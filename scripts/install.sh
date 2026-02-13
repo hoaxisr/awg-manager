@@ -77,14 +77,20 @@ fetch_version() {
 
     info "Получаю последнюю версию с GitHub..."
 
-    # Метод 1: Location header из redirect /releases/latest
+    # Метод 1: Location header из redirect /releases/latest (только stable)
     VERSION=$(curl -sI "https://github.com/$REPO/releases/latest" 2>/dev/null \
         | sed -n 's/^[Ll]ocation:.*\/v\([^ \t\r]*\).*/\1/p' | tr -d '\r\n')
 
-    # Метод 2: GitHub API (fallback)
+    # Метод 2: GitHub API /releases/latest (только stable)
     if [ -z "$VERSION" ]; then
         VERSION=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
             | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\([^"]*\)".*/\1/p')
+    fi
+
+    # Метод 3: все релизы, включая pre-release (первый = самый новый)
+    if [ -z "$VERSION" ]; then
+        VERSION=$(curl -sL "https://api.github.com/repos/$REPO/releases" 2>/dev/null \
+            | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\([^"]*\)".*/\1/p' | head -1)
     fi
 
     [ -z "$VERSION" ] && error "Не удалось получить версию с GitHub. Проверьте подключение к интернету."
