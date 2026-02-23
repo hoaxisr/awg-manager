@@ -151,9 +151,9 @@ add_repo() {
 # --- Запуск сервиса ---
 start_service() {
     info "Запускаю сервис..."
-    /opt/etc/init.d/S80awg-manager restart 2>/dev/null \
+    /opt/etc/init.d/S99awg-manager restart 2>/dev/null \
         || /opt/bin/awg-manager --service start 2>/dev/null \
-        || warn "Не удалось запустить автоматически. Запустите вручную: /opt/etc/init.d/S80awg-manager start"
+        || warn "Не удалось запустить автоматически. Запустите вручную: /opt/etc/init.d/S99awg-manager start"
 }
 
 # --- Проверка работоспособности ---
