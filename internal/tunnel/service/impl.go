@@ -1,0 +1,656 @@
+package service
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/logger"
+	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/ops"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/state"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
+)
+
+var confDir = "/opt/etc/awg-manager"
+
+// ReconcileHooks allows the reconcile loop to notify external services
+// (e.g. PingCheck) about tunnel state changes detected via NDMS.
+type ReconcileHooks interface {
+	// OnReconcileStart is called when reconcile auto-starts a tunnel.
+	OnReconcileStart(tunnelID, tunnelName string)
+	// OnReconcileStop is called when reconcile detects NeedsStop (router UI toggled OFF).
+	OnReconcileStop(tunnelID string)
+	// OnTunnelDelete is called when a tunnel is deleted (cleanup monitoring).
+	OnTunnelDelete(tunnelID string)
+}
+
+// PolicyHooks allows tunnel lifecycle to notify the policy service.
+type PolicyHooks interface {
+	OnTunnelStart(ctx context.Context, tunnelID, tunnelIface string) error
+	OnTunnelStop(ctx context.Context, tunnelID string) error
+	OnTunnelDelete(ctx context.Context, tunnelID string) error
+}
+
+// ServiceImpl is the concrete implementation of Service.
+type ServiceImpl struct {
+	store    *storage.AWGTunnelStore
+	state    state.Manager
+	operator ops.Operator
+	log      *logger.Logger
+
+	// tunnelMu provides per-tunnel mutexes for lifecycle operations.
+	// Key: tunnelID (string), Value: *sync.Mutex
+	tunnelMu sync.Map
+
+	// reconcileHooks notifies external services about reconcile events.
+	reconcileHooks ReconcileHooks
+
+	// policyHooks notifies the policy service about tunnel lifecycle events.
+	policyHooks PolicyHooks
+
+	// wan is the unified WAN state model (up/down tracking).
+	wan *wan.Model
+
+	// reconcileDeadline suppresses self-triggered NDMS hooks.
+	// When our Start/Stop/Restart calls InterfaceUp/InterfaceDown, NDMS fires
+	// hooks back to ReconcileInterface. We suppress these for a short window
+	// to prevent conflicts with our own operations.
+	reconcileDeadline map[string]time.Time
+	reconcileMu       sync.Mutex
+
+	// lifecycleOps tracks tunnels currently undergoing lifecycle operations.
+	// Used by GetState to override transient misleading states (e.g. NeedsStop
+	// during Start when process is running but InterfaceUp hasn't been called yet).
+	lifecycleOps   map[string]tunnel.State
+	lifecycleOpsMu sync.RWMutex
+
+	// wanOps tracks per-tunnel cancellation for WAN handler goroutines.
+	// When a new WAN event arrives for a tunnel, the previous goroutine is cancelled
+	// so it releases the lock promptly instead of running its full timeout.
+	wanOps   map[string]context.CancelFunc
+	wanOpsMu sync.Mutex
+}
+
+// New creates a new TunnelService.
+func New(
+	store *storage.AWGTunnelStore,
+	stateMgr state.Manager,
+	operator ops.Operator,
+	log *logger.Logger,
+	wanModel *wan.Model,
+) *ServiceImpl {
+	return &ServiceImpl{
+		store:             store,
+		state:             stateMgr,
+		operator:          operator,
+		log:               log,
+		wan:               wanModel,
+		reconcileDeadline: make(map[string]time.Time),
+		lifecycleOps:      make(map[string]tunnel.State),
+		wanOps:            make(map[string]context.CancelFunc),
+	}
+}
+
+// WANModel returns the WAN state model for direct access by API handlers.
+func (s *ServiceImpl) WANModel() *wan.Model { return s.wan }
+
+// GetResolvedISP returns the resolved ISP interface name for a running tunnel.
+func (s *ServiceImpl) GetResolvedISP(tunnelID string) string {
+	stored, err := s.store.Get(tunnelID)
+	if err != nil {
+		return ""
+	}
+	return stored.ActiveWAN
+}
+
+// SetReconcileHooks sets callbacks for reconcile loop events.
+func (s *ServiceImpl) SetReconcileHooks(hooks ReconcileHooks) {
+	s.reconcileHooks = hooks
+}
+
+// SetPolicyHooks sets callbacks for tunnel lifecycle events (policy routing).
+func (s *ServiceImpl) SetPolicyHooks(hooks PolicyHooks) {
+	s.policyHooks = hooks
+}
+
+// suppressReconcile temporarily suppresses ReconcileInterface for a tunnel.
+// Must be called BEFORE lockTunnel() so hooks blocked on the lock see the suppression.
+const reconcileSuppressDuration = 15 * time.Second
+
+func (s *ServiceImpl) suppressReconcile(tunnelID string) {
+	s.reconcileMu.Lock()
+	s.reconcileDeadline[tunnelID] = time.Now().Add(reconcileSuppressDuration)
+	s.reconcileMu.Unlock()
+}
+
+// isReconcileSuppressed checks if a self-triggered hook should be ignored.
+func (s *ServiceImpl) isReconcileSuppressed(tunnelID string) bool {
+	s.reconcileMu.Lock()
+	deadline, ok := s.reconcileDeadline[tunnelID]
+	if !ok {
+		s.reconcileMu.Unlock()
+		return false
+	}
+	if time.Now().After(deadline) {
+		delete(s.reconcileDeadline, tunnelID)
+		s.reconcileMu.Unlock()
+		return false
+	}
+	s.reconcileMu.Unlock()
+	return true
+}
+
+// newWANOp creates a cancellable context for a WAN handler goroutine.
+// Cancels any previous WAN operation for this tunnel.
+func (s *ServiceImpl) newWANOp(tunnelID string) context.Context {
+	s.wanOpsMu.Lock()
+	defer s.wanOpsMu.Unlock()
+
+	if cancel, ok := s.wanOps[tunnelID]; ok {
+		cancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.wanOps[tunnelID] = cancel
+	return ctx
+}
+
+// clearWANOp removes the WAN operation context for a tunnel.
+// Called at the end of each WAN handler goroutine.
+func (s *ServiceImpl) clearWANOp(tunnelID string) {
+	s.wanOpsMu.Lock()
+	defer s.wanOpsMu.Unlock()
+	if cancel, ok := s.wanOps[tunnelID]; ok {
+		cancel()
+	}
+	delete(s.wanOps, tunnelID)
+}
+
+// lockTunnel acquires the per-tunnel mutex.
+func (s *ServiceImpl) lockTunnel(tunnelID string) {
+	mu, _ := s.tunnelMu.LoadOrStore(tunnelID, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+}
+
+// unlockTunnel releases the per-tunnel mutex.
+func (s *ServiceImpl) unlockTunnel(tunnelID string) {
+	if mu, ok := s.tunnelMu.Load(tunnelID); ok {
+		mu.(*sync.Mutex).Unlock()
+	}
+}
+
+// cleanupTunnelLock removes the lock entry for a deleted tunnel.
+func (s *ServiceImpl) cleanupTunnelLock(tunnelID string) {
+	s.tunnelMu.Delete(tunnelID)
+}
+
+// === CRUD Operations ===
+
+// Create creates a new tunnel and saves it to storage.
+func (s *ServiceImpl) Create(ctx context.Context, tunnelID, name string, cfg tunnel.Config) error {
+	s.lockTunnel(tunnelID)
+	defer s.unlockTunnel(tunnelID)
+
+	// Check if tunnel already exists in storage
+	if s.store.Exists(tunnelID) {
+		return tunnel.ErrAlreadyExists
+	}
+
+	// Create in NDMS (for OS5, no-op for OS4)
+	if err := s.operator.Create(ctx, cfg); err != nil {
+		return err
+	}
+
+	s.logInfo("create", tunnelID, "Tunnel created")
+	return nil
+}
+
+// Get returns a tunnel with its current state.
+func (s *ServiceImpl) Get(ctx context.Context, tunnelID string) (*TunnelWithStatus, error) {
+	stored, err := s.store.Get(tunnelID)
+	if err != nil {
+		return nil, tunnel.ErrNotFound
+	}
+
+	stateInfo := s.state.GetState(ctx, tunnelID)
+	names := tunnel.NewNames(tunnelID)
+
+	isDeadByMonitoring := stored.PingCheck != nil && stored.PingCheck.IsDeadByMonitoring
+
+	return &TunnelWithStatus{
+		ID:                 stored.ID,
+		Name:               stored.Name,
+		Config:             s.storedToConfig(stored),
+		State:              stateInfo.State,
+		StateInfo:          stateInfo,
+		Enabled:            stored.Enabled,
+		AutoStart:          stored.Enabled, // AutoStart == Enabled in current design
+		PingCheckOn:        stored.PingCheck != nil && stored.PingCheck.Enabled,
+		DefaultRoute:       stored.DefaultRoute,
+		ISPInterface:       stored.ISPInterface,
+		InterfaceName:      names.IfaceName,
+		ConfigPreview:      config.Generate(stored),
+		IsDeadByMonitoring: isDeadByMonitoring,
+	}, nil
+}
+
+// List returns all tunnels with their current states.
+func (s *ServiceImpl) List(ctx context.Context) ([]TunnelWithStatus, error) {
+	stored, err := s.store.List()
+	if err != nil {
+		return nil, fmt.Errorf("list tunnels: %w", err)
+	}
+
+	result := make([]TunnelWithStatus, 0, len(stored))
+	for _, t := range stored {
+		// Lightweight: skip NDMS, use process+WG only (no socket per tunnel per poll)
+		stateInfo := s.state.GetStateLightweight(ctx, t.ID)
+
+		// Enrich with storage knowledge: stopped + disabled → Disabled
+		if !t.Enabled && stateInfo.State == tunnel.StateStopped {
+			stateInfo.State = tunnel.StateDisabled
+		}
+
+		names := tunnel.NewNames(t.ID)
+		isDeadByMonitoring := t.PingCheck != nil && t.PingCheck.IsDeadByMonitoring
+
+		result = append(result, TunnelWithStatus{
+			ID:                 t.ID,
+			Name:               t.Name,
+			Config:             s.storedToConfig(&t),
+			State:              stateInfo.State,
+			StateInfo:          stateInfo,
+			Enabled:            t.Enabled,
+			AutoStart:          t.Enabled,
+			PingCheckOn:        t.PingCheck != nil && t.PingCheck.Enabled,
+			DefaultRoute:       t.DefaultRoute,
+			ISPInterface:       t.ISPInterface,
+			InterfaceName:      names.IfaceName,
+			IsDeadByMonitoring: isDeadByMonitoring,
+		})
+	}
+
+	return result, nil
+}
+
+// Update updates a tunnel's configuration.
+func (s *ServiceImpl) Update(ctx context.Context, tunnelID string, cfg tunnel.Config) error {
+	s.lockTunnel(tunnelID)
+	defer s.unlockTunnel(tunnelID)
+
+	stored, err := s.store.Get(tunnelID)
+	if err != nil {
+		return tunnel.ErrNotFound
+	}
+
+	// Check current state
+	stateInfo := s.state.GetState(ctx, tunnelID)
+
+	// Block address changes in kernel mode — NDMS cannot change address on a kernel interface
+	if stateInfo.BackendType == "kernel" && cfg.Address != "" && cfg.Address != stored.Interface.Address {
+		return fmt.Errorf("address change is not supported in kernel mode")
+	}
+
+	// Update NDMS description if name changed
+	if cfg.Name != "" && cfg.Name != stored.Name {
+		if err := s.operator.UpdateDescription(ctx, tunnelID, cfg.Name); err != nil {
+			s.logWarn("update", tunnelID, "Failed to update NDMS description: "+err.Error())
+		}
+		stored.Name = cfg.Name
+	}
+
+	// Capture old endpoint before updating (for route refresh)
+	oldEndpoint := stored.Peer.Endpoint
+
+	// Update stored config
+	stored.Interface.Address = cfg.Address
+	stored.Interface.MTU = cfg.MTU
+	if cfg.Endpoint != "" {
+		stored.Peer.Endpoint = cfg.Endpoint
+	}
+
+	// Regenerate config file
+	if err := s.writeConfigFile(stored); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+
+	// Save to storage
+	if err := s.store.Save(stored); err != nil {
+		return fmt.Errorf("save tunnel: %w", err)
+	}
+
+	// If running, apply new config
+	if stateInfo.State == tunnel.StateRunning {
+		confPath := tunnel.NewNames(tunnelID).ConfPath
+		if err := s.operator.ApplyConfig(ctx, tunnelID, confPath); err != nil {
+			s.logWarn("update", tunnelID, "Failed to apply config to running tunnel: "+err.Error())
+		}
+		// Apply MTU immediately to running interface
+		if err := s.operator.SetMTU(ctx, tunnelID, cfg.MTU); err != nil {
+			s.logWarn("update", tunnelID, "Failed to apply MTU: "+err.Error())
+		}
+
+		// If endpoint changed, refresh endpoint route via ISP
+		if cfg.Endpoint != "" && cfg.Endpoint != oldEndpoint {
+			_ = s.operator.CleanupEndpointRoute(ctx, tunnelID)
+			resolvedWAN, resolveErr := s.resolveWAN(ctx, stored.ISPInterface)
+			if resolveErr != nil {
+				s.logWarn("update", tunnelID, "Failed to resolve WAN: "+resolveErr.Error())
+			} else if ip, err := s.operator.SetupEndpointRoute(ctx, tunnelID, stored.Peer.Endpoint, resolvedWAN); err != nil {
+				s.logWarn("update", tunnelID, "Failed to setup new endpoint route: "+err.Error())
+			} else {
+				stored.ResolvedEndpointIP = ip
+				if err := s.store.Save(stored); err != nil {
+					s.logWarn("save", stored.ID, "Failed to persist state: "+err.Error())
+				}
+			}
+		}
+	}
+
+	s.logInfo("update", tunnelID, "Tunnel updated")
+	return nil
+}
+
+// SetEnabled changes the enabled/autostart state of a tunnel.
+func (s *ServiceImpl) SetEnabled(ctx context.Context, tunnelID string, enabled bool) error {
+	s.lockTunnel(tunnelID)
+	defer s.unlockTunnel(tunnelID)
+
+	stored, err := s.store.Get(tunnelID)
+	if err != nil {
+		return tunnel.ErrNotFound
+	}
+
+	stored.Enabled = enabled
+
+	if err := s.store.Save(stored); err != nil {
+		return fmt.Errorf("save tunnel: %w", err)
+	}
+
+	s.logInfo("set_enabled", tunnelID, fmt.Sprintf("Enabled set to %v", enabled))
+	return nil
+}
+
+// SetDefaultRoute changes the default route setting.
+// If tunnel is running, immediately applies route changes.
+func (s *ServiceImpl) SetDefaultRoute(ctx context.Context, tunnelID string, enabled bool) error {
+	s.lockTunnel(tunnelID)
+	defer s.unlockTunnel(tunnelID)
+
+	stored, err := s.store.Get(tunnelID)
+	if err != nil {
+		return tunnel.ErrNotFound
+	}
+
+	oldValue := stored.DefaultRoute
+	stored.DefaultRoute = enabled
+	stored.DefaultRouteSet = true
+
+	if err := s.store.Save(stored); err != nil {
+		return fmt.Errorf("save tunnel: %w", err)
+	}
+
+	// If tunnel is running and value changed, apply default route changes.
+	// Endpoint route is always present (set up in Start), only default route toggles.
+	stateInfo := s.state.GetState(ctx, tunnelID)
+	if stateInfo.State == tunnel.StateRunning && oldValue != enabled {
+		if enabled {
+			if err := s.operator.SetDefaultRoute(ctx, tunnelID); err != nil {
+				s.logWarn("set_default_route", tunnelID, "Failed to set default route: "+err.Error())
+			}
+		} else {
+			if err := s.operator.RemoveDefaultRoute(ctx, tunnelID); err != nil {
+				s.logWarn("set_default_route", tunnelID, "Failed to remove default route: "+err.Error())
+			}
+		}
+	}
+
+	s.logInfo("set_default_route", tunnelID, fmt.Sprintf("DefaultRoute set to %v", enabled))
+	return nil
+}
+
+// Import parses a WireGuard .conf file and creates a tunnel.
+func (s *ServiceImpl) Import(ctx context.Context, confContent, name string) (*TunnelWithStatus, error) {
+	// Parse config
+	parsed, err := config.Parse(confContent)
+	if err != nil {
+		return nil, fmt.Errorf("parse conf: %w", err)
+	}
+
+	// Set name
+	if name != "" {
+		parsed.Name = name
+	}
+	if parsed.Name == "" {
+		parsed.Name = "Imported Tunnel"
+	}
+
+	// Generate ID
+	tunnelID, err := s.store.NextAvailableID()
+	if err != nil {
+		return nil, fmt.Errorf("generate ID: %w", err)
+	}
+	parsed.ID = tunnelID
+
+	// Set defaults
+	parsed.Type = "awg"
+	parsed.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	parsed.Status = "stopped"
+	parsed.Enabled = false
+
+	// Save to storage
+	if err := s.store.Save(parsed); err != nil {
+		return nil, fmt.Errorf("save tunnel: %w", err)
+	}
+
+	// Write config file
+	if err := s.writeConfigFile(parsed); err != nil {
+		_ = s.store.Delete(tunnelID)
+		return nil, fmt.Errorf("write config: %w", err)
+	}
+
+	s.logInfo("import", tunnelID, "Tunnel imported: "+parsed.Name)
+
+	return s.Get(ctx, tunnelID)
+}
+
+// === Validation ===
+
+// CheckAddressConflicts returns warnings if the tunnel's address
+// conflicts with any other stored tunnel.
+func (s *ServiceImpl) CheckAddressConflicts(_ context.Context, tunnelID string) []string {
+	stored, err := s.store.Get(tunnelID)
+	if err != nil {
+		return nil
+	}
+	return checkStoredAddressConflicts(s.store, stored.Interface.Address, tunnelID)
+}
+
+// clearActiveWAN clears the persisted ActiveWAN and StartedAt for a tunnel.
+// Called after KillLink to ensure HandleWANDown won't match stale WAN.
+func (s *ServiceImpl) clearActiveWAN(tunnelID string) {
+	stored, err := s.store.Get(tunnelID)
+	if err != nil {
+		return
+	}
+	changed := false
+	if stored.ActiveWAN != "" {
+		stored.ActiveWAN = ""
+		changed = true
+	}
+	if stored.StartedAt != "" {
+		stored.StartedAt = ""
+		changed = true
+	}
+	if changed {
+		_ = s.store.Save(stored)
+	}
+}
+
+// collectManagedIfaceNames returns interface names for all stored tunnels.
+// Used to exclude managed interfaces from system address conflict checks.
+func (s *ServiceImpl) collectManagedIfaceNames() []string {
+	tunnels, err := s.store.List()
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(tunnels))
+	for _, t := range tunnels {
+		names = append(names, tunnel.NewNames(t.ID).IfaceName)
+	}
+	return names
+}
+
+// === Helper Methods ===
+
+// resolveWAN resolves the tunnel's ISPInterface to a concrete WAN name.
+// Auto mode (empty): queries NDMS for the current default gateway interface.
+// Tunnel chaining (tunnel:xxx): resolves to parent tunnel's WAN.
+// Explicit: returns as-is.
+func (s *ServiceImpl) resolveWAN(ctx context.Context, ispInterface string) (string, error) {
+	if ispInterface == "" {
+		// Auto mode: prefer WAN model (priority-based selection)
+		if iface, ok := s.wan.PreferredUp(); ok {
+			return iface, nil
+		}
+		// Fallback: wan.Model not yet populated (early boot)
+		iface, err := s.operator.GetDefaultGatewayInterface(ctx)
+		if err != nil {
+			return "", fmt.Errorf("no default gateway available: %w", err)
+		}
+		return iface, nil
+	}
+
+	if tunnel.IsTunnelRoute(ispInterface) {
+		// Tunnel chaining: resolve to parent's persisted WAN
+		parentID := tunnel.TunnelRouteID(ispInterface)
+		parentStored, err := s.store.Get(parentID)
+		if err != nil {
+			return "", fmt.Errorf("parent tunnel %s not found", parentID)
+		}
+		if parentStored.ActiveWAN != "" {
+			return parentStored.ActiveWAN, nil
+		}
+		// Fallback: ActiveWAN empty (first start or upgrade from old version)
+		parentState := s.state.GetState(ctx, parentID)
+		if parentState.State != tunnel.StateRunning {
+			return "", fmt.Errorf("parent tunnel %s not running (state: %s)", parentID, parentState.State)
+		}
+		if tunnel.IsTunnelRoute(parentStored.ISPInterface) {
+			return "", fmt.Errorf("parent tunnel %s: nested chain, ActiveWAN not tracked", parentID)
+		}
+		s.logInfo("resolve_wan", parentID, "ActiveWAN empty, resolving from stored config")
+		return s.resolveWAN(ctx, parentStored.ISPInterface)
+	}
+
+	// Explicit WAN name
+	return ispInterface, nil
+}
+
+// storedToConfig converts storage.AWGTunnel to tunnel.Config.
+func (s *ServiceImpl) storedToConfig(stored *storage.AWGTunnel) tunnel.Config {
+	names := tunnel.NewNames(stored.ID)
+	ipv4, ipv6 := splitAddresses(stored.Interface.Address)
+	return tunnel.Config{
+		ID:           stored.ID,
+		Name:         stored.Name,
+		Address:      ipv4,
+		AddressIPv6:  ipv6,
+		MTU:          stored.Interface.MTU,
+		ConfPath:     names.ConfPath,
+		ISPInterface: stored.ISPInterface,
+	}
+}
+
+// splitAddresses splits a WireGuard Address field (which may contain
+// comma-separated IPv4 and IPv6 addresses) into separate values.
+func splitAddresses(address string) (ipv4, ipv6 string) {
+	for _, part := range strings.Split(address, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		// Strip CIDR prefix for the config — operators add it themselves
+		host := part
+		if idx := strings.Index(part, "/"); idx != -1 {
+			host = part[:idx]
+		}
+		if strings.Contains(host, ":") {
+			ipv6 = host
+		} else {
+			ipv4 = host
+		}
+	}
+	return
+}
+
+// writeConfigFileForStart generates and writes the WireGuard config file for tunnel start.
+// When hasIPv6 is false, ::/0 is filtered from AllowedIPs.
+func (s *ServiceImpl) writeConfigFileForStart(stored *storage.AWGTunnel, hasIPv6 bool) error {
+	if err := os.MkdirAll(confDir, 0755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	content := config.GenerateForStart(stored, hasIPv6)
+	confPath := filepath.Join(confDir, stored.ID+".conf")
+	if err := os.WriteFile(confPath, []byte(content), 0600); err != nil {
+		return fmt.Errorf("write config file: %w", err)
+	}
+	return nil
+}
+
+// writeConfigFile generates and writes the WireGuard config file.
+func (s *ServiceImpl) writeConfigFile(stored *storage.AWGTunnel) error {
+	// Ensure directory exists
+	if err := os.MkdirAll(confDir, 0755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+
+	// Generate config content
+	content := config.Generate(stored)
+
+	// Write to file
+	confPath := filepath.Join(confDir, stored.ID+".conf")
+	if err := os.WriteFile(confPath, []byte(content), 0600); err != nil {
+		return fmt.Errorf("write config file: %w", err)
+	}
+
+	return nil
+}
+
+// logInfo logs an info message.
+func (s *ServiceImpl) logInfo(action, target, message string) {
+	if s.log != nil {
+		s.log.Infof("[%s] %s: %s", action, target, message)
+	}
+}
+
+// logWarn logs a warning message.
+func (s *ServiceImpl) logWarn(action, target, message string) {
+	if s.log != nil {
+		s.log.Warnf("[%s] %s: %s", action, target, message)
+	}
+}
+
+// MigrateISPInterfaceNone converts legacy "none" ISPInterface values to "" (auto).
+func (s *ServiceImpl) MigrateISPInterfaceNone() {
+	tunnels, err := s.store.List()
+	if err != nil {
+		return
+	}
+	for _, t := range tunnels {
+		if t.ISPInterface == "none" {
+			t.ISPInterface = ""
+			_ = s.store.Save(&t)
+			s.logInfo("migrate", t.ID, "Migrated ISPInterface from 'none' to auto")
+		}
+	}
+}
+
+// Ensure ServiceImpl implements Service interface.
+var _ Service = (*ServiceImpl)(nil)

@@ -1,0 +1,29 @@
+# Build artifacts
+build/
+dist/
+
+# Vendor binaries
+vendor/bin/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Frontend
+frontend/node_modules/
+frontend/build/
+frontend/.svelte-kit/
+
+# Planning & docs (internal only)
+docs/
+.planning/
+
+# Claude (keep skills)
+.claude/*
+!.claude/skills/
