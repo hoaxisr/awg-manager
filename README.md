@@ -8,6 +8,9 @@
 curl -sL https://raw.githubusercontent.com/hoaxisr/awg-manager/main/scripts/install.sh | sh
 ```
 ПОЛНОЕ УДАЛЕНИЕ:
+
 opkg remove awg-manager
+
 rm -rf /opt/etc/awg-manager
-m /opt/etc/opkg/awg_manager.conf
+
+rm /opt/etc/opkg/awg_manager.conf
