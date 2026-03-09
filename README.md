@@ -20,7 +20,7 @@
 
 ## Требования
 
-- Роутер Keenetic с поддержкой Entware
+- Роутер Keenetic с поддержкой Entware, установленный компонент Wireguard
 
 ---
 
@@ -39,7 +39,6 @@ curl -sL https://raw.githubusercontent.com/hoaxisr/awg-manager/main/scripts/inst
 ```sh
 opkg remove awg-manager
 rm -rf /opt/etc/awg-manager
-rm /opt/etc/opkg/awg_manager.conf
 ```
 
 ---
