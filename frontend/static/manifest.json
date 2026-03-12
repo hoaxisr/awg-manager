@@ -1,0 +1,17 @@
+{
+	"name": "AWG Manager",
+	"short_name": "AWG",
+	"start_url": "/",
+	"display": "standalone",
+	"theme_color": "#1a1b26",
+	"background_color": "#1a1b26",
+	"icons": [
+		{
+			"src": "/icon-192.png",
+			"sizes": "192x192",
+			"type": "image/png"
+		}
+	],
+	"orientation": "any",
+	"prefer_related_applications": false
+}

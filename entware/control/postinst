@@ -1,0 +1,66 @@
+#!/bin/sh
+
+OLD_VERSION="$2"
+
+# Create directories
+mkdir -p /opt/etc/awg-manager/tunnels
+mkdir -p /opt/var/run
+mkdir -p /opt/var/log
+
+# Set permissions
+chmod 755 /opt/bin/awg-manager
+chmod 755 /opt/sbin/awg
+chmod 755 /opt/etc/init.d/S99awg-manager
+chmod 755 /opt/etc/ndm/iflayerchanged.d/50-awg-manager.sh
+
+# Clean up legacy files
+rm -f /opt/etc/ndm/ifstatechanged.d/50-awg-manager.sh
+rm -f /opt/var/log/awg-wan-hook.log
+rm -f /opt/etc/init.d/S80awg-manager
+
+# Set permissions for amneziawg-go (userspace backend)
+chmod 755 /opt/sbin/amneziawg-go 2>/dev/null || true
+
+# Start awg-manager
+/opt/etc/init.d/S99awg-manager start
+
+# Wait a moment for settings to be initialized
+sleep 2
+
+# Get the port from settings.json (daemon persists actual port there)
+PORT=$(grep '"port"' /opt/etc/awg-manager/settings.json 2>/dev/null | tr -cd '0-9')
+[ -z "$PORT" ] && PORT="2222"
+
+# Get LAN IP from br0 interface (Keenetic bridge) - for display to user
+ROUTER_IP=""
+if command -v ip >/dev/null 2>&1; then
+    # Get IP from br0 (LAN bridge)
+    ROUTER_IP=$(ip -4 addr show br0 2>/dev/null | grep -oE 'inet [0-9.]+' | awk '{print $2}')
+fi
+if [ -z "$ROUTER_IP" ] && command -v ifconfig >/dev/null 2>&1; then
+    # Fallback to ifconfig
+    ROUTER_IP=$(ifconfig br0 2>/dev/null | grep -oE 'inet (addr:)?[0-9.]+' | grep -oE '[0-9.]+')
+fi
+if [ -z "$ROUTER_IP" ]; then
+    ROUTER_IP="<ROUTER-IP>"
+fi
+
+echo ""
+if [ -n "$OLD_VERSION" ]; then
+    echo "=========================================="
+    echo "  AWG Manager upgraded successfully!"
+    echo "  (from version $OLD_VERSION)"
+    echo "=========================================="
+    echo ""
+    echo "  Your tunnels and settings are preserved."
+else
+    echo "=========================================="
+    echo "  AWG Manager installed successfully!"
+    echo "=========================================="
+fi
+echo ""
+echo "  Web UI: http://${ROUTER_IP}:${PORT}"
+echo ""
+echo "  Commands:"
+echo "    /opt/etc/init.d/S99awg-manager {start|stop|restart|status}"
+echo ""
