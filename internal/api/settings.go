@@ -1,0 +1,216 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/storage"
+)
+
+// PingCheckToggleService defines the interface for ping check toggle operations.
+type PingCheckToggleService interface {
+	StartMonitoringAllRunning()
+	StopMonitoringAll()
+}
+
+// SettingsHandler handles settings API endpoints.
+type SettingsHandler struct {
+	store     *storage.SettingsStore
+	tunnels   *storage.AWGTunnelStore
+	pingCheck PingCheckToggleService
+	logger    AppLogger
+}
+
+// NewSettingsHandler creates a new settings handler.
+func NewSettingsHandler(store *storage.SettingsStore) *SettingsHandler {
+	return &SettingsHandler{store: store}
+}
+
+// SetTunnelStore sets the tunnel store for ping check toggle logic.
+func (h *SettingsHandler) SetTunnelStore(tunnels *storage.AWGTunnelStore) {
+	h.tunnels = tunnels
+}
+
+// SetPingCheckService sets the ping check service for toggle operations.
+func (h *SettingsHandler) SetPingCheckService(svc PingCheckToggleService) {
+	h.pingCheck = svc
+}
+
+// SetLoggingService sets the logging service for the handler.
+func (h *SettingsHandler) SetLoggingService(logger LoggingService) {
+	h.logger = logger
+}
+
+// Get returns current settings.
+func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+		return
+	}
+
+	settings, err := h.store.Get()
+	if err != nil {
+		response.Error(w, err.Error(), "SETTINGS_LOAD_ERROR")
+		return
+	}
+
+	response.Success(w, settings)
+}
+
+// Update saves settings.
+func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+		return
+	}
+
+	// Get current settings to detect pingCheck toggle change
+	oldSettings, err := h.store.Get()
+	if err != nil {
+		response.Error(w, err.Error(), "SETTINGS_LOAD_ERROR")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+	var settings storage.Settings
+	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
+		return
+	}
+
+	// Detect ping check toggle change before saving
+	pingCheckWasEnabled := oldSettings.PingCheck.Enabled
+	pingCheckNowEnabled := settings.PingCheck.Enabled
+	toggleEnabled := !pingCheckWasEnabled && pingCheckNowEnabled
+	toggleDisabled := pingCheckWasEnabled && !pingCheckNowEnabled
+
+	// Detect logging toggle change
+	loggingWasEnabled := oldSettings.Logging.Enabled
+	loggingNowEnabled := settings.Logging.Enabled
+
+	// Update tunnel configs if enabling
+	if h.tunnels != nil && toggleEnabled {
+		if err := h.enablePingCheckOnAllTunnels(&settings); err != nil {
+			response.Error(w, err.Error(), "TOGGLE_ENABLE_ERROR")
+			return
+		}
+	}
+
+	// Save settings BEFORE starting monitoring (so service reads new values)
+	if err := h.store.Save(&settings); err != nil {
+		response.Error(w, err.Error(), "SETTINGS_SAVE_ERROR")
+		return
+	}
+
+	// Handle ping check toggle AFTER settings are saved
+	if h.tunnels != nil {
+		if toggleEnabled {
+			// Start monitoring for all running tunnels
+			if h.pingCheck != nil {
+				h.pingCheck.StartMonitoringAllRunning()
+			}
+		} else if toggleDisabled {
+			// Disabling: stop all monitoring
+			if h.pingCheck != nil {
+				h.pingCheck.StopMonitoringAll()
+			}
+			// Set pingCheck.enabled=false on all tunnels
+			if err := h.disablePingCheckOnAllTunnels(); err != nil {
+				response.Error(w, err.Error(), "TOGGLE_DISABLE_ERROR")
+				return
+			}
+		}
+	}
+
+	// Log specific changes
+	if h.logger != nil {
+		// Log logging toggle (must be first - if just enabled, this will be the first log entry)
+		if loggingNowEnabled && !loggingWasEnabled {
+			h.logger.Log(logging.CategorySettings, "logging", "", "Logging enabled")
+		} else if loggingWasEnabled && !loggingNowEnabled {
+			// This won't actually log since logging is now disabled, but keep for completeness
+			h.logger.Log(logging.CategorySettings, "logging", "", "Logging disabled")
+		}
+
+		// Log ping check toggle
+		if toggleEnabled {
+			h.logger.Log(logging.CategorySettings, "pingcheck", "", "Ping Check enabled")
+		} else if toggleDisabled {
+			h.logger.Log(logging.CategorySettings, "pingcheck", "", "Ping Check disabled")
+		}
+
+		// Log other settings changes
+		if oldSettings.Server.Port != settings.Server.Port {
+			h.logger.Log(logging.CategorySettings, "update", "", "Server port changed")
+		}
+		if oldSettings.AuthEnabled != settings.AuthEnabled {
+			if settings.AuthEnabled {
+				h.logger.Log(logging.CategorySettings, "auth", "", "Authentication enabled")
+			} else {
+				h.logger.LogWarn(logging.CategorySettings, "auth", "", "Authentication disabled")
+			}
+		}
+		if oldSettings.DisableMemorySaving != settings.DisableMemorySaving {
+			if settings.DisableMemorySaving {
+				h.logger.Log(logging.CategorySettings, "memory-saving", "", "Memory saving disabled")
+			} else {
+				h.logger.Log(logging.CategorySettings, "memory-saving", "", "Memory saving enabled")
+			}
+		}
+	}
+
+	response.Success(w, settings)
+}
+
+// enablePingCheckOnAllTunnels adds pingCheck config with defaults to all tunnels.
+func (h *SettingsHandler) enablePingCheckOnAllTunnels(settings *storage.Settings) error {
+	tunnels, err := h.tunnels.List()
+	if err != nil {
+		return err
+	}
+
+	defaults := settings.PingCheck.Defaults
+	for i := range tunnels {
+		tunnel := &tunnels[i]
+		if tunnel.PingCheck == nil {
+			tunnel.PingCheck = &storage.TunnelPingCheck{
+				Enabled:       true,
+				Method:        defaults.Method,
+				Target:        defaults.Target,
+				Interval:      defaults.Interval,
+				DeadInterval:  defaults.DeadInterval,
+				FailThreshold: defaults.FailThreshold,
+				MinSuccess:    1,
+				Timeout:       5,
+				Restart:       true,
+			}
+		} else {
+			tunnel.PingCheck.Enabled = true
+		}
+		if err := h.tunnels.Save(tunnel); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// disablePingCheckOnAllTunnels sets pingCheck.enabled=false on all tunnels.
+func (h *SettingsHandler) disablePingCheckOnAllTunnels() error {
+	tunnels, err := h.tunnels.List()
+	if err != nil {
+		return err
+	}
+
+	for i := range tunnels {
+		tunnel := &tunnels[i]
+		if tunnel.PingCheck != nil {
+			tunnel.PingCheck.Enabled = false
+			if err := h.tunnels.Save(tunnel); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}

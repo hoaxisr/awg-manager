@@ -1,0 +1,123 @@
+#!/bin/sh
+# S99awg-manager - AWG Manager service
+
+# Ensure system binaries are in PATH (ndmc, ip, etc.)
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/opt/bin:/opt/sbin:$PATH"
+
+# Ensure ndmc uses system libraries (not Entware's openssl)
+export LD_LIBRARY_PATH="/lib:/usr/lib:$LD_LIBRARY_PATH"
+
+ENABLED=yes
+PROCS=awg-manager
+DESC="AWG Manager"
+BIN="/opt/bin/awg-manager"
+PID_FILE="/opt/var/run/awg-manager.pid"
+DATA_DIR="/opt/etc/awg-manager"
+WEB_ROOT="/opt/share/www/awg-manager"
+SETTINGS_FILE="$DATA_DIR/settings.json"
+
+# Read port from settings.json
+get_port() {
+    local port=$(grep '"port"' "$SETTINGS_FILE" 2>/dev/null | tr -cd '0-9')
+    [ -z "$port" ] && port="2222"
+    echo "$port"
+}
+
+# Get LAN IP from br0 interface
+get_host() {
+    local host=$(ip -4 addr show br0 2>/dev/null | grep -oE 'inet [0-9.]+' | awk '{print $2}')
+    [ -z "$host" ] && host="192.168.1.1"
+    echo "$host"
+}
+
+# Check if binary exists
+[ -x "$BIN" ] || exit 0
+
+# Ensure directories exist
+mkdir -p /opt/var/run /opt/var/log "$DATA_DIR"
+
+start() {
+    if [ -f "$PID_FILE" ]; then
+        local pid=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+            echo "$DESC already running (PID $pid)"
+            return 0
+        fi
+        rm -f "$PID_FILE"
+    fi
+
+    echo "Starting $DESC..."
+
+    # Start daemon (port is read from settings.json)
+    start-stop-daemon -S -b -m -p "$PID_FILE" -x "$BIN" -- \
+        -data-dir "$DATA_DIR" \
+        -web-root "$WEB_ROOT"
+
+    # Wait for process to start (up to 5 seconds)
+    local count=0
+    while [ $count -lt 5 ]; do
+        sleep 1
+        count=$((count + 1))
+        local pid=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+            local port=$(get_port)
+            local host=$(get_host)
+            echo "$DESC started: http://${host}:${port}"
+            return 0
+        fi
+    done
+
+    echo "$DESC failed to start"
+    return 1
+}
+
+stop() {
+    if [ -f "$PID_FILE" ]; then
+        local pid=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+            echo "Stopping $DESC..."
+            kill "$pid" 2>/dev/null
+
+            local count=0
+            while [ -d "/proc/$pid" ] && [ $count -lt 5 ]; do
+                sleep 1
+                count=$((count + 1))
+            done
+
+            [ -d "/proc/$pid" ] && kill -9 "$pid" 2>/dev/null
+        fi
+        rm -f "$PID_FILE"
+    fi
+    echo "$DESC stopped"
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}
+
+status() {
+    if [ -f "$PID_FILE" ]; then
+        local pid=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+            local port=$(get_port)
+            local host=$(get_host)
+            echo "$DESC running (PID $pid): http://${host}:${port}"
+            return 0
+        fi
+    fi
+    echo "$DESC not running"
+    return 1
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) restart ;;
+    status)  status ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac

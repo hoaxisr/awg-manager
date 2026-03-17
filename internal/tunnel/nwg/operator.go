@@ -1,0 +1,722 @@
+// Package nwg provides OperatorNativeWG — manages tunnels via Keenetic's
+// native WireGuard interface + awg_proxy.ko kernel module for obfuscation.
+//
+// Architecture: NDMS creates/manages the WireGuard interface natively.
+// awg_proxy.ko creates a per-tunnel UDP proxy: WG sends to 127.0.0.1:proxy_port,
+// the proxy transforms packets and forwards to the real AWG server (and vice versa).
+package nwg
+
+import (
+	"context"
+	"crypto/ecdh"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/logger"
+	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/exec"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
+)
+
+// OperatorNativeWG manages tunnels via Keenetic native WireGuard + awg_proxy.ko.
+type OperatorNativeWG struct {
+	rci  *RCIClient
+	kmod *KmodManager
+	ndms ndms.Client
+	log  *logger.Logger
+}
+
+// NewOperator creates a new NativeWG operator.
+func NewOperator(log *logger.Logger, ndmsClient ndms.Client) *OperatorNativeWG {
+	return &OperatorNativeWG{
+		rci:  NewRCIClient(),
+		kmod: NewKmodManager(log),
+		ndms: ndmsClient,
+		log:  log,
+	}
+}
+
+// ndmc runs an ndmc command and returns stdout.
+// On error, parses NDMS output for a human-readable message (e.g. address conflict).
+func (o *OperatorNativeWG) ndmc(ctx context.Context, cmd string) (string, error) {
+	result, err := exec.Run(ctx, "ndmc", "-c", cmd)
+	if err != nil {
+		// NDMS writes error details to stdout (not stderr).
+		// Extract the meaningful part for the user.
+		msg := ""
+		if result != nil {
+			msg = parseNDMSError(result.Stdout)
+		}
+		if msg != "" {
+			return "", fmt.Errorf("%s", msg)
+		}
+		return "", fmt.Errorf("ndmc %q: %w", cmd, err)
+	}
+	return result.Stdout, nil
+}
+
+// parseNDMSError extracts a human-readable error from NDMS stdout.
+// NDMS outputs lines like:
+//
+//	Network::Interface::Ip error[72220686]: "Wireguard3": network 10.99.0.2/32 conflicts with interface "Wireguard1".
+//
+// Returns the meaningful part after "error[...]: " or empty string if not found.
+func parseNDMSError(stdout string) string {
+	for _, line := range strings.Split(stdout, "\n") {
+		line = strings.TrimSpace(line)
+		if idx := strings.Index(line, "error["); idx != -1 {
+			// Find the closing "]: " and return everything after it
+			if end := strings.Index(line[idx:], "]: "); end != -1 {
+				return strings.TrimSpace(line[idx+end+3:])
+			}
+		}
+	}
+	return ""
+}
+
+// Create creates a NativeWG tunnel in NDMS.
+// Returns the assigned NWGIndex.
+// Accepts both AWG and plain WireGuard configs — plain WG can be edited later
+// to add obfuscation params, but Start() will block until they are set.
+func (o *OperatorNativeWG) Create(ctx context.Context, stored *storage.AWGTunnel) (index int, err error) {
+	// Find next free Wireguard index via RCI
+	idx, err := o.nextFreeIndex(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("find free index: %w", err)
+	}
+
+	names := NewNWGNames(idx)
+	ndmsName := names.NDMSName
+
+	// Create interface with explicit index
+	if _, err := o.ndmc(ctx, fmt.Sprintf("interface %s", ndmsName)); err != nil {
+		return 0, fmt.Errorf("create interface: %w", err)
+	}
+
+	// Configure interface via ndmc
+	cmds := []string{
+		fmt.Sprintf("interface %s description \"%s\"", ndmsName, stored.Name),
+		fmt.Sprintf("interface %s security-level public", ndmsName),
+		fmt.Sprintf("interface %s ip address %s", ndmsName, extractIPv4(stored.Interface.Address)),
+		fmt.Sprintf("interface %s ip mtu %d", ndmsName, stored.Interface.MTU),
+		fmt.Sprintf("interface %s ip tcp adjust-mss pmtu", ndmsName),
+		fmt.Sprintf("interface %s ip global auto", ndmsName),
+		fmt.Sprintf("interface %s wireguard private-key %s", ndmsName, stored.Interface.PrivateKey),
+	}
+
+	// Set DNS servers on the interface
+	if stored.Interface.DNS != "" {
+		for _, dns := range strings.Split(stored.Interface.DNS, ",") {
+			dns = strings.TrimSpace(dns)
+			if dns != "" {
+				cmds = append(cmds, fmt.Sprintf("interface %s ip name-server %s", ndmsName, dns))
+			}
+		}
+	}
+
+	// Resolve endpoint hostname → IP (for validation only at create time;
+	// the actual proxy endpoint is set at Start time)
+	endpointIP, endpointPort, err := resolveEndpointIP(stored.Peer.Endpoint)
+	if err != nil {
+		_, _ = o.ndmc(ctx, fmt.Sprintf("no interface %s", ndmsName))
+		_, _ = o.ndmc(ctx, "system configuration save")
+		return 0, fmt.Errorf("resolve endpoint: %w", err)
+	}
+
+	// Add peer configuration — at create time, use the resolved real endpoint.
+	// Start() will update this to 127.0.0.1:proxy_port.
+	pubkey := stored.Peer.PublicKey
+	peerCmds := []string{
+		fmt.Sprintf("interface %s wireguard peer %s", ndmsName, pubkey),
+		fmt.Sprintf("interface %s wireguard peer %s endpoint %s:%d", ndmsName, pubkey, endpointIP, endpointPort),
+		fmt.Sprintf("interface %s wireguard peer %s allow-ips 0.0.0.0 0.0.0.0", ndmsName, pubkey),
+	}
+
+	if stored.Peer.PersistentKeepalive > 0 {
+		peerCmds = append(peerCmds,
+			fmt.Sprintf("interface %s wireguard peer %s keepalive-interval %d", ndmsName, pubkey, stored.Peer.PersistentKeepalive))
+	}
+	if stored.Peer.PresharedKey != "" {
+		peerCmds = append(peerCmds,
+			fmt.Sprintf("interface %s wireguard peer %s preshared-key %s", ndmsName, pubkey, stored.Peer.PresharedKey))
+	}
+
+	// Execute all configuration commands
+	allCmds := append(cmds, peerCmds...)
+	for _, cmd := range allCmds {
+		if _, err := o.ndmc(ctx, cmd); err != nil {
+			// Cleanup on failure: remove the created interface
+			_, _ = o.ndmc(ctx, fmt.Sprintf("no interface %s", ndmsName))
+			_, _ = o.ndmc(ctx, "system configuration save")
+			return 0, fmt.Errorf("configure %q: %w", cmd, err)
+		}
+	}
+
+	// Set AWG obfuscation params via RCI (firmware >= 5.1Alpha4).
+	// Non-fatal: kmod proxy handles actual obfuscation regardless.
+	if ndmsinfo.SupportsWireguardASC() {
+		if ascJSON, err := buildASCJSON(&stored.Interface); err == nil && ascJSON != nil {
+			if err := o.ndms.SetASCParams(ctx, ndmsName, ascJSON); err != nil {
+				o.log.Warnf("nwg: SetASCParams via RCI failed (non-fatal): %v", err)
+			}
+		}
+	}
+
+	// Persist NDMS configuration
+	_, _ = o.ndmc(ctx, "system configuration save")
+
+	o.log.Infof("nwg: created %s", ndmsName)
+	return idx, nil
+}
+
+// Start starts a NativeWG tunnel.
+//
+// Requires AWG obfuscation parameters to be set — plain WireGuard configs
+// must be edited first to add Jc/H/S/I values before starting.
+//
+// On firmware >= 5.01.A.4 (native ASC): peer endpoint is set to the real server
+// address — NDMS handles obfuscation natively. ASC params are synced from storage
+// on every start (they may have been added/changed via the edit form after Create).
+//
+// On older firmware: awg_proxy.ko creates a local UDP proxy, peer endpoint is
+// set to 127.0.0.1:proxy_port, and the proxy forwards obfuscated traffic.
+func (o *OperatorNativeWG) Start(ctx context.Context, stored *storage.AWGTunnel) error {
+	// Block plain WireGuard configs — user must add AWG obfuscation params first
+	if !config.IsAWGObfuscated(&stored.Interface) {
+		return tunnel.ErrNotObfuscated
+	}
+
+	if ndmsinfo.SupportsWireguardASC() {
+		return o.startNative(ctx, stored)
+	}
+	return o.startProxy(ctx, stored)
+}
+
+// startNative starts a tunnel on firmware with native ASC support (>= 5.01.A.4).
+// No awg_proxy needed — NDMS handles obfuscation via ASC params.
+func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGTunnel) error {
+	names := NewNWGNames(stored.NWGIndex)
+	pubkey := stored.Peer.PublicKey
+
+	// Sync ASC params from storage to NDMS — they may have been added/changed
+	// via the edit form after the initial Create (e.g. imported as plain WG, then edited).
+	if ascJSON, err := buildASCJSON(&stored.Interface); err == nil && ascJSON != nil {
+		if err := o.ndms.SetASCParams(ctx, names.NDMSName, ascJSON); err != nil {
+			o.log.Warnf("nwg: sync ASC params on start for %s: %v", names.NDMSName, err)
+		}
+	}
+
+	// Resolve endpoint
+	endpointIP, endpointPort, err := resolveEndpointIP(stored.Peer.Endpoint)
+	if err != nil {
+		return fmt.Errorf("resolve endpoint: %w", err)
+	}
+
+	// Set peer endpoint to real server address
+	realEndpoint := fmt.Sprintf("%s:%d", endpointIP, endpointPort)
+	if _, err := o.ndmc(ctx, fmt.Sprintf("interface %s wireguard peer %s endpoint %s", names.NDMSName, pubkey, realEndpoint)); err != nil {
+		return fmt.Errorf("set endpoint: %w", err)
+	}
+
+	// Activate peer (with optional WAN binding)
+	connectCmd := fmt.Sprintf("interface %s wireguard peer %s connect", names.NDMSName, pubkey)
+	if stored.ISPInterface != "" {
+		connectCmd += fmt.Sprintf(" via %s", stored.ISPInterface)
+	}
+	if _, err := o.ndmc(ctx, connectCmd); err != nil {
+		return fmt.Errorf("activate peer: %w", err)
+	}
+
+	// Sync address/MTU from storage
+	if err := o.SyncAddressMTU(ctx, stored); err != nil {
+		o.log.Warnf("nwg: sync address/mtu on start: %v", err)
+	}
+
+	// Register DNS servers with the router's DNS proxy
+	o.applyDNS(ctx, names.NDMSName, stored)
+
+	// Bring interface up
+	if _, err := o.ndmc(ctx, fmt.Sprintf("interface %s up", names.NDMSName)); err != nil {
+		return fmt.Errorf("interface up: %w", err)
+	}
+
+	viaInfo := ""
+	if stored.ISPInterface != "" {
+		viaInfo = " via " + stored.ISPInterface
+	}
+	o.log.Infof("nwg: started %s (native ASC, endpoint %s%s)", names.NDMSName, realEndpoint, viaInfo)
+	return nil
+}
+
+// startProxy starts a tunnel on older firmware via awg_proxy.ko.
+// Peer endpoint is redirected to 127.0.0.1:proxy_port.
+func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTunnel) error {
+	names := NewNWGNames(stored.NWGIndex)
+	pubkey := stored.Peer.PublicKey
+
+	// Resolve endpoint — kmod proxy connects to this IP
+	endpointIP, endpointPort, err := resolveEndpointIP(stored.Peer.Endpoint)
+	if err != nil {
+		return fmt.Errorf("resolve endpoint: %w", err)
+	}
+
+	// Ensure kernel module is loaded
+	if err := o.kmod.EnsureLoaded(); err != nil {
+		return fmt.Errorf("kmod: %w", err)
+	}
+
+	// Read peer "via" from RCI (NDMS WAN binding) → resolve to kernel iface
+	bindIface := o.resolveBindIface(ctx, stored)
+
+	// Add tunnel to kernel module → creates proxy, returns listen_port
+	kmodCfg, err := buildKmodConfigResolved(stored, endpointIP, endpointPort, bindIface)
+	if err != nil {
+		return fmt.Errorf("build kmod config: %w", err)
+	}
+	result, err := o.kmod.AddTunnel(stored.ID, kmodCfg)
+	if err != nil {
+		return fmt.Errorf("kmod add: %w", err)
+	}
+
+	// Set NDMS peer endpoint to proxy address (127.0.0.1:listen_port)
+	proxyEndpoint := fmt.Sprintf("127.0.0.1:%d", result.ListenPort)
+	if _, err := o.ndmc(ctx, fmt.Sprintf("interface %s wireguard peer %s endpoint %s", names.NDMSName, pubkey, proxyEndpoint)); err != nil {
+		_ = o.kmod.RemoveTunnel(stored.ID)
+		return fmt.Errorf("set proxy endpoint: %w", err)
+	}
+
+	// Activate peer (with optional WAN binding)
+	connectCmd := fmt.Sprintf("interface %s wireguard peer %s connect", names.NDMSName, pubkey)
+	if stored.ISPInterface != "" {
+		connectCmd += fmt.Sprintf(" via %s", stored.ISPInterface)
+	}
+	if _, err := o.ndmc(ctx, connectCmd); err != nil {
+		_ = o.kmod.RemoveTunnel(stored.ID)
+		return fmt.Errorf("activate peer: %w", err)
+	}
+
+	// Sync address/MTU from storage
+	if err := o.SyncAddressMTU(ctx, stored); err != nil {
+		o.log.Warnf("nwg: sync address/mtu on start: %v", err)
+	}
+
+	// Register DNS servers with the router's DNS proxy
+	o.applyDNS(ctx, names.NDMSName, stored)
+
+	// Bring interface up
+	if _, err := o.ndmc(ctx, fmt.Sprintf("interface %s up", names.NDMSName)); err != nil {
+		_ = o.kmod.RemoveTunnel(stored.ID)
+		return fmt.Errorf("interface up: %w", err)
+	}
+
+	viaInfo := ""
+	if stored.ISPInterface != "" {
+		viaInfo = " via " + stored.ISPInterface
+	}
+	o.log.Infof("nwg: started %s (proxy %s -> %s:%d%s)", names.NDMSName, proxyEndpoint, endpointIP, endpointPort, viaInfo)
+	return nil
+}
+
+// Stop stops a NativeWG tunnel: ndmc down → deactivate peer → kmod remove (proxy only).
+func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) error {
+	names := NewNWGNames(stored.NWGIndex)
+	pubkey := stored.Peer.PublicKey
+
+	_, _ = o.ndmc(ctx, fmt.Sprintf("interface %s down", names.NDMSName))
+	_, _ = o.ndmc(ctx, fmt.Sprintf("interface %s wireguard peer %s no connect", names.NDMSName, pubkey))
+
+	// Clear DNS servers from the router's DNS proxy
+	o.clearDNS(ctx, names.NDMSName, stored)
+
+	// Only remove kmod proxy entry on older firmware
+	if !ndmsinfo.SupportsWireguardASC() {
+		_ = o.kmod.RemoveTunnel(stored.ID)
+	}
+
+	o.log.Infof("nwg: stopped %s", names.NDMSName)
+	return nil
+}
+
+// Delete removes a NativeWG tunnel from NDMS completely.
+func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel) error {
+	names := NewNWGNames(stored.NWGIndex)
+
+	// Stop first if running
+	_ = o.Stop(ctx, stored)
+
+	// Remove ping-check profile before removing the interface
+	_ = o.RemovePingCheck(ctx, stored)
+
+	// Clear DNS servers before removing the interface
+	// Uses "interface X no ip name-server Y" syntax (matches create-time assignment)
+	if stored.Interface.DNS != "" {
+		for _, dns := range strings.Split(stored.Interface.DNS, ",") {
+			dns = strings.TrimSpace(dns)
+			if dns != "" {
+				_, _ = o.ndmc(ctx, fmt.Sprintf("interface %s no ip name-server %s", names.NDMSName, dns))
+			}
+		}
+	}
+
+	// Remove NDMS interface
+	if _, err := o.ndmc(ctx, fmt.Sprintf("no interface %s", names.NDMSName)); err != nil {
+		return fmt.Errorf("delete interface: %w", err)
+	}
+
+	// Persist
+	_, _ = o.ndmc(ctx, "system configuration save")
+
+	o.log.Infof("nwg: deleted %s", names.NDMSName)
+	return nil
+}
+
+// applyDNS registers DNS servers from the tunnel config with the router's DNS proxy.
+// This tells the router to forward DNS queries arriving through this interface to these servers.
+func (o *OperatorNativeWG) applyDNS(ctx context.Context, ndmsName string, stored *storage.AWGTunnel) {
+	servers := parseDNSServers(stored.Interface.DNS)
+	if len(servers) == 0 {
+		return
+	}
+	if err := o.ndms.SetDNS(ctx, ndmsName, servers); err != nil {
+		o.log.Warnf("nwg: set DNS for %s: %v", ndmsName, err)
+	}
+}
+
+// clearDNS removes DNS servers from the router's DNS proxy for this interface.
+func (o *OperatorNativeWG) clearDNS(ctx context.Context, ndmsName string, stored *storage.AWGTunnel) {
+	servers := parseDNSServers(stored.Interface.DNS)
+	if len(servers) == 0 {
+		return
+	}
+	_ = o.ndms.ClearDNS(ctx, ndmsName, servers)
+}
+
+// parseDNSServers splits a comma-separated DNS string into a slice of trimmed, non-empty IPs.
+func parseDNSServers(dns string) []string {
+	if dns == "" {
+		return nil
+	}
+	var servers []string
+	for _, s := range strings.Split(dns, ",") {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			servers = append(servers, s)
+		}
+	}
+	return servers
+}
+
+// GetState returns the state of a NativeWG tunnel via RCI.
+// KmodManager does NOT participate in state detection — RCI is the single source of truth.
+func (o *OperatorNativeWG) GetState(ctx context.Context, stored *storage.AWGTunnel) tunnel.StateInfo {
+	names := NewNWGNames(stored.NWGIndex)
+
+	rciState, err := o.rci.GetInterfaceState(ctx, names.NDMSName)
+	if err != nil || !rciState.Exists {
+		return tunnel.StateInfo{State: tunnel.StateNotCreated}
+	}
+
+	info := tunnel.StateInfo{
+		OpkgTunExists: true,
+		InterfaceUp:   rciState.LinkUp,
+		HasPeer:       true, // always configured for nativewg
+		RxBytes:       rciState.RxBytes,
+		TxBytes:       rciState.TxBytes,
+		BackendType:   "nativewg",
+		ConnectedAt:   rciState.Connected,
+	}
+
+	// Parse handshake: RCI returns seconds since last handshake, not unix timestamp.
+	if rciState.LastHandshake > 0 && rciState.LastHandshake < neverHandshake {
+		info.HasHandshake = true
+		info.LastHandshake = time.Now().Add(-time.Duration(rciState.LastHandshake) * time.Second)
+	}
+
+	// State matrix (simplified — no proxy/kmod tracking needed):
+	//   ConfLayer==running && PeerOnline     → StateRunning
+	//   ConfLayer==running && !PeerOnline    → StateStarting
+	//   ConfLayer==disabled                  → StateStopped
+	//   !Exists                              → StateNotCreated
+	switch {
+	case rciState.ConfLayer == "running" && rciState.PeerOnline:
+		info.State = tunnel.StateRunning
+	case rciState.ConfLayer == "running" && !rciState.PeerOnline:
+		info.State = tunnel.StateStarting
+	case rciState.ConfLayer == "disabled":
+		info.State = tunnel.StateStopped
+	default:
+		info.State = tunnel.StateUnknown
+	}
+
+	return info
+}
+
+// pingCheckProfile returns the profile name for a tunnel: "awgm-<tunnelID>".
+func pingCheckProfile(tunnelID string) string {
+	return "awgm-" + tunnelID
+}
+
+// ConfigurePingCheck creates/updates a ping-check profile for a tunnel.
+func (o *OperatorNativeWG) ConfigurePingCheck(ctx context.Context, stored *storage.AWGTunnel, cfg ndms.PingCheckConfig) error {
+	profile := pingCheckProfile(stored.ID)
+	ifaceName := NewNWGNames(stored.NWGIndex).NDMSName
+	o.log.Infof("pingcheck: configure profile=%s iface=%s host=%s mode=%s", profile, ifaceName, cfg.Host, cfg.Mode)
+	if err := o.ndms.ConfigurePingCheck(ctx, profile, ifaceName, cfg); err != nil {
+		o.log.Warnf("pingcheck: configure failed: %v", err)
+		return err
+	}
+	return nil
+}
+
+// RemovePingCheck removes the ping-check profile for a tunnel.
+func (o *OperatorNativeWG) RemovePingCheck(ctx context.Context, stored *storage.AWGTunnel) error {
+	profile := pingCheckProfile(stored.ID)
+	ifaceName := NewNWGNames(stored.NWGIndex).NDMSName
+	return o.ndms.RemovePingCheck(ctx, profile, ifaceName)
+}
+
+// GetPingCheckStatus returns the current ping-check status for a tunnel.
+func (o *OperatorNativeWG) GetPingCheckStatus(ctx context.Context, stored *storage.AWGTunnel) (*ndms.PingCheckStatus, error) {
+	profile := pingCheckProfile(stored.ID)
+	status, err := o.ndms.ShowPingCheck(ctx, profile)
+	if err != nil {
+		o.log.Warnf("pingcheck: show %s: %v", profile, err)
+		// Return exists=false without error so API doesn't break
+		return &ndms.PingCheckStatus{Exists: false}, nil
+	}
+	o.log.Infof("pingcheck: show %s → exists=%v host=%s status=%s", profile, status.Exists, status.Host, status.Status)
+	return status, nil
+}
+
+// EnsureKmodLoaded loads awg_proxy.ko (or reloads if version changed).
+func (o *OperatorNativeWG) EnsureKmodLoaded() error {
+	return o.kmod.EnsureLoaded()
+}
+
+// RestoreKmodTunnel adds a tunnel entry to the already-loaded kmod and updates
+// the NDMS peer endpoint to use the proxy address (127.0.0.1:listen_port).
+// Called at boot for enabled tunnels that are already running in NDMS.
+func (o *OperatorNativeWG) RestoreKmodTunnel(ctx context.Context, stored *storage.AWGTunnel) error {
+	bindIface := o.resolveBindIface(ctx, stored)
+
+	kmodCfg, err := buildKmodConfig(stored, bindIface)
+	if err != nil {
+		return fmt.Errorf("build kmod config: %w", err)
+	}
+	result, err := o.kmod.AddTunnel(stored.ID, kmodCfg)
+	if err != nil {
+		return err
+	}
+
+	// Update NDMS peer endpoint to proxy address
+	names := NewNWGNames(stored.NWGIndex)
+	proxyEndpoint := fmt.Sprintf("127.0.0.1:%d", result.ListenPort)
+	if _, err := o.ndmc(ctx, fmt.Sprintf("interface %s wireguard peer %s endpoint %s",
+		names.NDMSName, stored.Peer.PublicKey, proxyEndpoint)); err != nil {
+		o.log.Warnf("nwg: restored kmod but failed to update endpoint to %s: %v", proxyEndpoint, err)
+	}
+
+	return nil
+}
+
+// SyncAddressMTU pushes the stored address and MTU to the NDMS interface.
+// Called on Start (to override any changes made via the router UI)
+// and on Update (to hot-apply changes to a running tunnel).
+func (o *OperatorNativeWG) SyncAddressMTU(ctx context.Context, stored *storage.AWGTunnel) error {
+	ndmsName := NewNWGNames(stored.NWGIndex).NDMSName
+	ipv4 := extractIPv4(stored.Interface.Address)
+
+	if err := o.ndms.SetAddress(ctx, ndmsName, ipv4); err != nil {
+		return fmt.Errorf("sync address: %w", err)
+	}
+	if err := o.ndms.SetMTU(ctx, ndmsName, stored.Interface.MTU); err != nil {
+		return fmt.Errorf("sync mtu: %w", err)
+	}
+
+	if err := o.ndms.Save(ctx); err != nil {
+		o.log.Warnf("nwg: save after address/mtu sync: %v", err)
+	}
+
+	o.log.Infof("nwg: synced address=%s mtu=%d on %s", ipv4, stored.Interface.MTU, ndmsName)
+	return nil
+}
+
+// UpdateDescription updates the NDMS interface description.
+func (o *OperatorNativeWG) UpdateDescription(ctx context.Context, stored *storage.AWGTunnel, name string) error {
+	return o.ndms.SetDescription(ctx, NewNWGNames(stored.NWGIndex).NDMSName, name)
+}
+
+// KmodManager returns the kmod manager (for shutdown hook).
+func (o *OperatorNativeWG) KmodManager() *KmodManager {
+	return o.kmod
+}
+
+// resolveBindIface reads the peer "via" field from RCI and resolves
+// the NDMS WAN name to a kernel interface name for SO_BINDTODEVICE.
+// Returns empty string if no "via" is set (= default routing).
+func (o *OperatorNativeWG) resolveBindIface(ctx context.Context, stored *storage.AWGTunnel) string {
+	names := NewNWGNames(stored.NWGIndex)
+	rciState, err := o.rci.GetInterfaceState(ctx, names.NDMSName)
+	if err != nil || !rciState.Exists || rciState.PeerVia == "" {
+		return ""
+	}
+	sysName := o.ndms.GetSystemName(ctx, rciState.PeerVia)
+	o.log.Infof("nwg: %s peer via %s → bind %s", names.NDMSName, rciState.PeerVia, sysName)
+	return sysName
+}
+
+// nextFreeIndex finds the next available Wireguard index via RCI.
+func (o *OperatorNativeWG) nextFreeIndex(ctx context.Context) (int, error) {
+	existing, err := o.rci.ListWireguardInterfaces(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list wireguard interfaces: %w", err)
+	}
+
+	used := make(map[int]bool)
+	for _, name := range existing {
+		// Extract index from "WireguardN"
+		if idx, _, err := ParseNDMSCreatedName(`"` + name + `" interface created`); err == nil {
+			used[idx] = true
+		}
+	}
+
+	for i := 0; i < MaxTunnels; i++ {
+		if !used[i] {
+			return i, nil
+		}
+	}
+	return 0, fmt.Errorf("all %d Wireguard slots are occupied", MaxTunnels)
+}
+
+// buildKmodConfig resolves the endpoint and builds a KmodConfig.
+// Used by RestoreKmodTunnel where we don't need the resolved IP separately.
+func buildKmodConfig(stored *storage.AWGTunnel, bindIface string) (KmodConfig, error) {
+	ip, port, err := resolveEndpointIP(stored.Peer.Endpoint)
+	if err != nil {
+		return KmodConfig{}, fmt.Errorf("resolve endpoint: %w", err)
+	}
+	return buildKmodConfigResolved(stored, ip, port, bindIface)
+}
+
+// buildKmodConfigResolved builds a KmodConfig with a pre-resolved endpoint IP.
+// bindIface is the kernel interface name for SO_BINDTODEVICE (empty = no binding).
+func buildKmodConfigResolved(stored *storage.AWGTunnel, endpointIP string, endpointPort int, bindIface string) (KmodConfig, error) {
+	return KmodConfig{
+		EndpointIP:   endpointIP,
+		EndpointPort: endpointPort,
+		H1: stored.Interface.H1, H2: stored.Interface.H2,
+		H3: stored.Interface.H3, H4: stored.Interface.H4,
+		S1: stored.Interface.S1, S2: stored.Interface.S2,
+		S3: stored.Interface.S3, S4: stored.Interface.S4,
+		Jc: stored.Interface.Jc, Jmin: stored.Interface.Jmin, Jmax: stored.Interface.Jmax,
+		PubServerHex: pubKeyToHex(stored.Peer.PublicKey),
+		PubClientHex: pubKeyToHex(clientPubKeyFromPrivate(stored.Interface.PrivateKey)),
+		I1: stored.Interface.I1, I2: stored.Interface.I2,
+		I3: stored.Interface.I3, I4: stored.Interface.I4, I5: stored.Interface.I5,
+		BindIface: bindIface,
+	}, nil
+}
+
+// resolveEndpointIP parses an endpoint string (host:port) and resolves hostname → IP.
+func resolveEndpointIP(endpoint string) (string, int, error) {
+	host, portStr, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return "", 0, fmt.Errorf("split endpoint %q: %w", endpoint, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("parse port %q: %w", portStr, err)
+	}
+
+	// If already an IP, return directly.
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.String(), port, nil
+	}
+
+	// Resolve hostname.
+	ips, err := net.LookupHost(host)
+	if err != nil {
+		return "", 0, fmt.Errorf("resolve %q: %w", host, err)
+	}
+	if len(ips) == 0 {
+		return "", 0, fmt.Errorf("no IPs for %q", host)
+	}
+	return ips[0], port, nil
+}
+
+// extractIPv4 extracts the IPv4 address from a WireGuard Address field
+// which may contain comma-separated IPv4 and IPv6 (e.g. "172.16.0.2, 2606::1/128").
+// Returns the IPv4 with /32 CIDR suffix.
+func extractIPv4(addr string) string {
+	for _, part := range strings.Split(addr, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		// Strip existing CIDR for the check
+		host := part
+		if idx := strings.Index(part, "/"); idx != -1 {
+			host = part[:idx]
+		}
+		// Skip IPv6
+		if strings.Contains(host, ":") {
+			continue
+		}
+		return host + "/32"
+	}
+	return addr + "/32"
+}
+
+// buildASCJSON builds a json.RawMessage for ndms.SetASCParams from stored interface fields.
+// Returns nil if the config is plain WireGuard (no obfuscation).
+func buildASCJSON(iface *storage.AWGInterface) (json.RawMessage, error) {
+	if !config.IsAWGObfuscated(iface) {
+		return nil, nil
+	}
+
+	ver := config.ClassifyAWGVersion(iface)
+	if ver == "awg1.5" || ver == "awg2.0" {
+		params := ndms.ASCParamsExtended{
+			ASCParams: ndms.ASCParams{
+				Jc: iface.Jc, Jmin: iface.Jmin, Jmax: iface.Jmax,
+				S1: iface.S1, S2: iface.S2,
+				H1: iface.H1, H2: iface.H2, H3: iface.H3, H4: iface.H4,
+			},
+			S3: iface.S3, S4: iface.S4,
+			I1: iface.I1, I2: iface.I2, I3: iface.I3, I4: iface.I4, I5: iface.I5,
+		}
+		return json.Marshal(params)
+	}
+
+	params := ndms.ASCParams{
+		Jc: iface.Jc, Jmin: iface.Jmin, Jmax: iface.Jmax,
+		S1: iface.S1, S2: iface.S2,
+		H1: iface.H1, H2: iface.H2, H3: iface.H3, H4: iface.H4,
+	}
+	return json.Marshal(params)
+}
+
+// clientPubKeyFromPrivate derives WireGuard public key from a base64 private key.
+// Uses crypto/ecdh (Go 1.20+) with X25519.
+func clientPubKeyFromPrivate(privKeyBase64 string) string {
+	privBytes, err := base64.StdEncoding.DecodeString(privKeyBase64)
+	if err != nil || len(privBytes) != 32 {
+		return ""
+	}
+
+	curve := ecdh.X25519()
+	privKey, err := curve.NewPrivateKey(privBytes)
+	if err != nil {
+		return ""
+	}
+
+	return base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes())
+}

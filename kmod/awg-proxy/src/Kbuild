@@ -1,0 +1,5 @@
+# AWG Proxy - Kernel UDP proxy for WG<->AWG packet transformation
+obj-m := awg_proxy.o
+awg_proxy-objs := main.o proxy.o transform.o tunnel.o cps.o blake2s.o
+
+ccflags-y := -DAWG_PROXY_VERSION=\"$(AWG_PROXY_VERSION)\"
