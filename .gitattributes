@@ -1,0 +1,4 @@
+*.sh text eol=lf
+entware/control/postinst text eol=lf
+entware/control/prerm text eol=lf
+entware/files/etc/init.d/* text eol=lf

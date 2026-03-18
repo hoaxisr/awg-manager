@@ -1,10 +1,13 @@
 package terminal
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -16,9 +19,14 @@ const (
 	portRangeStart = 7681
 	portRangeEnd   = 7690
 	ttydBinary     = "ttyd"
-	loginBinary    = "/opt/bin/login"
+	loginBinary    = "login"
 	opkgBinary     = "opkg"
 	installTimeout = 120 * time.Second
+	// First start after opkg install can be noticeably slower on some Keenetic models.
+	startTimeout   = 10 * time.Second
+	// Retry once to hide transient cold-start failures without masking persistent errors.
+	startAttempts  = 2
+	startRetryWait = 1 * time.Second
 	stopTimeout    = 5 * time.Second
 )
 
@@ -65,55 +73,168 @@ func (m *ManagerImpl) Start(ctx context.Context) (int, error) {
 		return m.port, nil // already running
 	}
 
-	port, err := m.findFreePort()
-	if err != nil {
-		return 0, err
+	var lastErr error
+	for attempt := 1; attempt <= startAttempts; attempt++ {
+		port, err := m.findFreePort()
+		if err != nil {
+			return 0, err
+		}
+
+		// Collect ttyd output so API errors include real failure reason (not generic timeout).
+		output := &syncBuffer{}
+		loginPath := resolveLoginBinary()
+		cmd := exec.Command(ttydBinary,
+			"--writable",
+			"--port", fmt.Sprintf("%d", port),
+			"--interface", "lo",
+			"--once",
+			loginPath,
+		)
+		cmd.Stdout = output
+		cmd.Stderr = output
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+		if err := cmd.Start(); err != nil {
+			lastErr = fmt.Errorf("failed to start ttyd: %w", err)
+			break
+		}
+
+		m.cmd = cmd
+		m.port = port
+		m.log.Infof("ttyd started on port %d (pid %d)", port, cmd.Process.Pid)
+
+		// Background goroutine to reap process on exit (e.g. --once self-termination).
+		go m.waitForExit(cmd)
+
+		// Wait for ttyd to be ready and fail fast if process exits immediately.
+		m.mu.Unlock()
+		ready, reason := m.waitForReady(ctx, cmd, port, output)
+		m.mu.Lock()
+		if ready {
+			return port, nil
+		}
+
+		if m.cmd == cmd {
+			m.cmd = nil
+			m.port = 0
+			m.sessionActive = false
+		}
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+
+		lastErr = fmt.Errorf("ttyd failed to start: %s", reason)
+		if attempt < startAttempts {
+			m.log.Warnf("ttyd startup attempt %d/%d failed: %s", attempt, startAttempts, reason)
+			m.mu.Unlock()
+			time.Sleep(startRetryWait)
+			m.mu.Lock()
+			continue
+		}
 	}
 
-	cmd := exec.Command(ttydBinary,
-		"--writable",
-		"--port", fmt.Sprintf("%d", port),
-		"--interface", "lo",
-		"--once",
-		loginBinary,
-	)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	if err := cmd.Start(); err != nil {
-		return 0, fmt.Errorf("failed to start ttyd: %w", err)
+	if lastErr == nil {
+		lastErr = fmt.Errorf("ttyd failed to start")
 	}
-
-	m.cmd = cmd
-	m.port = port
-	m.log.Infof("ttyd started on port %d (pid %d)", port, cmd.Process.Pid)
-
-	// Background goroutine to reap process on exit (e.g. --once self-termination).
-	go m.waitForExit(cmd)
-
-	// Wait for ttyd to be ready (accept TCP connections).
-	m.mu.Unlock()
-	ready := m.waitForReady(port)
-	m.mu.Lock()
-	if !ready {
-		return 0, fmt.Errorf("ttyd failed to start within timeout")
-	}
-
-	return port, nil
+	return 0, lastErr
 }
 
-// waitForReady polls ttyd port until it accepts connections or times out.
-func (m *ManagerImpl) waitForReady(port int) bool {
+// waitForReady polls ttyd port until it accepts connections, exits, or times out.
+// Distinguishing "exit before bind" vs "timeout" makes diagnostics actionable.
+func (m *ManagerImpl) waitForReady(ctx context.Context, cmd *exec.Cmd, port int, output *syncBuffer) (bool, string) {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(startTimeout)
 	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return false, "startup canceled: " + err.Error()
+		}
+
 		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
 		if err == nil {
 			conn.Close()
-			return true
+			return true, ""
+		}
+
+		if !isProcessAlive(cmd) {
+			reason := "process exited before opening port"
+			if out := summarizeOutput(output.String()); out != "" {
+				reason = reason + ": " + out
+			}
+			return false, reason
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return false
+
+	reason := "timeout waiting for ttyd to open the port"
+	if out := summarizeOutput(output.String()); out != "" {
+		reason = reason + ": " + out
+	}
+	return false, reason
+}
+
+func isProcessAlive(cmd *exec.Cmd) bool {
+	if cmd == nil || cmd.Process == nil {
+		return false
+	}
+
+	err := cmd.Process.Signal(syscall.Signal(0))
+	if err == nil {
+		return true
+	}
+
+	return errors.Is(err, syscall.EPERM)
+}
+
+func summarizeOutput(output string) string {
+	cleaned := strings.TrimSpace(output)
+	if cleaned == "" {
+		return ""
+	}
+
+	cleaned = strings.ReplaceAll(cleaned, "\n", "; ")
+	cleaned = strings.ReplaceAll(cleaned, "\r", "")
+	if len(cleaned) > 240 {
+		cleaned = cleaned[:240] + "..."
+	}
+	return cleaned
+}
+
+// resolveLoginBinary finds a login executable across firmware variants.
+// Path layout differs between routers (/bin, /usr/bin, /opt/bin), so avoid hardcoding one path.
+func resolveLoginBinary() string {
+	candidates := []string{
+		"/bin/login",
+		"/usr/bin/login",
+		"/opt/bin/login",
+		loginBinary, // PATH fallback
+	}
+
+	for _, candidate := range candidates {
+		if path, err := exec.LookPath(candidate); err == nil {
+			return path
+		}
+	}
+
+	return loginBinary
+}
+
+// syncBuffer is a tiny concurrent-safe buffer for ttyd stdout/stderr capture.
+// waitForReady reads it while the process can still be writing.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
 }
 
 // waitForExit waits for the ttyd process to finish, then cleans up state.
