@@ -23,28 +23,35 @@
 	let routes = $state<DnsRouteTarget[]>([]);
 	let newSubUrl = $state('');
 
+	let isInitialized = $state(false);
+
 	// Reset form when modal opens
 	$effect(() => {
 		if (open) {
-			if (route) {
-				name = route.name;
-				manualDomains = [...(route.manualDomains ?? [])];
-				subscriptions = (route.subscriptions ?? []).map((s) => ({ ...s }));
-				routes = (route.routes ?? []).map((r) => ({ ...r }));
-			} else {
-				name = '';
-				manualDomains = [];
-				subscriptions = [];
-				// Auto-add the first available tunnel for new routes
-				if (tunnels.length > 0) {
-					const t = tunnels[0];
-					routes = [{ interface: t.ndmsName, tunnelId: t.id, fallback: '' as const }];
+			if (!isInitialized) {
+				if (route) {
+					name = route.name;
+					manualDomains = [...(route.manualDomains ?? [])];
+					subscriptions = (route.subscriptions ?? []).map((s) => ({ ...s }));
+					routes = (route.routes ?? []).map((r) => ({ ...r }));
 				} else {
-					routes = [];
+					name = '';
+					manualDomains = [];
+					subscriptions = [];
+					// Auto-add the first available tunnel for new routes
+					if (tunnels.length > 0) {
+						const t = tunnels[0];
+						routes = [{ interface: t.ndmsName, tunnelId: t.id, fallback: '' as const }];
+					} else {
+						routes = [];
+					}
 				}
+				newSubUrl = '';
+				newRouteTunnelId = '';
+				isInitialized = true;
 			}
-			newSubUrl = '';
-		newRouteTunnelId = '';
+		} else {
+			isInitialized = false;
 		}
 	});
 
