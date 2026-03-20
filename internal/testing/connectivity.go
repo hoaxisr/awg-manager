@@ -50,7 +50,8 @@ func (s *Service) checkHTTP(ctx context.Context, tunnelID string) (*Connectivity
 	args := append([]string{
 		"-s", "-o", "/dev/null",
 		"--max-time", "5",
-		"-w", "%{http_code}|%{time_total}",
+		"--connect-timeout", "3", // Быстрый сброс при зависании
+		"-w", "%{http_code}|%{time_namelookup}|%{time_connect}|%{time_total}",
 	}, curlOpts...)
 	args = append(args, connectivityURL)
 
@@ -65,13 +66,28 @@ func (s *Service) checkHTTP(ctx context.Context, tunnelID string) (*Connectivity
 
 	output := strings.TrimSpace(result.Stdout)
 	parts := strings.Split(output, "|")
-	if len(parts) != 2 {
+	if len(parts) != 4 {
 		return &ConnectivityResult{Connected: false, Reason: ReasonUnexpectedResponse}, nil
 	}
 
 	httpCode, _ := strconv.Atoi(parts[0])
-	timeTotal, _ := strconv.ParseFloat(parts[1], 64)
-	latencyMs := int(timeTotal * 1000)
+	timeNameLookup, _ := strconv.ParseFloat(parts[1], 64)
+	timeConnect, _ := strconv.ParseFloat(parts[2], 64)
+	timeTotal, _ := strconv.ParseFloat(parts[3], 64)
+
+	var latencyMs int
+	// Вычисляем чистый TCP RTT (исключая задержки DNS и HTTP-ответа)
+	if timeConnect > 0 && timeConnect >= timeNameLookup {
+		latencyMs = int((timeConnect - timeNameLookup) * 1000)
+	} else {
+		// Fallback, если вдруг метрика отработала нетипично
+		latencyMs = int(timeTotal * 1000)
+	}
+	
+	// Ограничиваем минимум в 1ms, чтобы не показывать 0ms
+	if httpCode == 204 && latencyMs <= 0 {
+		latencyMs = 1
+	}
 
 	if httpCode == 204 {
 		return &ConnectivityResult{Connected: true, Latency: &latencyMs}, nil
@@ -185,10 +201,11 @@ func (s *Service) checkHandshake(tunnelID string) (*ConnectivityResult, error) {
 // CheckConnectivityByInterface performs connectivity test using a kernel interface name directly.
 // Used for system tunnels where we don't have a managed tunnel ID.
 func CheckConnectivityByInterface(ctx context.Context, ifaceName string) *ConnectivityResult {
-	args := []string{
+	args :=[]string{
 		"-s", "-o", "/dev/null",
 		"--max-time", "5",
-		"-w", "%{http_code}|%{time_total}",
+		"--connect-timeout", "3",
+		"-w", "%{http_code}|%{time_namelookup}|%{time_connect}|%{time_total}",
 		"--interface", ifaceName,
 		connectivityURL,
 	}
@@ -206,7 +223,7 @@ func CheckConnectivityByInterface(ctx context.Context, ifaceName string) *Connec
 
 	output := strings.TrimSpace(result.Stdout)
 	parts := strings.Split(output, "|")
-	if len(parts) != 2 {
+	if len(parts) != 4 {
 		return &ConnectivityResult{
 			Connected: false,
 			Reason:    ReasonUnexpectedResponse,
@@ -214,8 +231,20 @@ func CheckConnectivityByInterface(ctx context.Context, ifaceName string) *Connec
 	}
 
 	httpCode, _ := strconv.Atoi(parts[0])
-	timeTotal, _ := strconv.ParseFloat(parts[1], 64)
-	latencyMs := int(timeTotal * 1000)
+	timeNameLookup, _ := strconv.ParseFloat(parts[1], 64)
+	timeConnect, _ := strconv.ParseFloat(parts[2], 64)
+	timeTotal, _ := strconv.ParseFloat(parts[3], 64)
+
+	var latencyMs int
+	if timeConnect > 0 && timeConnect >= timeNameLookup {
+		latencyMs = int((timeConnect - timeNameLookup) * 1000)
+	} else {
+		latencyMs = int(timeTotal * 1000)
+	}
+	
+	if httpCode == 204 && latencyMs <= 0 {
+		latencyMs = 1
+	}
 
 	if httpCode == 204 {
 		return &ConnectivityResult{

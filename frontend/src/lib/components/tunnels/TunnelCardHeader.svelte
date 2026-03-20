@@ -93,6 +93,7 @@
 	type ConnectivityState = 'idle' | 'checking' | 'connected' | 'disconnected';
 	let connectivity = $state<ConnectivityState>('idle');
 	let latencyMs = $state<number | null>(null);
+	let connectivityPromise: Promise<void> | null = null; // Защита от параллельных вызовов
 
 	async function checkConnectivity(): Promise<void> {
 		if ((tunnel.status !== 'running' && tunnel.status !== 'broken') || tunnel.isDeadByMonitoring) {
@@ -101,20 +102,29 @@
 			return;
 		}
 
+		// Если проверка уже в процессе — просто возвращаем существующий Promise (блокируем спам кликами)
+		if (connectivityPromise) return connectivityPromise;
+
 		connectivity = 'checking';
-		try {
-			const result = await api.checkConnectivity(tunnel.id);
-			if (result.connected) {
-				connectivity = 'connected';
-				latencyMs = result.latency ?? null;
-			} else {
+		connectivityPromise = (async () => {
+			try {
+				const result = await api.checkConnectivity(tunnel.id);
+				if (result.connected) {
+					connectivity = 'connected';
+					latencyMs = result.latency ?? null;
+				} else {
+					connectivity = 'disconnected';
+					latencyMs = null;
+				}
+			} catch {
 				connectivity = 'disconnected';
 				latencyMs = null;
+			} finally {
+				connectivityPromise = null;
 			}
-		} catch {
-			connectivity = 'disconnected';
-			latencyMs = null;
-		}
+		})();
+		
+		return connectivityPromise;
 	}
 
 	// Extract primitives via $derived to avoid $effect re-running on every tunnel poll
