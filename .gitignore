@@ -1,0 +1,31 @@
+# Build artifacts
+build/
+dist/
+/awg-manager
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Frontend
+frontend/node_modules/
+frontend/build/
+frontend/.svelte-kit/
+
+# Planning & docs (internal only)
+docs/
+.planning/
+
+# Claude (all internal)
+.claude/
+CLAUDE.md
+screenshots/
+
+# Worktrees
+.worktrees/

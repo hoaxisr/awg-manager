@@ -1,0 +1,41 @@
+#!/bin/sh
+
+ACTION="$1"
+
+# On upgrade: only stop awg-manager daemon, keep tunnels running
+if [ "$ACTION" = "upgrade" ]; then
+    echo "Upgrading awg-manager..."
+    echo "  Tunnels will continue running during upgrade."
+    /opt/etc/init.d/S99awg-manager stop 2>/dev/null || true
+    exit 0
+fi
+
+# On remove: use awg-manager's own cleanup to properly delete tunnels
+echo "Removing awg-manager..."
+
+# Stop the daemon first (if running)
+/opt/etc/init.d/S99awg-manager stop 2>/dev/null || true
+
+# Use awg-manager --cleanup to properly delete all managed tunnels
+# This uses the service layer which handles:
+# - NDMS interface removal (OS 5.x)
+# - Process termination
+# - Endpoint route cleanup
+# - Config file cleanup
+# - Storage cleanup
+if [ -x /opt/bin/awg-manager ]; then
+    echo "Running awg-manager cleanup..."
+    /opt/bin/awg-manager --cleanup 2>&1 || true
+fi
+
+echo ""
+echo "=============================================="
+echo "  awg-manager has been removed."
+echo ""
+echo "  Settings file preserved at:"
+echo "    /opt/etc/awg-manager/settings.json"
+echo ""
+echo "  To remove all remaining data:"
+echo "    rm -rf /opt/etc/awg-manager"
+echo "=============================================="
+echo ""
