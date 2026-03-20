@@ -181,6 +181,7 @@ func BuildTunnelResponse(r *http.Request, svc TunnelService, store *storage.AWGT
 		resp["interface"] = stored.Interface
 		resp["peer"] = stored.Peer
 		resp["pingCheck"] = stored.PingCheck
+		resp["connectivityCheck"] = stored.ConnectivityCheck
 		resp["ispInterfaceLabel"] = stored.ISPInterfaceLabel
 		backend := stored.Backend
 		if backend == "" {
@@ -613,6 +614,14 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.PingCheck == nil {
 		req.PingCheck = existing.PingCheck
 		newPingCheckEnabled = oldPingCheckEnabled // no change
+	}
+	if req.ConnectivityCheck == nil {
+		req.ConnectivityCheck = existing.ConnectivityCheck
+	} else if req.ConnectivityCheck.Method == "" && (req.ConnectivityCheck.PingTarget == "" || req.ConnectivityCheck.Method != "ping") {
+		// Если поля пустые или метод не "ping", использовать существующие настройки
+		if existing.ConnectivityCheck != nil {
+			req.ConnectivityCheck = existing.ConnectivityCheck
+		}
 	}
 
 	// Update service config before store.Save — service detects name change
