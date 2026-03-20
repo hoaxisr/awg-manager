@@ -429,11 +429,6 @@ func (s *ServiceImpl) ListGlobalInterfaces(ctx context.Context) ([]GlobalInterfa
 		if info.SecurityLevel == "private" || info.SecurityLevel == "" {
 			continue
 		}
-		// Skip our own managed OpkgTun interfaces
-		if isOwnTunnel(info.InterfaceName) {
-			continue
-		}
-
 		up := info.State == "up" && info.Summary.Layer.IPv4 == "running"
 		label := interfaceLabel(info.Type, info.InterfaceName, info.Description)
 
@@ -507,10 +502,11 @@ func interfaceLabel(ifaceType, kernelName, description string) string {
 // ifaceCategory returns sort priority: 0=tunnel/VPN, 1=WAN, 2=other.
 func ifaceCategory(ndmsID string) int {
 	n := strings.ToLower(ndmsID)
-	// Tunnels/VPN
-	if strings.HasPrefix(n, "wireguard") || strings.HasPrefix(n, "ipsec") ||
-		strings.HasPrefix(n, "openvpn") || strings.HasPrefix(n, "sstp") ||
-		strings.HasPrefix(n, "l2tp") || strings.HasPrefix(n, "pptp") {
+	// Tunnels/VPN (including our managed OpkgTun)
+	if strings.HasPrefix(n, "opkgtun") || strings.HasPrefix(n, "wireguard") ||
+		strings.HasPrefix(n, "ipsec") || strings.HasPrefix(n, "openvpn") ||
+		strings.HasPrefix(n, "sstp") || strings.HasPrefix(n, "l2tp") ||
+		strings.HasPrefix(n, "pptp") {
 		return 0
 	}
 	// WAN interfaces

@@ -148,7 +148,7 @@
 						<button
 							class="icon-btn"
 							title={iface.denied ? 'Разрешить использование' : 'Запретить использование'}
-							onclick={() => iface.denied ? onpermit(iface.name, iface.order) : ondeny(iface.name)}
+							onclick={() => iface.denied ? onpermit(iface.name, interfaces.filter(i => !i.denied).length) : ondeny(iface.name)}
 						>
 							{#if iface.denied}
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
