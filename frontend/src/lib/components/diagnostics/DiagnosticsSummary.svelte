@@ -18,6 +18,9 @@
 		{#if summary.failed > 0}
 			<span class="summary-failed">{summary.failed} не пройдено</span>
 		{/if}
+		{#if summary.skipped > 0}
+			<span class="summary-skipped">{summary.skipped} пропущено</span>
+		{/if}
 	</div>
 	<div class="summary-actions">
 		<button class="btn btn-secondary" onclick={onRestart}>
@@ -53,6 +56,11 @@
 
 	.summary-failed {
 		color: #ef4444;
+		font-size: 14px;
+	}
+
+	.summary-skipped {
+		color: var(--text-secondary);
 		font-size: 14px;
 	}
 
