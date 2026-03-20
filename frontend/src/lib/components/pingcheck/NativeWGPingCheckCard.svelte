@@ -58,8 +58,14 @@
 		onRemove(tunnel.id);
 	}
 
-	// Sync form fields from status (every time status changes)
+	// Sync form fields from status, but NOT when the user might be editing.
 	$effect(() => {
+		// If the card is expanded for editing, don't overwrite user input from periodic refreshes.
+		// The form will be updated with fresh data once it's collapsed and reopened.
+		if (expanded) {
+			return;
+		}
+
 		if (status?.exists) {
 			host = status.host || '8.8.8.8';
 			mode = (status.mode as typeof mode) || 'icmp';
@@ -69,6 +75,16 @@
 			timeout = status.timeout || 5;
 			port = status.port || 443;
 			restart = status.restart ?? true;
+		} else {
+			// If config is removed, reset form to defaults
+			host = '8.8.8.8';
+			mode = 'icmp';
+			updateInterval = 10;
+			maxFails = 3;
+			minSuccess = 1;
+			timeout = 5;
+			port = 443;
+			restart = true;
 		}
 	});
 
