@@ -433,7 +433,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/external-tunnels/adopt", guarded(externalHandler.Adopt))
 
 	// System WireGuard tunnels (protected + boot guarded)
-	systemTunnelHandler := api.NewSystemTunnelsHandler(s.systemTunnelService, s.settings, s.tunnels)
+	systemTunnelHandler := api.NewSystemTunnelsHandler(s.systemTunnelService, s.settings, s.tunnels, s.loggingService)
 	mux.HandleFunc("/api/system-tunnels", guarded(systemTunnelHandler.List))
 	mux.HandleFunc("/api/system-tunnels/get", guarded(systemTunnelHandler.Get))
 	mux.HandleFunc("/api/system-tunnels/asc", guarded(systemTunnelHandler.ASC))
