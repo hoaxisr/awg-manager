@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/testing"
@@ -20,11 +21,17 @@ type SystemTunnelsHandler struct {
 	svc      systemtunnel.Service
 	settings *storage.SettingsStore
 	awgStore *storage.AWGTunnelStore
+	appLog   *logging.ScopedLogger
 }
 
 // NewSystemTunnelsHandler creates a new system tunnels handler.
-func NewSystemTunnelsHandler(svc systemtunnel.Service, settings *storage.SettingsStore, awgStore *storage.AWGTunnelStore) *SystemTunnelsHandler {
-	return &SystemTunnelsHandler{svc: svc, settings: settings, awgStore: awgStore}
+func NewSystemTunnelsHandler(svc systemtunnel.Service, settings *storage.SettingsStore, awgStore *storage.AWGTunnelStore, appLogger logging.AppLogger) *SystemTunnelsHandler {
+	return &SystemTunnelsHandler{
+		svc:      svc,
+		settings: settings,
+		awgStore: awgStore,
+		appLog:   logging.NewScopedLogger(appLogger, logging.GroupSystem, logging.SubSystemTunnel),
+	}
 }
 
 func (h *SystemTunnelsHandler) validateName(w http.ResponseWriter, name string) bool {
@@ -169,7 +176,13 @@ func (h *SystemTunnelsHandler) CheckConnectivity(w http.ResponseWriter, r *http.
 		})
 		return
 	}
+	h.appLog.Full("connectivity-check", name, fmt.Sprintf("Starting connectivity check for system tunnel %s", name))
 	result := testing.CheckConnectivityByInterface(r.Context(), tunnel.InterfaceName)
+	if result.Connected {
+		h.appLog.Info("connectivity-check", name, fmt.Sprintf("Connectivity check passed: latency=%dms", *result.Latency))
+	} else {
+		h.appLog.Warn("connectivity-check", name, fmt.Sprintf("Connectivity check failed: reason=%s", result.Reason))
+	}
 	response.Success(w, result)
 }
 
