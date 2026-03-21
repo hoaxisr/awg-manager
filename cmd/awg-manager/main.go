@@ -696,9 +696,10 @@ func reconnectTunnels(ctx context.Context, tunnelSvc service.Service, store *sto
 	for _, t := range tunnels {
 		state := t.StateInfo.State
 
-		// NativeWG: restore kmod proxy for running tunnels (only on older firmware)
+		// NativeWG: restore kmod proxy for running/starting tunnels (only on older firmware)
+		// StateStarting = conf:running but peer offline — proxy lost after daemon restart
 		if t.Backend == "nativewg" {
-			if state == tunnel.StateRunning {
+			if state == tunnel.StateRunning || state == tunnel.StateStarting {
 				if !ndmsinfo.SupportsWireguardASC() {
 					if stored, err := store.Get(t.ID); err == nil && nwgOp != nil {
 						if err := nwgOp.RestoreKmodTunnel(ctx, stored); err != nil {
