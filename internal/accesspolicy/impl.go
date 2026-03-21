@@ -15,19 +15,28 @@ import (
 
 const maxPolicies = 64
 
+// PolicyTracker tracks which policies were created by AWG Manager.
+type PolicyTracker interface {
+	AddManagedPolicy(name string) error
+	RemoveManagedPolicy(name string) error
+	GetManagedPolicies() []string
+}
+
 // ServiceImpl implements Service using the NDMS client.
 type ServiceImpl struct {
-	ndms   ndms.Client
-	log    *logger.Logger
-	appLog *logging.ScopedLogger
+	ndms    ndms.Client
+	tracker PolicyTracker
+	log     *logger.Logger
+	appLog  *logging.ScopedLogger
 }
 
 // New creates a new access policy service.
-func New(ndmsClient ndms.Client, log *logger.Logger, appLogger logging.AppLogger) *ServiceImpl {
+func New(ndmsClient ndms.Client, tracker PolicyTracker, log *logger.Logger, appLogger logging.AppLogger) *ServiceImpl {
 	return &ServiceImpl{
-		ndms:   ndmsClient,
-		log:    log.WithComponent("accesspolicy"),
-		appLog: logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubAccessPolicy),
+		ndms:    ndmsClient,
+		tracker: tracker,
+		log:     log.WithComponent("accesspolicy"),
+		appLog:  logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubAccessPolicy),
 	}
 }
 
@@ -145,6 +154,13 @@ func (s *ServiceImpl) Create(ctx context.Context, description string) (*Policy, 
 		s.log.Warnf("failed to save after create: %v", err)
 	}
 
+	// Track as managed by AWG Manager
+	if s.tracker != nil {
+		if err := s.tracker.AddManagedPolicy(name); err != nil {
+			s.log.Warnf("failed to track managed policy %s: %v", name, err)
+		}
+	}
+
 	s.appLog.Info("create", name, fmt.Sprintf("Policy %s created (%s)", name, description))
 
 	return &Policy{
@@ -175,6 +191,11 @@ func (s *ServiceImpl) Delete(ctx context.Context, name string) error {
 
 	if err := s.ndms.Save(ctx); err != nil {
 		s.log.Warnf("failed to save after delete: %v", err)
+	}
+
+	// Remove from managed list
+	if s.tracker != nil {
+		_ = s.tracker.RemoveManagedPolicy(name)
 	}
 
 	s.appLog.Info("delete", name, fmt.Sprintf("Policy %s deleted", name))

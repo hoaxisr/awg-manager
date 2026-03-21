@@ -512,3 +512,54 @@ func (s *SettingsStore) GetLoggingMaxAge() int {
 	}
 	return settings.Logging.MaxAge
 }
+
+// AddManagedPolicy adds a policy name to the managed policies list.
+func (s *SettingsStore) AddManagedPolicy(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	settings := s.settings
+	if settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+
+	for _, p := range settings.ManagedPolicies {
+		if p == name {
+			return nil
+		}
+	}
+
+	settings.ManagedPolicies = append(settings.ManagedPolicies, name)
+	return s.saveUnlocked(settings)
+}
+
+// RemoveManagedPolicy removes a policy name from the managed policies list.
+func (s *SettingsStore) RemoveManagedPolicy(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	settings := s.settings
+	if settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+
+	filtered := make([]string, 0, len(settings.ManagedPolicies))
+	for _, p := range settings.ManagedPolicies {
+		if p != name {
+			filtered = append(filtered, p)
+		}
+	}
+	settings.ManagedPolicies = filtered
+	return s.saveUnlocked(settings)
+}
+
+// GetManagedPolicies returns the list of policy names created by AWG Manager.
+func (s *SettingsStore) GetManagedPolicies() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.settings == nil {
+		return nil
+	}
+	return s.settings.ManagedPolicies
+}
