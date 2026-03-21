@@ -203,7 +203,7 @@ func main() {
 	// System WireGuard tunnels (read-only + ASC editing)
 	systemTunnelSvc := systemtunnel.New(ndmsClient)
 
-	testService := testing.NewService(awgStore, log)
+	testService := testing.NewService(awgStore, log, loggingService)
 
 	// Ping check service
 	pingCheckService := pingcheck.NewService(settingsStore, awgStore, log, loggingService)
@@ -671,10 +671,10 @@ func forceRestartTunnels(ctx context.Context, tunnelSvc service.Service, store *
 			if err := tunnelSvc.Start(ctx, t.ID); err != nil {
 				appLog.Warn("boot-start", t.Name, "Retry also failed: "+err.Error())
 			} else {
-				appLog.Info( "boot-start", t.Name, "Tunnel started (after retry)")
+				appLog.Info("boot-start", t.Name, "Tunnel started (after retry)")
 			}
 		} else {
-			appLog.Info( "boot-start", t.Name, "Tunnel started")
+			appLog.Info("boot-start", t.Name, "Tunnel started")
 		}
 	}
 }
@@ -702,19 +702,19 @@ func reconnectTunnels(ctx context.Context, tunnelSvc service.Service, store *sto
 				if !ndmsinfo.SupportsWireguardASC() {
 					if stored, err := store.Get(t.ID); err == nil && nwgOp != nil {
 						if err := nwgOp.RestoreKmodTunnel(ctx, stored); err != nil {
-							appLog.Warn( "reconnect", t.Name, "kmod restore failed: "+err.Error())
+							appLog.Warn("reconnect", t.Name, "kmod restore failed: "+err.Error())
 						}
 					}
 				}
 				pingCheckSvc.StartMonitoring(t.ID, t.Name)
-				appLog.Info( "reconnect", t.Name, "NativeWG tunnel reconnected")
+				appLog.Info("reconnect", t.Name, "NativeWG tunnel reconnected")
 			}
 			continue
 		}
 
 		if state == tunnel.StateRunning {
 			pingCheckSvc.StartMonitoring(t.ID, t.Name)
-			appLog.Info( "reconnect", t.Name, "Tunnel reconnected")
+			appLog.Info("reconnect", t.Name, "Tunnel reconnected")
 			continue
 		}
 
@@ -726,16 +726,16 @@ func reconnectTunnels(ctx context.Context, tunnelSvc service.Service, store *sto
 		_ = tunnelSvc.Stop(ctx, t.ID)
 
 		if err := tunnelSvc.Start(ctx, t.ID); err != nil {
-			appLog.Warn( "reconnect", t.Name, "Start failed, retrying in 3s: "+err.Error())
+			appLog.Warn("reconnect", t.Name, "Start failed, retrying in 3s: "+err.Error())
 
 			time.Sleep(3 * time.Second)
 			if err := tunnelSvc.Start(ctx, t.ID); err != nil {
 				appLog.Warn("reconnect", t.Name, "Retry also failed: "+err.Error())
 			} else {
-				appLog.Info( "reconnect", t.Name, "Tunnel started (after retry)")
+				appLog.Info("reconnect", t.Name, "Tunnel started (after retry)")
 			}
 		} else {
-			appLog.Info( "reconnect", t.Name, "Tunnel started")
+			appLog.Info("reconnect", t.Name, "Tunnel started")
 		}
 	}
 }

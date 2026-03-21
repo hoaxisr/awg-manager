@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
@@ -26,13 +27,15 @@ func IsAWGID(id string) bool {
 type Service struct {
 	awgStore *storage.AWGTunnelStore
 	log      *logger.Logger
+	appLog   *logging.ScopedLogger
 }
 
 // NewService creates a new testing service.
-func NewService(awgStore *storage.AWGTunnelStore, log *logger.Logger) *Service {
+func NewService(awgStore *storage.AWGTunnelStore, log *logger.Logger, appLogger logging.AppLogger) *Service {
 	return &Service{
 		awgStore: awgStore,
 		log:      log,
+		appLog:   logging.NewScopedLogger(appLogger, logging.GroupTunnel, "connectivity"),
 	}
 }
 

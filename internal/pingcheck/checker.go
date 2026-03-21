@@ -70,9 +70,12 @@ func checkHTTP(ctx context.Context, ifaceName string) CheckResult {
 func checkICMP(ctx context.Context, ifaceName string, target string) CheckResult {
 	iface := ifaceName
 
+	// Entware ping location
+	const pingTimeoutSec = "5"
 	args := []string{
 		"-I", iface,
 		"-c", "1",
+		"-W", pingTimeoutSec,
 		target,
 	}
 
@@ -80,6 +83,7 @@ func checkICMP(ctx context.Context, ifaceName string, target string) CheckResult
 	defer cancel()
 
 	start := time.Now()
+	// Use Entware ping at /opt/bin/ping
 	result, err := exec.Run(checkCtx, "/opt/bin/ping", args...)
 	latencyMs := int(time.Since(start).Milliseconds())
 
