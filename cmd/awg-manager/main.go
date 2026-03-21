@@ -275,7 +275,7 @@ func main() {
 	terminalManager := terminal.New(log)
 
 	// Access policy service (NDMS ip policy management)
-	accessPolicySvc := accesspolicy.New(ndmsClient, log, loggingService)
+	accessPolicySvc := accesspolicy.New(ndmsClient, settingsStore, log, loggingService)
 
 	srv := server.New(
 		server.Config{
@@ -1142,23 +1142,24 @@ func runCleanup(dataDir string) {
 		}
 	}
 
-	// Clean up access policies (OS5 only)
+	// Clean up access policies (OS5 only) — only those created by AWG Manager
 	if osdetect.Is5() {
 		fmt.Println("Cleaning up access policies...")
-		accessPolicySvc := accesspolicy.New(ndmsClient, log, nil)
-		policies, err := accessPolicySvc.List(ctx)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: failed to list policies: %v\n", err)
-		} else if len(policies) > 0 {
-			for _, p := range policies {
-				fmt.Printf("  Deleting policy %s (%s)...\n", p.Name, p.Description)
-				if err := accessPolicySvc.Delete(ctx, p.Name); err != nil {
-					fmt.Fprintf(os.Stderr, "    Error: %v\n", err)
+		managed := settingsStore.GetManagedPolicies()
+		if len(managed) > 0 {
+			accessPolicySvc := accesspolicy.New(ndmsClient, settingsStore, log, nil)
+			deleted := 0
+			for _, name := range managed {
+				fmt.Printf("  Deleting policy %s...\n", name)
+				if err := accessPolicySvc.Delete(ctx, name); err != nil {
+					fmt.Fprintf(os.Stderr, "    Warning: %v\n", err)
+				} else {
+					deleted++
 				}
 			}
-			fmt.Printf("  %d policies deleted\n", len(policies))
+			fmt.Printf("  %d managed policies deleted\n", deleted)
 		} else {
-			fmt.Println("  No access policies to clean up")
+			fmt.Println("  No managed access policies to clean up")
 		}
 	}
 

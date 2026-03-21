@@ -14,6 +14,7 @@ type Settings struct {
 	HiddenSystemTunnels    []string          `json:"hiddenSystemTunnels,omitempty"`
 	ServerInterfaces       []string          `json:"serverInterfaces,omitempty"`
 	ManagedServer          *ManagedServer    `json:"managedServer,omitempty"`
+	ManagedPolicies        []string          `json:"managedPolicies,omitempty"`
 }
 
 // ManagedServer represents the user-created WireGuard server interface.
