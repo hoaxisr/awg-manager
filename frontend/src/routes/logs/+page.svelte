@@ -240,12 +240,12 @@
 						<div class="log-entry">
 							<div class="log-header">
 								<span class="log-time">{formatTime(log.timestamp)}</span>
-								<span class="log-level" style="color:{levelStyle[log.level]?.badge ?? '#475569'}">[{levelStyle[log.level]?.label ?? log.level.toUpperCase()}]</span>
+								<span class="log-level level-badge-{log.level}">[{levelStyle[log.level]?.label ?? log.level.toUpperCase()}]</span>
 								<span class="log-scope">[{log.group}{log.subgroup ? '/' + log.subgroup : ''}]</span>
 								<span class="log-action">{log.action}</span>
 								<span class="log-target">{log.target}</span>
 							</div>
-							<div class="log-message" style="color:{levelStyle[log.level]?.msg ?? '#94a3b8'}">
+							<div class="log-message level-msg-{log.level}">
 								{log.message}
 							</div>
 						</div>
@@ -296,10 +296,24 @@
 	.log-action { color: var(--text-secondary); }
 	.log-target { color: var(--text-primary); }
 
+	/* Level badge colors (header line) */
+	.level-badge-error { color: var(--error, #ef4444); }
+	.level-badge-warn { color: var(--warning, #eab308); }
+	.level-badge-info { color: var(--accent, #60a5fa); }
+	.level-badge-full { color: #a78bfa; }
+	.level-badge-debug { color: var(--text-muted); }
+
 	.log-message {
 		padding-left: 24px;
 		word-break: break-word;
 	}
+
+	/* Level message colors (content line) — must be readable on both themes */
+	.level-msg-error { color: var(--error, #ef4444); }
+	.level-msg-warn { color: var(--warning, #eab308); }
+	.level-msg-info { color: var(--text-primary); }
+	.level-msg-full { color: var(--text-secondary); }
+	.level-msg-debug { color: var(--text-muted); }
 
 	.empty-feed {
 		color: var(--text-muted);
