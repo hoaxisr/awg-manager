@@ -3,7 +3,7 @@
  * AWG Proxy - Kernel UDP proxy for WG<->AWG transformation.
  * Ported from timbrs/amneziawg-mikrotik-c reference implementation.
  * Adapted: userspace sockets → kernel sockets, pthreads → kthreads,
- *          batch I/O → single-packet, fastrand → prandom_bytes.
+ *          batch I/O → single-packet, fastrand → get_random_bytes.
  *
  * Each proxy instance creates two kernel UDP sockets and two threads:
  *   listen_sock  - binds to 127.0.0.1:auto, receives from WG
@@ -174,7 +174,7 @@ static void send_junk_packets(struct awg_proxy *proxy)
 	for (i = 0; i < count; i++) {
 		if (sizes[i] <= 0 || sizes[i] > 1500)
 			continue;
-		prandom_bytes(junk, sizes[i]);
+		get_random_bytes(junk, sizes[i]);
 		proxy_sendmsg(proxy->remote_sock, junk, sizes[i], NULL);
 	}
 	kfree(junk);
@@ -252,7 +252,7 @@ static int c2s_thread_fn(void *data)
 		}
 
 		/* Get random value for H range selection */
-		prandom_bytes(&rand_val, sizeof(rand_val));
+		get_random_bytes(&rand_val, sizeof(rand_val));
 
 		/* Transform WG -> AWG (handles all message types) */
 		out = transform_outbound(raw_buf, headroom, n,
