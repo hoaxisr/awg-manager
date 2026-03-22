@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	defaultKoPath       = "/opt/lib/modules/awg_proxy/awg_proxy.ko"
-	legacyKoPath        = "/opt/lib/modules/awg_proxy.ko" // pre-2.4.4 single-file location
-	expectedKmodVersion = "2.4.4"                          // minimum required awg_proxy.ko version
+	awgProxyDir         = "/opt/etc/awg-manager/modules"
+	defaultKoPath       = awgProxyDir + "/awg_proxy.ko"
+	expectedKmodVersion = "1.1.0" // minimum required awg_proxy.ko version
 )
 
 // KmodManager manages the awg_proxy.ko kernel module for NativeWG tunnels.
@@ -64,26 +64,29 @@ func NewKmodManager(log *logger.Logger) *KmodManager {
 }
 
 // resolveKoPath returns the path to awg_proxy.ko.
-// Priority: model-specific override (e.g. KN-1011 with HIGHMEM) → default arch → legacy.
+// Priority: per-model (KN-1011 HIGHMEM) → SoC (mt7621/mt7628) → arch default.
 func (km *KmodManager) resolveKoPath() string {
-	// Check for per-model override (e.g. awg_proxy-KN-1011.ko)
+	// 1. Per-model override (e.g. awg_proxy-KN-1011.ko for HIGHMEM)
 	model := kmod.DetectModel()
 	if model != "" {
-		modelPath := fmt.Sprintf("/opt/lib/modules/awg_proxy/awg_proxy-%s.ko", model)
+		modelPath := fmt.Sprintf(awgProxyDir+"/awg_proxy-%s.ko", model)
 		if _, err := os.Stat(modelPath); err == nil {
 			km.log.Infof("kmod: using model-specific awg_proxy for %s", model)
 			return modelPath
 		}
 	}
 
-	if _, err := os.Stat(defaultKoPath); err == nil {
-		return defaultKoPath
+	// 2. SoC-specific (e.g. awg_proxy-mt7628.ko for non-SMP mipsel)
+	soc := kmod.DetectSoC()
+	if soc != kmod.SoCUnknown {
+		socPath := fmt.Sprintf(awgProxyDir+"/awg_proxy-%s.ko", string(soc))
+		if _, err := os.Stat(socPath); err == nil {
+			km.log.Infof("kmod: using SoC-specific awg_proxy for %s", string(soc))
+			return socPath
+		}
 	}
-	if _, err := os.Stat(legacyKoPath); err == nil {
-		km.log.Warnf("kmod: using legacy path %s", legacyKoPath)
-		return legacyKoPath
-	}
-	// Return canonical path — insmod will report the actual error
+
+	// 3. Arch default (fallback)
 	return defaultKoPath
 }
 
