@@ -17,6 +17,7 @@ chmod 755 /opt/etc/ndm/iflayerchanged.d/50-awg-manager.sh
 rm -f /opt/etc/ndm/ifstatechanged.d/50-awg-manager.sh
 rm -f /opt/var/log/awg-wan-hook.log
 rm -f /opt/etc/init.d/S80awg-manager
+rm -rf /opt/lib/modules/awg_proxy
 
 # Start awg-manager
 /opt/etc/init.d/S99awg-manager start
