@@ -10,6 +10,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
 
@@ -354,6 +355,10 @@ func (s *ServiceImpl) AssignDevice(ctx context.Context, mac, policyName string) 
 		return fmt.Errorf("assign device %s to %s: %w", mac, policyName, err)
 	}
 
+	if err := s.ndms.Save(ctx); err != nil {
+		s.log.Warnf("failed to save after assign device: %v", err)
+	}
+
 	s.appLog.Info("assign-device", mac, fmt.Sprintf("Device %s assigned to %s", mac, policyName))
 
 	return nil
@@ -377,6 +382,10 @@ func (s *ServiceImpl) UnassignDevice(ctx context.Context, mac string) error {
 		return fmt.Errorf("unassign device %s: %w", mac, err)
 	}
 
+	if err := s.ndms.Save(ctx); err != nil {
+		s.log.Warnf("failed to save after unassign device: %v", err)
+	}
+
 	s.appLog.Info("unassign-device", mac, fmt.Sprintf("Device %s unassigned", mac))
 
 	return nil
@@ -389,6 +398,16 @@ func (s *ServiceImpl) ListDevices(ctx context.Context) ([]Device, error) {
 		return nil, fmt.Errorf("list devices: %w", err)
 	}
 
+	// On firmware < 5.01A, /show/ip/hotspot doesn't include the "policy" field.
+	// Fall back to parsing running-config for host→policy mappings.
+	var rcHostPolicies map[string]string
+	if !osdetect.AtLeast(5, 1) {
+		rcHostPolicies, err = s.parseHotspotPolicies(ctx)
+		if err != nil {
+			s.log.Warnf("failed to parse hotspot policies from running-config: %v", err)
+		}
+	}
+
 	devices := make([]Device, 0)
 	for _, h := range resp {
 		if h.IP == "" || h.IP == "0.0.0.0" {
@@ -398,6 +417,10 @@ func (s *ServiceImpl) ListDevices(ctx context.Context) ([]Device, error) {
 		if hostname == "" {
 			hostname = h.Hostname
 		}
+		policy := h.Policy
+		if policy == "" && rcHostPolicies != nil {
+			policy = rcHostPolicies[strings.ToLower(h.MAC)]
+		}
 		devices = append(devices, Device{
 			MAC:      h.MAC,
 			IP:       h.IP,
@@ -405,7 +428,7 @@ func (s *ServiceImpl) ListDevices(ctx context.Context) ([]Device, error) {
 			Hostname: hostname,
 			Active:   isActiveHost(h.Active),
 			Link:     h.Link,
-			Policy:   h.Policy,
+			Policy:   policy,
 		})
 	}
 
@@ -603,10 +626,23 @@ func (s *ServiceImpl) countDevicesPerPolicy(ctx context.Context) (map[string]int
 		return nil, err
 	}
 
+	// On firmware < 5.01A, /show/ip/hotspot doesn't include the "policy" field.
+	var rcHostPolicies map[string]string
+	if !osdetect.AtLeast(5, 1) {
+		rcHostPolicies, err = s.parseHotspotPolicies(ctx)
+		if err != nil {
+			s.log.Warnf("failed to parse hotspot policies from running-config: %v", err)
+		}
+	}
+
 	counts := make(map[string]int)
 	for _, h := range hosts {
-		if h.Policy != "" {
-			counts[h.Policy]++
+		policy := h.Policy
+		if policy == "" && rcHostPolicies != nil {
+			policy = rcHostPolicies[strings.ToLower(h.MAC)]
+		}
+		if policy != "" {
+			counts[policy]++
 		}
 	}
 	return counts, nil
@@ -690,6 +726,58 @@ func (s *ServiceImpl) parseRunningConfig(ctx context.Context) (map[string]rcPoli
 	}
 
 	return policies, nil
+}
+
+// parseHotspotPolicies parses running-config to extract host→policy mappings
+// from the "ip hotspot" block. Returns map[mac]policyName with lowercase MACs.
+// Used as fallback on firmware < 5.01A where /show/ip/hotspot doesn't include "policy".
+func (s *ServiceImpl) parseHotspotPolicies(ctx context.Context) (map[string]string, error) {
+	raw, err := s.ndms.RCIGet(ctx, "/show/running-config")
+	if err != nil {
+		return nil, err
+	}
+
+	var rcResp struct {
+		Message []string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &rcResp); err != nil {
+		return nil, fmt.Errorf("parse running-config: %w", err)
+	}
+
+	result := make(map[string]string)
+	inHotspot := false
+
+	for _, line := range rcResp.Message {
+		trimmed := strings.TrimSpace(line)
+
+		if trimmed == "ip hotspot" {
+			inHotspot = true
+			continue
+		}
+
+		if !inHotspot {
+			continue
+		}
+
+		// End of hotspot block
+		if trimmed == "!" {
+			break
+		}
+
+		// Parse "host <mac> policy <PolicyN>"
+		if strings.HasPrefix(trimmed, "host ") && strings.Contains(trimmed, " policy ") {
+			parts := strings.Fields(trimmed)
+			// Expected: ["host", "<mac>", "policy", "<PolicyN>"]
+			for i := 0; i < len(parts)-1; i++ {
+				if parts[i] == "policy" {
+					result[strings.ToLower(parts[1])] = parts[i+1]
+					break
+				}
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // isValidPolicyName checks that the name matches PolicyN format.
