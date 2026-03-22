@@ -2,7 +2,7 @@
 /*
  * AWG transform logic.
  * Ported from timbrs/amneziawg-mikrotik-c reference implementation.
- * Adapted: fastrand → prandom_bytes.
+ * Adapted: fastrand → get_random_bytes.
  */
 
 #include <linux/kernel.h>
@@ -78,7 +78,7 @@ u8 *transform_outbound(u8 *buf, int dataoff, int n,
 				*out_len = n;
 				return data;
 			}
-			prandom_bytes(data - cfg->s1, cfg->s1);
+			get_random_bytes(data - cfg->s1, cfg->s1);
 			*out_len = cfg->s1 + n;
 			return data - cfg->s1;
 		}
@@ -93,7 +93,7 @@ u8 *transform_outbound(u8 *buf, int dataoff, int n,
 				*out_len = n;
 				return data;
 			}
-			prandom_bytes(data - cfg->s2, cfg->s2);
+			get_random_bytes(data - cfg->s2, cfg->s2);
 			*out_len = cfg->s2 + n;
 			return data - cfg->s2;
 		}
@@ -108,7 +108,7 @@ u8 *transform_outbound(u8 *buf, int dataoff, int n,
 				*out_len = n;
 				return data;
 			}
-			prandom_bytes(data - cfg->s3, cfg->s3);
+			get_random_bytes(data - cfg->s3, cfg->s3);
 			*out_len = cfg->s3 + n;
 			return data - cfg->s3;
 		}
@@ -219,7 +219,7 @@ int generate_junk(const awg_config_t *cfg, u8 *junk_buf,
 
 	for (i = 0; i < jc; i++) {
 		if (span > 1) {
-			prandom_bytes(&r, sizeof(r));
+			get_random_bytes(&r, sizeof(r));
 			sizes[i] = jmin + (int)(r % span);
 		} else {
 			sizes[i] = jmin;
