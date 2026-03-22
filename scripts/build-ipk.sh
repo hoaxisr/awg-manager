@@ -121,21 +121,36 @@ else
     echo "WARNING: No vendor/kmod/*.ko files found, IPK will have no bundled modules"
 fi
 
-# Bundle awg_proxy.ko kernel module (NativeWG obfuscation proxy)
-AWG_PROXY_KO="kmod/awg-proxy/out/awg_proxy-${KMOD_ARCH}.ko"
-if [[ -f "$AWG_PROXY_KO" ]]; then
-    mkdir -p "$IPK_ROOT/opt/lib/modules/awg_proxy"
-    cp "$AWG_PROXY_KO" "$IPK_ROOT/opt/lib/modules/awg_proxy/awg_proxy.ko"
-    echo "Bundled awg_proxy.ko for ${KMOD_ARCH}"
+# Bundle awg_proxy.ko kernel modules (NativeWG obfuscation proxy)
+# Modules are installed to /opt/etc/awg-manager/modules/ alongside amneziawg.ko.
+# For mipsel: SoC-specific (mt7621, mt7628) + per-model (KN-1011 HIGHMEM).
+# For mips/arm64: single arch default copied as awg_proxy.ko.
+AWG_PROXY_DIR="$IPK_ROOT/opt/etc/awg-manager/modules"
+AWG_PROXY_COUNT=0
+
+# 1. Arch default (awg_proxy.ko) — for mips/arm64 fallback, for mipsel = copy of mt7621
+case "$ENTWARE_ARCH" in
+    mipsel-3.4) AWG_PROXY_DEFAULT="kmod/awg-proxy/out/awg_proxy-mt7621.ko" ;;
+    mips-3.4)   AWG_PROXY_DEFAULT="kmod/awg-proxy/out/awg_proxy-mips.ko" ;;
+    aarch64-3.10) AWG_PROXY_DEFAULT="kmod/awg-proxy/out/awg_proxy-arm64.ko" ;;
+esac
+if [[ -f "$AWG_PROXY_DEFAULT" ]]; then
+    mkdir -p "$AWG_PROXY_DIR"
+    cp "$AWG_PROXY_DEFAULT" "$AWG_PROXY_DIR/awg_proxy.ko"
+    AWG_PROXY_COUNT=$((AWG_PROXY_COUNT + 1))
+    echo "Bundled awg_proxy.ko default ($(basename "$AWG_PROXY_DEFAULT"))"
 else
-    echo "WARNING: $AWG_PROXY_KO not found, IPK will have no awg_proxy module"
+    echo "WARNING: $AWG_PROXY_DEFAULT not found, IPK will have no awg_proxy module"
 fi
 
-# Bundle per-model awg_proxy overrides (e.g. KN-1011 with HIGHMEM)
-# Filter by architecture using ELF type (same approach as amneziawg bundling)
-for MODEL_KO in kmod/awg-proxy/out/awg_proxy-KN-*.ko; do
-    [[ -f "$MODEL_KO" ]] || continue
-    filetype=$(file -b "$MODEL_KO")
+# 2. SoC-specific and per-model overrides (filtered by ELF architecture)
+for EXTRA_KO in kmod/awg-proxy/out/awg_proxy-*.ko; do
+    [[ -f "$EXTRA_KO" ]] || continue
+    # Skip arch defaults (already handled above)
+    case "$(basename "$EXTRA_KO")" in
+        awg_proxy-mips.ko|awg_proxy-arm64.ko) continue ;;
+    esac
+    filetype=$(file -b "$EXTRA_KO")
     match=false
     case "$ENTWARE_ARCH" in
         mipsel-3.4)   [[ "$filetype" == *"LSB"*"MIPS"* ]] && match=true ;;
@@ -143,12 +158,15 @@ for MODEL_KO in kmod/awg-proxy/out/awg_proxy-KN-*.ko; do
         aarch64-3.10) [[ "$filetype" == *"aarch64"* ]]     && match=true ;;
     esac
     if $match; then
-        MODEL_NAME=$(basename "$MODEL_KO" .ko | sed 's/awg_proxy-//')
-        mkdir -p "$IPK_ROOT/opt/lib/modules/awg_proxy"
-        cp "$MODEL_KO" "$IPK_ROOT/opt/lib/modules/awg_proxy/awg_proxy-${MODEL_NAME}.ko"
-        echo "Bundled awg_proxy override for ${MODEL_NAME}"
+        KONAME=$(basename "$EXTRA_KO" .ko | sed 's/awg_proxy-//')
+        mkdir -p "$AWG_PROXY_DIR"
+        cp "$EXTRA_KO" "$AWG_PROXY_DIR/awg_proxy-${KONAME}.ko"
+        AWG_PROXY_COUNT=$((AWG_PROXY_COUNT + 1))
+        echo "Bundled awg_proxy override: ${KONAME}"
     fi
 done
+
+echo "Total awg_proxy modules bundled: $AWG_PROXY_COUNT"
 
 # Copy web files
 cp -r build/www/* "$IPK_ROOT/opt/share/www/awg-manager/"
