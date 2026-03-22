@@ -2,7 +2,7 @@
 /*
  * CPS template parsing and packet generation.
  * Ported from timbrs/amneziawg-mikrotik-c reference implementation.
- * Adapted: fastrand → prandom_bytes, time() → ktime_get_real_seconds().
+ * Adapted: fastrand → get_random_bytes, time() → ktime_get_real_seconds().
  */
 
 #include <linux/kernel.h>
@@ -222,7 +222,7 @@ int cps_generate(const cps_template_t *tmpl, u32 counter,
 		case CPS_RANDOM:
 			if (off + seg->size > bufsize)
 				return off;
-			prandom_bytes(buf + off, seg->size);
+			get_random_bytes(buf + off, seg->size);
 			off += seg->size;
 			break;
 		case CPS_RANDOM_CHARS: {
@@ -232,7 +232,7 @@ int cps_generate(const cps_template_t *tmpl, u32 counter,
 			if (off + seg->size > bufsize)
 				return off;
 			for (j = 0; j < seg->size; j++) {
-				prandom_bytes(&r, sizeof(r));
+				get_random_bytes(&r, sizeof(r));
 				buf[off + j] = alphanum[r % ALPHANUM_LEN];
 			}
 			off += seg->size;
@@ -245,7 +245,7 @@ int cps_generate(const cps_template_t *tmpl, u32 counter,
 			if (off + seg->size > bufsize)
 				return off;
 			for (j = 0; j < seg->size; j++) {
-				prandom_bytes(&r, sizeof(r));
+				get_random_bytes(&r, sizeof(r));
 				buf[off + j] = '0' + (r % 10);
 			}
 			off += seg->size;
