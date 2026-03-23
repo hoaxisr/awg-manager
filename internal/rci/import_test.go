@@ -20,7 +20,7 @@ func TestImportWireguardConfig(t *testing.T) {
 		json.Unmarshal(body, &receivedPayload)
 
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"interface":{"wireguard":{"import":{"name":"Wireguard1"}}}}`))
+		w.Write([]byte(`{"interface":{"wireguard":{"import":{"created":"Wireguard1","intersects":"","status":[{"status":"message","message":"imported"}]}}}}`))
 	}))
 	defer srv.Close()
 
@@ -49,12 +49,12 @@ func TestImportWireguardConfig(t *testing.T) {
 func TestImportWireguardConfig_NoName(t *testing.T) {
 	c, srv := newTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"interface":{"wireguard":{"import":{"name":""}}}}`))
+		w.Write([]byte(`{"interface":{"wireguard":{"import":{"created":"","intersects":""}}}}`))
 	}))
 	defer srv.Close()
 
 	_, err := c.ImportWireguardConfig(context.Background(), []byte("test"), "test.conf")
 	if err == nil {
-		t.Fatal("expected error for empty name")
+		t.Fatal("expected error for empty created")
 	}
 }
