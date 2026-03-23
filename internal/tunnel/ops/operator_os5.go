@@ -237,7 +237,13 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 		}
 	}
 
-	o.logInfo("start", cfg.ID, "NDMS config applied (address + MTU)")
+	// Ensure ip global is set — it's not part of CreateOpkgTun anymore
+	// (split out to avoid premature nginx binding), so re-apply on every start.
+	if err := o.ndms.SetIPGlobal(ctx, names.NDMSName); err != nil {
+		o.logWarn("start", cfg.ID, "Failed to set ip global: "+err.Error())
+	}
+
+	o.logInfo("start", cfg.ID, "NDMS config applied (address + MTU + global)")
 
 	if justCreated {
 		// Save NDMS config so InterfaceUp works (import flow creates OpkgTun
@@ -565,6 +571,11 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 		if err := o.ndms.SetMTU(ctx, names.NDMSName, cfg.MTU); err != nil {
 			o.logWarn("reconcile", cfg.ID, "Failed to re-apply NDMS MTU: "+err.Error())
 		}
+	}
+
+	// Ensure ip global is set
+	if err := o.ndms.SetIPGlobal(ctx, names.NDMSName); err != nil {
+		o.logWarn("reconcile", cfg.ID, "Failed to set ip global: "+err.Error())
 	}
 
 	// Re-apply DNS servers (may have been lost after reboot)
