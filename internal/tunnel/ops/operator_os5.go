@@ -111,6 +111,13 @@ func (o *OperatorOS5Impl) Create(ctx context.Context, cfg tunnel.Config) error {
 		}
 	}
 
+	// Mark interface as global AFTER address/MTU are set.
+	// Setting ip global during CreateOpkgTun (atomically with security-level: public)
+	// causes Keenetic's nginx to bind to the tunnel IP before the address exists.
+	if err := o.ndms.SetIPGlobal(ctx, names.NDMSName); err != nil {
+		o.logWarn("create", cfg.ID, "Failed to set ip global: "+err.Error())
+	}
+
 	// DNS is not applied in Create — Start handles it with proper tracking.
 	// Applying here without tracking would leave orphaned entries on the router.
 

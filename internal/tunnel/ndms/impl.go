@@ -52,21 +52,22 @@ func (c *ClientImpl) ShowInterface(ctx context.Context, name string) (string, er
 }
 
 // CreateOpkgTun creates an OpkgTun interface in NDMS.
+// Does NOT set ip global — caller must call SetIPGlobal after address/MTU are configured.
+// Reason: setting security-level public + ip global atomically causes Keenetic's nginx
+// to bind to the tunnel IP before the address is even set, leading to bind errors.
 func (c *ClientImpl) CreateOpkgTun(ctx context.Context, name, description string) error {
 	safeDesc := sanitizeDescription(description)
 	if safeDesc == "" {
 		safeDesc = name
 	}
 
-	// Create interface + configure all properties in a single RCI call
+	// Create interface with description + security-level only.
+	// ip global is applied later (after SetAddress/SetMTU) to avoid premature nginx binding.
 	_, err := c.rci.Post(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			name: map[string]interface{}{
 				"description":    safeDesc,
 				"security-level": map[string]interface{}{"public": true},
-				"ip": map[string]interface{}{
-					"global": map[string]interface{}{"auto": true},
-				},
 			},
 		},
 	})
@@ -74,6 +75,21 @@ func (c *ClientImpl) CreateOpkgTun(ctx context.Context, name, description string
 		return fmt.Errorf("create interface: %w", err)
 	}
 	return nil
+}
+
+// SetIPGlobal marks an interface as global (internet-facing) with automatic priority.
+// Must be called AFTER SetAddress/SetMTU to avoid premature nginx binding.
+func (c *ClientImpl) SetIPGlobal(ctx context.Context, name string) error {
+	_, err := c.rci.Post(ctx, map[string]interface{}{
+		"interface": map[string]interface{}{
+			name: map[string]interface{}{
+				"ip": map[string]interface{}{
+					"global": map[string]interface{}{"auto": true},
+				},
+			},
+		},
+	})
+	return err
 }
 
 // DeleteOpkgTun removes an OpkgTun interface from NDMS.
@@ -148,17 +164,35 @@ func (c *ClientImpl) SetAddress(ctx context.Context, name, address string) error
 }
 
 // SetIPv6Address sets the IPv6 address of an interface.
+// Uses name-as-key format ({"interface": {"OpkgTun0": {...}}}) for OpkgTun compatibility.
+// The [{}, {"block": "addr/128"}] array clears old addresses + sets new in one call.
 func (c *ClientImpl) SetIPv6Address(ctx context.Context, name, address string) error {
-	// RCI format clears old + sets new in one call (no separate "no" needed)
-	if _, err := c.rci.Post(ctx, rci.CmdInterfaceIPv6Address(name, address)); err != nil {
-		return err
-	}
-	return nil
+	_, err := c.rci.Post(ctx, map[string]interface{}{
+		"interface": map[string]interface{}{
+			name: map[string]interface{}{
+				"ipv6": map[string]interface{}{
+					"address": []interface{}{
+						map[string]interface{}{},
+						map[string]interface{}{"block": address + "/128"},
+					},
+				},
+			},
+		},
+	})
+	return err
 }
 
 // ClearIPv6Address removes all IPv6 addresses from an interface.
 func (c *ClientImpl) ClearIPv6Address(ctx context.Context, name string) {
-	_, _ = c.rci.Post(ctx, rci.CmdInterfaceIPv6AddressClear(name))
+	_, _ = c.rci.Post(ctx, map[string]interface{}{
+		"interface": map[string]interface{}{
+			name: map[string]interface{}{
+				"ipv6": map[string]interface{}{
+					"address": map[string]interface{}{},
+				},
+			},
+		},
+	})
 }
 
 // SetMTU sets the MTU of an interface.

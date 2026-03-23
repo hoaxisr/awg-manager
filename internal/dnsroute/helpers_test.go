@@ -37,6 +37,7 @@ func (n *noopNDMS) SetDescription(ctx context.Context, name, description string)
 }
 func (n *noopNDMS) InterfaceUp(ctx context.Context, name string) error         { return nil }
 func (n *noopNDMS) InterfaceDown(ctx context.Context, name string) error       { return nil }
+func (n *noopNDMS) SetIPGlobal(ctx context.Context, name string) error         { return nil }
 func (n *noopNDMS) SetDefaultRoute(ctx context.Context, name string) error     { return nil }
 func (n *noopNDMS) RemoveDefaultRoute(ctx context.Context, name string) error  { return nil }
 func (n *noopNDMS) RemoveHostRoute(ctx context.Context, host string) error     { return nil }

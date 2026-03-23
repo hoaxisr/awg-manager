@@ -82,6 +82,10 @@ func (m *MockNDMSClient) SetMTU(ctx context.Context, name string, mtu int) error
 	return m.setMTUError
 }
 
+func (m *MockNDMSClient) SetIPGlobal(ctx context.Context, name string) error {
+	return nil
+}
+
 func (m *MockNDMSClient) SetDNS(ctx context.Context, name string, servers []string) error {
 	return nil
 }
