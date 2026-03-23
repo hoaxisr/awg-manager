@@ -185,6 +185,14 @@ func (s *Service) Delete(ctx context.Context) error {
 	return nil
 }
 
+// DeleteIfExists deletes the managed server if one exists.
+func (s *Service) DeleteIfExists(ctx context.Context) error {
+	if s.Get() == nil {
+		return nil
+	}
+	return s.Delete(ctx)
+}
+
 // Get returns the managed server from storage, or nil if not created.
 func (s *Service) Get() *storage.ManagedServer {
 	return s.settings.GetManagedServer()

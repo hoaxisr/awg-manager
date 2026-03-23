@@ -384,6 +384,15 @@ func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error
 	return s.reconcile(ctx)
 }
 
+// CleanupAll removes all DNS route objects (AWG_*) from NDMS.
+func (s *ServiceImpl) CleanupAll(ctx context.Context) error {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	s.store.Save(EmptyStoreData())
+	return s.reconcile(ctx)
+}
+
 // Reconcile synchronises router state (object-groups, dns-proxy routes) with stored lists.
 func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	s.opMu.Lock()

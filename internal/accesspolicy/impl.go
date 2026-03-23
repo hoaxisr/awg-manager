@@ -193,6 +193,17 @@ func (s *ServiceImpl) Create(ctx context.Context, description string) (*Policy, 
 	}, nil
 }
 
+// CleanupAll deletes all access policies created by awg-manager.
+func (s *ServiceImpl) CleanupAll(ctx context.Context) error {
+	managed := s.tracker.GetManagedPolicies()
+	for _, name := range managed {
+		if err := s.Delete(ctx, name); err != nil {
+			continue
+		}
+	}
+	return nil
+}
+
 // Delete removes a policy by name.
 func (s *ServiceImpl) Delete(ctx context.Context, name string) error {
 	if !isValidPolicyName(name) {
