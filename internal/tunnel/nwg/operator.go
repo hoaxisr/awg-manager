@@ -19,8 +19,8 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/storage"
-	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
@@ -29,7 +29,7 @@ import (
 
 // OperatorNativeWG manages tunnels via Keenetic native WireGuard + awg_proxy.ko.
 type OperatorNativeWG struct {
-	rci    *RCIClient
+	rci    *rci.Client
 	kmod   *KmodManager
 	ndms   ndms.Client
 	log    *logger.Logger
@@ -37,9 +37,9 @@ type OperatorNativeWG struct {
 }
 
 // NewOperator creates a new NativeWG operator.
-func NewOperator(log *logger.Logger, ndmsClient ndms.Client, appLogger logging.AppLogger) *OperatorNativeWG {
+func NewOperator(log *logger.Logger, ndmsClient ndms.Client, rciClient *rci.Client, appLogger logging.AppLogger) *OperatorNativeWG {
 	return &OperatorNativeWG{
-		rci:    NewRCIClient(),
+		rci:    rciClient,
 		kmod:   NewKmodManager(log),
 		ndms:   ndmsClient,
 		log:    log,
@@ -47,50 +47,64 @@ func NewOperator(log *logger.Logger, ndmsClient ndms.Client, appLogger logging.A
 	}
 }
 
-// ndmc runs an ndmc command and returns stdout.
-// On error, parses NDMS output for a human-readable message (e.g. address conflict).
-func (o *OperatorNativeWG) ndmc(ctx context.Context, cmd string) (string, error) {
-	result, err := exec.Run(ctx, "ndmc", "-c", cmd)
-	if err != nil {
-		// NDMS writes error details to stdout (not stderr).
-		// Extract the meaningful part for the user.
-		msg := ""
-		if result != nil {
-			msg = parseNDMSError(result.Stdout)
-		}
-		if msg != "" {
-			return "", fmt.Errorf("%s", msg)
-		}
-		return "", fmt.Errorf("ndmc %q: %w", cmd, err)
-	}
-	return result.Stdout, nil
-}
-
-// parseNDMSError extracts a human-readable error from NDMS stdout.
-// NDMS outputs lines like:
-//
-//	Network::Interface::Ip error[72220686]: "Wireguard3": network 10.99.0.2/32 conflicts with interface "Wireguard1".
-//
-// Returns the meaningful part after "error[...]: " or empty string if not found.
-func parseNDMSError(stdout string) string {
-	for _, line := range strings.Split(stdout, "\n") {
-		line = strings.TrimSpace(line)
-		if idx := strings.Index(line, "error["); idx != -1 {
-			// Find the closing "]: " and return everything after it
-			if end := strings.Index(line[idx:], "]: "); end != -1 {
-				return strings.TrimSpace(line[idx+end+3:])
-			}
-		}
-	}
-	return ""
-}
-
 // Create creates a NativeWG tunnel in NDMS.
 // Returns the assigned NWGIndex.
 // Accepts both AWG and plain WireGuard configs — plain WG can be edited later
 // to add obfuscation params, but Start() will block until they are set.
 func (o *OperatorNativeWG) Create(ctx context.Context, stored *storage.AWGTunnel) (index int, err error) {
-	// Find next free Wireguard index via RCI
+	if ndmsinfo.SupportsHRanges() {
+		return o.createViaImport(ctx, stored)
+	}
+	return o.createViaBatch(ctx, stored)
+}
+
+// createViaImport creates a tunnel by importing a .conf file (firmware >= 5.01.A.3).
+// NDMS fully parses AWG params (Jc, Jmin, S1, H1 etc.) from the .conf file.
+func (o *OperatorNativeWG) createViaImport(ctx context.Context, stored *storage.AWGTunnel) (int, error) {
+	// Generate .conf with all AWG params
+	confData := config.GenerateForExport(stored)
+
+	// Import via RCI — NDMS creates the interface and parses all params
+	ndmsName, err := o.rci.ImportWireguardConfig(ctx, []byte(confData), stored.Name+".conf")
+	if err != nil {
+		return 0, fmt.Errorf("import wireguard config: %w", err)
+	}
+
+	// Extract index from "WireguardN"
+	idx, _, err := ParseNDMSCreatedName(`"` + ndmsName + `" interface created`)
+	if err != nil {
+		// Try direct parse: "Wireguard0" -> 0
+		numStr := strings.TrimPrefix(ndmsName, "Wireguard")
+		idx, err = strconv.Atoi(numStr)
+		if err != nil {
+			return 0, fmt.Errorf("parse imported interface name %q: %w", ndmsName, err)
+		}
+	}
+
+	// Post-import settings that aren't in .conf
+	batch := rci.NewBatch()
+	batch.InterfaceDescription(ndmsName, stored.Name)
+	batch.InterfaceSecurityLevel(ndmsName, "public")
+	batch.InterfaceIPGlobal(ndmsName, true)
+	batch.InterfaceAdjustMSS(ndmsName, true)
+	batch.Save()
+
+	if err := batch.Execute(ctx, o.rci); err != nil {
+		// Cleanup on failure
+		cleanup := rci.NewBatch()
+		cleanup.InterfaceDelete(ndmsName)
+		cleanup.Save()
+		_ = cleanup.Execute(ctx, o.rci)
+		return 0, fmt.Errorf("post-import settings: %w", err)
+	}
+
+	o.appLog.Full("create", stored.Name, fmt.Sprintf("Created NDMS interface %s via import", ndmsName))
+	o.log.Infof("nwg: created %s (import path)", ndmsName)
+	return idx, nil
+}
+
+// createViaBatch creates a tunnel via RCI batch commands (firmware < 5.01.A.3).
+func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.AWGTunnel) (int, error) {
 	idx, err := o.nextFreeIndex(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("find free index: %w", err)
@@ -99,80 +113,67 @@ func (o *OperatorNativeWG) Create(ctx context.Context, stored *storage.AWGTunnel
 	names := NewNWGNames(idx)
 	ndmsName := names.NDMSName
 
-	// Create interface with explicit index
-	if _, err := o.ndmc(ctx, fmt.Sprintf("interface %s", ndmsName)); err != nil {
-		return 0, fmt.Errorf("create interface: %w", err)
-	}
-
-	// Configure interface via ndmc
-	cmds := []string{
-		fmt.Sprintf("interface %s description \"%s\"", ndmsName, stored.Name),
-		fmt.Sprintf("interface %s security-level public", ndmsName),
-		fmt.Sprintf("interface %s ip address %s", ndmsName, extractIPv4(stored.Interface.Address)),
-		fmt.Sprintf("interface %s ip mtu %d", ndmsName, stored.Interface.MTU),
-		fmt.Sprintf("interface %s ip tcp adjust-mss pmtu", ndmsName),
-		fmt.Sprintf("interface %s ip global auto", ndmsName),
-		fmt.Sprintf("interface %s wireguard private-key %s", ndmsName, stored.Interface.PrivateKey),
-	}
-
-	// Set DNS servers on the interface
-	if stored.Interface.DNS != "" {
-		for _, dns := range strings.Split(stored.Interface.DNS, ",") {
-			dns = strings.TrimSpace(dns)
-			if dns != "" {
-				cmds = append(cmds, fmt.Sprintf("interface %s ip name-server %s", ndmsName, dns))
-			}
-		}
-	}
-
-	// Resolve endpoint hostname → IP (for validation only at create time;
+	// Resolve endpoint hostname -> IP (for validation only at create time;
 	// the actual proxy endpoint is set at Start time)
 	endpointIP, endpointPort, err := resolveEndpointIP(stored.Peer.Endpoint)
 	if err != nil {
-		_, _ = o.ndmc(ctx, fmt.Sprintf("no interface %s", ndmsName))
-		_, _ = o.ndmc(ctx, "system configuration save")
 		return 0, fmt.Errorf("resolve endpoint: %w", err)
 	}
 
-	// Configure IPv6 if present in address field
+	batch := rci.NewBatch()
+	batch.InterfaceCreate(ndmsName)
+	batch.InterfaceDescription(ndmsName, stored.Name)
+	batch.InterfaceSecurityLevel(ndmsName, "public")
+	batch.InterfaceIPAddress(ndmsName, extractIPv4(stored.Interface.Address), "255.255.255.255")
+	batch.InterfaceMTU(ndmsName, stored.Interface.MTU)
+	batch.InterfaceAdjustMSS(ndmsName, true)
+	batch.InterfaceIPGlobal(ndmsName, true)
+	batch.WireguardPrivateKey(ndmsName, stored.Interface.PrivateKey)
+
+	// DNS
+	if stored.Interface.DNS != "" {
+		var servers []string
+		for _, dns := range strings.Split(stored.Interface.DNS, ",") {
+			if d := strings.TrimSpace(dns); d != "" {
+				servers = append(servers, d)
+			}
+		}
+		if len(servers) > 0 {
+			batch.InterfaceDNS(ndmsName, servers)
+		}
+	}
+
+	// IPv6 if present
 	ipv6Addr := extractIPv6(stored.Interface.Address)
 	if ipv6Addr != "" {
-		cmds = append(cmds, fmt.Sprintf("interface %s ipv6 address %s/128", ndmsName, ipv6Addr))
+		batch.InterfaceIPv6Address(ndmsName, ipv6Addr)
 	}
 
-	// Add peer configuration — at create time, use the resolved real endpoint.
-	// Start() will update this to 127.0.0.1:proxy_port.
-	pubkey := stored.Peer.PublicKey
-	peerCmds := []string{
-		fmt.Sprintf("interface %s wireguard peer %s", ndmsName, pubkey),
-		fmt.Sprintf("interface %s wireguard peer %s endpoint %s:%d", ndmsName, pubkey, endpointIP, endpointPort),
-		fmt.Sprintf("interface %s wireguard peer %s allow-ips 0.0.0.0 0.0.0.0", ndmsName, pubkey),
+	// Peer
+	peerCfg := rci.PeerConfig{
+		PublicKey: stored.Peer.PublicKey,
+		Endpoint:  fmt.Sprintf("%s:%d", endpointIP, endpointPort),
+		AllowedIPv4: []rci.AllowedIP{{Address: "0.0.0.0", Mask: "0"}},
 	}
-
-	// Add IPv6 allowed-ips if AllowedIPs contains IPv6 entries
 	if hasIPv6AllowedIPs(stored.Peer.AllowedIPs) {
-		peerCmds = append(peerCmds,
-			fmt.Sprintf("interface %s wireguard peer %s allow-ips ::/0", ndmsName, pubkey))
+		peerCfg.AllowedIPv6 = []rci.AllowedIP{{Address: "::", Mask: "0"}}
 	}
-
 	if stored.Peer.PersistentKeepalive > 0 {
-		peerCmds = append(peerCmds,
-			fmt.Sprintf("interface %s wireguard peer %s keepalive-interval %d", ndmsName, pubkey, stored.Peer.PersistentKeepalive))
+		peerCfg.KeepaliveInterval = stored.Peer.PersistentKeepalive
 	}
 	if stored.Peer.PresharedKey != "" {
-		peerCmds = append(peerCmds,
-			fmt.Sprintf("interface %s wireguard peer %s preshared-key %s", ndmsName, pubkey, stored.Peer.PresharedKey))
+		peerCfg.PresharedKey = stored.Peer.PresharedKey
 	}
+	batch.WireguardPeer(ndmsName, peerCfg)
+	batch.Save()
 
-	// Execute all configuration commands
-	allCmds := append(cmds, peerCmds...)
-	for _, cmd := range allCmds {
-		if _, err := o.ndmc(ctx, cmd); err != nil {
-			// Cleanup on failure: remove the created interface
-			_, _ = o.ndmc(ctx, fmt.Sprintf("no interface %s", ndmsName))
-			_, _ = o.ndmc(ctx, "system configuration save")
-			return 0, fmt.Errorf("configure %q: %w", cmd, err)
-		}
+	if err := batch.Execute(ctx, o.rci); err != nil {
+		// Cleanup on failure
+		cleanup := rci.NewBatch()
+		cleanup.InterfaceDelete(ndmsName)
+		cleanup.Save()
+		_ = cleanup.Execute(ctx, o.rci)
+		return 0, fmt.Errorf("create batch: %w", err)
 	}
 
 	// Set AWG obfuscation params via RCI (firmware >= 5.1Alpha4).
@@ -184,9 +185,6 @@ func (o *OperatorNativeWG) Create(ctx context.Context, stored *storage.AWGTunnel
 			}
 		}
 	}
-
-	// Persist NDMS configuration
-	_, _ = o.ndmc(ctx, "system configuration save")
 
 	o.appLog.Full("create", stored.Name, fmt.Sprintf("Creating NDMS interface %s", ndmsName))
 	o.log.Infof("nwg: created %s", ndmsName)
@@ -239,24 +237,14 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 			return err
 		}
 	}
-	o.appLog.Full("start", stored.Name, fmt.Sprintf("Resolving endpoint %s → %s:%d", stored.Peer.Endpoint, endpointIP, endpointPort))
+	o.appLog.Full("start", stored.Name, fmt.Sprintf("Resolving endpoint %s -> %s:%d", stored.Peer.Endpoint, endpointIP, endpointPort))
 
-	// Set peer endpoint to real server address
 	realEndpoint := fmt.Sprintf("%s:%d", endpointIP, endpointPort)
-	if _, err := o.ndmc(ctx, fmt.Sprintf("interface %s wireguard peer %s endpoint %s", names.NDMSName, pubkey, realEndpoint)); err != nil {
-		return fmt.Errorf("set endpoint: %w", err)
-	}
 
-	// Activate peer (with optional WAN binding)
-	connectCmd := fmt.Sprintf("interface %s wireguard peer %s connect", names.NDMSName, pubkey)
-	if stored.ISPInterface != "" {
-		connectCmd += fmt.Sprintf(" via %s", stored.ISPInterface)
-	}
-	if _, err := o.ndmc(ctx, connectCmd); err != nil {
-		return fmt.Errorf("activate peer: %w", err)
-	}
-
-	o.appLog.Full("start", stored.Name, "Setting peer endpoint, interface up")
+	// Batch: set endpoint + connect via + sync + up
+	batch := rci.NewBatch()
+	batch.WireguardPeerEndpoint(names.NDMSName, pubkey, realEndpoint)
+	batch.WireguardPeerConnect(names.NDMSName, pubkey, stored.ISPInterface)
 
 	// Sync address/MTU from storage
 	if err := o.SyncAddressMTU(ctx, stored); err != nil {
@@ -266,9 +254,11 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 	// Register DNS servers with the router's DNS proxy
 	o.applyDNS(ctx, names.NDMSName, stored)
 
-	// Bring interface up
-	if _, err := o.ndmc(ctx, fmt.Sprintf("interface %s up", names.NDMSName)); err != nil {
-		return fmt.Errorf("interface up: %w", err)
+	o.appLog.Full("start", stored.Name, "Setting peer endpoint, interface up")
+	batch.InterfaceUp(names.NDMSName, true)
+
+	if err := batch.Execute(ctx, o.rci); err != nil {
+		return fmt.Errorf("start native: %w", err)
 	}
 
 	viaInfo := ""
@@ -301,10 +291,10 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 		return fmt.Errorf("kmod: %w", err)
 	}
 
-	// Read peer "via" from RCI (NDMS WAN binding) → resolve to kernel iface
+	// Read peer "via" from RCI (NDMS WAN binding) -> resolve to kernel iface
 	bindIface := o.resolveBindIface(ctx, stored)
 
-	// Add tunnel to kernel module → creates proxy, returns listen_port
+	// Add tunnel to kernel module -> creates proxy, returns listen_port
 	kmodCfg, err := buildKmodConfigResolved(stored, endpointIP, endpointPort, bindIface)
 	if err != nil {
 		return fmt.Errorf("build kmod config: %w", err)
@@ -314,24 +304,14 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 		return fmt.Errorf("kmod add: %w", err)
 	}
 	o.appLog.Full("start", stored.Name, fmt.Sprintf("Adding tunnel to kmod, listen port %d", result.ListenPort))
-	o.appLog.Debug("start", stored.Name, fmt.Sprintf("Kmod proxy %s:%d → 127.0.0.1:%d, bind=%s", endpointIP, endpointPort, result.ListenPort, bindIface))
+	o.appLog.Debug("start", stored.Name, fmt.Sprintf("Kmod proxy %s:%d -> 127.0.0.1:%d, bind=%s", endpointIP, endpointPort, result.ListenPort, bindIface))
 
-	// Set NDMS peer endpoint to proxy address (127.0.0.1:listen_port)
 	proxyEndpoint := fmt.Sprintf("127.0.0.1:%d", result.ListenPort)
-	if _, err := o.ndmc(ctx, fmt.Sprintf("interface %s wireguard peer %s endpoint %s", names.NDMSName, pubkey, proxyEndpoint)); err != nil {
-		_ = o.kmod.RemoveTunnel(stored.ID)
-		return fmt.Errorf("set proxy endpoint: %w", err)
-	}
 
-	// Activate peer (with optional WAN binding)
-	connectCmd := fmt.Sprintf("interface %s wireguard peer %s connect", names.NDMSName, pubkey)
-	if stored.ISPInterface != "" {
-		connectCmd += fmt.Sprintf(" via %s", stored.ISPInterface)
-	}
-	if _, err := o.ndmc(ctx, connectCmd); err != nil {
-		_ = o.kmod.RemoveTunnel(stored.ID)
-		return fmt.Errorf("activate peer: %w", err)
-	}
+	// Batch: set proxy endpoint + connect + up
+	batch := rci.NewBatch()
+	batch.WireguardPeerEndpoint(names.NDMSName, pubkey, proxyEndpoint)
+	batch.WireguardPeerConnect(names.NDMSName, pubkey, stored.ISPInterface)
 
 	// Sync address/MTU from storage
 	if err := o.SyncAddressMTU(ctx, stored); err != nil {
@@ -341,10 +321,11 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 	// Register DNS servers with the router's DNS proxy
 	o.applyDNS(ctx, names.NDMSName, stored)
 
-	// Bring interface up
-	if _, err := o.ndmc(ctx, fmt.Sprintf("interface %s up", names.NDMSName)); err != nil {
+	batch.InterfaceUp(names.NDMSName, true)
+
+	if err := batch.Execute(ctx, o.rci); err != nil {
 		_ = o.kmod.RemoveTunnel(stored.ID)
-		return fmt.Errorf("interface up: %w", err)
+		return fmt.Errorf("start proxy: %w", err)
 	}
 
 	viaInfo := ""
@@ -355,14 +336,17 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 	return nil
 }
 
-// Stop stops a NativeWG tunnel: ndmc down → deactivate peer → kmod remove (proxy only).
+// Stop stops a NativeWG tunnel: interface down -> deactivate peer -> kmod remove (proxy only).
 func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) error {
 	names := NewNWGNames(stored.NWGIndex)
 	pubkey := stored.Peer.PublicKey
 
 	o.appLog.Full("stop", stored.Name, "Interface down, peer deactivated")
-	_, _ = o.ndmc(ctx, fmt.Sprintf("interface %s down", names.NDMSName))
-	_, _ = o.ndmc(ctx, fmt.Sprintf("interface %s wireguard peer %s no connect", names.NDMSName, pubkey))
+
+	batch := rci.NewBatch()
+	batch.InterfaceUp(names.NDMSName, false)
+	batch.WireguardPeerConnect(names.NDMSName, pubkey, "") // reset binding
+	_ = batch.Execute(ctx, o.rci)
 
 	// Clear DNS servers from the router's DNS proxy
 	o.clearDNS(ctx, names.NDMSName, stored)
@@ -389,25 +373,20 @@ func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel
 		_ = o.RemovePingCheck(ctx, stored)
 	}
 
-	// Clear DNS servers before removing the interface
-	// Uses "interface X no ip name-server Y" syntax (matches create-time assignment)
-	if stored.Interface.DNS != "" {
-		for _, dns := range strings.Split(stored.Interface.DNS, ",") {
-			dns = strings.TrimSpace(dns)
-			if dns != "" {
-				_, _ = o.ndmc(ctx, fmt.Sprintf("interface %s no ip name-server %s", names.NDMSName, dns))
-			}
-		}
-	}
-
-	// Remove NDMS interface
+	// Delete interface + save in one batch
 	o.appLog.Full("delete", stored.Name, fmt.Sprintf("Deleting NDMS interface %s", names.NDMSName))
-	if _, err := o.ndmc(ctx, fmt.Sprintf("no interface %s", names.NDMSName)); err != nil {
+
+	batch := rci.NewBatch()
+	// Clear DNS servers before removing the interface
+	if stored.Interface.DNS != "" {
+		batch.InterfaceDNSClear(names.NDMSName)
+	}
+	batch.InterfaceDelete(names.NDMSName)
+	batch.Save()
+
+	if err := batch.Execute(ctx, o.rci); err != nil {
 		return fmt.Errorf("delete interface: %w", err)
 	}
-
-	// Persist
-	_, _ = o.ndmc(ctx, "system configuration save")
 
 	o.log.Infof("nwg: deleted %s", names.NDMSName)
 	return nil
@@ -454,7 +433,12 @@ func parseDNSServers(dns string) []string {
 func (o *OperatorNativeWG) GetState(ctx context.Context, stored *storage.AWGTunnel) tunnel.StateInfo {
 	names := NewNWGNames(stored.NWGIndex)
 
-	rciState, err := o.rci.GetInterfaceState(ctx, names.NDMSName)
+	body, err := o.rci.GetRaw(ctx, "/show/interface/"+names.NDMSName)
+	if err != nil {
+		return tunnel.StateInfo{State: tunnel.StateNotCreated}
+	}
+
+	rciState, err := parseRCIInterfaceResponse(body)
 	if err != nil || !rciState.Exists {
 		return tunnel.StateInfo{State: tunnel.StateNotCreated}
 	}
@@ -478,10 +462,10 @@ func (o *OperatorNativeWG) GetState(ctx context.Context, stored *storage.AWGTunn
 	o.appLog.Debug("state", stored.Name, fmt.Sprintf("RCI state: conf=%s link=%v peer=%v", rciState.ConfLayer, rciState.LinkUp, rciState.PeerOnline))
 
 	// State matrix (simplified — no proxy/kmod tracking needed):
-	//   ConfLayer==running && PeerOnline     → StateRunning
-	//   ConfLayer==running && !PeerOnline    → StateStarting
-	//   ConfLayer==disabled                  → StateStopped
-	//   !Exists                              → StateNotCreated
+	//   ConfLayer==running && PeerOnline     -> StateRunning
+	//   ConfLayer==running && !PeerOnline    -> StateStarting
+	//   ConfLayer==disabled                  -> StateStopped
+	//   !Exists                              -> StateNotCreated
 	switch {
 	case rciState.ConfLayer == "running" && rciState.PeerOnline:
 		info.State = tunnel.StateRunning
@@ -529,7 +513,7 @@ func (o *OperatorNativeWG) GetPingCheckStatus(ctx context.Context, stored *stora
 		// Return exists=false without error so API doesn't break
 		return &ndms.PingCheckStatus{Exists: false}, nil
 	}
-	o.log.Infof("pingcheck: show %s → exists=%v host=%s status=%s", profile, status.Exists, status.Host, status.Status)
+	o.log.Infof("pingcheck: show %s -> exists=%v host=%s status=%s", profile, status.Exists, status.Host, status.Status)
 	return status, nil
 }
 
@@ -556,8 +540,8 @@ func (o *OperatorNativeWG) RestoreKmodTunnel(ctx context.Context, stored *storag
 	// Update NDMS peer endpoint to proxy address
 	names := NewNWGNames(stored.NWGIndex)
 	proxyEndpoint := fmt.Sprintf("127.0.0.1:%d", result.ListenPort)
-	if _, err := o.ndmc(ctx, fmt.Sprintf("interface %s wireguard peer %s endpoint %s",
-		names.NDMSName, stored.Peer.PublicKey, proxyEndpoint)); err != nil {
+	_, err = o.rci.Post(ctx, rci.CmdWireguardPeerEndpoint(names.NDMSName, stored.Peer.PublicKey, proxyEndpoint))
+	if err != nil {
 		o.log.Warnf("nwg: restored kmod but failed to update endpoint to %s: %v", proxyEndpoint, err)
 	}
 
@@ -613,20 +597,30 @@ func (o *OperatorNativeWG) KmodManager() *KmodManager {
 // Returns empty string if no "via" is set (= default routing).
 func (o *OperatorNativeWG) resolveBindIface(ctx context.Context, stored *storage.AWGTunnel) string {
 	names := NewNWGNames(stored.NWGIndex)
-	rciState, err := o.rci.GetInterfaceState(ctx, names.NDMSName)
+
+	body, err := o.rci.GetRaw(ctx, "/show/interface/"+names.NDMSName)
+	if err != nil {
+		return ""
+	}
+	rciState, err := parseRCIInterfaceResponse(body)
 	if err != nil || !rciState.Exists || rciState.PeerVia == "" {
 		return ""
 	}
 	sysName := o.ndms.GetSystemName(ctx, rciState.PeerVia)
-	o.log.Infof("nwg: %s peer via %s → bind %s", names.NDMSName, rciState.PeerVia, sysName)
+	o.log.Infof("nwg: %s peer via %s -> bind %s", names.NDMSName, rciState.PeerVia, sysName)
 	return sysName
 }
 
 // nextFreeIndex finds the next available Wireguard index via RCI.
 func (o *OperatorNativeWG) nextFreeIndex(ctx context.Context) (int, error) {
-	existing, err := o.rci.ListWireguardInterfaces(ctx)
+	body, err := o.rci.GetRaw(ctx, "/show/interface/")
 	if err != nil {
 		return 0, fmt.Errorf("list wireguard interfaces: %w", err)
+	}
+
+	existing, err := parseRCIInterfaceList(body)
+	if err != nil {
+		return 0, fmt.Errorf("parse interface list: %w", err)
 	}
 
 	used := make(map[int]bool)
@@ -689,7 +683,7 @@ func (o *OperatorNativeWG) fallbackResolve(stored *storage.AWGTunnel, resolveErr
 	return stored.ResolvedEndpointIP, port, nil
 }
 
-// resolveEndpointIP parses an endpoint string (host:port) and resolves hostname → IP.
+// resolveEndpointIP parses an endpoint string (host:port) and resolves hostname -> IP.
 func resolveEndpointIP(endpoint string) (string, int, error) {
 	host, portStr, err := net.SplitHostPort(endpoint)
 	if err != nil {
