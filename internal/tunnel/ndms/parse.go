@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/hoaxisr/awg-manager/internal/rci"
 )
 
 // InterfaceInfo holds parsed NDMS "show interface" output.
@@ -101,18 +103,18 @@ func ParseInterfaceInfo(output string) (InterfaceInfo, error) {
 
 // parseInterfaceInfoJSON parses RCI JSON format into InterfaceInfo.
 func parseInterfaceInfoJSON(data string) (InterfaceInfo, error) {
-	var rci rciInterfaceInfo
-	if err := json.Unmarshal([]byte(data), &rci); err != nil {
+	var info rci.InterfaceInfo
+	if err := json.Unmarshal([]byte(data), &info); err != nil {
 		return InterfaceInfo{}, fmt.Errorf("parse JSON: %w", err)
 	}
-	if rci.State == "" {
+	if info.State == "" {
 		return InterfaceInfo{}, fmt.Errorf("no state field found in JSON")
 	}
 	return InterfaceInfo{
-		State:     rci.State,
-		Link:      rci.Link,
-		Connected: rci.Connected == "yes",
-		ConfLayer: rci.Summary.Layer.Conf,
+		State:     info.State,
+		Link:      info.Link,
+		Connected: info.Connected == "yes",
+		ConfLayer: info.Summary.Layer.Conf,
 	}, nil
 }
 

@@ -12,37 +12,26 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/rci"
-	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
-const (
-	defaultTimeout = 10 * time.Second
-)
-
 // ClientImpl is the NDMS client implementation.
 type ClientImpl struct {
-	timeout    time.Duration
-	httpClient *http.Client
-	rci        *rci.Client
+	rci *rci.Client
 }
 
 // New creates a new NDMS client.
 func New() *ClientImpl {
 	return &ClientImpl{
-		timeout:    defaultTimeout,
-		httpClient: &http.Client{Timeout: defaultTimeout, Transport: rci.Transport()},
-		rci:        rci.New(),
+		rci: rci.New(),
 	}
 }
 
 // NewWithTimeout creates a new NDMS client with custom timeout.
 func NewWithTimeout(timeout time.Duration) *ClientImpl {
 	return &ClientImpl{
-		timeout:    timeout,
-		httpClient: &http.Client{Timeout: timeout, Transport: rci.Transport()},
-		rci:        rci.NewWithTimeout(timeout),
+		rci: rci.NewWithTimeout(timeout),
 	}
 }
 
@@ -52,22 +41,11 @@ func RCITransport() *http.Transport {
 	return rci.Transport()
 }
 
-// ndmc executes an NDMS command via ndmc -c.
-func (c *ClientImpl) ndmc(ctx context.Context, command string) (string, error) {
-	result, err := exec.RunWithOptions(ctx, "/bin/ndmc", []string{"-c", command}, exec.Options{
-		Timeout: c.timeout,
-	})
-	if err != nil {
-		return "", fmt.Errorf("ndmc %q: %w", command, exec.FormatError(result, err))
-	}
-	return result.Stdout, nil
-}
-
 // ShowInterface returns raw interface data as JSON string (from RCI).
 // Consumed by ParseInterfaceInfo which auto-detects JSON vs text format.
 func (c *ClientImpl) ShowInterface(ctx context.Context, name string) (string, error) {
-	var raw json.RawMessage
-	if err := rciGet(ctx, c.httpClient, "/show/interface/"+name, &raw); err != nil {
+	raw, err := c.rci.GetRaw(ctx, "/show/interface/"+name)
+	if err != nil {
 		return "", err
 	}
 	return string(raw), nil
@@ -81,7 +59,7 @@ func (c *ClientImpl) CreateOpkgTun(ctx context.Context, name, description string
 	}
 
 	// Create interface + configure all properties in a single RCI call
-	_, err := rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+	_, err := c.rci.Post(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			name: map[string]interface{}{
 				"description":    safeDesc,
@@ -104,7 +82,7 @@ func (c *ClientImpl) DeleteOpkgTun(ctx context.Context, name string) error {
 	_, _ = c.rci.Post(ctx, rci.CmdRemoveDefaultRoute(name))
 
 	// Remove interface via RCI
-	_, _ = rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+	_, _ = c.rci.Post(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			name: map[string]interface{}{"no": true},
 		},
@@ -121,8 +99,8 @@ func (c *ClientImpl) OpkgTunExists(ctx context.Context, name string) bool {
 	if name == "" {
 		return false
 	}
-	var info rciInterfaceInfo
-	if err := rciGet(ctx, c.httpClient, "/show/interface/"+name, &info); err != nil {
+	var info rci.InterfaceInfo
+	if err := c.rci.Get(ctx, "/show/interface/"+name, &info); err != nil {
 		return false
 	}
 	return info.InterfaceName != ""
@@ -133,7 +111,7 @@ func (c *ClientImpl) OpkgTunExists(ctx context.Context, name string) bool {
 // If plain IP, /32 is assumed for point-to-point tunnels.
 func (c *ClientImpl) SetAddress(ctx context.Context, name, address string) error {
 	// Remove old address first
-	_, _ = rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+	_, _ = c.rci.Post(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			name: map[string]interface{}{
 				"ip": map[string]interface{}{
@@ -154,7 +132,7 @@ func (c *ClientImpl) SetAddress(ctx context.Context, name, address string) error
 	mask := net.IP(ipNet.Mask).String()
 
 	// Set new address with separate address + mask (RCI rejects CIDR notation)
-	_, err = rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+	_, err = c.rci.Post(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			name: map[string]interface{}{
 				"ip": map[string]interface{}{
@@ -185,7 +163,7 @@ func (c *ClientImpl) ClearIPv6Address(ctx context.Context, name string) {
 
 // SetMTU sets the MTU of an interface.
 func (c *ClientImpl) SetMTU(ctx context.Context, name string, mtu int) error {
-	_, err := rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+	_, err := c.rci.Post(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			name: map[string]interface{}{
 				"ip": map[string]interface{}{
@@ -214,7 +192,7 @@ func (c *ClientImpl) SetDNS(ctx context.Context, name string, servers []string) 
 		if net.ParseIP(dns) == nil {
 			return fmt.Errorf("invalid DNS server IP: %q", dns)
 		}
-		if _, err := rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+		if _, err := c.rci.Post(ctx, map[string]interface{}{
 			"ip": map[string]interface{}{
 				"name-server": map[string]interface{}{
 					"address":   dns,
@@ -240,7 +218,7 @@ func (c *ClientImpl) ClearDNS(ctx context.Context, name string, servers []string
 			continue
 		}
 		// Best-effort: "no ip name-server" may fail if already removed
-		_, _ = rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+		_, _ = c.rci.Post(ctx, map[string]interface{}{
 			"ip": map[string]interface{}{
 				"name-server": map[string]interface{}{
 					"no":        true,
@@ -259,7 +237,7 @@ func (c *ClientImpl) SetDescription(ctx context.Context, name, description strin
 	if safeDesc == "" {
 		safeDesc = name
 	}
-	_, err := rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+	_, err := c.rci.Post(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			name: map[string]interface{}{
 				"description": safeDesc,
@@ -271,7 +249,7 @@ func (c *ClientImpl) SetDescription(ctx context.Context, name, description strin
 
 // InterfaceUp brings an interface up.
 func (c *ClientImpl) InterfaceUp(ctx context.Context, name string) error {
-	_, err := rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+	_, err := c.rci.Post(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			name: map[string]interface{}{"up": true},
 		},
@@ -281,7 +259,7 @@ func (c *ClientImpl) InterfaceUp(ctx context.Context, name string) error {
 
 // InterfaceDown brings an interface down.
 func (c *ClientImpl) InterfaceDown(ctx context.Context, name string) error {
-	_, err := rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+	_, err := c.rci.Post(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			name: map[string]interface{}{"up": false},
 		},
@@ -358,9 +336,9 @@ func (c *ClientImpl) GetDefaultGatewayInterface(ctx context.Context) (string, er
 }
 
 // getIPv4Routes fetches IPv4 routes from RCI.
-func (c *ClientImpl) getIPv4Routes(ctx context.Context) ([]rciRouteEntry, error) {
-	var routes []rciRouteEntry
-	if err := rciGet(ctx, c.httpClient, "/show/ip/route", &routes); err != nil {
+func (c *ClientImpl) getIPv4Routes(ctx context.Context) ([]rci.RouteEntry, error) {
+	var routes []rci.RouteEntry
+	if err := c.rci.Get(ctx, "/show/ip/route", &routes); err != nil {
 		return nil, fmt.Errorf("show ip route: %w", err)
 	}
 	return routes, nil
@@ -385,8 +363,8 @@ func (c *ClientImpl) DumpIPv4Routes(ctx context.Context) string {
 
 // GetInterfaceAddress returns the IPv4 address and mask of an interface.
 func (c *ClientImpl) GetInterfaceAddress(ctx context.Context, iface string) (string, string, error) {
-	var info rciInterfaceInfo
-	if err := rciGet(ctx, c.httpClient, "/show/interface/"+iface, &info); err != nil {
+	var info rci.InterfaceInfo
+	if err := c.rci.Get(ctx, "/show/interface/"+iface, &info); err != nil {
 		return "", "", fmt.Errorf("show interface %s: %w", iface, err)
 	}
 	if info.Address == "" || info.Mask == "" {
@@ -400,7 +378,7 @@ func (c *ClientImpl) GetInterfaceAddress(ctx context.Context, iface string) (str
 // Returns ndmsName unchanged if the RCI call fails.
 func (c *ClientImpl) GetSystemName(ctx context.Context, ndmsName string) string {
 	var sysName string
-	if err := rciGet(ctx, c.httpClient, "/show/interface/system-name?name="+ndmsName, &sysName); err != nil {
+	if err := c.rci.Get(ctx, "/show/interface/system-name?name="+ndmsName, &sysName); err != nil {
 		return ndmsName
 	}
 	if sysName == "" {
@@ -411,7 +389,7 @@ func (c *ClientImpl) GetSystemName(ctx context.Context, ndmsName string) string 
 
 // Save saves the current configuration.
 func (c *ClientImpl) Save(ctx context.Context) error {
-	_, err := rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+	_, err := c.rci.Post(ctx, map[string]interface{}{
 		"system": map[string]interface{}{
 			"configuration": map[string]interface{}{
 				"save": true,
@@ -427,8 +405,8 @@ func (c *ClientImpl) Save(ctx context.Context) error {
 // Filters by security-level: public (NDMS designation for WAN-facing interfaces)
 // and excludes VPN tunnels via isNonISPInterface.
 func (c *ClientImpl) QueryAllWANInterfaces(ctx context.Context) ([]wan.Interface, error) {
-	var allIfaces map[string]rciInterfaceInfo
-	if err := rciGet(ctx, c.httpClient, "/show/interface/", &allIfaces); err != nil {
+	var allIfaces map[string]rci.InterfaceInfo
+	if err := c.rci.Get(ctx, "/show/interface/", &allIfaces); err != nil {
 		return nil, fmt.Errorf("show interface: %w", err)
 	}
 
@@ -453,8 +431,8 @@ func (c *ClientImpl) QueryAllWANInterfaces(ctx context.Context) ([]wan.Interface
 
 // QueryAllInterfaces returns all router interfaces without security-level filtering.
 func (c *ClientImpl) QueryAllInterfaces(ctx context.Context) ([]AllInterface, error) {
-	var allIfaces map[string]rciInterfaceInfo
-	if err := rciGet(ctx, c.httpClient, "/show/interface/", &allIfaces); err != nil {
+	var allIfaces map[string]rci.InterfaceInfo
+	if err := c.rci.Get(ctx, "/show/interface/", &allIfaces); err != nil {
 		return nil, fmt.Errorf("show interface: %w", err)
 	}
 
@@ -524,8 +502,8 @@ func allInterfaceLabel(ifaceType, name, description string) string {
 
 // HasWANIPv6 checks if a WAN interface has a global IPv6 address (ipv6 layer == "running").
 func (c *ClientImpl) HasWANIPv6(ctx context.Context, ifaceName string) bool {
-	var info rciInterfaceInfo
-	if err := rciGet(ctx, c.httpClient, "/show/interface/"+ifaceName, &info); err != nil {
+	var info rci.InterfaceInfo
+	if err := c.rci.Get(ctx, "/show/interface/"+ifaceName, &info); err != nil {
 		return false
 	}
 	return info.Summary.Layer.IPv6 == "running"
@@ -585,8 +563,8 @@ func wanInterfaceLabel(ifaceType, name, description string) string {
 
 // GetHotspotClients returns LAN devices from the router's hotspot table.
 func (c *ClientImpl) GetHotspotClients(ctx context.Context) ([]HotspotClient, error) {
-	var resp rciHotspotResponse
-	if err := rciGet(ctx, c.httpClient, "/show/ip/hotspot", &resp); err != nil {
+	var resp rci.HotspotResponse
+	if err := c.rci.Get(ctx, "/show/ip/hotspot", &resp); err != nil {
 		return nil, fmt.Errorf("show ip hotspot: %w", err)
 	}
 
@@ -641,16 +619,16 @@ func isNonISPInterface(name string) bool {
 
 // RCIPost sends a JSON payload to RCI via HTTP POST.
 func (c *ClientImpl) RCIPost(ctx context.Context, payload interface{}) (json.RawMessage, error) {
-	return rciPost(ctx, c.httpClient, "/", payload)
+	return c.rci.Post(ctx, payload)
 }
 
 // RCIGet performs an HTTP GET to an RCI path and returns raw JSON.
 func (c *ClientImpl) RCIGet(ctx context.Context, path string) (json.RawMessage, error) {
-	var raw json.RawMessage
-	if err := rciGet(ctx, c.httpClient, path, &raw); err != nil {
+	raw, err := c.rci.GetRaw(ctx, path)
+	if err != nil {
 		return nil, err
 	}
-	return raw, nil
+	return json.RawMessage(raw), nil
 }
 
 // ShowObjectGroupFQDN returns all FQDN object groups from the router.
@@ -667,7 +645,7 @@ func (c *ClientImpl) ShowObjectGroupFQDN(ctx context.Context) ([]ObjectGroupFQDN
 			} `json:"excluded-fqdns"`
 		} `json:"group"`
 	}
-	if err := rciGet(ctx, c.httpClient, "/show/object-group/fqdn", &raw); err != nil {
+	if err := c.rci.Get(ctx, "/show/object-group/fqdn", &raw); err != nil {
 		return nil, err
 	}
 
@@ -688,7 +666,7 @@ func (c *ClientImpl) ShowObjectGroupFQDN(ctx context.Context) ([]ObjectGroupFQDN
 // ShowDnsProxyRoute returns all dns-proxy route entries.
 func (c *ClientImpl) ShowDnsProxyRoute(ctx context.Context) ([]DnsProxyRoute, error) {
 	var routes []DnsProxyRoute
-	if err := rciGet(ctx, c.httpClient, "/show/rc/dns-proxy/route", &routes); err != nil {
+	if err := c.rci.Get(ctx, "/show/rc/dns-proxy/route", &routes); err != nil {
 		return nil, err
 	}
 	return routes, nil
@@ -698,8 +676,8 @@ func (c *ClientImpl) ShowDnsProxyRoute(ctx context.Context) ([]DnsProxyRoute, er
 // with tunnel-like types: Wireguard, Proxy (SSTP/L2TP/PPTP), OpkgTun.
 // These are interfaces that can be used as DNS route targets.
 func (c *ClientImpl) ListWireguardInterfaces(ctx context.Context) ([]WireguardInterfaceInfo, error) {
-	var allIfaces map[string]rciInterfaceInfo
-	if err := rciGet(ctx, c.httpClient, "/show/interface/", &allIfaces); err != nil {
+	var allIfaces map[string]rci.InterfaceInfo
+	if err := c.rci.Get(ctx, "/show/interface/", &allIfaces); err != nil {
 		return nil, err
 	}
 
@@ -725,7 +703,7 @@ func (c *ClientImpl) ListWireguardInterfaces(ctx context.Context) ([]WireguardIn
 func (c *ClientImpl) ListSystemWireguardTunnels(ctx context.Context) ([]SystemWireguardTunnel, error) {
 	// RCI /show/interface/ returns map[string]json.RawMessage
 	var allIfaces map[string]json.RawMessage
-	if err := rciGet(ctx, c.httpClient, "/show/interface/", &allIfaces); err != nil {
+	if err := c.rci.Get(ctx, "/show/interface/", &allIfaces); err != nil {
 		return nil, fmt.Errorf("list system wireguard: %w", err)
 	}
 
@@ -771,7 +749,7 @@ func (c *ClientImpl) GetSystemWireguardTunnel(ctx context.Context, name string) 
 	}
 
 	var detail rciWireguardDetail
-	if err := rciGet(ctx, c.httpClient, "/show/interface/"+name, &detail); err != nil {
+	if err := c.rci.Get(ctx, "/show/interface/"+name, &detail); err != nil {
 		return nil, fmt.Errorf("get system wireguard %s: %w", name, err)
 	}
 
@@ -787,7 +765,7 @@ func (c *ClientImpl) GetWireguardServer(ctx context.Context, name string) (*Wire
 	}
 
 	var detail rciWireguardDetail
-	if err := rciGet(ctx, c.httpClient, "/show/interface/"+name, &detail); err != nil {
+	if err := c.rci.Get(ctx, "/show/interface/"+name, &detail); err != nil {
 		return nil, fmt.Errorf("get wireguard server %s: %w", name, err)
 	}
 
@@ -804,7 +782,7 @@ func (c *ClientImpl) GetWireguardServerConfig(ctx context.Context, name string) 
 
 	// Get runtime data for public key
 	var detail rciWireguardDetail
-	if err := rciGet(ctx, c.httpClient, "/show/interface/"+name, &detail); err != nil {
+	if err := c.rci.Get(ctx, "/show/interface/"+name, &detail); err != nil {
 		return nil, fmt.Errorf("get wireguard server %s: %w", name, err)
 	}
 
@@ -815,7 +793,7 @@ func (c *ClientImpl) GetWireguardServerConfig(ctx context.Context, name string) 
 
 	// Get RC config for peer details (preshared keys, allowed IPs)
 	var rc rciRCInterface
-	if err := rciGet(ctx, c.httpClient, "/show/rc/interface/"+name, &rc); err != nil {
+	if err := c.rci.Get(ctx, "/show/rc/interface/"+name, &rc); err != nil {
 		return nil, fmt.Errorf("get wireguard server config %s: %w", name, err)
 	}
 
@@ -826,7 +804,7 @@ func (c *ClientImpl) GetWireguardServerConfig(ctx context.Context, name string) 
 // ListAllWireguardServers returns all WireGuard interfaces as server views (with all peers).
 func (c *ClientImpl) ListAllWireguardServers(ctx context.Context) ([]WireguardServer, error) {
 	var allIfaces map[string]json.RawMessage
-	if err := rciGet(ctx, c.httpClient, "/show/interface/", &allIfaces); err != nil {
+	if err := c.rci.Get(ctx, "/show/interface/", &allIfaces); err != nil {
 		return nil, fmt.Errorf("list wireguard servers: %w", err)
 	}
 
@@ -860,7 +838,7 @@ func (c *ClientImpl) ListAllWireguardServers(ctx context.Context) ([]WireguardSe
 	// One RCI call per server — acceptable since list is small (1-3 servers).
 	for i := range servers {
 		var rc rciRCInterface
-		if err := rciGet(ctx, c.httpClient, "/show/rc/interface/"+servers[i].ID, &rc); err != nil {
+		if err := c.rci.Get(ctx, "/show/rc/interface/"+servers[i].ID, &rc); err != nil {
 			continue
 		}
 		if rc.Wireguard == nil {
@@ -900,7 +878,7 @@ func (c *ClientImpl) GetASCParams(ctx context.Context, name string) (json.RawMes
 
 	var raw map[string]string
 	path := "/show/rc/interface/" + name + "/wireguard/asc"
-	if err := rciGet(ctx, c.httpClient, path, &raw); err != nil {
+	if err := c.rci.Get(ctx, path, &raw); err != nil {
 		return nil, fmt.Errorf("get ASC params %s: %w", name, err)
 	}
 
@@ -988,7 +966,7 @@ func (c *ClientImpl) SetASCParams(ctx context.Context, name string, params json.
 		ascPayload["h4"] = p.H4
 	}
 
-	if _, err := rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+	if _, err := c.rci.Post(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			name: map[string]interface{}{
 				"wireguard": map[string]interface{}{
@@ -1006,7 +984,7 @@ func (c *ClientImpl) SetASCParams(ctx context.Context, name string, params json.
 // FindFreeWireguardIndex returns the next free WireguardN index.
 func (c *ClientImpl) FindFreeWireguardIndex(ctx context.Context) (int, error) {
 	var allIfaces map[string]json.RawMessage
-	if err := rciGet(ctx, c.httpClient, "/show/interface/", &allIfaces); err != nil {
+	if err := c.rci.Get(ctx, "/show/interface/", &allIfaces); err != nil {
 		return 0, fmt.Errorf("list interfaces: %w", err)
 	}
 
@@ -1059,7 +1037,7 @@ func (c *ClientImpl) ConfigurePingCheck(ctx context.Context, profile, ifaceName 
 	}
 
 	// Create profile + set all params in one RCI call
-	if _, err := rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+	if _, err := c.rci.Post(ctx, map[string]interface{}{
 		"ping-check": map[string]interface{}{
 			"profile": map[string]interface{}{
 				profile: profileCfg,
@@ -1070,7 +1048,7 @@ func (c *ClientImpl) ConfigurePingCheck(ctx context.Context, profile, ifaceName 
 	}
 
 	// Bind to interface + set restart in one RCI call
-	if _, err := rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+	if _, err := c.rci.Post(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			ifaceName: map[string]interface{}{
 				"ping-check": map[string]interface{}{
@@ -1099,7 +1077,7 @@ func (c *ClientImpl) RemovePingCheck(ctx context.Context, profile, ifaceName str
 // removePingCheckRCI removes restart + unbinds profile + deletes profile via RCI.
 func (c *ClientImpl) removePingCheckRCI(ctx context.Context, profile, ifaceName string) {
 	// Disable restart first (must happen before profile unbind)
-	_, _ = rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+	_, _ = c.rci.Post(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			ifaceName: map[string]interface{}{
 				"ping-check": map[string]interface{}{
@@ -1109,7 +1087,7 @@ func (c *ClientImpl) removePingCheckRCI(ctx context.Context, profile, ifaceName 
 		},
 	})
 	// Unbind profile from interface
-	_, _ = rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+	_, _ = c.rci.Post(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			ifaceName: map[string]interface{}{
 				"ping-check": map[string]interface{}{
@@ -1119,7 +1097,7 @@ func (c *ClientImpl) removePingCheckRCI(ctx context.Context, profile, ifaceName 
 		},
 	})
 	// Delete profile
-	_, _ = rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+	_, _ = c.rci.Post(ctx, map[string]interface{}{
 		"ping-check": map[string]interface{}{
 			"profile": map[string]interface{}{
 				profile: map[string]interface{}{"no": true},
@@ -1130,7 +1108,7 @@ func (c *ClientImpl) removePingCheckRCI(ctx context.Context, profile, ifaceName 
 
 // rciSave saves configuration via RCI.
 func (c *ClientImpl) rciSave(ctx context.Context) {
-	_, _ = rciPost(ctx, c.httpClient, "/", map[string]interface{}{
+	_, _ = c.rci.Post(ctx, map[string]interface{}{
 		"system": map[string]interface{}{
 			"configuration": map[string]interface{}{
 				"save": true,
@@ -1142,8 +1120,8 @@ func (c *ClientImpl) rciSave(ctx context.Context) {
 // ShowPingCheck returns the current status of a ping-check profile.
 // Queries /show/ping-check/ (list all) and finds the matching profile.
 func (c *ClientImpl) ShowPingCheck(ctx context.Context, profile string) (*PingCheckStatus, error) {
-	var resp rciPingCheckListResponse
-	if err := rciGet(ctx, c.httpClient, "/show/ping-check/", &resp); err != nil {
+	var resp rci.PingCheckListResponse
+	if err := c.rci.Get(ctx, "/show/ping-check/", &resp); err != nil {
 		return &PingCheckStatus{Exists: false}, nil
 	}
 
