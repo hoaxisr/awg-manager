@@ -780,11 +780,11 @@ func splitAddresses(address string) (ipv4, ipv6 string) {
 
 // writeConfigFileForStart generates and writes the WireGuard config file for tunnel start.
 // When hasIPv6 is false, ::/0 is filtered from AllowedIPs.
-func (s *ServiceImpl) writeConfigFileForStart(stored *storage.AWGTunnel, hasIPv6 bool) error {
+func (s *ServiceImpl) writeConfigFileForStart(stored *storage.AWGTunnel) error {
 	if err := os.MkdirAll(confDir, 0755); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
-	content := config.GenerateForStart(stored, hasIPv6)
+	content := config.Generate(stored)
 	confPath := filepath.Join(confDir, stored.ID+".conf")
 	if err := os.WriteFile(confPath, []byte(content), 0600); err != nil {
 		return fmt.Errorf("write config file: %w", err)
