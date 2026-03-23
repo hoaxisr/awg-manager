@@ -4,14 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
-	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 )
 
@@ -21,15 +17,20 @@ import (
 // Safe to call on boot — operator only applies NDMS config when OpkgTun
 // was just created (import flow), not on every start.
 func (s *ServiceImpl) Start(ctx context.Context, tunnelID string) error {
-	s.clearReconcileLoop(tunnelID) // reset loop detection on manual start
-	s.suppressReconcile(tunnelID)
+	// NativeWG: own lifecycle (not covered by lifecycle.Manager).
+	if s.isNativeWGByID(tunnelID) {
+		s.clearReconcileLoop(tunnelID)
+		s.beginOperation(tunnelID)
+		defer s.endOperation(tunnelID)
+		s.lockTunnel(tunnelID)
+		defer s.unlockTunnel(tunnelID)
+		return s.startInternal(ctx, tunnelID)
+	}
+
+	// Kernel: delegate to lifecycle Manager.
 	s.setLifecycleOp(tunnelID, tunnel.StateStarting)
 	defer s.clearLifecycleOp(tunnelID)
-
-	s.lockTunnel(tunnelID)
-	defer s.unlockTunnel(tunnelID)
-
-	return s.startInternal(ctx, tunnelID)
+	return s.lifecycleManager.HandleAPIStart(ctx, tunnelID)
 }
 
 // startInternal starts a tunnel (assumes lock is held).
@@ -130,8 +131,8 @@ func (s *ServiceImpl) startInternal(ctx context.Context, tunnelID string) error 
 		return fmt.Errorf("start %s: %w", tunnelID, err)
 	}
 
-	// Start tunnel
-	if err := s.legacyOperator.Start(ctx, cfg); err != nil {
+	// ColdStart tunnel (full creation from scratch).
+	if err := s.legacyOperator.ColdStart(ctx, cfg); err != nil {
 		s.appLog.Warn("start", tunnelID, "Failed to start: "+err.Error())
 		return err
 	}
@@ -157,7 +158,67 @@ func (s *ServiceImpl) startInternal(ctx context.Context, tunnelID string) error 
 	s.logInfo("start", tunnelID, "Tunnel started")
 	s.appLog.Info("start", tunnelID, "Tunnel started")
 
-	if s.reconcileHooks != nil {
+	// PingCheck monitoring: for kernel tunnels with lifecycleManager,
+	// the Manager calls notifyTunnelRunning. For NativeWG, use reconcileHooks.
+	if s.reconcileHooks != nil && (s.lifecycleManager == nil || s.isNativeWG(stored)) {
+		s.reconcileHooks.OnReconcileStart(tunnelID, stored.Name)
+	}
+
+	return nil
+}
+
+// startLightInternal brings up an existing amneziawg interface (after our Stop).
+// Interface exists with address and WG config — just resolve WAN, link up, routes.
+func (s *ServiceImpl) startLightInternal(ctx context.Context, tunnelID string) error {
+	stored, err := s.store.Get(tunnelID)
+	if err != nil {
+		return tunnel.ErrNotFound
+	}
+
+	// Resolve WAN interface (needed for endpoint route).
+	resolvedWAN, err := s.resolveWAN(ctx, stored.ISPInterface)
+	if err != nil {
+		return fmt.Errorf("resolve WAN: %w", err)
+	}
+
+	// Build config (light — no config file write needed, WG config already loaded).
+	cfg := s.storedToConfig(stored)
+	cfg.ISPInterface = resolvedWAN
+	cfg.KernelDevice = s.resolveKernelDevice(resolvedWAN)
+	cfg.DefaultRoute = stored.DefaultRoute
+	cfg.Endpoint = stored.Peer.Endpoint
+	if ip, err := netutil.ResolveEndpointIP(stored.Peer.Endpoint); err == nil {
+		cfg.EndpointIP = ip
+	}
+
+	// Light start: ip link set up + InterfaceUp + routes + firewall.
+	if err := s.legacyOperator.Start(ctx, cfg); err != nil {
+		s.appLog.Warn("start", tunnelID, "Failed to start (light): "+err.Error())
+		return err
+	}
+
+	// Notify hook services.
+	names := tunnel.NewNames(tunnelID)
+	s.fireStartHooks(ctx, tunnelID, names.IfaceName)
+
+	// Persist state.
+	stored.ActiveWAN = resolvedWAN
+	stored.StartedAt = time.Now().UTC().Format(time.RFC3339)
+	if ip := s.legacyOperator.GetTrackedEndpointIP(tunnelID); ip != "" {
+		stored.ResolvedEndpointIP = ip
+	}
+	if stored.PingCheck != nil && stored.PingCheck.IsDeadByMonitoring {
+		stored.PingCheck.IsDeadByMonitoring = false
+		stored.PingCheck.DeadSince = nil
+	}
+	if err := s.store.Save(stored); err != nil {
+		s.logWarn("save", stored.ID, "Failed to persist state: "+err.Error())
+	}
+
+	s.logInfo("start-light", tunnelID, "Tunnel started (existing interface)")
+	s.appLog.Info("start", tunnelID, "Tunnel started")
+
+	if s.reconcileHooks != nil && (s.lifecycleManager == nil || s.isNativeWG(stored)) {
 		s.reconcileHooks.OnReconcileStart(tunnelID, stored.Name)
 	}
 
@@ -246,7 +307,7 @@ func (s *ServiceImpl) reconcileInternal(ctx context.Context, tunnelID string) er
 
 	s.logInfo("reconcile", tunnelID, "Tunnel reconciled")
 
-	if s.reconcileHooks != nil {
+	if s.reconcileHooks != nil && (s.lifecycleManager == nil || s.isNativeWG(stored)) {
 		s.reconcileHooks.OnReconcileStart(tunnelID, stored.Name)
 	}
 
@@ -255,12 +316,18 @@ func (s *ServiceImpl) reconcileInternal(ctx context.Context, tunnelID string) er
 
 // Stop stops a tunnel.
 func (s *ServiceImpl) Stop(ctx context.Context, tunnelID string) error {
-	s.clearReconcileLoop(tunnelID) // reset loop detection on manual stop
-	s.suppressReconcile(tunnelID)
-	s.lockTunnel(tunnelID)
-	defer s.unlockTunnel(tunnelID)
+	// NativeWG: own lifecycle.
+	if s.isNativeWGByID(tunnelID) {
+		s.clearReconcileLoop(tunnelID)
+		s.beginOperation(tunnelID)
+		defer s.endOperation(tunnelID)
+		s.lockTunnel(tunnelID)
+		defer s.unlockTunnel(tunnelID)
+		return s.stopInternal(ctx, tunnelID)
+	}
 
-	return s.stopInternal(ctx, tunnelID)
+	// Kernel: delegate to lifecycle Manager.
+	return s.lifecycleManager.HandleAPIStop(ctx, tunnelID)
 }
 
 // stopInternal stops a tunnel (assumes lock is held).
@@ -336,119 +403,6 @@ func (s *ServiceImpl) stopInternal(ctx context.Context, tunnelID string) error {
 	return nil
 }
 
-// startNativeWG starts a NativeWG tunnel (assumes lock is held).
-func (s *ServiceImpl) startNativeWG(ctx context.Context, stored *storage.AWGTunnel) error {
-	if s.nwgOperator == nil {
-		return fmt.Errorf("NativeWG backend not available")
-	}
-
-	// Check current state
-	stateInfo := s.nwgOperator.GetState(ctx, stored)
-	if stateInfo.State == tunnel.StateRunning {
-		s.clearDeadFlag(stored.ID)
-		s.appLog.Debug("start", stored.ID, "Already running, skipping")
-		return tunnel.ErrAlreadyRunning
-	}
-
-	// Start via NativeWG operator
-	if err := s.nwgOperator.Start(ctx, stored); err != nil {
-		s.appLog.Warn("start", stored.ID, "Failed to start NativeWG: "+err.Error())
-		return err
-	}
-
-	// Configure NDMS native ping-check if enabled
-	if stored.PingCheck != nil && stored.PingCheck.Enabled {
-		minSuccess := stored.PingCheck.MinSuccess
-		if minSuccess == 0 {
-			minSuccess = 1
-		}
-		pcCfg := ndms.PingCheckConfig{
-			Host:           stored.PingCheck.Target,
-			Mode:           stored.PingCheck.Method,
-			MinSuccess:     minSuccess,
-			UpdateInterval: stored.PingCheck.Interval,
-			MaxFails:       stored.PingCheck.FailThreshold,
-			Timeout:        stored.PingCheck.Timeout,
-			Port:           stored.PingCheck.Port,
-			Restart:        stored.PingCheck.Restart,
-		}
-		if err := s.nwgOperator.ConfigurePingCheck(ctx, stored, pcCfg); err != nil {
-			s.logWarn("start", stored.ID, "Failed to configure NWG ping-check: "+err.Error())
-		}
-	}
-
-	// Fire hooks (policy, DNS route, static route)
-	names := nwg.NewNWGNames(stored.NWGIndex)
-	s.fireStartHooks(ctx, stored.ID, names.IfaceName)
-
-	// Persist state
-	stored.StartedAt = time.Now().UTC().Format(time.RFC3339)
-	if stored.PingCheck != nil && stored.PingCheck.IsDeadByMonitoring {
-		stored.PingCheck.IsDeadByMonitoring = false
-		stored.PingCheck.DeadSince = nil
-	}
-	if err := s.store.Save(stored); err != nil {
-		s.logWarn("save", stored.ID, "Failed to persist state: "+err.Error())
-	}
-
-	s.logInfo("start", stored.ID, "NativeWG tunnel started")
-	s.appLog.Info("start", stored.ID, "NativeWG tunnel started")
-
-	if s.reconcileHooks != nil {
-		s.reconcileHooks.OnReconcileStart(stored.ID, stored.Name)
-	}
-
-	return nil
-}
-
-// stopNativeWG stops a NativeWG tunnel (assumes lock is held).
-func (s *ServiceImpl) stopNativeWG(ctx context.Context, stored *storage.AWGTunnel) error {
-	if s.nwgOperator == nil {
-		return fmt.Errorf("NativeWG backend not available")
-	}
-
-	// Check current state
-	stateInfo := s.nwgOperator.GetState(ctx, stored)
-	switch stateInfo.State {
-	case tunnel.StateStopped, tunnel.StateNotCreated, tunnel.StateDisabled:
-		return tunnel.ErrNotRunning
-	}
-
-	// Notify PingCheck before stopping
-	if s.reconcileHooks != nil {
-		s.reconcileHooks.OnReconcileStop(stored.ID)
-	}
-
-	// Remove NDMS native ping-check profile (only if it was configured)
-	if stored.PingCheck != nil && stored.PingCheck.Enabled {
-		if err := s.nwgOperator.RemovePingCheck(ctx, stored); err != nil {
-			s.logWarn("stop", stored.ID, "Failed to remove NWG ping-check: "+err.Error())
-		}
-	}
-
-	// Stop via NativeWG operator
-	if err := s.nwgOperator.Stop(ctx, stored); err != nil {
-		s.appLog.Warn("stop", stored.ID, "Failed to stop NativeWG: "+err.Error())
-		return err
-	}
-
-	// Fire stop hooks
-	s.fireStopHooks(ctx, stored.ID)
-
-	// Clear runtime state
-	stored.ActiveWAN = ""
-	stored.StartedAt = ""
-	if stored.PingCheck != nil && stored.PingCheck.IsDeadByMonitoring {
-		stored.PingCheck.IsDeadByMonitoring = false
-		stored.PingCheck.DeadSince = nil
-	}
-	_ = s.store.Save(stored)
-
-	s.logInfo("stop", stored.ID, "NativeWG tunnel stopped")
-	s.appLog.Info("stop", stored.ID, "NativeWG tunnel stopped")
-	return nil
-}
-
 // fireStartHooks notifies all hook services about a tunnel start.
 func (s *ServiceImpl) fireStartHooks(ctx context.Context, tunnelID, ifaceName string) {
 	if s.dnsRouteHooks != nil {
@@ -474,19 +428,18 @@ func (s *ServiceImpl) fireStopHooks(ctx context.Context, tunnelID string) {
 
 // Restart stops and starts a tunnel.
 func (s *ServiceImpl) Restart(ctx context.Context, tunnelID string) error {
-	s.suppressReconcile(tunnelID)
-	s.lockTunnel(tunnelID)
-	defer s.unlockTunnel(tunnelID)
+	// NativeWG: own lifecycle.
+	if s.isNativeWGByID(tunnelID) {
+		s.beginOperation(tunnelID)
+		defer s.endOperation(tunnelID)
+		s.lockTunnel(tunnelID)
+		defer s.unlockTunnel(tunnelID)
 
-	stored, err := s.store.Get(tunnelID)
-	if err != nil {
-		return tunnel.ErrNotFound
-	}
-
-	if s.isNativeWG(stored) {
-		// NativeWG: Stop + Start
+		stored, err := s.store.Get(tunnelID)
+		if err != nil {
+			return tunnel.ErrNotFound
+		}
 		_ = s.stopNativeWG(ctx, stored)
-		// Re-read stored after stop (it may have modified fields)
 		stored, err = s.store.Get(tunnelID)
 		if err != nil {
 			return tunnel.ErrNotFound
@@ -500,31 +453,17 @@ func (s *ServiceImpl) Restart(ctx context.Context, tunnelID string) error {
 		return nil
 	}
 
-	// === Kernel path ===
-
-	// Stop if process might be alive (ignore errors if not running)
-	stateInfo := s.state.GetState(ctx, tunnelID)
-	if stateInfo.State == tunnel.StateRunning || stateInfo.State == tunnel.StateBroken ||
-		stateInfo.State == tunnel.StateNeedsStop || stateInfo.State == tunnel.StateStarting {
-		if err := s.legacyOperator.Stop(ctx, tunnelID); err != nil {
-			s.logWarn("restart", tunnelID, "Stop failed: "+err.Error())
-		}
-	}
-
-	// Start
-	if err := s.startInternal(ctx, tunnelID); err != nil {
-		s.appLog.Warn("restart", tunnelID, "Failed to restart: "+err.Error())
-		return fmt.Errorf("restart start: %w", err)
-	}
-
-	s.logInfo("restart", tunnelID, "Tunnel restarted")
-	s.appLog.Info("restart", tunnelID, "Tunnel restarted")
-	return nil
+	// Kernel: delegate to lifecycle Manager.
+	s.setLifecycleOp(tunnelID, tunnel.StateStarting)
+	defer s.clearLifecycleOp(tunnelID)
+	return s.lifecycleManager.HandleAPIRestart(ctx, tunnelID)
 }
 
 // Delete stops (if running) and deletes a tunnel.
 func (s *ServiceImpl) Delete(ctx context.Context, tunnelID string) error {
 	s.suppressReconcile(tunnelID)
+	s.beginOperation(tunnelID)
+	defer s.endOperation(tunnelID)
 	s.lockTunnel(tunnelID)
 	defer func() {
 		s.unlockTunnel(tunnelID)
@@ -562,38 +501,6 @@ func (s *ServiceImpl) Delete(ctx context.Context, tunnelID string) error {
 	}
 
 	s.logInfo("delete", tunnelID, "Tunnel deleted")
-	s.appLog.Info("delete", tunnelID, "Tunnel deleted")
-	return nil
-}
-
-// deleteNativeWG deletes a NativeWG tunnel (assumes lock is held).
-func (s *ServiceImpl) deleteNativeWG(ctx context.Context, tunnelID string) error {
-	stored, err := s.store.Get(tunnelID)
-	if err != nil {
-		return tunnel.ErrNotFound
-	}
-
-	// Fire pre-delete hooks
-	s.fireDeleteHooks(ctx, tunnelID)
-
-	// Delete via NativeWG operator (handles stop if running)
-	if s.nwgOperator != nil {
-		if err := s.nwgOperator.Delete(ctx, stored); err != nil {
-			s.appLog.Warn("delete", tunnelID, "Failed to delete NativeWG: "+err.Error())
-			return err
-		}
-	}
-
-	// Delete config file
-	confPath := filepath.Join(confDir, tunnelID+".conf")
-	_ = os.Remove(confPath)
-
-	// Delete from storage
-	if err := s.store.Delete(tunnelID); err != nil {
-		return fmt.Errorf("delete from storage: %w", err)
-	}
-
-	s.logInfo("delete", tunnelID, "NativeWG tunnel deleted")
 	s.appLog.Info("delete", tunnelID, "Tunnel deleted")
 	return nil
 }

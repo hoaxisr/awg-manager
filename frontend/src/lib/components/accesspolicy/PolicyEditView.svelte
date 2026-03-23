@@ -19,6 +19,8 @@
 	let description = $state('');
 	let localInterfaces = $state<import('$lib/types').AccessPolicyInterface[]>([]);
 	let dragOver = $state(false);
+	const VALID_PATTERN = /^[a-zA-Z0-9_-]*$/;
+	const MAX_LEN = 256;
 
 	$effect(() => {
 		description = policy.description;
@@ -26,9 +28,15 @@
 	});
 
 	let assignedDevices = $derived(devices.filter((d) => d.policy === policy.name));
+	let descriptionValid = $derived(description.trim().length > 0 && description.trim().length <= MAX_LEN && VALID_PATTERN.test(description.trim()));
 
 	async function saveDescription() {
 		if (description.trim() === policy.description) return;
+		if (!descriptionValid) {
+			notifications.error('Описание: только латинские буквы, цифры, дефисы и подчёркивания');
+			description = policy.description;
+			return;
+		}
 		try {
 			await api.setAccessPolicyDescription(policy.name, description.trim());
 			onupdate();
@@ -122,13 +130,17 @@
 		</button>
 
 		<div class="field-group">
-			<label class="field-label">Описание</label>
-			<input
-				type="text"
-				class="field-input"
-				bind:value={description}
-				onblur={saveDescription}
-			/>
+			<label class="field-label">Описание
+				<input
+					type="text"
+					class="field-input"
+					bind:value={description}
+					onblur={saveDescription}
+					maxlength={MAX_LEN}
+					pattern="[a-zA-Z0-9_-]+"
+				/>
+				<span class="field-hint">Латинские буквы, цифры, дефисы, подчёркивания</span>
+			</label>
 		</div>
 
 		<Toggle
@@ -250,6 +262,11 @@
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
+	}
+
+	.field-hint {
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 	}
 
 	.field-label {

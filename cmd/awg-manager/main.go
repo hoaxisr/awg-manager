@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -43,6 +42,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ops"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/lifecycle"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/state"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
@@ -59,8 +59,6 @@ const (
 // version is set via ldflags at build time
 var version = "dev"
 
-// bootInProgress is set to 1 during boot initialization, 0 when done.
-var bootInProgress int32
 
 func main() {
 	dataDir := flag.String("data-dir", defaultDataDir, "Data directory path")
@@ -168,6 +166,11 @@ func main() {
 	// Create the main tunnel service
 	tunnelService := service.New(awgStore, nwgOp, operator, stateMgr, log, wanModel, loggingService)
 
+	// Create lifecycle Manager — single point of decision-making for kernel tunnels.
+	lifecycleMgr := lifecycle.NewManager(operator, awgStore, stateMgr, wanModel, tunnelService.TunnelLocks(), log, loggingService)
+	lifecycleMgr.SetExecutor(tunnelService)
+	tunnelService.SetLifecycleManager(lifecycleMgr)
+
 	// Migrate legacy ISPInterface="none" to "" (auto) for tunnels from older versions.
 	tunnelService.MigrateISPInterfaceNone()
 	tunnelService.MigrateEmptyBackend()
@@ -222,6 +225,11 @@ func main() {
 
 	// Unified facade: kernel → custom loop, NativeWG → NDMS native
 	pingCheckFacade := pingcheck.NewFacade(pingCheckService, awgStore, settingsStore, nwgOp)
+
+	// Wire lifecycle Manager callback: start PingCheck monitoring when tunnel enters Running.
+	lifecycleMgr.SetOnTunnelRunning(func(tunnelID, tunnelName string) {
+		pingCheckFacade.StartMonitoring(tunnelID, tunnelName)
+	})
 
 	// Wire reconcile hooks so NeedsStop pauses PingCheck, NeedsStart resumes it
 	tunnelService.SetReconcileHooks(&pingCheckReconcileHooks{pc: pingCheckFacade})
@@ -368,14 +376,12 @@ func main() {
 	const bootDetectionMax = 300 // 5 minutes
 	isBoot := (uptime > 0 && uptime < bootDetectionMax) || *forceBoot
 	if isBoot {
-		atomic.StoreInt32(&bootInProgress, 1)
-		srv.SetBootStatusFunc(func() bool { return atomic.LoadInt32(&bootInProgress) == 1 })
+		srv.SetBootStatusFunc(func() bool { return lifecycleMgr.IsBootInProgress() })
 
 		bootLog.Info("startup", "",
 			fmt.Sprintf("Boot detected (uptime %ds), starting tunnels", int(uptime)))
 
 		go func() {
-			defer atomic.StoreInt32(&bootInProgress, 0)
 
 			// Wait for NDMS to fully initialize OpkgTun interface subsystem.
 			// Without this delay, kernel tunnels enter start/stop loops because
@@ -393,7 +399,7 @@ func main() {
 			}
 
 			// Clean up stale userspace PID files (kernel doesn't need cleanup —
-			// forceRestartTunnels handles it via Stop+Start).
+			// bootTunnels handles it via lifecycle-based Start).
 			if backendImpl.Type() != backend.TypeKernel {
 				cleanupStaleUserspaceState(log)
 			}
@@ -409,9 +415,14 @@ func main() {
 			if _, err := ndmsClient.GetDefaultGatewayInterface(shutdownCtx); err != nil {
 				bootLog.Info("startup", "",
 					"WAN down at boot — waiting for WAN UP event")
-				tunnelService.HandleWANDown(shutdownCtx, "")
+				lifecycleMgr.HandleWANDown(shutdownCtx, "")
 			} else {
-				forceRestartTunnels(shutdownCtx, tunnelService, awgStore, nwgOp, tunnelBootLog, log)
+				// Kernel tunnels: lifecycle Manager handles boot.
+				lifecycleMgr.HandleBoot(shutdownCtx)
+
+				// NativeWG tunnels: separate boot logic (not covered by lifecycle Manager).
+				bootNativeWGTunnels(shutdownCtx, tunnelService, nwgOp, tunnelBootLog)
+
 				reconcileStaticRoutes(shutdownCtx, staticRouteService, tunnelService, ndmsClient, log)
 
 				if osdetect.Is5() {
@@ -437,7 +448,13 @@ func main() {
 		bootLog.Info("startup", "",
 			"Daemon restart detected — reconnecting to running tunnels")
 
-		reconnectTunnels(context.Background(), tunnelService, awgStore, nwgOp, pingCheckFacade, tunnelBootLog, log)
+		// Kernel tunnels: lifecycle Manager handles daemon restart.
+		// OnTunnelRunning callback starts PingCheck monitoring.
+		lifecycleMgr.HandleDaemonRestart(context.Background())
+
+		// NativeWG tunnels: separate reconnect logic.
+		reconnectNativeWGTunnels(context.Background(), tunnelService, awgStore, nwgOp, pingCheckFacade, tunnelBootLog)
+
 		reconcileStaticRoutes(context.Background(), staticRouteService, tunnelService, ndmsClient, log)
 
 		if osdetect.Is5() {
@@ -512,9 +529,13 @@ func (l *dnsRouteTunnelLister) ListTunnelInfo(ctx context.Context) ([]dnsroute.T
 			continue // skip if we couldn't determine NDMS name
 		}
 		managed[ndmsName] = true
+		name := ndmsName
+		if t.Name != "" {
+			name = ndmsName + " (" + t.Name + ")"
+		}
 		result = append(result, dnsroute.TunnelInfo{
 			ID:       t.ID,
-			Name:     t.Name,
+			Name:     name,
 			NDMSName: ndmsName,
 			Status:   t.State.String(),
 		})
@@ -635,108 +656,64 @@ func populateWANModel(ctx context.Context, ndmsClient ndms.Client, model *wan.Mo
 	log.Info("Boot: WAN model populated", map[string]interface{}{"count": len(interfaces)})
 }
 
-// forceRestartTunnels does stop+start for all enabled tunnels at boot.
-// Stop cleans up stale interfaces/state, Start creates everything fresh.
-// NDMS properly initializes firewall and routing on a clean Start cycle.
-func forceRestartTunnels(ctx context.Context, tunnelSvc service.Service, store *storage.AWGTunnelStore, nwgOp *nwg.OperatorNativeWG, appLog *logging.ScopedLogger, log *logger.Logger) {
+
+// bootNativeWGTunnels starts NativeWG tunnels at router boot.
+// Separate from lifecycle Manager which handles kernel tunnels only.
+func bootNativeWGTunnels(ctx context.Context, tunnelSvc service.Service, nwgOp *nwg.OperatorNativeWG, appLog *logging.ScopedLogger) {
+	if nwgOp == nil {
+		return
+	}
+	// New firmware with ASC: NDMS handles NativeWG persistence natively.
+	if ndmsinfo.SupportsWireguardASC() {
+		return
+	}
 	tunnels, err := tunnelSvc.List(ctx)
 	if err != nil {
 		return
 	}
-
 	for _, t := range tunnels {
-		if !t.Enabled {
+		if !t.Enabled || t.Backend != "nativewg" {
 			continue
 		}
-
-		// NativeWG: on firmware >= 5.01.A.4 (native ASC), NDMS restores
-		// the interface and peer connect state — no action needed.
-		// On older firmware (< 5.01.A.4), proxy ports change after reboot —
-		// RestoreKmodTunnel is not enough, need full Stop → Start cycle.
-		if t.Backend == "nativewg" && nwgOp != nil {
-			if ndmsinfo.SupportsWireguardASC() {
-				continue
-			}
-			// Old firmware with proxy — fall through to Stop → Start below
-		}
-
-		// Stop (ignore errors — tunnel may not be running after boot)
 		_ = tunnelSvc.Stop(ctx, t.ID)
-
-		log.Info("boot: starting tunnel", map[string]interface{}{"id": t.ID, "name": t.Name})
 		if err := tunnelSvc.Start(ctx, t.ID); err != nil {
-			appLog.Warn("boot-start", t.Name, "Start failed, retrying in 3s: "+err.Error())
-
-			time.Sleep(3 * time.Second)
-			if err := tunnelSvc.Start(ctx, t.ID); err != nil {
-				appLog.Warn("boot-start", t.Name, "Retry also failed: "+err.Error())
-			} else {
-				appLog.Info("boot-start", t.Name, "Tunnel started (after retry)")
-			}
+			appLog.Warn("boot-start", t.Name, "NativeWG start failed: "+err.Error())
 		} else {
-			appLog.Info("boot-start", t.Name, "Tunnel started")
+			appLog.Info("boot-start", t.Name, "NativeWG tunnel started")
 		}
 	}
 }
 
-// reconnectTunnels restores in-memory tracking for already-running tunnels
-// without restarting them. Used on daemon restart (upgrade) where child
-// processes survive syscall.Exec — all kernel state (TUN, routes, iptables,
-// NDMS config) is intact, only operator in-memory maps need restoration.
-// Tunnels that are enabled but not running (process died) get a full Start.
-func reconnectTunnels(ctx context.Context, tunnelSvc service.Service, store *storage.AWGTunnelStore, nwgOp *nwg.OperatorNativeWG, pingCheckSvc *pingcheck.Facade, appLog *logging.ScopedLogger, log *logger.Logger) {
+// reconnectNativeWGTunnels restores NativeWG tunnels on daemon restart.
+// Kernel tunnels are handled by lifecycle.Manager.HandleDaemonRestart.
+func reconnectNativeWGTunnels(ctx context.Context, tunnelSvc service.Service, store *storage.AWGTunnelStore, nwgOp *nwg.OperatorNativeWG, pingCheckSvc *pingcheck.Facade, appLog *logging.ScopedLogger) {
+	if nwgOp == nil {
+		return
+	}
 	tunnels, err := tunnelSvc.List(ctx)
 	if err != nil {
 		return
 	}
 
-	// Restore endpoint routes and ISP tracking for running tunnels.
-	tunnelSvc.RestoreEndpointTracking(ctx)
-
 	for _, t := range tunnels {
+		if t.Backend != "nativewg" {
+			continue
+		}
+
 		state := t.StateInfo.State
 
-		// NativeWG: restore kmod proxy for running/starting tunnels (only on older firmware)
-		// StateStarting = conf:running but peer offline — proxy lost after daemon restart
-		if t.Backend == "nativewg" {
-			if state == tunnel.StateRunning || state == tunnel.StateStarting {
-				if !ndmsinfo.SupportsWireguardASC() {
-					if stored, err := store.Get(t.ID); err == nil && nwgOp != nil {
-						if err := nwgOp.RestoreKmodTunnel(ctx, stored); err != nil {
-							appLog.Warn("reconnect", t.Name, "kmod restore failed: "+err.Error())
-						}
+		// Restore kmod proxy for running/starting tunnels (only on older firmware).
+		// StateStarting = conf:running but peer offline — proxy lost after daemon restart.
+		if state == tunnel.StateRunning || state == tunnel.StateStarting {
+			if !ndmsinfo.SupportsWireguardASC() {
+				if stored, err := store.Get(t.ID); err == nil {
+					if err := nwgOp.RestoreKmodTunnel(ctx, stored); err != nil {
+						appLog.Warn("reconnect", t.Name, "kmod restore failed: "+err.Error())
 					}
 				}
-				pingCheckSvc.StartMonitoring(t.ID, t.Name)
-				appLog.Info("reconnect", t.Name, "NativeWG tunnel reconnected")
 			}
-			continue
-		}
-
-		if state == tunnel.StateRunning {
 			pingCheckSvc.StartMonitoring(t.ID, t.Name)
-			appLog.Info("reconnect", t.Name, "Tunnel reconnected")
-			continue
-		}
-
-		if !t.Enabled {
-			continue
-		}
-
-		// Enabled but not running — full start (process died during update)
-		_ = tunnelSvc.Stop(ctx, t.ID)
-
-		if err := tunnelSvc.Start(ctx, t.ID); err != nil {
-			appLog.Warn("reconnect", t.Name, "Start failed, retrying in 3s: "+err.Error())
-
-			time.Sleep(3 * time.Second)
-			if err := tunnelSvc.Start(ctx, t.ID); err != nil {
-				appLog.Warn("reconnect", t.Name, "Retry also failed: "+err.Error())
-			} else {
-				appLog.Info("reconnect", t.Name, "Tunnel started (after retry)")
-			}
-		} else {
-			appLog.Info("reconnect", t.Name, "Tunnel started")
+			appLog.Info("reconnect", t.Name, "NativeWG tunnel reconnected")
 		}
 	}
 }

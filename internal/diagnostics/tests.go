@@ -471,9 +471,14 @@ func (r *Runner) testRouteLeak(ctx context.Context, report *Report) TestResult {
 		return res
 	}
 
+	// Collect all managed interface names (running and non-running).
+	allManagedIfaces := make(map[string]bool)
 	activeIfaces := make(map[string]bool)
 	for _, t := range report.Tunnels {
-		activeIfaces[t.InterfaceName] = true
+		allManagedIfaces[t.InterfaceName] = true
+		if t.Status == "running" {
+			activeIfaces[t.InterfaceName] = true
+		}
 	}
 
 	var leaks []string
@@ -482,19 +487,19 @@ func (r *Runner) testRouteLeak(ctx context.Context, report *Report) TestResult {
 		if line == "" {
 			continue
 		}
-		if !strings.Contains(line, "opkgtun") && !strings.Contains(line, "nwg") {
-			continue
-		}
-		found := false
-		for iface := range activeIfaces {
-			if strings.Contains(line, iface) {
-				found = true
+		// Only check routes on OUR managed interfaces, skip everything else.
+		isManagedRoute := false
+		for iface := range allManagedIfaces {
+			if strings.Contains(line, " dev "+iface+" ") || strings.HasSuffix(line, " dev "+iface) {
+				isManagedRoute = true
+				// Route exists on a managed interface that is NOT running → orphaned.
+				if !activeIfaces[iface] {
+					leaks = append(leaks, line)
+				}
 				break
 			}
 		}
-		if !found {
-			leaks = append(leaks, line)
-		}
+		_ = isManagedRoute // only managed routes are checked
 	}
 
 	if len(leaks) > 0 {

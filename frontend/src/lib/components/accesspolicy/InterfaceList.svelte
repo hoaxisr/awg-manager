@@ -341,10 +341,6 @@
 		cursor: default;
 	}
 
-	.icon-btn.danger:hover {
-		color: var(--error);
-	}
-
 	.icon-btn.active-toggle {
 		color: var(--success);
 	}

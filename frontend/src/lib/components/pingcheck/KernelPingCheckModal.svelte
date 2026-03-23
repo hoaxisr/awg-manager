@@ -2,7 +2,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Modal } from '$lib/components/ui';
-	import type { Tunnel } from '$lib/types';
+	import type { AWGTunnel } from '$lib/types';
 
 	interface Props {
 		open: boolean;
@@ -16,7 +16,7 @@
 
 	let loading = $state(false);
 	let saving = $state(false);
-	let tunnel: Tunnel | null = $state(null);
+	let tunnel: AWGTunnel | null = $state(null);
 
 	// Form fields
 	let method = $state('http');

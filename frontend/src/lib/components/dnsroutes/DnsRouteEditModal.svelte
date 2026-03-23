@@ -129,7 +129,9 @@
 	}
 
 	function tunnelName(tunnelId: string): string {
-		return tunnels.find((t) => t.id === tunnelId)?.name ?? tunnelId;
+		const t = tunnels.find((t) => t.id === tunnelId);
+		if (!t) return tunnelId;
+		return t.name + (t.system ? ' (системный)' : '');
 	}
 
 	function handleFallbackChange(value: string) {

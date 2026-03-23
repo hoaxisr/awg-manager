@@ -17,6 +17,7 @@
 	let loadingMore = $state(false);
 	let clearing = $state(false);
 	let pollInterval: number | null = $state(null);
+	let pollPaused = $state(false); // paused when user loads more
 	const LIMIT = 200;
 
 	const subgroupsByGroup: Record<string, string[]> = {
@@ -40,7 +41,9 @@
 
 	onMount(async () => {
 		await loadLogs();
-		pollInterval = window.setInterval(loadLogs, 5000);
+		pollInterval = window.setInterval(() => {
+			if (!pollPaused) loadLogs();
+		}, 5000);
 	});
 
 	onDestroy(() => {
@@ -66,6 +69,7 @@
 
 	async function loadMore() {
 		loadingMore = true;
+		pollPaused = true; // stop poll from overwriting loaded data
 		try {
 			const resp = await api.getLogs({
 				group: filterGroup || undefined,
@@ -83,16 +87,19 @@
 	function setGroup(g: string) {
 		filterGroup = filterGroup === g ? '' : g;
 		filterSubgroup = '';
+		pollPaused = false; // resume poll on filter change
 		loadLogs();
 	}
 
 	function setSubgroup(sg: string) {
 		filterSubgroup = filterSubgroup === sg ? '' : sg;
+		pollPaused = false;
 		loadLogs();
 	}
 
 	function setLevel(l: string) {
 		filterLevel = filterLevel === l ? '' : l;
+		pollPaused = false;
 		loadLogs();
 	}
 
@@ -119,14 +126,16 @@
 		}
 	}
 
+	function formatLogLine(log: LogEntry): string {
+		const time = formatTime(log.timestamp);
+		const scope = log.subgroup ? `${log.group}/${log.subgroup}` : log.group;
+		return `[${time}] [${(levelStyle[log.level]?.label ?? log.level).toUpperCase()}] [${scope}] ${log.action} ${log.target}: ${log.message}`;
+	}
+
 	async function copyToClipboard() {
 		if (!logs.length) return;
 
-		const text = displayLogs.map(log => {
-			const time = formatTime(log.timestamp);
-			const scope = log.subgroup ? `${log.group}/${log.subgroup}` : log.group;
-			return `[${time}] [${(levelStyle[log.level]?.label ?? log.level).toUpperCase()}] [${scope}] ${log.action} ${log.target}: ${log.message}`;
-		}).join('\n');
+		const text = displayLogs.map(formatLogLine).join('\n');
 
 		try {
 			if (navigator.clipboard && window.isSecureContext) {
@@ -144,6 +153,40 @@
 			notifications.success('Скопировано в буфер обмена');
 		} catch (e) {
 			notifications.error('Не удалось скопировать');
+		}
+	}
+
+	let downloading = $state(false);
+
+	async function downloadLogs() {
+		downloading = true;
+		try {
+			// Fetch ALL logs from server in one request.
+			const resp = await api.getLogs({
+				group: filterGroup || undefined,
+				subgroup: filterSubgroup || undefined,
+				level: filterLevel || undefined,
+				limit: total || 10000,
+			});
+
+			const text = resp.logs.map(formatLogLine).join('\n');
+			const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+			const url = URL.createObjectURL(blob);
+
+			const date = new Date().toISOString().slice(0, 10);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `awg-manager-logs-${date}.txt`;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			URL.revokeObjectURL(url);
+
+			notifications.success(`Скачано ${resp.logs.length} записей`);
+		} catch (e) {
+			notifications.error('Не удалось скачать логи');
+		} finally {
+			downloading = false;
 		}
 	}
 </script>
@@ -225,6 +268,9 @@
 				<div style="flex:1"></div>
 
 				<span class="log-count">{displayLogs.length}{#if total > logs.length} / {total}{/if}</span>
+				<button class="action-link download" onclick={downloadLogs} disabled={downloading || !total}>
+					{downloading ? '...' : 'Download'}
+				</button>
 				<button class="action-link copy" onclick={copyToClipboard} disabled={!displayLogs.length}>Copy</button>
 				<button class="action-link clear" onclick={clearLogs} disabled={clearing || !logs.length}>
 					{clearing ? 'Очистка...' : 'Clear'}
@@ -308,9 +354,9 @@
 		word-break: break-word;
 	}
 
-	/* Level message colors (content line) — must be readable on both themes */
-	.level-msg-error { color: var(--error, #ef4444); }
-	.level-msg-warn { color: var(--warning, #eab308); }
+	/* Level message colors (content line) — must meet WCAG contrast on both themes */
+	.level-msg-error { color: var(--text-primary); }
+	.level-msg-warn { color: var(--text-primary); }
 	.level-msg-info { color: var(--text-primary); }
 	.level-msg-full { color: var(--text-secondary); }
 	.level-msg-debug { color: var(--text-muted); }
@@ -431,6 +477,7 @@
 		font-family: sans-serif;
 	}
 
+	.action-link.download { color: var(--success, #22c55e); }
 	.action-link.copy { color: var(--accent); }
 	.action-link.clear { color: var(--error); }
 

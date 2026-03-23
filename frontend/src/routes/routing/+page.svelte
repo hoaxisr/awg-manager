@@ -57,33 +57,39 @@
     let ipActiveCount = $derived(ipRoutes.filter(r => r.enabled).length);
     let policyCount = $derived(accessPolicies.length);
 
+    function settled<T>(r: PromiseSettledResult<T>): T | null {
+        return r.status === 'fulfilled' ? r.value : null;
+    }
+
     async function refreshData() {
-        try {
-            const [ipRes, dnsRes, tunnelRes, policiesRes, devicesRes, ifacesRes] = await Promise.all([
-                api.listStaticRoutes(),
-                isOS5 ? api.listDnsRoutes() : Promise.resolve(null),
-                isOS5 ? api.getDnsRouteTunnels() : Promise.resolve(null),
-                isOS5 ? api.listAccessPolicies() : Promise.resolve(null),
-                isOS5 ? api.listPolicyDevices() : Promise.resolve(null),
-                isOS5 ? api.listPolicyInterfaces() : Promise.resolve(null),
-            ]);
-            ipRoutes = ipRes;
-            if (dnsRes) dnsRoutes = dnsRes;
-            if (tunnelRes) {
-                dnsRouteTunnels = tunnelRes;
-                ipRouteTunnels = tunnelRes;
-            }
-            if (policiesRes) {
-                accessPolicies = policiesRes;
-                if (editingPolicy) {
-                    editingPolicyData = policiesRes.find(p => p.name === editingPolicy) ?? null;
-                }
-            }
-            if (devicesRes) policyDevices = devicesRes;
-            if (ifacesRes) policyInterfaces = ifacesRes;
-        } catch {
-            // Silent — stale data is better than error flash
+        const [ipRes, dnsRes, tunnelRes, policiesRes, devicesRes, ifacesRes] = await Promise.allSettled([
+            api.listStaticRoutes(),
+            isOS5 ? api.listDnsRoutes() : Promise.resolve(null),
+            isOS5 ? api.getDnsRouteTunnels() : Promise.resolve(null),
+            isOS5 ? api.listAccessPolicies() : Promise.resolve(null),
+            isOS5 ? api.listPolicyDevices() : Promise.resolve(null),
+            isOS5 ? api.listPolicyInterfaces() : Promise.resolve(null),
+        ]);
+        const ip = settled(ipRes);
+        if (ip) ipRoutes = ip;
+        const dns = settled(dnsRes);
+        if (dns) dnsRoutes = dns;
+        const tunnels = settled(tunnelRes);
+        if (tunnels) {
+            dnsRouteTunnels = tunnels;
+            ipRouteTunnels = tunnels;
         }
+        const policies = settled(policiesRes);
+        if (policies) {
+            accessPolicies = policies;
+            if (editingPolicy) {
+                editingPolicyData = policies.find(p => p.name === editingPolicy) ?? null;
+            }
+        }
+        const devices = settled(devicesRes);
+        if (devices) policyDevices = devices;
+        const ifaces = settled(ifacesRes);
+        if (ifaces) policyInterfaces = ifaces;
     }
 
     function startPolling() {
@@ -114,15 +120,39 @@
                 promises.push(api.listDnsRoutes(), api.getDnsRouteTunnels(), api.listAccessPolicies(), api.listPolicyDevices(), api.listPolicyInterfaces());
             }
 
-            const results = await Promise.all(promises);
-            ipRoutes = results[0];
+            const results = await Promise.allSettled(promises);
+            const errors: string[] = [];
+
+            const ip = settled(results[0]);
+            if (ip) ipRoutes = ip;
+            else errors.push('IP-маршруты');
+
             if (isOS5) {
-                dnsRoutes = results[1];
-                dnsRouteTunnels = results[2];
-                ipRouteTunnels = results[2];
-                accessPolicies = results[3];
-                policyDevices = results[4];
-                policyInterfaces = results[5];
+                const dns = settled(results[1]);
+                if (dns) dnsRoutes = dns;
+                else errors.push('DNS-маршруты');
+
+                const tunnels = settled(results[2]);
+                if (tunnels) {
+                    dnsRouteTunnels = tunnels;
+                    ipRouteTunnels = tunnels;
+                } else {
+                    errors.push('туннели');
+                }
+
+                const policies = settled(results[3]);
+                if (policies) accessPolicies = policies;
+                else errors.push('политики');
+
+                const devices = settled(results[4]);
+                if (devices) policyDevices = devices;
+
+                const ifaces = settled(results[5]);
+                if (ifaces) policyInterfaces = ifaces;
+            }
+
+            if (errors.length > 0) {
+                notifications.error(`Ошибка загрузки: ${errors.join(', ')}`);
             }
 
             // If not OS5, default to IP tab (DNS tab hidden)
@@ -130,7 +160,7 @@
                 activeTab = 'ip';
             }
         } catch (e) {
-            notifications.error('Ошибка загрузки');
+            notifications.error(`Ошибка загрузки: ${(e as Error).message}`);
         } finally {
             loading = false;
         }

@@ -132,11 +132,67 @@ func (o *OperatorOS5Impl) Create(ctx context.Context, cfg tunnel.Config) error {
 	return nil
 }
 
-// Start starts a tunnel.
-// Sequence: OpkgTun → [NDMS config if just created] → backend (ip link add) →
-// kernel config (MTU/qlen) → WG → ip link up → NDMS up → routes → firewall → save.
-// NDMS address/MTU config is only applied when OpkgTun was just created (import flow).
+// Start brings up an existing amneziawg interface after our Stop.
+// Interface already exists with address and WG config — just bring it up.
+// Sequence: ip link set up → InterfaceUp → routes → firewall → Save.
+// Used for: Disabled (after our Stop), Dead (after PingCheck).
 func (o *OperatorOS5Impl) Start(ctx context.Context, cfg tunnel.Config) error {
+	names := tunnel.NewNames(cfg.ID)
+
+	// Bring link up.
+	if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "up", "dev", names.IfaceName); err != nil {
+		return tunnel.NewOpError("start", cfg.ID, "link", fmt.Errorf("ip link up: %w", exec.FormatError(result, err)))
+	}
+
+	// NDMS InterfaceUp sets conf: running.
+	if err := o.ndms.InterfaceUp(ctx, names.NDMSName); err != nil {
+		return tunnel.NewOpError("start", cfg.ID, "ndms", fmt.Errorf("interface up: %w", err))
+	}
+
+	o.logInfo("start", cfg.ID, "Interface up")
+
+	// Endpoint route.
+	if cfg.Endpoint != "" {
+		routeEndpoint := endpointWithResolvedIP(cfg.Endpoint, cfg.EndpointIP)
+		if _, err := o.SetupEndpointRoute(ctx, cfg.ID, routeEndpoint, cfg.KernelDevice, cfg.ISPInterface); err != nil {
+			o.logWarn("start", cfg.ID, "Endpoint route failed (non-fatal): "+err.Error())
+		}
+	}
+
+	// Track resolved ISP.
+	if cfg.ISPInterface != "" {
+		o.resolvedISPMu.Lock()
+		o.resolvedISP[cfg.ID] = cfg.ISPInterface
+		o.resolvedISPMu.Unlock()
+	}
+
+	// Default route.
+	if cfg.DefaultRoute {
+		if err := o.ndms.SetDefaultRoute(ctx, names.NDMSName); err != nil {
+			o.logWarn("start", cfg.ID, "Default route failed (non-fatal): "+err.Error())
+		}
+	}
+
+	// Firewall.
+	if err := o.firewall.AddRules(ctx, names.IfaceName); err != nil {
+		return tunnel.NewOpError("start", cfg.ID, "firewall", err)
+	}
+
+	// Save.
+	if err := o.ndms.Save(ctx); err != nil {
+		o.logWarn("start", cfg.ID, "Failed to save NDMS config: "+err.Error())
+	}
+
+	o.logInfo("start", cfg.ID, "Tunnel started (light — existing interface)")
+	o.appLog.Info("start", cfg.ID, "Туннель запущен")
+	return nil
+}
+
+// ColdStart creates a tunnel from scratch or recreates from wrong type (tun → amneziawg).
+// Full sequence: OpkgTun → NDMS config → ip link del + ip link add amneziawg →
+// ip addr add → wg setconf → ip link set up → InterfaceUp → routes → firewall → Save.
+// Used for: BootReady, NotCreated, Broken.
+func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) error {
 	names := tunnel.NewNames(cfg.ID)
 
 	// Validate config
@@ -154,36 +210,35 @@ func (o *OperatorOS5Impl) Start(ctx context.Context, cfg tunnel.Config) error {
 		o.logInfo("start", cfg.ID, "Created OpkgTun in NDMS")
 	}
 
-	// === Phase 2: NDMS config (only when OpkgTun was just created) ===
-	// For existing OpkgTun, NDMS already has address/MTU from Create or previous Start.
-	// Calling SetAddress on a running kernel-mode interface fails (exit 122).
+	// === Phase 2: NDMS config ===
+	// Always re-apply address/MTU — after ip link del + ip link add, NDMS
+	// does not re-apply stored config to the new kernel interface.
+	// SetAddress via RCI triggers NDMS to do "ip addr add" on the interface.
+	if err := o.ndms.SetAddress(ctx, names.NDMSName, cfg.Address); err != nil {
+		o.rollbackStart(ctx, cfg.ID, names, justCreated)
+		return tunnel.NewOpError("start", cfg.ID, "ndms", fmt.Errorf("set address: %w", err))
+	}
+
+	if err := o.ndms.SetMTU(ctx, names.NDMSName, cfg.MTU); err != nil {
+		o.rollbackStart(ctx, cfg.ID, names, justCreated)
+		return tunnel.NewOpError("start", cfg.ID, "ndms", fmt.Errorf("set MTU: %w", err))
+	}
+
+	if cfg.AddressIPv6 != "" {
+		if err := o.ndms.SetIPv6Address(ctx, names.NDMSName, cfg.AddressIPv6); err != nil {
+			o.logWarn("start", cfg.ID, "Failed to set NDMS IPv6 address: "+err.Error())
+		}
+	}
+
+	o.logInfo("start", cfg.ID, "NDMS config applied (address + MTU)")
+
 	if justCreated {
-		if err := o.ndms.SetAddress(ctx, names.NDMSName, cfg.Address); err != nil {
-			o.rollbackStart(ctx, cfg.ID, names, justCreated)
-			return tunnel.NewOpError("start", cfg.ID, "ndms", fmt.Errorf("set address: %w", err))
-		}
-
-		if err := o.ndms.SetMTU(ctx, names.NDMSName, cfg.MTU); err != nil {
-			o.rollbackStart(ctx, cfg.ID, names, justCreated)
-			return tunnel.NewOpError("start", cfg.ID, "ndms", fmt.Errorf("set MTU: %w", err))
-		}
-
-		if cfg.AddressIPv6 != "" {
-			if err := o.ndms.SetIPv6Address(ctx, names.NDMSName, cfg.AddressIPv6); err != nil {
-				o.logWarn("start", cfg.ID, "Failed to set NDMS IPv6 address: "+err.Error())
-			}
-		}
-
-		o.logInfo("start", cfg.ID, "NDMS config applied (address + MTU)")
-
 		// Save NDMS config so InterfaceUp works (import flow creates OpkgTun
 		// inside Start, and NDMS refuses to bring up unsaved interfaces).
 		if err := o.ndms.Save(ctx); err != nil {
 			o.rollbackStart(ctx, cfg.ID, names, justCreated)
 			return tunnel.NewOpError("start", cfg.ID, "ndms", fmt.Errorf("save: %w", err))
 		}
-	} else {
-		o.logInfo("start", cfg.ID, "OpkgTun already configured, skipping NDMS config")
 	}
 
 	// Apply DNS servers (idempotent, re-applied on every start)
@@ -323,52 +378,33 @@ func (o *OperatorOS5Impl) Start(ctx context.Context, cfg tunnel.Config) error {
 	return nil
 }
 
-// Stop stops a tunnel.
-// Order: InterfaceDown → firewall → routes → ip link del.
-// InterfaceDown needs the device present to succeed; ip link del removes it.
+// Stop brings down a tunnel without destroying the interface.
+// ip link set down + InterfaceDown (conf: disabled) + Save.
+// NDMS handles routing/failover automatically when link goes down.
+// Interface stays as amneziawg with WG config and address loaded.
 func (o *OperatorOS5Impl) Stop(ctx context.Context, tunnelID string) error {
 	names := tunnel.NewNames(tunnelID)
-	return o.stopKernel(ctx, tunnelID, names)
-}
 
-// stopKernel stops a kernel-mode tunnel.
-// InterfaceDown FIRST (device is present, NDMS can bring it down),
-// then ip link del removes the device.
-func (o *OperatorOS5Impl) stopKernel(ctx context.Context, tunnelID string, names tunnel.Names) error {
-	// === Phase 1: Bring interface down (sets conf: disabled) ===
-	// Device is still present → NDMS can bring it down cleanly.
-	o.interfaceDownBestEffort(ctx, tunnelID, names.NDMSName)
-
-	// === Phase 2: Remove firewall rules ===
-	_ = o.firewall.RemoveRules(ctx, names.IfaceName)
-	o.logInfo("stop", tunnelID, "Firewall rules removed")
-	o.appLog.Info("stop", tunnelID, "Правила файрвола удалены")
-
-	// === Phase 3: Remove routes and DNS ===
-	_ = o.ndms.RemoveDefaultRoute(ctx, names.NDMSName)
-	o.ndms.RemoveIPv6DefaultRoute(ctx, names.NDMSName)
-	_ = o.CleanupEndpointRoute(ctx, tunnelID)
-	o.clearAppliedDNS(ctx, tunnelID, names)
-	o.logInfo("stop", tunnelID, "Routes removed")
-
-	// === Phase 4: Remove kernel interface (ip link del) ===
-	if err := o.backend.Stop(ctx, names.IfaceName); err != nil {
-		o.logWarn("stop", tunnelID, "Failed to stop backend: "+err.Error())
-	} else {
-		o.logInfo("stop", tunnelID, "Backend stopped (kernel interface removed)")
+	// Bring link down at kernel level.
+	if _, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "down", "dev", names.IfaceName); err != nil {
+		o.logWarn("stop", tunnelID, "ip link set down: "+err.Error())
 	}
 
-	// Save NDMS config so router UI reflects conf: disabled
+	// InterfaceDown sets conf: disabled — NDMS won't bring it up on its own.
+	o.interfaceDownBestEffort(ctx, tunnelID, names.NDMSName)
+
+	// Save NDMS config so router UI reflects conf: disabled.
 	if err := o.ndms.Save(ctx); err != nil {
 		o.logWarn("stop", tunnelID, "Failed to save NDMS config: "+err.Error())
 	}
 
-	// Clear resolved ISP tracking
+	// Clear resolved ISP tracking.
 	o.resolvedISPMu.Lock()
 	delete(o.resolvedISP, tunnelID)
 	o.resolvedISPMu.Unlock()
 
-	o.logInfo("stop", tunnelID, "Tunnel stopped successfully")
+	o.logInfo("stop", tunnelID, "Tunnel stopped (link down, conf: disabled)")
+	o.appLog.Info("stop", tunnelID, "Туннель остановлен")
 	return nil
 }
 
@@ -632,69 +668,27 @@ func (o *OperatorOS5Impl) RemoveDefaultRoute(ctx context.Context, tunnelID strin
 	return o.ndms.Save(ctx)
 }
 
-// KillLink kills the tunnel link without changing NDMS admin intent.
-// Cleans up side effects (firewall, routes) but does NOT call
-// ndms.InterfaceDown — this preserves conf: running so the tunnel
-// auto-starts after reboot or WAN recovery.
-//
-// Kernel mode: bring link down (ip link set down) but preserve interface.
-// WG config stays loaded -> awg show works -> handshake check can detect recovery.
-// ip link del would destroy the interface entirely, making recovery impossible.
-func (o *OperatorOS5Impl) KillLink(ctx context.Context, tunnelID string) error {
+// Suspend sets link down without removing the interface or changing NDMS conf.
+// NDMS sees pending state and handles failover automatically.
+// Routes and firewall are NOT touched — NDMS manages failover.
+func (o *OperatorOS5Impl) Suspend(ctx context.Context, tunnelID string) error {
 	names := tunnel.NewNames(tunnelID)
-
-	// Clean up side effects from Start (same as Stop phases 2-3,
-	// but WITHOUT InterfaceDown to preserve NDMS intent).
-	_ = o.firewall.RemoveRules(ctx, names.IfaceName)
-	_ = o.ndms.RemoveDefaultRoute(ctx, names.NDMSName)
-	o.ndms.RemoveIPv6DefaultRoute(ctx, names.NDMSName)
-	_ = o.CleanupEndpointRoute(ctx, tunnelID)
-
-	// Clear resolved ISP tracking
-	o.resolvedISPMu.Lock()
-	delete(o.resolvedISP, tunnelID)
-	o.resolvedISPMu.Unlock()
-
-	// Bring link down but preserve interface.
-	// WG config stays loaded → awg show works → handshake check can detect recovery.
-	if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "down", "dev", names.IfaceName); err != nil {
-		o.logWarn("kill_link", tunnelID, "ip link set down: "+exec.FormatError(result, err).Error())
+	if _, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "down", "dev", names.IfaceName); err != nil {
+		return fmt.Errorf("suspend: ip link set down: %w", err)
 	}
-
-	o.logInfo("kill_link", tunnelID, "Link killed")
+	o.logInfo("suspend", tunnelID, "Interface suspended (link down)")
+	o.appLog.Info("suspend", tunnelID, "Интерфейс приостановлен")
 	return nil
 }
 
-// InterfaceUp brings only the interface up (for PingCheck recovery).
-// Tunnel already exists — ip link set up is sufficient, NDMS intent already conf: running.
-func (o *OperatorOS5Impl) InterfaceUp(ctx context.Context, tunnelID string) error {
+// Resume sets link up after Suspend. NDMS restores routing automatically.
+func (o *OperatorOS5Impl) Resume(ctx context.Context, tunnelID string) error {
 	names := tunnel.NewNames(tunnelID)
-
-	if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "up", "dev", names.IfaceName); err != nil {
-		return tunnel.NewOpError("interface_up", tunnelID, "link", fmt.Errorf("ip link up: %w", exec.FormatError(result, err)))
+	if _, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "up", "dev", names.IfaceName); err != nil {
+		return fmt.Errorf("resume: ip link set up: %w", err)
 	}
-
-	// NOTE: default route is NOT re-established here — caller (service layer)
-	// decides based on DefaultRoute setting.
-
-	o.logInfo("interface_up", tunnelID, "Interface brought up")
-	return nil
-}
-
-// InterfaceDown brings only the interface down (for PingCheck dead detection).
-func (o *OperatorOS5Impl) InterfaceDown(ctx context.Context, tunnelID string) error {
-	names := tunnel.NewNames(tunnelID)
-
-	// Bring link down at kernel level before NDMS.
-	if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "down", "dev", names.IfaceName); err != nil {
-		o.logWarn("interface_down", tunnelID, "Failed to ip link down: "+exec.FormatError(result, err).Error())
-	}
-
-	if err := o.ndms.InterfaceDown(ctx, names.NDMSName); err != nil {
-		return tunnel.NewOpError("interface_down", tunnelID, "ndms", err)
-	}
-
-	o.logInfo("interface_down", tunnelID, "Interface brought down")
+	o.logInfo("resume", tunnelID, "Interface resumed (link up)")
+	o.appLog.Info("resume", tunnelID, "Интерфейс возобновлён")
 	return nil
 }
 
