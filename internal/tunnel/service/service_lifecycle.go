@@ -8,7 +8,6 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 )
 
 // === Lifecycle Operations ===
@@ -95,15 +94,8 @@ func (s *ServiceImpl) startInternal(ctx context.Context, tunnelID string) error 
 		return fmt.Errorf("WAN %s is down", resolvedWAN)
 	}
 
-	// Check if ISP provides IPv6: default route exists AND WAN has IPv6 layer running.
-	// HasWANIPv6 uses NDMS RCI which needs NDMS ID, not kernel name.
-	hasIPv6 := sysinfo.HasDefaultIPv6Route() && s.legacyOperator.HasWANIPv6(ctx, s.wan.IDFor(resolvedWAN))
-	if !hasIPv6 {
-		s.logInfo("start", tunnelID, fmt.Sprintf("No IPv6 on WAN %s, skipping ::/0 and IPv6 routes", resolvedWAN))
-	}
-
-	// Write config file (filters ::/0 from AllowedIPs when no ISP IPv6)
-	if err := s.writeConfigFileForStart(stored, hasIPv6); err != nil {
+	// Write config file (always includes full AllowedIPs with ::/0)
+	if err := s.writeConfigFileForStart(stored); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 
@@ -111,11 +103,6 @@ func (s *ServiceImpl) startInternal(ctx context.Context, tunnelID string) error 
 	cfg := s.storedToConfig(stored)
 	cfg.ISPInterface = resolvedWAN
 	cfg.KernelDevice = s.resolveKernelDevice(resolvedWAN)
-
-	// Skip IPv6 setup if ISP has no IPv6
-	if !hasIPv6 {
-		cfg.AddressIPv6 = ""
-	}
 
 	cfg.DefaultRoute = stored.DefaultRoute
 	cfg.Endpoint = stored.Peer.Endpoint
@@ -264,13 +251,8 @@ func (s *ServiceImpl) reconcileInternal(ctx context.Context, tunnelID string) er
 
 	// Check if ISP provides IPv6: default route exists AND WAN has IPv6 layer running.
 	// HasWANIPv6 uses NDMS RCI which needs NDMS ID, not kernel name.
-	hasIPv6 := sysinfo.HasDefaultIPv6Route() && s.legacyOperator.HasWANIPv6(ctx, s.wan.IDFor(resolvedWAN))
-	if !hasIPv6 {
-		s.logInfo("reconcile", tunnelID, fmt.Sprintf("No IPv6 on WAN %s, skipping IPv6 routes", resolvedWAN))
-	}
-
-	// Write config file
-	if err := s.writeConfigFileForStart(stored, hasIPv6); err != nil {
+	// Write config file (always includes full AllowedIPs with ::/0)
+	if err := s.writeConfigFileForStart(stored); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 
@@ -278,9 +260,6 @@ func (s *ServiceImpl) reconcileInternal(ctx context.Context, tunnelID string) er
 	cfg := s.storedToConfig(stored)
 	cfg.ISPInterface = resolvedWAN
 	cfg.KernelDevice = s.resolveKernelDevice(resolvedWAN)
-	if !hasIPv6 {
-		cfg.AddressIPv6 = ""
-	}
 
 	cfg.DefaultRoute = stored.DefaultRoute
 	cfg.Endpoint = stored.Peer.Endpoint
