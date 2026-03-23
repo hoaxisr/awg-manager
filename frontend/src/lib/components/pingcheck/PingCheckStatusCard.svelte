@@ -121,6 +121,8 @@
 		background: var(--bg-primary);
 		border: 1px solid var(--border);
 		border-radius: 6px;
+		min-width: 0;
+		overflow: hidden;
 	}
 
 	.tunnel-header {
@@ -128,6 +130,7 @@
 		justify-content: space-between;
 		align-items: center;
 		gap: 0.5rem;
+		min-width: 0;
 	}
 
 	.tunnel-name-row {
@@ -135,12 +138,14 @@
 		align-items: center;
 		gap: 0.4rem;
 		min-width: 0;
+		overflow: hidden;
 	}
 
 	.tunnel-name {
 		font-weight: 500;
 		font-size: 0.875rem;
 		min-width: 0;
+		max-width: 12rem;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
