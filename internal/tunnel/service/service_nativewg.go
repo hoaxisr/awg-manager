@@ -133,34 +133,22 @@ func (s *ServiceImpl) stopNativeWG(ctx context.Context, stored *storage.AWGTunne
 }
 
 // deleteNativeWG deletes a NativeWG tunnel (assumes lock is held).
-func (s *ServiceImpl) deleteNativeWG(ctx context.Context, tunnelID string) error {
-	stored, err := s.store.Get(tunnelID)
-	if err != nil {
-		return tunnel.ErrNotFound
-	}
+func (s *ServiceImpl) deleteNativeWG(ctx context.Context, stored *storage.AWGTunnel) error {
+	s.fireDeleteHooks(ctx, stored.ID)
 
-	// Fire pre-delete hooks
-	s.fireDeleteHooks(ctx, tunnelID)
-
-	// Delete via NativeWG operator (handles stop if running)
 	if s.nwgOperator != nil {
 		if err := s.nwgOperator.Delete(ctx, stored); err != nil {
-			s.appLog.Warn("delete", tunnelID, "Failed to delete NativeWG: "+err.Error())
+			s.appLog.Warn("delete", stored.ID, "Failed to delete NativeWG: "+err.Error())
 			return err
 		}
 	}
 
-	// Delete config file
-	confPath := filepath.Join(confDir, tunnelID+".conf")
+	confPath := filepath.Join(confDir, stored.ID+".conf")
 	_ = os.Remove(confPath)
+	_ = s.store.Delete(stored.ID)
 
-	// Delete from storage
-	if err := s.store.Delete(tunnelID); err != nil {
-		return fmt.Errorf("delete from storage: %w", err)
-	}
-
-	s.logInfo("delete", tunnelID, "NativeWG tunnel deleted")
-	s.appLog.Info("delete", tunnelID, "Tunnel deleted")
+	s.logInfo("delete", stored.ID, "NativeWG tunnel deleted")
+	s.appLog.Info("delete", stored.ID, "Tunnel deleted")
 	return nil
 }
 

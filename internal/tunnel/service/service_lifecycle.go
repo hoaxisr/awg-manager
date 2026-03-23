@@ -470,32 +470,27 @@ func (s *ServiceImpl) Delete(ctx context.Context, tunnelID string) error {
 		s.cleanupTunnelLock(tunnelID)
 	}()
 
-	// Verify tunnel exists
-	if !s.store.Exists(tunnelID) {
+	stored, err := s.store.Get(tunnelID)
+	if err != nil {
 		return tunnel.ErrNotFound
 	}
 
 	// NativeWG dispatch
-	if s.isNativeWGByID(tunnelID) {
-		return s.deleteNativeWG(ctx, tunnelID)
+	if stored.Backend == "nativewg" {
+		return s.deleteNativeWG(ctx, stored)
 	}
 
 	// === Kernel path ===
-
-	// Fire pre-delete hooks
 	s.fireDeleteHooks(ctx, tunnelID)
 
-	// Delete via operator (handles stop if needed)
-	if err := s.legacyOperator.Delete(ctx, tunnelID); err != nil {
+	if err := s.legacyOperator.Delete(ctx, stored); err != nil {
 		s.appLog.Warn("delete", tunnelID, "Failed to delete: "+err.Error())
 		return err
 	}
 
-	// Delete config file
 	confPath := tunnel.NewNames(tunnelID).ConfPath
 	_ = os.Remove(confPath)
 
-	// Delete from storage
 	if err := s.store.Delete(tunnelID); err != nil {
 		return fmt.Errorf("delete from storage: %w", err)
 	}
