@@ -91,21 +91,15 @@ func (r *Runner) testWANConnectivity(ctx context.Context) TestResult {
 func (r *Runner) testNDMSHealth(ctx context.Context) TestResult {
 	res := TestResult{Name: "ndms_health", Description: "NDMS отвечает"}
 
-	result, err := exec.Run(ctx, "ndmc", "-c", "show version")
+	info, err := r.deps.RCI.ShowVersion(ctx)
 	if err != nil {
 		res.Status = StatusFail
-		res.Detail = "ndmc не отвечает: " + err.Error()
+		res.Detail = "NDMS не отвечает: " + err.Error()
 		return res
 	}
 
-	// Extract version from output
-	for _, line := range strings.Split(result.Stdout, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "title:") {
-			res.Detail = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "title:"))
-			break
-		}
-	}
 	res.Status = StatusPass
+	res.Detail = info.Title
 	return res
 }
 

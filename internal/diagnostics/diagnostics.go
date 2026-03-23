@@ -9,6 +9,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
+	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
@@ -303,13 +304,14 @@ type PingCheckForDiag interface {
 
 // Deps holds all dependencies needed by the diagnostics runner.
 type Deps struct {
-	TunnelService  TunnelServiceForDiag
-	NDMSClient     ndms.Client
-	Backend        backend.Backend
-	KmodLoader     *kmod.Loader
-	TunnelStore    *storage.AWGTunnelStore
-	LogService     LogServiceForDiag
-	AppVersion     string
+	TunnelService   TunnelServiceForDiag
+	RCI             *rci.Client
+	NDMSClient      ndms.Client
+	Backend         backend.Backend
+	KmodLoader      *kmod.Loader
+	TunnelStore     *storage.AWGTunnelStore
+	LogService      LogServiceForDiag
+	AppVersion      string
 	PingCheckFacade PingCheckForDiag
 }
 

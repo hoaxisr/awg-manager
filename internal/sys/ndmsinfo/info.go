@@ -4,14 +4,13 @@ package ndmsinfo
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/rci"
 )
 
 // VersionInfo holds parsed response from /rci/show/version.
@@ -36,47 +35,19 @@ var (
 	mu     sync.RWMutex
 )
 
-const rciURL = "http://localhost:79/rci/show/version"
-
 // Init fetches version info from NDMS RCI API with retry.
 // Blocks until NDMS responds or timeout expires.
 // Should be called once at startup before any Get() calls.
 func Init(ctx context.Context, timeout time.Duration) error {
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			MaxIdleConns:        10,
-			MaxIdleConnsPerHost: 5,
-			IdleConnTimeout:     30 * time.Second,
-		},
-	}
+	client := rci.NewWithTimeout(5 * time.Second)
 	deadline := time.After(timeout)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
 	fetch := func() (*VersionInfo, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rciURL, nil)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-
 		var info VersionInfo
-		if err := json.Unmarshal(body, &info); err != nil {
-			return nil, fmt.Errorf("parse JSON: %w", err)
+		if err := client.Get(ctx, "/show/version", &info); err != nil {
+			return nil, err
 		}
 		return &info, nil
 	}

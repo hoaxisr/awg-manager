@@ -2,6 +2,7 @@ package diagnostics
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
+	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
@@ -154,11 +156,11 @@ func (r *Runner) collectTunnels(ctx context.Context) []TunnelInfo {
 
 		// NDMS interface state (using resolved ndmsName)
 		// For nativewg, this output is reused for Connection data
-		var ndmcOutput string
+		var ndmsJSON string
 		if r.deps.NDMSClient != nil && ndmsName != "" {
-			if result, err := exec.Run(ctx, "ndmc", "-c", "show interface "+ndmsName); err == nil {
-				ndmcOutput = result.Stdout
-				ti.Interface.NDMSState = ndmcOutput
+			if raw, err := r.deps.NDMSClient.ShowInterface(ctx, ndmsName); err == nil {
+				ndmsJSON = raw
+				ti.Interface.NDMSState = raw
 			}
 		}
 
@@ -170,7 +172,7 @@ func (r *Runner) collectTunnels(ctx context.Context) []TunnelInfo {
 
 		// Connection info — backend-specific
 		if backend == "nativewg" {
-			r.collectNativeWGConnection(&ti, ndmcOutput)
+			r.collectNativeWGConnection(&ti, ndmsJSON)
 		} else {
 			r.collectKernelConnection(ctx, &ti, ifaceName)
 		}
@@ -227,37 +229,53 @@ func (r *Runner) collectKernelConnection(ctx context.Context, ti *TunnelInfo, if
 	ti.Connection.TransferTx = extractTransfer(result.Stdout, "sent")
 }
 
-// collectNativeWGConnection populates Connection from ndmc show interface output.
-// ndmcOutput is the already-collected output from the main loop (avoids duplicate ndmc call).
-func (r *Runner) collectNativeWGConnection(ti *TunnelInfo, ndmcOutput string) {
-	ti.Connection.RawOutput = ndmcOutput
+// collectNativeWGConnection populates Connection from RCI show interface JSON.
+// ndmsJSON is the already-collected JSON from the main loop (avoids duplicate RCI call).
+func (r *Runner) collectNativeWGConnection(ti *TunnelInfo, ndmsJSON string) {
+	ti.Connection.RawOutput = ndmsJSON
 
-	if hsStr := extractNDMCField(ndmcOutput, "last-handshake:"); hsStr != "" {
-		if ts, err := strconv.ParseInt(hsStr, 10, 64); err == nil {
-			if ts > 0 && ts < 2147483647 {
-				hsTime := time.Unix(ts, 0)
-				ago := time.Since(hsTime).Round(time.Second)
-				ti.Connection.LatestHandshake = fmt.Sprintf("%s ago", ago)
-			} else {
-				ti.Connection.LatestHandshake = "(none)"
+	if ndmsJSON == "" {
+		return
+	}
+
+	var wg rci.WGInterface
+	if err := json.Unmarshal([]byte(ndmsJSON), &wg); err != nil {
+		return
+	}
+
+	if wg.WireGuard != nil && len(wg.WireGuard.Peer) > 0 {
+		peer := wg.WireGuard.Peer[0]
+
+		ts := peer.LastHandshake
+		if ts > 0 && ts < rci.NeverHandshake {
+			hsTime := time.Unix(ts, 0)
+			ago := time.Since(hsTime).Round(time.Second)
+			ti.Connection.LatestHandshake = fmt.Sprintf("%s ago", ago)
+		} else {
+			ti.Connection.LatestHandshake = "(none)"
+		}
+
+		if peer.RxBytes > 0 {
+			ti.Connection.TransferRx = formatBytes(peer.RxBytes)
+		}
+		if peer.TxBytes > 0 {
+			ti.Connection.TransferTx = formatBytes(peer.TxBytes)
+		}
+	}
+
+	// Parse connected timestamp from raw JSON
+	if wg.Connected != nil {
+		var connStr string
+		if err := json.Unmarshal(wg.Connected, &connStr); err == nil {
+			if ts, err := strconv.ParseInt(connStr, 10, 64); err == nil && ts > 0 {
+				ti.Connection.ConnectedAt = time.Unix(ts, 0).UTC().Format(time.RFC3339)
 			}
-		}
-	}
-
-	if rx := extractNDMCField(ndmcOutput, "rxbytes:"); rx != "" {
-		if n, err := strconv.ParseInt(rx, 10, 64); err == nil {
-			ti.Connection.TransferRx = formatBytes(n)
-		}
-	}
-	if tx := extractNDMCField(ndmcOutput, "txbytes:"); tx != "" {
-		if n, err := strconv.ParseInt(tx, 10, 64); err == nil {
-			ti.Connection.TransferTx = formatBytes(n)
-		}
-	}
-
-	if conn := extractNDMCField(ndmcOutput, "connected:"); conn != "" {
-		if ts, err := strconv.ParseInt(conn, 10, 64); err == nil && ts > 0 {
-			ti.Connection.ConnectedAt = time.Unix(ts, 0).UTC().Format(time.RFC3339)
+		} else {
+			// Try as integer
+			var connInt int64
+			if err := json.Unmarshal(wg.Connected, &connInt); err == nil && connInt > 0 {
+				ti.Connection.ConnectedAt = time.Unix(connInt, 0).UTC().Format(time.RFC3339)
+			}
 		}
 	}
 }
@@ -380,17 +398,6 @@ func buildTunnelSettings(stored *storage.AWGTunnel) TunnelSettings {
 		}
 	}
 	return ts
-}
-
-// extractNDMCField extracts a value from ndmc output format "  field: value".
-func extractNDMCField(output, field string) string {
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, field) {
-			return strings.TrimSpace(strings.TrimPrefix(line, field))
-		}
-	}
-	return ""
 }
 
 // formatBytes formats bytes into human-readable string.
