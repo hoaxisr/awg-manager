@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
@@ -153,7 +154,7 @@ func TestOperatorOS4_Delete_SameAsStop(t *testing.T) {
 
 	op := NewOperatorOS4(nil, &MockWGClient{}, backendMock, fw, nil)
 
-	err := op.Delete(context.Background(), "awg0")
+	err := op.Delete(context.Background(), &storage.AWGTunnel{ID: "awg0"})
 
 	if err != nil {
 		t.Fatalf("Delete() error = %v", err)

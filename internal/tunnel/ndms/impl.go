@@ -93,21 +93,15 @@ func (c *ClientImpl) SetIPGlobal(ctx context.Context, name string) error {
 }
 
 // DeleteOpkgTun removes an OpkgTun interface from NDMS.
+// "no interface" removes everything: routes, DNS, address, security-level, ip global.
+// Caller is responsible for calling Save() separately.
 func (c *ClientImpl) DeleteOpkgTun(ctx context.Context, name string) error {
-	// Remove default route first
-	_, _ = c.rci.Post(ctx, rci.CmdRemoveDefaultRoute(name))
-
-	// Remove interface via RCI
-	_, _ = c.rci.Post(ctx, map[string]interface{}{
+	_, err := c.rci.Post(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			name: map[string]interface{}{"no": true},
 		},
 	})
-
-	// Save
-	c.rciSave(ctx)
-
-	return nil
+	return err
 }
 
 // OpkgTunExists checks if an OpkgTun interface exists in NDMS.

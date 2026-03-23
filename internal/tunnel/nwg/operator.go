@@ -365,28 +365,22 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel) error {
 	names := NewNWGNames(stored.NWGIndex)
 
-	// Stop first if running
-	_ = o.Stop(ctx, stored)
+	// 1. Remove kmod proxy entry (older firmware only, before interface deletion)
+	if !ndmsinfo.SupportsWireguardASC() {
+		_ = o.kmod.RemoveTunnel(stored.ID)
+	}
 
-	// Remove ping-check profile before removing the interface (only if configured)
+	// 2. Remove ping-check profile (before interface deletion)
 	if stored.PingCheck != nil && stored.PingCheck.Enabled {
 		_ = o.RemovePingCheck(ctx, stored)
 	}
 
-	// Delete interface + save in one batch
-	o.appLog.Full("delete", stored.Name, fmt.Sprintf("Deleting NDMS interface %s", names.NDMSName))
+	// 3. Remove NDMS interface — cleans everything:
+	//    peer, DNS (ip + ipv6 name-server), ASC params, kernel Wireguard interface
+	_, _ = o.rci.Post(ctx, rci.CmdInterfaceDelete(names.NDMSName))
 
-	batch := rci.NewBatch()
-	// Clear DNS servers before removing the interface
-	if stored.Interface.DNS != "" {
-		batch.InterfaceDNSClear(names.NDMSName)
-	}
-	batch.InterfaceDelete(names.NDMSName)
-	batch.Save()
-
-	if err := batch.Execute(ctx, o.rci); err != nil {
-		return fmt.Errorf("delete interface: %w", err)
-	}
+	// 4. Persist
+	_, _ = o.rci.Post(ctx, rci.CmdSave())
 
 	o.log.Infof("nwg: deleted %s", names.NDMSName)
 	return nil
