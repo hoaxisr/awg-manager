@@ -75,7 +75,7 @@ func TestNew(t *testing.T) {
 	if c == nil {
 		t.Error("New() returned nil")
 	}
-	if c.timeout == 0 {
-		t.Error("timeout not set")
+	if c.rci == nil {
+		t.Error("rci client not set")
 	}
 }

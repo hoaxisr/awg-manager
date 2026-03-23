@@ -5,6 +5,8 @@ import (
 	"math"
 	"net"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/rci"
 )
 
 const noHandshakeMarker = math.MaxInt32 // 2147483647
@@ -76,10 +78,10 @@ type WireguardServerPeerConfig struct {
 	Address      string   `json:"address"` // peer tunnel IP (first /32 from allow-ips)
 }
 
-// rciWireguardDetail extends rciInterfaceInfo with wireguard-specific peer data.
+// rciWireguardDetail extends rci.InterfaceInfo with wireguard-specific peer data.
 // Used to parse /show/interface/WireguardX which includes the "wireguard" nested object.
 type rciWireguardDetail struct {
-	rciInterfaceInfo
+	rci.InterfaceInfo
 	MTU       int `json:"mtu"`
 	Wireguard *struct {
 		PublicKey  string             `json:"public-key"`
