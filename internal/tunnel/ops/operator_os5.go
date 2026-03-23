@@ -299,7 +299,18 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 
 	o.logInfo("start", cfg.ID, "WireGuard config applied")
 
-	// === Phase 5: Bring up ===
+	// === Phase 5: Assign addresses + bring up ===
+	// After ip link del + ip link add, this is OUR kernel interface —
+	// NDMS does not manage it. We must apply all config ourselves.
+	if cfg.Address != "" {
+		addr := cfg.Address
+		if !strings.Contains(addr, "/") {
+			addr += "/32"
+		}
+		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "address", "add", "dev", names.IfaceName, addr); err != nil {
+			o.logWarn("start", cfg.ID, "Failed to set IPv4 address: "+err.Error())
+		}
+	}
 	if cfg.AddressIPv6 != "" {
 		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "-6", "address", "add", "dev", names.IfaceName, cfg.AddressIPv6+"/128"); err != nil {
 			o.logWarn("start", cfg.ID, "Failed to set IPv6 address: "+err.Error())
@@ -589,6 +600,16 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 		}
 	}
 
+	// Assign addresses on kernel interface (we own it after ip link del + add)
+	if cfg.Address != "" {
+		addr := cfg.Address
+		if !strings.Contains(addr, "/") {
+			addr += "/32"
+		}
+		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "address", "add", "dev", names.IfaceName, addr); err != nil {
+			o.logWarn("reconcile", cfg.ID, "Failed to set IPv4 address: "+err.Error())
+		}
+	}
 	if cfg.AddressIPv6 != "" {
 		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "-6", "address", "add", "dev", names.IfaceName, cfg.AddressIPv6+"/128"); err != nil {
 			o.logWarn("reconcile", cfg.ID, "Failed to set IPv6 address: "+err.Error())
