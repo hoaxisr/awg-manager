@@ -9,6 +9,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
@@ -211,9 +212,9 @@ func (o *OperatorOS4Impl) RemoveDefaultRoute(ctx context.Context, tunnelID strin
 }
 
 // Delete completely removes a tunnel.
-func (o *OperatorOS4Impl) Delete(ctx context.Context, tunnelID string) error {
+func (o *OperatorOS4Impl) Delete(ctx context.Context, stored *storage.AWGTunnel) error {
 	// On OS4, stop and delete are the same
-	return o.Stop(ctx, tunnelID)
+	return o.Stop(ctx, stored.ID)
 }
 
 // Recover attempts to bring a broken tunnel into a consistent state.

@@ -9,11 +9,13 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/firewall"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 )
 
@@ -469,25 +471,47 @@ func (o *OperatorOS5Impl) interfaceDownBestEffort(ctx context.Context, tunnelID,
 }
 
 // Delete completely removes a tunnel.
-func (o *OperatorOS5Impl) Delete(ctx context.Context, tunnelID string) error {
-	names := tunnel.NewNames(tunnelID)
+func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel) error {
+	names := tunnel.NewNames(stored.ID)
 
-	// Stop first (ignores errors if not running)
-	_ = o.Stop(ctx, tunnelID)
-
-	// Remove OpkgTun from NDMS
-	if err := o.ndms.DeleteOpkgTun(ctx, names.NDMSName); err != nil {
-		return tunnel.NewOpError("delete", tunnelID, "ndms", err)
+	// 1. Remove endpoint route from kernel (host route to VPN server via WAN).
+	//    Uses persisted IP. Fallback to DNS for old tunnels without stored IP.
+	endpointIP := stored.ResolvedEndpointIP
+	if endpointIP == "" && stored.Peer.Endpoint != "" {
+		if ip, err := netutil.ResolveEndpointIP(stored.Peer.Endpoint); err == nil {
+			endpointIP = ip
+		}
+	}
+	if endpointIP != "" {
+		o.delKernelHostRoute(ctx, endpointIP)
+		_ = o.ndms.RemoveHostRoute(ctx, endpointIP)
 	}
 
-	// Force-remove interface as safety net.
-	// NDMS may lose control of the interface and leave it as a zombie.
+	// 2. Remove NDMS interface — cleans everything:
+	//    address, MTU, security-level, ip global, default route, DNS name-servers
+	if err := o.ndms.DeleteOpkgTun(ctx, names.NDMSName); err != nil {
+		o.logWarn("delete", stored.ID, "DeleteOpkgTun: "+err.Error())
+	}
+
+	// 3. Remove kernel interface (our amneziawg — NDMS can't delete what we created)
 	o.ipRun(ctx, "/opt/sbin/ip", "link", "del", "dev", names.IfaceName)
 
-	// Save configuration
+	// 4. Persist NDMS config
 	_ = o.ndms.Save(ctx)
 
-	o.logInfo("delete", tunnelID, "Tunnel deleted")
+	// 5. Clear in-memory tracking
+	o.endpointRoutesMu.Lock()
+	delete(o.endpointRoutes, stored.ID)
+	o.endpointRoutesMu.Unlock()
+	o.resolvedISPMu.Lock()
+	delete(o.resolvedISP, stored.ID)
+	o.resolvedISPMu.Unlock()
+	o.appliedDNSMu.Lock()
+	delete(o.appliedDNS, stored.ID)
+	o.appliedDNSMu.Unlock()
+
+	o.logInfo("delete", stored.ID, "Tunnel deleted")
+	o.appLog.Info("delete", stored.ID, "Туннель удалён")
 	return nil
 }
 

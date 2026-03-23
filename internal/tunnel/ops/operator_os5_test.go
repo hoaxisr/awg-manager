@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
@@ -625,19 +626,21 @@ func TestOperatorOS5_Delete_Success(t *testing.T) {
 	op := NewOperatorOS5(ndms, &MockWGClient{}, &MockBackend{running: true}, fw, nil)
 	op.ipRun = recorder.run
 
-	err := op.Delete(context.Background(), "awg0")
+	stored := &storage.AWGTunnel{
+		ID: "awg0",
+		Peer: storage.AWGPeer{Endpoint: "vpn.example.com:51820"},
+	}
+	err := op.Delete(context.Background(), stored)
 	if err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
 
-	// Delete: Stop (link down + InterfaceDown) → DeleteOpkgTun → ip link del (safety net) → Save.
-	if len(ndms.IfDownCalls) != 1 {
-		t.Errorf("NDMS.InterfaceDown not called (from Stop)")
-	}
+	// Delete: DeleteOpkgTun → ip link del → Save.
+	// No Stop call — Delete is a direct cleanup now.
 	if len(ndms.DeleteCalls) != 1 || ndms.DeleteCalls[0] != "OpkgTun0" {
 		t.Errorf("NDMS.DeleteOpkgTun not called correctly")
 	}
-	// ip link del is called by Delete as safety net (not by Stop).
+	// ip link del removes our amneziawg kernel interface.
 	hasLinkDel := false
 	for _, c := range recorder.Calls {
 		if strings.Contains(c, "link del dev opkgtun0") {
@@ -645,7 +648,7 @@ func TestOperatorOS5_Delete_Success(t *testing.T) {
 		}
 	}
 	if !hasLinkDel {
-		t.Errorf("Delete should call ip link del as safety net")
+		t.Errorf("Delete should call ip link del to remove kernel interface")
 	}
 }
 

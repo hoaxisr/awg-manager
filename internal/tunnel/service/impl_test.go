@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -142,8 +143,8 @@ func (m *MockOperator) Stop(ctx context.Context, tunnelID string) error {
 	return m.stopError
 }
 
-func (m *MockOperator) Delete(ctx context.Context, tunnelID string) error {
-	m.DeleteCalls = append(m.DeleteCalls, tunnelID)
+func (m *MockOperator) Delete(ctx context.Context, stored *storage.AWGTunnel) error {
+	m.DeleteCalls = append(m.DeleteCalls, stored.ID)
 	return m.deleteError
 }
 

@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
@@ -36,8 +37,8 @@ type Operator interface {
 	Stop(ctx context.Context, tunnelID string) error
 
 	// Delete completely removes a tunnel.
-	// Calls Stop if running, then removes NDMS/system resources.
-	Delete(ctx context.Context, tunnelID string) error
+	// Receives the full stored tunnel for reliable cleanup (persisted endpoint IP, etc.).
+	Delete(ctx context.Context, stored *storage.AWGTunnel) error
 
 	// Recover attempts to bring a broken tunnel into a consistent state.
 	// Based on current state, may kill zombie processes, clean up orphaned resources, etc.
