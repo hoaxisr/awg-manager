@@ -17,16 +17,22 @@ type Operator interface {
 	// For OS4: no-op (interface created by process).
 	Create(ctx context.Context, cfg tunnel.Config) error
 
-	// Start starts a tunnel.
-	// Assumes: tunnel is in Stopped or NotCreated state.
-	// For OS5: ensures OpkgTun exists (configures NDMS only if just created),
-	//   starts process, sets routes, adds firewall rules.
-	// For OS4: starts process, configures interface directly.
+	// ColdStart creates a tunnel from scratch or recreates from wrong type.
+	// For OS5: ip link del (if exists) + ip link add amneziawg + ip addr add +
+	//   wg setconf + ip link set up + InterfaceUp + routes + firewall + Save.
+	// Used for: BootReady (tun from NDMS), NotCreated, Broken.
+	ColdStart(ctx context.Context, cfg tunnel.Config) error
+
+	// Start brings up an existing amneziawg interface after our Stop.
+	// Interface already exists with address and WG config loaded.
+	// For OS5: ip link set up + InterfaceUp + routes + firewall + Save.
+	// Used for: Disabled (after our Stop), Dead (after PingCheck stop).
 	Start(ctx context.Context, cfg tunnel.Config) error
 
-	// Stop stops a tunnel.
-	// Assumes: tunnel is in Running state.
-	// Removes routes, firewall rules, brings interface down, kills process.
+	// Stop brings down a tunnel without destroying the interface.
+	// ip link set down + InterfaceDown + Save.
+	// NDMS handles failover automatically. Routes/firewall stay — NDMS manages them.
+	// Used for: user Stop, PingCheck dead.
 	Stop(ctx context.Context, tunnelID string) error
 
 	// Delete completely removes a tunnel.
@@ -42,16 +48,14 @@ type Operator interface {
 	// Skips process start; applies WG config, NDMS config, routing, and firewall.
 	Reconcile(ctx context.Context, cfg tunnel.Config) error
 
-	// KillLink kills the tunnel link without changing NDMS admin intent.
-	// Sets interface down via ip link. Used by PingCheck dead detection and WAN down.
-	// Preserves conf: running so tunnel auto-starts after reboot.
-	KillLink(ctx context.Context, tunnelID string) error
+	// Suspend sets link down without removing the interface or changing NDMS conf.
+	// NDMS sees pending state and handles failover automatically.
+	// Routes and firewall are NOT touched — NDMS manages failover.
+	Suspend(ctx context.Context, tunnelID string) error
 
-	// InterfaceUp brings only the interface up (for PingCheck recovery).
-	InterfaceUp(ctx context.Context, tunnelID string) error
-
-	// InterfaceDown brings only the interface down (for PingCheck dead detection).
-	InterfaceDown(ctx context.Context, tunnelID string) error
+	// Resume sets link up after Suspend.
+	// NDMS will restore routing automatically.
+	Resume(ctx context.Context, tunnelID string) error
 
 	// ApplyConfig applies a new WireGuard config to a running tunnel.
 	ApplyConfig(ctx context.Context, tunnelID, configPath string) error

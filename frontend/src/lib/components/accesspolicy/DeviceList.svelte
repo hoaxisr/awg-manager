@@ -41,6 +41,7 @@
 			<div
 				class="device-row"
 				class:dimmed={isBusy}
+				role="listitem"
 				draggable="true"
 				ondragstart={(e) => e.dataTransfer?.setData('text/plain', device.mac)}
 			>

@@ -43,7 +43,7 @@
 		try {
 			tunnel = await api.getTunnel(tunnelId);
 			const cfg = tunnel.connectivityCheck;
-			method = (cfg?.method !== undefined && cfg?.method !== null && cfg?.method !== '') ? cfg.method : 'http';
+			method = (cfg?.method !== undefined && cfg?.method !== null) ? cfg.method : 'http';
 			pingTarget = cfg?.pingTarget || computeDefaultGateway(tunnel.interface?.address || tunnelAddress);
 		} catch (e) {
 			notifications.error('Не удалось загрузить настройки');

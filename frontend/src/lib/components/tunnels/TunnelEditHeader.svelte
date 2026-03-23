@@ -182,12 +182,6 @@
 		pointer-events: none;
 	}
 
-	.btn-icon {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-	}
-
 	@media (max-width: 600px) {
 		.btn-label {
 			display: none;

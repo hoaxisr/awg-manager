@@ -63,6 +63,11 @@ func (o *OperatorOS4Impl) Create(ctx context.Context, cfg tunnel.Config) error {
 	return nil
 }
 
+// ColdStart on OS4 is the same as Start — no NDMS/OpkgTun lifecycle.
+func (o *OperatorOS4Impl) ColdStart(ctx context.Context, cfg tunnel.Config) error {
+	return o.Start(ctx, cfg)
+}
+
 // Start starts a tunnel on OS 4.x.
 // Sequence: process → wait ready → ip config → WG config → interface up → firewall
 // Routing is not managed here — OS4 handles it externally.
@@ -279,41 +284,20 @@ func (o *OperatorOS4Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	return nil
 }
 
-// KillLink kills the tunnel link without changing admin intent.
-// Cleans up side effects (firewall) before killing the process.
-func (o *OperatorOS4Impl) KillLink(ctx context.Context, tunnelID string) error {
-	ifaceName := tunnelID
-
-	// Clean up firewall rules left by Start.
-	_ = o.firewall.RemoveRules(ctx, ifaceName)
-
-	if err := o.backend.Stop(ctx, ifaceName); err != nil {
-		return tunnel.NewOpError("kill_link", tunnelID, "backend", err)
-	}
-
-	// Clear resolved ISP tracking
-	o.resolvedISPMu.Lock()
-	delete(o.resolvedISP, tunnelID)
-	o.resolvedISPMu.Unlock()
-
-	o.logInfo("kill_link", tunnelID, "Link killed")
-	return nil
-}
-
-// InterfaceUp brings the interface up (limited on OS4).
-func (o *OperatorOS4Impl) InterfaceUp(ctx context.Context, tunnelID string) error {
-	result, err := exec.Run(ctx, "/opt/sbin/ip", "link", "set", "up", "dev", tunnelID)
-	if err != nil {
-		return tunnel.NewOpError("interface_up", tunnelID, "ip", exec.FormatError(result, err))
-	}
-	return nil
-}
-
-// InterfaceDown brings the interface down.
-func (o *OperatorOS4Impl) InterfaceDown(ctx context.Context, tunnelID string) error {
+// Suspend sets link down without removing the interface.
+func (o *OperatorOS4Impl) Suspend(ctx context.Context, tunnelID string) error {
 	result, err := exec.Run(ctx, "/opt/sbin/ip", "link", "set", "down", "dev", tunnelID)
 	if err != nil {
-		return tunnel.NewOpError("interface_down", tunnelID, "ip", exec.FormatError(result, err))
+		return tunnel.NewOpError("suspend", tunnelID, "ip", exec.FormatError(result, err))
+	}
+	return nil
+}
+
+// Resume sets link up after Suspend.
+func (o *OperatorOS4Impl) Resume(ctx context.Context, tunnelID string) error {
+	result, err := exec.Run(ctx, "/opt/sbin/ip", "link", "set", "up", "dev", tunnelID)
+	if err != nil {
+		return tunnel.NewOpError("resume", tunnelID, "ip", exec.FormatError(result, err))
 	}
 	return nil
 }

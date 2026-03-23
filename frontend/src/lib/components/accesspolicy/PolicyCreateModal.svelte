@@ -8,9 +8,13 @@
 		onclose: () => void;
 	}
 
-	let { open, saving, oncreate, onclose }: Props = $props();
+	let { open = $bindable(false), saving, oncreate, onclose }: Props = $props();
 
 	let description = $state('');
+	const VALID_PATTERN = /^[a-zA-Z0-9_-]*$/;
+	const MAX_LEN = 256;
+
+	let isValid = $derived(description.trim().length > 0 && description.trim().length <= MAX_LEN && VALID_PATTERN.test(description.trim()));
 
 	$effect(() => {
 		if (open) {
@@ -20,7 +24,7 @@
 
 	function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
-		if (description.trim()) {
+		if (isValid) {
 			oncreate(description.trim());
 		}
 	}
@@ -34,10 +38,13 @@
 				type="text"
 				class="field-input"
 				bind:value={description}
-				placeholder="Например: Гостевая сеть"
+				placeholder="Guest-Network"
 				required
+				maxlength={MAX_LEN}
+				pattern="[a-zA-Z0-9_-]+"
 				disabled={saving}
 			/>
+			<span class="field-hint">Латинские буквы, цифры, дефисы, подчёркивания</span>
 		</label>
 	</form>
 
@@ -45,8 +52,8 @@
 		<button class="btn btn-ghost" onclick={onclose} disabled={saving}>Отмена</button>
 		<button
 			class="btn btn-primary"
-			onclick={() => description.trim() && oncreate(description.trim())}
-			disabled={saving || !description.trim()}
+			onclick={() => isValid && oncreate(description.trim())}
+			disabled={saving || !isValid}
 		>
 			{#if saving}Создание...{:else}Создать{/if}
 		</button>
@@ -81,5 +88,10 @@
 
 	.field-input:disabled {
 		opacity: 0.6;
+	}
+
+	.field-hint {
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 	}
 </style>

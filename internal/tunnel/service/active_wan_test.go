@@ -10,6 +10,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/lifecycle"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
@@ -43,6 +44,12 @@ func testService(t *testing.T) (*ServiceImpl, *storage.AWGTunnelStore, *mockOp, 
 	})
 
 	svc := New(store, nil, op, stateMgr, nil, wanModel, nil)
+
+	// Wire lifecycle Manager for kernel tunnel operations.
+	lcm := lifecycle.NewManager(op, store, stateMgr, wanModel, svc.TunnelLocks(), nil, nil)
+	lcm.SetExecutor(svc)
+	svc.SetLifecycleManager(lcm)
+
 	return svc, store, op, stateMgr
 }
 
@@ -112,6 +119,10 @@ func (m *mockOp) Stop(ctx context.Context, tunnelID string) error {
 		m.stateMgr.SetState(tunnelID, tunnel.StateInfo{State: tunnel.StateStopped})
 	}
 	return m.stopError
+}
+
+func (m *mockOp) ColdStart(ctx context.Context, cfg tunnel.Config) error {
+	return m.Start(ctx, cfg) // ColdStart delegates to Start in tests
 }
 
 func (m *mockOp) Start(ctx context.Context, cfg tunnel.Config) error {
@@ -276,7 +287,7 @@ func TestActiveWAN_GetResolvedISP_MissingTunnel(t *testing.T) {
 // TestActiveWAN_HandleWANDown_MatchesByStoredWAN verifies HandleWANDown matches
 // tunnels using persisted ActiveWAN, not volatile operator map.
 func TestActiveWAN_HandleWANDown_MatchesByStoredWAN(t *testing.T) {
-	svc, store, op, _ := testService(t)
+	svc, store, op, stateMgr := testService(t)
 	ctx := context.Background()
 
 	// awg10 bound to eth3 (explicit — no failover), awg11 bound to ppp0
@@ -289,26 +300,30 @@ func TestActiveWAN_HandleWANDown_MatchesByStoredWAN(t *testing.T) {
 		tun.ISPInterface = "ppp0"
 	})
 
-	// Operator has NO resolvedISP (simulates daemon restart)
-	// Old code would fail here; new code reads storage.
+	// Set running state for lifecycle Manager (raw fields for determineState).
+	stateMgr.SetState("awg10", tunnel.StateInfo{
+		OpkgTunExists: true, ProcessRunning: true, InterfaceUp: true,
+	})
+	stateMgr.SetState("awg11", tunnel.StateInfo{
+		OpkgTunExists: true, ProcessRunning: true, InterfaceUp: true,
+	})
 
 	svc.HandleWANDown(ctx, "eth3")
 
-	// Wait for goroutines
-	time.Sleep(100 * time.Millisecond)
+	// HandleWANDown is now blocking (WaitGroup) — no sleep needed.
 
-	// Only awg10 should be killed (bound to ISP)
-	if len(op.KillLinkCalls) != 1 {
-		t.Fatalf("Expected 1 KillLink call, got %d", len(op.KillLinkCalls))
+	// Only awg10 should be suspended (bound to explicit ISP)
+	if len(op.SuspendCalls) != 1 {
+		t.Fatalf("Expected 1 Suspend call, got %d", len(op.SuspendCalls))
 	}
-	if op.KillLinkCalls[0] != "awg10" {
-		t.Errorf("KillLink called on %q, want %q", op.KillLinkCalls[0], "awg10")
+	if op.SuspendCalls[0] != "awg10" {
+		t.Errorf("Suspend called on %q, want %q", op.SuspendCalls[0], "awg10")
 	}
 
-	// ActiveWAN should be cleared for killed tunnel
+	// ActiveWAN should be preserved for suspended tunnel (paused, not stopped).
 	stored, _ := store.Get("awg10")
-	if stored.ActiveWAN != "" {
-		t.Errorf("awg10 ActiveWAN = %q, want empty after WAN down", stored.ActiveWAN)
+	if stored.ActiveWAN != "eth3" {
+		t.Errorf("awg10 ActiveWAN = %q, want %q (preserved after suspend)", stored.ActiveWAN, "eth3")
 	}
 
 	// awg11 should be untouched
@@ -318,10 +333,10 @@ func TestActiveWAN_HandleWANDown_MatchesByStoredWAN(t *testing.T) {
 	}
 }
 
-// TestActiveWAN_HandleWANDown_EmptyIface_KillsAllWithActiveWAN verifies that
-// HandleWANDown("") kills all tunnels with ActiveWAN set (boot scenario).
-func TestActiveWAN_HandleWANDown_EmptyIface_KillsAllWithActiveWAN(t *testing.T) {
-	svc, store, op, _ := testService(t)
+// TestActiveWAN_HandleWANDown_EmptyIface_SuspendsAllWithActiveWAN verifies that
+// HandleWANDown("") suspends all tunnels with ActiveWAN set (boot scenario).
+func TestActiveWAN_HandleWANDown_EmptyIface_SuspendsAllWithActiveWAN(t *testing.T) {
+	svc, store, op, stateMgr := testService(t)
 	ctx := context.Background()
 
 	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
@@ -332,13 +347,21 @@ func TestActiveWAN_HandleWANDown_EmptyIface_KillsAllWithActiveWAN(t *testing.T) 
 	})
 	saveTunnel(t, store, "awg12") // no ActiveWAN — should be skipped
 
+	// Set running state for tunnels with ActiveWAN.
+	stateMgr.SetState("awg10", tunnel.StateInfo{
+		OpkgTunExists: true, ProcessRunning: true, InterfaceUp: true,
+	})
+	stateMgr.SetState("awg11", tunnel.StateInfo{
+		OpkgTunExists: true, ProcessRunning: true, InterfaceUp: true,
+	})
+
 	svc.HandleWANDown(ctx, "")
 
-	time.Sleep(100 * time.Millisecond)
+	// HandleWANDown is now blocking (WaitGroup) — no sleep needed.
 
-	// awg10 and awg11 should be killed, awg12 skipped
-	if len(op.KillLinkCalls) != 2 {
-		t.Fatalf("Expected 2 KillLink calls, got %d: %v", len(op.KillLinkCalls), op.KillLinkCalls)
+	// awg10 and awg11 should be suspended, awg12 skipped
+	if len(op.SuspendCalls) != 2 {
+		t.Fatalf("Expected 2 Suspend calls, got %d: %v", len(op.SuspendCalls), op.SuspendCalls)
 	}
 }
 
@@ -352,10 +375,9 @@ func TestActiveWAN_HandleWANDown_SkipsEmptyActiveWAN(t *testing.T) {
 
 	svc.HandleWANDown(ctx, "eth3")
 
-	time.Sleep(50 * time.Millisecond)
-
-	if len(op.KillLinkCalls) != 0 {
-		t.Errorf("Expected 0 KillLink calls, got %d", len(op.KillLinkCalls))
+	// No Suspend expected — tunnel has no ActiveWAN matching "eth3".
+	if len(op.SuspendCalls) != 0 {
+		t.Errorf("Expected 0 Suspend calls for tunnel without ActiveWAN, got %d", len(op.SuspendCalls))
 	}
 }
 
@@ -460,12 +482,15 @@ func TestActiveWAN_RestoreEndpointTracking_ClearsStale(t *testing.T) {
 
 // TestActiveWAN_HandleMonitorDead_Clears verifies HandleMonitorDead clears ActiveWAN.
 func TestActiveWAN_HandleMonitorDead_Clears(t *testing.T) {
-	svc, store, _, _ := testService(t)
+	svc, store, _, stateMgr := testService(t)
 	ctx := context.Background()
 
 	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
 		tun.ActiveWAN = "eth3"
 		tun.PingCheck = &storage.TunnelPingCheck{Enabled: true}
+	})
+	stateMgr.SetState("awg10", tunnel.StateInfo{
+		OpkgTunExists: true, ProcessRunning: true, InterfaceUp: true,
 	})
 
 	err := svc.HandleMonitorDead(ctx, "awg10")
@@ -489,7 +514,11 @@ func TestActiveWAN_HandleForcedRestart_SetsNew(t *testing.T) {
 		tun.ActiveWAN = "eth3"
 		tun.PingCheck = &storage.TunnelPingCheck{Enabled: true, IsDeadByMonitoring: true}
 	})
-	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateRunning})
+	// Dead by monitoring — Manager sees StateDead from stored flag.
+	// Raw state: process stopped (after previous HandlePingDead → Stop).
+	stateMgr.SetState("awg10", tunnel.StateInfo{
+		OpkgTunExists: true, ProcessRunning: false, InterfaceUp: false,
+	})
 
 	// WAN changed: eth3 down, ppp0 becomes preferred
 	svc.WANModel().SetUp("eth3", false)

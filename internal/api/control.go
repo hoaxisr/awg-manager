@@ -68,15 +68,7 @@ func (h *ControlHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sync Enabled flag — Start means "ON" (autostart at boot)
-	_ = h.svc.SetEnabled(r.Context(), id, true)
-
-	// Start ping check monitoring if enabled
-	if h.pingCheck != nil {
-		if t, err := h.svc.Get(r.Context(), id); err == nil {
-			h.pingCheck.StartMonitoring(id, t.Name)
-		}
-	}
+	// Enabled + PingCheck monitoring handled by lifecycle Manager inside svc.Start.
 
 	h.log.Info("start", id, "Tunnel started")
 
@@ -120,8 +112,7 @@ func (h *ControlHandler) Stop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sync Enabled flag — Stop means "OFF" (no autostart at boot)
-	_ = h.svc.SetEnabled(r.Context(), id, false)
+	// Enabled handled by lifecycle Manager inside svc.Stop.
 
 	h.log.Info("stop", id, "Tunnel stopped")
 
@@ -160,14 +151,7 @@ func (h *ControlHandler) Restart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resume ping check monitoring after successful restart.
-	// StartMonitoring handles both resume (paused→running) and fresh start,
-	// and clears isDead + failCount internally.
-	if h.pingCheck != nil {
-		if t, err := h.svc.Get(r.Context(), id); err == nil {
-			h.pingCheck.StartMonitoring(id, t.Name)
-		}
-	}
+	// Enabled + PingCheck monitoring handled by lifecycle Manager inside svc.Restart.
 
 	h.log.Info("restart", id, "Tunnel restarted")
 

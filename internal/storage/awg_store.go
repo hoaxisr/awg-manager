@@ -174,6 +174,27 @@ func (s *AWGTunnelStore) Exists(id string) bool {
 	return err == nil
 }
 
+// ClearRuntimeState clears volatile runtime fields (ActiveWAN, StartedAt)
+// for a tunnel. Called after Stop/Suspend when the tunnel is no longer active.
+func (s *AWGTunnelStore) ClearRuntimeState(id string) {
+	stored, err := s.Get(id)
+	if err != nil {
+		return
+	}
+	changed := false
+	if stored.ActiveWAN != "" {
+		stored.ActiveWAN = ""
+		changed = true
+	}
+	if stored.StartedAt != "" {
+		stored.StartedAt = ""
+		changed = true
+	}
+	if changed {
+		_ = s.Save(stored)
+	}
+}
+
 const (
 	// OS 5.x: OpkgTun indices 10-16 (NDMS limit is 16)
 	os5MinIndex = 10

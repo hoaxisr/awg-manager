@@ -14,6 +14,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/lifecycle"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ops"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/state"
@@ -90,11 +91,9 @@ type ServiceImpl struct {
 	lifecycleOps   map[string]tunnel.State
 	lifecycleOpsMu sync.RWMutex
 
-	// wanOps tracks per-tunnel cancellation for WAN handler goroutines.
-	// When a new WAN event arrives for a tunnel, the previous goroutine is cancelled
-	// so it releases the lock promptly instead of running its full timeout.
-	wanOps   map[string]context.CancelFunc
-	wanOpsMu sync.Mutex
+	// lifecycleManager handles lifecycle decisions for kernel tunnels.
+	// Set via SetLifecycleManager after construction.
+	lifecycleManager *lifecycle.Manager
 }
 
 // New creates a new TunnelService.
@@ -119,7 +118,6 @@ func New(
 		reconcileDisabledEvents: make(map[string][]time.Time),
 		reconcileLoopBlocked:    make(map[string]time.Time),
 		lifecycleOps:            make(map[string]tunnel.State),
-		wanOps:                  make(map[string]context.CancelFunc),
 	}
 }
 
@@ -150,6 +148,61 @@ func (s *ServiceImpl) SetStaticRouteHooks(hooks StaticRouteHooks) {
 	s.staticRouteHooks = hooks
 }
 
+// SetLifecycleManager sets the lifecycle Manager for kernel tunnel operations.
+// Must be called after construction, before any lifecycle operations.
+func (s *ServiceImpl) SetLifecycleManager(m *lifecycle.Manager) {
+	s.lifecycleManager = m
+}
+
+// TunnelLocks returns the per-tunnel lock map for sharing with lifecycle.Manager.
+func (s *ServiceImpl) TunnelLocks() *sync.Map {
+	return &s.tunnelMu
+}
+
+// ColdStartKernel performs a full start from scratch for a kernel tunnel.
+// Resolves WAN, writes config, calls operator.ColdStart.
+// Called by lifecycle.Manager — assumes per-tunnel lock is already held.
+func (s *ServiceImpl) ColdStartKernel(ctx context.Context, tunnelID string) error {
+	return s.startInternal(ctx, tunnelID)
+}
+
+// StartKernel brings up an existing amneziawg interface (after our Stop).
+// Resolves WAN, calls operator.Start (light — ip link set up + routes + firewall).
+// Called by lifecycle.Manager — assumes per-tunnel lock is already held.
+func (s *ServiceImpl) StartKernel(ctx context.Context, tunnelID string) error {
+	return s.startLightInternal(ctx, tunnelID)
+}
+
+// StopKernel brings down a tunnel — calls operator.Stop + clears runtime state.
+// Called by lifecycle.Manager — assumes per-tunnel lock is already held.
+func (s *ServiceImpl) StopKernel(ctx context.Context, tunnelID string) error {
+	return s.stopInternal(ctx, tunnelID)
+}
+
+// beginOperation marks a tunnel as being modified by a lifecycle operation.
+// Delegates to lifecycle.Manager which owns the suppress map.
+// No-op when Manager is nil (cleanup path).
+func (s *ServiceImpl) beginOperation(tunnelID string) {
+	if s.lifecycleManager != nil {
+		s.lifecycleManager.BeginOperation(tunnelID)
+	}
+}
+
+// endOperation clears the operation flag for a tunnel.
+func (s *ServiceImpl) endOperation(tunnelID string) {
+	if s.lifecycleManager != nil {
+		s.lifecycleManager.EndOperation(tunnelID)
+	}
+}
+
+// isOperating checks if a tunnel is currently being modified by a lifecycle operation.
+func (s *ServiceImpl) isOperating(tunnelID string) bool {
+	if s.lifecycleManager != nil {
+		return s.lifecycleManager.IsOperating(tunnelID)
+	}
+	return false
+}
+
 // suppressReconcile temporarily suppresses ReconcileInterface for a tunnel.
 // Must be called BEFORE lockTunnel() so hooks blocked on the lock see the suppression.
 const reconcileSuppressDuration = 15 * time.Second
@@ -160,111 +213,12 @@ func (s *ServiceImpl) suppressReconcile(tunnelID string) {
 	s.reconcileMu.Unlock()
 }
 
-// isReconcileSuppressed checks if a self-triggered hook should be ignored.
-func (s *ServiceImpl) isReconcileSuppressed(tunnelID string) bool {
-	s.reconcileMu.Lock()
-	deadline, ok := s.reconcileDeadline[tunnelID]
-	if !ok {
-		s.reconcileMu.Unlock()
-		return false
-	}
-	if time.Now().After(deadline) {
-		delete(s.reconcileDeadline, tunnelID)
-		s.reconcileMu.Unlock()
-		return false
-	}
-	s.reconcileMu.Unlock()
-	return true
-}
-
-// reconcileLoop detection constants.
-const (
-	reconcileLoopWindow   = 3 * time.Minute // track disabled events within this window
-	reconcileLoopMaxCount = 4               // max disabled events before blocking
-	reconcileLoopBlockDur = 5 * time.Minute // block reconcile for this long
-)
-
-// recordDisabledEvent records a "disabled" reconcile event and returns true if loop detected.
-func (s *ServiceImpl) recordDisabledEvent(tunnelID string) bool {
-	s.reconcileMu.Lock()
-	defer s.reconcileMu.Unlock()
-
-	// Check if already blocked
-	if blockUntil, ok := s.reconcileLoopBlocked[tunnelID]; ok {
-		if time.Now().Before(blockUntil) {
-			return true // still blocked
-		}
-		delete(s.reconcileLoopBlocked, tunnelID)
-	}
-
-	now := time.Now()
-	cutoff := now.Add(-reconcileLoopWindow)
-
-	// Prune old events
-	events := s.reconcileDisabledEvents[tunnelID]
-	pruned := events[:0]
-	for _, t := range events {
-		if t.After(cutoff) {
-			pruned = append(pruned, t)
-		}
-	}
-	pruned = append(pruned, now)
-	s.reconcileDisabledEvents[tunnelID] = pruned
-
-	if len(pruned) >= reconcileLoopMaxCount {
-		s.reconcileLoopBlocked[tunnelID] = now.Add(reconcileLoopBlockDur)
-		s.reconcileDisabledEvents[tunnelID] = nil // reset counter
-		return true
-	}
-	return false
-}
-
-// isReconcileLoopBlocked checks if reconcile is blocked due to loop detection.
-func (s *ServiceImpl) isReconcileLoopBlocked(tunnelID string) bool {
-	s.reconcileMu.Lock()
-	defer s.reconcileMu.Unlock()
-	blockUntil, ok := s.reconcileLoopBlocked[tunnelID]
-	if !ok {
-		return false
-	}
-	if time.Now().After(blockUntil) {
-		delete(s.reconcileLoopBlocked, tunnelID)
-		return false
-	}
-	return true
-}
-
-// clearReconcileLoop resets loop detection for a tunnel (called on manual Start/Stop).
+// clearReconcileLoop resets loop detection for a tunnel (called on manual NativeWG Start/Stop).
 func (s *ServiceImpl) clearReconcileLoop(tunnelID string) {
 	s.reconcileMu.Lock()
 	defer s.reconcileMu.Unlock()
 	delete(s.reconcileDisabledEvents, tunnelID)
 	delete(s.reconcileLoopBlocked, tunnelID)
-}
-
-// newWANOp creates a cancellable context for a WAN handler goroutine.
-// Cancels any previous WAN operation for this tunnel.
-func (s *ServiceImpl) newWANOp(tunnelID string) context.Context {
-	s.wanOpsMu.Lock()
-	defer s.wanOpsMu.Unlock()
-
-	if cancel, ok := s.wanOps[tunnelID]; ok {
-		cancel()
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	s.wanOps[tunnelID] = cancel
-	return ctx
-}
-
-// clearWANOp removes the WAN operation context for a tunnel.
-// Called at the end of each WAN handler goroutine.
-func (s *ServiceImpl) clearWANOp(tunnelID string) {
-	s.wanOpsMu.Lock()
-	defer s.wanOpsMu.Unlock()
-	if cancel, ok := s.wanOps[tunnelID]; ok {
-		cancel()
-	}
-	delete(s.wanOps, tunnelID)
 }
 
 // lockTunnel acquires the per-tunnel mutex.
@@ -688,25 +642,9 @@ func (s *ServiceImpl) clearDeadFlag(tunnelID string) {
 	}
 }
 
-// clearActiveWAN clears the persisted ActiveWAN and StartedAt for a tunnel.
-// Called after KillLink to ensure HandleWANDown won't match stale WAN.
+// clearActiveWAN clears volatile runtime state for a tunnel.
 func (s *ServiceImpl) clearActiveWAN(tunnelID string) {
-	stored, err := s.store.Get(tunnelID)
-	if err != nil {
-		return
-	}
-	changed := false
-	if stored.ActiveWAN != "" {
-		stored.ActiveWAN = ""
-		changed = true
-	}
-	if stored.StartedAt != "" {
-		stored.StartedAt = ""
-		changed = true
-	}
-	if changed {
-		_ = s.store.Save(stored)
-	}
+	s.store.ClearRuntimeState(tunnelID)
 }
 
 // collectManagedIfaceNames returns interface names for all stored tunnels.

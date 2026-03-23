@@ -187,32 +187,6 @@ func TestOperatorOS4_Recover(t *testing.T) {
 	}
 }
 
-func TestOperatorOS4_InterfaceUp(t *testing.T) {
-	op := NewOperatorOS4(nil, &MockWGClient{}, &MockBackend{}, &MockFirewall{}, nil)
-
-	// This test verifies the method exists and doesn't panic
-	// Actual ip command execution can't be tested without mocking exec
-	err := op.InterfaceUp(context.Background(), "awg0")
-
-	// Will fail because ip command doesn't exist in test environment
-	// but that's expected - we're testing the interface, not the exec
-	if err == nil {
-		// If somehow ip exists (e.g., running tests on Keenetic), that's fine too
-		t.Log("InterfaceUp succeeded (ip command available)")
-	}
-}
-
-func TestOperatorOS4_InterfaceDown(t *testing.T) {
-	op := NewOperatorOS4(nil, &MockWGClient{}, &MockBackend{}, &MockFirewall{}, nil)
-
-	// Same as InterfaceUp - testing interface existence
-	err := op.InterfaceDown(context.Background(), "awg0")
-
-	if err == nil {
-		t.Log("InterfaceDown succeeded (ip command available)")
-	}
-}
-
 func TestOperatorOS4_ApplyConfig(t *testing.T) {
 	wgClient := &MockWGClient{}
 	op := NewOperatorOS4(nil, wgClient, &MockBackend{}, &MockFirewall{}, nil)
@@ -311,15 +285,3 @@ func TestOperatorOS4_GetTrackedEndpointIP_NoOp(t *testing.T) {
 	}
 }
 
-func TestOperatorOS4_KillLink_StopsBackend(t *testing.T) {
-	backendMock := &MockBackend{running: true}
-	op := NewOperatorOS4(nil, &MockWGClient{}, backendMock, &MockFirewall{}, nil)
-
-	err := op.KillLink(context.Background(), "awgm0")
-	if err != nil {
-		t.Fatalf("KillLink() error = %v", err)
-	}
-	if len(backendMock.StopCalls) != 1 {
-		t.Errorf("Backend.Stop not called in KillLink")
-	}
-}

@@ -29,9 +29,16 @@ func (b *KernelBackend) Type() Type {
 }
 
 // Start creates a kernel AmneziaWG interface.
-// First attempts cleanup of any existing interface, then creates new one.
+// If interface already exists as amneziawg — does nothing (idempotent).
+// If interface exists as wrong type (tun) — deletes and recreates.
+// If interface doesn't exist — creates new.
 func (b *KernelBackend) Start(ctx context.Context, ifaceName string) error {
-	// Cleanup any existing interface (ignore error - may not exist)
+	// Check if interface already exists with correct type
+	if running, _ := b.IsRunning(ctx, ifaceName); running {
+		return nil // Already amneziawg, nothing to do
+	}
+
+	// Remove existing interface if present (may be wrong type like tun)
 	_, _ = exec.Run(ctx, "/opt/sbin/ip", "link", "del", "dev", ifaceName)
 
 	// Create kernel interface

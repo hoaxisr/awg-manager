@@ -101,7 +101,7 @@ type Service interface {
 	// PingCheck integration
 
 	// HandleMonitorDead is called when PingCheck detects a dead tunnel.
-	// Persists dead state in storage and kills the tunnel process (KillLink).
+	// Persists dead state in storage and stops the tunnel via lifecycle Manager.
 	HandleMonitorDead(ctx context.Context, tunnelID string) error
 
 	// HandleMonitorRecovered is called when PingCheck detects tunnel recovery.

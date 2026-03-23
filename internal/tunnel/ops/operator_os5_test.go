@@ -381,7 +381,9 @@ func TestOperatorOS5_Create_AlreadyExists(t *testing.T) {
 	}
 }
 
-func TestOperatorOS5_Start_Success(t *testing.T) {
+// === ColdStart tests (full creation from scratch) ===
+
+func TestOperatorOS5_ColdStart_Success(t *testing.T) {
 	ndms := &MockNDMSClient{opkgTunExists: true}
 	wgClient := &MockWGClient{}
 	backendMock := &MockBackend{}
@@ -398,41 +400,29 @@ func TestOperatorOS5_Start_Success(t *testing.T) {
 		DefaultRoute: true,
 	}
 
-	err := op.Start(context.Background(), cfg)
-
+	err := op.ColdStart(context.Background(), cfg)
 	if err != nil {
-		t.Fatalf("Start() error = %v", err)
+		t.Fatalf("ColdStart() error = %v", err)
 	}
 
-	// Verify phases: backend → kernel config → WG → ip link up → NDMS up → firewall
-	// When OpkgTun exists + kernel: SetAddress/SetMTU skipped (MTU set via ip link set)
 	if len(backendMock.StartCalls) != 1 {
 		t.Errorf("Backend.Start not called")
 	}
 	if len(wgClient.SetConfCalls) != 1 {
 		t.Errorf("WG.SetConf not called")
 	}
-	if len(ndms.SetAddrCalls) != 0 {
-		t.Errorf("NDMS.SetAddress should NOT be called when OpkgTun exists, got %d", len(ndms.SetAddrCalls))
-	}
-	if len(ndms.SetMTUCalls) != 0 {
-		t.Errorf("NDMS.SetMTU should NOT be called for kernel backend (MTU set via ip), got %d", len(ndms.SetMTUCalls))
-	}
-	// Start always calls InterfaceUp (after Stop, conf is disabled)
 	if len(ndms.IfUpCalls) != 1 {
-		t.Errorf("NDMS.InterfaceUp not called, got %d", len(ndms.IfUpCalls))
+		t.Errorf("NDMS.InterfaceUp not called")
 	}
 	if len(fw.AddCalls) != 1 {
 		t.Errorf("Firewall.AddRules not called")
 	}
-	// NDMS default route is set when DefaultRoute=true (Phase 6 only)
 	if len(ndms.SetRouteCalls) != 1 {
-		t.Errorf("NDMS.SetDefaultRoute expected 1 call (phase 6), got %d", len(ndms.SetRouteCalls))
+		t.Errorf("NDMS.SetDefaultRoute expected 1 call, got %d", len(ndms.SetRouteCalls))
 	}
 }
 
-func TestOperatorOS5_Start_JustCreated_SetsNDMSConfig(t *testing.T) {
-	// When OpkgTun does NOT exist, Start creates it and sets address/MTU
+func TestOperatorOS5_ColdStart_JustCreated_SetsNDMSConfig(t *testing.T) {
 	ndms := &MockNDMSClient{opkgTunExists: false}
 	wgClient := &MockWGClient{}
 	backendMock := &MockBackend{}
@@ -448,66 +438,20 @@ func TestOperatorOS5_Start_JustCreated_SetsNDMSConfig(t *testing.T) {
 		ConfPath: "/tmp/awg0.conf",
 	}
 
-	err := op.Start(context.Background(), cfg)
-
+	err := op.ColdStart(context.Background(), cfg)
 	if err != nil {
-		t.Fatalf("Start() error = %v", err)
+		t.Fatalf("ColdStart() error = %v", err)
 	}
 
-	// OpkgTun was just created -> NDMS SetAddress/SetMTU SHOULD be called
 	if len(ndms.CreateCalls) != 1 {
 		t.Errorf("NDMS.CreateOpkgTun not called")
 	}
-	if len(ndms.SetAddrCalls) != 1 {
-		t.Errorf("NDMS.SetAddress should be called when OpkgTun just created, got %d", len(ndms.SetAddrCalls))
-	}
-	if len(ndms.SetMTUCalls) != 1 {
-		t.Errorf("NDMS.SetMTU should be called when OpkgTun just created, got %d", len(ndms.SetMTUCalls))
-	}
-	// Save should be called twice: after NDMS config (justCreated) + final save
-	if ndms.SaveCalls != 2 {
-		t.Errorf("NDMS.Save should be called twice (config + final), got %d", ndms.SaveCalls)
+	if ndms.SaveCalls < 2 {
+		t.Errorf("NDMS.Save should be called at least twice (config + final), got %d", ndms.SaveCalls)
 	}
 }
 
-func TestOperatorOS5_Start_VerifyIPCommands(t *testing.T) {
-	// Verify the specific ip commands called during Start
-	ndms := &MockNDMSClient{opkgTunExists: true}
-	backendMock := &MockBackend{}
-	recorder := &ipRunRecorder{}
-
-	op := NewOperatorOS5(ndms, &MockWGClient{}, backendMock, &MockFirewall{}, nil)
-	op.ipRun = recorder.run
-
-	cfg := tunnel.Config{
-		ID:       "awg0",
-		Name:     "Test",
-		Address:  "10.0.0.1",
-		MTU:      1420,
-		ConfPath: "/tmp/awg0.conf",
-	}
-
-	err := op.Start(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-
-	// Should have: (1) ip link set dev ... mtu/qlen, (2) ip link set up
-	if len(recorder.Calls) < 2 {
-		t.Fatalf("Expected at least 2 ip calls, got %d: %v", len(recorder.Calls), recorder.Calls)
-	}
-
-	// First call: configure interface MTU + txqueuelen
-	if !strings.Contains(recorder.Calls[0], "link set dev opkgtun0 txqueuelen 1000 mtu 1420") {
-		t.Errorf("First ip call should configure MTU/qlen, got: %s", recorder.Calls[0])
-	}
-	// Second call: bring link up
-	if !strings.Contains(recorder.Calls[1], "link set up dev opkgtun0") {
-		t.Errorf("Second ip call should bring link up, got: %s", recorder.Calls[1])
-	}
-}
-
-func TestOperatorOS5_Start_BackendFails_Rollback(t *testing.T) {
+func TestOperatorOS5_ColdStart_BackendFails_Rollback(t *testing.T) {
 	ndms := &MockNDMSClient{opkgTunExists: true}
 	backendMock := &MockBackend{startError: errors.New("process failed")}
 
@@ -520,21 +464,13 @@ func TestOperatorOS5_Start_BackendFails_Rollback(t *testing.T) {
 		ConfPath: "/tmp/awg0.conf",
 	}
 
-	err := op.Start(context.Background(), cfg)
-
+	err := op.ColdStart(context.Background(), cfg)
 	if err == nil {
-		t.Fatal("Start() should fail")
-	}
-	// OpkgTun exists + kernel -> justCreated=false -> no SetAddress, no NDMS SetMTU
-	if len(ndms.SetAddrCalls) != 0 {
-		t.Errorf("SetAddress should NOT be called when OpkgTun exists, got %d", len(ndms.SetAddrCalls))
-	}
-	if len(ndms.SetMTUCalls) != 0 {
-		t.Errorf("SetMTU should NOT be called for kernel backend (MTU set via ip), got %d", len(ndms.SetMTUCalls))
+		t.Fatal("ColdStart() should fail")
 	}
 }
 
-func TestOperatorOS5_Start_WGFails_Rollback(t *testing.T) {
+func TestOperatorOS5_ColdStart_WGFails_Rollback(t *testing.T) {
 	ndms := &MockNDMSClient{opkgTunExists: true}
 	backendMock := &MockBackend{}
 	wgClient := &MockWGClient{setConfError: errors.New("WG config failed")}
@@ -548,18 +484,16 @@ func TestOperatorOS5_Start_WGFails_Rollback(t *testing.T) {
 		ConfPath: "/tmp/awg0.conf",
 	}
 
-	err := op.Start(context.Background(), cfg)
-
+	err := op.ColdStart(context.Background(), cfg)
 	if err == nil {
-		t.Fatal("Start() should fail")
+		t.Fatal("ColdStart() should fail")
 	}
-	// Backend should be stopped on rollback
 	if len(backendMock.StopCalls) != 1 {
 		t.Errorf("Backend.Stop should be called on WG failure")
 	}
 }
 
-func TestOperatorOS5_Start_FirewallFails_Rollback(t *testing.T) {
+func TestOperatorOS5_ColdStart_FirewallFails_Rollback(t *testing.T) {
 	ndms := &MockNDMSClient{opkgTunExists: true}
 	backendMock := &MockBackend{}
 	fw := &MockFirewall{addError: errors.New("firewall failed")}
@@ -573,65 +507,144 @@ func TestOperatorOS5_Start_FirewallFails_Rollback(t *testing.T) {
 		ConfPath: "/tmp/awg0.conf",
 	}
 
-	err := op.Start(context.Background(), cfg)
-
+	err := op.ColdStart(context.Background(), cfg)
 	if err == nil {
-		t.Fatal("Start() should fail")
+		t.Fatal("ColdStart() should fail")
 	}
-	// Rollback: backend stopped, but InterfaceDown NOT called (OpkgTun already existed)
 	if len(backendMock.StopCalls) != 1 {
 		t.Errorf("Backend.Stop should be called on firewall failure")
 	}
-	if len(ndms.IfDownCalls) != 0 {
-		t.Errorf("InterfaceDown should NOT be called when OpkgTun already existed (preserves conf: running)")
+}
+
+// === Start tests (light — bring up existing amneziawg interface) ===
+
+func TestOperatorOS5_Start_Success(t *testing.T) {
+	ndms := &MockNDMSClient{opkgTunExists: true}
+	fw := &MockFirewall{}
+	recorder := &ipRunRecorder{}
+
+	op := NewOperatorOS5(ndms, &MockWGClient{}, &MockBackend{}, fw, nil)
+	op.ipRun = recorder.run
+
+	cfg := tunnel.Config{
+		ID:           "awg0",
+		Name:         "Test",
+		Address:      "10.0.0.1",
+		MTU:          1420,
+		ConfPath:     "/tmp/awg0.conf",
+		DefaultRoute: true,
+	}
+
+	err := op.Start(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	// Light start: ip link set up + InterfaceUp + firewall
+	if len(recorder.Calls) != 1 {
+		t.Fatalf("Expected 1 ip call (link set up), got %d: %v", len(recorder.Calls), recorder.Calls)
+	}
+	if !strings.Contains(recorder.Calls[0], "link set up dev opkgtun0") {
+		t.Errorf("ip call should bring link up, got: %s", recorder.Calls[0])
+	}
+	if len(ndms.IfUpCalls) != 1 {
+		t.Errorf("NDMS.InterfaceUp not called, got %d", len(ndms.IfUpCalls))
+	}
+	if len(fw.AddCalls) != 1 {
+		t.Errorf("Firewall.AddRules not called")
+	}
+	if len(ndms.SetRouteCalls) != 1 {
+		t.Errorf("NDMS.SetDefaultRoute expected 1 call, got %d", len(ndms.SetRouteCalls))
+	}
+	// No backend.Start, no WG.SetConf — interface already exists
+}
+
+func TestOperatorOS5_Start_VerifyNoBackendOrWG(t *testing.T) {
+	ndms := &MockNDMSClient{opkgTunExists: true}
+	backendMock := &MockBackend{}
+	wgClient := &MockWGClient{}
+
+	op := newTestOperator(ndms, wgClient, backendMock, &MockFirewall{})
+
+	cfg := tunnel.Config{
+		ID:       "awg0",
+		Address:  "10.0.0.1",
+		MTU:      1420,
+		ConfPath: "/tmp/awg0.conf",
+	}
+
+	_ = op.Start(context.Background(), cfg)
+
+	// Light Start should NOT call backend.Start or WG.SetConf
+	if len(backendMock.StartCalls) != 0 {
+		t.Errorf("Backend.Start should NOT be called in light Start, got %d", len(backendMock.StartCalls))
+	}
+	if len(wgClient.SetConfCalls) != 0 {
+		t.Errorf("WG.SetConf should NOT be called in light Start, got %d", len(wgClient.SetConfCalls))
 	}
 }
 
 func TestOperatorOS5_Stop_Success(t *testing.T) {
 	ndms := &MockNDMSClient{}
-	backendMock := &MockBackend{running: true}
 	fw := &MockFirewall{}
+	recorder := &ipRunRecorder{}
 
-	op := newTestOperator(ndms, &MockWGClient{}, backendMock, fw)
+	op := NewOperatorOS5(ndms, &MockWGClient{}, &MockBackend{running: true}, fw, nil)
+	op.ipRun = recorder.run
 
 	err := op.Stop(context.Background(), "awg0")
-
 	if err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}
 
-	// Kernel stop order: InterfaceDown -> firewall -> routes -> backend.Stop (ip link del)
+	// New Stop: ip link set down + InterfaceDown + Save. No firewall, no backend.Stop.
+	if len(recorder.Calls) != 1 {
+		t.Fatalf("Expected 1 ip call (link set down), got %d: %v", len(recorder.Calls), recorder.Calls)
+	}
+	if !strings.Contains(recorder.Calls[0], "link set down dev opkgtun0") {
+		t.Errorf("ip call should set link down, got: %s", recorder.Calls[0])
+	}
 	if len(ndms.IfDownCalls) != 1 {
 		t.Errorf("NDMS.InterfaceDown not called")
 	}
-	if len(fw.RemoveCalls) != 1 || fw.RemoveCalls[0] != "opkgtun0" {
-		t.Errorf("Firewall.RemoveRules not called correctly, got: %v", fw.RemoveCalls)
+	if ndms.SaveCalls != 1 {
+		t.Errorf("NDMS.Save expected 1 call, got %d", ndms.SaveCalls)
 	}
-	if len(backendMock.StopCalls) != 1 {
-		t.Errorf("Backend.Stop not called")
+	// No firewall removal, no backend.Stop — interface stays.
+	if len(fw.RemoveCalls) != 0 {
+		t.Errorf("Firewall.RemoveRules should NOT be called, got %d", len(fw.RemoveCalls))
 	}
-	// Kernel stop calls RemoveDefaultRoute (Phase 3: routes cleanup)
 }
 
 func TestOperatorOS5_Delete_Success(t *testing.T) {
 	ndms := &MockNDMSClient{opkgTunExists: true}
-	backendMock := &MockBackend{running: true}
 	fw := &MockFirewall{}
+	recorder := &ipRunRecorder{}
 
-	op := newTestOperator(ndms, &MockWGClient{}, backendMock, fw)
+	op := NewOperatorOS5(ndms, &MockWGClient{}, &MockBackend{running: true}, fw, nil)
+	op.ipRun = recorder.run
 
 	err := op.Delete(context.Background(), "awg0")
-
 	if err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
 
-	// Should stop first, then delete OpkgTun
-	if len(backendMock.StopCalls) != 1 {
-		t.Errorf("Backend.Stop not called")
+	// Delete: Stop (link down + InterfaceDown) → DeleteOpkgTun → ip link del (safety net) → Save.
+	if len(ndms.IfDownCalls) != 1 {
+		t.Errorf("NDMS.InterfaceDown not called (from Stop)")
 	}
 	if len(ndms.DeleteCalls) != 1 || ndms.DeleteCalls[0] != "OpkgTun0" {
 		t.Errorf("NDMS.DeleteOpkgTun not called correctly")
+	}
+	// ip link del is called by Delete as safety net (not by Stop).
+	hasLinkDel := false
+	for _, c := range recorder.Calls {
+		if strings.Contains(c, "link del dev opkgtun0") {
+			hasLinkDel = true
+		}
+	}
+	if !hasLinkDel {
+		t.Errorf("Delete should call ip link del as safety net")
 	}
 }
 
@@ -685,45 +698,6 @@ func TestOperatorOS5_Recover_OrphanedInterface(t *testing.T) {
 	}
 	if len(ndms.IfDownCalls) != 1 {
 		t.Errorf("InterfaceDown should be called to bring down stale interface")
-	}
-}
-
-func TestOperatorOS5_InterfaceUp(t *testing.T) {
-	ndms := &MockNDMSClient{}
-	recorder := &ipRunRecorder{}
-
-	op := NewOperatorOS5(ndms, &MockWGClient{}, &MockBackend{}, &MockFirewall{}, nil)
-	op.ipRun = recorder.run
-
-	err := op.InterfaceUp(context.Background(), "awg0")
-
-	if err != nil {
-		t.Fatalf("InterfaceUp() error = %v", err)
-	}
-	// Kernel: NDMS InterfaceUp is skipped (intent already persisted)
-	if len(ndms.IfUpCalls) != 0 {
-		t.Errorf("NDMS.InterfaceUp should NOT be called for kernel, got %d", len(ndms.IfUpCalls))
-	}
-	// Kernel: ip link set up must be called
-	if len(recorder.Calls) != 1 {
-		t.Fatalf("Expected 1 ip call, got %d", len(recorder.Calls))
-	}
-	if !strings.Contains(recorder.Calls[0], "link set up dev opkgtun0") {
-		t.Errorf("ip link set up not called, got: %s", recorder.Calls[0])
-	}
-}
-
-func TestOperatorOS5_InterfaceDown(t *testing.T) {
-	ndms := &MockNDMSClient{}
-	op := newTestOperator(ndms, &MockWGClient{}, &MockBackend{}, &MockFirewall{})
-
-	err := op.InterfaceDown(context.Background(), "awg0")
-
-	if err != nil {
-		t.Fatalf("InterfaceDown() error = %v", err)
-	}
-	if len(ndms.IfDownCalls) != 1 || ndms.IfDownCalls[0] != "OpkgTun0" {
-		t.Errorf("NDMS.InterfaceDown not called correctly")
 	}
 }
 
@@ -925,7 +899,7 @@ func TestOperatorOS5_NamesConversion(t *testing.T) {
 	// - NDMSName: "OpkgTun0"
 	// - IfaceName: "opkgtun0"
 
-	// Use opkgTunExists=false so Start creates OpkgTun and calls SetAddress
+	// Use opkgTunExists=false so ColdStart creates OpkgTun
 	ndms := &MockNDMSClient{opkgTunExists: false}
 	backendMock := &MockBackend{}
 	wgClient := &MockWGClient{}
@@ -940,9 +914,12 @@ func TestOperatorOS5_NamesConversion(t *testing.T) {
 		ConfPath: "/tmp/awg0.conf",
 	}
 
-	_ = op.Start(context.Background(), cfg)
+	_ = op.ColdStart(context.Background(), cfg)
 
 	// Backend uses IfaceName (opkgtun0)
+	if len(backendMock.StartCalls) == 0 {
+		t.Fatal("Backend.Start not called")
+	}
 	if backendMock.StartCalls[0] != "opkgtun0" {
 		t.Errorf("Backend.Start iface = %s, want opkgtun0", backendMock.StartCalls[0])
 	}

@@ -99,9 +99,6 @@ type MockOperator struct {
 	stopError          error
 	deleteError        error
 	recoverError       error
-	killLinkError      error
-	interfaceUpError   error
-	interfaceDownError error
 	applyConfigError   error
 
 	// SetupEndpointRouteIP is the IP returned by SetupEndpointRoute.
@@ -115,9 +112,8 @@ type MockOperator struct {
 	DeleteCalls              []string
 	RecoverCalls             []struct{ ID string; State tunnel.StateInfo }
 	ReconcileCalls           []tunnel.Config
-	KillLinkCalls            []string
-	InterfaceUpCalls         []string
-	InterfaceDownCalls       []string
+	SuspendCalls             []string
+	ResumeCalls              []string
 	ApplyConfigCalls         []struct{ ID, Path string }
 	SetupEndpointRouteCalls  []struct{ ID, Endpoint, ISP string }
 	CleanupEndpointRouteCalls []string
@@ -129,6 +125,11 @@ type MockOperator struct {
 func (m *MockOperator) Create(ctx context.Context, cfg tunnel.Config) error {
 	m.CreateCalls = append(m.CreateCalls, cfg)
 	return m.createError
+}
+
+func (m *MockOperator) ColdStart(ctx context.Context, cfg tunnel.Config) error {
+	m.StartCalls = append(m.StartCalls, cfg)
+	return m.startError
 }
 
 func (m *MockOperator) Start(ctx context.Context, cfg tunnel.Config) error {
@@ -156,19 +157,14 @@ func (m *MockOperator) Reconcile(ctx context.Context, cfg tunnel.Config) error {
 	return nil
 }
 
-func (m *MockOperator) KillLink(ctx context.Context, tunnelID string) error {
-	m.KillLinkCalls = append(m.KillLinkCalls, tunnelID)
-	return m.killLinkError
+func (m *MockOperator) Suspend(ctx context.Context, tunnelID string) error {
+	m.SuspendCalls = append(m.SuspendCalls, tunnelID)
+	return nil
 }
 
-func (m *MockOperator) InterfaceUp(ctx context.Context, tunnelID string) error {
-	m.InterfaceUpCalls = append(m.InterfaceUpCalls, tunnelID)
-	return m.interfaceUpError
-}
-
-func (m *MockOperator) InterfaceDown(ctx context.Context, tunnelID string) error {
-	m.InterfaceDownCalls = append(m.InterfaceDownCalls, tunnelID)
-	return m.interfaceDownError
+func (m *MockOperator) Resume(ctx context.Context, tunnelID string) error {
+	m.ResumeCalls = append(m.ResumeCalls, tunnelID)
+	return nil
 }
 
 func (m *MockOperator) ApplyConfig(ctx context.Context, tunnelID, configPath string) error {
@@ -358,51 +354,40 @@ func TestServiceWANUp_StartsEnabled(t *testing.T) {
 	}
 }
 
-// TestServiceWANDown_KillsRunning verifies WAN down kills running tunnels (v2).
-func TestServiceWANDown_KillsRunning(t *testing.T) {
+// TestServiceWANDown_Suspends verifies WAN down suspends running tunnels.
+func TestServiceWANDown_Suspends(t *testing.T) {
 	stateMgr := NewMockStateManager()
 	stateMgr.SetState("awg0", tunnel.StateInfo{State: tunnel.StateRunning})
 	stateMgr.SetState("awg1", tunnel.StateInfo{State: tunnel.StateStopped})
 
 	op := &MockOperator{}
 
+	// v3: WAN down calls Suspend (ip link set down, preserves interface)
 	tunnelIDs := []string{"awg0", "awg1"}
-
-	// v2: WAN down calls KillLink (preserves NDMS intent for WAN up autostart)
 	for _, id := range tunnelIDs {
 		state := stateMgr.GetState(context.Background(), id)
-		switch state.State {
-		case tunnel.StateRunning, tunnel.StateBroken, tunnel.StateStarting, tunnel.StateNeedsStop:
-			_ = op.KillLink(context.Background(), id)
+		if state.State == tunnel.StateRunning {
+			_ = op.Suspend(context.Background(), id)
 		}
 	}
 
-	// Only awg0 should be killed (running)
-	if len(op.KillLinkCalls) != 1 {
-		t.Errorf("Expected 1 KillLink call, got %d", len(op.KillLinkCalls))
+	if len(op.SuspendCalls) != 1 {
+		t.Errorf("Expected 1 Suspend call, got %d", len(op.SuspendCalls))
 	}
-	if len(op.KillLinkCalls) > 0 && op.KillLinkCalls[0] != "awg0" {
-		t.Errorf("Expected awg0 to be killed, got %s", op.KillLinkCalls[0])
-	}
-	// Stop must NOT be called (old v1 behavior)
 	if len(op.StopCalls) != 0 {
 		t.Errorf("Stop should not be called by WAN down, got %d", len(op.StopCalls))
 	}
 }
 
-// TestServicePingCheck_Dead verifies HandleMonitorDead uses KillLink.
+// TestServicePingCheck_Dead verifies HandleMonitorDead uses Stop (not KillLink).
 func TestServicePingCheck_Dead(t *testing.T) {
 	op := &MockOperator{}
 
-	// HandleMonitorDead calls KillLink (kills process, preserves NDMS intent)
-	_ = op.KillLink(context.Background(), "awg0")
+	// v3: HandleMonitorDead calls Stop via Manager
+	_ = op.Stop(context.Background(), "awg0")
 
-	if len(op.KillLinkCalls) != 1 {
-		t.Errorf("Expected 1 KillLink call, got %d", len(op.KillLinkCalls))
-	}
-	// InterfaceDown must NOT be called (old v1 behavior)
-	if len(op.InterfaceDownCalls) != 0 {
-		t.Errorf("InterfaceDown should not be called, got %d", len(op.InterfaceDownCalls))
+	if len(op.StopCalls) != 1 {
+		t.Errorf("Expected 1 Stop call, got %d", len(op.StopCalls))
 	}
 }
 

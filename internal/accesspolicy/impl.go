@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +16,9 @@ import (
 )
 
 const maxPolicies = 64
+const maxDescriptionLen = 256
+
+var validDescription = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // PolicyTracker tracks which policies were created by AWG Manager.
 type PolicyTracker interface {
@@ -117,8 +121,26 @@ func (s *ServiceImpl) List(ctx context.Context) ([]Policy, error) {
 	return policies, nil
 }
 
+// validateDescription checks that the description conforms to NDMS requirements:
+// Latin letters, digits, hyphens, underscores only; max 256 characters.
+func validateDescription(description string) error {
+	if description == "" {
+		return fmt.Errorf("description is required")
+	}
+	if len(description) > maxDescriptionLen {
+		return fmt.Errorf("description too long (%d chars, max %d)", len(description), maxDescriptionLen)
+	}
+	if !validDescription.MatchString(description) {
+		return fmt.Errorf("description contains invalid characters (only Latin letters, digits, hyphens and underscores are allowed)")
+	}
+	return nil
+}
+
 // Create creates a new policy. Finds the first free PolicyN index.
 func (s *ServiceImpl) Create(ctx context.Context, description string) (*Policy, error) {
+	if err := validateDescription(description); err != nil {
+		return nil, err
+	}
 	existing, err := s.queryPolicies(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("create policy: %w", err)
@@ -208,6 +230,9 @@ func (s *ServiceImpl) Delete(ctx context.Context, name string) error {
 func (s *ServiceImpl) SetDescription(ctx context.Context, name, description string) error {
 	if !isValidPolicyName(name) {
 		return fmt.Errorf("invalid policy name: %s", name)
+	}
+	if err := validateDescription(description); err != nil {
+		return err
 	}
 
 	if _, err := s.ndms.RCIPost(ctx, map[string]interface{}{
