@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
@@ -20,26 +21,19 @@ const (
 	defaultTimeout = 10 * time.Second
 )
 
-// rciTransport is a shared HTTP transport for all RCI (localhost:79) connections.
-// Reuses TCP connections instead of creating new ones per request.
-var rciTransport = &http.Transport{
-	MaxIdleConns:        50,
-	MaxIdleConnsPerHost: 10,
-	IdleConnTimeout:     90 * time.Second,
-	DisableKeepAlives:   false,
-}
-
 // ClientImpl is the NDMS client implementation.
 type ClientImpl struct {
 	timeout    time.Duration
 	httpClient *http.Client
+	rci        *rci.Client
 }
 
 // New creates a new NDMS client.
 func New() *ClientImpl {
 	return &ClientImpl{
 		timeout:    defaultTimeout,
-		httpClient: &http.Client{Timeout: defaultTimeout, Transport: rciTransport},
+		httpClient: &http.Client{Timeout: defaultTimeout, Transport: rci.Transport()},
+		rci:        rci.New(),
 	}
 }
 
@@ -47,14 +41,15 @@ func New() *ClientImpl {
 func NewWithTimeout(timeout time.Duration) *ClientImpl {
 	return &ClientImpl{
 		timeout:    timeout,
-		httpClient: &http.Client{Timeout: timeout, Transport: rciTransport},
+		httpClient: &http.Client{Timeout: timeout, Transport: rci.Transport()},
+		rci:        rci.NewWithTimeout(timeout),
 	}
 }
 
 // RCITransport returns the shared HTTP transport for RCI connections.
 // Used by other packages that also query localhost:79.
 func RCITransport() *http.Transport {
-	return rciTransport
+	return rci.Transport()
 }
 
 // ndmc executes an NDMS command via ndmc -c.
@@ -105,8 +100,8 @@ func (c *ClientImpl) CreateOpkgTun(ctx context.Context, name, description string
 
 // DeleteOpkgTun removes an OpkgTun interface from NDMS.
 func (c *ClientImpl) DeleteOpkgTun(ctx context.Context, name string) error {
-	// Remove default route first (stays as ndmc — RCI doesn't support ip route default)
-	_, _ = c.ndmc(ctx, fmt.Sprintf("no ip route default %s", name))
+	// Remove default route first
+	_, _ = c.rci.Post(ctx, rci.CmdRemoveDefaultRoute(name))
 
 	// Remove interface via RCI
 	_, _ = rciPost(ctx, c.httpClient, "/", map[string]interface{}{
@@ -176,11 +171,8 @@ func (c *ClientImpl) SetAddress(ctx context.Context, name, address string) error
 
 // SetIPv6Address sets the IPv6 address of an interface.
 func (c *ClientImpl) SetIPv6Address(ctx context.Context, name, address string) error {
-	// Remove old addresses first
-	_, _ = c.ndmc(ctx, fmt.Sprintf("no interface %s ipv6 address", name))
-
-	// Set new address with /128 prefix
-	if _, err := c.ndmc(ctx, fmt.Sprintf("interface %s ipv6 address %s/128", name, address)); err != nil {
+	// RCI format clears old + sets new in one call (no separate "no" needed)
+	if _, err := c.rci.Post(ctx, rci.CmdInterfaceIPv6Address(name, address)); err != nil {
 		return err
 	}
 	return nil
@@ -188,7 +180,7 @@ func (c *ClientImpl) SetIPv6Address(ctx context.Context, name, address string) e
 
 // ClearIPv6Address removes all IPv6 addresses from an interface.
 func (c *ClientImpl) ClearIPv6Address(ctx context.Context, name string) {
-	_, _ = c.ndmc(ctx, fmt.Sprintf("no interface %s ipv6 address", name))
+	_, _ = c.rci.Post(ctx, rci.CmdInterfaceIPv6AddressClear(name))
 }
 
 // SetMTU sets the MTU of an interface.
@@ -299,7 +291,7 @@ func (c *ClientImpl) InterfaceDown(ctx context.Context, name string) error {
 
 // SetDefaultRoute sets the default IPv4 route via an interface.
 func (c *ClientImpl) SetDefaultRoute(ctx context.Context, name string) error {
-	if _, err := c.ndmc(ctx, fmt.Sprintf("ip route default %s", name)); err != nil {
+	if _, err := c.rci.Post(ctx, rci.CmdSetDefaultRoute(name)); err != nil {
 		return fmt.Errorf("set default route: %w", err)
 	}
 	return nil
@@ -307,7 +299,7 @@ func (c *ClientImpl) SetDefaultRoute(ctx context.Context, name string) error {
 
 // RemoveDefaultRoute removes the default IPv4 route for an interface.
 func (c *ClientImpl) RemoveDefaultRoute(ctx context.Context, name string) error {
-	if _, err := c.ndmc(ctx, fmt.Sprintf("no ip route default %s", name)); err != nil {
+	if _, err := c.rci.Post(ctx, rci.CmdRemoveDefaultRoute(name)); err != nil {
 		return fmt.Errorf("remove default route: %w", err)
 	}
 	return nil
@@ -317,13 +309,13 @@ func (c *ClientImpl) RemoveDefaultRoute(ctx context.Context, name string) error 
 // Detects IPv6 addresses and uses the appropriate command.
 func (c *ClientImpl) RemoveHostRoute(ctx context.Context, host string) error {
 	if parsed := net.ParseIP(host); parsed != nil && parsed.To4() == nil {
-		// IPv6 — stays as ndmc (RCI doesn't support ipv6 route)
-		_, _ = c.ndmc(ctx, fmt.Sprintf("no ipv6 route %s", host))
+		// IPv6
+		_, _ = c.rci.Post(ctx, rci.CmdRemoveIPv6HostRoute(host))
 	} else {
-		// IPv4 — use RCI
-		_, _ = rciPost(ctx, c.httpClient, "/", map[string]interface{}{
-			"ip": map[string]interface{}{
-				"route": map[string]interface{}{
+		// IPv4
+		_, _ = c.rci.Post(ctx, map[string]any{
+			"ip": map[string]any{
+				"route": map[string]any{
 					"no":   true,
 					"host": host,
 				},
@@ -335,7 +327,7 @@ func (c *ClientImpl) RemoveHostRoute(ctx context.Context, host string) error {
 
 // SetIPv6DefaultRoute sets the default IPv6 route via an interface.
 func (c *ClientImpl) SetIPv6DefaultRoute(ctx context.Context, name string) error {
-	if _, err := c.ndmc(ctx, fmt.Sprintf("ipv6 route default %s", name)); err != nil {
+	if _, err := c.rci.Post(ctx, rci.CmdSetIPv6DefaultRoute(name)); err != nil {
 		return err
 	}
 	return nil
@@ -343,7 +335,7 @@ func (c *ClientImpl) SetIPv6DefaultRoute(ctx context.Context, name string) error
 
 // RemoveIPv6DefaultRoute removes the default IPv6 route for an interface.
 func (c *ClientImpl) RemoveIPv6DefaultRoute(ctx context.Context, name string) {
-	_, _ = c.ndmc(ctx, fmt.Sprintf("no ipv6 route default %s", name))
+	_, _ = c.rci.Post(ctx, rci.CmdRemoveIPv6DefaultRoute(name))
 }
 
 // GetDefaultGatewayInterface returns the current default gateway interface.
@@ -1011,11 +1003,6 @@ func (c *ClientImpl) SetASCParams(ctx context.Context, name string, params json.
 	return c.Save(ctx)
 }
 
-// Ndmc executes an arbitrary ndmc command.
-func (c *ClientImpl) Ndmc(ctx context.Context, command string) (string, error) {
-	return c.ndmc(ctx, command)
-}
-
 // FindFreeWireguardIndex returns the next free WireguardN index.
 func (c *ClientImpl) FindFreeWireguardIndex(ctx context.Context) (int, error) {
 	var allIfaces map[string]json.RawMessage
@@ -1197,29 +1184,23 @@ func (c *ClientImpl) ShowPingCheck(ctx context.Context, profile string) (*PingCh
 }
 
 // hasPingCheckRestart checks if "ping-check restart" is configured on an interface
-// by parsing the interface block from ndmc "show running-config" output.
+// by querying the interface RC config via RCI.
 func (c *ClientImpl) hasPingCheckRestart(ctx context.Context, ifaceName string) bool {
-	output, err := c.ndmc(ctx, "show running-config")
+	raw, err := c.rci.GetRaw(ctx, "/show/rc/interface/"+ifaceName)
 	if err != nil {
 		return false
 	}
-	inBlock := false
-	for _, line := range strings.Split(output, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "interface "+ifaceName {
-			inBlock = true
-			continue
-		}
-		if inBlock {
-			if trimmed == "!" {
-				return false
-			}
-			if trimmed == "ping-check restart" {
-				return true
-			}
-		}
+	var cfg struct {
+		PingCheck struct {
+			Restart json.RawMessage `json:"restart"`
+		} `json:"ping-check"`
 	}
-	return false
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return false
+	}
+	// If "restart" key exists and is not null/absent, it's enabled.
+	// NDMS uses "true" for enabled and omits/nulls for disabled.
+	return len(cfg.PingCheck.Restart) > 0 && string(cfg.PingCheck.Restart) != "null"
 }
 
 // clamp returns v clamped to [min, max], or def if v <= 0.

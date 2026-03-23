@@ -188,12 +188,6 @@ type Client interface {
 	// Unlike ListSystemWireguardTunnels, this does NOT filter out VPN Server.
 	ListAllWireguardServers(ctx context.Context) ([]WireguardServer, error)
 
-	// Managed server support
-
-	// Ndmc executes an arbitrary ndmc command. Used by the managed server service
-	// for WireGuard-specific commands (listen-port, peer, etc.).
-	Ndmc(ctx context.Context, command string) (string, error)
-
 	// FindFreeWireguardIndex returns the next free WireguardN index.
 	FindFreeWireguardIndex(ctx context.Context) (int, error)
 

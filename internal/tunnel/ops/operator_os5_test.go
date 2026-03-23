@@ -195,9 +195,6 @@ func (m *MockNDMSClient) GetWireguardServerConfig(ctx context.Context, name stri
 func (m *MockNDMSClient) ListAllWireguardServers(ctx context.Context) ([]ndms.WireguardServer, error) {
 	return nil, nil
 }
-func (m *MockNDMSClient) Ndmc(ctx context.Context, command string) (string, error) {
-	return "", nil
-}
 func (m *MockNDMSClient) FindFreeWireguardIndex(ctx context.Context) (int, error) {
 	return 0, nil
 }
