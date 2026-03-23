@@ -9,11 +9,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/rci"
 )
 
 const (
@@ -60,34 +61,12 @@ func NewKeeneticClient() *KeeneticClient {
 
 // getHTTPPort returns router HTTP port from NDMS RCI API.
 func getHTTPPort() int {
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			MaxIdleConns:        10,
-			MaxIdleConnsPerHost: 5,
-			IdleConnTimeout:     30 * time.Second,
-		},
-	}
-	resp, err := client.Get("http://localhost:79/rci/show/running-config")
-	if err != nil {
-		return 80
-	}
-	defer resp.Body.Close()
+	client := rci.NewWithTimeout(5 * time.Second)
 
-	if resp.StatusCode != http.StatusOK {
-		return 80
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 80
-	}
-
-	// RCI returns {"message": ["line1", "line2", ...]}
 	var result struct {
 		Message []string `json:"message"`
 	}
-	if err := json.Unmarshal(body, &result); err != nil {
+	if err := client.Get(context.Background(), "/show/running-config", &result); err != nil {
 		return 80
 	}
 

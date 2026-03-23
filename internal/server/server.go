@@ -19,6 +19,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
+	"github.com/hoaxisr/awg-manager/internal/rci"
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -311,6 +312,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	dnsRouteHandler := api.NewDNSRouteHandler(s.dnsRouteService, appLog)
 	diagRunner := diagnostics.NewRunner(diagnostics.Deps{
 		TunnelService:   s.tunnelService,
+		RCI:             rci.New(),
 		NDMSClient:      s.ndmsClient,
 		Backend:         s.activeBackend,
 		KmodLoader:      s.kmodLoader,
