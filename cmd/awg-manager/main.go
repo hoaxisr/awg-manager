@@ -25,6 +25,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
+	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/server"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
@@ -146,7 +147,8 @@ func main() {
 	operator := ops.NewOperator(ndmsClient, wgClient, backendImpl, firewallMgr, log)
 
 	// Create NativeWG operator
-	nwgOp := nwg.NewOperator(log, ndmsClient, loggingService)
+	rciClient := rci.New()
+	nwgOp := nwg.NewOperator(log, ndmsClient, rciClient, loggingService)
 
 	// Load awg_proxy.ko if firmware < 5.1 Alpha 4
 	if !ndmsinfo.SupportsWireguardASC() {
@@ -1043,7 +1045,8 @@ func runCleanup(dataDir string) {
 	stateMgr := state.New(ndmsClient, wgClient, backendImpl, nil)
 	firewallMgr := firewall.New(backendImpl.Type() == backend.TypeKernel, osdetect.Is5(), nil)
 	operator := ops.NewOperator(ndmsClient, wgClient, backendImpl, firewallMgr, log)
-	nwgOp := nwg.NewOperator(log, ndmsClient, nil)
+	cleanupRCI := rci.New()
+	nwgOp := nwg.NewOperator(log, ndmsClient, cleanupRCI, nil)
 	tunnelService := service.New(awgStore, nwgOp, operator, stateMgr, log, wan.NewModel(), nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
