@@ -26,12 +26,13 @@ func (c *Client) ImportWireguardConfig(ctx context.Context, confData []byte, fil
 		return "", fmt.Errorf("import wireguard config: %w", err)
 	}
 
-	// Response format is inferred from firmware analysis — verify on real device.
+	// Real NDMS response format (verified on device):
+	// {"interface":{"wireguard":{"import":{"created":"Wireguard0","intersects":"","status":[...]}}}}
 	var result struct {
 		Interface struct {
 			Wireguard struct {
 				Import struct {
-					Name string `json:"name"`
+					Created string `json:"created"`
 				} `json:"import"`
 			} `json:"wireguard"`
 		} `json:"interface"`
@@ -39,7 +40,7 @@ func (c *Client) ImportWireguardConfig(ctx context.Context, confData []byte, fil
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return "", fmt.Errorf("import: parse response: %w", err)
 	}
-	name := result.Interface.Wireguard.Import.Name
+	name := result.Interface.Wireguard.Import.Created
 	if name == "" {
 		return "", fmt.Errorf("import: no interface name in response")
 	}
