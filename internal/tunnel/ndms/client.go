@@ -16,8 +16,12 @@ type Client interface {
 	// OpkgTun management
 
 	// CreateOpkgTun creates an OpkgTun interface in NDMS.
-	// Commands: interface <name>, description, security-level, ip global
+	// Sets description + security-level. Does NOT set ip global (see SetIPGlobal).
 	CreateOpkgTun(ctx context.Context, name, description string) error
+
+	// SetIPGlobal marks an interface as global (internet-facing) with automatic priority.
+	// Must be called AFTER SetAddress/SetMTU to avoid premature nginx binding.
+	SetIPGlobal(ctx context.Context, name string) error
 
 	// DeleteOpkgTun removes an OpkgTun interface from NDMS.
 	// Commands: no interface <name>

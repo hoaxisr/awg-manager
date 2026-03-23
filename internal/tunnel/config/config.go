@@ -31,6 +31,44 @@ func DefaultAllowedIPs() []string {
 	return []string{"0.0.0.0/0", "::/0"}
 }
 
+// writeAWGParams writes AWG obfuscation parameters to a .conf builder.
+// If the tunnel is obfuscated, ALL base params are written including zero values.
+// NDMS import rejects partial AWG configs (e.g. Jc present but S1 missing).
+func writeAWGParams(b *strings.Builder, iface *storage.AWGInterface) {
+	if !IsAWGObfuscated(iface) {
+		return
+	}
+	b.WriteString(fmt.Sprintf("Jc = %d\n", iface.Jc))
+	b.WriteString(fmt.Sprintf("Jmin = %d\n", iface.Jmin))
+	b.WriteString(fmt.Sprintf("Jmax = %d\n", iface.Jmax))
+	b.WriteString(fmt.Sprintf("S1 = %d\n", iface.S1))
+	b.WriteString(fmt.Sprintf("S2 = %d\n", iface.S2))
+	b.WriteString(fmt.Sprintf("H1 = %s\n", iface.H1))
+	b.WriteString(fmt.Sprintf("H2 = %s\n", iface.H2))
+	b.WriteString(fmt.Sprintf("H3 = %s\n", iface.H3))
+	b.WriteString(fmt.Sprintf("H4 = %s\n", iface.H4))
+	// Extended params (S3, S4, I1-I5) — only if any extended param is set
+	if iface.S3 > 0 || iface.S4 > 0 || iface.I1 != "" {
+		b.WriteString(fmt.Sprintf("S3 = %d\n", iface.S3))
+		b.WriteString(fmt.Sprintf("S4 = %d\n", iface.S4))
+		if iface.I1 != "" {
+			b.WriteString(fmt.Sprintf("I1 = %s\n", iface.I1))
+		}
+		if iface.I2 != "" {
+			b.WriteString(fmt.Sprintf("I2 = %s\n", iface.I2))
+		}
+		if iface.I3 != "" {
+			b.WriteString(fmt.Sprintf("I3 = %s\n", iface.I3))
+		}
+		if iface.I4 != "" {
+			b.WriteString(fmt.Sprintf("I4 = %s\n", iface.I4))
+		}
+		if iface.I5 != "" {
+			b.WriteString(fmt.Sprintf("I5 = %s\n", iface.I5))
+		}
+	}
+}
+
 // Generate generates WireGuard .conf content from tunnel metadata.
 func Generate(tunnel *storage.AWGTunnel) string {
 	var b strings.Builder
@@ -38,59 +76,7 @@ func Generate(tunnel *storage.AWGTunnel) string {
 	b.WriteString("[Interface]\n")
 	b.WriteString(fmt.Sprintf("PrivateKey = %s\n", tunnel.Interface.PrivateKey))
 
-	iface := &tunnel.Interface
-
-	if iface.Jc > 0 {
-		b.WriteString(fmt.Sprintf("Jc = %d\n", iface.Jc))
-	}
-	if iface.Jmin > 0 {
-		b.WriteString(fmt.Sprintf("Jmin = %d\n", iface.Jmin))
-	}
-	if iface.Jmax > 0 {
-		b.WriteString(fmt.Sprintf("Jmax = %d\n", iface.Jmax))
-	}
-
-	if iface.S1 > 0 {
-		b.WriteString(fmt.Sprintf("S1 = %d\n", iface.S1))
-	}
-	if iface.S2 > 0 {
-		b.WriteString(fmt.Sprintf("S2 = %d\n", iface.S2))
-	}
-	if iface.S3 > 0 {
-		b.WriteString(fmt.Sprintf("S3 = %d\n", iface.S3))
-	}
-	if iface.S4 > 0 {
-		b.WriteString(fmt.Sprintf("S4 = %d\n", iface.S4))
-	}
-
-	if iface.H1 != "" {
-		b.WriteString(fmt.Sprintf("H1 = %s\n", iface.H1))
-	}
-	if iface.H2 != "" {
-		b.WriteString(fmt.Sprintf("H2 = %s\n", iface.H2))
-	}
-	if iface.H3 != "" {
-		b.WriteString(fmt.Sprintf("H3 = %s\n", iface.H3))
-	}
-	if iface.H4 != "" {
-		b.WriteString(fmt.Sprintf("H4 = %s\n", iface.H4))
-	}
-
-	if iface.I1 != "" {
-		b.WriteString(fmt.Sprintf("I1 = %s\n", iface.I1))
-	}
-	if iface.I2 != "" {
-		b.WriteString(fmt.Sprintf("I2 = %s\n", iface.I2))
-	}
-	if iface.I3 != "" {
-		b.WriteString(fmt.Sprintf("I3 = %s\n", iface.I3))
-	}
-	if iface.I4 != "" {
-		b.WriteString(fmt.Sprintf("I4 = %s\n", iface.I4))
-	}
-	if iface.I5 != "" {
-		b.WriteString(fmt.Sprintf("I5 = %s\n", iface.I5))
-	}
+	writeAWGParams(&b, &tunnel.Interface)
 
 	b.WriteString("\n[Peer]\n")
 	b.WriteString(fmt.Sprintf("PublicKey = %s\n", tunnel.Peer.PublicKey))
@@ -138,59 +124,7 @@ func GenerateForExport(tunnel *storage.AWGTunnel) string {
 		b.WriteString(fmt.Sprintf("DNS = %s\n", tunnel.Interface.DNS))
 	}
 
-	iface := &tunnel.Interface
-
-	if iface.Jc > 0 {
-		b.WriteString(fmt.Sprintf("Jc = %d\n", iface.Jc))
-	}
-	if iface.Jmin > 0 {
-		b.WriteString(fmt.Sprintf("Jmin = %d\n", iface.Jmin))
-	}
-	if iface.Jmax > 0 {
-		b.WriteString(fmt.Sprintf("Jmax = %d\n", iface.Jmax))
-	}
-
-	if iface.S1 > 0 {
-		b.WriteString(fmt.Sprintf("S1 = %d\n", iface.S1))
-	}
-	if iface.S2 > 0 {
-		b.WriteString(fmt.Sprintf("S2 = %d\n", iface.S2))
-	}
-	if iface.S3 > 0 {
-		b.WriteString(fmt.Sprintf("S3 = %d\n", iface.S3))
-	}
-	if iface.S4 > 0 {
-		b.WriteString(fmt.Sprintf("S4 = %d\n", iface.S4))
-	}
-
-	if iface.H1 != "" {
-		b.WriteString(fmt.Sprintf("H1 = %s\n", iface.H1))
-	}
-	if iface.H2 != "" {
-		b.WriteString(fmt.Sprintf("H2 = %s\n", iface.H2))
-	}
-	if iface.H3 != "" {
-		b.WriteString(fmt.Sprintf("H3 = %s\n", iface.H3))
-	}
-	if iface.H4 != "" {
-		b.WriteString(fmt.Sprintf("H4 = %s\n", iface.H4))
-	}
-
-	if iface.I1 != "" {
-		b.WriteString(fmt.Sprintf("I1 = %s\n", iface.I1))
-	}
-	if iface.I2 != "" {
-		b.WriteString(fmt.Sprintf("I2 = %s\n", iface.I2))
-	}
-	if iface.I3 != "" {
-		b.WriteString(fmt.Sprintf("I3 = %s\n", iface.I3))
-	}
-	if iface.I4 != "" {
-		b.WriteString(fmt.Sprintf("I4 = %s\n", iface.I4))
-	}
-	if iface.I5 != "" {
-		b.WriteString(fmt.Sprintf("I5 = %s\n", iface.I5))
-	}
+	writeAWGParams(&b, &tunnel.Interface)
 
 	b.WriteString("\n[Peer]\n")
 	b.WriteString(fmt.Sprintf("PublicKey = %s\n", tunnel.Peer.PublicKey))

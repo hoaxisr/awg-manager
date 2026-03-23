@@ -76,6 +76,7 @@ func (m *MockNDMSClient) SetDescription(ctx context.Context, name, description s
 }
 func (m *MockNDMSClient) InterfaceUp(ctx context.Context, name string) error   { return nil }
 func (m *MockNDMSClient) InterfaceDown(ctx context.Context, name string) error { return nil }
+func (m *MockNDMSClient) SetIPGlobal(ctx context.Context, name string) error        { return nil }
 func (m *MockNDMSClient) SetDefaultRoute(ctx context.Context, name string) error    { return nil }
 func (m *MockNDMSClient) RemoveDefaultRoute(ctx context.Context, name string) error { return nil }
 func (m *MockNDMSClient) RemoveHostRoute(ctx context.Context, host string) error    { return nil }
