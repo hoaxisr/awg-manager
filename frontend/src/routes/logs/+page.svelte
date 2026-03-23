@@ -314,7 +314,6 @@
 	.log-container {
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
-		overflow: hidden;
 	}
 
 	/* Terminal feed */
@@ -439,6 +438,7 @@
 		padding: 6px 16px;
 		border-bottom: 1px solid var(--border);
 		font-family: sans-serif;
+		flex-wrap: wrap;
 	}
 
 	.level-chip {
