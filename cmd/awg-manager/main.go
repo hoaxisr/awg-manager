@@ -19,6 +19,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/auth"
+	"github.com/hoaxisr/awg-manager/internal/cleanup"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/staticroute"
@@ -40,7 +41,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/firewall"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ops"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/lifecycle"
@@ -1003,42 +1003,25 @@ func ensureServiceEnv() {
 	}
 }
 
-// runCleanup stops and deletes all tunnels managed by awg-manager.
-// This is used during package uninstall to properly clean up resources.
+// runCleanup removes all awg-manager resources and config files.
+// Called during package uninstall (opkg remove).
 func runCleanup(dataDir string) {
-	fmt.Println("awg-manager cleanup: deleting all managed tunnels...")
+	fmt.Println("awg-manager cleanup: removing all managed resources...")
 
 	log := logger.New()
 	defer log.Close()
 
-	awgStore := storage.NewAWGTunnelStore(
-		filepath.Join(dataDir, "tunnels"),
-		log,
-	)
-
-	// List all tunnels from storage
-	tunnels, err := awgStore.List()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to list tunnels: %v\n", err)
-		return
-	}
-
-	if len(tunnels) == 0 {
-		fmt.Println("No tunnels to clean up.")
-	}
-
-	// Init NDMS info so osdetect.Is5() works correctly.
-	// Without this, cleanup falls back to OS4 operator and skips NDMS interface removal.
+	// Init NDMS info (needed for OS detection)
 	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	if err := ndmsinfo.Init(initCtx, 10*time.Second); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: NDMS not available: %v\n", err)
-	}
+	_ = ndmsinfo.Init(initCtx, 10*time.Second)
 	initCancel()
 
 	settingsStore := storage.NewSettingsStore(dataDir)
 	settingsStore.Load()
 
-	// Create service components for proper cleanup
+	awgStore := storage.NewAWGTunnelStore(filepath.Join(dataDir, "tunnels"), log)
+
+	// Create service components
 	ndmsClient := ndms.New()
 	wgClient := wg.New()
 	backendImpl := backend.New(log)
@@ -1049,101 +1032,24 @@ func runCleanup(dataDir string) {
 	nwgOp := nwg.NewOperator(log, ndmsClient, cleanupRCI, nil)
 	tunnelService := service.New(awgStore, nwgOp, operator, stateMgr, log, wan.NewModel(), nil)
 
+	// Create auxiliary services
+	dnsStore := dnsroute.NewStore(dataDir)
+	dnsStore.Load()
+	dnsSvc := dnsroute.NewService(dnsStore, ndmsClient, nil, log, nil)
+
+	managedSvc := managed.New(ndmsClient, settingsStore, slog.Default(), nil)
+	accessPolicySvc := accesspolicy.New(ndmsClient, settingsStore, log, nil)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Remove endpoint routes before deleting tunnels.
-	// The operator's in-memory tracking is empty in a fresh cleanup process,
-	// so we use the persisted resolved IP (stored by daemon), with DNS fallback.
-	for _, t := range tunnels {
-		if t.Backend == "nativewg" {
-			continue // NDMS manages routing natively via "via" peer property
-		}
-		if t.Peer.Endpoint == "" {
-			continue // no endpoint → no route to clean
-		}
-
-		// Prefer stored resolved IP (reliable — same IP that was actually routed)
-		ip := t.ResolvedEndpointIP
-		if ip == "" && t.Peer.Endpoint != "" {
-			// Fallback to DNS resolve (for tunnels from older versions without stored IP)
-			var err error
-			ip, err = netutil.ResolveEndpointIP(t.Peer.Endpoint)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "  Warning: could not resolve endpoint for %s: %v\n", t.ID, err)
-				continue
-			}
-			fmt.Printf("  %s: no stored IP, resolved via DNS: %s\n", t.ID, ip)
-		}
-
-		if ip != "" {
-			_ = ndmsClient.RemoveHostRoute(ctx, ip)
-			fmt.Printf("  Removed endpoint route for %s (%s)\n", t.ID, ip)
-		}
+	// Single cleanup call — all business logic in CleanupService
+	cleanupSvc := cleanup.New(tunnelService, awgStore, dnsSvc, managedSvc, accessPolicySvc, ndmsClient)
+	if err := cleanupSvc.CleanupAll(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Cleanup error: %v\n", err)
 	}
 
-	var deleted, failed int
-	for _, t := range tunnels {
-		fmt.Printf("  Deleting tunnel %s (%s)...\n", t.ID, t.Name)
-		if err := tunnelService.Delete(ctx, t.ID); err != nil {
-			fmt.Fprintf(os.Stderr, "    Error: %v\n", err)
-			failed++
-		} else {
-			fmt.Printf("    Deleted successfully\n")
-			deleted++
-		}
-	}
-
-	fmt.Printf("\nCleanup complete: %d deleted, %d failed\n", deleted, failed)
-
-	// Clean up DNS route NDMS objects (OS5 only)
-	if osdetect.Is5() {
-		fmt.Println("Cleaning up DNS routes...")
-		dnsStore := dnsroute.NewStore(dataDir)
-		dnsStore.Load()
-		// Save empty data so reconcile removes all AWG_* objects from the router
-		dnsStore.Save(dnsroute.EmptyStoreData())
-		dnsSvc := dnsroute.NewService(dnsStore, ndmsClient, nil, log, nil)
-		if err := dnsSvc.Reconcile(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: DNS route cleanup failed: %v\n", err)
-		} else {
-			fmt.Println("  DNS routes cleaned up")
-		}
-	}
-
-	// Delete managed server (if exists)
-	managedSvc := managed.New(ndmsClient, settingsStore, slog.Default(), nil)
-	if ms := managedSvc.Get(); ms != nil {
-		fmt.Printf("Deleting managed server %s...\n", ms.InterfaceName)
-		if err := managedSvc.Delete(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: managed server cleanup failed: %v\n", err)
-		} else {
-			fmt.Println("  Managed server deleted")
-		}
-	}
-
-	// Clean up access policies (OS5 only) — only those created by AWG Manager
-	if osdetect.Is5() {
-		fmt.Println("Cleaning up access policies...")
-		managed := settingsStore.GetManagedPolicies()
-		if len(managed) > 0 {
-			accessPolicySvc := accesspolicy.New(ndmsClient, settingsStore, log, nil)
-			deleted := 0
-			for _, name := range managed {
-				fmt.Printf("  Deleting policy %s...\n", name)
-				if err := accessPolicySvc.Delete(ctx, name); err != nil {
-					fmt.Fprintf(os.Stderr, "    Warning: %v\n", err)
-				} else {
-					deleted++
-				}
-			}
-			fmt.Printf("  %d managed policies deleted\n", deleted)
-		} else {
-			fmt.Println("  No managed access policies to clean up")
-		}
-	}
-
-	// Clean up remaining files
+	// Remove all config/runtime files
 	fmt.Println("Cleaning up files...")
 	os.RemoveAll(filepath.Join(dataDir, "tunnels"))
 	files, _ := filepath.Glob(filepath.Join(dataDir, "*.conf"))
