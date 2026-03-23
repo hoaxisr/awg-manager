@@ -100,7 +100,6 @@ func (n *noopNDMS) GetWireguardServerConfig(ctx context.Context, name string) (*
 func (n *noopNDMS) ListAllWireguardServers(ctx context.Context) ([]ndms.WireguardServer, error) {
 	return nil, nil
 }
-func (n *noopNDMS) Ndmc(ctx context.Context, command string) (string, error) { return "", nil }
 func (n *noopNDMS) FindFreeWireguardIndex(ctx context.Context) (int, error)  { return 0, nil }
 func (n *noopNDMS) ConfigurePingCheck(ctx context.Context, profile, ifaceName string, cfg ndms.PingCheckConfig) error {
 	return nil
