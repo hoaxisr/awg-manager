@@ -35,6 +35,11 @@ type PolicyCleaner interface {
 	CleanupAll(ctx context.Context) error
 }
 
+// ClientRouteCleaner removes all client VPN routing rules.
+type ClientRouteCleaner interface {
+	CleanupAll(ctx context.Context) error
+}
+
 // ConfigSaver persists NDMS configuration.
 type ConfigSaver interface {
 	Save(ctx context.Context) error
@@ -47,6 +52,7 @@ type Service struct {
 	dnsRoutes     DnsRouteCleaner
 	managed       ManagedServerCleaner
 	policies      PolicyCleaner
+	clientRoutes  ClientRouteCleaner
 	saver         ConfigSaver
 }
 
@@ -57,6 +63,7 @@ func New(
 	dnsRoutes DnsRouteCleaner,
 	managed ManagedServerCleaner,
 	policies PolicyCleaner,
+	clientRoutes ClientRouteCleaner,
 	saver ConfigSaver,
 ) *Service {
 	return &Service{
@@ -65,6 +72,7 @@ func New(
 		dnsRoutes:     dnsRoutes,
 		managed:       managed,
 		policies:      policies,
+		clientRoutes:  clientRoutes,
 		saver:         saver,
 	}
 }
@@ -93,6 +101,14 @@ func (s *Service) CleanupAll(ctx context.Context) error {
 			if len(tunnels) > 0 {
 				fmt.Printf("  Tunnels: %d deleted, %d failed\n", deleted, failed)
 			}
+		}
+	}
+
+	// 1.5. Remove client VPN routing rules
+	if s.clientRoutes != nil {
+		fmt.Println("  Cleaning client VPN routes...")
+		if err := s.clientRoutes.CleanupAll(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "    Warning: client routes: %v\n", err)
 		}
 	}
 

@@ -47,6 +47,13 @@ type StaticRouteHooks interface {
 	OnTunnelDelete(ctx context.Context, tunnelID string) error
 }
 
+// ClientRouteHooks allows tunnel lifecycle to notify the client route service.
+type ClientRouteHooks interface {
+	OnTunnelStart(ctx context.Context, tunnelID string, kernelIface string) error
+	OnTunnelStop(ctx context.Context, tunnelID string) error
+	OnTunnelDelete(ctx context.Context, tunnelID string) error
+}
+
 // ServiceImpl is the concrete implementation of Service.
 type ServiceImpl struct {
 	store          *storage.AWGTunnelStore
@@ -68,6 +75,9 @@ type ServiceImpl struct {
 
 	// staticRouteHooks notifies the static route service about tunnel lifecycle events.
 	staticRouteHooks StaticRouteHooks
+
+	// clientRouteHooks notifies the client route service about tunnel lifecycle events.
+	clientRouteHooks ClientRouteHooks
 
 	// wan is the unified WAN state model (up/down tracking).
 	wan *wan.Model
@@ -146,6 +156,11 @@ func (s *ServiceImpl) SetDnsRouteHooks(hooks DnsRouteHooks) {
 // SetStaticRouteHooks sets callbacks for tunnel lifecycle events (static IP routing).
 func (s *ServiceImpl) SetStaticRouteHooks(hooks StaticRouteHooks) {
 	s.staticRouteHooks = hooks
+}
+
+// SetClientRouteHooks sets callbacks for tunnel lifecycle events (per-device client routing).
+func (s *ServiceImpl) SetClientRouteHooks(hooks ClientRouteHooks) {
+	s.clientRouteHooks = hooks
 }
 
 // SetLifecycleManager sets the lifecycle Manager for kernel tunnel operations.
