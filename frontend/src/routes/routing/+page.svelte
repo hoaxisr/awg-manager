@@ -73,10 +73,12 @@
     }
 
     async function refreshData() {
+        // getDnsRouteTunnels works on both OS4 and OS5 (backend uses RCI which exists on both).
+        // Loaded unconditionally because IP routes and client routes need tunnel list on all OS versions.
         const [ipRes, dnsRes, tunnelRes, policiesRes, devicesRes, ifacesRes, clientRoutesRes, tunnelListRes] = await Promise.allSettled([
             api.listStaticRoutes(),
             isOS5 ? api.listDnsRoutes() : Promise.resolve(null),
-            isOS5 ? api.getDnsRouteTunnels() : Promise.resolve(null),
+            api.getDnsRouteTunnels(),
             isOS5 ? api.listAccessPolicies() : Promise.resolve(null),
             api.listPolicyDevices(),
             isOS5 ? api.listPolicyInterfaces() : Promise.resolve(null),
@@ -89,7 +91,7 @@
         if (dns) dnsRoutes = dns;
         const tunnels = settled(tunnelRes);
         if (tunnels) {
-            dnsRouteTunnels = tunnels;
+            if (isOS5) dnsRouteTunnels = tunnels;
             ipRouteTunnels = tunnels;
         }
         const policies = settled(policiesRes);
@@ -133,15 +135,18 @@
             isOS5 = sysInfo.isOS5;
 
             // Common promises (both OS4 and OS5)
+            // getDnsRouteTunnels works on both OS — backend uses RCI available on all versions.
+            // Needed for IP route and client route tunnel dropdowns on OS4.
             const commonPromises: Promise<any>[] = [
                 api.listStaticRoutes(),        // 0
                 api.listClientRoutes(),        // 1
                 api.listTunnels(),             // 2
                 api.listPolicyDevices(),       // 3
+                api.getDnsRouteTunnels(),      // 4
             ];
             // OS5-only promises
             const os5Promises: Promise<any>[] = isOS5
-                ? [api.listDnsRoutes(), api.getDnsRouteTunnels(), api.listAccessPolicies(), api.listPolicyInterfaces()]
+                ? [api.listDnsRoutes(), api.listAccessPolicies(), api.listPolicyInterfaces()]
                 : [];
 
             const results = await Promise.allSettled([...commonPromises, ...os5Promises]);
@@ -160,18 +165,18 @@
             const devices = settled(results[3]);
             if (devices) policyDevices = devices;
 
+            const tunnels = settled(results[4]);
+            if (tunnels) {
+                if (isOS5) dnsRouteTunnels = tunnels;
+                ipRouteTunnels = tunnels;
+            } else {
+                errors.push('туннели');
+            }
+
             if (isOS5) {
-                const dns = settled(results[4]);
+                const dns = settled(results[5]);
                 if (dns) dnsRoutes = dns;
                 else errors.push('DNS-маршруты');
-
-                const tunnels = settled(results[5]);
-                if (tunnels) {
-                    dnsRouteTunnels = tunnels;
-                    ipRouteTunnels = tunnels;
-                } else {
-                    errors.push('туннели');
-                }
 
                 const policies = settled(results[6]);
                 if (policies) accessPolicies = policies;
