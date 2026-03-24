@@ -67,12 +67,14 @@
     }
 </script>
 
-<Modal {open} title="Импорт правил" size="md" {onclose}>
+<Modal {open} title="Загрузить набор правил" size="md" {onclose}>
     {#if !parsed}
         <!-- File picker -->
         <div class="import-upload">
+            <p class="import-description">
+                Загрузка конфигурации правил DNS-маршрутизации, <span class="import-accent">ранее сохранённых в AWG Manager</span>. Выберите .json файл.
+            </p>
             <label class="import-label">
-                Выберите .json файл с правилами
                 <input type="file" accept=".json" onchange={handleFile} class="import-input" />
             </label>
             {#if parseError}
@@ -132,6 +134,18 @@
 
     .import-input {
         font-size: 0.8125rem;
+    }
+
+    .import-description {
+        color: var(--text-secondary);
+        font-size: 0.8125rem;
+        text-align: center;
+        margin-bottom: 0.5rem;
+    }
+
+    .import-accent {
+        color: var(--error);
+        font-weight: 500;
     }
 
     .import-error {

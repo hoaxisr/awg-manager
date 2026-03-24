@@ -545,16 +545,16 @@
                 <span class="section-summary">{dnsRoutes.length} правил, {dnsActiveCount} активных</span>
                 <div class="section-buttons">
                     {#if !dnsExportMode}
-                        <button class="btn btn-sm btn-ghost" onclick={() => dnsExportMode = true}>Экспорт</button>
-                        <button class="btn btn-sm btn-ghost" onclick={() => dnsImportOpen = true}>Импорт</button>
+                        <button class="btn btn-sm btn-ghost" onclick={() => dnsExportMode = true}>Сохранить набор правил</button>
+                        <button class="btn btn-sm btn-ghost" onclick={() => dnsImportOpen = true}>Загрузить набор правил</button>
                     {:else}
                         <button class="btn btn-sm btn-ghost" onclick={() => { dnsExportMode = false; dnsExportSelected = new Set(); }}>Отмена</button>
                         {#if dnsExportSelected.size > 0}
-                            <button class="btn btn-sm btn-primary" onclick={downloadDnsExport}>Скачать ({dnsExportSelected.size})</button>
+                            <button class="btn btn-sm btn-primary" onclick={downloadDnsExport}>Сохранить выбранные ({dnsExportSelected.size})</button>
                         {/if}
                     {/if}
                     <button class="btn btn-sm btn-primary" onclick={() => { editingDnsRoute = null; dnsModalOpen = true; }}>
-                        + Создать
+                        + Новое правило
                     </button>
                 </div>
             </div>
@@ -612,16 +612,16 @@
                 <span class="section-summary">{ipRoutes.length} правил, {ipActiveCount} активных</span>
                 <div class="section-buttons">
                     {#if !ipExportMode}
-                        <button class="btn btn-sm btn-ghost" onclick={() => ipExportMode = true}>Экспорт</button>
-                        <button class="btn btn-sm btn-ghost" onclick={() => ipImportOpen = true}>Импорт</button>
+                        <button class="btn btn-sm btn-ghost" onclick={() => ipExportMode = true}>Сохранить набор правил</button>
+                        <button class="btn btn-sm btn-ghost" onclick={() => ipImportOpen = true}>Загрузить набор правил</button>
                     {:else}
                         <button class="btn btn-sm btn-ghost" onclick={() => { ipExportMode = false; ipExportSelected = new Set(); }}>Отмена</button>
                         {#if ipExportSelected.size > 0}
-                            <button class="btn btn-sm btn-primary" onclick={downloadIpExport}>Скачать ({ipExportSelected.size})</button>
+                            <button class="btn btn-sm btn-primary" onclick={downloadIpExport}>Сохранить выбранные ({ipExportSelected.size})</button>
                         {/if}
                     {/if}
                     <button class="btn btn-sm btn-primary" onclick={() => { editingIpRoute = null; ipCreateOpen = true; }}>
-                        + Создать
+                        + Новое правило
                     </button>
                 </div>
             </div>

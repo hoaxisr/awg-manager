@@ -67,12 +67,14 @@
 	}
 </script>
 
-<Modal {open} title="Импорт IP-маршрутов" size="md" {onclose}>
+<Modal {open} title="Загрузить набор маршрутов" size="md" {onclose}>
 	{#if !parsed}
 		<!-- File picker -->
 		<div class="import-upload">
+			<p class="import-description">
+				Загрузка конфигурации IP-маршрутов, <span class="import-accent">ранее сохранённых в AWG Manager</span>. Выберите .json файл.
+			</p>
 			<label class="import-label">
-				Выберите .json файл с маршрутами
 				<input type="file" accept=".json" onchange={handleFile} class="import-input" />
 			</label>
 			{#if parseError}
@@ -129,6 +131,18 @@
 
 	.import-input {
 		font-size: 0.8125rem;
+	}
+
+	.import-description {
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		text-align: center;
+		margin-bottom: 0.5rem;
+	}
+
+	.import-accent {
+		color: var(--error);
+		font-weight: 500;
 	}
 
 	.import-error {
