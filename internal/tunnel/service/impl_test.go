@@ -215,6 +215,23 @@ func (m *MockOperator) GetSystemName(_ context.Context, ndmsID string) string { 
 
 func (m *MockOperator) SetAppLogger(logger logging.AppLogger) {}
 
+// Client VPN routing stubs
+func (m *MockOperator) SetupClientRouteTable(ctx context.Context, kernelIface string, tableNum int) error {
+	return nil
+}
+func (m *MockOperator) AddClientRule(ctx context.Context, clientIP string, tableNum int) error {
+	return nil
+}
+func (m *MockOperator) RemoveClientRule(ctx context.Context, clientIP string, tableNum int) error {
+	return nil
+}
+func (m *MockOperator) CleanupClientRouteTable(ctx context.Context, tableNum int) error {
+	return nil
+}
+func (m *MockOperator) ListUsedRoutingTables(ctx context.Context) ([]int, error) {
+	return nil, nil
+}
+
 // === Tests ===
 
 func TestResolveEndpointIP_IP(t *testing.T) {
