@@ -444,6 +444,9 @@ func (s *ServiceImpl) ListDevices(ctx context.Context) ([]Device, error) {
 		}
 	}
 
+	// Deduplicate by MAC — hotspot may return multiple entries for the same device
+	// (e.g. after reconnect with a new IP). Prefer the active entry.
+	seen := make(map[string]int) // MAC -> index in devices
 	devices := make([]Device, 0)
 	for _, h := range resp {
 		if h.IP == "" || h.IP == "0.0.0.0" {
@@ -457,7 +460,7 @@ func (s *ServiceImpl) ListDevices(ctx context.Context) ([]Device, error) {
 		if policy == "" && rcHostPolicies != nil {
 			policy = rcHostPolicies[strings.ToLower(h.MAC)]
 		}
-		devices = append(devices, Device{
+		dev := Device{
 			MAC:      h.MAC,
 			IP:       h.IP,
 			Name:     h.Name,
@@ -465,7 +468,16 @@ func (s *ServiceImpl) ListDevices(ctx context.Context) ([]Device, error) {
 			Active:   isActiveHost(h.Active),
 			Link:     h.Link,
 			Policy:   policy,
-		})
+		}
+		if idx, dup := seen[h.MAC]; dup {
+			// Replace if new entry is active (prefer latest active over stale)
+			if dev.Active {
+				devices[idx] = dev
+			}
+		} else {
+			seen[h.MAC] = len(devices)
+			devices = append(devices, dev)
+		}
 	}
 
 	return devices, nil
