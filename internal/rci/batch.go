@@ -61,7 +61,8 @@ func (b *Batch) WireguardPrivateKey(name, key string) *Batch       { return b.Ad
 func (b *Batch) WireguardPeer(name string, peer PeerConfig) *Batch { return b.Add(CmdWireguardPeer(name, peer)) }
 func (b *Batch) WireguardPeerDelete(name, pk string) *Batch        { return b.Add(CmdWireguardPeerDelete(name, pk)) }
 func (b *Batch) WireguardPeerEndpoint(name, pk, ep string) *Batch  { return b.Add(CmdWireguardPeerEndpoint(name, pk, ep)) }
-func (b *Batch) WireguardPeerConnect(name, pk, via string) *Batch  { return b.Add(CmdWireguardPeerConnect(name, pk, via)) }
+func (b *Batch) WireguardPeerConnect(name, pk, via string) *Batch     { return b.Add(CmdWireguardPeerConnect(name, pk, via)) }
+func (b *Batch) WireguardPeerDisconnect(name, pk string) *Batch      { return b.Add(CmdWireguardPeerDisconnect(name, pk)) }
 
 func (b *Batch) SetDefaultRoute(name string) *Batch        { return b.Add(CmdSetDefaultRoute(name)) }
 func (b *Batch) RemoveDefaultRoute(name string) *Batch      { return b.Add(CmdRemoveDefaultRoute(name)) }

@@ -138,6 +138,12 @@ func CmdWireguardPeerConnect(name, publicKey, viaInterface string) any {
 	}}}
 }
 
+func CmdWireguardPeerDisconnect(name, publicKey string) any {
+	return map[string]any{"interface": map[string]any{"name": name, "wireguard": map[string]any{
+		"peer": map[string]any{"key": publicKey, "connect": map[string]any{"no": true}},
+	}}}
+}
+
 // --- IPv4 routes (#1, #2) ---
 
 func CmdSetDefaultRoute(name string) any {

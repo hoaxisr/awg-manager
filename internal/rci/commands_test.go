@@ -233,6 +233,11 @@ func TestCmdWireguardPeerConnect(t *testing.T) {
 	})
 }
 
+func TestCmdWireguardPeerDisconnect(t *testing.T) {
+	assertJSON(t, CmdWireguardPeerDisconnect("Wireguard0", "HHHH="),
+		`{"interface":{"name":"Wireguard0","wireguard":{"peer":{"key":"HHHH=","connect":{"no":true}}}}}`)
+}
+
 func TestCmdSave(t *testing.T) {
 	assertJSON(t, CmdSave(),
 		`{"system":{"configuration":{"save":{}}}}`)

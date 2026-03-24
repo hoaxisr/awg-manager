@@ -337,6 +337,34 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 	return nil
 }
 
+// SuspendProxy disconnects the peer and removes kmod proxy entry.
+// Called on WAN down for firmware < 5.01.A.3 (proxy mode).
+// Preserves NDMS intent (conf stays "running") — peer goes to link: pending.
+// Does NOT call InterfaceDown (that would set conf: disabled, losing user intent).
+// Does NOT clear DNS (interface stays up in NDMS, DNS binding is intact).
+// Resume path: call Start() which routes through startProxy().
+func (o *OperatorNativeWG) SuspendProxy(ctx context.Context, stored *storage.AWGTunnel) error {
+	names := NewNWGNames(stored.NWGIndex)
+	pubkey := stored.Peer.PublicKey
+
+	// 1. Remove kmod proxy entry (socket is dead after WAN down anyway).
+	// Module stays loaded — only the tunnel entry is removed.
+	_ = o.kmod.RemoveTunnel(stored.ID)
+
+	// 2. Disconnect peer — NDMS sets link: pending, connected: no.
+	// conf stays "running" so NDMS knows the tunnel wants to be up.
+	batch := rci.NewBatch()
+	batch.WireguardPeerDisconnect(names.NDMSName, pubkey)
+	if err := batch.Execute(ctx, o.rci); err != nil {
+		o.log.Warnf("nwg: suspend proxy %s: peer disconnect: %v", names.NDMSName, err)
+		return fmt.Errorf("peer disconnect: %w", err)
+	}
+
+	o.appLog.Info("suspend", stored.Name, "Proxy suspended (WAN down)")
+	o.log.Infof("nwg: suspended proxy %s", names.NDMSName)
+	return nil
+}
+
 // Stop stops a NativeWG tunnel: interface down -> deactivate peer -> kmod remove (proxy only).
 func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) error {
 	names := NewNWGNames(stored.NWGIndex)

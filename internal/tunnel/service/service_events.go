@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
@@ -13,15 +14,31 @@ import (
 
 // HandleWANUp is called when a WAN interface comes up.
 // Kernel tunnels: delegated to lifecycle Manager.
-// NativeWG: NDMS manages routing natively, skipped.
+// NativeWG+proxy (< 5.01.A.3): resume proxy via startProxy().
+// NativeWG+native ASC (>= 5.01.A.3): NDMS manages reconnect, skipped.
 func (s *ServiceImpl) HandleWANUp(ctx context.Context, iface string) {
+	if s.nwgOperator != nil && !ndmsinfo.SupportsWireguardASC() {
+		if s.lifecycleManager.IsBootInProgress() {
+			s.logInfo("wan_up", "nwg", "NativeWG proxy resume deferred — boot in progress")
+		} else {
+			s.resumeNativeWGProxies(ctx)
+		}
+	}
 	s.lifecycleManager.HandleWANUp(ctx, iface)
 }
 
-
 // HandleWANDown is called when a WAN interface goes down.
 // Kernel tunnels: delegated to lifecycle Manager.
+// NativeWG+proxy (< 5.01.A.3): suspend proxy (kill kmod entry, disconnect peer).
+// NativeWG+native ASC (>= 5.01.A.3): NDMS manages, skipped.
 func (s *ServiceImpl) HandleWANDown(ctx context.Context, iface string) {
+	if s.nwgOperator != nil && !ndmsinfo.SupportsWireguardASC() {
+		if s.lifecycleManager.IsBootInProgress() {
+			s.logInfo("wan_down", "nwg", "NativeWG proxy suspend deferred — boot in progress")
+		} else {
+			s.suspendNativeWGProxies(ctx)
+		}
+	}
 	s.lifecycleManager.HandleWANDown(ctx, iface)
 }
 
@@ -174,4 +191,61 @@ func (s *ServiceImpl) findTunnelByNDMSName(ndmsName string) (string, *storage.AW
 		}
 	}
 	return "", nil
+}
+
+// suspendNativeWGProxies suspends all running NativeWG+proxy tunnels on WAN down.
+// Kills kmod proxy entry and disconnects peer (conf stays "running" = intent preserved).
+func (s *ServiceImpl) suspendNativeWGProxies(ctx context.Context) {
+	tunnels, err := s.store.List()
+	if err != nil {
+		s.logWarn("wan_down", "nwg", "Failed to list tunnels: "+err.Error())
+		return
+	}
+	for i := range tunnels {
+		t := &tunnels[i]
+		if t.Backend != "nativewg" || !t.Enabled {
+			continue
+		}
+		info := s.nwgOperator.GetState(ctx, t)
+		if info.State != tunnel.StateRunning {
+			continue
+		}
+		s.beginOperation(t.ID)
+		s.lockTunnel(t.ID)
+		s.logInfo("wan_down", t.ID, "Suspending NativeWG proxy")
+		if err := s.nwgOperator.SuspendProxy(ctx, t); err != nil {
+			s.logWarn("wan_down", t.ID, "SuspendProxy failed: "+err.Error())
+		}
+		s.unlockTunnel(t.ID)
+		s.endOperation(t.ID)
+	}
+}
+
+// resumeNativeWGProxies resumes all enabled NativeWG+proxy tunnels on WAN up.
+// Calls startNativeWG which routes through startProxy() — creates new kmod proxy, reconnects peer.
+func (s *ServiceImpl) resumeNativeWGProxies(ctx context.Context) {
+	tunnels, err := s.store.List()
+	if err != nil {
+		s.logWarn("wan_up", "nwg", "Failed to list tunnels: "+err.Error())
+		return
+	}
+	for i := range tunnels {
+		t := &tunnels[i]
+		if t.Backend != "nativewg" || !t.Enabled {
+			continue
+		}
+		// Only resume tunnels that were suspended (not already running).
+		info := s.nwgOperator.GetState(ctx, t)
+		if info.State == tunnel.StateRunning {
+			continue
+		}
+		s.beginOperation(t.ID)
+		s.lockTunnel(t.ID)
+		s.logInfo("wan_up", t.ID, "Resuming NativeWG proxy")
+		if err := s.startNativeWG(ctx, t); err != nil {
+			s.logWarn("wan_up", t.ID, "Resume proxy failed: "+err.Error())
+		}
+		s.unlockTunnel(t.ID)
+		s.endOperation(t.ID)
+	}
 }
