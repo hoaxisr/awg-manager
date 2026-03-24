@@ -22,7 +22,7 @@
 	let importing = $state(false);
 	let wasOpen = $state(false);
 	let dragging = $state(false);
-	let fileInput: HTMLInputElement;
+	let fileInput = $state<HTMLInputElement>(null!);
 
 	// Reset on open
 	$effect(() => {
@@ -93,11 +93,13 @@
 			<p class="import-description">
 				Загрузка конфигурации IP-маршрутов, <span class="import-accent">ранее сохранённых в AWG Manager</span>.
 			</p>
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
 				class="drop-zone"
 				class:dragging
+				role="button"
+				tabindex="0"
 				onclick={() => fileInput.click()}
+				onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') fileInput.click(); }}
 				ondrop={handleDrop}
 				ondragover={handleDragOver}
 				ondragleave={handleDragLeave}
