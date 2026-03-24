@@ -257,24 +257,26 @@
 
 			<!-- Level + actions bar -->
 			<div class="level-bar">
-				<span class="level-label">Level</span>
-				<button class="level-chip" class:active={filterLevel === ''} onclick={() => setLevel('')}>Все</button>
-				<button class="level-chip" class:active={filterLevel === 'error'} onclick={() => setLevel('error')}>ERROR</button>
-				<button class="level-chip" class:active={filterLevel === 'warn'} onclick={() => setLevel('warn')}>WARN</button>
-				<button class="level-chip" class:active={filterLevel === 'info'} onclick={() => setLevel('info')}>INFO</button>
-				<button class="level-chip" class:active={filterLevel === 'full'} onclick={() => setLevel('full')}>FULL</button>
-				<button class="level-chip" class:active={filterLevel === 'debug'} onclick={() => setLevel('debug')}>DEBUG</button>
+				<div class="level-chips">
+					<span class="level-label">Level</span>
+					<button class="level-chip" class:active={filterLevel === ''} onclick={() => setLevel('')}>Все</button>
+					<button class="level-chip" class:active={filterLevel === 'error'} onclick={() => setLevel('error')}>ERROR</button>
+					<button class="level-chip" class:active={filterLevel === 'warn'} onclick={() => setLevel('warn')}>WARN</button>
+					<button class="level-chip" class:active={filterLevel === 'info'} onclick={() => setLevel('info')}>INFO</button>
+					<button class="level-chip" class:active={filterLevel === 'full'} onclick={() => setLevel('full')}>FULL</button>
+					<button class="level-chip" class:active={filterLevel === 'debug'} onclick={() => setLevel('debug')}>DEBUG</button>
+				</div>
 
-				<div style="flex:1"></div>
-
-				<span class="log-count">{displayLogs.length}{#if total > logs.length} / {total}{/if}</span>
-				<button class="action-link download" onclick={downloadLogs} disabled={downloading || !total}>
-					{downloading ? '...' : 'Download'}
-				</button>
-				<button class="action-link copy" onclick={copyToClipboard} disabled={!displayLogs.length}>Copy</button>
-				<button class="action-link clear" onclick={clearLogs} disabled={clearing || !logs.length}>
-					{clearing ? 'Очистка...' : 'Clear'}
-				</button>
+				<div class="level-actions">
+					<span class="log-count">{displayLogs.length}{#if total > logs.length} / {total}{/if}</span>
+					<button class="btn btn-sm btn-ghost" onclick={downloadLogs} disabled={downloading || !total}>
+						{downloading ? '...' : 'Download'}
+					</button>
+					<button class="btn btn-sm btn-ghost" onclick={copyToClipboard} disabled={!displayLogs.length}>Copy</button>
+					<button class="btn btn-sm btn-danger" onclick={clearLogs} disabled={clearing || !logs.length}>
+						{clearing ? 'Очистка...' : 'Clear'}
+					</button>
+				</div>
 			</div>
 
 			<!-- Terminal feed -->
@@ -434,11 +436,24 @@
 	.level-bar {
 		display: flex;
 		align-items: center;
+		justify-content: space-between;
 		gap: 6px;
 		padding: 6px 16px;
 		border-bottom: 1px solid var(--border);
 		font-family: sans-serif;
 		flex-wrap: wrap;
+	}
+
+	.level-chips {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.level-actions {
+		display: flex;
+		align-items: center;
+		gap: 6px;
 	}
 
 	.level-chip {
@@ -468,18 +483,6 @@
 		color: var(--text-muted);
 		font-family: sans-serif;
 	}
-
-	.action-link {
-		font-size: 10px;
-		cursor: pointer;
-		background: none;
-		border: none;
-		font-family: sans-serif;
-	}
-
-	.action-link.download { color: var(--success, #22c55e); }
-	.action-link.copy { color: var(--accent); }
-	.action-link.clear { color: var(--error); }
 
 	/* Load more */
 	.load-more {
