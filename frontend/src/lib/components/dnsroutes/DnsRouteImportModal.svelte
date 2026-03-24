@@ -21,6 +21,8 @@
     let parseError = $state('');
     let importing = $state(false);
     let wasOpen = $state(false);
+    let dragging = $state(false);
+    let fileInput: HTMLInputElement;
 
     // Reset on open
     $effect(() => {
@@ -40,10 +42,7 @@
         return existingLower.includes(name.toLowerCase());
     }
 
-    async function handleFile(e: Event) {
-        const input = e.target as HTMLInputElement;
-        const file = input.files?.[0];
-        if (!file) return;
+    async function processFile(file: File) {
         try {
             const text = await file.text();
             const routes = parseImportFile(text);
@@ -52,11 +51,32 @@
                 return;
             }
             parsed = routes;
-            // Auto-select non-duplicates
             selectedFlags = routes.map(r => !isDuplicate(r.name));
         } catch (e) {
             parseError = e instanceof Error ? e.message : 'Ошибка чтения файла';
         }
+    }
+
+    function handleFile(e: Event) {
+        const input = e.target as HTMLInputElement;
+        const file = input.files?.[0];
+        if (file) processFile(file);
+    }
+
+    function handleDrop(e: DragEvent) {
+        e.preventDefault();
+        dragging = false;
+        const file = e.dataTransfer?.files?.[0];
+        if (file) processFile(file);
+    }
+
+    function handleDragOver(e: DragEvent) {
+        e.preventDefault();
+        dragging = true;
+    }
+
+    function handleDragLeave() {
+        dragging = false;
     }
 
     function handleImport() {
@@ -69,14 +89,28 @@
 
 <Modal {open} title="Загрузить набор правил" size="md" {onclose}>
     {#if !parsed}
-        <!-- File picker -->
         <div class="import-upload">
             <p class="import-description">
-                Загрузка конфигурации правил DNS-маршрутизации, <span class="import-accent">ранее сохранённых в AWG Manager</span>. Выберите .json файл.
+                Загрузка конфигурации правил DNS-маршрутизации, <span class="import-accent">ранее сохранённых в AWG Manager</span>.
             </p>
-            <label class="import-label">
-                <input type="file" accept=".json" onchange={handleFile} class="import-input" />
-            </label>
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+                class="drop-zone"
+                class:dragging
+                onclick={() => fileInput.click()}
+                ondrop={handleDrop}
+                ondragover={handleDragOver}
+                ondragleave={handleDragLeave}
+            >
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <p class="drop-text">Перетащите .json файл сюда</p>
+                <p class="drop-hint">или нажмите для выбора</p>
+            </div>
+            <input type="file" accept=".json" onchange={handleFile} bind:this={fileInput} class="hidden-input" />
             {#if parseError}
                 <p class="import-error">{parseError}</p>
             {/if}
@@ -122,18 +156,36 @@
         padding: 2rem;
     }
 
-    .import-label {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 0.5rem;
+    .drop-zone {
+        border: 2px dashed var(--border);
+        border-radius: 10px;
+        padding: 2rem 1.5rem;
         cursor: pointer;
-        color: var(--text-secondary);
-        font-size: 0.875rem;
+        text-align: center;
+        color: var(--text-muted);
+        transition: border-color 0.2s, background 0.2s;
+        width: 100%;
     }
 
-    .import-input {
+    .drop-zone:hover, .drop-zone.dragging {
+        border-color: var(--accent);
+        background: rgba(59, 130, 246, 0.05);
+    }
+
+    .drop-text {
         font-size: 0.8125rem;
+        color: var(--text-secondary);
+        margin: 0.5rem 0 0;
+    }
+
+    .drop-hint {
+        font-size: 0.6875rem;
+        color: var(--text-muted);
+        margin: 0.25rem 0 0;
+    }
+
+    .hidden-input {
+        display: none;
     }
 
     .import-description {
