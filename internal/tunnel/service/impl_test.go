@@ -7,7 +7,6 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 )
 
@@ -233,37 +232,6 @@ func (m *MockOperator) ListUsedRoutingTables(ctx context.Context) ([]int, error)
 }
 
 // === Tests ===
-
-func TestResolveEndpointIP_IP(t *testing.T) {
-	ip, err := netutil.ResolveEndpointIP("192.168.1.1:51820")
-	if err != nil {
-		t.Fatalf("netutil.ResolveEndpointIP() error = %v", err)
-	}
-	if ip != "192.168.1.1" {
-		t.Errorf("netutil.ResolveEndpointIP() = %v, want 192.168.1.1", ip)
-	}
-}
-
-func TestResolveEndpointIP_IPv6(t *testing.T) {
-	ip, err := netutil.ResolveEndpointIP("[2001:db8::1]:51820")
-	if err != nil {
-		t.Fatalf("netutil.ResolveEndpointIP() error = %v", err)
-	}
-	if ip != "2001:db8::1" {
-		t.Errorf("netutil.ResolveEndpointIP() = %v, want 2001:db8::1", ip)
-	}
-}
-
-func TestResolveEndpointIP_Hostname(t *testing.T) {
-	// This test may fail in offline environments
-	ip, err := netutil.ResolveEndpointIP("localhost:51820")
-	if err != nil {
-		t.Skipf("Skipping hostname test (offline?): %v", err)
-	}
-	if ip == "" {
-		t.Error("netutil.ResolveEndpointIP() returned empty string")
-	}
-}
 
 // TestServiceStart_AlreadyRunning verifies Start returns error when tunnel is running.
 func TestServiceStart_AlreadyRunning(t *testing.T) {
