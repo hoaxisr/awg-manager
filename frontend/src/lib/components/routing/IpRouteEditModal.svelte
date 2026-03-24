@@ -18,19 +18,25 @@
 	let name = $state('');
 	let tunnelID = $state('');
 	let subnetsText = $state('');
+	let isInitialized = $state(false);
 
-	// Reset form when modal opens
+	// Reset form when modal opens (only once per open, not on every poll tick)
 	$effect(() => {
 		if (open) {
-			if (route) {
-				name = route.name;
-				tunnelID = route.tunnelID;
-				subnetsText = (route.subnets ?? []).join('\n');
-			} else {
-				name = '';
-				tunnelID = tunnels.length > 0 ? tunnels[0].id : '';
-				subnetsText = '';
+			if (!isInitialized) {
+				if (route) {
+					name = route.name;
+					tunnelID = route.tunnelID;
+					subnetsText = (route.subnets ?? []).join('\n');
+				} else {
+					name = '';
+					tunnelID = tunnels.length > 0 ? tunnels[0].id : '';
+					subnetsText = '';
+				}
+				isInitialized = true;
 			}
+		} else {
+			isInitialized = false;
 		}
 	});
 
@@ -159,7 +165,12 @@
 		<div class="section-header">
 			<div class="section-title">Подсети (по одной на строку, CIDR)</div>
 			<button class="btn-bat-import" onclick={handleBatImport}>
-				Импорт из .bat
+				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+					<polyline points="17 8 12 3 7 8"/>
+					<line x1="12" y1="3" x2="12" y2="15"/>
+				</svg>
+				Из .bat файла
 			</button>
 			<input
 				bind:this={batInput}
@@ -242,17 +253,23 @@
 	}
 
 	.btn-bat-import {
-		background: none;
-		border: none;
-		color: var(--accent);
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		margin-left: auto;
+		background: var(--bg-tertiary, #2d2f45);
+		border: 1px solid var(--border);
+		color: var(--text-secondary);
 		font-size: 0.6875rem;
 		cursor: pointer;
-		padding: 0;
-		text-decoration: underline;
+		padding: 3px 10px;
+		border-radius: 4px;
+		transition: border-color 0.15s, color 0.15s;
 	}
 
 	.btn-bat-import:hover {
-		opacity: 0.8;
+		border-color: var(--accent);
+		color: var(--text-primary);
 	}
 
 	.hidden-input {
