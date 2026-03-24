@@ -48,15 +48,15 @@ esac
 cd "$PROJECT_ROOT"
 
 # Check for amneziawg binaries
-AWG_CLI_BIN="vendor/bin/awg-${AWG_ARCH}"
+AWG_CLI_BIN="prebuilt/bin/awg-${AWG_ARCH}"
 
 if [[ ! -f "$AWG_CLI_BIN" ]]; then
     echo "ERROR: Missing $AWG_CLI_BIN"
-    echo "Please place awg CLI binary for ${AWG_ARCH} architecture in vendor/bin/"
+    echo "Please place awg CLI binary for ${AWG_ARCH} architecture in prebuilt/bin/"
     exit 1
 fi
 
-# Kernel modules are bundled per-model from vendor/kmod/.
+# Kernel modules are bundled per-model from prebuilt/kmod/.
 # At runtime, the daemon selects the correct .ko for the detected router model.
 
 # Clean previous builds
@@ -95,9 +95,9 @@ KMOD_VERSION=$(grep 'ExpectedKmodVersion' internal/sys/kmod/download.go | grep -
 BUNDLED_DIR="$IPK_ROOT/opt/etc/awg-manager/modules/bundled"
 KMOD_COUNT=0
 
-if ls "$PROJECT_ROOT/vendor/kmod"/amneziawg-*.ko &>/dev/null; then
+if ls "$PROJECT_ROOT/prebuilt/kmod"/amneziawg-*.ko &>/dev/null; then
     mkdir -p "$BUNDLED_DIR"
-    for ko in "$PROJECT_ROOT/vendor/kmod"/amneziawg-*.ko; do
+    for ko in "$PROJECT_ROOT/prebuilt/kmod"/amneziawg-*.ko; do
         filetype=$(file -b "$ko")
         match=false
         case "$ENTWARE_ARCH" in
@@ -118,7 +118,7 @@ if ls "$PROJECT_ROOT/vendor/kmod"/amneziawg-*.ko &>/dev/null; then
         rmdir "$BUNDLED_DIR" 2>/dev/null || true
     fi
 else
-    echo "WARNING: No vendor/kmod/*.ko files found, IPK will have no bundled modules"
+    echo "WARNING: No prebuilt/kmod/*.ko files found, IPK will have no bundled modules"
 fi
 
 # Bundle awg_proxy.ko kernel modules (NativeWG obfuscation proxy)
