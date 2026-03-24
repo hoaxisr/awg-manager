@@ -67,9 +67,9 @@ func CmdInterfaceIPGlobal(name string, auto bool) any {
 // --- DNS (#17, #28) ---
 
 func CmdInterfaceDNS(name string, servers []string) any {
-	list := []any{map[string]any{}}
+	var list []any
 	for _, s := range servers {
-		list = append(list, s)
+		list = append(list, map[string]any{"name-server": s})
 	}
 	return map[string]any{"interface": map[string]any{"name": name, "ip": map[string]any{"name-server": list}}}
 }
@@ -82,7 +82,7 @@ func CmdInterfaceDNSClear(name string) any {
 
 func CmdInterfaceIPv6Address(name, address string) any {
 	return map[string]any{"interface": map[string]any{"name": name, "ipv6": map[string]any{
-		"address": []any{map[string]any{}, map[string]any{"block": address + "/128"}},
+		"address": []any{map[string]any{"block": address + "/128"}},
 	}}}
 }
 
@@ -102,14 +102,13 @@ func CmdWireguardPeer(name string, peer PeerConfig) any {
 		p["endpoint"] = map[string]any{"address": peer.Endpoint}
 	}
 	var allowIPs []any
-	allowIPs = append(allowIPs, map[string]any{})
 	for _, ip := range peer.AllowedIPv4 {
 		allowIPs = append(allowIPs, map[string]any{"address": ip.Address, "mask": ip.Mask})
 	}
 	for _, ip := range peer.AllowedIPv6 {
 		allowIPs = append(allowIPs, map[string]any{"address": ip.Address, "mask": ip.Mask})
 	}
-	if len(allowIPs) > 1 {
+	if len(allowIPs) > 0 {
 		p["allow-ips"] = allowIPs
 	}
 	if peer.KeepaliveInterval > 0 {

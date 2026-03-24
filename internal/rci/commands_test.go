@@ -118,7 +118,7 @@ func TestCmdInterfaceIPGlobal(t *testing.T) {
 
 func TestCmdInterfaceDNS(t *testing.T) {
 	assertJSON(t, CmdInterfaceDNS("Wireguard0", []string{"8.8.8.8", "1.1.1.1"}),
-		`{"interface":{"name":"Wireguard0","ip":{"name-server":[{},"8.8.8.8","1.1.1.1"]}}}`)
+		`{"interface":{"name":"Wireguard0","ip":{"name-server":[{"name-server":"8.8.8.8"},{"name-server":"1.1.1.1"}]}}}`)
 }
 
 func TestCmdInterfaceDNSClear(t *testing.T) {
@@ -128,7 +128,7 @@ func TestCmdInterfaceDNSClear(t *testing.T) {
 
 func TestCmdInterfaceIPv6Address(t *testing.T) {
 	assertJSON(t, CmdInterfaceIPv6Address("Wireguard0", "fd00::1"),
-		`{"interface":{"name":"Wireguard0","ipv6":{"address":[{},{"block":"fd00::1/128"}]}}}`)
+		`{"interface":{"name":"Wireguard0","ipv6":{"address":[{"block":"fd00::1/128"}]}}}`)
 }
 
 func TestCmdInterfaceIPv6AddressClear(t *testing.T) {
@@ -172,13 +172,8 @@ func TestCmdWireguardPeer_Full(t *testing.T) {
 		t.Errorf("endpoint address = %v", ep["address"])
 	}
 	allowIPs := p["allow-ips"].([]any)
-	if len(allowIPs) != 3 { // {} + ipv4 + ipv6
-		t.Errorf("allow-ips len = %d, want 3", len(allowIPs))
-	}
-	// First element is clear marker.
-	clear := allowIPs[0].(map[string]any)
-	if len(clear) != 0 {
-		t.Errorf("allow-ips[0] should be empty object, got %v", clear)
+	if len(allowIPs) != 2 { // ipv4 + ipv6
+		t.Errorf("allow-ips len = %d, want 2", len(allowIPs))
 	}
 	ka := p["keepalive-interval"].(map[string]any)
 	if ka["interval"] != float64(25) {

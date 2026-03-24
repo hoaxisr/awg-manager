@@ -678,9 +678,9 @@ func (o *OperatorNativeWG) fallbackResolve(stored *storage.AWGTunnel, resolveErr
 	return stored.ResolvedEndpointIP, port, nil
 }
 
-// extractIPv4 extracts the IPv4 address from a WireGuard Address field
-// which may contain comma-separated IPv4 and IPv6 (e.g. "172.16.0.2, 2606::1/128").
-// Returns the IPv4 with /32 CIDR suffix.
+// extractIPv4 extracts the bare IPv4 address from a WireGuard Address field
+// which may contain comma-separated IPv4 and IPv6 (e.g. "172.16.0.2/32, 2606::1/128").
+// Returns the IPv4 without CIDR suffix (caller provides mask separately for RCI).
 func extractIPv4(addr string) string {
 	for _, part := range strings.Split(addr, ",") {
 		part = strings.TrimSpace(part)
@@ -696,9 +696,9 @@ func extractIPv4(addr string) string {
 		if strings.Contains(host, ":") {
 			continue
 		}
-		return host + "/32"
+		return host
 	}
-	return addr + "/32"
+	return addr
 }
 
 // extractIPv6 extracts the IPv6 address from a WireGuard Address field
