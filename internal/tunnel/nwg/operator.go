@@ -25,6 +25,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 )
 
 // OperatorNativeWG manages tunnels via Keenetic native WireGuard + awg_proxy.ko.
@@ -115,7 +116,7 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 
 	// Resolve endpoint hostname -> IP (for validation only at create time;
 	// the actual proxy endpoint is set at Start time)
-	endpointIP, endpointPort, err := resolveEndpointIP(stored.Peer.Endpoint)
+	endpointIP, endpointPort, err := netutil.ResolveEndpoint(stored.Peer.Endpoint)
 	if err != nil {
 		return 0, fmt.Errorf("resolve endpoint: %w", err)
 	}
@@ -230,7 +231,7 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 	}
 
 	// Resolve endpoint (fallback to cached IP if DNS unavailable at boot)
-	endpointIP, endpointPort, err := resolveEndpointIP(stored.Peer.Endpoint)
+	endpointIP, endpointPort, err := netutil.ResolveEndpoint(stored.Peer.Endpoint)
 	if err != nil {
 		endpointIP, endpointPort, err = o.fallbackResolve(stored, err)
 		if err != nil {
@@ -277,7 +278,7 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 
 	// Resolve endpoint — kmod proxy connects to this IP
 	// Fallback to cached IP if DNS unavailable at boot
-	endpointIP, endpointPort, err := resolveEndpointIP(stored.Peer.Endpoint)
+	endpointIP, endpointPort, err := netutil.ResolveEndpoint(stored.Peer.Endpoint)
 	if err != nil {
 		endpointIP, endpointPort, err = o.fallbackResolve(stored, err)
 		if err != nil {
@@ -636,7 +637,7 @@ func (o *OperatorNativeWG) nextFreeIndex(ctx context.Context) (int, error) {
 // buildKmodConfig resolves the endpoint and builds a KmodConfig.
 // Used by RestoreKmodTunnel where we don't need the resolved IP separately.
 func buildKmodConfig(stored *storage.AWGTunnel, bindIface string) (KmodConfig, error) {
-	ip, port, err := resolveEndpointIP(stored.Peer.Endpoint)
+	ip, port, err := netutil.ResolveEndpoint(stored.Peer.Endpoint)
 	if err != nil {
 		return KmodConfig{}, fmt.Errorf("resolve endpoint: %w", err)
 	}
@@ -677,32 +678,6 @@ func (o *OperatorNativeWG) fallbackResolve(stored *storage.AWGTunnel, resolveErr
 	return stored.ResolvedEndpointIP, port, nil
 }
 
-// resolveEndpointIP parses an endpoint string (host:port) and resolves hostname -> IP.
-func resolveEndpointIP(endpoint string) (string, int, error) {
-	host, portStr, err := net.SplitHostPort(endpoint)
-	if err != nil {
-		return "", 0, fmt.Errorf("split endpoint %q: %w", endpoint, err)
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return "", 0, fmt.Errorf("parse port %q: %w", portStr, err)
-	}
-
-	// If already an IP, return directly.
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.String(), port, nil
-	}
-
-	// Resolve hostname.
-	ips, err := net.LookupHost(host)
-	if err != nil {
-		return "", 0, fmt.Errorf("resolve %q: %w", host, err)
-	}
-	if len(ips) == 0 {
-		return "", 0, fmt.Errorf("no IPs for %q", host)
-	}
-	return ips[0], port, nil
-}
 
 // extractIPv4 extracts the IPv4 address from a WireGuard Address field
 // which may contain comma-separated IPv4 and IPv6 (e.g. "172.16.0.2, 2606::1/128").
