@@ -15,10 +15,10 @@ import (
 	"fmt"
 	"net"
 	"strings"
-
-	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 	"sync"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 )
 
 const (

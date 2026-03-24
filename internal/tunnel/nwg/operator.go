@@ -678,7 +678,6 @@ func (o *OperatorNativeWG) fallbackResolve(stored *storage.AWGTunnel, resolveErr
 	return stored.ResolvedEndpointIP, port, nil
 }
 
-
 // extractIPv4 extracts the IPv4 address from a WireGuard Address field
 // which may contain comma-separated IPv4 and IPv6 (e.g. "172.16.0.2, 2606::1/128").
 // Returns the IPv4 with /32 CIDR suffix.
