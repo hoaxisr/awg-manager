@@ -1,19 +1,20 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
     import { api } from '$lib/api/client';
-    import type { DnsRoute, DnsRouteTunnelInfo, StaticRouteList, AccessPolicy, PolicyDevice, PolicyGlobalInterface } from '$lib/types';
+    import type { DnsRoute, DnsRouteTunnelInfo, StaticRouteList, AccessPolicy, PolicyDevice, PolicyGlobalInterface, ClientRoute } from '$lib/types';
     import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
     import { Modal } from '$lib/components/ui';
     import { IpRouteCard, IpRouteEditModal, IpRouteImportModal } from '$lib/components/routing';
     import { DnsRouteCard, DnsRouteEditModal, DnsRouteImportModal } from '$lib/components/dnsroutes';
     import { PolicyTable, PolicyCreateModal, PolicyEditView } from '$lib/components/accesspolicy';
+    import { ClientRouteCard, ClientRouteCreateModal } from '$lib/components/clientroute';
     import { exportRoutes, downloadJson } from '$lib/utils/dns-export';
     import { exportStaticRoutes, type PortableStaticRoute } from '$lib/utils/staticroute-export';
     import { notifications } from '$lib/stores/notifications';
 
     const POLL_INTERVAL = 30_000;
 
-    let activeTab = $state<'dns' | 'ip' | 'policy'>('dns');
+    let activeTab = $state<'dns' | 'ip' | 'policy' | 'clientvpn'>('dns');
     let loading = $state(true);
     let isOS5 = $state(false);
     let pollTimer = $state<number | null>(null);
@@ -40,6 +41,15 @@
     let editingPolicy = $state<string | null>(null);
     let editingPolicyData = $state<AccessPolicy | null>(null);
 
+    // Client VPN routing state
+    let clientRoutes = $state<ClientRoute[]>([]);
+    let clientRouteSaving = $state(false);
+    let clientRouteDeleteId = $state<string | null>(null);
+    let clientRouteToggling = $state<string | null>(null);
+    let clientRouteModalOpen = $state(false);
+    let editingClientRoute = $state<ClientRoute | null>(null);
+    let clientTunnels = $state<{id: string; name: string}[]>([]);
+
     // IP state
     let ipRoutes = $state<StaticRouteList[]>([]);
     let ipRouteTunnels = $state<DnsRouteTunnelInfo[]>([]);
@@ -56,19 +66,22 @@
     let dnsActiveCount = $derived(dnsRoutes.filter(r => r.enabled).length);
     let ipActiveCount = $derived(ipRoutes.filter(r => r.enabled).length);
     let policyCount = $derived(accessPolicies.length);
+    let clientRouteCount = $derived(clientRoutes.length);
 
     function settled<T>(r: PromiseSettledResult<T>): T | null {
         return r.status === 'fulfilled' ? r.value : null;
     }
 
     async function refreshData() {
-        const [ipRes, dnsRes, tunnelRes, policiesRes, devicesRes, ifacesRes] = await Promise.allSettled([
+        const [ipRes, dnsRes, tunnelRes, policiesRes, devicesRes, ifacesRes, clientRoutesRes, tunnelListRes] = await Promise.allSettled([
             api.listStaticRoutes(),
             isOS5 ? api.listDnsRoutes() : Promise.resolve(null),
             isOS5 ? api.getDnsRouteTunnels() : Promise.resolve(null),
             isOS5 ? api.listAccessPolicies() : Promise.resolve(null),
-            isOS5 ? api.listPolicyDevices() : Promise.resolve(null),
+            api.listPolicyDevices(),
             isOS5 ? api.listPolicyInterfaces() : Promise.resolve(null),
+            api.listClientRoutes(),
+            api.listTunnels(),
         ]);
         const ip = settled(ipRes);
         if (ip) ipRoutes = ip;
@@ -90,6 +103,10 @@
         if (devices) policyDevices = devices;
         const ifaces = settled(ifacesRes);
         if (ifaces) policyInterfaces = ifaces;
+        const cr = settled(clientRoutesRes);
+        if (cr) clientRoutes = cr;
+        const tl = settled(tunnelListRes);
+        if (tl) clientTunnels = tl.map(t => ({ id: t.id, name: t.name }));
     }
 
     function startPolling() {
@@ -115,24 +132,40 @@
             const sysInfo = await api.getSystemInfo();
             isOS5 = sysInfo.isOS5;
 
-            const promises: Promise<any>[] = [api.listStaticRoutes()];
-            if (isOS5) {
-                promises.push(api.listDnsRoutes(), api.getDnsRouteTunnels(), api.listAccessPolicies(), api.listPolicyDevices(), api.listPolicyInterfaces());
-            }
+            // Common promises (both OS4 and OS5)
+            const commonPromises: Promise<any>[] = [
+                api.listStaticRoutes(),        // 0
+                api.listClientRoutes(),        // 1
+                api.listTunnels(),             // 2
+                api.listPolicyDevices(),       // 3
+            ];
+            // OS5-only promises
+            const os5Promises: Promise<any>[] = isOS5
+                ? [api.listDnsRoutes(), api.getDnsRouteTunnels(), api.listAccessPolicies(), api.listPolicyInterfaces()]
+                : [];
 
-            const results = await Promise.allSettled(promises);
+            const results = await Promise.allSettled([...commonPromises, ...os5Promises]);
             const errors: string[] = [];
 
             const ip = settled(results[0]);
             if (ip) ipRoutes = ip;
             else errors.push('IP-маршруты');
 
+            const cr = settled(results[1]);
+            if (cr) clientRoutes = cr;
+
+            const tl = settled(results[2]);
+            if (tl) clientTunnels = tl.map((t: any) => ({ id: t.id, name: t.name }));
+
+            const devices = settled(results[3]);
+            if (devices) policyDevices = devices;
+
             if (isOS5) {
-                const dns = settled(results[1]);
+                const dns = settled(results[4]);
                 if (dns) dnsRoutes = dns;
                 else errors.push('DNS-маршруты');
 
-                const tunnels = settled(results[2]);
+                const tunnels = settled(results[5]);
                 if (tunnels) {
                     dnsRouteTunnels = tunnels;
                     ipRouteTunnels = tunnels;
@@ -140,14 +173,11 @@
                     errors.push('туннели');
                 }
 
-                const policies = settled(results[3]);
+                const policies = settled(results[6]);
                 if (policies) accessPolicies = policies;
                 else errors.push('политики');
 
-                const devices = settled(results[4]);
-                if (devices) policyDevices = devices;
-
-                const ifaces = settled(results[5]);
+                const ifaces = settled(results[7]);
                 if (ifaces) policyInterfaces = ifaces;
             }
 
@@ -397,6 +427,66 @@
         }
     }
 
+    // ─── Client VPN functions ───
+
+    async function createClientRoute(data: Partial<ClientRoute>) {
+        clientRouteSaving = true;
+        try {
+            await api.createClientRoute(data);
+            clientRoutes = await api.listClientRoutes();
+            clientRouteModalOpen = false;
+            editingClientRoute = null;
+            startPolling();
+            notifications.success('Правило создано');
+        } catch (e: any) {
+            notifications.error(e.message || 'Ошибка создания');
+        } finally {
+            clientRouteSaving = false;
+        }
+    }
+
+    async function updateClientRoute(data: Partial<ClientRoute>) {
+        if (!editingClientRoute) return;
+        clientRouteSaving = true;
+        try {
+            await api.updateClientRoute(editingClientRoute.id, data);
+            clientRoutes = await api.listClientRoutes();
+            clientRouteModalOpen = false;
+            editingClientRoute = null;
+            startPolling();
+            notifications.success('Правило обновлено');
+        } catch (e: any) {
+            notifications.error(e.message || 'Ошибка обновления');
+        } finally {
+            clientRouteSaving = false;
+        }
+    }
+
+    async function deleteClientRoute() {
+        if (!clientRouteDeleteId) return;
+        try {
+            await api.deleteClientRoute(clientRouteDeleteId);
+            clientRoutes = await api.listClientRoutes();
+            clientRouteDeleteId = null;
+            notifications.success('Правило удалено');
+        } catch (e: any) {
+            notifications.error(e.message || 'Ошибка удаления');
+        }
+    }
+
+    async function toggleClientRoute(id: string, enabled: boolean) {
+        clientRouteToggling = id;
+        try {
+            await api.toggleClientRoute(id, enabled);
+            clientRoutes = await api.listClientRoutes();
+            notifications.success(enabled ? 'VPN включён' : 'VPN отключён');
+        } catch (e: any) {
+            notifications.error(e.message || 'Ошибка переключения');
+        } finally {
+            clientRouteToggling = null;
+        }
+    }
+
     async function handleIpImport(routes: PortableStaticRoute[]) {
         let count = 0;
         for (const route of routes) {
@@ -444,6 +534,9 @@
                     Политики доступа <span class="tab-badge">{policyCount}</span>
                 </button>
             {/if}
+            <button class="tab" class:active={activeTab === 'clientvpn'} onclick={() => activeTab = 'clientvpn'}>
+                VPN для устройств <span class="tab-badge">{clientRouteCount}</span>
+            </button>
         </div>
 
         {#if activeTab === 'dns' && isOS5}
@@ -626,6 +719,53 @@
                         {/snippet}
                     </Modal>
                 {/if}
+            {/if}
+        {:else if activeTab === 'clientvpn'}
+            <div class="section-header">
+                <span class="section-summary">{clientRoutes.length} правил</span>
+                <div class="section-buttons">
+                    <button class="btn btn-sm btn-primary" onclick={() => { editingClientRoute = null; clientRouteModalOpen = true; stopPolling(); }}>
+                        + Создать
+                    </button>
+                </div>
+            </div>
+
+            {#if clientRoutes.length === 0}
+                <div class="empty-hint">Нет правил VPN для устройств. Создайте правило, чтобы направить трафик устройства через VPN-туннель.</div>
+            {:else}
+                <div class="route-grid">
+                    {#each clientRoutes as route (route.id)}
+                        <ClientRouteCard
+                            {route}
+                            tunnelName={clientTunnels.find(t => t.id === route.tunnelId)?.name ?? route.tunnelId}
+                            ontoggle={(enabled) => toggleClientRoute(route.id, enabled)}
+                            onedit={() => { editingClientRoute = route; clientRouteModalOpen = true; stopPolling(); }}
+                            ondelete={() => clientRouteDeleteId = route.id}
+                            toggleLoading={clientRouteToggling === route.id}
+                        />
+                    {/each}
+                </div>
+            {/if}
+
+            <ClientRouteCreateModal
+                open={clientRouteModalOpen}
+                editing={editingClientRoute}
+                devices={policyDevices}
+                tunnels={clientTunnels}
+                existingIPs={clientRoutes.map(r => r.clientIp)}
+                saving={clientRouteSaving}
+                onsave={editingClientRoute ? updateClientRoute : createClientRoute}
+                onclose={() => { clientRouteModalOpen = false; editingClientRoute = null; startPolling(); refreshData(); }}
+            />
+
+            {#if clientRouteDeleteId}
+                <Modal open={true} title="Удаление правила" size="sm" onclose={() => clientRouteDeleteId = null}>
+                    <p class="confirm-text">Удалить VPN-правило для «{clientRoutes.find(r => r.id === clientRouteDeleteId)?.clientHostname}»?</p>
+                    {#snippet actions()}
+                        <button class="btn btn-ghost" onclick={() => clientRouteDeleteId = null}>Отмена</button>
+                        <button class="btn btn-danger" onclick={deleteClientRoute}>Удалить</button>
+                    {/snippet}
+                </Modal>
             {/if}
         {/if}
     {/if}
