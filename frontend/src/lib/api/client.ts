@@ -43,7 +43,8 @@ import type {
 	TerminalStatus,
 	AccessPolicy,
 	PolicyDevice,
-	PolicyGlobalInterface
+	PolicyGlobalInterface,
+	ClientRoute
 } from '$lib/types';
 
 interface ApiResponse<T> {
@@ -806,6 +807,38 @@ class ApiClient {
 		return this.request('/access-policies/interface-up', {
 			method: 'POST',
 			body: JSON.stringify({ name, up }),
+		});
+	}
+
+	// Client Routes
+	async listClientRoutes(): Promise<ClientRoute[]> {
+		return this.request('/client-routes');
+	}
+
+	async createClientRoute(data: Partial<ClientRoute>): Promise<ClientRoute> {
+		return this.request('/client-routes/create', {
+			method: 'POST',
+			body: JSON.stringify(data)
+		});
+	}
+
+	async updateClientRoute(id: string, data: Partial<ClientRoute>): Promise<ClientRoute> {
+		return this.request(`/client-routes/update?id=${encodeURIComponent(id)}`, {
+			method: 'POST',
+			body: JSON.stringify(data)
+		});
+	}
+
+	async deleteClientRoute(id: string): Promise<void> {
+		return this.request(`/client-routes/delete?id=${encodeURIComponent(id)}`, {
+			method: 'POST'
+		});
+	}
+
+	async toggleClientRoute(id: string, enabled: boolean): Promise<void> {
+		return this.request(`/client-routes/toggle?id=${encodeURIComponent(id)}`, {
+			method: 'POST',
+			body: JSON.stringify({ enabled })
 		});
 	}
 }

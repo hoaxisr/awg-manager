@@ -650,3 +650,14 @@ export interface PolicyGlobalInterface {
 	label: string;
 	up: boolean;
 }
+
+// Client Routes (per-device VPN routing)
+
+export interface ClientRoute {
+	id: string;
+	clientIp: string;
+	clientHostname: string;
+	tunnelId: string;
+	fallback: 'drop' | 'bypass';
+	enabled: boolean;
+}
