@@ -10,6 +10,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 )
 
 func (r *Runner) runTestsWithEvents(ctx context.Context, report *Report) []TestResult {
@@ -176,7 +177,7 @@ func (r *Runner) testDNSResolve(t TunnelInfo) TestResult {
 		return res
 	}
 
-	ips, err := net.LookupHost(host)
+	ips, err := netutil.LookupAllIPs(host)
 	if err != nil {
 		res.Status = StatusFail
 		res.Detail = fmt.Sprintf("Не удалось резолвить %s: %s", host, err.Error())
@@ -208,13 +209,13 @@ func (r *Runner) testEndpointReachable(ctx context.Context, t TunnelInfo) TestRe
 	// Resolve hostname if needed
 	ip := host
 	if net.ParseIP(host) == nil {
-		ips, err := net.LookupHost(host)
-		if err != nil || len(ips) == 0 {
+		resolved, err := netutil.ResolveHost(host)
+		if err != nil {
 			res.Status = StatusSkip
 			res.Detail = "Не удалось резолвить endpoint"
 			return res
 		}
-		ip = ips[0]
+		ip = resolved
 	}
 
 	result, err := exec.Run(ctx, "ping", "-c", "3", ip)
