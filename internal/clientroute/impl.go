@@ -93,6 +93,14 @@ func (s *ServiceImpl) Update(ctx context.Context, route ClientRoute) (*ClientRou
 		return nil, fmt.Errorf("client route not found: %s", route.ID)
 	}
 
+	// Validate.
+	if route.Fallback != "drop" && route.Fallback != "bypass" {
+		return nil, fmt.Errorf("invalid fallback: %q (must be drop or bypass)", route.Fallback)
+	}
+	if !s.tunnelExists(route.TunnelID) {
+		return nil, fmt.Errorf("tunnel not found: %s", route.TunnelID)
+	}
+
 	// IP and hostname cannot change.
 	route.ClientIP = old.ClientIP
 	route.ClientHostname = old.ClientHostname
