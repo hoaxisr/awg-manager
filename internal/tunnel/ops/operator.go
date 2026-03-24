@@ -122,4 +122,11 @@ type Operator interface {
 
 	// SetAppLogger sets the web UI logger for operator events.
 	SetAppLogger(logger logging.AppLogger)
+
+	// Client VPN routing (ip rule / ip route tables)
+	SetupClientRouteTable(ctx context.Context, kernelIface string, tableNum int) error
+	AddClientRule(ctx context.Context, clientIP string, tableNum int) error
+	RemoveClientRule(ctx context.Context, clientIP string, tableNum int) error
+	CleanupClientRouteTable(ctx context.Context, tableNum int) error
+	ListUsedRoutingTables(ctx context.Context) ([]int, error)
 }
