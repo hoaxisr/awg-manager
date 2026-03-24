@@ -15,6 +15,9 @@ type Service interface {
 	OnTunnelStop(ctx context.Context, tunnelID string) error
 	OnTunnelDelete(ctx context.Context, tunnelID string) error
 
+	// HasRoutesForTunnel returns true if any client routes reference the given tunnelID.
+	HasRoutesForTunnel(tunnelID string) bool
+
 	// Reconcile re-applies routing rules for all running tunnels.
 	Reconcile(ctx context.Context, runningTunnels map[string]string) error
 	// CleanupAll removes all routing tables and deletes storage.

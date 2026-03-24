@@ -52,6 +52,7 @@ type ClientRouteHooks interface {
 	OnTunnelStart(ctx context.Context, tunnelID string, kernelIface string) error
 	OnTunnelStop(ctx context.Context, tunnelID string) error
 	OnTunnelDelete(ctx context.Context, tunnelID string) error
+	HasRoutesForTunnel(tunnelID string) bool
 }
 
 // ServiceImpl is the concrete implementation of Service.

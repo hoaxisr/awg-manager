@@ -294,9 +294,18 @@ func main() {
 		clientRouteStore,
 		operator,
 		func(ctx context.Context, tunnelID string) (string, bool) {
+			// System tunnel: resolve NDMS name → kernel name via RCI.
+			if tunnel.IsSystemTunnel(tunnelID) {
+				ndmsName := tunnel.SystemTunnelName(tunnelID)
+				kernelName := ndmsClient.GetSystemName(ctx, ndmsName)
+				if kernelName == "" || kernelName == ndmsName {
+					return "", false
+				}
+				return kernelName, true
+			}
+			// Managed tunnel: check state and resolve kernel iface.
 			si := tunnelService.GetState(ctx, tunnelID)
 			if si.State == tunnel.StateRunning {
-				// Determine kernel iface name based on backend type.
 				if stored, err := awgStore.Get(tunnelID); err == nil && stored.Backend == "nativewg" {
 					return nwg.NewNWGNames(stored.NWGIndex).IfaceName, true
 				}
@@ -305,6 +314,13 @@ func main() {
 			return "", false
 		},
 		func(tunnelID string) bool {
+			// System tunnel: check interface exists via NDMS.
+			if tunnel.IsSystemTunnel(tunnelID) {
+				ndmsName := tunnel.SystemTunnelName(tunnelID)
+				ctx := context.Background()
+				kernelName := ndmsClient.GetSystemName(ctx, ndmsName)
+				return kernelName != "" && kernelName != ndmsName
+			}
 			return awgStore.Exists(tunnelID)
 		},
 		loggingService,

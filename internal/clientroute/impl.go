@@ -39,6 +39,11 @@ func (s *ServiceImpl) List() ([]ClientRoute, error) {
 	return s.store.List(), nil
 }
 
+// HasRoutesForTunnel returns true if any client routes reference the given tunnelID.
+func (s *ServiceImpl) HasRoutesForTunnel(tunnelID string) bool {
+	return len(s.store.FindByTunnel(tunnelID)) > 0
+}
+
 // Create validates and stores a new client route, applying rules if the tunnel is running.
 func (s *ServiceImpl) Create(ctx context.Context, route ClientRoute) (*ClientRoute, error) {
 	// Validate IPv4.

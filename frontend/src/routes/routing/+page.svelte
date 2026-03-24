@@ -75,7 +75,7 @@
     async function refreshData() {
         // getDnsRouteTunnels works on both OS4 and OS5 (backend uses RCI which exists on both).
         // Loaded unconditionally because IP routes and client routes need tunnel list on all OS versions.
-        const [ipRes, dnsRes, tunnelRes, policiesRes, devicesRes, ifacesRes, clientRoutesRes, tunnelListRes] = await Promise.allSettled([
+        const [ipRes, dnsRes, tunnelRes, policiesRes, devicesRes, ifacesRes, clientRoutesRes] = await Promise.allSettled([
             api.listStaticRoutes(),
             isOS5 ? api.listDnsRoutes() : Promise.resolve(null),
             api.getDnsRouteTunnels(),
@@ -83,7 +83,6 @@
             api.listPolicyDevices(),
             isOS5 ? api.listPolicyInterfaces() : Promise.resolve(null),
             api.listClientRoutes(),
-            api.listTunnels(),
         ]);
         const ip = settled(ipRes);
         if (ip) ipRoutes = ip;
@@ -107,8 +106,8 @@
         if (ifaces) policyInterfaces = ifaces;
         const cr = settled(clientRoutesRes);
         if (cr) clientRoutes = cr;
-        const tl = settled(tunnelListRes);
-        if (tl) clientTunnels = tl.map(t => ({ id: t.id, name: t.name }));
+        // clientTunnels: managed + system (no WAN) — from getDnsRouteTunnels
+        if (tunnels) clientTunnels = tunnels.filter(t => !t.wan).map(t => ({ id: t.id, name: t.name }));
     }
 
     function startPolling() {
@@ -140,9 +139,8 @@
             const commonPromises: Promise<any>[] = [
                 api.listStaticRoutes(),        // 0
                 api.listClientRoutes(),        // 1
-                api.listTunnels(),             // 2
-                api.listPolicyDevices(),       // 3
-                api.getDnsRouteTunnels(),      // 4
+                api.listPolicyDevices(),       // 2
+                api.getDnsRouteTunnels(),      // 3
             ];
             // OS5-only promises
             const os5Promises: Promise<any>[] = isOS5
@@ -159,30 +157,28 @@
             const cr = settled(results[1]);
             if (cr) clientRoutes = cr;
 
-            const tl = settled(results[2]);
-            if (tl) clientTunnels = tl.map((t: any) => ({ id: t.id, name: t.name }));
-
-            const devices = settled(results[3]);
+            const devices = settled(results[2]);
             if (devices) policyDevices = devices;
 
-            const tunnels = settled(results[4]);
+            const tunnels = settled(results[3]);
             if (tunnels) {
                 if (isOS5) dnsRouteTunnels = tunnels;
                 ipRouteTunnels = tunnels;
+                clientTunnels = tunnels.filter((t: any) => !t.wan).map((t: any) => ({ id: t.id, name: t.name }));
             } else {
                 errors.push('туннели');
             }
 
             if (isOS5) {
-                const dns = settled(results[5]);
+                const dns = settled(results[4]);
                 if (dns) dnsRoutes = dns;
                 else errors.push('DNS-маршруты');
 
-                const policies = settled(results[6]);
+                const policies = settled(results[5]);
                 if (policies) accessPolicies = policies;
                 else errors.push('политики');
 
-                const ifaces = settled(results[7]);
+                const ifaces = settled(results[6]);
                 if (ifaces) policyInterfaces = ifaces;
             }
 
