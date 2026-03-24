@@ -44,6 +44,7 @@ const (
 	SubDnsRoute     = "dns-route"
 	SubStaticRoute  = "static-route"
 	SubAccessPolicy = "access-policy"
+	SubClientRoute  = "client-route"
 	SubManaged      = "managed"
 	SubSystemTunnel = "system-tunnels"
 	SubBoot         = "boot"
