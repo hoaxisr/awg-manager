@@ -146,24 +146,50 @@ func (s *ServiceImpl) RestoreEndpointTracking(ctx context.Context) error {
 
 // ReconcileInterface handles an NDMS interface state change event.
 // Called by iflayerchanged.d hook when user toggles interface in router UI.
+// Handles three cases:
+//  1. Managed NativeWG tunnel → reconcileNativeWG
+//  2. Managed kernel tunnel → lifecycle Manager
+//  3. System interface with client routes → OnTunnelStart/OnTunnelStop
 func (s *ServiceImpl) ReconcileInterface(ctx context.Context, ndmsName, layer, level string) error {
 	if layer != "conf" {
 		return nil
 	}
 
-	// Map NDMS name (OpkgTun0) -> tunnel ID (awg0)
+	// Case 1 & 2: Managed tunnel (NativeWG or kernel).
 	tunnelID, stored := s.findTunnelByNDMSName(ndmsName)
-	if tunnelID == "" {
-		return nil // Not our interface
+	if tunnelID != "" {
+		if stored.Backend == "nativewg" {
+			return s.reconcileNativeWG(ctx, tunnelID, stored, level)
+		}
+		s.lifecycleManager.HandleUserToggle(ctx, tunnelID, level)
+		return nil
 	}
 
-	// NativeWG: keep own reconcile logic (lifecycle Manager is kernel-only).
-	if stored.Backend == "nativewg" {
-		return s.reconcileNativeWG(ctx, tunnelID, stored, level)
+	// Case 3: System interface — check if any client routes reference it.
+	if s.clientRouteHooks == nil {
+		return nil
+	}
+	systemTunnelID := tunnel.SystemTunnelPrefix + ndmsName
+	if !s.clientRouteHooks.HasRoutesForTunnel(systemTunnelID) {
+		return nil
 	}
 
-	// Kernel: delegate to lifecycle Manager.
-	s.lifecycleManager.HandleUserToggle(ctx, tunnelID, level)
+	switch level {
+	case "running":
+		kernelIface := s.legacyOperator.GetSystemName(ctx, ndmsName)
+		if kernelIface == "" || kernelIface == ndmsName {
+			return nil
+		}
+		s.logInfo("reconcile", systemTunnelID, "System interface up, applying client routes")
+		if err := s.clientRouteHooks.OnTunnelStart(ctx, systemTunnelID, kernelIface); err != nil {
+			s.logWarn("reconcile", systemTunnelID, "OnTunnelStart failed: "+err.Error())
+		}
+	case "disabled":
+		s.logInfo("reconcile", systemTunnelID, "System interface down, removing client routes")
+		if err := s.clientRouteHooks.OnTunnelStop(ctx, systemTunnelID); err != nil {
+			s.logWarn("reconcile", systemTunnelID, "OnTunnelStop failed: "+err.Error())
+		}
+	}
 	return nil
 }
 
