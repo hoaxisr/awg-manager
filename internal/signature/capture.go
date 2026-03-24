@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"net"
 	"strings"
+
+	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 	"sync"
 	"time"
 )
@@ -68,11 +70,10 @@ func Capture(domain string) CaptureResult {
 	}
 
 	// Resolve domain to IP
-	ips, err := net.LookupHost(domain)
-	if err != nil || len(ips) == 0 {
+	ip, err := netutil.ResolveHost(domain)
+	if err != nil {
 		return CaptureResult{Source: "error", Warning: "Домен не найден: " + domain}
 	}
-	ip := ips[0]
 
 	// Capture QUIC Initial exchange
 	packets, err := captureQUIC(domain, ip, captureTimeout)
