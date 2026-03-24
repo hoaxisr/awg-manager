@@ -19,6 +19,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
 
@@ -311,8 +312,8 @@ func (r *Runner) collectProxyInfo(ctx context.Context, stored *storage.AWGTunnel
 
 	endpointHost, endpointPort, _ := net.SplitHostPort(stored.Peer.Endpoint)
 	if net.ParseIP(endpointHost) == nil {
-		if ips, err := net.LookupHost(endpointHost); err == nil && len(ips) > 0 {
-			endpointHost = ips[0]
+		if resolved, err := netutil.ResolveHost(endpointHost); err == nil {
+			endpointHost = resolved
 		}
 	}
 	targetPrefix := endpointHost + ":" + endpointPort + " "
