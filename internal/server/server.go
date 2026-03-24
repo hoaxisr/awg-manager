@@ -18,6 +18,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/auth"
+	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/rci"
 
@@ -77,6 +78,7 @@ type Server struct {
 	nwgOp                *nwg.OperatorNativeWG
 	terminalManager      terminal.Manager
 	accessPolicyService  accesspolicy.Service
+	clientRouteService   clientroute.Service
 	authMiddleware     *auth.Middleware
 	httpServer         *http.Server
 	loopbackListener   net.Listener // optional loopback listener for reverse proxy
@@ -91,7 +93,7 @@ type Server struct {
 }
 
 // New creates a new server instance.
-func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, externalService api.ExternalTunnelService, testingService *testing.Service, keenetic *auth.KeeneticClient, sessions *auth.SessionStore, settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore, pingCheckService api.PingCheckService, loggingService *logging.Service, activeBackend backend.Backend, kmodLoader *kmod.Loader, updaterService *updater.Service, ndmsClient ndms.Client, trafficHistory *traffic.History, dnsRouteService api.DNSRouteService, staticRouteService api.StaticRouteService, systemTunnelService systemtunnel.Service, managedService managed.ManagedServerService, nwgOp *nwg.OperatorNativeWG, terminalManager terminal.Manager, accessPolicySvc accesspolicy.Service) *Server {
+func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, externalService api.ExternalTunnelService, testingService *testing.Service, keenetic *auth.KeeneticClient, sessions *auth.SessionStore, settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore, pingCheckService api.PingCheckService, loggingService *logging.Service, activeBackend backend.Backend, kmodLoader *kmod.Loader, updaterService *updater.Service, ndmsClient ndms.Client, trafficHistory *traffic.History, dnsRouteService api.DNSRouteService, staticRouteService api.StaticRouteService, systemTunnelService systemtunnel.Service, managedService managed.ManagedServerService, nwgOp *nwg.OperatorNativeWG, terminalManager terminal.Manager, accessPolicySvc accesspolicy.Service, clientRouteSvc clientroute.Service) *Server {
 	id := generateInstanceID()
 	log.Infof("Server instance: %s", id)
 
@@ -119,6 +121,7 @@ func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, extern
 		nwgOp:               nwgOp,
 		terminalManager:     terminalManager,
 		accessPolicyService: accessPolicySvc,
+		clientRouteService:  clientRouteSvc,
 		authMiddleware:     auth.NewMiddleware(sessions, settings, log),
 		instanceID:       id,
 	}
@@ -479,9 +482,14 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/terminal/stop", guarded(terminalHandler.Stop))
 	mux.HandleFunc("/api/terminal/ws", guarded(terminalHandler.WebSocket))
 
+	// Access policies — handler created outside block for shared endpoints
+	accessPolicyHandler := api.NewAccessPolicyHandler(s.accessPolicyService)
+
+	// Devices endpoint uses hotspot RCI — works on both OS4 and OS5
+	mux.HandleFunc("/api/access-policies/devices", guarded(accessPolicyHandler.ListDevices))
+
 	// Access policies (protected + boot guarded) — OS5 only
 	if osdetect.Is5() {
-		accessPolicyHandler := api.NewAccessPolicyHandler(s.accessPolicyService)
 		mux.HandleFunc("/api/access-policies", guarded(accessPolicyHandler.List))
 		mux.HandleFunc("/api/access-policies/create", guarded(accessPolicyHandler.Create))
 		mux.HandleFunc("/api/access-policies/delete", guarded(accessPolicyHandler.Delete))
@@ -489,10 +497,17 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/access-policies/standalone", guarded(accessPolicyHandler.SetStandalone))
 		mux.HandleFunc("/api/access-policies/permit", guarded(accessPolicyHandler.PermitInterface))
 		mux.HandleFunc("/api/access-policies/assign", guarded(accessPolicyHandler.AssignDevice))
-		mux.HandleFunc("/api/access-policies/devices", guarded(accessPolicyHandler.ListDevices))
 		mux.HandleFunc("/api/access-policies/interfaces", guarded(accessPolicyHandler.ListGlobalInterfaces))
 		mux.HandleFunc("/api/access-policies/interface-up", guarded(accessPolicyHandler.SetInterfaceUp))
 	}
+
+	// Client routes (per-device VPN routing) — works on both OS4 and OS5
+	crHandler := api.NewClientRouteHandler(s.clientRouteService)
+	mux.HandleFunc("/api/client-routes", guarded(crHandler.HandleList))
+	mux.HandleFunc("/api/client-routes/create", guarded(crHandler.HandleCreate))
+	mux.HandleFunc("/api/client-routes/update", guarded(crHandler.HandleUpdate))
+	mux.HandleFunc("/api/client-routes/delete", guarded(crHandler.HandleDelete))
+	mux.HandleFunc("/api/client-routes/toggle", guarded(crHandler.HandleToggle))
 
 	// Diagnostics (protected + boot guarded)
 	mux.HandleFunc("/api/diagnostics/run", guarded(diagHandler.Run))

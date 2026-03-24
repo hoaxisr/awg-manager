@@ -394,6 +394,11 @@ func (s *ServiceImpl) fireStartHooks(ctx context.Context, tunnelID, ifaceName st
 			s.logWarn("start", tunnelID, "Static route hook failed: "+err.Error())
 		}
 	}
+	if s.clientRouteHooks != nil {
+		if err := s.clientRouteHooks.OnTunnelStart(ctx, tunnelID, ifaceName); err != nil {
+			s.logWarn("start", tunnelID, "Client route hook failed: "+err.Error())
+		}
+	}
 }
 
 // fireStopHooks notifies all hook services about a tunnel stop.
@@ -401,6 +406,11 @@ func (s *ServiceImpl) fireStopHooks(ctx context.Context, tunnelID string) {
 	if s.staticRouteHooks != nil {
 		if err := s.staticRouteHooks.OnTunnelStop(ctx, tunnelID); err != nil {
 			s.logWarn("stop", tunnelID, "Static route hook failed: "+err.Error())
+		}
+	}
+	if s.clientRouteHooks != nil {
+		if err := s.clientRouteHooks.OnTunnelStop(ctx, tunnelID); err != nil {
+			s.logWarn("stop", tunnelID, "Client route hook failed: "+err.Error())
 		}
 	}
 }
@@ -492,6 +502,11 @@ func (s *ServiceImpl) fireDeleteHooks(ctx context.Context, tunnelID string) {
 	if s.dnsRouteHooks != nil {
 		if err := s.dnsRouteHooks.OnTunnelDelete(ctx, tunnelID); err != nil {
 			s.logWarn("delete", tunnelID, "DNS route hook failed: "+err.Error())
+		}
+	}
+	if s.clientRouteHooks != nil {
+		if err := s.clientRouteHooks.OnTunnelDelete(ctx, tunnelID); err != nil {
+			s.logWarn("delete", tunnelID, "Client route hook failed: "+err.Error())
 		}
 	}
 }

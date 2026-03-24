@@ -18,6 +18,7 @@ import (
 	"log/slog"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
+	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/cleanup"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
@@ -287,6 +288,29 @@ func main() {
 	// Access policy service (NDMS ip policy management)
 	accessPolicySvc := accesspolicy.New(ndmsClient, settingsStore, log, loggingService)
 
+	// Client route service (per-device VPN routing)
+	clientRouteStore := storage.NewClientRouteStore(*dataDir)
+	clientRouteService := clientroute.New(
+		clientRouteStore,
+		operator,
+		func(ctx context.Context, tunnelID string) (string, bool) {
+			si := tunnelService.GetState(ctx, tunnelID)
+			if si.State == tunnel.StateRunning {
+				// Determine kernel iface name based on backend type.
+				if stored, err := awgStore.Get(tunnelID); err == nil && stored.Backend == "nativewg" {
+					return nwg.NewNWGNames(stored.NWGIndex).IfaceName, true
+				}
+				return tunnel.NewNames(tunnelID).IfaceName, true
+			}
+			return "", false
+		},
+		func(tunnelID string) bool {
+			return awgStore.Exists(tunnelID)
+		},
+		loggingService,
+	)
+	tunnelService.SetClientRouteHooks(clientRouteService)
+
 	srv := server.New(
 		server.Config{
 			Version: version,
@@ -314,6 +338,7 @@ func main() {
 		nwgOp,
 		terminalManager,
 		accessPolicySvc,
+		clientRouteService,
 	)
 
 	// Determine bind IP from settings
@@ -1040,11 +1065,15 @@ func runCleanup(dataDir string) {
 	managedSvc := managed.New(ndmsClient, settingsStore, slog.Default(), nil)
 	accessPolicySvc := accesspolicy.New(ndmsClient, settingsStore, log, nil)
 
+	// Client route service for cleanup
+	clientRouteStore := storage.NewClientRouteStore(dataDir)
+	clientRouteSvc := clientroute.New(clientRouteStore, operator, nil, nil, nil)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	// Single cleanup call — all business logic in CleanupService
-	cleanupSvc := cleanup.New(tunnelService, awgStore, dnsSvc, managedSvc, accessPolicySvc, ndmsClient)
+	cleanupSvc := cleanup.New(tunnelService, awgStore, dnsSvc, managedSvc, accessPolicySvc, clientRouteSvc, ndmsClient)
 	if err := cleanupSvc.CleanupAll(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Cleanup error: %v\n", err)
 	}
