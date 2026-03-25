@@ -42,8 +42,11 @@
 				class="device-row"
 				class:dimmed={isBusy}
 				role="listitem"
-				draggable="true"
-				ondragstart={(e) => e.dataTransfer?.setData('text/plain', device.mac)}
+				draggable={!isBusy}
+				ondragstart={(e) => {
+					if (isBusy) return;
+					e.dataTransfer?.setData('text/plain', device.mac);
+				}}
 			>
 				<span class="led" class:led-green={isActive} class:led-gray={!isActive}></span>
 				<div class="device-info">
@@ -58,7 +61,8 @@
 				<button
 					class="assign-btn"
 					title="Назначить в политику"
-					onclick={() => onassign(device.mac)}
+					disabled={isBusy}
+					onclick={() => { if (!isBusy) onassign(device.mac); }}
 				>
 					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<line x1="19" y1="12" x2="5" y2="12"/>
@@ -129,6 +133,7 @@
 
 	.device-row.dimmed {
 		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	.device-info {
@@ -175,6 +180,11 @@
 
 	.assign-btn:hover {
 		color: var(--accent);
+	}
+
+	.assign-btn:disabled {
+		opacity: 0.3;
+		cursor: not-allowed;
 	}
 
 	.led {
