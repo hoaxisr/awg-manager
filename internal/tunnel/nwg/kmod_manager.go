@@ -64,7 +64,7 @@ func NewKmodManager(log *logger.Logger) *KmodManager {
 }
 
 // resolveKoPath returns the path to awg_proxy.ko.
-// Priority: per-model (KN-1011 HIGHMEM) → SoC (mt7621/mt7628) → arch default.
+// Priority: per-model (KN-1011 HIGHMEM) → per-device (Xiaomi-R3P) → SoC (mt7621/mt7628) → arch default.
 func (km *KmodManager) resolveKoPath() string {
 	// 1. Per-model override (e.g. awg_proxy-KN-1011.ko for HIGHMEM)
 	model := kmod.DetectModel()
@@ -76,7 +76,17 @@ func (km *KmodManager) resolveKoPath() string {
 		}
 	}
 
-	// 2. SoC-specific (e.g. awg_proxy-mt7628.ko for non-SMP mipsel)
+	// 2. Per-device override (e.g. awg_proxy-Xiaomi-R3P.ko for non-Keenetic HW)
+	device := kmod.DetectDevice()
+	if device != "" {
+		devicePath := fmt.Sprintf(awgProxyDir+"/awg_proxy-%s.ko", device)
+		if _, err := os.Stat(devicePath); err == nil {
+			km.log.Infof("kmod: using device-specific awg_proxy for %s", device)
+			return devicePath
+		}
+	}
+
+	// 3. SoC-specific (e.g. awg_proxy-mt7628.ko for non-SMP mipsel)
 	soc := kmod.DetectSoC()
 	if soc != kmod.SoCUnknown {
 		socPath := fmt.Sprintf(awgProxyDir+"/awg_proxy-%s.ko", string(soc))
@@ -86,7 +96,7 @@ func (km *KmodManager) resolveKoPath() string {
 		}
 	}
 
-	// 3. Arch default (fallback)
+	// 4. Arch default (fallback)
 	return defaultKoPath
 }
 

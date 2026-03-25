@@ -150,6 +150,17 @@ var legacyHWIDToSoC = map[string]SoC{
 	"ku_rd":  SoCMT7621, // Keenetic Ultra II (MT7621AT)
 }
 
+// DetectDevice returns the router's device name from cached NDMS version info.
+// Returns e.g. "Xiaomi R3P", "Keenetic Giga". Spaces are replaced with dashes
+// for use as filename suffixes (e.g. "Xiaomi-R3P").
+func DetectDevice() string {
+	info := ndmsinfo.Get()
+	if info == nil || info.Device == "" {
+		return ""
+	}
+	return strings.ReplaceAll(info.Device, " ", "-")
+}
+
 // DetectModel returns the router's hw_id from cached NDMS version info.
 // Normalizes NC-xxxx to KN-xxxx (NC is international branding, same hardware).
 // Returns e.g. "KN-1810", "ki_rb".
