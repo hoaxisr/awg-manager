@@ -11,7 +11,7 @@
 		devices: PolicyDevice[];
 		globalInterfaces: PolicyGlobalInterface[];
 		onback: () => void;
-		onupdate: () => void;
+		onupdate: () => Promise<void>;
 	}
 
 	let { policy, devices, globalInterfaces, onback, onupdate }: Props = $props();
@@ -39,7 +39,7 @@
 		}
 		try {
 			await api.setAccessPolicyDescription(policy.name, description.trim());
-			onupdate();
+			await onupdate();
 		} catch (e: any) {
 			notifications.error(`Ошибка: ${e.message}`);
 		}
@@ -48,7 +48,7 @@
 	async function toggleStandalone(checked: boolean) {
 		try {
 			await api.setAccessPolicyStandalone(policy.name, checked);
-			onupdate();
+			await onupdate();
 		} catch (e: any) {
 			notifications.error(`Ошибка: ${e.message}`);
 		}
@@ -57,7 +57,7 @@
 	async function handlePermit(iface: string, order: number) {
 		try {
 			await api.permitPolicyInterface(policy.name, iface, order);
-			onupdate();
+			await onupdate();
 		} catch (e: any) {
 			notifications.error(`Ошибка: ${e.message}`);
 		}
@@ -66,7 +66,7 @@
 	async function handleDeny(iface: string) {
 		try {
 			await api.denyPolicyInterface(policy.name, iface);
-			onupdate();
+			await onupdate();
 		} catch (e: any) {
 			notifications.error(`Ошибка: ${e.message}`);
 		}
@@ -76,7 +76,7 @@
 		try {
 			const policyName = policy.name;
 			await api.permitPolicyInterface(policyName, iface, newOrder);
-			onupdate();
+			await onupdate();
 		} catch (e: any) {
 			notifications.error(`Ошибка: ${e.message}`);
 		}
@@ -85,8 +85,9 @@
 	async function assignDevice(mac: string) {
 		try {
 			await api.assignDeviceToPolicy(mac, policy.name);
-			onupdate();
+			await onupdate();
 		} catch (e: any) {
+			dragOver = false;
 			notifications.error(`Ошибка: ${e.message}`);
 		}
 	}
@@ -94,7 +95,7 @@
 	async function unassignDevice(mac: string) {
 		try {
 			await api.unassignDeviceFromPolicy(mac);
-			onupdate();
+			await onupdate();
 		} catch (e: any) {
 			notifications.error(`Ошибка: ${e.message}`);
 		}
