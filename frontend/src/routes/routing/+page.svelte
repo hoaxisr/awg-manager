@@ -3,7 +3,7 @@
     import { api } from '$lib/api/client';
     import type { DnsRoute, DnsRouteTunnelInfo, StaticRouteList, AccessPolicy, PolicyDevice, PolicyGlobalInterface, ClientRoute } from '$lib/types';
     import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
-    import { Modal } from '$lib/components/ui';
+    import { Modal, OverflowTabs } from '$lib/components/ui';
     import { IpRouteCard, IpRouteEditModal, IpRouteImportModal } from '$lib/components/routing';
     import { DnsRouteCard, DnsRouteEditModal, DnsRouteImportModal } from '$lib/components/dnsroutes';
     import { PolicyTable, PolicyCreateModal, PolicyEditView } from '$lib/components/accesspolicy';
@@ -67,6 +67,15 @@
     let ipActiveCount = $derived(ipRoutes.filter(r => r.enabled).length);
     let policyCount = $derived(accessPolicies.length);
     let clientRouteCount = $derived(clientRoutes.length);
+
+    let tabItems = $derived(
+        [
+            isOS5 ? { id: 'dns', label: 'Домены', badge: dnsActiveCount } : null,
+            { id: 'ip', label: 'IP-адреса', badge: ipActiveCount },
+            isOS5 ? { id: 'policy', label: 'Политики доступа', badge: policyCount } : null,
+            { id: 'clientvpn', label: 'VPN для устройств', badge: clientRouteCount },
+        ].filter((t): t is { id: string; label: string; badge: number } => t !== null)
+    );
 
     function settled<T>(r: PromiseSettledResult<T>): T | null {
         return r.status === 'fulfilled' ? r.value : null;
@@ -521,24 +530,11 @@
         <LoadingSpinner />
     {:else}
         <!-- Tab bar -->
-        <div class="tab-bar">
-            {#if isOS5}
-                <button class="tab" class:active={activeTab === 'dns'} onclick={() => activeTab = 'dns'}>
-                    Домены <span class="tab-badge">{dnsActiveCount}</span>
-                </button>
-            {/if}
-            <button class="tab" class:active={activeTab === 'ip'} onclick={() => activeTab = 'ip'}>
-                IP-адреса <span class="tab-badge">{ipActiveCount}</span>
-            </button>
-            {#if isOS5}
-                <button class="tab" class:active={activeTab === 'policy'} onclick={() => activeTab = 'policy'}>
-                    Политики доступа <span class="tab-badge">{policyCount}</span>
-                </button>
-            {/if}
-            <button class="tab" class:active={activeTab === 'clientvpn'} onclick={() => activeTab = 'clientvpn'}>
-                VPN для устройств <span class="tab-badge">{clientRouteCount}</span>
-            </button>
-        </div>
+        <OverflowTabs
+            tabs={tabItems}
+            active={activeTab}
+            onchange={(id) => activeTab = id as typeof activeTab}
+        />
 
         {#if activeTab === 'dns' && isOS5}
             <!-- DNS section -->
@@ -773,56 +769,6 @@
 </PageContainer>
 
 <style>
-    .tab-bar {
-        display: flex;
-        border-bottom: 1px solid var(--border);
-        gap: 0;
-        margin-bottom: 1rem;
-    }
-
-    .tab {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.625rem 1rem;
-        background: none;
-        border: none;
-        border-bottom: 2px solid transparent;
-        color: var(--text-muted);
-        font-size: 0.875rem;
-        font-weight: 500;
-        cursor: pointer;
-        transition: color 0.15s, border-color 0.15s;
-    }
-
-    .tab:hover {
-        color: var(--text-primary);
-    }
-
-    .tab.active {
-        color: var(--text-primary);
-        border-bottom-color: var(--accent);
-    }
-
-    .tab-badge {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 1.25rem;
-        height: 1.25rem;
-        padding: 0 0.375rem;
-        border-radius: 9999px;
-        background: var(--bg-hover);
-        color: var(--text-muted);
-        font-size: 0.6875rem;
-        font-weight: 600;
-    }
-
-    .tab.active .tab-badge {
-        background: var(--accent);
-        color: #fff;
-    }
-
     .section-header {
         display: flex;
         justify-content: space-between;
