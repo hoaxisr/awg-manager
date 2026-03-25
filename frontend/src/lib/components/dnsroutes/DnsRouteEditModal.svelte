@@ -14,7 +14,16 @@
 	}
 
 	let { open, route, tunnels: rawTunnels, saving, onsave, onclose }: Props = $props();
-	let tunnels = $derived(rawTunnels ?? []);
+	// Deduplicate by ndmsName: system interfaces come before WAN in the array,
+	// so if Proxy0 appears as both system and WAN, the system entry wins.
+	let tunnels = $derived.by(() => {
+		const seen = new Set<string>();
+		return (rawTunnels ?? []).filter((t) => {
+			if (seen.has(t.ndmsName)) return false;
+			seen.add(t.ndmsName);
+			return true;
+		});
+	});
 
 	// Form state
 	let name = $state('');
