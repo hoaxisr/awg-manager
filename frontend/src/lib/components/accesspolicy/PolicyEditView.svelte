@@ -12,9 +12,11 @@
 		globalInterfaces: PolicyGlobalInterface[];
 		onback: () => void;
 		onupdate: () => Promise<void>;
+		ondeviceassigned: (mac: string, policyName: string) => void;
+		ondeviceunassigned: (mac: string, fromPolicy: string) => void;
 	}
 
-	let { policy, devices, globalInterfaces, onback, onupdate }: Props = $props();
+	let { policy, devices, globalInterfaces, onback, onupdate, ondeviceassigned, ondeviceunassigned }: Props = $props();
 
 	let description = $state('');
 	let localInterfaces = $state<import('$lib/types').AccessPolicyInterface[]>([]);
@@ -85,7 +87,7 @@
 	async function assignDevice(mac: string) {
 		try {
 			await api.assignDeviceToPolicy(mac, policy.name);
-			await onupdate();
+			ondeviceassigned(mac, policy.name);
 		} catch (e: any) {
 			dragOver = false;
 			notifications.error(`Ошибка: ${e.message}`);
@@ -95,7 +97,7 @@
 	async function unassignDevice(mac: string) {
 		try {
 			await api.unassignDeviceFromPolicy(mac);
-			await onupdate();
+			ondeviceunassigned(mac, policy.name);
 		} catch (e: any) {
 			notifications.error(`Ошибка: ${e.message}`);
 		}

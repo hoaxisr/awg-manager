@@ -406,17 +406,42 @@
     }
 
     async function refreshPolicyData() {
-        const [policies, devices, ifaces] = await Promise.all([
+        const [p, d] = await Promise.all([
             api.listAccessPolicies(),
             api.listPolicyDevices(),
-            api.listPolicyInterfaces(),
         ]);
-        accessPolicies = policies;
-        policyDevices = devices;
-        policyInterfaces = ifaces;
-        // Update editing policy data if editing
+        accessPolicies = p;
+        policyDevices = d;
         if (editingPolicy) {
-            editingPolicyData = policies.find(p => p.name === editingPolicy) ?? null;
+            editingPolicyData = accessPolicies.find(p => p.name === editingPolicy) ?? null;
+        }
+    }
+
+    function handleDeviceAssigned(mac: string, policyName: string) {
+        const sourcePolicy = policyDevices.find(d => d.mac === mac)?.policy;
+        policyDevices = policyDevices.map(d =>
+            d.mac === mac ? { ...d, policy: policyName } : d
+        );
+        accessPolicies = accessPolicies.map(p => {
+            if (p.name === policyName) return { ...p, deviceCount: p.deviceCount + 1 };
+            if (sourcePolicy && p.name === sourcePolicy) return { ...p, deviceCount: Math.max(0, p.deviceCount - 1) };
+            return p;
+        });
+        if (editingPolicy) {
+            editingPolicyData = accessPolicies.find(p => p.name === editingPolicy) ?? null;
+        }
+    }
+
+    function handleDeviceUnassigned(mac: string, fromPolicy: string) {
+        policyDevices = policyDevices.map(d =>
+            d.mac === mac ? { ...d, policy: '' } : d
+        );
+        accessPolicies = accessPolicies.map(p => {
+            if (p.name === fromPolicy) return { ...p, deviceCount: Math.max(0, p.deviceCount - 1) };
+            return p;
+        });
+        if (editingPolicy) {
+            editingPolicyData = accessPolicies.find(p => p.name === editingPolicy) ?? null;
         }
     }
 
@@ -658,6 +683,8 @@
                         globalInterfaces={policyInterfaces}
                         onback={() => { editingPolicy = null; editingPolicyData = null; }}
                         onupdate={refreshPolicyData}
+                        ondeviceassigned={handleDeviceAssigned}
+                        ondeviceunassigned={handleDeviceUnassigned}
                     />
             {:else}
                 <div class="section-header">
