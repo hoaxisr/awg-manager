@@ -238,6 +238,31 @@ func TestCmdWireguardPeerDisconnect(t *testing.T) {
 		`{"interface":{"name":"Wireguard0","wireguard":{"peer":{"key":"HHHH=","connect":{"no":true}}}}}`)
 }
 
+func TestCmdAddStaticRoute(t *testing.T) {
+	assertJSON(t, CmdAddStaticRoute("10.0.0.0", "255.255.255.0", "OpkgTun10", false),
+		`{"ip":{"route":{"auto":true,"interface":"OpkgTun10","mask":"255.255.255.0","network":"10.0.0.0"}}}`)
+}
+
+func TestCmdAddStaticRoute_Reject(t *testing.T) {
+	assertJSON(t, CmdAddStaticRoute("10.0.0.0", "255.255.255.0", "OpkgTun10", true),
+		`{"ip":{"route":{"auto":true,"interface":"OpkgTun10","mask":"255.255.255.0","network":"10.0.0.0","reject":true}}}`)
+}
+
+func TestCmdAddHostRoute(t *testing.T) {
+	assertJSON(t, CmdAddHostRoute("1.2.3.4", "PPPoE0", false),
+		`{"ip":{"route":{"auto":true,"host":"1.2.3.4","interface":"PPPoE0"}}}`)
+}
+
+func TestCmdRemoveStaticRoute(t *testing.T) {
+	assertJSON(t, CmdRemoveStaticRoute("10.0.0.0", "255.255.255.0", "OpkgTun10"),
+		`{"ip":{"route":{"interface":"OpkgTun10","mask":"255.255.255.0","network":"10.0.0.0","no":true}}}`)
+}
+
+func TestCmdRemoveStaticHostRoute(t *testing.T) {
+	assertJSON(t, CmdRemoveStaticHostRoute("1.2.3.4", "PPPoE0"),
+		`{"ip":{"route":{"host":"1.2.3.4","interface":"PPPoE0","no":true}}}`)
+}
+
 func TestCmdSave(t *testing.T) {
 	assertJSON(t, CmdSave(),
 		`{"system":{"configuration":{"save":{}}}}`)
