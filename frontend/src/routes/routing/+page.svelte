@@ -12,12 +12,9 @@
     import { exportStaticRoutes, type PortableStaticRoute } from '$lib/utils/staticroute-export';
     import { notifications } from '$lib/stores/notifications';
 
-    const POLL_INTERVAL = 30_000;
-
     let activeTab = $state<'dns' | 'ip' | 'policy' | 'clientvpn'>('dns');
     let loading = $state(true);
     let isOS5 = $state(false);
-    let pollTimer = $state<number | null>(null);
 
     // DNS state
     let dnsRoutes = $state<DnsRoute[]>([]);
@@ -119,21 +116,9 @@
         if (tunnels) clientTunnels = tunnels.filter(t => !t.wan).map(t => ({ id: t.id, name: t.name }));
     }
 
-    function startPolling() {
-        stopPolling();
-        pollTimer = setInterval(refreshData, POLL_INTERVAL) as unknown as number;
-    }
-
-    function stopPolling() {
-        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-    }
-
     function handleVisibility() {
-        if (document.hidden) {
-            stopPolling();
-        } else {
+        if (!document.hidden) {
             refreshData();
-            startPolling();
         }
     }
 
@@ -204,12 +189,10 @@
         } finally {
             loading = false;
         }
-        startPolling();
         document.addEventListener('visibilitychange', handleVisibility);
     });
 
     onDestroy(() => {
-        stopPolling();
         document.removeEventListener('visibilitychange', handleVisibility);
     });
 
@@ -446,7 +429,6 @@
             clientRoutes = await api.listClientRoutes();
             clientRouteModalOpen = false;
             editingClientRoute = null;
-            startPolling();
             notifications.success('Правило создано');
         } catch (e: any) {
             notifications.error(e.message || 'Ошибка создания');
@@ -463,7 +445,6 @@
             clientRoutes = await api.listClientRoutes();
             clientRouteModalOpen = false;
             editingClientRoute = null;
-            startPolling();
             notifications.success('Правило обновлено');
         } catch (e: any) {
             notifications.error(e.message || 'Ошибка обновления');
@@ -721,7 +702,7 @@
             <div class="section-header">
                 <span class="section-summary">{clientRoutes.length} правил</span>
                 <div class="section-buttons">
-                    <button class="btn btn-sm btn-primary" onclick={() => { editingClientRoute = null; clientRouteModalOpen = true; stopPolling(); }}>
+                    <button class="btn btn-sm btn-primary" onclick={() => { editingClientRoute = null; clientRouteModalOpen = true; }}>
                         + Создать
                     </button>
                 </div>
@@ -736,7 +717,7 @@
                             {route}
                             tunnelName={clientTunnels.find(t => t.id === route.tunnelId)?.name ?? route.tunnelId}
                             ontoggle={(enabled) => toggleClientRoute(route.id, enabled)}
-                            onedit={() => { editingClientRoute = route; clientRouteModalOpen = true; stopPolling(); }}
+                            onedit={() => { editingClientRoute = route; clientRouteModalOpen = true; }}
                             ondelete={() => clientRouteDeleteId = route.id}
                             toggleLoading={clientRouteToggling === route.id}
                         />
@@ -752,7 +733,7 @@
                 existingIPs={clientRoutes.map(r => r.clientIp)}
                 saving={clientRouteSaving}
                 onsave={editingClientRoute ? updateClientRoute : createClientRoute}
-                onclose={() => { clientRouteModalOpen = false; editingClientRoute = null; startPolling(); refreshData(); }}
+                onclose={() => { clientRouteModalOpen = false; editingClientRoute = null; refreshData(); }}
             />
 
             {#if clientRouteDeleteId}
