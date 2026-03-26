@@ -738,8 +738,9 @@ class ApiClient {
 	}
 
 	// Access policies
-	async listAccessPolicies(): Promise<AccessPolicy[]> {
-		return this.request('/access-policies');
+	async listAccessPolicies(options?: { refresh?: boolean }): Promise<AccessPolicy[]> {
+		const params = options?.refresh ? '?refresh=true' : '';
+		return this.request('/access-policies' + params);
 	}
 
 	async createAccessPolicy(description: string): Promise<AccessPolicy> {
@@ -795,8 +796,9 @@ class ApiClient {
 		});
 	}
 
-	async listPolicyDevices(): Promise<PolicyDevice[]> {
-		return this.request('/access-policies/devices');
+	async listPolicyDevices(options?: { refresh?: boolean }): Promise<PolicyDevice[]> {
+		const params = options?.refresh ? '?refresh=true' : '';
+		return this.request('/access-policies/devices' + params);
 	}
 
 	async listPolicyInterfaces(): Promise<PolicyGlobalInterface[]> {
