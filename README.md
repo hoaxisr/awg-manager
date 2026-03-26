@@ -67,6 +67,6 @@ Telegram: [@awgmanager](https://t.me/awgmanager)
 
 ---
 
-## Лицензия
+## Полезное
 
-MIT
+Установить и управлять AmneziaWG сервером - https://github.com/bivlked/amneziawg-installer
