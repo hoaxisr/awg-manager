@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -33,6 +34,7 @@ type ServiceImpl struct {
 	tracker PolicyTracker
 	log     *logger.Logger
 	appLog  *logging.ScopedLogger
+	cache   *dataCache
 }
 
 // New creates a new access policy service.
@@ -42,6 +44,7 @@ func New(ndmsClient ndms.Client, tracker PolicyTracker, log *logger.Logger, appL
 		tracker: tracker,
 		log:     log.WithComponent("accesspolicy"),
 		appLog:  logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubAccessPolicy),
+		cache:   newDataCache(30 * time.Second),
 	}
 }
 
@@ -265,6 +268,7 @@ func (s *ServiceImpl) SetDescription(ctx context.Context, name, description stri
 
 	s.appLog.Full("set-description", name, fmt.Sprintf("Policy %s description updated", name))
 
+	s.cache.InvalidateRC()
 	return nil
 }
 
@@ -304,6 +308,7 @@ func (s *ServiceImpl) SetStandalone(ctx context.Context, name string, enabled bo
 	}
 	s.appLog.Full("set-standalone", name, fmt.Sprintf("Policy %s standalone %s", name, state))
 
+	s.cache.InvalidateRC()
 	return nil
 }
 
@@ -336,6 +341,7 @@ func (s *ServiceImpl) PermitInterface(ctx context.Context, name, iface string, o
 
 	s.appLog.Info("permit", name, fmt.Sprintf("Policy %s: interface %s permitted (order %d)", name, iface, order))
 
+	s.cache.InvalidateRC()
 	return nil
 }
 
@@ -368,6 +374,7 @@ func (s *ServiceImpl) DenyInterface(ctx context.Context, name, iface string) err
 
 	s.appLog.Info("deny", name, fmt.Sprintf("Policy %s: interface %s denied", name, iface))
 
+	s.cache.InvalidateRC()
 	return nil
 }
 
@@ -397,6 +404,8 @@ func (s *ServiceImpl) AssignDevice(ctx context.Context, mac, policyName string) 
 
 	s.appLog.Info("assign-device", mac, fmt.Sprintf("Device %s assigned to %s", mac, policyName))
 
+	s.cache.InvalidateHotspot()
+	s.cache.InvalidateRC()
 	return nil
 }
 
@@ -424,6 +433,8 @@ func (s *ServiceImpl) UnassignDevice(ctx context.Context, mac string) error {
 
 	s.appLog.Info("unassign-device", mac, fmt.Sprintf("Device %s unassigned", mac))
 
+	s.cache.InvalidateHotspot()
+	s.cache.InvalidateRC()
 	return nil
 }
 
@@ -653,17 +664,22 @@ func (s *ServiceImpl) queryPolicies(ctx context.Context) (map[string]json.RawMes
 }
 
 // queryHotspot queries /show/ip/hotspot via RCI GET for device data including policy field.
+// Results are cached for the duration of cache TTL.
 func (s *ServiceImpl) queryHotspot(ctx context.Context) ([]hotspotHost, error) {
+	if hosts, ok := s.cache.GetHotspot(); ok {
+		return hosts, nil
+	}
+
 	raw, err := s.ndms.RCIGet(ctx, "/show/ip/hotspot")
 	if err != nil {
 		return nil, err
 	}
-
 	var resp hotspotResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return nil, fmt.Errorf("parse hotspot response: %w", err)
 	}
 
+	s.cache.SetHotspot(resp.Host)
 	return resp.Host, nil
 }
 
@@ -696,14 +712,16 @@ func (s *ServiceImpl) countDevicesPerPolicy(ctx context.Context) (map[string]int
 	return counts, nil
 }
 
-// parseRunningConfig parses "show running-config" via RCI GET to extract standalone
-// and permit details for each policy block.
-func (s *ServiceImpl) parseRunningConfig(ctx context.Context) (map[string]rcPolicy, error) {
+// getRunningConfigLines fetches and caches the lines from /show/running-config.
+func (s *ServiceImpl) getRunningConfigLines(ctx context.Context) ([]string, error) {
+	if lines, ok := s.cache.GetRCLines(); ok {
+		return lines, nil
+	}
+
 	raw, err := s.ndms.RCIGet(ctx, "/show/running-config")
 	if err != nil {
 		return nil, err
 	}
-
 	var rcResp struct {
 		Message []string `json:"message"`
 	}
@@ -711,11 +729,23 @@ func (s *ServiceImpl) parseRunningConfig(ctx context.Context) (map[string]rcPoli
 		return nil, fmt.Errorf("parse running-config: %w", err)
 	}
 
+	s.cache.SetRCLines(rcResp.Message)
+	return rcResp.Message, nil
+}
+
+// parseRunningConfig parses "show running-config" via RCI GET to extract standalone
+// and permit details for each policy block.
+func (s *ServiceImpl) parseRunningConfig(ctx context.Context) (map[string]rcPolicy, error) {
+	lines, err := s.getRunningConfigLines(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	policies := make(map[string]rcPolicy)
 	var currentPolicy string
 	var current rcPolicy
 
-	for _, line := range rcResp.Message {
+	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
 		// Detect "ip policy PolicyN" block start
@@ -780,22 +810,15 @@ func (s *ServiceImpl) parseRunningConfig(ctx context.Context) (map[string]rcPoli
 // from the "ip hotspot" block. Returns map[mac]policyName with lowercase MACs.
 // Used as fallback on firmware < 5.01A where /show/ip/hotspot doesn't include "policy".
 func (s *ServiceImpl) parseHotspotPolicies(ctx context.Context) (map[string]string, error) {
-	raw, err := s.ndms.RCIGet(ctx, "/show/running-config")
+	lines, err := s.getRunningConfigLines(ctx)
 	if err != nil {
 		return nil, err
-	}
-
-	var rcResp struct {
-		Message []string `json:"message"`
-	}
-	if err := json.Unmarshal(raw, &rcResp); err != nil {
-		return nil, fmt.Errorf("parse running-config: %w", err)
 	}
 
 	result := make(map[string]string)
 	inHotspot := false
 
-	for _, line := range rcResp.Message {
+	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
 		if trimmed == "ip hotspot" {
