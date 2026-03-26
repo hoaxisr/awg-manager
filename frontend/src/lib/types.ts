@@ -444,6 +444,7 @@ export interface StaticRouteList {
 	name: string;
 	tunnelID: string;
 	subnets: string[];
+	fallback?: '' | 'reject';
 	enabled: boolean;
 	createdAt: string;
 	updatedAt: string;

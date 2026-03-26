@@ -7,7 +7,7 @@
 		route: StaticRouteList | null;
 		tunnels: DnsRouteTunnelInfo[];
 		saving: boolean;
-		onsave: (data: { name: string; tunnelID: string; subnets: string[] }) => void;
+		onsave: (data: { name: string; tunnelID: string; subnets: string[]; fallback: '' | 'reject' }) => void;
 		onclose: () => void;
 	}
 
@@ -17,6 +17,7 @@
 	// Form state
 	let name = $state('');
 	let tunnelID = $state('');
+	let fallback = $state<'' | 'reject'>('');
 	let subnetsText = $state('');
 	let isInitialized = $state(false);
 
@@ -27,10 +28,12 @@
 				if (route) {
 					name = route.name;
 					tunnelID = route.tunnelID;
+					fallback = route.fallback || '';
 					subnetsText = (route.subnets ?? []).join('\n');
 				} else {
 					name = '';
 					tunnelID = tunnels.length > 0 ? tunnels[0].id : '';
+					fallback = '';
 					subnetsText = '';
 				}
 				isInitialized = true;
@@ -116,6 +119,7 @@
 			name: name.trim(),
 			tunnelID,
 			subnets: parsedSubnets,
+			fallback,
 		});
 	}
 </script>
@@ -157,6 +161,20 @@
 					{/each}
 				</optgroup>
 			{/if}
+		</select>
+	</div>
+
+	<!-- Fallback -->
+	<div class="form-group">
+		<!-- svelte-ignore a11y_label_has_associated_control -->
+		<label class="form-label">При недоступности интерфейса</label>
+		<select
+			class="form-select"
+			value={fallback}
+			onchange={(e) => { fallback = (e.target as HTMLSelectElement).value as '' | 'reject'; }}
+		>
+			<option value="">Bypass — трафик пойдёт обычным маршрутом</option>
+			<option value="reject">Kill Switch — трафик будет заблокирован</option>
 		</select>
 	</div>
 
