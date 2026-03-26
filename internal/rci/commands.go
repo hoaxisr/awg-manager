@@ -168,6 +168,58 @@ func CmdRemoveIPv6HostRoute(host string) any {
 	return map[string]any{"ipv6": map[string]any{"route": map[string]any{"host": host, "no": true}}}
 }
 
+// --- Static subnet routes ---
+
+// CmdAddStaticRoute adds a static route to a subnet via an interface.
+// Uses "auto" flag so the route activates only when the interface is up.
+// If reject is true, traffic is blocked when the interface is down (kill switch).
+func CmdAddStaticRoute(network, mask, iface string, reject bool) any {
+	route := map[string]any{
+		"network":   network,
+		"mask":      mask,
+		"interface": iface,
+		"auto":      true,
+	}
+	if reject {
+		route["reject"] = true
+	}
+	return map[string]any{"ip": map[string]any{"route": route}}
+}
+
+// CmdAddHostRoute adds a static host route (/32) via an interface.
+func CmdAddHostRoute(host, iface string, reject bool) any {
+	route := map[string]any{
+		"host":      host,
+		"interface": iface,
+		"auto":      true,
+	}
+	if reject {
+		route["reject"] = true
+	}
+	return map[string]any{"ip": map[string]any{"route": route}}
+}
+
+// CmdRemoveStaticRoute removes a static subnet route via an interface.
+func CmdRemoveStaticRoute(network, mask, iface string) any {
+	return map[string]any{"ip": map[string]any{"route": map[string]any{
+		"network":   network,
+		"mask":      mask,
+		"interface": iface,
+		"no":        true,
+	}}}
+}
+
+// CmdRemoveStaticHostRoute removes a static host route (/32) via an interface.
+// Note: this is different from the existing RemoveHostRoute in ndms which
+// removes endpoint routes without specifying an interface.
+func CmdRemoveStaticHostRoute(host, iface string) any {
+	return map[string]any{"ip": map[string]any{"route": map[string]any{
+		"host":      host,
+		"interface": iface,
+		"no":        true,
+	}}}
+}
+
 // --- System (#30) ---
 
 func CmdSave() any {
