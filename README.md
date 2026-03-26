@@ -27,6 +27,8 @@
 ## Установка (стабильная версия)
 
 ```sh
+opkg update
+opkg install curl
 curl -sL https://raw.githubusercontent.com/hoaxisr/awg-manager/main/scripts/install.sh | sh
 ```
 
