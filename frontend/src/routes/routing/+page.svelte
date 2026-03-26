@@ -14,6 +14,7 @@
 
     let activeTab = $state<'dns' | 'ip' | 'policy' | 'clientvpn'>('dns');
     let loading = $state(true);
+    let refreshing = $state(false);
     let isOS5 = $state(false);
 
     // DNS state
@@ -78,15 +79,16 @@
         return r.status === 'fulfilled' ? r.value : null;
     }
 
-    async function refreshData() {
+    async function refreshData(options?: { refresh?: boolean }) {
+        const refresh = options?.refresh;
         // getDnsRouteTunnels works on both OS4 and OS5 (backend uses RCI which exists on both).
         // Loaded unconditionally because IP routes and client routes need tunnel list on all OS versions.
         const [ipRes, dnsRes, tunnelRes, policiesRes, devicesRes, ifacesRes, clientRoutesRes] = await Promise.allSettled([
             api.listStaticRoutes(),
             isOS5 ? api.listDnsRoutes() : Promise.resolve(null),
             api.getDnsRouteTunnels(),
-            isOS5 ? api.listAccessPolicies() : Promise.resolve(null),
-            api.listPolicyDevices(),
+            isOS5 ? api.listAccessPolicies({ refresh }) : Promise.resolve(null),
+            api.listPolicyDevices({ refresh }),
             isOS5 ? api.listPolicyInterfaces() : Promise.resolve(null),
             api.listClientRoutes(),
         ]);
@@ -114,6 +116,15 @@
         if (cr) clientRoutes = cr;
         // clientTunnels: managed + system (no WAN) — from getDnsRouteTunnels
         if (tunnels) clientTunnels = tunnels.filter(t => !t.wan).map(t => ({ id: t.id, name: t.name }));
+    }
+
+    async function handleManualRefresh() {
+        refreshing = true;
+        try {
+            await refreshData({ refresh: true });
+        } finally {
+            refreshing = false;
+        }
     }
 
     function handleVisibility() {
@@ -530,7 +541,22 @@
 </svelte:head>
 
 <PageContainer>
-    <PageHeader title="Маршрутизация" />
+    <PageHeader title="Маршрутизация">
+        {#snippet actions()}
+            <button
+                class="btn btn-ghost btn-icon"
+                onclick={handleManualRefresh}
+                disabled={refreshing}
+                title="Обновить данные"
+            >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20" class:spinning={refreshing}>
+                    <polyline points="23 4 23 10 17 10" />
+                    <polyline points="1 20 1 14 7 14" />
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                </svg>
+            </button>
+        {/snippet}
+    </PageHeader>
 
     {#if loading}
         <LoadingSpinner />
@@ -817,6 +843,15 @@
         font-size: 12px;
         color: var(--text-muted);
         margin-top: 4px;
+    }
+
+    .spinning {
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
     }
 
     @media (max-width: 768px) {
