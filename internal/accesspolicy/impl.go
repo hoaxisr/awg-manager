@@ -21,6 +21,20 @@ const maxDescriptionLen = 256
 
 var validDescription = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
+type ctxKey string
+
+const ctxForceRefresh ctxKey = "forceRefresh"
+
+// ContextWithForceRefresh returns a context that signals cache invalidation.
+func ContextWithForceRefresh(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ctxForceRefresh, true)
+}
+
+func isForceRefresh(ctx context.Context) bool {
+	v, _ := ctx.Value(ctxForceRefresh).(bool)
+	return v
+}
+
 // PolicyTracker tracks which policies were created by AWG Manager.
 type PolicyTracker interface {
 	AddManagedPolicy(name string) error
@@ -50,6 +64,10 @@ func New(ndmsClient ndms.Client, tracker PolicyTracker, log *logger.Logger, appL
 
 // List returns all access policies with permitted interfaces and device counts.
 func (s *ServiceImpl) List(ctx context.Context) ([]Policy, error) {
+	if isForceRefresh(ctx) {
+		s.cache.InvalidateAll()
+	}
+
 	// Query all policies from NDMS
 	raw, err := s.queryPolicies(ctx)
 	if err != nil {
@@ -440,6 +458,10 @@ func (s *ServiceImpl) UnassignDevice(ctx context.Context, mac string) error {
 
 // ListDevices returns all known LAN devices with their policy assignments.
 func (s *ServiceImpl) ListDevices(ctx context.Context) ([]Device, error) {
+	if isForceRefresh(ctx) {
+		s.cache.InvalidateAll()
+	}
+
 	resp, err := s.queryHotspot(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list devices: %w", err)
