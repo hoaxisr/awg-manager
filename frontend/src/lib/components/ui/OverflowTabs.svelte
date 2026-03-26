@@ -15,7 +15,7 @@
 
     let containerEl: HTMLDivElement | undefined = $state();
     let measureEl: HTMLDivElement | undefined = $state();
-    let visibleCount = $state(tabs.length);
+    let visibleCount = $state(Infinity);
     let dropdownOpen = $state(false);
 
     let visibleTabs = $derived(tabs.slice(0, visibleCount));
@@ -117,8 +117,8 @@
                 </button>
 
                 {#if dropdownOpen}
-                    <!-- svelte-ignore a11y_no_static_element_interactions -->
-                    <div class="dropdown" onclick={(e) => e.stopPropagation()}>
+                    <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+                    <div class="dropdown" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
                         {#each overflowTabs as tab (tab.id)}
                             <button
                                 class="dropdown-item"
