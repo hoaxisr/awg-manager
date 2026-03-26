@@ -205,6 +205,7 @@ func (s *ServiceImpl) Create(ctx context.Context, description string) (*Policy, 
 		}
 	}
 
+	s.cache.InvalidateRC()
 	s.appLog.Info("create", name, fmt.Sprintf("Policy %s created (%s)", name, description))
 
 	return &Policy{
@@ -253,6 +254,7 @@ func (s *ServiceImpl) Delete(ctx context.Context, name string) error {
 		_ = s.tracker.RemoveManagedPolicy(name)
 	}
 
+	s.cache.InvalidateRC()
 	s.appLog.Info("delete", name, fmt.Sprintf("Policy %s deleted", name))
 
 	return nil
@@ -702,7 +704,10 @@ func (s *ServiceImpl) queryHotspot(ctx context.Context) ([]hotspotHost, error) {
 	}
 
 	s.cache.SetHotspot(resp.Host)
-	return resp.Host, nil
+	// Return copy — same as cache hit path (GetHotspot returns copy)
+	cp := make([]hotspotHost, len(resp.Host))
+	copy(cp, resp.Host)
+	return cp, nil
 }
 
 // countDevicesPerPolicy counts how many devices are assigned to each policy.
