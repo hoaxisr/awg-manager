@@ -443,7 +443,7 @@ func main() {
 				// NativeWG tunnels: separate boot logic (not covered by lifecycle Manager).
 				bootNativeWGTunnels(shutdownCtx, tunnelService, nwgOp, tunnelBootLog)
 
-				reconcileStaticRoutes(shutdownCtx, staticRouteService, tunnelService, ndmsClient, log)
+				reconcileStaticRoutes(shutdownCtx, staticRouteService, log)
 
 				if osdetect.Is5() {
 					if err := dnsRouteService.Reconcile(shutdownCtx); err != nil {
@@ -475,7 +475,7 @@ func main() {
 		// NativeWG tunnels: separate reconnect logic.
 		reconnectNativeWGTunnels(context.Background(), tunnelService, awgStore, nwgOp, pingCheckFacade, tunnelBootLog)
 
-		reconcileStaticRoutes(context.Background(), staticRouteService, tunnelService, ndmsClient, log)
+		reconcileStaticRoutes(context.Background(), staticRouteService, log)
 
 		if osdetect.Is5() {
 			if err := dnsRouteService.Reconcile(context.Background()); err != nil {
@@ -627,40 +627,11 @@ func logStartup(appLog *logging.ScopedLogger, version, osVersion, listenAddr str
 	}
 }
 
-// reconcileStaticRoutes restores static IP routes for currently running tunnels.
-func reconcileStaticRoutes(ctx context.Context, svc *staticroute.ServiceImpl, tunnelSvc service.Service, ndmsClient ndms.Client, log *logger.Logger) {
-	tunnels, err := tunnelSvc.List(ctx)
-	if err != nil {
-		log.Warn("reconcileStaticRoutes: failed to list tunnels", map[string]interface{}{"error": err.Error()})
-		return
-	}
-	running := make(map[string]string)
-	for _, t := range tunnels {
-		if t.State == tunnel.StateRunning {
-			running[t.ID] = t.InterfaceName
-		}
-	}
-
-	// Include system tunnels that have static routes assigned.
-	addSystemTunnels(ctx, running, svc.SystemTunnelIDs(), ndmsClient)
-
-	if len(running) == 0 {
-		return
-	}
-	if err := svc.Reconcile(ctx, running); err != nil {
+// reconcileStaticRoutes re-applies all enabled static routes via NDMS RCI.
+// NDMS "auto" flag ensures routes only activate when the interface is up.
+func reconcileStaticRoutes(ctx context.Context, svc *staticroute.ServiceImpl, log *logger.Logger) {
+	if err := svc.Reconcile(ctx); err != nil {
 		log.Warn("reconcileStaticRoutes: failed", map[string]interface{}{"error": err.Error()})
-	}
-}
-
-// addSystemTunnels resolves system tunnel IDs to kernel names and adds them to the running map.
-func addSystemTunnels(ctx context.Context, running map[string]string, systemIDs []string, ndmsClient ndms.Client) {
-	if ndmsClient == nil || len(systemIDs) == 0 {
-		return
-	}
-	for _, id := range systemIDs {
-		ndmsName := tunnel.SystemTunnelName(id)
-		kernelName := ndmsClient.GetSystemName(ctx, ndmsName)
-		running[id] = kernelName
 	}
 }
 
