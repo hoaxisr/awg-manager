@@ -760,7 +760,7 @@
                 existingIPs={clientRoutes.map(r => r.clientIp)}
                 saving={clientRouteSaving}
                 onsave={editingClientRoute ? updateClientRoute : createClientRoute}
-                onclose={() => { clientRouteModalOpen = false; editingClientRoute = null; refreshData(); }}
+                onclose={async () => { clientRouteModalOpen = false; editingClientRoute = null; clientRoutes = await api.listClientRoutes(); }}
             />
 
             {#if clientRouteDeleteId}
