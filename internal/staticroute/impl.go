@@ -90,6 +90,7 @@ func (s *ServiceImpl) Create(ctx context.Context, rl storage.StaticRouteList) (*
 
 	if rl.Enabled {
 		s.applyRoutes(ctx, rl)
+		s.save(ctx)
 	}
 
 	return &rl, nil
@@ -241,7 +242,7 @@ func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error
 
 // Reconcile re-applies all enabled route lists via NDMS RCI.
 // NDMS "auto" flag ensures routes only activate when the interface is up.
-func (s *ServiceImpl) Reconcile(ctx context.Context, runningTunnels map[string]string) error {
+func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
