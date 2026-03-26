@@ -197,7 +197,7 @@ func main() {
 
 	// Static route service for IP-based routing through tunnels
 	staticRouteStore := storage.NewStaticRouteStore(*dataDir)
-	staticRouteService := staticroute.New(staticRouteStore, operator, log, loggingService)
+	staticRouteService := staticroute.New(staticRouteStore, awgStore, ndmsClient, wanModel, log, loggingService)
 
 	// DNS route subscription auto-refresh scheduler
 	dnsRefreshScheduler := dnsroute.NewScheduler(dnsRouteService, settingsStore, log)
@@ -238,29 +238,6 @@ func main() {
 	tunnelService.SetReconcileHooks(&pingCheckReconcileHooks{pc: pingCheckFacade})
 	tunnelService.SetDnsRouteHooks(dnsRouteService)
 	tunnelService.SetStaticRouteHooks(staticRouteService)
-	staticRouteService.SetTunnelRunningCheck(func(ctx context.Context, tunnelID string) bool {
-		if tunnel.IsSystemTunnel(tunnelID) {
-			return true // system tunnels are always considered running
-		}
-		return tunnelService.GetState(ctx, tunnelID).State == tunnel.StateRunning
-	})
-
-	// Resolve tunnelID → kernel interface name for static routes.
-	resolveIfaceName := func(ctx context.Context, tunnelID string) string {
-		if tunnel.IsSystemTunnel(tunnelID) {
-			ndmsName := tunnel.SystemTunnelName(tunnelID)
-			if ndmsClient != nil {
-				return ndmsClient.GetSystemName(ctx, ndmsName)
-			}
-			return ndmsName
-		}
-		// NativeWG tunnels use nwgX interface names, not opkgtunX.
-		if stored, err := awgStore.Get(tunnelID); err == nil && stored.Backend == "nativewg" {
-			return nwg.NewNWGNames(stored.NWGIndex).IfaceName
-		}
-		return tunnel.NewNames(tunnelID).IfaceName
-	}
-	staticRouteService.SetResolveIfaceName(resolveIfaceName)
 
 	// Auth components
 	keeneticClient := auth.NewKeeneticClient()
