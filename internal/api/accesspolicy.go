@@ -26,7 +26,11 @@ func (h *AccessPolicyHandler) List(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
-	policies, err := h.svc.List(r.Context())
+	ctx := r.Context()
+	if r.URL.Query().Get("refresh") == "true" {
+		ctx = accesspolicy.ContextWithForceRefresh(ctx)
+	}
+	policies, err := h.svc.List(ctx)
 	if err != nil {
 		response.Error(w, err.Error(), "LIST_FAILED")
 		return
@@ -277,7 +281,11 @@ func (h *AccessPolicyHandler) ListDevices(w http.ResponseWriter, r *http.Request
 		response.MethodNotAllowed(w)
 		return
 	}
-	devices, err := h.svc.ListDevices(r.Context())
+	ctx := r.Context()
+	if r.URL.Query().Get("refresh") == "true" {
+		ctx = accesspolicy.ContextWithForceRefresh(ctx)
+	}
+	devices, err := h.svc.ListDevices(ctx)
 	if err != nil {
 		response.Error(w, err.Error(), "LIST_DEVICES_FAILED")
 		return
