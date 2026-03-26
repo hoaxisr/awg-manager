@@ -318,7 +318,7 @@
 
     // ─── IP functions ───
 
-    async function saveIpRoute(data: { name: string; tunnelID: string; subnets: string[] }) {
+    async function saveIpRoute(data: { name: string; tunnelID: string; subnets: string[]; fallback: '' | 'reject' }) {
         ipSaving = true;
         try {
             if (editingIpRoute) {
@@ -327,6 +327,7 @@
                     name: data.name,
                     tunnelID: data.tunnelID,
                     subnets: data.subnets,
+                    fallback: data.fallback,
                 });
                 notifications.success('IP-маршрут обновлён');
             } else {
@@ -334,6 +335,7 @@
                     name: data.name,
                     tunnelID: data.tunnelID,
                     subnets: data.subnets,
+                    fallback: data.fallback,
                     enabled: true,
                 });
                 notifications.success('IP-маршрут создан');

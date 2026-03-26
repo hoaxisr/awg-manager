@@ -70,6 +70,9 @@
 			{#if routeTarget}
 				<div class="card-route">
 					<span>&rarr;</span> <code>{routeTarget}</code>
+				{#if route.fallback === 'reject'}
+					<span class="badge-killswitch">Kill Switch</span>
+				{/if}
 				</div>
 			{/if}
 		</div>
@@ -215,5 +218,19 @@
 		cursor: pointer;
 		flex-shrink: 0;
 		margin-top: 10px;
+	}
+
+	.badge-killswitch {
+		display: inline-block;
+		font-size: 0.5625rem;
+		font-weight: 600;
+		color: var(--error);
+		background: color-mix(in srgb, var(--error) 15%, transparent);
+		padding: 1px 5px;
+		border-radius: 3px;
+		margin-left: 6px;
+		vertical-align: middle;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
 	}
 </style>
