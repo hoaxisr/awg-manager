@@ -13,8 +13,9 @@ type StaticRouteList struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name"`
 	TunnelID  string   `json:"tunnelID"`
-	Subnets   []string `json:"subnets"`
-	Enabled   bool     `json:"enabled"`
+	Subnets  []string `json:"subnets"`
+	Fallback string   `json:"fallback,omitempty"` // "" = auto (default), "reject" = kill switch
+	Enabled  bool     `json:"enabled"`
 	CreatedAt string   `json:"createdAt"`
 	UpdatedAt string   `json:"updatedAt"`
 }
