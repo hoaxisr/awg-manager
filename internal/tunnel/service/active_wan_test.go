@@ -147,12 +147,6 @@ func (m *mockOp) RemoveClientRule(ctx context.Context, ip string, table int) err
 	return nil
 }
 func (m *mockOp) ListUsedRoutingTables(ctx context.Context) ([]int, error) { return nil, nil }
-func (m *mockOp) AddStaticRoutes(ctx context.Context, tunnelIface string, subnets []string) error {
-	return nil
-}
-func (m *mockOp) RemoveStaticRoutes(ctx context.Context, tunnelIface string, subnets []string) error {
-	return nil
-}
 
 // === ActiveWAN Persistence Tests ===
 

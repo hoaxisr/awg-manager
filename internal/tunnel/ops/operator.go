@@ -86,16 +86,6 @@ type Operator interface {
 	// Returns empty string if no endpoint route is tracked.
 	GetTrackedEndpointIP(tunnelID string) string
 
-	// Static IP routing — adds/removes routes in the main routing table.
-
-	// AddStaticRoutes adds routes for subnets through a tunnel interface.
-	// Uses "ip route replace" for idempotency. Individual route errors are non-fatal.
-	AddStaticRoutes(ctx context.Context, tunnelIface string, subnets []string) error
-
-	// RemoveStaticRoutes removes routes for subnets from a tunnel interface.
-	// Individual route errors are non-fatal (route may already be gone).
-	RemoveStaticRoutes(ctx context.Context, tunnelIface string, subnets []string) error
-
 	// SetMTU sets MTU on a running tunnel interface.
 	// OS5: via NDMS. OS4: via ip link set.
 	SetMTU(ctx context.Context, tunnelID string, mtu int) error

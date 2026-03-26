@@ -374,38 +374,6 @@ func (o *OperatorOS4Impl) UpdateDescription(ctx context.Context, tunnelID, descr
 	return nil
 }
 
-// --- Static IP routing ---
-
-// AddStaticRoutes adds routes for subnets through a tunnel interface.
-// Uses "ip route replace" for idempotency. Individual route errors are non-fatal.
-func (o *OperatorOS4Impl) AddStaticRoutes(ctx context.Context, tunnelIface string, subnets []string) error {
-	var firstErr error
-	for _, subnet := range subnets {
-		if result, err := exec.Run(ctx, "/opt/sbin/ip", "route", "replace", subnet, "dev", tunnelIface); err != nil {
-			o.logWarn("static-route", tunnelIface, fmt.Sprintf("Failed to add route %s: %s", subnet, exec.FormatError(result, err)))
-			if firstErr == nil {
-				firstErr = fmt.Errorf("add route %s: %w", subnet, err)
-			}
-		}
-	}
-	return firstErr
-}
-
-// RemoveStaticRoutes removes routes for subnets from a tunnel interface.
-// Individual route errors are non-fatal (route may already be gone).
-func (o *OperatorOS4Impl) RemoveStaticRoutes(ctx context.Context, tunnelIface string, subnets []string) error {
-	var firstErr error
-	for _, subnet := range subnets {
-		if result, err := exec.Run(ctx, "/opt/sbin/ip", "route", "del", subnet, "dev", tunnelIface); err != nil {
-			o.logWarn("static-route", tunnelIface, fmt.Sprintf("Failed to remove route %s: %s", subnet, exec.FormatError(result, err)))
-			if firstErr == nil {
-				firstErr = fmt.Errorf("del route %s: %w", subnet, err)
-			}
-		}
-	}
-	return firstErr
-}
-
 // configureIP configures IPv4 address on the interface.
 func (o *OperatorOS4Impl) configureIP(ctx context.Context, iface, address string) error {
 	result, err := exec.Run(ctx, "/opt/sbin/ip", "address", "add", "dev", iface, address+"/32")

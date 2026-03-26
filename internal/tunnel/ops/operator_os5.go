@@ -802,39 +802,6 @@ func (o *OperatorOS5Impl) GetResolvedISP(tunnelID string) string {
 	return o.resolvedISP[tunnelID]
 }
 
-// --- Static IP routing ---
-
-// AddStaticRoutes adds routes for subnets through a tunnel interface.
-// Uses "ip route replace" for idempotency. Individual route errors are non-fatal.
-func (o *OperatorOS5Impl) AddStaticRoutes(ctx context.Context, tunnelIface string, subnets []string) error {
-	var firstErr error
-	for _, subnet := range subnets {
-		if result, err := o.ipRun(ctx, "/opt/sbin/ip", "route", "replace", subnet, "dev", tunnelIface); err != nil {
-			o.logWarn("static-route", tunnelIface, fmt.Sprintf("Failed to add route %s: %s", subnet, exec.FormatError(result, err)))
-			if firstErr == nil {
-				firstErr = fmt.Errorf("add route %s: %w", subnet, err)
-			}
-		}
-	}
-	return firstErr
-}
-
-// RemoveStaticRoutes removes routes for subnets from a tunnel interface.
-// Individual route errors are non-fatal (route may already be gone).
-func (o *OperatorOS5Impl) RemoveStaticRoutes(ctx context.Context, tunnelIface string, subnets []string) error {
-	var firstErr error
-	for _, subnet := range subnets {
-		if result, err := o.ipRun(ctx, "/opt/sbin/ip", "route", "del", subnet, "dev", tunnelIface); err != nil {
-			// Route may already be gone — debug level only
-			o.log.Debugf("static-route: remove %s dev %s: %s", subnet, tunnelIface, exec.FormatError(result, err))
-			if firstErr == nil {
-				firstErr = fmt.Errorf("del route %s: %w", subnet, err)
-			}
-		}
-	}
-	return firstErr
-}
-
 // rollbackStart cleans up after a failed start operation.
 // justCreated indicates whether we created the OpkgTun in this Start attempt.
 // When false (OpkgTun already existed), we preserve NDMS conf state (conf: running)
