@@ -37,11 +37,16 @@
 	);
 
 	let canSave = $derived(selectedDevice !== null && selectedTunnel !== '');
+	let attempted = $state(false);
+	let shaking = $state(false);
+
+	let deviceError = $derived(attempted && selectedDevice === null);
 
 	let title = $derived(editing ? 'Редактирование правила' : 'VPN для устройства');
 
 	$effect(() => {
 		if (open) {
+			attempted = false;
 			if (editing) {
 				selectedDevice = { ip: editing.clientIp, name: editing.clientHostname };
 				selectedTunnel = editing.tunnelId;
@@ -56,7 +61,12 @@
 	});
 
 	function handleSave() {
-		if (!canSave) return;
+		attempted = true;
+		if (!canSave) {
+			shaking = true;
+			setTimeout(() => shaking = false, 400);
+			return;
+		}
 		onsave({
 			clientIp: selectedDevice!.ip,
 			clientHostname: selectedDevice!.name,
@@ -79,7 +89,7 @@
 <Modal {open} {title} size="md" {onclose}>
 	<div class="form-sections">
 		<!-- Device list -->
-		<div class="section">
+		<div class="section" class:field-error={deviceError}>
 			<span class="section-label">Устройство</span>
 			<input
 				type="text"
@@ -108,6 +118,7 @@
 					<div class="empty-list">Устройства не найдены</div>
 				{/each}
 			</div>
+			<div class="error-text" class:visible={deviceError}>Выберите устройство из списка</div>
 		</div>
 
 		<!-- Tunnel dropdown -->
@@ -155,7 +166,7 @@
 
 	{#snippet actions()}
 		<button class="btn btn-ghost" onclick={onclose} disabled={saving}>Отмена</button>
-		<button class="btn btn-primary" onclick={handleSave} disabled={!canSave || saving}>
+		<button class="btn btn-primary" class:shake={shaking} onclick={handleSave} disabled={saving}>
 			{saving ? 'Сохранение...' : editing ? 'Сохранить' : 'Создать'}
 		</button>
 	{/snippet}
@@ -330,6 +341,11 @@
 	.fallback-subtitle {
 		font-size: 0.75rem;
 		color: var(--text-muted);
+	}
+
+	.field-error .device-list {
+		border-color: var(--error, #ef4444);
+		box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.15);
 	}
 
 	.warning-box {
