@@ -42,7 +42,7 @@
 								<span class="led led-offline" title="Оффлайн"></span>
 							{/if}
 						</td>
-						<td class="mono hide-mobile">{peer.allowedIPs?.find(ip => ip.includes('/32'))?.replace('/32', '') || peer.allowedIPs?.[0] || '-'}</td>
+						<td class="mono hide-mobile">{peer.allowedIPs?.find(ip => ip.includes('/32'))?.split('/')[0] || peer.allowedIPs?.[0]?.split('/')[0] || '-'}</td>
 					<td class="mono hide-mobile">{peer.endpoint || '-'}</td>
 						<td class="mono">{formatBytes(peer.rxBytes)}</td>
 						<td class="mono">{formatBytes(peer.txBytes)}</td>
