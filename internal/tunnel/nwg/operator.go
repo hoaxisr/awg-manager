@@ -374,6 +374,7 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 
 	batch := rci.NewBatch()
 	batch.InterfaceUp(names.NDMSName, false)
+	batch.Save()
 	_ = batch.Execute(ctx, o.rci)
 
 	// Clear DNS servers from the router's DNS proxy
