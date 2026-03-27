@@ -66,14 +66,12 @@
         onchange(id);
     }
 
-    function handleWindowClick(e: MouseEvent) {
-        if (dropdownOpen) {
-            dropdownOpen = false;
-        }
-    }
 </script>
 
-<svelte:window onclick={handleWindowClick} />
+{#if dropdownOpen}
+    <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+    <div class="backdrop" onclick={() => dropdownOpen = false} onkeydown={() => {}}></div>
+{/if}
 
 <div class="overflow-tabs" bind:this={containerEl}>
     <!-- Hidden measurement row: renders all tabs offscreen to measure widths -->
@@ -108,7 +106,7 @@
                 <button
                     class="more-chip"
                     class:has-active={hasOverflowActive}
-                    onclick={(e) => { e.stopPropagation(); dropdownOpen = !dropdownOpen; }}
+                    onclick={() => dropdownOpen = !dropdownOpen}
                 >
                     +{overflowTabs.length}
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -118,7 +116,7 @@
 
                 {#if dropdownOpen}
                     <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-                    <div class="dropdown" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+                    <div class="dropdown">
                         {#each overflowTabs as tab (tab.id)}
                             <button
                                 class="dropdown-item"
@@ -139,9 +137,16 @@
 </div>
 
 <style>
+    .backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.3);
+        z-index: 40;
+    }
+
     .overflow-tabs {
         position: relative;
-        z-index: 10;
+        z-index: 41;
     }
 
     .measure-row {
@@ -246,12 +251,12 @@
     /* ─── Dropdown ─── */
     .dropdown {
         position: absolute;
-        top: calc(100% + 4px);
+        top: calc(100% + 6px);
         right: 0;
-        background: var(--bg-card, var(--bg));
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-bright, var(--border));
+        border-radius: 10px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
         min-width: 180px;
         z-index: 50;
         overflow: hidden;
