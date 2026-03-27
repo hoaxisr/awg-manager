@@ -276,6 +276,17 @@
 					<span class="credits-nick">@KomarovIgor</span>
 					<span class="credits-nick">@Skverna84</span>
 					<span class="credits-nick">@SBogolyubov</span>
+					<span class="credits-nick">@Kub26</span>
+					<span class="credits-nick">@kentbrokeman</span>
+					<span class="credits-nick">@Sergej_Kopyshev</span>
+					<span class="credits-nick">@Green_snakee</span>
+					<span class="credits-nick">@Console4ka</span>
+					<span class="credits-nick">@Vorlam Vorlamov</span>
+					<span class="credits-nick">@ras****.com</span>
+					<span class="credits-nick">@Даниил_***ов</span>
+					<span class="credits-nick">@White3d3</span>
+					<span class="credits-nick">@neoplazma</span>
+					<span class="credits-nick">@Борис_Д******о</span>
 				</div>
 			</div>
 		</div>
