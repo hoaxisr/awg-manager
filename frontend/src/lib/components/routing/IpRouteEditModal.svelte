@@ -20,11 +20,14 @@
 	let fallback = $state<'' | 'reject'>('');
 	let subnetsText = $state('');
 	let isInitialized = $state(false);
+	let attempted = $state(false);
+	let shaking = $state(false);
 
 	// Reset form when modal opens (only once per open, not on every poll tick)
 	$effect(() => {
 		if (open) {
 			if (!isInitialized) {
+				attempted = false;
 				if (route) {
 					name = route.name;
 					tunnelID = route.tunnelID;
@@ -55,6 +58,10 @@
 	);
 
 	let canSave = $derived(name.trim() !== '' && tunnelID !== '' && parsedSubnets.length > 0);
+
+	let nameError = $derived(attempted && name.trim() === '');
+	let tunnelError = $derived(attempted && tunnelID === '');
+	let subnetError = $derived(attempted && parsedSubnets.length === 0);
 
 	let userTunnels = $derived(tunnels.filter(t => !t.system));
 	let systemTunnels = $derived(tunnels.filter(t => t.system));
@@ -115,6 +122,12 @@
 	}
 
 	function handleSave() {
+		attempted = true;
+		if (!canSave) {
+			shaking = true;
+			setTimeout(() => shaking = false, 400);
+			return;
+		}
 		onsave({
 			name: name.trim(),
 			tunnelID,
@@ -126,7 +139,7 @@
 
 <Modal {open} {title} size="lg" onclose={onclose}>
 	<!-- Name -->
-	<div class="form-group">
+	<div class="form-group" class:field-error={nameError}>
 		<!-- svelte-ignore a11y_label_has_associated_control -->
 		<label class="form-label">Название</label>
 		<input
@@ -136,10 +149,11 @@
 			value={name}
 			oninput={(e) => { name = (e.target as HTMLInputElement).value; }}
 		/>
+		<div class="error-text" class:visible={nameError}>Введите название</div>
 	</div>
 
 	<!-- Tunnel -->
-	<div class="form-group">
+	<div class="form-group" class:field-error={tunnelError}>
 		<!-- svelte-ignore a11y_label_has_associated_control -->
 		<label class="form-label">Туннель</label>
 		<select
@@ -162,6 +176,7 @@
 				</optgroup>
 			{/if}
 		</select>
+		<div class="error-text" class:visible={tunnelError}>Выберите туннель</div>
 	</div>
 
 	<!-- Fallback -->
@@ -179,7 +194,7 @@
 	</div>
 
 	<!-- Subnets -->
-	<div class="form-section">
+	<div class="form-section" class:field-error={subnetError}>
 		<div class="section-header">
 			<div class="section-title">Подсети (по одной на строку, CIDR)</div>
 			<button class="btn-bat-import" onclick={handleBatImport}>
@@ -208,11 +223,12 @@
 		{#if parsedSubnets.length > 0}
 			<span class="subnet-count">{parsedSubnets.length} подсетей</span>
 		{/if}
+		<div class="error-text" class:visible={subnetError}>Добавьте хотя бы одну подсеть</div>
 	</div>
 
 	{#snippet actions()}
 		<button class="btn btn-secondary" onclick={onclose}>Отмена</button>
-		<button class="btn btn-primary" onclick={handleSave} disabled={!canSave || saving}>
+		<button class="btn btn-primary" class:shake={shaking} onclick={handleSave} disabled={saving}>
 			{saving ? 'Сохранение...' : 'Сохранить'}
 		</button>
 	{/snippet}
@@ -318,5 +334,12 @@
 		font-size: 0.6875rem;
 		color: var(--text-muted);
 		margin-top: 0.25rem;
+	}
+
+	.field-error .form-input,
+	.field-error .form-select,
+	.field-error .form-textarea {
+		border-color: var(--error, #ef4444);
+		box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.15);
 	}
 </style>
