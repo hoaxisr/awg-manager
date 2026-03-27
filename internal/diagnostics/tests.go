@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 )
@@ -106,6 +107,14 @@ func (r *Runner) testNDMSHealth(ctx context.Context) TestResult {
 
 func (r *Runner) testKernelModule(ctx context.Context, report *Report) TestResult {
 	res := TestResult{Name: "kernel_module", Description: "Модули AmneziaWG"}
+
+	// On firmware with native ASC support, no kernel modules are needed —
+	// NDMS handles WireGuard and obfuscation natively.
+	if ndmsinfo.SupportsWireguardASC() {
+		res.Status = StatusSkip
+		res.Detail = "Не требуется: NDMS обрабатывает обфускацию нативно"
+		return res
+	}
 
 	hasKernel, hasNativeWG := false, false
 	for _, t := range report.Tunnels {
@@ -593,6 +602,13 @@ func (r *Runner) testProxyHealth(t TunnelInfo) TestResult {
 	if t.Backend != "nativewg" {
 		res.Status = StatusSkip
 		res.Detail = "Kernel backend: proxy не используется"
+		return res
+	}
+
+	// On firmware with native ASC support, awg_proxy.ko is not used.
+	if ndmsinfo.SupportsWireguardASC() {
+		res.Status = StatusSkip
+		res.Detail = "Не требуется: NDMS обрабатывает обфускацию нативно"
 		return res
 	}
 
