@@ -365,16 +365,15 @@ func (o *OperatorNativeWG) SuspendProxy(ctx context.Context, stored *storage.AWG
 	return nil
 }
 
-// Stop stops a NativeWG tunnel: interface down -> deactivate peer -> kmod remove (proxy only).
+// Stop stops a NativeWG tunnel: interface down -> kmod remove (proxy only).
+// Peer binding is not reset here — Start sets it fresh via WireguardPeerConnect.
 func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) error {
 	names := NewNWGNames(stored.NWGIndex)
-	pubkey := stored.Peer.PublicKey
 
-	o.appLog.Full("stop", stored.Name, "Interface down, peer deactivated")
+	o.appLog.Full("stop", stored.Name, "Interface down")
 
 	batch := rci.NewBatch()
 	batch.InterfaceUp(names.NDMSName, false)
-	batch.WireguardPeerConnect(names.NDMSName, pubkey, "") // reset binding
 	_ = batch.Execute(ctx, o.rci)
 
 	// Clear DNS servers from the router's DNS proxy
