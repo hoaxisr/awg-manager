@@ -33,11 +33,17 @@
 	let newSubUrl = $state('');
 
 	let isInitialized = $state(false);
+	let attempted = $state(false);
+	let shaking = $state(false);
+
+	let nameError = $derived(attempted && name.trim() === '');
+	let routeError = $derived(attempted && routes.length === 0);
 
 	// Reset form when modal opens
 	$effect(() => {
 		if (open) {
 			if (!isInitialized) {
+				attempted = false;
 				if (route) {
 					name = route.name;
 					manualDomains = [...(route.manualDomains ?? [])];
@@ -157,6 +163,12 @@
 	});
 
 	function handleSave() {
+		attempted = true;
+		if (!canSave) {
+			shaking = true;
+			setTimeout(() => shaking = false, 400);
+			return;
+		}
 		const data: Partial<DnsRoute> = {
 			name: name.trim(),
 			manualDomains,
@@ -176,7 +188,7 @@
 
 <Modal {open} {title} size="lg" onclose={onclose}>
 	<!-- Name -->
-	<div class="form-group">
+	<div class="form-group" class:field-error={nameError}>
 		<!-- svelte-ignore a11y_label_has_associated_control -->
 		<label class="form-label">Название</label>
 		<input
@@ -186,6 +198,7 @@
 			value={name}
 			oninput={(e) => { name = (e.target as HTMLInputElement).value; }}
 		/>
+		<div class="error-text" class:visible={nameError}>Введите название</div>
 	</div>
 
 	<!-- Manual domains -->
@@ -240,7 +253,7 @@
 	<div class="form-section">
 		<div class="section-title">Маршрут (порядок = приоритет)</div>
 		{#if routes.length === 0}
-			<p class="route-hint">Добавьте хотя бы один туннель для маршрутизации</p>
+			<p class="route-hint" class:route-hint-error={routeError}>Добавьте хотя бы один туннель для маршрутизации</p>
 		{/if}
 		{#if routes.length > 0}
 			<div class="route-list">
@@ -311,7 +324,7 @@
 
 	{#snippet actions()}
 		<button class="btn btn-secondary" onclick={onclose}>Отмена</button>
-		<button class="btn btn-primary" onclick={handleSave} disabled={!canSave || saving}>
+		<button class="btn btn-primary" class:shake={shaking} onclick={handleSave} disabled={saving}>
 			{saving ? 'Сохранение...' : 'Сохранить'}
 		</button>
 	{/snippet}
@@ -545,6 +558,19 @@
 		font-size: 0.75rem;
 		color: var(--warning, #eab308);
 		margin: 0 0 0.5rem 0;
+	}
+
+	.field-error .form-input {
+		border-color: var(--error, #ef4444);
+		box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.15);
+	}
+
+	.route-hint-error {
+		color: var(--error, #ef4444);
+		background: rgba(239, 68, 68, 0.08);
+		padding: 0.5rem;
+		border-radius: 6px;
+		border: 1px solid rgba(239, 68, 68, 0.25);
 	}
 
 	/* Summary */
