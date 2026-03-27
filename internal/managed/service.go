@@ -19,6 +19,9 @@ type ManagedServerService interface {
 	Delete(ctx context.Context) error
 	GetInterfaceName() string
 
+	// Enable/disable
+	SetEnabled(ctx context.Context, enabled bool) error
+
 	// NAT
 	SetNAT(ctx context.Context, enabled bool) error
 

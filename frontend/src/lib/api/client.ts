@@ -659,6 +659,13 @@ class ApiClient {
 		});
 	}
 
+	async setManagedServerEnabled(enabled: boolean): Promise<void> {
+		return this.request('/managed-server/enabled', {
+			method: 'POST',
+			body: JSON.stringify({ enabled })
+		});
+	}
+
 	async setManagedServerNAT(enabled: boolean): Promise<void> {
 		return this.request('/managed-server/nat', {
 			method: 'POST',
