@@ -15,23 +15,38 @@
 	const MAX_LEN = 256;
 
 	let isValid = $derived(description.trim().length > 0 && description.trim().length <= MAX_LEN && VALID_PATTERN.test(description.trim()));
+	let attempted = $state(false);
+	let shaking = $state(false);
+
+	let descriptionError = $derived.by(() => {
+		if (!attempted) return '';
+		const val = description.trim();
+		if (val.length === 0) return 'Введите описание политики';
+		if (!VALID_PATTERN.test(val)) return 'Только латинские буквы, цифры, дефисы и подчёркивания';
+		if (val.length > MAX_LEN) return 'Максимум 256 символов';
+		return '';
+	});
 
 	$effect(() => {
 		if (open) {
 			description = '';
+			attempted = false;
 		}
 	});
 
-	function handleSubmit(e: SubmitEvent) {
-		e.preventDefault();
-		if (isValid) {
-			oncreate(description.trim());
+	function handleSave() {
+		attempted = true;
+		if (!isValid) {
+			shaking = true;
+			setTimeout(() => shaking = false, 400);
+			return;
 		}
+		oncreate(description.trim());
 	}
 </script>
 
 <Modal {open} title="Создать политику" size="sm" {onclose}>
-	<form onsubmit={handleSubmit}>
+	<div class="form-group" class:field-error={descriptionError !== ''}>
 		<label class="field-label">
 			Описание
 			<input
@@ -39,21 +54,20 @@
 				class="field-input"
 				bind:value={description}
 				placeholder="Guest-Network"
-				required
-				maxlength={MAX_LEN}
-				pattern="[a-zA-Z0-9_-]+"
 				disabled={saving}
 			/>
 			<span class="field-hint">Латинские буквы, цифры, дефисы, подчёркивания</span>
+			<div class="error-text" class:visible={descriptionError !== ''}>{descriptionError}</div>
 		</label>
-	</form>
+	</div>
 
 	{#snippet actions()}
 		<button class="btn btn-ghost" onclick={onclose} disabled={saving}>Отмена</button>
 		<button
 			class="btn btn-primary"
-			onclick={() => isValid && oncreate(description.trim())}
-			disabled={saving || !isValid}
+			class:shake={shaking}
+			onclick={handleSave}
+			disabled={saving}
 		>
 			{#if saving}Создание...{:else}Создать{/if}
 		</button>
@@ -61,6 +75,10 @@
 </Modal>
 
 <style>
+	.form-group {
+		margin-bottom: 0;
+	}
+
 	.field-label {
 		display: flex;
 		flex-direction: column;
@@ -88,6 +106,11 @@
 
 	.field-input:disabled {
 		opacity: 0.6;
+	}
+
+	.field-error .field-input {
+		border-color: var(--error, #ef4444);
+		box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.15);
 	}
 
 	.field-hint {
