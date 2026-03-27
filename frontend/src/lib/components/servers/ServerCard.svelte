@@ -3,8 +3,6 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { formatBytes } from '$lib/utils/format';
-	import { TrafficChart } from '$lib/components/ui';
-	import { getTrafficRates, subscribeTraffic } from '$lib/stores/traffic';
 	import { PeerTable, ConfGeneratorModal } from '$lib/components/servers';
 
 	interface Props {
@@ -27,21 +25,6 @@
 	let totalPeers = $derived((server.peers ?? []).length);
 	let totalRx = $derived((server.peers ?? []).reduce((sum, p) => sum + p.rxBytes, 0));
 	let totalTx = $derived((server.peers ?? []).reduce((sum, p) => sum + p.txBytes, 0));
-
-	// Traffic chart
-	let rxRates = $state<number[]>([]);
-	let txRates = $state<number[]>([]);
-
-	$effect(() => {
-		const id = server.id;
-		const update = () => {
-			const t = getTrafficRates(id);
-			rxRates = t.rx;
-			txRates = t.tx;
-		};
-		update();
-		return subscribeTraffic(update);
-	});
 
 	async function openConfModal(publicKey: string) {
 		confPeerKey = publicKey;
@@ -127,18 +110,6 @@
 		</div>
 	{/if}
 
-	<!-- Traffic chart (not for built-in server — read-only) -->
-	{#if !isBuiltIn && server.status === 'up' && rxRates.length >= 2}
-		<div class="chart-wrap">
-			<TrafficChart
-				{rxRates}
-				{txRates}
-				rxTotal={totalRx}
-				txTotal={totalTx}
-				height={100}
-			/>
-		</div>
-	{/if}
 </div>
 
 {#if confModalOpen && serverConfig && confPeer}
@@ -282,11 +253,4 @@
 		gap: 0.5rem;
 	}
 
-	.chart-wrap {
-		margin: 0 -1rem -1rem;
-		padding: 8px 12px 4px;
-		overflow: hidden;
-		border-radius: 0 0 var(--radius) var(--radius);
-		background: var(--bg-secondary, rgba(0,0,0,0.15));
-	}
 </style>

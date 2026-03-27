@@ -12,7 +12,6 @@
 		ManagedServerCard,
 		CreateManagedServerModal
 	} from '$lib/components/servers';
-	import { feedTraffic } from '$lib/stores/traffic';
 
 	let servers = $state<WireguardServer[]>([]);
 	let managedServer = $state<ManagedServer | null>(null);
@@ -53,13 +52,6 @@
 				managedStats = null;
 			}
 
-			// Feed traffic data for charts
-			for (const s of svrs) {
-				const peers = s.peers ?? [];
-				const totalRx = peers.reduce((sum, p) => sum + p.rxBytes, 0);
-				const totalTx = peers.reduce((sum, p) => sum + p.txBytes, 0);
-				feedTraffic(s.id, totalRx, totalTx);
-			}
 		} catch (e) {
 			if (loading) {
 				notifications.error('Не удалось загрузить серверы');
