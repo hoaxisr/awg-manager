@@ -66,6 +66,17 @@
 	let userTunnels = $derived(tunnels.filter(t => !t.system));
 	let systemTunnels = $derived(tunnels.filter(t => t.system));
 
+	// OS4 kernel tunnels (awgmX) don't support kill switch — interface destruction
+	// removes routes, so "reject" fallback has no effect.
+	let isOS4Kernel = $derived(tunnelID.startsWith('awgm'));
+
+	// Reset fallback to bypass when switching to OS4 kernel tunnel
+	$effect(() => {
+		if (isOS4Kernel && fallback === 'reject') {
+			fallback = '';
+		}
+	});
+
 	// .bat file import
 	let batInput: HTMLInputElement | undefined = $state(undefined);
 
@@ -189,7 +200,9 @@
 			onchange={(e) => { fallback = (e.target as HTMLSelectElement).value as '' | 'reject'; }}
 		>
 			<option value="">Bypass — трафик пойдёт обычным маршрутом</option>
-			<option value="reject">Kill Switch — трафик будет заблокирован</option>
+			{#if !isOS4Kernel}
+				<option value="reject">Kill Switch — трафик будет заблокирован</option>
+			{/if}
 		</select>
 	</div>
 

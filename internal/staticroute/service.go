@@ -22,6 +22,5 @@ type Service interface {
 	OnTunnelDelete(ctx context.Context, tunnelID string) error
 
 	// Reconcile restores static routes at daemon startup.
-	// runningTunnels maps tunnelID -> kernel interface name (e.g. "awgm0").
-	Reconcile(ctx context.Context, runningTunnels map[string]string) error
+	Reconcile(ctx context.Context) error
 }
