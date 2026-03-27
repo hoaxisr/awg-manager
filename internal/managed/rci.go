@@ -146,6 +146,17 @@ func (s *Service) rciSetNAT(ctx context.Context, ifaceName string, enabled bool)
 	})
 }
 
+// rciInterfaceUp brings the interface up.
+func (s *Service) rciInterfaceUp(ctx context.Context, ifaceName string) error {
+	return s.rciPost(ctx, map[string]interface{}{
+		"interface": map[string]interface{}{
+			ifaceName: map[string]interface{}{
+				"up": true,
+			},
+		},
+	})
+}
+
 // rciInterfaceDown brings the interface down.
 func (s *Service) rciInterfaceDown(ctx context.Context, ifaceName string) error {
 	return s.rciPost(ctx, map[string]interface{}{

@@ -109,6 +109,20 @@
 		return String(bits);
 	}
 
+	let togglingEnabled = $state(false);
+
+	async function handleToggleEnabled() {
+		togglingEnabled = true;
+		try {
+			await api.setManagedServerEnabled(!isUp);
+			onUpdated();
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Ошибка переключения');
+		} finally {
+			togglingEnabled = false;
+		}
+	}
+
 	let togglingNAT = $state(false);
 
 	async function handleToggleNAT() {
@@ -149,6 +163,12 @@
 			</div>
 		</div>
 		<div class="header-actions">
+			<Toggle
+				checked={isUp}
+				onchange={handleToggleEnabled}
+				disabled={togglingEnabled}
+				size="sm"
+			/>
 			<button class="btn btn-ghost btn-sm" onclick={onOpenASC} title="Параметры обфускации">
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 					<path d="M12 20V10M18 20V4M6 20v-4"/>

@@ -469,6 +469,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/managed-server/peers/delete", guarded(managedHandler.DeletePeer))
 	mux.HandleFunc("/api/managed-server/peers/toggle", guarded(managedHandler.TogglePeer))
 	mux.HandleFunc("/api/managed-server/peers/conf", guarded(managedHandler.PeerConf))
+	mux.HandleFunc("/api/managed-server/enabled", guarded(managedHandler.SetEnabled))
 	mux.HandleFunc("/api/managed-server/nat", guarded(managedHandler.NAT))
 	mux.HandleFunc("/api/managed-server/asc", guarded(managedHandler.ASC))
 

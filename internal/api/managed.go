@@ -302,6 +302,27 @@ func (h *ManagedServerHandler) NAT(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, map[string]bool{"ok": true})
 }
 
+// SetEnabled enables or disables the managed server interface.
+// POST /api/managed-server/enabled
+func (h *ManagedServerHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid request body", "INVALID_BODY")
+		return
+	}
+	if err := h.svc.SetEnabled(r.Context(), req.Enabled); err != nil {
+		response.Error(w, err.Error(), "SET_ENABLED_FAILED")
+		return
+	}
+	response.Success(w, map[string]bool{"ok": true})
+}
+
 // ASC handles GET/POST for ASC parameters of the managed server.
 // GET /api/managed-server/asc — get ASC params
 // POST /api/managed-server/asc — set ASC params

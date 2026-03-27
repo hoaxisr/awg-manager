@@ -152,6 +152,31 @@ func (s *Service) SetNAT(ctx context.Context, enabled bool) error {
 	return nil
 }
 
+// SetEnabled brings the managed server interface up or down.
+func (s *Service) SetEnabled(ctx context.Context, enabled bool) error {
+	server := s.settings.GetManagedServer()
+	if server == nil {
+		return fmt.Errorf("no managed server exists")
+	}
+
+	if enabled {
+		if err := s.rciInterfaceUp(ctx, server.InterfaceName); err != nil {
+			return fmt.Errorf("interface up: %w", err)
+		}
+	} else {
+		if err := s.rciInterfaceDown(ctx, server.InterfaceName); err != nil {
+			return fmt.Errorf("interface down: %w", err)
+		}
+	}
+
+	if err := s.rciSave(ctx); err != nil {
+		s.log.Warn("failed to save NDMS config after SetEnabled", "error", err)
+	}
+
+	s.log.Info("managed server toggled", "interface", server.InterfaceName, "enabled", enabled)
+	return nil
+}
+
 // Delete removes the managed server and all its peers.
 func (s *Service) Delete(ctx context.Context) error {
 	server := s.settings.GetManagedServer()
