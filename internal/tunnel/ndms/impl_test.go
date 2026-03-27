@@ -45,6 +45,8 @@ func TestIsNonISPInterface(t *testing.T) {
 		{"IPSec0", true},
 		{"SSTP1", true},
 		{"OpenVPN0", true},
+		{"Proxy0", true},
+		{"proxy1", true},
 		{"PPTP0", false},
 		{"pptp1", false},
 		{"EoIP0", false},
