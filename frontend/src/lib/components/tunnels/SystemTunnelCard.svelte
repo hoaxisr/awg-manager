@@ -18,8 +18,21 @@
 	let checking = $state(false);
 	let showEndpoint = $state(false);
 
+	// Connectivity check toggle (persisted in localStorage)
+	const CC_KEY_PREFIX = 'systunnel_cc_disabled_';
+	// svelte-ignore state_referenced_locally — intentional: initial value from localStorage
+	let checkDisabled = $state(localStorage.getItem(CC_KEY_PREFIX + tunnel.id) === 'true');
+
+	function toggleCheckDisabled() {
+		checkDisabled = !checkDisabled;
+		localStorage.setItem(CC_KEY_PREFIX + tunnel.id, String(checkDisabled));
+		if (checkDisabled) {
+			connectivity = null;
+		}
+	}
+
 	async function checkConnectivity() {
-		if (tunnel.status !== 'up' || checking) return;
+		if (tunnel.status !== 'up' || checking || checkDisabled) return;
 		checking = true;
 		try {
 			connectivity = await api.checkSystemTunnelConnectivity(tunnel.id);
@@ -31,10 +44,10 @@
 	}
 
 	// Auto-check connectivity every 60s when up
-	// Only track tunnel.status to avoid re-running on every poll update
 	$effect(() => {
 		const status = tunnel.status;
-		if (status !== 'up') {
+		const disabled = checkDisabled;
+		if (status !== 'up' || disabled) {
 			connectivity = null;
 			return;
 		}
@@ -63,6 +76,18 @@
 		update();
 		return subscribeTraffic(update);
 	});
+
+	// Collapsible chart (persisted in localStorage)
+	const CHART_KEY_PREFIX = 'chart_expanded_systunnel_';
+	// svelte-ignore state_referenced_locally — intentional: initial value from localStorage
+	let chartExpanded = $state(localStorage.getItem(CHART_KEY_PREFIX + tunnel.id) !== 'false');
+
+	function toggleChart() {
+		chartExpanded = !chartExpanded;
+		localStorage.setItem(CHART_KEY_PREFIX + tunnel.id, String(chartExpanded));
+	}
+
+	let hasData = $derived(rxRates.length >= 2);
 </script>
 
 <div class="card flex flex-col gap-4 transition-[border-color] duration-200" class:status-up={tunnel.status === 'up'} class:status-down={tunnel.status !== 'up'}>
@@ -79,35 +104,47 @@
 			<span class="led {ledClass}"></span>
 			{#if tunnel.status === 'up'}
 				<div class="flex items-center gap-1.5">
-					{#if connectivity?.connected}
+					{#if !checkDisabled && connectivity?.connected}
 						<span class="latency-value">{connectivity.latency}ms</span>
 					{/if}
 					<button
-						class="connectivity-btn"
-						class:connected={connectivity?.connected}
-						class:disconnected={connectivity !== null && !connectivity.connected}
-						class:checking
-						onclick={checkConnectivity}
-						title={connectivity?.connected ? 'Связь OK' : connectivity !== null ? 'Нет связи' : 'Проверка связи...'}
+						class="connectivity-gear"
+						class:gear-disabled={checkDisabled}
+						onclick={toggleCheckDisabled}
+						title={checkDisabled ? 'Проверка связности выключена. Нажмите для включения' : 'Выключить проверку связности'}
 					>
-						{#if checking}
-							<span class="connectivity-spinner"></span>
-						{:else if connectivity?.connected}
-							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-								<path d="M5 12.55a11 11 0 0 1 14.08 0"/>
-								<path d="M1.42 9a16 16 0 0 1 21.16 0"/>
-								<path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
-								<circle cx="12" cy="20" r="1" fill="currentColor"/>
-							</svg>
-						{:else}
-							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-								<line x1="2" y1="2" x2="22" y2="22"/>
-								<path d="M8.5 16.5a5 5 0 0 1 7 0"/>
-								<path d="M2 8.82a15 15 0 0 1 4.17-2.65"/>
-								<path d="M10.66 5c4.01-.36 8.14.9 11.34 3.76"/>
-							</svg>
-						{/if}
+						<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
+							<path fill-rule="evenodd" d="M7.84 1.804A1 1 0 018.82 1h2.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l1.18 2.044a1 1 0 01-.205 1.251l-1.267 1.113a7.047 7.047 0 010 2.228l1.267 1.113a1 1 0 01.206 1.25l-1.18 2.045a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H8.82a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-1.18-2.044a1 1 0 01.205-1.251l1.267-1.114a7.05 7.05 0 010-2.227L1.821 7.773a1 1 0 01-.206-1.25l1.18-2.045a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 017.51 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" />
+						</svg>
 					</button>
+					{#if !checkDisabled}
+						<button
+							class="connectivity-btn"
+							class:connected={connectivity?.connected}
+							class:disconnected={connectivity !== null && !connectivity.connected}
+							class:checking
+							onclick={checkConnectivity}
+							title={connectivity?.connected ? 'Связь OK' : connectivity !== null ? 'Нет связи' : 'Проверка связи...'}
+						>
+							{#if checking}
+								<span class="connectivity-spinner"></span>
+							{:else if connectivity?.connected}
+								<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+									<path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+									<path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+									<path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+									<circle cx="12" cy="20" r="1" fill="currentColor"/>
+								</svg>
+							{:else}
+								<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+									<line x1="2" y1="2" x2="22" y2="22"/>
+									<path d="M8.5 16.5a5 5 0 0 1 7 0"/>
+									<path d="M2 8.82a15 15 0 0 1 4.17-2.65"/>
+									<path d="M10.66 5c4.01-.36 8.14.9 11.34 3.76"/>
+								</svg>
+							{/if}
+						</button>
+					{/if}
 				</div>
 			{/if}
 		</div>
@@ -194,16 +231,24 @@
 		{/if}
 	</div>
 
-	<!-- Traffic chart (same as TunnelCard) -->
-	{#if tunnel.status === 'up' && rxRates.length >= 2}
-		<div class="chart-wrap">
-			<TrafficChart
-				{rxRates}
-				{txRates}
-				rxTotal={tunnel.peer?.rxBytes ?? 0}
-				txTotal={tunnel.peer?.txBytes ?? 0}
-				height={100}
-			/>
+	<!-- Traffic chart (collapsible) -->
+	{#if tunnel.status === 'up'}
+		<div class="chart-section">
+			<button type="button" class="chart-header" onclick={toggleChart}>
+				<span class="chart-label">Трафик</span>
+				<span class="chart-chevron" class:expanded={chartExpanded}>▾</span>
+			</button>
+			<div class="chart-body" class:expanded={chartExpanded && hasData}>
+				{#if hasData}
+					<TrafficChart
+						{rxRates}
+						{txRates}
+						rxTotal={tunnel.peer?.rxBytes ?? 0}
+						txTotal={tunnel.peer?.txBytes ?? 0}
+						height={100}
+					/>
+				{/if}
+			</div>
 		</div>
 	{/if}
 </div>
@@ -376,13 +421,82 @@
 		color: var(--error);
 	}
 
-	/* Traffic chart wrapper (same as TunnelCard) */
-	.chart-wrap {
+	/* Connectivity gear */
+	.connectivity-gear {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 2px;
+		background: none;
+		border: none;
+		color: var(--text-muted);
+		cursor: pointer;
+		border-radius: 4px;
+		transition: color 0.15s;
+	}
+
+	.connectivity-gear:hover {
+		color: var(--accent);
+	}
+
+	.connectivity-gear.gear-disabled {
+		opacity: 0.4;
+	}
+
+	/* Collapsible traffic chart */
+	.chart-section {
 		margin: 0 -1rem -1rem;
-		padding: 8px 12px 4px;
-		overflow: hidden;
 		border-radius: 0 0 var(--radius) var(--radius);
 		background: var(--bg-secondary, rgba(0,0,0,0.15));
+		overflow: hidden;
+	}
+
+	.chart-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		width: 100%;
+		padding: 6px 12px;
+		border: none;
+		background: none;
+		cursor: pointer;
+		user-select: none;
+		transition: background 0.15s;
+	}
+
+	.chart-header:hover {
+		background: rgba(255,255,255,0.03);
+	}
+
+	.chart-label {
+		font-size: 0.6875rem;
+		font-weight: 500;
+		color: var(--text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+	}
+
+	.chart-chevron {
+		font-size: 0.875rem;
+		color: var(--text-muted);
+		transition: transform 0.2s ease;
+		transform: rotate(-90deg);
+	}
+
+	.chart-chevron.expanded {
+		transform: rotate(0deg);
+	}
+
+	.chart-body {
+		max-height: 0;
+		overflow: hidden;
+		transition: max-height 0.2s ease;
+		padding: 0 12px;
+	}
+
+	.chart-body.expanded {
+		max-height: 150px;
+		padding: 0 12px 4px;
 	}
 
 	.actions-row {
