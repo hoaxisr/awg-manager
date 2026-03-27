@@ -631,6 +631,7 @@ func isActiveHost(v any) bool {
 //   - opkgtun/awg: our own managed tunnels
 //   - wireguard/nwg/wg: WireGuard (Keenetic native or third-party)
 //   - ipsec/sstp/openvpn: pure VPN protocols
+//   - proxy: Keenetic proxy interfaces (t2s), depend on underlying WAN
 //
 // NOT excluded (ISPs do use these): PPTP, L2TP, GRE, IPIP, EoIP, PPPoE, IPoE.
 func isNonISPInterface(name string) bool {
@@ -642,7 +643,8 @@ func isNonISPInterface(name string) bool {
 		strings.HasPrefix(name, "wireguard") ||
 		strings.HasPrefix(name, "ipsec") ||
 		strings.HasPrefix(name, "sstp") ||
-		strings.HasPrefix(name, "openvpn")
+		strings.HasPrefix(name, "openvpn") ||
+		strings.HasPrefix(name, "proxy")
 }
 
 // RCIPost sends a JSON payload to RCI via HTTP POST.
