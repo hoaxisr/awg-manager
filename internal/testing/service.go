@@ -35,7 +35,7 @@ func NewService(awgStore *storage.AWGTunnelStore, log *logger.Logger, appLogger 
 	return &Service{
 		awgStore: awgStore,
 		log:      log,
-		appLog:   logging.NewScopedLogger(appLogger, logging.GroupTunnel, "connectivity"),
+		appLog:   logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubConnectivity),
 	}
 }
 

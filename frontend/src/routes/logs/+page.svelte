@@ -21,7 +21,7 @@
 	const LIMIT = 200;
 
 	const subgroupsByGroup: Record<string, string[]> = {
-		tunnel:  ['lifecycle', 'ops', 'state', 'firewall', 'pingcheck'],
+		tunnel:  ['lifecycle', 'ops', 'state', 'firewall', 'pingcheck', 'connectivity'],
 		routing: ['dns-route', 'static-route', 'access-policy'],
 		server:  ['managed', 'system-tunnels'],
 		system:  ['boot', 'wan', 'auth', 'settings', 'update'],
