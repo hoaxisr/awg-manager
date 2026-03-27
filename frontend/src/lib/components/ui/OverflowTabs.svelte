@@ -141,6 +141,7 @@
 <style>
     .overflow-tabs {
         position: relative;
+        z-index: 10;
     }
 
     .measure-row {
