@@ -211,7 +211,13 @@ func (h *PingCheckHandler) ConfigureTunnelPingCheck(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Save config to storage
+	// Apply to NDMS first — only persist to storage after success
+	if err := h.nwgOp.ConfigurePingCheck(r.Context(), stored, cfg); err != nil {
+		response.Error(w, err.Error(), "PINGCHECK_CONFIGURE_ERROR")
+		return
+	}
+
+	// Save config to storage after NDMS success
 	stored.PingCheck = &storage.TunnelPingCheck{
 		Enabled:       true,
 		Method:        cfg.Mode,
@@ -225,12 +231,6 @@ func (h *PingCheckHandler) ConfigureTunnelPingCheck(w http.ResponseWriter, r *ht
 	}
 	if err := h.tunnels.Save(stored); err != nil {
 		response.Error(w, "failed to save config", "SAVE_ERROR")
-		return
-	}
-
-	// Apply to NDMS
-	if err := h.nwgOp.ConfigurePingCheck(r.Context(), stored, cfg); err != nil {
-		response.Error(w, err.Error(), "PINGCHECK_CONFIGURE_ERROR")
 		return
 	}
 

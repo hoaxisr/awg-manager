@@ -1176,12 +1176,11 @@ func (c *ClientImpl) ShowPingCheck(ctx context.Context, profile string) (*PingCh
 			Port:       p.Port,
 		}
 
-		for ifName, ifStatus := range p.Interface {
+		for _, ifStatus := range p.Interface {
 			status.Bound = true
 			status.Status = ifStatus.Status
 			status.FailCount = ifStatus.FailCount
 			status.SuccessCount = ifStatus.SuccessCount
-			status.Restart = c.hasPingCheckRestart(ctx, ifName)
 			break
 		}
 
@@ -1191,25 +1190,6 @@ func (c *ClientImpl) ShowPingCheck(ctx context.Context, profile string) (*PingCh
 	return &PingCheckStatus{Exists: false}, nil
 }
 
-// hasPingCheckRestart checks if "ping-check restart" is configured on an interface
-// by querying the interface RC config via RCI.
-func (c *ClientImpl) hasPingCheckRestart(ctx context.Context, ifaceName string) bool {
-	raw, err := c.rci.GetRaw(ctx, "/show/rc/interface/"+ifaceName)
-	if err != nil {
-		return false
-	}
-	var cfg struct {
-		PingCheck struct {
-			Restart json.RawMessage `json:"restart"`
-		} `json:"ping-check"`
-	}
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return false
-	}
-	// If "restart" key exists and is not null/absent, it's enabled.
-	// NDMS uses "true" for enabled and omits/nulls for disabled.
-	return len(cfg.PingCheck.Restart) > 0 && string(cfg.PingCheck.Restart) != "null"
-}
 
 // clamp returns v clamped to [min, max], or def if v <= 0.
 func clamp(v, min, max, def int) int {
