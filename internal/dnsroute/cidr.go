@@ -45,7 +45,8 @@ func dedupSubnets(input []string, currentListID string, existingLists []DomainLi
 	for _, raw := range input {
 		_, n, err := net.ParseCIDR(raw)
 		if err != nil {
-			report.TotalRemoved++
+			// Invalid CIDR — skip without counting (preserves report invariants).
+			report.TotalInput--
 			continue
 		}
 		normalized := n.String()
