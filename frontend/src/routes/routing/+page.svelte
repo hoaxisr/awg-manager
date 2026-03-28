@@ -4,7 +4,7 @@
     import type { DnsRoute, DnsRouteTunnelInfo, StaticRouteList, AccessPolicy, PolicyDevice, PolicyGlobalInterface, ClientRoute } from '$lib/types';
     import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
     import { Modal, OverflowTabs } from '$lib/components/ui';
-    import { IpRouteCard, IpRouteEditModal, IpRouteImportModal } from '$lib/components/routing';
+    import { IpRouteCard, IpRouteEditModal, IpRouteImportModal, RoutingSearch } from '$lib/components/routing';
     import { DnsRouteCard, DnsRouteEditModal, DnsRouteImportModal } from '$lib/components/dnsroutes';
     import { PolicyTable, PolicyCreateModal, PolicyEditView } from '$lib/components/accesspolicy';
     import { ClientRouteCard, ClientRouteCreateModal } from '$lib/components/clientroute';
@@ -559,6 +559,8 @@
             </button>
         {/snippet}
     </PageHeader>
+
+    <RoutingSearch dnsRoutes={dnsRoutes} staticRoutes={ipRoutes} />
 
     {#if loading}
         <LoadingSpinner />
