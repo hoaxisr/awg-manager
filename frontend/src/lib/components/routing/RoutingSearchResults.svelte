@@ -87,10 +87,18 @@
             {#if resolveMatch.rules.length > 0}
                 {#each resolveMatch.rules as rule}
                     <div class="result-item">
-                        <svg class="result-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                            <rect x="2" y="2" width="20" height="20" rx="2"/>
-                            <path d="M7 8h10M7 12h10M7 16h6"/>
-                        </svg>
+                        {#if rule.type === 'dns'}
+                            <svg class="result-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                <circle cx="12" cy="12" r="10"/>
+                                <line x1="2" y1="12" x2="22" y2="12"/>
+                                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                            </svg>
+                        {:else}
+                            <svg class="result-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                <rect x="2" y="2" width="20" height="20" rx="2"/>
+                                <path d="M7 8h10M7 12h10M7 16h6"/>
+                            </svg>
+                        {/if}
                         <span class="result-rule-name">{rule.name}</span>
                         <span class="result-matches">
                             попадает в {rule.matches.slice(0, MAX_SHOWN).join(', ')}
@@ -112,7 +120,7 @@
         </div>
     {/if}
 
-    {#if dnsResults.length === 0 && ipResults.length === 0 && !resolving && !resolveMatch}
+    {#if dnsResults.length === 0 && ipResults.length === 0 && !resolving && !resolveMatch && !resolveError}
         <div class="result-item result-empty">Не найдено ни в одном правиле</div>
     {/if}
 </div>

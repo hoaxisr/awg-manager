@@ -50,7 +50,7 @@ func (h *ResolveHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	// Filter to IPv4 only
 	var ipv4 []string
 	for _, addr := range addrs {
-		if net.ParseIP(addr) != nil && net.ParseIP(addr).To4() != nil {
+		if ip := net.ParseIP(addr); ip != nil && ip.To4() != nil {
 			ipv4 = append(ipv4, addr)
 		}
 	}
