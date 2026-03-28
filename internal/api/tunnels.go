@@ -17,6 +17,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/traffic"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
@@ -444,6 +445,14 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate endpoint resolves
+	if req.Peer.Endpoint != "" {
+		if _, _, err := netutil.ResolveEndpoint(req.Peer.Endpoint); err != nil {
+			response.Error(w, "endpoint не резолвится: "+err.Error(), "INVALID_ENDPOINT")
+			return
+		}
+	}
+
 	// Generate ID if not provided
 	tunnelID := req.ID
 	if tunnelID == "" {
@@ -621,6 +630,14 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		// Если поля пустые или метод не "ping", использовать существующие настройки
 		if existing.ConnectivityCheck != nil {
 			req.ConnectivityCheck = existing.ConnectivityCheck
+		}
+	}
+
+	// Validate endpoint resolves (only if changed)
+	if req.Peer.Endpoint != existing.Peer.Endpoint {
+		if _, _, err := netutil.ResolveEndpoint(req.Peer.Endpoint); err != nil {
+			response.Error(w, "endpoint не резолвится: "+err.Error(), "INVALID_ENDPOINT")
+			return
 		}
 	}
 

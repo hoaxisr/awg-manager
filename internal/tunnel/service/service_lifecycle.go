@@ -106,7 +106,9 @@ func (s *ServiceImpl) startInternal(ctx context.Context, tunnelID string) error 
 
 	cfg.DefaultRoute = stored.DefaultRoute
 	cfg.Endpoint = stored.Peer.Endpoint
-	if ip, err := netutil.ResolveEndpointIP(stored.Peer.Endpoint); err == nil {
+	if ip, err := netutil.ResolveEndpointIP(stored.Peer.Endpoint); err != nil {
+		return fmt.Errorf("start %s: endpoint resolve failed: %w", tunnelID, err)
+	} else {
 		cfg.EndpointIP = ip
 	}
 
@@ -174,7 +176,9 @@ func (s *ServiceImpl) startLightInternal(ctx context.Context, tunnelID string) e
 	cfg.KernelDevice = s.resolveKernelDevice(resolvedWAN)
 	cfg.DefaultRoute = stored.DefaultRoute
 	cfg.Endpoint = stored.Peer.Endpoint
-	if ip, err := netutil.ResolveEndpointIP(stored.Peer.Endpoint); err == nil {
+	if ip, err := netutil.ResolveEndpointIP(stored.Peer.Endpoint); err != nil {
+		return fmt.Errorf("start %s: endpoint resolve failed: %w", tunnelID, err)
+	} else {
 		cfg.EndpointIP = ip
 	}
 
