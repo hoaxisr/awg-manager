@@ -70,6 +70,8 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 		return nil, fmt.Errorf("resolve routes: %w", err)
 	}
 
+	s.dedup(&list)
+
 	data.Lists = append(data.Lists, list)
 
 	if err := s.store.Save(data); err != nil {
@@ -179,6 +181,8 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 	if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
 		return nil, fmt.Errorf("resolve routes: %w", err)
 	}
+
+	s.dedup(&list)
 
 	data.Lists[idx] = list
 
@@ -318,6 +322,7 @@ func (s *ServiceImpl) refreshSubscriptions(ctx context.Context, id string) error
 
 	// Merge manual + subscription domains
 	list.Domains = mergeDomains(list.ManualDomains, allSubDomains)
+	s.dedup(list)
 	list.UpdatedAt = now
 
 	if err := s.store.Save(data); err != nil {
@@ -427,6 +432,48 @@ func (s *ServiceImpl) resolveRouteInterfaces(ctx context.Context, routes []Route
 		routes[i].Interface = iface
 	}
 	return nil
+}
+
+// dedup runs domain and subnet deduplication for the given list against all other lists.
+// It modifies list.Domains and list.Subnets in place and sets list.LastDedupeReport.
+func (s *ServiceImpl) dedup(list *DomainList) {
+	data := s.store.GetCached()
+	if data == nil {
+		return
+	}
+
+	// Build index from all lists except the current one.
+	idx := BuildIndex(data.Lists, list.ID)
+	names := listNameMap(data.Lists)
+	names[list.ID] = list.Name
+
+	// Deduplicate domains.
+	keptDomains, domainReport := idx.CheckBatch(list.Domains, list.ID, names)
+
+	// Deduplicate subnets.
+	keptSubnets, subnetReport := dedupSubnets(list.Subnets, list.ID, data.Lists)
+
+	// Merge reports.
+	report := DedupeReport{
+		TotalInput:    domainReport.TotalInput + subnetReport.TotalInput,
+		TotalKept:     domainReport.TotalKept + subnetReport.TotalKept,
+		TotalRemoved:  domainReport.TotalRemoved + subnetReport.TotalRemoved,
+		ExactDupes:    domainReport.ExactDupes + subnetReport.ExactDupes,
+		WildcardDupes: domainReport.WildcardDupes + subnetReport.WildcardDupes,
+		Items:         append(domainReport.Items, subnetReport.Items...),
+	}
+
+	list.Domains = keptDomains
+	if list.Domains == nil {
+		list.Domains = []string{}
+	}
+	list.Subnets = keptSubnets
+
+	if report.TotalRemoved > 0 {
+		list.LastDedupeReport = &report
+	} else {
+		list.LastDedupeReport = nil
+	}
 }
 
 // nextListID generates the next sequential list ID (list_1, list_2, ...).
