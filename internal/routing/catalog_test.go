@@ -131,9 +131,6 @@ func TestListAll_ManagedTunnels(t *testing.T) {
 	if e.Name != "OS4 Tunnel" {
 		t.Errorf("expected Name 'OS4 Tunnel', got %s", e.Name)
 	}
-	if !e.Available == false {
-		// awgm0 is stopped, should not be available
-	}
 	if e.Available {
 		t.Error("expected Available=false for stopped tunnel")
 	}
