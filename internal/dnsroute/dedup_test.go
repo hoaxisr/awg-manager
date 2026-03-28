@@ -1,6 +1,7 @@
 package dnsroute
 
 import (
+	"context"
 	"testing"
 )
 
@@ -249,5 +250,114 @@ func TestCheckBatch_AllFiltered(t *testing.T) {
 	}
 	if report.TotalRemoved != 2 {
 		t.Errorf("TotalRemoved = %d, want 2", report.TotalRemoved)
+	}
+}
+
+// --- Integration tests ---
+
+func TestServiceDedup_CreateRemovesCrossListDupes(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver := &noopResolver{}
+	svc := NewService(store, &noopNDMS{}, resolver, noopLogger(), nil)
+
+	// Create first list with example.com.
+	list1, err := svc.Create(context.Background(), DomainList{
+		Name:          "List A",
+		ManualDomains: []string{"example.com", "google.com"},
+		Routes:        []RouteTarget{{TunnelID: "t1"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list1.Domains) != 2 {
+		t.Fatalf("list1 domains = %d, want 2", len(list1.Domains))
+	}
+	if list1.LastDedupeReport != nil {
+		t.Error("list1 should have no dedup report (no dupes)")
+	}
+
+	// Create second list with sub.example.com (covered by list1's example.com)
+	// and google.com (exact dupe with list1).
+	list2, err := svc.Create(context.Background(), DomainList{
+		Name:          "List B",
+		ManualDomains: []string{"sub.example.com", "google.com", "newsite.com"},
+		Routes:        []RouteTarget{{TunnelID: "t1"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Only newsite.com should remain.
+	if len(list2.Domains) != 1 {
+		t.Fatalf("list2 domains = %v, want [newsite.com]", list2.Domains)
+	}
+	if list2.Domains[0] != "newsite.com" {
+		t.Errorf("list2.Domains[0] = %q, want newsite.com", list2.Domains[0])
+	}
+	if list2.LastDedupeReport == nil {
+		t.Fatal("list2 should have dedup report")
+	}
+	if list2.LastDedupeReport.TotalRemoved != 2 {
+		t.Errorf("TotalRemoved = %d, want 2", list2.LastDedupeReport.TotalRemoved)
+	}
+}
+
+// noopResolver implements InterfaceResolver for tests.
+type noopResolver struct{}
+
+func (r *noopResolver) ResolveInterface(ctx context.Context, tunnelID string) (string, error) {
+	return tunnelID, nil
+}
+
+// --- BuildIndex tests ---
+
+func TestBuildIndex_RebuildAfterDelete(t *testing.T) {
+	lists := []DomainList{
+		{ID: "list_1", Domains: []string{"example.com"}},
+		{ID: "list_2", Domains: []string{"google.com"}},
+	}
+
+	idx := BuildIndex(lists, "")
+	res := idx.Check("example.com", "list_3")
+	if !res.Removed {
+		t.Fatal("example.com should be claimed by list_1")
+	}
+
+	// Rebuild without list_1.
+	lists = lists[1:]
+	idx = BuildIndex(lists, "")
+
+	res = idx.Check("example.com", "list_3")
+	if res.Removed {
+		t.Fatal("after removing list_1, example.com should be available")
+	}
+
+	res = idx.Check("google.com", "list_3")
+	if !res.Removed {
+		t.Fatal("google.com should still be claimed by list_2")
+	}
+}
+
+func TestBuildIndex_ExcludeList(t *testing.T) {
+	lists := []DomainList{
+		{ID: "list_1", Domains: []string{"example.com"}},
+		{ID: "list_2", Domains: []string{"google.com"}},
+	}
+
+	idx := BuildIndex(lists, "list_1")
+
+	res := idx.Check("example.com", "list_1")
+	if res.Removed {
+		t.Fatal("excluded list's domains should not be in index")
+	}
+
+	res = idx.Check("google.com", "list_1")
+	if !res.Removed {
+		t.Fatal("list_2 domains should still be in index")
 	}
 }
