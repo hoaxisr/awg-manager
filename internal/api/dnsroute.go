@@ -20,7 +20,6 @@ type DNSRouteService interface {
 	SetEnabled(ctx context.Context, id string, enabled bool) error
 	RefreshSubscriptions(ctx context.Context, id string) error
 	RefreshAllSubscriptions(ctx context.Context) error
-	GetAvailableTunnels(ctx context.Context) ([]dnsroute.TunnelInfo, error)
 }
 
 // DNSRouteHandler handles DNS route API endpoints.
@@ -221,18 +220,3 @@ func (h *DNSRouteHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, map[string]bool{"success": true})
 }
 
-// Tunnels returns available tunnels for DNS routing.
-func (h *DNSRouteHandler) Tunnels(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		response.MethodNotAllowed(w)
-		return
-	}
-
-	tunnels, err := h.svc.GetAvailableTunnels(r.Context())
-	if err != nil {
-		response.Error(w, err.Error(), "DNS_ROUTE_TUNNELS_ERROR")
-		return
-	}
-
-	response.Success(w, tunnels)
-}

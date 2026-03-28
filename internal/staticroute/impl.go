@@ -5,17 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/rci"
+	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
 
 // ndmsClient is the subset of ndms.Client needed for static routes.
@@ -24,20 +23,14 @@ type ndmsClient interface {
 	Save(ctx context.Context) error
 }
 
-// wanModel resolves kernel interface names to NDMS IDs.
-type wanModel interface {
-	IDFor(kernelName string) string
-}
-
 // ServiceImpl is the concrete implementation of the static route Service.
 type ServiceImpl struct {
-	store       *storage.StaticRouteStore
-	tunnelStore *storage.AWGTunnelStore
-	ndms        ndmsClient
-	wanModel    wanModel
-	log         *logger.Logger
-	appLog      *logging.ScopedLogger
-	mu          sync.Mutex
+	store   *storage.StaticRouteStore
+	ndms    ndmsClient
+	catalog routing.Catalog
+	log     *logger.Logger
+	appLog  *logging.ScopedLogger
+	mu      sync.Mutex
 
 	// ifaceExists checks whether a network interface exists. Defaults to
 	// net.InterfaceByName; override in tests.
@@ -47,17 +40,15 @@ type ServiceImpl struct {
 // New creates a new static route service.
 func New(
 	store *storage.StaticRouteStore,
-	tunnelStore *storage.AWGTunnelStore,
 	ndmsClient ndmsClient,
-	wanModel wanModel,
+	catalog routing.Catalog,
 	log *logger.Logger,
 	appLogger logging.AppLogger,
 ) *ServiceImpl {
 	return &ServiceImpl{
 		store:       store,
-		tunnelStore: tunnelStore,
 		ndms:        ndmsClient,
-		wanModel:    wanModel,
+		catalog:     catalog,
 		log:         log,
 		appLog:      logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubStaticRoute),
 		ifaceExists: defaultIfaceExists,
@@ -96,7 +87,7 @@ func (s *ServiceImpl) Create(ctx context.Context, rl storage.StaticRouteList) (*
 
 	if rl.Enabled {
 		s.applyRoutes(ctx, rl)
-		if !s.isOS4Kernel(rl.TunnelID) {
+		if !isOS4Kernel(rl.TunnelID) {
 			s.save(ctx)
 		}
 	}
@@ -133,7 +124,7 @@ func (s *ServiceImpl) Update(ctx context.Context, rl storage.StaticRouteList) (*
 	}
 
 	// Save NDMS config if any affected tunnel uses NDMS routes.
-	if !s.isOS4Kernel(old.TunnelID) || !s.isOS4Kernel(rl.TunnelID) {
+	if !isOS4Kernel(old.TunnelID) || !isOS4Kernel(rl.TunnelID) {
 		s.save(ctx)
 	}
 	return &rl, nil
@@ -157,7 +148,7 @@ func (s *ServiceImpl) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("delete route list: %w", err)
 	}
 
-	if !s.isOS4Kernel(existing.TunnelID) {
+	if !isOS4Kernel(existing.TunnelID) {
 		s.save(ctx)
 	}
 	return nil
@@ -190,7 +181,7 @@ func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) e
 		s.removeRoutes(ctx, rl.TunnelID, rl.Subnets)
 	}
 
-	if !s.isOS4Kernel(rl.TunnelID) {
+	if !isOS4Kernel(rl.TunnelID) {
 		s.save(ctx)
 	}
 	return nil
@@ -228,7 +219,7 @@ func (s *ServiceImpl) Import(ctx context.Context, tunnelID, name, batContent str
 // For NDMS-managed tunnels this is a no-op (NDMS "auto" flag handles it).
 // For OS4 kernel tunnels, routes are applied via ip route using tunnelIface directly.
 func (s *ServiceImpl) OnTunnelStart(ctx context.Context, tunnelID, tunnelIface string) error {
-	if !s.isOS4Kernel(tunnelID) {
+	if !isOS4Kernel(tunnelID) {
 		return nil // NDMS "auto" flag handles it
 	}
 
@@ -252,7 +243,7 @@ func (s *ServiceImpl) OnTunnelStart(ctx context.Context, tunnelID, tunnelIface s
 //   - fallback="" (bypass): remove routes so traffic falls back to WAN
 //   - fallback="reject": keep routes — dead interface acts as blackhole
 func (s *ServiceImpl) OnTunnelStop(ctx context.Context, tunnelID string) error {
-	if !s.isOS4Kernel(tunnelID) {
+	if !isOS4Kernel(tunnelID) {
 		return nil // NDMS "auto" flag handles it
 	}
 
@@ -285,7 +276,7 @@ func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error
 	}
 
 	// Remove active routes (NDMS or ip route).
-	if !s.isOS4Kernel(tunnelID) {
+	if !isOS4Kernel(tunnelID) {
 		for _, rl := range lists {
 			if rl.Enabled {
 				s.removeRoutes(ctx, rl.TunnelID, rl.Subnets)
@@ -328,7 +319,7 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 		if !rl.Enabled {
 			continue
 		}
-		if s.isOS4Kernel(rl.TunnelID) {
+		if isOS4Kernel(rl.TunnelID) {
 			// OS4 kernel: only apply if interface exists (tunnel is running)
 			if !s.ifaceExists(rl.TunnelID) { // OS4: tunnelID == ifaceName
 				continue
@@ -358,47 +349,9 @@ func defaultIfaceExists(ifaceName string) bool {
 
 // isOS4Kernel returns true if tunnelID refers to an OS4 kernel tunnel (awgmX).
 // These tunnels have no NDMS representation — routes must use ip route directly.
-func (s *ServiceImpl) isOS4Kernel(tunnelID string) bool {
+func isOS4Kernel(tunnelID string) bool {
 	names := tunnel.NewNames(tunnelID)
 	return names.NDMSName == ""
-}
-
-// resolveIfaceName resolves a tunnelID to an interface name.
-// For OS4 kernel tunnels, returns the kernel name directly (e.g. "awgm0").
-// For all others, returns the NDMS name for RCI commands.
-func (s *ServiceImpl) resolveIfaceName(tunnelID string) (string, error) {
-	// WAN: "wan:ppp0" → look up NDMS ID via WAN model
-	if strings.HasPrefix(tunnelID, "wan:") {
-		kernelName := strings.TrimPrefix(tunnelID, "wan:")
-		if s.wanModel == nil {
-			return "", fmt.Errorf("WAN model not available")
-		}
-		if ndmsID := s.wanModel.IDFor(kernelName); ndmsID != "" {
-			return ndmsID, nil
-		}
-		return "", fmt.Errorf("WAN interface %s not found in model", kernelName)
-	}
-
-	// System tunnel: "system:Wireguard0" → "Wireguard0"
-	if tunnel.IsSystemTunnel(tunnelID) {
-		return tunnel.SystemTunnelName(tunnelID), nil
-	}
-
-	// Managed tunnel: check backend for NativeWG
-	if s.tunnelStore != nil {
-		if stored, err := s.tunnelStore.Get(tunnelID); err == nil && stored.Backend == "nativewg" {
-			return nwg.NewNWGNames(stored.NWGIndex).NDMSName, nil
-		}
-	}
-
-	// Kernel tunnel
-	names := tunnel.NewNames(tunnelID)
-	if names.NDMSName == "" {
-		// OS4 kernel: return kernel name directly (e.g. "awgm0")
-		return names.IfaceName, nil
-	}
-	// OS5 kernel: awg10 → OpkgTun10
-	return names.NDMSName, nil
 }
 
 // parseCIDR splits a CIDR string into network and mask.
@@ -486,12 +439,12 @@ func (s *ServiceImpl) ipRouteDel(ctx context.Context, subnet, ifaceName string) 
 // For OS4 kernel tunnels, silently skips if the interface doesn't exist
 // (routes will be applied later by OnTunnelStart).
 func (s *ServiceImpl) applyRoutes(ctx context.Context, rl storage.StaticRouteList) {
-	os4k := s.isOS4Kernel(rl.TunnelID)
+	os4k := isOS4Kernel(rl.TunnelID)
 	if os4k && !s.ifaceExists(rl.TunnelID) {
 		s.log.Debugf("staticroute: skip apply for %s (interface not up, will apply on start)", rl.TunnelID)
 		return
 	}
-	ifaceName, err := s.resolveIfaceName(rl.TunnelID)
+	ifaceName, err := s.catalog.ResolveInterface(ctx, rl.TunnelID)
 	if err != nil {
 		s.log.Errorf("staticroute: resolve interface name for %s: %v", rl.TunnelID, err)
 		return
@@ -506,11 +459,11 @@ func (s *ServiceImpl) applyRoutes(ctx context.Context, rl storage.StaticRouteLis
 // removeRoutes removes static routes for a tunnel.
 // For OS4 kernel tunnels, skips if the interface doesn't exist (kernel already cleaned up).
 func (s *ServiceImpl) removeRoutes(ctx context.Context, tunnelID string, subnets []string) {
-	os4k := s.isOS4Kernel(tunnelID)
+	os4k := isOS4Kernel(tunnelID)
 	if os4k && !s.ifaceExists(tunnelID) {
 		return // kernel already removed routes when interface was destroyed
 	}
-	ifaceName, err := s.resolveIfaceName(tunnelID)
+	ifaceName, err := s.catalog.ResolveInterface(ctx, tunnelID)
 	if err != nil {
 		s.log.Errorf("staticroute: resolve interface name for %s: %v", tunnelID, err)
 		return

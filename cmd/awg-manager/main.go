@@ -23,6 +23,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/cleanup"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/managed"
+	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/staticroute"
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -187,17 +188,18 @@ func main() {
 	if _, err := dnsRouteStore.Load(); err != nil {
 		log.Warn("Failed to load dns-routes", map[string]interface{}{"error": err.Error()})
 	}
-	dnsRouteService := dnsroute.NewService(
-		dnsRouteStore,
+	dnsRouteService := dnsroute.NewService(dnsRouteStore, ndmsClient, log, loggingService)
+
+	// Routing catalog — unified tunnel listing for all routing subsystems
+	catalog := routing.NewCatalog(
+		&tunnelProviderAdapter{svc: tunnelService, store: awgStore},
 		ndmsClient,
-		&dnsRouteTunnelLister{svc: tunnelService, ndms: ndmsClient, store: awgStore},
-		log,
-		loggingService,
+		&storeAdapter{store: awgStore},
 	)
 
 	// Static route service for IP-based routing through tunnels
 	staticRouteStore := storage.NewStaticRouteStore(*dataDir)
-	staticRouteService := staticroute.New(staticRouteStore, awgStore, ndmsClient, wanModel, log, loggingService)
+	staticRouteService := staticroute.New(staticRouteStore, ndmsClient, catalog, log, loggingService)
 
 	// DNS route subscription auto-refresh scheduler
 	dnsRefreshScheduler := dnsroute.NewScheduler(dnsRouteService, settingsStore, log)
@@ -270,36 +272,7 @@ func main() {
 	clientRouteService := clientroute.New(
 		clientRouteStore,
 		operator,
-		func(ctx context.Context, tunnelID string) (string, bool) {
-			// System tunnel: resolve NDMS name → kernel name via RCI.
-			if tunnel.IsSystemTunnel(tunnelID) {
-				ndmsName := tunnel.SystemTunnelName(tunnelID)
-				kernelName := ndmsClient.GetSystemName(ctx, ndmsName)
-				if kernelName == "" || kernelName == ndmsName {
-					return "", false
-				}
-				return kernelName, true
-			}
-			// Managed tunnel: check state and resolve kernel iface.
-			si := tunnelService.GetState(ctx, tunnelID)
-			if si.State == tunnel.StateRunning {
-				if stored, err := awgStore.Get(tunnelID); err == nil && stored.Backend == "nativewg" {
-					return nwg.NewNWGNames(stored.NWGIndex).IfaceName, true
-				}
-				return tunnel.NewNames(tunnelID).IfaceName, true
-			}
-			return "", false
-		},
-		func(tunnelID string) bool {
-			// System tunnel: check interface exists via NDMS.
-			if tunnel.IsSystemTunnel(tunnelID) {
-				ndmsName := tunnel.SystemTunnelName(tunnelID)
-				ctx := context.Background()
-				kernelName := ndmsClient.GetSystemName(ctx, ndmsName)
-				return kernelName != "" && kernelName != ndmsName
-			}
-			return awgStore.Exists(tunnelID)
-		},
+		catalog,
 		loggingService,
 	)
 	tunnelService.SetClientRouteHooks(clientRouteService)
@@ -332,6 +305,7 @@ func main() {
 		terminalManager,
 		accessPolicySvc,
 		clientRouteService,
+		catalog,
 	)
 
 	// Determine bind IP from settings
@@ -519,97 +493,59 @@ func (h *pingCheckReconcileHooks) OnTunnelDelete(tunnelID string) {
 	h.pc.StopMonitoring(tunnelID)
 }
 
-// dnsRouteTunnelLister adapts tunnel.service.Service to dnsroute.TunnelLister.
-type dnsRouteTunnelLister struct {
+// tunnelProviderAdapter adapts service.Service to routing.TunnelProvider.
+type tunnelProviderAdapter struct {
 	svc   service.Service
-	ndms  ndms.Client
 	store *storage.AWGTunnelStore
 }
 
-func (l *dnsRouteTunnelLister) ListTunnelInfo(ctx context.Context) ([]dnsroute.TunnelInfo, error) {
-	tunnels, err := l.svc.List(ctx)
+func (a *tunnelProviderAdapter) ListTunnels(ctx context.Context) ([]routing.TunnelWithStatus, error) {
+	tunnels, err := a.svc.List(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	// Track managed NDMS names to filter them out from system interfaces.
-	managed := make(map[string]bool)
-	var result []dnsroute.TunnelInfo
-	for _, t := range tunnels {
-		var ndmsName string
+	result := make([]routing.TunnelWithStatus, len(tunnels))
+	for i, t := range tunnels {
+		entry := routing.TunnelWithStatus{
+			ID:      t.ID,
+			Name:    t.Name,
+			Backend: t.Backend,
+			State:   t.State,
+		}
+		// NativeWG tunnels need NWGIndex from storage.
 		if t.Backend == "nativewg" {
-			// NativeWG tunnels use Wireguard{N} as NDMS name
-			if stored, err := l.store.Get(t.ID); err == nil {
-				ndmsName = nwg.NewNWGNames(stored.NWGIndex).NDMSName
-			}
-		} else {
-			ndmsName = tunnel.NewNames(t.ID).NDMSName
-		}
-		if ndmsName == "" {
-			continue // skip if we couldn't determine NDMS name
-		}
-		managed[ndmsName] = true
-		name := ndmsName
-		if t.Name != "" {
-			name = ndmsName + " (" + t.Name + ")"
-		}
-		result = append(result, dnsroute.TunnelInfo{
-			ID:       t.ID,
-			Name:     name,
-			NDMSName: ndmsName,
-			Status:   t.State.String(),
-		})
-	}
-
-	// Append unmanaged system interfaces: Wireguard, Proxy, OpkgTun (if NDMS is available).
-	if l.ndms != nil {
-		wgIfaces, err := l.ndms.ListWireguardInterfaces(ctx)
-		if err == nil {
-			for _, iface := range wgIfaces {
-				if managed[iface.Name] {
-					continue
-				}
-				name := iface.Name
-				if iface.Description != "" {
-					name = iface.Name + " (" + iface.Description + ")"
-				}
-				result = append(result, dnsroute.TunnelInfo{
-					ID:       "system:" + iface.Name,
-					Name:     name,
-					NDMSName: iface.Name,
-					Status:   "system",
-					System:   true,
-				})
+			if stored, err := a.store.Get(t.ID); err == nil {
+				entry.NWGIndex = stored.NWGIndex
 			}
 		}
+		result[i] = entry
 	}
-
-	// Append WAN interfaces (ISP, PPPoE, LTE, etc.)
-	wanModel := l.svc.WANModel()
-	if wanModel != nil {
-		for _, iface := range wanModel.ForUI() {
-			label := iface.Label
-			if label == "" {
-				label = iface.Name
-			}
-			result = append(result, dnsroute.TunnelInfo{
-				ID:       "wan:" + iface.Name,
-				Name:     label,
-				NDMSName: iface.ID, // NDMS ID (e.g. "ISP", "PPPoE0") for dns-proxy route
-				Status:   boolToStatus(iface.Up),
-				WAN:      true,
-			})
-		}
-	}
-
 	return result, nil
 }
 
-func boolToStatus(up bool) string {
-	if up {
-		return "up"
+func (a *tunnelProviderAdapter) GetState(ctx context.Context, tunnelID string) tunnel.StateInfo {
+	return a.svc.GetState(ctx, tunnelID)
+}
+
+func (a *tunnelProviderAdapter) WANModel() *wan.Model {
+	return a.svc.WANModel()
+}
+
+// storeAdapter adapts storage.AWGTunnelStore to routing.StoreClient.
+type storeAdapter struct {
+	store *storage.AWGTunnelStore
+}
+
+func (a *storeAdapter) Get(id string) (routing.StoreEntry, error) {
+	t, err := a.store.Get(id)
+	if err != nil {
+		return routing.StoreEntry{}, err
 	}
-	return "down"
+	return routing.StoreEntry{Backend: t.Backend, NWGIndex: t.NWGIndex}, nil
+}
+
+func (a *storeAdapter) Exists(id string) bool {
+	return a.store.Exists(id)
 }
 
 // logStartup logs system startup information.
@@ -1024,14 +960,14 @@ func runCleanup(dataDir string) {
 	// Create auxiliary services
 	dnsStore := dnsroute.NewStore(dataDir)
 	dnsStore.Load()
-	dnsSvc := dnsroute.NewService(dnsStore, ndmsClient, nil, log, nil)
+	dnsSvc := dnsroute.NewService(dnsStore, ndmsClient, log, nil)
 
 	managedSvc := managed.New(ndmsClient, settingsStore, slog.Default(), nil)
 	accessPolicySvc := accesspolicy.New(ndmsClient, settingsStore, log, nil)
 
 	// Client route service for cleanup
 	clientRouteStore := storage.NewClientRouteStore(dataDir)
-	clientRouteSvc := clientroute.New(clientRouteStore, operator, nil, nil, nil)
+	clientRouteSvc := clientroute.New(clientRouteStore, operator, nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

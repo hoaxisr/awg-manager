@@ -21,6 +21,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/rci"
+	"github.com/hoaxisr/awg-manager/internal/routing"
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -79,6 +80,7 @@ type Server struct {
 	terminalManager      terminal.Manager
 	accessPolicyService  accesspolicy.Service
 	clientRouteService   clientroute.Service
+	catalog              routing.Catalog
 	authMiddleware     *auth.Middleware
 	httpServer         *http.Server
 	loopbackListener   net.Listener // optional loopback listener for reverse proxy
@@ -93,7 +95,7 @@ type Server struct {
 }
 
 // New creates a new server instance.
-func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, externalService api.ExternalTunnelService, testingService *testing.Service, keenetic *auth.KeeneticClient, sessions *auth.SessionStore, settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore, pingCheckService api.PingCheckService, loggingService *logging.Service, activeBackend backend.Backend, kmodLoader *kmod.Loader, updaterService *updater.Service, ndmsClient ndms.Client, trafficHistory *traffic.History, dnsRouteService api.DNSRouteService, staticRouteService api.StaticRouteService, systemTunnelService systemtunnel.Service, managedService managed.ManagedServerService, nwgOp *nwg.OperatorNativeWG, terminalManager terminal.Manager, accessPolicySvc accesspolicy.Service, clientRouteSvc clientroute.Service) *Server {
+func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, externalService api.ExternalTunnelService, testingService *testing.Service, keenetic *auth.KeeneticClient, sessions *auth.SessionStore, settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore, pingCheckService api.PingCheckService, loggingService *logging.Service, activeBackend backend.Backend, kmodLoader *kmod.Loader, updaterService *updater.Service, ndmsClient ndms.Client, trafficHistory *traffic.History, dnsRouteService api.DNSRouteService, staticRouteService api.StaticRouteService, systemTunnelService systemtunnel.Service, managedService managed.ManagedServerService, nwgOp *nwg.OperatorNativeWG, terminalManager terminal.Manager, accessPolicySvc accesspolicy.Service, clientRouteSvc clientroute.Service, catalog routing.Catalog) *Server {
 	id := generateInstanceID()
 	log.Infof("Server instance: %s", id)
 
@@ -122,6 +124,7 @@ func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, extern
 		terminalManager:     terminalManager,
 		accessPolicyService: accessPolicySvc,
 		clientRouteService:  clientRouteSvc,
+		catalog:             catalog,
 		authMiddleware:     auth.NewMiddleware(sessions, settings, log),
 		instanceID:       id,
 	}
@@ -391,7 +394,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/dns-routes/delete", guarded(dnsRouteHandler.Delete))
 		mux.HandleFunc("/api/dns-routes/set-enabled", guarded(dnsRouteHandler.SetEnabled))
 		mux.HandleFunc("/api/dns-routes/refresh", guarded(dnsRouteHandler.Refresh))
-		mux.HandleFunc("/api/dns-routes/tunnels", guarded(dnsRouteHandler.Tunnels))
 	}
 
 	// Static IP routes (protected + boot guarded)
@@ -402,6 +404,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/static-routes/delete", guarded(staticRouteHandler.Delete))
 	mux.HandleFunc("/api/static-routes/set-enabled", guarded(staticRouteHandler.SetEnabled))
 	mux.HandleFunc("/api/static-routes/import", guarded(staticRouteHandler.Import))
+
+	// Routing: unified tunnel listing for all routing subsystems
+	routingHandler := api.NewRoutingHandler(s.catalog)
+	mux.HandleFunc("/api/routing/tunnels", guarded(routingHandler.Tunnels))
 
 	// DNS resolve for routing search
 	resolveHandler := api.NewResolveHandler()

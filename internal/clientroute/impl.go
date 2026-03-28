@@ -15,22 +15,20 @@ const idAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 // ServiceImpl implements the Service interface.
 type ServiceImpl struct {
-	mu             sync.Mutex
-	store          Store
-	operator       Operator
-	getKernelIface GetKernelIfaceFunc
-	tunnelExists   TunnelExistsFunc
-	appLog         *logging.ScopedLogger
+	mu       sync.Mutex
+	store    Store
+	operator Operator
+	catalog  TunnelCatalog
+	appLog   *logging.ScopedLogger
 }
 
 // New creates a new client route service.
-func New(store Store, operator Operator, getKernelIface GetKernelIfaceFunc, tunnelExists TunnelExistsFunc, appLogger logging.AppLogger) *ServiceImpl {
+func New(store Store, operator Operator, catalog TunnelCatalog, appLogger logging.AppLogger) *ServiceImpl {
 	return &ServiceImpl{
-		store:          store,
-		operator:       operator,
-		getKernelIface: getKernelIface,
-		tunnelExists:   tunnelExists,
-		appLog:         logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubClientRoute),
+		store:    store,
+		operator: operator,
+		catalog:  catalog,
+		appLog:   logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubClientRoute),
 	}
 }
 
@@ -59,7 +57,7 @@ func (s *ServiceImpl) Create(ctx context.Context, route ClientRoute) (*ClientRou
 	}
 
 	// Check tunnel exists.
-	if !s.tunnelExists(route.TunnelID) {
+	if !s.catalog.Exists(ctx, route.TunnelID) {
 		return nil, fmt.Errorf("tunnel not found: %s", route.TunnelID)
 	}
 
@@ -102,7 +100,7 @@ func (s *ServiceImpl) Update(ctx context.Context, route ClientRoute) (*ClientRou
 	if route.Fallback != "drop" && route.Fallback != "bypass" {
 		return nil, fmt.Errorf("invalid fallback: %q (must be drop or bypass)", route.Fallback)
 	}
-	if !s.tunnelExists(route.TunnelID) {
+	if !s.catalog.Exists(ctx, route.TunnelID) {
 		return nil, fmt.Errorf("tunnel not found: %s", route.TunnelID)
 	}
 
@@ -385,7 +383,7 @@ func (s *ServiceImpl) CleanupAll(ctx context.Context) error {
 // applyIfRunning applies ip rules for a route if the tunnel is currently running.
 // Errors are logged but non-fatal.
 func (s *ServiceImpl) applyIfRunning(ctx context.Context, route ClientRoute) {
-	kernelIface, running := s.getKernelIface(ctx, route.TunnelID)
+	kernelIface, running := s.catalog.GetKernelIface(ctx, route.TunnelID)
 	if !running {
 		return
 	}

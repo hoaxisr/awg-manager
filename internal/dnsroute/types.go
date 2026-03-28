@@ -37,16 +37,6 @@ type RouteTarget struct {
 	Fallback  string `json:"fallback,omitempty"`
 }
 
-// TunnelInfo provides tunnel/interface metadata for the UI.
-type TunnelInfo struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	NDMSName string `json:"ndmsName"`
-	Status   string `json:"status"`
-	System   bool   `json:"system,omitempty"` // true for unmanaged WireGuard interfaces
-	WAN      bool   `json:"wan,omitempty"`    // true for WAN interfaces (ISP, PPPoE, LTE)
-}
-
 // StoreData is the top-level dns-routes.json structure.
 type StoreData struct {
 	Lists []DomainList `json:"lists"`

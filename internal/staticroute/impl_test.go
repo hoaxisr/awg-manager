@@ -3,12 +3,34 @@ package staticroute
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+// mockCatalog implements routing.Catalog for tests.
+type mockCatalog struct {
+	ifaces map[string]string // tunnelID → interface name
+}
+
+func (m *mockCatalog) ListAll(_ context.Context) []routing.TunnelEntry { return nil }
+func (m *mockCatalog) ResolveInterface(_ context.Context, tunnelID string) (string, error) {
+	if m == nil || m.ifaces == nil {
+		return tunnelID, nil
+	}
+	if name, ok := m.ifaces[tunnelID]; ok {
+		return name, nil
+	}
+	return "", fmt.Errorf("tunnel %s not found", tunnelID)
+}
+func (m *mockCatalog) Exists(_ context.Context, tunnelID string) bool { return true }
+func (m *mockCatalog) GetKernelIface(_ context.Context, tunnelID string) (string, bool) {
+	return "", false
+}
 
 func TestParseCIDR(t *testing.T) {
 	tests := []struct {
@@ -37,84 +59,21 @@ func TestParseCIDR(t *testing.T) {
 	}
 }
 
-func TestResolveIfaceName_SystemTunnel(t *testing.T) {
-	s := &ServiceImpl{}
-	name, err := s.resolveIfaceName("system:Wireguard0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != "Wireguard0" {
-		t.Errorf("got %q, want Wireguard0", name)
-	}
-}
-
-func TestResolveIfaceName_KernelTunnel(t *testing.T) {
-	s := &ServiceImpl{}
-	name, err := s.resolveIfaceName("awg10")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != "OpkgTun10" {
-		t.Errorf("got %q, want OpkgTun10", name)
-	}
-}
-
-func TestResolveIfaceName_OS4KernelTunnel(t *testing.T) {
-	s := &ServiceImpl{}
-	name, err := s.resolveIfaceName("awgm0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != "awgm0" {
-		t.Errorf("got %q, want awgm0", name)
-	}
-}
-
 func TestIsOS4Kernel(t *testing.T) {
-	s := &ServiceImpl{}
-	if !s.isOS4Kernel("awgm0") {
+	if !isOS4Kernel("awgm0") {
 		t.Error("awgm0 should be OS4 kernel")
 	}
-	if !s.isOS4Kernel("awgm5") {
+	if !isOS4Kernel("awgm5") {
 		t.Error("awgm5 should be OS4 kernel")
 	}
-	if s.isOS4Kernel("awg10") {
+	if isOS4Kernel("awg10") {
 		t.Error("awg10 should NOT be OS4 kernel")
 	}
-	if s.isOS4Kernel("system:Wireguard0") {
+	if isOS4Kernel("system:Wireguard0") {
 		t.Error("system tunnel should NOT be OS4 kernel")
 	}
-	if s.isOS4Kernel("wan:ppp0") {
+	if isOS4Kernel("wan:ppp0") {
 		t.Error("WAN should NOT be OS4 kernel")
-	}
-}
-
-func TestResolveIfaceName_WANNoModel(t *testing.T) {
-	s := &ServiceImpl{}
-	_, err := s.resolveIfaceName("wan:ppp0")
-	if err == nil {
-		t.Error("expected error for WAN without model")
-	}
-}
-
-type mockWANModel struct {
-	ids map[string]string
-}
-
-func (m *mockWANModel) IDFor(kernelName string) string {
-	return m.ids[kernelName]
-}
-
-func TestResolveIfaceName_WAN(t *testing.T) {
-	s := &ServiceImpl{
-		wanModel: &mockWANModel{ids: map[string]string{"ppp0": "PPPoE0"}},
-	}
-	name, err := s.resolveIfaceName("wan:ppp0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != "PPPoE0" {
-		t.Errorf("got %q, want PPPoE0", name)
 	}
 }
 
@@ -196,6 +155,7 @@ func TestOnTunnelDelete_NDMS_RemovesRoutesAndStorage(t *testing.T) {
 	svc := &ServiceImpl{
 		store:       store,
 		ndms:        ndms,
+		catalog:     &mockCatalog{ifaces: map[string]string{"awg10": "OpkgTun10"}},
 		ifaceExists: defaultIfaceExists,
 	}
 
@@ -239,6 +199,7 @@ func TestOnTunnelDelete_OS4Kernel_SkipsRoutesButCleansStorage(t *testing.T) {
 	svc := &ServiceImpl{
 		store:       store,
 		ndms:        ndms,
+		catalog:     &mockCatalog{ifaces: map[string]string{"awgm0": "awgm0"}},
 		ifaceExists: func(string) bool { return false },
 	}
 

@@ -3,6 +3,8 @@ package routing
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
@@ -162,6 +164,73 @@ func (c *CatalogImpl) ListAll(ctx context.Context) []TunnelEntry {
 		return []TunnelEntry{}
 	}
 	return result
+}
+
+// ResolveInterface maps tunnelID to the interface name used in routing commands.
+// Returns NDMS name on OS5, kernel name on OS4.
+func (c *CatalogImpl) ResolveInterface(ctx context.Context, tunnelID string) (string, error) {
+	// WAN: "wan:ppp0" → NDMS ID via WAN model
+	if strings.HasPrefix(tunnelID, "wan:") {
+		kernelName := strings.TrimPrefix(tunnelID, "wan:")
+		wanModel := c.provider.WANModel()
+		if wanModel == nil {
+			return "", fmt.Errorf("WAN model not available")
+		}
+		if ndmsID := wanModel.IDFor(kernelName); ndmsID != "" {
+			return ndmsID, nil
+		}
+		return "", fmt.Errorf("WAN interface %s not found", kernelName)
+	}
+
+	// System: "system:Wireguard0" → "Wireguard0"
+	if tunnel.IsSystemTunnel(tunnelID) {
+		return tunnel.SystemTunnelName(tunnelID), nil
+	}
+
+	// Managed: check NativeWG first
+	if entry, err := c.store.Get(tunnelID); err == nil && entry.Backend == "nativewg" {
+		return nwg.NewNWGNames(entry.NWGIndex).NDMSName, nil
+	}
+
+	// Kernel tunnel
+	names := tunnel.NewNames(tunnelID)
+	if names.NDMSName == "" {
+		return names.IfaceName, nil // OS4: "awgm0"
+	}
+	return names.NDMSName, nil // OS5: "OpkgTun10"
+}
+
+// Exists checks if tunnelID refers to a valid tunnel or interface.
+func (c *CatalogImpl) Exists(ctx context.Context, tunnelID string) bool {
+	if tunnel.IsSystemTunnel(tunnelID) {
+		ndmsName := tunnel.SystemTunnelName(tunnelID)
+		kernelName := c.ndms.GetSystemName(ctx, ndmsName)
+		return kernelName != "" && kernelName != ndmsName
+	}
+	return c.store.Exists(tunnelID)
+}
+
+// GetKernelIface resolves tunnelID to kernel interface name.
+// Returns empty string and false if tunnel is not running.
+func (c *CatalogImpl) GetKernelIface(ctx context.Context, tunnelID string) (string, bool) {
+	if tunnel.IsSystemTunnel(tunnelID) {
+		ndmsName := tunnel.SystemTunnelName(tunnelID)
+		kernelName := c.ndms.GetSystemName(ctx, ndmsName)
+		if kernelName == "" || kernelName == ndmsName {
+			return "", false
+		}
+		return kernelName, true
+	}
+
+	si := c.provider.GetState(ctx, tunnelID)
+	if si.State != tunnel.StateRunning {
+		return "", false
+	}
+
+	if entry, err := c.store.Get(tunnelID); err == nil && entry.Backend == "nativewg" {
+		return nwg.NewNWGNames(entry.NWGIndex).IfaceName, true
+	}
+	return tunnel.NewNames(tunnelID).IfaceName, true
 }
 
 // resolveNDMSName returns the NDMS or kernel interface name for a managed tunnel.
