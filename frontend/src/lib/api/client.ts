@@ -29,6 +29,7 @@ import type {
 	DnsRouteTunnelInfo,
 	SignatureCaptureResult,
 	StaticRouteList,
+	ResolveResult,
 	WireguardServer,
 	WireguardServerConfig,
 	ManagedServer,
@@ -537,6 +538,11 @@ class ApiClient {
 			method: 'POST',
 			body: JSON.stringify({ tunnelID, name, content })
 		});
+	}
+
+	// Routing search
+	async resolveDomain(domain: string): Promise<ResolveResult> {
+		return this.request(`/routing/resolve?domain=${encodeURIComponent(domain)}`);
 	}
 
 	// DNS Routes

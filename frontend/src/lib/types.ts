@@ -450,6 +450,12 @@ export interface StaticRouteList {
 	updatedAt: string;
 }
 
+export interface ResolveResult {
+	domain: string;
+	ips: string[];
+	error?: string;
+}
+
 export interface IPCheckService {
 	label: string;
 	url: string;
