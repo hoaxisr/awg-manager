@@ -56,6 +56,9 @@
 	});
 
 	// Computed
+	let dedupReport = $derived(route?.lastDedupeReport);
+	let hasDedups = $derived(dedupReport && dedupReport.totalRemoved > 0);
+
 	let isEdit = $derived(route !== null);
 	let title = $derived(isEdit ? `Редактирование: ${route?.name ?? ''}` : 'Новый DNS-маршрут');
 
@@ -298,6 +301,35 @@
 			</div>
 		{/if}
 	</div>
+
+	{#if hasDedups && dedupReport}
+		<details class="dedup-details">
+			<summary class="dedup-summary">
+				Убрано {dedupReport.totalRemoved} дублей ({dedupReport.exactDupes} точных, {dedupReport.wildcardDupes} wildcard)
+			</summary>
+			<div class="dedup-list">
+				{#each dedupReport.items ?? [] as item}
+					<div class="dedup-item">
+						<code>{item.domain}</code>
+						<span class="dedup-reason">
+							{#if item.reason === 'exact'}
+								дубль
+							{:else if item.reason === 'wildcard'}
+								покрыт {item.coveredBy}
+							{:else}
+								покрыт подсетью {item.coveredBy}
+							{/if}
+							{#if item.listName}
+								в «{item.listName}»
+							{:else if item.listId}
+								в {item.listId}
+							{/if}
+						</span>
+					</div>
+				{/each}
+			</div>
+		</details>
+	{/if}
 
 	<!-- Summary -->
 	{#if totalDomains > 0}
@@ -555,6 +587,47 @@
 		padding: 0.5rem;
 		border-radius: 6px;
 		border: 1px solid rgba(239, 68, 68, 0.25);
+	}
+
+	.dedup-details {
+		margin-top: 12px;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		overflow: hidden;
+	}
+
+	.dedup-summary {
+		padding: 8px 12px;
+		font-size: 0.75rem;
+		color: var(--warning, #f59e0b);
+		cursor: pointer;
+		background: var(--bg-hover);
+	}
+
+	.dedup-list {
+		max-height: 200px;
+		overflow-y: auto;
+		padding: 8px 12px;
+	}
+
+	.dedup-item {
+		display: flex;
+		justify-content: space-between;
+		gap: 8px;
+		padding: 2px 0;
+		font-size: 0.6875rem;
+	}
+
+	.dedup-item code {
+		font-family: monospace;
+		font-size: 0.625rem;
+		color: var(--text-primary);
+	}
+
+	.dedup-reason {
+		color: var(--text-muted);
+		text-align: right;
+		white-space: nowrap;
 	}
 
 	/* Summary */
