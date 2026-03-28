@@ -414,6 +414,21 @@ func TestExists_NotFound(t *testing.T) {
 	}
 }
 
+func TestExists_WAN(t *testing.T) {
+	wanModel := wan.NewModel()
+	wanModel.Populate([]wan.Interface{
+		{Name: "ppp0", ID: "PPPoE0", Up: true, Priority: 100},
+	})
+	cat := NewCatalog(&mockTunnelProvider{wan: wanModel}, nil, &mockStoreClient{entries: map[string]StoreEntry{}})
+
+	if !cat.Exists(context.Background(), "wan:ppp0") {
+		t.Error("expected Exists=true for WAN interface")
+	}
+	if cat.Exists(context.Background(), "wan:eth99") {
+		t.Error("expected Exists=false for unknown WAN interface")
+	}
+}
+
 // --- GetKernelIface Tests ---
 
 func TestGetKernelIface_Running(t *testing.T) {

@@ -202,6 +202,11 @@ func (c *CatalogImpl) ResolveInterface(ctx context.Context, tunnelID string) (st
 
 // Exists checks if tunnelID refers to a valid tunnel or interface.
 func (c *CatalogImpl) Exists(ctx context.Context, tunnelID string) bool {
+	if strings.HasPrefix(tunnelID, "wan:") {
+		kernelName := strings.TrimPrefix(tunnelID, "wan:")
+		wanModel := c.provider.WANModel()
+		return wanModel != nil && wanModel.IDFor(kernelName) != ""
+	}
 	if tunnel.IsSystemTunnel(tunnelID) {
 		ndmsName := tunnel.SystemTunnelName(tunnelID)
 		kernelName := c.ndms.GetSystemName(ctx, ndmsName)
