@@ -47,7 +47,8 @@
                     ...(route.excludes || [])
                 ];
                 for (const domain of allDomains) {
-                    if (domain.toLowerCase().includes(qLower)) {
+                    const domainLower = domain.toLowerCase();
+                    if (domainLower.includes(qLower) || qLower.endsWith('.' + domainLower)) {
                         matches.push(domain);
                     }
                 }
