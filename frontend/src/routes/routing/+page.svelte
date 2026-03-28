@@ -388,9 +388,12 @@
     async function createPolicy(description: string) {
         policyCreating = true;
         try {
-            await api.createAccessPolicy(description);
+            const created = await api.createAccessPolicy(description);
             policyCreateOpen = false;
             await refreshPolicyData();
+            // Open newly created policy for editing
+            editingPolicy = created.name;
+            editingPolicyData = accessPolicies.find(p => p.name === created.name) ?? created;
             notifications.success('Политика создана');
         } catch (e) {
             notifications.error(`Ошибка: ${(e as Error).message}`);
