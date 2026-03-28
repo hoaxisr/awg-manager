@@ -12,6 +12,11 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
 
+// InterfaceResolver resolves tunnel IDs to NDMS interface names for RCI commands.
+type InterfaceResolver interface {
+	ResolveInterface(ctx context.Context, tunnelID string) (string, error)
+}
+
 // ServiceImpl implements the Service interface.
 // All operations are serialized via opMu to prevent race conditions between
 // concurrent HTTP handlers, background scheduler, and tunnel lifecycle hooks.
@@ -19,17 +24,19 @@ type ServiceImpl struct {
 	opMu     sync.Mutex
 	store    *Store
 	ndms     ndms.Client
+	resolver InterfaceResolver
 	log      *logger.Logger
 	appLog   *logging.ScopedLogger
 }
 
 // NewService creates a new DNS route service.
-func NewService(store *Store, ndmsClient ndms.Client, log *logger.Logger, appLogger logging.AppLogger) *ServiceImpl {
+func NewService(store *Store, ndmsClient ndms.Client, resolver InterfaceResolver, log *logger.Logger, appLogger logging.AppLogger) *ServiceImpl {
 	return &ServiceImpl{
-		store:  store,
-		ndms:   ndmsClient,
-		log:    log,
-		appLog: logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubDnsRoute),
+		store:    store,
+		ndms:     ndmsClient,
+		resolver: resolver,
+		log:      log,
+		appLog:   logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubDnsRoute),
 	}
 }
 
@@ -57,6 +64,11 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 	list.CreatedAt = now
 	list.UpdatedAt = now
 	list.Domains = deduplicateDomains(list.ManualDomains)
+
+	// Resolve tunnel IDs to NDMS interface names for RCI commands.
+	if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
+		return nil, fmt.Errorf("resolve routes: %w", err)
+	}
 
 	data.Lists = append(data.Lists, list)
 
@@ -162,6 +174,11 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 	manual := deduplicateDomains(list.ManualDomains)
 	subDomains := subscriptionDomains(existing.Domains, existing.ManualDomains)
 	list.Domains = deduplicateDomains(append(manual, subDomains...))
+
+	// Resolve tunnel IDs to NDMS interface names for RCI commands.
+	if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
+		return nil, fmt.Errorf("resolve routes: %w", err)
+	}
 
 	data.Lists[idx] = list
 
@@ -391,6 +408,25 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 	return s.reconcile(ctx)
+}
+
+// resolveRouteInterfaces fills RouteTarget.Interface from TunnelID via the resolver.
+// Frontend sends tunnelId; backend resolves it to the NDMS interface name needed by RCI.
+func (s *ServiceImpl) resolveRouteInterfaces(ctx context.Context, routes []RouteTarget) error {
+	if s.resolver == nil {
+		return nil
+	}
+	for i := range routes {
+		if routes[i].TunnelID == "" {
+			continue
+		}
+		iface, err := s.resolver.ResolveInterface(ctx, routes[i].TunnelID)
+		if err != nil {
+			return fmt.Errorf("resolve tunnel %s: %w", routes[i].TunnelID, err)
+		}
+		routes[i].Interface = iface
+	}
+	return nil
 }
 
 // nextListID generates the next sequential list ID (list_1, list_2, ...).

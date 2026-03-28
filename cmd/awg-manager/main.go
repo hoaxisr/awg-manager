@@ -183,19 +183,19 @@ func main() {
 	// boot and normal-restart paths. It needs WAN model populated so that
 	// auto-mode tunnels can resolve ISP interface via NDMS gateway query.
 
-	// DNS route service (OS5 only — routes domains through tunnels via NDMS)
-	dnsRouteStore := dnsroute.NewStore(*dataDir)
-	if _, err := dnsRouteStore.Load(); err != nil {
-		log.Warn("Failed to load dns-routes", map[string]interface{}{"error": err.Error()})
-	}
-	dnsRouteService := dnsroute.NewService(dnsRouteStore, ndmsClient, log, loggingService)
-
 	// Routing catalog — unified tunnel listing for all routing subsystems
 	catalog := routing.NewCatalog(
 		&tunnelProviderAdapter{svc: tunnelService, store: awgStore},
 		ndmsClient,
 		&storeAdapter{store: awgStore},
 	)
+
+	// DNS route service (OS5 only — routes domains through tunnels via NDMS)
+	dnsRouteStore := dnsroute.NewStore(*dataDir)
+	if _, err := dnsRouteStore.Load(); err != nil {
+		log.Warn("Failed to load dns-routes", map[string]interface{}{"error": err.Error()})
+	}
+	dnsRouteService := dnsroute.NewService(dnsRouteStore, ndmsClient, catalog, log, loggingService)
 
 	// Static route service for IP-based routing through tunnels
 	staticRouteStore := storage.NewStaticRouteStore(*dataDir)
@@ -960,7 +960,7 @@ func runCleanup(dataDir string) {
 	// Create auxiliary services
 	dnsStore := dnsroute.NewStore(dataDir)
 	dnsStore.Load()
-	dnsSvc := dnsroute.NewService(dnsStore, ndmsClient, log, nil)
+	dnsSvc := dnsroute.NewService(dnsStore, ndmsClient, nil, log, nil)
 
 	managedSvc := managed.New(ndmsClient, settingsStore, slog.Default(), nil)
 	accessPolicySvc := accesspolicy.New(ndmsClient, settingsStore, log, nil)
