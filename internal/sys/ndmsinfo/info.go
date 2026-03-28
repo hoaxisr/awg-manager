@@ -110,7 +110,7 @@ func SupportsWireguardASC() bool {
 }
 
 // supportsASC checks if the given NDMS release version supports ASC.
-// ASC is supported starting from 5.01.A.4 (alpha 4+), 5.01.B+ (beta+),
+// ASC is supported starting from 5.01.A.3 (alpha 3+), 5.01.B+ (beta+),
 // 5.01.03+ (release), or any 5.02+ / 6.x+.
 func supportsASC(release string) bool {
 	parts := strings.Split(release, ".")
@@ -135,7 +135,7 @@ func supportsASC(release string) bool {
 			return false
 		}
 		alphaNum, _ := strconv.Atoi(parts[3])
-		return alphaNum >= 4
+		return alphaNum >= 3
 	}
 	return true
 }

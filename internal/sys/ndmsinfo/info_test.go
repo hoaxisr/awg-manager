@@ -10,7 +10,7 @@ func TestSupportsASC(t *testing.T) {
 		{"4.02.01.0-0", false},
 		{"5.00.A.1.0-0", false},
 		{"5.01.A.1.0-0", false},
-		{"5.01.A.3.0-0", false},
+		{"5.01.A.3.0-0", true},
 		{"5.01.A.4.0-0", true},
 		{"5.01.A.5.0-0", true},
 		{"5.01.B.1.0-0", true},
