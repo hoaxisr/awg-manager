@@ -403,6 +403,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/static-routes/set-enabled", guarded(staticRouteHandler.SetEnabled))
 	mux.HandleFunc("/api/static-routes/import", guarded(staticRouteHandler.Import))
 
+	// DNS resolve for routing search
+	resolveHandler := api.NewResolveHandler()
+	mux.HandleFunc("/api/routing/resolve", guarded(resolveHandler.Resolve))
+
 	// Settings (protected + boot guarded)
 	mux.HandleFunc("/api/settings/get", guarded(settingsHandler.Get))
 	mux.HandleFunc("/api/settings/update", guarded(settingsHandler.Update))
