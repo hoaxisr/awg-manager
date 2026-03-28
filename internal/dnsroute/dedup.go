@@ -118,3 +118,90 @@ func (idx *DomainIndex) Check(domain string, currentListID string) CheckResult {
 
 	return CheckResult{}
 }
+
+// BuildIndex builds a DomainIndex from all existing lists, optionally excluding one list.
+func BuildIndex(lists []DomainList, excludeListID string) *DomainIndex {
+	idx := NewDomainIndex()
+	for i := range lists {
+		if lists[i].ID == excludeListID {
+			continue
+		}
+		for _, d := range lists[i].Domains {
+			idx.Add(d, lists[i].ID)
+		}
+	}
+	return idx
+}
+
+// listNameMap builds a map of listID → listName from all lists.
+func listNameMap(lists []DomainList) map[string]string {
+	m := make(map[string]string, len(lists))
+	for i := range lists {
+		m[lists[i].ID] = lists[i].Name
+	}
+	return m
+}
+
+// CheckBatch checks a batch of domains against the index and returns
+// the kept domains and a deduplication report.
+func (idx *DomainIndex) CheckBatch(domains []string, currentListID string, listNames map[string]string) ([]string, DedupeReport) {
+	report := DedupeReport{TotalInput: len(domains)}
+	if len(domains) == 0 {
+		return nil, report
+	}
+
+	work := NewDomainIndex()
+	var kept []string
+
+	for _, raw := range domains {
+		d := normalizeDomain(raw)
+		if d == "" {
+			continue
+		}
+
+		// 1. Check against existing index (cross-list).
+		if res := idx.Check(d, currentListID); res.Removed {
+			reason := res.Reason
+			report.TotalRemoved++
+			if reason == "exact" {
+				report.ExactDupes++
+			} else {
+				report.WildcardDupes++
+			}
+			report.Items = append(report.Items, DedupeItem{
+				Domain:    d,
+				Reason:    reason,
+				CoveredBy: res.CoveredBy,
+				ListID:    res.OwnerListID,
+				ListName:  listNames[res.OwnerListID],
+			})
+			continue
+		}
+
+		// 2. Check against working index (internal batch dedup).
+		if res := work.Check(d, currentListID); res.Removed {
+			reason := res.Reason
+			report.TotalRemoved++
+			if reason == "exact" {
+				report.ExactDupes++
+			} else {
+				report.WildcardDupes++
+			}
+			report.Items = append(report.Items, DedupeItem{
+				Domain:    d,
+				Reason:    reason,
+				CoveredBy: res.CoveredBy,
+				ListID:    currentListID,
+				ListName:  listNames[currentListID],
+			})
+			continue
+		}
+
+		// 3. Not a dupe — keep it and add to working index.
+		work.Add(d, currentListID)
+		kept = append(kept, d)
+	}
+
+	report.TotalKept = len(kept)
+	return kept, report
+}
