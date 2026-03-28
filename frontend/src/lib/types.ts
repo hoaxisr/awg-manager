@@ -528,6 +528,24 @@ export interface DnsRoute {
 	enabled: boolean;
 	createdAt: string;
 	updatedAt: string;
+	lastDedupeReport?: DedupeReport;
+}
+
+export interface DedupeItem {
+	domain: string;
+	reason: 'exact' | 'wildcard' | 'subnet_covered';
+	coveredBy: string;
+	listId: string;
+	listName: string;
+}
+
+export interface DedupeReport {
+	totalInput: number;
+	totalKept: number;
+	totalRemoved: number;
+	exactDupes: number;
+	wildcardDupes: number;
+	items?: DedupeItem[];
 }
 
 export interface RoutingTunnel {
