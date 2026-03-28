@@ -9,7 +9,7 @@ func TestDomainIndex_ExactMatch(t *testing.T) {
 	idx := NewDomainIndex()
 	idx.Add("example.com", "list_1")
 
-	res := idx.Check("example.com", "list_2")
+	res := idx.Check("example.com")
 	if !res.Removed {
 		t.Fatal("expected domain to be removed")
 	}
@@ -28,7 +28,7 @@ func TestDomainIndex_WildcardParentCovers(t *testing.T) {
 	idx := NewDomainIndex()
 	idx.Add("example.com", "list_1")
 
-	res := idx.Check("sub.example.com", "list_2")
+	res := idx.Check("sub.example.com")
 	if !res.Removed {
 		t.Fatal("expected subdomain to be removed")
 	}
@@ -44,7 +44,7 @@ func TestDomainIndex_DeepNesting(t *testing.T) {
 	idx := NewDomainIndex()
 	idx.Add("example.com", "list_1")
 
-	res := idx.Check("a.b.c.example.com", "list_2")
+	res := idx.Check("a.b.c.example.com")
 	if !res.Removed {
 		t.Fatal("expected deeply nested subdomain to be removed")
 	}
@@ -57,7 +57,7 @@ func TestDomainIndex_ChildDoesNotCoverParent(t *testing.T) {
 	idx := NewDomainIndex()
 	idx.Add("sub.example.com", "list_1")
 
-	res := idx.Check("example.com", "list_2")
+	res := idx.Check("example.com")
 	if res.Removed {
 		t.Fatal("child should NOT cover parent")
 	}
@@ -67,7 +67,7 @@ func TestDomainIndex_SiblingDoesNotCover(t *testing.T) {
 	idx := NewDomainIndex()
 	idx.Add("a.example.com", "list_1")
 
-	res := idx.Check("b.example.com", "list_2")
+	res := idx.Check("b.example.com")
 	if res.Removed {
 		t.Fatal("sibling should NOT cover sibling")
 	}
@@ -77,7 +77,7 @@ func TestDomainIndex_SameListWildcard(t *testing.T) {
 	idx := NewDomainIndex()
 	idx.Add("example.com", "list_1")
 
-	res := idx.Check("sub.example.com", "list_1")
+	res := idx.Check("sub.example.com")
 	if !res.Removed {
 		t.Fatal("same-list wildcard should remove subdomain")
 	}
@@ -87,7 +87,7 @@ func TestDomainIndex_SameListExact(t *testing.T) {
 	idx := NewDomainIndex()
 	idx.Add("example.com", "list_1")
 
-	res := idx.Check("example.com", "list_1")
+	res := idx.Check("example.com")
 	if !res.Removed {
 		t.Fatal("same-list exact duplicate should be removed")
 	}
@@ -97,7 +97,7 @@ func TestDomainIndex_TLDOnly(t *testing.T) {
 	idx := NewDomainIndex()
 
 	idx.Add("com", "list_1")
-	res := idx.Check("com", "list_1")
+	res := idx.Check("com")
 	if !res.Removed {
 		t.Fatal("exact same-list dupe for TLD should be removed")
 	}
@@ -107,7 +107,7 @@ func TestDomainIndex_TLDCoversAll(t *testing.T) {
 	idx := NewDomainIndex()
 	idx.Add("com", "list_1")
 
-	res := idx.Check("example.com", "list_2")
+	res := idx.Check("example.com")
 	if !res.Removed {
 		t.Fatal("TLD should cover all domains under it")
 	}
@@ -120,7 +120,7 @@ func TestDomainIndex_CaseInsensitive(t *testing.T) {
 	idx := NewDomainIndex()
 	idx.Add("Example.COM", "list_1")
 
-	res := idx.Check("example.com", "list_2")
+	res := idx.Check("example.com")
 	if !res.Removed {
 		t.Fatal("case-insensitive match should work")
 	}
@@ -130,7 +130,7 @@ func TestDomainIndex_TrailingDot(t *testing.T) {
 	idx := NewDomainIndex()
 	idx.Add("example.com", "list_1")
 
-	res := idx.Check("example.com.", "list_2")
+	res := idx.Check("example.com.")
 	if !res.Removed {
 		t.Fatal("trailing dot should be stripped")
 	}
@@ -139,7 +139,7 @@ func TestDomainIndex_TrailingDot(t *testing.T) {
 func TestDomainIndex_EmptyDomain(t *testing.T) {
 	idx := NewDomainIndex()
 
-	res := idx.Check("", "list_1")
+	res := idx.Check("")
 	if res.Removed {
 		t.Fatal("empty domain should not be marked as removed")
 	}
@@ -323,7 +323,7 @@ func TestBuildIndex_RebuildAfterDelete(t *testing.T) {
 	}
 
 	idx := BuildIndex(lists, "")
-	res := idx.Check("example.com", "list_3")
+	res := idx.Check("example.com")
 	if !res.Removed {
 		t.Fatal("example.com should be claimed by list_1")
 	}
@@ -332,12 +332,12 @@ func TestBuildIndex_RebuildAfterDelete(t *testing.T) {
 	lists = lists[1:]
 	idx = BuildIndex(lists, "")
 
-	res = idx.Check("example.com", "list_3")
+	res = idx.Check("example.com")
 	if res.Removed {
 		t.Fatal("after removing list_1, example.com should be available")
 	}
 
-	res = idx.Check("google.com", "list_3")
+	res = idx.Check("google.com")
 	if !res.Removed {
 		t.Fatal("google.com should still be claimed by list_2")
 	}
@@ -351,12 +351,12 @@ func TestBuildIndex_ExcludeList(t *testing.T) {
 
 	idx := BuildIndex(lists, "list_1")
 
-	res := idx.Check("example.com", "list_1")
+	res := idx.Check("example.com")
 	if res.Removed {
 		t.Fatal("excluded list's domains should not be in index")
 	}
 
-	res = idx.Check("google.com", "list_1")
+	res = idx.Check("google.com")
 	if !res.Removed {
 		t.Fatal("list_2 domains should still be in index")
 	}

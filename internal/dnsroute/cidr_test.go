@@ -175,8 +175,12 @@ func TestDedupSubnets_InvalidCIDR(t *testing.T) {
 	if len(kept) != 1 {
 		t.Errorf("expected 1 kept, got %d: %v", len(kept), kept)
 	}
-	if report.TotalRemoved != 1 {
-		t.Errorf("expected 1 removed (invalid), got %d", report.TotalRemoved)
+	// Invalid CIDR is silently skipped — not counted in TotalInput or TotalRemoved.
+	if report.TotalInput != 1 {
+		t.Errorf("expected TotalInput=1 (invalid skipped), got %d", report.TotalInput)
+	}
+	if report.TotalRemoved != 0 {
+		t.Errorf("expected 0 removed, got %d", report.TotalRemoved)
 	}
 }
 

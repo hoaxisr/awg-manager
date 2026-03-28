@@ -79,7 +79,7 @@ func (idx *DomainIndex) Add(domain string, listID string) {
 // A domain is covered if:
 //   - An exact match exists (any list, including same list) -> reason "exact"
 //   - A parent domain exists (any ancestor in the label hierarchy) -> reason "wildcard"
-func (idx *DomainIndex) Check(domain string, currentListID string) CheckResult {
+func (idx *DomainIndex) Check(domain string) CheckResult {
 	domain = normalizeDomain(domain)
 	if domain == "" {
 		return CheckResult{}
@@ -160,7 +160,7 @@ func (idx *DomainIndex) CheckBatch(domains []string, currentListID string, listN
 		}
 
 		// 1. Check against existing index (cross-list).
-		if res := idx.Check(d, currentListID); res.Removed {
+		if res := idx.Check(d); res.Removed {
 			reason := res.Reason
 			report.TotalRemoved++
 			if reason == "exact" {
@@ -179,7 +179,7 @@ func (idx *DomainIndex) CheckBatch(domains []string, currentListID string, listN
 		}
 
 		// 2. Check against working index (internal batch dedup).
-		if res := work.Check(d, currentListID); res.Removed {
+		if res := work.Check(d); res.Removed {
 			reason := res.Reason
 			report.TotalRemoved++
 			if reason == "exact" {
