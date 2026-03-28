@@ -1,18 +1,18 @@
 <script lang="ts">
-	import type { StaticRouteList, DnsRouteTunnelInfo } from '$lib/types';
+	import type { StaticRouteList, RoutingTunnel } from '$lib/types';
 	import { Modal } from '$lib/components/ui';
 
 	interface Props {
 		open: boolean;
 		route: StaticRouteList | null;
-		tunnels: DnsRouteTunnelInfo[];
+		tunnels: RoutingTunnel[];
 		saving: boolean;
 		onsave: (data: { name: string; tunnelID: string; subnets: string[]; fallback: '' | 'reject' }) => void;
 		onclose: () => void;
 	}
 
 	let { open, route, tunnels: rawTunnels, saving, onsave, onclose }: Props = $props();
-	let tunnels = $derived((rawTunnels ?? []).filter(t => !t.wan || t.status === 'up'));
+	let tunnels = $derived((rawTunnels ?? []).filter(t => t.available));
 
 	// Form state
 	let name = $state('');
@@ -63,8 +63,8 @@
 	let tunnelError = $derived(attempted && tunnelID === '');
 	let subnetError = $derived(attempted && parsedSubnets.length === 0);
 
-	let userTunnels = $derived(tunnels.filter(t => !t.system));
-	let systemTunnels = $derived(tunnels.filter(t => t.system));
+	let userTunnels = $derived(tunnels.filter(t => t.type === 'managed'));
+	let systemTunnels = $derived(tunnels.filter(t => t.type === 'system'));
 
 	// OS4 kernel tunnels (awgmX) don't support kill switch — interface destruction
 	// removes routes, so "reject" fallback has no effect.

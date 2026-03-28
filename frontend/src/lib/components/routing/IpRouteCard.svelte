@@ -1,11 +1,11 @@
 <script lang="ts">
-	import type { StaticRouteList, DnsRouteTunnelInfo } from '$lib/types';
+	import type { StaticRouteList, RoutingTunnel } from '$lib/types';
 	import { Toggle } from '$lib/components/ui';
 	import { ServiceIcon } from '$lib/components/dnsroutes';
 
 	interface Props {
 		route: StaticRouteList;
-		tunnels?: DnsRouteTunnelInfo[];
+		tunnels?: RoutingTunnel[];
 		ontoggle: (enabled: boolean) => void;
 		onedit: () => void;
 		ondelete: () => void;

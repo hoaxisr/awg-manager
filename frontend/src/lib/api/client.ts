@@ -26,7 +26,7 @@ import type {
 	DiagEvent,
 	DiagMode,
 	DnsRoute,
-	DnsRouteTunnelInfo,
+	RoutingTunnel,
 	SignatureCaptureResult,
 	StaticRouteList,
 	ResolveResult,
@@ -588,8 +588,8 @@ class ApiClient {
 		return this.request(endpoint, { method: 'POST' });
 	}
 
-	async getDnsRouteTunnels(): Promise<DnsRouteTunnelInfo[]> {
-		return this.request('/dns-routes/tunnels');
+	async getRoutingTunnels(): Promise<RoutingTunnel[]> {
+		return this.request('/routing/tunnels');
 	}
 
 	// Diagnostics
