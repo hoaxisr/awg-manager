@@ -44,13 +44,7 @@
 					name = '';
 					manualDomains = [];
 					subscriptions = [];
-					// Auto-add the first available tunnel for new routes
-					if (tunnels.length > 0) {
-						const t = tunnels[0];
-						routes = [{ interface: t.id, tunnelId: t.id, fallback: '' as const }];
-					} else {
-						routes = [];
-					}
+					routes = [];
 				}
 				newSubUrl = '';
 				newRouteTunnelId = '';
