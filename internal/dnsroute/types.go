@@ -18,7 +18,8 @@ type DomainList struct {
 	Routes        []RouteTarget  `json:"routes"`
 	Enabled       bool           `json:"enabled"`
 	CreatedAt     string         `json:"createdAt"`
-	UpdatedAt     string         `json:"updatedAt"`
+	UpdatedAt        string         `json:"updatedAt"`
+	LastDedupeReport *DedupeReport  `json:"lastDedupeReport,omitempty"`
 }
 
 // Subscription represents a remote domain list URL that is periodically fetched.
@@ -35,6 +36,25 @@ type RouteTarget struct {
 	Interface string `json:"interface"`
 	TunnelID  string `json:"tunnelId"`
 	Fallback  string `json:"fallback,omitempty"`
+}
+
+// DedupeReport contains information about domains removed during deduplication.
+type DedupeReport struct {
+	TotalInput    int          `json:"totalInput"`
+	TotalKept     int          `json:"totalKept"`
+	TotalRemoved  int          `json:"totalRemoved"`
+	ExactDupes    int          `json:"exactDupes"`
+	WildcardDupes int          `json:"wildcardDupes"`
+	Items         []DedupeItem `json:"items,omitempty"`
+}
+
+// DedupeItem describes a single domain or subnet removed during deduplication.
+type DedupeItem struct {
+	Domain    string `json:"domain"`
+	Reason    string `json:"reason"`    // "exact", "wildcard", "subnet_covered"
+	CoveredBy string `json:"coveredBy"`
+	ListID    string `json:"listId"`
+	ListName  string `json:"listName"`
 }
 
 // StoreData is the top-level dns-routes.json structure.
