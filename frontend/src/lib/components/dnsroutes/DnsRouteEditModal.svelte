@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { DnsRoute, DnsRouteTarget, DnsRouteSubscription, DnsRouteTunnelInfo } from '$lib/types';
+	import type { DnsRoute, DnsRouteTarget, DnsRouteSubscription, RoutingTunnel } from '$lib/types';
 	import { Modal } from '$lib/components/ui';
 	import { formatRelativeTime } from '$lib/utils/format';
 	import DnsRouteDomainEditor from './DnsRouteDomainEditor.svelte';
@@ -7,23 +7,14 @@
 	interface Props {
 		open: boolean;
 		route: DnsRoute | null;
-		tunnels: DnsRouteTunnelInfo[];
+		tunnels: RoutingTunnel[];
 		saving: boolean;
 		onsave: (data: Partial<DnsRoute>) => void;
 		onclose: () => void;
 	}
 
 	let { open, route, tunnels: rawTunnels, saving, onsave, onclose }: Props = $props();
-	// Deduplicate by ndmsName: system interfaces come before WAN in the array,
-	// so if Proxy0 appears as both system and WAN, the system entry wins.
-	let tunnels = $derived.by(() => {
-		const seen = new Set<string>();
-		return (rawTunnels ?? []).filter((t) => {
-			if (seen.has(t.ndmsName)) return false;
-			seen.add(t.ndmsName);
-			return true;
-		});
-	});
+	let tunnels = $derived((rawTunnels ?? []).filter(t => t.available || t.type === 'wan'));
 
 	// Form state
 	let name = $state('');
@@ -56,7 +47,7 @@
 					// Auto-add the first available tunnel for new routes
 					if (tunnels.length > 0) {
 						const t = tunnels[0];
-						routes = [{ interface: t.ndmsName, tunnelId: t.id, fallback: '' as const }];
+						routes = [{ interface: t.id, tunnelId: t.id, fallback: '' as const }];
 					} else {
 						routes = [];
 					}
@@ -102,8 +93,7 @@
 	}
 
 	let availableTunnels = $derived(tunnels.filter((t) =>
-		!routes.some((r) => r.tunnelId === t.id) &&
-		(!t.wan || t.status === 'up')
+		!routes.some((r) => r.tunnelId === t.id) && t.available
 	));
 	let newRouteTunnelId = $state('');
 
@@ -115,7 +105,7 @@
 		// Move fallback from old last route to the new one
 		const fallback = currentFallback;
 		const cleared = routes.map((r) => ({ ...r, fallback: '' as const }));
-		routes = [...cleared, { interface: tunnel.ndmsName, tunnelId: tunnel.id, fallback }];
+		routes = [...cleared, { interface: tunnel.id, tunnelId: tunnel.id, fallback }];
 		newRouteTunnelId = '';
 	}
 
@@ -146,7 +136,7 @@
 	function tunnelName(tunnelId: string): string {
 		const t = tunnels.find((t) => t.id === tunnelId);
 		if (!t) return tunnelId;
-		return t.name + (t.system ? ' (системный)' : '');
+		return t.name + (t.type === 'system' ? ' (системный)' : '');
 	}
 
 	function handleFallbackChange(value: string) {
@@ -278,7 +268,7 @@
 					onchange={(e) => { newRouteTunnelId = (e.target as HTMLSelectElement).value; }}
 				>
 					{#each availableTunnels as tunnel}
-						<option value={tunnel.id}>{tunnel.name}{tunnel.system ? ' (системный)' : ''}</option>
+						<option value={tunnel.id}>{tunnel.name}{tunnel.type === 'system' ? ' (системный)' : ''}</option>
 					{/each}
 				</select>
 				<button class="btn btn-sm btn-primary" onclick={addRoute}>+ Добавить</button>

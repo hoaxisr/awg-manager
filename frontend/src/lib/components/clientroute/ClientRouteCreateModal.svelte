@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { Modal } from '$lib/components/ui';
-	import type { ClientRoute, PolicyDevice } from '$lib/types';
+	import type { ClientRoute, PolicyDevice, RoutingTunnel } from '$lib/types';
 
 	interface Props {
 		open: boolean;
 		editing: ClientRoute | null;
 		devices: PolicyDevice[];
-		tunnels: { id: string; name: string }[];
+		tunnels: RoutingTunnel[];
 		existingIPs: string[];
 		saving: boolean;
 		onsave: (data: Partial<ClientRoute>) => void;
@@ -23,6 +23,8 @@
 		onsave,
 		onclose
 	}: Props = $props();
+
+	let availableTunnels = $derived(tunnels.filter(t => t.type !== 'wan' && t.available));
 
 	let selectedDevice = $state<{ ip: string; name: string } | null>(null);
 	let searchText = $state('');
@@ -53,7 +55,7 @@
 				selectedFallback = editing.fallback;
 			} else {
 				selectedDevice = null;
-				selectedTunnel = tunnels[0]?.id ?? '';
+				selectedTunnel = availableTunnels[0]?.id ?? '';
 				selectedFallback = 'drop';
 			}
 			searchText = '';
@@ -125,7 +127,7 @@
 		<div class="section">
 			<label class="section-label" for="tunnel-select">Туннель</label>
 			<select id="tunnel-select" class="field-select" bind:value={selectedTunnel}>
-				{#each tunnels as tunnel (tunnel.id)}
+				{#each availableTunnels as tunnel (tunnel.id)}
 					<option value={tunnel.id}>{tunnel.name}</option>
 				{/each}
 			</select>

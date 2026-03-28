@@ -530,13 +530,12 @@ export interface DnsRoute {
 	updatedAt: string;
 }
 
-export interface DnsRouteTunnelInfo {
+export interface RoutingTunnel {
 	id: string;
 	name: string;
-	ndmsName: string;
+	type: 'managed' | 'system' | 'wan';
 	status: string;
-	system?: boolean;
-	wan?: boolean;
+	available: boolean;
 }
 
 // Managed WireGuard Server

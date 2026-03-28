@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
     import { api } from '$lib/api/client';
-    import type { DnsRoute, DnsRouteTunnelInfo, StaticRouteList, AccessPolicy, PolicyDevice, PolicyGlobalInterface, ClientRoute } from '$lib/types';
+    import type { DnsRoute, RoutingTunnel, StaticRouteList, AccessPolicy, PolicyDevice, PolicyGlobalInterface, ClientRoute } from '$lib/types';
     import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
     import { Modal, OverflowTabs } from '$lib/components/ui';
     import { IpRouteCard, IpRouteEditModal, IpRouteImportModal, RoutingSearch } from '$lib/components/routing';
@@ -19,7 +19,7 @@
 
     // DNS state
     let dnsRoutes = $state<DnsRoute[]>([]);
-    let dnsRouteTunnels = $state<DnsRouteTunnelInfo[]>([]);
+    let routingTunnels = $state<RoutingTunnel[]>([]);
     let editingDnsRoute = $state<DnsRoute | null>(null);
     let dnsExportMode = $state(false);
     let dnsExportSelected = $state<Set<string>>(new Set());
@@ -46,11 +46,9 @@
     let clientRouteToggling = $state<string | null>(null);
     let clientRouteModalOpen = $state(false);
     let editingClientRoute = $state<ClientRoute | null>(null);
-    let clientTunnels = $state<{id: string; name: string}[]>([]);
 
     // IP state
     let ipRoutes = $state<StaticRouteList[]>([]);
-    let ipRouteTunnels = $state<DnsRouteTunnelInfo[]>([]);
     let editingIpRoute = $state<StaticRouteList | null>(null);
     let ipExportMode = $state(false);
     let ipExportSelected = $state<Set<string>>(new Set());
@@ -81,12 +79,12 @@
 
     async function refreshData(options?: { refresh?: boolean }) {
         const refresh = options?.refresh;
-        // getDnsRouteTunnels works on both OS4 and OS5 (backend uses RCI which exists on both).
+        // getRoutingTunnels works on both OS4 and OS5 (backend uses RCI which exists on both).
         // Loaded unconditionally because IP routes and client routes need tunnel list on all OS versions.
         const [ipRes, dnsRes, tunnelRes, policiesRes, devicesRes, ifacesRes, clientRoutesRes] = await Promise.allSettled([
             api.listStaticRoutes(),
             isOS5 ? api.listDnsRoutes() : Promise.resolve(null),
-            api.getDnsRouteTunnels(),
+            api.getRoutingTunnels(),
             isOS5 ? api.listAccessPolicies({ refresh }) : Promise.resolve(null),
             api.listPolicyDevices({ refresh }),
             isOS5 ? api.listPolicyInterfaces() : Promise.resolve(null),
@@ -97,10 +95,7 @@
         const dns = settled(dnsRes);
         if (dns) dnsRoutes = dns;
         const tunnels = settled(tunnelRes);
-        if (tunnels) {
-            if (isOS5) dnsRouteTunnels = tunnels;
-            ipRouteTunnels = tunnels;
-        }
+        if (tunnels) routingTunnels = tunnels;
         const policies = settled(policiesRes);
         if (policies) {
             accessPolicies = policies;
@@ -114,8 +109,6 @@
         if (ifaces) policyInterfaces = ifaces;
         const cr = settled(clientRoutesRes);
         if (cr) clientRoutes = cr;
-        // clientTunnels: managed + system (no WAN) — from getDnsRouteTunnels
-        if (tunnels) clientTunnels = tunnels.filter(t => !t.wan).map(t => ({ id: t.id, name: t.name }));
     }
 
     async function handleManualRefresh() {
@@ -139,13 +132,13 @@
             isOS5 = sysInfo.isOS5;
 
             // Common promises (both OS4 and OS5)
-            // getDnsRouteTunnels works on both OS — backend uses RCI available on all versions.
+            // getRoutingTunnels works on both OS — backend uses RCI available on all versions.
             // Needed for IP route and client route tunnel dropdowns on OS4.
             const commonPromises: Promise<any>[] = [
                 api.listStaticRoutes(),        // 0
                 api.listClientRoutes(),        // 1
                 api.listPolicyDevices(),       // 2
-                api.getDnsRouteTunnels(),      // 3
+                api.getRoutingTunnels(),       // 3
             ];
             // OS5-only promises
             const os5Promises: Promise<any>[] = isOS5
@@ -164,12 +157,11 @@
 
             const devices = settled(results[2]);
             if (devices) policyDevices = devices;
+            else errors.push('устройства');
 
             const tunnels = settled(results[3]);
             if (tunnels) {
-                if (isOS5) dnsRouteTunnels = tunnels;
-                ipRouteTunnels = tunnels;
-                clientTunnels = tunnels.filter((t: any) => !t.wan).map((t: any) => ({ id: t.id, name: t.name }));
+                routingTunnels = tunnels;
             } else {
                 errors.push('туннели');
             }
@@ -599,7 +591,7 @@
                     {#each dnsRoutes as route (route.id)}
                         <DnsRouteCard
                             {route}
-                            tunnels={dnsRouteTunnels}
+                            tunnels={routingTunnels}
                             ontoggle={(enabled) => toggleDnsRoute(route.id, enabled)}
                             onedit={() => { editingDnsRoute = route; dnsModalOpen = true; }}
                             ondelete={() => dnsDeleteId = route.id}
@@ -616,7 +608,7 @@
             <DnsRouteEditModal
                 open={dnsModalOpen}
                 route={editingDnsRoute}
-                tunnels={dnsRouteTunnels}
+                tunnels={routingTunnels}
                 saving={dnsSaving}
                 onsave={editingDnsRoute ? updateDnsRoute : createDnsRoute}
                 onclose={() => { dnsModalOpen = false; editingDnsRoute = null; }}
@@ -666,7 +658,7 @@
                     {#each ipRoutes as route (route.id)}
                         <IpRouteCard
                             {route}
-                            tunnels={ipRouteTunnels}
+                            tunnels={routingTunnels}
                             ontoggle={(enabled) => toggleIpRoute(route.id, enabled)}
                             onedit={() => { editingIpRoute = route; ipCreateOpen = true; }}
                             ondelete={() => ipDeleteId = route.id}
@@ -682,7 +674,7 @@
             <IpRouteEditModal
                 open={ipCreateOpen}
                 route={editingIpRoute}
-                tunnels={ipRouteTunnels}
+                tunnels={routingTunnels}
                 saving={ipSaving}
                 onsave={saveIpRoute}
                 onclose={() => { ipCreateOpen = false; editingIpRoute = null; }}
@@ -772,7 +764,7 @@
                     {#each clientRoutes as route (route.id)}
                         <ClientRouteCard
                             {route}
-                            tunnelName={clientTunnels.find(t => t.id === route.tunnelId)?.name ?? route.tunnelId}
+                            tunnelName={routingTunnels.find(t => t.id === route.tunnelId)?.name ?? route.tunnelId}
                             ontoggle={(enabled) => toggleClientRoute(route.id, enabled)}
                             onedit={() => { editingClientRoute = route; clientRouteModalOpen = true; }}
                             ondelete={() => clientRouteDeleteId = route.id}
@@ -786,7 +778,7 @@
                 open={clientRouteModalOpen}
                 editing={editingClientRoute}
                 devices={policyDevices}
-                tunnels={clientTunnels}
+                tunnels={routingTunnels}
                 existingIPs={clientRoutes.map(r => r.clientIp)}
                 saving={clientRouteSaving}
                 onsave={editingClientRoute ? updateClientRoute : createClientRoute}
