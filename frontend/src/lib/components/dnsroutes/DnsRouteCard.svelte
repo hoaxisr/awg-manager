@@ -34,6 +34,9 @@
 	let subCount = $derived(route.subscriptions?.length ?? 0);
 	let manualCount = $derived(route.manualDomains?.length ?? 0);
 
+	let dedupReport = $derived(route.lastDedupeReport);
+	let hasDedups = $derived(dedupReport && dedupReport.totalRemoved > 0);
+
 	let sourceSummary = $derived.by(() => {
 		if (subCount > 0 && manualCount > 0) return `${subCount} листов + ${manualCount} вручную`;
 		if (subCount > 0) return `${subCount} листов`;
@@ -86,6 +89,13 @@
 			{/if}
 			{#if sourceSummary}
 				<span class="card-source">{sourceSummary}</span>
+			{/if}
+			{#if hasDedups}
+				<span class="card-dedup" title={dedupReport?.items?.map(
+					i => `${i.domain} — ${i.reason === 'exact' ? 'дубль' : 'покрыт'} ${i.coveredBy} (${i.listName || i.listId})`
+				).join('\n') ?? ''}>
+					{dedupReport?.totalRemoved} убрано
+				</span>
 			{/if}
 			{#if routeTarget}
 				<div class="card-route">
@@ -237,6 +247,12 @@
 
 	.led-gray {
 		background: var(--text-muted);
+	}
+
+	.card-dedup {
+		font-size: 0.625rem;
+		color: var(--warning, #f59e0b);
+		cursor: help;
 	}
 
 	.select-check {
