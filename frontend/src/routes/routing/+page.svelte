@@ -204,11 +204,18 @@
     async function createDnsRoute(data: Partial<DnsRoute>) {
         dnsSaving = true;
         try {
-            await api.createDnsRoute(data);
+            const created = await api.createDnsRoute(data);
             dnsRoutes = await api.listDnsRoutes();
             dnsModalOpen = false;
             editingDnsRoute = null;
-            notifications.success('DNS-маршрут создан');
+            if (created.lastDedupeReport && created.lastDedupeReport.totalRemoved > 0) {
+                const r = created.lastDedupeReport;
+                notifications.warning(
+                    `DNS-маршрут создан. Убрано ${r.totalRemoved} дублей (${r.exactDupes} точных, ${r.wildcardDupes} wildcard).`
+                );
+            } else {
+                notifications.success('DNS-маршрут создан');
+            }
         } catch (e: any) {
             notifications.error(e.message || 'Ошибка создания');
         } finally {
@@ -220,11 +227,18 @@
         if (!editingDnsRoute) return;
         dnsSaving = true;
         try {
-            await api.updateDnsRoute(editingDnsRoute.id, data);
+            const updated = await api.updateDnsRoute(editingDnsRoute.id, data);
             dnsRoutes = await api.listDnsRoutes();
             dnsModalOpen = false;
             editingDnsRoute = null;
-            notifications.success('DNS-маршрут обновлён');
+            if (updated.lastDedupeReport && updated.lastDedupeReport.totalRemoved > 0) {
+                const r = updated.lastDedupeReport;
+                notifications.warning(
+                    `DNS-маршрут обновлён. Убрано ${r.totalRemoved} дублей (${r.exactDupes} точных, ${r.wildcardDupes} wildcard).`
+                );
+            } else {
+                notifications.success('DNS-маршрут обновлён');
+            }
         } catch (e: any) {
             notifications.error(e.message || 'Ошибка сохранения');
         } finally {
@@ -261,7 +275,15 @@
         try {
             await api.refreshDnsRouteSubscriptions(id);
             dnsRoutes = await api.listDnsRoutes();
-            notifications.success('Подписки обновлены');
+            const refreshed = dnsRoutes.find(r => r.id === id);
+            if (refreshed?.lastDedupeReport && refreshed.lastDedupeReport.totalRemoved > 0) {
+                const r = refreshed.lastDedupeReport;
+                notifications.warning(
+                    `Подписки обновлены. Убрано ${r.totalRemoved} дублей (${r.exactDupes} точных, ${r.wildcardDupes} wildcard).`
+                );
+            } else {
+                notifications.success('Подписки обновлены');
+            }
         } catch (e: any) {
             notifications.error(e.message || 'Ошибка обновления');
         }
