@@ -24,6 +24,16 @@ type Service interface {
 	CleanupAll(ctx context.Context) error
 }
 
+// TunnelCatalog is the subset of routing.Catalog used by client routes.
+// Defined locally to avoid import cycles (storage → clientroute → routing → nwg → storage).
+type TunnelCatalog interface {
+	// Exists checks if tunnelID refers to a valid tunnel or interface.
+	Exists(ctx context.Context, tunnelID string) bool
+	// GetKernelIface resolves tunnelID to kernel interface name.
+	// Returns empty string and false if tunnel is not running.
+	GetKernelIface(ctx context.Context, tunnelID string) (ifaceName string, running bool)
+}
+
 // Operator is the narrow interface for OS-level routing operations.
 type Operator interface {
 	SetupClientRouteTable(ctx context.Context, kernelIface string, tableNum int) error
@@ -50,9 +60,3 @@ type Store interface {
 	DeleteFile() error
 }
 
-// GetKernelIfaceFunc returns the kernel interface name for a running tunnel.
-// Returns ("", false) if the tunnel is not running.
-type GetKernelIfaceFunc func(ctx context.Context, tunnelID string) (string, bool)
-
-// TunnelExistsFunc checks whether a tunnel exists in storage.
-type TunnelExistsFunc func(tunnelID string) bool

@@ -34,9 +34,6 @@ func (m *mockRefreshService) RefreshAllSubscriptions(ctx context.Context) error 
 	return nil
 }
 func (m *mockRefreshService) Reconcile(ctx context.Context) error { return nil }
-func (m *mockRefreshService) GetAvailableTunnels(ctx context.Context) ([]TunnelInfo, error) {
-	return nil, nil
-}
 
 func (m *mockRefreshService) count() int {
 	return int(atomic.LoadInt32(&m.refreshCount))

@@ -263,6 +263,251 @@ func TestListAll_SystemNoDescription(t *testing.T) {
 	}
 }
 
+// --- ResolveInterface Tests ---
+
+func TestResolveInterface_ManagedKernel(t *testing.T) {
+	// OS4 kernel tunnel: "awgm0" → NewNames returns NDMSName="" so IfaceName "awgm0"
+	store := &mockStoreClient{entries: map[string]StoreEntry{
+		"awgm0": {Backend: "kernel"},
+	}}
+	cat := NewCatalog(&mockTunnelProvider{}, nil, store)
+
+	iface, err := cat.ResolveInterface(context.Background(), "awgm0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if iface != "awgm0" {
+		t.Errorf("expected 'awgm0', got %q", iface)
+	}
+}
+
+func TestResolveInterface_ManagedOS5(t *testing.T) {
+	// OS5 kernel tunnel: "awg10" → NewNames returns NDMSName "OpkgTun10"
+	store := &mockStoreClient{entries: map[string]StoreEntry{
+		"awg10": {Backend: "kernel"},
+	}}
+	cat := NewCatalog(&mockTunnelProvider{}, nil, store)
+
+	iface, err := cat.ResolveInterface(context.Background(), "awg10")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if iface != "OpkgTun10" {
+		t.Errorf("expected 'OpkgTun10', got %q", iface)
+	}
+}
+
+func TestResolveInterface_NativeWG(t *testing.T) {
+	store := &mockStoreClient{entries: map[string]StoreEntry{
+		"awg10": {Backend: "nativewg", NWGIndex: 2},
+	}}
+	cat := NewCatalog(&mockTunnelProvider{}, nil, store)
+
+	iface, err := cat.ResolveInterface(context.Background(), "awg10")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if iface != "Wireguard2" {
+		t.Errorf("expected 'Wireguard2', got %q", iface)
+	}
+}
+
+func TestResolveInterface_SystemTunnel(t *testing.T) {
+	cat := NewCatalog(&mockTunnelProvider{}, nil, &mockStoreClient{entries: map[string]StoreEntry{}})
+
+	iface, err := cat.ResolveInterface(context.Background(), "system:Wireguard0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if iface != "Wireguard0" {
+		t.Errorf("expected 'Wireguard0', got %q", iface)
+	}
+}
+
+func TestResolveInterface_WAN(t *testing.T) {
+	wanModel := wan.NewModel()
+	wanModel.Populate([]wan.Interface{
+		{Name: "ppp0", ID: "PPPoE0", Label: "My ISP", Up: true, Priority: 100},
+	})
+
+	provider := &mockTunnelProvider{wan: wanModel}
+	cat := NewCatalog(provider, nil, nil)
+
+	iface, err := cat.ResolveInterface(context.Background(), "wan:ppp0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if iface != "PPPoE0" {
+		t.Errorf("expected 'PPPoE0', got %q", iface)
+	}
+}
+
+func TestResolveInterface_WANNotFound(t *testing.T) {
+	wanModel := wan.NewModel()
+	wanModel.Populate([]wan.Interface{})
+
+	provider := &mockTunnelProvider{wan: wanModel}
+	cat := NewCatalog(provider, nil, nil)
+
+	_, err := cat.ResolveInterface(context.Background(), "wan:ppp0")
+	if err == nil {
+		t.Fatal("expected error for unknown WAN interface")
+	}
+}
+
+func TestResolveInterface_WANNoModel(t *testing.T) {
+	provider := &mockTunnelProvider{wan: nil}
+	cat := NewCatalog(provider, nil, nil)
+
+	_, err := cat.ResolveInterface(context.Background(), "wan:ppp0")
+	if err == nil {
+		t.Fatal("expected error when WAN model is nil")
+	}
+}
+
+// --- Exists Tests ---
+
+func TestExists_Managed(t *testing.T) {
+	store := &mockStoreClient{entries: map[string]StoreEntry{
+		"awg10": {Backend: "kernel"},
+	}}
+	cat := NewCatalog(&mockTunnelProvider{}, nil, store)
+
+	if !cat.Exists(context.Background(), "awg10") {
+		t.Error("expected Exists=true for managed tunnel")
+	}
+}
+
+func TestExists_System(t *testing.T) {
+	ndmsClient := &mockNDMSClient{
+		sysNames: map[string]string{
+			"Wireguard0": "nwg0", // kernel name differs from NDMS name → exists
+		},
+	}
+	store := &mockStoreClient{entries: map[string]StoreEntry{}}
+	cat := NewCatalog(&mockTunnelProvider{}, ndmsClient, store)
+
+	if !cat.Exists(context.Background(), "system:Wireguard0") {
+		t.Error("expected Exists=true for system tunnel with kernel iface")
+	}
+}
+
+func TestExists_SystemNotFound(t *testing.T) {
+	// GetSystemName returns same as input → interface not found in NDMS
+	ndmsClient := &mockNDMSClient{
+		sysNames: map[string]string{}, // will return ndmsName itself (default mock behavior)
+	}
+	store := &mockStoreClient{entries: map[string]StoreEntry{}}
+	cat := NewCatalog(&mockTunnelProvider{}, ndmsClient, store)
+
+	if cat.Exists(context.Background(), "system:Wireguard99") {
+		t.Error("expected Exists=false for unknown system tunnel")
+	}
+}
+
+func TestExists_NotFound(t *testing.T) {
+	store := &mockStoreClient{entries: map[string]StoreEntry{}}
+	cat := NewCatalog(&mockTunnelProvider{}, nil, store)
+
+	if cat.Exists(context.Background(), "awg99") {
+		t.Error("expected Exists=false for non-existent tunnel")
+	}
+}
+
+// --- GetKernelIface Tests ---
+
+func TestGetKernelIface_Running(t *testing.T) {
+	provider := &mockTunnelProvider{
+		states: map[string]tunnel.StateInfo{
+			"awg10": {State: tunnel.StateRunning},
+		},
+	}
+	store := &mockStoreClient{entries: map[string]StoreEntry{
+		"awg10": {Backend: "kernel"},
+	}}
+	cat := NewCatalog(provider, nil, store)
+
+	iface, running := cat.GetKernelIface(context.Background(), "awg10")
+	if !running {
+		t.Fatal("expected running=true")
+	}
+	if iface != "opkgtun10" {
+		t.Errorf("expected 'opkgtun10', got %q", iface)
+	}
+}
+
+func TestGetKernelIface_Stopped(t *testing.T) {
+	provider := &mockTunnelProvider{
+		states: map[string]tunnel.StateInfo{
+			"awg10": {State: tunnel.StateStopped},
+		},
+	}
+	store := &mockStoreClient{entries: map[string]StoreEntry{
+		"awg10": {Backend: "kernel"},
+	}}
+	cat := NewCatalog(provider, nil, store)
+
+	iface, running := cat.GetKernelIface(context.Background(), "awg10")
+	if running {
+		t.Fatal("expected running=false")
+	}
+	if iface != "" {
+		t.Errorf("expected empty string, got %q", iface)
+	}
+}
+
+func TestGetKernelIface_NativeWG(t *testing.T) {
+	provider := &mockTunnelProvider{
+		states: map[string]tunnel.StateInfo{
+			"awg10": {State: tunnel.StateRunning},
+		},
+	}
+	store := &mockStoreClient{entries: map[string]StoreEntry{
+		"awg10": {Backend: "nativewg", NWGIndex: 3},
+	}}
+	cat := NewCatalog(provider, nil, store)
+
+	iface, running := cat.GetKernelIface(context.Background(), "awg10")
+	if !running {
+		t.Fatal("expected running=true")
+	}
+	if iface != "nwg3" {
+		t.Errorf("expected 'nwg3', got %q", iface)
+	}
+}
+
+func TestGetKernelIface_System(t *testing.T) {
+	ndmsClient := &mockNDMSClient{
+		sysNames: map[string]string{
+			"Wireguard0": "nwg0",
+		},
+	}
+	cat := NewCatalog(&mockTunnelProvider{}, ndmsClient, &mockStoreClient{entries: map[string]StoreEntry{}})
+
+	iface, running := cat.GetKernelIface(context.Background(), "system:Wireguard0")
+	if !running {
+		t.Fatal("expected running=true for system tunnel with kernel name")
+	}
+	if iface != "nwg0" {
+		t.Errorf("expected 'nwg0', got %q", iface)
+	}
+}
+
+func TestGetKernelIface_SystemNotFound(t *testing.T) {
+	ndmsClient := &mockNDMSClient{
+		sysNames: map[string]string{}, // returns input as-is
+	}
+	cat := NewCatalog(&mockTunnelProvider{}, ndmsClient, &mockStoreClient{entries: map[string]StoreEntry{}})
+
+	iface, running := cat.GetKernelIface(context.Background(), "system:Wireguard99")
+	if running {
+		t.Fatal("expected running=false for unknown system tunnel")
+	}
+	if iface != "" {
+		t.Errorf("expected empty string, got %q", iface)
+	}
+}
+
 func TestListAll_ProviderError(t *testing.T) {
 	// When provider returns error, should still list system and WAN interfaces.
 	provider := &mockTunnelProvider{

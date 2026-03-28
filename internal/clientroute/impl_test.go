@@ -7,6 +7,27 @@ import (
 	"testing"
 )
 
+// --- Mock Catalog ---
+
+type mockCatalog struct {
+	kernelIfaces map[string]string // tunnelID → kernel iface name (present = running)
+	tunnels      map[string]bool   // tunnelID → exists
+}
+
+func (m *mockCatalog) Exists(_ context.Context, tunnelID string) bool {
+	if m == nil || m.tunnels == nil {
+		return false
+	}
+	return m.tunnels[tunnelID]
+}
+func (m *mockCatalog) GetKernelIface(_ context.Context, tunnelID string) (string, bool) {
+	if m == nil || m.kernelIfaces == nil {
+		return "", false
+	}
+	iface, ok := m.kernelIfaces[tunnelID]
+	return iface, ok
+}
+
 // --- Mock Operator ---
 
 type mockOperator struct {
@@ -177,14 +198,11 @@ func (m *mockStore) DeleteFile() error {
 // --- Helpers ---
 
 func newTestService(store *mockStore, op *mockOperator, kernelIfaces map[string]string, tunnels map[string]bool) *ServiceImpl {
-	getKernel := func(_ context.Context, tunnelID string) (string, bool) {
-		iface, ok := kernelIfaces[tunnelID]
-		return iface, ok
+	catalog := &mockCatalog{
+		kernelIfaces: kernelIfaces,
+		tunnels:      tunnels,
 	}
-	tunnelExists := func(tunnelID string) bool {
-		return tunnels[tunnelID]
-	}
-	return New(store, op, getKernel, tunnelExists, nil)
+	return New(store, op, catalog, nil)
 }
 
 // --- Tests ---

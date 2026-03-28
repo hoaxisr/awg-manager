@@ -13,5 +13,4 @@ type Service interface {
 	RefreshSubscriptions(ctx context.Context, id string) error
 	RefreshAllSubscriptions(ctx context.Context) error
 	Reconcile(ctx context.Context) error
-	GetAvailableTunnels(ctx context.Context) ([]TunnelInfo, error)
 }
