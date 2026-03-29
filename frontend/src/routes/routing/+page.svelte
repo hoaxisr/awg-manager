@@ -336,24 +336,29 @@
 
     async function handlePresetCreate(presets: ServicePreset[], tunnelId: string) {
         let count = 0;
-        for (const preset of presets) {
-            try {
-                await api.createDnsRoute({
-                    name: preset.name,
-                    manualDomains: preset.manualDomains ?? [],
-                    subscriptions: preset.subscriptions.map(s => ({ url: s.url, name: s.name })),
-                    enabled: true,
-                    routes: [{ tunnelId, interface: tunnelId, fallback: '' as const }],
-                });
-                count++;
-            } catch (e) {
-                notifications.error(`Ошибка создания "${preset.name}": ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+        try {
+            for (const preset of presets) {
+                try {
+                    await api.createDnsRoute({
+                        name: preset.name,
+                        manualDomains: preset.manualDomains ?? [],
+                        subscriptions: preset.subscriptions.map(s => ({ url: s.url, name: s.name })),
+                        enabled: true,
+                        routes: [{ tunnelId, interface: tunnelId, fallback: '' as const }],
+                    });
+                    count++;
+                } catch (e) {
+                    notifications.error(`Ошибка создания "${preset.name}": ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+                }
             }
-        }
-        dnsRoutes = await api.listDnsRoutes();
-        dnsPresetOpen = false;
-        if (count > 0) {
-            notifications.success(`Создано ${count} правил из каталога`);
+            dnsRoutes = await api.listDnsRoutes();
+            if (count > 0) {
+                notifications.success(`Создано ${count} правил из каталога`);
+            } else if (presets.length > 0) {
+                notifications.error('Не удалось создать ни одного правила');
+            }
+        } finally {
+            dnsPresetOpen = false;
         }
     }
 
