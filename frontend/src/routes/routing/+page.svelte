@@ -44,6 +44,10 @@
     let policyDeleteName = $state<string | null>(null);
     let editingPolicy = $state<string | null>(null);
     let editingPolicyData = $state<AccessPolicy | null>(null);
+    let policySelectionMode = $state(false);
+    let policySelected = $state<Set<string>>(new Set());
+    let policyBulkLoading = $state(false);
+    let policyBulkDeleteConfirm = $state(false);
 
     // Client VPN routing state
     let clientRoutes = $state<ClientRoute[]>([]);
@@ -626,6 +630,38 @@
         }
     }
 
+    function togglePolicySelect(name: string) {
+        const next = new Set(policySelected);
+        if (next.has(name)) next.delete(name);
+        else next.add(name);
+        policySelected = next;
+    }
+
+    function policySelectAll() {
+        policySelected = new Set(accessPolicies.map(p => p.name));
+    }
+
+    function exitPolicySelection() {
+        policySelectionMode = false;
+        policySelected = new Set();
+    }
+
+    async function bulkPolicyDelete() {
+        policyBulkLoading = true;
+        try {
+            let count = 0;
+            for (const name of policySelected) {
+                try { await api.deleteAccessPolicy(name); count++; } catch {}
+            }
+            accessPolicies = await api.listAccessPolicies();
+            exitPolicySelection();
+            notifications.success(`Удалено ${count} политик`);
+        } finally {
+            policyBulkLoading = false;
+            policyBulkDeleteConfirm = false;
+        }
+    }
+
     // ─── Client VPN functions ───
 
     async function createClientRoute(data: Partial<ClientRoute>) {
@@ -970,10 +1006,26 @@
                     />
             {:else}
                 <div class="section-header">
-                    <span class="section-summary">{policyCount} политик</span>
-                    <div class="section-buttons">
-                        <button class="btn btn-sm btn-primary" onclick={() => policyCreateOpen = true}>+ Создать</button>
-                    </div>
+                    {#if !policySelectionMode}
+                        <span class="section-summary">{policyCount} политик</span>
+                        <div class="section-buttons">
+                            {#if accessPolicies.length > 0}
+                                <button class="btn btn-sm btn-ghost" onclick={() => { policySelectionMode = true; policySelected = new Set(); }}>Выбрать</button>
+                            {/if}
+                            <button class="btn btn-sm btn-primary" onclick={() => policyCreateOpen = true}>+ Создать</button>
+                        </div>
+                    {:else}
+                        <div class="bulk-bar">
+                            <div class="bulk-bar-nav">
+                                <button class="bulk-btn bulk-btn-cancel" onclick={exitPolicySelection} disabled={policyBulkLoading}>✕ Отмена</button>
+                                <span class="bulk-count">{policySelected.size} выбрано</span>
+                                <button class="bulk-btn bulk-btn-select-all" onclick={policySelectAll} disabled={policyBulkLoading}>Выбрать все</button>
+                            </div>
+                            <div class="bulk-bar-actions">
+                                <button class="bulk-btn bulk-btn-delete" disabled={policySelected.size === 0 || policyBulkLoading} onclick={() => policyBulkDeleteConfirm = true}>Удалить</button>
+                            </div>
+                        </div>
+                    {/if}
                 </div>
 
                 {#if accessPolicies.length === 0}
@@ -985,6 +1037,9 @@
                         policies={accessPolicies}
                         onedit={(name) => { editingPolicy = name; editingPolicyData = accessPolicies.find(p => p.name === name) ?? null; }}
                         ondelete={(name) => policyDeleteName = name}
+                        selectable={policySelectionMode}
+                        selectedNames={policySelected}
+                        onselect={togglePolicySelect}
                     />
                 {/if}
 
@@ -1003,6 +1058,16 @@
                         {#snippet actions()}
                             <button class="btn btn-ghost" onclick={() => policyDeleteName = null}>Отмена</button>
                             <button class="btn btn-danger" onclick={() => deletePolicy(policyDeleteName!)}>Удалить</button>
+                        {/snippet}
+                    </Modal>
+                {/if}
+
+                {#if policyBulkDeleteConfirm}
+                    <Modal open={true} title="Удаление" size="sm" onclose={() => policyBulkDeleteConfirm = false}>
+                        <p class="confirm-text">Удалить {policySelected.size} политик? Все устройства будут отвязаны.</p>
+                        {#snippet actions()}
+                            <button class="btn btn-ghost" onclick={() => policyBulkDeleteConfirm = false}>Отмена</button>
+                            <button class="btn btn-danger" onclick={bulkPolicyDelete}>Удалить</button>
                         {/snippet}
                     </Modal>
                 {/if}
