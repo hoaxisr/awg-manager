@@ -56,8 +56,12 @@
     // IP state
     let ipRoutes = $state<StaticRouteList[]>([]);
     let editingIpRoute = $state<StaticRouteList | null>(null);
-    let ipExportMode = $state(false);
-    let ipExportSelected = $state<Set<string>>(new Set());
+    let ipSelectionMode = $state(false);
+    let ipSelected = $state<Set<string>>(new Set());
+    let ipTunnelMode = $state(false);
+    let ipBulkTunnelId = $state('');
+    let ipBulkLoading = $state(false);
+    let ipBulkDeleteConfirm = $state(false);
     let ipImportOpen = $state(false);
     let ipDeleteId = $state<string | null>(null);
     let ipToggling = $state<string | null>(null);
@@ -482,20 +486,74 @@
         }
     }
 
-    function toggleIpExportSelect(id: string) {
-        const next = new Set(ipExportSelected);
+    function toggleIpSelect(id: string) {
+        const next = new Set(ipSelected);
         if (next.has(id)) next.delete(id);
         else next.add(id);
-        ipExportSelected = next;
+        ipSelected = next;
+    }
+
+    function ipSelectAll() {
+        ipSelected = new Set(ipRoutes.map(r => r.id));
+    }
+
+    function exitIpSelection() {
+        ipSelectionMode = false;
+        ipSelected = new Set();
+        ipTunnelMode = false;
     }
 
     function downloadIpExport() {
-        const selected = ipRoutes.filter(r => ipExportSelected.has(r.id));
+        const selected = ipRoutes.filter(r => ipSelected.has(r.id));
         const portable = exportStaticRoutes(selected);
         downloadJson(portable, 'awg-ip-routes.json');
-        ipExportMode = false;
-        ipExportSelected = new Set();
         notifications.success(`Экспортировано ${portable.length} маршрутов`);
+    }
+
+    async function bulkIpToggle(enabled: boolean) {
+        ipBulkLoading = true;
+        try {
+            for (const id of ipSelected) {
+                try { await api.setStaticRouteEnabled(id, enabled); } catch {}
+            }
+            ipRoutes = await api.listStaticRoutes();
+            notifications.success(`${enabled ? 'Включено' : 'Выключено'} ${ipSelected.size} маршрутов`);
+        } finally {
+            ipBulkLoading = false;
+        }
+    }
+
+    async function bulkIpDelete() {
+        ipBulkLoading = true;
+        try {
+            let count = 0;
+            for (const id of ipSelected) {
+                try { await api.deleteStaticRoute(id); count++; } catch {}
+            }
+            ipRoutes = await api.listStaticRoutes();
+            exitIpSelection();
+            notifications.success(`Удалено ${count} маршрутов`);
+        } finally {
+            ipBulkLoading = false;
+            ipBulkDeleteConfirm = false;
+        }
+    }
+
+    async function bulkIpChangeTunnel() {
+        if (!ipBulkTunnelId) return;
+        ipBulkLoading = true;
+        try {
+            for (const id of ipSelected) {
+                const route = ipRoutes.find(r => r.id === id);
+                if (!route) continue;
+                try { await api.updateStaticRoute({ ...route, tunnelID: ipBulkTunnelId }); } catch {}
+            }
+            ipRoutes = await api.listStaticRoutes();
+            ipTunnelMode = false;
+            notifications.success(`Туннель изменён для ${ipSelected.size} маршрутов`);
+        } finally {
+            ipBulkLoading = false;
+        }
     }
 
     // ─── Policy functions ───
@@ -799,21 +857,47 @@
         {:else if activeTab === 'ip'}
             <!-- IP section -->
             <div class="section-header">
-                <span class="section-summary">{ipRoutes.length} правил, {ipActiveCount} активных</span>
-                <div class="section-buttons">
-                    {#if !ipExportMode}
-                        <button class="btn btn-sm btn-ghost" onclick={() => ipExportMode = true}>Сохранить набор правил</button>
+                {#if !ipSelectionMode}
+                    <span class="section-summary">{ipRoutes.length} правил, {ipActiveCount} активных</span>
+                    <div class="section-buttons">
                         <button class="btn btn-sm btn-ghost" onclick={() => ipImportOpen = true}>Загрузить набор правил</button>
-                    {:else}
-                        <button class="btn btn-sm btn-ghost" onclick={() => { ipExportMode = false; ipExportSelected = new Set(); }}>Отмена</button>
-                        {#if ipExportSelected.size > 0}
-                            <button class="btn btn-sm btn-primary" onclick={downloadIpExport}>Сохранить выбранные ({ipExportSelected.size})</button>
+                        {#if ipRoutes.length > 0}
+                            <button class="btn btn-sm btn-ghost" onclick={() => { ipSelectionMode = true; ipSelected = new Set(); }}>Выбрать</button>
                         {/if}
-                    {/if}
-                    <button class="btn btn-sm btn-primary" onclick={() => { editingIpRoute = null; ipCreateOpen = true; }}>
-                        + Новое правило
-                    </button>
-                </div>
+                        <button class="btn btn-sm btn-primary" onclick={() => { editingIpRoute = null; ipCreateOpen = true; }}>+ Новое правило</button>
+                    </div>
+                {:else}
+                    <div class="bulk-bar">
+                        <div class="bulk-bar-nav">
+                            <button class="bulk-btn bulk-btn-cancel" onclick={exitIpSelection} disabled={ipBulkLoading}>✕ Отмена</button>
+                            <span class="bulk-count">{ipSelected.size} выбрано</span>
+                            <button class="bulk-btn bulk-btn-select-all" onclick={ipSelectAll} disabled={ipBulkLoading}>Выбрать все</button>
+                        </div>
+                        {#if !ipTunnelMode}
+                            <div class="bulk-bar-actions">
+                                <button class="bulk-btn bulk-btn-enable" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={() => bulkIpToggle(true)}>Включить</button>
+                                <button class="bulk-btn bulk-btn-disable" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={() => bulkIpToggle(false)}>Выключить</button>
+                                <button class="bulk-btn bulk-btn-delete" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={() => ipBulkDeleteConfirm = true}>Удалить</button>
+                                <button class="bulk-btn bulk-btn-tunnel" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={() => { ipTunnelMode = true; ipBulkTunnelId = routingTunnels.find(t => t.available)?.id ?? ''; }}>Туннель ▾</button>
+                                <button class="bulk-btn bulk-btn-export" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={downloadIpExport}>Экспорт</button>
+                            </div>
+                        {:else}
+                            <div class="bulk-tunnel-bar">
+                                <span class="bulk-tunnel-label">Туннель:</span>
+                                <select class="bulk-tunnel-select" bind:value={ipBulkTunnelId} disabled={ipBulkLoading}>
+                                    {#each routingTunnels.filter(t => t.type === 'managed' && t.available) as t}
+                                        <option value={t.id}>{t.name}</option>
+                                    {/each}
+                                    {#each routingTunnels.filter(t => t.type === 'system' && t.available) as t}
+                                        <option value={t.id}>{t.name}</option>
+                                    {/each}
+                                </select>
+                                <button class="bulk-tunnel-apply" disabled={ipBulkLoading} onclick={bulkIpChangeTunnel}>Применить ({ipSelected.size})</button>
+                                <button class="bulk-tunnel-close" onclick={() => ipTunnelMode = false}>✕</button>
+                            </div>
+                        {/if}
+                    </div>
+                {/if}
             </div>
 
             {#if ipRoutes.length === 0}
@@ -828,9 +912,9 @@
                             onedit={() => { editingIpRoute = route; ipCreateOpen = true; }}
                             ondelete={() => ipDeleteId = route.id}
                             toggleLoading={ipToggling === route.id}
-                            selectable={ipExportMode}
-                            selected={ipExportSelected.has(route.id)}
-                            onselect={() => toggleIpExportSelect(route.id)}
+                            selectable={ipSelectionMode}
+                            selected={ipSelected.has(route.id)}
+                            onselect={() => toggleIpSelect(route.id)}
                         />
                     {/each}
                 </div>
@@ -860,6 +944,16 @@
                     {#snippet actions()}
                         <button class="btn btn-ghost" onclick={() => ipDeleteId = null}>Отмена</button>
                         <button class="btn btn-danger" onclick={() => deleteIpRoute()}>Удалить</button>
+                    {/snippet}
+                </Modal>
+            {/if}
+
+            {#if ipBulkDeleteConfirm}
+                <Modal open={true} title="Удаление" size="sm" onclose={() => ipBulkDeleteConfirm = false}>
+                    <p class="confirm-text">Удалить {ipSelected.size} IP-маршрутов?</p>
+                    {#snippet actions()}
+                        <button class="btn btn-ghost" onclick={() => ipBulkDeleteConfirm = false}>Отмена</button>
+                        <button class="btn btn-danger" onclick={bulkIpDelete}>Удалить</button>
                     {/snippet}
                 </Modal>
             {/if}
