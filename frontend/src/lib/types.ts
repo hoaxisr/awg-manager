@@ -100,8 +100,6 @@ export interface TunnelListItem {
 	endpoint: string;
 	address: string;
 	interfaceName?: string;
-	isDeadByMonitoring?: boolean;
-	nextRestartAt?: string;
 	hasAddressConflict?: boolean;
 	rxBytes?: number;
 	txBytes?: number;
@@ -226,8 +224,6 @@ export interface TunnelPingCheck {
 	timeout: number;
 	port?: number;
 	restart: boolean;
-	isDeadByMonitoring: boolean;
-	deadSince?: string | null;
 }
 
 export interface NativePingCheckConfig {
@@ -267,14 +263,14 @@ export interface TunnelPingStatus {
 	tunnelName: string;
 	enabled: boolean;
 	backend: 'kernel' | 'nativewg';
-	status: 'alive' | 'dead' | 'disabled' | 'paused';
+	status: 'alive' | 'recovering' | 'disabled';
 	method: string;
 	lastCheck?: string;
 	lastLatency: number;
 	failCount: number;
 	successCount?: number;
 	failThreshold: number;
-	isDeadByMonitor: boolean;
+	restartCount: number;
 }
 
 export interface PingLogEntry {
