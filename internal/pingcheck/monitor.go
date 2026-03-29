@@ -113,7 +113,9 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 
 	// 2. Link down — NDMS switches to fallback immediately
 	//    conf: running preserved (user intent intact), link: pending
-	exec.Run(s.ctx, "/opt/sbin/ip", "link", "set", ifaceName, "down")
+	if _, err := exec.Run(s.ctx, "/opt/sbin/ip", "link", "set", ifaceName, "down"); err != nil {
+		s.logWarn(m.tunnelID, "ip link set down failed: "+err.Error())
+	}
 
 	// 3. Re-apply endpoint if resolved to new IP
 	if newEndpoint != "" && stored != nil {
@@ -123,7 +125,9 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 	}
 
 	// 4. Link up — WireGuard re-initiates handshake
-	exec.Run(s.ctx, "/opt/sbin/ip", "link", "set", ifaceName, "up")
+	if _, err := exec.Run(s.ctx, "/opt/sbin/ip", "link", "set", ifaceName, "up"); err != nil {
+		s.logWarn(m.tunnelID, "ip link set up failed: "+err.Error())
+	}
 
 	// 5. Wait for handshake
 	ok := s.waitHandshake(ifaceName)

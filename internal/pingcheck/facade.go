@@ -133,7 +133,7 @@ func (f *Facade) getNativeWGStatuses() []TunnelStatus {
 				// NDMS keeps status="fail" after restart even when failCount
 				// resets to 0.  With no active failures the tunnel is healthy.
 				if status.FailCount > 0 {
-					ts.Status = "dead"
+					ts.Status = "recovering"
 					ts.RestartCount = 1
 				} else {
 					ts.Status = "alive"

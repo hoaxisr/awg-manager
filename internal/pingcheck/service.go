@@ -55,7 +55,6 @@ type checkConfig struct {
 	Method        string
 	Target        string
 	Interval      int
-	DeadInterval  int
 	FailThreshold int
 }
 
@@ -392,7 +391,6 @@ func (s *Service) getCheckConfig(tunnelID string) *checkConfig {
 		Method:        pc.Method,
 		Target:        pc.Target,
 		Interval:      interval,
-		DeadInterval:  pc.DeadInterval,
 		FailThreshold: failThreshold,
 	}
 }
