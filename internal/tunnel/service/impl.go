@@ -409,8 +409,10 @@ func (s *ServiceImpl) Update(ctx context.Context, tunnelID string, cfg tunnel.Co
 		stored.Name = cfg.Name
 	}
 
-	// Capture old endpoint before updating (for route refresh)
+	// Capture old values before updating (for conditional sync)
 	oldEndpoint := stored.Peer.Endpoint
+	oldDNS := stored.Interface.DNS
+	oldAddress := stored.Interface.Address
 
 	// Update stored config
 	stored.Interface.Address = cfg.Address
@@ -453,23 +455,27 @@ func (s *ServiceImpl) Update(ctx context.Context, tunnelID string, cfg tunnel.Co
 				s.logWarn("update", tunnelID, "Failed to apply MTU: "+err.Error())
 			}
 
-			// Sync DNS servers to NDMS
-			var dnsServers []string
-			if stored.Interface.DNS != "" {
-				for _, part := range strings.Split(stored.Interface.DNS, ",") {
-					if d := strings.TrimSpace(part); d != "" {
-						dnsServers = append(dnsServers, d)
+			// Sync DNS servers to NDMS (only if changed)
+			if stored.Interface.DNS != oldDNS {
+				var dnsServers []string
+				if stored.Interface.DNS != "" {
+					for _, part := range strings.Split(stored.Interface.DNS, ",") {
+						if d := strings.TrimSpace(part); d != "" {
+							dnsServers = append(dnsServers, d)
+						}
 					}
 				}
-			}
-			if err := s.legacyOperator.SyncDNS(ctx, tunnelID, dnsServers); err != nil {
-				s.logWarn("update", tunnelID, "Failed to sync DNS: "+err.Error())
+				if err := s.legacyOperator.SyncDNS(ctx, tunnelID, dnsServers); err != nil {
+					s.logWarn("update", tunnelID, "Failed to sync DNS: "+err.Error())
+				}
 			}
 
-			// Sync address (IPv4 + IPv6) to NDMS
-			ipv4, ipv6 := splitAddresses(stored.Interface.Address)
-			if err := s.legacyOperator.SyncAddress(ctx, tunnelID, ipv4, ipv6); err != nil {
-				s.logWarn("update", tunnelID, "Failed to sync address: "+err.Error())
+			// Sync address (IPv4 + IPv6) to NDMS (only if changed)
+			if stored.Interface.Address != oldAddress {
+				ipv4, ipv6 := splitAddresses(stored.Interface.Address)
+				if err := s.legacyOperator.SyncAddress(ctx, tunnelID, ipv4, ipv6); err != nil {
+					s.logWarn("update", tunnelID, "Failed to sync address: "+err.Error())
+				}
 			}
 
 			// If endpoint changed, refresh endpoint route via ISP
