@@ -9,6 +9,9 @@
 		onedit: () => void;
 		ondelete: () => void;
 		toggleLoading?: boolean;
+		selectable?: boolean;
+		selected?: boolean;
+		onselect?: () => void;
 	}
 
 	let {
@@ -17,15 +20,27 @@
 		ontoggle,
 		onedit,
 		ondelete,
-		toggleLoading = false
+		toggleLoading = false,
+		selectable = false,
+		selected = false,
+		onselect
 	}: Props = $props();
 </script>
 
 <div
 	class="dns-card"
 	class:enabled={route.enabled}
+	class:selected={selectable && selected}
 >
 	<div class="card-main">
+		{#if selectable}
+			<input
+				type="checkbox"
+				class="select-check"
+				checked={selected}
+				onchange={() => onselect?.()}
+			/>
+		{/if}
 		<svg class="device-icon" width="36" height="36" viewBox="0 0 36 36" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
 			<rect x="6" y="10" width="24" height="18" rx="3" />
 			<line x1="18" y1="10" x2="18" y2="4" />
@@ -86,6 +101,10 @@
 
 	.dns-card.enabled {
 		border: 2px solid var(--success);
+	}
+
+	.dns-card.selected {
+		border-color: var(--accent);
 	}
 
 	.dns-card:not(.enabled) {
@@ -184,5 +203,14 @@
 
 	.led-gray {
 		background: var(--text-muted);
+	}
+
+	.select-check {
+		accent-color: var(--accent);
+		width: 16px;
+		height: 16px;
+		cursor: pointer;
+		flex-shrink: 0;
+		margin-top: 10px;
 	}
 </style>
