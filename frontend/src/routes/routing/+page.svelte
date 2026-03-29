@@ -5,7 +5,8 @@
     import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
     import { Modal, OverflowTabs } from '$lib/components/ui';
     import { IpRouteCard, IpRouteEditModal, IpRouteImportModal, RoutingSearch } from '$lib/components/routing';
-    import { DnsRouteCard, DnsRouteEditModal, DnsRouteImportModal } from '$lib/components/dnsroutes';
+    import { DnsRouteCard, DnsRouteEditModal, DnsRouteImportModal, DnsRoutePresetModal } from '$lib/components/dnsroutes';
+    import type { ServicePreset } from '$lib/data/presets';
     import { PolicyTable, PolicyCreateModal, PolicyEditView } from '$lib/components/accesspolicy';
     import { ClientRouteCard, ClientRouteCreateModal } from '$lib/components/clientroute';
     import { exportRoutes, downloadJson } from '$lib/utils/dns-export';
@@ -24,6 +25,7 @@
     let dnsExportMode = $state(false);
     let dnsExportSelected = $state<Set<string>>(new Set());
     let dnsImportOpen = $state(false);
+    let dnsPresetOpen = $state(false);
     let dnsDeleteId = $state<string | null>(null);
     let dnsToggling = $state<string | null>(null);
     let dnsSaving = $state(false);
@@ -332,6 +334,29 @@
         }
     }
 
+    async function handlePresetCreate(presets: ServicePreset[], tunnelId: string) {
+        let count = 0;
+        for (const preset of presets) {
+            try {
+                await api.createDnsRoute({
+                    name: preset.name,
+                    manualDomains: preset.manualDomains ?? [],
+                    subscriptions: preset.subscriptions.map(s => ({ url: s.url, name: s.name })),
+                    enabled: true,
+                    routes: [{ tunnelId, interface: tunnelId, fallback: '' as const }],
+                });
+                count++;
+            } catch (e) {
+                notifications.error(`Ошибка создания "${preset.name}": ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+            }
+        }
+        dnsRoutes = await api.listDnsRoutes();
+        dnsPresetOpen = false;
+        if (count > 0) {
+            notifications.success(`Создано ${count} правил из каталога`);
+        }
+    }
+
     // ─── IP functions ───
 
     async function saveIpRoute(data: { name: string; tunnelID: string; subnets: string[]; fallback: '' | 'reject' }) {
@@ -600,6 +625,7 @@
                     {#if !dnsExportMode}
                         <button class="btn btn-sm btn-ghost" onclick={() => dnsExportMode = true}>Сохранить набор правил</button>
                         <button class="btn btn-sm btn-ghost" onclick={() => dnsImportOpen = true}>Загрузить набор правил</button>
+                        <button class="btn btn-sm btn-secondary" onclick={() => dnsPresetOpen = true}>Из каталога</button>
                     {:else}
                         <button class="btn btn-sm btn-ghost" onclick={() => { dnsExportMode = false; dnsExportSelected = new Set(); }}>Отмена</button>
                         {#if dnsExportSelected.size > 0}
@@ -648,6 +674,14 @@
                 tunnels={routingTunnels}
                 onclose={() => dnsImportOpen = false}
                 onimport={handleDnsImport}
+            />
+
+            <DnsRoutePresetModal
+                bind:open={dnsPresetOpen}
+                existingNames={dnsRoutes.map(r => r.name)}
+                tunnels={routingTunnels}
+                onclose={() => dnsPresetOpen = false}
+                oncreate={handlePresetCreate}
             />
 
             {#if dnsDeleteId}
