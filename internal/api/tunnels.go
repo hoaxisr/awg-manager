@@ -221,8 +221,7 @@ func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 		Endpoint                  string `json:"endpoint"`
 		Address                   string `json:"address"`
 		InterfaceName             string `json:"interfaceName"`
-		IsDeadByMonitoring        bool   `json:"isDeadByMonitoring"`
-		NextRestartAt             string `json:"nextRestartAt,omitempty"`
+		RestartCount              int    `json:"restartCount"`
 		HasAddressConflict        bool   `json:"hasAddressConflict"`
 		RxBytes                   int64  `json:"rxBytes"`
 		TxBytes                   int64  `json:"txBytes"`
@@ -249,27 +248,12 @@ func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 		// Get stored tunnel for additional fields
 		stored, _ := h.store.Get(t.ID)
 
-		isDeadByMonitoring := false
-		var nextRestartAt string
 		awgVersion := "wg"
 		var endpoint, address string
 		var ispInterface, ispInterfaceLabel string
 		var resolvedISPInterface, resolvedISPInterfaceLabel string
 		var mtu int
 		if stored != nil {
-			if stored.PingCheck != nil {
-				isDeadByMonitoring = stored.PingCheck.IsDeadByMonitoring
-				// Compute next forced restart time for dead tunnels
-				if isDeadByMonitoring && stored.PingCheck.DeadSince != nil {
-					if deadSince, err := time.Parse(time.RFC3339, *stored.PingCheck.DeadSince); err == nil {
-						deadInterval := 120 // default
-						if stored.PingCheck.DeadInterval > 0 {
-							deadInterval = stored.PingCheck.DeadInterval
-						}
-						nextRestartAt = deadSince.Add(time.Duration(deadInterval) * time.Second).Format(time.RFC3339)
-					}
-				}
-			}
 			endpoint = stored.Peer.Endpoint
 			address = stored.Interface.Address
 			mtu = stored.Interface.MTU
@@ -338,8 +322,7 @@ func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 			Address:             address,
 			InterfaceName:       t.InterfaceName,
 			Backend:             backend,
-			IsDeadByMonitoring:  isDeadByMonitoring,
-			NextRestartAt:       nextRestartAt,
+			RestartCount:        t.RestartCount,
 			HasAddressConflict:  hasConflict,
 			RxBytes:             t.StateInfo.RxBytes,
 			TxBytes:             t.StateInfo.TxBytes,

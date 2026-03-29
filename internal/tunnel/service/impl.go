@@ -313,23 +313,20 @@ func (s *ServiceImpl) Get(ctx context.Context, tunnelID string) (*TunnelWithStat
 		ifaceName = tunnel.NewNames(tunnelID).IfaceName
 	}
 
-	isDeadByMonitoring := stored.PingCheck != nil && stored.PingCheck.IsDeadByMonitoring
-
 	return &TunnelWithStatus{
-		ID:                 stored.ID,
-		Name:               stored.Name,
-		Config:             s.storedToConfig(stored),
-		State:              stateInfo.State,
-		StateInfo:          stateInfo,
-		Enabled:            stored.Enabled,
-		AutoStart:          stored.Enabled, // AutoStart == Enabled in current design
-		PingCheckOn:        stored.PingCheck != nil && stored.PingCheck.Enabled,
-		DefaultRoute:       stored.DefaultRoute,
-		ISPInterface:       stored.ISPInterface,
-		InterfaceName:      ifaceName,
-		ConfigPreview:      config.Generate(stored),
-		IsDeadByMonitoring: isDeadByMonitoring,
-		Backend:            s.backendLabel(stored),
+		ID:            stored.ID,
+		Name:          stored.Name,
+		Config:        s.storedToConfig(stored),
+		State:         stateInfo.State,
+		StateInfo:     stateInfo,
+		Enabled:       stored.Enabled,
+		AutoStart:     stored.Enabled, // AutoStart == Enabled in current design
+		PingCheckOn:   stored.PingCheck != nil && stored.PingCheck.Enabled,
+		DefaultRoute:  stored.DefaultRoute,
+		ISPInterface:  stored.ISPInterface,
+		InterfaceName: ifaceName,
+		ConfigPreview: config.Generate(stored),
+		Backend:       s.backendLabel(stored),
 	}, nil
 }
 
@@ -360,22 +357,19 @@ func (s *ServiceImpl) List(ctx context.Context) ([]TunnelWithStatus, error) {
 		} else {
 			ifaceName = tunnel.NewNames(t.ID).IfaceName
 		}
-		isDeadByMonitoring := t.PingCheck != nil && t.PingCheck.IsDeadByMonitoring
-
 		result = append(result, TunnelWithStatus{
-			ID:                 t.ID,
-			Name:               t.Name,
-			Config:             s.storedToConfig(&t),
-			State:              stateInfo.State,
-			StateInfo:          stateInfo,
-			Enabled:            t.Enabled,
-			AutoStart:          t.Enabled,
-			PingCheckOn:        t.PingCheck != nil && t.PingCheck.Enabled,
-			DefaultRoute:       t.DefaultRoute,
-			ISPInterface:       t.ISPInterface,
-			InterfaceName:      ifaceName,
-			IsDeadByMonitoring: isDeadByMonitoring,
-			Backend:            s.backendLabel(&t),
+			ID:            t.ID,
+			Name:          t.Name,
+			Config:        s.storedToConfig(&t),
+			State:         stateInfo.State,
+			StateInfo:     stateInfo,
+			Enabled:       t.Enabled,
+			AutoStart:     t.Enabled,
+			PingCheckOn:   t.PingCheck != nil && t.PingCheck.Enabled,
+			DefaultRoute:  t.DefaultRoute,
+			ISPInterface:  t.ISPInterface,
+			InterfaceName: ifaceName,
+			Backend:       s.backendLabel(&t),
 		})
 	}
 
@@ -662,20 +656,6 @@ func (s *ServiceImpl) CheckAddressConflicts(_ context.Context, tunnelID string) 
 	return checkStoredAddressConflicts(s.store, stored.Interface.Address, tunnelID)
 }
 
-// clearDeadFlag clears IsDeadByMonitoring when user manually starts a running tunnel.
-// This handles the edge case where PingCheck restarted the tunnel
-// but re-set the dead flag before the user's Start acquired the lock.
-func (s *ServiceImpl) clearDeadFlag(tunnelID string) {
-	stored, err := s.store.Get(tunnelID)
-	if err != nil {
-		return
-	}
-	if stored.PingCheck != nil && stored.PingCheck.IsDeadByMonitoring {
-		stored.PingCheck.IsDeadByMonitoring = false
-		stored.PingCheck.DeadSince = nil
-		_ = s.store.Save(stored)
-	}
-}
 
 // clearActiveWAN clears volatile runtime state for a tunnel.
 func (s *ServiceImpl) clearActiveWAN(tunnelID string) {

@@ -26,7 +26,6 @@ func (s *ServiceImpl) startNativeWG(ctx context.Context, stored *storage.AWGTunn
 	// Check current state
 	stateInfo := s.nwgOperator.GetState(ctx, stored)
 	if stateInfo.State == tunnel.StateRunning {
-		s.clearDeadFlag(stored.ID)
 		s.appLog.Debug("start", stored.ID, "Already running, skipping")
 		return tunnel.ErrAlreadyRunning
 	}
@@ -65,10 +64,6 @@ func (s *ServiceImpl) startNativeWG(ctx context.Context, stored *storage.AWGTunn
 	// Persist state
 	stored.Enabled = true
 	stored.StartedAt = time.Now().UTC().Format(time.RFC3339)
-	if stored.PingCheck != nil && stored.PingCheck.IsDeadByMonitoring {
-		stored.PingCheck.IsDeadByMonitoring = false
-		stored.PingCheck.DeadSince = nil
-	}
 	if err := s.store.Save(stored); err != nil {
 		s.logWarn("save", stored.ID, "Failed to persist state: "+err.Error())
 	}
@@ -121,10 +116,6 @@ func (s *ServiceImpl) stopNativeWG(ctx context.Context, stored *storage.AWGTunne
 	stored.Enabled = false
 	stored.ActiveWAN = ""
 	stored.StartedAt = ""
-	if stored.PingCheck != nil && stored.PingCheck.IsDeadByMonitoring {
-		stored.PingCheck.IsDeadByMonitoring = false
-		stored.PingCheck.DeadSince = nil
-	}
 	_ = s.store.Save(stored)
 
 	s.logInfo("stop", stored.ID, "NativeWG tunnel stopped")

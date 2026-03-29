@@ -125,6 +125,6 @@ type TunnelWithStatus struct {
 	ISPInterface       string           `json:"ispInterface,omitempty"`
 	InterfaceName      string           `json:"interfaceName"`      // Kernel interface name (opkgtun0 on OS5, awg0 on OS4)
 	ConfigPreview      string           `json:"configPreview,omitempty"` // Generated .conf content for display
-	IsDeadByMonitoring bool             `json:"isDeadByMonitoring"` // True if PingCheck marked this tunnel as dead
+	RestartCount       int              `json:"restartCount"`       // PingCheck restart count (0 = healthy)
 	Backend            string           `json:"backend"`            // "nativewg" | "kernel"
 }

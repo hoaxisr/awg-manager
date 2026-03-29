@@ -143,11 +143,6 @@ func (m *Manager) IsBootInProgress() bool {
 // + stored PingCheck dead flag + sysfs device presence.
 // Does NOT use tunnel.State from the old state matrix.
 func (m *Manager) determineState(ctx context.Context, tunnelID string, stored *storage.AWGTunnel) TunnelState {
-	// Dead flag takes priority (set by HandlePingDead, cleared on Start).
-	if stored.PingCheck != nil && stored.PingCheck.IsDeadByMonitoring {
-		return StateDead
-	}
-
 	info := m.state.GetState(ctx, tunnelID)
 
 	// Inconsistent state detection.
@@ -694,13 +689,6 @@ func (m *Manager) HandlePingDead(ctx context.Context, tunnelID string) error {
 		return nil
 	}
 
-	// Mark dead in storage BEFORE stopping.
-	if stored.PingCheck != nil {
-		now := time.Now().Format(time.RFC3339)
-		stored.PingCheck.IsDeadByMonitoring = true
-		stored.PingCheck.DeadSince = &now
-		_ = m.store.Save(stored)
-	}
 
 	m.BeginOperation(tunnelID)
 	defer m.EndOperation(tunnelID)

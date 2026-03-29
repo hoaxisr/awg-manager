@@ -713,10 +713,10 @@ func (r *Runner) testPingCheckHealth(t TunnelInfo) TestResult {
 	}
 
 	switch t.PingCheck.Status {
-	case "dead":
+	case "recovering":
 		res.Status = StatusFail
-		res.Detail = fmt.Sprintf("Туннель мёртв по мониторингу (%s, %d/%d fails)",
-			t.PingCheck.Method, t.PingCheck.FailCount, t.PingCheck.FailThreshold)
+		res.Detail = fmt.Sprintf("Восстановление связи (%s, рестарт #%d)",
+			t.PingCheck.Method, t.PingCheck.RestartCount)
 	case "alive":
 		res.Status = StatusPass
 		res.Detail = fmt.Sprintf("Alive (%s)", t.PingCheck.Method)

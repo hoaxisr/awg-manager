@@ -96,8 +96,8 @@ func (h *ControlHandler) Stop(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fully stop monitoring — user explicitly stopped the tunnel.
-	// StopMonitoring clears IsDeadByMonitoring in storage, preventing
-	// stale dead flag from blocking future starts via ReconcileInterface.
+	// StopMonitoring resets monitor state, preventing stale recovering
+	// status from persisting after user's explicit stop.
 	if h.pingCheck != nil {
 		h.pingCheck.StopMonitoring(id)
 	}
