@@ -59,16 +59,6 @@ func (f *Facade) StopMonitoring(tunnelID string) {
 	f.custom.StopMonitoring(tunnelID)
 }
 
-// PauseMonitoring pauses monitoring for a tunnel.
-// NativeWG: no-op.
-// Kernel: delegates to custom loop.
-func (f *Facade) PauseMonitoring(tunnelID string) {
-	if f.isNativeWG(tunnelID) {
-		return
-	}
-	f.custom.PauseMonitoring(tunnelID)
-}
-
 // GetStatus returns unified status from both engines.
 func (f *Facade) GetStatus() []TunnelStatus {
 	result := f.custom.GetStatus()
@@ -144,7 +134,7 @@ func (f *Facade) getNativeWGStatuses() []TunnelStatus {
 				// resets to 0.  With no active failures the tunnel is healthy.
 				if status.FailCount > 0 {
 					ts.Status = "dead"
-					ts.IsDeadByMonitor = true
+					ts.RestartCount = 1
 				} else {
 					ts.Status = "alive"
 				}
