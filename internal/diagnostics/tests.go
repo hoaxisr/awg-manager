@@ -519,23 +519,38 @@ func (r *Runner) testRouteLeak(ctx context.Context, report *Report) TestResult {
 func (r *Runner) testDNSLeak(ctx context.Context, t TunnelInfo) TestResult {
 	res := TestResult{Name: "dns_leak_check", Description: "DNS leak проверка", TunnelID: t.ID, TunnelName: t.Name}
 
-	// Resolve a test domain via tunnel interface
-	tunnelResult, err := exec.Run(ctx, "/opt/bin/curl", "-s", "--max-time", "5",
-		"--interface", t.InterfaceName, "https://am.i.mullvad.net/json")
-	if err != nil {
+	// Need DNS servers from tunnel config to test
+	if t.Settings.DNS == "" {
 		res.Status = StatusSkip
-		res.Detail = "Не удалось проверить DNS leak (сервис недоступен)"
+		res.Detail = "DNS не настроен в конфигурации туннеля"
 		return res
 	}
 
-	// Check if mullvad detects us as using VPN
-	output := strings.TrimSpace(tunnelResult.Stdout)
-	if strings.Contains(output, "\"mullvad_exit_ip\":true") {
+	// Parse first DNS server from comma-separated list
+	dnsServer := strings.TrimSpace(strings.SplitN(t.Settings.DNS, ",", 2)[0])
+	if dnsServer == "" {
+		res.Status = StatusSkip
+		res.Detail = "DNS не настроен в конфигурации туннеля"
+		return res
+	}
+
+	// Resolve a domain via the tunnel's DNS server.
+	// If the server is only reachable through the tunnel (e.g. 100.64.0.1),
+	// successful resolution proves DNS queries go through the tunnel.
+	result, err := exec.Run(ctx, "nslookup", "example.com", dnsServer)
+	if err != nil {
+		res.Status = StatusFail
+		res.Detail = fmt.Sprintf("DNS-сервер %s недоступен", dnsServer)
+		return res
+	}
+
+	output := result.Stdout + result.Stderr
+	if strings.Contains(output, "Address") && !strings.Contains(output, "server can't find") {
 		res.Status = StatusPass
-		res.Detail = "VPN обнаружен Mullvad -- DNS не утекает"
+		res.Detail = fmt.Sprintf("DNS через %s работает", dnsServer)
 	} else {
-		res.Status = StatusPass
-		res.Detail = "Ответ получен через туннель"
+		res.Status = StatusFail
+		res.Detail = fmt.Sprintf("DNS-сервер %s не резолвит", dnsServer)
 	}
 	return res
 }
