@@ -43,43 +43,8 @@
 	let checkMethod = $derived(tunnel.connectivityCheck?.method || 'http');
 	let isCheckDisabled = $derived(checkMethod === 'disabled');
 
-	// Countdown for dead tunnel restart
-	let restartCountdown = $state('');
-
-	$effect(() => {
-		if (!tunnel.isDeadByMonitoring || !tunnel.nextRestartAt) {
-			restartCountdown = '';
-			return;
-		}
-
-		function updateCountdown() {
-			const target = new Date(tunnel.nextRestartAt!).getTime();
-			const remaining = Math.max(0, Math.ceil((target - Date.now()) / 1000));
-			if (remaining <= 0) {
-				restartCountdown = '';
-				return;
-			}
-			const min = Math.floor(remaining / 60);
-			const sec = remaining % 60;
-			restartCountdown = min > 0
-				? `через ${min}:${sec.toString().padStart(2, '0')}`
-				: `через ${sec}с`;
-		}
-
-		updateCountdown();
-		const interval = setInterval(updateCountdown, 1000);
-		return () => clearInterval(interval);
-	});
-
 	// Status hint text — only for transitional/problem states
 	let statusHint = $derived.by(() => {
-		// Dead tunnel — show countdown to forced restart
-		if (tunnel.isDeadByMonitoring && (tunnel.status === 'starting' || tunnel.status === 'needs_start')) {
-			if (restartCountdown) {
-				return `Восстановление ${restartCountdown}`;
-			}
-			return 'Попытка восстановления...';
-		}
 		switch (tunnel.status) {
 			case 'starting': return 'Запуск...';
 			case 'needs_start': return 'Ожидает запуска';
@@ -96,7 +61,7 @@
 	let connectivityPromise: Promise<void> | null = null; // Защита от параллельных вызовов
 
 	async function checkConnectivity(): Promise<void> {
-		if ((tunnel.status !== 'running' && tunnel.status !== 'broken') || tunnel.isDeadByMonitoring) {
+		if (tunnel.status !== 'running' && tunnel.status !== 'broken') {
 			connectivity = 'idle';
 			latencyMs = null;
 			return;
@@ -129,16 +94,14 @@
 
 	// Extract primitives via $derived to avoid $effect re-running on every tunnel poll
 	let tunnelStatus = $derived(tunnel?.status ?? '');
-	let tunnelIsDead = $derived(tunnel?.isDeadByMonitoring ?? false);
 	let tunnelHasHandshake = $derived(!!tunnel?.lastHandshake);
 
 	$effect(() => {
 		const status = tunnelStatus;
-		const isDead = tunnelIsDead;
 		const hasHandshake = tunnelHasHandshake;
 		const disabled = isCheckDisabled;
 
-		const isActive = (status === 'running' || status === 'broken') && !isDead;
+		const isActive = status === 'running' || status === 'broken';
 
 		if (!isActive) {
 			connectivity = 'idle';
@@ -189,16 +152,6 @@
 			{:else if tunnel.awgVersion === 'wg'}
 				<span class="version-badge version-wg">WG</span>
 			{/if}
-			{#if tunnel.isDeadByMonitoring}
-				<span class="dead-badge" title="Туннель недоступен (ping check)">
-					<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-						<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-						<line x1="12" y1="9" x2="12" y2="13"/>
-						<line x1="12" y1="17" x2="12.01" y2="17"/>
-					</svg>
-					DEAD
-				</span>
-			{/if}
 		</div>
 	</div>
 
@@ -226,7 +179,7 @@
 		{#if statusHint}
 			<span class="status-hint">{statusHint}</span>
 		{/if}
-		{#if (tunnel.status === 'running' || tunnel.status === 'broken') && !tunnel.isDeadByMonitoring}
+		{#if tunnel.status === 'running' || tunnel.status === 'broken'}
 			<div class="flex items-center gap-1.5">
 				{#if !isCheckDisabled && connectivity === 'connected' && latencyMs !== null}
 					<span class="latency-value">{latencyMs}ms</span>
@@ -378,25 +331,6 @@
 
 	@keyframes spin {
 		to { transform: rotate(360deg); }
-	}
-
-	/* Dead badge */
-	.dead-badge {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		padding: 2px 8px;
-		font-size: 11px;
-		font-weight: 600;
-		border-radius: 10px;
-		background: rgba(239, 68, 68, 0.2);
-		color: var(--error, #ef4444);
-		animation: pulse-dead 2s ease-in-out infinite;
-	}
-
-	@keyframes pulse-dead {
-		0%, 100% { opacity: 1; }
-		50% { opacity: 0.7; }
 	}
 
 	/* Version badge */

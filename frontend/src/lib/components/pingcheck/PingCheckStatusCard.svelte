@@ -12,14 +12,13 @@
 
 	let { tunnel, toggleLoading, onOpenSettings, onToggleEnabled }: Props = $props();
 
-	function getMonitorLabel(enabled: boolean, s: string): string {
+	function getMonitorLabel(enabled: boolean): string {
 		if (!enabled) return 'Отключён';
-		if (s === 'paused') return 'Ожидание';
 		return 'Активен';
 	}
 
 	function getCheckLabel(s: string): string {
-		return s === 'dead' ? 'Проверки неуспешны' : 'Проверки успешны';
+		return s === 'recovering' ? 'Проверки неуспешны' : 'Проверки успешны';
 	}
 
 	function getMethodLabel(method: string): string {
@@ -37,12 +36,11 @@
 
 	let monitorBadgeClass = $derived.by(() => {
 		if (!tunnel.enabled) return 'badge-disabled';
-		if (tunnel.status === 'paused') return 'badge-warning';
 		return 'badge-success';
 	});
 
-	let showCheckBadge = $derived(tunnel.enabled && tunnel.status !== 'paused');
-	let checkBadgeClass = $derived(tunnel.status === 'dead' ? 'badge-error' : 'badge-success');
+	let showCheckBadge = $derived(tunnel.enabled);
+	let checkBadgeClass = $derived(tunnel.status === 'recovering' ? 'badge-warning' : 'badge-success');
 </script>
 
 <div class="tunnel-status">
@@ -62,7 +60,7 @@
 				</button>
 			{/if}
 			<span class="badge {monitorBadgeClass}">
-				{getMonitorLabel(tunnel.enabled, tunnel.status)}
+				{getMonitorLabel(tunnel.enabled)}
 			</span>
 			{#if showCheckBadge}
 				<span class="badge {checkBadgeClass}">
