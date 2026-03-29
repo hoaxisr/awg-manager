@@ -13,32 +13,21 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 )
 
-// initialMonitoringDelay is the delay before first check for newly started tunnels.
-// This allows the tunnel to establish connection before monitoring begins.
-const initialMonitoringDelay = 30 * time.Second
-
-// MonitorCallback is called when a tunnel transitions between dead/alive states.
-// isDead=true: tunnel is dead. isDead=false: tunnel recovered.
-// On recovery (isDead=false), returning an error means recovery failed —
-// pingcheck stays in dead state and retries after DeadInterval.
-type MonitorCallback func(tunnelID string, isDead bool) error
-
-// ForcedRestartCallback is called when the dead interval timer fires.
-// Restarts the tunnel without clearing dead state — recovery is confirmed
-// only when a subsequent handshake check succeeds.
-type ForcedRestartCallback func(tunnelID string) error
+// wgClient is the subset of wg.Client needed by the health sensor.
+type wgClient interface {
+	Show(ctx context.Context, iface string) (*wg.ShowResult, error)
+}
 
 // Service manages ping check monitoring for all tunnels.
 type Service struct {
 	settings *storage.SettingsStore
 	tunnels  *storage.AWGTunnelStore
+	wg       wgClient
 	log      *logger.Logger
 	appLog   *logging.ScopedLogger
-
-	onMonitorEvent  MonitorCallback
-	onForcedRestart ForcedRestartCallback
 
 	mu        sync.RWMutex
 	monitors  map[string]*tunnelMonitor
@@ -49,23 +38,16 @@ type Service struct {
 	cancel    context.CancelFunc
 }
 
-// gracePeriod is how long after start a tunnel is immune from being marked dead.
-// Gives WireGuard handshake time to establish, especially at boot.
-const gracePeriod = 120 * time.Second
-
 // tunnelMonitor tracks monitoring state for a single tunnel.
 type tunnelMonitor struct {
-	tunnelID   string
-	tunnelName string
-	failCount  int
-	paused     bool
-	isDead     bool
-	deadSince  time.Time // when tunnel entered dead state (zero = not dead)
-	startedAt  time.Time // when monitoring started (for grace period)
-	lastCheck  time.Time
-	lastResult *CheckResult
-	stopCh     chan struct{}
-	wg         sync.WaitGroup // tracks goroutine lifecycle
+	tunnelID     string
+	tunnelName   string
+	failCount    int
+	restartCount int
+	lastCheck    time.Time
+	lastResult   *CheckResult
+	stopCh       chan struct{}
+	wg           sync.WaitGroup
 }
 
 // checkConfig holds resolved check configuration for a tunnel.
@@ -81,32 +63,19 @@ type checkConfig struct {
 func NewService(
 	settings *storage.SettingsStore,
 	tunnels *storage.AWGTunnelStore,
+	wgClient wgClient,
 	log *logger.Logger,
 	appLogger logging.AppLogger,
 ) *Service {
 	return &Service{
 		settings:  settings,
 		tunnels:   tunnels,
+		wg:        wgClient,
 		log:       log,
 		appLog:    logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubPingcheck),
 		monitors:  make(map[string]*tunnelMonitor),
 		logBuffer: NewLogBuffer(),
-		running:   false,
 	}
-}
-
-// SetMonitorCallback sets the callback for dead/alive state transitions.
-func (s *Service) SetMonitorCallback(fn MonitorCallback) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.onMonitorEvent = fn
-}
-
-// SetForcedRestartCallback sets the callback for forced restart attempts.
-func (s *Service) SetForcedRestartCallback(fn ForcedRestartCallback) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.onForcedRestart = fn
 }
 
 // Start begins the monitoring service.
@@ -167,24 +136,10 @@ func (s *Service) StartMonitoring(tunnelID string, tunnelName string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Check if already monitoring
-	if m, exists := s.monitors[tunnelID]; exists {
-		// If paused, resume it
-		if m.paused {
-			m.paused = false
-			m.failCount = 0
-			m.isDead = false
-			m.deadSince = time.Time{}
-			m.startedAt = time.Now()
-			m.stopCh = make(chan struct{})
-			m.wg.Add(1)
-			go s.runMonitorLoop(m)
-			s.logInfo(tunnelID, "Resumed monitoring tunnel")
-		}
+	if _, exists := s.monitors[tunnelID]; exists {
 		return
 	}
 
-	// Check if tunnel has ping check enabled
 	stored, err := s.tunnels.Get(tunnelID)
 	if err != nil || stored.PingCheck == nil || !stored.PingCheck.Enabled {
 		return
@@ -193,18 +148,14 @@ func (s *Service) StartMonitoring(tunnelID string, tunnelName string) {
 	m := &tunnelMonitor{
 		tunnelID:   tunnelID,
 		tunnelName: tunnelName,
-		failCount:  0,
-		isDead:     false,
-		startedAt:  time.Now(),
+		stopCh:     make(chan struct{}),
 	}
 
 	s.monitors[tunnelID] = m
-
-	s.logInfo(tunnelID, "Started monitoring tunnel: "+tunnelName)
-
-	m.stopCh = make(chan struct{})
 	m.wg.Add(1)
 	go s.runMonitorLoop(m)
+
+	s.logInfo(tunnelID, "Started monitoring: "+tunnelName)
 }
 
 // StopMonitoring stops monitoring a specific tunnel.
@@ -224,24 +175,6 @@ func (s *Service) StopMonitoring(tunnelID string) {
 
 	m.wg.Wait() // Safe: outside lock
 	s.logInfo(tunnelID, "Stopped monitoring tunnel")
-}
-
-// PauseMonitoring pauses monitoring for a tunnel (e.g., manual stop).
-func (s *Service) PauseMonitoring(tunnelID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if m, exists := s.monitors[tunnelID]; exists {
-		m.paused = true
-		m.failCount = 0
-		m.isDead = false
-		m.deadSince = time.Time{}
-		if m.stopCh != nil {
-			close(m.stopCh)
-			m.stopCh = nil
-		}
-		s.logInfo(tunnelID, "Paused monitoring tunnel")
-	}
 }
 
 // GetLogs returns all log entries.
@@ -274,10 +207,8 @@ func (s *Service) GetStatus() []TunnelStatus {
 
 		status := "disabled"
 		if config != nil {
-			if m.paused {
-				status = "paused"
-			} else if m.isDead {
-				status = "dead"
+			if m.restartCount > 0 && (m.lastResult == nil || !m.lastResult.Success) {
+				status = "recovering"
 			} else {
 				status = "alive"
 			}
@@ -310,7 +241,7 @@ func (s *Service) GetStatus() []TunnelStatus {
 			LastLatency:     lastLatency,
 			FailCount:       m.failCount,
 			FailThreshold:   failThreshold,
-			IsDeadByMonitor: m.isDead,
+			RestartCount:    m.restartCount,
 		})
 	}
 
@@ -369,7 +300,7 @@ func (s *Service) CheckAllNow() {
 		m, exists := s.monitors[tunnelID]
 		s.mu.RUnlock()
 
-		if !exists || m.paused {
+		if !exists {
 			continue
 		}
 
