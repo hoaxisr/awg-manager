@@ -489,7 +489,7 @@ func TestParseInterfaceInfo_NotFoundOutput(t *testing.T) {
 // JSON fixtures — RCI equivalents of the text fixtures above.
 // Used to verify parseInterfaceInfoJSON produces identical InterfaceInfo.
 
-const showInterfaceRunningJSON = `{"state":"up","link":"up","connected":"yes","interface-name":"OpkgTun10","type":"OpkgTun","description":"WARPm1_63","address":"172.16.0.2","mask":"255.255.255.255","security-level":"public","priority":32766,"summary":{"layer":{"conf":"running","link":"running","ipv4":"running","ipv6":"disabled"}}}`
+const showInterfaceRunningJSON = `{"state":"up","link":"up","connected":"yes","uptime":540,"interface-name":"OpkgTun10","type":"OpkgTun","description":"WARPm1_63","address":"172.16.0.2","mask":"255.255.255.255","security-level":"public","priority":32766,"summary":{"layer":{"conf":"running","link":"running","ipv4":"running","ipv6":"disabled"}}}`
 
 const showInterfaceAfterRebootWasUpJSON = `{"state":"up","link":"down","connected":"no","interface-name":"OpkgTun10","type":"OpkgTun","description":"WARPm1_63","address":"172.16.0.2","mask":"255.255.255.255","security-level":"public","priority":32766,"summary":{"layer":{"conf":"running","link":"pending","ipv4":"pending","ipv6":"disabled"}}}`
 

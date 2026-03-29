@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
@@ -61,6 +62,9 @@ func (m *ManagerImpl) GetState(ctx context.Context, tunnelID string) tunnel.Stat
 				if ifInfo, err := ndms.ParseInterfaceInfo(raw); err == nil {
 					intent = ifInfo.Intent()
 					linkUp = ifInfo.LinkUp()
+					if ifInfo.Uptime > 0 {
+						info.ConnectedAt = time.Now().Add(-time.Duration(ifInfo.Uptime) * time.Second).UTC().Format(time.RFC3339)
+					}
 				} else {
 					showInterfaceFailed = true
 				}

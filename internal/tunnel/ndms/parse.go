@@ -16,6 +16,7 @@ type InterfaceInfo struct {
 	Link      string // "up", "down"
 	Connected bool
 	ConfLayer string // "running", "disabled", "pending"
+	Uptime    int    // seconds since interface came up (0 if down)
 }
 
 // InterfaceIntent represents what NDMS admin wants for this interface.
@@ -85,6 +86,8 @@ func ParseInterfaceInfo(output string) (InterfaceInfo, error) {
 				info.Link = v
 			} else if v, ok := parseField(trimmed, "connected"); ok {
 				info.Connected = v == "yes"
+			} else if v, ok := parseField(trimmed, "uptime"); ok {
+				fmt.Sscanf(v, "%d", &info.Uptime)
 			}
 		} else {
 			// Summary > layer fields
@@ -115,6 +118,7 @@ func parseInterfaceInfoJSON(data string) (InterfaceInfo, error) {
 		Link:      info.Link,
 		Connected: info.Connected == "yes",
 		ConfLayer: info.Summary.Layer.Conf,
+		Uptime:    info.Uptime,
 	}, nil
 }
 

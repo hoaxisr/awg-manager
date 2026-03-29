@@ -299,11 +299,11 @@ func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var startedAt string
-		if backend == "nativewg" && t.StateInfo.ConnectedAt != "" {
-			// NativeWG: use RCI connected timestamp (NDMS is source of truth)
+		if t.StateInfo.ConnectedAt != "" {
+			// Use NDMS uptime as source of truth (both kernel and NativeWG)
 			startedAt = t.StateInfo.ConnectedAt
 		} else if stored != nil && stored.StartedAt != "" {
-			startedAt = stored.StartedAt
+			startedAt = stored.StartedAt // fallback to storage
 		}
 
 		items = append(items, tunnelItem{

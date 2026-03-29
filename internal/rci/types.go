@@ -16,6 +16,7 @@ type InterfaceInfo struct {
 	Mask          string `json:"mask"`
 	SecurityLevel string `json:"security-level"`
 	Priority      int    `json:"priority"`
+	Uptime        int    `json:"uptime"`
 	Summary       struct {
 		Layer struct {
 			Conf string `json:"conf"`
