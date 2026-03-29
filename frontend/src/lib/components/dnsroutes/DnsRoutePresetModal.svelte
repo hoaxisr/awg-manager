@@ -65,6 +65,11 @@
             next.delete(presetId);
         } else {
             next.add(presetId);
+            // If this preset covers others, deselect them
+            const preset = SERVICE_PRESETS.find(p => p.id === presetId);
+            if (preset?.covers) {
+                for (const c of preset.covers) next.delete(c);
+            }
         }
         selected = next;
     }
