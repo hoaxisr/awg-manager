@@ -204,6 +204,14 @@ func (m *MockOperator) UpdateDescription(ctx context.Context, tunnelID, descript
 	return nil
 }
 
+func (m *MockOperator) SyncDNS(ctx context.Context, tunnelID string, dns []string) error {
+	return nil
+}
+
+func (m *MockOperator) SyncAddress(ctx context.Context, tunnelID string, address, ipv6 string) error {
+	return nil
+}
+
 func (m *MockOperator) GetDefaultGatewayInterface(ctx context.Context) (string, error) {
 	return "PPPoE1", nil
 }
