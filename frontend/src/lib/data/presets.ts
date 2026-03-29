@@ -1,7 +1,9 @@
 export interface ServicePreset {
 	id: string;
 	name: string;
-	domains: string[];
+	domains?: string[];
+	subscriptionUrl?: string;
+	covers?: string[];  // IDs of other presets covered by this one
 }
 
 // Domain lists verified and cleaned 2026-03-29.
@@ -178,5 +180,11 @@ export const SERVICE_PRESETS: ServicePreset[] = [
 			'usermoderation.roblox.com', 'users.roblox.com', 'voice.roblox.com',
 			'withpersona.com', 'www.roblox.com',
 		],
+	},
+	{
+		id: 'all-blocked',
+		name: 'ItDog Allow Domains',
+		subscriptionUrl: 'https://raw.githubusercontent.com/itdoginfo/allow-domains/master/Russia/inside-raw.lst',
+		covers: ['youtube', 'discord', 'social', 'twitter', 'spotify', 'netflix', 'tiktok', 'chatgpt', 'google'],
 	},
 ];
