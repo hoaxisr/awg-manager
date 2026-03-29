@@ -56,6 +56,12 @@
     let clientRouteToggling = $state<string | null>(null);
     let clientRouteModalOpen = $state(false);
     let editingClientRoute = $state<ClientRoute | null>(null);
+    let clientSelectionMode = $state(false);
+    let clientSelected = $state<Set<string>>(new Set());
+    let clientTunnelMode = $state(false);
+    let clientBulkTunnelId = $state('');
+    let clientBulkLoading = $state(false);
+    let clientBulkDeleteConfirm = $state(false);
 
     // IP state
     let ipRoutes = $state<StaticRouteList[]>([]);
@@ -720,6 +726,67 @@
         }
     }
 
+    function toggleClientSelect(id: string) {
+        const next = new Set(clientSelected);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        clientSelected = next;
+    }
+
+    function clientSelectAll() {
+        clientSelected = new Set(clientRoutes.map(r => r.id));
+    }
+
+    function exitClientSelection() {
+        clientSelectionMode = false;
+        clientSelected = new Set();
+        clientTunnelMode = false;
+    }
+
+    async function bulkClientToggle(enabled: boolean) {
+        clientBulkLoading = true;
+        try {
+            for (const id of clientSelected) {
+                try { await api.toggleClientRoute(id, enabled); } catch {}
+            }
+            clientRoutes = await api.listClientRoutes();
+            notifications.success(`${enabled ? 'Включено' : 'Выключено'} ${clientSelected.size} правил`);
+        } finally {
+            clientBulkLoading = false;
+        }
+    }
+
+    async function bulkClientDelete() {
+        clientBulkLoading = true;
+        try {
+            let count = 0;
+            for (const id of clientSelected) {
+                try { await api.deleteClientRoute(id); count++; } catch {}
+            }
+            clientRoutes = await api.listClientRoutes();
+            exitClientSelection();
+            notifications.success(`Удалено ${count} правил`);
+        } finally {
+            clientBulkLoading = false;
+            clientBulkDeleteConfirm = false;
+        }
+    }
+
+    async function bulkClientChangeTunnel() {
+        if (!clientBulkTunnelId) return;
+        clientBulkLoading = true;
+        try {
+            for (const id of clientSelected) {
+                try { await api.updateClientRoute(id, { tunnelId: clientBulkTunnelId }); } catch {}
+            }
+            clientRoutes = await api.listClientRoutes();
+            clientTunnelMode = false;
+            notifications.success(`Туннель изменён для ${clientSelected.size} правил`);
+        } finally {
+            clientBulkLoading = false;
+        }
+    }
+
     async function handleIpImport(routes: (PortableStaticRoute & { tunnelID: string })[]) {
         let count = 0;
         for (const route of routes) {
@@ -1074,12 +1141,45 @@
             {/if}
         {:else if activeTab === 'clientvpn'}
             <div class="section-header">
-                <span class="section-summary">{clientRoutes.length} правил</span>
-                <div class="section-buttons">
-                    <button class="btn btn-sm btn-primary" onclick={() => { editingClientRoute = null; clientRouteModalOpen = true; }}>
-                        + Создать
-                    </button>
-                </div>
+                {#if !clientSelectionMode}
+                    <span class="section-summary">{clientRoutes.length} правил</span>
+                    <div class="section-buttons">
+                        {#if clientRoutes.length > 0}
+                            <button class="btn btn-sm btn-ghost" onclick={() => { clientSelectionMode = true; clientSelected = new Set(); }}>Выбрать</button>
+                        {/if}
+                        <button class="btn btn-sm btn-primary" onclick={() => { editingClientRoute = null; clientRouteModalOpen = true; }}>+ Создать</button>
+                    </div>
+                {:else}
+                    <div class="bulk-bar">
+                        <div class="bulk-bar-nav">
+                            <button class="bulk-btn bulk-btn-cancel" onclick={exitClientSelection} disabled={clientBulkLoading}>✕ Отмена</button>
+                            <span class="bulk-count">{clientSelected.size} выбрано</span>
+                            <button class="bulk-btn bulk-btn-select-all" onclick={clientSelectAll} disabled={clientBulkLoading}>Выбрать все</button>
+                        </div>
+                        {#if !clientTunnelMode}
+                            <div class="bulk-bar-actions">
+                                <button class="bulk-btn bulk-btn-enable" disabled={clientSelected.size === 0 || clientBulkLoading} onclick={() => bulkClientToggle(true)}>Включить</button>
+                                <button class="bulk-btn bulk-btn-disable" disabled={clientSelected.size === 0 || clientBulkLoading} onclick={() => bulkClientToggle(false)}>Выключить</button>
+                                <button class="bulk-btn bulk-btn-delete" disabled={clientSelected.size === 0 || clientBulkLoading} onclick={() => clientBulkDeleteConfirm = true}>Удалить</button>
+                                <button class="bulk-btn bulk-btn-tunnel" disabled={clientSelected.size === 0 || clientBulkLoading} onclick={() => { clientTunnelMode = true; clientBulkTunnelId = routingTunnels.find(t => t.available)?.id ?? ''; }}>Туннель ▾</button>
+                            </div>
+                        {:else}
+                            <div class="bulk-tunnel-bar">
+                                <span class="bulk-tunnel-label">Туннель:</span>
+                                <select class="bulk-tunnel-select" bind:value={clientBulkTunnelId} disabled={clientBulkLoading}>
+                                    {#each routingTunnels.filter(t => t.type === 'managed' && t.available) as t}
+                                        <option value={t.id}>{t.name}</option>
+                                    {/each}
+                                    {#each routingTunnels.filter(t => t.type === 'system' && t.available) as t}
+                                        <option value={t.id}>{t.name}</option>
+                                    {/each}
+                                </select>
+                                <button class="bulk-tunnel-apply" disabled={clientBulkLoading} onclick={bulkClientChangeTunnel}>Применить ({clientSelected.size})</button>
+                                <button class="bulk-tunnel-close" onclick={() => clientTunnelMode = false}>✕</button>
+                            </div>
+                        {/if}
+                    </div>
+                {/if}
             </div>
 
             {#if clientRoutes.length === 0}
@@ -1094,6 +1194,9 @@
                             onedit={() => { editingClientRoute = route; clientRouteModalOpen = true; }}
                             ondelete={() => clientRouteDeleteId = route.id}
                             toggleLoading={clientRouteToggling === route.id}
+                            selectable={clientSelectionMode}
+                            selected={clientSelected.has(route.id)}
+                            onselect={() => toggleClientSelect(route.id)}
                         />
                     {/each}
                 </div>
@@ -1116,6 +1219,16 @@
                     {#snippet actions()}
                         <button class="btn btn-ghost" onclick={() => clientRouteDeleteId = null}>Отмена</button>
                         <button class="btn btn-danger" onclick={deleteClientRoute}>Удалить</button>
+                    {/snippet}
+                </Modal>
+            {/if}
+
+            {#if clientBulkDeleteConfirm}
+                <Modal open={true} title="Удаление" size="sm" onclose={() => clientBulkDeleteConfirm = false}>
+                    <p class="confirm-text">Удалить {clientSelected.size} VPN-правил?</p>
+                    {#snippet actions()}
+                        <button class="btn btn-ghost" onclick={() => clientBulkDeleteConfirm = false}>Отмена</button>
+                        <button class="btn btn-danger" onclick={bulkClientDelete}>Удалить</button>
                     {/snippet}
                 </Modal>
             {/if}
