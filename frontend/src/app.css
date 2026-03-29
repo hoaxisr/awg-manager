@@ -684,3 +684,131 @@ label {
 .tunnel-name-btn.overridden {
 	color: var(--accent);
 }
+
+/* ─── Bulk Action Bar ─── */
+
+.bulk-bar {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.bulk-bar-nav {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.bulk-bar-actions {
+	display: flex;
+	gap: 0.375rem;
+	flex-wrap: wrap;
+}
+
+.bulk-btn {
+	padding: 0.5rem 0.875rem;
+	border-radius: 6px;
+	font-size: 0.75rem;
+	font-weight: 500;
+	cursor: pointer;
+	border: 1px solid;
+	background: transparent;
+	transition: opacity 0.15s;
+}
+
+.bulk-btn:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+.bulk-btn-cancel {
+	border-color: var(--border);
+	color: var(--text-primary);
+}
+
+.bulk-btn-select-all {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+.bulk-btn-enable {
+	border-color: var(--success, #22c55e);
+	color: var(--success, #22c55e);
+}
+
+.bulk-btn-disable {
+	border-color: var(--warning, #f59e0b);
+	color: var(--warning, #f59e0b);
+}
+
+.bulk-btn-delete {
+	border: none;
+	background: var(--error, #ef4444);
+	color: #fff;
+}
+
+.bulk-btn-tunnel {
+	border-color: #8b5cf6;
+	color: #8b5cf6;
+}
+
+.bulk-btn-export {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+.bulk-count {
+	color: var(--text-primary);
+	font-size: 0.8125rem;
+	font-weight: 500;
+	flex: 1;
+}
+
+.bulk-tunnel-bar {
+	display: flex;
+	align-items: center;
+	gap: 0.375rem;
+	background: rgba(139, 92, 246, 0.06);
+	border: 1px solid rgba(139, 92, 246, 0.25);
+	border-radius: 8px;
+	padding: 0.375rem 0.5rem;
+}
+
+.bulk-tunnel-label {
+	color: #8b5cf6;
+	font-size: 0.75rem;
+	font-weight: 500;
+	white-space: nowrap;
+}
+
+.bulk-tunnel-select {
+	flex: 1;
+	border: 1px solid #8b5cf6;
+	color: var(--text-primary);
+	background: var(--bg-secondary);
+	padding: 0.4375rem 0.5rem;
+	border-radius: 5px;
+	font-size: 0.75rem;
+	min-width: 0;
+}
+
+.bulk-tunnel-apply {
+	background: #8b5cf6;
+	color: #fff;
+	padding: 0.4375rem 0.875rem;
+	border-radius: 5px;
+	font-size: 0.75rem;
+	font-weight: 600;
+	border: none;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.bulk-tunnel-close {
+	background: none;
+	border: none;
+	color: var(--text-muted);
+	padding: 0.25rem 0.5rem;
+	font-size: 0.75rem;
+	cursor: pointer;
+}
