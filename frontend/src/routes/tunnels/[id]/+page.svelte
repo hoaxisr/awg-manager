@@ -273,10 +273,10 @@
 				ispLabel = iface?.label || value;
 			}
 			await api.updateTunnel(tunnelId, {
-				ispInterface: value === 'auto' ? '' : value,
+				ispInterface: value,
 				ispInterfaceLabel: ispLabel,
 			});
-			tunnel.ispInterface = value === 'auto' ? undefined : value;
+			tunnel.ispInterface = value === 'auto' ? '' : value;
 			tunnel.ispInterfaceLabel = ispLabel;
 		} catch (e) {
 			notifications.error(`Ошибка: ${(e as Error).message}`);
