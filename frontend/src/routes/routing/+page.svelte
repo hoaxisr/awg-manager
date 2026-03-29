@@ -336,11 +336,14 @@
     async function bulkDnsToggle(enabled: boolean) {
         dnsBulkLoading = true;
         try {
+            let ok = 0, fail = 0;
             for (const id of dnsSelected) {
-                try { await api.setDnsRouteEnabled(id, enabled); } catch {}
+                try { await api.setDnsRouteEnabled(id, enabled); ok++; } catch { fail++; }
             }
             dnsRoutes = await api.listDnsRoutes();
-            notifications.success(`${enabled ? 'Включено' : 'Выключено'} ${dnsSelected.size} правил`);
+            const label = enabled ? 'Включено' : 'Выключено';
+            if (fail > 0) notifications.warning(`${label} ${ok} из ${ok + fail} правил (${fail} ошибок)`);
+            else notifications.success(`${label} ${ok} правил`);
         } finally {
             dnsBulkLoading = false;
         }
@@ -349,13 +352,14 @@
     async function bulkDnsDelete() {
         dnsBulkLoading = true;
         try {
-            let count = 0;
+            let ok = 0, fail = 0;
             for (const id of dnsSelected) {
-                try { await api.deleteDnsRoute(id); count++; } catch {}
+                try { await api.deleteDnsRoute(id); ok++; } catch { fail++; }
             }
             dnsRoutes = await api.listDnsRoutes();
             exitDnsSelection();
-            notifications.success(`Удалено ${count} правил`);
+            if (fail > 0) notifications.warning(`Удалено ${ok} из ${ok + fail} правил (${fail} ошибок)`);
+            else notifications.success(`Удалено ${ok} правил`);
         } finally {
             dnsBulkLoading = false;
             dnsBulkDeleteConfirm = false;
@@ -366,17 +370,19 @@
         if (!dnsBulkTunnelId) return;
         dnsBulkLoading = true;
         try {
+            let ok = 0, fail = 0;
             for (const id of dnsSelected) {
                 const route = dnsRoutes.find(r => r.id === id);
                 if (!route) continue;
                 const newRoutes = route.routes.length > 0
                     ? [{ ...route.routes[0], tunnelId: dnsBulkTunnelId, interface: dnsBulkTunnelId }, ...route.routes.slice(1)]
                     : [{ tunnelId: dnsBulkTunnelId, interface: dnsBulkTunnelId, fallback: '' as const }];
-                try { await api.updateDnsRoute(id, { routes: newRoutes }); } catch {}
+                try { await api.updateDnsRoute(id, { routes: newRoutes }); ok++; } catch { fail++; }
             }
             dnsRoutes = await api.listDnsRoutes();
             dnsTunnelMode = false;
-            notifications.success(`Туннель изменён для ${dnsSelected.size} правил`);
+            if (fail > 0) notifications.warning(`Туннель изменён для ${ok} из ${ok + fail} правил (${fail} ошибок)`);
+            else notifications.success(`Туннель изменён для ${ok} правил`);
         } finally {
             dnsBulkLoading = false;
         }
@@ -523,11 +529,14 @@
     async function bulkIpToggle(enabled: boolean) {
         ipBulkLoading = true;
         try {
+            let ok = 0, fail = 0;
             for (const id of ipSelected) {
-                try { await api.setStaticRouteEnabled(id, enabled); } catch {}
+                try { await api.setStaticRouteEnabled(id, enabled); ok++; } catch { fail++; }
             }
             ipRoutes = await api.listStaticRoutes();
-            notifications.success(`${enabled ? 'Включено' : 'Выключено'} ${ipSelected.size} маршрутов`);
+            const label = enabled ? 'Включено' : 'Выключено';
+            if (fail > 0) notifications.warning(`${label} ${ok} из ${ok + fail} маршрутов (${fail} ошибок)`);
+            else notifications.success(`${label} ${ok} маршрутов`);
         } finally {
             ipBulkLoading = false;
         }
@@ -536,13 +545,14 @@
     async function bulkIpDelete() {
         ipBulkLoading = true;
         try {
-            let count = 0;
+            let ok = 0, fail = 0;
             for (const id of ipSelected) {
-                try { await api.deleteStaticRoute(id); count++; } catch {}
+                try { await api.deleteStaticRoute(id); ok++; } catch { fail++; }
             }
             ipRoutes = await api.listStaticRoutes();
             exitIpSelection();
-            notifications.success(`Удалено ${count} маршрутов`);
+            if (fail > 0) notifications.warning(`Удалено ${ok} из ${ok + fail} маршрутов (${fail} ошибок)`);
+            else notifications.success(`Удалено ${ok} маршрутов`);
         } finally {
             ipBulkLoading = false;
             ipBulkDeleteConfirm = false;
@@ -553,14 +563,16 @@
         if (!ipBulkTunnelId) return;
         ipBulkLoading = true;
         try {
+            let ok = 0, fail = 0;
             for (const id of ipSelected) {
                 const route = ipRoutes.find(r => r.id === id);
                 if (!route) continue;
-                try { await api.updateStaticRoute({ ...route, tunnelID: ipBulkTunnelId }); } catch {}
+                try { await api.updateStaticRoute({ ...route, tunnelID: ipBulkTunnelId }); ok++; } catch { fail++; }
             }
             ipRoutes = await api.listStaticRoutes();
             ipTunnelMode = false;
-            notifications.success(`Туннель изменён для ${ipSelected.size} маршрутов`);
+            if (fail > 0) notifications.warning(`Туннель изменён для ${ok} из ${ok + fail} маршрутов (${fail} ошибок)`);
+            else notifications.success(`Туннель изменён для ${ok} маршрутов`);
         } finally {
             ipBulkLoading = false;
         }
@@ -655,13 +667,14 @@
     async function bulkPolicyDelete() {
         policyBulkLoading = true;
         try {
-            let count = 0;
+            let ok = 0, fail = 0;
             for (const name of policySelected) {
-                try { await api.deleteAccessPolicy(name); count++; } catch {}
+                try { await api.deleteAccessPolicy(name); ok++; } catch { fail++; }
             }
             accessPolicies = await api.listAccessPolicies();
             exitPolicySelection();
-            notifications.success(`Удалено ${count} политик`);
+            if (fail > 0) notifications.warning(`Удалено ${ok} из ${ok + fail} политик (${fail} ошибок)`);
+            else notifications.success(`Удалено ${ok} политик`);
         } finally {
             policyBulkLoading = false;
             policyBulkDeleteConfirm = false;
@@ -746,11 +759,14 @@
     async function bulkClientToggle(enabled: boolean) {
         clientBulkLoading = true;
         try {
+            let ok = 0, fail = 0;
             for (const id of clientSelected) {
-                try { await api.toggleClientRoute(id, enabled); } catch {}
+                try { await api.toggleClientRoute(id, enabled); ok++; } catch { fail++; }
             }
             clientRoutes = await api.listClientRoutes();
-            notifications.success(`${enabled ? 'Включено' : 'Выключено'} ${clientSelected.size} правил`);
+            const label = enabled ? 'Включено' : 'Выключено';
+            if (fail > 0) notifications.warning(`${label} ${ok} из ${ok + fail} правил (${fail} ошибок)`);
+            else notifications.success(`${label} ${ok} правил`);
         } finally {
             clientBulkLoading = false;
         }
@@ -759,13 +775,14 @@
     async function bulkClientDelete() {
         clientBulkLoading = true;
         try {
-            let count = 0;
+            let ok = 0, fail = 0;
             for (const id of clientSelected) {
-                try { await api.deleteClientRoute(id); count++; } catch {}
+                try { await api.deleteClientRoute(id); ok++; } catch { fail++; }
             }
             clientRoutes = await api.listClientRoutes();
             exitClientSelection();
-            notifications.success(`Удалено ${count} правил`);
+            if (fail > 0) notifications.warning(`Удалено ${ok} из ${ok + fail} правил (${fail} ошибок)`);
+            else notifications.success(`Удалено ${ok} правил`);
         } finally {
             clientBulkLoading = false;
             clientBulkDeleteConfirm = false;
@@ -776,12 +793,14 @@
         if (!clientBulkTunnelId) return;
         clientBulkLoading = true;
         try {
+            let ok = 0, fail = 0;
             for (const id of clientSelected) {
-                try { await api.updateClientRoute(id, { tunnelId: clientBulkTunnelId }); } catch {}
+                try { await api.updateClientRoute(id, { tunnelId: clientBulkTunnelId }); ok++; } catch { fail++; }
             }
             clientRoutes = await api.listClientRoutes();
             clientTunnelMode = false;
-            notifications.success(`Туннель изменён для ${clientSelected.size} правил`);
+            if (fail > 0) notifications.warning(`Туннель изменён для ${ok} из ${ok + fail} правил (${fail} ошибок)`);
+            else notifications.success(`Туннель изменён для ${ok} правил`);
         } finally {
             clientBulkLoading = false;
         }
