@@ -373,32 +373,3 @@ func TestServiceWANDown_Suspends(t *testing.T) {
 	}
 }
 
-// TestServicePingCheck_Dead verifies HandleMonitorDead uses Stop (not KillLink).
-func TestServicePingCheck_Dead(t *testing.T) {
-	op := &MockOperator{}
-
-	// v3: HandleMonitorDead calls Stop via Manager
-	_ = op.Stop(context.Background(), "awg0")
-
-	if len(op.StopCalls) != 1 {
-		t.Errorf("Expected 1 Stop call, got %d", len(op.StopCalls))
-	}
-}
-
-// TestServicePingCheck_Recovered verifies HandleMonitorRecovered restarts tunnel.
-func TestServicePingCheck_Recovered(t *testing.T) {
-	// After KillLink killed the process, HandleMonitorRecovered should
-	// call startInternal() for a full restart (not just InterfaceUp).
-	// State would be NeedsStart (intent=up, no process).
-	stateMgr := NewMockStateManager()
-	stateMgr.SetState("awg0", tunnel.StateInfo{
-		State:          tunnel.StateNeedsStart,
-		OpkgTunExists:  true,
-		ProcessRunning: false,
-	})
-
-	state := stateMgr.GetState(context.Background(), "awg0")
-	if state.State != tunnel.StateNeedsStart {
-		t.Errorf("State should be NeedsStart after KillLink, got %v", state.State)
-	}
-}

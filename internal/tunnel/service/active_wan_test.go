@@ -474,62 +474,6 @@ func TestActiveWAN_RestoreEndpointTracking_ClearsStale(t *testing.T) {
 	}
 }
 
-// TestActiveWAN_HandleMonitorDead_Clears verifies HandleMonitorDead clears ActiveWAN.
-func TestActiveWAN_HandleMonitorDead_Clears(t *testing.T) {
-	svc, store, _, stateMgr := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
-		tun.ActiveWAN = "eth3"
-		tun.PingCheck = &storage.TunnelPingCheck{Enabled: true}
-	})
-	stateMgr.SetState("awg10", tunnel.StateInfo{
-		OpkgTunExists: true, ProcessRunning: true, InterfaceUp: true,
-	})
-
-	err := svc.HandleMonitorDead(ctx, "awg10")
-	if err != nil {
-		t.Fatalf("HandleMonitorDead() error = %v", err)
-	}
-
-	stored, _ := store.Get("awg10")
-	if stored.ActiveWAN != "" {
-		t.Errorf("ActiveWAN = %q, want empty after monitor dead", stored.ActiveWAN)
-	}
-}
-
-// TestActiveWAN_HandleForcedRestart_SetsNew verifies HandleForcedRestart
-// clears old ActiveWAN and sets a new one after restart.
-func TestActiveWAN_HandleForcedRestart_SetsNew(t *testing.T) {
-	svc, store, op, stateMgr := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
-		tun.ActiveWAN = "eth3"
-		tun.PingCheck = &storage.TunnelPingCheck{Enabled: true, IsDeadByMonitoring: true}
-	})
-	// Dead by monitoring — Manager sees StateDead from stored flag.
-	// Raw state: process stopped (after previous HandlePingDead → Stop).
-	stateMgr.SetState("awg10", tunnel.StateInfo{
-		OpkgTunExists: true, ProcessRunning: false, InterfaceUp: false,
-	})
-
-	// WAN changed: eth3 down, ppp0 becomes preferred
-	svc.WANModel().SetUp("eth3", false)
-	op.defaultGW = "ppp0"
-
-	err := svc.HandleForcedRestart(ctx, "awg10")
-	if err != nil {
-		t.Fatalf("HandleForcedRestart() error = %v", err)
-	}
-
-	stored, _ := store.Get("awg10")
-	// After forced restart, ActiveWAN should be the new preferred WAN
-	if stored.ActiveWAN != "ppp0" {
-		t.Errorf("ActiveWAN = %q, want %q after forced restart", stored.ActiveWAN, "ppp0")
-	}
-}
-
 // TestActiveWAN_ResolveWAN_ChainedTunnel verifies resolveWAN reads parent's ActiveWAN.
 func TestActiveWAN_ResolveWAN_ChainedTunnel(t *testing.T) {
 	svc, store, _, stateMgr := testService(t)

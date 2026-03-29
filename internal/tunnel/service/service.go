@@ -98,16 +98,6 @@ type Service interface {
 	// WANModel returns the unified WAN state model.
 	WANModel() *wan.Model
 
-	// PingCheck integration
-
-	// HandleMonitorDead is called when PingCheck detects a dead tunnel.
-	// Persists dead state in storage and stops the tunnel via lifecycle Manager.
-	HandleMonitorDead(ctx context.Context, tunnelID string) error
-
-	// HandleMonitorRecovered is called when PingCheck detects tunnel recovery.
-	// Attempts a full restart. Returns error if restart fails (pingcheck retries).
-	HandleMonitorRecovered(ctx context.Context, tunnelID string) error
-
 	// RestoreEndpointTracking restores endpoint route tracking on daemon restart.
 	// For running tunnels, re-populates the in-memory tracking map.
 	RestoreEndpointTracking(ctx context.Context) error

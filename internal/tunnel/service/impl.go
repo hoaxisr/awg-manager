@@ -663,7 +663,7 @@ func (s *ServiceImpl) CheckAddressConflicts(_ context.Context, tunnelID string) 
 }
 
 // clearDeadFlag clears IsDeadByMonitoring when user manually starts a running tunnel.
-// This handles the edge case where PingCheck's HandleForcedRestart started the tunnel
+// This handles the edge case where PingCheck restarted the tunnel
 // but re-set the dead flag before the user's Start acquired the lock.
 func (s *ServiceImpl) clearDeadFlag(tunnelID string) {
 	stored, err := s.store.Get(tunnelID)
