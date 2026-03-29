@@ -23,7 +23,7 @@ BASE_URL="http://${AWG_HOST}:${AWG_PORT}"
 
 # === OpkgTun interface changes (tunnel toggled in router UI) ===
 case "$id" in
-    OpkgTun*)
+    OpkgTun*|Wireguard*)
         [ "$layer" = "conf" ] || exit 0
         RESULT=$(/opt/bin/curl -s -o /dev/null -w '%{http_code}' \
             --max-time 5 -X POST \
