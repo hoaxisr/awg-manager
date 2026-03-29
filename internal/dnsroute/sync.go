@@ -116,14 +116,20 @@ func (s *ServiceImpl) reconcile(ctx context.Context) error {
 	s.logInfo("reconcile", "", fmt.Sprintf("Reconciling: %d group deletes, %d group updates, %d route deletes, %d route upserts",
 		len(diff.groupDeletes), len(diff.groupUpdates), len(diff.routeDeletes), len(diff.routeUpserts)))
 
-	if err := s.applyDiff(ctx, diff); err != nil {
-		s.logError("reconcile", "", "Failed to apply diff", err.Error())
-		return fmt.Errorf("apply diff: %w", err)
+	applyErr := s.applyDiff(ctx, diff)
+	if applyErr != nil {
+		s.logError("reconcile", "", "Partial apply failure", applyErr.Error())
 	}
 
+	// Always save — even on partial failure some operations succeeded
+	// and must be persisted to running-config.
 	if err := s.ndms.Save(ctx); err != nil {
 		s.logError("reconcile", "", "Failed to save config", err.Error())
 		return fmt.Errorf("save config: %w", err)
+	}
+
+	if applyErr != nil {
+		return fmt.Errorf("apply diff: %w", applyErr)
 	}
 
 	s.logInfo("reconcile", "", "Reconcile complete")
@@ -386,6 +392,8 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff) error {
 	}
 
 	// Phase 3: Create/update groups (incremental domain add/remove)
+	// Continue on per-group errors so other groups still get applied.
+	var groupErrors []string
 	for _, g := range diff.groupUpdates {
 		groupBody := make(map[string]interface{})
 
@@ -423,7 +431,8 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff) error {
 			},
 		}
 		if _, err := s.ndms.RCIPost(ctx, payload); err != nil {
-			return fmt.Errorf("update group %s: %w", g.name, err)
+			groupErrors = append(groupErrors, fmt.Sprintf("%s: %v", g.name, err))
+			s.log.Warnf("reconcile: group %s update failed: %v", g.name, err)
 		}
 	}
 
@@ -439,6 +448,9 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff) error {
 		}
 	}
 
+	if len(groupErrors) > 0 {
+		return fmt.Errorf("%d group update(s) failed: %s", len(groupErrors), strings.Join(groupErrors, "; "))
+	}
 	return nil
 }
 
