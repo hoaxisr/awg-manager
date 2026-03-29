@@ -24,16 +24,16 @@ type LogEntry struct {
 
 // TunnelStatus represents the current ping check status of a tunnel.
 type TunnelStatus struct {
-	TunnelID        string     `json:"tunnelId"`
-	TunnelName      string     `json:"tunnelName"`
-	Enabled         bool       `json:"enabled"`
-	Backend         string     `json:"backend"`                   // "kernel" or "nativewg"
-	Status          string     `json:"status"`                    // "alive", "dead", "disabled", "paused"
-	Method          string     `json:"method"`                    // "http", "icmp", "connect", "tls", "uri"
-	LastCheck       *time.Time `json:"lastCheck"`
-	LastLatency     int        `json:"lastLatency"`               // ms
-	FailCount       int        `json:"failCount"`
-	SuccessCount    int        `json:"successCount,omitempty"`    // NDMS native only
-	FailThreshold   int        `json:"failThreshold"`
-	IsDeadByMonitor bool       `json:"isDeadByMonitor"`
+	TunnelID      string     `json:"tunnelId"`
+	TunnelName    string     `json:"tunnelName"`
+	Enabled       bool       `json:"enabled"`
+	Backend       string     `json:"backend"`                // "kernel" or "nativewg"
+	Status        string     `json:"status"`                 // "alive", "recovering", "disabled"
+	Method        string     `json:"method"`                 // "http", "icmp", "connect", "tls", "uri"
+	LastCheck     *time.Time `json:"lastCheck"`
+	LastLatency   int        `json:"lastLatency"`            // ms
+	FailCount     int        `json:"failCount"`
+	SuccessCount  int        `json:"successCount,omitempty"` // NDMS native only
+	FailThreshold int        `json:"failThreshold"`
+	RestartCount  int        `json:"restartCount"`
 }
