@@ -148,7 +148,6 @@
 
 		<div class="chart-area">
 			<span class="scale-label top-label">{formatBitRate(maxRate)}</span>
-			<span class="scale-label bottom-label">{formatBitRate(maxRate)}</span>
 
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<svg
@@ -265,10 +264,6 @@
 
 	.top-label {
 		top: 2px;
-	}
-
-	.bottom-label {
-		bottom: 14px; /* above x-labels */
 	}
 
 	.x-labels {
