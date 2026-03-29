@@ -510,3 +510,177 @@ label {
 .collapse-trigger.open svg {
 	transform: rotate(90deg);
 }
+
+/* ─── Import Modal shared styles ─── */
+
+.import-upload {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 1rem;
+	padding: 2rem;
+}
+
+.drop-zone {
+	border: 2px dashed var(--border);
+	border-radius: 10px;
+	padding: 2rem 1.5rem;
+	cursor: pointer;
+	text-align: center;
+	color: var(--text-muted);
+	transition: border-color 0.2s, background 0.2s;
+	width: 100%;
+}
+
+.drop-zone:hover, .drop-zone.dragging {
+	border-color: var(--accent);
+	background: rgba(59, 130, 246, 0.05);
+}
+
+.drop-text {
+	font-size: 0.8125rem;
+	color: var(--text-secondary);
+	margin: 0.5rem 0 0;
+}
+
+.drop-hint {
+	font-size: 0.6875rem;
+	color: var(--text-muted);
+	margin: 0.25rem 0 0;
+}
+
+.hidden-input {
+	display: none;
+}
+
+.import-description {
+	color: var(--text-secondary);
+	font-size: 0.8125rem;
+	text-align: center;
+	margin-bottom: 0.5rem;
+}
+
+.import-accent {
+	color: var(--error);
+	font-weight: 500;
+}
+
+.import-error {
+	color: var(--error);
+	font-size: 0.8125rem;
+}
+
+.import-hint {
+	color: var(--text-secondary);
+	font-size: 0.875rem;
+	margin-bottom: 0.75rem;
+}
+
+.import-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	max-height: 400px;
+	overflow-y: auto;
+}
+
+.import-item {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.5rem 0.75rem;
+	background: var(--bg-primary);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	cursor: pointer;
+	font-size: 0.8125rem;
+}
+
+.import-item.duplicate {
+	opacity: 0.5;
+}
+
+.import-item.overridden {
+	border-color: var(--accent-muted, rgba(59, 130, 246, 0.3));
+}
+
+.import-item-info {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	gap: 0.125rem;
+	min-width: 0;
+}
+
+.import-name {
+	font-weight: 500;
+	color: var(--text-primary);
+}
+
+.import-meta {
+	color: var(--text-muted);
+	font-size: 0.75rem;
+}
+
+.import-dup {
+	color: var(--warning);
+	font-size: 0.6875rem;
+	font-style: italic;
+}
+
+.tunnel-default-bar {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 0.625rem 0.75rem;
+	background: var(--bg-primary);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	margin-bottom: 1rem;
+}
+
+.tunnel-default-label {
+	color: var(--text-muted);
+	font-size: 0.75rem;
+	white-space: nowrap;
+}
+
+.tunnel-select {
+	flex: 1;
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	padding: 0.375rem 0.5rem;
+	color: var(--text-primary);
+	font-size: 0.8125rem;
+}
+
+.tunnel-select-inline {
+	background: var(--bg-secondary);
+	border: 1px solid var(--accent);
+	border-radius: 4px;
+	padding: 0.25rem 0.375rem;
+	color: var(--text-primary);
+	font-size: 0.6875rem;
+	max-width: 140px;
+}
+
+.tunnel-name-btn {
+	background: none;
+	border: none;
+	padding: 0.125rem 0.375rem;
+	color: var(--text-muted);
+	font-size: 0.6875rem;
+	cursor: pointer;
+	border-radius: 4px;
+	white-space: nowrap;
+}
+
+.tunnel-name-btn:hover {
+	background: var(--bg-secondary);
+	color: var(--text-secondary);
+}
+
+.tunnel-name-btn.overridden {
+	color: var(--accent);
+}
