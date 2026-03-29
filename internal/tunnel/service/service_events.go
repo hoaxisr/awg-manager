@@ -37,6 +37,14 @@ func (s *ServiceImpl) HandleWANDown(ctx context.Context, iface string) {
 			s.logInfo("wan_down", "nwg", "NativeWG proxy suspend deferred — boot in progress")
 		} else {
 			s.suspendNativeWGProxies(ctx)
+			// If another WAN is still up, immediately resume proxies through
+			// the surviving WAN. Without this, tunnels stay suspended until
+			// a wan-up event fires — which never happens for an already-up
+			// backup interface.
+			if _, ok := s.wan.PreferredUp(); ok {
+				s.logInfo("wan_down", "nwg", "Another WAN available — resuming NativeWG proxies")
+				s.resumeNativeWGProxies(ctx)
+			}
 		}
 	}
 	s.lifecycleManager.HandleWANDown(ctx, iface)
