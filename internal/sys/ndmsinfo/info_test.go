@@ -13,6 +13,7 @@ func TestSupportsASC(t *testing.T) {
 		{"5.01.A.3.0-0", true},
 		{"5.01.A.4.0-0", true},
 		{"5.01.A.5.0-0", true},
+		{"5.01.B.0.0-1", true},
 		{"5.01.B.1.0-0", true},
 		{"5.01.03.0-0", true},
 		{"5.02.A.1.0-0", true},
