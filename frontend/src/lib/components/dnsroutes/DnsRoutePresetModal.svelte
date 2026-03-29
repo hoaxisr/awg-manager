@@ -39,8 +39,24 @@
         wasOpen = open;
     });
 
+    // IDs covered by a selected "covers" preset (e.g. "all-blocked" covers youtube, discord, etc.)
+    let coveredIds = $derived.by(() => {
+        const ids = new Set<string>();
+        for (const id of selected) {
+            const preset = SERVICE_PRESETS.find(p => p.id === id);
+            if (preset?.covers) {
+                for (const c of preset.covers) ids.add(c);
+            }
+        }
+        return ids;
+    });
+
     function isAdded(preset: ServicePreset): boolean {
         return existingLower.includes(preset.name.toLowerCase());
+    }
+
+    function isCovered(preset: ServicePreset): boolean {
+        return coveredIds.has(preset.id);
     }
 
     function toggle(presetId: string) {
@@ -65,12 +81,14 @@
     <div class="preset-grid">
         {#each SERVICE_PRESETS as preset (preset.id)}
             {@const added = isAdded(preset)}
+            {@const covered = isCovered(preset)}
             {@const isSelected = selected.has(preset.id)}
             <button
                 type="button"
                 class="preset-card"
                 class:selected={isSelected}
                 class:added
+                class:covered={covered && !isSelected}
                 onclick={() => { if (!added) toggle(preset.id); }}
                 disabled={added || creating}
             >
@@ -78,6 +96,8 @@
                     <span class="preset-check">&#10003;</span>
                 {:else if added}
                     <span class="preset-badge">добавлено</span>
+                {:else if covered}
+                    <span class="preset-badge">входит в сборник</span>
                 {/if}
                 <ServiceIcon name={preset.name} size={40} />
                 <span class="preset-name">{preset.name}</span>
@@ -127,8 +147,6 @@
         display: grid;
         grid-template-columns: repeat(4, 1fr);
         gap: 10px;
-        max-height: 380px;
-        overflow-y: auto;
         margin-bottom: 1rem;
     }
 
@@ -169,6 +187,11 @@
     .preset-card.added {
         opacity: 0.4;
         cursor: not-allowed;
+    }
+
+    .preset-card.covered {
+        opacity: 0.35;
+        filter: grayscale(0.5);
     }
 
     .preset-check {
