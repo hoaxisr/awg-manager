@@ -161,7 +161,7 @@
 	}
 
 	.chart-body.expanded {
-		max-height: 150px;
+		max-height: 300px;
 		padding: 0 12px 4px;
 	}
 </style>
