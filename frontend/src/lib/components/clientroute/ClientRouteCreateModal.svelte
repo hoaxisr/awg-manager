@@ -38,6 +38,17 @@
 		})
 	);
 
+	let isManualIP = $derived(() => {
+		if (!searchText.trim()) return false;
+		const parts = searchText.trim().split('.');
+		if (parts.length !== 4) return false;
+		return parts.every(p => { const n = Number(p); return Number.isInteger(n) && n >= 0 && n <= 255 && p !== ''; });
+	});
+
+	let showManualOption = $derived(
+		!editing && filteredDevices.length === 0 && isManualIP() && !existingIPs.includes(searchText.trim())
+	);
+
 	let canSave = $derived(selectedDevice !== null && selectedTunnel !== '');
 	let attempted = $state(false);
 	let shaking = $state(false);
@@ -119,8 +130,18 @@
 				{:else}
 					<div class="empty-list">Устройства не найдены</div>
 				{/each}
+				{#if showManualOption}
+					<button
+						type="button"
+						class="manual-ip-btn"
+						class:selected={selectedDevice?.ip === searchText.trim()}
+						onclick={() => { selectedDevice = { ip: searchText.trim(), name: '' }; }}
+					>
+						Использовать: {searchText.trim()}
+					</button>
+				{/if}
 			</div>
-			<div class="error-text" class:visible={deviceError}>Выберите устройство из списка</div>
+			<div class="error-text" class:visible={deviceError}>Выберите устройство</div>
 		</div>
 
 		<!-- Tunnel dropdown -->
@@ -289,6 +310,28 @@
 		text-align: center;
 		color: var(--text-muted);
 		font-size: 0.875rem;
+	}
+
+	.manual-ip-btn {
+		display: block;
+		width: 100%;
+		padding: 8px 12px;
+		border: none;
+		border-top: 1px solid var(--border);
+		background: transparent;
+		color: var(--accent);
+		font-size: 0.875rem;
+		cursor: pointer;
+		text-align: left;
+		transition: background 0.15s;
+	}
+
+	.manual-ip-btn:hover {
+		background: var(--bg-hover);
+	}
+
+	.manual-ip-btn.selected {
+		background: color-mix(in srgb, var(--accent) 15%, transparent);
 	}
 
 	.field-select {

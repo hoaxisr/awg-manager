@@ -40,9 +40,11 @@
 					class:led-green={route.enabled}
 					class:led-gray={!route.enabled}
 				></span>
-				<h3>{route.clientHostname}</h3>
+				<h3>{route.clientHostname || route.clientIp}</h3>
 			</div>
-			<span class="card-stat">IP: {route.clientIp}</span>
+			{#if route.clientHostname}
+				<span class="card-stat">IP: {route.clientIp}</span>
+			{/if}
 			<div class="card-route">
 				<span>&rarr;</span> <code>{tunnelName}</code>
 			</div>
