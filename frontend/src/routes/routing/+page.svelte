@@ -305,7 +305,7 @@
         notifications.success(`Экспортировано ${portable.length} правил`);
     }
 
-    async function handleDnsImport(routes: import('$lib/utils/dns-export').PortableDnsRoute[]) {
+    async function handleDnsImport(routes: (import('$lib/utils/dns-export').PortableDnsRoute & { tunnelId: string })[]) {
         let count = 0;
         for (const route of routes) {
             try {
@@ -316,7 +316,9 @@
                     excludes: route.excludes,
                     subnets: route.subnets,
                     enabled: route.enabled,
-                    routes: [],
+                    routes: route.tunnelId
+                        ? [{ tunnelId: route.tunnelId, interface: route.tunnelId, fallback: '' as const }]
+                        : [],
                 });
                 count++;
             } catch (e) {
@@ -533,7 +535,7 @@
         }
     }
 
-    async function handleIpImport(routes: PortableStaticRoute[]) {
+    async function handleIpImport(routes: (PortableStaticRoute & { tunnelID: string })[]) {
         let count = 0;
         for (const route of routes) {
             try {
@@ -541,6 +543,7 @@
                     name: route.name,
                     subnets: route.subnets,
                     enabled: route.enabled,
+                    tunnelID: route.tunnelID,
                 });
                 count++;
             } catch (e) {
@@ -642,6 +645,7 @@
             <DnsRouteImportModal
                 bind:open={dnsImportOpen}
                 existingNames={dnsRoutes.map(r => r.name)}
+                tunnels={routingTunnels}
                 onclose={() => dnsImportOpen = false}
                 onimport={handleDnsImport}
             />
@@ -708,6 +712,7 @@
             <IpRouteImportModal
                 bind:open={ipImportOpen}
                 existingNames={ipRoutes.map(r => r.name)}
+                tunnels={routingTunnels}
                 onclose={() => ipImportOpen = false}
                 onimport={handleIpImport}
             />
