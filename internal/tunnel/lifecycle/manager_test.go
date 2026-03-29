@@ -204,25 +204,3 @@ func TestDecide_APIRestart_Disabled(t *testing.T) {
 	}
 }
 
-func TestDecide_PingCheck(t *testing.T) {
-	tests := []struct {
-		name  string
-		event Event
-		state TunnelState
-		want  Action
-	}{
-		{"dead + running", EventPingDead, StateRunning, ActionStop},
-		{"dead + not running", EventPingDead, StateSuspended, ActionNone},
-		{"retry + dead", EventPingRetry, StateDead, ActionColdStart},
-		{"retry + not dead", EventPingRetry, StateRunning, ActionNone},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := Decide(tt.event, tt.state, EventContext{StoredEnabled: true})
-			if got != tt.want {
-				t.Errorf("Decide(%s, %s) = %s, want %s",
-					tt.event, tt.state, got, tt.want)
-			}
-		})
-	}
-}

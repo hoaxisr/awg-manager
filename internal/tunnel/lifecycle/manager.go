@@ -671,63 +671,6 @@ func (m *Manager) HandleAPIRestart(ctx context.Context, tunnelID string) error {
 	return nil
 }
 
-// HandlePingDead is called when PingCheck detects a dead tunnel.
-func (m *Manager) HandlePingDead(ctx context.Context, tunnelID string) error {
-	stored, err := m.store.Get(tunnelID)
-	if err != nil {
-		return nil
-	}
-
-	st := m.determineState(ctx, tunnelID, stored)
-	action := Decide(EventPingDead, st, EventContext{
-		StoredEnabled: stored.Enabled,
-	})
-
-	m.log.Infof("[ping_dead] %s: state=%s action=%s", tunnelID, st, action)
-
-	if action == ActionNone {
-		return nil
-	}
-
-
-	m.BeginOperation(tunnelID)
-	defer m.EndOperation(tunnelID)
-	m.lockTunnel(tunnelID)
-	defer m.unlockTunnel(tunnelID)
-
-	return m.executeAction(ctx, tunnelID, action, "ping_dead")
-}
-
-// HandlePingRetry is called when PingCheck retry timer fires for a dead tunnel.
-func (m *Manager) HandlePingRetry(ctx context.Context, tunnelID string) error {
-	stored, err := m.store.Get(tunnelID)
-	if err != nil {
-		return nil
-	}
-
-	st := m.determineState(ctx, tunnelID, stored)
-	action := Decide(EventPingRetry, st, EventContext{
-		StoredEnabled: stored.Enabled,
-	})
-
-	m.log.Infof("[ping_retry] %s: state=%s action=%s", tunnelID, st, action)
-
-	if action == ActionNone {
-		return nil
-	}
-
-	m.BeginOperation(tunnelID)
-	defer m.EndOperation(tunnelID)
-	m.lockTunnel(tunnelID)
-	defer m.unlockTunnel(tunnelID)
-
-	if err := m.executeAction(ctx, tunnelID, action, "ping_retry"); err != nil {
-		return err
-	}
-
-	m.notifyTunnelRunning(tunnelID)
-	return nil
-}
 
 // ─────────────────────────────────────────────────────────────
 // Action dispatch

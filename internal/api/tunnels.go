@@ -221,7 +221,6 @@ func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 		Endpoint                  string `json:"endpoint"`
 		Address                   string `json:"address"`
 		InterfaceName             string `json:"interfaceName"`
-		RestartCount              int    `json:"restartCount"`
 		HasAddressConflict        bool   `json:"hasAddressConflict"`
 		RxBytes                   int64  `json:"rxBytes"`
 		TxBytes                   int64  `json:"txBytes"`
@@ -322,7 +321,6 @@ func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 			Address:             address,
 			InterfaceName:       t.InterfaceName,
 			Backend:             backend,
-			RestartCount:        t.RestartCount,
 			HasAddressConflict:  hasConflict,
 			RxBytes:             t.StateInfo.RxBytes,
 			TxBytes:             t.StateInfo.TxBytes,
