@@ -1,0 +1,235 @@
+<script lang="ts">
+    import { Modal } from '$lib/components/ui';
+    import { ServiceIcon } from '$lib/components/dnsroutes';
+    import { SERVICE_PRESETS, type ServicePreset } from '$lib/data/presets';
+    import type { RoutingTunnel } from '$lib/types';
+
+    interface Props {
+        open: boolean;
+        existingNames: string[];
+        tunnels: RoutingTunnel[];
+        onclose: () => void;
+        oncreate: (presets: ServicePreset[], tunnelId: string) => void;
+    }
+
+    let {
+        open = $bindable(false),
+        existingNames,
+        tunnels,
+        onclose,
+        oncreate,
+    }: Props = $props();
+
+    let selected = $state<Set<string>>(new Set());
+    let defaultTunnelId = $state('');
+    let creating = $state(false);
+    let wasOpen = $state(false);
+
+    let userTunnels = $derived(tunnels.filter(t => t.type === 'managed' && t.available));
+    let systemTunnels = $derived(tunnels.filter(t => t.type === 'system' && t.available));
+    let noTunnels = $derived(tunnels.filter(t => t.available).length === 0);
+    let existingLower = $derived(existingNames.map(n => n.toLowerCase()));
+
+    $effect(() => {
+        if (open && !wasOpen) {
+            selected = new Set();
+            defaultTunnelId = tunnels.find(t => t.available)?.id ?? '';
+            creating = false;
+        }
+        wasOpen = open;
+    });
+
+    function isAdded(preset: ServicePreset): boolean {
+        return existingLower.includes(preset.name.toLowerCase());
+    }
+
+    function toggle(presetId: string) {
+        const next = new Set(selected);
+        if (next.has(presetId)) {
+            next.delete(presetId);
+        } else {
+            next.add(presetId);
+        }
+        selected = next;
+    }
+
+    function handleCreate() {
+        if (selected.size === 0 || !defaultTunnelId) return;
+        creating = true;
+        const presets = SERVICE_PRESETS.filter(p => selected.has(p.id));
+        oncreate(presets, defaultTunnelId);
+    }
+</script>
+
+<Modal {open} title="Каталог сервисов" size="lg" {onclose}>
+    <div class="preset-grid">
+        {#each SERVICE_PRESETS as preset (preset.id)}
+            {@const added = isAdded(preset)}
+            {@const isSelected = selected.has(preset.id)}
+            <button
+                type="button"
+                class="preset-card"
+                class:selected={isSelected}
+                class:added
+                onclick={() => { if (!added) toggle(preset.id); }}
+                disabled={added || creating}
+            >
+                {#if isSelected}
+                    <span class="preset-check">&#10003;</span>
+                {:else if added}
+                    <span class="preset-badge">добавлено</span>
+                {/if}
+                <ServiceIcon name={preset.name} size={40} />
+                <span class="preset-name">{preset.name}</span>
+            </button>
+        {/each}
+    </div>
+
+    <!-- Tunnel selector -->
+    <div class="tunnel-bar">
+        <span class="tunnel-label">Туннель:</span>
+        <select class="tunnel-select" bind:value={defaultTunnelId} disabled={creating}>
+            {#if userTunnels.length > 0}
+                <optgroup label="Пользовательские">
+                    {#each userTunnels as t}
+                        <option value={t.id}>{t.name}</option>
+                    {/each}
+                </optgroup>
+            {/if}
+            {#if systemTunnels.length > 0}
+                <optgroup label="Системные">
+                    {#each systemTunnels as t}
+                        <option value={t.id}>{t.name}</option>
+                    {/each}
+                </optgroup>
+            {/if}
+        </select>
+    </div>
+
+    {#if noTunnels}
+        <p class="no-tunnels">Создайте хотя бы один туннель</p>
+    {/if}
+
+    {#snippet actions()}
+        <button class="btn btn-ghost" onclick={onclose} disabled={creating}>Отмена</button>
+        <button
+            class="btn btn-primary"
+            onclick={handleCreate}
+            disabled={creating || selected.size === 0 || noTunnels}
+        >
+            {creating ? 'Создание...' : `Создать (${selected.size})`}
+        </button>
+    {/snippet}
+</Modal>
+
+<style>
+    .preset-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+        max-height: 380px;
+        overflow-y: auto;
+        margin-bottom: 1rem;
+    }
+
+    @media (max-width: 640px) {
+        .preset-grid {
+            grid-template-columns: repeat(3, 1fr);
+        }
+    }
+
+    @media (max-width: 420px) {
+        .preset-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+
+    .preset-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0.875rem 0.5rem;
+        background: var(--bg-primary);
+        border: 2px solid var(--border);
+        border-radius: 10px;
+        cursor: pointer;
+        transition: border-color 0.15s;
+        position: relative;
+    }
+
+    .preset-card:hover:not(.added) {
+        border-color: var(--text-muted);
+    }
+
+    .preset-card.selected {
+        border-color: var(--accent);
+    }
+
+    .preset-card.added {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+
+    .preset-check {
+        position: absolute;
+        top: 6px;
+        right: 6px;
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 11px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .preset-badge {
+        position: absolute;
+        top: 6px;
+        right: 6px;
+        font-size: 0.5625rem;
+        color: var(--text-muted);
+    }
+
+    .preset-name {
+        font-size: 0.6875rem;
+        font-weight: 500;
+        color: var(--text-primary);
+        text-align: center;
+    }
+
+    .tunnel-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.625rem 0.75rem;
+        background: var(--bg-primary);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        margin-bottom: 0.75rem;
+    }
+
+    .tunnel-label {
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        white-space: nowrap;
+    }
+
+    .tunnel-select {
+        flex: 1;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0.375rem 0.5rem;
+        color: var(--text-primary);
+        font-size: 0.8125rem;
+    }
+
+    .no-tunnels {
+        color: var(--error);
+        font-size: 0.8125rem;
+    }
+</style>
