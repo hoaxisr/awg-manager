@@ -1,17 +1,20 @@
 <script lang="ts">
     import { Modal } from '$lib/components/ui';
     import { parseImportFile, type PortableDnsRoute } from '$lib/utils/dns-export';
+    import type { RoutingTunnel } from '$lib/types';
 
     interface Props {
         open: boolean;
         existingNames: string[];
+        tunnels: RoutingTunnel[];
         onclose: () => void;
-        onimport: (routes: PortableDnsRoute[]) => void;
+        onimport: (routes: (PortableDnsRoute & { tunnelId: string })[]) => void;
     }
 
     let {
         open = $bindable(false),
         existingNames,
+        tunnels,
         onclose,
         onimport,
     }: Props = $props();
@@ -23,6 +26,9 @@
     let wasOpen = $state(false);
     let dragging = $state(false);
     let fileInput = $state<HTMLInputElement>(null!);
+    let defaultTunnelId = $state('');
+    let tunnelOverrides = $state<Record<number, string>>({});
+    let editingTunnelIdx = $state<number | null>(null);
 
     // Reset on open
     $effect(() => {
@@ -31,15 +37,29 @@
             selectedFlags = [];
             parseError = '';
             importing = false;
+            defaultTunnelId = tunnels.find(t => t.available)?.id ?? '';
+            tunnelOverrides = {};
+            editingTunnelIdx = null;
         }
         wasOpen = open;
     });
 
     let selectedCount = $derived(selectedFlags.filter(Boolean).length);
     let existingLower = $derived(existingNames.map(n => n.toLowerCase()));
+    let userTunnels = $derived(tunnels.filter(t => t.type === 'managed' && t.available));
+    let systemTunnels = $derived(tunnels.filter(t => t.type === 'system' && t.available));
+    let noTunnels = $derived(tunnels.filter(t => t.available).length === 0);
 
     function isDuplicate(name: string): boolean {
         return existingLower.includes(name.toLowerCase());
+    }
+
+    function effectiveTunnel(index: number): string {
+        return tunnelOverrides[index] ?? defaultTunnelId;
+    }
+
+    function tunnelName(tunnelId: string): string {
+        return tunnels.find(t => t.id === tunnelId)?.name ?? tunnelId;
     }
 
     async function processFile(file: File) {
@@ -52,6 +72,8 @@
             }
             parsed = routes;
             selectedFlags = routes.map(r => !isDuplicate(r.name));
+            tunnelOverrides = {};
+            editingTunnelIdx = null;
         } catch (e) {
             parseError = e instanceof Error ? e.message : 'Ошибка чтения файла';
         }
@@ -81,13 +103,16 @@
 
     function handleImport() {
         if (!parsed) return;
-        const selected = parsed.filter((_, i) => selectedFlags[i]);
+        const selected = parsed
+            .map((r, i) => ({ ...r, tunnelId: effectiveTunnel(i), _selected: selectedFlags[i] }))
+            .filter(r => r._selected)
+            .map(({ _selected, ...r }) => r);
         importing = true;
         onimport(selected);
     }
 </script>
 
-<Modal {open} title="Загрузить набор правил" size="md" {onclose}>
+<Modal {open} title="Загрузить набор правил" size="lg" {onclose}>
     {#if !parsed}
         <div class="import-upload">
             <p class="import-description">
@@ -118,21 +143,90 @@
             {/if}
         </div>
     {:else}
+        <!-- Default tunnel selector -->
+        <div class="tunnel-default-bar">
+            <span class="tunnel-default-label">Туннель для всех:</span>
+            <select class="tunnel-select" bind:value={defaultTunnelId} disabled={importing}>
+                {#if userTunnels.length > 0}
+                    <optgroup label="Пользовательские">
+                        {#each userTunnels as t}
+                            <option value={t.id}>{t.name}</option>
+                        {/each}
+                    </optgroup>
+                {/if}
+                {#if systemTunnels.length > 0}
+                    <optgroup label="Системные">
+                        {#each systemTunnels as t}
+                            <option value={t.id}>{t.name}</option>
+                        {/each}
+                    </optgroup>
+                {/if}
+            </select>
+        </div>
+
+        {#if noTunnels}
+            <p class="import-error">Создайте хотя бы один туннель перед импортом</p>
+        {/if}
+
         <!-- Preview list -->
         <p class="import-hint">Найдено {parsed.length} правил:</p>
         <div class="import-list">
             {#each parsed as route, i}
-                <label class="import-item" class:duplicate={isDuplicate(route.name)}>
+                <label class="import-item" class:duplicate={isDuplicate(route.name)} class:overridden={tunnelOverrides[i] != null}>
                     <input type="checkbox" bind:checked={selectedFlags[i]} disabled={importing} />
-                    <span class="import-name">{route.name}</span>
-                    <span class="import-meta">
-                        {route.manualDomains?.length ?? 0} доменов
-                        {#if route.subscriptions?.length}
-                            , {route.subscriptions.length} листов
-                        {/if}
-                    </span>
+                    <div class="import-item-info">
+                        <span class="import-name">{route.name}</span>
+                        <span class="import-meta">
+                            {route.manualDomains?.length ?? 0} доменов
+                            {#if route.subscriptions?.length}
+                                , {route.subscriptions.length} листов
+                            {/if}
+                        </span>
+                    </div>
                     {#if isDuplicate(route.name)}
                         <span class="import-dup">(дубликат)</span>
+                    {/if}
+                    {#if editingTunnelIdx === i}
+                        <select
+                            class="tunnel-select-inline"
+                            value={effectiveTunnel(i)}
+                            onchange={(e) => {
+                                const val = (e.target as HTMLSelectElement).value;
+                                if (val === defaultTunnelId) {
+                                    const next = { ...tunnelOverrides };
+                                    delete next[i];
+                                    tunnelOverrides = next;
+                                } else {
+                                    tunnelOverrides = { ...tunnelOverrides, [i]: val };
+                                }
+                                editingTunnelIdx = null;
+                            }}
+                            onblur={() => editingTunnelIdx = null}
+                        >
+                            {#if userTunnels.length > 0}
+                                <optgroup label="Пользовательские">
+                                    {#each userTunnels as t}
+                                        <option value={t.id}>{t.name}</option>
+                                    {/each}
+                                </optgroup>
+                            {/if}
+                            {#if systemTunnels.length > 0}
+                                <optgroup label="Системные">
+                                    {#each systemTunnels as t}
+                                        <option value={t.id}>{t.name}</option>
+                                    {/each}
+                                </optgroup>
+                            {/if}
+                        </select>
+                    {:else}
+                        <button
+                            class="tunnel-name-btn"
+                            class:overridden={tunnelOverrides[i] != null}
+                            onclick={(e) => { e.stopPropagation(); editingTunnelIdx = i; }}
+                            disabled={importing}
+                        >
+                            {tunnelName(effectiveTunnel(i))}
+                        </button>
                     {/if}
                 </label>
             {/each}
@@ -142,7 +236,7 @@
     {#snippet actions()}
         <button class="btn btn-ghost" onclick={onclose} disabled={importing}>Отмена</button>
         {#if parsed}
-            <button class="btn btn-primary" onclick={handleImport} disabled={importing || selectedCount === 0}>
+            <button class="btn btn-primary" onclick={handleImport} disabled={importing || selectedCount === 0 || noTunnels}>
                 {importing ? 'Импорт...' : `Импортировать (${selectedCount})`}
             </button>
         {/if}
@@ -237,6 +331,18 @@
         opacity: 0.5;
     }
 
+    .import-item.overridden {
+        border-color: var(--accent-muted, rgba(59, 130, 246, 0.3));
+    }
+
+    .import-item-info {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 0.125rem;
+        min-width: 0;
+    }
+
     .import-name {
         font-weight: 500;
         color: var(--text-primary);
@@ -251,5 +357,62 @@
         color: var(--warning);
         font-size: 0.6875rem;
         font-style: italic;
+    }
+
+    .tunnel-default-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.625rem 0.75rem;
+        background: var(--bg-primary);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        margin-bottom: 1rem;
+    }
+
+    .tunnel-default-label {
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        white-space: nowrap;
+    }
+
+    .tunnel-select {
+        flex: 1;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0.375rem 0.5rem;
+        color: var(--text-primary);
+        font-size: 0.8125rem;
+    }
+
+    .tunnel-select-inline {
+        background: var(--bg-secondary);
+        border: 1px solid var(--accent);
+        border-radius: 4px;
+        padding: 0.25rem 0.375rem;
+        color: var(--text-primary);
+        font-size: 0.6875rem;
+        max-width: 140px;
+    }
+
+    .tunnel-name-btn {
+        background: none;
+        border: none;
+        padding: 0.125rem 0.375rem;
+        color: var(--text-muted);
+        font-size: 0.6875rem;
+        cursor: pointer;
+        border-radius: 4px;
+        white-space: nowrap;
+    }
+
+    .tunnel-name-btn:hover {
+        background: var(--bg-secondary);
+        color: var(--text-secondary);
+    }
+
+    .tunnel-name-btn.overridden {
+        color: var(--accent);
     }
 </style>
