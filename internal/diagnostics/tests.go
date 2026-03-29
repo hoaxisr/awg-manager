@@ -720,9 +720,6 @@ func (r *Runner) testPingCheckHealth(t TunnelInfo) TestResult {
 	case "alive":
 		res.Status = StatusPass
 		res.Detail = fmt.Sprintf("Alive (%s)", t.PingCheck.Method)
-	case "paused":
-		res.Status = StatusSkip
-		res.Detail = "Мониторинг на паузе"
 	default:
 		res.Status = StatusPass
 		res.Detail = "Status: " + t.PingCheck.Status
