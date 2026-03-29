@@ -777,6 +777,55 @@ func (o *OperatorOS5Impl) SetMTU(ctx context.Context, tunnelID string, mtu int) 
 	return nil
 }
 
+// SyncDNS updates DNS servers on a running tunnel's NDMS interface.
+func (o *OperatorOS5Impl) SyncDNS(ctx context.Context, tunnelID string, dns []string) error {
+	names := tunnel.NewNames(tunnelID)
+	// Clear previously applied DNS first
+	o.appliedDNSMu.RLock()
+	oldDNS := o.appliedDNS[tunnelID]
+	o.appliedDNSMu.RUnlock()
+	if len(oldDNS) > 0 {
+		_ = o.ndms.ClearDNS(ctx, names.NDMSName, oldDNS)
+	}
+	if len(dns) == 0 {
+		o.appliedDNSMu.Lock()
+		delete(o.appliedDNS, tunnelID)
+		o.appliedDNSMu.Unlock()
+	} else {
+		if err := o.ndms.SetDNS(ctx, names.NDMSName, dns); err != nil {
+			return tunnel.NewOpError("sync_dns", tunnelID, "ndms", err)
+		}
+		o.appliedDNSMu.Lock()
+		o.appliedDNS[tunnelID] = dns
+		o.appliedDNSMu.Unlock()
+	}
+	if err := o.ndms.Save(ctx); err != nil {
+		o.logWarn("sync_dns", tunnelID, "Failed to save NDMS config: "+err.Error())
+	}
+	o.logInfo("sync_dns", tunnelID, fmt.Sprintf("DNS synced: %v", dns))
+	return nil
+}
+
+// SyncAddress updates IPv4/IPv6 address on a running tunnel's NDMS interface.
+func (o *OperatorOS5Impl) SyncAddress(ctx context.Context, tunnelID string, address, ipv6 string) error {
+	names := tunnel.NewNames(tunnelID)
+	if err := o.ndms.SetAddress(ctx, names.NDMSName, address); err != nil {
+		return tunnel.NewOpError("sync_address", tunnelID, "ndms", err)
+	}
+	if ipv6 != "" {
+		if err := o.ndms.SetIPv6Address(ctx, names.NDMSName, ipv6); err != nil {
+			o.logWarn("sync_address", tunnelID, "Failed to set IPv6: "+err.Error())
+		}
+	} else {
+		o.ndms.ClearIPv6Address(ctx, names.NDMSName)
+	}
+	if err := o.ndms.Save(ctx); err != nil {
+		o.logWarn("sync_address", tunnelID, "Failed to save NDMS config: "+err.Error())
+	}
+	o.logInfo("sync_address", tunnelID, fmt.Sprintf("Address synced: %s, IPv6: %s", address, ipv6))
+	return nil
+}
+
 // UpdateDescription updates the NDMS interface description for a tunnel.
 func (o *OperatorOS5Impl) UpdateDescription(ctx context.Context, tunnelID, description string) error {
 	names := tunnel.NewNames(tunnelID)

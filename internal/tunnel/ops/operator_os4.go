@@ -369,6 +369,16 @@ func (o *OperatorOS4Impl) SetMTU(ctx context.Context, tunnelID string, mtu int) 
 	return nil
 }
 
+// SyncDNS is a no-op on OS4 (DNS managed differently).
+func (o *OperatorOS4Impl) SyncDNS(ctx context.Context, tunnelID string, dns []string) error {
+	return nil
+}
+
+// SyncAddress is a no-op on OS4 (address managed by process).
+func (o *OperatorOS4Impl) SyncAddress(ctx context.Context, tunnelID string, address, ipv6 string) error {
+	return nil
+}
+
 // UpdateDescription is a no-op on OS4 (no NDMS interface descriptions).
 func (o *OperatorOS4Impl) UpdateDescription(ctx context.Context, tunnelID, description string) error {
 	return nil

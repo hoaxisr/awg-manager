@@ -90,6 +90,14 @@ type Operator interface {
 	// OS5: via NDMS. OS4: via ip link set.
 	SetMTU(ctx context.Context, tunnelID string, mtu int) error
 
+	// SyncDNS updates DNS servers on a running tunnel's NDMS interface.
+	// OS5: via NDMS SetDNS/ClearDNS + Save. OS4: no-op.
+	SyncDNS(ctx context.Context, tunnelID string, dns []string) error
+
+	// SyncAddress updates IPv4/IPv6 address on a running tunnel's NDMS interface.
+	// OS5: via NDMS SetAddress + SetIPv6Address/ClearIPv6Address + Save. OS4: no-op.
+	SyncAddress(ctx context.Context, tunnelID string, address, ipv6 string) error
+
 	// UpdateDescription updates the NDMS interface description (OS5 only, no-op for OS4).
 	UpdateDescription(ctx context.Context, tunnelID, description string) error
 
