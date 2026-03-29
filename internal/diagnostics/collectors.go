@@ -201,7 +201,7 @@ func (r *Runner) collectTunnels(ctx context.Context) []TunnelInfo {
 					Method:          ps.Method,
 					FailCount:       ps.FailCount,
 					FailThreshold:   ps.FailThreshold,
-					IsDeadByMonitor: ps.IsDeadByMonitor,
+					RestartCount:    ps.RestartCount,
 					SuccessCount:    ps.SuccessCount,
 				}
 			}

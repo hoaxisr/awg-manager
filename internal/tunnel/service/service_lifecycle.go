@@ -52,8 +52,6 @@ func (s *ServiceImpl) startInternal(ctx context.Context, tunnelID string) error 
 
 	switch stateInfo.State {
 	case tunnel.StateRunning:
-		// Clear dead flag — user's manual Start intent overrides monitoring state
-		s.clearDeadFlag(tunnelID)
 		s.appLog.Debug("start", tunnelID, "Already running, skipping")
 		return tunnel.ErrAlreadyRunning
 
@@ -136,10 +134,6 @@ func (s *ServiceImpl) startInternal(ctx context.Context, tunnelID string) error 
 	if ip := s.legacyOperator.GetTrackedEndpointIP(tunnelID); ip != "" {
 		stored.ResolvedEndpointIP = ip
 	}
-	if stored.PingCheck != nil && stored.PingCheck.IsDeadByMonitoring {
-		stored.PingCheck.IsDeadByMonitoring = false
-		stored.PingCheck.DeadSince = nil
-	}
 	if err := s.store.Save(stored); err != nil {
 		s.logWarn("save", stored.ID, "Failed to persist state: "+err.Error())
 	}
@@ -197,10 +191,6 @@ func (s *ServiceImpl) startLightInternal(ctx context.Context, tunnelID string) e
 	stored.StartedAt = time.Now().UTC().Format(time.RFC3339)
 	if ip := s.legacyOperator.GetTrackedEndpointIP(tunnelID); ip != "" {
 		stored.ResolvedEndpointIP = ip
-	}
-	if stored.PingCheck != nil && stored.PingCheck.IsDeadByMonitoring {
-		stored.PingCheck.IsDeadByMonitoring = false
-		stored.PingCheck.DeadSince = nil
 	}
 	if err := s.store.Save(stored); err != nil {
 		s.logWarn("save", stored.ID, "Failed to persist state: "+err.Error())
@@ -279,10 +269,6 @@ func (s *ServiceImpl) reconcileInternal(ctx context.Context, tunnelID string) er
 	stored.ActiveWAN = resolvedWAN
 	if ip := s.legacyOperator.GetTrackedEndpointIP(tunnelID); ip != "" {
 		stored.ResolvedEndpointIP = ip
-	}
-	if stored.PingCheck != nil && stored.PingCheck.IsDeadByMonitoring {
-		stored.PingCheck.IsDeadByMonitoring = false
-		stored.PingCheck.DeadSince = nil
 	}
 	if err := s.store.Save(stored); err != nil {
 		s.logWarn("save", stored.ID, "Failed to persist state: "+err.Error())
@@ -369,11 +355,6 @@ func (s *ServiceImpl) stopInternal(ctx context.Context, tunnelID string) error {
 		}
 		if stored.StartedAt != "" {
 			stored.StartedAt = ""
-			changed = true
-		}
-		if stored.PingCheck != nil && stored.PingCheck.IsDeadByMonitoring {
-			stored.PingCheck.IsDeadByMonitoring = false
-			stored.PingCheck.DeadSince = nil
 			changed = true
 		}
 		if changed {

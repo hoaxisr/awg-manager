@@ -129,8 +129,6 @@ type TunnelPingCheck struct {
 	Timeout            int     `json:"timeout"`             // check timeout seconds (nativewg, default 5)
 	Port               int     `json:"port,omitempty"`      // port for connect/tls modes
 	Restart            bool    `json:"restart"`             // restart tunnel on dead (nativewg)
-	IsDeadByMonitoring bool    `json:"isDeadByMonitoring"`
-	DeadSince          *string `json:"deadSince"`           // ISO timestamp or null
 }
 
 // AWGInterface contains AmneziaWG interface configuration.

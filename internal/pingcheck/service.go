@@ -370,6 +370,39 @@ func (s *Service) StopMonitoringAll() {
 	s.logInfo("", "Stopped all monitoring")
 }
 
+// getCheckConfig reads storage and returns resolved check config for a tunnel.
+// Returns nil if tunnel not found or ping check not enabled.
+func (s *Service) getCheckConfig(tunnelID string) *checkConfig {
+	stored, err := s.tunnels.Get(tunnelID)
+	if err != nil || stored.PingCheck == nil || !stored.PingCheck.Enabled {
+		return nil
+	}
+
+	pc := stored.PingCheck
+	interval := pc.Interval
+	if interval <= 0 {
+		interval = 30
+	}
+	failThreshold := pc.FailThreshold
+	if failThreshold <= 0 {
+		failThreshold = 3
+	}
+
+	return &checkConfig{
+		Method:        pc.Method,
+		Target:        pc.Target,
+		Interval:      interval,
+		DeadInterval:  pc.DeadInterval,
+		FailThreshold: failThreshold,
+	}
+}
+
+// performCheckAndUpdate performs a single check and updates monitor state.
+// Used by CheckAllNow for immediate checks.
+func (s *Service) performCheckAndUpdate(m *tunnelMonitor, config *checkConfig) {
+	s.sensorTick(m, config)
+}
+
 // resolveIfaceName returns the kernel interface name for a tunnel,
 // using NativeWG names (nwgN) for nativewg backend, kernel names (opkgtunN) otherwise.
 func (s *Service) resolveIfaceName(tunnelID string) string {

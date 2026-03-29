@@ -142,7 +142,7 @@ type PingCheckInfo struct {
 	Method          string `json:"method"`
 	FailCount       int    `json:"failCount"`
 	FailThreshold   int    `json:"failThreshold"`
-	IsDeadByMonitor bool   `json:"isDeadByMonitor"`
+	RestartCount    int    `json:"restartCount"`
 	SuccessCount    int    `json:"successCount,omitempty"`
 }
 
