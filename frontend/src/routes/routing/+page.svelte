@@ -422,8 +422,7 @@
                 try {
                     await api.createDnsRoute({
                         name: preset.name,
-                        manualDomains: preset.manualDomains ?? [],
-                        subscriptions: preset.subscriptions.map(s => ({ url: s.url, name: s.name })),
+                        manualDomains: preset.domains,
                         enabled: true,
                         routes: [{ tunnelId, interface: tunnelId, fallback: '' as const }],
                     });
