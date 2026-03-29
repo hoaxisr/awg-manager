@@ -5,14 +5,27 @@
 		policies: AccessPolicy[];
 		onedit: (name: string) => void;
 		ondelete: (name: string) => void;
+		selectable?: boolean;
+		selectedNames?: Set<string>;
+		onselect?: (name: string) => void;
 	}
 
-	let { policies, onedit, ondelete }: Props = $props();
+	let { policies, onedit, ondelete, selectable, selectedNames, onselect }: Props = $props();
 </script>
 
 <div class="policy-grid">
 	{#each policies as policy}
 		<div class="policy-card">
+			{#if selectable}
+				<div class="select-cell">
+					<input
+						type="checkbox"
+						class="select-check"
+						checked={selectedNames?.has(policy.name)}
+						onchange={() => onselect?.(policy.name)}
+					/>
+				</div>
+			{/if}
 			<div class="policy-body">
 				<div class="policy-meta">
 					{policy.deviceCount} устройств
@@ -153,6 +166,21 @@
 	.action-btn.danger:hover {
 		color: var(--error);
 		background: rgba(247, 118, 142, 0.1);
+	}
+
+	.select-cell {
+		width: 2rem;
+		padding: 0.5rem;
+		display: flex;
+		align-items: center;
+		flex-shrink: 0;
+	}
+
+	.select-check {
+		accent-color: var(--accent);
+		width: 1rem;
+		height: 1rem;
+		cursor: pointer;
 	}
 
 	@media (max-width: 768px) {
