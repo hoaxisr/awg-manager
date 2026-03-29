@@ -49,6 +49,7 @@ func fetchSubscription(ctx context.Context, url string) ([]string, error) {
 // Returns empty string for comments, empty lines, and invalid entries.
 func parseDomainLine(line string) string {
 	line = strings.TrimSpace(line)
+	line = strings.TrimPrefix(line, "\xEF\xBB\xBF") // strip UTF-8 BOM
 
 	// Skip empty lines and comments
 	if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "!") {
