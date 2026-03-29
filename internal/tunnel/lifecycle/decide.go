@@ -34,10 +34,6 @@ func Decide(event Event, state TunnelState, ctx EventContext) Action {
 		return decideEnable(state)
 	case EventAPIStop:
 		return decideDisable(state)
-	case EventPingDead:
-		return decidePingDead(state)
-	case EventPingRetry:
-		return decidePingRetry(state)
 	case EventAPIRestart:
 		return decideRestart(state)
 	default:
@@ -135,20 +131,6 @@ func decideDisable(state TunnelState) Action {
 	default:
 		return ActionStop
 	}
-}
-
-func decidePingDead(state TunnelState) Action {
-	if state == StateRunning {
-		return ActionStop
-	}
-	return ActionNone
-}
-
-func decidePingRetry(state TunnelState) Action {
-	if state == StateDead {
-		return ActionColdStart // device may be gone after PingCheck stop
-	}
-	return ActionNone
 }
 
 // decideRestart: bring to Running regardless of current state.

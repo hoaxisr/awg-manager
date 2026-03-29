@@ -9,22 +9,6 @@ import (
 
 // === Tests for PingCheck lifecycle integration (v3: Manager-based) ===
 
-// TestPingCheck_Dead_UsesStop verifies that PingCheck dead detection
-// goes through Manager → ActionStop → operator.Stop (ip link set down + InterfaceDown).
-func TestPingCheck_Dead_UsesStop(t *testing.T) {
-	op := &MockOperator{}
-
-	// PingCheck dead → Manager.HandlePingDead → ActionStop → operator.Stop
-	_ = op.Stop(context.Background(), "awg0")
-
-	if len(op.StopCalls) != 1 {
-		t.Errorf("Stop should be called once, got %d", len(op.StopCalls))
-	}
-	if op.StopCalls[0] != "awg0" {
-		t.Errorf("Stop called with %q, want %q", op.StopCalls[0], "awg0")
-	}
-}
-
 // TestWANDown_UsesSuspend verifies WAN down uses Suspend (ip link set down only),
 // preserving NDMS intent for auto-resume on WAN up.
 func TestWANDown_UsesSuspend(t *testing.T) {

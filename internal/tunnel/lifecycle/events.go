@@ -46,8 +46,6 @@ const (
 	EventUserDisable                // User toggled OFF in Keenetic UI (NDMS hook)
 	EventAPIStart                   // User pressed Start in our UI
 	EventAPIStop                    // User pressed Stop in our UI
-	EventPingDead                   // PingCheck: tunnel not responding
-	EventPingRetry                  // PingCheck: retry timer fired
 	EventAPIRestart                 // User pressed Restart in our UI
 )
 
@@ -69,10 +67,6 @@ func (e Event) String() string {
 		return "api_start"
 	case EventAPIStop:
 		return "api_stop"
-	case EventPingDead:
-		return "ping_dead"
-	case EventPingRetry:
-		return "ping_retry"
 	case EventAPIRestart:
 		return "api_restart"
 	default:
