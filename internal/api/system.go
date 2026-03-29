@@ -174,7 +174,7 @@ func (h *SystemHandler) Info(w http.ResponseWriter, r *http.Request) {
 		"bootInProgress":      h.bootStatusFn != nil && h.bootStatusFn(),
 		"backendAvailability": map[string]bool{
 			"nativewg": nativewgAvailable(),
-			"kernel":   kernelModuleLoaded,
+			"kernel":   kernelModuleLoaded && !ndmsinfo.SupportsWireguardASC(),
 		},
 	}
 
