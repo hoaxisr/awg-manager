@@ -519,40 +519,65 @@ func (r *Runner) testRouteLeak(ctx context.Context, report *Report) TestResult {
 func (r *Runner) testDNSLeak(ctx context.Context, t TunnelInfo) TestResult {
 	res := TestResult{Name: "dns_leak_check", Description: "DNS leak проверка", TunnelID: t.ID, TunnelName: t.Name}
 
-	// Need DNS servers from tunnel config to test
 	if t.Settings.DNS == "" {
 		res.Status = StatusSkip
 		res.Detail = "DNS не настроен в конфигурации туннеля"
 		return res
 	}
 
-	// Parse first DNS server from comma-separated list
-	dnsServer := strings.TrimSpace(strings.SplitN(t.Settings.DNS, ",", 2)[0])
+	// Find a tunnel-internal DNS server (private/CGNAT IP).
+	// Public DNS (8.8.8.8 etc.) is reachable via WAN too, so resolving
+	// through it doesn't prove anything about the tunnel path.
+	dnsServer := findTunnelDNS(t.Settings.DNS)
 	if dnsServer == "" {
 		res.Status = StatusSkip
-		res.Detail = "DNS не настроен в конфигурации туннеля"
+		res.Detail = "DNS-серверы туннеля публичные — проверка неинформативна"
 		return res
 	}
 
-	// Resolve a domain via the tunnel's DNS server.
-	// If the server is only reachable through the tunnel (e.g. 100.64.0.1),
-	// successful resolution proves DNS queries go through the tunnel.
+	// The DNS server sits inside the tunnel network and is only reachable
+	// through the tunnel.  Successful resolution proves no DNS leak.
 	result, err := exec.Run(ctx, "nslookup", "example.com", dnsServer)
 	if err != nil {
 		res.Status = StatusFail
-		res.Detail = fmt.Sprintf("DNS-сервер %s недоступен", dnsServer)
+		res.Detail = fmt.Sprintf("Туннельный DNS %s недоступен", dnsServer)
 		return res
 	}
 
 	output := result.Stdout + result.Stderr
 	if strings.Contains(output, "Address") && !strings.Contains(output, "server can't find") {
 		res.Status = StatusPass
-		res.Detail = fmt.Sprintf("DNS через %s работает", dnsServer)
+		res.Detail = fmt.Sprintf("Ответ получен через туннельный DNS %s", dnsServer)
 	} else {
 		res.Status = StatusFail
-		res.Detail = fmt.Sprintf("DNS-сервер %s не резолвит", dnsServer)
+		res.Detail = fmt.Sprintf("Туннельный DNS %s не резолвит", dnsServer)
 	}
 	return res
+}
+
+// findTunnelDNS returns the first private/CGNAT DNS server from a
+// comma-separated list, or "" if all servers are public.
+func findTunnelDNS(dnsList string) string {
+	for _, s := range strings.Split(dnsList, ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		ip := net.ParseIP(s)
+		if ip == nil {
+			continue
+		}
+		if ip.IsPrivate() || isCGNAT(ip) {
+			return s
+		}
+	}
+	return ""
+}
+
+// isCGNAT checks if the IP is in the 100.64.0.0/10 range (RFC 6598).
+func isCGNAT(ip net.IP) bool {
+	_, cgnat, _ := net.ParseCIDR("100.64.0.0/10")
+	return cgnat.Contains(ip)
 }
 
 func (r *Runner) testRestartCycle(ctx context.Context, t TunnelInfo) TestResult {
