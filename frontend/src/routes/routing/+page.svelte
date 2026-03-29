@@ -22,8 +22,12 @@
     let dnsRoutes = $state<DnsRoute[]>([]);
     let routingTunnels = $state<RoutingTunnel[]>([]);
     let editingDnsRoute = $state<DnsRoute | null>(null);
-    let dnsExportMode = $state(false);
-    let dnsExportSelected = $state<Set<string>>(new Set());
+    let dnsSelectionMode = $state(false);
+    let dnsSelected = $state<Set<string>>(new Set());
+    let dnsTunnelMode = $state(false);
+    let dnsBulkTunnelId = $state('');
+    let dnsBulkLoading = $state(false);
+    let dnsBulkDeleteConfirm = $state(false);
     let dnsImportOpen = $state(false);
     let dnsPresetOpen = $state(false);
     let dnsDeleteId = $state<string | null>(null);
@@ -291,20 +295,77 @@
         }
     }
 
-    function toggleDnsExportSelect(id: string) {
-        const next = new Set(dnsExportSelected);
+    function toggleDnsSelect(id: string) {
+        const next = new Set(dnsSelected);
         if (next.has(id)) next.delete(id);
         else next.add(id);
-        dnsExportSelected = next;
+        dnsSelected = next;
+    }
+
+    function dnsSelectAll() {
+        dnsSelected = new Set(dnsRoutes.map(r => r.id));
+    }
+
+    function exitDnsSelection() {
+        dnsSelectionMode = false;
+        dnsSelected = new Set();
+        dnsTunnelMode = false;
     }
 
     function downloadDnsExport() {
-        const selected = dnsRoutes.filter(r => dnsExportSelected.has(r.id));
+        const selected = dnsRoutes.filter(r => dnsSelected.has(r.id));
         const portable = exportRoutes(selected);
         downloadJson(portable, 'awg-dns-routes.json');
-        dnsExportMode = false;
-        dnsExportSelected = new Set();
         notifications.success(`Экспортировано ${portable.length} правил`);
+    }
+
+    async function bulkDnsToggle(enabled: boolean) {
+        dnsBulkLoading = true;
+        try {
+            for (const id of dnsSelected) {
+                try { await api.setDnsRouteEnabled(id, enabled); } catch {}
+            }
+            dnsRoutes = await api.listDnsRoutes();
+            notifications.success(`${enabled ? 'Включено' : 'Выключено'} ${dnsSelected.size} правил`);
+        } finally {
+            dnsBulkLoading = false;
+        }
+    }
+
+    async function bulkDnsDelete() {
+        dnsBulkLoading = true;
+        try {
+            let count = 0;
+            for (const id of dnsSelected) {
+                try { await api.deleteDnsRoute(id); count++; } catch {}
+            }
+            dnsRoutes = await api.listDnsRoutes();
+            exitDnsSelection();
+            notifications.success(`Удалено ${count} правил`);
+        } finally {
+            dnsBulkLoading = false;
+            dnsBulkDeleteConfirm = false;
+        }
+    }
+
+    async function bulkDnsChangeTunnel() {
+        if (!dnsBulkTunnelId) return;
+        dnsBulkLoading = true;
+        try {
+            for (const id of dnsSelected) {
+                const route = dnsRoutes.find(r => r.id === id);
+                if (!route) continue;
+                const newRoutes = route.routes.length > 0
+                    ? [{ ...route.routes[0], tunnelId: dnsBulkTunnelId, interface: dnsBulkTunnelId }, ...route.routes.slice(1)]
+                    : [{ tunnelId: dnsBulkTunnelId, interface: dnsBulkTunnelId, fallback: '' as const }];
+                try { await api.updateDnsRoute(id, { routes: newRoutes }); } catch {}
+            }
+            dnsRoutes = await api.listDnsRoutes();
+            dnsTunnelMode = false;
+            notifications.success(`Туннель изменён для ${dnsSelected.size} правил`);
+        } finally {
+            dnsBulkLoading = false;
+        }
     }
 
     async function handleDnsImport(routes: (import('$lib/utils/dns-export').PortableDnsRoute & { tunnelId: string })[]) {
@@ -625,22 +686,48 @@
         {#if activeTab === 'dns' && isOS5}
             <!-- DNS section -->
             <div class="section-header">
-                <span class="section-summary">{dnsRoutes.length} правил, {dnsActiveCount} активных</span>
-                <div class="section-buttons">
-                    {#if !dnsExportMode}
-                        <button class="btn btn-sm btn-ghost" onclick={() => dnsExportMode = true}>Сохранить набор правил</button>
+                {#if !dnsSelectionMode}
+                    <span class="section-summary">{dnsRoutes.length} правил, {dnsActiveCount} активных</span>
+                    <div class="section-buttons">
                         <button class="btn btn-sm btn-ghost" onclick={() => dnsImportOpen = true}>Загрузить набор правил</button>
                         <button class="btn btn-sm btn-secondary" onclick={() => dnsPresetOpen = true}>Из каталога</button>
-                    {:else}
-                        <button class="btn btn-sm btn-ghost" onclick={() => { dnsExportMode = false; dnsExportSelected = new Set(); }}>Отмена</button>
-                        {#if dnsExportSelected.size > 0}
-                            <button class="btn btn-sm btn-primary" onclick={downloadDnsExport}>Сохранить выбранные ({dnsExportSelected.size})</button>
+                        {#if dnsRoutes.length > 0}
+                            <button class="btn btn-sm btn-ghost" onclick={() => { dnsSelectionMode = true; dnsSelected = new Set(); }}>Выбрать</button>
                         {/if}
-                    {/if}
-                    <button class="btn btn-sm btn-primary" onclick={() => { editingDnsRoute = null; dnsModalOpen = true; }}>
-                        + Новое правило
-                    </button>
-                </div>
+                        <button class="btn btn-sm btn-primary" onclick={() => { editingDnsRoute = null; dnsModalOpen = true; }}>+ Новое правило</button>
+                    </div>
+                {:else}
+                    <div class="bulk-bar">
+                        <div class="bulk-bar-nav">
+                            <button class="bulk-btn bulk-btn-cancel" onclick={exitDnsSelection} disabled={dnsBulkLoading}>✕ Отмена</button>
+                            <span class="bulk-count">{dnsSelected.size} выбрано</span>
+                            <button class="bulk-btn bulk-btn-select-all" onclick={dnsSelectAll} disabled={dnsBulkLoading}>Выбрать все</button>
+                        </div>
+                        {#if !dnsTunnelMode}
+                            <div class="bulk-bar-actions">
+                                <button class="bulk-btn bulk-btn-enable" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={() => bulkDnsToggle(true)}>Включить</button>
+                                <button class="bulk-btn bulk-btn-disable" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={() => bulkDnsToggle(false)}>Выключить</button>
+                                <button class="bulk-btn bulk-btn-delete" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={() => dnsBulkDeleteConfirm = true}>Удалить</button>
+                                <button class="bulk-btn bulk-btn-tunnel" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={() => { dnsTunnelMode = true; dnsBulkTunnelId = routingTunnels.find(t => t.available)?.id ?? ''; }}>Туннель ▾</button>
+                                <button class="bulk-btn bulk-btn-export" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={downloadDnsExport}>Экспорт</button>
+                            </div>
+                        {:else}
+                            <div class="bulk-tunnel-bar">
+                                <span class="bulk-tunnel-label">Туннель:</span>
+                                <select class="bulk-tunnel-select" bind:value={dnsBulkTunnelId} disabled={dnsBulkLoading}>
+                                    {#each routingTunnels.filter(t => t.type === 'managed' && t.available) as t}
+                                        <option value={t.id}>{t.name}</option>
+                                    {/each}
+                                    {#each routingTunnels.filter(t => t.type === 'system' && t.available) as t}
+                                        <option value={t.id}>{t.name}</option>
+                                    {/each}
+                                </select>
+                                <button class="bulk-tunnel-apply" disabled={dnsBulkLoading} onclick={bulkDnsChangeTunnel}>Применить ({dnsSelected.size})</button>
+                                <button class="bulk-tunnel-close" onclick={() => dnsTunnelMode = false}>✕</button>
+                            </div>
+                        {/if}
+                    </div>
+                {/if}
             </div>
 
             {#if dnsRoutes.length === 0}
@@ -656,9 +743,9 @@
                             ondelete={() => dnsDeleteId = route.id}
                             onrefresh={() => refreshDnsRouteSubscriptions(route.id)}
                             toggleLoading={dnsToggling === route.id}
-                            selectable={dnsExportMode}
-                            selected={dnsExportSelected.has(route.id)}
-                            onselect={() => toggleDnsExportSelect(route.id)}
+                            selectable={dnsSelectionMode}
+                            selected={dnsSelected.has(route.id)}
+                            onselect={() => toggleDnsSelect(route.id)}
                         />
                     {/each}
                 </div>
@@ -696,6 +783,16 @@
                     {#snippet actions()}
                         <button class="btn btn-secondary" onclick={() => dnsDeleteId = null}>Отмена</button>
                         <button class="btn btn-danger" onclick={deleteDnsRoute}>Удалить</button>
+                    {/snippet}
+                </Modal>
+            {/if}
+
+            {#if dnsBulkDeleteConfirm}
+                <Modal open={true} title="Удаление" size="sm" onclose={() => dnsBulkDeleteConfirm = false}>
+                    <p class="confirm-text">Удалить {dnsSelected.size} DNS-маршрутов?</p>
+                    {#snippet actions()}
+                        <button class="btn btn-ghost" onclick={() => dnsBulkDeleteConfirm = false}>Отмена</button>
+                        <button class="btn btn-danger" onclick={bulkDnsDelete}>Удалить</button>
                     {/snippet}
                 </Modal>
             {/if}
