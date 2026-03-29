@@ -51,8 +51,6 @@ func (m *mockPingCheckService) StartMonitoring(tunnelID, tunnelName string) {}
 
 func (m *mockPingCheckService) StopMonitoring(tunnelID string) {}
 
-func (m *mockPingCheckService) PauseMonitoring(tunnelID string) {}
-
 func (m *mockPingCheckService) Stop() {}
 
 func TestPingCheckHandler_GetStatus(t *testing.T) {

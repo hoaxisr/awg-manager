@@ -50,35 +50,6 @@ func (s *ServiceImpl) HandleWANDown(ctx context.Context, iface string) {
 	s.lifecycleManager.HandleWANDown(ctx, iface)
 }
 
-// === PingCheck Integration ===
-
-// HandleMonitorDead is called when PingCheck detects a dead tunnel.
-// Kernel tunnels: delegated to lifecycle Manager.
-func (s *ServiceImpl) HandleMonitorDead(ctx context.Context, tunnelID string) error {
-	if s.isNativeWGByID(tunnelID) {
-		return nil
-	}
-	return s.lifecycleManager.HandlePingDead(ctx, tunnelID)
-}
-
-// HandleForcedRestart is called by PingCheck when the dead interval timer fires.
-// Kernel tunnels: delegated to lifecycle Manager as PingRetry event.
-func (s *ServiceImpl) HandleForcedRestart(ctx context.Context, tunnelID string) error {
-	if s.isNativeWGByID(tunnelID) {
-		return nil
-	}
-	return s.lifecycleManager.HandlePingRetry(ctx, tunnelID)
-}
-
-// HandleMonitorRecovered is called when PingCheck detects tunnel recovery.
-// Kernel tunnels: delegated to lifecycle Manager as PingRetry event.
-func (s *ServiceImpl) HandleMonitorRecovered(ctx context.Context, tunnelID string) error {
-	if s.isNativeWGByID(tunnelID) {
-		return nil
-	}
-	return s.lifecycleManager.HandlePingRetry(ctx, tunnelID)
-}
-
 // RestoreEndpointTracking restores endpoint route tracking on daemon restart.
 func (s *ServiceImpl) RestoreEndpointTracking(ctx context.Context) error {
 	tunnels, err := s.store.List()

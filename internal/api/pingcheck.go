@@ -27,7 +27,6 @@ type PingCheckService interface {
 	// Per-tunnel monitoring control
 	StartMonitoring(tunnelID, tunnelName string)
 	StopMonitoring(tunnelID string)
-	PauseMonitoring(tunnelID string)
 }
 
 // PingCheckHandler handles ping check API endpoints.

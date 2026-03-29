@@ -214,17 +214,7 @@ func main() {
 	testService := testing.NewService(awgStore, log, loggingService)
 
 	// Ping check service
-	pingCheckService := pingcheck.NewService(settingsStore, awgStore, log, loggingService)
-	pingCheckService.SetMonitorCallback(func(tunnelID string, isDead bool) error {
-		ctx := context.Background()
-		if isDead {
-			return tunnelService.HandleMonitorDead(ctx, tunnelID)
-		}
-		return tunnelService.HandleMonitorRecovered(ctx, tunnelID)
-	})
-	pingCheckService.SetForcedRestartCallback(func(tunnelID string) error {
-		return tunnelService.HandleForcedRestart(context.Background(), tunnelID)
-	})
+	pingCheckService := pingcheck.NewService(settingsStore, awgStore, wgClient, log, loggingService)
 	pingCheckService.Start()
 	defer pingCheckService.Stop()
 
@@ -486,7 +476,7 @@ func (h *pingCheckReconcileHooks) OnReconcileStart(tunnelID, tunnelName string) 
 }
 
 func (h *pingCheckReconcileHooks) OnReconcileStop(tunnelID string) {
-	h.pc.PauseMonitoring(tunnelID)
+	h.pc.StopMonitoring(tunnelID)
 }
 
 func (h *pingCheckReconcileHooks) OnTunnelDelete(tunnelID string) {
