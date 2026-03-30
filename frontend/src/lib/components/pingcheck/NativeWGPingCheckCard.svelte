@@ -13,6 +13,7 @@
 	let { tunnel, status, saving, onConfigure, onRemove }: Props = $props();
 
 	let expanded = $state(false);
+	let prevExpanded = $state(false);
 
 	// Form fields — defaults only, synced from status via $effect
 	let host = $state('8.8.8.8');
@@ -58,14 +59,7 @@
 		onRemove(tunnel.id);
 	}
 
-	// Sync form fields from status, but NOT when the user might be editing.
-	$effect(() => {
-		// If the card is expanded for editing, don't overwrite user input from periodic refreshes.
-		// The form will be updated with fresh data once it's collapsed and reopened.
-		if (expanded) {
-			return;
-		}
-
+	function syncFromStatus() {
 		if (status?.exists) {
 			host = status.host || '8.8.8.8';
 			mode = (status.mode as typeof mode) || 'icmp';
@@ -76,7 +70,6 @@
 			port = status.port || 443;
 			restart = status.restart ?? true;
 		} else {
-			// If config is removed, reset form to defaults
 			host = '8.8.8.8';
 			mode = 'icmp';
 			updateInterval = 10;
@@ -86,6 +79,20 @@
 			port = 443;
 			restart = true;
 		}
+	}
+
+	// Sync form fields from status, but NOT when the user might be editing.
+	$effect(() => {
+		const justExpanded = expanded && !prevExpanded;
+		prevExpanded = expanded;
+
+		// On expand: load fresh values so user edits actual config, not stale defaults.
+		// While expanded: skip — don't overwrite user input from periodic refreshes.
+		if (expanded && !justExpanded) {
+			return;
+		}
+
+		syncFromStatus();
 	});
 
 	let isPending = $derived(
