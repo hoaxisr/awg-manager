@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
@@ -229,7 +230,8 @@ func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 		BackendType               string `json:"backendType,omitempty"`
 		AWGVersion                string `json:"awgVersion"`
 		MTU                       int    `json:"mtu"`
-		StartedAt                 string `json:"startedAt,omitempty"`
+		StartedAt                 string                  `json:"startedAt,omitempty"`
+		PingCheck                 pingcheck.TunnelPingInfo `json:"pingCheck"`
 	}
 
 	// Build set of addresses used by running tunnels (for conflict detection)
@@ -306,6 +308,13 @@ func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 			startedAt = stored.StartedAt // fallback to storage
 		}
 
+		var pcInfo pingcheck.TunnelPingInfo
+		if h.pingCheck != nil {
+			pcInfo = h.pingCheck.GetTunnelPingStatus(t.ID)
+		} else {
+			pcInfo = pingcheck.TunnelPingInfo{Status: "disabled"}
+		}
+
 		items = append(items, tunnelItem{
 			ID:                        t.ID,
 			Name:                      t.Name,
@@ -329,6 +338,7 @@ func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 			AWGVersion:          awgVersion,
 			MTU:                 mtu,
 			StartedAt:           startedAt,
+			PingCheck:           pcInfo,
 		})
 	}
 

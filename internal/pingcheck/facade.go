@@ -220,6 +220,59 @@ func (f *Facade) removeNativeWGPingCheck(tunnelID string) {
 	_ = f.nwgOp.RemovePingCheck(context.Background(), stored)
 }
 
+// GetTunnelPingStatus returns lightweight ping status for a single tunnel.
+// NativeWG: queries NDMS. Kernel: delegates to custom loop.
+func (f *Facade) GetTunnelPingStatus(tunnelID string) TunnelPingInfo {
+	if f.isNativeWG(tunnelID) {
+		return f.getNativeWGTunnelPingStatus(tunnelID)
+	}
+	return f.custom.GetTunnelPingStatus(tunnelID)
+}
+
+// getNativeWGTunnelPingStatus queries NDMS ping-check for a single NativeWG tunnel.
+func (f *Facade) getNativeWGTunnelPingStatus(tunnelID string) TunnelPingInfo {
+	if f.nwgOp == nil {
+		return TunnelPingInfo{Status: "disabled"}
+	}
+	stored, err := f.tunnels.Get(tunnelID)
+	if err != nil {
+		return TunnelPingInfo{Status: "disabled"}
+	}
+	if stored.PingCheck == nil || !stored.PingCheck.Enabled {
+		return TunnelPingInfo{Status: "disabled"}
+	}
+
+	status, err := f.nwgOp.GetPingCheckStatus(context.Background(), stored)
+	if err != nil {
+		return TunnelPingInfo{Status: "disabled"}
+	}
+
+	if !status.Exists {
+		return TunnelPingInfo{Status: "disabled"}
+	}
+
+	info := TunnelPingInfo{
+		FailCount:     status.FailCount,
+		FailThreshold: status.MaxFails,
+	}
+
+	switch status.Status {
+	case "pass":
+		info.Status = "alive"
+	case "fail":
+		if status.FailCount > 0 {
+			info.Status = "recovering"
+			info.RestartCount = 1
+		} else {
+			info.Status = "alive"
+		}
+	default:
+		info.Status = "alive"
+	}
+
+	return info
+}
+
 // GetLogs returns logs (kernel custom loop only, NDMS has no log history).
 func (f *Facade) GetLogs() []LogEntry {
 	return f.custom.GetLogs()

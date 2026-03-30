@@ -27,6 +27,7 @@ type PingCheckService interface {
 	// Per-tunnel monitoring control
 	StartMonitoring(tunnelID, tunnelName string)
 	StopMonitoring(tunnelID string)
+	GetTunnelPingStatus(tunnelID string) pingcheck.TunnelPingInfo
 }
 
 // PingCheckHandler handles ping check API endpoints.
