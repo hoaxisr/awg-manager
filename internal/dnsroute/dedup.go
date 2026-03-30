@@ -33,10 +33,12 @@ func NewDomainIndex() *DomainIndex {
 	}
 }
 
-// normalizeDomain lowercases, trims whitespace and trailing dots.
+// normalizeDomain lowercases, trims whitespace, trailing dots,
+// and leading dots (.ru → ru).
 func normalizeDomain(d string) string {
 	d = strings.ToLower(strings.TrimSpace(d))
 	d = strings.TrimRight(d, ".")
+	d = strings.TrimLeft(d, ".")
 	return d
 }
 
