@@ -109,6 +109,12 @@ export interface TunnelListItem {
 	startedAt?: string;
 	backend?: 'nativewg' | 'kernel';
 	connectivityCheck?: ConnectivityCheckConfig;
+	pingCheck: {
+		status: 'alive' | 'recovering' | 'disabled';
+		restartCount: number;
+		failCount: number;
+		failThreshold: number;
+	};
 }
 
 export interface IPResult {

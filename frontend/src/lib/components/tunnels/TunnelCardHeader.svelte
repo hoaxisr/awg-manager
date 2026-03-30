@@ -24,7 +24,8 @@
 	// LED color based on tunnel status
 	let ledColor = $derived.by(() => {
 		switch (tunnel.status) {
-			case 'running': return 'green';
+			case 'running':
+				return tunnel.pingCheck.status === 'recovering' ? 'orange' : 'green';
 			case 'starting':
 			case 'needs_start':
 			case 'needs_stop': return 'yellow';
@@ -35,7 +36,8 @@
 
 	// LED pulses for transitional/problem states
 	let ledPulse = $derived(
-		['starting', 'needs_start', 'needs_stop', 'broken'].includes(tunnel.status)
+		['starting', 'needs_start', 'needs_stop', 'broken'].includes(tunnel.status) ||
+		(tunnel.status === 'running' && tunnel.pingCheck.status === 'recovering')
 	);
 
 	let connectivitySettingsOpen = $state(false);
@@ -50,6 +52,12 @@
 			case 'needs_start': return 'Ожидает запуска';
 			case 'needs_stop': return 'Остановка...';
 			case 'broken': return 'Сломан';
+			case 'running':
+				if (tunnel.pingCheck.status === 'recovering') {
+					const n = tunnel.pingCheck.restartCount;
+					return `Восстановление (попытка ${n})`;
+				}
+				return '';
 			default: return '';
 		}
 	});
