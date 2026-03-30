@@ -37,3 +37,12 @@ type TunnelStatus struct {
 	FailThreshold int        `json:"failThreshold"`
 	RestartCount  int        `json:"restartCount"`
 }
+
+// TunnelPingInfo is a lightweight status for embedding in tunnel list responses.
+// Zero value (Status="") means "disabled" — callers should treat empty status as disabled.
+type TunnelPingInfo struct {
+	Status        string `json:"status"`        // "alive", "recovering", "disabled"
+	RestartCount  int    `json:"restartCount"`  // link toggle attempts
+	FailCount     int    `json:"failCount"`     // current consecutive failures
+	FailThreshold int    `json:"failThreshold"` // threshold for link toggle
+}
