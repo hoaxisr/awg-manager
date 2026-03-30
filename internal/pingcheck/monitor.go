@@ -23,6 +23,8 @@ func (s *Service) runMonitorLoop(m *tunnelMonitor) {
 		return
 	}
 
+	m.failThreshold = config.FailThreshold
+
 	interval := time.Duration(config.Interval) * time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -34,6 +36,7 @@ func (s *Service) runMonitorLoop(m *tunnelMonitor) {
 			if config == nil {
 				return
 			}
+			m.failThreshold = config.FailThreshold
 			s.sensorTick(m, config)
 
 		case <-m.stopCh:
