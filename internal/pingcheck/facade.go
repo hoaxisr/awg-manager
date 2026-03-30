@@ -260,12 +260,8 @@ func (f *Facade) getNativeWGTunnelPingStatus(tunnelID string) TunnelPingInfo {
 	case "pass":
 		info.Status = "alive"
 	case "fail":
-		if status.FailCount > 0 {
-			info.Status = "recovering"
-			info.RestartCount = 1
-		} else {
-			info.Status = "alive"
-		}
+		// NDMS doesn't expose restart count; infer recovering from fail status.
+		info.Status = "recovering"
 	default:
 		info.Status = "alive"
 	}
