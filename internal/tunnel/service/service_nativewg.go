@@ -156,6 +156,8 @@ func (s *ServiceImpl) reconcileNativeWG(ctx context.Context, tunnelID string, st
 		if !s.wan.AnyUp() {
 			return nil
 		}
+		s.beginOperation(tunnelID)
+		defer s.endOperation(tunnelID)
 		s.lockTunnel(tunnelID)
 		defer s.unlockTunnel(tunnelID)
 		if !s.store.Exists(tunnelID) {
@@ -163,6 +165,11 @@ func (s *ServiceImpl) reconcileNativeWG(ctx context.Context, tunnelID string, st
 		}
 		stored, err := s.store.Get(tunnelID)
 		if err != nil {
+			return nil
+		}
+		// Don't start tunnels that user explicitly disabled — prevents
+		// reconcile storm where NDMS hooks keep re-starting stopped tunnels.
+		if !stored.Enabled {
 			return nil
 		}
 		if s.nwgOperator != nil {
@@ -175,6 +182,8 @@ func (s *ServiceImpl) reconcileNativeWG(ctx context.Context, tunnelID string, st
 			return err
 		}
 	case "disabled":
+		s.beginOperation(tunnelID)
+		defer s.endOperation(tunnelID)
 		s.lockTunnel(tunnelID)
 		defer s.unlockTunnel(tunnelID)
 		if !s.store.Exists(tunnelID) {
