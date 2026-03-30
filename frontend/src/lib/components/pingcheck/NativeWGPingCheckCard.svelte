@@ -17,7 +17,7 @@
 
 	// Form fields — defaults only, synced from status via $effect
 	let host = $state('8.8.8.8');
-	let mode = $state<'icmp' | 'connect' | 'tls' | 'uri'>('icmp');
+	let mode = $state<'icmp' | 'connect' | 'tls'>('icmp');
 	let updateInterval = $state(10);
 	let maxFails = $state(3);
 	let minSuccess = $state(1);
@@ -32,7 +32,6 @@
 		{ label: 'ICMP 1.1.1.1', host: '1.1.1.1', mode: 'icmp' as const },
 		{ label: 'TCP 8.8.8.8:53', host: '8.8.8.8', mode: 'connect' as const, port: 53 },
 		{ label: 'TLS 1.1.1.1:443', host: '1.1.1.1', mode: 'tls' as const, port: 443 },
-		{ label: 'HTTP cp.cloudflare.com', host: 'cp.cloudflare.com', mode: 'uri' as const, port: 80 },
 	];
 
 	function applyPreset(p: typeof presets[0]) {
@@ -62,7 +61,8 @@
 	function syncFromStatus() {
 		if (status?.exists) {
 			host = status.host || '8.8.8.8';
-			mode = (status.mode as typeof mode) || 'icmp';
+			const m = status.mode;
+			mode = (m === 'icmp' || m === 'connect' || m === 'tls') ? m : 'icmp';
 			updateInterval = status.interval || 10;
 			maxFails = status.maxFails || 3;
 			minSuccess = status.minSuccess || 1;
@@ -152,7 +152,6 @@
 						<option value="icmp">ICMP</option>
 						<option value="connect">TCP Connect</option>
 						<option value="tls">TLS</option>
-						<option value="uri">HTTP/URI</option>
 					</select>
 				</div>
 

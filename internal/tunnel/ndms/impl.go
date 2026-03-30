@@ -1044,8 +1044,8 @@ func (c *ClientImpl) ConfigurePingCheck(ctx context.Context, profile, ifaceName 
 
 	// Build profile config
 	mode := cfg.Mode
-	if mode == "" {
-		mode = "icmp"
+	if mode == "" || mode == "uri" {
+		mode = "icmp" // URI mode is unstable in NDMS, fallback to ICMP
 	}
 	profileCfg := map[string]interface{}{
 		"host":            cfg.Host,
@@ -1061,9 +1061,6 @@ func (c *ClientImpl) ConfigurePingCheck(ctx context.Context, profile, ifaceName 
 	}
 	if cfg.Port > 0 && (cfg.Mode == "connect" || cfg.Mode == "tls") {
 		profileCfg["port"] = cfg.Port
-	}
-	if cfg.URI != "" && cfg.Mode == "uri" {
-		profileCfg["uri"] = cfg.URI
 	}
 
 	// Create profile + set all params in one RCI call
