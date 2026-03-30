@@ -287,19 +287,19 @@ func (s *Service) GetStatus() []TunnelStatus {
 // Returns TunnelPingInfo with Status="disabled" if tunnel has no active monitor.
 func (s *Service) GetTunnelPingStatus(tunnelID string) TunnelPingInfo {
 	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	m, ok := s.monitors[tunnelID]
 	if !ok {
-		s.mu.RUnlock()
 		return TunnelPingInfo{Status: "disabled"}
 	}
+
 	info := TunnelPingInfo{
 		Status:        "alive",
 		RestartCount:  m.restartCount,
 		FailCount:     m.failCount,
 		FailThreshold: m.failThreshold,
 	}
-	s.mu.RUnlock()
-
 	if info.RestartCount > 0 && (m.lastResult == nil || !m.lastResult.Success) {
 		info.Status = "recovering"
 	}
