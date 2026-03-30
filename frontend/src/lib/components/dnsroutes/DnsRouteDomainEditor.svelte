@@ -30,6 +30,8 @@
 		// Allow IPv6 CIDR (e.g. 2001:b28:f23d::/48)
 		if (ipv6CidrRe.test(trimmed)) return true;
 		if (trimmed.includes('/')) return false;
+		// Allow bare TLDs (ru, com, org) — single label without dots
+		if (/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(trimmed)) return true;
 		if (!trimmed.includes('.')) return false;
 		return true;
 	}
@@ -49,7 +51,9 @@
 			if (!isValidDomain(line)) {
 				errors.push(i + 1);
 			} else {
-				validDomains.push(line);
+				// Strip leading dots (.ru → ru)
+				let normalized = line.replace(/^\.+/, '');
+				if (normalized) validDomains.push(normalized);
 			}
 		}
 
