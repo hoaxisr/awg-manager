@@ -31,6 +31,12 @@ func fetchSubscription(ctx context.Context, url string) ([]string, error) {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
+	// Block non-text responses (HTML pages, JSON APIs, etc.)
+	ct := resp.Header.Get("Content-Type")
+	if ct != "" && !strings.HasPrefix(ct, "text/plain") && !strings.HasPrefix(ct, "application/octet-stream") {
+		return nil, fmt.Errorf("неподдерживаемый формат: %s (нужен text/plain или raw-ссылка)", ct)
+	}
+
 	var domains []string
 	seen := make(map[string]bool)
 	scanner := bufio.NewScanner(resp.Body)
