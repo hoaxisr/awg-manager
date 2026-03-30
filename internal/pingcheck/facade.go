@@ -221,7 +221,7 @@ func (f *Facade) removeNativeWGPingCheck(tunnelID string) {
 }
 
 // GetTunnelPingStatus returns lightweight ping status for a single tunnel.
-// NativeWG: queries NDMS. Kernel: delegates to custom loop.
+// NativeWG: queries NDMS ping-check. Kernel: delegates to custom monitor loop.
 func (f *Facade) GetTunnelPingStatus(tunnelID string) TunnelPingInfo {
 	if f.isNativeWG(tunnelID) {
 		return f.getNativeWGTunnelPingStatus(tunnelID)
@@ -235,19 +235,12 @@ func (f *Facade) getNativeWGTunnelPingStatus(tunnelID string) TunnelPingInfo {
 		return TunnelPingInfo{Status: "disabled"}
 	}
 	stored, err := f.tunnels.Get(tunnelID)
-	if err != nil {
-		return TunnelPingInfo{Status: "disabled"}
-	}
-	if stored.PingCheck == nil || !stored.PingCheck.Enabled {
+	if err != nil || stored.PingCheck == nil || !stored.PingCheck.Enabled {
 		return TunnelPingInfo{Status: "disabled"}
 	}
 
 	status, err := f.nwgOp.GetPingCheckStatus(context.Background(), stored)
-	if err != nil {
-		return TunnelPingInfo{Status: "disabled"}
-	}
-
-	if !status.Exists {
+	if err != nil || !status.Exists {
 		return TunnelPingInfo{Status: "disabled"}
 	}
 
@@ -256,13 +249,14 @@ func (f *Facade) getNativeWGTunnelPingStatus(tunnelID string) TunnelPingInfo {
 		FailThreshold: status.MaxFails,
 	}
 
-	switch status.Status {
-	case "pass":
+	switch {
+	case status.Status == "pass":
 		info.Status = "alive"
-	case "fail":
-		// NDMS doesn't expose restart count; infer recovering from fail status.
+	case status.Status == "fail" && status.FailCount >= status.MaxFails:
+		// Real failure: NDMS hit the threshold → recovering
 		info.Status = "recovering"
 	default:
+		// "fail" with failCount < threshold = still checking, or initial state (0/0)
 		info.Status = "alive"
 	}
 
