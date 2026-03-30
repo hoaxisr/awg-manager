@@ -283,6 +283,20 @@ func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 						// Last resort — show kernel interface name
 						resolvedISPInterfaceLabel = resolved
 					}
+
+					// NativeWG: resolve actual WAN from NDMS peer "via" field
+					if resolvedISPInterface == "" && stored.Backend == "nativewg" {
+						if via := t.StateInfo.PeerVia; via != "" {
+							wanModel := h.svc.WANModel()
+							if kernelName := wanModel.NameForID(via); kernelName != "" {
+								resolvedISPInterface = kernelName
+								resolvedISPInterfaceLabel = wanModel.GetLabel(kernelName)
+							}
+							if resolvedISPInterfaceLabel == "" {
+								resolvedISPInterfaceLabel = via
+							}
+						}
+					}
 				}
 			}
 		}

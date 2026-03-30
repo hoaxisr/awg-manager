@@ -129,6 +129,10 @@ type StateInfo struct {
 	// Connection timestamp (from NDMS "connected" field for nativewg)
 	ConnectedAt string `json:"connectedAt,omitempty"`
 
+	// PeerVia is the NDMS WAN name the peer routes through (e.g. "PPPoE0").
+	// Populated for NativeWG tunnels from RCI show interface peer "via" field.
+	PeerVia string `json:"peerVia,omitempty"`
+
 	// Diagnostics
 	Error   error  `json:"error"`            // Error encountered during state detection
 	Details string `json:"details,omitempty"` // Human-readable details about the state

@@ -474,6 +474,7 @@ func (o *OperatorNativeWG) GetState(ctx context.Context, stored *storage.AWGTunn
 		TxBytes:       rciState.TxBytes,
 		BackendType:   "nativewg",
 		ConnectedAt:   rciState.Connected,
+		PeerVia:       rciState.PeerVia,
 	}
 
 	// Parse handshake: RCI returns seconds since last handshake, not unix timestamp.
