@@ -134,8 +134,8 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 		s.logWarn(m.tunnelID, "ip link set up failed: "+err.Error())
 	}
 
-	// 5. Wait for handshake
-	ok := s.waitHandshake(ifaceName)
+	// 5. Wait for handshake (interruptible by monitor stop signal)
+	ok := s.waitHandshake(ifaceName, m.stopCh)
 
 	s.mu.Lock()
 	m.restartCount++
@@ -198,7 +198,9 @@ func tryResolveEndpoint(endpoint string) string {
 }
 
 // waitHandshake polls awg show for a fresh handshake after link toggle.
-func (s *Service) waitHandshake(ifaceName string) bool {
+// stopCh allows early exit when StopMonitoring is called during link toggle,
+// preventing the HTTP handler from blocking for up to 30 seconds.
+func (s *Service) waitHandshake(ifaceName string, stopCh <-chan struct{}) bool {
 	deadline := time.After(handshakeTimeout)
 	poll := time.NewTicker(handshakePollFreq)
 	defer poll.Stop()
@@ -217,6 +219,8 @@ func (s *Service) waitHandshake(ifaceName string) bool {
 				return true
 			}
 		case <-deadline:
+			return false
+		case <-stopCh:
 			return false
 		case <-s.ctx.Done():
 			return false

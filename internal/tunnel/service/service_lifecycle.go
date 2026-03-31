@@ -521,6 +521,15 @@ func (s *ServiceImpl) GetState(ctx context.Context, tunnelID string) tunnel.Stat
 		info.State = expectedState
 	}
 
+	// After our Stop: state matrix sees Intent=DOWN + Process=true → NeedsStop.
+	// But if we disabled the tunnel (Enabled=false), it's Disabled, not NeedsStop.
+	// NeedsStop should only persist when router UI toggled off (Enabled still true).
+	if info.State == tunnel.StateNeedsStop {
+		if stored, err := s.store.Get(tunnelID); err == nil && !stored.Enabled {
+			info.State = tunnel.StateDisabled
+		}
+	}
+
 	return info
 }
 
