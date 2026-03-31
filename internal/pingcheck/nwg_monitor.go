@@ -125,6 +125,18 @@ func (m *nwgMonitor) run(ctx context.Context) {
 			if err != nil || status == nil || !status.Exists {
 				continue // skip this poll, retry next interval
 			}
+
+			// Sync poll interval with actual NDMS check interval on first poll.
+			// Prevents emitting N duplicate entries when our interval differs
+			// from the NDMS interval (e.g., we poll at 10s but NDMS checks at 5s).
+			if !m.initialized && status.Interval > 0 {
+				actual := time.Duration(status.Interval) * time.Second
+				if actual != m.interval && actual >= 3*time.Second {
+					m.interval = actual
+					ticker.Reset(actual)
+				}
+			}
+
 			m.threshold = status.MaxFails
 			m.processDelta(status.FailCount, status.SuccessCount, status.Status)
 
