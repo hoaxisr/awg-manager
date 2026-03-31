@@ -972,7 +972,8 @@ func TestOperatorOS5_TeardownForRestart_NoInterfaceDown(t *testing.T) {
 }
 
 // TestOperatorOS5_TeardownForRestart_CleansUp verifies that TeardownForRestart
-// properly cleans up firewall, endpoint routes, and kills the backend.
+// properly cleans up firewall, endpoint routes, and sets link down
+// while preserving the amneziawg interface (no backend.Stop).
 func TestOperatorOS5_TeardownForRestart_CleansUp(t *testing.T) {
 	ndmsMock := &MockNDMSClient{opkgTunExists: true}
 	fw := &MockFirewall{}
@@ -987,12 +988,9 @@ func TestOperatorOS5_TeardownForRestart_CleansUp(t *testing.T) {
 		t.Errorf("Firewall.RemoveRules: want [opkgtun0], got %v", fw.RemoveCalls)
 	}
 
-	// Backend killed (ip link del).
-	if len(backendMock.StopCalls) != 1 || backendMock.StopCalls[0] != "opkgtun0" {
-		t.Errorf("Backend.Stop: want [opkgtun0], got %v", backendMock.StopCalls)
-	}
-	if backendMock.running {
-		t.Error("Backend should not be running after TeardownForRestart")
+	// Backend NOT killed — device preserved for light Start.
+	if len(backendMock.StopCalls) != 0 {
+		t.Errorf("Backend.Stop should NOT be called, got %v", backendMock.StopCalls)
 	}
 
 	// ResolvedISP tracking cleared.

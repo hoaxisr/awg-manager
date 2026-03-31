@@ -197,10 +197,9 @@ func (s *ServiceImpl) RestartKernel(ctx context.Context, tunnelID string) error 
 	// Teardown: firewall, routes, DNS, backend — WITHOUT InterfaceDown.
 	s.legacyOperator.TeardownForRestart(ctx, tunnelID)
 
-	// Full start from scratch (ColdStart path).
-	// State after teardown: OpkgTun exists, Intent=UP, no process → NeedsStart.
-	// startInternal falls through to ColdStart.
-	return s.startInternal(ctx, tunnelID)
+	// Light start — device preserved by TeardownForRestart (only link toggled down).
+	// Re-resolves WAN, sets link up, re-applies routes and firewall.
+	return s.startLightInternal(ctx, tunnelID)
 }
 
 // beginOperation marks a tunnel as being modified by a lifecycle operation.
