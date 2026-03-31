@@ -98,6 +98,25 @@ func TestLogBuffer_MaxEntries(t *testing.T) {
 	}
 }
 
+func TestLogBuffer_BackendFieldPreserved(t *testing.T) {
+	buf := NewLogBuffer()
+	defer buf.Stop()
+
+	buf.Add(LogEntry{Timestamp: time.Now(), TunnelID: "awg0", Backend: "kernel", Success: true, Latency: 42})
+	buf.Add(LogEntry{Timestamp: time.Now(), TunnelID: "nwg0", Backend: "nativewg", Success: true, Latency: -1})
+
+	logs := buf.GetAll()
+	if len(logs) != 2 {
+		t.Fatalf("GetAll() len = %d, want 2", len(logs))
+	}
+	if logs[0].Backend != "nativewg" {
+		t.Errorf("logs[0].Backend = %q, want nativewg", logs[0].Backend)
+	}
+	if logs[1].Backend != "kernel" {
+		t.Errorf("logs[1].Backend = %q, want kernel", logs[1].Backend)
+	}
+}
+
 func TestLogBuffer_OrderDescending(t *testing.T) {
 	buf := NewLogBuffer()
 	defer buf.Stop()
