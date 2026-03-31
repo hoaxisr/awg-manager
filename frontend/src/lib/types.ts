@@ -289,6 +289,7 @@ export interface PingLogEntry {
 	failCount: number;
 	threshold: number;
 	stateChange: string;
+	backend?: string;
 }
 
 export interface AuthStatus {
