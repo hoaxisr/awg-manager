@@ -933,3 +933,105 @@ func TestOperatorOS5_NamesConversion(t *testing.T) {
 		t.Errorf("NDMS.SetAddress name = %s, want OpkgTun0", ndms.SetAddrCalls[0].Name)
 	}
 }
+
+// === TeardownForRestart tests ===
+
+// TestOperatorOS5_TeardownForRestart_NoInterfaceDown verifies that TeardownForRestart
+// does NOT call InterfaceDown — this is the core property that prevents NDMS
+// from firing conf-layer hooks that cause infinite restart loops.
+func TestOperatorOS5_TeardownForRestart_NoInterfaceDown(t *testing.T) {
+	ndmsMock := &MockNDMSClient{opkgTunExists: true}
+	fw := &MockFirewall{}
+	backendMock := &MockBackend{running: true}
+	recorder := &ipRunRecorder{}
+
+	op := NewOperatorOS5(ndmsMock, &MockWGClient{}, backendMock, fw, nil)
+	op.ipRun = recorder.run
+
+	op.TeardownForRestart(context.Background(), "awg0")
+
+	// MUST NOT call InterfaceDown — this is the whole point.
+	if len(ndmsMock.IfDownCalls) != 0 {
+		t.Errorf("TeardownForRestart must NOT call InterfaceDown, got %d calls", len(ndmsMock.IfDownCalls))
+	}
+
+	// MUST NOT call InterfaceUp.
+	if len(ndmsMock.IfUpCalls) != 0 {
+		t.Errorf("TeardownForRestart must NOT call InterfaceUp, got %d calls", len(ndmsMock.IfUpCalls))
+	}
+
+	// MUST NOT call Save (deferred to ColdStart).
+	if ndmsMock.SaveCalls != 0 {
+		t.Errorf("TeardownForRestart must NOT call Save, got %d calls", ndmsMock.SaveCalls)
+	}
+
+	// MUST NOT delete OpkgTun.
+	if len(ndmsMock.DeleteCalls) != 0 {
+		t.Errorf("TeardownForRestart must NOT delete OpkgTun, got %v", ndmsMock.DeleteCalls)
+	}
+}
+
+// TestOperatorOS5_TeardownForRestart_CleansUp verifies that TeardownForRestart
+// properly cleans up firewall, endpoint routes, and kills the backend.
+func TestOperatorOS5_TeardownForRestart_CleansUp(t *testing.T) {
+	ndmsMock := &MockNDMSClient{opkgTunExists: true}
+	fw := &MockFirewall{}
+	backendMock := &MockBackend{running: true}
+
+	op := newTestOperator(ndmsMock, &MockWGClient{}, backendMock, fw)
+
+	op.TeardownForRestart(context.Background(), "awg0")
+
+	// Firewall rules removed.
+	if len(fw.RemoveCalls) != 1 || fw.RemoveCalls[0] != "opkgtun0" {
+		t.Errorf("Firewall.RemoveRules: want [opkgtun0], got %v", fw.RemoveCalls)
+	}
+
+	// Backend killed (ip link del).
+	if len(backendMock.StopCalls) != 1 || backendMock.StopCalls[0] != "opkgtun0" {
+		t.Errorf("Backend.Stop: want [opkgtun0], got %v", backendMock.StopCalls)
+	}
+	if backendMock.running {
+		t.Error("Backend should not be running after TeardownForRestart")
+	}
+
+	// ResolvedISP tracking cleared.
+	if isp := op.GetResolvedISP("awg0"); isp != "" {
+		t.Errorf("ResolvedISP should be empty, got %q", isp)
+	}
+}
+
+// TestOperatorOS5_TeardownForRestart_VsStop_Contract contrasts TeardownForRestart
+// with Stop to prove the key behavioral difference: Stop calls InterfaceDown,
+// TeardownForRestart does not.
+func TestOperatorOS5_TeardownForRestart_VsStop_Contract(t *testing.T) {
+	// --- Run Stop ---
+	ndmsStop := &MockNDMSClient{}
+	opStop := newTestOperator(ndmsStop, &MockWGClient{}, &MockBackend{running: true}, &MockFirewall{})
+	_ = opStop.Stop(context.Background(), "awg0")
+
+	// --- Run TeardownForRestart ---
+	ndmsTeardown := &MockNDMSClient{}
+	opTeardown := newTestOperator(ndmsTeardown, &MockWGClient{}, &MockBackend{running: true}, &MockFirewall{})
+	opTeardown.TeardownForRestart(context.Background(), "awg0")
+
+	// Stop MUST call InterfaceDown.
+	if len(ndmsStop.IfDownCalls) == 0 {
+		t.Error("Stop should call InterfaceDown")
+	}
+
+	// TeardownForRestart MUST NOT call InterfaceDown.
+	if len(ndmsTeardown.IfDownCalls) != 0 {
+		t.Error("TeardownForRestart must NOT call InterfaceDown")
+	}
+
+	// Stop MUST call Save (persists conf: disabled).
+	if ndmsStop.SaveCalls == 0 {
+		t.Error("Stop should call Save")
+	}
+
+	// TeardownForRestart MUST NOT call Save.
+	if ndmsTeardown.SaveCalls != 0 {
+		t.Error("TeardownForRestart must NOT call Save")
+	}
+}
