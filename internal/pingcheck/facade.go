@@ -3,11 +3,27 @@ package pingcheck
 import (
 	"context"
 	"sort"
+	"sync"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
+
+// nwgOpPollAdapter adapts nwg.OperatorNativeWG to the nwgPollSource interface.
+type nwgOpPollAdapter struct {
+	op      *nwg.OperatorNativeWG
+	tunnels *storage.AWGTunnelStore
+}
+
+func (a *nwgOpPollAdapter) PollPingCheck(ctx context.Context, tunnelID string) (*ndms.PingCheckStatus, error) {
+	stored, err := a.tunnels.Get(tunnelID)
+	if err != nil {
+		return nil, err
+	}
+	return a.op.GetPingCheckStatus(ctx, stored)
+}
 
 // Facade unifies kernel (custom loop) and NativeWG (NDMS native) ping-check
 // behind a single interface. All dispatch is based on stored.Backend.
@@ -16,17 +32,31 @@ type Facade struct {
 	tunnels  *storage.AWGTunnelStore
 	settings *storage.SettingsStore
 	nwgOp    *nwg.OperatorNativeWG
+
+	nwgSource   nwgPollSource // nil when nwgOp is nil; overridable for tests
+	nwgMonMu    sync.RWMutex
+	nwgMonitors map[string]*nwgMonitor
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 // NewFacade creates a unified ping-check facade.
 // nwgOp may be nil if NativeWG is unavailable.
 func NewFacade(custom *Service, tunnels *storage.AWGTunnelStore, settings *storage.SettingsStore, nwgOp *nwg.OperatorNativeWG) *Facade {
-	return &Facade{
-		custom:   custom,
-		tunnels:  tunnels,
-		settings: settings,
-		nwgOp:    nwgOp,
+	ctx, cancel := context.WithCancel(context.Background())
+	f := &Facade{
+		custom:      custom,
+		tunnels:     tunnels,
+		settings:    settings,
+		nwgOp:       nwgOp,
+		nwgMonitors: make(map[string]*nwgMonitor),
+		ctx:         ctx,
+		cancel:      cancel,
 	}
+	if nwgOp != nil {
+		f.nwgSource = &nwgOpPollAdapter{op: nwgOp, tunnels: tunnels}
+	}
+	return f
 }
 
 func (f *Facade) isNativeWG(tunnelID string) bool {
@@ -43,6 +73,7 @@ func (f *Facade) isNativeWG(tunnelID string) bool {
 func (f *Facade) StartMonitoring(tunnelID, tunnelName string) {
 	if f.isNativeWG(tunnelID) {
 		f.configureNativeWGPingCheck(tunnelID)
+		f.startNwgMonitor(tunnelID, tunnelName)
 		return
 	}
 	f.custom.StartMonitoring(tunnelID, tunnelName)
@@ -53,6 +84,7 @@ func (f *Facade) StartMonitoring(tunnelID, tunnelName string) {
 // Kernel: delegates to custom loop.
 func (f *Facade) StopMonitoring(tunnelID string) {
 	if f.isNativeWG(tunnelID) {
+		f.stopNwgMonitor(tunnelID)
 		f.removeNativeWGPingCheck(tunnelID)
 		return
 	}
@@ -147,6 +179,68 @@ func (f *Facade) getNativeWGStatuses() []TunnelStatus {
 	}
 
 	return result
+}
+
+// startNwgMonitor creates and starts a poll-based nwgMonitor for the given tunnel.
+// Skipped if the nwgSource is nil (NativeWG unavailable) or PingCheck is not enabled.
+func (f *Facade) startNwgMonitor(tunnelID, tunnelName string) {
+	if f.nwgSource == nil {
+		return
+	}
+
+	stored, err := f.tunnels.Get(tunnelID)
+	if err != nil || stored.PingCheck == nil || !stored.PingCheck.Enabled {
+		return
+	}
+
+	interval := time.Duration(stored.PingCheck.Interval) * time.Second
+	if interval < 5*time.Second {
+		interval = 10 * time.Second
+	}
+
+	mon := &nwgMonitor{
+		tunnelID:   tunnelID,
+		tunnelName: tunnelName,
+		interval:   interval,
+		threshold:  stored.PingCheck.FailThreshold,
+		logBuffer:  f.custom.logBuffer,
+		source:     f.nwgSource,
+		stopCh:     make(chan struct{}),
+	}
+
+	// Extract and stop the old monitor (if any) outside the lock
+	// to avoid holding the mutex during wg.Wait().
+	f.nwgMonMu.Lock()
+	old, hadOld := f.nwgMonitors[tunnelID]
+	if hadOld {
+		delete(f.nwgMonitors, tunnelID)
+	}
+	f.nwgMonMu.Unlock()
+
+	if hadOld {
+		old.stop()
+	}
+
+	mon.wg.Add(1)
+	go mon.run(f.ctx)
+
+	f.nwgMonMu.Lock()
+	f.nwgMonitors[tunnelID] = mon
+	f.nwgMonMu.Unlock()
+}
+
+// stopNwgMonitor stops and removes the nwgMonitor for the given tunnel.
+func (f *Facade) stopNwgMonitor(tunnelID string) {
+	f.nwgMonMu.Lock()
+	mon, ok := f.nwgMonitors[tunnelID]
+	if ok {
+		delete(f.nwgMonitors, tunnelID)
+	}
+	f.nwgMonMu.Unlock()
+
+	if ok {
+		mon.stop()
+	}
 }
 
 // configureNativeWGPingCheck creates/updates the NDMS ping-check profile
@@ -299,7 +393,21 @@ func (f *Facade) StopMonitoringAll() {
 	f.custom.StopMonitoringAll()
 }
 
-// Stop stops the custom monitoring service.
+// Stop stops all monitoring: cancels nwgMonitor goroutines, then stops the custom service.
 func (f *Facade) Stop() {
+	f.cancel()
+
+	f.nwgMonMu.Lock()
+	monitors := make([]*nwgMonitor, 0, len(f.nwgMonitors))
+	for _, mon := range f.nwgMonitors {
+		monitors = append(monitors, mon)
+	}
+	f.nwgMonitors = make(map[string]*nwgMonitor)
+	f.nwgMonMu.Unlock()
+
+	for _, mon := range monitors {
+		mon.stop()
+	}
+
 	f.custom.Stop()
 }

@@ -10,7 +10,7 @@ import (
 
 // nwgPollSource abstracts NDMS polling for testability.
 type nwgPollSource interface {
-	ShowPingCheck(ctx context.Context, profile string) (*ndms.PingCheckStatus, error)
+	PollPingCheck(ctx context.Context, tunnelID string) (*ndms.PingCheckStatus, error)
 }
 
 // nwgMonitor polls NDMS ping-check status for a single NativeWG tunnel
@@ -18,7 +18,6 @@ type nwgPollSource interface {
 type nwgMonitor struct {
 	tunnelID   string
 	tunnelName string
-	profile    string // NDMS ping-check profile name
 	interval   time.Duration
 	threshold  int
 	logBuffer  *LogBuffer
@@ -118,7 +117,7 @@ func (m *nwgMonitor) run(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			status, err := m.source.ShowPingCheck(ctx, m.profile)
+			status, err := m.source.PollPingCheck(ctx, m.tunnelID)
 			if err != nil || status == nil || !status.Exists {
 				continue // skip this poll, retry next interval
 			}
@@ -134,10 +133,8 @@ func (m *nwgMonitor) run(ctx context.Context) {
 }
 
 // stop signals the poll loop to exit and waits for it.
+// Safe to call only once per monitor (Facade guarantees this via nwgMonMu).
 func (m *nwgMonitor) stop() {
-	if m.stopCh != nil {
-		close(m.stopCh)
-		m.stopCh = nil
-	}
+	close(m.stopCh)
 	m.wg.Wait()
 }
