@@ -20,6 +20,7 @@ type LogEntry struct {
 	FailCount   int       `json:"failCount"`   // current fail count (e.g., 2)
 	Threshold   int       `json:"threshold"`   // fail threshold (e.g., 3)
 	StateChange string    `json:"stateChange"` // "link_toggle", "recovered", or ""
+	Backend     string    `json:"backend"`     // "kernel" or "nativewg"
 }
 
 // TunnelStatus represents the current ping check status of a tunnel.

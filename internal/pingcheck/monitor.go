@@ -75,6 +75,7 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 			Latency:    result.Latency,
 			FailCount:  0,
 			Threshold:  config.FailThreshold,
+			Backend:    "kernel",
 		})
 		return
 	}
@@ -93,6 +94,7 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 		Error:      result.Error,
 		FailCount:  failCount,
 		Threshold:  config.FailThreshold,
+		Backend:    "kernel",
 	})
 
 	if failCount < config.FailThreshold {
@@ -157,6 +159,7 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 		FailCount:   0,
 		Threshold:   config.FailThreshold,
 		StateChange: stateChange,
+		Backend:     "kernel",
 	})
 
 	// 6. Backoff if handshake didn't restore
