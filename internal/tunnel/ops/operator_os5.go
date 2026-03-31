@@ -404,9 +404,10 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	return nil
 }
 
-// TeardownForRestart removes firewall, routes, DNS, and kills the backend
+// TeardownForRestart removes firewall, routes, DNS, and sets link down
 // WITHOUT calling InterfaceDown. NDMS intent stays "running" so no conf-layer
-// hooks are fired. ColdStart rebuilds everything from scratch afterwards.
+// hooks are fired. The amneziawg interface is preserved (only link toggled down)
+// so that a light Start can bring it back up.
 func (o *OperatorOS5Impl) TeardownForRestart(ctx context.Context, tunnelID string) {
 	names := tunnel.NewNames(tunnelID)
 
@@ -416,11 +417,13 @@ func (o *OperatorOS5Impl) TeardownForRestart(ctx context.Context, tunnelID strin
 	// Remove endpoint route from kernel + clear tracking.
 	_ = o.CleanupEndpointRoute(ctx, tunnelID)
 
-	// Clear DNS servers from NDMS (ColdStart will re-apply).
+	// Clear DNS servers from NDMS (Start will re-apply).
 	o.clearAppliedDNS(ctx, tunnelID, names)
 
-	// Kill backend — removes amneziawg kernel interface.
-	_ = o.backend.Stop(ctx, names.IfaceName)
+	// Link down only — amneziawg interface stays, WG config stays loaded.
+	// NO backend.Stop (ip link del) — that would destroy the device and
+	// require ColdStart to recreate, which can fail on NDMS transient errors.
+	o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "down", "dev", names.IfaceName)
 
 	// Clear in-memory tracking.
 	o.resolvedISPMu.Lock()
@@ -428,8 +431,7 @@ func (o *OperatorOS5Impl) TeardownForRestart(ctx context.Context, tunnelID strin
 	o.resolvedISPMu.Unlock()
 
 	// NO InterfaceDown — NDMS intent stays "running".
-	// NO Save — ColdStart will Save after full rebuild.
-	o.logInfo("teardown", tunnelID, "Teardown for restart complete (NDMS intent preserved)")
+	o.logInfo("teardown", tunnelID, "Teardown for restart (link down, device preserved)")
 }
 
 // Stop brings down a tunnel without destroying the interface.
