@@ -34,7 +34,7 @@
 		const text = filteredLogs.map(log => {
 			const time = formatDate(log.timestamp);
 			const result = log.stateChange === 'dead' ? 'DEAD' : log.stateChange === 'alive' ? 'RECOVERED' : log.stateChange === 'forced_restart' ? (log.success ? 'RESTART OK' : 'RESTART FAIL') : log.stateChange === 'grace' ? 'FAIL (grace)' : log.success ? 'OK' : 'FAIL';
-			const latency = log.success ? `${log.latency}ms` : '-';
+			const latency = !log.success ? '-' : log.latency >= 0 ? `${log.latency}ms` : '—';
 			const error = log.error ? ` | ${log.error}` : '';
 			return `[${time}] ${log.tunnelName} ${result} ${latency} ${log.failCount}/${log.threshold}${error}`;
 		}).join('\n');
@@ -127,7 +127,15 @@
 									<span class="result-fail" title={log.error}>FAIL</span>
 								{/if}
 							</td>
-							<td>{log.success ? `${log.latency} ms` : '-'}</td>
+							<td>
+								{#if !log.success}
+									-
+								{:else if log.latency >= 0}
+									{log.latency} ms
+								{:else}
+									—
+								{/if}
+							</td>
 							<td>{log.failCount}/{log.threshold}</td>
 						</tr>
 					{/each}
