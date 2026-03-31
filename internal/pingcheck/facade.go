@@ -385,14 +385,39 @@ func (f *Facade) IsEnabled() bool {
 }
 
 // StartMonitoringAllRunning starts monitoring for all running tunnels.
-// Kernel tunnels: custom loop. NativeWG tunnels: skipped (NDMS manages).
+// Kernel tunnels: custom loop. NativeWG tunnels: start poll-based nwgMonitor.
 func (f *Facade) StartMonitoringAllRunning() {
 	f.custom.StartMonitoringAllRunning()
+
+	// Start NativeWG monitors for running tunnels with ping-check enabled.
+	tunnels, err := f.tunnels.List()
+	if err != nil {
+		return
+	}
+	for _, t := range tunnels {
+		if t.Backend != "nativewg" || t.PingCheck == nil || !t.PingCheck.Enabled {
+			continue
+		}
+		f.startNwgMonitor(t.ID, t.Name)
+	}
 }
 
-// StopMonitoringAll stops all monitoring (kernel custom loop only).
+// StopMonitoringAll stops all monitoring.
 func (f *Facade) StopMonitoringAll() {
 	f.custom.StopMonitoringAll()
+
+	// Stop all NativeWG monitors.
+	f.nwgMonMu.Lock()
+	monitors := make(map[string]*nwgMonitor, len(f.nwgMonitors))
+	for k, v := range f.nwgMonitors {
+		monitors[k] = v
+	}
+	f.nwgMonitors = make(map[string]*nwgMonitor)
+	f.nwgMonMu.Unlock()
+
+	for _, mon := range monitors {
+		mon.stop()
+	}
 }
 
 // Stop stops all monitoring: cancels nwgMonitor goroutines, then stops the custom service.
