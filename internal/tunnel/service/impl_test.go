@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -94,6 +95,7 @@ func (m *MockStateManager) SetState(tunnelID string, state tunnel.StateInfo) {
 
 // MockOperator is a mock operator.
 type MockOperator struct {
+	mu                 sync.Mutex // protects call slices from concurrent goroutines
 	createError        error
 	startError         error
 	stopError          error
@@ -162,7 +164,9 @@ func (m *MockOperator) Reconcile(ctx context.Context, cfg tunnel.Config) error {
 }
 
 func (m *MockOperator) Suspend(ctx context.Context, tunnelID string) error {
+	m.mu.Lock()
 	m.SuspendCalls = append(m.SuspendCalls, tunnelID)
+	m.mu.Unlock()
 	return nil
 }
 
