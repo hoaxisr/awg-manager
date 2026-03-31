@@ -288,6 +288,57 @@ func TestRestartKernel_Disabled_BringsUp(t *testing.T) {
 	}
 }
 
+// === GetState NeedsStop correction tests ===
+
+// TestGetState_NeedsStop_DisabledByUs verifies that when a tunnel is stopped
+// by our code (Enabled=false), GetState returns Disabled instead of NeedsStop.
+// NeedsStop means "router UI toggled off but process alive" — when WE stopped it,
+// it's Disabled even if the amneziawg interface hasn't been cleaned up yet.
+func TestGetState_NeedsStop_DisabledByUs(t *testing.T) {
+	svc, store, _, stateMgr := testService(t)
+	ctx := context.Background()
+
+	// Tunnel stopped by us: Enabled=false, but process still running
+	// (amneziawg interface exists after ip link set down).
+	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
+		tun.Enabled = false
+	})
+	stateMgr.SetState("awg10", tunnel.StateInfo{
+		State:          tunnel.StateNeedsStop,
+		OpkgTunExists:  true,
+		ProcessRunning: true,
+		InterfaceUp:    false,
+	})
+
+	info := svc.GetState(ctx, "awg10")
+	if info.State != tunnel.StateDisabled {
+		t.Errorf("GetState() = %s, want Disabled (Enabled=false corrects NeedsStop)", info.State)
+	}
+}
+
+// TestGetState_NeedsStop_RouterToggle verifies that NeedsStop is preserved
+// when the router UI toggled the tunnel off (Enabled still true in our storage).
+func TestGetState_NeedsStop_RouterToggle(t *testing.T) {
+	svc, store, _, stateMgr := testService(t)
+	ctx := context.Background()
+
+	// Router UI toggled off: Enabled=true (we didn't disable it), conf=disabled by NDMS.
+	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
+		tun.Enabled = true
+	})
+	stateMgr.SetState("awg10", tunnel.StateInfo{
+		State:          tunnel.StateNeedsStop,
+		OpkgTunExists:  true,
+		ProcessRunning: true,
+		InterfaceUp:    false,
+	})
+
+	info := svc.GetState(ctx, "awg10")
+	if info.State != tunnel.StateNeedsStop {
+		t.Errorf("GetState() = %s, want NeedsStop (Enabled=true, router toggled off)", info.State)
+	}
+}
+
 // === ActiveWAN Persistence Tests ===
 
 // TestActiveWAN_SetOnStart verifies startInternal persists ActiveWAN.
