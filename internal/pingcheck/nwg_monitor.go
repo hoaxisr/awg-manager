@@ -8,6 +8,10 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
 
+// LatencyNotAvailable is used for NativeWG log entries where NDMS
+// does not provide per-check latency data. Frontend hides the value.
+const LatencyNotAvailable = -1
+
 // nwgPollSource abstracts NDMS polling for testability.
 type nwgPollSource interface {
 	PollPingCheck(ctx context.Context, tunnelID string) (*ndms.PingCheckStatus, error)
@@ -66,7 +70,7 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
 			TunnelName: m.tunnelName,
 			Backend:    "nativewg",
 			Success:    false,
-			Latency:    -1,
+			Latency:    LatencyNotAvailable,
 			FailCount:  failCount,
 			Threshold:  m.threshold,
 		})
@@ -80,7 +84,7 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
 			TunnelName: m.tunnelName,
 			Backend:    "nativewg",
 			Success:    true,
-			Latency:    -1,
+			Latency:    LatencyNotAvailable,
 			FailCount:  0,
 			Threshold:  m.threshold,
 		})

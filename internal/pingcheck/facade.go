@@ -183,6 +183,8 @@ func (f *Facade) getNativeWGStatuses() []TunnelStatus {
 
 // startNwgMonitor creates and starts a poll-based nwgMonitor for the given tunnel.
 // Skipped if the nwgSource is nil (NativeWG unavailable) or PingCheck is not enabled.
+// Not safe for concurrent calls with the same tunnelID — callers are single-threaded
+// per tunnel (lifecycle hooks from service layer hold per-tunnel locks).
 func (f *Facade) startNwgMonitor(tunnelID, tunnelName string) {
 	if f.nwgSource == nil {
 		return
