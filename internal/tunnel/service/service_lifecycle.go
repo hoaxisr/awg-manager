@@ -18,7 +18,6 @@ import (
 func (s *ServiceImpl) Start(ctx context.Context, tunnelID string) error {
 	// NativeWG: own lifecycle (not covered by lifecycle.Manager).
 	if s.isNativeWGByID(tunnelID) {
-		s.clearReconcileLoop(tunnelID)
 		s.beginOperation(tunnelID)
 		defer s.endOperation(tunnelID)
 		s.lockTunnel(tunnelID)
@@ -212,7 +211,6 @@ func (s *ServiceImpl) Reconcile(ctx context.Context, tunnelID string) error {
 		return nil // NativeWG: NDMS manages tunnel persistence
 	}
 
-	s.suppressReconcile(tunnelID)
 	s.lockTunnel(tunnelID)
 	defer s.unlockTunnel(tunnelID)
 
@@ -287,7 +285,6 @@ func (s *ServiceImpl) reconcileInternal(ctx context.Context, tunnelID string) er
 func (s *ServiceImpl) Stop(ctx context.Context, tunnelID string) error {
 	// NativeWG: own lifecycle.
 	if s.isNativeWGByID(tunnelID) {
-		s.clearReconcileLoop(tunnelID)
 		s.beginOperation(tunnelID)
 		defer s.endOperation(tunnelID)
 		s.lockTunnel(tunnelID)
@@ -435,7 +432,6 @@ func (s *ServiceImpl) Restart(ctx context.Context, tunnelID string) error {
 
 // Delete stops (if running) and deletes a tunnel.
 func (s *ServiceImpl) Delete(ctx context.Context, tunnelID string) error {
-	s.suppressReconcile(tunnelID)
 	s.beginOperation(tunnelID)
 	defer s.endOperation(tunnelID)
 	s.lockTunnel(tunnelID)

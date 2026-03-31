@@ -44,6 +44,11 @@ type Executor interface {
 
 	// StopKernel brings down a tunnel — calls operator.Stop + clears runtime state.
 	StopKernel(ctx context.Context, tunnelID string) error
+
+	// RestartKernel tears down a tunnel WITHOUT changing NDMS intent
+	// (no InterfaceDown) and then performs a full ColdStart.
+	// This avoids NDMS conf-layer hooks that cause infinite restart loops.
+	RestartKernel(ctx context.Context, tunnelID string) error
 }
 
 // Manager is the single point of lifecycle decision-making for kernel tunnels.
@@ -794,13 +799,12 @@ func (m *Manager) executeAction(ctx context.Context, tunnelID string, action Act
 		return nil
 
 	case ActionRestart:
-		// Restart: Stop if alive, then Start.
+		// Restart: teardown WITHOUT InterfaceDown, then ColdStart.
+		// Using RestartKernel instead of StopKernel+StartKernel avoids
+		// generating NDMS conf-layer hooks that cause infinite restart loops.
 		m.appLog.Info(source, tunnelID, "Restarting tunnel")
-		// Stop (ignore errors — tunnel may not be running).
-		_ = m.executor.StopKernel(ctx, tunnelID)
-		// Start.
-		if err := m.executor.StartKernel(ctx, tunnelID); err != nil {
-			m.logWarn(source, tunnelID, "Restart start failed: "+err.Error())
+		if err := m.executor.RestartKernel(ctx, tunnelID); err != nil {
+			m.logWarn(source, tunnelID, "Restart failed: "+err.Error())
 			m.appLog.Warn(source, tunnelID, "Restart failed: "+err.Error())
 			return err
 		}

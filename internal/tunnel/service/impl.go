@@ -83,19 +83,6 @@ type ServiceImpl struct {
 	// wan is the unified WAN state model (up/down tracking).
 	wan *wan.Model
 
-	// reconcileDeadline suppresses self-triggered NDMS hooks.
-	// When our Start/Stop/Restart calls InterfaceUp/InterfaceDown, NDMS fires
-	// hooks back to ReconcileInterface. We suppress these for a short window
-	// to prevent conflicts with our own operations.
-	reconcileDeadline map[string]time.Time
-	reconcileMu       sync.Mutex
-
-	// reconcileLoopDetect tracks "disabled" events per tunnel for loop detection.
-	// If a tunnel receives too many disabled events in a short window, NDMS is
-	// cycling the interface — we block reconcile to stop the loop.
-	reconcileDisabledEvents map[string][]time.Time
-	reconcileLoopBlocked    map[string]time.Time
-
 	// lifecycleOps tracks tunnels currently undergoing lifecycle operations.
 	// Used by GetState to override transient misleading states (e.g. NeedsStop
 	// during Start when process is running but InterfaceUp hasn't been called yet).
@@ -125,10 +112,7 @@ func New(
 		log:               log,
 		appLog:            logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubLifecycle),
 		wan:               wanModel,
-		reconcileDeadline:       make(map[string]time.Time),
-		reconcileDisabledEvents: make(map[string][]time.Time),
-		reconcileLoopBlocked:    make(map[string]time.Time),
-		lifecycleOps:            make(map[string]tunnel.State),
+		lifecycleOps: make(map[string]tunnel.State),
 	}
 }
 
@@ -195,6 +179,30 @@ func (s *ServiceImpl) StopKernel(ctx context.Context, tunnelID string) error {
 	return s.stopInternal(ctx, tunnelID)
 }
 
+// RestartKernel tears down a running kernel tunnel and rebuilds it from scratch.
+// Unlike StopKernel+ColdStartKernel, this does NOT call InterfaceDown during
+// teardown — NDMS intent stays "running", so no conf-layer hooks are fired.
+// This prevents the infinite restart loop where late NDMS hooks from Stop
+// would trigger HandleUserToggle → decideDisable(Running) → ActionStop.
+// Called by lifecycle.Manager — assumes per-tunnel lock is already held.
+func (s *ServiceImpl) RestartKernel(ctx context.Context, tunnelID string) error {
+	// Pause PingCheck monitoring before teardown.
+	if s.reconcileHooks != nil {
+		s.reconcileHooks.OnReconcileStop(tunnelID)
+	}
+
+	// Notify hook services about stop (static routes, client routes cleanup).
+	s.fireStopHooks(ctx, tunnelID)
+
+	// Teardown: firewall, routes, DNS, backend — WITHOUT InterfaceDown.
+	s.legacyOperator.TeardownForRestart(ctx, tunnelID)
+
+	// Full start from scratch (ColdStart path).
+	// State after teardown: OpkgTun exists, Intent=UP, no process → NeedsStart.
+	// startInternal falls through to ColdStart.
+	return s.startInternal(ctx, tunnelID)
+}
+
 // beginOperation marks a tunnel as being modified by a lifecycle operation.
 // Delegates to lifecycle.Manager which owns the suppress map.
 // No-op when Manager is nil (cleanup path).
@@ -219,23 +227,6 @@ func (s *ServiceImpl) isOperating(tunnelID string) bool {
 	return false
 }
 
-// suppressReconcile temporarily suppresses ReconcileInterface for a tunnel.
-// Must be called BEFORE lockTunnel() so hooks blocked on the lock see the suppression.
-const reconcileSuppressDuration = 15 * time.Second
-
-func (s *ServiceImpl) suppressReconcile(tunnelID string) {
-	s.reconcileMu.Lock()
-	s.reconcileDeadline[tunnelID] = time.Now().Add(reconcileSuppressDuration)
-	s.reconcileMu.Unlock()
-}
-
-// clearReconcileLoop resets loop detection for a tunnel (called on manual NativeWG Start/Stop).
-func (s *ServiceImpl) clearReconcileLoop(tunnelID string) {
-	s.reconcileMu.Lock()
-	defer s.reconcileMu.Unlock()
-	delete(s.reconcileDisabledEvents, tunnelID)
-	delete(s.reconcileLoopBlocked, tunnelID)
-}
 
 // lockTunnel acquires the per-tunnel mutex.
 func (s *ServiceImpl) lockTunnel(tunnelID string) {

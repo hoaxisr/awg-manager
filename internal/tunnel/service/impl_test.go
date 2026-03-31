@@ -142,6 +142,10 @@ func (m *MockOperator) Stop(ctx context.Context, tunnelID string) error {
 	return m.stopError
 }
 
+func (m *MockOperator) TeardownForRestart(ctx context.Context, tunnelID string) {
+	m.StopCalls = append(m.StopCalls, tunnelID)
+}
+
 func (m *MockOperator) Delete(ctx context.Context, stored *storage.AWGTunnel) error {
 	m.DeleteCalls = append(m.DeleteCalls, stored.ID)
 	return m.deleteError
