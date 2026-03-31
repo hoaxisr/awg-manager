@@ -88,7 +88,9 @@
 				if (tunnel.enabled) {
 					await api.removeNativePingCheck(tunnelId);
 				} else {
-					// For NativeWG, open settings modal to configure
+					// For NativeWG, open settings modal to configure.
+					// Clear toggle loading before opening modal — user interaction moves to modal.
+					togglingTunnelId = null;
 					openSettings(tunnelId);
 					return;
 				}
@@ -123,6 +125,8 @@
 			api.getNativePingCheckStatus(tunnelId).then(s => {
 				nwgSettingsStatus = s;
 				nwgSettingsOpen = true;
+			}).catch(() => {
+				notifications.error('Не удалось загрузить настройки');
 			});
 		} else {
 			kernelSettingsOpen = true;
