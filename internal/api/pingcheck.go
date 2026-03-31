@@ -234,6 +234,11 @@ func (h *PingCheckHandler) ConfigureTunnelPingCheck(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// Start NativeWG poll-based monitor for log generation.
+	// StartMonitoring is idempotent: NDMS config already applied above,
+	// this just ensures the nwgMonitor goroutine is running.
+	h.service.StartMonitoring(id, stored.Name)
+
 	h.log.Info("ping-check-configure", id, "Ping-check configured: host="+cfg.Host)
 
 	response.Success(w, map[string]bool{"success": true})
@@ -269,6 +274,9 @@ func (h *PingCheckHandler) RemoveTunnelPingCheck(w http.ResponseWriter, r *http.
 		response.Error(w, err.Error(), "PINGCHECK_REMOVE_ERROR")
 		return
 	}
+
+	// Stop NativeWG poll-based monitor.
+	h.service.StopMonitoring(id)
 
 	// Update storage
 	if stored.PingCheck != nil {
