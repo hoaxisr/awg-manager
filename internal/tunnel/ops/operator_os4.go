@@ -168,6 +168,12 @@ func (o *OperatorOS4Impl) Start(ctx context.Context, cfg tunnel.Config) error {
 	return nil
 }
 
+// TeardownForRestart on OS4 is identical to Stop — OS4 has no NDMS conf-layer
+// hooks, so there is no infinite restart loop risk.
+func (o *OperatorOS4Impl) TeardownForRestart(ctx context.Context, tunnelID string) {
+	_ = o.Stop(ctx, tunnelID)
+}
+
 // Stop stops a tunnel on OS 4.x.
 func (o *OperatorOS4Impl) Stop(ctx context.Context, tunnelID string) error {
 	ifaceName := tunnelID

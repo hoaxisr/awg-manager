@@ -36,6 +36,13 @@ type Operator interface {
 	// Used for: user Stop, PingCheck dead.
 	Stop(ctx context.Context, tunnelID string) error
 
+	// TeardownForRestart removes firewall, routes, DNS, and kills the backend
+	// WITHOUT changing NDMS intent (no InterfaceDown). This prevents NDMS from
+	// firing conf-layer hooks that would cause HandleUserToggle to re-stop
+	// or re-start the tunnel, creating an infinite restart loop.
+	// ColdStart is called after teardown to rebuild from scratch.
+	TeardownForRestart(ctx context.Context, tunnelID string)
+
 	// Delete completely removes a tunnel.
 	// Receives the full stored tunnel for reliable cleanup (persisted endpoint IP, etc.).
 	Delete(ctx context.Context, stored *storage.AWGTunnel) error
