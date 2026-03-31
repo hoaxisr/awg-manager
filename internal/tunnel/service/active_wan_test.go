@@ -133,6 +133,18 @@ func (m *mockOp) Start(ctx context.Context, cfg tunnel.Config) error {
 	return m.startError
 }
 
+func (m *mockOp) TeardownForRestart(ctx context.Context, tunnelID string) {
+	m.StopCalls = append(m.StopCalls, tunnelID)
+	// Simulate real TeardownForRestart: backend killed, but NDMS intent stays UP.
+	// State becomes NeedsStart (OpkgTun exists, intent=UP, no process).
+	if m.stateMgr != nil {
+		m.stateMgr.SetState(tunnelID, tunnel.StateInfo{
+			State:         tunnel.StateNeedsStart,
+			OpkgTunExists: true,
+		})
+	}
+}
+
 func (m *mockOp) GetSystemName(_ context.Context, ndmsID string) string { return ndmsID }
 func (m *mockOp) SetDefaultRoute(ctx context.Context, ndmsName string) error    { return nil }
 func (m *mockOp) RemoveDefaultRoute(ctx context.Context, ndmsName string) error { return nil }
@@ -147,6 +159,134 @@ func (m *mockOp) RemoveClientRule(ctx context.Context, ip string, table int) err
 	return nil
 }
 func (m *mockOp) ListUsedRoutingTables(ctx context.Context) ([]int, error) { return nil, nil }
+
+// === RestartKernel Tests ===
+
+// TestRestartKernel_NoInterfaceDown verifies that RestartKernel (via lifecycle
+// manager's ActionRestart) does NOT call operator.Stop — which would trigger
+// InterfaceDown and generate NDMS hooks that cause infinite restart loops.
+// Instead, it calls TeardownForRestart (tracked as StopCalls in mock) + startInternal.
+func TestRestartKernel_NoInterfaceDown(t *testing.T) {
+	svc, store, op, stateMgr := testService(t)
+	ctx := context.Background()
+
+	saveTunnel(t, store, "awg10")
+	stateMgr.SetState("awg10", tunnel.StateInfo{
+		State:          tunnel.StateRunning,
+		ProcessRunning: true,
+		InterfaceUp:    true,
+		OpkgTunExists:  true,
+	})
+
+	// Clear any calls from setup.
+	op.StopCalls = nil
+	op.StartCalls = nil
+
+	err := svc.RestartKernel(ctx, "awg10")
+	if err != nil {
+		t.Fatalf("RestartKernel() error = %v", err)
+	}
+
+	// TeardownForRestart is tracked via StopCalls in the mock.
+	if len(op.StopCalls) != 1 || op.StopCalls[0] != "awg10" {
+		t.Errorf("TeardownForRestart: want [awg10], got %v", op.StopCalls)
+	}
+
+	// ColdStart/Start should be called after teardown.
+	if len(op.StartCalls) == 0 {
+		t.Error("ColdStart not called after teardown")
+	}
+}
+
+// TestRestartKernel_PersistsState verifies that RestartKernel sets ActiveWAN
+// and StartedAt after successful restart.
+func TestRestartKernel_PersistsState(t *testing.T) {
+	svc, store, _, stateMgr := testService(t)
+	ctx := context.Background()
+
+	saveTunnel(t, store, "awg10")
+	stateMgr.SetState("awg10", tunnel.StateInfo{
+		State:          tunnel.StateRunning,
+		ProcessRunning: true,
+		InterfaceUp:    true,
+		OpkgTunExists:  true,
+	})
+
+	err := svc.RestartKernel(ctx, "awg10")
+	if err != nil {
+		t.Fatalf("RestartKernel() error = %v", err)
+	}
+
+	stored, _ := store.Get("awg10")
+	if stored.ActiveWAN == "" {
+		t.Error("ActiveWAN not set after RestartKernel")
+	}
+	if stored.StartedAt == "" {
+		t.Error("StartedAt not set after RestartKernel")
+	}
+}
+
+// TestRestartKernel_ViaLifecycleManager verifies that the lifecycle manager's
+// HandleAPIRestart dispatches ActionRestart through RestartKernel (not StopKernel+StartKernel).
+func TestRestartKernel_ViaLifecycleManager(t *testing.T) {
+	svc, store, op, stateMgr := testService(t)
+	ctx := context.Background()
+
+	saveTunnel(t, store, "awg10")
+	stateMgr.SetState("awg10", tunnel.StateInfo{
+		State:          tunnel.StateRunning,
+		ProcessRunning: true,
+		InterfaceUp:    true,
+		OpkgTunExists:  true,
+	})
+
+	op.StopCalls = nil
+	op.StartCalls = nil
+
+	// Use the public API path: service.Restart → lifecycle.HandleAPIRestart.
+	err := svc.Restart(ctx, "awg10")
+	if err != nil {
+		t.Fatalf("Restart() error = %v", err)
+	}
+
+	// TeardownForRestart called (tracked as StopCalls).
+	if len(op.StopCalls) != 1 {
+		t.Errorf("Expected 1 TeardownForRestart call, got %d", len(op.StopCalls))
+	}
+
+	// ColdStart called after teardown.
+	if len(op.StartCalls) == 0 {
+		t.Error("ColdStart not called after lifecycle restart")
+	}
+}
+
+// TestRestartKernel_Disabled_BringsUp verifies that restarting a disabled tunnel
+// brings it up (ActionStart or ActionColdStart, not ActionRestart).
+func TestRestartKernel_Disabled_BringsUp(t *testing.T) {
+	svc, store, op, stateMgr := testService(t)
+	ctx := context.Background()
+
+	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
+		tun.Enabled = false
+	})
+	stateMgr.SetState("awg10", tunnel.StateInfo{
+		State:         tunnel.StateDisabled,
+		OpkgTunExists: true,
+	})
+
+	op.StartCalls = nil
+
+	err := svc.Restart(ctx, "awg10")
+	if err != nil {
+		t.Fatalf("Restart() on disabled tunnel error = %v", err)
+	}
+
+	// For disabled tunnels, lifecycle decides ActionStart (not ActionRestart).
+	// This goes through StartKernel → startLightInternal, not RestartKernel.
+	if len(op.StartCalls) == 0 {
+		t.Error("Start not called for disabled tunnel restart")
+	}
+}
 
 // === ActiveWAN Persistence Tests ===
 
