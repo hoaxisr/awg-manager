@@ -31,10 +31,13 @@ func fetchSubscription(ctx context.Context, url string) ([]string, error) {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	// Block non-text responses (HTML pages, JSON APIs, etc.)
+	// Only accept text/plain responses — reject HTML, JSON, binary, etc.
 	ct := resp.Header.Get("Content-Type")
-	if ct != "" && !strings.HasPrefix(ct, "text/plain") && !strings.HasPrefix(ct, "application/octet-stream") {
-		return nil, fmt.Errorf("неподдерживаемый формат: %s (нужен text/plain или raw-ссылка)", ct)
+	if !strings.HasPrefix(ct, "text/plain") {
+		if ct == "" {
+			return nil, fmt.Errorf("сервер не указал Content-Type (нужен text/plain)")
+		}
+		return nil, fmt.Errorf("неподдерживаемый формат: %s (нужен text/plain)", ct)
 	}
 
 	var domains []string
@@ -132,6 +135,34 @@ func normalizeGitHubURL(url string) string {
 	}
 	// Reconstruct: raw.githubusercontent.com/{user}/{repo}/{branch}/{path}
 	return "https://raw.githubusercontent.com/" + parts[0] + "/" + parts[1] + "/" + parts[3]
+}
+
+// validateSubscriptionURL fetches a URL and verifies it returns text/plain with parseable domains.
+// Used to reject invalid URLs at create/update time, not just at refresh time.
+func validateSubscriptionURL(ctx context.Context, url string) error {
+	domains, err := fetchSubscription(ctx, url)
+	if err != nil {
+		return err
+	}
+	if len(domains) == 0 {
+		return fmt.Errorf("список пуст — URL не содержит доменов")
+	}
+	return nil
+}
+
+// findNewSubscriptions returns subscriptions in updated that are not present in existing (by URL).
+func findNewSubscriptions(existing, updated []Subscription) []Subscription {
+	old := make(map[string]bool, len(existing))
+	for _, s := range existing {
+		old[s.URL] = true
+	}
+	var newSubs []Subscription
+	for _, s := range updated {
+		if !old[s.URL] {
+			newSubs = append(newSubs, s)
+		}
+	}
+	return newSubs
 }
 
 // isLocalIP returns true for loopback, private, and link-local addresses.

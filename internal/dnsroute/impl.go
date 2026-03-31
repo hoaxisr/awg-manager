@@ -80,9 +80,15 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 
 	s.log.Infof("created dns route list %q (%s)", list.Name, list.ID)
 
-	// If the list has subscriptions, fetch them now so Domains gets populated
-	// before reconcile. RefreshSubscriptions calls Reconcile at the end.
+	// Validate subscriptions by fetching them. If any URL fails (wrong
+	// Content-Type, unreachable, etc.), reject the entire Create.
 	if len(list.Subscriptions) > 0 {
+		if err := s.validateSubscriptions(ctx, list.Subscriptions); err != nil {
+			// Remove the just-appended list from data.
+			data.Lists = data.Lists[:len(data.Lists)-1]
+			_ = s.store.Save(data)
+			return nil, err
+		}
 		if err := s.refreshSubscriptions(ctx, list.ID); err != nil {
 			s.logError("create", list.ID, "Refresh subscriptions failed", err.Error())
 		}
@@ -170,6 +176,14 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 	}
 	if list.Subnets == nil {
 		list.Subnets = existing.Subnets
+	}
+
+	// Validate any new subscription URLs before saving.
+	newSubs := findNewSubscriptions(existing.Subscriptions, list.Subscriptions)
+	if len(newSubs) > 0 {
+		if err := s.validateSubscriptions(ctx, newSubs); err != nil {
+			return nil, err
+		}
 	}
 
 	// Merge domains: manual domains + existing subscription domains.
@@ -270,6 +284,17 @@ func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) e
 		s.logError("set-enabled", id, "Reconcile failed", err.Error())
 	}
 
+	return nil
+}
+
+// validateSubscriptions fetches each subscription URL and verifies it returns
+// text/plain with at least one parseable domain. Returns the first error encountered.
+func (s *ServiceImpl) validateSubscriptions(ctx context.Context, subs []Subscription) error {
+	for _, sub := range subs {
+		if err := validateSubscriptionURL(ctx, sub.URL); err != nil {
+			return fmt.Errorf("подписка %q: %w", sub.URL, err)
+		}
+	}
 	return nil
 }
 
