@@ -946,6 +946,8 @@ class ApiClient {
 		search?: string;
 		offset?: number;
 		limit?: number;
+		sortBy?: 'proto' | 'src' | 'dst' | 'iface' | 'state' | 'bytes';
+		sortDir?: 'asc' | 'desc';
 	} = {}): Promise<ConnectionsResponse> {
 		const sp = new URLSearchParams();
 		if (params.tunnel && params.tunnel !== 'all') sp.set('tunnel', params.tunnel);
@@ -953,6 +955,8 @@ class ApiClient {
 		if (params.search) sp.set('search', params.search);
 		if (params.offset) sp.set('offset', String(params.offset));
 		if (params.limit) sp.set('limit', String(params.limit));
+		if (params.sortBy) sp.set('sortBy', params.sortBy);
+		if (params.sortDir) sp.set('sortDir', params.sortDir);
 		const qs = sp.toString();
 		return this.request<ConnectionsResponse>(`/connections${qs ? '?' + qs : ''}`);
 	}
