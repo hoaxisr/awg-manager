@@ -5,10 +5,13 @@
 	interface Props {
 		connections: ConntrackConnection[];
 		pagination: ConnectionsPagination;
+		sortBy: '' | 'proto' | 'src' | 'dst' | 'iface' | 'state' | 'bytes';
+		sortDir: 'asc' | 'desc';
+		onSortChange: (column: 'proto' | 'src' | 'dst' | 'iface' | 'state' | 'bytes') => void;
 		onPageChange: (offset: number) => void;
 	}
 
-	let { connections, pagination, onPageChange }: Props = $props();
+	let { connections, pagination, sortBy, sortDir, onSortChange, onPageChange }: Props = $props();
 
 	let currentPage = $derived(Math.floor(pagination.offset / pagination.limit) + 1);
 	let totalPages = $derived(Math.ceil(pagination.total / pagination.limit) || 1);
@@ -24,16 +27,25 @@
 	}
 </script>
 
+{#snippet sortHeader(column: 'proto' | 'src' | 'dst' | 'iface' | 'state' | 'bytes', label: string)}
+	<th class="sortable" class:active={sortBy === column} onclick={() => onSortChange(column)}>
+		<span class="sort-label">{label}</span>
+		{#if sortBy === column}
+			<span class="sort-arrow">{sortDir === 'asc' ? '▲' : '▼'}</span>
+		{/if}
+	</th>
+{/snippet}
+
 <div class="table-wrapper">
 	<table class="conn-table">
 		<thead>
 			<tr>
-				<th>Proto</th>
-				<th>Source</th>
-				<th>Destination</th>
-				<th>Интерфейс</th>
-				<th>Состояние</th>
-				<th>Трафик</th>
+				{@render sortHeader('proto', 'Proto')}
+				{@render sortHeader('src', 'Source')}
+				{@render sortHeader('dst', 'Destination')}
+				{@render sortHeader('iface', 'Интерфейс')}
+				{@render sortHeader('state', 'Состояние')}
+				{@render sortHeader('bytes', 'Трафик')}
 			</tr>
 		</thead>
 		<tbody>
@@ -217,5 +229,24 @@
 		color: var(--accent);
 		cursor: help;
 		white-space: nowrap;
+	}
+
+	.sortable {
+		cursor: pointer;
+		user-select: none;
+	}
+
+	.sortable:hover {
+		color: var(--accent);
+	}
+
+	.sortable.active {
+		color: var(--accent);
+	}
+
+	.sort-arrow {
+		font-size: 0.6rem;
+		margin-left: 0.25rem;
+		vertical-align: middle;
 	}
 </style>
