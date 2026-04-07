@@ -4,7 +4,7 @@
 	import { api } from '$lib/api/client';
 	import { formatRelativeTime } from '$lib/utils/format';
 	import { TrafficChart } from '$lib/components/ui';
-	import { getTrafficRates, subscribeTraffic } from '$lib/stores/traffic';
+	import { getTrafficRates, subscribeTraffic, loadHistory } from '$lib/stores/traffic';
 
 	interface Props {
 		tunnel: SystemTunnel;
@@ -65,6 +65,14 @@
 	// Traffic chart — live only (no server history for system tunnels)
 	let rxRates = $state<number[]>([]);
 	let txRates = $state<number[]>([]);
+
+	let initialLoadDone = false;
+	$effect(() => {
+		const id = tunnel.id;
+		if (initialLoadDone) return;
+		initialLoadDone = true;
+		untrack(() => loadHistory(id, '1h'));
+	});
 
 	$effect(() => {
 		const id = tunnel.id;

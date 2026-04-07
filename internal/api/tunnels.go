@@ -523,7 +523,6 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	req.ID = tunnelID
 	req.Type = "awg"
 	req.CreatedAt = time.Now().UTC().Format(time.RFC3339)
-	req.Status = "stopped"
 	if !req.Enabled {
 		req.Enabled = true
 	}
@@ -628,7 +627,6 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	req.CreatedAt = existing.CreatedAt
 	req.Type = existing.Type
 	req.Enabled = existing.Enabled
-	req.Status = "stopped" // runtime-only field, always "stopped" in persisted JSON
 	req.ResolvedEndpointIP = existing.ResolvedEndpointIP
 	req.ActiveWAN = existing.ActiveWAN
 	req.Backend = existing.Backend

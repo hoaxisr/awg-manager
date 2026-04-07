@@ -1,6 +1,7 @@
 package connections
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,17 +11,23 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
 
-// Service provides connection listing with tunnel resolution.
+// Service provides connection listing with tunnel and DNS-rule resolution.
 type Service struct {
 	catalog routing.Catalog
 	ndms    ndms.Client
+	lister  DNSListLister
 }
 
 // NewService creates a new connections service.
-func NewService(catalog routing.Catalog, ndmsClient ndms.Client) *Service {
+//
+// The lister is used to resolve DNS-route list IDs into display names when
+// attributing connections to rules. Pass nil to disable name resolution
+// (rule attribution still works, just without ListName).
+func NewService(catalog routing.Catalog, ndmsClient ndms.Client, lister DNSListLister) *Service {
 	return &Service{
 		catalog: catalog,
 		ndms:    ndmsClient,
+		lister:  lister,
 	}
 }
 
@@ -58,6 +65,11 @@ func (s *Service) List(ctx context.Context, params ListParams) (*ListResponse, e
 	// 4. Resolve client MACs
 	clientNames := s.resolveClientNames(ctx)
 
+	// 4.5. Lazy fetch DNS-route runtime cache and build IP -> rules map.
+	// Best-effort: any failure leaves the map empty and connections still
+	// return without rule attribution.
+	ipRules := s.fetchIPRules(ctx)
+
 	// 5. Enrich connections
 	conns := make([]Connection, 0, len(rawConns))
 	for _, rc := range rawConns {
@@ -82,6 +94,11 @@ func (s *Service) List(ctx context.Context, params ListParams) (*ListResponse, e
 		// Resolve client name
 		if c.ClientMAC != "" {
 			c.ClientName = clientNames[strings.ToLower(c.ClientMAC)]
+		}
+
+		// Attach DNS-route rule attribution by destination IP.
+		if rules, ok := ipRules[c.Dst]; ok {
+			c.Rules = rules
 		}
 
 		conns = append(conns, c)
@@ -185,6 +202,22 @@ func (s *Service) resolveClientNames(ctx context.Context) map[string]string {
 	}
 
 	return result
+}
+
+// fetchIPRules queries the NDMS object-group runtime cache and returns
+// a map from destination IP to matched DNS-route rule hits. Best-effort:
+// any error returns an empty map without surfacing the error to the caller —
+// the connections list still works without rule attribution.
+func (s *Service) fetchIPRules(ctx context.Context) map[string][]RuleHit {
+	raw, err := s.ndms.RCIGet(ctx, "/show/object-group/fqdn")
+	if err != nil {
+		return nil
+	}
+	groups, err := parseObjectGroupRuntime(bytes.NewReader(raw))
+	if err != nil {
+		return nil
+	}
+	return buildIPRuleMap(ctx, groups, s.lister)
 }
 
 // computeStats calculates aggregate statistics and per-tunnel counts.

@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/response"
@@ -11,6 +13,11 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
 
+// serverPollInterval is the cadence at which we publish server:updated
+// snapshots so the frontend sees fresh peer state (handshakes, RX/TX)
+// without having to reload the page. Same cadence as tunnel:traffic.
+const serverPollInterval = 15 * time.Second
+
 // ServersHandler handles VPN server interface operations.
 type ServersHandler struct {
 	ndms     ndms.Client
@@ -18,10 +25,63 @@ type ServersHandler struct {
 	awgStore *storage.AWGTunnelStore
 	bus      *events.Bus
 	managed  *ManagedServerHandler
+
+	// Periodic publisher lifecycle.
+	pollOnce sync.Once
+	stopCh   chan struct{}
+	wg       sync.WaitGroup
 }
 
-// SetEventBus sets the event bus for SSE publishing.
-func (h *ServersHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
+// SetEventBus sets the event bus for SSE publishing and starts the
+// periodic snapshot publisher (idempotent — safe to call multiple times).
+func (h *ServersHandler) SetEventBus(bus *events.Bus) {
+	h.bus = bus
+	h.startPolling()
+}
+
+// startPolling launches a background goroutine that re-publishes the full
+// server snapshot every serverPollInterval. Skips publication when no SSE
+// clients are connected to avoid pointless NDMS load.
+func (h *ServersHandler) startPolling() {
+	h.pollOnce.Do(func() {
+		h.stopCh = make(chan struct{})
+		h.wg.Add(1)
+		go h.pollLoop()
+	})
+}
+
+func (h *ServersHandler) pollLoop() {
+	defer h.wg.Done()
+	ticker := time.NewTicker(serverPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if h.bus == nil || h.bus.SubscriberCount() == 0 {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			h.publishServerUpdated(ctx)
+			cancel()
+		case <-h.stopCh:
+			return
+		}
+	}
+}
+
+// Stop terminates the periodic publisher. Safe to call multiple times.
+func (h *ServersHandler) Stop() {
+	if h.stopCh == nil {
+		return
+	}
+	select {
+	case <-h.stopCh:
+		// Already closed.
+	default:
+		close(h.stopCh)
+	}
+	h.wg.Wait()
+}
 
 // SetManagedHandler sets the managed server handler for shared publishing.
 func (h *ServersHandler) SetManagedHandler(m *ManagedServerHandler) { h.managed = m }

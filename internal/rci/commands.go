@@ -154,6 +154,20 @@ func CmdRemoveDefaultRoute(name string) any {
 	return map[string]any{"ip": map[string]any{"route": map[string]any{"default": true, "interface": name, "no": true}}}
 }
 
+// --- IPv6 routes ---
+
+func CmdSetIPv6DefaultRoute(name string) any {
+	return map[string]any{"ipv6": map[string]any{"route": map[string]any{"default": true, "interface": name}}}
+}
+
+func CmdRemoveIPv6DefaultRoute(name string) any {
+	return map[string]any{"ipv6": map[string]any{"route": map[string]any{"default": true, "interface": name, "no": true}}}
+}
+
+func CmdRemoveIPv6HostRoute(host string) any {
+	return map[string]any{"ipv6": map[string]any{"route": map[string]any{"host": host, "no": true}}}
+}
+
 // --- Static subnet routes ---
 
 // CmdAddStaticRoute adds a static route to a subnet via an interface.

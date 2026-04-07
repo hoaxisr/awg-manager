@@ -26,8 +26,13 @@
             e.preventDefault();
             return;
         }
-        checked = (e.target as HTMLInputElement).checked;
-        onchange(checked);
+        // Controlled pattern: prevent browser from auto-toggling and let
+        // the parent decide via onchange. If the parent updates its source
+        // of truth, the prop changes and the checkbox re-renders. If the
+        // parent does NOT update (e.g., user cancels a modal), the checkbox
+        // stays in its previous visual state — no stale local mutation.
+        e.preventDefault();
+        onchange(!checked);
     }
 </script>
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
@@ -117,7 +118,14 @@ func (f *Facade) GetStatus() []TunnelStatus {
 }
 
 // getNativeWGStatuses queries NDMS for ping-check status of all NativeWG tunnels.
+// Returns an empty slice if the firmware does not have the pingcheck component
+// installed — in that mode nativewg monitoring is not available at all, so the
+// monitoring page shows only kernel tunnels.
 func (f *Facade) getNativeWGStatuses() []TunnelStatus {
+	if !ndmsinfo.HasPingCheckComponent() {
+		return nil
+	}
+
 	tunnels, err := f.tunnels.List()
 	if err != nil {
 		return nil
@@ -131,8 +139,10 @@ func (f *Facade) getNativeWGStatuses() []TunnelStatus {
 			continue
 		}
 
-		// Tunnels without PingCheck config: show as disabled (user can toggle on)
-		if t.PingCheck == nil {
+		// Tunnels without monitoring configured or with monitoring disabled:
+		// skip the RCI call and return a 'disabled' placeholder so the UI
+		// can still render an "enable monitoring" affordance.
+		if t.PingCheck == nil || !t.PingCheck.Enabled {
 			result = append(result, TunnelStatus{
 				TunnelID:      t.ID,
 				TunnelName:    t.Name,
@@ -158,7 +168,7 @@ func (f *Facade) getNativeWGStatuses() []TunnelStatus {
 			Method:     status.Mode,
 		}
 
-		if !status.Exists || !t.PingCheck.Enabled {
+		if !status.Exists {
 			ts.Status = "disabled"
 			ts.FailThreshold = 3
 		} else {
@@ -171,7 +181,7 @@ func (f *Facade) getNativeWGStatuses() []TunnelStatus {
 				ts.Status = "alive"
 			case "fail":
 				// NDMS keeps status="fail" after restart even when failCount
-				// resets to 0.  With no active failures the tunnel is healthy.
+				// resets to 0. With no active failures the tunnel is healthy.
 				if status.FailCount > 0 {
 					ts.Status = "recovering"
 					ts.RestartCount = 1

@@ -48,7 +48,6 @@
 	let replaceModalOpen = $state(false);
 
 	let tunnel = $state<AWGTunnel | null>(null);
-	let isKernel = $derived(tunnel?.backend === 'kernel');
 	let systemInfo = $state<SystemInfo | null>(null);
 	let loading = $state(true);
 	let saving = $state(false);
@@ -328,9 +327,7 @@
 		<div class="tab-bar">
 			<button class="tab" class:active={activeTab === 'basic'} onclick={() => activeTab = 'basic'}>Основное</button>
 			<button class="tab" class:active={activeTab === 'obfuscation'} onclick={() => activeTab = 'obfuscation'}>Обфускация</button>
-			{#if !isKernel}
-				<button class="tab" class:active={activeTab === 'routing'} onclick={() => activeTab = 'routing'}>Маршрутизация</button>
-			{/if}
+			<button class="tab" class:active={activeTab === 'routing'} onclick={() => activeTab = 'routing'}>Маршрутизация</button>
 		</div>
 
 		<div class="tab-content">

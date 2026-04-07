@@ -18,6 +18,8 @@ func noopLogger() *logger.Logger {
 // Reconcile calls ShowObjectGroupFQDN, ShowDnsProxyRoute, RCIPost, Save — all no-op here.
 type noopNDMS struct{}
 
+func (n *noopNDMS) CreateOpkgTun(ctx context.Context, name, description string) error { return nil }
+func (n *noopNDMS) SetIPGlobal(ctx context.Context, name string) error                 { return nil }
 func (n *noopNDMS) DeleteOpkgTun(ctx context.Context, name string) error      { return nil }
 func (n *noopNDMS) OpkgTunExists(ctx context.Context, name string) bool       { return false }
 func (n *noopNDMS) ShowInterface(ctx context.Context, name string) (string, error) {
@@ -33,8 +35,15 @@ func (n *noopNDMS) SetDescription(ctx context.Context, name, description string)
 	return nil
 }
 func (n *noopNDMS) InterfaceUp(ctx context.Context, name string) error        { return nil }
+func (n *noopNDMS) InterfaceDown(ctx context.Context, name string) error      { return nil }
 func (n *noopNDMS) SetDefaultRoute(ctx context.Context, name string) error    { return nil }
 func (n *noopNDMS) RemoveDefaultRoute(ctx context.Context, name string) error { return nil }
+func (n *noopNDMS) RemoveHostRoute(ctx context.Context, host string) error    { return nil }
+func (n *noopNDMS) SetIPv6DefaultRoute(ctx context.Context, name string) error { return nil }
+func (n *noopNDMS) RemoveIPv6DefaultRoute(ctx context.Context, name string)   {}
+func (n *noopNDMS) GetInterfaceAddress(ctx context.Context, iface string) (string, string, error) {
+	return "", "", nil
+}
 func (n *noopNDMS) GetDefaultGatewayInterface(ctx context.Context) (string, error) {
 	return "", nil
 }

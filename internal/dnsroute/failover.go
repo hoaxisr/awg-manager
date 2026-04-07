@@ -253,6 +253,12 @@ func (fm *FailoverManager) handlePingCheckEvent(data any) {
 
 	switch ev.Status {
 	case "fail":
+		// NDMS reports status="fail" with failCount=0 at tunnel startup
+		// before the first check completes. Ignore — no real failure yet.
+		// Real failures always have failCount > 0.
+		if ev.FailCount == 0 {
+			return
+		}
 		_ = fm.MarkFailed(ev.TunnelID)
 	case "pass":
 		_ = fm.MarkRecovered(ev.TunnelID)

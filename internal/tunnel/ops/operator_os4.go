@@ -248,6 +248,17 @@ func (o *OperatorOS4Impl) Recover(ctx context.Context, tunnelID string, state tu
 	return nil
 }
 
+// Suspend on OS4 is a no-op — OS4 has no NDMS layer.
+// WAN down on OS4 is handled by kernel routing automatically.
+func (o *OperatorOS4Impl) Suspend(ctx context.Context, tunnelID string) error {
+	return nil
+}
+
+// Resume on OS4 is a no-op — see Suspend.
+func (o *OperatorOS4Impl) Resume(ctx context.Context, tunnelID string) error {
+	return nil
+}
+
 // Reconcile re-applies system configuration around an already-running process.
 // Assumes: process is running, interface exists. Re-applies WG config, IP, firewall.
 func (o *OperatorOS4Impl) Reconcile(ctx context.Context, cfg tunnel.Config) error {

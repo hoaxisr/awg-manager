@@ -39,7 +39,13 @@ func decideBoot(state *State) []Action {
 
 		switch t.Backend {
 		case "kernel":
-			actions = append(actions, Action{Type: ActionColdStartKernel, Tunnel: t.ID})
+			// If process is already running (e.g., daemon restart, not router reboot),
+			// reconcile around it. Otherwise cold start from scratch.
+			if t.Running {
+				actions = append(actions, Action{Type: ActionReconcileKernel, Tunnel: t.ID})
+			} else {
+				actions = append(actions, Action{Type: ActionColdStartKernel, Tunnel: t.ID})
+			}
 			actions = appendPostStartActions(actions, t)
 
 		case "nativewg":
@@ -71,8 +77,14 @@ func decideReconnect(state *State) []Action {
 			continue
 		}
 
-		if t.Backend == "nativewg" && !state.supportsASC {
-			actions = append(actions, Action{Type: ActionRestoreKmod, Tunnel: t.ID})
+		switch t.Backend {
+		case "kernel":
+			// Re-apply NDMS config, firewall, routing around the running process.
+			actions = append(actions, Action{Type: ActionReconcileKernel, Tunnel: t.ID})
+		case "nativewg":
+			if !state.supportsASC {
+				actions = append(actions, Action{Type: ActionRestoreKmod, Tunnel: t.ID})
+			}
 		}
 
 		if t.PingCheck != nil && t.PingCheck.Enabled {
@@ -173,47 +185,76 @@ func decideNDMSHook(event Event, state *State) []Action {
 }
 
 func decideWANUp(event Event, state *State) []Action {
-	if state.supportsASC {
-		return nil
-	}
-
 	var actions []Action
+
 	for _, t := range state.tunnels {
-		if t.Backend != "nativewg" || !t.Enabled || t.Running {
+		if !t.Enabled {
 			continue
 		}
 		if !canStartOnWAN(t, event.WANIface) {
 			continue
 		}
-		actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
-		actions = appendPostStartActions(actions, t)
+
+		switch t.Backend {
+		case "kernel":
+			if t.Running {
+				// Was suspended on WAN down. Choice depends on bind mode:
+				// - Explicit bind (ISPInterface=="ethX"): Resume — same WAN came back, link up is enough.
+				// - Auto mode (ISPInterface==""): Reconcile — different WAN may be available now,
+				//   need to re-resolve WAN and refresh endpoint route via the new WAN.
+				if t.ISPInterface == "" {
+					actions = append(actions, Action{Type: ActionReconcileKernel, Tunnel: t.ID})
+				} else {
+					actions = append(actions, Action{Type: ActionResumeKernel, Tunnel: t.ID})
+				}
+			} else {
+				// Stopped — start from scratch.
+				actions = append(actions, Action{Type: ActionColdStartKernel, Tunnel: t.ID})
+				actions = appendPostStartActions(actions, t)
+			}
+
+		case "nativewg":
+			if state.supportsASC || t.Running {
+				continue
+			}
+			actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+			actions = appendPostStartActions(actions, t)
+		}
 	}
+
 	return actions
 }
 
 func decideWANDown(event Event, state *State) []Action {
-	if state.supportsASC {
-		return nil
-	}
-
 	var actions []Action
-	var suspended []string
+	var nwgSuspended []string
 
-	// Suspend only tunnels affected by this WAN going down
 	for _, t := range state.tunnels {
-		if t.Backend != "nativewg" || !t.Enabled || !t.Running {
+		if !t.Enabled || !t.Running {
 			continue
 		}
 		if !affectedByWANDown(t, event.WANIface) {
 			continue
 		}
-		actions = append(actions, Action{Type: ActionSuspendProxy, Tunnel: t.ID})
-		suspended = append(suspended, t.ID)
+
+		switch t.Backend {
+		case "kernel":
+			actions = append(actions, Action{Type: ActionSuspendKernel, Tunnel: t.ID})
+
+		case "nativewg":
+			if state.supportsASC {
+				continue // ASC handles failover natively
+			}
+			actions = append(actions, Action{Type: ActionSuspendProxy, Tunnel: t.ID})
+			nwgSuspended = append(nwgSuspended, t.ID)
+		}
 	}
 
-	// Immediate failover: restart only suspended tunnels if another WAN is available
-	if len(suspended) > 0 && state.anyWANUp() {
-		for _, id := range suspended {
+	// Immediate failover for NativeWG (without ASC): restart suspended tunnels
+	// if another WAN is available. Kernel tunnels stay suspended until
+	// WANUp event resumes them.
+	if len(nwgSuspended) > 0 && state.anyWANUp() {
+		for _, id := range nwgSuspended {
 			t := state.tunnels[id]
 			actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
 			actions = appendPostStartActions(actions, t)

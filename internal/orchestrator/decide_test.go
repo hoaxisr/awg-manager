@@ -517,21 +517,6 @@ func TestDecide_WANUp_SkipsAlreadyRunning(t *testing.T) {
 	}
 }
 
-func TestDecide_WANUp_SkipsKernel(t *testing.T) {
-	s := newState()
-	s.supportsASC = false
-	s.anyWANUpFn = func() bool { return true }
-	s.tunnels["awg0"] = &tunnelState{
-		ID: "awg0", Backend: "kernel", Enabled: true, Running: false,
-	}
-
-	actions := decide(Event{Type: EventWANUp, WANIface: "eth3"}, &s)
-
-	if hasAction(actions, ActionColdStartKernel) {
-		t.Error("WAN up should not start kernel tunnels (PingCheck handles reconnect)")
-	}
-}
-
 func TestDecide_WANDown_SuspendsNativeWG(t *testing.T) {
 	s := newState()
 	s.supportsASC = false
@@ -1000,5 +985,220 @@ func assertNoActionForTunnel(t *testing.T, actions []Action, tunnelID string, ty
 		if a.Type == typ && a.Tunnel == tunnelID {
 			t.Errorf("unexpected %v for tunnel %s", typ, tunnelID)
 		}
+	}
+}
+
+func TestDecide_Boot_ReconcilesRunningKernelTunnel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
+	}
+
+	actions := decide(Event{Type: EventBoot}, &s)
+
+	// Running kernel tunnel should be reconciled, not cold-started.
+	reconciles := filterActions(actions, ActionReconcileKernel)
+	if len(reconciles) != 1 {
+		t.Errorf("expected 1 ReconcileKernel for running tunnel, got %d", len(reconciles))
+	}
+	coldStarts := filterActions(actions, ActionColdStartKernel)
+	if len(coldStarts) != 0 {
+		t.Errorf("expected 0 ColdStartKernel for running tunnel, got %d", len(coldStarts))
+	}
+}
+
+func TestDecide_Boot_ColdStartsStoppedKernelTunnel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: false,
+	}
+
+	actions := decide(Event{Type: EventBoot}, &s)
+
+	coldStarts := filterActions(actions, ActionColdStartKernel)
+	if len(coldStarts) != 1 {
+		t.Errorf("expected 1 ColdStartKernel for stopped tunnel, got %d", len(coldStarts))
+	}
+}
+
+func TestDecide_Reconnect_ReconcilesRunningKernelTunnel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	reconciles := filterActions(actions, ActionReconcileKernel)
+	if len(reconciles) != 1 {
+		t.Errorf("expected 1 ReconcileKernel on reconnect, got %d", len(reconciles))
+	}
+}
+
+func TestDecide_Reconnect_DoesNotReconcileStoppedKernelTunnel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: false,
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	reconciles := filterActions(actions, ActionReconcileKernel)
+	if len(reconciles) != 0 {
+		t.Errorf("stopped tunnel should not be reconciled on reconnect, got %d", len(reconciles))
+	}
+}
+
+func TestDecide_WANDown_SuspendsAffectedKernelTunnel(t *testing.T) {
+	s := newState()
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
+		ISPInterface: "eth3", ActiveWAN: "eth3",
+	}
+
+	actions := decide(Event{Type: EventWANDown, WANIface: "eth3"}, &s)
+
+	suspends := filterActions(actions, ActionSuspendKernel)
+	if len(suspends) != 1 {
+		t.Errorf("expected 1 SuspendKernel for affected tunnel, got %d", len(suspends))
+	}
+}
+
+func TestDecide_WANDown_DoesNotSuspendUnaffectedKernelTunnel(t *testing.T) {
+	s := newState()
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
+		ISPInterface: "eth4", ActiveWAN: "eth4",
+	}
+
+	actions := decide(Event{Type: EventWANDown, WANIface: "eth3"}, &s)
+
+	suspends := filterActions(actions, ActionSuspendKernel)
+	if len(suspends) != 0 {
+		t.Errorf("unaffected tunnel should not be suspended, got %d", len(suspends))
+	}
+}
+
+func TestDecide_WANDown_SuspendsAutoBoundKernelTunnel(t *testing.T) {
+	s := newState()
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
+		ISPInterface: "", ActiveWAN: "eth3", // auto mode, currently on eth3
+	}
+
+	actions := decide(Event{Type: EventWANDown, WANIface: "eth3"}, &s)
+
+	suspends := filterActions(actions, ActionSuspendKernel)
+	if len(suspends) != 1 {
+		t.Errorf("auto-mode tunnel on downed WAN should be suspended, got %d", len(suspends))
+	}
+}
+
+func TestDecide_WANUp_ResumesKernelTunnelBoundToWAN(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
+		ISPInterface: "eth3",
+	}
+
+	actions := decide(Event{Type: EventWANUp, WANIface: "eth3"}, &s)
+
+	resumes := filterActions(actions, ActionResumeKernel)
+	if len(resumes) != 1 {
+		t.Errorf("expected 1 ResumeKernel for matching tunnel, got %d", len(resumes))
+	}
+}
+
+func TestDecide_WANUp_StartsStoppedKernelTunnel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: false,
+		ISPInterface: "eth3",
+	}
+
+	actions := decide(Event{Type: EventWANUp, WANIface: "eth3"}, &s)
+
+	starts := filterActions(actions, ActionColdStartKernel)
+	if len(starts) != 1 {
+		t.Errorf("expected 1 ColdStartKernel for stopped tunnel on WAN up, got %d", len(starts))
+	}
+}
+
+func TestDecide_WANUp_DoesNotResumeUnboundKernelTunnel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
+		ISPInterface: "eth4",
+	}
+
+	actions := decide(Event{Type: EventWANUp, WANIface: "eth3"}, &s)
+
+	resumes := filterActions(actions, ActionResumeKernel)
+	if len(resumes) != 0 {
+		t.Errorf("kernel tunnel bound to other WAN should not be resumed, got %d", len(resumes))
+	}
+}
+
+// Auto-mode tunnel suspended (was on eth3 which went down).
+// On any WAN coming up: must Reconcile (re-resolve WAN, refresh endpoint route),
+// not just Resume (Resume only does ip link up on the dead interface).
+func TestDecide_WANUp_ReconcilesAutoModeKernelTunnel(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
+		ISPInterface: "", ActiveWAN: "eth3", // auto mode, was on eth3
+	}
+
+	// eth4 (different WAN) comes up
+	actions := decide(Event{Type: EventWANUp, WANIface: "eth4"}, &s)
+
+	reconciles := filterActions(actions, ActionReconcileKernel)
+	if len(reconciles) != 1 {
+		t.Errorf("expected 1 ReconcileKernel for auto-mode tunnel on WAN up, got %d", len(reconciles))
+	}
+	resumes := filterActions(actions, ActionResumeKernel)
+	if len(resumes) != 0 {
+		t.Errorf("auto-mode tunnel should NOT be resumed (Resume only does link up on dead WAN), got %d", len(resumes))
+	}
+}
+
+func TestDecide_WANDown_NativeWGAutoMode_WithActiveWAN_TriggersFailover(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.anyWANUpFn = func() bool { return true } // backup WAN available
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0,
+		ISPInterface: "", ActiveWAN: "ppp0", // auto mode, NDMS picked ppp0
+	}
+
+	// ppp0 falls — auto-mode nativewg with ActiveWAN=ppp0 must suspend AND restart
+	actions := decide(Event{Type: EventWANDown, WANIface: "ppp0"}, &s)
+
+	if !hasAction(actions, ActionSuspendProxy) {
+		t.Error("expected ActionSuspendProxy for auto-mode nativewg whose ActiveWAN matches downed WAN")
+	}
+	if !hasAction(actions, ActionStartNativeWG) {
+		t.Error("expected ActionStartNativeWG (failover restart) when backup WAN is available")
+	}
+}
+
+func TestDecide_WANDown_NativeWGAutoMode_StaleActiveWAN_NoFailover(t *testing.T) {
+	// Regression guard: this is the bug. If ActiveWAN is empty (the historical
+	// state for nativewg before this fix), the tunnel is not considered affected.
+	s := newState()
+	s.supportsASC = false
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0,
+		ISPInterface: "", ActiveWAN: "", // stale: ActiveWAN never populated
+	}
+
+	actions := decide(Event{Type: EventWANDown, WANIface: "ppp0"}, &s)
+
+	if hasAction(actions, ActionSuspendProxy) {
+		t.Error("with empty ActiveWAN the tunnel must NOT be considered affected (documents the bug surface)")
 	}
 }

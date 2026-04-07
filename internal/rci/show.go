@@ -69,14 +69,6 @@ func (c *Client) ShowASCParams(ctx context.Context, name string) (json.RawMessag
 	return json.RawMessage(raw), nil
 }
 
-func (c *Client) ShowObjectGroupFQDN(ctx context.Context) (json.RawMessage, error) {
-	raw, err := c.GetRaw(ctx, "/show/object-group/fqdn")
-	if err != nil {
-		return nil, err
-	}
-	return json.RawMessage(raw), nil
-}
-
 func (c *Client) ShowDnsProxyRoute(ctx context.Context) (json.RawMessage, error) {
 	raw, err := c.GetRaw(ctx, "/show/rc/dns-proxy/route")
 	if err != nil {

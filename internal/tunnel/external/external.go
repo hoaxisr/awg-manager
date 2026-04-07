@@ -136,7 +136,6 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (*service.TunnelW
 	// Set defaults
 	t.Type = "awg"
 	t.CreatedAt = time.Now().UTC().Format(time.RFC3339)
-	t.Status = "stopped"
 	t.Enabled = true
 
 	// Validate

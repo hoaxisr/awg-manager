@@ -54,6 +54,10 @@ type MockNDMSClient struct {
 func (m *MockNDMSClient) ShowInterface(ctx context.Context, name string) (string, error) {
 	return m.showInterfaceOutput, m.showInterfaceError
 }
+func (m *MockNDMSClient) CreateOpkgTun(ctx context.Context, name, description string) error {
+	return nil
+}
+func (m *MockNDMSClient) SetIPGlobal(ctx context.Context, name string) error    { return nil }
 func (m *MockNDMSClient) DeleteOpkgTun(ctx context.Context, name string) error { return nil }
 func (m *MockNDMSClient) OpkgTunExists(ctx context.Context, name string) bool {
 	return m.opkgTunExists
@@ -72,8 +76,17 @@ func (m *MockNDMSClient) SetDescription(ctx context.Context, name, description s
 	return nil
 }
 func (m *MockNDMSClient) InterfaceUp(ctx context.Context, name string) error     { return nil }
+func (m *MockNDMSClient) InterfaceDown(ctx context.Context, name string) error   { return nil }
 func (m *MockNDMSClient) SetDefaultRoute(ctx context.Context, name string) error { return nil }
 func (m *MockNDMSClient) RemoveDefaultRoute(ctx context.Context, name string) error { return nil }
+func (m *MockNDMSClient) RemoveHostRoute(ctx context.Context, host string) error    { return nil }
+func (m *MockNDMSClient) SetIPv6DefaultRoute(ctx context.Context, name string) error {
+	return nil
+}
+func (m *MockNDMSClient) RemoveIPv6DefaultRoute(ctx context.Context, name string) {}
+func (m *MockNDMSClient) GetInterfaceAddress(ctx context.Context, iface string) (string, string, error) {
+	return "", "", nil
+}
 func (m *MockNDMSClient) GetDefaultGatewayInterface(ctx context.Context) (string, error) {
 	return "PPPoE1", nil
 }

@@ -115,13 +115,10 @@ func (c *CatalogImpl) ListAll(ctx context.Context) []TunnelEntry {
 	var result []TunnelEntry
 	managed := make(map[string]bool)
 
-	// 1. Managed tunnels (only NativeWG — kernel tunnels have no NDMS routing integration)
+	// 1. Managed tunnels
 	tunnels, err := c.provider.ListTunnels(ctx)
 	if err == nil {
 		for _, t := range tunnels {
-			if t.Backend == "kernel" {
-				continue
-			}
 			ndmsName := c.resolveNDMSName(t)
 			if ndmsName == "" {
 				continue

@@ -66,7 +66,7 @@
 		</div>
 	</div>
 
-	{#if tunnel.backend !== 'kernel' && (tunnel.resolvedIspInterface || tunnel.ispInterface)}
+	{#if tunnel.resolvedIspInterface || tunnel.ispInterface}
 		{@const iface = tunnel.resolvedIspInterface || tunnel.ispInterface}
 		{@const label = tunnel.resolvedIspInterfaceLabel || tunnel.ispInterfaceLabel || ''}
 		<div class="flex gap-4 items-start">

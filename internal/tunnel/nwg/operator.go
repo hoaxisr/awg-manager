@@ -302,7 +302,7 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 	}
 
 	// Read peer "via" from RCI (NDMS WAN binding) -> resolve to kernel iface
-	bindIface := o.resolveBindIface(ctx, stored)
+	bindIface := o.ResolveActiveWAN(ctx, stored)
 
 	// Add tunnel to kernel module -> creates proxy, returns listen_port
 	kmodCfg, err := buildKmodConfigResolved(stored, endpointIP, endpointPort, bindIface)
@@ -571,7 +571,7 @@ func (o *OperatorNativeWG) EnsureKmodLoaded() error {
 // the NDMS peer endpoint to use the proxy address (127.0.0.1:listen_port).
 // Called at boot for enabled tunnels that are already running in NDMS.
 func (o *OperatorNativeWG) RestoreKmodTunnel(ctx context.Context, stored *storage.AWGTunnel) error {
-	bindIface := o.resolveBindIface(ctx, stored)
+	bindIface := o.ResolveActiveWAN(ctx, stored)
 
 	kmodCfg, err := buildKmodConfig(stored, bindIface)
 	if err != nil {
@@ -637,10 +637,12 @@ func (o *OperatorNativeWG) KmodManager() *KmodManager {
 	return o.kmod
 }
 
-// resolveBindIface reads the peer "via" field from RCI and resolves
-// the NDMS WAN name to a kernel interface name for SO_BINDTODEVICE.
-// Returns empty string if no "via" is set (= default routing).
-func (o *OperatorNativeWG) resolveBindIface(ctx context.Context, stored *storage.AWGTunnel) string {
+// ResolveActiveWAN reads the peer "via" field from RCI and resolves the
+// NDMS WAN name (e.g. "PPPoE0") to a kernel interface name (e.g. "ppp0").
+// Returns empty string if no peer.via is set (= default routing) or if
+// the RCI query fails. Used both for SO_BINDTODEVICE in the kmod proxy
+// and for ActiveWAN tracking in the orchestrator.
+func (o *OperatorNativeWG) ResolveActiveWAN(ctx context.Context, stored *storage.AWGTunnel) string {
 	names := NewNWGNames(stored.NWGIndex)
 
 	body, err := o.rci.GetRaw(ctx, "/show/interface/"+names.NDMSName)
@@ -652,7 +654,7 @@ func (o *OperatorNativeWG) resolveBindIface(ctx context.Context, stored *storage
 		return ""
 	}
 	sysName := o.ndms.GetSystemName(ctx, rciState.PeerVia)
-	o.log.Infof("nwg: %s peer via %s -> bind %s", names.NDMSName, rciState.PeerVia, sysName)
+	o.log.Infof("nwg: %s peer via %s -> kernel %s", names.NDMSName, rciState.PeerVia, sysName)
 	return sysName
 }
 

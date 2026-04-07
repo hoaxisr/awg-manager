@@ -12,6 +12,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 )
@@ -431,13 +432,12 @@ func (s *Service) performCheckAndUpdate(m *tunnelMonitor, config *checkConfig) {
 }
 
 // resolveIfaceName returns the kernel interface name for a tunnel,
-// using NativeWG names (nwgN) for nativewg backend, kernel names (opkgtunN) otherwise.
+// using NativeWG names (nwgN) for nativewg backend, kernel names (opkgtunN/awgmN) otherwise.
 func (s *Service) resolveIfaceName(tunnelID string) string {
 	if stored, err := s.tunnels.Get(tunnelID); err == nil && stored.Backend == "nativewg" {
 		return nwg.NewNWGNames(stored.NWGIndex).IfaceName
 	}
-	// Kernel: interface name = tunnel ID directly (e.g., "awg0")
-	return tunnelID
+	return tunnel.NewNames(tunnelID).IfaceName
 }
 
 // addLogEntry adds a log entry to the buffer and publishes it via SSE.

@@ -99,6 +99,21 @@ func HasComponent(name string) bool {
 	return false
 }
 
+// HasWireguardComponent returns true if the NDMS firmware has the
+// "wireguard" component installed. Required for the nativewg backend
+// (NDMS-managed Wireguard interfaces).
+func HasWireguardComponent() bool {
+	return HasComponent("wireguard")
+}
+
+// HasPingCheckComponent returns true if the NDMS firmware has the
+// "pingcheck" component installed. Required for NDMS-native ping-check
+// profiles used by the nativewg backend. Kernel backend uses a custom
+// loop and does not depend on this component.
+func HasPingCheckComponent() bool {
+	return HasComponent("pingcheck")
+}
+
 // SupportsWireguardASC returns true if the current NDMS release supports
 // WireGuard as an ASC (Application Service Component).
 func SupportsWireguardASC() bool {

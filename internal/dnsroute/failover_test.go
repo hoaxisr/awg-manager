@@ -118,10 +118,11 @@ func TestFailoverManager_ListenPingCheckEvents(t *testing.T) {
 	fm.StartListener(bus)
 	defer fm.StopListener()
 
-	// Publish fail event
+	// Publish fail event (real failure has failCount > 0)
 	bus.Publish("pingcheck:state", events.PingCheckStateEvent{
-		TunnelID: "tun1",
-		Status:   "fail",
+		TunnelID:  "tun1",
+		Status:    "fail",
+		FailCount: 3,
 	})
 
 	// Give listener goroutine time to process
@@ -430,5 +431,44 @@ func TestFailoverManager_NoPublishOnNoChange(t *testing.T) {
 
 	if len(collected) != 1 {
 		t.Errorf("expected 1 event (only first MarkFailed published), got %d", len(collected))
+	}
+}
+
+func TestFailoverManager_HandlePingCheckEvent_IgnoresFailWithZeroCount(t *testing.T) {
+	called := 0
+	fm := NewFailoverManager(func() error { called++; return nil })
+
+	// NDMS reports "fail" with failCount=0 at tunnel startup before any check ran.
+	// This should NOT trigger failover.
+	fm.handlePingCheckEvent(events.PingCheckStateEvent{
+		TunnelID:  "tunnel1",
+		Status:    "fail",
+		FailCount: 0,
+	})
+
+	if called != 0 {
+		t.Errorf("expected 0 reconcile calls for fail with failCount=0, got %d", called)
+	}
+	if fm.IsFailed("tunnel1") {
+		t.Error("tunnel1 should NOT be in failedSet for fail with failCount=0")
+	}
+}
+
+func TestFailoverManager_HandlePingCheckEvent_TriggersFailWithNonZeroCount(t *testing.T) {
+	called := 0
+	fm := NewFailoverManager(func() error { called++; return nil })
+
+	// Real failure: failCount > 0.
+	fm.handlePingCheckEvent(events.PingCheckStateEvent{
+		TunnelID:  "tunnel1",
+		Status:    "fail",
+		FailCount: 3,
+	})
+
+	if called != 1 {
+		t.Errorf("expected 1 reconcile call for real failure, got %d", called)
+	}
+	if !fm.IsFailed("tunnel1") {
+		t.Error("tunnel1 should be in failedSet for real failure")
 	}
 }
