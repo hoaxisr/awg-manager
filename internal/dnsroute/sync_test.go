@@ -116,7 +116,7 @@ func TestBuildTargetState(t *testing.T) {
 		data := &StoreData{Lists: []DomainList{
 			{ID: "list_1", Enabled: false, Domains: []string{"a.com"}},
 		}}
-		ts := buildTargetState(data)
+		ts := buildTargetState(data, nil)
 		if len(ts.groups) != 0 {
 			t.Errorf("expected 0 groups, got %d", len(ts.groups))
 		}
@@ -126,7 +126,7 @@ func TestBuildTargetState(t *testing.T) {
 		data := &StoreData{Lists: []DomainList{
 			{ID: "list_1", Enabled: true, Domains: nil, Subnets: nil},
 		}}
-		ts := buildTargetState(data)
+		ts := buildTargetState(data, nil)
 		if len(ts.groups) != 0 {
 			t.Errorf("expected 0 groups, got %d", len(ts.groups))
 		}
@@ -142,7 +142,7 @@ func TestBuildTargetState(t *testing.T) {
 				Routes:  []RouteTarget{{Interface: "OpkgTun0", TunnelID: "t1"}},
 			},
 		}}
-		ts := buildTargetState(data)
+		ts := buildTargetState(data, nil)
 		if len(ts.groups) != 1 {
 			t.Fatalf("expected 1 group, got %d", len(ts.groups))
 		}
@@ -172,7 +172,7 @@ func TestBuildTargetState(t *testing.T) {
 				Routes:   []RouteTarget{{Interface: "OpkgTun0"}},
 			},
 		}}
-		ts := buildTargetState(data)
+		ts := buildTargetState(data, nil)
 		if len(ts.groups) != 2 {
 			t.Fatalf("expected 2 groups, got %d", len(ts.groups))
 		}
@@ -197,7 +197,7 @@ func TestBuildTargetState(t *testing.T) {
 				Routes:  []RouteTarget{{Interface: "OpkgTun0"}},
 			},
 		}}
-		ts := buildTargetState(data)
+		ts := buildTargetState(data, nil)
 		if len(ts.groups) != 1 {
 			t.Fatalf("expected 1 group, got %d", len(ts.groups))
 		}
@@ -205,6 +205,101 @@ func TestBuildTargetState(t *testing.T) {
 			t.Errorf("subnets = %v", ts.groups[0].subnets)
 		}
 	})
+}
+
+func TestBuildTargetState_SkipsFailedTunnel(t *testing.T) {
+	data := &StoreData{
+		Lists: []DomainList{{
+			ID: "list_1", Name: "test", Enabled: true,
+			Domains: []string{"a.com"},
+			Routes: []RouteTarget{
+				{Interface: "Wireguard0", TunnelID: "tun0"},
+				{Interface: "Wireguard1", TunnelID: "tun1", Fallback: "auto"},
+			},
+		}},
+	}
+
+	failed := map[string]struct{}{"tun0": {}}
+	ts := buildTargetState(data, failed)
+
+	if len(ts.routes) != 1 {
+		t.Fatalf("expected 1 route, got %d: %+v", len(ts.routes), ts.routes)
+	}
+	if ts.routes[0].iface != "Wireguard1" {
+		t.Errorf("expected Wireguard1, got %s", ts.routes[0].iface)
+	}
+	if ts.routes[0].fallback != "auto" {
+		t.Errorf("expected fallback 'auto', got %q", ts.routes[0].fallback)
+	}
+}
+
+func TestBuildTargetState_AllTunnelsFailed(t *testing.T) {
+	data := &StoreData{
+		Lists: []DomainList{{
+			ID: "list_1", Name: "test", Enabled: true,
+			Domains: []string{"a.com"},
+			Routes: []RouteTarget{
+				{Interface: "Wireguard0", TunnelID: "tun0"},
+				{Interface: "Wireguard1", TunnelID: "tun1", Fallback: "reject"},
+			},
+		}},
+	}
+
+	failed := map[string]struct{}{"tun0": {}, "tun1": {}}
+	ts := buildTargetState(data, failed)
+
+	if len(ts.routes) != 0 {
+		t.Errorf("expected 0 routes, got %d: %+v", len(ts.routes), ts.routes)
+	}
+	if len(ts.groups) != 1 {
+		t.Errorf("expected 1 group (domains still tracked), got %d", len(ts.groups))
+	}
+}
+
+func TestBuildTargetState_NoFailedTunnels(t *testing.T) {
+	data := &StoreData{
+		Lists: []DomainList{{
+			ID: "list_1", Name: "test", Enabled: true,
+			Domains: []string{"a.com"},
+			Routes: []RouteTarget{
+				{Interface: "Wireguard0", TunnelID: "tun0"},
+				{Interface: "Wireguard1", TunnelID: "tun1", Fallback: "auto"},
+			},
+		}},
+	}
+
+	ts := buildTargetState(data, nil)
+
+	if len(ts.routes) != 2 {
+		t.Fatalf("expected 2 routes, got %d", len(ts.routes))
+	}
+}
+
+func TestBuildTargetState_FallbackReassignedToLastActive(t *testing.T) {
+	data := &StoreData{
+		Lists: []DomainList{{
+			ID: "list_1", Name: "test", Enabled: true,
+			Domains: []string{"a.com"},
+			Routes: []RouteTarget{
+				{Interface: "Wireguard0", TunnelID: "tun0"},
+				{Interface: "Wireguard1", TunnelID: "tun1"},
+				{Interface: "Wireguard2", TunnelID: "tun2", Fallback: "reject"},
+			},
+		}},
+	}
+
+	failed := map[string]struct{}{"tun1": {}}
+	ts := buildTargetState(data, failed)
+
+	if len(ts.routes) != 2 {
+		t.Fatalf("expected 2 routes, got %d: %+v", len(ts.routes), ts.routes)
+	}
+	if ts.routes[1].fallback != "reject" {
+		t.Errorf("expected fallback 'reject' on last route, got %q", ts.routes[1].fallback)
+	}
+	if ts.routes[0].fallback != "" {
+		t.Errorf("expected no fallback on first route, got %q", ts.routes[0].fallback)
+	}
 }
 
 func TestFilterAWGState(t *testing.T) {
@@ -377,4 +472,48 @@ func TestComputeDiff(t *testing.T) {
 			t.Errorf("expected 1 route upsert for OpkgTun1, got %+v", diff.routeUpserts)
 		}
 	})
+}
+
+func TestBuildTargetState_SameTunnelInMultipleLists(t *testing.T) {
+	data := &StoreData{
+		Lists: []DomainList{
+			{
+				ID: "list_1", Name: "telegram", Enabled: true,
+				Domains: []string{"t.me"},
+				Routes: []RouteTarget{
+					{Interface: "Wireguard0", TunnelID: "tun-shared"},
+					{Interface: "Wireguard1", TunnelID: "tun-backup"},
+				},
+			},
+			{
+				ID: "list_2", Name: "youtube", Enabled: true,
+				Domains: []string{"youtube.com"},
+				Routes: []RouteTarget{
+					{Interface: "Wireguard0", TunnelID: "tun-shared"},
+					{Interface: "Wireguard2", TunnelID: "tun-other"},
+				},
+			},
+		},
+	}
+
+	failed := map[string]struct{}{"tun-shared": {}}
+	ts := buildTargetState(data, failed)
+
+	if len(ts.routes) != 2 {
+		t.Fatalf("expected 2 routes, got %d: %+v", len(ts.routes), ts.routes)
+	}
+
+	ifaces := map[string]bool{}
+	for _, r := range ts.routes {
+		ifaces[r.iface] = true
+		if r.iface == "Wireguard0" {
+			t.Errorf("Wireguard0 should be skipped (failed)")
+		}
+	}
+	if !ifaces["Wireguard1"] {
+		t.Error("expected Wireguard1 in target state")
+	}
+	if !ifaces["Wireguard2"] {
+		t.Error("expected Wireguard2 in target state")
+	}
 }

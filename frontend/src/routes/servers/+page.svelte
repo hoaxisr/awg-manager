@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import type { WireguardServer, ManagedServer, ManagedServerStats } from '$lib/types';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
+	import { servers as serversStore } from '$lib/stores/servers';
+	import { systemInfo } from '$lib/stores/system';
 	import { goto } from '$app/navigation';
 	import { PageContainer } from '$lib/components/layout';
 	import { LoadingSpinner, EmptyState } from '$lib/components/layout';
@@ -13,75 +13,21 @@
 		CreateManagedServerModal
 	} from '$lib/components/servers';
 
-	let servers = $state<WireguardServer[]>([]);
-	let managedServer = $state<ManagedServer | null>(null);
-	let managedStats = $state<ManagedServerStats | null>(null);
-	let loading = $state(true);
-	let wanIP = $state('');
-	let routerIP = $state('');
+	let serverList = $derived($serversStore.servers);
+	let managedServer = $derived($serversStore.managed);
+	let managedStats = $derived($serversStore.managedStats);
+	let wanIP = $derived($serversStore.wanIP);
+	let loading = $derived(!$serversStore.loaded);
+	let routerIP = $derived($systemInfo?.routerIP ?? '');
+
 	let addModalOpen = $state(false);
 	let createManagedOpen = $state(false);
 
-	let existingServerIds = $derived(servers.map(s => s.id));
-
-	onMount(() => {
-		loadAll();
-		fetchWanIP();
-		fetchRouterIP();
-		const interval = setInterval(loadAll, 5000);
-		return () => clearInterval(interval);
-	});
-
-	async function loadAll() {
-		try {
-			const [svrs, managed] = await Promise.all([
-				api.listServers(),
-				api.getManagedServer()
-			]);
-			servers = svrs;
-			managedServer = managed;
-
-			// Fetch managed server stats if server exists
-			if (managed) {
-				try {
-					managedStats = await api.getManagedServerStats();
-				} catch {
-					managedStats = null;
-				}
-			} else {
-				managedStats = null;
-			}
-
-		} catch (e) {
-			if (loading) {
-				notifications.error('Не удалось загрузить серверы');
-			}
-		} finally {
-			loading = false;
-		}
-	}
-
-	async function fetchWanIP() {
-		try {
-			wanIP = await api.getWANIP();
-		} catch {
-			// WAN IP will be empty
-		}
-	}
-
-	async function fetchRouterIP() {
-		try {
-			const info = await api.getSystemInfo();
-			routerIP = info.routerIP || '';
-		} catch {
-			// Router IP will be empty
-		}
-	}
+	let existingServerIds = $derived(serverList.map(s => s.id));
 
 	async function unmarkServer(id: string) {
 		try {
 			await api.unmarkServerInterface(id);
-			await loadAll();
 			notifications.success(`Интерфейс ${id} возвращён в туннели.`);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Ошибка');
@@ -89,7 +35,6 @@
 	}
 
 	function onServerAdded() {
-		loadAll();
 		notifications.success('Интерфейс добавлен в серверы');
 	}
 
@@ -137,14 +82,12 @@
 					server={managedServer}
 					stats={managedStats}
 					{routerIP}
-					onDeleted={loadAll}
-					onUpdated={loadAll}
 					onOpenASC={openManagedASC}
 				/>
 			{/if}
 
 			<!-- System/marked servers -->
-			{#each servers as server (server.id)}
+			{#each serverList as server (server.id)}
 				<ServerCard
 					{server}
 					isBuiltIn={server.description === 'Wireguard VPN Server'}
@@ -153,7 +96,7 @@
 				/>
 			{/each}
 
-			{#if !managedServer && servers.length === 0}
+			{#if !managedServer && serverList.length === 0}
 				<EmptyState
 					title="Нет серверов"
 					description="Создайте свой WireGuard-сервер или добавьте существующий интерфейс."
@@ -172,7 +115,7 @@
 	<CreateManagedServerModal
 		bind:open={createManagedOpen}
 		onclose={() => createManagedOpen = false}
-		onCreated={loadAll}
+		onCreated={() => notifications.success('Сервер создан')}
 	/>
 </PageContainer>
 

@@ -9,12 +9,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/traffic"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/lifecycle"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ops"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/state"
@@ -22,38 +24,6 @@ import (
 )
 
 var confDir = "/opt/etc/awg-manager"
-
-// ReconcileHooks allows the reconcile loop to notify external services
-// (e.g. PingCheck) about tunnel state changes detected via NDMS.
-type ReconcileHooks interface {
-	// OnReconcileStart is called when reconcile auto-starts a tunnel.
-	OnReconcileStart(tunnelID, tunnelName string)
-	// OnReconcileStop is called when reconcile detects NeedsStop (router UI toggled OFF).
-	OnReconcileStop(tunnelID string)
-	// OnTunnelDelete is called when a tunnel is deleted (cleanup monitoring).
-	OnTunnelDelete(tunnelID string)
-}
-
-// DnsRouteHooks allows tunnel lifecycle to notify the DNS route service.
-type DnsRouteHooks interface {
-	OnTunnelStart(ctx context.Context) error
-	OnTunnelDelete(ctx context.Context, tunnelID string) error
-}
-
-// StaticRouteHooks allows tunnel lifecycle to notify the static route service.
-type StaticRouteHooks interface {
-	OnTunnelStart(ctx context.Context, tunnelID, tunnelIface string) error
-	OnTunnelStop(ctx context.Context, tunnelID string) error
-	OnTunnelDelete(ctx context.Context, tunnelID string) error
-}
-
-// ClientRouteHooks allows tunnel lifecycle to notify the client route service.
-type ClientRouteHooks interface {
-	OnTunnelStart(ctx context.Context, tunnelID string, kernelIface string) error
-	OnTunnelStop(ctx context.Context, tunnelID string) error
-	OnTunnelDelete(ctx context.Context, tunnelID string) error
-	HasRoutesForTunnel(tunnelID string) bool
-}
 
 // ServiceImpl is the concrete implementation of Service.
 type ServiceImpl struct {
@@ -68,30 +38,14 @@ type ServiceImpl struct {
 	// Key: tunnelID (string), Value: *sync.Mutex
 	tunnelMu sync.Map
 
-	// reconcileHooks notifies external services about reconcile events.
-	reconcileHooks ReconcileHooks
-
-	// dnsRouteHooks notifies the DNS route service about tunnel lifecycle events.
-	dnsRouteHooks DnsRouteHooks
-
-	// staticRouteHooks notifies the static route service about tunnel lifecycle events.
-	staticRouteHooks StaticRouteHooks
-
-	// clientRouteHooks notifies the client route service about tunnel lifecycle events.
-	clientRouteHooks ClientRouteHooks
-
 	// wan is the unified WAN state model (up/down tracking).
 	wan *wan.Model
 
-	// lifecycleOps tracks tunnels currently undergoing lifecycle operations.
-	// Used by GetState to override transient misleading states (e.g. NeedsStop
-	// during Start when process is running but InterfaceUp hasn't been called yet).
-	lifecycleOps   map[string]tunnel.State
-	lifecycleOpsMu sync.RWMutex
+	// orch is the orchestrator for lifecycle operations (Start/Stop/Restart/Delete).
+	orch *orchestrator.Orchestrator
 
-	// lifecycleManager handles lifecycle decisions for kernel tunnels.
-	// Set via SetLifecycleManager after construction.
-	lifecycleManager *lifecycle.Manager
+	// bus is the event bus for SSE publishing.
+	bus *events.Bus
 }
 
 // New creates a new TunnelService.
@@ -105,14 +59,13 @@ func New(
 	appLogger logging.AppLogger,
 ) *ServiceImpl {
 	return &ServiceImpl{
-		store:             store,
-		state:             stateMgr,
-		nwgOperator:       nwgOp,
-		legacyOperator:    legacyOp,
-		log:               log,
-		appLog:            logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubLifecycle),
-		wan:               wanModel,
-		lifecycleOps: make(map[string]tunnel.State),
+		store:          store,
+		state:          stateMgr,
+		nwgOperator:    nwgOp,
+		legacyOperator: legacyOp,
+		log:            log,
+		appLog:         logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubLifecycle),
+		wan:            wanModel,
 	}
 }
 
@@ -128,104 +81,52 @@ func (s *ServiceImpl) GetResolvedISP(tunnelID string) string {
 	return stored.ActiveWAN
 }
 
-// SetReconcileHooks sets callbacks for reconcile loop events.
-func (s *ServiceImpl) SetReconcileHooks(hooks ReconcileHooks) {
-	s.reconcileHooks = hooks
+// SetOrchestrator sets the orchestrator for lifecycle delegation.
+func (s *ServiceImpl) SetOrchestrator(orch *orchestrator.Orchestrator) {
+	s.orch = orch
 }
 
-// SetDnsRouteHooks sets callbacks for tunnel lifecycle events (DNS routing).
-func (s *ServiceImpl) SetDnsRouteHooks(hooks DnsRouteHooks) {
-	s.dnsRouteHooks = hooks
-}
+// SetEventBus sets the event bus for SSE publishing.
+func (s *ServiceImpl) SetEventBus(bus *events.Bus) { s.bus = bus }
 
-// SetStaticRouteHooks sets callbacks for tunnel lifecycle events (static IP routing).
-func (s *ServiceImpl) SetStaticRouteHooks(hooks StaticRouteHooks) {
-	s.staticRouteHooks = hooks
-}
-
-// SetClientRouteHooks sets callbacks for tunnel lifecycle events (per-device client routing).
-func (s *ServiceImpl) SetClientRouteHooks(hooks ClientRouteHooks) {
-	s.clientRouteHooks = hooks
-}
-
-// SetLifecycleManager sets the lifecycle Manager for kernel tunnel operations.
-// Must be called after construction, before any lifecycle operations.
-func (s *ServiceImpl) SetLifecycleManager(m *lifecycle.Manager) {
-	s.lifecycleManager = m
-}
-
-// TunnelLocks returns the per-tunnel lock map for sharing with lifecycle.Manager.
-func (s *ServiceImpl) TunnelLocks() *sync.Map {
-	return &s.tunnelMu
-}
-
-// ColdStartKernel performs a full start from scratch for a kernel tunnel.
-// Resolves WAN, writes config, calls operator.ColdStart.
-// Called by lifecycle.Manager — assumes per-tunnel lock is already held.
-func (s *ServiceImpl) ColdStartKernel(ctx context.Context, tunnelID string) error {
-	return s.startInternal(ctx, tunnelID)
-}
-
-// StartKernel brings up an existing amneziawg interface (after our Stop).
-// Resolves WAN, calls operator.Start (light — ip link set up + routes + firewall).
-// Called by lifecycle.Manager — assumes per-tunnel lock is already held.
-func (s *ServiceImpl) StartKernel(ctx context.Context, tunnelID string) error {
-	return s.startLightInternal(ctx, tunnelID)
-}
-
-// StopKernel brings down a tunnel — calls operator.Stop + clears runtime state.
-// Called by lifecycle.Manager — assumes per-tunnel lock is already held.
-func (s *ServiceImpl) StopKernel(ctx context.Context, tunnelID string) error {
-	return s.stopInternal(ctx, tunnelID)
-}
-
-// RestartKernel tears down a running kernel tunnel and rebuilds it from scratch.
-// Unlike StopKernel+ColdStartKernel, this does NOT call InterfaceDown during
-// teardown — NDMS intent stays "running", so no conf-layer hooks are fired.
-// This prevents the infinite restart loop where late NDMS hooks from Stop
-// would trigger HandleUserToggle → decideDisable(Running) → ActionStop.
-// Called by lifecycle.Manager — assumes per-tunnel lock is already held.
-func (s *ServiceImpl) RestartKernel(ctx context.Context, tunnelID string) error {
-	// Pause PingCheck monitoring before teardown.
-	if s.reconcileHooks != nil {
-		s.reconcileHooks.OnReconcileStop(tunnelID)
+// RunningTunnels returns the list of currently running tunnels for the traffic collector.
+func (s *ServiceImpl) RunningTunnels(ctx context.Context) []traffic.RunningTunnel {
+	stored, err := s.store.List()
+	if err != nil {
+		return nil
 	}
-
-	// Notify hook services about stop (static routes, client routes cleanup).
-	s.fireStopHooks(ctx, tunnelID)
-
-	// Teardown: firewall, routes, DNS, backend — WITHOUT InterfaceDown.
-	s.legacyOperator.TeardownForRestart(ctx, tunnelID)
-
-	// Light start — device preserved by TeardownForRestart (only link toggled down).
-	// Re-resolves WAN, sets link up, re-applies routes and firewall.
-	return s.startLightInternal(ctx, tunnelID)
-}
-
-// beginOperation marks a tunnel as being modified by a lifecycle operation.
-// Delegates to lifecycle.Manager which owns the suppress map.
-// No-op when Manager is nil (cleanup path).
-func (s *ServiceImpl) beginOperation(tunnelID string) {
-	if s.lifecycleManager != nil {
-		s.lifecycleManager.BeginOperation(tunnelID)
+	var result []traffic.RunningTunnel
+	for _, t := range stored {
+		if !t.Enabled {
+			continue
+		}
+		var si tunnel.StateInfo
+		if t.Backend == "nativewg" && s.nwgOperator != nil {
+			si = s.nwgOperator.GetState(ctx, &t)
+		} else {
+			si = s.state.GetState(ctx, t.ID)
+		}
+		if si.State != tunnel.StateRunning {
+			continue
+		}
+		var ifaceName string
+		if t.Backend == "nativewg" {
+			ifaceName = nwg.NewNWGNames(t.NWGIndex).IfaceName
+		} else {
+			ifaceName = tunnel.NewNames(t.ID).IfaceName
+		}
+		result = append(result, traffic.RunningTunnel{
+			ID:            t.ID,
+			BackendType:   s.backendLabel(&t),
+			IfaceName:     ifaceName,
+			RxBytes:       si.RxBytes,
+			TxBytes:       si.TxBytes,
+			LastHandshake: si.LastHandshake,
+			ConnectedAt:   si.ConnectedAt,
+		})
 	}
+	return result
 }
-
-// endOperation clears the operation flag for a tunnel.
-func (s *ServiceImpl) endOperation(tunnelID string) {
-	if s.lifecycleManager != nil {
-		s.lifecycleManager.EndOperation(tunnelID)
-	}
-}
-
-// isOperating checks if a tunnel is currently being modified by a lifecycle operation.
-func (s *ServiceImpl) isOperating(tunnelID string) bool {
-	if s.lifecycleManager != nil {
-		return s.lifecycleManager.IsOperating(tunnelID)
-	}
-	return false
-}
-
 
 // lockTunnel acquires the per-tunnel mutex.
 func (s *ServiceImpl) lockTunnel(tunnelID string) {
@@ -270,6 +171,11 @@ func (s *ServiceImpl) Create(ctx context.Context, tunnelID, name string, cfg tun
 		}
 		stored.NWGIndex = index
 		s.logInfo("create", tunnelID, "NativeWG tunnel created")
+		if s.bus != nil {
+			s.bus.Publish("tunnel:created", events.TunnelCreatedEvent{
+				ID: stored.ID, Name: stored.Name, Backend: s.backendLabel(stored),
+			})
+		}
 		return nil
 	}
 
@@ -279,6 +185,11 @@ func (s *ServiceImpl) Create(ctx context.Context, tunnelID, name string, cfg tun
 	}
 
 	s.logInfo("create", tunnelID, "Tunnel created")
+	if s.bus != nil && stored != nil {
+		s.bus.Publish("tunnel:created", events.TunnelCreatedEvent{
+			ID: stored.ID, Name: stored.Name, Backend: s.backendLabel(stored),
+		})
+	}
 	return nil
 }
 
@@ -487,6 +398,11 @@ func (s *ServiceImpl) Update(ctx context.Context, tunnelID string, cfg tunnel.Co
 	}
 
 	s.logInfo("update", tunnelID, "Tunnel updated")
+	if s.bus != nil {
+		s.bus.Publish("tunnel:updated", events.TunnelUpdatedEvent{
+			ID: tunnelID, Name: stored.Name,
+		})
+	}
 	return nil
 }
 
@@ -597,6 +513,11 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 	}
 
 	s.logInfo("import", tunnelID, "Tunnel imported: "+parsed.Name)
+	if s.bus != nil {
+		s.bus.Publish("tunnel:created", events.TunnelCreatedEvent{
+			ID: parsed.ID, Name: parsed.Name, Backend: s.backendLabel(parsed),
+		})
+	}
 	return s.Get(ctx, tunnelID)
 }
 
@@ -637,7 +558,75 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 	}
 
 	s.logInfo("import", tunnelID, "NativeWG tunnel imported: "+parsed.Name)
+	if s.bus != nil {
+		s.bus.Publish("tunnel:created", events.TunnelCreatedEvent{
+			ID: parsed.ID, Name: parsed.Name, Backend: s.backendLabel(parsed),
+		})
+	}
 	return s.Get(ctx, tunnelID)
+}
+
+// ReplaceConfig replaces a tunnel's Interface and Peer from a parsed .conf,
+// preserving identity, routing, monitoring, and all other metadata.
+func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string) error {
+	s.lockTunnel(tunnelID)
+	defer s.unlockTunnel(tunnelID)
+
+	stored, err := s.store.Get(tunnelID)
+	if err != nil {
+		return tunnel.ErrNotFound
+	}
+
+	parsed, err := config.Parse(confContent)
+	if err != nil {
+		return fmt.Errorf("parse conf: %w", err)
+	}
+
+	// Replace Interface + Peer entirely
+	stored.Interface = parsed.Interface
+	stored.Peer = parsed.Peer
+
+	// Optionally update name
+	if newName != "" {
+		stored.Name = newName
+	}
+
+	// Clear runtime state (will be re-populated on next start)
+	stored.ResolvedEndpointIP = ""
+	stored.ActiveWAN = ""
+	stored.StartedAt = ""
+
+	// Save to storage
+	if err := s.store.Save(stored); err != nil {
+		return fmt.Errorf("save tunnel: %w", err)
+	}
+
+	// Overwrite .conf file
+	if err := s.writeConfigFile(stored); err != nil {
+		s.logWarn("replace-config", tunnelID, "Failed to write config file: "+err.Error())
+	}
+
+	// NativeWG: sync NDMS config (address, MTU). Peer sync happens on restart.
+	if s.nwgOperator != nil && s.isNativeWG(stored) {
+		if err := s.nwgOperator.SyncAddressMTU(ctx, stored); err != nil {
+			s.logWarn("replace-config", tunnelID, "SyncAddressMTU failed: "+err.Error())
+		}
+		// Update description if name changed
+		if newName != "" {
+			if err := s.nwgOperator.UpdateDescription(ctx, stored, newName); err != nil {
+				s.logWarn("replace-config", tunnelID, "UpdateDescription failed: "+err.Error())
+			}
+		}
+	}
+
+	s.logInfo("replace-config", tunnelID, "Configuration replaced: "+stored.Name)
+	if s.bus != nil {
+		s.bus.Publish("tunnel:updated", events.TunnelUpdatedEvent{
+			ID: tunnelID, Name: stored.Name,
+		})
+	}
+
+	return nil
 }
 
 // === Validation ===
@@ -653,27 +642,30 @@ func (s *ServiceImpl) CheckAddressConflicts(_ context.Context, tunnelID string) 
 }
 
 
-// clearActiveWAN clears volatile runtime state for a tunnel.
-func (s *ServiceImpl) clearActiveWAN(tunnelID string) {
-	s.store.ClearRuntimeState(tunnelID)
-}
 
-// collectManagedIfaceNames returns interface names for all stored tunnels.
-// Used to exclude managed interfaces from system address conflict checks.
-func (s *ServiceImpl) collectManagedIfaceNames() []string {
-	tunnels, err := s.store.List()
+// GetState returns the current state of a tunnel.
+func (s *ServiceImpl) GetState(ctx context.Context, tunnelID string) tunnel.StateInfo {
+	// NativeWG: use nwgOperator.GetState directly
+	stored, err := s.store.Get(tunnelID)
 	if err != nil {
-		return nil
+		return tunnel.StateInfo{State: tunnel.StateUnknown}
 	}
-	names := make([]string, 0, len(tunnels))
-	for _, t := range tunnels {
-		if t.Backend == "nativewg" {
-			names = append(names, nwg.NewNWGNames(t.NWGIndex).IfaceName)
-		} else {
-			names = append(names, tunnel.NewNames(t.ID).IfaceName)
+	if s.nwgOperator != nil && s.isNativeWG(stored) {
+		return s.nwgOperator.GetState(ctx, stored)
+	}
+
+	// === Kernel path ===
+	info := s.state.GetState(ctx, tunnelID)
+
+	// After our Stop: state matrix sees Intent=DOWN + Process=true → NeedsStop.
+	// But if we disabled the tunnel (Enabled=false), it's Disabled, not NeedsStop.
+	if info.State == tunnel.StateNeedsStop {
+		if !stored.Enabled {
+			info.State = tunnel.StateDisabled
 		}
 	}
-	return names
+
+	return info
 }
 
 // === Helper Methods ===
@@ -789,20 +781,6 @@ func splitAddresses(address string) (ipv4, ipv6 string) {
 	return
 }
 
-// writeConfigFileForStart generates and writes the WireGuard config file for tunnel start.
-// When hasIPv6 is false, ::/0 is filtered from AllowedIPs.
-func (s *ServiceImpl) writeConfigFileForStart(stored *storage.AWGTunnel) error {
-	if err := os.MkdirAll(confDir, 0755); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
-	}
-	content := config.Generate(stored)
-	confPath := filepath.Join(confDir, stored.ID+".conf")
-	if err := os.WriteFile(confPath, []byte(content), 0600); err != nil {
-		return fmt.Errorf("write config file: %w", err)
-	}
-	return nil
-}
-
 // writeConfigFile generates and writes the WireGuard config file.
 func (s *ServiceImpl) writeConfigFile(stored *storage.AWGTunnel) error {
 	// Ensure directory exists
@@ -908,15 +886,6 @@ func (s *ServiceImpl) MigrateISPInterfaceToKernel() {
 // isNativeWG returns true if the tunnel uses the NativeWG backend.
 func (s *ServiceImpl) isNativeWG(stored *storage.AWGTunnel) bool {
 	return stored.Backend == "nativewg"
-}
-
-// isNativeWGByID returns true if the tunnel uses the NativeWG backend (by ID lookup).
-func (s *ServiceImpl) isNativeWGByID(tunnelID string) bool {
-	stored, err := s.store.Get(tunnelID)
-	if err != nil {
-		return false
-	}
-	return s.isNativeWG(stored)
 }
 
 // backendLabel returns the backend label for a stored tunnel.

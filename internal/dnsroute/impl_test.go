@@ -263,3 +263,88 @@ func TestServiceImpl_NotFound(t *testing.T) {
 		t.Error("SetEnabled nonexistent: expected error")
 	}
 }
+
+func TestServiceImpl_OnTunnelDelete_CleansFailoverState(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	svc := &ServiceImpl{
+		store: store,
+		ndms:  &noopNDMS{},
+		log:   noopLogger(),
+	}
+	fm := NewFailoverManager(func() error { return nil })
+	svc.SetFailoverManager(fm)
+
+	// Mark tunnel as failed
+	if err := fm.MarkFailed("doomed-tunnel"); err != nil {
+		t.Fatalf("MarkFailed: %v", err)
+	}
+	if !fm.IsFailed("doomed-tunnel") {
+		t.Fatal("setup: expected doomed-tunnel in failedSet")
+	}
+
+	// Simulate tunnel delete
+	if err := svc.OnTunnelDelete(context.Background(), "doomed-tunnel"); err != nil {
+		t.Fatalf("OnTunnelDelete: %v", err)
+	}
+
+	// Failover state should be cleaned up
+	if fm.IsFailed("doomed-tunnel") {
+		t.Error("expected failover state cleared after OnTunnelDelete")
+	}
+}
+
+func TestServiceImpl_LookupAffectedLists_RestoredAction(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	svc := &ServiceImpl{
+		store: store,
+		ndms:  &noopNDMS{},
+		log:   noopLogger(),
+	}
+	fm := NewFailoverManager(func() error { return nil })
+	svc.SetFailoverManager(fm)
+
+	// Create a list with two routes
+	if _, err := svc.Create(context.Background(), DomainList{
+		Name:          "test",
+		ManualDomains: []string{"a.com"},
+		Routes: []RouteTarget{
+			{Interface: "Wireguard0", TunnelID: "tun-primary"},
+			{Interface: "Wireguard1", TunnelID: "tun-backup"},
+		},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// "switched" — primary failed, traffic moves to backup
+	switched := svc.LookupAffectedLists("tun-primary", "switched")
+	if len(switched) != 1 {
+		t.Fatalf("switched: expected 1 affected list, got %d", len(switched))
+	}
+	if switched[0].FromTunnel != "Wireguard0" {
+		t.Errorf("switched.From = %q, want Wireguard0", switched[0].FromTunnel)
+	}
+	if switched[0].ToTunnel != "Wireguard1" {
+		t.Errorf("switched.To = %q, want Wireguard1", switched[0].ToTunnel)
+	}
+
+	// "restored" — primary recovers, traffic moves back from backup to primary
+	// (inverted: From = what was active during failure, To = recovered tunnel)
+	restored := svc.LookupAffectedLists("tun-primary", "restored")
+	if len(restored) != 1 {
+		t.Fatalf("restored: expected 1 affected list, got %d", len(restored))
+	}
+	if restored[0].FromTunnel != "Wireguard1" {
+		t.Errorf("restored.From = %q, want Wireguard1 (was active during failure)", restored[0].FromTunnel)
+	}
+	if restored[0].ToTunnel != "Wireguard0" {
+		t.Errorf("restored.To = %q, want Wireguard0 (recovered)", restored[0].ToTunnel)
+	}
+}

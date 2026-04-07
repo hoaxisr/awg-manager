@@ -2,9 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
-	"sync"
-	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
@@ -12,65 +9,6 @@ import (
 )
 
 // === Mock implementations ===
-
-// MockStore is a mock storage implementation.
-type MockStore struct {
-	tunnels map[string]*MockTunnel
-}
-
-type MockTunnel struct {
-	ID                string
-	Name              string
-	Enabled           bool
-	DefaultRoute bool
-	ISPInterface      string
-	Interface         MockInterface
-	Peer              MockPeer
-}
-
-type MockInterface struct {
-	Address string
-	MTU     int
-}
-
-type MockPeer struct {
-	Endpoint string
-}
-
-func NewMockStore() *MockStore {
-	return &MockStore{tunnels: make(map[string]*MockTunnel)}
-}
-
-func (m *MockStore) Exists(id string) bool {
-	_, ok := m.tunnels[id]
-	return ok
-}
-
-func (m *MockStore) Get(id string) (*MockTunnel, error) {
-	t, ok := m.tunnels[id]
-	if !ok {
-		return nil, errors.New("not found")
-	}
-	return t, nil
-}
-
-func (m *MockStore) List() ([]MockTunnel, error) {
-	var result []MockTunnel
-	for _, t := range m.tunnels {
-		result = append(result, *t)
-	}
-	return result, nil
-}
-
-func (m *MockStore) Save(t *MockTunnel) error {
-	m.tunnels[t.ID] = t
-	return nil
-}
-
-func (m *MockStore) Delete(id string) error {
-	delete(m.tunnels, id)
-	return nil
-}
 
 // MockStateManager is a mock state manager.
 type MockStateManager struct {
@@ -88,14 +26,12 @@ func (m *MockStateManager) GetState(ctx context.Context, tunnelID string) tunnel
 	return tunnel.StateInfo{State: tunnel.StateNotCreated}
 }
 
-
 func (m *MockStateManager) SetState(tunnelID string, state tunnel.StateInfo) {
 	m.states[tunnelID] = state
 }
 
 // MockOperator is a mock operator.
 type MockOperator struct {
-	mu                 sync.Mutex // protects call slices from concurrent goroutines
 	createError        error
 	startError         error
 	stopError          error
@@ -114,8 +50,6 @@ type MockOperator struct {
 	DeleteCalls              []string
 	RecoverCalls             []struct{ ID string; State tunnel.StateInfo }
 	ReconcileCalls           []tunnel.Config
-	SuspendCalls             []string
-	ResumeCalls              []string
 	ApplyConfigCalls         []struct{ ID, Path string }
 	SetupEndpointRouteCalls  []struct{ ID, Endpoint, ISP string }
 	CleanupEndpointRouteCalls []string
@@ -144,10 +78,6 @@ func (m *MockOperator) Stop(ctx context.Context, tunnelID string) error {
 	return m.stopError
 }
 
-func (m *MockOperator) TeardownForRestart(ctx context.Context, tunnelID string) {
-	m.StopCalls = append(m.StopCalls, tunnelID)
-}
-
 func (m *MockOperator) Delete(ctx context.Context, stored *storage.AWGTunnel) error {
 	m.DeleteCalls = append(m.DeleteCalls, stored.ID)
 	return m.deleteError
@@ -160,18 +90,6 @@ func (m *MockOperator) Recover(ctx context.Context, tunnelID string, state tunne
 
 func (m *MockOperator) Reconcile(ctx context.Context, cfg tunnel.Config) error {
 	m.ReconcileCalls = append(m.ReconcileCalls, cfg)
-	return nil
-}
-
-func (m *MockOperator) Suspend(ctx context.Context, tunnelID string) error {
-	m.mu.Lock()
-	m.SuspendCalls = append(m.SuspendCalls, tunnelID)
-	m.mu.Unlock()
-	return nil
-}
-
-func (m *MockOperator) Resume(ctx context.Context, tunnelID string) error {
-	m.ResumeCalls = append(m.ResumeCalls, tunnelID)
 	return nil
 }
 
@@ -246,138 +164,3 @@ func (m *MockOperator) CleanupClientRouteTable(ctx context.Context, tableNum int
 func (m *MockOperator) ListUsedRoutingTables(ctx context.Context) ([]int, error) {
 	return nil, nil
 }
-
-// === Tests ===
-
-// TestServiceStart_AlreadyRunning verifies Start returns error when tunnel is running.
-func TestServiceStart_AlreadyRunning(t *testing.T) {
-	stateMgr := NewMockStateManager()
-	stateMgr.SetState("awg0", tunnel.StateInfo{State: tunnel.StateRunning})
-
-	op := &MockOperator{}
-
-	// We can't use the real service because it depends on real storage
-	// This test demonstrates the expected behavior pattern
-
-	// The service should return ErrAlreadyRunning without calling operator
-	state := stateMgr.GetState(context.Background(), "awg0")
-	if state.State == tunnel.StateRunning {
-		// Service would return error here
-		t.Log("State is running - service would return ErrAlreadyRunning")
-	}
-
-	// Operator should not be called
-	if len(op.StartCalls) != 0 {
-		t.Errorf("Operator.Start should not be called when already running")
-	}
-}
-
-// TestServiceStart_RecoversBroken verifies Start recovers from broken state.
-func TestServiceStart_RecoversBroken(t *testing.T) {
-	stateMgr := NewMockStateManager()
-	stateMgr.SetState("awg0", tunnel.StateInfo{
-		State:          tunnel.StateBroken,
-		ProcessRunning: true,
-		InterfaceUp:    false,
-	})
-
-	op := &MockOperator{}
-
-	// Simulate service behavior
-	state := stateMgr.GetState(context.Background(), "awg0")
-	if state.State == tunnel.StateBroken {
-		// Service would call Recover first
-		_ = op.Recover(context.Background(), "awg0", state)
-	}
-
-	if len(op.RecoverCalls) != 1 {
-		t.Errorf("Operator.Recover should be called once for broken state")
-	}
-	if op.RecoverCalls[0].ID != "awg0" {
-		t.Errorf("Recover called with wrong ID")
-	}
-}
-
-// TestServiceStop_NotRunning verifies Stop returns error when tunnel is not running.
-func TestServiceStop_NotRunning(t *testing.T) {
-	stateMgr := NewMockStateManager()
-	stateMgr.SetState("awg0", tunnel.StateInfo{State: tunnel.StateStopped})
-
-	op := &MockOperator{}
-
-	// Simulate service behavior
-	state := stateMgr.GetState(context.Background(), "awg0")
-	if state.State == tunnel.StateStopped {
-		// Service would return ErrNotRunning
-		t.Log("State is stopped - service would return ErrNotRunning")
-	}
-
-	// Operator should not be called
-	if len(op.StopCalls) != 0 {
-		t.Errorf("Operator.Stop should not be called when not running")
-	}
-}
-
-// TestServiceWANUp_StartsEnabled verifies WAN up starts enabled tunnels.
-func TestServiceWANUp_StartsEnabled(t *testing.T) {
-	stateMgr := NewMockStateManager()
-	stateMgr.SetState("awg0", tunnel.StateInfo{State: tunnel.StateStopped})
-	stateMgr.SetState("awg1", tunnel.StateInfo{State: tunnel.StateStopped})
-
-	op := &MockOperator{}
-
-	// Simulate enabled tunnels
-	enabledTunnels := []struct {
-		ID      string
-		Enabled bool
-	}{
-		{"awg0", true},
-		{"awg1", false},
-	}
-
-	// Simulate WAN up behavior
-	for _, t := range enabledTunnels {
-		if !t.Enabled {
-			continue
-		}
-		state := stateMgr.GetState(context.Background(), t.ID)
-		if state.State == tunnel.StateStopped {
-			// Service would start this tunnel
-			op.StartCalls = append(op.StartCalls, tunnel.Config{ID: t.ID})
-		}
-	}
-
-	// Only awg0 should be started (enabled)
-	if len(op.StartCalls) != 1 {
-		t.Errorf("Expected 1 Start call, got %d", len(op.StartCalls))
-	}
-	if len(op.StartCalls) > 0 && op.StartCalls[0].ID != "awg0" {
-		t.Errorf("Expected awg0 to be started, got %s", op.StartCalls[0].ID)
-	}
-}
-
-// TestServiceWANDown_Suspends verifies WAN down suspends running tunnels.
-func TestServiceWANDown_Suspends(t *testing.T) {
-	stateMgr := NewMockStateManager()
-	stateMgr.SetState("awg0", tunnel.StateInfo{State: tunnel.StateRunning})
-	stateMgr.SetState("awg1", tunnel.StateInfo{State: tunnel.StateStopped})
-
-	op := &MockOperator{}
-
-	// v3: WAN down calls Suspend (ip link set down, preserves interface)
-	tunnelIDs := []string{"awg0", "awg1"}
-	for _, id := range tunnelIDs {
-		state := stateMgr.GetState(context.Background(), id)
-		if state.State == tunnel.StateRunning {
-			_ = op.Suspend(context.Background(), id)
-		}
-	}
-
-	if len(op.SuspendCalls) != 1 {
-		t.Errorf("Expected 1 Suspend call, got %d", len(op.SuspendCalls))
-	}
-	if len(op.StopCalls) != 0 {
-		t.Errorf("Stop should not be called by WAN down, got %d", len(op.StopCalls))
-	}
-}
-

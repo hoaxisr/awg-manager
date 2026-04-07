@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -63,6 +64,15 @@ func RunWithOptions(ctx context.Context, name string, args []string, opts Option
 	}
 	if len(opts.Env) > 0 {
 		cmd.Env = opts.Env
+	} else {
+		// Defence-in-depth: scrub dynamic linker variables from inherited env.
+		// On Keenetic + Entware, a stale LD_LIBRARY_PATH=/lib:/usr/lib: (e.g. from
+		// an opkg postinst-spawned restart, or a misguided init script) makes ld.so
+		// load Keenetic system libraries (libssl, libcrypto) instead of Entware ones,
+		// causing SIGSEGV/SIGBUS in curl and other Entware binaries. We never need
+		// these vars to be inherited — Entware binaries find their libs via the
+		// embedded /opt/lib/ld-linux-*.so interpreter and DT_RUNPATH.
+		cmd.Env = scrubLinkerEnv(os.Environ())
 	}
 	if opts.Stdin != nil {
 		cmd.Stdin = opts.Stdin
@@ -119,4 +129,17 @@ func FormatError(result *Result, err error) error {
 // Shell executes command in shell (sh -c).
 func Shell(ctx context.Context, command string) (*Result, error) {
 	return Run(ctx, "sh", "-c", command)
+}
+
+// scrubLinkerEnv returns a copy of env with dynamic-linker variables removed.
+// See the comment in RunWithOptions for the rationale.
+func scrubLinkerEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		if strings.HasPrefix(e, "LD_LIBRARY_PATH=") || strings.HasPrefix(e, "LD_PRELOAD=") {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }

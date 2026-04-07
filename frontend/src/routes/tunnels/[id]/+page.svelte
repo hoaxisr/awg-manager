@@ -11,7 +11,7 @@
 	import { superForm } from 'sveltekit-superforms';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import { editTunnelSchema } from '$lib/schemas/tunnel';
-	import { AWGAdvancedParams } from '$lib/components/tunnels';
+	import { AWGAdvancedParams, ReplaceTunnelConfigModal } from '$lib/components/tunnels';
 	import TunnelEditHeader from '$lib/components/tunnels/TunnelEditHeader.svelte';
 
 	let { data } = $props();
@@ -45,8 +45,10 @@
 	type ActionStatus = 'loading' | 'success' | 'error';
 
 	let activeTab = $state<'basic' | 'obfuscation' | 'routing'>('basic');
+	let replaceModalOpen = $state(false);
 
 	let tunnel = $state<AWGTunnel | null>(null);
+	let isKernel = $derived(tunnel?.backend === 'kernel');
 	let systemInfo = $state<SystemInfo | null>(null);
 	let loading = $state(true);
 	let saving = $state(false);
@@ -317,6 +319,7 @@
 			tunnelState={tunnel.state ?? 'stopped'}
 			{saving}
 			{actionStatus}
+			onReplace={() => replaceModalOpen = true}
 			onExport={handleExport}
 			onSaveOnly={handleSaveOnly}
 			onSaveAndStart={handleSaveAndStart}
@@ -325,7 +328,9 @@
 		<div class="tab-bar">
 			<button class="tab" class:active={activeTab === 'basic'} onclick={() => activeTab = 'basic'}>Основное</button>
 			<button class="tab" class:active={activeTab === 'obfuscation'} onclick={() => activeTab = 'obfuscation'}>Обфускация</button>
-			<button class="tab" class:active={activeTab === 'routing'} onclick={() => activeTab = 'routing'}>Маршрутизация</button>
+			{#if !isKernel}
+				<button class="tab" class:active={activeTab === 'routing'} onclick={() => activeTab = 'routing'}>Маршрутизация</button>
+			{/if}
 		</div>
 
 		<div class="tab-content">
@@ -462,6 +467,18 @@
 		</div>
 	</div>
 	</PageContainer>
+
+	{#if tunnel}
+		<ReplaceTunnelConfigModal
+			bind:open={replaceModalOpen}
+			tunnelId={tunnel.id}
+			tunnelName={tunnel.name}
+			tunnelState={tunnel.state ?? 'stopped'}
+			backendLabel={tunnel.backend === 'nativewg' ? 'NativeWG' : 'Kernel'}
+			ndmsName={tunnel.interfaceName ?? tunnel.id}
+			onclose={() => replaceModalOpen = false}
+		/>
+	{/if}
 {/if}
 
 <style>

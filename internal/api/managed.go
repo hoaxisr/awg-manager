@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -68,12 +69,41 @@ func toManagedServerResponse(s *storage.ManagedServer) *managedServerResponse {
 
 // ManagedServerHandler handles managed WireGuard server operations.
 type ManagedServerHandler struct {
-	svc managed.ManagedServerService
+	svc     managed.ManagedServerService
+	servers *ServersHandler // for shared server:updated publishing
+}
+
+// SetServersHandler sets the servers handler for shared SSE publishing.
+func (h *ManagedServerHandler) SetServersHandler(s *ServersHandler) { h.servers = s }
+
+// publishServerUpdated delegates to ServersHandler to publish the full server snapshot.
+func (h *ManagedServerHandler) publishServerUpdated(ctx context.Context) {
+	if h.servers != nil {
+		h.servers.publishServerUpdated(ctx)
+	}
 }
 
 // NewManagedServerHandler creates a new managed server handler.
 func NewManagedServerHandler(svc managed.ManagedServerService) *ManagedServerHandler {
 	return &ManagedServerHandler{svc: svc}
+}
+
+// getManaged builds the managed server response for API and SSE snapshots.
+func (h *ManagedServerHandler) getManaged() interface{} {
+	ms := h.svc.Get()
+	if ms == nil {
+		return nil
+	}
+	return toManagedServerResponse(ms)
+}
+
+// getManagedStats builds the managed server stats for API and SSE snapshots.
+func (h *ManagedServerHandler) getManagedStats(ctx context.Context) interface{} {
+	stats, err := h.svc.GetStats(ctx)
+	if err != nil {
+		return nil
+	}
+	return stats
 }
 
 // Get returns the managed server with runtime data, or null if not created.
@@ -83,12 +113,7 @@ func (h *ManagedServerHandler) Get(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
-	server := h.svc.Get()
-	if server == nil {
-		response.Success(w, nil)
-		return
-	}
-	response.Success(w, toManagedServerResponse(server))
+	response.Success(w, h.getManaged())
 }
 
 // Stats returns runtime statistics for the managed server peers.
@@ -100,7 +125,7 @@ func (h *ManagedServerHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	}
 	stats, err := h.svc.GetStats(r.Context())
 	if err != nil {
-		response.Error(w, err.Error(), "STATS_FAILED")
+		response.Error(w, err.Error(), "STATS_ERROR")
 		return
 	}
 	response.Success(w, stats)
@@ -124,6 +149,7 @@ func (h *ManagedServerHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Success(w, toManagedServerResponse(server))
+	h.publishServerUpdated(r.Context())
 }
 
 // Update updates the managed server's address and/or listen port.
@@ -143,6 +169,7 @@ func (h *ManagedServerHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
+	h.publishServerUpdated(r.Context())
 }
 
 // Delete removes the managed server and all peers.
@@ -157,6 +184,7 @@ func (h *ManagedServerHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
+	h.publishServerUpdated(r.Context())
 }
 
 // AddPeer adds a new peer to the managed server.
@@ -177,6 +205,7 @@ func (h *ManagedServerHandler) AddPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Success(w, peer)
+	h.publishServerUpdated(r.Context())
 }
 
 // UpdatePeer updates an existing peer.
@@ -205,6 +234,7 @@ func (h *ManagedServerHandler) UpdatePeer(w http.ResponseWriter, r *http.Request
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
+	h.publishServerUpdated(r.Context())
 }
 
 // DeletePeer removes a peer from the managed server.
@@ -228,6 +258,7 @@ func (h *ManagedServerHandler) DeletePeer(w http.ResponseWriter, r *http.Request
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
+	h.publishServerUpdated(r.Context())
 }
 
 // TogglePeer enables or disables a peer.
@@ -255,6 +286,7 @@ func (h *ManagedServerHandler) TogglePeer(w http.ResponseWriter, r *http.Request
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
+	h.publishServerUpdated(r.Context())
 }
 
 // PeerConf generates and returns a .conf file for a peer.
@@ -300,6 +332,7 @@ func (h *ManagedServerHandler) NAT(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
+	h.publishServerUpdated(r.Context())
 }
 
 // SetEnabled enables or disables the managed server interface.
@@ -321,6 +354,7 @@ func (h *ManagedServerHandler) SetEnabled(w http.ResponseWriter, r *http.Request
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
+	h.publishServerUpdated(r.Context())
 }
 
 // ASC handles GET/POST for ASC parameters of the managed server.
@@ -353,6 +387,7 @@ func (h *ManagedServerHandler) ASC(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		response.Success(w, map[string]bool{"ok": true})
+		h.publishServerUpdated(r.Context())
 	default:
 		response.MethodNotAllowed(w)
 	}

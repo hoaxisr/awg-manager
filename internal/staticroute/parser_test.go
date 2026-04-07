@@ -139,6 +139,52 @@ func TestMaskToCIDR(t *testing.T) {
 	}
 }
 
+func TestParseBatWithComments(t *testing.T) {
+	content := `route add 1.2.3.4 mask 255.255.255.255 192.168.1.1 !ASTelegram
+route add 10.0.0.0 mask 255.0.0.0 192.168.1.1
+route add 172.16.0.0 mask 255.240.0.0 192.168.1.1 metric 10 !ASGoogle
+`
+
+	subnets, parseErrors := ParseBat(content)
+
+	if len(parseErrors) != 0 {
+		t.Errorf("unexpected parse errors: %v", parseErrors)
+	}
+
+	expected := []string{
+		"1.2.3.4/32 !ASTelegram",
+		"10.0.0.0/8",
+		"172.16.0.0/12 !ASGoogle",
+	}
+
+	if len(subnets) != len(expected) {
+		t.Fatalf("got %d subnets, want %d: %v", len(subnets), len(expected), subnets)
+	}
+
+	for i, s := range subnets {
+		if s != expected[i] {
+			t.Errorf("subnet[%d] = %q, want %q", i, s, expected[i])
+		}
+	}
+}
+
+func TestParseBatCommentDedup(t *testing.T) {
+	// Same CIDR with different comments — first one wins
+	content := `route add 10.0.0.0 mask 255.0.0.0 192.168.1.1 !First
+route add 10.0.0.0 mask 255.0.0.0 192.168.1.2 !Second
+`
+
+	subnets, _ := ParseBat(content)
+
+	if len(subnets) != 1 {
+		t.Fatalf("got %d subnets, want 1: %v", len(subnets), subnets)
+	}
+
+	if subnets[0] != "10.0.0.0/8 !First" {
+		t.Errorf("got %q, want %q", subnets[0], "10.0.0.0/8 !First")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchSubstring(s, substr)
 }

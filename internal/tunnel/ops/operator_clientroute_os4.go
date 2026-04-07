@@ -3,7 +3,10 @@ package ops
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
@@ -100,4 +103,42 @@ func (o *OperatorOS4Impl) detectLANSubnetOS4(ctx context.Context) string {
 		return ""
 	}
 	return parseLANSubnet(result.Stdout)
+}
+
+// parseLANSubnet extracts the first CIDR subnet from ip route output.
+func parseLANSubnet(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 0 {
+			continue
+		}
+		// Look for CIDR notation (e.g., "192.168.1.0/24")
+		if strings.Contains(fields[0], "/") {
+			return fields[0]
+		}
+	}
+	return ""
+}
+
+// lookupRe matches "lookup NNN" in ip rule list output.
+var lookupRe = regexp.MustCompile(`lookup\s+(\d+)`)
+
+// parseRoutingTables extracts unique table numbers from ip rule list output.
+func parseRoutingTables(output string) []int {
+	seen := make(map[int]struct{})
+	var tables []int
+
+	for _, match := range lookupRe.FindAllStringSubmatch(output, -1) {
+		num, err := strconv.Atoi(match[1])
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[num]; !ok {
+			seen[num] = struct{}{}
+			tables = append(tables, num)
+		}
+	}
+
+	sort.Ints(tables)
+	return tables
 }

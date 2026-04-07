@@ -1,0 +1,269 @@
+package connections
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/hoaxisr/awg-manager/internal/routing"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
+)
+
+// Service provides connection listing with tunnel resolution.
+type Service struct {
+	catalog routing.Catalog
+	ndms    ndms.Client
+}
+
+// NewService creates a new connections service.
+func NewService(catalog routing.Catalog, ndmsClient ndms.Client) *Service {
+	return &Service{
+		catalog: catalog,
+		ndms:    ndmsClient,
+	}
+}
+
+// List reads conntrack, resolves tunnels and client names, filters, and paginates.
+func (s *Service) List(ctx context.Context, params ListParams) (*ListResponse, error) {
+	// Normalize params
+	if params.Limit <= 0 {
+		params.Limit = 50
+	}
+	if params.Limit > 500 {
+		params.Limit = 500
+	}
+	if params.Offset < 0 {
+		params.Offset = 0
+	}
+	if params.Tunnel == "" {
+		params.Tunnel = "all"
+	}
+	if params.Protocol == "" {
+		params.Protocol = "all"
+	}
+
+	// 1. Read conntrack
+	rawConns, err := readConntrackFile()
+	if err != nil {
+		return nil, fmt.Errorf("read conntrack: %w", err)
+	}
+
+	// 2. Build ifindex map
+	ifMap := buildIfindexMap()
+
+	// 3. Build reverse tunnel lookup: kernel iface → (tunnelID, tunnelName)
+	tunnelByIface := s.buildTunnelMap(ctx)
+
+	// 4. Resolve client MACs
+	clientNames := s.resolveClientNames(ctx)
+
+	// 5. Enrich connections
+	conns := make([]Connection, 0, len(rawConns))
+	for _, rc := range rawConns {
+		// Skip router-local traffic without outgoing interface
+		if rc.ifw == 0 {
+			continue
+		}
+
+		c := rc.Connection
+		c.Interface = ifMap[rc.ifw]
+
+		// Resolve tunnel
+		if info, ok := tunnelByIface[c.Interface]; ok {
+			c.TunnelID = info.id
+			c.TunnelName = info.name
+		} else if c.Interface != "" {
+			c.TunnelName = fmt.Sprintf("Direct (%s)", c.Interface)
+		} else {
+			c.TunnelName = "Direct"
+		}
+
+		// Resolve client name
+		if c.ClientMAC != "" {
+			c.ClientName = clientNames[strings.ToLower(c.ClientMAC)]
+		}
+
+		conns = append(conns, c)
+	}
+
+	// 6. Compute stats (over ALL connections, before filtering)
+	stats, tunnelSummary := computeStats(conns)
+
+	// 7. Filter
+	filtered := applyFilters(conns, params)
+
+	// 8. Paginate
+	total := len(filtered)
+	start := params.Offset
+	if start > total {
+		start = total
+	}
+	end := start + params.Limit
+	if end > total {
+		end = total
+	}
+	page := filtered[start:end]
+
+	// Ensure non-nil slices/maps for JSON
+	if page == nil {
+		page = []Connection{}
+	}
+	if tunnelSummary == nil {
+		tunnelSummary = make(map[string]TunnelConnectionInfo)
+	}
+
+	return &ListResponse{
+		Stats:       stats,
+		Tunnels:     tunnelSummary,
+		Connections: page,
+		Pagination: PaginationInfo{
+			Total:    total,
+			Offset:   start,
+			Limit:    params.Limit,
+			Returned: len(page),
+		},
+	}, nil
+}
+
+type tunnelInfo struct {
+	id   string
+	name string
+}
+
+// buildTunnelMap creates kernel iface name → tunnel info mapping.
+func (s *Service) buildTunnelMap(ctx context.Context) map[string]tunnelInfo {
+	result := make(map[string]tunnelInfo)
+
+	entries := s.catalog.ListAll(ctx)
+	for _, e := range entries {
+		if e.Type == "wan" {
+			continue
+		}
+		kernelIface, running := s.catalog.GetKernelIface(ctx, e.ID)
+		if !running || kernelIface == "" {
+			continue
+		}
+		result[kernelIface] = tunnelInfo{
+			id:   e.ID,
+			name: e.Name,
+		}
+	}
+
+	return result
+}
+
+// resolveClientNames queries NDMS hotspot for MAC → device name mapping.
+func (s *Service) resolveClientNames(ctx context.Context) map[string]string {
+	result := make(map[string]string)
+
+	raw, err := s.ndms.RCIGet(ctx, "/show/ip/hotspot")
+	if err != nil {
+		return result
+	}
+
+	var resp struct {
+		Host []struct {
+			MAC      string `json:"mac"`
+			Name     string `json:"name"`
+			Hostname string `json:"hostname"`
+		} `json:"host"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return result
+	}
+
+	for _, h := range resp.Host {
+		mac := strings.ToLower(h.MAC)
+		name := h.Name
+		if name == "" {
+			name = h.Hostname
+		}
+		if name != "" {
+			result[mac] = name
+		}
+	}
+
+	return result
+}
+
+// computeStats calculates aggregate statistics and per-tunnel counts.
+func computeStats(conns []Connection) (ConnectionStats, map[string]TunnelConnectionInfo) {
+	var stats ConnectionStats
+	tunnels := make(map[string]TunnelConnectionInfo)
+
+	for _, c := range conns {
+		stats.Total++
+
+		switch strings.ToLower(c.Protocol) {
+		case "tcp":
+			stats.Protocols.TCP++
+		case "udp":
+			stats.Protocols.UDP++
+		case "icmp", "icmpv6":
+			stats.Protocols.ICMP++
+		}
+
+		if c.TunnelID != "" {
+			stats.Tunneled++
+		} else {
+			stats.Direct++
+		}
+
+		key := c.TunnelID // "" for direct
+		info := tunnels[key]
+		info.Count++
+		if info.Name == "" {
+			info.Name = c.TunnelName
+			info.Interface = c.Interface
+		}
+		tunnels[key] = info
+	}
+
+	return stats, tunnels
+}
+
+// applyFilters returns connections matching the given params.
+func applyFilters(conns []Connection, params ListParams) []Connection {
+	var result []Connection
+
+	search := strings.ToLower(params.Search)
+
+	for _, c := range conns {
+		// Tunnel filter
+		switch params.Tunnel {
+		case "all":
+			// pass
+		case "direct":
+			if c.TunnelID != "" {
+				continue
+			}
+		default:
+			if c.TunnelID != params.Tunnel {
+				continue
+			}
+		}
+
+		// Protocol filter
+		if params.Protocol != "all" {
+			if !strings.EqualFold(c.Protocol, params.Protocol) {
+				// icmp filter also matches icmpv6
+				if !(params.Protocol == "icmp" && strings.EqualFold(c.Protocol, "icmpv6")) {
+					continue
+				}
+			}
+		}
+
+		// Search filter
+		if search != "" {
+			haystack := strings.ToLower(c.Src + " " + c.Dst + " " + c.ClientName)
+			if !strings.Contains(haystack, search) {
+				continue
+			}
+		}
+
+		result = append(result, c)
+	}
+
+	return result
+}

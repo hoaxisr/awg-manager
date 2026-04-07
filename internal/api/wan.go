@@ -9,21 +9,24 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	wanpkg "github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
 // WANHandler handles WAN hook events.
 type WANHandler struct {
-	svc TunnelService
-	log *logger.Logger
+	svc    TunnelService
+	orch   *orchestrator.Orchestrator
+	log    *logger.Logger
 	appLog *logging.ScopedLogger
 }
 
 // NewWANHandler creates a new WAN event handler.
-func NewWANHandler(svc TunnelService, log *logger.Logger, appLogger logging.AppLogger) *WANHandler {
+func NewWANHandler(svc TunnelService, orch *orchestrator.Orchestrator, log *logger.Logger, appLogger logging.AppLogger) *WANHandler {
 	return &WANHandler{
 		svc:    svc,
+		orch:   orch,
 		log:    log,
 		appLog: logging.NewScopedLogger(appLogger, logging.GroupSystem, logging.SubWan),
 	}
@@ -71,12 +74,18 @@ func (h *WANHandler) processEvent(action, iface string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	var evType orchestrator.EventType
 	switch action {
 	case "up":
-		h.svc.HandleWANUp(ctx, iface)
+		evType = orchestrator.EventWANUp
 	case "down":
-		h.svc.HandleWANDown(ctx, iface)
+		evType = orchestrator.EventWANDown
 	}
+
+	h.orch.HandleEvent(ctx, orchestrator.Event{
+		Type:     evType,
+		WANIface: iface,
+	})
 
 	h.appLog.Info("wan-"+action, "", fmt.Sprintf("WAN %s: %s processed", action, iface))
 }

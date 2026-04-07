@@ -76,9 +76,9 @@ func (m *mockStoreClient) Exists(id string) bool {
 func TestListAll_ManagedTunnels(t *testing.T) {
 	provider := &mockTunnelProvider{
 		tunnels: []TunnelWithStatus{
-			{ID: "awg10", Name: "MyVPN", Backend: "kernel", State: tunnel.StateRunning},
-			{ID: "awg11", Name: "", Backend: "kernel", State: tunnel.StateDisabled},
-			{ID: "awgm0", Name: "OS4 Tunnel", Backend: "kernel", State: tunnel.StateStopped},
+			{ID: "awg10", Name: "MyVPN", Backend: "nativewg", State: tunnel.StateRunning},
+			{ID: "awg11", Name: "", Backend: "nativewg", State: tunnel.StateDisabled},
+			{ID: "awgm0", Name: "NWG Tunnel", Backend: "nativewg", State: tunnel.StateStopped},
 		},
 	}
 	store := &mockStoreClient{entries: map[string]StoreEntry{}}
@@ -90,7 +90,7 @@ func TestListAll_ManagedTunnels(t *testing.T) {
 		t.Fatalf("expected 3 entries, got %d: %+v", len(result), result)
 	}
 
-	// awg10: running kernel tunnel with name
+	// awg10: running nativewg tunnel with name
 	e := result[0]
 	if e.ID != "awg10" {
 		t.Errorf("expected ID awg10, got %s", e.ID)
@@ -108,31 +108,28 @@ func TestListAll_ManagedTunnels(t *testing.T) {
 		t.Error("expected Available=true for running tunnel")
 	}
 
-	// awg11: disabled, no name -> falls back to NDMS name
+	// awg11: disabled, no name -> falls back to tunnel ID
 	e = result[1]
 	if e.ID != "awg11" {
 		t.Errorf("expected ID awg11, got %s", e.ID)
 	}
-	if e.Name != "OpkgTun11" {
-		t.Errorf("expected Name OpkgTun11, got %s", e.Name)
-	}
 	if e.Status != "disabled" {
 		t.Errorf("expected Status disabled, got %s", e.Status)
 	}
-	if e.Available {
-		t.Error("expected Available=false for disabled tunnel")
+	if !e.Available {
+		t.Error("expected Available=true for disabled tunnel (always selectable)")
 	}
 
-	// awgm0: OS4 kernel tunnel
+	// awgm0: NativeWG tunnel
 	e = result[2]
 	if e.ID != "awgm0" {
 		t.Errorf("expected ID awgm0, got %s", e.ID)
 	}
-	if e.Name != "OS4 Tunnel" {
-		t.Errorf("expected Name 'OS4 Tunnel', got %s", e.Name)
+	if e.Name != "NWG Tunnel" {
+		t.Errorf("expected Name 'NWG Tunnel', got %s", e.Name)
 	}
-	if e.Available {
-		t.Error("expected Available=false for stopped tunnel")
+	if !e.Available {
+		t.Error("expected Available=true for stopped tunnel (always selectable)")
 	}
 }
 

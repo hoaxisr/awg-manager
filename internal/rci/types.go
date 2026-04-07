@@ -34,20 +34,6 @@ type RouteEntry struct {
 	Interface   string `json:"interface"`
 }
 
-// HotspotResponse wraps /show/ip/hotspot response.
-type HotspotResponse struct {
-	Host []HotspotHost `json:"host"`
-}
-
-// HotspotHost is a single host entry.
-type HotspotHost struct {
-	IP       string `json:"ip"`
-	MAC      string `json:"mac"`
-	Name     string `json:"name"`
-	Hostname string `json:"hostname"`
-	Active   any    `json:"active"`
-}
-
 // PingCheckListResponse represents /show/ping-check/ response.
 type PingCheckListResponse struct {
 	PingCheck []PingCheckProfile `json:"pingcheck"`

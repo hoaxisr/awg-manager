@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/testing"
@@ -14,6 +16,33 @@ type ServersHandler struct {
 	ndms     ndms.Client
 	settings *storage.SettingsStore
 	awgStore *storage.AWGTunnelStore
+	bus      *events.Bus
+	managed  *ManagedServerHandler
+}
+
+// SetEventBus sets the event bus for SSE publishing.
+func (h *ServersHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
+
+// SetManagedHandler sets the managed server handler for shared publishing.
+func (h *ServersHandler) SetManagedHandler(m *ManagedServerHandler) { h.managed = m }
+
+// publishServerUpdated publishes the full server snapshot via SSE (best-effort).
+func (h *ServersHandler) publishServerUpdated(ctx context.Context) {
+	if h.bus == nil {
+		return
+	}
+	servers, err := h.listServers(ctx)
+	if err != nil {
+		return
+	}
+	payload := map[string]interface{}{
+		"servers": servers,
+	}
+	if h.managed != nil {
+		payload["managed"] = h.managed.getManaged()
+		payload["managedStats"] = h.managed.getManagedStats(ctx)
+	}
+	h.bus.Publish("server:updated", payload)
 }
 
 // NewServersHandler creates a new servers handler.
@@ -33,18 +62,11 @@ func (h *ServersHandler) validateName(w http.ResponseWriter, name string) bool {
 	return true
 }
 
-// List returns all server WireGuard interfaces (built-in VPN Server + user-marked).
-// GET /api/servers
-func (h *ServersHandler) List(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		response.MethodNotAllowed(w)
-		return
-	}
-
-	all, err := h.ndms.ListAllWireguardServers(r.Context())
+// listServers builds the filtered server list for API response and SSE snapshots.
+func (h *ServersHandler) listServers(ctx context.Context) ([]ndms.WireguardServer, error) {
+	all, err := h.ndms.ListAllWireguardServers(ctx)
 	if err != nil {
-		response.Error(w, err.Error(), "LIST_FAILED")
-		return
+		return nil, err
 	}
 
 	serverIDs := h.settings.GetServerInterfaces()
@@ -78,7 +100,27 @@ func (h *ServersHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	response.Success(w, response.MustNotNil(servers))
+	if servers == nil {
+		servers = []ndms.WireguardServer{}
+	}
+	return servers, nil
+}
+
+// List returns all server WireGuard interfaces (built-in VPN Server + user-marked).
+// GET /api/servers
+func (h *ServersHandler) List(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+
+	servers, err := h.listServers(r.Context())
+	if err != nil {
+		response.Error(w, err.Error(), "LIST_FAILED")
+		return
+	}
+
+	response.Success(w, servers)
 }
 
 // Get returns a single server with all peers.
@@ -135,12 +177,14 @@ func (h *ServersHandler) Mark(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		response.Success(w, map[string]bool{"ok": true})
+		h.publishServerUpdated(r.Context())
 	case http.MethodDelete:
 		if err := h.settings.UnmarkServerInterface(name); err != nil {
 			response.Error(w, err.Error(), "UNMARK_FAILED")
 			return
 		}
 		response.Success(w, map[string]bool{"ok": true})
+		h.publishServerUpdated(r.Context())
 	default:
 		response.MethodNotAllowed(w)
 	}

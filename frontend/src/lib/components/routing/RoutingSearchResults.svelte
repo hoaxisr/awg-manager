@@ -1,17 +1,6 @@
 <script lang="ts">
-    interface MatchedRule {
-        id: string;
-        name: string;
-        type: 'dns' | 'ip';
-        matches: string[];
-        totalMatches: number;
-    }
-
-    interface ResolveMatch {
-        domain: string;
-        ips: string[];
-        rules: MatchedRule[];
-    }
+    import { ServiceIcon } from '$lib/components/dnsroutes';
+    import type { MatchedRule, ResolveMatch } from './types';
 
     interface Props {
         dnsResults: MatchedRule[];
@@ -19,11 +8,12 @@
         resolveMatch: ResolveMatch | null;
         resolving: boolean;
         resolveError: string;
+        onRuleClick?: (id: string, type: 'dns' | 'ip') => void;
     }
 
-    let { dnsResults, ipResults, resolveMatch, resolving, resolveError }: Props = $props();
+    let { dnsResults, ipResults, resolveMatch, resolving, resolveError, onRuleClick }: Props = $props();
 
-    const MAX_SHOWN = 3;
+    const MAX_SHOWN = 4;
 </script>
 
 <div class="search-results">
@@ -31,20 +21,33 @@
         <div class="results-group">
             <div class="results-group-title">DNS-правила</div>
             {#each dnsResults as rule}
-                <div class="result-item">
-                    <svg class="result-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                        <circle cx="12" cy="12" r="10"/>
-                        <line x1="2" y1="12" x2="22" y2="12"/>
-                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-                    </svg>
-                    <span class="result-rule-name">{rule.name}</span>
-                    <span class="result-matches">
-                        {rule.matches.slice(0, MAX_SHOWN).join(', ')}
-                        {#if rule.totalMatches > MAX_SHOWN}
-                            <span class="result-more">+{rule.totalMatches - MAX_SHOWN} ещё</span>
-                        {/if}
-                    </span>
-                </div>
+                <button class="result-card" onclick={() => onRuleClick?.(rule.id, rule.type)}>
+                    <ServiceIcon name={rule.name} size={32} />
+                    <div class="result-body">
+                        <div class="result-title">
+                            <span class="result-led" class:led-on={rule.enabled} class:led-off={!rule.enabled}></span>
+                            <span class="result-name">{rule.name}</span>
+                        </div>
+                        <div class="result-meta">
+                            {#if rule.domainCount > 0}
+                                <span>{rule.domainCount} доменов</span>
+                            {/if}
+                            {#if rule.sourceSummary}
+                                <span>{rule.sourceSummary}</span>
+                            {/if}
+                            {#if rule.tunnelName}
+                                <span class="result-tunnel">&rarr; <code>{rule.tunnelName}</code></span>
+                            {/if}
+                        </div>
+                        <div class="result-match">
+                            {rule.matches.slice(0, MAX_SHOWN).join(', ')}
+                            {#if rule.totalMatches > MAX_SHOWN}
+                                <span class="result-more">+{rule.totalMatches - MAX_SHOWN} ещё</span>
+                            {/if}
+                        </div>
+                    </div>
+                    <span class="result-arrow">&rsaquo;</span>
+                </button>
             {/each}
         </div>
     {/if}
@@ -53,19 +56,35 @@
         <div class="results-group">
             <div class="results-group-title">IP-правила</div>
             {#each ipResults as rule}
-                <div class="result-item">
-                    <svg class="result-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                        <rect x="2" y="2" width="20" height="20" rx="2"/>
-                        <path d="M7 8h10M7 12h10M7 16h6"/>
-                    </svg>
-                    <span class="result-rule-name">{rule.name}</span>
-                    <span class="result-matches">
-                        {rule.matches.slice(0, MAX_SHOWN).join(', ')}
-                        {#if rule.totalMatches > MAX_SHOWN}
-                            <span class="result-more">+{rule.totalMatches - MAX_SHOWN} ещё</span>
-                        {/if}
-                    </span>
-                </div>
+                <button class="result-card" onclick={() => onRuleClick?.(rule.id, rule.type)}>
+                    <div class="result-icon-box result-icon-ip">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                            <rect x="2" y="2" width="20" height="20" rx="2"/>
+                            <path d="M7 8h10M7 12h10M7 16h6"/>
+                        </svg>
+                    </div>
+                    <div class="result-body">
+                        <div class="result-title">
+                            <span class="result-led" class:led-on={rule.enabled} class:led-off={!rule.enabled}></span>
+                            <span class="result-name">{rule.name}</span>
+                        </div>
+                        <div class="result-meta">
+                            {#if rule.sourceSummary}
+                                <span>{rule.sourceSummary}</span>
+                            {/if}
+                            {#if rule.tunnelName}
+                                <span class="result-tunnel">&rarr; <code>{rule.tunnelName}</code></span>
+                            {/if}
+                        </div>
+                        <div class="result-match">
+                            {rule.matches.slice(0, MAX_SHOWN).join(', ')}
+                            {#if rule.totalMatches > MAX_SHOWN}
+                                <span class="result-more">+{rule.totalMatches - MAX_SHOWN} ещё</span>
+                            {/if}
+                        </div>
+                    </div>
+                    <span class="result-arrow">&rsaquo;</span>
+                </button>
             {/each}
         </div>
     {/if}
@@ -80,48 +99,57 @@
     {/if}
 
     {#if resolveMatch}
-        <div class="results-group">
+        <div class="results-group resolve-group">
             <div class="results-group-title">
-                Резолв: {resolveMatch.domain} → {resolveMatch.ips.join(', ')}
+                Резолв: {resolveMatch.domain} &rarr; <span class="resolve-ips">{resolveMatch.ips.join(', ')}</span>
             </div>
             {#if resolveMatch.rules.length > 0}
                 {#each resolveMatch.rules as rule}
-                    <div class="result-item">
+                    <button class="result-card" onclick={() => onRuleClick?.(rule.id, rule.type)}>
                         {#if rule.type === 'dns'}
-                            <svg class="result-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                                <circle cx="12" cy="12" r="10"/>
-                                <line x1="2" y1="12" x2="22" y2="12"/>
-                                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-                            </svg>
+                            <ServiceIcon name={rule.name} size={32} />
                         {:else}
-                            <svg class="result-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                                <rect x="2" y="2" width="20" height="20" rx="2"/>
-                                <path d="M7 8h10M7 12h10M7 16h6"/>
-                            </svg>
+                            <div class="result-icon-box result-icon-ip">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                    <rect x="2" y="2" width="20" height="20" rx="2"/>
+                                    <path d="M7 8h10M7 12h10M7 16h6"/>
+                                </svg>
+                            </div>
                         {/if}
-                        <span class="result-rule-name">{rule.name}</span>
-                        <span class="result-matches">
-                            попадает в {rule.matches.slice(0, MAX_SHOWN).join(', ')}
-                            {#if rule.totalMatches > MAX_SHOWN}
-                                <span class="result-more">+{rule.totalMatches - MAX_SHOWN} ещё</span>
-                            {/if}
-                        </span>
-                    </div>
+                        <div class="result-body">
+                            <div class="result-title">
+                                <span class="result-led" class:led-on={rule.enabled} class:led-off={!rule.enabled}></span>
+                                <span class="result-name">{rule.name}</span>
+                            </div>
+                            <div class="result-meta">
+                                {#if rule.tunnelName}
+                                    <span class="result-tunnel">&rarr; <code>{rule.tunnelName}</code></span>
+                                {/if}
+                            </div>
+                            <div class="result-match">
+                                попадает в {rule.matches.slice(0, MAX_SHOWN).join(', ')}
+                                {#if rule.totalMatches > MAX_SHOWN}
+                                    <span class="result-more">+{rule.totalMatches - MAX_SHOWN} ещё</span>
+                                {/if}
+                            </div>
+                        </div>
+                        <span class="result-arrow">&rsaquo;</span>
+                    </button>
                 {/each}
             {:else}
-                <div class="result-item result-empty">Не попадает ни в одну подсеть</div>
+                <div class="result-empty">Не попадает ни в одну подсеть</div>
             {/if}
         </div>
     {/if}
 
     {#if resolveError}
         <div class="results-group">
-            <div class="result-item result-error">{resolveError}</div>
+            <div class="result-error">{resolveError}</div>
         </div>
     {/if}
 
     {#if dnsResults.length === 0 && ipResults.length === 0 && !resolving && !resolveMatch && !resolveError}
-        <div class="result-item result-empty">Не найдено ни в одном правиле</div>
+        <div class="result-empty">Не найдено ни в одном правиле</div>
     {/if}
 </div>
 
@@ -132,28 +160,24 @@
         right: 0;
         top: 100%;
         z-index: 50;
-        background: var(--color-surface-100);
-        border: 1px solid var(--color-surface-300);
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
         border-radius: 0 0 8px 8px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-        max-height: 400px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+        max-height: 450px;
         overflow-y: auto;
+        padding: 6px;
     }
 
     .results-group {
-        padding: 4px 0;
-        border-bottom: 1px solid var(--color-surface-200);
-    }
-
-    .results-group:last-child {
-        border-bottom: none;
+        margin-bottom: 4px;
     }
 
     .results-group-title {
-        padding: 6px 12px;
-        font-size: 0.75rem;
+        padding: 4px 8px;
+        font-size: 0.6875rem;
         font-weight: 600;
-        color: var(--color-surface-500);
+        color: var(--text-muted);
         text-transform: uppercase;
         letter-spacing: 0.05em;
     }
@@ -167,8 +191,8 @@
     .spinner-sm {
         width: 14px;
         height: 14px;
-        border: 2px solid var(--color-surface-300);
-        border-top-color: var(--color-primary-500);
+        border: 2px solid var(--border);
+        border-top-color: var(--accent);
         border-radius: 50%;
         animation: spin 0.6s linear infinite;
     }
@@ -177,47 +201,143 @@
         to { transform: rotate(360deg); }
     }
 
-    .result-item {
+    .result-card {
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 8px 12px;
-        font-size: 0.875rem;
+        gap: 10px;
+        padding: 10px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: border-color 0.15s;
+        width: 100%;
+        text-align: left;
+        font: inherit;
+        color: inherit;
+        margin-bottom: 4px;
     }
 
-    .result-item:hover {
-        background: var(--color-surface-200);
+    .result-card:hover {
+        border-color: var(--accent);
     }
 
-    .result-icon {
+    .result-card:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: -2px;
+    }
+
+    .result-icon-box {
+        width: 32px;
+        height: 32px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         flex-shrink: 0;
-        color: var(--color-surface-400);
     }
 
-    .result-rule-name {
-        font-weight: 500;
+    .result-icon-ip {
+        background: rgba(34,197,94,0.12);
+        color: var(--success, #22c55e);
+    }
+
+    .result-body {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .result-title {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.8125rem;
+        font-weight: 600;
+    }
+
+    .result-led {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+
+    .led-on {
+        background: var(--success, #22c55e);
+        box-shadow: 0 0 4px var(--success, #22c55e);
+    }
+
+    .led-off {
+        background: var(--text-muted);
+    }
+
+    .result-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
         white-space: nowrap;
-        color: var(--color-surface-900);
     }
 
-    .result-matches {
-        color: var(--color-surface-500);
+    .result-meta {
+        display: flex;
+        gap: 8px;
+        font-size: 0.6875rem;
+        color: var(--text-muted);
+        margin-top: 1px;
+        flex-wrap: wrap;
+    }
+
+    .result-tunnel code {
+        background: rgba(122,162,247,0.1);
+        color: var(--accent);
+        padding: 0 4px;
+        border-radius: 3px;
+        font-size: 0.625rem;
+        font-family: var(--font-mono, monospace);
+    }
+
+    .result-match {
+        font-size: 0.6875rem;
+        color: var(--text-secondary);
+        margin-top: 2px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
     }
 
     .result-more {
-        color: var(--color-primary-500);
+        color: var(--accent);
         font-weight: 500;
     }
 
+    .result-arrow {
+        color: var(--text-muted);
+        flex-shrink: 0;
+        font-size: 1.25rem;
+        line-height: 1;
+    }
+
+    .resolve-group {
+        background: rgba(122,162,247,0.03);
+        border-radius: 6px;
+        padding: 4px;
+    }
+
+    .resolve-ips {
+        font-family: var(--font-mono, monospace);
+        color: var(--accent);
+        font-size: 0.6875rem;
+    }
+
     .result-empty {
-        color: var(--color-surface-400);
+        padding: 12px;
+        color: var(--text-muted);
         font-style: italic;
+        font-size: 0.8125rem;
     }
 
     .result-error {
-        color: var(--color-error-500);
+        padding: 8px 12px;
+        color: var(--error, #ef4444);
+        font-size: 0.8125rem;
     }
 </style>

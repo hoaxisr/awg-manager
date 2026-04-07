@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/response"
@@ -36,6 +37,7 @@ type PingCheckHandler struct {
 	tunnels *storage.AWGTunnelStore
 	nwgOp   *nwg.OperatorNativeWG
 	log     *logging.ScopedLogger
+	bus     *events.Bus
 }
 
 // NewPingCheckHandler creates a new ping check handler.
@@ -46,6 +48,34 @@ func NewPingCheckHandler(service PingCheckService, tunnels *storage.AWGTunnelSto
 		nwgOp:   nwgOp,
 		log:     logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubPingcheck),
 	}
+}
+
+// SetEventBus sets the event bus for SSE snapshot publishing.
+func (h *PingCheckHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
+
+// PublishSnapshot publishes a full pingcheck snapshot via SSE.
+func (h *PingCheckHandler) PublishSnapshot() {
+	if h.bus == nil {
+		return
+	}
+	statuses, logs := h.collectAll()
+	h.bus.Publish("snapshot:pingcheck", map[string]interface{}{
+		"statuses": statuses,
+		"logs":     logs,
+	})
+}
+
+// collectAll builds pingcheck statuses and logs for API response and SSE snapshots.
+func (h *PingCheckHandler) collectAll() (statuses []pingcheck.TunnelStatus, logs []pingcheck.LogEntry) {
+	statuses = h.service.GetStatus()
+	if statuses == nil {
+		statuses = []pingcheck.TunnelStatus{}
+	}
+	logs = h.service.GetLogs()
+	if logs == nil {
+		logs = []pingcheck.LogEntry{}
+	}
+	return statuses, logs
 }
 
 // GetStatus returns the current status of all monitored tunnels.
@@ -60,13 +90,13 @@ func (h *PingCheckHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := h.service.GetStatus()
-	if status == nil {
-		status = []pingcheck.TunnelStatus{}
+	statuses := h.service.GetStatus()
+	if statuses == nil {
+		statuses = []pingcheck.TunnelStatus{}
 	}
 	response.Success(w, map[string]interface{}{
 		"enabled": h.service.IsEnabled(),
-		"tunnels": status,
+		"tunnels": statuses,
 	})
 }
 
@@ -94,6 +124,9 @@ func (h *PingCheckHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	} else {
 		logs = h.service.GetLogs()
 	}
+	if logs == nil {
+		logs = []pingcheck.LogEntry{}
+	}
 
 	response.Success(w, logs)
 }
@@ -112,6 +145,7 @@ func (h *PingCheckHandler) ClearLogs(w http.ResponseWriter, r *http.Request) {
 
 	h.service.ClearLogs()
 	h.log.Info("pingcheck", "", "Ping check logs cleared")
+	h.PublishSnapshot()
 
 	response.Success(w, map[string]string{"message": "Logs cleared"})
 }
@@ -240,6 +274,7 @@ func (h *PingCheckHandler) ConfigureTunnelPingCheck(w http.ResponseWriter, r *ht
 	h.service.StartMonitoring(id, stored.Name)
 
 	h.log.Info("ping-check-configure", id, "Ping-check configured: host="+cfg.Host)
+	h.PublishSnapshot()
 
 	response.Success(w, map[string]bool{"success": true})
 }
@@ -285,6 +320,7 @@ func (h *PingCheckHandler) RemoveTunnelPingCheck(w http.ResponseWriter, r *http.
 	_ = h.tunnels.Save(stored)
 
 	h.log.Info("ping-check-remove", id, "Ping-check removed")
+	h.PublishSnapshot()
 
 	response.Success(w, map[string]bool{"success": true})
 }

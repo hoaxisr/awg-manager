@@ -18,9 +18,6 @@ func noopLogger() *logger.Logger {
 // Reconcile calls ShowObjectGroupFQDN, ShowDnsProxyRoute, RCIPost, Save — all no-op here.
 type noopNDMS struct{}
 
-func (n *noopNDMS) CreateOpkgTun(ctx context.Context, name, description string) error {
-	return nil
-}
 func (n *noopNDMS) DeleteOpkgTun(ctx context.Context, name string) error      { return nil }
 func (n *noopNDMS) OpkgTunExists(ctx context.Context, name string) bool       { return false }
 func (n *noopNDMS) ShowInterface(ctx context.Context, name string) (string, error) {
@@ -35,19 +32,11 @@ func (n *noopNDMS) SetMTU(ctx context.Context, name string, mtu int) error     {
 func (n *noopNDMS) SetDescription(ctx context.Context, name, description string) error {
 	return nil
 }
-func (n *noopNDMS) InterfaceUp(ctx context.Context, name string) error         { return nil }
-func (n *noopNDMS) InterfaceDown(ctx context.Context, name string) error       { return nil }
-func (n *noopNDMS) SetIPGlobal(ctx context.Context, name string) error         { return nil }
-func (n *noopNDMS) SetDefaultRoute(ctx context.Context, name string) error     { return nil }
-func (n *noopNDMS) RemoveDefaultRoute(ctx context.Context, name string) error  { return nil }
-func (n *noopNDMS) RemoveHostRoute(ctx context.Context, host string) error     { return nil }
-func (n *noopNDMS) SetIPv6DefaultRoute(ctx context.Context, name string) error { return nil }
-func (n *noopNDMS) RemoveIPv6DefaultRoute(ctx context.Context, name string)    {}
+func (n *noopNDMS) InterfaceUp(ctx context.Context, name string) error        { return nil }
+func (n *noopNDMS) SetDefaultRoute(ctx context.Context, name string) error    { return nil }
+func (n *noopNDMS) RemoveDefaultRoute(ctx context.Context, name string) error { return nil }
 func (n *noopNDMS) GetDefaultGatewayInterface(ctx context.Context) (string, error) {
 	return "", nil
-}
-func (n *noopNDMS) GetInterfaceAddress(ctx context.Context, iface string) (string, string, error) {
-	return "", "", nil
 }
 func (n *noopNDMS) QueryAllWANInterfaces(ctx context.Context) ([]wan.Interface, error) {
 	return nil, nil
@@ -55,9 +44,6 @@ func (n *noopNDMS) QueryAllWANInterfaces(ctx context.Context) ([]wan.Interface, 
 func (n *noopNDMS) DumpIPv4Routes(ctx context.Context) string { return "" }
 func (n *noopNDMS) HasWANIPv6(ctx context.Context, ifaceName string) bool {
 	return false
-}
-func (n *noopNDMS) GetHotspotClients(ctx context.Context) ([]ndms.HotspotClient, error) {
-	return nil, nil
 }
 func (n *noopNDMS) GetSystemName(ctx context.Context, ndmsName string) string { return ndmsName }
 func (n *noopNDMS) Save(ctx context.Context) error                           { return nil }

@@ -6,6 +6,15 @@
 	import { auth, isAuthenticated, isLoading } from '$lib/stores/auth';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
+	import { connectSSE } from '$lib/api/events';
+	import { serverOnline } from '$lib/stores/events';
+	import { tunnels } from '$lib/stores/tunnels';
+	import { logEntries } from '$lib/stores/logs';
+	import { pingCheckStatus } from '$lib/stores/pingcheck';
+	import { servers } from '$lib/stores/servers';
+	import { routing } from '$lib/stores/routing';
+	import { systemInfo } from '$lib/stores/system';
+	import { feedTraffic } from '$lib/stores/traffic';
 	import type { UpdateInfo } from '$lib/types';
 	import LoginForm from '$lib/components/LoginForm.svelte';
 	import { Modal } from '$lib/components/ui';
@@ -15,17 +24,13 @@
 
 	let mobileMenuOpen = $state(false);
 	let donateModalOpen = $state(false);
+	let booting = $state(false);
 
 	function closeMobileMenu() {
 		mobileMenuOpen = false;
 	}
 
-	let backendOffline = $state(false);
-
-	let knownInstanceId = $state('');
-	let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
-	let offlinePollInterval: ReturnType<typeof setInterval> | null = null;
-	let consecutiveErrors = 0;
+	let backendOffline = $derived(!$serverOnline);
 
 	let updateInfo = $state<UpdateInfo | null>(null);
 	const currentVersion = $derived(updateInfo?.currentVersion ?? '');
@@ -37,80 +42,106 @@
 	);
 	const hasUpdate = $derived(updateInfo?.available ?? false);
 
-	const HEARTBEAT_MS = 30_000;
-	const OFFLINE_POLL_MS = 2_000;
-	const MAX_CONSECUTIVE_ERRORS = 3;
+	let disconnectSSE: (() => void) | null = null;
 
-	function clearAllIntervals() {
-		if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
-		if (offlinePollInterval) { clearInterval(offlinePollInterval); offlinePollInterval = null; }
-	}
+	let knownInstanceId = '';
 
-	function startHeartbeat() {
-		if (heartbeatInterval) return;
-		consecutiveErrors = 0;
-		heartbeatInterval = setInterval(async () => {
-			try {
-				const status = await api.getBootStatus();
-				consecutiveErrors = 0;
-
-				if (knownInstanceId && status.instanceId !== knownInstanceId) {
-					// Server restarted — re-check auth
-					knownInstanceId = status.instanceId;
-					auth.checkStatus();
+	function startSSE() {
+		if (disconnectSSE) return;
+		disconnectSSE = connectSSE({
+			// System events
+			onSystemReady: (data) => {
+				serverOnline.set(true);
+				booting = false;
+				// Detect backend restart — force full page reload to pick up new JS
+				if (knownInstanceId && data.instanceId && knownInstanceId !== data.instanceId) {
+					location.reload();
+					return;
 				}
-			} catch {
-				consecutiveErrors++;
-				if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-					backendOffline = true;
-					stopHeartbeat();
-					startOfflinePoll();
+				knownInstanceId = data.instanceId;
+			},
+			onSystemBooting: () => {
+				serverOnline.set(true);
+				booting = true;
+			},
+			onConnected: () => {
+				serverOnline.set(true);
+			},
+			onDisconnected: () => serverOnline.set(false),
+
+			// Snapshot events
+			onSnapshotSystem: (data) => systemInfo.setSnapshot(data),
+			onSnapshotTunnels: (data) => {
+				tunnels.setSnapshot(data);
+				// Feed traffic store for system tunnels (they don't get tunnel:traffic events)
+				for (const st of data.system ?? []) {
+					if (st.status === 'up' && st.peer) {
+						feedTraffic(st.id, st.peer.rxBytes, st.peer.txBytes);
+					}
 				}
-			}
-		}, HEARTBEAT_MS);
+			},
+			onSnapshotServers: (data) => servers.setSnapshot(data),
+			onSnapshotRouting: (data) => routing.setSnapshot(data),
+			onSnapshotPingcheck: (data) => pingCheckStatus.setSnapshot(data),
+			onSnapshotLogs: (data) => logEntries.setSnapshot(data),
+
+			// Tunnel incremental
+			onTunnelState: (data) => tunnels.updateTunnelState(data.id, data.state),
+			onTunnelTraffic: (data) => {
+				tunnels.updateTraffic(data);
+				feedTraffic(data.id, data.rxBytes, data.txBytes);
+			},
+			onTunnelConnectivity: (data) => tunnels.updateConnectivity(data.id, data.connected, data.latency),
+			onTunnelCreated: () => {},
+			onTunnelDeleted: (data) => tunnels.removeFromList(data.id),
+			onTunnelUpdated: () => {},
+			onTunnelsList: (data) => tunnels.setManagedList(data),
+
+			// Server incremental
+			onServerUpdated: (data) => servers.updateAll(data),
+
+			// Routing incremental
+			onRoutingDnsUpdated: (data) => routing.setDnsRoutes(data),
+			onRoutingStaticUpdated: (data) => routing.setStaticRoutes(data),
+			onRoutingPoliciesUpdated: (data) => routing.setPolicies(data),
+			onRoutingPolicyDevicesUpdated: (data) => routing.setPolicyDevices(data),
+			onRoutingPolicyInterfacesUpdated: (data) => routing.setPolicyInterfaces(data),
+			onRoutingClientRoutesUpdated: (data) => routing.setClientRoutes(data),
+			onRoutingTunnelsUpdated: (data) => routing.setRoutingTunnels(data),
+			onDnsRouteFailover: (data) => {
+				if (data.action === 'switched') {
+					notifications.warning(`DNS-маршрут "${data.listName}" переключён: ${data.fromTunnel || '—'} → ${data.toTunnel || 'нет резерва'}`);
+				} else if (data.action === 'restored') {
+					notifications.success(`DNS-маршрут "${data.listName}" восстановлен: → ${data.toTunnel || '—'}`);
+				} else if (data.action === 'error') {
+					notifications.error(`Ошибка переключения DNS-маршрута "${data.listName}": ${data.error || 'неизвестная ошибка'}`);
+				}
+			},
+
+			// Logs & pingcheck incremental
+			onLogEntry: (data) => logEntries.append(data),
+			onPingCheckState: (data) => pingCheckStatus.updateStatus(data),
+			onPingCheckLog: (data) => pingCheckStatus.appendLog(data),
+		});
 	}
 
-	function stopHeartbeat() {
-		if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
+	function stopSSE() {
+		if (disconnectSSE) {
+			disconnectSSE();
+			disconnectSSE = null;
+		}
 	}
 
-	function startOfflinePoll() {
-		if (offlinePollInterval) return;
-		offlinePollInterval = setInterval(async () => {
-			try {
-				const status = await api.getBootStatus();
-				backendOffline = false;
-				if (offlinePollInterval) { clearInterval(offlinePollInterval); offlinePollInterval = null; }
-				knownInstanceId = status.instanceId;
-				auth.checkStatus();
-				startHeartbeat();
-			} catch {
-				// Server still offline — continue polling
-			}
-		}, OFFLINE_POLL_MS);
-	}
-
-	// Wire up connection-lost callback from API client.
-	// Verify with a direct ping before showing the offline screen —
-	// a single failed request (e.g. during backend restart) shouldn't flash the offline UI.
-	let verifyingConnection = false;
-	api.setConnectionLostHandler(async () => {
-		if (backendOffline || verifyingConnection) return;
-		verifyingConnection = true;
-		try {
-			await api.getBootStatus();
-			// Server is reachable — transient error, ignore
-		} catch {
-			// Server really is down
-			backendOffline = true;
-			stopHeartbeat();
-			startOfflinePoll();
-		} finally {
-			verifyingConnection = false;
+	// SSE starts/stops reactively based on auth state
+	$effect(() => {
+		if ($isAuthenticated) {
+			startSSE();
+		} else {
+			stopSSE();
 		}
 	});
 
-	// Fetch update info when authenticated (on initial load or after login)
+	// Fetch update info when authenticated
 	$effect(() => {
 		if ($isAuthenticated) {
 			api.checkUpdate().then(info => updateInfo = info).catch(() => null);
@@ -119,27 +150,13 @@
 		}
 	});
 
-	onMount(() => {
+	onMount(async () => {
 		theme.init();
-
-		(async () => {
-			try {
-				const status = await api.getBootStatus();
-				knownInstanceId = status.instanceId;
-			} catch {
-				// Backend unavailable on startup — show offline screen
-				backendOffline = true;
-				startOfflinePoll();
-				return;
-			}
-
-			await auth.checkStatus();
-			startHeartbeat();
-		})();
+		await auth.checkStatus();
 	});
 
 	onDestroy(() => {
-		clearAllIntervals();
+		stopSSE();
 	});
 </script>
 
@@ -154,6 +171,11 @@
 		<p class="offline-status">Не удалось подключиться к AWG Manager</p>
 		<div class="offline-spinner"></div>
 		<p class="offline-hint">Переподключение...</p>
+	</div>
+{:else if booting}
+	<div class="loading-screen">
+		<div class="loading-spinner"></div>
+		<p style="color: var(--text-muted); font-size: 0.875rem; margin-top: 1rem;">Роутер загружается...</p>
 	</div>
 {:else if $isLoading}
 	<div class="loading-screen">
@@ -190,6 +212,7 @@
 					<a href="/routing" class="nav-link" class:active={$page.url.pathname.startsWith('/routing')}>Маршрутизация</a>
 					<a href="/logs" class="nav-link" class:active={$page.url.pathname.startsWith('/logs')}>Логи</a>
 					<a href="/diagnostics" class="nav-link" class:active={$page.url.pathname.startsWith('/diagnostics')}>Диагностика</a>
+					<a href="/connections" class="nav-link" class:active={$page.url.pathname.startsWith('/connections')}>Соединения</a>
 					<a href="/settings" class="nav-link" class:active={$page.url.pathname.startsWith('/settings')}>Настройки</a>
 				</nav>
 			{:else}
@@ -279,6 +302,7 @@
 				<a href="/routing" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/routing')} onclick={closeMobileMenu}>Маршрутизация</a>
 				<a href="/logs" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/logs')} onclick={closeMobileMenu}>Логи</a>
 				<a href="/diagnostics" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/diagnostics')} onclick={closeMobileMenu}>Диагностика</a>
+				<a href="/connections" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/connections')} onclick={closeMobileMenu}>Соединения</a>
 				<a href="/settings" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/settings')} onclick={closeMobileMenu}>Настройки</a>
 			</nav>
 		{/if}
@@ -331,6 +355,7 @@
 	.loading-screen {
 		min-height: 100vh;
 		display: flex;
+		flex-direction: column;
 		align-items: center;
 		justify-content: center;
 		background: var(--bg-primary);

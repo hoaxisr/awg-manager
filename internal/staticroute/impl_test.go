@@ -31,6 +31,7 @@ func (m *mockCatalog) Exists(_ context.Context, tunnelID string) bool { return t
 func (m *mockCatalog) GetKernelIface(_ context.Context, tunnelID string) (string, bool) {
 	return "", false
 }
+func (m *mockCatalog) SnapshotAll(_ context.Context) *routing.RoutingSnapshot { return nil }
 
 func TestParseCIDR(t *testing.T) {
 	tests := []struct {

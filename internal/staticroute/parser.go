@@ -68,7 +68,8 @@ func ParseBat(content string) (subnets []string, parseErrors []string) {
 			continue
 		}
 		seen[normalized] = struct{}{}
-		subnets = append(subnets, normalized)
+		comment := extractBatComment(fields[6:])
+		subnets = append(subnets, FormatSubnetComment(normalized, comment))
 	}
 
 	sort.Strings(subnets)
@@ -110,4 +111,17 @@ func maskToCIDR(mask string) (int, bool) {
 	}
 
 	return count, true
+}
+
+// extractBatComment scans fields for a token starting with "!" and returns
+// everything from "!" onwards joined as the comment string.
+func extractBatComment(fields []string) string {
+	for i, f := range fields {
+		if strings.HasPrefix(f, "!") {
+			// Join this and all subsequent fields as the comment
+			combined := strings.Join(fields[i:], " ")
+			return strings.TrimSpace(combined[1:]) // strip leading "!"
+		}
+	}
+	return ""
 }

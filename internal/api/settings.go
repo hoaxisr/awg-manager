@@ -17,10 +17,12 @@ type PingCheckToggleService interface {
 
 // SettingsHandler handles settings API endpoints.
 type SettingsHandler struct {
-	store     *storage.SettingsStore
-	tunnels   *storage.AWGTunnelStore
-	pingCheck PingCheckToggleService
-	log       *logging.ScopedLogger
+	store             *storage.SettingsStore
+	tunnels           *storage.AWGTunnelStore
+	pingCheck         PingCheckToggleService
+	pingCheckSnapshot func()
+	logsSnapshot      func()
+	log               *logging.ScopedLogger
 }
 
 // NewSettingsHandler creates a new settings handler.
@@ -40,6 +42,12 @@ func (h *SettingsHandler) SetTunnelStore(tunnels *storage.AWGTunnelStore) {
 func (h *SettingsHandler) SetPingCheckService(svc PingCheckToggleService) {
 	h.pingCheck = svc
 }
+
+// SetPingCheckSnapshot sets the function that publishes a pingcheck snapshot.
+func (h *SettingsHandler) SetPingCheckSnapshot(fn func()) { h.pingCheckSnapshot = fn }
+
+// SetLogsSnapshot sets the function that publishes a logs snapshot.
+func (h *SettingsHandler) SetLogsSnapshot(fn func()) { h.logsSnapshot = fn }
 
 // Get returns current settings.
 func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -148,6 +156,13 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		} else {
 			h.log.Info("memory-saving", "", "Memory saving enabled")
 		}
+	}
+
+	if h.pingCheckSnapshot != nil && (toggleEnabled || toggleDisabled) {
+		h.pingCheckSnapshot()
+	}
+	if h.logsSnapshot != nil && loggingNowEnabled != loggingWasEnabled {
+		h.logsSnapshot()
 	}
 
 	response.Success(w, settings)

@@ -38,21 +38,6 @@ func TestCmdRemoveDefaultRoute(t *testing.T) {
 		`{"ip":{"route":{"default":true,"interface":"Wireguard0","no":true}}}`)
 }
 
-func TestCmdSetIPv6DefaultRoute(t *testing.T) {
-	assertJSON(t, CmdSetIPv6DefaultRoute("Wireguard0"),
-		`{"ipv6":{"route":{"default":true,"interface":"Wireguard0"}}}`)
-}
-
-func TestCmdRemoveIPv6DefaultRoute(t *testing.T) {
-	assertJSON(t, CmdRemoveIPv6DefaultRoute("Wireguard0"),
-		`{"ipv6":{"route":{"default":true,"interface":"Wireguard0","no":true}}}`)
-}
-
-func TestCmdRemoveIPv6HostRoute(t *testing.T) {
-	assertJSON(t, CmdRemoveIPv6HostRoute("2001:db8::1"),
-		`{"ipv6":{"route":{"host":"2001:db8::1","no":true}}}`)
-}
-
 func TestCmdInterfaceCreate(t *testing.T) {
 	assertJSON(t, CmdInterfaceCreate("Wireguard0"),
 		`{"interface":{"name":"Wireguard0"}}`)
@@ -239,18 +224,28 @@ func TestCmdWireguardPeerDisconnect(t *testing.T) {
 }
 
 func TestCmdAddStaticRoute(t *testing.T) {
-	assertJSON(t, CmdAddStaticRoute("10.0.0.0", "255.255.255.0", "OpkgTun10", false),
+	assertJSON(t, CmdAddStaticRoute("10.0.0.0", "255.255.255.0", "OpkgTun10", false, ""),
 		`{"ip":{"route":{"auto":true,"interface":"OpkgTun10","mask":"255.255.255.0","network":"10.0.0.0"}}}`)
 }
 
 func TestCmdAddStaticRoute_Reject(t *testing.T) {
-	assertJSON(t, CmdAddStaticRoute("10.0.0.0", "255.255.255.0", "OpkgTun10", true),
+	assertJSON(t, CmdAddStaticRoute("10.0.0.0", "255.255.255.0", "OpkgTun10", true, ""),
 		`{"ip":{"route":{"auto":true,"interface":"OpkgTun10","mask":"255.255.255.0","network":"10.0.0.0","reject":true}}}`)
 }
 
+func TestCmdAddStaticRoute_Comment(t *testing.T) {
+	assertJSON(t, CmdAddStaticRoute("10.0.0.0", "255.255.255.0", "OpkgTun10", false, "my route"),
+		`{"ip":{"route":{"auto":true,"comment":"my route","interface":"OpkgTun10","mask":"255.255.255.0","network":"10.0.0.0"}}}`)
+}
+
 func TestCmdAddHostRoute(t *testing.T) {
-	assertJSON(t, CmdAddHostRoute("1.2.3.4", "PPPoE0", false),
+	assertJSON(t, CmdAddHostRoute("1.2.3.4", "PPPoE0", false, ""),
 		`{"ip":{"route":{"auto":true,"host":"1.2.3.4","interface":"PPPoE0"}}}`)
+}
+
+func TestCmdAddHostRoute_Comment(t *testing.T) {
+	assertJSON(t, CmdAddHostRoute("1.2.3.4", "PPPoE0", false, "endpoint"),
+		`{"ip":{"route":{"auto":true,"comment":"endpoint","host":"1.2.3.4","interface":"PPPoE0"}}}`)
 }
 
 func TestCmdRemoveStaticRoute(t *testing.T) {

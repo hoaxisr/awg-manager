@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import type { TunnelListItem } from '$lib/types';
 	import { Toggle } from '$lib/components/ui';
+	import { tunnels } from '$lib/stores/tunnels';
 	import { api } from '$lib/api/client';
 	import ConnectivitySettingsModal from './ConnectivitySettingsModal.svelte';
 
@@ -62,82 +62,34 @@
 		}
 	});
 
-	// Connectivity state
-	type ConnectivityState = 'idle' | 'checking' | 'connected' | 'disconnected';
-	let connectivity = $state<ConnectivityState>('idle');
-	let latencyMs = $state<number | null>(null);
-	let connectivityPromise: Promise<void> | null = null; // Защита от параллельных вызовов
+	// Connectivity from SSE-driven store
+	const connMap = tunnels.connectivityMap;
+	let connData = $derived(($connMap).get(tunnel.id));
 
-	async function checkConnectivity(): Promise<void> {
-		if (tunnel.status !== 'running' && tunnel.status !== 'broken') {
-			connectivity = 'idle';
-			latencyMs = null;
-			return;
-		}
+	let isActive = $derived(tunnel.status === 'running' || tunnel.status === 'broken');
 
-		// Если проверка уже в процессе — просто возвращаем существующий Promise (блокируем спам кликами)
-		if (connectivityPromise) return connectivityPromise;
-
-		connectivity = 'checking';
-		connectivityPromise = (async () => {
-			try {
-				const result = await api.checkConnectivity(tunnel.id);
-				if (result.connected) {
-					connectivity = 'connected';
-					latencyMs = result.latency ?? null;
-				} else {
-					connectivity = 'disconnected';
-					latencyMs = null;
-				}
-			} catch {
-				connectivity = 'disconnected';
-				latencyMs = null;
-			} finally {
-				connectivityPromise = null;
-			}
-		})();
-		
-		return connectivityPromise;
-	}
-
-	// Extract primitives via $derived to avoid $effect re-running on every tunnel poll
-	let tunnelStatus = $derived(tunnel?.status ?? '');
-	let tunnelHasHandshake = $derived(!!tunnel?.lastHandshake);
-
-	$effect(() => {
-		const status = tunnelStatus;
-		const hasHandshake = tunnelHasHandshake;
-		const disabled = isCheckDisabled;
-
-		const isActive = status === 'running' || status === 'broken';
-
-		if (!isActive) {
-			connectivity = 'idle';
-			latencyMs = null;
-			return;
-		}
-
-		if (disabled) {
-			connectivity = 'idle';
-			latencyMs = null;
-			return;
-		}
-
-		// Wait for handshake before first connectivity check.
-		// After boot, the tunnel may be "running" but handshake takes a few seconds.
-		// Without this, the first check fails → red arrow persists for 60s.
-		if (!hasHandshake) {
-			connectivity = 'checking';
-			return;
-		}
-
-		untrack(() => checkConnectivity());
-		const interval = setInterval(checkConnectivity, 60000);
-
-		return () => {
-			clearInterval(interval);
-		};
+	type ConnectivityState = 'idle' | 'connected' | 'disconnected' | 'checking';
+	let connectivity = $derived.by<ConnectivityState>(() => {
+		if (!isActive || isCheckDisabled) return 'idle';
+		if (!connData) return 'checking'; // waiting for handshake + first check
+		return connData.connected ? 'connected' : 'disconnected';
 	});
+	let latencyMs = $derived(connData?.latency ?? null);
+
+	// Manual connectivity check (one-shot)
+	let manualChecking = $state(false);
+	async function checkConnectivityManual(): Promise<void> {
+		if (manualChecking) return;
+		manualChecking = true;
+		try {
+			const result = await api.checkConnectivity(tunnel.id);
+			tunnels.updateConnectivity(tunnel.id, result.connected, result.latency ?? null);
+		} catch {
+			tunnels.updateConnectivity(tunnel.id, false, null);
+		} finally {
+			manualChecking = false;
+		}
+	}
 </script>
 
 <div class="flex justify-between items-start gap-3">
@@ -206,15 +158,15 @@
 						class="connectivity-btn"
 						class:connected={connectivity === 'connected'}
 						class:disconnected={connectivity === 'disconnected'}
-						class:checking={connectivity === 'checking'}
-						onclick={checkConnectivity}
+						class:checking={manualChecking}
+						onclick={checkConnectivityManual}
 						title={connectivity === 'connected'
 							? 'Связь OK'
 							: connectivity === 'disconnected'
 								? 'Нет связи. Нажмите для проверки'
 								: 'Проверка связи...'}
 					>
-						{#if connectivity === 'checking'}
+						{#if manualChecking}
 							<span class="connectivity-spinner"></span>
 						{:else if connectivity === 'connected'}
 							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">

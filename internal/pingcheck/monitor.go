@@ -5,6 +5,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
@@ -67,7 +68,7 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 		m.restartCount = 0
 		s.mu.Unlock()
 
-		s.logBuffer.Add(LogEntry{
+		s.addLogEntry(LogEntry{
 			Timestamp:  now,
 			TunnelID:   m.tunnelID,
 			TunnelName: m.tunnelName,
@@ -85,7 +86,7 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 	failCount := m.failCount
 	s.mu.Unlock()
 
-	s.logBuffer.Add(LogEntry{
+	s.addLogEntry(LogEntry{
 		Timestamp:  now,
 		TunnelID:   m.tunnelID,
 		TunnelName: m.tunnelName,
@@ -108,6 +109,14 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName string) {
 	s.logInfo(m.tunnelID, fmt.Sprintf("Connectivity lost (%d/%d fails), toggling link",
 		m.failCount, config.FailThreshold))
+
+	if s.bus != nil {
+		s.bus.Publish("pingcheck:state", events.PingCheckStateEvent{
+			TunnelID:  m.tunnelID,
+			Status:    "fail",
+			FailCount: m.failCount,
+		})
+	}
 
 	// 1. Re-resolve DNS endpoint before link down (while DNS may still work)
 	stored, _ := s.tunnels.Get(m.tunnelID)
@@ -147,11 +156,19 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 	if ok {
 		stateChange = "recovered"
 		s.logInfo(m.tunnelID, "Link toggle successful, handshake restored")
+
+		if s.bus != nil {
+			s.bus.Publish("pingcheck:state", events.PingCheckStateEvent{
+				TunnelID:  m.tunnelID,
+				Status:    "pass",
+				FailCount: 0,
+			})
+		}
 	} else {
 		s.logWarn(m.tunnelID, fmt.Sprintf("Link toggle: no handshake, backoff #%d", restartCount))
 	}
 
-	s.logBuffer.Add(LogEntry{
+	s.addLogEntry(LogEntry{
 		Timestamp:   time.Now(),
 		TunnelID:    m.tunnelID,
 		TunnelName:  m.tunnelName,

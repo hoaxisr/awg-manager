@@ -11,37 +11,26 @@ import (
 )
 
 // Operator is the interface for tunnel lifecycle operations.
-// Different implementations exist for OS5 (NDMS) and OS4 (direct).
+// All operations use direct ip commands for kernel interface management.
 type Operator interface {
-	// Create creates a tunnel's NDMS/system resources without starting it.
-	// For OS5: creates OpkgTun in NDMS, sets address and MTU.
-	// For OS4: no-op (interface created by process).
+	// Create creates system resources for a tunnel without starting it.
+	// No-op for kernel tunnels (interface created by process).
 	Create(ctx context.Context, cfg tunnel.Config) error
 
-	// ColdStart creates a tunnel from scratch or recreates from wrong type.
-	// For OS5: ip link del (if exists) + ip link add amneziawg + ip addr add +
-	//   wg setconf + ip link set up + InterfaceUp + routes + firewall + Save.
-	// Used for: BootReady (tun from NDMS), NotCreated, Broken.
+	// ColdStart creates a tunnel from scratch: ip link add + ip addr add +
+	// wg setconf + ip link set up + firewall.
+	// Used for: NotCreated, Broken, boot.
 	ColdStart(ctx context.Context, cfg tunnel.Config) error
 
-	// Start brings up an existing amneziawg interface after our Stop.
+	// Start brings up an existing amneziawg interface after Stop.
 	// Interface already exists with address and WG config loaded.
-	// For OS5: ip link set up + InterfaceUp + routes + firewall + Save.
-	// Used for: Disabled (after our Stop), Dead (after PingCheck stop).
+	// ip link set up + firewall.
+	// Used for: Disabled (after Stop), Dead (after PingCheck stop).
 	Start(ctx context.Context, cfg tunnel.Config) error
 
-	// Stop brings down a tunnel without destroying the interface.
-	// ip link set down + InterfaceDown + Save.
-	// NDMS handles failover automatically. Routes/firewall stay — NDMS manages them.
+	// Stop brings down a tunnel: kills backend process + removes firewall rules.
 	// Used for: user Stop, PingCheck dead.
 	Stop(ctx context.Context, tunnelID string) error
-
-	// TeardownForRestart removes firewall, routes, DNS, and kills the backend
-	// WITHOUT changing NDMS intent (no InterfaceDown). This prevents NDMS from
-	// firing conf-layer hooks that would cause HandleUserToggle to re-stop
-	// or re-start the tunnel, creating an infinite restart loop.
-	// ColdStart is called after teardown to rebuild from scratch.
-	TeardownForRestart(ctx context.Context, tunnelID string)
 
 	// Delete completely removes a tunnel.
 	// Receives the full stored tunnel for reliable cleanup (persisted endpoint IP, etc.).
@@ -51,27 +40,18 @@ type Operator interface {
 	// Based on current state, may kill zombie processes, clean up orphaned resources, etc.
 	Recover(ctx context.Context, tunnelID string, state tunnel.StateInfo) error
 
-	// Reconcile re-applies NDMS/system configuration around an already-running process.
-	// Used when the process survived a daemon restart but NDMS state was lost.
-	// Skips process start; applies WG config, NDMS config, routing, and firewall.
+	// Reconcile re-applies system configuration around an already-running process.
+	// Used when the process survived a daemon restart.
+	// Skips process start; applies WG config, IP config, and firewall.
 	Reconcile(ctx context.Context, cfg tunnel.Config) error
-
-	// Suspend sets link down without removing the interface or changing NDMS conf.
-	// NDMS sees pending state and handles failover automatically.
-	// Routes and firewall are NOT touched — NDMS manages failover.
-	Suspend(ctx context.Context, tunnelID string) error
-
-	// Resume sets link up after Suspend.
-	// NDMS will restore routing automatically.
-	Resume(ctx context.Context, tunnelID string) error
 
 	// ApplyConfig applies a new WireGuard config to a running tunnel.
 	ApplyConfig(ctx context.Context, tunnelID, configPath string) error
 
-	// SetDefaultRoute adds a default route through the tunnel interface (no-op in kernel mode).
+	// SetDefaultRoute adds a default route through the tunnel interface.
 	SetDefaultRoute(ctx context.Context, tunnelID string) error
 
-	// RemoveDefaultRoute removes the default route through the tunnel interface (no-op in kernel mode).
+	// RemoveDefaultRoute removes the default route through the tunnel interface.
 	RemoveDefaultRoute(ctx context.Context, tunnelID string) error
 
 	// SetupEndpointRoute adds a route to the VPN endpoint via kernel device.
@@ -93,19 +73,16 @@ type Operator interface {
 	// Returns empty string if no endpoint route is tracked.
 	GetTrackedEndpointIP(tunnelID string) string
 
-	// SetMTU sets MTU on a running tunnel interface.
-	// OS5: via NDMS. OS4: via ip link set.
+	// SetMTU sets MTU on a running tunnel interface via ip link set.
 	SetMTU(ctx context.Context, tunnelID string, mtu int) error
 
-	// SyncDNS updates DNS servers on a running tunnel's NDMS interface.
-	// OS5: via NDMS SetDNS/ClearDNS + Save. OS4: no-op.
+	// SyncDNS updates DNS servers for a tunnel via RCI.
 	SyncDNS(ctx context.Context, tunnelID string, dns []string) error
 
-	// SyncAddress updates IPv4/IPv6 address on a running tunnel's NDMS interface.
-	// OS5: via NDMS SetAddress + SetIPv6Address/ClearIPv6Address + Save. OS4: no-op.
+	// SyncAddress updates IPv4/IPv6 address on a running tunnel via ip commands.
 	SyncAddress(ctx context.Context, tunnelID string, address, ipv6 string) error
 
-	// UpdateDescription updates the NDMS interface description (OS5 only, no-op for OS4).
+	// UpdateDescription updates the tunnel description in RCI.
 	UpdateDescription(ctx context.Context, tunnelID, description string) error
 
 	// GetDefaultGatewayInterface returns the current default gateway interface name.
@@ -117,12 +94,11 @@ type Operator interface {
 	// Returns empty string if no resolved ISP is tracked.
 	GetResolvedISP(tunnelID string) string
 
-	// HasWANIPv6 checks if a WAN interface has IPv6 connectivity.
-	// Uses NDMS RCI to check the ipv6 layer status (works with NDMS interface names).
+	// HasWANIPv6 checks if a WAN interface has IPv6 connectivity via RCI.
 	HasWANIPv6(ctx context.Context, ifaceName string) bool
 
-	// GetSystemName resolves an NDMS ID (e.g., "PPPoE0") to its kernel interface name
-	// (e.g., "ppp0") via NDMS RCI. Returns ndmsID unchanged if resolution fails.
+	// GetSystemName resolves a router interface ID (e.g., "PPPoE0") to its kernel
+	// interface name (e.g., "ppp0") via RCI. Returns the ID unchanged if resolution fails.
 	GetSystemName(ctx context.Context, ndmsID string) string
 
 	// SetAppLogger sets the web UI logger for operator events.

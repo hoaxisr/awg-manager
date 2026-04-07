@@ -19,7 +19,10 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
+	"github.com/hoaxisr/awg-manager/internal/connections"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
+	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 
@@ -72,6 +75,7 @@ type Server struct {
 	updaterService   *updater.Service
 	ndmsClient       ndms.Client
 	trafficHistory   *traffic.History
+	trafficCollector *traffic.Collector
 	dnsRouteService      api.DNSRouteService
 	staticRouteService   api.StaticRouteService
 	systemTunnelService  systemtunnel.Service
@@ -81,6 +85,8 @@ type Server struct {
 	accessPolicyService  accesspolicy.Service
 	clientRouteService   clientroute.Service
 	catalog              routing.Catalog
+	orch                 *orchestrator.Orchestrator
+	bus                  *events.Bus
 	authMiddleware     *auth.Middleware
 	httpServer         *http.Server
 	loopbackListener   net.Listener // optional loopback listener for reverse proxy
@@ -95,7 +101,7 @@ type Server struct {
 }
 
 // New creates a new server instance.
-func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, externalService api.ExternalTunnelService, testingService *testing.Service, keenetic *auth.KeeneticClient, sessions *auth.SessionStore, settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore, pingCheckService api.PingCheckService, loggingService *logging.Service, activeBackend backend.Backend, kmodLoader *kmod.Loader, updaterService *updater.Service, ndmsClient ndms.Client, trafficHistory *traffic.History, dnsRouteService api.DNSRouteService, staticRouteService api.StaticRouteService, systemTunnelService systemtunnel.Service, managedService managed.ManagedServerService, nwgOp *nwg.OperatorNativeWG, terminalManager terminal.Manager, accessPolicySvc accesspolicy.Service, clientRouteSvc clientroute.Service, catalog routing.Catalog) *Server {
+func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, externalService api.ExternalTunnelService, testingService *testing.Service, keenetic *auth.KeeneticClient, sessions *auth.SessionStore, settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore, pingCheckService api.PingCheckService, loggingService *logging.Service, activeBackend backend.Backend, kmodLoader *kmod.Loader, updaterService *updater.Service, ndmsClient ndms.Client, trafficHistory *traffic.History, dnsRouteService api.DNSRouteService, staticRouteService api.StaticRouteService, systemTunnelService systemtunnel.Service, managedService managed.ManagedServerService, nwgOp *nwg.OperatorNativeWG, terminalManager terminal.Manager, accessPolicySvc accesspolicy.Service, clientRouteSvc clientroute.Service, catalog routing.Catalog, orch *orchestrator.Orchestrator, bus *events.Bus) *Server {
 	id := generateInstanceID()
 	log.Infof("Server instance: %s", id)
 
@@ -125,9 +131,16 @@ func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, extern
 		accessPolicyService: accessPolicySvc,
 		clientRouteService:  clientRouteSvc,
 		catalog:             catalog,
+		orch:                orch,
+		bus:                 bus,
 		authMiddleware:     auth.NewMiddleware(sessions, settings, log),
 		instanceID:       id,
 	}
+}
+
+// SetTrafficCollector sets the traffic collector (for wiring system tunnel lister).
+func (s *Server) SetTrafficCollector(c *traffic.Collector) {
+	s.trafficCollector = c
 }
 
 // generateInstanceID creates a random 16-byte hex string (32 chars).
@@ -195,11 +208,11 @@ func (s *Server) Start() error {
 
 	s.httpServer = &http.Server{
 		Handler:           handler,
-		ReadTimeout:       30 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      300 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    8192,
+		// No ReadTimeout/WriteTimeout — SSE requires long-lived connections.
+		// Individual handlers use context timeouts where needed.
 	}
 
 	listener, err := net.Listen("tcp", s.config.ListenAddr)
@@ -219,9 +232,7 @@ func (s *Server) Start() error {
 			s.loopbackListener = ln
 			loopbackSrv := &http.Server{
 				Handler:           handler,
-				ReadTimeout:       30 * time.Second,
 				ReadHeaderTimeout: 5 * time.Second,
-				WriteTimeout:      300 * time.Second,
 				IdleTimeout:       120 * time.Second,
 				MaxHeaderBytes:    8192,
 			}
@@ -288,8 +299,13 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	tunnelsHandler.SetSettingsStore(s.settings)
 	tunnelsHandler.SetPingCheckService(s.pingCheckService)
 	tunnelsHandler.SetTrafficHistory(s.trafficHistory)
+	tunnelsHandler.SetOrchestrator(s.orch)
 	controlHandler := api.NewControlHandler(s.tunnelService, appLog)
 	controlHandler.SetPingCheckService(s.pingCheckService)
+	controlHandler.SetOrchestrator(s.orch)
+	controlHandler.SetTunnelsHandler(tunnelsHandler)
+	controlHandler.SetEventBus(s.bus)
+	controlHandler.SetCatalog(s.catalog)
 	testingHandler := api.NewTestingHandler(s.testingService)
 	systemHandler := api.NewSystemHandler(s.config.Version)
 	systemHandler.SetSettingsStore(s.settings)
@@ -309,11 +325,18 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	importHandler := api.NewImportHandler(s.tunnelService, s.tunnels, appLog)
 	importHandler.SetSettingsStore(s.settings)
 	importHandler.SetPingCheckService(s.pingCheckService)
+	importHandler.SetTunnelsHandler(tunnelsHandler)
 	statusHandler := api.NewStatusHandler(s.tunnelService)
-	wanHandler := api.NewWANHandler(s.tunnelService, s.log, appLog)
+	wanHandler := api.NewWANHandler(s.tunnelService, s.orch, s.log, appLog)
 	pingCheckHandler := api.NewPingCheckHandler(s.pingCheckService, s.tunnels, s.nwgOp, appLog)
+	pingCheckHandler.SetEventBus(s.bus)
+	tunnelsHandler.SetPingCheckSnapshot(pingCheckHandler.PublishSnapshot)
+	settingsHandler.SetPingCheckSnapshot(pingCheckHandler.PublishSnapshot)
 	loggingHandler := api.NewLoggingHandler(s.loggingService, appLog)
+	loggingHandler.SetEventBus(s.bus)
+	settingsHandler.SetLogsSnapshot(loggingHandler.PublishSnapshot)
 	externalHandler := api.NewExternalTunnelsHandler(s.externalService, s.tunnelService, s.tunnels, appLog)
+	externalHandler.SetTunnelListPublisher(tunnelsHandler.PublishTunnelList)
 	updateHandler := api.NewUpdateHandler(s.updaterService, appLog)
 	dnsRouteHandler := api.NewDNSRouteHandler(s.dnsRouteService, appLog)
 	diagRunner := diagnostics.NewRunner(diagnostics.Deps{
@@ -328,8 +351,15 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		PingCheckFacade: s.pingCheckService,
 	})
 	diagHandler := api.NewDiagnosticsHandler(diagRunner)
+
+	// Connections viewer
+	connectionsService := connections.NewService(s.catalog, s.ndmsClient)
+	connectionsHandler := api.NewConnectionsHandler(connectionsService)
+
 	signatureHandler := api.NewSignatureHandler()
 	terminalHandler := api.NewTerminalHandler(s.terminalManager)
+
+	eventsHandler := api.NewEventsHandler(s.bus)
 
 	// Auth middleware helper
 	guarded := s.authMiddleware.RequireAuthFunc
@@ -339,8 +369,11 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/logout", authHandler.Logout)
 	mux.HandleFunc("/api/auth/status", authHandler.Status)
 
+	// SSE event stream (protected)
+	mux.HandleFunc("/api/events", guarded(eventsHandler.Stream))
+
 	// NDM hooks (public - called from shell scripts)
-	hookHandler := api.NewHookHandler(s.tunnelService, appLog)
+	hookHandler := api.NewHookHandler(s.tunnelService, s.orch, appLog)
 	mux.HandleFunc("/api/hook/iface-changed", hookHandler.HandleIfaceChanged)
 
 	// WAN hooks (public - called from shell scripts)
@@ -355,6 +388,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/tunnels/delete", guarded(tunnelsHandler.Delete))
 	mux.HandleFunc("/api/tunnels/export", guarded(tunnelsHandler.Export))
 	mux.HandleFunc("/api/tunnels/export-all", guarded(tunnelsHandler.ExportAll))
+	mux.HandleFunc("/api/tunnels/replace", guarded(tunnelsHandler.ReplaceConf))
 	mux.HandleFunc("/api/tunnels/traffic-history", guarded(tunnelsHandler.TrafficHistory))
 
 	// Control operations (protected + boot guarded)
@@ -392,6 +426,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/dns-routes/create", guarded(dnsRouteHandler.Create))
 		mux.HandleFunc("/api/dns-routes/update", guarded(dnsRouteHandler.Update))
 		mux.HandleFunc("/api/dns-routes/delete", guarded(dnsRouteHandler.Delete))
+		mux.HandleFunc("/api/dns-routes/delete-batch", guarded(dnsRouteHandler.DeleteBatch))
+		mux.HandleFunc("/api/dns-routes/create-batch", guarded(dnsRouteHandler.CreateBatch))
 		mux.HandleFunc("/api/dns-routes/set-enabled", guarded(dnsRouteHandler.SetEnabled))
 		mux.HandleFunc("/api/dns-routes/refresh", guarded(dnsRouteHandler.Refresh))
 	}
@@ -457,6 +493,11 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/system-tunnels/test-connectivity", guarded(systemTunnelHandler.CheckConnectivity))
 	mux.HandleFunc("/api/system-tunnels/test-ip", guarded(systemTunnelHandler.CheckIP))
 	mux.HandleFunc("/api/system-tunnels/test-speed", guarded(systemTunnelHandler.SpeedTestStream))
+
+	// Wire system tunnel traffic into collector
+	if s.trafficCollector != nil {
+		s.trafficCollector.SetSystemLister(systemTunnelHandler)
+	}
 
 	// VPN Servers (protected + boot guarded)
 	serverHandler := api.NewServersHandler(s.ndmsClient, s.settings, s.tunnels)
@@ -526,6 +567,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/diagnostics/result", guarded(diagHandler.Result))
 	mux.HandleFunc("/api/diagnostics/stream", guarded(diagHandler.Stream))
 
+	// Connections viewer (protected)
+	mux.HandleFunc("/api/connections", guarded(connectionsHandler.List))
+
 	// Health check (public)
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -542,6 +586,44 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 			"instanceId":       s.instanceID,
 		})
 	})
+
+	// Wire event bus to CRUD handlers for SSE publishing
+	tunnelsHandler.SetEventBus(s.bus)
+	tunnelsHandler.SetCatalog(s.catalog)
+	dnsRouteHandler.SetEventBus(s.bus)
+	staticRouteHandler.SetEventBus(s.bus)
+	accessPolicyHandler.SetEventBus(s.bus)
+	crHandler.SetEventBus(s.bus)
+	serverHandler.SetEventBus(s.bus)
+
+	// Cross-wire servers <-> managed for unified server:updated event
+	serverHandler.SetManagedHandler(managedHandler)
+	managedHandler.SetServersHandler(serverHandler)
+
+	// SSE Snapshot Builder — provides full state on client connect/reconnect
+	sb := api.NewSnapshotBuilder()
+	sb.SetTunnelsHandler(tunnelsHandler)
+	sb.SetExternalHandler(externalHandler)
+	sb.SetSystemTunnelsHandler(systemTunnelHandler)
+	sb.SetServersHandler(serverHandler)
+	sb.SetManagedHandler(managedHandler)
+	sb.SetPingCheckHandler(pingCheckHandler)
+	sb.SetLoggingHandler(loggingHandler)
+	if s.bootStatusFn != nil {
+		sb.SetBootStatusFunc(s.bootStatusFn)
+	}
+	sb.SetRoutingSnapshotFunc(func(ctx context.Context) interface{} {
+		return s.catalog.SnapshotAll(ctx)
+	})
+	sb.SetSystemSnapshotFunc(func(ctx context.Context) interface{} {
+		return systemHandler.BuildSystemInfo()
+	})
+	sb.SetWANIPFunc(func(ctx context.Context) string {
+		ip, _ := testing.GetWANIP(ctx)
+		return ip
+	})
+	sb.SetInstanceID(s.instanceID)
+	eventsHandler.SetSnapshotBuilder(sb)
 
 	// Static files (SPA) - must be last
 	if s.config.WebRoot != "" {

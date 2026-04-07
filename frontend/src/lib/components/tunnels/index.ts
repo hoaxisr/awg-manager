@@ -7,5 +7,6 @@ export { default as TunnelCardActions } from './TunnelCardActions.svelte';
 export { default as TunnelEditHeader } from './TunnelEditHeader.svelte';
 export { default as ExternalTunnelCard } from './ExternalTunnelCard.svelte';
 export { default as AdoptTunnelDialog } from './AdoptTunnelDialog.svelte';
+export { default as ReplaceTunnelConfigModal } from './ReplaceTunnelConfigModal.svelte';
 export { default as SpeedTestCard } from './SpeedTestCard.svelte';
 export { default as SystemTunnelCard } from './SystemTunnelCard.svelte';

@@ -3,7 +3,7 @@
 #
 # Env vars from NDM: $id, $system_name, $layer, $level
 #
-# OpkgTun conf changes (user toggles tunnel in router UI):
+# NativeWG (Wireguard*) conf changes (user toggles tunnel in router UI):
 #   layer=conf, level=running  -> tunnel enabled
 #   layer=conf, level=disabled -> tunnel disabled
 #
@@ -21,9 +21,9 @@ AWG_HOST=$(/opt/sbin/ip -4 addr show br0 2>/dev/null | grep -oP 'inet \K[\d.]+' 
 
 BASE_URL="http://${AWG_HOST}:${AWG_PORT}"
 
-# === OpkgTun interface changes (tunnel toggled in router UI) ===
+# === NativeWG interface changes (tunnel toggled in router UI) ===
 case "$id" in
-    OpkgTun*|Wireguard*)
+    Wireguard*)
         [ "$layer" = "conf" ] || exit 0
         RESULT=$(/opt/bin/curl -s -o /dev/null -w '%{http_code}' \
             --max-time 5 -X POST \

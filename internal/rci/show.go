@@ -37,14 +37,6 @@ func (c *Client) ShowIPRoute(ctx context.Context) ([]RouteEntry, error) {
 	return routes, nil
 }
 
-func (c *Client) ShowIPHotspot(ctx context.Context) (*HotspotResponse, error) {
-	var resp HotspotResponse
-	if err := c.Get(ctx, "/show/ip/hotspot", &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
 func (c *Client) ShowPingCheck(ctx context.Context) (*PingCheckListResponse, error) {
 	var resp PingCheckListResponse
 	if err := c.Get(ctx, "/show/ping-check/", &resp); err != nil {

@@ -3,6 +3,8 @@ package logging
 import (
 	"sync"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/events"
 )
 
 // SettingsGetter provides logging configuration.
@@ -16,6 +18,7 @@ type SettingsGetter interface {
 type Service struct {
 	settings SettingsGetter
 	buffer   *LogBuffer
+	bus      *events.Bus
 	mu       sync.RWMutex
 }
 
@@ -27,6 +30,9 @@ func NewService(settings SettingsGetter) *Service {
 }
 
 func (s *Service) Stop() { s.buffer.Stop() }
+
+// SetEventBus sets the event bus for SSE publishing.
+func (s *Service) SetEventBus(bus *events.Bus) { s.bus = bus }
 
 func (s *Service) IsEnabled() bool {
 	if s.settings == nil {
@@ -49,7 +55,7 @@ func (s *Service) AppLog(level Level, group, subgroup, action, target, message s
 			s.buffer.SetMaxAge(maxAge)
 		}
 	}
-	s.buffer.Add(LogEntry{
+	entry := LogEntry{
 		Timestamp: time.Now(),
 		Level:     string(level),
 		Group:     group,
@@ -57,7 +63,19 @@ func (s *Service) AppLog(level Level, group, subgroup, action, target, message s
 		Action:    action,
 		Target:    target,
 		Message:   message,
-	})
+	}
+	s.buffer.Add(entry)
+	if s.bus != nil {
+		s.bus.Publish("log:entry", events.LogEntryEvent{
+			Timestamp: entry.Timestamp.Format(time.RFC3339),
+			Level:     entry.Level,
+			Group:     entry.Group,
+			Subgroup:  entry.Subgroup,
+			Action:    entry.Action,
+			Target:    entry.Target,
+			Message:   entry.Message,
+		})
+	}
 }
 
 // GetLogs returns entries filtered by group, subgroup, level with pagination.

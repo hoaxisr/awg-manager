@@ -1,29 +1,25 @@
 <script lang="ts">
-    import type { DnsRoute, StaticRouteList } from '$lib/types';
+    import type { DnsRoute, StaticRouteList, RoutingTunnel } from '$lib/types';
     import { api } from '$lib/api/client';
     import { detectQueryType, ipInCIDR, isIPv4 } from '$lib/utils/cidr';
     import RoutingSearchResults from './RoutingSearchResults.svelte';
-
-    interface MatchedRule {
-        id: string;
-        name: string;
-        type: 'dns' | 'ip';
-        matches: string[];
-        totalMatches: number;
-    }
-
-    interface ResolveMatch {
-        domain: string;
-        ips: string[];
-        rules: MatchedRule[];
-    }
+    import type { MatchedRule, ResolveMatch } from './types';
 
     interface Props {
         dnsRoutes: DnsRoute[];
         staticRoutes: StaticRouteList[];
+        tunnels?: RoutingTunnel[];
+        onRuleClick?: (id: string, type: 'dns' | 'ip') => void;
     }
 
-    let { dnsRoutes, staticRoutes }: Props = $props();
+    let { dnsRoutes, staticRoutes, tunnels = [], onRuleClick }: Props = $props();
+
+    function resolveTunnelName(routes: Array<{ tunnelId?: string; interface?: string }>): string {
+        if (!routes || routes.length === 0) return '';
+        const first = routes[0];
+        const found = tunnels.find(t => t.id === first.tunnelId);
+        return found?.name ?? first.interface ?? first.tunnelId ?? '';
+    }
 
     let query = $state('');
     let hasSearched = $state(false);
@@ -67,12 +63,23 @@
             }
 
             if (matches.length > 0) {
+                const subCount = route.subscriptions?.length ?? 0;
+                const manualCount = route.manualDomains?.length ?? 0;
+                let sourceSummary = '';
+                if (subCount > 0 && manualCount > 0) sourceSummary = `${subCount} листов + ${manualCount} вручную`;
+                else if (subCount > 0) sourceSummary = `${subCount} листов`;
+                else if (manualCount > 0) sourceSummary = 'все вручную';
+
                 results.push({
                     id: route.id,
                     name: route.name,
                     type: 'dns',
                     matches,
-                    totalMatches: matches.length
+                    totalMatches: matches.length,
+                    enabled: route.enabled,
+                    tunnelName: resolveTunnelName(route.routes ?? []),
+                    domainCount: route.domains?.length ?? 0,
+                    sourceSummary,
                 });
             }
         }
@@ -102,12 +109,17 @@
             }
 
             if (matches.length > 0) {
+                const ipTunnel = tunnels.find(t => t.id === route.tunnelID);
                 results.push({
                     id: route.id,
                     name: route.name,
                     type: 'ip',
                     matches,
-                    totalMatches: matches.length
+                    totalMatches: matches.length,
+                    enabled: route.enabled,
+                    tunnelName: ipTunnel?.name ?? route.tunnelID ?? '',
+                    domainCount: 0,
+                    sourceSummary: `${route.subnets?.length ?? 0} подсетей`,
                 });
             }
         }
@@ -129,12 +141,17 @@
                 }
             }
             if (matches.length > 0) {
+                const ipTunnel = tunnels.find(t => t.id === route.tunnelID);
                 results.push({
                     id: route.id,
                     name: route.name,
                     type: 'ip',
                     matches: [...new Set(matches)],
-                    totalMatches: new Set(matches).size
+                    totalMatches: new Set(matches).size,
+                    enabled: route.enabled,
+                    tunnelName: ipTunnel?.name ?? route.tunnelID ?? '',
+                    domainCount: 0,
+                    sourceSummary: `${route.subnets?.length ?? 0} подсетей`,
                 });
             }
         }
@@ -155,7 +172,11 @@
                     name: route.name,
                     type: 'dns',
                     matches: [...new Set(matches)],
-                    totalMatches: new Set(matches).size
+                    totalMatches: new Set(matches).size,
+                    enabled: route.enabled,
+                    tunnelName: resolveTunnelName(route.routes ?? []),
+                    domainCount: route.domains?.length ?? 0,
+                    sourceSummary: '',
                 });
             }
         }
@@ -250,6 +271,7 @@
             {resolveMatch}
             {resolving}
             {resolveError}
+            {onRuleClick}
         />
     {/if}
 </div>
@@ -293,7 +315,7 @@
         height: 32px;
         border: none;
         background: none;
-        color: var(--color-surface-400);
+        color: var(--text-muted);
         cursor: pointer;
         border-radius: 4px;
         margin-left: -44px;
@@ -301,7 +323,7 @@
     }
 
     .btn-clear:hover {
-        color: var(--color-surface-600);
+        color: var(--text-secondary);
     }
 
     .search-btn {

@@ -1,0 +1,347 @@
+package orchestrator
+
+// decide takes an event and current state, returns actions to execute.
+// Pure function — no I/O, no side effects. All decision logic lives here.
+func decide(event Event, state *State) []Action {
+	switch event.Type {
+	case EventBoot:
+		return decideBoot(state)
+	case EventReconnect:
+		return decideReconnect(state)
+	case EventStart:
+		return decideStart(event, state)
+	case EventStop:
+		return decideStop(event, state)
+	case EventDelete:
+		return decideDelete(event, state)
+	case EventRestart:
+		return decideRestart(event, state)
+	case EventNDMSHook:
+		return decideNDMSHook(event, state)
+	case EventWANUp:
+		return decideWANUp(event, state)
+	case EventWANDown:
+		return decideWANDown(event, state)
+	case EventPingCheckFailed:
+		return decidePingCheckFailed(event, state)
+	default:
+		return nil
+	}
+}
+
+func decideBoot(state *State) []Action {
+	var actions []Action
+
+	for _, t := range state.tunnels {
+		if !t.Enabled {
+			continue
+		}
+
+		switch t.Backend {
+		case "kernel":
+			actions = append(actions, Action{Type: ActionColdStartKernel, Tunnel: t.ID})
+			actions = appendPostStartActions(actions, t)
+
+		case "nativewg":
+			if !state.supportsASC {
+				actions = append(actions,
+					Action{Type: ActionStopNativeWG, Tunnel: t.ID},
+					Action{Type: ActionStartNativeWG, Tunnel: t.ID},
+				)
+				actions = appendPostStartActions(actions, t)
+			}
+		}
+	}
+
+	actions = append(actions,
+		Action{Type: ActionReconcileStaticRoutes},
+		Action{Type: ActionReconcileDNSRoutes},
+	)
+
+	return actions
+}
+
+func decideReconnect(state *State) []Action {
+	var actions []Action
+
+	actions = append(actions, Action{Type: ActionRestoreEndpointTracking})
+
+	for _, t := range state.tunnels {
+		if !t.Running {
+			continue
+		}
+
+		if t.Backend == "nativewg" && !state.supportsASC {
+			actions = append(actions, Action{Type: ActionRestoreKmod, Tunnel: t.ID})
+		}
+
+		if t.PingCheck != nil && t.PingCheck.Enabled {
+			actions = append(actions, Action{Type: ActionStartMonitoring, Tunnel: t.ID})
+		}
+	}
+
+	actions = append(actions,
+		Action{Type: ActionReconcileStaticRoutes},
+		Action{Type: ActionReconcileDNSRoutes},
+	)
+
+	return actions
+}
+
+func decideStart(event Event, state *State) []Action {
+	t := state.tunnels[event.Tunnel]
+	if t == nil || t.Running {
+		return nil
+	}
+
+	var actions []Action
+
+	switch t.Backend {
+	case "kernel":
+		actions = append(actions, Action{Type: ActionColdStartKernel, Tunnel: t.ID})
+	case "nativewg":
+		actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+	}
+
+	actions = appendPostStartActions(actions, t)
+	return actions
+}
+
+func decideStop(event Event, state *State) []Action {
+	t := state.tunnels[event.Tunnel]
+	if t == nil || !t.Running {
+		return nil
+	}
+
+	var actions []Action
+
+	// Stop monitoring first
+	if t.Monitoring {
+		actions = append(actions, Action{Type: ActionStopMonitoring, Tunnel: t.ID})
+	}
+
+	// Remove NDMS ping-check profile (NativeWG only)
+	if t.Backend == "nativewg" && t.PingCheck != nil && t.PingCheck.Enabled {
+		actions = append(actions, Action{Type: ActionRemovePingCheck, Tunnel: t.ID})
+	}
+
+	// Stop tunnel
+	switch t.Backend {
+	case "kernel":
+		actions = append(actions, Action{Type: ActionStopKernel, Tunnel: t.ID})
+	case "nativewg":
+		actions = append(actions, Action{Type: ActionStopNativeWG, Tunnel: t.ID})
+	}
+
+	// Remove routing
+	actions = append(actions,
+		Action{Type: ActionRemoveStaticRoutes, Tunnel: t.ID},
+		Action{Type: ActionRemoveClientRoutes, Tunnel: t.ID},
+	)
+
+	// Persist stopped state
+	actions = append(actions, Action{Type: ActionPersistStopped, Tunnel: t.ID})
+
+	return actions
+}
+
+func decideNDMSHook(event Event, state *State) []Action {
+	if event.Layer != "conf" {
+		return nil
+	}
+
+	t := state.findByNDMSName(event.NDMSName)
+	if t == nil {
+		return nil
+	}
+
+	switch event.Level {
+	case "running":
+		if t.Running || !t.Enabled || !state.anyWANUp() {
+			return nil
+		}
+		return decideStart(Event{Type: EventStart, Tunnel: t.ID}, state)
+
+	case "disabled":
+		if !t.Running {
+			return nil
+		}
+		return decideStop(Event{Type: EventStop, Tunnel: t.ID}, state)
+	}
+
+	return nil
+}
+
+func decideWANUp(event Event, state *State) []Action {
+	if state.supportsASC {
+		return nil
+	}
+
+	var actions []Action
+	for _, t := range state.tunnels {
+		if t.Backend != "nativewg" || !t.Enabled || t.Running {
+			continue
+		}
+		if !canStartOnWAN(t, event.WANIface) {
+			continue
+		}
+		actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+		actions = appendPostStartActions(actions, t)
+	}
+	return actions
+}
+
+func decideWANDown(event Event, state *State) []Action {
+	if state.supportsASC {
+		return nil
+	}
+
+	var actions []Action
+	var suspended []string
+
+	// Suspend only tunnels affected by this WAN going down
+	for _, t := range state.tunnels {
+		if t.Backend != "nativewg" || !t.Enabled || !t.Running {
+			continue
+		}
+		if !affectedByWANDown(t, event.WANIface) {
+			continue
+		}
+		actions = append(actions, Action{Type: ActionSuspendProxy, Tunnel: t.ID})
+		suspended = append(suspended, t.ID)
+	}
+
+	// Immediate failover: restart only suspended tunnels if another WAN is available
+	if len(suspended) > 0 && state.anyWANUp() {
+		for _, id := range suspended {
+			t := state.tunnels[id]
+			actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+			actions = appendPostStartActions(actions, t)
+		}
+	}
+
+	return actions
+}
+
+// affectedByWANDown returns true if the tunnel is affected by a WAN going down.
+// Auto mode (ISPInterface=""): affected if ActiveWAN matches the downed WAN.
+// Explicit binding: affected if ISPInterface matches the downed WAN.
+func affectedByWANDown(t *tunnelState, wanIface string) bool {
+	if t.ISPInterface == "" {
+		return t.ActiveWAN == wanIface
+	}
+	return t.ISPInterface == wanIface
+}
+
+// canStartOnWAN returns true if the tunnel can start when the given WAN comes up.
+// Auto mode: can start on any WAN.
+// Explicit binding: can only start when its specific WAN comes up.
+func canStartOnWAN(t *tunnelState, wanIface string) bool {
+	if t.ISPInterface == "" {
+		return true
+	}
+	return t.ISPInterface == wanIface
+}
+
+func decideDelete(event Event, state *State) []Action {
+	t := state.tunnels[event.Tunnel]
+	if t == nil {
+		return nil
+	}
+
+	var actions []Action
+
+	// Stop monitoring
+	if t.Monitoring {
+		actions = append(actions, Action{Type: ActionStopMonitoring, Tunnel: t.ID})
+	}
+
+	// Remove NDMS ping-check profile if running NativeWG
+	if t.Running && t.Backend == "nativewg" && t.PingCheck != nil && t.PingCheck.Enabled {
+		actions = append(actions, Action{Type: ActionRemovePingCheck, Tunnel: t.ID})
+	}
+
+	// Remove all routing BEFORE deleting the NDMS interface.
+	// OnTunnelDelete cleans storage + removes NDMS routes while interface still exists.
+	actions = append(actions,
+		Action{Type: ActionDeleteDNSRoutes, Tunnel: t.ID},
+		Action{Type: ActionDeleteStaticRoutes, Tunnel: t.ID},
+		Action{Type: ActionDeleteClientRoutes, Tunnel: t.ID},
+	)
+
+	// Delete (operator handles stop-if-running internally)
+	switch t.Backend {
+	case "kernel":
+		actions = append(actions, Action{Type: ActionDeleteKernel, Tunnel: t.ID})
+	case "nativewg":
+		actions = append(actions, Action{Type: ActionDeleteNativeWG, Tunnel: t.ID})
+	}
+
+	return actions
+}
+
+func decideRestart(event Event, state *State) []Action {
+	t := state.tunnels[event.Tunnel]
+	if t == nil {
+		return nil
+	}
+
+	var actions []Action
+
+	// Stop phase (without PersistStopped — restart should not disable)
+	if t.Running {
+		if t.Monitoring {
+			actions = append(actions, Action{Type: ActionStopMonitoring, Tunnel: t.ID})
+		}
+		if t.Backend == "nativewg" && t.PingCheck != nil && t.PingCheck.Enabled {
+			actions = append(actions, Action{Type: ActionRemovePingCheck, Tunnel: t.ID})
+		}
+		switch t.Backend {
+		case "kernel":
+			actions = append(actions, Action{Type: ActionStopKernel, Tunnel: t.ID})
+		case "nativewg":
+			actions = append(actions, Action{Type: ActionStopNativeWG, Tunnel: t.ID})
+		}
+		// NOTE: no ActionRemoveStaticRoutes/ClientRoutes — will be re-applied after start
+		// NOTE: no ActionPersistStopped — restart should not toggle Enabled flag
+	}
+
+	// Start phase
+	switch t.Backend {
+	case "kernel":
+		actions = append(actions, Action{Type: ActionColdStartKernel, Tunnel: t.ID})
+	case "nativewg":
+		actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+	}
+	actions = appendPostStartActions(actions, t)
+
+	return actions
+}
+
+func decidePingCheckFailed(event Event, state *State) []Action {
+	t := state.tunnels[event.Tunnel]
+	if t == nil || !t.Running || t.Backend != "kernel" {
+		return nil
+	}
+	return []Action{{Type: ActionLinkToggle, Tunnel: t.ID}}
+}
+
+// appendPostStartActions adds monitoring + routing actions after a tunnel start.
+func appendPostStartActions(actions []Action, t *tunnelState) []Action {
+	actions = append(actions,
+		Action{Type: ActionApplyDNSRoutes, Tunnel: t.ID},
+		Action{Type: ActionApplyStaticRoutes, Tunnel: t.ID, Iface: t.ifaceName()},
+		Action{Type: ActionApplyClientRoutes, Tunnel: t.ID, Iface: t.ifaceName()},
+	)
+
+	if t.PingCheck != nil && t.PingCheck.Enabled {
+		if t.Backend == "nativewg" {
+			actions = append(actions, Action{Type: ActionConfigurePingCheck, Tunnel: t.ID})
+		}
+		actions = append(actions, Action{Type: ActionStartMonitoring, Tunnel: t.ID})
+	}
+
+	actions = append(actions, Action{Type: ActionPersistRunning, Tunnel: t.ID})
+
+	return actions
+}

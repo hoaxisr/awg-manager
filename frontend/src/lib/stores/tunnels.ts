@@ -2,6 +2,7 @@ import { writable, get } from 'svelte/store';
 import { api } from '$lib/api/client';
 import { clearTraffic } from '$lib/stores/traffic';
 import type { TunnelListItem, AWGTunnel, ExternalTunnel, SystemTunnel, DeleteResult } from '$lib/types';
+import type { SnapshotTunnelsEvent, TunnelTrafficEvent } from '$lib/api/events';
 
 // Track operations in progress to prevent race conditions
 const operationsInProgress = writable<Set<string>>(new Set());
@@ -33,6 +34,7 @@ function createTunnelsStore() {
 	const error = writable<string | null>(null);
 	const externalTunnels = writable<ExternalTunnel[]>([]);
 	const systemTunnels = writable<SystemTunnel[]>([]);
+	const connectivityMap = writable<Map<string, { connected: boolean; latency: number | null }>>(new Map());
 
 	async function load() {
 		loading.set(true);
@@ -55,7 +57,7 @@ function createTunnelsStore() {
 
 	async function updateTunnel(id: string, tunnel: Partial<AWGTunnel>): Promise<AWGTunnel> {
 		const updated = await api.updateTunnel(id, tunnel);
-		await load();
+		// Full list refresh comes via SSE tunnels:list — don't fetch
 		return updated;
 	}
 
@@ -67,7 +69,7 @@ function createTunnelsStore() {
 			const result = await api.deleteTunnel(id);
 			if (result.success && result.verified) {
 				clearTraffic(id);
-				await load();
+				// Removal comes via SSE tunnel:deleted + tunnels:list — don't fetch
 			}
 			return result;
 		} finally {
@@ -80,10 +82,8 @@ function createTunnelsStore() {
 			throw new Error('Операция уже выполняется');
 		}
 		try {
-			const result = await api.startTunnel(id);
-			update((tunnels) =>
-				tunnels.map((t) => (t.id === id ? { ...t, status: result.status } : t))
-			);
+			await api.startTunnel(id);
+			// Status update comes via SSE tunnel:state — don't overwrite from API response
 		} finally {
 			endOperation(id);
 		}
@@ -94,10 +94,8 @@ function createTunnelsStore() {
 			throw new Error('Операция уже выполняется');
 		}
 		try {
-			const result = await api.stopTunnel(id);
-			update((tunnels) =>
-				tunnels.map((t) => (t.id === id ? { ...t, status: result.status } : t))
-			);
+			await api.stopTunnel(id);
+			// Status update comes via SSE tunnel:state — don't overwrite from API response
 		} finally {
 			endOperation(id);
 		}
@@ -109,7 +107,7 @@ function createTunnelsStore() {
 		}
 		try {
 			await api.restartTunnel(id);
-			await load();
+			// State refresh comes via SSE tunnel:state + tunnels:list — don't fetch
 		} finally {
 			endOperation(id);
 		}
@@ -117,14 +115,75 @@ function createTunnelsStore() {
 
 	async function importConfig(content: string, name?: string, backend?: string): Promise<AWGTunnel> {
 		const tunnel = await api.importConfig(content, name, backend);
-		await load();
+		// List refresh comes via SSE tunnels:list
 		return tunnel;
 	}
 
 	async function adoptExternal(interfaceName: string, content: string, name?: string): Promise<AWGTunnel> {
 		const tunnel = await api.adoptExternalTunnel(interfaceName, content, name);
-		await load();
+		// List refresh comes via SSE tunnels:list
 		return tunnel;
+	}
+
+	// Track recent tunnel:state SSE updates — these have priority over tunnels:list
+	const recentStateUpdates = new Map<string, { status: string; ts: number }>();
+
+	function updateTunnelState(id: string, newState: string) {
+		recentStateUpdates.set(id, { status: newState, ts: Date.now() });
+		update(list => list.map(t => t.id === id ? { ...t, status: newState } : t));
+	}
+
+	function removeFromList(id: string) {
+		update(list => list.filter(t => t.id !== id));
+		clearTraffic(id);
+	}
+
+	function setSnapshot(data: SnapshotTunnelsEvent) {
+		set(data.tunnels ?? []);
+		externalTunnels.set(data.external ?? []);
+		systemTunnels.set(data.system ?? []);
+		loading.set(false);
+	}
+
+	function updateTraffic(data: TunnelTrafficEvent) {
+		update(list => list.map(t =>
+			t.id === data.id
+				? { ...t, rxBytes: data.rxBytes, txBytes: data.txBytes,
+					lastHandshake: data.lastHandshake ?? t.lastHandshake,
+					startedAt: data.startedAt ?? t.startedAt }
+				: t
+		));
+	}
+
+	function updateConnectivity(id: string, connected: boolean, latency: number | null) {
+		connectivityMap.update(m => {
+			const newMap = new Map(m);
+			newMap.set(id, { connected, latency });
+			return newMap;
+		});
+	}
+
+	function setManagedList(items: TunnelListItem[]) {
+		const now = Date.now();
+		const merged = items.map(item => {
+			const recent = recentStateUpdates.get(item.id);
+			// If tunnel:state arrived within last 5 seconds, preserve its status
+			if (recent && (now - recent.ts) < 5000) {
+				return { ...item, status: recent.status };
+			}
+			return item;
+		});
+		set(merged);
+		loading.set(false);
+
+		// Clean up old entries
+		for (const [id, entry] of recentStateUpdates) {
+			if (now - entry.ts > 10000) recentStateUpdates.delete(id);
+		}
+	}
+
+	function updateFullTunnel(data: TunnelListItem) {
+		update(list => list.map(t => t.id === data.id ? data : t));
 	}
 
 	return {
@@ -133,10 +192,18 @@ function createTunnelsStore() {
 		error: { subscribe: error.subscribe },
 		externalTunnels: { subscribe: externalTunnels.subscribe },
 		systemTunnels: { subscribe: systemTunnels.subscribe },
+		connectivityMap: { subscribe: connectivityMap.subscribe },
 		operationsInProgress: { subscribe: operationsInProgress.subscribe },
 		load,
 		update: updateTunnel,
 		remove,
+		removeFromList,
+		updateTunnelState,
+		setSnapshot,
+		updateTraffic,
+		updateConnectivity,
+		setManagedList,
+		updateFullTunnel,
 		start,
 		stop,
 		restart,

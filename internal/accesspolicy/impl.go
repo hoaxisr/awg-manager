@@ -42,13 +42,24 @@ type PolicyTracker interface {
 	GetManagedPolicies() []string
 }
 
+// HookNotifier registers expected NDMS hooks before state-changing RCI calls.
+type HookNotifier interface {
+	ExpectHook(ndmsName, level string)
+}
+
 // ServiceImpl implements Service using the NDMS client.
 type ServiceImpl struct {
-	ndms    ndms.Client
-	tracker PolicyTracker
-	log     *logger.Logger
-	appLog  *logging.ScopedLogger
-	cache   *dataCache
+	ndms         ndms.Client
+	tracker      PolicyTracker
+	log          *logger.Logger
+	appLog       *logging.ScopedLogger
+	cache        *dataCache
+	hookNotifier HookNotifier
+}
+
+// SetHookNotifier sets the hook notifier for NDMS hook filtering.
+func (s *ServiceImpl) SetHookNotifier(hn HookNotifier) {
+	s.hookNotifier = hn
 }
 
 // New creates a new access policy service.
@@ -588,6 +599,14 @@ func (s *ServiceImpl) SetInterfaceUp(ctx context.Context, ndmsName string, up bo
 	action := "up"
 	if !up {
 		action = "down"
+	}
+	// Register expected NDMS hook before the state-changing RCI call.
+	if s.hookNotifier != nil {
+		level := "running"
+		if !up {
+			level = "disabled"
+		}
+		s.hookNotifier.ExpectHook(ndmsName, level)
 	}
 	if _, err := s.ndms.RCIPost(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{

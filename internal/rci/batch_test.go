@@ -50,14 +50,11 @@ func TestBatch_FluentChaining(t *testing.T) {
 		WireguardPeerConnect("Wireguard0", "pk=", "ISP").
 		SetDefaultRoute("Wireguard0").
 		RemoveDefaultRoute("Wireguard0").
-		SetIPv6DefaultRoute("Wireguard0").
-		RemoveIPv6DefaultRoute("Wireguard0").
-		RemoveIPv6HostRoute("2001:db8::1").
 		InterfaceDelete("Wireguard0").
 		Save()
 
-	if b.Len() != 24 {
-		t.Fatalf("fluent chain Len() = %d, want 24", b.Len())
+	if b.Len() != 21 {
+		t.Fatalf("fluent chain Len() = %d, want 21", b.Len())
 	}
 }
 

@@ -177,7 +177,7 @@
 				onclick={() => selectedBackend = 'nativewg'}
 			>
 				<span class="backend-name">NativeWG</span>
-				<span class="backend-desc">Нативный WireGuard через NDMS</span>
+				<span class="backend-desc">DNS/IP маршрутизация, failover, виден в UI роутера</span>
 			</button>
 			<button
 				type="button"
@@ -189,7 +189,7 @@
 				onclick={() => selectedBackend = 'kernel'}
 			>
 				<span class="backend-name">Kernel</span>
-				<span class="backend-desc">AmneziaWG через модуль ядра</span>
+				<span class="backend-desc">Без интеграции в роутер, для сторонних проектов</span>
 			</button>
 		</div>
 	</div>
