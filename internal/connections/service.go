@@ -110,6 +110,10 @@ func (s *Service) List(ctx context.Context, params ListParams) (*ListResponse, e
 	// 7. Filter
 	filtered := applyFilters(conns, params)
 
+	// 7.5. Optional sort over the filtered set (before pagination so sort
+	// spans the full dataset, not just the current page).
+	applySort(filtered, params.SortBy, params.SortDir)
+
 	// 8. Paginate
 	total := len(filtered)
 	start := params.Offset

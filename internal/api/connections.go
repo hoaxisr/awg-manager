@@ -30,6 +30,8 @@ func (h *ConnectionsHandler) List(w http.ResponseWriter, r *http.Request) {
 		Tunnel:   q.Get("tunnel"),
 		Protocol: q.Get("protocol"),
 		Search:   q.Get("search"),
+		SortBy:   q.Get("sortBy"),
+		SortDir:  q.Get("sortDir"),
 	}
 
 	if v := q.Get("offset"); v != "" {

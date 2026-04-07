@@ -40,13 +40,15 @@ type TunnelConnectionInfo struct {
 	Count     int    `json:"count"`
 }
 
-// ListParams holds filtering and pagination parameters.
+// ListParams holds filtering, sorting, and pagination parameters.
 type ListParams struct {
 	Tunnel   string // "all", "direct", or tunnel ID
 	Protocol string // "all", "tcp", "udp", "icmp"
 	Search   string // substring match on src, dst, clientName
 	Offset   int
-	Limit    int // default 50, max 500
+	Limit    int    // default 50, max 500
+	SortBy   string // "" | "proto" | "src" | "dst" | "iface" | "state" | "bytes"
+	SortDir  string // "asc" | "desc" — defaults to "asc" if SortBy is set
 }
 
 // ListResponse is returned by Service.List().
