@@ -15,6 +15,14 @@ import (
 type Client interface {
 	// OpkgTun management
 
+	// CreateOpkgTun creates an OpkgTun interface in NDMS.
+	// Sets description + security-level. Does NOT set ip global (see SetIPGlobal).
+	CreateOpkgTun(ctx context.Context, name, description string) error
+
+	// SetIPGlobal marks an interface as global (internet-facing) with automatic priority.
+	// Must be called AFTER SetAddress/SetMTU to avoid premature nginx binding.
+	SetIPGlobal(ctx context.Context, name string) error
+
 	// DeleteOpkgTun removes an OpkgTun interface from NDMS.
 	// Commands: no interface <name>
 	DeleteOpkgTun(ctx context.Context, name string) error
@@ -65,6 +73,10 @@ type Client interface {
 	// Command: interface <name> up
 	InterfaceUp(ctx context.Context, name string) error
 
+	// InterfaceDown brings an interface down.
+	// Command: interface <name> down
+	InterfaceDown(ctx context.Context, name string) error
+
 	// IPv4 Routing
 
 	// SetDefaultRoute sets the default IPv4 route via an interface.
@@ -74,6 +86,21 @@ type Client interface {
 	// RemoveDefaultRoute removes the default IPv4 route for an interface.
 	// Command: no ip route default <name>
 	RemoveDefaultRoute(ctx context.Context, name string) error
+
+	// RemoveHostRoute removes a host route.
+	// Command: no ip route <host>
+	RemoveHostRoute(ctx context.Context, host string) error
+
+	// IPv6 Routing
+
+	// SetIPv6DefaultRoute sets the default IPv6 route via an interface.
+	SetIPv6DefaultRoute(ctx context.Context, name string) error
+
+	// RemoveIPv6DefaultRoute removes the default IPv6 route for an interface.
+	RemoveIPv6DefaultRoute(ctx context.Context, name string)
+
+	// GetInterfaceAddress returns the IPv4 address and mask of an interface.
+	GetInterfaceAddress(ctx context.Context, iface string) (address, mask string, err error)
 
 	// WAN interface detection
 

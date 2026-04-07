@@ -33,6 +33,12 @@ func (o *Orchestrator) executeOne(ctx context.Context, action Action) error {
 	case ActionLinkToggle:
 		// Placeholder: pingcheck calls ip link down/up directly.
 		return nil
+	case ActionReconcileKernel:
+		return o.executeReconcileKernel(ctx, action)
+	case ActionSuspendKernel:
+		return o.executeSuspendKernel(ctx, action)
+	case ActionResumeKernel:
+		return o.executeResumeKernel(ctx, action)
 
 	// Monitoring
 	case ActionStartMonitoring:
@@ -211,6 +217,71 @@ func (o *Orchestrator) executeColdStartKernel(ctx context.Context, action Action
 	return nil
 }
 
+// executeReconcileKernel re-applies system config around an already-running kernel tunnel.
+// Used after daemon restart when the kernel process and interface survived but
+// firewall/DNS/routing state was lost. Calls operator.Reconcile which re-applies
+// NDMS config + WG config + addresses + routing + firewall.
+func (o *Orchestrator) executeReconcileKernel(ctx context.Context, action Action) error {
+	stored, err := o.store.Get(action.Tunnel)
+	if err != nil {
+		return tunnel.ErrNotFound
+	}
+
+	// Resolve WAN
+	resolvedWAN, err := o.resolveWAN(ctx, stored.ISPInterface)
+	if err != nil {
+		return fmt.Errorf("resolve WAN: %w", err)
+	}
+
+	// Build config
+	cfg := storedToConfig(stored)
+	cfg.ISPInterface = resolvedWAN
+	cfg.KernelDevice = o.resolveKernelDevice(resolvedWAN)
+	cfg.DefaultRoute = stored.DefaultRoute
+	cfg.Endpoint = stored.Peer.Endpoint
+	if stored.ResolvedEndpointIP != "" {
+		cfg.EndpointIP = stored.ResolvedEndpointIP
+	}
+
+	// Reconcile (works with already-running process)
+	if err := o.kernelOp.Reconcile(ctx, cfg); err != nil {
+		return err
+	}
+
+	// Persist resolved WAN
+	stored.ActiveWAN = resolvedWAN
+	if trackedIP := o.kernelOp.GetTrackedEndpointIP(action.Tunnel); trackedIP != "" {
+		stored.ResolvedEndpointIP = trackedIP
+	}
+	if err := o.store.Save(stored); err != nil {
+		o.logWarn(action.Tunnel, "failed to persist state: %s", err.Error())
+	}
+
+	o.logInfo(action.Tunnel, "kernel tunnel reconciled")
+	return nil
+}
+
+// executeSuspendKernel sets kernel tunnel link down without changing NDMS state.
+// Used on WAN down — NDMS routing handles failover via auto flag.
+// On WAN up, executeResumeKernel brings the link back up.
+func (o *Orchestrator) executeSuspendKernel(ctx context.Context, action Action) error {
+	if err := o.kernelOp.Suspend(ctx, action.Tunnel); err != nil {
+		return err
+	}
+	o.logInfo(action.Tunnel, "kernel tunnel suspended")
+	return nil
+}
+
+// executeResumeKernel sets kernel tunnel link up after a suspend.
+// Used on WAN up — restores connectivity for tunnels that were suspended on WAN down.
+func (o *Orchestrator) executeResumeKernel(ctx context.Context, action Action) error {
+	if err := o.kernelOp.Resume(ctx, action.Tunnel); err != nil {
+		return err
+	}
+	o.logInfo(action.Tunnel, "kernel tunnel resumed")
+	return nil
+}
+
 // executeStartNativeWG starts a NativeWG tunnel via the NWG operator.
 func (o *Orchestrator) executeStartNativeWG(ctx context.Context, action Action) error {
 	if o.nwgOp == nil {
@@ -226,14 +297,26 @@ func (o *Orchestrator) executeStartNativeWG(ctx context.Context, action Action) 
 		return err
 	}
 
-	// Persist state
+	// Persist runtime state. ResolveActiveWAN reads peer.via from RCI
+	// (NDMS fills it with the actually selected WAN even when we passed
+	// empty ISPInterface) and resolves it to a kernel name like "ppp0"
+	// matching what /etc/ndm/iflayerchanged.d/50-awg-manager.sh sends in
+	// WAN events. Empty result preserves the previous ActiveWAN — protects
+	// against transient RCI failure when re-starting an already-running tunnel.
 	stored.Enabled = true
 	stored.StartedAt = time.Now().UTC().Format(time.RFC3339)
+	if activeWAN := o.nwgOp.ResolveActiveWAN(ctx, stored); activeWAN != "" {
+		stored.ActiveWAN = activeWAN
+	}
 	if err := o.store.Save(stored); err != nil {
 		o.logWarn(action.Tunnel, "failed to persist state: %s", err.Error())
 	}
 
-	o.logInfo(action.Tunnel, "NativeWG tunnel started")
+	wan := stored.ActiveWAN
+	if wan == "" {
+		wan = "unknown"
+	}
+	o.logInfo(action.Tunnel, "NativeWG tunnel started (active WAN: %s)", wan)
 	return nil
 }
 
@@ -306,7 +389,21 @@ func (o *Orchestrator) executeRestoreKmod(ctx context.Context, action Action) er
 		return tunnel.ErrNotFound
 	}
 
-	return o.nwgOp.RestoreKmodTunnel(ctx, stored)
+	if err := o.nwgOp.RestoreKmodTunnel(ctx, stored); err != nil {
+		return err
+	}
+
+	// Refresh ActiveWAN — at boot, the tunnel survived a router restart and
+	// NDMS may have picked a different WAN than what was previously stored.
+	if activeWAN := o.nwgOp.ResolveActiveWAN(ctx, stored); activeWAN != "" && stored.ActiveWAN != activeWAN {
+		stored.ActiveWAN = activeWAN
+		if err := o.store.Save(stored); err != nil {
+			o.logWarn(action.Tunnel, "failed to persist refreshed ActiveWAN: %s", err.Error())
+		}
+		o.logInfo(action.Tunnel, "restored kmod tunnel, refreshed active WAN to %s", activeWAN)
+	}
+
+	return nil
 }
 
 // executeRestoreEndpointTracking restores endpoint route tracking for

@@ -353,7 +353,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	diagHandler := api.NewDiagnosticsHandler(diagRunner)
 
 	// Connections viewer
-	connectionsService := connections.NewService(s.catalog, s.ndmsClient)
+	connectionsService := connections.NewService(s.catalog, s.ndmsClient, s.dnsRouteService)
 	connectionsHandler := api.NewConnectionsHandler(connectionsService)
 
 	signatureHandler := api.NewSignatureHandler()
@@ -595,6 +595,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	accessPolicyHandler.SetEventBus(s.bus)
 	crHandler.SetEventBus(s.bus)
 	serverHandler.SetEventBus(s.bus)
+	s.AddShutdownHook(serverHandler.Stop)
 
 	// Cross-wire servers <-> managed for unified server:updated event
 	serverHandler.SetManagedHandler(managedHandler)

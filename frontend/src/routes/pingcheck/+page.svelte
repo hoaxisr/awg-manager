@@ -3,6 +3,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { pingCheckStatus } from '$lib/stores/pingcheck';
+	import { systemInfo } from '$lib/stores/system';
 	import { PageContainer, LoadingSpinner } from '$lib/components/layout';
 	import { PingCheckStatusCard, PingCheckLogsTable, KernelPingCheckModal, NativeWGPingCheckModal } from '$lib/components/pingcheck';
 
@@ -109,6 +110,15 @@
 </svelte:head>
 
 <PageContainer>
+	{#if $systemInfo !== null && $systemInfo.supportsPingCheck === false}
+		<div class="component-warning">
+			<strong>Компонент pingcheck не установлен в прошивке роутера.</strong>
+			NativeWG-туннели не могут использовать мониторинг через NDMS. Установите компонент
+			через веб-интерфейс роутера → «Управление» → «Компоненты системы» → «ping-check».
+			Kernel-туннели используют собственный механизм мониторинга и работают без этого компонента.
+		</div>
+	{/if}
+
 	{#if !$loadedStore}
 		<div class="flex justify-center py-8">
 			<LoadingSpinner size="md" />
@@ -188,5 +198,22 @@
 		text-align: center;
 		padding: 2rem;
 		color: var(--text-muted);
+	}
+
+	.component-warning {
+		background: rgba(245, 158, 11, 0.12);
+		border: 1px solid rgba(245, 158, 11, 0.4);
+		border-radius: var(--radius);
+		padding: 0.75rem 1rem;
+		margin-bottom: 1rem;
+		font-size: 0.875rem;
+		color: var(--text-secondary, #b6bcc8);
+		line-height: 1.5;
+	}
+
+	.component-warning strong {
+		color: var(--warning, #f59e0b);
+		display: block;
+		margin-bottom: 0.25rem;
 	}
 </style>

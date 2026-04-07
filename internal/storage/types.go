@@ -99,7 +99,6 @@ type AWGTunnel struct {
 	ID                string           `json:"id"`
 	Name              string           `json:"name"`
 	Type              string           `json:"type,omitempty"` // "awg"
-	Status            string           `json:"status"`         // runtime-only, always "stopped" in file
 	Enabled           bool             `json:"enabled"`
 	DefaultRoute    bool `json:"defaultRoute"`              // Create NDMS default route (ip route default OpkgTunX)
 	DefaultRouteSet bool `json:"defaultRouteSet,omitempty"` // Migration sentinel: false = field never saved, default to true

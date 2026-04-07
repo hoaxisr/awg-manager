@@ -501,7 +501,6 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 	parsed.ID = tunnelID
 	parsed.Type = "awg"
 	parsed.CreatedAt = time.Now().UTC().Format(time.RFC3339)
-	parsed.Status = "stopped"
 	parsed.Enabled = false
 
 	if err := s.store.Save(parsed); err != nil {
@@ -535,7 +534,6 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 	parsed.ID = tunnelID
 	parsed.Type = "awg"
 	parsed.CreatedAt = time.Now().UTC().Format(time.RFC3339)
-	parsed.Status = "stopped"
 	parsed.Enabled = false
 	parsed.Backend = "nativewg"
 

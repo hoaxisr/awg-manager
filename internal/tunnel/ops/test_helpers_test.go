@@ -44,6 +44,14 @@ func (m *MockNDMSClient) ShowInterface(ctx context.Context, name string) (string
 	return m.showInterfaceOutput, m.showInterfaceError
 }
 
+func (m *MockNDMSClient) CreateOpkgTun(ctx context.Context, name, description string) error {
+	return nil
+}
+
+func (m *MockNDMSClient) SetIPGlobal(ctx context.Context, name string) error {
+	return nil
+}
+
 func (m *MockNDMSClient) DeleteOpkgTun(ctx context.Context, name string) error {
 	m.DeleteCalls = append(m.DeleteCalls, name)
 	return m.deleteError
@@ -86,6 +94,10 @@ func (m *MockNDMSClient) InterfaceUp(ctx context.Context, name string) error {
 	return m.ifUpError
 }
 
+func (m *MockNDMSClient) InterfaceDown(ctx context.Context, name string) error {
+	return nil
+}
+
 func (m *MockNDMSClient) SetDefaultRoute(ctx context.Context, name string) error {
 	m.SetRouteCalls = append(m.SetRouteCalls, name)
 	return m.setRouteError
@@ -94,6 +106,20 @@ func (m *MockNDMSClient) SetDefaultRoute(ctx context.Context, name string) error
 func (m *MockNDMSClient) RemoveDefaultRoute(ctx context.Context, name string) error {
 	m.RemoveRouteCalls = append(m.RemoveRouteCalls, name)
 	return nil
+}
+
+func (m *MockNDMSClient) RemoveHostRoute(ctx context.Context, host string) error {
+	return nil
+}
+
+func (m *MockNDMSClient) SetIPv6DefaultRoute(ctx context.Context, name string) error {
+	return nil
+}
+
+func (m *MockNDMSClient) RemoveIPv6DefaultRoute(ctx context.Context, name string) {}
+
+func (m *MockNDMSClient) GetInterfaceAddress(ctx context.Context, iface string) (string, string, error) {
+	return "", "", nil
 }
 
 func (m *MockNDMSClient) GetDefaultGatewayInterface(ctx context.Context) (string, error) {

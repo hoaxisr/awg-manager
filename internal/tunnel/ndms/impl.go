@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/rci"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
@@ -49,6 +50,47 @@ func (c *ClientImpl) ShowInterface(ctx context.Context, name string) (string, er
 		return "", err
 	}
 	return string(raw), nil
+}
+
+// CreateOpkgTun creates an OpkgTun interface in NDMS.
+// Does NOT set ip global — caller must call SetIPGlobal after address/MTU are configured.
+// Reason: setting security-level public + ip global atomically causes Keenetic's nginx
+// to bind to the tunnel IP before the address is even set, leading to bind errors.
+func (c *ClientImpl) CreateOpkgTun(ctx context.Context, name, description string) error {
+	safeDesc := sanitizeDescription(description)
+	if safeDesc == "" {
+		safeDesc = name
+	}
+
+	// Create interface with description + security-level only.
+	// ip global is applied later (after SetAddress/SetMTU) to avoid premature nginx binding.
+	_, err := c.rci.Post(ctx, map[string]interface{}{
+		"interface": map[string]interface{}{
+			name: map[string]interface{}{
+				"description":    safeDesc,
+				"security-level": map[string]interface{}{"public": true},
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("create interface: %w", err)
+	}
+	return nil
+}
+
+// SetIPGlobal marks an interface as global (internet-facing) with automatic priority.
+// Must be called AFTER SetAddress/SetMTU to avoid premature nginx binding.
+func (c *ClientImpl) SetIPGlobal(ctx context.Context, name string) error {
+	_, err := c.rci.Post(ctx, map[string]interface{}{
+		"interface": map[string]interface{}{
+			name: map[string]interface{}{
+				"ip": map[string]interface{}{
+					"global": map[string]interface{}{"auto": true},
+				},
+			},
+		},
+	})
+	return err
 }
 
 // DeleteOpkgTun removes an OpkgTun interface from NDMS.
@@ -244,6 +286,16 @@ func (c *ClientImpl) InterfaceUp(ctx context.Context, name string) error {
 	return err
 }
 
+// InterfaceDown brings an interface down.
+func (c *ClientImpl) InterfaceDown(ctx context.Context, name string) error {
+	_, err := c.rci.Post(ctx, map[string]interface{}{
+		"interface": map[string]interface{}{
+			name: map[string]interface{}{"up": false},
+		},
+	})
+	return err
+}
+
 // SetDefaultRoute sets the default IPv4 route via an interface.
 func (c *ClientImpl) SetDefaultRoute(ctx context.Context, name string) error {
 	if _, err := c.rci.Post(ctx, rci.CmdSetDefaultRoute(name)); err != nil {
@@ -258,6 +310,51 @@ func (c *ClientImpl) RemoveDefaultRoute(ctx context.Context, name string) error 
 		return fmt.Errorf("remove default route: %w", err)
 	}
 	return nil
+}
+
+// RemoveHostRoute removes a host route.
+// Detects IPv6 addresses and uses the appropriate command.
+func (c *ClientImpl) RemoveHostRoute(ctx context.Context, host string) error {
+	if parsed := net.ParseIP(host); parsed != nil && parsed.To4() == nil {
+		// IPv6
+		_, _ = c.rci.Post(ctx, rci.CmdRemoveIPv6HostRoute(host))
+	} else {
+		// IPv4
+		_, _ = c.rci.Post(ctx, map[string]any{
+			"ip": map[string]any{
+				"route": map[string]any{
+					"no":   true,
+					"host": host,
+				},
+			},
+		})
+	}
+	return nil
+}
+
+// SetIPv6DefaultRoute sets the default IPv6 route via an interface.
+func (c *ClientImpl) SetIPv6DefaultRoute(ctx context.Context, name string) error {
+	if _, err := c.rci.Post(ctx, rci.CmdSetIPv6DefaultRoute(name)); err != nil {
+		return err
+	}
+	return nil
+}
+
+// RemoveIPv6DefaultRoute removes the default IPv6 route for an interface.
+func (c *ClientImpl) RemoveIPv6DefaultRoute(ctx context.Context, name string) {
+	_, _ = c.rci.Post(ctx, rci.CmdRemoveIPv6DefaultRoute(name))
+}
+
+// GetInterfaceAddress returns the IPv4 address and mask of an interface.
+func (c *ClientImpl) GetInterfaceAddress(ctx context.Context, iface string) (string, string, error) {
+	var info rci.InterfaceInfo
+	if err := c.rci.Get(ctx, "/show/interface/"+iface, &info); err != nil {
+		return "", "", fmt.Errorf("show interface %s: %w", iface, err)
+	}
+	if info.Address == "" || info.Mask == "" {
+		return "", "", fmt.Errorf("address or mask not found for interface %s", iface)
+	}
+	return info.Address, info.Mask, nil
 }
 
 // GetDefaultGatewayInterface returns the current default gateway interface.
@@ -528,31 +625,39 @@ func (c *ClientImpl) RCIGet(ctx context.Context, path string) (json.RawMessage, 
 	return json.RawMessage(raw), nil
 }
 
-// ShowObjectGroupFQDN returns all FQDN object groups from the router.
-// The response has nested structure that differs from the public ObjectGroupFQDN type.
+// ShowObjectGroupFQDN returns all FQDN object groups as configured in
+// running-config.
+//
+// IMPORTANT: this uses /show/rc/object-group/fqdn (running-config), NOT
+// /show/object-group/fqdn (which returns the runtime DNS-resolver cache:
+// every dynamically-resolved subdomain with type:"runtime" and the parent
+// pattern as a back-reference). Reading from the runtime endpoint and
+// reconciling against the configured target produces a flood of phantom
+// removes for resolved subdomains the router never accepted as configured
+// entries — visible in NDM log as 'Network::ObjectGroup: ... no such entry'.
+//
+// Schema: map[group-name]{include: [{address}], exclude: [{address}]} —
+// symmetric to what we POST in dnsroute/sync.go applyDiff.
 func (c *ClientImpl) ShowObjectGroupFQDN(ctx context.Context) ([]ObjectGroupFQDN, error) {
-	var raw struct {
-		Group []struct {
-			GroupName     string `json:"group-name"`
-			Entry         []struct {
-				FQDN string `json:"fqdn"`
-			} `json:"entry"`
-			ExcludedFQDNs []struct {
-				Address string `json:"address"`
-			} `json:"excluded-fqdns"`
-		} `json:"group"`
+	var raw map[string]struct {
+		Include []struct {
+			Address string `json:"address"`
+		} `json:"include"`
+		Exclude []struct {
+			Address string `json:"address"`
+		} `json:"exclude"`
 	}
-	if err := c.rci.Get(ctx, "/show/object-group/fqdn", &raw); err != nil {
+	if err := c.rci.Get(ctx, "/show/rc/object-group/fqdn", &raw); err != nil {
 		return nil, err
 	}
 
-	groups := make([]ObjectGroupFQDN, 0, len(raw.Group))
-	for _, g := range raw.Group {
-		og := ObjectGroupFQDN{Name: g.GroupName}
-		for _, e := range g.Entry {
-			og.Includes = append(og.Includes, e.FQDN)
+	groups := make([]ObjectGroupFQDN, 0, len(raw))
+	for name, g := range raw {
+		og := ObjectGroupFQDN{Name: name}
+		for _, e := range g.Include {
+			og.Includes = append(og.Includes, e.Address)
 		}
-		for _, e := range g.ExcludedFQDNs {
+		for _, e := range g.Exclude {
 			og.Excludes = append(og.Excludes, e.Address)
 		}
 		groups = append(groups, og)
@@ -905,7 +1010,11 @@ func (c *ClientImpl) FindFreeWireguardIndex(ctx context.Context) (int, error) {
 
 // ConfigurePingCheck creates/updates a ping-check profile and binds it to an interface.
 // Always removes the old profile first to ensure clean state.
+// Returns nil without hitting RCI when the firmware lacks the pingcheck component.
 func (c *ClientImpl) ConfigurePingCheck(ctx context.Context, profile, ifaceName string, cfg PingCheckConfig) error {
+	if !ndmsinfo.HasPingCheckComponent() {
+		return nil
+	}
 	// Remove old profile first (NDMS doesn't cleanly update existing profiles)
 	c.removePingCheckRCI(ctx, profile, ifaceName)
 
@@ -962,7 +1071,11 @@ func (c *ClientImpl) ConfigurePingCheck(ctx context.Context, profile, ifaceName 
 }
 
 // RemovePingCheck removes a ping-check profile and its interface binding.
+// Returns nil without hitting RCI when the firmware lacks the pingcheck component.
 func (c *ClientImpl) RemovePingCheck(ctx context.Context, profile, ifaceName string) error {
+	if !ndmsinfo.HasPingCheckComponent() {
+		return nil
+	}
 	c.removePingCheckRCI(ctx, profile, ifaceName)
 	c.rciSave(ctx)
 	return nil
@@ -1013,7 +1126,12 @@ func (c *ClientImpl) rciSave(ctx context.Context) {
 
 // ShowPingCheck returns the current status of a ping-check profile.
 // Queries /show/ping-check/ (list all) and finds the matching profile.
+// Returns Exists=false without hitting RCI when the firmware lacks
+// the pingcheck component.
 func (c *ClientImpl) ShowPingCheck(ctx context.Context, profile string) (*PingCheckStatus, error) {
+	if !ndmsinfo.HasPingCheckComponent() {
+		return &PingCheckStatus{Exists: false}, nil
+	}
 	var resp rci.PingCheckListResponse
 	if err := c.rci.Get(ctx, "/show/ping-check/", &resp); err != nil {
 		return &PingCheckStatus{Exists: false}, nil

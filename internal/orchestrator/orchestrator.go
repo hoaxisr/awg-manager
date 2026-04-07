@@ -271,13 +271,22 @@ func (o *Orchestrator) updateState(action Action) {
 	}
 
 	switch action.Type {
-	case ActionColdStartKernel, ActionStartNativeWG:
+	case ActionColdStartKernel, ActionStartNativeWG, ActionReconcileKernel, ActionResumeKernel:
 		t.Running = true
+		// Refresh ActiveWAN from store. Execute layer persists the resolved
+		// WAN; we mirror it into the in-memory cache so decideWANDown can
+		// match correctly via affectedByWANDown.
+		if stored, err := o.store.Get(action.Tunnel); err == nil {
+			t.ActiveWAN = stored.ActiveWAN
+		}
 	case ActionStopKernel, ActionStopNativeWG:
 		t.Running = false
 		t.Monitoring = false
-	case ActionSuspendProxy:
-		t.Running = false
+		t.ActiveWAN = ""
+	case ActionSuspendProxy, ActionSuspendKernel:
+		// Keep t.Running=true so the next WANUp picks Resume/Reconcile,
+		// not a fresh ColdStart. Keep ActiveWAN so a duplicate WANDown
+		// for the same iface does not re-trigger failover.
 	case ActionStartMonitoring:
 		t.Monitoring = true
 	case ActionStopMonitoring:
@@ -289,11 +298,11 @@ func (o *Orchestrator) updateState(action Action) {
 	// Publish SSE event
 	if o.bus != nil && t != nil {
 		switch action.Type {
-		case ActionColdStartKernel, ActionStartNativeWG:
+		case ActionColdStartKernel, ActionStartNativeWG, ActionReconcileKernel, ActionResumeKernel:
 			o.bus.Publish("tunnel:state", events.TunnelStateEvent{
 				ID: t.ID, Name: t.Name, State: "running", Backend: t.Backend,
 			})
-		case ActionStopKernel, ActionStopNativeWG, ActionSuspendProxy:
+		case ActionStopKernel, ActionStopNativeWG, ActionSuspendProxy, ActionSuspendKernel:
 			o.bus.Publish("tunnel:state", events.TunnelStateEvent{
 				ID: t.ID, Name: t.Name, State: "stopped", Backend: t.Backend,
 			})

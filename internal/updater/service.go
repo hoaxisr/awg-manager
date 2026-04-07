@@ -144,7 +144,7 @@ func (s *Service) CheckNow(ctx context.Context) *UpdateInfo {
 	return info
 }
 
-// ApplyUpgrade downloads and installs the update from GitHub release.
+// ApplyUpgrade downloads and installs the update from the entware repo.
 // Returns error if upgrade is already in progress or no download URL cached.
 func (s *Service) ApplyUpgrade(ctx context.Context) error {
 	s.mu.Lock()

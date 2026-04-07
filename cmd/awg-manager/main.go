@@ -177,10 +177,6 @@ func main() {
 	tunnelService.MigrateISPInterfaceNone()
 	tunnelService.MigrateEmptyBackend()
 
-	// Migrate existing kernel tunnels to NativeWG on OS5.
-	// Must run before boot sequence so tunnels boot as NativeWG.
-	migrateKernelToNativeWG(context.Background(), awgStore, ndmsClient, operator, loggingService, *dataDir)
-
 	// Routing catalog — unified tunnel listing for all routing subsystems
 	catalog := routing.NewCatalog(
 		&tunnelProviderAdapter{svc: tunnelService, store: awgStore},
@@ -271,6 +267,12 @@ func main() {
 	orch := orchestrator.New(awgStore, operator, nwgOp, stateMgr, wanModel, ndmsClient, log, loggingService)
 	tunnelService.SetOrchestrator(orch)
 	nwgOp.SetHookNotifier(orch) // operators register expected hooks before InterfaceUp/Down
+	// OS5 kernel operator also uses ExpectHook (via OpkgTun two-layer arch).
+	if os5Op, ok := operator.(interface {
+		SetHookNotifier(tunnel.HookNotifier)
+	}); ok {
+		os5Op.SetHookNotifier(orch)
+	}
 	orch.SetSupportsASC(ndmsinfo.SupportsWireguardASC)
 	orch.SetPingCheck(pingCheckFacade)
 	orch.SetDNSRoute(dnsRouteService)
@@ -589,134 +591,6 @@ func populateWANModel(ctx context.Context, ndmsClient ndms.Client, model *wan.Mo
 }
 
 
-// migrateKernelToNativeWG converts all kernel/legacy tunnels to NativeWG on OS5.
-// Called once at startup before boot sequence. On OS4, kernel tunnels stay as-is.
-// Also converts ISPInterface from kernel name to NDMS ID and updates DNS route
-// interface references from OpkgTunN to WireguardN.
-func migrateKernelToNativeWG(ctx context.Context, store *storage.AWGTunnelStore, ndmsClient ndms.Client, operator ops.Operator, loggingSvc *logging.Service, dataDir string) {
-	if !osdetect.Is5() {
-		return
-	}
-	tunnels, err := store.List()
-	if err != nil {
-		return
-	}
-
-	log := logging.NewScopedLogger(loggingSvc, logging.GroupSystem, logging.SubBoot)
-
-	// Build kernel name → NDMS ID map for ISPInterface conversion.
-	kernelToNDMS := make(map[string]string)
-	wanIfaces, err := ndmsClient.QueryAllWANInterfaces(ctx)
-	if err == nil {
-		for _, iface := range wanIfaces {
-			if iface.Name != "" && iface.ID != "" {
-				kernelToNDMS[iface.Name] = iface.ID
-			}
-		}
-	}
-
-	// Track old NDMS name → new NDMS name for DNS route migration.
-	ifaceRenames := make(map[string]string) // "OpkgTun10" → "Wireguard1"
-
-	migrated := 0
-	for _, t := range tunnels {
-		if t.Backend == "nativewg" {
-			continue
-		}
-		// backend="" or "kernel" → migrate
-
-		// Stop if running (best-effort)
-		_ = operator.Stop(ctx, t.ID)
-
-		// Remember old NDMS name before deleting
-		oldNames := tunnel.NewNames(t.ID)
-
-		// Delete OpkgTun from NDMS
-		if oldNames.NDMSName != "" {
-			_ = ndmsClient.DeleteOpkgTun(ctx, oldNames.NDMSName)
-		}
-
-		// Allocate NativeWG index
-		nwgIndex, err := ndmsClient.FindFreeWireguardIndex(ctx)
-		if err != nil {
-			log.Warn("migrate", t.ID, "Failed to find free wireguard index: "+err.Error())
-			continue
-		}
-
-		newNDMSName := nwg.NewNWGNames(nwgIndex).NDMSName
-
-		// Track rename for DNS routes
-		if oldNames.NDMSName != "" {
-			ifaceRenames[oldNames.NDMSName] = newNDMSName
-		}
-
-		// Convert ISPInterface: kernel name → NDMS ID
-		if t.ISPInterface != "" && !tunnel.IsTunnelRoute(t.ISPInterface) {
-			if ndmsID, ok := kernelToNDMS[t.ISPInterface]; ok {
-				log.Info("migrate", t.ID, fmt.Sprintf("ISPInterface: %s → %s", t.ISPInterface, ndmsID))
-				t.ISPInterface = ndmsID
-			} else {
-				// WAN interface not found — reset to auto to avoid broken RCI calls
-				log.Warn("migrate", t.ID, fmt.Sprintf("ISPInterface %q not found in WAN model, resetting to auto", t.ISPInterface))
-				t.ISPInterface = ""
-				t.ISPInterfaceLabel = ""
-			}
-		}
-
-		// Update storage
-		t.Backend = "nativewg"
-		t.NWGIndex = nwgIndex
-		if err := store.Save(&t); err != nil {
-			log.Warn("migrate", t.ID, "Failed to save: "+err.Error())
-			continue
-		}
-
-		migrated++
-		log.Info("migrate", t.ID, fmt.Sprintf("Migrated to NativeWG (index=%d, ndms=%s)", nwgIndex, newNDMSName))
-	}
-
-	if migrated > 0 {
-		_ = ndmsClient.Save(ctx)
-		log.Info("migrate", "system", fmt.Sprintf("Migrated %d kernel tunnel(s) to NativeWG", migrated))
-
-		// Migrate DNS route interface references: OpkgTunN → WireguardN
-		migrateDNSRouteInterfaces(dataDir, ifaceRenames, log)
-	}
-}
-
-// migrateDNSRouteInterfaces updates DNS route interface names after kernel→nativewg migration.
-func migrateDNSRouteInterfaces(dataDir string, renames map[string]string, log *logging.ScopedLogger) {
-	if len(renames) == 0 {
-		return
-	}
-
-	dnsStore := dnsroute.NewStore(dataDir)
-	data, err := dnsStore.Load()
-	if err != nil {
-		log.Warn("migrate-dns", "", "Failed to load dns-routes: "+err.Error())
-		return
-	}
-
-	changed := false
-	for i := range data.Lists {
-		for j := range data.Lists[i].Routes {
-			rt := &data.Lists[i].Routes[j]
-			if newName, ok := renames[rt.Interface]; ok {
-				log.Info("migrate-dns", data.Lists[i].ID, fmt.Sprintf("Route interface: %s → %s", rt.Interface, newName))
-				rt.Interface = newName
-				changed = true
-			}
-		}
-	}
-
-	if changed {
-		if err := dnsStore.Save(data); err != nil {
-			log.Warn("migrate-dns", "", "Failed to save dns-routes: "+err.Error())
-		}
-	}
-}
-
-
 // getInterfaceIP returns the first IPv4 address of the given interface.
 func getInterfaceIP(ifaceName string) string {
 	iface, err := net.InterfaceByName(ifaceName)
@@ -1030,6 +904,12 @@ func runCleanup(dataDir string) {
 	// Wire orchestrator for lifecycle operations (Delete needs it)
 	cleanupOrch := orchestrator.New(awgStore, operator, nwgOp, stateMgr, wan.NewModel(), ndmsClient, log, nil)
 	tunnelService.SetOrchestrator(cleanupOrch)
+	nwgOp.SetHookNotifier(cleanupOrch)
+	if os5Op, ok := operator.(interface {
+		SetHookNotifier(tunnel.HookNotifier)
+	}); ok {
+		os5Op.SetHookNotifier(cleanupOrch)
+	}
 
 	// Create auxiliary services
 	dnsStore := dnsroute.NewStore(dataDir)

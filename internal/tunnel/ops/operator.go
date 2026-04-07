@@ -45,6 +45,13 @@ type Operator interface {
 	// Skips process start; applies WG config, IP config, and firewall.
 	Reconcile(ctx context.Context, cfg tunnel.Config) error
 
+	// Suspend sets the tunnel link down without removing the interface.
+	// Used for WAN failover. NDMS handles routing automatically.
+	Suspend(ctx context.Context, tunnelID string) error
+
+	// Resume sets the tunnel link up after Suspend.
+	Resume(ctx context.Context, tunnelID string) error
+
 	// ApplyConfig applies a new WireGuard config to a running tunnel.
 	ApplyConfig(ctx context.Context, tunnelID, configPath string) error
 

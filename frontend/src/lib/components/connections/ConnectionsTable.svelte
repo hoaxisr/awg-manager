@@ -48,7 +48,21 @@
 							<span class="client-name">{conn.clientName}</span>
 						{/if}
 					</td>
-					<td class="mono">{conn.dst}{#if conn.dstPort > 0}:{conn.dstPort}{/if}</td>
+					<td class="mono">
+						{conn.dst}{#if conn.dstPort > 0}:{conn.dstPort}{/if}
+						{#if conn.rules && conn.rules.length > 0}
+							<div class="rule-badges">
+								{#each conn.rules as r}
+									<span
+										class="rule-badge"
+										title={`${r.fqdn ?? ''}${r.pattern ? ' (pattern: ' + r.pattern + ')' : ''}`}
+									>
+										{r.listName || r.listId}
+									</span>
+								{/each}
+							</div>
+						{/if}
+					</td>
 					<td>
 						{#if conn.tunnelId}
 							<span class="tunnel-badge tunnel-badge-vpn">{conn.tunnelName}</span>
@@ -181,5 +195,27 @@
 	.pagination-btns {
 		display: flex;
 		gap: 0.375rem;
+	}
+
+	.rule-badges {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.25rem;
+		margin-top: 0.25rem;
+	}
+
+	.rule-badge {
+		display: inline-block;
+		padding: 0.05rem 0.4rem;
+		font-size: 0.625rem;
+		font-weight: 500;
+		font-family: var(--font-sans, sans-serif);
+		line-height: 1.4;
+		background: rgba(122, 162, 247, 0.12);
+		border: 1px solid rgba(122, 162, 247, 0.35);
+		border-radius: 4px;
+		color: var(--accent);
+		cursor: help;
+		white-space: nowrap;
 	}
 </style>

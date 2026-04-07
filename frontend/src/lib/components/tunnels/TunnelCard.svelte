@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import type { TunnelListItem } from '$lib/types';
 	import { TrafficChart } from '$lib/components/ui';
-	import { getTrafficRates, getTrafficPeriod, subscribeTraffic, loadHistory } from '$lib/stores/traffic';
+	import { getTrafficRates, getTrafficPeriod, subscribeTraffic, loadHistory, setTrafficPeriod } from '$lib/stores/traffic';
 	import TunnelCardHeader from './TunnelCardHeader.svelte';
 	import TunnelCardDetails from './TunnelCardDetails.svelte';
 	import TunnelCardActions from './TunnelCardActions.svelte';
@@ -43,8 +43,9 @@
 	// Subscribe to traffic data updates (rate changes from feedTraffic/loadHistory)
 	$effect(() => {
 		const id = tunnelId;
+		const p = period; // tracked dep — slice window depends on period
 		const update = () => {
-			const t = getTrafficRates(id);
+			const t = getTrafficRates(id, p);
 			rxRates = t.rx;
 			txRates = t.tx;
 		};
@@ -52,17 +53,19 @@
 		return subscribeTraffic(update);
 	});
 
-	// Load server history once per tunnel+period combination
-	let lastLoadedKey = '';
+	// Load server history once per tunnel on mount.
+	// Subsequent updates flow via SSE through feedTraffic.
+	let initialLoadDone = false;
 	$effect(() => {
-		const key = `${tunnelId}:${period}`;
-		if (key === lastLoadedKey) return;
-		lastLoadedKey = key;
-		untrack(() => loadHistory(tunnelId, period));
+		const id = tunnelId;
+		if (initialLoadDone) return;
+		initialLoadDone = true;
+		untrack(() => loadHistory(id, period));
 	});
 
 	function handlePeriodChange(newPeriod: string) {
 		period = newPeriod;
+		setTrafficPeriod(tunnelId, newPeriod);
 	}
 
 	let hasData = $derived(rxRates.length >= 2);

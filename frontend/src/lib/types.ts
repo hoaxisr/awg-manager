@@ -453,6 +453,7 @@ export interface SystemInfo {
 	firmwareVersion: string;
 	supportsExtendedASC: boolean;
 	supportsHRanges: boolean;
+	supportsPingCheck: boolean;
 	totalMemoryMB: number;
 	isLowMemory: boolean;
 	gcMemLimit: string;
@@ -765,6 +766,13 @@ export type DiagMode = 'quick' | 'full';
 // #region Connections viewer
 // ─────────────────────────────────────────────
 
+export interface RuleHit {
+	listId: string;
+	listName?: string;
+	fqdn?: string;
+	pattern?: string;
+}
+
 export interface ConntrackConnection {
 	protocol: string;
 	src: string;
@@ -779,6 +787,7 @@ export interface ConntrackConnection {
 	tunnelName: string;
 	clientMac: string;
 	clientName: string;
+	rules?: RuleHit[];
 }
 
 export interface ConnectionStats {

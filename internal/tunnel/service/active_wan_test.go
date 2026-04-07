@@ -53,7 +53,6 @@ func saveTunnel(t *testing.T, store *storage.AWGTunnelStore, id string, opts ...
 		ID:        id,
 		Name:      "Test " + id,
 		Type:      "awg",
-		Status:    "stopped",
 		Enabled:   true,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 		Interface: storage.AWGInterface{
@@ -129,6 +128,8 @@ func (m *mockOp) Start(ctx context.Context, cfg tunnel.Config) error {
 func (m *mockOp) GetSystemName(_ context.Context, ndmsID string) string { return ndmsID }
 func (m *mockOp) SetDefaultRoute(ctx context.Context, ndmsName string) error    { return nil }
 func (m *mockOp) RemoveDefaultRoute(ctx context.Context, ndmsName string) error { return nil }
+func (m *mockOp) Suspend(ctx context.Context, tunnelID string) error            { return nil }
+func (m *mockOp) Resume(ctx context.Context, tunnelID string) error             { return nil }
 func (m *mockOp) SetupPolicyTable(ctx context.Context, iface string, table int) error {
 	return nil
 }

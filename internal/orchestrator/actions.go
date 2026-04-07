@@ -17,6 +17,9 @@ const (
 	ActionRestoreKmod
 	ActionRestoreEndpointTracking
 	ActionLinkToggle
+	ActionReconcileKernel
+	ActionSuspendKernel
+	ActionResumeKernel
 
 	// Live config
 	ActionApplyConfig

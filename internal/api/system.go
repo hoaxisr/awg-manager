@@ -212,6 +212,7 @@ func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, go
 		"firmwareVersion":             osdetect.ReleaseString(),
 		"supportsExtendedASC":         osdetect.AtLeast(5, 1),
 		"supportsHRanges":             ndmsinfo.SupportsHRanges(),
+		"supportsPingCheck":           ndmsinfo.HasPingCheckComponent(),
 		"totalMemoryMB":               osdetect.GetTotalMemoryMB(),
 		"isLowMemory":                 osdetect.IsLowMemoryDevice(),
 		"gcMemLimit":                  gcMemLimit,
@@ -227,15 +228,21 @@ func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, go
 		"bootInProgress":      h.bootStatusFn != nil && h.bootStatusFn(),
 		"backendAvailability": map[string]bool{
 			"nativewg": nativewgAvailable(),
-			"kernel":   kernelModuleLoaded && !ndmsinfo.SupportsWireguardASC(),
+			// Kernel backend works on any OS where amneziawg.ko is loaded.
+			// On OS5 it uses the OpkgTun two-layer architecture (NDMS + kernel).
+			"kernel": kernelModuleLoaded,
 		},
 	}
 }
 
 // nativewgAvailable returns true if NativeWG backend can work:
-// either firmware supports WireGuard ASC natively (>= 5.01.A.4),
-// or awg_proxy.ko is loaded (provides obfuscation proxy for older firmware).
+// (1) the firmware has the 'wireguard' component installed, AND
+// (2) either firmware supports WireGuard ASC natively (>= 5.01.A.4)
+//     or awg_proxy.ko is loaded (provides obfuscation proxy for older firmware).
 func nativewgAvailable() bool {
+	if !ndmsinfo.HasWireguardComponent() {
+		return false
+	}
 	if ndmsinfo.SupportsWireguardASC() {
 		return true
 	}

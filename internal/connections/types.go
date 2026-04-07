@@ -15,6 +15,7 @@ type Connection struct {
 	TunnelName string `json:"tunnelName"`
 	ClientMAC  string `json:"clientMac"`
 	ClientName string `json:"clientName"`
+	Rules      []RuleHit `json:"rules,omitempty"`
 }
 
 // ConnectionStats holds aggregate counts over all connections (pre-filter).
