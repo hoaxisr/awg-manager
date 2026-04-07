@@ -13,11 +13,21 @@
 	let protocol = $state('all');
 	let search = $state('');
 	let offset = $state(0);
+	let sortBy = $state<'' | 'proto' | 'src' | 'dst' | 'iface' | 'state' | 'bytes'>('');
+	let sortDir = $state<'asc' | 'desc'>('asc');
 
 	async function fetchData() {
 		loading = true;
 		try {
-			data = await api.getConnections({ tunnel, protocol, search, offset, limit: 50 });
+			data = await api.getConnections({
+				tunnel,
+				protocol,
+				search,
+				offset,
+				limit: 50,
+				sortBy: sortBy || undefined,
+				sortDir,
+			});
 		} catch (e) {
 			notifications.error('Не удалось загрузить соединения');
 			data = null;
@@ -36,6 +46,25 @@
 		protocol = value;
 		offset = 0;
 		fetchData();
+	}
+
+	function handleSortChange(column: 'proto' | 'src' | 'dst' | 'iface' | 'state' | 'bytes') {
+		if (sortBy === column) {
+			sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortBy = column;
+			sortDir = 'asc';
+		}
+		offset = 0;
+		fetchData();
+	}
+
+	function handleChipClick(chipId: string) {
+		// chipId is the raw key from data.tunnels: '' for direct, tunnel ID otherwise.
+		// Map to the filter value used by the dropdown ('direct' for empty, tunnel ID otherwise).
+		const target = chipId === '' ? 'direct' : chipId;
+		// Toggle: clicking the active chip resets to 'all'.
+		handleTunnelChange(tunnel === target ? 'all' : target);
 	}
 
 	let searchTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -76,11 +105,16 @@
 		{#if Object.keys(data.tunnels).length > 0}
 			<div class="tunnel-chips">
 				{#each Object.entries(data.tunnels).sort((a, b) => b[1].count - a[1].count) as [id, info]}
-					<div class="tunnel-chip">
+					<button
+						type="button"
+						class="tunnel-chip"
+						class:active={(tunnel === 'direct' && id === '') || tunnel === id}
+						onclick={() => handleChipClick(id)}
+					>
 						<span class="tunnel-chip-dot" class:tunnel-chip-dot-vpn={id !== ''} class:tunnel-chip-dot-direct={id === ''}></span>
 						<span>{info.name}</span>
 						<span class="tunnel-chip-count">{#if info.interface && id !== ''}{info.interface} &middot; {/if}{info.count}</span>
-					</div>
+					</button>
 				{/each}
 			</div>
 		{/if}
@@ -100,6 +134,9 @@
 		<ConnectionsTable
 			connections={data.connections}
 			pagination={data.pagination}
+			{sortBy}
+			{sortDir}
+			onSortChange={handleSortChange}
 			onPageChange={handlePageChange}
 		/>
 	{/if}
@@ -129,6 +166,19 @@
 		border: 1px solid var(--border);
 		border-radius: 6px;
 		font-size: 0.75rem;
+		cursor: pointer;
+		font-family: inherit;
+		color: inherit;
+		transition: border-color 0.15s, background 0.15s;
+	}
+
+	.tunnel-chip:hover {
+		border-color: var(--accent);
+	}
+
+	.tunnel-chip.active {
+		border-color: var(--accent);
+		background: rgba(122, 162, 247, 0.15);
 	}
 
 	.tunnel-chip-dot {
