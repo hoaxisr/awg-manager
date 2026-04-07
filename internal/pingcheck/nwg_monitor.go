@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
 
@@ -26,6 +27,7 @@ type nwgMonitor struct {
 	threshold  int
 	logBuffer  *LogBuffer
 	source     nwgPollSource
+	bus        *events.Bus
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -35,6 +37,25 @@ type nwgMonitor struct {
 	prevFail    int
 	prevSuccess int
 	prevStatus  string
+}
+
+// publishLog publishes a log entry as an SSE event.
+func (m *nwgMonitor) publishLog(entry LogEntry) {
+	if m.bus == nil {
+		return
+	}
+	m.bus.Publish("pingcheck:log", events.PingCheckLogEvent{
+		Timestamp:   entry.Timestamp.Format(time.RFC3339),
+		TunnelID:    entry.TunnelID,
+		TunnelName:  entry.TunnelName,
+		Success:     entry.Success,
+		Latency:     entry.Latency,
+		Error:       entry.Error,
+		FailCount:   entry.FailCount,
+		Threshold:   entry.Threshold,
+		StateChange: entry.StateChange,
+		Backend:     entry.Backend,
+	})
 }
 
 // processDelta compares current counters with previous snapshot,
@@ -50,7 +71,8 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
 		return
 	}
 
-	// Calculate deltas. If current < prev, counters were reset (NDMS restart).
+	// Calculate deltas. If current < prev, counters were reset
+	// (NDMS restart or fail→recovery cycle resets successcount).
 	failDelta := failCount - m.prevFail
 	if failDelta < 0 {
 		failDelta = failCount
@@ -61,11 +83,26 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
 	}
 
 	now := time.Now()
+	totalDelta := failDelta + successDelta
+
+	// Distribute timestamps across the poll interval.
+	// NDMS may perform multiple checks per our poll (e.g. NDMS checks
+	// every ~5s, we poll every 10s → delta=2). Give each entry a
+	// unique timestamp spread evenly over the interval.
+	entryTS := func(index int) time.Time {
+		if totalDelta <= 1 {
+			return now
+		}
+		offset := m.interval * time.Duration(totalDelta-1-index) / time.Duration(totalDelta)
+		return now.Add(-offset)
+	}
+
+	entryIdx := 0
 
 	// Emit fail entries first (chronological: failures happened before recovery).
 	for i := 0; i < failDelta; i++ {
-		m.logBuffer.Add(LogEntry{
-			Timestamp:  now,
+		entry := LogEntry{
+			Timestamp:  entryTS(entryIdx),
 			TunnelID:   m.tunnelID,
 			TunnelName: m.tunnelName,
 			Backend:    "nativewg",
@@ -73,13 +110,16 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
 			Latency:    LatencyNotAvailable,
 			FailCount:  failCount,
 			Threshold:  m.threshold,
-		})
+		}
+		m.logBuffer.Add(entry)
+		m.publishLog(entry)
+		entryIdx++
 	}
 
 	// Emit success entries.
 	for i := 0; i < successDelta; i++ {
-		m.logBuffer.Add(LogEntry{
-			Timestamp:  now,
+		entry := LogEntry{
+			Timestamp:  entryTS(entryIdx),
 			TunnelID:   m.tunnelID,
 			TunnelName: m.tunnelName,
 			Backend:    "nativewg",
@@ -87,13 +127,16 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
 			Latency:    LatencyNotAvailable,
 			FailCount:  0,
 			Threshold:  m.threshold,
-		})
+		}
+		m.logBuffer.Add(entry)
+		m.publishLog(entry)
+		entryIdx++
 	}
 
 	// Emit state change entry on status transition.
 	if status != m.prevStatus && m.prevStatus != "" {
 		stateChange := "status_" + status // "status_fail" or "status_pass"
-		m.logBuffer.Add(LogEntry{
+		entry := LogEntry{
 			Timestamp:   now,
 			TunnelID:    m.tunnelID,
 			TunnelName:  m.tunnelName,
@@ -103,6 +146,18 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
 			StateChange: stateChange,
 			FailCount:   failCount,
 			Threshold:   m.threshold,
+		}
+		m.logBuffer.Add(entry)
+		m.publishLog(entry)
+	}
+
+	// Publish state on every poll so frontend counters stay current.
+	if m.bus != nil {
+		m.bus.Publish("pingcheck:state", events.PingCheckStateEvent{
+			TunnelID:     m.tunnelID,
+			Status:       status,
+			FailCount:    failCount,
+			SuccessCount: successCount,
 		})
 	}
 

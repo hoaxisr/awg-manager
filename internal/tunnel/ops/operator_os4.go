@@ -18,6 +18,11 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 )
 
+const (
+	interfaceReadyTimeout = 10 * time.Second
+	socketReadyTimeout    = 5 * time.Second
+)
+
 // OperatorOS4Impl is the Operator implementation for Keenetic OS 4.x.
 // Uses ip commands directly instead of NDMS.
 // Routing is NOT managed by the operator — OS4 handles routing externally.
@@ -168,12 +173,6 @@ func (o *OperatorOS4Impl) Start(ctx context.Context, cfg tunnel.Config) error {
 	return nil
 }
 
-// TeardownForRestart on OS4 is identical to Stop — OS4 has no NDMS conf-layer
-// hooks, so there is no infinite restart loop risk.
-func (o *OperatorOS4Impl) TeardownForRestart(ctx context.Context, tunnelID string) {
-	_ = o.Stop(ctx, tunnelID)
-}
-
 // Stop stops a tunnel on OS 4.x.
 func (o *OperatorOS4Impl) Stop(ctx context.Context, tunnelID string) error {
 	ifaceName := tunnelID
@@ -288,24 +287,6 @@ func (o *OperatorOS4Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	}
 
 	o.logInfo("reconcile", cfg.ID, "Reconciliation complete")
-	return nil
-}
-
-// Suspend sets link down without removing the interface.
-func (o *OperatorOS4Impl) Suspend(ctx context.Context, tunnelID string) error {
-	result, err := exec.Run(ctx, "/opt/sbin/ip", "link", "set", "down", "dev", tunnelID)
-	if err != nil {
-		return tunnel.NewOpError("suspend", tunnelID, "ip", exec.FormatError(result, err))
-	}
-	return nil
-}
-
-// Resume sets link up after Suspend.
-func (o *OperatorOS4Impl) Resume(ctx context.Context, tunnelID string) error {
-	result, err := exec.Run(ctx, "/opt/sbin/ip", "link", "set", "up", "dev", tunnelID)
-	if err != nil {
-		return tunnel.NewOpError("resume", tunnelID, "ip", exec.FormatError(result, err))
-	}
 	return nil
 }
 

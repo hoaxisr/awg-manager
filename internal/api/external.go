@@ -20,10 +20,11 @@ type ExternalTunnelService interface {
 
 // ExternalTunnelsHandler handles external tunnel operations.
 type ExternalTunnelsHandler struct {
-	svc        ExternalTunnelService
-	tunnelSvc  TunnelService
-	store      *storage.AWGTunnelStore
-	log        *logging.ScopedLogger
+	svc                ExternalTunnelService
+	tunnelSvc          TunnelService
+	store              *storage.AWGTunnelStore
+	log                *logging.ScopedLogger
+	publishTunnelList  func(ctx context.Context)
 }
 
 // NewExternalTunnelsHandler creates a new external tunnels handler.
@@ -36,6 +37,23 @@ func NewExternalTunnelsHandler(svc ExternalTunnelService, tunnelSvc TunnelServic
 	}
 }
 
+// SetTunnelListPublisher sets the function that publishes the full tunnel list via SSE.
+func (h *ExternalTunnelsHandler) SetTunnelListPublisher(fn func(ctx context.Context)) {
+	h.publishTunnelList = fn
+}
+
+// listExternal builds the external tunnel list for API response and SSE snapshots.
+func (h *ExternalTunnelsHandler) listExternal(ctx context.Context) ([]external.TunnelInfo, error) {
+	tunnels, err := h.svc.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if tunnels == nil {
+		tunnels = []external.TunnelInfo{}
+	}
+	return tunnels, nil
+}
+
 // List returns all external (unmanaged) tunnels.
 // Endpoint: GET /api/external-tunnels
 func (h *ExternalTunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -44,13 +62,13 @@ func (h *ExternalTunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tunnels, err := h.svc.List(r.Context())
+	tunnels, err := h.listExternal(r.Context())
 	if err != nil {
 		response.Error(w, err.Error(), "LIST_FAILED")
 		return
 	}
 
-	response.Success(w, response.MustNotNil(tunnels))
+	response.Success(w, tunnels)
 }
 
 // adoptRequest represents the request body for adopting an external tunnel.
@@ -97,6 +115,10 @@ func (h *ExternalTunnelsHandler) Adopt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("adopt", result.Name, "External tunnel adopted")
+
+	if h.publishTunnelList != nil {
+		h.publishTunnelList(r.Context())
+	}
 
 	resp, err := BuildTunnelResponse(r, h.tunnelSvc, h.store, result.ID)
 	if err != nil {

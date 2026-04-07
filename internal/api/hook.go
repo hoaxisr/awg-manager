@@ -4,20 +4,23 @@ import (
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
 // HookHandler handles NDM hook events.
 type HookHandler struct {
-	svc TunnelService
-	log *logging.ScopedLogger
+	svc  TunnelService
+	orch *orchestrator.Orchestrator
+	log  *logging.ScopedLogger
 }
 
 // NewHookHandler creates a new hook event handler.
-func NewHookHandler(svc TunnelService, appLogger logging.AppLogger) *HookHandler {
+func NewHookHandler(svc TunnelService, orch *orchestrator.Orchestrator, appLogger logging.AppLogger) *HookHandler {
 	return &HookHandler{
-		svc: svc,
-		log: logging.NewScopedLogger(appLogger, logging.GroupSystem, logging.SubBoot),
+		svc:  svc,
+		orch: orch,
+		log:  logging.NewScopedLogger(appLogger, logging.GroupSystem, logging.SubBoot),
 	}
 }
 
@@ -40,7 +43,12 @@ func (h *HookHandler) HandleIfaceChanged(w http.ResponseWriter, r *http.Request)
 
 	h.log.Info("hook", id, "iface-changed: layer="+layer+" level="+level)
 
-	if err := h.svc.ReconcileInterface(r.Context(), id, layer, level); err != nil {
+	if err := h.orch.HandleEvent(r.Context(), orchestrator.Event{
+		Type:     orchestrator.EventNDMSHook,
+		NDMSName: id,
+		Layer:    layer,
+		Level:    level,
+	}); err != nil {
 		h.log.Warn("hook", id, "ReconcileInterface failed: "+err.Error())
 		response.Error(w, err.Error(), "RECONCILE_FAILED")
 		return

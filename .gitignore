@@ -29,3 +29,12 @@ screenshots/
 
 # Worktrees
 .worktrees/
+
+# Not needed in remote
+CHANGELOG.md
+README.md
+INSTALL.md
+package.json
+package-lock.json
+test-results/
+.superpowers/

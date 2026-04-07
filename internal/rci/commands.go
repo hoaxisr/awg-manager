@@ -154,26 +154,12 @@ func CmdRemoveDefaultRoute(name string) any {
 	return map[string]any{"ip": map[string]any{"route": map[string]any{"default": true, "interface": name, "no": true}}}
 }
 
-// --- IPv6 routes (#5, #6, #7) ---
-
-func CmdSetIPv6DefaultRoute(name string) any {
-	return map[string]any{"ipv6": map[string]any{"route": map[string]any{"default": true, "interface": name}}}
-}
-
-func CmdRemoveIPv6DefaultRoute(name string) any {
-	return map[string]any{"ipv6": map[string]any{"route": map[string]any{"default": true, "interface": name, "no": true}}}
-}
-
-func CmdRemoveIPv6HostRoute(host string) any {
-	return map[string]any{"ipv6": map[string]any{"route": map[string]any{"host": host, "no": true}}}
-}
-
 // --- Static subnet routes ---
 
 // CmdAddStaticRoute adds a static route to a subnet via an interface.
 // Uses "auto" flag so the route activates only when the interface is up.
 // If reject is true, traffic is blocked when the interface is down (kill switch).
-func CmdAddStaticRoute(network, mask, iface string, reject bool) any {
+func CmdAddStaticRoute(network, mask, iface string, reject bool, comment string) any {
 	route := map[string]any{
 		"network":   network,
 		"mask":      mask,
@@ -183,11 +169,14 @@ func CmdAddStaticRoute(network, mask, iface string, reject bool) any {
 	if reject {
 		route["reject"] = true
 	}
+	if comment != "" {
+		route["comment"] = comment
+	}
 	return map[string]any{"ip": map[string]any{"route": route}}
 }
 
 // CmdAddHostRoute adds a static host route (/32) via an interface.
-func CmdAddHostRoute(host, iface string, reject bool) any {
+func CmdAddHostRoute(host, iface string, reject bool, comment string) any {
 	route := map[string]any{
 		"host":      host,
 		"interface": iface,
@@ -195,6 +184,9 @@ func CmdAddHostRoute(host, iface string, reject bool) any {
 	}
 	if reject {
 		route["reject"] = true
+	}
+	if comment != "" {
+		route["comment"] = comment
 	}
 	return map[string]any{"ip": map[string]any{"route": route}}
 }

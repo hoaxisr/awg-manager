@@ -27,6 +27,7 @@ type ServiceImpl struct {
 	resolver InterfaceResolver
 	log      *logger.Logger
 	appLog   *logging.ScopedLogger
+	failover *FailoverManager
 }
 
 // NewService creates a new DNS route service.
@@ -38,6 +39,95 @@ func NewService(store *Store, ndmsClient ndms.Client, resolver InterfaceResolver
 		log:      log,
 		appLog:   logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubDnsRoute),
 	}
+}
+
+// SetFailoverManager sets the failover manager for DNS route failover.
+func (s *ServiceImpl) SetFailoverManager(fm *FailoverManager) {
+	s.failover = fm
+}
+
+// LookupAffectedLists returns DNS lists that reference the given tunnelID,
+// with FromTunnel/ToTunnel resolved based on the action ("switched" or "restored").
+// For "switched": FromTunnel is the failed tunnel's interface name; ToTunnel is the
+// next active route in the chain (or empty if none).
+// For "restored": ToTunnel is the recovered tunnel's interface name; FromTunnel is
+// what was active during the failure (the next route in chain).
+func (s *ServiceImpl) LookupAffectedLists(tunnelID string, action string) []AffectedList {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	data := s.store.GetCached()
+	if data == nil {
+		return nil
+	}
+
+	var failedSet map[string]struct{}
+	if s.failover != nil {
+		failed := s.failover.FailedTunnels()
+		if len(failed) > 0 {
+			failedSet = make(map[string]struct{}, len(failed))
+			for _, id := range failed {
+				failedSet[id] = struct{}{}
+			}
+		}
+	}
+
+	var result []AffectedList
+	for _, list := range data.Lists {
+		if !list.Enabled {
+			continue
+		}
+
+		// Find this tunnel's index in the route chain
+		idx := -1
+		for i, rt := range list.Routes {
+			if rt.TunnelID == tunnelID {
+				idx = i
+				break
+			}
+		}
+		if idx == -1 {
+			continue // tunnel not in this list
+		}
+
+		// Determine the next active route in the chain (skipping failed ones).
+		// Always exclude the current tunnel itself:
+		// - For "switched": it just failed, traffic moves to a replacement.
+		// - For "restored": we want "what WAS active during failure" (the replacement),
+		//   not the recovered tunnel itself.
+		var nextActive string
+		for i, rt := range list.Routes {
+			if i == idx {
+				continue
+			}
+			if failedSet != nil {
+				if _, isFailed := failedSet[rt.TunnelID]; isFailed {
+					continue
+				}
+			}
+			nextActive = rt.Interface
+			break
+		}
+
+		failedIface := list.Routes[idx].Interface
+		var from, to string
+		if action == "switched" {
+			from = failedIface
+			to = nextActive
+		} else { // "restored"
+			from = nextActive
+			to = failedIface
+		}
+
+		result = append(result, AffectedList{
+			ListID:     list.ID,
+			ListName:   list.Name,
+			FromTunnel: from,
+			ToTunnel:   to,
+		})
+	}
+
+	return result
 }
 
 // Create adds a new domain list, persists it, and reconciles router state.
@@ -250,6 +340,134 @@ func (s *ServiceImpl) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// DeleteBatch removes multiple domain lists by IDs, persists once, and reconciles once.
+// Returns the count of actually deleted lists.
+func (s *ServiceImpl) DeleteBatch(ctx context.Context, ids []string) (int, error) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	data := s.store.GetCached()
+	if data == nil {
+		return 0, fmt.Errorf("store not loaded")
+	}
+
+	toDelete := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		toDelete[id] = true
+	}
+
+	kept := make([]DomainList, 0, len(data.Lists))
+	deleted := 0
+	for _, list := range data.Lists {
+		if toDelete[list.ID] {
+			s.log.Infof("deleted dns route list %q (%s)", list.Name, list.ID)
+			deleted++
+		} else {
+			kept = append(kept, list)
+		}
+	}
+
+	if deleted == 0 {
+		return 0, nil
+	}
+
+	data.Lists = kept
+
+	if err := s.store.Save(data); err != nil {
+		return 0, fmt.Errorf("save after delete batch: %w", err)
+	}
+
+	if err := s.reconcile(ctx); err != nil {
+		s.logError("delete-batch", "", "Reconcile failed", err.Error())
+	}
+
+	return deleted, nil
+}
+
+// CreateBatch adds multiple domain lists, persists once, and reconciles once.
+// Lists with empty name or no domains/subscriptions are silently skipped.
+func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*DomainList, error) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	data := s.store.GetCached()
+	if data == nil {
+		return nil, fmt.Errorf("store not loaded")
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	var createdIDs []string
+	hasSubs := false
+
+	for _, list := range lists {
+		if strings.TrimSpace(list.Name) == "" {
+			continue
+		}
+		if len(list.ManualDomains) == 0 && len(list.Subscriptions) == 0 {
+			continue
+		}
+
+		list.ID = nextListID(data.Lists)
+		list.Enabled = true
+		list.CreatedAt = now
+		list.UpdatedAt = now
+		list.Domains = deduplicateDomains(list.ManualDomains)
+
+		if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
+			return nil, fmt.Errorf("resolve routes for %q: %w", list.Name, err)
+		}
+
+		s.dedup(&list)
+		data.Lists = append(data.Lists, list)
+		createdIDs = append(createdIDs, list.ID)
+		s.log.Infof("created dns route list %q (%s)", list.Name, list.ID)
+
+		if len(list.Subscriptions) > 0 {
+			hasSubs = true
+		}
+	}
+
+	if len(createdIDs) == 0 {
+		return []*DomainList{}, nil
+	}
+
+	if err := s.store.Save(data); err != nil {
+		return nil, fmt.Errorf("save after create batch: %w", err)
+	}
+
+	if hasSubs {
+		for _, id := range createdIDs {
+			// Find the list to check if it has subscriptions.
+			for i := range data.Lists {
+				if data.Lists[i].ID == id && len(data.Lists[i].Subscriptions) > 0 {
+					if err := s.refreshSubscriptions(ctx, id); err != nil {
+						s.logError("create-batch", id, "Refresh subscriptions failed", err.Error())
+					}
+					break
+				}
+			}
+		}
+	} else {
+		if err := s.reconcile(ctx); err != nil {
+			s.logError("create-batch", "", "Reconcile failed", err.Error())
+		}
+	}
+
+	// Collect created lists from data (may have been updated by refreshSubscriptions).
+	result := make([]*DomainList, 0, len(createdIDs))
+	idSet := make(map[string]bool, len(createdIDs))
+	for _, id := range createdIDs {
+		idSet[id] = true
+	}
+	for i := range data.Lists {
+		if idSet[data.Lists[i].ID] {
+			result = append(result, &data.Lists[i])
+		}
+	}
+
+	return result, nil
+}
+
 // SetEnabled toggles the enabled state of a domain list.
 func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) error {
 	s.opMu.Lock()
@@ -389,7 +607,14 @@ func (s *ServiceImpl) OnTunnelStart(ctx context.Context) error {
 }
 
 // OnTunnelDelete removes route targets referencing the deleted tunnel and reconciles.
+// Also clears any failover state for the deleted tunnel.
 func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error {
+	// Clean up failover state first (uses its own mutex, before opMu lock).
+	// Skip if not in failedSet to avoid redundant reconcile.
+	if s.failover != nil && s.failover.IsFailed(tunnelID) {
+		_ = s.failover.MarkRecovered(tunnelID)
+	}
+
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 

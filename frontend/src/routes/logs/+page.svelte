@@ -1,23 +1,21 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
+	import { logEntries } from '$lib/stores/logs';
 	import { PageContainer, LoadingSpinner, EmptyState } from '$lib/components/layout';
 	import { formatTime } from '$lib/utils/format';
 	import type { LogEntry } from '$lib/types';
 
-	let logs = $state<LogEntry[]>([]);
-	let total = $state(0);
-	let enabled = $state(true);
-	let loading = $state(true);
+	const enabledStore = logEntries.enabled;
+	const totalStore = logEntries.total;
+	const loadedStore = logEntries.loaded;
+
 	let filterGroup = $state('');
 	let filterSubgroup = $state('');
 	let filterLevel = $state('');
 	let searchText = $state('');
 	let loadingMore = $state(false);
 	let clearing = $state(false);
-	let pollInterval: number | null = $state(null);
-	let pollPaused = $state(false); // paused when user loads more
 	const LIMIT = 200;
 
 	const subgroupsByGroup: Record<string, string[]> = {
@@ -39,47 +37,16 @@
 		tunnel: 'Tunnel', routing: 'Routing', server: 'Server', system: 'System',
 	};
 
-	onMount(async () => {
-		await loadLogs();
-		pollInterval = window.setInterval(() => {
-			if (!pollPaused) loadLogs();
-		}, 5000);
-	});
-
-	onDestroy(() => {
-		if (pollInterval) {
-			clearInterval(pollInterval);
-		}
-	});
-
-	async function loadLogs() {
-		try {
-			const resp = await api.getLogs({
-				group: filterGroup || undefined,
-				subgroup: filterSubgroup || undefined,
-				level: filterLevel || undefined,
-				limit: LIMIT,
-			});
-			enabled = resp.enabled;
-			logs = resp.logs;
-			total = resp.total;
-		} catch { }
-		finally { loading = false; }
-	}
-
 	async function loadMore() {
 		loadingMore = true;
-		pollPaused = true; // stop poll from overwriting loaded data
 		try {
+			const currentCount = $logEntries.length;
 			const resp = await api.getLogs({
-				group: filterGroup || undefined,
-				subgroup: filterSubgroup || undefined,
-				level: filterLevel || undefined,
 				limit: LIMIT,
-				offset: logs.length,
+				offset: currentCount,
 			});
-			logs = [...logs, ...resp.logs];
-			total = resp.total;
+			logEntries.setEntries([...$logEntries, ...resp.logs]);
+			logEntries.setTotal(resp.total);
 		} catch { }
 		finally { loadingMore = false; }
 	}
@@ -87,38 +54,44 @@
 	function setGroup(g: string) {
 		filterGroup = filterGroup === g ? '' : g;
 		filterSubgroup = '';
-		pollPaused = false; // resume poll on filter change
-		loadLogs();
 	}
 
 	function setSubgroup(sg: string) {
 		filterSubgroup = filterSubgroup === sg ? '' : sg;
-		pollPaused = false;
-		loadLogs();
 	}
 
 	function setLevel(l: string) {
 		filterLevel = filterLevel === l ? '' : l;
-		pollPaused = false;
-		loadLogs();
 	}
 
-	let displayLogs = $derived(
-		searchText
-			? logs.filter(l =>
-				l.message.toLowerCase().includes(searchText.toLowerCase()) ||
-				l.target.toLowerCase().includes(searchText.toLowerCase()) ||
-				l.action.toLowerCase().includes(searchText.toLowerCase())
-			)
-			: logs
-	);
+	let displayLogs = $derived.by(() => {
+		let filtered = $logEntries;
+		if (filterGroup) {
+			filtered = filtered.filter(l => l.group === filterGroup);
+		}
+		if (filterSubgroup) {
+			filtered = filtered.filter(l => l.subgroup === filterSubgroup);
+		}
+		if (filterLevel) {
+			filtered = filtered.filter(l => l.level === filterLevel);
+		}
+		if (searchText) {
+			const q = searchText.toLowerCase();
+			filtered = filtered.filter(l =>
+				l.message.toLowerCase().includes(q) ||
+				l.target.toLowerCase().includes(q) ||
+				l.action.toLowerCase().includes(q)
+			);
+		}
+		return filtered;
+	});
 
 	async function clearLogs() {
 		clearing = true;
 		try {
 			await api.clearLogs();
+			logEntries.clear();
 			notifications.success('Логи очищены');
-			await loadLogs();
 		} catch (e) {
 			notifications.error('Не удалось очистить логи');
 		} finally {
@@ -133,7 +106,7 @@
 	}
 
 	async function copyToClipboard() {
-		if (!logs.length) return;
+		if (!displayLogs.length) return;
 
 		const text = displayLogs.map(formatLogLine).join('\n');
 
@@ -166,7 +139,7 @@
 				group: filterGroup || undefined,
 				subgroup: filterSubgroup || undefined,
 				level: filterLevel || undefined,
-				limit: total || 10000,
+				limit: $totalStore || 10000,
 			});
 
 			const text = resp.logs.map(formatLogLine).join('\n');
@@ -196,11 +169,11 @@
 </svelte:head>
 
 <PageContainer>
-	{#if loading}
+	{#if !$loadedStore}
 		<div class="flex justify-center py-12">
 			<LoadingSpinner size="lg" message="Загрузка журнала..." />
 		</div>
-	{:else if !enabled}
+	{:else if !$enabledStore}
 		<div class="card">
 			<EmptyState
 				title="Логирование отключено"
@@ -268,12 +241,12 @@
 				</div>
 
 				<div class="level-actions">
-					<span class="log-count">{displayLogs.length}{#if total > logs.length} / {total}{/if}</span>
-					<button class="btn btn-sm btn-ghost" onclick={downloadLogs} disabled={downloading || !total}>
+					<span class="log-count">{displayLogs.length}{#if $totalStore > $logEntries.length} / {$totalStore}{/if}</span>
+					<button class="btn btn-sm btn-ghost" onclick={downloadLogs} disabled={downloading || !$totalStore}>
 						{downloading ? '...' : 'Download'}
 					</button>
 					<button class="btn btn-sm btn-ghost" onclick={copyToClipboard} disabled={!displayLogs.length}>Copy</button>
-					<button class="btn btn-sm btn-danger" onclick={clearLogs} disabled={clearing || !logs.length}>
+					<button class="btn btn-sm btn-danger" onclick={clearLogs} disabled={clearing || !$logEntries.length}>
 						{clearing ? 'Очистка...' : 'Clear'}
 					</button>
 				</div>
@@ -299,10 +272,10 @@
 						</div>
 					{/each}
 
-					{#if logs.length < total}
+					{#if $logEntries.length < $totalStore}
 						<div class="load-more">
 							<button class="btn-load-more" onclick={loadMore} disabled={loadingMore}>
-								{loadingMore ? 'Загрузка...' : `Загрузить ещё (${total - logs.length} оставшихся)`}
+								{loadingMore ? 'Загрузка...' : `Загрузить ещё (${$totalStore - $logEntries.length} оставшихся)`}
 							</button>
 						</div>
 					{/if}

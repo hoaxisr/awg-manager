@@ -94,17 +94,21 @@
 			const subnets: string[] = [];
 			for (const line of lines) {
 				const trimmed = line.trim();
-				// Match "route add X.X.X.X mask Y.Y.Y.Y ..." or CIDR patterns
-				const routeMatch = trimmed.match(/route\s+add\s+(\d+\.\d+\.\d+\.\d+)\s+mask\s+(\d+\.\d+\.\d+\.\d+)/i);
+				// Match "route add X.X.X.X mask Y.Y.Y.Y GW [metric N] [!comment]"
+				const routeMatch = trimmed.match(/route\s+add\s+(\d+\.\d+\.\d+\.\d+)\s+mask\s+(\d+\.\d+\.\d+\.\d+)\s+\S+(?:\s+metric\s+\d+)?\s*(!.+)?/i);
 				if (routeMatch) {
 					const cidr = maskToCidr(routeMatch[1], routeMatch[2]);
-					if (cidr) subnets.push(cidr);
+					if (cidr) {
+						const comment = routeMatch[3] ? routeMatch[3].substring(1).trim() : '';
+						subnets.push(comment ? `${cidr} !${comment}` : cidr);
+					}
 					continue;
 				}
-				// Also accept plain CIDR lines
-				const cidrMatch = trimmed.match(/^(\d+\.\d+\.\d+\.\d+\/\d+)$/);
+				// Also accept "CIDR [!comment]" lines
+				const cidrMatch = trimmed.match(/^(\d+\.\d+\.\d+\.\d+\/\d+)(?:\s+(!.+))?$/);
 				if (cidrMatch) {
-					subnets.push(cidrMatch[1]);
+					const comment = cidrMatch[2] ? cidrMatch[2].substring(1).trim() : '';
+					subnets.push(comment ? `${cidrMatch[1]} !${comment}` : cidrMatch[1]);
 				}
 			}
 			if (subnets.length > 0) {
@@ -114,7 +118,6 @@
 		} catch {
 			// silently ignore read errors
 		}
-		// Reset input so the same file can be re-selected
 		input.value = '';
 	}
 

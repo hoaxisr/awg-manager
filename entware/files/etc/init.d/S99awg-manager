@@ -1,11 +1,8 @@
 #!/bin/sh
 # S99awg-manager - AWG Manager service
 
-# Ensure system binaries are in PATH (ndmc, ip, etc.)
+# Ensure system binaries are in PATH
 export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/opt/bin:/opt/sbin:$PATH"
-
-# Ensure ndmc uses system libraries (not Entware's openssl)
-export LD_LIBRARY_PATH="/lib:/usr/lib:$LD_LIBRARY_PATH"
 
 ENABLED=yes
 PROCS=awg-manager

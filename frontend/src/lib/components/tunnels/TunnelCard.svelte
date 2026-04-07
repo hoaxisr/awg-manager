@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import type { TunnelListItem } from '$lib/types';
 	import { TrafficChart } from '$lib/components/ui';
 	import { getTrafficRates, getTrafficPeriod, subscribeTraffic, loadHistory } from '$lib/stores/traffic';
@@ -36,9 +37,12 @@
 		localStorage.setItem(CHART_KEY_PREFIX + tunnel.id, String(chartExpanded));
 	}
 
+	// Extract tunnel.id as derived — so effects only re-run when ID changes, not on every prop update
+	let tunnelId = $derived(tunnel.id);
+
 	// Subscribe to traffic data updates (rate changes from feedTraffic/loadHistory)
 	$effect(() => {
-		const id = tunnel.id;
+		const id = tunnelId;
 		const update = () => {
 			const t = getTrafficRates(id);
 			rxRates = t.rx;
@@ -48,14 +52,17 @@
 		return subscribeTraffic(update);
 	});
 
-	// Load server history on mount (once per tunnel)
+	// Load server history once per tunnel+period combination
+	let lastLoadedKey = '';
 	$effect(() => {
-		loadHistory(tunnel.id, period);
+		const key = `${tunnelId}:${period}`;
+		if (key === lastLoadedKey) return;
+		lastLoadedKey = key;
+		untrack(() => loadHistory(tunnelId, period));
 	});
 
 	function handlePeriodChange(newPeriod: string) {
 		period = newPeriod;
-		loadHistory(tunnel.id, newPeriod);
 	}
 
 	let hasData = $derived(rxRates.length >= 2);

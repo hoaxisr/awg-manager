@@ -229,8 +229,9 @@ func (s *ServiceImpl) OnTunnelStart(ctx context.Context, tunnelID, tunnelIface s
 	lists := s.listsForTunnel(tunnelID)
 	for _, rl := range lists {
 		for _, subnet := range rl.Subnets {
-			if err := s.ipRouteAdd(ctx, subnet, tunnelIface); err != nil {
-				s.log.Errorf("staticroute: add route %s: %v", subnet, err)
+			cidr, _ := ParseSubnetComment(subnet)
+			if err := s.ipRouteAdd(ctx, cidr, tunnelIface); err != nil {
+				s.log.Errorf("staticroute: add route %s: %v", cidr, err)
 			}
 		}
 	}
@@ -375,22 +376,23 @@ func parseCIDR(cidr string) (network, mask string, err error) {
 // addRoute adds a single static route.
 // OS4 kernel tunnels use ip route; all others use NDMS RCI.
 func (s *ServiceImpl) addRoute(ctx context.Context, subnet, ifaceName, fallback string, os4kernel bool) error {
+	cidr, comment := ParseSubnetComment(subnet)
 	if os4kernel {
-		return s.ipRouteAdd(ctx, subnet, ifaceName)
+		return s.ipRouteAdd(ctx, cidr, ifaceName)
 	}
-	network, mask, err := parseCIDR(subnet)
+	network, mask, err := parseCIDR(cidr)
 	if err != nil {
-		return fmt.Errorf("parse CIDR %s: %w", subnet, err)
+		return fmt.Errorf("parse CIDR %s: %w", cidr, err)
 	}
 	reject := fallback == "reject"
 	var cmd any
 	if mask == "" {
-		cmd = rci.CmdAddHostRoute(network, ifaceName, reject)
+		cmd = rci.CmdAddHostRoute(network, ifaceName, reject, comment)
 	} else {
-		cmd = rci.CmdAddStaticRoute(network, mask, ifaceName, reject)
+		cmd = rci.CmdAddStaticRoute(network, mask, ifaceName, reject, comment)
 	}
 	if _, err := s.ndms.RCIPost(ctx, cmd); err != nil {
-		return fmt.Errorf("RCI add route %s via %s: %w", subnet, ifaceName, err)
+		return fmt.Errorf("RCI add route %s via %s: %w", cidr, ifaceName, err)
 	}
 	return nil
 }
@@ -398,10 +400,11 @@ func (s *ServiceImpl) addRoute(ctx context.Context, subnet, ifaceName, fallback 
 // removeRoute removes a single static route.
 // OS4 kernel tunnels use ip route; all others use NDMS RCI.
 func (s *ServiceImpl) removeRoute(ctx context.Context, subnet, ifaceName string, os4kernel bool) error {
+	cidr, _ := ParseSubnetComment(subnet)
 	if os4kernel {
-		return s.ipRouteDel(ctx, subnet, ifaceName)
+		return s.ipRouteDel(ctx, cidr, ifaceName)
 	}
-	network, mask, err := parseCIDR(subnet)
+	network, mask, err := parseCIDR(cidr)
 	if err != nil {
 		return err
 	}
@@ -412,7 +415,7 @@ func (s *ServiceImpl) removeRoute(ctx context.Context, subnet, ifaceName string,
 		cmd = rci.CmdRemoveStaticRoute(network, mask, ifaceName)
 	}
 	if _, err := s.ndms.RCIPost(ctx, cmd); err != nil {
-		return fmt.Errorf("RCI remove route %s via %s: %w", subnet, ifaceName, err)
+		return fmt.Errorf("RCI remove route %s via %s: %w", cidr, ifaceName, err)
 	}
 	return nil
 }

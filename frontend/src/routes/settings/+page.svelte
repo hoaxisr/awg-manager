@@ -287,6 +287,18 @@
 					<span class="credits-nick">@White3d3</span>
 					<span class="credits-nick">@neoplazma</span>
 					<span class="credits-nick">@Борис_Д******о</span>
+					<span class="credits-nick">@N1KN0</span>
+					<span class="credits-nick">@GregMSK</span>
+					<span class="credits-nick">@vadim_uv</span>
+					<span class="credits-nick">@xProtosx</span>
+					<span class="credits-nick">@RaggaSimpson</span>
+					<span class="credits-nick">@М****л Л*****о</span>
+					<span class="credits-nick">@D***s C************o</span>
+					<span class="credits-nick">@MrUndefined86</span>
+					<span class="credits-nick">@А*******р Ч******н</span>
+					<span class="credits-nick">@vkh_ent</span>
+					<span class="credits-nick">@momomol777</span>
+					<span class="credits-nick">@Grimrade</span>
 				</div>
 			</div>
 		</div>

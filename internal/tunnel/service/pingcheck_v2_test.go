@@ -7,25 +7,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
-// === Tests for PingCheck lifecycle integration (v3: Manager-based) ===
-
-// TestWANDown_UsesSuspend verifies WAN down uses Suspend (ip link set down only),
-// preserving NDMS intent for auto-resume on WAN up.
-func TestWANDown_UsesSuspend(t *testing.T) {
-	op := &MockOperator{}
-
-	// WAN down → Manager.HandleWANDown → ActionSuspend → operator.Suspend
-	_ = op.Suspend(context.Background(), "awg0")
-
-	if len(op.SuspendCalls) != 1 {
-		t.Errorf("Suspend should be called once, got %d", len(op.SuspendCalls))
-	}
-
-	// Stop must NOT be called (Suspend preserves interface).
-	if len(op.StopCalls) != 0 {
-		t.Errorf("Stop must NOT be called by WAN down, got %d", len(op.StopCalls))
-	}
-}
+// === Tests for PingCheck lifecycle integration ===
 
 // TestWANUp_StartsIntentUpTunnels verifies that after WAN up, only tunnels
 // with Enabled=true are started. Disabled tunnels stay disabled.

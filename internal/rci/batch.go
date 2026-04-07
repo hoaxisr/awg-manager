@@ -64,10 +64,7 @@ func (b *Batch) WireguardPeerEndpoint(name, pk, ep string) *Batch  { return b.Ad
 func (b *Batch) WireguardPeerConnect(name, pk, via string) *Batch     { return b.Add(CmdWireguardPeerConnect(name, pk, via)) }
 func (b *Batch) WireguardPeerDisconnect(name, pk string) *Batch      { return b.Add(CmdWireguardPeerDisconnect(name, pk)) }
 
-func (b *Batch) SetDefaultRoute(name string) *Batch        { return b.Add(CmdSetDefaultRoute(name)) }
-func (b *Batch) RemoveDefaultRoute(name string) *Batch      { return b.Add(CmdRemoveDefaultRoute(name)) }
-func (b *Batch) SetIPv6DefaultRoute(name string) *Batch     { return b.Add(CmdSetIPv6DefaultRoute(name)) }
-func (b *Batch) RemoveIPv6DefaultRoute(name string) *Batch  { return b.Add(CmdRemoveIPv6DefaultRoute(name)) }
-func (b *Batch) RemoveIPv6HostRoute(host string) *Batch     { return b.Add(CmdRemoveIPv6HostRoute(host)) }
+func (b *Batch) SetDefaultRoute(name string) *Batch    { return b.Add(CmdSetDefaultRoute(name)) }
+func (b *Batch) RemoveDefaultRoute(name string) *Batch { return b.Add(CmdRemoveDefaultRoute(name)) }
 
 func (b *Batch) Save() *Batch { return b.Add(CmdSave()) }

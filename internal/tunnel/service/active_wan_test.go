@@ -4,18 +4,16 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/lifecycle"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
 // testService creates a ServiceImpl with real file storage and mocks.
-// Returns the service, store, mock operator, mock state manager, and cleanup func.
+// Returns the service, store, mock operator, mock state manager.
 func testService(t *testing.T) (*ServiceImpl, *storage.AWGTunnelStore, *mockOp, *MockStateManager) {
 	t.Helper()
 
@@ -44,11 +42,6 @@ func testService(t *testing.T) (*ServiceImpl, *storage.AWGTunnelStore, *mockOp, 
 	})
 
 	svc := New(store, nil, op, stateMgr, nil, wanModel, nil)
-
-	// Wire lifecycle Manager for kernel tunnel operations.
-	lcm := lifecycle.NewManager(op, store, stateMgr, wanModel, svc.TunnelLocks(), nil, nil)
-	lcm.SetExecutor(svc)
-	svc.SetLifecycleManager(lcm)
 
 	return svc, store, op, stateMgr
 }
@@ -133,18 +126,6 @@ func (m *mockOp) Start(ctx context.Context, cfg tunnel.Config) error {
 	return m.startError
 }
 
-func (m *mockOp) TeardownForRestart(ctx context.Context, tunnelID string) {
-	m.StopCalls = append(m.StopCalls, tunnelID)
-	// Simulate real TeardownForRestart: backend killed, but NDMS intent stays UP.
-	// State becomes NeedsStart (OpkgTun exists, intent=UP, no process).
-	if m.stateMgr != nil {
-		m.stateMgr.SetState(tunnelID, tunnel.StateInfo{
-			State:         tunnel.StateNeedsStart,
-			OpkgTunExists: true,
-		})
-	}
-}
-
 func (m *mockOp) GetSystemName(_ context.Context, ndmsID string) string { return ndmsID }
 func (m *mockOp) SetDefaultRoute(ctx context.Context, ndmsName string) error    { return nil }
 func (m *mockOp) RemoveDefaultRoute(ctx context.Context, ndmsName string) error { return nil }
@@ -160,146 +141,14 @@ func (m *mockOp) RemoveClientRule(ctx context.Context, ip string, table int) err
 }
 func (m *mockOp) ListUsedRoutingTables(ctx context.Context) ([]int, error) { return nil, nil }
 
-// === RestartKernel Tests ===
-
-// TestRestartKernel_NoInterfaceDown verifies that RestartKernel (via lifecycle
-// manager's ActionRestart) does NOT call operator.Stop — which would trigger
-// InterfaceDown and generate NDMS hooks that cause infinite restart loops.
-// Instead, it calls TeardownForRestart (tracked as StopCalls in mock) + startInternal.
-func TestRestartKernel_NoInterfaceDown(t *testing.T) {
-	svc, store, op, stateMgr := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10")
-	stateMgr.SetState("awg10", tunnel.StateInfo{
-		State:          tunnel.StateRunning,
-		ProcessRunning: true,
-		InterfaceUp:    true,
-		OpkgTunExists:  true,
-	})
-
-	// Clear any calls from setup.
-	op.StopCalls = nil
-	op.StartCalls = nil
-
-	err := svc.RestartKernel(ctx, "awg10")
-	if err != nil {
-		t.Fatalf("RestartKernel() error = %v", err)
-	}
-
-	// TeardownForRestart is tracked via StopCalls in the mock.
-	if len(op.StopCalls) != 1 || op.StopCalls[0] != "awg10" {
-		t.Errorf("TeardownForRestart: want [awg10], got %v", op.StopCalls)
-	}
-
-	// ColdStart/Start should be called after teardown.
-	if len(op.StartCalls) == 0 {
-		t.Error("ColdStart not called after teardown")
-	}
-}
-
-// TestRestartKernel_PersistsState verifies that RestartKernel sets ActiveWAN
-// and StartedAt after successful restart.
-func TestRestartKernel_PersistsState(t *testing.T) {
-	svc, store, _, stateMgr := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10")
-	stateMgr.SetState("awg10", tunnel.StateInfo{
-		State:          tunnel.StateRunning,
-		ProcessRunning: true,
-		InterfaceUp:    true,
-		OpkgTunExists:  true,
-	})
-
-	err := svc.RestartKernel(ctx, "awg10")
-	if err != nil {
-		t.Fatalf("RestartKernel() error = %v", err)
-	}
-
-	stored, _ := store.Get("awg10")
-	if stored.ActiveWAN == "" {
-		t.Error("ActiveWAN not set after RestartKernel")
-	}
-	if stored.StartedAt == "" {
-		t.Error("StartedAt not set after RestartKernel")
-	}
-}
-
-// TestRestartKernel_ViaLifecycleManager verifies that the lifecycle manager's
-// HandleAPIRestart dispatches ActionRestart through RestartKernel (not StopKernel+StartKernel).
-func TestRestartKernel_ViaLifecycleManager(t *testing.T) {
-	svc, store, op, stateMgr := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10")
-	stateMgr.SetState("awg10", tunnel.StateInfo{
-		State:          tunnel.StateRunning,
-		ProcessRunning: true,
-		InterfaceUp:    true,
-		OpkgTunExists:  true,
-	})
-
-	op.StopCalls = nil
-	op.StartCalls = nil
-
-	// Use the public API path: service.Restart → lifecycle.HandleAPIRestart.
-	err := svc.Restart(ctx, "awg10")
-	if err != nil {
-		t.Fatalf("Restart() error = %v", err)
-	}
-
-	// TeardownForRestart called (tracked as StopCalls).
-	if len(op.StopCalls) != 1 {
-		t.Errorf("Expected 1 TeardownForRestart call, got %d", len(op.StopCalls))
-	}
-
-	// ColdStart called after teardown.
-	if len(op.StartCalls) == 0 {
-		t.Error("ColdStart not called after lifecycle restart")
-	}
-}
-
-// TestRestartKernel_Disabled_BringsUp verifies that restarting a disabled tunnel
-// brings it up (ActionStart or ActionColdStart, not ActionRestart).
-func TestRestartKernel_Disabled_BringsUp(t *testing.T) {
-	svc, store, op, stateMgr := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
-		tun.Enabled = false
-	})
-	stateMgr.SetState("awg10", tunnel.StateInfo{
-		State:         tunnel.StateDisabled,
-		OpkgTunExists: true,
-	})
-
-	op.StartCalls = nil
-
-	err := svc.Restart(ctx, "awg10")
-	if err != nil {
-		t.Fatalf("Restart() on disabled tunnel error = %v", err)
-	}
-
-	// For disabled tunnels, lifecycle decides ActionStart (not ActionRestart).
-	// This goes through StartKernel → startLightInternal, not RestartKernel.
-	if len(op.StartCalls) == 0 {
-		t.Error("Start not called for disabled tunnel restart")
-	}
-}
-
 // === GetState NeedsStop correction tests ===
 
 // TestGetState_NeedsStop_DisabledByUs verifies that when a tunnel is stopped
 // by our code (Enabled=false), GetState returns Disabled instead of NeedsStop.
-// NeedsStop means "router UI toggled off but process alive" — when WE stopped it,
-// it's Disabled even if the amneziawg interface hasn't been cleaned up yet.
 func TestGetState_NeedsStop_DisabledByUs(t *testing.T) {
 	svc, store, _, stateMgr := testService(t)
 	ctx := context.Background()
 
-	// Tunnel stopped by us: Enabled=false, but process still running
-	// (amneziawg interface exists after ip link set down).
 	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
 		tun.Enabled = false
 	})
@@ -322,7 +171,6 @@ func TestGetState_NeedsStop_RouterToggle(t *testing.T) {
 	svc, store, _, stateMgr := testService(t)
 	ctx := context.Background()
 
-	// Router UI toggled off: Enabled=true (we didn't disable it), conf=disabled by NDMS.
 	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
 		tun.Enabled = true
 	})
@@ -339,108 +187,7 @@ func TestGetState_NeedsStop_RouterToggle(t *testing.T) {
 	}
 }
 
-// === ActiveWAN Persistence Tests ===
-
-// TestActiveWAN_SetOnStart verifies startInternal persists ActiveWAN.
-func TestActiveWAN_SetOnStart(t *testing.T) {
-	svc, store, _, stateMgr := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10")
-	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped})
-
-	err := svc.startInternal(ctx, "awg10")
-	if err != nil {
-		t.Fatalf("startInternal() error = %v", err)
-	}
-
-	stored, _ := store.Get("awg10")
-	if stored.ActiveWAN != "eth3" {
-		t.Errorf("ActiveWAN = %q, want %q", stored.ActiveWAN, "eth3")
-	}
-}
-
-// TestActiveWAN_SetOnReconcile verifies reconcileInternal persists ActiveWAN.
-func TestActiveWAN_SetOnReconcile(t *testing.T) {
-	svc, store, _, stateMgr := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10")
-	stateMgr.SetState("awg10", tunnel.StateInfo{
-		State:          tunnel.StateNeedsStart,
-		ProcessRunning: true,
-	})
-
-	err := svc.reconcileInternal(ctx, "awg10")
-	if err != nil {
-		t.Fatalf("reconcileInternal() error = %v", err)
-	}
-
-	stored, _ := store.Get("awg10")
-	if stored.ActiveWAN != "eth3" {
-		t.Errorf("ActiveWAN = %q, want %q", stored.ActiveWAN, "eth3")
-	}
-}
-
-// TestActiveWAN_ClearedOnStop verifies stopInternal clears ActiveWAN.
-func TestActiveWAN_ClearedOnStop(t *testing.T) {
-	svc, store, _, stateMgr := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
-		tun.ActiveWAN = "eth3"
-	})
-	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateRunning})
-
-	err := svc.stopInternal(ctx, "awg10")
-	if err != nil {
-		t.Fatalf("stopInternal() error = %v", err)
-	}
-
-	stored, _ := store.Get("awg10")
-	if stored.ActiveWAN != "" {
-		t.Errorf("ActiveWAN = %q, want empty after stop", stored.ActiveWAN)
-	}
-}
-
-// TestActiveWAN_ClearedByClearHelper verifies clearActiveWAN helper.
-func TestActiveWAN_ClearedByClearHelper(t *testing.T) {
-	svc, store, _, _ := testService(t)
-
-	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
-		tun.ActiveWAN = "ppp0"
-	})
-
-	svc.clearActiveWAN("awg10")
-
-	stored, _ := store.Get("awg10")
-	if stored.ActiveWAN != "" {
-		t.Errorf("ActiveWAN = %q, want empty after clearActiveWAN", stored.ActiveWAN)
-	}
-}
-
-// TestActiveWAN_ClearHelper_NoopOnEmpty verifies clearActiveWAN is a no-op when empty.
-func TestActiveWAN_ClearHelper_NoopOnEmpty(t *testing.T) {
-	svc, store, _, _ := testService(t)
-
-	saveTunnel(t, store, "awg10") // no ActiveWAN set
-
-	// Should not panic or error
-	svc.clearActiveWAN("awg10")
-
-	stored, _ := store.Get("awg10")
-	if stored.ActiveWAN != "" {
-		t.Errorf("ActiveWAN = %q, want empty", stored.ActiveWAN)
-	}
-}
-
-// TestActiveWAN_ClearHelper_NonexistentTunnel verifies clearActiveWAN handles missing tunnel.
-func TestActiveWAN_ClearHelper_NonexistentTunnel(t *testing.T) {
-	svc, _, _, _ := testService(t)
-
-	// Should not panic
-	svc.clearActiveWAN("nonexistent")
-}
+// === GetResolvedISP Tests ===
 
 // TestActiveWAN_GetResolvedISP_ReadsStorage verifies GetResolvedISP reads from storage.
 func TestActiveWAN_GetResolvedISP_ReadsStorage(t *testing.T) {
@@ -469,201 +216,7 @@ func TestActiveWAN_GetResolvedISP_MissingTunnel(t *testing.T) {
 	}
 }
 
-// TestActiveWAN_HandleWANDown_MatchesByStoredWAN verifies HandleWANDown matches
-// tunnels using persisted ActiveWAN, not volatile operator map.
-func TestActiveWAN_HandleWANDown_MatchesByStoredWAN(t *testing.T) {
-	svc, store, op, stateMgr := testService(t)
-	ctx := context.Background()
-
-	// awg10 bound to eth3 (explicit — no failover), awg11 bound to ppp0
-	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
-		tun.ActiveWAN = "eth3"
-		tun.ISPInterface = "eth3" // explicit: prevents auto-failover after KillLink
-	})
-	saveTunnel(t, store, "awg11", func(tun *storage.AWGTunnel) {
-		tun.ActiveWAN = "ppp0"
-		tun.ISPInterface = "ppp0"
-	})
-
-	// Set running state for lifecycle Manager (raw fields for determineState).
-	stateMgr.SetState("awg10", tunnel.StateInfo{
-		OpkgTunExists: true, ProcessRunning: true, InterfaceUp: true,
-	})
-	stateMgr.SetState("awg11", tunnel.StateInfo{
-		OpkgTunExists: true, ProcessRunning: true, InterfaceUp: true,
-	})
-
-	svc.HandleWANDown(ctx, "eth3")
-
-	// HandleWANDown is now blocking (WaitGroup) — no sleep needed.
-
-	// Only awg10 should be suspended (bound to explicit ISP)
-	if len(op.SuspendCalls) != 1 {
-		t.Fatalf("Expected 1 Suspend call, got %d", len(op.SuspendCalls))
-	}
-	if op.SuspendCalls[0] != "awg10" {
-		t.Errorf("Suspend called on %q, want %q", op.SuspendCalls[0], "awg10")
-	}
-
-	// ActiveWAN should be preserved for suspended tunnel (paused, not stopped).
-	stored, _ := store.Get("awg10")
-	if stored.ActiveWAN != "eth3" {
-		t.Errorf("awg10 ActiveWAN = %q, want %q (preserved after suspend)", stored.ActiveWAN, "eth3")
-	}
-
-	// awg11 should be untouched
-	stored11, _ := store.Get("awg11")
-	if stored11.ActiveWAN != "ppp0" {
-		t.Errorf("awg11 ActiveWAN = %q, want %q (untouched)", stored11.ActiveWAN, "ppp0")
-	}
-}
-
-// TestActiveWAN_HandleWANDown_EmptyIface_SuspendsAllWithActiveWAN verifies that
-// HandleWANDown("") suspends all tunnels with ActiveWAN set (boot scenario).
-func TestActiveWAN_HandleWANDown_EmptyIface_SuspendsAllWithActiveWAN(t *testing.T) {
-	svc, store, op, stateMgr := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
-		tun.ActiveWAN = "eth3"
-	})
-	saveTunnel(t, store, "awg11", func(tun *storage.AWGTunnel) {
-		tun.ActiveWAN = "ppp0"
-	})
-	saveTunnel(t, store, "awg12") // no ActiveWAN — should be skipped
-
-	// Set running state for tunnels with ActiveWAN.
-	stateMgr.SetState("awg10", tunnel.StateInfo{
-		OpkgTunExists: true, ProcessRunning: true, InterfaceUp: true,
-	})
-	stateMgr.SetState("awg11", tunnel.StateInfo{
-		OpkgTunExists: true, ProcessRunning: true, InterfaceUp: true,
-	})
-
-	svc.HandleWANDown(ctx, "")
-
-	// HandleWANDown is now blocking (WaitGroup) — no sleep needed.
-
-	// awg10 and awg11 should be suspended, awg12 skipped
-	if len(op.SuspendCalls) != 2 {
-		t.Fatalf("Expected 2 Suspend calls, got %d: %v", len(op.SuspendCalls), op.SuspendCalls)
-	}
-}
-
-// TestActiveWAN_HandleWANDown_SkipsEmptyActiveWAN verifies that tunnels
-// without ActiveWAN are skipped by HandleWANDown.
-func TestActiveWAN_HandleWANDown_SkipsEmptyActiveWAN(t *testing.T) {
-	svc, store, op, _ := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10") // no ActiveWAN
-
-	svc.HandleWANDown(ctx, "eth3")
-
-	// No Suspend expected — tunnel has no ActiveWAN matching "eth3".
-	if len(op.SuspendCalls) != 0 {
-		t.Errorf("Expected 0 Suspend calls for tunnel without ActiveWAN, got %d", len(op.SuspendCalls))
-	}
-}
-
-// TestActiveWAN_StartAfterStop_RefreshesWAN verifies that Start after Stop
-// correctly sets a fresh ActiveWAN.
-func TestActiveWAN_StartAfterStop_RefreshesWAN(t *testing.T) {
-	svc, store, op, stateMgr := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
-		tun.ActiveWAN = "eth3"
-	})
-
-	// Stop: clears ActiveWAN
-	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateRunning})
-	_ = svc.stopInternal(ctx, "awg10")
-
-	stored, _ := store.Get("awg10")
-	if stored.ActiveWAN != "" {
-		t.Fatalf("ActiveWAN should be empty after stop, got %q", stored.ActiveWAN)
-	}
-
-	// WAN changed: eth3 down, ppp0 becomes preferred
-	svc.WANModel().SetUp("eth3", false)
-	op.defaultGW = "ppp0"
-	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped})
-
-	// Start: sets fresh ActiveWAN from PreferredUp (ppp0)
-	err := svc.startInternal(ctx, "awg10")
-	if err != nil {
-		t.Fatalf("startInternal() error = %v", err)
-	}
-
-	stored, _ = store.Get("awg10")
-	if stored.ActiveWAN != "ppp0" {
-		t.Errorf("ActiveWAN = %q, want %q after restart with new gateway", stored.ActiveWAN, "ppp0")
-	}
-}
-
-// TestActiveWAN_ExplicitISP verifies ActiveWAN for tunnels with explicit ISP.
-func TestActiveWAN_ExplicitISP(t *testing.T) {
-	svc, store, _, stateMgr := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
-		tun.ISPInterface = "ppp0"
-	})
-	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped})
-
-	err := svc.startInternal(ctx, "awg10")
-	if err != nil {
-		t.Fatalf("startInternal() error = %v", err)
-	}
-
-	stored, _ := store.Get("awg10")
-	if stored.ActiveWAN != "ppp0" {
-		t.Errorf("ActiveWAN = %q, want %q for explicit ISP", stored.ActiveWAN, "ppp0")
-	}
-}
-
-// TestActiveWAN_RestoreEndpointTracking_ClearsStale verifies that
-// RestoreEndpointTracking clears ActiveWAN for dead processes.
-func TestActiveWAN_RestoreEndpointTracking_ClearsStale(t *testing.T) {
-	svc, store, _, stateMgr := testService(t)
-	ctx := context.Background()
-
-	// awg10: dead process with stale ActiveWAN
-	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
-		tun.ActiveWAN = "eth3"
-	})
-	stateMgr.SetState("awg10", tunnel.StateInfo{
-		State:          tunnel.StateStopped,
-		ProcessRunning: false,
-	})
-
-	// awg11: running process with valid ActiveWAN
-	saveTunnel(t, store, "awg11", func(tun *storage.AWGTunnel) {
-		tun.ActiveWAN = "ppp0"
-	})
-	stateMgr.SetState("awg11", tunnel.StateInfo{
-		State:          tunnel.StateRunning,
-		ProcessRunning: true,
-	})
-
-	err := svc.RestoreEndpointTracking(ctx)
-	if err != nil {
-		t.Fatalf("RestoreEndpointTracking() error = %v", err)
-	}
-
-	// awg10: stale ActiveWAN should be cleared
-	stored10, _ := store.Get("awg10")
-	if stored10.ActiveWAN != "" {
-		t.Errorf("awg10 ActiveWAN = %q, want empty (process dead)", stored10.ActiveWAN)
-	}
-
-	// awg11: valid ActiveWAN should be preserved
-	stored11, _ := store.Get("awg11")
-	if stored11.ActiveWAN != "ppp0" {
-		t.Errorf("awg11 ActiveWAN = %q, want %q (process alive)", stored11.ActiveWAN, "ppp0")
-	}
-}
+// === ResolveWAN Tests ===
 
 // TestActiveWAN_ResolveWAN_ChainedTunnel verifies resolveWAN reads parent's ActiveWAN.
 func TestActiveWAN_ResolveWAN_ChainedTunnel(t *testing.T) {
@@ -719,211 +272,5 @@ func TestActiveWAN_ResolveWAN_ChainedTunnel_ParentNotRunning(t *testing.T) {
 	_, err := svc.resolveWAN(ctx, "tunnel:awg10")
 	if err == nil {
 		t.Fatal("resolveWAN() should return error when parent not running")
-	}
-}
-
-// === Explicit WAN selection — IsUp check ===
-
-// TestStartInternal_ExplicitWAN_Down_ReturnsError verifies that startInternal
-// returns an error when the explicitly selected WAN interface is down.
-func TestStartInternal_ExplicitWAN_Down_ReturnsError(t *testing.T) {
-	svc, store, op, stateMgr := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
-		tun.ISPInterface = "ppp0"
-	})
-
-	// ppp0 is up by default in testService — set it down
-	svc.WANModel().SetUp("ppp0", false)
-	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped})
-
-	err := svc.startInternal(ctx, "awg10")
-	if err == nil {
-		t.Fatal("startInternal() should return error when explicit WAN is down")
-	}
-	if !strings.Contains(err.Error(), "WAN ppp0 is down") {
-		t.Errorf("error = %q, want to contain %q", err.Error(), "WAN ppp0 is down")
-	}
-	if len(op.StartCalls) != 0 {
-		t.Errorf("operator.Start should not be called, got %d calls", len(op.StartCalls))
-	}
-}
-
-// TestStartInternal_ExplicitWAN_Up_Succeeds verifies that startInternal
-// succeeds when the explicitly selected WAN interface is up.
-func TestStartInternal_ExplicitWAN_Up_Succeeds(t *testing.T) {
-	svc, store, op, stateMgr := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
-		tun.ISPInterface = "eth3"
-	})
-	// eth3 is up by default in testService
-	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped})
-
-	err := svc.startInternal(ctx, "awg10")
-	if err != nil {
-		t.Fatalf("startInternal() error = %v", err)
-	}
-	if len(op.StartCalls) != 1 {
-		t.Fatalf("expected 1 Start call, got %d", len(op.StartCalls))
-	}
-	if op.StartCalls[0].ISPInterface != "eth3" {
-		t.Errorf("Start called with ISPInterface = %q, want %q", op.StartCalls[0].ISPInterface, "eth3")
-	}
-}
-
-// === Auto mode — IsUp NOT checked ===
-
-// TestStartInternal_AutoMode_NoIsUpCheck verifies that auto mode (ISPInterface="")
-// does NOT check IsUp on the WAN model. Even with all WANs down in the model,
-// auto mode succeeds if GetDefaultGatewayInterface returns a valid fallback.
-func TestStartInternal_AutoMode_NoIsUpCheck(t *testing.T) {
-	svc, store, op, stateMgr := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10") // ISPInterface="" = auto mode
-
-	// Set ALL WANs to down — proves IsUp is NOT consulted for auto mode
-	svc.WANModel().SetUp("eth3", false)
-	svc.WANModel().SetUp("ppp0", false)
-
-	// PreferredUp returns ("", false) now, so resolveWAN falls through
-	// to GetDefaultGatewayInterface
-	op.defaultGW = "eth3"
-	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped})
-
-	err := svc.startInternal(ctx, "awg10")
-	if err != nil {
-		t.Fatalf("startInternal() error = %v (auto mode should skip IsUp check)", err)
-	}
-	if len(op.StartCalls) != 1 {
-		t.Fatalf("expected 1 Start call, got %d", len(op.StartCalls))
-	}
-}
-
-// === Unpopulated WAN model edge case ===
-
-// TestStartInternal_ExplicitWAN_UnpopulatedModel verifies that an explicit WAN
-// selection with an unpopulated model allows start (interface not known to model).
-// Before the all-interfaces feature, this returned "is down" error. Now unknown
-// interfaces (not in WAN model) are allowed — this supports bridge mode and also
-// fixes boot-time race where model isn't populated yet.
-func TestStartInternal_ExplicitWAN_UnpopulatedModel(t *testing.T) {
-	// Custom setup: same as testService but without Populate
-	dir := t.TempDir()
-	lockDir := filepath.Join(dir, "locks")
-	confTestDir := filepath.Join(dir, "conf")
-	for _, d := range []string{lockDir, confTestDir} {
-		if err := os.MkdirAll(d, 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	oldConfDir := confDir
-	confDir = confTestDir
-	t.Cleanup(func() { confDir = oldConfDir })
-
-	store := storage.NewAWGTunnelStoreWithLockDir(dir, nil, lockDir)
-	stateMgr := NewMockStateManager()
-	op := newMockOp()
-	op.stateMgr = stateMgr
-	wanModel := wan.NewModel() // NOT populated — Populate() never called
-
-	svc := New(store, nil, op, stateMgr, nil, wanModel, nil)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
-		tun.ISPInterface = "eth3"
-	})
-	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped})
-
-	err := svc.startInternal(ctx, "awg10")
-	if err != nil {
-		t.Fatalf("startInternal() should succeed for unknown interface (not in model): %v", err)
-	}
-}
-
-// === Tunnel chaining integration ===
-
-// TestStartInternal_TunnelChain_UsesParentActiveWAN verifies that a child tunnel
-// using tunnel chaining (ISPInterface="tunnel:awg0") resolves to the parent's
-// persisted ActiveWAN.
-func TestStartInternal_TunnelChain_UsesParentActiveWAN(t *testing.T) {
-	svc, store, op, stateMgr := testService(t)
-	ctx := context.Background()
-
-	// Parent tunnel with ActiveWAN set (already running)
-	saveTunnel(t, store, "awg0", func(tun *storage.AWGTunnel) {
-		tun.ActiveWAN = "eth3"
-	})
-	stateMgr.SetState("awg0", tunnel.StateInfo{State: tunnel.StateRunning})
-
-	// Child tunnel routed through parent
-	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
-		tun.ISPInterface = "tunnel:awg0"
-	})
-	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped})
-
-	err := svc.startInternal(ctx, "awg10")
-	if err != nil {
-		t.Fatalf("startInternal() error = %v", err)
-	}
-	if len(op.StartCalls) != 1 {
-		t.Fatalf("expected 1 Start call, got %d", len(op.StartCalls))
-	}
-	if op.StartCalls[0].ISPInterface != "eth3" {
-		t.Errorf("Start called with ISPInterface = %q, want %q (parent's ActiveWAN)", op.StartCalls[0].ISPInterface, "eth3")
-	}
-}
-
-// TestStartInternal_TunnelChain_ParentStopped_Error verifies that starting a
-// child tunnel fails when the parent tunnel is not running.
-func TestStartInternal_TunnelChain_ParentStopped_Error(t *testing.T) {
-	svc, store, _, stateMgr := testService(t)
-	ctx := context.Background()
-
-	// Parent tunnel — stopped, no ActiveWAN
-	saveTunnel(t, store, "awg0")
-	stateMgr.SetState("awg0", tunnel.StateInfo{State: tunnel.StateStopped})
-
-	// Child tunnel routed through parent
-	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
-		tun.ISPInterface = "tunnel:awg0"
-	})
-	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped})
-
-	err := svc.startInternal(ctx, "awg10")
-	if err == nil {
-		t.Fatal("startInternal() should return error when parent is stopped")
-	}
-	if !strings.Contains(err.Error(), "not running") {
-		t.Errorf("error = %q, want to contain %q", err.Error(), "not running")
-	}
-}
-
-// === ActiveWAN persistence on explicit WAN ===
-
-// TestStartInternal_ExplicitWAN_PersistsActiveWAN verifies that startInternal
-// persists the explicit WAN name as ActiveWAN in storage after a successful start.
-func TestStartInternal_ExplicitWAN_PersistsActiveWAN(t *testing.T) {
-	svc, store, _, stateMgr := testService(t)
-	ctx := context.Background()
-
-	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
-		tun.ISPInterface = "ppp0"
-	})
-	// ppp0 is up by default in testService
-	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped})
-
-	err := svc.startInternal(ctx, "awg10")
-	if err != nil {
-		t.Fatalf("startInternal() error = %v", err)
-	}
-
-	stored, _ := store.Get("awg10")
-	if stored.ActiveWAN != "ppp0" {
-		t.Errorf("ActiveWAN = %q, want %q", stored.ActiveWAN, "ppp0")
 	}
 }

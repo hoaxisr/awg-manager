@@ -15,12 +15,12 @@
 		server: ManagedServer;
 		stats: ManagedServerStats | null;
 		routerIP?: string;
-		onDeleted: () => void;
-		onUpdated: () => void;
+		onDeleted?: () => void;
+		onUpdated?: () => void;
 		onOpenASC: () => void;
 	}
 
-	let { server, stats, routerIP = '', onDeleted, onUpdated, onOpenASC }: Props = $props();
+	let { server, stats, routerIP = '', onDeleted = () => {}, onUpdated = () => {}, onOpenASC }: Props = $props();
 
 	let editServerOpen = $state(false);
 	let addPeerOpen = $state(false);
@@ -33,9 +33,96 @@
 	let confirmDelete = $state(false);
 	let confirmDeletePeerKey = $state<string | null>(null);
 
+	// Peer sort & search
+	type SortKey = 'name' | 'traffic' | 'ip' | 'online' | 'handshake';
+	const SORT_DEFAULTS: Record<SortKey, boolean> = {
+		name: true,       // A→Z
+		traffic: false,   // most first
+		ip: true,         // low→high
+		online: false,    // online first
+		handshake: false, // recent first
+	};
+
+	let sortBy = $state<SortKey>('name');
+	let sortAsc = $state(true);
+	let searchQuery = $state('');
+
+	function parseIP(ip: string): number {
+		const parts = ip.split('.').map(Number);
+		return ((parts[0] ?? 0) << 24) + ((parts[1] ?? 0) << 16) + ((parts[2] ?? 0) << 8) + (parts[3] ?? 0);
+	}
+
+	function setSortBy(key: SortKey) {
+		if (sortBy === key) return;
+		sortBy = key;
+		sortAsc = SORT_DEFAULTS[key];
+	}
+
 	function getPeerStats(publicKey: string): ManagedPeerStats | undefined {
 		return stats?.peers?.find(p => p.publicKey === publicKey);
 	}
+
+	let sortedPeers = $derived.by(() => {
+		let peers = server.peers ?? [];
+
+		// Filter (only when search is rendered: 5+ peers)
+		if (searchQuery && peers.length >= 5) {
+			const q = searchQuery.toLowerCase();
+			peers = peers.filter(p =>
+				(p.description || '').toLowerCase().includes(q) ||
+				p.tunnelIP.toLowerCase().includes(q)
+			);
+		}
+
+		// Sort
+		const sorted = [...peers].sort((a, b) => {
+			const sa = getPeerStats(a.publicKey);
+			const sb = getPeerStats(b.publicKey);
+			let cmp = 0;
+
+			switch (sortBy) {
+				case 'name': {
+					const na = (a.description || a.publicKey).toLowerCase();
+					const nb = (b.description || b.publicKey).toLowerCase();
+					cmp = na.localeCompare(nb);
+					break;
+				}
+				case 'traffic': {
+					const ta = sa ? sa.rxBytes + sa.txBytes : -1;
+					const tb = sb ? sb.rxBytes + sb.txBytes : -1;
+					if (ta === -1 && tb === -1) cmp = 0;
+					else if (ta === -1) cmp = 1;
+					else if (tb === -1) cmp = -1;
+					else cmp = ta - tb;
+					break;
+				}
+				case 'ip': {
+					cmp = parseIP(a.tunnelIP) - parseIP(b.tunnelIP);
+					break;
+				}
+				case 'online': {
+					if (!sa && !sb) cmp = 0;
+					else if (!sa) cmp = 1;
+					else if (!sb) cmp = -1;
+					else cmp = (sa.online ? 1 : 0) - (sb.online ? 1 : 0);
+					break;
+				}
+				case 'handshake': {
+					const ha = sa?.lastHandshake ? new Date(sa.lastHandshake).getTime() : -1;
+					const hb = sb?.lastHandshake ? new Date(sb.lastHandshake).getTime() : -1;
+					if (ha === -1 && hb === -1) cmp = 0;
+					else if (ha === -1) cmp = 1;
+					else if (hb === -1) cmp = -1;
+					else cmp = ha - hb;
+					break;
+				}
+			}
+
+			return sortAsc ? cmp : -cmp;
+		});
+
+		return sorted;
+	});
 
 	let onlineCount = $derived(stats?.peers?.filter(p => p.online).length ?? 0);
 	let isUp = $derived(stats?.status === 'up');
@@ -217,19 +304,39 @@
 	<div class="peers-section">
 		<div class="peers-header">
 			<span class="peers-title">Клиенты {#if stats}({onlineCount}/{(server.peers ?? []).length} онлайн){:else}({(server.peers ?? []).length}){/if}</span>
-			<button class="btn btn-secondary btn-sm" onclick={() => addPeerOpen = true}>
-				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-				</svg>
-				Добавить
-			</button>
+			<div class="peers-controls">
+				{#if (server.peers ?? []).length >= 5}
+					<input
+						class="peer-search"
+						type="text"
+						placeholder="Поиск..."
+						bind:value={searchQuery}
+					/>
+				{/if}
+				<select class="peer-sort-select" value={sortBy} onchange={(e) => setSortBy(e.currentTarget.value as SortKey)}>
+					<option value="name">По имени</option>
+					<option value="traffic">По трафику</option>
+					<option value="ip">По IP</option>
+					<option value="online">Онлайн</option>
+					<option value="handshake">Handshake</option>
+				</select>
+				<button class="peer-sort-dir" onclick={() => sortAsc = !sortAsc} title="Направление сортировки">
+					{sortAsc ? '↑' : '↓'}
+				</button>
+				<button class="btn btn-secondary btn-sm" onclick={() => addPeerOpen = true}>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+					</svg>
+					Добавить
+				</button>
+			</div>
 		</div>
 
 		{#if (server.peers ?? []).length === 0}
 			<div class="empty-peers">Нет клиентов. Добавьте первого.</div>
 		{:else}
 			<div class="peers-list">
-				{#each (server.peers ?? []) as peer (peer.publicKey)}
+				{#each sortedPeers as peer (peer.publicKey)}
 					{@const peerStats = getPeerStats(peer.publicKey)}
 					<div class="peer-row" class:peer-disabled={!peer.enabled}>
 						<div class="peer-info">
@@ -418,6 +525,53 @@
 		margin-bottom: 0.75rem;
 	}
 
+	.peers-controls {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+	}
+
+	.peer-search {
+		width: 120px;
+		padding: 0.25rem 0.5rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--bg-primary);
+		color: var(--text-primary);
+		font-size: 0.6875rem;
+	}
+
+	.peer-search::placeholder {
+		color: var(--text-muted);
+	}
+
+	.peer-sort-select {
+		padding: 0.25rem 0.5rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--bg-primary);
+		color: var(--text-secondary);
+		font-size: 0.6875rem;
+		cursor: pointer;
+	}
+
+	.peer-sort-dir {
+		padding: 0.125rem 0.375rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--bg-primary);
+		color: var(--text-secondary);
+		font-size: 0.75rem;
+		cursor: pointer;
+		line-height: 1;
+		transition: color 0.15s ease, background 0.15s ease;
+	}
+
+	.peer-sort-dir:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
 	.peers-title {
 		font-size: 0.875rem;
 		font-weight: 600;
@@ -580,6 +734,21 @@
 	}
 
 	@media (max-width: 640px) {
+		.peers-header {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 0.5rem;
+		}
+
+		.peers-controls {
+			flex-wrap: wrap;
+		}
+
+		.peer-search {
+			flex: 1;
+			min-width: 80px;
+		}
+
 		.card-header {
 			flex-direction: column;
 		}

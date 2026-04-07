@@ -54,9 +54,6 @@ type MockNDMSClient struct {
 func (m *MockNDMSClient) ShowInterface(ctx context.Context, name string) (string, error) {
 	return m.showInterfaceOutput, m.showInterfaceError
 }
-func (m *MockNDMSClient) CreateOpkgTun(ctx context.Context, name, description string) error {
-	return nil
-}
 func (m *MockNDMSClient) DeleteOpkgTun(ctx context.Context, name string) error { return nil }
 func (m *MockNDMSClient) OpkgTunExists(ctx context.Context, name string) bool {
 	return m.opkgTunExists
@@ -74,16 +71,9 @@ func (m *MockNDMSClient) ClearDNS(ctx context.Context, name string, servers []st
 func (m *MockNDMSClient) SetDescription(ctx context.Context, name, description string) error {
 	return nil
 }
-func (m *MockNDMSClient) InterfaceUp(ctx context.Context, name string) error   { return nil }
-func (m *MockNDMSClient) InterfaceDown(ctx context.Context, name string) error { return nil }
-func (m *MockNDMSClient) SetIPGlobal(ctx context.Context, name string) error        { return nil }
-func (m *MockNDMSClient) SetDefaultRoute(ctx context.Context, name string) error    { return nil }
+func (m *MockNDMSClient) InterfaceUp(ctx context.Context, name string) error     { return nil }
+func (m *MockNDMSClient) SetDefaultRoute(ctx context.Context, name string) error { return nil }
 func (m *MockNDMSClient) RemoveDefaultRoute(ctx context.Context, name string) error { return nil }
-func (m *MockNDMSClient) RemoveHostRoute(ctx context.Context, host string) error    { return nil }
-func (m *MockNDMSClient) SetIPv6DefaultRoute(ctx context.Context, name string) error {
-	return nil
-}
-func (m *MockNDMSClient) RemoveIPv6DefaultRoute(ctx context.Context, name string) {}
 func (m *MockNDMSClient) GetDefaultGatewayInterface(ctx context.Context) (string, error) {
 	return "PPPoE1", nil
 }
@@ -92,13 +82,7 @@ func (m *MockNDMSClient) DumpIPv4Routes(ctx context.Context) string { return "" 
 func (m *MockNDMSClient) QueryAllWANInterfaces(ctx context.Context) ([]wan.Interface, error) {
 	return nil, nil
 }
-func (m *MockNDMSClient) GetInterfaceAddress(ctx context.Context, iface string) (string, string, error) {
-	return "", "", nil
-}
 func (m *MockNDMSClient) HasWANIPv6(ctx context.Context, ifaceName string) bool { return false }
-func (m *MockNDMSClient) GetHotspotClients(ctx context.Context) ([]ndms.HotspotClient, error) {
-	return nil, nil
-}
 func (m *MockNDMSClient) GetSystemName(ctx context.Context, ndmsName string) string {
 	return ndmsName
 }

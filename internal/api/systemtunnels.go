@@ -1,16 +1,19 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/testing"
+	"github.com/hoaxisr/awg-manager/internal/traffic"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
@@ -46,17 +49,11 @@ func (h *SystemTunnelsHandler) validateName(w http.ResponseWriter, name string) 
 	return true
 }
 
-// List returns all visible (non-hidden) system WireGuard tunnels.
-// GET /api/system-tunnels
-func (h *SystemTunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		response.MethodNotAllowed(w)
-		return
-	}
-	tunnels, err := h.svc.List(r.Context())
+// listSystemTunnels builds the filtered system tunnel list for API response and SSE snapshots.
+func (h *SystemTunnelsHandler) listSystemTunnels(ctx context.Context) ([]ndms.SystemWireguardTunnel, error) {
+	tunnels, err := h.svc.List(ctx)
 	if err != nil {
-		response.Error(w, err.Error(), "LIST_FAILED")
-		return
+		return nil, err
 	}
 
 	// Filter out hidden, server-marked, managed server, and AWG Manager-managed NativeWG tunnels
@@ -84,9 +81,56 @@ func (h *SystemTunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 			visible = append(visible, t)
 		}
 	}
-	tunnels = visible
 
-	response.Success(w, response.MustNotNil(tunnels))
+	if visible == nil {
+		visible = []ndms.SystemWireguardTunnel{}
+	}
+	return visible, nil
+}
+
+// RunningSystemTunnels implements traffic.SystemTunnelLister.
+// Returns traffic data for visible system tunnels that are "up" with peer info.
+func (h *SystemTunnelsHandler) RunningSystemTunnels(ctx context.Context) []traffic.RunningTunnel {
+	tunnels, err := h.listSystemTunnels(ctx)
+	if err != nil {
+		return nil
+	}
+	var result []traffic.RunningTunnel
+	for _, t := range tunnels {
+		if t.Status != "up" || t.Peer == nil {
+			continue
+		}
+		var hs time.Time
+		if t.Peer.LastHandshake != "" {
+			hs, _ = time.Parse(time.RFC3339, t.Peer.LastHandshake)
+		}
+		result = append(result, traffic.RunningTunnel{
+			ID:            t.ID,
+			BackendType:   "system",
+			IfaceName:     t.InterfaceName,
+			RxBytes:       t.Peer.RxBytes,
+			TxBytes:       t.Peer.TxBytes,
+			LastHandshake: hs,
+		})
+	}
+	return result
+}
+
+// List returns all visible (non-hidden) system WireGuard tunnels.
+// GET /api/system-tunnels
+func (h *SystemTunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+
+	tunnels, err := h.listSystemTunnels(r.Context())
+	if err != nil {
+		response.Error(w, err.Error(), "LIST_FAILED")
+		return
+	}
+
+	response.Success(w, tunnels)
 }
 
 // Get returns a single system WireGuard tunnel.

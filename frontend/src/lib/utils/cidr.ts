@@ -51,3 +51,16 @@ export function detectQueryType(query: string): 'ip' | 'cidr' | 'domain' {
     if (isIPv4(query)) return 'ip';
     return 'domain';
 }
+
+/**
+ * Parse "1.2.3.4/32 !ASTelegram" into { cidr, comment }.
+ * If no "!" present, comment is empty string.
+ */
+export function parseSubnetComment(s: string): { cidr: string; comment: string } {
+    const idx = s.indexOf('!');
+    if (idx === -1) return { cidr: s.trim(), comment: '' };
+    return {
+        cidr: s.substring(0, idx).trim(),
+        comment: s.substring(idx + 1).trim()
+    };
+}

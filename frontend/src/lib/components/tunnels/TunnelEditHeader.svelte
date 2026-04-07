@@ -6,6 +6,7 @@
 		tunnelState: string;
 		saving: boolean;
 		actionStatus: ActionStatus | null;
+		onReplace?: () => void;
 		onExport?: () => void;
 		onSaveOnly?: () => void;
 		onSaveAndStart: () => void;
@@ -16,6 +17,7 @@
 		tunnelState,
 		saving,
 		actionStatus,
+		onReplace,
 		onExport,
 		onSaveOnly,
 		onSaveAndStart
@@ -47,6 +49,21 @@
 	</div>
 
 	<div class="header-actions flex items-center gap-2">
+		{#if onReplace}
+			<button
+				type="button"
+				class="btn btn-secondary btn-replace"
+				title="Заменить конфигурацию"
+				onclick={onReplace}
+			>
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<polyline points="1 4 1 10 7 10"/>
+					<polyline points="23 20 23 14 17 14"/>
+					<path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/>
+				</svg>
+				<span class="btn-label">Заменить</span>
+			</button>
+		{/if}
 		{#if onExport}
 			<button
 				type="button"
@@ -180,6 +197,15 @@
 		background: var(--error) !important;
 		color: white !important;
 		pointer-events: none;
+	}
+
+	.btn-replace {
+		color: var(--accent);
+		border-color: rgba(122, 162, 247, 0.3);
+	}
+
+	.btn-replace:hover {
+		background: rgba(122, 162, 247, 0.08);
 	}
 
 	@media (max-width: 600px) {

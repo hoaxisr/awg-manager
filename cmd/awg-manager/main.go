@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -19,10 +20,13 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
+	"github.com/hoaxisr/awg-manager/internal/connectivity"
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/cleanup"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/managed"
+	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/staticroute"
 	"github.com/hoaxisr/awg-manager/internal/logger"
@@ -45,7 +49,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ops"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/lifecycle"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/state"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
@@ -170,18 +173,13 @@ func main() {
 	// Create the main tunnel service
 	tunnelService := service.New(awgStore, nwgOp, operator, stateMgr, log, wanModel, loggingService)
 
-	// Create lifecycle Manager — single point of decision-making for kernel tunnels.
-	lifecycleMgr := lifecycle.NewManager(operator, awgStore, stateMgr, wanModel, tunnelService.TunnelLocks(), log, loggingService)
-	lifecycleMgr.SetExecutor(tunnelService)
-	tunnelService.SetLifecycleManager(lifecycleMgr)
-
 	// Migrate legacy ISPInterface="none" to "" (auto) for tunnels from older versions.
 	tunnelService.MigrateISPInterfaceNone()
 	tunnelService.MigrateEmptyBackend()
 
-	// NOTE: RestoreEndpointTracking is called AFTER populateWANModel in both
-	// boot and normal-restart paths. It needs WAN model populated so that
-	// auto-mode tunnels can resolve ISP interface via NDMS gateway query.
+	// Migrate existing kernel tunnels to NativeWG on OS5.
+	// Must run before boot sequence so tunnels boot as NativeWG.
+	migrateKernelToNativeWG(context.Background(), awgStore, ndmsClient, operator, loggingService, *dataDir)
 
 	// Routing catalog — unified tunnel listing for all routing subsystems
 	catalog := routing.NewCatalog(
@@ -196,6 +194,20 @@ func main() {
 		log.Warn("Failed to load dns-routes", map[string]interface{}{"error": err.Error()})
 	}
 	dnsRouteService := dnsroute.NewService(dnsRouteStore, ndmsClient, catalog, log, loggingService)
+
+	// DNS route failover — switches DNS targets when pingcheck detects tunnel failure.
+	dnsFailover := dnsroute.NewFailoverManager(func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := dnsRouteService.Reconcile(ctx); err != nil {
+			log.Warnf("dns failover reconcile: %v", err)
+			return err
+		}
+		return nil
+	})
+	dnsRouteService.SetFailoverManager(dnsFailover)
+	dnsFailover.SetLogger(log)
+	dnsFailover.SetAffectedListsLookup(dnsRouteService.LookupAffectedLists)
 
 	// Static route service for IP-based routing through tunnels
 	staticRouteStore := storage.NewStaticRouteStore(*dataDir)
@@ -220,16 +232,6 @@ func main() {
 
 	// Unified facade: kernel → custom loop, NativeWG → NDMS native
 	pingCheckFacade := pingcheck.NewFacade(pingCheckService, awgStore, settingsStore, nwgOp)
-
-	// Wire lifecycle Manager callback: start PingCheck monitoring when tunnel enters Running.
-	lifecycleMgr.SetOnTunnelRunning(func(tunnelID, tunnelName string) {
-		pingCheckFacade.StartMonitoring(tunnelID, tunnelName)
-	})
-
-	// Wire reconcile hooks so NeedsStop pauses PingCheck, NeedsStart resumes it
-	tunnelService.SetReconcileHooks(&pingCheckReconcileHooks{pc: pingCheckFacade})
-	tunnelService.SetDnsRouteHooks(dnsRouteService)
-	tunnelService.SetStaticRouteHooks(staticRouteService)
 
 	// Auth components
 	keeneticClient := auth.NewKeeneticClient()
@@ -265,7 +267,63 @@ func main() {
 		catalog,
 		loggingService,
 	)
-	tunnelService.SetClientRouteHooks(clientRouteService)
+	// Create orchestrator — single brain for all lifecycle decisions.
+	orch := orchestrator.New(awgStore, operator, nwgOp, stateMgr, wanModel, ndmsClient, log, loggingService)
+	tunnelService.SetOrchestrator(orch)
+	nwgOp.SetHookNotifier(orch) // operators register expected hooks before InterfaceUp/Down
+	orch.SetSupportsASC(ndmsinfo.SupportsWireguardASC)
+	orch.SetPingCheck(pingCheckFacade)
+	orch.SetDNSRoute(dnsRouteService)
+	orch.SetStaticRoute(staticRouteService)
+	orch.SetClientRoute(clientRouteService)
+
+	eventBus := events.NewBus()
+	orch.SetEventBus(eventBus)
+	loggingService.SetEventBus(eventBus)
+	tunnelService.SetEventBus(eventBus)
+	pingCheckFacade.SetEventBus(eventBus)
+
+	// Start DNS failover listener after event bus is wired
+	dnsFailover.SetEventBus(eventBus)
+	dnsFailover.StartListener(eventBus)
+	defer dnsFailover.StopListener()
+
+	// Traffic Collector — periodically collects traffic metrics, publishes via SSE.
+	trafficCollector := traffic.NewCollector(eventBus, trafficHistory, tunnelService)
+	trafficCollector.Start()
+	defer trafficCollector.Stop()
+
+	// Connectivity Monitor — periodically checks tunnel connectivity, publishes via SSE.
+	connAdapter := connectivity.NewAdapter(tunnelService, awgStore, testService)
+	connMonitor := connectivity.NewMonitor(eventBus, connAdapter, connAdapter, connAdapter)
+	connMonitor.Start()
+	defer connMonitor.Stop()
+
+	// Register routing snapshot providers with catalog.
+	catalog.SetSnapshotProvider("dnsRoutes", func(ctx context.Context) interface{} {
+		routes, _ := dnsRouteService.List(ctx)
+		return routes
+	})
+	catalog.SetSnapshotProvider("staticRoutes", func(ctx context.Context) interface{} {
+		routes, _ := staticRouteService.List()
+		return routes
+	})
+	catalog.SetSnapshotProvider("accessPolicies", func(ctx context.Context) interface{} {
+		policies, _ := accessPolicySvc.List(ctx)
+		return policies
+	})
+	catalog.SetSnapshotProvider("policyDevices", func(ctx context.Context) interface{} {
+		devices, _ := accessPolicySvc.ListDevices(ctx)
+		return devices
+	})
+	catalog.SetSnapshotProvider("policyInterfaces", func(ctx context.Context) interface{} {
+		ifaces, _ := accessPolicySvc.ListGlobalInterfaces(ctx)
+		return ifaces
+	})
+	catalog.SetSnapshotProvider("clientRoutes", func(ctx context.Context) interface{} {
+		routes, _ := clientRouteService.List()
+		return routes
+	})
 
 	srv := server.New(
 		server.Config{
@@ -296,7 +354,15 @@ func main() {
 		accessPolicySvc,
 		clientRouteService,
 		catalog,
+		orch,
+		eventBus,
 	)
+
+	srv.SetTrafficCollector(trafficCollector)
+
+	// Boot status: 0 = booting, 1 = done. Used by /api/system/info.
+	var bootDone int32
+	srv.SetBootStatusFunc(func() bool { return atomic.LoadInt32(&bootDone) == 0 })
 
 	// Determine bind IP from settings
 	bindIface := settings.Server.Interface
@@ -333,7 +399,6 @@ func main() {
 	}
 
 	bootLog := logging.NewScopedLogger(loggingService, logging.GroupSystem, logging.SubBoot)
-	tunnelBootLog := logging.NewScopedLogger(loggingService, logging.GroupTunnel, logging.SubLifecycle)
 
 	logStartup(bootLog, version, string(osdetect.Get()), listenAddr, settings)
 
@@ -360,15 +425,13 @@ func main() {
 	const bootDetectionMax = 300 // 5 minutes
 	isBoot := (uptime > 0 && uptime < bootDetectionMax) || *forceBoot
 	if isBoot {
-		srv.SetBootStatusFunc(func() bool { return lifecycleMgr.IsBootInProgress() })
-
 		bootLog.Info("startup", "",
 			fmt.Sprintf("Boot detected (uptime %ds), starting tunnels", int(uptime)))
 
 		go func() {
 
-			// Wait for NDMS to fully initialize OpkgTun interface subsystem.
-			// Without this delay, kernel tunnels enter start/stop loops because
+			// Wait for NDMS to fully initialize interface subsystem.
+			// Without this delay, tunnels enter start/stop loops because
 			// NDMS cycles their conf layer between running/disabled.
 			const minBootUptime = 120 // seconds
 			if uptime < float64(minBootUptime) {
@@ -399,26 +462,16 @@ func main() {
 			if _, err := ndmsClient.GetDefaultGatewayInterface(shutdownCtx); err != nil {
 				bootLog.Info("startup", "",
 					"WAN down at boot — waiting for WAN UP event")
-				lifecycleMgr.HandleWANDown(shutdownCtx, "")
 			} else {
-				// Kernel tunnels: lifecycle Manager handles boot.
-				lifecycleMgr.HandleBoot(shutdownCtx)
-
-				// NativeWG tunnels: separate boot logic (not covered by lifecycle Manager).
-				bootNativeWGTunnels(shutdownCtx, tunnelService, nwgOp, tunnelBootLog)
-
-				reconcileStaticRoutes(shutdownCtx, staticRouteService, log)
-
-				if osdetect.Is5() {
-					if err := dnsRouteService.Reconcile(shutdownCtx); err != nil {
-						log.Warn("boot: dns-route reconcile failed", map[string]interface{}{"error": err.Error()})
-					}
-				}
+				orch.LoadState(shutdownCtx)
+				orch.HandleEvent(shutdownCtx, orchestrator.Event{Type: orchestrator.EventBoot})
 			}
 
+			atomic.StoreInt32(&bootDone, 1)
 			bootLog.Info("startup", "", "Boot initialization complete")
 		}()
 	} else {
+		atomic.StoreInt32(&bootDone, 1) // Not booting — mark done immediately.
 		// Normal start (daemon restart / upgrade): reconnect to surviving processes.
 		// syscall.Exec preserves child processes — amneziawg-go, TUN devices,
 		// iptables rules, routes, NDMS config all survive. Only in-memory
@@ -432,20 +485,8 @@ func main() {
 		bootLog.Info("startup", "",
 			"Daemon restart detected — reconnecting to running tunnels")
 
-		// Kernel tunnels: lifecycle Manager handles daemon restart.
-		// OnTunnelRunning callback starts PingCheck monitoring.
-		lifecycleMgr.HandleDaemonRestart(context.Background())
-
-		// NativeWG tunnels: separate reconnect logic.
-		reconnectNativeWGTunnels(context.Background(), tunnelService, awgStore, nwgOp, pingCheckFacade, tunnelBootLog)
-
-		reconcileStaticRoutes(context.Background(), staticRouteService, log)
-
-		if osdetect.Is5() {
-			if err := dnsRouteService.Reconcile(context.Background()); err != nil {
-				log.Warn("dns-route reconcile failed", map[string]interface{}{"error": err.Error()})
-			}
-		}
+		orch.LoadState(context.Background())
+		orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventReconnect})
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -463,24 +504,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-// StartupLogger interface for logging startup events.
-// pingCheckReconcileHooks bridges reconcile events to PingCheck facade.
-type pingCheckReconcileHooks struct {
-	pc *pingcheck.Facade
-}
-
-func (h *pingCheckReconcileHooks) OnReconcileStart(tunnelID, tunnelName string) {
-	h.pc.StartMonitoring(tunnelID, tunnelName)
-}
-
-func (h *pingCheckReconcileHooks) OnReconcileStop(tunnelID string) {
-	h.pc.StopMonitoring(tunnelID)
-}
-
-func (h *pingCheckReconcileHooks) OnTunnelDelete(tunnelID string) {
-	h.pc.StopMonitoring(tunnelID)
 }
 
 // tunnelProviderAdapter adapts service.Service to routing.TunnelProvider.
@@ -553,14 +576,6 @@ func logStartup(appLog *logging.ScopedLogger, version, osVersion, listenAddr str
 	}
 }
 
-// reconcileStaticRoutes re-applies all enabled static routes via NDMS RCI.
-// NDMS "auto" flag ensures routes only activate when the interface is up.
-func reconcileStaticRoutes(ctx context.Context, svc *staticroute.ServiceImpl, log *logger.Logger) {
-	if err := svc.Reconcile(ctx); err != nil {
-		log.Warn("reconcileStaticRoutes: failed", map[string]interface{}{"error": err.Error()})
-	}
-}
-
 // populateWANModel queries NDMS for current WAN interfaces and fills the
 // unified WAN model so that AnyUp() works before any WAN hooks fire.
 func populateWANModel(ctx context.Context, ndmsClient ndms.Client, model *wan.Model, log *logger.Logger) {
@@ -574,66 +589,133 @@ func populateWANModel(ctx context.Context, ndmsClient ndms.Client, model *wan.Mo
 }
 
 
-// bootNativeWGTunnels starts NativeWG tunnels at router boot.
-// Separate from lifecycle Manager which handles kernel tunnels only.
-func bootNativeWGTunnels(ctx context.Context, tunnelSvc service.Service, nwgOp *nwg.OperatorNativeWG, appLog *logging.ScopedLogger) {
-	if nwgOp == nil {
+// migrateKernelToNativeWG converts all kernel/legacy tunnels to NativeWG on OS5.
+// Called once at startup before boot sequence. On OS4, kernel tunnels stay as-is.
+// Also converts ISPInterface from kernel name to NDMS ID and updates DNS route
+// interface references from OpkgTunN to WireguardN.
+func migrateKernelToNativeWG(ctx context.Context, store *storage.AWGTunnelStore, ndmsClient ndms.Client, operator ops.Operator, loggingSvc *logging.Service, dataDir string) {
+	if !osdetect.Is5() {
 		return
 	}
-	// New firmware with ASC: NDMS handles NativeWG persistence natively.
-	if ndmsinfo.SupportsWireguardASC() {
-		return
-	}
-	tunnels, err := tunnelSvc.List(ctx)
-	if err != nil {
-		return
-	}
-	for _, t := range tunnels {
-		if !t.Enabled || t.Backend != "nativewg" {
-			continue
-		}
-		_ = tunnelSvc.Stop(ctx, t.ID)
-		if err := tunnelSvc.Start(ctx, t.ID); err != nil {
-			appLog.Warn("boot-start", t.Name, "NativeWG start failed: "+err.Error())
-		} else {
-			appLog.Info("boot-start", t.Name, "NativeWG tunnel started")
-		}
-	}
-}
-
-// reconnectNativeWGTunnels restores NativeWG tunnels on daemon restart.
-// Kernel tunnels are handled by lifecycle.Manager.HandleDaemonRestart.
-func reconnectNativeWGTunnels(ctx context.Context, tunnelSvc service.Service, store *storage.AWGTunnelStore, nwgOp *nwg.OperatorNativeWG, pingCheckSvc *pingcheck.Facade, appLog *logging.ScopedLogger) {
-	if nwgOp == nil {
-		return
-	}
-	tunnels, err := tunnelSvc.List(ctx)
+	tunnels, err := store.List()
 	if err != nil {
 		return
 	}
 
-	for _, t := range tunnels {
-		if t.Backend != "nativewg" {
-			continue
-		}
+	log := logging.NewScopedLogger(loggingSvc, logging.GroupSystem, logging.SubBoot)
 
-		state := t.StateInfo.State
-
-		// Restore kmod proxy for running/starting tunnels (only on older firmware).
-		// StateStarting = conf:running but peer offline — proxy lost after daemon restart.
-		if state == tunnel.StateRunning || state == tunnel.StateStarting {
-			if !ndmsinfo.SupportsWireguardASC() {
-				if stored, err := store.Get(t.ID); err == nil {
-					if err := nwgOp.RestoreKmodTunnel(ctx, stored); err != nil {
-						appLog.Warn("reconnect", t.Name, "kmod restore failed: "+err.Error())
-					}
-				}
+	// Build kernel name → NDMS ID map for ISPInterface conversion.
+	kernelToNDMS := make(map[string]string)
+	wanIfaces, err := ndmsClient.QueryAllWANInterfaces(ctx)
+	if err == nil {
+		for _, iface := range wanIfaces {
+			if iface.Name != "" && iface.ID != "" {
+				kernelToNDMS[iface.Name] = iface.ID
 			}
-			pingCheckSvc.StartMonitoring(t.ID, t.Name)
-			appLog.Info("reconnect", t.Name, "NativeWG tunnel reconnected")
+		}
+	}
+
+	// Track old NDMS name → new NDMS name for DNS route migration.
+	ifaceRenames := make(map[string]string) // "OpkgTun10" → "Wireguard1"
+
+	migrated := 0
+	for _, t := range tunnels {
+		if t.Backend == "nativewg" {
+			continue
+		}
+		// backend="" or "kernel" → migrate
+
+		// Stop if running (best-effort)
+		_ = operator.Stop(ctx, t.ID)
+
+		// Remember old NDMS name before deleting
+		oldNames := tunnel.NewNames(t.ID)
+
+		// Delete OpkgTun from NDMS
+		if oldNames.NDMSName != "" {
+			_ = ndmsClient.DeleteOpkgTun(ctx, oldNames.NDMSName)
+		}
+
+		// Allocate NativeWG index
+		nwgIndex, err := ndmsClient.FindFreeWireguardIndex(ctx)
+		if err != nil {
+			log.Warn("migrate", t.ID, "Failed to find free wireguard index: "+err.Error())
+			continue
+		}
+
+		newNDMSName := nwg.NewNWGNames(nwgIndex).NDMSName
+
+		// Track rename for DNS routes
+		if oldNames.NDMSName != "" {
+			ifaceRenames[oldNames.NDMSName] = newNDMSName
+		}
+
+		// Convert ISPInterface: kernel name → NDMS ID
+		if t.ISPInterface != "" && !tunnel.IsTunnelRoute(t.ISPInterface) {
+			if ndmsID, ok := kernelToNDMS[t.ISPInterface]; ok {
+				log.Info("migrate", t.ID, fmt.Sprintf("ISPInterface: %s → %s", t.ISPInterface, ndmsID))
+				t.ISPInterface = ndmsID
+			} else {
+				// WAN interface not found — reset to auto to avoid broken RCI calls
+				log.Warn("migrate", t.ID, fmt.Sprintf("ISPInterface %q not found in WAN model, resetting to auto", t.ISPInterface))
+				t.ISPInterface = ""
+				t.ISPInterfaceLabel = ""
+			}
+		}
+
+		// Update storage
+		t.Backend = "nativewg"
+		t.NWGIndex = nwgIndex
+		if err := store.Save(&t); err != nil {
+			log.Warn("migrate", t.ID, "Failed to save: "+err.Error())
+			continue
+		}
+
+		migrated++
+		log.Info("migrate", t.ID, fmt.Sprintf("Migrated to NativeWG (index=%d, ndms=%s)", nwgIndex, newNDMSName))
+	}
+
+	if migrated > 0 {
+		_ = ndmsClient.Save(ctx)
+		log.Info("migrate", "system", fmt.Sprintf("Migrated %d kernel tunnel(s) to NativeWG", migrated))
+
+		// Migrate DNS route interface references: OpkgTunN → WireguardN
+		migrateDNSRouteInterfaces(dataDir, ifaceRenames, log)
+	}
+}
+
+// migrateDNSRouteInterfaces updates DNS route interface names after kernel→nativewg migration.
+func migrateDNSRouteInterfaces(dataDir string, renames map[string]string, log *logging.ScopedLogger) {
+	if len(renames) == 0 {
+		return
+	}
+
+	dnsStore := dnsroute.NewStore(dataDir)
+	data, err := dnsStore.Load()
+	if err != nil {
+		log.Warn("migrate-dns", "", "Failed to load dns-routes: "+err.Error())
+		return
+	}
+
+	changed := false
+	for i := range data.Lists {
+		for j := range data.Lists[i].Routes {
+			rt := &data.Lists[i].Routes[j]
+			if newName, ok := renames[rt.Interface]; ok {
+				log.Info("migrate-dns", data.Lists[i].ID, fmt.Sprintf("Route interface: %s → %s", rt.Interface, newName))
+				rt.Interface = newName
+				changed = true
+			}
+		}
+	}
+
+	if changed {
+		if err := dnsStore.Save(data); err != nil {
+			log.Warn("migrate-dns", "", "Failed to save dns-routes: "+err.Error())
 		}
 	}
 }
+
 
 // getInterfaceIP returns the first IPv4 address of the given interface.
 func getInterfaceIP(ifaceName string) string {
@@ -905,16 +987,14 @@ func ensureCACerts() {
 	}
 }
 
-// ensureServiceEnv ensures PATH and LD_LIBRARY_PATH contain system directories.
-// Required for child processes (ndmc, ip, awg) to find binaries and libraries.
+// ensureServiceEnv ensures PATH contains system directories so child processes
+// can find binaries by name. LD_LIBRARY_PATH is intentionally NOT set: forcing
+// /lib:/usr/lib first poisons Entware binaries (curl/openssl) by making ld.so
+// load incompatible system libraries → SIGSEGV/SIGBUS at runtime.
 func ensureServiceEnv() {
 	path := os.Getenv("PATH")
 	if !strings.Contains(path, "/usr/sbin") {
 		os.Setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin:/opt/bin:/opt/sbin:"+path)
-	}
-	ldPath := os.Getenv("LD_LIBRARY_PATH")
-	if !strings.Contains(ldPath, "/usr/lib") {
-		os.Setenv("LD_LIBRARY_PATH", "/lib:/usr/lib:"+ldPath)
 	}
 }
 
@@ -946,6 +1026,10 @@ func runCleanup(dataDir string) {
 	cleanupRCI := rci.New()
 	nwgOp := nwg.NewOperator(log, ndmsClient, cleanupRCI, nil)
 	tunnelService := service.New(awgStore, nwgOp, operator, stateMgr, log, wan.NewModel(), nil)
+
+	// Wire orchestrator for lifecycle operations (Delete needs it)
+	cleanupOrch := orchestrator.New(awgStore, operator, nwgOp, stateMgr, wan.NewModel(), ndmsClient, log, nil)
+	tunnelService.SetOrchestrator(cleanupOrch)
 
 	// Create auxiliary services
 	dnsStore := dnsroute.NewStore(dataDir)

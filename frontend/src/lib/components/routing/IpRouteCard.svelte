@@ -2,6 +2,7 @@
 	import type { StaticRouteList, RoutingTunnel } from '$lib/types';
 	import { Toggle } from '$lib/components/ui';
 	import { ServiceIcon } from '$lib/components/dnsroutes';
+	import { parseSubnetComment } from '$lib/utils/cidr';
 
 	interface Props {
 		route: StaticRouteList;
@@ -28,6 +29,15 @@
 	}: Props = $props();
 
 	let subnetCount = $derived(route.subnets?.length ?? 0);
+
+	let commentTags = $derived.by(() => {
+		const comments = new Set<string>();
+		for (const s of route.subnets ?? []) {
+			const { comment } = parseSubnetComment(s);
+			if (comment) comments.add(comment);
+		}
+		return [...comments];
+	});
 
 	let routeTarget = $derived.by(() => {
 		if (!route.tunnelID) return '';
@@ -65,7 +75,18 @@
 				<h3>{route.name}</h3>
 			</div>
 			{#if subnetCount > 0}
-				<span class="card-stat">{subnetCount} подсетей</span>
+				<span class="card-stat">
+					{subnetCount} подсетей
+					{#if commentTags.length > 0}
+						<span class="comment-sep">&middot;</span>
+						<span class="comment-tags">
+							{commentTags.slice(0, 3).join(', ')}
+							{#if commentTags.length > 3}
+								<span class="comment-more">+{commentTags.length - 3} ещё</span>
+							{/if}
+						</span>
+					{/if}
+				</span>
 			{/if}
 			{#if routeTarget}
 				<div class="card-route">
@@ -218,6 +239,21 @@
 		cursor: pointer;
 		flex-shrink: 0;
 		margin-top: 10px;
+	}
+
+	.comment-sep {
+		margin: 0 4px;
+		color: var(--text-muted);
+	}
+
+	.comment-tags {
+		color: var(--text-secondary);
+		font-size: 0.625rem;
+	}
+
+	.comment-more {
+		color: var(--accent);
+		font-weight: 500;
 	}
 
 	.badge-killswitch {

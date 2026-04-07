@@ -11,11 +11,12 @@ import (
 
 // ImportHandler handles config import operations.
 type ImportHandler struct {
-	svc           TunnelService
-	store         *storage.AWGTunnelStore
-	settingsStore *storage.SettingsStore
-	pingCheck     PingCheckService
-	log           *logging.ScopedLogger
+	svc            TunnelService
+	store          *storage.AWGTunnelStore
+	settingsStore  *storage.SettingsStore
+	pingCheck      PingCheckService
+	tunnelsHandler *TunnelsHandler
+	log            *logging.ScopedLogger
 }
 
 // NewImportHandler creates a new import handler.
@@ -35,6 +36,11 @@ func (h *ImportHandler) SetSettingsStore(store *storage.SettingsStore) {
 // SetPingCheckService sets the ping check service.
 func (h *ImportHandler) SetPingCheckService(svc PingCheckService) {
 	h.pingCheck = svc
+}
+
+// SetTunnelsHandler sets the tunnels handler for SSE publishing after import.
+func (h *ImportHandler) SetTunnelsHandler(th *TunnelsHandler) {
+	h.tunnelsHandler = th
 }
 
 // ImportConf imports a WireGuard/AmneziaWG config file.
@@ -91,6 +97,9 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("import", tunnel.Name, "Tunnel imported")
+	if h.tunnelsHandler != nil {
+		h.tunnelsHandler.publishTunnelList(r.Context())
+	}
 
 	resp, err := BuildTunnelResponse(r, h.svc, h.store, tunnel.ID)
 	if err != nil {

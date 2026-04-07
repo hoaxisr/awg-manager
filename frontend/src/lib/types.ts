@@ -1,3 +1,7 @@
+// ─────────────────────────────────────────────
+// #region Tunnels — config, state, list items
+// ─────────────────────────────────────────────
+
 export interface AWGInterface {
 	privateKey: string;
 	address: string;
@@ -29,6 +33,39 @@ export interface AWGPeer {
 	persistentKeepalive?: number;
 }
 
+export interface ConnectivityCheckConfig {
+	method: 'http' | 'ping' | 'handshake' | 'disabled';
+	pingTarget?: string;
+}
+
+export interface TunnelPingCheck {
+	enabled: boolean;
+	method: string;
+	target: string;
+	interval: number;
+	deadInterval: number;
+	failThreshold: number;
+	minSuccess: number;
+	timeout: number;
+	port?: number;
+	restart: boolean;
+}
+
+export interface TunnelStateInfo {
+	state: number;
+	opkgTunExists: boolean;
+	interfaceUp: boolean;
+	processRunning: boolean;
+	processPID: number;
+	hasPeer: boolean;
+	hasHandshake: boolean;
+	lastHandshake: string;
+	rxBytes: number;
+	txBytes: number;
+	error: unknown;
+	details?: string;
+}
+
 export interface AWGTunnel {
 	id: string;
 	name: string;
@@ -47,43 +84,6 @@ export interface AWGTunnel {
 	connectivityCheck?: ConnectivityCheckConfig;
 	warnings?: string[];
 	backend?: 'nativewg' | 'kernel';
-}
-
-export interface TunnelStateInfo {
-	state: number;
-	opkgTunExists: boolean;
-	interfaceUp: boolean;
-	processRunning: boolean;
-	processPID: number;
-	hasPeer: boolean;
-	hasHandshake: boolean;
-	lastHandshake: string;
-	rxBytes: number;
-	txBytes: number;
-	error: unknown;
-	details?: string;
-}
-
-export interface WANInterface {
-	name: string;
-	label: string;
-	state: string;
-}
-
-export interface RouterInterface {
-	name: string;
-	label: string;
-	up: boolean;
-}
-
-export interface WANStatus {
-	interfaces: Record<string, WANInterfaceStatus>;
-	anyWANUp: boolean;
-}
-
-export interface WANInterfaceStatus {
-	up: boolean;
-	label: string;
 }
 
 export interface TunnelListItem {
@@ -117,208 +117,17 @@ export interface TunnelListItem {
 	};
 }
 
-export interface IPResult {
-	directIp: string;
-	vpnIp: string;
-	endpointIp: string;
-	ipChanged: boolean;
-}
-
-export interface ConnectivityCheckConfig {
-	method: 'http' | 'ping' | 'handshake' | 'disabled';
-	pingTarget?: string;
-}
-
-export interface ConnectivityResult {
-	connected: boolean;
-	latency?: number;
-	reason?: string;
-	httpCode?: number;
-}
-
-export interface SystemInfo {
-	version: string;
-	goVersion: string;
-	goArch: string;
-	goOS: string;
-	keeneticOS: string;
-	isOS5: boolean;
-	firmwareVersion: string;
-	supportsExtendedASC: boolean;
-	supportsHRanges: boolean;
-	totalMemoryMB: number;
-	isLowMemory: boolean;
-	gcMemLimit: string;
-	gogc: string;
-	disableMemorySaving: boolean;
-	kernelModuleExists: boolean;
-	kernelModuleLoaded: boolean;
-	kernelModuleModel: string;
-	kernelModuleVersion: string;
-	isAarch64: boolean;
-	activeBackend: string;
-	routerIP: string;
-	bootInProgress: boolean;
-	backendAvailability: { nativewg: boolean; kernel: boolean };
-}
-
-export interface UpdateInfo {
-	available: boolean;
-	currentVersion: string;
-	latestVersion?: string;
-	checkedAt: string;
-	checking: boolean;
-	error?: string;
-	warning?: string;
-}
-
-export interface ServerSettings {
-	port: number;
-	interface: string;
-}
-
-export interface PingCheckDefaults {
-	method: 'http' | 'icmp';
-	target: string;
-	interval: number;
-	deadInterval: number;
-	failThreshold: number;
-}
-
-export interface PingCheckSettings {
-	enabled: boolean;
-	defaults: PingCheckDefaults;
-}
-
-export interface LoggingSettings {
-	enabled: boolean;
-	maxAge: number;
-	logLevel: string;
-}
-
-export interface UpdateSettings {
-	checkEnabled: boolean;
-}
-
-export interface DNSRouteSettings {
-	autoRefreshEnabled: boolean;
-	refreshIntervalHours: number;
-	refreshMode?: string;       // "interval" (default) or "daily"
-	refreshDailyTime?: string;  // "HH:MM" 24h format
-}
-
-export interface Settings {
-	schemaVersion?: number;
-	authEnabled: boolean;
-	server: ServerSettings;
-	pingCheck: PingCheckSettings;
-	logging: LoggingSettings;
-	disableMemorySaving: boolean;
-	updates: UpdateSettings;
-	dnsRoute: DNSRouteSettings;
-	hiddenSystemTunnels?: string[];
-}
-
-export interface TunnelPingCheck {
-	enabled: boolean;
-	method: string;
-	target: string;
-	interval: number;
-	deadInterval: number;
-	failThreshold: number;
-	minSuccess: number;
-	timeout: number;
-	port?: number;
-	restart: boolean;
-}
-
-export interface NativePingCheckConfig {
-	host: string;
-	mode: 'icmp' | 'connect' | 'tls' | 'uri';
-	updateInterval: number;
-	maxFails: number;
-	minSuccess: number;
-	timeout: number;
-	port?: number;
-	restart: boolean;
-}
-
-export interface NativePingCheckStatus {
-	exists: boolean;
-	host: string;
-	mode: string;
-	interval: number;
-	maxFails: number;
-	minSuccess: number;
-	timeout: number;
-	port?: number;
-	restart: boolean;
-	bound: boolean;
-	status: string;
-	failCount: number;
-	successCount: number;
-}
-
-export interface PingCheckStatus {
-	enabled: boolean;
-	tunnels: TunnelPingStatus[];
-}
-
-export interface TunnelPingStatus {
-	tunnelId: string;
-	tunnelName: string;
-	enabled: boolean;
-	backend: 'kernel' | 'nativewg';
-	status: 'alive' | 'recovering' | 'disabled';
-	method: string;
-	lastCheck?: string;
-	lastLatency: number;
-	failCount: number;
-	successCount?: number;
-	failThreshold: number;
-	restartCount: number;
-}
-
-export interface PingLogEntry {
-	timestamp: string;
-	tunnelId: string;
-	tunnelName: string;
+export interface DeleteResult {
 	success: boolean;
-	latency: number;
-	error: string;
-	failCount: number;
-	threshold: number;
-	stateChange: string;
-	backend?: string;
+	tunnelId: string;
+	verified: boolean;
 }
 
-export interface AuthStatus {
-	authenticated: boolean;
-	authDisabled?: boolean;
-	login?: string;
-	expiresIn?: number;
-}
+// #endregion
 
-export interface LoginResult {
-	success: boolean;
-	login: string;
-}
-
-export interface LogEntry {
-	timestamp: string;
-	level: string;
-	group: string;
-	subgroup: string;
-	action: string;
-	target: string;
-	message: string;
-}
-
-export interface LogsResponse {
-	enabled: boolean;
-	logs: LogEntry[];
-	total: number;
-}
+// ─────────────────────────────────────────────
+// #region External & System Tunnels
+// ─────────────────────────────────────────────
 
 export interface ExternalTunnel {
 	interfaceName: string;
@@ -372,6 +181,102 @@ export interface ASCParamsExtended extends ASCParamsBase {
 
 export type ASCParams = ASCParamsBase | ASCParamsExtended;
 
+export interface SignatureCaptureResult {
+	ok: boolean;
+	source: string;
+	packets: {
+		i1: string;
+		i2: string;
+		i3: string;
+		i4: string;
+		i5: string;
+	};
+	warning?: string;
+}
+
+// #endregion
+
+// ─────────────────────────────────────────────
+// #region Routing — DNS routes, static routes, tunnels
+// ─────────────────────────────────────────────
+
+export interface DnsRouteSubscription {
+	url: string;
+	name: string;
+	lastFetched?: string;
+	lastCount?: number;
+	lastError?: string;
+}
+
+export interface DnsRouteTarget {
+	interface: string;
+	tunnelId: string;
+	fallback?: 'auto' | 'reject' | '';
+}
+
+export interface DedupeItem {
+	domain: string;
+	reason: 'exact' | 'wildcard' | 'subnet_covered';
+	coveredBy: string;
+	listId: string;
+	listName: string;
+}
+
+export interface DedupeReport {
+	totalInput: number;
+	totalKept: number;
+	totalRemoved: number;
+	exactDupes: number;
+	wildcardDupes: number;
+	items?: DedupeItem[];
+}
+
+export interface DnsRoute {
+	id: string;
+	name: string;
+	domains: string[];
+	excludes?: string[];
+	subnets?: string[];
+	manualDomains: string[];
+	subscriptions?: DnsRouteSubscription[];
+	routes: DnsRouteTarget[];
+	enabled: boolean;
+	createdAt: string;
+	updatedAt: string;
+	lastDedupeReport?: DedupeReport;
+}
+
+export interface StaticRouteList {
+	id: string;
+	name: string;
+	tunnelID: string;
+	subnets: string[];
+	fallback?: '' | 'reject';
+	enabled: boolean;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export interface RoutingTunnel {
+	id: string;
+	name: string;
+	type: 'managed' | 'system' | 'wan';
+	status: string;
+	available: boolean;
+}
+
+export interface ResolveResult {
+	domain: string;
+	ips: string[];
+	error?: string;
+}
+
+// #endregion
+
+// ─────────────────────────────────────────────
+// #region Servers — WireGuard, managed server
+// ─────────────────────────────────────────────
+
 export interface WireguardServer {
 	id: string;
 	interfaceName: string;
@@ -414,152 +319,6 @@ export interface WireguardServerPeerConfig {
 	address: string;
 }
 
-export interface DeleteResult {
-	success: boolean;
-	tunnelId: string;
-	verified: boolean;
-}
-
-export interface BootStatus {
-	initializing: boolean;
-	remainingSeconds: number;
-	phase: 'waiting' | 'starting' | 'ready';
-	instanceId: string;
-}
-
-export interface SpeedTestResult {
-	server: string;
-	direction: 'download' | 'upload';
-	bandwidth: number;
-	bytes: number;
-	duration: number;
-	retransmits: number;
-}
-
-export interface SpeedTestServer {
-	label: string;
-	host: string;
-	port: number;
-}
-
-export interface StaticRouteList {
-	id: string;
-	name: string;
-	tunnelID: string;
-	subnets: string[];
-	fallback?: '' | 'reject';
-	enabled: boolean;
-	createdAt: string;
-	updatedAt: string;
-}
-
-export interface ResolveResult {
-	domain: string;
-	ips: string[];
-	error?: string;
-}
-
-export interface IPCheckService {
-	label: string;
-	url: string;
-}
-
-export interface SpeedTestInfo {
-	available: boolean;
-	servers: SpeedTestServer[];
-}
-
-export interface DiagnosticsStatus {
-	status: 'idle' | 'running' | 'done' | 'error';
-	progress: string;
-	error?: string;
-}
-
-export interface DiagTestEvent {
-	name: string;
-	description: string;
-	status: 'pass' | 'fail' | 'skip' | 'error';
-	detail: string;
-	tunnelId?: string;
-	tunnelName?: string;
-	level: 'basic' | 'detailed';
-}
-
-export interface DiagDoneSummary {
-	total: number;
-	passed: number;
-	failed: number;
-	skipped: number;
-	hasReport: boolean;
-}
-
-export interface DiagEvent {
-	type: 'phase' | 'test' | 'done' | 'error';
-	phase?: string;
-	label?: string;
-	test?: DiagTestEvent;
-	summary?: DiagDoneSummary;
-	message?: string;
-}
-
-export type DiagMode = 'quick' | 'full';
-
-// DNS Routes
-export interface DnsRouteSubscription {
-	url: string;
-	name: string;
-	lastFetched?: string;
-	lastCount?: number;
-	lastError?: string;
-}
-
-export interface DnsRouteTarget {
-	interface: string;
-	tunnelId: string;
-	fallback?: 'auto' | 'reject' | '';
-}
-
-export interface DnsRoute {
-	id: string;
-	name: string;
-	domains: string[];
-	excludes?: string[];
-	subnets?: string[];
-	manualDomains: string[];
-	subscriptions?: DnsRouteSubscription[];
-	routes: DnsRouteTarget[];
-	enabled: boolean;
-	createdAt: string;
-	updatedAt: string;
-	lastDedupeReport?: DedupeReport;
-}
-
-export interface DedupeItem {
-	domain: string;
-	reason: 'exact' | 'wildcard' | 'subnet_covered';
-	coveredBy: string;
-	listId: string;
-	listName: string;
-}
-
-export interface DedupeReport {
-	totalInput: number;
-	totalKept: number;
-	totalRemoved: number;
-	exactDupes: number;
-	wildcardDupes: number;
-	items?: DedupeItem[];
-}
-
-export interface RoutingTunnel {
-	id: string;
-	name: string;
-	type: 'managed' | 'system' | 'wan';
-	status: string;
-	available: boolean;
-}
-
-// Managed WireGuard Server
 export interface ManagedServer {
 	interfaceName: string;
 	address: string;
@@ -626,26 +385,11 @@ export interface UpdateManagedPeerRequest {
 	dns?: string;
 }
 
-export interface SignatureCaptureResult {
-	ok: boolean;
-	source: string;
-	packets: {
-		i1: string;
-		i2: string;
-		i3: string;
-		i4: string;
-		i5: string;
-	};
-	warning?: string;
-}
+// #endregion
 
-export interface TerminalStatus {
-	installed: boolean;
-	running: boolean;
-	sessionActive: boolean;
-}
-
-// Access Policies (ip policy)
+// ─────────────────────────────────────────────
+// #region Access Policies — ip policy
+// ─────────────────────────────────────────────
 
 export interface AccessPolicy {
 	name: string;
@@ -678,7 +422,11 @@ export interface PolicyGlobalInterface {
 	up: boolean;
 }
 
-// Client Routes (per-device VPN routing)
+// #endregion
+
+// ─────────────────────────────────────────────
+// #region Client Routes — per-device VPN routing
+// ─────────────────────────────────────────────
 
 export interface ClientRoute {
 	id: string;
@@ -688,3 +436,400 @@ export interface ClientRoute {
 	fallback: 'drop' | 'bypass';
 	enabled: boolean;
 }
+
+// #endregion
+
+// ─────────────────────────────────────────────
+// #region System — info, WAN, interfaces
+// ─────────────────────────────────────────────
+
+export interface SystemInfo {
+	version: string;
+	goVersion: string;
+	goArch: string;
+	goOS: string;
+	keeneticOS: string;
+	isOS5: boolean;
+	firmwareVersion: string;
+	supportsExtendedASC: boolean;
+	supportsHRanges: boolean;
+	totalMemoryMB: number;
+	isLowMemory: boolean;
+	gcMemLimit: string;
+	gogc: string;
+	disableMemorySaving: boolean;
+	kernelModuleExists: boolean;
+	kernelModuleLoaded: boolean;
+	kernelModuleModel: string;
+	kernelModuleVersion: string;
+	isAarch64: boolean;
+	activeBackend: string;
+	routerIP: string;
+	bootInProgress: boolean;
+	backendAvailability: { nativewg: boolean; kernel: boolean };
+}
+
+export interface WANInterface {
+	name: string;
+	label: string;
+	state: string;
+}
+
+export interface RouterInterface {
+	name: string;
+	label: string;
+	up: boolean;
+}
+
+export interface WANStatus {
+	interfaces: Record<string, WANInterfaceStatus>;
+	anyWANUp: boolean;
+}
+
+export interface WANInterfaceStatus {
+	up: boolean;
+	label: string;
+}
+
+export interface TerminalStatus {
+	installed: boolean;
+	running: boolean;
+	sessionActive: boolean;
+}
+
+// #endregion
+
+// ─────────────────────────────────────────────
+// #region Settings
+// ─────────────────────────────────────────────
+
+export interface ServerSettings {
+	port: number;
+	interface: string;
+}
+
+export interface PingCheckDefaults {
+	method: 'http' | 'icmp';
+	target: string;
+	interval: number;
+	deadInterval: number;
+	failThreshold: number;
+}
+
+export interface PingCheckSettings {
+	enabled: boolean;
+	defaults: PingCheckDefaults;
+}
+
+export interface LoggingSettings {
+	enabled: boolean;
+	maxAge: number;
+	logLevel: string;
+}
+
+export interface UpdateSettings {
+	checkEnabled: boolean;
+}
+
+export interface DNSRouteSettings {
+	autoRefreshEnabled: boolean;
+	refreshIntervalHours: number;
+	refreshMode?: string;       // "interval" (default) or "daily"
+	refreshDailyTime?: string;  // "HH:MM" 24h format
+}
+
+export interface Settings {
+	schemaVersion?: number;
+	authEnabled: boolean;
+	server: ServerSettings;
+	pingCheck: PingCheckSettings;
+	logging: LoggingSettings;
+	disableMemorySaving: boolean;
+	updates: UpdateSettings;
+	dnsRoute: DNSRouteSettings;
+	hiddenSystemTunnels?: string[];
+}
+
+// #endregion
+
+// ─────────────────────────────────────────────
+// #region Auth & Boot
+// ─────────────────────────────────────────────
+
+export interface AuthStatus {
+	authenticated: boolean;
+	authDisabled?: boolean;
+	login?: string;
+	expiresIn?: number;
+}
+
+export interface LoginResult {
+	success: boolean;
+	login: string;
+}
+
+export interface BootStatus {
+	initializing: boolean;
+	remainingSeconds: number;
+	phase: 'waiting' | 'starting' | 'ready';
+	instanceId: string;
+}
+
+export interface UpdateInfo {
+	available: boolean;
+	currentVersion: string;
+	latestVersion?: string;
+	checkedAt: string;
+	checking: boolean;
+	error?: string;
+	warning?: string;
+}
+
+// #endregion
+
+// ─────────────────────────────────────────────
+// #region PingCheck — status, logs, native config
+// ─────────────────────────────────────────────
+
+export interface NativePingCheckConfig {
+	host: string;
+	mode: 'icmp' | 'connect' | 'tls' | 'uri';
+	updateInterval: number;
+	maxFails: number;
+	minSuccess: number;
+	timeout: number;
+	port?: number;
+	restart: boolean;
+}
+
+export interface NativePingCheckStatus {
+	exists: boolean;
+	host: string;
+	mode: string;
+	interval: number;
+	maxFails: number;
+	minSuccess: number;
+	timeout: number;
+	port?: number;
+	restart: boolean;
+	bound: boolean;
+	status: string;
+	failCount: number;
+	successCount: number;
+}
+
+export interface PingCheckStatus {
+	enabled: boolean;
+	tunnels: TunnelPingStatus[];
+}
+
+export interface TunnelPingStatus {
+	tunnelId: string;
+	tunnelName: string;
+	enabled: boolean;
+	backend: 'kernel' | 'nativewg';
+	status: 'alive' | 'recovering' | 'disabled';
+	method: string;
+	lastCheck?: string;
+	lastLatency: number;
+	failCount: number;
+	successCount?: number;
+	failThreshold: number;
+	restartCount: number;
+}
+
+export interface PingLogEntry {
+	timestamp: string;
+	tunnelId: string;
+	tunnelName: string;
+	success: boolean;
+	latency: number;
+	error: string;
+	failCount: number;
+	threshold: number;
+	stateChange: string;
+	backend?: string;
+}
+
+// #endregion
+
+// ─────────────────────────────────────────────
+// #region Logging
+// ─────────────────────────────────────────────
+
+export interface LogEntry {
+	timestamp: string;
+	level: string;
+	group: string;
+	subgroup: string;
+	action: string;
+	target: string;
+	message: string;
+}
+
+export interface LogsResponse {
+	enabled: boolean;
+	logs: LogEntry[];
+	total: number;
+}
+
+// #endregion
+
+// ─────────────────────────────────────────────
+// #region Testing — IP check, connectivity, speed
+// ─────────────────────────────────────────────
+
+export interface IPResult {
+	directIp: string;
+	vpnIp: string;
+	endpointIp: string;
+	ipChanged: boolean;
+}
+
+export interface ConnectivityResult {
+	connected: boolean;
+	latency?: number;
+	reason?: string;
+	httpCode?: number;
+}
+
+export interface IPCheckService {
+	label: string;
+	url: string;
+}
+
+export interface SpeedTestResult {
+	server: string;
+	direction: 'download' | 'upload';
+	bandwidth: number;
+	bytes: number;
+	duration: number;
+	retransmits: number;
+}
+
+export interface SpeedTestServer {
+	label: string;
+	host: string;
+	port: number;
+}
+
+export interface SpeedTestInfo {
+	available: boolean;
+	servers: SpeedTestServer[];
+}
+
+// #endregion
+
+// ─────────────────────────────────────────────
+// #region Diagnostics
+// ─────────────────────────────────────────────
+
+export interface DiagnosticsStatus {
+	status: 'idle' | 'running' | 'done' | 'error';
+	progress: string;
+	error?: string;
+}
+
+export interface DiagTestEvent {
+	name: string;
+	description: string;
+	status: 'pass' | 'fail' | 'skip' | 'error';
+	detail: string;
+	tunnelId?: string;
+	tunnelName?: string;
+	level: 'basic' | 'detailed';
+}
+
+export interface DiagDoneSummary {
+	total: number;
+	passed: number;
+	failed: number;
+	skipped: number;
+	hasReport: boolean;
+}
+
+export interface DiagEvent {
+	type: 'phase' | 'test' | 'done' | 'error';
+	phase?: string;
+	label?: string;
+	test?: DiagTestEvent;
+	summary?: DiagDoneSummary;
+	message?: string;
+}
+
+export type DiagMode = 'quick' | 'full';
+
+// #endregion
+
+// ─────────────────────────────────────────────
+// #region Connections viewer
+// ─────────────────────────────────────────────
+
+export interface ConntrackConnection {
+	protocol: string;
+	src: string;
+	dst: string;
+	srcPort: number;
+	dstPort: number;
+	state: string;
+	packets: number;
+	bytes: number;
+	interface: string;
+	tunnelId: string;
+	tunnelName: string;
+	clientMac: string;
+	clientName: string;
+}
+
+export interface ConnectionStats {
+	total: number;
+	direct: number;
+	tunneled: number;
+	protocols: { tcp: number; udp: number; icmp: number };
+}
+
+export interface TunnelConnectionInfo {
+	name: string;
+	interface: string;
+	count: number;
+}
+
+export interface ConnectionsPagination {
+	total: number;
+	offset: number;
+	limit: number;
+	returned: number;
+}
+
+export interface ConnectionsResponse {
+	stats: ConnectionStats;
+	tunnels: Record<string, TunnelConnectionInfo>;
+	connections: ConntrackConnection[];
+	pagination: ConnectionsPagination;
+}
+
+// #endregion
+
+// ─────────────────────────────────────────────
+// #region SSE Events (re-exports from api/events.ts)
+// ─────────────────────────────────────────────
+
+export type {
+	TunnelStateEvent,
+	TunnelDeletedEvent,
+	TunnelCreatedEvent,
+	TunnelUpdatedEvent,
+	LogEntryEvent,
+	PingCheckStateEvent,
+	SystemBootingEvent,
+	SnapshotTunnelsEvent,
+	SnapshotServersEvent,
+	SnapshotRoutingEvent,
+	SnapshotPingcheckEvent,
+	SnapshotLogsEvent,
+	TunnelTrafficEvent,
+	TunnelConnectivityEvent,
+	PingCheckLogEvent
+} from '$lib/api/events';
+
+// #endregion

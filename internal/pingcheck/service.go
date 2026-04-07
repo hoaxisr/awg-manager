@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
-	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 )
@@ -28,6 +28,7 @@ type Service struct {
 	wg       wgClient
 	log      *logger.Logger
 	appLog   *logging.ScopedLogger
+	bus      *events.Bus
 
 	mu        sync.RWMutex
 	monitors  map[string]*tunnelMonitor
@@ -77,6 +78,9 @@ func NewService(
 		logBuffer: NewLogBuffer(),
 	}
 }
+
+// SetEventBus sets the event bus for SSE publishing.
+func (s *Service) SetEventBus(bus *events.Bus) { s.bus = bus }
 
 // Start begins the monitoring service.
 func (s *Service) Start() {
@@ -432,7 +436,28 @@ func (s *Service) resolveIfaceName(tunnelID string) string {
 	if stored, err := s.tunnels.Get(tunnelID); err == nil && stored.Backend == "nativewg" {
 		return nwg.NewNWGNames(stored.NWGIndex).IfaceName
 	}
-	return tunnel.NewNames(tunnelID).IfaceName
+	// Kernel: interface name = tunnel ID directly (e.g., "awg0")
+	return tunnelID
+}
+
+// addLogEntry adds a log entry to the buffer and publishes it via SSE.
+func (s *Service) addLogEntry(entry LogEntry) {
+	s.logBuffer.Add(entry)
+	if s.bus == nil {
+		return
+	}
+	s.bus.Publish("pingcheck:log", events.PingCheckLogEvent{
+		Timestamp:   entry.Timestamp.Format(time.RFC3339),
+		TunnelID:    entry.TunnelID,
+		TunnelName:  entry.TunnelName,
+		Success:     entry.Success,
+		Latency:     entry.Latency,
+		Error:       entry.Error,
+		FailCount:   entry.FailCount,
+		Threshold:   entry.Threshold,
+		StateChange: entry.StateChange,
+		Backend:     entry.Backend,
+	})
 }
 
 // logInfo logs an info message.

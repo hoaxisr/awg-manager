@@ -1,25 +1,23 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { tunnels } from '$lib/stores/tunnels';
+	import { systemInfo as systemInfoStore } from '$lib/stores/system';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
-	import { feedTraffic } from '$lib/stores/traffic';
 	import { TunnelCard, ExternalTunnelCard, AdoptTunnelDialog, SystemTunnelCard } from '$lib/components/tunnels';
 	import { PageContainer, LoadingSpinner } from '$lib/components/layout';
 	import { Modal } from '$lib/components/ui';
-	import type { SystemInfo } from '$lib/types';
 
-	let loading = $state(false);
-	let systemInfo = $state<SystemInfo | null>(null);
+	let sysInfo = $derived($systemInfoStore);
+	let loading = $derived(!sysInfo);
 
-	const goArch = $derived(systemInfo?.goArch ?? '');
+	const goArch = $derived(sysInfo?.goArch ?? '');
 
 	let showUnsupportedBlock = $derived(
-		systemInfo !== null &&
-		!systemInfo.kernelModuleExists &&
-		!systemInfo.kernelModuleLoaded &&
-		!systemInfo.backendAvailability?.nativewg
+		sysInfo !== null &&
+		!sysInfo.kernelModuleExists &&
+		!sysInfo.kernelModuleLoaded &&
+		!sysInfo.backendAvailability?.nativewg
 	);
 
 	const externalTunnels = tunnels.externalTunnels;
@@ -29,43 +27,10 @@
 	let deleteLoading = $state<Record<string, boolean>>({});
 	let deleteConfirmId = $state<string | null>(null);
 
-	// Feed traffic data on each poll update
-	$effect(() => {
-		for (const t of $tunnels) {
-			if (t.status === 'running' && t.rxBytes != null && t.txBytes != null) {
-				feedTraffic(t.id, t.rxBytes, t.txBytes);
-			}
-		}
-		for (const t of $systemTunnelsList) {
-			if (t.status === 'up' && t.peer) {
-				feedTraffic(t.id, t.peer.rxBytes, t.peer.txBytes);
-			}
-		}
-	});
-
-	let bootNotified = $state(false);
-
-	onMount(() => {
-		loading = true;
-		Promise.all([
-			tunnels.load(),
-			api.getSystemInfo().then(info => {
-				systemInfo = info;
-				if (info.bootInProgress && !bootNotified) {
-					bootNotified = true;
-					notifications.warning('Роутер загружается. Kernel туннели будут запущены автоматически после инициализации NDMS (~2 мин).', 15000);
-				}
-			}).catch(() => null)
-		]).finally(() => loading = false);
-
-		const interval = setInterval(() => tunnels.load(), 5000);
-		return () => clearInterval(interval);
-	});
-
 	async function hideSystemTunnel(id: string) {
 		try {
 			await api.hideSystemTunnel(id);
-			await tunnels.load();
+			// List refresh comes via SSE tunnels:list + server:updated
 			notifications.success(`Туннель ${id} скрыт. Вернуть можно в настройках.`);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Ошибка скрытия туннеля');
@@ -75,7 +40,7 @@
 	async function markAsServer(id: string) {
 		try {
 			await api.markServerInterface(id);
-			await tunnels.load();
+			// List refresh comes via SSE tunnels:list + server:updated
 			notifications.success(`Туннель ${id} перенесён в серверы.`);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Ошибка переноса в серверы');
@@ -97,7 +62,6 @@
 			}
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Ошибка');
-			await tunnels.load();
 		} finally {
 			const { [id]: _, ...rest } = toggleLoading;
 			toggleLoading = rest;
@@ -194,7 +158,7 @@
 
 	// Auto-select backend based on availability
 	$effect(() => {
-		if (systemInfo?.backendAvailability && !systemInfo.backendAvailability.nativewg && systemInfo.backendAvailability.kernel) {
+		if (sysInfo?.backendAvailability && !sysInfo.backendAvailability.nativewg && sysInfo.backendAvailability.kernel) {
 			selectedBackend = 'kernel';
 		}
 	});
@@ -233,10 +197,10 @@
 
 	// Terminal status line
 	let statusLine = $derived.by(() => {
-		if (!systemInfo) return '';
+		if (!sysInfo) return '';
 		const count = $tunnels.length;
 		const word = count === 0 ? 'туннелей' : count === 1 ? 'туннель' : count < 5 ? 'туннеля' : 'туннелей';
-		return `${systemInfo.version}  ·  ${systemInfo.goArch}  ·  ${count} ${word}`;
+		return `${sysInfo.version}  ·  ${sysInfo.goArch}  ·  ${count} ${word}`;
 	});
 
 
@@ -297,8 +261,8 @@
 							type="button"
 							class="term-backend-btn"
 							class:selected={selectedBackend === 'nativewg'}
-							class:disabled={systemInfo !== null && !systemInfo.backendAvailability?.nativewg}
-							disabled={systemInfo !== null && !systemInfo.backendAvailability?.nativewg}
+							class:disabled={sysInfo !== null && !sysInfo.backendAvailability?.nativewg}
+							disabled={sysInfo !== null && !sysInfo.backendAvailability?.nativewg}
 							onclick={() => selectedBackend = 'nativewg'}
 						>
 							NativeWG
@@ -307,8 +271,8 @@
 							type="button"
 							class="term-backend-btn"
 							class:selected={selectedBackend === 'kernel'}
-							class:disabled={systemInfo !== null && !systemInfo.backendAvailability?.kernel}
-							disabled={systemInfo !== null && !systemInfo.backendAvailability?.kernel}
+							class:disabled={sysInfo !== null && !sysInfo.backendAvailability?.kernel}
+							disabled={sysInfo !== null && !sysInfo.backendAvailability?.kernel}
 							onclick={() => selectedBackend = 'kernel'}
 						>
 							Kernel
@@ -455,7 +419,7 @@
 			</div>
 			<h2 class="unsupported-title">Модуль ядра недоступен</h2>
 			<p class="unsupported-text">
-				Модель роутера <strong>{systemInfo?.kernelModuleModel || '(неизвестна)'}</strong> не имеет скомпилированный модуль ядра в настоящий момент.
+				Модель роутера <strong>{sysInfo?.kernelModuleModel || '(неизвестна)'}</strong> не имеет скомпилированный модуль ядра в настоящий момент.
 			</p>
 			<div class="unsupported-actions">
 				<a href="https://t.me/awgmanager" target="_blank" rel="noopener" class="unsupported-link unsupported-link-primary">

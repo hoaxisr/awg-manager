@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
@@ -11,6 +12,7 @@ import (
 // LoggingHandler handles logging API endpoints.
 type LoggingHandler struct {
 	svc *logging.Service
+	bus *events.Bus
 	log *logging.ScopedLogger
 }
 
@@ -22,11 +24,35 @@ func NewLoggingHandler(svc *logging.Service, appLogger logging.AppLogger) *Loggi
 	}
 }
 
+// SetEventBus sets the event bus for SSE snapshot publishing.
+func (h *LoggingHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
+
+// PublishSnapshot publishes a full logs snapshot via SSE.
+func (h *LoggingHandler) PublishSnapshot() {
+	if h.bus == nil {
+		return
+	}
+	h.bus.Publish("snapshot:logs", h.collectSnapshot())
+}
+
 // LogsResponse represents the response for get logs endpoint.
 type LogsResponse struct {
 	Enabled bool               `json:"enabled"`
 	Logs    []logging.LogEntry `json:"logs"`
 	Total   int                `json:"total"`
+}
+
+// collectSnapshot builds the logging snapshot for API response and SSE snapshots.
+func (h *LoggingHandler) collectSnapshot() LogsResponse {
+	entries, total := h.svc.GetLogs("", "", "", 200, 0)
+	if entries == nil {
+		entries = []logging.LogEntry{}
+	}
+	return LogsResponse{
+		Enabled: h.svc.IsEnabled(),
+		Logs:    entries,
+		Total:   total,
+	}
 }
 
 // GetLogs returns log entries with optional filtering.
@@ -90,5 +116,6 @@ func (h *LoggingHandler) ClearLogs(w http.ResponseWriter, r *http.Request) {
 
 	h.svc.Clear()
 	h.log.Info("clear-logs", "", "Logs cleared")
+	h.PublishSnapshot()
 	response.Success(w, map[string]bool{"cleared": true})
 }

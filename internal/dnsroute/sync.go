@@ -92,7 +92,17 @@ func (s *ServiceImpl) reconcile(ctx context.Context) error {
 		return nil
 	}
 
-	target := buildTargetState(data)
+	var failedSet map[string]struct{}
+	if s.failover != nil {
+		failed := s.failover.FailedTunnels()
+		if len(failed) > 0 {
+			failedSet = make(map[string]struct{}, len(failed))
+			for _, id := range failed {
+				failedSet[id] = struct{}{}
+			}
+		}
+	}
+	target := buildTargetState(data, failedSet)
 
 	allGroups, err := s.ndms.ShowObjectGroupFQDN(ctx)
 	if err != nil {
@@ -137,7 +147,7 @@ func (s *ServiceImpl) reconcile(ctx context.Context) error {
 }
 
 // buildTargetState converts stored domain lists into the desired router state.
-func buildTargetState(data *StoreData) targetState {
+func buildTargetState(data *StoreData, failedTunnels map[string]struct{}) targetState {
 	var ts targetState
 
 	for _, list := range data.Lists {
@@ -170,12 +180,21 @@ func buildTargetState(data *StoreData) targetState {
 
 			ts.groups = append(ts.groups, g)
 
-			// Every group gets the same route targets.
-			// Fallback (reject/auto) only applies to the LAST route in the chain.
-			for j, rt := range list.Routes {
+			// Filter out failed tunnels, reassign fallback to last active route.
+			var activeRoutes []RouteTarget
+			for _, rt := range list.Routes {
+				if failedTunnels != nil {
+					if _, failed := failedTunnels[rt.TunnelID]; failed {
+						continue
+					}
+				}
+				activeRoutes = append(activeRoutes, rt)
+			}
+			for j, rt := range activeRoutes {
 				fallback := ""
-				if j == len(list.Routes)-1 {
-					fallback = rt.Fallback
+				if j == len(activeRoutes)-1 && len(list.Routes) > 0 {
+					// Last active route inherits the fallback from the original last route
+					fallback = list.Routes[len(list.Routes)-1].Fallback
 				}
 				ts.routes = append(ts.routes, targetRoute{
 					group:    groupName,

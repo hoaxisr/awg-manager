@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
@@ -17,6 +18,8 @@ type DNSRouteService interface {
 	List(ctx context.Context) ([]dnsroute.DomainList, error)
 	Update(ctx context.Context, list dnsroute.DomainList) (*dnsroute.DomainList, error)
 	Delete(ctx context.Context, id string) error
+	DeleteBatch(ctx context.Context, ids []string) (int, error)
+	CreateBatch(ctx context.Context, lists []dnsroute.DomainList) ([]*dnsroute.DomainList, error)
 	SetEnabled(ctx context.Context, id string, enabled bool) error
 	RefreshSubscriptions(ctx context.Context, id string) error
 	RefreshAllSubscriptions(ctx context.Context) error
@@ -25,7 +28,23 @@ type DNSRouteService interface {
 // DNSRouteHandler handles DNS route API endpoints.
 type DNSRouteHandler struct {
 	svc DNSRouteService
+	bus *events.Bus
 	log *logging.ScopedLogger
+}
+
+// SetEventBus sets the event bus for SSE publishing.
+func (h *DNSRouteHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
+
+// publishDnsUpdated publishes the full DNS route list via SSE (best-effort).
+func (h *DNSRouteHandler) publishDnsUpdated(ctx context.Context) {
+	if h.bus == nil {
+		return
+	}
+	list, err := h.svc.List(ctx)
+	if err != nil {
+		return
+	}
+	h.bus.Publish("routing:dns-updated", list)
 }
 
 // NewDNSRouteHandler creates a new DNS route handler.
@@ -98,6 +117,7 @@ func (h *DNSRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("dns-route-create", created.ID, "DNS route list created: "+created.Name)
 
 	response.Success(w, created)
+	h.publishDnsUpdated(r.Context())
 }
 
 // Update updates an existing domain list.
@@ -132,6 +152,7 @@ func (h *DNSRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("dns-route-update", updated.ID, "DNS route list updated: "+updated.Name)
 
 	response.Success(w, updated)
+	h.publishDnsUpdated(r.Context())
 }
 
 // Delete deletes a domain list by ID.
@@ -155,6 +176,73 @@ func (h *DNSRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("dns-route-delete", id, "DNS route list deleted")
 
 	response.Success(w, map[string]bool{"success": true})
+	h.publishDnsUpdated(r.Context())
+}
+
+// DeleteBatch deletes multiple domain lists by IDs.
+func (h *DNSRouteHandler) DeleteBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
+		return
+	}
+
+	if len(body.IDs) == 0 {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "No IDs provided", "MISSING_IDS")
+		return
+	}
+
+	deleted, err := h.svc.DeleteBatch(r.Context(), body.IDs)
+	if err != nil {
+		response.Error(w, err.Error(), "DNS_ROUTE_DELETE_BATCH_ERROR")
+		return
+	}
+
+	h.log.Info("dns-route-delete-batch", "", "DNS route lists deleted in batch")
+
+	response.Success(w, map[string]int{"deleted": deleted})
+	h.publishDnsUpdated(r.Context())
+}
+
+// CreateBatch creates multiple domain lists at once.
+func (h *DNSRouteHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+
+	var lists []dnsroute.DomainList
+	if err := json.NewDecoder(r.Body).Decode(&lists); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
+		return
+	}
+
+	if len(lists) == 0 {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "No lists provided", "MISSING_LISTS")
+		return
+	}
+
+	created, err := h.svc.CreateBatch(r.Context(), lists)
+	if err != nil {
+		response.Error(w, err.Error(), "DNS_ROUTE_CREATE_BATCH_ERROR")
+		return
+	}
+
+	h.log.Info("dns-route-create-batch", "", "DNS route lists created in batch")
+
+	response.Success(w, map[string]any{"created": len(created), "lists": created})
+	h.publishDnsUpdated(r.Context())
 }
 
 // SetEnabled toggles the enabled state of a domain list.
@@ -192,6 +280,7 @@ func (h *DNSRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("dns-route-toggle", id, "DNS route list "+action)
 
 	response.Success(w, map[string]bool{"success": true})
+	h.publishDnsUpdated(r.Context())
 }
 
 // Refresh refreshes subscriptions for a single list or all lists.
@@ -218,5 +307,6 @@ func (h *DNSRouteHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.Success(w, map[string]bool{"success": true})
+	h.publishDnsUpdated(r.Context())
 }
 

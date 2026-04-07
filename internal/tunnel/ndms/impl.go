@@ -51,47 +51,6 @@ func (c *ClientImpl) ShowInterface(ctx context.Context, name string) (string, er
 	return string(raw), nil
 }
 
-// CreateOpkgTun creates an OpkgTun interface in NDMS.
-// Does NOT set ip global — caller must call SetIPGlobal after address/MTU are configured.
-// Reason: setting security-level public + ip global atomically causes Keenetic's nginx
-// to bind to the tunnel IP before the address is even set, leading to bind errors.
-func (c *ClientImpl) CreateOpkgTun(ctx context.Context, name, description string) error {
-	safeDesc := sanitizeDescription(description)
-	if safeDesc == "" {
-		safeDesc = name
-	}
-
-	// Create interface with description + security-level only.
-	// ip global is applied later (after SetAddress/SetMTU) to avoid premature nginx binding.
-	_, err := c.rci.Post(ctx, map[string]interface{}{
-		"interface": map[string]interface{}{
-			name: map[string]interface{}{
-				"description":    safeDesc,
-				"security-level": map[string]interface{}{"public": true},
-			},
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("create interface: %w", err)
-	}
-	return nil
-}
-
-// SetIPGlobal marks an interface as global (internet-facing) with automatic priority.
-// Must be called AFTER SetAddress/SetMTU to avoid premature nginx binding.
-func (c *ClientImpl) SetIPGlobal(ctx context.Context, name string) error {
-	_, err := c.rci.Post(ctx, map[string]interface{}{
-		"interface": map[string]interface{}{
-			name: map[string]interface{}{
-				"ip": map[string]interface{}{
-					"global": map[string]interface{}{"auto": true},
-				},
-			},
-		},
-	})
-	return err
-}
-
 // DeleteOpkgTun removes an OpkgTun interface from NDMS.
 // "no interface" removes everything: routes, DNS, address, security-level, ip global.
 // Caller is responsible for calling Save() separately.
@@ -182,7 +141,7 @@ func (c *ClientImpl) ClearIPv6Address(ctx context.Context, name string) {
 		"interface": map[string]interface{}{
 			name: map[string]interface{}{
 				"ipv6": map[string]interface{}{
-					"address": map[string]interface{}{},
+					"address": map[string]interface{}{"no": true},
 				},
 			},
 		},
@@ -285,16 +244,6 @@ func (c *ClientImpl) InterfaceUp(ctx context.Context, name string) error {
 	return err
 }
 
-// InterfaceDown brings an interface down.
-func (c *ClientImpl) InterfaceDown(ctx context.Context, name string) error {
-	_, err := c.rci.Post(ctx, map[string]interface{}{
-		"interface": map[string]interface{}{
-			name: map[string]interface{}{"up": false},
-		},
-	})
-	return err
-}
-
 // SetDefaultRoute sets the default IPv4 route via an interface.
 func (c *ClientImpl) SetDefaultRoute(ctx context.Context, name string) error {
 	if _, err := c.rci.Post(ctx, rci.CmdSetDefaultRoute(name)); err != nil {
@@ -309,39 +258,6 @@ func (c *ClientImpl) RemoveDefaultRoute(ctx context.Context, name string) error 
 		return fmt.Errorf("remove default route: %w", err)
 	}
 	return nil
-}
-
-// RemoveHostRoute removes a host route.
-// Detects IPv6 addresses and uses the appropriate command.
-func (c *ClientImpl) RemoveHostRoute(ctx context.Context, host string) error {
-	if parsed := net.ParseIP(host); parsed != nil && parsed.To4() == nil {
-		// IPv6
-		_, _ = c.rci.Post(ctx, rci.CmdRemoveIPv6HostRoute(host))
-	} else {
-		// IPv4
-		_, _ = c.rci.Post(ctx, map[string]any{
-			"ip": map[string]any{
-				"route": map[string]any{
-					"no":   true,
-					"host": host,
-				},
-			},
-		})
-	}
-	return nil
-}
-
-// SetIPv6DefaultRoute sets the default IPv6 route via an interface.
-func (c *ClientImpl) SetIPv6DefaultRoute(ctx context.Context, name string) error {
-	if _, err := c.rci.Post(ctx, rci.CmdSetIPv6DefaultRoute(name)); err != nil {
-		return err
-	}
-	return nil
-}
-
-// RemoveIPv6DefaultRoute removes the default IPv6 route for an interface.
-func (c *ClientImpl) RemoveIPv6DefaultRoute(ctx context.Context, name string) {
-	_, _ = c.rci.Post(ctx, rci.CmdRemoveIPv6DefaultRoute(name))
 }
 
 // GetDefaultGatewayInterface returns the current default gateway interface.
@@ -387,18 +303,6 @@ func (c *ClientImpl) DumpIPv4Routes(ctx context.Context) string {
 		fmt.Fprintf(&buf, "%s via %s dev %s\n", r.Destination, gw, r.Interface)
 	}
 	return buf.String()
-}
-
-// GetInterfaceAddress returns the IPv4 address and mask of an interface.
-func (c *ClientImpl) GetInterfaceAddress(ctx context.Context, iface string) (string, string, error) {
-	var info rci.InterfaceInfo
-	if err := c.rci.Get(ctx, "/show/interface/"+iface, &info); err != nil {
-		return "", "", fmt.Errorf("show interface %s: %w", iface, err)
-	}
-	if info.Address == "" || info.Mask == "" {
-		return "", "", fmt.Errorf("address or mask not found for interface %s", iface)
-	}
-	return info.Address, info.Mask, nil
 }
 
 // GetSystemName resolves an NDMS logical name (e.g., "ISP") to the kernel
@@ -587,43 +491,6 @@ func wanInterfaceLabel(ifaceType, name, description string) string {
 
 	// Fallback: use interface name
 	return name
-}
-
-// GetHotspotClients returns LAN devices from the router's hotspot table.
-func (c *ClientImpl) GetHotspotClients(ctx context.Context) ([]HotspotClient, error) {
-	var resp rci.HotspotResponse
-	if err := c.rci.Get(ctx, "/show/ip/hotspot", &resp); err != nil {
-		return nil, fmt.Errorf("show ip hotspot: %w", err)
-	}
-
-	var clients []HotspotClient
-	for _, h := range resp.Host {
-		if h.IP == "" || h.IP == "0.0.0.0" {
-			continue
-		}
-		hostname := h.Name
-		if hostname == "" {
-			hostname = h.Hostname
-		}
-		clients = append(clients, HotspotClient{
-			IP:       h.IP,
-			MAC:      h.MAC,
-			Hostname: hostname,
-			Online:   isActiveHost(h.Active),
-		})
-	}
-	return clients, nil
-}
-
-// isActiveHost checks the "active" field which may be bool or string depending on firmware.
-func isActiveHost(v any) bool {
-	switch val := v.(type) {
-	case bool:
-		return val
-	case string:
-		return val == "yes"
-	}
-	return true // assume active if field absent
 }
 
 // isNonISPInterface checks if the interface is a VPN tunnel (not a real ISP connection).

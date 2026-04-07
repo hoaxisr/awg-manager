@@ -30,11 +30,12 @@ import (
 
 // OperatorNativeWG manages tunnels via Keenetic native WireGuard + awg_proxy.ko.
 type OperatorNativeWG struct {
-	rci    *rci.Client
-	kmod   *KmodManager
-	ndms   ndms.Client
-	log    *logger.Logger
-	appLog *logging.ScopedLogger
+	rci            *rci.Client
+	kmod           *KmodManager
+	ndms           ndms.Client
+	log            *logger.Logger
+	appLog         *logging.ScopedLogger
+	hookNotifier   tunnel.HookNotifier
 }
 
 // NewOperator creates a new NativeWG operator.
@@ -46,6 +47,11 @@ func NewOperator(log *logger.Logger, ndmsClient ndms.Client, rciClient *rci.Clie
 		log:    log,
 		appLog: logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubOps),
 	}
+}
+
+// SetHookNotifier sets the hook notifier for registering expected NDMS hooks.
+func (o *OperatorNativeWG) SetHookNotifier(hn tunnel.HookNotifier) {
+	o.hookNotifier = hn
 }
 
 // Create creates a NativeWG tunnel in NDMS.
@@ -256,6 +262,9 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 	o.applyDNS(ctx, names.NDMSName, stored)
 
 	o.appLog.Full("start", stored.Name, "Setting peer endpoint, interface up")
+	if o.hookNotifier != nil {
+		o.hookNotifier.ExpectHook(names.NDMSName, "running")
+	}
 	batch.InterfaceUp(names.NDMSName, true)
 
 	if err := batch.Execute(ctx, o.rci); err != nil {
@@ -322,6 +331,9 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 	// Register DNS servers with the router's DNS proxy
 	o.applyDNS(ctx, names.NDMSName, stored)
 
+	if o.hookNotifier != nil {
+		o.hookNotifier.ExpectHook(names.NDMSName, "running")
+	}
 	batch.InterfaceUp(names.NDMSName, true)
 
 	if err := batch.Execute(ctx, o.rci); err != nil {
@@ -372,6 +384,9 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 
 	o.appLog.Full("stop", stored.Name, "Interface down")
 
+	if o.hookNotifier != nil {
+		o.hookNotifier.ExpectHook(names.NDMSName, "disabled")
+	}
 	batch := rci.NewBatch()
 	batch.InterfaceUp(names.NDMSName, false)
 	batch.Save()

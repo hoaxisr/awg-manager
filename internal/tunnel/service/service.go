@@ -29,12 +29,9 @@ type Service interface {
 	// Update updates a tunnel's configuration.
 	Update(ctx context.Context, tunnelID string, cfg tunnel.Config) error
 
-	// Lifecycle operations
+	// Lifecycle operations — thin delegators to orchestrator.
 
 	// Start starts a tunnel.
-	// Checks current state, recovers if broken, then starts.
-	// Safe to call on boot — operator only applies NDMS config when OpkgTun
-	// was just created, not on every start.
 	Start(ctx context.Context, tunnelID string) error
 
 	// Stop stops a tunnel.
@@ -43,12 +40,7 @@ type Service interface {
 	// Restart stops and starts a tunnel.
 	Restart(ctx context.Context, tunnelID string) error
 
-	// Reconcile re-applies system configuration around an already-running process.
-	// Used when the process survived a daemon restart but NDMS state was lost (Broken + ProcessRunning).
-	Reconcile(ctx context.Context, tunnelID string) error
-
 	// Delete stops (if running) and deletes a tunnel.
-	// Includes retry logic for reliable deletion.
 	Delete(ctx context.Context, tunnelID string) error
 
 	// SetEnabled changes the enabled/autostart state of a tunnel.
@@ -61,6 +53,11 @@ type Service interface {
 	// Import parses a WireGuard .conf file and creates a tunnel.
 	// backend selects the tunnel backend: "nativewg" or "kernel" (default).
 	Import(ctx context.Context, confContent, name, backend string) (*TunnelWithStatus, error)
+
+	// ReplaceConfig replaces a tunnel's Interface and Peer from a new .conf,
+	// preserving all metadata (ID, Backend, NWGIndex, routing, PingCheck, etc.).
+	// Does NOT handle stop/start — caller is responsible for lifecycle.
+	ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string) error
 
 	// Validation
 
@@ -77,30 +74,8 @@ type Service interface {
 	// For auto-mode tunnels, returns the WAN picked during endpoint route setup.
 	GetResolvedISP(tunnelID string) string
 
-	// Reconcile
-
-	// ReconcileInterface handles an NDMS interface state change event.
-	// Called by iflayerchanged.d hook when user toggles interface in router UI.
-	ReconcileInterface(ctx context.Context, ndmsName, layer, level string) error
-
-	// WAN event handlers
-
-	// HandleWANUp is called when a WAN interface comes up.
-	// Starts tunnels bound to this WAN. Auto-mode tunnels may switch
-	// to the new default gateway if it changed.
-	HandleWANUp(ctx context.Context, iface string)
-
-	// HandleWANDown is called when a WAN interface goes down.
-	// Kills only tunnels bound to this specific WAN. Auto-mode tunnels
-	// attempt immediate failover to another available gateway.
-	HandleWANDown(ctx context.Context, iface string)
-
 	// WANModel returns the unified WAN state model.
 	WANModel() *wan.Model
-
-	// RestoreEndpointTracking restores endpoint route tracking on daemon restart.
-	// For running tunnels, re-populates the in-memory tracking map.
-	RestoreEndpointTracking(ctx context.Context) error
 
 	// MigrateISPInterfaceNone converts legacy "none" ISPInterface values to "" (auto).
 	// Called once at startup to migrate tunnels from older versions.
@@ -109,6 +84,9 @@ type Service interface {
 	// MigrateISPInterfaceToKernel converts legacy NDMS ID values in ISPInterface
 	// and ActiveWAN to kernel names. Called once at startup after WAN model is populated.
 	MigrateISPInterfaceToKernel()
+
+	// MigrateEmptyBackend sets Backend="kernel" on all tunnels with empty Backend field.
+	MigrateEmptyBackend()
 }
 
 // TunnelWithStatus combines stored tunnel data with live status.

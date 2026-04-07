@@ -1,20 +1,28 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
 // ControlHandler handles tunnel start/stop/restart operations.
 type ControlHandler struct {
-	svc       TunnelService
-	pingCheck PingCheckService
-	log       *logging.ScopedLogger
+	svc            TunnelService
+	orch           *orchestrator.Orchestrator
+	pingCheck      PingCheckService
+	tunnelsHandler *TunnelsHandler
+	bus            *events.Bus
+	catalog        routing.Catalog
+	log            *logging.ScopedLogger
 }
 
 // NewControlHandler creates a new control handler.
@@ -28,6 +36,30 @@ func NewControlHandler(svc TunnelService, appLogger logging.AppLogger) *ControlH
 // SetPingCheckService sets the ping check service for monitoring control.
 func (h *ControlHandler) SetPingCheckService(svc PingCheckService) {
 	h.pingCheck = svc
+}
+
+// SetOrchestrator sets the orchestrator for lifecycle operations.
+func (h *ControlHandler) SetOrchestrator(orch *orchestrator.Orchestrator) {
+	h.orch = orch
+}
+
+// SetTunnelsHandler sets the tunnels handler for SSE list publishing.
+func (h *ControlHandler) SetTunnelsHandler(th *TunnelsHandler) {
+	h.tunnelsHandler = th
+}
+
+// SetEventBus sets the event bus for SSE publishing.
+func (h *ControlHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
+
+// SetCatalog sets the routing catalog for tunnel list updates.
+func (h *ControlHandler) SetCatalog(cat routing.Catalog) { h.catalog = cat }
+
+// publishRoutingTunnels publishes updated routing tunnel list via SSE.
+func (h *ControlHandler) publishRoutingTunnels(ctx context.Context) {
+	if h.bus == nil || h.catalog == nil {
+		return
+	}
+	h.bus.Publish("routing:tunnels-updated", h.catalog.ListAll(ctx))
 }
 
 func (h *ControlHandler) getStatus(r *http.Request, id string) string {
@@ -52,13 +84,10 @@ func (h *ControlHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stop PingCheck dead monitor before starting — prevents race
-	// where forced restart holds per-tunnel lock during our Start.
-	if h.pingCheck != nil {
-		h.pingCheck.StopMonitoring(id)
-	}
-
-	err := h.svc.Start(r.Context(), id)
+	err := h.orch.HandleEvent(r.Context(), orchestrator.Event{
+		Type:   orchestrator.EventStart,
+		Tunnel: id,
+	})
 	if errors.Is(err, tunnel.ErrAlreadyRunning) {
 		err = nil // tunnel already running — user's intent fulfilled
 	}
@@ -68,14 +97,17 @@ func (h *ControlHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enabled + PingCheck monitoring handled by lifecycle Manager inside svc.Start.
-
 	h.log.Info("start", id, "Tunnel started")
 
 	response.Success(w, map[string]interface{}{
 		"id":     id,
 		"status": h.getStatus(r, id),
 	})
+
+	if h.tunnelsHandler != nil {
+		h.tunnelsHandler.publishTunnelList(r.Context())
+		h.publishRoutingTunnels(r.Context())
+	}
 }
 
 // Stop stops a tunnel.
@@ -95,14 +127,10 @@ func (h *ControlHandler) Stop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fully stop monitoring — user explicitly stopped the tunnel.
-	// StopMonitoring resets monitor state, preventing stale recovering
-	// status from persisting after user's explicit stop.
-	if h.pingCheck != nil {
-		h.pingCheck.StopMonitoring(id)
-	}
-
-	if err := h.svc.Stop(r.Context(), id); err != nil {
+	if err := h.orch.HandleEvent(r.Context(), orchestrator.Event{
+		Type:   orchestrator.EventStop,
+		Tunnel: id,
+	}); err != nil {
 		// Always sync Enabled=false — user's intent is "OFF" regardless of current state.
 		// ErrNotRunning means tunnel is already stopped/disabled, but we still want Enabled=false
 		// so it doesn't auto-start on boot.
@@ -112,14 +140,17 @@ func (h *ControlHandler) Stop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enabled handled by lifecycle Manager inside svc.Stop.
-
 	h.log.Info("stop", id, "Tunnel stopped")
 
 	response.Success(w, map[string]interface{}{
 		"id":     id,
 		"status": h.getStatus(r, id),
 	})
+
+	if h.tunnelsHandler != nil {
+		h.tunnelsHandler.publishTunnelList(r.Context())
+		h.publishRoutingTunnels(r.Context())
+	}
 }
 
 // Restart restarts a tunnel.
@@ -139,19 +170,14 @@ func (h *ControlHandler) Restart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stop PingCheck dead monitor before restarting — prevents race
-	// where forced restart holds per-tunnel lock during our Restart.
-	if h.pingCheck != nil {
-		h.pingCheck.StopMonitoring(id)
-	}
-
-	if err := h.svc.Restart(r.Context(), id); err != nil {
+	if err := h.orch.HandleEvent(r.Context(), orchestrator.Event{
+		Type:   orchestrator.EventRestart,
+		Tunnel: id,
+	}); err != nil {
 		h.log.Warn("restart", id, "Failed to restart tunnel: "+err.Error())
 		response.Error(w, err.Error(), "RESTART_FAILED")
 		return
 	}
-
-	// Enabled + PingCheck monitoring handled by lifecycle Manager inside svc.Restart.
 
 	h.log.Info("restart", id, "Tunnel restarted")
 
@@ -159,6 +185,11 @@ func (h *ControlHandler) Restart(w http.ResponseWriter, r *http.Request) {
 		"id":     id,
 		"status": h.getStatus(r, id),
 	})
+
+	if h.tunnelsHandler != nil {
+		h.tunnelsHandler.publishTunnelList(r.Context())
+		h.publishRoutingTunnels(r.Context())
+	}
 }
 
 // RestartAll restarts all enabled tunnels.
@@ -182,7 +213,10 @@ func (h *ControlHandler) RestartAll(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		err := h.svc.Restart(r.Context(), t.ID)
+		err := h.orch.HandleEvent(r.Context(), orchestrator.Event{
+			Type:   orchestrator.EventRestart,
+			Tunnel: t.ID,
+		})
 		result := map[string]interface{}{
 			"id":     t.ID,
 			"status": h.getStatus(r, t.ID),
@@ -200,6 +234,11 @@ func (h *ControlHandler) RestartAll(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("restart-all", "", fmt.Sprintf("Restart all: %d restarted, %d failed", restarted, failed))
 
 	response.Success(w, results)
+
+	if h.tunnelsHandler != nil {
+		h.tunnelsHandler.publishTunnelList(r.Context())
+		h.publishRoutingTunnels(r.Context())
+	}
 }
 
 // ToggleEnabled toggles the auto-start setting for a tunnel.
@@ -243,6 +282,11 @@ func (h *ControlHandler) ToggleEnabled(w http.ResponseWriter, r *http.Request) {
 		"id":      id,
 		"enabled": newEnabled,
 	})
+
+	if h.tunnelsHandler != nil {
+		h.tunnelsHandler.publishTunnelList(r.Context())
+		h.publishRoutingTunnels(r.Context())
+	}
 }
 
 // ToggleDefaultRoute toggles the default route setting for a tunnel.
@@ -286,4 +330,9 @@ func (h *ControlHandler) ToggleDefaultRoute(w http.ResponseWriter, r *http.Reque
 		"id":           id,
 		"defaultRoute": newValue,
 	})
+
+	if h.tunnelsHandler != nil {
+		h.tunnelsHandler.publishTunnelList(r.Context())
+		h.publishRoutingTunnels(r.Context())
+	}
 }

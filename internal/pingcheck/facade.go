@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
@@ -32,6 +33,7 @@ type Facade struct {
 	tunnels  *storage.AWGTunnelStore
 	settings *storage.SettingsStore
 	nwgOp    *nwg.OperatorNativeWG
+	bus      *events.Bus
 
 	nwgSource   nwgPollSource // nil when nwgOp is nil; overridable for tests
 	nwgMonMu    sync.RWMutex
@@ -57,6 +59,12 @@ func NewFacade(custom *Service, tunnels *storage.AWGTunnelStore, settings *stora
 		f.nwgSource = &nwgOpPollAdapter{op: nwgOp, tunnels: tunnels}
 	}
 	return f
+}
+
+// SetEventBus sets the event bus for SSE publishing.
+func (f *Facade) SetEventBus(bus *events.Bus) {
+	f.bus = bus
+	f.custom.SetEventBus(bus)
 }
 
 func (f *Facade) isNativeWG(tunnelID string) bool {
@@ -207,6 +215,7 @@ func (f *Facade) startNwgMonitor(tunnelID, tunnelName string) {
 		threshold:  stored.PingCheck.FailThreshold,
 		logBuffer:  f.custom.logBuffer,
 		source:     f.nwgSource,
+		bus:        f.bus,
 		stopCh:     make(chan struct{}),
 	}
 

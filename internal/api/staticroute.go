@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -25,7 +26,23 @@ type StaticRouteService interface {
 // StaticRouteHandler handles static route API endpoints.
 type StaticRouteHandler struct {
 	svc StaticRouteService
+	bus *events.Bus
 	log *logging.ScopedLogger
+}
+
+// SetEventBus sets the event bus for SSE publishing.
+func (h *StaticRouteHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
+
+// publishStaticUpdated publishes the full static route list via SSE (best-effort).
+func (h *StaticRouteHandler) publishStaticUpdated() {
+	if h.bus == nil {
+		return
+	}
+	list, err := h.svc.List()
+	if err != nil {
+		return
+	}
+	h.bus.Publish("routing:static-updated", list)
 }
 
 // NewStaticRouteHandler creates a new static route handler.
@@ -76,6 +93,7 @@ func (h *StaticRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("static-route", created.ID, "Route list created: "+created.Name)
 
 	response.Success(w, created)
+	h.publishStaticUpdated()
 }
 
 // Update updates an existing static route list.
@@ -102,6 +120,7 @@ func (h *StaticRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("static-route", updated.ID, "Route list updated: "+updated.Name)
 
 	response.Success(w, updated)
+	h.publishStaticUpdated()
 }
 
 // Delete deletes a static route list by ID.
@@ -125,6 +144,7 @@ func (h *StaticRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("static-route", id, "Route list deleted")
 
 	response.Success(w, map[string]bool{"deleted": true})
+	h.publishStaticUpdated()
 }
 
 // SetEnabled toggles the enabled state of a static route list.
@@ -162,6 +182,7 @@ func (h *StaticRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) 
 	h.log.Info("static-route", id, "Route list "+action)
 
 	response.Success(w, map[string]bool{"success": true})
+	h.publishStaticUpdated()
 }
 
 // Import imports subnets from a .bat file content.
@@ -193,4 +214,5 @@ func (h *StaticRouteHandler) Import(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("Route list imported: %s (%d subnets)", created.Name, len(created.Subnets)))
 
 	response.Success(w, created)
+	h.publishStaticUpdated()
 }

@@ -10,8 +10,6 @@ import type {
 	Settings,
 	AuthStatus,
 	LoginResult,
-	PingCheckStatus,
-	PingLogEntry,
 	LogsResponse,
 	WANInterface,
 	RouterInterface,
@@ -26,11 +24,9 @@ import type {
 	DiagEvent,
 	DiagMode,
 	DnsRoute,
-	RoutingTunnel,
 	SignatureCaptureResult,
 	StaticRouteList,
 	ResolveResult,
-	WireguardServer,
 	WireguardServerConfig,
 	ManagedServer,
 	ManagedPeer,
@@ -38,14 +34,12 @@ import type {
 	UpdateManagedServerRequest,
 	AddManagedPeerRequest,
 	UpdateManagedPeerRequest,
-	ManagedServerStats,
 	NativePingCheckConfig,
 	NativePingCheckStatus,
 	TerminalStatus,
 	AccessPolicy,
-	PolicyDevice,
-	PolicyGlobalInterface,
-	ClientRoute
+	ClientRoute,
+	ConnectionsResponse
 } from '$lib/types';
 
 interface ApiResponse<T> {
@@ -131,7 +125,10 @@ class ApiClient {
 		return data.data as T;
 	}
 
-	// Tunnels
+	// ─────────────────────────────────────────────
+	// #region Tunnels — CRUD, export, traffic
+	// ─────────────────────────────────────────────
+
 	async listTunnels(): Promise<TunnelListItem[]> {
 		return this.request('/tunnels/list');
 	}
@@ -171,7 +168,12 @@ class ApiClient {
 		return res.blob();
 	}
 
-	// Control
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Control — start, stop, restart, toggle
+	// ─────────────────────────────────────────────
+
 	async startTunnel(id: string): Promise<{ id: string; status: string }> {
 		return this.request(`/control/start?id=${encodeURIComponent(id)}`, {
 			method: 'POST'
@@ -196,7 +198,12 @@ class ApiClient {
 		});
 	}
 
-	// Import
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Import
+	// ─────────────────────────────────────────────
+
 	async importConfig(content: string, name?: string, backend?: string): Promise<AWGTunnel> {
 		return this.request('/import/conf', {
 			method: 'POST',
@@ -204,7 +211,19 @@ class ApiClient {
 		});
 	}
 
-	// Testing
+	async replaceConfig(id: string, content: string, name?: string): Promise<AWGTunnel> {
+		return this.request(`/tunnels/replace?id=${encodeURIComponent(id)}`, {
+			method: 'POST',
+			body: JSON.stringify({ content, name: name || '' })
+		});
+	}
+
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Testing — IP check, connectivity, speed
+	// ─────────────────────────────────────────────
+
 	async checkIP(id: string, serviceURL?: string): Promise<IPResult> {
 		let url = `/test/ip?id=${encodeURIComponent(id)}`;
 		if (serviceURL) url += `&service=${encodeURIComponent(serviceURL)}`;
@@ -248,7 +267,12 @@ class ApiClient {
 		return es;
 	}
 
-	// System
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region System — info, WAN, interfaces
+	// ─────────────────────────────────────────────
+
 	async getSystemInfo(): Promise<SystemInfo> {
 		return this.request('/system/info');
 	}
@@ -265,7 +289,12 @@ class ApiClient {
 		return this.request('/wan/status');
 	}
 
-	// Updates
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Updates
+	// ─────────────────────────────────────────────
+
 	async checkUpdate(force = false): Promise<UpdateInfo> {
 		const query = force ? '?force=true' : '';
 		return this.request(`/system/update/check${query}`);
@@ -275,7 +304,12 @@ class ApiClient {
 		return this.request('/system/update/apply', { method: 'POST' });
 	}
 
-	// Settings
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Settings
+	// ─────────────────────────────────────────────
+
 	async getSettings(): Promise<Settings> {
 		return this.request('/settings/get');
 	}
@@ -287,7 +321,12 @@ class ApiClient {
 		});
 	}
 
-	// Auth
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Auth — login, logout, status
+	// ─────────────────────────────────────────────
+
 	async login(login: string, password: string): Promise<LoginResult> {
 		const url = `${this.baseUrl}/auth/login`;
 		const response = await fetch(url, {
@@ -321,7 +360,12 @@ class ApiClient {
 		return response.json();
 	}
 
-	// Boot status (public, direct JSON response)
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Boot status (public, direct JSON)
+	// ─────────────────────────────────────────────
+
 	async getBootStatus(): Promise<BootStatus> {
 		const response = await fetch(`${this.baseUrl}/boot-status`);
 		if (!response.ok) {
@@ -330,15 +374,11 @@ class ApiClient {
 		return response.json();
 	}
 
-	// Ping Check
-	async getPingCheckStatus(): Promise<PingCheckStatus> {
-		return this.request('/pingcheck/status');
-	}
+	// #endregion
 
-	async getPingCheckLogs(tunnelId?: string): Promise<PingLogEntry[]> {
-		const params = tunnelId ? `?tunnelId=${encodeURIComponent(tunnelId)}` : '';
-		return this.request(`/pingcheck/logs${params}`);
-	}
+	// ─────────────────────────────────────────────
+	// #region Ping Check — status, logs, native
+	// ─────────────────────────────────────────────
 
 	async triggerPingCheck(): Promise<{ message: string }> {
 		return this.request('/pingcheck/check-now', { method: 'POST' });
@@ -366,7 +406,12 @@ class ApiClient {
 		});
 	}
 
-	// Logging
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Logging
+	// ─────────────────────────────────────────────
+
 	async getLogs(params?: {
 		group?: string;
 		subgroup?: string;
@@ -388,7 +433,12 @@ class ApiClient {
 		await this.request('/logs/clear', { method: 'POST' });
 	}
 
-	// External Tunnels
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region External Tunnels — list, adopt
+	// ─────────────────────────────────────────────
+
 	async listExternalTunnels(): Promise<ExternalTunnel[]> {
 		return this.request('/external-tunnels');
 	}
@@ -400,7 +450,12 @@ class ApiClient {
 		});
 	}
 
-	// System Tunnels
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region System Tunnels — CRUD, ASC, testing
+	// ─────────────────────────────────────────────
+
 	async listSystemTunnels(): Promise<SystemTunnel[]> {
 		return this.request('/system-tunnels');
 	}
@@ -467,14 +522,11 @@ class ApiClient {
 		return es;
 	}
 
-	// VPN Servers
-	async listServers(): Promise<WireguardServer[]> {
-		return this.request('/servers');
-	}
+	// #endregion
 
-	async getServer(name: string): Promise<WireguardServer> {
-		return this.request(`/servers/get?name=${encodeURIComponent(name)}`);
-	}
+	// ─────────────────────────────────────────────
+	// #region VPN Servers — list, config, mark
+	// ─────────────────────────────────────────────
 
 	async getServerConfig(name: string): Promise<WireguardServerConfig> {
 		return this.request(`/servers/config?name=${encodeURIComponent(name)}`);
@@ -501,10 +553,11 @@ class ApiClient {
 		return res.ip;
 	}
 
-	// Static IP Routes
-	async listStaticRoutes(): Promise<StaticRouteList[]> {
-		return this.request('/static-routes/list');
-	}
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Static IP Routes
+	// ─────────────────────────────────────────────
 
 	async createStaticRoute(rl: Partial<StaticRouteList>): Promise<StaticRouteList> {
 		return this.request('/static-routes/create', {
@@ -540,15 +593,21 @@ class ApiClient {
 		});
 	}
 
-	// Routing search
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Routing — resolve, tunnels
+	// ─────────────────────────────────────────────
+
 	async resolveDomain(domain: string): Promise<ResolveResult> {
 		return this.request(`/routing/resolve?domain=${encodeURIComponent(domain)}`);
 	}
 
-	// DNS Routes
-	async listDnsRoutes(): Promise<DnsRoute[]> {
-		return this.request('/dns-routes/list');
-	}
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region DNS Routes — CRUD, batch, subscriptions
+	// ─────────────────────────────────────────────
 
 	async getDnsRoute(id: string): Promise<DnsRoute> {
 		return this.request(`/dns-routes/get?id=${encodeURIComponent(id)}`);
@@ -581,6 +640,20 @@ class ApiClient {
 		});
 	}
 
+	async createDnsRouteBatch(lists: Array<Partial<DnsRoute>>): Promise<{ created: number; lists: DnsRoute[] }> {
+		return this.request('/dns-routes/create-batch', {
+			method: 'POST',
+			body: JSON.stringify(lists)
+		});
+	}
+
+	async deleteDnsRouteBatch(ids: string[]): Promise<{ deleted: number }> {
+		return this.request('/dns-routes/delete-batch', {
+			method: 'POST',
+			body: JSON.stringify({ ids })
+		});
+	}
+
 	async refreshDnsRouteSubscriptions(id?: string): Promise<void> {
 		const endpoint = id
 			? `/dns-routes/refresh?id=${encodeURIComponent(id)}`
@@ -588,11 +661,12 @@ class ApiClient {
 		return this.request(endpoint, { method: 'POST' });
 	}
 
-	async getRoutingTunnels(): Promise<RoutingTunnel[]> {
-		return this.request('/routing/tunnels');
-	}
+	// #endregion
 
-	// Diagnostics
+	// ─────────────────────────────────────────────
+	// #region Diagnostics — run, status, stream
+	// ─────────────────────────────────────────────
+
 	async runDiagnostics(): Promise<{ status: string }> {
 		return this.request('/diagnostics/run', { method: 'POST' });
 	}
@@ -642,13 +716,14 @@ class ApiClient {
 		return es;
 	}
 
-	// Managed WireGuard Server
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Managed WireGuard Server — CRUD, peers, ASC
+	// ─────────────────────────────────────────────
+
 	async getManagedServer(): Promise<ManagedServer | null> {
 		return this.request('/managed-server');
-	}
-
-	async getManagedServerStats(): Promise<ManagedServerStats> {
-		return this.request('/managed-server/stats');
 	}
 
 	async createManagedServer(req: CreateManagedServerRequest): Promise<ManagedServer> {
@@ -728,7 +803,12 @@ class ApiClient {
 		});
 	}
 
-	// Terminal
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Terminal
+	// ─────────────────────────────────────────────
+
 	async terminalStatus(): Promise<TerminalStatus> {
 		return this.request('/terminal/status');
 	}
@@ -745,16 +825,21 @@ class ApiClient {
 		return this.request('/terminal/stop', { method: 'POST' });
 	}
 
-	// Signature capture
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Signature capture
+	// ─────────────────────────────────────────────
+
 	async captureSignature(domain: string): Promise<SignatureCaptureResult> {
 		return this.request(`/signature/capture?domain=${encodeURIComponent(domain)}`);
 	}
 
-	// Access policies
-	async listAccessPolicies(options?: { refresh?: boolean }): Promise<AccessPolicy[]> {
-		const params = options?.refresh ? '?refresh=true' : '';
-		return this.request('/access-policies' + params);
-	}
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Access Policies — CRUD, devices, interfaces
+	// ─────────────────────────────────────────────
 
 	async createAccessPolicy(description: string): Promise<AccessPolicy> {
 		return this.request('/access-policies/create', {
@@ -809,15 +894,6 @@ class ApiClient {
 		});
 	}
 
-	async listPolicyDevices(options?: { refresh?: boolean }): Promise<PolicyDevice[]> {
-		const params = options?.refresh ? '?refresh=true' : '';
-		return this.request('/access-policies/devices' + params);
-	}
-
-	async listPolicyInterfaces(): Promise<PolicyGlobalInterface[]> {
-		return this.request('/access-policies/interfaces');
-	}
-
 	async setPolicyInterfaceUp(name: string, up: boolean): Promise<void> {
 		return this.request('/access-policies/interface-up', {
 			method: 'POST',
@@ -825,10 +901,11 @@ class ApiClient {
 		});
 	}
 
-	// Client Routes
-	async listClientRoutes(): Promise<ClientRoute[]> {
-		return this.request('/client-routes');
-	}
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Client Routes
+	// ─────────────────────────────────────────────
 
 	async createClientRoute(data: Partial<ClientRoute>): Promise<ClientRoute> {
 		return this.request('/client-routes/create', {
@@ -856,6 +933,31 @@ class ApiClient {
 			body: JSON.stringify({ enabled })
 		});
 	}
+
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Connections — conntrack viewer
+	// ─────────────────────────────────────────────
+
+	async getConnections(params: {
+		tunnel?: string;
+		protocol?: string;
+		search?: string;
+		offset?: number;
+		limit?: number;
+	} = {}): Promise<ConnectionsResponse> {
+		const sp = new URLSearchParams();
+		if (params.tunnel && params.tunnel !== 'all') sp.set('tunnel', params.tunnel);
+		if (params.protocol && params.protocol !== 'all') sp.set('protocol', params.protocol);
+		if (params.search) sp.set('search', params.search);
+		if (params.offset) sp.set('offset', String(params.offset));
+		if (params.limit) sp.set('limit', String(params.limit));
+		const qs = sp.toString();
+		return this.request<ConnectionsResponse>(`/connections${qs ? '?' + qs : ''}`);
+	}
+
+	// #endregion
 }
 
 export const api = new ApiClient();

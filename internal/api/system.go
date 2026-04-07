@@ -149,7 +149,60 @@ func (h *SystemHandler) Info(w http.ResponseWriter, r *http.Request) {
 	// Router LAN IP (from br0 interface)
 	routerIP := getBr0IP()
 
-	info := map[string]interface{}{
+	info := h.buildSystemInfo(disableMemorySaving, gcMemLimit, gogc, kernelModuleExists, kernelModuleLoaded, kernelModuleModel, kernelModuleVersion, isAarch64, activeBackendType, routerIP)
+
+	response.Success(w, info)
+}
+
+// BuildSystemInfo returns system info for SSE snapshot.
+func (h *SystemHandler) BuildSystemInfo() map[string]interface{} {
+	var disableMemorySaving bool
+	if h.settingsStore != nil {
+		if settings, err := h.settingsStore.Get(); err == nil {
+			disableMemorySaving = settings.DisableMemorySaving
+		}
+	}
+
+	gcEnv := osdetect.GetGCEnv(disableMemorySaving)
+	var gcMemLimit, gogc string
+	if gcEnv == nil {
+		gcMemLimit = "Unlimited"
+		gogc = "default"
+	} else {
+		for _, env := range gcEnv {
+			if len(env) > 11 && env[:11] == "GOMEMLIMIT=" {
+				gcMemLimit = env[11:]
+			}
+			if len(env) > 5 && env[:5] == "GOGC=" {
+				gogc = env[5:]
+			}
+		}
+		if gcMemLimit == "" {
+			gcMemLimit = "Unlimited"
+		}
+	}
+
+	var kernelModuleExists, kernelModuleLoaded bool
+	var kernelModuleModel, kernelModuleVersion string
+	var isAarch64 bool
+	if h.kmodLoader != nil {
+		kernelModuleExists = h.kmodLoader.ModuleExists()
+		kernelModuleLoaded = h.kmodLoader.IsLoaded()
+		kernelModuleModel = h.kmodLoader.Model()
+		kernelModuleVersion = h.kmodLoader.OnDiskVersion()
+		isAarch64 = h.kmodLoader.SoC().IsAARCH64()
+	}
+	activeBackendType := "kernel"
+	if h.activeBackend != nil {
+		activeBackendType = h.activeBackend.Type().String()
+	}
+	routerIP := getBr0IP()
+
+	return h.buildSystemInfo(disableMemorySaving, gcMemLimit, gogc, kernelModuleExists, kernelModuleLoaded, kernelModuleModel, kernelModuleVersion, isAarch64, activeBackendType, routerIP)
+}
+
+func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, gogc string, kernelModuleExists, kernelModuleLoaded bool, kernelModuleModel, kernelModuleVersion string, isAarch64 bool, activeBackendType, routerIP string) map[string]interface{} {
+	return map[string]interface{}{
 		"version":                     h.version,
 		"goVersion":                   runtime.Version(),
 		"goArch":                      runtime.GOARCH,
@@ -177,8 +230,6 @@ func (h *SystemHandler) Info(w http.ResponseWriter, r *http.Request) {
 			"kernel":   kernelModuleLoaded && !ndmsinfo.SupportsWireguardASC(),
 		},
 	}
-
-	response.Success(w, info)
 }
 
 // nativewgAvailable returns true if NativeWG backend can work:

@@ -9,11 +9,15 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
@@ -82,7 +86,7 @@ type TunnelService interface {
 	Update(ctx context.Context, tunnelID string, cfg tunnel.Config) error
 	Delete(ctx context.Context, tunnelID string) error
 
-	// Lifecycle
+	// Lifecycle (delegated to orchestrator)
 	Start(ctx context.Context, tunnelID string) error
 	Stop(ctx context.Context, tunnelID string) error
 	Restart(ctx context.Context, tunnelID string) error
@@ -100,12 +104,8 @@ type TunnelService interface {
 	// Import
 	Import(ctx context.Context, confContent, name, backend string) (*service.TunnelWithStatus, error)
 
-	// Reconcile
-	ReconcileInterface(ctx context.Context, ndmsName, layer, level string) error
-
-	// WAN events
-	HandleWANUp(ctx context.Context, iface string)
-	HandleWANDown(ctx context.Context, iface string)
+	// ReplaceConfig replaces a tunnel's config from a new .conf file.
+	ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string) error
 
 	// WAN state model
 	WANModel() *wan.Model
@@ -116,12 +116,16 @@ type TunnelService interface {
 
 // TunnelsHandler handles tunnel CRUD operations.
 type TunnelsHandler struct {
-	svc           TunnelService
-	store         *storage.AWGTunnelStore
-	settingsStore *storage.SettingsStore
-	pingCheck     PingCheckService
-	log           *logging.ScopedLogger
-	traffic       *traffic.History
+	svc               TunnelService
+	orch              *orchestrator.Orchestrator
+	store             *storage.AWGTunnelStore
+	settingsStore     *storage.SettingsStore
+	pingCheck         PingCheckService
+	bus               *events.Bus
+	catalog           routing.Catalog
+	log               *logging.ScopedLogger
+	traffic           *traffic.History
+	pingCheckSnapshot func()
 }
 
 // NewTunnelsHandler creates a new tunnels handler.
@@ -130,6 +134,38 @@ func NewTunnelsHandler(svc TunnelService, store *storage.AWGTunnelStore, appLogg
 		svc:   svc,
 		store: store,
 		log:   logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubLifecycle),
+	}
+}
+
+// SetEventBus sets the event bus for SSE publishing.
+func (h *TunnelsHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
+
+// SetCatalog sets the routing catalog for tunnel list updates.
+func (h *TunnelsHandler) SetCatalog(cat routing.Catalog) { h.catalog = cat }
+
+// PublishTunnelList publishes the full managed tunnel list via SSE (exported for cross-handler use).
+func (h *TunnelsHandler) PublishTunnelList(ctx context.Context) { h.publishTunnelList(ctx) }
+
+// publishTunnelList publishes the full managed tunnel list via SSE.
+// Called after Create/Update/Delete so frontends get complete data.
+func (h *TunnelsHandler) publishTunnelList(ctx context.Context) {
+	if h.bus == nil {
+		return
+	}
+	items, err := h.listItems(ctx)
+	if err != nil {
+		return
+	}
+	h.bus.Publish("tunnels:list", items)
+
+	// Also update routing dropdown
+	if h.catalog != nil {
+		h.bus.Publish("routing:tunnels-updated", h.catalog.ListAll(ctx))
+	}
+
+	// Also refresh pingcheck (new/deleted tunnels appear/disappear on monitoring page)
+	if h.pingCheckSnapshot != nil {
+		h.pingCheckSnapshot()
 	}
 }
 
@@ -147,6 +183,14 @@ func (h *TunnelsHandler) SetPingCheckService(svc PingCheckService) {
 func (h *TunnelsHandler) SetTrafficHistory(th *traffic.History) {
 	h.traffic = th
 }
+
+// SetOrchestrator sets the orchestrator for lifecycle operations.
+func (h *TunnelsHandler) SetOrchestrator(orch *orchestrator.Orchestrator) {
+	h.orch = orch
+}
+
+// SetPingCheckSnapshot sets the function that publishes a pingcheck snapshot.
+func (h *TunnelsHandler) SetPingCheckSnapshot(fn func()) { h.pingCheckSnapshot = fn }
 
 // BuildTunnelResponse builds a consistent tunnel response with stored data.
 // Exported so Import and External handlers can reuse the same response format.
@@ -195,43 +239,38 @@ func BuildTunnelResponse(r *http.Request, svc TunnelService, store *storage.AWGT
 	return resp, nil
 }
 
-// List returns all tunnels.
-func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		response.MethodNotAllowed(w)
-		return
-	}
+// tunnelItem is the list-item DTO returned by List and used by SSE snapshots.
+type tunnelItem struct {
+	ID                        string `json:"id"`
+	Name                      string `json:"name"`
+	Type                      string `json:"type"`
+	Status                    string `json:"status"`
+	Enabled                   bool   `json:"enabled"`
+	DefaultRoute              bool   `json:"defaultRoute"`
+	ISPInterface              string `json:"ispInterface,omitempty"`
+	ISPInterfaceLabel         string `json:"ispInterfaceLabel,omitempty"`
+	ResolvedISPInterface      string `json:"resolvedIspInterface,omitempty"`
+	ResolvedISPInterfaceLabel string `json:"resolvedIspInterfaceLabel,omitempty"`
+	Endpoint                  string `json:"endpoint"`
+	Address                   string `json:"address"`
+	InterfaceName             string `json:"interfaceName"`
+	HasAddressConflict        bool   `json:"hasAddressConflict"`
+	RxBytes                   int64  `json:"rxBytes"`
+	TxBytes                   int64  `json:"txBytes"`
+	LastHandshake             string `json:"lastHandshake"`
+	Backend                   string `json:"backend"`
+	BackendType               string `json:"backendType,omitempty"`
+	AWGVersion                string `json:"awgVersion"`
+	MTU                       int    `json:"mtu"`
+	StartedAt                 string                  `json:"startedAt,omitempty"`
+	PingCheck                 pingcheck.TunnelPingInfo `json:"pingCheck"`
+}
 
-	tunnels, err := h.svc.List(r.Context())
+// listItems builds the tunnel list items for API response and SSE snapshots.
+func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
+	tunnels, err := h.svc.List(ctx)
 	if err != nil {
-		response.Error(w, err.Error(), "LIST_FAILED")
-		return
-	}
-
-	type tunnelItem struct {
-		ID                        string `json:"id"`
-		Name                      string `json:"name"`
-		Type                      string `json:"type"`
-		Status                    string `json:"status"`
-		Enabled                   bool   `json:"enabled"`
-		DefaultRoute              bool   `json:"defaultRoute"`
-		ISPInterface              string `json:"ispInterface,omitempty"`
-		ISPInterfaceLabel         string `json:"ispInterfaceLabel,omitempty"`
-		ResolvedISPInterface      string `json:"resolvedIspInterface,omitempty"`
-		ResolvedISPInterfaceLabel string `json:"resolvedIspInterfaceLabel,omitempty"`
-		Endpoint                  string `json:"endpoint"`
-		Address                   string `json:"address"`
-		InterfaceName             string `json:"interfaceName"`
-		HasAddressConflict        bool   `json:"hasAddressConflict"`
-		RxBytes                   int64  `json:"rxBytes"`
-		TxBytes                   int64  `json:"txBytes"`
-		LastHandshake             string `json:"lastHandshake"`
-		Backend                   string `json:"backend"`
-		BackendType               string `json:"backendType,omitempty"`
-		AWGVersion                string `json:"awgVersion"`
-		MTU                       int    `json:"mtu"`
-		StartedAt                 string                  `json:"startedAt,omitempty"`
-		PingCheck                 pingcheck.TunnelPingInfo `json:"pingCheck"`
+		return nil, err
 	}
 
 	// Build set of addresses used by running tunnels (for conflict detection)
@@ -357,13 +396,20 @@ func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Feed traffic history for running tunnels.
-	if h.traffic != nil {
-		for _, item := range items {
-			if item.Status == "running" {
-				h.traffic.Feed(item.ID, item.RxBytes, item.TxBytes)
-			}
-		}
+	return items, nil
+}
+
+// List returns all tunnels.
+func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+
+	items, err := h.listItems(r.Context())
+	if err != nil {
+		response.Error(w, err.Error(), "LIST_FAILED")
+		return
 	}
 
 	response.Success(w, items)
@@ -530,6 +576,7 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("create", req.Name, "Tunnel created")
+	h.publishTunnelList(r.Context())
 
 	// Return the created tunnel
 	resp, err := BuildTunnelResponse(r, h.svc, h.store, tunnelID)
@@ -590,7 +637,13 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		req.Name = existing.Name
 	}
 	if req.Interface.PrivateKey == "" {
-		req.Interface = existing.Interface
+		if req.Interface.Address == "" {
+			// No interface data sent (partial update like ISP change) — preserve everything.
+			req.Interface = existing.Interface
+		} else {
+			// Interface data sent without private key (edit page) — preserve only the key.
+			req.Interface.PrivateKey = existing.Interface.PrivateKey
+		}
 	}
 	if req.Peer.PublicKey == "" {
 		req.Peer = existing.Peer
@@ -695,7 +748,9 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if routeChanged {
 		stateInfo := h.svc.GetState(r.Context(), id)
 		if stateInfo.State == tunnel.StateRunning {
-			if err := h.svc.Restart(r.Context(), id); err != nil {
+			if err := h.orch.HandleEvent(r.Context(), orchestrator.Event{
+				Type: orchestrator.EventRestart, Tunnel: id,
+			}); err != nil {
 				h.log.Warn("update", req.Name, "Restart for routing changes failed: "+err.Error())
 			} else {
 				h.log.Info("update", req.Name, "Tunnel restarted to apply routing changes")
@@ -704,6 +759,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("update", req.Name, "Tunnel updated")
+	h.publishTunnelList(r.Context())
 
 	resp, err := BuildTunnelResponse(r, h.svc, h.store, id)
 	if err != nil {
@@ -739,16 +795,13 @@ func (h *TunnelsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		tunnelName = t.Name
 	}
 
-	// Delete via service (handles stop + config file + store + NDMS cleanup)
-	if err := h.svc.Delete(r.Context(), id); err != nil {
+	// Delete via orchestrator (handles stop + config file + store + NDMS cleanup + monitoring)
+	if err := h.orch.HandleEvent(r.Context(), orchestrator.Event{
+		Type: orchestrator.EventDelete, Tunnel: id,
+	}); err != nil {
 		h.log.Warn("delete", tunnelName, "Failed to delete tunnel: "+err.Error())
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "DELETE_FAILED")
 		return
-	}
-
-	// Stop monitoring for deleted tunnel
-	if h.pingCheck != nil {
-		h.pingCheck.StopMonitoring(id)
 	}
 
 	// Clear traffic history for deleted tunnel
@@ -757,6 +810,7 @@ func (h *TunnelsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("delete", tunnelName, "Tunnel deleted")
+	h.publishTunnelList(r.Context())
 
 	response.Success(w, map[string]interface{}{
 		"success":  true,
@@ -835,5 +889,93 @@ func (h *TunnelsHandler) ExportAll(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", "attachment; filename=\"awg-tunnels.zip\"")
 	w.Write(buf.Bytes())
+}
+
+// ReplaceConf replaces a tunnel's configuration from a new .conf file.
+// If the tunnel is running, it is stopped before replacement and restarted after.
+func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		response.Error(w, "missing id parameter", "MISSING_ID")
+		return
+	}
+	if !isValidTunnelID(id) {
+		response.Error(w, "invalid tunnel ID", "INVALID_ID")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+	var req struct {
+		Content string `json:"content"`
+		Name    string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid request body", "INVALID_BODY")
+		return
+	}
+
+	if req.Content == "" {
+		response.BadRequest(w, "missing config content")
+		return
+	}
+
+	// Check tunnel exists
+	if _, err := h.store.Get(id); err != nil {
+		response.ErrorWithStatus(w, http.StatusNotFound, "tunnel not found", "NOT_FOUND")
+		return
+	}
+
+	// Check if running — need to stop before replacing config
+	stateInfo := h.svc.GetState(r.Context(), id)
+	wasRunning := stateInfo.State == tunnel.StateRunning
+
+	if wasRunning {
+		if err := h.svc.Stop(r.Context(), id); err != nil {
+			response.InternalError(w, "failed to stop tunnel before config replace: "+err.Error())
+			return
+		}
+	}
+
+	// Replace config
+	var warnings []string
+	if err := h.svc.ReplaceConfig(r.Context(), id, req.Content, req.Name); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			response.ErrorWithStatus(w, http.StatusNotFound, err.Error(), "NOT_FOUND")
+			return
+		}
+		if strings.Contains(err.Error(), "parse conf") {
+			response.BadRequest(w, err.Error())
+			return
+		}
+		response.InternalError(w, err.Error())
+		return
+	}
+
+	// Restart if was running
+	if wasRunning {
+		if err := h.svc.Start(r.Context(), id); err != nil {
+			warnings = append(warnings, "tunnel config replaced but failed to restart: "+err.Error())
+		}
+	}
+
+	h.publishTunnelList(r.Context())
+
+	resp, err := BuildTunnelResponse(r, h.svc, h.store, id)
+	if err != nil {
+		response.InternalError(w, err.Error())
+		return
+	}
+	if conflicts := h.svc.CheckAddressConflicts(r.Context(), id); len(conflicts) > 0 {
+		warnings = append(warnings, conflicts...)
+	}
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+	response.Success(w, resp)
 }
 
