@@ -196,6 +196,30 @@ func TestServiceImpl_CRUD(t *testing.T) {
 		t.Error("CreatedAt should be preserved")
 	}
 
+	// Update with partial payload (only Routes) must preserve Name,
+	// ManualDomains, Domains, Subscriptions, Excludes, Subnets.
+	// Regression guard for the bug where a bulk "change tunnel" operation
+	// sent {routes: [...]} alone and wiped everything else.
+	partialUpdated, err := svc.Update(ctx, DomainList{
+		ID:     "list_1",
+		Routes: []RouteTarget{{Interface: "OpkgTun1", TunnelID: "t2"}},
+	})
+	if err != nil {
+		t.Fatalf("Update (partial): %v", err)
+	}
+	if partialUpdated.Name != "updated" {
+		t.Errorf("partial update wiped Name: got %q, want %q", partialUpdated.Name, "updated")
+	}
+	if len(partialUpdated.ManualDomains) != 2 {
+		t.Errorf("partial update wiped ManualDomains: got %v, want [a.com, c.com]", partialUpdated.ManualDomains)
+	}
+	if len(partialUpdated.Domains) == 0 {
+		t.Errorf("partial update wiped Domains: got %v", partialUpdated.Domains)
+	}
+	if len(partialUpdated.Routes) != 1 || partialUpdated.Routes[0].TunnelID != "t2" {
+		t.Errorf("partial update did not apply new Routes: got %+v", partialUpdated.Routes)
+	}
+
 	// SetEnabled
 	if err := svc.SetEnabled(ctx, "list_1", false); err != nil {
 		t.Fatalf("SetEnabled: %v", err)
