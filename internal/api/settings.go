@@ -86,6 +86,49 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Defense-in-depth for partial updates: Go's json decoder cannot
+	// distinguish "field absent" from "field present with zero value", so a
+	// payload missing any top-level field decodes to zero. Without preserve
+	// logic Save(&settings) would wipe every omitted section (server,
+	// pingCheck, logging, etc.). Frontend currently sends full objects via
+	// spread, but a single forgotten spread would silently nuke the config.
+	//
+	// Policy: for every top-level sub-struct or slice field, restore from
+	// existing if the incoming value is zero. Top-level bool flags
+	// (AuthEnabled, DisableMemorySaving, OnboardingCompleted) cannot be
+	// defended this way — "false" and "not sent" are indistinguishable —
+	// so the caller is expected to always send the full object.
+	if settings.Server == (storage.ServerSettings{}) {
+		settings.Server = oldSettings.Server
+	}
+	if settings.PingCheck == (storage.PingCheckSettings{}) {
+		settings.PingCheck = oldSettings.PingCheck
+	}
+	if settings.Logging == (storage.LoggingSettings{}) {
+		settings.Logging = oldSettings.Logging
+	}
+	if settings.Updates == (storage.UpdateSettings{}) {
+		settings.Updates = oldSettings.Updates
+	}
+	if settings.DNSRoute == (storage.DNSRouteSettings{}) {
+		settings.DNSRoute = oldSettings.DNSRoute
+	}
+	if settings.HiddenSystemTunnels == nil {
+		settings.HiddenSystemTunnels = oldSettings.HiddenSystemTunnels
+	}
+	if settings.ServerInterfaces == nil {
+		settings.ServerInterfaces = oldSettings.ServerInterfaces
+	}
+	if settings.ManagedPolicies == nil {
+		settings.ManagedPolicies = oldSettings.ManagedPolicies
+	}
+	if settings.ManagedServer == nil {
+		settings.ManagedServer = oldSettings.ManagedServer
+	}
+	if settings.SchemaVersion == 0 {
+		settings.SchemaVersion = oldSettings.SchemaVersion
+	}
+
 	// Detect ping check toggle change before saving
 	pingCheckWasEnabled := oldSettings.PingCheck.Enabled
 	pingCheckNowEnabled := settings.PingCheck.Enabled

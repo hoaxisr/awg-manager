@@ -144,6 +144,56 @@ func newTestStore(t *testing.T, lists []storage.StaticRouteList) *storage.Static
 	return store
 }
 
+// TestUpdate_PartialPayloadPreservesFields is a regression guard for the
+// class of bug where a partial JSON body (e.g. bulk "change tunnel" sending
+// only {tunnelID: "awg11"}) would decode into a StaticRouteList with zero
+// values for every other field, and Update() would then silently wipe
+// Name, Subnets, CreatedAt, etc.
+func TestUpdate_PartialPayloadPreservesFields(t *testing.T) {
+	original := storage.StaticRouteList{
+		ID:        "srl1",
+		Name:      "Blocked Sites",
+		TunnelID:  "awg10",
+		Subnets:   []string{"10.0.0.0/8", "172.16.0.0/12"},
+		Fallback:  "reject",
+		Enabled:   true,
+		CreatedAt: "2026-01-01T00:00:00Z",
+	}
+	store := newTestStore(t, []storage.StaticRouteList{original})
+
+	svc := &ServiceImpl{
+		store:       store,
+		ndms:        &mockNDMS{},
+		catalog:     &mockCatalog{ifaces: map[string]string{"awg10": "OpkgTun10", "awg11": "OpkgTun11"}},
+		ifaceExists: func(string) bool { return false },
+	}
+
+	// Partial payload: only ID and new TunnelID set (simulating a bulk
+	// "change tunnel" operation). Everything else is zero.
+	partial := storage.StaticRouteList{
+		ID:       "srl1",
+		TunnelID: "awg11",
+	}
+
+	updated, err := svc.Update(context.Background(), partial)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	if updated.Name != "Blocked Sites" {
+		t.Errorf("Name wiped: got %q, want %q", updated.Name, "Blocked Sites")
+	}
+	if updated.TunnelID != "awg11" {
+		t.Errorf("TunnelID not applied: got %q, want %q", updated.TunnelID, "awg11")
+	}
+	if len(updated.Subnets) != 2 {
+		t.Errorf("Subnets wiped: got %v, want [10.0.0.0/8, 172.16.0.0/12]", updated.Subnets)
+	}
+	if updated.CreatedAt != "2026-01-01T00:00:00Z" {
+		t.Errorf("CreatedAt wiped: got %q, want %q", updated.CreatedAt, "2026-01-01T00:00:00Z")
+	}
+}
+
 func TestOnTunnelDelete_NDMS_RemovesRoutesAndStorage(t *testing.T) {
 	lists := []storage.StaticRouteList{
 		{ID: "srl1", TunnelID: "awg10", Subnets: []string{"10.0.0.0/8"}, Enabled: true},
