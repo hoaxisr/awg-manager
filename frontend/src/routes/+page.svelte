@@ -50,7 +50,9 @@
 	async function handleToggleOnOff(id: string) {
 		const tunnel = $tunnels.find(t => t.id === id);
 		if (!tunnel) return;
-		const isOn = ['running', 'starting', 'needs_start', 'broken'].includes(tunnel.status);
+		// needs_start is NOT "on" — it means "intent up but not actually running",
+		// so the toggle should show OFF and the click should fire Start, not Stop.
+		const isOn = ['running', 'starting', 'broken'].includes(tunnel.status);
 		toggleLoading = { ...toggleLoading, [id]: true };
 		try {
 			if (isOn) {

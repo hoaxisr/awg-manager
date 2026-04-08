@@ -13,9 +13,11 @@
 
 	let { tunnel, toggleLoading = false, onToggleOnOff }: Props = $props();
 
-	// Toggle state — ON for intent-up states
+	// Toggle state — ON only for states where the tunnel is actually working
+	// (or transitioning into it). needs_start is "intent up but not running",
+	// so the toggle should show OFF and clicking it should fire Start.
 	let isOn = $derived(
-		['running', 'starting', 'needs_start', 'broken'].includes(tunnel.status)
+		['running', 'starting', 'broken'].includes(tunnel.status)
 	);
 
 	// Toggle disabled when address conflicts with a running tunnel
