@@ -94,6 +94,7 @@
                 class:selected={isSelected}
                 class:added
                 class:covered={covered && !isSelected}
+                title={preset.notice || undefined}
                 onclick={() => { if (!added) toggle(preset.id); }}
                 disabled={added || creating}
             >
@@ -104,11 +105,29 @@
                 {:else if covered}
                     <span class="preset-badge">входит в сборник</span>
                 {/if}
+                {#if preset.notice}
+                    <span class="preset-notice-mark" aria-label="warning">⚠</span>
+                {/if}
                 <ServiceIcon name={preset.name} size={40} />
                 <span class="preset-name">{preset.name}</span>
             </button>
         {/each}
     </div>
+
+    {@const selectedWithNotices = SERVICE_PRESETS.filter(p => selected.has(p.id) && p.notice)}
+    {#if selectedWithNotices.length > 0}
+        <div class="notices-panel">
+            {#each selectedWithNotices as p (p.id)}
+                <div class="notice-entry">
+                    <span class="notice-icon">⚠</span>
+                    <div class="notice-body">
+                        <strong class="notice-title">{p.name}</strong>
+                        <span class="notice-text">{p.notice}</span>
+                    </div>
+                </div>
+            {/each}
+        </div>
+    {/if}
 
     <!-- Tunnel selector -->
     <div class="tunnel-bar">
@@ -222,6 +241,16 @@
         color: var(--text-muted);
     }
 
+    .preset-notice-mark {
+        position: absolute;
+        top: 6px;
+        left: 6px;
+        font-size: 0.875rem;
+        color: var(--warning, #f59e0b);
+        cursor: help;
+        line-height: 1;
+    }
+
     .preset-name {
         font-size: 0.6875rem;
         font-weight: 500;
@@ -259,5 +288,43 @@
     .no-tunnels {
         color: var(--error);
         font-size: 0.8125rem;
+    }
+
+    .notices-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+        padding: 0.625rem 0.75rem;
+        background: rgba(245, 158, 11, 0.08);
+        border: 1px solid rgba(245, 158, 11, 0.25);
+        border-radius: 6px;
+    }
+    .notice-entry {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+    .notice-icon {
+        color: var(--warning, #f59e0b);
+        font-size: 0.875rem;
+        line-height: 1.4;
+        flex-shrink: 0;
+    }
+    .notice-body {
+        display: flex;
+        flex-direction: column;
+        gap: 0.125rem;
+        font-size: 0.75rem;
+        line-height: 1.4;
+        color: var(--text-secondary);
+    }
+    .notice-title {
+        color: var(--text-primary);
+        font-weight: 500;
+        font-size: 0.75rem;
+    }
+    .notice-text {
+        color: var(--text-secondary);
     }
 </style>
