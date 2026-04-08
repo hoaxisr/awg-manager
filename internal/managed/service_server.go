@@ -113,13 +113,23 @@ func (s *Service) Update(ctx context.Context, req UpdateServerRequest) error {
 		s.log.Warn("failed to save NDMS config after server update", "error", err)
 	}
 
-	// Update storage
+	// Update storage. Required fields (Address, Mask, ListenPort) were
+	// validated above. Optional fields (Endpoint, DNS, MTU) must be
+	// preserved from existing when the caller omits them in the request —
+	// Go's json decoder cannot distinguish "absent" from "zero value", so
+	// a payload missing Endpoint/DNS/MTU would otherwise wipe them.
 	server.Address = req.Address
 	server.Mask = mask
 	server.ListenPort = req.ListenPort
-	server.Endpoint = req.Endpoint
-	server.DNS = req.DNS
-	server.MTU = req.MTU
+	if req.Endpoint != "" {
+		server.Endpoint = req.Endpoint
+	}
+	if req.DNS != "" {
+		server.DNS = req.DNS
+	}
+	if req.MTU != 0 {
+		server.MTU = req.MTU
+	}
 	if err := s.settings.SaveManagedServer(server); err != nil {
 		return fmt.Errorf("save to storage: %w", err)
 	}

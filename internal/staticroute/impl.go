@@ -100,13 +100,34 @@ func (s *ServiceImpl) Update(ctx context.Context, rl storage.StaticRouteList) (*
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := validateRouteList(rl); err != nil {
-		return nil, err
-	}
-
 	old, err := s.store.GetRouteList(rl.ID)
 	if err != nil {
 		return nil, fmt.Errorf("update route list: get existing: %w", err)
+	}
+
+	// Defense-in-depth for partial updates: Go's json decoder cannot
+	// distinguish "field absent" from "field present with zero value", so
+	// a payload missing any field decodes into a StaticRouteList where
+	// that field is zero. Treat zero values as "not sent" and restore
+	// from the existing record. Same policy as dnsroute.Update — empty
+	// Name is not a valid user intent, and clearing Subnets would make
+	// the list useless.
+	if rl.Name == "" {
+		rl.Name = old.Name
+	}
+	if rl.TunnelID == "" {
+		rl.TunnelID = old.TunnelID
+	}
+	if rl.Subnets == nil {
+		rl.Subnets = old.Subnets
+	}
+	// Enabled is a bool — can't distinguish "sent false" from "not sent".
+	// For bulk partial updates (e.g. change tunnel only), the caller must
+	// send the full object via spread. Full-list PUT semantics work.
+	rl.CreatedAt = old.CreatedAt
+
+	if err := validateRouteList(rl); err != nil {
+		return nil, err
 	}
 
 	rl.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
