@@ -44,6 +44,35 @@ export function ipInCIDR(ip: string, cidr: string): boolean {
 }
 
 /**
+ * Check whether two IPv4 CIDR ranges overlap — either intersect or one
+ * contains the other. Returns false if either input is invalid.
+ *
+ * Example: cidrOverlaps("10.0.0.0/16", "10.0.0.0/8")  -> true  (subset)
+ *          cidrOverlaps("10.0.0.0/24", "10.0.1.0/24") -> false (disjoint)
+ */
+export function cidrOverlaps(a: string, b: string): boolean {
+    const pa = parseCIDR(a);
+    const pb = parseCIDR(b);
+    if (!pa || !pb) return false;
+    // For IPv4, two CIDRs overlap iff one is a subset of the other —
+    // compare their network addresses under the broader (shorter) mask.
+    const minMask = pa.prefix < pb.prefix ? pa.mask : pb.mask;
+    return ((pa.net & minMask) >>> 0) === ((pb.net & minMask) >>> 0);
+}
+
+function parseCIDR(cidr: string): { net: number; mask: number; prefix: number } | null {
+    const slash = cidr.indexOf('/');
+    if (slash === -1) return null;
+    const ip = cidr.substring(0, slash);
+    const prefixStr = cidr.substring(slash + 1);
+    const prefix = Number(prefixStr);
+    if (!isIPv4(ip) || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) return null;
+    const mask = prefix === 0 ? 0 : ((~0 << (32 - prefix)) >>> 0);
+    const net = (ipToNumber(ip) & mask) >>> 0;
+    return { net, mask, prefix };
+}
+
+/**
  * Determine search query type: 'ip', 'cidr', or 'domain'.
  */
 export function detectQueryType(query: string): 'ip' | 'cidr' | 'domain' {
