@@ -171,6 +171,7 @@
 		status={nwgSettingsStatus}
 		onclose={() => closeSettings()}
 		onSaved={() => { pingCheckStatus.setTunnelEnabled(settingsTunnelId, true); closeSettings(); }}
+		onRemoved={() => { pingCheckStatus.setTunnelEnabled(settingsTunnelId, false); closeSettings(); }}
 	/>
 </PageContainer>
 

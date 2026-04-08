@@ -11,9 +11,10 @@
 		status: NativePingCheckStatus | null;
 		onclose: () => void;
 		onSaved: () => void;
+		onRemoved: () => void;
 	}
 
-	let { open = $bindable(false), tunnelId, tunnelName, status, onclose, onSaved }: Props = $props();
+	let { open = $bindable(false), tunnelId, tunnelName, status, onclose, onSaved, onRemoved }: Props = $props();
 
 	let saving = $state(false);
 	let removing = $state(false);
@@ -103,7 +104,7 @@
 		try {
 			await api.removeNativePingCheck(tunnelId);
 			notifications.success('Мониторинг отключён');
-			onSaved();
+			onRemoved();
 		} catch (e) {
 			notifications.error(`Ошибка: ${(e as Error).message}`);
 		} finally {
@@ -145,24 +146,29 @@
 
 		<div class="field">
 			<label class="field-label" for="npc-interval">Интервал (сек)</label>
-			<input id="npc-interval" type="number" class="input" bind:value={updateInterval} min="5" max="300" />
+			<input id="npc-interval" type="number" class="input" bind:value={updateInterval} min="3" max="3600" />
+			<span class="field-hint">3–3600</span>
 		</div>
 
 		<div class="field">
 			<label class="field-label" for="npc-maxfails">Максимум сбоев</label>
-			<input id="npc-maxfails" type="number" class="input" bind:value={maxFails} min="1" max="100" />
+			<input id="npc-maxfails" type="number" class="input" bind:value={maxFails} min="1" max="10" />
+			<span class="field-hint">1–10</span>
 		</div>
 
 		<div class="field">
 			<label class="field-label" for="npc-minsuccess">Минимум успехов</label>
-			<input id="npc-minsuccess" type="number" class="input" bind:value={minSuccess} min="1" max="100" />
+			<input id="npc-minsuccess" type="number" class="input" bind:value={minSuccess} min="1" max="10" />
+			<span class="field-hint">1–10</span>
 		</div>
 
 		<div class="field">
 			<label class="field-label" for="npc-timeout">Таймаут (сек)</label>
-			<input id="npc-timeout" type="number" class="input" bind:value={timeout} min="1" max="60" />
+			<input id="npc-timeout" type="number" class="input" bind:value={timeout} min="1" max="10" />
+			<span class="field-hint">1–10</span>
 		</div>
 	</div>
+	<p class="limits-note">Пределы заданы компонентом ping-check Keenetic NDMS.</p>
 
 	<div class="restart-row">
 		<div class="restart-info">
@@ -233,6 +239,20 @@
 		font-size: 0.6875rem;
 		text-transform: uppercase;
 		color: var(--text-muted);
+	}
+
+	.field-hint {
+		font-size: 0.6875rem;
+		color: var(--text-muted);
+		opacity: 0.75;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.limits-note {
+		margin: 0.625rem 0 0;
+		font-size: 0.6875rem;
+		color: var(--text-muted);
+		opacity: 0.7;
 	}
 
 	.restart-row {
