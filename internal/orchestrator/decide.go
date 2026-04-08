@@ -121,9 +121,16 @@ func decideStart(event Event, state *State) []Action {
 
 func decideStop(event Event, state *State) []Action {
 	t := state.tunnels[event.Tunnel]
-	if t == nil || !t.Running {
+	if t == nil {
 		return nil
 	}
+	// Note: we deliberately do NOT guard on !t.Running here.
+	// A tunnel can be in NeedsStart (NDMS intent up, our process not yet
+	// running — typical after router reboot when auto-start hasn't fired
+	// or has failed). User clicks Stop to cancel that intent. All actions
+	// below are idempotent, and decideNDMSHook("disabled") still guards
+	// on !t.Running before calling us, so this won't fire phantom stops
+	// from external NDMS hooks.
 
 	var actions []Action
 

@@ -298,14 +298,23 @@ func TestDecide_Stop_RunningKernel(t *testing.T) {
 	}
 }
 
-func TestDecide_Stop_NotRunning(t *testing.T) {
+func TestDecide_Stop_NotRunning_StillFiresActions(t *testing.T) {
+	// Regression: tunnel in NeedsStart (Running=false but NDMS intent up,
+	// e.g. after router reboot when auto-start hasn't fired). User clicks
+	// Stop to cancel that pending intent. We must still fire StopKernel +
+	// PersistStopped — otherwise the API silently logs success while
+	// nothing happens, trapping the user (the toggle will keep firing
+	// Stop and never Start).
 	s := newState()
 	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "kernel", Running: false}
 
 	actions := decide(Event{Type: EventStop, Tunnel: "awg0"}, &s)
 
-	if len(actions) != 0 {
-		t.Errorf("stopped tunnel should produce no actions, got %d", len(actions))
+	if !hasAction(actions, ActionStopKernel) {
+		t.Error("expected ActionStopKernel even when Running=false (cancel pending NDMS intent)")
+	}
+	if !hasAction(actions, ActionPersistStopped) {
+		t.Error("expected ActionPersistStopped to clear stored.Enabled")
 	}
 }
 
