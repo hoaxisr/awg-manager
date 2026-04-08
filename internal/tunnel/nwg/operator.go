@@ -557,9 +557,23 @@ func (o *OperatorNativeWG) GetPingCheckStatus(ctx context.Context, stored *stora
 	// (min-success is simply omitted from the profile response even when
 	// applied — confirmed on live router), and we already persist both
 	// settings when configuring ping-check.
+	//
+	// When the NDMS profile doesn't exist (monitoring disabled), also
+	// overlay the rest of the fields from storage so the settings modal
+	// can pre-fill with the user's last-saved values on re-enable.
+	// When Exists=true we leave NDMS values alone — it's the live source
+	// of truth if anyone edited the profile via the router's web UI.
 	if stored.PingCheck != nil {
 		status.Restart = stored.PingCheck.Restart
 		status.MinSuccess = stored.PingCheck.MinSuccess
+		if !status.Exists {
+			status.Host = stored.PingCheck.Target
+			status.Mode = stored.PingCheck.Method
+			status.Interval = stored.PingCheck.Interval
+			status.MaxFails = stored.PingCheck.FailThreshold
+			status.Timeout = stored.PingCheck.Timeout
+			status.Port = stored.PingCheck.Port
+		}
 	}
 	o.log.Infof("pingcheck: show %s -> exists=%v host=%s status=%s", profile, status.Exists, status.Host, status.Status)
 	return status, nil

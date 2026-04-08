@@ -45,26 +45,20 @@
 	}
 
 	function syncFromStatus() {
-		if (status?.exists) {
-			host = status.host || '8.8.8.8';
-			const m = status.mode;
-			mode = (m === 'icmp' || m === 'connect' || m === 'tls') ? m : 'icmp';
-			updateInterval = status.interval || 10;
-			maxFails = status.maxFails || 3;
-			minSuccess = status.minSuccess || 1;
-			timeout = status.timeout || 5;
-			port = status.port || 443;
-			restart = status.restart ?? true;
-		} else {
-			host = '8.8.8.8';
-			mode = 'icmp';
-			updateInterval = 10;
-			maxFails = 3;
-			minSuccess = 1;
-			timeout = 5;
-			port = 443;
-			restart = true;
-		}
+		// Backend overlays storage into status.* when the NDMS profile is
+		// disabled, so a single read path works for all three cases:
+		// active profile (from NDMS), disabled profile with stored settings
+		// (from storage), and brand-new tunnel (all empty → hardcoded
+		// defaults via `||`/`??`).
+		host = status?.host || '8.8.8.8';
+		const m = status?.mode;
+		mode = (m === 'icmp' || m === 'connect' || m === 'tls') ? m : 'icmp';
+		updateInterval = status?.interval || 10;
+		maxFails = status?.maxFails || 3;
+		minSuccess = status?.minSuccess || 1;
+		timeout = status?.timeout || 5;
+		port = status?.port || 443;
+		restart = status?.restart ?? true;
 	}
 
 	// Sync form from status when modal opens
