@@ -552,11 +552,14 @@ func (o *OperatorNativeWG) GetPingCheckStatus(ctx context.Context, stored *stora
 		// Return exists=false without error so API doesn't break
 		return &ndms.PingCheckStatus{Exists: false}, nil
 	}
-	// Restart setting: use storage as source of truth.
-	// NDMS RC config doesn't expose ping-check restart in a reliable way,
-	// and we already persist the setting when configuring ping-check.
+	// Restart and MinSuccess: use storage as source of truth.
+	// NDMS /show/ping-check/ doesn't expose these fields in a reliable way
+	// (min-success is simply omitted from the profile response even when
+	// applied — confirmed on live router), and we already persist both
+	// settings when configuring ping-check.
 	if stored.PingCheck != nil {
 		status.Restart = stored.PingCheck.Restart
+		status.MinSuccess = stored.PingCheck.MinSuccess
 	}
 	o.log.Infof("pingcheck: show %s -> exists=%v host=%s status=%s", profile, status.Exists, status.Host, status.Status)
 	return status, nil
