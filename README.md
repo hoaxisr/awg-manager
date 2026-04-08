@@ -70,3 +70,4 @@ Telegram: [@awgmanager](https://t.me/awgmanager)
 ## Полезное
 
 Установить и управлять AmneziaWG сервером - https://github.com/bivlked/amneziawg-installer
+Другой вариант управления AmneziaWG сервером - https://github.com/pumbaX/awg-multi-script
