@@ -1,9 +1,28 @@
 <script lang="ts">
     import type { DnsRoute, StaticRouteList, RoutingTunnel } from '$lib/types';
     import { api } from '$lib/api/client';
-    import { detectQueryType, ipInCIDR, isIPv4 } from '$lib/utils/cidr';
+    import { detectQueryType, ipInCIDR, cidrOverlaps, isCIDR } from '$lib/utils/cidr';
     import RoutingSearchResults from './RoutingSearchResults.svelte';
     import type { MatchedRule, ResolveMatch } from './types';
+
+    // Collect all CIDR entries from a DNS route, regardless of which bucket
+    // they live in. On the router, `domains` and `subnets` are merged into a
+    // single NDMS `object-group fqdn` (see internal/dnsroute/sync.go), so
+    // CIDRs may legitimately appear in either field — typically in `subnets`
+    // from the UI, but also in `domains`/`manualDomains` when they come from
+    // a mixed subscription list or are pasted by the user. The search must
+    // check both, otherwise IP lookups miss rules that actually route the IP.
+    function collectDnsRouteCIDRs(route: DnsRoute): string[] {
+        const cidrs = new Set<string>();
+        const pools = [route.subnets, route.manualDomains, route.domains];
+        for (const pool of pools) {
+            if (!pool) continue;
+            for (const entry of pool) {
+                if (isCIDR(entry)) cidrs.add(entry);
+            }
+        }
+        return [...cidrs];
+    }
 
     interface Props {
         dnsRoutes: DnsRoute[];
@@ -34,34 +53,38 @@
         const qLower = q.toLowerCase();
 
         for (const route of dnsRoutes) {
-            const matches: string[] = [];
+            const matchSet = new Set<string>();
 
             if (queryType === 'domain') {
-                const allDomains = [
+                // Dedup the domain pool: `route.domains` is derived from
+                // `manualDomains + subscriptions`, so iterating both lists
+                // would otherwise surface user-added entries twice.
+                const allDomains = new Set<string>([
                     ...(route.manualDomains || []),
                     ...(route.domains || []),
-                    ...(route.excludes || [])
-                ];
+                    ...(route.excludes || []),
+                ]);
                 for (const domain of allDomains) {
                     const domainLower = domain.toLowerCase();
                     if (domainLower.includes(qLower) || qLower.endsWith('.' + domainLower)) {
-                        matches.push(domain);
+                        matchSet.add(domain);
                     }
                 }
             } else if (queryType === 'ip') {
-                for (const subnet of (route.subnets || [])) {
-                    if (ipInCIDR(q, subnet)) {
-                        matches.push(subnet);
+                for (const cidr of collectDnsRouteCIDRs(route)) {
+                    if (ipInCIDR(q, cidr)) {
+                        matchSet.add(cidr);
                     }
                 }
             } else if (queryType === 'cidr') {
-                for (const subnet of (route.subnets || [])) {
-                    if (subnet.includes(q)) {
-                        matches.push(subnet);
+                for (const cidr of collectDnsRouteCIDRs(route)) {
+                    if (cidrOverlaps(q, cidr)) {
+                        matchSet.add(cidr);
                     }
                 }
             }
 
+            const matches = [...matchSet];
             if (matches.length > 0) {
                 const subCount = route.subscriptions?.length ?? 0;
                 const manualCount = route.manualDomains?.length ?? 0;
@@ -92,22 +115,26 @@
         const results: MatchedRule[] = [];
 
         for (const route of staticRoutes) {
-            const matches: string[] = [];
+            const matchSet = new Set<string>();
+            // Dedup raw subnets: lists imported via paste can contain
+            // duplicate CIDRs, which would otherwise appear twice in results.
+            const uniqueSubnets = new Set(route.subnets || []);
 
             if (queryType === 'ip') {
-                for (const subnet of route.subnets) {
+                for (const subnet of uniqueSubnets) {
                     if (ipInCIDR(q, subnet)) {
-                        matches.push(subnet);
+                        matchSet.add(subnet);
                     }
                 }
             } else if (queryType === 'cidr') {
-                for (const subnet of route.subnets) {
-                    if (subnet.includes(q)) {
-                        matches.push(subnet);
+                for (const subnet of uniqueSubnets) {
+                    if (cidrOverlaps(q, subnet)) {
+                        matchSet.add(subnet);
                     }
                 }
             }
 
+            const matches = [...matchSet];
             if (matches.length > 0) {
                 const ipTunnel = tunnels.find(t => t.id === route.tunnelID);
                 results.push({
@@ -130,24 +157,26 @@
     function findCIDRMatchesForIPs(ips: string[]): MatchedRule[] {
         const results: MatchedRule[] = [];
 
-        // Check IP routes
+        // Check IP routes (static)
         for (const route of staticRoutes) {
-            const matches: string[] = [];
+            const matchSet = new Set<string>();
+            const uniqueSubnets = new Set(route.subnets || []);
             for (const ip of ips) {
-                for (const subnet of route.subnets) {
+                for (const subnet of uniqueSubnets) {
                     if (ipInCIDR(ip, subnet)) {
-                        matches.push(subnet);
+                        matchSet.add(subnet);
                     }
                 }
             }
-            if (matches.length > 0) {
+            if (matchSet.size > 0) {
                 const ipTunnel = tunnels.find(t => t.id === route.tunnelID);
+                const matches = [...matchSet];
                 results.push({
                     id: route.id,
                     name: route.name,
                     type: 'ip',
-                    matches: [...new Set(matches)],
-                    totalMatches: new Set(matches).size,
+                    matches,
+                    totalMatches: matches.length,
                     enabled: route.enabled,
                     tunnelName: ipTunnel?.name ?? route.tunnelID ?? '',
                     domainCount: 0,
@@ -156,23 +185,27 @@
             }
         }
 
-        // Check DNS route subnets
+        // Check DNS routes — scan all CIDR entries regardless of bucket
+        // (subnets or domains/manualDomains — both land in the same NDMS
+        // object-group fqdn at sync time).
         for (const route of dnsRoutes) {
-            const matches: string[] = [];
+            const matchSet = new Set<string>();
+            const routeCIDRs = collectDnsRouteCIDRs(route);
             for (const ip of ips) {
-                for (const subnet of (route.subnets || [])) {
-                    if (ipInCIDR(ip, subnet)) {
-                        matches.push(subnet);
+                for (const cidr of routeCIDRs) {
+                    if (ipInCIDR(ip, cidr)) {
+                        matchSet.add(cidr);
                     }
                 }
             }
-            if (matches.length > 0) {
+            if (matchSet.size > 0) {
+                const matches = [...matchSet];
                 results.push({
                     id: route.id,
                     name: route.name,
                     type: 'dns',
-                    matches: [...new Set(matches)],
-                    totalMatches: new Set(matches).size,
+                    matches,
+                    totalMatches: matches.length,
                     enabled: route.enabled,
                     tunnelName: resolveTunnelName(route.routes ?? []),
                     domainCount: route.domains?.length ?? 0,
