@@ -192,7 +192,11 @@
                 const newRoutes = route.routes.length > 0
                     ? [{ ...route.routes[0], tunnelId: dnsBulkTunnelId, interface: dnsBulkTunnelId }, ...route.routes.slice(1)]
                     : [{ tunnelId: dnsBulkTunnelId, interface: dnsBulkTunnelId, fallback: 'auto' as const }];
-                try { await api.updateDnsRoute(id, { routes: newRoutes }); ok++; } catch { fail++; }
+                // Send the full list with updated routes. The backend Update() uses
+                // PUT semantics — missing fields are interpreted as "zero value" and
+                // would wipe name/manualDomains/domains. Defense against that is also
+                // in the backend now, but sending the full object is the right thing.
+                try { await api.updateDnsRoute(id, { ...route, routes: newRoutes }); ok++; } catch { fail++; }
             }
 
             dnsTunnelMode = false;

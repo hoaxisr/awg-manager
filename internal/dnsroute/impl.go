@@ -260,12 +260,36 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 	list.Enabled = existing.Enabled
 	list.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
-	// Preserve excludes and subnets if not provided (frontend doesn't send them on edit).
+	// Defense-in-depth for partial updates: Go's json decoder cannot
+	// distinguish "field absent" from "field present with zero value", so
+	// a payload like {"routes": [...]} decodes into a DomainList where every
+	// other field is zero (empty string / nil slice). Without preserve logic
+	// Update() would silently wipe Name, ManualDomains, Subscriptions, etc.
+	// A bulk "change tunnel" operation used to do exactly that.
+	//
+	// Policy: treat zero values as "not sent" and restore from existing.
+	// This means the caller cannot set Name to "" or clear ManualDomains
+	// via this endpoint — but those edge cases are not real user intents
+	// (empty list name is invalid, empty ManualDomains makes the list
+	// useless). Full-list PUT semantics still work because the caller
+	// sends the existing values back unchanged.
+	if list.Name == "" {
+		list.Name = existing.Name
+	}
+	if list.ManualDomains == nil {
+		list.ManualDomains = existing.ManualDomains
+	}
+	if list.Subscriptions == nil {
+		list.Subscriptions = existing.Subscriptions
+	}
 	if list.Excludes == nil {
 		list.Excludes = existing.Excludes
 	}
 	if list.Subnets == nil {
 		list.Subnets = existing.Subnets
+	}
+	if list.Routes == nil {
+		list.Routes = existing.Routes
 	}
 
 	// Validate any new subscription URLs before saving.
