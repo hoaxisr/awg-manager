@@ -57,6 +57,7 @@ type ListResponse struct {
 	Tunnels     map[string]TunnelConnectionInfo `json:"tunnels"`
 	Connections []Connection                    `json:"connections"`
 	Pagination  PaginationInfo                  `json:"pagination"`
+	FetchedAt   string                          `json:"fetchedAt"`
 }
 
 // PaginationInfo describes the current page of results.

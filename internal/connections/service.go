@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
@@ -144,6 +145,7 @@ func (s *Service) List(ctx context.Context, params ListParams) (*ListResponse, e
 			Limit:    params.Limit,
 			Returned: len(page),
 		},
+		FetchedAt: time.Now().Format(time.RFC3339),
 	}, nil
 }
 

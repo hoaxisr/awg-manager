@@ -815,6 +815,7 @@ export interface ConnectionsResponse {
 	tunnels: Record<string, TunnelConnectionInfo>;
 	connections: ConntrackConnection[];
 	pagination: ConnectionsPagination;
+	fetchedAt: string;
 }
 
 // #endregion
