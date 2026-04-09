@@ -33,8 +33,14 @@
 
 		const text = filteredLogs.map(log => {
 			const time = formatDate(log.timestamp);
-			const result = log.stateChange === 'dead' ? 'DEAD' : log.stateChange === 'alive' ? 'RECOVERED' : log.stateChange === 'forced_restart' ? (log.success ? 'RESTART OK' : 'RESTART FAIL') : log.stateChange === 'grace' ? 'FAIL (grace)' : log.success ? 'OK' : 'FAIL';
-			const latency = !log.success ? '-' : log.latency >= 0 ? `${log.latency}ms` : '—';
+			const result =
+				log.stateChange === 'initial' ? 'INIT' :
+				log.stateChange === 'dead' ? 'DEAD' :
+				log.stateChange === 'alive' ? 'RECOVERED' :
+				log.stateChange === 'forced_restart' ? (log.success ? 'RESTART OK' : 'RESTART FAIL') :
+				log.stateChange === 'grace' ? 'FAIL (grace)' :
+				log.success ? 'OK' : 'FAIL';
+			const latency = log.latency >= 0 ? `${log.latency}ms` : '-';
 			const error = log.error ? ` | ${log.error}` : '';
 			return `[${time}] ${log.tunnelName} ${result} ${latency} ${log.failCount}/${log.threshold}${error}`;
 		}).join('\n');
@@ -109,11 +115,13 @@
 				</thead>
 				<tbody>
 					{#each visibleLogs as log}
-						<tr class:log-error={!log.success} class:log-state-change={log.stateChange && log.stateChange !== 'grace'}>
+						<tr class:log-error={!log.success && log.stateChange !== 'initial'} class:log-state-change={log.stateChange && log.stateChange !== 'grace'}>
 							<td class="time-cell">{formatDate(log.timestamp)}</td>
 							<td>{log.tunnelName}</td>
 							<td>
-								{#if log.stateChange === 'dead'}
+								{#if log.stateChange === 'initial'}
+									<span class="state-initial">INIT</span>
+								{:else if log.stateChange === 'dead'}
 									<span class="state-dead">DEAD</span>
 								{:else if log.stateChange === 'alive'}
 									<span class="state-alive">RECOVERED</span>
@@ -128,12 +136,10 @@
 								{/if}
 							</td>
 							<td>
-								{#if !log.success}
-									-
-								{:else if log.latency >= 0}
+								{#if log.latency >= 0}
 									{log.latency} ms
 								{:else}
-									—
+									-
 								{/if}
 							</td>
 							<td>{log.failCount}/{log.threshold}</td>
@@ -250,6 +256,11 @@
 
 	.state-restart {
 		color: var(--warning);
+		font-weight: 600;
+	}
+
+	.state-initial {
+		color: var(--text-muted);
 		font-weight: 600;
 	}
 

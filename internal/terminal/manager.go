@@ -1,6 +1,10 @@
 package terminal
 
-import "context"
+import (
+	"context"
+
+	"github.com/hoaxisr/awg-manager/internal/logging"
+)
 
 // Manager manages the ttyd terminal process lifecycle.
 type Manager interface {
@@ -22,4 +26,9 @@ type Manager interface {
 	SetSessionActive(active bool)
 	// Port returns the current ttyd port (0 if not running).
 	Port() int
+}
+
+// New creates a new terminal manager.
+func New(log logging.AppLogger) *ManagerImpl {
+	return &ManagerImpl{log: log}
 }

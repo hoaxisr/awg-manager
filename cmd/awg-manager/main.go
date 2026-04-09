@@ -19,38 +19,38 @@ import (
 	"log/slog"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
-	"github.com/hoaxisr/awg-manager/internal/clientroute"
-	"github.com/hoaxisr/awg-manager/internal/connectivity"
-	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/cleanup"
+	"github.com/hoaxisr/awg-manager/internal/clientroute"
+	"github.com/hoaxisr/awg-manager/internal/connectivity"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
-	"github.com/hoaxisr/awg-manager/internal/managed"
-	"github.com/hoaxisr/awg-manager/internal/orchestrator"
-	"github.com/hoaxisr/awg-manager/internal/routing"
-	"github.com/hoaxisr/awg-manager/internal/staticroute"
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/managed"
+	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/rci"
+	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/server"
+	"github.com/hoaxisr/awg-manager/internal/staticroute"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/terminal"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
-	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
-	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/external"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/firewall"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ops"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/state"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 	"github.com/hoaxisr/awg-manager/internal/updater"
@@ -64,7 +64,6 @@ const (
 
 // version is set via ldflags at build time
 var version = "dev"
-
 
 func main() {
 	dataDir := flag.String("data-dir", defaultDataDir, "Data directory path")
@@ -228,6 +227,13 @@ func main() {
 
 	// Unified facade: kernel → custom loop, NativeWG → NDMS native
 	pingCheckFacade := pingcheck.NewFacade(pingCheckService, awgStore, settingsStore, nwgOp)
+	pingCheckFacade.SetNativeWGLatencyProbe(func(ctx context.Context, tunnelID string) int {
+		res, err := testService.CheckConnectivity(ctx, tunnelID)
+		if err != nil || res == nil || !res.Connected || res.Latency == nil {
+			return pingcheck.LatencyNotAvailable
+		}
+		return *res.Latency
+	})
 
 	// Auth components
 	keeneticClient := auth.NewKeeneticClient()
@@ -250,7 +256,16 @@ func main() {
 	managedService := managed.New(ndmsClient, settingsStore, slog.Default().With("component", "managed"), loggingService)
 
 	// Terminal manager (ttyd lifecycle)
-	terminalManager := terminal.New(log)
+	terminalManager := terminal.New(loggingService)
+
+	// Autostart ttyd if already installed — silent, non-blocking.
+	if terminalManager.IsInstalled(context.Background()) {
+		if port, err := terminalManager.Start(context.Background()); err != nil {
+			log.Warn("ttyd autostart failed", map[string]interface{}{"error": err.Error()})
+		} else {
+			log.Info("ttyd autostarted", map[string]interface{}{"port": port})
+		}
+	}
 
 	// Access policy service (NDMS ip policy management)
 	accessPolicySvc := accesspolicy.New(ndmsClient, settingsStore, log, loggingService)
@@ -592,7 +607,6 @@ func populateWANModel(ctx context.Context, ndmsClient ndms.Client, model *wan.Mo
 	log.Info("Boot: WAN model populated", map[string]interface{}{"count": len(interfaces)})
 }
 
-
 // getInterfaceIP returns the first IPv4 address of the given interface.
 func getInterfaceIP(ifaceName string) string {
 	iface, err := net.InterfaceByName(ifaceName)
@@ -710,7 +724,7 @@ func serviceStart(dataDir, webRoot string) {
 
 	// Start the daemon without --service flag
 	cmd := exec.Command(executable, "-data-dir", dataDir, "-web-root", webRoot)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	setServiceSysProcAttr(cmd)
 
 	devNull, err := os.Open(os.DevNull)
 	if err == nil {
@@ -947,4 +961,3 @@ func runCleanup(dataDir string) {
 
 	fmt.Println("Done.")
 }
-

@@ -21,22 +21,25 @@ type nwgPollSource interface {
 // nwgMonitor polls NDMS ping-check status for a single NativeWG tunnel
 // and converts counter deltas into LogEntry records in the shared LogBuffer.
 type nwgMonitor struct {
-	tunnelID   string
-	tunnelName string
-	interval   time.Duration
-	threshold  int
-	logBuffer  *LogBuffer
-	source     nwgPollSource
-	bus        *events.Bus
+	tunnelID     string
+	tunnelName   string
+	interval     time.Duration
+	threshold    int
+	logBuffer    *LogBuffer
+	source       nwgPollSource
+	latencyProbe func(context.Context, string) int
+	bus          *events.Bus
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
 
 	// Previous snapshot for delta calculation.
-	initialized bool
-	prevFail    int
-	prevSuccess int
-	prevStatus  string
+	initialized  bool
+	prevFail     int
+	prevSuccess  int
+	prevStatus   string
+	lastLatency  int
+	startupPhase bool
 }
 
 // publishLog publishes a log entry as an SSE event.
@@ -62,12 +65,44 @@ func (m *nwgMonitor) publishLog(entry LogEntry) {
 // emits LogEntry records for each detected check, and updates state.
 // Called once per poll interval.
 func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
+	latency := m.lastLatency
+	if latency <= 0 {
+		latency = LatencyNotAvailable
+	}
+
 	if !m.initialized {
-		// First poll: set baseline, emit nothing.
+		// First poll: set baseline and emit one initial log entry so UI log
+		// reflects immediate check after enabling monitoring.
 		m.prevFail = failCount
 		m.prevSuccess = successCount
 		m.prevStatus = status
 		m.initialized = true
+		m.startupPhase = true
+
+		success := status != "fail"
+		entry := LogEntry{
+			Timestamp:   time.Now(),
+			TunnelID:    m.tunnelID,
+			TunnelName:  m.tunnelName,
+			Backend:     "nativewg",
+			Success:     success,
+			Latency:     latency,
+			FailCount:   failCount,
+			Threshold:   m.threshold,
+			StateChange: "initial",
+		}
+		m.logBuffer.Add(entry)
+		m.publishLog(entry)
+
+		// Still publish current state immediately so UI updates right after enable.
+		if m.bus != nil {
+			m.bus.Publish("pingcheck:state", events.PingCheckStateEvent{
+				TunnelID:     m.tunnelID,
+				Status:       status,
+				FailCount:    failCount,
+				SuccessCount: successCount,
+			})
+		}
 		return
 	}
 
@@ -80,6 +115,18 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
 	successDelta := successCount - m.prevSuccess
 	if successDelta < 0 {
 		successDelta = successCount
+	}
+
+	// NDMS can report a transient startup mix where, in one poll window,
+	// we see one fail and one success while the current state is already pass
+	// (status=pass, failCount=0). This creates a noisy "FAIL -> OK" pair
+	// right after INIT even though the tunnel is already healthy.
+	// Suppress only this startup-only mixed delta.
+	if m.startupPhase &&
+		status == "pass" &&
+		failDelta > 0 &&
+		successDelta > 0 {
+		failDelta = 0
 	}
 
 	now := time.Now()
@@ -107,7 +154,7 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
 			TunnelName: m.tunnelName,
 			Backend:    "nativewg",
 			Success:    false,
-			Latency:    LatencyNotAvailable,
+			Latency:    latency,
 			FailCount:  failCount,
 			Threshold:  m.threshold,
 		}
@@ -124,7 +171,7 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
 			TunnelName: m.tunnelName,
 			Backend:    "nativewg",
 			Success:    true,
-			Latency:    LatencyNotAvailable,
+			Latency:    latency,
 			FailCount:  0,
 			Threshold:  m.threshold,
 		}
@@ -142,7 +189,7 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
 			TunnelName:  m.tunnelName,
 			Backend:     "nativewg",
 			Success:     status == "pass",
-			Latency:     -1,
+			Latency:     latency,
 			StateChange: stateChange,
 			FailCount:   failCount,
 			Threshold:   m.threshold,
@@ -164,11 +211,42 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
 	m.prevFail = failCount
 	m.prevSuccess = successCount
 	m.prevStatus = status
+	if status == "pass" && successCount > 0 {
+		m.startupPhase = false
+	}
 }
 
 // run starts the poll loop. Blocks until stop() is called.
 func (m *nwgMonitor) run(ctx context.Context) {
 	defer m.wg.Done()
+
+	pollOnce := func() {
+		status, err := m.source.PollPingCheck(ctx, m.tunnelID)
+		if err != nil || status == nil || !status.Exists {
+			return // skip this poll, retry next interval
+		}
+		if m.latencyProbe != nil {
+			m.lastLatency = m.latencyProbe(ctx, m.tunnelID)
+		} else {
+			m.lastLatency = LatencyNotAvailable
+		}
+
+		// Sync poll interval with actual NDMS check interval on first poll.
+		// Prevents emitting N duplicate entries when our interval differs
+		// from the NDMS interval (e.g., we poll at 10s but NDMS checks at 5s).
+		if !m.initialized && status.Interval > 0 {
+			actual := time.Duration(status.Interval) * time.Second
+			if actual != m.interval && actual >= 3*time.Second {
+				m.interval = actual
+			}
+		}
+
+		m.threshold = status.MaxFails
+		m.processDelta(status.FailCount, status.SuccessCount, status.Status)
+	}
+
+	// Run first poll immediately after monitor start.
+	pollOnce()
 
 	ticker := time.NewTicker(m.interval)
 	defer ticker.Stop()
@@ -176,24 +254,11 @@ func (m *nwgMonitor) run(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			status, err := m.source.PollPingCheck(ctx, m.tunnelID)
-			if err != nil || status == nil || !status.Exists {
-				continue // skip this poll, retry next interval
+			prevInterval := m.interval
+			pollOnce()
+			if m.interval != prevInterval {
+				ticker.Reset(m.interval)
 			}
-
-			// Sync poll interval with actual NDMS check interval on first poll.
-			// Prevents emitting N duplicate entries when our interval differs
-			// from the NDMS interval (e.g., we poll at 10s but NDMS checks at 5s).
-			if !m.initialized && status.Interval > 0 {
-				actual := time.Duration(status.Interval) * time.Second
-				if actual != m.interval && actual >= 3*time.Second {
-					m.interval = actual
-					ticker.Reset(actual)
-				}
-			}
-
-			m.threshold = status.MaxFails
-			m.processDelta(status.FailCount, status.SuccessCount, status.Status)
 
 		case <-m.stopCh:
 			return

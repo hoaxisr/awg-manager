@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -54,10 +53,8 @@ func RunWithOptions(ctx context.Context, name string, args []string, opts Option
 
 	cmd := exec.CommandContext(ctx, name, args...)
 
-	// Create new process group for proper cleanup
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
+	// Create new process group for proper cleanup (platform-specific).
+	setCommandProcessGroup(cmd)
 
 	if opts.Dir != "" {
 		cmd.Dir = opts.Dir
@@ -90,10 +87,8 @@ func RunWithOptions(ctx context.Context, name string, args []string, opts Option
 	}
 
 	if ctx.Err() == context.DeadlineExceeded {
-		// Kill the process group to clean up any children
-		if cmd.Process != nil {
-			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
+		// Kill the process group to clean up any children (platform-specific).
+		killCommandProcessGroup(cmd)
 		return result, ErrTimeout
 	}
 

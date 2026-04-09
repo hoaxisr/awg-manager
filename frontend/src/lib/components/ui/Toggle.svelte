@@ -21,25 +21,24 @@
         variant = 'slider',
     }: Props = $props();
 
-    function handleClick(e: Event) {
-        if (loading || disabled) {
-            e.preventDefault();
-            return;
-        }
-        // Controlled pattern: prevent browser from auto-toggling and let
-        // the parent decide via onchange. If the parent updates its source
-        // of truth, the prop changes and the checkbox re-renders. If the
-        // parent does NOT update (e.g., user cancels a modal), the checkbox
-        // stays in its previous visual state — no stale local mutation.
-        e.preventDefault();
-        onchange(!checked);
+    // Native checkbox toggle + parent notification.
+    // bind:checked lets the browser toggle visually and updates the
+    // `checked` variable. $bindable() propagates it to the parent
+    // when used as bind:checked={...}. The oninput handler notifies
+    // parents that use the controlled pattern (onchange callback).
+    function handleInput(event: Event) {
+        if (loading || disabled) return;
+        const input = event.currentTarget as HTMLInputElement | null;
+        const nextChecked = input ? input.checked : checked;
+        checked = nextChecked;
+        if (onchange) onchange(nextChecked);
     }
 </script>
 
 {#if label}
     <div class="toggle-group">
         <label class="toggle-container" class:loading class:sm={size === 'sm'} class:flip={variant === 'flip'}>
-            <input type="checkbox" {checked} {disabled} onclick={handleClick} />
+            <input type="checkbox" bind:checked={checked} {disabled} oninput={handleInput} />
             {#if variant === 'flip'}
                 <span class="flip-track">
                     <span class="flip-lever">
@@ -65,7 +64,7 @@
     </div>
 {:else}
     <label class="toggle-container" class:loading class:sm={size === 'sm'} class:flip={variant === 'flip'}>
-        <input type="checkbox" {checked} {disabled} onclick={handleClick} />
+        <input type="checkbox" bind:checked={checked} {disabled} oninput={handleInput} />
         {#if variant === 'flip'}
             <span class="flip-track">
                 <span class="flip-lever">

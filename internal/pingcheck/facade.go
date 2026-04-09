@@ -36,11 +36,12 @@ type Facade struct {
 	nwgOp    *nwg.OperatorNativeWG
 	bus      *events.Bus
 
-	nwgSource   nwgPollSource // nil when nwgOp is nil; overridable for tests
-	nwgMonMu    sync.RWMutex
-	nwgMonitors map[string]*nwgMonitor
-	ctx         context.Context
-	cancel      context.CancelFunc
+	nwgSource       nwgPollSource // nil when nwgOp is nil; overridable for tests
+	nwgMonMu        sync.RWMutex
+	nwgMonitors     map[string]*nwgMonitor
+	nwgLatencyProbe func(context.Context, string) int // returns latency in ms, <=0 when unavailable
+	ctx             context.Context
+	cancel          context.CancelFunc
 }
 
 // NewFacade creates a unified ping-check facade.
@@ -60,6 +61,13 @@ func NewFacade(custom *Service, tunnels *storage.AWGTunnelStore, settings *stora
 		f.nwgSource = &nwgOpPollAdapter{op: nwgOp, tunnels: tunnels}
 	}
 	return f
+}
+
+// SetNativeWGLatencyProbe sets an optional probe used by NativeWG monitors
+// to obtain real latency values (for example, via testing connectivity checks).
+// Probe should return latency in milliseconds, or <=0 when unavailable.
+func (f *Facade) SetNativeWGLatencyProbe(fn func(context.Context, string) int) {
+	f.nwgLatencyProbe = fn
 }
 
 // SetEventBus sets the event bus for SSE publishing.
@@ -219,14 +227,15 @@ func (f *Facade) startNwgMonitor(tunnelID, tunnelName string) {
 	}
 
 	mon := &nwgMonitor{
-		tunnelID:   tunnelID,
-		tunnelName: tunnelName,
-		interval:   interval,
-		threshold:  stored.PingCheck.FailThreshold,
-		logBuffer:  f.custom.logBuffer,
-		source:     f.nwgSource,
-		bus:        f.bus,
-		stopCh:     make(chan struct{}),
+		tunnelID:     tunnelID,
+		tunnelName:   tunnelName,
+		interval:     interval,
+		threshold:    stored.PingCheck.FailThreshold,
+		logBuffer:    f.custom.logBuffer,
+		source:       f.nwgSource,
+		latencyProbe: f.nwgLatencyProbe,
+		bus:          f.bus,
+		stopCh:       make(chan struct{}),
 	}
 
 	// Extract and stop the old monitor (if any) outside the lock
