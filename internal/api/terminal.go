@@ -7,6 +7,7 @@ import (
 
 	"nhooyr.io/websocket"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/terminal"
 )
@@ -14,11 +15,12 @@ import (
 // TerminalHandler handles terminal API endpoints.
 type TerminalHandler struct {
 	manager terminal.Manager
+	log     logging.AppLogger
 }
 
 // NewTerminalHandler creates a new terminal handler.
-func NewTerminalHandler(manager terminal.Manager) *TerminalHandler {
-	return &TerminalHandler{manager: manager}
+func NewTerminalHandler(manager terminal.Manager, log logging.AppLogger) *TerminalHandler {
+	return &TerminalHandler{manager: manager, log: log}
 }
 
 // TerminalStatusResponse represents terminal status.
@@ -53,10 +55,13 @@ func (h *TerminalHandler) Install(w http.ResponseWriter, r *http.Request) {
 		response.Success(w, map[string]bool{"installed": true})
 		return
 	}
+	h.log.AppLog(logging.LevelInfo, "terminal", "", "install", "ttyd", "install requested via API")
 	if err := h.manager.Install(r.Context()); err != nil {
+		h.log.AppLog(logging.LevelWarn, "terminal", "", "install", "ttyd", "failed: "+err.Error())
 		response.InternalError(w, err.Error())
 		return
 	}
+	h.log.AppLog(logging.LevelInfo, "terminal", "", "install", "ttyd", "installed successfully via API")
 	response.Success(w, map[string]bool{"installed": true})
 }
 
@@ -71,11 +76,14 @@ func (h *TerminalHandler) Start(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, "ttyd is not installed", "NOT_INSTALLED")
 		return
 	}
+	h.log.AppLog(logging.LevelInfo, "terminal", "", "start", "ttyd", "start requested via API")
 	port, err := h.manager.Start(r.Context())
 	if err != nil {
+		h.log.AppLog(logging.LevelWarn, "terminal", "", "start", "ttyd", "failed via API: "+err.Error())
 		response.InternalError(w, err.Error())
 		return
 	}
+	h.log.AppLog(logging.LevelInfo, "terminal", "", "start", "ttyd", fmt.Sprintf("started on port %d via API", port))
 	response.Success(w, map[string]int{"port": port})
 }
 
@@ -86,10 +94,13 @@ func (h *TerminalHandler) Stop(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
+	h.log.AppLog(logging.LevelInfo, "terminal", "", "stop", "ttyd", "stop requested via API")
 	if err := h.manager.Stop(r.Context()); err != nil {
+		h.log.AppLog(logging.LevelWarn, "terminal", "", "stop", "ttyd", "failed via API: "+err.Error())
 		response.InternalError(w, err.Error())
 		return
 	}
+	h.log.AppLog(logging.LevelInfo, "terminal", "", "stop", "ttyd", "stopped via API")
 	response.Success(w, map[string]bool{"stopped": true})
 }
 

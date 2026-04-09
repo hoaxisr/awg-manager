@@ -169,7 +169,7 @@
 			<span class="restart-label">Перезапуск при dead</span>
 			<span class="restart-hint">Автоматически перезапускать туннель при потере связи</span>
 		</div>
-		<Toggle checked={restart} onchange={() => restart = !restart} size="sm" />
+		<Toggle checked={restart} onchange={(val) => restart = val} size="sm" />
 	</div>
 
 	{#snippet actions()}

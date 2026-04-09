@@ -20,14 +20,22 @@ import (
 
 // Report is the top-level diagnostics report.
 type Report struct {
-	Version     string           `json:"version"`
-	GeneratedAt time.Time        `json:"generatedAt"`
-	DurationMs  int64            `json:"durationMs"`
-	System      SystemInfo       `json:"system"`
-	WAN         WANInfo          `json:"wan"`
-	Tunnels     []TunnelInfo     `json:"tunnels"`
-	Tests       []TestResult     `json:"tests"`
+	Version     string             `json:"version"`
+	GeneratedAt time.Time          `json:"generatedAt"`
+	DurationMs  int64              `json:"durationMs"`
+	Route       RouteInfoMeta      `json:"route"`
+	System      SystemInfo         `json:"system"`
+	WAN         WANInfo            `json:"wan"`
+	Tunnels     []TunnelInfo       `json:"tunnels"`
+	Tests       []TestResult       `json:"tests"`
 	Logs        []logging.LogEntry `json:"logs"`
+}
+
+// RouteInfoMeta captures diagnostics route selection used for network tests.
+type RouteInfoMeta struct {
+	Mode       RouteMode `json:"mode"`
+	TunnelID   string    `json:"tunnelId,omitempty"`
+	TunnelName string    `json:"tunnelName,omitempty"`
 }
 
 // SystemInfo contains system-level diagnostics.
@@ -65,23 +73,23 @@ type WANIfaceInfo struct {
 
 // TunnelInfo contains per-tunnel diagnostics.
 type TunnelInfo struct {
-	ID                   string          `json:"id"`
-	Name                 string          `json:"name"`
-	Status               string          `json:"status"`
-	Enabled              bool            `json:"enabled"`
-	Backend              string          `json:"backend"`
-	InterfaceName        string          `json:"interfaceName"`
-	ISPInterface         string          `json:"ispInterface"`
-	ResolvedISPInterface string          `json:"resolvedIspInterface"`
-	DefaultRoute         bool            `json:"defaultRoute"`
-	Interface            IfaceInfo       `json:"interface"`
-	Connection           ConnectionInfo  `json:"connection"`
-	Routes               RouteInfo       `json:"routes"`
-	Firewall             FirewallInfo    `json:"firewall"`
-	ConfigFile           string          `json:"configFile"`
-	Settings             TunnelSettings  `json:"settings"`
-	PingCheck            *PingCheckInfo  `json:"pingCheck,omitempty"`
-	Proxy                *ProxyInfo      `json:"proxy,omitempty"`
+	ID                   string         `json:"id"`
+	Name                 string         `json:"name"`
+	Status               string         `json:"status"`
+	Enabled              bool           `json:"enabled"`
+	Backend              string         `json:"backend"`
+	InterfaceName        string         `json:"interfaceName"`
+	ISPInterface         string         `json:"ispInterface"`
+	ResolvedISPInterface string         `json:"resolvedIspInterface"`
+	DefaultRoute         bool           `json:"defaultRoute"`
+	Interface            IfaceInfo      `json:"interface"`
+	Connection           ConnectionInfo `json:"connection"`
+	Routes               RouteInfo      `json:"routes"`
+	Firewall             FirewallInfo   `json:"firewall"`
+	ConfigFile           string         `json:"configFile"`
+	Settings             TunnelSettings `json:"settings"`
+	PingCheck            *PingCheckInfo `json:"pingCheck,omitempty"`
+	Proxy                *ProxyInfo     `json:"proxy,omitempty"`
 }
 
 // IfaceInfo contains interface state.
@@ -138,12 +146,12 @@ type PingCheckConfig struct {
 
 // PingCheckInfo contains runtime ping check status from facade.
 type PingCheckInfo struct {
-	Status          string `json:"status"`
-	Method          string `json:"method"`
-	FailCount       int    `json:"failCount"`
-	FailThreshold   int    `json:"failThreshold"`
-	RestartCount    int    `json:"restartCount"`
-	SuccessCount    int    `json:"successCount,omitempty"`
+	Status        string `json:"status"`
+	Method        string `json:"method"`
+	FailCount     int    `json:"failCount"`
+	FailThreshold int    `json:"failThreshold"`
+	RestartCount  int    `json:"restartCount"`
+	SuccessCount  int    `json:"successCount,omitempty"`
 }
 
 // ProxyInfo contains awg_proxy status for nativewg tunnels.
@@ -206,10 +214,20 @@ const (
 	ModeFull  RunMode = "full"
 )
 
+// RouteMode controls how outbound network checks are routed during diagnostics.
+type RouteMode string
+
+const (
+	RouteDirect RouteMode = "direct"
+	RouteTunnel RouteMode = "tunnel"
+)
+
 // RunOptions configures a diagnostic run.
 type RunOptions struct {
 	Mode           RunMode
 	IncludeRestart bool
+	RouteMode      RouteMode
+	RouteTunnelID  string
 }
 
 // DiagEvent is a single event emitted during a diagnostic run.
@@ -272,8 +290,8 @@ var testLevels = map[string]string{
 	"mtu_check":                   LevelDetailed,
 	"route_leak_check":            LevelDetailed,
 	"dns_leak_check":              LevelDetailed,
-	"proxy_health":     LevelBasic,
-	"pingcheck_health": LevelBasic,
+	"proxy_health":                LevelBasic,
+	"pingcheck_health":            LevelBasic,
 }
 
 func testLevel(name string) string {
@@ -455,7 +473,11 @@ func (r *Runner) RunWithStream(ctx context.Context, opts RunOptions) (<-chan Dia
 }
 
 func (r *Runner) execute(ctx context.Context) {
-	r.opts = RunOptions{Mode: ModeFull, IncludeRestart: true}
+	r.opts = RunOptions{
+		Mode:           ModeFull,
+		IncludeRestart: true,
+		RouteMode:      RouteDirect,
+	}
 	r.executeStream(ctx)
 }
 
@@ -464,6 +486,10 @@ func (r *Runner) executeStream(ctx context.Context) {
 	report := &Report{
 		Version:     "1.0",
 		GeneratedAt: start,
+		Route: RouteInfoMeta{
+			Mode:     r.opts.RouteMode,
+			TunnelID: r.opts.RouteTunnelID,
+		},
 	}
 
 	var allResults []TestResult
@@ -519,13 +545,27 @@ func (r *Runner) executeStream(ctx context.Context) {
 
 		r.emitPhase("collect_tunnels", "Сбор информации о туннелях...")
 		report.Tunnels = r.collectTunnels(ctx)
+		report.Route.TunnelName = resolveRouteTunnelName(report.Tunnels, report.Route.TunnelID)
 
 		r.emitPhase("collect_logs", "Сбор логов...")
 		report.Logs = r.collectLogs()
 	} else {
 		r.emitPhase("collect_tunnels", "Получение списка туннелей...")
 		report.Tunnels = r.collectTunnels(ctx)
+		report.Route.TunnelName = resolveRouteTunnelName(report.Tunnels, report.Route.TunnelID)
 	}
 
 	allResults = r.runTestsWithEvents(ctx, report)
+}
+
+func resolveRouteTunnelName(tunnels []TunnelInfo, tunnelID string) string {
+	if tunnelID == "" {
+		return ""
+	}
+	for _, t := range tunnels {
+		if t.ID == tunnelID {
+			return t.Name
+		}
+	}
+	return ""
 }

@@ -2,6 +2,8 @@
 build/
 dist/
 /awg-manager
+.gocache/
+*.test
 
 # IDE
 .idea/

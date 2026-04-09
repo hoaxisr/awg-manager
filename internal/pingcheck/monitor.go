@@ -26,6 +26,10 @@ func (s *Service) runMonitorLoop(m *tunnelMonitor) {
 
 	m.failThreshold = config.FailThreshold
 
+	// Run the first check immediately after monitor start.
+	// This avoids waiting up to one full interval after enabling monitoring.
+	s.sensorTick(m, config)
+
 	interval := time.Duration(config.Interval) * time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
