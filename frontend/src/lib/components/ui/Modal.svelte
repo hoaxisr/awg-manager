@@ -95,7 +95,12 @@
         border: 1px solid var(--border);
         border-radius: var(--radius, 8px);
         width: 100%;
+        /* 100vh on mobile includes hidden browser chrome (address bar,
+           toolbar) so the card overflows the visible area. dvh (dynamic
+           viewport height) tracks the actual visible space. Fallback to
+           vh for older browsers that don't support dvh. */
         max-height: calc(100vh - 2rem);
+        max-height: calc(100dvh - 2rem);
         display: flex;
         flex-direction: column;
     }
