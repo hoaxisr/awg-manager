@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/rci"
@@ -24,32 +25,17 @@ const (
 
 // KeeneticClient handles authentication against Keenetic router.
 type KeeneticClient struct {
-	routerAddr string
-	httpClient *http.Client
+	routerAddr     string
+	routerAddrOnce sync.Once
+	httpClient     *http.Client
 }
 
 // NewKeeneticClient creates a new Keenetic auth client.
-// It detects router IP from br0 interface and port from ndmc config.
+// Router address (IP + port) is resolved lazily on first Authenticate call
+// to avoid a race with NDMS at boot — getHTTPPort queries RCI which may
+// not be ready when the daemon starts.
 func NewKeeneticClient() *KeeneticClient {
-	// Get IP from br0 interface
-	ip := getBr0IP()
-	if ip == "" {
-		ip = "192.168.1.1"
-	}
-
-	// Get HTTP port from router config
-	port := getHTTPPort()
-
-	// Format address with port (skip :80 as it's default)
-	var addr string
-	if port != 0 && port != 80 {
-		addr = fmt.Sprintf("%s:%d", ip, port)
-	} else {
-		addr = ip
-	}
-
 	return &KeeneticClient{
-		routerAddr: addr,
 		httpClient: &http.Client{
 			Timeout: httpTimeout,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -57,6 +43,24 @@ func NewKeeneticClient() *KeeneticClient {
 			},
 		},
 	}
+}
+
+// resolveAddr detects router IP (br0) and HTTP port (RCI) once.
+func (c *KeeneticClient) resolveAddr() {
+	c.routerAddrOnce.Do(func() {
+		ip := getBr0IP()
+		if ip == "" {
+			ip = "192.168.1.1"
+		}
+
+		port := getHTTPPort()
+
+		if port != 0 && port != 80 {
+			c.routerAddr = fmt.Sprintf("%s:%d", ip, port)
+		} else {
+			c.routerAddr = ip
+		}
+	})
 }
 
 // getHTTPPort returns router HTTP port from NDMS RCI API.
@@ -108,6 +112,7 @@ func getBr0IP() string {
 // Authenticate verifies credentials against Keenetic router.
 // Returns nil on success, error on failure.
 func (c *KeeneticClient) Authenticate(ctx context.Context, login, password string) error {
+	c.resolveAddr()
 	authURL := fmt.Sprintf("http://%s%s", c.routerAddr, authEndpoint)
 
 	// Step 1: GET /auth to get challenge, realm and cookies
