@@ -18,16 +18,16 @@ func TestNwgDelta_SuccessIncrement(t *testing.T) {
 	defer buf.Stop()
 	m := newTestNwgMonitor(buf)
 
-	// First poll: baseline — should emit nothing.
+	// First poll emits INIT.
 	m.processDelta(0, 0, "pass")
-	if buf.Len() != 0 {
-		t.Fatalf("after baseline: got %d entries, want 0", buf.Len())
+	if buf.Len() != 1 {
+		t.Fatalf("after baseline: got %d entries, want 1 (INIT)", buf.Len())
 	}
 
 	// Second poll: 3 new successes.
 	m.processDelta(0, 3, "pass")
-	if buf.Len() != 3 {
-		t.Fatalf("after success increment: got %d entries, want 3", buf.Len())
+	if buf.Len() != 4 {
+		t.Fatalf("after success increment: got %d entries, want 4 (INIT + 3)", buf.Len())
 	}
 
 	entries := buf.GetAll()
@@ -57,8 +57,8 @@ func TestNwgDelta_FailIncrement(t *testing.T) {
 
 	// 2 new failures, same status — no state change entry.
 	m.processDelta(2, 0, "fail")
-	if buf.Len() != 2 {
-		t.Fatalf("got %d entries, want 2", buf.Len())
+	if buf.Len() != 3 {
+		t.Fatalf("got %d entries, want 3 (INIT + 2 fails)", buf.Len())
 	}
 
 	entries := buf.GetAll()
@@ -79,15 +79,15 @@ func TestNwgDelta_CounterReset(t *testing.T) {
 
 	// Baseline with 10 successes.
 	m.processDelta(0, 10, "pass")
-	if buf.Len() != 0 {
-		t.Fatalf("after baseline: got %d entries, want 0", buf.Len())
+	if buf.Len() != 1 {
+		t.Fatalf("after baseline: got %d entries, want 1 (INIT)", buf.Len())
 	}
 
 	// Counter reset: success went from 10 down to 2.
 	// Should treat 2 as the delta (counter was reset).
 	m.processDelta(0, 2, "pass")
-	if buf.Len() != 2 {
-		t.Fatalf("after counter reset: got %d entries, want 2", buf.Len())
+	if buf.Len() != 3 {
+		t.Fatalf("after counter reset: got %d entries, want 3 (INIT + 2)", buf.Len())
 	}
 }
 
@@ -102,9 +102,9 @@ func TestNwgDelta_StatusChange(t *testing.T) {
 	// 3 new failures, status changes to fail.
 	m.processDelta(3, 5, "fail")
 
-	// Expect: 3 fail entries + 1 state change entry = 4.
-	if buf.Len() != 4 {
-		t.Fatalf("got %d entries, want 4", buf.Len())
+	// Expect: INIT + 3 fail entries + 1 state change entry = 5.
+	if buf.Len() != 5 {
+		t.Fatalf("got %d entries, want 5", buf.Len())
 	}
 
 	entries := buf.GetAll()
@@ -126,20 +126,20 @@ func TestNwgDelta_MixedFailAndSuccess(t *testing.T) {
 	// Baseline.
 	m.processDelta(0, 0, "pass")
 
-	// 2 fails + 1 success.
+	// 2 fails + 1 success in startup phase.
+	// Startup filter suppresses the transient fail burst, keeping only success.
 	m.processDelta(2, 1, "pass")
-	if buf.Len() != 3 {
-		t.Fatalf("got %d entries, want 3", buf.Len())
+	if buf.Len() != 2 {
+		t.Fatalf("got %d entries, want 2 (INIT + 1 success)", buf.Len())
 	}
 
 	entries := buf.GetAll()
-	// Order in buffer: 2 fails then 1 success. GetAll reverses.
-	// So entries[0] = success (newest), entries[1..2] = fails.
+	// Order in buffer after suppression: INIT then success. GetAll reverses.
 	if !entries[0].Success {
 		t.Errorf("entries[0] (newest) should be success")
 	}
-	if entries[1].Success || entries[2].Success {
-		t.Errorf("entries[1] and [2] should be failures")
+	if entries[1].StateChange != "initial" {
+		t.Errorf("entries[1] should be INIT")
 	}
 }
 
@@ -153,7 +153,28 @@ func TestNwgDelta_NoDelta_NoEntries(t *testing.T) {
 
 	// Same counters, no change.
 	m.processDelta(0, 5, "pass")
-	if buf.Len() != 0 {
-		t.Fatalf("got %d entries, want 0", buf.Len())
+	if buf.Len() != 1 {
+		t.Fatalf("got %d entries, want 1 (INIT only)", buf.Len())
+	}
+}
+
+func TestNwgDelta_StartupMixedDelta_SuppressesTransientFail(t *testing.T) {
+	buf := NewLogBuffer()
+	defer buf.Stop()
+	m := newTestNwgMonitor(buf)
+
+	// First poll emits INIT and enables startup phase.
+	m.processDelta(0, 0, "pass")
+	buf.Clear()
+
+	// Transitional NDMS window: both counters incremented in one poll,
+	// but current state is already healthy (status=pass).
+	m.processDelta(1, 1, "pass")
+	if buf.Len() != 1 {
+		t.Fatalf("got %d entries, want 1 (success only)", buf.Len())
+	}
+	entries := buf.GetAll()
+	if !entries[0].Success {
+		t.Fatalf("got transient fail, want success-only entry")
 	}
 }

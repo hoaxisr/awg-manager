@@ -204,6 +204,11 @@ func (h *PingCheckHandler) GetTunnelPingCheckStatus(w http.ResponseWriter, r *ht
 		response.Error(w, err.Error(), "PINGCHECK_STATUS_ERROR")
 		return
 	}
+	// NDMS /show/ping-check may omit restart flag in status payload.
+	// Use persisted tunnel config so UI toggle reflects the actual saved intent.
+	if stored.PingCheck != nil {
+		status.Restart = stored.PingCheck.Restart
+	}
 
 	response.Success(w, status)
 }

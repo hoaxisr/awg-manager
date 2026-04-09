@@ -357,7 +357,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	connectionsHandler := api.NewConnectionsHandler(connectionsService)
 
 	signatureHandler := api.NewSignatureHandler()
-	terminalHandler := api.NewTerminalHandler(s.terminalManager)
+	terminalHandler := api.NewTerminalHandler(s.terminalManager, s.loggingService)
 
 	eventsHandler := api.NewEventsHandler(s.bus)
 

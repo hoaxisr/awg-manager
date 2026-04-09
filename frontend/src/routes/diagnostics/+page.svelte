@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { api } from '$lib/api/client';
-	import type { DiagTestEvent, DiagDoneSummary, DiagMode } from '$lib/types';
+	import type { DiagTestEvent, DiagDoneSummary, DiagMode, DiagRouteMode, TunnelListItem } from '$lib/types';
 	import { PageContainer, PageHeader } from '$lib/components/layout';
 	import {
 		DiagnosticsControls,
@@ -19,6 +19,15 @@
 	let errorMessage = $state('');
 	let lastMode = $state<DiagMode>('quick');
 	let eventSource = $state<EventSource | null>(null);
+	let tunnels = $state<TunnelListItem[]>([]);
+
+	onMount(async () => {
+		try {
+			tunnels = await api.listTunnels();
+		} catch {
+			tunnels = [];
+		}
+	});
 
 	function cleanup() {
 		if (eventSource) {
@@ -27,7 +36,7 @@
 		}
 	}
 
-	function startDiagnostics(mode: DiagMode, restart: boolean) {
+	function startDiagnostics(mode: DiagMode, restart: boolean, routeMode: DiagRouteMode, routeTunnelId: string) {
 		cleanup();
 		tests = [];
 		summary = null;
@@ -39,6 +48,8 @@
 		eventSource = api.streamDiagnostics(
 			mode,
 			restart,
+			routeMode,
+			routeTunnelId,
 			(event) => {
 				switch (event.type) {
 					case 'phase':
@@ -98,6 +109,7 @@
 					<DiagnosticsControls
 						onStart={startDiagnostics}
 						disabled={false}
+						{tunnels}
 					/>
 
 				{:else if pageState === 'running'}

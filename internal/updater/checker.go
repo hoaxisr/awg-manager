@@ -9,7 +9,6 @@ import (
 	osexec "os/exec"
 	"path"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -87,7 +86,7 @@ func Upgrade(_ context.Context, downloadURL string) error {
 	}
 
 	cmd := osexec.Command("sh", "-c", fmt.Sprintf("sleep 2 && opkg install %s && rm -f %s", ipkPath, ipkPath))
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	setUpgradeDetachedProcess(cmd)
 	if err := cmd.Start(); err != nil {
 		os.Remove(ipkPath)
 		return err

@@ -759,6 +759,7 @@ export interface DiagEvent {
 }
 
 export type DiagMode = 'quick' | 'full';
+export type DiagRouteMode = 'direct' | 'tunnel';
 
 // #endregion
 

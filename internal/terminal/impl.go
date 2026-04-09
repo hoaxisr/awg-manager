@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hoaxisr/awg-manager/internal/logger"
+	"github.com/hoaxisr/awg-manager/internal/logging"
 )
 
 const (
@@ -23,25 +23,23 @@ const (
 	opkgBinary     = "opkg"
 	installTimeout = 120 * time.Second
 	// First start after opkg install can be noticeably slower on some Keenetic models.
-	startTimeout   = 10 * time.Second
+	startTimeout = 10 * time.Second
 	// Retry once to hide transient cold-start failures without masking persistent errors.
 	startAttempts  = 2
 	startRetryWait = 1 * time.Second
 	stopTimeout    = 5 * time.Second
+
+	logGroup    = "terminal"
+	logSubgroup = ""
 )
 
 // ManagerImpl implements the Manager interface.
 type ManagerImpl struct {
-	log           *logger.Logger
+	log           logging.AppLogger
 	mu            sync.Mutex
 	cmd           *exec.Cmd
 	port          int
 	sessionActive bool
-}
-
-// New creates a new terminal manager.
-func New(log *logger.Logger) *ManagerImpl {
-	return &ManagerImpl{log: log}
 }
 
 // IsInstalled checks if ttyd is available via PATH lookup.
@@ -52,15 +50,17 @@ func (m *ManagerImpl) IsInstalled(ctx context.Context) bool {
 
 // Install runs opkg install ttyd with a timeout.
 func (m *ManagerImpl) Install(ctx context.Context) error {
+	m.log.AppLog(logging.LevelInfo, logGroup, logSubgroup, "install", "ttyd", "installing ttyd via opkg")
 	ctx, cancel := context.WithTimeout(ctx, installTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, opkgBinary, "install", "ttyd")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		m.log.AppLog(logging.LevelWarn, logGroup, logSubgroup, "install", "ttyd", fmt.Sprintf("opkg install failed: %s", string(output)))
 		return fmt.Errorf("opkg install ttyd failed: %s: %w", string(output), err)
 	}
-	m.log.Infof("ttyd installed successfully")
+	m.log.AppLog(logging.LevelInfo, logGroup, logSubgroup, "install", "ttyd", "ttyd installed successfully")
 	return nil
 }
 
@@ -70,8 +70,11 @@ func (m *ManagerImpl) Start(ctx context.Context) (int, error) {
 	defer m.mu.Unlock()
 
 	if m.cmd != nil {
+		m.log.AppLog(logging.LevelInfo, logGroup, logSubgroup, "start", "ttyd", fmt.Sprintf("already running on port %d", m.port))
 		return m.port, nil // already running
 	}
+
+	m.log.AppLog(logging.LevelInfo, logGroup, logSubgroup, "start", "ttyd", "starting ttyd")
 
 	var lastErr error
 	for attempt := 1; attempt <= startAttempts; attempt++ {
@@ -92,7 +95,7 @@ func (m *ManagerImpl) Start(ctx context.Context) (int, error) {
 		)
 		cmd.Stdout = output
 		cmd.Stderr = output
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		setTerminalSysProcAttr(cmd)
 
 		if err := cmd.Start(); err != nil {
 			lastErr = fmt.Errorf("failed to start ttyd: %w", err)
@@ -101,7 +104,7 @@ func (m *ManagerImpl) Start(ctx context.Context) (int, error) {
 
 		m.cmd = cmd
 		m.port = port
-		m.log.Infof("ttyd started on port %d (pid %d)", port, cmd.Process.Pid)
+		m.log.AppLog(logging.LevelInfo, logGroup, logSubgroup, "start", "ttyd", fmt.Sprintf("ttyd started on port %d (pid %d)", port, cmd.Process.Pid))
 
 		// Background goroutine to reap process on exit (e.g. --once self-termination).
 		go m.waitForExit(cmd)
@@ -125,7 +128,7 @@ func (m *ManagerImpl) Start(ctx context.Context) (int, error) {
 
 		lastErr = fmt.Errorf("ttyd failed to start: %s", reason)
 		if attempt < startAttempts {
-			m.log.Warnf("ttyd startup attempt %d/%d failed: %s", attempt, startAttempts, reason)
+			m.log.AppLog(logging.LevelWarn, logGroup, logSubgroup, "start", "ttyd", fmt.Sprintf("attempt %d/%d failed: %s", attempt, startAttempts, reason))
 			m.mu.Unlock()
 			time.Sleep(startRetryWait)
 			m.mu.Lock()
@@ -136,6 +139,7 @@ func (m *ManagerImpl) Start(ctx context.Context) (int, error) {
 	if lastErr == nil {
 		lastErr = fmt.Errorf("ttyd failed to start")
 	}
+	m.log.AppLog(logging.LevelWarn, logGroup, logSubgroup, "start", "ttyd", lastErr.Error())
 	return 0, lastErr
 }
 
@@ -250,7 +254,7 @@ func (m *ManagerImpl) waitForExit(cmd *exec.Cmd) {
 		if cmd.Process != nil {
 			pid = cmd.Process.Pid
 		}
-		m.log.Infof("ttyd process exited (pid %d)", pid)
+		m.log.AppLog(logging.LevelInfo, logGroup, logSubgroup, "exit", "ttyd", fmt.Sprintf("ttyd process exited (pid %d)", pid))
 		m.cmd = nil
 		m.port = 0
 		m.sessionActive = false
@@ -269,10 +273,10 @@ func (m *ManagerImpl) Stop(ctx context.Context) error {
 	pid := proc.Pid
 	m.mu.Unlock() // Release lock before waiting — waitForExit also needs it.
 
-	m.log.Infof("Stopping ttyd (pid %d)", pid)
+	m.log.AppLog(logging.LevelInfo, logGroup, logSubgroup, "stop", "ttyd", fmt.Sprintf("stopping ttyd (pid %d)", pid))
 
 	// SIGTERM first.
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
+	if err := terminateProcess(proc); err != nil {
 		return nil // process already gone
 	}
 
@@ -292,7 +296,7 @@ func (m *ManagerImpl) Stop(ctx context.Context) error {
 	case <-done:
 		return nil
 	case <-time.After(stopTimeout):
-		m.log.Warnf("ttyd did not exit gracefully, sending SIGKILL")
+		m.log.AppLog(logging.LevelWarn, logGroup, logSubgroup, "stop", "ttyd", "ttyd did not exit gracefully, sending SIGKILL")
 		_ = proc.Kill()
 		return nil
 	}
@@ -300,6 +304,9 @@ func (m *ManagerImpl) Stop(ctx context.Context) error {
 
 // Shutdown gracefully stops ttyd on app exit.
 func (m *ManagerImpl) Shutdown(ctx context.Context) error {
+	if m.IsRunning() {
+		m.log.AppLog(logging.LevelInfo, logGroup, logSubgroup, "shutdown", "ttyd", "shutting down ttyd")
+	}
 	return m.Stop(ctx)
 }
 
