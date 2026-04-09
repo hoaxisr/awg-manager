@@ -275,7 +275,9 @@ func main() {
 	}
 	orch.SetSupportsASC(ndmsinfo.SupportsWireguardASC)
 	orch.SetPingCheck(pingCheckFacade)
-	orch.SetDNSRoute(dnsRouteService)
+	if osdetect.Is5() {
+		orch.SetDNSRoute(dnsRouteService)
+	}
 	orch.SetStaticRoute(staticRouteService)
 	orch.SetClientRoute(clientRouteService)
 
