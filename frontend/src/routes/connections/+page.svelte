@@ -94,9 +94,14 @@
 <PageContainer>
 	<div class="page-header">
 		<h2>Соединения</h2>
-		<button class="btn btn-primary btn-sm" onclick={fetchData} disabled={loading}>
-			{loading ? 'Загрузка...' : data ? 'Обновить' : 'Показать'}
-		</button>
+		<div class="header-right">
+			{#if data?.fetchedAt}
+				<span class="fetched-at">{new Date(data.fetchedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+			{/if}
+			<button class="btn btn-primary btn-sm" onclick={fetchData} disabled={loading}>
+				{loading ? 'Загрузка...' : data ? 'Обновить' : 'Показать'}
+			</button>
+		</div>
 	</div>
 
 	{#if data}
@@ -148,6 +153,18 @@
 		justify-content: space-between;
 		align-items: center;
 		margin-bottom: 1rem;
+	}
+
+	.header-right {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.fetched-at {
+		font-size: 0.75rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--text-muted);
 	}
 
 	.tunnel-chips {
