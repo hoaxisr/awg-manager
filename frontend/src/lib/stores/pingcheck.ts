@@ -21,6 +21,21 @@ function createPingCheckStore() {
 		logs: { subscribe: logsList.subscribe },
 		loaded: { subscribe: loaded.subscribe },
 		updateStatus(data: PingCheckStateEvent) {
+			// Map raw NDMS status to UI status for nativewg tunnels.
+			const mapStatus = (raw: string, tunnel: TunnelPingStatus | undefined): TunnelPingStatus['status'] => {
+				if (!tunnel || tunnel.backend !== 'nativewg') {
+					// Kernel tunnels already send mapped status.
+					return raw as TunnelPingStatus['status'];
+				}
+				if (raw === 'pass') return 'alive';
+				if (raw === 'fail') {
+					if (data.failCount > 0) return 'recovering';
+					if (data.restartDetected) return 'recovering';
+					return 'alive';
+				}
+				return 'alive';
+			};
+
 			update(map => {
 				map.set(data.tunnelId, {
 					tunnelId: data.tunnelId,
@@ -32,11 +47,11 @@ function createPingCheckStore() {
 			});
 			// Also merge into statuses list so UI stays in sync
 			statusesList.update(list =>
-				list.map(t =>
-					t.tunnelId === data.tunnelId
-						? { ...t, status: data.status as TunnelPingStatus['status'], failCount: data.failCount, successCount: data.successCount }
-						: t
-				)
+				list.map(t => {
+					if (t.tunnelId !== data.tunnelId) return t;
+					const mapped = mapStatus(data.status, t);
+					return { ...t, status: mapped, failCount: data.failCount, successCount: data.successCount };
+				})
 			);
 		},
 		setSnapshot(data: SnapshotPingcheckEvent) {

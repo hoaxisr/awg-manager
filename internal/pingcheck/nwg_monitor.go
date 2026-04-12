@@ -38,8 +38,14 @@ type nwgMonitor struct {
 	prevFail     int
 	prevSuccess  int
 	prevStatus   string
+	prevBound    bool
 	lastLatency  int
 	startupPhase bool
+
+	// restartDetected is set when nwgMonitor detects that NDMS restarted
+	// the tunnel interface (counters reset after failure). Cleared on first
+	// successful check after restart.
+	restartDetected bool
 }
 
 // publishLog publishes a log entry as an SSE event.
@@ -64,7 +70,7 @@ func (m *nwgMonitor) publishLog(entry LogEntry) {
 // processDelta compares current counters with previous snapshot,
 // emits LogEntry records for each detected check, and updates state.
 // Called once per poll interval.
-func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
+func (m *nwgMonitor) processDelta(failCount, successCount int, status string, bound bool) {
 	latency := m.lastLatency
 	if latency <= 0 {
 		latency = LatencyNotAvailable
@@ -76,6 +82,7 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
 		m.prevFail = failCount
 		m.prevSuccess = successCount
 		m.prevStatus = status
+		m.prevBound = bound
 		m.initialized = true
 		m.startupPhase = true
 
@@ -104,6 +111,23 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
 			})
 		}
 		return
+	}
+
+	// Detect NDMS-initiated interface restart:
+	// 1. Bound transition: interface was down, now back up with zeroed counters
+	// 2. Counter reset: was failing (prevFail > 0), now counters zeroed
+	if m.initialized {
+		countersZeroed := failCount == 0 && successCount == 0
+		boundTransition := !m.prevBound && bound
+		counterReset := m.prevFail > 0 && countersZeroed
+
+		if countersZeroed && (boundTransition || counterReset) {
+			m.restartDetected = true
+		}
+		// Clear restart flag once NDMS reports first success after restart.
+		if m.restartDetected && successCount > 0 {
+			m.restartDetected = false
+		}
 	}
 
 	// Calculate deltas. If current < prev, counters were reset
@@ -201,16 +225,18 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string) {
 	// Publish state on every poll so frontend counters stay current.
 	if m.bus != nil {
 		m.bus.Publish("pingcheck:state", events.PingCheckStateEvent{
-			TunnelID:     m.tunnelID,
-			Status:       status,
-			FailCount:    failCount,
-			SuccessCount: successCount,
+			TunnelID:        m.tunnelID,
+			Status:          status,
+			FailCount:       failCount,
+			SuccessCount:    successCount,
+			RestartDetected: m.restartDetected,
 		})
 	}
 
 	m.prevFail = failCount
 	m.prevSuccess = successCount
 	m.prevStatus = status
+	m.prevBound = bound
 	if status == "pass" && successCount > 0 {
 		m.startupPhase = false
 	}
@@ -242,7 +268,7 @@ func (m *nwgMonitor) run(ctx context.Context) {
 		}
 
 		m.threshold = status.MaxFails
-		m.processDelta(status.FailCount, status.SuccessCount, status.Status)
+		m.processDelta(status.FailCount, status.SuccessCount, status.Status, status.Bound)
 	}
 
 	// Run first poll immediately after monitor start.

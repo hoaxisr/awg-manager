@@ -37,6 +37,7 @@ export interface PingCheckStateEvent {
 	status: string;
 	failCount: number;
 	successCount: number;
+	restartDetected?: boolean;
 }
 
 // --- Snapshot payloads ---
