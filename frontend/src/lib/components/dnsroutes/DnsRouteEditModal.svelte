@@ -11,9 +11,11 @@
 		saving: boolean;
 		onsave: (data: Partial<DnsRoute>) => void;
 		onclose: () => void;
+		isOS5?: boolean;
+		hydrarouteInstalled?: boolean;
 	}
 
-	let { open, route, tunnels: rawTunnels, saving, onsave, onclose }: Props = $props();
+	let { open, route, tunnels: rawTunnels, saving, onsave, onclose, isOS5 = false, hydrarouteInstalled = false }: Props = $props();
 	let tunnels = $derived((rawTunnels ?? []).filter(t => t.available || t.type === 'wan'));
 
 	// Form state
@@ -22,6 +24,10 @@
 	let subscriptions = $state<DnsRouteSubscription[]>([]);
 	let routes = $state<DnsRouteTarget[]>([]);
 	let newSubUrl = $state('');
+	let backend = $state<'ndms' | 'hydraroute'>('ndms');
+
+	let showBackendSelector = $derived(isOS5 && hydrarouteInstalled);
+	let isHydraRouteBackend = $derived(backend === 'hydraroute');
 
 	let isInitialized = $state(false);
 	let attempted = $state(false);
@@ -40,11 +46,13 @@
 					manualDomains = [...(route.manualDomains ?? [])];
 					subscriptions = (route.subscriptions ?? []).map((s) => ({ ...s }));
 					routes = (route.routes ?? []).map((r) => ({ ...r }));
+					backend = route.backend || (isOS5 ? 'ndms' : hydrarouteInstalled ? 'hydraroute' : 'ndms');
 				} else {
 					name = '';
 					manualDomains = [];
 					subscriptions = [];
 					routes = [];
+					backend = isOS5 ? 'ndms' : (hydrarouteInstalled ? 'hydraroute' : 'ndms');
 				}
 				newSubUrl = '';
 				newRouteTunnelId = '';
@@ -160,7 +168,8 @@
 			name: name.trim(),
 			manualDomains,
 			subscriptions,
-			routes
+			routes,
+			backend
 		};
 		onsave(data);
 	}
@@ -188,9 +197,24 @@
 		<div class="error-text" class:visible={nameError}>Введите название</div>
 	</div>
 
+	<!-- Backend selector -->
+	{#if showBackendSelector}
+		<div class="form-group">
+			<!-- svelte-ignore a11y_label_has_associated_control -->
+			<label class="form-label">Движок маршрутизации</label>
+			<select class="form-select" value={backend} onchange={(e) => backend = (e.target as HTMLSelectElement).value as 'ndms' | 'hydraroute'}>
+				<option value="ndms">ПО роутера (NDMS)</option>
+				<option value="hydraroute">HydraRoute Neo</option>
+			</select>
+		</div>
+	{/if}
+
 	<!-- Manual domains -->
 	<div class="form-section">
 		<div class="section-title">Домены (вручную)</div>
+		{#if isHydraRouteBackend}
+			<span class="field-hint geo-hint">Поддерживается geosite:TAG, например geosite:GOOGLE</span>
+		{/if}
 		<DnsRouteDomainEditor domains={manualDomains} onchange={handleDomainsChange} />
 	</div>
 
@@ -636,5 +660,16 @@
 		color: var(--text-muted);
 		padding: 0.5rem 0;
 		border-top: 1px dashed var(--border);
+	}
+
+	.field-hint {
+		display: block;
+		font-size: 0.6875rem;
+		margin-bottom: 0.375rem;
+	}
+
+	.geo-hint {
+		color: var(--accent);
+		font-style: italic;
 	}
 </style>
