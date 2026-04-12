@@ -278,6 +278,10 @@ class ApiClient {
 		return this.request('/system/info');
 	}
 
+	async restartDaemon(): Promise<void> {
+		await this.request('/system/restart', { method: 'POST' });
+	}
+
 	async getWANInterfaces(): Promise<WANInterface[]> {
 		return this.request('/system/wan-interfaces');
 	}

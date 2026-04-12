@@ -413,6 +413,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// System (protected + boot guarded)
 	mux.HandleFunc("/api/system/info", guarded(systemHandler.Info))
+	mux.HandleFunc("/api/system/restart", guarded(systemHandler.RestartDaemon))
 	mux.HandleFunc("/api/system/wan-interfaces", guarded(systemHandler.WANInterfaces))
 	mux.HandleFunc("/api/system/all-interfaces", guarded(systemHandler.AllInterfaces))
 	// Update endpoints (protected + boot guarded)

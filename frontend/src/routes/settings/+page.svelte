@@ -12,6 +12,7 @@
 	let loading = $state(true);
 	let saving = $state(false);
 	let updateInfo: UpdateInfo | null = $state(null);
+	let restarting = $state(false);
 
 	onMount(async () => {
 		try {
@@ -161,6 +162,18 @@
 		} catch { /* ignore */ }
 	}
 
+	async function restartDaemon() {
+		if (!confirm('Перезапустить AWG Manager?')) return;
+		restarting = true;
+		try {
+			await api.restartDaemon();
+			notifications.success('AWG Manager перезапускается...');
+		} catch (e) {
+			notifications.error('Не удалось перезапустить');
+			restarting = false;
+		}
+	}
+
 </script>
 
 <svelte:head>
@@ -204,6 +217,18 @@
 							</span>
 						</div>
 						<Toggle checked={settings.updates.checkEnabled} onchange={() => toggleUpdateCheck()} disabled={saving} />
+					</div>
+
+					<div class="setting-row">
+						<div class="flex flex-col gap-1">
+							<span class="font-medium">Перезапуск</span>
+							<span class="setting-description">
+								Перезапустить процесс AWG Manager. Туннели продолжат работать.
+							</span>
+						</div>
+						<button class="btn btn-ghost btn-sm" onclick={restartDaemon} disabled={restarting}>
+							{restarting ? 'Перезапуск...' : 'Перезапустить'}
+						</button>
 					</div>
 				</div>
 			</div>
