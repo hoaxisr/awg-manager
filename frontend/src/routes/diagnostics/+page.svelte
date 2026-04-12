@@ -17,8 +17,18 @@
         const tabParam = $page.url.searchParams.get('tab');
         if (tabParam === 'connections' || tabParam === 'logs' || tabParam === 'tests') {
             activeTab = tabParam;
+        } else if (!tabParam) {
+            activeTab = 'tests';
         }
     });
+
+    const tabTitles: Record<string, string> = {
+        tests: 'Диагностика',
+        connections: 'Соединения',
+        logs: 'Журнал',
+    };
+
+    let pageTitle = $derived(tabTitles[activeTab] ?? 'Диагностика');
 
     onMount(async () => {
         try {
@@ -36,7 +46,7 @@
 </script>
 
 <svelte:head>
-    <title>Диагностика - AWG Manager</title>
+    <title>{pageTitle} - AWG Manager</title>
 </svelte:head>
 
 <PageContainer>
