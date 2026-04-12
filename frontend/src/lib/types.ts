@@ -629,7 +629,7 @@ export interface TunnelPingStatus {
 	tunnelName: string;
 	enabled: boolean;
 	backend: 'kernel' | 'nativewg';
-	status: 'alive' | 'recovering' | 'disabled';
+	status: 'alive' | 'recovering' | 'disabled' | 'stopped';
 	method: string;
 	lastCheck?: string;
 	lastLatency: number;
@@ -637,6 +637,7 @@ export interface TunnelPingStatus {
 	successCount?: number;
 	failThreshold: number;
 	restartCount: number;
+	tunnelRunning?: boolean;
 }
 
 export interface PingLogEntry {
