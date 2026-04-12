@@ -18,6 +18,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/auth"
+	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/connections"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
@@ -89,6 +90,7 @@ type Server struct {
 	hydraService         *hydraroute.Service
 	orch                 *orchestrator.Orchestrator
 	bus                  *events.Bus
+	dnsCheckService      *dnscheck.Service
 	authMiddleware     *auth.Middleware
 	httpServer         *http.Server
 	loopbackListener   net.Listener // optional loopback listener for reverse proxy
@@ -144,6 +146,11 @@ func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, extern
 // SetTrafficCollector sets the traffic collector (for wiring system tunnel lister).
 func (s *Server) SetTrafficCollector(c *traffic.Collector) {
 	s.trafficCollector = c
+}
+
+// SetDnsCheckService sets the DNS check service (wired after port selection).
+func (s *Server) SetDnsCheckService(svc *dnscheck.Service) {
+	s.dnsCheckService = svc
 }
 
 // generateInstanceID creates a random 16-byte hex string (32 chars).
@@ -645,6 +652,14 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	})
 	sb.SetInstanceID(s.instanceID)
 	eventsHandler.SetSnapshotBuilder(sb)
+
+	// DNS routing diagnostics
+	if s.dnsCheckService != nil {
+		dnsCheckHandler := api.NewDnsCheckHandler(s.dnsCheckService)
+		mux.HandleFunc("/api/dns-check/start", guarded(dnsCheckHandler.Start))
+		mux.HandleFunc("/api/dns-check/probe/", dnsCheckHandler.Probe)  // NO auth — cross-origin
+		mux.HandleFunc("/api/dns-check/complete", guarded(dnsCheckHandler.Complete))
+	}
 
 	// Static files (SPA) - must be last
 	if s.config.WebRoot != "" {
