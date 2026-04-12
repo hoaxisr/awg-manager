@@ -8,15 +8,16 @@ import (
 )
 
 const (
-	neoBinary = "/opt/bin/neo"
-	pidFile   = "/var/run/hrneo.pid"
+	hrneoBinary = "/opt/bin/hrneo"
+	neoCommand  = "/opt/bin/neo"
+	pidFile     = "/var/run/hrneo.pid"
 )
 
 // Detect checks if HydraRoute Neo is installed and running.
 func Detect() Status {
 	var s Status
 
-	if _, err := os.Stat(neoBinary); err == nil {
+	if _, err := os.Stat(hrneoBinary); err == nil {
 		s.Installed = true
 	}
 
