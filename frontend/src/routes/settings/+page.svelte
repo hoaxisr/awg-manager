@@ -15,7 +15,7 @@
 	let restarting = $state(false);
 	let restartConfirmOpen = $state(false);
 	let hydraStatus = $state<HydraRouteStatus | null>(null);
-	let hydraLoading = $state(false);
+	// hydraLoading removed — Start/Stop/Restart moved to /settings/hydraroute
 
 	onMount(async () => {
 		try {
@@ -180,17 +180,6 @@
 		}
 	}
 
-	async function controlHydraRoute(action: 'start' | 'stop' | 'restart') {
-		hydraLoading = true;
-		try {
-			hydraStatus = await api.controlHydraRoute(action);
-			notifications.success(action === 'start' ? 'HydraRoute запущен' : action === 'stop' ? 'HydraRoute остановлен' : 'HydraRoute перезапущен');
-		} catch (e) {
-			notifications.error('Ошибка управления HydraRoute');
-		} finally {
-			hydraLoading = false;
-		}
-	}
 
 </script>
 
@@ -263,14 +252,7 @@
 							</span>
 						</div>
 						{#if hydraStatus?.installed}
-							<div style="display: flex; gap: 0.5rem;">
-								{#if !hydraStatus.running}
-									<button class="btn btn-ghost btn-sm" onclick={() => controlHydraRoute('start')} disabled={hydraLoading}>Запустить</button>
-								{:else}
-									<button class="btn btn-ghost btn-sm" onclick={() => controlHydraRoute('stop')} disabled={hydraLoading}>Остановить</button>
-								{/if}
-								<button class="btn btn-ghost btn-sm" onclick={() => controlHydraRoute('restart')} disabled={hydraLoading}>Перезапустить</button>
-							</div>
+							<a href="/settings/hydraroute" class="btn btn-ghost btn-sm">Настроить</a>
 						{/if}
 					</div>
 				</div>
