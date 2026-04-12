@@ -106,7 +106,7 @@ func (s *Service) Control(action string) error {
 
 	switch action {
 	case "start", "stop", "restart":
-		result, err := exec.Run(context.Background(), neoBinary, action)
+		result, err := exec.Run(context.Background(), neoCommand, action)
 		if err != nil {
 			return fmt.Errorf("neo %s: %w", action, exec.FormatError(result, err))
 		}
@@ -130,7 +130,7 @@ func (s *Service) scheduleRestart() {
 		s.restartTimer = nil
 		s.mu.Unlock()
 
-		result, err := exec.Run(context.Background(), neoBinary, "restart")
+		result, err := exec.Run(context.Background(), neoCommand, "restart")
 		if err != nil {
 			s.log.Warnf("hydraroute: neo restart failed: %v", exec.FormatError(result, err))
 		} else {
