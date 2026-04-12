@@ -40,7 +40,8 @@ import type {
 	TerminalStatus,
 	AccessPolicy,
 	ClientRoute,
-	ConnectionsResponse
+	ConnectionsResponse,
+	HydraRouteStatus
 } from '$lib/types';
 
 interface ApiResponse<T> {
@@ -280,6 +281,17 @@ class ApiClient {
 
 	async restartDaemon(): Promise<void> {
 		await this.request('/system/restart', { method: 'POST' });
+	}
+
+	async getHydraRouteStatus(): Promise<HydraRouteStatus> {
+		return this.request('/system/hydraroute-status');
+	}
+
+	async controlHydraRoute(action: 'start' | 'stop' | 'restart'): Promise<HydraRouteStatus> {
+		return this.request('/system/hydraroute-control', {
+			method: 'POST',
+			body: JSON.stringify({ action }),
+		});
 	}
 
 	async getWANInterfaces(): Promise<WANInterface[]> {
@@ -664,6 +676,13 @@ class ApiClient {
 			? `/dns-routes/refresh?id=${encodeURIComponent(id)}`
 			: '/dns-routes/refresh';
 		return this.request(endpoint, { method: 'POST' });
+	}
+
+	async bulkDnsRouteBackend(listIDs: string[], backend: 'ndms' | 'hydraroute'): Promise<{ updated: number }> {
+		return this.request('/dns-routes/bulk-backend', {
+			method: 'POST',
+			body: JSON.stringify({ listIDs, backend }),
+		});
 	}
 
 	// #endregion
