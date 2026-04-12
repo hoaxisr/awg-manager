@@ -279,6 +279,13 @@ export const SERVICE_PRESETS: ServicePreset[] = [
 		notice: 'Содержит широкие IP-ранги Akamai CDN (43 шт) и собственной сети Roblox (4 шт) — необходимы для игр в Roblox, но Akamai-блоки могут направлять в туннель трафик других сайтов.',
 	},
 	{
+		id: 'tmdb',
+		name: 'TMDB',
+		domains: [
+			'themoviedb.org', 'tmdb.org', 'tmdb-image-prod.b-cdn.net',
+		],
+	},
+	{
 		id: 'torrents',
 		name: 'Торренты',
 		domains: [
