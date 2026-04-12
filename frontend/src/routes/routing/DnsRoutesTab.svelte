@@ -249,7 +249,7 @@
         }
     }
 
-    async function handlePresetCreate(presets: ServicePreset[], tunnelId: string) {
+    async function handlePresetCreate(presets: ServicePreset[], tunnelId: string, presetBackend: 'ndms' | 'hydraroute' = 'ndms') {
         try {
             const lists = presets.map(preset => ({
                 name: preset.name,
@@ -259,6 +259,7 @@
                     : undefined,
                 enabled: true,
                 routes: [{ tunnelId, interface: tunnelId, fallback: 'auto' as const }],
+                backend: presetBackend,
             }));
             const result = await api.createDnsRouteBatch(lists);
 
@@ -374,6 +375,8 @@
     bind:open={dnsPresetOpen}
     existingNames={dnsRoutes.map(r => r.name)}
     tunnels={routingTunnels}
+    {isOS5}
+    {hydrarouteInstalled}
     onclose={() => dnsPresetOpen = false}
     oncreate={handlePresetCreate}
 />
