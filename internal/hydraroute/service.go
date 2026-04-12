@@ -3,6 +3,7 @@ package hydraroute
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,8 @@ type Service struct {
 	status            Status
 	restartTimer      *time.Timer
 	lastDomainContent string
+	geodata           *GeoDataStore
+	dnsListProvider   func() []DnsListInfo
 }
 
 // NewService creates a new HydraRoute service. Detects HRNeo on creation.
@@ -147,4 +150,123 @@ func (s *Service) BuildEntries(ctx context.Context, lists []ListInput) ([]Manage
 		})
 	}
 	return entries, nil
+}
+
+// SetGeoDataStore sets the GeoDataStore used for syncing geo file paths to config.
+func (s *Service) SetGeoDataStore(gds *GeoDataStore) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.geodata = gds
+}
+
+// SetDnsListProvider sets the function that returns current DNS list info for ipset usage calculation.
+func (s *Service) SetDnsListProvider(fn func() []DnsListInfo) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dnsListProvider = fn
+}
+
+// GetGeoData returns the current GeoDataStore.
+func (s *Service) GetGeoData() *GeoDataStore {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.geodata
+}
+
+// ReadConfig reads and returns the current HydraRoute config.
+func (s *Service) ReadConfig() (*Config, error) {
+	return ReadConfig()
+}
+
+// WriteConfig syncs geo file paths from geodata (if set), writes the config, and schedules a restart.
+func (s *Service) WriteConfig(cfg *Config) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.geodata != nil {
+		geoIP, geoSite := s.geodata.GeoFilePaths()
+		cfg.GeoIPFiles = geoIP
+		cfg.GeoSiteFiles = geoSite
+	}
+
+	if err := WriteConfig(cfg); err != nil {
+		return err
+	}
+
+	s.scheduleRestart()
+	return nil
+}
+
+// SyncGeoFilesToConfig reads the current config and writes it back with updated geo file paths.
+func (s *Service) SyncGeoFilesToConfig() error {
+	cfg, err := ReadConfig()
+	if err != nil {
+		return err
+	}
+	return s.WriteConfig(cfg)
+}
+
+// CalculateIpsetUsage returns the current ipset usage per kernel interface.
+func (s *Service) CalculateIpsetUsage() (*IpsetUsage, error) {
+	cfg, err := ReadConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	usage := &IpsetUsage{
+		MaxElem: cfg.EffectiveMaxElem(),
+		Usage:   make(map[string]int),
+	}
+
+	s.mu.Lock()
+	provider := s.dnsListProvider
+	gds := s.geodata
+	s.mu.Unlock()
+
+	if provider == nil || gds == nil {
+		return usage, nil
+	}
+
+	// Build geoip tag→count lookup from all tracked geoip files (first file wins for duplicate tags).
+	geoIPCount := make(map[string]int)
+	geoIPFiles, _ := gds.GeoFilePaths()
+	for _, path := range geoIPFiles {
+		tags, err := gds.GetTags(path)
+		if err != nil {
+			continue
+		}
+		for _, t := range tags {
+			key := strings.ToLower(t.Name)
+			if _, exists := geoIPCount[key]; !exists {
+				geoIPCount[key] = t.Count
+			}
+		}
+	}
+
+	lists := provider()
+	for _, list := range lists {
+		if list.TunnelID == "" {
+			continue
+		}
+
+		iface, err := s.resolver.GetKernelIfaceName(context.Background(), list.TunnelID)
+		if err != nil {
+			continue
+		}
+
+		for _, subnet := range list.Subnets {
+			lower := strings.ToLower(subnet)
+			if strings.HasPrefix(lower, "geoip:") {
+				tag := strings.TrimPrefix(lower, "geoip:")
+				if count, ok := geoIPCount[tag]; ok {
+					usage.Usage[iface] += count
+				}
+			} else {
+				// Static CIDR counts as 1.
+				usage.Usage[iface]++
+			}
+		}
+	}
+
+	return usage, nil
 }
