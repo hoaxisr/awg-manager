@@ -41,7 +41,11 @@ import type {
 	AccessPolicy,
 	ClientRoute,
 	ConnectionsResponse,
-	HydraRouteStatus
+	HydraRouteStatus,
+	HydraRouteConfig,
+	GeoFileEntry,
+	GeoTag,
+	IpsetUsage
 } from '$lib/types';
 
 interface ApiResponse<T> {
@@ -292,6 +296,47 @@ class ApiClient {
 			method: 'POST',
 			body: JSON.stringify({ action }),
 		});
+	}
+
+	async getHydraRouteConfig(): Promise<HydraRouteConfig> {
+		return this.request('/hydraroute/config');
+	}
+
+	async updateHydraRouteConfig(config: HydraRouteConfig): Promise<HydraRouteConfig> {
+		return this.request('/hydraroute/config/update', {
+			method: 'PUT',
+			body: JSON.stringify(config),
+		});
+	}
+
+	async getGeoFiles(): Promise<GeoFileEntry[]> {
+		return this.request('/hydraroute/geo-files');
+	}
+
+	async addGeoFile(type: 'geosite' | 'geoip', url: string): Promise<GeoFileEntry> {
+		return this.request('/hydraroute/geo-files/add', {
+			method: 'POST',
+			body: JSON.stringify({ type, url }),
+		});
+	}
+
+	async deleteGeoFile(path: string): Promise<void> {
+		await this.request(`/hydraroute/geo-files/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+	}
+
+	async updateGeoFile(path?: string): Promise<unknown> {
+		return this.request('/hydraroute/geo-files/update', {
+			method: 'POST',
+			body: JSON.stringify({ path: path || '' }),
+		});
+	}
+
+	async getGeoTags(path: string): Promise<GeoTag[]> {
+		return this.request(`/hydraroute/geo-tags?path=${encodeURIComponent(path)}`);
+	}
+
+	async getIpsetUsage(): Promise<IpsetUsage> {
+		return this.request('/hydraroute/ipset-usage');
 	}
 
 	async getWANInterfaces(): Promise<WANInterface[]> {

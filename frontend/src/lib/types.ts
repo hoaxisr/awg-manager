@@ -450,6 +450,41 @@ export interface HydraRouteStatus {
 	version?: string;
 }
 
+export interface HydraRouteConfig {
+	autoStart: boolean;
+	clearIPSet: boolean;
+	cidr: boolean;
+	ipsetEnableTimeout: boolean;
+	ipsetTimeout: number;
+	ipsetMaxElem: number;
+	directRouteEnabled: boolean;
+	globalRouting: boolean;
+	conntrackFlush: boolean;
+	log: string;
+	logFile: string;
+	geoIPFiles: string[];
+	geoSiteFiles: string[];
+}
+
+export interface GeoFileEntry {
+	type: 'geosite' | 'geoip';
+	path: string;
+	url: string;
+	size: number;
+	tagCount: number;
+	updated: string;
+}
+
+export interface GeoTag {
+	name: string;
+	count: number;
+}
+
+export interface IpsetUsage {
+	maxElem: number;
+	usage: Record<string, number>;
+}
+
 export interface SystemInfo {
 	version: string;
 	goVersion: string;
