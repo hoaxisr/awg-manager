@@ -37,10 +37,11 @@ type TunnelUpdatedEvent struct {
 
 // PingCheckStateEvent is sent when ping-check status changes.
 type PingCheckStateEvent struct {
-	TunnelID     string `json:"tunnelId"`
-	Status       string `json:"status"`
-	FailCount    int    `json:"failCount"`
-	SuccessCount int    `json:"successCount"`
+	TunnelID        string `json:"tunnelId"`
+	Status          string `json:"status"`
+	FailCount       int    `json:"failCount"`
+	SuccessCount    int    `json:"successCount"`
+	RestartDetected bool   `json:"restartDetected,omitempty"`
 }
 
 // LogEntryEvent is sent for each new log entry.

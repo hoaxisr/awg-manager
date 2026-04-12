@@ -90,7 +90,7 @@
 				{getMethodLabel(tunnel.method)}
 			</span>
 			{#if isNativeWG}
-				{#if tunnel.successCount != null || tunnel.failCount > 0}
+				{#if tunnel.successCount != null || tunnel.failCount > 0 || tunnel.status === 'recovering'}
 					<span class="detail detail-success">
 						<span class="detail-label">Успехов:</span> {tunnel.successCount ?? 0}
 					</span>
