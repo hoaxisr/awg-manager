@@ -5,11 +5,11 @@
 
     function defaultChecks(): DnsCheckResult[] {
         return [
-            { id: 'tunnel', status: 'pending', title: 'Туннель работает', message: 'Проверка состояния VPN-интерфейса' },
-            { id: 'routes', status: 'pending', title: 'DNS-маршруты настроены', message: 'Есть ли активные правила маршрутизации по доменам' },
-            { id: 'dns', status: 'pending', title: 'Устройство использует DNS роутера', message: 'Ваши DNS-запросы проходят через роутер' },
-            { id: 'policy', status: 'pending', title: 'Политика доступа', message: 'Устройство в стандартной политике маршрутизации' },
-            { id: 'encryption', status: 'pending', title: 'Шифрование DNS', message: 'DNS-over-TLS или DNS-over-HTTPS настроен на роутере' },
+            { id: 'tunnel_running', status: 'pending', title: 'Туннель работает', message: 'Проверка состояния VPN-интерфейса' },
+            { id: 'dns_routes', status: 'pending', title: 'DNS-маршруты настроены', message: 'Есть ли активные правила маршрутизации по доменам' },
+            { id: 'dns_probe', status: 'pending', title: 'Устройство использует DNS роутера', message: 'Ваши DNS-запросы проходят через роутер' },
+            { id: 'client_policy', status: 'pending', title: 'Политика доступа', message: 'Устройство в стандартной политике маршрутизации' },
+            { id: 'dns_encryption', status: 'pending', title: 'Шифрование DNS', message: 'DNS-over-TLS или DNS-over-HTTPS настроен на роутере' },
         ];
     }
 
