@@ -1,11 +1,13 @@
 package api
 
 import (
+	"encoding/json"
 	"net"
 	"net/http"
 	"os"
 	"runtime"
 
+	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
@@ -41,6 +43,7 @@ type SystemHandler struct {
 	ndmsClient       ndms.Client
 	restartFn        func()
 	bootStatusFn     func() bool // returns true if boot is still in progress
+	hydra            *hydraroute.Service
 }
 
 // NewSystemHandler creates a new system handler.
@@ -93,6 +96,11 @@ func (h *SystemHandler) SetBootStatusFunc(fn func() bool) {
 	h.bootStatusFn = fn
 }
 
+// SetHydraRoute sets the HydraRoute Neo service for status/control endpoints.
+func (h *SystemHandler) SetHydraRoute(svc *hydraroute.Service) {
+	h.hydra = svc
+}
+
 // RestartDaemon triggers a self-restart of the AWG Manager daemon.
 func (h *SystemHandler) RestartDaemon(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -105,6 +113,43 @@ func (h *SystemHandler) RestartDaemon(w http.ResponseWriter, r *http.Request) {
 	}
 	response.Success(w, map[string]string{"status": "restarting"})
 	h.restartFn()
+}
+
+// HydraRouteStatus returns HydraRoute Neo detection status.
+func (h *SystemHandler) HydraRouteStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if h.hydra == nil {
+		response.Success(w, hydraroute.Status{})
+		return
+	}
+	response.Success(w, h.hydra.RefreshStatus())
+}
+
+// HydraRouteControl starts/stops/restarts the HydraRoute daemon.
+func (h *SystemHandler) HydraRouteControl(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if h.hydra == nil {
+		response.Error(w, "HydraRoute not available", "HYDRAROUTE_UNAVAILABLE")
+		return
+	}
+	var req struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "Invalid request", "INVALID_REQUEST")
+		return
+	}
+	if err := h.hydra.Control(req.Action); err != nil {
+		response.Error(w, err.Error(), "HYDRAROUTE_CONTROL_ERROR")
+		return
+	}
+	response.Success(w, h.hydra.GetStatus())
 }
 
 // Info returns system information.

@@ -30,6 +30,7 @@ type RoutingSnapshot struct {
 	PolicyDevices    interface{} `json:"policyDevices"`
 	PolicyInterfaces interface{} `json:"policyInterfaces"`
 	ClientRoutes     interface{} `json:"clientRoutes"`
+	HydraRouteStatus interface{} `json:"hydrarouteStatus,omitempty"`
 }
 
 // Catalog provides a unified tunnel listing and ID resolution for all routing subsystems.
@@ -106,7 +107,8 @@ type CatalogImpl struct {
 	snapAccessPolicies   SnapshotFunc
 	snapPolicyDevices    SnapshotFunc
 	snapPolicyInterfaces SnapshotFunc
-	snapClientRoutes     SnapshotFunc
+	snapClientRoutes         SnapshotFunc
+	snapHydraRouteStatus     SnapshotFunc
 }
 
 // NewCatalog creates a new CatalogImpl.
@@ -305,6 +307,8 @@ func (c *CatalogImpl) SetSnapshotProvider(name string, fn SnapshotFunc) {
 		c.snapPolicyInterfaces = fn
 	case "clientRoutes":
 		c.snapClientRoutes = fn
+	case "hydrarouteStatus":
+		c.snapHydraRouteStatus = fn
 	}
 }
 
@@ -339,6 +343,9 @@ func (c *CatalogImpl) SnapshotAll(ctx context.Context) *RoutingSnapshot {
 	}
 	if v := c.callSnap(ctx, c.snapClientRoutes); v != nil {
 		snap.ClientRoutes = v
+	}
+	if v := c.callSnap(ctx, c.snapHydraRouteStatus); v != nil {
+		snap.HydraRouteStatus = v
 	}
 
 	return snap
