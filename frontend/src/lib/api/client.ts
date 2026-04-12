@@ -45,7 +45,9 @@ import type {
 	HydraRouteConfig,
 	GeoFileEntry,
 	GeoTag,
-	IpsetUsage
+	IpsetUsage,
+	DnsCheckStartResponse,
+	DnsCheckCompleteResponse
 } from '$lib/types';
 
 interface ApiResponse<T> {
@@ -1037,6 +1039,23 @@ class ApiClient {
 		if (params.sortDir) sp.set('sortDir', params.sortDir);
 		const qs = sp.toString();
 		return this.request<ConnectionsResponse>(`/connections${qs ? '?' + qs : ''}`);
+	}
+
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region DNS Check
+	// ─────────────────────────────────────────────
+
+	async startDnsCheck(): Promise<DnsCheckStartResponse> {
+		return this.request('/dns-check/start', { method: 'POST' });
+	}
+
+	async completeDnsCheck(token: string, dnsReached: boolean): Promise<DnsCheckCompleteResponse> {
+		return this.request('/dns-check/complete', {
+			method: 'POST',
+			body: JSON.stringify({ token, dnsReached }),
+		});
 	}
 
 	// #endregion

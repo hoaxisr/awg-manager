@@ -868,6 +868,32 @@ export interface ConnectionsResponse {
 // #region SSE Events (re-exports from api/events.ts)
 // ─────────────────────────────────────────────
 
+// ─────────────────────────────────────────────
+// #region DNS Check
+// ─────────────────────────────────────────────
+
+export interface DnsCheckResult {
+	id: string;
+	status: 'ok' | 'fail' | 'warning' | 'pending';
+	title: string;
+	message: string;
+	detail?: string;
+}
+
+export interface DnsCheckStartResponse {
+	token: string;
+	clientIP: string;
+	hostname: string;
+	port: number;
+	checks: DnsCheckResult[];
+}
+
+export interface DnsCheckCompleteResponse {
+	checks: DnsCheckResult[];
+}
+
+// #endregion
+
 export type {
 	TunnelStateEvent,
 	TunnelDeletedEvent,
