@@ -23,7 +23,7 @@
 	let summary = $state<DiagDoneSummary | null>(null);
 	let errorMessage = $state('');
 	let lastMode = $state<DiagMode>('quick');
-	let eventSource = $state<EventSource | null>(null);
+	let eventSource: EventSource | null = null;
 
 	function cleanup() {
 		if (eventSource) {
