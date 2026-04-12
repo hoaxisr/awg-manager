@@ -3,7 +3,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { PageContainer, LoadingSpinner } from '$lib/components/layout';
-	import { Toggle } from '$lib/components/ui';
+	import { Toggle, Modal } from '$lib/components/ui';
 	import { SystemInfoGrid, LoggingSettings, UpdateSection, DnsRouteSettings, HiddenTunnelsSettings } from '$lib/components/settings';
 	import type { SystemInfo, Settings, UpdateInfo, HydraRouteStatus } from '$lib/types';
 
@@ -13,6 +13,7 @@
 	let saving = $state(false);
 	let updateInfo: UpdateInfo | null = $state(null);
 	let restarting = $state(false);
+	let restartConfirmOpen = $state(false);
 	let hydraStatus = $state<HydraRouteStatus | null>(null);
 	let hydraLoading = $state(false);
 
@@ -168,7 +169,7 @@
 	}
 
 	async function restartDaemon() {
-		if (!confirm('Перезапустить AWG Manager?')) return;
+		restartConfirmOpen = false;
 		restarting = true;
 		try {
 			await api.restartDaemon();
@@ -243,7 +244,7 @@
 								Перезапустить процесс AWG Manager. Туннели продолжат работать.
 							</span>
 						</div>
-						<button class="btn btn-ghost btn-sm" onclick={restartDaemon} disabled={restarting}>
+						<button class="btn btn-ghost btn-sm" onclick={() => restartConfirmOpen = true} disabled={restarting}>
 							{restarting ? 'Перезапуск...' : 'Перезапустить'}
 						</button>
 					</div>
@@ -371,6 +372,14 @@
 		</div>
 
 	{/if}
+
+	<Modal open={restartConfirmOpen} title="Перезапуск AWG Manager" size="sm" onclose={() => restartConfirmOpen = false}>
+		<p style="color: var(--text-secondary); font-size: 0.875rem; margin: 0;">Перезапустить процесс AWG Manager? Туннели продолжат работать.</p>
+		{#snippet actions()}
+			<button class="btn btn-ghost" onclick={() => restartConfirmOpen = false}>Отмена</button>
+			<button class="btn btn-primary" onclick={restartDaemon}>Перезапустить</button>
+		{/snippet}
+	</Modal>
 </PageContainer>
 
 <style>

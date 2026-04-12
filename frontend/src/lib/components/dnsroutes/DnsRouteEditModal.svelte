@@ -215,7 +215,7 @@
 		{#if isHydraRouteBackend}
 			<span class="field-hint geo-hint">Поддерживается geosite:TAG, например geosite:GOOGLE</span>
 		{/if}
-		<DnsRouteDomainEditor domains={manualDomains} onchange={handleDomainsChange} />
+		<DnsRouteDomainEditor domains={manualDomains} onchange={handleDomainsChange} allowGeoTags={isHydraRouteBackend} />
 	</div>
 
 	<!-- Subscriptions -->
