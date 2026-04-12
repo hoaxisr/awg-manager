@@ -5,7 +5,7 @@
 	import { PageContainer, LoadingSpinner } from '$lib/components/layout';
 	import { Toggle } from '$lib/components/ui';
 	import { SystemInfoGrid, LoggingSettings, UpdateSection, DnsRouteSettings, HiddenTunnelsSettings } from '$lib/components/settings';
-	import type { SystemInfo, Settings, UpdateInfo } from '$lib/types';
+	import type { SystemInfo, Settings, UpdateInfo, HydraRouteStatus } from '$lib/types';
 
 	let systemInfo: SystemInfo | null = $state(null);
 	let settings = $state<Settings | null>(null);
@@ -13,6 +13,8 @@
 	let saving = $state(false);
 	let updateInfo: UpdateInfo | null = $state(null);
 	let restarting = $state(false);
+	let hydraStatus = $state<HydraRouteStatus | null>(null);
+	let hydraLoading = $state(false);
 
 	onMount(async () => {
 		try {
@@ -26,6 +28,9 @@
 		} finally {
 			loading = false;
 		}
+		try {
+			hydraStatus = await api.getHydraRouteStatus();
+		} catch { /* ignore - HR may not be available */ }
 	});
 
 	async function toggleAuth() {
@@ -174,6 +179,18 @@
 		}
 	}
 
+	async function controlHydraRoute(action: 'start' | 'stop' | 'restart') {
+		hydraLoading = true;
+		try {
+			hydraStatus = await api.controlHydraRoute(action);
+			notifications.success(action === 'start' ? 'HydraRoute запущен' : action === 'stop' ? 'HydraRoute остановлен' : 'HydraRoute перезапущен');
+		} catch (e) {
+			notifications.error('Ошибка управления HydraRoute');
+		} finally {
+			hydraLoading = false;
+		}
+	}
+
 </script>
 
 <svelte:head>
@@ -229,6 +246,31 @@
 						<button class="btn btn-ghost btn-sm" onclick={restartDaemon} disabled={restarting}>
 							{restarting ? 'Перезапуск...' : 'Перезапустить'}
 						</button>
+					</div>
+
+					<div class="setting-row">
+						<div class="flex flex-col gap-1">
+							<span class="font-medium">HydraRoute Neo</span>
+							<span class="setting-description">
+								{#if !hydraStatus || !hydraStatus.installed}
+									Не обнаружен — <a href="https://github.com/Ground-Zerro/HydraRoute" target="_blank" rel="noopener">установить</a>
+								{:else if hydraStatus.running}
+									<span style="color: var(--success)">Работает</span>
+								{:else}
+									<span style="color: var(--text-muted)">Остановлен</span>
+								{/if}
+							</span>
+						</div>
+						{#if hydraStatus?.installed}
+							<div style="display: flex; gap: 0.5rem;">
+								{#if !hydraStatus.running}
+									<button class="btn btn-ghost btn-sm" onclick={() => controlHydraRoute('start')} disabled={hydraLoading}>Запустить</button>
+								{:else}
+									<button class="btn btn-ghost btn-sm" onclick={() => controlHydraRoute('stop')} disabled={hydraLoading}>Остановить</button>
+								{/if}
+								<button class="btn btn-ghost btn-sm" onclick={() => controlHydraRoute('restart')} disabled={hydraLoading}>Перезапустить</button>
+							</div>
+						{/if}
 					</div>
 				</div>
 			</div>
