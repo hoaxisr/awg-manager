@@ -8,22 +8,29 @@
         open: boolean;
         existingNames: string[];
         tunnels: RoutingTunnel[];
+        isOS5?: boolean;
+        hydrarouteInstalled?: boolean;
         onclose: () => void;
-        oncreate: (presets: ServicePreset[], tunnelId: string) => void;
+        oncreate: (presets: ServicePreset[], tunnelId: string, backend: 'ndms' | 'hydraroute') => void;
     }
 
     let {
         open = $bindable(false),
         existingNames,
         tunnels,
+        isOS5 = false,
+        hydrarouteInstalled = false,
         onclose,
         oncreate,
     }: Props = $props();
 
     let selected = $state<Set<string>>(new Set());
     let defaultTunnelId = $state('');
+    let backend = $state<'ndms' | 'hydraroute'>('ndms');
     let creating = $state(false);
     let wasOpen = $state(false);
+
+    let showBackendSelector = $derived(isOS5 && hydrarouteInstalled);
 
     let userTunnels = $derived(tunnels.filter(t => t.type === 'managed' && t.available));
     let systemTunnels = $derived(tunnels.filter(t => t.type === 'system' && t.available));
@@ -34,6 +41,7 @@
         if (open && !wasOpen) {
             selected = new Set();
             defaultTunnelId = tunnels.find(t => t.available)?.id ?? '';
+            backend = isOS5 ? 'ndms' : (hydrarouteInstalled ? 'hydraroute' : 'ndms');
             creating = false;
         }
         wasOpen = open;
@@ -78,7 +86,7 @@
         if (selected.size === 0 || !defaultTunnelId) return;
         creating = true;
         const presets = SERVICE_PRESETS.filter(p => selected.has(p.id));
-        oncreate(presets, defaultTunnelId);
+        oncreate(presets, defaultTunnelId, backend);
     }
 </script>
 
@@ -129,8 +137,15 @@
         </div>
     {/if}
 
-    <!-- Tunnel selector -->
+    <!-- Backend + Tunnel selector -->
     <div class="tunnel-bar">
+        {#if showBackendSelector}
+            <span class="tunnel-label">Движок:</span>
+            <select class="tunnel-select" style="flex: 0 1 auto; max-width: 180px;" bind:value={backend} disabled={creating}>
+                <option value="ndms">NDMS</option>
+                <option value="hydraroute">HydraRoute Neo</option>
+            </select>
+        {/if}
         <span class="tunnel-label">Туннель:</span>
         <select class="tunnel-select" bind:value={defaultTunnelId} disabled={creating}>
             {#if userTunnels.length > 0}
