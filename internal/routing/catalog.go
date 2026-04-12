@@ -50,6 +50,10 @@ type Catalog interface {
 
 	// SnapshotAll collects all routing data for SSE snapshot.
 	SnapshotAll(ctx context.Context) *RoutingSnapshot
+
+	// GetKernelIfaceName resolves tunnelID to the kernel-level interface name
+	// for HydraRoute DirectRoute (not NDMS name).
+	GetKernelIfaceName(ctx context.Context, tunnelID string) (string, error)
 }
 
 // TunnelWithStatus is the tunnel info Catalog needs from the provider.
@@ -262,6 +266,26 @@ func (c *CatalogImpl) GetKernelIface(ctx context.Context, tunnelID string) (stri
 		return nwg.NewNWGNames(entry.NWGIndex).IfaceName, true
 	}
 	return tunnel.NewNames(tunnelID).IfaceName, true
+}
+
+// GetKernelIfaceName resolves tunnelID to the kernel-level interface name
+// for HydraRoute DirectRoute (not NDMS name).
+func (c *CatalogImpl) GetKernelIfaceName(ctx context.Context, tunnelID string) (string, error) {
+	// WAN: "wan:ppp0" → "ppp0"
+	if strings.HasPrefix(tunnelID, "wan:") {
+		return strings.TrimPrefix(tunnelID, "wan:"), nil
+	}
+	// System: "system:Wireguard0" → "Wireguard0"
+	if tunnel.IsSystemTunnel(tunnelID) {
+		return tunnel.SystemTunnelName(tunnelID), nil
+	}
+	// NativeWG: kernel iface is "nwgX"
+	if entry, err := c.store.Get(tunnelID); err == nil && entry.Backend == "nativewg" {
+		return nwg.NewNWGNames(entry.NWGIndex).IfaceName, nil
+	}
+	// Managed kernel: OS4 "awgm0" → "awgm0", OS5 "awg10" → "opkgtun10"
+	names := tunnel.NewNames(tunnelID)
+	return names.IfaceName, nil
 }
 
 // SetSnapshotProvider registers a named snapshot provider function.
