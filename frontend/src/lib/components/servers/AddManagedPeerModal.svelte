@@ -78,7 +78,7 @@
 			{#if routerIP}
 				<div class="toggle-row">
 					<span class="toggle-label">DNS роутера ({routerIP})</span>
-					<Toggle checked={useRouterDNS} onchange={() => { useRouterDNS = !useRouterDNS; if (useRouterDNS) dns = routerIP; else dns = ''; }} size="sm" />
+					<Toggle checked={useRouterDNS} onchange={(val) => { useRouterDNS = val; dns = val ? routerIP : ''; }} size="sm" />
 				</div>
 			{/if}
 			<span class="hint-text">По умолчанию: 1.1.1.1, 8.8.8.8</span>
