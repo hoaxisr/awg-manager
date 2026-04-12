@@ -8,14 +8,15 @@
     import DiagnosticsTestsTab from './DiagnosticsTestsTab.svelte';
     import ConnectionsTab from './ConnectionsTab.svelte';
     import LogsTab from './LogsTab.svelte';
+    import DnsCheckTab from './DnsCheckTab.svelte';
 
-    let activeTab = $state<'tests' | 'connections' | 'logs'>('tests');
+    let activeTab = $state<'tests' | 'connections' | 'logs' | 'dnscheck'>('tests');
     let tunnels = $state<TunnelListItem[]>([]);
 
     // Deep link: ?tab=connections or ?tab=logs (from redirects)
     $effect(() => {
         const tabParam = $page.url.searchParams.get('tab');
-        if (tabParam === 'connections' || tabParam === 'logs' || tabParam === 'tests') {
+        if (tabParam === 'connections' || tabParam === 'logs' || tabParam === 'tests' || tabParam === 'dnscheck') {
             activeTab = tabParam;
         } else if (!tabParam) {
             activeTab = 'tests';
@@ -26,6 +27,7 @@
         tests: 'Диагностика',
         connections: 'Соединения',
         logs: 'Журнал',
+        dnscheck: 'DNS-проверка',
     };
 
     let pageTitle = $derived(tabTitles[activeTab] ?? 'Диагностика');
@@ -42,6 +44,7 @@
         { id: 'tests', label: 'Тесты' },
         { id: 'connections', label: 'Соединения' },
         { id: 'logs', label: 'Журнал' },
+        { id: 'dnscheck', label: 'DNS-проверка' },
     ];
 </script>
 
@@ -64,5 +67,7 @@
         <ConnectionsTab />
     {:else if activeTab === 'logs'}
         <LogsTab />
+    {:else if activeTab === 'dnscheck'}
+        <DnsCheckTab />
     {/if}
 </PageContainer>
