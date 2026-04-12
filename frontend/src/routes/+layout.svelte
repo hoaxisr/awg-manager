@@ -316,10 +316,15 @@
 		</main>
 
 		<div class="toast-container">
+			{#if $notifications.length > 1}
+				<button class="toast-dismiss-all" onclick={() => notifications.clearAll()}>
+					Закрыть все ({$notifications.length})
+				</button>
+			{/if}
 			{#each $notifications as notification (notification.id)}
-				<div class="toast toast-{notification.type}">
+				<button class="toast toast-{notification.type}" onclick={() => notifications.remove(notification.id)}>
 					{notification.message}
-				</div>
+				</button>
 			{/each}
 		</div>
 
