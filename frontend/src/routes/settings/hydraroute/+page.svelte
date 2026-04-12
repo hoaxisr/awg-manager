@@ -142,11 +142,11 @@
 		return `${(bytes / 1048576).toFixed(1)} МБ`;
 	}
 
-	const ipsetUsageForFile = $derived(
-		tagModalFile && ipsetUsage
-			? (ipsetUsage.usage[tagModalFile.path] ?? 0)
-			: 0
-	);
+	// The tag browser on the settings page is for discovery, not for adding tags to a
+	// specific routing rule. ipset usage is keyed by kernel interface name, which we
+	// don't know here. Pass 0 / empty to disable the per-interface bar; per-rule
+	// validation will be enforced in the DNS route edit modal.
+	const ipsetUsageForFile = $derived(0);
 
 	const ipsetMaxElem = $derived(ipsetUsage?.maxElem ?? 65536);
 </script>
@@ -400,8 +400,8 @@
 		tags={geoTags}
 		fileType={tagModalFile.type}
 		ipsetMaxElem={ipsetMaxElem}
-		ifaceUsage={ipsetUsageForFile}
-		ifaceName={tagModalFile.path.split('/').pop() ?? tagModalFile.path}
+		ifaceUsage={0}
+		ifaceName=""
 		onclose={() => { tagModalOpen = false; tagModalFile = null; }}
 	/>
 {/if}

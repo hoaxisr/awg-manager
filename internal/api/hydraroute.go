@@ -52,7 +52,7 @@ func (h *HydraRouteHandler) UpdateConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	response.Success(w, nil)
+	response.Success(w, cfg)
 }
 
 // ListGeoFiles returns all tracked geo data files.
