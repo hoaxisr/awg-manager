@@ -23,6 +23,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/cleanup"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/connectivity"
+	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
@@ -446,6 +447,16 @@ func main() {
 		srv.SetLoopbackAddr(fmt.Sprintf("127.0.0.1:%d", selectedPort))
 	}
 
+	// DNS routing diagnostics (wired after port selection)
+	dnsCheckService := dnscheck.NewService(
+		ndmsClient,
+		&dnsRouteCountAdapter{store: dnsRouteStore},
+		&runningTunnelAdapter{svc: tunnelService},
+		log,
+		selectedPort,
+	)
+	srv.SetDnsCheckService(dnsCheckService)
+
 	bootLog := logging.NewScopedLogger(loggingService, logging.GroupSystem, logging.SubBoot)
 
 	logStartup(bootLog, version, string(osdetect.Get()), listenAddr, settings)
@@ -590,6 +601,45 @@ func (a *tunnelProviderAdapter) GetState(ctx context.Context, tunnelID string) t
 
 func (a *tunnelProviderAdapter) WANModel() *wan.Model {
 	return a.svc.WANModel()
+}
+
+// dnsRouteCountAdapter adapts dnsroute.Store to dnscheck.DnsRouteProvider.
+type dnsRouteCountAdapter struct {
+	store *dnsroute.Store
+}
+
+func (a *dnsRouteCountAdapter) ListEnabledCount(_ context.Context) (int, int) {
+	data := a.store.GetCached()
+	if data == nil {
+		return 0, 0
+	}
+	total := len(data.Lists)
+	enabled := 0
+	for _, l := range data.Lists {
+		if l.Enabled {
+			enabled++
+		}
+	}
+	return total, enabled
+}
+
+// runningTunnelAdapter adapts service.Service to dnscheck.TunnelStateProvider.
+type runningTunnelAdapter struct {
+	svc service.Service
+}
+
+func (a *runningTunnelAdapter) RunningTunnelNames(ctx context.Context) []string {
+	list, err := a.svc.List(ctx)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, t := range list {
+		if t.State == tunnel.StateRunning {
+			names = append(names, t.Name)
+		}
+	}
+	return names
 }
 
 // storeAdapter adapts storage.AWGTunnelStore to routing.StoreClient.
