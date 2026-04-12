@@ -31,13 +31,18 @@ function createNotificationStore() {
 		update((n) => n.filter((notification) => notification.id !== id));
 	}
 
+	function clearAll() {
+		update(() => []);
+	}
+
 	return {
 		subscribe,
 		success: (message: string, duration?: number) => add('success', message, duration ?? 5000),
 		error: (message: string, duration?: number) => add('error', message, duration ?? 10000),
 		info: (message: string, duration?: number) => add('info', message, duration ?? 5000),
 		warning: (message: string, duration?: number) => add('warning', message, duration ?? 8000),
-		remove
+		remove,
+		clearAll
 	};
 }
 

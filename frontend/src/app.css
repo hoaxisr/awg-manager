@@ -381,6 +381,29 @@ label {
 	min-width: 280px;
 	max-width: 400px;
 	animation: slideIn 0.2s ease;
+	cursor: pointer;
+	font: inherit;
+	color: inherit;
+	text-align: left;
+}
+
+.toast-dismiss-all {
+	padding: 0.375rem 0.75rem;
+	border-radius: var(--radius);
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border);
+	box-shadow: var(--shadow);
+	font: inherit;
+	font-size: 0.75rem;
+	color: var(--text-muted);
+	cursor: pointer;
+	align-self: flex-end;
+	animation: slideIn 0.2s ease;
+}
+
+.toast-dismiss-all:hover {
+	color: var(--text-primary);
+	background: var(--bg-hover);
 }
 
 .toast-success {
