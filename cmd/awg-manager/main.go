@@ -186,6 +186,8 @@ func main() {
 
 	// HydraRoute Neo integration (optional — detected at startup)
 	hydraService := hydraroute.NewService(catalog, log)
+	geoDataStore := hydraroute.NewGeoDataStore(*dataDir)
+	hydraService.SetGeoDataStore(geoDataStore)
 
 	// DNS route service (OS5 only — routes domains through tunnels via NDMS)
 	dnsRouteStore := dnsroute.NewStore(*dataDir)
@@ -208,6 +210,24 @@ func main() {
 	dnsRouteService.SetFailoverManager(dnsFailover)
 	dnsFailover.SetLogger(log)
 	dnsFailover.SetAffectedListsLookup(dnsRouteService.LookupAffectedLists)
+
+	hydraService.SetDnsListProvider(func() []hydraroute.DnsListInfo {
+		data := dnsRouteStore.GetCached()
+		if data == nil {
+			return nil
+		}
+		var lists []hydraroute.DnsListInfo
+		for _, list := range data.Lists {
+			if list.Backend != "hydraroute" || !list.Enabled || len(list.Routes) == 0 {
+				continue
+			}
+			lists = append(lists, hydraroute.DnsListInfo{
+				TunnelID: list.Routes[0].TunnelID,
+				Subnets:  list.Subnets,
+			})
+		}
+		return lists
+	})
 
 	// Static route service for IP-based routing through tunnels
 	staticRouteStore := storage.NewStaticRouteStore(*dataDir)
