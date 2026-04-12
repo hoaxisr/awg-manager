@@ -29,7 +29,7 @@ type TunnelStatus struct {
 	TunnelName    string     `json:"tunnelName"`
 	Enabled       bool       `json:"enabled"`
 	Backend       string     `json:"backend"`                // "kernel" or "nativewg"
-	Status        string     `json:"status"`                 // "alive", "recovering", "disabled"
+	Status        string     `json:"status"`                 // "alive", "recovering", "disabled", "stopped"
 	Method        string     `json:"method"`                 // "http", "icmp", "connect", "tls", "uri"
 	LastCheck     *time.Time `json:"lastCheck"`
 	LastLatency   int        `json:"lastLatency"`            // ms
@@ -37,6 +37,7 @@ type TunnelStatus struct {
 	SuccessCount  int        `json:"successCount,omitempty"` // NDMS native only
 	FailThreshold int        `json:"failThreshold"`
 	RestartCount  int        `json:"restartCount"`
+	TunnelRunning bool       `json:"tunnelRunning"`          // whether the tunnel interface is actually up
 }
 
 // TunnelPingInfo is a lightweight status for embedding in tunnel list responses.

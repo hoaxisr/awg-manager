@@ -183,21 +183,30 @@ func (f *Facade) getNativeWGStatuses() []TunnelStatus {
 			ts.FailThreshold = status.MaxFails
 			ts.FailCount = status.FailCount
 			ts.SuccessCount = status.SuccessCount
+			ts.TunnelRunning = status.Bound
 
-			switch status.Status {
-			case "pass":
-				ts.Status = "alive"
-			case "fail":
-				// NDMS keeps status="fail" after restart even when failCount
-				// resets to 0. With no active failures the tunnel is healthy.
-				if status.FailCount > 0 {
-					ts.Status = "recovering"
-					ts.RestartCount = 1
-				} else {
+			// When the interface is down, the ping-check profile has no bound
+			// interface → status/counts are meaningless. Show "stopped" so the
+			// UI can distinguish "monitoring enabled but tunnel not running"
+			// from "alive and checking".
+			if !status.Bound {
+				ts.Status = "stopped"
+			} else {
+				switch status.Status {
+				case "pass":
 					ts.Status = "alive"
+				case "fail":
+					// NDMS keeps status="fail" after restart even when failCount
+					// resets to 0. With no active failures the tunnel is healthy.
+					if status.FailCount > 0 {
+						ts.Status = "recovering"
+						ts.RestartCount = 1
+					} else {
+						ts.Status = "alive"
+					}
+				default:
+					ts.Status = "alive" // pending/unknown → treat as alive
 				}
-			default:
-				ts.Status = "alive" // pending/unknown → treat as alive
 			}
 		}
 
