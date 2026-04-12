@@ -68,6 +68,7 @@ export interface SnapshotRoutingEvent {
 	policyDevices: import('$lib/types').PolicyDevice[];
 	policyInterfaces: import('$lib/types').PolicyGlobalInterface[];
 	clientRoutes: import('$lib/types').ClientRoute[];
+	hydrarouteStatus?: import('$lib/types').HydraRouteStatus;
 }
 
 export interface SnapshotPingcheckEvent {

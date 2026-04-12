@@ -244,6 +244,7 @@ export interface DnsRoute {
 	createdAt: string;
 	updatedAt: string;
 	lastDedupeReport?: DedupeReport;
+	backend?: 'ndms' | 'hydraroute';
 }
 
 export interface StaticRouteList {
@@ -442,6 +443,12 @@ export interface ClientRoute {
 // ─────────────────────────────────────────────
 // #region System — info, WAN, interfaces
 // ─────────────────────────────────────────────
+
+export interface HydraRouteStatus {
+	installed: boolean;
+	running: boolean;
+	version?: string;
+}
 
 export interface SystemInfo {
 	version: string;
