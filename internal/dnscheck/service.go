@@ -141,9 +141,10 @@ func (s *Service) Start(ctx context.Context, clientIP string) (*StartResponse, e
 	s.tokens[token] = st
 	s.mu.Unlock()
 
-	// Safety cleanup: remove token after 10 seconds regardless of Complete call.
+	// Safety cleanup: remove token after 20 seconds regardless of Complete call.
+	// Must be longer than probe timeout (3s) + network latency + Complete round-trip.
 	go func() {
-		time.Sleep(10 * time.Second)
+		time.Sleep(20 * time.Second)
 		s.mu.Lock()
 		_, exists := s.tokens[token]
 		s.mu.Unlock()
@@ -255,7 +256,7 @@ func (s *Service) checkPolicy(ctx context.Context, clientIP string) CheckResult 
 	if err != nil {
 		return CheckResult{
 			ID:      "client_policy",
-			Status:  "skip",
+			Status:  "warning",
 			Title:   "Политика доступа клиента",
 			Message: "Не удалось получить список клиентов",
 			Detail:  err.Error(),
@@ -273,7 +274,7 @@ func (s *Service) checkPolicy(ctx context.Context, clientIP string) CheckResult 
 	if err := json.Unmarshal(raw, &hotspot); err != nil {
 		return CheckResult{
 			ID:      "client_policy",
-			Status:  "skip",
+			Status:  "warning",
 			Title:   "Политика доступа клиента",
 			Message: "Не удалось разобрать список клиентов",
 			Detail:  err.Error(),
@@ -292,7 +293,7 @@ func (s *Service) checkPolicy(ctx context.Context, clientIP string) CheckResult 
 			}
 			return CheckResult{
 				ID:      "client_policy",
-				Status:  "warn",
+				Status:  "warning",
 				Title:   "Политика доступа клиента",
 				Message: "Клиент использует политику по умолчанию",
 				Detail:  "Назначьте альтернативную политику для маршрутизации трафика через туннель",
@@ -302,7 +303,7 @@ func (s *Service) checkPolicy(ctx context.Context, clientIP string) CheckResult 
 
 	return CheckResult{
 		ID:      "client_policy",
-		Status:  "skip",
+		Status:  "warning",
 		Title:   "Политика доступа клиента",
 		Message: "Клиент не найден в списке устройств",
 		Detail:  fmt.Sprintf("IP %s не найден в /show/ip/hotspot", clientIP),
@@ -315,7 +316,7 @@ func (s *Service) checkEncryption(ctx context.Context) CheckResult {
 	if err != nil {
 		return CheckResult{
 			ID:      "dns_encryption",
-			Status:  "skip",
+			Status:  "warning",
 			Title:   "Шифрование DNS",
 			Message: "Не удалось получить конфигурацию DNS-прокси",
 			Detail:  err.Error(),
@@ -337,7 +338,7 @@ func (s *Service) checkEncryption(ctx context.Context) CheckResult {
 
 	return CheckResult{
 		ID:      "dns_encryption",
-		Status:  "warn",
+		Status:  "warning",
 		Title:   "Шифрование DNS",
 		Message: "Зашифрованный DNS не обнаружен",
 		Detail:  "Рекомендуется включить DNS-over-TLS или DNS-over-HTTPS",
