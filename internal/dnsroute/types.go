@@ -20,7 +20,9 @@ type DomainList struct {
 	CreatedAt     string         `json:"createdAt"`
 	UpdatedAt        string         `json:"updatedAt"`
 	LastDedupeReport *DedupeReport  `json:"lastDedupeReport,omitempty"`
+	Backend          string         `json:"backend,omitempty"` // "" or "ndms" = NDMS, "hydraroute" = HydraRoute Neo
 }
+
 
 // Subscription represents a remote domain list URL that is periodically fetched.
 type Subscription struct {
@@ -60,4 +62,12 @@ type DedupeItem struct {
 // StoreData is the top-level dns-routes.json structure.
 type StoreData struct {
 	Lists []DomainList `json:"lists"`
+}
+
+func isHydraRoute(backend string) bool {
+	return backend == "hydraroute"
+}
+
+func isNDMS(backend string) bool {
+	return backend == "" || backend == "ndms"
 }

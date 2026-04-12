@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
@@ -28,6 +29,7 @@ type ServiceImpl struct {
 	log      *logger.Logger
 	appLog   *logging.ScopedLogger
 	failover *FailoverManager
+	hydra    *hydraroute.Service
 }
 
 // NewService creates a new DNS route service.
@@ -44,6 +46,11 @@ func NewService(store *Store, ndmsClient ndms.Client, resolver InterfaceResolver
 // SetFailoverManager sets the failover manager for DNS route failover.
 func (s *ServiceImpl) SetFailoverManager(fm *FailoverManager) {
 	s.failover = fm
+}
+
+// SetHydraRoute sets the HydraRoute Neo service for hydraroute-backend lists.
+func (s *ServiceImpl) SetHydraRoute(h *hydraroute.Service) {
+	s.hydra = h
 }
 
 // LookupAffectedLists returns DNS lists that reference the given tunnelID,
@@ -183,7 +190,7 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 			s.logError("create", list.ID, "Refresh subscriptions failed", err.Error())
 		}
 	} else {
-		if err := s.reconcile(ctx); err != nil {
+		if err := s.reconcileAll(ctx); err != nil {
 			s.logError("create", list.ID, "Reconcile failed", err.Error())
 		}
 	}
@@ -320,7 +327,7 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 
 	s.log.Infof("updated dns route list %q (%s)", list.Name, list.ID)
 
-	if err := s.reconcile(ctx); err != nil {
+	if err := s.reconcileAll(ctx); err != nil {
 		s.logError("update", list.ID, "Reconcile failed", err.Error())
 	}
 
@@ -357,7 +364,7 @@ func (s *ServiceImpl) Delete(ctx context.Context, id string) error {
 
 	s.log.Infof("deleted dns route list %q (%s)", name, id)
 
-	if err := s.reconcile(ctx); err != nil {
+	if err := s.reconcileAll(ctx); err != nil {
 		s.logError("delete", id, "Reconcile failed", err.Error())
 	}
 
@@ -401,7 +408,7 @@ func (s *ServiceImpl) DeleteBatch(ctx context.Context, ids []string) (int, error
 		return 0, fmt.Errorf("save after delete batch: %w", err)
 	}
 
-	if err := s.reconcile(ctx); err != nil {
+	if err := s.reconcileAll(ctx); err != nil {
 		s.logError("delete-batch", "", "Reconcile failed", err.Error())
 	}
 
@@ -472,7 +479,7 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 			}
 		}
 	} else {
-		if err := s.reconcile(ctx); err != nil {
+		if err := s.reconcileAll(ctx); err != nil {
 			s.logError("create-batch", "", "Reconcile failed", err.Error())
 		}
 	}
@@ -522,7 +529,7 @@ func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) e
 
 	s.log.Infof("set enabled=%v for dns route list %q", enabled, id)
 
-	if err := s.reconcile(ctx); err != nil {
+	if err := s.reconcileAll(ctx); err != nil {
 		s.logError("set-enabled", id, "Reconcile failed", err.Error())
 	}
 
@@ -600,7 +607,7 @@ func (s *ServiceImpl) refreshSubscriptions(ctx context.Context, id string) error
 		"list": id, "totalDomains": len(list.Domains),
 	})
 
-	return s.reconcile(ctx)
+	return s.reconcileAll(ctx)
 }
 
 // RefreshAllSubscriptions fetches subscriptions for all lists.
@@ -627,7 +634,7 @@ func (s *ServiceImpl) RefreshAllSubscriptions(ctx context.Context) error {
 func (s *ServiceImpl) OnTunnelStart(ctx context.Context) error {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
-	return s.reconcile(ctx)
+	return s.reconcileAll(ctx)
 }
 
 // OnTunnelDelete removes route targets referencing the deleted tunnel and reconciles.
@@ -670,7 +677,7 @@ func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error
 		s.log.Infof("removed deleted tunnel %s from dns route targets", tunnelID)
 	}
 
-	return s.reconcile(ctx)
+	return s.reconcileAll(ctx)
 }
 
 // CleanupAll removes all DNS route objects (AWG_*) from NDMS.
@@ -679,14 +686,14 @@ func (s *ServiceImpl) CleanupAll(ctx context.Context) error {
 	defer s.opMu.Unlock()
 
 	s.store.Save(EmptyStoreData())
-	return s.reconcile(ctx)
+	return s.reconcileAll(ctx)
 }
 
 // Reconcile synchronises router state (object-groups, dns-proxy routes) with stored lists.
 func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
-	return s.reconcile(ctx)
+	return s.reconcileAll(ctx)
 }
 
 // resolveRouteInterfaces fills RouteTarget.Interface from TunnelID via the resolver.
@@ -795,6 +802,59 @@ func subscriptionDomains(allDomains, manualDomains []string) []string {
 		}
 	}
 	return sub
+}
+
+// reconcileHydraRoute collects all hydraroute-backend lists and applies them.
+func (s *ServiceImpl) reconcileHydraRoute(ctx context.Context) error {
+	if s.hydra == nil {
+		return nil
+	}
+	if !s.hydra.GetStatus().Installed {
+		return nil
+	}
+
+	data := s.store.GetCached()
+	if data == nil {
+		return nil
+	}
+
+	var inputs []hydraroute.ListInput
+	for _, list := range data.Lists {
+		if !isHydraRoute(list.Backend) || !list.Enabled {
+			continue
+		}
+		if len(list.Routes) == 0 {
+			continue
+		}
+		inputs = append(inputs, hydraroute.ListInput{
+			ListID:   list.ID,
+			ListName: list.Name,
+			TunnelID: list.Routes[0].TunnelID,
+			Domains:  append(list.Domains, list.ManualDomains...),
+			Subnets:  list.Subnets,
+		})
+	}
+
+	entries, err := s.hydra.BuildEntries(ctx, inputs)
+	if err != nil {
+		return fmt.Errorf("build hydraroute entries: %w", err)
+	}
+
+	return s.hydra.Apply(ctx, entries)
+}
+
+// reconcileAll runs both NDMS and HydraRoute reconciliation.
+func (s *ServiceImpl) reconcileAll(ctx context.Context) error {
+	err := s.reconcile(ctx)
+	if hrErr := s.reconcileHydraRoute(ctx); hrErr != nil {
+		if s.log != nil {
+			s.log.Warnf("hydraroute reconcile failed: %v", hrErr)
+		}
+		if err == nil {
+			err = hrErr
+		}
+	}
+	return err
 }
 
 func (s *ServiceImpl) logInfo(action, target, msg string) {
