@@ -422,6 +422,20 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/system/all-interfaces", guarded(systemHandler.AllInterfaces))
 	mux.HandleFunc("/api/system/hydraroute-status", guarded(systemHandler.HydraRouteStatus))
 	mux.HandleFunc("/api/system/hydraroute-control", guarded(systemHandler.HydraRouteControl))
+
+	// HydraRoute settings (protected + boot guarded)
+	if s.hydraService != nil {
+		hrHandler := api.NewHydraRouteHandler(s.hydraService)
+		mux.HandleFunc("/api/hydraroute/config", guarded(hrHandler.GetConfig))
+		mux.HandleFunc("/api/hydraroute/config/update", guarded(hrHandler.UpdateConfig))
+		mux.HandleFunc("/api/hydraroute/geo-files", guarded(hrHandler.ListGeoFiles))
+		mux.HandleFunc("/api/hydraroute/geo-files/add", guarded(hrHandler.AddGeoFile))
+		mux.HandleFunc("/api/hydraroute/geo-files/delete", guarded(hrHandler.DeleteGeoFile))
+		mux.HandleFunc("/api/hydraroute/geo-files/update", guarded(hrHandler.UpdateGeoFile))
+		mux.HandleFunc("/api/hydraroute/geo-tags", guarded(hrHandler.GetGeoTags))
+		mux.HandleFunc("/api/hydraroute/ipset-usage", guarded(hrHandler.GetIpsetUsage))
+	}
+
 	// Update endpoints (protected + boot guarded)
 	mux.HandleFunc("/api/system/update/check", guarded(updateHandler.Check))
 	mux.HandleFunc("/api/system/update/apply", guarded(updateHandler.Apply))
