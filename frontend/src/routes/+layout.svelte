@@ -208,11 +208,9 @@
 				<nav class="nav">
 					<a href="/" class="nav-link" class:active={$page.url.pathname === '/' || $page.url.pathname.startsWith('/tunnels')}>Туннели</a>
 					<a href="/servers" class="nav-link" class:active={$page.url.pathname.startsWith('/servers')}>Серверы</a>
-					<a href="/pingcheck" class="nav-link" class:active={$page.url.pathname.startsWith('/pingcheck')}>Мониторинг</a>
 					<a href="/routing" class="nav-link" class:active={$page.url.pathname.startsWith('/routing')}>Маршрутизация</a>
-					<a href="/logs" class="nav-link" class:active={$page.url.pathname.startsWith('/logs')}>Логи</a>
-					<a href="/diagnostics" class="nav-link" class:active={$page.url.pathname.startsWith('/diagnostics')}>Диагностика</a>
-					<a href="/connections" class="nav-link" class:active={$page.url.pathname.startsWith('/connections')}>Соединения</a>
+					<a href="/pingcheck" class="nav-link" class:active={$page.url.pathname.startsWith('/pingcheck')}>Мониторинг</a>
+					<a href="/diagnostics" class="nav-link" class:active={$page.url.pathname.startsWith('/diagnostics') || $page.url.pathname.startsWith('/connections') || $page.url.pathname.startsWith('/logs')}>Диагностика</a>
 					<a href="/settings" class="nav-link" class:active={$page.url.pathname.startsWith('/settings')}>Настройки</a>
 				</nav>
 			{:else}
@@ -298,11 +296,9 @@
 			<nav class="mobile-nav">
 				<a href="/" class="mobile-nav-link" class:active={$page.url.pathname === '/'} onclick={closeMobileMenu}>Туннели</a>
 				<a href="/servers" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/servers')} onclick={closeMobileMenu}>Серверы</a>
-				<a href="/pingcheck" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/pingcheck')} onclick={closeMobileMenu}>Мониторинг</a>
 				<a href="/routing" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/routing')} onclick={closeMobileMenu}>Маршрутизация</a>
-				<a href="/logs" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/logs')} onclick={closeMobileMenu}>Логи</a>
-				<a href="/diagnostics" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/diagnostics')} onclick={closeMobileMenu}>Диагностика</a>
-				<a href="/connections" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/connections')} onclick={closeMobileMenu}>Соединения</a>
+				<a href="/pingcheck" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/pingcheck')} onclick={closeMobileMenu}>Мониторинг</a>
+				<a href="/diagnostics" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/diagnostics') || $page.url.pathname.startsWith('/connections') || $page.url.pathname.startsWith('/logs')} onclick={closeMobileMenu}>Диагностика</a>
 				<a href="/settings" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/settings')} onclick={closeMobileMenu}>Настройки</a>
 			</nav>
 		{/if}
