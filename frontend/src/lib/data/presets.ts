@@ -279,6 +279,18 @@ export const SERVICE_PRESETS: ServicePreset[] = [
 		notice: 'Содержит широкие IP-ранги Akamai CDN (43 шт) и собственной сети Roblox (4 шт) — необходимы для игр в Roblox, но Akamai-блоки могут направлять в туннель трафик других сайтов.',
 	},
 	{
+		id: 'torrents',
+		name: 'Торренты',
+		domains: [
+			'1337x.to', 'booktracker.org', 'booktracker.work', 'eu.org', 'filmitorrent.net',
+			'freetp.org', 'kinozal.me', 'newstudio.tv', 'nnmclub.to', 'nnmstatic.win',
+			'rustorka.com', 'rutrc.org', 'rutor.info', 'rutor.is', 'rutor.org',
+			'rutracker.cc', 'rutracker.net', 'rutracker.org', 'rutracker.ru',
+			'rutracker.wiki', 'rutrk.org', 'stealth.si', 't-ru.org', 'thepiratebay.org',
+			'torrent.by', 'torrindex.net', 'wstracker.online', 'ysagin.top',
+		],
+	},
+	{
 		id: 'all-blocked',
 		name: 'ItDog Allow Domains',
 		subscriptionUrl: 'https://raw.githubusercontent.com/itdoginfo/allow-domains/master/Russia/inside-raw.lst',
