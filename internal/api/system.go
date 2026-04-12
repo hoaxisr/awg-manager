@@ -93,6 +93,20 @@ func (h *SystemHandler) SetBootStatusFunc(fn func() bool) {
 	h.bootStatusFn = fn
 }
 
+// RestartDaemon triggers a self-restart of the AWG Manager daemon.
+func (h *SystemHandler) RestartDaemon(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if h.restartFn == nil {
+		response.Error(w, "restart not available", "RESTART_UNAVAILABLE")
+		return
+	}
+	response.Success(w, map[string]string{"status": "restarting"})
+	h.restartFn()
+}
+
 // Info returns system information.
 func (h *SystemHandler) Info(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
