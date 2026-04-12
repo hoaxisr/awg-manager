@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { onMount, onDestroy } from 'svelte';
     import { api } from '$lib/api/client';
     import type { DnsRoute, RoutingTunnel } from '$lib/types';
     import type { ServicePreset } from '$lib/data/presets';
@@ -46,6 +47,11 @@
     let dnsToggling = $state<string | null>(null);
     let dnsSaving = $state(false);
     let dnsModalOpen = $state(false);
+    let addMenuOpen = $state(false);
+
+    function handleClickOutside() { addMenuOpen = false; }
+    onMount(() => document.addEventListener('click', handleClickOutside));
+    onDestroy(() => document.removeEventListener('click', handleClickOutside));
 
     let dnsActiveCount = $derived(dnsRoutes.filter(r => r.enabled).length);
 
@@ -285,12 +291,32 @@
     {#if !dnsSelectionMode}
         <span class="section-summary">{dnsRoutes.length} правил, {dnsActiveCount} активных</span>
         <div class="section-buttons">
-            <button class="btn btn-sm btn-ghost" onclick={() => dnsImportOpen = true}>Загрузить набор правил</button>
-            <button class="btn btn-sm btn-secondary" onclick={() => dnsPresetOpen = true}>Из каталога</button>
             {#if dnsRoutes.length > 0}
                 <button class="btn btn-sm btn-ghost" onclick={() => { dnsSelectionMode = true; dnsSelected = new Set(); }}>Выбрать</button>
             {/if}
-            <button class="btn btn-sm btn-primary" onclick={() => { editingDnsRoute = null; dnsModalOpen = true; }}>+ Новое правило</button>
+            <div class="dropdown-wrapper">
+                <button class="btn btn-sm btn-primary" onclick={(e) => { e.stopPropagation(); addMenuOpen = !addMenuOpen; }}>
+                    + Добавить
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M2 4l3 3 3-3"/></svg>
+                </button>
+                {#if addMenuOpen}
+                    <div class="dropdown-menu">
+                        <button class="dropdown-item" onclick={() => { addMenuOpen = false; dnsPresetOpen = true; }}>
+                            <svg class="dropdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                            Из каталога
+                        </button>
+                        <button class="dropdown-item" onclick={() => { addMenuOpen = false; editingDnsRoute = null; dnsModalOpen = true; }}>
+                            <svg class="dropdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                            Создать вручную
+                        </button>
+                        <div class="dropdown-sep"></div>
+                        <button class="dropdown-item" onclick={() => { addMenuOpen = false; dnsImportOpen = true; }}>
+                            <svg class="dropdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                            Загрузить конфигурацию
+                        </button>
+                    </div>
+                {/if}
+            </div>
         </div>
     {:else}
         <div class="bulk-bar">
@@ -331,7 +357,28 @@
 </div>
 
 {#if dnsRoutes.length === 0}
-    <div class="empty-hint">Нет DNS-маршрутов</div>
+    <div class="empty-state-rich">
+        <div class="empty-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+        </div>
+        <div class="empty-title">DNS-маршрутов пока нет</div>
+        <div class="empty-desc">Выберите сервисы из каталога или создайте правило вручную</div>
+        <div class="empty-actions">
+            <button class="btn btn-primary" onclick={() => dnsPresetOpen = true}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                Из каталога
+            </button>
+            <button class="btn btn-secondary" onclick={() => { editingDnsRoute = null; dnsModalOpen = true; }}>+ Создать вручную</button>
+            <button class="btn btn-ghost" onclick={() => dnsImportOpen = true}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Загрузить конфигурацию
+            </button>
+        </div>
+    </div>
 {:else}
     <div class="route-grid">
         {#each dnsRoutes as route (route.id)}
@@ -413,5 +460,120 @@
     .empty-state a {
         color: var(--accent);
         text-decoration: none;
+    }
+
+    /* Rich empty state */
+    .empty-state-rich {
+        text-align: center;
+        padding: 3rem 1.5rem;
+    }
+
+    .empty-icon {
+        width: 48px;
+        height: 48px;
+        margin: 0 auto 1rem;
+        border-radius: 12px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-muted);
+    }
+
+    .empty-title {
+        font-size: 0.9375rem;
+        font-weight: 500;
+        color: var(--text-primary);
+        margin-bottom: 0.375rem;
+    }
+
+    .empty-desc {
+        font-size: 0.8125rem;
+        color: var(--text-muted);
+        margin-bottom: 1.25rem;
+    }
+
+    .empty-actions {
+        display: flex;
+        justify-content: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+    }
+
+    .empty-actions .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    /* Dropdown menu */
+    .dropdown-wrapper {
+        position: relative;
+        display: inline-block;
+    }
+
+    .dropdown-menu {
+        position: absolute;
+        top: calc(100% + 4px);
+        right: 0;
+        z-index: 10;
+        background: var(--bg-secondary, var(--bg-card, #1a1b2e));
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        min-width: 210px;
+        padding: 4px;
+    }
+
+    .dropdown-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0.5rem 0.75rem;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.8125rem;
+        color: var(--text-secondary);
+        border: none;
+        background: none;
+        width: 100%;
+        text-align: left;
+        font-family: inherit;
+        transition: background 0.1s;
+    }
+
+    .dropdown-item:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+
+    :global(.dropdown-icon) {
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        color: var(--text-muted);
+    }
+
+    .dropdown-item:hover :global(.dropdown-icon) {
+        color: var(--accent);
+    }
+
+    .dropdown-sep {
+        height: 1px;
+        background: var(--border);
+        margin: 4px 8px;
+    }
+
+    @media (max-width: 640px) {
+        .empty-actions {
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .empty-actions .btn {
+            width: 100%;
+            justify-content: center;
+        }
     }
 </style>
