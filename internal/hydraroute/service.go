@@ -3,6 +3,7 @@ package hydraroute
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -65,6 +66,13 @@ func (s *Service) Apply(ctx context.Context, lists []ManagedEntry) error {
 		return fmt.Errorf("HydraRoute Neo is not installed")
 	}
 
+	// Capture the current managed section before any writes for rollback.
+	prevDomainManaged := s.lastDomainContent
+	if prevDomainManaged == "" {
+		// First Apply: read what's currently in the file so rollback restores it.
+		prevDomainManaged = readManagedSection(domainConfPath)
+	}
+
 	domainContent := GenerateDomainConf(lists)
 	ipContent := GenerateIPList(lists)
 
@@ -73,7 +81,7 @@ func (s *Service) Apply(ctx context.Context, lists []ManagedEntry) error {
 	}
 
 	if err := WriteManagedSection(ipListPath, ipContent); err != nil {
-		_ = WriteManagedSection(domainConfPath, s.lastDomainContent)
+		_ = WriteManagedSection(domainConfPath, prevDomainManaged)
 		return fmt.Errorf("write ip.list (domain.conf rolled back): %w", err)
 	}
 
@@ -115,6 +123,13 @@ func (s *Service) scheduleRestart() {
 		s.restartTimer.Stop()
 	}
 	s.restartTimer = time.AfterFunc(2*time.Second, func() {
+		// Mark timer as completed before releasing the lock so a concurrent
+		// scheduleRestart sees nil and creates a fresh timer rather than
+		// stopping an already-fired one.
+		s.mu.Lock()
+		s.restartTimer = nil
+		s.mu.Unlock()
+
 		result, err := exec.Run(context.Background(), neoBinary, "restart")
 		if err != nil {
 			s.log.Warnf("hydraroute: neo restart failed: %v", exec.FormatError(result, err))
@@ -125,6 +140,27 @@ func (s *Service) scheduleRestart() {
 		s.status = Detect()
 		s.mu.Unlock()
 	})
+}
+
+// readManagedSection reads the AWG-managed section (including markers) from the
+// given file. Returns an empty string if the file doesn't exist or has no markers.
+// Used to capture the current state for rollback before the first Apply.
+func readManagedSection(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	s := string(raw)
+	start := strings.Index(s, markerStart)
+	end := strings.Index(s, markerEnd)
+	if start < 0 || end < 0 || end <= start {
+		return ""
+	}
+	endOfMarker := end + len(markerEnd)
+	if endOfMarker < len(s) && s[endOfMarker] == '\n' {
+		endOfMarker++
+	}
+	return s[start:endOfMarker]
 }
 
 // BuildEntries converts domain lists with resolved tunnel interfaces into ManagedEntry slice.

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,10 +54,40 @@ func (s *GeoDataStore) List() []GeoFileEntry {
 	return result
 }
 
+// validateDownloadURL returns an error if rawURL is not a safe http/https URL
+// pointing to a public host (not localhost or private IP ranges).
+func validateDownloadURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("only http/https URLs are allowed")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("URL must have a host")
+	}
+	host := u.Hostname()
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return fmt.Errorf("localhost URLs are not allowed")
+	}
+	ip := net.ParseIP(host)
+	if ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+			return fmt.Errorf("private/local IP addresses are not allowed")
+		}
+	}
+	return nil
+}
+
 // Download fetches a .dat file from rawURL, validates it, and tracks it.
 func (s *GeoDataStore) Download(fileType, rawURL string) (*GeoFileEntry, error) {
 	if fileType != "geosite" && fileType != "geoip" {
 		return nil, fmt.Errorf("invalid file type %q: must be geosite or geoip", fileType)
+	}
+
+	if err := validateDownloadURL(rawURL); err != nil {
+		return nil, fmt.Errorf("invalid download URL: %w", err)
 	}
 
 	s.mu.Lock()
@@ -113,6 +145,11 @@ func (s *GeoDataStore) Download(fileType, rawURL string) (*GeoFileEntry, error) 
 
 // Delete removes the tracked entry and its file from disk.
 func (s *GeoDataStore) Delete(path string) error {
+	path = filepath.Clean(path)
+	if !strings.HasPrefix(path, hrDir) {
+		return fmt.Errorf("path outside HydraRoute directory")
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -133,6 +170,11 @@ func (s *GeoDataStore) Delete(path string) error {
 
 // Update re-downloads and revalidates a tracked file from its stored URL.
 func (s *GeoDataStore) Update(path string) (*GeoFileEntry, error) {
+	path = filepath.Clean(path)
+	if !strings.HasPrefix(path, hrDir) {
+		return nil, fmt.Errorf("path outside HydraRoute directory")
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -193,6 +235,11 @@ func (s *GeoDataStore) UpdateAll() (int, error) {
 
 // GetTags returns the tag list for the given file path, using the cache.
 func (s *GeoDataStore) GetTags(path string) ([]GeoTag, error) {
+	path = filepath.Clean(path)
+	if !strings.HasPrefix(path, hrDir) {
+		return nil, fmt.Errorf("path outside HydraRoute directory")
+	}
+
 	s.mu.RLock()
 	if tags, ok := s.tagCache[path]; ok {
 		result := make([]GeoTag, len(tags))
@@ -201,7 +248,7 @@ func (s *GeoDataStore) GetTags(path string) ([]GeoTag, error) {
 		return result, nil
 	}
 
-	idx := s.findUnlockedR(path)
+	idx := s.findUnlocked(path)
 	if idx < 0 {
 		s.mu.RUnlock()
 		return nil, fmt.Errorf("geo file not found: %s", path)
@@ -295,16 +342,6 @@ func (s *GeoDataStore) findUnlocked(path string) int {
 	return -1
 }
 
-// findUnlockedR is like findUnlocked but for read-lock callers.
-func (s *GeoDataStore) findUnlockedR(path string) int {
-	for i, e := range s.entries {
-		if e.Path == path {
-			return i
-		}
-	}
-	return -1
-}
-
 // resolveConflict returns a non-conflicting path by appending a numeric suffix.
 // Caller must hold s.mu (write lock).
 func (s *GeoDataStore) resolveConflict(path string) string {
@@ -333,6 +370,11 @@ func (s *GeoDataStore) resolveConflict(path string) string {
 // downloadFile downloads rawURL to dest using a 120-second timeout.
 // Uses atomic write: downloads to a temp file, then renames.
 func downloadFile(rawURL, dest string) error {
+	// Defense-in-depth: re-validate scheme before making the request.
+	if u, err := url.Parse(rawURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("only http/https URLs are allowed")
+	}
+
 	client := &http.Client{Timeout: 120 * time.Second}
 
 	resp, err := client.Get(rawURL) //nolint:noctx
