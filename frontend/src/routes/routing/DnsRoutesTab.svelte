@@ -12,9 +12,12 @@
         routingTunnels: RoutingTunnel[];
         editRuleId?: string;
         editRuleCounter?: number;
+        isOS5?: boolean;
+        hydrarouteInstalled?: boolean;
+        hasDnsEngine?: boolean;
     }
 
-    let { dnsRoutes, routingTunnels, editRuleId = '', editRuleCounter = 0 }: Props = $props();
+    let { dnsRoutes, routingTunnels, editRuleId = '', editRuleCounter = 0, isOS5 = false, hydrarouteInstalled = false, hasDnsEngine = false }: Props = $props();
 
     // Open edit modal when search result is clicked.
     // Capture counter at mount to skip stale values on tab re-mount.
@@ -207,6 +210,19 @@
         }
     }
 
+    async function bulkDnsChangeBackend(newBackend: 'ndms' | 'hydraroute') {
+        dnsBulkLoading = true;
+        try {
+            const ids = [...dnsSelected];
+            const result = await api.bulkDnsRouteBackend(ids, newBackend);
+            notifications.success(`Переключено ${result.updated} правил на ${newBackend === 'ndms' ? 'NDMS' : 'HydraRoute'}`);
+        } catch (e) {
+            notifications.error(`Ошибка: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+        } finally {
+            dnsBulkLoading = false;
+        }
+    }
+
     async function handleDnsImport(routes: (import('$lib/utils/dns-export').PortableDnsRoute & { tunnelId: string })[]) {
         let count = 0;
         for (const route of routes) {
@@ -259,6 +275,11 @@
     }
 </script>
 
+{#if !hasDnsEngine}
+    <div class="empty-state">
+        <p>Для DNS-маршрутизации требуется прошивка OS5 или <a href="https://github.com/Ground-Zerro/HydraRoute" target="_blank" rel="noopener">HydraRoute Neo</a></p>
+    </div>
+{:else}
 <div class="section-header">
     {#if !dnsSelectionMode}
         <span class="section-summary">{dnsRoutes.length} правил, {dnsActiveCount} активных</span>
@@ -284,6 +305,10 @@
                     <button class="bulk-btn bulk-btn-delete" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={() => dnsBulkDeleteConfirm = true}>Удалить</button>
                     <button class="bulk-btn bulk-btn-tunnel" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={() => { dnsTunnelMode = true; dnsBulkTunnelId = routingTunnels.find(t => t.available)?.id ?? ''; }}>Туннель ▾</button>
                     <button class="bulk-btn bulk-btn-export" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={downloadDnsExport}>Экспорт</button>
+                    {#if isOS5 && hydrarouteInstalled}
+                        <button class="bulk-btn" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={() => bulkDnsChangeBackend('ndms')}>→ NDMS</button>
+                        <button class="bulk-btn" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={() => bulkDnsChangeBackend('hydraroute')}>→ HydraRoute</button>
+                    {/if}
                 </div>
             {:else}
                 <div class="bulk-tunnel-bar">
@@ -320,6 +345,7 @@
                 selectable={dnsSelectionMode}
                 selected={dnsSelected.has(route.id)}
                 onselect={() => toggleDnsSelect(route.id)}
+                {hydrarouteInstalled}
             />
         {/each}
     </div>
@@ -332,6 +358,8 @@
     saving={dnsSaving}
     onsave={editingDnsRoute ? updateDnsRoute : createDnsRoute}
     onclose={() => { dnsModalOpen = false; editingDnsRoute = null; }}
+    {isOS5}
+    {hydrarouteInstalled}
 />
 
 <DnsRouteImportModal
@@ -370,3 +398,17 @@
         {/snippet}
     </Modal>
 {/if}
+{/if}
+
+<style>
+    .empty-state {
+        text-align: center;
+        padding: 2rem;
+        color: var(--text-muted);
+    }
+
+    .empty-state a {
+        color: var(--accent);
+        text-decoration: none;
+    }
+</style>

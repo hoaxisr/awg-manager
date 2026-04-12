@@ -11,6 +11,8 @@
 
     let activeTab = $state<'dns' | 'ip' | 'policy' | 'clientvpn'>('dns');
     let isOS5 = $derived($systemInfo?.isOS5 ?? false);
+    let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
+    let hasDnsEngine = $derived(isOS5 || hydrarouteInstalled);
 
     // Search → edit rule integration
     let editRuleId = $state('');
@@ -42,16 +44,16 @@
     let policyCount = $derived(accessPolicies.length);
     let clientRouteCount = $derived(clientRoutes.length);
 
-    // Default to IP tab when not OS5
+    // Default to IP tab when no DNS engine available
     $effect(() => {
-        if (!isOS5 && activeTab === 'dns') {
+        if (!hasDnsEngine && activeTab === 'dns') {
             activeTab = 'ip';
         }
     });
 
     let tabItems = $derived(
         [
-            isOS5 ? { id: 'dns', label: 'Домены', badge: dnsActiveCount } : null,
+            { id: 'dns', label: 'Домены', badge: dnsActiveCount },
             { id: 'ip', label: 'IP-адреса', badge: ipActiveCount },
             isOS5 ? { id: 'policy', label: 'Политики доступа', badge: policyCount } : null,
             { id: 'clientvpn', label: 'VPN для устройств', badge: clientRouteCount },
@@ -78,12 +80,15 @@
             onchange={(id) => activeTab = id as typeof activeTab}
         />
 
-        {#if activeTab === 'dns' && isOS5}
+        {#if activeTab === 'dns'}
             <DnsRoutesTab
                 {dnsRoutes}
                 {routingTunnels}
                 {editRuleId}
                 {editRuleCounter}
+                {isOS5}
+                {hydrarouteInstalled}
+                {hasDnsEngine}
             />
         {:else if activeTab === 'ip'}
             <IpRoutesTab
