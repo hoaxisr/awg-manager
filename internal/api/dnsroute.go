@@ -283,6 +283,51 @@ func (h *DNSRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 	h.publishDnsUpdated(r.Context())
 }
 
+// BulkBackend switches the routing backend for multiple lists.
+func (h *DNSRouteHandler) BulkBackend(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+
+	var req struct {
+		ListIDs []string `json:"listIDs"`
+		Backend string   `json:"backend"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "Invalid request body", "INVALID_BODY")
+		return
+	}
+	if req.Backend != "ndms" && req.Backend != "hydraroute" {
+		response.Error(w, "Invalid backend: must be 'ndms' or 'hydraroute'", "INVALID_BACKEND")
+		return
+	}
+	if len(req.ListIDs) == 0 {
+		response.Error(w, "No list IDs provided", "EMPTY_LIST")
+		return
+	}
+
+	updated := 0
+	for _, id := range req.ListIDs {
+		list, err := h.svc.Get(r.Context(), id)
+		if err != nil {
+			continue
+		}
+		list.Backend = req.Backend
+		if _, err := h.svc.Update(r.Context(), *list); err != nil {
+			h.log.Warn("bulk-backend", id, "Failed to update backend: "+err.Error())
+			continue
+		}
+		updated++
+	}
+
+	if h.bus != nil {
+		h.publishDnsUpdated(r.Context())
+	}
+
+	response.Success(w, map[string]int{"updated": updated})
+}
+
 // Refresh refreshes subscriptions for a single list or all lists.
 func (h *DNSRouteHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

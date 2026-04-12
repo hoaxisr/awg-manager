@@ -25,6 +25,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/connectivity"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
@@ -183,6 +184,9 @@ func main() {
 		&storeAdapter{store: awgStore},
 	)
 
+	// HydraRoute Neo integration (optional — detected at startup)
+	hydraService := hydraroute.NewService(catalog, log)
+
 	// DNS route service (OS5 only — routes domains through tunnels via NDMS)
 	dnsRouteStore := dnsroute.NewStore(*dataDir)
 	if _, err := dnsRouteStore.Load(); err != nil {
@@ -200,6 +204,7 @@ func main() {
 		}
 		return nil
 	})
+	dnsRouteService.SetHydraRoute(hydraService)
 	dnsRouteService.SetFailoverManager(dnsFailover)
 	dnsFailover.SetLogger(log)
 	dnsFailover.SetAffectedListsLookup(dnsRouteService.LookupAffectedLists)
@@ -343,6 +348,9 @@ func main() {
 		routes, _ := clientRouteService.List()
 		return routes
 	})
+	catalog.SetSnapshotProvider("hydrarouteStatus", func(ctx context.Context) interface{} {
+		return hydraService.GetStatus()
+	})
 
 	srv := server.New(
 		server.Config{
@@ -375,6 +383,7 @@ func main() {
 		catalog,
 		orch,
 		eventBus,
+		hydraService,
 	)
 
 	srv.SetTrafficCollector(trafficCollector)

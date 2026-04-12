@@ -22,6 +22,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/connections"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/routing"
@@ -85,6 +86,7 @@ type Server struct {
 	accessPolicyService  accesspolicy.Service
 	clientRouteService   clientroute.Service
 	catalog              routing.Catalog
+	hydraService         *hydraroute.Service
 	orch                 *orchestrator.Orchestrator
 	bus                  *events.Bus
 	authMiddleware     *auth.Middleware
@@ -101,7 +103,7 @@ type Server struct {
 }
 
 // New creates a new server instance.
-func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, externalService api.ExternalTunnelService, testingService *testing.Service, keenetic *auth.KeeneticClient, sessions *auth.SessionStore, settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore, pingCheckService api.PingCheckService, loggingService *logging.Service, activeBackend backend.Backend, kmodLoader *kmod.Loader, updaterService *updater.Service, ndmsClient ndms.Client, trafficHistory *traffic.History, dnsRouteService api.DNSRouteService, staticRouteService api.StaticRouteService, systemTunnelService systemtunnel.Service, managedService managed.ManagedServerService, nwgOp *nwg.OperatorNativeWG, terminalManager terminal.Manager, accessPolicySvc accesspolicy.Service, clientRouteSvc clientroute.Service, catalog routing.Catalog, orch *orchestrator.Orchestrator, bus *events.Bus) *Server {
+func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, externalService api.ExternalTunnelService, testingService *testing.Service, keenetic *auth.KeeneticClient, sessions *auth.SessionStore, settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore, pingCheckService api.PingCheckService, loggingService *logging.Service, activeBackend backend.Backend, kmodLoader *kmod.Loader, updaterService *updater.Service, ndmsClient ndms.Client, trafficHistory *traffic.History, dnsRouteService api.DNSRouteService, staticRouteService api.StaticRouteService, systemTunnelService systemtunnel.Service, managedService managed.ManagedServerService, nwgOp *nwg.OperatorNativeWG, terminalManager terminal.Manager, accessPolicySvc accesspolicy.Service, clientRouteSvc clientroute.Service, catalog routing.Catalog, orch *orchestrator.Orchestrator, bus *events.Bus, hydraService *hydraroute.Service) *Server {
 	id := generateInstanceID()
 	log.Infof("Server instance: %s", id)
 
@@ -131,6 +133,7 @@ func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, extern
 		accessPolicyService: accessPolicySvc,
 		clientRouteService:  clientRouteSvc,
 		catalog:             catalog,
+		hydraService:        hydraService,
 		orch:                orch,
 		bus:                 bus,
 		authMiddleware:     auth.NewMiddleware(sessions, settings, log),
@@ -319,6 +322,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	if s.bootStatusFn != nil {
 		systemHandler.SetBootStatusFunc(s.bootStatusFn)
 	}
+	systemHandler.SetHydraRoute(s.hydraService)
 	settingsHandler := api.NewSettingsHandler(s.settings, appLog)
 	settingsHandler.SetTunnelStore(s.tunnels)
 	settingsHandler.SetPingCheckService(s.pingCheckService)
@@ -416,22 +420,23 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/system/restart", guarded(systemHandler.RestartDaemon))
 	mux.HandleFunc("/api/system/wan-interfaces", guarded(systemHandler.WANInterfaces))
 	mux.HandleFunc("/api/system/all-interfaces", guarded(systemHandler.AllInterfaces))
+	mux.HandleFunc("/api/system/hydraroute-status", guarded(systemHandler.HydraRouteStatus))
+	mux.HandleFunc("/api/system/hydraroute-control", guarded(systemHandler.HydraRouteControl))
 	// Update endpoints (protected + boot guarded)
 	mux.HandleFunc("/api/system/update/check", guarded(updateHandler.Check))
 	mux.HandleFunc("/api/system/update/apply", guarded(updateHandler.Apply))
 
-	// DNS routes — OS5 only (requires dns-proxy route + object-group fqdn)
-	if osdetect.Is5() {
-		mux.HandleFunc("/api/dns-routes/list", guarded(dnsRouteHandler.List))
-		mux.HandleFunc("/api/dns-routes/get", guarded(dnsRouteHandler.Get))
-		mux.HandleFunc("/api/dns-routes/create", guarded(dnsRouteHandler.Create))
-		mux.HandleFunc("/api/dns-routes/update", guarded(dnsRouteHandler.Update))
-		mux.HandleFunc("/api/dns-routes/delete", guarded(dnsRouteHandler.Delete))
-		mux.HandleFunc("/api/dns-routes/delete-batch", guarded(dnsRouteHandler.DeleteBatch))
-		mux.HandleFunc("/api/dns-routes/create-batch", guarded(dnsRouteHandler.CreateBatch))
-		mux.HandleFunc("/api/dns-routes/set-enabled", guarded(dnsRouteHandler.SetEnabled))
-		mux.HandleFunc("/api/dns-routes/refresh", guarded(dnsRouteHandler.Refresh))
-	}
+	// DNS routes (NDMS backend on OS5, HydraRoute on any OS)
+	mux.HandleFunc("/api/dns-routes/list", guarded(dnsRouteHandler.List))
+	mux.HandleFunc("/api/dns-routes/get", guarded(dnsRouteHandler.Get))
+	mux.HandleFunc("/api/dns-routes/create", guarded(dnsRouteHandler.Create))
+	mux.HandleFunc("/api/dns-routes/update", guarded(dnsRouteHandler.Update))
+	mux.HandleFunc("/api/dns-routes/delete", guarded(dnsRouteHandler.Delete))
+	mux.HandleFunc("/api/dns-routes/delete-batch", guarded(dnsRouteHandler.DeleteBatch))
+	mux.HandleFunc("/api/dns-routes/create-batch", guarded(dnsRouteHandler.CreateBatch))
+	mux.HandleFunc("/api/dns-routes/set-enabled", guarded(dnsRouteHandler.SetEnabled))
+	mux.HandleFunc("/api/dns-routes/refresh", guarded(dnsRouteHandler.Refresh))
+	mux.HandleFunc("/api/dns-routes/bulk-backend", guarded(dnsRouteHandler.BulkBackend))
 
 	// Static IP routes (protected + boot guarded)
 	staticRouteHandler := api.NewStaticRouteHandler(s.staticRouteService, appLog)
