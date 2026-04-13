@@ -164,6 +164,33 @@ func decideStop(event Event, state *State) []Action {
 	return actions
 }
 
+// decideExternalStop handles externally-triggered conf=disabled for nativewg tunnels.
+// Unlike decideStop, it does NOT generate ActionPersistStopped — the tunnel stays
+// enabled in storage. Instead it generates ActionExternalRestart which will attempt
+// to bring the tunnel back up.
+//
+// Rate-limited: after externalRestartMaxCount restarts within externalRestartWindow,
+// falls back to normal decideStop (persists disabled) to prevent infinite loops.
+func decideExternalStop(event Event, state *State, t *tunnelState) []Action {
+	if !t.canExternalRestart() {
+		return decideStop(event, state)
+	}
+
+	var actions []Action
+
+	if t.Monitoring {
+		actions = append(actions, Action{Type: ActionStopMonitoring, Tunnel: t.ID})
+	}
+
+	if t.PingCheck != nil && t.PingCheck.Enabled {
+		actions = append(actions, Action{Type: ActionRemovePingCheck, Tunnel: t.ID})
+	}
+
+	actions = append(actions, Action{Type: ActionExternalRestart, Tunnel: t.ID})
+
+	return actions
+}
+
 func decideNDMSHook(event Event, state *State) []Action {
 	if event.Layer != "conf" {
 		return nil
@@ -184,6 +211,9 @@ func decideNDMSHook(event Event, state *State) []Action {
 	case "disabled":
 		if !t.Running {
 			return nil
+		}
+		if t.Backend == "nativewg" {
+			return decideExternalStop(Event{Type: EventStop, Tunnel: t.ID}, state, t)
 		}
 		return decideStop(Event{Type: EventStop, Tunnel: t.ID}, state)
 	}
