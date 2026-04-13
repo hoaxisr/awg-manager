@@ -103,6 +103,7 @@
 		color: var(--text-primary);
 		font-size: 0.8125rem;
 		font-family: inherit;
+		max-width: 280px;
 	}
 
 	.controls-select:focus {
