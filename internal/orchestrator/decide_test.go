@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -1209,5 +1210,99 @@ func TestDecide_WANDown_NativeWGAutoMode_StaleActiveWAN_NoFailover(t *testing.T)
 
 	if hasAction(actions, ActionSuspendProxy) {
 		t.Error("with empty ActiveWAN the tunnel must NOT be considered affected (documents the bug surface)")
+	}
+}
+
+// === External restart tests ===
+
+func TestDecideNDMSHook_ExternalDisabled_TriggersRestart(t *testing.T) {
+	s := State{
+		tunnels: map[string]*tunnelState{
+			"awg10": {
+				ID: "awg10", Name: "test", Backend: "nativewg",
+				Enabled: true, Running: true, NWGIndex: 0,
+			},
+		},
+		anyWANUpFn: func() bool { return true },
+	}
+	actions := decide(Event{
+		Type: EventNDMSHook, NDMSName: "Wireguard0",
+		Layer: "conf", Level: "disabled",
+	}, &s)
+	if hasAction(actions, ActionPersistStopped) {
+		t.Error("external conf=disabled must NOT generate ActionPersistStopped")
+	}
+	if !hasAction(actions, ActionExternalRestart) {
+		t.Error("expected ActionExternalRestart for external conf=disabled")
+	}
+}
+
+func TestDecideNDMSHook_ExternalDisabled_RateLimited(t *testing.T) {
+	s := State{
+		tunnels: map[string]*tunnelState{
+			"awg10": {
+				ID: "awg10", Name: "test", Backend: "nativewg",
+				Enabled: true, Running: true, NWGIndex: 0,
+				ExternalRestartCount: 3,
+				LastExternalRestart:  time.Now().Add(-1 * time.Minute),
+			},
+		},
+		anyWANUpFn: func() bool { return true },
+	}
+	actions := decide(Event{
+		Type: EventNDMSHook, NDMSName: "Wireguard0",
+		Layer: "conf", Level: "disabled",
+	}, &s)
+	if hasAction(actions, ActionExternalRestart) {
+		t.Error("rate-limited: must NOT generate ActionExternalRestart")
+	}
+	if !hasAction(actions, ActionPersistStopped) {
+		t.Error("rate-limited: expected ActionPersistStopped as fallback")
+	}
+}
+
+func TestDecideNDMSHook_ExternalDisabled_WindowExpired(t *testing.T) {
+	s := State{
+		tunnels: map[string]*tunnelState{
+			"awg10": {
+				ID: "awg10", Name: "test", Backend: "nativewg",
+				Enabled: true, Running: true, NWGIndex: 0,
+				ExternalRestartCount: 3,
+				LastExternalRestart:  time.Now().Add(-6 * time.Minute),
+			},
+		},
+		anyWANUpFn: func() bool { return true },
+	}
+	actions := decide(Event{
+		Type: EventNDMSHook, NDMSName: "Wireguard0",
+		Layer: "conf", Level: "disabled",
+	}, &s)
+	if !hasAction(actions, ActionExternalRestart) {
+		t.Error("window expired: should allow external restart")
+	}
+	if hasAction(actions, ActionPersistStopped) {
+		t.Error("window expired: must NOT persist stopped")
+	}
+}
+
+func TestDecideNDMSHook_ExternalDisabled_KernelTunnel(t *testing.T) {
+	s := State{
+		tunnels: map[string]*tunnelState{
+			"awg0": {
+				ID: "awg0", Name: "test", Backend: "kernel",
+				Enabled: true, Running: true,
+			},
+		},
+		anyWANUpFn: func() bool { return true },
+	}
+	actions := decide(Event{
+		Type: EventNDMSHook, NDMSName: "OpkgTun0",
+		Layer: "conf", Level: "disabled",
+	}, &s)
+	if !hasAction(actions, ActionPersistStopped) {
+		t.Error("kernel tunnel: expected normal PersistStopped")
+	}
+	if hasAction(actions, ActionExternalRestart) {
+		t.Error("kernel tunnel: should NOT use ExternalRestart")
 	}
 }
