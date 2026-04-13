@@ -218,6 +218,20 @@ func (h *HydraRouteHandler) GetGeoTags(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, response.MustNotNil(tags))
 }
 
+// ImportNative imports native HydraRoute rules from the router's domain.conf / ip.list.
+func (h *HydraRouteHandler) ImportNative(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	count, err := h.svc.ImportNative(r.Context())
+	if err != nil {
+		response.Error(w, err.Error(), "IMPORT_ERROR")
+		return
+	}
+	response.Success(w, map[string]int{"imported": count})
+}
+
 // GetIpsetUsage returns the current ipset usage per kernel interface.
 func (h *HydraRouteHandler) GetIpsetUsage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

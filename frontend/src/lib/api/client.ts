@@ -341,6 +341,10 @@ class ApiClient {
 		return this.request('/hydraroute/ipset-usage');
 	}
 
+	async importNativeHydraRouteRules(): Promise<{ imported: number }> {
+		return this.request('/hydraroute/import-native', { method: 'POST' });
+	}
+
 	async getWANInterfaces(): Promise<WANInterface[]> {
 		return this.request('/system/wan-interfaces');
 	}
