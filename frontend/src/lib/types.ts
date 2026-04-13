@@ -245,6 +245,8 @@ export interface DnsRoute {
 	updatedAt: string;
 	lastDedupeReport?: DedupeReport;
 	backend?: 'ndms' | 'hydraroute';
+	hrRouteMode?: 'interface' | 'policy';
+	hrPolicyName?: string;
 }
 
 export interface StaticRouteList {
