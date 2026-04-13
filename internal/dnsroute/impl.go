@@ -892,6 +892,20 @@ func (s *ServiceImpl) reconcileHydraRoute(ctx context.Context) error {
 		return nil
 	}
 
+	// Ensure Keenetic ip policies exist for policy-mode rules
+	for _, list := range data.Lists {
+		if !isHydraRoute(list.Backend) || !list.Enabled {
+			continue
+		}
+		if list.HRRouteMode == "policy" && list.HRPolicyName != "" {
+			if err := s.hydra.EnsurePolicy(ctx, list.HRPolicyName); err != nil {
+				if s.log != nil {
+					s.log.Warnf("hydraroute: ensure policy %s: %v", list.HRPolicyName, err)
+				}
+			}
+		}
+	}
+
 	var inputs []hydraroute.ListInput
 	for _, list := range data.Lists {
 		if !isHydraRoute(list.Backend) || !list.Enabled {
