@@ -5,7 +5,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import type { IPResult, ConnectivityResult, AWGTunnel, IPCheckService } from '$lib/types';
 	import { SpeedTestCard } from '$lib/components/tunnels';
-	import { Toggle } from '$lib/components/ui';
+	import { FormToggle } from '$lib/components/ui';
 	import { PageContainer } from '$lib/components/layout';
 
 	let tunnelId = $derived($page.params.id as string);
@@ -159,9 +159,8 @@
 			<div class="server-section">
 				<div class="server-header">
 					<span class="server-label">Сервис</span>
-					<Toggle
-						checked={useCustomService}
-						onchange={(v) => { useCustomService = v; }}
+					<FormToggle
+						bind:checked={useCustomService}
 						disabled={ipLoading}
 						label="Свой"
 						size="sm"

@@ -49,7 +49,10 @@ func (o *Orchestrator) executeOne(ctx context.Context, action Action) error {
 		if err != nil {
 			return nil
 		}
-		o.pingCheck.StartMonitoring(action.Tunnel, stored.Name)
+		// NativeWG: NDMS profile already configured by ActionConfigurePingCheck,
+		// skip redundant configure to avoid double delete→create cycle.
+		skipConfigure := stored.Backend == "nativewg"
+		o.pingCheck.StartMonitoring(action.Tunnel, stored.Name, skipConfigure)
 		return nil
 	case ActionStopMonitoring:
 		if o.pingCheck == nil {

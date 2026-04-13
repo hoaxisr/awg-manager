@@ -19,7 +19,7 @@ import (
 // PingCheckExecutor is the interface for monitoring operations.
 // Satisfied by *pingcheck.Facade.
 type PingCheckExecutor interface {
-	StartMonitoring(tunnelID, tunnelName string)
+	StartMonitoring(tunnelID, tunnelName string, skipConfigure ...bool)
 	StopMonitoring(tunnelID string)
 }
 

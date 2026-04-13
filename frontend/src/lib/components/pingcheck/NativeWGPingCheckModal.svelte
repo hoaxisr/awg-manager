@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { Modal, Toggle } from '$lib/components/ui';
+	import { Modal, FormToggle } from '$lib/components/ui';
 	import type { NativePingCheckConfig, NativePingCheckStatus } from '$lib/types';
 
 	interface Props {
@@ -169,7 +169,7 @@
 			<span class="restart-label">Перезапуск при dead</span>
 			<span class="restart-hint">Автоматически перезапускать туннель при потере связи</span>
 		</div>
-		<Toggle checked={restart} onchange={(val) => restart = val} size="sm" />
+		<FormToggle bind:checked={restart} size="sm" />
 	</div>
 
 	{#snippet actions()}

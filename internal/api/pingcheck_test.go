@@ -47,7 +47,7 @@ func (m *mockPingCheckService) StartMonitoringAllRunning() {}
 
 func (m *mockPingCheckService) StopMonitoringAll() {}
 
-func (m *mockPingCheckService) StartMonitoring(tunnelID, tunnelName string) {}
+func (m *mockPingCheckService) StartMonitoring(tunnelID, tunnelName string, skipConfigure ...bool) {}
 
 func (m *mockPingCheckService) StopMonitoring(tunnelID string) {}
 

@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { Toggle } from '$lib/components/ui';
+	import { FormToggle } from '$lib/components/ui';
 	import type { SpeedTestInfo, SpeedTestResult } from '$lib/types';
 
 	interface Props {
@@ -180,9 +180,8 @@
 		<div class="server-section">
 			<div class="server-header">
 				<span class="server-label">Сервер</span>
-				<Toggle
-					checked={useCustomServer}
-					onchange={(v) => { useCustomServer = v; }}
+				<FormToggle
+					bind:checked={useCustomServer}
 					disabled={isRunning}
 					label="Свой"
 					size="sm"

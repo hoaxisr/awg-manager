@@ -26,7 +26,7 @@ type PingCheckService interface {
 	StopMonitoringAll()
 	Stop()
 	// Per-tunnel monitoring control
-	StartMonitoring(tunnelID, tunnelName string)
+	StartMonitoring(tunnelID, tunnelName string, skipConfigure ...bool)
 	StopMonitoring(tunnelID string)
 	GetTunnelPingStatus(tunnelID string) pingcheck.TunnelPingInfo
 }
@@ -274,9 +274,8 @@ func (h *PingCheckHandler) ConfigureTunnelPingCheck(w http.ResponseWriter, r *ht
 	}
 
 	// Start NativeWG poll-based monitor for log generation.
-	// StartMonitoring is idempotent: NDMS config already applied above,
-	// this just ensures the nwgMonitor goroutine is running.
-	h.service.StartMonitoring(id, stored.Name)
+	// NDMS config already applied above — skip redundant configure.
+	h.service.StartMonitoring(id, stored.Name, true)
 
 	h.log.Info("ping-check-configure", id, "Ping-check configured: host="+cfg.Host)
 	h.PublishSnapshot()
