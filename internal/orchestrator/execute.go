@@ -92,6 +92,8 @@ func (o *Orchestrator) executeOne(ctx context.Context, action Action) error {
 			return nil
 		}
 		return o.nwgOp.RemovePingCheck(ctx, stored)
+	case ActionExternalRestart:
+		return o.executeExternalRestart(ctx, action)
 
 	// Routing
 	case ActionApplyDNSRoutes, ActionReconcileDNSRoutes:
@@ -572,6 +574,54 @@ func (o *Orchestrator) executePersistStopped(action Action) error {
 		return fmt.Errorf("persist stopped state: %w", err)
 	}
 	return nil
+}
+
+// executeExternalRestart handles a soft restart for tunnels that were disabled
+// externally (e.g. by NDMS). It records the rate-limit counter, persists
+// enabled=true, resets in-memory state, then re-decides and executes start actions.
+func (o *Orchestrator) executeExternalRestart(ctx context.Context, action Action) error {
+	// Record restart and reset in-memory state under lock.
+	o.mu.Lock()
+	t := o.state.tunnels[action.Tunnel]
+	if t != nil {
+		t.recordExternalRestart()
+		t.Running = false
+		t.Monitoring = false
+		t.ActiveWAN = ""
+		t.Enabled = true
+	}
+	o.mu.Unlock()
+
+	stored, err := o.store.Get(action.Tunnel)
+	if err != nil {
+		return tunnel.ErrNotFound
+	}
+
+	count := 0
+	if t != nil {
+		count = t.ExternalRestartCount
+	}
+	o.logInfo(action.Tunnel, "External restart attempt (%d/%d)", count, externalRestartMaxCount)
+
+	// Ensure enabled=true in storage.
+	stored.Enabled = true
+	stored.ActiveWAN = ""
+	stored.StartedAt = ""
+	if err := o.store.Save(stored); err != nil {
+		return fmt.Errorf("persist before external restart: %w", err)
+	}
+
+	// Generate start actions.
+	o.mu.Lock()
+	startActions := decide(Event{Type: EventStart, Tunnel: action.Tunnel}, &o.state)
+	o.mu.Unlock()
+
+	if len(startActions) == 0 {
+		o.logInfo(action.Tunnel, "External restart: no start actions generated (WAN down?)")
+		return nil
+	}
+
+	return o.executeActions(ctx, startActions)
 }
 
 // checkSystemAddressConflict checks if ipv4 or ipv6 is already assigned to any

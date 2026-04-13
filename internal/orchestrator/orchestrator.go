@@ -293,6 +293,8 @@ func (o *Orchestrator) updateState(action Action) {
 		t.Monitoring = false
 	case ActionDeleteKernel, ActionDeleteNativeWG:
 		delete(o.state.tunnels, action.Tunnel)
+	case ActionExternalRestart:
+		// State already updated inside executeExternalRestart directly.
 	}
 
 	// Publish SSE event
