@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { ManagedPeer } from '$lib/types';
-	import { Modal, Toggle } from '$lib/components/ui';
+	import { Modal, FormToggle } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 
@@ -62,7 +62,7 @@
 			{#if routerIP}
 				<div class="toggle-row">
 					<span class="toggle-label">DNS роутера ({routerIP})</span>
-					<Toggle checked={useRouterDNS} onchange={(val) => { useRouterDNS = val; dns = val ? routerIP : ''; }} size="sm" />
+					<FormToggle bind:checked={useRouterDNS} onchange={(val) => { dns = val ? routerIP : ''; }} size="sm" />
 				</div>
 			{/if}
 			<span class="field-hint">Используется в конфиге клиента. По умолчанию: 1.1.1.1, 8.8.8.8</span>

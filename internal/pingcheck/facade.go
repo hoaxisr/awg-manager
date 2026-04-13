@@ -85,11 +85,15 @@ func (f *Facade) isNativeWG(tunnelID string) bool {
 }
 
 // StartMonitoring starts monitoring for a tunnel.
-// NativeWG: configures NDMS native ping-check profile.
+// NativeWG: configures NDMS native ping-check profile (unless skipConfigure is true).
 // Kernel: delegates to custom loop.
-func (f *Facade) StartMonitoring(tunnelID, tunnelName string) {
+// Pass skipConfigure=true when the NDMS profile was already configured by the caller
+// (e.g. in the API handler) to avoid a redundant delete→create cycle.
+func (f *Facade) StartMonitoring(tunnelID, tunnelName string, skipConfigure ...bool) {
 	if f.isNativeWG(tunnelID) {
-		f.configureNativeWGPingCheck(tunnelID)
+		if len(skipConfigure) == 0 || !skipConfigure[0] {
+			f.configureNativeWGPingCheck(tunnelID)
+		}
 		f.startNwgMonitor(tunnelID, tunnelName)
 		return
 	}
