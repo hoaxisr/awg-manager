@@ -804,6 +804,80 @@ func subscriptionDomains(allDomains, manualDomains []string) []string {
 	return sub
 }
 
+// ImportNativeRules converts native HydraRoute domain/IP rules into DomainList entries
+// and saves them to the DNS route store. Implements hydraroute.NativeImporter.
+// Idempotent: rules whose name already exists in the store are skipped.
+// Returns the count of newly created lists.
+func (s *ServiceImpl) ImportNativeRules(ctx context.Context, rules []hydraroute.NativeRule, ipBlocks []hydraroute.NativeIPBlock) (int, error) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	data := s.store.GetCached()
+	if data == nil {
+		return 0, fmt.Errorf("store not loaded")
+	}
+
+	// Index ip blocks by lowercase name.
+	ipByName := make(map[string]*hydraroute.NativeIPBlock, len(ipBlocks))
+	for i := range ipBlocks {
+		ipByName[strings.ToLower(ipBlocks[i].Name)] = &ipBlocks[i]
+	}
+
+	// Idempotency: skip rules whose name already exists.
+	existingNames := make(map[string]bool, len(data.Lists))
+	for _, list := range data.Lists {
+		existingNames[strings.ToLower(list.Name)] = true
+	}
+
+	imported := 0
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	for _, rule := range rules {
+		if existingNames[strings.ToLower(rule.Name)] {
+			continue
+		}
+
+		list := DomainList{
+			ID:            nextListID(data.Lists),
+			Name:          rule.Name,
+			ManualDomains: rule.Domains,
+			Domains:       rule.Domains,
+			Backend:       "hydraroute",
+			Enabled:       true,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+			HRRouteMode:   "interface",
+			Routes: []RouteTarget{
+				{Interface: rule.Target, TunnelID: rule.Target},
+			},
+		}
+
+		if ipBlock, ok := ipByName[strings.ToLower(rule.Name)]; ok {
+			list.Subnets = ipBlock.Subnets
+		}
+
+		data.Lists = append(data.Lists, list)
+		existingNames[strings.ToLower(rule.Name)] = true
+		imported++
+	}
+
+	if imported == 0 {
+		return 0, nil
+	}
+
+	if err := s.store.Save(data); err != nil {
+		return 0, fmt.Errorf("save after native import: %w", err)
+	}
+
+	s.log.Infof("imported %d native hydraroute rules into dns route store", imported)
+
+	if err := s.reconcileAll(ctx); err != nil {
+		s.logError("import-native", "", "Reconcile failed", err.Error())
+	}
+
+	return imported, nil
+}
+
 // reconcileHydraRoute collects all hydraroute-backend lists and applies them.
 func (s *ServiceImpl) reconcileHydraRoute(ctx context.Context) error {
 	if s.hydra == nil {
@@ -827,11 +901,13 @@ func (s *ServiceImpl) reconcileHydraRoute(ctx context.Context) error {
 			continue
 		}
 		inputs = append(inputs, hydraroute.ListInput{
-			ListID:   list.ID,
-			ListName: list.Name,
-			TunnelID: list.Routes[0].TunnelID,
-			Domains:  append(list.Domains, list.ManualDomains...),
-			Subnets:  list.Subnets,
+			ListID:       list.ID,
+			ListName:     list.Name,
+			TunnelID:     list.Routes[0].TunnelID,
+			Domains:      append(list.Domains, list.ManualDomains...),
+			Subnets:      list.Subnets,
+			HRRouteMode:  list.HRRouteMode,
+			HRPolicyName: list.HRPolicyName,
 		})
 	}
 

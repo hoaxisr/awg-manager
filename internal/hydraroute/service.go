@@ -2,6 +2,7 @@ package hydraroute
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -17,6 +18,18 @@ type KernelIfaceResolver interface {
 	GetKernelIfaceName(ctx context.Context, tunnelID string) (string, error)
 }
 
+// ndmsRCI is the minimal NDMS client interface used by Service.
+type ndmsRCI interface {
+	RCIPost(ctx context.Context, payload interface{}) (json.RawMessage, error)
+	RCIGet(ctx context.Context, path string) (json.RawMessage, error)
+}
+
+// NativeImporter is implemented by the DNS route service to import native HydraRoute rules.
+// This interface breaks the import cycle: hydraroute cannot import dnsroute directly.
+type NativeImporter interface {
+	ImportNativeRules(ctx context.Context, rules []NativeRule, ipBlocks []NativeIPBlock) (int, error)
+}
+
 // Service manages HydraRoute Neo integration: detection, config writes, daemon control.
 type Service struct {
 	resolver          KernelIfaceResolver
@@ -27,6 +40,8 @@ type Service struct {
 	lastDomainContent string
 	geodata           *GeoDataStore
 	dnsListProvider   func() []DnsListInfo
+	nativeImporter    NativeImporter
+	ndms              ndmsRCI
 }
 
 // NewService creates a new HydraRoute service. Detects HRNeo on creation.
@@ -173,6 +188,21 @@ func (s *Service) BuildEntries(ctx context.Context, lists []ListInput) ([]Manage
 		if l.TunnelID == "" {
 			continue
 		}
+
+		// Policy mode: use the policy name as the routing target directly,
+		// no kernel interface resolution needed.
+		if l.HRRouteMode == "policy" && l.HRPolicyName != "" {
+			entries = append(entries, ManagedEntry{
+				ListID:   l.ListID,
+				ListName: l.ListName,
+				Domains:  l.Domains,
+				Subnets:  l.Subnets,
+				Iface:    l.HRPolicyName,
+			})
+			continue
+		}
+
+		// Interface mode: resolve tunnel ID to kernel interface name.
 		iface, err := s.resolver.GetKernelIfaceName(ctx, l.TunnelID)
 		if err != nil {
 			return nil, fmt.Errorf("resolve tunnel %s: %w", l.TunnelID, err)
@@ -202,11 +232,95 @@ func (s *Service) SetDnsListProvider(fn func() []DnsListInfo) {
 	s.dnsListProvider = fn
 }
 
+// SetNativeImporter sets the NativeImporter used by ImportNative.
+func (s *Service) SetNativeImporter(imp NativeImporter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nativeImporter = imp
+}
+
+// SetNDMS sets the NDMS RCI client used by EnsurePolicy.
+func (s *Service) SetNDMS(client ndmsRCI) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ndms = client
+}
+
 // GetGeoData returns the current GeoDataStore.
 func (s *Service) GetGeoData() *GeoDataStore {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.geodata
+}
+
+// ImportNative reads native (non-managed) rules from domain.conf and ip.list,
+// delegates conversion to the NativeImporter (dnsroute.ServiceImpl), then
+// removes the native blocks from the HydraRoute config files. Idempotent:
+// lists whose name already exists in the store are skipped by the importer.
+// Returns the number of newly imported lists.
+func (s *Service) ImportNative(ctx context.Context) (int, error) {
+	s.mu.Lock()
+	installed := s.status.Installed
+	importer := s.nativeImporter
+	s.mu.Unlock()
+
+	if !installed || importer == nil {
+		return 0, nil
+	}
+
+	domainRules, err := ParseNativeDomainConf()
+	if err != nil {
+		return 0, fmt.Errorf("parse domain.conf: %w", err)
+	}
+	if len(domainRules) == 0 {
+		return 0, nil
+	}
+
+	ipBlocks, _ := ParseNativeIPList()
+
+	n, err := importer.ImportNativeRules(ctx, domainRules, ipBlocks)
+	if err != nil {
+		return 0, err
+	}
+
+	if n > 0 {
+		_ = RemoveNativeFromDomainConf()
+		_ = RemoveNativeFromIPList()
+		s.log.Infof("hydraroute: imported %d native rules", n)
+	}
+
+	return n, nil
+}
+
+// EnsurePolicy creates an ip policy with the given name via NDMS RCI if it doesn't exist.
+func (s *Service) EnsurePolicy(ctx context.Context, policyName string) error {
+	s.mu.Lock()
+	client := s.ndms
+	s.mu.Unlock()
+
+	if client == nil {
+		return fmt.Errorf("NDMS client not available")
+	}
+
+	raw, err := client.RCIGet(ctx, "/show/ip/policy")
+	if err == nil && strings.Contains(string(raw), policyName) {
+		return nil
+	}
+
+	payload := []map[string]interface{}{
+		{"parse": fmt.Sprintf("ip policy %s", policyName)},
+	}
+	if _, err := client.RCIPost(ctx, payload); err != nil {
+		return fmt.Errorf("create policy %s: %w", policyName, err)
+	}
+
+	savePayload := map[string]interface{}{
+		"system": map[string]interface{}{
+			"configuration": map[string]interface{}{"save": true},
+		},
+	}
+	_, _ = client.RCIPost(ctx, savePayload)
+	return nil
 }
 
 // ReadConfig reads and returns the current HydraRoute config.
