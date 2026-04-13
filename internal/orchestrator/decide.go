@@ -203,6 +203,8 @@ func decideNDMSHook(event Event, state *State) []Action {
 
 	switch event.Level {
 	case "running":
+		t.ExternalRestartCount = 0
+
 		if t.Running || !t.Enabled || !state.anyWANUp() {
 			return nil
 		}
