@@ -23,61 +23,55 @@
 </script>
 
 <div class="controls">
-	<div class="routing">
-		<label class="field">
-			<span class="field-label">Маршрут тестов</span>
-			<select
-				class="select"
-				bind:value={routeMode}
-				disabled={disabled}
-			>
-				<option value="direct">Через текущий маршрут по умолчанию</option>
-				<option value="tunnel">Через выбранный туннель</option>
-			</select>
-		</label>
+	<div class="controls-bar">
+		<select
+			class="controls-select"
+			bind:value={routeMode}
+			disabled={disabled}
+		>
+			<option value="direct">Через текущий маршрут по умолчанию</option>
+			<option value="tunnel">Через выбранный туннель</option>
+		</select>
 
 		{#if routeMode === 'tunnel'}
-			<label class="field">
-				<span class="field-label">Туннель для тестов</span>
-				<select
-					class="select"
-					bind:value={routeTunnelId}
-					disabled={disabled || runningTunnels.length === 0}
-				>
-					{#if runningTunnels.length === 0}
-						<option value="">Нет запущенных туннелей</option>
-					{:else}
-						{#each runningTunnels as t}
-							<option value={t.id}>{t.name} ({t.interfaceName ?? t.id})</option>
-						{/each}
-					{/if}
-				</select>
-			</label>
+			<select
+				class="controls-select"
+				bind:value={routeTunnelId}
+				disabled={disabled || runningTunnels.length === 0}
+			>
+				{#if runningTunnels.length === 0}
+					<option value="">Нет запущенных туннелей</option>
+				{:else}
+					{#each runningTunnels as t}
+						<option value={t.id}>{t.name} ({t.interfaceName ?? t.id})</option>
+					{/each}
+				{/if}
+			</select>
 		{/if}
-	</div>
 
-	<div class="buttons">
-		<button
-			class="btn btn-secondary"
-			onclick={() => onStart('quick', false, routeMode, routeTunnelId)}
-			disabled={startDisabled}
-		>
-			Быстрый тест
-		</button>
-		<button
-			class="btn btn-secondary"
-			onclick={() => onStart('quick', true, routeMode, routeTunnelId)}
-			disabled={startDisabled}
-		>
-			Полная диагностика
-		</button>
-		<button
-			class="btn btn-primary"
-			onclick={() => onStart('full', true, routeMode, routeTunnelId)}
-			disabled={startDisabled}
-		>
-			Сформировать отчёт
-		</button>
+		<div class="controls-buttons">
+			<button
+				class="btn btn-ghost btn-sm"
+				onclick={() => onStart('quick', false, routeMode, routeTunnelId)}
+				disabled={startDisabled}
+			>
+				Быстрый тест
+			</button>
+			<button
+				class="btn btn-ghost btn-sm"
+				onclick={() => onStart('quick', true, routeMode, routeTunnelId)}
+				disabled={startDisabled}
+			>
+				Полная диагностика
+			</button>
+			<button
+				class="btn btn-sm" style="border-color: var(--error); color: var(--error);"
+				onclick={() => onStart('full', true, routeMode, routeTunnelId)}
+				disabled={startDisabled}
+			>
+				Сформировать отчёт
+			</button>
+		</div>
 	</div>
 
 	<p class="controls-hint">
@@ -88,46 +82,44 @@
 
 <style>
 	.controls {
+		background: var(--bg-secondary, var(--bg-card));
+		border: 1px solid var(--border);
+		border-radius: var(--radius, 8px);
+		padding: 1rem;
+	}
+
+	.controls-bar {
 		display: flex;
-		flex-direction: column;
-		gap: 12px;
-	}
-
-	.routing {
-		display: grid;
-		gap: 10px;
-		grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-	}
-
-	.field {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-	}
-
-	.field-label {
-		font-size: 13px;
-		color: var(--text-secondary);
-	}
-
-	.select {
-		height: 36px;
-		padding: 0 10px;
-		border-radius: 8px;
-		border: 1px solid var(--border-primary);
-		background: var(--bg-elevated);
-		color: var(--text-primary);
-	}
-
-	.buttons {
-		display: flex;
+		align-items: center;
+		gap: 0.75rem;
 		flex-wrap: wrap;
-		gap: 8px;
+	}
+
+	.controls-select {
+		padding: 0.375rem 0.625rem;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		background: var(--bg-primary);
+		color: var(--text-primary);
+		font-size: 0.8125rem;
+		font-family: inherit;
+	}
+
+	.controls-select:focus {
+		outline: none;
+		border-color: var(--accent);
+	}
+
+	.controls-buttons {
+		display: flex;
+		gap: 0.5rem;
+		margin-left: auto;
 	}
 
 	.controls-hint {
-		color: var(--text-tertiary);
-		font-size: 13px;
-		line-height: 1.4;
+		color: var(--text-muted);
+		font-size: 0.75rem;
+		line-height: 1.5;
+		margin-top: 0.75rem;
 	}
 </style>

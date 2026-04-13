@@ -157,9 +157,9 @@
 
 <style>
     .dns-check-card {
-        background: var(--color-surface-100);
-        border: 1px solid var(--color-surface-300);
-        border-radius: 0.75rem;
+        background: var(--bg-secondary, var(--bg-card));
+        border: 1px solid var(--border);
+        border-radius: var(--radius, 8px);
         overflow: hidden;
     }
 
@@ -168,8 +168,8 @@
         align-items: flex-start;
         justify-content: space-between;
         gap: 1rem;
-        padding: 1.25rem 1.5rem;
-        border-bottom: 1px solid var(--color-surface-300);
+        padding: 1.25rem;
+        border-bottom: 1px solid var(--border);
     }
 
     .dns-check-header-text {
@@ -178,15 +178,15 @@
     }
 
     .dns-check-title {
-        font-size: 1rem;
+        font-size: 0.9375rem;
         font-weight: 600;
         margin: 0 0 0.25rem 0;
-        color: var(--color-surface-900);
+        color: var(--text-primary);
     }
 
     .dns-check-desc {
-        font-size: 0.8125rem;
-        color: var(--color-surface-600);
+        font-size: 0.75rem;
+        color: var(--text-muted);
         margin: 0;
         line-height: 1.4;
     }
@@ -196,19 +196,20 @@
         display: inline-flex;
         align-items: center;
         gap: 0.4rem;
-        padding: 0.45rem 1rem;
-        border-radius: 0.5rem;
-        border: none;
-        background: var(--color-primary-500);
-        color: white;
-        font-size: 0.875rem;
+        padding: 0.375rem 0.75rem;
+        border-radius: 6px;
+        border: 1px solid var(--accent);
+        background: var(--accent);
+        color: #fff;
+        font-size: 0.8125rem;
         font-weight: 500;
+        font-family: inherit;
         cursor: pointer;
-        transition: background 0.15s;
+        transition: filter 0.15s;
     }
 
     .dns-check-btn:hover:not(:disabled) {
-        background: var(--color-primary-600);
+        filter: brightness(1.1);
     }
 
     .dns-check-btn:disabled {
@@ -230,16 +231,16 @@
         display: flex;
         align-items: center;
         gap: 0.5rem;
-        padding: 0.6rem 1.5rem;
-        background: var(--color-surface-50, var(--color-surface-100));
-        border-bottom: 1px solid var(--color-surface-200);
-        font-size: 0.8125rem;
-        color: var(--color-surface-600);
+        padding: 0.625rem 1.25rem;
+        background: var(--bg-primary);
+        border-bottom: 1px solid var(--border);
+        font-size: 0.75rem;
+        color: var(--text-secondary);
     }
 
     .client-info svg {
         flex-shrink: 0;
-        color: var(--color-surface-500);
+        color: var(--text-muted);
     }
 
     .check-list {
@@ -250,9 +251,9 @@
     .check-item {
         display: flex;
         align-items: center;
-        gap: 0.875rem;
-        padding: 0.875rem 1.5rem;
-        border-bottom: 1px solid var(--color-surface-200);
+        gap: 0.75rem;
+        padding: 0.875rem 1.25rem;
+        border-bottom: 1px solid var(--border);
     }
 
     .check-item:last-child {
@@ -267,28 +268,26 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 0.875rem;
-        font-weight: 700;
     }
 
     .check-icon-ok {
-        background: rgba(34, 197, 94, 0.15);
-        color: rgb(21, 128, 61);
+        background: rgba(16, 185, 129, 0.15);
+        color: var(--success);
     }
 
     .check-icon-fail {
         background: rgba(239, 68, 68, 0.15);
-        color: rgb(185, 28, 28);
+        color: var(--error);
     }
 
     .check-icon-warning {
-        background: rgba(234, 179, 8, 0.15);
-        color: rgb(161, 98, 7);
+        background: rgba(245, 158, 11, 0.15);
+        color: var(--warning);
     }
 
     .check-icon-pending {
-        background: var(--color-surface-200);
-        color: var(--color-surface-500);
+        background: var(--bg-primary);
+        color: var(--text-muted);
     }
 
     .check-info {
@@ -302,68 +301,69 @@
     .check-title {
         font-size: 0.8125rem;
         font-weight: 500;
-        color: var(--color-surface-900);
+        color: var(--text-primary);
     }
 
     .check-desc {
         font-size: 0.75rem;
-        color: var(--color-surface-500);
+        color: var(--text-muted);
+        line-height: 1.4;
     }
 
     .check-detail {
         display: inline-block;
         margin-top: 0.25rem;
         font-family: monospace;
-        font-size: 0.75rem;
-        background: var(--color-surface-200);
-        color: var(--color-surface-700);
-        padding: 0.1rem 0.4rem;
-        border-radius: 0.25rem;
+        font-size: 0.6875rem;
+        background: var(--bg-primary);
+        color: var(--text-secondary);
+        padding: 0.125rem 0.5rem;
+        border-radius: 4px;
     }
 
     .check-status {
         flex-shrink: 0;
-        font-size: 0.75rem;
+        font-size: 0.6875rem;
         font-weight: 600;
-        padding: 0.2rem 0.55rem;
-        border-radius: 0.375rem;
+        padding: 0.125rem 0.5rem;
+        border-radius: 4px;
     }
 
     .status-ok {
-        background: rgba(34, 197, 94, 0.12);
-        color: rgb(21, 128, 61);
+        background: rgba(16, 185, 129, 0.15);
+        color: var(--success);
     }
 
     .status-fail {
-        background: rgba(239, 68, 68, 0.12);
-        color: rgb(185, 28, 28);
+        background: rgba(239, 68, 68, 0.15);
+        color: var(--error);
     }
 
     .status-warn {
-        background: rgba(234, 179, 8, 0.12);
-        color: rgb(161, 98, 7);
+        background: rgba(245, 158, 11, 0.15);
+        color: var(--warning);
     }
 
     .summary-bar {
         display: flex;
         align-items: flex-start;
         gap: 0.75rem;
-        padding: 0.875rem 1.5rem;
-        background: var(--color-surface-50, var(--color-surface-100));
-        border-top: 1px solid var(--color-surface-200);
-        border-left: 4px solid transparent;
+        padding: 0.75rem 1.25rem;
+        background: var(--bg-primary);
+        border-top: 1px solid var(--border);
+        border-left: 3px solid transparent;
     }
 
     .summary-ok {
-        border-left-color: rgb(34, 197, 94);
+        border-left-color: var(--success);
     }
 
     .summary-error {
-        border-left-color: rgb(239, 68, 68);
+        border-left-color: var(--error);
     }
 
     .summary-warning {
-        border-left-color: rgb(234, 179, 8);
+        border-left-color: var(--warning);
     }
 
     .summary-icon {
@@ -374,15 +374,15 @@
 
     .summary-text {
         font-size: 0.8125rem;
-        color: var(--color-surface-700);
+        color: var(--text-secondary);
         line-height: 1.5;
     }
 
     .spinner {
         width: 16px;
         height: 16px;
-        border: 2px solid var(--color-surface-400);
-        border-top-color: var(--color-primary-500);
+        border: 2px solid var(--border);
+        border-top-color: var(--accent);
         border-radius: 50%;
         animation: spin 0.7s linear infinite;
     }
