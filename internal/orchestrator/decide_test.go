@@ -1308,3 +1308,29 @@ func TestDecideNDMSHook_ExternalDisabled_KernelTunnel(t *testing.T) {
 		t.Error("kernel tunnel: should NOT use ExternalRestart")
 	}
 }
+
+func TestDecideNDMSHook_RunningResetsExternalRestartCount(t *testing.T) {
+	s := State{
+		tunnels: map[string]*tunnelState{
+			"awg10": {
+				ID: "awg10", Name: "test", Backend: "nativewg",
+				Enabled: true, Running: false, NWGIndex: 0,
+				ExternalRestartCount: 2,
+				LastExternalRestart:  time.Now().Add(-1 * time.Minute),
+			},
+		},
+		anyWANUpFn: func() bool { return true },
+	}
+
+	_ = decide(Event{
+		Type:     EventNDMSHook,
+		NDMSName: "Wireguard0",
+		Layer:    "conf",
+		Level:    "running",
+	}, &s)
+
+	ts := s.tunnels["awg10"]
+	if ts.ExternalRestartCount != 0 {
+		t.Errorf("expected ExternalRestartCount reset to 0, got %d", ts.ExternalRestartCount)
+	}
+}
