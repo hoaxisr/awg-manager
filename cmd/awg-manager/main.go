@@ -189,6 +189,7 @@ func main() {
 	hydraService := hydraroute.NewService(catalog, log)
 	geoDataStore := hydraroute.NewGeoDataStore(*dataDir)
 	hydraService.SetGeoDataStore(geoDataStore)
+	hydraService.SetNDMS(ndmsClient)
 
 	// DNS route service (OS5 only — routes domains through tunnels via NDMS)
 	dnsRouteStore := dnsroute.NewStore(*dataDir)
@@ -208,6 +209,7 @@ func main() {
 		return nil
 	})
 	dnsRouteService.SetHydraRoute(hydraService)
+	hydraService.SetNativeImporter(dnsRouteService)
 	dnsRouteService.SetFailoverManager(dnsFailover)
 	dnsFailover.SetLogger(log)
 	dnsFailover.SetAffectedListsLookup(dnsRouteService.LookupAffectedLists)
@@ -372,6 +374,15 @@ func main() {
 	catalog.SetSnapshotProvider("hydrarouteStatus", func(ctx context.Context) interface{} {
 		return hydraService.GetStatus()
 	})
+
+	// Auto-import native HydraRoute rules on startup
+	if hydraService.GetStatus().Installed {
+		if count, err := hydraService.ImportNative(context.Background()); err != nil {
+			log.Warnf("hydraroute: auto-import failed: %v", err)
+		} else if count > 0 {
+			log.Infof("hydraroute: auto-imported %d native rules", count)
+		}
+	}
 
 	srv := server.New(
 		server.Config{

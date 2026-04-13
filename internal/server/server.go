@@ -441,6 +441,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/hydraroute/geo-files/update", guarded(hrHandler.UpdateGeoFile))
 		mux.HandleFunc("/api/hydraroute/geo-tags", guarded(hrHandler.GetGeoTags))
 		mux.HandleFunc("/api/hydraroute/ipset-usage", guarded(hrHandler.GetIpsetUsage))
+		mux.HandleFunc("/api/hydraroute/import-native", guarded(hrHandler.ImportNative))
 	}
 
 	// Update endpoints (protected + boot guarded)
