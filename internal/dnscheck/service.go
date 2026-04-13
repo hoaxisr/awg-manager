@@ -110,7 +110,7 @@ func (s *Service) Start(ctx context.Context, clientIP string) (*StartResponse, e
 	checks[2] = CheckResult{
 		ID:      "dns_probe",
 		Status:  "pending",
-		Title:   "DNS-запрос через туннель",
+		Title:   "DNS-запрос к роутеру",
 		Message: "Ожидание DNS-запроса...",
 	}
 
@@ -191,15 +191,15 @@ func (s *Service) Complete(ctx context.Context, token string, dnsReached bool) (
 		checks[2] = CheckResult{
 			ID:      "dns_probe",
 			Status:  "ok",
-			Title:   "DNS-запрос через туннель",
-			Message: "DNS-запрос успешно прошёл через туннель",
+			Title:   "DNS-запрос к роутеру",
+			Message: "DNS-запрос успешно достиг роутера",
 		}
 	} else {
 		checks[2] = CheckResult{
 			ID:      "dns_probe",
 			Status:  "fail",
-			Title:   "DNS-запрос через туннель",
-			Message: "DNS-запрос не достиг роутера через туннель",
+			Title:   "DNS-запрос к роутеру",
+			Message: "DNS-запрос не достиг роутера. Возможно клиент не настроен корректно",
 			Detail:  "Клиент не сделал DNS-запрос к домену диагностики за отведённое время",
 		}
 	}

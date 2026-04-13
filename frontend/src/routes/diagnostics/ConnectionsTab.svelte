@@ -87,7 +87,6 @@
 </script>
 
 <div class="page-header">
-	<h2>Соединения</h2>
 	<div class="header-right">
 		{#if data?.fetchedAt}
 			<span class="fetched-at">{new Date(data.fetchedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
@@ -143,7 +142,7 @@
 <style>
 	.page-header {
 		display: flex;
-		justify-content: space-between;
+		justify-content: flex-end;
 		align-items: center;
 		margin-bottom: 1rem;
 	}
