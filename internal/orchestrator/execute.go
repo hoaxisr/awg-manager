@@ -581,6 +581,7 @@ func (o *Orchestrator) executePersistStopped(action Action) error {
 // enabled=true, resets in-memory state, then re-decides and executes start actions.
 func (o *Orchestrator) executeExternalRestart(ctx context.Context, action Action) error {
 	// Record restart and reset in-memory state under lock.
+	var count int
 	o.mu.Lock()
 	t := o.state.tunnels[action.Tunnel]
 	if t != nil {
@@ -589,6 +590,7 @@ func (o *Orchestrator) executeExternalRestart(ctx context.Context, action Action
 		t.Monitoring = false
 		t.ActiveWAN = ""
 		t.Enabled = true
+		count = t.ExternalRestartCount
 	}
 	o.mu.Unlock()
 
@@ -597,10 +599,6 @@ func (o *Orchestrator) executeExternalRestart(ctx context.Context, action Action
 		return tunnel.ErrNotFound
 	}
 
-	count := 0
-	if t != nil {
-		count = t.ExternalRestartCount
-	}
 	o.logInfo(action.Tunnel, "External restart attempt (%d/%d)", count, externalRestartMaxCount)
 
 	// Ensure enabled=true in storage.
