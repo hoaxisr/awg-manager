@@ -452,8 +452,10 @@ func TestDecide_NDMSHook_StopsRunningOnDisabled(t *testing.T) {
 
 	actions := decide(Event{Type: EventNDMSHook, NDMSName: "Wireguard0", Layer: "conf", Level: "disabled"}, &s)
 
-	if !hasAction(actions, ActionStopNativeWG) {
-		t.Error("running tunnel with level=disabled should be stopped")
+	// nativewg conf=disabled triggers external restart (not a plain stop),
+	// so the tunnel is kept enabled and will be brought back up.
+	if !hasAction(actions, ActionExternalRestart) {
+		t.Error("running nativewg tunnel with level=disabled should trigger external restart")
 	}
 }
 
