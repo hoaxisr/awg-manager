@@ -20,7 +20,9 @@ type DomainList struct {
 	CreatedAt     string         `json:"createdAt"`
 	UpdatedAt        string         `json:"updatedAt"`
 	LastDedupeReport *DedupeReport  `json:"lastDedupeReport,omitempty"`
-	Backend          string         `json:"backend,omitempty"` // "" or "ndms" = NDMS, "hydraroute" = HydraRoute Neo
+	Backend          string         `json:"backend,omitempty"`  // "" or "ndms" = NDMS, "hydraroute" = HydraRoute Neo
+	HRRouteMode      string         `json:"hrRouteMode,omitempty"`  // "interface" or "policy" (hydraroute only)
+	HRPolicyName     string         `json:"hrPolicyName,omitempty"` // policy name for policy mode
 }
 
 
