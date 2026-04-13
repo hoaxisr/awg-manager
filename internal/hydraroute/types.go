@@ -18,11 +18,13 @@ type ManagedEntry struct {
 
 // ListInput is the input for BuildEntries — domain list data with tunnel ID to resolve.
 type ListInput struct {
-	ListID   string
-	ListName string
-	TunnelID string
-	Domains  []string
-	Subnets  []string
+	ListID       string
+	ListName     string
+	TunnelID     string
+	Domains      []string
+	Subnets      []string
+	HRRouteMode  string // "interface" (default) or "policy"
+	HRPolicyName string // policy name when HRRouteMode == "policy"
 }
 
 // Config represents the managed subset of hrneo.conf fields.
