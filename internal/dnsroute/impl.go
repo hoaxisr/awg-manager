@@ -298,6 +298,15 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 	if list.Routes == nil {
 		list.Routes = existing.Routes
 	}
+	if list.Backend == "" {
+		list.Backend = existing.Backend
+	}
+	if list.HRRouteMode == "" {
+		list.HRRouteMode = existing.HRRouteMode
+	}
+	if list.HRPolicyName == "" {
+		list.HRPolicyName = existing.HRPolicyName
+	}
 
 	// Validate any new subscription URLs before saving.
 	newSubs := findNewSubscriptions(existing.Subscriptions, list.Subscriptions)
@@ -918,7 +927,7 @@ func (s *ServiceImpl) reconcileHydraRoute(ctx context.Context) error {
 			ListID:       list.ID,
 			ListName:     list.Name,
 			TunnelID:     list.Routes[0].TunnelID,
-			Domains:      append(list.Domains, list.ManualDomains...),
+			Domains:      list.Domains,
 			Subnets:      list.Subnets,
 			HRRouteMode:  list.HRRouteMode,
 			HRPolicyName: list.HRPolicyName,

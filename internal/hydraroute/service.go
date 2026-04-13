@@ -303,8 +303,13 @@ func (s *Service) EnsurePolicy(ctx context.Context, policyName string) error {
 	}
 
 	raw, err := client.RCIGet(ctx, "/show/ip/policy")
-	if err == nil && strings.Contains(string(raw), policyName) {
-		return nil
+	if err == nil {
+		var policies map[string]json.RawMessage
+		if json.Unmarshal(raw, &policies) == nil {
+			if _, exists := policies[policyName]; exists {
+				return nil
+			}
+		}
 	}
 
 	payload := []map[string]interface{}{
