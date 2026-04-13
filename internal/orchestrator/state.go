@@ -1,6 +1,8 @@
 package orchestrator
 
 import (
+	"time"
+
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
@@ -19,7 +21,29 @@ type tunnelState struct {
 	PingCheck    *storage.TunnelPingCheck
 	DefaultRoute bool
 	ISPInterface string
-	Endpoint     string // peer endpoint (host:port)
+	Endpoint             string    // peer endpoint (host:port)
+	ExternalRestartCount int       // consecutive external restarts within window
+	LastExternalRestart  time.Time // timestamp of last external restart
+}
+
+const (
+	externalRestartMaxCount = 3
+	externalRestartWindow   = 5 * time.Minute
+)
+
+func (t *tunnelState) canExternalRestart() bool {
+	if time.Since(t.LastExternalRestart) > externalRestartWindow {
+		return true
+	}
+	return t.ExternalRestartCount < externalRestartMaxCount
+}
+
+func (t *tunnelState) recordExternalRestart() {
+	if time.Since(t.LastExternalRestart) > externalRestartWindow {
+		t.ExternalRestartCount = 0
+	}
+	t.ExternalRestartCount++
+	t.LastExternalRestart = time.Now()
 }
 
 // ndmsName returns the NDMS interface name for this tunnel.
