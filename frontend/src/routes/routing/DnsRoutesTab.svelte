@@ -4,7 +4,7 @@
     import type { DnsRoute, RoutingTunnel } from '$lib/types';
     import type { ServicePreset } from '$lib/data/presets';
     import { Modal } from '$lib/components/ui';
-    import { DnsRouteCard, DnsRouteEditModal, DnsRouteImportModal, DnsRoutePresetModal } from '$lib/components/dnsroutes';
+    import { DnsRouteCard, DnsRouteEditModal, DnsRouteImportModal, DnsRoutePresetModal, HrNeoRouteList } from '$lib/components/dnsroutes';
     import { exportRoutes, downloadJson } from '$lib/utils/dns-export';
     import { notifications } from '$lib/stores/notifications';
 
@@ -16,9 +16,10 @@
         isOS5?: boolean;
         hydrarouteInstalled?: boolean;
         hasDnsEngine?: boolean;
+        policyOrder?: string[];
     }
 
-    let { dnsRoutes, routingTunnels, editRuleId = '', editRuleCounter = 0, isOS5 = false, hydrarouteInstalled = false, hasDnsEngine = false }: Props = $props();
+    let { dnsRoutes, routingTunnels, editRuleId = '', editRuleCounter = 0, isOS5 = false, hydrarouteInstalled = false, hasDnsEngine = false, policyOrder = [] }: Props = $props();
 
     // Open edit modal when search result is clicked.
     // Capture counter at mount to skip stale values on tab re-mount.
@@ -48,12 +49,15 @@
     let dnsSaving = $state(false);
     let dnsModalOpen = $state(false);
     let addMenuOpen = $state(false);
+    let orderSaving = $state(false);
 
     function handleClickOutside() { addMenuOpen = false; }
     onMount(() => document.addEventListener('click', handleClickOutside));
     onDestroy(() => document.removeEventListener('click', handleClickOutside));
 
     let dnsActiveCount = $derived(dnsRoutes.filter(r => r.enabled).length);
+    let hrNeoRoutes = $derived(dnsRoutes.filter(r => r.backend === 'hydraroute'));
+    let ndmsRoutes = $derived(dnsRoutes.filter(r => r.backend !== 'hydraroute'));
 
     async function createDnsRoute(data: Partial<DnsRoute>) {
         dnsSaving = true;
@@ -131,6 +135,18 @@
             notifications.success('Подписки обновлены');
         } catch (e: any) {
             notifications.error(e.message || 'Ошибка обновления');
+        }
+    }
+
+    async function applyPolicyOrder(order: string[]) {
+        orderSaving = true;
+        try {
+            await api.setPolicyOrder(order);
+            notifications.success('Порядок политик применён');
+        } catch (e: any) {
+            notifications.error(e.message || 'Ошибка сохранения порядка');
+        } finally {
+            orderSaving = false;
         }
     }
 
@@ -380,23 +396,50 @@
         </div>
     </div>
 {:else}
-    <div class="route-grid">
-        {#each dnsRoutes as route (route.id)}
-            <DnsRouteCard
-                {route}
-                tunnels={routingTunnels}
-                ontoggle={(enabled) => toggleDnsRoute(route.id, enabled)}
-                onedit={() => { editingDnsRoute = route; dnsModalOpen = true; }}
-                ondelete={() => dnsDeleteId = route.id}
-                onrefresh={() => refreshDnsRouteSubscriptions(route.id)}
-                toggleLoading={dnsToggling === route.id}
-                selectable={dnsSelectionMode}
-                selected={dnsSelected.has(route.id)}
-                onselect={() => toggleDnsSelect(route.id)}
-                {hydrarouteInstalled}
-            />
-        {/each}
-    </div>
+    {#if hrNeoRoutes.length > 0}
+        <HrNeoRouteList
+            routes={hrNeoRoutes}
+            tunnels={routingTunnels}
+            {policyOrder}
+            ontoggle={(id, enabled) => toggleDnsRoute(id, enabled)}
+            onedit={(route) => { editingDnsRoute = route; dnsModalOpen = true; }}
+            ondelete={(id) => dnsDeleteId = id}
+            onrefresh={(id) => refreshDnsRouteSubscriptions(id)}
+            onapplyorder={applyPolicyOrder}
+            toggleLoadingId={dnsToggling}
+            {hydrarouteInstalled}
+        />
+    {/if}
+
+    {#if hrNeoRoutes.length > 0 && ndmsRoutes.length > 0}
+        <div class="section-divider"></div>
+    {/if}
+
+    {#if ndmsRoutes.length > 0}
+        <div class="ndms-section">
+            <div class="ndms-title">
+                <span class="ndms-title-text">NDMS</span>
+                <span class="ndms-title-count">{ndmsRoutes.length}</span>
+            </div>
+            <div class="route-grid">
+                {#each ndmsRoutes as route (route.id)}
+                    <DnsRouteCard
+                        {route}
+                        tunnels={routingTunnels}
+                        ontoggle={(enabled) => toggleDnsRoute(route.id, enabled)}
+                        onedit={() => { editingDnsRoute = route; dnsModalOpen = true; }}
+                        ondelete={() => dnsDeleteId = route.id}
+                        onrefresh={() => refreshDnsRouteSubscriptions(route.id)}
+                        toggleLoading={dnsToggling === route.id}
+                        selectable={dnsSelectionMode}
+                        selected={dnsSelected.has(route.id)}
+                        onselect={() => toggleDnsSelect(route.id)}
+                        {hydrarouteInstalled}
+                    />
+                {/each}
+            </div>
+        </div>
+    {/if}
 {/if}
 
 <DnsRouteEditModal
@@ -563,6 +606,39 @@
         height: 1px;
         background: var(--border);
         margin: 4px 8px;
+    }
+
+    .section-divider {
+        border-top: 1px solid var(--border);
+        margin: 8px 0;
+    }
+
+    .ndms-section {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .ndms-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .ndms-title-text {
+        font-size: 0.8125rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: var(--text-muted);
+    }
+
+    .ndms-title-count {
+        background: var(--border);
+        color: var(--text-secondary);
+        padding: 1px 6px;
+        border-radius: 3px;
+        font-size: 0.625rem;
     }
 
     @media (max-width: 640px) {
