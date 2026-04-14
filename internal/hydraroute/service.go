@@ -348,6 +348,32 @@ func (s *Service) WriteConfig(cfg *Config) error {
 	return nil
 }
 
+// SetPolicyOrder updates only the PolicyOrder field in hrneo.conf and restarts.
+func (s *Service) SetPolicyOrder(order []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cfg, err := ReadConfig()
+	if err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
+
+	cfg.PolicyOrder = order
+
+	if s.geodata != nil {
+		geoIP, geoSite := s.geodata.GeoFilePaths()
+		cfg.GeoIPFiles = geoIP
+		cfg.GeoSiteFiles = geoSite
+	}
+
+	if err := WriteConfig(cfg); err != nil {
+		return err
+	}
+
+	s.scheduleRestart()
+	return nil
+}
+
 // SyncGeoFilesToConfig reads the current config and writes it back with updated geo file paths.
 func (s *Service) SyncGeoFilesToConfig() error {
 	cfg, err := ReadConfig()
