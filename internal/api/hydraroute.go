@@ -247,3 +247,26 @@ func (h *HydraRouteHandler) GetIpsetUsage(w http.ResponseWriter, r *http.Request
 
 	response.Success(w, usage)
 }
+
+// SetPolicyOrder updates the PolicyOrder in hrneo.conf.
+func (h *HydraRouteHandler) SetPolicyOrder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+
+	var req struct {
+		Order []string `json:"order"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid request body: "+err.Error(), "BAD_REQUEST")
+		return
+	}
+
+	if err := h.svc.SetPolicyOrder(req.Order); err != nil {
+		response.Error(w, err.Error(), "POLICY_ORDER_ERROR")
+		return
+	}
+
+	response.Success(w, map[string][]string{"order": req.Order})
+}
