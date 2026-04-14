@@ -513,6 +513,10 @@ export interface SystemInfo {
 	routerIP: string;
 	bootInProgress: boolean;
 	backendAvailability: { nativewg: boolean; kernel: boolean };
+	singbox?: {
+		installed: boolean;
+		version: string;
+	};
 }
 
 export interface WANInterface {
@@ -908,5 +912,62 @@ export type {
 	TunnelConnectivityEvent,
 	PingCheckLogEvent
 } from '$lib/api/events';
+
+// #endregion
+
+// ─────────────────────────────────────────────
+// #region Sing-box
+// ─────────────────────────────────────────────
+
+export interface SingboxTunnel {
+	tag: string;
+	protocol: 'vless' | 'hysteria2' | 'naive';
+	server: string;
+	port: number;
+	security: 'reality' | 'tls' | 'none';
+	transport: 'tcp' | 'grpc' | 'quic' | 'https';
+	listenPort: number;
+	proxyInterface: string;
+	sni?: string;
+	fingerprint?: string;
+	username?: string;
+	connectivity: {
+		connected: boolean;
+		latency: number | null;
+	};
+	kernelInterface?: string;
+}
+
+export interface SingboxStatus {
+	installed: boolean;
+	version?: string;
+	running: boolean;
+	pid?: number;
+	tunnelCount: number;
+}
+
+export interface SingboxImportResponse {
+	imported: SingboxTunnel[];
+	errors: Array<{ line: number; input: string; error: string }>;
+}
+
+export interface SingboxTraffic {
+	tag: string;
+	upload: number;
+	download: number;
+}
+
+export interface SingboxTunnelEvent {
+	action: 'added' | 'updated' | 'removed';
+	tags: string[];
+}
+
+export interface SingboxStatusEvent extends SingboxStatus {}
+
+export interface SingboxDelayEvent {
+	tag: string;
+	delay: number;
+	timestamp: number;
+}
 
 // #endregion

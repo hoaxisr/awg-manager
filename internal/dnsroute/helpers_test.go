@@ -109,3 +109,23 @@ func (n *noopNDMS) ShowPingCheck(ctx context.Context, profile string) (*ndms.Pin
 func (n *noopNDMS) RCIGet(ctx context.Context, path string) (json.RawMessage, error) {
 	return nil, nil
 }
+
+func (n *noopNDMS) CreateProxy(ctx context.Context, name, description, upstreamHost string, upstreamPort int, socks5UDP bool) error {
+	return nil
+}
+
+func (n *noopNDMS) DeleteProxy(ctx context.Context, name string) error {
+	return nil
+}
+
+func (n *noopNDMS) ProxyUp(ctx context.Context, name string) error {
+	return nil
+}
+
+func (n *noopNDMS) ProxyDown(ctx context.Context, name string) error {
+	return nil
+}
+
+func (n *noopNDMS) ShowProxy(ctx context.Context, name string) (*ndms.ProxyInfo, error) {
+	return nil, nil
+}

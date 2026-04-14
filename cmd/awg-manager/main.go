@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
+	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/cleanup"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
@@ -35,6 +36,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/server"
+	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/staticroute"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
@@ -346,6 +348,31 @@ func main() {
 	connMonitor.Start()
 	defer connMonitor.Stop()
 
+	// Sing-box integration
+	singboxOp := singbox.NewOperator(singbox.OperatorDeps{
+		Log:  slog.Default().With("component", "singbox"),
+		NDMS: ndmsClient,
+	})
+	delayChecker := singbox.NewDelayChecker(singboxOp.Clash(), singboxOp, eventBus)
+	singboxHandler := api.NewSingboxHandler(singboxOp, eventBus, delayChecker, testService)
+	clashProxy := api.NewClashProxy(singboxOp)
+
+	// Startup reconcile — if config.json exists from a previous run,
+	// this starts sing-box and syncs NDMS Proxy interfaces.
+	go func() {
+		if err := singboxOp.Reconcile(context.Background()); err != nil {
+			slog.Default().Warn("singbox startup reconcile", "err", err)
+		}
+	}()
+
+	trafficCtx, trafficCancel := context.WithCancel(context.Background())
+	defer trafficCancel()
+	go singbox.NewTrafficAggregator(singboxOp.Clash().Address(), eventBus).Run(trafficCtx)
+
+	delayCtx, delayCancel := context.WithCancel(context.Background())
+	defer delayCancel()
+	go delayChecker.Run(delayCtx)
+
 	// Register routing snapshot providers with catalog.
 	catalog.SetSnapshotProvider("dnsRoutes", func(ctx context.Context) interface{} {
 		routes, _ := dnsRouteService.List(ctx)
@@ -416,9 +443,12 @@ func main() {
 		orch,
 		eventBus,
 		hydraService,
+		singboxHandler,
+		clashProxy,
 	)
 
 	srv.SetTrafficCollector(trafficCollector)
+	srv.SetSingboxOperator(singboxOp)
 
 	// Boot status: 0 = booting, 1 = done. Used by /api/system/info.
 	var bootDone int32

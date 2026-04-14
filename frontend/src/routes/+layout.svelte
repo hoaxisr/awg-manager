@@ -15,6 +15,7 @@
 	import { routing } from '$lib/stores/routing';
 	import { systemInfo } from '$lib/stores/system';
 	import { feedTraffic } from '$lib/stores/traffic';
+	import { singbox } from '$lib/stores/singbox';
 	import type { UpdateInfo } from '$lib/types';
 	import LoginForm from '$lib/components/LoginForm.svelte';
 	import { Modal } from '$lib/components/ui';
@@ -48,6 +49,8 @@
 
 	function startSSE() {
 		if (disconnectSSE) return;
+		singbox.loadStatus();
+		singbox.loadTunnels();
 		disconnectSSE = connectSSE({
 			// System events
 			onSystemReady: (data) => {
@@ -122,6 +125,12 @@
 			onLogEntry: (data) => logEntries.append(data),
 			onPingCheckState: (data) => pingCheckStatus.updateStatus(data),
 			onPingCheckLog: (data) => pingCheckStatus.appendLog(data),
+
+			// Sing-box
+			onSingboxStatus: singbox.applyStatus,
+			onSingboxTunnel: singbox.applyTunnelEvent,
+			onSingboxTraffic: singbox.applyTraffic,
+			onSingboxDelay: (data) => singbox.applyDelay(data.tag, data.delay),
 		});
 	}
 

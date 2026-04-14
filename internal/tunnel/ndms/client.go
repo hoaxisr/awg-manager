@@ -201,6 +201,23 @@ type Client interface {
 
 	// ShowPingCheck returns the current status of a ping-check profile.
 	ShowPingCheck(ctx context.Context, profile string) (*PingCheckStatus, error)
+
+	// Proxy interface (for SOCKS5 upstream integration, e.g., sing-box)
+
+	// CreateProxy creates a Proxy interface in NDMS with SOCKS5 upstream.
+	CreateProxy(ctx context.Context, name, description, upstreamHost string, upstreamPort int, socks5UDP bool) error
+
+	// DeleteProxy removes a Proxy interface from NDMS.
+	DeleteProxy(ctx context.Context, name string) error
+
+	// ProxyUp brings a Proxy interface up.
+	ProxyUp(ctx context.Context, name string) error
+
+	// ProxyDown brings a Proxy interface down.
+	ProxyDown(ctx context.Context, name string) error
+
+	// ShowProxy returns the current state of a Proxy interface.
+	ShowProxy(ctx context.Context, name string) (*ProxyInfo, error)
 }
 
 // PingCheckConfig holds configuration for an NDMS ping-check profile.
@@ -208,12 +225,12 @@ type PingCheckConfig struct {
 	Host           string `json:"host"`
 	Mode           string `json:"mode"`           // "icmp", "connect", "tls", "uri"
 	UpdateInterval int    `json:"updateInterval"` // seconds (3-3600)
-	MaxFails       int    `json:"maxFails"`        // 1-10
-	MinSuccess     int    `json:"minSuccess"`      // 1-10
-	Timeout        int    `json:"timeout"`         // seconds (1-10)
-	Port           int    `json:"port,omitempty"`  // for connect/tls mode
-	URI            string `json:"uri,omitempty"`   // for uri mode
-	Restart        bool   `json:"restart"`         // auto-restart interface on fail
+	MaxFails       int    `json:"maxFails"`       // 1-10
+	MinSuccess     int    `json:"minSuccess"`     // 1-10
+	Timeout        int    `json:"timeout"`        // seconds (1-10)
+	Port           int    `json:"port,omitempty"` // for connect/tls mode
+	URI            string `json:"uri,omitempty"`  // for uri mode
+	Restart        bool   `json:"restart"`        // auto-restart interface on fail
 }
 
 // PingCheckStatus holds the current state of an NDMS ping-check profile.
@@ -228,7 +245,7 @@ type PingCheckStatus struct {
 	Port         int    `json:"port,omitempty"`
 	Restart      bool   `json:"restart"`
 	Bound        bool   `json:"bound"`
-	Status       string `json:"status"`       // "pass" | "fail" | ""
+	Status       string `json:"status"` // "pass" | "fail" | ""
 	FailCount    int    `json:"failCount"`
 	SuccessCount int    `json:"successCount"`
 }
@@ -265,4 +282,18 @@ type DnsProxyRoute struct {
 	Interface string `json:"interface"`
 	Auto      bool   `json:"auto,omitempty"`
 	Reject    bool   `json:"reject,omitempty"`
+}
+
+// ProxyInfo describes an NDMS Proxy interface state obtained from
+// /show/interface/<name>. Proxy-specific config (upstream, protocol) is
+// NOT included because NDMS does not expose it via this endpoint — that
+// data lives in running-config.
+type ProxyInfo struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"` // "Proxy" for valid proxy interfaces
+	Description string `json:"description"`
+	State       string `json:"state"` // "up" | "down"
+	Link        string `json:"link"`  // "up" | "down"
+	Up          bool   `json:"up"`    // convenience: State == "up"
+	Exists      bool   `json:"exists"`
 }

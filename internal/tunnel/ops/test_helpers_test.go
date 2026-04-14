@@ -201,6 +201,26 @@ func (m *MockNDMSClient) RCIGet(ctx context.Context, path string) (json.RawMessa
 	return nil, nil
 }
 
+func (m *MockNDMSClient) CreateProxy(ctx context.Context, name, description, upstreamHost string, upstreamPort int, socks5UDP bool) error {
+	return nil
+}
+
+func (m *MockNDMSClient) DeleteProxy(ctx context.Context, name string) error {
+	return nil
+}
+
+func (m *MockNDMSClient) ProxyUp(ctx context.Context, name string) error {
+	return nil
+}
+
+func (m *MockNDMSClient) ProxyDown(ctx context.Context, name string) error {
+	return nil
+}
+
+func (m *MockNDMSClient) ShowProxy(ctx context.Context, name string) (*ndms.ProxyInfo, error) {
+	return nil, nil
+}
+
 // MockWGClient for WireGuard operations.
 type MockWGClient struct {
 	setConfError error

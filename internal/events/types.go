@@ -85,6 +85,28 @@ type PingCheckLogEvent struct {
 	Backend     string `json:"backend,omitempty"`
 }
 
+// SingboxTunnelEvent is emitted when sing-box tunnels are added/updated/removed.
+type SingboxTunnelEvent struct {
+	Action string   `json:"action"` // "added" | "updated" | "removed"
+	Tags   []string `json:"tags"`
+}
+
+// SingboxStatusEvent is emitted after install/reconcile operations.
+type SingboxStatusEvent struct {
+	Installed   bool   `json:"installed"`
+	Running     bool   `json:"running"`
+	Version     string `json:"version,omitempty"`
+	PID         int    `json:"pid,omitempty"`
+	TunnelCount int    `json:"tunnelCount"`
+}
+
+// SingboxDelayEvent is emitted when a sing-box tunnel delay is measured.
+type SingboxDelayEvent struct {
+	Tag       string `json:"tag"`
+	Delay     int    `json:"delay"`     // milliseconds; 0 = timeout
+	Timestamp int64  `json:"timestamp"` // unix seconds
+}
+
 // DNSRouteFailoverEvent is sent when DNS route failover switches targets,
 // restores them, or fails to apply changes.
 type DNSRouteFailoverEvent struct {
