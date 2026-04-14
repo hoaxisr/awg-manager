@@ -883,14 +883,8 @@ export interface DnsCheckResult {
 }
 
 export interface DnsCheckStartResponse {
-	token: string;
 	clientIP: string;
 	hostname: string;
-	port: number;
-	checks: DnsCheckResult[];
-}
-
-export interface DnsCheckCompleteResponse {
 	checks: DnsCheckResult[];
 }
 

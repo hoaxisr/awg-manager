@@ -2,17 +2,16 @@ package dnscheck
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
+
+const probeDomain = "awgm-dnscheck.test"
 
 // DnsRouteProvider provides DNS route list statistics.
 type DnsRouteProvider interface {
@@ -39,175 +38,53 @@ type Service struct {
 	dns     DnsRouteProvider
 	tunnels TunnelStateProvider
 	log     *logger.Logger
-	port    int
-
-	mu     sync.Mutex
-	tokens map[string]*tokenState
 }
 
-// NewService creates a new DNS check service and starts a background cleanup goroutine.
-func NewService(ndmsClient ndms.Client, dns DnsRouteProvider, tunnels TunnelStateProvider, log *logger.Logger, port int) *Service {
-	s := &Service{
+// NewService creates a new DNS check service.
+func NewService(ndmsClient ndms.Client, dns DnsRouteProvider, tunnels TunnelStateProvider, log *logger.Logger) *Service {
+	return &Service{
 		ndms:    ndmsClient,
 		dns:     dns,
 		tunnels: tunnels,
 		log:     log,
-		port:    port,
-		tokens:  make(map[string]*tokenState),
-	}
-	go s.cleanupLoop()
-	return s
-}
-
-// cleanupLoop periodically removes stale tokens.
-func (s *Service) cleanupLoop() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for range ticker.C {
-		s.cleanupStale()
 	}
 }
 
-// cleanupStale removes tokens older than 30 seconds.
-func (s *Service) cleanupStale() {
-	now := time.Now()
-	s.mu.Lock()
-	stale := make([]string, 0)
-	for tok, st := range s.tokens {
-		if now.Sub(st.createdAt) > 30*time.Second {
-			stale = append(stale, tok)
-		}
-	}
-	s.mu.Unlock()
-
-	for _, tok := range stale {
-		s.cleanup(tok)
-	}
-}
-
-// Start runs checks 1, 2, 4, 5 server-side, creates an ip host entry, and returns
-// a StartResponse with the token for check 3 (pending).
-func (s *Service) Start(ctx context.Context, clientIP string) (*StartResponse, error) {
-	token, err := generateToken()
-	if err != nil {
-		return nil, fmt.Errorf("generate token: %w", err)
-	}
-
+// EnsureIPHost creates a permanent ip host entry for the probe domain.
+// Called once at startup. The entry maps awgm-dnscheck.test to the router's
+// br0 IP so clients can verify their DNS goes through the router.
+func (s *Service) EnsureIPHost(ctx context.Context) {
 	routerIP := getBr0IP()
+	if routerIP == "" {
+		s.log.Warnf("dnscheck: br0 has no IPv4, skipping ip host setup")
+		return
+	}
+	if err := s.createIPHost(ctx, probeDomain, routerIP); err != nil {
+		s.log.Warnf("dnscheck: failed to create ip host %s -> %s: %v", probeDomain, routerIP, err)
+		return
+	}
+	s.log.Infof("dnscheck: ip host %s -> %s", probeDomain, routerIP)
+}
+
+// Start runs server-side checks (tunnel, routes, policy, encryption) and returns
+// the results along with client info. Check 3 (DNS probe) is left pending —
+// the frontend performs it directly via fetch to the probe domain.
+func (s *Service) Start(ctx context.Context, clientIP string) (*StartResponse, error) {
 	hostname := s.resolveHostname(ctx, clientIP)
 
-	domain := fmt.Sprintf("awgm-dnscheck-%s.test", token)
-
-	checks := make([]CheckResult, 5)
-
-	// Check 1: tunnel running
-	checks[0] = s.checkTunnel(ctx)
-
-	// Check 2: DNS routes configured
-	checks[1] = s.checkRoutes(ctx)
-
-	// Check 3: DNS probe (pending — client must call probe endpoint)
-	checks[2] = CheckResult{
-		ID:      "dns_probe",
-		Status:  "pending",
-		Title:   "DNS-запрос к роутеру",
-		Message: "Ожидание DNS-запроса...",
+	checks := []CheckResult{
+		s.checkTunnel(ctx),
+		s.checkRoutes(ctx),
+		{ID: "dns_probe", Status: "pending", Title: "DNS-запрос к роутеру", Message: "Ожидание DNS-запроса..."},
+		s.checkPolicy(ctx, clientIP),
+		s.checkEncryption(ctx),
 	}
-
-	// Check 4: client policy
-	checks[3] = s.checkPolicy(ctx, clientIP)
-
-	// Check 5: encryption (DoT/DoH)
-	checks[4] = s.checkEncryption(ctx)
-
-	// Create ip host entry so the probe domain resolves to our router IP.
-	if routerIP != "" {
-		if err := s.createIPHost(ctx, domain, routerIP); err != nil {
-			s.log.Warnf("dnscheck: failed to create ip host %s: %v", domain, err)
-		}
-	}
-
-	st := &tokenState{
-		token:     token,
-		clientIP:  clientIP,
-		hostname:  hostname,
-		domain:    domain,
-		routerIP:  routerIP,
-		checks:    checks,
-		createdAt: time.Now(),
-	}
-
-	s.mu.Lock()
-	s.tokens[token] = st
-	s.mu.Unlock()
-
-	// Safety cleanup: remove token after 20 seconds regardless of Complete call.
-	// Must be longer than probe timeout (3s) + network latency + Complete round-trip.
-	go func() {
-		time.Sleep(20 * time.Second)
-		s.mu.Lock()
-		_, exists := s.tokens[token]
-		s.mu.Unlock()
-		if exists {
-			s.log.Infof("dnscheck: safety cleanup for token %s", token)
-			s.cleanup(token)
-		}
-	}()
 
 	return &StartResponse{
-		Token:    token,
 		ClientIP: clientIP,
 		Hostname: hostname,
-		Port:     s.port,
 		Checks:   checks,
 	}, nil
-}
-
-// MarkReached marks that the probe endpoint was hit for the given token.
-func (s *Service) MarkReached(token string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if st, ok := s.tokens[token]; ok {
-		st.reached = true
-	}
-}
-
-// Complete finalises the diagnostic, builds check 3 result, removes the ip host
-// entry, and returns all 5 checks.
-func (s *Service) Complete(ctx context.Context, token string, dnsReached bool) (*CompleteResponse, error) {
-	s.mu.Lock()
-	st, ok := s.tokens[token]
-	if !ok {
-		s.mu.Unlock()
-		return nil, fmt.Errorf("unknown token: %s", token)
-	}
-	reached := st.reached || dnsReached
-	checks := make([]CheckResult, len(st.checks))
-	copy(checks, st.checks)
-	s.mu.Unlock()
-
-	// Build check 3 result.
-	if reached {
-		checks[2] = CheckResult{
-			ID:      "dns_probe",
-			Status:  "ok",
-			Title:   "DNS-запрос к роутеру",
-			Message: "DNS-запрос успешно достиг роутера",
-		}
-	} else {
-		checks[2] = CheckResult{
-			ID:      "dns_probe",
-			Status:  "fail",
-			Title:   "DNS-запрос к роутеру",
-			Message: "DNS-запрос не достиг роутера. Возможно клиент не настроен корректно",
-			Detail:  "Клиент не сделал DNS-запрос к домену диагностики за отведённое время",
-		}
-	}
-
-	// Cleanup token and ip host entry.
-	s.cleanup(token)
-
-	return &CompleteResponse{Checks: checks}, nil
 }
 
 // checkTunnel checks that at least one tunnel is running.
@@ -263,7 +140,6 @@ func (s *Service) checkPolicy(ctx context.Context, clientIP string) CheckResult 
 		}
 	}
 
-	// Parse hotspot response: {"host": [{"ip": "...", "access": "...", ...}]}
 	var hotspot struct {
 		Host []struct {
 			IP     string `json:"ip"`
@@ -360,39 +236,6 @@ func (s *Service) createIPHost(ctx context.Context, domain, address string) erro
 	return err
 }
 
-// removeIPHost removes an ip host entry via RCI.
-func (s *Service) removeIPHost(ctx context.Context, domain string) error {
-	payload := map[string]interface{}{
-		"ip": map[string]interface{}{
-			"host": map[string]interface{}{
-				domain: map[string]interface{}{
-					"no": true,
-				},
-			},
-		},
-	}
-	_, err := s.ndms.RCIPost(ctx, payload)
-	return err
-}
-
-// cleanup removes a token from the map and deletes its ip host entry.
-func (s *Service) cleanup(token string) {
-	s.mu.Lock()
-	st, ok := s.tokens[token]
-	if ok {
-		delete(s.tokens, token)
-	}
-	s.mu.Unlock()
-
-	if ok && st.domain != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := s.removeIPHost(ctx, st.domain); err != nil {
-			s.log.Warnf("dnscheck: failed to remove ip host %s: %v", st.domain, err)
-		}
-	}
-}
-
 // resolveHostname looks up the client hostname from the hotspot list.
 func (s *Service) resolveHostname(ctx context.Context, ip string) string {
 	raw, err := s.ndms.RCIGet(ctx, "/show/ip/hotspot")
@@ -445,17 +288,4 @@ func getBr0IP() string {
 		}
 	}
 	return ""
-}
-
-// generateToken generates a random 4-byte hex token.
-func generateToken() (string, error) {
-	b := make([]byte, 4)
-	// Use time-based pseudo-random to avoid importing crypto/rand
-	// and to keep it simple; tokens are short-lived (10-30s).
-	now := time.Now().UnixNano()
-	b[0] = byte(now)
-	b[1] = byte(now >> 8)
-	b[2] = byte(now >> 16)
-	b[3] = byte(now >> 24)
-	return hex.EncodeToString(b), nil
 }

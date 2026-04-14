@@ -458,14 +458,14 @@ func main() {
 		srv.SetLoopbackAddr(fmt.Sprintf("127.0.0.1:%d", selectedPort))
 	}
 
-	// DNS routing diagnostics (wired after port selection)
+	// DNS routing diagnostics
 	dnsCheckService := dnscheck.NewService(
 		ndmsClient,
 		&dnsRouteCountAdapter{store: dnsRouteStore},
 		&runningTunnelAdapter{svc: tunnelService},
 		log,
-		selectedPort,
 	)
+	dnsCheckService.EnsureIPHost(context.Background())
 	srv.SetDnsCheckService(dnsCheckService)
 
 	bootLog := logging.NewScopedLogger(loggingService, logging.GroupSystem, logging.SubBoot)
