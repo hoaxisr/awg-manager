@@ -4,3 +4,4 @@ export { default as DnsRouteImportModal } from './DnsRouteImportModal.svelte';
 export { default as DnsRouteDomainEditor } from './DnsRouteDomainEditor.svelte';
 export { default as DnsRoutePresetModal } from './DnsRoutePresetModal.svelte';
 export { default as ServiceIcon } from './ServiceIcon.svelte';
+export { default as HrNeoRouteList } from './HrNeoRouteList.svelte';
