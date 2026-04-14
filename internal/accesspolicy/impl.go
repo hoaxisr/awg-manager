@@ -101,9 +101,6 @@ func (s *ServiceImpl) List(ctx context.Context) ([]Policy, error) {
 
 	policies := make([]Policy, 0)
 	for name, policyRaw := range raw {
-		if !strings.HasPrefix(name, "Policy") {
-			continue
-		}
 
 		var info rciPolicyInfo
 		if err := json.Unmarshal(policyRaw, &info); err != nil {
@@ -145,9 +142,13 @@ func (s *ServiceImpl) List(ctx context.Context) ([]Policy, error) {
 		}
 	}
 
-	// Stable sort by policy index
+	// Stable sort: PolicyN by number first, then custom policies alphabetically
 	sort.Slice(policies, func(i, j int) bool {
-		return policyIndex(policies[i].Name) < policyIndex(policies[j].Name)
+		pi, pj := policyIndex(policies[i].Name), policyIndex(policies[j].Name)
+		if pi != pj {
+			return pi < pj
+		}
+		return policies[i].Name < policies[j].Name
 	})
 
 	return policies, nil
@@ -897,24 +898,22 @@ func (s *ServiceImpl) parseHotspotPolicies(ctx context.Context) (map[string]stri
 	return result, nil
 }
 
-// isValidPolicyName checks that the name matches PolicyN format.
+// isValidPolicyName checks that the policy name is non-empty.
+// Accepts both standard PolicyN names and custom names (e.g. from HR Neo).
 func isValidPolicyName(name string) bool {
-	if !strings.HasPrefix(name, "Policy") {
-		return false
-	}
-	numStr := strings.TrimPrefix(name, "Policy")
-	n, err := strconv.Atoi(numStr)
-	if err != nil {
-		return false
-	}
-	return n >= 0 && n < maxPolicies
+	return name != ""
 }
 
-// policyIndex extracts the numeric index from a policy name for sorting.
+// policyIndex extracts a sort key from a policy name.
+// Standard PolicyN names sort by number (0-63), custom names sort after them (1000+).
 func policyIndex(name string) int {
-	numStr := strings.TrimPrefix(name, "Policy")
-	n, _ := strconv.Atoi(numStr)
-	return n
+	if strings.HasPrefix(name, "Policy") {
+		numStr := strings.TrimPrefix(name, "Policy")
+		if n, err := strconv.Atoi(numStr); err == nil {
+			return n
+		}
+	}
+	return 1000 // custom policies sort after standard PolicyN
 }
 
 // isActiveHost checks the "active" field which may be bool or string depending on firmware.
