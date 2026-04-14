@@ -901,15 +901,24 @@ func (s *ServiceImpl) reconcileHydraRoute(ctx context.Context) error {
 		return nil
 	}
 
-	// Ensure Keenetic ip policies exist for policy-mode rules
+	// Permit tunnel interfaces in HR Neo policies (policy-mode rules).
+	// HR Neo creates the policy itself; we only add the interfaces.
 	for _, list := range data.Lists {
 		if !isHydraRoute(list.Backend) || !list.Enabled {
 			continue
 		}
-		if list.HRRouteMode == "policy" && list.HRPolicyName != "" {
-			if err := s.hydra.EnsurePolicy(ctx, list.HRPolicyName); err != nil {
-				if s.log != nil {
-					s.log.Warnf("hydraroute: ensure policy %s: %v", list.HRPolicyName, err)
+		if list.HRRouteMode == "policy" && list.HRPolicyName != "" && len(list.Routes) > 0 {
+			var ndmsIfaces []string
+			for _, route := range list.Routes {
+				if ndmsName, err := s.resolver.ResolveInterface(ctx, route.TunnelID); err == nil {
+					ndmsIfaces = append(ndmsIfaces, ndmsName)
+				}
+			}
+			if len(ndmsIfaces) > 0 {
+				if err := s.hydra.EnsurePolicyInterfaces(ctx, list.HRPolicyName, ndmsIfaces); err != nil {
+					if s.log != nil {
+						s.log.Warnf("hydraroute: permit interfaces in policy %s: %v", list.HRPolicyName, err)
+					}
 				}
 			}
 		}

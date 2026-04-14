@@ -292,8 +292,9 @@ func (s *Service) ImportNative(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-// EnsurePolicy creates an ip policy with the given name via NDMS RCI if it doesn't exist.
-func (s *Service) EnsurePolicy(ctx context.Context, policyName string) error {
+// EnsurePolicyInterfaces permits the given NDMS interfaces in the policy.
+// HR Neo creates the policy itself; we only need to add interfaces.
+func (s *Service) EnsurePolicyInterfaces(ctx context.Context, policyName string, ndmsIfaces []string) error {
 	s.mu.Lock()
 	client := s.ndms
 	s.mu.Unlock()
@@ -302,29 +303,24 @@ func (s *Service) EnsurePolicy(ctx context.Context, policyName string) error {
 		return fmt.Errorf("NDMS client not available")
 	}
 
-	raw, err := client.RCIGet(ctx, "/show/ip/policy")
-	if err == nil {
-		var policies map[string]json.RawMessage
-		if json.Unmarshal(raw, &policies) == nil {
-			if _, exists := policies[policyName]; exists {
-				return nil
-			}
+	for i, iface := range ndmsIfaces {
+		payload := map[string]interface{}{
+			"ip": map[string]interface{}{
+				"policy": map[string]interface{}{
+					policyName: map[string]interface{}{
+						"permit": map[string]interface{}{
+							"global":    true,
+							"interface": iface,
+							"order":     i + 1,
+						},
+					},
+				},
+			},
+		}
+		if _, err := client.RCIPost(ctx, payload); err != nil {
+			return fmt.Errorf("permit %s in policy %s: %w", iface, policyName, err)
 		}
 	}
-
-	payload := []map[string]interface{}{
-		{"parse": fmt.Sprintf("ip policy %s", policyName)},
-	}
-	if _, err := client.RCIPost(ctx, payload); err != nil {
-		return fmt.Errorf("create policy %s: %w", policyName, err)
-	}
-
-	savePayload := map[string]interface{}{
-		"system": map[string]interface{}{
-			"configuration": map[string]interface{}{"save": true},
-		},
-	}
-	_, _ = client.RCIPost(ctx, savePayload)
 	return nil
 }
 
