@@ -671,6 +671,13 @@ func (o *OperatorNativeWG) ResolveActiveWAN(ctx context.Context, stored *storage
 		return ""
 	}
 	sysName := o.ndms.GetSystemName(ctx, rciState.PeerVia)
+	if sysName == rciState.PeerVia {
+		// GetSystemName failed to translate (e.g. /show/interface/system-name
+		// unavailable on firmware < 4.1). Return "" so the kmod proxy socket
+		// uses the default route instead of crashing with ENODEV.
+		o.log.Warnf("nwg: %s peer via %s: could not resolve kernel name, using default route", names.NDMSName, rciState.PeerVia)
+		return ""
+	}
 	o.log.Infof("nwg: %s peer via %s -> kernel %s", names.NDMSName, rciState.PeerVia, sysName)
 	return sysName
 }
