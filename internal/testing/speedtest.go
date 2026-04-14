@@ -63,7 +63,24 @@ func (s *Service) SpeedTest(ctx context.Context, tunnelID, server string, port i
 	}
 
 	ifaceName := s.resolveIfaceName(tunnelID)
+	return s.runIperf3(ctx, ifaceName, server, port, direction)
+}
 
+// SpeedTestByIface runs iperf3 bound to the given kernel interface name,
+// without any tunnel-state precondition. Used by the sing-box speedtest flow
+// where the interface is t2sN.
+func (s *Service) SpeedTestByIface(ctx context.Context, ifaceName, server string, port int, direction string) (*SpeedTestResult, error) {
+	return s.runIperf3(ctx, ifaceName, server, port, direction)
+}
+
+// runIperf3 executes iperf3 in JSON mode bound to the given interface and
+// parses the final result.
+func (s *Service) runIperf3(ctx context.Context, ifaceName, server string, port int, direction string) (*SpeedTestResult, error) {
+	return iperf3JSONRun(ctx, ifaceName, server, port, direction)
+}
+
+// iperf3JSONRun is the receiverless shared implementation.
+func iperf3JSONRun(ctx context.Context, ifaceName, server string, port int, direction string) (*SpeedTestResult, error) {
 	args := []string{
 		"-c", server,
 		"-p", strconv.Itoa(port),
@@ -100,7 +117,22 @@ func (s *Service) SpeedTestStream(ctx context.Context, tunnelID, server string, 
 	}
 
 	ifaceName := s.resolveIfaceName(tunnelID)
+	return s.runIperf3Stream(ctx, ifaceName, server, port, direction, onInterval)
+}
 
+// SpeedTestStreamByIface is the streaming equivalent of SpeedTestByIface.
+func (s *Service) SpeedTestStreamByIface(ctx context.Context, ifaceName, server string, port int, direction string, onInterval func(SpeedTestInterval)) (*SpeedTestResult, error) {
+	return s.runIperf3Stream(ctx, ifaceName, server, port, direction, onInterval)
+}
+
+// runIperf3Stream executes iperf3 in text/forceflush mode bound to the given
+// interface and streams per-second intervals via onInterval.
+func (s *Service) runIperf3Stream(ctx context.Context, ifaceName, server string, port int, direction string, onInterval func(SpeedTestInterval)) (*SpeedTestResult, error) {
+	return iperf3StreamRun(ctx, ifaceName, server, port, direction, onInterval)
+}
+
+// iperf3StreamRun is the receiverless shared implementation.
+func iperf3StreamRun(ctx context.Context, ifaceName, server string, port int, direction string, onInterval func(SpeedTestInterval)) (*SpeedTestResult, error) {
 	args := []string{
 		"-c", server,
 		"-p", strconv.Itoa(port),
@@ -247,79 +279,7 @@ type iperf3JSON struct {
 // SpeedTestStreamByInterface runs iperf3 speed test with SSE streaming using a kernel interface name.
 // Used for system tunnels.
 func SpeedTestStreamByInterface(ctx context.Context, ifaceName, server string, port int, direction string, onInterval func(SpeedTestInterval)) (*SpeedTestResult, error) {
-	args := []string{
-		"-c", server,
-		"-p", strconv.Itoa(port),
-		"-t", "10",
-		"--forceflush",
-		"--bind-dev", ifaceName,
-	}
-	if direction == "download" {
-		args = append(args, "-R")
-	}
-
-	cmdCtx, cancel := context.WithTimeout(ctx, speedTestTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(cmdCtx, "iperf3", args...)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("iperf3 stdout pipe: %w", err)
-	}
-
-	var stderrBuf bytes.Buffer
-	cmd.Stderr = &stderrBuf
-
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("iperf3 start: %w", err)
-	}
-
-	var lastBandwidth float64
-	var totalBytes int64
-	var totalSeconds float64
-	var retransmits int
-	var stdoutErrors []string
-	second := 0
-
-	scanner := bufio.NewScanner(stdout)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if iperf3ErrorRe.MatchString(line) {
-			stdoutErrors = append(stdoutErrors, line)
-			continue
-		}
-		if bw, retr, isSummary := parseIperf3TextLine(line, direction); bw >= 0 {
-			if isSummary {
-				lastBandwidth = bw
-				retransmits = retr
-			} else {
-				second++
-				lastBandwidth = bw
-				if onInterval != nil {
-					onInterval(SpeedTestInterval{Second: second, Bandwidth: bw})
-				}
-			}
-		}
-	}
-
-	err = cmd.Wait()
-	if err != nil {
-		return nil, extractIperf3Error(stdoutErrors, stderrBuf.String(), err)
-	}
-
-	totalSeconds = float64(second)
-	if totalSeconds > 0 {
-		totalBytes = int64(lastBandwidth * 1e6 / 8 * totalSeconds)
-	}
-
-	return &SpeedTestResult{
-		Server:      server,
-		Direction:   direction,
-		Bandwidth:   lastBandwidth,
-		Bytes:       totalBytes,
-		Duration:    totalSeconds,
-		Retransmits: retransmits,
-	}, nil
+	return iperf3StreamRun(ctx, ifaceName, server, port, direction, onInterval)
 }
 
 // iperf3ErrorRe matches iperf3 error lines from stdout, e.g.:

@@ -46,7 +46,10 @@ import type {
 	GeoFileEntry,
 	GeoTag,
 	IpsetUsage,
-	DnsCheckStartResponse
+	DnsCheckStartResponse,
+	SingboxTunnel,
+	SingboxStatus,
+	SingboxImportResponse
 } from '$lib/types';
 
 interface ApiResponse<T> {
@@ -1059,6 +1062,84 @@ class ApiClient {
 
 	async startDnsCheck(): Promise<DnsCheckStartResponse> {
 		return this.request('/dns-check/start', { method: 'POST' });
+	}
+
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Sing-box
+	// ─────────────────────────────────────────────
+
+	async singboxGetStatus(): Promise<SingboxStatus> {
+		return this.request('/singbox/status');
+	}
+
+	async singboxInstall(): Promise<{ ok: boolean }> {
+		return this.request('/singbox/install', { method: 'POST' });
+	}
+
+	async singboxListTunnels(): Promise<SingboxTunnel[]> {
+		return this.request('/singbox/tunnels');
+	}
+
+	async singboxImportLinks(links: string): Promise<SingboxImportResponse> {
+		return this.request('/singbox/tunnels', {
+			method: 'POST',
+			body: JSON.stringify({ links })
+		});
+	}
+
+	async singboxGetTunnel(tag: string): Promise<{ tag: string; outbound: unknown }> {
+		return this.request(`/singbox/tunnels?tag=${encodeURIComponent(tag)}`);
+	}
+
+	async singboxUpdateTunnel(tag: string, outbound: unknown): Promise<{ ok: boolean }> {
+		return this.request(`/singbox/tunnels?tag=${encodeURIComponent(tag)}`, {
+			method: 'PUT',
+			body: JSON.stringify({ outbound })
+		});
+	}
+
+	async singboxDeleteTunnel(tag: string): Promise<{ ok: boolean }> {
+		return this.request(`/singbox/tunnels?tag=${encodeURIComponent(tag)}`, {
+			method: 'DELETE'
+		});
+	}
+
+	async singboxDelayCheck(tag: string): Promise<{ tag: string; delay: number }> {
+		return this.request(`/singbox/tunnels/delay-check?tag=${encodeURIComponent(tag)}`, {
+			method: 'POST',
+		});
+	}
+
+	singboxSpeedTestStream(
+		tag: string,
+		server: string,
+		port: number,
+		onPhase: (phase: 'download' | 'upload') => void,
+		onInterval: (data: { phase: string; second: number; bandwidth: number }) => void,
+		onResult: (data: { phase: string; bandwidth: number; bytes: number; duration: number }) => void,
+		onDone: () => void,
+		onError: (error: string) => void,
+	): EventSource {
+		const url = `${this.baseUrl}/singbox/tunnels/test/speed/stream?tag=${encodeURIComponent(tag)}&server=${encodeURIComponent(server)}&port=${port}`;
+		const es = new EventSource(url);
+		es.addEventListener('phase', (e) => {
+			try { onPhase(JSON.parse((e as MessageEvent).data).phase); } catch { /* ignore */ }
+		});
+		es.addEventListener('interval', (e) => {
+			try { onInterval(JSON.parse((e as MessageEvent).data)); } catch { /* ignore */ }
+		});
+		es.addEventListener('result', (e) => {
+			try { onResult(JSON.parse((e as MessageEvent).data)); } catch { /* ignore */ }
+		});
+		es.addEventListener('done', () => { onDone(); es.close(); });
+		es.addEventListener('error', (e) => {
+			const msg = e instanceof MessageEvent ? String(e.data) : 'Соединение потеряно';
+			onError(msg);
+			es.close();
+		});
+		return es;
 	}
 
 	// #endregion

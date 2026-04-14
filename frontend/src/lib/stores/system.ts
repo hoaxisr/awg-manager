@@ -2,12 +2,15 @@ import { writable } from 'svelte/store';
 import type { SystemInfo } from '$lib/types';
 
 function createSystemStore() {
-	const { subscribe, set } = writable<SystemInfo | null>(null);
+	const inner = writable<SystemInfo | null>(null);
 
 	return {
-		subscribe,
+		subscribe: inner.subscribe,
 		setSnapshot(data: SystemInfo) {
-			set(data);
+			inner.set(data);
+		},
+		applySingboxStatus(installed: boolean, version: string): void {
+			inner.update(info => info ? { ...info, singbox: { installed, version } } : info);
 		},
 	};
 }

@@ -1,4 +1,10 @@
 // SSE event payloads
+import type {
+	SingboxStatusEvent,
+	SingboxTunnelEvent,
+	SingboxTraffic,
+	SingboxDelayEvent,
+} from '$lib/types';
 
 export interface TunnelStateEvent {
 	id: string;
@@ -156,6 +162,12 @@ export interface SSEEventHandlers {
 		action: 'switched' | 'restored' | 'error';
 		error?: string;
 	}) => void;
+
+	// Sing-box
+	onSingboxStatus?: (data: SingboxStatusEvent) => void;
+	onSingboxTunnel?: (data: SingboxTunnelEvent) => void;
+	onSingboxTraffic?: (data: SingboxTraffic[]) => void;
+	onSingboxDelay?: (data: SingboxDelayEvent) => void;
 }
 
 export function connectSSE(handlers: SSEEventHandlers): () => void {
@@ -205,6 +217,12 @@ export function connectSSE(handlers: SSEEventHandlers): () => void {
 	handle('routing:tunnels-updated', handlers.onRoutingTunnelsUpdated);
 	handle('tunnels:list', handlers.onTunnelsList);
 	handle('dnsroute:failover', handlers.onDnsRouteFailover);
+
+	// Sing-box events
+	handle('singbox:status', handlers.onSingboxStatus);
+	handle('singbox:tunnel', handlers.onSingboxTunnel);
+	handle('singbox:traffic', handlers.onSingboxTraffic);
+	handle('singbox:delay', handlers.onSingboxDelay);
 
 	// Server sends "connected" event immediately on stream start
 	es.addEventListener('connected', () => {

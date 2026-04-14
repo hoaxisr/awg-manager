@@ -52,6 +52,15 @@ func NewWithTimeout(timeout time.Duration) *Client {
 	}
 }
 
+// NewWithURL creates a new RCI client with a custom base URL.
+// Intended for tests that point to an httptest.Server.
+func NewWithURL(baseURL string) *Client {
+	return &Client{
+		http:    &http.Client{Timeout: defaultTimeout},
+		baseURL: baseURL,
+	}
+}
+
 // Get performs an HTTP GET to /rci/{path} and decodes JSON into dst.
 func (c *Client) Get(ctx context.Context, path string, dst any) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+path, nil)
