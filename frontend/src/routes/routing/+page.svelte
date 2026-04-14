@@ -116,6 +116,7 @@
                 {hydrarouteInstalled}
                 {hasDnsEngine}
                 {policyOrder}
+                onpolicyorderchanged={loadPolicyOrder}
             />
         {:else if activeTab === 'ip'}
             <IpRoutesTab
