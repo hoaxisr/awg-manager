@@ -466,6 +466,7 @@ export interface HydraRouteConfig {
 	logFile: string;
 	geoIPFiles: string[];
 	geoSiteFiles: string[];
+	policyOrder: string[];
 }
 
 export interface GeoFileEntry {
