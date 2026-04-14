@@ -1,6 +1,8 @@
 <script lang="ts">
+    import { onMount } from 'svelte';
     import { routing } from '$lib/stores/routing';
     import { systemInfo } from '$lib/stores/system';
+    import { api } from '$lib/api/client';
     import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
     import { OverflowTabs } from '$lib/components/ui';
     import { RoutingSearch } from '$lib/components/routing';
@@ -43,6 +45,30 @@
     let ipActiveCount = $derived(ipRoutes.filter(r => r.enabled).length);
     let policyCount = $derived(accessPolicies.length);
     let clientRouteCount = $derived(clientRoutes.length);
+
+    let policyOrder = $state<string[]>([]);
+
+    async function loadPolicyOrder() {
+        if (!hydrarouteInstalled) {
+            policyOrder = [];
+            return;
+        }
+        try {
+            const cfg = await api.getHydraRouteConfig();
+            policyOrder = cfg.policyOrder ?? [];
+        } catch {
+            // HR Neo not available
+        }
+    }
+
+    onMount(() => { loadPolicyOrder(); });
+
+    // Reload when hydraroute becomes installed
+    $effect(() => {
+        if (hydrarouteInstalled) {
+            loadPolicyOrder();
+        }
+    });
 
     // Default to IP tab when no DNS engine available
     $effect(() => {
@@ -89,6 +115,7 @@
                 {isOS5}
                 {hydrarouteInstalled}
                 {hasDnsEngine}
+                {policyOrder}
             />
         {:else if activeTab === 'ip'}
             <IpRoutesTab
