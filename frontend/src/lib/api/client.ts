@@ -46,8 +46,7 @@ import type {
 	GeoFileEntry,
 	GeoTag,
 	IpsetUsage,
-	DnsCheckStartResponse,
-	DnsCheckCompleteResponse
+	DnsCheckStartResponse
 } from '$lib/types';
 
 interface ApiResponse<T> {
@@ -1053,13 +1052,6 @@ class ApiClient {
 
 	async startDnsCheck(): Promise<DnsCheckStartResponse> {
 		return this.request('/dns-check/start', { method: 'POST' });
-	}
-
-	async completeDnsCheck(token: string, dnsReached: boolean): Promise<DnsCheckCompleteResponse> {
-		return this.request('/dns-check/complete', {
-			method: 'POST',
-			body: JSON.stringify({ token, dnsReached }),
-		});
 	}
 
 	// #endregion

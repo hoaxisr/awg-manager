@@ -23,32 +23,38 @@
         checks = defaultChecks();
 
         try {
-            // Step 1: start — runs checks 1,2,4,5 server-side
+            // Step 1: server-side checks (1,2,4,5)
             const start = await api.startDnsCheck();
             clientIP = start.clientIP;
             hostname = start.hostname;
 
-            // Update server-side checks
+            // Merge server results into checks array
             checks = checks.map(c => {
                 const serverCheck = start.checks.find(sc => sc.id === c.id);
                 return serverCheck || c;
             });
 
-            // Step 2: DNS probe — client-side fetch to test hostname
+            // Step 2: DNS probe — client-side fetch to awgm-dnscheck.test
+            // If client DNS goes through the router, ip host resolves this
+            // to the router IP and our API responds. .test TLD is reserved
+            // (RFC 6761) — public DNS always returns NXDOMAIN.
             let dnsReached = false;
-            if (start.token) {
-                try {
-                    const probeUrl = `http://awgm-dnscheck-${start.token}.test:${start.port}/api/dns-check/probe/${start.token}`;
-                    await fetch(probeUrl, { signal: AbortSignal.timeout(3000) });
-                    dnsReached = true;
-                } catch {
-                    dnsReached = false;
-                }
+            try {
+                const port = window.location.port || '80';
+                const probeUrl = `http://awgm-dnscheck.test:${port}/api/dns-check/probe`;
+                const resp = await fetch(probeUrl, { signal: AbortSignal.timeout(3000) });
+                dnsReached = resp.ok;
+            } catch {
+                dnsReached = false;
             }
 
-            // Step 3: complete — finalize check 3
-            const result = await api.completeDnsCheck(start.token, dnsReached);
-            checks = result.checks;
+            // Build check 3 result
+            checks = checks.map(c => {
+                if (c.id !== 'dns_probe') return c;
+                return dnsReached
+                    ? { ...c, status: 'ok' as const, message: 'DNS-запрос успешно достиг роутера' }
+                    : { ...c, status: 'fail' as const, message: 'DNS-запрос не достиг роутера. Возможно клиент не настроен корректно' };
+            });
         } catch {
             notifications.error('Ошибка запуска диагностики');
         } finally {
