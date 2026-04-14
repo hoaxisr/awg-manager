@@ -71,6 +71,14 @@ func ReadConfig() (*Config, error) {
 			if val != "" {
 				cfg.GeoSiteFiles = append(cfg.GeoSiteFiles, val)
 			}
+		case "PolicyOrder":
+			cfg.PolicyOrder = nil
+			for _, s := range strings.Split(val, ",") {
+				s = strings.TrimSpace(s)
+				if s != "" {
+					cfg.PolicyOrder = append(cfg.PolicyOrder, s)
+				}
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -110,6 +118,7 @@ func WriteConfig(cfg *Config) error {
 		"LogFile":            {},
 		"GeoIPFile":          {},
 		"GeoSiteFile":        {},
+		"PolicyOrder":        {},
 	}
 
 	var out strings.Builder
@@ -189,6 +198,7 @@ func WriteConfig(cfg *Config) error {
 	appendIfMissing("ConntrackFlush", formatBool(cfg.ConntrackFlush))
 	appendIfMissing("Log", cfg.Log)
 	appendIfMissing("LogFile", cfg.LogFile)
+	appendIfMissing("PolicyOrder", strings.Join(cfg.PolicyOrder, ","))
 	if state := knownKeys["GeoIPFile"]; !state.written {
 		for _, v := range cfg.GeoIPFiles {
 			fmt.Fprintf(&out, "GeoIPFile=%s\n", v)
@@ -236,6 +246,8 @@ func configValue(key string, cfg *Config) string {
 		return cfg.Log
 	case "LogFile":
 		return cfg.LogFile
+	case "PolicyOrder":
+		return strings.Join(cfg.PolicyOrder, ",")
 	}
 	return ""
 }

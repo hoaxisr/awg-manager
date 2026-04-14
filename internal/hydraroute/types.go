@@ -42,6 +42,7 @@ type Config struct {
 	LogFile            string   `json:"logFile"`
 	GeoIPFiles         []string `json:"geoIPFiles"`
 	GeoSiteFiles       []string `json:"geoSiteFiles"`
+	PolicyOrder        []string `json:"policyOrder"`
 }
 
 func (c *Config) EffectiveMaxElem() int {
