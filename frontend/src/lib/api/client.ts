@@ -344,6 +344,13 @@ class ApiClient {
 		return this.request('/hydraroute/import-native', { method: 'POST' });
 	}
 
+	async setPolicyOrder(order: string[]): Promise<{ order: string[] }> {
+		return this.request('/hydraroute/policy-order', {
+			method: 'POST',
+			body: JSON.stringify({ order }),
+		});
+	}
+
 	async getWANInterfaces(): Promise<WANInterface[]> {
 		return this.request('/system/wan-interfaces');
 	}
