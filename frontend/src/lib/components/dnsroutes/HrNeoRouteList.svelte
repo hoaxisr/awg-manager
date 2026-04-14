@@ -8,8 +8,6 @@
 		policyOrder: string[];
 		ontoggle: (id: string, enabled: boolean) => void;
 		onedit: (route: DnsRoute) => void;
-		ondelete: (id: string) => void;
-		onrefresh: (id: string) => void;
 		onapplyorder: (order: string[]) => void;
 		toggleLoadingId?: string | null;
 		hydrarouteInstalled?: boolean;
@@ -21,8 +19,6 @@
 		policyOrder,
 		ontoggle,
 		onedit,
-		ondelete,
-		onrefresh,
 		onapplyorder,
 		toggleLoadingId = null,
 		hydrarouteInstalled = false,
@@ -30,10 +26,16 @@
 
 	// Local order state — initialized from policyOrder prop, modified by drag/arrows
 	let localOrder = $state<string[]>([]);
+	// Track last synced prop value to avoid resetting local edits on SSE re-renders
+	let lastSyncedOrder = $state<string>('');
 
-	// Sync from prop when it changes externally (e.g. after apply)
+	// Sync from prop only when it actually changes (e.g. after successful apply)
 	$effect(() => {
-		localOrder = [...policyOrder];
+		const serialized = policyOrder.join(',');
+		if (serialized !== lastSyncedOrder) {
+			localOrder = [...policyOrder];
+			lastSyncedOrder = serialized;
+		}
 	});
 
 	// Sort routes by position in localOrder; unordered go to end
@@ -127,14 +129,6 @@
 	function handleDragEnd() {
 		dragIndex = null;
 		dragOverIndex = null;
-	}
-
-	function routeTarget(route: DnsRoute): string {
-		const routes = route.routes ?? [];
-		if (routes.length === 0) return '';
-		const first = routes[0];
-		const found = tunnels.find(t => t.id === first.tunnelId);
-		return found?.name || first.interface || first.tunnelId;
 	}
 </script>
 

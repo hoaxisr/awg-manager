@@ -17,9 +17,10 @@
         hydrarouteInstalled?: boolean;
         hasDnsEngine?: boolean;
         policyOrder?: string[];
+        onpolicyorderchanged?: () => void;
     }
 
-    let { dnsRoutes, routingTunnels, editRuleId = '', editRuleCounter = 0, isOS5 = false, hydrarouteInstalled = false, hasDnsEngine = false, policyOrder = [] }: Props = $props();
+    let { dnsRoutes, routingTunnels, editRuleId = '', editRuleCounter = 0, isOS5 = false, hydrarouteInstalled = false, hasDnsEngine = false, policyOrder = [], onpolicyorderchanged }: Props = $props();
 
     // Open edit modal when search result is clicked.
     // Capture counter at mount to skip stale values on tab re-mount.
@@ -142,6 +143,7 @@
         orderSaving = true;
         try {
             await api.setPolicyOrder(order);
+            onpolicyorderchanged?.();
             notifications.success('Порядок политик применён');
         } catch (e: any) {
             notifications.error(e.message || 'Ошибка сохранения порядка');
@@ -403,8 +405,6 @@
             {policyOrder}
             ontoggle={(id, enabled) => toggleDnsRoute(id, enabled)}
             onedit={(route) => { editingDnsRoute = route; dnsModalOpen = true; }}
-            ondelete={(id) => dnsDeleteId = id}
-            onrefresh={(id) => refreshDnsRouteSubscriptions(id)}
             onapplyorder={applyPolicyOrder}
             toggleLoadingId={dnsToggling}
             {hydrarouteInstalled}
