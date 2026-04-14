@@ -183,7 +183,6 @@ ConntrackFlush=false
 	for _, must := range []string{
 		"watchlistPath=/opt/etc/HydraRoute/watchlist",
 		"InterfaceFwMarkStart=100",
-		"PolicyOrder=main,default",
 	} {
 		if !strContains(text, must) {
 			t.Errorf("missing preserved key: %q\nfull output:\n%s", must, text)
@@ -243,6 +242,102 @@ GeoSiteFile=/old/site.dat
 		if !strContains(text, want) {
 			t.Errorf("missing %q\nfull output:\n%s", want, text)
 		}
+	}
+}
+
+func TestReadConfig_PolicyOrder(t *testing.T) {
+	content := `AutoStart=true
+PolicyOrder=AWG_YouTube,awgm0,AWG_Google
+`
+	setupTestConf(t, content)
+
+	cfg, err := ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig: %v", err)
+	}
+
+	if len(cfg.PolicyOrder) != 3 {
+		t.Fatalf("PolicyOrder: want 3 elements, got %d: %v", len(cfg.PolicyOrder), cfg.PolicyOrder)
+	}
+	want := []string{"AWG_YouTube", "awgm0", "AWG_Google"}
+	for i, w := range want {
+		if cfg.PolicyOrder[i] != w {
+			t.Errorf("PolicyOrder[%d]: want %q, got %q", i, w, cfg.PolicyOrder[i])
+		}
+	}
+}
+
+func TestReadConfig_PolicyOrderEmpty(t *testing.T) {
+	content := `AutoStart=true
+PolicyOrder=
+`
+	setupTestConf(t, content)
+
+	cfg, err := ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig: %v", err)
+	}
+
+	if len(cfg.PolicyOrder) != 0 {
+		t.Errorf("PolicyOrder: want empty slice, got %v", cfg.PolicyOrder)
+	}
+}
+
+func TestWriteConfig_PolicyOrder(t *testing.T) {
+	content := `AutoStart=true
+PolicyOrder=old_policy,old_iface
+`
+	setupTestConf(t, content)
+
+	cfg := &Config{
+		AutoStart:   true,
+		PolicyOrder: []string{"AWG_YouTube", "awgm0", "AWG_Google"},
+	}
+
+	if err := WriteConfig(cfg); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
+	}
+
+	result, err := os.ReadFile(hrConfPath)
+	if err != nil {
+		t.Fatalf("read result: %v", err)
+	}
+	text := string(result)
+
+	if !strContains(text, "PolicyOrder=AWG_YouTube,awgm0,AWG_Google") {
+		t.Errorf("PolicyOrder not written correctly\nfull output:\n%s", text)
+	}
+	if strContains(text, "old_policy") {
+		t.Errorf("old PolicyOrder value not replaced\nfull output:\n%s", text)
+	}
+}
+
+func TestWriteConfig_PolicyOrderEmpty(t *testing.T) {
+	content := `AutoStart=true
+PolicyOrder=old_policy,old_iface
+`
+	setupTestConf(t, content)
+
+	cfg := &Config{
+		AutoStart:   true,
+		PolicyOrder: nil,
+	}
+
+	if err := WriteConfig(cfg); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
+	}
+
+	result, err := os.ReadFile(hrConfPath)
+	if err != nil {
+		t.Fatalf("read result: %v", err)
+	}
+	text := string(result)
+
+	if !strContains(text, "PolicyOrder=\n") && !strContains(text, "PolicyOrder=") {
+		t.Errorf("PolicyOrder key not preserved\nfull output:\n%s", text)
+	}
+	if strContains(text, "old_policy") {
+		t.Errorf("old PolicyOrder value not cleared\nfull output:\n%s", text)
 	}
 }
 
