@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount } from 'svelte';
+    import { page } from '$app/stores';
     import { routing } from '$lib/stores/routing';
     import { systemInfo } from '$lib/stores/system';
     import { api } from '$lib/api/client';
@@ -13,6 +14,14 @@
     import { HrNeoTab } from '$lib/components/hrneo';
 
     let activeTab = $state<'hrneo' | 'dns' | 'ip' | 'policy' | 'clientvpn'>('dns');
+
+    // Deep link: ?tab=hrneo from the Settings page HR NEO card, etc.
+    $effect(() => {
+        const t = $page.url.searchParams.get('tab');
+        if (t === 'hrneo' || t === 'dns' || t === 'ip' || t === 'policy' || t === 'clientvpn') {
+            activeTab = t;
+        }
+    });
     let isOS5 = $derived($systemInfo?.isOS5 ?? false);
     let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
     let hasDnsEngine = $derived(isOS5 || hydrarouteInstalled);
