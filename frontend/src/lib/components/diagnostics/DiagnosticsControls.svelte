@@ -51,21 +51,21 @@
 
 		<div class="controls-buttons">
 			<button
-				class="btn btn-ghost btn-sm"
+				class="btn btn-secondary"
 				onclick={() => onStart('quick', false, routeMode, routeTunnelId)}
 				disabled={startDisabled}
 			>
 				Быстрый тест
 			</button>
 			<button
-				class="btn btn-ghost btn-sm"
+				class="btn btn-primary"
 				onclick={() => onStart('quick', true, routeMode, routeTunnelId)}
 				disabled={startDisabled}
 			>
 				Полная диагностика
 			</button>
 			<button
-				class="btn btn-sm" style="border-color: var(--error); color: var(--error);"
+				class="btn btn-ghost"
 				onclick={() => onStart('full', true, routeMode, routeTunnelId)}
 				disabled={startDisabled}
 			>
@@ -103,6 +103,7 @@
 		color: var(--text-primary);
 		font-size: 0.8125rem;
 		font-family: inherit;
+		width: auto;
 		max-width: 280px;
 	}
 
@@ -122,5 +123,27 @@
 		font-size: 0.75rem;
 		line-height: 1.5;
 		margin-top: 0.75rem;
+	}
+
+	@media (max-width: 640px) {
+		.controls-bar {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.controls-select {
+			width: 100%;
+			max-width: none;
+		}
+
+		.controls-buttons {
+			margin-left: 0;
+			flex-direction: column;
+			width: 100%;
+		}
+
+		.controls-buttons :global(.btn) {
+			width: 100%;
+		}
 	}
 </style>
