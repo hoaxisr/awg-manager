@@ -90,7 +90,20 @@
 				newPolicyName = '';
 				newPolicyIfaces = [];
 			} else {
-				tunnelId = rule.routes?.[0]?.tunnelId ?? tunnels[0]?.id ?? '';
+				// HR interface-mode rules come back from the backend with
+				// route.interface = route.tunnelId = kernel iface name
+				// ("nwg0"), not our internal tunnel id ("awg10"). Resolve
+				// the select's value by matching any of those fields against
+				// every tunnel property so the dropdown shows the right
+				// option instead of blanking out.
+				const route = rule.routes?.[0];
+				const match = tunnels.find(
+					(x) =>
+						x.id === route?.tunnelId ||
+						x.iface === route?.tunnelId ||
+						x.iface === route?.interface,
+				);
+				tunnelId = match?.id ?? tunnels[0]?.id ?? '';
 			}
 		} else {
 			name = '';
