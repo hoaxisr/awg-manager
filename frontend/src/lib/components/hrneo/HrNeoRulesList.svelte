@@ -118,4 +118,16 @@
 		border: 1px dashed var(--border);
 		border-radius: 8px;
 	}
+
+	@media (max-width: 640px) {
+		.list-header {
+			flex-wrap: wrap;
+		}
+		.list-title {
+			flex: 1 1 100%;
+		}
+		.list-header :global(.btn) {
+			flex: 1 1 100%;
+		}
+	}
 </style>

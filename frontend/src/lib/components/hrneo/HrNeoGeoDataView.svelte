@@ -441,4 +441,22 @@
 			transform: rotate(360deg);
 		}
 	}
+
+	@media (max-width: 640px) {
+		.file-row {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 8px;
+		}
+		.file-info {
+			flex-wrap: wrap;
+			row-gap: 4px;
+		}
+		.file-actions {
+			justify-content: flex-end;
+		}
+		.add-row {
+			grid-template-columns: 1fr;
+		}
+	}
 </style>
