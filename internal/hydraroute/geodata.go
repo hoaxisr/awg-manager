@@ -2,7 +2,9 @@ package hydraroute
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -25,12 +27,27 @@ type geoDataJSON struct {
 	Files []GeoFileEntry `json:"files"`
 }
 
+// ProgressFn receives streaming download progress: bytes copied so far and
+// total expected (0 if Content-Length was absent). Called from the goroutine
+// that drives the HTTP response body — must not block.
+type ProgressFn func(downloaded, total int64)
+
 // GeoDataStore manages .dat file downloads, tracking, and tag caching.
 type GeoDataStore struct {
 	storagePath string // path to hydraroute-geodata.json
 	mu          sync.RWMutex
 	entries     []GeoFileEntry
 	tagCache    map[string][]GeoTag // path → cached tags
+	progress    func(rawURL, fileType, phase string, downloaded, total int64, errMsg string)
+}
+
+// SetProgressReporter wires a callback that receives lifecycle events for
+// each download (start, periodic progress, validate, done/error). Optional;
+// nil is fine — no reporting.
+func (s *GeoDataStore) SetProgressReporter(fn func(rawURL, fileType, phase string, downloaded, total int64, errMsg string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.progress = fn
 }
 
 // NewGeoDataStore creates a store and loads entries from the JSON file.
@@ -112,17 +129,39 @@ func (s *GeoDataStore) Download(fileType, rawURL string) (*GeoFileEntry, error) 
 	dest := filepath.Join(hrDir, base)
 	dest = s.resolveConflict(dest)
 
-	// Download to a temp location then move.
-	if err := downloadFile(rawURL, dest); err != nil {
+	progress := s.progress
+	report := func(phase string, downloaded, total int64, errMsg string) {
+		if progress != nil {
+			progress(rawURL, fileType, phase, downloaded, total, errMsg)
+		}
+	}
+
+	// Stream the download with progress callbacks.
+	bytesProgress := func(downloaded, total int64) {
+		report("download", downloaded, total, "")
+	}
+	if _, err := downloadFile(rawURL, dest, bytesProgress); err != nil {
+		report("error", 0, 0, err.Error())
 		return nil, fmt.Errorf("download %s: %w", rawURL, err)
 	}
 
-	// Validate by parsing the protobuf.
+	report("validate", 0, 0, "")
+
+	// Validate by parsing the protobuf. Refuses an empty file (often a sign
+	// that the user picked the wrong type for this URL).
 	size, tagCount, err := ReadFileInfo(dest, fileType)
 	if err != nil {
 		os.Remove(dest)
+		report("error", 0, 0, err.Error())
 		return nil, fmt.Errorf("validate %s: %w", dest, err)
 	}
+	if tagCount == 0 {
+		os.Remove(dest)
+		emsg := fmt.Sprintf("file has 0 %s entries — wrong type or corrupt download?", fileType)
+		report("error", size, size, emsg)
+		return nil, fmt.Errorf("%s", emsg)
+	}
+	report("done", size, size, "")
 
 	entry := GeoFileEntry{
 		Type:     fileType,
@@ -185,8 +224,20 @@ func (s *GeoDataStore) Update(path string) (*GeoFileEntry, error) {
 
 	entry := s.entries[idx]
 
-	if err := downloadFile(entry.URL, path); err != nil {
+	progress := s.progress
+	bytesProgress := func(downloaded, total int64) {
+		if progress != nil {
+			progress(entry.URL, entry.Type, "download", downloaded, total, "")
+		}
+	}
+	if _, err := downloadFile(entry.URL, path, bytesProgress); err != nil {
+		if progress != nil {
+			progress(entry.URL, entry.Type, "error", 0, 0, err.Error())
+		}
 		return nil, fmt.Errorf("re-download %s: %w", entry.URL, err)
+	}
+	if progress != nil {
+		progress(entry.URL, entry.Type, "done", 0, 0, "")
 	}
 
 	size, tagCount, err := ReadFileInfo(path, entry.Type)
@@ -367,52 +418,127 @@ func (s *GeoDataStore) resolveConflict(path string) string {
 	}
 }
 
-// downloadFile downloads rawURL to dest using a 120-second timeout.
-// Uses atomic write: downloads to a temp file, then renames.
-func downloadFile(rawURL, dest string) error {
+// maxGeoFileSize caps single .dat downloads. Realistic geosite/geoip files
+// are 5-30 MB; anything past 200 MB is almost certainly a misclick on a
+// random URL, and on a router with limited disk it can fill /opt.
+const maxGeoFileSize = 200 << 20 // 200 MB
+
+// progressReader wraps an io.Reader and calls onProgress periodically with
+// the cumulative bytes read so far. Throttled — emits at most every ~64 KB
+// or 200 ms (whichever comes first) to keep SSE traffic sane.
+type progressReader struct {
+	r         io.Reader
+	total     int64
+	read      int64
+	lastEmit  int64
+	lastTime  time.Time
+	onProgress ProgressFn
+}
+
+func (p *progressReader) Read(buf []byte) (int, error) {
+	n, err := p.r.Read(buf)
+	if n > 0 {
+		p.read += int64(n)
+		shouldEmit := p.read-p.lastEmit >= 64*1024 ||
+			time.Since(p.lastTime) >= 200*time.Millisecond ||
+			err == io.EOF
+		if shouldEmit && p.onProgress != nil {
+			p.onProgress(p.read, p.total)
+			p.lastEmit = p.read
+			p.lastTime = time.Now()
+		}
+	}
+	return n, err
+}
+
+// downloadTimeout caps a single .dat fetch. 200 MB at 0.5 MB/s ≈ 7 min in
+// the worst case; 15 min leaves plenty of margin for slow router uplinks
+// without letting a runaway request hang forever.
+const downloadTimeout = 15 * time.Minute
+
+// downloadFile downloads rawURL to dest with a generous overall timeout and a
+// hard size cap. Uses atomic write: downloads to a temp file, then renames.
+// onProgress (optional) receives streaming byte counters during the copy.
+func downloadFile(rawURL, dest string, onProgress ProgressFn) (size int64, err error) {
 	// Defense-in-depth: re-validate scheme before making the request.
-	if u, err := url.Parse(rawURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return fmt.Errorf("only http/https URLs are allowed")
+	if u, parseErr := url.Parse(rawURL); parseErr != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return 0, fmt.Errorf("only http/https URLs are allowed")
 	}
 
-	client := &http.Client{Timeout: 120 * time.Second}
+	// Per-request context so the timeout covers headers + body. The
+	// http.Client.Timeout field has the same effect, but a context lets us
+	// surface a clearer error string ("download timed out after …").
+	ctx, cancel := context.WithTimeout(context.Background(), downloadTimeout)
+	defer cancel()
 
-	resp, err := client.Get(rawURL) //nolint:noctx
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return fmt.Errorf("http get: %w", err)
+		return 0, fmt.Errorf("build request: %w", err)
+	}
+
+	client := &http.Client{}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return 0, fmt.Errorf("download timed out after %s — slow link or unresponsive server", downloadTimeout)
+		}
+		return 0, fmt.Errorf("http get: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status: %s", resp.Status)
+		return 0, fmt.Errorf("unexpected status: %s", resp.Status)
+	}
+
+	if resp.ContentLength > maxGeoFileSize {
+		return 0, fmt.Errorf("content-length %d > limit %d", resp.ContentLength, maxGeoFileSize)
 	}
 
 	dir := filepath.Dir(dest)
 	if err := os.MkdirAll(dir, storage.DirPermission); err != nil {
-		return fmt.Errorf("create dir %s: %w", dir, err)
+		return 0, fmt.Errorf("create dir %s: %w", dir, err)
 	}
 
 	tmp := fmt.Sprintf("%s.tmp.%d.%d", dest, os.Getpid(), time.Now().UnixNano())
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, storage.FilePermission)
 	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
+		return 0, fmt.Errorf("create temp file: %w", err)
 	}
 
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	// Cap the read at maxGeoFileSize+1 so we can detect oversize content
+	// even when the server didn't send Content-Length.
+	src := io.LimitReader(resp.Body, maxGeoFileSize+1)
+	pr := &progressReader{
+		r:          src,
+		total:      resp.ContentLength,
+		lastTime:   time.Now(),
+		onProgress: onProgress,
+	}
+	written, err := io.Copy(f, pr)
+	if err != nil {
 		f.Close()
 		os.Remove(tmp)
-		return fmt.Errorf("write temp file: %w", err)
+		if errors.Is(err, context.DeadlineExceeded) {
+			return 0, fmt.Errorf("download timed out at %d/%d bytes after %s", pr.read, pr.total, downloadTimeout)
+		}
+		return 0, fmt.Errorf("write temp file: %w", err)
+	}
+	if written > maxGeoFileSize {
+		f.Close()
+		os.Remove(tmp)
+		return 0, fmt.Errorf("download exceeds %d bytes", maxGeoFileSize)
 	}
 
 	if err := f.Close(); err != nil {
 		os.Remove(tmp)
-		return fmt.Errorf("close temp file: %w", err)
+		return 0, fmt.Errorf("close temp file: %w", err)
 	}
 
 	if err := os.Rename(tmp, dest); err != nil {
 		os.Remove(tmp)
-		return fmt.Errorf("rename to dest: %w", err)
+		return 0, fmt.Errorf("rename to dest: %w", err)
 	}
 
-	return nil
+	return written, nil
 }

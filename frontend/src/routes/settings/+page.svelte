@@ -15,7 +15,7 @@
 	let restarting = $state(false);
 	let restartConfirmOpen = $state(false);
 	let hydraStatus = $state<HydraRouteStatus | null>(null);
-	// hydraLoading removed — Start/Stop/Restart moved to /settings/hydraroute
+	// hydraLoading removed — HydraRoute controls moved to the Routing page
 
 	onMount(async () => {
 		try {
@@ -252,7 +252,7 @@
 							</span>
 						</div>
 						{#if hydraStatus?.installed}
-							<a href="/settings/hydraroute" class="btn btn-ghost btn-sm">Настроить</a>
+							<a href="/routing" class="btn btn-ghost btn-sm">Открыть</a>
 						{/if}
 					</div>
 				</div>

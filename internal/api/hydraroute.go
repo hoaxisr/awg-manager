@@ -218,20 +218,6 @@ func (h *HydraRouteHandler) GetGeoTags(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, response.MustNotNil(tags))
 }
 
-// ImportNative imports native HydraRoute rules from the router's domain.conf / ip.list.
-func (h *HydraRouteHandler) ImportNative(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	count, err := h.svc.ImportNative(r.Context())
-	if err != nil {
-		response.Error(w, err.Error(), "IMPORT_ERROR")
-		return
-	}
-	response.Success(w, map[string]int{"imported": count})
-}
-
 // GetIpsetUsage returns the current ipset usage per kernel interface.
 func (h *HydraRouteHandler) GetIpsetUsage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -269,4 +255,42 @@ func (h *HydraRouteHandler) SetPolicyOrder(w http.ResponseWriter, r *http.Reques
 	}
 
 	response.Success(w, map[string][]string{"order": req.Order})
+}
+
+// GetOversizedTags returns the list of geoip tags HR Neo excluded plus
+// the current IpsetMaxElem so the frontend can render the 'Отключённые
+// теги' pane and enforce picker limits.
+func (h *HydraRouteHandler) GetOversizedTags(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+
+	status := h.svc.GetStatus()
+	if !status.Installed {
+		response.Success(w, map[string]interface{}{
+			"installed": false,
+			"maxelem":   0,
+			"tags":      []hydraroute.OversizedTag{},
+		})
+		return
+	}
+
+	cfg, err := h.svc.ReadConfig()
+	if err != nil {
+		response.Error(w, err.Error(), "CONFIG_READ_ERROR")
+		return
+	}
+
+	tags, err := h.svc.OversizedTags(r.Context())
+	if err != nil {
+		response.Error(w, err.Error(), "OVERSIZED_ERROR")
+		return
+	}
+
+	response.Success(w, map[string]interface{}{
+		"installed": true,
+		"maxelem":   cfg.EffectiveMaxElem(),
+		"tags":      response.MustNotNil(tags),
+	})
 }
