@@ -19,6 +19,7 @@ import type {
 	ASCParams,
 	DeleteResult,
 	BootStatus,
+	ChangelogEntry,
 	UpdateInfo,
 	DiagnosticsStatus,
 	DiagEvent,
@@ -384,6 +385,11 @@ class ApiClient {
 
 	async applyUpdate(): Promise<{ status: string }> {
 		return this.request('/system/update/apply', { method: 'POST' });
+	}
+
+	async getUpdateChangelog(from: string, to: string): Promise<{ entries: ChangelogEntry[] }> {
+		const qs = `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+		return this.request(`/system/update/changelog?${qs}`);
 	}
 
 	// #endregion
