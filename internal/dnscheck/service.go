@@ -53,10 +53,18 @@ func NewService(ndmsClient ndms.Client, dns DnsRouteProvider, tunnels TunnelStat
 // EnsureIPHost creates a permanent ip host entry for the probe domain.
 // Called once at startup. The entry maps awgm-dnscheck.test to the router's
 // br0 IP so clients can verify their DNS goes through the router.
+//
+// The existing entry is inspected via /show/rc/ip/host first and left alone
+// when it already matches — a blind POST at every startup made NDMS log
+// 'Core::Configurator: not found: "ip/host/awgm-dnscheck.test"' because
+// it resolved the leaf path before creating.
 func (s *Service) EnsureIPHost(ctx context.Context) {
 	routerIP := getBr0IP()
 	if routerIP == "" {
 		s.log.Warnf("dnscheck: br0 has no IPv4, skipping ip host setup")
+		return
+	}
+	if current, ok := s.lookupIPHost(ctx, probeDomain); ok && current == routerIP {
 		return
 	}
 	if err := s.createIPHost(ctx, probeDomain, routerIP); err != nil {
@@ -64,6 +72,30 @@ func (s *Service) EnsureIPHost(ctx context.Context) {
 		return
 	}
 	s.log.Infof("dnscheck: ip host %s -> %s", probeDomain, routerIP)
+}
+
+// lookupIPHost returns the configured address for the given domain, or
+// ("", false) if not present. Errors are swallowed because a missing
+// entry is indistinguishable from a transient NDMS hiccup at this level —
+// the caller retries via createIPHost either way.
+func (s *Service) lookupIPHost(ctx context.Context, domain string) (string, bool) {
+	raw, err := s.ndms.RCIGet(ctx, "/show/rc/ip/host")
+	if err != nil {
+		return "", false
+	}
+	var entries []struct {
+		Domain  string `json:"domain"`
+		Address string `json:"address"`
+	}
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return "", false
+	}
+	for _, e := range entries {
+		if e.Domain == domain {
+			return e.Address, true
+		}
+	}
+	return "", false
 }
 
 // Start runs server-side checks (tunnel, routes, policy, encryption) and returns
