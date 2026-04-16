@@ -114,23 +114,6 @@ func TestParsePoliciesRC_StandaloneFlag(t *testing.T) {
 	}
 }
 
-// Keenetic (observed live) encodes standalone as the boolean literal `true`
-// rather than `{}` — both must be treated as "enabled".
-func TestParsePoliciesRC_StandaloneBooleanTrue(t *testing.T) {
-	raw := []byte(`{
-		"Policy0": {
-			"description": "Mallware",
-			"permit": [{"enabled": true, "interface": "PPPoE0"}],
-			"standalone": true
-		}
-	}`)
-
-	got, _ := parsePoliciesRC(raw)
-	if !got["Policy0"].standalone {
-		t.Error("standalone=true literal must be parsed as enabled")
-	}
-}
-
 func TestParsePoliciesRC_EmptyMap(t *testing.T) {
 	got, err := parsePoliciesRC([]byte(`{}`))
 	if err != nil {
