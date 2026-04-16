@@ -114,6 +114,14 @@ func HasPingCheckComponent() bool {
 	return HasComponent("pingcheck")
 }
 
+// HasProxyComponent returns true if the NDMS firmware has the "proxy"
+// component installed. Required for sing-box integration — ProxyN
+// interfaces (SOCKS5 upstream to sing-box) cannot be created without
+// this NDMS component.
+func HasProxyComponent() bool {
+	return HasComponent("proxy")
+}
+
 // SupportsWireguardASC returns true if the current NDMS release supports
 // WireGuard as an ASC (Application Service Component).
 func SupportsWireguardASC() bool {

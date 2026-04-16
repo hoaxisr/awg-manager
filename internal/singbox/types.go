@@ -37,6 +37,11 @@ type Status struct {
 	Running     bool   `json:"running"`
 	PID         int    `json:"pid,omitempty"`
 	TunnelCount int    `json:"tunnelCount"`
+	// ProxyComponent reports whether the NDMS "proxy" component is
+	// installed. Without it, ProxyN interfaces cannot be created and
+	// sing-box integration cannot route any traffic — the binary may be
+	// installed, but nothing works end-to-end.
+	ProxyComponent bool `json:"proxyComponent"`
 }
 
 // ProcessState is the internal lifecycle state.
