@@ -14,6 +14,9 @@ type dataCache struct {
 
 	rcLines   []string
 	rcLinesAt time.Time
+
+	rcPolicies   map[string]rcPolicy
+	rcPoliciesAt time.Time
 }
 
 func newDataCache(ttl time.Duration) *dataCache {
@@ -76,6 +79,7 @@ func (c *dataCache) InvalidateRC() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.rcLines = nil
+	c.rcPolicies = nil
 }
 
 func (c *dataCache) InvalidateAll() {
@@ -83,4 +87,42 @@ func (c *dataCache) InvalidateAll() {
 	defer c.mu.Unlock()
 	c.hotspot = nil
 	c.rcLines = nil
+	c.rcPolicies = nil
+}
+
+// GetRCPolicies returns the cached policy map if fresh, copied so the caller
+// can mutate without racing other readers.
+func (c *dataCache) GetRCPolicies() (map[string]rcPolicy, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.rcPolicies == nil || time.Since(c.rcPoliciesAt) > c.ttl {
+		return nil, false
+	}
+	return copyPolicyMap(c.rcPolicies), true
+}
+
+// PeekRCPolicies returns the last-known policy map regardless of TTL —
+// stale-ok fallback for when a fresh NDMS fetch fails.
+func (c *dataCache) PeekRCPolicies() (map[string]rcPolicy, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.rcPolicies == nil {
+		return nil, false
+	}
+	return copyPolicyMap(c.rcPolicies), true
+}
+
+func (c *dataCache) SetRCPolicies(policies map[string]rcPolicy) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.rcPolicies = copyPolicyMap(policies)
+	c.rcPoliciesAt = time.Now()
+}
+
+func copyPolicyMap(in map[string]rcPolicy) map[string]rcPolicy {
+	out := make(map[string]rcPolicy, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
