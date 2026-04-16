@@ -2,6 +2,7 @@ package updater
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -80,9 +81,20 @@ func ParseChangelog(md string) (map[string]Entry, error) {
 	return out, nil
 }
 
-// Slice returns entries where fromVer < v <= toVer, sorted newest-first by
-// the order they appear in the source map (callers should prefer the sort
-// emitted by the parser, which preserves file order — newest first).
+// Slice returns entries where fromVer < v <= toVer, sorted newest-first.
+// Version comparison reuses compareVersions (dotted-numeric semver-like).
 func Slice(entries map[string]Entry, fromVer, toVer string) []Entry {
-	return nil
+	if compareVersions(fromVer, toVer) >= 0 {
+		return nil
+	}
+	out := make([]Entry, 0)
+	for _, e := range entries {
+		if compareVersions(e.Version, fromVer) > 0 && compareVersions(e.Version, toVer) <= 0 {
+			out = append(out, e)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return compareVersions(out[i].Version, out[j].Version) > 0
+	})
+	return out
 }
