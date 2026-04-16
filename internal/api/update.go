@@ -67,3 +67,26 @@ func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		f.Flush()
 	}
 }
+
+// Changelog returns the slice of changelog entries between the caller's
+// current version and the latest version. Query params: from, to.
+// GET /api/system/update/changelog?from=2.7.5&to=2.8.0
+func (h *UpdateHandler) Changelog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+	if from == "" || to == "" {
+		response.Error(w, "missing from/to", "MISSING_PARAM")
+		return
+	}
+
+	entries, err := h.updater.GetChangelog(r.Context(), from, to)
+	if err != nil {
+		response.ErrorWithStatus(w, http.StatusBadGateway, err.Error(), "CHANGELOG_FETCH_FAILED")
+		return
+	}
+	response.Success(w, map[string]interface{}{"entries": entries})
+}

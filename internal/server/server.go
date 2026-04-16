@@ -460,6 +460,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Update endpoints (protected + boot guarded)
 	mux.HandleFunc("/api/system/update/check", guarded(updateHandler.Check))
 	mux.HandleFunc("/api/system/update/apply", guarded(updateHandler.Apply))
+	mux.HandleFunc("/api/system/update/changelog", guarded(updateHandler.Changelog))
 
 	// DNS routes (NDMS backend on OS5, HydraRoute on any OS)
 	mux.HandleFunc("/api/dns-routes/list", guarded(dnsRouteHandler.List))
