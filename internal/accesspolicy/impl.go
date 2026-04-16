@@ -79,10 +79,8 @@ func (s *ServiceImpl) List(ctx context.Context) ([]Policy, error) {
 		s.cache.InvalidateAll()
 	}
 
-	// One structured call — /show/rc/ip/policy returns description, standalone
-	// and permit[] in a single JSON for every policy. Works uniformly for
-	// standard PolicyN and custom (e.g. HydraRoute) policies.
-	rcPolicies, err := s.queryPolicies(ctx)
+	// Query all policies from NDMS
+	raw, err := s.queryPolicies(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list policies: %w", err)
 	}
@@ -94,18 +92,37 @@ func (s *ServiceImpl) List(ctx context.Context) ([]Policy, error) {
 		deviceCounts = map[string]int{}
 	}
 
-	policies := make([]Policy, 0, len(rcPolicies))
-	for name, rc := range rcPolicies {
+	// Parse running-config for standalone and permit details
+	rcPolicies, err := s.parseRunningConfig(ctx)
+	if err != nil {
+		s.log.Warnf("failed to parse running-config: %v", err)
+		rcPolicies = map[string]rcPolicy{}
+	}
+
+	policies := make([]Policy, 0)
+	for name, policyRaw := range raw {
+
+		var info rciPolicyInfo
+		if err := json.Unmarshal(policyRaw, &info); err != nil {
+			s.log.Warnf("failed to parse policy %s: %v", name, err)
+			continue
+		}
+
 		p := Policy{
 			Name:        name,
-			Description: rc.description,
-			Standalone:  rc.standalone,
+			Description: info.Description,
 			Interfaces:  []PermittedIface{},
 			DeviceCount: deviceCounts[name],
 		}
-		if rc.interfaces != nil {
-			p.Interfaces = rc.interfaces
+
+		// Enrich with running-config data (standalone, interfaces)
+		if rc, ok := rcPolicies[name]; ok {
+			p.Standalone = rc.standalone
+			if rc.interfaces != nil {
+				p.Interfaces = rc.interfaces
+			}
 		}
+
 		policies = append(policies, p)
 	}
 
@@ -649,6 +666,11 @@ func ifaceCategory(ndmsID string) int {
 
 // --- internal helpers ---
 
+// rciPolicyInfo represents a single policy from /show/ip/policy.
+type rciPolicyInfo struct {
+	Description string `json:"description"`
+}
+
 // hotspotHost represents a single host from /show/ip/hotspot with policy field.
 type hotspotHost struct {
 	IP       string `json:"ip"`
@@ -667,69 +689,22 @@ type hotspotResponse struct {
 
 // rcPolicy holds parsed running-config data for a policy.
 type rcPolicy struct {
-	description string
-	standalone  bool
-	interfaces  []PermittedIface
+	standalone bool
+	interfaces []PermittedIface
 }
 
-// rcPermitJSON mirrors one entry of the permit[] array returned by
-// /show/rc/ip/policy.
-type rcPermitJSON struct {
-	Enabled   bool   `json:"enabled"`
-	Interface string `json:"interface"`
-}
-
-// rcPolicyJSON mirrors one policy subtree from /show/rc/ip/policy.
-// Standalone is a raw message because NDMS encodes it as `{}` when set and
-// omits the key when unset — presence is the signal, content is irrelevant.
-type rcPolicyJSON struct {
-	Description string          `json:"description"`
-	Standalone  json.RawMessage `json:"standalone,omitempty"`
-	Permit      []rcPermitJSON  `json:"permit,omitempty"`
-}
-
-// parsePoliciesRC decodes the body of /show/rc/ip/policy into a map keyed
-// by policy name. Interface order follows the permit[] order emitted by
-// NDMS, which matches the order stored in running-config and used for
-// routing priority.
-func parsePoliciesRC(raw []byte) (map[string]rcPolicy, error) {
-	var input map[string]rcPolicyJSON
-	if err := json.Unmarshal(raw, &input); err != nil {
-		return nil, fmt.Errorf("parse rc ip policy: %w", err)
-	}
-
-	out := make(map[string]rcPolicy, len(input))
-	for name, j := range input {
-		p := rcPolicy{
-			description: j.Description,
-			standalone:  len(j.Standalone) > 0 && string(j.Standalone) != "null",
-		}
-		if len(j.Permit) > 0 {
-			p.interfaces = make([]PermittedIface, 0, len(j.Permit))
-			for i, pi := range j.Permit {
-				p.interfaces = append(p.interfaces, PermittedIface{
-					Name:   pi.Interface,
-					Order:  i,
-					Denied: !pi.Enabled,
-				})
-			}
-		}
-		out[name] = p
-	}
-	return out, nil
-}
-
-// queryPolicies queries /show/rc/ip/policy — the structured running-config
-// subtree — and returns per-policy metadata (description, standalone flag,
-// permit[] interfaces). This single endpoint handles every policy the same
-// way, including custom-named ones like HydraRoute that the text
-// running-config parser used to mis-handle.
-func (s *ServiceImpl) queryPolicies(ctx context.Context) (map[string]rcPolicy, error) {
-	raw, err := s.ndms.RCIGet(ctx, "/show/rc/ip/policy")
+// queryPolicies queries /show/ip/policy via RCI GET and returns raw JSON per policy name.
+func (s *ServiceImpl) queryPolicies(ctx context.Context) (map[string]json.RawMessage, error) {
+	raw, err := s.ndms.RCIGet(ctx, "/show/ip/policy")
 	if err != nil {
 		return nil, fmt.Errorf("query policies: %w", err)
 	}
-	return parsePoliciesRC(raw)
+
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("parse policy response: %w", err)
+	}
+	return result, nil
 }
 
 // queryHotspot queries /show/ip/hotspot via RCI GET for device data including policy field.
@@ -803,6 +778,79 @@ func (s *ServiceImpl) getRunningConfigLines(ctx context.Context) ([]string, erro
 
 	s.cache.SetRCLines(rcResp.Message)
 	return rcResp.Message, nil
+}
+
+// parseRunningConfig parses "show running-config" via RCI GET to extract standalone
+// and permit details for each policy block.
+func (s *ServiceImpl) parseRunningConfig(ctx context.Context) (map[string]rcPolicy, error) {
+	lines, err := s.getRunningConfigLines(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	policies := make(map[string]rcPolicy)
+	var currentPolicy string
+	var current rcPolicy
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Detect "ip policy PolicyN" block start
+		if strings.HasPrefix(trimmed, "ip policy ") {
+			if currentPolicy != "" {
+				policies[currentPolicy] = current
+			}
+			currentPolicy = strings.TrimPrefix(trimmed, "ip policy ")
+			current = rcPolicy{}
+			continue
+		}
+
+		if currentPolicy == "" {
+			continue
+		}
+
+		// End of block
+		if trimmed == "!" {
+			policies[currentPolicy] = current
+			currentPolicy = ""
+			continue
+		}
+
+		// Parse standalone
+		if trimmed == "standalone" {
+			current.standalone = true
+			continue
+		}
+
+		// Parse "permit global <interface>" and "no permit global <interface>"
+		if strings.HasPrefix(trimmed, "permit global ") {
+			parts := strings.Fields(trimmed)
+			if len(parts) >= 3 {
+				pi := PermittedIface{
+					Name:  parts[2],
+					Order: len(current.interfaces),
+				}
+				current.interfaces = append(current.interfaces, pi)
+			}
+		} else if strings.HasPrefix(trimmed, "no permit global ") {
+			parts := strings.Fields(trimmed)
+			if len(parts) >= 4 {
+				pi := PermittedIface{
+					Name:   parts[3],
+					Order:  len(current.interfaces),
+					Denied: true,
+				}
+				current.interfaces = append(current.interfaces, pi)
+			}
+		}
+	}
+
+	// Flush last policy if file doesn't end with "!"
+	if currentPolicy != "" {
+		policies[currentPolicy] = current
+	}
+
+	return policies, nil
 }
 
 // parseHotspotPolicies parses running-config to extract host→policy mappings
