@@ -1,7 +1,6 @@
 package updater
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
 )
@@ -32,7 +31,53 @@ var itemLine = regexp.MustCompile(`^[-*]\s+(.+?)\s*$`)
 // Unparseable leftover lines are skipped silently so a partial file still
 // produces usable data.
 func ParseChangelog(md string) (map[string]Entry, error) {
-	return nil, fmt.Errorf("not implemented")
+	out := make(map[string]Entry)
+	var cur *Entry
+	var curGroup *Group
+
+	flushGroup := func() {
+		if cur != nil && curGroup != nil && len(curGroup.Items) > 0 {
+			cur.Groups = append(cur.Groups, *curGroup)
+		}
+		curGroup = nil
+	}
+	flushEntry := func() {
+		flushGroup()
+		if cur != nil {
+			out[cur.Version] = *cur
+			cur = nil
+		}
+	}
+
+	for _, raw := range strings.Split(md, "\n") {
+		line := strings.TrimRight(raw, "\r")
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		if m := versionLine.FindStringSubmatch(trimmed); m != nil {
+			flushEntry()
+			cur = &Entry{Version: m[1], Date: m[2]}
+			continue
+		}
+		if cur == nil {
+			continue
+		}
+		if m := groupLine.FindStringSubmatch(trimmed); m != nil {
+			flushGroup()
+			curGroup = &Group{Heading: m[1]}
+			continue
+		}
+		if curGroup == nil {
+			continue
+		}
+		if m := itemLine.FindStringSubmatch(trimmed); m != nil {
+			curGroup.Items = append(curGroup.Items, m[1])
+		}
+	}
+	flushEntry()
+	return out, nil
 }
 
 // Slice returns entries where fromVer < v <= toVer, sorted newest-first by
@@ -41,6 +86,3 @@ func ParseChangelog(md string) (map[string]Entry, error) {
 func Slice(entries map[string]Entry, fromVer, toVer string) []Entry {
 	return nil
 }
-
-// suppress unused-import complaints until implementations land
-var _ = strings.TrimSpace
