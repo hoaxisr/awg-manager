@@ -45,7 +45,6 @@ func parseNaive(raw string) (*ParsedOutbound, error) {
 		"server_port": port,
 		"username":    username,
 		"password":    password,
-		"network":     "tcp",
 		"tls": map[string]any{
 			"enabled":     true,
 			"server_name": host,
