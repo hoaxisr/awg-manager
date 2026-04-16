@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
@@ -55,6 +56,11 @@ type ServiceImpl struct {
 	appLog       *logging.ScopedLogger
 	cache        *dataCache
 	hookNotifier HookNotifier
+
+	// rcFetchMu serialises /show/running-config fetches so concurrent
+	// callers share a single NDMS round-trip — the call can take several
+	// seconds on busy routers and must not multiply under SSE load.
+	rcFetchMu sync.Mutex
 }
 
 // SetHookNotifier sets the hook notifier for NDMS hook filtering.
@@ -62,15 +68,25 @@ func (s *ServiceImpl) SetHookNotifier(hn HookNotifier) {
 	s.hookNotifier = hn
 }
 
-// New creates a new access policy service.
+// New creates a new access policy service. Kicks off a background goroutine
+// that pre-warms the running-config cache so the first user request doesn't
+// block on a cold NDMS round-trip.
 func New(ndmsClient ndms.Client, tracker PolicyTracker, log *logger.Logger, appLogger logging.AppLogger) *ServiceImpl {
-	return &ServiceImpl{
+	s := &ServiceImpl{
 		ndms:    ndmsClient,
 		tracker: tracker,
 		log:     log.WithComponent("accesspolicy"),
 		appLog:  logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubAccessPolicy),
 		cache:   newDataCache(30 * time.Second),
 	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := s.getRunningConfigLines(ctx); err != nil {
+			s.log.Warnf("running-config pre-warm failed: %v", err)
+		}
+	}()
+	return s
 }
 
 // List returns all access policies with permitted interfaces and device counts.
@@ -760,13 +776,35 @@ func (s *ServiceImpl) countDevicesPerPolicy(ctx context.Context) (map[string]int
 }
 
 // getRunningConfigLines fetches and caches the lines from /show/running-config.
+//
+// Resilient to NDMS slowness:
+//   - Fast path: fresh cache hit returns immediately.
+//   - Single-flight: concurrent callers share one NDMS round-trip via
+//     rcFetchMu so a 5-second running-config response doesn't spawn a
+//     queue of its own.
+//   - Stale-ok: when the fresh fetch fails but we have a previous
+//     (possibly expired) snapshot in memory, return it instead of erroring
+//     out — keeps the UI populated through transient NDMS hiccups.
 func (s *ServiceImpl) getRunningConfigLines(ctx context.Context) ([]string, error) {
+	if lines, ok := s.cache.GetRCLines(); ok {
+		return lines, nil
+	}
+
+	s.rcFetchMu.Lock()
+	defer s.rcFetchMu.Unlock()
+
+	// Re-check: another goroutine may have populated the cache while we
+	// waited for the mutex.
 	if lines, ok := s.cache.GetRCLines(); ok {
 		return lines, nil
 	}
 
 	raw, err := s.ndms.RCIGet(ctx, "/show/running-config")
 	if err != nil {
+		if stale, ok := s.cache.PeekRCLines(); ok {
+			s.log.Warnf("running-config fetch failed, serving stale cache: %v", err)
+			return stale, nil
+		}
 		return nil, err
 	}
 	var rcResp struct {

@@ -47,6 +47,18 @@ func (c *dataCache) GetRCLines() ([]string, bool) {
 	return c.rcLines, true
 }
 
+// PeekRCLines returns the last-known running-config lines regardless of TTL.
+// Used as a stale-ok fallback when a fresh NDMS fetch fails — we'd rather
+// return slightly out-of-date data than empty the UI.
+func (c *dataCache) PeekRCLines() ([]string, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.rcLines == nil {
+		return nil, false
+	}
+	return c.rcLines, true
+}
+
 func (c *dataCache) SetRCLines(lines []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
