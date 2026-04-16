@@ -49,6 +49,34 @@ func TestDeduplicateDomains(t *testing.T) {
 			t.Errorf("expected empty, got %v", got)
 		}
 	})
+
+	t.Run("preserves case for geosite/geoip tags", func(t *testing.T) {
+		// HR Neo matches geo tags byte-for-byte against the .dat file, where
+		// geosite tags are typically UPPERCASE (GOOGLE, YOUTUBE) and geoip
+		// codes are lowercase (ru, us). Lowercasing the entry breaks the lookup.
+		got := deduplicateDomains([]string{
+			"google.com",
+			"geosite:GOOGLE",
+			"geosite:YOUTUBE",
+			"geoip:RU",
+		})
+		want := []string{"google.com", "geosite:GOOGLE", "geosite:YOUTUBE", "geoip:RU"}
+		if len(got) != len(want) {
+			t.Fatalf("len = %d, want %d: %v", len(got), len(want), got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("got[%d] = %q, want %q", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("dedupes geo tags case-insensitively", func(t *testing.T) {
+		got := deduplicateDomains([]string{"geosite:GOOGLE", "geosite:google"})
+		if len(got) != 1 {
+			t.Errorf("expected 1 entry (case-insensitive dedup), got %v", got)
+		}
+	})
 }
 
 func TestSubscriptionDomains(t *testing.T) {

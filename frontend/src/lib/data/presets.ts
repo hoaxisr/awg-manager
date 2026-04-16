@@ -27,7 +27,7 @@ export const SERVICE_PRESETS: ServicePreset[] = [
 		id: 'telegram',
 		name: 'Telegram',
 		domains: [
-			'149.154.160.0/20', '185.76.151.0/24', '2001:67c:4e8::/48', '2001:b28:f23c::/48',
+			'5.28.192.0/18', '149.154.160.0/20', '185.76.151.0/24', '2001:67c:4e8::/48', '2001:b28:f23c::/48',
 			'2001:b28:f23d::/48', '2001:b28:f23f::/48', '2a0a:f280::/32', '91.105.192.0/23',
 			'91.108.12.0/22', '91.108.16.0/22', '91.108.20.0/22', '91.108.4.0/22',
 			'91.108.56.0/22', '91.108.8.0/22', 'cdn-telegram.org', 'comments.app', 'contest.com',
@@ -277,6 +277,25 @@ export const SERVICE_PRESETS: ServicePreset[] = [
 			'184.50.128.0/19',
 		],
 		notice: 'Содержит широкие IP-ранги Akamai CDN (43 шт) и собственной сети Roblox (4 шт) — необходимы для игр в Roblox, но Akamai-блоки могут направлять в туннель трафик других сайтов.',
+	},
+	{
+		id: 'tmdb',
+		name: 'TMDB',
+		domains: [
+			'themoviedb.org', 'tmdb.org', 'tmdb-image-prod.b-cdn.net',
+		],
+	},
+	{
+		id: 'torrents',
+		name: 'Торренты',
+		domains: [
+			'1337x.to', 'booktracker.org', 'booktracker.work', 'eu.org', 'filmitorrent.net',
+			'freetp.org', 'kinozal.me', 'newstudio.tv', 'nnmclub.to', 'nnmstatic.win',
+			'rustorka.com', 'rutrc.org', 'rutor.info', 'rutor.is', 'rutor.org',
+			'rutracker.cc', 'rutracker.net', 'rutracker.org', 'rutracker.ru',
+			'rutracker.wiki', 'rutrk.org', 'stealth.si', 't-ru.org', 'thepiratebay.org',
+			'torrent.by', 'torrindex.net', 'wstracker.online', 'ysagin.top',
+		],
 	},
 	{
 		id: 'all-blocked',

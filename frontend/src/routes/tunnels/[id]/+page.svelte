@@ -474,6 +474,7 @@
 			backendLabel={tunnel.backend === 'nativewg' ? 'NativeWG' : 'Kernel'}
 			ndmsName={tunnel.interfaceName ?? tunnel.id}
 			onclose={() => replaceModalOpen = false}
+			onreplaced={() => { replaceModalOpen = false; loadTunnel(); }}
 		/>
 	{/if}
 {/if}

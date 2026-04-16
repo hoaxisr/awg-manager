@@ -2,9 +2,10 @@
 	interface Props {
 		domains: string[];
 		onchange: (domains: string[]) => void;
+		allowGeoTags?: boolean;
 	}
 
-	let { domains, onchange }: Props = $props();
+	let { domains, onchange, allowGeoTags = false }: Props = $props();
 
 	let text = $state('');
 	let errorLines = $state<number[]>([]);
@@ -23,6 +24,8 @@
 	function isValidDomain(line: string): boolean {
 		const trimmed = line.trim();
 		if (!trimmed) return true; // empty lines are ok, filtered out
+		// HydraRoute geosite: tags (e.g. geosite:GOOGLE, geosite:TELEGRAM)
+		if (allowGeoTags && /^geosite:[A-Za-z0-9_-]+$/i.test(trimmed)) return true;
 		if (trimmed.includes(' ')) return false;
 		if (trimmed.includes('*')) return false;
 		// Allow IPv4 CIDR (e.g. 8.8.8.0/24)
@@ -51,9 +54,14 @@
 			if (!isValidDomain(line)) {
 				errors.push(i + 1);
 			} else {
-				// Strip leading dots (.ru → ru)
-				let normalized = line.replace(/^\.+/, '');
-				if (normalized) validDomains.push(normalized);
+				// Preserve geosite: tags as-is (case-sensitive tag names)
+				if (/^geosite:/i.test(line)) {
+					validDomains.push(line);
+				} else {
+					// Strip leading dots (.ru → ru)
+					let normalized = line.replace(/^\.+/, '');
+					if (normalized) validDomains.push(normalized);
+				}
 			}
 		}
 

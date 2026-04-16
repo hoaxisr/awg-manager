@@ -3,15 +3,19 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { PageContainer, LoadingSpinner } from '$lib/components/layout';
-	import { Toggle } from '$lib/components/ui';
+	import { Toggle, Modal } from '$lib/components/ui';
 	import { SystemInfoGrid, LoggingSettings, UpdateSection, DnsRouteSettings, HiddenTunnelsSettings } from '$lib/components/settings';
-	import type { SystemInfo, Settings, UpdateInfo } from '$lib/types';
+	import type { SystemInfo, Settings, UpdateInfo, HydraRouteStatus } from '$lib/types';
 
 	let systemInfo: SystemInfo | null = $state(null);
 	let settings = $state<Settings | null>(null);
 	let loading = $state(true);
 	let saving = $state(false);
 	let updateInfo: UpdateInfo | null = $state(null);
+	let restarting = $state(false);
+	let restartConfirmOpen = $state(false);
+	let hydraStatus = $state<HydraRouteStatus | null>(null);
+	// hydraLoading removed — HydraRoute controls moved to the Routing page
 
 	onMount(async () => {
 		try {
@@ -25,6 +29,9 @@
 		} finally {
 			loading = false;
 		}
+		try {
+			hydraStatus = await api.getHydraRouteStatus();
+		} catch { /* ignore - HR may not be available */ }
 	});
 
 	async function toggleAuth() {
@@ -161,6 +168,19 @@
 		} catch { /* ignore */ }
 	}
 
+	async function restartDaemon() {
+		restartConfirmOpen = false;
+		restarting = true;
+		try {
+			await api.restartDaemon();
+			notifications.success('AWG Manager перезапускается...');
+		} catch (e) {
+			notifications.error('Не удалось перезапустить');
+			restarting = false;
+		}
+	}
+
+
 </script>
 
 <svelte:head>
@@ -204,6 +224,36 @@
 							</span>
 						</div>
 						<Toggle checked={settings.updates.checkEnabled} onchange={() => toggleUpdateCheck()} disabled={saving} />
+					</div>
+
+					<div class="setting-row">
+						<div class="flex flex-col gap-1">
+							<span class="font-medium">Перезапуск</span>
+							<span class="setting-description">
+								Перезапустить процесс AWG Manager. Туннели продолжат работать.
+							</span>
+						</div>
+						<button class="btn btn-ghost btn-sm" onclick={() => restartConfirmOpen = true} disabled={restarting}>
+							{restarting ? 'Перезапуск...' : 'Перезапустить'}
+						</button>
+					</div>
+
+					<div class="setting-row">
+						<div class="flex flex-col gap-1">
+							<span class="font-medium">HydraRoute Neo</span>
+							<span class="setting-description">
+								{#if !hydraStatus || !hydraStatus.installed}
+									Не обнаружен — <a href="https://github.com/Ground-Zerro/HydraRoute" target="_blank" rel="noopener">установить</a>
+								{:else if hydraStatus.running}
+									<span style="color: var(--success)">Работает</span>
+								{:else}
+									<span style="color: var(--text-muted)">Остановлен</span>
+								{/if}
+							</span>
+						</div>
+						{#if hydraStatus?.installed}
+							<a href="/routing" class="btn btn-ghost btn-sm">Открыть</a>
+						{/if}
 					</div>
 				</div>
 			</div>
@@ -304,6 +354,14 @@
 		</div>
 
 	{/if}
+
+	<Modal open={restartConfirmOpen} title="Перезапуск AWG Manager" size="sm" onclose={() => restartConfirmOpen = false}>
+		<p style="color: var(--text-secondary); font-size: 0.875rem; margin: 0;">Перезапустить процесс AWG Manager? Туннели продолжат работать.</p>
+		{#snippet actions()}
+			<button class="btn btn-ghost" onclick={() => restartConfirmOpen = false}>Отмена</button>
+			<button class="btn btn-primary" onclick={restartDaemon}>Перезапустить</button>
+		{/snippet}
+	</Modal>
 </PageContainer>
 
 <style>

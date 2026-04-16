@@ -37,6 +37,74 @@ func TestHotspotCacheReturnsCopy(t *testing.T) {
 	}
 }
 
+func TestPeekRCLines_StaleOkAfterExpiry(t *testing.T) {
+	c := newDataCache(1 * time.Millisecond)
+	c.SetRCLines([]string{"ip policy HydraRoute", "    permit global PPPoE0", "!"})
+
+	time.Sleep(5 * time.Millisecond)
+
+	if _, ok := c.GetRCLines(); ok {
+		t.Fatal("GetRCLines must reject expired entries")
+	}
+	stale, ok := c.PeekRCLines()
+	if !ok || len(stale) != 3 {
+		t.Fatalf("PeekRCLines must return stale data regardless of TTL, got %v %v", stale, ok)
+	}
+}
+
+func TestPeekRCLines_EmptyWhenNeverSet(t *testing.T) {
+	c := newDataCache(30 * time.Second)
+	if _, ok := c.PeekRCLines(); ok {
+		t.Fatal("PeekRCLines must return false when cache was never set")
+	}
+}
+
+func TestPeekRCLines_InvalidateClears(t *testing.T) {
+	c := newDataCache(30 * time.Second)
+	c.SetRCLines([]string{"x"})
+	c.InvalidateRC()
+	if _, ok := c.PeekRCLines(); ok {
+		t.Fatal("PeekRCLines must return false after InvalidateRC")
+	}
+}
+
+func TestPeekRCPolicies_StaleOkAfterExpiry(t *testing.T) {
+	c := newDataCache(1 * time.Millisecond)
+	c.SetRCPolicies(map[string]rcPolicy{
+		"HydraRoute": {description: "", interfaces: []PermittedIface{{Name: "PPPoE0"}}},
+	})
+
+	time.Sleep(5 * time.Millisecond)
+
+	if _, ok := c.GetRCPolicies(); ok {
+		t.Fatal("GetRCPolicies must reject expired entries")
+	}
+	stale, ok := c.PeekRCPolicies()
+	if !ok || stale["HydraRoute"].interfaces[0].Name != "PPPoE0" {
+		t.Fatalf("PeekRCPolicies must return stale data, got %+v %v", stale, ok)
+	}
+}
+
+func TestRCPoliciesCache_InvalidateRCClears(t *testing.T) {
+	c := newDataCache(30 * time.Second)
+	c.SetRCPolicies(map[string]rcPolicy{"Policy0": {description: "X"}})
+	c.InvalidateRC()
+	if _, ok := c.PeekRCPolicies(); ok {
+		t.Fatal("PeekRCPolicies must return false after InvalidateRC")
+	}
+}
+
+func TestRCPoliciesCache_ReturnsCopy(t *testing.T) {
+	c := newDataCache(30 * time.Second)
+	c.SetRCPolicies(map[string]rcPolicy{"Policy0": {description: "X"}})
+	got1, _ := c.GetRCPolicies()
+	got1["Mutated"] = rcPolicy{description: "should-not-leak"}
+	got2, _ := c.GetRCPolicies()
+	if _, leaked := got2["Mutated"]; leaked {
+		t.Fatal("cache must return a copy, not a shared map")
+	}
+}
+
 func TestHotspotCacheExpiry(t *testing.T) {
 	c := newDataCache(1 * time.Millisecond)
 	c.SetHotspot([]hotspotHost{{MAC: "AA:BB:CC:DD:EE:FF"}})

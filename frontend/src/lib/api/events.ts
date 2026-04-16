@@ -1,4 +1,10 @@
 // SSE event payloads
+import type {
+	SingboxStatusEvent,
+	SingboxTunnelEvent,
+	SingboxTraffic,
+	SingboxDelayEvent,
+} from '$lib/types';
 
 export interface TunnelStateEvent {
 	id: string;
@@ -37,6 +43,7 @@ export interface PingCheckStateEvent {
 	status: string;
 	failCount: number;
 	successCount: number;
+	restartDetected?: boolean;
 }
 
 // --- Snapshot payloads ---
@@ -67,6 +74,7 @@ export interface SnapshotRoutingEvent {
 	policyDevices: import('$lib/types').PolicyDevice[];
 	policyInterfaces: import('$lib/types').PolicyGlobalInterface[];
 	clientRoutes: import('$lib/types').ClientRoute[];
+	hydrarouteStatus?: import('$lib/types').HydraRouteStatus;
 }
 
 export interface SnapshotPingcheckEvent {
@@ -154,6 +162,24 @@ export interface SSEEventHandlers {
 		action: 'switched' | 'restored' | 'error';
 		error?: string;
 	}) => void;
+
+	// Sing-box
+	onSingboxStatus?: (data: SingboxStatusEvent) => void;
+	onSingboxTunnel?: (data: SingboxTunnelEvent) => void;
+	onSingboxTraffic?: (data: SingboxTraffic[]) => void;
+	onSingboxDelay?: (data: SingboxDelayEvent) => void;
+
+	// HydraRoute
+	onHydraRouteGeoProgress?: (data: GeoDownloadProgressEvent) => void;
+}
+
+export interface GeoDownloadProgressEvent {
+	url: string;
+	fileType: 'geosite' | 'geoip';
+	downloaded: number;
+	total: number; // 0 when unknown
+	phase: 'download' | 'validate' | 'done' | 'error';
+	error?: string;
 }
 
 export function connectSSE(handlers: SSEEventHandlers): () => void {
@@ -203,6 +229,15 @@ export function connectSSE(handlers: SSEEventHandlers): () => void {
 	handle('routing:tunnels-updated', handlers.onRoutingTunnelsUpdated);
 	handle('tunnels:list', handlers.onTunnelsList);
 	handle('dnsroute:failover', handlers.onDnsRouteFailover);
+
+	// Sing-box events
+	handle('singbox:status', handlers.onSingboxStatus);
+	handle('singbox:tunnel', handlers.onSingboxTunnel);
+	handle('singbox:traffic', handlers.onSingboxTraffic);
+	handle('singbox:delay', handlers.onSingboxDelay);
+
+	// HydraRoute events
+	handle('hydraroute:geo-progress', handlers.onHydraRouteGeoProgress);
 
 	// Server sends "connected" event immediately on stream start
 	es.addEventListener('connected', () => {

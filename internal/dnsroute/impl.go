@@ -7,27 +7,33 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
 
-// InterfaceResolver resolves tunnel IDs to NDMS interface names for RCI commands.
+// InterfaceResolver resolves tunnel IDs to router interface names.
+// ResolveInterface returns the NDMS name (for RCI commands).
+// GetKernelIfaceName returns the kernel-level interface name (for HR Neo).
 type InterfaceResolver interface {
 	ResolveInterface(ctx context.Context, tunnelID string) (string, error)
+	GetKernelIfaceName(ctx context.Context, tunnelID string) (string, error)
 }
 
 // ServiceImpl implements the Service interface.
 // All operations are serialized via opMu to prevent race conditions between
 // concurrent HTTP handlers, background scheduler, and tunnel lifecycle hooks.
 type ServiceImpl struct {
-	opMu     sync.Mutex
-	store    *Store
-	ndms     ndms.Client
-	resolver InterfaceResolver
-	log      *logger.Logger
-	appLog   *logging.ScopedLogger
-	failover *FailoverManager
+	opMu               sync.Mutex
+	store              *Store
+	ndms               ndms.Client
+	resolver           InterfaceResolver
+	log                *logger.Logger
+	appLog             *logging.ScopedLogger
+	failover           *FailoverManager
+	hydra              *hydraroute.Service
+	policyOrchestrator policyOrchestrator
 }
 
 // NewService creates a new DNS route service.
@@ -44,6 +50,16 @@ func NewService(store *Store, ndmsClient ndms.Client, resolver InterfaceResolver
 // SetFailoverManager sets the failover manager for DNS route failover.
 func (s *ServiceImpl) SetFailoverManager(fm *FailoverManager) {
 	s.failover = fm
+}
+
+// SetHydraRoute sets the HydraRoute Neo service for hydraroute-backend lists.
+// hydraroute.Service satisfies the policyOrchestrator seam, so tests that
+// override policyOrchestrator before calling SetHydraRoute keep their stub.
+func (s *ServiceImpl) SetHydraRoute(h *hydraroute.Service) {
+	s.hydra = h
+	if s.policyOrchestrator == nil {
+		s.policyOrchestrator = h
+	}
 }
 
 // LookupAffectedLists returns DNS lists that reference the given tunnelID,
@@ -135,6 +151,10 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 
+	if isHydraRoute(list.Backend) {
+		return s.createHydraRoute(ctx, list)
+	}
+
 	data := s.store.GetCached()
 	if data == nil {
 		return nil, fmt.Errorf("store not loaded")
@@ -153,7 +173,7 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 	list.Enabled = true
 	list.CreatedAt = now
 	list.UpdatedAt = now
-	list.Domains = deduplicateDomains(list.ManualDomains)
+	list.Domains, list.Subnets = splitDomainsAndSubnets(deduplicateDomains(list.ManualDomains))
 
 	// Resolve tunnel IDs to NDMS interface names for RCI commands.
 	if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
@@ -183,7 +203,7 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 			s.logError("create", list.ID, "Refresh subscriptions failed", err.Error())
 		}
 	} else {
-		if err := s.reconcile(ctx); err != nil {
+		if err := s.reconcileAll(ctx); err != nil {
 			s.logError("create", list.ID, "Reconcile failed", err.Error())
 		}
 	}
@@ -215,7 +235,8 @@ func (s *ServiceImpl) Get(ctx context.Context, id string) (*DomainList, error) {
 	return nil, fmt.Errorf("dns route list %q not found", id)
 }
 
-// List returns all domain lists.
+// List returns all domain lists: NDMS-backed ones from JSON storage merged
+// with HR-backed ones read straight from HR Neo's config files.
 func (s *ServiceImpl) List(ctx context.Context) ([]DomainList, error) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
@@ -225,16 +246,31 @@ func (s *ServiceImpl) List(ctx context.Context) ([]DomainList, error) {
 		return nil, fmt.Errorf("store not loaded")
 	}
 
-	if data.Lists == nil {
-		return []DomainList{}, nil
+	result := make([]DomainList, 0, len(data.Lists))
+	for _, l := range data.Lists {
+		// HR-backed entries are legacy rows; the HR files are now SoT.
+		if !isHydraRoute(l.Backend) {
+			result = append(result, l)
+		}
 	}
-	return data.Lists, nil
+
+	hrLists, err := s.listHydraRoute(ctx)
+	if err != nil {
+		s.log.Warnf("hydraroute: list rules failed: %v", err)
+	}
+	result = append(result, hrLists...)
+
+	return result, nil
 }
 
 // Update modifies an existing domain list, persists changes, and reconciles.
 func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList, error) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
+
+	if isHRID(list.ID) || isHydraRoute(list.Backend) {
+		return s.updateHydraRoute(ctx, list.ID, list)
+	}
 
 	data := s.store.GetCached()
 	if data == nil {
@@ -285,11 +321,17 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 	if list.Excludes == nil {
 		list.Excludes = existing.Excludes
 	}
-	if list.Subnets == nil {
-		list.Subnets = existing.Subnets
-	}
 	if list.Routes == nil {
 		list.Routes = existing.Routes
+	}
+	if list.Backend == "" {
+		list.Backend = existing.Backend
+	}
+	if list.HRRouteMode == "" {
+		list.HRRouteMode = existing.HRRouteMode
+	}
+	if list.HRPolicyName == "" {
+		list.HRPolicyName = existing.HRPolicyName
 	}
 
 	// Validate any new subscription URLs before saving.
@@ -300,10 +342,12 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 		}
 	}
 
-	// Merge domains: manual domains + existing subscription domains.
+	// Merge domains: manual domains + existing subscription domains, then
+	// classify into DNS-style domains vs CIDR subnets so HR Neo writes them
+	// into the correct file (domain.conf vs ip.list).
 	manual := deduplicateDomains(list.ManualDomains)
 	subDomains := subscriptionDomains(existing.Domains, existing.ManualDomains)
-	list.Domains = deduplicateDomains(append(manual, subDomains...))
+	list.Domains, list.Subnets = splitDomainsAndSubnets(deduplicateDomains(append(manual, subDomains...)))
 
 	// Resolve tunnel IDs to NDMS interface names for RCI commands.
 	if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
@@ -320,7 +364,7 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 
 	s.log.Infof("updated dns route list %q (%s)", list.Name, list.ID)
 
-	if err := s.reconcile(ctx); err != nil {
+	if err := s.reconcileAll(ctx); err != nil {
 		s.logError("update", list.ID, "Reconcile failed", err.Error())
 	}
 
@@ -331,6 +375,13 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 func (s *ServiceImpl) Delete(ctx context.Context, id string) error {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
+
+	if isHRID(id) {
+		if !s.hrReady() {
+			return fmt.Errorf("HydraRoute Neo is not installed")
+		}
+		return s.hydra.DeleteRule(nameFromHRID(id))
+	}
 
 	data := s.store.GetCached()
 	if data == nil {
@@ -357,7 +408,7 @@ func (s *ServiceImpl) Delete(ctx context.Context, id string) error {
 
 	s.log.Infof("deleted dns route list %q (%s)", name, id)
 
-	if err := s.reconcile(ctx); err != nil {
+	if err := s.reconcileAll(ctx); err != nil {
 		s.logError("delete", id, "Reconcile failed", err.Error())
 	}
 
@@ -401,7 +452,7 @@ func (s *ServiceImpl) DeleteBatch(ctx context.Context, ids []string) (int, error
 		return 0, fmt.Errorf("save after delete batch: %w", err)
 	}
 
-	if err := s.reconcile(ctx); err != nil {
+	if err := s.reconcileAll(ctx); err != nil {
 		s.logError("delete-batch", "", "Reconcile failed", err.Error())
 	}
 
@@ -472,7 +523,7 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 			}
 		}
 	} else {
-		if err := s.reconcile(ctx); err != nil {
+		if err := s.reconcileAll(ctx); err != nil {
 			s.logError("create-batch", "", "Reconcile failed", err.Error())
 		}
 	}
@@ -522,7 +573,7 @@ func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) e
 
 	s.log.Infof("set enabled=%v for dns route list %q", enabled, id)
 
-	if err := s.reconcile(ctx); err != nil {
+	if err := s.reconcileAll(ctx); err != nil {
 		s.logError("set-enabled", id, "Reconcile failed", err.Error())
 	}
 
@@ -587,8 +638,8 @@ func (s *ServiceImpl) refreshSubscriptions(ctx context.Context, id string) error
 		allSubDomains = append(allSubDomains, domains)
 	}
 
-	// Merge manual + subscription domains
-	list.Domains = mergeDomains(list.ManualDomains, allSubDomains)
+	// Merge manual + subscription domains, then classify CIDRs → Subnets.
+	list.Domains, list.Subnets = splitDomainsAndSubnets(mergeDomains(list.ManualDomains, allSubDomains))
 	s.dedup(list)
 	list.UpdatedAt = now
 
@@ -600,7 +651,7 @@ func (s *ServiceImpl) refreshSubscriptions(ctx context.Context, id string) error
 		"list": id, "totalDomains": len(list.Domains),
 	})
 
-	return s.reconcile(ctx)
+	return s.reconcileAll(ctx)
 }
 
 // RefreshAllSubscriptions fetches subscriptions for all lists.
@@ -627,7 +678,7 @@ func (s *ServiceImpl) RefreshAllSubscriptions(ctx context.Context) error {
 func (s *ServiceImpl) OnTunnelStart(ctx context.Context) error {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
-	return s.reconcile(ctx)
+	return s.reconcileAll(ctx)
 }
 
 // OnTunnelDelete removes route targets referencing the deleted tunnel and reconciles.
@@ -670,7 +721,7 @@ func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error
 		s.log.Infof("removed deleted tunnel %s from dns route targets", tunnelID)
 	}
 
-	return s.reconcile(ctx)
+	return s.reconcileAll(ctx)
 }
 
 // CleanupAll removes all DNS route objects (AWG_*) from NDMS.
@@ -679,14 +730,14 @@ func (s *ServiceImpl) CleanupAll(ctx context.Context) error {
 	defer s.opMu.Unlock()
 
 	s.store.Save(EmptyStoreData())
-	return s.reconcile(ctx)
+	return s.reconcileAll(ctx)
 }
 
 // Reconcile synchronises router state (object-groups, dns-proxy routes) with stored lists.
 func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
-	return s.reconcile(ctx)
+	return s.reconcileAll(ctx)
 }
 
 // resolveRouteInterfaces fills RouteTarget.Interface from TunnelID via the resolver.
@@ -764,18 +815,39 @@ func nextListID(lists []DomainList) string {
 	return fmt.Sprintf("list_%d", max+1)
 }
 
-// deduplicateDomains returns a lowercased, trimmed, deduplicated domain list.
+// deduplicateDomains returns a trimmed, deduplicated list. Real domains get
+// lowercased (DNS is case-insensitive). geosite:/geoip: tags are preserved
+// as-is — HR Neo matches them byte-for-byte against the .dat file, which
+// uses upper-case geosite tags (GOOGLE) and lower-case geoip country codes
+// (ru). Dedup is case-insensitive in either case.
 func deduplicateDomains(domains []string) []string {
 	seen := make(map[string]bool, len(domains))
 	result := make([]string, 0, len(domains))
-	for _, d := range domains {
-		d = strings.ToLower(strings.TrimSpace(d))
-		if d != "" && !seen[d] {
-			seen[d] = true
-			result = append(result, d)
+	for _, raw := range domains {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
+			continue
 		}
+		var stored string
+		if isGeoTag(entry) {
+			stored = entry
+		} else {
+			stored = strings.ToLower(entry)
+		}
+		key := strings.ToLower(stored)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, stored)
 	}
 	return result
+}
+
+// isGeoTag reports whether the entry is a geosite:/geoip: tag whose case
+// must be preserved for HR Neo's byte-for-byte tag match.
+func isGeoTag(s string) bool {
+	return strings.HasPrefix(s, "geosite:") || strings.HasPrefix(s, "geoip:")
 }
 
 // subscriptionDomains returns the domains that came from subscriptions (present in
@@ -795,6 +867,13 @@ func subscriptionDomains(allDomains, manualDomains []string) []string {
 		}
 	}
 	return sub
+}
+
+// reconcileAll runs NDMS reconciliation. HR rules no longer participate —
+// HR config files are the source of truth and are written directly by the
+// hydraroute service; there is nothing to reconcile from JSON storage.
+func (s *ServiceImpl) reconcileAll(ctx context.Context) error {
+	return s.reconcile(ctx)
 }
 
 func (s *ServiceImpl) logInfo(action, target, msg string) {

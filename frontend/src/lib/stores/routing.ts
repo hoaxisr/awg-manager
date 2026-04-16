@@ -1,7 +1,7 @@
 import { writable } from 'svelte/store';
 import type {
 	DnsRoute, StaticRouteList, RoutingTunnel,
-	AccessPolicy, PolicyDevice, PolicyGlobalInterface, ClientRoute
+	AccessPolicy, PolicyDevice, PolicyGlobalInterface, ClientRoute, HydraRouteStatus
 } from '$lib/types';
 import type { SnapshotRoutingEvent } from '$lib/api/events';
 
@@ -13,6 +13,7 @@ interface RoutingState {
 	policyDevices: PolicyDevice[];
 	policyInterfaces: PolicyGlobalInterface[];
 	clientRoutes: ClientRoute[];
+	hydrarouteStatus: HydraRouteStatus | null;
 	loaded: boolean;
 }
 
@@ -25,6 +26,7 @@ function createRoutingStore() {
 		policyDevices: [],
 		policyInterfaces: [],
 		clientRoutes: [],
+		hydrarouteStatus: null,
 		loaded: false,
 	});
 
@@ -39,6 +41,7 @@ function createRoutingStore() {
 				policyDevices: data.policyDevices ?? [],
 				policyInterfaces: data.policyInterfaces ?? [],
 				clientRoutes: data.clientRoutes ?? [],
+				hydrarouteStatus: data.hydrarouteStatus ?? null,
 				loaded: true,
 			});
 		},
@@ -49,6 +52,7 @@ function createRoutingStore() {
 		setPolicyInterfaces(interfaces: PolicyGlobalInterface[]) { update(s => ({ ...s, policyInterfaces: interfaces ?? [] })); },
 		setClientRoutes(routes: ClientRoute[]) { update(s => ({ ...s, clientRoutes: routes ?? [] })); },
 		setRoutingTunnels(tunnels: RoutingTunnel[]) { update(s => ({ ...s, tunnels: tunnels ?? [] })); },
+		setHydraRouteStatus(status: HydraRouteStatus | null) { update(s => ({ ...s, hydrarouteStatus: status })); },
 	};
 }
 

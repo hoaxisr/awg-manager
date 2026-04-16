@@ -85,11 +85,15 @@ func (f *Facade) isNativeWG(tunnelID string) bool {
 }
 
 // StartMonitoring starts monitoring for a tunnel.
-// NativeWG: configures NDMS native ping-check profile.
+// NativeWG: configures NDMS native ping-check profile (unless skipConfigure is true).
 // Kernel: delegates to custom loop.
-func (f *Facade) StartMonitoring(tunnelID, tunnelName string) {
+// Pass skipConfigure=true when the NDMS profile was already configured by the caller
+// (e.g. in the API handler) to avoid a redundant delete→create cycle.
+func (f *Facade) StartMonitoring(tunnelID, tunnelName string, skipConfigure ...bool) {
 	if f.isNativeWG(tunnelID) {
-		f.configureNativeWGPingCheck(tunnelID)
+		if len(skipConfigure) == 0 || !skipConfigure[0] {
+			f.configureNativeWGPingCheck(tunnelID)
+		}
 		f.startNwgMonitor(tunnelID, tunnelName)
 		return
 	}
@@ -183,21 +187,36 @@ func (f *Facade) getNativeWGStatuses() []TunnelStatus {
 			ts.FailThreshold = status.MaxFails
 			ts.FailCount = status.FailCount
 			ts.SuccessCount = status.SuccessCount
+			ts.TunnelRunning = status.Bound
 
-			switch status.Status {
-			case "pass":
-				ts.Status = "alive"
-			case "fail":
-				// NDMS keeps status="fail" after restart even when failCount
-				// resets to 0. With no active failures the tunnel is healthy.
-				if status.FailCount > 0 {
-					ts.Status = "recovering"
-					ts.RestartCount = 1
-				} else {
+			// When the interface is down, the ping-check profile has no bound
+			// interface → status/counts are meaningless. Show "stopped" so the
+			// UI can distinguish "monitoring enabled but tunnel not running"
+			// from "alive and checking".
+			if !status.Bound {
+				ts.Status = "stopped"
+			} else {
+				switch status.Status {
+				case "pass":
 					ts.Status = "alive"
+				case "fail":
+					if status.FailCount > 0 {
+						// Active failures — NDMS is counting towards threshold.
+						ts.Status = "recovering"
+						ts.RestartCount = 1
+					} else if f.isNwgRestartDetected(t.ID) {
+						// Post-restart: NDMS reset counters after interface
+						// restart, no checks completed yet. Show "recovering"
+						// so user sees the tunnel was just restarted.
+						ts.Status = "recovering"
+						ts.RestartCount = 1
+					} else {
+						// Fresh start or stale "fail" with no active failures.
+						ts.Status = "alive"
+					}
+				default:
+					ts.Status = "alive" // pending/unknown → treat as alive
 				}
-			default:
-				ts.Status = "alive" // pending/unknown → treat as alive
 			}
 		}
 
@@ -205,6 +224,19 @@ func (f *Facade) getNativeWGStatuses() []TunnelStatus {
 	}
 
 	return result
+}
+
+// isNwgRestartDetected returns true if the nwgMonitor for the given tunnel
+// has detected a recent NDMS-initiated interface restart (counters zeroed
+// after failure). Returns false if no monitor exists or no restart detected.
+func (f *Facade) isNwgRestartDetected(tunnelID string) bool {
+	f.nwgMonMu.RLock()
+	mon, ok := f.nwgMonitors[tunnelID]
+	f.nwgMonMu.RUnlock()
+	if !ok {
+		return false
+	}
+	return mon.restartDetected
 }
 
 // startNwgMonitor creates and starts a poll-based nwgMonitor for the given tunnel.
@@ -376,11 +408,12 @@ func (f *Facade) getNativeWGTunnelPingStatus(tunnelID string) TunnelPingInfo {
 	switch {
 	case status.Status == "pass":
 		info.Status = "alive"
-	case status.Status == "fail" && status.FailCount >= status.MaxFails:
-		// Real failure: NDMS hit the threshold → recovering
+	case status.Status == "fail" && status.FailCount > 0:
+		info.Status = "recovering"
+	case status.Status == "fail" && f.isNwgRestartDetected(tunnelID):
+		// Post-restart: counters zeroed, NDMS hasn't confirmed recovery yet.
 		info.Status = "recovering"
 	default:
-		// "fail" with failCount < threshold = still checking, or initial state (0/0)
 		info.Status = "alive"
 	}
 

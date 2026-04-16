@@ -151,6 +151,26 @@ func (m *MockNDMSClient) ShowPingCheck(ctx context.Context, profile string) (*nd
 	return nil, nil
 }
 
+func (m *MockNDMSClient) CreateProxy(ctx context.Context, name, description, upstreamHost string, upstreamPort int, socks5UDP bool) error {
+	return nil
+}
+
+func (m *MockNDMSClient) DeleteProxy(ctx context.Context, name string) error {
+	return nil
+}
+
+func (m *MockNDMSClient) ProxyUp(ctx context.Context, name string) error {
+	return nil
+}
+
+func (m *MockNDMSClient) ProxyDown(ctx context.Context, name string) error {
+	return nil
+}
+
+func (m *MockNDMSClient) ShowProxy(ctx context.Context, name string) (*ndms.ProxyInfo, error) {
+	return nil, nil
+}
+
 // MockWGClient is a mock WireGuard client for testing.
 type MockWGClient struct {
 	hasPeer       bool

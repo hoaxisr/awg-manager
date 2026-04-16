@@ -7,6 +7,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
 	import { connectSSE } from '$lib/api/events';
+	import { geoDownloadProgress } from '$lib/stores/geoDownload';
 	import { serverOnline } from '$lib/stores/events';
 	import { tunnels } from '$lib/stores/tunnels';
 	import { logEntries } from '$lib/stores/logs';
@@ -15,6 +16,7 @@
 	import { routing } from '$lib/stores/routing';
 	import { systemInfo } from '$lib/stores/system';
 	import { feedTraffic } from '$lib/stores/traffic';
+	import { singbox } from '$lib/stores/singbox';
 	import type { UpdateInfo } from '$lib/types';
 	import LoginForm from '$lib/components/LoginForm.svelte';
 	import { Modal } from '$lib/components/ui';
@@ -48,6 +50,8 @@
 
 	function startSSE() {
 		if (disconnectSSE) return;
+		singbox.loadStatus();
+		singbox.loadTunnels();
 		disconnectSSE = connectSSE({
 			// System events
 			onSystemReady: (data) => {
@@ -122,6 +126,15 @@
 			onLogEntry: (data) => logEntries.append(data),
 			onPingCheckState: (data) => pingCheckStatus.updateStatus(data),
 			onPingCheckLog: (data) => pingCheckStatus.appendLog(data),
+
+			// Sing-box
+			onSingboxStatus: singbox.applyStatus,
+			onSingboxTunnel: singbox.applyTunnelEvent,
+			onSingboxTraffic: singbox.applyTraffic,
+			onSingboxDelay: (data) => singbox.applyDelay(data.tag, data.delay),
+
+			// HydraRoute geo download progress
+			onHydraRouteGeoProgress: (data) => geoDownloadProgress.ingest(data),
 		});
 	}
 
@@ -208,11 +221,9 @@
 				<nav class="nav">
 					<a href="/" class="nav-link" class:active={$page.url.pathname === '/' || $page.url.pathname.startsWith('/tunnels')}>Туннели</a>
 					<a href="/servers" class="nav-link" class:active={$page.url.pathname.startsWith('/servers')}>Серверы</a>
-					<a href="/pingcheck" class="nav-link" class:active={$page.url.pathname.startsWith('/pingcheck')}>Мониторинг</a>
 					<a href="/routing" class="nav-link" class:active={$page.url.pathname.startsWith('/routing')}>Маршрутизация</a>
-					<a href="/logs" class="nav-link" class:active={$page.url.pathname.startsWith('/logs')}>Логи</a>
-					<a href="/diagnostics" class="nav-link" class:active={$page.url.pathname.startsWith('/diagnostics')}>Диагностика</a>
-					<a href="/connections" class="nav-link" class:active={$page.url.pathname.startsWith('/connections')}>Соединения</a>
+					<a href="/pingcheck" class="nav-link" class:active={$page.url.pathname.startsWith('/pingcheck')}>Мониторинг</a>
+					<a href="/diagnostics" class="nav-link" class:active={$page.url.pathname.startsWith('/diagnostics') || $page.url.pathname.startsWith('/connections') || $page.url.pathname.startsWith('/logs')}>Диагностика</a>
 					<a href="/settings" class="nav-link" class:active={$page.url.pathname.startsWith('/settings')}>Настройки</a>
 				</nav>
 			{:else}
@@ -298,11 +309,9 @@
 			<nav class="mobile-nav">
 				<a href="/" class="mobile-nav-link" class:active={$page.url.pathname === '/'} onclick={closeMobileMenu}>Туннели</a>
 				<a href="/servers" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/servers')} onclick={closeMobileMenu}>Серверы</a>
-				<a href="/pingcheck" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/pingcheck')} onclick={closeMobileMenu}>Мониторинг</a>
 				<a href="/routing" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/routing')} onclick={closeMobileMenu}>Маршрутизация</a>
-				<a href="/logs" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/logs')} onclick={closeMobileMenu}>Логи</a>
-				<a href="/diagnostics" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/diagnostics')} onclick={closeMobileMenu}>Диагностика</a>
-				<a href="/connections" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/connections')} onclick={closeMobileMenu}>Соединения</a>
+				<a href="/pingcheck" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/pingcheck')} onclick={closeMobileMenu}>Мониторинг</a>
+				<a href="/diagnostics" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/diagnostics') || $page.url.pathname.startsWith('/connections') || $page.url.pathname.startsWith('/logs')} onclick={closeMobileMenu}>Диагностика</a>
 				<a href="/settings" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/settings')} onclick={closeMobileMenu}>Настройки</a>
 			</nav>
 		{/if}
@@ -316,10 +325,15 @@
 		</main>
 
 		<div class="toast-container">
+			{#if $notifications.length > 1}
+				<button class="toast-dismiss-all" onclick={() => notifications.clearAll()}>
+					Закрыть все ({$notifications.length})
+				</button>
+			{/if}
 			{#each $notifications as notification (notification.id)}
-				<div class="toast toast-{notification.type}">
+				<button class="toast toast-{notification.type}" onclick={() => notifications.remove(notification.id)}>
 					{notification.message}
-				</div>
+				</button>
 			{/each}
 		</div>
 

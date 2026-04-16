@@ -1,12 +1,18 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { tunnels } from '$lib/stores/tunnels';
 	import { systemInfo as systemInfoStore } from '$lib/stores/system';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
 	import { TunnelCard, ExternalTunnelCard, AdoptTunnelDialog, SystemTunnelCard } from '$lib/components/tunnels';
+	import TunnelTabs from '$lib/components/tunnels/TunnelTabs.svelte';
 	import { PageContainer, LoadingSpinner } from '$lib/components/layout';
 	import { Modal } from '$lib/components/ui';
+	import { singbox } from '$lib/stores/singbox';
+	import { SingboxInstallBanner, SingboxTunnelCard, SingboxGhostTerminal } from '$lib/components/singbox';
+
+	type TunnelTab = 'awg' | 'singbox';
 
 	let sysInfo = $derived($systemInfoStore);
 	let loading = $derived(!sysInfo);
@@ -91,6 +97,29 @@
 			deleteLoading = rest;
 		}
 	}
+
+	const singboxStatus = singbox.status;
+	const singboxTunnels = singbox.tunnels;
+
+	// Tabs
+	let activeTab = $state<TunnelTab>('awg');
+
+	onMount(() => {
+		const stored = sessionStorage.getItem('tunnelsTab');
+		if (stored === 'awg' || stored === 'singbox') {
+			activeTab = stored;
+		}
+	});
+
+	$effect(() => {
+		sessionStorage.setItem('tunnelsTab', activeTab);
+	});
+
+	$effect(() => {
+		if (activeTab === 'singbox' && sysInfo && !sysInfo.singbox?.installed) {
+			activeTab = 'awg';
+		}
+	});
 
 	// External tunnels
 	let adoptDialogOpen = $state(false);
@@ -213,11 +242,21 @@
 </svelte:head>
 
 <PageContainer>
+	<SingboxInstallBanner />
+
 	{#if loading}
 		<div class="py-12">
 			<LoadingSpinner size="lg" message="Загрузка туннелей..." />
 		</div>
-	{:else if $tunnels.length === 0 && $systemTunnelsList.length === 0}
+	{:else}
+		<TunnelTabs
+			bind:active={activeTab}
+			awgCount={$tunnels.length + $systemTunnelsList.length}
+			singboxCount={$singboxTunnels.length}
+		/>
+
+		{#if activeTab === 'awg'}
+		{#if $tunnels.length === 0 && $systemTunnelsList.length === 0}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="ghost-terminal"
@@ -314,72 +353,107 @@
 
 		<div class="info-card">
 			<h3 class="info-title">Об AmneziaWG</h3>
-			<p class="info-text">
-				AmneziaWG — форк WireGuard с обфускацией трафика, разработанный для обхода блокировок DPI.
-				Поддерживаются три поколения протокола:
+			<p class="info-section-desc">
+				Форк WireGuard с обфускацией трафика. Три поколения протокола:
 			</p>
 			<div class="info-versions">
 				<div class="info-version">
 					<span class="info-version-tag">AWG 1.0</span>
-					<span class="info-version-desc">Базовая обфускация. Модификация заголовков хэндшейка (H1–H4), junk-пакеты (Jc/Jmin/Jmax) и изменение размеров сообщений (S1–S2). Достаточно для обхода простых сигнатурных фильтров.</span>
+					<span class="info-version-desc">Базовая обфускация: модификация заголовков (H1–H4), junk-пакеты (Jc/Jmin/Jmax), размеры сообщений (S1–S2).</span>
 				</div>
 				<div class="info-version">
 					<span class="info-version-tag tag-15">AWG 1.5</span>
-					<span class="info-version-desc">Мимикрия протоколов. Добавлены initiation-пакеты (I1–I5), маскирующие начало соединения под легитимные протоколы: QUIC, DTLS, STUN, DNS и другие. Эффективнее против глубокого анализа трафика.</span>
+					<span class="info-version-desc">Мимикрия протоколов: initiation-пакеты (I1–I5) маскируют соединение под QUIC, DTLS, STUN, DNS.</span>
 				</div>
 				<div class="info-version">
 					<span class="info-version-tag tag-20">AWG 2.0</span>
-					<span class="info-version-desc">Рандомизация заголовков. Значения H1–H4 задаются диапазонами (например, 100–200), генерируя случайные значения при каждом хэндшейке. Максимально затрудняет построение статических сигнатур.</span>
+					<span class="info-version-desc">Рандомизация заголовков: H1–H4 задаются диапазонами, генерируются при каждом хэндшейке.</span>
 				</div>
 			</div>
 			<p class="info-text info-kernel">
-				AWG Manager поддерживает работу через <strong>модуль ядра</strong> — в отличие от userspace-реализации,
-				трафик обрабатывается напрямую в ядре Linux, что значительно снижает нагрузку на CPU и увеличивает
-				пропускную способность. Это особенно актуально для роутеров на базе архитектур MIPS/MIPSEL.
+				Работает через <strong>модуль ядра</strong> — трафик обрабатывается напрямую в ядре Linux, что снижает нагрузку на CPU.
 			</p>
 		</div>
 
-	{:else}
-		{@const totalCount = $tunnels.length + $systemTunnelsList.length}
-		<div class="tunnels-toolbar">
-			<span class="tunnel-count">{totalCount} {totalCount === 1 ? 'туннель' : totalCount < 5 ? 'туннеля' : 'туннелей'}</span>
-			<div class="toolbar-actions">
-				<button class="btn btn-secondary" onclick={handleExportAll} disabled={exporting}>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-						<polyline points="7 10 12 15 17 10"/>
-						<line x1="12" y1="15" x2="12" y2="3"/>
-					</svg>
-					Экспорт
-				</button>
-				<a href="/tunnels/new" class="btn btn-primary">+ Создать</a>
+		{:else}
+			{@const totalCount = $tunnels.length + $systemTunnelsList.length}
+			<div class="tunnels-toolbar">
+				<span class="tunnel-count">{totalCount} {totalCount === 1 ? 'туннель' : totalCount < 5 ? 'туннеля' : 'туннелей'}</span>
+				<div class="toolbar-actions">
+					<button class="btn btn-secondary" onclick={handleExportAll} disabled={exporting}>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+							<polyline points="7 10 12 15 17 10"/>
+							<line x1="12" y1="15" x2="12" y2="3"/>
+						</svg>
+						Экспорт
+					</button>
+					<a href="/tunnels/new" class="btn btn-primary">+ Создать</a>
+				</div>
 			</div>
-		</div>
-		<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-			{#each $tunnels as tunnel (tunnel.id)}
-				<TunnelCard
-					{tunnel}
-					toggleLoading={toggleLoading[tunnel.id] ?? false}
-					deleteLoading={deleteLoading[tunnel.id] ?? false}
-					onToggleOnOff={() => handleToggleOnOff(tunnel.id)}
-					ondelete={() => requestDelete(tunnel.id)}
-				/>
-			{/each}
-			{#each $systemTunnelsList as tunnel (tunnel.id)}
-				<SystemTunnelCard {tunnel} onHide={hideSystemTunnel} onMarkServer={markAsServer} />
-			{/each}
-		</div>
-
-		{#if $externalTunnels.length > 0}
-			<h2 class="text-lg font-semibold mt-6 mb-4">Внешние туннели</h2>
 			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-				{#each $externalTunnels as extTunnel (extTunnel.interfaceName)}
-					<ExternalTunnelCard
-						tunnel={extTunnel}
-						onadopt={(name) => handleAdoptClick(name)}
+				{#each $tunnels as tunnel (tunnel.id)}
+					<TunnelCard
+						{tunnel}
+						toggleLoading={toggleLoading[tunnel.id] ?? false}
+						deleteLoading={deleteLoading[tunnel.id] ?? false}
+						onToggleOnOff={() => handleToggleOnOff(tunnel.id)}
+						ondelete={() => requestDelete(tunnel.id)}
 					/>
 				{/each}
+				{#each $systemTunnelsList as tunnel (tunnel.id)}
+					<SystemTunnelCard {tunnel} onHide={hideSystemTunnel} onMarkServer={markAsServer} />
+				{/each}
 			</div>
+
+			{#if $externalTunnels.length > 0}
+				<h2 class="text-lg font-semibold mt-6 mb-4">Внешние туннели</h2>
+				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+					{#each $externalTunnels as extTunnel (extTunnel.interfaceName)}
+						<ExternalTunnelCard
+							tunnel={extTunnel}
+							onadopt={(name) => handleAdoptClick(name)}
+						/>
+					{/each}
+				</div>
+			{/if}
+		{/if}
+		{:else}
+			{#if $singboxTunnels.length === 0}
+				<SingboxGhostTerminal />
+				<div class="info-card">
+					<h3 class="info-title">О Sing-box</h3>
+					<p class="info-section-desc">
+						Универсальный прокси с поддержкой современных протоколов:
+					</p>
+					<div class="info-versions">
+						<div class="info-version">
+							<span class="info-version-tag tag-vless">VLESS</span>
+							<span class="info-version-desc">Лёгкий протокол без шифрования на уровне протокола. Поддерживает <strong>Reality</strong> (маскировка под настоящий TLS-сервер) и транспорт gRPC для обхода DPI.</span>
+						</div>
+						<div class="info-version">
+							<span class="info-version-tag tag-hy2">Hysteria2</span>
+							<span class="info-version-desc">QUIC-based, устойчив к потерям пакетов и работает поверх UDP. Паролевая аутентификация, обфускация salamander.</span>
+						</div>
+						<div class="info-version">
+							<span class="info-version-tag tag-naive">NaiveProxy</span>
+							<span class="info-version-desc">HTTP/2 с полноценным TLS-маскированием под обычный HTTPS-сервер. Сложно отличим от браузерного трафика.</span>
+						</div>
+					</div>
+				</div>
+			{:else}
+				<div class="tunnels-toolbar">
+					<span class="tunnel-count">
+						{$singboxTunnels.length}
+						{$singboxTunnels.length === 1 ? 'туннель' : $singboxTunnels.length < 5 ? 'туннеля' : 'туннелей'}
+					</span>
+				</div>
+				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+					{#each $singboxTunnels as tunnel (tunnel.tag)}
+						<SingboxTunnelCard {tunnel} />
+					{/each}
+				</div>
+			{/if}
 		{/if}
 	{/if}
 </PageContainer>
@@ -773,4 +847,24 @@
 		color: #fff;
 		border-color: var(--accent);
 	}
+
+	.info-section-desc {
+		font-size: 0.85rem;
+		color: var(--text-muted);
+		margin: 0 0 0.75rem 0;
+	}
+
+	.tag-vless {
+		background: rgba(59, 130, 246, 0.15);
+		color: #60a5fa;
+	}
+	.tag-hy2 {
+		background: rgba(245, 158, 11, 0.15);
+		color: #fbbf24;
+	}
+	.tag-naive {
+		background: rgba(34, 211, 238, 0.15);
+		color: #22d3ee;
+	}
+
 </style>

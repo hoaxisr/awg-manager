@@ -20,7 +20,16 @@ type DomainList struct {
 	CreatedAt     string         `json:"createdAt"`
 	UpdatedAt        string         `json:"updatedAt"`
 	LastDedupeReport *DedupeReport  `json:"lastDedupeReport,omitempty"`
+	Backend          string         `json:"backend,omitempty"`  // "" or "ndms" = NDMS, "hydraroute" = HydraRoute Neo
+	HRRouteMode      string         `json:"hrRouteMode,omitempty"`  // "interface" or "policy" (hydraroute only)
+	HRPolicyName     string         `json:"hrPolicyName,omitempty"` // policy name for policy mode
+	// HRPolicyInterfaces lists NDMS interface names (e.g. "Wireguard0",
+	// "PPPoE0") permitted in a newly-created HR policy, in priority order.
+	// Only honored when HRRouteMode == "policy" and HRPolicyName is set
+	// (new-policy flow). Ignored otherwise. Not persisted back to clients.
+	HRPolicyInterfaces []string `json:"hrPolicyInterfaces,omitempty"`
 }
+
 
 // Subscription represents a remote domain list URL that is periodically fetched.
 type Subscription struct {
@@ -60,4 +69,12 @@ type DedupeItem struct {
 // StoreData is the top-level dns-routes.json structure.
 type StoreData struct {
 	Lists []DomainList `json:"lists"`
+}
+
+func isHydraRoute(backend string) bool {
+	return backend == "hydraroute"
+}
+
+func isNDMS(backend string) bool {
+	return backend == "" || backend == "ndms"
 }

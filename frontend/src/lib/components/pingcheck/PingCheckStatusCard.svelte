@@ -12,13 +12,16 @@
 
 	let { tunnel, toggleLoading, onOpenSettings, onToggleEnabled }: Props = $props();
 
-	function getMonitorLabel(enabled: boolean): string {
+	function getMonitorLabel(enabled: boolean, status: string): string {
 		if (!enabled) return 'Отключён';
+		if (status === 'stopped') return 'Остановлен';
 		return 'Активен';
 	}
 
 	function getCheckLabel(s: string): string {
-		return s === 'recovering' ? 'Проверки неуспешны' : 'Проверки успешны';
+		if (s === 'recovering') return 'Проверки неуспешны';
+		if (s === 'stopped') return 'Туннель не запущен';
+		return 'Проверки успешны';
 	}
 
 	function getMethodLabel(method: string): string {
@@ -36,11 +39,16 @@
 
 	let monitorBadgeClass = $derived.by(() => {
 		if (!tunnel.enabled) return 'badge-disabled';
+		if (tunnel.status === 'stopped') return 'badge-warning';
 		return 'badge-success';
 	});
 
 	let showCheckBadge = $derived(tunnel.enabled);
-	let checkBadgeClass = $derived(tunnel.status === 'recovering' ? 'badge-warning' : 'badge-success');
+	let checkBadgeClass = $derived.by(() => {
+		if (tunnel.status === 'recovering') return 'badge-warning';
+		if (tunnel.status === 'stopped') return 'badge-disabled';
+		return 'badge-success';
+	});
 </script>
 
 <div class="tunnel-status">
@@ -60,7 +68,7 @@
 				</button>
 			{/if}
 			<span class="badge {monitorBadgeClass}">
-				{getMonitorLabel(tunnel.enabled)}
+				{getMonitorLabel(tunnel.enabled, tunnel.status)}
 			</span>
 			{#if showCheckBadge}
 				<span class="badge {checkBadgeClass}">
@@ -82,7 +90,7 @@
 				{getMethodLabel(tunnel.method)}
 			</span>
 			{#if isNativeWG}
-				{#if tunnel.successCount != null || tunnel.failCount > 0}
+				{#if tunnel.successCount != null || tunnel.failCount > 0 || tunnel.status === 'recovering'}
 					<span class="detail detail-success">
 						<span class="detail-label">Успехов:</span> {tunnel.successCount ?? 0}
 					</span>

@@ -21,15 +21,13 @@
         variant = 'slider',
     }: Props = $props();
 
-    // Native checkbox toggle + parent notification.
-    // bind:checked lets the browser toggle visually and updates the
-    // `checked` variable. $bindable() propagates it to the parent
-    // when used as bind:checked={...}. The oninput handler notifies
-    // parents that use the controlled pattern (onchange callback).
     function handleInput(event: Event) {
-        if (loading || disabled) return;
-        const input = event.currentTarget as HTMLInputElement | null;
-        const nextChecked = input ? input.checked : checked;
+        if (loading || disabled) {
+            event.preventDefault();
+            return;
+        }
+        const input = event.currentTarget as HTMLInputElement;
+        const nextChecked = input.checked;
         checked = nextChecked;
         if (onchange) onchange(nextChecked);
     }
@@ -38,7 +36,7 @@
 {#if label}
     <div class="toggle-group">
         <label class="toggle-container" class:loading class:sm={size === 'sm'} class:flip={variant === 'flip'}>
-            <input type="checkbox" bind:checked={checked} {disabled} oninput={handleInput} />
+            <input type="checkbox" checked={checked} {disabled} oninput={handleInput} />
             {#if variant === 'flip'}
                 <span class="flip-track">
                     <span class="flip-lever">
@@ -64,7 +62,7 @@
     </div>
 {:else}
     <label class="toggle-container" class:loading class:sm={size === 'sm'} class:flip={variant === 'flip'}>
-        <input type="checkbox" bind:checked={checked} {disabled} oninput={handleInput} />
+        <input type="checkbox" checked={checked} {disabled} oninput={handleInput} />
         {#if variant === 'flip'}
             <span class="flip-track">
                 <span class="flip-lever">

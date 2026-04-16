@@ -32,6 +32,9 @@ func (m *mockCatalog) GetKernelIface(_ context.Context, tunnelID string) (string
 	return "", false
 }
 func (m *mockCatalog) SnapshotAll(_ context.Context) *routing.RoutingSnapshot { return nil }
+func (m *mockCatalog) GetKernelIfaceName(_ context.Context, tunnelID string) (string, error) {
+	return tunnelID, nil
+}
 
 func TestParseCIDR(t *testing.T) {
 	tests := []struct {

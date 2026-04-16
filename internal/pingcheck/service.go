@@ -137,7 +137,8 @@ func (s *Service) Stop() {
 
 // StartMonitoring begins monitoring a specific tunnel.
 // Called via reconcile hooks when a tunnel starts successfully.
-func (s *Service) StartMonitoring(tunnelID string, tunnelName string) {
+// skipConfigure is unused for kernel tunnels (only relevant for NativeWG via Facade).
+func (s *Service) StartMonitoring(tunnelID string, tunnelName string, skipConfigure ...bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

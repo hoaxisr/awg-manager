@@ -108,6 +108,17 @@ func (s *Service) List(ctx context.Context, params ListParams) (*ListResponse, e
 	// 6. Compute stats (over ALL connections, before filtering)
 	stats, tunnelSummary := computeStats(conns)
 
+	// 6.5. Ensure all running tunnels appear in the summary even with 0 connections.
+	for iface, ti := range tunnelByIface {
+		if _, exists := tunnelSummary[ti.id]; !exists {
+			tunnelSummary[ti.id] = TunnelConnectionInfo{
+				Name:      ti.name,
+				Interface: iface,
+				Count:     0,
+			}
+		}
+	}
+
 	// 7. Filter
 	filtered := applyFilters(conns, params)
 

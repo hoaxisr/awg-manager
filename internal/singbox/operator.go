@@ -1,0 +1,378 @@
+package singbox
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
+)
+
+const (
+	defaultBinary = "sing-box"
+	defaultDir    = "/opt/etc/awg-manager/singbox"
+)
+
+// Operator is the high-level facade for sing-box integration.
+type Operator struct {
+	log        *slog.Logger
+	dir        string
+	binary     string
+	configPath string
+	pidPath    string
+	logPath    string
+
+	proc      *Process
+	validator *Validator
+	proxyMgr  *ProxyManager
+	clash     *ClashClient
+}
+
+// OperatorDeps are external dependencies for DI.
+type OperatorDeps struct {
+	Log    *slog.Logger
+	NDMS   ndms.Client
+	Dir    string // optional; defaults to /opt/etc/awg-manager/singbox
+	Binary string // optional; defaults to "sing-box"
+}
+
+func NewOperator(d OperatorDeps) *Operator {
+	dir := d.Dir
+	if dir == "" {
+		dir = defaultDir
+	}
+	binary := d.Binary
+	if binary == "" {
+		binary = defaultBinary
+	}
+	log := d.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	configPath := filepath.Join(dir, "config.json")
+	pidPath := filepath.Join(dir, "sing-box.pid")
+	logPath := filepath.Join(dir, "sing-box.log")
+
+	return &Operator{
+		log:        log,
+		dir:        dir,
+		binary:     binary,
+		configPath: configPath,
+		pidPath:    pidPath,
+		logPath:    logPath,
+		proc:       NewProcess(binary, configPath, pidPath, logPath),
+		validator:  NewValidator(binary),
+		proxyMgr:   NewProxyManager(d.NDMS),
+		clash:      NewClashClient("127.0.0.1:9090"),
+	}
+}
+
+// IsInstalled reports whether the sing-box binary is on PATH.
+// Cheap — just an exec.LookPath probe (does not read config or check process).
+func (o *Operator) IsInstalled() (bool, string) {
+	path, err := exec.LookPath(o.binary)
+	if err != nil || path == "" {
+		return false, ""
+	}
+	return true, detectVersion(o.binary)
+}
+
+// GetStatus returns install + run status.
+func (o *Operator) GetStatus(ctx context.Context) Status {
+	s := Status{}
+	if path, err := exec.LookPath(o.binary); err == nil && path != "" {
+		s.Installed = true
+		s.Version = detectVersion(o.binary)
+	}
+	if running, pid := o.proc.IsRunning(); running {
+		s.Running = true
+		s.PID = pid
+	}
+	if cfg, err := o.loadConfig(); err == nil {
+		s.TunnelCount = len(cfg.Tunnels())
+	}
+	return s
+}
+
+func detectVersion(binary string) string {
+	out, err := exec.Command(binary, "version").Output()
+	if err != nil {
+		return ""
+	}
+	s := strings.TrimSpace(string(out))
+	if idx := strings.Index(s, "\n"); idx > 0 {
+		s = s[:idx]
+	}
+	parts := strings.Fields(s)
+	if len(parts) >= 3 {
+		return parts[2]
+	}
+	return s
+}
+
+// ListTunnels returns the current tunnels from config.json.
+func (o *Operator) ListTunnels(ctx context.Context) ([]TunnelInfo, error) {
+	cfg, err := o.loadConfig()
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []TunnelInfo{}, nil
+		}
+		return nil, err
+	}
+	return cfg.Tunnels(), nil
+}
+
+// GetTunnel returns the full outbound JSON for one tag.
+func (o *Operator) GetTunnel(ctx context.Context, tag string) (json.RawMessage, error) {
+	cfg, err := o.loadConfig()
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%w: %q", ErrTunnelNotFound, tag)
+		}
+		return nil, err
+	}
+	return cfg.GetOutbound(tag)
+}
+
+// AddTunnels parses one or more links and atomically adds them.
+// Returns successfully-added tunnels and parse errors.
+func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelInfo, []BatchError, error) {
+	parsed, parseErrs := ParseBatch(linksText)
+	if len(parsed) == 0 {
+		return nil, parseErrs, nil
+	}
+
+	cfg, err := o.loadOrInitConfig()
+	if err != nil {
+		return nil, parseErrs, err
+	}
+	var addedTags []string
+	for _, p := range parsed {
+		if err := cfg.AddTunnel(p.Tag, p.Protocol, p.Server, p.Port, p.Outbound); err != nil {
+			parseErrs = append(parseErrs, BatchError{Input: p.Tag, Err: err})
+			continue
+		}
+		addedTags = append(addedTags, p.Tag)
+	}
+	if len(addedTags) == 0 {
+		return nil, parseErrs, nil
+	}
+
+	if err := o.applyConfig(ctx, cfg); err != nil {
+		return nil, parseErrs, fmt.Errorf("apply: %w", err)
+	}
+
+	// Create NDMS Proxy interfaces for new tunnels
+	all := cfg.Tunnels()
+	for _, t := range all {
+		for _, newTag := range addedTags {
+			if t.Tag == newTag {
+				idx, err := parseProxyIdx(t.ProxyInterface)
+				if err != nil {
+					o.log.Error("malformed proxy interface post-add", "tag", t.Tag, "iface", t.ProxyInterface, "err", err)
+					parseErrs = append(parseErrs, BatchError{Input: t.Tag, Err: fmt.Errorf("ndms proxy setup: %w", err)})
+					continue
+				}
+				if err := o.proxyMgr.EnsureProxy(ctx, idx, t.ListenPort, t.Tag); err != nil {
+					o.log.Warn("create proxy failed", "tag", t.Tag, "err", err)
+					parseErrs = append(parseErrs, BatchError{Input: t.Tag, Err: fmt.Errorf("ndms proxy setup for %s: %w", t.Tag, err)})
+				}
+			}
+		}
+	}
+
+	added := make([]TunnelInfo, 0, len(addedTags))
+	for _, t := range all {
+		for _, newTag := range addedTags {
+			if t.Tag == newTag {
+				added = append(added, t)
+			}
+		}
+	}
+	return added, parseErrs, nil
+}
+
+// RemoveTunnel removes outbound+inbound+route+Proxy for a tag.
+func (o *Operator) RemoveTunnel(ctx context.Context, tag string) error {
+	cfg, err := o.loadConfig()
+	if err != nil {
+		return err
+	}
+	proxyIdx := -1
+	for _, t := range cfg.Tunnels() {
+		if t.Tag == tag {
+			idx, err := parseProxyIdx(t.ProxyInterface)
+			if err != nil {
+				return fmt.Errorf("tunnel %q has malformed proxy interface %q: %w", tag, t.ProxyInterface, err)
+			}
+			proxyIdx = idx
+			break
+		}
+	}
+	if err := cfg.RemoveTunnel(tag); err != nil {
+		return err
+	}
+
+	// Commit config/process state BEFORE NDMS teardown so a mid-failure leaves
+	// a consistent recoverable state (sing-box config matches on-disk reality).
+	if len(cfg.Tunnels()) == 0 {
+		_ = o.proc.Stop()
+		_ = os.Remove(o.configPath)
+	} else {
+		if err := o.applyConfig(ctx, cfg); err != nil {
+			return err
+		}
+	}
+
+	// NDMS teardown last — if it fails, Reconcile/retry can clean up later.
+	if proxyIdx >= 0 {
+		if err := o.proxyMgr.RemoveProxy(ctx, proxyIdx); err != nil {
+			o.log.Warn("remove proxy failed", "tag", tag, "err", err)
+		}
+	}
+	return nil
+}
+
+// UpdateTunnel replaces outbound JSON, reloads.
+func (o *Operator) UpdateTunnel(ctx context.Context, tag string, outbound json.RawMessage) error {
+	cfg, err := o.loadConfig()
+	if err != nil {
+		return err
+	}
+	if err := cfg.UpdateTunnel(tag, outbound); err != nil {
+		return err
+	}
+	return o.applyConfig(ctx, cfg)
+}
+
+// Reconcile: ensure process is running if config has tunnels; ensure Proxies are up.
+func (o *Operator) Reconcile(ctx context.Context) error {
+	cfg, err := o.loadConfig()
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	tunnels := cfg.Tunnels()
+	if len(tunnels) == 0 {
+		return nil
+	}
+	if running, _ := o.proc.IsRunning(); !running {
+		if err := o.proc.Start(); err != nil {
+			return fmt.Errorf("start: %w", err)
+		}
+	}
+	return o.proxyMgr.SyncProxies(ctx, tunnels)
+}
+
+// Install runs `opkg install sing-box`.
+func (o *Operator) Install(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, "opkg", "install", "sing-box")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("opkg install sing-box: %s: %w", string(out), err)
+	}
+	return nil
+}
+
+// Clash exposes the Clash client (for API proxying + telemetry).
+func (o *Operator) Clash() *ClashClient { return o.clash }
+
+// Cleanup tears down all sing-box-managed state during package uninstall:
+//   - stops the detached sing-box daemon (SIGTERM → SIGKILL)
+//   - deletes every NDMS Proxy interface we created
+//   - removes the on-disk config and pid/log files
+//
+// Best-effort: individual errors are logged and do not abort the sequence —
+// we want to leave as little garbage as possible even when some steps fail.
+func (o *Operator) Cleanup(ctx context.Context) error {
+	// Stop the daemon first — once it's gone it can't rewrite config or
+	// re-create NDMS interfaces behind our back.
+	if err := o.proc.Stop(); err != nil {
+		o.log.Warn("cleanup: stop sing-box failed", "err", err)
+	}
+
+	// Read the config (if present) to discover which Proxy interfaces we
+	// still own. A missing config means nothing to tear down.
+	cfg, err := o.loadConfig()
+	if err != nil && !os.IsNotExist(err) {
+		o.log.Warn("cleanup: load config failed", "err", err)
+	}
+	if cfg != nil {
+		for _, t := range cfg.Tunnels() {
+			idx, perr := parseProxyIdx(t.ProxyInterface)
+			if perr != nil {
+				o.log.Warn("cleanup: bad proxy iface", "tag", t.Tag, "iface", t.ProxyInterface, "err", perr)
+				continue
+			}
+			if err := o.proxyMgr.RemoveProxy(ctx, idx); err != nil {
+				o.log.Warn("cleanup: remove proxy failed", "tag", t.Tag, "err", err)
+			}
+		}
+	}
+
+	// Remove on-disk files. Errors are non-fatal — the directory itself
+	// will be removed by the opkg postrm step.
+	for _, path := range []string{o.configPath, o.pidPath, o.logPath} {
+		if path == "" {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			o.log.Warn("cleanup: remove file failed", "path", path, "err", err)
+		}
+	}
+	return nil
+}
+
+// applyConfig: save to tmp path → validate → promote → reload.
+func (o *Operator) applyConfig(ctx context.Context, cfg *Config) error {
+	tmpPath := o.configPath + ".new"
+	if err := cfg.Save(tmpPath); err != nil {
+		return err
+	}
+	if err := o.validator.Validate(tmpPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("validate: %w", err)
+	}
+	if err := os.Rename(tmpPath, o.configPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("promote config: %w", err)
+	}
+	if running, _ := o.proc.IsRunning(); !running {
+		return o.proc.Start()
+	}
+	return o.proc.Reload()
+}
+
+func (o *Operator) loadConfig() (*Config, error) {
+	return LoadConfig(o.configPath)
+}
+
+func (o *Operator) loadOrInitConfig() (*Config, error) {
+	cfg, err := LoadConfig(o.configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return NewConfig(), nil
+		}
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func parseProxyIdx(name string) (int, error) {
+	var idx int
+	n, err := fmt.Sscanf(name, proxyIfacePrefix+"%d", &idx)
+	if err != nil {
+		return 0, fmt.Errorf("parse %q: %w", name, err)
+	}
+	if n != 1 {
+		return 0, fmt.Errorf("parse %q: expected %s<N>", name, proxyIfacePrefix)
+	}
+	return idx, nil
+}

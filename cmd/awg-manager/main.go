@@ -19,12 +19,15 @@ import (
 	"log/slog"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
+	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/cleanup"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/connectivity"
+	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
@@ -33,6 +36,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/server"
+	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/staticroute"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
@@ -183,6 +187,12 @@ func main() {
 		&storeAdapter{store: awgStore},
 	)
 
+	// HydraRoute Neo integration (optional — detected at startup)
+	hydraService := hydraroute.NewService(catalog, log)
+	geoDataStore := hydraroute.NewGeoDataStore(*dataDir)
+	hydraService.SetGeoDataStore(geoDataStore)
+	hydraService.SetNDMS(ndmsClient)
+
 	// DNS route service (OS5 only — routes domains through tunnels via NDMS)
 	dnsRouteStore := dnsroute.NewStore(*dataDir)
 	if _, err := dnsRouteStore.Load(); err != nil {
@@ -200,9 +210,28 @@ func main() {
 		}
 		return nil
 	})
+	dnsRouteService.SetHydraRoute(hydraService)
 	dnsRouteService.SetFailoverManager(dnsFailover)
 	dnsFailover.SetLogger(log)
 	dnsFailover.SetAffectedListsLookup(dnsRouteService.LookupAffectedLists)
+
+	hydraService.SetDnsListProvider(func() []hydraroute.DnsListInfo {
+		data := dnsRouteStore.GetCached()
+		if data == nil {
+			return nil
+		}
+		var lists []hydraroute.DnsListInfo
+		for _, list := range data.Lists {
+			if list.Backend != "hydraroute" || !list.Enabled || len(list.Routes) == 0 {
+				continue
+			}
+			lists = append(lists, hydraroute.DnsListInfo{
+				TunnelID: list.Routes[0].TunnelID,
+				Subnets:  list.Subnets,
+			})
+		}
+		return lists
+	})
 
 	// Static route service for IP-based routing through tunnels
 	staticRouteStore := storage.NewStaticRouteStore(*dataDir)
@@ -302,6 +331,19 @@ func main() {
 	tunnelService.SetEventBus(eventBus)
 	pingCheckFacade.SetEventBus(eventBus)
 
+	// Stream geo-file download progress over SSE so the UI can show a
+	// real progress bar instead of a guess.
+	geoDataStore.SetProgressReporter(func(rawURL, fileType, phase string, downloaded, total int64, errMsg string) {
+		eventBus.Publish("hydraroute:geo-progress", events.GeoDownloadProgressEvent{
+			URL:        rawURL,
+			FileType:   fileType,
+			Downloaded: downloaded,
+			Total:      total,
+			Phase:      phase,
+			Error:      errMsg,
+		})
+	})
+
 	// Start DNS failover listener after event bus is wired
 	dnsFailover.SetEventBus(eventBus)
 	dnsFailover.StartListener(eventBus)
@@ -317,6 +359,31 @@ func main() {
 	connMonitor := connectivity.NewMonitor(eventBus, connAdapter, connAdapter, connAdapter)
 	connMonitor.Start()
 	defer connMonitor.Stop()
+
+	// Sing-box integration
+	singboxOp := singbox.NewOperator(singbox.OperatorDeps{
+		Log:  slog.Default().With("component", "singbox"),
+		NDMS: ndmsClient,
+	})
+	delayChecker := singbox.NewDelayChecker(singboxOp.Clash(), singboxOp, eventBus)
+	singboxHandler := api.NewSingboxHandler(singboxOp, eventBus, delayChecker, testService)
+	clashProxy := api.NewClashProxy(singboxOp)
+
+	// Startup reconcile — if config.json exists from a previous run,
+	// this starts sing-box and syncs NDMS Proxy interfaces.
+	go func() {
+		if err := singboxOp.Reconcile(context.Background()); err != nil {
+			slog.Default().Warn("singbox startup reconcile", "err", err)
+		}
+	}()
+
+	trafficCtx, trafficCancel := context.WithCancel(context.Background())
+	defer trafficCancel()
+	go singbox.NewTrafficAggregator(singboxOp.Clash().Address(), eventBus).Run(trafficCtx)
+
+	delayCtx, delayCancel := context.WithCancel(context.Background())
+	defer delayCancel()
+	go delayChecker.Run(delayCtx)
 
 	// Register routing snapshot providers with catalog.
 	catalog.SetSnapshotProvider("dnsRoutes", func(ctx context.Context) interface{} {
@@ -342,6 +409,9 @@ func main() {
 	catalog.SetSnapshotProvider("clientRoutes", func(ctx context.Context) interface{} {
 		routes, _ := clientRouteService.List()
 		return routes
+	})
+	catalog.SetSnapshotProvider("hydrarouteStatus", func(ctx context.Context) interface{} {
+		return hydraService.GetStatus()
 	})
 
 	srv := server.New(
@@ -375,9 +445,13 @@ func main() {
 		catalog,
 		orch,
 		eventBus,
+		hydraService,
+		singboxHandler,
+		clashProxy,
 	)
 
 	srv.SetTrafficCollector(trafficCollector)
+	srv.SetSingboxOperator(singboxOp)
 
 	// Boot status: 0 = booting, 1 = done. Used by /api/system/info.
 	var bootDone int32
@@ -416,6 +490,16 @@ func main() {
 	if ip != "0.0.0.0" && ip != "127.0.0.1" {
 		srv.SetLoopbackAddr(fmt.Sprintf("127.0.0.1:%d", selectedPort))
 	}
+
+	// DNS routing diagnostics
+	dnsCheckService := dnscheck.NewService(
+		ndmsClient,
+		&dnsRouteCountAdapter{store: dnsRouteStore},
+		&runningTunnelAdapter{svc: tunnelService},
+		log,
+	)
+	dnsCheckService.EnsureIPHost(context.Background())
+	srv.SetDnsCheckService(dnsCheckService)
 
 	bootLog := logging.NewScopedLogger(loggingService, logging.GroupSystem, logging.SubBoot)
 
@@ -561,6 +645,45 @@ func (a *tunnelProviderAdapter) GetState(ctx context.Context, tunnelID string) t
 
 func (a *tunnelProviderAdapter) WANModel() *wan.Model {
 	return a.svc.WANModel()
+}
+
+// dnsRouteCountAdapter adapts dnsroute.Store to dnscheck.DnsRouteProvider.
+type dnsRouteCountAdapter struct {
+	store *dnsroute.Store
+}
+
+func (a *dnsRouteCountAdapter) ListEnabledCount(_ context.Context) (int, int) {
+	data := a.store.GetCached()
+	if data == nil {
+		return 0, 0
+	}
+	total := len(data.Lists)
+	enabled := 0
+	for _, l := range data.Lists {
+		if l.Enabled {
+			enabled++
+		}
+	}
+	return total, enabled
+}
+
+// runningTunnelAdapter adapts service.Service to dnscheck.TunnelStateProvider.
+type runningTunnelAdapter struct {
+	svc service.Service
+}
+
+func (a *runningTunnelAdapter) RunningTunnelNames(ctx context.Context) []string {
+	list, err := a.svc.List(ctx)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, t := range list {
+		if t.State == tunnel.StateRunning {
+			names = append(names, t.Name)
+		}
+	}
+	return names
 }
 
 // storeAdapter adapts storage.AWGTunnelStore to routing.StoreClient.
@@ -939,11 +1062,18 @@ func runCleanup(dataDir string) {
 	clientRouteStore := storage.NewClientRouteStore(dataDir)
 	clientRouteSvc := clientroute.New(clientRouteStore, operator, nil, nil)
 
+	// Sing-box operator — knows how to stop the detached daemon and tear
+	// down its NDMS Proxy interfaces.
+	singboxOp := singbox.NewOperator(singbox.OperatorDeps{
+		Log:  slog.Default().With("component", "singbox"),
+		NDMS: ndmsClient,
+	})
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	// Single cleanup call — all business logic in CleanupService
-	cleanupSvc := cleanup.New(tunnelService, awgStore, dnsSvc, managedSvc, accessPolicySvc, clientRouteSvc, ndmsClient)
+	cleanupSvc := cleanup.New(tunnelService, awgStore, dnsSvc, managedSvc, accessPolicySvc, clientRouteSvc, singboxOp, ndmsClient)
 	if err := cleanupSvc.CleanupAll(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Cleanup error: %v\n", err)
 	}

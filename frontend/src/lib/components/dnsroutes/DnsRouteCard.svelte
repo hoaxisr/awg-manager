@@ -14,6 +14,7 @@
 		selectable?: boolean;
 		selected?: boolean;
 		onselect?: () => void;
+		hydrarouteInstalled?: boolean;
 	}
 
 	let {
@@ -26,8 +27,22 @@
 		toggleLoading = false,
 		selectable = false,
 		selected = false,
-		onselect
+		onselect,
+		hydrarouteInstalled = false
 	}: Props = $props();
+
+	let backendLabel = $derived.by(() => {
+		if (route.backend === 'hydraroute') {
+			return hydrarouteInstalled ? 'HR' : 'HR \u26a0';
+		}
+		return 'NDMS';
+	});
+
+	let backendClass = $derived(
+		route.backend === 'hydraroute'
+			? (hydrarouteInstalled ? 'badge-hr' : 'badge-hr-warn')
+			: 'badge-ndms'
+	);
 
 	let cidrCount = $derived((route.domains ?? []).filter(d => d.includes('/')).length);
 	let domainCount = $derived((route.domains?.length ?? 0) - cidrCount);
@@ -100,6 +115,7 @@
 			{#if routeTarget}
 				<div class="card-route">
 					<span>&rarr;</span> <code>{routeTarget}</code>
+					<span class="backend-badge {backendClass}">{backendLabel}</span>
 				</div>
 			{/if}
 		</div>
@@ -262,5 +278,29 @@
 		cursor: pointer;
 		flex-shrink: 0;
 		margin-top: 10px;
+	}
+
+	.backend-badge {
+		font-size: 0.5625rem;
+		font-weight: 600;
+		padding: 1px 5px;
+		border-radius: 3px;
+		vertical-align: middle;
+		margin-left: 4px;
+	}
+
+	.badge-ndms {
+		background: rgba(122, 162, 247, 0.15);
+		color: var(--accent);
+	}
+
+	.badge-hr {
+		background: rgba(16, 185, 129, 0.15);
+		color: var(--success);
+	}
+
+	.badge-hr-warn {
+		background: rgba(245, 158, 11, 0.15);
+		color: var(--warning);
 	}
 </style>

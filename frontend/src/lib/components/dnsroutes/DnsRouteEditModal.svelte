@@ -11,9 +11,11 @@
 		saving: boolean;
 		onsave: (data: Partial<DnsRoute>) => void;
 		onclose: () => void;
+		isOS5?: boolean;
+		hydrarouteInstalled?: boolean;
 	}
 
-	let { open, route, tunnels: rawTunnels, saving, onsave, onclose }: Props = $props();
+	let { open, route, tunnels: rawTunnels, saving, onsave, onclose, isOS5 = false, hydrarouteInstalled = false }: Props = $props();
 	let tunnels = $derived((rawTunnels ?? []).filter(t => t.available || t.type === 'wan'));
 
 	// Form state
@@ -22,6 +24,22 @@
 	let subscriptions = $state<DnsRouteSubscription[]>([]);
 	let routes = $state<DnsRouteTarget[]>([]);
 	let newSubUrl = $state('');
+	let backend = $state<'ndms' | 'hydraroute'>('ndms');
+
+	// New state variables
+	let hrRouteMode = $state<'interface' | 'policy'>('interface');
+	let hrPolicyName = $state('');
+	let excludesText = $state('');
+	let hrInterfaceId = $state('');
+
+	let showBackendSelector = $derived(isOS5 && hydrarouteInstalled);
+	let isHydraRouteBackend = $derived(backend === 'hydraroute');
+
+	// New derived
+	let isHR = $derived(backend === 'hydraroute');
+	let isNDMS = $derived(backend !== 'hydraroute');
+	let isPolicyMode = $derived(isHR && hrRouteMode === 'policy');
+	let isInterfaceMode = $derived(isHR && hrRouteMode === 'interface');
 
 	let isInitialized = $state(false);
 	let attempted = $state(false);
@@ -40,11 +58,21 @@
 					manualDomains = [...(route.manualDomains ?? [])];
 					subscriptions = (route.subscriptions ?? []).map((s) => ({ ...s }));
 					routes = (route.routes ?? []).map((r) => ({ ...r }));
+					backend = route.backend || (isOS5 ? 'ndms' : hydrarouteInstalled ? 'hydraroute' : 'ndms');
+					hrRouteMode = route.hrRouteMode || 'interface';
+					hrPolicyName = route.hrPolicyName || '';
+					excludesText = (route.excludes ?? []).join('\n');
+					hrInterfaceId = (isHR && route.routes?.[0]?.tunnelId) || tunnels[0]?.id || '';
 				} else {
 					name = '';
 					manualDomains = [];
 					subscriptions = [];
 					routes = [];
+					backend = isOS5 ? 'ndms' : (hydrarouteInstalled ? 'hydraroute' : 'ndms');
+					hrRouteMode = 'interface';
+					hrPolicyName = '';
+					excludesText = '';
+					hrInterfaceId = tunnels[0]?.id || '';
 				}
 				newSubUrl = '';
 				newRouteTunnelId = '';
@@ -70,7 +98,7 @@
 
 	let groupCount = $derived(Math.ceil(totalDomains / 300) || 0);
 
-	let canSave = $derived(name.trim() !== '' && routes.length > 0);
+	let canSave = $derived(name.trim() !== '' && (isInterfaceMode ? !!hrInterfaceId : routes.length > 0));
 
 	// Handlers
 	function handleDomainsChange(domains: string[]) {
@@ -156,11 +184,24 @@
 			setTimeout(() => shaking = false, 400);
 			return;
 		}
+
+		const parsedExcludes = excludesText.split('\n').map(s => s.trim()).filter(s => s !== '');
+
+		// Build routes based on mode
+		let saveRoutes = routes;
+		if (isInterfaceMode) {
+			saveRoutes = hrInterfaceId ? [{ tunnelId: hrInterfaceId, interface: hrInterfaceId, fallback: '' as const }] : [];
+		}
+
 		const data: Partial<DnsRoute> = {
 			name: name.trim(),
 			manualDomains,
 			subscriptions,
-			routes
+			routes: saveRoutes,
+			backend,
+			excludes: isNDMS ? parsedExcludes : undefined,
+			hrRouteMode: isHR ? hrRouteMode : undefined,
+			hrPolicyName: isPolicyMode ? (hrPolicyName || `AWG_${name.trim().replace(/\s+/g, '_')}`) : undefined,
 		};
 		onsave(data);
 	}
@@ -188,10 +229,25 @@
 		<div class="error-text" class:visible={nameError}>Введите название</div>
 	</div>
 
+	<!-- Backend selector -->
+	{#if showBackendSelector}
+		<div class="form-group">
+			<!-- svelte-ignore a11y_label_has_associated_control -->
+			<label class="form-label">Движок маршрутизации</label>
+			<select class="form-select" value={backend} onchange={(e) => backend = (e.target as HTMLSelectElement).value as 'ndms' | 'hydraroute'}>
+				<option value="ndms">ПО роутера (NDMS)</option>
+				<option value="hydraroute">HydraRoute Neo</option>
+			</select>
+		</div>
+	{/if}
+
 	<!-- Manual domains -->
 	<div class="form-section">
 		<div class="section-title">Домены (вручную)</div>
-		<DnsRouteDomainEditor domains={manualDomains} onchange={handleDomainsChange} />
+		{#if isHydraRouteBackend}
+			<span class="field-hint geo-hint">Поддерживается geosite:TAG, например geosite:GOOGLE</span>
+		{/if}
+		<DnsRouteDomainEditor domains={manualDomains} onchange={handleDomainsChange} allowGeoTags={isHydraRouteBackend} />
 	</div>
 
 	<!-- Subscriptions -->
@@ -236,71 +292,121 @@
 		</div>
 	</div>
 
-	<!-- Route chain -->
-	<div class="form-section">
-		<div class="section-title">Маршрут (порядок = приоритет)</div>
-		{#if routes.length === 0}
-			<p class="route-hint" class:route-hint-error={routeError}>Добавьте хотя бы один туннель для маршрутизации</p>
-		{/if}
-		{#if routes.length > 0}
-			<div class="route-list">
-				{#each routes as target, i (target.tunnelId)}
-					<div class="route-item">
-						<span class="route-index">{i + 1}.</span>
-						<span class="route-name">{tunnelName(target.tunnelId)}</span>
-						<div class="route-actions">
-							<button class="btn-move" onclick={() => moveRoute(i, -1)} disabled={i === 0} title="Вверх">&uarr;</button>
-							<button class="btn-move" onclick={() => moveRoute(i, 1)} disabled={i === routes.length - 1} title="Вниз">&darr;</button>
-							<button class="btn-remove" onclick={() => removeRoute(i)} title="Удалить">&times;</button>
-						</div>
-					</div>
-				{/each}
-			</div>
-		{/if}
-		{#if availableTunnels.length > 0}
-			<div class="route-add">
-				<select
-					class="form-select"
-					value={newRouteTunnelId || availableTunnels[0]?.id || ''}
-					onchange={(e) => { newRouteTunnelId = (e.target as HTMLSelectElement).value; }}
-				>
-					{#each availableTunnels as tunnel}
-						<option value={tunnel.id}>{tunnel.name}{tunnel.type === 'system' ? ' (системный)' : ''}</option>
-					{/each}
-				</select>
-				<button class="btn btn-sm btn-primary" onclick={addRoute}>+ Добавить</button>
-			</div>
-		{/if}
+	<!-- HR Mode Tabs (only for hydraroute) -->
+	{#if isHR}
+		<div class="section-title">Маршрут</div>
+		<div class="mode-tabs">
+			<button class="mode-tab" class:active={hrRouteMode === 'interface'} onclick={() => hrRouteMode = 'interface'}>Интерфейс</button>
+			<button class="mode-tab" class:active={hrRouteMode === 'policy'} onclick={() => hrRouteMode = 'policy'}>Политика</button>
+		</div>
+	{/if}
 
-		{#if routes.length > 0}
-			<div class="fallback-group">
-				<!-- svelte-ignore a11y_label_has_associated_control -->
-				<label class="form-label">Если все недоступны:</label>
-				<div class="fallback-options">
-					<label class="fallback-option">
-						<input
-							type="radio"
-							name="fallback"
-							value="auto"
-							checked={currentFallback === 'auto'}
-							onchange={() => handleFallbackChange('auto')}
-						/>
-						<span>провайдер</span>
-					</label>
-					<label class="fallback-option">
-						<input
-							type="radio"
-							name="fallback"
-							value="reject"
-							checked={currentFallback === 'reject'}
-							onchange={() => handleFallbackChange('reject')}
-						/>
-						<span>эксклюзивный</span>
-					</label>
+	<!-- HR Interface mode: single selector -->
+	{#if isInterfaceMode}
+		<div class="form-group">
+			<!-- svelte-ignore a11y_label_has_associated_control -->
+			<label class="form-label">Целевой интерфейс</label>
+			<select class="form-select" value={hrInterfaceId} onchange={(e) => hrInterfaceId = (e.target as HTMLSelectElement).value}>
+				{#each tunnels.filter(t => t.type === 'managed' && t.available) as tunnel}
+					<option value={tunnel.id}>{tunnel.name}</option>
+				{/each}
+				{#each tunnels.filter(t => t.type === 'system') as tunnel}
+					<option value={tunnel.id}>{tunnel.name}</option>
+				{/each}
+				{#each tunnels.filter(t => t.type === 'wan') as tunnel}
+					<option value={tunnel.id}>{tunnel.name}</option>
+				{/each}
+			</select>
+			<span class="field-hint">Трафик направляется напрямую на интерфейс (DirectRoute)</span>
+		</div>
+	{/if}
+
+	<!-- Route chain (for NDMS and HR Policy mode) -->
+	{#if isNDMS || isPolicyMode}
+		<div class="form-section">
+			{#if isNDMS}
+				<div class="section-title">Маршрут (порядок = приоритет)</div>
+			{/if}
+			{#if routes.length === 0}
+				<p class="route-hint" class:route-hint-error={routeError}>Добавьте хотя бы один туннель для маршрутизации</p>
+			{/if}
+			{#if routes.length > 0}
+				<div class="route-list">
+					{#each routes as target, i (target.tunnelId)}
+						<div class="route-item">
+							<span class="route-index">{i + 1}.</span>
+							<span class="route-name">{tunnelName(target.tunnelId)}</span>
+							<div class="route-actions">
+								<button class="btn-move" onclick={() => moveRoute(i, -1)} disabled={i === 0} title="Вверх">&uarr;</button>
+								<button class="btn-move" onclick={() => moveRoute(i, 1)} disabled={i === routes.length - 1} title="Вниз">&darr;</button>
+								<button class="btn-remove" onclick={() => removeRoute(i)} title="Удалить">&times;</button>
+							</div>
+						</div>
+					{/each}
 				</div>
-			</div>
-		{/if}
-	</div>
+			{/if}
+			{#if availableTunnels.length > 0}
+				<div class="route-add">
+					<select
+						class="form-select"
+						value={newRouteTunnelId || availableTunnels[0]?.id || ''}
+						onchange={(e) => { newRouteTunnelId = (e.target as HTMLSelectElement).value; }}
+					>
+						{#each availableTunnels as tunnel}
+							<option value={tunnel.id}>{tunnel.name}{tunnel.type === 'system' ? ' (системный)' : ''}</option>
+						{/each}
+					</select>
+					<button class="btn btn-sm btn-primary" onclick={addRoute}>+ Добавить</button>
+				</div>
+			{/if}
+
+			{#if isNDMS && routes.length > 0}
+				<div class="fallback-group">
+					<!-- svelte-ignore a11y_label_has_associated_control -->
+					<label class="form-label">Если все недоступны:</label>
+					<div class="fallback-options">
+						<label class="fallback-option">
+							<input
+								type="radio"
+								name="fallback"
+								value="auto"
+								checked={currentFallback === 'auto'}
+								onchange={() => handleFallbackChange('auto')}
+							/>
+							<span>провайдер</span>
+						</label>
+						<label class="fallback-option">
+							<input
+								type="radio"
+								name="fallback"
+								value="reject"
+								checked={currentFallback === 'reject'}
+								onchange={() => handleFallbackChange('reject')}
+							/>
+							<span>эксклюзивный</span>
+						</label>
+					</div>
+				</div>
+			{/if}
+
+			{#if isPolicyMode}
+				<div class="policy-name-row">
+					<span class="policy-label">Имя политики:</span>
+					<input class="policy-input" value={hrPolicyName} oninput={(e) => hrPolicyName = (e.target as HTMLInputElement).value} placeholder="HydraRoute">
+				</div>
+				<span class="field-hint">Порядок = приоритет. Политика создаётся автоматически в Keenetic.</span>
+			{/if}
+		</div>
+	{/if}
+
+	<!-- Excludes (NDMS only) -->
+	{#if isNDMS}
+		<div class="form-section">
+			<div class="section-title">Исключения</div>
+			<textarea class="form-textarea" rows="3" placeholder="Домены, которые НЕ маршрутизировать (по одному на строку)" value={excludesText} oninput={(e) => excludesText = (e.target as HTMLTextAreaElement).value}></textarea>
+			<span class="field-hint">Эти домены будут исключены из маршрутизации через туннель</span>
+		</div>
+	{/if}
 
 	{#if hasDedups && dedupReport}
 		<details class="dedup-details">
@@ -373,6 +479,24 @@
 
 	.form-input:focus,
 	.form-select:focus {
+		outline: none;
+		border-color: var(--accent);
+	}
+
+	.form-textarea {
+		width: 100%;
+		padding: 0.375rem 0.625rem;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		background: var(--bg-primary);
+		color: var(--text-primary);
+		font-size: 0.8125rem;
+		box-sizing: border-box;
+		resize: vertical;
+		font-family: inherit;
+	}
+
+	.form-textarea:focus {
 		outline: none;
 		border-color: var(--accent);
 	}
@@ -636,5 +760,81 @@
 		color: var(--text-muted);
 		padding: 0.5rem 0;
 		border-top: 1px dashed var(--border);
+	}
+
+	.field-hint {
+		display: block;
+		font-size: 0.6875rem;
+		margin-bottom: 0.375rem;
+	}
+
+	.geo-hint {
+		color: var(--accent);
+		font-style: italic;
+	}
+
+	/* Mode tabs */
+	.mode-tabs {
+		display: flex;
+		gap: 0;
+		margin-bottom: 0.75rem;
+		background: var(--bg-primary);
+		border-radius: 6px;
+		padding: 3px;
+	}
+
+	.mode-tab {
+		flex: 1;
+		padding: 0.375rem 0.75rem;
+		text-align: center;
+		font-size: 0.75rem;
+		font-weight: 500;
+		border-radius: 4px;
+		cursor: pointer;
+		border: none;
+		background: transparent;
+		color: var(--text-muted);
+		font-family: inherit;
+		transition: all 0.15s;
+	}
+
+	.mode-tab.active {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+	}
+
+	/* Policy name row */
+	.policy-name-row {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.75rem;
+		padding: 0.5rem 0.625rem;
+		background: var(--bg-primary);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+	}
+
+	.policy-label {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+		white-space: nowrap;
+	}
+
+	.policy-input {
+		flex: 1;
+		padding: 0.25rem 0.5rem;
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		background: var(--bg-secondary, var(--bg-card));
+		color: var(--text-primary);
+		font-size: 0.8125rem;
+		font-family: inherit;
+	}
+
+	.policy-input:focus {
+		outline: none;
+		border-color: var(--accent);
 	}
 </style>

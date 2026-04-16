@@ -244,6 +244,15 @@ export interface DnsRoute {
 	createdAt: string;
 	updatedAt: string;
 	lastDedupeReport?: DedupeReport;
+	backend?: 'ndms' | 'hydraroute';
+	hrRouteMode?: 'interface' | 'policy';
+	hrPolicyName?: string;
+	/**
+	 * Tunnel IDs permitted in a newly-created HR policy, in priority order.
+	 * Only honored when hrRouteMode === 'policy' and the policy is new.
+	 * Absent for existing-policy and interface-mode flows.
+	 */
+	hrPolicyInterfaces?: string[];
 }
 
 export interface StaticRouteList {
@@ -260,6 +269,7 @@ export interface StaticRouteList {
 export interface RoutingTunnel {
 	id: string;
 	name: string;
+	iface?: string; // kernel interface name ("nwg0", "opkgtun10", "ppp0"); used to match HR file targets
 	type: 'managed' | 'system' | 'wan';
 	status: string;
 	available: boolean;
@@ -443,6 +453,60 @@ export interface ClientRoute {
 // #region System — info, WAN, interfaces
 // ─────────────────────────────────────────────
 
+export interface HydraRouteStatus {
+	installed: boolean;
+	running: boolean;
+	version?: string;
+}
+
+export interface HydraRouteConfig {
+	autoStart: boolean;
+	clearIPSet: boolean;
+	cidr: boolean;
+	ipsetEnableTimeout: boolean;
+	ipsetTimeout: number;
+	ipsetMaxElem: number;
+	directRouteEnabled: boolean;
+	globalRouting: boolean;
+	conntrackFlush: boolean;
+	log: string;
+	logFile: string;
+	geoIPFiles: string[];
+	geoSiteFiles: string[];
+	policyOrder: string[];
+}
+
+export interface GeoFileEntry {
+	type: 'geosite' | 'geoip';
+	path: string;
+	url: string;
+	size: number;
+	tagCount: number;
+	updated: string;
+}
+
+export interface GeoTag {
+	name: string;
+	count: number;
+}
+
+export interface IpsetUsage {
+	maxElem: number;
+	usage: Record<string, number>;
+}
+
+export interface OversizedTag {
+	name: string;
+	count: number;
+	file: string;
+}
+
+export interface HydraRouteOversizedResponse {
+	installed: boolean;
+	maxelem: number;
+	tags: OversizedTag[];
+}
+
 export interface SystemInfo {
 	version: string;
 	goVersion: string;
@@ -468,6 +532,10 @@ export interface SystemInfo {
 	routerIP: string;
 	bootInProgress: boolean;
 	backendAvailability: { nativewg: boolean; kernel: boolean };
+	singbox?: {
+		installed: boolean;
+		version: string;
+	};
 }
 
 export interface WANInterface {
@@ -629,7 +697,7 @@ export interface TunnelPingStatus {
 	tunnelName: string;
 	enabled: boolean;
 	backend: 'kernel' | 'nativewg';
-	status: 'alive' | 'recovering' | 'disabled';
+	status: 'alive' | 'recovering' | 'disabled' | 'stopped';
 	method: string;
 	lastCheck?: string;
 	lastLatency: number;
@@ -637,6 +705,7 @@ export interface TunnelPingStatus {
 	successCount?: number;
 	failThreshold: number;
 	restartCount: number;
+	tunnelRunning?: boolean;
 }
 
 export interface PingLogEntry {
@@ -825,6 +894,26 @@ export interface ConnectionsResponse {
 // #region SSE Events (re-exports from api/events.ts)
 // ─────────────────────────────────────────────
 
+// ─────────────────────────────────────────────
+// #region DNS Check
+// ─────────────────────────────────────────────
+
+export interface DnsCheckResult {
+	id: string;
+	status: 'ok' | 'fail' | 'warning' | 'pending';
+	title: string;
+	message: string;
+	detail?: string;
+}
+
+export interface DnsCheckStartResponse {
+	clientIP: string;
+	hostname: string;
+	checks: DnsCheckResult[];
+}
+
+// #endregion
+
 export type {
 	TunnelStateEvent,
 	TunnelDeletedEvent,
@@ -842,5 +931,62 @@ export type {
 	TunnelConnectivityEvent,
 	PingCheckLogEvent
 } from '$lib/api/events';
+
+// #endregion
+
+// ─────────────────────────────────────────────
+// #region Sing-box
+// ─────────────────────────────────────────────
+
+export interface SingboxTunnel {
+	tag: string;
+	protocol: 'vless' | 'hysteria2' | 'naive';
+	server: string;
+	port: number;
+	security: 'reality' | 'tls' | 'none';
+	transport: 'tcp' | 'grpc' | 'quic' | 'https';
+	listenPort: number;
+	proxyInterface: string;
+	sni?: string;
+	fingerprint?: string;
+	username?: string;
+	connectivity: {
+		connected: boolean;
+		latency: number | null;
+	};
+	kernelInterface?: string;
+}
+
+export interface SingboxStatus {
+	installed: boolean;
+	version?: string;
+	running: boolean;
+	pid?: number;
+	tunnelCount: number;
+}
+
+export interface SingboxImportResponse {
+	imported: SingboxTunnel[];
+	errors: Array<{ line: number; input: string; error: string }>;
+}
+
+export interface SingboxTraffic {
+	tag: string;
+	upload: number;
+	download: number;
+}
+
+export interface SingboxTunnelEvent {
+	action: 'added' | 'updated' | 'removed';
+	tags: string[];
+}
+
+export interface SingboxStatusEvent extends SingboxStatus {}
+
+export interface SingboxDelayEvent {
+	tag: string;
+	delay: number;
+	timestamp: number;
+}
 
 // #endregion

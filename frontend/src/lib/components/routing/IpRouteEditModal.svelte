@@ -12,7 +12,7 @@
 	}
 
 	let { open, route, tunnels: rawTunnels, saving, onsave, onclose }: Props = $props();
-	let tunnels = $derived((rawTunnels ?? []).filter(t => t.available));
+	let tunnels = $derived((rawTunnels ?? []).filter(t => t.available || t.type === 'wan'));
 
 	// Form state
 	let name = $state('');
@@ -65,6 +65,7 @@
 
 	let userTunnels = $derived(tunnels.filter(t => t.type === 'managed'));
 	let systemTunnels = $derived(tunnels.filter(t => t.type === 'system'));
+	let wanInterfaces = $derived(tunnels.filter(t => t.type === 'wan'));
 
 	// OS4 kernel tunnels (awgmX) don't support kill switch — interface destruction
 	// removes routes, so "reject" fallback has no effect.
@@ -185,6 +186,13 @@
 			{#if systemTunnels.length > 0}
 				<optgroup label="Системные">
 					{#each systemTunnels as tunnel}
+						<option value={tunnel.id}>{tunnel.name}</option>
+					{/each}
+				</optgroup>
+			{/if}
+			{#if wanInterfaces.length > 0}
+				<optgroup label="WAN">
+					{#each wanInterfaces as tunnel}
 						<option value={tunnel.id}>{tunnel.name}</option>
 					{/each}
 				</optgroup>

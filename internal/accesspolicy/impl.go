@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
@@ -55,6 +56,14 @@ type ServiceImpl struct {
 	appLog       *logging.ScopedLogger
 	cache        *dataCache
 	hookNotifier HookNotifier
+
+	// rcFetchMu serialises /show/running-config fetches so concurrent
+	// callers share a single NDMS round-trip — the call can take several
+	// seconds on busy routers and must not multiply under SSE load.
+	rcFetchMu sync.Mutex
+
+	// policiesFetchMu does the same for /show/rc/ip/policy.
+	policiesFetchMu sync.Mutex
 }
 
 // SetHookNotifier sets the hook notifier for NDMS hook filtering.
@@ -62,15 +71,32 @@ func (s *ServiceImpl) SetHookNotifier(hn HookNotifier) {
 	s.hookNotifier = hn
 }
 
-// New creates a new access policy service.
+// New creates a new access policy service. Kicks off a background goroutine
+// that pre-warms the running-config cache so the first user request doesn't
+// block on a cold NDMS round-trip.
 func New(ndmsClient ndms.Client, tracker PolicyTracker, log *logger.Logger, appLogger logging.AppLogger) *ServiceImpl {
-	return &ServiceImpl{
+	s := &ServiceImpl{
 		ndms:    ndmsClient,
 		tracker: tracker,
 		log:     log.WithComponent("accesspolicy"),
 		appLog:  logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubAccessPolicy),
 		cache:   newDataCache(30 * time.Second),
 	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := s.queryPolicies(ctx); err != nil {
+			s.log.Warnf("policies pre-warm failed: %v", err)
+		}
+	}()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := s.getRunningConfigLines(ctx); err != nil {
+			s.log.Warnf("running-config pre-warm failed: %v", err)
+		}
+	}()
+	return s
 }
 
 // List returns all access policies with permitted interfaces and device counts.
@@ -79,8 +105,10 @@ func (s *ServiceImpl) List(ctx context.Context) ([]Policy, error) {
 		s.cache.InvalidateAll()
 	}
 
-	// Query all policies from NDMS
-	raw, err := s.queryPolicies(ctx)
+	// One structured call — /show/rc/ip/policy returns description, standalone
+	// and permit[] in a single JSON for every policy. Works uniformly for
+	// PolicyN and custom-named policies (e.g. HydraRoute).
+	rcPolicies, err := s.queryPolicies(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list policies: %w", err)
 	}
@@ -92,40 +120,18 @@ func (s *ServiceImpl) List(ctx context.Context) ([]Policy, error) {
 		deviceCounts = map[string]int{}
 	}
 
-	// Parse running-config for standalone and permit details
-	rcPolicies, err := s.parseRunningConfig(ctx)
-	if err != nil {
-		s.log.Warnf("failed to parse running-config: %v", err)
-		rcPolicies = map[string]rcPolicy{}
-	}
-
-	policies := make([]Policy, 0)
-	for name, policyRaw := range raw {
-		if !strings.HasPrefix(name, "Policy") {
-			continue
-		}
-
-		var info rciPolicyInfo
-		if err := json.Unmarshal(policyRaw, &info); err != nil {
-			s.log.Warnf("failed to parse policy %s: %v", name, err)
-			continue
-		}
-
+	policies := make([]Policy, 0, len(rcPolicies))
+	for name, rc := range rcPolicies {
 		p := Policy{
 			Name:        name,
-			Description: info.Description,
+			Description: rc.description,
+			Standalone:  rc.standalone,
 			Interfaces:  []PermittedIface{},
 			DeviceCount: deviceCounts[name],
 		}
-
-		// Enrich with running-config data (standalone, interfaces)
-		if rc, ok := rcPolicies[name]; ok {
-			p.Standalone = rc.standalone
-			if rc.interfaces != nil {
-				p.Interfaces = rc.interfaces
-			}
+		if rc.interfaces != nil {
+			p.Interfaces = rc.interfaces
 		}
-
 		policies = append(policies, p)
 	}
 
@@ -145,9 +151,13 @@ func (s *ServiceImpl) List(ctx context.Context) ([]Policy, error) {
 		}
 	}
 
-	// Stable sort by policy index
+	// Stable sort: PolicyN by number first, then custom policies alphabetically
 	sort.Slice(policies, func(i, j int) bool {
-		return policyIndex(policies[i].Name) < policyIndex(policies[j].Name)
+		pi, pj := policyIndex(policies[i].Name), policyIndex(policies[j].Name)
+		if pi != pj {
+			return pi < pj
+		}
+		return policies[i].Name < policies[j].Name
 	})
 
 	return policies, nil
@@ -665,9 +675,65 @@ func ifaceCategory(ndmsID string) int {
 
 // --- internal helpers ---
 
-// rciPolicyInfo represents a single policy from /show/ip/policy.
-type rciPolicyInfo struct {
-	Description string `json:"description"`
+// rcPermitJSON mirrors one entry of the permit[] array returned by
+// /show/rc/ip/policy.
+type rcPermitJSON struct {
+	Enabled   bool   `json:"enabled"`
+	Interface string `json:"interface"`
+}
+
+// rcPolicyJSON mirrors one policy subtree from /show/rc/ip/policy. Standalone
+// is a RawMessage because NDMS encodes it as boolean, empty object, or omits
+// the key entirely — we need to distinguish all three.
+type rcPolicyJSON struct {
+	Description string          `json:"description"`
+	Standalone  json.RawMessage `json:"standalone,omitempty"`
+	Permit      []rcPermitJSON  `json:"permit,omitempty"`
+}
+
+// parseStandalone interprets the raw value of the 'standalone' JSON key.
+// Keenetic writes 'true' on live firmware and '{}' in some running-config
+// dumps; any non-null non-'false' presence is treated as enabled. Explicit
+// 'false' is honoured.
+func parseStandalone(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	s := string(raw)
+	if s == "null" || s == "false" {
+		return false
+	}
+	return true
+}
+
+// parsePoliciesRC decodes the body of /show/rc/ip/policy into a map keyed
+// by policy name. Interface order follows the permit[] order emitted by
+// NDMS, which matches the order used for routing priority.
+func parsePoliciesRC(raw []byte) (map[string]rcPolicy, error) {
+	var input map[string]rcPolicyJSON
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return nil, fmt.Errorf("parse rc ip policy: %w", err)
+	}
+
+	out := make(map[string]rcPolicy, len(input))
+	for name, j := range input {
+		p := rcPolicy{
+			description: j.Description,
+			standalone:  parseStandalone(j.Standalone),
+		}
+		if len(j.Permit) > 0 {
+			p.interfaces = make([]PermittedIface, 0, len(j.Permit))
+			for i, pi := range j.Permit {
+				p.interfaces = append(p.interfaces, PermittedIface{
+					Name:   pi.Interface,
+					Order:  i,
+					Denied: !pi.Enabled,
+				})
+			}
+		}
+		out[name] = p
+	}
+	return out, nil
 }
 
 // hotspotHost represents a single host from /show/ip/hotspot with policy field.
@@ -686,24 +752,52 @@ type hotspotResponse struct {
 	Host []hotspotHost `json:"host"`
 }
 
-// rcPolicy holds parsed running-config data for a policy.
+// rcPolicy holds parsed policy data from /show/rc/ip/policy.
 type rcPolicy struct {
-	standalone bool
-	interfaces []PermittedIface
+	description string
+	standalone  bool
+	interfaces  []PermittedIface
 }
 
-// queryPolicies queries /show/ip/policy via RCI GET and returns raw JSON per policy name.
-func (s *ServiceImpl) queryPolicies(ctx context.Context) (map[string]json.RawMessage, error) {
-	raw, err := s.ndms.RCIGet(ctx, "/show/ip/policy")
+// queryPolicies fetches structured policy data from /show/rc/ip/policy —
+// the single running-config subtree that exposes description, standalone
+// and permit[] for every policy. Same resilience pattern as
+// getRunningConfigLines: single-flight + stale-ok + caching. Replaces the
+// old /show/ip/policy + text running-config combo.
+func (s *ServiceImpl) queryPolicies(ctx context.Context) (map[string]rcPolicy, error) {
+	if policies, ok := s.cache.GetRCPolicies(); ok {
+		return policies, nil
+	}
+
+	s.policiesFetchMu.Lock()
+	defer s.policiesFetchMu.Unlock()
+
+	// Re-check after acquiring the mutex — another goroutine may have
+	// populated the cache while we waited.
+	if policies, ok := s.cache.GetRCPolicies(); ok {
+		return policies, nil
+	}
+
+	raw, err := s.ndms.RCIGet(ctx, "/show/rc/ip/policy")
 	if err != nil {
+		if stale, ok := s.cache.PeekRCPolicies(); ok {
+			s.log.Warnf("ip policy fetch failed, serving stale cache: %v", err)
+			return stale, nil
+		}
 		return nil, fmt.Errorf("query policies: %w", err)
 	}
 
-	var result map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return nil, fmt.Errorf("parse policy response: %w", err)
+	parsed, err := parsePoliciesRC(raw)
+	if err != nil {
+		if stale, ok := s.cache.PeekRCPolicies(); ok {
+			s.log.Warnf("ip policy parse failed, serving stale cache: %v", err)
+			return stale, nil
+		}
+		return nil, err
 	}
-	return result, nil
+
+	s.cache.SetRCPolicies(parsed)
+	return parsed, nil
 }
 
 // queryHotspot queries /show/ip/hotspot via RCI GET for device data including policy field.
@@ -759,13 +853,35 @@ func (s *ServiceImpl) countDevicesPerPolicy(ctx context.Context) (map[string]int
 }
 
 // getRunningConfigLines fetches and caches the lines from /show/running-config.
+//
+// Resilient to NDMS slowness:
+//   - Fast path: fresh cache hit returns immediately.
+//   - Single-flight: concurrent callers share one NDMS round-trip via
+//     rcFetchMu so a 5-second running-config response doesn't spawn a
+//     queue of its own.
+//   - Stale-ok: when the fresh fetch fails but we have a previous
+//     (possibly expired) snapshot in memory, return it instead of erroring
+//     out — keeps the UI populated through transient NDMS hiccups.
 func (s *ServiceImpl) getRunningConfigLines(ctx context.Context) ([]string, error) {
+	if lines, ok := s.cache.GetRCLines(); ok {
+		return lines, nil
+	}
+
+	s.rcFetchMu.Lock()
+	defer s.rcFetchMu.Unlock()
+
+	// Re-check: another goroutine may have populated the cache while we
+	// waited for the mutex.
 	if lines, ok := s.cache.GetRCLines(); ok {
 		return lines, nil
 	}
 
 	raw, err := s.ndms.RCIGet(ctx, "/show/running-config")
 	if err != nil {
+		if stale, ok := s.cache.PeekRCLines(); ok {
+			s.log.Warnf("running-config fetch failed, serving stale cache: %v", err)
+			return stale, nil
+		}
 		return nil, err
 	}
 	var rcResp struct {
@@ -777,79 +893,6 @@ func (s *ServiceImpl) getRunningConfigLines(ctx context.Context) ([]string, erro
 
 	s.cache.SetRCLines(rcResp.Message)
 	return rcResp.Message, nil
-}
-
-// parseRunningConfig parses "show running-config" via RCI GET to extract standalone
-// and permit details for each policy block.
-func (s *ServiceImpl) parseRunningConfig(ctx context.Context) (map[string]rcPolicy, error) {
-	lines, err := s.getRunningConfigLines(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	policies := make(map[string]rcPolicy)
-	var currentPolicy string
-	var current rcPolicy
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		// Detect "ip policy PolicyN" block start
-		if strings.HasPrefix(trimmed, "ip policy ") {
-			if currentPolicy != "" {
-				policies[currentPolicy] = current
-			}
-			currentPolicy = strings.TrimPrefix(trimmed, "ip policy ")
-			current = rcPolicy{}
-			continue
-		}
-
-		if currentPolicy == "" {
-			continue
-		}
-
-		// End of block
-		if trimmed == "!" {
-			policies[currentPolicy] = current
-			currentPolicy = ""
-			continue
-		}
-
-		// Parse standalone
-		if trimmed == "standalone" {
-			current.standalone = true
-			continue
-		}
-
-		// Parse "permit global <interface>" and "no permit global <interface>"
-		if strings.HasPrefix(trimmed, "permit global ") {
-			parts := strings.Fields(trimmed)
-			if len(parts) >= 3 {
-				pi := PermittedIface{
-					Name:  parts[2],
-					Order: len(current.interfaces),
-				}
-				current.interfaces = append(current.interfaces, pi)
-			}
-		} else if strings.HasPrefix(trimmed, "no permit global ") {
-			parts := strings.Fields(trimmed)
-			if len(parts) >= 4 {
-				pi := PermittedIface{
-					Name:   parts[3],
-					Order:  len(current.interfaces),
-					Denied: true,
-				}
-				current.interfaces = append(current.interfaces, pi)
-			}
-		}
-	}
-
-	// Flush last policy if file doesn't end with "!"
-	if currentPolicy != "" {
-		policies[currentPolicy] = current
-	}
-
-	return policies, nil
 }
 
 // parseHotspotPolicies parses running-config to extract host→policy mappings
@@ -897,24 +940,22 @@ func (s *ServiceImpl) parseHotspotPolicies(ctx context.Context) (map[string]stri
 	return result, nil
 }
 
-// isValidPolicyName checks that the name matches PolicyN format.
+// isValidPolicyName checks that the policy name is non-empty.
+// Accepts both standard PolicyN names and custom names (e.g. from HR Neo).
 func isValidPolicyName(name string) bool {
-	if !strings.HasPrefix(name, "Policy") {
-		return false
-	}
-	numStr := strings.TrimPrefix(name, "Policy")
-	n, err := strconv.Atoi(numStr)
-	if err != nil {
-		return false
-	}
-	return n >= 0 && n < maxPolicies
+	return name != ""
 }
 
-// policyIndex extracts the numeric index from a policy name for sorting.
+// policyIndex extracts a sort key from a policy name.
+// Standard PolicyN names sort by number (0-63), custom names sort after them (1000+).
 func policyIndex(name string) int {
-	numStr := strings.TrimPrefix(name, "Policy")
-	n, _ := strconv.Atoi(numStr)
-	return n
+	if strings.HasPrefix(name, "Policy") {
+		numStr := strings.TrimPrefix(name, "Policy")
+		if n, err := strconv.Atoi(numStr); err == nil {
+			return n
+		}
+	}
+	return 1000 // custom policies sort after standard PolicyN
 }
 
 // isActiveHost checks the "active" field which may be bool or string depending on firmware.

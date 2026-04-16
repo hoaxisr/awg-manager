@@ -49,7 +49,7 @@
 			</tr>
 		</thead>
 		<tbody>
-			{#each connections as conn (conn.src + conn.srcPort + conn.dst + conn.dstPort + conn.protocol)}
+			{#each connections as conn, i (conn.src + conn.srcPort + conn.dst + conn.dstPort + conn.protocol + i)}
 				<tr class:row-tunneled={conn.tunnelId !== ''}>
 					<td>
 						<span class="proto-badge proto-{conn.protocol}">{conn.protocol.toUpperCase()}</span>

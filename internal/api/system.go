@@ -1,12 +1,15 @@
 package api
 
 import (
+	"encoding/json"
 	"net"
 	"net/http"
 	"os"
 	"runtime"
 
+	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
@@ -41,6 +44,8 @@ type SystemHandler struct {
 	ndmsClient       ndms.Client
 	restartFn        func()
 	bootStatusFn     func() bool // returns true if boot is still in progress
+	hydra            *hydraroute.Service
+	singboxOp        *singbox.Operator
 }
 
 // NewSystemHandler creates a new system handler.
@@ -91,6 +96,68 @@ func (h *SystemHandler) SetRestartFunc(fn func()) {
 // SetBootStatusFunc sets the callback to check if boot is in progress.
 func (h *SystemHandler) SetBootStatusFunc(fn func() bool) {
 	h.bootStatusFn = fn
+}
+
+// SetHydraRoute sets the HydraRoute Neo service for status/control endpoints.
+func (h *SystemHandler) SetHydraRoute(svc *hydraroute.Service) {
+	h.hydra = svc
+}
+
+// SetSingboxOperator provides access to the sing-box operator for
+// reporting install status in system info.
+func (h *SystemHandler) SetSingboxOperator(op *singbox.Operator) {
+	h.singboxOp = op
+}
+
+// RestartDaemon triggers a self-restart of the AWG Manager daemon.
+func (h *SystemHandler) RestartDaemon(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if h.restartFn == nil {
+		response.Error(w, "restart not available", "RESTART_UNAVAILABLE")
+		return
+	}
+	response.Success(w, map[string]string{"status": "restarting"})
+	h.restartFn()
+}
+
+// HydraRouteStatus returns HydraRoute Neo detection status.
+func (h *SystemHandler) HydraRouteStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if h.hydra == nil {
+		response.Success(w, hydraroute.Status{})
+		return
+	}
+	response.Success(w, h.hydra.RefreshStatus())
+}
+
+// HydraRouteControl starts/stops/restarts the HydraRoute daemon.
+func (h *SystemHandler) HydraRouteControl(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if h.hydra == nil {
+		response.Error(w, "HydraRoute not available", "HYDRAROUTE_UNAVAILABLE")
+		return
+	}
+	var req struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "Invalid request", "INVALID_REQUEST")
+		return
+	}
+	if err := h.hydra.Control(req.Action); err != nil {
+		response.Error(w, err.Error(), "HYDRAROUTE_CONTROL_ERROR")
+		return
+	}
+	response.Success(w, h.hydra.GetStatus())
 }
 
 // Info returns system information.
@@ -202,6 +269,11 @@ func (h *SystemHandler) BuildSystemInfo() map[string]interface{} {
 }
 
 func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, gogc string, kernelModuleExists, kernelModuleLoaded bool, kernelModuleModel, kernelModuleVersion string, isAarch64 bool, activeBackendType, routerIP string) map[string]interface{} {
+	singboxInstalled, singboxVersion := false, ""
+	if h.singboxOp != nil {
+		singboxInstalled, singboxVersion = h.singboxOp.IsInstalled()
+	}
+
 	return map[string]interface{}{
 		"version":                     h.version,
 		"goVersion":                   runtime.Version(),
@@ -231,6 +303,10 @@ func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, go
 			// Kernel backend works on any OS where amneziawg.ko is loaded.
 			// On OS5 it uses the OpkgTun two-layer architecture (NDMS + kernel).
 			"kernel": kernelModuleLoaded,
+		},
+		"singbox": map[string]interface{}{
+			"installed": singboxInstalled,
+			"version":   singboxVersion,
 		},
 	}
 }

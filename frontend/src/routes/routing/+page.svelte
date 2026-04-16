@@ -1,6 +1,8 @@
 <script lang="ts">
+    import { onMount } from 'svelte';
     import { routing } from '$lib/stores/routing';
     import { systemInfo } from '$lib/stores/system';
+    import { api } from '$lib/api/client';
     import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
     import { OverflowTabs } from '$lib/components/ui';
     import { RoutingSearch } from '$lib/components/routing';
@@ -8,9 +10,12 @@
     import IpRoutesTab from './IpRoutesTab.svelte';
     import AccessPoliciesTab from './AccessPoliciesTab.svelte';
     import ClientRoutesTab from './ClientRoutesTab.svelte';
+    import { HrNeoTab } from '$lib/components/hrneo';
 
-    let activeTab = $state<'dns' | 'ip' | 'policy' | 'clientvpn'>('dns');
+    let activeTab = $state<'hrneo' | 'dns' | 'ip' | 'policy' | 'clientvpn'>('dns');
     let isOS5 = $derived($systemInfo?.isOS5 ?? false);
+    let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
+    let hasDnsEngine = $derived(isOS5 || hydrarouteInstalled);
 
     // Search → edit rule integration
     let editRuleId = $state('');
@@ -37,26 +42,53 @@
     let routingTunnels = $derived($routing.tunnels);
 
     // Derived: tab badges
-    let dnsActiveCount = $derived(dnsRoutes.filter(r => r.enabled).length);
+    let hrRuleCount = $derived(dnsRoutes.filter(r => r.backend === 'hydraroute').length);
+    let dnsActiveCount = $derived(dnsRoutes.filter(r => r.enabled && r.backend !== 'hydraroute').length);
     let ipActiveCount = $derived(ipRoutes.filter(r => r.enabled).length);
     let policyCount = $derived(accessPolicies.length);
     let clientRouteCount = $derived(clientRoutes.length);
 
-    // Default to IP tab when not OS5
+    let policyOrder = $state<string[]>([]);
+
+    async function loadPolicyOrder() {
+        if (!hydrarouteInstalled) {
+            policyOrder = [];
+            return;
+        }
+        try {
+            const cfg = await api.getHydraRouteConfig();
+            policyOrder = cfg.policyOrder ?? [];
+        } catch {
+            // HR Neo not available
+        }
+    }
+
+    onMount(() => { loadPolicyOrder(); });
+
+    // Reload when hydraroute becomes installed
     $effect(() => {
-        if (!isOS5 && activeTab === 'dns') {
+        if (hydrarouteInstalled) {
+            loadPolicyOrder();
+        }
+    });
+
+    // Default to IP tab when no DNS engine available
+    $effect(() => {
+        if (!hasDnsEngine && activeTab === 'dns') {
             activeTab = 'ip';
         }
     });
 
     let tabItems = $derived(
         [
-            isOS5 ? { id: 'dns', label: 'Домены', badge: dnsActiveCount } : null,
+            hydrarouteInstalled ? { id: 'hrneo', label: 'HR NEO', badge: hrRuleCount } : null,
+            { id: 'dns', label: 'NDMS', badge: dnsActiveCount },
             { id: 'ip', label: 'IP-адреса', badge: ipActiveCount },
             isOS5 ? { id: 'policy', label: 'Политики доступа', badge: policyCount } : null,
             { id: 'clientvpn', label: 'VPN для устройств', badge: clientRouteCount },
         ].filter((t): t is { id: string; label: string; badge: number } => t !== null)
     );
+
 </script>
 
 <svelte:head>
@@ -78,12 +110,21 @@
             onchange={(id) => activeTab = id as typeof activeTab}
         />
 
-        {#if activeTab === 'dns' && isOS5}
+        {#if activeTab === 'hrneo'}
+            <HrNeoTab
+                {dnsRoutes}
+                tunnels={routingTunnels}
+                policies={accessPolicies}
+                {policyInterfaces}
+            />
+        {:else if activeTab === 'dns'}
             <DnsRoutesTab
                 {dnsRoutes}
                 {routingTunnels}
                 {editRuleId}
                 {editRuleCounter}
+                {isOS5}
+                {hasDnsEngine}
             />
         {:else if activeTab === 'ip'}
             <IpRoutesTab

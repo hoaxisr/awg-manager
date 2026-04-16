@@ -21,32 +21,35 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/connections"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
+	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/routing"
+	"github.com/hoaxisr/awg-manager/internal/singbox"
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
+	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
+	"github.com/hoaxisr/awg-manager/internal/terminal"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
-	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
-	"github.com/hoaxisr/awg-manager/internal/terminal"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
 	"github.com/hoaxisr/awg-manager/internal/updater"
 )
 
 const (
-	DefaultPort      = 2222
+	DefaultPort       = 2222
 	FallbackPortStart = 8080
 	FallbackPortEnd   = 8090
-	DefaultWebRoot   = "/opt/share/www/awg-manager"
+	DefaultWebRoot    = "/opt/share/www/awg-manager"
 )
 
 // Config holds server configuration.
@@ -59,88 +62,106 @@ type Config struct {
 
 // Server is the HTTP server for awg-manager.
 type Server struct {
-	config           Config
-	log              *logger.Logger
-	tunnelService    api.TunnelService
-	externalService  api.ExternalTunnelService
-	testingService   *testing.Service
-	keenetic         *auth.KeeneticClient
-	sessions         *auth.SessionStore
-	settings         *storage.SettingsStore
-	tunnels          *storage.AWGTunnelStore
-	pingCheckService api.PingCheckService
-	loggingService   *logging.Service
-	activeBackend    backend.Backend
-	kmodLoader       *kmod.Loader
-	updaterService   *updater.Service
-	ndmsClient       ndms.Client
-	trafficHistory   *traffic.History
-	trafficCollector *traffic.Collector
-	dnsRouteService      api.DNSRouteService
-	staticRouteService   api.StaticRouteService
-	systemTunnelService  systemtunnel.Service
-	managedService       managed.ManagedServerService
-	nwgOp                *nwg.OperatorNativeWG
-	terminalManager      terminal.Manager
-	accessPolicyService  accesspolicy.Service
-	clientRouteService   clientroute.Service
-	catalog              routing.Catalog
-	orch                 *orchestrator.Orchestrator
-	bus                  *events.Bus
-	authMiddleware     *auth.Middleware
-	httpServer         *http.Server
-	loopbackListener   net.Listener // optional loopback listener for reverse proxy
+	config              Config
+	log                 *logger.Logger
+	tunnelService       api.TunnelService
+	externalService     api.ExternalTunnelService
+	testingService      *testing.Service
+	keenetic            *auth.KeeneticClient
+	sessions            *auth.SessionStore
+	settings            *storage.SettingsStore
+	tunnels             *storage.AWGTunnelStore
+	pingCheckService    api.PingCheckService
+	loggingService      *logging.Service
+	activeBackend       backend.Backend
+	kmodLoader          *kmod.Loader
+	updaterService      *updater.Service
+	ndmsClient          ndms.Client
+	trafficHistory      *traffic.History
+	trafficCollector    *traffic.Collector
+	dnsRouteService     api.DNSRouteService
+	staticRouteService  api.StaticRouteService
+	systemTunnelService systemtunnel.Service
+	managedService      managed.ManagedServerService
+	nwgOp               *nwg.OperatorNativeWG
+	terminalManager     terminal.Manager
+	accessPolicyService accesspolicy.Service
+	clientRouteService  clientroute.Service
+	catalog             routing.Catalog
+	hydraService        *hydraroute.Service
+	orch                *orchestrator.Orchestrator
+	bus                 *events.Bus
+	singboxHandler      *api.SingboxHandler
+	clashProxy          *api.ClashProxy
+	singboxOp           *singbox.Operator
+	dnsCheckService     *dnscheck.Service
+	authMiddleware      *auth.Middleware
+	httpServer          *http.Server
+	loopbackListener    net.Listener // optional loopback listener for reverse proxy
 
 	instanceID string // unique per process, changes on restart
 
 	bootStatusFn func() bool // returns true if boot still in progress
 
 	// Restart lifecycle
-	restartOnce    sync.Once     // prevents multiple restart goroutines
-	shutdownHooks  []func()      // cleanup functions called before syscall.Exec
+	restartOnce   sync.Once // prevents multiple restart goroutines
+	shutdownHooks []func()  // cleanup functions called before syscall.Exec
 }
 
 // New creates a new server instance.
-func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, externalService api.ExternalTunnelService, testingService *testing.Service, keenetic *auth.KeeneticClient, sessions *auth.SessionStore, settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore, pingCheckService api.PingCheckService, loggingService *logging.Service, activeBackend backend.Backend, kmodLoader *kmod.Loader, updaterService *updater.Service, ndmsClient ndms.Client, trafficHistory *traffic.History, dnsRouteService api.DNSRouteService, staticRouteService api.StaticRouteService, systemTunnelService systemtunnel.Service, managedService managed.ManagedServerService, nwgOp *nwg.OperatorNativeWG, terminalManager terminal.Manager, accessPolicySvc accesspolicy.Service, clientRouteSvc clientroute.Service, catalog routing.Catalog, orch *orchestrator.Orchestrator, bus *events.Bus) *Server {
+func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, externalService api.ExternalTunnelService, testingService *testing.Service, keenetic *auth.KeeneticClient, sessions *auth.SessionStore, settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore, pingCheckService api.PingCheckService, loggingService *logging.Service, activeBackend backend.Backend, kmodLoader *kmod.Loader, updaterService *updater.Service, ndmsClient ndms.Client, trafficHistory *traffic.History, dnsRouteService api.DNSRouteService, staticRouteService api.StaticRouteService, systemTunnelService systemtunnel.Service, managedService managed.ManagedServerService, nwgOp *nwg.OperatorNativeWG, terminalManager terminal.Manager, accessPolicySvc accesspolicy.Service, clientRouteSvc clientroute.Service, catalog routing.Catalog, orch *orchestrator.Orchestrator, bus *events.Bus, hydraService *hydraroute.Service, singboxHandler *api.SingboxHandler, clashProxy *api.ClashProxy) *Server {
 	id := generateInstanceID()
 	log.Infof("Server instance: %s", id)
 
 	return &Server{
-		config:           cfg,
-		log:              log,
-		tunnelService:    tunnelService,
-		externalService:  externalService,
-		testingService:   testingService,
-		keenetic:         keenetic,
-		sessions:         sessions,
-		settings:         settings,
-		tunnels:          tunnels,
-		pingCheckService: pingCheckService,
-		loggingService:   loggingService,
-		activeBackend:    activeBackend,
-		kmodLoader:       kmodLoader,
-		updaterService:   updaterService,
-		ndmsClient:       ndmsClient,
-		trafficHistory:   trafficHistory,
-		dnsRouteService:      dnsRouteService,
-		staticRouteService:   staticRouteService,
-		systemTunnelService:  systemTunnelService,
-		managedService:       managedService,
+		config:              cfg,
+		log:                 log,
+		tunnelService:       tunnelService,
+		externalService:     externalService,
+		testingService:      testingService,
+		keenetic:            keenetic,
+		sessions:            sessions,
+		settings:            settings,
+		tunnels:             tunnels,
+		pingCheckService:    pingCheckService,
+		loggingService:      loggingService,
+		activeBackend:       activeBackend,
+		kmodLoader:          kmodLoader,
+		updaterService:      updaterService,
+		ndmsClient:          ndmsClient,
+		trafficHistory:      trafficHistory,
+		dnsRouteService:     dnsRouteService,
+		staticRouteService:  staticRouteService,
+		systemTunnelService: systemTunnelService,
+		managedService:      managedService,
 		nwgOp:               nwgOp,
 		terminalManager:     terminalManager,
 		accessPolicyService: accessPolicySvc,
 		clientRouteService:  clientRouteSvc,
 		catalog:             catalog,
+		hydraService:        hydraService,
 		orch:                orch,
 		bus:                 bus,
-		authMiddleware:     auth.NewMiddleware(sessions, settings, log),
-		instanceID:       id,
+		singboxHandler:      singboxHandler,
+		clashProxy:          clashProxy,
+		authMiddleware:      auth.NewMiddleware(sessions, settings, log),
+		instanceID:          id,
 	}
 }
 
 // SetTrafficCollector sets the traffic collector (for wiring system tunnel lister).
 func (s *Server) SetTrafficCollector(c *traffic.Collector) {
 	s.trafficCollector = c
+}
+
+// SetDnsCheckService sets the DNS check service (wired after port selection).
+func (s *Server) SetDnsCheckService(svc *dnscheck.Service) {
+	s.dnsCheckService = svc
+}
+
+// SetSingboxOperator sets the sing-box operator so system info can report install status.
+func (s *Server) SetSingboxOperator(op *singbox.Operator) {
+	s.singboxOp = op
 }
 
 // generateInstanceID creates a random 16-byte hex string (32 chars).
@@ -319,6 +340,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	if s.bootStatusFn != nil {
 		systemHandler.SetBootStatusFunc(s.bootStatusFn)
 	}
+	systemHandler.SetHydraRoute(s.hydraService)
+	systemHandler.SetSingboxOperator(s.singboxOp)
 	settingsHandler := api.NewSettingsHandler(s.settings, appLog)
 	settingsHandler.SetTunnelStore(s.tunnels)
 	settingsHandler.SetPingCheckService(s.pingCheckService)
@@ -413,24 +436,42 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// System (protected + boot guarded)
 	mux.HandleFunc("/api/system/info", guarded(systemHandler.Info))
+	mux.HandleFunc("/api/system/restart", guarded(systemHandler.RestartDaemon))
 	mux.HandleFunc("/api/system/wan-interfaces", guarded(systemHandler.WANInterfaces))
 	mux.HandleFunc("/api/system/all-interfaces", guarded(systemHandler.AllInterfaces))
+	mux.HandleFunc("/api/system/hydraroute-status", guarded(systemHandler.HydraRouteStatus))
+	mux.HandleFunc("/api/system/hydraroute-control", guarded(systemHandler.HydraRouteControl))
+
+	// HydraRoute settings (protected + boot guarded)
+	if s.hydraService != nil {
+		hrHandler := api.NewHydraRouteHandler(s.hydraService)
+		mux.HandleFunc("/api/hydraroute/config", guarded(hrHandler.GetConfig))
+		mux.HandleFunc("/api/hydraroute/config/update", guarded(hrHandler.UpdateConfig))
+		mux.HandleFunc("/api/hydraroute/geo-files", guarded(hrHandler.ListGeoFiles))
+		mux.HandleFunc("/api/hydraroute/geo-files/add", guarded(hrHandler.AddGeoFile))
+		mux.HandleFunc("/api/hydraroute/geo-files/delete", guarded(hrHandler.DeleteGeoFile))
+		mux.HandleFunc("/api/hydraroute/geo-files/update", guarded(hrHandler.UpdateGeoFile))
+		mux.HandleFunc("/api/hydraroute/geo-tags", guarded(hrHandler.GetGeoTags))
+		mux.HandleFunc("/api/hydraroute/ipset-usage", guarded(hrHandler.GetIpsetUsage))
+		mux.HandleFunc("/api/hydraroute/oversized-tags", guarded(hrHandler.GetOversizedTags))
+		mux.HandleFunc("/api/hydraroute/policy-order", guarded(hrHandler.SetPolicyOrder))
+	}
+
 	// Update endpoints (protected + boot guarded)
 	mux.HandleFunc("/api/system/update/check", guarded(updateHandler.Check))
 	mux.HandleFunc("/api/system/update/apply", guarded(updateHandler.Apply))
 
-	// DNS routes — OS5 only (requires dns-proxy route + object-group fqdn)
-	if osdetect.Is5() {
-		mux.HandleFunc("/api/dns-routes/list", guarded(dnsRouteHandler.List))
-		mux.HandleFunc("/api/dns-routes/get", guarded(dnsRouteHandler.Get))
-		mux.HandleFunc("/api/dns-routes/create", guarded(dnsRouteHandler.Create))
-		mux.HandleFunc("/api/dns-routes/update", guarded(dnsRouteHandler.Update))
-		mux.HandleFunc("/api/dns-routes/delete", guarded(dnsRouteHandler.Delete))
-		mux.HandleFunc("/api/dns-routes/delete-batch", guarded(dnsRouteHandler.DeleteBatch))
-		mux.HandleFunc("/api/dns-routes/create-batch", guarded(dnsRouteHandler.CreateBatch))
-		mux.HandleFunc("/api/dns-routes/set-enabled", guarded(dnsRouteHandler.SetEnabled))
-		mux.HandleFunc("/api/dns-routes/refresh", guarded(dnsRouteHandler.Refresh))
-	}
+	// DNS routes (NDMS backend on OS5, HydraRoute on any OS)
+	mux.HandleFunc("/api/dns-routes/list", guarded(dnsRouteHandler.List))
+	mux.HandleFunc("/api/dns-routes/get", guarded(dnsRouteHandler.Get))
+	mux.HandleFunc("/api/dns-routes/create", guarded(dnsRouteHandler.Create))
+	mux.HandleFunc("/api/dns-routes/update", guarded(dnsRouteHandler.Update))
+	mux.HandleFunc("/api/dns-routes/delete", guarded(dnsRouteHandler.Delete))
+	mux.HandleFunc("/api/dns-routes/delete-batch", guarded(dnsRouteHandler.DeleteBatch))
+	mux.HandleFunc("/api/dns-routes/create-batch", guarded(dnsRouteHandler.CreateBatch))
+	mux.HandleFunc("/api/dns-routes/set-enabled", guarded(dnsRouteHandler.SetEnabled))
+	mux.HandleFunc("/api/dns-routes/refresh", guarded(dnsRouteHandler.Refresh))
+	mux.HandleFunc("/api/dns-routes/bulk-backend", guarded(dnsRouteHandler.BulkBackend))
 
 	// Static IP routes (protected + boot guarded)
 	staticRouteHandler := api.NewStaticRouteHandler(s.staticRouteService, appLog)
@@ -626,6 +667,43 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	sb.SetInstanceID(s.instanceID)
 	eventsHandler.SetSnapshotBuilder(sb)
 
+	// DNS routing diagnostics
+	if s.dnsCheckService != nil {
+		dnsCheckHandler := api.NewDnsCheckHandler(s.dnsCheckService)
+		mux.HandleFunc("/api/dns-check/start", guarded(dnsCheckHandler.Start))
+		mux.HandleFunc("/api/dns-check/probe", dnsCheckHandler.Probe) // NO auth — cross-origin
+	}
+
+	// Sing-box integration (protected + boot guarded)
+	if s.singboxHandler != nil {
+		mux.HandleFunc("/api/singbox/status", guarded(s.singboxHandler.Status))
+		mux.HandleFunc("/api/singbox/install", guarded(s.singboxHandler.Install))
+		mux.HandleFunc("/api/singbox/tunnels/delay-check", guarded(s.singboxHandler.DelayCheck))
+		mux.HandleFunc("/api/singbox/tunnels/test/speed/stream", guarded(s.singboxHandler.SpeedTestStream))
+		mux.HandleFunc("/api/singbox/tunnels", guarded(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				if r.URL.Query().Has("tag") {
+					s.singboxHandler.GetTunnel(w, r)
+				} else {
+					s.singboxHandler.ListTunnels(w, r)
+				}
+			case http.MethodPost:
+				s.singboxHandler.AddTunnels(w, r)
+			case http.MethodPut:
+				s.singboxHandler.UpdateTunnel(w, r)
+			case http.MethodDelete:
+				s.singboxHandler.DeleteTunnel(w, r)
+			default:
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		}))
+	}
+	if s.clashProxy != nil {
+		mux.HandleFunc("/api/singbox/clash/", guarded(s.clashProxy.ServeHTTP))
+		mux.HandleFunc("/api/singbox/clash", guarded(s.clashProxy.ServeHTTP))
+	}
+
 	// Static files (SPA) - must be last
 	if s.config.WebRoot != "" {
 		mux.Handle("/", s.spaHandler())
@@ -679,7 +757,6 @@ func (s *Server) spaHandler() http.Handler {
 		http.ServeFile(w, r, path)
 	})
 }
-
 
 // diagLogAdapter adapts logging.Service to diagnostics.LogServiceForDiag.
 // Diagnostics expects GetLogs(category, level) but new service uses GetLogs(group, subgroup, level).

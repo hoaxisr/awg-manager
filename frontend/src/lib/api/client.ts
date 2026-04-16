@@ -40,7 +40,17 @@ import type {
 	TerminalStatus,
 	AccessPolicy,
 	ClientRoute,
-	ConnectionsResponse
+	ConnectionsResponse,
+	HydraRouteStatus,
+	HydraRouteConfig,
+	GeoFileEntry,
+	GeoTag,
+	HydraRouteOversizedResponse,
+	IpsetUsage,
+	DnsCheckStartResponse,
+	SingboxTunnel,
+	SingboxStatus,
+	SingboxImportResponse
 } from '$lib/types';
 
 interface ApiResponse<T> {
@@ -276,6 +286,77 @@ class ApiClient {
 
 	async getSystemInfo(): Promise<SystemInfo> {
 		return this.request('/system/info');
+	}
+
+	async restartDaemon(): Promise<void> {
+		await this.request('/system/restart', { method: 'POST' });
+	}
+
+	async getHydraRouteStatus(): Promise<HydraRouteStatus> {
+		return this.request('/system/hydraroute-status');
+	}
+
+	async controlHydraRoute(action: 'start' | 'stop' | 'restart'): Promise<HydraRouteStatus> {
+		return this.request('/system/hydraroute-control', {
+			method: 'POST',
+			body: JSON.stringify({ action }),
+		});
+	}
+
+	async getHydraRouteConfig(): Promise<HydraRouteConfig> {
+		return this.request('/hydraroute/config');
+	}
+
+	async updateHydraRouteConfig(config: HydraRouteConfig): Promise<HydraRouteConfig> {
+		return this.request('/hydraroute/config/update', {
+			method: 'PUT',
+			body: JSON.stringify(config),
+		});
+	}
+
+	async getGeoFiles(): Promise<GeoFileEntry[]> {
+		return this.request('/hydraroute/geo-files');
+	}
+
+	async addGeoFile(type: 'geosite' | 'geoip', url: string): Promise<GeoFileEntry> {
+		return this.request('/hydraroute/geo-files/add', {
+			method: 'POST',
+			body: JSON.stringify({ type, url }),
+		});
+	}
+
+	async deleteGeoFile(path: string): Promise<void> {
+		await this.request(`/hydraroute/geo-files/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+	}
+
+	async updateGeoFile(path?: string): Promise<unknown> {
+		return this.request('/hydraroute/geo-files/update', {
+			method: 'POST',
+			body: JSON.stringify({ path: path || '' }),
+		});
+	}
+
+	async getGeoTags(path: string): Promise<GeoTag[]> {
+		return this.request(`/hydraroute/geo-tags?path=${encodeURIComponent(path)}`);
+	}
+
+	async getIpsetUsage(): Promise<IpsetUsage> {
+		return this.request('/hydraroute/ipset-usage');
+	}
+
+	async getHydraRouteOversizedTags(): Promise<HydraRouteOversizedResponse> {
+		return this.request('/hydraroute/oversized-tags');
+	}
+
+	async importNativeHydraRouteRules(): Promise<{ imported: number }> {
+		return this.request('/hydraroute/import-native', { method: 'POST' });
+	}
+
+	async setPolicyOrder(order: string[]): Promise<{ order: string[] }> {
+		return this.request('/hydraroute/policy-order', {
+			method: 'POST',
+			body: JSON.stringify({ order }),
+		});
 	}
 
 	async getWANInterfaces(): Promise<WANInterface[]> {
@@ -662,6 +743,13 @@ class ApiClient {
 		return this.request(endpoint, { method: 'POST' });
 	}
 
+	async bulkDnsRouteBackend(listIDs: string[], backend: 'ndms' | 'hydraroute'): Promise<{ updated: number }> {
+		return this.request('/dns-routes/bulk-backend', {
+			method: 'POST',
+			body: JSON.stringify({ listIDs, backend }),
+		});
+	}
+
 	// #endregion
 
 	// ─────────────────────────────────────────────
@@ -969,6 +1057,94 @@ class ApiClient {
 		if (params.sortDir) sp.set('sortDir', params.sortDir);
 		const qs = sp.toString();
 		return this.request<ConnectionsResponse>(`/connections${qs ? '?' + qs : ''}`);
+	}
+
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region DNS Check
+	// ─────────────────────────────────────────────
+
+	async startDnsCheck(): Promise<DnsCheckStartResponse> {
+		return this.request('/dns-check/start', { method: 'POST' });
+	}
+
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Sing-box
+	// ─────────────────────────────────────────────
+
+	async singboxGetStatus(): Promise<SingboxStatus> {
+		return this.request('/singbox/status');
+	}
+
+	async singboxInstall(): Promise<{ ok: boolean }> {
+		return this.request('/singbox/install', { method: 'POST' });
+	}
+
+	async singboxListTunnels(): Promise<SingboxTunnel[]> {
+		return this.request('/singbox/tunnels');
+	}
+
+	async singboxImportLinks(links: string): Promise<SingboxImportResponse> {
+		return this.request('/singbox/tunnels', {
+			method: 'POST',
+			body: JSON.stringify({ links })
+		});
+	}
+
+	async singboxGetTunnel(tag: string): Promise<{ tag: string; outbound: unknown }> {
+		return this.request(`/singbox/tunnels?tag=${encodeURIComponent(tag)}`);
+	}
+
+	async singboxUpdateTunnel(tag: string, outbound: unknown): Promise<{ ok: boolean }> {
+		return this.request(`/singbox/tunnels?tag=${encodeURIComponent(tag)}`, {
+			method: 'PUT',
+			body: JSON.stringify({ outbound })
+		});
+	}
+
+	async singboxDeleteTunnel(tag: string): Promise<{ ok: boolean }> {
+		return this.request(`/singbox/tunnels?tag=${encodeURIComponent(tag)}`, {
+			method: 'DELETE'
+		});
+	}
+
+	async singboxDelayCheck(tag: string): Promise<{ tag: string; delay: number }> {
+		return this.request(`/singbox/tunnels/delay-check?tag=${encodeURIComponent(tag)}`, {
+			method: 'POST',
+		});
+	}
+
+	singboxSpeedTestStream(
+		tag: string,
+		server: string,
+		port: number,
+		onPhase: (phase: 'download' | 'upload') => void,
+		onInterval: (data: { phase: string; second: number; bandwidth: number }) => void,
+		onResult: (data: { phase: string; bandwidth: number; bytes: number; duration: number }) => void,
+		onDone: () => void,
+		onError: (error: string) => void,
+	): EventSource {
+		const url = `${this.baseUrl}/singbox/tunnels/test/speed/stream?tag=${encodeURIComponent(tag)}&server=${encodeURIComponent(server)}&port=${port}`;
+		const es = new EventSource(url);
+		es.addEventListener('phase', (e) => {
+			try { onPhase(JSON.parse((e as MessageEvent).data).phase); } catch { /* ignore */ }
+		});
+		es.addEventListener('interval', (e) => {
+			try { onInterval(JSON.parse((e as MessageEvent).data)); } catch { /* ignore */ }
+		});
+		es.addEventListener('result', (e) => {
+			try { onResult(JSON.parse((e as MessageEvent).data)); } catch { /* ignore */ }
+		});
+		es.addEventListener('done', () => { onDone(); es.close(); });
+		es.addEventListener('error', (e) => {
+			const msg = e instanceof MessageEvent ? String(e.data) : 'Соединение потеряно';
+			onError(msg);
+			es.close();
+		});
+		return es;
 	}
 
 	// #endregion

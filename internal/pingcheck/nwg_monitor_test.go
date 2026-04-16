@@ -19,13 +19,13 @@ func TestNwgDelta_SuccessIncrement(t *testing.T) {
 	m := newTestNwgMonitor(buf)
 
 	// First poll emits INIT.
-	m.processDelta(0, 0, "pass")
+	m.processDelta(0, 0, "pass", true)
 	if buf.Len() != 1 {
 		t.Fatalf("after baseline: got %d entries, want 1 (INIT)", buf.Len())
 	}
 
 	// Second poll: 3 new successes.
-	m.processDelta(0, 3, "pass")
+	m.processDelta(0, 3, "pass", true)
 	if buf.Len() != 4 {
 		t.Fatalf("after success increment: got %d entries, want 4 (INIT + 3)", buf.Len())
 	}
@@ -53,10 +53,10 @@ func TestNwgDelta_FailIncrement(t *testing.T) {
 	m := newTestNwgMonitor(buf)
 
 	// Baseline with status "fail" so no state change on next poll.
-	m.processDelta(0, 0, "fail")
+	m.processDelta(0, 0, "fail", true)
 
 	// 2 new failures, same status — no state change entry.
-	m.processDelta(2, 0, "fail")
+	m.processDelta(2, 0, "fail", true)
 	if buf.Len() != 3 {
 		t.Fatalf("got %d entries, want 3 (INIT + 2 fails)", buf.Len())
 	}
@@ -78,14 +78,14 @@ func TestNwgDelta_CounterReset(t *testing.T) {
 	m := newTestNwgMonitor(buf)
 
 	// Baseline with 10 successes.
-	m.processDelta(0, 10, "pass")
+	m.processDelta(0, 10, "pass", true)
 	if buf.Len() != 1 {
 		t.Fatalf("after baseline: got %d entries, want 1 (INIT)", buf.Len())
 	}
 
 	// Counter reset: success went from 10 down to 2.
 	// Should treat 2 as the delta (counter was reset).
-	m.processDelta(0, 2, "pass")
+	m.processDelta(0, 2, "pass", true)
 	if buf.Len() != 3 {
 		t.Fatalf("after counter reset: got %d entries, want 3 (INIT + 2)", buf.Len())
 	}
@@ -97,10 +97,10 @@ func TestNwgDelta_StatusChange(t *testing.T) {
 	m := newTestNwgMonitor(buf)
 
 	// Baseline: 5 successes, status pass.
-	m.processDelta(0, 5, "pass")
+	m.processDelta(0, 5, "pass", true)
 
 	// 3 new failures, status changes to fail.
-	m.processDelta(3, 5, "fail")
+	m.processDelta(3, 5, "fail", true)
 
 	// Expect: INIT + 3 fail entries + 1 state change entry = 5.
 	if buf.Len() != 5 {
@@ -124,11 +124,11 @@ func TestNwgDelta_MixedFailAndSuccess(t *testing.T) {
 	m := newTestNwgMonitor(buf)
 
 	// Baseline.
-	m.processDelta(0, 0, "pass")
+	m.processDelta(0, 0, "pass", true)
 
 	// 2 fails + 1 success in startup phase.
 	// Startup filter suppresses the transient fail burst, keeping only success.
-	m.processDelta(2, 1, "pass")
+	m.processDelta(2, 1, "pass", true)
 	if buf.Len() != 2 {
 		t.Fatalf("got %d entries, want 2 (INIT + 1 success)", buf.Len())
 	}
@@ -149,12 +149,77 @@ func TestNwgDelta_NoDelta_NoEntries(t *testing.T) {
 	m := newTestNwgMonitor(buf)
 
 	// Baseline.
-	m.processDelta(0, 5, "pass")
+	m.processDelta(0, 5, "pass", true)
 
 	// Same counters, no change.
-	m.processDelta(0, 5, "pass")
+	m.processDelta(0, 5, "pass", true)
 	if buf.Len() != 1 {
 		t.Fatalf("got %d entries, want 1 (INIT only)", buf.Len())
+	}
+}
+
+func TestNwgDelta_RestartDetected_CounterReset(t *testing.T) {
+	buf := NewLogBuffer()
+	defer buf.Stop()
+	m := newTestNwgMonitor(buf)
+
+	// Baseline: tunnel running, checks passing.
+	m.processDelta(0, 5, "pass", true)
+	if m.restartDetected {
+		t.Fatal("restartDetected should be false at init")
+	}
+
+	// Failures accumulate.
+	m.processDelta(3, 5, "fail", true)
+	if m.restartDetected {
+		t.Fatal("restartDetected should be false during active failures")
+	}
+
+	// NDMS restarts interface: counters zeroed, status still "fail".
+	m.processDelta(0, 0, "fail", true)
+	if !m.restartDetected {
+		t.Fatal("restartDetected should be true after counter reset")
+	}
+
+	// First success after restart clears the flag.
+	m.processDelta(0, 1, "pass", true)
+	if m.restartDetected {
+		t.Fatal("restartDetected should be cleared after first success")
+	}
+}
+
+func TestNwgDelta_RestartDetected_BoundTransition(t *testing.T) {
+	buf := NewLogBuffer()
+	defer buf.Stop()
+	m := newTestNwgMonitor(buf)
+
+	// Baseline: tunnel running.
+	m.processDelta(0, 5, "pass", true)
+
+	// Failures.
+	m.processDelta(3, 5, "fail", true)
+
+	// Interface goes down (bound=false).
+	m.processDelta(0, 0, "fail", false)
+	// restartDetected may or may not be set here (counters zeroed + prevFail>0),
+	// but the key transition is the next poll:
+
+	// Interface comes back up (bound transition false→true), counters zeroed.
+	m.processDelta(0, 0, "fail", true)
+	if !m.restartDetected {
+		t.Fatal("restartDetected should be true after bound transition with zeroed counters")
+	}
+}
+
+func TestNwgDelta_FreshStart_NoRestartDetected(t *testing.T) {
+	buf := NewLogBuffer()
+	defer buf.Stop()
+	m := newTestNwgMonitor(buf)
+
+	// Fresh start: first poll with fail/0/0 — should NOT be detected as restart.
+	m.processDelta(0, 0, "fail", true)
+	if m.restartDetected {
+		t.Fatal("restartDetected should be false on fresh start (no previous state)")
 	}
 }
 
@@ -164,12 +229,12 @@ func TestNwgDelta_StartupMixedDelta_SuppressesTransientFail(t *testing.T) {
 	m := newTestNwgMonitor(buf)
 
 	// First poll emits INIT and enables startup phase.
-	m.processDelta(0, 0, "pass")
+	m.processDelta(0, 0, "pass", true)
 	buf.Clear()
 
 	// Transitional NDMS window: both counters incremented in one poll,
 	// but current state is already healthy (status=pass).
-	m.processDelta(1, 1, "pass")
+	m.processDelta(1, 1, "pass", true)
 	if buf.Len() != 1 {
 		t.Fatalf("got %d entries, want 1 (success only)", buf.Len())
 	}

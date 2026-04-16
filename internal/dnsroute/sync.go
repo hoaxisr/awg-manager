@@ -151,6 +151,10 @@ func buildTargetState(data *StoreData, failedTunnels map[string]struct{}) target
 	var ts targetState
 
 	for _, list := range data.Lists {
+		// Skip non-NDMS lists (handled by hydraroute reconcile)
+		if !isNDMS(list.Backend) {
+			continue
+		}
 		if !list.Enabled {
 			continue
 		}

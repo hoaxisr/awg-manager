@@ -4,7 +4,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import type { IPResult, ConnectivityResult, IPCheckService, SpeedTestInfo, SpeedTestResult } from '$lib/types';
-	import { Toggle } from '$lib/components/ui';
+	import { FormToggle } from '$lib/components/ui';
 	import { PageContainer } from '$lib/components/layout';
 
 	let tunnelName = $derived($page.params.name as string);
@@ -234,9 +234,8 @@
 			<div class="server-section">
 				<div class="server-header">
 					<span class="server-label">Сервис</span>
-					<Toggle
-						checked={useCustomService}
-						onchange={(v) => { useCustomService = v; }}
+					<FormToggle
+						bind:checked={useCustomService}
 						disabled={ipLoading}
 						label="Свой"
 						size="sm"
@@ -309,9 +308,8 @@
 			<div class="server-section">
 				<div class="server-header">
 					<span class="server-label">Сервер</span>
-					<Toggle
-						checked={useCustomServer}
-						onchange={(v) => { useCustomServer = v; }}
+					<FormToggle
+						bind:checked={useCustomServer}
 						disabled={speedPhase !== 'idle' && speedPhase !== 'done' && speedPhase !== 'error'}
 						label="Свой"
 						size="sm"
