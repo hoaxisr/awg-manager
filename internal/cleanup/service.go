@@ -40,6 +40,12 @@ type ClientRouteCleaner interface {
 	CleanupAll(ctx context.Context) error
 }
 
+// SingboxCleaner stops the sing-box daemon and removes its NDMS Proxy
+// interfaces + on-disk config. Its shape follows singbox.Operator.Cleanup.
+type SingboxCleaner interface {
+	Cleanup(ctx context.Context) error
+}
+
 // ConfigSaver persists NDMS configuration.
 type ConfigSaver interface {
 	Save(ctx context.Context) error
@@ -53,6 +59,7 @@ type Service struct {
 	managed       ManagedServerCleaner
 	policies      PolicyCleaner
 	clientRoutes  ClientRouteCleaner
+	singbox       SingboxCleaner
 	saver         ConfigSaver
 }
 
@@ -64,6 +71,7 @@ func New(
 	managed ManagedServerCleaner,
 	policies PolicyCleaner,
 	clientRoutes ClientRouteCleaner,
+	singbox SingboxCleaner,
 	saver ConfigSaver,
 ) *Service {
 	return &Service{
@@ -73,14 +81,26 @@ func New(
 		managed:       managed,
 		policies:      policies,
 		clientRoutes:  clientRoutes,
+		singbox:       singbox,
 		saver:         saver,
 	}
 }
 
 // CleanupAll removes all resources created by awg-manager.
-// Order: tunnels first (hooks notify dependent services), then auxiliary.
+// Order: sing-box daemon first (stop before touching anything else it owns),
+// then tunnels (hooks notify dependent services), then auxiliary.
 // Errors are logged but do not stop cleanup — best-effort removal.
 func (s *Service) CleanupAll(ctx context.Context) error {
+	// 0. Stop sing-box and remove its NDMS Proxy interfaces before anything
+	// else — the daemon is detached (Setsid) and would otherwise keep
+	// running and mutating NDMS state during the rest of the cleanup.
+	if s.singbox != nil {
+		fmt.Println("  Cleaning sing-box...")
+		if err := s.singbox.Cleanup(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "    Warning: sing-box: %v\n", err)
+		}
+	}
+
 	// 1. Delete all tunnels
 	if s.tunnelLister != nil && s.tunnelDeleter != nil {
 		tunnels, err := s.tunnelLister.List()
