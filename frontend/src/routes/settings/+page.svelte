@@ -252,7 +252,7 @@
 							</span>
 						</div>
 						{#if hydraStatus?.installed}
-							<a href="/routing" class="btn btn-ghost btn-sm">Открыть</a>
+							<a href="/routing?tab=hrneo" class="btn btn-ghost btn-sm">Открыть</a>
 						{/if}
 					</div>
 				</div>
