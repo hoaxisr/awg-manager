@@ -21,8 +21,8 @@ func TestParseNaive_Full(t *testing.T) {
 	if raw["username"] != "user123" || raw["password"] != "pass456" {
 		t.Error("creds")
 	}
-	if raw["network"] != "tcp" {
-		t.Error("network")
+	if _, hasNetwork := raw["network"]; hasNetwork {
+		t.Error("naive outbound must not contain 'network' field — sing-box rejects it")
 	}
 }
 
