@@ -236,21 +236,34 @@
 		return policies.find((p) => p.name === sel.name) ?? null;
 	});
 
-	async function policyPermit(iface: string, order: number) {
-		if (!selectedPolicy) return;
+	// Name-parametric variants — used by both the desktop pane (bound to the
+	// currently-selected target) and each mobile accordion entry (bound to
+	// its own target).
+	async function permitInterfaceFor(policyName: string, iface: string, order: number) {
 		try {
-			await api.permitPolicyInterface(selectedPolicy.name, iface, order);
+			await api.permitPolicyInterface(policyName, iface, order);
 		} catch (e: unknown) {
 			notifications.error(e instanceof Error ? e.message : String(e));
 		}
 	}
-	async function policyDeny(iface: string) {
-		if (!selectedPolicy) return;
+	async function denyInterfaceFor(policyName: string, iface: string) {
 		try {
-			await api.denyPolicyInterface(selectedPolicy.name, iface);
+			await api.denyPolicyInterface(policyName, iface);
 		} catch (e: unknown) {
 			notifications.error(e instanceof Error ? e.message : String(e));
 		}
+	}
+	async function policyPermit(iface: string, order: number) {
+		if (!selectedPolicy) return;
+		await permitInterfaceFor(selectedPolicy.name, iface, order);
+	}
+	async function policyDeny(iface: string) {
+		if (!selectedPolicy) return;
+		await denyInterfaceFor(selectedPolicy.name, iface);
+	}
+
+	function policyByName(name: string) {
+		return policies.find((p) => p.name === name) ?? null;
 	}
 </script>
 
@@ -305,6 +318,7 @@
 		<!-- Mobile: accordion — each target expandable -->
 		<div class="mobile-stack">
 			{#each targets as t, i (t.name)}
+				{@const pol = t.kind === 'policy' ? policyByName(t.name) : null}
 				<details open={i === 0}>
 					<summary>
 						<span class="num">{i + 1}</span>
@@ -312,6 +326,22 @@
 						<span class="tmeta">{t.kind} · {t.ruleCount}</span>
 					</summary>
 					<div class="acc-body">
+						{#if pol}
+							<section class="policy-interfaces-panel">
+								<header class="panel-header">
+									<h3>Интерфейсы политики</h3>
+									<span class="hint">Изменения сохраняются сразу через RCI</span>
+								</header>
+								<InterfaceList
+									interfaces={pol.interfaces ?? []}
+									availableInterfaces={policyInterfaces}
+									onpermit={(iface, order) => permitInterfaceFor(t.name, iface, order)}
+									ondeny={(iface) => denyInterfaceFor(t.name, iface)}
+									onreorder={(iface, order) => permitInterfaceFor(t.name, iface, order)}
+									onupdate={() => {}}
+								/>
+							</section>
+						{/if}
 						<HrNeoRulesList
 							target={t.name}
 							targetKind={t.kind}
