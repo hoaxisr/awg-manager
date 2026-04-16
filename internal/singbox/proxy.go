@@ -4,8 +4,16 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
+
+// ErrProxyComponentMissing is returned when the router lacks the NDMS
+// "proxy" component. Without it, no ProxyN interface can be created, so
+// sing-box cannot route any traffic. Surfaced to the UI as a distinct
+// state (separate from generic RCI errors) so we can show the user how
+// to fix it instead of a raw NDMS error string.
+var ErrProxyComponentMissing = fmt.Errorf("NDMS 'proxy' component is not installed — sing-box integration unavailable")
 
 // ProxyManager wraps ndms.Client for Proxy interface operations
 // specific to sing-box tunnels.
@@ -18,8 +26,14 @@ func NewProxyManager(n ndms.Client) *ProxyManager {
 }
 
 // EnsureProxy creates or refreshes ProxyN pointing at 127.0.0.1:port.
-// Idempotent: re-creating with same params is safe.
+// Idempotent: re-creating with same params is safe. Returns
+// ErrProxyComponentMissing before talking to NDMS when the required
+// component is absent — avoids a confusing "interface type not
+// supported" error from the router.
 func (pm *ProxyManager) EnsureProxy(ctx context.Context, index, port int, description string) error {
+	if !ndmsinfo.HasProxyComponent() {
+		return ErrProxyComponentMissing
+	}
 	name := fmt.Sprintf("%s%d", proxyIfacePrefix, index)
 	return pm.ndms.CreateProxy(ctx, name, description, "127.0.0.1", port, true)
 }

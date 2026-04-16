@@ -34,6 +34,18 @@
 			<div class="error">{error}</div>
 		{/if}
 	</div>
+{:else if $status && $status.installed && !$status.proxyComponent}
+	<div class="banner banner-error">
+		<div class="text">
+			<strong>NDMS-компонент «proxy» не установлен</strong>
+			<span>
+				Sing-box установлен, но без компонента <code>proxy</code> в Keenetic-прошивке
+				интерфейсы Proxy0/1/… не создаются и трафик sing-box никуда не маршрутизируется.
+				Добавьте компонент в веб-интерфейсе Keenetic (Настройки → Компоненты → «Прокси SOCKS5»)
+				и перезапустите этот демон.
+			</span>
+		</div>
+	</div>
 {/if}
 
 <style>
@@ -47,6 +59,17 @@
 		border-radius: var(--radius);
 		margin-bottom: 1rem;
 	}
+	.banner-error {
+		border-color: var(--error);
+		background: rgba(239, 68, 68, 0.08);
+	}
 	.text { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+	.text code {
+		background: var(--bg-tertiary);
+		padding: 0 4px;
+		border-radius: 3px;
+		font-family: ui-monospace, monospace;
+		font-size: 0.8125rem;
+	}
 	.error { color: var(--error); font-size: 12px; }
 </style>

@@ -963,6 +963,7 @@ export interface SingboxStatus {
 	running: boolean;
 	pid?: number;
 	tunnelCount: number;
+	proxyComponent: boolean;
 }
 
 export interface SingboxImportResponse {

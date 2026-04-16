@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
 
@@ -96,6 +97,7 @@ func (o *Operator) GetStatus(ctx context.Context) Status {
 	if cfg, err := o.loadConfig(); err == nil {
 		s.TunnelCount = len(cfg.Tunnels())
 	}
+	s.ProxyComponent = ndmsinfo.HasProxyComponent()
 	return s
 }
 
