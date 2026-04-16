@@ -23,6 +23,11 @@ type DomainList struct {
 	Backend          string         `json:"backend,omitempty"`  // "" or "ndms" = NDMS, "hydraroute" = HydraRoute Neo
 	HRRouteMode      string         `json:"hrRouteMode,omitempty"`  // "interface" or "policy" (hydraroute only)
 	HRPolicyName     string         `json:"hrPolicyName,omitempty"` // policy name for policy mode
+	// HRPolicyInterfaces lists NDMS interface names (e.g. "Wireguard0",
+	// "PPPoE0") permitted in a newly-created HR policy, in priority order.
+	// Only honored when HRRouteMode == "policy" and HRPolicyName is set
+	// (new-policy flow). Ignored otherwise. Not persisted back to clients.
+	HRPolicyInterfaces []string `json:"hrPolicyInterfaces,omitempty"`
 }
 
 

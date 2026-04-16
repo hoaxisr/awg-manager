@@ -168,6 +168,18 @@ export interface SSEEventHandlers {
 	onSingboxTunnel?: (data: SingboxTunnelEvent) => void;
 	onSingboxTraffic?: (data: SingboxTraffic[]) => void;
 	onSingboxDelay?: (data: SingboxDelayEvent) => void;
+
+	// HydraRoute
+	onHydraRouteGeoProgress?: (data: GeoDownloadProgressEvent) => void;
+}
+
+export interface GeoDownloadProgressEvent {
+	url: string;
+	fileType: 'geosite' | 'geoip';
+	downloaded: number;
+	total: number; // 0 when unknown
+	phase: 'download' | 'validate' | 'done' | 'error';
+	error?: string;
 }
 
 export function connectSSE(handlers: SSEEventHandlers): () => void {
@@ -223,6 +235,9 @@ export function connectSSE(handlers: SSEEventHandlers): () => void {
 	handle('singbox:tunnel', handlers.onSingboxTunnel);
 	handle('singbox:traffic', handlers.onSingboxTraffic);
 	handle('singbox:delay', handlers.onSingboxDelay);
+
+	// HydraRoute events
+	handle('hydraroute:geo-progress', handlers.onHydraRouteGeoProgress);
 
 	// Server sends "connected" event immediately on stream start
 	es.addEventListener('connected', () => {

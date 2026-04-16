@@ -10,8 +10,9 @@
     import IpRoutesTab from './IpRoutesTab.svelte';
     import AccessPoliciesTab from './AccessPoliciesTab.svelte';
     import ClientRoutesTab from './ClientRoutesTab.svelte';
+    import { HrNeoTab } from '$lib/components/hrneo';
 
-    let activeTab = $state<'dns' | 'ip' | 'policy' | 'clientvpn'>('dns');
+    let activeTab = $state<'hrneo' | 'dns' | 'ip' | 'policy' | 'clientvpn'>('dns');
     let isOS5 = $derived($systemInfo?.isOS5 ?? false);
     let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
     let hasDnsEngine = $derived(isOS5 || hydrarouteInstalled);
@@ -41,7 +42,8 @@
     let routingTunnels = $derived($routing.tunnels);
 
     // Derived: tab badges
-    let dnsActiveCount = $derived(dnsRoutes.filter(r => r.enabled).length);
+    let hrRuleCount = $derived(dnsRoutes.filter(r => r.backend === 'hydraroute').length);
+    let dnsActiveCount = $derived(dnsRoutes.filter(r => r.enabled && r.backend !== 'hydraroute').length);
     let ipActiveCount = $derived(ipRoutes.filter(r => r.enabled).length);
     let policyCount = $derived(accessPolicies.length);
     let clientRouteCount = $derived(clientRoutes.length);
@@ -79,12 +81,14 @@
 
     let tabItems = $derived(
         [
-            { id: 'dns', label: 'Домены', badge: dnsActiveCount },
+            hydrarouteInstalled ? { id: 'hrneo', label: 'HR NEO', badge: hrRuleCount } : null,
+            { id: 'dns', label: 'NDMS', badge: dnsActiveCount },
             { id: 'ip', label: 'IP-адреса', badge: ipActiveCount },
             isOS5 ? { id: 'policy', label: 'Политики доступа', badge: policyCount } : null,
             { id: 'clientvpn', label: 'VPN для устройств', badge: clientRouteCount },
         ].filter((t): t is { id: string; label: string; badge: number } => t !== null)
     );
+
 </script>
 
 <svelte:head>
@@ -106,17 +110,21 @@
             onchange={(id) => activeTab = id as typeof activeTab}
         />
 
-        {#if activeTab === 'dns'}
+        {#if activeTab === 'hrneo'}
+            <HrNeoTab
+                {dnsRoutes}
+                tunnels={routingTunnels}
+                policies={accessPolicies}
+                {policyInterfaces}
+            />
+        {:else if activeTab === 'dns'}
             <DnsRoutesTab
                 {dnsRoutes}
                 {routingTunnels}
                 {editRuleId}
                 {editRuleCounter}
                 {isOS5}
-                {hydrarouteInstalled}
                 {hasDnsEngine}
-                {policyOrder}
-                onpolicyorderchanged={loadPolicyOrder}
             />
         {:else if activeTab === 'ip'}
             <IpRoutesTab

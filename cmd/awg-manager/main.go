@@ -211,7 +211,6 @@ func main() {
 		return nil
 	})
 	dnsRouteService.SetHydraRoute(hydraService)
-	hydraService.SetNativeImporter(dnsRouteService)
 	dnsRouteService.SetFailoverManager(dnsFailover)
 	dnsFailover.SetLogger(log)
 	dnsFailover.SetAffectedListsLookup(dnsRouteService.LookupAffectedLists)
@@ -332,6 +331,19 @@ func main() {
 	tunnelService.SetEventBus(eventBus)
 	pingCheckFacade.SetEventBus(eventBus)
 
+	// Stream geo-file download progress over SSE so the UI can show a
+	// real progress bar instead of a guess.
+	geoDataStore.SetProgressReporter(func(rawURL, fileType, phase string, downloaded, total int64, errMsg string) {
+		eventBus.Publish("hydraroute:geo-progress", events.GeoDownloadProgressEvent{
+			URL:        rawURL,
+			FileType:   fileType,
+			Downloaded: downloaded,
+			Total:      total,
+			Phase:      phase,
+			Error:      errMsg,
+		})
+	})
+
 	// Start DNS failover listener after event bus is wired
 	dnsFailover.SetEventBus(eventBus)
 	dnsFailover.StartListener(eventBus)
@@ -401,15 +413,6 @@ func main() {
 	catalog.SetSnapshotProvider("hydrarouteStatus", func(ctx context.Context) interface{} {
 		return hydraService.GetStatus()
 	})
-
-	// Auto-import native HydraRoute rules on startup
-	if hydraService.GetStatus().Installed {
-		if count, err := hydraService.ImportNative(context.Background()); err != nil {
-			log.Warnf("hydraroute: auto-import failed: %v", err)
-		} else if count > 0 {
-			log.Infof("hydraroute: auto-imported %d native rules", count)
-		}
-	}
 
 	srv := server.New(
 		server.Config{

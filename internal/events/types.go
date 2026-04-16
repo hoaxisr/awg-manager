@@ -118,3 +118,14 @@ type DNSRouteFailoverEvent struct {
 	Action     string `json:"action"` // "switched" | "restored" | "error"
 	Error      string `json:"error,omitempty"`
 }
+
+// GeoDownloadProgressEvent reports the live state of a geo .dat download.
+// Total may be 0 when the server didn't send a Content-Length header.
+type GeoDownloadProgressEvent struct {
+	URL        string `json:"url"`
+	FileType   string `json:"fileType"`             // "geosite" | "geoip"
+	Downloaded int64  `json:"downloaded"`           // bytes received so far
+	Total      int64  `json:"total"`                // 0 when unknown
+	Phase      string `json:"phase"`                // "download" | "validate" | "done" | "error"
+	Error      string `json:"error,omitempty"`
+}

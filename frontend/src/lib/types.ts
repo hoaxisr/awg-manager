@@ -247,6 +247,12 @@ export interface DnsRoute {
 	backend?: 'ndms' | 'hydraroute';
 	hrRouteMode?: 'interface' | 'policy';
 	hrPolicyName?: string;
+	/**
+	 * Tunnel IDs permitted in a newly-created HR policy, in priority order.
+	 * Only honored when hrRouteMode === 'policy' and the policy is new.
+	 * Absent for existing-policy and interface-mode flows.
+	 */
+	hrPolicyInterfaces?: string[];
 }
 
 export interface StaticRouteList {
@@ -263,6 +269,7 @@ export interface StaticRouteList {
 export interface RoutingTunnel {
 	id: string;
 	name: string;
+	iface?: string; // kernel interface name ("nwg0", "opkgtun10", "ppp0"); used to match HR file targets
 	type: 'managed' | 'system' | 'wan';
 	status: string;
 	available: boolean;
@@ -486,6 +493,18 @@ export interface GeoTag {
 export interface IpsetUsage {
 	maxElem: number;
 	usage: Record<string, number>;
+}
+
+export interface OversizedTag {
+	name: string;
+	count: number;
+	file: string;
+}
+
+export interface HydraRouteOversizedResponse {
+	installed: boolean;
+	maxelem: number;
+	tags: OversizedTag[];
 }
 
 export interface SystemInfo {

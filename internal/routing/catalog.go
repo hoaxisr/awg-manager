@@ -16,6 +16,7 @@ import (
 type TunnelEntry struct {
 	ID        string `json:"id"`        // "awgm0", "system:Wireguard0", "wan:apcli1"
 	Name      string `json:"name"`      // "WARPm2_88", "Wireguard0", "gpon5G_2"
+	Iface     string `json:"iface"`     // kernel interface name ("nwg0", "opkgtun10", "ppp0", "Wireguard0")
 	Type      string `json:"type"`      // "managed", "system", "wan"
 	Status    string `json:"status"`    // "running", "stopped", "disabled", "up", "down"
 	Available bool   `json:"available"` // can route traffic right now
@@ -136,9 +137,11 @@ func (c *CatalogImpl) ListAll(ctx context.Context) []TunnelEntry {
 				name = t.Name
 			}
 
+			iface, _ := c.GetKernelIfaceName(ctx, t.ID)
 			result = append(result, TunnelEntry{
 				ID:        t.ID,
 				Name:      name,
+				Iface:     iface,
 				Type:      "managed",
 				Status:    t.State.String(),
 				Available: true, // always selectable — route activates when tunnel starts
@@ -161,6 +164,7 @@ func (c *CatalogImpl) ListAll(ctx context.Context) []TunnelEntry {
 				result = append(result, TunnelEntry{
 					ID:        "system:" + iface.Name,
 					Name:      name,
+					Iface:     iface.Name,
 					Type:      "system",
 					Status:    "up",
 					Available: true,
@@ -184,6 +188,7 @@ func (c *CatalogImpl) ListAll(ctx context.Context) []TunnelEntry {
 			result = append(result, TunnelEntry{
 				ID:        "wan:" + iface.Name,
 				Name:      name,
+				Iface:     iface.Name,
 				Type:      "wan",
 				Status:    status,
 				Available: iface.Up,
@@ -272,6 +277,10 @@ func (c *CatalogImpl) GetKernelIface(ctx context.Context, tunnelID string) (stri
 
 // GetKernelIfaceName resolves tunnelID to the kernel-level interface name
 // for HydraRoute DirectRoute (not NDMS name).
+//
+// Returns an error if tunnelID doesn't resolve to any known tunnel — the
+// caller must handle it (skip the rule, surface to the user) rather than
+// silently write a garbage interface name into HydraRoute's domain.conf.
 func (c *CatalogImpl) GetKernelIfaceName(ctx context.Context, tunnelID string) (string, error) {
 	// WAN: "wan:ppp0" → "ppp0"
 	if strings.HasPrefix(tunnelID, "wan:") {
@@ -281,13 +290,19 @@ func (c *CatalogImpl) GetKernelIfaceName(ctx context.Context, tunnelID string) (
 	if tunnel.IsSystemTunnel(tunnelID) {
 		return tunnel.SystemTunnelName(tunnelID), nil
 	}
+	// Managed tunnels must exist in our storage. This guards against stale
+	// rule references (e.g. a policy name leaking into TunnelID) that would
+	// otherwise be silently mis-resolved by tunnel.NewNames.
+	entry, err := c.store.Get(tunnelID)
+	if err != nil {
+		return "", fmt.Errorf("unknown tunnel %q: %w", tunnelID, err)
+	}
 	// NativeWG: kernel iface is "nwgX"
-	if entry, err := c.store.Get(tunnelID); err == nil && entry.Backend == "nativewg" {
+	if entry.Backend == "nativewg" {
 		return nwg.NewNWGNames(entry.NWGIndex).IfaceName, nil
 	}
 	// Managed kernel: OS4 "awgm0" → "awgm0", OS5 "awg10" → "opkgtun10"
-	names := tunnel.NewNames(tunnelID)
-	return names.IfaceName, nil
+	return tunnel.NewNames(tunnelID).IfaceName, nil
 }
 
 // SetSnapshotProvider registers a named snapshot provider function.

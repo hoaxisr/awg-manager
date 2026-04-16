@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -24,24 +23,16 @@ type ndmsRCI interface {
 	RCIGet(ctx context.Context, path string) (json.RawMessage, error)
 }
 
-// NativeImporter is implemented by the DNS route service to import native HydraRoute rules.
-// This interface breaks the import cycle: hydraroute cannot import dnsroute directly.
-type NativeImporter interface {
-	ImportNativeRules(ctx context.Context, rules []NativeRule, ipBlocks []NativeIPBlock) (int, error)
-}
-
 // Service manages HydraRoute Neo integration: detection, config writes, daemon control.
 type Service struct {
-	resolver          KernelIfaceResolver
-	log               *logger.Logger
-	mu                sync.Mutex
-	status            Status
-	restartTimer      *time.Timer
-	lastDomainContent string
-	geodata           *GeoDataStore
-	dnsListProvider   func() []DnsListInfo
-	nativeImporter    NativeImporter
-	ndms              ndmsRCI
+	resolver        KernelIfaceResolver
+	log             *logger.Logger
+	mu              sync.Mutex
+	status          Status
+	restartTimer    *time.Timer
+	geodata         *GeoDataStore
+	dnsListProvider func() []DnsListInfo
+	ndms            ndmsRCI
 }
 
 // NewService creates a new HydraRoute service. Detects HRNeo on creation.
@@ -72,42 +63,12 @@ func (s *Service) RefreshStatus() Status {
 	return s.status
 }
 
-// Apply writes managed sections to domain.conf and ip.list, then schedules neo restart.
-func (s *Service) Apply(ctx context.Context, lists []ManagedEntry) error {
+// SetStatusForTest lets tests declare HR Neo "installed" without having
+// the real daemon present on disk. Intended only for tests.
+func (s *Service) SetStatusForTest(installed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if !s.status.Installed {
-		return fmt.Errorf("HydraRoute Neo is not installed")
-	}
-
-	// Capture the current managed section before any writes for rollback.
-	prevDomainManaged := s.lastDomainContent
-	if prevDomainManaged == "" {
-		// First Apply: read what's currently in the file so rollback restores it.
-		prevDomainManaged = readManagedSection(domainConfPath)
-	}
-
-	domainContent := GenerateDomainConf(lists)
-	ipContent := GenerateIPList(lists)
-
-	if err := WriteManagedSection(domainConfPath, domainContent); err != nil {
-		return fmt.Errorf("write domain.conf: %w", err)
-	}
-
-	if err := WriteManagedSection(ipListPath, ipContent); err != nil {
-		_ = WriteManagedSection(domainConfPath, prevDomainManaged)
-		return fmt.Errorf("write ip.list (domain.conf rolled back): %w", err)
-	}
-
-	s.lastDomainContent = domainContent
-	s.scheduleRestart()
-	return nil
-}
-
-// Remove clears all managed entries from HydraRoute config files.
-func (s *Service) Remove(ctx context.Context) error {
-	return s.Apply(ctx, nil)
+	s.status.Installed = installed
 }
 
 // Control starts/stops/restarts the HydraRoute daemon.
@@ -157,67 +118,6 @@ func (s *Service) scheduleRestart() {
 	})
 }
 
-// readManagedSection reads the AWG-managed section (including markers) from the
-// given file. Returns an empty string if the file doesn't exist or has no markers.
-// Used to capture the current state for rollback before the first Apply.
-func readManagedSection(path string) string {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	s := string(raw)
-	start := strings.Index(s, markerStart)
-	end := strings.Index(s, markerEnd)
-	if start < 0 || end < 0 || end <= start {
-		return ""
-	}
-	endOfMarker := end + len(markerEnd)
-	if endOfMarker < len(s) && s[endOfMarker] == '\n' {
-		endOfMarker++
-	}
-	return s[start:endOfMarker]
-}
-
-// BuildEntries converts domain lists with resolved tunnel interfaces into ManagedEntry slice.
-func (s *Service) BuildEntries(ctx context.Context, lists []ListInput) ([]ManagedEntry, error) {
-	var entries []ManagedEntry
-	for _, l := range lists {
-		if len(l.Domains) == 0 && len(l.Subnets) == 0 {
-			continue
-		}
-		if l.TunnelID == "" {
-			continue
-		}
-
-		// Policy mode: use the policy name as the routing target directly,
-		// no kernel interface resolution needed.
-		if l.HRRouteMode == "policy" && l.HRPolicyName != "" {
-			entries = append(entries, ManagedEntry{
-				ListID:   l.ListID,
-				ListName: l.ListName,
-				Domains:  l.Domains,
-				Subnets:  l.Subnets,
-				Iface:    l.HRPolicyName,
-			})
-			continue
-		}
-
-		// Interface mode: resolve tunnel ID to kernel interface name.
-		iface, err := s.resolver.GetKernelIfaceName(ctx, l.TunnelID)
-		if err != nil {
-			return nil, fmt.Errorf("resolve tunnel %s: %w", l.TunnelID, err)
-		}
-		entries = append(entries, ManagedEntry{
-			ListID:   l.ListID,
-			ListName: l.ListName,
-			Domains:  l.Domains,
-			Subnets:  l.Subnets,
-			Iface:    iface,
-		})
-	}
-	return entries, nil
-}
-
 // SetGeoDataStore sets the GeoDataStore used for syncing geo file paths to config.
 func (s *Service) SetGeoDataStore(gds *GeoDataStore) {
 	s.mu.Lock()
@@ -230,13 +130,6 @@ func (s *Service) SetDnsListProvider(fn func() []DnsListInfo) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dnsListProvider = fn
-}
-
-// SetNativeImporter sets the NativeImporter used by ImportNative.
-func (s *Service) SetNativeImporter(imp NativeImporter) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.nativeImporter = imp
 }
 
 // SetNDMS sets the NDMS RCI client used by EnsurePolicy.
@@ -253,45 +146,6 @@ func (s *Service) GetGeoData() *GeoDataStore {
 	return s.geodata
 }
 
-// ImportNative reads native (non-managed) rules from domain.conf and ip.list,
-// delegates conversion to the NativeImporter (dnsroute.ServiceImpl), then
-// removes the native blocks from the HydraRoute config files. Idempotent:
-// lists whose name already exists in the store are skipped by the importer.
-// Returns the number of newly imported lists.
-func (s *Service) ImportNative(ctx context.Context) (int, error) {
-	s.mu.Lock()
-	installed := s.status.Installed
-	importer := s.nativeImporter
-	s.mu.Unlock()
-
-	if !installed || importer == nil {
-		return 0, nil
-	}
-
-	domainRules, err := ParseNativeDomainConf()
-	if err != nil {
-		return 0, fmt.Errorf("parse domain.conf: %w", err)
-	}
-	if len(domainRules) == 0 {
-		return 0, nil
-	}
-
-	ipBlocks, _ := ParseNativeIPList()
-
-	n, err := importer.ImportNativeRules(ctx, domainRules, ipBlocks)
-	if err != nil {
-		return 0, err
-	}
-
-	if n > 0 {
-		_ = RemoveNativeFromDomainConf()
-		_ = RemoveNativeFromIPList()
-		s.log.Infof("hydraroute: imported %d native rules", n)
-	}
-
-	return n, nil
-}
-
 // EnsurePolicyInterfaces permits the given NDMS interfaces in the policy.
 // HR Neo creates the policy itself; we only need to add interfaces.
 func (s *Service) EnsurePolicyInterfaces(ctx context.Context, policyName string, ndmsIfaces []string) error {
@@ -303,6 +157,14 @@ func (s *Service) EnsurePolicyInterfaces(ctx context.Context, policyName string,
 		return fmt.Errorf("NDMS client not available")
 	}
 
+	// Keenetic's `ip policy permit` order is 0-based: first permit MUST be
+	// added with order=0, the next with 1, and so on. Sending order=1 first
+	// triggers `Network::PolicyTable: <name>: invalid order: 1`.
+	//
+	// On an existing policy that already has permits, sending order=0 INSERTS
+	// at the front and shifts the previous permits back by one. Callers that
+	// permit into an existing policy should be aware they may silently change
+	// the policy's existing routing priority.
 	for i, iface := range ndmsIfaces {
 		payload := map[string]interface{}{
 			"ip": map[string]interface{}{
@@ -311,11 +173,14 @@ func (s *Service) EnsurePolicyInterfaces(ctx context.Context, policyName string,
 						"permit": map[string]interface{}{
 							"global":    true,
 							"interface": iface,
-							"order":     i + 1,
+							"order":     i,
 						},
 					},
 				},
 			},
+		}
+		if s.log != nil {
+			s.log.Infof("hydraroute: ip policy %s permit global %s order %d", policyName, iface, i)
 		}
 		if _, err := client.RCIPost(ctx, payload); err != nil {
 			return fmt.Errorf("permit %s in policy %s: %w", iface, policyName, err)
@@ -379,6 +244,14 @@ func (s *Service) SyncGeoFilesToConfig() error {
 	cfg, err := ReadConfig()
 	if err != nil {
 		return err
+	}
+	if s.log != nil {
+		geoIP, geoSite := 0, 0
+		if s.geodata != nil {
+			ips, sites := s.geodata.GeoFilePaths()
+			geoIP, geoSite = len(ips), len(sites)
+		}
+		s.log.Infof("hydraroute: sync geo files to config — %d geoip + %d geosite", geoIP, geoSite)
 	}
 	return s.WriteConfig(cfg)
 }

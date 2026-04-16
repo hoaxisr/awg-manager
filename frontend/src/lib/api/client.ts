@@ -45,6 +45,7 @@ import type {
 	HydraRouteConfig,
 	GeoFileEntry,
 	GeoTag,
+	HydraRouteOversizedResponse,
 	IpsetUsage,
 	DnsCheckStartResponse,
 	SingboxTunnel,
@@ -341,6 +342,10 @@ class ApiClient {
 
 	async getIpsetUsage(): Promise<IpsetUsage> {
 		return this.request('/hydraroute/ipset-usage');
+	}
+
+	async getHydraRouteOversizedTags(): Promise<HydraRouteOversizedResponse> {
+		return this.request('/hydraroute/oversized-tags');
 	}
 
 	async importNativeHydraRouteRules(): Promise<{ imported: number }> {

@@ -7,6 +7,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
 	import { connectSSE } from '$lib/api/events';
+	import { geoDownloadProgress } from '$lib/stores/geoDownload';
 	import { serverOnline } from '$lib/stores/events';
 	import { tunnels } from '$lib/stores/tunnels';
 	import { logEntries } from '$lib/stores/logs';
@@ -131,6 +132,9 @@
 			onSingboxTunnel: singbox.applyTunnelEvent,
 			onSingboxTraffic: singbox.applyTraffic,
 			onSingboxDelay: (data) => singbox.applyDelay(data.tag, data.delay),
+
+			// HydraRoute geo download progress
+			onHydraRouteGeoProgress: (data) => geoDownloadProgress.ingest(data),
 		});
 	}
 

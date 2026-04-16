@@ -8,23 +8,12 @@ type Status struct {
 }
 
 // ManagedEntry represents a single DNS list to be written into HydraRoute config files.
+// The list name is the identity — there's no separate ID.
 type ManagedEntry struct {
-	ListID   string
-	ListName string
+	ListName string   // human-readable name, unique per file (== identity)
 	Domains  []string // regular domains + geosite: tags
 	Subnets  []string // CIDR ranges + geoip: tags
-	Iface    string   // kernel interface name (DirectRoute target)
-}
-
-// ListInput is the input for BuildEntries — domain list data with tunnel ID to resolve.
-type ListInput struct {
-	ListID       string
-	ListName     string
-	TunnelID     string
-	Domains      []string
-	Subnets      []string
-	HRRouteMode  string // "interface" (default) or "policy"
-	HRPolicyName string // policy name when HRRouteMode == "policy"
+	Iface    string   // kernel interface name or policy name (DirectRoute target)
 }
 
 // Config represents the managed subset of hrneo.conf fields.

@@ -16,7 +16,7 @@
 	}
 </script>
 
-<nav class="tunnel-tabs" role="tablist">
+<div class="tunnel-tabs" role="tablist">
 	<button
 		type="button"
 		role="tab"
@@ -39,7 +39,7 @@
 		<span>Sing-box</span>
 		<span class="count">{singboxCount}</span>
 	</button>
-</nav>
+</div>
 
 <style>
 	.tunnel-tabs {
