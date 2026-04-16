@@ -654,6 +654,17 @@ export interface UpdateInfo {
 	warning?: string;
 }
 
+export interface ChangelogGroup {
+	heading: string;
+	items: string[];
+}
+
+export interface ChangelogEntry {
+	version: string;
+	date: string;
+	groups: ChangelogGroup[];
+}
+
 // #endregion
 
 // ─────────────────────────────────────────────
