@@ -284,6 +284,52 @@ func (o *Operator) Install(ctx context.Context) error {
 // Clash exposes the Clash client (for API proxying + telemetry).
 func (o *Operator) Clash() *ClashClient { return o.clash }
 
+// Cleanup tears down all sing-box-managed state during package uninstall:
+//   - stops the detached sing-box daemon (SIGTERM → SIGKILL)
+//   - deletes every NDMS Proxy interface we created
+//   - removes the on-disk config and pid/log files
+//
+// Best-effort: individual errors are logged and do not abort the sequence —
+// we want to leave as little garbage as possible even when some steps fail.
+func (o *Operator) Cleanup(ctx context.Context) error {
+	// Stop the daemon first — once it's gone it can't rewrite config or
+	// re-create NDMS interfaces behind our back.
+	if err := o.proc.Stop(); err != nil {
+		o.log.Warn("cleanup: stop sing-box failed", "err", err)
+	}
+
+	// Read the config (if present) to discover which Proxy interfaces we
+	// still own. A missing config means nothing to tear down.
+	cfg, err := o.loadConfig()
+	if err != nil && !os.IsNotExist(err) {
+		o.log.Warn("cleanup: load config failed", "err", err)
+	}
+	if cfg != nil {
+		for _, t := range cfg.Tunnels() {
+			idx, perr := parseProxyIdx(t.ProxyInterface)
+			if perr != nil {
+				o.log.Warn("cleanup: bad proxy iface", "tag", t.Tag, "iface", t.ProxyInterface, "err", perr)
+				continue
+			}
+			if err := o.proxyMgr.RemoveProxy(ctx, idx); err != nil {
+				o.log.Warn("cleanup: remove proxy failed", "tag", t.Tag, "err", err)
+			}
+		}
+	}
+
+	// Remove on-disk files. Errors are non-fatal — the directory itself
+	// will be removed by the opkg postrm step.
+	for _, path := range []string{o.configPath, o.pidPath, o.logPath} {
+		if path == "" {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			o.log.Warn("cleanup: remove file failed", "path", path, "err", err)
+		}
+	}
+	return nil
+}
+
 // applyConfig: save to tmp path → validate → promote → reload.
 func (o *Operator) applyConfig(ctx context.Context, cfg *Config) error {
 	tmpPath := o.configPath + ".new"

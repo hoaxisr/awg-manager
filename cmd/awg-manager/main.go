@@ -1062,11 +1062,18 @@ func runCleanup(dataDir string) {
 	clientRouteStore := storage.NewClientRouteStore(dataDir)
 	clientRouteSvc := clientroute.New(clientRouteStore, operator, nil, nil)
 
+	// Sing-box operator — knows how to stop the detached daemon and tear
+	// down its NDMS Proxy interfaces.
+	singboxOp := singbox.NewOperator(singbox.OperatorDeps{
+		Log:  slog.Default().With("component", "singbox"),
+		NDMS: ndmsClient,
+	})
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	// Single cleanup call — all business logic in CleanupService
-	cleanupSvc := cleanup.New(tunnelService, awgStore, dnsSvc, managedSvc, accessPolicySvc, clientRouteSvc, ndmsClient)
+	cleanupSvc := cleanup.New(tunnelService, awgStore, dnsSvc, managedSvc, accessPolicySvc, clientRouteSvc, singboxOp, ndmsClient)
 	if err := cleanupSvc.CleanupAll(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Cleanup error: %v\n", err)
 	}
