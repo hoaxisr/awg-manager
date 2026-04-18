@@ -22,10 +22,17 @@ type Config struct {
 }
 
 // NewConfig creates a fresh empty config skeleton.
+//
+// dns.strategy = "prefer_ipv4" is deliberate: Keenetic routers usually
+// don't have IPv6 egress, and sing-box's default dual-stack resolution
+// otherwise returns AAAA records that trigger "network is unreachable"
+// on outbound connects. prefer_ipv4 still queries AAAA (so dual-stack
+// setups keep working) but picks IPv4 first whenever both are present.
 func NewConfig() *Config {
 	return &Config{
 		raw: map[string]any{
 			"log": map[string]any{"level": "info", "timestamp": true},
+			"dns": map[string]any{"strategy": "prefer_ipv4"},
 			"experimental": map[string]any{
 				"clash_api": map[string]any{
 					"external_controller": "127.0.0.1:9090",
