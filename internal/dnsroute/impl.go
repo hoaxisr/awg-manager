@@ -10,7 +10,8 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 // InterfaceResolver resolves tunnel IDs to router interface names.
@@ -27,7 +28,8 @@ type InterfaceResolver interface {
 type ServiceImpl struct {
 	opMu               sync.Mutex
 	store              *Store
-	ndms               ndms.Client
+	queries            *query.Queries
+	commands           *command.Commands
 	resolver           InterfaceResolver
 	log                *logger.Logger
 	appLog             *logging.ScopedLogger
@@ -37,10 +39,11 @@ type ServiceImpl struct {
 }
 
 // NewService creates a new DNS route service.
-func NewService(store *Store, ndmsClient ndms.Client, resolver InterfaceResolver, log *logger.Logger, appLogger logging.AppLogger) *ServiceImpl {
+func NewService(store *Store, queries *query.Queries, commands *command.Commands, resolver InterfaceResolver, log *logger.Logger, appLogger logging.AppLogger) *ServiceImpl {
 	return &ServiceImpl{
 		store:    store,
-		ndms:     ndmsClient,
+		queries:  queries,
+		commands: commands,
 		resolver: resolver,
 		log:      log,
 		appLog:   logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubDnsRoute),

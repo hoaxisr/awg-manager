@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
@@ -324,7 +325,8 @@ type PingCheckForDiag interface {
 type Deps struct {
 	TunnelService   TunnelServiceForDiag
 	RCI             *rci.Client
-	NDMSClient      ndms.Client
+	NDMSQueries     *query.Queries
+	NDMSTransport   *transport.Client
 	Backend         backend.Backend
 	KmodLoader      *kmod.Loader
 	TunnelStore     *storage.AWGTunnelStore

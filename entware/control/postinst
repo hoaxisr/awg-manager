@@ -11,7 +11,9 @@ mkdir -p /opt/var/log
 chmod 755 /opt/bin/awg-manager
 chmod 755 /opt/sbin/awg
 chmod 755 /opt/etc/init.d/S99awg-manager
-chmod 755 /opt/etc/ndm/iflayerchanged.d/50-awg-manager.sh
+for hook in iflayerchanged ifcreated ifdestroyed ifipchanged; do
+    chmod 755 "/opt/etc/ndm/${hook}.d/50-awg-manager.sh" 2>/dev/null || true
+done
 
 # Clean up legacy files
 rm -f /opt/etc/ndm/ifstatechanged.d/50-awg-manager.sh

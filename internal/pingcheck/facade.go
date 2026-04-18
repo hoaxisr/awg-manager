@@ -8,8 +8,8 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
 
@@ -19,7 +19,7 @@ type nwgOpPollAdapter struct {
 	tunnels *storage.AWGTunnelStore
 }
 
-func (a *nwgOpPollAdapter) PollPingCheck(ctx context.Context, tunnelID string) (*ndms.PingCheckStatus, error) {
+func (a *nwgOpPollAdapter) PollPingCheck(ctx context.Context, tunnelID string) (*ndms.PingCheckProfileStatus, error) {
 	stored, err := a.tunnels.Get(tunnelID)
 	if err != nil {
 		return nil, err

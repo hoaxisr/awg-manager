@@ -2,25 +2,20 @@ package hydraroute
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
 // KernelIfaceResolver resolves tunnel IDs to kernel interface names.
 type KernelIfaceResolver interface {
 	GetKernelIfaceName(ctx context.Context, tunnelID string) (string, error)
-}
-
-// ndmsRCI is the minimal NDMS client interface used by Service.
-type ndmsRCI interface {
-	RCIPost(ctx context.Context, payload interface{}) (json.RawMessage, error)
-	RCIGet(ctx context.Context, path string) (json.RawMessage, error)
 }
 
 // Service manages HydraRoute Neo integration: detection, config writes, daemon control.
@@ -32,7 +27,8 @@ type Service struct {
 	restartTimer    *time.Timer
 	geodata         *GeoDataStore
 	dnsListProvider func() []DnsListInfo
-	ndms            ndmsRCI
+	queries         *query.Queries
+	policies        *command.PolicyCommands
 }
 
 // NewService creates a new HydraRoute service. Detects HRNeo on creation.
@@ -132,11 +128,18 @@ func (s *Service) SetDnsListProvider(fn func() []DnsListInfo) {
 	s.dnsListProvider = fn
 }
 
-// SetNDMS sets the NDMS RCI client used by EnsurePolicy.
-func (s *Service) SetNDMS(client ndmsRCI) {
+// SetQueries wires the NDMS Queries registry used to read ip policies.
+func (s *Service) SetQueries(q *query.Queries) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.ndms = client
+	s.queries = q
+}
+
+// SetPolicies wires the NDMS PolicyCommands used to permit interfaces in a policy.
+func (s *Service) SetPolicies(p *command.PolicyCommands) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.policies = p
 }
 
 // GetGeoData returns the current GeoDataStore.
@@ -148,41 +151,29 @@ func (s *Service) GetGeoData() *GeoDataStore {
 
 // EnsurePolicyInterfaces permits the given NDMS interfaces in the policy.
 // HR Neo creates the policy itself; we only need to add interfaces.
+//
+// Keenetic's `ip policy permit` order is 0-based: first permit MUST be
+// added with order=0, the next with 1, and so on. Sending order=1 first
+// triggers `Network::PolicyTable: <name>: invalid order: 1`.
+//
+// On an existing policy that already has permits, sending order=0 INSERTS
+// at the front and shifts the previous permits back by one. Callers that
+// permit into an existing policy should be aware they may silently change
+// the policy's existing routing priority.
 func (s *Service) EnsurePolicyInterfaces(ctx context.Context, policyName string, ndmsIfaces []string) error {
 	s.mu.Lock()
-	client := s.ndms
+	policies := s.policies
 	s.mu.Unlock()
 
-	if client == nil {
-		return fmt.Errorf("NDMS client not available")
+	if policies == nil {
+		return fmt.Errorf("PolicyCommands not available")
 	}
 
-	// Keenetic's `ip policy permit` order is 0-based: first permit MUST be
-	// added with order=0, the next with 1, and so on. Sending order=1 first
-	// triggers `Network::PolicyTable: <name>: invalid order: 1`.
-	//
-	// On an existing policy that already has permits, sending order=0 INSERTS
-	// at the front and shifts the previous permits back by one. Callers that
-	// permit into an existing policy should be aware they may silently change
-	// the policy's existing routing priority.
 	for i, iface := range ndmsIfaces {
-		payload := map[string]interface{}{
-			"ip": map[string]interface{}{
-				"policy": map[string]interface{}{
-					policyName: map[string]interface{}{
-						"permit": map[string]interface{}{
-							"global":    true,
-							"interface": iface,
-							"order":     i,
-						},
-					},
-				},
-			},
-		}
 		if s.log != nil {
 			s.log.Infof("hydraroute: ip policy %s permit global %s order %d", policyName, iface, i)
 		}
-		if _, err := client.RCIPost(ctx, payload); err != nil {
+		if err := policies.PermitInterface(ctx, policyName, iface, i); err != nil {
 			return fmt.Errorf("permit %s in policy %s: %w", iface, policyName, err)
 		}
 	}

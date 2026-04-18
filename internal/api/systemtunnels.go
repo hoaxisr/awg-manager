@@ -7,14 +7,12 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	ndms "github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/testing"
-	"github.com/hoaxisr/awg-manager/internal/traffic"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
 )
@@ -42,7 +40,7 @@ func (h *SystemTunnelsHandler) validateName(w http.ResponseWriter, name string) 
 		response.Error(w, "missing name parameter", "MISSING_NAME")
 		return false
 	}
-	if !ndms.IsValidWireguardName(name) {
+	if !isValidWireguardName(name) {
 		response.Error(w, "invalid tunnel name", "INVALID_NAME")
 		return false
 	}
@@ -86,34 +84,6 @@ func (h *SystemTunnelsHandler) listSystemTunnels(ctx context.Context) ([]ndms.Sy
 		visible = []ndms.SystemWireguardTunnel{}
 	}
 	return visible, nil
-}
-
-// RunningSystemTunnels implements traffic.SystemTunnelLister.
-// Returns traffic data for visible system tunnels that are "up" with peer info.
-func (h *SystemTunnelsHandler) RunningSystemTunnels(ctx context.Context) []traffic.RunningTunnel {
-	tunnels, err := h.listSystemTunnels(ctx)
-	if err != nil {
-		return nil
-	}
-	var result []traffic.RunningTunnel
-	for _, t := range tunnels {
-		if t.Status != "up" || t.Peer == nil {
-			continue
-		}
-		var hs time.Time
-		if t.Peer.LastHandshake != "" {
-			hs, _ = time.Parse(time.RFC3339, t.Peer.LastHandshake)
-		}
-		result = append(result, traffic.RunningTunnel{
-			ID:            t.ID,
-			BackendType:   "system",
-			IfaceName:     t.InterfaceName,
-			RxBytes:       t.Peer.RxBytes,
-			TxBytes:       t.Peer.TxBytes,
-			LastHandshake: hs,
-		})
-	}
-	return result
 }
 
 // List returns all visible (non-hidden) system WireGuard tunnels.

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/testing"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
 
 // GenerateConf generates a WireGuard client .conf file for a peer.
@@ -24,7 +24,7 @@ func (s *Service) GenerateConf(ctx context.Context, pubkey string) (string, erro
 	peer := server.Peers[idx]
 
 	// Get server public key from RCI
-	serverInfo, err := s.ndms.GetWireguardServer(ctx, server.InterfaceName)
+	serverInfo, err := s.queries.WGServers.Get(ctx, server.InterfaceName)
 	if err != nil {
 		return "", fmt.Errorf("get server info: %w", err)
 	}
@@ -36,7 +36,7 @@ func (s *Service) GenerateConf(ctx context.Context, pubkey string) (string, erro
 	// Resolve endpoint: use stored value or fall back to WAN IP
 	endpoint := server.Endpoint
 	if endpoint == "" {
-		wanIP, err := testing.GetWANIP(ctx)
+		wanIP, err := testing.GetWANIPWithFallback(ctx, s.queries.WANInterfaceAddress)
 		if err != nil {
 			return "", fmt.Errorf("get WAN IP: %w", err)
 		}

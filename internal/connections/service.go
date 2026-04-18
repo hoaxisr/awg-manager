@@ -8,14 +8,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/routing"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
+
+// ndmsClient is the subset of *transport.Client used by this service.
+// Both endpoints we read (/show/ip/hotspot and /show/object-group/fqdn) are
+// ad-hoc raw RCI reads with no benefit from typed Stores.
+type ndmsClient interface {
+	GetRaw(ctx context.Context, path string) ([]byte, error)
+}
+
+// compile-time check: *transport.Client must satisfy ndmsClient
+var _ ndmsClient = (*transport.Client)(nil)
 
 // Service provides connection listing with tunnel and DNS-rule resolution.
 type Service struct {
 	catalog routing.Catalog
-	ndms    ndms.Client
+	ndms    ndmsClient
 	lister  DNSListLister
 }
 
@@ -24,7 +34,7 @@ type Service struct {
 // The lister is used to resolve DNS-route list IDs into display names when
 // attributing connections to rules. Pass nil to disable name resolution
 // (rule attribution still works, just without ListName).
-func NewService(catalog routing.Catalog, ndmsClient ndms.Client, lister DNSListLister) *Service {
+func NewService(catalog routing.Catalog, ndmsClient ndmsClient, lister DNSListLister) *Service {
 	return &Service{
 		catalog: catalog,
 		ndms:    ndmsClient,
@@ -191,7 +201,7 @@ func (s *Service) buildTunnelMap(ctx context.Context) map[string]tunnelInfo {
 func (s *Service) resolveClientNames(ctx context.Context) map[string]string {
 	result := make(map[string]string)
 
-	raw, err := s.ndms.RCIGet(ctx, "/show/ip/hotspot")
+	raw, err := s.ndms.GetRaw(ctx, "/show/ip/hotspot")
 	if err != nil {
 		return result
 	}
@@ -226,7 +236,7 @@ func (s *Service) resolveClientNames(ctx context.Context) map[string]string {
 // any error returns an empty map without surfacing the error to the caller —
 // the connections list still works without rule attribution.
 func (s *Service) fetchIPRules(ctx context.Context) map[string][]RuleHit {
-	raw, err := s.ndms.RCIGet(ctx, "/show/object-group/fqdn")
+	raw, err := s.ndms.GetRaw(ctx, "/show/object-group/fqdn")
 	if err != nil {
 		return nil
 	}

@@ -6,8 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -117,20 +121,43 @@ func TestDefaultIfaceExists_Loopback(t *testing.T) {
 	}
 }
 
-// mockNDMS records RCIPost calls and Save calls for verification.
-type mockNDMS struct {
-	posts []any
-	saves int
+// fakePoster records payloads passed to Post for assertion.
+type fakePoster struct {
+	mu       sync.Mutex
+	payloads []any
 }
 
-func (m *mockNDMS) RCIPost(_ context.Context, payload interface{}) (json.RawMessage, error) {
-	m.posts = append(m.posts, payload)
+func (f *fakePoster) Post(_ context.Context, payload any) (json.RawMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.payloads = append(f.payloads, payload)
 	return json.RawMessage(`{}`), nil
 }
 
-func (m *mockNDMS) Save(_ context.Context) error {
-	m.saves++
-	return nil
+func (f *fakePoster) Payloads() []any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]any, len(f.payloads))
+	copy(out, f.payloads)
+	return out
+}
+
+// nopPublisher satisfies command.StatusPublisher without side effects.
+type nopPublisher struct{}
+
+func (nopPublisher) Publish(string, any) {}
+
+// newTestRouteCommands builds a real *command.RouteCommands backed by a
+// fakePoster so tests can observe outgoing payloads.
+func newTestRouteCommands() (*command.RouteCommands, *fakePoster) {
+	poster := &fakePoster{}
+	sc := command.NewSaveCoordinator(poster, nopPublisher{}, 500*time.Millisecond, 5*time.Second)
+	q := query.NewQueries(query.Deps{
+		Getter: query.NewFakeGetter(),
+		Logger: query.NopLogger(),
+		IsOS5:  func() bool { return true },
+	})
+	return command.NewRouteCommands(poster, sc, q), poster
 }
 
 // newTestStore creates a StaticRouteStore backed by a temp file with given lists.
@@ -163,10 +190,11 @@ func TestUpdate_PartialPayloadPreservesFields(t *testing.T) {
 		CreatedAt: "2026-01-01T00:00:00Z",
 	}
 	store := newTestStore(t, []storage.StaticRouteList{original})
+	routes, _ := newTestRouteCommands()
 
 	svc := &ServiceImpl{
 		store:       store,
-		ndms:        &mockNDMS{},
+		routes:      routes,
 		catalog:     &mockCatalog{ifaces: map[string]string{"awg10": "OpkgTun10", "awg11": "OpkgTun11"}},
 		ifaceExists: func(string) bool { return false },
 	}
@@ -204,11 +232,11 @@ func TestOnTunnelDelete_NDMS_RemovesRoutesAndStorage(t *testing.T) {
 		{ID: "srl3", TunnelID: "awg11", Subnets: []string{"192.168.0.0/16"}, Enabled: true},
 	}
 	store := newTestStore(t, lists)
-	ndms := &mockNDMS{}
+	routes, poster := newTestRouteCommands()
 
 	svc := &ServiceImpl{
 		store:       store,
-		ndms:        ndms,
+		routes:      routes,
 		catalog:     &mockCatalog{ifaces: map[string]string{"awg10": "OpkgTun10"}},
 		ifaceExists: defaultIfaceExists,
 	}
@@ -218,14 +246,9 @@ func TestOnTunnelDelete_NDMS_RemovesRoutesAndStorage(t *testing.T) {
 		t.Fatalf("OnTunnelDelete: %v", err)
 	}
 
-	// Routes for enabled list should have been removed via RCI
-	if len(ndms.posts) == 0 {
-		t.Error("expected RCI calls to remove routes for enabled list")
-	}
-
-	// NDMS save should have been called
-	if ndms.saves == 0 {
-		t.Error("expected NDMS save")
+	// Routes for enabled list should have been removed via NDMS
+	if len(poster.Payloads()) == 0 {
+		t.Error("expected NDMS calls to remove routes for enabled list")
 	}
 
 	// Storage should only contain srl3 (other tunnel)
@@ -248,11 +271,11 @@ func TestOnTunnelDelete_OS4Kernel_SkipsRoutesButCleansStorage(t *testing.T) {
 		{ID: "srl3", TunnelID: "awg10", Subnets: []string{"192.168.0.0/16"}, Enabled: true},
 	}
 	store := newTestStore(t, lists)
-	ndms := &mockNDMS{}
+	routes, poster := newTestRouteCommands()
 
 	svc := &ServiceImpl{
 		store:       store,
-		ndms:        ndms,
+		routes:      routes,
 		catalog:     &mockCatalog{ifaces: map[string]string{"awgm0": "awgm0"}},
 		ifaceExists: func(string) bool { return false },
 	}
@@ -262,14 +285,9 @@ func TestOnTunnelDelete_OS4Kernel_SkipsRoutesButCleansStorage(t *testing.T) {
 		t.Fatalf("OnTunnelDelete: %v", err)
 	}
 
-	// No RCI calls for OS4 kernel tunnel
-	if len(ndms.posts) != 0 {
-		t.Errorf("expected no RCI calls for OS4 kernel, got %d", len(ndms.posts))
-	}
-
-	// No NDMS save for OS4 kernel
-	if ndms.saves != 0 {
-		t.Errorf("expected no NDMS save for OS4 kernel, got %d", ndms.saves)
+	// No NDMS calls for OS4 kernel tunnel
+	if n := len(poster.Payloads()); n != 0 {
+		t.Errorf("expected no NDMS calls for OS4 kernel, got %d", n)
 	}
 
 	// Storage should only contain srl3 (other tunnel)

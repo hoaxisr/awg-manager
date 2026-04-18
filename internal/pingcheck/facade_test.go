@@ -7,15 +7,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/storage"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
 
 // mockPollSource implements nwgPollSource for testing.
 type mockPollSource struct{}
 
-func (m *mockPollSource) PollPingCheck(_ context.Context, _ string) (*ndms.PingCheckStatus, error) {
-	return &ndms.PingCheckStatus{Exists: false}, nil
+func (m *mockPollSource) PollPingCheck(_ context.Context, _ string) (*ndms.PingCheckProfileStatus, error) {
+	return &ndms.PingCheckProfileStatus{Exists: false}, nil
 }
 
 // newTestFacade creates a minimal Facade suitable for unit tests (no real Service/nwgOp).

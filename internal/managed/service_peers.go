@@ -54,11 +54,6 @@ func (s *Service) AddPeer(ctx context.Context, req AddPeerRequest) (*storage.Man
 		return nil, fmt.Errorf("add peer: %w", err)
 	}
 
-	// Save NDMS
-	if err := s.rciSave(ctx); err != nil {
-		s.log.Warn("failed to save NDMS config after adding peer", "error", err)
-	}
-
 	// Save to storage
 	peer := storage.ManagedPeer{
 		PublicKey:    pubKey,
@@ -135,11 +130,6 @@ func (s *Service) UpdatePeer(ctx context.Context, pubkey string, req UpdatePeerR
 	// Update DNS (per-peer, only stored locally)
 	peer.DNS = req.DNS
 
-	// Save NDMS
-	if err := s.rciSave(ctx); err != nil {
-		s.log.Warn("failed to save NDMS config after updating peer", "error", err)
-	}
-
 	// Save to storage
 	if err := s.settings.SaveManagedServer(server); err != nil {
 		return fmt.Errorf("save to storage: %w", err)
@@ -170,11 +160,6 @@ func (s *Service) DeletePeer(ctx context.Context, pubkey string) error {
 		s.log.Warn("failed to remove peer via RCI", "error", err)
 	}
 
-	// Save NDMS
-	if err := s.rciSave(ctx); err != nil {
-		s.log.Warn("failed to save NDMS config after deleting peer", "error", err)
-	}
-
 	// Remove from storage
 	server.Peers = append(server.Peers[:idx], server.Peers[idx+1:]...)
 	if err := s.settings.SaveManagedServer(server); err != nil {
@@ -202,11 +187,6 @@ func (s *Service) TogglePeer(ctx context.Context, pubkey string, enabled bool) e
 
 	if err := s.rciSetPeerConnect(ctx, iface, pubkey, enabled); err != nil {
 		return fmt.Errorf("toggle peer: %w", err)
-	}
-
-	// Save NDMS
-	if err := s.rciSave(ctx); err != nil {
-		s.log.Warn("failed to save NDMS config after toggling peer", "error", err)
 	}
 
 	// Update storage

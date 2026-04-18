@@ -145,6 +145,31 @@ func GetWANIP(ctx context.Context) (string, error) {
 	return fetchIPAuto(ctx, "", nil)
 }
 
+// WANIPFallback returns an IP to use when external IP probes fail.
+// Typical implementation reads the default-gateway interface's IPv4
+// address from NDMS — not truly "external" if the router is behind
+// CGNAT, but accurate for straight PPPoE/DHCP and better than nothing.
+type WANIPFallback func(ctx context.Context) (string, error)
+
+// GetWANIPWithFallback tries external probes first. If they all fail
+// (DNS down, no internet, upstream block), it calls the fallback and
+// returns whatever it produces. Errors from the fallback are surfaced;
+// the original external-probe error is only returned if fallback is nil.
+func GetWANIPWithFallback(ctx context.Context, fallback WANIPFallback) (string, error) {
+	ip, err := fetchIPAuto(ctx, "", nil)
+	if err == nil {
+		return ip, nil
+	}
+	if fallback == nil {
+		return "", err
+	}
+	fip, ferr := fallback(ctx)
+	if ferr == nil && fip != "" {
+		return fip, nil
+	}
+	return "", err
+}
+
 // fetchIPAuto fetches IP using a specific service or falls back through the default list.
 func fetchIPAuto(ctx context.Context, serviceURL string, extraCurlOpts []string) (string, error) {
 	if serviceURL != "" {
