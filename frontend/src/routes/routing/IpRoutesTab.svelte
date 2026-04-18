@@ -43,7 +43,12 @@
     let ipSaving = $state(false);
     let ipCreateOpen = $state(false);
 
-    let ipActiveCount = $derived(ipRoutes.filter(r => r.enabled).length);
+    // Orphan = list whose tunnel was deleted (TunnelID=""). Kept in storage
+    // so the user can reassign it via the Edit dialog instead of rebuilding
+    // the CIDRs from scratch.
+    let orphanRoutes = $derived(ipRoutes.filter(r => !r.tunnelID));
+    let boundRoutes = $derived(ipRoutes.filter(r => r.tunnelID));
+    let ipActiveCount = $derived(boundRoutes.filter(r => r.enabled).length);
 
     async function saveIpRoute(data: { name: string; tunnelID: string; subnets: string[]; fallback: '' | 'reject' }) {
         ipSaving = true;
@@ -202,7 +207,9 @@
 
 <div class="section-header">
     {#if !ipSelectionMode}
-        <span class="section-summary">{ipRoutes.length} правил, {ipActiveCount} активных</span>
+        <span class="section-summary">
+            {boundRoutes.length} правил, {ipActiveCount} активных{#if orphanRoutes.length > 0}, <span class="orphan-count">несвязанных: {orphanRoutes.length}</span>{/if}
+        </span>
         <div class="section-buttons">
             <button class="btn btn-sm btn-ghost" onclick={() => ipImportOpen = true}>Загрузить набор правил</button>
             {#if ipRoutes.length > 0}
@@ -247,21 +254,45 @@
 {#if ipRoutes.length === 0}
     <div class="empty-hint">Нет IP-маршрутов</div>
 {:else}
-    <div class="route-grid">
-        {#each ipRoutes as route (route.id)}
-            <IpRouteCard
-                {route}
-                tunnels={routingTunnels}
-                ontoggle={(enabled) => toggleIpRoute(route.id, enabled)}
-                onedit={() => { editingIpRoute = route; ipCreateOpen = true; }}
-                ondelete={() => ipDeleteId = route.id}
-                toggleLoading={ipToggling === route.id}
-                selectable={ipSelectionMode}
-                selected={ipSelected.has(route.id)}
-                onselect={() => toggleIpSelect(route.id)}
-            />
-        {/each}
-    </div>
+    {#if orphanRoutes.length > 0}
+        <div class="orphan-section">
+            <h4 class="orphan-header">Без туннеля — {orphanRoutes.length}</h4>
+            <p class="orphan-hint">Туннель удалён, правила сохранены. Нажмите «Изменить», чтобы привязать список к другому туннелю.</p>
+            <div class="route-grid">
+                {#each orphanRoutes as route (route.id)}
+                    <IpRouteCard
+                        {route}
+                        tunnels={routingTunnels}
+                        ontoggle={(enabled) => toggleIpRoute(route.id, enabled)}
+                        onedit={() => { editingIpRoute = route; ipCreateOpen = true; }}
+                        ondelete={() => ipDeleteId = route.id}
+                        toggleLoading={ipToggling === route.id}
+                        selectable={ipSelectionMode}
+                        selected={ipSelected.has(route.id)}
+                        onselect={() => toggleIpSelect(route.id)}
+                    />
+                {/each}
+            </div>
+        </div>
+    {/if}
+
+    {#if boundRoutes.length > 0}
+        <div class="route-grid">
+            {#each boundRoutes as route (route.id)}
+                <IpRouteCard
+                    {route}
+                    tunnels={routingTunnels}
+                    ontoggle={(enabled) => toggleIpRoute(route.id, enabled)}
+                    onedit={() => { editingIpRoute = route; ipCreateOpen = true; }}
+                    ondelete={() => ipDeleteId = route.id}
+                    toggleLoading={ipToggling === route.id}
+                    selectable={ipSelectionMode}
+                    selected={ipSelected.has(route.id)}
+                    onselect={() => toggleIpSelect(route.id)}
+                />
+            {/each}
+        </div>
+    {/if}
 {/if}
 
 <IpRouteEditModal
@@ -301,3 +332,29 @@
         {/snippet}
     </Modal>
 {/if}
+
+<style>
+    .orphan-section {
+        margin-bottom: 18px;
+    }
+
+    .orphan-header {
+        font-size: 0.8125rem;
+        font-weight: 600;
+        color: var(--warn, #d08770);
+        margin: 0 0 4px 0;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .orphan-hint {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        margin: 0 0 10px 0;
+    }
+
+    .orphan-count {
+        color: var(--warn, #d08770);
+        font-weight: 500;
+    }
+</style>

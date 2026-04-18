@@ -48,11 +48,14 @@
 		}
 		return route.tunnelID;
 	});
+
+	let isOrphan = $derived(!route.tunnelID);
 </script>
 
 <div
 	class="dns-card"
 	class:enabled={route.enabled}
+	class:orphan={isOrphan}
 	class:selected={selectable && selected}
 >
 	<div class="card-main">
@@ -95,6 +98,10 @@
 					<span class="badge-killswitch">Kill Switch</span>
 				{/if}
 				</div>
+			{:else if isOrphan}
+				<div class="card-route">
+					<span class="badge-orphan" title="Туннель, к которому был привязан этот список, удалён. Нажмите «Изменить» и выберите новый туннель.">Без туннеля</span>
+				</div>
 			{/if}
 		</div>
 	</div>
@@ -103,6 +110,7 @@
 			checked={route.enabled}
 			onchange={(checked) => ontoggle(checked)}
 			loading={toggleLoading}
+			disabled={isOrphan}
 			size="sm"
 		/>
 		<button class="action-btn" title="Изменить" onclick={() => onedit()}>
@@ -254,6 +262,23 @@
 	.comment-more {
 		color: var(--accent);
 		font-weight: 500;
+	}
+
+	.dns-card.orphan {
+		opacity: 0.7;
+		border: 1px dashed var(--warn, #d08770);
+	}
+
+	.badge-orphan {
+		display: inline-block;
+		font-size: 0.625rem;
+		font-weight: 600;
+		color: var(--warn, #d08770);
+		background: color-mix(in srgb, var(--warn, #d08770) 15%, transparent);
+		padding: 2px 6px;
+		border-radius: 3px;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
 	}
 
 	.badge-killswitch {
