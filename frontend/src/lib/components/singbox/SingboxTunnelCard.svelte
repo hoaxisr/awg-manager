@@ -151,7 +151,13 @@
 	{:else if tunnel.sni}
 		<div class="row">
 			<span class="label">SNI</span>
-			<span class="value">{tunnel.sni}</span>
+			<span class="value">
+				{#if showServer}
+					{tunnel.sni}
+				{:else}
+					<span class="server-hidden">●●●●●●●●</span>
+				{/if}
+			</span>
 		</div>
 	{/if}
 
