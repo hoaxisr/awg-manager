@@ -27,7 +27,6 @@ type Operator struct {
 	binary     string
 	configPath string
 	pidPath    string
-	logPath    string
 
 	proc      *Process
 	validator *Validator
@@ -59,7 +58,6 @@ func NewOperator(d OperatorDeps) *Operator {
 	}
 	configPath := filepath.Join(dir, "config.json")
 	pidPath := filepath.Join(dir, "sing-box.pid")
-	logPath := filepath.Join(dir, "sing-box.log")
 
 	return &Operator{
 		log:        log,
@@ -67,8 +65,7 @@ func NewOperator(d OperatorDeps) *Operator {
 		binary:     binary,
 		configPath: configPath,
 		pidPath:    pidPath,
-		logPath:    logPath,
-		proc:       NewProcess(binary, configPath, pidPath, logPath),
+		proc:       NewProcess(binary, configPath, pidPath),
 		validator:  NewValidator(binary),
 		proxyMgr:   NewProxyManager(d.Queries, d.Commands),
 		clash:      NewClashClient("127.0.0.1:9090"),
@@ -334,7 +331,10 @@ func (o *Operator) Cleanup(ctx context.Context) error {
 
 	// Remove on-disk files. Errors are non-fatal — the directory itself
 	// will be removed by the opkg postrm step.
-	for _, path := range []string{o.configPath, o.pidPath, o.logPath} {
+	// sing-box.log is a legacy path (pre-log-forwarding) — removed here so
+	// upgrades from older installs don't leave an orphaned file behind.
+	legacyLogPath := filepath.Join(o.dir, "sing-box.log")
+	for _, path := range []string{o.configPath, o.pidPath, legacyLogPath} {
 		if path == "" {
 			continue
 		}

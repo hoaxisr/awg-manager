@@ -480,6 +480,12 @@ func main() {
 	defer delayCancel()
 	go delayChecker.Run(delayCtx)
 
+	// Forward sing-box runtime logs from clash_api /logs into the app's
+	// UI log view (replaces the old file-based log; see process.go).
+	logFwdCtx, logFwdCancel := context.WithCancel(context.Background())
+	defer logFwdCancel()
+	go singbox.NewLogForwarder(singboxOp.Clash().Address(), loggingService).Run(logFwdCtx)
+
 	// Register routing snapshot providers with catalog.
 	catalog.SetSnapshotProvider("dnsRoutes", func(ctx context.Context) interface{} {
 		routes, _ := dnsRouteService.List(ctx)
