@@ -13,23 +13,26 @@ import (
 )
 
 // Process manages the sing-box process lifecycle (single-process model).
+//
+// sing-box's stdout/stderr is discarded to /dev/null — runtime logs are
+// streamed over clash_api /logs and forwarded into the UI log view
+// (loggingService), avoiding flash wear from an ever-growing log file
+// and surfacing logs in the same place as every other subsystem.
 type Process struct {
 	binary     string
 	configPath string
 	pidPath    string
-	logPath    string // optional
 
 	// For tests
 	startCmd func(bin string, args ...string) (*exec.Cmd, error)
 	signalFn func(pid int, sig syscall.Signal) error
 }
 
-func NewProcess(binary, configPath, pidPath, logPath string) *Process {
+func NewProcess(binary, configPath, pidPath string) *Process {
 	return &Process{
 		binary:     binary,
 		configPath: configPath,
 		pidPath:    pidPath,
-		logPath:    logPath,
 		startCmd: func(bin string, args ...string) (*exec.Cmd, error) {
 			return exec.Command(bin, args...), nil
 		},
@@ -51,12 +54,12 @@ func (p *Process) Start() error {
 	if err != nil {
 		return err
 	}
-	if p.logPath != "" {
-		f, err := os.OpenFile(p.logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-		if err == nil {
-			cmd.Stdout = f
-			cmd.Stderr = f
-		}
+	// Discard stdout/stderr — logs flow via clash_api /logs into the
+	// app's loggingService. Keeping a file here would cause flash wear
+	// and unbounded growth.
+	if devnull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0); err == nil {
+		cmd.Stdout = devnull
+		cmd.Stderr = devnull
 	}
 	// Detach so sing-box survives the parent
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
