@@ -23,16 +23,64 @@ type Config struct {
 
 // NewConfig creates a fresh empty config skeleton.
 //
-// dns.strategy = "prefer_ipv4" is deliberate: Keenetic routers usually
-// don't have IPv6 egress, and sing-box's default dual-stack resolution
-// otherwise returns AAAA records that trigger "network is unreachable"
-// on outbound connects. prefer_ipv4 still queries AAAA (so dual-stack
-// setups keep working) but picks IPv4 first whenever both are present.
+// The DNS block is explicit (rather than leaving sing-box to fall back
+// on the OS resolver) for three reasons:
+//
+//  1. Keenetic's local resolver on 127.0.0.1:53 is flaky under load —
+//     we saw i/o timeouts in production.
+//  2. sing-box's default dual-stack resolution returns AAAA records that
+//     router with no IPv6 egress can't route, producing
+//     "network is unreachable" on outbound connects.
+//  3. DoH upstream (cloudflare-dns.com) needs its hostname resolved
+//     before the first query — hence the bootstrap server that speaks
+//     plain UDP to an IP literal (1.1.1.1). The DoH server points its
+//     domain_resolver at the bootstrap tag, breaking the chicken-and-
+//     egg. The bootstrap stays on detour="direct" forever — if we
+//     routed it through a tunnel, the tunnel's own hostname couldn't
+//     be resolved.
+//
+// The DoH server has NO detour: it follows route.rules / route.final,
+// so when later milestones route outbound traffic through a sing-box
+// tunnel, DNS queries naturally follow and the ISP sees only ciphered
+// DoH traffic to the tunnel endpoint — no DNS leak.
+//
+// The M1 UI will let users pick different upstreams (Google / Quad9 /
+// NextDNS / custom).
 func NewConfig() *Config {
 	return &Config{
 		raw: map[string]any{
 			"log": map[string]any{"level": "info", "timestamp": true},
-			"dns": map[string]any{"strategy": "prefer_ipv4"},
+			"dns": map[string]any{
+				"strategy": "ipv4_only",
+				"servers": []any{
+					// sing-box 1.13+ native schema: when `type` is set,
+					// the server is addressed via `server` + optional
+					// `server_port`/`path`, NOT the legacy `address`
+					// field (that was the 1.11/1.12 shape). `address`
+					// is rejected with "unknown field" once a type is
+					// declared.
+					// Bootstrap omits `detour` intentionally: sing-box
+					// 1.13 flags "detour to an empty direct outbound
+					// makes no sense" and FATALs at startup. With
+					// route.final = "direct" the DNS query ends up at
+					// the same place anyway. When M2+ routes traffic
+					// through a tunnel, we'll add an explicit route
+					// rule pinning bootstrap UDP/53 to direct so the
+					// chicken-and-egg stays broken.
+					map[string]any{
+						"type":   "udp",
+						"tag":    "dns-bootstrap",
+						"server": "1.1.1.1",
+					},
+					map[string]any{
+						"type":            "https",
+						"tag":             "dns-doh",
+						"server":          "cloudflare-dns.com",
+						"domain_resolver": "dns-bootstrap",
+					},
+				},
+				"final": "dns-doh",
+			},
 			"experimental": map[string]any{
 				"clash_api": map[string]any{
 					"external_controller": "127.0.0.1:9090",
@@ -43,6 +91,12 @@ func NewConfig() *Config {
 			"route": map[string]any{
 				"rules": []any{},
 				"final": "direct",
+				// sing-box 1.12+ requires a default resolver for
+				// outbound `server` hostnames (naive / vless / etc.).
+				// Pointing at dns-bootstrap uses plain UDP to an IP
+				// literal — no chicken-and-egg when the tunnel itself
+				// is what needs resolving at startup.
+				"default_domain_resolver": "dns-bootstrap",
 			},
 		},
 	}
