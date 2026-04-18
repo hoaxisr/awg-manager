@@ -267,8 +267,15 @@ func (s *ServiceImpl) OnTunnelStop(ctx context.Context, tunnelID string) error {
 	return nil
 }
 
-// OnTunnelDelete removes all routes and route lists for a deleted tunnel.
+// OnTunnelDelete uninstalls any kernel/NDMS state for the tunnel's route
+// lists and then orphans those lists (TunnelID = "") rather than deleting
+// them. The user curated the CIDRs — they should survive a tunnel delete
+// and be reassignable to another tunnel from the UI. Reconcile skips
+// orphan lists; the frontend surfaces them as "Без туннеля".
 func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error {
+	if tunnelID == "" {
+		return nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -277,7 +284,8 @@ func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error
 		return nil
 	}
 
-	// Remove active routes (NDMS only; SaveCoordinator persists debounced).
+	// Uninstall active NDMS routes first (OS4 kernel already cleaned up on
+	// interface destroy).
 	if !isOS4Kernel(tunnelID) {
 		for _, rl := range lists {
 			if rl.Enabled {
@@ -285,16 +293,18 @@ func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error
 			}
 		}
 	}
-	// OS4 kernel: routes are already gone (kernel cleans up on interface destroy).
 
-	// Delete route lists from storage so they don't become orphaned.
+	// Unbind: clear TunnelID but keep the list in storage.
+	now := time.Now().UTC().Format(time.RFC3339)
 	for _, rl := range lists {
-		if err := s.store.DeleteRouteList(rl.ID); err != nil {
-			s.log.Errorf("staticroute: delete list %s: %v", rl.ID, err)
+		rl.TunnelID = ""
+		rl.UpdatedAt = now
+		if err := s.store.UpdateRouteList(rl); err != nil {
+			s.log.Errorf("staticroute: orphan list %s: %v", rl.ID, err)
 		}
 	}
 
-	s.log.Infof("staticroute: tunnel %s deleted, removed %d route lists", tunnelID, len(lists))
+	s.log.Infof("staticroute: tunnel %s deleted, %d route lists orphaned", tunnelID, len(lists))
 	return nil
 }
 
@@ -317,6 +327,10 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	var totalRoutes int
 	for _, rl := range all {
 		if !rl.Enabled {
+			continue
+		}
+		// Orphan list awaiting reassignment — nothing to install.
+		if rl.TunnelID == "" {
 			continue
 		}
 		if isOS4Kernel(rl.TunnelID) {
@@ -477,8 +491,13 @@ func (s *ServiceImpl) removeRoutes(ctx context.Context, tunnelID string, subnets
 	}
 }
 
-// allListsForTunnel returns all route lists (enabled and disabled) for a given tunnel.
+// allListsForTunnel returns all route lists (enabled and disabled) for a
+// given tunnel. Returns nil for empty tunnelID — orphan lists don't
+// belong to any tunnel and must not match here.
 func (s *ServiceImpl) allListsForTunnel(tunnelID string) []storage.StaticRouteList {
+	if tunnelID == "" {
+		return nil
+	}
 	all, err := s.store.ListRouteLists()
 	if err != nil {
 		return nil
@@ -493,7 +512,11 @@ func (s *ServiceImpl) allListsForTunnel(tunnelID string) []storage.StaticRouteLi
 }
 
 // listsForTunnel returns enabled route lists for a given tunnel.
+// Returns nil for empty tunnelID (orphan lists don't belong to any tunnel).
 func (s *ServiceImpl) listsForTunnel(tunnelID string) []storage.StaticRouteList {
+	if tunnelID == "" {
+		return nil
+	}
 	all, err := s.store.ListRouteLists()
 	if err != nil {
 		return nil

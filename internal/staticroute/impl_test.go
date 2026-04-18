@@ -1,6 +1,7 @@
 package staticroute
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -225,7 +226,7 @@ func TestUpdate_PartialPayloadPreservesFields(t *testing.T) {
 	}
 }
 
-func TestOnTunnelDelete_NDMS_RemovesRoutesAndStorage(t *testing.T) {
+func TestOnTunnelDelete_NDMS_UninstallsRoutesAndOrphansLists(t *testing.T) {
 	lists := []storage.StaticRouteList{
 		{ID: "srl1", TunnelID: "awg10", Subnets: []string{"10.0.0.0/8"}, Enabled: true},
 		{ID: "srl2", TunnelID: "awg10", Subnets: []string{"172.16.0.0/12"}, Enabled: false},
@@ -246,25 +247,37 @@ func TestOnTunnelDelete_NDMS_RemovesRoutesAndStorage(t *testing.T) {
 		t.Fatalf("OnTunnelDelete: %v", err)
 	}
 
-	// Routes for enabled list should have been removed via NDMS
+	// Routes for the enabled list should have been uninstalled via NDMS.
 	if len(poster.Payloads()) == 0 {
 		t.Error("expected NDMS calls to remove routes for enabled list")
 	}
 
-	// Storage should only contain srl3 (other tunnel)
+	// All three lists remain; srl1 / srl2 are orphaned (TunnelID="") so
+	// the user can reassign them later; srl3 (other tunnel) untouched.
 	remaining, err := store.ListRouteLists()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(remaining) != 1 {
-		t.Fatalf("expected 1 remaining list, got %d", len(remaining))
+	if len(remaining) != 3 {
+		t.Fatalf("expected 3 lists preserved, got %d", len(remaining))
 	}
-	if remaining[0].ID != "srl3" {
-		t.Errorf("expected srl3 to remain, got %s", remaining[0].ID)
+	byID := map[string]storage.StaticRouteList{}
+	for _, rl := range remaining {
+		byID[rl.ID] = rl
+	}
+	if byID["srl1"].TunnelID != "" || byID["srl2"].TunnelID != "" {
+		t.Errorf("srl1/srl2 must be orphaned (TunnelID=\"\"), got %q/%q",
+			byID["srl1"].TunnelID, byID["srl2"].TunnelID)
+	}
+	if byID["srl3"].TunnelID != "awg11" {
+		t.Errorf("srl3 binding must be untouched, got %q", byID["srl3"].TunnelID)
+	}
+	if len(byID["srl1"].Subnets) != 1 || byID["srl1"].Subnets[0] != "10.0.0.0/8" {
+		t.Errorf("orphan must preserve subnets, got %+v", byID["srl1"].Subnets)
 	}
 }
 
-func TestOnTunnelDelete_OS4Kernel_SkipsRoutesButCleansStorage(t *testing.T) {
+func TestOnTunnelDelete_OS4Kernel_SkipsRoutesAndOrphansLists(t *testing.T) {
 	lists := []storage.StaticRouteList{
 		{ID: "srl1", TunnelID: "awgm0", Subnets: []string{"10.0.0.0/8"}, Enabled: true},
 		{ID: "srl2", TunnelID: "awgm0", Subnets: []string{"172.16.0.0/12"}, Enabled: false},
@@ -285,20 +298,60 @@ func TestOnTunnelDelete_OS4Kernel_SkipsRoutesButCleansStorage(t *testing.T) {
 		t.Fatalf("OnTunnelDelete: %v", err)
 	}
 
-	// No NDMS calls for OS4 kernel tunnel
+	// No NDMS calls for OS4 kernel tunnel.
 	if n := len(poster.Payloads()); n != 0 {
 		t.Errorf("expected no NDMS calls for OS4 kernel, got %d", n)
 	}
 
-	// Storage should only contain srl3 (other tunnel)
+	// All three lists preserved; srl1 / srl2 orphaned; srl3 untouched.
 	remaining, err := store.ListRouteLists()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(remaining) != 1 {
-		t.Fatalf("expected 1 remaining list, got %d", len(remaining))
+	if len(remaining) != 3 {
+		t.Fatalf("expected 3 lists preserved, got %d", len(remaining))
 	}
-	if remaining[0].ID != "srl3" {
-		t.Errorf("expected srl3 to remain, got %s", remaining[0].ID)
+	byID := map[string]storage.StaticRouteList{}
+	for _, rl := range remaining {
+		byID[rl.ID] = rl
+	}
+	if byID["srl1"].TunnelID != "" || byID["srl2"].TunnelID != "" {
+		t.Errorf("srl1/srl2 must be orphaned, got %q/%q",
+			byID["srl1"].TunnelID, byID["srl2"].TunnelID)
+	}
+	if byID["srl3"].TunnelID != "awg10" {
+		t.Errorf("srl3 binding must be untouched, got %q", byID["srl3"].TunnelID)
+	}
+}
+
+func TestReconcile_SkipsOrphanLists(t *testing.T) {
+	// An orphan list (TunnelID="") must never be applied — there's no
+	// tunnel to route through, and the catalog would fail to resolve.
+	lists := []storage.StaticRouteList{
+		{ID: "orphan", TunnelID: "", Subnets: []string{"10.0.0.0/8"}, Enabled: true},
+		{ID: "active", TunnelID: "awg10", Subnets: []string{"192.168.0.0/16"}, Enabled: true},
+	}
+	store := newTestStore(t, lists)
+	routes, poster := newTestRouteCommands()
+
+	svc := &ServiceImpl{
+		store:       store,
+		routes:      routes,
+		catalog:     &mockCatalog{ifaces: map[string]string{"awg10": "OpkgTun10"}},
+		ifaceExists: defaultIfaceExists,
+	}
+
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	// Exactly one list should have been applied (the active one).
+	// The orphan list has 1 subnet; if it leaked through we'd see a
+	// payload referencing 10.0.0.0/8.
+	for _, p := range poster.Payloads() {
+		raw, _ := json.Marshal(p)
+		if bytes.Contains(raw, []byte("10.0.0.0")) {
+			t.Errorf("orphan subnet 10.0.0.0/8 must not be installed, saw %s", string(raw))
+		}
 	}
 }
