@@ -275,12 +275,23 @@ func (o *Operator) Reconcile(ctx context.Context) error {
 	return o.proxyMgr.SyncProxies(ctx, tunnels)
 }
 
-// Install runs `opkg install sing-box`.
+// Install installs sing-box-naive from the awg-manager repo (Entware
+// repo list). Entware's stock `sing-box` package is built without
+// `-tags with_naive_outbound`, so importing naive+https:// links fails
+// with "naive outbound is not included in this build". Our repacked
+// package `sing-box-naive` carries the vendor-default DEFAULT_BUILD_TAGS
+// (naive + quic + wireguard + utls + clash_api + tailscale + dhcp +
+// gvisor + acme), statically linked, installed to /opt/bin/sing-box.
+//
+// opkg update runs first so a router that was provisioned before we
+// started publishing this package still sees it.
 func (o *Operator) Install(ctx context.Context) error {
-	cmd := exec.CommandContext(ctx, "opkg", "install", "sing-box")
-	out, err := cmd.CombinedOutput()
+	if out, err := exec.CommandContext(ctx, "opkg", "update").CombinedOutput(); err != nil {
+		return fmt.Errorf("opkg update: %s: %w", string(out), err)
+	}
+	out, err := exec.CommandContext(ctx, "opkg", "install", "sing-box-naive").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("opkg install sing-box: %s: %w", string(out), err)
+		return fmt.Errorf("opkg install sing-box-naive: %s: %w", string(out), err)
 	}
 	return nil
 }
