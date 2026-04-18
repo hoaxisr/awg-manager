@@ -355,6 +355,74 @@ func TestServiceImpl_OnTunnelDelete_CleansFailoverState(t *testing.T) {
 	}
 }
 
+func TestServiceImpl_OnTunnelDelete_PreservesListDomains(t *testing.T) {
+	// Regression guard for the "orphan on delete" contract: when a tunnel
+	// is deleted, DNS route lists keep their domains / subscriptions /
+	// excludes — only the per-tunnel RouteTarget binding is removed.
+	// Users rebind the survivor to another tunnel via the Edit modal.
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	q, c, _, _ := newTestNDMS()
+	svc := &ServiceImpl{store: store, queries: q, commands: c, log: noopLogger()}
+	svc.SetFailoverManager(NewFailoverManager(func() error { return nil }))
+
+	// soloList → only bound to "doomed", becomes orphan after delete.
+	// multiList → bound to "doomed" + "keeper", loses one target but keeps the other.
+	if _, err := svc.Create(context.Background(), DomainList{
+		Name:          "solo",
+		ManualDomains: []string{"example.com", "another.test"},
+		Excludes:      []string{"deny.me"},
+		Routes:        []RouteTarget{{Interface: "Wireguard0", TunnelID: "doomed"}},
+	}); err != nil {
+		t.Fatalf("Create solo: %v", err)
+	}
+	if _, err := svc.Create(context.Background(), DomainList{
+		Name:          "multi",
+		ManualDomains: []string{"other.org"},
+		Routes: []RouteTarget{
+			{Interface: "Wireguard0", TunnelID: "doomed"},
+			{Interface: "Wireguard1", TunnelID: "keeper"},
+		},
+	}); err != nil {
+		t.Fatalf("Create multi: %v", err)
+	}
+
+	if err := svc.OnTunnelDelete(context.Background(), "doomed"); err != nil {
+		t.Fatalf("OnTunnelDelete: %v", err)
+	}
+
+	data := store.GetCached()
+	if data == nil || len(data.Lists) != 2 {
+		t.Fatalf("lists: want both preserved, got %+v", data)
+	}
+	byName := map[string]DomainList{}
+	for _, l := range data.Lists {
+		byName[l.Name] = l
+	}
+
+	solo := byName["solo"]
+	if len(solo.Routes) != 0 {
+		t.Errorf("solo.Routes: want [] (orphan), got %+v", solo.Routes)
+	}
+	if len(solo.ManualDomains) != 2 || solo.ManualDomains[0] != "example.com" {
+		t.Errorf("solo.ManualDomains must survive, got %+v", solo.ManualDomains)
+	}
+	if len(solo.Excludes) != 1 || solo.Excludes[0] != "deny.me" {
+		t.Errorf("solo.Excludes must survive, got %+v", solo.Excludes)
+	}
+
+	multi := byName["multi"]
+	if len(multi.Routes) != 1 || multi.Routes[0].TunnelID != "keeper" {
+		t.Errorf("multi.Routes: want only keeper remaining, got %+v", multi.Routes)
+	}
+	if len(multi.ManualDomains) != 1 || multi.ManualDomains[0] != "other.org" {
+		t.Errorf("multi.ManualDomains must survive, got %+v", multi.ManualDomains)
+	}
+}
+
 func TestServiceImpl_LookupAffectedLists_RestoredAction(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
