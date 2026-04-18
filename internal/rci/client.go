@@ -12,7 +12,13 @@ import (
 
 const (
 	defaultBaseURL = "http://localhost:79/rci"
-	defaultTimeout = 10 * time.Second
+	// defaultTimeout is the backstop for a single RCI HTTP exchange.
+	// Per-call context deadlines still win when shorter. 30s allows
+	// slow NDMS operations (interface create, flash commits, running
+	// a ping-check re-setup under load) to complete without leaving
+	// the router in a partially-configured state from a client-side
+	// timeout. Callers with bespoke needs use NewWithTimeout.
+	defaultTimeout = 30 * time.Second
 )
 
 // sharedTransport is the HTTP transport for all RCI connections.

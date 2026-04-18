@@ -165,10 +165,12 @@ func TestServiceImpl_CRUD(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	q, c, _, _ := newTestNDMS()
 	svc := &ServiceImpl{
-		store: store,
-		ndms:  &noopNDMS{},
-		log:   noopLogger(),
+		store:    store,
+		queries:  q,
+		commands: c,
+		log:      noopLogger(),
 	}
 
 	ctx := context.Background()
@@ -274,7 +276,8 @@ func TestServiceImpl_CreateValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	svc := &ServiceImpl{store: store, ndms: &noopNDMS{}, log: noopLogger()}
+	q, c, _, _ := newTestNDMS()
+	svc := &ServiceImpl{store: store, queries: q, commands: c, log: noopLogger()}
 	ctx := context.Background()
 
 	t.Run("empty name", func(t *testing.T) {
@@ -299,7 +302,8 @@ func TestServiceImpl_NotFound(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	svc := &ServiceImpl{store: store, ndms: &noopNDMS{}, log: noopLogger()}
+	q, c, _, _ := newTestNDMS()
+	svc := &ServiceImpl{store: store, queries: q, commands: c, log: noopLogger()}
 	ctx := context.Background()
 
 	if _, err := svc.Get(ctx, "nope"); err == nil {
@@ -322,10 +326,12 @@ func TestServiceImpl_OnTunnelDelete_CleansFailoverState(t *testing.T) {
 	if _, err := store.Load(); err != nil {
 		t.Fatal(err)
 	}
+	q, c, _, _ := newTestNDMS()
 	svc := &ServiceImpl{
-		store: store,
-		ndms:  &noopNDMS{},
-		log:   noopLogger(),
+		store:    store,
+		queries:  q,
+		commands: c,
+		log:      noopLogger(),
 	}
 	fm := NewFailoverManager(func() error { return nil })
 	svc.SetFailoverManager(fm)
@@ -355,10 +361,12 @@ func TestServiceImpl_LookupAffectedLists_RestoredAction(t *testing.T) {
 	if _, err := store.Load(); err != nil {
 		t.Fatal(err)
 	}
+	q, c, _, _ := newTestNDMS()
 	svc := &ServiceImpl{
-		store: store,
-		ndms:  &noopNDMS{},
-		log:   noopLogger(),
+		store:    store,
+		queries:  q,
+		commands: c,
+		log:      noopLogger(),
 	}
 	fm := NewFailoverManager(func() error { return nil })
 	svc.SetFailoverManager(fm)

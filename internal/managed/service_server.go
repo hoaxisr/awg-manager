@@ -22,7 +22,7 @@ func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage
 	}
 
 	// Find free index
-	idx, err := s.ndms.FindFreeWireguardIndex(ctx)
+	idx, err := s.queries.WGServers.FindFreeIndex(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("find free index: %w", err)
 	}
@@ -47,11 +47,6 @@ func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage
 	if err := s.rciSetNAT(ctx, ifaceName, true); err != nil {
 		s.cleanupInterface(ctx, ifaceName)
 		return nil, fmt.Errorf("enable NAT: %w", err)
-	}
-
-	// Save NDMS config
-	if err := s.rciSave(ctx); err != nil {
-		s.log.Warn("failed to save NDMS config after server creation", "error", err)
 	}
 
 	// Save to storage
@@ -108,11 +103,6 @@ func (s *Service) Update(ctx context.Context, req UpdateServerRequest) error {
 		}
 	}
 
-	// Save NDMS
-	if err := s.rciSave(ctx); err != nil {
-		s.log.Warn("failed to save NDMS config after server update", "error", err)
-	}
-
 	// Update storage. Required fields (Address, Mask, ListenPort) were
 	// validated above. Optional fields (Endpoint, DNS, MTU) must be
 	// preserved from existing when the caller omits them in the request —
@@ -149,10 +139,6 @@ func (s *Service) SetNAT(ctx context.Context, enabled bool) error {
 		return fmt.Errorf("set NAT: %w", err)
 	}
 
-	if err := s.rciSave(ctx); err != nil {
-		s.log.Warn("failed to save NDMS config after NAT change", "error", err)
-	}
-
 	server.NATEnabled = enabled
 	if err := s.settings.SaveManagedServer(server); err != nil {
 		return fmt.Errorf("save to storage: %w", err)
@@ -179,10 +165,6 @@ func (s *Service) SetEnabled(ctx context.Context, enabled bool) error {
 		}
 	}
 
-	if err := s.rciSave(ctx); err != nil {
-		s.log.Warn("failed to save NDMS config after SetEnabled", "error", err)
-	}
-
 	s.log.Info("managed server toggled", "interface", server.InterfaceName, "enabled", enabled)
 	return nil
 }
@@ -204,11 +186,6 @@ func (s *Service) Delete(ctx context.Context) error {
 
 	// Delete interface (removes all peers too)
 	_ = s.rciDeleteInterface(ctx, server.InterfaceName)
-
-	// Save NDMS
-	if err := s.rciSave(ctx); err != nil {
-		s.log.Warn("failed to save NDMS config after server deletion", "error", err)
-	}
 
 	// Delete from storage
 	if err := s.settings.DeleteManagedServer(); err != nil {
@@ -240,7 +217,7 @@ func (s *Service) GetStats(ctx context.Context) (*ManagedServerStats, error) {
 		return nil, fmt.Errorf("no managed server exists")
 	}
 
-	wgServer, err := s.ndms.GetWireguardServer(ctx, server.InterfaceName)
+	wgServer, err := s.queries.WGServers.Get(ctx, server.InterfaceName)
 	if err != nil {
 		return nil, fmt.Errorf("get runtime data: %w", err)
 	}
@@ -311,5 +288,4 @@ func (s *Service) maskToPrefix(mask string) string {
 
 func (s *Service) cleanupInterface(ctx context.Context, name string) {
 	_ = s.rciDeleteInterface(ctx, name)
-	_ = s.rciSave(ctx)
 }

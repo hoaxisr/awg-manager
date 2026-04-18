@@ -1,18 +1,43 @@
 package api
 
 import (
+	"context"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms/events"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
+// HookDispatcher is the subset of events.Dispatcher that HookHandler
+// uses. Interface so tests can inject a fake.
+type HookDispatcher interface {
+	Enqueue(e events.Event)
+}
+
+// HookWANModel is the narrow surface HookHandler needs from the WAN
+// model. Kept local so api/hook.go doesn't depend on *wan.Model.
+type HookWANModel interface {
+	SetUp(kernelName string, up bool)
+}
+
+// TunnelSnapshotRefresher rebroadcasts the snapshot:tunnels SSE event
+// to every connected client so the UI drops/adds tunnel cards without
+// a browser refresh. Invoked on ifcreated / ifdestroyed hooks.
+type TunnelSnapshotRefresher func(ctx context.Context)
+
 // HookHandler handles NDM hook events.
 type HookHandler struct {
-	svc  TunnelService
-	orch *orchestrator.Orchestrator
-	log  *logging.ScopedLogger
+	svc            TunnelService
+	orch           *orchestrator.Orchestrator
+	dispatcher     HookDispatcher // may be nil until SetDispatcher is called
+	wanModel       HookWANModel   // may be nil until SetWANModel is called
+	refreshTunnels TunnelSnapshotRefresher
+	log            *logging.ScopedLogger
 }
 
 // NewHookHandler creates a new hook event handler.
@@ -24,37 +49,162 @@ func NewHookHandler(svc TunnelService, orch *orchestrator.Orchestrator, appLogge
 	}
 }
 
-// HandleIfaceChanged processes interface layer change events from iflayerchanged.d.
-// POST /api/hook/iface-changed?id=OpkgTun0&layer=conf&level=running
-func (h *HookHandler) HandleIfaceChanged(w http.ResponseWriter, r *http.Request) {
+// SetDispatcher wires an events.Dispatcher for hook-driven cache
+// invalidation. Call after construction (typically from server.New).
+func (h *HookHandler) SetDispatcher(d HookDispatcher) {
+	h.dispatcher = d
+}
+
+// SetWANModel wires the WAN model so iflayerchanged layer=ipv4 hooks
+// can update WAN interface up/down state in-memory before dispatching
+// EventWANUp/Down to the orchestrator.
+func (h *HookHandler) SetWANModel(m HookWANModel) {
+	h.wanModel = m
+}
+
+// SetTunnelRefresher wires the callback that rebroadcasts
+// snapshot:tunnels whenever an interface is created or destroyed.
+// Without it, the UI keeps showing cards for tunnels that NDMS has
+// already torn down (reported bug).
+func (h *HookHandler) SetTunnelRefresher(fn TunnelSnapshotRefresher) {
+	h.refreshTunnels = fn
+}
+
+// HandleNDMS is the unified hook endpoint. The shared forwarder script
+// installed into /opt/etc/ndm/{iflayerchanged,ifcreated,ifdestroyed,
+// ifipchanged}.d/ POSTs here with a `type` discriminator. The handler
+// parses the form into a typed events.Event, enqueues it into the
+// Dispatcher for cache invalidation, and (for iflayerchanged only) also
+// forwards to the orchestrator for tunnel-lifecycle decisions.
+//
+// POST /api/hook/ndms
+//   type=iflayerchanged|ifcreated|ifdestroyed|ifipchanged
+//   id=<ndms-interface-id>
+//   system_name=<kernel-name>
+//   layer=<conf|link|ipv4|ipv6|ctrl>      (layerchanged only)
+//   level=<running|disabled|...>          (layerchanged only)
+//   address=<ipv4>                        (ipchanged only)
+//   up=<0|1>
+//   connected=<0|1>
+func (h *HookHandler) HandleNDMS(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
 		return
 	}
-
-	id := r.URL.Query().Get("id")
-	layer := r.URL.Query().Get("layer")
-	level := r.URL.Query().Get("level")
-
-	if id == "" || layer == "" || level == "" {
-		response.BadRequest(w, "id, layer, and level are required")
+	if err := r.ParseForm(); err != nil {
+		response.BadRequest(w, "parse form: "+err.Error())
 		return
 	}
 
-	h.log.Info("hook", id, "iface-changed: layer="+layer+" level="+level)
+	typeStr := r.PostForm.Get("type")
+	event := events.Event{
+		Type:       events.EventType(typeStr),
+		ID:         r.PostForm.Get("id"),
+		SystemName: r.PostForm.Get("system_name"),
+		Layer:      r.PostForm.Get("layer"),
+		Level:      r.PostForm.Get("level"),
+		Address:    r.PostForm.Get("address"),
+		Up:         r.PostForm.Get("up") == "1" || r.PostForm.Get("up") == "true",
+		Connected:  r.PostForm.Get("connected") == "1" || r.PostForm.Get("connected") == "true",
+	}
 
-	if err := h.orch.HandleEvent(r.Context(), orchestrator.Event{
-		Type:     orchestrator.EventNDMSHook,
-		NDMSName: id,
-		Layer:    layer,
-		Level:    level,
-	}); err != nil {
-		h.log.Warn("hook", id, "ReconcileInterface failed: "+err.Error())
-		response.Error(w, err.Error(), "RECONCILE_FAILED")
+	switch event.Type {
+	case events.EventIfLayerChanged, events.EventIfCreated,
+		events.EventIfDestroyed, events.EventIfIPChanged:
+		// OK
+	default:
+		response.BadRequest(w, "unknown hook type: "+typeStr)
 		return
 	}
 
-	response.Success(w, map[string]interface{}{
-		"ok": true,
-	})
+	// 1) Enqueue into Dispatcher for cache invalidation (async, non-blocking).
+	if h.dispatcher != nil {
+		h.dispatcher.Enqueue(event)
+	}
+
+	// 1b) On interface create/destroy, rebroadcast the tunnel list so
+	// every connected UI client drops/adds the card without a browser
+	// refresh. Runs in a goroutine so the hook POST acks immediately.
+	if event.Type == events.EventIfCreated || event.Type == events.EventIfDestroyed {
+		if h.refreshTunnels != nil {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				h.refreshTunnels(ctx)
+			}()
+		}
+	}
+
+	// 2) For iflayerchanged, route to the orchestrator:
+	//    - layer=conf → NDMS hook path (tunnel lifecycle)
+	//    - layer=ipv4 → WAN model update + EventWANUp/Down
+	if event.Type == events.EventIfLayerChanged {
+		if event.Layer == "ipv4" {
+			h.handleWANLayerEvent(event)
+		} else if h.orch != nil {
+			go func(e events.Event) {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := h.orch.HandleEvent(ctx, orchestrator.Event{
+					Type:     orchestrator.EventNDMSHook,
+					NDMSName: e.ID,
+					Layer:    e.Layer,
+					Level:    e.Level,
+				}); err != nil {
+					h.log.Warn("hook", e.ID, "orchestrator HandleEvent failed: "+err.Error())
+				}
+			}(event)
+		}
+	}
+
+	h.log.Info("hook", event.ID, fmt.Sprintf("ndms: type=%s layer=%s level=%s", event.Type, event.Layer, event.Level))
+	response.Success(w, map[string]interface{}{"ok": true})
+}
+
+// handleWANLayerEvent processes an iflayerchanged hook with layer=ipv4.
+// Updates the WAN model synchronously so the orchestrator's WAN-up
+// decision sees the fresh state, then dispatches EventWANUp/Down in a
+// goroutine (same 60s timeout the legacy /api/wan/event handler used).
+//
+// Skips VPN/tunnel kernel names (nwg*, opkgtun*, awg*, wg*, wireguard*,
+// ipsec*, sstp*, openvpn*, proxy*) — they fire ipv4-layer too but aren't
+// WAN. If we didn't skip, wanModel.SetUp would trigger a repopulate
+// storm and the orchestrator would treat tunnel events as WAN events.
+func (h *HookHandler) handleWANLayerEvent(e events.Event) {
+	kernelName := e.SystemName
+	if kernelName == "" {
+		// Can't update WAN model without a kernel name.
+		return
+	}
+	if ndmsquery.IsNonISPInterface(kernelName) {
+		return
+	}
+	if h.wanModel == nil {
+		return
+	}
+	up := e.Level == "running"
+
+	// Sync WAN model update — must happen before the orch decides
+	// whether any WAN is up. SetUp handles hot-plug via repopulateFn.
+	h.wanModel.SetUp(kernelName, up)
+
+	if h.orch == nil {
+		return
+	}
+	action := "up"
+	evType := orchestrator.EventWANUp
+	if !up {
+		action = "down"
+		evType = orchestrator.EventWANDown
+	}
+	go func(iface, act string, et orchestrator.EventType) {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if err := h.orch.HandleEvent(ctx, orchestrator.Event{
+			Type:     et,
+			WANIface: iface,
+		}); err != nil {
+			h.log.Warn("hook", iface, "orchestrator WAN "+act+" failed: "+err.Error())
+		}
+	}(kernelName, action, evType)
 }

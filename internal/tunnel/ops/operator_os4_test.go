@@ -15,7 +15,7 @@ func TestOperatorOS4_Create_NoOp(t *testing.T) {
 	wgClient := &MockWGClient{}
 	fw := &MockFirewall{}
 
-	op := NewOperatorOS4(nil, wgClient, backendMock, fw, nil)
+	op := NewOperatorOS4(nil, nil, wgClient, backendMock, fw, nil)
 
 	cfg := tunnel.Config{
 		ID:   "awg0",
@@ -41,7 +41,7 @@ func TestOperatorOS4_Start_VerifySequence(t *testing.T) {
 	wgClient := &MockWGClient{}
 	fw := &MockFirewall{}
 
-	op := NewOperatorOS4(nil, wgClient, backendMock, fw, nil)
+	op := NewOperatorOS4(nil, nil, wgClient, backendMock, fw, nil)
 
 	cfg := tunnel.Config{
 		ID:       "awg0",
@@ -77,7 +77,7 @@ func TestOperatorOS4_Start_BackendFails(t *testing.T) {
 	wgClient := &MockWGClient{}
 	fw := &MockFirewall{}
 
-	op := NewOperatorOS4(nil, wgClient, backendMock, fw, nil)
+	op := NewOperatorOS4(nil, nil, wgClient, backendMock, fw, nil)
 
 	cfg := tunnel.Config{
 		ID:       "awg0",
@@ -102,7 +102,7 @@ func TestOperatorOS4_Start_WGFails_Rollback(t *testing.T) {
 	wgClient := &MockWGClient{setConfError: errors.New("WG config failed")}
 	fw := &MockFirewall{}
 
-	op := NewOperatorOS4(nil, wgClient, backendMock, fw, nil)
+	op := NewOperatorOS4(nil, nil, wgClient, backendMock, fw, nil)
 
 	cfg := tunnel.Config{
 		ID:       "awg0",
@@ -126,7 +126,7 @@ func TestOperatorOS4_Stop_Success(t *testing.T) {
 	backendMock := &MockBackend{running: true}
 	fw := &MockFirewall{}
 
-	op := NewOperatorOS4(nil, &MockWGClient{}, backendMock, fw, nil)
+	op := NewOperatorOS4(nil, nil, &MockWGClient{}, backendMock, fw, nil)
 
 	err := op.Stop(context.Background(), "awg0")
 
@@ -152,7 +152,7 @@ func TestOperatorOS4_Delete_SameAsStop(t *testing.T) {
 	backendMock := &MockBackend{running: true}
 	fw := &MockFirewall{}
 
-	op := NewOperatorOS4(nil, &MockWGClient{}, backendMock, fw, nil)
+	op := NewOperatorOS4(nil, nil, &MockWGClient{}, backendMock, fw, nil)
 
 	err := op.Delete(context.Background(), &storage.AWGTunnel{ID: "awg0"})
 
@@ -169,7 +169,7 @@ func TestOperatorOS4_Delete_SameAsStop(t *testing.T) {
 func TestOperatorOS4_Recover(t *testing.T) {
 	backendMock := &MockBackend{running: true}
 
-	op := NewOperatorOS4(nil, &MockWGClient{}, backendMock, &MockFirewall{}, nil)
+	op := NewOperatorOS4(nil, nil, &MockWGClient{}, backendMock, &MockFirewall{}, nil)
 
 	state := tunnel.StateInfo{
 		State:          tunnel.StateBroken,
@@ -190,7 +190,7 @@ func TestOperatorOS4_Recover(t *testing.T) {
 
 func TestOperatorOS4_ApplyConfig(t *testing.T) {
 	wgClient := &MockWGClient{}
-	op := NewOperatorOS4(nil, wgClient, &MockBackend{}, &MockFirewall{}, nil)
+	op := NewOperatorOS4(nil, nil, wgClient, &MockBackend{}, &MockFirewall{}, nil)
 
 	err := op.ApplyConfig(context.Background(), "awg0", "/tmp/new.conf")
 
@@ -214,7 +214,7 @@ func TestOperatorOS4_UsesDirectTunnelID(t *testing.T) {
 	wgClient := &MockWGClient{}
 	fw := &MockFirewall{}
 
-	op := NewOperatorOS4(nil, wgClient, backendMock, fw, nil)
+	op := NewOperatorOS4(nil, nil, wgClient, backendMock, fw, nil)
 
 	cfg := tunnel.Config{
 		ID:       "awg1", // Different ID to verify
@@ -257,7 +257,7 @@ func TestOperatorOS4_UsesDirectTunnelID(t *testing.T) {
 // === Endpoint route no-op tests (routing not managed on OS4) ===
 
 func TestOperatorOS4_SetupEndpointRoute_NoOp(t *testing.T) {
-	op := NewOperatorOS4(nil, &MockWGClient{}, &MockBackend{}, &MockFirewall{}, nil)
+	op := NewOperatorOS4(nil, nil, &MockWGClient{}, &MockBackend{}, &MockFirewall{}, nil)
 
 	ip, err := op.SetupEndpointRoute(context.Background(), "awgm0", "1.2.3.4:51820", "", "")
 	if err != nil {
@@ -269,7 +269,7 @@ func TestOperatorOS4_SetupEndpointRoute_NoOp(t *testing.T) {
 }
 
 func TestOperatorOS4_CleanupEndpointRoute_NoOp(t *testing.T) {
-	op := NewOperatorOS4(nil, &MockWGClient{}, &MockBackend{}, &MockFirewall{}, nil)
+	op := NewOperatorOS4(nil, nil, &MockWGClient{}, &MockBackend{}, &MockFirewall{}, nil)
 
 	err := op.CleanupEndpointRoute(context.Background(), "awgm0")
 	if err != nil {
@@ -278,7 +278,7 @@ func TestOperatorOS4_CleanupEndpointRoute_NoOp(t *testing.T) {
 }
 
 func TestOperatorOS4_GetTrackedEndpointIP_NoOp(t *testing.T) {
-	op := NewOperatorOS4(nil, &MockWGClient{}, &MockBackend{}, &MockFirewall{}, nil)
+	op := NewOperatorOS4(nil, nil, &MockWGClient{}, &MockBackend{}, &MockFirewall{}, nil)
 
 	got := op.GetTrackedEndpointIP("awgm0")
 	if got != "" {

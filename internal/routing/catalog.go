@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
@@ -74,10 +74,11 @@ type TunnelProvider interface {
 	WANModel() *wan.Model
 }
 
-// NDMSClient is the subset of ndms.Client used by Catalog.
-type NDMSClient interface {
-	ListWireguardInterfaces(ctx context.Context) ([]ndms.WireguardInterfaceInfo, error)
-	GetSystemName(ctx context.Context, ndmsName string) string
+// interfaceQueries is the subset of *query.Queries.Interfaces used by Catalog.
+// Narrow interface — easy to mock, insulates catalog from query store details.
+type interfaceQueries interface {
+	List(ctx context.Context) ([]ndms.Interface, error)
+	ResolveSystemName(ctx context.Context, ndmsName string) string
 }
 
 // StoreClient is the subset of storage used by Catalog.
@@ -99,7 +100,7 @@ type SnapshotFunc func(ctx context.Context) interface{}
 // CatalogImpl implements the Catalog interface.
 type CatalogImpl struct {
 	provider TunnelProvider
-	ndms     NDMSClient
+	ifaces   interfaceQueries
 	store    StoreClient
 
 	// Snapshot providers (nil-safe). Set via SetSnapshotProvider.
@@ -113,8 +114,8 @@ type CatalogImpl struct {
 }
 
 // NewCatalog creates a new CatalogImpl.
-func NewCatalog(provider TunnelProvider, ndms NDMSClient, store StoreClient) *CatalogImpl {
-	return &CatalogImpl{provider: provider, ndms: ndms, store: store}
+func NewCatalog(provider TunnelProvider, ifaces interfaceQueries, store StoreClient) *CatalogImpl {
+	return &CatalogImpl{provider: provider, ifaces: ifaces, store: store}
 }
 
 // ListAll returns a deduplicated list of all tunnels and interfaces for UI dropdowns.
@@ -149,22 +150,26 @@ func (c *CatalogImpl) ListAll(ctx context.Context) []TunnelEntry {
 		}
 	}
 
-	// 2. System interfaces (unmanaged WireGuard)
-	if c.ndms != nil {
-		wgIfaces, err := c.ndms.ListWireguardInterfaces(ctx)
+	// 2. System interfaces (unmanaged WireGuard/Proxy/OpkgTun)
+	if c.ifaces != nil {
+		all, err := c.ifaces.List(ctx)
 		if err == nil {
-			for _, iface := range wgIfaces {
-				if managed[iface.Name] {
+			for _, iface := range all {
+				t := strings.ToLower(iface.Type)
+				if t != "wireguard" && t != "proxy" && t != "opkgtun" {
 					continue
 				}
-				name := iface.Name
+				if managed[iface.ID] {
+					continue
+				}
+				name := iface.ID
 				if iface.Description != "" {
 					name = iface.Description
 				}
 				result = append(result, TunnelEntry{
-					ID:        "system:" + iface.Name,
+					ID:        "system:" + iface.ID,
 					Name:      name,
-					Iface:     iface.Name,
+					Iface:     iface.ID,
 					Type:      "system",
 					Status:    "up",
 					Available: true,
@@ -246,7 +251,7 @@ func (c *CatalogImpl) Exists(ctx context.Context, tunnelID string) bool {
 	}
 	if tunnel.IsSystemTunnel(tunnelID) {
 		ndmsName := tunnel.SystemTunnelName(tunnelID)
-		kernelName := c.ndms.GetSystemName(ctx, ndmsName)
+		kernelName := c.ifaces.ResolveSystemName(ctx, ndmsName)
 		return kernelName != "" && kernelName != ndmsName
 	}
 	return c.store.Exists(tunnelID)
@@ -257,7 +262,7 @@ func (c *CatalogImpl) Exists(ctx context.Context, tunnelID string) bool {
 func (c *CatalogImpl) GetKernelIface(ctx context.Context, tunnelID string) (string, bool) {
 	if tunnel.IsSystemTunnel(tunnelID) {
 		ndmsName := tunnel.SystemTunnelName(tunnelID)
-		kernelName := c.ndms.GetSystemName(ctx, ndmsName)
+		kernelName := c.ifaces.ResolveSystemName(ctx, ndmsName)
 		if kernelName == "" || kernelName == ndmsName {
 			return "", false
 		}

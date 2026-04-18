@@ -8,16 +8,24 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 )
+
+// InterfaceQueries is the subset of *query.Queries.Interfaces used by
+// ManagerImpl. Narrow interface so tests can mock without pulling in the
+// whole query store.
+type InterfaceQueries interface {
+	Get(ctx context.Context, name string) (*ndms.Interface, error)
+	GetDetails(ctx context.Context, name string) (*ndms.InterfaceDetails, error)
+}
 
 // ManagerImpl is the implementation of the state Manager.
 // It is the SINGLE SOURCE OF TRUTH for tunnel state.
 type ManagerImpl struct {
-	ndms     ndms.Client
+	ifaces   InterfaceQueries
 	wg       wg.Client
 	backend  backend.Backend
 	matrixV2 StateMatrixV2
@@ -28,9 +36,9 @@ type ManagerImpl struct {
 }
 
 // New creates a new StateManager.
-func New(ndmsClient ndms.Client, wgClient wg.Client, backendImpl backend.Backend, appLogger logging.AppLogger) *ManagerImpl {
+func New(ifaces InterfaceQueries, wgClient wg.Client, backendImpl backend.Backend, appLogger logging.AppLogger) *ManagerImpl {
 	m := &ManagerImpl{
-		ndms:     ndmsClient,
+		ifaces:   ifaces,
 		wg:       wgClient,
 		backend:  backendImpl,
 		matrixV2: StateMatrixV2{},
@@ -55,18 +63,18 @@ func (m *ManagerImpl) GetState(ctx context.Context, tunnelID string) tunnel.Stat
 		// OS4 / lightweight: check link status via sysfs operstate (fast, no NDMS)
 		linkUp = m.sysfsLinkUp(names.IfaceName)
 	} else if hasNDMS {
-		info.OpkgTunExists = m.ndms.OpkgTunExists(ctx, names.NDMSName)
+		iface, err := m.ifaces.Get(ctx, names.NDMSName)
+		if err == nil && iface != nil {
+			info.OpkgTunExists = true
+		}
 
 		if info.OpkgTunExists {
-			if raw, err := m.ndms.ShowInterface(ctx, names.NDMSName); err == nil {
-				if ifInfo, err := ndms.ParseInterfaceInfo(raw); err == nil {
-					intent = ifInfo.Intent()
-					linkUp = ifInfo.LinkUp()
-					if ifInfo.Uptime > 0 {
-						info.ConnectedAt = time.Now().Add(-time.Duration(ifInfo.Uptime) * time.Second).UTC().Format(time.RFC3339)
-					}
-				} else {
-					showInterfaceFailed = true
+			details, err := m.ifaces.GetDetails(ctx, names.NDMSName)
+			if err == nil && details != nil {
+				intent = details.Intent()
+				linkUp = details.LinkUp()
+				if details.Uptime > 0 {
+					info.ConnectedAt = time.Now().Add(-time.Duration(details.Uptime) * time.Second).UTC().Format(time.RFC3339)
 				}
 			} else {
 				showInterfaceFailed = true

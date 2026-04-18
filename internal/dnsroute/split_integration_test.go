@@ -13,10 +13,12 @@ func TestCreate_SplitsCIDRIntoSubnets(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	q, c, _, _ := newTestNDMS()
 	svc := &ServiceImpl{
-		store: store,
-		ndms:  &noopNDMS{},
-		log:   noopLogger(),
+		store:    store,
+		queries:  q,
+		commands: c,
+		log:      noopLogger(),
 	}
 
 	ctx := context.Background()
@@ -60,10 +62,12 @@ func TestUpdate_SplitsCIDRIntoSubnets(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	q, c, _, _ := newTestNDMS()
 	svc := &ServiceImpl{
-		store: store,
-		ndms:  &noopNDMS{},
-		log:   noopLogger(),
+		store:    store,
+		queries:  q,
+		commands: c,
+		log:      noopLogger(),
 	}
 
 	ctx := context.Background()

@@ -10,20 +10,28 @@ import (
 // spamming router logs with session connect/disconnect messages.
 
 // rciPost sends a JSON payload to RCI and returns an error if the call fails.
+// On success, schedules a debounced NDMS config save and invalidates caches
+// that could be affected by an interface/wireguard-peer mutation so
+// subsequent reads see fresh data.
 func (s *Service) rciPost(ctx context.Context, payload interface{}) error {
-	_, err := s.ndms.RCIPost(ctx, payload)
-	return err
-}
-
-// rciSave saves the NDMS configuration via RCI.
-func (s *Service) rciSave(ctx context.Context) error {
-	return s.rciPost(ctx, map[string]interface{}{
-		"system": map[string]interface{}{
-			"configuration": map[string]interface{}{
-				"save": true,
-			},
-		},
-	})
+	if _, err := s.transport.Post(ctx, payload); err != nil {
+		return err
+	}
+	if s.saveCoord != nil {
+		s.saveCoord.Request()
+	}
+	if s.queries != nil {
+		if s.queries.WGServers != nil {
+			s.queries.WGServers.InvalidateAll()
+		}
+		if s.queries.Interfaces != nil {
+			s.queries.Interfaces.InvalidateAll()
+		}
+		if s.queries.RunningConfig != nil {
+			s.queries.RunningConfig.InvalidateAll()
+		}
+	}
+	return nil
 }
 
 // rciCreateInterface creates a new WireGuard interface via RCI.

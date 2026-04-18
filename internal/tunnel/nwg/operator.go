@@ -19,33 +19,42 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 )
 
 // OperatorNativeWG manages tunnels via Keenetic native WireGuard + awg_proxy.ko.
 type OperatorNativeWG struct {
-	rci            *rci.Client
-	kmod           *KmodManager
-	ndms           ndms.Client
-	log            *logger.Logger
-	appLog         *logging.ScopedLogger
-	hookNotifier   tunnel.HookNotifier
+	queries   *query.Queries
+	commands  *command.Commands
+	transport *transport.Client
+	// Legacy rci.Client retained only for ImportWireguardConfig (multipart upload).
+	// Will move to new layer in cleanup phase.
+	rci          *rci.Client
+	kmod         *KmodManager
+	log          *logger.Logger
+	appLog       *logging.ScopedLogger
+	hookNotifier tunnel.HookNotifier
 }
 
 // NewOperator creates a new NativeWG operator.
-func NewOperator(log *logger.Logger, ndmsClient ndms.Client, rciClient *rci.Client, appLogger logging.AppLogger) *OperatorNativeWG {
+func NewOperator(log *logger.Logger, queries *query.Queries, commands *command.Commands, tr *transport.Client, rciClient *rci.Client, appLogger logging.AppLogger) *OperatorNativeWG {
 	return &OperatorNativeWG{
-		rci:    rciClient,
-		kmod:   NewKmodManager(log),
-		ndms:   ndmsClient,
-		log:    log,
-		appLog: logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubOps),
+		queries:   queries,
+		commands:  commands,
+		transport: tr,
+		rci:       rciClient,
+		kmod:      NewKmodManager(log),
+		log:       log,
+		appLog:    logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubOps),
 	}
 }
 
@@ -71,7 +80,8 @@ func (o *OperatorNativeWG) createViaImport(ctx context.Context, stored *storage.
 	// Generate .conf with all AWG params
 	confData := config.GenerateForExport(stored)
 
-	// Import via RCI — NDMS creates the interface and parses all params
+	// Import via RCI — NDMS creates the interface and parses all params.
+	// ImportWireguardConfig is a multipart-upload helper with no new-layer equivalent yet.
 	ndmsName, err := o.rci.ImportWireguardConfig(ctx, []byte(confData), stored.Name+".conf")
 	if err != nil {
 		return 0, fmt.Errorf("import wireguard config: %w", err)
@@ -89,19 +99,21 @@ func (o *OperatorNativeWG) createViaImport(ctx context.Context, stored *storage.
 	}
 
 	// Post-import settings that aren't in .conf
-	batch := rci.NewBatch()
-	batch.InterfaceDescription(ndmsName, stored.Name)
-	batch.InterfaceSecurityLevel(ndmsName, "public")
-	batch.InterfaceIPGlobal(ndmsName, true)
-	batch.InterfaceAdjustMSS(ndmsName, true)
-	batch.Save()
+	cmds := []any{
+		rci.CmdInterfaceDescription(ndmsName, stored.Name),
+		rci.CmdInterfaceSecurityLevel(ndmsName, "public"),
+		rci.CmdInterfaceIPGlobal(ndmsName, true),
+		rci.CmdInterfaceAdjustMSS(ndmsName, true),
+		rci.CmdSave(),
+	}
 
-	if err := batch.Execute(ctx, o.rci); err != nil {
+	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		// Cleanup on failure
-		cleanup := rci.NewBatch()
-		cleanup.InterfaceDelete(ndmsName)
-		cleanup.Save()
-		_ = cleanup.Execute(ctx, o.rci)
+		cleanup := []any{
+			rci.CmdInterfaceDelete(ndmsName),
+			rci.CmdSave(),
+		}
+		_, _ = o.transport.PostBatch(ctx, cleanup)
 		return 0, fmt.Errorf("post-import settings: %w", err)
 	}
 
@@ -127,15 +139,16 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 		return 0, fmt.Errorf("resolve endpoint: %w", err)
 	}
 
-	batch := rci.NewBatch()
-	batch.InterfaceCreate(ndmsName)
-	batch.InterfaceDescription(ndmsName, stored.Name)
-	batch.InterfaceSecurityLevel(ndmsName, "public")
-	batch.InterfaceIPAddress(ndmsName, extractIPv4(stored.Interface.Address), "255.255.255.255")
-	batch.InterfaceMTU(ndmsName, stored.Interface.MTU)
-	batch.InterfaceAdjustMSS(ndmsName, true)
-	batch.InterfaceIPGlobal(ndmsName, true)
-	batch.WireguardPrivateKey(ndmsName, stored.Interface.PrivateKey)
+	cmds := []any{
+		rci.CmdInterfaceCreate(ndmsName),
+		rci.CmdInterfaceDescription(ndmsName, stored.Name),
+		rci.CmdInterfaceSecurityLevel(ndmsName, "public"),
+		rci.CmdInterfaceIPAddress(ndmsName, extractIPv4(stored.Interface.Address), "255.255.255.255"),
+		rci.CmdInterfaceMTU(ndmsName, stored.Interface.MTU),
+		rci.CmdInterfaceAdjustMSS(ndmsName, true),
+		rci.CmdInterfaceIPGlobal(ndmsName, true),
+		rci.CmdWireguardPrivateKey(ndmsName, stored.Interface.PrivateKey),
+	}
 
 	// DNS
 	if stored.Interface.DNS != "" {
@@ -146,20 +159,20 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 			}
 		}
 		if len(servers) > 0 {
-			batch.InterfaceDNS(ndmsName, servers)
+			cmds = append(cmds, rci.CmdInterfaceDNS(ndmsName, servers))
 		}
 	}
 
 	// IPv6 if present
 	ipv6Addr := extractIPv6(stored.Interface.Address)
 	if ipv6Addr != "" {
-		batch.InterfaceIPv6Address(ndmsName, ipv6Addr)
+		cmds = append(cmds, rci.CmdInterfaceIPv6Address(ndmsName, ipv6Addr))
 	}
 
 	// Peer
 	peerCfg := rci.PeerConfig{
-		PublicKey: stored.Peer.PublicKey,
-		Endpoint:  fmt.Sprintf("%s:%d", endpointIP, endpointPort),
+		PublicKey:   stored.Peer.PublicKey,
+		Endpoint:    fmt.Sprintf("%s:%d", endpointIP, endpointPort),
 		AllowedIPv4: []rci.AllowedIP{{Address: "0.0.0.0", Mask: "0"}},
 	}
 	if hasIPv6AllowedIPs(stored.Peer.AllowedIPs) {
@@ -171,15 +184,15 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	if stored.Peer.PresharedKey != "" {
 		peerCfg.PresharedKey = stored.Peer.PresharedKey
 	}
-	batch.WireguardPeer(ndmsName, peerCfg)
-	batch.Save()
+	cmds = append(cmds, rci.CmdWireguardPeer(ndmsName, peerCfg), rci.CmdSave())
 
-	if err := batch.Execute(ctx, o.rci); err != nil {
+	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		// Cleanup on failure
-		cleanup := rci.NewBatch()
-		cleanup.InterfaceDelete(ndmsName)
-		cleanup.Save()
-		_ = cleanup.Execute(ctx, o.rci)
+		cleanup := []any{
+			rci.CmdInterfaceDelete(ndmsName),
+			rci.CmdSave(),
+		}
+		_, _ = o.transport.PostBatch(ctx, cleanup)
 		return 0, fmt.Errorf("create batch: %w", err)
 	}
 
@@ -187,7 +200,7 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	// Non-fatal: kmod proxy handles actual obfuscation regardless.
 	if ndmsinfo.SupportsWireguardASC() {
 		if ascJSON, err := buildASCJSON(&stored.Interface); err == nil && ascJSON != nil {
-			if err := o.ndms.SetASCParams(ctx, ndmsName, ascJSON); err != nil {
+			if err := o.commands.Wireguard.SetASCParams(ctx, ndmsName, ascJSON); err != nil {
 				o.log.Warnf("nwg: SetASCParams via RCI failed (non-fatal): %v", err)
 			}
 		}
@@ -231,7 +244,7 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 	// via the edit form after the initial Create (e.g. imported as plain WG, then edited).
 	o.appLog.Full("start", stored.Name, "Syncing ASC params to NDMS")
 	if ascJSON, err := buildASCJSON(&stored.Interface); err == nil && ascJSON != nil {
-		if err := o.ndms.SetASCParams(ctx, names.NDMSName, ascJSON); err != nil {
+		if err := o.commands.Wireguard.SetASCParams(ctx, names.NDMSName, ascJSON); err != nil {
 			o.log.Warnf("nwg: sync ASC params on start for %s: %v", names.NDMSName, err)
 		}
 	}
@@ -248,11 +261,6 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 
 	realEndpoint := fmt.Sprintf("%s:%d", endpointIP, endpointPort)
 
-	// Batch: set endpoint + connect via + sync + up
-	batch := rci.NewBatch()
-	batch.WireguardPeerEndpoint(names.NDMSName, pubkey, realEndpoint)
-	batch.WireguardPeerConnect(names.NDMSName, pubkey, stored.ISPInterface)
-
 	// Sync address/MTU from storage
 	if err := o.SyncAddressMTU(ctx, stored); err != nil {
 		o.log.Warnf("nwg: sync address/mtu on start: %v", err)
@@ -265,9 +273,14 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 	if o.hookNotifier != nil {
 		o.hookNotifier.ExpectHook(names.NDMSName, "running")
 	}
-	batch.InterfaceUp(names.NDMSName, true)
 
-	if err := batch.Execute(ctx, o.rci); err != nil {
+	// Batch: set endpoint + connect via + up
+	cmds := []any{
+		rci.CmdWireguardPeerEndpoint(names.NDMSName, pubkey, realEndpoint),
+		rci.CmdWireguardPeerConnect(names.NDMSName, pubkey, stored.ISPInterface),
+		rci.CmdInterfaceUp(names.NDMSName, true),
+	}
+	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		return fmt.Errorf("start native: %w", err)
 	}
 
@@ -318,11 +331,6 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 
 	proxyEndpoint := fmt.Sprintf("127.0.0.1:%d", result.ListenPort)
 
-	// Batch: set proxy endpoint + connect + up
-	batch := rci.NewBatch()
-	batch.WireguardPeerEndpoint(names.NDMSName, pubkey, proxyEndpoint)
-	batch.WireguardPeerConnect(names.NDMSName, pubkey, stored.ISPInterface)
-
 	// Sync address/MTU from storage
 	if err := o.SyncAddressMTU(ctx, stored); err != nil {
 		o.log.Warnf("nwg: sync address/mtu on start: %v", err)
@@ -334,9 +342,14 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 	if o.hookNotifier != nil {
 		o.hookNotifier.ExpectHook(names.NDMSName, "running")
 	}
-	batch.InterfaceUp(names.NDMSName, true)
 
-	if err := batch.Execute(ctx, o.rci); err != nil {
+	// Batch: set proxy endpoint + connect + up
+	cmds := []any{
+		rci.CmdWireguardPeerEndpoint(names.NDMSName, pubkey, proxyEndpoint),
+		rci.CmdWireguardPeerConnect(names.NDMSName, pubkey, stored.ISPInterface),
+		rci.CmdInterfaceUp(names.NDMSName, true),
+	}
+	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		_ = o.kmod.RemoveTunnel(stored.ID)
 		return fmt.Errorf("start proxy: %w", err)
 	}
@@ -365,9 +378,10 @@ func (o *OperatorNativeWG) SuspendProxy(ctx context.Context, stored *storage.AWG
 
 	// 2. Disconnect peer — NDMS sets link: pending, connected: no.
 	// conf stays "running" so NDMS knows the tunnel wants to be up.
-	batch := rci.NewBatch()
-	batch.WireguardPeerDisconnect(names.NDMSName, pubkey)
-	if err := batch.Execute(ctx, o.rci); err != nil {
+	cmds := []any{
+		rci.CmdWireguardPeerDisconnect(names.NDMSName, pubkey),
+	}
+	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		o.log.Warnf("nwg: suspend proxy %s: peer disconnect: %v", names.NDMSName, err)
 		return fmt.Errorf("peer disconnect: %w", err)
 	}
@@ -387,10 +401,11 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 	if o.hookNotifier != nil {
 		o.hookNotifier.ExpectHook(names.NDMSName, "disabled")
 	}
-	batch := rci.NewBatch()
-	batch.InterfaceUp(names.NDMSName, false)
-	batch.Save()
-	_ = batch.Execute(ctx, o.rci)
+	cmds := []any{
+		rci.CmdInterfaceUp(names.NDMSName, false),
+		rci.CmdSave(),
+	}
+	_, _ = o.transport.PostBatch(ctx, cmds)
 
 	// Clear DNS servers from the router's DNS proxy
 	o.clearDNS(ctx, names.NDMSName, stored)
@@ -421,10 +436,10 @@ func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel
 
 	// 3. Remove NDMS interface — cleans everything:
 	//    peer, DNS (ip + ipv6 name-server), ASC params, kernel Wireguard interface
-	_, _ = o.rci.Post(ctx, rci.CmdInterfaceDelete(names.NDMSName))
+	_, _ = o.transport.Post(ctx, rci.CmdInterfaceDelete(names.NDMSName))
 
 	// 4. Persist
-	_, _ = o.rci.Post(ctx, rci.CmdSave())
+	_, _ = o.transport.Post(ctx, rci.CmdSave())
 
 	o.log.Infof("nwg: deleted %s", names.NDMSName)
 	return nil
@@ -437,7 +452,7 @@ func (o *OperatorNativeWG) applyDNS(ctx context.Context, ndmsName string, stored
 	if len(servers) == 0 {
 		return
 	}
-	if err := o.ndms.SetDNS(ctx, ndmsName, servers); err != nil {
+	if err := o.commands.Interfaces.SetDNS(ctx, ndmsName, servers); err != nil {
 		o.log.Warnf("nwg: set DNS for %s: %v", ndmsName, err)
 	}
 }
@@ -448,7 +463,7 @@ func (o *OperatorNativeWG) clearDNS(ctx context.Context, ndmsName string, stored
 	if len(servers) == 0 {
 		return
 	}
-	_ = o.ndms.ClearDNS(ctx, ndmsName, servers)
+	_ = o.commands.Interfaces.ClearDNS(ctx, ndmsName, servers)
 }
 
 // parseDNSServers splits a comma-separated DNS string into a slice of trimmed, non-empty IPs.
@@ -471,7 +486,7 @@ func parseDNSServers(dns string) []string {
 func (o *OperatorNativeWG) GetState(ctx context.Context, stored *storage.AWGTunnel) tunnel.StateInfo {
 	names := NewNWGNames(stored.NWGIndex)
 
-	body, err := o.rci.GetRaw(ctx, "/show/interface/"+names.NDMSName)
+	body, err := o.transport.GetRaw(ctx, "/show/interface/"+names.NDMSName)
 	if err != nil {
 		return tunnel.StateInfo{State: tunnel.StateNotCreated}
 	}
@@ -529,7 +544,7 @@ func (o *OperatorNativeWG) ConfigurePingCheck(ctx context.Context, stored *stora
 	profile := pingCheckProfile(stored.ID)
 	ifaceName := NewNWGNames(stored.NWGIndex).NDMSName
 	o.log.Infof("pingcheck: configure profile=%s iface=%s host=%s mode=%s", profile, ifaceName, cfg.Host, cfg.Mode)
-	if err := o.ndms.ConfigurePingCheck(ctx, profile, ifaceName, cfg); err != nil {
+	if err := o.commands.PingCheck.ConfigureProfile(ctx, profile, ifaceName, cfg); err != nil {
 		o.log.Warnf("pingcheck: configure failed: %v", err)
 		return err
 	}
@@ -540,18 +555,59 @@ func (o *OperatorNativeWG) ConfigurePingCheck(ctx context.Context, stored *stora
 func (o *OperatorNativeWG) RemovePingCheck(ctx context.Context, stored *storage.AWGTunnel) error {
 	profile := pingCheckProfile(stored.ID)
 	ifaceName := NewNWGNames(stored.NWGIndex).NDMSName
-	return o.ndms.RemovePingCheck(ctx, profile, ifaceName)
+	return o.commands.PingCheck.RemoveProfile(ctx, profile, ifaceName)
 }
 
 // GetPingCheckStatus returns the current ping-check status for a tunnel.
-func (o *OperatorNativeWG) GetPingCheckStatus(ctx context.Context, stored *storage.AWGTunnel) (*ndms.PingCheckStatus, error) {
+//
+// The return type is the legacy (nested, profile-oriented) PingCheckStatus
+// kept for API compatibility with callers in api/pingcheck.go and
+// pingcheck/facade.go. Internally we compose it from the new flattened
+// query stores (PingCheckProfile.List + PingCheckStatus.List).
+func (o *OperatorNativeWG) GetPingCheckStatus(ctx context.Context, stored *storage.AWGTunnel) (*ndms.PingCheckProfileStatus, error) {
 	profile := pingCheckProfile(stored.ID)
-	status, err := o.ndms.ShowPingCheck(ctx, profile)
-	if err != nil {
-		o.log.Warnf("pingcheck: show %s: %v", profile, err)
-		// Return exists=false without error so API doesn't break
-		return &ndms.PingCheckStatus{Exists: false}, nil
+	ifaceName := NewNWGNames(stored.NWGIndex).NDMSName
+
+	status := &ndms.PingCheckProfileStatus{Exists: false}
+
+	profiles, perr := o.queries.PingCheckProfile.List(ctx)
+	if perr != nil {
+		o.log.Warnf("pingcheck: list profiles: %v", perr)
+	} else {
+		for _, p := range profiles {
+			if p.Profile == profile {
+				status.Exists = true
+				if len(p.Host) > 0 {
+					status.Host = p.Host[0]
+				}
+				status.Mode = p.Mode
+				status.Interval = p.UpdateInterval
+				status.MaxFails = p.MaxFails
+				status.MinSuccess = p.MinSuccess
+				status.Timeout = p.Timeout
+				status.Port = p.Port
+				break
+			}
+		}
 	}
+
+	if status.Exists {
+		statuses, serr := o.queries.PingCheckStatus.List(ctx)
+		if serr != nil {
+			o.log.Warnf("pingcheck: list statuses: %v", serr)
+		} else {
+			for _, s := range statuses {
+				if s.Profile == profile && s.Interface == ifaceName {
+					status.Bound = true
+					status.Status = s.Status
+					status.SuccessCount = s.SuccessCount
+					status.FailCount = s.FailCount
+					break
+				}
+			}
+		}
+	}
+
 	// Restart and MinSuccess: use storage as source of truth.
 	// NDMS /show/ping-check/ doesn't expose these fields in a reliable way
 	// (min-success is simply omitted from the profile response even when
@@ -602,7 +658,7 @@ func (o *OperatorNativeWG) RestoreKmodTunnel(ctx context.Context, stored *storag
 	// Update NDMS peer endpoint to proxy address
 	names := NewNWGNames(stored.NWGIndex)
 	proxyEndpoint := fmt.Sprintf("127.0.0.1:%d", result.ListenPort)
-	_, err = o.rci.Post(ctx, rci.CmdWireguardPeerEndpoint(names.NDMSName, stored.Peer.PublicKey, proxyEndpoint))
+	_, err = o.transport.Post(ctx, rci.CmdWireguardPeerEndpoint(names.NDMSName, stored.Peer.PublicKey, proxyEndpoint))
 	if err != nil {
 		o.log.Warnf("nwg: restored kmod but failed to update endpoint to %s: %v", proxyEndpoint, err)
 	}
@@ -617,36 +673,34 @@ func (o *OperatorNativeWG) SyncAddressMTU(ctx context.Context, stored *storage.A
 	ndmsName := NewNWGNames(stored.NWGIndex).NDMSName
 	ipv4 := extractIPv4(stored.Interface.Address)
 
-	if err := o.ndms.SetAddress(ctx, ndmsName, ipv4); err != nil {
+	addr, mask := splitAddressMask(ipv4)
+	if err := o.commands.Interfaces.SetAddress(ctx, ndmsName, addr, mask); err != nil {
 		return fmt.Errorf("sync address: %w", err)
 	}
 
 	// Sync IPv6 address if present
 	ipv6 := extractIPv6(stored.Interface.Address)
 	if ipv6 != "" {
-		if err := o.ndms.SetIPv6Address(ctx, ndmsName, ipv6); err != nil {
+		if err := o.commands.Interfaces.SetIPv6Address(ctx, ndmsName, ipv6); err != nil {
 			o.log.Warnf("nwg: sync ipv6 address on %s: %v", ndmsName, err)
 		}
 	} else {
 		// Clear IPv6 if removed from config
-		o.ndms.ClearIPv6Address(ctx, ndmsName)
+		_ = o.commands.Interfaces.ClearIPv6Address(ctx, ndmsName)
 	}
 
-	if err := o.ndms.SetMTU(ctx, ndmsName, stored.Interface.MTU); err != nil {
+	if err := o.commands.Interfaces.SetMTU(ctx, ndmsName, stored.Interface.MTU); err != nil {
 		return fmt.Errorf("sync mtu: %w", err)
 	}
 
-	if err := o.ndms.Save(ctx); err != nil {
-		o.log.Warnf("nwg: save after address/mtu sync: %v", err)
-	}
-
+	// Save is handled by the Commands layer via SaveCoordinator.
 	o.log.Infof("nwg: synced address=%s ipv6=%s mtu=%d on %s", ipv4, ipv6, stored.Interface.MTU, ndmsName)
 	return nil
 }
 
 // UpdateDescription updates the NDMS interface description.
 func (o *OperatorNativeWG) UpdateDescription(ctx context.Context, stored *storage.AWGTunnel, name string) error {
-	return o.ndms.SetDescription(ctx, NewNWGNames(stored.NWGIndex).NDMSName, name)
+	return o.commands.Interfaces.SetDescription(ctx, NewNWGNames(stored.NWGIndex).NDMSName, name)
 }
 
 // KmodManager returns the kmod manager (for shutdown hook).
@@ -662,7 +716,7 @@ func (o *OperatorNativeWG) KmodManager() *KmodManager {
 func (o *OperatorNativeWG) ResolveActiveWAN(ctx context.Context, stored *storage.AWGTunnel) string {
 	names := NewNWGNames(stored.NWGIndex)
 
-	body, err := o.rci.GetRaw(ctx, "/show/interface/"+names.NDMSName)
+	body, err := o.transport.GetRaw(ctx, "/show/interface/"+names.NDMSName)
 	if err != nil {
 		return ""
 	}
@@ -670,9 +724,9 @@ func (o *OperatorNativeWG) ResolveActiveWAN(ctx context.Context, stored *storage
 	if err != nil || !rciState.Exists || rciState.PeerVia == "" {
 		return ""
 	}
-	sysName := o.ndms.GetSystemName(ctx, rciState.PeerVia)
-	if sysName == rciState.PeerVia {
-		// GetSystemName failed to translate (e.g. /show/interface/system-name
+	sysName := o.queries.Interfaces.ResolveSystemName(ctx, rciState.PeerVia)
+	if sysName == "" || sysName == rciState.PeerVia {
+		// ResolveSystemName failed to translate (e.g. /show/interface/system-name
 		// unavailable on firmware < 4.1). Return "" so the kmod proxy socket
 		// uses the default route instead of crashing with ENODEV.
 		o.log.Warnf("nwg: %s peer via %s: could not resolve kernel name, using default route", names.NDMSName, rciState.PeerVia)
@@ -684,7 +738,7 @@ func (o *OperatorNativeWG) ResolveActiveWAN(ctx context.Context, stored *storage
 
 // nextFreeIndex finds the next available Wireguard index via RCI.
 func (o *OperatorNativeWG) nextFreeIndex(ctx context.Context) (int, error) {
-	body, err := o.rci.GetRaw(ctx, "/show/interface/")
+	body, err := o.transport.GetRaw(ctx, "/show/interface/")
 	if err != nil {
 		return 0, fmt.Errorf("list wireguard interfaces: %w", err)
 	}
@@ -726,14 +780,14 @@ func buildKmodConfigResolved(stored *storage.AWGTunnel, endpointIP string, endpo
 	return KmodConfig{
 		EndpointIP:   endpointIP,
 		EndpointPort: endpointPort,
-		H1: stored.Interface.H1, H2: stored.Interface.H2,
+		H1:           stored.Interface.H1, H2: stored.Interface.H2,
 		H3: stored.Interface.H3, H4: stored.Interface.H4,
 		S1: stored.Interface.S1, S2: stored.Interface.S2,
 		S3: stored.Interface.S3, S4: stored.Interface.S4,
 		Jc: stored.Interface.Jc, Jmin: stored.Interface.Jmin, Jmax: stored.Interface.Jmax,
 		PubServerHex: pubKeyToHex(stored.Peer.PublicKey),
 		PubClientHex: pubKeyToHex(clientPubKeyFromPrivate(stored.Interface.PrivateKey)),
-		I1: stored.Interface.I1, I2: stored.Interface.I2,
+		I1:           stored.Interface.I1, I2: stored.Interface.I2,
 		I3: stored.Interface.I3, I4: stored.Interface.I4, I5: stored.Interface.I5,
 		BindIface: bindIface,
 	}, nil
@@ -752,6 +806,25 @@ func (o *OperatorNativeWG) fallbackResolve(stored *storage.AWGTunnel, resolveErr
 	port, _ := strconv.Atoi(portStr)
 	o.log.Warnf("nwg: DNS failed for %s, using cached IP %s", stored.Peer.Endpoint, stored.ResolvedEndpointIP)
 	return stored.ResolvedEndpointIP, port, nil
+}
+
+// splitAddressMask splits a CIDR or bare IP into (address, mask).
+// - "10.0.0.2/32" → ("10.0.0.2", "255.255.255.255")
+// - "10.0.0.2"    → ("10.0.0.2", "255.255.255.255")  (defaults to /32)
+// Returns the original input as-is with a /32 mask if parsing fails.
+func splitAddressMask(addr string) (string, string) {
+	if addr == "" {
+		return "", ""
+	}
+	cidr := addr
+	if !strings.Contains(cidr, "/") {
+		cidr += "/32"
+	}
+	ip, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return addr, "255.255.255.255"
+	}
+	return ip.String(), net.IP(ipNet.Mask).String()
 }
 
 // extractIPv4 extracts the bare IPv4 address from a WireGuard Address field
@@ -779,7 +852,7 @@ func extractIPv4(addr string) string {
 
 // extractIPv6 extracts the IPv6 address from a WireGuard Address field
 // which may contain comma-separated IPv4 and IPv6 (e.g. "172.16.0.2, 2606::1/128").
-// Returns the bare IPv6 address WITHOUT CIDR suffix (ndms.SetIPv6Address adds /128).
+// Returns the bare IPv6 address WITHOUT CIDR suffix (SetIPv6Address adds /128).
 func extractIPv6(addr string) string {
 	for _, part := range strings.Split(addr, ",") {
 		part = strings.TrimSpace(part)
@@ -809,7 +882,7 @@ func hasIPv6AllowedIPs(allowedIPs []string) bool {
 	return false
 }
 
-// buildASCJSON builds a json.RawMessage for ndms.SetASCParams from stored interface fields.
+// buildASCJSON builds a json.RawMessage for SetASCParams from stored interface fields.
 // Returns nil if the config is plain WireGuard (no obfuscation).
 func buildASCJSON(iface *storage.AWGInterface) (json.RawMessage, error) {
 	if !config.IsAWGObfuscated(iface) {

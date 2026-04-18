@@ -32,9 +32,11 @@ func newHRTestSvc(t *testing.T, resolver InterfaceResolver) (*ServiceImpl, *hydr
 		t.Fatal(err)
 	}
 
+	q, c, _, _ := newTestNDMS()
 	svc := &ServiceImpl{
 		store:    store,
-		ndms:     &noopNDMS{},
+		queries:  q,
+		commands: c,
 		resolver: resolver,
 		log:      noopLogger(),
 		hydra:    hydra,

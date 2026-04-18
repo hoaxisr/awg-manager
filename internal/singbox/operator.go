@@ -10,8 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
 
 const (
@@ -36,10 +37,11 @@ type Operator struct {
 
 // OperatorDeps are external dependencies for DI.
 type OperatorDeps struct {
-	Log    *slog.Logger
-	NDMS   ndms.Client
-	Dir    string // optional; defaults to /opt/etc/awg-manager/singbox
-	Binary string // optional; defaults to "sing-box"
+	Log      *slog.Logger
+	Queries  *query.Queries
+	Commands *command.Commands
+	Dir      string // optional; defaults to /opt/etc/awg-manager/singbox
+	Binary   string // optional; defaults to "sing-box"
 }
 
 func NewOperator(d OperatorDeps) *Operator {
@@ -68,7 +70,7 @@ func NewOperator(d OperatorDeps) *Operator {
 		logPath:    logPath,
 		proc:       NewProcess(binary, configPath, pidPath, logPath),
 		validator:  NewValidator(binary),
-		proxyMgr:   NewProxyManager(d.NDMS),
+		proxyMgr:   NewProxyManager(d.Queries, d.Commands),
 		clash:      NewClashClient("127.0.0.1:9090"),
 	}
 }

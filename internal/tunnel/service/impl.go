@@ -109,16 +109,21 @@ func (s *ServiceImpl) RunningTunnels(ctx context.Context) []traffic.RunningTunne
 		if si.State != tunnel.StateRunning {
 			continue
 		}
-		var ifaceName string
+		var ifaceName, ndmsName string
 		if t.Backend == "nativewg" {
-			ifaceName = nwg.NewNWGNames(t.NWGIndex).IfaceName
+			names := nwg.NewNWGNames(t.NWGIndex)
+			ifaceName = names.IfaceName
+			ndmsName = names.NDMSName
 		} else {
-			ifaceName = tunnel.NewNames(t.ID).IfaceName
+			names := tunnel.NewNames(t.ID)
+			ifaceName = names.IfaceName
+			ndmsName = names.NDMSName
 		}
 		result = append(result, traffic.RunningTunnel{
 			ID:            t.ID,
 			BackendType:   s.backendLabel(&t),
 			IfaceName:     ifaceName,
+			NDMSName:      ndmsName,
 			RxBytes:       si.RxBytes,
 			TxBytes:       si.TxBytes,
 			LastHandshake: si.LastHandshake,

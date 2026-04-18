@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 )
 
 // LatencyNotAvailable is used for NativeWG log entries where NDMS
@@ -15,7 +15,7 @@ const LatencyNotAvailable = -1
 
 // nwgPollSource abstracts NDMS polling for testability.
 type nwgPollSource interface {
-	PollPingCheck(ctx context.Context, tunnelID string) (*ndms.PingCheckStatus, error)
+	PollPingCheck(ctx context.Context, tunnelID string) (*ndms.PingCheckProfileStatus, error)
 }
 
 // nwgMonitor polls NDMS ping-check status for a single NativeWG tunnel

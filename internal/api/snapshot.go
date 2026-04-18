@@ -75,6 +75,32 @@ func (sb *SnapshotBuilder) SetInstanceID(id string) {
 	sb.instanceID = id
 }
 
+// BuildTunnelsSnapshot composes the snapshot:tunnels payload
+// ({tunnels, external, system}) the same way SendSnapshots does for
+// a fresh SSE client, but in a form that can also be republished to
+// the event bus when the tunnel list changes (hook-driven refresh).
+// Returns nil when no TunnelsHandler is wired, or when its listItems
+// call errors — in both cases there's nothing safe to broadcast.
+func (sb *SnapshotBuilder) BuildTunnelsSnapshot(ctx context.Context) map[string]interface{} {
+	if sb.tunnels == nil {
+		return nil
+	}
+	items, err := sb.tunnels.listItems(ctx)
+	if err != nil {
+		return nil
+	}
+	payload := map[string]interface{}{"tunnels": items}
+	if sb.external != nil {
+		external, _ := sb.external.listExternal(ctx)
+		payload["external"] = external
+	}
+	if sb.systemTun != nil {
+		system, _ := sb.systemTun.listSystemTunnels(ctx)
+		payload["system"] = system
+	}
+	return payload
+}
+
 // SendSnapshots sends all current-state snapshots to an SSE client.
 // Called immediately after SSE connection (or reconnection).
 func (sb *SnapshotBuilder) SendSnapshots(w http.ResponseWriter, flusher http.Flusher, ctx context.Context) {
@@ -100,22 +126,8 @@ func (sb *SnapshotBuilder) SendSnapshots(w http.ResponseWriter, flusher http.Flu
 	}
 
 	// Tunnels snapshot
-	if sb.tunnels != nil {
-		items, err := sb.tunnels.listItems(snapCtx)
-		if err == nil {
-			payload := map[string]interface{}{
-				"tunnels": items,
-			}
-			if sb.external != nil {
-				external, _ := sb.external.listExternal(snapCtx)
-				payload["external"] = external
-			}
-			if sb.systemTun != nil {
-				system, _ := sb.systemTun.listSystemTunnels(snapCtx)
-				payload["system"] = system
-			}
-			writeSSE(w, flusher, "snapshot:tunnels", payload)
-		}
+	if payload := sb.BuildTunnelsSnapshot(snapCtx); payload != nil {
+		writeSSE(w, flusher, "snapshot:tunnels", payload)
 	}
 
 	// Servers snapshot

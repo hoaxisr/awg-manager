@@ -3,7 +3,7 @@ package dnsroute
 import (
 	"testing"
 
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 )
 
 func TestChunkDomains(t *testing.T) {
@@ -303,12 +303,12 @@ func TestBuildTargetState_FallbackReassignedToLastActive(t *testing.T) {
 }
 
 func TestFilterAWGState(t *testing.T) {
-	groups := []ndms.ObjectGroupFQDN{
+	groups := []ndms.FQDNGroup{
 		{Name: "AWG_list_1_1", Includes: []string{"a.com"}, Excludes: []string{"b.com"}},
 		{Name: "USER_custom", Includes: []string{"c.com"}},
 		{Name: "AWG_list_2_1", Includes: []string{"d.com"}},
 	}
-	routes := []ndms.DnsProxyRoute{
+	routes := []ndms.DNSRouteRule{
 		{Group: "AWG_list_1_1", Interface: "OpkgTun0"},
 		{Group: "USER_custom", Interface: "OpkgTun1"},
 		{Group: "AWG_list_2_1", Interface: "OpkgTun2"},

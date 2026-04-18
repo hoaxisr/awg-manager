@@ -8,6 +8,7 @@ import (
 	"runtime"
 
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -15,7 +16,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
 
 // SettingsProvider provides access to settings.
@@ -41,7 +41,7 @@ type SystemHandler struct {
 	kmodLoader       KmodLoader
 	tunnelService    TunnelService
 	pingCheckService PingCheckService
-	ndmsClient       ndms.Client
+	ndmsQueries      *ndmsquery.Queries
 	restartFn        func()
 	bootStatusFn     func() bool // returns true if boot is still in progress
 	hydra            *hydraroute.Service
@@ -83,9 +83,9 @@ func (h *SystemHandler) SetPingCheckService(svc PingCheckService) {
 	h.pingCheckService = svc
 }
 
-// SetNDMSClient sets the NDMS client for querying router interfaces.
-func (h *SystemHandler) SetNDMSClient(c ndms.Client) {
-	h.ndmsClient = c
+// SetNDMSQueries sets the NDMS query registry for the new CQRS layer.
+func (h *SystemHandler) SetNDMSQueries(q *ndmsquery.Queries) {
+	h.ndmsQueries = q
 }
 
 // SetRestartFunc sets the callback to trigger daemon self-restart.
@@ -388,12 +388,12 @@ func (h *SystemHandler) AllInterfaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.ndmsClient == nil {
-		response.InternalError(w, "NDMS client not available")
+	if h.ndmsQueries == nil {
+		response.InternalError(w, "NDMS queries not available")
 		return
 	}
 
-	ifaces, err := h.ndmsClient.QueryAllInterfaces(r.Context())
+	ifaces, err := h.ndmsQueries.Interfaces.ListAll(r.Context())
 	if err != nil {
 		response.InternalError(w, "Failed to query interfaces: "+err.Error())
 		return

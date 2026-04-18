@@ -32,6 +32,9 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
+	ndmsmetrics "github.com/hoaxisr/awg-manager/internal/ndms/metrics"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
+	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
@@ -39,7 +42,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
 	"github.com/hoaxisr/awg-manager/internal/updater"
@@ -76,9 +78,8 @@ type Server struct {
 	activeBackend       backend.Backend
 	kmodLoader          *kmod.Loader
 	updaterService      *updater.Service
-	ndmsClient          ndms.Client
+	ndmsQueries         *ndmsquery.Queries
 	trafficHistory      *traffic.History
-	trafficCollector    *traffic.Collector
 	dnsRouteService     api.DNSRouteService
 	staticRouteService  api.StaticRouteService
 	systemTunnelService systemtunnel.Service
@@ -99,6 +100,10 @@ type Server struct {
 	httpServer          *http.Server
 	loopbackListener    net.Listener // optional loopback listener for reverse proxy
 
+	ndmsDispatcher api.HookDispatcher
+	ndmsTransport  *ndmstransport.Client
+	metricsPoller  *ndmsmetrics.Poller
+
 	instanceID string // unique per process, changes on restart
 
 	bootStatusFn func() bool // returns true if boot still in progress
@@ -109,7 +114,7 @@ type Server struct {
 }
 
 // New creates a new server instance.
-func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, externalService api.ExternalTunnelService, testingService *testing.Service, keenetic *auth.KeeneticClient, sessions *auth.SessionStore, settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore, pingCheckService api.PingCheckService, loggingService *logging.Service, activeBackend backend.Backend, kmodLoader *kmod.Loader, updaterService *updater.Service, ndmsClient ndms.Client, trafficHistory *traffic.History, dnsRouteService api.DNSRouteService, staticRouteService api.StaticRouteService, systemTunnelService systemtunnel.Service, managedService managed.ManagedServerService, nwgOp *nwg.OperatorNativeWG, terminalManager terminal.Manager, accessPolicySvc accesspolicy.Service, clientRouteSvc clientroute.Service, catalog routing.Catalog, orch *orchestrator.Orchestrator, bus *events.Bus, hydraService *hydraroute.Service, singboxHandler *api.SingboxHandler, clashProxy *api.ClashProxy) *Server {
+func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, externalService api.ExternalTunnelService, testingService *testing.Service, keenetic *auth.KeeneticClient, sessions *auth.SessionStore, settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore, pingCheckService api.PingCheckService, loggingService *logging.Service, activeBackend backend.Backend, kmodLoader *kmod.Loader, updaterService *updater.Service, ndmsQueries *ndmsquery.Queries, trafficHistory *traffic.History, dnsRouteService api.DNSRouteService, staticRouteService api.StaticRouteService, systemTunnelService systemtunnel.Service, managedService managed.ManagedServerService, nwgOp *nwg.OperatorNativeWG, terminalManager terminal.Manager, accessPolicySvc accesspolicy.Service, clientRouteSvc clientroute.Service, catalog routing.Catalog, orch *orchestrator.Orchestrator, bus *events.Bus, hydraService *hydraroute.Service, singboxHandler *api.SingboxHandler, clashProxy *api.ClashProxy) *Server {
 	id := generateInstanceID()
 	log.Infof("Server instance: %s", id)
 
@@ -128,7 +133,7 @@ func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, extern
 		activeBackend:       activeBackend,
 		kmodLoader:          kmodLoader,
 		updaterService:      updaterService,
-		ndmsClient:          ndmsClient,
+		ndmsQueries:         ndmsQueries,
 		trafficHistory:      trafficHistory,
 		dnsRouteService:     dnsRouteService,
 		staticRouteService:  staticRouteService,
@@ -149,9 +154,26 @@ func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, extern
 	}
 }
 
-// SetTrafficCollector sets the traffic collector (for wiring system tunnel lister).
-func (s *Server) SetTrafficCollector(c *traffic.Collector) {
-	s.trafficCollector = c
+// SetNDMSDispatcher wires the NDMS events.Dispatcher into the hook
+// handler so POST /api/hook/ndms invalidates Store caches. Main.go
+// calls this after constructing the new layer.
+func (s *Server) SetNDMSDispatcher(d api.HookDispatcher) {
+	s.ndmsDispatcher = d
+}
+
+// SetNDMSTransport wires the new NDMS transport for consumers that need
+// ad-hoc raw RCI reads (connections viewer). Main.go calls this after
+// constructing the new layer.
+func (s *Server) SetNDMSTransport(t *ndmstransport.Client) {
+	s.ndmsTransport = t
+}
+
+// SetMetricsPoller wires the unified NDMS metrics poller. Once registerRoutes
+// builds the ServersHandler, the poller's server-snapshot publisher is
+// connected to it and the ticker is started. Main.go calls this before
+// srv.Start().
+func (s *Server) SetMetricsPoller(p *ndmsmetrics.Poller) {
+	s.metricsPoller = p
 }
 
 // SetDnsCheckService sets the DNS check service (wired after port selection).
@@ -335,7 +357,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	systemHandler.SetSettingsWriter(s.settings)
 	systemHandler.SetTunnelService(s.tunnelService)
 	systemHandler.SetPingCheckService(s.pingCheckService)
-	systemHandler.SetNDMSClient(s.ndmsClient)
+	systemHandler.SetNDMSQueries(s.ndmsQueries)
 	systemHandler.SetRestartFunc(s.ScheduleRestart)
 	if s.bootStatusFn != nil {
 		systemHandler.SetBootStatusFunc(s.bootStatusFn)
@@ -350,7 +372,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	importHandler.SetPingCheckService(s.pingCheckService)
 	importHandler.SetTunnelsHandler(tunnelsHandler)
 	statusHandler := api.NewStatusHandler(s.tunnelService)
-	wanHandler := api.NewWANHandler(s.tunnelService, s.orch, s.log, appLog)
+	wanHandler := api.NewWANHandler(s.tunnelService, s.log, appLog)
 	pingCheckHandler := api.NewPingCheckHandler(s.pingCheckService, s.tunnels, s.nwgOp, appLog)
 	pingCheckHandler.SetEventBus(s.bus)
 	tunnelsHandler.SetPingCheckSnapshot(pingCheckHandler.PublishSnapshot)
@@ -365,7 +387,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	diagRunner := diagnostics.NewRunner(diagnostics.Deps{
 		TunnelService:   s.tunnelService,
 		RCI:             rci.New(),
-		NDMSClient:      s.ndmsClient,
+		NDMSQueries:     s.ndmsQueries,
+		NDMSTransport:   s.ndmsTransport,
 		Backend:         s.activeBackend,
 		KmodLoader:      s.kmodLoader,
 		TunnelStore:     s.tunnels,
@@ -376,7 +399,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	diagHandler := api.NewDiagnosticsHandler(diagRunner)
 
 	// Connections viewer
-	connectionsService := connections.NewService(s.catalog, s.ndmsClient, s.dnsRouteService)
+	connectionsService := connections.NewService(s.catalog, s.ndmsTransport, s.dnsRouteService)
 	connectionsHandler := api.NewConnectionsHandler(connectionsService)
 
 	signatureHandler := api.NewSignatureHandler()
@@ -395,12 +418,18 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// SSE event stream (protected)
 	mux.HandleFunc("/api/events", guarded(eventsHandler.Stream))
 
-	// NDM hooks (public - called from shell scripts)
+	// NDM hooks (public - called from shell scripts). Also carries the
+	// former /api/wan/event traffic via iflayerchanged layer=ipv4.
 	hookHandler := api.NewHookHandler(s.tunnelService, s.orch, appLog)
-	mux.HandleFunc("/api/hook/iface-changed", hookHandler.HandleIfaceChanged)
+	if s.ndmsDispatcher != nil {
+		hookHandler.SetDispatcher(s.ndmsDispatcher)
+	}
+	if s.tunnelService != nil {
+		hookHandler.SetWANModel(s.tunnelService.WANModel())
+	}
+	mux.HandleFunc("/api/hook/ndms", hookHandler.HandleNDMS)
 
-	// WAN hooks (public - called from shell scripts)
-	mux.HandleFunc("/api/wan/event", wanHandler.HandleEvent)
+	// WAN status (protected) — event ingress is now /api/hook/ndms.
 	mux.HandleFunc("/api/wan/status", guarded(wanHandler.GetStatus))
 
 	// Tunnels CRUD (protected + boot guarded)
@@ -536,13 +565,11 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/system-tunnels/test-ip", guarded(systemTunnelHandler.CheckIP))
 	mux.HandleFunc("/api/system-tunnels/test-speed", guarded(systemTunnelHandler.SpeedTestStream))
 
-	// Wire system tunnel traffic into collector
-	if s.trafficCollector != nil {
-		s.trafficCollector.SetSystemLister(systemTunnelHandler)
-	}
+	// System tunnel traffic is now gathered by ndmsMetricsPoller via the
+	// runningInterfacesAdapter (wired in main.go).
 
 	// VPN Servers (protected + boot guarded)
-	serverHandler := api.NewServersHandler(s.ndmsClient, s.settings, s.tunnels)
+	serverHandler := api.NewServersHandler(s.ndmsQueries, s.settings, s.tunnels)
 	mux.HandleFunc("/api/servers", guarded(serverHandler.List))
 	mux.HandleFunc("/api/servers/get", guarded(serverHandler.Get))
 	mux.HandleFunc("/api/servers/config", guarded(serverHandler.Config))
@@ -637,11 +664,18 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	accessPolicyHandler.SetEventBus(s.bus)
 	crHandler.SetEventBus(s.bus)
 	serverHandler.SetEventBus(s.bus)
-	s.AddShutdownHook(serverHandler.Stop)
 
 	// Cross-wire servers <-> managed for unified server:updated event
 	serverHandler.SetManagedHandler(managedHandler)
 	managedHandler.SetServersHandler(serverHandler)
+
+	// Plug MetricsPoller into the handler now that ServersHandler is fully
+	// wired (bus + managed). The poller re-broadcasts the full server snapshot
+	// via serverHandler whenever any server's peer metrics change.
+	if s.metricsPoller != nil {
+		s.metricsPoller.SetServerSnapshotPublisher(serverHandler)
+		s.metricsPoller.Start()
+	}
 
 	// SSE Snapshot Builder — provides full state on client connect/reconnect
 	sb := api.NewSnapshotBuilder()
@@ -662,11 +696,29 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		return systemHandler.BuildSystemInfo()
 	})
 	sb.SetWANIPFunc(func(ctx context.Context) string {
-		ip, _ := testing.GetWANIP(ctx)
+		ip, _ := testing.GetWANIPWithFallback(ctx, s.ndmsQueries.WANInterfaceAddress)
 		return ip
 	})
 	sb.SetInstanceID(s.instanceID)
 	eventsHandler.SetSnapshotBuilder(sb)
+
+	// Wire hook-driven tunnel snapshot rebroadcast so the UI drops
+	// destroyed tunnel cards (including system tunnels) without a
+	// browser refresh. The closure invalidates the stores it reads
+	// before rebuilding, because the dispatcher invalidation is async.
+	hookHandler.SetTunnelRefresher(func(ctx context.Context) {
+		if s.ndmsQueries != nil {
+			if s.ndmsQueries.WGServers != nil {
+				s.ndmsQueries.WGServers.InvalidateAll()
+			}
+			if s.ndmsQueries.Interfaces != nil {
+				s.ndmsQueries.Interfaces.InvalidateAll()
+			}
+		}
+		if payload := sb.BuildTunnelsSnapshot(ctx); payload != nil && s.bus != nil {
+			s.bus.Publish("snapshot:tunnels", payload)
+		}
+	})
 
 	// DNS routing diagnostics
 	if s.dnsCheckService != nil {

@@ -12,10 +12,12 @@ func newTestService(t *testing.T) *ServiceImpl {
 	if _, err := store.Load(); err != nil {
 		t.Fatal(err)
 	}
+	q, c, _, _ := newTestNDMS()
 	return &ServiceImpl{
-		store: store,
-		ndms:  &noopNDMS{},
-		log:   noopLogger(),
+		store:    store,
+		queries:  q,
+		commands: c,
+		log:      noopLogger(),
 	}
 }
 

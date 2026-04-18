@@ -83,7 +83,9 @@ mkdir -p "$IPK_ROOT/opt/sbin"
 mkdir -p "$IPK_ROOT/opt/share/www/awg-manager"
 mkdir -p "$IPK_ROOT/opt/etc/init.d"
 mkdir -p "$IPK_ROOT/opt/etc/awg-manager"
-mkdir -p "$IPK_ROOT/opt/etc/ndm/iflayerchanged.d"
+for hook in iflayerchanged ifcreated ifdestroyed ifipchanged; do
+    mkdir -p "$IPK_ROOT/opt/etc/ndm/${hook}.d"
+done
 
 # Copy binaries
 cp build/bin/awg-manager "$IPK_ROOT/opt/bin/"
@@ -174,8 +176,13 @@ cp -r build/www/* "$IPK_ROOT/opt/share/www/awg-manager/"
 # Copy init script (lighttpd config is generated dynamically)
 cp entware/files/etc/init.d/* "$IPK_ROOT/opt/etc/init.d/"
 
-# Copy iflayerchanged.d hook script
-cp entware/files/etc/ndm/iflayerchanged.d/* "$IPK_ROOT/opt/etc/ndm/iflayerchanged.d/"
+# Copy unified hook script into every NDMS hook directory we use.
+# Source file is internal/ndms/events/hook-script.sh (also used as
+# //go:embed for the Installer component at runtime).
+for hook in iflayerchanged ifcreated ifdestroyed ifipchanged; do
+    cp internal/ndms/events/hook-script.sh \
+        "$IPK_ROOT/opt/etc/ndm/${hook}.d/50-awg-manager.sh"
+done
 
 # Generate control file
 cat > "$IPK_ROOT/CONTROL/control" << EOF

@@ -6,7 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 )
 
 // GetASCParams returns ASC parameters for the managed server's interface.
@@ -17,7 +18,7 @@ func (s *Service) GetASCParams(ctx context.Context) (json.RawMessage, error) {
 		return nil, fmt.Errorf("no managed server exists")
 	}
 
-	raw, err := s.ndms.GetASCParams(ctx, server.InterfaceName)
+	raw, err := s.queries.WGServers.GetASCParams(ctx, server.InterfaceName, osdetect.AtLeast(5, 1))
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +96,7 @@ func (s *Service) SetASCParams(ctx context.Context, params json.RawMessage) erro
 		return fmt.Errorf("marshal stripped ASC params: %w", err)
 	}
 
-	if err := s.ndms.SetASCParams(ctx, server.InterfaceName, stripped); err != nil {
+	if err := s.commands.Wireguard.SetASCParams(ctx, server.InterfaceName, stripped); err != nil {
 		s.appLog.Warn("set-asc", server.InterfaceName, "Failed to set ASC params: "+err.Error())
 		return err
 	}
