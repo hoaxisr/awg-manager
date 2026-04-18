@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
 	import { tunnels } from '$lib/stores/tunnels';
 	import { systemInfo as systemInfoStore } from '$lib/stores/system';
 	import { notifications } from '$lib/stores/notifications';
@@ -105,6 +106,13 @@
 	let activeTab = $state<TunnelTab>('awg');
 
 	onMount(() => {
+		// URL query wins over sessionStorage — lets other pages
+		// (e.g. /singbox/new) land the user on the right tab after an action.
+		const fromQuery = $page.url.searchParams.get('tab');
+		if (fromQuery === 'awg' || fromQuery === 'singbox') {
+			activeTab = fromQuery;
+			return;
+		}
 		const stored = sessionStorage.getItem('tunnelsTab');
 		if (stored === 'awg' || stored === 'singbox') {
 			activeTab = stored;
@@ -447,6 +455,9 @@
 						{$singboxTunnels.length}
 						{$singboxTunnels.length === 1 ? 'туннель' : $singboxTunnels.length < 5 ? 'туннеля' : 'туннелей'}
 					</span>
+					<div class="toolbar-actions">
+						<a href="/singbox/new" class="btn btn-primary">+ Добавить</a>
+					</div>
 				</div>
 				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 					{#each $singboxTunnels as tunnel (tunnel.tag)}
