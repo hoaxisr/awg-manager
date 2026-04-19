@@ -34,11 +34,7 @@ func (c *WireguardCommands) SetASCParams(ctx context.Context, name string, param
 			},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("set asc params %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Interfaces.Invalidate(name)
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "set asc params "+name,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		c.queries.RunningConfig.InvalidateAll)
 }

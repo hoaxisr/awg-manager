@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
@@ -30,13 +29,9 @@ func (c *PolicyCommands) CreatePolicy(ctx context.Context, name, description str
 			},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("create policy %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Policies.InvalidateAll()
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "create policy "+name,
+		c.queries.Policies.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 func (c *PolicyCommands) DeletePolicy(ctx context.Context, name string) error {
@@ -47,13 +42,9 @@ func (c *PolicyCommands) DeletePolicy(ctx context.Context, name string) error {
 			},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("delete policy %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Policies.InvalidateAll()
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "delete policy "+name,
+		c.queries.Policies.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 func (c *PolicyCommands) SetDescription(ctx context.Context, name, description string) error {
@@ -64,13 +55,9 @@ func (c *PolicyCommands) SetDescription(ctx context.Context, name, description s
 			},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("set policy description %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Policies.InvalidateAll()
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "set policy description "+name,
+		c.queries.Policies.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 func (c *PolicyCommands) SetStandalone(ctx context.Context, name string, enabled bool) error {
@@ -87,13 +74,9 @@ func (c *PolicyCommands) SetStandalone(ctx context.Context, name string, enabled
 			},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("set standalone %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Policies.InvalidateAll()
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "set standalone "+name,
+		c.queries.Policies.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 func (c *PolicyCommands) PermitInterface(ctx context.Context, name, iface string, order int) error {
@@ -110,13 +93,9 @@ func (c *PolicyCommands) PermitInterface(ctx context.Context, name, iface string
 			},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("permit %s on %s: %w", iface, name, err)
-	}
-	c.save.Request()
-	c.queries.Policies.InvalidateAll()
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "permit "+iface+" on "+name,
+		c.queries.Policies.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 func (c *PolicyCommands) DenyInterface(ctx context.Context, name, iface string) error {
@@ -133,13 +112,9 @@ func (c *PolicyCommands) DenyInterface(ctx context.Context, name, iface string) 
 			},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("deny %s on %s: %w", iface, name, err)
-	}
-	c.save.Request()
-	c.queries.Policies.InvalidateAll()
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "deny "+iface+" on "+name,
+		c.queries.Policies.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 func (c *PolicyCommands) AssignDevice(ctx context.Context, mac, policyName string) error {
@@ -153,13 +128,9 @@ func (c *PolicyCommands) AssignDevice(ctx context.Context, mac, policyName strin
 			},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("assign device %s to %s: %w", mac, policyName, err)
-	}
-	c.save.Request()
-	c.queries.Hotspot.InvalidateAll()
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "assign device "+mac+" to "+policyName,
+		c.queries.Hotspot.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 func (c *PolicyCommands) UnassignDevice(ctx context.Context, mac string) error {
@@ -173,12 +144,7 @@ func (c *PolicyCommands) UnassignDevice(ctx context.Context, mac string) error {
 			},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("unassign device %s: %w", mac, err)
-	}
-	c.save.Request()
-	c.queries.Hotspot.InvalidateAll()
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "unassign device "+mac,
+		c.queries.Hotspot.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
 }
-

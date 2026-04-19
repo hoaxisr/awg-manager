@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
@@ -34,7 +33,7 @@ func (c *RouteCommands) SetDefaultRoute(ctx context.Context, name string) error 
 			"route": map[string]any{"default": true, "interface": name},
 		},
 	}
-	return c.postAndInvalidate(ctx, payload, "set default route "+name)
+	return c.mutate(ctx, payload, "set default route "+name)
 }
 
 func (c *RouteCommands) RemoveDefaultRoute(ctx context.Context, name string) error {
@@ -43,7 +42,7 @@ func (c *RouteCommands) RemoveDefaultRoute(ctx context.Context, name string) err
 			"route": map[string]any{"default": true, "interface": name, "no": true},
 		},
 	}
-	return c.postAndInvalidate(ctx, payload, "remove default route "+name)
+	return c.mutate(ctx, payload, "remove default route "+name)
 }
 
 func (c *RouteCommands) SetIPv6DefaultRoute(ctx context.Context, name string) error {
@@ -52,7 +51,7 @@ func (c *RouteCommands) SetIPv6DefaultRoute(ctx context.Context, name string) er
 			"route": map[string]any{"default": true, "interface": name},
 		},
 	}
-	return c.postAndInvalidate(ctx, payload, "set ipv6 default route "+name)
+	return c.mutate(ctx, payload, "set ipv6 default route "+name)
 }
 
 func (c *RouteCommands) RemoveIPv6DefaultRoute(ctx context.Context, name string) error {
@@ -61,7 +60,7 @@ func (c *RouteCommands) RemoveIPv6DefaultRoute(ctx context.Context, name string)
 			"route": map[string]any{"default": true, "interface": name, "no": true},
 		},
 	}
-	return c.postAndInvalidate(ctx, payload, "remove ipv6 default route "+name)
+	return c.mutate(ctx, payload, "remove ipv6 default route "+name)
 }
 
 // RemoveHostRoute removes an IPv4 host route (best-effort).
@@ -71,7 +70,7 @@ func (c *RouteCommands) RemoveHostRoute(ctx context.Context, host string) error 
 			"route": map[string]any{"no": true, "host": host},
 		},
 	}
-	return c.postAndInvalidate(ctx, payload, "remove host route "+host)
+	return c.mutate(ctx, payload, "remove host route "+host)
 }
 
 // AddStaticRoute adds a network or host route to the given interface.
@@ -95,7 +94,7 @@ func (c *RouteCommands) AddStaticRoute(ctx context.Context, route StaticRouteSpe
 	payload := map[string]any{
 		"ip": map[string]any{"route": inner},
 	}
-	return c.postAndInvalidate(ctx, payload, "add static route")
+	return c.mutate(ctx, payload, "add static route")
 }
 
 // RemoveStaticRoute removes a previously-added static route.
@@ -113,15 +112,14 @@ func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRoute
 	payload := map[string]any{
 		"ip": map[string]any{"route": inner},
 	}
-	return c.postAndInvalidate(ctx, payload, "remove static route")
+	return c.mutate(ctx, payload, "remove static route")
 }
 
-func (c *RouteCommands) postAndInvalidate(ctx context.Context, payload any, op string) error {
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("%s: %w", op, err)
-	}
-	c.save.Request()
-	c.queries.Routes.InvalidateAll()
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+// mutate is a thin wrapper over postMutation with RouteCommands' fixed
+// invalidation set (Routes + RunningConfig). Every route mutation touches
+// both caches identically, so we pin them in one place.
+func (c *RouteCommands) mutate(ctx context.Context, payload any, op string) error {
+	return postMutation(ctx, c.poster, c.save, payload, op,
+		c.queries.Routes.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
 }

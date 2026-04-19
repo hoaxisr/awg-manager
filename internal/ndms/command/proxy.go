@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -39,13 +38,9 @@ func (c *ProxyCommands) CreateProxy(ctx context.Context, name, description, upst
 			},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("create proxy %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Interfaces.InvalidateAll()
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "create proxy "+name,
+		c.queries.Interfaces.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 func (c *ProxyCommands) DeleteProxy(ctx context.Context, name string) error {
@@ -54,14 +49,10 @@ func (c *ProxyCommands) DeleteProxy(ctx context.Context, name string) error {
 			name: map[string]any{"no": true},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("delete proxy %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Interfaces.InvalidateAll()
-	c.queries.Interfaces.Invalidate(name)
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "delete proxy "+name,
+		c.queries.Interfaces.InvalidateAll,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 func (c *ProxyCommands) ProxyUp(ctx context.Context, name string) error {
@@ -70,12 +61,8 @@ func (c *ProxyCommands) ProxyUp(ctx context.Context, name string) error {
 			name: map[string]any{"up": true},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("proxy up %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Interfaces.Invalidate(name)
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "proxy up "+name,
+		func() { c.queries.Interfaces.Invalidate(name) })
 }
 
 func (c *ProxyCommands) ProxyDown(ctx context.Context, name string) error {
@@ -84,10 +71,6 @@ func (c *ProxyCommands) ProxyDown(ctx context.Context, name string) error {
 			name: map[string]any{"down": true},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("proxy down %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Interfaces.Invalidate(name)
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "proxy down "+name,
+		func() { c.queries.Interfaces.Invalidate(name) })
 }
