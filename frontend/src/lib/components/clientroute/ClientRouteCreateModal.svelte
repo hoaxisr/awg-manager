@@ -24,7 +24,10 @@
 		onclose
 	}: Props = $props();
 
-	let availableTunnels = $derived(tunnels.filter(t => t.type !== 'wan' && t.available));
+	// Include WAN interfaces in the target list — routing a device directly to
+	// WAN is a valid use case ("pull this device OUT of any VPN"). Matches the
+	// behavior of DNS- and IP-route dropdowns.
+	let availableTunnels = $derived(tunnels.filter(t => t.available || t.type === 'wan'));
 
 	let selectedDevice = $state<{ ip: string; name: string } | null>(null);
 	let searchText = $state('');
