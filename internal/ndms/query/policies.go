@@ -18,11 +18,8 @@ const policyTTL = 60 * time.Minute
 // PolicyStore caches /show/rc/ip/policy — write-through primary, TTL as
 // safety net (per spec §4.3).
 type PolicyStore struct {
+	*cache.ListStore[[]ndms.Policy]
 	getter Getter
-	log    Logger
-
-	list   *cache.TTL[struct{}, []ndms.Policy]
-	listSF *cache.SingleFlight[struct{}, []ndms.Policy]
 }
 
 func NewPolicyStore(g Getter, log Logger) *PolicyStore {
@@ -30,36 +27,10 @@ func NewPolicyStore(g Getter, log Logger) *PolicyStore {
 }
 
 func NewPolicyStoreWithTTL(g Getter, log Logger, ttl time.Duration) *PolicyStore {
-	if log == nil {
-		log = NopLogger()
-	}
-	return &PolicyStore{
-		getter: g,
-		log:    log,
-		list:   cache.NewTTL[struct{}, []ndms.Policy](ttl),
-		listSF: cache.NewSingleFlight[struct{}, []ndms.Policy](),
-	}
+	s := &PolicyStore{getter: g}
+	s.ListStore = cache.NewListStore(ttl, log, "policies", s.fetch)
+	return s
 }
-
-func (s *PolicyStore) List(ctx context.Context) ([]ndms.Policy, error) {
-	if v, ok := s.list.Get(struct{}{}); ok {
-		return v, nil
-	}
-	return s.listSF.Do(struct{}{}, func() ([]ndms.Policy, error) {
-		v, err := s.fetch(ctx)
-		if err != nil {
-			if stale, ok := s.list.Peek(struct{}{}); ok {
-				s.log.Warnf("policies fetch failed, serving stale cache: %v", err)
-				return stale, nil
-			}
-			return nil, err
-		}
-		s.list.Set(struct{}{}, v)
-		return v, nil
-	})
-}
-
-func (s *PolicyStore) InvalidateAll() { s.list.InvalidateAll() }
 
 type rcPermitWire struct {
 	Enabled   bool   `json:"enabled"`
