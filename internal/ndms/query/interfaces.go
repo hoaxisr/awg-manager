@@ -29,11 +29,10 @@ const (
 // (single item). Invalidation comes from NDMS hooks (Plan 4) and from
 // command-after-write (Plan 3).
 type InterfaceStore struct {
+	*cache.ListStore[[]ndms.Interface]
+
 	getter Getter
 	log    Logger
-
-	list   *cache.TTL[struct{}, []ndms.Interface]
-	listSF *cache.SingleFlight[struct{}, []ndms.Interface]
 
 	items   *cache.TTL[string, *ndms.Interface]
 	itemsSF *cache.SingleFlight[string, *ndms.Interface]
@@ -56,34 +55,15 @@ func NewInterfaceStoreWithTTL(g Getter, log Logger, listTTL, itemTTL time.Durati
 	if log == nil {
 		log = NopLogger()
 	}
-	return &InterfaceStore{
+	s := &InterfaceStore{
 		getter:  g,
 		log:     log,
-		list:    cache.NewTTL[struct{}, []ndms.Interface](listTTL),
-		listSF:  cache.NewSingleFlight[struct{}, []ndms.Interface](),
 		items:   cache.NewTTL[string, *ndms.Interface](itemTTL),
 		itemsSF: cache.NewSingleFlight[string, *ndms.Interface](),
 		sys:     make(map[string]string),
 	}
-}
-
-// List returns every interface. Uses cache; stale-ok on error.
-func (s *InterfaceStore) List(ctx context.Context) ([]ndms.Interface, error) {
-	if v, ok := s.list.Get(struct{}{}); ok {
-		return v, nil
-	}
-	return s.listSF.Do(struct{}{}, func() ([]ndms.Interface, error) {
-		v, err := s.fetchList(ctx)
-		if err != nil {
-			if stale, ok := s.list.Peek(struct{}{}); ok {
-				s.log.Warnf("interface list fetch failed, serving stale cache: %v", err)
-				return stale, nil
-			}
-			return nil, err
-		}
-		s.list.Set(struct{}{}, v)
-		return v, nil
-	})
+	s.ListStore = cache.NewListStore(listTTL, log, "interface list", s.fetchList)
+	return s
 }
 
 // Get returns a single interface by NDMS name. Cached; stale-ok on error.
@@ -130,10 +110,12 @@ func (s *InterfaceStore) GetProxy(ctx context.Context, name string) (*ndms.Proxy
 	}, nil
 }
 
-// InvalidateAll drops the list cache (the per-item cache is untouched —
-// hooks for a specific name will invalidate items individually).
+// InvalidateAll drops the list cache and the system-name memo. The
+// per-item cache is untouched — hooks for a specific name invalidate
+// items individually. Shadows the promoted ListStore.InvalidateAll so
+// the sys memo stays in sync with the list cache.
 func (s *InterfaceStore) InvalidateAll() {
-	s.list.InvalidateAll()
+	s.ListStore.InvalidateAll()
 	s.sysMu.Lock()
 	s.sys = make(map[string]string)
 	s.sysMu.Unlock()
