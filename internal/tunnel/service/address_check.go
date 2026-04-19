@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 
+	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
@@ -11,7 +12,7 @@ import (
 // with the given address string. Returns human-readable warning messages.
 // excludeID is skipped (used for Update to avoid warning about self).
 func checkStoredAddressConflicts(store *storage.AWGTunnelStore, address, excludeID string) []string {
-	newIPv4, newIPv6 := splitAddresses(address)
+	newIPv4, newIPv6 := orchestrator.SplitAddresses(address)
 	if newIPv4 == "" && newIPv6 == "" {
 		return nil
 	}
@@ -26,7 +27,7 @@ func checkStoredAddressConflicts(store *storage.AWGTunnelStore, address, exclude
 		if t.ID == excludeID {
 			continue
 		}
-		storedIPv4, storedIPv6 := splitAddresses(t.Interface.Address)
+		storedIPv4, storedIPv6 := orchestrator.SplitAddresses(t.Interface.Address)
 
 		if newIPv4 != "" && storedIPv4 == newIPv4 {
 			names := tunnel.NewNames(t.ID)

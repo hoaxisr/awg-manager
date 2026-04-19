@@ -183,7 +183,7 @@ func (o *Orchestrator) executeColdStartKernel(ctx context.Context, action Action
 	}
 
 	// Build config
-	cfg := storedToConfig(stored)
+	cfg := StoredToConfig(stored)
 	cfg.ISPInterface = resolvedWAN
 	cfg.KernelDevice = o.resolveKernelDevice(resolvedWAN)
 	cfg.DefaultRoute = stored.DefaultRoute
@@ -239,7 +239,7 @@ func (o *Orchestrator) executeReconcileKernel(ctx context.Context, action Action
 	}
 
 	// Build config
-	cfg := storedToConfig(stored)
+	cfg := StoredToConfig(stored)
 	cfg.ISPInterface = resolvedWAN
 	cfg.KernelDevice = o.resolveKernelDevice(resolvedWAN)
 	cfg.DefaultRoute = stored.DefaultRoute
