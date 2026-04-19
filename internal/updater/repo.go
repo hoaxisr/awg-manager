@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"io"
 	"runtime"
-	"strconv"
 	"strings"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/semver"
 )
 
 // PackageEntry is a single Debian-style package block from a Packages index,
@@ -34,7 +35,7 @@ func parsePackagesGz(r io.Reader, pkgName string) (PackageEntry, error) {
 	}
 	flush := func() {
 		if current.pkg == pkgName && current.ver != "" && current.fn != "" {
-			if best.Version == "" || compareVersions(current.ver, best.Version) > 0 {
+			if best.Version == "" || semver.Compare(current.ver, best.Version) > 0 {
 				best = PackageEntry{Version: current.ver, Filename: current.fn}
 			}
 		}
@@ -67,34 +68,6 @@ func parsePackagesGz(r io.Reader, pkgName string) (PackageEntry, error) {
 		return PackageEntry{}, fmt.Errorf("package %q not found in index", pkgName)
 	}
 	return best, nil
-}
-
-// compareVersions compares two semver-like version strings ("a.b.c").
-// Returns -1 if a < b, 0 if a == b, 1 if a > b. Missing components are 0.
-// Non-numeric components are treated as 0.
-func compareVersions(a, b string) int {
-	partsA := strings.Split(a, ".")
-	partsB := strings.Split(b, ".")
-	maxLen := len(partsA)
-	if len(partsB) > maxLen {
-		maxLen = len(partsB)
-	}
-	for i := 0; i < maxLen; i++ {
-		var numA, numB int
-		if i < len(partsA) {
-			numA, _ = strconv.Atoi(partsA[i])
-		}
-		if i < len(partsB) {
-			numB, _ = strconv.Atoi(partsB[i])
-		}
-		if numA < numB {
-			return -1
-		}
-		if numA > numB {
-			return 1
-		}
-	}
-	return 0
 }
 
 // archSuffix returns the entware architecture string for the current platform,

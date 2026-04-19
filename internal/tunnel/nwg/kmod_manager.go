@@ -14,6 +14,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
+	"github.com/hoaxisr/awg-manager/internal/sys/semver"
 )
 
 const (
@@ -114,7 +115,7 @@ func (km *KmodManager) EnsureLoaded() error {
 	if km.isLoadedLocked() {
 		// Check version — reload if loaded version is below expected.
 		loaded := km.readVersionLocked()
-		if loaded != "" && compareKmodVersions(loaded, expectedKmodVersion) < 0 {
+		if loaded != "" && semver.Compare(loaded, expectedKmodVersion) < 0 {
 			// Don't reload if there are active proxy entries —
 			// rmmod would destroy ALL running tunnels' proxies.
 			if len(km.tunnels) > 0 {
@@ -317,33 +318,6 @@ func (km *KmodManager) RemoveAllTunnels() {
 			km.log.Warnf("kmod: failed to remove tunnel %s on shutdown: %v", id, err)
 		}
 	}
-}
-
-// compareKmodVersions compares two semver-like version strings.
-// Returns -1 if a < b, 0 if a == b, 1 if a > b.
-func compareKmodVersions(a, b string) int {
-	partsA := strings.Split(a, ".")
-	partsB := strings.Split(b, ".")
-	maxLen := len(partsA)
-	if len(partsB) > maxLen {
-		maxLen = len(partsB)
-	}
-	for i := 0; i < maxLen; i++ {
-		var numA, numB int
-		if i < len(partsA) {
-			numA, _ = strconv.Atoi(partsA[i])
-		}
-		if i < len(partsB) {
-			numB, _ = strconv.Atoi(partsB[i])
-		}
-		if numA < numB {
-			return -1
-		}
-		if numA > numB {
-			return 1
-		}
-	}
-	return 0
 }
 
 // buildProcLine builds the config line for /proc/awg_proxy/add.
