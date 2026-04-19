@@ -1,182 +1,78 @@
 package logging
 
 import (
-	"sync"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/logbuf"
 )
 
 const (
-	defaultMaxAge   = 4 * time.Hour
-	cleanupInterval = 5 * time.Minute
-	maxEntries      = 10000
+	defaultMaxAge = 4 * time.Hour
+	maxEntries    = 10000
 )
 
-// LogBuffer stores log entries in memory with automatic cleanup.
+// LogBuffer stores app log entries with automatic cleanup.
+// Thin wrapper over logbuf.Buffer[LogEntry] — see internal/logbuf for
+// the shared ring + TTL + goroutine-safe storage machinery.
 type LogBuffer struct {
-	mu      sync.RWMutex
-	entries []LogEntry
-	maxAge  time.Duration
-	stopCh  chan struct{}
+	inner *logbuf.Buffer[LogEntry]
 }
 
 // NewLogBuffer creates a new log buffer with automatic cleanup.
 func NewLogBuffer() *LogBuffer {
-	lb := &LogBuffer{
-		entries: make([]LogEntry, 0, 256),
-		maxAge:  defaultMaxAge,
-		stopCh:  make(chan struct{}),
+	return &LogBuffer{
+		inner: logbuf.New(logbuf.Options[LogEntry]{
+			MaxAge:       defaultMaxAge,
+			MaxEntries:   maxEntries,
+			TimestampOf:  func(e LogEntry) time.Time { return e.Timestamp },
+			SetTimestamp: func(e *LogEntry, t time.Time) { e.Timestamp = t },
+		}),
 	}
-	go lb.cleanupLoop()
-	return lb
 }
 
 // Add adds a new log entry to the buffer.
-func (lb *LogBuffer) Add(entry LogEntry) {
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
-
-	if entry.Timestamp.IsZero() {
-		entry.Timestamp = time.Now()
-	}
-
-	if len(lb.entries) >= maxEntries {
-		lb.entries = lb.entries[len(lb.entries)-maxEntries+1:]
-	}
-
-	lb.entries = append(lb.entries, entry)
-}
+func (lb *LogBuffer) Add(entry LogEntry) { lb.inner.Add(entry) }
 
 // GetAll returns all log entries, newest first.
-func (lb *LogBuffer) GetAll() []LogEntry {
-	lb.mu.RLock()
-	defer lb.mu.RUnlock()
+func (lb *LogBuffer) GetAll() []LogEntry { return lb.inner.GetAll() }
 
-	// Return copy in reverse order (newest first)
-	result := make([]LogEntry, len(lb.entries))
-	for i, j := 0, len(lb.entries)-1; j >= 0; i, j = i+1, j-1 {
-		result[i] = lb.entries[j]
-	}
-	return result
-}
-
-// GetFiltered returns log entries filtered by group, subgroup and/or level, newest first.
+// GetFiltered returns log entries matching group/subgroup/level, newest first.
+// Empty string for any field means "no constraint on that field".
 func (lb *LogBuffer) GetFiltered(group, subgroup, level string) []LogEntry {
-	lb.mu.RLock()
-	defer lb.mu.RUnlock()
-
-	var result []LogEntry
-	// Iterate in reverse for newest first
-	for i := len(lb.entries) - 1; i >= 0; i-- {
-		entry := lb.entries[i]
-		if group != "" && entry.Group != group {
-			continue
-		}
-		if subgroup != "" && entry.Subgroup != subgroup {
-			continue
-		}
-		if level != "" && entry.Level != level {
-			continue
-		}
-		result = append(result, entry)
-	}
-	return result
+	return lb.inner.Filter(matcher(group, subgroup, level))
 }
 
-// GetPaginated returns filtered entries with pagination, newest first.
-// Returns the page slice and the total count of filtered entries.
+// GetPaginated returns filtered entries with pagination, newest first,
+// plus the total count of filtered entries.
 func (lb *LogBuffer) GetPaginated(group, subgroup, level string, limit, offset int) ([]LogEntry, int) {
-	lb.mu.RLock()
-	defer lb.mu.RUnlock()
-
-	var filtered []LogEntry
-	for i := len(lb.entries) - 1; i >= 0; i-- {
-		entry := lb.entries[i]
-		if group != "" && entry.Group != group {
-			continue
-		}
-		if subgroup != "" && entry.Subgroup != subgroup {
-			continue
-		}
-		if level != "" && entry.Level != level {
-			continue
-		}
-		filtered = append(filtered, entry)
-	}
-
-	total := len(filtered)
-	if offset >= total {
-		return []LogEntry{}, total
-	}
-	end := offset + limit
-	if end > total {
-		end = total
-	}
-	return filtered[offset:end], total
+	return lb.inner.FilterPage(matcher(group, subgroup, level), limit, offset)
 }
 
-// Clear removes all entries from the buffer.
-func (lb *LogBuffer) Clear() {
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
-	lb.entries = lb.entries[:0]
-}
+// Clear removes all entries.
+func (lb *LogBuffer) Clear() { lb.inner.Clear() }
 
-// SetMaxAge updates the maximum age for log entries.
-func (lb *LogBuffer) SetMaxAge(hours int) {
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
-	if hours <= 0 {
-		hours = 2 // default
-	}
-	lb.maxAge = time.Duration(hours) * time.Hour
-}
+// SetMaxAge updates the maximum age for log entries (hours).
+func (lb *LogBuffer) SetMaxAge(hours int) { lb.inner.SetMaxAge(hours) }
 
 // Stop stops the cleanup goroutine.
-func (lb *LogBuffer) Stop() {
-	close(lb.stopCh)
-}
-
-// cleanupLoop periodically removes old entries.
-func (lb *LogBuffer) cleanupLoop() {
-	ticker := time.NewTicker(cleanupInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			lb.cleanup()
-		case <-lb.stopCh:
-			return
-		}
-	}
-}
-
-// cleanup removes entries older than maxAge.
-func (lb *LogBuffer) cleanup() {
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
-
-	cutoff := time.Now().Add(-lb.maxAge)
-
-	// Find first entry that's not too old
-	firstValid := 0
-	for i, entry := range lb.entries {
-		if entry.Timestamp.After(cutoff) {
-			firstValid = i
-			break
-		}
-		firstValid = i + 1
-	}
-
-	if firstValid > 0 {
-		// Remove old entries by slicing
-		lb.entries = lb.entries[firstValid:]
-	}
-}
+func (lb *LogBuffer) Stop() { lb.inner.Stop() }
 
 // Len returns the number of entries in the buffer.
-func (lb *LogBuffer) Len() int {
-	lb.mu.RLock()
-	defer lb.mu.RUnlock()
-	return len(lb.entries)
+func (lb *LogBuffer) Len() int { return lb.inner.Len() }
+
+// matcher builds the group/subgroup/level composite predicate once so
+// Filter/FilterPage don't recompute the closure shape per entry.
+func matcher(group, subgroup, level string) func(LogEntry) bool {
+	return func(e LogEntry) bool {
+		if group != "" && e.Group != group {
+			return false
+		}
+		if subgroup != "" && e.Subgroup != subgroup {
+			return false
+		}
+		if level != "" && e.Level != level {
+			return false
+		}
+		return true
+	}
 }
