@@ -1,8 +1,7 @@
-# nhooyr.io/websocket v1.8.17
-## explicit; go 1.19
-nhooyr.io/websocket
-nhooyr.io/websocket/internal/bpool
-nhooyr.io/websocket/internal/errd
-nhooyr.io/websocket/internal/util
-nhooyr.io/websocket/internal/wsjs
-nhooyr.io/websocket/internal/xsync
+# github.com/coder/websocket v1.8.14
+## explicit; go 1.23
+github.com/coder/websocket
+github.com/coder/websocket/internal/bpool
+github.com/coder/websocket/internal/errd
+github.com/coder/websocket/internal/util
+github.com/coder/websocket/internal/wsjs

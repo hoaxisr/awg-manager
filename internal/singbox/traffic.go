@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"nhooyr.io/websocket"
+	"github.com/coder/websocket"
 )
 
 // TrafficSnapshot is per-tunnel traffic (bytes since process start).

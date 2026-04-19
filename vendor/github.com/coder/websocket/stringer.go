@@ -49,7 +49,6 @@ const _MessageType_name = "MessageTextMessageBinary"
 
 var _MessageType_index = [...]uint8{0, 11, 24}
 
-// Deprecated: coder now maintains this library at https://github.com/coder/websocket.
 func (i MessageType) String() string {
 	i -= 1
 	if i < 0 || i >= MessageType(len(_MessageType_index)-1) {
@@ -83,7 +82,6 @@ const _StatusCode_name = "StatusNormalClosureStatusGoingAwayStatusProtocolErrorS
 
 var _StatusCode_index = [...]uint16{0, 19, 34, 53, 74, 88, 106, 127, 156, 177, 196, 220, 239, 259, 278, 294, 312}
 
-// Deprecated: coder now maintains this library at https://github.com/coder/websocket.
 func (i StatusCode) String() string {
 	i -= 1000
 	if i < 0 || i >= StatusCode(len(_StatusCode_index)-1) {

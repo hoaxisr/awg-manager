@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"nhooyr.io/websocket"
+	"github.com/coder/websocket"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"

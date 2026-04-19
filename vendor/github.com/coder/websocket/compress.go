@@ -1,5 +1,4 @@
 //go:build !js
-// +build !js
 
 package websocket
 
@@ -11,8 +10,6 @@ import (
 
 // CompressionMode represents the modes available to the permessage-deflate extension.
 // See https://tools.ietf.org/html/rfc7692
-//
-// Deprecated: coder now maintains this library at https://github.com/coder/websocket.
 //
 // Works in all modern browsers except Safari which does not implement the permessage-deflate extension.
 //
@@ -170,8 +167,10 @@ type slidingWindow struct {
 	buf []byte
 }
 
-var swPoolMu sync.RWMutex
-var swPool = map[int]*sync.Pool{}
+var (
+	swPoolMu sync.RWMutex
+	swPool   = map[int]*sync.Pool{}
+)
 
 func slidingWindowPool(n int) *sync.Pool {
 	swPoolMu.RLock()
