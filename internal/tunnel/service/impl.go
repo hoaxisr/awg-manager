@@ -273,9 +273,11 @@ func (s *ServiceImpl) List(ctx context.Context) ([]TunnelWithStatus, error) {
 			stateInfo = s.state.GetState(ctx, t.ID)
 		}
 
-		var ifaceName string
+		var ifaceName, ndmsName string
 		if t.Backend == "nativewg" {
-			ifaceName = nwg.NewNWGNames(t.NWGIndex).IfaceName
+			names := nwg.NewNWGNames(t.NWGIndex)
+			ifaceName = names.IfaceName
+			ndmsName = names.NDMSName
 		} else {
 			ifaceName = tunnel.NewNames(t.ID).IfaceName
 		}
@@ -291,6 +293,7 @@ func (s *ServiceImpl) List(ctx context.Context) ([]TunnelWithStatus, error) {
 			DefaultRoute:  t.DefaultRoute,
 			ISPInterface:  t.ISPInterface,
 			InterfaceName: ifaceName,
+			NDMSName:      ndmsName,
 			Backend:       s.backendLabel(&t),
 		})
 	}
