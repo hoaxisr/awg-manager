@@ -12,11 +12,8 @@ import (
 const hotspotTTL = 30 * time.Second
 
 type HotspotStore struct {
+	*cache.ListStore[[]ndms.Device]
 	getter Getter
-	log    Logger
-
-	list   *cache.TTL[struct{}, []ndms.Device]
-	listSF *cache.SingleFlight[struct{}, []ndms.Device]
 }
 
 func NewHotspotStore(g Getter, log Logger) *HotspotStore {
@@ -24,36 +21,10 @@ func NewHotspotStore(g Getter, log Logger) *HotspotStore {
 }
 
 func NewHotspotStoreWithTTL(g Getter, log Logger, ttl time.Duration) *HotspotStore {
-	if log == nil {
-		log = NopLogger()
-	}
-	return &HotspotStore{
-		getter: g,
-		log:    log,
-		list:   cache.NewTTL[struct{}, []ndms.Device](ttl),
-		listSF: cache.NewSingleFlight[struct{}, []ndms.Device](),
-	}
+	s := &HotspotStore{getter: g}
+	s.ListStore = cache.NewListStore(ttl, log, "hotspot", s.fetch)
+	return s
 }
-
-func (s *HotspotStore) List(ctx context.Context) ([]ndms.Device, error) {
-	if v, ok := s.list.Get(struct{}{}); ok {
-		return v, nil
-	}
-	return s.listSF.Do(struct{}{}, func() ([]ndms.Device, error) {
-		v, err := s.fetch(ctx)
-		if err != nil {
-			if stale, ok := s.list.Peek(struct{}{}); ok {
-				s.log.Warnf("hotspot fetch failed, serving stale cache: %v", err)
-				return stale, nil
-			}
-			return nil, err
-		}
-		s.list.Set(struct{}{}, v)
-		return v, nil
-	})
-}
-
-func (s *HotspotStore) InvalidateAll() { s.list.InvalidateAll() }
 
 type hotspotHostWire struct {
 	IP       string `json:"ip"`
