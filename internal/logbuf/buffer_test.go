@@ -188,3 +188,11 @@ func TestBuffer_SetMaxAgeNonPositiveDefaults(t *testing.T) {
 		t.Errorf("negative → default, got %v, want 2h", b.maxAge)
 	}
 }
+
+func TestBuffer_StopIsIdempotent(t *testing.T) {
+	b := newBuf(10, time.Hour)
+	b.Stop()
+	// Must not panic on repeated Stop.
+	b.Stop()
+	b.Stop()
+}

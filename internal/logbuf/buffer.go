@@ -42,6 +42,7 @@ type Buffer[T any] struct {
 	timestampOf     func(T) time.Time
 	setTimestamp    func(*T, time.Time)
 	stopCh          chan struct{}
+	stopOnce        sync.Once
 }
 
 // New creates a Buffer[T] and starts its background cleanup goroutine.
@@ -147,9 +148,12 @@ func (b *Buffer[T]) SetMaxAge(hours int) {
 	b.maxAge = time.Duration(hours) * time.Hour
 }
 
-// Stop signals the cleanup goroutine to exit. Safe to call once.
+// Stop signals the cleanup goroutine to exit. Idempotent — repeat
+// calls are no-ops, matching the shutdown contract of the surrounding
+// services (Service.Stop / nwgMonitor.Stop may fire through multiple
+// defer chains).
 func (b *Buffer[T]) Stop() {
-	close(b.stopCh)
+	b.stopOnce.Do(func() { close(b.stopCh) })
 }
 
 // cleanupLoop runs cleanup at a fixed cadence until Stop is called.
@@ -168,6 +172,16 @@ func (b *Buffer[T]) cleanupLoop() {
 }
 
 // cleanup removes entries older than maxAge.
+//
+// Assumes entries are appended in non-decreasing timestamp order — scans
+// forward and drops the whole prefix up to the first non-expired entry.
+// Both wrappers (logging, pingcheck) satisfy this: logging's Add stamps
+// time.Now() under the write lock (serialises monotonically); pingcheck
+// stamps before Add but its producers are per-tunnel monotonic.
+//
+// If a caller inserts out-of-order timestamps, cleanup may leave some
+// stale entries alive past their TTL — never drops fresh entries, so
+// the failure mode is "too few" deletions, not correctness.
 func (b *Buffer[T]) cleanup() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
