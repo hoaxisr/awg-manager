@@ -91,8 +91,8 @@ func TestExternalTunnelsHandler_Adopt_InvalidBody(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if resp.Code != "INVALID_BODY" {
-		t.Errorf("Code = %s, want INVALID_BODY", resp.Code)
+	if resp.Code != "INVALID_JSON" {
+		t.Errorf("Code = %s, want INVALID_JSON", resp.Code)
 	}
 }
 

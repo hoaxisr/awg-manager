@@ -79,17 +79,19 @@ type adoptRequest struct {
 // Adopt takes control of an external tunnel.
 // Endpoint: POST /api/external-tunnels/adopt?interface=opkgtunX
 func (h *ExternalTunnelsHandler) Adopt(w http.ResponseWriter, r *http.Request) {
-	req, ok := parseJSON[adoptRequest](w, r, http.MethodPost)
-	if !ok {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
 		return
 	}
-
 	interfaceName := r.URL.Query().Get("interface")
 	if interfaceName == "" {
 		response.Error(w, "missing interface parameter", "MISSING_INTERFACE")
 		return
 	}
-
+	req, ok := parseJSON[adoptRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
 	if req.Content == "" {
 		response.Error(w, "config content is required", "MISSING_CONTENT")
 		return
