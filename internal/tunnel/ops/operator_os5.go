@@ -302,11 +302,6 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 
 	o.logInfo("start", cfg.ID, "NDMS config applied (address + MTU + global)")
 
-	if justCreated {
-		// Save NDMS config so InterfaceUp works (import flow creates OpkgTun
-		// inside Start, and NDMS refuses to bring up unsaved interfaces).
-	}
-
 	// Apply DNS servers (idempotent, re-applied on every start)
 	if len(cfg.DNS) > 0 {
 		if err := o.commands.Interfaces.SetDNS(ctx, names.NDMSName, cfg.DNS); err != nil {
