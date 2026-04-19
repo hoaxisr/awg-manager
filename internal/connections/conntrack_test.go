@@ -7,9 +7,9 @@ import (
 
 func TestParseConntrackLine_TCP(t *testing.T) {
 	line := `ipv4     2 tcp      6 1187 ESTABLISHED src=192.168.1.15 dst=185.199.110.133 sport=49158 dport=443 packets=14 bytes=3389 src=185.199.110.133 dst=172.16.0.2 sport=443 dport=49158 packets=12 bytes=6182 [ASSURED] [FASTNAT] mark=268434092 nmark=0 sc=0 ifw=59 ifl=35 mac=b0:4a:b4:74:80:f8 slan attrs= use=2`
-	conn := parseConntrackLine(line)
-	if conn == nil {
-		t.Fatal("expected non-nil connection")
+	conn, ok := parseConntrackLine(line)
+	if !ok {
+		t.Fatal("expected parse ok")
 	}
 	if conn.Protocol != "tcp" {
 		t.Errorf("protocol: got %q, want tcp", conn.Protocol)
@@ -45,9 +45,9 @@ func TestParseConntrackLine_TCP(t *testing.T) {
 
 func TestParseConntrackLine_UDP(t *testing.T) {
 	line := `ipv4     2 udp      17 98 src=178.205.128.207 dst=89.232.109.74 sport=53907 dport=53 packets=2 bytes=154 src=89.232.109.74 dst=178.205.128.207 sport=53 dport=53907 packets=2 bytes=331 [ASSURED] [FASTNAT] mark=0 nmark=256 sc=0 nomac swan no_if attrs= use=2`
-	conn := parseConntrackLine(line)
-	if conn == nil {
-		t.Fatal("expected non-nil connection")
+	conn, ok := parseConntrackLine(line)
+	if !ok {
+		t.Fatal("expected parse ok")
 	}
 	if conn.Protocol != "udp" {
 		t.Errorf("protocol: got %q, want udp", conn.Protocol)
@@ -65,9 +65,9 @@ func TestParseConntrackLine_UDP(t *testing.T) {
 
 func TestParseConntrackLine_ICMP(t *testing.T) {
 	line := `ipv4     2 icmp     1 src=172.16.0.2 dst=8.8.8.8 type=8 code=0 id=6184 packets=1 bytes=84 src=8.8.8.8 dst=172.16.0.2 type=0 code=0 id=0 packets=1 bytes=84 [FASTNAT] mark=0 nmark=0 sc=0 use=2`
-	conn := parseConntrackLine(line)
-	if conn == nil {
-		t.Fatal("expected non-nil connection")
+	conn, ok := parseConntrackLine(line)
+	if !ok {
+		t.Fatal("expected parse ok")
 	}
 	if conn.Protocol != "icmp" {
 		t.Errorf("protocol: got %q, want icmp", conn.Protocol)
@@ -79,17 +79,15 @@ func TestParseConntrackLine_ICMP(t *testing.T) {
 
 func TestParseConntrackLine_Loopback_Skipped(t *testing.T) {
 	line := `ipv4     2 tcp      6 1186 ESTABLISHED src=127.0.0.1 dst=127.0.0.1 sport=55006 dport=79 packets=1338 bytes=142918 src=127.0.0.1 dst=127.0.0.1 sport=79 dport=55006 packets=930 bytes=1427210 [ASSURED] mark=0 nmark=0 sc=0 use=2`
-	conn := parseConntrackLine(line)
-	if conn != nil {
-		t.Error("expected nil for loopback connection")
+	if _, ok := parseConntrackLine(line); ok {
+		t.Error("expected skip for loopback connection")
 	}
 }
 
 func TestParseConntrackLine_IPv6_Skipped(t *testing.T) {
 	line := `ipv6     10 tcp      6 299 ESTABLISHED src=::1 dst=::1 sport=1234 dport=80 packets=1 bytes=60 src=::1 dst=::1 sport=80 dport=1234 packets=1 bytes=60 mark=0 use=2`
-	conn := parseConntrackLine(line)
-	if conn != nil {
-		t.Error("expected nil for IPv6 connection")
+	if _, ok := parseConntrackLine(line); ok {
+		t.Error("expected skip for IPv6 connection")
 	}
 }
 

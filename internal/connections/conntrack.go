@@ -33,58 +33,66 @@ func parseConntrack(r io.Reader) []rawConn {
 	var result []rawConn
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		if conn := parseConntrackLine(scanner.Text()); conn != nil {
-			result = append(result, *conn)
+		if conn, ok := parseConntrackLine(scanner.Text()); ok {
+			result = append(result, conn)
 		}
 	}
 	return result
 }
 
 // parseConntrackLine parses a single /proc/net/nf_conntrack line.
-// Returns nil for entries that should be skipped (loopback, IPv6).
-func parseConntrackLine(line string) *rawConn {
-	fields := strings.Fields(line)
-	if len(fields) < 5 {
-		return nil
+// Returns (_, false) for entries that should be skipped (loopback, IPv6).
+//
+// Zero-copy: walks the line once via splitField and takes field values
+// as substrings of the input. Avoids the strings.Fields allocation that
+// dominated profiles on active routers (10k+ lines per read). Returns
+// rawConn by value so the local doesn't escape to the heap.
+func parseConntrackLine(line string) (rawConn, bool) {
+	// Field 0: "ipv4" / "ipv6".
+	f0, rest := splitField(line)
+	if f0 != "ipv4" {
+		return rawConn{}, false
 	}
-
-	// Skip IPv6
-	if fields[0] != "ipv4" {
-		return nil
+	// Field 1: L3 proto number — skip.
+	_, rest = splitField(rest)
+	// Field 2: L4 proto name (tcp/udp/icmp/…).
+	proto, rest := splitField(rest)
+	if proto == "" {
+		return rawConn{}, false
 	}
-
-	proto := fields[2]
 
 	var conn rawConn
 	conn.Protocol = proto
 
-	// Parse TCP state (appears as a bare word like ESTABLISHED, SYN_SENT, etc.)
-	if proto == "tcp" {
-		for _, f := range fields[5:] {
-			switch f {
-			case "ESTABLISHED", "SYN_SENT", "SYN_RECV", "FIN_WAIT",
-				"CLOSE_WAIT", "LAST_ACK", "TIME_WAIT", "CLOSE":
-				conn.State = f
-			}
-			if conn.State != "" {
-				break
-			}
-		}
-	}
-
-	// Parse key=value pairs. Take first occurrence of src/dst/sport/dport (original direction).
-	var srcSeen, dstSeen, sportSeen, dportSeen bool
+	// Key=value pairs + an optional bare TCP state word. Only the FIRST
+	// occurrence of src/dst/sport/dport is taken (original direction);
+	// the two packets/bytes pairs (original + reply) are summed.
 	var packets1, packets2, bytes1, bytes2 int64
 	var packetsSeen, bytesSeen int
+	var srcSeen, dstSeen, sportSeen, dportSeen bool
 
-	for _, f := range fields {
+	for {
+		var f string
+		f, rest = splitField(rest)
+		if f == "" {
+			break
+		}
 		idx := strings.IndexByte(f, '=')
 		if idx < 0 {
+			// Bare word. The only one we care about is the TCP state.
+			// Other bare words (L4 proto number, timeout, flags like
+			// [ASSURED]) fall through untouched.
+			if proto == "tcp" && conn.State == "" {
+				switch f {
+				case "ESTABLISHED", "SYN_SENT", "SYN_RECV", "FIN_WAIT",
+					"CLOSE_WAIT", "LAST_ACK", "TIME_WAIT", "CLOSE":
+					conn.State = f
+				}
+			}
 			continue
 		}
 		key := f[:idx]
 		val := f[idx+1:]
-
 		switch key {
 		case "src":
 			if !srcSeen {
@@ -130,10 +138,27 @@ func parseConntrackLine(line string) *rawConn {
 	conn.Packets = packets1 + packets2
 	conn.Bytes = bytes1 + bytes2
 
-	// Skip loopback
 	if conn.Src == "127.0.0.1" && conn.Dst == "127.0.0.1" {
-		return nil
+		return rawConn{}, false
 	}
+	return conn, true
+}
 
-	return &conn
+// splitField returns the first whitespace-delimited token in s plus the
+// remainder. Returned token is a substring of s (no copy). Treats runs
+// of ' ' or '\t' as a single separator; empty or all-space input yields
+// ("", "").
+func splitField(s string) (token, rest string) {
+	start := 0
+	for start < len(s) && (s[start] == ' ' || s[start] == '\t') {
+		start++
+	}
+	if start >= len(s) {
+		return "", ""
+	}
+	end := start
+	for end < len(s) && s[end] != ' ' && s[end] != '\t' {
+		end++
+	}
+	return s[start:end], s[end:]
 }
