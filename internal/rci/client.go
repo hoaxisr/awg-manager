@@ -31,11 +31,6 @@ var sharedTransport = &http.Transport{
 	DisableKeepAlives:   false,
 }
 
-// Transport returns the shared HTTP transport for RCI connections.
-func Transport() *http.Transport {
-	return sharedTransport
-}
-
 // Client is the RCI HTTP client for Keenetic NDMS.
 type Client struct {
 	http    *http.Client
@@ -55,15 +50,6 @@ func NewWithTimeout(timeout time.Duration) *Client {
 	return &Client{
 		http:    &http.Client{Timeout: timeout, Transport: sharedTransport},
 		baseURL: defaultBaseURL,
-	}
-}
-
-// NewWithURL creates a new RCI client with a custom base URL.
-// Intended for tests that point to an httptest.Server.
-func NewWithURL(baseURL string) *Client {
-	return &Client{
-		http:    &http.Client{Timeout: defaultTimeout},
-		baseURL: baseURL,
 	}
 }
 
