@@ -13,10 +13,8 @@ import (
 const objectGroupTTL = 60 * time.Minute
 
 type ObjectGroupStore struct {
+	*cache.ListStore[[]ndms.FQDNGroup]
 	getter Getter
-	log    Logger
-	list   *cache.TTL[struct{}, []ndms.FQDNGroup]
-	listSF *cache.SingleFlight[struct{}, []ndms.FQDNGroup]
 }
 
 func NewObjectGroupStore(g Getter, log Logger) *ObjectGroupStore {
@@ -24,35 +22,10 @@ func NewObjectGroupStore(g Getter, log Logger) *ObjectGroupStore {
 }
 
 func NewObjectGroupStoreWithTTL(g Getter, log Logger, ttl time.Duration) *ObjectGroupStore {
-	if log == nil {
-		log = NopLogger()
-	}
-	return &ObjectGroupStore{
-		getter: g, log: log,
-		list:   cache.NewTTL[struct{}, []ndms.FQDNGroup](ttl),
-		listSF: cache.NewSingleFlight[struct{}, []ndms.FQDNGroup](),
-	}
+	s := &ObjectGroupStore{getter: g}
+	s.ListStore = cache.NewListStore(ttl, log, "fqdn groups", s.fetch)
+	return s
 }
-
-func (s *ObjectGroupStore) List(ctx context.Context) ([]ndms.FQDNGroup, error) {
-	if v, ok := s.list.Get(struct{}{}); ok {
-		return v, nil
-	}
-	return s.listSF.Do(struct{}{}, func() ([]ndms.FQDNGroup, error) {
-		v, err := s.fetch(ctx)
-		if err != nil {
-			if stale, ok := s.list.Peek(struct{}{}); ok {
-				s.log.Warnf("fqdn groups fetch failed, serving stale cache: %v", err)
-				return stale, nil
-			}
-			return nil, err
-		}
-		s.list.Set(struct{}{}, v)
-		return v, nil
-	})
-}
-
-func (s *ObjectGroupStore) InvalidateAll() { s.list.InvalidateAll() }
 
 type fqdnEntryWire struct {
 	Address string `json:"address"`
