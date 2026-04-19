@@ -167,6 +167,50 @@
 
 	let activeNewPolicyIfaces = $derived(newPolicyIfaces.filter((i) => !i.denied));
 
+	// HR Neo policy naming rules (mirrors backend validateHRPolicyName):
+	//  - Latin letters only (a-zA-Z), no digits / punctuation / whitespace / non-ASCII
+	//  - Length 1..32
+	//  - Must not match ^Policy\d+$ (reserved for system-created policies that
+	//    HR Neo cannot route into)
+	const HR_POLICY_NAME_RE = /^[a-zA-Z]+$/;
+	const HR_POLICY_NAME_MAX = 32;
+	const SYSTEM_POLICY_RE = /^Policy\d+$/;
+
+	function hrPolicyNameError(raw: string): string {
+		const v = raw.trim();
+		if (v === '') return 'Введите имя политики';
+		if (v.length > HR_POLICY_NAME_MAX) return `Максимум ${HR_POLICY_NAME_MAX} символов`;
+		if (SYSTEM_POLICY_RE.test(v))
+			return `Имя ${v} зарезервировано для системных политик Keenetic — HR Neo не может в них маршрутизировать`;
+		if (!HR_POLICY_NAME_RE.test(v))
+			return 'Только латинские буквы (a-z, A-Z), без цифр, пробелов и спецсимволов';
+		return '';
+	}
+
+	// Filter existing policies dropdown: hide system-created ones (PolicyN).
+	let hrCompatiblePolicies = $derived(policies.filter((p) => !SYSTEM_POLICY_RE.test(p.name)));
+
+	// Interfaces available for routing — used to detect name collisions.
+	let ifaceNameSet = $derived(new Set(policyInterfaces.map((i) => i.name)));
+
+	// Warning when the chosen new-policy name matches an existing interface.
+	// HR Neo will route directly to the interface instead of creating a policy.
+	let newPolicyNameInterfaceHint = $derived(
+		newPolicyName.trim() !== '' && ifaceNameSet.has(newPolicyName.trim())
+			? `Имя совпадает с интерфейсом "${newPolicyName.trim()}". Возможно, вы хотели выбрать Target = Интерфейс.`
+			: '',
+	);
+
+	// Warning when the new-policy name duplicates an existing HR-compatible policy.
+	let newPolicyNameDuplicateHint = $derived(
+		newPolicyName.trim() !== '' &&
+			hrCompatiblePolicies.some((p) => p.name === newPolicyName.trim())
+			? `Политика с именем "${newPolicyName.trim()}" уже существует. Выберите "Существующая" выше.`
+			: '',
+	);
+
+	let newPolicyNameValidationError = $derived(hrPolicyNameError(newPolicyName));
+
 	let canSave = $derived.by(() => {
 		if (!name.trim()) return false;
 		const d = splitLines(domainsText);
@@ -174,7 +218,11 @@
 		if (d.length === 0 && c.length === 0) return false;
 		if (mode === 'interface') return !!tunnelId;
 		if (policyChoice === 'existing') return !!existingPolicyName;
-		return !!newPolicyName.trim() && activeNewPolicyIfaces.length > 0;
+		// New policy: name must pass validation, must not duplicate an existing
+		// HR policy, and at least one interface must be permitted.
+		if (newPolicyNameValidationError !== '') return false;
+		if (newPolicyNameDuplicateHint !== '') return false;
+		return activeNewPolicyIfaces.length > 0;
 	});
 
 	// Local InterfaceList callbacks for the new-policy flow — accumulate
@@ -379,11 +427,17 @@
 			</div>
 
 			{#if policyChoice === 'existing'}
-				{#if policies.length === 0}
-					<div class="form-hint muted">Нет политик. Создайте новую.</div>
+				{#if hrCompatiblePolicies.length === 0}
+					<div class="form-hint muted">
+						Нет HR-совместимых политик. Создайте новую.
+						{#if policies.length > hrCompatiblePolicies.length}
+							Системные политики Keenetic (<code>PolicyN</code>) не отображаются —
+							HR Neo не может маршрутизировать в них.
+						{/if}
+					</div>
 				{:else}
 					<select class="form-select" bind:value={existingPolicyName}>
-						{#each policies as p}
+						{#each hrCompatiblePolicies as p}
 							<option value={p.name}>
 								{p.name}{p.description ? ` (${p.description})` : ''}
 							</option>
@@ -396,15 +450,27 @@
 			{:else}
 				<div class="policy-card">
 					<div class="policy-card-header">Новая политика Keenetic</div>
-					<div class="form-group">
+					<div class="form-group" class:field-error={attempted && newPolicyNameValidationError !== ''}>
 						<label class="form-label" for="hr-new-policy-name">Имя политики</label>
 						<input
 							id="hr-new-policy-name"
 							class="form-input"
 							type="text"
 							placeholder="Streaming"
+							maxlength={HR_POLICY_NAME_MAX}
 							bind:value={newPolicyName}
 						/>
+						{#if attempted && newPolicyNameValidationError !== ''}
+							<div class="error-text">{newPolicyNameValidationError}</div>
+						{:else if newPolicyNameDuplicateHint !== ''}
+							<div class="error-text">{newPolicyNameDuplicateHint}</div>
+						{:else if newPolicyNameInterfaceHint !== ''}
+							<div class="warn-text">{newPolicyNameInterfaceHint}</div>
+						{:else}
+							<div class="form-hint">
+								Только латинские буквы (a–Z), до {HR_POLICY_NAME_MAX} символов.
+							</div>
+						{/if}
 					</div>
 					<div class="form-group">
 						<InterfaceList
@@ -629,6 +695,11 @@
 	}
 	.error-text {
 		color: var(--error);
+		font-size: 0.75rem;
+		margin-top: 4px;
+	}
+	.warn-text {
+		color: var(--warning, #f59e0b);
 		font-size: 0.75rem;
 		margin-top: 4px;
 	}

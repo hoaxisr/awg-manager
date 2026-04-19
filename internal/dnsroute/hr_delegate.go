@@ -3,11 +3,44 @@ package dnsroute
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 )
+
+// Policy naming constraints for HR Neo.
+//
+// hrPolicyNameRE: latin letters only, no digits / underscores / hyphens /
+// spaces / non-ASCII. Keeps names valid as ipset set names on the router.
+//
+// systemPolicyNameRE: policies created by Keenetic itself use Policy<N>
+// naming (Policy0, Policy1, ...). HR Neo can't attach routes to these —
+// reject at the API boundary so broken rules never reach disk.
+var (
+	hrPolicyNameRE     = regexp.MustCompile(`^[a-zA-Z]+$`)
+	systemPolicyNameRE = regexp.MustCompile(`^Policy\d+$`)
+)
+
+const hrPolicyNameMaxLen = 32
+
+// validateHRPolicyName enforces naming rules for HR Neo policy targets.
+func validateHRPolicyName(name string) error {
+	if name == "" {
+		return fmt.Errorf("policy name is empty")
+	}
+	if len(name) > hrPolicyNameMaxLen {
+		return fmt.Errorf("policy name too long: %d chars (max %d)", len(name), hrPolicyNameMaxLen)
+	}
+	if systemPolicyNameRE.MatchString(name) {
+		return fmt.Errorf("policy name %q is reserved for system policies (HR Neo cannot attach to those)", name)
+	}
+	if !hrPolicyNameRE.MatchString(name) {
+		return fmt.Errorf("policy name %q must contain only latin letters (a-z, A-Z)", name)
+	}
+	return nil
+}
 
 // policyOrchestrator handles the two-step "wait for HR Neo to create the
 // policy, then permit the interfaces" sequence used by the new-policy flow.
@@ -180,10 +213,11 @@ func (s *ServiceImpl) updateHydraRoute(ctx context.Context, id string, list Doma
 // interface name and refuses to write if the tunnel doesn't exist.
 func (s *ServiceImpl) resolveHRTarget(ctx context.Context, list DomainList) (string, error) {
 	if list.HRRouteMode == "policy" {
-		if strings.TrimSpace(list.HRPolicyName) == "" {
-			return "", fmt.Errorf("policy mode requires hrPolicyName")
+		name := strings.TrimSpace(list.HRPolicyName)
+		if err := validateHRPolicyName(name); err != nil {
+			return "", err
 		}
-		return list.HRPolicyName, nil
+		return name, nil
 	}
 	if len(list.Routes) == 0 {
 		return "", fmt.Errorf("interface mode requires a tunnel")
