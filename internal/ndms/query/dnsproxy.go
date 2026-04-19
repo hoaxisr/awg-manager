@@ -15,12 +15,9 @@ import (
 const dnsProxyTTL = 60 * time.Minute
 
 type DNSProxyStore struct {
+	*cache.ListStore[[]ndms.DNSRouteRule]
 	getter Getter
-	log    Logger
 	isOS5  func() bool
-
-	list   *cache.TTL[struct{}, []ndms.DNSRouteRule]
-	listSF *cache.SingleFlight[struct{}, []ndms.DNSRouteRule]
 }
 
 func NewDNSProxyStore(g Getter, log Logger, isOS5 func() bool) *DNSProxyStore {
@@ -28,41 +25,23 @@ func NewDNSProxyStore(g Getter, log Logger, isOS5 func() bool) *DNSProxyStore {
 }
 
 func NewDNSProxyStoreWithTTL(g Getter, log Logger, isOS5 func() bool, ttl time.Duration) *DNSProxyStore {
-	if log == nil {
-		log = NopLogger()
-	}
 	if isOS5 == nil {
 		isOS5 = func() bool { return false }
 	}
-	return &DNSProxyStore{
-		getter: g, log: log, isOS5: isOS5,
-		list:   cache.NewTTL[struct{}, []ndms.DNSRouteRule](ttl),
-		listSF: cache.NewSingleFlight[struct{}, []ndms.DNSRouteRule](),
-	}
+	s := &DNSProxyStore{getter: g, isOS5: isOS5}
+	s.ListStore = cache.NewListStore(ttl, log, "dns-proxy", s.fetch)
+	return s
 }
 
+// List overrides the embedded ListStore.List to gate dns-proxy on OS5:
+// the endpoint does not exist on OS4, so calling it would 404 every
+// TTL miss and spam the cache Warnf.
 func (s *DNSProxyStore) List(ctx context.Context) ([]ndms.DNSRouteRule, error) {
 	if !s.isOS5() {
 		return nil, ErrNotSupportedOnOS4
 	}
-	if v, ok := s.list.Get(struct{}{}); ok {
-		return v, nil
-	}
-	return s.listSF.Do(struct{}{}, func() ([]ndms.DNSRouteRule, error) {
-		v, err := s.fetch(ctx)
-		if err != nil {
-			if stale, ok := s.list.Peek(struct{}{}); ok {
-				s.log.Warnf("dns-proxy fetch failed, serving stale cache: %v", err)
-				return stale, nil
-			}
-			return nil, err
-		}
-		s.list.Set(struct{}{}, v)
-		return v, nil
-	})
+	return s.ListStore.List(ctx)
 }
-
-func (s *DNSProxyStore) InvalidateAll() { s.list.InvalidateAll() }
 
 // dnsProxyRouteWire is the populated-entry shape. NDMS returns it either
 // as a JSON array of these objects (legacy shape: group as a field) or
