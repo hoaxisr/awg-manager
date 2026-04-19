@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
@@ -47,13 +46,9 @@ func (c *DNSRouteCommands) DeleteRoutes(ctx context.Context, specs []DNSRouteSpe
 	payload := map[string]any{
 		"dns-proxy": map[string]any{"route": routes},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("delete dns-proxy routes: %w", err)
-	}
-	c.save.Request()
-	c.queries.DNSProxy.InvalidateAll()
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "delete dns-proxy routes",
+		c.queries.DNSProxy.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 // UpsertRoutes adds or updates dns-proxy route entries in a single batch.
@@ -79,11 +74,7 @@ func (c *DNSRouteCommands) UpsertRoutes(ctx context.Context, specs []DNSRouteSpe
 	payload := map[string]any{
 		"dns-proxy": map[string]any{"route": routes},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("upsert dns-proxy routes: %w", err)
-	}
-	c.save.Request()
-	c.queries.DNSProxy.InvalidateAll()
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "upsert dns-proxy routes",
+		c.queries.DNSProxy.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
 }

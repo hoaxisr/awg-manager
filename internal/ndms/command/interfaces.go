@@ -37,13 +37,9 @@ func (c *InterfaceCommands) CreateOpkgTun(ctx context.Context, name, description
 			},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("create opkgtun %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Interfaces.InvalidateAll()
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "create opkgtun "+name,
+		c.queries.Interfaces.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 // DeleteOpkgTun removes an interface (any type — NDMS accepts "no": true for any).
@@ -53,15 +49,11 @@ func (c *InterfaceCommands) DeleteOpkgTun(ctx context.Context, name string) erro
 			name: map[string]any{"no": true},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("delete interface %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Interfaces.InvalidateAll()
-	c.queries.Interfaces.Invalidate(name)
-	c.queries.Peers.Invalidate(name)
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "delete interface "+name,
+		c.queries.Interfaces.InvalidateAll,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		func() { c.queries.Peers.Invalidate(name) },
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 // SetIPGlobal enables auto-global IP assignment on the interface.
@@ -75,13 +67,9 @@ func (c *InterfaceCommands) SetIPGlobal(ctx context.Context, name string) error 
 			},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("set ip global %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Interfaces.Invalidate(name)
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "set ip global "+name,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 // SetAddress sets the IPv4 address on the interface. Composite: clears
@@ -107,14 +95,10 @@ func (c *InterfaceCommands) SetAddress(ctx context.Context, name, address, mask 
 			},
 		},
 	}
-	if _, err := c.poster.Post(ctx, setPayload); err != nil {
-		return fmt.Errorf("set address %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Interfaces.Invalidate(name)
-	c.queries.Routes.InvalidateAll()
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, setPayload, "set address "+name,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		c.queries.Routes.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 // SetIPv6Address sets a single IPv6 address on the interface, clearing
@@ -132,13 +116,9 @@ func (c *InterfaceCommands) SetIPv6Address(ctx context.Context, name, address st
 			},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("set ipv6 address %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Interfaces.Invalidate(name)
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "set ipv6 address "+name,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 // ClearIPv6Address removes the IPv6 address from the interface.
@@ -152,13 +132,9 @@ func (c *InterfaceCommands) ClearIPv6Address(ctx context.Context, name string) e
 			},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("clear ipv6 address %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Interfaces.Invalidate(name)
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "clear ipv6 address "+name,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 // SetMTU sets the interface MTU and auto-adjusts TCP MSS.
@@ -175,13 +151,9 @@ func (c *InterfaceCommands) SetMTU(ctx context.Context, name string, mtu int) er
 			},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("set mtu %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Interfaces.Invalidate(name)
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "set mtu "+name,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 // SetDescription updates the NDMS description of the interface.
@@ -191,13 +163,9 @@ func (c *InterfaceCommands) SetDescription(ctx context.Context, name, descriptio
 			name: map[string]any{"description": description},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("set description %s: %w", name, err)
-	}
-	c.save.Request()
-	c.queries.Interfaces.Invalidate(name)
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "set description "+name,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 // SetDNS sets DNS name-servers for the interface. One POST per server.
@@ -241,6 +209,9 @@ func (c *InterfaceCommands) ClearDNS(ctx context.Context, name string, servers [
 
 // InterfaceUp brings the interface administratively up.
 // Registers expected hook if notifier is set.
+// RunningConfig invalidation is deliberately skipped — Plan 4's
+// events.Dispatcher invalidates RunningConfig on iflayerchanged hooks,
+// which fire on every interface up/down.
 func (c *InterfaceCommands) InterfaceUp(ctx context.Context, name string) error {
 	if c.hookNotifier != nil {
 		c.hookNotifier.ExpectHook(name, "running")
@@ -250,20 +221,16 @@ func (c *InterfaceCommands) InterfaceUp(ctx context.Context, name string) error 
 			name: map[string]any{"up": true},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("interface up %s: %w", name, err)
-	}
-	c.save.Request()
-	// Note: RunningConfig invalidation is deliberately skipped here.
-	// Plan 4's events.Dispatcher invalidates RunningConfig on
-	// iflayerchanged hooks, which fire on every interface up/down.
-	c.queries.Interfaces.Invalidate(name)
-	c.queries.Peers.Invalidate(name)
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "interface up "+name,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		func() { c.queries.Peers.Invalidate(name) })
 }
 
 // InterfaceDown brings the interface administratively down.
 // Registers expected hook if notifier is set.
+// RunningConfig invalidation is deliberately skipped — Plan 4's
+// events.Dispatcher invalidates RunningConfig on iflayerchanged hooks,
+// which fire on every interface up/down.
 func (c *InterfaceCommands) InterfaceDown(ctx context.Context, name string) error {
 	if c.hookNotifier != nil {
 		c.hookNotifier.ExpectHook(name, "disabled")
@@ -273,14 +240,7 @@ func (c *InterfaceCommands) InterfaceDown(ctx context.Context, name string) erro
 			name: map[string]any{"up": false},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("interface down %s: %w", name, err)
-	}
-	c.save.Request()
-	// Note: RunningConfig invalidation is deliberately skipped here.
-	// Plan 4's events.Dispatcher invalidates RunningConfig on
-	// iflayerchanged hooks, which fire on every interface up/down.
-	c.queries.Interfaces.Invalidate(name)
-	c.queries.Peers.Invalidate(name)
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "interface down "+name,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		func() { c.queries.Peers.Invalidate(name) })
 }

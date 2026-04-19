@@ -29,13 +29,9 @@ func (c *ObjectGroupCommands) DeleteGroups(ctx context.Context, names []string) 
 	payload := map[string]any{
 		"object-group": map[string]any{"fqdn": fqdn},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("delete fqdn groups: %w", err)
-	}
-	c.save.Request()
-	c.queries.ObjectGroups.InvalidateAll()
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "delete fqdn groups",
+		c.queries.ObjectGroups.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 // FQDNGroupMutation describes addresses to add or remove from one group.
@@ -67,13 +63,9 @@ func (c *ObjectGroupCommands) UpsertGroup(ctx context.Context, m FQDNGroupMutati
 			"fqdn": map[string]any{m.Name: group},
 		},
 	}
-	if _, err := c.poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("upsert fqdn group %s: %w", m.Name, err)
-	}
-	c.save.Request()
-	c.queries.ObjectGroups.InvalidateAll()
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
+	return postMutation(ctx, c.poster, c.save, payload, "upsert fqdn group "+m.Name,
+		c.queries.ObjectGroups.InvalidateAll,
+		c.queries.RunningConfig.InvalidateAll)
 }
 
 // buildEntries builds the include/exclude array: removes first (no: true),
