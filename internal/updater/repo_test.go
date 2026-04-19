@@ -135,31 +135,6 @@ func TestParsePackagesGz_MalformedGzip(t *testing.T) {
 	}
 }
 
-func TestCompareVersions(t *testing.T) {
-	tests := []struct {
-		a, b string
-		want int
-	}{
-		{"2.3.10", "2.3.11", -1},
-		{"2.3.11", "2.3.10", 1},
-		{"2.3.11", "2.3.11", 0},
-		{"2.4.0", "2.3.99", 1},
-		{"1.0.0", "2.0.0", -1},
-		{"2.3", "2.3.0", 0},
-		{"2.3.0", "2.3", 0},
-		{"2.3", "2.3.1", -1},
-		{"10.0.0", "9.99.99", 1},
-		{"0.0.1", "0.0.2", -1},
-		{"2.7.10", "2.7.3", 1},
-	}
-	for _, tt := range tests {
-		got := compareVersions(tt.a, tt.b)
-		if got != tt.want {
-			t.Errorf("compareVersions(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
-		}
-	}
-}
-
 func TestArchRepoDir(t *testing.T) {
 	tests := []struct {
 		suffix string

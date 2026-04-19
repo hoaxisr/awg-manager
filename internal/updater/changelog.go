@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/semver"
 )
 
 // Entry is one version's changelog as parsed from CHANGELOG.md.
@@ -82,19 +84,19 @@ func ParseChangelog(md string) (map[string]Entry, error) {
 }
 
 // Slice returns entries where fromVer < v <= toVer, sorted newest-first.
-// Version comparison reuses compareVersions (dotted-numeric semver-like).
+// Version comparison reuses semver.Compare (dotted-numeric semver-like).
 func Slice(entries map[string]Entry, fromVer, toVer string) []Entry {
-	if compareVersions(fromVer, toVer) >= 0 {
+	if semver.Compare(fromVer, toVer) >= 0 {
 		return nil
 	}
 	out := make([]Entry, 0)
 	for _, e := range entries {
-		if compareVersions(e.Version, fromVer) > 0 && compareVersions(e.Version, toVer) <= 0 {
+		if semver.Compare(e.Version, fromVer) > 0 && semver.Compare(e.Version, toVer) <= 0 {
 			out = append(out, e)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return compareVersions(out[i].Version, out[j].Version) > 0
+		return semver.Compare(out[i].Version, out[j].Version) > 0
 	})
 	return out
 }
