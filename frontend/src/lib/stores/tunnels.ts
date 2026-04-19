@@ -145,14 +145,28 @@ function createTunnelsStore() {
 		loading.set(false);
 	}
 
-	function updateTraffic(data: TunnelTrafficEvent) {
-		update(list => list.map(t =>
-			t.id === data.id
-				? { ...t, rxBytes: data.rxBytes, txBytes: data.txBytes,
+	// updateTraffic merges incoming traffic stats into the matching tunnel.
+	//
+	// On OS 5.x the SSE `tunnel:traffic` event is keyed by the NDMS interface
+	// name (e.g. "Wireguard0"), which does not always equal the awg-manager
+	// tunnel ID. We match by both to handle either case, then return the
+	// awg-manager ID so the caller can feed the traffic history store with
+	// the right key (subscribers in TunnelCard look up rates by tunnel.id).
+	//
+	// Returns the resolved tunnel.id, or null if no tunnel matches — in
+	// which case the event belongs to something we don't track (skip).
+	function updateTraffic(data: TunnelTrafficEvent): string | null {
+		let resolved: string | null = null;
+		update(list => list.map(t => {
+			if (t.id === data.id || t.interfaceName === data.id) {
+				resolved = t.id;
+				return { ...t, rxBytes: data.rxBytes, txBytes: data.txBytes,
 					lastHandshake: data.lastHandshake ?? t.lastHandshake,
-					startedAt: data.startedAt ?? t.startedAt }
-				: t
-		));
+					startedAt: data.startedAt ?? t.startedAt };
+			}
+			return t;
+		}));
+		return resolved;
 	}
 
 	function updateConnectivity(id: string, connected: boolean, latency: number | null) {
