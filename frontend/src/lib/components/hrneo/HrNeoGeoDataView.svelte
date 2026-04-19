@@ -112,6 +112,9 @@
 					<div class="file-info">
 						<span class="file-type type-{f.type}">{f.type}</span>
 						<span class="file-name">{fileName(f.path)}</span>
+						{#if f.external}
+							<span class="file-external" title="Найден в hrneo.conf вне awg-manager. Можно удалить, но не обновить — источник неизвестен.">external</span>
+						{/if}
 						<span class="file-meta">{humanSize(f.size)} · {f.tagCount} тегов</span>
 						{#if busy === f.path && fp}
 							<span class="row-progress">
@@ -124,13 +127,15 @@
 						{/if}
 					</div>
 					<div class="file-actions">
-						<button
-							class="btn btn-ghost btn-sm"
-							disabled={busy === f.path}
-							onclick={() => update(f.path)}
-						>
-							{busy === f.path ? 'Обновление…' : 'Обновить'}
-						</button>
+						{#if !f.external}
+							<button
+								class="btn btn-ghost btn-sm"
+								disabled={busy === f.path}
+								onclick={() => update(f.path)}
+							>
+								{busy === f.path ? 'Обновление…' : 'Обновить'}
+							</button>
+						{/if}
 						<button
 							class="btn btn-ghost btn-sm row-danger"
 							disabled={busy === f.path}
@@ -320,6 +325,18 @@
 	.file-meta {
 		color: var(--text-muted);
 		font-size: 0.75rem;
+	}
+
+	.file-external {
+		font-size: 0.6875rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		font-weight: 600;
+		padding: 2px 8px;
+		border-radius: 10px;
+		background: rgba(245, 158, 11, 0.15);
+		color: var(--warning, #f59e0b);
+		cursor: help;
 	}
 
 	.file-actions {

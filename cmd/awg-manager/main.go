@@ -236,6 +236,32 @@ func main() {
 	hydraService := hydraroute.NewService(catalog, log)
 	geoDataStore := hydraroute.NewGeoDataStore(*dataDir)
 	hydraService.SetGeoDataStore(geoDataStore)
+	// Adopt any geo files already listed in hrneo.conf (e.g. added manually
+	// before awg-manager was installed) so they show up in the UI. Adoption
+	// is stat-only — TagCount is populated lazily in the background.
+	if cfg, err := hydraroute.ReadConfig(); err == nil {
+		if n, err := geoDataStore.AdoptExternalFiles(cfg); err != nil {
+			log.Warn("Failed to adopt external geo files", map[string]interface{}{"error": err.Error()})
+		} else if n > 0 {
+			log.Info("Adopted external geo files from hrneo.conf", map[string]interface{}{"count": n})
+		}
+	}
+	// Warm up tag cache for entries with TagCount=0 in a background goroutine.
+	// Runs sequentially (one file at a time) to keep I/O pressure low — the
+	// streaming parser holds ~64 KB RAM regardless of file size.
+	go func() {
+		for _, e := range geoDataStore.List() {
+			if e.TagCount != 0 {
+				continue
+			}
+			if _, err := geoDataStore.GetTags(e.Path); err != nil {
+				log.Warn("Background tag parse failed", map[string]interface{}{
+					"path":  e.Path,
+					"error": err.Error(),
+				})
+			}
+		}
+	}()
 	// NDMS wiring (SetQueries + SetPolicies) happens after ndmsCommands is
 	// constructed — see below.
 
