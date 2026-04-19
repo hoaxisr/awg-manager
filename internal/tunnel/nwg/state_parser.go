@@ -29,12 +29,6 @@ type NWGState struct {
 	Connected     string // RFC3339 timestamp converted from NDMS "connected" field (unix ts or string)
 }
 
-// WGInterfaceInfo holds basic info about a Wireguard interface.
-type WGInterfaceInfo struct {
-	Name        string
-	Description string
-}
-
 // parseRCIInterfaceResponse parses a raw RCI JSON response for a single
 // Wireguard interface into NWGState.
 func parseRCIInterfaceResponse(data []byte) (NWGState, error) {
@@ -132,21 +126,3 @@ func parseRCIInterfaceList(data []byte) ([]string, error) {
 	return names, nil
 }
 
-// parseRCIInterfaceInfoList is like parseRCIInterfaceList but also returns descriptions.
-func parseRCIInterfaceInfoList(data []byte) ([]WGInterfaceInfo, error) {
-	var allIfaces map[string]rci.WGInterface
-	if err := json.Unmarshal(data, &allIfaces); err != nil {
-		return nil, fmt.Errorf("decode rci interface list: %w", err)
-	}
-
-	var result []WGInterfaceInfo
-	for _, iface := range allIfaces {
-		if strings.EqualFold(iface.Type, "Wireguard") {
-			result = append(result, WGInterfaceInfo{
-				Name:        iface.ID,
-				Description: iface.Description,
-			})
-		}
-	}
-	return result, nil
-}

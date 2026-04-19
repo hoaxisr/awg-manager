@@ -491,37 +491,6 @@ func routesEqual(current []currentRoute, target []targetRoute) bool {
 	return true
 }
 
-// groupDataEqual checks if current router state matches the target group.
-func groupDataEqual(current currentGroupData, target targetGroup) bool {
-	// On the router, subnets appear as regular entries alongside domains.
-	allIncludes := target.includes
-	if len(target.subnets) > 0 {
-		allIncludes = make([]string, 0, len(target.includes)+len(target.subnets))
-		allIncludes = append(allIncludes, target.includes...)
-		allIncludes = append(allIncludes, target.subnets...)
-	}
-	return domainsEqual(current.includes, allIncludes) &&
-		domainsEqual(current.excludes, target.excludes)
-}
-
-// domainsEqual checks if two domain slices contain the same elements (order-insensitive, case-insensitive).
-func domainsEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	set := make(map[string]int, len(a))
-	for _, d := range a {
-		set[strings.ToLower(d)]++
-	}
-	for _, d := range b {
-		set[strings.ToLower(d)]--
-		if set[strings.ToLower(d)] < 0 {
-			return false
-		}
-	}
-	return true
-}
-
 // buildGroupName generates a human-readable NDMS object-group name.
 // Format: AWG_{num}_{sanitized_name}_{chunk}
 // Example: list_2 "hetzner" chunk 1 → "AWG_2_hetzner_1"

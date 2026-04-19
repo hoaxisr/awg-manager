@@ -20,7 +20,6 @@ type Scheduler struct {
 	log         *logger.Logger
 	stop        chan struct{}
 	done        chan struct{}
-	kick        chan struct{}
 	lastRefresh time.Time // tracks last successful refresh
 }
 
@@ -32,7 +31,6 @@ func NewScheduler(svc Service, settings *storage.SettingsStore, log *logger.Logg
 		log:      log,
 		stop:     make(chan struct{}),
 		done:     make(chan struct{}),
-		kick:     make(chan struct{}, 1),
 	}
 }
 
@@ -45,15 +43,6 @@ func (s *Scheduler) Start() {
 func (s *Scheduler) Stop() {
 	close(s.stop)
 	<-s.done
-}
-
-// Kick forces the scheduler to re-evaluate settings immediately.
-// Non-blocking: if a kick is already pending, the extra one is dropped.
-func (s *Scheduler) Kick() {
-	select {
-	case s.kick <- struct{}{}:
-	default:
-	}
 }
 
 func (s *Scheduler) run() {
@@ -74,7 +63,6 @@ func (s *Scheduler) run() {
 
 		select {
 		case <-time.After(schedulerTick):
-		case <-s.kick:
 		case <-s.stop:
 			return
 		}

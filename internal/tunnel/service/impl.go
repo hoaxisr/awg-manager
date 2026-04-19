@@ -146,11 +146,6 @@ func (s *ServiceImpl) unlockTunnel(tunnelID string) {
 	}
 }
 
-// cleanupTunnelLock removes the lock entry for a deleted tunnel.
-func (s *ServiceImpl) cleanupTunnelLock(tunnelID string) {
-	s.tunnelMu.Delete(tunnelID)
-}
-
 // === CRUD Operations ===
 
 // Create creates a new tunnel and saves it to storage.

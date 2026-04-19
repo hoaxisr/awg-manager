@@ -277,15 +277,6 @@ func (s *Service) resolveMask(mask string) string {
 	return mask
 }
 
-func (s *Service) maskToPrefix(mask string) string {
-	ip := net.ParseIP(mask)
-	if ip == nil {
-		return mask // already a prefix number
-	}
-	ones, _ := net.IPMask(ip.To4()).Size()
-	return strconv.Itoa(ones)
-}
-
 func (s *Service) cleanupInterface(ctx context.Context, name string) {
 	_ = s.rciDeleteInterface(ctx, name)
 }

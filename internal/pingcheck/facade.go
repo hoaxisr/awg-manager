@@ -337,29 +337,6 @@ func (f *Facade) configureNativeWGPingCheck(tunnelID string) {
 	_ = f.nwgOp.ConfigurePingCheck(context.Background(), stored, pcCfg)
 }
 
-// getPingCheckDefaults returns default PingCheck config from global settings.
-func (f *Facade) getPingCheckDefaults() *storage.TunnelPingCheck {
-	if f.settings == nil {
-		return nil
-	}
-	settings, err := f.settings.Get()
-	if err != nil {
-		return nil
-	}
-	defaults := settings.PingCheck.Defaults
-	return &storage.TunnelPingCheck{
-		Enabled:       true,
-		Method:        defaults.Method,
-		Target:        defaults.Target,
-		Interval:      defaults.Interval,
-		DeadInterval:  defaults.DeadInterval,
-		FailThreshold: defaults.FailThreshold,
-		MinSuccess:    1,
-		Timeout:       5,
-		Restart:       true,
-	}
-}
-
 // removeNativeWGPingCheck removes the NDMS ping-check profile
 // for a nativewg tunnel (called when pingcheck is toggled OFF at runtime).
 func (f *Facade) removeNativeWGPingCheck(tunnelID string) {

@@ -140,11 +140,6 @@ func CheckIPByInterface(ctx context.Context, ifaceName string, serviceURL string
 	}, nil
 }
 
-// GetWANIP fetches the external WAN IP via default route (no interface binding).
-func GetWANIP(ctx context.Context) (string, error) {
-	return fetchIPAuto(ctx, "", nil)
-}
-
 // WANIPFallback returns an IP to use when external IP probes fail.
 // Typical implementation reads the default-gateway interface's IPv4
 // address from NDMS — not truly "external" if the router is behind

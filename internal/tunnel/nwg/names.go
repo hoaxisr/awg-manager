@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
-	"strings"
 )
 
 const MaxTunnels = 10
@@ -23,16 +22,6 @@ func NewNWGNames(index int) NWGNames {
 		NDMSName:  fmt.Sprintf("Wireguard%d", index),
 		IfaceName: fmt.Sprintf("nwg%d", index),
 	}
-}
-
-func KernelToNDMS(kernelName string) string {
-	if strings.HasPrefix(kernelName, "nwg") {
-		suffix := kernelName[3:]
-		if _, err := strconv.Atoi(suffix); err == nil {
-			return "Wireguard" + suffix
-		}
-	}
-	return kernelName
 }
 
 func ParseNDMSCreatedName(output string) (index int, ndmsName string, err error) {
