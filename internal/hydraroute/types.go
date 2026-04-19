@@ -48,6 +48,13 @@ type GeoFileEntry struct {
 	Size     int64  `json:"size"`
 	TagCount int    `json:"tagCount"`
 	Updated  string `json:"updated"`
+	// External is true for files discovered in hrneo.conf but not registered
+	// through awg-manager. They have no URL and cannot be re-downloaded.
+	External bool `json:"external,omitempty"`
+	// Mtime (RFC3339 UTC) is the file's modification time at the moment
+	// TagCount was computed. Used to detect stale cached TagCount without
+	// re-parsing the file: stat() returns the same mtime+size → cache hit.
+	Mtime string `json:"mtime,omitempty"`
 }
 
 type GeoTag struct {

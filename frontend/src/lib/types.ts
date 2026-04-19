@@ -483,6 +483,8 @@ export interface GeoFileEntry {
 	size: number;
 	tagCount: number;
 	updated: string;
+	/** True for files discovered in hrneo.conf but not managed by awg-manager. */
+	external?: boolean;
 }
 
 export interface GeoTag {
