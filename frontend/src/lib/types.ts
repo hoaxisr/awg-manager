@@ -100,6 +100,7 @@ export interface TunnelListItem {
 	endpoint: string;
 	address: string;
 	interfaceName?: string;
+	ndmsName?: string;
 	hasAddressConflict?: boolean;
 	rxBytes?: number;
 	txBytes?: number;

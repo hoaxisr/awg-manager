@@ -411,9 +411,14 @@
 				{/each}
 				{#each $systemTunnelsList.filter((st) =>
 					// Defense against backend dedup races: if a managed tunnel
-					// already claims this interface name, don't render the
-					// system card (it would be a ghost duplicate).
-					!$tunnels.some((mt) => mt.interfaceName && mt.interfaceName === st.id)
+					// already claims this NDMS name, don't render the system
+					// card (it would be a ghost duplicate). System tunnel id
+					// is the NDMS name ("WireguardN"), so we compare against
+					// the managed tunnel's ndmsName.
+					!$tunnels.some((mt) =>
+						(mt.ndmsName && mt.ndmsName === st.id) ||
+						(mt.interfaceName && mt.interfaceName === st.id)
+					)
 				) as tunnel (tunnel.id)}
 					<SystemTunnelCard {tunnel} onHide={hideSystemTunnel} onMarkServer={markAsServer} />
 				{/each}

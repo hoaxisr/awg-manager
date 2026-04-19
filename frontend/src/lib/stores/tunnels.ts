@@ -161,18 +161,18 @@ function createTunnelsStore() {
 
 	// updateTraffic merges incoming traffic stats into the matching tunnel.
 	//
-	// On OS 5.x the SSE `tunnel:traffic` event is keyed by the NDMS interface
-	// name (e.g. "Wireguard0"), which does not always equal the awg-manager
-	// tunnel ID. We match by both to handle either case, then return the
-	// awg-manager ID so the caller can feed the traffic history store with
-	// the right key (subscribers in TunnelCard look up rates by tunnel.id).
+	// SSE `tunnel:traffic` is keyed by the NDMS interface name ("WireguardN"
+	// for NativeWG, or the kernel iface name for kernel mode). We match
+	// against every known identifier — t.id (awg-manager ID), t.ndmsName
+	// ("WireguardN"), or t.interfaceName (kernel: "nwgN" / "opkgtunN" /
+	// "awgN") — and return the awg-manager t.id so feedTraffic writes to
+	// the same key TunnelCard subscribes under.
 	//
-	// Returns the resolved tunnel.id, or null if no tunnel matches — in
-	// which case the event belongs to something we don't track (skip).
+	// Returns null if no tunnel matches (transient state / unrelated iface).
 	function updateTraffic(data: TunnelTrafficEvent): string | null {
 		let resolved: string | null = null;
 		update(list => list.map(t => {
-			if (t.id === data.id || t.interfaceName === data.id) {
+			if (t.id === data.id || t.ndmsName === data.id || t.interfaceName === data.id) {
 				resolved = t.id;
 				return { ...t, rxBytes: data.rxBytes, txBytes: data.txBytes,
 					lastHandshake: data.lastHandshake ?? t.lastHandshake,
