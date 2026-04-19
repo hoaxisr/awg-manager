@@ -70,6 +70,12 @@
 			},
 			onConnected: () => {
 				serverOnline.set(true);
+				// Drop any preserved tunnel:state updates from before the
+				// disconnect — the fresh snapshot about to arrive is the
+				// authoritative state, and the 5-second preservation window
+				// in setSnapshot would otherwise let a stale "running"
+				// shadow a legitimate "stopped".
+				tunnels.clearRecentStateUpdates();
 			},
 			onDisconnected: () => serverOnline.set(false),
 
