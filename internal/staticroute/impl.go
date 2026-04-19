@@ -364,7 +364,7 @@ func isOS4Kernel(tunnelID string) bool {
 }
 
 // parseCIDR splits a CIDR string into network and mask.
-// Returns ("1.2.3.4", "", nil) for /32 host routes (use CmdAddHostRoute).
+// Returns ("1.2.3.4", "", nil) for /32 host routes.
 // Returns ("10.0.0.0", "255.255.255.0", nil) for subnet routes.
 func parseCIDR(cidr string) (network, mask string, err error) {
 	_, ipNet, err := net.ParseCIDR(cidr)

@@ -74,20 +74,12 @@ func CmdInterfaceDNS(name string, servers []string) any {
 	return map[string]any{"interface": map[string]any{"name": name, "ip": map[string]any{"name-server": list}}}
 }
 
-func CmdInterfaceDNSClear(name string) any {
-	return map[string]any{"interface": map[string]any{"name": name, "ip": map[string]any{"name-server": map[string]any{}}}}
-}
-
 // --- IPv6 (#3, #4, #18) ---
 
 func CmdInterfaceIPv6Address(name, address string) any {
 	return map[string]any{"interface": map[string]any{"name": name, "ipv6": map[string]any{
 		"address": []any{map[string]any{"block": address + "/128"}},
 	}}}
-}
-
-func CmdInterfaceIPv6AddressClear(name string) any {
-	return map[string]any{"interface": map[string]any{"name": name, "ipv6": map[string]any{"address": map[string]any{}}}}
 }
 
 // --- WireGuard (#16, #19-23, #24, #27) ---
@@ -120,12 +112,6 @@ func CmdWireguardPeer(name string, peer PeerConfig) any {
 	return map[string]any{"interface": map[string]any{"name": name, "wireguard": map[string]any{"peer": p}}}
 }
 
-func CmdWireguardPeerDelete(name, publicKey string) any {
-	return map[string]any{"interface": map[string]any{"name": name, "wireguard": map[string]any{
-		"peer": map[string]any{"key": publicKey, "no": true},
-	}}}
-}
-
 func CmdWireguardPeerEndpoint(name, publicKey, endpoint string) any {
 	return map[string]any{"interface": map[string]any{"name": name, "wireguard": map[string]any{
 		"peer": map[string]any{"key": publicKey, "endpoint": map[string]any{"address": endpoint}},
@@ -141,88 +127,6 @@ func CmdWireguardPeerConnect(name, publicKey, viaInterface string) any {
 func CmdWireguardPeerDisconnect(name, publicKey string) any {
 	return map[string]any{"interface": map[string]any{"name": name, "wireguard": map[string]any{
 		"peer": map[string]any{"key": publicKey, "connect": map[string]any{"no": true}},
-	}}}
-}
-
-// --- IPv4 routes (#1, #2) ---
-
-func CmdSetDefaultRoute(name string) any {
-	return map[string]any{"ip": map[string]any{"route": map[string]any{"default": true, "interface": name}}}
-}
-
-func CmdRemoveDefaultRoute(name string) any {
-	return map[string]any{"ip": map[string]any{"route": map[string]any{"default": true, "interface": name, "no": true}}}
-}
-
-// --- IPv6 routes ---
-
-func CmdSetIPv6DefaultRoute(name string) any {
-	return map[string]any{"ipv6": map[string]any{"route": map[string]any{"default": true, "interface": name}}}
-}
-
-func CmdRemoveIPv6DefaultRoute(name string) any {
-	return map[string]any{"ipv6": map[string]any{"route": map[string]any{"default": true, "interface": name, "no": true}}}
-}
-
-func CmdRemoveIPv6HostRoute(host string) any {
-	return map[string]any{"ipv6": map[string]any{"route": map[string]any{"host": host, "no": true}}}
-}
-
-// --- Static subnet routes ---
-
-// CmdAddStaticRoute adds a static route to a subnet via an interface.
-// Uses "auto" flag so the route activates only when the interface is up.
-// If reject is true, traffic is blocked when the interface is down (kill switch).
-func CmdAddStaticRoute(network, mask, iface string, reject bool, comment string) any {
-	route := map[string]any{
-		"network":   network,
-		"mask":      mask,
-		"interface": iface,
-		"auto":      true,
-	}
-	if reject {
-		route["reject"] = true
-	}
-	if comment != "" {
-		route["comment"] = comment
-	}
-	return map[string]any{"ip": map[string]any{"route": route}}
-}
-
-// CmdAddHostRoute adds a static host route (/32) via an interface.
-func CmdAddHostRoute(host, iface string, reject bool, comment string) any {
-	route := map[string]any{
-		"host":      host,
-		"interface": iface,
-		"auto":      true,
-	}
-	if reject {
-		route["reject"] = true
-	}
-	if comment != "" {
-		route["comment"] = comment
-	}
-	return map[string]any{"ip": map[string]any{"route": route}}
-}
-
-// CmdRemoveStaticRoute removes a static subnet route via an interface.
-func CmdRemoveStaticRoute(network, mask, iface string) any {
-	return map[string]any{"ip": map[string]any{"route": map[string]any{
-		"network":   network,
-		"mask":      mask,
-		"interface": iface,
-		"no":        true,
-	}}}
-}
-
-// CmdRemoveStaticHostRoute removes a static host route (/32) via an interface.
-// Note: this is different from the existing RemoveHostRoute in ndms which
-// removes endpoint routes without specifying an interface.
-func CmdRemoveStaticHostRoute(host, iface string) any {
-	return map[string]any{"ip": map[string]any{"route": map[string]any{
-		"host":      host,
-		"interface": iface,
-		"no":        true,
 	}}}
 }
 
