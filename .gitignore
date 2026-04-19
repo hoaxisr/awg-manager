@@ -40,3 +40,12 @@ package.json
 package-lock.json
 test-results/
 .superpowers/
+
+# Release infrastructure — contain repo host IP, SSH key paths, and
+# upload targets. Kept local-only to avoid leaking to the public source
+# mirror; prior incidents shipped publish-github-release.sh and
+# build-singbox-naive.sh before history rewrite caught them.
+scripts/release.sh
+scripts/backfill-changelog.sh
+scripts/build-singbox-naive.sh
+scripts/publish-github-release.sh
