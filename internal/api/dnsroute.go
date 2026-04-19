@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
@@ -95,19 +94,10 @@ func (h *DNSRouteHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Create creates a new domain list.
 func (h *DNSRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
+	list, ok := parseJSON[dnsroute.DomainList](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-
-	var list dnsroute.DomainList
-	if err := json.NewDecoder(r.Body).Decode(&list); err != nil {
-		response.ErrorWithStatus(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
-		return
-	}
-
 	created, err := h.svc.Create(r.Context(), list)
 	if err != nil {
 		response.Error(w, err.Error(), "DNS_ROUTE_CREATE_ERROR")
@@ -122,25 +112,15 @@ func (h *DNSRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Update updates an existing domain list.
 func (h *DNSRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
+	list, ok := parseJSON[dnsroute.DomainList](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
-
 	id := r.URL.Query().Get("id")
 	if id == "" {
 		response.ErrorWithStatus(w, http.StatusBadRequest, "Missing id parameter", "MISSING_ID")
 		return
 	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-
-	var list dnsroute.DomainList
-	if err := json.NewDecoder(r.Body).Decode(&list); err != nil {
-		response.ErrorWithStatus(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
-		return
-	}
-
 	list.ID = id
 
 	updated, err := h.svc.Update(r.Context(), list)
@@ -181,18 +161,10 @@ func (h *DNSRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // DeleteBatch deletes multiple domain lists by IDs.
 func (h *DNSRouteHandler) DeleteBatch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-
-	var body struct {
+	body, ok := parseJSON[struct {
 		IDs []string `json:"ids"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		response.ErrorWithStatus(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
+	}](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 
@@ -215,16 +187,8 @@ func (h *DNSRouteHandler) DeleteBatch(w http.ResponseWriter, r *http.Request) {
 
 // CreateBatch creates multiple domain lists at once.
 func (h *DNSRouteHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-
-	var lists []dnsroute.DomainList
-	if err := json.NewDecoder(r.Body).Decode(&lists); err != nil {
-		response.ErrorWithStatus(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
+	lists, ok := parseJSON[[]dnsroute.DomainList](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 
@@ -247,24 +211,14 @@ func (h *DNSRouteHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 
 // SetEnabled toggles the enabled state of a domain list.
 func (h *DNSRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
+	body, ok := parseJSON[enabledToggle](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 
 	id := r.URL.Query().Get("id")
 	if id == "" {
 		response.ErrorWithStatus(w, http.StatusBadRequest, "Missing id parameter", "MISSING_ID")
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-
-	var body struct {
-		Enabled bool `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		response.ErrorWithStatus(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
 		return
 	}
 
@@ -285,17 +239,11 @@ func (h *DNSRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 
 // BulkBackend switches the routing backend for multiple lists.
 func (h *DNSRouteHandler) BulkBackend(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-
-	var req struct {
+	req, ok := parseJSON[struct {
 		ListIDs []string `json:"listIDs"`
 		Backend string   `json:"backend"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "Invalid request body", "INVALID_BODY")
+	}](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	if req.Backend != "ndms" && req.Backend != "hydraroute" {

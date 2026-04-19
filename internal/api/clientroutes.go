@@ -1,8 +1,6 @@
 package api
 
 import (
-	"encoding/json"
-	"io"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
@@ -55,19 +53,8 @@ func (h *ClientRouteHandler) HandleList(w http.ResponseWriter, r *http.Request) 
 // POST /api/client-routes/create
 // Body: ClientRoute JSON
 func (h *ClientRouteHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
-		return
-	}
-	var route clientroute.ClientRoute
-	if err := json.Unmarshal(body, &route); err != nil {
-		response.Error(w, "invalid JSON", "INVALID_JSON")
+	route, ok := parseJSON[clientroute.ClientRoute](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	created, err := h.svc.Create(r.Context(), route)
@@ -83,24 +70,13 @@ func (h *ClientRouteHandler) HandleCreate(w http.ResponseWriter, r *http.Request
 // POST /api/client-routes/update?id=xxx
 // Body: ClientRoute JSON
 func (h *ClientRouteHandler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
+	route, ok := parseJSON[clientroute.ClientRoute](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	id := r.URL.Query().Get("id")
 	if id == "" {
 		response.Error(w, "missing id parameter", "MISSING_ID")
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
-		return
-	}
-	var route clientroute.ClientRoute
-	if err := json.Unmarshal(body, &route); err != nil {
-		response.Error(w, "invalid JSON", "INVALID_JSON")
 		return
 	}
 	route.ID = id
@@ -137,26 +113,13 @@ func (h *ClientRouteHandler) HandleDelete(w http.ResponseWriter, r *http.Request
 // POST /api/client-routes/toggle?id=xxx
 // Body: {"enabled": bool}
 func (h *ClientRouteHandler) HandleToggle(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
+	req, ok := parseJSON[enabledToggle](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	id := r.URL.Query().Get("id")
 	if id == "" {
 		response.Error(w, "missing id parameter", "MISSING_ID")
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
-		return
-	}
-	var req struct {
-		Enabled bool `json:"enabled"`
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		response.Error(w, "invalid JSON", "INVALID_JSON")
 		return
 	}
 	if err := h.svc.SetEnabled(r.Context(), id, req.Enabled); err != nil {
