@@ -313,18 +313,16 @@ func (h *ManagedServerHandler) PeerConf(w http.ResponseWriter, r *http.Request) 
 	response.Success(w, map[string]string{"conf": conf})
 }
 
+// enabledToggle is the shared request body for NAT and SetEnabled.
+type enabledToggle struct {
+	Enabled bool `json:"enabled"`
+}
+
 // NAT enables or disables NAT on the managed server interface.
 // POST /api/managed-server/nat
 func (h *ManagedServerHandler) NAT(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	var req struct {
-		Enabled bool `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	req, ok := parseJSON[enabledToggle](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	if err := h.svc.SetNAT(r.Context(), req.Enabled); err != nil {
@@ -338,15 +336,8 @@ func (h *ManagedServerHandler) NAT(w http.ResponseWriter, r *http.Request) {
 // SetEnabled enables or disables the managed server interface.
 // POST /api/managed-server/enabled
 func (h *ManagedServerHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	var req struct {
-		Enabled bool `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	req, ok := parseJSON[enabledToggle](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	if err := h.svc.SetEnabled(r.Context(), req.Enabled); err != nil {
