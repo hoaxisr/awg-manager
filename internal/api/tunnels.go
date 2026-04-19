@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -485,15 +484,8 @@ func (h *TunnelsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Create creates a new tunnel.
 func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	var req storage.AWGTunnel
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	req, ok := parseJSON[storage.AWGTunnel](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 
@@ -592,7 +584,6 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
-
 	id := r.URL.Query().Get("id")
 	if id == "" {
 		response.Error(w, "missing id parameter", "MISSING_ID")
@@ -602,11 +593,8 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
 		return
 	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	var req storage.AWGTunnel
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	req, ok := parseJSON[storage.AWGTunnel](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 
@@ -896,7 +884,6 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
-
 	id := r.URL.Query().Get("id")
 	if id == "" {
 		response.Error(w, "missing id parameter", "MISSING_ID")
@@ -906,14 +893,11 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
 		return
 	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	var req struct {
+	req, ok := parseJSON[struct {
 		Content string `json:"content"`
 		Name    string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	}](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 
