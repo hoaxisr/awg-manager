@@ -426,6 +426,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	}
 	if s.tunnelService != nil {
 		hookHandler.SetWANModel(s.tunnelService.WANModel())
+		// Wire the self-create gate so importNativeWG can suppress the
+		// ifcreated-driven snapshot republish while its store.Save is
+		// still pending.
+		s.tunnelService.SetSelfCreateGate(hookHandler)
 	}
 	mux.HandleFunc("/api/hook/ndms", hookHandler.HandleNDMS)
 
@@ -706,7 +710,13 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// destroyed tunnel cards (including system tunnels) without a
 	// browser refresh. The closure invalidates the stores it reads
 	// before rebuilding, because the dispatcher invalidation is async.
-	hookHandler.SetTunnelRefresher(func(ctx context.Context) {
+	//
+	// The same closure is also wired into tunnelsHandler so every
+	// managed-list-modifying operation (create / import / delete /
+	// start / stop / etc.) publishes a fresh snapshot:tunnels with
+	// dedup applied — otherwise the frontend's systemTunnels array
+	// stays stale and ghost cards linger.
+	refreshTunnelsSnapshot := func(ctx context.Context) {
 		if s.ndmsQueries != nil {
 			if s.ndmsQueries.WGServers != nil {
 				s.ndmsQueries.WGServers.InvalidateAll()
@@ -718,7 +728,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		if payload := sb.BuildTunnelsSnapshot(ctx); payload != nil && s.bus != nil {
 			s.bus.Publish("snapshot:tunnels", payload)
 		}
-	})
+	}
+	hookHandler.SetTunnelRefresher(refreshTunnelsSnapshot)
+	tunnelsHandler.SetSnapshotRefresher(refreshTunnelsSnapshot)
+	tunnelsHandler.SetSelfCreateGate(hookHandler)
 
 	// DNS routing diagnostics
 	if s.dnsCheckService != nil {

@@ -409,7 +409,12 @@
 						ondelete={() => requestDelete(tunnel.id)}
 					/>
 				{/each}
-				{#each $systemTunnelsList as tunnel (tunnel.id)}
+				{#each $systemTunnelsList.filter((st) =>
+					// Defense against backend dedup races: if a managed tunnel
+					// already claims this interface name, don't render the
+					// system card (it would be a ghost duplicate).
+					!$tunnels.some((mt) => mt.interfaceName && mt.interfaceName === st.id)
+				) as tunnel (tunnel.id)}
 					<SystemTunnelCard {tunnel} onHide={hideSystemTunnel} onMarkServer={markAsServer} />
 				{/each}
 			</div>
