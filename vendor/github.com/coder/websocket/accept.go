@@ -1,10 +1,10 @@
 //go:build !js
-// +build !js
 
 package websocket
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha1"
 	"encoding/base64"
 	"errors"
@@ -14,15 +14,13 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
-	"path/filepath"
+	"path"
 	"strings"
 
-	"nhooyr.io/websocket/internal/errd"
+	"github.com/coder/websocket/internal/errd"
 )
 
 // AcceptOptions represents Accept's options.
-//
-// Deprecated: coder now maintains this library at https://github.com/coder/websocket.
 type AcceptOptions struct {
 	// Subprotocols lists the WebSocket subprotocols that Accept will negotiate with the client.
 	// The empty subprotocol will always be negotiated as per RFC 6455. If you would like to
@@ -42,9 +40,10 @@ type AcceptOptions struct {
 	// In such a case, example.com is the origin and chat.example.com is the request host.
 	// One would set this field to []string{"example.com"} to authorize example.com to connect.
 	//
-	// Each pattern is matched case insensitively against the request origin host
-	// with filepath.Match.
-	// See https://golang.org/pkg/path/filepath/#Match
+	// Each pattern is matched case insensitively with path.Match (see
+	// https://golang.org/pkg/path/#Match). By default, it is matched
+	// against the request origin host. If the pattern contains a URI
+	// scheme ("://"), it will be matched against "scheme://host".
 	//
 	// Please ensure you understand the ramifications of enabling this.
 	// If used incorrectly your WebSocket server will be open to CSRF attacks.
@@ -64,6 +63,22 @@ type AcceptOptions struct {
 	// Defaults to 512 bytes for CompressionNoContextTakeover and 128 bytes
 	// for CompressionContextTakeover.
 	CompressionThreshold int
+
+	// OnPingReceived is an optional callback invoked synchronously when a ping frame is received.
+	//
+	// The payload contains the application data of the ping frame.
+	// If the callback returns false, the subsequent pong frame will not be sent.
+	// To avoid blocking, any expensive processing should be performed asynchronously using a goroutine.
+	OnPingReceived func(ctx context.Context, payload []byte) bool
+
+	// OnPongReceived is an optional callback invoked synchronously when a pong frame is received.
+	//
+	// The payload contains the application data of the pong frame.
+	// To avoid blocking, any expensive processing should be performed asynchronously using a goroutine.
+	//
+	// Unlike OnPingReceived, this callback does not return a value because a pong frame
+	// is a response to a ping and does not trigger any further frame transmission.
+	OnPongReceived func(ctx context.Context, payload []byte)
 }
 
 func (opts *AcceptOptions) cloneWithDefaults() *AcceptOptions {
@@ -77,12 +92,13 @@ func (opts *AcceptOptions) cloneWithDefaults() *AcceptOptions {
 // Accept accepts a WebSocket handshake from a client and upgrades the
 // the connection to a WebSocket.
 //
-// Deprecated: coder now maintains this library at https://github.com/coder/websocket.
-//
 // Accept will not allow cross origin requests by default.
 // See the InsecureSkipVerify and OriginPatterns options to allow cross origin requests.
 //
 // Accept will write a response to w on all errors.
+//
+// Note that using the http.Request Context after Accept returns may lead to
+// unexpected behavior (see http.Hijacker).
 func Accept(w http.ResponseWriter, r *http.Request, opts *AcceptOptions) (*Conn, error) {
 	return accept(w, r, opts)
 }
@@ -100,7 +116,7 @@ func accept(w http.ResponseWriter, r *http.Request, opts *AcceptOptions) (_ *Con
 	if !opts.InsecureSkipVerify {
 		err = authenticateOrigin(r, opts.OriginPatterns)
 		if err != nil {
-			if errors.Is(err, filepath.ErrBadPattern) {
+			if errors.Is(err, path.ErrBadPattern) {
 				log.Printf("websocket: %v", err)
 				err = errors.New(http.StatusText(http.StatusForbidden))
 			}
@@ -109,7 +125,7 @@ func accept(w http.ResponseWriter, r *http.Request, opts *AcceptOptions) (_ *Con
 		}
 	}
 
-	hj, ok := w.(http.Hijacker)
+	hj, ok := hijacker(w)
 	if !ok {
 		err = errors.New("http.ResponseWriter does not implement http.Hijacker")
 		http.Error(w, http.StatusText(http.StatusNotImplemented), http.StatusNotImplemented)
@@ -157,6 +173,8 @@ func accept(w http.ResponseWriter, r *http.Request, opts *AcceptOptions) (_ *Con
 		client:         false,
 		copts:          copts,
 		flateThreshold: opts.CompressionThreshold,
+		onPingReceived: opts.OnPingReceived,
+		onPongReceived: opts.OnPongReceived,
 
 		br: brw.Reader,
 		bw: brw.Writer,
@@ -223,9 +241,13 @@ func authenticateOrigin(r *http.Request, originHosts []string) error {
 	}
 
 	for _, hostPattern := range originHosts {
-		matched, err := match(hostPattern, u.Host)
+		target := u.Host
+		if strings.Contains(hostPattern, "://") {
+			target = u.Scheme + "://" + u.Host
+		}
+		matched, err := match(hostPattern, target)
 		if err != nil {
-			return fmt.Errorf("failed to parse filepath pattern %q: %w", hostPattern, err)
+			return fmt.Errorf("failed to parse path pattern %q: %w", hostPattern, err)
 		}
 		if matched {
 			return nil
@@ -238,7 +260,7 @@ func authenticateOrigin(r *http.Request, originHosts []string) error {
 }
 
 func match(pattern, s string) (bool, error) {
-	return filepath.Match(strings.ToLower(pattern), strings.ToLower(s))
+	return path.Match(strings.ToLower(pattern), strings.ToLower(s))
 }
 
 func selectSubprotocol(r *http.Request, subprotocols []string) string {
