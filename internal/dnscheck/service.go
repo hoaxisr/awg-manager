@@ -254,13 +254,19 @@ func (s *Service) checkEncryption(ctx context.Context) CheckResult {
 }
 
 // createIPHost creates an ip host entry via RCI.
+//
+// Request shape matches the CLI `ip host <domain> <address>` — domain
+// and address are SIBLINGS under ip.host, NOT domain-as-key. An earlier
+// version nested {ip: {host: {<domain>: {address}}}} which NDMS parsed
+// as a path lookup to an existing record, producing:
+//
+//	Core::Configurator: not found: "ip/host/awgm-dnscheck.test"
 func (s *Service) createIPHost(ctx context.Context, domain, address string) error {
 	payload := map[string]interface{}{
 		"ip": map[string]interface{}{
 			"host": map[string]interface{}{
-				domain: map[string]interface{}{
-					"address": address,
-				},
+				"domain":  domain,
+				"address": address,
 			},
 		},
 	}
