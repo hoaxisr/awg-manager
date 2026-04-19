@@ -30,7 +30,11 @@ function endOperation(id: string): void {
 
 function createTunnelsStore() {
 	const { subscribe, set, update } = writable<TunnelListItem[]>([]);
-	const loading = writable(false);
+	// Starts true: distinguish "waiting for first snapshot" from "empty list".
+	// Set to false by load() / setManagedList() / setSnapshot() once the first
+	// real payload lands. Without this, the page briefly renders the empty
+	// state between sysInfo arriving and snapshot:tunnels arriving on reload.
+	const loading = writable(true);
 	const error = writable<string | null>(null);
 	const externalTunnels = writable<ExternalTunnel[]>([]);
 	const systemTunnels = writable<SystemTunnel[]>([]);

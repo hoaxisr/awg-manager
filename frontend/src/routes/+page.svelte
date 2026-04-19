@@ -16,7 +16,11 @@
 	type TunnelTab = 'awg' | 'singbox';
 
 	let sysInfo = $derived($systemInfoStore);
-	let loading = $derived(!sysInfo);
+	// Wait for both system info AND the first tunnels snapshot before leaving
+	// the loading state — otherwise sysInfo arrives first and the empty-state
+	// flashes until snapshot:tunnels lands.
+	let tunnelsLoading = tunnels.loading;
+	let loading = $derived(!sysInfo || $tunnelsLoading);
 
 	const goArch = $derived(sysInfo?.goArch ?? '');
 
