@@ -295,13 +295,11 @@ func (s *SettingsStore) MarkServerInterface(id string) error {
 		return fmt.Errorf("settings not loaded")
 	}
 
-	for _, sid := range settings.ServerInterfaces {
-		if sid == id {
-			return nil
-		}
+	next, added := appendUnique(settings.ServerInterfaces, id)
+	if !added {
+		return nil
 	}
-
-	settings.ServerInterfaces = append(settings.ServerInterfaces, id)
+	settings.ServerInterfaces = next
 	return s.saveUnlocked(settings)
 }
 
@@ -315,13 +313,7 @@ func (s *SettingsStore) UnmarkServerInterface(id string) error {
 		return fmt.Errorf("settings not loaded")
 	}
 
-	filtered := make([]string, 0, len(settings.ServerInterfaces))
-	for _, sid := range settings.ServerInterfaces {
-		if sid != id {
-			filtered = append(filtered, sid)
-		}
-	}
-	settings.ServerInterfaces = filtered
+	settings.ServerInterfaces = filterOut(settings.ServerInterfaces, id)
 	return s.saveUnlocked(settings)
 }
 
@@ -340,12 +332,7 @@ func (s *SettingsStore) IsServerInterface(id string) bool {
 	if err != nil {
 		return false
 	}
-	for _, sid := range settings.ServerInterfaces {
-		if sid == id {
-			return true
-		}
-	}
-	return false
+	return contains(settings.ServerInterfaces, id)
 }
 
 // IsSystemTunnelHidden checks if a system tunnel ID is in the hidden list.
@@ -354,12 +341,7 @@ func (s *SettingsStore) IsSystemTunnelHidden(tunnelID string) bool {
 	if err != nil {
 		return false
 	}
-	for _, id := range settings.HiddenSystemTunnels {
-		if id == tunnelID {
-			return true
-		}
-	}
-	return false
+	return contains(settings.HiddenSystemTunnels, tunnelID)
 }
 
 // HideSystemTunnel adds a tunnel ID to the hidden list.
@@ -372,14 +354,11 @@ func (s *SettingsStore) HideSystemTunnel(tunnelID string) error {
 		return fmt.Errorf("settings not loaded")
 	}
 
-	// Check if already hidden
-	for _, id := range settings.HiddenSystemTunnels {
-		if id == tunnelID {
-			return nil
-		}
+	next, added := appendUnique(settings.HiddenSystemTunnels, tunnelID)
+	if !added {
+		return nil
 	}
-
-	settings.HiddenSystemTunnels = append(settings.HiddenSystemTunnels, tunnelID)
+	settings.HiddenSystemTunnels = next
 	return s.saveUnlocked(settings)
 }
 
@@ -393,13 +372,7 @@ func (s *SettingsStore) UnhideSystemTunnel(tunnelID string) error {
 		return fmt.Errorf("settings not loaded")
 	}
 
-	filtered := make([]string, 0, len(settings.HiddenSystemTunnels))
-	for _, id := range settings.HiddenSystemTunnels {
-		if id != tunnelID {
-			filtered = append(filtered, id)
-		}
-	}
-	settings.HiddenSystemTunnels = filtered
+	settings.HiddenSystemTunnels = filterOut(settings.HiddenSystemTunnels, tunnelID)
 	return s.saveUnlocked(settings)
 }
 
@@ -523,13 +496,11 @@ func (s *SettingsStore) AddManagedPolicy(name string) error {
 		return fmt.Errorf("settings not loaded")
 	}
 
-	for _, p := range settings.ManagedPolicies {
-		if p == name {
-			return nil
-		}
+	next, added := appendUnique(settings.ManagedPolicies, name)
+	if !added {
+		return nil
 	}
-
-	settings.ManagedPolicies = append(settings.ManagedPolicies, name)
+	settings.ManagedPolicies = next
 	return s.saveUnlocked(settings)
 }
 
@@ -543,13 +514,7 @@ func (s *SettingsStore) RemoveManagedPolicy(name string) error {
 		return fmt.Errorf("settings not loaded")
 	}
 
-	filtered := make([]string, 0, len(settings.ManagedPolicies))
-	for _, p := range settings.ManagedPolicies {
-		if p != name {
-			filtered = append(filtered, p)
-		}
-	}
-	settings.ManagedPolicies = filtered
+	settings.ManagedPolicies = filterOut(settings.ManagedPolicies, name)
 	return s.saveUnlocked(settings)
 }
 
