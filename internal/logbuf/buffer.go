@@ -108,19 +108,36 @@ func (b *Buffer[T]) Filter(pred func(T) bool) []T {
 	return out
 }
 
-// FilterPage returns entries matching pred paginated newest-first
+// FilterPage returns entries matching pred paginated newest-first,
 // along with the total count of matches.
+//
+// Single-pass: walks newest-first, increments total for every match,
+// appends to page only when total falls in [offset, offset+limit).
+// Avoids allocating the full matches slice just to slice off a small
+// page — a big-buffer / small-page call that previously allocated
+// MaxEntries × sizeof(T) now allocates at most limit × sizeof(T).
 func (b *Buffer[T]) FilterPage(pred func(T) bool, limit, offset int) ([]T, int) {
-	matched := b.Filter(pred)
-	total := len(matched)
-	if offset >= total {
-		return []T{}, total
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	var page []T
+	if limit > 0 {
+		page = make([]T, 0, limit)
+	} else {
+		page = []T{}
 	}
 	end := offset + limit
-	if end > total {
-		end = total
+	total := 0
+	for i := len(b.entries) - 1; i >= 0; i-- {
+		if !pred(b.entries[i]) {
+			continue
+		}
+		if limit > 0 && total >= offset && total < end {
+			page = append(page, b.entries[i])
+		}
+		total++
 	}
-	return matched[offset:end], total
+	return page, total
 }
 
 // Clear drops all entries.
