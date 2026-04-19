@@ -217,7 +217,7 @@ func (s *ServiceImpl) Get(ctx context.Context, tunnelID string) (*TunnelWithStat
 	return &TunnelWithStatus{
 		ID:            stored.ID,
 		Name:          stored.Name,
-		Config:        s.storedToConfig(stored),
+		Config:        orchestrator.StoredToConfig(stored),
 		State:         stateInfo.State,
 		StateInfo:     stateInfo,
 		Enabled:       stored.Enabled,
@@ -261,7 +261,7 @@ func (s *ServiceImpl) List(ctx context.Context) ([]TunnelWithStatus, error) {
 		result = append(result, TunnelWithStatus{
 			ID:            t.ID,
 			Name:          t.Name,
-			Config:        s.storedToConfig(&t),
+			Config:        orchestrator.StoredToConfig(&t),
 			State:         stateInfo.State,
 			StateInfo:     stateInfo,
 			Enabled:       t.Enabled,
@@ -373,7 +373,7 @@ func (s *ServiceImpl) Update(ctx context.Context, tunnelID string, cfg tunnel.Co
 
 			// Sync address (IPv4 + IPv6) to NDMS (only if changed)
 			if stored.Interface.Address != oldAddress {
-				ipv4, ipv6 := splitAddresses(stored.Interface.Address)
+				ipv4, ipv6 := orchestrator.SplitAddresses(stored.Interface.Address)
 				if err := s.legacyOperator.SyncAddress(ctx, tunnelID, ipv4, ipv6); err != nil {
 					s.logWarn("update", tunnelID, "Failed to sync address: "+err.Error())
 				}
@@ -728,55 +728,6 @@ func (s *ServiceImpl) resolveKernelDevice(resolvedWAN string) string {
 		return tunnel.NewNames(tunnel.TunnelRouteID(resolvedWAN)).IfaceName
 	}
 	return resolvedWAN // already a kernel name
-}
-
-// storedToConfig converts storage.AWGTunnel to tunnel.Config.
-func (s *ServiceImpl) storedToConfig(stored *storage.AWGTunnel) tunnel.Config {
-	names := tunnel.NewNames(stored.ID)
-	ipv4, ipv6 := splitAddresses(stored.Interface.Address)
-	// Parse DNS servers from comma-separated string
-	var dns []string
-	if stored.Interface.DNS != "" {
-		for _, part := range strings.Split(stored.Interface.DNS, ",") {
-			part = strings.TrimSpace(part)
-			if part != "" {
-				dns = append(dns, part)
-			}
-		}
-	}
-
-	return tunnel.Config{
-		ID:           stored.ID,
-		Name:         stored.Name,
-		Address:      ipv4,
-		AddressIPv6:  ipv6,
-		MTU:          stored.Interface.MTU,
-		DNS:          dns,
-		ConfPath:     names.ConfPath,
-		ISPInterface: stored.ISPInterface,
-	}
-}
-
-// splitAddresses splits a WireGuard Address field (which may contain
-// comma-separated IPv4 and IPv6 addresses) into separate values.
-func splitAddresses(address string) (ipv4, ipv6 string) {
-	for _, part := range strings.Split(address, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		// Strip CIDR prefix for the config — operators add it themselves
-		host := part
-		if idx := strings.Index(part, "/"); idx != -1 {
-			host = part[:idx]
-		}
-		if strings.Contains(host, ":") {
-			ipv6 = host
-		} else {
-			ipv4 = host
-		}
-	}
-	return
 }
 
 // writeConfigFile generates and writes the WireGuard config file.
