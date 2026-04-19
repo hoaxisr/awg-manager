@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -45,20 +44,12 @@ func (h *ImportHandler) SetTunnelsHandler(th *TunnelsHandler) {
 
 // ImportConf imports a WireGuard/AmneziaWG config file.
 func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	var req struct {
+	req, ok := parseJSON[struct {
 		Content string `json:"content"`
 		Name    string `json:"name"`
 		Backend string `json:"backend"` // "nativewg" | "kernel" (default: "kernel")
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	}](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 

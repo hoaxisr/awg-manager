@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -80,21 +79,14 @@ type adoptRequest struct {
 // Adopt takes control of an external tunnel.
 // Endpoint: POST /api/external-tunnels/adopt?interface=opkgtunX
 func (h *ExternalTunnelsHandler) Adopt(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
+	req, ok := parseJSON[adoptRequest](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 
 	interfaceName := r.URL.Query().Get("interface")
 	if interfaceName == "" {
 		response.Error(w, "missing interface parameter", "MISSING_INTERFACE")
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	var req adoptRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
 		return
 	}
 

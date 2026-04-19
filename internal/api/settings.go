@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -67,8 +66,8 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Update saves settings.
 func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+	settings, ok := parseJSON[storage.Settings](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 
@@ -76,13 +75,6 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	oldSettings, err := h.store.Get()
 	if err != nil {
 		response.Error(w, err.Error(), "SETTINGS_LOAD_ERROR")
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	var settings storage.Settings
-	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
-		response.ErrorWithStatus(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
 		return
 	}
 
