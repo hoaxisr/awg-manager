@@ -139,7 +139,21 @@ function createTunnelsStore() {
 	}
 
 	function setSnapshot(data: SnapshotTunnelsEvent) {
-		set(data.tunnels ?? []);
+		// Preserve recent tunnel:state updates (same window as setManagedList).
+		// Without this, a snapshot:tunnels that lands shortly after the start
+		// action (e.g. the one publishTunnelList now triggers to refresh the
+		// system list) overwrites the fresh "running" status coming from the
+		// orchestrator with the momentarily-still-"starting" value read from
+		// GetState — card sticks at "Запуск..." forever.
+		const now = Date.now();
+		const managed = (data.tunnels ?? []).map(item => {
+			const recent = recentStateUpdates.get(item.id);
+			if (recent && (now - recent.ts) < 5000) {
+				return { ...item, status: recent.status };
+			}
+			return item;
+		});
+		set(managed);
 		externalTunnels.set(data.external ?? []);
 		systemTunnels.set(data.system ?? []);
 		loading.set(false);
