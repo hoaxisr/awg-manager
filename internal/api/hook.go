@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -38,7 +39,26 @@ type HookHandler struct {
 	wanModel       HookWANModel   // may be nil until SetWANModel is called
 	refreshTunnels TunnelSnapshotRefresher
 	log            *logging.ScopedLogger
+	// selfCreateGate counts in-flight awg-manager-initiated NDMS interface
+	// creations. While > 0, ifcreated hook events suppress their automatic
+	// snapshot rebroadcast — the caller (importer / Create path) is
+	// responsible for publishing a fresh snapshot AFTER it has persisted
+	// the tunnel to awg-manager's store. Otherwise the hook-triggered
+	// snapshot fires before the Save and the new NDMS interface appears
+	// briefly in the "system tunnels" list as a ghost duplicate of the
+	// managed tunnel.
+	selfCreateGate atomic.Int32
 }
+
+// EnterSelfCreate marks the start of an awg-manager-initiated NDMS
+// interface creation. Pair with ExitSelfCreate via defer.
+func (h *HookHandler) EnterSelfCreate() { h.selfCreateGate.Add(1) }
+
+// ExitSelfCreate marks the end of an awg-manager-initiated NDMS
+// interface creation. Callers MUST publish a fresh snapshot themselves
+// after this (typically via TunnelsHandler.publishTunnelList → snapshot
+// rebroadcast) so UIs see the finalized state.
+func (h *HookHandler) ExitSelfCreate() { h.selfCreateGate.Add(-1) }
 
 // NewHookHandler creates a new hook event handler.
 func NewHookHandler(svc TunnelService, orch *orchestrator.Orchestrator, appLogger logging.AppLogger) *HookHandler {
@@ -125,7 +145,17 @@ func (h *HookHandler) HandleNDMS(w http.ResponseWriter, r *http.Request) {
 	// 1b) On interface create/destroy, rebroadcast the tunnel list so
 	// every connected UI client drops/adds the card without a browser
 	// refresh. Runs in a goroutine so the hook POST acks immediately.
-	if event.Type == events.EventIfCreated || event.Type == events.EventIfDestroyed {
+	//
+	// Exception: if awg-manager is currently creating an interface itself
+	// (EnterSelfCreate was called), the corresponding ifcreated would fire
+	// before our code has persisted the tunnel to our store. Publishing a
+	// snapshot at that moment would show the new interface in the "system"
+	// list (because managedNativeWGNames can't see a tunnel that isn't in
+	// the store yet) — a ghost duplicate that vanishes on next refresh.
+	// Skip; the creator publishes its own snapshot after Save.
+	if event.Type == events.EventIfCreated && h.selfCreateGate.Load() > 0 {
+		// Self-initiated creation: skip auto-refresh.
+	} else if event.Type == events.EventIfCreated || event.Type == events.EventIfDestroyed {
 		if h.refreshTunnels != nil {
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

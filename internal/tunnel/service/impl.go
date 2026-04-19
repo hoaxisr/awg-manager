@@ -46,6 +46,13 @@ type ServiceImpl struct {
 
 	// bus is the event bus for SSE publishing.
 	bus *events.Bus
+
+	// selfCreateGate (optional) suppresses the hook-driven snapshot refresh
+	// during awg-manager-initiated NDMS interface creations. Without it,
+	// the ifcreated hook fires (and rebroadcasts system tunnels) before
+	// our own store.Save completes — producing a transient ghost entry in
+	// the system tunnels list.
+	selfCreateGate tunnel.SelfCreateGater
 }
 
 // New creates a new TunnelService.
@@ -71,6 +78,11 @@ func New(
 
 // WANModel returns the WAN state model for direct access by API handlers.
 func (s *ServiceImpl) WANModel() *wan.Model { return s.wan }
+
+// SetSelfCreateGate wires the self-create gate used to suppress hook-driven
+// snapshot refreshes during Create/Import. Optional; nil is safe (code paths
+// degrade to the old behavior).
+func (s *ServiceImpl) SetSelfCreateGate(g tunnel.SelfCreateGater) { s.selfCreateGate = g }
 
 // GetResolvedISP returns the resolved ISP interface name for a running tunnel.
 func (s *ServiceImpl) GetResolvedISP(tunnelID string) string {
@@ -165,6 +177,12 @@ func (s *ServiceImpl) Create(ctx context.Context, tunnelID, name string, cfg tun
 		if s.nwgOperator == nil {
 			return fmt.Errorf("NativeWG backend not available")
 		}
+		// NOTE: the caller (tunnels API handler) calls store.Save AFTER we
+		// return, so the self-create gate can't be scoped to this function
+		// alone — it would exit too early and let the ifcreated hook see an
+		// empty managed list. For now, the gate only protects Import (which
+		// saves internally). Manual Create racing with ifcreated is a known
+		// edge case; if it surfaces, move the gate up to the handler layer.
 		index, err := s.nwgOperator.Create(ctx, stored)
 		if err != nil {
 			return err
@@ -536,6 +554,18 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 	parsed.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	parsed.Enabled = false
 	parsed.Backend = "nativewg"
+
+	// Guard: the ifcreated hook fires from NDMS AS SOON AS the interface
+	// is created. Without the gate, the hook handler rebroadcasts a
+	// snapshot that sees the new NDMS interface but does NOT see this
+	// tunnel in our managed store yet (Save hasn't run), so the interface
+	// is misclassified as a "system tunnel" — a ghost duplicate vanishing
+	// only on next refresh. Gate spans both Create and Save; the caller
+	// (import handler) publishes the final snapshot after us.
+	if s.selfCreateGate != nil {
+		s.selfCreateGate.EnterSelfCreate()
+		defer s.selfCreateGate.ExitSelfCreate()
+	}
 
 	// Create NDMS WireGuard interface via NativeWG operator
 	index, err := s.nwgOperator.Create(ctx, parsed)
