@@ -142,6 +142,14 @@ function createTunnelsStore() {
 		clearTraffic(id);
 	}
 
+	// clearRecentStateUpdates drops any in-memory tunnel:state events kept
+	// around to survive the preservation window in setSnapshot/setManagedList.
+	// Must be called on SSE reconnect so a stale "running" from before the
+	// disconnect cannot overwrite the fresh snapshot's actual state.
+	function clearRecentStateUpdates() {
+		recentStateUpdates.clear();
+	}
+
 	function setSnapshot(data: SnapshotTunnelsEvent) {
 		// Preserve recent tunnel:state updates (same window as setManagedList).
 		// Without this, a snapshot:tunnels that lands shortly after the start
@@ -230,6 +238,7 @@ function createTunnelsStore() {
 		update: updateTunnel,
 		remove,
 		removeFromList,
+		clearRecentStateUpdates,
 		updateTunnelState,
 		setSnapshot,
 		updateTraffic,

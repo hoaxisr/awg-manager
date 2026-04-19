@@ -24,10 +24,13 @@
 		onclose
 	}: Props = $props();
 
-	// Include WAN interfaces in the target list — routing a device directly to
-	// WAN is a valid use case ("pull this device OUT of any VPN"). Matches the
-	// behavior of DNS- and IP-route dropdowns.
-	let availableTunnels = $derived(tunnels.filter(t => t.available || t.type === 'wan'));
+	// ClientRoute's OnTunnelStart path calls SetupClientRouteTable with the
+	// target's kernel interface — designed for WG-style tunnels. Routing a
+	// device directly to a WAN interface would need a different backend path
+	// (ip rule pointing at a WAN-gateway table), which isn't implemented yet.
+	// Until it is, exclude WAN targets here so users can't save rules the
+	// backend can't apply.
+	let availableTunnels = $derived(tunnels.filter(t => t.type !== 'wan' && t.available));
 
 	let selectedDevice = $state<{ ip: string; name: string } | null>(null);
 	let searchText = $state('');
