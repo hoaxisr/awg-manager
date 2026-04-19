@@ -129,53 +129,25 @@ func SupportsWireguardASC() bool {
 	if info == nil || info.Release == "" {
 		return false
 	}
-	return supportsASC(info.Release)
-}
-
-// supportsASC checks if the given NDMS release version supports ASC.
-// ASC is supported starting from 5.01.A.3 (alpha 3+), 5.01.B+ (beta+),
-// 5.01.03+ (release), or any 5.02+ / 6.x+.
-func supportsASC(release string) bool {
-	parts := strings.Split(release, ".")
-	if len(parts) < 3 {
-		return false
-	}
-	major, _ := strconv.Atoi(parts[0])
-	minor, _ := strconv.Atoi(parts[1])
-	if major > 5 {
-		return true
-	}
-	if major < 5 || minor < 1 {
-		return false
-	}
-	if minor > 1 {
-		return true
-	}
-	// major == 5, minor == 1
-	stage := parts[2]
-	if stage == "A" {
-		if len(parts) < 4 {
-			return false
-		}
-		alphaNum, _ := strconv.Atoi(parts[3])
-		return alphaNum >= 3
-	}
-	return true
+	return isAtLeast501A3(info.Release)
 }
 
 // SupportsHRanges returns true if the current NDMS release supports
 // H1-H4 header parameters as ranges (AWG 2.0).
-// Supported starting from 5.01.A.3 (alpha 3+), 5.01.B+ (beta+),
-// 5.01.03+ (release), or any 5.02+ / 6.x+.
+// Shares the same gate as SupportsASC — both features landed in the
+// same firmware release.
 func SupportsHRanges() bool {
 	info := Get()
 	if info == nil || info.Release == "" {
 		return false
 	}
-	return supportsHRanges(info.Release)
+	return isAtLeast501A3(info.Release)
 }
 
-func supportsHRanges(release string) bool {
+// isAtLeast501A3 returns true when release is >= 5.01.A.3 (alpha 3+),
+// 5.01.B+ (beta+), 5.01.03+ (release), or any 5.02+ / 6.x+. Both ASC
+// support and H-range support landed in that cut; share one check.
+func isAtLeast501A3(release string) bool {
 	parts := strings.Split(release, ".")
 	if len(parts) < 3 {
 		return false
