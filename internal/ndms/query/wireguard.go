@@ -103,13 +103,11 @@ type rciRCPeer struct {
 // /show/rc/interface/<name>. Invalidation comes from NDMS hooks and
 // command-after-write callers.
 type WGServerStore struct {
+	*cache.ListStore[[]ndms.WireguardServer]
+
 	getter     Getter
 	log        Logger
 	interfaces *InterfaceStore // for ResolveSystemName (memoised)
-
-	// list cache (all servers, merged + enriched).
-	list   *cache.TTL[struct{}, []ndms.WireguardServer]
-	listSF *cache.SingleFlight[struct{}, []ndms.WireguardServer]
 
 	// per-name server snapshot (runtime only).
 	items   *cache.TTL[string, *ndms.WireguardServer]
@@ -136,12 +134,10 @@ func NewWGServerStoreWithTTL(g Getter, log Logger, ifaces *InterfaceStore, listT
 	if log == nil {
 		log = NopLogger()
 	}
-	return &WGServerStore{
+	s := &WGServerStore{
 		getter:     g,
 		log:        log,
 		interfaces: ifaces,
-		list:       cache.NewTTL[struct{}, []ndms.WireguardServer](listTTL),
-		listSF:     cache.NewSingleFlight[struct{}, []ndms.WireguardServer](),
 		items:      cache.NewTTL[string, *ndms.WireguardServer](itemTTL),
 		itemsSF:    cache.NewSingleFlight[string, *ndms.WireguardServer](),
 		rc:         cache.NewTTL[string, *ndms.WireguardServerConfig](rcTTL),
@@ -149,25 +145,8 @@ func NewWGServerStoreWithTTL(g Getter, log Logger, ifaces *InterfaceStore, listT
 		asc:        cache.NewTTL[string, json.RawMessage](rcTTL),
 		ascSF:      cache.NewSingleFlight[string, json.RawMessage](),
 	}
-}
-
-// List returns every WG server with peers enriched from RC.
-func (s *WGServerStore) List(ctx context.Context) ([]ndms.WireguardServer, error) {
-	if v, ok := s.list.Get(struct{}{}); ok {
-		return v, nil
-	}
-	return s.listSF.Do(struct{}{}, func() ([]ndms.WireguardServer, error) {
-		v, err := s.fetchAll(ctx)
-		if err != nil {
-			if stale, ok := s.list.Peek(struct{}{}); ok {
-				s.log.Warnf("wg server list fetch failed, serving stale cache: %v", err)
-				return stale, nil
-			}
-			return nil, err
-		}
-		s.list.Set(struct{}{}, v)
-		return v, nil
-	})
+	s.ListStore = cache.NewListStore(listTTL, log, "wg server list", s.fetchAll)
+	return s
 }
 
 // Get returns a single WG server's runtime snapshot.
@@ -316,14 +295,16 @@ func (s *WGServerStore) Invalidate(name string) {
 	s.rc.Invalidate(name)
 	s.asc.Invalidate(name + ":ext")
 	s.asc.Invalidate(name + ":base")
-	s.list.InvalidateAll()
+	s.ListStore.InvalidateAll()
 }
 
 // InvalidateAll drops every cached entry across all keyspaces. Kernel
 // system-name memo is owned by InterfaceStore — callers that need a
-// full hot-plug reset should invalidate both stores.
+// full hot-plug reset should invalidate both stores. Shadows the
+// promoted ListStore.InvalidateAll so the per-name keyed caches are
+// reset alongside the list cache.
 func (s *WGServerStore) InvalidateAll() {
-	s.list.InvalidateAll()
+	s.ListStore.InvalidateAll()
 	s.items.InvalidateAll()
 	s.rc.InvalidateAll()
 	s.asc.InvalidateAll()
