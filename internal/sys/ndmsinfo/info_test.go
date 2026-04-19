@@ -2,7 +2,7 @@ package ndmsinfo
 
 import "testing"
 
-func TestSupportsASC(t *testing.T) {
+func TestIsAtLeast501A3(t *testing.T) {
 	tests := []struct {
 		release string
 		want    bool
@@ -24,9 +24,9 @@ func TestSupportsASC(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.release, func(t *testing.T) {
-			got := supportsASC(tt.release)
+			got := isAtLeast501A3(tt.release)
 			if got != tt.want {
-				t.Errorf("supportsASC(%q) = %v, want %v", tt.release, got, tt.want)
+				t.Errorf("isAtLeast501A3(%q) = %v, want %v", tt.release, got, tt.want)
 			}
 		})
 	}
