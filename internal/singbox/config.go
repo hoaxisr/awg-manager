@@ -135,11 +135,6 @@ func (c *Config) Save(path string) error {
 	return nil
 }
 
-// Raw returns the underlying map (for validation via sing-box check which reads from disk).
-func (c *Config) Raw() map[string]any {
-	return c.raw
-}
-
 func (c *Config) inbounds() []any {
 	v, _ := c.raw["inbounds"].([]any)
 	return v

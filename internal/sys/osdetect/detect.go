@@ -74,11 +74,6 @@ func Get() Version {
 	return Version4x
 }
 
-// Is4x returns true if running on Keenetic OS 4.x.
-func Is4x() bool {
-	return Get() == Version4x
-}
-
 // Is5 returns true if running on Keenetic OS 5.0+.
 func Is5() bool {
 	return Get() == Version5

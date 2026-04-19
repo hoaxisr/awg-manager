@@ -46,7 +46,7 @@ type Poller struct {
 	// interface is observed with zero peers, we skip polling it for
 	// emptyCooldown — no point hitting NDMS every 10s for an empty
 	// server (e.g. one freshly created with no clients added yet).
-	// Invalidate<All>() clears this map via ClearEmptyCooldowns().
+	// Invalidate<All>() clears this map whenever the list of peers is refreshed.
 	emptyUntil  map[string]time.Time
 	snapshotPub ServerSnapshotPublisher
 	history     HistoryFeeder
@@ -128,17 +128,6 @@ func NewWithInterval(peers *query.PeerStore, pub Publisher, running RunningInter
 		stopCh:      make(chan struct{}),
 		doneCh:      make(chan struct{}),
 	}
-}
-
-// ClearEmptyCooldowns drops every "known empty" marker, forcing the
-// next tick to re-poll every running interface. Intended for callers
-// that know a peer was just added (e.g. POST .../peers) and want the
-// metrics pipeline to pick it up immediately instead of waiting for
-// the cooldown to elapse.
-func (p *Poller) ClearEmptyCooldowns() {
-	p.mu.Lock()
-	p.emptyUntil = make(map[string]time.Time)
-	p.mu.Unlock()
 }
 
 // SetServerSnapshotPublisher wires the callback used to publish the full

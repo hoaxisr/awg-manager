@@ -190,32 +190,6 @@ func TestMetricsPoller_EmptyPeersCooldown_SkipsSubsequentTicks(t *testing.T) {
 	}
 }
 
-func TestMetricsPoller_ClearEmptyCooldowns_ForcesRepoll(t *testing.T) {
-	fg := query.NewFakeGetter()
-	fg.SetJSON("/show/interface/Wireguard1/wireguard/peer", `[]`)
-	peers := query.NewPeerStoreWithTTL(fg, query.NopLogger(), 1*time.Millisecond)
-
-	run := &fakeRunningProvider{}
-	run.Set([]InterfaceRef{{ID: "Wireguard1", IsServer: false}})
-
-	pub := &fakeMetricsPublisher{}
-	subs := &fakeSubs{count: 1}
-
-	p := NewWithInterval(peers, pub, run, subs, NopLogger(), 10*time.Millisecond)
-	p.Start()
-	defer p.Stop()
-
-	time.Sleep(50 * time.Millisecond)
-	before := fg.Calls("/show/interface/Wireguard1/wireguard/peer")
-	p.ClearEmptyCooldowns()
-	time.Sleep(50 * time.Millisecond)
-	after := fg.Calls("/show/interface/Wireguard1/wireguard/peer")
-
-	if after <= before {
-		t.Errorf("ClearEmptyCooldowns did not force a re-poll: before=%d after=%d", before, after)
-	}
-}
-
 func TestMetricsPoller_SkipsWhenNoSubscribers(t *testing.T) {
 	fg := query.NewFakeGetter()
 	fg.SetJSON("/show/interface/Wireguard0/wireguard/peer", `[]`)

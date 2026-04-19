@@ -51,66 +51,6 @@ func TestChunkDomains(t *testing.T) {
 	})
 }
 
-func TestDomainsEqual(t *testing.T) {
-	tests := []struct {
-		name string
-		a, b []string
-		want bool
-	}{
-		{"both nil", nil, nil, true},
-		{"both empty", []string{}, []string{}, true},
-		{"same order", []string{"a.com", "b.com"}, []string{"a.com", "b.com"}, true},
-		{"different order", []string{"b.com", "a.com"}, []string{"a.com", "b.com"}, true},
-		{"different length", []string{"a.com"}, []string{"a.com", "b.com"}, false},
-		{"different content", []string{"a.com", "c.com"}, []string{"a.com", "b.com"}, false},
-		{"duplicates matter", []string{"a.com", "a.com"}, []string{"a.com", "b.com"}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := domainsEqual(tt.a, tt.b); got != tt.want {
-				t.Errorf("domainsEqual(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestGroupDataEqual(t *testing.T) {
-	t.Run("equal includes no excludes", func(t *testing.T) {
-		cur := currentGroupData{includes: []string{"a.com", "b.com"}}
-		tgt := targetGroup{includes: []string{"b.com", "a.com"}}
-		if !groupDataEqual(cur, tgt) {
-			t.Error("expected equal")
-		}
-	})
-
-	t.Run("subnets merged into includes", func(t *testing.T) {
-		cur := currentGroupData{includes: []string{"a.com", "10.0.0.0/8"}}
-		tgt := targetGroup{includes: []string{"a.com"}, subnets: []string{"10.0.0.0/8"}}
-		if !groupDataEqual(cur, tgt) {
-			t.Error("expected equal: subnets appear as includes on router")
-		}
-	})
-
-	t.Run("excludes compared", func(t *testing.T) {
-		cur := currentGroupData{
-			includes: []string{"a.com"},
-			excludes: []string{"b.com"},
-		}
-		tgt := targetGroup{includes: []string{"a.com"}, excludes: []string{"b.com"}}
-		if !groupDataEqual(cur, tgt) {
-			t.Error("expected equal")
-		}
-	})
-
-	t.Run("different excludes", func(t *testing.T) {
-		cur := currentGroupData{includes: []string{"a.com"}, excludes: []string{"b.com"}}
-		tgt := targetGroup{includes: []string{"a.com"}, excludes: []string{"c.com"}}
-		if groupDataEqual(cur, tgt) {
-			t.Error("expected not equal")
-		}
-	})
-}
-
 func TestBuildTargetState(t *testing.T) {
 	t.Run("disabled lists skipped", func(t *testing.T) {
 		data := &StoreData{Lists: []DomainList{

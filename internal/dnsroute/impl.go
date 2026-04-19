@@ -883,10 +883,6 @@ func (s *ServiceImpl) logInfo(action, target, msg string) {
 	s.appLog.Info(action, target, msg)
 }
 
-func (s *ServiceImpl) logWarn(action, target, msg string) {
-	s.appLog.Warn(action, target, msg)
-}
-
 func (s *ServiceImpl) logError(action, target, msg, errMsg string) {
 	s.appLog.Warn(action, target, msg+": "+errMsg)
 }
