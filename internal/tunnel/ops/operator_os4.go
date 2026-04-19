@@ -28,6 +28,8 @@ const (
 // Uses ip commands directly instead of NDMS.
 // Routing is NOT managed by the operator — OS4 handles routing externally.
 type OperatorOS4Impl struct {
+	*clientRouteOps // provides the 5 client-route Operator methods
+
 	queries  *query.Queries
 	commands *command.Commands
 	wg       wg.Client
@@ -55,7 +57,7 @@ func NewOperatorOS4(
 	firewallMgr firewall.Manager,
 	log *logger.Logger,
 ) *OperatorOS4Impl {
-	return &OperatorOS4Impl{
+	o := &OperatorOS4Impl{
 		queries:     queries,
 		commands:    commands,
 		wg:          wgClient,
@@ -65,6 +67,10 @@ func NewOperatorOS4(
 		resolvedISP: make(map[string]string),
 		appliedDNS:  make(map[string][]string),
 	}
+	// OS4 has no mockable ipRun field of its own — client-route uses
+	// exec.Run directly. The warn-logger is bound to o.
+	o.clientRouteOps = newClientRouteOps(exec.Run, o.logWarn)
+	return o
 }
 
 // Create is a no-op on OS4 (interface created by process).
