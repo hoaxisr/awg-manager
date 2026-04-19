@@ -56,6 +56,32 @@ func TestLookupIPHost_Missing(t *testing.T) {
 	}
 }
 
+// Regression for NDMS error 1179781 "not found: ip/host/<domain>".
+// An earlier version nested the domain as a map key under ip.host,
+// which NDMS treats as a path lookup to an existing record — it then
+// errors out because we're trying to create. The correct shape keeps
+// domain and address as sibling fields under ip.host.
+func TestCreateIPHost_PayloadShape(t *testing.T) {
+	fake := &fakeNDMS{}
+	svc := &Service{ndms: fake}
+
+	if err := svc.createIPHost(context.Background(), "awgm-dnscheck.test", "192.168.1.1"); err != nil {
+		t.Fatalf("createIPHost: %v", err)
+	}
+	if len(fake.postedPayloads) != 1 {
+		t.Fatalf("expected 1 POST, got %d", len(fake.postedPayloads))
+	}
+
+	raw, err := json.Marshal(fake.postedPayloads[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"ip":{"host":{"address":"192.168.1.1","domain":"awgm-dnscheck.test"}}}`
+	if string(raw) != want {
+		t.Fatalf("payload mismatch:\n got: %s\nwant: %s", raw, want)
+	}
+}
+
 // Regression for the router-log spam: when the entry already matches, we
 // must NOT issue a create POST — that's what triggered NDMS to log
 // 'Core::Configurator: not found: "ip/host/awgm-dnscheck.test"'.
