@@ -16,7 +16,3 @@ var sharedTransport = &http.Transport{
 	DisableKeepAlives:   false,
 }
 
-// SharedTransport returns the shared http.Transport. Exposed for reuse
-// by any consumer that needs its own *http.Client pointing at NDMS but
-// wants to share the connection pool.
-func SharedTransport() *http.Transport { return sharedTransport }
