@@ -93,17 +93,23 @@ func (h *History) Feed(tunnelID string, rxBytes, txBytes int64) {
 
 // Get returns rate points for a tunnel within the given duration,
 // downsampled to at most maxPoints using bucket averaging.
+//
+// Holds the read lock across the (cheap) downsample pass instead of
+// copying the full window to a temporary slice first — for a 24 h × 1 Hz
+// history that is a ~2 MB allocation avoided per call. The lock window
+// is still microseconds; Feed (write lock, ~1/10 s) is not starved.
 func (h *History) Get(tunnelID string, since time.Duration, maxPoints int) []Point {
 	cutoff := time.Now().Add(-since).Unix()
 
 	h.mu.RLock()
+	defer h.mu.RUnlock()
+
 	th := h.tunnels[tunnelID]
 	if th == nil {
-		h.mu.RUnlock()
 		return nil
 	}
 
-	// Find start index via binary search (points are time-sorted).
+	// Binary search — points are time-sorted by construction.
 	pts := th.points
 	lo := 0
 	hi := len(pts)
@@ -115,20 +121,23 @@ func (h *History) Get(tunnelID string, since time.Duration, maxPoints int) []Poi
 			hi = mid
 		}
 	}
-	// Copy slice under read lock.
-	filtered := make([]Point, len(pts)-lo)
-	copy(filtered, pts[lo:])
-	h.mu.RUnlock()
 
-	if len(filtered) == 0 {
+	window := pts[lo:]
+	if len(window) == 0 {
 		return nil
 	}
 
-	if maxPoints <= 0 || len(filtered) <= maxPoints {
-		return filtered
+	// No downsampling needed: copy into an independent slice so the
+	// caller survives concurrent Feed / prune that mutate th.points.
+	if maxPoints <= 0 || len(window) <= maxPoints {
+		out := make([]Point, len(window))
+		copy(out, window)
+		return out
 	}
 
-	return downsample(filtered, maxPoints)
+	// Downsample directly into a fresh maxPoints-sized slice; no
+	// intermediate copy of the full window.
+	return downsample(window, maxPoints)
 }
 
 // Clear removes all history for a tunnel (e.g. on delete).
