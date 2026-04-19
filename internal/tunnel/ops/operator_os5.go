@@ -61,6 +61,8 @@ type ipRunFunc func(ctx context.Context, name string, args ...string) (*exec.Res
 // OperatorOS5Impl is the Operator implementation for Keenetic OS 5.0+.
 // Uses NDMS for interface management, kernel backend for tunnel interfaces.
 type OperatorOS5Impl struct {
+	*clientRouteOps // provides the 5 client-route Operator methods
+
 	queries  *query.Queries
 	commands *command.Commands
 	wg       wg.Client
@@ -100,7 +102,7 @@ func NewOperatorOS5(
 	firewallMgr firewall.Manager,
 	log *logger.Logger,
 ) *OperatorOS5Impl {
-	return &OperatorOS5Impl{
+	o := &OperatorOS5Impl{
 		queries:        queries,
 		commands:       commands,
 		wg:             wgClient,
@@ -112,6 +114,15 @@ func NewOperatorOS5(
 		resolvedISP:    make(map[string]string),
 		appliedDNS:     make(map[string][]string),
 	}
+	// Wire clientRouteOps after o is built — it captures o.ipRun and
+	// o.logWarn (bound to o) as the runner and warn-logger.
+	o.clientRouteOps = newClientRouteOps(
+		func(ctx context.Context, name string, args ...string) (*exec.Result, error) {
+			return o.ipRun(ctx, name, args...)
+		},
+		o.logWarn,
+	)
+	return o
 }
 
 // SetHookNotifier sets the hook notifier for registering expected NDMS hooks.
