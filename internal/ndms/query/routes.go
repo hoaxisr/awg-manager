@@ -12,10 +12,8 @@ import (
 const routeTTL = 30 * time.Minute
 
 type RouteStore struct {
+	*cache.ListStore[[]ndms.Route]
 	getter Getter
-	log    Logger
-	list   *cache.TTL[struct{}, []ndms.Route]
-	listSF *cache.SingleFlight[struct{}, []ndms.Route]
 }
 
 func NewRouteStore(g Getter, log Logger) *RouteStore {
@@ -23,35 +21,10 @@ func NewRouteStore(g Getter, log Logger) *RouteStore {
 }
 
 func NewRouteStoreWithTTL(g Getter, log Logger, ttl time.Duration) *RouteStore {
-	if log == nil {
-		log = NopLogger()
-	}
-	return &RouteStore{
-		getter: g, log: log,
-		list:   cache.NewTTL[struct{}, []ndms.Route](ttl),
-		listSF: cache.NewSingleFlight[struct{}, []ndms.Route](),
-	}
+	s := &RouteStore{getter: g}
+	s.ListStore = cache.NewListStore(ttl, log, "routes", s.fetch)
+	return s
 }
-
-func (s *RouteStore) List(ctx context.Context) ([]ndms.Route, error) {
-	if v, ok := s.list.Get(struct{}{}); ok {
-		return v, nil
-	}
-	return s.listSF.Do(struct{}{}, func() ([]ndms.Route, error) {
-		v, err := s.fetch(ctx)
-		if err != nil {
-			if stale, ok := s.list.Peek(struct{}{}); ok {
-				s.log.Warnf("routes fetch failed, serving stale cache: %v", err)
-				return stale, nil
-			}
-			return nil, err
-		}
-		s.list.Set(struct{}{}, v)
-		return v, nil
-	})
-}
-
-func (s *RouteStore) InvalidateAll() { s.list.InvalidateAll() }
 
 // GetDefaultGatewayInterface returns the NDMS interface name carrying the
 // IPv4 default route (0.0.0.0/0 or "default"). Returns ErrNoDefaultRoute
