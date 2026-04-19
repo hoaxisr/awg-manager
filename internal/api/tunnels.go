@@ -261,6 +261,7 @@ func BuildTunnelResponse(r *http.Request, svc TunnelService, store *storage.AWGT
 		"defaultRoute": t.DefaultRoute,
 		"ispInterface":      ispIface,
 		"interfaceName":     t.InterfaceName,
+		"ndmsName":          t.NDMSName,
 		"configPreview":     t.ConfigPreview,
 		"state":             t.State.String(),
 		"stateInfo":         t.StateInfo,
@@ -297,6 +298,7 @@ type tunnelItem struct {
 	Endpoint                  string `json:"endpoint"`
 	Address                   string `json:"address"`
 	InterfaceName             string `json:"interfaceName"`
+	NDMSName                  string `json:"ndmsName,omitempty"`
 	HasAddressConflict        bool   `json:"hasAddressConflict"`
 	RxBytes                   int64  `json:"rxBytes"`
 	TxBytes                   int64  `json:"txBytes"`
@@ -426,6 +428,7 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			Endpoint:                  endpoint,
 			Address:             address,
 			InterfaceName:       t.InterfaceName,
+			NDMSName:            t.NDMSName,
 			Backend:             backend,
 			HasAddressConflict:  hasConflict,
 			RxBytes:             t.StateInfo.RxBytes,
