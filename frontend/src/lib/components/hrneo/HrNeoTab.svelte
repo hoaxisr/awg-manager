@@ -32,6 +32,21 @@
 
 	let hrRules = $derived(dnsRoutes.filter((r) => r.backend === 'hydraroute'));
 
+	let policyOrder = $state<string[]>([]);
+
+	async function loadPolicyOrder() {
+		try {
+			const cfg = await api.getHydraRouteConfig();
+			policyOrder = cfg.policyOrder ?? [];
+		} catch {
+			policyOrder = [];
+		}
+	}
+
+	$effect(() => {
+		void loadPolicyOrder();
+	});
+
 	let geoFiles = $state<GeoFileEntry[]>([]);
 	let selection = $state<SidebarSelection>(null);
 
@@ -126,7 +141,14 @@
 			if (existing) existing.ruleCount++;
 			else byName.set(t.name, { name: t.name, kind: t.kind, ruleCount: 1, broken: isBroken(t) });
 		}
-		return [...byName.values()];
+		const entries = [...byName.values()];
+		if (policyOrder.length === 0) return entries;
+		const orderIdx = new Map(policyOrder.map((n, i) => [n, i]));
+		const UNKNOWN = Number.MAX_SAFE_INTEGER;
+		return entries
+			.map((entry, origIdx) => ({ entry, idx: orderIdx.get(entry.name) ?? UNKNOWN, origIdx }))
+			.sort((a, b) => a.idx - b.idx || a.origIdx - b.origIdx)
+			.map((x) => x.entry);
 	});
 
 	let rulesOfSelected = $derived.by(() => {
@@ -218,9 +240,11 @@
 	}
 
 	async function handleReorder(order: string[]) {
+		policyOrder = order;
 		try {
 			await api.setPolicyOrder(order);
 		} catch (e: unknown) {
+			await loadPolicyOrder();
 			notifications.error(e instanceof Error ? e.message : String(e));
 		}
 	}

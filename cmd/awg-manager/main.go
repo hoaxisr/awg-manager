@@ -173,6 +173,27 @@ func main() {
 		initCancel()
 	}
 
+	// Warm NDMS list caches before accepting clients so the first SSE snapshot
+	// is not empty while the caches populate lazily. Failures are non-fatal:
+	// the corresponding sections will appear in RoutingSnapshot.Missing and
+	// the UI will prompt the user to retry.
+	{
+		warmCtx, warmCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if _, err := ndmsQueries.Policies.List(warmCtx); err != nil {
+			log.Warnf("ndms prewarm policies: %v", err)
+		}
+		if _, err := ndmsQueries.Hotspot.List(warmCtx); err != nil {
+			log.Warnf("ndms prewarm hotspot: %v", err)
+		}
+		if _, err := ndmsQueries.Interfaces.List(warmCtx); err != nil {
+			log.Warnf("ndms prewarm interfaces: %v", err)
+		}
+		if _, err := ndmsQueries.RunningConfig.Lines(warmCtx); err != nil {
+			log.Warnf("ndms prewarm running-config: %v", err)
+		}
+		warmCancel()
+	}
+
 	// Create tunnel service components
 	wgClient := wg.New()
 	backendImpl := backend.New(log)
@@ -512,33 +533,29 @@ func main() {
 	defer logFwdCancel()
 	go singbox.NewLogForwarder(singboxOp.Clash().Address(), loggingService).Run(logFwdCtx)
 
-	// Register routing snapshot providers with catalog.
-	catalog.SetSnapshotProvider("dnsRoutes", func(ctx context.Context) interface{} {
-		routes, _ := dnsRouteService.List(ctx)
-		return routes
+	// Register routing snapshot providers with catalog. Each returns (data, err);
+	// errors cause the section to appear in RoutingSnapshot.Missing so the UI can
+	// show a "not loaded" state and offer a refresh action.
+	catalog.SetSnapshotProvider("dnsRoutes", func(ctx context.Context) (interface{}, error) {
+		return dnsRouteService.List(ctx)
 	})
-	catalog.SetSnapshotProvider("staticRoutes", func(ctx context.Context) interface{} {
-		routes, _ := staticRouteService.List()
-		return routes
+	catalog.SetSnapshotProvider("staticRoutes", func(ctx context.Context) (interface{}, error) {
+		return staticRouteService.List()
 	})
-	catalog.SetSnapshotProvider("accessPolicies", func(ctx context.Context) interface{} {
-		policies, _ := accessPolicySvc.List(ctx)
-		return policies
+	catalog.SetSnapshotProvider("accessPolicies", func(ctx context.Context) (interface{}, error) {
+		return accessPolicySvc.List(ctx)
 	})
-	catalog.SetSnapshotProvider("policyDevices", func(ctx context.Context) interface{} {
-		devices, _ := accessPolicySvc.ListDevices(ctx)
-		return devices
+	catalog.SetSnapshotProvider("policyDevices", func(ctx context.Context) (interface{}, error) {
+		return accessPolicySvc.ListDevices(ctx)
 	})
-	catalog.SetSnapshotProvider("policyInterfaces", func(ctx context.Context) interface{} {
-		ifaces, _ := accessPolicySvc.ListGlobalInterfaces(ctx)
-		return ifaces
+	catalog.SetSnapshotProvider("policyInterfaces", func(ctx context.Context) (interface{}, error) {
+		return accessPolicySvc.ListGlobalInterfaces(ctx)
 	})
-	catalog.SetSnapshotProvider("clientRoutes", func(ctx context.Context) interface{} {
-		routes, _ := clientRouteService.List()
-		return routes
+	catalog.SetSnapshotProvider("clientRoutes", func(ctx context.Context) (interface{}, error) {
+		return clientRouteService.List()
 	})
-	catalog.SetSnapshotProvider("hydrarouteStatus", func(ctx context.Context) interface{} {
-		return hydraService.GetStatus()
+	catalog.SetSnapshotProvider("hydrarouteStatus", func(ctx context.Context) (interface{}, error) {
+		return hydraService.GetStatus(), nil
 	})
 
 	srv := server.New(

@@ -691,6 +691,10 @@ class ApiClient {
 		return this.request(`/routing/resolve?domain=${encodeURIComponent(domain)}`);
 	}
 
+	async refreshRouting(): Promise<{ missing: string[] }> {
+		return this.request('/routing/refresh', { method: 'POST' });
+	}
+
 	// #endregion
 
 	// ─────────────────────────────────────────────
