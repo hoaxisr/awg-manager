@@ -208,7 +208,12 @@
 			}
 			editOpen = false;
 			scheduleOversizedRefresh();
-			// SSE store will update shortly
+			// HR Neo save may have created a fresh NDMS policy and/or permitted
+			// interfaces through the orchestrator. Those mutations don't flow
+			// through AccessPolicyHandler, so no automatic SSE snapshot is
+			// broadcast — the sidebar target flashes "broken" until the user
+			// refreshes. Force a routing refresh to pull the new state in.
+			api.refreshRouting().catch(() => {});
 		} catch (e: unknown) {
 			const msg = e instanceof Error ? e.message : String(e);
 			notifications.error(msg);
