@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -450,6 +452,36 @@ func main() {
 	hydraService.SetPolicies(ndmsCommands.Policies)
 
 	ndmsDispatcher := ndmsevents.NewDispatcher(ndmsQueries, eventsLogger(loggingService))
+
+	// After any invalidation drain, rebuild the routing snapshot and
+	// rebroadcast it — but only when the payload actually changed. NDMS
+	// layer/IP hooks fire in tight bursts (~13 events for one Proxy0
+	// create), the Dispatcher's pending-set coalesces them into a handful
+	// of drains, and this SHA-256 compare drops redundant identical
+	// snapshots without any artificial time debounce.
+	var (
+		lastRoutingMu   sync.Mutex
+		lastRoutingHash [sha256.Size]byte
+	)
+	ndmsDispatcher.SetRoutingChanged(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		snap := catalog.SnapshotAll(ctx)
+		data, err := json.Marshal(snap)
+		if err != nil {
+			return
+		}
+		hash := sha256.Sum256(data)
+		lastRoutingMu.Lock()
+		same := hash == lastRoutingHash
+		lastRoutingHash = hash
+		lastRoutingMu.Unlock()
+		if same {
+			return
+		}
+		eventBus.Publish("snapshot:routing", snap)
+	})
+
 	ndmsDispatcher.Start()
 
 	ndmsInstaller := ndmsevents.NewInstaller(eventsLogger(loggingService))
