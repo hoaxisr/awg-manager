@@ -23,6 +23,11 @@ type TunnelEntry struct {
 }
 
 // RoutingSnapshot holds all routing data for SSE snapshots.
+//
+// Missing lists the section keys whose provider failed or was unavailable
+// when this snapshot was built. The corresponding payload field falls back
+// to an empty slice so the frontend can safely render; Missing distinguishes
+// "successfully empty" from "could not load" per section.
 type RoutingSnapshot struct {
 	DnsRoutes        interface{} `json:"dnsRoutes"`
 	StaticRoutes     interface{} `json:"staticRoutes"`
@@ -32,6 +37,7 @@ type RoutingSnapshot struct {
 	PolicyInterfaces interface{} `json:"policyInterfaces"`
 	ClientRoutes     interface{} `json:"clientRoutes"`
 	HydraRouteStatus interface{} `json:"hydrarouteStatus,omitempty"`
+	Missing          []string    `json:"missing"`
 }
 
 // Catalog provides a unified tunnel listing and ID resolution for all routing subsystems.
@@ -93,9 +99,11 @@ type StoreEntry struct {
 	NWGIndex int
 }
 
-// SnapshotFunc is a function that returns a piece of routing data for the snapshot.
-// Returns nil on error or if the service is unavailable.
-type SnapshotFunc func(ctx context.Context) interface{}
+// SnapshotFunc returns one piece of routing data for a snapshot.
+// A non-nil error signals that the section could not be loaded — the caller
+// records this in RoutingSnapshot.Missing so the UI can surface a
+// "not loaded" state distinct from a successful empty result.
+type SnapshotFunc func(ctx context.Context) (interface{}, error)
 
 // CatalogImpl implements the Catalog interface.
 type CatalogImpl struct {
@@ -332,8 +340,10 @@ func (c *CatalogImpl) SetSnapshotProvider(name string, fn SnapshotFunc) {
 	}
 }
 
-// SnapshotAll collects all routing data for SSE snapshot.
-// Providers that are nil or return nil produce empty slices (never null in JSON).
+// SnapshotAll collects all routing data for SSE snapshot. For each registered
+// provider, data fields fall back to an empty slice and the section key is
+// recorded in Missing when the provider errors. Unregistered providers are
+// neither filled nor reported (they are not expected to produce data).
 func (c *CatalogImpl) SnapshotAll(ctx context.Context) *RoutingSnapshot {
 	empty := []interface{}{}
 	snap := &RoutingSnapshot{
@@ -344,39 +354,35 @@ func (c *CatalogImpl) SnapshotAll(ctx context.Context) *RoutingSnapshot {
 		PolicyDevices:    empty,
 		PolicyInterfaces: empty,
 		ClientRoutes:     empty,
+		Missing:          []string{},
 	}
 
-	if v := c.callSnap(ctx, c.snapDnsRoutes); v != nil {
-		snap.DnsRoutes = v
-	}
-	if v := c.callSnap(ctx, c.snapStaticRoutes); v != nil {
-		snap.StaticRoutes = v
-	}
-	if v := c.callSnap(ctx, c.snapAccessPolicies); v != nil {
-		snap.AccessPolicies = v
-	}
-	if v := c.callSnap(ctx, c.snapPolicyDevices); v != nil {
-		snap.PolicyDevices = v
-	}
-	if v := c.callSnap(ctx, c.snapPolicyInterfaces); v != nil {
-		snap.PolicyInterfaces = v
-	}
-	if v := c.callSnap(ctx, c.snapClientRoutes); v != nil {
-		snap.ClientRoutes = v
-	}
-	if v := c.callSnap(ctx, c.snapHydraRouteStatus); v != nil {
-		snap.HydraRouteStatus = v
-	}
+	c.fillSection(ctx, "dnsRoutes", c.snapDnsRoutes, &snap.DnsRoutes, &snap.Missing)
+	c.fillSection(ctx, "staticRoutes", c.snapStaticRoutes, &snap.StaticRoutes, &snap.Missing)
+	c.fillSection(ctx, "accessPolicies", c.snapAccessPolicies, &snap.AccessPolicies, &snap.Missing)
+	c.fillSection(ctx, "policyDevices", c.snapPolicyDevices, &snap.PolicyDevices, &snap.Missing)
+	c.fillSection(ctx, "policyInterfaces", c.snapPolicyInterfaces, &snap.PolicyInterfaces, &snap.Missing)
+	c.fillSection(ctx, "clientRoutes", c.snapClientRoutes, &snap.ClientRoutes, &snap.Missing)
+	c.fillSection(ctx, "hydrarouteStatus", c.snapHydraRouteStatus, &snap.HydraRouteStatus, &snap.Missing)
 
 	return snap
 }
 
-// callSnap safely calls a snapshot function, returning nil if fn is nil.
-func (c *CatalogImpl) callSnap(ctx context.Context, fn SnapshotFunc) interface{} {
+// fillSection runs a single provider and either assigns its value to dst or
+// appends key to missing when the provider is registered but failed. Nil
+// providers are skipped silently (not every section is wired in every build).
+func (c *CatalogImpl) fillSection(ctx context.Context, key string, fn SnapshotFunc, dst *interface{}, missing *[]string) {
 	if fn == nil {
-		return nil
+		return
 	}
-	return fn(ctx)
+	v, err := fn(ctx)
+	if err != nil {
+		*missing = append(*missing, key)
+		return
+	}
+	if v != nil {
+		*dst = v
+	}
 }
 
 // resolveNDMSName returns the NDMS or kernel interface name for a managed tunnel.

@@ -9,9 +9,10 @@
         accessPolicies: AccessPolicy[];
         policyDevices: PolicyDevice[];
         policyInterfaces: PolicyGlobalInterface[];
+        missing?: boolean;
     }
 
-    let { accessPolicies, policyDevices, policyInterfaces }: Props = $props();
+    let { accessPolicies, policyDevices, policyInterfaces, missing = false }: Props = $props();
 
     let policyCreateOpen = $state(false);
     let policyCreating = $state(false);
@@ -137,9 +138,15 @@
     </div>
 
     {#if accessPolicies.length === 0}
-        <div class="empty-hint">
-            Нет политик доступа. Создайте политику, чтобы направить трафик устройств через выбранные интерфейсы.
-        </div>
+        {#if missing}
+            <div class="warn-hint">
+                Данные политик не получены от маршрутизатора. Нажмите «Загрузить недостающее» в заголовке страницы, чтобы повторить запрос.
+            </div>
+        {:else}
+            <div class="empty-hint">
+                Нет политик доступа. Создайте политику, чтобы направить трафик устройств через выбранные интерфейсы.
+            </div>
+        {/if}
     {:else}
         <PolicyTable
             policies={accessPolicies}

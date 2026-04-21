@@ -66,6 +66,16 @@ export interface SnapshotServersEvent {
 	wanIP: string;
 }
 
+export type RoutingSectionKey =
+	| 'dnsRoutes'
+	| 'staticRoutes'
+	| 'tunnels'
+	| 'accessPolicies'
+	| 'policyDevices'
+	| 'policyInterfaces'
+	| 'clientRoutes'
+	| 'hydrarouteStatus';
+
 export interface SnapshotRoutingEvent {
 	dnsRoutes: import('$lib/types').DnsRoute[];
 	staticRoutes: import('$lib/types').StaticRouteList[];
@@ -75,6 +85,7 @@ export interface SnapshotRoutingEvent {
 	policyInterfaces: import('$lib/types').PolicyGlobalInterface[];
 	clientRoutes: import('$lib/types').ClientRoute[];
 	hydrarouteStatus?: import('$lib/types').HydraRouteStatus;
+	missing?: RoutingSectionKey[];
 }
 
 export interface SnapshotPingcheckEvent {

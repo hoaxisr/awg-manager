@@ -517,8 +517,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/static-routes/import", guarded(staticRouteHandler.Import))
 
 	// Routing: unified tunnel listing for all routing subsystems
-	routingHandler := api.NewRoutingHandler(s.catalog)
+	routingHandler := api.NewRoutingHandler(s.catalog, s.ndmsQueries)
+	routingHandler.SetEventBus(s.bus)
 	mux.HandleFunc("/api/routing/tunnels", guarded(routingHandler.Tunnels))
+	mux.HandleFunc("/api/routing/refresh", guarded(routingHandler.Refresh))
 
 	// DNS resolve for routing search
 	resolveHandler := api.NewResolveHandler()
