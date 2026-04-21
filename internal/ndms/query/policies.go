@@ -33,6 +33,7 @@ func NewPolicyStoreWithTTL(g Getter, log Logger, ttl time.Duration) *PolicyStore
 }
 
 type rcPermitWire struct {
+	No        bool   `json:"no,omitempty"`
 	Enabled   bool   `json:"enabled"`
 	Interface string `json:"interface"`
 }
@@ -71,10 +72,18 @@ func (s *PolicyStore) fetch(ctx context.Context) ([]ndms.Policy, error) {
 			Standalone:  parseStandalone(w.Standalone),
 			Interfaces:  make([]ndms.PermittedIface, 0, len(w.Permit)),
 		}
-		for i, pi := range w.Permit {
+		// Entries with "no": true are `no ip policy ... permit ...` markers —
+		// the permit was removed but RCI still renders the historical line.
+		// Treating them as denied pollutes the policy with ghost interfaces
+		// and hides real interfaces from the "add" dropdown (they look
+		// already-permitted).
+		for _, pi := range w.Permit {
+			if pi.No {
+				continue
+			}
 			p.Interfaces = append(p.Interfaces, ndms.PermittedIface{
 				Name:   pi.Interface,
-				Order:  i,
+				Order:  len(p.Interfaces),
 				Denied: !pi.Enabled,
 			})
 		}

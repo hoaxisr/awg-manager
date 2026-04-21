@@ -100,6 +100,43 @@ func TestPolicyStore_List_EmptyArray(t *testing.T) {
 	}
 }
 
+func TestPolicyStore_List_SkipsNoPermitEntries(t *testing.T) {
+	// `"no": true` in an RCI permit block means the corresponding
+	// `no ip policy ... permit ...` line — the permit was removed but RCI
+	// still renders the historical entry. Those must not appear as
+	// denied interfaces, otherwise the "add interface" dropdown hides
+	// the real interface (it looks already-permitted).
+	const withNoEntries = `{
+		"HydraRoute": {
+			"permit": [
+				{"no": true, "enabled": false, "interface": "PPPoE0"},
+				{"enabled": true, "interface": "Wireguard0"},
+				{"no": true, "enabled": false, "interface": "Proxy0"}
+			]
+		}
+	}`
+	fg := newFakeGetter()
+	fg.SetJSON(policiesPath, withNoEntries)
+	s := NewPolicyStore(fg, NopLogger())
+
+	got, err := s.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "HydraRoute" {
+		t.Fatalf("got: %+v", got)
+	}
+	if len(got[0].Interfaces) != 1 {
+		t.Fatalf("Interfaces: want 1 (Wireguard0 only), got %d: %+v", len(got[0].Interfaces), got[0].Interfaces)
+	}
+	if got[0].Interfaces[0].Name != "Wireguard0" || got[0].Interfaces[0].Denied {
+		t.Errorf("surviving entry: %+v", got[0].Interfaces[0])
+	}
+	if got[0].Interfaces[0].Order != 0 {
+		t.Errorf("Order: want 0 (compacted after skipping), got %d", got[0].Interfaces[0].Order)
+	}
+}
+
 func TestPolicyStore_InvalidateAllForcesRefetch(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(policiesPath, samplePoliciesJSON)
