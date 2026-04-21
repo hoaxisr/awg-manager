@@ -47,8 +47,15 @@ func TestAdoptExternalFiles_AddsUnknownFiles(t *testing.T) {
 		if !e.External {
 			t.Errorf("entry %q: External=false, want true", e.Path)
 		}
-		if e.URL != "" {
-			t.Errorf("entry %q: URL=%q, want empty", e.Path, e.URL)
+		want := ""
+		switch e.Type {
+		case "geoip":
+			want = GroundZerroGeoIPURL
+		case "geosite":
+			want = GroundZerroGeoSiteURL
+		}
+		if e.URL != want {
+			t.Errorf("entry %q (type=%s): URL=%q, want %q", e.Path, e.Type, e.URL, want)
 		}
 	}
 }

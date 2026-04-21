@@ -22,6 +22,30 @@ import (
 // geoDataFile is the JSON storage filename for geo data entries.
 const geoDataFile = "hydraroute-geodata.json"
 
+// Ground-Zerro/Geo-Aggregator publishes the canonical .dat files that
+// HydraRoute ships by default (daily-refreshed aggregate of v2fly +
+// Russian blocklists). Any file the installer drops into hrneo.conf is
+// assumed to come from this source, so AdoptExternalFiles prefills the
+// URL and the "Обновить" button works without the user re-adding the
+// file by hand.
+const (
+	GroundZerroGeoIPURL   = "https://raw.githubusercontent.com/Ground-Zerro/Geo-Aggregator/main/geodat/geoip_GA.dat"
+	GroundZerroGeoSiteURL = "https://raw.githubusercontent.com/Ground-Zerro/Geo-Aggregator/main/geodat/geosite_GA.dat"
+)
+
+// defaultURLForType returns the Ground-Zerro source URL for a known .dat
+// type, or "" for unsupported types.
+func defaultURLForType(fileType string) string {
+	switch fileType {
+	case "geoip":
+		return GroundZerroGeoIPURL
+	case "geosite":
+		return GroundZerroGeoSiteURL
+	default:
+		return ""
+	}
+}
+
 // geoDataJSON is the on-disk format for GeoDataStore persistence.
 type geoDataJSON struct {
 	Files []GeoFileEntry `json:"files"`
@@ -434,7 +458,7 @@ func (s *GeoDataStore) AdoptExternalFiles(cfg *Config) (int, error) {
 		s.entries = append(s.entries, GeoFileEntry{
 			Type:     item.fileType,
 			Path:     clean,
-			URL:      "",
+			URL:      defaultURLForType(item.fileType),
 			Size:     info.Size(),
 			TagCount: 0,
 			Updated:  mtime,
