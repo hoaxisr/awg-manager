@@ -102,16 +102,22 @@
 <PageContainer>
     <PageHeader title="Маршрутизация">
         {#snippet actions()}
-            {#if missing.length > 0}
-                <button
-                    class="btn btn-warning btn-sm"
-                    onclick={handleRefresh}
-                    disabled={refreshing}
-                    title={`Не загружено: ${missing.join(', ')}`}
-                >
-                    {refreshing ? 'Загрузка…' : `Загрузить недостающее (${missing.length})`}
-                </button>
-            {/if}
+            <button
+                class="btn btn-sm"
+                class:btn-warning={missing.length > 0}
+                class:btn-ghost={missing.length === 0}
+                onclick={handleRefresh}
+                disabled={refreshing}
+                title={missing.length > 0 ? `Не загружено: ${missing.join(', ')}` : 'Обновить данные маршрутизации'}
+            >
+                {#if refreshing}
+                    Загрузка…
+                {:else if missing.length > 0}
+                    Загрузить недостающее ({missing.length})
+                {:else}
+                    Обновить
+                {/if}
+            </button>
         {/snippet}
     </PageHeader>
 
