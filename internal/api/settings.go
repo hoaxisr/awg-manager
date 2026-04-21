@@ -99,9 +99,6 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if settings.Logging == (storage.LoggingSettings{}) {
 		settings.Logging = oldSettings.Logging
 	}
-	if settings.Updates == (storage.UpdateSettings{}) {
-		settings.Updates = oldSettings.Updates
-	}
 	if settings.DNSRoute == (storage.DNSRouteSettings{}) {
 		settings.DNSRoute = oldSettings.DNSRoute
 	}
