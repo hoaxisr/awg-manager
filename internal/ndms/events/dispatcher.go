@@ -7,6 +7,12 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
+// RoutingChangedListener is fired after every drain that invalidated at
+// least one store. The listener rebuilds the routing snapshot and decides
+// (by hash compare) whether to broadcast it — the dispatcher itself stays
+// agnostic of routing semantics.
+type RoutingChangedListener = func()
+
 // Dispatcher is a push-side cache invalidator. Hook handler Enqueue's
 // Events; the worker goroutine drains a pending-set and calls the
 // appropriate Store.Invalidate() methods.
@@ -27,6 +33,8 @@ type Dispatcher struct {
 	stopOnce  sync.Once
 	startOnce sync.Once
 	started   atomic.Bool
+
+	onRouting atomic.Pointer[RoutingChangedListener]
 }
 
 // Logger is the minimal logging surface Dispatcher uses.
@@ -74,6 +82,18 @@ func NewDispatcher(q *query.Queries, log Logger) *Dispatcher {
 		stopCh:  make(chan struct{}),
 		doneCh:  make(chan struct{}),
 	}
+}
+
+// SetRoutingChanged registers (or clears with nil) the callback fired after
+// every drain. Safe to call at any time; the stored pointer is swapped
+// atomically. The callback runs in its own goroutine so slow rebuilds don't
+// block the invalidator.
+func (d *Dispatcher) SetRoutingChanged(fn RoutingChangedListener) {
+	if fn == nil {
+		d.onRouting.Store(nil)
+		return
+	}
+	d.onRouting.Store(&fn)
 }
 
 // Start launches the worker goroutine. Non-blocking. Safe to call
@@ -134,11 +154,13 @@ func (d *Dispatcher) eventToKeys(e Event) []invKey {
 		}
 	case EventIfIPChanged:
 		return []invKey{
+			{storeInterfaces, ""},
 			{storeInterfaces, e.ID},
 			{storeRoutes, ""},
 		}
 	case EventIfLayerChanged:
 		keys := []invKey{
+			{storeInterfaces, ""},
 			{storeInterfaces, e.ID},
 			{storePeers, e.ID},
 		}
@@ -171,8 +193,16 @@ func (d *Dispatcher) drain() {
 	d.pending = make(map[invKey]struct{})
 	d.mu.Unlock()
 
+	if len(batch) == 0 {
+		return
+	}
+
 	for k := range batch {
 		d.invalidate(k)
+	}
+
+	if p := d.onRouting.Load(); p != nil {
+		go (*p)()
 	}
 }
 
