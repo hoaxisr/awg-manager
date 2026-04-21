@@ -212,6 +212,32 @@
 					</div>
 				{/if}
 
+				{#if outbound.transport?.type === 'ws'}
+					<div class="section">
+						<h2 class="section-title">Transport (WebSocket)</h2>
+						<p class="section-hint">Параметры импортированы из ссылки и редактированию не подлежат.</p>
+
+						<div class="form-group">
+							<label class="label" for="ws_path">Path</label>
+							<input id="ws_path" class="input" value={getField(['transport', 'path']) ?? '/'} readonly />
+						</div>
+
+						{#if getField(['transport', 'headers', 'Host'])}
+							<div class="form-group">
+								<label class="label" for="ws_host">Host header</label>
+								<input id="ws_host" class="input" value={getField(['transport', 'headers', 'Host'])} readonly />
+							</div>
+						{/if}
+
+						{#if getField(['transport', 'early_data_header_name'])}
+							<div class="form-group">
+								<label class="label" for="ws_ed">Early Data Header</label>
+								<input id="ws_ed" class="input" value={getField(['transport', 'early_data_header_name'])} readonly />
+							</div>
+						{/if}
+					</div>
+				{/if}
+
 			{:else if protocol === 'hysteria2'}
 				<div class="section">
 					<h2 class="section-title">Hysteria2</h2>
@@ -341,6 +367,12 @@
 		font-size: 1rem;
 		font-weight: 600;
 		margin: 0 0 1rem;
+	}
+
+	.section-hint {
+		font-size: 12px;
+		color: var(--text-muted);
+		margin: -0.5rem 0 1rem;
 	}
 
 	.subsection-title {

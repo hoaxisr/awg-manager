@@ -85,6 +85,18 @@ func parseVLESS(raw string) (*ParsedOutbound, error) {
 			tr["service_name"] = svc
 		}
 		ob["transport"] = tr
+	case "ws":
+		tr := map[string]any{"type": "ws"}
+		if path := q.Get("path"); path != "" {
+			tr["path"] = path
+		}
+		if hostHdr := q.Get("host"); hostHdr != "" {
+			tr["headers"] = map[string]any{"Host": hostHdr}
+		}
+		if ed := q.Get("ed"); ed != "" {
+			tr["early_data_header_name"] = ed
+		}
+		ob["transport"] = tr
 	default:
 		return nil, fmt.Errorf("unsupported transport: %s", q.Get("type"))
 	}
