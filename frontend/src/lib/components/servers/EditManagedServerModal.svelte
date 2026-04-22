@@ -3,6 +3,7 @@
 	import { Modal } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
+	import { servers } from '$lib/stores/servers';
 
 	interface Props {
 		open: boolean;
@@ -67,7 +68,8 @@
 		}
 		saving = true;
 		try {
-			await api.updateManagedServer({ address, mask, listenPort, endpoint: endpoint || undefined, mtu });
+			const fresh = await api.updateManagedServer({ address, mask, listenPort, endpoint: endpoint || undefined, mtu });
+			servers.applyMutationResponse(fresh);
 			notifications.success('Сервер обновлён');
 			onclose();
 			onUpdated();

@@ -3,6 +3,7 @@
 	import { Modal, FormToggle } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
+	import { servers } from '$lib/stores/servers';
 
 	interface Props {
 		open: boolean;
@@ -34,7 +35,8 @@
 	async function handleSave() {
 		saving = true;
 		try {
-			await api.updateManagedPeer(peer.publicKey, { description, tunnelIP, dns: dns || undefined });
+			const fresh = await api.updateManagedPeer(peer.publicKey, { description, tunnelIP, dns: dns || undefined });
+			servers.applyMutationResponse(fresh);
 			notifications.success('Клиент обновлён');
 			onclose();
 			onUpdated();
