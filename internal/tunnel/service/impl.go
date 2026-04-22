@@ -189,11 +189,9 @@ func (s *ServiceImpl) Create(ctx context.Context, tunnelID, name string, cfg tun
 		}
 		stored.NWGIndex = index
 		s.logInfo("create", tunnelID, "NativeWG tunnel created")
-		if s.bus != nil {
-			s.bus.Publish("tunnel:created", events.TunnelCreatedEvent{
-				ID: stored.ID, Name: stored.Name, Backend: s.backendLabel(stored),
-			})
-		}
+		// Legacy tunnel:created publish removed (Task 14 sweep); handler
+		// layer calls publishTunnelList → resource:invalidated after all
+		// mutations, so no subscriber missed an update.
 		return nil
 	}
 
@@ -203,11 +201,8 @@ func (s *ServiceImpl) Create(ctx context.Context, tunnelID, name string, cfg tun
 	}
 
 	s.logInfo("create", tunnelID, "Tunnel created")
-	if s.bus != nil && stored != nil {
-		s.bus.Publish("tunnel:created", events.TunnelCreatedEvent{
-			ID: stored.ID, Name: stored.Name, Backend: s.backendLabel(stored),
-		})
-	}
+	// Legacy tunnel:created publish removed (Task 14 sweep); handler
+	// layer emits resource:invalidated via publishTunnelList.
 	return nil
 }
 
@@ -422,11 +417,8 @@ func (s *ServiceImpl) Update(ctx context.Context, tunnelID string, cfg tunnel.Co
 	}
 
 	s.logInfo("update", tunnelID, "Tunnel updated")
-	if s.bus != nil {
-		s.bus.Publish("tunnel:updated", events.TunnelUpdatedEvent{
-			ID: tunnelID, Name: stored.Name,
-		})
-	}
+	// Legacy tunnel:updated publish removed (Task 14 sweep); handler
+	// layer emits resource:invalidated via publishTunnelList.
 	return nil
 }
 
@@ -536,11 +528,8 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 	}
 
 	s.logInfo("import", tunnelID, "Tunnel imported: "+parsed.Name)
-	if s.bus != nil {
-		s.bus.Publish("tunnel:created", events.TunnelCreatedEvent{
-			ID: parsed.ID, Name: parsed.Name, Backend: s.backendLabel(parsed),
-		})
-	}
+	// Legacy tunnel:created publish removed (Task 14 sweep); import
+	// handler emits resource:invalidated via publishTunnelList.
 	return s.Get(ctx, tunnelID)
 }
 
@@ -592,11 +581,8 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 	}
 
 	s.logInfo("import", tunnelID, "NativeWG tunnel imported: "+parsed.Name)
-	if s.bus != nil {
-		s.bus.Publish("tunnel:created", events.TunnelCreatedEvent{
-			ID: parsed.ID, Name: parsed.Name, Backend: s.backendLabel(parsed),
-		})
-	}
+	// Legacy tunnel:created publish removed (Task 14 sweep); import
+	// handler emits resource:invalidated via publishTunnelList.
 	return s.Get(ctx, tunnelID)
 }
 
@@ -654,11 +640,8 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 	}
 
 	s.logInfo("replace-config", tunnelID, "Configuration replaced: "+stored.Name)
-	if s.bus != nil {
-		s.bus.Publish("tunnel:updated", events.TunnelUpdatedEvent{
-			ID: tunnelID, Name: stored.Name,
-		})
-	}
+	// Legacy tunnel:updated publish removed (Task 14 sweep); the
+	// ReplaceConfig handler emits resource:invalidated via publishTunnelList.
 
 	return nil
 }
