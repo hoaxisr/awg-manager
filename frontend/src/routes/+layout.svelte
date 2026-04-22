@@ -12,7 +12,7 @@
 	import { healthMonitor } from '$lib/stores/health';
 	import { tunnels } from '$lib/stores/tunnels';
 	import { logEntries } from '$lib/stores/logs';
-	import { pingCheckStatus } from '$lib/stores/pingcheck';
+	import { appendPingLog } from '$lib/stores/pingcheck';
 	import { systemInfo } from '$lib/stores/system';
 	import { feedTraffic } from '$lib/stores/traffic';
 	import { applyTraffic as singboxApplyTraffic, applyDelay as singboxApplyDelay } from '$lib/stores/singbox';
@@ -90,7 +90,9 @@
 			// on /+page.svelte (runs on every polling refresh).
 			// onSnapshotRouting removed — routing is now 7 per-section polling
 			// stores with invalidation hints (Task 11).
-			onSnapshotPingcheck: (data) => pingCheckStatus.setSnapshot(data),
+			// onSnapshotPingcheck removed — pingcheck status is a polling
+			// store, invalidated via resource:invalidated (Task 12). Logs
+			// stream via pingcheck:log untouched.
 			onSnapshotLogs: (data) => logEntries.setSnapshot(data),
 
 			// Tunnel streams (kept — traffic + connectivity are not REST-pollable)
@@ -122,10 +124,12 @@
 				}
 			},
 
-			// Logs & pingcheck incremental
+			// Logs & pingcheck incremental.
+			// onPingCheckState removed — frontend polls the status list;
+			// backend still publishes pingcheck:state for internal
+			// dnsroute/failover subscriber + resource:invalidated hint.
 			onLogEntry: (data) => logEntries.append(data),
-			onPingCheckState: (data) => pingCheckStatus.updateStatus(data),
-			onPingCheckLog: (data) => pingCheckStatus.appendLog(data),
+			onPingCheckLog: appendPingLog,
 
 			// Sing-box streams (polling covers status + tunnels list; traffic
 			// + delay remain push-only — no REST equivalent).

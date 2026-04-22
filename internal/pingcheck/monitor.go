@@ -121,6 +121,7 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 			FailCount: m.failCount,
 		})
 	}
+	publishInvalidatedBus(s.bus, "pingcheck", "state-change")
 
 	// 1. Re-resolve DNS endpoint before link down (while DNS may still work)
 	stored, _ := s.tunnels.Get(m.tunnelID)
@@ -168,6 +169,7 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 				FailCount: 0,
 			})
 		}
+		publishInvalidatedBus(s.bus, "pingcheck", "state-change")
 	} else {
 		s.logWarn(m.tunnelID, fmt.Sprintf("Link toggle: no handshake, backoff #%d", restartCount))
 	}

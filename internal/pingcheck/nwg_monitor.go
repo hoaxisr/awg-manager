@@ -101,7 +101,9 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string, bo
 		m.logBuffer.Add(entry)
 		m.publishLog(entry)
 
-		// Still publish current state immediately so UI updates right after enable.
+		// Still publish current state immediately so internal subscribers
+		// (dnsroute failover) react. Frontend polls the status list; the
+		// invalidation hint below prompts an immediate refetch.
 		if m.bus != nil {
 			m.bus.Publish("pingcheck:state", events.PingCheckStateEvent{
 				TunnelID:     m.tunnelID,
@@ -110,6 +112,7 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string, bo
 				SuccessCount: successCount,
 			})
 		}
+		publishInvalidatedBus(m.bus, "pingcheck", "state-change")
 		return
 	}
 
@@ -222,7 +225,9 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string, bo
 		m.publishLog(entry)
 	}
 
-	// Publish state on every poll so frontend counters stay current.
+	// Publish state on every poll for internal subscribers (dnsroute
+	// failover). Frontend polls the list; the invalidation hint below
+	// prompts an immediate refetch on state changes.
 	if m.bus != nil {
 		m.bus.Publish("pingcheck:state", events.PingCheckStateEvent{
 			TunnelID:        m.tunnelID,
@@ -231,6 +236,13 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string, bo
 			SuccessCount:    successCount,
 			RestartDetected: m.restartDetected,
 		})
+	}
+	// Only invalidate when status actually transitioned. processDelta runs
+	// on every poll tick (~5s) per monitored tunnel; firing unconditionally
+	// would trigger excessive refetches. Initial state is published from
+	// the !m.initialized branch above (which returns early).
+	if status != m.prevStatus {
+		publishInvalidatedBus(m.bus, "pingcheck", "state-change")
 	}
 
 	m.prevFail = failCount
