@@ -34,6 +34,7 @@
 
     let userTunnels = $derived(tunnels.filter(t => t.type === 'managed' && t.available));
     let systemTunnels = $derived(tunnels.filter(t => t.type === 'system' && t.available));
+    let wanTunnels = $derived(tunnels.filter(t => t.type === 'wan' && t.available));
     let noTunnels = $derived(tunnels.filter(t => t.available).length === 0);
     let existingLower = $derived(existingNames.map(n => n.toLowerCase()));
 
@@ -158,6 +159,13 @@
             {#if systemTunnels.length > 0}
                 <optgroup label="Системные">
                     {#each systemTunnels as t}
+                        <option value={t.id}>{t.name}</option>
+                    {/each}
+                </optgroup>
+            {/if}
+            {#if wanTunnels.length > 0}
+                <optgroup label="WAN">
+                    {#each wanTunnels as t}
                         <option value={t.id}>{t.name}</option>
                     {/each}
                 </optgroup>

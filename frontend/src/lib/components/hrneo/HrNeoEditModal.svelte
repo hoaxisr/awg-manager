@@ -647,12 +647,12 @@
 
 	.radio-block {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 8px;
 		margin-bottom: 10px;
 	}
 	.radio-option {
-		flex: 1;
-		display: flex;
+		display: inline-flex;
 		align-items: center;
 		gap: 8px;
 		padding: 8px 12px;
@@ -660,6 +660,7 @@
 		border: 1px solid var(--border);
 		border-radius: 6px;
 		cursor: pointer;
+		white-space: nowrap;
 	}
 	.radio-option.active {
 		border-color: var(--accent);

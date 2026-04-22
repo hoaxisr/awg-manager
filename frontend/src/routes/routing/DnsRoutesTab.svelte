@@ -560,6 +560,15 @@
         padding: 4px;
     }
 
+    @media (max-width: 480px) {
+        .dropdown-menu {
+            right: auto;
+            left: 0;
+            min-width: min(210px, calc(100vw - 32px));
+            max-width: calc(100vw - 32px);
+        }
+    }
+
     .dropdown-item {
         display: flex;
         align-items: center;
