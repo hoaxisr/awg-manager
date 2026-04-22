@@ -254,8 +254,6 @@
 </svelte:head>
 
 <PageContainer>
-	<SingboxInstallBanner />
-
 	{#if loading}
 		<div class="py-12">
 			<LoadingSpinner size="lg" message="Загрузка туннелей..." />
@@ -441,6 +439,7 @@
 			{/if}
 		{/if}
 		{:else}
+			<SingboxInstallBanner />
 			{#if $singboxTunnels.length === 0}
 				<SingboxGhostTerminal />
 				<div class="info-card">
