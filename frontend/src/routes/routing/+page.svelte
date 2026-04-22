@@ -22,7 +22,7 @@
             activeTab = t;
         }
     });
-    let isOS5 = $derived($systemInfo?.isOS5 ?? false);
+    let isOS5 = $derived($systemInfo.data?.isOS5 ?? false);
     let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
     let hasDnsEngine = $derived(isOS5 || hydrarouteInstalled);
 

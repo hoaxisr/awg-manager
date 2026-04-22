@@ -18,7 +18,7 @@
 	let importing = $state(false);
 	let result = $state<SingboxImportResponse | null>(null);
 
-	const singboxVersion = $derived($systemInfo?.singbox?.version ?? '');
+	const singboxVersion = $derived($systemInfo.data?.singbox?.version ?? '');
 
 	async function submit(): Promise<void> {
 		importing = true;

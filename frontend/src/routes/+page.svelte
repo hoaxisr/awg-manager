@@ -24,7 +24,7 @@
 	onMount(() => { unsubTunnels = tunnels.subscribe(() => {}); });
 	onDestroy(() => unsubTunnels?.());
 
-	let sysInfo = $derived($systemInfoStore);
+	let sysInfo = $derived($systemInfoStore.data);
 	let tunnelSnap = $derived($tunnels);
 	let awgList = $derived(tunnelSnap.data?.tunnels ?? []);
 	let externalList = $derived(tunnelSnap.data?.external ?? []);

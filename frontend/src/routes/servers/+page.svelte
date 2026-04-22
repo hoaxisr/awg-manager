@@ -25,7 +25,7 @@
 	let managedStats = $derived(snap.data?.managedStats ?? null);
 	let wanIP = $derived(snap.data?.wanIP ?? '');
 	let loading = $derived(snap.lastFetchedAt === 0);
-	let routerIP = $derived($systemInfo?.routerIP ?? '');
+	let routerIP = $derived($systemInfo.data?.routerIP ?? '');
 
 	let addModalOpen = $state(false);
 	let createManagedOpen = $state(false);

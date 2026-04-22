@@ -110,7 +110,7 @@
 </svelte:head>
 
 <PageContainer>
-	{#if $systemInfo !== null && $systemInfo.supportsPingCheck === false}
+	{#if $systemInfo.data !== null && $systemInfo.data.supportsPingCheck === false}
 		<div class="component-warning">
 			<strong>Компонент pingcheck не установлен в прошивке роутера.</strong>
 			NativeWG-туннели не могут использовать мониторинг через NDMS. Установите компонент

@@ -22,23 +22,13 @@ import { writable } from 'svelte/store';
 import { api } from '$lib/api/client';
 import { createPollingStore, type PollingStore } from './polling';
 import { registerStore } from './storeRegistry';
-import { systemInfo } from '$lib/stores/system';
 import type { SingboxStatus, SingboxTunnel, SingboxTraffic } from '$lib/types';
 
 // ─────────────────────────────────────────────
 // Cold tier: sing-box install/run status (30s)
 // ─────────────────────────────────────────────
 async function fetchStatus(): Promise<SingboxStatus> {
-	const data = await api.singboxGetStatus();
-	// Mirror install/version into sysInfo so the mode selector reflects
-	// immediately on any status refresh (polling + invalidation).
-	// TODO(state-sync-redesign): this is a cross-store side-effect in a
-	// polling fetcher. It keeps the legacy systemInfo.singbox field in
-	// sync for the mode selector. Remove when systemInfo is fully migrated
-	// to a polling store (Task 10) — the mode selector should read
-	// `$singboxStatus` directly.
-	systemInfo.applySingboxStatus(data.installed, data.version ?? '');
-	return data;
+	return api.singboxGetStatus();
 }
 
 export const singboxStatus: PollingStore<SingboxStatus> = createPollingStore<SingboxStatus>(
