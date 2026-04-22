@@ -52,27 +52,33 @@ func (f *fakePoster) Payloads() []any {
 	return out
 }
 
+// fakePublisher captures resource:invalidated hints emitted by
+// SaveCoordinator. State-sync redesign (Task 13) replaced the former
+// save:status SSE event with a hint — the SaveStatus payload is now
+// read via GET /api/ndms/save-status. Tests snapshot the current state
+// via sc.Status() and count hints to verify publish was invoked.
 type fakePublisher struct {
-	mu     sync.Mutex
-	events []events.SaveStatusEvent
+	mu    sync.Mutex
+	hints []events.ResourceInvalidatedEvent
 }
 
 func (p *fakePublisher) Publish(eventType string, data any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if eventType != "save:status" {
+	if eventType != "resource:invalidated" {
 		return
 	}
-	if e, ok := data.(events.SaveStatusEvent); ok {
-		p.events = append(p.events, e)
+	if e, ok := data.(events.ResourceInvalidatedEvent); ok {
+		p.hints = append(p.hints, e)
 	}
 }
 
-func (p *fakePublisher) Events() []events.SaveStatusEvent {
+// Hints returns every resource:invalidated hint emitted, in order.
+func (p *fakePublisher) Hints() []events.ResourceInvalidatedEvent {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	out := make([]events.SaveStatusEvent, len(p.events))
-	copy(out, p.events)
+	out := make([]events.ResourceInvalidatedEvent, len(p.hints))
+	copy(out, p.hints)
 	return out
 }
 
@@ -151,20 +157,20 @@ func TestSaveCoordinator_PublishesStatusTransitions(t *testing.T) {
 	sc.Request()
 	time.Sleep(80 * time.Millisecond)
 
-	evs := pub.Events()
-	// Expected sequence: pending -> saving -> idle. (There may be
-	// additional "pending" events if Request is called more than once,
-	// but here it's exactly one.)
-	if len(evs) < 3 {
-		t.Fatalf("events: want >=3, got %d (%v)", len(evs), evs)
+	// Expected sequence: pending -> saving -> idle. Each transition emits
+	// a resource:invalidated hint with Resource="saveStatus" — we verify
+	// at least three hints fired and that Status() lands on Idle.
+	hints := pub.Hints()
+	if len(hints) < 3 {
+		t.Fatalf("hints: want >=3 (pending+saving+idle), got %d (%v)", len(hints), hints)
 	}
-	if evs[0].State != "pending" {
-		t.Errorf("event[0]: want Pending, got %v", evs[0].State)
+	for i, h := range hints {
+		if h.Resource != "saveStatus" {
+			t.Errorf("hint[%d].Resource: want saveStatus, got %q", i, h.Resource)
+		}
 	}
-	// The last events should end in Idle.
-	last := evs[len(evs)-1]
-	if last.State != "idle" {
-		t.Errorf("event[last]: want Idle, got %v", last.State)
+	if st := sc.Status(); st.State != SaveStateIdle {
+		t.Errorf("terminal state: want Idle, got %v", st.State)
 	}
 }
 
@@ -186,14 +192,17 @@ func TestSaveCoordinator_RetryOnFailure(t *testing.T) {
 		t.Errorf("Post calls: want 4 (1 + 3 retries), got %d", got)
 	}
 
-	// Final state should be Failed.
-	evs := pub.Events()
-	last := evs[len(evs)-1]
-	if last.State != "failed" {
-		t.Errorf("terminal state: want Failed, got %v (events=%v)", last.State, evs)
+	// Final state should be Failed — checked via Status() since the hint
+	// payload no longer carries state.
+	st := sc.Status()
+	if st.State != SaveStateFailed {
+		t.Errorf("terminal state: want Failed, got %v", st.State)
 	}
-	if last.LastError != boom.Error() {
-		t.Errorf("LastError: want %q, got %q", boom.Error(), last.LastError)
+	if st.LastError != boom.Error() {
+		t.Errorf("LastError: want %q, got %q", boom.Error(), st.LastError)
+	}
+	if len(pub.Hints()) == 0 {
+		t.Error("expected resource:invalidated hints to be published")
 	}
 }
 
@@ -215,10 +224,8 @@ func TestSaveCoordinator_RetrySucceedsClearsError(t *testing.T) {
 		t.Errorf("Post calls: want 2 (1 fail + 1 success), got %d", got)
 	}
 
-	evs := pub.Events()
-	last := evs[len(evs)-1]
-	if last.State != "idle" {
-		t.Errorf("terminal state: want Idle, got %v (events=%v)", last.State, evs)
+	if st := sc.Status(); st.State != SaveStateIdle {
+		t.Errorf("terminal state: want Idle, got %v", st.State)
 	}
 }
 
@@ -253,10 +260,8 @@ func TestSaveCoordinator_FlushClearsFailedState(t *testing.T) {
 		t.Fatalf("Flush after Failed: %v", err)
 	}
 
-	evs := pub.Events()
-	last := evs[len(evs)-1]
-	if last.State != "idle" {
-		t.Errorf("state after Flush success: want Idle, got %v", last.State)
+	if st := sc.Status(); st.State != SaveStateIdle {
+		t.Errorf("state after Flush success: want Idle, got %v", st.State)
 	}
 }
 
@@ -276,10 +281,8 @@ func TestSaveCoordinator_FlushFailureGoesToFailed(t *testing.T) {
 		t.Errorf("state after Flush failure from Idle: want Failed, got %v", st.State)
 	}
 
-	evs := pub.Events()
-	last := evs[len(evs)-1]
-	if last.State != "failed" {
-		t.Errorf("last event: want failed, got %q", last.State)
+	if len(pub.Hints()) == 0 {
+		t.Error("expected at least one resource:invalidated hint")
 	}
 }
 
@@ -315,14 +318,12 @@ func TestSaveCoordinator_FlushConcurrentWithInFlightFire(t *testing.T) {
 		t.Errorf("pending after Flush: want 0, got %d", st.PendingCount)
 	}
 
-	// The last published event must be the Flush-driven Idle, not a
-	// rogue transition from fire() running after Flush completed.
-	evs := pub.Events()
-	if len(evs) == 0 {
-		t.Fatal("no events")
-	}
-	if evs[len(evs)-1].State != "idle" {
-		t.Errorf("last event: want idle, got %q (events=%v)", evs[len(evs)-1].State, evs)
+	// Hints are just invalidation nudges now; verify they were emitted
+	// for both the Flush-driven transitions and the fire() path. The
+	// flushInProgress guard in setStateLocked's caller prevents fire
+	// from clobbering state after Flush — we rely on Status() above.
+	if len(pub.Hints()) == 0 {
+		t.Fatal("no hints published")
 	}
 }
 

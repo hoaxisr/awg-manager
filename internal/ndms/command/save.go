@@ -204,16 +204,21 @@ func (s *SaveCoordinator) Flush(ctx context.Context) error {
 	return err
 }
 
-// setStateLocked updates state + publishes SSE. Must be called with mu held.
+// setStateLocked updates state + publishes a resource:invalidated hint.
+// Must be called with mu held.
+//
+// Before the state-sync redesign (Task 13) this published the full
+// SaveStatus as a "save:status" SSE event; the payload is now fetched
+// on-demand via GET /api/ndms/save-status by a polling store. Emitting
+// just the hint keeps the save indicator reactive without pushing full
+// state over SSE.
 func (s *SaveCoordinator) setStateLocked(next SaveState, errMsg string) {
 	s.state = next
 	s.lastError = errMsg
 	if s.publisher != nil {
-		s.publisher.Publish("save:status", events.SaveStatusEvent{
-			State:        next.String(),
-			LastError:    errMsg,
-			LastSaveAt:   s.lastSaveAt,
-			PendingCount: s.pendingCount,
+		s.publisher.Publish("resource:invalidated", events.ResourceInvalidatedEvent{
+			Resource: "saveStatus",
+			Reason:   "state-change",
 		})
 	}
 }

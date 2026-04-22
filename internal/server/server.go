@@ -32,6 +32,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
+	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsmetrics "github.com/hoaxisr/awg-manager/internal/ndms/metrics"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
@@ -102,6 +103,7 @@ type Server struct {
 
 	ndmsDispatcher api.HookDispatcher
 	ndmsTransport  *ndmstransport.Client
+	ndmsSaveCoord  *ndmscommand.SaveCoordinator
 	metricsPoller  *ndmsmetrics.Poller
 
 	instanceID string // unique per process, changes on restart
@@ -166,6 +168,13 @@ func (s *Server) SetNDMSDispatcher(d api.HookDispatcher) {
 // constructing the new layer.
 func (s *Server) SetNDMSTransport(t *ndmstransport.Client) {
 	s.ndmsTransport = t
+}
+
+// SetNDMSSaveCoordinator wires the NDMS SaveCoordinator so GET
+// /api/ndms/save-status can expose the debounced-save state machine
+// snapshot. Main.go calls this after constructing the coordinator.
+func (s *Server) SetNDMSSaveCoordinator(sc *ndmscommand.SaveCoordinator) {
+	s.ndmsSaveCoord = sc
 }
 
 // SetMetricsPoller wires the unified NDMS metrics poller. Once registerRoutes
@@ -685,6 +694,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// Connections viewer (protected)
 	mux.HandleFunc("/api/connections", guarded(connectionsHandler.List))
+
+	// NDMS save-coordinator status (protected) — polled by the header
+	// save indicator. SaveCoordinator emits a resource:invalidated hint
+	// on every state transition so clients refetch this endpoint.
+	ndmsHandler := api.NewNDMSHandler(s.ndmsSaveCoord)
+	mux.HandleFunc("/api/ndms/save-status", guarded(ndmsHandler.GetSaveStatus))
 
 	// Boot status (public - frontend uses instanceId for restart detection)
 	mux.HandleFunc("/api/boot-status", func(w http.ResponseWriter, r *http.Request) {
