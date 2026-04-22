@@ -37,7 +37,10 @@ function createLogStore() {
 		},
 		setTotal(n: number) {
 			logsTotal.set(n);
-		}
+		},
+		setLoaded(v: boolean) {
+			loaded.set(v);
+		},
 	};
 }
 

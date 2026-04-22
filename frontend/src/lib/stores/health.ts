@@ -22,7 +22,6 @@ function createHealthMonitor(): HealthMonitor {
 	});
 
 	let timer: ReturnType<typeof setInterval> | null = null;
-	let stopped = false;
 
 	async function tick() {
 		try {
@@ -49,12 +48,11 @@ function createHealthMonitor(): HealthMonitor {
 	return {
 		subscribe: state.subscribe,
 		start() {
-			if (stopped || timer !== null) return;
+			if (timer !== null) return;
 			void tick(); // immediate first check
 			timer = setInterval(tick, POLL_INTERVAL_MS);
 		},
 		stop() {
-			stopped = true;
 			if (timer !== null) {
 				clearInterval(timer);
 				timer = null;
