@@ -19,6 +19,7 @@ const (
 	ResourceRoutingPolicyInterfaces = "routing.policyInterfaces"
 	ResourceRoutingClientRoutes     = "routing.clientRoutes"
 	ResourceRoutingTunnels          = "routing.tunnels"
+	ResourceRoutingHydrarouteStatus = "routing.hydrarouteStatus"
 )
 
 // publishInvalidated posts a resource:invalidated hint to the SSE bus.

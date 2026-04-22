@@ -373,6 +373,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	}
 	systemHandler.SetHydraRoute(s.hydraService)
 	systemHandler.SetSingboxOperator(s.singboxOp)
+	systemHandler.SetEventBus(s.bus)
 	settingsHandler := api.NewSettingsHandler(s.settings, appLog)
 	settingsHandler.SetTunnelStore(s.tunnels)
 	settingsHandler.SetPingCheckService(s.pingCheckService)
@@ -746,7 +747,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// The closure invalidates the in-memory NDMS caches so the next
 	// poll reads fresh data, then publishes resource:invalidated; the
 	// frontend tunnels store responds by refetching /api/tunnels/all.
-	refreshTunnelsSnapshot := func(ctx context.Context) {
+	invalidateTunnelsOnHook := func(ctx context.Context) {
+		_ = ctx
 		// NDMS cache invalidation stays — hook events signal that the
 		// system view has changed, so our in-memory caches must drop
 		// their entries before the next poll.
@@ -760,13 +762,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		}
 		if s.bus != nil {
 			s.bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{
-				Resource: "tunnels",
+				Resource: api.ResourceTunnels,
 				Reason:   "ndms-hook",
 			})
 		}
 	}
-	hookHandler.SetTunnelRefresher(refreshTunnelsSnapshot)
-	tunnelsHandler.SetSnapshotRefresher(refreshTunnelsSnapshot)
+	hookHandler.SetTunnelRefresher(invalidateTunnelsOnHook)
 	// Injects the composite {tunnels, external, system} builder used by
 	// GetAll so /api/tunnels/all returns the exact shape the polling
 	// store expects.

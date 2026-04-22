@@ -130,14 +130,6 @@ type TunnelsHandler struct {
 	log               *logging.ScopedLogger
 	traffic           *traffic.History
 	pingCheckSnapshot func()
-	// snapshotRefresh (optional) republishes the full snapshot:tunnels
-	// SSE event (managed + external + system lists with fresh dedup).
-	// Called after publishTunnelList so UIs see a consistent state after
-	// any managed-list-modifying operation (create / import / delete /
-	// start / stop / etc.) — without it the frontend systemTunnels array
-	// stays stale and the only guard against ghost duplicates is the
-	// frontend-level interfaceName filter.
-	snapshotRefresh func(ctx context.Context)
 	// selfCreateGate (optional) suppresses the hook-driven snapshot
 	// refresh while awg-manager is itself in the middle of creating an
 	// NDMS interface. See tunnel.SelfCreateGater / api.HookHandler for
@@ -180,10 +172,10 @@ func (h *TunnelsHandler) PublishTunnelList(ctx context.Context) { h.publishTunne
 //   - ResourceRoutingTunnels  — the routing-page catalog, served by
 //                               /api/routing/tunnels (Task 11).
 //
-// Also still refreshes the pingcheck snapshot + rebroadcasts the
-// legacy snapshot:tunnels SSE for any subscribers that haven't migrated
-// yet (hookHandler shares the same refresher).
+// Also refreshes the pingcheck snapshot so monitoring picks up
+// new/deleted tunnels.
 func (h *TunnelsHandler) publishTunnelList(ctx context.Context) {
+	_ = ctx
 	if h.bus == nil {
 		return
 	}
@@ -196,22 +188,6 @@ func (h *TunnelsHandler) publishTunnelList(ctx context.Context) {
 	if h.pingCheckSnapshot != nil {
 		h.pingCheckSnapshot()
 	}
-
-	// Keep the legacy snapshot rebroadcast wired — hookHandler calls the
-	// same refresher on ifcreated/ifdestroyed; dropping it here would
-	// require a separate refactor sweep. It is a no-op when no SSE
-	// client listens to snapshot:tunnels.
-	if h.snapshotRefresh != nil {
-		h.snapshotRefresh(ctx)
-	}
-}
-
-// SetSnapshotRefresher wires the legacy snapshot:tunnels refresher
-// shared with hookHandler (fires on ifcreated/ifdestroyed). Kept for
-// backward compat with NDMS hook-driven UI refresh; can be removed
-// once the hook fires resource:invalidated directly.
-func (h *TunnelsHandler) SetSnapshotRefresher(fn func(ctx context.Context)) {
-	h.snapshotRefresh = fn
 }
 
 // SetTunnelsSnapshotBuilder wires the composer used by GetAll and
@@ -478,8 +454,8 @@ func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetAll returns the composite tunnels snapshot ({tunnels, external,
-// system}) the frontend polls instead of listening to the legacy
-// snapshot:tunnels SSE event.
+// system}) the frontend polls instead of listening to a legacy
+// snapshot SSE event.
 // GET /api/tunnels/all
 func (h *TunnelsHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

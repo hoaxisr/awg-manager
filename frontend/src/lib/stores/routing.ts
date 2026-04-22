@@ -1,5 +1,5 @@
 /**
- * routing — seven per-section polling stores + a derived `routing`
+ * routing — eight per-section polling stores + a derived `routing`
  * composite that preserves the monolithic shape older pages read as
  * `$routing.dnsRoutes`, `$routing.staticRoutes`, etc.
  *
@@ -8,12 +8,11 @@
  * ResourceRoutingXxx; the storeRegistry wiring triggers an immediate
  * refetch of only the affected section.
  *
- * `hydrarouteStatus` is not a per-section polling store here — it is
- * owned by `systemInfo` (HR Neo status lives on system-wide polling)
- * and surfaced through the composite as a passthrough field when
- * available. For routing.ts it stays undefined unless a future task
- * wires a dedicated store; the composite exposes it optionally so
- * existing `$routing.hydrarouteStatus` reads don't crash.
+ * `hydrarouteStatus` is a full polling store backed by
+ * `/api/system/hydraroute-status`. Backend publishes
+ * `routing.hydrarouteStatus` invalidations whenever the HR Neo daemon
+ * state could change (Control start/stop/restart, config write, policy
+ * order change).
  */
 import { derived, type Readable } from 'svelte/store';
 import { createPollingStore, type PollingStore } from './polling';
@@ -75,6 +74,23 @@ export const routingTunnelsStore = createSection<RoutingTunnel[]>(
 	'routing.tunnels'
 );
 
+// HR Neo status is a single object, not an array — use a dedicated
+// fetcher so the empty-body fallback is a real Status rather than an
+// empty array. Backed by the existing /api/system/hydraroute-status.
+export const hydrarouteStatusStore: PollingStore<HydraRouteStatus> = createPollingStore<HydraRouteStatus>(
+	async () => {
+		const res = await fetch('/api/system/hydraroute-status');
+		if (!res.ok) throw new Error(`routing.hydrarouteStatus ${res.status}`);
+		const body = await res.json();
+		return (body.data ?? { installed: false, running: false }) as HydraRouteStatus;
+	},
+	{
+		staleTime: 30_000,
+		pollInterval: 30_000,
+	}
+);
+registerStore('routing.hydrarouteStatus', hydrarouteStatusStore);
+
 export type RoutingComposite = {
 	dnsRoutes: DnsRoute[];
 	staticRoutes: StaticRouteList[];
@@ -97,8 +113,9 @@ export const routing: Readable<RoutingComposite> = derived(
 		policyInterfacesStore,
 		clientRoutesStore,
 		routingTunnelsStore,
+		hydrarouteStatusStore,
 	],
-	([d, s, a, pd, pi, cr, rt]) => {
+	([d, s, a, pd, pi, cr, rt, hr]) => {
 		const missing: string[] = [];
 		if (d.status === 'error') missing.push('dnsRoutes');
 		if (s.status === 'error') missing.push('staticRoutes');
@@ -107,6 +124,7 @@ export const routing: Readable<RoutingComposite> = derived(
 		if (pi.status === 'error') missing.push('policyInterfaces');
 		if (cr.status === 'error') missing.push('clientRoutes');
 		if (rt.status === 'error') missing.push('tunnels');
+		if (hr.status === 'error') missing.push('hydrarouteStatus');
 		return {
 			dnsRoutes: d.data ?? [],
 			staticRoutes: s.data ?? [],
@@ -115,8 +133,8 @@ export const routing: Readable<RoutingComposite> = derived(
 			policyInterfaces: pi.data ?? [],
 			clientRoutes: cr.data ?? [],
 			tunnels: rt.data ?? [],
-			hydrarouteStatus: null,
-			loaded: [d, s, a, pd, pi, cr, rt].every(
+			hydrarouteStatus: hr.data ?? null,
+			loaded: [d, s, a, pd, pi, cr, rt, hr].every(
 				(x) => x.lastFetchedAt > 0 || x.status === 'error'
 			),
 			missing,
@@ -126,7 +144,7 @@ export const routing: Readable<RoutingComposite> = derived(
 
 /**
  * subscribeRouting — convenience helper that subscribes to every section
- * store with a no-op listener. Pages that want all seven sections can
+ * store with a no-op listener. Pages that want all eight sections can
  * call this once in `onMount` and the returned function on `onDestroy`.
  * Each subscribe triggers the polling lifecycle (initial fetch + interval).
  */
@@ -139,12 +157,13 @@ export function subscribeRouting(): () => void {
 		policyInterfacesStore.subscribe(() => {}),
 		clientRoutesStore.subscribe(() => {}),
 		routingTunnelsStore.subscribe(() => {}),
+		hydrarouteStatusStore.subscribe(() => {}),
 	];
 	return () => unsubs.forEach((u) => u());
 }
 
 /**
- * invalidateAllRouting — triggers immediate refetch across all seven
+ * invalidateAllRouting — triggers immediate refetch across all eight
  * section stores. Used by the `/api/routing/refresh` button handler so
  * the user sees fresh data even when some sections previously errored.
  */
@@ -156,4 +175,5 @@ export function invalidateAllRouting(): void {
 	policyInterfacesStore.invalidate();
 	clientRoutesStore.invalidate();
 	routingTunnelsStore.invalidate();
+	hydrarouteStatusStore.invalidate();
 }

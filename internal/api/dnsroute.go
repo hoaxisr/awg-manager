@@ -35,9 +35,11 @@ type DNSRouteHandler struct {
 func (h *DNSRouteHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
 // publishDnsUpdated posts a resource:invalidated hint so clients refetch
-// their DNS route list. The fresh list is also returned inline from each
-// mutation (see Create/Update/Delete/SetEnabled), so routine cases do
-// not even need the hint — it is a safety net for tabs subscribed on
+// their DNS route list. The fresh list is also returned inline from every
+// mutation handler (Create/Update return the single entity for its
+// lastDedupeReport; Delete/SetEnabled/DeleteBatch/BulkBackend/Refresh
+// return the whole list so the caller can apply it without an extra
+// round-trip). The hint remains as a safety net for tabs subscribed on
 // different pages that did not issue the mutation themselves.
 func (h *DNSRouteHandler) publishDnsUpdated(reason string) {
 	publishInvalidated(h.bus, ResourceRoutingDnsRoutes, reason)
@@ -132,7 +134,8 @@ func (h *DNSRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
 	h.publishDnsUpdated("update")
 }
 
-// Delete deletes a domain list by ID.
+// Delete deletes a domain list by ID and returns the fresh list so the
+// client can call applyMutationResponse without a separate refetch.
 func (h *DNSRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -152,7 +155,13 @@ func (h *DNSRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	h.log.Info("dns-route-delete", id, "DNS route list deleted")
 
-	response.Success(w, map[string]bool{"success": true})
+	list, err := h.svc.List(r.Context())
+	if err != nil {
+		response.Error(w, err.Error(), "DNS_ROUTE_LIST_ERROR")
+		return
+	}
+
+	response.Success(w, list)
 	h.publishDnsUpdated("delete")
 }
 
@@ -170,15 +179,23 @@ func (h *DNSRouteHandler) DeleteBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deleted, err := h.svc.DeleteBatch(r.Context(), body.IDs)
-	if err != nil {
+	if _, err := h.svc.DeleteBatch(r.Context(), body.IDs); err != nil {
 		response.Error(w, err.Error(), "DNS_ROUTE_DELETE_BATCH_ERROR")
 		return
 	}
 
 	h.log.Info("dns-route-delete-batch", "", "DNS route lists deleted in batch")
 
-	response.Success(w, map[string]int{"deleted": deleted})
+	list, err := h.svc.List(r.Context())
+	if err != nil {
+		response.Error(w, err.Error(), "DNS_ROUTE_LIST_ERROR")
+		return
+	}
+
+	// Mirror Create/Update: fresh list in data so the client can call
+	// applyMutationResponse. Callers that need the deleted count can
+	// derive it from the length delta.
+	response.Success(w, list)
 	h.publishDnsUpdated("delete-batch")
 }
 
@@ -230,7 +247,13 @@ func (h *DNSRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 	}
 	h.log.Info("dns-route-toggle", id, "DNS route list "+action)
 
-	response.Success(w, map[string]bool{"success": true})
+	list, err := h.svc.List(r.Context())
+	if err != nil {
+		response.Error(w, err.Error(), "DNS_ROUTE_LIST_ERROR")
+		return
+	}
+
+	response.Success(w, list)
 	h.publishDnsUpdated("set-enabled")
 }
 
@@ -252,7 +275,6 @@ func (h *DNSRouteHandler) BulkBackend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated := 0
 	for _, id := range req.ListIDs {
 		list, err := h.svc.Get(r.Context(), id)
 		if err != nil {
@@ -263,12 +285,18 @@ func (h *DNSRouteHandler) BulkBackend(w http.ResponseWriter, r *http.Request) {
 			h.log.Warn("bulk-backend", id, "Failed to update backend: "+err.Error())
 			continue
 		}
-		updated++
+	}
+
+	fresh, err := h.svc.List(r.Context())
+	if err != nil {
+		response.Error(w, err.Error(), "DNS_ROUTE_LIST_ERROR")
+		return
 	}
 
 	h.publishDnsUpdated("bulk-backend")
 
-	response.Success(w, map[string]int{"updated": updated})
+	// Return fresh list so clients can call applyMutationResponse.
+	response.Success(w, fresh)
 }
 
 // Refresh refreshes subscriptions for a single list or all lists.
@@ -294,7 +322,13 @@ func (h *DNSRouteHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		h.log.Info("dns-route-refresh-all", "", "All DNS route subscriptions refreshed")
 	}
 
-	response.Success(w, map[string]bool{"success": true})
+	list, err := h.svc.List(r.Context())
+	if err != nil {
+		response.Error(w, err.Error(), "DNS_ROUTE_LIST_ERROR")
+		return
+	}
+
+	response.Success(w, list)
 	h.publishDnsUpdated("refresh-subscriptions")
 }
 

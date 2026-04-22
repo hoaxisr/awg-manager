@@ -14,22 +14,12 @@
     import ClientRoutesTab from './ClientRoutesTab.svelte';
     import { HrNeoTab } from '$lib/components/hrneo';
 
-    // Per-section polling stores — subscribe here so all 7 fetch while
+    // Per-section polling stores — subscribe here so all 8 fetch while
     // the routing page is open. Unsubscribed on destroy to stop polling.
     let unsubRouting: (() => void) | null = null;
 
-    // HR Neo installation status — used to decide whether to show the
-    // HR Neo tab and the DNS engine availability. Previously this was
-    // surfaced through the routing SSE snapshot; Task 11 switched routing
-    // to per-section polling, so we fetch HR status once here on mount.
-    let hydrarouteInstalled = $state(false);
-
-    onMount(async () => {
+    onMount(() => {
         unsubRouting = subscribeRouting();
-        try {
-            const s = await api.getHydraRouteStatus();
-            hydrarouteInstalled = !!s.installed;
-        } catch { /* HR status unavailable — treat as not installed */ }
     });
     onDestroy(() => { unsubRouting?.(); });
 
@@ -43,6 +33,7 @@
         }
     });
     let isOS5 = $derived($systemInfo.data?.isOS5 ?? false);
+    let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
     let hasDnsEngine = $derived(isOS5 || hydrarouteInstalled);
 
     // Search → edit rule integration
