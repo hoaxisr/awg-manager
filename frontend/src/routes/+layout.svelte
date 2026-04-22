@@ -24,7 +24,7 @@
 	// failover) plus the generic resource:invalidated hint.
 	import type { UpdateInfo } from '$lib/types';
 	import LoginForm from '$lib/components/LoginForm.svelte';
-	import { Modal } from '$lib/components/ui';
+	import { Modal, SaveStatusIndicator } from '$lib/components/ui';
 	import '../app.css';
 
 	let { children }: { children: Snippet } = $props();
@@ -231,6 +231,9 @@
 							v{currentVersion}
 						</span>
 					{/if}
+				{/if}
+				{#if $isAuthenticated}
+					<SaveStatusIndicator />
 				{/if}
 			</div>
 

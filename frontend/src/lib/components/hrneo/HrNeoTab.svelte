@@ -9,7 +9,8 @@
 		RoutingTunnel,
 	} from '$lib/types';
 	import { notifications } from '$lib/stores/notifications';
-	import { Modal } from '$lib/components/ui';
+	import { Modal, StoreStatusBadge } from '$lib/components/ui';
+	import { dnsRoutesStore } from '$lib/stores/routing';
 	import { InterfaceList } from '$lib/components/accesspolicy';
 	import HrNeoTargetSidebar, {
 		type TargetEntry,
@@ -296,6 +297,10 @@
 	}
 </script>
 
+<div class="hrneo-status-row">
+	<StoreStatusBadge store={dnsRoutesStore} />
+</div>
+
 <div class="hrneo-tab" class:mobile={isMobile}>
 	{#if !isMobile}
 		<HrNeoTargetSidebar
@@ -459,6 +464,14 @@
 		border-radius: 3px;
 		font-family: ui-monospace, monospace;
 		font-size: 0.75rem;
+	}
+	.hrneo-status-row {
+		display: flex;
+		justify-content: flex-end;
+		margin-bottom: 8px;
+	}
+	.hrneo-status-row:empty {
+		display: none;
 	}
 	.hrneo-tab {
 		display: grid;

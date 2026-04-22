@@ -1,11 +1,12 @@
 <script lang="ts">
     import { api } from '$lib/api/client';
     import type { StaticRouteList, RoutingTunnel } from '$lib/types';
-    import { Modal } from '$lib/components/ui';
+    import { Modal, StoreStatusBadge } from '$lib/components/ui';
     import { IpRouteCard, IpRouteEditModal, IpRouteImportModal } from '$lib/components/routing';
     import { exportStaticRoutes, type PortableStaticRoute } from '$lib/utils/staticroute-export';
     import { downloadJson } from '$lib/utils/dns-export';
     import { notifications } from '$lib/stores/notifications';
+    import { staticRoutesStore } from '$lib/stores/routing';
 
     interface Props {
         ipRoutes: StaticRouteList[];
@@ -211,6 +212,7 @@
             {boundRoutes.length} правил, {ipActiveCount} активных{#if orphanRoutes.length > 0}, <span class="orphan-count">несвязанных: {orphanRoutes.length}</span>{/if}
         </span>
         <div class="section-buttons">
+            <StoreStatusBadge store={staticRoutesStore} />
             <button class="btn btn-sm btn-ghost" onclick={() => ipImportOpen = true}>Загрузить набор правил</button>
             {#if ipRoutes.length > 0}
                 <button class="btn btn-sm btn-ghost" onclick={() => { ipSelectionMode = true; ipSelected = new Set(); }}>Выбрать</button>

@@ -35,18 +35,24 @@
     let linkInput = $state('');
     let linkPreview = $state('');
     let linkError = $state('');
+    let wasOpen = $state(false);
 
-    // Reset state when modal opens
+    // Reset state when modal opens (only once per open cycle so polling-tick
+    // re-runs don't wipe user edits).
     $effect(() => {
-        if (open) {
-            importContent = '';
-            newName = tunnelName;
-            activeTab = 'file';
-            linkInput = '';
-            linkPreview = '';
-            linkError = '';
-            loading = false;
+        if (!open) {
+            wasOpen = false;
+            return;
         }
+        if (wasOpen) return; // already initialised — user may be editing
+        wasOpen = true;
+        importContent = '';
+        newName = tunnelName;
+        activeTab = 'file';
+        linkInput = '';
+        linkPreview = '';
+        linkError = '';
+        loading = false;
     });
 
     function handleFileSelect(event: Event) {
