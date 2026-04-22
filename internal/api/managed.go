@@ -78,21 +78,23 @@ func (h *ManagedServerHandler) SetServersHandler(s *ServersHandler) { h.servers 
 
 // publishServerUpdated delegates to ServersHandler to broadcast a
 // resource:invalidated hint so servers polling subscribers refetch.
-// The ctx is kept for signature parity with previous callers.
-//
-// TODO(state-sync-redesign): the 8 managed-server mutation handlers in
-// this file (Update, Delete, UpdatePeer, DeletePeer, TogglePeer, NAT,
-// SetEnabled, ASC POST) still return {"ok":true} rather than a fresh
-// ServersSnapshot. They rely on this hint to trigger a background
-// refetch, so UI stays correct but lags by one cadence (~5s) vs the
-// instant applyMutationResponse path used by Mark/Unmark. Migrate to
-// fresh-state responses before final merge to `next` — the spec
-// mandates zero {"ok":true} mutation responses.
-func (h *ManagedServerHandler) publishServerUpdated(ctx context.Context) {
+func (h *ManagedServerHandler) publishServerUpdated() {
 	if h.servers != nil {
 		h.servers.publishServerInvalidated("managed-mutation")
 	}
-	_ = ctx
+}
+
+// writeServersSnapshot delegates the composite ServersSnapshot response
+// to ServersHandler.writeAll with a nil guard. All 8 mutation handlers
+// use this so an isolated-test construction (NewManagedServerHandler
+// without SetServersHandler) falls back to a safe error response
+// instead of a nil pointer panic.
+func (h *ManagedServerHandler) writeServersSnapshot(w http.ResponseWriter, r *http.Request) {
+	if h.servers == nil {
+		response.Error(w, "servers handler not initialized", "INTERNAL_ERROR")
+		return
+	}
+	h.servers.writeAll(w, r)
 }
 
 // NewManagedServerHandler creates a new managed server handler.
@@ -156,7 +158,7 @@ func (h *ManagedServerHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Success(w, toManagedServerResponse(server))
-	h.publishServerUpdated(r.Context())
+	h.publishServerUpdated()
 }
 
 // Update updates the managed server's address and/or listen port.
@@ -170,8 +172,8 @@ func (h *ManagedServerHandler) Update(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err.Error(), "UPDATE_FAILED")
 		return
 	}
-	response.Success(w, map[string]bool{"ok": true})
-	h.publishServerUpdated(r.Context())
+	h.publishServerUpdated()
+	h.writeServersSnapshot(w, r)
 }
 
 // Delete removes the managed server and all peers.
@@ -185,8 +187,8 @@ func (h *ManagedServerHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err.Error(), "DELETE_FAILED")
 		return
 	}
-	response.Success(w, map[string]bool{"ok": true})
-	h.publishServerUpdated(r.Context())
+	h.publishServerUpdated()
+	h.writeServersSnapshot(w, r)
 }
 
 // AddPeer adds a new peer to the managed server.
@@ -202,11 +204,11 @@ func (h *ManagedServerHandler) AddPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Success(w, peer)
-	h.publishServerUpdated(r.Context())
+	h.publishServerUpdated()
 }
 
 // UpdatePeer updates an existing peer.
-// PUT /api/managed-server/peers?pubkey=X
+// PUT /api/managed-server/peers/update?pubkey=X
 func (h *ManagedServerHandler) UpdatePeer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		response.MethodNotAllowed(w)
@@ -229,8 +231,8 @@ func (h *ManagedServerHandler) UpdatePeer(w http.ResponseWriter, r *http.Request
 		response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
 		return
 	}
-	response.Success(w, map[string]bool{"ok": true})
-	h.publishServerUpdated(r.Context())
+	h.publishServerUpdated()
+	h.writeServersSnapshot(w, r)
 }
 
 // DeletePeer removes a peer from the managed server.
@@ -253,8 +255,8 @@ func (h *ManagedServerHandler) DeletePeer(w http.ResponseWriter, r *http.Request
 		response.Error(w, err.Error(), "DELETE_PEER_FAILED")
 		return
 	}
-	response.Success(w, map[string]bool{"ok": true})
-	h.publishServerUpdated(r.Context())
+	h.publishServerUpdated()
+	h.writeServersSnapshot(w, r)
 }
 
 // TogglePeer enables or disables a peer.
@@ -276,8 +278,8 @@ func (h *ManagedServerHandler) TogglePeer(w http.ResponseWriter, r *http.Request
 		response.Error(w, err.Error(), "TOGGLE_FAILED")
 		return
 	}
-	response.Success(w, map[string]bool{"ok": true})
-	h.publishServerUpdated(r.Context())
+	h.publishServerUpdated()
+	h.writeServersSnapshot(w, r)
 }
 
 // PeerConf generates and returns a .conf file for a peer.
@@ -320,8 +322,8 @@ func (h *ManagedServerHandler) NAT(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err.Error(), "NAT_FAILED")
 		return
 	}
-	response.Success(w, map[string]bool{"ok": true})
-	h.publishServerUpdated(r.Context())
+	h.publishServerUpdated()
+	h.writeServersSnapshot(w, r)
 }
 
 // SetEnabled enables or disables the managed server interface.
@@ -335,8 +337,8 @@ func (h *ManagedServerHandler) SetEnabled(w http.ResponseWriter, r *http.Request
 		response.Error(w, err.Error(), "SET_ENABLED_FAILED")
 		return
 	}
-	response.Success(w, map[string]bool{"ok": true})
-	h.publishServerUpdated(r.Context())
+	h.publishServerUpdated()
+	h.writeServersSnapshot(w, r)
 }
 
 // ASC handles GET/POST for ASC parameters of the managed server.
@@ -368,8 +370,8 @@ func (h *ManagedServerHandler) ASC(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, err.Error(), "SET_ASC_FAILED")
 			return
 		}
-		response.Success(w, map[string]bool{"ok": true})
-		h.publishServerUpdated(r.Context())
+		h.publishServerUpdated()
+		h.writeServersSnapshot(w, r)
 	default:
 		response.MethodNotAllowed(w)
 	}

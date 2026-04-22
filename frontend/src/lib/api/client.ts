@@ -841,28 +841,28 @@ class ApiClient {
 		});
 	}
 
-	async updateManagedServer(req: UpdateManagedServerRequest): Promise<void> {
+	async updateManagedServer(req: UpdateManagedServerRequest): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request('/managed-server/update', {
 			method: 'PUT',
 			body: JSON.stringify(req)
 		});
 	}
 
-	async setManagedServerEnabled(enabled: boolean): Promise<void> {
+	async setManagedServerEnabled(enabled: boolean): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request('/managed-server/enabled', {
 			method: 'POST',
 			body: JSON.stringify({ enabled })
 		});
 	}
 
-	async setManagedServerNAT(enabled: boolean): Promise<void> {
+	async setManagedServerNAT(enabled: boolean): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request('/managed-server/nat', {
 			method: 'POST',
 			body: JSON.stringify({ enabled })
 		});
 	}
 
-	async deleteManagedServer(): Promise<void> {
+	async deleteManagedServer(): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request('/managed-server/delete', {
 			method: 'DELETE'
 		});
@@ -875,20 +875,20 @@ class ApiClient {
 		});
 	}
 
-	async updateManagedPeer(pubkey: string, req: UpdateManagedPeerRequest): Promise<void> {
+	async updateManagedPeer(pubkey: string, req: UpdateManagedPeerRequest): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request(`/managed-server/peers/update?pubkey=${encodeURIComponent(pubkey)}`, {
 			method: 'PUT',
 			body: JSON.stringify(req)
 		});
 	}
 
-	async deleteManagedPeer(pubkey: string): Promise<void> {
+	async deleteManagedPeer(pubkey: string): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request(`/managed-server/peers/delete?pubkey=${encodeURIComponent(pubkey)}`, {
 			method: 'DELETE'
 		});
 	}
 
-	async toggleManagedPeer(publicKey: string, enabled: boolean): Promise<void> {
+	async toggleManagedPeer(publicKey: string, enabled: boolean): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request('/managed-server/peers/toggle', {
 			method: 'POST',
 			body: JSON.stringify({ publicKey, enabled })
@@ -904,7 +904,7 @@ class ApiClient {
 		return this.request('/managed-server/asc');
 	}
 
-	async setManagedServerASC(params: ASCParams): Promise<void> {
+	async setManagedServerASC(params: ASCParams): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request('/managed-server/asc', {
 			method: 'POST',
 			body: JSON.stringify(params)

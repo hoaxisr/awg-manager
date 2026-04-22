@@ -2,6 +2,7 @@
 	import type { ManagedServer, ManagedPeer, ManagedPeerStats, ManagedServerStats } from '$lib/types';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
+	import { servers } from '$lib/stores/servers';
 	import { formatBytes, formatRelativeTime } from '$lib/utils/format';
 	import { Toggle } from '$lib/components/ui';
 	import {
@@ -137,7 +138,8 @@
 		}
 		deleting = true;
 		try {
-			await api.deleteManagedServer();
+			const fresh = await api.deleteManagedServer();
+			servers.applyMutationResponse(fresh);
 			notifications.success('Сервер удалён');
 			onDeleted();
 		} catch (e) {
@@ -150,7 +152,8 @@
 
 	async function handleTogglePeer(peer: ManagedPeer) {
 		try {
-			await api.toggleManagedPeer(peer.publicKey, !peer.enabled);
+			const fresh = await api.toggleManagedPeer(peer.publicKey, !peer.enabled);
+			servers.applyMutationResponse(fresh);
 			onUpdated();
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Ошибка');
@@ -173,7 +176,8 @@
 	async function doDeletePeer(peer: ManagedPeer) {
 		try {
 			confirmDeletePeerKey = null;
-			await api.deleteManagedPeer(peer.publicKey);
+			const fresh = await api.deleteManagedPeer(peer.publicKey);
+			servers.applyMutationResponse(fresh);
 			notifications.success('Клиент удалён');
 			onUpdated();
 		} catch (e) {
@@ -201,7 +205,8 @@
 	async function handleToggleEnabled() {
 		togglingEnabled = true;
 		try {
-			await api.setManagedServerEnabled(!isUp);
+			const fresh = await api.setManagedServerEnabled(!isUp);
+			servers.applyMutationResponse(fresh);
 			onUpdated();
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Ошибка переключения');
@@ -215,7 +220,8 @@
 	async function handleToggleNAT() {
 		togglingNAT = true;
 		try {
-			await api.setManagedServerNAT(!server.natEnabled);
+			const fresh = await api.setManagedServerNAT(!server.natEnabled);
+			servers.applyMutationResponse(fresh);
 			onUpdated();
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Ошибка переключения NAT');

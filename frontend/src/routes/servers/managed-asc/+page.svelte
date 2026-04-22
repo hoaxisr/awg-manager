@@ -2,6 +2,7 @@
 	import { api } from '$lib/api/client';
 	import { goto } from '$app/navigation';
 	import { notifications } from '$lib/stores/notifications';
+	import { servers } from '$lib/stores/servers';
 	import type { ASCParams, ASCParamsExtended, SystemInfo } from '$lib/types';
 	import { PageContainer } from '$lib/components/layout';
 	import { calcByteSize, calcTotalSize } from '$lib/utils/protocols';
@@ -114,7 +115,8 @@
 		if (!ascParams) return;
 		saving = true;
 		try {
-			await api.setManagedServerASC(ascParams);
+			const fresh = await api.setManagedServerASC(ascParams);
+			servers.applyMutationResponse(fresh);
 			notifications.success('Параметры обфускации сохранены');
 			// Warn about existing peers needing reconfiguration
 			try {
