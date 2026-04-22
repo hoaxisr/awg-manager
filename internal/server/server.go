@@ -415,6 +415,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/logout", authHandler.Logout)
 	mux.HandleFunc("/api/auth/status", authHandler.Status)
 
+	// Health liveness endpoint (public - used by frontend 5s poller to
+	// detect backend offline independently of SSE connection state).
+	mux.Handle("/api/health", api.NewHealthHandler(s.config.Version))
+
 	// SSE event stream (protected)
 	mux.HandleFunc("/api/events", guarded(eventsHandler.Stream))
 
@@ -644,12 +648,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// Connections viewer (protected)
 	mux.HandleFunc("/api/connections", guarded(connectionsHandler.List))
-
-	// Health check (public)
-	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
-	})
 
 	// Boot status (public - frontend uses instanceId for restart detection)
 	mux.HandleFunc("/api/boot-status", func(w http.ResponseWriter, r *http.Request) {
