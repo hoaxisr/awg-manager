@@ -1,9 +1,10 @@
 <script lang="ts">
     import { api } from '$lib/api/client';
     import type { AccessPolicy, PolicyDevice, PolicyGlobalInterface } from '$lib/types';
-    import { Modal } from '$lib/components/ui';
+    import { Modal, StoreStatusBadge } from '$lib/components/ui';
     import { PolicyTable, PolicyCreateModal, PolicyEditView } from '$lib/components/accesspolicy';
     import { notifications } from '$lib/stores/notifications';
+    import { accessPoliciesStore, policyDevicesStore, policyInterfacesStore } from '$lib/stores/routing';
 
     interface Props {
         accessPolicies: AccessPolicy[];
@@ -118,6 +119,9 @@
         {#if !policySelectionMode}
             <span class="section-summary">{policyCount} политик</span>
             <div class="section-buttons">
+                <StoreStatusBadge store={accessPoliciesStore} />
+                <StoreStatusBadge store={policyDevicesStore} />
+                <StoreStatusBadge store={policyInterfacesStore} />
                 {#if accessPolicies.length > 0}
                     <button class="btn btn-sm btn-ghost" onclick={() => { policySelectionMode = true; policySelected = new Set(); }}>Выбрать</button>
                 {/if}

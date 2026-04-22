@@ -3,10 +3,11 @@
     import { api } from '$lib/api/client';
     import type { DnsRoute, RoutingTunnel } from '$lib/types';
     import type { ServicePreset } from '$lib/data/presets';
-    import { Modal } from '$lib/components/ui';
+    import { Modal, StoreStatusBadge } from '$lib/components/ui';
     import { DnsRouteCard, DnsRouteEditModal, DnsRouteImportModal, DnsRoutePresetModal } from '$lib/components/dnsroutes';
     import { exportRoutes, downloadJson } from '$lib/utils/dns-export';
     import { notifications } from '$lib/stores/notifications';
+    import { dnsRoutesStore } from '$lib/stores/routing';
 
     interface Props {
         dnsRoutes: DnsRoute[];
@@ -286,6 +287,7 @@
     {#if !dnsSelectionMode}
         <span class="section-summary">{dnsRoutes.length} правил, {dnsActiveCount} активных</span>
         <div class="section-buttons">
+            <StoreStatusBadge store={dnsRoutesStore} />
             {#if dnsRoutes.length > 0}
                 <button class="btn btn-sm btn-ghost" onclick={() => { dnsSelectionMode = true; dnsSelected = new Set(); }}>Выбрать</button>
             {/if}

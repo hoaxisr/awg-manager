@@ -1,9 +1,10 @@
 <script lang="ts">
     import { api } from '$lib/api/client';
     import type { ClientRoute, PolicyDevice, RoutingTunnel } from '$lib/types';
-    import { Modal } from '$lib/components/ui';
+    import { Modal, StoreStatusBadge } from '$lib/components/ui';
     import { ClientRouteCard, ClientRouteCreateModal } from '$lib/components/clientroute';
     import { notifications } from '$lib/stores/notifications';
+    import { clientRoutesStore } from '$lib/stores/routing';
 
     interface Props {
         clientRoutes: ClientRoute[];
@@ -153,6 +154,7 @@
     {#if !clientSelectionMode}
         <span class="section-summary">{clientRoutes.length} правил</span>
         <div class="section-buttons">
+            <StoreStatusBadge store={clientRoutesStore} />
             {#if clientRoutes.length > 0}
                 <button class="btn btn-sm btn-ghost" onclick={() => { clientSelectionMode = true; clientSelected = new Set(); }}>Выбрать</button>
             {/if}

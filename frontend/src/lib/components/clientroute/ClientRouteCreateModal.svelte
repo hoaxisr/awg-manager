@@ -58,25 +58,30 @@
 	let canSave = $derived(selectedDevice !== null && selectedTunnel !== '');
 	let attempted = $state(false);
 	let shaking = $state(false);
+	let wasOpen = $state(false);
 
 	let deviceError = $derived(attempted && selectedDevice === null);
 
 	let title = $derived(editing ? 'Редактирование правила' : 'VPN для устройства');
 
 	$effect(() => {
-		if (open) {
-			attempted = false;
-			if (editing) {
-				selectedDevice = { ip: editing.clientIp, name: editing.clientHostname };
-				selectedTunnel = editing.tunnelId;
-				selectedFallback = editing.fallback;
-			} else {
-				selectedDevice = null;
-				selectedTunnel = availableTunnels[0]?.id ?? '';
-				selectedFallback = 'drop';
-			}
-			searchText = '';
+		if (!open) {
+			wasOpen = false;
+			return;
 		}
+		if (wasOpen) return; // already initialised — user may be editing
+		wasOpen = true;
+		attempted = false;
+		if (editing) {
+			selectedDevice = { ip: editing.clientIp, name: editing.clientHostname };
+			selectedTunnel = editing.tunnelId;
+			selectedFallback = editing.fallback;
+		} else {
+			selectedDevice = null;
+			selectedTunnel = availableTunnels[0]?.id ?? '';
+			selectedFallback = 'drop';
+		}
+		searchText = '';
 	});
 
 	function handleSave() {

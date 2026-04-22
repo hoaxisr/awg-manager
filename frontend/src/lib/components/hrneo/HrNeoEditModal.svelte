@@ -66,12 +66,18 @@
 	let geoipPickerOpen = $state(false);
 
 	let attempted = $state(false);
+	let wasOpen = $state(false);
 
 	let isNew = $derived(rule === null);
 	let title = $derived(isNew ? 'Новое HR правило' : `Редактирование: ${rule?.name ?? ''}`);
 
 	$effect(() => {
-		if (!open) return;
+		if (!open) {
+			wasOpen = false;
+			return;
+		}
+		if (wasOpen) return; // already initialised — user may be editing
+		wasOpen = true;
 		attempted = false;
 		selectedPreset = null;
 		geositePickerOpen = false;
