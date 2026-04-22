@@ -27,6 +27,11 @@ type targetRoute struct {
 	group    string
 	iface    string
 	fallback string
+	// disabled — when true, the route must exist on the router but be
+	// paused via dns-proxy.route.disable. Disabled routes stay materialized
+	// so re-enabling is a cheap one-call toggle (SetDisabled) rather than
+	// a full recreate. Introduced to mirror Keenetic-native toggle semantics.
+	disabled bool
 }
 
 type targetState struct {
@@ -50,15 +55,34 @@ type currentRoute struct {
 	group    string
 	iface    string
 	fallback string
+	// index is Keenetic's stable hash from /show/sc/dns-proxy/route, used
+	// for the disable.index toggle command. Empty when routes were fetched
+	// from an endpoint that doesn't expose indexes (shouldn't happen after
+	// the sc migration, but kept tolerant for tests).
+	index    string
+	disabled bool
 }
 
 // --- RCI diff types ---
 
 type rciDiff struct {
-	routeDeletes []rciRouteDelete
-	groupDeletes []string
-	groupUpdates []rciGroupUpdate
-	routeUpserts []rciRouteOp
+	routeDeletes  []rciRouteDelete
+	groupDeletes  []string
+	groupUpdates  []rciGroupUpdate
+	routeUpserts  []rciRouteOp
+	routeDisables []rciRouteDisable
+}
+
+// rciRouteDisable is a toggle of the `disable` flag on an existing route,
+// keyed by Keenetic's stable index hash. Pending disables for routes that
+// were just upserted (no index yet) are carried by routeUpserts.Disabled
+// and applied after a post-upsert refetch.
+type rciRouteDisable struct {
+	Index    string
+	Disabled bool
+	// Group/Iface carried for logging; not used in the RCI payload.
+	Group string
+	Iface string
 }
 
 type rciRouteDelete struct {
@@ -72,6 +96,10 @@ type rciRouteOp struct {
 	Iface  string `json:"interface"`
 	Auto   bool   `json:"auto,omitempty"`
 	Reject bool   `json:"reject,omitempty"`
+	// Disabled — if true, the route is created/updated as enabled first
+	// (UpsertRoutes has no `disable` field), and the reconciler fetches
+	// its freshly-assigned index post-upsert to issue a SetDisabled call.
+	Disabled bool `json:"-"`
 }
 
 type rciGroupUpdate struct {
@@ -85,7 +113,8 @@ type rciGroupUpdate struct {
 
 func (d rciDiff) isEmpty() bool {
 	return len(d.routeDeletes) == 0 && len(d.groupDeletes) == 0 &&
-		len(d.groupUpdates) == 0 && len(d.routeUpserts) == 0
+		len(d.groupUpdates) == 0 && len(d.routeUpserts) == 0 &&
+		len(d.routeDisables) == 0
 }
 
 // reconcile is the main entry point: reads desired and actual state, computes diff, applies.
@@ -138,8 +167,8 @@ func (s *ServiceImpl) reconcile(ctx context.Context) error {
 		return nil
 	}
 
-	s.logInfo("reconcile", "", fmt.Sprintf("Reconciling: %d group deletes, %d group updates, %d route deletes, %d route upserts",
-		len(diff.groupDeletes), len(diff.groupUpdates), len(diff.routeDeletes), len(diff.routeUpserts)))
+	s.logInfo("reconcile", "", fmt.Sprintf("Reconciling: %d group deletes, %d group updates, %d route deletes, %d route upserts, %d route disables",
+		len(diff.groupDeletes), len(diff.groupUpdates), len(diff.routeDeletes), len(diff.routeUpserts), len(diff.routeDisables)))
 
 	// Detailed names — the count-only log above loses diagnostic power when
 	// reconcile runs but the router still shows an old entry; these lines
@@ -153,6 +182,13 @@ func (s *ServiceImpl) reconcile(ctx context.Context) error {
 			pairs = append(pairs, rd.Group+"->"+rd.Iface)
 		}
 		s.logInfo("reconcile", "", fmt.Sprintf("Route deletes: %v", pairs))
+	}
+	if len(diff.routeDisables) > 0 {
+		pairs := make([]string, 0, len(diff.routeDisables))
+		for _, rd := range diff.routeDisables {
+			pairs = append(pairs, fmt.Sprintf("%s->%s=%v", rd.Group, rd.Iface, rd.Disabled))
+		}
+		s.logInfo("reconcile", "", fmt.Sprintf("Route disables: %v", pairs))
 	}
 
 	applyErr := s.applyDiff(ctx, diff)
@@ -174,12 +210,14 @@ func buildTargetState(data *StoreData, failedTunnels map[string]struct{}) target
 		if !isNDMS(list.Backend) {
 			continue
 		}
-		if !list.Enabled {
-			continue
-		}
 		if len(list.Domains) == 0 && len(list.Subnets) == 0 {
 			continue
 		}
+		// Disabled lists stay in target state but are marked disabled —
+		// the route is kept on the router and toggled via
+		// dns-proxy.route.disable rather than delete/recreate. This matches
+		// Keenetic's own UI toggle semantics.
+		routeDisabled := !list.Enabled
 
 		chunks := chunkDomains(list.Domains, MaxDomainsPerGroup)
 		// Ensure at least one group even if Domains is empty but Subnets is not.
@@ -223,6 +261,7 @@ func buildTargetState(data *StoreData, failedTunnels map[string]struct{}) target
 					group:    groupName,
 					iface:    rt.Interface,
 					fallback: fallback,
+					disabled: routeDisabled,
 				})
 			}
 		}
@@ -275,6 +314,8 @@ func filterAWGState(groups []ndms.FQDNGroup, routes []ndms.DNSRouteRule) current
 			group:    r.Group,
 			iface:    r.Interface,
 			fallback: fallback,
+			index:    r.Index,
+			disabled: r.Disabled,
 		})
 	}
 
@@ -352,12 +393,19 @@ func computeDiff(current currentState, target targetState) rciDiff {
 		}
 	}
 
-	// For each target group: compare routes, delete removed, upsert if changed
+	// For each target group: compare routes, delete removed, upsert if changed,
+	// toggle disable flag if only that differs.
 	for group, tgts := range targetByGroup {
 		curs := currentByGroup[group]
 
 		if routesEqual(curs, tgts) {
 			continue
+		}
+
+		// Index current routes by iface for O(1) lookups while diffing.
+		curByIface := make(map[string]currentRoute, len(curs))
+		for _, cr := range curs {
+			curByIface[cr.iface] = cr
 		}
 
 		// Delete current routes for interfaces no longer in target
@@ -373,14 +421,48 @@ func computeDiff(current currentState, target targetState) rciDiff {
 			}
 		}
 
-		// Upsert all target routes (NDMS creates or updates)
+		// For each target route:
+		//  - if no matching current route → upsert (new route).
+		//  - if current exists and only `disabled` differs → issue a
+		//    disable.index toggle (no recreate).
+		//  - otherwise (fallback/reject diff) → upsert.
+		//
+		// Upserts that should end up disabled carry the Disabled flag so
+		// applyDiff can re-fetch the freshly-assigned index and follow up
+		// with SetDisabled. UpsertRoutes itself has no `disable` field.
 		for _, tr := range tgts {
-			diff.routeUpserts = append(diff.routeUpserts, rciRouteOp{
-				Group:  tr.group,
-				Iface:  tr.iface,
-				Auto:   true,
-				Reject: tr.fallback == "reject",
-			})
+			cr, exists := curByIface[tr.iface]
+			if !exists {
+				diff.routeUpserts = append(diff.routeUpserts, rciRouteOp{
+					Group:    tr.group,
+					Iface:    tr.iface,
+					Auto:     true,
+					Reject:   tr.fallback == "reject",
+					Disabled: tr.disabled,
+				})
+				continue
+			}
+
+			sameShape := cr.fallback == tr.fallback
+			if !sameShape {
+				diff.routeUpserts = append(diff.routeUpserts, rciRouteOp{
+					Group:    tr.group,
+					Iface:    tr.iface,
+					Auto:     true,
+					Reject:   tr.fallback == "reject",
+					Disabled: tr.disabled,
+				})
+				continue
+			}
+
+			if cr.disabled != tr.disabled {
+				diff.routeDisables = append(diff.routeDisables, rciRouteDisable{
+					Index:    cr.index,
+					Disabled: tr.disabled,
+					Group:    tr.group,
+					Iface:    tr.iface,
+				})
+			}
 		}
 	}
 
@@ -459,8 +541,74 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff) error {
 			})
 		}
 		if err := s.commands.DNSRoutes.UpsertRoutes(ctx, specs); err != nil {
+			s.logError("applyDiff", "", fmt.Sprintf("Phase4: UpsertRoutes(%d) failed", len(specs)), err.Error())
 			return fmt.Errorf("upsert routes: %w", err)
 		}
+		s.logInfo("applyDiff", "", fmt.Sprintf("Phase4: upserted %d routes OK", len(specs)))
+	}
+
+	// Phase 5a: re-fetch router state so newly-created routes get their
+	// freshly-assigned indexes, needed for disable toggles below.
+	var needPostFetch bool
+	for _, ro := range diff.routeUpserts {
+		if ro.Disabled {
+			needPostFetch = true
+			break
+		}
+	}
+
+	postDisables := append([]rciRouteDisable{}, diff.routeDisables...)
+
+	if needPostFetch {
+		s.queries.DNSProxy.InvalidateAll()
+		fresh, err := s.queries.DNSProxy.List(ctx)
+		if err != nil {
+			s.logError("applyDiff", "", "Phase5a: refetch dns-proxy after upsert", err.Error())
+			// Non-fatal: the next reconcile will catch up.
+		} else {
+			indexByKey := make(map[string]string, len(fresh))
+			for _, r := range fresh {
+				if r.Index == "" {
+					continue
+				}
+				indexByKey[r.Group+"|"+r.Interface] = r.Index
+			}
+			for _, ro := range diff.routeUpserts {
+				if !ro.Disabled {
+					continue
+				}
+				key := ro.Group + "|" + ro.Iface
+				idx, ok := indexByKey[key]
+				if !ok || idx == "" {
+					s.logError("applyDiff", "", fmt.Sprintf("Phase5a: no index for %s", key), "route not in post-upsert show")
+					continue
+				}
+				postDisables = append(postDisables, rciRouteDisable{
+					Index:    idx,
+					Disabled: true,
+					Group:    ro.Group,
+					Iface:    ro.Iface,
+				})
+			}
+		}
+	}
+
+	// Phase 5b: apply disable toggles (pre-existing routes + newly-upserted
+	// ones whose index we just learned).
+	for _, rd := range postDisables {
+		if rd.Index == "" {
+			continue
+		}
+		if err := s.commands.DNSRoutes.SetDisabled(ctx, rd.Index, rd.Disabled); err != nil {
+			s.logError("applyDiff",
+				fmt.Sprintf("%s->%s", rd.Group, rd.Iface),
+				fmt.Sprintf("Phase5b: SetDisabled(%v) failed", rd.Disabled),
+				err.Error())
+			return fmt.Errorf("set disabled %s->%s: %w", rd.Group, rd.Iface, err)
+		}
+		s.logInfo("applyDiff",
+			fmt.Sprintf("%s->%s", rd.Group, rd.Iface),
+			fmt.Sprintf("Phase5b: SetDisabled=%v OK (index=%s)", rd.Disabled, rd.Index))
 	}
 
 	if len(groupErrors) > 0 {
@@ -502,7 +650,8 @@ func routesEqual(current []currentRoute, target []targetRoute) bool {
 	for i := range current {
 		if current[i].group != target[i].group ||
 			current[i].iface != target[i].iface ||
-			current[i].fallback != target[i].fallback {
+			current[i].fallback != target[i].fallback ||
+			current[i].disabled != target[i].disabled {
 			return false
 		}
 	}

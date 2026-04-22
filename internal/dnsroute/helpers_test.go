@@ -51,7 +51,7 @@ func newTestNDMS() (*query.Queries, *command.Commands, *fakePoster, *query.FakeG
 	// dnsroute reconcile reads these two endpoints; default to empty maps
 	// so List() succeeds and returns no current state.
 	fg.SetJSON("/show/rc/object-group/fqdn", `{}`)
-	fg.SetJSON("/show/rc/dns-proxy/route", `{}`)
+	fg.SetJSON("/show/sc/dns-proxy/route", `{}`)
 
 	q := query.NewQueries(query.Deps{
 		Getter: fg,

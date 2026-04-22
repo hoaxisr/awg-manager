@@ -52,13 +52,41 @@ func TestChunkDomains(t *testing.T) {
 }
 
 func TestBuildTargetState(t *testing.T) {
-	t.Run("disabled lists skipped", func(t *testing.T) {
+	t.Run("disabled lists kept in target with disabled flag", func(t *testing.T) {
 		data := &StoreData{Lists: []DomainList{
-			{ID: "list_1", Enabled: false, Domains: []string{"a.com"}},
+			{
+				ID:      "list_1",
+				Name:    "foo",
+				Enabled: false,
+				Domains: []string{"a.com"},
+				Routes:  []RouteTarget{{Interface: "OpkgTun0", TunnelID: "t1"}},
+			},
 		}}
 		ts := buildTargetState(data, nil)
-		if len(ts.groups) != 0 {
-			t.Errorf("expected 0 groups, got %d", len(ts.groups))
+		if len(ts.groups) != 1 {
+			t.Fatalf("expected 1 group, got %d", len(ts.groups))
+		}
+		if len(ts.routes) != 1 {
+			t.Fatalf("expected 1 route, got %d", len(ts.routes))
+		}
+		if !ts.routes[0].disabled {
+			t.Errorf("route for disabled list must be marked disabled")
+		}
+	})
+
+	t.Run("enabled lists produce non-disabled routes", func(t *testing.T) {
+		data := &StoreData{Lists: []DomainList{
+			{
+				ID:      "list_1",
+				Name:    "foo",
+				Enabled: true,
+				Domains: []string{"a.com"},
+				Routes:  []RouteTarget{{Interface: "OpkgTun0", TunnelID: "t1"}},
+			},
+		}}
+		ts := buildTargetState(data, nil)
+		if len(ts.routes) != 1 || ts.routes[0].disabled {
+			t.Errorf("expected 1 enabled route, got %+v", ts.routes)
 		}
 	})
 

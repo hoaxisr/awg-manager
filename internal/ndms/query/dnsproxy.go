@@ -47,15 +47,21 @@ func (s *DNSProxyStore) List(ctx context.Context) ([]ndms.DNSRouteRule, error) {
 // as a JSON array of these objects (legacy shape: group as a field) or
 // as a JSON object keyed by group name (group as the key, no "group"
 // field). Empty data is rendered as `[]`. All three shapes are handled.
+//
+// Index and Disable are only present on /show/sc/dns-proxy/route — that's
+// the path this Store fetches, because we need Index to issue
+// disable.index toggles without delete-recreate.
 type dnsProxyRouteWire struct {
 	Group     string `json:"group,omitempty"`
 	Interface string `json:"interface"`
 	Auto      bool   `json:"auto"`
 	Reject    bool   `json:"reject"`
+	Index     string `json:"index,omitempty"`
+	Disable   bool   `json:"disable,omitempty"`
 }
 
 func (s *DNSProxyStore) fetch(ctx context.Context) ([]ndms.DNSRouteRule, error) {
-	raw, err := s.getter.GetRaw(ctx, "/show/rc/dns-proxy/route")
+	raw, err := s.getter.GetRaw(ctx, "/show/sc/dns-proxy/route")
 	if err != nil {
 		return nil, fmt.Errorf("fetch dns-proxy routes: %w", err)
 	}
@@ -78,6 +84,8 @@ func (s *DNSProxyStore) fetch(ctx context.Context) ([]ndms.DNSRouteRule, error) 
 				Interface: r.Interface,
 				Auto:      r.Auto,
 				Reject:    r.Reject,
+				Index:     r.Index,
+				Disabled:  r.Disable,
 			})
 		}
 	case '{':
@@ -96,6 +104,8 @@ func (s *DNSProxyStore) fetch(ctx context.Context) ([]ndms.DNSRouteRule, error) 
 				Interface: r.Interface,
 				Auto:      r.Auto,
 				Reject:    r.Reject,
+				Index:     r.Index,
+				Disabled:  r.Disable,
 			})
 		}
 	default:
