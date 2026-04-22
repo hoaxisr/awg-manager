@@ -618,6 +618,7 @@ func main() {
 	srv.SetSingboxOperator(singboxOp)
 	srv.SetNDMSDispatcher(ndmsDispatcher)
 	srv.SetNDMSTransport(ndmsTransportClient)
+	srv.SetNDMSSaveCoordinator(ndmsSaveCoord)
 	srv.SetMetricsPoller(ndmsMetricsPoller)
 
 	// Boot status: 0 = booting, 1 = done. Used by /api/system/info.
