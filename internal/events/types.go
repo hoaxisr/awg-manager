@@ -1,7 +1,5 @@
 package events
 
-import "time"
-
 // Event represents a server-sent event.
 type Event struct {
 	ID   uint64 `json:"-"`    // monotonic, sent as SSE "id:" field
@@ -11,7 +9,10 @@ type Event struct {
 
 // Tunnel lifecycle payloads.
 
-// TunnelStateEvent is sent when tunnel state changes (start/stop).
+// TunnelStateEvent is an internal dual-publish payload consumed by the
+// connectivity monitor when the orchestrator reports a state transition.
+// NOT forwarded to SSE clients — the frontend polls tunnels and reacts
+// to resource:invalidated hints instead.
 type TunnelStateEvent struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
@@ -19,25 +20,15 @@ type TunnelStateEvent struct {
 	Backend string `json:"backend,omitempty"`
 }
 
-// TunnelDeletedEvent is sent when a tunnel is deleted.
+// TunnelDeletedEvent is an internal dual-publish payload emitted by the
+// orchestrator after tunnel deletion. NOT forwarded to SSE clients.
 type TunnelDeletedEvent struct {
 	ID string `json:"id"`
 }
 
-// TunnelCreatedEvent is sent when a new tunnel is created or imported.
-type TunnelCreatedEvent struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Backend string `json:"backend"`
-}
-
-// TunnelUpdatedEvent is sent when tunnel config is updated.
-type TunnelUpdatedEvent struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
-// PingCheckStateEvent is sent when ping-check status changes.
+// PingCheckStateEvent is an internal dual-publish payload emitted by the
+// ping-check monitors and consumed by dnsroute failover. NOT forwarded
+// to SSE clients — the frontend polls the ping-check status list.
 type PingCheckStateEvent struct {
 	TunnelID        string `json:"tunnelId"`
 	Status          string `json:"status"`
@@ -87,25 +78,6 @@ type PingCheckLogEvent struct {
 	Backend     string `json:"backend,omitempty"`
 }
 
-// SingboxTunnelEvent is emitted when sing-box tunnels are added/updated/removed.
-type SingboxTunnelEvent struct {
-	Action string   `json:"action"` // "added" | "updated" | "removed"
-	Tags   []string `json:"tags"`
-}
-
-// SingboxStatusEvent is emitted after install/reconcile operations.
-// Mirrors the REST /api/singbox/status payload so the UI reducer can
-// reuse the same handler for both the initial fetch and live updates.
-type SingboxStatusEvent struct {
-	Installed      bool     `json:"installed"`
-	Running        bool     `json:"running"`
-	Version        string   `json:"version,omitempty"`
-	PID            int      `json:"pid,omitempty"`
-	TunnelCount    int      `json:"tunnelCount"`
-	ProxyComponent bool     `json:"proxyComponent"`
-	Features       []string `json:"features,omitempty"`
-}
-
 // SingboxDelayEvent is emitted when a sing-box tunnel delay is measured.
 type SingboxDelayEvent struct {
 	Tag       string `json:"tag"`
@@ -134,17 +106,6 @@ type GeoDownloadProgressEvent struct {
 	Total      int64  `json:"total"`      // 0 when unknown
 	Phase      string `json:"phase"`      // "download" | "validate" | "done" | "error"
 	Error      string `json:"error,omitempty"`
-}
-
-// SaveStatusEvent is published by the NDMS SaveCoordinator on every state
-// transition so the UI can show a Google-Docs-style save indicator.
-//
-// State is one of: "idle" | "pending" | "saving" | "error" | "failed".
-type SaveStatusEvent struct {
-	State        string    `json:"state"`
-	LastError    string    `json:"lastError,omitempty"`
-	LastSaveAt   time.Time `json:"lastSaveAt,omitempty"`
-	PendingCount int       `json:"pendingCount"`
 }
 
 // ResourceInvalidatedEvent is the single state-invalidation hint.

@@ -733,40 +733,19 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		s.metricsPoller.Start()
 	}
 
-	// SSE Snapshot Builder — provides full state on client connect/reconnect
-	sb := api.NewSnapshotBuilder()
-	sb.SetTunnelsHandler(tunnelsHandler)
-	sb.SetExternalHandler(externalHandler)
-	sb.SetSystemTunnelsHandler(systemTunnelHandler)
-	sb.SetServersHandler(serverHandler)
-	sb.SetManagedHandler(managedHandler)
-	sb.SetPingCheckHandler(pingCheckHandler)
-	sb.SetLoggingHandler(loggingHandler)
-	if s.bootStatusFn != nil {
-		sb.SetBootStatusFunc(s.bootStatusFn)
-	}
-	// SetRoutingSnapshotFunc removed — routing is now 7 per-section
-	// polling stores (Task 11); no cold-tier SSE snapshot is needed.
-	sb.SetSystemSnapshotFunc(func(ctx context.Context) interface{} {
-		return systemHandler.BuildSystemInfo()
-	})
-	sb.SetWANIPFunc(func(ctx context.Context) string {
-		ip, _ := testing.GetWANIPWithFallback(ctx, s.ndmsQueries.WANInterfaceAddress)
-		return ip
-	})
-	sb.SetInstanceID(s.instanceID)
-	eventsHandler.SetSnapshotBuilder(sb)
+	// Composite tunnels snapshot builder — used by GET /api/tunnels/all
+	// and by the hook-driven resource:invalidated refresher to assemble
+	// the {tunnels, external, system} payload the polling store reads.
+	tsb := api.NewTunnelsSnapshotBuilder()
+	tsb.SetTunnelsHandler(tunnelsHandler)
+	tsb.SetExternalHandler(externalHandler)
+	tsb.SetSystemTunnelsHandler(systemTunnelHandler)
 
-	// Wire hook-driven tunnel snapshot rebroadcast so the UI drops
-	// destroyed tunnel cards (including system tunnels) without a
-	// browser refresh. The closure invalidates the stores it reads
-	// before rebuilding, because the dispatcher invalidation is async.
-	//
-	// The same closure is also wired into tunnelsHandler so every
-	// managed-list-modifying operation (create / import / delete /
-	// start / stop / etc.) publishes a fresh snapshot:tunnels with
-	// dedup applied — otherwise the frontend's systemTunnels array
-	// stays stale and ghost cards linger.
+	// Wire hook-driven tunnel invalidation so the UI drops destroyed
+	// tunnel cards (including system tunnels) without a browser refresh.
+	// The closure invalidates the in-memory NDMS caches so the next
+	// poll reads fresh data, then publishes resource:invalidated; the
+	// frontend tunnels store responds by refetching /api/tunnels/all.
 	refreshTunnelsSnapshot := func(ctx context.Context) {
 		// NDMS cache invalidation stays — hook events signal that the
 		// system view has changed, so our in-memory caches must drop
@@ -779,8 +758,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 				s.ndmsQueries.Interfaces.InvalidateAll()
 			}
 		}
-		// Emit resource:invalidated instead of snapshot:tunnels — the
-		// tunnels store polls /api/tunnels/all and refetches on hint.
 		if s.bus != nil {
 			s.bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{
 				Resource: "tunnels",
@@ -791,10 +768,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	hookHandler.SetTunnelRefresher(refreshTunnelsSnapshot)
 	tunnelsHandler.SetSnapshotRefresher(refreshTunnelsSnapshot)
 	// Injects the composite {tunnels, external, system} builder used by
-	// GetAll — same assembly as snapshot:tunnels so /api/tunnels/all
-	// returns the exact shape the polling store expects.
+	// GetAll so /api/tunnels/all returns the exact shape the polling
+	// store expects.
 	tunnelsHandler.SetTunnelsSnapshotBuilder(func(ctx context.Context) map[string]interface{} {
-		return sb.BuildTunnelsSnapshot(ctx)
+		return tsb.Build(ctx)
 	})
 	tunnelsHandler.SetSelfCreateGate(hookHandler)
 

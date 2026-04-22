@@ -929,17 +929,8 @@ export interface DnsCheckStartResponse {
 // #endregion
 
 export type {
-	TunnelStateEvent,
-	TunnelDeletedEvent,
-	TunnelCreatedEvent,
-	TunnelUpdatedEvent,
 	LogEntryEvent,
-	PingCheckStateEvent,
 	SystemBootingEvent,
-	SnapshotTunnelsEvent,
-	SnapshotServersEvent,
-	SnapshotPingcheckEvent,
-	SnapshotLogsEvent,
 	TunnelTrafficEvent,
 	TunnelConnectivityEvent,
 	PingCheckLogEvent
@@ -996,13 +987,6 @@ export interface SingboxTraffic {
 	upload: number;
 	download: number;
 }
-
-export interface SingboxTunnelEvent {
-	action: 'added' | 'updated' | 'removed';
-	tags: string[];
-}
-
-export interface SingboxStatusEvent extends SingboxStatus {}
 
 export interface SingboxDelayEvent {
 	tag: string;

@@ -1,171 +1,55 @@
 package api
 
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"time"
-)
+import "context"
 
-// SnapshotBuilder collects current state from all services for SSE snapshots.
-type SnapshotBuilder struct {
-	tunnels         *TunnelsHandler
-	external       *ExternalTunnelsHandler
-	systemTun      *SystemTunnelsHandler
-	servers        *ServersHandler
-	managed        *ManagedServerHandler
-	pingCheck      *PingCheckHandler
-	logging        *LoggingHandler
-	systemSnapshot func(ctx context.Context) interface{} // system info snapshot
-	bootInProgress func() bool
-	wanIP          func(ctx context.Context) string
-	instanceID     string
+// TunnelsSnapshotBuilder composes the {tunnels, external, system}
+// payload used by GET /api/tunnels/all and by the hook-driven
+// resource:invalidated refresher. It is the single assembly point
+// for the composite tunnels list the polling store reads.
+//
+// The struct is a thin holder for the three handler references;
+// callers wire whichever handlers are available and call Build.
+// Missing handlers produce empty slices in the relevant keys.
+type TunnelsSnapshotBuilder struct {
+	tunnels   *TunnelsHandler
+	external  *ExternalTunnelsHandler
+	systemTun *SystemTunnelsHandler
 }
 
-// NewSnapshotBuilder creates a new SnapshotBuilder.
-func NewSnapshotBuilder() *SnapshotBuilder {
-	return &SnapshotBuilder{}
+// NewTunnelsSnapshotBuilder creates a new builder with no handlers
+// wired. Use the setters to wire the three handler references.
+func NewTunnelsSnapshotBuilder() *TunnelsSnapshotBuilder {
+	return &TunnelsSnapshotBuilder{}
 }
 
 // SetTunnelsHandler sets the tunnels handler reference.
-func (sb *SnapshotBuilder) SetTunnelsHandler(h *TunnelsHandler) { sb.tunnels = h }
+func (b *TunnelsSnapshotBuilder) SetTunnelsHandler(h *TunnelsHandler) { b.tunnels = h }
 
 // SetExternalHandler sets the external tunnels handler reference.
-func (sb *SnapshotBuilder) SetExternalHandler(h *ExternalTunnelsHandler) { sb.external = h }
+func (b *TunnelsSnapshotBuilder) SetExternalHandler(h *ExternalTunnelsHandler) { b.external = h }
 
 // SetSystemTunnelsHandler sets the system tunnels handler reference.
-func (sb *SnapshotBuilder) SetSystemTunnelsHandler(h *SystemTunnelsHandler) { sb.systemTun = h }
+func (b *TunnelsSnapshotBuilder) SetSystemTunnelsHandler(h *SystemTunnelsHandler) { b.systemTun = h }
 
-// SetServersHandler sets the servers handler reference.
-func (sb *SnapshotBuilder) SetServersHandler(h *ServersHandler) { sb.servers = h }
-
-// SetManagedHandler sets the managed server handler reference.
-func (sb *SnapshotBuilder) SetManagedHandler(h *ManagedServerHandler) { sb.managed = h }
-
-// SetPingCheckHandler sets the ping check handler reference.
-func (sb *SnapshotBuilder) SetPingCheckHandler(h *PingCheckHandler) { sb.pingCheck = h }
-
-// SetLoggingHandler sets the logging handler reference.
-func (sb *SnapshotBuilder) SetLoggingHandler(h *LoggingHandler) { sb.logging = h }
-
-// SetBootStatusFunc sets the callback to check boot status.
-func (sb *SnapshotBuilder) SetBootStatusFunc(fn func() bool) {
-	sb.bootInProgress = fn
-}
-
-// SetSystemSnapshotFunc sets the callback to collect system info.
-func (sb *SnapshotBuilder) SetSystemSnapshotFunc(fn func(ctx context.Context) interface{}) {
-	sb.systemSnapshot = fn
-}
-
-// SetWANIPFunc sets the callback to get the WAN IP address.
-func (sb *SnapshotBuilder) SetWANIPFunc(fn func(ctx context.Context) string) {
-	sb.wanIP = fn
-}
-
-// SetInstanceID sets the server instance ID for version detection.
-func (sb *SnapshotBuilder) SetInstanceID(id string) {
-	sb.instanceID = id
-}
-
-// BuildTunnelsSnapshot composes the snapshot:tunnels payload
-// ({tunnels, external, system}) the same way SendSnapshots does for
-// a fresh SSE client, but in a form that can also be republished to
-// the event bus when the tunnel list changes (hook-driven refresh).
-// Returns nil when no TunnelsHandler is wired, or when its listItems
-// call errors — in both cases there's nothing safe to broadcast.
-func (sb *SnapshotBuilder) BuildTunnelsSnapshot(ctx context.Context) map[string]interface{} {
-	if sb.tunnels == nil {
+// Build composes the snapshot payload for the polling store. Returns
+// nil when no TunnelsHandler is wired, or when its listItems call
+// errors — in both cases there's nothing safe to return.
+func (b *TunnelsSnapshotBuilder) Build(ctx context.Context) map[string]interface{} {
+	if b.tunnels == nil {
 		return nil
 	}
-	items, err := sb.tunnels.listItems(ctx)
+	items, err := b.tunnels.listItems(ctx)
 	if err != nil {
 		return nil
 	}
 	payload := map[string]interface{}{"tunnels": items}
-	if sb.external != nil {
-		external, _ := sb.external.listExternal(ctx)
+	if b.external != nil {
+		external, _ := b.external.listExternal(ctx)
 		payload["external"] = external
 	}
-	if sb.systemTun != nil {
-		system, _ := sb.systemTun.listSystemTunnels(ctx)
+	if b.systemTun != nil {
+		system, _ := b.systemTun.listSystemTunnels(ctx)
 		payload["system"] = system
 	}
 	return payload
-}
-
-// SendSnapshots sends all current-state snapshots to an SSE client.
-// Called immediately after SSE connection (or reconnection).
-func (sb *SnapshotBuilder) SendSnapshots(w http.ResponseWriter, flusher http.Flusher, ctx context.Context) {
-	// Check boot status
-	if sb.bootInProgress != nil && sb.bootInProgress() {
-		writeSSE(w, flusher, "system:booting", map[string]interface{}{
-			"phase": "starting",
-		})
-		return
-	}
-
-	writeSSE(w, flusher, "system:ready", map[string]interface{}{"ok": true, "instanceId": sb.instanceID})
-
-	snapCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	// System info snapshot
-	if sb.systemSnapshot != nil {
-		data := sb.systemSnapshot(snapCtx)
-		if data != nil {
-			writeSSE(w, flusher, "snapshot:system", data)
-		}
-	}
-
-	// Tunnels snapshot — removed: frontend polls /api/tunnels/all.
-	// BuildTunnelsSnapshot is still used by TunnelsHandler.GetAll and
-	// by the hook-driven refresher, so it stays on SnapshotBuilder.
-
-	// Servers snapshot
-	if sb.servers != nil {
-		servers, _ := sb.servers.listServers(snapCtx)
-		payload := map[string]interface{}{
-			"servers": servers,
-		}
-		if sb.managed != nil {
-			managed := sb.managed.getManaged()
-			payload["managed"] = managed
-			if managed != nil {
-				payload["managedStats"] = sb.managed.getManagedStats(snapCtx)
-			}
-		}
-		if sb.wanIP != nil {
-			payload["wanIP"] = sb.wanIP(snapCtx)
-		} else {
-			payload["wanIP"] = ""
-		}
-		writeSSE(w, flusher, "snapshot:servers", payload)
-	}
-
-	// Routing snapshot removed — each of the 7 sections has its own
-	// polling store keyed by ResourceRoutingXxx (Task 11). Invalidation
-	// hints drive fresh-state fetches; the initial subscribe triggers
-	// the first fetch automatically.
-
-	// PingCheck snapshot removed — the status list is now a polling store
-	// keyed by ResourcePingcheck (Task 12). Logs stream via `pingcheck:log`
-	// and are backfilled by the initial fetch on page mount.
-
-	// Logs snapshot
-	if sb.logging != nil {
-		data := sb.logging.collectSnapshot()
-		writeSSE(w, flusher, "snapshot:logs", data)
-	}
-}
-
-// writeSSE writes a single SSE event.
-func writeSSE(w http.ResponseWriter, flusher http.Flusher, eventType string, data interface{}) {
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return
-	}
-	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, jsonData)
-	flusher.Flush()
 }

@@ -17,6 +17,11 @@
 	import { feedTraffic } from '$lib/stores/traffic';
 	import { applyTraffic as singboxApplyTraffic, applyDelay as singboxApplyDelay } from '$lib/stores/singbox';
 	import { invalidateResource } from '$lib/stores/storeRegistry';
+	// Task 15 note: no snapshot handlers remain — all cold-tier state is
+	// fetched via REST by polling stores, and the SSE stream now carries
+	// only incremental push-only events (traffic, connectivity, logs,
+	// ping-check logs, sing-box delay/traffic, geo progress, DNS-route
+	// failover) plus the generic resource:invalidated hint.
 	import type { UpdateInfo } from '$lib/types';
 	import LoginForm from '$lib/components/LoginForm.svelte';
 	import { Modal } from '$lib/components/ui';
@@ -54,6 +59,18 @@
 		// singboxStatus / singboxTunnels now poll automatically on subscribe;
 		// no eager fetch needed here — components subscribe as they mount.
 		disconnectSSE = connectSSE({
+			onConnected: () => {
+				// SSE may have been down for minutes. Clear connectivity side-channel
+				// (it's stream-only, not included in the polling snapshot) and force a
+				// fresh fetch of tunnel state to catch any drift during the outage.
+				tunnels.clearConnectivity();
+				tunnels.invalidate();
+			},
+			onDisconnected: () => {
+				// Phase C: serverOnline.set() is gone (derived from healthMonitor);
+				// nothing else needs to happen on disconnect — health monitor owns the overlay.
+			},
+
 			// System events
 			onSystemReady: (data) => {
 				// Phase C: serverOnline.set() is gone (derived from healthMonitor);
@@ -70,32 +87,8 @@
 				// Phase C: serverOnline.set() is gone; booting flag still drives UI.
 				booting = true;
 			},
-			onConnected: () => {
-				// SSE may have been down for minutes. Clear connectivity side-channel
-				// (it's stream-only, not included in the polling snapshot) and force a
-				// fresh fetch of tunnel state to catch any drift during the outage.
-				tunnels.clearConnectivity();
-				tunnels.invalidate();
-			},
-			onDisconnected: () => {
-				// Phase C: serverOnline.set() is gone (derived from healthMonitor);
-				// nothing else needs to happen on disconnect — health monitor owns the overlay.
-			},
 
-			// Snapshot events
-			// onSnapshotSystem removed — systemInfo is a polling store with
-			// invalidation via resource:invalidated (Task 10).
-			// onSnapshotTunnels removed — tunnels store polls /api/tunnels/all.
-			// System-tunnel traffic feed moved into the store's subscriber
-			// on /+page.svelte (runs on every polling refresh).
-			// onSnapshotRouting removed — routing is now 7 per-section polling
-			// stores with invalidation hints (Task 11).
-			// onSnapshotPingcheck removed — pingcheck status is a polling
-			// store, invalidated via resource:invalidated (Task 12). Logs
-			// stream via pingcheck:log untouched.
-			onSnapshotLogs: (data) => logEntries.setSnapshot(data),
-
-			// Tunnel streams (kept — traffic + connectivity are not REST-pollable)
+			// Tunnel streams (traffic + connectivity are not REST-pollable)
 			onTunnelTraffic: (data) => {
 				// data.id is the NDMS interface name (e.g. "Wireguard0") on OS 5.x —
 				// updateTraffic resolves it to the awg-manager tunnel ID, which is
@@ -106,14 +99,19 @@
 				}
 			},
 			onTunnelConnectivity: (data) => tunnels.updateConnectivity(data.id, data.connected, data.latency),
-			// onTunnelState / onTunnelCreated / onTunnelDeleted / onTunnelUpdated /
-			// onTunnelsList removed — polling + resource:invalidated hint covers them.
 
-			// Routing incremental — removed in Task 11. Each of the 7 sections
-			// is now a polling store keyed by ResourceRoutingXxx; the backend
-			// publishes resource:invalidated hints which trigger immediate
-			// refetches via storeRegistry. onDnsRouteFailover stays because
-			// it is a user-visible notification, not a state stream.
+			// Logs & ping-check streams
+			onLogEntry: (data) => logEntries.append(data),
+			onPingCheckLog: appendPingLog,
+
+			// Sing-box streams
+			onSingboxTraffic: singboxApplyTraffic,
+			onSingboxDelay: (data) => singboxApplyDelay(data.tag, data.delay),
+
+			// HydraRoute geo download progress
+			onHydraRouteGeoProgress: (data) => geoDownloadProgress.ingest(data),
+
+			// DNS-route failover — user-visible notification, not a state stream
 			onDnsRouteFailover: (data) => {
 				if (data.action === 'switched') {
 					notifications.warning(`DNS-маршрут "${data.listName}" переключён: ${data.fromTunnel || '—'} → ${data.toTunnel || 'нет резерва'}`);
@@ -123,21 +121,6 @@
 					notifications.error(`Ошибка переключения DNS-маршрута "${data.listName}": ${data.error || 'неизвестная ошибка'}`);
 				}
 			},
-
-			// Logs & pingcheck incremental.
-			// onPingCheckState removed — frontend polls the status list;
-			// backend still publishes pingcheck:state for internal
-			// dnsroute/failover subscriber + resource:invalidated hint.
-			onLogEntry: (data) => logEntries.append(data),
-			onPingCheckLog: appendPingLog,
-
-			// Sing-box streams (polling covers status + tunnels list; traffic
-			// + delay remain push-only — no REST equivalent).
-			onSingboxTraffic: singboxApplyTraffic,
-			onSingboxDelay: (data) => singboxApplyDelay(data.tag, data.delay),
-
-			// HydraRoute geo download progress
-			onHydraRouteGeoProgress: (data) => geoDownloadProgress.ingest(data),
 
 			// Generic resource invalidation hint (state-sync redesign)
 			onResourceInvalidated: (data) => {
