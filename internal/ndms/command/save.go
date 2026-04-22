@@ -16,7 +16,20 @@ type Poster interface {
 }
 
 // savePayload is the NDMS command for "persist running-config to flash".
-var savePayload = map[string]any{"save": true}
+// Matches the exact shape Keenetic's own web UI uses:
+//   {"system":{"configuration":{"save":{}}}}
+// (This is `system configuration save` in ndmc CLI form.)
+// The previous shorthand {"save": true} was not a valid RCI path and
+// silently no-oped on OS5 — changes survived the session but certain
+// state fields (e.g. dns-proxy.route "disable" flag) never made it
+// into `/show/sc/...` views that the router UI reads from.
+var savePayload = map[string]any{
+	"system": map[string]any{
+		"configuration": map[string]any{
+			"save": map[string]any{},
+		},
+	},
+}
 
 // SaveCoordinator debounces flash-write Save requests into a single POST
 // per burst. See design spec §5.2-5.3.
