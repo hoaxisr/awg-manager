@@ -94,12 +94,16 @@ type SingboxTunnelEvent struct {
 }
 
 // SingboxStatusEvent is emitted after install/reconcile operations.
+// Mirrors the REST /api/singbox/status payload so the UI reducer can
+// reuse the same handler for both the initial fetch and live updates.
 type SingboxStatusEvent struct {
-	Installed   bool   `json:"installed"`
-	Running     bool   `json:"running"`
-	Version     string `json:"version,omitempty"`
-	PID         int    `json:"pid,omitempty"`
-	TunnelCount int    `json:"tunnelCount"`
+	Installed      bool     `json:"installed"`
+	Running        bool     `json:"running"`
+	Version        string   `json:"version,omitempty"`
+	PID            int      `json:"pid,omitempty"`
+	TunnelCount    int      `json:"tunnelCount"`
+	ProxyComponent bool     `json:"proxyComponent"`
+	Features       []string `json:"features,omitempty"`
 }
 
 // SingboxDelayEvent is emitted when a sing-box tunnel delay is measured.

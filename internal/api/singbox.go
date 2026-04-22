@@ -72,11 +72,13 @@ func (h *SingboxHandler) Install(w http.ResponseWriter, r *http.Request) {
 	if h.bus != nil {
 		s := h.op.GetStatus(r.Context())
 		h.bus.Publish("singbox:status", events.SingboxStatusEvent{
-			Installed:   s.Installed,
-			Running:     s.Running,
-			Version:     s.Version,
-			PID:         s.PID,
-			TunnelCount: s.TunnelCount,
+			Installed:      s.Installed,
+			Running:        s.Running,
+			Version:        s.Version,
+			PID:            s.PID,
+			TunnelCount:    s.TunnelCount,
+			ProxyComponent: s.ProxyComponent,
+			Features:       s.Features,
 		})
 	}
 	response.Success(w, map[string]bool{"ok": true})

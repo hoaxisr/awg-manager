@@ -978,6 +978,12 @@ export interface SingboxStatus {
 	pid?: number;
 	tunnelCount: number;
 	proxyComponent: boolean;
+	/**
+	 * Build tags of the installed sing-box binary (parsed from
+	 * `sing-box version` Tags: line). Missing when not installed.
+	 * Example: ["with_gvisor","with_quic","with_naive_outbound"].
+	 */
+	features?: string[];
 }
 
 export interface SingboxImportResponse {

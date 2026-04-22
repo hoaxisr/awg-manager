@@ -42,6 +42,13 @@ type Status struct {
 	// sing-box integration cannot route any traffic — the binary may be
 	// installed, but nothing works end-to-end.
 	ProxyComponent bool `json:"proxyComponent"`
+	// Features enumerates the build tags of the installed sing-box
+	// binary (parsed from the `Tags:` line of `sing-box version`).
+	// Example: ["with_gvisor","with_quic","with_naive_outbound",…].
+	// The UI uses this to warn when a protocol the user configured
+	// isn't supported by the installed build (e.g. NaiveProxy needs
+	// with_naive_outbound).
+	Features []string `json:"features,omitempty"`
 }
 
 // ProcessState is the internal lifecycle state.
