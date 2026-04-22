@@ -182,6 +182,9 @@ export interface SSEEventHandlers {
 
 	// HydraRoute
 	onHydraRouteGeoProgress?: (data: GeoDownloadProgressEvent) => void;
+
+	// Generic resource invalidation hint (state-sync redesign)
+	onResourceInvalidated?: (data: ResourceInvalidatedEvent) => void;
 }
 
 export interface GeoDownloadProgressEvent {
@@ -191,6 +194,11 @@ export interface GeoDownloadProgressEvent {
 	total: number; // 0 when unknown
 	phase: 'download' | 'validate' | 'done' | 'error';
 	error?: string;
+}
+
+export interface ResourceInvalidatedEvent {
+	resource: string;
+	reason?: string;
 }
 
 export function connectSSE(handlers: SSEEventHandlers): () => void {
@@ -249,6 +257,9 @@ export function connectSSE(handlers: SSEEventHandlers): () => void {
 
 	// HydraRoute events
 	handle('hydraroute:geo-progress', handlers.onHydraRouteGeoProgress);
+
+	// Generic resource invalidation hint (state-sync redesign)
+	handle('resource:invalidated', handlers.onResourceInvalidated);
 
 	// Server sends "connected" event immediately on stream start
 	es.addEventListener('connected', () => {

@@ -129,10 +129,10 @@ type DNSRouteFailoverEvent struct {
 // Total may be 0 when the server didn't send a Content-Length header.
 type GeoDownloadProgressEvent struct {
 	URL        string `json:"url"`
-	FileType   string `json:"fileType"`             // "geosite" | "geoip"
-	Downloaded int64  `json:"downloaded"`           // bytes received so far
-	Total      int64  `json:"total"`                // 0 when unknown
-	Phase      string `json:"phase"`                // "download" | "validate" | "done" | "error"
+	FileType   string `json:"fileType"`   // "geosite" | "geoip"
+	Downloaded int64  `json:"downloaded"` // bytes received so far
+	Total      int64  `json:"total"`      // 0 when unknown
+	Phase      string `json:"phase"`      // "download" | "validate" | "done" | "error"
 	Error      string `json:"error,omitempty"`
 }
 
@@ -145,4 +145,19 @@ type SaveStatusEvent struct {
 	LastError    string    `json:"lastError,omitempty"`
 	LastSaveAt   time.Time `json:"lastSaveAt,omitempty"`
 	PendingCount int       `json:"pendingCount"`
+}
+
+// ResourceInvalidatedEvent is the single state-invalidation hint.
+// Replaces all per-resource state events (tunnel:state, server:updated,
+// routing:*-updated, singbox:status, singbox:tunnel, pingcheck:state,
+// tunnels:list, snapshot:*). The client uses Resource to look up the
+// corresponding polling store and trigger an immediate refetch.
+// Payload intentionally carries nothing beyond the key — the store is
+// the single source of truth for data shape, and the client always
+// re-reads via REST.
+type ResourceInvalidatedEvent struct {
+	Resource string `json:"resource"`
+	// Reason is optional and for backend logs / debug; the frontend
+	// does not key off it. Examples: "tunnel-toggled", "ndms-restart".
+	Reason string `json:"reason,omitempty"`
 }
