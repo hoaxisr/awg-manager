@@ -18,6 +18,7 @@
 	import { systemInfo } from '$lib/stores/system';
 	import { feedTraffic } from '$lib/stores/traffic';
 	import { singbox } from '$lib/stores/singbox';
+	import { invalidateResource } from '$lib/stores/storeRegistry';
 	import type { UpdateInfo } from '$lib/types';
 	import LoginForm from '$lib/components/LoginForm.svelte';
 	import { Modal } from '$lib/components/ui';
@@ -148,6 +149,11 @@
 
 			// HydraRoute geo download progress
 			onHydraRouteGeoProgress: (data) => geoDownloadProgress.ingest(data),
+
+			// Generic resource invalidation hint (state-sync redesign)
+			onResourceInvalidated: (data) => {
+				invalidateResource(data.resource);
+			},
 		});
 	}
 
