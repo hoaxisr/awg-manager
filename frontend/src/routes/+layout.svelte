@@ -9,6 +9,7 @@
 	import { connectSSE } from '$lib/api/events';
 	import { geoDownloadProgress } from '$lib/stores/geoDownload';
 	import { serverOnline } from '$lib/stores/events';
+	import { healthMonitor } from '$lib/stores/health';
 	import { tunnels } from '$lib/stores/tunnels';
 	import { logEntries } from '$lib/stores/logs';
 	import { pingCheckStatus } from '$lib/stores/pingcheck';
@@ -55,7 +56,8 @@
 		disconnectSSE = connectSSE({
 			// System events
 			onSystemReady: (data) => {
-				serverOnline.set(true);
+				// Phase C: serverOnline.set() is gone (derived from healthMonitor);
+				// keep the booting/instanceId handling — still used by the UI.
 				booting = false;
 				// Detect backend restart — force full page reload to pick up new JS
 				if (knownInstanceId && data.instanceId && knownInstanceId !== data.instanceId) {
@@ -65,19 +67,19 @@
 				knownInstanceId = data.instanceId;
 			},
 			onSystemBooting: () => {
-				serverOnline.set(true);
+				// Phase C: serverOnline.set() is gone; booting flag still drives UI.
 				booting = true;
 			},
 			onConnected: () => {
-				serverOnline.set(true);
-				// Drop any preserved tunnel:state updates from before the
-				// disconnect — the fresh snapshot about to arrive is the
-				// authoritative state, and the 5-second preservation window
-				// in setSnapshot would otherwise let a stale "running"
-				// shadow a legitimate "stopped".
+				// Phase C: serverOnline.set() is gone (derived from healthMonitor);
+				// KEEP tunnels.clearRecentStateUpdates() — required for SSE reconnect
+				// correctness (prevents stale preserved state from shadowing fresh snapshot).
 				tunnels.clearRecentStateUpdates();
 			},
-			onDisconnected: () => serverOnline.set(false),
+			onDisconnected: () => {
+				// Phase C: serverOnline.set() is gone (derived from healthMonitor);
+				// nothing else needs to happen on disconnect — health monitor owns the overlay.
+			},
 
 			// Snapshot events
 			onSnapshotSystem: (data) => systemInfo.setSnapshot(data),
@@ -159,6 +161,7 @@
 	// SSE starts/stops reactively based on auth state
 	$effect(() => {
 		if ($isAuthenticated) {
+			healthMonitor.start();
 			startSSE();
 		} else {
 			stopSSE();
