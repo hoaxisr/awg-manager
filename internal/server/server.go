@@ -442,6 +442,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// Tunnels CRUD (protected + boot guarded)
 	mux.HandleFunc("/api/tunnels/list", guarded(tunnelsHandler.List))
+	mux.HandleFunc("/api/tunnels/all", guarded(tunnelsHandler.GetAll))
 	mux.HandleFunc("/api/tunnels/get", guarded(tunnelsHandler.Get))
 	mux.HandleFunc("/api/tunnels/create", guarded(tunnelsHandler.Create))
 	mux.HandleFunc("/api/tunnels/update", guarded(tunnelsHandler.Update))
@@ -718,6 +719,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// dedup applied — otherwise the frontend's systemTunnels array
 	// stays stale and ghost cards linger.
 	refreshTunnelsSnapshot := func(ctx context.Context) {
+		// NDMS cache invalidation stays — hook events signal that the
+		// system view has changed, so our in-memory caches must drop
+		// their entries before the next poll.
 		if s.ndmsQueries != nil {
 			if s.ndmsQueries.WGServers != nil {
 				s.ndmsQueries.WGServers.InvalidateAll()
@@ -726,12 +730,23 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 				s.ndmsQueries.Interfaces.InvalidateAll()
 			}
 		}
-		if payload := sb.BuildTunnelsSnapshot(ctx); payload != nil && s.bus != nil {
-			s.bus.Publish("snapshot:tunnels", payload)
+		// Emit resource:invalidated instead of snapshot:tunnels — the
+		// tunnels store polls /api/tunnels/all and refetches on hint.
+		if s.bus != nil {
+			s.bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{
+				Resource: "tunnels",
+				Reason:   "ndms-hook",
+			})
 		}
 	}
 	hookHandler.SetTunnelRefresher(refreshTunnelsSnapshot)
 	tunnelsHandler.SetSnapshotRefresher(refreshTunnelsSnapshot)
+	// Injects the composite {tunnels, external, system} builder used by
+	// GetAll — same assembly as snapshot:tunnels so /api/tunnels/all
+	// returns the exact shape the polling store expects.
+	tunnelsHandler.SetTunnelsSnapshotBuilder(func(ctx context.Context) map[string]interface{} {
+		return sb.BuildTunnelsSnapshot(ctx)
+	})
 	tunnelsHandler.SetSelfCreateGate(hookHandler)
 
 	// DNS routing diagnostics

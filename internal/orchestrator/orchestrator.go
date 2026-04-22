@@ -297,17 +297,40 @@ func (o *Orchestrator) updateState(action Action) {
 	if o.bus != nil && t != nil {
 		switch action.Type {
 		case ActionColdStartKernel, ActionStartNativeWG, ActionReconcileKernel, ActionResumeKernel:
+			// tunnel:state is still consumed internally by
+			// connectivity.Monitor (listens for "running" to trigger an
+			// immediate check). Keep it until that dependency is
+			// migrated. Frontend no longer listens.
 			o.bus.Publish("tunnel:state", events.TunnelStateEvent{
 				ID: t.ID, Name: t.Name, State: "running", Backend: t.Backend,
 			})
+			publishInvalidatedBus(o.bus, "tunnels", "state-running")
 		case ActionStopKernel, ActionStopNativeWG, ActionSuspendProxy, ActionSuspendKernel:
 			o.bus.Publish("tunnel:state", events.TunnelStateEvent{
 				ID: t.ID, Name: t.Name, State: "stopped", Backend: t.Backend,
 			})
+			publishInvalidatedBus(o.bus, "tunnels", "state-stopped")
 		case ActionDeleteKernel, ActionDeleteNativeWG:
+			// tunnel:deleted remains as a no-op SSE for any legacy
+			// subscriber; the frontend handler is removed so nobody
+			// reacts. Future cleanup can drop this publish.
 			o.bus.Publish("tunnel:deleted", events.TunnelDeletedEvent{ID: action.Tunnel})
+			publishInvalidatedBus(o.bus, "tunnels", "deleted")
 		}
 	}
+}
+
+// publishInvalidatedBus posts a resource:invalidated hint. Duplicated
+// here (from internal/api.publishInvalidated) to avoid an import cycle
+// between the orchestrator and the api package.
+func publishInvalidatedBus(bus *events.Bus, resource, reason string) {
+	if bus == nil {
+		return
+	}
+	bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{
+		Resource: resource,
+		Reason:   reason,
+	})
 }
 
 // logWarn logs a warning.

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { tunnels } from '$lib/stores/tunnels';
@@ -10,17 +10,48 @@
 	import TunnelTabs from '$lib/components/tunnels/TunnelTabs.svelte';
 	import { PageContainer, LoadingSpinner } from '$lib/components/layout';
 	import { Modal } from '$lib/components/ui';
+	import { StoreStatusBadge } from '$lib/components/ui';
 	import { singbox } from '$lib/stores/singbox';
 	import { SingboxInstallBanner, SingboxTunnelCard, SingboxGhostTerminal } from '$lib/components/singbox';
+	import { feedTraffic } from '$lib/stores/traffic';
 
 	type TunnelTab = 'awg' | 'singbox';
 
+	// Polling-store subscription: first subscriber triggers the fetch,
+	// the last unsubscribe stops polling. `$tunnels` yields a
+	// PollingState<TunnelsSnapshot> — unwrap below.
+	let unsubTunnels: (() => void) | undefined;
+	onMount(() => { unsubTunnels = tunnels.subscribe(() => {}); });
+	onDestroy(() => unsubTunnels?.());
+
 	let sysInfo = $derived($systemInfoStore);
+	let tunnelSnap = $derived($tunnels);
+	let awgList = $derived(tunnelSnap.data?.tunnels ?? []);
+	let externalList = $derived(tunnelSnap.data?.external ?? []);
+	let systemList = $derived(tunnelSnap.data?.system ?? []);
 	// Wait for both system info AND the first tunnels snapshot before leaving
 	// the loading state — otherwise sysInfo arrives first and the empty-state
-	// flashes until snapshot:tunnels lands.
-	let tunnelsLoading = tunnels.loading;
-	let loading = $derived(!sysInfo || $tunnelsLoading);
+	// flashes until /api/tunnels/all lands.
+	let loading = $derived(!sysInfo || tunnelSnap.lastFetchedAt === 0);
+
+	// System tunnels don't emit tunnel:traffic stream events (no awg-manager
+	// peer entry tracks them) — feed the traffic store from the polled
+	// snapshot so the per-system-tunnel rate chart stays alive. Runs on
+	// every snapshot refresh (~5s).
+	$effect(() => {
+		// Skip system tunnels that are ALSO tracked as managed — they receive
+		// tunnel:traffic stream events via +layout. Double-feeding doubles
+		// the rate sample and produces a spurious chart spike.
+		for (const st of systemList) {
+			const isManaged = awgList.some((m) =>
+				(m.ndmsName && m.ndmsName === st.id) || (m.interfaceName && m.interfaceName === st.id)
+			);
+			if (isManaged) continue;
+			if (st.status === 'up' && st.peer) {
+				feedTraffic(st.id, st.peer.rxBytes, st.peer.txBytes);
+			}
+		}
+	});
 
 	const goArch = $derived(sysInfo?.goArch ?? '');
 
@@ -31,9 +62,6 @@
 		!sysInfo.backendAvailability?.nativewg
 	);
 
-	const externalTunnels = tunnels.externalTunnels;
-	const systemTunnelsList = tunnels.systemTunnels;
-
 	let toggleLoading = $state<Record<string, boolean>>({});
 	let deleteLoading = $state<Record<string, boolean>>({});
 	let deleteConfirmId = $state<string | null>(null);
@@ -41,7 +69,7 @@
 	async function hideSystemTunnel(id: string) {
 		try {
 			await api.hideSystemTunnel(id);
-			// List refresh comes via SSE tunnels:list + server:updated
+			tunnels.invalidate();
 			notifications.success(`Туннель ${id} скрыт. Вернуть можно в настройках.`);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Ошибка скрытия туннеля');
@@ -51,7 +79,9 @@
 	async function markAsServer(id: string) {
 		try {
 			await api.markServerInterface(id);
-			// List refresh comes via SSE tunnels:list + server:updated
+			// markServerInterface returns fresh ServersSnapshot; the tunnels
+			// list also changes (the system card disappears) — invalidate.
+			tunnels.invalidate();
 			notifications.success(`Туннель ${id} перенесён в серверы.`);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Ошибка переноса в серверы');
@@ -59,7 +89,7 @@
 	}
 
 	async function handleToggleOnOff(id: string) {
-		const tunnel = $tunnels.find(t => t.id === id);
+		const tunnel = awgList.find(t => t.id === id);
 		if (!tunnel) return;
 		// needs_start is NOT "on" — it means "intent up but not actually running",
 		// so the toggle should show OFF and the click should fire Start, not Stop.
@@ -241,7 +271,7 @@
 	// Terminal status line
 	let statusLine = $derived.by(() => {
 		if (!sysInfo) return '';
-		const count = $tunnels.length;
+		const count = awgList.length;
 		const word = count === 0 ? 'туннелей' : count === 1 ? 'туннель' : count < 5 ? 'туннеля' : 'туннелей';
 		return `${sysInfo.version}  ·  ${sysInfo.goArch}  ·  ${count} ${word}`;
 	});
@@ -261,12 +291,12 @@
 	{:else}
 		<TunnelTabs
 			bind:active={activeTab}
-			awgCount={$tunnels.length + $systemTunnelsList.length}
+			awgCount={awgList.length + systemList.length}
 			singboxCount={$singboxTunnels.length}
 		/>
 
 		{#if activeTab === 'awg'}
-		{#if $tunnels.length === 0 && $systemTunnelsList.length === 0}
+		{#if awgList.length === 0 && systemList.length === 0}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="ghost-terminal"
@@ -331,12 +361,12 @@
 					</div>
 
 					<div class="term-commands">
-						{#if $externalTunnels.length > 0}
+						{#if externalList.length > 0}
 							<span class="term-found">
-								найдено {$externalTunnels.length} внешних интерфейс{$externalTunnels.length === 1 ? '' : 'а'}
+								найдено {externalList.length} внешних интерфейс{externalList.length === 1 ? '' : 'а'}
 							</span>
 							<button class="term-cmd term-cmd-primary" onclick={() => {
-								adoptingInterface = $externalTunnels[0].interfaceName;
+								adoptingInterface = externalList[0].interfaceName;
 								adoptDialogOpen = true;
 							}}>
 								<span class="term-arrow">{'>'}</span> подхватить интерфейсы
@@ -386,9 +416,12 @@
 		</div>
 
 		{:else}
-			{@const totalCount = $tunnels.length + $systemTunnelsList.length}
+			{@const totalCount = awgList.length + systemList.length}
 			<div class="tunnels-toolbar">
-				<span class="tunnel-count">{totalCount} {totalCount === 1 ? 'туннель' : totalCount < 5 ? 'туннеля' : 'туннелей'}</span>
+				<div class="count-group">
+					<span class="tunnel-count">{totalCount} {totalCount === 1 ? 'туннель' : totalCount < 5 ? 'туннеля' : 'туннелей'}</span>
+					<StoreStatusBadge store={tunnels} />
+				</div>
 				<div class="toolbar-actions">
 					<button class="btn btn-secondary" onclick={handleExportAll} disabled={exporting}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -402,7 +435,7 @@
 				</div>
 			</div>
 			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-				{#each $tunnels as tunnel (tunnel.id)}
+				{#each awgList as tunnel (tunnel.id)}
 					<TunnelCard
 						{tunnel}
 						toggleLoading={toggleLoading[tunnel.id] ?? false}
@@ -411,13 +444,13 @@
 						ondelete={() => requestDelete(tunnel.id)}
 					/>
 				{/each}
-				{#each $systemTunnelsList.filter((st) =>
+				{#each systemList.filter((st) =>
 					// Defense against backend dedup races: if a managed tunnel
 					// already claims this NDMS name, don't render the system
 					// card (it would be a ghost duplicate). System tunnel id
 					// is the NDMS name ("WireguardN"), so we compare against
 					// the managed tunnel's ndmsName.
-					!$tunnels.some((mt) =>
+					!awgList.some((mt) =>
 						(mt.ndmsName && mt.ndmsName === st.id) ||
 						(mt.interfaceName && mt.interfaceName === st.id)
 					)
@@ -426,10 +459,10 @@
 				{/each}
 			</div>
 
-			{#if $externalTunnels.length > 0}
+			{#if externalList.length > 0}
 				<h2 class="text-lg font-semibold mt-6 mb-4">Внешние туннели</h2>
 				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-					{#each $externalTunnels as extTunnel (extTunnel.interfaceName)}
+					{#each externalList as extTunnel (extTunnel.interfaceName)}
 						<ExternalTunnelCard
 							tunnel={extTunnel}
 							onadopt={(name) => handleAdoptClick(name)}
@@ -492,7 +525,7 @@
 />
 
 {#if deleteConfirmId}
-	{@const tunnelName = $tunnels.find(t => t.id === deleteConfirmId)?.name ?? deleteConfirmId}
+	{@const tunnelName = awgList.find(t => t.id === deleteConfirmId)?.name ?? deleteConfirmId}
 	<Modal
 		open={true}
 		title="Удалить туннель"
@@ -550,6 +583,12 @@
 	.tunnel-count {
 		font-size: 0.8125rem;
 		color: var(--text-muted);
+	}
+
+	.count-group {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 	}
 
 	.toolbar-actions {

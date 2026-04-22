@@ -254,6 +254,9 @@
 		try {
 			const data = await api.toggleDefaultRoute(tunnelId);
 			tunnel.defaultRoute = data.defaultRoute;
+			// Tunnels list view shows the default-route chip — keep its
+			// polling snapshot in sync with the single-tunnel view.
+			tunnels.invalidate();
 		} catch (e) {
 			notifications.error(`Ошибка: ${(e as Error).message}`);
 		}
@@ -279,6 +282,7 @@
 			});
 			tunnel.ispInterface = value === 'auto' ? '' : value;
 			tunnel.ispInterfaceLabel = ispLabel;
+			tunnels.invalidate();
 		} catch (e) {
 			notifications.error(`Ошибка: ${(e as Error).message}`);
 		} finally {
