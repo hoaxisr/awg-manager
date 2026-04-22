@@ -26,10 +26,12 @@ type HookWANModel interface {
 	SetUp(kernelName string, up bool)
 }
 
-// TunnelSnapshotRefresher rebroadcasts the snapshot:tunnels SSE event
-// to every connected client so the UI drops/adds tunnel cards without
-// a browser refresh. Invoked on ifcreated / ifdestroyed hooks.
-type TunnelSnapshotRefresher func(ctx context.Context)
+// TunnelHookInvalidator is invoked on ifcreated / ifdestroyed hooks so
+// the handler can drop stale NDMS caches and publish a
+// `resource:invalidated` hint for the tunnels resource. Every connected
+// SSE client then refetches `/api/tunnels/all` and the UI drops/adds
+// tunnel cards without a browser refresh.
+type TunnelHookInvalidator func(ctx context.Context)
 
 // HookHandler handles NDM hook events.
 type HookHandler struct {
@@ -37,7 +39,7 @@ type HookHandler struct {
 	orch           *orchestrator.Orchestrator
 	dispatcher     HookDispatcher // may be nil until SetDispatcher is called
 	wanModel       HookWANModel   // may be nil until SetWANModel is called
-	refreshTunnels TunnelSnapshotRefresher
+	refreshTunnels TunnelHookInvalidator
 	log            *logging.ScopedLogger
 	// selfCreateGate counts in-flight awg-manager-initiated NDMS interface
 	// creations. While > 0, ifcreated hook events suppress their automatic
@@ -55,9 +57,9 @@ type HookHandler struct {
 func (h *HookHandler) EnterSelfCreate() { h.selfCreateGate.Add(1) }
 
 // ExitSelfCreate marks the end of an awg-manager-initiated NDMS
-// interface creation. Callers MUST publish a fresh snapshot themselves
-// after this (typically via TunnelsHandler.publishTunnelList → snapshot
-// rebroadcast) so UIs see the finalized state.
+// interface creation. Callers MUST publish a fresh tunnels invalidation
+// hint themselves after this (typically via TunnelsHandler.publishTunnelList)
+// so UIs see the finalized state.
 func (h *HookHandler) ExitSelfCreate() { h.selfCreateGate.Add(-1) }
 
 // NewHookHandler creates a new hook event handler.
@@ -82,11 +84,11 @@ func (h *HookHandler) SetWANModel(m HookWANModel) {
 	h.wanModel = m
 }
 
-// SetTunnelRefresher wires the callback that rebroadcasts
-// snapshot:tunnels whenever an interface is created or destroyed.
-// Without it, the UI keeps showing cards for tunnels that NDMS has
-// already torn down (reported bug).
-func (h *HookHandler) SetTunnelRefresher(fn TunnelSnapshotRefresher) {
+// SetTunnelRefresher wires the callback that invalidates NDMS caches
+// and publishes a tunnels `resource:invalidated` hint on ifcreated /
+// ifdestroyed. Without it, the UI keeps showing cards for tunnels that
+// NDMS has already torn down (reported bug).
+func (h *HookHandler) SetTunnelRefresher(fn TunnelHookInvalidator) {
 	h.refreshTunnels = fn
 }
 

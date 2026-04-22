@@ -723,13 +723,13 @@ class ApiClient {
 		});
 	}
 
-	async deleteDnsRoute(id: string): Promise<void> {
+	async deleteDnsRoute(id: string): Promise<DnsRoute[]> {
 		return this.request(`/dns-routes/delete?id=${encodeURIComponent(id)}`, {
 			method: 'POST'
 		});
 	}
 
-	async setDnsRouteEnabled(id: string, enabled: boolean): Promise<void> {
+	async setDnsRouteEnabled(id: string, enabled: boolean): Promise<DnsRoute[]> {
 		return this.request(`/dns-routes/set-enabled?id=${encodeURIComponent(id)}`, {
 			method: 'POST',
 			body: JSON.stringify({ enabled })
@@ -743,21 +743,21 @@ class ApiClient {
 		});
 	}
 
-	async deleteDnsRouteBatch(ids: string[]): Promise<{ deleted: number }> {
+	async deleteDnsRouteBatch(ids: string[]): Promise<DnsRoute[]> {
 		return this.request('/dns-routes/delete-batch', {
 			method: 'POST',
 			body: JSON.stringify({ ids })
 		});
 	}
 
-	async refreshDnsRouteSubscriptions(id?: string): Promise<void> {
+	async refreshDnsRouteSubscriptions(id?: string): Promise<DnsRoute[]> {
 		const endpoint = id
 			? `/dns-routes/refresh?id=${encodeURIComponent(id)}`
 			: '/dns-routes/refresh';
 		return this.request(endpoint, { method: 'POST' });
 	}
 
-	async bulkDnsRouteBackend(listIDs: string[], backend: 'ndms' | 'hydraroute'): Promise<{ updated: number }> {
+	async bulkDnsRouteBackend(listIDs: string[], backend: 'ndms' | 'hydraroute'): Promise<DnsRoute[]> {
 		return this.request('/dns-routes/bulk-backend', {
 			method: 'POST',
 			body: JSON.stringify({ listIDs, backend }),

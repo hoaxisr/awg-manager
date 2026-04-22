@@ -22,7 +22,8 @@ func NewHydraRouteHandler(svc *hydraroute.Service) *HydraRouteHandler {
 
 // SetEventBus wires the SSE bus so HR Neo mutations that touch the DNS
 // route list (policy order, native rule import, config write) can emit
-// resource:invalidated hints for `routing.dnsRoutes`.
+// resource:invalidated hints for `routing.dnsRoutes`, and so HR daemon
+// state changes publish `routing.hydrarouteStatus` hints.
 func (h *HydraRouteHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
 // GetConfig returns the current HydraRoute config.
@@ -59,6 +60,9 @@ func (h *HydraRouteHandler) UpdateConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// WriteConfig schedules a neo restart that flips the running flag,
+	// so the cached hydraroute status becomes stale.
+	publishInvalidated(h.bus, ResourceRoutingHydrarouteStatus, "config-write")
 	response.Success(w, cfg)
 }
 
@@ -262,6 +266,8 @@ func (h *HydraRouteHandler) SetPolicyOrder(w http.ResponseWriter, r *http.Reques
 	}
 
 	publishInvalidated(h.bus, ResourceRoutingDnsRoutes, "policy-order")
+	// Policy-order changes trigger a neo restart too.
+	publishInvalidated(h.bus, ResourceRoutingHydrarouteStatus, "policy-order")
 	response.Success(w, map[string][]string{"order": req.Order})
 }
 

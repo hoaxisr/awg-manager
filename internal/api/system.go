@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/response"
@@ -46,7 +47,12 @@ type SystemHandler struct {
 	bootStatusFn     func() bool // returns true if boot is still in progress
 	hydra            *hydraroute.Service
 	singboxOp        *singbox.Operator
+	bus              *events.Bus
 }
+
+// SetEventBus wires the SSE bus so HR Neo control actions emit
+// `routing.hydrarouteStatus` resource:invalidated hints.
+func (h *SystemHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
 // NewSystemHandler creates a new system handler.
 func NewSystemHandler(version string) *SystemHandler {
@@ -157,6 +163,7 @@ func (h *SystemHandler) HydraRouteControl(w http.ResponseWriter, r *http.Request
 		response.Error(w, err.Error(), "HYDRAROUTE_CONTROL_ERROR")
 		return
 	}
+	publishInvalidated(h.bus, ResourceRoutingHydrarouteStatus, "control-"+req.Action)
 	response.Success(w, h.hydra.GetStatus())
 }
 

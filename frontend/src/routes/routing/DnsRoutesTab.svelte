@@ -111,8 +111,8 @@
     async function toggleDnsRoute(id: string, enabled: boolean) {
         dnsToggling = id;
         try {
-            await api.setDnsRouteEnabled(id, enabled);
-
+            const fresh = await api.setDnsRouteEnabled(id, enabled);
+            dnsRoutesStore.applyMutationResponse(fresh);
         } catch (e: any) {
             notifications.error(e.message || 'Ошибка');
         } finally {
@@ -125,8 +125,8 @@
         const id = dnsDeleteId;
         dnsDeleteId = null;
         try {
-            await api.deleteDnsRoute(id);
-
+            const fresh = await api.deleteDnsRoute(id);
+            dnsRoutesStore.applyMutationResponse(fresh);
             notifications.success('DNS-маршрут удалён');
         } catch (e: any) {
             notifications.error(e.message || 'Ошибка удаления');
@@ -135,7 +135,8 @@
 
     async function refreshDnsRouteSubscriptions(id: string) {
         try {
-            await api.refreshDnsRouteSubscriptions(id);
+            const fresh = await api.refreshDnsRouteSubscriptions(id);
+            dnsRoutesStore.applyMutationResponse(fresh);
             notifications.success('Подписки обновлены');
         } catch (e: any) {
             notifications.error(e.message || 'Ошибка обновления');
@@ -171,9 +172,14 @@
         dnsBulkLoading = true;
         try {
             let ok = 0, fail = 0;
+            let latest: DnsRoute[] | null = null;
             for (const id of dnsSelected) {
-                try { await api.setDnsRouteEnabled(id, enabled); ok++; } catch { fail++; }
+                try {
+                    latest = await api.setDnsRouteEnabled(id, enabled);
+                    ok++;
+                } catch { fail++; }
             }
+            if (latest) dnsRoutesStore.applyMutationResponse(latest);
 
             const label = enabled ? 'Включено' : 'Выключено';
             if (fail > 0) notifications.warning(`${label} ${ok} из ${ok + fail} правил (${fail} ошибок)`);
@@ -187,10 +193,13 @@
         dnsBulkLoading = true;
         try {
             const ids = [...dnsSelected];
-            const result = await api.deleteDnsRouteBatch(ids);
+            const beforeCount = dnsRoutes.length;
+            const fresh = await api.deleteDnsRouteBatch(ids);
+            dnsRoutesStore.applyMutationResponse(fresh);
+            const deleted = Math.max(0, beforeCount - fresh.filter(r => r.backend !== 'hydraroute').length);
 
             exitDnsSelection();
-            notifications.success(`Удалено ${result.deleted} правил`);
+            notifications.success(`Удалено ${deleted} правил`);
         } catch (e) {
             notifications.error(`Ошибка: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
         } finally {
