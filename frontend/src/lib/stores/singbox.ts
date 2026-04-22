@@ -2,8 +2,8 @@
  * singbox — split polling stores + stream writables.
  *
  * Split rationale (Task 8 of state-sync redesign):
- *   - singbox.status  — cold tier (30s): install/running flags rarely change.
- *   - singbox.tunnels — hot tier (5s): list changes on CRUD + connectivity
+ *   - singboxStatus  — cold tier (30s): install/running flags rarely change.
+ *   - singboxTunnels — hot tier (5s): list changes on CRUD + connectivity
  *     enrichment refreshes via the Clash API on every fetch.
  *
  * SSE streams remain streams (writables fed by +layout handlers):
@@ -12,11 +12,6 @@
  *
  * `resource:invalidated` hints (ResourceSingboxStatus / ResourceSingboxTunnels)
  * trigger immediate refetch via the store registry.
- *
- * The back-compat `singbox = { ... }` object preserves existing call sites
- * (`singbox.status`, `singbox.tunnels`, `singbox.trafficMap`, etc.) while
- * the component-by-component migration to the new shape happens. Task 16
- * removes this shim.
  */
 import { writable } from 'svelte/store';
 import { api } from '$lib/api/client';
@@ -93,24 +88,3 @@ export async function triggerDelayCheck(tag: string): Promise<void> {
 	}
 }
 
-// ─────────────────────────────────────────────
-// Back-compat namespace. Callers that referenced `singbox.status`,
-// `singbox.tunnels`, `singbox.trafficMap`, `singbox.delayHistory`,
-// `singbox.applyTraffic`, `singbox.applyDelay` or
-// `singbox.triggerDelayCheck` continue to compile.
-//
-// NOTE: The emitted STATE SHAPE of `singbox.status` / `singbox.tunnels`
-// now comes from the polling store (`PollingState<T>` with `.data`,
-// `.status`, etc.) — it is no longer a raw value/list. Consumers that
-// read `$singbox.status` or `$singbox.tunnels` must access `.data`.
-// This shim is removed in Task 16.
-// ─────────────────────────────────────────────
-export const singbox = {
-	status: singboxStatus,
-	tunnels: singboxTunnels,
-	trafficMap: singboxTraffic,
-	delayHistory: singboxDelayHistory,
-	applyTraffic,
-	applyDelay,
-	triggerDelayCheck,
-};
