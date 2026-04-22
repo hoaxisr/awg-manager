@@ -100,12 +100,19 @@ type FQDNGroup struct {
 	Excludes []string `json:"excludes"`
 }
 
-// DNSRouteRule — one entry from /show/rc/dns-proxy/route.
+// DNSRouteRule — one entry from /show/sc/dns-proxy/route.
 type DNSRouteRule struct {
 	Group     string `json:"group"`
 	Interface string `json:"interface,omitempty"`
 	Auto      bool   `json:"auto,omitempty"`
 	Reject    bool   `json:"reject,omitempty"`
+	// Index is Keenetic's stable hash for the route, used by the
+	// dns-proxy.route.disable command to toggle without delete-recreate.
+	// Present in /show/sc/dns-proxy/route; not present in /show/rc/.
+	Index string `json:"index,omitempty"`
+	// Disabled mirrors the `disable: true` flag NDMS returns for paused
+	// routes (absent when enabled).
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // PingCheckProfile — one profile from /show/ping-check/. Profiles are the

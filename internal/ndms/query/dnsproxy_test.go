@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const dnsProxyPath = "/show/rc/dns-proxy/route"
+const dnsProxyPath = "/show/sc/dns-proxy/route"
 
 const sampleDNSProxyJSON = `{
 	"group1": {"interface": "Wireguard0", "auto": false, "reject": false},

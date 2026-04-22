@@ -68,6 +68,45 @@ func TestDNSRouteCommands_OS4_ReturnsErrNotSupported(t *testing.T) {
 	}
 }
 
+func TestDNSRouteCommands_SetDisabled_OS5(t *testing.T) {
+	cmds, poster := newTestDNSRouteCommands(t, true)
+
+	// disabled=true → "no": false (apply the disable)
+	if err := cmds.SetDisabled(context.Background(), "abc123", true); err != nil {
+		t.Fatalf("SetDisabled true: %v", err)
+	}
+	d := poster.Payloads()[0].(map[string]any)["dns-proxy"].(map[string]any)["route"].(map[string]any)["disable"].(map[string]any)
+	if d["index"] != "abc123" || d["no"] != false {
+		t.Errorf("disable true payload: %#v", d)
+	}
+
+	// disabled=false → "no": true (negate the disable)
+	if err := cmds.SetDisabled(context.Background(), "abc123", false); err != nil {
+		t.Fatalf("SetDisabled false: %v", err)
+	}
+	d2 := poster.Payloads()[1].(map[string]any)["dns-proxy"].(map[string]any)["route"].(map[string]any)["disable"].(map[string]any)
+	if d2["no"] != true {
+		t.Errorf("disable false payload: %#v", d2)
+	}
+}
+
+func TestDNSRouteCommands_SetDisabled_EmptyIndexNoOp(t *testing.T) {
+	cmds, poster := newTestDNSRouteCommands(t, true)
+	if err := cmds.SetDisabled(context.Background(), "", true); err != nil {
+		t.Errorf("empty index: %v", err)
+	}
+	if poster.Calls() != 0 {
+		t.Errorf("empty index must not POST, got %d", poster.Calls())
+	}
+}
+
+func TestDNSRouteCommands_SetDisabled_OS4(t *testing.T) {
+	cmds, _ := newTestDNSRouteCommands(t, false)
+	if err := cmds.SetDisabled(context.Background(), "abc", true); !errors.Is(err, query.ErrNotSupportedOnOS4) {
+		t.Errorf("OS4 err: %v", err)
+	}
+}
+
 func TestDNSRouteCommands_EmptyBatch_NoOp(t *testing.T) {
 	cmds, poster := newTestDNSRouteCommands(t, true)
 	if err := cmds.UpsertRoutes(context.Background(), nil); err != nil {
