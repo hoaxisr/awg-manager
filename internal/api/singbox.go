@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,6 +61,8 @@ func (h *SingboxHandler) Status(w http.ResponseWriter, r *http.Request) {
 }
 
 // Install handles POST /api/singbox/install.
+// Returns the fresh status so the client can update cache without refetch.
+// Also publishes a resource:invalidated hint so other tabs/subscribers refresh.
 func (h *SingboxHandler) Install(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -69,19 +72,9 @@ func (h *SingboxHandler) Install(w http.ResponseWriter, r *http.Request) {
 		response.InternalError(w, err.Error())
 		return
 	}
-	if h.bus != nil {
-		s := h.op.GetStatus(r.Context())
-		h.bus.Publish("singbox:status", events.SingboxStatusEvent{
-			Installed:      s.Installed,
-			Running:        s.Running,
-			Version:        s.Version,
-			PID:            s.PID,
-			TunnelCount:    s.TunnelCount,
-			ProxyComponent: s.ProxyComponent,
-			Features:       s.Features,
-		})
-	}
-	response.Success(w, map[string]bool{"ok": true})
+	s := h.op.GetStatus(r.Context())
+	publishInvalidated(h.bus, ResourceSingboxStatus, "installed")
+	response.Success(w, s)
 }
 
 // ListTunnels handles GET /api/singbox/tunnels.
@@ -91,23 +84,36 @@ func (h *SingboxHandler) ListTunnels(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
-	list, err := h.op.ListTunnels(r.Context())
+	out, err := h.enrichedTunnels(r.Context())
 	if err != nil {
 		response.InternalError(w, err.Error())
 		return
 	}
-	type connectivity struct {
-		Connected bool `json:"connected"`
-		Latency   *int `json:"latency"`
+	response.Success(w, out)
+}
+
+type singboxConnectivity struct {
+	Connected bool `json:"connected"`
+	Latency   *int `json:"latency"`
+}
+
+type singboxEnrichedTunnel struct {
+	singbox.TunnelInfo
+	Connectivity singboxConnectivity `json:"connectivity"`
+}
+
+// enrichedTunnels returns the current tunnel list enriched with per-tunnel
+// connectivity from the Clash API — the same shape emitted by ListTunnels,
+// used by mutation handlers that return fresh state.
+func (h *SingboxHandler) enrichedTunnels(ctx context.Context) ([]singboxEnrichedTunnel, error) {
+	list, err := h.op.ListTunnels(ctx)
+	if err != nil {
+		return nil, err
 	}
-	type enriched struct {
-		singbox.TunnelInfo
-		Connectivity connectivity `json:"connectivity"`
-	}
-	out := make([]enriched, 0, len(list))
+	out := make([]singboxEnrichedTunnel, 0, len(list))
 	proxies, _ := h.op.Clash().GetProxies() // best-effort; ignore error
 	for _, t := range list {
-		e := enriched{TunnelInfo: t}
+		e := singboxEnrichedTunnel{TunnelInfo: t}
 		if p, ok := proxies[t.Tag]; ok && len(p.History) > 0 {
 			d := p.History[len(p.History)-1].Delay
 			if d > 0 {
@@ -118,7 +124,7 @@ func (h *SingboxHandler) ListTunnels(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, e)
 	}
-	response.Success(w, out)
+	return out, nil
 }
 
 // AddTunnels handles POST /api/singbox/tunnels.
@@ -143,19 +149,21 @@ func (h *SingboxHandler) AddTunnels(w http.ResponseWriter, r *http.Request) {
 	if added == nil {
 		added = []singbox.TunnelInfo{}
 	}
+	if len(added) > 0 {
+		publishInvalidated(h.bus, ResourceSingboxTunnels, "tunnel-added")
+	}
+	fresh, ferr := h.enrichedTunnels(r.Context())
+	if ferr != nil {
+		response.InternalError(w, ferr.Error())
+		return
+	}
 	resp := struct {
-		Imported []singbox.TunnelInfo `json:"imported"`
-		Errors   []errItem            `json:"errors"`
-	}{Imported: added, Errors: []errItem{}}
+		Imported []singbox.TunnelInfo    `json:"imported"`
+		Errors   []errItem               `json:"errors"`
+		Tunnels  []singboxEnrichedTunnel `json:"tunnels"`
+	}{Imported: added, Errors: []errItem{}, Tunnels: fresh}
 	for _, e := range errs {
 		resp.Errors = append(resp.Errors, errItem{Line: e.Line, Input: e.Input, Error: e.Err.Error()})
-	}
-	if h.bus != nil && len(added) > 0 {
-		tags := make([]string, 0, len(added))
-		for _, t := range added {
-			tags = append(tags, t.Tag)
-		}
-		h.bus.Publish("singbox:tunnel", events.SingboxTunnelEvent{Action: "added", Tags: tags})
 	}
 	response.Success(w, resp)
 }
@@ -201,10 +209,13 @@ func (h *SingboxHandler) UpdateTunnel(w http.ResponseWriter, r *http.Request) {
 		response.InternalError(w, err.Error())
 		return
 	}
-	if h.bus != nil {
-		h.bus.Publish("singbox:tunnel", events.SingboxTunnelEvent{Action: "updated", Tags: []string{tag}})
+	publishInvalidated(h.bus, ResourceSingboxTunnels, "tunnel-updated")
+	out, err := h.enrichedTunnels(r.Context())
+	if err != nil {
+		response.InternalError(w, err.Error())
+		return
 	}
-	response.Success(w, map[string]bool{"ok": true})
+	response.Success(w, out)
 }
 
 // SpeedTestStream handles GET /api/singbox/tunnels/test/speed/stream?tag=X&server=Y&port=Z.
@@ -339,8 +350,11 @@ func (h *SingboxHandler) DeleteTunnel(w http.ResponseWriter, r *http.Request) {
 		response.InternalError(w, err.Error())
 		return
 	}
-	if h.bus != nil {
-		h.bus.Publish("singbox:tunnel", events.SingboxTunnelEvent{Action: "removed", Tags: []string{tag}})
+	publishInvalidated(h.bus, ResourceSingboxTunnels, "tunnel-removed")
+	out, err := h.enrichedTunnels(r.Context())
+	if err != nil {
+		response.InternalError(w, err.Error())
+		return
 	}
-	response.Success(w, map[string]bool{"ok": true})
+	response.Success(w, out)
 }

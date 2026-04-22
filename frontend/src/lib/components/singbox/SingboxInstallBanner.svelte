@@ -1,8 +1,6 @@
 <script lang="ts">
-	import { singbox } from '$lib/stores/singbox';
+	import { singboxStatus } from '$lib/stores/singbox';
 	import { api } from '$lib/api/client';
-
-	const { status } = singbox;
 
 	let installing = $state(false);
 	let error = $state<string | null>(null);
@@ -14,7 +12,7 @@
 	// changes, so a dismiss on one issue auto-resets once that issue is
 	// resolved or replaced by a new one.
 	let signature = $derived.by(() => {
-		const s = $status;
+		const s = $singboxStatus.data;
 		if (!s) return '';
 		if (!s.installed) return 'not-installed';
 		if (!s.proxyComponent) return 'no-proxy-component';
@@ -44,8 +42,8 @@
 		installing = true;
 		error = null;
 		try {
-			await api.singboxInstall();
-			await singbox.loadStatus();
+			const fresh = await api.singboxInstall();
+			singboxStatus.applyMutationResponse(fresh);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {

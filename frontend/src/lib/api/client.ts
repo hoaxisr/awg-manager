@@ -1093,7 +1093,7 @@ class ApiClient {
 		return this.request('/singbox/status');
 	}
 
-	async singboxInstall(): Promise<{ ok: boolean }> {
+	async singboxInstall(): Promise<SingboxStatus> {
 		return this.request('/singbox/install', { method: 'POST' });
 	}
 
@@ -1112,14 +1112,14 @@ class ApiClient {
 		return this.request(`/singbox/tunnels?tag=${encodeURIComponent(tag)}`);
 	}
 
-	async singboxUpdateTunnel(tag: string, outbound: unknown): Promise<{ ok: boolean }> {
+	async singboxUpdateTunnel(tag: string, outbound: unknown): Promise<SingboxTunnel[]> {
 		return this.request(`/singbox/tunnels?tag=${encodeURIComponent(tag)}`, {
 			method: 'PUT',
 			body: JSON.stringify({ outbound })
 		});
 	}
 
-	async singboxDeleteTunnel(tag: string): Promise<{ ok: boolean }> {
+	async singboxDeleteTunnel(tag: string): Promise<SingboxTunnel[]> {
 		return this.request(`/singbox/tunnels?tag=${encodeURIComponent(tag)}`, {
 			method: 'DELETE'
 		});

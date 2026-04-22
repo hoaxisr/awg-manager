@@ -1,91 +1,126 @@
+/**
+ * singbox — split polling stores + stream writables.
+ *
+ * Split rationale (Task 8 of state-sync redesign):
+ *   - singbox.status  — cold tier (30s): install/running flags rarely change.
+ *   - singbox.tunnels — hot tier (5s): list changes on CRUD + connectivity
+ *     enrichment refreshes via the Clash API on every fetch.
+ *
+ * SSE streams remain streams (writables fed by +layout handlers):
+ *   - singbox:traffic — per-tunnel byte counters.
+ *   - singbox:delay   — per-tunnel delay-check samples (history ring buffer).
+ *
+ * `resource:invalidated` hints (ResourceSingboxStatus / ResourceSingboxTunnels)
+ * trigger immediate refetch via the store registry.
+ *
+ * The back-compat `singbox = { ... }` object preserves existing call sites
+ * (`singbox.status`, `singbox.tunnels`, `singbox.trafficMap`, etc.) while
+ * the component-by-component migration to the new shape happens. Task 16
+ * removes this shim.
+ */
 import { writable } from 'svelte/store';
 import { api } from '$lib/api/client';
-import type { SingboxStatus, SingboxTunnel, SingboxTraffic, SingboxStatusEvent, SingboxTunnelEvent } from '$lib/types';
+import { createPollingStore, type PollingStore } from './polling';
+import { registerStore } from './storeRegistry';
 import { systemInfo } from '$lib/stores/system';
+import type { SingboxStatus, SingboxTunnel, SingboxTraffic } from '$lib/types';
 
-function createSingboxStore() {
-	const status = writable<SingboxStatus | null>(null);
-	const tunnels = writable<SingboxTunnel[]>([]);
-	const trafficMap = writable<Map<string, SingboxTraffic>>(new Map());
-	const delayHistoryWritable = writable<Map<string, number[]>>(new Map());
-	const MAX_DELAY_HISTORY = 10;
-	const loading = writable(false);
-	const error = writable<string | null>(null);
-
-	async function loadStatus(): Promise<void> {
-		try {
-			status.set(await api.singboxGetStatus());
-		} catch (e) {
-			console.error('singbox: failed to load status', e);
-		}
-	}
-
-	async function loadTunnels(): Promise<void> {
-		loading.set(true);
-		error.set(null);
-		try {
-			tunnels.set(await api.singboxListTunnels());
-		} catch (e) {
-			error.set(e instanceof Error ? e.message : 'Не удалось загрузить туннели sing-box');
-		} finally {
-			loading.set(false);
-		}
-	}
-
-	function applyStatus(data: SingboxStatusEvent): void {
-		status.set(data);
-		// also sync installed/version into sysInfo so selector reflects immediately
-		systemInfo.applySingboxStatus(data.installed, data.version ?? '');
-	}
-
-	function applyTunnelEvent(_ev: SingboxTunnelEvent): void {
-		// Any tunnel change → refresh full list
-		loadTunnels();
-	}
-
-	function applyTraffic(data: SingboxTraffic[]): void {
-		const m = new Map<string, SingboxTraffic>();
-		for (const t of data) m.set(t.tag, t);
-		trafficMap.set(m);
-	}
-
-	function applyDelay(tag: string, delay: number): void {
-		delayHistoryWritable.update((map) => {
-			const next = new Map(map);
-			const existing = next.get(tag) ?? [];
-			const updated = [...existing, delay];
-			if (updated.length > MAX_DELAY_HISTORY) {
-				updated.splice(0, updated.length - MAX_DELAY_HISTORY);
-			}
-			next.set(tag, updated);
-			return next;
-		});
-	}
-
-	async function triggerDelayCheck(tag: string): Promise<void> {
-		try {
-			await api.singboxDelayCheck(tag);
-			// SSE event fires and updates delayHistory — no local state change needed
-		} catch (e) {
-			console.error('singbox delay check', tag, e);
-		}
-	}
-
-	return {
-		status: { subscribe: status.subscribe },
-		tunnels: { subscribe: tunnels.subscribe },
-		trafficMap: { subscribe: trafficMap.subscribe },
-		delayHistory: { subscribe: delayHistoryWritable.subscribe },
-		loading: { subscribe: loading.subscribe },
-		error: { subscribe: error.subscribe },
-		loadStatus,
-		loadTunnels,
-		applyStatus,
-		applyTunnelEvent,
-		applyTraffic,
-		applyDelay,
-		triggerDelayCheck,
-	};
+// ─────────────────────────────────────────────
+// Cold tier: sing-box install/run status (30s)
+// ─────────────────────────────────────────────
+async function fetchStatus(): Promise<SingboxStatus> {
+	const data = await api.singboxGetStatus();
+	// Mirror install/version into sysInfo so the mode selector reflects
+	// immediately on any status refresh (polling + invalidation).
+	// TODO(state-sync-redesign): this is a cross-store side-effect in a
+	// polling fetcher. It keeps the legacy systemInfo.singbox field in
+	// sync for the mode selector. Remove when systemInfo is fully migrated
+	// to a polling store (Task 10) — the mode selector should read
+	// `$singboxStatus` directly.
+	systemInfo.applySingboxStatus(data.installed, data.version ?? '');
+	return data;
 }
 
-export const singbox = createSingboxStore();
+export const singboxStatus: PollingStore<SingboxStatus> = createPollingStore<SingboxStatus>(
+	fetchStatus,
+	{ staleTime: 30_000, pollInterval: 30_000 }
+);
+
+registerStore('singbox.status', singboxStatus);
+
+// ─────────────────────────────────────────────
+// Hot tier: sing-box tunnels list (5s)
+// ─────────────────────────────────────────────
+async function fetchTunnels(): Promise<SingboxTunnel[]> {
+	return api.singboxListTunnels();
+}
+
+export const singboxTunnels: PollingStore<SingboxTunnel[]> = createPollingStore<SingboxTunnel[]>(
+	fetchTunnels,
+	{ staleTime: 5_000, pollInterval: 5_000 }
+);
+
+registerStore('singbox.tunnels', singboxTunnels);
+
+// ─────────────────────────────────────────────
+// Streams: traffic + delay history
+// Fed by +layout SSE handlers (onSingboxTraffic / onSingboxDelay).
+// Kept as Map so consumer `.get(tag)` patterns continue to work.
+// ─────────────────────────────────────────────
+const MAX_DELAY_HISTORY = 10;
+
+export const singboxTraffic = writable<Map<string, SingboxTraffic>>(new Map());
+
+export function applyTraffic(data: SingboxTraffic[]): void {
+	const m = new Map<string, SingboxTraffic>();
+	for (const t of data) m.set(t.tag, t);
+	singboxTraffic.set(m);
+}
+
+export const singboxDelayHistory = writable<Map<string, number[]>>(new Map());
+
+export function applyDelay(tag: string, delay: number): void {
+	singboxDelayHistory.update((map) => {
+		const next = new Map(map);
+		const existing = next.get(tag) ?? [];
+		const updated = [...existing, delay];
+		if (updated.length > MAX_DELAY_HISTORY) {
+			updated.splice(0, updated.length - MAX_DELAY_HISTORY);
+		}
+		next.set(tag, updated);
+		return next;
+	});
+}
+
+// ─────────────────────────────────────────────
+// Ad-hoc delay-check trigger (SSE event updates history).
+// ─────────────────────────────────────────────
+export async function triggerDelayCheck(tag: string): Promise<void> {
+	try {
+		await api.singboxDelayCheck(tag);
+	} catch (e) {
+		console.error('singbox delay check', tag, e);
+	}
+}
+
+// ─────────────────────────────────────────────
+// Back-compat namespace. Callers that referenced `singbox.status`,
+// `singbox.tunnels`, `singbox.trafficMap`, `singbox.delayHistory`,
+// `singbox.applyTraffic`, `singbox.applyDelay` or
+// `singbox.triggerDelayCheck` continue to compile.
+//
+// NOTE: The emitted STATE SHAPE of `singbox.status` / `singbox.tunnels`
+// now comes from the polling store (`PollingState<T>` with `.data`,
+// `.status`, etc.) — it is no longer a raw value/list. Consumers that
+// read `$singbox.status` or `$singbox.tunnels` must access `.data`.
+// This shim is removed in Task 16.
+// ─────────────────────────────────────────────
+export const singbox = {
+	status: singboxStatus,
+	tunnels: singboxTunnels,
+	trafficMap: singboxTraffic,
+	delayHistory: singboxDelayHistory,
+	applyTraffic,
+	applyDelay,
+	triggerDelayCheck,
+};

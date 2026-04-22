@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
+	import { singboxTunnels } from '$lib/stores/singbox';
 	import { PageContainer } from '$lib/components/layout';
 
 	let tag = $derived($page.params.tag!);
@@ -29,7 +30,8 @@
 		saving = true;
 		error = null;
 		try {
-			await api.singboxUpdateTunnel(tag, outbound);
+			const fresh = await api.singboxUpdateTunnel(tag, outbound);
+			singboxTunnels.applyMutationResponse(fresh);
 			goto('/');
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);

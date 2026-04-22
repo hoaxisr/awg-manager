@@ -2,7 +2,12 @@
 	import type { SingboxTunnel } from '$lib/types';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api/client';
-	import { singbox } from '$lib/stores/singbox';
+	import {
+		singboxTunnels,
+		singboxDelayHistory,
+		singboxTraffic,
+		triggerDelayCheck,
+	} from '$lib/stores/singbox';
 	import { Modal } from '$lib/components/ui';
 	import SingboxSpeedTestModal from './SingboxSpeedTestModal.svelte';
 
@@ -12,8 +17,6 @@
 
 	let { tunnel }: Props = $props();
 
-	const { delayHistory, trafficMap } = singbox;
-
 	let deleting = $state(false);
 	let confirmDeleteOpen = $state(false);
 	let showServer = $state(false);
@@ -22,14 +25,14 @@
 	const DELAY_OK = 200;
 	const DELAY_SLOW = 500;
 
-	const history = $derived($delayHistory.get(tunnel.tag) ?? []);
+	const history = $derived($singboxDelayHistory.get(tunnel.tag) ?? []);
 	const latest = $derived(history.length > 0 ? history[history.length - 1] : undefined);
 	const avg = $derived(
 		history.length > 0
 			? Math.round(history.reduce((s, v) => s + v, 0) / history.length)
 			: 0,
 	);
-	const traffic = $derived($trafficMap.get(tunnel.tag));
+	const traffic = $derived($singboxTraffic.get(tunnel.tag));
 
 	type State = 'ok' | 'slow' | 'fail' | 'unknown';
 	const cardState: State = $derived.by(() => {
@@ -56,7 +59,7 @@
 		if (checking) return;
 		checking = true;
 		try {
-			await singbox.triggerDelayCheck(tunnel.tag);
+			await triggerDelayCheck(tunnel.tag);
 		} finally {
 			checking = false;
 		}
@@ -66,7 +69,9 @@
 		deleting = true;
 		confirmDeleteOpen = false;
 		try {
-			await api.singboxDeleteTunnel(tunnel.tag);
+			const fresh = await api.singboxDeleteTunnel(tunnel.tag);
+			// Instant update — beats waiting for the poll or SSE hint refetch.
+			singboxTunnels.applyMutationResponse(fresh);
 		} finally {
 			deleting = false;
 		}

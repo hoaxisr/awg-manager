@@ -16,7 +16,7 @@
 	import { routing } from '$lib/stores/routing';
 	import { systemInfo } from '$lib/stores/system';
 	import { feedTraffic } from '$lib/stores/traffic';
-	import { singbox } from '$lib/stores/singbox';
+	import { applyTraffic as singboxApplyTraffic, applyDelay as singboxApplyDelay } from '$lib/stores/singbox';
 	import { invalidateResource } from '$lib/stores/storeRegistry';
 	import type { UpdateInfo } from '$lib/types';
 	import LoginForm from '$lib/components/LoginForm.svelte';
@@ -51,8 +51,8 @@
 
 	function startSSE() {
 		if (disconnectSSE) return;
-		singbox.loadStatus();
-		singbox.loadTunnels();
+		// singboxStatus / singboxTunnels now poll automatically on subscribe;
+		// no eager fetch needed here — components subscribe as they mount.
 		disconnectSSE = connectSSE({
 			// System events
 			onSystemReady: (data) => {
@@ -128,11 +128,10 @@
 			onPingCheckState: (data) => pingCheckStatus.updateStatus(data),
 			onPingCheckLog: (data) => pingCheckStatus.appendLog(data),
 
-			// Sing-box
-			onSingboxStatus: singbox.applyStatus,
-			onSingboxTunnel: singbox.applyTunnelEvent,
-			onSingboxTraffic: singbox.applyTraffic,
-			onSingboxDelay: (data) => singbox.applyDelay(data.tag, data.delay),
+			// Sing-box streams (polling covers status + tunnels list; traffic
+			// + delay remain push-only — no REST equivalent).
+			onSingboxTraffic: singboxApplyTraffic,
+			onSingboxDelay: (data) => singboxApplyDelay(data.tag, data.delay),
 
 			// HydraRoute geo download progress
 			onHydraRouteGeoProgress: (data) => geoDownloadProgress.ingest(data),
