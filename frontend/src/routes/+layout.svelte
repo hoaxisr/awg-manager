@@ -71,10 +71,11 @@
 				booting = true;
 			},
 			onConnected: () => {
-				// Phase C: serverOnline.set() is gone (derived from healthMonitor);
-				// KEEP tunnels.clearRecentStateUpdates() — required for SSE reconnect
-				// correctness (prevents stale preserved state from shadowing fresh snapshot).
-				tunnels.clearRecentStateUpdates();
+				// SSE may have been down for minutes. Clear connectivity side-channel
+				// (it's stream-only, not included in the polling snapshot) and force a
+				// fresh fetch of tunnel state to catch any drift during the outage.
+				tunnels.clearConnectivity();
+				tunnels.invalidate();
 			},
 			onDisconnected: () => {
 				// Phase C: serverOnline.set() is gone (derived from healthMonitor);
@@ -83,35 +84,26 @@
 
 			// Snapshot events
 			onSnapshotSystem: (data) => systemInfo.setSnapshot(data),
-			onSnapshotTunnels: (data) => {
-				tunnels.setSnapshot(data);
-				// Feed traffic store for system tunnels (they don't get tunnel:traffic events)
-				for (const st of data.system ?? []) {
-					if (st.status === 'up' && st.peer) {
-						feedTraffic(st.id, st.peer.rxBytes, st.peer.txBytes);
-					}
-				}
-			},
+			// onSnapshotTunnels removed — tunnels store polls /api/tunnels/all.
+			// System-tunnel traffic feed moved into the store's subscriber
+			// on /+page.svelte (runs on every polling refresh).
 			onSnapshotRouting: (data) => routing.setSnapshot(data),
 			onSnapshotPingcheck: (data) => pingCheckStatus.setSnapshot(data),
 			onSnapshotLogs: (data) => logEntries.setSnapshot(data),
 
-			// Tunnel incremental
-			onTunnelState: (data) => tunnels.updateTunnelState(data.id, data.state),
+			// Tunnel streams (kept — traffic + connectivity are not REST-pollable)
 			onTunnelTraffic: (data) => {
 				// data.id is the NDMS interface name (e.g. "Wireguard0") on OS 5.x —
 				// updateTraffic resolves it to the awg-manager tunnel ID, which is
-				// what the traffic store and TunnelCard subscribers are keyed on.
+				// what the traffic store is keyed on.
 				const resolvedId = tunnels.updateTraffic(data);
 				if (resolvedId !== null) {
 					feedTraffic(resolvedId, data.rxBytes, data.txBytes);
 				}
 			},
 			onTunnelConnectivity: (data) => tunnels.updateConnectivity(data.id, data.connected, data.latency),
-			onTunnelCreated: () => {},
-			onTunnelDeleted: (data) => tunnels.removeFromList(data.id),
-			onTunnelUpdated: () => {},
-			onTunnelsList: (data) => tunnels.setManagedList(data),
+			// onTunnelState / onTunnelCreated / onTunnelDeleted / onTunnelUpdated /
+			// onTunnelsList removed — polling + resource:invalidated hint covers them.
 
 			// Routing incremental
 			onRoutingDnsUpdated: (data) => routing.setDnsRoutes(data),

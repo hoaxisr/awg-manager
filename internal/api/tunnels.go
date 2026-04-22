@@ -143,6 +143,12 @@ type TunnelsHandler struct {
 	// NDMS interface. See tunnel.SelfCreateGater / api.HookHandler for
 	// the contract.
 	selfCreateGate tunnel.SelfCreateGater
+	// buildTunnelsSnapshot (optional) assembles the composite
+	// {tunnels, external, system} payload used by GetAll and by
+	// mutation handlers that return fresh state. Injected by server.go
+	// so TunnelsHandler doesn't need direct references to External /
+	// System tunnel handlers. Falls back to managed-only when nil.
+	buildTunnelsSnapshot func(ctx context.Context) map[string]interface{}
 }
 
 // NewTunnelsHandler creates a new tunnels handler.
@@ -160,29 +166,34 @@ func (h *TunnelsHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 // SetCatalog sets the routing catalog for tunnel list updates.
 func (h *TunnelsHandler) SetCatalog(cat routing.Catalog) { h.catalog = cat }
 
-// PublishTunnelList publishes the full managed tunnel list via SSE (exported for cross-handler use).
+// PublishTunnelList emits resource:invalidated hints for tunnels and
+// routing.tunnels so polling stores refetch immediately. Exported for
+// cross-handler use (Import, ExternalAdopt, Control).
 func (h *TunnelsHandler) PublishTunnelList(ctx context.Context) { h.publishTunnelList(ctx) }
 
-// publishTunnelList publishes the full managed tunnel list via SSE.
-// Called after Create/Update/Delete so frontends get complete data.
+// publishTunnelList emits resource:invalidated hints after any mutation
+// that changes the managed-tunnel list (Create / Update / Delete /
+// Start / Stop / Restart / Import / Adopt / Replace).
 //
-// Also republishes snapshot:tunnels (managed + external + system with
-// fresh dedup) when a snapshot refresher is wired. Without that, the
-// frontend systemTunnels array becomes stale after create/import and
-// the new NDMS interface lingers as a ghost card until the next
-// snapshot-triggering event.
+//   - ResourceTunnels         — the {tunnels, external, system} snapshot
+//                               now served by /api/tunnels/all.
+//   - ResourceRoutingTunnels  — the routing-page catalog (Task 11 will
+//                               migrate the store; the hint fires now
+//                               so the future store picks it up.)
+//
+// Also still refreshes the pingcheck snapshot + rebroadcasts the
+// legacy snapshot:tunnels SSE for any subscribers that haven't migrated
+// yet (hookHandler shares the same refresher).
 func (h *TunnelsHandler) publishTunnelList(ctx context.Context) {
 	if h.bus == nil {
 		return
 	}
-	items, err := h.listItems(ctx)
-	if err != nil {
-		return
-	}
-	h.bus.Publish("tunnels:list", items)
-
-	// Also update routing dropdown
+	publishInvalidated(h.bus, ResourceTunnels, "list-changed")
 	if h.catalog != nil {
+		publishInvalidated(h.bus, ResourceRoutingTunnels, "list-changed")
+		// Task 11 will migrate the routing.tunnels store to polling; until
+		// then, keep the legacy SSE payload too so the routing page
+		// dropdown refreshes on tunnel CRUD.
 		h.bus.Publish("routing:tunnels-updated", h.catalog.ListAll(ctx))
 	}
 
@@ -191,18 +202,28 @@ func (h *TunnelsHandler) publishTunnelList(ctx context.Context) {
 		h.pingCheckSnapshot()
 	}
 
-	// Rebroadcast the full snapshot (managed + external + system) with
-	// managedNativeWGNames-based dedup applied against the now-updated
-	// store state.
+	// Keep the legacy snapshot rebroadcast wired — hookHandler calls the
+	// same refresher on ifcreated/ifdestroyed; dropping it here would
+	// require a separate refactor sweep. It is a no-op when no SSE
+	// client listens to snapshot:tunnels.
 	if h.snapshotRefresh != nil {
 		h.snapshotRefresh(ctx)
 	}
 }
 
-// SetSnapshotRefresher wires the full snapshot:tunnels refresher called
-// after publishTunnelList.
+// SetSnapshotRefresher wires the legacy snapshot:tunnels refresher
+// shared with hookHandler (fires on ifcreated/ifdestroyed). Kept for
+// backward compat with NDMS hook-driven UI refresh; can be removed
+// once the hook fires resource:invalidated directly.
 func (h *TunnelsHandler) SetSnapshotRefresher(fn func(ctx context.Context)) {
 	h.snapshotRefresh = fn
+}
+
+// SetTunnelsSnapshotBuilder wires the composer used by GetAll and
+// mutation handlers that return fresh snapshot state. Server.go
+// typically injects SnapshotBuilder.BuildTunnelsSnapshot.
+func (h *TunnelsHandler) SetTunnelsSnapshotBuilder(fn func(ctx context.Context) map[string]interface{}) {
+	h.buildTunnelsSnapshot = fn
 }
 
 // SetSelfCreateGate wires the gate used to suppress hook-driven snapshot
@@ -459,6 +480,43 @@ func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.Success(w, items)
+}
+
+// GetAll returns the composite tunnels snapshot ({tunnels, external,
+// system}) the frontend polls instead of listening to the legacy
+// snapshot:tunnels SSE event.
+// GET /api/tunnels/all
+func (h *TunnelsHandler) GetAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	h.writeAll(w, r)
+}
+
+// writeAll writes the composite tunnels snapshot. Used by GetAll
+// (REST poll) and by any mutation that wants to return fresh state
+// inline (see Task spec — current Create/Update/Delete return a single
+// entity instead, so this is reserved for future callers).
+func (h *TunnelsHandler) writeAll(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if h.buildTunnelsSnapshot != nil {
+		if payload := h.buildTunnelsSnapshot(ctx); payload != nil {
+			response.Success(w, payload)
+			return
+		}
+	}
+	// Fallback: managed-only (no external / system lists wired).
+	items, err := h.listItems(ctx)
+	if err != nil {
+		response.Error(w, err.Error(), "LIST_FAILED")
+		return
+	}
+	response.Success(w, map[string]interface{}{
+		"tunnels":  items,
+		"external": []interface{}{},
+		"system":   []interface{}{},
+	})
 }
 
 // TrafficHistory returns rate history for a tunnel.

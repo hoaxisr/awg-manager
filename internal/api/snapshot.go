@@ -125,10 +125,9 @@ func (sb *SnapshotBuilder) SendSnapshots(w http.ResponseWriter, flusher http.Flu
 		}
 	}
 
-	// Tunnels snapshot
-	if payload := sb.BuildTunnelsSnapshot(snapCtx); payload != nil {
-		writeSSE(w, flusher, "snapshot:tunnels", payload)
-	}
+	// Tunnels snapshot — removed: frontend polls /api/tunnels/all.
+	// BuildTunnelsSnapshot is still used by TunnelsHandler.GetAll and
+	// by the hook-driven refresher, so it stays on SnapshotBuilder.
 
 	// Servers snapshot
 	if sb.servers != nil {

@@ -145,6 +145,10 @@ class ApiClient {
 		return this.request('/tunnels/list');
 	}
 
+	async getTunnelsAll(): Promise<import('$lib/stores/tunnels').TunnelsSnapshot> {
+		return this.request('/tunnels/all');
+	}
+
 	async getTunnel(id: string): Promise<AWGTunnel> {
 		return this.request(`/tunnels/get?id=${encodeURIComponent(id)}`);
 	}
