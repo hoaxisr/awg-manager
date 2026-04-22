@@ -149,14 +149,9 @@ func (sb *SnapshotBuilder) SendSnapshots(w http.ResponseWriter, flusher http.Flu
 	// hints drive fresh-state fetches; the initial subscribe triggers
 	// the first fetch automatically.
 
-	// PingCheck snapshot
-	if sb.pingCheck != nil {
-		statuses, logs := sb.pingCheck.collectAll()
-		writeSSE(w, flusher, "snapshot:pingcheck", map[string]interface{}{
-			"statuses": statuses,
-			"logs":     logs,
-		})
-	}
+	// PingCheck snapshot removed — the status list is now a polling store
+	// keyed by ResourcePingcheck (Task 12). Logs stream via `pingcheck:log`
+	// and are backfilled by the initial fetch on page mount.
 
 	// Logs snapshot
 	if sb.logging != nil {

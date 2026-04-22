@@ -1,99 +1,37 @@
 import { writable } from 'svelte/store';
-import type { PingCheckStateEvent, SnapshotPingcheckEvent, PingCheckLogEvent } from '$lib/api/events';
+import { createPollingStore } from './polling';
+import { registerStore } from './storeRegistry';
 import type { TunnelPingStatus, PingLogEntry } from '$lib/types';
+import type { PingCheckLogEvent } from '$lib/api/events';
 
-export interface PingCheckStatus {
-	tunnelId: string;
-	status: string;
-	failCount: number;
-	successCount: number;
+// State — polling (cold 30s).
+// Backend returns { enabled, tunnels: TunnelPingStatus[] } at /api/pingcheck/status;
+// unwrap to the tunnel array so consumers get a flat list.
+async function fetchPingcheck(): Promise<TunnelPingStatus[]> {
+	const res = await fetch('/api/pingcheck/status');
+	if (!res.ok) throw new Error(`pingcheck ${res.status}`);
+	const body = await res.json();
+	const tunnels = body?.data?.tunnels;
+	return Array.isArray(tunnels) ? (tunnels as TunnelPingStatus[]) : [];
 }
 
-function createPingCheckStore() {
-	const { subscribe, update } = writable<Map<string, PingCheckStatus>>(new Map());
-	const statusesList = writable<TunnelPingStatus[]>([]);
-	const logsList = writable<PingLogEntry[]>([]);
-	const loaded = writable(false);
+export const pingCheckStatus = createPollingStore<TunnelPingStatus[]>(fetchPingcheck, {
+	staleTime: 30_000,
+	pollInterval: 30_000,
+});
+registerStore('pingcheck', pingCheckStatus);
 
-	return {
-		subscribe,
-		statuses: { subscribe: statusesList.subscribe },
-		logs: { subscribe: logsList.subscribe },
-		loaded: { subscribe: loaded.subscribe },
-		updateStatus(data: PingCheckStateEvent) {
-			// Map raw NDMS status to UI status for nativewg tunnels.
-			const mapStatus = (raw: string, tunnel: TunnelPingStatus | undefined): TunnelPingStatus['status'] => {
-				if (!tunnel || tunnel.backend !== 'nativewg') {
-					// Kernel tunnels already send mapped status.
-					return raw as TunnelPingStatus['status'];
-				}
-				if (raw === 'pass') return 'alive';
-				if (raw === 'fail') {
-					if (data.failCount > 0) return 'recovering';
-					if (data.restartDetected) return 'recovering';
-					return 'alive';
-				}
-				return 'alive';
-			};
+// Stream — logs pushed via SSE `pingcheck:log`. Capped at 200 entries,
+// newest-first to match the previous table ordering.
+export const pingCheckLogs = writable<PingLogEntry[]>([]);
 
-			update(map => {
-				map.set(data.tunnelId, {
-					tunnelId: data.tunnelId,
-					status: data.status,
-					failCount: data.failCount,
-					successCount: data.successCount,
-				});
-				return new Map(map);
-			});
-			// Also merge into statuses list so UI stays in sync
-			statusesList.update(list =>
-				list.map(t => {
-					if (t.tunnelId !== data.tunnelId) return t;
-					const mapped = mapStatus(data.status, t);
-					return { ...t, status: mapped, failCount: data.failCount, successCount: data.successCount };
-				})
-			);
-		},
-		setSnapshot(data: SnapshotPingcheckEvent) {
-			statusesList.set(data.statuses ?? []);
-			logsList.set(data.logs ?? []);
-			loaded.set(true);
-			// Also update the status map from statuses list
-			update(() => {
-				const newMap = new Map<string, PingCheckStatus>();
-				for (const s of (data.statuses ?? [])) {
-					newMap.set(s.tunnelId, {
-						tunnelId: s.tunnelId,
-						status: s.status,
-						failCount: s.failCount,
-						successCount: s.successCount ?? 0,
-					});
-				}
-				return newMap;
-			});
-		},
-		setTunnelEnabled(id: string, enabled: boolean) {
-			statusesList.update(list =>
-				list.map(t =>
-					t.tunnelId === id
-						? { ...t, enabled, status: enabled ? (t.status === 'disabled' ? 'alive' : t.status) : 'disabled' }
-						: t
-				)
-			);
-		},
-		appendLog(entry: PingCheckLogEvent) {
-			logsList.update(list => {
-				const logEntry = entry as unknown as PingLogEntry;
-				return [logEntry, ...list].slice(0, 200);
-			});
-		},
-		clearLogs() {
-			logsList.set([]);
-		},
-		clear() {
-			update(() => new Map());
-		}
-	};
+export function appendPingLog(entry: PingCheckLogEvent) {
+	pingCheckLogs.update(list => {
+		const logEntry = entry as unknown as PingLogEntry;
+		return [logEntry, ...list].slice(0, 200);
+	});
 }
 
-export const pingCheckStatus = createPingCheckStore();
+export function clearPingLogs() {
+	pingCheckLogs.set([]);
+}

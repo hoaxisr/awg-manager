@@ -50,32 +50,15 @@ func NewPingCheckHandler(service PingCheckService, tunnels *storage.AWGTunnelSto
 	}
 }
 
-// SetEventBus sets the event bus for SSE snapshot publishing.
+// SetEventBus sets the event bus for SSE invalidation hints.
 func (h *PingCheckHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
-// PublishSnapshot publishes a full pingcheck snapshot via SSE.
+// PublishSnapshot publishes a resource:invalidated hint for pingcheck so
+// subscribed polling stores refetch. The legacy `snapshot:pingcheck` event
+// was removed (Task 12) — the frontend status list is now a polling store.
+// Logs are still pushed via `pingcheck:log` stream, untouched.
 func (h *PingCheckHandler) PublishSnapshot() {
-	if h.bus == nil {
-		return
-	}
-	statuses, logs := h.collectAll()
-	h.bus.Publish("snapshot:pingcheck", map[string]interface{}{
-		"statuses": statuses,
-		"logs":     logs,
-	})
-}
-
-// collectAll builds pingcheck statuses and logs for API response and SSE snapshots.
-func (h *PingCheckHandler) collectAll() (statuses []pingcheck.TunnelStatus, logs []pingcheck.LogEntry) {
-	statuses = h.service.GetStatus()
-	if statuses == nil {
-		statuses = []pingcheck.TunnelStatus{}
-	}
-	logs = h.service.GetLogs()
-	if logs == nil {
-		logs = []pingcheck.LogEntry{}
-	}
-	return statuses, logs
+	publishInvalidated(h.bus, ResourcePingcheck, "snapshot")
 }
 
 // GetStatus returns the current status of all monitored tunnels.

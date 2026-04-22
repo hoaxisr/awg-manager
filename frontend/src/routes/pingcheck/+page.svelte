@@ -1,15 +1,22 @@
 <script lang="ts">
+	import { onMount, onDestroy } from 'svelte';
 	import type { NativePingCheckStatus } from '$lib/types';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { pingCheckStatus } from '$lib/stores/pingcheck';
+	import { pingCheckStatus, pingCheckLogs, clearPingLogs } from '$lib/stores/pingcheck';
 	import { systemInfo } from '$lib/stores/system';
 	import { PageContainer, LoadingSpinner } from '$lib/components/layout';
+	import { StoreStatusBadge } from '$lib/components/ui';
 	import { PingCheckStatusCard, PingCheckLogsTable, KernelPingCheckModal, NativeWGPingCheckModal } from '$lib/components/pingcheck';
 
-	const statusesStore = pingCheckStatus.statuses;
-	const logsStore = pingCheckStatus.logs;
-	const loadedStore = pingCheckStatus.loaded;
+	let unsub: (() => void) | undefined;
+	onMount(() => { unsub = pingCheckStatus.subscribe(() => {}); });
+	onDestroy(() => unsub?.());
+
+	let snap = $derived($pingCheckStatus);
+	let statuses = $derived(snap.data ?? []);
+	let logs = $derived($pingCheckLogs);
+	let loading = $derived(snap.lastFetchedAt === 0 && snap.status === 'loading');
 
 	let filterTunnelId = $state('');
 	let clearingLogs = $state(false);
@@ -39,7 +46,7 @@
 		clearingLogs = true;
 		try {
 			await api.clearPingCheckLogs();
-			pingCheckStatus.clearLogs();
+			clearPingLogs();
 			notifications.success('Журнал проверок очищен');
 		} catch (e) {
 			notifications.error('Не удалось очистить журнал');
@@ -51,13 +58,13 @@
 	async function toggleTunnelMonitoring(tunnelId: string) {
 		togglingTunnelId = tunnelId;
 		try {
-			const tunnel = $statusesStore.find(t => t.tunnelId === tunnelId);
+			const tunnel = statuses.find(t => t.tunnelId === tunnelId);
 			if (!tunnel) return;
 
 			if (tunnel.backend === 'nativewg') {
 				if (tunnel.enabled) {
 					await api.removeNativePingCheck(tunnelId);
-					pingCheckStatus.setTunnelEnabled(tunnelId, false);
+					pingCheckStatus.invalidate();
 				} else {
 					// For NativeWG, open settings modal to configure.
 					// Clear toggle loading before opening modal — user interaction moves to modal.
@@ -71,7 +78,7 @@
 				const wasEnabled = full.pingCheck?.enabled ?? true;
 				full.pingCheck = { ...full.pingCheck!, enabled: !wasEnabled };
 				await api.updateTunnel(tunnelId, full);
-				pingCheckStatus.setTunnelEnabled(tunnelId, !wasEnabled);
+				pingCheckStatus.invalidate();
 			}
 
 			notifications.success('Мониторинг обновлён');
@@ -88,7 +95,7 @@
 	}
 
 	function openSettings(tunnelId: string) {
-		const tunnel = $statusesStore.find(t => t.tunnelId === tunnelId);
+		const tunnel = statuses.find(t => t.tunnelId === tunnelId);
 		if (!tunnel) return;
 		settingsTunnelId = tunnelId;
 		settingsTunnelName = tunnel.tunnelName;
@@ -119,24 +126,27 @@
 		</div>
 	{/if}
 
-	{#if !$loadedStore}
+	{#if loading}
 		<div class="flex justify-center py-8">
 			<LoadingSpinner size="md" />
 		</div>
-	{:else if $statusesStore.length === 0}
+	{:else if statuses.length === 0}
 		<div class="empty-state">
 			<p>Нет туннелей для мониторинга</p>
 		</div>
 	{:else}
 		<div class="page-header">
-			<h2>Мониторинг</h2>
+			<div class="title-group">
+				<h2>Мониторинг</h2>
+				<StoreStatusBadge store={pingCheckStatus} />
+			</div>
 			<button class="btn btn-primary btn-sm" onclick={triggerCheck} disabled={checking}>
 				{checking ? 'Проверка...' : 'Проверить'}
 			</button>
 		</div>
 
 		<div class="status-grid">
-			{#each $statusesStore as tunnel (tunnel.tunnelId)}
+			{#each statuses as tunnel (tunnel.tunnelId)}
 				<PingCheckStatusCard
 					{tunnel}
 					toggleLoading={togglingTunnelId === tunnel.tunnelId}
@@ -147,8 +157,8 @@
 		</div>
 
 		<PingCheckLogsTable
-			logs={$logsStore}
-			tunnels={$statusesStore}
+			{logs}
+			tunnels={statuses}
 			{filterTunnelId}
 			clearing={clearingLogs}
 			onFilterChange={(id) => { filterTunnelId = id; }}
@@ -161,7 +171,7 @@
 		tunnelId={settingsTunnelId}
 		tunnelName={settingsTunnelName}
 		onclose={() => closeSettings()}
-		onSaved={() => { pingCheckStatus.setTunnelEnabled(settingsTunnelId, true); closeSettings(); }}
+		onSaved={() => { pingCheckStatus.invalidate(); closeSettings(); }}
 	/>
 
 	<NativeWGPingCheckModal
@@ -170,8 +180,8 @@
 		tunnelName={settingsTunnelName}
 		status={nwgSettingsStatus}
 		onclose={() => closeSettings()}
-		onSaved={() => { pingCheckStatus.setTunnelEnabled(settingsTunnelId, true); closeSettings(); }}
-		onRemoved={() => { pingCheckStatus.setTunnelEnabled(settingsTunnelId, false); closeSettings(); }}
+		onSaved={() => { pingCheckStatus.invalidate(); closeSettings(); }}
+		onRemoved={() => { pingCheckStatus.invalidate(); closeSettings(); }}
 	/>
 </PageContainer>
 
@@ -181,6 +191,12 @@
 		justify-content: space-between;
 		align-items: center;
 		margin-bottom: 1rem;
+	}
+
+	.title-group {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 	}
 
 	.status-grid {

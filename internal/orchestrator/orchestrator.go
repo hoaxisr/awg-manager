@@ -323,6 +323,11 @@ func (o *Orchestrator) updateState(action Action) {
 // publishInvalidatedBus posts a resource:invalidated hint. Duplicated
 // here (from internal/api.publishInvalidated) to avoid an import cycle
 // between the orchestrator and the api package.
+//
+// TODO(tech-debt): consolidate publishInvalidatedBus helpers into
+// internal/events once the import-cycle with internal/api is resolved.
+// Currently duplicated in internal/orchestrator and internal/pingcheck
+// because those packages cannot import internal/api.
 func publishInvalidatedBus(bus *events.Bus, resource, reason string) {
 	if bus == nil {
 		return
