@@ -32,16 +32,12 @@ type StaticRouteHandler struct {
 // SetEventBus sets the event bus for SSE publishing.
 func (h *StaticRouteHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
-// publishStaticUpdated publishes the full static route list via SSE (best-effort).
-func (h *StaticRouteHandler) publishStaticUpdated() {
-	if h.bus == nil {
-		return
-	}
-	list, err := h.svc.List()
-	if err != nil {
-		return
-	}
-	h.bus.Publish("routing:static-updated", list)
+// publishStaticUpdated posts a resource:invalidated hint so clients refetch
+// their static route list. Mutations also return the fresh list inline so
+// the caller's store can applyMutationResponse without waiting for the
+// hint.
+func (h *StaticRouteHandler) publishStaticUpdated(reason string) {
+	publishInvalidated(h.bus, ResourceRoutingStaticRoutes, reason)
 }
 
 // NewStaticRouteHandler creates a new static route handler.
@@ -84,7 +80,7 @@ func (h *StaticRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("static-route", created.ID, "Route list created: "+created.Name)
 
 	response.Success(w, created)
-	h.publishStaticUpdated()
+	h.publishStaticUpdated("create")
 }
 
 // Update updates an existing static route list.
@@ -103,7 +99,7 @@ func (h *StaticRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("static-route", updated.ID, "Route list updated: "+updated.Name)
 
 	response.Success(w, updated)
-	h.publishStaticUpdated()
+	h.publishStaticUpdated("update")
 }
 
 // Delete deletes a static route list by ID.
@@ -127,7 +123,7 @@ func (h *StaticRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("static-route", id, "Route list deleted")
 
 	response.Success(w, map[string]bool{"deleted": true})
-	h.publishStaticUpdated()
+	h.publishStaticUpdated("delete")
 }
 
 // SetEnabled toggles the enabled state of a static route list.
@@ -155,7 +151,7 @@ func (h *StaticRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) 
 	h.log.Info("static-route", id, "Route list "+action)
 
 	response.Success(w, map[string]bool{"success": true})
-	h.publishStaticUpdated()
+	h.publishStaticUpdated("set-enabled")
 }
 
 // staticRouteImportReq is the shape of /api/static-route/import body.
@@ -182,5 +178,5 @@ func (h *StaticRouteHandler) Import(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("Route list imported: %s (%d subnets)", created.Name, len(created.Subnets)))
 
 	response.Success(w, created)
-	h.publishStaticUpdated()
+	h.publishStaticUpdated("import")
 }

@@ -483,6 +483,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// HydraRoute settings (protected + boot guarded)
 	if s.hydraService != nil {
 		hrHandler := api.NewHydraRouteHandler(s.hydraService)
+		hrHandler.SetEventBus(s.bus)
 		mux.HandleFunc("/api/hydraroute/config", guarded(hrHandler.GetConfig))
 		mux.HandleFunc("/api/hydraroute/config/update", guarded(hrHandler.UpdateConfig))
 		mux.HandleFunc("/api/hydraroute/geo-files", guarded(hrHandler.ListGeoFiles))
@@ -526,6 +527,16 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	routingHandler.SetEventBus(s.bus)
 	mux.HandleFunc("/api/routing/tunnels", guarded(routingHandler.Tunnels))
 	mux.HandleFunc("/api/routing/refresh", guarded(routingHandler.Refresh))
+
+	// Routing: per-section GET endpoints (Task 11 — polling stores).
+	// Reuse the dedicated service handlers so there is a single source of
+	// truth per section. These URLs mirror the frontend store paths
+	// (frontend/src/lib/stores/routing.ts).
+	mux.HandleFunc("/api/routing/dns-routes", guarded(dnsRouteHandler.List))
+	mux.HandleFunc("/api/routing/static-routes", guarded(staticRouteHandler.List))
+	// Access policies + client routes + policy interfaces are registered
+	// further below once their handlers exist (see "Routing polling GET
+	// aliases" below).
 
 	// DNS resolve for routing search
 	resolveHandler := api.NewResolveHandler()
@@ -642,6 +653,30 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/client-routes/delete", guarded(crHandler.HandleDelete))
 	mux.HandleFunc("/api/client-routes/toggle", guarded(crHandler.HandleToggle))
 
+	// Routing polling GET aliases for sections whose handlers live later
+	// in this function (accesspolicy + clientroute). See Task 11.
+	mux.HandleFunc("/api/routing/client-routes", guarded(crHandler.HandleList))
+	// Policy devices endpoint is unconditional (hotspot RCI works on both OSes).
+	mux.HandleFunc("/api/routing/policy-devices", guarded(accessPolicyHandler.ListDevices))
+	if osdetect.Is5() {
+		mux.HandleFunc("/api/routing/access-policies", guarded(accessPolicyHandler.List))
+		mux.HandleFunc("/api/routing/policy-interfaces", guarded(accessPolicyHandler.ListGlobalInterfaces))
+	} else {
+		// OS4: access policies + global-interfaces are NOT available.
+		// Return empty arrays so the polling stores stay in the 'fresh'
+		// state instead of erroring and showing a badge.
+		emptyArr := func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		}
+		mux.HandleFunc("/api/routing/access-policies", guarded(emptyArr))
+		mux.HandleFunc("/api/routing/policy-interfaces", guarded(emptyArr))
+	}
+
 	// Diagnostics (protected + boot guarded)
 	mux.HandleFunc("/api/diagnostics/run", guarded(diagHandler.Run))
 	mux.HandleFunc("/api/diagnostics/status", guarded(diagHandler.Status))
@@ -695,9 +730,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	if s.bootStatusFn != nil {
 		sb.SetBootStatusFunc(s.bootStatusFn)
 	}
-	sb.SetRoutingSnapshotFunc(func(ctx context.Context) interface{} {
-		return s.catalog.SnapshotAll(ctx)
-	})
+	// SetRoutingSnapshotFunc removed — routing is now 7 per-section
+	// polling stores (Task 11); no cold-tier SSE snapshot is needed.
 	sb.SetSystemSnapshotFunc(func(ctx context.Context) interface{} {
 		return systemHandler.BuildSystemInfo()
 	})

@@ -66,28 +66,6 @@ export interface SnapshotServersEvent {
 	wanIP: string;
 }
 
-export type RoutingSectionKey =
-	| 'dnsRoutes'
-	| 'staticRoutes'
-	| 'tunnels'
-	| 'accessPolicies'
-	| 'policyDevices'
-	| 'policyInterfaces'
-	| 'clientRoutes'
-	| 'hydrarouteStatus';
-
-export interface SnapshotRoutingEvent {
-	dnsRoutes: import('$lib/types').DnsRoute[];
-	staticRoutes: import('$lib/types').StaticRouteList[];
-	tunnels: import('$lib/types').RoutingTunnel[];
-	accessPolicies: import('$lib/types').AccessPolicy[];
-	policyDevices: import('$lib/types').PolicyDevice[];
-	policyInterfaces: import('$lib/types').PolicyGlobalInterface[];
-	clientRoutes: import('$lib/types').ClientRoute[];
-	hydrarouteStatus?: import('$lib/types').HydraRouteStatus;
-	missing?: RoutingSectionKey[];
-}
-
 export interface SnapshotPingcheckEvent {
 	statuses: import('$lib/types').TunnelPingStatus[];
 	logs: import('$lib/types').PingLogEntry[];
@@ -147,7 +125,9 @@ export interface SSEEventHandlers {
 	onSnapshotSystem?: (data: import('$lib/types').SystemInfo) => void;
 	onSnapshotTunnels?: (data: SnapshotTunnelsEvent) => void;
 	onSnapshotServers?: (data: SnapshotServersEvent) => void;
-	onSnapshotRouting?: (data: SnapshotRoutingEvent) => void;
+	// onSnapshotRouting + all onRouting*Updated removed in Task 11 —
+	// the 7 routing subsections are now polling stores invalidated via
+	// resource:invalidated hints (see lib/stores/routing.ts).
 	onSnapshotPingcheck?: (data: SnapshotPingcheckEvent) => void;
 	onSnapshotLogs?: (data: SnapshotLogsEvent) => void;
 
@@ -156,13 +136,6 @@ export interface SSEEventHandlers {
 	onTunnelConnectivity?: (data: TunnelConnectivityEvent) => void;
 	onPingCheckLog?: (data: PingCheckLogEvent) => void;
 	onServerUpdated?: (data: SnapshotServersEvent) => void;
-	onRoutingDnsUpdated?: (data: import('$lib/types').DnsRoute[]) => void;
-	onRoutingStaticUpdated?: (data: import('$lib/types').StaticRouteList[]) => void;
-	onRoutingPoliciesUpdated?: (data: import('$lib/types').AccessPolicy[]) => void;
-	onRoutingPolicyDevicesUpdated?: (data: import('$lib/types').PolicyDevice[]) => void;
-	onRoutingPolicyInterfacesUpdated?: (data: import('$lib/types').PolicyGlobalInterface[]) => void;
-	onRoutingClientRoutesUpdated?: (data: import('$lib/types').ClientRoute[]) => void;
-	onRoutingTunnelsUpdated?: (data: import('$lib/types').RoutingTunnel[]) => void;
 	onTunnelsList?: (data: import('$lib/types').TunnelListItem[]) => void;
 	onDnsRouteFailover?: (data: {
 		listId: string;
@@ -233,7 +206,6 @@ export function connectSSE(handlers: SSEEventHandlers): () => void {
 	handle('snapshot:system', handlers.onSnapshotSystem);
 	handle('snapshot:tunnels', handlers.onSnapshotTunnels);
 	handle('snapshot:servers', handlers.onSnapshotServers);
-	handle('snapshot:routing', handlers.onSnapshotRouting);
 	handle('snapshot:pingcheck', handlers.onSnapshotPingcheck);
 	handle('snapshot:logs', handlers.onSnapshotLogs);
 
@@ -242,13 +214,6 @@ export function connectSSE(handlers: SSEEventHandlers): () => void {
 	handle('tunnel:connectivity', handlers.onTunnelConnectivity);
 	handle('pingcheck:log', handlers.onPingCheckLog);
 	handle('server:updated', handlers.onServerUpdated);
-	handle('routing:dns-updated', handlers.onRoutingDnsUpdated);
-	handle('routing:static-updated', handlers.onRoutingStaticUpdated);
-	handle('routing:policies-updated', handlers.onRoutingPoliciesUpdated);
-	handle('routing:policy-devices-updated', handlers.onRoutingPolicyDevicesUpdated);
-	handle('routing:policy-interfaces-updated', handlers.onRoutingPolicyInterfacesUpdated);
-	handle('routing:client-routes-updated', handlers.onRoutingClientRoutesUpdated);
-	handle('routing:tunnels-updated', handlers.onRoutingTunnelsUpdated);
 	handle('tunnels:list', handlers.onTunnelsList);
 	handle('dnsroute:failover', handlers.onDnsRouteFailover);
 

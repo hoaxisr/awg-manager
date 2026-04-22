@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
@@ -18,28 +17,15 @@ type AccessPolicyHandler struct {
 // SetEventBus sets the event bus for SSE publishing.
 func (h *AccessPolicyHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
-// publishPoliciesUpdated publishes the full policy list via SSE (best-effort).
-func (h *AccessPolicyHandler) publishPoliciesUpdated(ctx context.Context) {
-	if h.bus == nil {
-		return
-	}
-	list, err := h.svc.List(ctx)
-	if err != nil {
-		return
-	}
-	h.bus.Publish("routing:policies-updated", list)
+// publishPoliciesUpdated posts a resource:invalidated hint for the access
+// policy list so clients refetch.
+func (h *AccessPolicyHandler) publishPoliciesUpdated(reason string) {
+	publishInvalidated(h.bus, ResourceRoutingAccessPolicies, reason)
 }
 
-// publishDevicesUpdated publishes the full device list via SSE (best-effort).
-func (h *AccessPolicyHandler) publishDevicesUpdated(ctx context.Context) {
-	if h.bus == nil {
-		return
-	}
-	devices, err := h.svc.ListDevices(ctx)
-	if err != nil {
-		return
-	}
-	h.bus.Publish("routing:policy-devices-updated", devices)
+// publishDevicesUpdated posts a resource:invalidated hint for the device list.
+func (h *AccessPolicyHandler) publishDevicesUpdated(reason string) {
+	publishInvalidated(h.bus, ResourceRoutingPolicyDevices, reason)
 }
 
 // NewAccessPolicyHandler creates a new access policy handler.
@@ -82,7 +68,7 @@ func (h *AccessPolicyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Success(w, policy)
-	h.publishPoliciesUpdated(r.Context())
+	h.publishPoliciesUpdated("create")
 }
 
 // Delete removes an access policy.
@@ -102,7 +88,7 @@ func (h *AccessPolicyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
-	h.publishPoliciesUpdated(r.Context())
+	h.publishPoliciesUpdated("delete")
 }
 
 // SetDescription updates the description of an access policy.
@@ -125,7 +111,7 @@ func (h *AccessPolicyHandler) SetDescription(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
-	h.publishPoliciesUpdated(r.Context())
+	h.publishPoliciesUpdated("set-description")
 }
 
 // SetStandalone enables or disables standalone mode on an access policy.
@@ -148,7 +134,7 @@ func (h *AccessPolicyHandler) SetStandalone(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
-	h.publishPoliciesUpdated(r.Context())
+	h.publishPoliciesUpdated("set-standalone")
 }
 
 // PermitInterface handles permit/deny operations for policy interfaces.
@@ -188,7 +174,7 @@ func (h *AccessPolicyHandler) permitInterfaceAdd(w http.ResponseWriter, r *http.
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
-	h.publishPoliciesUpdated(r.Context())
+	h.publishPoliciesUpdated("permit-interface")
 }
 
 func (h *AccessPolicyHandler) permitInterfaceRemove(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +193,7 @@ func (h *AccessPolicyHandler) permitInterfaceRemove(w http.ResponseWriter, r *ht
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
-	h.publishPoliciesUpdated(r.Context())
+	h.publishPoliciesUpdated("deny-interface")
 }
 
 // AssignDevice handles device assignment to policies.
@@ -246,8 +232,8 @@ func (h *AccessPolicyHandler) assignDevicePost(w http.ResponseWriter, r *http.Re
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
-	h.publishPoliciesUpdated(r.Context())
-	h.publishDevicesUpdated(r.Context())
+	h.publishPoliciesUpdated("assign-device")
+	h.publishDevicesUpdated("assign-device")
 }
 
 func (h *AccessPolicyHandler) unassignDeviceDelete(w http.ResponseWriter, r *http.Request) {
@@ -261,8 +247,8 @@ func (h *AccessPolicyHandler) unassignDeviceDelete(w http.ResponseWriter, r *htt
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
-	h.publishPoliciesUpdated(r.Context())
-	h.publishDevicesUpdated(r.Context())
+	h.publishPoliciesUpdated("unassign-device")
+	h.publishDevicesUpdated("unassign-device")
 }
 
 // ListDevices returns all LAN devices with their policy assignments.
@@ -319,5 +305,5 @@ func (h *AccessPolicyHandler) SetInterfaceUp(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
-	h.publishPoliciesUpdated(r.Context())
+	publishInvalidated(h.bus, ResourceRoutingPolicyInterfaces, "set-interface-up")
 }

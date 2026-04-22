@@ -1,6 +1,7 @@
 <script lang="ts">
+    import { onMount, onDestroy } from 'svelte';
     import { page } from '$app/stores';
-    import { routing } from '$lib/stores/routing';
+    import { routing, subscribeRouting, invalidateAllRouting } from '$lib/stores/routing';
     import { systemInfo } from '$lib/stores/system';
     import { api } from '$lib/api/client';
     import { notifications } from '$lib/stores/notifications';
@@ -13,6 +14,25 @@
     import ClientRoutesTab from './ClientRoutesTab.svelte';
     import { HrNeoTab } from '$lib/components/hrneo';
 
+    // Per-section polling stores — subscribe here so all 7 fetch while
+    // the routing page is open. Unsubscribed on destroy to stop polling.
+    let unsubRouting: (() => void) | null = null;
+
+    // HR Neo installation status — used to decide whether to show the
+    // HR Neo tab and the DNS engine availability. Previously this was
+    // surfaced through the routing SSE snapshot; Task 11 switched routing
+    // to per-section polling, so we fetch HR status once here on mount.
+    let hydrarouteInstalled = $state(false);
+
+    onMount(async () => {
+        unsubRouting = subscribeRouting();
+        try {
+            const s = await api.getHydraRouteStatus();
+            hydrarouteInstalled = !!s.installed;
+        } catch { /* HR status unavailable — treat as not installed */ }
+    });
+    onDestroy(() => { unsubRouting?.(); });
+
     let activeTab = $state<'hrneo' | 'dns' | 'ip' | 'policy' | 'clientvpn'>('dns');
 
     // Deep link: ?tab=hrneo from the Settings page HR NEO card, etc.
@@ -23,7 +43,6 @@
         }
     });
     let isOS5 = $derived($systemInfo.data?.isOS5 ?? false);
-    let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
     let hasDnsEngine = $derived(isOS5 || hydrarouteInstalled);
 
     // Search → edit rule integration
@@ -57,6 +76,10 @@
         refreshing = true;
         try {
             const res = await api.refreshRouting();
+            // Force every section store to refetch now (the backend also
+            // posts resource:invalidated hints, but a local kick keeps the
+            // UI responsive even if SSE happens to be lagging).
+            invalidateAllRouting();
             if (res.missing.length === 0) {
                 notifications.success('Данные получены');
             } else {

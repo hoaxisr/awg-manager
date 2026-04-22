@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
@@ -11,12 +12,18 @@ import (
 // HydraRouteHandler handles HydraRoute Neo settings API endpoints.
 type HydraRouteHandler struct {
 	svc *hydraroute.Service
+	bus *events.Bus
 }
 
 // NewHydraRouteHandler creates a new HydraRoute settings handler.
 func NewHydraRouteHandler(svc *hydraroute.Service) *HydraRouteHandler {
 	return &HydraRouteHandler{svc: svc}
 }
+
+// SetEventBus wires the SSE bus so HR Neo mutations that touch the DNS
+// route list (policy order, native rule import, config write) can emit
+// resource:invalidated hints for `routing.dnsRoutes`.
+func (h *HydraRouteHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
 // GetConfig returns the current HydraRoute config.
 func (h *HydraRouteHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
@@ -254,6 +261,7 @@ func (h *HydraRouteHandler) SetPolicyOrder(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	publishInvalidated(h.bus, ResourceRoutingDnsRoutes, "policy-order")
 	response.Success(w, map[string][]string{"order": req.Order})
 }
 

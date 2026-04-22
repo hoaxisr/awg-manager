@@ -11,17 +11,16 @@ import (
 // SnapshotBuilder collects current state from all services for SSE snapshots.
 type SnapshotBuilder struct {
 	tunnels         *TunnelsHandler
-	external        *ExternalTunnelsHandler
-	systemTun       *SystemTunnelsHandler
-	servers         *ServersHandler
-	managed         *ManagedServerHandler
-	pingCheck       *PingCheckHandler
-	logging         *LoggingHandler
-	routingSnapshot func(ctx context.Context) interface{} // full routing data (Task 6)
-	systemSnapshot  func(ctx context.Context) interface{} // system info snapshot
-	bootInProgress  func() bool
-	wanIP           func(ctx context.Context) string
-	instanceID      string
+	external       *ExternalTunnelsHandler
+	systemTun      *SystemTunnelsHandler
+	servers        *ServersHandler
+	managed        *ManagedServerHandler
+	pingCheck      *PingCheckHandler
+	logging        *LoggingHandler
+	systemSnapshot func(ctx context.Context) interface{} // system info snapshot
+	bootInProgress func() bool
+	wanIP          func(ctx context.Context) string
+	instanceID     string
 }
 
 // NewSnapshotBuilder creates a new SnapshotBuilder.
@@ -58,11 +57,6 @@ func (sb *SnapshotBuilder) SetBootStatusFunc(fn func() bool) {
 // SetSystemSnapshotFunc sets the callback to collect system info.
 func (sb *SnapshotBuilder) SetSystemSnapshotFunc(fn func(ctx context.Context) interface{}) {
 	sb.systemSnapshot = fn
-}
-
-// SetRoutingSnapshotFunc sets the callback to collect routing snapshot data.
-func (sb *SnapshotBuilder) SetRoutingSnapshotFunc(fn func(ctx context.Context) interface{}) {
-	sb.routingSnapshot = fn
 }
 
 // SetWANIPFunc sets the callback to get the WAN IP address.
@@ -150,13 +144,10 @@ func (sb *SnapshotBuilder) SendSnapshots(w http.ResponseWriter, flusher http.Flu
 		writeSSE(w, flusher, "snapshot:servers", payload)
 	}
 
-	// Routing snapshot
-	if sb.routingSnapshot != nil {
-		data := sb.routingSnapshot(snapCtx)
-		if data != nil {
-			writeSSE(w, flusher, "snapshot:routing", data)
-		}
-	}
+	// Routing snapshot removed — each of the 7 sections has its own
+	// polling store keyed by ResourceRoutingXxx (Task 11). Invalidation
+	// hints drive fresh-state fetches; the initial subscribe triggers
+	// the first fetch automatically.
 
 	// PingCheck snapshot
 	if sb.pingCheck != nil {

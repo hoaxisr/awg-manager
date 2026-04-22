@@ -13,7 +13,6 @@
 	import { tunnels } from '$lib/stores/tunnels';
 	import { logEntries } from '$lib/stores/logs';
 	import { pingCheckStatus } from '$lib/stores/pingcheck';
-	import { routing } from '$lib/stores/routing';
 	import { systemInfo } from '$lib/stores/system';
 	import { feedTraffic } from '$lib/stores/traffic';
 	import { applyTraffic as singboxApplyTraffic, applyDelay as singboxApplyDelay } from '$lib/stores/singbox';
@@ -89,7 +88,8 @@
 			// onSnapshotTunnels removed — tunnels store polls /api/tunnels/all.
 			// System-tunnel traffic feed moved into the store's subscriber
 			// on /+page.svelte (runs on every polling refresh).
-			onSnapshotRouting: (data) => routing.setSnapshot(data),
+			// onSnapshotRouting removed — routing is now 7 per-section polling
+			// stores with invalidation hints (Task 11).
 			onSnapshotPingcheck: (data) => pingCheckStatus.setSnapshot(data),
 			onSnapshotLogs: (data) => logEntries.setSnapshot(data),
 
@@ -107,14 +107,11 @@
 			// onTunnelState / onTunnelCreated / onTunnelDeleted / onTunnelUpdated /
 			// onTunnelsList removed — polling + resource:invalidated hint covers them.
 
-			// Routing incremental
-			onRoutingDnsUpdated: (data) => routing.setDnsRoutes(data),
-			onRoutingStaticUpdated: (data) => routing.setStaticRoutes(data),
-			onRoutingPoliciesUpdated: (data) => routing.setPolicies(data),
-			onRoutingPolicyDevicesUpdated: (data) => routing.setPolicyDevices(data),
-			onRoutingPolicyInterfacesUpdated: (data) => routing.setPolicyInterfaces(data),
-			onRoutingClientRoutesUpdated: (data) => routing.setClientRoutes(data),
-			onRoutingTunnelsUpdated: (data) => routing.setRoutingTunnels(data),
+			// Routing incremental — removed in Task 11. Each of the 7 sections
+			// is now a polling store keyed by ResourceRoutingXxx; the backend
+			// publishes resource:invalidated hints which trigger immediate
+			// refetches via storeRegistry. onDnsRouteFailover stays because
+			// it is a user-visible notification, not a state stream.
 			onDnsRouteFailover: (data) => {
 				if (data.action === 'switched') {
 					notifications.warning(`DNS-маршрут "${data.listName}" переключён: ${data.fromTunnel || '—'} → ${data.toTunnel || 'нет резерва'}`);
