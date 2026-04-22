@@ -2,7 +2,11 @@
     import type { PollingStore } from '$lib/stores/polling';
 
     interface Props {
-        store: PollingStore<unknown>;
+        // `PollingStore<any>` because the badge only reads status/error/age/
+        // lastFetchedAt/consecutiveFailures — it never calls applyMutationResponse,
+        // which is the method whose invariant T prevents assigning typed stores
+        // to `PollingStore<unknown>`.
+        store: PollingStore<any>;
         /**
          * Must match the `errorThreshold` passed to createPollingStore for this store.
          * Default 3 matches the createPollingStore default. If the store was created

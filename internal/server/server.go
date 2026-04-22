@@ -581,6 +581,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// VPN Servers (protected + boot guarded)
 	serverHandler := api.NewServersHandler(s.ndmsQueries, s.settings, s.tunnels)
 	mux.HandleFunc("/api/servers", guarded(serverHandler.List))
+	mux.HandleFunc("/api/servers/all", guarded(serverHandler.GetAll))
 	mux.HandleFunc("/api/servers/get", guarded(serverHandler.Get))
 	mux.HandleFunc("/api/servers/config", guarded(serverHandler.Config))
 	mux.HandleFunc("/api/servers/mark", guarded(serverHandler.Mark))

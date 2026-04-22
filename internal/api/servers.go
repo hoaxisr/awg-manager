@@ -25,9 +25,9 @@ func isValidWireguardName(name string) bool {
 }
 
 // ServersHandler handles VPN server interface operations.
-// Periodic server:updated snapshots are driven by ndms/metrics.Poller
-// via PublishServerSnapshot; this handler only broadcasts on mark/unmark
-// and on poller-triggered callbacks.
+// Frontend now polls GET /api/servers/all; this handler only emits
+// resource:invalidated hints on mark/unmark and poller metrics ticks so
+// subscribers refetch immediately instead of waiting for the next poll.
 type ServersHandler struct {
 	queries  *query.Queries
 	settings *storage.SettingsStore
@@ -44,30 +44,18 @@ func (h *ServersHandler) SetEventBus(bus *events.Bus) {
 // SetManagedHandler sets the managed server handler for shared publishing.
 func (h *ServersHandler) SetManagedHandler(m *ManagedServerHandler) { h.managed = m }
 
-// PublishServerSnapshot publishes the full server:updated snapshot via SSE.
-// Implements metrics.ServerSnapshotPublisher so the Poller can trigger a
-// refresh whenever any server's peer metrics change.
+// PublishServerSnapshot broadcasts a resource:invalidated hint. Kept
+// as a method on *ServersHandler because ndms/metrics.Poller calls it
+// through the ServerSnapshotPublisher interface.
 func (h *ServersHandler) PublishServerSnapshot(ctx context.Context) {
-	h.publishServerUpdated(ctx)
+	publishInvalidated(h.bus, ResourceServers, "metrics-tick")
 }
 
-// publishServerUpdated publishes the full server snapshot via SSE (best-effort).
-func (h *ServersHandler) publishServerUpdated(ctx context.Context) {
-	if h.bus == nil {
-		return
-	}
-	servers, err := h.listServers(ctx)
-	if err != nil {
-		return
-	}
-	payload := map[string]interface{}{
-		"servers": servers,
-	}
-	if h.managed != nil {
-		payload["managed"] = h.managed.getManaged()
-		payload["managedStats"] = h.managed.getManagedStats(ctx)
-	}
-	h.bus.Publish("server:updated", payload)
+// publishServerInvalidated broadcasts a resource:invalidated hint for
+// servers. Used by ManagedServerHandler after managed CRUD so its
+// subscribers refetch immediately.
+func (h *ServersHandler) publishServerInvalidated(reason string) {
+	publishInvalidated(h.bus, ResourceServers, reason)
 }
 
 // NewServersHandler creates a new servers handler.
@@ -148,6 +136,42 @@ func (h *ServersHandler) List(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, servers)
 }
 
+// writeAll writes the composite servers snapshot. Used by GetAll (REST)
+// and by Mark/Unmark so mutations return fresh state inline.
+func (h *ServersHandler) writeAll(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	list, err := h.listServers(ctx)
+	if err != nil {
+		response.Error(w, err.Error(), "LIST_FAILED")
+		return
+	}
+	payload := map[string]any{
+		"servers":      list,
+		"managed":      nil,
+		"managedStats": nil,
+		"wanIP":        "",
+	}
+	if h.managed != nil {
+		payload["managed"] = h.managed.getManaged()
+		payload["managedStats"] = h.managed.getManagedStats(ctx)
+	}
+	if ip, err := testing.GetWANIPWithFallback(ctx, h.queries.WANInterfaceAddress); err == nil {
+		payload["wanIP"] = ip
+	}
+	response.Success(w, payload)
+}
+
+// GetAll returns the composite servers snapshot (list + managed + stats + wanIP).
+// Replaces the snapshot:servers SSE event — the frontend polls this.
+// GET /api/servers/all
+func (h *ServersHandler) GetAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	h.writeAll(w, r)
+}
+
 // Get returns a single server with all peers.
 // GET /api/servers/get?name=Wireguard0
 func (h *ServersHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -189,6 +213,7 @@ func (h *ServersHandler) Config(w http.ResponseWriter, r *http.Request) {
 // Mark handles mark/unmark operations for server interfaces.
 // POST /api/servers/mark?name=Wireguard0 — mark as server
 // DELETE /api/servers/mark?name=Wireguard0 — unmark (return to tunnels)
+// Both return the fresh ServersSnapshot as body.
 func (h *ServersHandler) Mark(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	if !h.validateName(w, name) {
@@ -201,18 +226,18 @@ func (h *ServersHandler) Mark(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, err.Error(), "MARK_FAILED")
 			return
 		}
-		response.Success(w, map[string]bool{"ok": true})
-		h.publishServerUpdated(r.Context())
 	case http.MethodDelete:
 		if err := h.settings.UnmarkServerInterface(name); err != nil {
 			response.Error(w, err.Error(), "UNMARK_FAILED")
 			return
 		}
-		response.Success(w, map[string]bool{"ok": true})
-		h.publishServerUpdated(r.Context())
 	default:
 		response.MethodNotAllowed(w)
+		return
 	}
+
+	publishInvalidated(h.bus, ResourceServers, "mark-changed")
+	h.writeAll(w, r)
 }
 
 // WANIP returns the external WAN IP for .conf generation.

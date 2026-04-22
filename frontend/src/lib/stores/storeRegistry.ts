@@ -35,11 +35,11 @@ const registry = new Map<string, PollingStore<unknown>>();
  * will trigger an immediate refetch on that store. Typed by `ResourceKey`
  * so typos become compile errors rather than silent invalidation misses.
  */
-export function registerStore(resource: ResourceKey, store: PollingStore<unknown>): void {
+export function registerStore<T>(resource: ResourceKey, store: PollingStore<T>): void {
 	if (import.meta.env.DEV && registry.has(resource)) {
 		console.warn(`storeRegistry: overwriting store for "${resource}"`);
 	}
-	registry.set(resource, store);
+	registry.set(resource, store as PollingStore<unknown>);
 }
 
 /**

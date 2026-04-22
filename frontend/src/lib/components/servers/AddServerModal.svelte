@@ -1,6 +1,8 @@
 <script lang="ts">
 	import type { SystemTunnel } from '$lib/types';
 	import { api } from '$lib/api/client';
+	import { servers } from '$lib/stores/servers';
+	import { notifications } from '$lib/stores/notifications';
 	import { Modal } from '$lib/components/ui';
 	import { LoadingSpinner } from '$lib/components/layout';
 
@@ -39,11 +41,12 @@
 		if (adding) return;
 		adding = id;
 		try {
-			await api.markServerInterface(id);
+			const fresh = await api.markServerInterface(id);
+			servers.applyMutationResponse(fresh);
 			onAdded();
 			onclose();
-		} catch {
-			// error handled by caller
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Ошибка добавления');
 		} finally {
 			adding = '';
 		}
