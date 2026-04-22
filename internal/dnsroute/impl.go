@@ -567,6 +567,8 @@ func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) e
 		return fmt.Errorf("dns route list %q not found", id)
 	}
 
+	listName := data.Lists[idx].Name
+	listBackend := data.Lists[idx].Backend
 	data.Lists[idx].Enabled = enabled
 	data.Lists[idx].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
@@ -574,7 +576,7 @@ func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) e
 		return fmt.Errorf("save after set-enabled: %w", err)
 	}
 
-	s.log.Infof("set enabled=%v for dns route list %q", enabled, id)
+	s.logInfo("set-enabled", id, fmt.Sprintf("enabled=%v name=%q backend=%s", enabled, listName, listBackend))
 
 	if err := s.reconcileAll(ctx); err != nil {
 		s.logError("set-enabled", id, "Reconcile failed", err.Error())

@@ -141,6 +141,20 @@ func (s *ServiceImpl) reconcile(ctx context.Context) error {
 	s.logInfo("reconcile", "", fmt.Sprintf("Reconciling: %d group deletes, %d group updates, %d route deletes, %d route upserts",
 		len(diff.groupDeletes), len(diff.groupUpdates), len(diff.routeDeletes), len(diff.routeUpserts)))
 
+	// Detailed names — the count-only log above loses diagnostic power when
+	// reconcile runs but the router still shows an old entry; these lines
+	// let triage see exactly which AWG_* groups/routes were targeted.
+	if len(diff.groupDeletes) > 0 {
+		s.logInfo("reconcile", "", fmt.Sprintf("Group deletes: %v", diff.groupDeletes))
+	}
+	if len(diff.routeDeletes) > 0 {
+		pairs := make([]string, 0, len(diff.routeDeletes))
+		for _, rd := range diff.routeDeletes {
+			pairs = append(pairs, rd.Group+"->"+rd.Iface)
+		}
+		s.logInfo("reconcile", "", fmt.Sprintf("Route deletes: %v", pairs))
+	}
+
 	applyErr := s.applyDiff(ctx, diff)
 	if applyErr != nil {
 		s.logError("reconcile", "", "Partial apply failure", applyErr.Error())
@@ -402,15 +416,19 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff) error {
 			})
 		}
 		if err := s.commands.DNSRoutes.DeleteRoutes(ctx, specs); err != nil {
+			s.logError("applyDiff", "", fmt.Sprintf("Phase1: DeleteRoutes(%d) failed", len(specs)), err.Error())
 			return fmt.Errorf("delete routes: %w", err)
 		}
+		s.logInfo("applyDiff", "", fmt.Sprintf("Phase1: deleted %d routes OK", len(specs)))
 	}
 
 	// Phase 2: Delete groups
 	if len(diff.groupDeletes) > 0 {
 		if err := s.commands.ObjectGroups.DeleteGroups(ctx, diff.groupDeletes); err != nil {
+			s.logError("applyDiff", "", fmt.Sprintf("Phase2: DeleteGroups(%d) failed", len(diff.groupDeletes)), err.Error())
 			return fmt.Errorf("delete groups: %w", err)
 		}
+		s.logInfo("applyDiff", "", fmt.Sprintf("Phase2: deleted %d groups OK", len(diff.groupDeletes)))
 	}
 
 	// Phase 3: Create/update groups (incremental domain add/remove)
