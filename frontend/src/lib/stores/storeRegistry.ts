@@ -54,3 +54,15 @@ export function registerStore<T>(resource: ResourceKey, store: PollingStore<T>):
 export function invalidateResource(resource: string): void {
 	registry.get(resource)?.invalidate();
 }
+
+/**
+ * Invalidate every registered store. Called when the backend recovers
+ * from a full outage (Tier 3 overlay) so all polling stores pick up
+ * fresh state rather than keeping whatever cached data they had before
+ * the outage.
+ */
+export function invalidateAll(): void {
+	for (const store of registry.values()) {
+		store.invalidate();
+	}
+}

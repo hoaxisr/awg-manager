@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { logEntries } from '$lib/stores/logs';
@@ -36,6 +37,20 @@
 	const groupLabels: Record<string, string> = {
 		tunnel: 'Tunnel', routing: 'Routing', server: 'Server', system: 'System',
 	};
+
+	onMount(async () => {
+		// Fetch the initial page — Task 15 removed the `onSnapshotLogs` SSE
+		// handler, so the client must now pull the first page over REST.
+		try {
+			const resp = await api.getLogs({ limit: LIMIT, offset: 0 });
+			logEntries.setEntries(resp.logs);
+			logEntries.setTotal(resp.total);
+		} catch (e) {
+			notifications.error('Не удалось загрузить журнал');
+		} finally {
+			logEntries.setLoaded(true);
+		}
+	});
 
 	async function loadMore() {
 		loadingMore = true;

@@ -16,7 +16,7 @@
 	import { systemInfo } from '$lib/stores/system';
 	import { feedTraffic } from '$lib/stores/traffic';
 	import { applyTraffic as singboxApplyTraffic, applyDelay as singboxApplyDelay } from '$lib/stores/singbox';
-	import { invalidateResource } from '$lib/stores/storeRegistry';
+	import { invalidateResource, invalidateAll } from '$lib/stores/storeRegistry';
 	// Task 15 note: no snapshot handlers remain — all cold-tier state is
 	// fetched via REST by polling stores, and the SSE stream now carries
 	// only incremental push-only events (traffic, connectivity, logs,
@@ -148,9 +148,23 @@
 				unsubSysInfo = systemInfo.subscribe(() => {});
 			}
 		} else {
+			healthMonitor.stop();
 			stopSSE();
 			unsubSysInfo?.();
 			unsubSysInfo = null;
+		}
+	});
+
+	let wasOffline = $state(false);
+	$effect(() => {
+		if (!$serverOnline) {
+			wasOffline = true;
+		} else if (wasOffline) {
+			// Backend recovered from Tier 3 outage — pull fresh state for
+			// every active polling store. Inactive stores auto-refetch on
+			// their next subscribe via invalidate()'s mark-stale branch.
+			invalidateAll();
+			wasOffline = false;
 		}
 	});
 
@@ -169,6 +183,7 @@
 	});
 
 	onDestroy(() => {
+		healthMonitor.stop();
 		stopSSE();
 		unsubSysInfo?.();
 		unsubSysInfo = null;
