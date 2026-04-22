@@ -346,6 +346,7 @@
 	{:else}
 		<!-- Mobile: accordion — each target expandable -->
 		<div class="mobile-stack">
+			<button type="button" class="mobile-add-rule" onclick={openNewRule}>+ Новое правило</button>
 			{#each targets as t, i (t.name)}
 				{@const pol = t.kind === 'policy' ? policyByName(t.name) : null}
 				<details open={i === 0}>
@@ -480,6 +481,20 @@
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
+	}
+	.mobile-add-rule {
+		padding: 10px;
+		background: transparent;
+		border: 1px dashed var(--border-hover);
+		border-radius: 6px;
+		color: var(--accent);
+		font-family: inherit;
+		font-size: 0.875rem;
+		cursor: pointer;
+	}
+	.mobile-add-rule:hover {
+		border-color: var(--accent);
+		background: var(--bg-tertiary);
 	}
 	details {
 		background: var(--bg-secondary);

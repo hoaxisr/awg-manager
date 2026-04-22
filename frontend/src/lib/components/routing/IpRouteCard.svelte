@@ -75,7 +75,7 @@
 					class:led-green={route.enabled}
 					class:led-gray={!route.enabled}
 				></span>
-				<h3>{route.name}</h3>
+				<h3 title={route.name}>{route.name}</h3>
 			</div>
 			{#if subnetCount > 0}
 				<span class="card-stat">
@@ -169,12 +169,17 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
+		min-width: 0;
 	}
 
 	.card-title h3 {
 		font-size: 0.875rem;
 		font-weight: 600;
 		margin: 0;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		min-width: 0;
 	}
 
 	.card-stat {

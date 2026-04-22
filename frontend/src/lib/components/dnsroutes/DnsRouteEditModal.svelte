@@ -339,6 +339,7 @@
 						<div class="route-item">
 							<span class="route-index">{i + 1}.</span>
 							<span class="route-name">{tunnelName(target.tunnelId)}</span>
+							<span class="route-id" title={target.tunnelId}>{target.tunnelId}</span>
 							<div class="route-actions">
 								<button class="btn-move" onclick={() => moveRoute(i, -1)} disabled={i === 0} title="Вверх">&uarr;</button>
 								<button class="btn-move" onclick={() => moveRoute(i, 1)} disabled={i === routes.length - 1} title="Вниз">&darr;</button>
@@ -605,6 +606,20 @@
 		font-size: 0.8125rem;
 		color: var(--text-primary);
 		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.route-id {
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 0.6875rem;
+		color: var(--text-muted);
+		background: var(--bg-tertiary);
+		padding: 1px 6px;
+		border-radius: 4px;
+		flex-shrink: 0;
+		max-width: 40%;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
