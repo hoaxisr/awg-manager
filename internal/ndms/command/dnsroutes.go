@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
@@ -77,9 +78,21 @@ func (c *DNSRouteCommands) SetDisabled(ctx context.Context, index string, disabl
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "toggle dns-proxy route disable",
-		c.queries.DNSProxy.InvalidateAll,
-		c.queries.RunningConfig.InvalidateAll)
+	if _, err := c.poster.Post(ctx, payload); err != nil {
+		return fmt.Errorf("toggle dns-proxy route disable: %w", err)
+	}
+	c.queries.DNSProxy.InvalidateAll()
+	c.queries.RunningConfig.InvalidateAll()
+	// Flush save synchronously, not via the debounced coordinator. NDMS
+	// applies dns-proxy.route.disable to running state on POST, but the
+	// flag only surfaces in /show/sc/… (which Keenetic's web UI reads)
+	// after system-configuration-save. Matching the native UI's batched
+	// disable+save POST sequence makes toggles show up immediately on
+	// both sides rather than after the 500ms debounce window.
+	if err := c.save.Flush(ctx); err != nil {
+		return fmt.Errorf("save after dns-proxy disable toggle: %w", err)
+	}
+	return nil
 }
 
 // UpsertRoutes adds or updates dns-proxy route entries in a single batch.

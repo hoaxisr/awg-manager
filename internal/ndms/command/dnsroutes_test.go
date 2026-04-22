@@ -71,6 +71,13 @@ func TestDNSRouteCommands_OS4_ReturnsErrNotSupported(t *testing.T) {
 func TestDNSRouteCommands_SetDisabled_OS5(t *testing.T) {
 	cmds, poster := newTestDNSRouteCommands(t, true)
 
+	// Each SetDisabled POSTs the disable command AND flushes save
+	// synchronously (no debounce), so payloads arrive as:
+	//   [0] disable command
+	//   [1] system-configuration-save
+	//   [2] disable command (second call)
+	//   [3] system-configuration-save (second call)
+
 	// disabled=true → "no": false (apply the disable)
 	if err := cmds.SetDisabled(context.Background(), "abc123", true); err != nil {
 		t.Fatalf("SetDisabled true: %v", err)
@@ -79,12 +86,17 @@ func TestDNSRouteCommands_SetDisabled_OS5(t *testing.T) {
 	if d["index"] != "abc123" || d["no"] != false {
 		t.Errorf("disable true payload: %#v", d)
 	}
+	// Flush should have sent save immediately, not via debounce.
+	save := poster.Payloads()[1].(map[string]any)["system"].(map[string]any)["configuration"].(map[string]any)
+	if _, ok := save["save"]; !ok {
+		t.Errorf("save payload missing: %#v", poster.Payloads()[1])
+	}
 
 	// disabled=false → "no": true (negate the disable)
 	if err := cmds.SetDisabled(context.Background(), "abc123", false); err != nil {
 		t.Fatalf("SetDisabled false: %v", err)
 	}
-	d2 := poster.Payloads()[1].(map[string]any)["dns-proxy"].(map[string]any)["route"].(map[string]any)["disable"].(map[string]any)
+	d2 := poster.Payloads()[2].(map[string]any)["dns-proxy"].(map[string]any)["route"].(map[string]any)["disable"].(map[string]any)
 	if d2["no"] != true {
 		t.Errorf("disable false payload: %#v", d2)
 	}
