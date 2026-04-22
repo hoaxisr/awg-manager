@@ -1,44 +1,24 @@
-import { writable } from 'svelte/store';
+import { createPollingStore } from './polling';
+import { registerStore } from './storeRegistry';
 import type { WireguardServer, ManagedServer, ManagedServerStats } from '$lib/types';
-import type { SnapshotServersEvent } from '$lib/api/events';
 
-interface ServersState {
+export interface ServersSnapshot {
 	servers: WireguardServer[];
 	managed: ManagedServer | null;
 	managedStats: ManagedServerStats | null;
 	wanIP: string;
-	loaded: boolean;
 }
 
-function createServersStore() {
-	const { subscribe, set, update } = writable<ServersState>({
-		servers: [],
-		managed: null,
-		managedStats: null,
-		wanIP: '',
-		loaded: false,
-	});
-
-	return {
-		subscribe,
-		setSnapshot(data: SnapshotServersEvent) {
-			set({
-				servers: data.servers ?? [],
-				managed: data.managed,
-				managedStats: data.managedStats,
-				wanIP: data.wanIP ?? '',
-				loaded: true,
-			});
-		},
-		updateAll(data: SnapshotServersEvent) {
-			update(s => ({
-				...s,
-				servers: data.servers ?? [],
-				managed: data.managed,
-				managedStats: data.managedStats,
-			}));
-		},
-	};
+async function fetchServers(): Promise<ServersSnapshot> {
+	const res = await fetch('/api/servers/all');
+	if (!res.ok) throw new Error(`servers ${res.status}`);
+	const body = await res.json();
+	return body.data as ServersSnapshot;
 }
 
-export const servers = createServersStore();
+export const servers = createPollingStore<ServersSnapshot>(fetchServers, {
+	staleTime: 5_000,
+	pollInterval: 5_000,
+});
+
+registerStore('servers', servers);

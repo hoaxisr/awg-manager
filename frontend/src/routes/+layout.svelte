@@ -13,7 +13,6 @@
 	import { tunnels } from '$lib/stores/tunnels';
 	import { logEntries } from '$lib/stores/logs';
 	import { pingCheckStatus } from '$lib/stores/pingcheck';
-	import { servers } from '$lib/stores/servers';
 	import { routing } from '$lib/stores/routing';
 	import { systemInfo } from '$lib/stores/system';
 	import { feedTraffic } from '$lib/stores/traffic';
@@ -93,7 +92,6 @@
 					}
 				}
 			},
-			onSnapshotServers: (data) => servers.setSnapshot(data),
 			onSnapshotRouting: (data) => routing.setSnapshot(data),
 			onSnapshotPingcheck: (data) => pingCheckStatus.setSnapshot(data),
 			onSnapshotLogs: (data) => logEntries.setSnapshot(data),
@@ -114,9 +112,6 @@
 			onTunnelDeleted: (data) => tunnels.removeFromList(data.id),
 			onTunnelUpdated: () => {},
 			onTunnelsList: (data) => tunnels.setManagedList(data),
-
-			// Server incremental
-			onServerUpdated: (data) => servers.updateAll(data),
 
 			// Routing incremental
 			onRoutingDnsUpdated: (data) => routing.setDnsRoutes(data),

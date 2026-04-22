@@ -620,13 +620,13 @@ class ApiClient {
 		return this.request(`/servers/config?name=${encodeURIComponent(name)}`);
 	}
 
-	async markServerInterface(name: string): Promise<void> {
+	async markServerInterface(name: string): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request(`/servers/mark?name=${encodeURIComponent(name)}`, {
 			method: 'POST'
 		});
 	}
 
-	async unmarkServerInterface(name: string): Promise<void> {
+	async unmarkServerInterface(name: string): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request(`/servers/mark?name=${encodeURIComponent(name)}`, {
 			method: 'DELETE'
 		});

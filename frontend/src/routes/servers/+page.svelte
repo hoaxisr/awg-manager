@@ -1,11 +1,13 @@
 <script lang="ts">
+	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { servers as serversStore } from '$lib/stores/servers';
+	import { servers } from '$lib/stores/servers';
 	import { systemInfo } from '$lib/stores/system';
 	import { goto } from '$app/navigation';
 	import { PageContainer } from '$lib/components/layout';
 	import { LoadingSpinner, EmptyState } from '$lib/components/layout';
+	import { StoreStatusBadge } from '$lib/components/ui';
 	import {
 		ServerCard,
 		AddServerModal,
@@ -13,11 +15,16 @@
 		CreateManagedServerModal
 	} from '$lib/components/servers';
 
-	let serverList = $derived($serversStore.servers);
-	let managedServer = $derived($serversStore.managed);
-	let managedStats = $derived($serversStore.managedStats);
-	let wanIP = $derived($serversStore.wanIP);
-	let loading = $derived(!$serversStore.loaded);
+	let unsub: (() => void) | undefined;
+	onMount(() => { unsub = servers.subscribe(() => {}); });
+	onDestroy(() => unsub?.());
+
+	let snap = $derived($servers);
+	let serverList = $derived(snap.data?.servers ?? []);
+	let managedServer = $derived(snap.data?.managed ?? null);
+	let managedStats = $derived(snap.data?.managedStats ?? null);
+	let wanIP = $derived(snap.data?.wanIP ?? '');
+	let loading = $derived(snap.lastFetchedAt === 0);
 	let routerIP = $derived($systemInfo?.routerIP ?? '');
 
 	let addModalOpen = $state(false);
@@ -27,7 +34,8 @@
 
 	async function unmarkServer(id: string) {
 		try {
-			await api.unmarkServerInterface(id);
+			const fresh = await api.unmarkServerInterface(id);
+			servers.applyMutationResponse(fresh);
 			notifications.success(`Интерфейс ${id} возвращён в туннели.`);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Ошибка');
@@ -35,7 +43,14 @@
 	}
 
 	function onServerAdded() {
+		// AddServerModal already applied the fresh snapshot inline;
+		// nothing to refetch here.
 		notifications.success('Интерфейс добавлен в серверы');
+	}
+
+	function onManagedCreated() {
+		notifications.success('Сервер создан');
+		servers.invalidate();
 	}
 
 	function openManagedASC() {
@@ -49,7 +64,10 @@
 
 <PageContainer>
 	<div class="page-header">
-		<h1 class="page-title">Серверы</h1>
+		<div class="title-group">
+			<h1 class="page-title">Серверы</h1>
+			<StoreStatusBadge store={servers} />
+		</div>
 		<div class="header-actions">
 			{#if !managedServer}
 				<button class="btn btn-primary btn-sm" onclick={() => createManagedOpen = true}>
@@ -115,7 +133,7 @@
 	<CreateManagedServerModal
 		bind:open={createManagedOpen}
 		onclose={() => createManagedOpen = false}
-		onCreated={() => notifications.success('Сервер создан')}
+		onCreated={onManagedCreated}
 	/>
 </PageContainer>
 
@@ -125,6 +143,12 @@
 		justify-content: space-between;
 		align-items: center;
 		margin-bottom: 1rem;
+	}
+
+	.title-group {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
 	}
 
 	.page-title {

@@ -76,11 +76,23 @@ type ManagedServerHandler struct {
 // SetServersHandler sets the servers handler for shared SSE publishing.
 func (h *ManagedServerHandler) SetServersHandler(s *ServersHandler) { h.servers = s }
 
-// publishServerUpdated delegates to ServersHandler to publish the full server snapshot.
+// publishServerUpdated delegates to ServersHandler to broadcast a
+// resource:invalidated hint so servers polling subscribers refetch.
+// The ctx is kept for signature parity with previous callers.
+//
+// TODO(state-sync-redesign): the 8 managed-server mutation handlers in
+// this file (Update, Delete, UpdatePeer, DeletePeer, TogglePeer, NAT,
+// SetEnabled, ASC POST) still return {"ok":true} rather than a fresh
+// ServersSnapshot. They rely on this hint to trigger a background
+// refetch, so UI stays correct but lags by one cadence (~5s) vs the
+// instant applyMutationResponse path used by Mark/Unmark. Migrate to
+// fresh-state responses before final merge to `next` — the spec
+// mandates zero {"ok":true} mutation responses.
 func (h *ManagedServerHandler) publishServerUpdated(ctx context.Context) {
 	if h.servers != nil {
-		h.servers.publishServerUpdated(ctx)
+		h.servers.publishServerInvalidated("managed-mutation")
 	}
+	_ = ctx
 }
 
 // NewManagedServerHandler creates a new managed server handler.
