@@ -6,6 +6,32 @@
 
 	let installing = $state(false);
 	let error = $state<string | null>(null);
+	let dismissedKey = $state<string>('');
+
+	const STORAGE_KEY = 'awgm:singbox-banner-dismissed';
+
+	// Signature changes when install/proxyComponent state changes, so a
+	// dismiss on "not installed" is auto-reset once it gets installed.
+	let signature = $derived.by(() => {
+		const s = $status;
+		if (!s) return '';
+		if (!s.installed) return 'not-installed';
+		if (!s.proxyComponent) return 'no-proxy-component';
+		return '';
+	});
+
+	$effect(() => {
+		if (typeof window === 'undefined') return;
+		dismissedKey = window.localStorage.getItem(STORAGE_KEY) ?? '';
+	});
+
+	let visible = $derived(signature !== '' && dismissedKey !== signature);
+
+	function dismiss(): void {
+		if (typeof window === 'undefined') return;
+		window.localStorage.setItem(STORAGE_KEY, signature);
+		dismissedKey = signature;
+	}
 
 	async function install(): Promise<void> {
 		installing = true;
@@ -21,7 +47,7 @@
 	}
 </script>
 
-{#if $status && !$status.installed}
+{#if visible && signature === 'not-installed'}
 	<div class="banner">
 		<div class="text">
 			<strong>Sing-box не установлен</strong>
@@ -30,11 +56,12 @@
 		<button class="btn btn-primary btn-sm" onclick={install} disabled={installing}>
 			{installing ? 'Установка...' : 'Установить'}
 		</button>
+		<button class="dismiss" onclick={dismiss} title="Скрыть" aria-label="Скрыть">&times;</button>
 		{#if error}
 			<div class="error">{error}</div>
 		{/if}
 	</div>
-{:else if $status && $status.installed && !$status.proxyComponent}
+{:else if visible && signature === 'no-proxy-component'}
 	<div class="banner banner-error">
 		<div class="text">
 			<strong>NDMS-компонент «proxy» не установлен</strong>
@@ -45,6 +72,7 @@
 				и перезапустите этот демон.
 			</span>
 		</div>
+		<button class="dismiss" onclick={dismiss} title="Скрыть" aria-label="Скрыть">&times;</button>
 	</div>
 {/if}
 
@@ -72,4 +100,21 @@
 		font-size: 0.8125rem;
 	}
 	.error { color: var(--error); font-size: 12px; }
+	.dismiss {
+		flex-shrink: 0;
+		align-self: flex-start;
+		background: transparent;
+		border: none;
+		color: var(--text-muted);
+		font-size: 1.25rem;
+		line-height: 1;
+		padding: 2px 6px;
+		border-radius: 4px;
+		cursor: pointer;
+		transition: color 0.15s, background 0.15s;
+	}
+	.dismiss:hover {
+		color: var(--text-primary);
+		background: var(--bg-hover);
+	}
 </style>
