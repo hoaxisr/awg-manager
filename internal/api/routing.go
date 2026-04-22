@@ -36,10 +36,11 @@ func (h *RoutingHandler) Tunnels(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, entries)
 }
 
-// Refresh drops every NDMS list cache that feeds the routing snapshot,
-// rebuilds the snapshot from fresh RCI data and publishes it to SSE
-// subscribers. The response returns the new Missing list so the caller can
-// immediately tell whether the retry succeeded.
+// Refresh drops every NDMS list cache that feeds the routing sections,
+// then posts resource:invalidated hints so every routing polling store
+// refetches on the next tick (or immediately if subscribed). Returns the
+// Missing list from a freshly-built snapshot so the caller can tell
+// whether the retry succeeded.
 // POST /api/routing/refresh
 func (h *RoutingHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -63,8 +64,13 @@ func (h *RoutingHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	snap := h.catalog.SnapshotAll(r.Context())
-	if h.bus != nil {
-		h.bus.Publish("snapshot:routing", snap)
-	}
+	// Notify every routing polling store to refetch.
+	publishInvalidated(h.bus, ResourceRoutingDnsRoutes, "refresh")
+	publishInvalidated(h.bus, ResourceRoutingStaticRoutes, "refresh")
+	publishInvalidated(h.bus, ResourceRoutingAccessPolicies, "refresh")
+	publishInvalidated(h.bus, ResourceRoutingPolicyDevices, "refresh")
+	publishInvalidated(h.bus, ResourceRoutingPolicyInterfaces, "refresh")
+	publishInvalidated(h.bus, ResourceRoutingClientRoutes, "refresh")
+	publishInvalidated(h.bus, ResourceRoutingTunnels, "refresh")
 	response.Success(w, map[string]any{"missing": snap.Missing})
 }

@@ -177,9 +177,8 @@ func (h *TunnelsHandler) PublishTunnelList(ctx context.Context) { h.publishTunne
 //
 //   - ResourceTunnels         — the {tunnels, external, system} snapshot
 //                               now served by /api/tunnels/all.
-//   - ResourceRoutingTunnels  — the routing-page catalog (Task 11 will
-//                               migrate the store; the hint fires now
-//                               so the future store picks it up.)
+//   - ResourceRoutingTunnels  — the routing-page catalog, served by
+//                               /api/routing/tunnels (Task 11).
 //
 // Also still refreshes the pingcheck snapshot + rebroadcasts the
 // legacy snapshot:tunnels SSE for any subscribers that haven't migrated
@@ -191,10 +190,6 @@ func (h *TunnelsHandler) publishTunnelList(ctx context.Context) {
 	publishInvalidated(h.bus, ResourceTunnels, "list-changed")
 	if h.catalog != nil {
 		publishInvalidated(h.bus, ResourceRoutingTunnels, "list-changed")
-		// Task 11 will migrate the routing.tunnels store to polling; until
-		// then, keep the legacy SSE payload too so the routing page
-		// dropdown refreshes on tunnel CRUD.
-		h.bus.Publish("routing:tunnels-updated", h.catalog.ListAll(ctx))
 	}
 
 	// Also refresh pingcheck (new/deleted tunnels appear/disappear on monitoring page)

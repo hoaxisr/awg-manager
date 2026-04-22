@@ -17,16 +17,10 @@ type ClientRouteHandler struct {
 // SetEventBus sets the event bus for SSE publishing.
 func (h *ClientRouteHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
-// publishClientRoutesUpdated publishes the full client route list via SSE (best-effort).
-func (h *ClientRouteHandler) publishClientRoutesUpdated() {
-	if h.bus == nil {
-		return
-	}
-	list, err := h.svc.List()
-	if err != nil {
-		return
-	}
-	h.bus.Publish("routing:client-routes-updated", list)
+// publishClientRoutesUpdated posts a resource:invalidated hint so
+// clients refetch the client-routes list.
+func (h *ClientRouteHandler) publishClientRoutesUpdated(reason string) {
+	publishInvalidated(h.bus, ResourceRoutingClientRoutes, reason)
 }
 
 // NewClientRouteHandler creates a new client route handler.
@@ -63,7 +57,7 @@ func (h *ClientRouteHandler) HandleCreate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	response.Success(w, created)
-	h.publishClientRoutesUpdated()
+	h.publishClientRoutesUpdated("create")
 }
 
 // HandleUpdate updates an existing client route.
@@ -86,7 +80,7 @@ func (h *ClientRouteHandler) HandleUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	response.Success(w, updated)
-	h.publishClientRoutesUpdated()
+	h.publishClientRoutesUpdated("update")
 }
 
 // HandleDelete deletes a client route.
@@ -106,7 +100,7 @@ func (h *ClientRouteHandler) HandleDelete(w http.ResponseWriter, r *http.Request
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
-	h.publishClientRoutesUpdated()
+	h.publishClientRoutesUpdated("delete")
 }
 
 // HandleToggle enables or disables a client route.
@@ -130,5 +124,5 @@ func (h *ClientRouteHandler) HandleToggle(w http.ResponseWriter, r *http.Request
 		"id":      id,
 		"enabled": req.Enabled,
 	})
-	h.publishClientRoutesUpdated()
+	h.publishClientRoutesUpdated("toggle")
 }

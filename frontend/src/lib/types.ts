@@ -938,7 +938,6 @@ export type {
 	SystemBootingEvent,
 	SnapshotTunnelsEvent,
 	SnapshotServersEvent,
-	SnapshotRoutingEvent,
 	SnapshotPingcheckEvent,
 	SnapshotLogsEvent,
 	TunnelTrafficEvent,

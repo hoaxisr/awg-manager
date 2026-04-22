@@ -1,68 +1,159 @@
-import { writable } from 'svelte/store';
+/**
+ * routing — seven per-section polling stores + a derived `routing`
+ * composite that preserves the monolithic shape older pages read as
+ * `$routing.dnsRoutes`, `$routing.staticRoutes`, etc.
+ *
+ * Each section polls its own GET endpoint at 30s (cold tier). Backend
+ * mutations publish `resource:invalidated` hints keyed by
+ * ResourceRoutingXxx; the storeRegistry wiring triggers an immediate
+ * refetch of only the affected section.
+ *
+ * `hydrarouteStatus` is not a per-section polling store here — it is
+ * owned by `systemInfo` (HR Neo status lives on system-wide polling)
+ * and surfaced through the composite as a passthrough field when
+ * available. For routing.ts it stays undefined unless a future task
+ * wires a dedicated store; the composite exposes it optionally so
+ * existing `$routing.hydrarouteStatus` reads don't crash.
+ */
+import { derived, type Readable } from 'svelte/store';
+import { createPollingStore, type PollingStore } from './polling';
+import { registerStore, type ResourceKey } from './storeRegistry';
 import type {
-	DnsRoute, StaticRouteList, RoutingTunnel,
-	AccessPolicy, PolicyDevice, PolicyGlobalInterface, ClientRoute, HydraRouteStatus
+	DnsRoute,
+	StaticRouteList,
+	AccessPolicy,
+	PolicyDevice,
+	PolicyGlobalInterface,
+	ClientRoute,
+	RoutingTunnel,
+	HydraRouteStatus,
 } from '$lib/types';
-import type { RoutingSectionKey, SnapshotRoutingEvent } from '$lib/api/events';
 
-interface RoutingState {
+function createSection<T>(url: string, resourceKey: ResourceKey): PollingStore<T> {
+	const store = createPollingStore<T>(
+		async () => {
+			const res = await fetch(url);
+			if (!res.ok) throw new Error(`${resourceKey} ${res.status}`);
+			const body = await res.json();
+			return (body.data ?? []) as T;
+		},
+		{
+			staleTime: 30_000,
+			pollInterval: 30_000,
+		}
+	);
+	registerStore(resourceKey, store);
+	return store;
+}
+
+export const dnsRoutesStore = createSection<DnsRoute[]>(
+	'/api/routing/dns-routes',
+	'routing.dnsRoutes'
+);
+export const staticRoutesStore = createSection<StaticRouteList[]>(
+	'/api/routing/static-routes',
+	'routing.staticRoutes'
+);
+export const accessPoliciesStore = createSection<AccessPolicy[]>(
+	'/api/routing/access-policies',
+	'routing.accessPolicies'
+);
+export const policyDevicesStore = createSection<PolicyDevice[]>(
+	'/api/routing/policy-devices',
+	'routing.policyDevices'
+);
+export const policyInterfacesStore = createSection<PolicyGlobalInterface[]>(
+	'/api/routing/policy-interfaces',
+	'routing.policyInterfaces'
+);
+export const clientRoutesStore = createSection<ClientRoute[]>(
+	'/api/routing/client-routes',
+	'routing.clientRoutes'
+);
+export const routingTunnelsStore = createSection<RoutingTunnel[]>(
+	'/api/routing/tunnels',
+	'routing.tunnels'
+);
+
+export type RoutingComposite = {
 	dnsRoutes: DnsRoute[];
 	staticRoutes: StaticRouteList[];
-	tunnels: RoutingTunnel[];
 	accessPolicies: AccessPolicy[];
 	policyDevices: PolicyDevice[];
 	policyInterfaces: PolicyGlobalInterface[];
 	clientRoutes: ClientRoute[];
+	tunnels: RoutingTunnel[];
 	hydrarouteStatus: HydraRouteStatus | null;
-	missing: RoutingSectionKey[];
 	loaded: boolean;
+	missing: string[];
+};
+
+export const routing: Readable<RoutingComposite> = derived(
+	[
+		dnsRoutesStore,
+		staticRoutesStore,
+		accessPoliciesStore,
+		policyDevicesStore,
+		policyInterfacesStore,
+		clientRoutesStore,
+		routingTunnelsStore,
+	],
+	([d, s, a, pd, pi, cr, rt]) => {
+		const missing: string[] = [];
+		if (d.status === 'error') missing.push('dnsRoutes');
+		if (s.status === 'error') missing.push('staticRoutes');
+		if (a.status === 'error') missing.push('accessPolicies');
+		if (pd.status === 'error') missing.push('policyDevices');
+		if (pi.status === 'error') missing.push('policyInterfaces');
+		if (cr.status === 'error') missing.push('clientRoutes');
+		if (rt.status === 'error') missing.push('tunnels');
+		return {
+			dnsRoutes: d.data ?? [],
+			staticRoutes: s.data ?? [],
+			accessPolicies: a.data ?? [],
+			policyDevices: pd.data ?? [],
+			policyInterfaces: pi.data ?? [],
+			clientRoutes: cr.data ?? [],
+			tunnels: rt.data ?? [],
+			hydrarouteStatus: null,
+			loaded: [d, s, a, pd, pi, cr, rt].every(
+				(x) => x.lastFetchedAt > 0 || x.status === 'error'
+			),
+			missing,
+		};
+	}
+);
+
+/**
+ * subscribeRouting — convenience helper that subscribes to every section
+ * store with a no-op listener. Pages that want all seven sections can
+ * call this once in `onMount` and the returned function on `onDestroy`.
+ * Each subscribe triggers the polling lifecycle (initial fetch + interval).
+ */
+export function subscribeRouting(): () => void {
+	const unsubs = [
+		dnsRoutesStore.subscribe(() => {}),
+		staticRoutesStore.subscribe(() => {}),
+		accessPoliciesStore.subscribe(() => {}),
+		policyDevicesStore.subscribe(() => {}),
+		policyInterfacesStore.subscribe(() => {}),
+		clientRoutesStore.subscribe(() => {}),
+		routingTunnelsStore.subscribe(() => {}),
+	];
+	return () => unsubs.forEach((u) => u());
 }
 
-function createRoutingStore() {
-	const { subscribe, set, update } = writable<RoutingState>({
-		dnsRoutes: [],
-		staticRoutes: [],
-		tunnels: [],
-		accessPolicies: [],
-		policyDevices: [],
-		policyInterfaces: [],
-		clientRoutes: [],
-		hydrarouteStatus: null,
-		missing: [],
-		loaded: false,
-	});
-
-	return {
-		subscribe,
-		setSnapshot(data: SnapshotRoutingEvent) {
-			set({
-				dnsRoutes: data.dnsRoutes ?? [],
-				staticRoutes: data.staticRoutes ?? [],
-				tunnels: data.tunnels ?? [],
-				accessPolicies: data.accessPolicies ?? [],
-				policyDevices: data.policyDevices ?? [],
-				policyInterfaces: data.policyInterfaces ?? [],
-				clientRoutes: data.clientRoutes ?? [],
-				hydrarouteStatus: data.hydrarouteStatus ?? null,
-				missing: data.missing ?? [],
-				loaded: true,
-			});
-		},
-		setDnsRoutes(routes: DnsRoute[]) { update(s => ({ ...s, dnsRoutes: routes ?? [], missing: withoutSection(s.missing, 'dnsRoutes') })); },
-		setStaticRoutes(routes: StaticRouteList[]) { update(s => ({ ...s, staticRoutes: routes ?? [], missing: withoutSection(s.missing, 'staticRoutes') })); },
-		setPolicies(policies: AccessPolicy[]) { update(s => ({ ...s, accessPolicies: policies ?? [], missing: withoutSection(s.missing, 'accessPolicies') })); },
-		setPolicyDevices(devices: PolicyDevice[]) { update(s => ({ ...s, policyDevices: devices ?? [], missing: withoutSection(s.missing, 'policyDevices') })); },
-		setPolicyInterfaces(interfaces: PolicyGlobalInterface[]) { update(s => ({ ...s, policyInterfaces: interfaces ?? [], missing: withoutSection(s.missing, 'policyInterfaces') })); },
-		setClientRoutes(routes: ClientRoute[]) { update(s => ({ ...s, clientRoutes: routes ?? [], missing: withoutSection(s.missing, 'clientRoutes') })); },
-		setRoutingTunnels(tunnels: RoutingTunnel[]) { update(s => ({ ...s, tunnels: tunnels ?? [], missing: withoutSection(s.missing, 'tunnels') })); },
-		setHydraRouteStatus(status: HydraRouteStatus | null) { update(s => ({ ...s, hydrarouteStatus: status, missing: withoutSection(s.missing, 'hydrarouteStatus') })); },
-	};
+/**
+ * invalidateAllRouting — triggers immediate refetch across all seven
+ * section stores. Used by the `/api/routing/refresh` button handler so
+ * the user sees fresh data even when some sections previously errored.
+ */
+export function invalidateAllRouting(): void {
+	dnsRoutesStore.invalidate();
+	staticRoutesStore.invalidate();
+	accessPoliciesStore.invalidate();
+	policyDevicesStore.invalidate();
+	policyInterfacesStore.invalidate();
+	clientRoutesStore.invalidate();
+	routingTunnelsStore.invalidate();
 }
-
-function withoutSection(missing: RoutingSectionKey[], key: RoutingSectionKey): RoutingSectionKey[] {
-	if (missing.length === 0) return missing;
-	const next = missing.filter(k => k !== key);
-	return next.length === missing.length ? missing : next;
-}
-
-export const routing = createRoutingStore();

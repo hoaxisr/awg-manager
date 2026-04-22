@@ -21,7 +21,6 @@ type ControlHandler struct {
 	pingCheck      PingCheckService
 	tunnelsHandler *TunnelsHandler
 	bus            *events.Bus
-	catalog        routing.Catalog
 	log            *logging.ScopedLogger
 }
 
@@ -51,15 +50,16 @@ func (h *ControlHandler) SetTunnelsHandler(th *TunnelsHandler) {
 // SetEventBus sets the event bus for SSE publishing.
 func (h *ControlHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
-// SetCatalog sets the routing catalog for tunnel list updates.
-func (h *ControlHandler) SetCatalog(cat routing.Catalog) { h.catalog = cat }
+// SetCatalog is a no-op retained for API compatibility. The control
+// handler no longer needs direct catalog access — it just emits a
+// resource:invalidated hint so the polling store refetches.
+func (h *ControlHandler) SetCatalog(_ routing.Catalog) {}
 
-// publishRoutingTunnels publishes updated routing tunnel list via SSE.
-func (h *ControlHandler) publishRoutingTunnels(ctx context.Context) {
-	if h.bus == nil || h.catalog == nil {
-		return
-	}
-	h.bus.Publish("routing:tunnels-updated", h.catalog.ListAll(ctx))
+// publishRoutingTunnels posts a resource:invalidated hint so clients
+// refetch the routing tunnel list after a start/stop that changed
+// which tunnels are available for routing dropdowns.
+func (h *ControlHandler) publishRoutingTunnels(_ context.Context) {
+	publishInvalidated(h.bus, ResourceRoutingTunnels, "state-changed")
 }
 
 func (h *ControlHandler) getStatus(r *http.Request, id string) string {
