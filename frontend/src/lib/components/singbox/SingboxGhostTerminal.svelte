@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
 	import { systemInfo } from '$lib/stores/system';
+	import { singboxTunnels } from '$lib/stores/singbox';
 	import type { SingboxImportResponse } from '$lib/types';
 
 	interface Props {
@@ -25,6 +26,7 @@
 		try {
 			const res = await api.singboxImportLinks(input);
 			result = res;
+			singboxTunnels.applyMutationResponse(res.tunnels);
 			if ((res.imported?.length ?? 0) > 0) {
 				input = '';
 				oncomplete?.(res.imported!.length);
@@ -33,6 +35,7 @@
 			result = {
 				imported: [],
 				errors: [{ line: 0, input: '', error: e instanceof Error ? e.message : String(e) }],
+				tunnels: [],
 			};
 		} finally {
 			importing = false;

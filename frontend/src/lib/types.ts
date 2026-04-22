@@ -989,6 +989,7 @@ export interface SingboxStatus {
 export interface SingboxImportResponse {
 	imported: SingboxTunnel[];
 	errors: Array<{ line: number; input: string; error: string }>;
+	tunnels: SingboxTunnel[]; // fresh full list
 }
 
 export interface SingboxTraffic {

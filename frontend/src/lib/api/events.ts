@@ -175,6 +175,9 @@ export interface SSEEventHandlers {
 	}) => void;
 
 	// Sing-box
+	// TODO(state-sync-redesign Task 15): remove — `singbox:status` and
+	// `singbox:tunnel` events are no longer published by the backend;
+	// polling stores + resource:invalidated hint cover this now.
 	onSingboxStatus?: (data: SingboxStatusEvent) => void;
 	onSingboxTunnel?: (data: SingboxTunnelEvent) => void;
 	onSingboxTraffic?: (data: SingboxTraffic[]) => void;

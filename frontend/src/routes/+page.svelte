@@ -11,7 +11,7 @@
 	import { PageContainer, LoadingSpinner } from '$lib/components/layout';
 	import { Modal } from '$lib/components/ui';
 	import { StoreStatusBadge } from '$lib/components/ui';
-	import { singbox } from '$lib/stores/singbox';
+	import { singboxStatus, singboxTunnels } from '$lib/stores/singbox';
 	import { SingboxInstallBanner, SingboxTunnelCard, SingboxGhostTerminal } from '$lib/components/singbox';
 	import { feedTraffic } from '$lib/stores/traffic';
 
@@ -133,8 +133,20 @@
 		}
 	}
 
-	const singboxStatus = singbox.status;
-	const singboxTunnels = singbox.tunnels;
+	// Polling-store subscriptions for sing-box status + tunnels list.
+	// First subscribe triggers fetch; last unsubscribe stops polling.
+	let unsubSingboxStatus: (() => void) | undefined;
+	let unsubSingboxTunnels: (() => void) | undefined;
+	onMount(() => {
+		unsubSingboxStatus = singboxStatus.subscribe(() => {});
+		unsubSingboxTunnels = singboxTunnels.subscribe(() => {});
+	});
+	onDestroy(() => {
+		unsubSingboxStatus?.();
+		unsubSingboxTunnels?.();
+	});
+
+	let singboxTunnelsList = $derived($singboxTunnels.data ?? []);
 
 	// Tabs
 	let activeTab = $state<TunnelTab>('awg');
@@ -292,7 +304,7 @@
 		<TunnelTabs
 			bind:active={activeTab}
 			awgCount={awgList.length + systemList.length}
-			singboxCount={$singboxTunnels.length}
+			singboxCount={singboxTunnelsList.length}
 		/>
 
 		{#if activeTab === 'awg'}
@@ -473,7 +485,7 @@
 		{/if}
 		{:else}
 			<SingboxInstallBanner />
-			{#if $singboxTunnels.length === 0}
+			{#if singboxTunnelsList.length === 0}
 				<SingboxGhostTerminal />
 				<div class="info-card">
 					<h3 class="info-title">О Sing-box</h3>
@@ -498,15 +510,15 @@
 			{:else}
 				<div class="tunnels-toolbar">
 					<span class="tunnel-count">
-						{$singboxTunnels.length}
-						{$singboxTunnels.length === 1 ? 'туннель' : $singboxTunnels.length < 5 ? 'туннеля' : 'туннелей'}
+						{singboxTunnelsList.length}
+						{singboxTunnelsList.length === 1 ? 'туннель' : singboxTunnelsList.length < 5 ? 'туннеля' : 'туннелей'}
 					</span>
 					<div class="toolbar-actions">
 						<a href="/singbox/new" class="btn btn-primary">+ Добавить</a>
 					</div>
 				</div>
 				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-					{#each $singboxTunnels as tunnel (tunnel.tag)}
+					{#each singboxTunnelsList as tunnel (tunnel.tag)}
 						<SingboxTunnelCard {tunnel} />
 					{/each}
 				</div>
