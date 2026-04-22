@@ -46,6 +46,7 @@
 	const hasUpdate = $derived(updateInfo?.available ?? false);
 
 	let disconnectSSE: (() => void) | null = null;
+	let unsubSysInfo: (() => void) | null = null;
 
 	let knownInstanceId = '';
 
@@ -83,7 +84,8 @@
 			},
 
 			// Snapshot events
-			onSnapshotSystem: (data) => systemInfo.setSnapshot(data),
+			// onSnapshotSystem removed — systemInfo is a polling store with
+			// invalidation via resource:invalidated (Task 10).
 			// onSnapshotTunnels removed — tunnels store polls /api/tunnels/all.
 			// System-tunnel traffic feed moved into the store's subscriber
 			// on /+page.svelte (runs on every polling refresh).
@@ -150,13 +152,21 @@
 		}
 	}
 
-	// SSE starts/stops reactively based on auth state
+	// SSE starts/stops reactively based on auth state.
+	// systemInfo is a cold-tier polling store used by the header version badge
+	// and several pages — subscribe globally for the authenticated session so
+	// it's ready on any route without every page re-subscribing.
 	$effect(() => {
 		if ($isAuthenticated) {
 			healthMonitor.start();
 			startSSE();
+			if (!unsubSysInfo) {
+				unsubSysInfo = systemInfo.subscribe(() => {});
+			}
 		} else {
 			stopSSE();
+			unsubSysInfo?.();
+			unsubSysInfo = null;
 		}
 	});
 
@@ -176,6 +186,8 @@
 
 	onDestroy(() => {
 		stopSSE();
+		unsubSysInfo?.();
+		unsubSysInfo = null;
 	});
 </script>
 

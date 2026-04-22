@@ -74,6 +74,11 @@ func (h *SingboxHandler) Install(w http.ResponseWriter, r *http.Request) {
 	}
 	s := h.op.GetStatus(r.Context())
 	publishInvalidated(h.bus, ResourceSingboxStatus, "installed")
+	// sysInfo.singbox mirrors the installed flag on its own 30s cadence;
+	// invalidate it too so UI paths that still read SystemInfo.singbox
+	// (e.g. the tunnels-page tab guard) see the change immediately
+	// instead of waiting up to 30s for the next poll tick.
+	publishInvalidated(h.bus, ResourceSysInfo, "singbox-installed")
 	response.Success(w, s)
 }
 
