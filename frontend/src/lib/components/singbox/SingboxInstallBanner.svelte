@@ -10,13 +10,20 @@
 
 	const STORAGE_KEY = 'awgm:singbox-banner-dismissed';
 
-	// Signature changes when install/proxyComponent state changes, so a
-	// dismiss on "not installed" is auto-reset once it gets installed.
+	// Signature changes when install/proxyComponent/features state
+	// changes, so a dismiss on one issue auto-resets once that issue is
+	// resolved or replaced by a new one.
 	let signature = $derived.by(() => {
 		const s = $status;
 		if (!s) return '';
 		if (!s.installed) return 'not-installed';
 		if (!s.proxyComponent) return 'no-proxy-component';
+		// NaiveProxy requires the with_naive_outbound build tag. When
+		// the installed binary lacks it, naive outbounds silently fail
+		// at runtime — warn explicitly so the user swaps the build.
+		if (s.features && s.features.length > 0 && !s.features.includes('with_naive_outbound')) {
+			return 'no-naive';
+		}
 		return '';
 	});
 
@@ -70,6 +77,18 @@
 				интерфейсы Proxy0/1/… не создаются и трафик sing-box никуда не маршрутизируется.
 				Добавьте компонент в веб-интерфейсе Keenetic (Настройки → Компоненты → «Клиент прокси»)
 				и перезапустите этот демон.
+			</span>
+		</div>
+		<button class="dismiss" onclick={dismiss} title="Скрыть" aria-label="Скрыть">&times;</button>
+	</div>
+{:else if visible && signature === 'no-naive'}
+	<div class="banner">
+		<div class="text">
+			<strong>Sing-box собран без поддержки NaiveProxy</strong>
+			<span>
+				В установленной сборке отсутствует тег <code>with_naive_outbound</code>.
+				VLESS/Reality и Hysteria2 работают, но NaiveProxy-туннели при запуске будут
+				отвергнуты сингбоксом. Установите сборку с этим тегом, если нужен NaiveProxy.
 			</span>
 		</div>
 		<button class="dismiss" onclick={dismiss} title="Скрыть" aria-label="Скрыть">&times;</button>

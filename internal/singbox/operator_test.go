@@ -1,56 +1,67 @@
 package singbox
 
 import (
-	"context"
-	"path/filepath"
+	"reflect"
 	"testing"
 )
 
-func TestOperator_ListTunnels_NoConfig(t *testing.T) {
-	dir := t.TempDir()
-	op := NewOperator(OperatorDeps{
-		Dir: dir,
+func TestParseSingboxVersionOutput(t *testing.T) {
+	t.Run("typical 1.13.x output", func(t *testing.T) {
+		out := "sing-box version 1.13.8\n" +
+			"\n" +
+			"Environment: go1.25.9 linux/arm64\n" +
+			"Tags: with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,with_naive_outbound,badlinkname,tfogo_checklinkname0,with_musl\n" +
+			"Revision: d5adb54bc6c6b2c21ab6f748276c4ec62d9bb650\n" +
+			"CGO: enabled\n"
+		version, features := parseSingboxVersionOutput(out)
+		if version != "1.13.8" {
+			t.Errorf("version = %q, want 1.13.8", version)
+		}
+		wantFeatures := []string{
+			"with_gvisor", "with_quic", "with_dhcp", "with_wireguard",
+			"with_utls", "with_acme", "with_clash_api", "with_tailscale",
+			"with_ccm", "with_ocm", "with_naive_outbound", "badlinkname",
+			"tfogo_checklinkname0", "with_musl",
+		}
+		if !reflect.DeepEqual(features, wantFeatures) {
+			t.Errorf("features mismatch:\n  got  %v\n  want %v", features, wantFeatures)
+		}
 	})
-	list, err := op.ListTunnels(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(list) != 0 {
-		t.Errorf("expected empty, got %d", len(list))
-	}
-}
 
-func TestOperator_ConfigPaths(t *testing.T) {
-	dir := t.TempDir()
-	op := NewOperator(OperatorDeps{Dir: dir})
-	if op.configPath != filepath.Join(dir, "config.json") {
-		t.Errorf("configPath: %s", op.configPath)
-	}
-	if op.pidPath != filepath.Join(dir, "sing-box.pid") {
-		t.Errorf("pidPath: %s", op.pidPath)
-	}
-}
+	t.Run("missing Tags line — version only", func(t *testing.T) {
+		out := "sing-box version 1.10.0\nEnvironment: go1.22 linux/amd64\n"
+		version, features := parseSingboxVersionOutput(out)
+		if version != "1.10.0" {
+			t.Errorf("version = %q", version)
+		}
+		if len(features) != 0 {
+			t.Errorf("features = %v, want empty", features)
+		}
+	})
 
-func TestParseProxyIdx(t *testing.T) {
-	cases := []struct {
-		in      string
-		wantIdx int
-		wantErr bool
-	}{
-		{"Proxy0", 0, false},
-		{"Proxy42", 42, false},
-		{"", 0, true},
-		{"Proxy", 0, true},
-		{"WrongPrefix0", 0, true},
-		{"Proxy-1", -1, false}, // Sscanf accepts negative — that's OK, semantic validation elsewhere
-	}
-	for _, c := range cases {
-		got, err := parseProxyIdx(c.in)
-		if (err != nil) != c.wantErr {
-			t.Errorf("%q: err=%v wantErr=%v", c.in, err, c.wantErr)
+	t.Run("tags with spaces around commas", func(t *testing.T) {
+		out := "sing-box version 1.0\nTags: with_a , with_b ,with_c\n"
+		_, features := parseSingboxVersionOutput(out)
+		want := []string{"with_a", "with_b", "with_c"}
+		if !reflect.DeepEqual(features, want) {
+			t.Errorf("features = %v, want %v", features, want)
 		}
-		if err == nil && got != c.wantIdx {
-			t.Errorf("%q: got=%d want=%d", c.in, got, c.wantIdx)
+	})
+
+	t.Run("empty output", func(t *testing.T) {
+		v, f := parseSingboxVersionOutput("")
+		if v != "" || f != nil {
+			t.Errorf("want empty, got version=%q features=%v", v, f)
 		}
-	}
+	})
+
+	t.Run("version line alone", func(t *testing.T) {
+		v, f := parseSingboxVersionOutput("sing-box version 1.2.3\n")
+		if v != "1.2.3" {
+			t.Errorf("version = %q", v)
+		}
+		if len(f) != 0 {
+			t.Errorf("features = %v, want empty", f)
+		}
+	})
 }

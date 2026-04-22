@@ -79,7 +79,8 @@ func (o *Operator) IsInstalled() (bool, string) {
 	if err != nil || path == "" {
 		return false, ""
 	}
-	return true, detectVersion(o.binary)
+	version, _ := detectVersionAndFeatures(o.binary)
+	return true, version
 }
 
 // GetStatus returns install + run status.
@@ -87,7 +88,7 @@ func (o *Operator) GetStatus(ctx context.Context) Status {
 	s := Status{}
 	if path, err := exec.LookPath(o.binary); err == nil && path != "" {
 		s.Installed = true
-		s.Version = detectVersion(o.binary)
+		s.Version, s.Features = detectVersionAndFeatures(o.binary)
 	}
 	if running, pid := o.proc.IsRunning(); running {
 		s.Running = true
@@ -100,20 +101,56 @@ func (o *Operator) GetStatus(ctx context.Context) Status {
 	return s
 }
 
-func detectVersion(binary string) string {
+// detectVersionAndFeatures shells out to `<binary> version` and returns
+// the version string and build tags parsed from its output. Exec
+// failure returns empty values.
+func detectVersionAndFeatures(binary string) (string, []string) {
 	out, err := exec.Command(binary, "version").Output()
 	if err != nil {
-		return ""
+		return "", nil
 	}
-	s := strings.TrimSpace(string(out))
-	if idx := strings.Index(s, "\n"); idx > 0 {
-		s = s[:idx]
+	return parseSingboxVersionOutput(string(out))
+}
+
+// parseSingboxVersionOutput parses the multi-line text produced by
+// `sing-box version`:
+//
+//	sing-box version 1.13.8
+//	Environment: go1.25.9 linux/arm64
+//	Tags: with_gvisor,with_quic,with_naive_outbound,...
+//	Revision: ...
+//	CGO: enabled
+//
+// Returns the version string (third field of the "sing-box version"
+// line) and the comma-separated build tags from the "Tags:" line.
+// Missing sections degrade to empty values — the caller is responsible
+// for deciding how to present "no tags detected".
+func parseSingboxVersionOutput(out string) (string, []string) {
+	var version string
+	var features []string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if version == "" && strings.HasPrefix(line, "sing-box version") {
+			parts := strings.Fields(line)
+			if len(parts) >= 3 {
+				version = parts[2]
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "Tags:") {
+			tagsRaw := strings.TrimSpace(strings.TrimPrefix(line, "Tags:"))
+			for _, t := range strings.Split(tagsRaw, ",") {
+				t = strings.TrimSpace(t)
+				if t != "" {
+					features = append(features, t)
+				}
+			}
+		}
 	}
-	parts := strings.Fields(s)
-	if len(parts) >= 3 {
-		return parts[2]
-	}
-	return s
+	return version, features
 }
 
 // ListTunnels returns the current tunnels from config.json.
