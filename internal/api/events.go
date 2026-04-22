@@ -10,13 +10,7 @@ import (
 
 // EventsHandler serves the SSE event stream.
 type EventsHandler struct {
-	bus      *events.Bus
-	snapshot *SnapshotBuilder
-}
-
-// SetSnapshotBuilder sets the snapshot builder for initial state delivery on connect.
-func (h *EventsHandler) SetSnapshotBuilder(sb *SnapshotBuilder) {
-	h.snapshot = sb
+	bus *events.Bus
 }
 
 // NewEventsHandler creates a new events handler.
@@ -26,6 +20,13 @@ func NewEventsHandler(bus *events.Bus) *EventsHandler {
 
 // Stream serves the SSE event stream.
 // GET /api/events
+//
+// The stream carries only incremental/push-only events (traffic,
+// connectivity, logs, ping-check logs, sing-box delay/traffic, geo
+// download progress, DNS-route failover notifications, and the generic
+// resource:invalidated hint). All cold-tier state is fetched via REST
+// by the frontend polling stores; the initial "connected" marker lets
+// the client confirm the stream is open before any push event arrives.
 func (h *EventsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -42,14 +43,9 @@ func (h *EventsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	_, ch, unsubscribe := h.bus.Subscribe()
 	defer unsubscribe()
 
-	// Send initial "connected" event so client confirms stream works
+	// Send initial "connected" event so client confirms stream works.
 	fmt.Fprintf(w, "event: connected\ndata: {\"ok\":true}\n\n")
 	flusher.Flush()
-
-	// Send snapshots on connect (full state for SSE-only architecture).
-	if h.snapshot != nil {
-		h.snapshot.SendSnapshots(w, flusher, r.Context())
-	}
 
 	ctx := r.Context()
 	for {

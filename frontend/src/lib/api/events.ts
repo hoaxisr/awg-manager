@@ -1,32 +1,5 @@
 // SSE event payloads
-import type {
-	SingboxStatusEvent,
-	SingboxTunnelEvent,
-	SingboxTraffic,
-	SingboxDelayEvent,
-} from '$lib/types';
-
-export interface TunnelStateEvent {
-	id: string;
-	name: string;
-	state: string;
-	backend?: string;
-}
-
-export interface TunnelDeletedEvent {
-	id: string;
-}
-
-export interface TunnelCreatedEvent {
-	id: string;
-	name: string;
-	backend: string;
-}
-
-export interface TunnelUpdatedEvent {
-	id: string;
-	name: string;
-}
+import type { SingboxTraffic, SingboxDelayEvent } from '$lib/types';
 
 export interface LogEntryEvent {
 	timestamp: string;
@@ -38,43 +11,9 @@ export interface LogEntryEvent {
 	message: string;
 }
 
-export interface PingCheckStateEvent {
-	tunnelId: string;
-	status: string;
-	failCount: number;
-	successCount: number;
-	restartDetected?: boolean;
-}
-
-// --- Snapshot payloads ---
-
 export interface SystemBootingEvent {
 	phase: 'waiting' | 'starting';
 	remainingSeconds?: number;
-}
-
-export interface SnapshotTunnelsEvent {
-	tunnels: import('$lib/types').TunnelListItem[];
-	external: import('$lib/types').ExternalTunnel[];
-	system: import('$lib/types').SystemTunnel[];
-}
-
-export interface SnapshotServersEvent {
-	servers: import('$lib/types').WireguardServer[];
-	managed: import('$lib/types').ManagedServer | null;
-	managedStats: import('$lib/types').ManagedServerStats | null;
-	wanIP: string;
-}
-
-export interface SnapshotPingcheckEvent {
-	statuses: import('$lib/types').TunnelPingStatus[];
-	logs: import('$lib/types').PingLogEntry[];
-}
-
-export interface SnapshotLogsEvent {
-	enabled: boolean;
-	logs: import('$lib/types').LogEntry[];
-	total: number;
 }
 
 // --- Incremental payloads ---
@@ -106,63 +45,6 @@ export interface PingCheckLogEvent {
 	backend?: string;
 }
 
-export interface SSEEventHandlers {
-	// Existing
-	onTunnelState?: (data: TunnelStateEvent) => void;
-	onTunnelCreated?: (data: TunnelCreatedEvent) => void;
-	onTunnelDeleted?: (data: TunnelDeletedEvent) => void;
-	onTunnelUpdated?: (data: TunnelUpdatedEvent) => void;
-	onLogEntry?: (data: LogEntryEvent) => void;
-	onPingCheckState?: (data: PingCheckStateEvent) => void;
-	onConnected?: () => void;
-	onDisconnected?: () => void;
-
-	// System
-	onSystemReady?: (data: { ok: boolean; instanceId: string }) => void;
-	onSystemBooting?: (data: SystemBootingEvent) => void;
-
-	// Snapshots
-	onSnapshotSystem?: (data: import('$lib/types').SystemInfo) => void;
-	onSnapshotTunnels?: (data: SnapshotTunnelsEvent) => void;
-	onSnapshotServers?: (data: SnapshotServersEvent) => void;
-	// onSnapshotRouting + all onRouting*Updated removed in Task 11 —
-	// the 7 routing subsections are now polling stores invalidated via
-	// resource:invalidated hints (see lib/stores/routing.ts).
-	onSnapshotPingcheck?: (data: SnapshotPingcheckEvent) => void;
-	onSnapshotLogs?: (data: SnapshotLogsEvent) => void;
-
-	// Incremental
-	onTunnelTraffic?: (data: TunnelTrafficEvent) => void;
-	onTunnelConnectivity?: (data: TunnelConnectivityEvent) => void;
-	onPingCheckLog?: (data: PingCheckLogEvent) => void;
-	onServerUpdated?: (data: SnapshotServersEvent) => void;
-	onTunnelsList?: (data: import('$lib/types').TunnelListItem[]) => void;
-	onDnsRouteFailover?: (data: {
-		listId: string;
-		listName: string;
-		tunnelId: string;
-		fromTunnel?: string;
-		toTunnel?: string;
-		action: 'switched' | 'restored' | 'error';
-		error?: string;
-	}) => void;
-
-	// Sing-box
-	// TODO(state-sync-redesign Task 15): remove — `singbox:status` and
-	// `singbox:tunnel` events are no longer published by the backend;
-	// polling stores + resource:invalidated hint cover this now.
-	onSingboxStatus?: (data: SingboxStatusEvent) => void;
-	onSingboxTunnel?: (data: SingboxTunnelEvent) => void;
-	onSingboxTraffic?: (data: SingboxTraffic[]) => void;
-	onSingboxDelay?: (data: SingboxDelayEvent) => void;
-
-	// HydraRoute
-	onHydraRouteGeoProgress?: (data: GeoDownloadProgressEvent) => void;
-
-	// Generic resource invalidation hint (state-sync redesign)
-	onResourceInvalidated?: (data: ResourceInvalidatedEvent) => void;
-}
-
 export interface GeoDownloadProgressEvent {
 	url: string;
 	fileType: 'geosite' | 'geoip';
@@ -172,9 +54,48 @@ export interface GeoDownloadProgressEvent {
 	error?: string;
 }
 
+export interface DnsRouteFailoverEvent {
+	listId: string;
+	listName: string;
+	tunnelId: string;
+	fromTunnel?: string;
+	toTunnel?: string;
+	action: 'switched' | 'restored' | 'error';
+	error?: string;
+}
+
 export interface ResourceInvalidatedEvent {
 	resource: string;
 	reason?: string;
+}
+
+export interface SSEEventHandlers {
+	// Connection lifecycle
+	onConnected?: () => void;
+	onDisconnected?: () => void;
+
+	// System events
+	onSystemReady?: (data: { ok: boolean; instanceId: string }) => void;
+	onSystemBooting?: (data: SystemBootingEvent) => void;
+
+	// Incremental streams (push-only — no REST equivalent)
+	onTunnelTraffic?: (data: TunnelTrafficEvent) => void;
+	onTunnelConnectivity?: (data: TunnelConnectivityEvent) => void;
+	onLogEntry?: (data: LogEntryEvent) => void;
+	onPingCheckLog?: (data: PingCheckLogEvent) => void;
+
+	// Sing-box streams (traffic + delay remain push-only)
+	onSingboxTraffic?: (data: SingboxTraffic[]) => void;
+	onSingboxDelay?: (data: SingboxDelayEvent) => void;
+
+	// HydraRoute geo download progress
+	onHydraRouteGeoProgress?: (data: GeoDownloadProgressEvent) => void;
+
+	// DNS-route failover notification (user-visible toast)
+	onDnsRouteFailover?: (data: DnsRouteFailoverEvent) => void;
+
+	// Generic resource invalidation hint (state-sync redesign)
+	onResourceInvalidated?: (data: ResourceInvalidatedEvent) => void;
 }
 
 export function connectSSE(handlers: SSEEventHandlers): () => void {
@@ -191,40 +112,25 @@ export function connectSSE(handlers: SSEEventHandlers): () => void {
 		}) as EventListener);
 	};
 
-	handle('tunnel:state', handlers.onTunnelState);
-	handle('tunnel:created', handlers.onTunnelCreated);
-	handle('tunnel:deleted', handlers.onTunnelDeleted);
-	handle('tunnel:updated', handlers.onTunnelUpdated);
-	handle('log:entry', handlers.onLogEntry);
-	handle('pingcheck:state', handlers.onPingCheckState);
-
 	// System events
 	handle('system:ready', handlers.onSystemReady);
 	handle('system:booting', handlers.onSystemBooting);
 
-	// Snapshot events
-	handle('snapshot:system', handlers.onSnapshotSystem);
-	handle('snapshot:tunnels', handlers.onSnapshotTunnels);
-	handle('snapshot:servers', handlers.onSnapshotServers);
-	handle('snapshot:pingcheck', handlers.onSnapshotPingcheck);
-	handle('snapshot:logs', handlers.onSnapshotLogs);
-
-	// Incremental events
+	// Incremental streams
 	handle('tunnel:traffic', handlers.onTunnelTraffic);
 	handle('tunnel:connectivity', handlers.onTunnelConnectivity);
+	handle('log:entry', handlers.onLogEntry);
 	handle('pingcheck:log', handlers.onPingCheckLog);
-	handle('server:updated', handlers.onServerUpdated);
-	handle('tunnels:list', handlers.onTunnelsList);
-	handle('dnsroute:failover', handlers.onDnsRouteFailover);
 
-	// Sing-box events
-	handle('singbox:status', handlers.onSingboxStatus);
-	handle('singbox:tunnel', handlers.onSingboxTunnel);
+	// Sing-box streams
 	handle('singbox:traffic', handlers.onSingboxTraffic);
 	handle('singbox:delay', handlers.onSingboxDelay);
 
 	// HydraRoute events
 	handle('hydraroute:geo-progress', handlers.onHydraRouteGeoProgress);
+
+	// DNS-route failover
+	handle('dnsroute:failover', handlers.onDnsRouteFailover);
 
 	// Generic resource invalidation hint (state-sync redesign)
 	handle('resource:invalidated', handlers.onResourceInvalidated);

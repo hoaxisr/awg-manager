@@ -28,9 +28,9 @@ func NewNDMSHandler(save *ndmscommand.SaveCoordinator) *NDMSHandler {
 }
 
 // saveStatusDTO is the wire shape returned by GET /api/ndms/save-status.
-// Fields match the former events.SaveStatusEvent one-for-one so existing
-// UI consumers that moved from the SSE event to the polling store can
-// keep reading the same keys.
+// State is one of: "idle" | "pending" | "saving" | "error" | "failed".
+// Mirrors the shape UI consumers previously read from the SSE event bus
+// so the polling store keeps the same keys.
 type saveStatusDTO struct {
 	State        string    `json:"state"`
 	LastError    string    `json:"lastError,omitempty"`

@@ -216,7 +216,7 @@ func (h *TunnelsHandler) SetSnapshotRefresher(fn func(ctx context.Context)) {
 
 // SetTunnelsSnapshotBuilder wires the composer used by GetAll and
 // mutation handlers that return fresh snapshot state. Server.go
-// typically injects SnapshotBuilder.BuildTunnelsSnapshot.
+// typically injects TunnelsSnapshotBuilder.Build.
 func (h *TunnelsHandler) SetTunnelsSnapshotBuilder(fn func(ctx context.Context) map[string]interface{}) {
 	h.buildTunnelsSnapshot = fn
 }

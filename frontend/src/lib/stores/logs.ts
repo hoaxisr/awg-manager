@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
 import type { LogEntry } from '$lib/types';
-import type { LogEntryEvent, SnapshotLogsEvent } from '$lib/api/events';
+import type { LogEntryEvent } from '$lib/api/events';
 
 const MAX_ENTRIES = 500;
 
@@ -27,12 +27,6 @@ function createLogStore() {
 				}
 				return updated;
 			});
-		},
-		setSnapshot(data: SnapshotLogsEvent) {
-			set(data.logs ?? []);
-			logsEnabled.set(data.enabled);
-			logsTotal.set(data.total);
-			loaded.set(true);
 		},
 		clear() {
 			set([]);
