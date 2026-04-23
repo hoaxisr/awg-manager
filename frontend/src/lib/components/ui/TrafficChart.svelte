@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { formatBytes, formatBitRate } from '$lib/utils/format';
+	import { formatBitRate, formatBytes } from '$lib/utils/format';
 
 	interface Props {
 		rxRates: number[];
@@ -7,8 +7,8 @@
 		rxTotal?: number;
 		txTotal?: number;
 		height?: number;
-		period?: string;
-		onPeriodChange?: (period: string) => void;
+		/** Fires on click over the chart area — used by host to open detail modal. */
+		onclick?: () => void;
 	}
 
 	let {
@@ -16,20 +16,20 @@
 		txRates,
 		rxTotal = 0,
 		txTotal = 0,
-		height = 100,
-		period = '1h',
-		onPeriodChange,
+		height = 68,
+		onclick
 	}: Props = $props();
 
 	const PAD_X = 0;
-	const PAD_Y = 2;
-
-	let hoverIndex = $state<number | null>(null);
-	let svgEl = $state<SVGSVGElement | null>(null);
+	const PAD_BOTTOM = 2;
+	const PAD_TOP = 2;
+	const CHART_W = 300;
 
 	let len = $derived(Math.min(rxRates.length, txRates.length));
 	let hasData = $derived(len >= 2);
 
+	// Scale Y by the peak RX (area) so TX line stays visually subordinate
+	// but still visible when it's a small fraction of RX.
 	let maxRate = $derived.by(() => {
 		if (!hasData) return 1;
 		let m = 1;
@@ -40,170 +40,108 @@
 		return m;
 	});
 
-	let centerY = $derived(height / 2);
-	let halfH = $derived(centerY - PAD_Y);
-
-	// Current (last) rates
 	let currentRx = $derived(hasData ? rxRates[len - 1] : 0);
 	let currentTx = $derived(hasData ? txRates[len - 1] : 0);
 
-	// Hover values
-	let hoverRx = $derived(hoverIndex !== null ? rxRates[hoverIndex] : null);
-	let hoverTx = $derived(hoverIndex !== null ? txRates[hoverIndex] : null);
-
-	function buildPath(rates: number[], direction: 'up' | 'down', w: number): string {
+	function buildLine(rates: number[]): string {
 		if (len < 2) return '';
-		const step = w / (len - 1);
-		const points = [];
+		const step = (CHART_W - PAD_X * 2) / (len - 1);
+		const h = height - PAD_TOP - PAD_BOTTOM;
+		const pts: string[] = [];
 		for (let i = 0; i < len; i++) {
 			const x = PAD_X + i * step;
-			const norm = (rates[i] / maxRate) * halfH;
-			const y = direction === 'up' ? centerY - norm : centerY + norm;
-			points.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+			const norm = (rates[i] / maxRate) * h;
+			const y = height - PAD_BOTTOM - norm;
+			pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
 		}
-		return `M${points.join(' L')}`;
+		return `M${pts.join(' L')}`;
 	}
 
-	function buildAreaPath(linePath: string, direction: 'up' | 'down', w: number): string {
-		if (!linePath) return '';
-		const step = w / (len - 1);
-		const endX = (PAD_X + (len - 1) * step).toFixed(1);
+	function buildArea(line: string): string {
+		if (!line) return '';
+		const endX = (CHART_W - PAD_X).toFixed(1);
+		const baseY = (height - PAD_BOTTOM).toFixed(1);
 		const startX = PAD_X.toFixed(1);
-		const baseY = centerY.toFixed(1);
-		return `${linePath} L${endX},${baseY} L${startX},${baseY} Z`;
+		return `${line} L${endX},${baseY} L${startX},${baseY} Z`;
 	}
 
-	function handleMouseMove(e: MouseEvent) {
-		if (!svgEl || !hasData) return;
-		const rect = svgEl.getBoundingClientRect();
-		const mouseX = e.clientX - rect.left;
-		const w = rect.width - PAD_X * 2;
-		const step = w / (len - 1);
-		const idx = Math.round((mouseX - PAD_X) / step);
-		hoverIndex = Math.max(0, Math.min(len - 1, idx));
-	}
-
-	function handleMouseLeave() {
-		hoverIndex = null;
-	}
-
-	const PERIODS = [
-		{ value: '1h', label: '1ч' },
-		{ value: '3h', label: '3ч' },
-		{ value: '24h', label: '24ч' },
-	] as const;
-
-	let periodLabel = $derived(PERIODS.find(p => p.value === period)?.label ?? '1ч');
-
-	// Derived SVG paths (use full width via CSS, viewBox handles coords)
-	let chartWidth = $derived(300);
-	let rxPath = $derived(buildPath(rxRates, 'up', chartWidth - PAD_X * 2));
-	let txPath = $derived(buildPath(txRates, 'down', chartWidth - PAD_X * 2));
-	let rxArea = $derived(buildAreaPath(rxPath, 'up', chartWidth - PAD_X * 2));
-	let txArea = $derived(buildAreaPath(txPath, 'down', chartWidth - PAD_X * 2));
-
-	let hoverX = $derived.by(() => {
-		if (hoverIndex === null || len < 2) return 0;
-		const w = chartWidth - PAD_X * 2;
-		const step = w / (len - 1);
-		return PAD_X + hoverIndex * step;
-	});
-
-	let hoverRxY = $derived.by(() => {
-		if (hoverIndex === null) return centerY;
-		return centerY - (rxRates[hoverIndex] / maxRate) * halfH;
-	});
-
-	let hoverTxY = $derived.by(() => {
-		if (hoverIndex === null) return centerY;
-		return centerY + (txRates[hoverIndex] / maxRate) * halfH;
-	});
+	let rxLine = $derived(buildLine(rxRates));
+	let txLine = $derived(buildLine(txRates));
+	let rxArea = $derived(buildArea(rxLine));
 </script>
 
 {#if hasData}
-	<div class="traffic-chart">
-		<div class="chart-labels">
-			<div class="label-col left">
-				<span class="rate rx">↓ {formatBitRate(hoverIndex !== null ? hoverRx! : currentRx)}</span>
-				<span class="rate tx">↑ {formatBitRate(hoverIndex !== null ? hoverTx! : currentTx)}</span>
-			</div>
-			{#if onPeriodChange}
-				<div class="period-tabs">
-					{#each PERIODS as p}
-						<button
-							class="period-btn"
-							class:active={period === p.value}
-							onclick={() => onPeriodChange(p.value)}
-						>
-							{p.label}
-						</button>
-					{/each}
-				</div>
-			{/if}
-			<div class="label-col right">
-				<span class="total rx">↓ {formatBytes(rxTotal)}</span>
-				<span class="total tx">↑ {formatBytes(txTotal)}</span>
-			</div>
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div
+		class="traffic-chart"
+		class:clickable={!!onclick}
+		onclick={onclick}
+	>
+		<svg
+			class="chart-svg"
+			viewBox={`0 0 ${CHART_W} ${height}`}
+			preserveAspectRatio="none"
+			aria-hidden="true"
+		>
+			<defs>
+				<linearGradient id="rx-area-grad" x1="0" x2="0" y1="0" y2="1">
+					<stop offset="0%" stop-color="var(--accent, #7aa2f7)" stop-opacity="0.45" />
+					<stop offset="100%" stop-color="var(--accent, #7aa2f7)" stop-opacity="0" />
+				</linearGradient>
+			</defs>
+
+			<!-- 50% + 25% grid lines -->
+			<line
+				x1={PAD_X}
+				y1={(height - PAD_TOP - PAD_BOTTOM) * 0.25 + PAD_TOP}
+				x2={CHART_W - PAD_X}
+				y2={(height - PAD_TOP - PAD_BOTTOM) * 0.25 + PAD_TOP}
+				stroke="var(--border, #333)"
+				stroke-width="0.3"
+				stroke-dasharray="2,3"
+				opacity="0.35"
+			/>
+			<line
+				x1={PAD_X}
+				y1={(height - PAD_TOP - PAD_BOTTOM) * 0.5 + PAD_TOP}
+				x2={CHART_W - PAD_X}
+				y2={(height - PAD_TOP - PAD_BOTTOM) * 0.5 + PAD_TOP}
+				stroke="var(--border, #333)"
+				stroke-width="0.3"
+				stroke-dasharray="2,3"
+				opacity="0.35"
+			/>
+
+			<!-- RX area + line -->
+			<path d={rxArea} fill="url(#rx-area-grad)" />
+			<path
+				d={rxLine}
+				fill="none"
+				stroke="var(--accent, #7aa2f7)"
+				stroke-width="1.4"
+				stroke-linejoin="round"
+				stroke-linecap="round"
+			/>
+
+			<!-- TX line (no fill) -->
+			<path
+				d={txLine}
+				fill="none"
+				stroke="var(--warning, #e0af68)"
+				stroke-width="1.2"
+				stroke-linejoin="round"
+				stroke-linecap="round"
+				opacity="0.85"
+			/>
+		</svg>
+		<div class="x-labels">
+			<span>−1ч</span>
+			<span>сейчас</span>
 		</div>
-
-		<div class="chart-area">
-			<span class="scale-label top-label">{formatBitRate(maxRate)}</span>
-
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
-			<svg
-				bind:this={svgEl}
-				class="chart-svg"
-				viewBox="0 0 {chartWidth} {height}"
-				preserveAspectRatio="none"
-				onmousemove={handleMouseMove}
-				onmouseleave={handleMouseLeave}
-			>
-				<!-- 50% grid lines -->
-				<line
-					x1={PAD_X} y1={centerY - halfH * 0.5}
-					x2={chartWidth - PAD_X} y2={centerY - halfH * 0.5}
-					stroke="var(--border, #333)" stroke-width="0.3" stroke-dasharray="2,4" opacity="0.4"
-				/>
-				<line
-					x1={PAD_X} y1={centerY + halfH * 0.5}
-					x2={chartWidth - PAD_X} y2={centerY + halfH * 0.5}
-					stroke="var(--border, #333)" stroke-width="0.3" stroke-dasharray="2,4" opacity="0.4"
-				/>
-
-				<!-- center axis -->
-				<line
-					x1={PAD_X} y1={centerY}
-					x2={chartWidth - PAD_X} y2={centerY}
-					stroke="var(--border, #333)"
-					stroke-width="0.5"
-					stroke-dasharray="4,3"
-				/>
-
-				<!-- RX area + line (up) -->
-				<path d={rxArea} fill="var(--success, #118c74)" fill-opacity="0.15" />
-				<path d={rxPath} fill="none" stroke="var(--success, #118c74)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" />
-
-				<!-- TX area + line (down) -->
-				<path d={txArea} fill="var(--error, #f52a65)" fill-opacity="0.15" />
-				<path d={txPath} fill="none" stroke="var(--error, #f52a65)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" />
-
-				<!-- Hover overlay -->
-				{#if hoverIndex !== null}
-					<line
-						x1={hoverX} y1={PAD_Y}
-						x2={hoverX} y2={height - PAD_Y}
-						stroke="var(--text-muted, #888)"
-						stroke-width="0.75"
-						stroke-dasharray="2,2"
-					/>
-					<circle cx={hoverX} cy={hoverRxY} r="3" fill="var(--success, #118c74)" />
-					<circle cx={hoverX} cy={hoverTxY} r="3" fill="var(--error, #f52a65)" />
-				{/if}
-			</svg>
-			<div class="x-labels">
-				<span>-{periodLabel}</span>
-				<span>сейчас</span>
-			</div>
+		<div class="stats-row">
+			<span class="rate rx">↓ {formatBitRate(currentRx)}</span>
+			<span class="rate tx">↑ {formatBitRate(currentTx)}</span>
+			<span class="total">за час: {formatBytes(rxTotal + txTotal)}</span>
 		</div>
 	</div>
 {/if}
@@ -212,64 +150,30 @@
 	.traffic-chart {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: 2px;
+		padding: 4px;
+		border-radius: 6px;
+		transition: background 0.15s;
 	}
 
-	.chart-labels {
-		display: flex;
-		justify-content: space-between;
-		align-items: flex-start;
-		padding: 0 2px;
+	.traffic-chart.clickable {
+		cursor: pointer;
 	}
 
-	.label-col {
-		display: flex;
-		flex-direction: column;
-		gap: 1px;
+	.traffic-chart.clickable:hover {
+		background: rgba(122, 162, 247, 0.06);
 	}
 
-	.label-col.right {
-		text-align: right;
-	}
-
-	.rate, .total {
-		font-size: 11px;
-		font-family: var(--font-mono, monospace);
-		line-height: 1.3;
-	}
-
-	.rate.rx, .total.rx {
-		color: var(--success, #118c74);
-	}
-
-	.rate.tx, .total.tx {
-		color: var(--error, #f52a65);
-	}
-
-	.chart-area {
-		position: relative;
-	}
-
-	.scale-label {
-		position: absolute;
-		left: 4px;
-		font-size: 9px;
-		font-family: var(--font-mono, monospace);
-		color: var(--text-muted, #555);
-		pointer-events: none;
-		opacity: 0.8;
-		z-index: 1;
-		line-height: 1;
-	}
-
-	.top-label {
-		top: 2px;
+	.chart-svg {
+		display: block;
+		width: 100%;
+		height: auto;
 	}
 
 	.x-labels {
 		display: flex;
 		justify-content: space-between;
-		padding: 2px 4px 0;
+		padding: 0 2px;
 		font-size: 9px;
 		font-family: var(--font-mono, monospace);
 		color: var(--text-muted, #555);
@@ -277,37 +181,25 @@
 		line-height: 1;
 	}
 
-	.chart-svg {
-		display: block;
-		width: 100%;
-		cursor: crosshair;
-	}
-
-	.period-tabs {
+	.stats-row {
 		display: flex;
-		gap: 2px;
-		background: var(--bg-secondary, rgba(0,0,0,0.2));
-		border-radius: 6px;
-		padding: 2px;
-	}
-
-	.period-btn {
-		all: unset;
-		font-size: 10px;
+		gap: 10px;
+		justify-content: space-between;
+		align-items: baseline;
+		padding: 0 2px;
+		font-size: 11px;
 		font-family: var(--font-mono, monospace);
-		padding: 1px 6px;
-		border-radius: 4px;
-		cursor: pointer;
+	}
+
+	.rate.rx {
+		color: var(--accent, #7aa2f7);
+	}
+
+	.rate.tx {
+		color: var(--warning, #e0af68);
+	}
+
+	.total {
 		color: var(--text-muted, #888);
-		transition: background 0.15s, color 0.15s;
-	}
-
-	.period-btn:hover {
-		color: var(--text-primary);
-	}
-
-	.period-btn.active {
-		background: var(--bg-tertiary);
-		color: var(--text-primary);
 	}
 </style>
