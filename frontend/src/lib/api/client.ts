@@ -160,7 +160,7 @@ class ApiClient {
 		});
 	}
 
-	async getTrafficHistory(
+	async getTraffic(
 		id: string,
 		period: '1h' | '24h'
 	): Promise<{
