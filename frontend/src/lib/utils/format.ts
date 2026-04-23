@@ -14,14 +14,14 @@ export function formatBytes(bytes: number, decimals = 2): string {
 }
 
 /**
- * Format bytes/sec to human readable bits/sec string (Kbps, Mbps, Gbps)
+ * Format bytes/sec to human readable bits/sec string (Кбит/с, Мбит/с, Гбит/с)
  */
 export function formatBitRate(bytesPerSec: number): string {
     const bits = bytesPerSec * 8;
-    if (bits === 0) return '0 bps';
+    if (bits === 0) return '0 бит/с';
 
     const k = 1000;
-    const sizes = ['bps', 'Kbps', 'Mbps', 'Gbps'];
+    const sizes = ['бит/с', 'Кбит/с', 'Мбит/с', 'Гбит/с'];
 
     const i = Math.floor(Math.log(bits) / Math.log(k));
     const idx = Math.min(i, sizes.length - 1);
