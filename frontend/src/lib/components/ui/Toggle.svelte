@@ -46,11 +46,10 @@
                     </span>
                 </span>
             {:else}
-                <span class="toggle-slider">
-                    {#if loading}
-                        <span class="toggle-spinner"></span>
-                    {/if}
+                <span class="toggle-spinner-slot" aria-hidden="true">
+                    {#if loading}<span class="toggle-spinner"></span>{/if}
                 </span>
+                <span class="toggle-slider"></span>
             {/if}
         </label>
         <div class="toggle-text">
@@ -72,11 +71,10 @@
                 </span>
             </span>
         {:else}
-            <span class="toggle-slider">
-                {#if loading}
-                    <span class="toggle-spinner"></span>
-                {/if}
+            <span class="toggle-spinner-slot" aria-hidden="true">
+                {#if loading}<span class="toggle-spinner"></span>{/if}
             </span>
+            <span class="toggle-slider"></span>
         {/if}
     </label>
 {/if}
@@ -86,7 +84,19 @@
         position: relative;
         display: inline-flex;
         align-items: center;
+        gap: 8px;
         cursor: pointer;
+    }
+
+    /* Reserved slot next to the slider — prevents layout jump between
+       idle and loading. Empty in idle, spinner appears when loading. */
+    .toggle-spinner-slot {
+        width: 12px;
+        height: 12px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
     }
 
     .toggle-container input {
@@ -119,11 +129,11 @@
         transition: transform 0.2s ease, background 0.2s ease;
     }
 
-    .toggle-container input:checked + .toggle-slider {
+    .toggle-container input:checked ~ .toggle-slider {
         background: var(--accent);
     }
 
-    .toggle-container input:checked + .toggle-slider::before {
+    .toggle-container input:checked ~ .toggle-slider::before {
         transform: translateX(20px);
         background: white;
     }
@@ -132,7 +142,7 @@
         background: var(--border);
     }
 
-    .toggle-container input:checked:hover + .toggle-slider {
+    .toggle-container input:checked:hover ~ .toggle-slider {
         filter: brightness(1.1);
     }
 
@@ -150,7 +160,7 @@
         left: 2px;
     }
 
-    .toggle-container.sm input:checked + .toggle-slider::before {
+    .toggle-container.sm input:checked ~ .toggle-slider::before {
         transform: translateX(14px);
     }
 
@@ -230,14 +240,10 @@
     }
 
     .toggle-spinner {
-        position: absolute;
-        left: 50%;
-        top: 50%;
-        transform: translate(-50%, -50%);
         width: 12px;
         height: 12px;
         border: 2px solid var(--text-muted);
-        border-top-color: transparent;
+        border-top-color: var(--accent);
         border-radius: 50%;
         animation: spin 0.8s linear infinite;
     }
@@ -252,7 +258,7 @@
     }
 
     /* Disabled */
-    .toggle-container input:disabled + .toggle-slider,
+    .toggle-container input:disabled ~ .toggle-slider,
     .toggle-container input:disabled + .flip-track {
         opacity: 0.5;
         cursor: not-allowed;

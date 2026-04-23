@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 )
 
 const probeDomain = "awgm-dnscheck.test"
@@ -23,14 +23,14 @@ type TunnelStateProvider interface {
 	RunningTunnelNames(ctx context.Context) []string
 }
 
-// ndmsClient is the subset of ndms.Client used by this service.
+// ndmsClient is the subset of *transport.Client used by this service.
 type ndmsClient interface {
-	RCIPost(ctx context.Context, payload interface{}) (json.RawMessage, error)
-	RCIGet(ctx context.Context, path string) (json.RawMessage, error)
+	Post(ctx context.Context, payload any) (json.RawMessage, error)
+	GetRaw(ctx context.Context, path string) ([]byte, error)
 }
 
-// compile-time check: ndms.Client must satisfy ndmsClient
-var _ ndmsClient = (ndms.Client)(nil)
+// compile-time check: *transport.Client must satisfy ndmsClient
+var _ ndmsClient = (*transport.Client)(nil)
 
 // Service runs DNS routing diagnostic checks.
 type Service struct {
@@ -41,7 +41,7 @@ type Service struct {
 }
 
 // NewService creates a new DNS check service.
-func NewService(ndmsClient ndms.Client, dns DnsRouteProvider, tunnels TunnelStateProvider, log *logger.Logger) *Service {
+func NewService(ndmsClient ndmsClient, dns DnsRouteProvider, tunnels TunnelStateProvider, log *logger.Logger) *Service {
 	return &Service{
 		ndms:    ndmsClient,
 		dns:     dns,
@@ -79,7 +79,7 @@ func (s *Service) EnsureIPHost(ctx context.Context) {
 // entry is indistinguishable from a transient NDMS hiccup at this level —
 // the caller retries via createIPHost either way.
 func (s *Service) lookupIPHost(ctx context.Context, domain string) (string, bool) {
-	raw, err := s.ndms.RCIGet(ctx, "/show/rc/ip/host")
+	raw, err := s.ndms.GetRaw(ctx, "/show/rc/ip/host")
 	if err != nil {
 		return "", false
 	}
@@ -161,7 +161,7 @@ func (s *Service) checkRoutes(ctx context.Context) CheckResult {
 
 // checkPolicy checks if the client IP is assigned an alternative access policy.
 func (s *Service) checkPolicy(ctx context.Context, clientIP string) CheckResult {
-	raw, err := s.ndms.RCIGet(ctx, "/show/ip/hotspot")
+	raw, err := s.ndms.GetRaw(ctx, "/show/ip/hotspot")
 	if err != nil {
 		return CheckResult{
 			ID:      "client_policy",
@@ -220,7 +220,7 @@ func (s *Service) checkPolicy(ctx context.Context, clientIP string) CheckResult 
 
 // checkEncryption checks if the DNS proxy uses encrypted DNS (DoT/DoH/TLS).
 func (s *Service) checkEncryption(ctx context.Context) CheckResult {
-	raw, err := s.ndms.RCIGet(ctx, "/show/rc/dns-proxy")
+	raw, err := s.ndms.GetRaw(ctx, "/show/rc/dns-proxy")
 	if err != nil {
 		return CheckResult{
 			ID:      "dns_encryption",
@@ -254,23 +254,29 @@ func (s *Service) checkEncryption(ctx context.Context) CheckResult {
 }
 
 // createIPHost creates an ip host entry via RCI.
+//
+// Request shape matches the CLI `ip host <domain> <address>` — domain
+// and address are SIBLINGS under ip.host, NOT domain-as-key. An earlier
+// version nested {ip: {host: {<domain>: {address}}}} which NDMS parsed
+// as a path lookup to an existing record, producing:
+//
+//	Core::Configurator: not found: "ip/host/awgm-dnscheck.test"
 func (s *Service) createIPHost(ctx context.Context, domain, address string) error {
 	payload := map[string]interface{}{
 		"ip": map[string]interface{}{
 			"host": map[string]interface{}{
-				domain: map[string]interface{}{
-					"address": address,
-				},
+				"domain":  domain,
+				"address": address,
 			},
 		},
 	}
-	_, err := s.ndms.RCIPost(ctx, payload)
+	_, err := s.ndms.Post(ctx, payload)
 	return err
 }
 
 // resolveHostname looks up the client hostname from the hotspot list.
 func (s *Service) resolveHostname(ctx context.Context, ip string) string {
-	raw, err := s.ndms.RCIGet(ctx, "/show/ip/hotspot")
+	raw, err := s.ndms.GetRaw(ctx, "/show/ip/hotspot")
 	if err != nil {
 		return ip
 	}

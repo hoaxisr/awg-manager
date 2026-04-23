@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -71,16 +70,8 @@ func (h *StaticRouteHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Create creates a new static route list.
 func (h *StaticRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-
-	var rl storage.StaticRouteList
-	if err := json.NewDecoder(r.Body).Decode(&rl); err != nil {
-		response.ErrorWithStatus(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
+	rl, ok := parseJSON[storage.StaticRouteList](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 
@@ -98,16 +89,8 @@ func (h *StaticRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Update updates an existing static route list.
 func (h *StaticRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-
-	var rl storage.StaticRouteList
-	if err := json.NewDecoder(r.Body).Decode(&rl); err != nil {
-		response.ErrorWithStatus(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
+	rl, ok := parseJSON[storage.StaticRouteList](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 
@@ -149,24 +132,14 @@ func (h *StaticRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // SetEnabled toggles the enabled state of a static route list.
 func (h *StaticRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
+	body, ok := parseJSON[enabledToggle](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 
 	id := r.URL.Query().Get("id")
 	if id == "" {
 		response.ErrorWithStatus(w, http.StatusBadRequest, "Missing id parameter", "MISSING_ID")
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-
-	var body struct {
-		Enabled bool `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		response.ErrorWithStatus(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
 		return
 	}
 
@@ -185,22 +158,17 @@ func (h *StaticRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) 
 	h.publishStaticUpdated()
 }
 
+// staticRouteImportReq is the shape of /api/static-route/import body.
+type staticRouteImportReq struct {
+	TunnelID string `json:"tunnelID"`
+	Name     string `json:"name"`
+	Content  string `json:"content"`
+}
+
 // Import imports subnets from a .bat file content.
 func (h *StaticRouteHandler) Import(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-
-	var body struct {
-		TunnelID string `json:"tunnelID"`
-		Name     string `json:"name"`
-		Content  string `json:"content"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		response.ErrorWithStatus(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
+	body, ok := parseJSON[staticRouteImportReq](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 

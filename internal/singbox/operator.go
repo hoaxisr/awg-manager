@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 )
 
 const (
@@ -25,7 +27,6 @@ type Operator struct {
 	binary     string
 	configPath string
 	pidPath    string
-	logPath    string
 
 	proc      *Process
 	validator *Validator
@@ -35,10 +36,11 @@ type Operator struct {
 
 // OperatorDeps are external dependencies for DI.
 type OperatorDeps struct {
-	Log    *slog.Logger
-	NDMS   ndms.Client
-	Dir    string // optional; defaults to /opt/etc/awg-manager/singbox
-	Binary string // optional; defaults to "sing-box"
+	Log      *slog.Logger
+	Queries  *query.Queries
+	Commands *command.Commands
+	Dir      string // optional; defaults to /opt/etc/awg-manager/singbox
+	Binary   string // optional; defaults to "sing-box"
 }
 
 func NewOperator(d OperatorDeps) *Operator {
@@ -56,7 +58,6 @@ func NewOperator(d OperatorDeps) *Operator {
 	}
 	configPath := filepath.Join(dir, "config.json")
 	pidPath := filepath.Join(dir, "sing-box.pid")
-	logPath := filepath.Join(dir, "sing-box.log")
 
 	return &Operator{
 		log:        log,
@@ -64,10 +65,9 @@ func NewOperator(d OperatorDeps) *Operator {
 		binary:     binary,
 		configPath: configPath,
 		pidPath:    pidPath,
-		logPath:    logPath,
-		proc:       NewProcess(binary, configPath, pidPath, logPath),
+		proc:       NewProcess(binary, configPath, pidPath),
 		validator:  NewValidator(binary),
-		proxyMgr:   NewProxyManager(d.NDMS),
+		proxyMgr:   NewProxyManager(d.Queries, d.Commands),
 		clash:      NewClashClient("127.0.0.1:9090"),
 	}
 }
@@ -96,6 +96,7 @@ func (o *Operator) GetStatus(ctx context.Context) Status {
 	if cfg, err := o.loadConfig(); err == nil {
 		s.TunnelCount = len(cfg.Tunnels())
 	}
+	s.ProxyComponent = ndmsinfo.HasProxyComponent()
 	return s
 }
 
@@ -271,12 +272,23 @@ func (o *Operator) Reconcile(ctx context.Context) error {
 	return o.proxyMgr.SyncProxies(ctx, tunnels)
 }
 
-// Install runs `opkg install sing-box`.
+// Install installs sing-box-naive from the awg-manager repo (Entware
+// repo list). Entware's stock `sing-box` package is built without
+// `-tags with_naive_outbound`, so importing naive+https:// links fails
+// with "naive outbound is not included in this build". Our repacked
+// package `sing-box-naive` carries the vendor-default DEFAULT_BUILD_TAGS
+// (naive + quic + wireguard + utls + clash_api + tailscale + dhcp +
+// gvisor + acme), statically linked, installed to /opt/bin/sing-box.
+//
+// opkg update runs first so a router that was provisioned before we
+// started publishing this package still sees it.
 func (o *Operator) Install(ctx context.Context) error {
-	cmd := exec.CommandContext(ctx, "opkg", "install", "sing-box")
-	out, err := cmd.CombinedOutput()
+	if out, err := exec.CommandContext(ctx, "opkg", "update").CombinedOutput(); err != nil {
+		return fmt.Errorf("opkg update: %s: %w", string(out), err)
+	}
+	out, err := exec.CommandContext(ctx, "opkg", "install", "sing-box-naive").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("opkg install sing-box: %s: %w", string(out), err)
+		return fmt.Errorf("opkg install sing-box-naive: %s: %w", string(out), err)
 	}
 	return nil
 }
@@ -319,7 +331,10 @@ func (o *Operator) Cleanup(ctx context.Context) error {
 
 	// Remove on-disk files. Errors are non-fatal — the directory itself
 	// will be removed by the opkg postrm step.
-	for _, path := range []string{o.configPath, o.pidPath, o.logPath} {
+	// sing-box.log is a legacy path (pre-log-forwarding) — removed here so
+	// upgrades from older installs don't leave an orphaned file behind.
+	legacyLogPath := filepath.Join(o.dir, "sing-box.log")
+	for _, path := range []string{o.configPath, o.pidPath, legacyLogPath} {
 		if path == "" {
 			continue
 		}

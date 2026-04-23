@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
@@ -37,22 +37,29 @@ func (m *mockTunnelProvider) WANModel() *wan.Model {
 }
 
 type mockNDMSClient struct {
-	wgIfaces []ndms.WireguardInterfaceInfo
+	ifaces   []ndms.Interface
 	err      error
 	sysNames map[string]string
+	// sysNamesDefaultIdentity — when true, ResolveSystemName returns the
+	// input as-is when no mapping is found (mimics "not found"). When
+	// false (default), returns "".
+	sysNamesDefaultIdentity bool
 }
 
-func (m *mockNDMSClient) ListWireguardInterfaces(_ context.Context) ([]ndms.WireguardInterfaceInfo, error) {
-	return m.wgIfaces, m.err
+func (m *mockNDMSClient) List(_ context.Context) ([]ndms.Interface, error) {
+	return m.ifaces, m.err
 }
 
-func (m *mockNDMSClient) GetSystemName(_ context.Context, ndmsName string) string {
+func (m *mockNDMSClient) ResolveSystemName(_ context.Context, ndmsName string) string {
 	if m.sysNames != nil {
 		if n, ok := m.sysNames[ndmsName]; ok {
 			return n
 		}
 	}
-	return ndmsName
+	if m.sysNamesDefaultIdentity {
+		return ndmsName
+	}
+	return ""
 }
 
 type mockStoreClient struct {
@@ -141,9 +148,9 @@ func TestListAll_SystemDedup(t *testing.T) {
 		},
 	}
 	ndmsClient := &mockNDMSClient{
-		wgIfaces: []ndms.WireguardInterfaceInfo{
-			{Name: "Wireguard0", Description: "Unmanaged VPN"},
-			{Name: "Wireguard1", Description: "Should be deduped"}, // same as managed NWG
+		ifaces: []ndms.Interface{
+			{ID: "Wireguard0", Type: "wireguard", Description: "Unmanaged VPN"},
+			{ID: "Wireguard1", Type: "wireguard", Description: "Should be deduped"}, // same as managed NWG
 		},
 	}
 	store := &mockStoreClient{entries: map[string]StoreEntry{}}
@@ -245,8 +252,8 @@ func TestListAll_WANInterfaces(t *testing.T) {
 func TestListAll_SystemNoDescription(t *testing.T) {
 	provider := &mockTunnelProvider{tunnels: nil}
 	ndmsClient := &mockNDMSClient{
-		wgIfaces: []ndms.WireguardInterfaceInfo{
-			{Name: "Wireguard0", Description: ""},
+		ifaces: []ndms.Interface{
+			{ID: "Wireguard0", Type: "wireguard", Description: ""},
 		},
 	}
 	cat := NewCatalog(provider, ndmsClient, nil)
@@ -527,8 +534,8 @@ func TestListAll_ProviderError(t *testing.T) {
 		wan: wan.NewModel(),
 	}
 	ndmsClient := &mockNDMSClient{
-		wgIfaces: []ndms.WireguardInterfaceInfo{
-			{Name: "Wireguard0", Description: "Still works"},
+		ifaces: []ndms.Interface{
+			{ID: "Wireguard0", Type: "wireguard", Description: "Still works"},
 		},
 	}
 	cat := NewCatalog(provider, ndmsClient, nil)

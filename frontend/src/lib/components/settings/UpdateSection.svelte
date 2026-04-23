@@ -2,6 +2,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Modal } from '$lib/components/ui';
+	import ChangelogModal from './ChangelogModal.svelte';
 	import type { UpdateInfo } from '$lib/types';
 
 	interface Props {
@@ -13,6 +14,7 @@
 	let checking = $state(false);
 	let upgrading = $state(false);
 	let showConfirm = $state(false);
+	let showChangelog = $state(false);
 
 	async function checkForUpdates() {
 		checking = true;
@@ -112,6 +114,12 @@
 		{:else}
 			{#if updateInfo?.available}
 				<button
+					class="btn btn-ghost btn-sm"
+					onclick={() => (showChangelog = true)}
+				>
+					Что нового
+				</button>
+				<button
 					class="btn btn-primary btn-sm"
 					onclick={confirmUpgrade}
 				>
@@ -143,6 +151,15 @@
 		<button class="btn btn-primary" onclick={applyUpgrade}>Обновить</button>
 	{/snippet}
 </Modal>
+
+{#if updateInfo?.currentVersion && updateInfo?.latestVersion}
+	<ChangelogModal
+		open={showChangelog}
+		fromVersion={updateInfo.currentVersion}
+		toVersion={updateInfo.latestVersion}
+		onclose={() => (showChangelog = false)}
+	/>
+{/if}
 
 <style>
 	.update-actions {

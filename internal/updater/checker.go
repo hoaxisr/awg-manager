@@ -10,6 +10,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/semver"
 )
 
 const (
@@ -41,7 +43,7 @@ func Check(ctx context.Context, currentVersion string) *UpdateInfo {
 		return info
 	}
 
-	if compareVersions(currentVersion, pkg.Version) >= 0 {
+	if semver.Compare(currentVersion, pkg.Version) >= 0 {
 		return info
 	}
 

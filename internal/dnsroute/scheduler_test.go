@@ -173,28 +173,6 @@ func TestScheduler_DailyMode_EmptyTimeDisabled(t *testing.T) {
 	}
 }
 
-func TestScheduler_KickIsNonBlocking(t *testing.T) {
-	sched := &Scheduler{
-		kick: make(chan struct{}, 1),
-	}
-	// Should not block even when called multiple times.
-	sched.Kick()
-	sched.Kick()
-	sched.Kick()
-
-	// Channel should have exactly 1 item.
-	select {
-	case <-sched.kick:
-	default:
-		t.Error("expected kick in channel")
-	}
-	select {
-	case <-sched.kick:
-		t.Error("expected only 1 kick in channel")
-	default:
-	}
-}
-
 func TestScheduler_StartStop(t *testing.T) {
 	mock := &mockRefreshService{}
 	store := newTestSettings(t, storage.DNSRouteSettings{

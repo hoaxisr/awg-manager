@@ -3,6 +3,16 @@
 	import { systemInfo } from '$lib/stores/system';
 	import type { SingboxImportResponse } from '$lib/types';
 
+	interface Props {
+		/** Called once after a successful import finishes. Used by the
+		 * /singbox/new dedicated page to navigate back to the tunnels list.
+		 * Omitted on the empty-state embedding — that one stays in place
+		 * and relies on SSE to refresh the count. */
+		oncomplete?: (imported: number) => void;
+	}
+
+	let { oncomplete }: Props = $props();
+
 	let input = $state('');
 	let importing = $state(false);
 	let result = $state<SingboxImportResponse | null>(null);
@@ -17,7 +27,7 @@
 			result = res;
 			if ((res.imported?.length ?? 0) > 0) {
 				input = '';
-				// SSE will refresh the tunnels list
+				oncomplete?.(res.imported!.length);
 			}
 		} catch (e) {
 			result = {

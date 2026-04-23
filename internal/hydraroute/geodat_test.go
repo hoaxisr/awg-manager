@@ -108,6 +108,70 @@ func TestExtractGeoSiteTags_FileNotFound(t *testing.T) {
 	}
 }
 
+// Verifies the streaming parser copes with entries whose payload exceeds the
+// bufio.Reader buffer size (64 KB). A single large tag with 200 k items forces
+// the reader to chain-discard across multiple refills. If the parser ever does
+// an os.ReadFile or allocates per-item, this test will either OOM on a small
+// VM or take multi-second time — we assert both correctness and a loose time
+// bound.
+func TestExtractGeoSiteTags_LargeEntryBeyondBuffer(t *testing.T) {
+	const itemCount = 200_000 // ~800 KB of item bytes, > 64 KB buffer
+	entries := [][]byte{buildGeoEntry(1, "HUGE", 2, itemCount)}
+	dat := buildGeoDAT(entries)
+
+	tmp := filepath.Join(t.TempDir(), "geosite.dat")
+	if err := os.WriteFile(tmp, dat, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tags, err := ExtractGeoSiteTags(tmp)
+	if err != nil {
+		t.Fatalf("ExtractGeoSiteTags error: %v", err)
+	}
+	if len(tags) != 1 {
+		t.Fatalf("tags = %d, want 1", len(tags))
+	}
+	if tags[0].Name != "HUGE" {
+		t.Errorf("name = %q, want HUGE", tags[0].Name)
+	}
+	if tags[0].Count != itemCount {
+		t.Errorf("count = %d, want %d", tags[0].Count, itemCount)
+	}
+}
+
+// Verifies multiple entries interleaved with unknown top-level fields (forward
+// compatibility) are handled correctly.
+func TestExtractGeoSiteTags_UnknownTopLevelFieldsAreSkipped(t *testing.T) {
+	var dat []byte
+	// Entry 1
+	dat = append(dat, field(1, buildGeoEntry(1, "A", 2, 3))...)
+	// Unknown top-level field 99 (length-delimited, 50 bytes of garbage)
+	dat = append(dat, field(99, make([]byte, 50))...)
+	// Entry 2
+	dat = append(dat, field(1, buildGeoEntry(1, "B", 2, 5))...)
+	// Unknown varint at top-level
+	dat = append(dat, varintField(77, 1234)...)
+
+	tmp := filepath.Join(t.TempDir(), "geosite.dat")
+	if err := os.WriteFile(tmp, dat, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tags, err := ExtractGeoSiteTags(tmp)
+	if err != nil {
+		t.Fatalf("ExtractGeoSiteTags error: %v", err)
+	}
+	if len(tags) != 2 {
+		t.Fatalf("tags = %d, want 2", len(tags))
+	}
+	if tags[0].Name != "A" || tags[0].Count != 3 {
+		t.Errorf("tags[0] = %+v, want {A 3}", tags[0])
+	}
+	if tags[1].Name != "B" || tags[1].Count != 5 {
+		t.Errorf("tags[1] = %+v, want {B 5}", tags[1])
+	}
+}
+
 func TestExtractGeoIPTags(t *testing.T) {
 	// Build .dat with 2 entries: RU (2 CIDRs), US (5 CIDRs)
 	entries := [][]byte{

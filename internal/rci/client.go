@@ -12,7 +12,13 @@ import (
 
 const (
 	defaultBaseURL = "http://localhost:79/rci"
-	defaultTimeout = 10 * time.Second
+	// defaultTimeout is the backstop for a single RCI HTTP exchange.
+	// Per-call context deadlines still win when shorter. 30s allows
+	// slow NDMS operations (interface create, flash commits, running
+	// a ping-check re-setup under load) to complete without leaving
+	// the router in a partially-configured state from a client-side
+	// timeout. Callers with bespoke needs use NewWithTimeout.
+	defaultTimeout = 30 * time.Second
 )
 
 // sharedTransport is the HTTP transport for all RCI connections.
@@ -23,11 +29,6 @@ var sharedTransport = &http.Transport{
 	MaxIdleConnsPerHost: 10,
 	IdleConnTimeout:     90 * time.Second,
 	DisableKeepAlives:   false,
-}
-
-// Transport returns the shared HTTP transport for RCI connections.
-func Transport() *http.Transport {
-	return sharedTransport
 }
 
 // Client is the RCI HTTP client for Keenetic NDMS.
@@ -49,15 +50,6 @@ func NewWithTimeout(timeout time.Duration) *Client {
 	return &Client{
 		http:    &http.Client{Timeout: timeout, Transport: sharedTransport},
 		baseURL: defaultBaseURL,
-	}
-}
-
-// NewWithURL creates a new RCI client with a custom base URL.
-// Intended for tests that point to an httptest.Server.
-func NewWithURL(baseURL string) *Client {
-	return &Client{
-		http:    &http.Client{Timeout: defaultTimeout},
-		baseURL: baseURL,
 	}
 }
 

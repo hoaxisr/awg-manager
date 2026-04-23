@@ -9,12 +9,13 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/firewall"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 )
 
@@ -27,12 +28,15 @@ const (
 // Uses ip commands directly instead of NDMS.
 // Routing is NOT managed by the operator — OS4 handles routing externally.
 type OperatorOS4Impl struct {
-	ndms      ndms.Client
-	wg        wg.Client
-	backend   backend.Backend
-	firewall  firewall.Manager
-	log       *logger.Logger
-	appLog *logging.ScopedLogger
+	*clientRouteOps // provides the 5 client-route Operator methods
+
+	queries  *query.Queries
+	commands *command.Commands
+	wg       wg.Client
+	backend  backend.Backend
+	firewall firewall.Manager
+	log      *logger.Logger
+	appLog   *logging.ScopedLogger
 
 	// Resolved ISP tracking (tunnelID -> WAN interface name)
 	// Tracks which WAN each tunnel is bound to for WAN event matching.
@@ -46,14 +50,16 @@ type OperatorOS4Impl struct {
 
 // NewOperatorOS4 creates a new OS4 operator.
 func NewOperatorOS4(
-	ndmsClient ndms.Client,
+	queries *query.Queries,
+	commands *command.Commands,
 	wgClient wg.Client,
 	backendImpl backend.Backend,
 	firewallMgr firewall.Manager,
 	log *logger.Logger,
 ) *OperatorOS4Impl {
-	return &OperatorOS4Impl{
-		ndms:        ndmsClient,
+	o := &OperatorOS4Impl{
+		queries:     queries,
+		commands:    commands,
 		wg:          wgClient,
 		backend:     backendImpl,
 		firewall:    firewallMgr,
@@ -61,6 +67,10 @@ func NewOperatorOS4(
 		resolvedISP: make(map[string]string),
 		appliedDNS:  make(map[string][]string),
 	}
+	// OS4 has no mockable ipRun field of its own — client-route uses
+	// exec.Run directly. The warn-logger is bound to o.
+	o.clientRouteOps = newClientRouteOps(exec.Run, o.logWarn)
+	return o
 }
 
 // Create is a no-op on OS4 (interface created by process).
@@ -153,7 +163,7 @@ func (o *OperatorOS4Impl) Start(ctx context.Context, cfg tunnel.Config) error {
 
 	// Apply DNS servers via NDMS (RCI works on OS4 too)
 	if len(cfg.DNS) > 0 {
-		if err := o.ndms.SetDNS(ctx, ifaceName, cfg.DNS); err != nil {
+		if err := o.commands.Interfaces.SetDNS(ctx, ifaceName, cfg.DNS); err != nil {
 			o.logWarn("start", cfg.ID, "Failed to set DNS: "+err.Error())
 		} else {
 			o.appliedDNSMu.Lock()
@@ -194,7 +204,7 @@ func (o *OperatorOS4Impl) Stop(ctx context.Context, tunnelID string) error {
 	delete(o.appliedDNS, tunnelID)
 	o.appliedDNSMu.Unlock()
 	if len(dnsServers) > 0 {
-		_ = o.ndms.ClearDNS(ctx, ifaceName, dnsServers)
+		_ = o.commands.Interfaces.ClearDNS(ctx, ifaceName, dnsServers)
 	}
 
 	// Clear resolved ISP tracking
@@ -241,7 +251,7 @@ func (o *OperatorOS4Impl) Recover(ctx context.Context, tunnelID string, state tu
 	delete(o.appliedDNS, tunnelID)
 	o.appliedDNSMu.Unlock()
 	if len(dnsServers) > 0 {
-		_ = o.ndms.ClearDNS(ctx, ifaceName, dnsServers)
+		_ = o.commands.Interfaces.ClearDNS(ctx, ifaceName, dnsServers)
 	}
 
 	o.logInfo("recover", tunnelID, "Recovery complete")
@@ -288,7 +298,7 @@ func (o *OperatorOS4Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 
 	// Re-apply DNS servers
 	if len(cfg.DNS) > 0 {
-		if err := o.ndms.SetDNS(ctx, ifaceName, cfg.DNS); err != nil {
+		if err := o.commands.Interfaces.SetDNS(ctx, ifaceName, cfg.DNS); err != nil {
 			o.logWarn("reconcile", cfg.ID, "Failed to re-apply DNS: "+err.Error())
 		} else {
 			o.appliedDNSMu.Lock()
@@ -444,10 +454,10 @@ func (o *OperatorOS4Impl) logWarn(action, target, message string) {
 
 // HasWANIPv6 checks if a WAN interface has IPv6 connectivity via NDMS RCI.
 func (o *OperatorOS4Impl) HasWANIPv6(ctx context.Context, ifaceName string) bool {
-	if o.ndms == nil {
+	if o.queries == nil {
 		return false
 	}
-	return o.ndms.HasWANIPv6(ctx, ifaceName)
+	return o.queries.Interfaces.HasIPv6Global(ctx, ifaceName)
 }
 
 // GetSystemName on OS4 returns ndmsID as-is (no system-name RCI on OS4;

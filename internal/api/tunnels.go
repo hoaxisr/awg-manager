@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -112,6 +111,11 @@ type TunnelService interface {
 
 	// Resolved ISP for auto-mode tunnels
 	GetResolvedISP(tunnelID string) string
+
+	// SetSelfCreateGate wires the gate used by import/create paths to
+	// suppress hook-driven snapshot refreshes while an NDMS interface is
+	// being created but our store.Save hasn't run yet.
+	SetSelfCreateGate(g tunnel.SelfCreateGater)
 }
 
 // TunnelsHandler handles tunnel CRUD operations.
@@ -126,6 +130,19 @@ type TunnelsHandler struct {
 	log               *logging.ScopedLogger
 	traffic           *traffic.History
 	pingCheckSnapshot func()
+	// snapshotRefresh (optional) republishes the full snapshot:tunnels
+	// SSE event (managed + external + system lists with fresh dedup).
+	// Called after publishTunnelList so UIs see a consistent state after
+	// any managed-list-modifying operation (create / import / delete /
+	// start / stop / etc.) — without it the frontend systemTunnels array
+	// stays stale and the only guard against ghost duplicates is the
+	// frontend-level interfaceName filter.
+	snapshotRefresh func(ctx context.Context)
+	// selfCreateGate (optional) suppresses the hook-driven snapshot
+	// refresh while awg-manager is itself in the middle of creating an
+	// NDMS interface. See tunnel.SelfCreateGater / api.HookHandler for
+	// the contract.
+	selfCreateGate tunnel.SelfCreateGater
 }
 
 // NewTunnelsHandler creates a new tunnels handler.
@@ -148,6 +165,12 @@ func (h *TunnelsHandler) PublishTunnelList(ctx context.Context) { h.publishTunne
 
 // publishTunnelList publishes the full managed tunnel list via SSE.
 // Called after Create/Update/Delete so frontends get complete data.
+//
+// Also republishes snapshot:tunnels (managed + external + system with
+// fresh dedup) when a snapshot refresher is wired. Without that, the
+// frontend systemTunnels array becomes stale after create/import and
+// the new NDMS interface lingers as a ghost card until the next
+// snapshot-triggering event.
 func (h *TunnelsHandler) publishTunnelList(ctx context.Context) {
 	if h.bus == nil {
 		return
@@ -167,6 +190,26 @@ func (h *TunnelsHandler) publishTunnelList(ctx context.Context) {
 	if h.pingCheckSnapshot != nil {
 		h.pingCheckSnapshot()
 	}
+
+	// Rebroadcast the full snapshot (managed + external + system) with
+	// managedNativeWGNames-based dedup applied against the now-updated
+	// store state.
+	if h.snapshotRefresh != nil {
+		h.snapshotRefresh(ctx)
+	}
+}
+
+// SetSnapshotRefresher wires the full snapshot:tunnels refresher called
+// after publishTunnelList.
+func (h *TunnelsHandler) SetSnapshotRefresher(fn func(ctx context.Context)) {
+	h.snapshotRefresh = fn
+}
+
+// SetSelfCreateGate wires the gate used to suppress hook-driven snapshot
+// refreshes while the handler itself is creating an NDMS interface
+// (manual Create path — import path gates inside ServiceImpl directly).
+func (h *TunnelsHandler) SetSelfCreateGate(g tunnel.SelfCreateGater) {
+	h.selfCreateGate = g
 }
 
 // SetSettingsStore sets the settings store for reading defaults.
@@ -218,6 +261,7 @@ func BuildTunnelResponse(r *http.Request, svc TunnelService, store *storage.AWGT
 		"defaultRoute": t.DefaultRoute,
 		"ispInterface":      ispIface,
 		"interfaceName":     t.InterfaceName,
+		"ndmsName":          t.NDMSName,
 		"configPreview":     t.ConfigPreview,
 		"state":             t.State.String(),
 		"stateInfo":         t.StateInfo,
@@ -254,6 +298,7 @@ type tunnelItem struct {
 	Endpoint                  string `json:"endpoint"`
 	Address                   string `json:"address"`
 	InterfaceName             string `json:"interfaceName"`
+	NDMSName                  string `json:"ndmsName,omitempty"`
 	HasAddressConflict        bool   `json:"hasAddressConflict"`
 	RxBytes                   int64  `json:"rxBytes"`
 	TxBytes                   int64  `json:"txBytes"`
@@ -383,6 +428,7 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			Endpoint:                  endpoint,
 			Address:             address,
 			InterfaceName:       t.InterfaceName,
+			NDMSName:            t.NDMSName,
 			Backend:             backend,
 			HasAddressConflict:  hasConflict,
 			RxBytes:             t.StateInfo.RxBytes,
@@ -485,15 +531,8 @@ func (h *TunnelsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Create creates a new tunnel.
 func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	var req storage.AWGTunnel
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	req, ok := parseJSON[storage.AWGTunnel](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 
@@ -536,6 +575,16 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Name:    req.Name,
 		Address: req.Interface.Address,
 		MTU:     req.Interface.MTU,
+	}
+	// Gate from before the NDMS Create call through publishTunnelList so
+	// the hook-driven snapshot rebroadcast sees the finalized store state.
+	// Only relevant for NativeWG (kernel backend doesn't touch NDMS at
+	// Create time), but always entering is cheap and keeps the flow
+	// symmetric. The final publishTunnelList at the bottom triggers its
+	// own snapshot refresh AFTER gate exit.
+	if h.selfCreateGate != nil {
+		h.selfCreateGate.EnterSelfCreate()
+		defer h.selfCreateGate.ExitSelfCreate()
 	}
 	if err := h.svc.Create(r.Context(), tunnelID, req.Name, cfg, &req); err != nil {
 		h.log.Warn("create", req.Name, "Service create failed: "+err.Error())
@@ -592,7 +641,6 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
-
 	id := r.URL.Query().Get("id")
 	if id == "" {
 		response.Error(w, "missing id parameter", "MISSING_ID")
@@ -602,11 +650,8 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
 		return
 	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	var req storage.AWGTunnel
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	req, ok := parseJSON[storage.AWGTunnel](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 
@@ -896,7 +941,6 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
-
 	id := r.URL.Query().Get("id")
 	if id == "" {
 		response.Error(w, "missing id parameter", "MISSING_ID")
@@ -906,14 +950,11 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
 		return
 	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	var req struct {
+	req, ok := parseJSON[struct {
 		Content string `json:"content"`
 		Name    string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	}](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 

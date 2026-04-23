@@ -869,6 +869,16 @@ label {
 	padding: 3rem 1rem;
 }
 
+.warn-hint {
+	text-align: center;
+	color: var(--warning);
+	font-size: 0.875rem;
+	padding: 3rem 1rem;
+	background: color-mix(in srgb, var(--warning) 8%, transparent);
+	border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+	border-radius: 8px;
+}
+
 .confirm-text {
 	font-size: 0.875rem;
 	color: var(--text-secondary);

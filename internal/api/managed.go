@@ -134,13 +134,8 @@ func (h *ManagedServerHandler) Stats(w http.ResponseWriter, r *http.Request) {
 // Create creates a new managed WireGuard server.
 // POST /api/managed-server/create
 func (h *ManagedServerHandler) Create(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	var req managed.CreateServerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	req, ok := parseJSON[managed.CreateServerRequest](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	server, err := h.svc.Create(r.Context(), req)
@@ -155,13 +150,8 @@ func (h *ManagedServerHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Update updates the managed server's address and/or listen port.
 // PUT /api/managed-server/update
 func (h *ManagedServerHandler) Update(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
-		response.MethodNotAllowed(w)
-		return
-	}
-	var req managed.UpdateServerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	req, ok := parseJSON[managed.UpdateServerRequest](w, r, http.MethodPut)
+	if !ok {
 		return
 	}
 	if err := h.svc.Update(r.Context(), req); err != nil {
@@ -190,13 +180,8 @@ func (h *ManagedServerHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // AddPeer adds a new peer to the managed server.
 // POST /api/managed-server/peers
 func (h *ManagedServerHandler) AddPeer(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	var req managed.AddPeerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	req, ok := parseJSON[managed.AddPeerRequest](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	peer, err := h.svc.AddPeer(r.Context(), req)
@@ -224,9 +209,8 @@ func (h *ManagedServerHandler) UpdatePeer(w http.ResponseWriter, r *http.Request
 		response.Error(w, "invalid pubkey format", "INVALID_PUBKEY")
 		return
 	}
-	var req managed.UpdatePeerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	req, ok := parseJSON[managed.UpdatePeerRequest](w, r, http.MethodPut)
+	if !ok {
 		return
 	}
 	if err := h.svc.UpdatePeer(r.Context(), pubkey, req); err != nil {
@@ -264,13 +248,8 @@ func (h *ManagedServerHandler) DeletePeer(w http.ResponseWriter, r *http.Request
 // TogglePeer enables or disables a peer.
 // POST /api/managed-server/peers/toggle
 func (h *ManagedServerHandler) TogglePeer(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	var req managed.TogglePeerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	req, ok := parseJSON[managed.TogglePeerRequest](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	if req.PublicKey == "" {
@@ -313,18 +292,16 @@ func (h *ManagedServerHandler) PeerConf(w http.ResponseWriter, r *http.Request) 
 	response.Success(w, map[string]string{"conf": conf})
 }
 
+// enabledToggle is the shared request body for NAT and SetEnabled.
+type enabledToggle struct {
+	Enabled bool `json:"enabled"`
+}
+
 // NAT enables or disables NAT on the managed server interface.
 // POST /api/managed-server/nat
 func (h *ManagedServerHandler) NAT(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	var req struct {
-		Enabled bool `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	req, ok := parseJSON[enabledToggle](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	if err := h.svc.SetNAT(r.Context(), req.Enabled); err != nil {
@@ -338,15 +315,8 @@ func (h *ManagedServerHandler) NAT(w http.ResponseWriter, r *http.Request) {
 // SetEnabled enables or disables the managed server interface.
 // POST /api/managed-server/enabled
 func (h *ManagedServerHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	var req struct {
-		Enabled bool `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	req, ok := parseJSON[enabledToggle](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	if err := h.svc.SetEnabled(r.Context(), req.Enabled); err != nil {

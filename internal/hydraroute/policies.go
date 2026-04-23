@@ -2,38 +2,32 @@ package hydraroute
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 )
 
 // ListPolicyNames returns the names of all Keenetic ip-policies configured
-// on the router, parsed from `show rc ip policy`.
+// on the router, read from the NDMS Policies Query Store.
 //
-// Returns an empty slice when no NDMS client is wired up (e.g. during
+// Returns an empty slice when no Queries registry is wired up (e.g. during
 // standalone tests); callers treat that as "no policies known" and fall
 // back to interface-mode classification.
 func (s *Service) ListPolicyNames(ctx context.Context) ([]string, error) {
 	s.mu.Lock()
-	client := s.ndms
+	queries := s.queries
 	s.mu.Unlock()
 
-	if client == nil {
+	if queries == nil || queries.Policies == nil {
 		return nil, nil
 	}
 
-	raw, err := client.RCIGet(ctx, "/show/rc/ip/policy")
+	list, err := queries.Policies.List(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("show rc ip policy: %w", err)
+		return nil, fmt.Errorf("list ip policies: %w", err)
 	}
 
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("parse ip policy response: %w", err)
-	}
-
-	names := make([]string, 0, len(m))
-	for name := range m {
-		names = append(names, name)
+	names := make([]string, 0, len(list))
+	for _, p := range list {
+		names = append(names, p.Name)
 	}
 	return names, nil
 }

@@ -40,7 +40,6 @@ type anonymizer struct {
 	keys      map[string]string // real key -> alias
 	hosts     map[string]string // real hostname -> alias
 	ipCount   int
-	gwCount   int
 	epCount   int
 	keyCount  int
 	hostCount int

@@ -16,6 +16,78 @@ func TestConfig_NewEmpty(t *testing.T) {
 	}
 }
 
+func TestConfig_NewDNSBootstrap(t *testing.T) {
+	// The fresh skeleton ships an explicit DNS block with a UDP
+	// bootstrap (IP literal, no hostname resolution needed) and a DoH
+	// upstream that points domain_resolver at the bootstrap tag. Both
+	// detour="direct" so DNS never loops through a tunnel that itself
+	// needs DNS to start.
+	c := NewConfig()
+	dns, ok := c.raw["dns"].(map[string]any)
+	if !ok {
+		t.Fatalf("dns block missing or not an object: %#v", c.raw["dns"])
+	}
+	if dns["strategy"] != "ipv4_only" {
+		t.Errorf("strategy: want ipv4_only (Keenetic has no IPv6 egress by default), got %v", dns["strategy"])
+	}
+	servers, ok := dns["servers"].([]any)
+	if !ok || len(servers) != 2 {
+		t.Fatalf("servers: want 2 (bootstrap + DoH), got %#v", dns["servers"])
+	}
+
+	bootstrap := servers[0].(map[string]any)
+	if bootstrap["tag"] != "dns-bootstrap" || bootstrap["type"] != "udp" {
+		t.Errorf("bootstrap server: %#v", bootstrap)
+	}
+	// sing-box 1.13 native schema uses `server`, not `address`. If we
+	// ever regress to the legacy key, `sing-box check` will reject the
+	// config with "unknown field 'address'".
+	if _, hasLegacyAddress := bootstrap["address"]; hasLegacyAddress {
+		t.Errorf("bootstrap must NOT use legacy `address` field, got %#v", bootstrap)
+	}
+	if bootstrap["server"] != "1.1.1.1" {
+		t.Errorf("bootstrap server must be an IP literal (no hostname to resolve), got %v", bootstrap["server"])
+	}
+	// Bootstrap must NOT carry detour=direct — sing-box 1.13 FATALs on
+	// "detour to an empty direct outbound makes no sense" at startup.
+	// When M2+ adds tunnel routes we'll pin bootstrap via route rules.
+	if _, hasDetour := bootstrap["detour"]; hasDetour {
+		t.Errorf("bootstrap must not set detour (fails sing-box 1.13 startup), got %v", bootstrap["detour"])
+	}
+
+	doh := servers[1].(map[string]any)
+	if doh["tag"] != "dns-doh" || doh["type"] != "https" {
+		t.Errorf("DoH server: %#v", doh)
+	}
+	if _, hasLegacyAddress := doh["address"]; hasLegacyAddress {
+		t.Errorf("DoH must NOT use legacy `address` field, got %#v", doh)
+	}
+	if doh["server"] != "cloudflare-dns.com" {
+		t.Errorf("DoH server hostname: want cloudflare-dns.com, got %v", doh["server"])
+	}
+	if doh["domain_resolver"] != "dns-bootstrap" {
+		t.Errorf("DoH must point domain_resolver at the bootstrap tag to avoid chicken-and-egg, got %v", doh["domain_resolver"])
+	}
+	// DoH must NOT set detour: following route.final lets DNS flow
+	// through whichever tunnel the user later makes default, giving
+	// automatic leak protection once routing is wired up.
+	if _, hasDetour := doh["detour"]; hasDetour {
+		t.Errorf("DoH must not pin a detour; found %v", doh["detour"])
+	}
+	if dns["final"] != "dns-doh" {
+		t.Errorf("final: want dns-doh, got %v", dns["final"])
+	}
+
+	// sing-box 1.12+ requires route.default_domain_resolver; without
+	// it outbound hostname resolution is deprecated and emits a FATAL
+	// on `sing-box check`. Pinning it to dns-bootstrap stays safe
+	// even when the user later routes everything through a tunnel.
+	route := c.raw["route"].(map[string]any)
+	if route["default_domain_resolver"] != "dns-bootstrap" {
+		t.Errorf("route.default_domain_resolver: want dns-bootstrap, got %v", route["default_domain_resolver"])
+	}
+}
+
 func TestConfig_AddTunnel_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")

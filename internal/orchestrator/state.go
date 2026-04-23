@@ -67,7 +67,6 @@ type State struct {
 	tunnels     map[string]*tunnelState // tunnelID → state
 	anyWANUpFn  func() bool            // delegates to wanModel.AnyUp()
 	supportsASC bool
-	booted      bool
 }
 
 // newState creates an empty state.

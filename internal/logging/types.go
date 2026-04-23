@@ -53,6 +53,7 @@ const (
 	SubAuth         = "auth"
 	SubSettings     = "settings"
 	SubUpdate       = "update"
+	SubSingbox      = "singbox"
 )
 
 // LogEntry represents a single log entry.

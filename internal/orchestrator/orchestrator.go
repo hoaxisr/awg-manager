@@ -9,7 +9,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ops"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/state"
@@ -64,7 +63,6 @@ type Orchestrator struct {
 	nwgOp      *nwg.OperatorNativeWG
 	stateMgr   state.Manager
 	wanModel   *wan.Model
-	ndmsClient ndms.Client
 
 	// Downstream executors
 	pingCheck   PingCheckExecutor
@@ -87,7 +85,6 @@ func New(
 	nwgOp *nwg.OperatorNativeWG,
 	stateMgr state.Manager,
 	wanModel *wan.Model,
-	ndmsClient ndms.Client,
 	log *logger.Logger,
 	appLogger logging.AppLogger,
 ) *Orchestrator {
@@ -98,7 +95,6 @@ func New(
 		nwgOp:      nwgOp,
 		stateMgr:   stateMgr,
 		wanModel:   wanModel,
-		ndmsClient: ndmsClient,
 		log:        log,
 		appLog:     logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubLifecycle),
 	}

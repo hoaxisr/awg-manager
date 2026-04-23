@@ -3,88 +3,53 @@ package api
 import (
 	"context"
 	"net/http"
-	"sync"
-	"time"
+	"regexp"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/testing"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
 
-// serverPollInterval is the cadence at which we publish server:updated
-// snapshots so the frontend sees fresh peer state (handshakes, RX/TX)
-// without having to reload the page. Same cadence as tunnel:traffic.
-const serverPollInterval = 15 * time.Second
+// wireguardNamePattern matches valid Keenetic WG interface names (WireguardN).
+// Local copy of the legacy ndms.IsValidWireguardName regex — kept here so this
+// file no longer depends on the legacy tunnel/ndms package.
+var wireguardNamePattern = regexp.MustCompile(`^Wireguard\d+$`)
+
+// isValidWireguardName checks that the name matches "WireguardN" pattern.
+// Used to prevent command injection in ndmc/RCI calls.
+func isValidWireguardName(name string) bool {
+	return wireguardNamePattern.MatchString(name)
+}
 
 // ServersHandler handles VPN server interface operations.
+// Periodic server:updated snapshots are driven by ndms/metrics.Poller
+// via PublishServerSnapshot; this handler only broadcasts on mark/unmark
+// and on poller-triggered callbacks.
 type ServersHandler struct {
-	ndms     ndms.Client
+	queries  *query.Queries
 	settings *storage.SettingsStore
 	awgStore *storage.AWGTunnelStore
 	bus      *events.Bus
 	managed  *ManagedServerHandler
-
-	// Periodic publisher lifecycle.
-	pollOnce sync.Once
-	stopCh   chan struct{}
-	wg       sync.WaitGroup
 }
 
-// SetEventBus sets the event bus for SSE publishing and starts the
-// periodic snapshot publisher (idempotent — safe to call multiple times).
+// SetEventBus sets the event bus used for SSE publishing.
 func (h *ServersHandler) SetEventBus(bus *events.Bus) {
 	h.bus = bus
-	h.startPolling()
-}
-
-// startPolling launches a background goroutine that re-publishes the full
-// server snapshot every serverPollInterval. Skips publication when no SSE
-// clients are connected to avoid pointless NDMS load.
-func (h *ServersHandler) startPolling() {
-	h.pollOnce.Do(func() {
-		h.stopCh = make(chan struct{})
-		h.wg.Add(1)
-		go h.pollLoop()
-	})
-}
-
-func (h *ServersHandler) pollLoop() {
-	defer h.wg.Done()
-	ticker := time.NewTicker(serverPollInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if h.bus == nil || h.bus.SubscriberCount() == 0 {
-				continue
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			h.publishServerUpdated(ctx)
-			cancel()
-		case <-h.stopCh:
-			return
-		}
-	}
-}
-
-// Stop terminates the periodic publisher. Safe to call multiple times.
-func (h *ServersHandler) Stop() {
-	if h.stopCh == nil {
-		return
-	}
-	select {
-	case <-h.stopCh:
-		// Already closed.
-	default:
-		close(h.stopCh)
-	}
-	h.wg.Wait()
 }
 
 // SetManagedHandler sets the managed server handler for shared publishing.
 func (h *ServersHandler) SetManagedHandler(m *ManagedServerHandler) { h.managed = m }
+
+// PublishServerSnapshot publishes the full server:updated snapshot via SSE.
+// Implements metrics.ServerSnapshotPublisher so the Poller can trigger a
+// refresh whenever any server's peer metrics change.
+func (h *ServersHandler) PublishServerSnapshot(ctx context.Context) {
+	h.publishServerUpdated(ctx)
+}
 
 // publishServerUpdated publishes the full server snapshot via SSE (best-effort).
 func (h *ServersHandler) publishServerUpdated(ctx context.Context) {
@@ -106,8 +71,8 @@ func (h *ServersHandler) publishServerUpdated(ctx context.Context) {
 }
 
 // NewServersHandler creates a new servers handler.
-func NewServersHandler(ndmsClient ndms.Client, settings *storage.SettingsStore, awgStore *storage.AWGTunnelStore) *ServersHandler {
-	return &ServersHandler{ndms: ndmsClient, settings: settings, awgStore: awgStore}
+func NewServersHandler(queries *query.Queries, settings *storage.SettingsStore, awgStore *storage.AWGTunnelStore) *ServersHandler {
+	return &ServersHandler{queries: queries, settings: settings, awgStore: awgStore}
 }
 
 func (h *ServersHandler) validateName(w http.ResponseWriter, name string) bool {
@@ -115,7 +80,7 @@ func (h *ServersHandler) validateName(w http.ResponseWriter, name string) bool {
 		response.Error(w, "missing name parameter", "MISSING_NAME")
 		return false
 	}
-	if !ndms.IsValidWireguardName(name) {
+	if !isValidWireguardName(name) {
 		response.Error(w, "invalid interface name", "INVALID_NAME")
 		return false
 	}
@@ -124,7 +89,7 @@ func (h *ServersHandler) validateName(w http.ResponseWriter, name string) bool {
 
 // listServers builds the filtered server list for API response and SSE snapshots.
 func (h *ServersHandler) listServers(ctx context.Context) ([]ndms.WireguardServer, error) {
-	all, err := h.ndms.ListAllWireguardServers(ctx)
+	all, err := h.queries.WGServers.List(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +159,7 @@ func (h *ServersHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if !h.validateName(w, name) {
 		return
 	}
-	server, err := h.ndms.GetWireguardServer(r.Context(), name)
+	server, err := h.queries.WGServers.Get(r.Context(), name)
 	if err != nil {
 		response.Error(w, err.Error(), "GET_FAILED")
 		return
@@ -213,7 +178,7 @@ func (h *ServersHandler) Config(w http.ResponseWriter, r *http.Request) {
 	if !h.validateName(w, name) {
 		return
 	}
-	config, err := h.ndms.GetWireguardServerConfig(r.Context(), name)
+	config, err := h.queries.WGServers.GetConfig(r.Context(), name)
 	if err != nil {
 		response.Error(w, err.Error(), "GET_CONFIG_FAILED")
 		return
@@ -257,7 +222,7 @@ func (h *ServersHandler) WANIP(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
-	ip, err := testing.GetWANIP(r.Context())
+	ip, err := testing.GetWANIPWithFallback(r.Context(), h.queries.WANInterfaceAddress)
 	if err != nil {
 		response.Error(w, err.Error(), "WAN_IP_FAILED")
 		return

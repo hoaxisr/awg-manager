@@ -2,26 +2,6 @@ package nwg
 
 import "testing"
 
-func TestCompareKmodVersions(t *testing.T) {
-	tests := []struct {
-		a, b string
-		want int
-	}{
-		{"2.4.4", "2.4.4", 0},
-		{"2.4.3", "2.4.4", -1},
-		{"2.4.5", "2.4.4", 1},
-		{"2.5.0", "2.4.4", 1},
-		{"1.0.0", "2.0.0", -1},
-		{"2.4", "2.4.0", 0},
-	}
-	for _, tt := range tests {
-		got := compareKmodVersions(tt.a, tt.b)
-		if got != tt.want {
-			t.Errorf("compareKmodVersions(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
-		}
-	}
-}
-
 func TestPubKeyToHex(t *testing.T) {
 	key := "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
 	hex := pubKeyToHex(key)

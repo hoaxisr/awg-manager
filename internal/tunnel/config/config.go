@@ -149,35 +149,6 @@ func GenerateForExport(tunnel *storage.AWGTunnel) string {
 	return b.String()
 }
 
-// GenerateForStart generates .conf content for tunnel start.
-// When hasIPv6 is false, ::/0 is excluded from AllowedIPs to avoid
-// broken IPv6 routing when the ISP doesn't provide IPv6.
-func GenerateForStart(tunnel *storage.AWGTunnel, hasIPv6 bool) string {
-	if hasIPv6 {
-		return Generate(tunnel)
-	}
-	copy := *tunnel
-	copy.Peer.AllowedIPs = filterIPv6DefaultRoute(tunnel.Peer.AllowedIPs)
-	return Generate(&copy)
-}
-
-// filterIPv6DefaultRoute removes ::/0 from AllowedIPs.
-func filterIPv6DefaultRoute(ips []string) []string {
-	if len(ips) == 0 {
-		return []string{"0.0.0.0/0"}
-	}
-	var result []string
-	for _, ip := range ips {
-		if strings.TrimSpace(ip) != "::/0" {
-			result = append(result, ip)
-		}
-	}
-	if len(result) == 0 {
-		result = []string{"0.0.0.0/0"}
-	}
-	return result
-}
-
 // Parse parses WireGuard .conf content into an AWGTunnel.
 func Parse(content string) (*storage.AWGTunnel, error) {
 	tunnel := &storage.AWGTunnel{

@@ -15,14 +15,15 @@ const checkInterval = 24 * time.Hour
 
 // Service manages periodic update checks and caches results.
 type Service struct {
-	version  string
-	log      *logger.Logger
-	appLog   *logging.ScopedLogger
-	settings *storage.SettingsStore
-	mu       sync.RWMutex
-	cached  *UpdateInfo
-	stop    chan struct{}
-	done    chan struct{}
+	version   string
+	log       *logger.Logger
+	appLog    *logging.ScopedLogger
+	settings  *storage.SettingsStore
+	changelog *changelogFetcher
+	mu        sync.RWMutex
+	cached    *UpdateInfo
+	stop      chan struct{}
+	done      chan struct{}
 
 	// Guard against concurrent upgrades
 	upgrading bool
@@ -30,7 +31,7 @@ type Service struct {
 
 // New creates a new updater service.
 func New(version string, settings *storage.SettingsStore, log *logger.Logger, appLogger logging.AppLogger) *Service {
-	return &Service{
+	s := &Service{
 		version:  version,
 		log:      log,
 		appLog:   logging.NewScopedLogger(appLogger, logging.GroupSystem, logging.SubUpdate),
@@ -38,6 +39,8 @@ func New(version string, settings *storage.SettingsStore, log *logger.Logger, ap
 		stop:     make(chan struct{}),
 		done:     make(chan struct{}),
 	}
+	s.changelog = newChangelogFetcher(defaultChangelogURL, 10*time.Minute)
+	return s
 }
 
 // Start begins periodic update checks.
@@ -137,6 +140,10 @@ func (s *Service) CheckNow(ctx context.Context) *UpdateInfo {
 
 	info := Check(ctx, s.version)
 
+	// A user-forced refresh should also invalidate the changelog cache so
+	// the next "Что нового" click hits the repo server for fresh content.
+	s.changelog.Invalidate()
+
 	s.mu.Lock()
 	s.cached = info
 	s.mu.Unlock()
@@ -165,4 +172,15 @@ func (s *Service) ApplyUpgrade(ctx context.Context) error {
 	}
 
 	return Upgrade(ctx, downloadURL)
+}
+
+// GetChangelog fetches the monolithic CHANGELOG.md from the repo server,
+// parses it, and returns the slice of entries strictly newer than fromVer
+// and no newer than toVer. Result is sorted newest-first.
+func (s *Service) GetChangelog(ctx context.Context, fromVer, toVer string) ([]Entry, error) {
+	entries, err := s.changelog.Fetch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return Slice(entries, fromVer, toVer), nil
 }

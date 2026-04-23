@@ -122,16 +122,10 @@ func (h *SingboxHandler) ListTunnels(w http.ResponseWriter, r *http.Request) {
 // AddTunnels handles POST /api/singbox/tunnels.
 // Body: {"links": "vless://...\nhy2://..."}. Returns imported tunnels and per-line errors.
 func (h *SingboxHandler) AddTunnels(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	var body struct {
+	body, ok := parseJSON[struct {
 		Links string `json:"links"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		response.BadRequest(w, "invalid JSON body")
+	}](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	added, errs, err := h.op.AddTunnels(r.Context(), body.Links)
@@ -190,21 +184,15 @@ func (h *SingboxHandler) GetTunnel(w http.ResponseWriter, r *http.Request) {
 // UpdateTunnel handles PUT /api/singbox/tunnels?tag={tag}.
 // Body: {"outbound": {...}}.
 func (h *SingboxHandler) UpdateTunnel(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
-		response.MethodNotAllowed(w)
+	body, ok := parseJSON[struct {
+		Outbound json.RawMessage `json:"outbound"`
+	}](w, r, http.MethodPut)
+	if !ok {
 		return
 	}
 	tag := r.URL.Query().Get("tag")
 	if tag == "" {
 		response.BadRequest(w, "tag required")
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	var body struct {
-		Outbound json.RawMessage `json:"outbound"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		response.BadRequest(w, "invalid JSON body")
 		return
 	}
 	if err := h.op.UpdateTunnel(r.Context(), tag, body.Outbound); err != nil {

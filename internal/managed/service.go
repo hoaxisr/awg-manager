@@ -6,8 +6,10 @@ import (
 	"log/slog"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/storage"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
 
 // ManagedServerService defines the interface for managed WireGuard server operations.
@@ -42,20 +44,42 @@ type ManagedServerService interface {
 	SetASCParams(ctx context.Context, params json.RawMessage) error
 }
 
+// rciPoster is the minimal POST surface managed needs from the NDMS transport.
+// *transport.Client satisfies it.
+type rciPoster interface {
+	Post(ctx context.Context, payload any) (json.RawMessage, error)
+}
+
+var _ rciPoster = (*transport.Client)(nil)
+
 // Service manages the user-created WireGuard server.
 type Service struct {
-	ndms     ndms.Client
-	settings *storage.SettingsStore
-	log      *slog.Logger
-	appLog   *logging.ScopedLogger
+	transport rciPoster
+	saveCoord *command.SaveCoordinator
+	queries   *query.Queries
+	commands  *command.Commands
+	settings  *storage.SettingsStore
+	log       *slog.Logger
+	appLog    *logging.ScopedLogger
 }
 
 // New creates a new managed server service.
-func New(ndmsClient ndms.Client, settings *storage.SettingsStore, log *slog.Logger, appLogger logging.AppLogger) *Service {
+func New(
+	transport rciPoster,
+	saveCoord *command.SaveCoordinator,
+	queries *query.Queries,
+	commands *command.Commands,
+	settings *storage.SettingsStore,
+	log *slog.Logger,
+	appLogger logging.AppLogger,
+) *Service {
 	return &Service{
-		ndms:     ndmsClient,
-		settings: settings,
-		log:      log,
-		appLog:   logging.NewScopedLogger(appLogger, logging.GroupServer, logging.SubManaged),
+		transport: transport,
+		saveCoord: saveCoord,
+		queries:   queries,
+		commands:  commands,
+		settings:  settings,
+		log:       log,
+		appLog:    logging.NewScopedLogger(appLogger, logging.GroupServer, logging.SubManaged),
 	}
 }

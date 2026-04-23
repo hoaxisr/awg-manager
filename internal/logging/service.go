@@ -1,7 +1,6 @@
 package logging
 
 import (
-	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -19,7 +18,6 @@ type Service struct {
 	settings SettingsGetter
 	buffer   *LogBuffer
 	bus      *events.Bus
-	mu       sync.RWMutex
 }
 
 func NewService(settings SettingsGetter) *Service {

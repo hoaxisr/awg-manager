@@ -14,10 +14,13 @@ import (
 
 var confDir = "/opt/etc/awg-manager"
 
-// storedToConfig converts storage.AWGTunnel to tunnel.Config.
-func storedToConfig(stored *storage.AWGTunnel) tunnel.Config {
+// StoredToConfig converts storage.AWGTunnel to tunnel.Config. Shared
+// with internal/tunnel/service — this package owns the canonical
+// storage→runtime translation since the orchestrator drives the
+// lifecycle that consumes tunnel.Config.
+func StoredToConfig(stored *storage.AWGTunnel) tunnel.Config {
 	names := tunnel.NewNames(stored.ID)
-	ipv4, ipv6 := splitAddresses(stored.Interface.Address)
+	ipv4, ipv6 := SplitAddresses(stored.Interface.Address)
 	var dns []string
 	if stored.Interface.DNS != "" {
 		for _, part := range strings.Split(stored.Interface.DNS, ",") {
@@ -39,15 +42,15 @@ func storedToConfig(stored *storage.AWGTunnel) tunnel.Config {
 	}
 }
 
-// splitAddresses splits a WireGuard Address field (which may contain
+// SplitAddresses splits a WireGuard Address field (which may contain
 // comma-separated IPv4 and IPv6 addresses) into separate values.
-func splitAddresses(address string) (ipv4, ipv6 string) {
+// The CIDR prefix is stripped — operators add the mask themselves.
+func SplitAddresses(address string) (ipv4, ipv6 string) {
 	for _, part := range strings.Split(address, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
-		// Strip CIDR prefix for the config — operators add it themselves
 		host := part
 		if idx := strings.Index(part, "/"); idx != -1 {
 			host = part[:idx]

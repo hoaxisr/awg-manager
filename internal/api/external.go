@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -84,20 +83,15 @@ func (h *ExternalTunnelsHandler) Adopt(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
-
 	interfaceName := r.URL.Query().Get("interface")
 	if interfaceName == "" {
 		response.Error(w, "missing interface parameter", "MISSING_INTERFACE")
 		return
 	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	var req adoptRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
+	req, ok := parseJSON[adoptRequest](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
-
 	if req.Content == "" {
 		response.Error(w, "config content is required", "MISSING_CONTENT")
 		return

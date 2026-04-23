@@ -100,6 +100,7 @@ export interface TunnelListItem {
 	endpoint: string;
 	address: string;
 	interfaceName?: string;
+	ndmsName?: string;
 	hasAddressConflict?: boolean;
 	rxBytes?: number;
 	txBytes?: number;
@@ -483,6 +484,8 @@ export interface GeoFileEntry {
 	size: number;
 	tagCount: number;
 	updated: string;
+	/** True for files discovered in hrneo.conf but not managed by awg-manager. */
+	external?: boolean;
 }
 
 export interface GeoTag {
@@ -652,6 +655,17 @@ export interface UpdateInfo {
 	checking: boolean;
 	error?: string;
 	warning?: string;
+}
+
+export interface ChangelogGroup {
+	heading: string;
+	items: string[];
+}
+
+export interface ChangelogEntry {
+	version: string;
+	date: string;
+	groups: ChangelogGroup[];
 }
 
 // #endregion
@@ -963,6 +977,7 @@ export interface SingboxStatus {
 	running: boolean;
 	pid?: number;
 	tunnelCount: number;
+	proxyComponent: boolean;
 }
 
 export interface SingboxImportResponse {

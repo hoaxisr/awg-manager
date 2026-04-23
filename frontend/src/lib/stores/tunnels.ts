@@ -30,7 +30,11 @@ function endOperation(id: string): void {
 
 function createTunnelsStore() {
 	const { subscribe, set, update } = writable<TunnelListItem[]>([]);
-	const loading = writable(false);
+	// Starts true: distinguish "waiting for first snapshot" from "empty list".
+	// Set to false by load() / setManagedList() / setSnapshot() once the first
+	// real payload lands. Without this, the page briefly renders the empty
+	// state between sysInfo arriving and snapshot:tunnels arriving on reload.
+	const loading = writable(true);
 	const error = writable<string | null>(null);
 	const externalTunnels = writable<ExternalTunnel[]>([]);
 	const systemTunnels = writable<SystemTunnel[]>([]);
@@ -138,21 +142,57 @@ function createTunnelsStore() {
 		clearTraffic(id);
 	}
 
+	// clearRecentStateUpdates drops any in-memory tunnel:state events kept
+	// around to survive the preservation window in setSnapshot/setManagedList.
+	// Must be called on SSE reconnect so a stale "running" from before the
+	// disconnect cannot overwrite the fresh snapshot's actual state.
+	function clearRecentStateUpdates() {
+		recentStateUpdates.clear();
+	}
+
 	function setSnapshot(data: SnapshotTunnelsEvent) {
-		set(data.tunnels ?? []);
+		// Preserve recent tunnel:state updates (same window as setManagedList).
+		// Without this, a snapshot:tunnels that lands shortly after the start
+		// action (e.g. the one publishTunnelList now triggers to refresh the
+		// system list) overwrites the fresh "running" status coming from the
+		// orchestrator with the momentarily-still-"starting" value read from
+		// GetState — card sticks at "Запуск..." forever.
+		const now = Date.now();
+		const managed = (data.tunnels ?? []).map(item => {
+			const recent = recentStateUpdates.get(item.id);
+			if (recent && (now - recent.ts) < 5000) {
+				return { ...item, status: recent.status };
+			}
+			return item;
+		});
+		set(managed);
 		externalTunnels.set(data.external ?? []);
 		systemTunnels.set(data.system ?? []);
 		loading.set(false);
 	}
 
-	function updateTraffic(data: TunnelTrafficEvent) {
-		update(list => list.map(t =>
-			t.id === data.id
-				? { ...t, rxBytes: data.rxBytes, txBytes: data.txBytes,
+	// updateTraffic merges incoming traffic stats into the matching tunnel.
+	//
+	// SSE `tunnel:traffic` is keyed by the NDMS interface name ("WireguardN"
+	// for NativeWG, or the kernel iface name for kernel mode). We match
+	// against every known identifier — t.id (awg-manager ID), t.ndmsName
+	// ("WireguardN"), or t.interfaceName (kernel: "nwgN" / "opkgtunN" /
+	// "awgN") — and return the awg-manager t.id so feedTraffic writes to
+	// the same key TunnelCard subscribes under.
+	//
+	// Returns null if no tunnel matches (transient state / unrelated iface).
+	function updateTraffic(data: TunnelTrafficEvent): string | null {
+		let resolved: string | null = null;
+		update(list => list.map(t => {
+			if (t.id === data.id || t.ndmsName === data.id || t.interfaceName === data.id) {
+				resolved = t.id;
+				return { ...t, rxBytes: data.rxBytes, txBytes: data.txBytes,
 					lastHandshake: data.lastHandshake ?? t.lastHandshake,
-					startedAt: data.startedAt ?? t.startedAt }
-				: t
-		));
+					startedAt: data.startedAt ?? t.startedAt };
+			}
+			return t;
+		}));
+		return resolved;
 	}
 
 	function updateConnectivity(id: string, connected: boolean, latency: number | null) {
@@ -198,6 +238,7 @@ function createTunnelsStore() {
 		update: updateTunnel,
 		remove,
 		removeFromList,
+		clearRecentStateUpdates,
 		updateTunnelState,
 		setSnapshot,
 		updateTraffic,

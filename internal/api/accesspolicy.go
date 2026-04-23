@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
@@ -72,21 +70,10 @@ func (h *AccessPolicyHandler) List(w http.ResponseWriter, r *http.Request) {
 // POST /api/access-policies/create
 // Body: {"description":"..."}
 func (h *AccessPolicyHandler) Create(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
-		return
-	}
-	var req struct {
+	req, ok := parseJSON[struct {
 		Description string `json:"description"`
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		response.Error(w, "invalid JSON", "INVALID_JSON")
+	}](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	policy, err := h.svc.Create(r.Context(), req.Description)
@@ -122,22 +109,11 @@ func (h *AccessPolicyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // POST /api/access-policies/description
 // Body: {"name":"Policy0","description":"..."}
 func (h *AccessPolicyHandler) SetDescription(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
-		return
-	}
-	var req struct {
+	req, ok := parseJSON[struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		response.Error(w, "invalid JSON", "INVALID_JSON")
+	}](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	if req.Name == "" {
@@ -156,22 +132,11 @@ func (h *AccessPolicyHandler) SetDescription(w http.ResponseWriter, r *http.Requ
 // POST /api/access-policies/standalone
 // Body: {"name":"Policy0","enabled":true}
 func (h *AccessPolicyHandler) SetStandalone(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
-		return
-	}
-	var req struct {
+	req, ok := parseJSON[struct {
 		Name    string `json:"name"`
 		Enabled bool   `json:"enabled"`
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		response.Error(w, "invalid JSON", "INVALID_JSON")
+	}](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	if req.Name == "" {
@@ -202,19 +167,12 @@ func (h *AccessPolicyHandler) PermitInterface(w http.ResponseWriter, r *http.Req
 }
 
 func (h *AccessPolicyHandler) permitInterfaceAdd(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
-		return
-	}
-	var req struct {
+	req, ok := parseJSON[struct {
 		Name      string `json:"name"`
 		Interface string `json:"interface"`
 		Order     int    `json:"order"`
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		response.Error(w, "invalid JSON", "INVALID_JSON")
+	}](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	if req.Name == "" {
@@ -268,18 +226,11 @@ func (h *AccessPolicyHandler) AssignDevice(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *AccessPolicyHandler) assignDevicePost(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		response.Error(w, "invalid request body", "INVALID_BODY")
-		return
-	}
-	var req struct {
+	req, ok := parseJSON[struct {
 		MAC    string `json:"mac"`
 		Policy string `json:"policy"`
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		response.Error(w, "invalid JSON", "INVALID_JSON")
+	}](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
 	if req.MAC == "" {
@@ -352,20 +303,14 @@ func (h *AccessPolicyHandler) ListGlobalInterfaces(w http.ResponseWriter, r *htt
 // POST /api/access-policies/interface-up
 // Body: {"name":"Wireguard0","up":true}
 func (h *AccessPolicyHandler) SetInterfaceUp(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	var req struct {
+	req, ok := parseJSON[struct {
 		Name string `json:"name"`
 		Up   bool   `json:"up"`
-	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		response.Error(w, "invalid body", "INVALID_BODY")
+	}](w, r, http.MethodPost)
+	if !ok {
 		return
 	}
-	if err := json.Unmarshal(body, &req); err != nil || req.Name == "" {
+	if req.Name == "" {
 		response.Error(w, "name required", "INVALID_REQUEST")
 		return
 	}

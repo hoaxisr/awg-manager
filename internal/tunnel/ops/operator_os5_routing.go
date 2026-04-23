@@ -139,7 +139,7 @@ func (o *OperatorOS5Impl) CleanupEndpointRoute(ctx context.Context, tunnelID str
 
 	// Remove kernel route + NDMS route (NDMS caches kernel routes but doesn't track their removal)
 	o.delKernelHostRoute(ctx, endpointIP)
-	_ = o.ndms.RemoveHostRoute(ctx, endpointIP)
+	_ = o.commands.Routes.RemoveHostRoute(ctx, endpointIP)
 	o.logInfo("cleanup_route", tunnelID, "Removed kernel endpoint route to "+endpointIP)
 	o.appLog.Info("stop", tunnelID, "Маршрут до endpoint "+endpointIP+" удалён")
 

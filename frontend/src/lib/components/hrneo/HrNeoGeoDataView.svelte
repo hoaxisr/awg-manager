@@ -16,6 +16,11 @@
 	let busy = $state<string | null>(null);
 	let err = $state('');
 
+	const GROUND_ZERRO_GEOIP_URL =
+		'https://raw.githubusercontent.com/Ground-Zerro/Geo-Aggregator/main/geodat/geoip_GA.dat';
+	const GROUND_ZERRO_GEOSITE_URL =
+		'https://raw.githubusercontent.com/Ground-Zerro/Geo-Aggregator/main/geodat/geosite_GA.dat';
+
 	// Progress for the currently in-flight add (keyed by URL). Populated by SSE.
 	let progress = $derived($geoDownloadProgress[addUrl.trim()] ?? null);
 	let progressByPath = $derived($geoDownloadProgress);
@@ -40,6 +45,19 @@
 		try {
 			await api.addGeoFile(addType, addUrl.trim());
 			addUrl = '';
+			onrefresh();
+		} catch (e: unknown) {
+			err = e instanceof Error ? e.message : String(e);
+		} finally {
+			busy = null;
+		}
+	}
+
+	async function addPreset(type: 'geoip' | 'geosite', url: string) {
+		busy = 'add';
+		err = '';
+		try {
+			await api.addGeoFile(type, url);
 			onrefresh();
 		} catch (e: unknown) {
 			err = e instanceof Error ? e.message : String(e);
@@ -112,6 +130,9 @@
 					<div class="file-info">
 						<span class="file-type type-{f.type}">{f.type}</span>
 						<span class="file-name">{fileName(f.path)}</span>
+						{#if f.external}
+							<span class="file-external" title="Найден в hrneo.conf вне awg-manager. Можно удалить, но не обновить — источник неизвестен.">external</span>
+						{/if}
 						<span class="file-meta">{humanSize(f.size)} · {f.tagCount} тегов</span>
 						{#if busy === f.path && fp}
 							<span class="row-progress">
@@ -124,13 +145,15 @@
 						{/if}
 					</div>
 					<div class="file-actions">
-						<button
-							class="btn btn-ghost btn-sm"
-							disabled={busy === f.path}
-							onclick={() => update(f.path)}
-						>
-							{busy === f.path ? 'Обновление…' : 'Обновить'}
-						</button>
+						{#if f.url}
+							<button
+								class="btn btn-ghost btn-sm"
+								disabled={busy === f.path}
+								onclick={() => update(f.path)}
+							>
+								{busy === f.path ? 'Обновление…' : 'Обновить'}
+							</button>
+						{/if}
 						<button
 							class="btn btn-ghost btn-sm row-danger"
 							disabled={busy === f.path}
@@ -145,7 +168,25 @@
 	{/if}
 
 	<div class="add-form">
-		<div class="form-label">Добавить .dat файл</div>
+		<div class="form-label">Пресеты Ground-Zerro</div>
+		<div class="preset-row">
+			<button
+				class="btn btn-secondary btn-sm"
+				disabled={busy === 'add'}
+				onclick={() => addPreset('geoip', GROUND_ZERRO_GEOIP_URL)}
+			>
+				+ geoip_GA.dat
+			</button>
+			<button
+				class="btn btn-secondary btn-sm"
+				disabled={busy === 'add'}
+				onclick={() => addPreset('geosite', GROUND_ZERRO_GEOSITE_URL)}
+			>
+				+ geosite_GA.dat
+			</button>
+			<span class="preset-hint">Агрегат v2fly + RU-блоклистов, обновляется ежедневно.</span>
+		</div>
+		<div class="form-label form-label-spaced">Добавить по URL</div>
 		<div class="add-row">
 			<select class="form-select" bind:value={addType} disabled={busy === 'add'}>
 				<option value="geosite">geosite</option>
@@ -322,6 +363,18 @@
 		font-size: 0.75rem;
 	}
 
+	.file-external {
+		font-size: 0.6875rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		font-weight: 600;
+		padding: 2px 8px;
+		border-radius: 10px;
+		background: rgba(245, 158, 11, 0.15);
+		color: var(--warning, #f59e0b);
+		cursor: help;
+	}
+
 	.file-actions {
 		display: flex;
 		gap: 4px;
@@ -346,6 +399,22 @@
 		font-weight: 500;
 		color: var(--text-primary);
 		margin-bottom: 6px;
+	}
+
+	.form-label-spaced {
+		margin-top: 12px;
+	}
+
+	.preset-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+
+	.preset-hint {
+		color: var(--text-muted);
+		font-size: 0.75rem;
 	}
 
 	.add-row {

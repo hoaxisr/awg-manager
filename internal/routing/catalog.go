@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
@@ -23,6 +23,11 @@ type TunnelEntry struct {
 }
 
 // RoutingSnapshot holds all routing data for SSE snapshots.
+//
+// Missing lists the section keys whose provider failed or was unavailable
+// when this snapshot was built. The corresponding payload field falls back
+// to an empty slice so the frontend can safely render; Missing distinguishes
+// "successfully empty" from "could not load" per section.
 type RoutingSnapshot struct {
 	DnsRoutes        interface{} `json:"dnsRoutes"`
 	StaticRoutes     interface{} `json:"staticRoutes"`
@@ -32,6 +37,7 @@ type RoutingSnapshot struct {
 	PolicyInterfaces interface{} `json:"policyInterfaces"`
 	ClientRoutes     interface{} `json:"clientRoutes"`
 	HydraRouteStatus interface{} `json:"hydrarouteStatus,omitempty"`
+	Missing          []string    `json:"missing"`
 }
 
 // Catalog provides a unified tunnel listing and ID resolution for all routing subsystems.
@@ -74,10 +80,11 @@ type TunnelProvider interface {
 	WANModel() *wan.Model
 }
 
-// NDMSClient is the subset of ndms.Client used by Catalog.
-type NDMSClient interface {
-	ListWireguardInterfaces(ctx context.Context) ([]ndms.WireguardInterfaceInfo, error)
-	GetSystemName(ctx context.Context, ndmsName string) string
+// interfaceQueries is the subset of *query.Queries.Interfaces used by Catalog.
+// Narrow interface — easy to mock, insulates catalog from query store details.
+type interfaceQueries interface {
+	List(ctx context.Context) ([]ndms.Interface, error)
+	ResolveSystemName(ctx context.Context, ndmsName string) string
 }
 
 // StoreClient is the subset of storage used by Catalog.
@@ -92,14 +99,16 @@ type StoreEntry struct {
 	NWGIndex int
 }
 
-// SnapshotFunc is a function that returns a piece of routing data for the snapshot.
-// Returns nil on error or if the service is unavailable.
-type SnapshotFunc func(ctx context.Context) interface{}
+// SnapshotFunc returns one piece of routing data for a snapshot.
+// A non-nil error signals that the section could not be loaded — the caller
+// records this in RoutingSnapshot.Missing so the UI can surface a
+// "not loaded" state distinct from a successful empty result.
+type SnapshotFunc func(ctx context.Context) (interface{}, error)
 
 // CatalogImpl implements the Catalog interface.
 type CatalogImpl struct {
 	provider TunnelProvider
-	ndms     NDMSClient
+	ifaces   interfaceQueries
 	store    StoreClient
 
 	// Snapshot providers (nil-safe). Set via SetSnapshotProvider.
@@ -113,8 +122,8 @@ type CatalogImpl struct {
 }
 
 // NewCatalog creates a new CatalogImpl.
-func NewCatalog(provider TunnelProvider, ndms NDMSClient, store StoreClient) *CatalogImpl {
-	return &CatalogImpl{provider: provider, ndms: ndms, store: store}
+func NewCatalog(provider TunnelProvider, ifaces interfaceQueries, store StoreClient) *CatalogImpl {
+	return &CatalogImpl{provider: provider, ifaces: ifaces, store: store}
 }
 
 // ListAll returns a deduplicated list of all tunnels and interfaces for UI dropdowns.
@@ -149,22 +158,26 @@ func (c *CatalogImpl) ListAll(ctx context.Context) []TunnelEntry {
 		}
 	}
 
-	// 2. System interfaces (unmanaged WireGuard)
-	if c.ndms != nil {
-		wgIfaces, err := c.ndms.ListWireguardInterfaces(ctx)
+	// 2. System interfaces (unmanaged WireGuard/Proxy/OpkgTun)
+	if c.ifaces != nil {
+		all, err := c.ifaces.List(ctx)
 		if err == nil {
-			for _, iface := range wgIfaces {
-				if managed[iface.Name] {
+			for _, iface := range all {
+				t := strings.ToLower(iface.Type)
+				if t != "wireguard" && t != "proxy" && t != "opkgtun" {
 					continue
 				}
-				name := iface.Name
+				if managed[iface.ID] {
+					continue
+				}
+				name := iface.ID
 				if iface.Description != "" {
 					name = iface.Description
 				}
 				result = append(result, TunnelEntry{
-					ID:        "system:" + iface.Name,
+					ID:        "system:" + iface.ID,
 					Name:      name,
-					Iface:     iface.Name,
+					Iface:     iface.ID,
 					Type:      "system",
 					Status:    "up",
 					Available: true,
@@ -246,7 +259,7 @@ func (c *CatalogImpl) Exists(ctx context.Context, tunnelID string) bool {
 	}
 	if tunnel.IsSystemTunnel(tunnelID) {
 		ndmsName := tunnel.SystemTunnelName(tunnelID)
-		kernelName := c.ndms.GetSystemName(ctx, ndmsName)
+		kernelName := c.ifaces.ResolveSystemName(ctx, ndmsName)
 		return kernelName != "" && kernelName != ndmsName
 	}
 	return c.store.Exists(tunnelID)
@@ -257,7 +270,7 @@ func (c *CatalogImpl) Exists(ctx context.Context, tunnelID string) bool {
 func (c *CatalogImpl) GetKernelIface(ctx context.Context, tunnelID string) (string, bool) {
 	if tunnel.IsSystemTunnel(tunnelID) {
 		ndmsName := tunnel.SystemTunnelName(tunnelID)
-		kernelName := c.ndms.GetSystemName(ctx, ndmsName)
+		kernelName := c.ifaces.ResolveSystemName(ctx, ndmsName)
 		if kernelName == "" || kernelName == ndmsName {
 			return "", false
 		}
@@ -327,8 +340,10 @@ func (c *CatalogImpl) SetSnapshotProvider(name string, fn SnapshotFunc) {
 	}
 }
 
-// SnapshotAll collects all routing data for SSE snapshot.
-// Providers that are nil or return nil produce empty slices (never null in JSON).
+// SnapshotAll collects all routing data for SSE snapshot. For each registered
+// provider, data fields fall back to an empty slice and the section key is
+// recorded in Missing when the provider errors. Unregistered providers are
+// neither filled nor reported (they are not expected to produce data).
 func (c *CatalogImpl) SnapshotAll(ctx context.Context) *RoutingSnapshot {
 	empty := []interface{}{}
 	snap := &RoutingSnapshot{
@@ -339,39 +354,35 @@ func (c *CatalogImpl) SnapshotAll(ctx context.Context) *RoutingSnapshot {
 		PolicyDevices:    empty,
 		PolicyInterfaces: empty,
 		ClientRoutes:     empty,
+		Missing:          []string{},
 	}
 
-	if v := c.callSnap(ctx, c.snapDnsRoutes); v != nil {
-		snap.DnsRoutes = v
-	}
-	if v := c.callSnap(ctx, c.snapStaticRoutes); v != nil {
-		snap.StaticRoutes = v
-	}
-	if v := c.callSnap(ctx, c.snapAccessPolicies); v != nil {
-		snap.AccessPolicies = v
-	}
-	if v := c.callSnap(ctx, c.snapPolicyDevices); v != nil {
-		snap.PolicyDevices = v
-	}
-	if v := c.callSnap(ctx, c.snapPolicyInterfaces); v != nil {
-		snap.PolicyInterfaces = v
-	}
-	if v := c.callSnap(ctx, c.snapClientRoutes); v != nil {
-		snap.ClientRoutes = v
-	}
-	if v := c.callSnap(ctx, c.snapHydraRouteStatus); v != nil {
-		snap.HydraRouteStatus = v
-	}
+	c.fillSection(ctx, "dnsRoutes", c.snapDnsRoutes, &snap.DnsRoutes, &snap.Missing)
+	c.fillSection(ctx, "staticRoutes", c.snapStaticRoutes, &snap.StaticRoutes, &snap.Missing)
+	c.fillSection(ctx, "accessPolicies", c.snapAccessPolicies, &snap.AccessPolicies, &snap.Missing)
+	c.fillSection(ctx, "policyDevices", c.snapPolicyDevices, &snap.PolicyDevices, &snap.Missing)
+	c.fillSection(ctx, "policyInterfaces", c.snapPolicyInterfaces, &snap.PolicyInterfaces, &snap.Missing)
+	c.fillSection(ctx, "clientRoutes", c.snapClientRoutes, &snap.ClientRoutes, &snap.Missing)
+	c.fillSection(ctx, "hydrarouteStatus", c.snapHydraRouteStatus, &snap.HydraRouteStatus, &snap.Missing)
 
 	return snap
 }
 
-// callSnap safely calls a snapshot function, returning nil if fn is nil.
-func (c *CatalogImpl) callSnap(ctx context.Context, fn SnapshotFunc) interface{} {
+// fillSection runs a single provider and either assigns its value to dst or
+// appends key to missing when the provider is registered but failed. Nil
+// providers are skipped silently (not every section is wired in every build).
+func (c *CatalogImpl) fillSection(ctx context.Context, key string, fn SnapshotFunc, dst *interface{}, missing *[]string) {
 	if fn == nil {
-		return nil
+		return
 	}
-	return fn(ctx)
+	v, err := fn(ctx)
+	if err != nil {
+		*missing = append(*missing, key)
+		return
+	}
+	if v != nil {
+		*dst = v
+	}
 }
 
 // resolveNDMSName returns the NDMS or kernel interface name for a managed tunnel.

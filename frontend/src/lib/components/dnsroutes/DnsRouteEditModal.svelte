@@ -117,8 +117,11 @@
 		subscriptions = subscriptions.filter((_, i) => i !== index);
 	}
 
+	// Match the inclusion rule from line 19: WAN interfaces are always "available"
+	// in the logical sense (they're up by definition as long as the WAN link is
+	// up), but they don't carry the t.available flag. Treat them as selectable.
 	let availableTunnels = $derived(tunnels.filter((t) =>
-		!routes.some((r) => r.tunnelId === t.id) && t.available
+		!routes.some((r) => r.tunnelId === t.id) && (t.available || t.type === 'wan')
 	));
 	let newRouteTunnelId = $state('');
 

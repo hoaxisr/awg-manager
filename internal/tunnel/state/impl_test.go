@@ -2,173 +2,57 @@ package state
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 )
 
-// Minimal NDMS "show interface" output templates for tests.
-const (
+// Pre-built InterfaceDetails fixtures matching the legacy "show interface"
+// output templates. Used across state tests.
+var (
 	// conf: running, link: up — fully operational tunnel
-	ndmsRunning = `
-            state: up
-             link: up
-        connected: yes
-          summary:
-                layer:
-                     conf: running
-`
+	detailsRunning = &ndms.InterfaceDetails{
+		State: "up", Link: "up", Connected: true, ConfLayer: "running",
+	}
 	// conf: disabled, link: down — admin turned off
-	ndmsDisabled = `
-            state: down
-             link: down
-        connected: no
-          summary:
-                layer:
-                     conf: disabled
-`
+	detailsDisabled = &ndms.InterfaceDetails{
+		State: "down", Link: "down", Connected: false, ConfLayer: "disabled",
+	}
 	// conf: running, link: down — needs start (after reboot / kill)
-	ndmsNeedsStart = `
-            state: up
-             link: down
-        connected: no
-          summary:
-                layer:
-                     conf: running
-`
+	detailsNeedsStart = &ndms.InterfaceDetails{
+		State: "up", Link: "down", Connected: false, ConfLayer: "running",
+	}
 )
 
-// MockNDMSClient is a mock NDMS client for testing.
+// MockNDMSClient is a mock InterfaceQueries for state tests.
+// It satisfies the narrow state.InterfaceQueries interface
+// (Get + GetDetails).
 type MockNDMSClient struct {
-	opkgTunExists       bool
-	showInterfaceOutput string
-	showInterfaceError  error
+	// opkgTunExists controls whether Get returns a non-nil Interface.
+	opkgTunExists bool
+	// details is what GetDetails returns. If nil, GetDetails returns
+	// (nil, error) to simulate an unreachable NDMS (legacy: ShowInterface
+	// returning empty / parse error).
+	details *ndms.InterfaceDetails
 }
 
-func (m *MockNDMSClient) ShowInterface(ctx context.Context, name string) (string, error) {
-	return m.showInterfaceOutput, m.showInterfaceError
-}
-func (m *MockNDMSClient) CreateOpkgTun(ctx context.Context, name, description string) error {
-	return nil
-}
-func (m *MockNDMSClient) SetIPGlobal(ctx context.Context, name string) error    { return nil }
-func (m *MockNDMSClient) DeleteOpkgTun(ctx context.Context, name string) error { return nil }
-func (m *MockNDMSClient) OpkgTunExists(ctx context.Context, name string) bool {
-	return m.opkgTunExists
-}
-func (m *MockNDMSClient) SetAddress(ctx context.Context, name, address string) error {
-	return nil
-}
-func (m *MockNDMSClient) SetIPv6Address(ctx context.Context, name, address string) error { return nil }
-func (m *MockNDMSClient) ClearIPv6Address(ctx context.Context, name string)             {}
-func (m *MockNDMSClient) SetMTU(ctx context.Context, name string, mtu int) error         { return nil }
-func (m *MockNDMSClient) SetDNS(ctx context.Context, name string, servers []string) error { return nil }
-func (m *MockNDMSClient) ClearDNS(ctx context.Context, name string, servers []string) error {
-	return nil
-}
-func (m *MockNDMSClient) SetDescription(ctx context.Context, name, description string) error {
-	return nil
-}
-func (m *MockNDMSClient) InterfaceUp(ctx context.Context, name string) error     { return nil }
-func (m *MockNDMSClient) InterfaceDown(ctx context.Context, name string) error   { return nil }
-func (m *MockNDMSClient) SetDefaultRoute(ctx context.Context, name string) error { return nil }
-func (m *MockNDMSClient) RemoveDefaultRoute(ctx context.Context, name string) error { return nil }
-func (m *MockNDMSClient) RemoveHostRoute(ctx context.Context, host string) error    { return nil }
-func (m *MockNDMSClient) SetIPv6DefaultRoute(ctx context.Context, name string) error {
-	return nil
-}
-func (m *MockNDMSClient) RemoveIPv6DefaultRoute(ctx context.Context, name string) {}
-func (m *MockNDMSClient) GetInterfaceAddress(ctx context.Context, iface string) (string, string, error) {
-	return "", "", nil
-}
-func (m *MockNDMSClient) GetDefaultGatewayInterface(ctx context.Context) (string, error) {
-	return "PPPoE1", nil
-}
-func (m *MockNDMSClient) Save(ctx context.Context) error            { return nil }
-func (m *MockNDMSClient) DumpIPv4Routes(ctx context.Context) string { return "" }
-func (m *MockNDMSClient) QueryAllWANInterfaces(ctx context.Context) ([]wan.Interface, error) {
-	return nil, nil
-}
-func (m *MockNDMSClient) HasWANIPv6(ctx context.Context, ifaceName string) bool { return false }
-func (m *MockNDMSClient) GetSystemName(ctx context.Context, ndmsName string) string {
-	return ndmsName
-}
-func (m *MockNDMSClient) RCIPost(ctx context.Context, payload interface{}) (json.RawMessage, error) {
-	return nil, nil
-}
-func (m *MockNDMSClient) RCIGet(ctx context.Context, path string) (json.RawMessage, error) {
-	return nil, nil
-}
-func (m *MockNDMSClient) ShowObjectGroupFQDN(ctx context.Context) ([]ndms.ObjectGroupFQDN, error) {
-	return nil, nil
-}
-func (m *MockNDMSClient) ShowDnsProxyRoute(ctx context.Context) ([]ndms.DnsProxyRoute, error) {
-	return nil, nil
-}
-func (m *MockNDMSClient) ListWireguardInterfaces(ctx context.Context) ([]ndms.WireguardInterfaceInfo, error) {
-	return nil, nil
-}
-func (m *MockNDMSClient) QueryAllInterfaces(ctx context.Context) ([]ndms.AllInterface, error) {
-	return nil, nil
-}
-func (m *MockNDMSClient) ListSystemWireguardTunnels(ctx context.Context) ([]ndms.SystemWireguardTunnel, error) {
-	return nil, nil
-}
-func (m *MockNDMSClient) GetSystemWireguardTunnel(ctx context.Context, name string) (*ndms.SystemWireguardTunnel, error) {
-	return nil, nil
-}
-func (m *MockNDMSClient) GetASCParams(ctx context.Context, name string) (json.RawMessage, error) {
-	return nil, nil
-}
-func (m *MockNDMSClient) SetASCParams(ctx context.Context, name string, params json.RawMessage) error {
-	return nil
-}
-func (m *MockNDMSClient) GetWireguardServer(ctx context.Context, name string) (*ndms.WireguardServer, error) {
-	return nil, nil
-}
-func (m *MockNDMSClient) GetWireguardServerConfig(ctx context.Context, name string) (*ndms.WireguardServerConfig, error) {
-	return nil, nil
-}
-func (m *MockNDMSClient) ListAllWireguardServers(ctx context.Context) ([]ndms.WireguardServer, error) {
-	return nil, nil
-}
-func (m *MockNDMSClient) FindFreeWireguardIndex(ctx context.Context) (int, error) {
-	return 0, nil
-}
-func (m *MockNDMSClient) ConfigurePingCheck(ctx context.Context, profile, ifaceName string, cfg ndms.PingCheckConfig) error {
-	return nil
-}
-func (m *MockNDMSClient) RemovePingCheck(ctx context.Context, profile, ifaceName string) error {
-	return nil
-}
-func (m *MockNDMSClient) ShowPingCheck(ctx context.Context, profile string) (*ndms.PingCheckStatus, error) {
-	return nil, nil
+func (m *MockNDMSClient) Get(_ context.Context, name string) (*ndms.Interface, error) {
+	if !m.opkgTunExists {
+		return nil, nil
+	}
+	return &ndms.Interface{ID: name}, nil
 }
 
-func (m *MockNDMSClient) CreateProxy(ctx context.Context, name, description, upstreamHost string, upstreamPort int, socks5UDP bool) error {
-	return nil
-}
-
-func (m *MockNDMSClient) DeleteProxy(ctx context.Context, name string) error {
-	return nil
-}
-
-func (m *MockNDMSClient) ProxyUp(ctx context.Context, name string) error {
-	return nil
-}
-
-func (m *MockNDMSClient) ProxyDown(ctx context.Context, name string) error {
-	return nil
-}
-
-func (m *MockNDMSClient) ShowProxy(ctx context.Context, name string) (*ndms.ProxyInfo, error) {
-	return nil, nil
+func (m *MockNDMSClient) GetDetails(_ context.Context, _ string) (*ndms.InterfaceDetails, error) {
+	if m.details == nil {
+		return nil, errors.New("show interface failed")
+	}
+	return m.details, nil
 }
 
 // MockWGClient is a mock WireGuard client for testing.
@@ -240,7 +124,7 @@ func TestManagerImpl_GetState_NotCreated(t *testing.T) {
 // v1 called this "Stopped". v2 calls it "Disabled" (NDMS intent = down).
 func TestManagerImpl_GetState_Disabled(t *testing.T) {
 	mgr := New(
-		&MockNDMSClient{opkgTunExists: true, showInterfaceOutput: ndmsDisabled},
+		&MockNDMSClient{opkgTunExists: true, details: detailsDisabled},
 		&MockWGClient{},
 		&MockBackend{running: false},
 		nil,
@@ -264,7 +148,7 @@ func TestManagerImpl_GetState_Disabled(t *testing.T) {
 
 func TestManagerImpl_GetState_Running(t *testing.T) {
 	mgr := New(
-		&MockNDMSClient{opkgTunExists: true, showInterfaceOutput: ndmsRunning},
+		&MockNDMSClient{opkgTunExists: true, details: detailsRunning},
 		&MockWGClient{hasPeer: true, lastHandshake: time.Now(), rxBytes: 1000, txBytes: 500},
 		&MockBackend{running: true, pid: 12345},
 		nil,
@@ -306,7 +190,7 @@ func TestManagerImpl_GetState_Running(t *testing.T) {
 // v1 called this "Broken". v2 calls it "Starting".
 func TestManagerImpl_GetState_Starting(t *testing.T) {
 	mgr := New(
-		&MockNDMSClient{opkgTunExists: true, showInterfaceOutput: ndmsNeedsStart},
+		&MockNDMSClient{opkgTunExists: true, details: detailsNeedsStart},
 		&MockWGClient{},
 		&MockBackend{running: true, pid: 12345},
 		nil,
@@ -330,7 +214,7 @@ func TestManagerImpl_GetState_Starting(t *testing.T) {
 // v2 correctly identifies this as NeedsStart via conf layer.
 func TestManagerImpl_GetState_NeedsStart(t *testing.T) {
 	mgr := New(
-		&MockNDMSClient{opkgTunExists: true, showInterfaceOutput: ndmsNeedsStart},
+		&MockNDMSClient{opkgTunExists: true, details: detailsNeedsStart},
 		&MockWGClient{},
 		&MockBackend{running: false},
 		nil,
@@ -347,7 +231,7 @@ func TestManagerImpl_GetState_NeedsStart(t *testing.T) {
 // Happens when user toggles off in router UI.
 func TestManagerImpl_GetState_NeedsStop(t *testing.T) {
 	mgr := New(
-		&MockNDMSClient{opkgTunExists: true, showInterfaceOutput: ndmsDisabled},
+		&MockNDMSClient{opkgTunExists: true, details: detailsDisabled},
 		&MockWGClient{},
 		&MockBackend{running: true, pid: 12345},
 		nil,
@@ -364,7 +248,7 @@ func TestManagerImpl_GetState_NeedsStop(t *testing.T) {
 // v1 called this "Broken". v2 calls it "Running" (peer is not required for Running).
 func TestManagerImpl_GetState_RunningNoPeer(t *testing.T) {
 	mgr := New(
-		&MockNDMSClient{opkgTunExists: true, showInterfaceOutput: ndmsRunning},
+		&MockNDMSClient{opkgTunExists: true, details: detailsRunning},
 		&MockWGClient{hasPeer: false},
 		&MockBackend{running: true, pid: 12345},
 		nil,
@@ -383,7 +267,7 @@ func TestManagerImpl_GetState_RunningNoPeer(t *testing.T) {
 // so with no process → Disabled.
 func TestManagerImpl_GetState_ShowInterfaceFails(t *testing.T) {
 	mgr := New(
-		&MockNDMSClient{opkgTunExists: true, showInterfaceOutput: ""},
+		&MockNDMSClient{opkgTunExists: true, details: nil},
 		&MockWGClient{},
 		&MockBackend{running: false},
 		nil,
@@ -414,21 +298,21 @@ func TestManagerImpl_GetState_Details(t *testing.T) {
 		},
 		{
 			name:    "disabled",
-			ndms:    &MockNDMSClient{opkgTunExists: true, showInterfaceOutput: ndmsDisabled},
+			ndms:    &MockNDMSClient{opkgTunExists: true, details: detailsDisabled},
 			wg:      &MockWGClient{},
 			backend: &MockBackend{},
 			wantIn:  "disabled",
 		},
 		{
 			name:    "running with handshake",
-			ndms:    &MockNDMSClient{opkgTunExists: true, showInterfaceOutput: ndmsRunning},
+			ndms:    &MockNDMSClient{opkgTunExists: true, details: detailsRunning},
 			wg:      &MockWGClient{hasPeer: true, lastHandshake: time.Now(), rxBytes: 100},
 			backend: &MockBackend{running: true},
 			wantIn:  "running",
 		},
 		{
 			name:    "needs start",
-			ndms:    &MockNDMSClient{opkgTunExists: true, showInterfaceOutput: ndmsNeedsStart},
+			ndms:    &MockNDMSClient{opkgTunExists: true, details: detailsNeedsStart},
 			wg:      &MockWGClient{},
 			backend: &MockBackend{},
 			wantIn:  "needs start",

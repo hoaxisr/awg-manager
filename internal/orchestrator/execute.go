@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 )
 
@@ -183,7 +183,7 @@ func (o *Orchestrator) executeColdStartKernel(ctx context.Context, action Action
 	}
 
 	// Build config
-	cfg := storedToConfig(stored)
+	cfg := StoredToConfig(stored)
 	cfg.ISPInterface = resolvedWAN
 	cfg.KernelDevice = o.resolveKernelDevice(resolvedWAN)
 	cfg.DefaultRoute = stored.DefaultRoute
@@ -239,7 +239,7 @@ func (o *Orchestrator) executeReconcileKernel(ctx context.Context, action Action
 	}
 
 	// Build config
-	cfg := storedToConfig(stored)
+	cfg := StoredToConfig(stored)
 	cfg.ISPInterface = resolvedWAN
 	cfg.KernelDevice = o.resolveKernelDevice(resolvedWAN)
 	cfg.DefaultRoute = stored.DefaultRoute

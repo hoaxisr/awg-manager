@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api/client';
 	import { singbox } from '$lib/stores/singbox';
+	import { Modal } from '$lib/components/ui';
 	import SingboxSpeedTestModal from './SingboxSpeedTestModal.svelte';
 
 	interface Props {
@@ -14,6 +15,7 @@
 	const { delayHistory, trafficMap } = singbox;
 
 	let deleting = $state(false);
+	let confirmDeleteOpen = $state(false);
 	let showServer = $state(false);
 	let checking = $state(false);
 
@@ -61,8 +63,8 @@
 	}
 
 	async function remove(): Promise<void> {
-		if (!confirm(`Удалить туннель "${tunnel.tag}"?`)) return;
 		deleting = true;
+		confirmDeleteOpen = false;
 		try {
 			await api.singboxDeleteTunnel(tunnel.tag);
 		} finally {
@@ -151,7 +153,13 @@
 	{:else if tunnel.sni}
 		<div class="row">
 			<span class="label">SNI</span>
-			<span class="value">{tunnel.sni}</span>
+			<span class="value">
+				{#if showServer}
+					{tunnel.sni}
+				{:else}
+					<span class="server-hidden">●●●●●●●●</span>
+				{/if}
+			</span>
 		</div>
 	{/if}
 
@@ -222,7 +230,7 @@
 			Тест скорости
 		</button>
 		<button class="btn btn-ghost btn-sm" onclick={edit}>Изменить</button>
-		<button class="btn btn-danger btn-sm" onclick={remove} disabled={deleting}>
+		<button class="btn btn-danger btn-sm" onclick={() => (confirmDeleteOpen = true)} disabled={deleting}>
 			{deleting ? 'Удаление...' : 'Удалить'}
 		</button>
 	</div>
@@ -234,6 +242,19 @@
 	kernelInterface={tunnel.kernelInterface ?? ''}
 	onclose={() => (speedtestOpen = false)}
 />
+
+<Modal
+	open={confirmDeleteOpen}
+	title="Удаление"
+	size="sm"
+	onclose={() => (confirmDeleteOpen = false)}
+>
+	<p class="confirm-text">Удалить туннель <strong>{tunnel.tag}</strong>?</p>
+	{#snippet actions()}
+		<button class="btn btn-ghost" onclick={() => (confirmDeleteOpen = false)}>Отмена</button>
+		<button class="btn btn-danger" onclick={remove}>Удалить</button>
+	{/snippet}
+</Modal>
 
 <style>
 	.card {

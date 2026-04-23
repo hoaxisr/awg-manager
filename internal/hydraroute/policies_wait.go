@@ -6,20 +6,24 @@ import (
 	"time"
 )
 
-// WaitForPolicy polls `show rc ip policy` until the given policy name appears
-// or the timeout expires. Intended for the new-policy flow: after a rule is
-// written into HR Neo's config and the daemon restarts, HR Neo uses RCI to
-// create the policy on the router; we can only permit interfaces in the
-// policy once it exists.
+// WaitForPolicy polls the NDMS policy store until the given policy name
+// appears or the timeout expires. Intended for the new-policy flow: after
+// a rule is written into HR Neo's config and the daemon restarts, HR Neo
+// uses RCI to create the policy on the router; we can only permit
+// interfaces in the policy once it exists.
+//
+// The Policies Query Store has a 60 min TTL, which is far too long for a
+// poll of an external event. We force a fresh read each iteration by
+// invalidating the cache before every List call.
 //
 // Returns nil on success, an error on timeout or ctx cancellation. If no
-// NDMS client is wired (e.g. tests), returns nil immediately.
+// Queries registry is wired (e.g. tests), returns nil immediately.
 func (s *Service) WaitForPolicy(ctx context.Context, policyName string, timeout time.Duration) error {
 	s.mu.Lock()
-	client := s.ndms
+	queries := s.queries
 	log := s.log
 	s.mu.Unlock()
-	if client == nil {
+	if queries == nil || queries.Policies == nil {
 		return nil
 	}
 	if log != nil {
@@ -31,10 +35,11 @@ func (s *Service) WaitForPolicy(ctx context.Context, policyName string, timeout 
 	start := time.Now()
 
 	for {
-		names, err := s.ListPolicyNames(ctx)
+		queries.Policies.InvalidateAll()
+		list, err := queries.Policies.List(ctx)
 		if err == nil {
-			for _, n := range names {
-				if n == policyName {
+			for _, p := range list {
+				if p.Name == policyName {
 					if log != nil {
 						log.Infof("hydraroute: policy %q appeared after %s", policyName, time.Since(start).Round(100*time.Millisecond))
 					}

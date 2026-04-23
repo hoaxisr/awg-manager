@@ -2,13 +2,16 @@ package dnsroute
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 // --- Target state types (what we WANT on the router) ---
@@ -104,16 +107,28 @@ func (s *ServiceImpl) reconcile(ctx context.Context) error {
 	}
 	target := buildTargetState(data, failedSet)
 
-	allGroups, err := s.ndms.ShowObjectGroupFQDN(ctx)
-	if err != nil {
-		s.logError("reconcile", "", "Failed to read object-groups", err.Error())
-		return fmt.Errorf("show object-group fqdn: %w", err)
+	// Force-refresh caches: router state may have been mutated since the
+	// last fetch (60-minute TTL is too long for reconcile-time freshness).
+	if s.queries != nil {
+		s.queries.ObjectGroups.InvalidateAll()
+		s.queries.DNSProxy.InvalidateAll()
 	}
 
-	allRoutes, err := s.ndms.ShowDnsProxyRoute(ctx)
+	allRoutes, err := s.queries.DNSProxy.List(ctx)
+	if errors.Is(err, query.ErrNotSupportedOnOS4) {
+		// OS4 has no NDMS dns-proxy; dnsroute is a no-op on this platform.
+		// HR Neo handles DNS routing on OS4 via the hr_delegate path.
+		return nil
+	}
 	if err != nil {
 		s.logError("reconcile", "", "Failed to read dns-proxy routes", err.Error())
 		return fmt.Errorf("show dns-proxy route: %w", err)
+	}
+
+	allGroups, err := s.queries.ObjectGroups.List(ctx)
+	if err != nil {
+		s.logError("reconcile", "", "Failed to read object-groups", err.Error())
+		return fmt.Errorf("show object-group fqdn: %w", err)
 	}
 
 	current := filterAWGState(allGroups, allRoutes)
@@ -129,16 +144,6 @@ func (s *ServiceImpl) reconcile(ctx context.Context) error {
 	applyErr := s.applyDiff(ctx, diff)
 	if applyErr != nil {
 		s.logError("reconcile", "", "Partial apply failure", applyErr.Error())
-	}
-
-	// Always save — even on partial failure some operations succeeded
-	// and must be persisted to running-config.
-	if err := s.ndms.Save(ctx); err != nil {
-		s.logError("reconcile", "", "Failed to save config", err.Error())
-		return fmt.Errorf("save config: %w", err)
-	}
-
-	if applyErr != nil {
 		return fmt.Errorf("apply diff: %w", applyErr)
 	}
 
@@ -229,7 +234,7 @@ func chunkDomains(domains []string, maxSize int) [][]string {
 }
 
 // filterAWGState extracts only AWG_* groups and their routes from the full router state.
-func filterAWGState(groups []ndms.ObjectGroupFQDN, routes []ndms.DnsProxyRoute) currentState {
+func filterAWGState(groups []ndms.FQDNGroup, routes []ndms.DNSRouteRule) currentState {
 	cs := currentState{
 		groups: make(map[string]currentGroupData),
 	}
@@ -384,32 +389,26 @@ func computeDiff(current currentState, target targetState) rciDiff {
 	return diff
 }
 
-// applyDiff sends JSON RCI payloads to apply the computed diff.
+// applyDiff issues the computed diff to NDMS via the new CQRS command layer.
+// Save is handled by the debounced SaveCoordinator inside each command group.
 func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff) error {
 	// Phase 1: Delete routes (before deleting groups they reference)
 	if len(diff.routeDeletes) > 0 {
-		payload := map[string]interface{}{
-			"dns-proxy": map[string]interface{}{
-				"route": diff.routeDeletes,
-			},
+		specs := make([]command.DNSRouteSpec, 0, len(diff.routeDeletes))
+		for _, rd := range diff.routeDeletes {
+			specs = append(specs, command.DNSRouteSpec{
+				Group:     rd.Group,
+				Interface: rd.Iface,
+			})
 		}
-		if _, err := s.ndms.RCIPost(ctx, payload); err != nil {
+		if err := s.commands.DNSRoutes.DeleteRoutes(ctx, specs); err != nil {
 			return fmt.Errorf("delete routes: %w", err)
 		}
 	}
 
 	// Phase 2: Delete groups
 	if len(diff.groupDeletes) > 0 {
-		fqdnPayload := make(map[string]interface{})
-		for _, name := range diff.groupDeletes {
-			fqdnPayload[name] = map[string]interface{}{"no": true}
-		}
-		payload := map[string]interface{}{
-			"object-group": map[string]interface{}{
-				"fqdn": fqdnPayload,
-			},
-		}
-		if _, err := s.ndms.RCIPost(ctx, payload); err != nil {
+		if err := s.commands.ObjectGroups.DeleteGroups(ctx, diff.groupDeletes); err != nil {
 			return fmt.Errorf("delete groups: %w", err)
 		}
 	}
@@ -418,42 +417,14 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff) error {
 	// Continue on per-group errors so other groups still get applied.
 	var groupErrors []string
 	for _, g := range diff.groupUpdates {
-		groupBody := make(map[string]interface{})
-
-		var includeOps []map[string]interface{}
-		for _, d := range g.removeIncludes {
-			includeOps = append(includeOps, map[string]interface{}{"address": d, "no": true})
+		mut := command.FQDNGroupMutation{
+			Name:           g.name,
+			AddIncludes:    g.addIncludes,
+			RemoveIncludes: g.removeIncludes,
+			AddExcludes:    g.addExcludes,
+			RemoveExcludes: g.removeExcludes,
 		}
-		for _, d := range g.addIncludes {
-			includeOps = append(includeOps, map[string]interface{}{"address": d})
-		}
-		if len(includeOps) > 0 {
-			groupBody["include"] = includeOps
-		}
-
-		var excludeOps []map[string]interface{}
-		for _, d := range g.removeExcludes {
-			excludeOps = append(excludeOps, map[string]interface{}{"address": d, "no": true})
-		}
-		for _, d := range g.addExcludes {
-			excludeOps = append(excludeOps, map[string]interface{}{"address": d})
-		}
-		if len(excludeOps) > 0 {
-			groupBody["exclude"] = excludeOps
-		}
-
-		if len(groupBody) == 0 {
-			continue
-		}
-
-		payload := map[string]interface{}{
-			"object-group": map[string]interface{}{
-				"fqdn": map[string]interface{}{
-					g.name: groupBody,
-				},
-			},
-		}
-		if _, err := s.ndms.RCIPost(ctx, payload); err != nil {
+		if err := s.commands.ObjectGroups.UpsertGroup(ctx, mut); err != nil {
 			groupErrors = append(groupErrors, fmt.Sprintf("%s: %v", g.name, err))
 			s.log.Warnf("reconcile: group %s update failed: %v", g.name, err)
 		}
@@ -461,12 +432,15 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff) error {
 
 	// Phase 4: Create/update routes (all in one call, order = priority)
 	if len(diff.routeUpserts) > 0 {
-		payload := map[string]interface{}{
-			"dns-proxy": map[string]interface{}{
-				"route": diff.routeUpserts,
-			},
+		specs := make([]command.DNSRouteSpec, 0, len(diff.routeUpserts))
+		for _, ro := range diff.routeUpserts {
+			specs = append(specs, command.DNSRouteSpec{
+				Group:     ro.Group,
+				Interface: ro.Iface,
+				Reject:    ro.Reject,
+			})
 		}
-		if _, err := s.ndms.RCIPost(ctx, payload); err != nil {
+		if err := s.commands.DNSRoutes.UpsertRoutes(ctx, specs); err != nil {
 			return fmt.Errorf("upsert routes: %w", err)
 		}
 	}
@@ -511,37 +485,6 @@ func routesEqual(current []currentRoute, target []targetRoute) bool {
 		if current[i].group != target[i].group ||
 			current[i].iface != target[i].iface ||
 			current[i].fallback != target[i].fallback {
-			return false
-		}
-	}
-	return true
-}
-
-// groupDataEqual checks if current router state matches the target group.
-func groupDataEqual(current currentGroupData, target targetGroup) bool {
-	// On the router, subnets appear as regular entries alongside domains.
-	allIncludes := target.includes
-	if len(target.subnets) > 0 {
-		allIncludes = make([]string, 0, len(target.includes)+len(target.subnets))
-		allIncludes = append(allIncludes, target.includes...)
-		allIncludes = append(allIncludes, target.subnets...)
-	}
-	return domainsEqual(current.includes, allIncludes) &&
-		domainsEqual(current.excludes, target.excludes)
-}
-
-// domainsEqual checks if two domain slices contain the same elements (order-insensitive, case-insensitive).
-func domainsEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	set := make(map[string]int, len(a))
-	for _, d := range a {
-		set[strings.ToLower(d)]++
-	}
-	for _, d := range b {
-		set[strings.ToLower(d)]--
-		if set[strings.ToLower(d)] < 0 {
 			return false
 		}
 	}

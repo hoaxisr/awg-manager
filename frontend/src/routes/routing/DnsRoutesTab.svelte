@@ -55,7 +55,12 @@
     onMount(() => document.addEventListener('click', handleClickOutside));
     onDestroy(() => document.removeEventListener('click', handleClickOutside));
 
-    let dnsActiveCount = $derived(dnsRoutes.filter(r => r.enabled).length);
+    // Orphan = list whose tunnel binding was wiped on tunnel delete.
+    // Domain list / subscriptions survive in storage; the user reassigns
+    // via the Edit modal.
+    let orphanDnsRoutes = $derived(dnsRoutes.filter(r => (r.routes?.length ?? 0) === 0));
+    let boundDnsRoutes = $derived(dnsRoutes.filter(r => (r.routes?.length ?? 0) > 0));
+    let dnsActiveCount = $derived(boundDnsRoutes.filter(r => r.enabled).length);
 
     async function createDnsRoute(data: Partial<DnsRoute>) {
         dnsSaving = true;
@@ -366,9 +371,32 @@
         </div>
     </div>
 {:else}
-    {#if dnsRoutes.length > 0}
+    {#if orphanDnsRoutes.length > 0}
+        <div class="orphan-section">
+            <h4 class="orphan-header">Без туннеля — {orphanDnsRoutes.length}</h4>
+            <p class="orphan-hint">Туннель удалён, списки доменов сохранены. Нажмите «Изменить», чтобы привязать список к другому туннелю.</p>
+            <div class="route-grid">
+                {#each orphanDnsRoutes as route (route.id)}
+                    <DnsRouteCard
+                        {route}
+                        tunnels={routingTunnels}
+                        ontoggle={(enabled) => toggleDnsRoute(route.id, enabled)}
+                        onedit={() => { editingDnsRoute = route; dnsModalOpen = true; }}
+                        ondelete={() => dnsDeleteId = route.id}
+                        onrefresh={() => refreshDnsRouteSubscriptions(route.id)}
+                        toggleLoading={dnsToggling === route.id}
+                        selectable={dnsSelectionMode}
+                        selected={dnsSelected.has(route.id)}
+                        onselect={() => toggleDnsSelect(route.id)}
+                    />
+                {/each}
+            </div>
+        </div>
+    {/if}
+
+    {#if boundDnsRoutes.length > 0}
         <div class="route-grid">
-            {#each dnsRoutes as route (route.id)}
+            {#each boundDnsRoutes as route (route.id)}
                 <DnsRouteCard
                     {route}
                     tunnels={routingTunnels}
@@ -438,6 +466,25 @@
 {/if}
 
 <style>
+    .orphan-section {
+        margin-bottom: 18px;
+    }
+
+    .orphan-header {
+        font-size: 0.8125rem;
+        font-weight: 600;
+        color: var(--warn, #d08770);
+        margin: 0 0 4px 0;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .orphan-hint {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        margin: 0 0 10px 0;
+    }
+
     .empty-state {
         text-align: center;
         padding: 2rem;

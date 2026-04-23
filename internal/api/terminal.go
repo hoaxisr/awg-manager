@@ -3,9 +3,10 @@ package api
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 
-	"nhooyr.io/websocket"
+	"github.com/coder/websocket"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
@@ -168,14 +169,29 @@ func (h *TerminalHandler) WebSocket(w http.ResponseWriter, r *http.Request) {
 	proxyCancel()
 }
 
-// wsCopy copies complete WebSocket messages from src to dst.
+// wsCopy streams complete WebSocket messages from src to dst.
+//
+// Uses the coder/websocket Reader/Writer stream API and io.CopyBuffer
+// with a reused 32 KiB scratch buffer. The previous implementation
+// called Read, which allocates a fresh []byte holding the whole
+// message per call — for large output bursts (xterm log dumps, tail
+// -f, etc.) that was a message-sized allocation on every hop.
 func wsCopy(ctx context.Context, dst, src *websocket.Conn) error {
+	buf := make([]byte, 32*1024)
 	for {
-		msgType, data, err := src.Read(ctx)
+		msgType, reader, err := src.Reader(ctx)
 		if err != nil {
 			return err
 		}
-		if err := dst.Write(ctx, msgType, data); err != nil {
+		writer, err := dst.Writer(ctx, msgType)
+		if err != nil {
+			return err
+		}
+		if _, err := io.CopyBuffer(writer, reader, buf); err != nil {
+			_ = writer.Close()
+			return err
+		}
+		if err := writer.Close(); err != nil {
 			return err
 		}
 	}

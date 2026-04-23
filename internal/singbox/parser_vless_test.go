@@ -99,6 +99,57 @@ func TestParseVLESS_Missing(t *testing.T) {
 	}
 }
 
+func TestParseVLESS_WS(t *testing.T) {
+	link := "vless://uuid-1@host.tld:443?security=tls&sni=example.com&type=ws&path=/wspath&host=cdn.example.com&ed=Sec-WebSocket-Protocol#WS"
+	got, err := parseVLESS(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(got.Outbound, &raw); err != nil {
+		t.Fatal(err)
+	}
+	tr, ok := raw["transport"].(map[string]any)
+	if !ok {
+		t.Fatal("transport block missing")
+	}
+	if tr["type"] != "ws" {
+		t.Errorf("type: %v", tr["type"])
+	}
+	if tr["path"] != "/wspath" {
+		t.Errorf("path: %v", tr["path"])
+	}
+	headers, ok := tr["headers"].(map[string]any)
+	if !ok || headers["Host"] != "cdn.example.com" {
+		t.Errorf("headers: %+v", tr["headers"])
+	}
+	if tr["early_data_header_name"] != "Sec-WebSocket-Protocol" {
+		t.Errorf("early_data_header_name: %v", tr["early_data_header_name"])
+	}
+}
+
+func TestParseVLESS_WS_Minimal(t *testing.T) {
+	got, err := parseVLESS("vless://uuid-1@host.tld:443?type=ws#bare")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	_ = json.Unmarshal(got.Outbound, &raw)
+	tr, ok := raw["transport"].(map[string]any)
+	if !ok {
+		t.Fatal("transport block missing")
+	}
+	if tr["type"] != "ws" {
+		t.Errorf("type: %v", tr["type"])
+	}
+	if _, hasPath := tr["path"]; hasPath {
+		t.Error("path must not be set when absent in URI")
+	}
+	if _, hasHeaders := tr["headers"]; hasHeaders {
+		t.Error("headers must not be set when host is absent in URI")
+	}
+}
+
 func TestParseVLESS_TLS_NoReality(t *testing.T) {
 	link := "vless://uuid-1@host.tld:443?security=tls&sni=example.com&fp=firefox#TLS"
 	got, err := parseVLESS(link)

@@ -1,8 +1,8 @@
 package state
 
 import (
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
 
 // StateInputs holds the inputs for the v2 state matrix.

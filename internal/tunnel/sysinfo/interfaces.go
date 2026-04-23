@@ -24,26 +24,6 @@ var (
 	awgmPattern = regexp.MustCompile(`^awgm(\d+)$`)
 )
 
-// HasDefaultIPv6Route checks whether the system has a real default IPv6 route.
-// Reads /proc/net/ipv6_route looking for ::/0 on a non-loopback interface.
-// The kernel always has a ::/0 reject route on lo (metric ffffffff) — we skip it.
-func HasDefaultIPv6Route() bool {
-	data, err := os.ReadFile("/proc/net/ipv6_route")
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		// Format: dest dest_prefix src src_prefix nexthop metric refcnt use flags iface
-		// Default route: dest=00000000000000000000000000000000 dest_prefix=00
-		if len(fields) >= 10 && fields[0] == "00000000000000000000000000000000" && fields[1] == "00" &&
-			strings.TrimSpace(fields[9]) != "lo" {
-			return true
-		}
-	}
-	return false
-}
-
 // ExtractInterfaceNumber extracts the numeric suffix from an interface name.
 // Returns the number and true if the interface matches opkgtunX, awgX, or awgmX pattern.
 func ExtractInterfaceNumber(ifaceName string) (int, bool) {

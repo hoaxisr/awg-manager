@@ -72,6 +72,27 @@
 	}
 
 	let domainCount = $derived(domains.length);
+	let textareaEl = $state<HTMLTextAreaElement | null>(null);
+
+	// Click on an error badge → focus the textarea, select the bad line,
+	// and scroll it into view. Selecting via setSelectionRange is enough
+	// — the browser brings the selection into view automatically, which
+	// is faster than computing a manual scrollTop offset and handles
+	// line-wrapping correctly.
+	function jumpToLine(lineNumber: number) {
+		const el = textareaEl;
+		if (!el) return;
+		const lines = text.split('\n');
+		const idx = lineNumber - 1;
+		if (idx < 0 || idx >= lines.length) return;
+		let start = 0;
+		for (let i = 0; i < idx; i++) {
+			start += lines[i].length + 1; // +1 for the newline itself
+		}
+		const end = start + lines[idx].length;
+		el.focus();
+		el.setSelectionRange(start, end);
+	}
 </script>
 
 <div class="domain-editor">
@@ -79,11 +100,20 @@
 		<span class="editor-count">{domainCount} записей</span>
 		{#if errorLines.length > 0}
 			<span class="editor-errors">
-				Ошибки в строках: {errorLines.join(', ')}
+				<span class="editor-errors-label">Ошибки в строках:</span>
+				{#each errorLines as line (line)}
+					<button
+						type="button"
+						class="editor-error-chip"
+						title="Перейти к строке {line}"
+						onclick={() => jumpToLine(line)}
+					>{line}</button>
+				{/each}
 			</span>
 		{/if}
 	</div>
 	<textarea
+		bind:this={textareaEl}
 		class="form-textarea"
 		class:has-errors={errorLines.length > 0}
 		rows="8"
@@ -91,7 +121,7 @@
 		value={text}
 		oninput={handleInput}
 	></textarea>
-	<span class="editor-hint">Один домен или CIDR на строку. Формат: domain.tld, IP/mask или IPv6/prefix</span>
+	<span class="editor-hint">Один домен или CIDR на строку. Формат: domain.tld, IP/mask или IPv6/prefix. Нажмите номер строки, чтобы перейти к ошибке.</span>
 </div>
 
 <style>
@@ -113,8 +143,41 @@
 	}
 
 	.editor-errors {
+		display: inline-flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.25rem;
 		font-size: 0.75rem;
 		color: var(--error, #ef4444);
+	}
+
+	.editor-errors-label {
+		margin-right: 0.25rem;
+	}
+
+	.editor-error-chip {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 1.75rem;
+		padding: 0.125rem 0.375rem;
+		border: 1px solid var(--error, #ef4444);
+		border-radius: 4px;
+		background: color-mix(in srgb, var(--error, #ef4444) 10%, transparent);
+		color: var(--error, #ef4444);
+		font-size: 0.75rem;
+		font-weight: 600;
+		font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+		cursor: pointer;
+		transition: background 0.15s, transform 0.1s;
+	}
+
+	.editor-error-chip:hover {
+		background: color-mix(in srgb, var(--error, #ef4444) 25%, transparent);
+	}
+
+	.editor-error-chip:active {
+		transform: scale(0.95);
 	}
 
 	.form-textarea {

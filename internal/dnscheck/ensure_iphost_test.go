@@ -7,25 +7,25 @@ import (
 )
 
 type fakeNDMS struct {
-	getResp  json.RawMessage
+	getResp  []byte
 	getErr   error
 	postResp json.RawMessage
 	postErr  error
 
-	postedPayloads []interface{}
+	postedPayloads []any
 }
 
-func (f *fakeNDMS) RCIGet(_ context.Context, _ string) (json.RawMessage, error) {
+func (f *fakeNDMS) GetRaw(_ context.Context, _ string) ([]byte, error) {
 	return f.getResp, f.getErr
 }
-func (f *fakeNDMS) RCIPost(_ context.Context, payload interface{}) (json.RawMessage, error) {
+func (f *fakeNDMS) Post(_ context.Context, payload any) (json.RawMessage, error) {
 	f.postedPayloads = append(f.postedPayloads, payload)
 	return f.postResp, f.postErr
 }
 
 func TestLookupIPHost_Found(t *testing.T) {
 	svc := &Service{ndms: &fakeNDMS{
-		getResp: json.RawMessage(`[{"domain":"awgm-dnscheck.test","address":"192.168.1.1"}]`),
+		getResp: []byte(`[{"domain":"awgm-dnscheck.test","address":"192.168.1.1"}]`),
 	}}
 	addr, ok := svc.lookupIPHost(context.Background(), probeDomain)
 	if !ok || addr != "192.168.1.1" {
@@ -35,7 +35,7 @@ func TestLookupIPHost_Found(t *testing.T) {
 
 func TestLookupIPHost_OtherDomainsPresent(t *testing.T) {
 	svc := &Service{ndms: &fakeNDMS{
-		getResp: json.RawMessage(`[
+		getResp: []byte(`[
 			{"domain":"other.example","address":"10.0.0.1"},
 			{"domain":"awgm-dnscheck.test","address":"192.168.1.1"}
 		]`),
@@ -48,11 +48,37 @@ func TestLookupIPHost_OtherDomainsPresent(t *testing.T) {
 
 func TestLookupIPHost_Missing(t *testing.T) {
 	svc := &Service{ndms: &fakeNDMS{
-		getResp: json.RawMessage(`[]`),
+		getResp: []byte(`[]`),
 	}}
 	_, ok := svc.lookupIPHost(context.Background(), probeDomain)
 	if ok {
 		t.Error("expected not found on empty list")
+	}
+}
+
+// Regression for NDMS error 1179781 "not found: ip/host/<domain>".
+// An earlier version nested the domain as a map key under ip.host,
+// which NDMS treats as a path lookup to an existing record — it then
+// errors out because we're trying to create. The correct shape keeps
+// domain and address as sibling fields under ip.host.
+func TestCreateIPHost_PayloadShape(t *testing.T) {
+	fake := &fakeNDMS{}
+	svc := &Service{ndms: fake}
+
+	if err := svc.createIPHost(context.Background(), "awgm-dnscheck.test", "192.168.1.1"); err != nil {
+		t.Fatalf("createIPHost: %v", err)
+	}
+	if len(fake.postedPayloads) != 1 {
+		t.Fatalf("expected 1 POST, got %d", len(fake.postedPayloads))
+	}
+
+	raw, err := json.Marshal(fake.postedPayloads[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"ip":{"host":{"address":"192.168.1.1","domain":"awgm-dnscheck.test"}}}`
+	if string(raw) != want {
+		t.Fatalf("payload mismatch:\n got: %s\nwant: %s", raw, want)
 	}
 }
 
@@ -65,7 +91,7 @@ func TestEnsureIPHost_SkipsPostWhenAlreadyCorrect(t *testing.T) {
 		t.Skip("no br0 IP on this test host")
 	}
 	fake := &fakeNDMS{
-		getResp: json.RawMessage(`[{"domain":"awgm-dnscheck.test","address":"` + routerIP + `"}]`),
+		getResp: []byte(`[{"domain":"awgm-dnscheck.test","address":"` + routerIP + `"}]`),
 	}
 	svc := &Service{ndms: fake, log: nil}
 	// Intentionally passing nil log — EnsureIPHost only calls logger in

@@ -3,8 +3,8 @@ package state
 import (
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 )
 
 // TestStateMatrixV2_DetermineState tests the new state matrix that uses

@@ -1,8 +1,9 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
+    import { page } from '$app/stores';
     import { routing } from '$lib/stores/routing';
     import { systemInfo } from '$lib/stores/system';
     import { api } from '$lib/api/client';
+    import { notifications } from '$lib/stores/notifications';
     import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
     import { OverflowTabs } from '$lib/components/ui';
     import { RoutingSearch } from '$lib/components/routing';
@@ -13,6 +14,14 @@
     import { HrNeoTab } from '$lib/components/hrneo';
 
     let activeTab = $state<'hrneo' | 'dns' | 'ip' | 'policy' | 'clientvpn'>('dns');
+
+    // Deep link: ?tab=hrneo from the Settings page HR NEO card, etc.
+    $effect(() => {
+        const t = $page.url.searchParams.get('tab');
+        if (t === 'hrneo' || t === 'dns' || t === 'ip' || t === 'policy' || t === 'clientvpn') {
+            activeTab = t;
+        }
+    });
     let isOS5 = $derived($systemInfo?.isOS5 ?? false);
     let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
     let hasDnsEngine = $derived(isOS5 || hydrarouteInstalled);
@@ -40,6 +49,25 @@
     let policyInterfaces = $derived($routing.policyInterfaces);
     let clientRoutes = $derived($routing.clientRoutes);
     let routingTunnels = $derived($routing.tunnels);
+    let missing = $derived($routing.missing);
+
+    let refreshing = $state(false);
+    async function handleRefresh() {
+        if (refreshing) return;
+        refreshing = true;
+        try {
+            const res = await api.refreshRouting();
+            if (res.missing.length === 0) {
+                notifications.success('Данные получены');
+            } else {
+                notifications.warning(`Не удалось загрузить: ${res.missing.join(', ')}`);
+            }
+        } catch (e) {
+            notifications.error(`Ошибка обновления: ${(e as Error).message}`);
+        } finally {
+            refreshing = false;
+        }
+    }
 
     // Derived: tab badges
     let hrRuleCount = $derived(dnsRoutes.filter(r => r.backend === 'hydraroute').length);
@@ -47,30 +75,6 @@
     let ipActiveCount = $derived(ipRoutes.filter(r => r.enabled).length);
     let policyCount = $derived(accessPolicies.length);
     let clientRouteCount = $derived(clientRoutes.length);
-
-    let policyOrder = $state<string[]>([]);
-
-    async function loadPolicyOrder() {
-        if (!hydrarouteInstalled) {
-            policyOrder = [];
-            return;
-        }
-        try {
-            const cfg = await api.getHydraRouteConfig();
-            policyOrder = cfg.policyOrder ?? [];
-        } catch {
-            // HR Neo not available
-        }
-    }
-
-    onMount(() => { loadPolicyOrder(); });
-
-    // Reload when hydraroute becomes installed
-    $effect(() => {
-        if (hydrarouteInstalled) {
-            loadPolicyOrder();
-        }
-    });
 
     // Default to IP tab when no DNS engine available
     $effect(() => {
@@ -96,7 +100,26 @@
 </svelte:head>
 
 <PageContainer>
-    <PageHeader title="Маршрутизация" />
+    <PageHeader title="Маршрутизация">
+        {#snippet actions()}
+            <button
+                class="btn btn-sm"
+                class:btn-warning={missing.length > 0}
+                class:btn-ghost={missing.length === 0}
+                onclick={handleRefresh}
+                disabled={refreshing}
+                title={missing.length > 0 ? `Не загружено: ${missing.join(', ')}` : 'Обновить данные маршрутизации'}
+            >
+                {#if refreshing}
+                    Загрузка…
+                {:else if missing.length > 0}
+                    Загрузить недостающее ({missing.length})
+                {:else}
+                    Обновить
+                {/if}
+            </button>
+        {/snippet}
+    </PageHeader>
 
     <RoutingSearch dnsRoutes={dnsRoutes} staticRoutes={ipRoutes} tunnels={routingTunnels} onRuleClick={handleSearchRuleClick} />
 
@@ -138,6 +161,7 @@
                 {accessPolicies}
                 {policyDevices}
                 {policyInterfaces}
+                missing={missing.includes('accessPolicies')}
             />
         {:else if activeTab === 'clientvpn'}
             <ClientRoutesTab

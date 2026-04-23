@@ -19,6 +19,7 @@ import type {
 	ASCParams,
 	DeleteResult,
 	BootStatus,
+	ChangelogEntry,
 	UpdateInfo,
 	DiagnosticsStatus,
 	DiagEvent,
@@ -386,6 +387,11 @@ class ApiClient {
 		return this.request('/system/update/apply', { method: 'POST' });
 	}
 
+	async getUpdateChangelog(from: string, to: string): Promise<{ entries: ChangelogEntry[] }> {
+		const qs = `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+		return this.request(`/system/update/changelog?${qs}`);
+	}
+
 	// #endregion
 
 	// ─────────────────────────────────────────────
@@ -683,6 +689,10 @@ class ApiClient {
 
 	async resolveDomain(domain: string): Promise<ResolveResult> {
 		return this.request(`/routing/resolve?domain=${encodeURIComponent(domain)}`);
+	}
+
+	async refreshRouting(): Promise<{ missing: string[] }> {
+		return this.request('/routing/refresh', { method: 'POST' });
 	}
 
 	// #endregion

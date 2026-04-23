@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -31,6 +33,11 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
+	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
+	ndmsevents "github.com/hoaxisr/awg-manager/internal/ndms/events"
+	ndmsmetrics "github.com/hoaxisr/awg-manager/internal/ndms/metrics"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
+	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/rci"
@@ -49,7 +56,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/external"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/firewall"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ops"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
@@ -146,17 +152,79 @@ func main() {
 	loggingService := logging.NewService(settingsStore)
 	defer loggingService.Stop()
 
+	// === NEW NDMS LAYER (CQRS: query.Queries + command.Commands) ===
+	// Transport + Queries are constructed early so downstream consumers
+	// (state.Manager, routing.Catalog, etc.) can depend on them. Commands
+	// + SaveCoordinator are constructed later (they depend on eventBus +
+	// orchestrator).
+	ndmsSem := ndmstransport.NewSemaphore(4)
+	ndmsTransportClient := ndmstransport.New(ndmsSem)
+
+	ndmsQueries := ndmsquery.NewQueries(ndmsquery.Deps{
+		Getter: ndmsTransportClient,
+		Logger: queryLogger(loggingService),
+		IsOS5:  osdetect.Is5,
+	})
+
+	// Initialize SystemInfoStore at boot — one-shot fetch of /show/version.
+	{
+		initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := ndmsQueries.SystemInfo.Init(initCtx); err != nil {
+			log.Warnf("ndms sysinfo init: %v", err)
+		}
+		initCancel()
+	}
+
+	// Warm NDMS list caches before accepting clients so the first SSE snapshot
+	// is not empty while the caches populate lazily. Failures are non-fatal:
+	// the corresponding sections will appear in RoutingSnapshot.Missing and
+	// the UI will prompt the user to retry.
+	{
+		warmCtx, warmCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if _, err := ndmsQueries.Policies.List(warmCtx); err != nil {
+			log.Warnf("ndms prewarm policies: %v", err)
+		}
+		if _, err := ndmsQueries.Hotspot.List(warmCtx); err != nil {
+			log.Warnf("ndms prewarm hotspot: %v", err)
+		}
+		if _, err := ndmsQueries.Interfaces.List(warmCtx); err != nil {
+			log.Warnf("ndms prewarm interfaces: %v", err)
+		}
+		if _, err := ndmsQueries.RunningConfig.Lines(warmCtx); err != nil {
+			log.Warnf("ndms prewarm running-config: %v", err)
+		}
+		warmCancel()
+	}
+
 	// Create tunnel service components
-	ndmsClient := ndms.New()
 	wgClient := wg.New()
 	backendImpl := backend.New(log)
-	stateMgr := state.New(ndmsClient, wgClient, backendImpl, loggingService)
+	stateMgr := state.New(ndmsQueries.Interfaces, wgClient, backendImpl, loggingService)
 	firewallMgr := firewall.New(backendImpl.Type() == backend.TypeKernel, osdetect.Is5(), loggingService)
-	operator := ops.NewOperator(ndmsClient, wgClient, backendImpl, firewallMgr, log)
+
+	// Build NDMS CQRS Commands eagerly so the Operator can consume them.
+	// HookNotifier is wired later (ndmsCommands.SetHookNotifier(orch)) once
+	// the orchestrator exists — this breaks the construction cycle.
+	eventBus := events.NewBus()
+	ndmsSaveCoord := ndmscommand.NewSaveCoordinator(
+		ndmsTransportClient,
+		eventBus,
+		3*time.Second,
+		10*time.Second,
+	)
+	ndmsCommands := ndmscommand.NewCommands(ndmscommand.Deps{
+		Poster:       ndmsTransportClient,
+		Save:         ndmsSaveCoord,
+		Queries:      ndmsQueries,
+		HookNotifier: nil, // wired after orchestrator construction below
+		IsOS5:        osdetect.Is5,
+	})
+
+	operator := ops.NewOperator(ndmsQueries, ndmsCommands, wgClient, backendImpl, firewallMgr, log)
 
 	// Create NativeWG operator
 	rciClient := rci.New()
-	nwgOp := nwg.NewOperator(log, ndmsClient, rciClient, loggingService)
+	nwgOp := nwg.NewOperator(log, ndmsQueries, ndmsCommands, ndmsTransportClient, rciClient, loggingService)
 
 	// Load awg_proxy.ko if firmware < 5.1 Alpha 4
 	if !ndmsinfo.SupportsWireguardASC() {
@@ -170,7 +238,7 @@ func main() {
 	// (USB hotplug, new PPPoE configured after boot, etc.).
 	wanModel := wan.NewModel()
 	wanModel.SetRepopulateFn(func() {
-		populateWANModel(context.Background(), ndmsClient, wanModel, log)
+		populateWANModel(context.Background(), ndmsQueries, wanModel, log)
 	})
 
 	// Create the main tunnel service
@@ -183,7 +251,7 @@ func main() {
 	// Routing catalog — unified tunnel listing for all routing subsystems
 	catalog := routing.NewCatalog(
 		&tunnelProviderAdapter{svc: tunnelService, store: awgStore},
-		ndmsClient,
+		ndmsQueries.Interfaces,
 		&storeAdapter{store: awgStore},
 	)
 
@@ -191,29 +259,41 @@ func main() {
 	hydraService := hydraroute.NewService(catalog, log)
 	geoDataStore := hydraroute.NewGeoDataStore(*dataDir)
 	hydraService.SetGeoDataStore(geoDataStore)
-	hydraService.SetNDMS(ndmsClient)
+	// Adopt any geo files already listed in hrneo.conf (e.g. added manually
+	// before awg-manager was installed) so they show up in the UI. Adoption
+	// is stat-only — TagCount is populated lazily in the background.
+	if cfg, err := hydraroute.ReadConfig(); err == nil {
+		if n, err := geoDataStore.AdoptExternalFiles(cfg); err != nil {
+			log.Warn("Failed to adopt external geo files", map[string]interface{}{"error": err.Error()})
+		} else if n > 0 {
+			log.Info("Adopted external geo files from hrneo.conf", map[string]interface{}{"count": n})
+		}
+	}
+	// Warm up tag cache for entries with TagCount=0 in a background goroutine.
+	// Runs sequentially (one file at a time) to keep I/O pressure low — the
+	// streaming parser holds ~64 KB RAM regardless of file size.
+	go func() {
+		for _, e := range geoDataStore.List() {
+			if e.TagCount != 0 {
+				continue
+			}
+			if _, err := geoDataStore.GetTags(e.Path); err != nil {
+				log.Warn("Background tag parse failed", map[string]interface{}{
+					"path":  e.Path,
+					"error": err.Error(),
+				})
+			}
+		}
+	}()
+	// NDMS wiring (SetQueries + SetPolicies) happens after ndmsCommands is
+	// constructed — see below.
 
 	// DNS route service (OS5 only — routes domains through tunnels via NDMS)
+	// (constructed later, after ndmsCommands is available.)
 	dnsRouteStore := dnsroute.NewStore(*dataDir)
 	if _, err := dnsRouteStore.Load(); err != nil {
 		log.Warn("Failed to load dns-routes", map[string]interface{}{"error": err.Error()})
 	}
-	dnsRouteService := dnsroute.NewService(dnsRouteStore, ndmsClient, catalog, log, loggingService)
-
-	// DNS route failover — switches DNS targets when pingcheck detects tunnel failure.
-	dnsFailover := dnsroute.NewFailoverManager(func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := dnsRouteService.Reconcile(ctx); err != nil {
-			log.Warnf("dns failover reconcile: %v", err)
-			return err
-		}
-		return nil
-	})
-	dnsRouteService.SetHydraRoute(hydraService)
-	dnsRouteService.SetFailoverManager(dnsFailover)
-	dnsFailover.SetLogger(log)
-	dnsFailover.SetAffectedListsLookup(dnsRouteService.LookupAffectedLists)
 
 	hydraService.SetDnsListProvider(func() []hydraroute.DnsListInfo {
 		data := dnsRouteStore.GetCached()
@@ -234,18 +314,15 @@ func main() {
 	})
 
 	// Static route service for IP-based routing through tunnels
+	// (constructed later, after ndmsCommands is available).
 	staticRouteStore := storage.NewStaticRouteStore(*dataDir)
-	staticRouteService := staticroute.New(staticRouteStore, ndmsClient, catalog, log, loggingService)
-
-	// DNS route subscription auto-refresh scheduler
-	dnsRefreshScheduler := dnsroute.NewScheduler(dnsRouteService, settingsStore, log)
-	dnsRefreshScheduler.Start()
 
 	// Create external tunnel service
 	externalService := external.NewService(awgStore, settingsStore, tunnelService, log)
 
-	// System WireGuard tunnels (read-only + ASC editing)
-	systemTunnelSvc := systemtunnel.New(ndmsClient)
+	// System WireGuard tunnels (read-only + ASC editing) — constructed later,
+	// after ndmsQueries/ndmsCommands are available.
+	var systemTunnelSvc *systemtunnel.ServiceImpl
 
 	testService := testing.NewService(awgStore, log, loggingService)
 
@@ -281,8 +358,8 @@ func main() {
 	updaterService.Start()
 	defer updaterService.Stop()
 
-	// Managed WireGuard server service
-	managedService := managed.New(ndmsClient, settingsStore, slog.Default().With("component", "managed"), loggingService)
+	// Managed WireGuard server service — constructed after ndmsCommands is built.
+	var managedService *managed.Service
 
 	// Terminal manager (ttyd lifecycle)
 	terminalManager := terminal.New(loggingService)
@@ -296,8 +373,6 @@ func main() {
 		}
 	}
 
-	// Access policy service (NDMS ip policy management)
-	accessPolicySvc := accesspolicy.New(ndmsClient, settingsStore, log, loggingService)
 
 	// Client route service (per-device VPN routing)
 	clientRouteStore := storage.NewClientRouteStore(*dataDir)
@@ -308,7 +383,7 @@ func main() {
 		loggingService,
 	)
 	// Create orchestrator — single brain for all lifecycle decisions.
-	orch := orchestrator.New(awgStore, operator, nwgOp, stateMgr, wanModel, ndmsClient, log, loggingService)
+	orch := orchestrator.New(awgStore, operator, nwgOp, stateMgr, wanModel, log, loggingService)
 	tunnelService.SetOrchestrator(orch)
 	nwgOp.SetHookNotifier(orch) // operators register expected hooks before InterfaceUp/Down
 	// OS5 kernel operator also uses ExpectHook (via OpkgTun two-layer arch).
@@ -319,13 +394,112 @@ func main() {
 	}
 	orch.SetSupportsASC(ndmsinfo.SupportsWireguardASC)
 	orch.SetPingCheck(pingCheckFacade)
+	// dnsRouteService wiring to orchestrator happens later, after ndmsCommands is built.
+	orch.SetClientRoute(clientRouteService)
+
+	// Wire HookNotifier for NDMS Commands — orchestrator exists now.
+	ndmsCommands.SetHookNotifier(orch)
+
+	// System WireGuard tunnels (read-only + ASC editing) — wired to NDMS CQRS layer.
+	systemTunnelSvc = systemtunnel.New(ndmsQueries, ndmsCommands)
+
+	// Managed WireGuard server service — wired to the new NDMS layer.
+	managedService = managed.New(
+		ndmsTransportClient,
+		ndmsSaveCoord,
+		ndmsQueries,
+		ndmsCommands,
+		settingsStore,
+		slog.Default().With("component", "managed"),
+		loggingService,
+	)
+
+	// Static route service — wired to NDMS RouteCommands.
+	staticRouteService := staticroute.New(staticRouteStore, ndmsCommands.Routes, catalog, log, loggingService)
+	orch.SetStaticRoute(staticRouteService)
+
+	// DNS route service — wired to NDMS CQRS layer.
+	dnsRouteService := dnsroute.NewService(dnsRouteStore, ndmsQueries, ndmsCommands, catalog, log, loggingService)
+
+	// DNS route failover — switches DNS targets when pingcheck detects tunnel failure.
+	dnsFailover := dnsroute.NewFailoverManager(func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := dnsRouteService.Reconcile(ctx); err != nil {
+			log.Warnf("dns failover reconcile: %v", err)
+			return err
+		}
+		return nil
+	})
+	dnsRouteService.SetHydraRoute(hydraService)
+	dnsRouteService.SetFailoverManager(dnsFailover)
+	dnsFailover.SetLogger(log)
+	dnsFailover.SetAffectedListsLookup(dnsRouteService.LookupAffectedLists)
+
 	if osdetect.Is5() {
 		orch.SetDNSRoute(dnsRouteService)
 	}
-	orch.SetStaticRoute(staticRouteService)
-	orch.SetClientRoute(clientRouteService)
 
-	eventBus := events.NewBus()
+	// DNS route subscription auto-refresh scheduler
+	dnsRefreshScheduler := dnsroute.NewScheduler(dnsRouteService, settingsStore, log)
+	dnsRefreshScheduler.Start()
+
+	// Access policy service (NDMS ip policy management) — wired to CQRS layer.
+	accessPolicySvc := accesspolicy.New(ndmsCommands.Policies, ndmsCommands.Interfaces, ndmsQueries, settingsStore, log, loggingService)
+
+	// HydraRoute NDMS wiring — now that ndmsCommands/Queries are ready.
+	hydraService.SetQueries(ndmsQueries)
+	hydraService.SetPolicies(ndmsCommands.Policies)
+
+	ndmsDispatcher := ndmsevents.NewDispatcher(ndmsQueries, eventsLogger(loggingService))
+
+	// After any invalidation drain, rebuild the routing snapshot and
+	// rebroadcast it — but only when the payload actually changed. NDMS
+	// layer/IP hooks fire in tight bursts (~13 events for one Proxy0
+	// create), the Dispatcher's pending-set coalesces them into a handful
+	// of drains, and this SHA-256 compare drops redundant identical
+	// snapshots without any artificial time debounce.
+	var (
+		lastRoutingMu   sync.Mutex
+		lastRoutingHash [sha256.Size]byte
+	)
+	ndmsDispatcher.SetRoutingChanged(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		snap := catalog.SnapshotAll(ctx)
+		data, err := json.Marshal(snap)
+		if err != nil {
+			return
+		}
+		hash := sha256.Sum256(data)
+		lastRoutingMu.Lock()
+		same := hash == lastRoutingHash
+		lastRoutingHash = hash
+		lastRoutingMu.Unlock()
+		if same {
+			return
+		}
+		eventBus.Publish("snapshot:routing", snap)
+	})
+
+	ndmsDispatcher.Start()
+
+	ndmsInstaller := ndmsevents.NewInstaller(eventsLogger(loggingService))
+	if err := ndmsInstaller.Install(); err != nil {
+		log.Warnf("ndms hook installer: %v", err)
+	}
+
+	ndmsRunningProvider := newRunningInterfacesAdapter(tunnelService, systemTunnelSvc, settingsStore)
+
+	ndmsMetricsPoller := ndmsmetrics.New(
+		ndmsQueries.Peers,
+		eventBus,
+		ndmsRunningProvider,
+		eventBus,
+		metricsLogger(loggingService),
+	)
+	ndmsMetricsPoller.SetHistoryFeeder(trafficHistory)
+
 	orch.SetEventBus(eventBus)
 	loggingService.SetEventBus(eventBus)
 	tunnelService.SetEventBus(eventBus)
@@ -349,10 +523,9 @@ func main() {
 	dnsFailover.StartListener(eventBus)
 	defer dnsFailover.StopListener()
 
-	// Traffic Collector — periodically collects traffic metrics, publishes via SSE.
-	trafficCollector := traffic.NewCollector(eventBus, trafficHistory, tunnelService)
-	trafficCollector.Start()
-	defer trafficCollector.Stop()
+	// Traffic publishing is now handled by ndmsMetricsPoller (started by
+	// Server.SetMetricsPoller wiring). It feeds trafficHistory and emits
+	// tunnel:traffic + server:updated events via one ticker + narrow RCI.
 
 	// Connectivity Monitor — periodically checks tunnel connectivity, publishes via SSE.
 	connAdapter := connectivity.NewAdapter(tunnelService, awgStore, testService)
@@ -362,8 +535,9 @@ func main() {
 
 	// Sing-box integration
 	singboxOp := singbox.NewOperator(singbox.OperatorDeps{
-		Log:  slog.Default().With("component", "singbox"),
-		NDMS: ndmsClient,
+		Log:      slog.Default().With("component", "singbox"),
+		Queries:  ndmsQueries,
+		Commands: ndmsCommands,
 	})
 	delayChecker := singbox.NewDelayChecker(singboxOp.Clash(), singboxOp, eventBus)
 	singboxHandler := api.NewSingboxHandler(singboxOp, eventBus, delayChecker, testService)
@@ -385,33 +559,35 @@ func main() {
 	defer delayCancel()
 	go delayChecker.Run(delayCtx)
 
-	// Register routing snapshot providers with catalog.
-	catalog.SetSnapshotProvider("dnsRoutes", func(ctx context.Context) interface{} {
-		routes, _ := dnsRouteService.List(ctx)
-		return routes
+	// Forward sing-box runtime logs from clash_api /logs into the app's
+	// UI log view (replaces the old file-based log; see process.go).
+	logFwdCtx, logFwdCancel := context.WithCancel(context.Background())
+	defer logFwdCancel()
+	go singbox.NewLogForwarder(singboxOp.Clash().Address(), loggingService).Run(logFwdCtx)
+
+	// Register routing snapshot providers with catalog. Each returns (data, err);
+	// errors cause the section to appear in RoutingSnapshot.Missing so the UI can
+	// show a "not loaded" state and offer a refresh action.
+	catalog.SetSnapshotProvider("dnsRoutes", func(ctx context.Context) (interface{}, error) {
+		return dnsRouteService.List(ctx)
 	})
-	catalog.SetSnapshotProvider("staticRoutes", func(ctx context.Context) interface{} {
-		routes, _ := staticRouteService.List()
-		return routes
+	catalog.SetSnapshotProvider("staticRoutes", func(ctx context.Context) (interface{}, error) {
+		return staticRouteService.List()
 	})
-	catalog.SetSnapshotProvider("accessPolicies", func(ctx context.Context) interface{} {
-		policies, _ := accessPolicySvc.List(ctx)
-		return policies
+	catalog.SetSnapshotProvider("accessPolicies", func(ctx context.Context) (interface{}, error) {
+		return accessPolicySvc.List(ctx)
 	})
-	catalog.SetSnapshotProvider("policyDevices", func(ctx context.Context) interface{} {
-		devices, _ := accessPolicySvc.ListDevices(ctx)
-		return devices
+	catalog.SetSnapshotProvider("policyDevices", func(ctx context.Context) (interface{}, error) {
+		return accessPolicySvc.ListDevices(ctx)
 	})
-	catalog.SetSnapshotProvider("policyInterfaces", func(ctx context.Context) interface{} {
-		ifaces, _ := accessPolicySvc.ListGlobalInterfaces(ctx)
-		return ifaces
+	catalog.SetSnapshotProvider("policyInterfaces", func(ctx context.Context) (interface{}, error) {
+		return accessPolicySvc.ListGlobalInterfaces(ctx)
 	})
-	catalog.SetSnapshotProvider("clientRoutes", func(ctx context.Context) interface{} {
-		routes, _ := clientRouteService.List()
-		return routes
+	catalog.SetSnapshotProvider("clientRoutes", func(ctx context.Context) (interface{}, error) {
+		return clientRouteService.List()
 	})
-	catalog.SetSnapshotProvider("hydrarouteStatus", func(ctx context.Context) interface{} {
-		return hydraService.GetStatus()
+	catalog.SetSnapshotProvider("hydrarouteStatus", func(ctx context.Context) (interface{}, error) {
+		return hydraService.GetStatus(), nil
 	})
 
 	srv := server.New(
@@ -432,7 +608,7 @@ func main() {
 		backendImpl,
 		kmodLoader,
 		updaterService,
-		ndmsClient,
+		ndmsQueries,
 		trafficHistory,
 		dnsRouteService,
 		staticRouteService,
@@ -450,8 +626,10 @@ func main() {
 		clashProxy,
 	)
 
-	srv.SetTrafficCollector(trafficCollector)
 	srv.SetSingboxOperator(singboxOp)
+	srv.SetNDMSDispatcher(ndmsDispatcher)
+	srv.SetNDMSTransport(ndmsTransportClient)
+	srv.SetMetricsPoller(ndmsMetricsPoller)
 
 	// Boot status: 0 = booting, 1 = done. Used by /api/system/info.
 	var bootDone int32
@@ -493,7 +671,7 @@ func main() {
 
 	// DNS routing diagnostics
 	dnsCheckService := dnscheck.NewService(
-		ndmsClient,
+		ndmsTransportClient,
 		&dnsRouteCountAdapter{store: dnsRouteStore},
 		&runningTunnelAdapter{svc: tunnelService},
 		log,
@@ -519,6 +697,15 @@ func main() {
 	srv.AddShutdownHook(pingCheckService.Stop)
 	srv.AddShutdownHook(dnsRefreshScheduler.Stop)
 	srv.AddShutdownHook(sessionStore.Stop)
+	srv.AddShutdownHook(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := ndmsSaveCoord.Flush(ctx); err != nil {
+			log.Warnf("ndms saveCoord flush on shutdown: %v", err)
+		}
+	})
+	srv.AddShutdownHook(ndmsDispatcher.Stop)
+	srv.AddShutdownHook(ndmsMetricsPoller.Stop)
 	srv.AddShutdownHook(loggingService.Stop)
 	srv.AddShutdownHook(trafficHistory.Stop)
 	srv.AddShutdownHook(func() { terminalManager.Shutdown(context.Background()) })
@@ -556,13 +743,13 @@ func main() {
 
 			// Seed WAN model with current interface state from NDMS.
 			// Must happen before tunnel start so ISP resolution works.
-			populateWANModel(shutdownCtx, ndmsClient, wanModel, log)
+			populateWANModel(shutdownCtx, ndmsQueries, wanModel, log)
 
 			// Migrate legacy NDMS ID values to kernel names (one-time after model is populated).
 			tunnelService.MigrateISPInterfaceToKernel()
 
 			// Detect actual WAN state.
-			if _, err := ndmsClient.GetDefaultGatewayInterface(shutdownCtx); err != nil {
+			if _, err := ndmsQueries.Routes.GetDefaultGatewayInterface(shutdownCtx); err != nil {
 				bootLog.Info("startup", "",
 					"WAN down at boot — waiting for WAN UP event")
 			} else {
@@ -580,7 +767,7 @@ func main() {
 		// iptables rules, routes, NDMS config all survive. Only in-memory
 		// operator maps (endpointRoutes, resolvedISP) need restoration.
 		// PID files are valid (not stale) — do NOT call cleanupStaleUserspaceState.
-		populateWANModel(context.Background(), ndmsClient, wanModel, log)
+		populateWANModel(context.Background(), ndmsQueries, wanModel, log)
 
 		// Migrate legacy NDMS ID values to kernel names (one-time after model is populated).
 		tunnelService.MigrateISPInterfaceToKernel()
@@ -607,6 +794,17 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// configSaver adapts *ndmscommand.SaveCoordinator to the cleanup.ConfigSaver
+// interface (Save(ctx) error). Flush forces the debounced NDMS save to run
+// synchronously, matching the contract expected by the cleanup service.
+type configSaver struct {
+	sc *ndmscommand.SaveCoordinator
+}
+
+func (c configSaver) Save(ctx context.Context) error {
+	return c.sc.Flush(ctx)
 }
 
 // tunnelProviderAdapter adapts service.Service to routing.TunnelProvider.
@@ -720,8 +918,8 @@ func logStartup(appLog *logging.ScopedLogger, version, osVersion, listenAddr str
 
 // populateWANModel queries NDMS for current WAN interfaces and fills the
 // unified WAN model so that AnyUp() works before any WAN hooks fire.
-func populateWANModel(ctx context.Context, ndmsClient ndms.Client, model *wan.Model, log *logger.Logger) {
-	interfaces, err := ndmsClient.QueryAllWANInterfaces(ctx)
+func populateWANModel(ctx context.Context, queries *ndmsquery.Queries, model *wan.Model, log *logger.Logger) {
+	interfaces, err := queries.Interfaces.ListWAN(ctx)
 	if err != nil {
 		log.Warn("populateWANModel: failed to get WAN interfaces", map[string]interface{}{"error": err.Error()})
 		return
@@ -1029,19 +1227,40 @@ func runCleanup(dataDir string) {
 
 	awgStore := storage.NewAWGTunnelStore(filepath.Join(dataDir, "tunnels"), log)
 
+	// Build minimal NDMS CQRS layer first — state.Manager consumes
+	// Queries.Interfaces, and ProxyManager / dnsroute / accesspolicy share
+	// the same transport + commands further down.
+	cleanupEventBus := events.NewBus()
+	cleanupNDMSTransport := ndmstransport.New(ndmstransport.NewSemaphore(4))
+	cleanupNDMSQueries := ndmsquery.NewQueries(ndmsquery.Deps{
+		Getter: cleanupNDMSTransport,
+		Logger: nil,
+		IsOS5:  osdetect.Is5,
+	})
+
 	// Create service components
-	ndmsClient := ndms.New()
 	wgClient := wg.New()
 	backendImpl := backend.New(log)
-	stateMgr := state.New(ndmsClient, wgClient, backendImpl, nil)
+	stateMgr := state.New(cleanupNDMSQueries.Interfaces, wgClient, backendImpl, nil)
 	firewallMgr := firewall.New(backendImpl.Type() == backend.TypeKernel, osdetect.Is5(), nil)
-	operator := ops.NewOperator(ndmsClient, wgClient, backendImpl, firewallMgr, log)
+
+	// Build NDMS Commands early so the Operator can consume them. HookNotifier
+	// is wired below once the orchestrator exists (see SetHookNotifier call).
+	cleanupNDMSSave := ndmscommand.NewSaveCoordinator(cleanupNDMSTransport, cleanupEventBus, 3*time.Second, 10*time.Second)
+	cleanupNDMSCommands := ndmscommand.NewCommands(ndmscommand.Deps{
+		Poster:  cleanupNDMSTransport,
+		Save:    cleanupNDMSSave,
+		Queries: cleanupNDMSQueries,
+		IsOS5:   osdetect.Is5,
+	})
+
+	operator := ops.NewOperator(cleanupNDMSQueries, cleanupNDMSCommands, wgClient, backendImpl, firewallMgr, log)
 	cleanupRCI := rci.New()
-	nwgOp := nwg.NewOperator(log, ndmsClient, cleanupRCI, nil)
+	nwgOp := nwg.NewOperator(log, cleanupNDMSQueries, cleanupNDMSCommands, cleanupNDMSTransport, cleanupRCI, nil)
 	tunnelService := service.New(awgStore, nwgOp, operator, stateMgr, log, wan.NewModel(), nil)
 
 	// Wire orchestrator for lifecycle operations (Delete needs it)
-	cleanupOrch := orchestrator.New(awgStore, operator, nwgOp, stateMgr, wan.NewModel(), ndmsClient, log, nil)
+	cleanupOrch := orchestrator.New(awgStore, operator, nwgOp, stateMgr, wan.NewModel(), log, nil)
 	tunnelService.SetOrchestrator(cleanupOrch)
 	nwgOp.SetHookNotifier(cleanupOrch)
 	if os5Op, ok := operator.(interface {
@@ -1049,31 +1268,46 @@ func runCleanup(dataDir string) {
 	}); ok {
 		os5Op.SetHookNotifier(cleanupOrch)
 	}
+	// Wire HookNotifier on NDMS Commands now that the orchestrator exists.
+	cleanupNDMSCommands.SetHookNotifier(cleanupOrch)
 
 	// Create auxiliary services
 	dnsStore := dnsroute.NewStore(dataDir)
 	dnsStore.Load()
-	dnsSvc := dnsroute.NewService(dnsStore, ndmsClient, nil, log, nil)
-
-	managedSvc := managed.New(ndmsClient, settingsStore, slog.Default(), nil)
-	accessPolicySvc := accesspolicy.New(ndmsClient, settingsStore, log, nil)
+	// dnsSvc is constructed later, after cleanup NDMS CQRS layer is built.
 
 	// Client route service for cleanup
 	clientRouteStore := storage.NewClientRouteStore(dataDir)
 	clientRouteSvc := clientroute.New(clientRouteStore, operator, nil, nil)
 
-	// Sing-box operator — knows how to stop the detached daemon and tear
-	// down its NDMS Proxy interfaces.
+	// Managed WireGuard server — wired to the cleanup-path NDMS CQRS layer.
+	managedSvc := managed.New(
+		cleanupNDMSTransport,
+		cleanupNDMSSave,
+		cleanupNDMSQueries,
+		cleanupNDMSCommands,
+		settingsStore,
+		slog.Default(),
+		nil,
+	)
+
+	// DNS route service wired to cleanup NDMS CQRS layer (OS5 only — OS4
+	// short-circuits inside reconcile via ErrNotSupportedOnOS4).
+	dnsSvc := dnsroute.NewService(dnsStore, cleanupNDMSQueries, cleanupNDMSCommands, nil, log, nil)
+
 	singboxOp := singbox.NewOperator(singbox.OperatorDeps{
-		Log:  slog.Default().With("component", "singbox"),
-		NDMS: ndmsClient,
+		Log:      slog.Default().With("component", "singbox"),
+		Queries:  cleanupNDMSQueries,
+		Commands: cleanupNDMSCommands,
 	})
+
+	accessPolicySvc := accesspolicy.New(cleanupNDMSCommands.Policies, cleanupNDMSCommands.Interfaces, cleanupNDMSQueries, settingsStore, log, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	// Single cleanup call — all business logic in CleanupService
-	cleanupSvc := cleanup.New(tunnelService, awgStore, dnsSvc, managedSvc, accessPolicySvc, clientRouteSvc, singboxOp, ndmsClient)
+	cleanupSvc := cleanup.New(tunnelService, awgStore, dnsSvc, managedSvc, accessPolicySvc, clientRouteSvc, singboxOp, configSaver{sc: cleanupNDMSSave})
 	if err := cleanupSvc.CleanupAll(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Cleanup error: %v\n", err)
 	}

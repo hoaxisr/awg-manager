@@ -46,6 +46,13 @@ type ServiceImpl struct {
 
 	// bus is the event bus for SSE publishing.
 	bus *events.Bus
+
+	// selfCreateGate (optional) suppresses the hook-driven snapshot refresh
+	// during awg-manager-initiated NDMS interface creations. Without it,
+	// the ifcreated hook fires (and rebroadcasts system tunnels) before
+	// our own store.Save completes — producing a transient ghost entry in
+	// the system tunnels list.
+	selfCreateGate tunnel.SelfCreateGater
 }
 
 // New creates a new TunnelService.
@@ -71,6 +78,11 @@ func New(
 
 // WANModel returns the WAN state model for direct access by API handlers.
 func (s *ServiceImpl) WANModel() *wan.Model { return s.wan }
+
+// SetSelfCreateGate wires the self-create gate used to suppress hook-driven
+// snapshot refreshes during Create/Import. Optional; nil is safe (code paths
+// degrade to the old behavior).
+func (s *ServiceImpl) SetSelfCreateGate(g tunnel.SelfCreateGater) { s.selfCreateGate = g }
 
 // GetResolvedISP returns the resolved ISP interface name for a running tunnel.
 func (s *ServiceImpl) GetResolvedISP(tunnelID string) string {
@@ -109,16 +121,21 @@ func (s *ServiceImpl) RunningTunnels(ctx context.Context) []traffic.RunningTunne
 		if si.State != tunnel.StateRunning {
 			continue
 		}
-		var ifaceName string
+		var ifaceName, ndmsName string
 		if t.Backend == "nativewg" {
-			ifaceName = nwg.NewNWGNames(t.NWGIndex).IfaceName
+			names := nwg.NewNWGNames(t.NWGIndex)
+			ifaceName = names.IfaceName
+			ndmsName = names.NDMSName
 		} else {
-			ifaceName = tunnel.NewNames(t.ID).IfaceName
+			names := tunnel.NewNames(t.ID)
+			ifaceName = names.IfaceName
+			ndmsName = names.NDMSName
 		}
 		result = append(result, traffic.RunningTunnel{
 			ID:            t.ID,
 			BackendType:   s.backendLabel(&t),
 			IfaceName:     ifaceName,
+			NDMSName:      ndmsName,
 			RxBytes:       si.RxBytes,
 			TxBytes:       si.TxBytes,
 			LastHandshake: si.LastHandshake,
@@ -141,11 +158,6 @@ func (s *ServiceImpl) unlockTunnel(tunnelID string) {
 	}
 }
 
-// cleanupTunnelLock removes the lock entry for a deleted tunnel.
-func (s *ServiceImpl) cleanupTunnelLock(tunnelID string) {
-	s.tunnelMu.Delete(tunnelID)
-}
-
 // === CRUD Operations ===
 
 // Create creates a new tunnel and saves it to storage.
@@ -165,6 +177,12 @@ func (s *ServiceImpl) Create(ctx context.Context, tunnelID, name string, cfg tun
 		if s.nwgOperator == nil {
 			return fmt.Errorf("NativeWG backend not available")
 		}
+		// NOTE: the caller (tunnels API handler) calls store.Save AFTER we
+		// return, so the self-create gate can't be scoped to this function
+		// alone — it would exit too early and let the ifcreated hook see an
+		// empty managed list. For now, the gate only protects Import (which
+		// saves internally). Manual Create racing with ifcreated is a known
+		// edge case; if it surfaces, move the gate up to the handler layer.
 		index, err := s.nwgOperator.Create(ctx, stored)
 		if err != nil {
 			return err
@@ -207,9 +225,11 @@ func (s *ServiceImpl) Get(ctx context.Context, tunnelID string) (*TunnelWithStat
 		stateInfo = s.state.GetState(ctx, tunnelID)
 	}
 
-	var ifaceName string
+	var ifaceName, ndmsName string
 	if stored.Backend == "nativewg" {
-		ifaceName = nwg.NewNWGNames(stored.NWGIndex).IfaceName
+		names := nwg.NewNWGNames(stored.NWGIndex)
+		ifaceName = names.IfaceName
+		ndmsName = names.NDMSName
 	} else {
 		ifaceName = tunnel.NewNames(tunnelID).IfaceName
 	}
@@ -217,7 +237,7 @@ func (s *ServiceImpl) Get(ctx context.Context, tunnelID string) (*TunnelWithStat
 	return &TunnelWithStatus{
 		ID:            stored.ID,
 		Name:          stored.Name,
-		Config:        s.storedToConfig(stored),
+		Config:        orchestrator.StoredToConfig(stored),
 		State:         stateInfo.State,
 		StateInfo:     stateInfo,
 		Enabled:       stored.Enabled,
@@ -226,6 +246,7 @@ func (s *ServiceImpl) Get(ctx context.Context, tunnelID string) (*TunnelWithStat
 		DefaultRoute:  stored.DefaultRoute,
 		ISPInterface:  stored.ISPInterface,
 		InterfaceName: ifaceName,
+		NDMSName:      ndmsName,
 		ConfigPreview: config.Generate(stored),
 		Backend:       s.backendLabel(stored),
 	}, nil
@@ -252,16 +273,18 @@ func (s *ServiceImpl) List(ctx context.Context) ([]TunnelWithStatus, error) {
 			stateInfo = s.state.GetState(ctx, t.ID)
 		}
 
-		var ifaceName string
+		var ifaceName, ndmsName string
 		if t.Backend == "nativewg" {
-			ifaceName = nwg.NewNWGNames(t.NWGIndex).IfaceName
+			names := nwg.NewNWGNames(t.NWGIndex)
+			ifaceName = names.IfaceName
+			ndmsName = names.NDMSName
 		} else {
 			ifaceName = tunnel.NewNames(t.ID).IfaceName
 		}
 		result = append(result, TunnelWithStatus{
 			ID:            t.ID,
 			Name:          t.Name,
-			Config:        s.storedToConfig(&t),
+			Config:        orchestrator.StoredToConfig(&t),
 			State:         stateInfo.State,
 			StateInfo:     stateInfo,
 			Enabled:       t.Enabled,
@@ -270,6 +293,7 @@ func (s *ServiceImpl) List(ctx context.Context) ([]TunnelWithStatus, error) {
 			DefaultRoute:  t.DefaultRoute,
 			ISPInterface:  t.ISPInterface,
 			InterfaceName: ifaceName,
+			NDMSName:      ndmsName,
 			Backend:       s.backendLabel(&t),
 		})
 	}
@@ -373,7 +397,7 @@ func (s *ServiceImpl) Update(ctx context.Context, tunnelID string, cfg tunnel.Co
 
 			// Sync address (IPv4 + IPv6) to NDMS (only if changed)
 			if stored.Interface.Address != oldAddress {
-				ipv4, ipv6 := splitAddresses(stored.Interface.Address)
+				ipv4, ipv6 := orchestrator.SplitAddresses(stored.Interface.Address)
 				if err := s.legacyOperator.SyncAddress(ctx, tunnelID, ipv4, ipv6); err != nil {
 					s.logWarn("update", tunnelID, "Failed to sync address: "+err.Error())
 				}
@@ -536,6 +560,18 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 	parsed.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	parsed.Enabled = false
 	parsed.Backend = "nativewg"
+
+	// Guard: the ifcreated hook fires from NDMS AS SOON AS the interface
+	// is created. Without the gate, the hook handler rebroadcasts a
+	// snapshot that sees the new NDMS interface but does NOT see this
+	// tunnel in our managed store yet (Save hasn't run), so the interface
+	// is misclassified as a "system tunnel" — a ghost duplicate vanishing
+	// only on next refresh. Gate spans both Create and Save; the caller
+	// (import handler) publishes the final snapshot after us.
+	if s.selfCreateGate != nil {
+		s.selfCreateGate.EnterSelfCreate()
+		defer s.selfCreateGate.ExitSelfCreate()
+	}
 
 	// Create NDMS WireGuard interface via NativeWG operator
 	index, err := s.nwgOperator.Create(ctx, parsed)
@@ -728,55 +764,6 @@ func (s *ServiceImpl) resolveKernelDevice(resolvedWAN string) string {
 		return tunnel.NewNames(tunnel.TunnelRouteID(resolvedWAN)).IfaceName
 	}
 	return resolvedWAN // already a kernel name
-}
-
-// storedToConfig converts storage.AWGTunnel to tunnel.Config.
-func (s *ServiceImpl) storedToConfig(stored *storage.AWGTunnel) tunnel.Config {
-	names := tunnel.NewNames(stored.ID)
-	ipv4, ipv6 := splitAddresses(stored.Interface.Address)
-	// Parse DNS servers from comma-separated string
-	var dns []string
-	if stored.Interface.DNS != "" {
-		for _, part := range strings.Split(stored.Interface.DNS, ",") {
-			part = strings.TrimSpace(part)
-			if part != "" {
-				dns = append(dns, part)
-			}
-		}
-	}
-
-	return tunnel.Config{
-		ID:           stored.ID,
-		Name:         stored.Name,
-		Address:      ipv4,
-		AddressIPv6:  ipv6,
-		MTU:          stored.Interface.MTU,
-		DNS:          dns,
-		ConfPath:     names.ConfPath,
-		ISPInterface: stored.ISPInterface,
-	}
-}
-
-// splitAddresses splits a WireGuard Address field (which may contain
-// comma-separated IPv4 and IPv6 addresses) into separate values.
-func splitAddresses(address string) (ipv4, ipv6 string) {
-	for _, part := range strings.Split(address, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		// Strip CIDR prefix for the config — operators add it themselves
-		host := part
-		if idx := strings.Index(part, "/"); idx != -1 {
-			host = part[:idx]
-		}
-		if strings.Contains(host, ":") {
-			ipv6 = host
-		} else {
-			ipv4 = host
-		}
-	}
-	return
 }
 
 // writeConfigFile generates and writes the WireGuard config file.

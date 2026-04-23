@@ -70,6 +70,12 @@
 			},
 			onConnected: () => {
 				serverOnline.set(true);
+				// Drop any preserved tunnel:state updates from before the
+				// disconnect — the fresh snapshot about to arrive is the
+				// authoritative state, and the 5-second preservation window
+				// in setSnapshot would otherwise let a stale "running"
+				// shadow a legitimate "stopped".
+				tunnels.clearRecentStateUpdates();
 			},
 			onDisconnected: () => serverOnline.set(false),
 
@@ -92,8 +98,13 @@
 			// Tunnel incremental
 			onTunnelState: (data) => tunnels.updateTunnelState(data.id, data.state),
 			onTunnelTraffic: (data) => {
-				tunnels.updateTraffic(data);
-				feedTraffic(data.id, data.rxBytes, data.txBytes);
+				// data.id is the NDMS interface name (e.g. "Wireguard0") on OS 5.x —
+				// updateTraffic resolves it to the awg-manager tunnel ID, which is
+				// what the traffic store and TunnelCard subscribers are keyed on.
+				const resolvedId = tunnels.updateTraffic(data);
+				if (resolvedId !== null) {
+					feedTraffic(resolvedId, data.rxBytes, data.txBytes);
+				}
 			},
 			onTunnelConnectivity: (data) => tunnels.updateConnectivity(data.id, data.connected, data.latency),
 			onTunnelCreated: () => {},

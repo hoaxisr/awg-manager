@@ -22,6 +22,30 @@ import (
 // geoDataFile is the JSON storage filename for geo data entries.
 const geoDataFile = "hydraroute-geodata.json"
 
+// Ground-Zerro/Geo-Aggregator publishes the canonical .dat files that
+// HydraRoute ships by default (daily-refreshed aggregate of v2fly +
+// Russian blocklists). Any file the installer drops into hrneo.conf is
+// assumed to come from this source, so AdoptExternalFiles prefills the
+// URL and the "Обновить" button works without the user re-adding the
+// file by hand.
+const (
+	GroundZerroGeoIPURL   = "https://raw.githubusercontent.com/Ground-Zerro/Geo-Aggregator/main/geodat/geoip_GA.dat"
+	GroundZerroGeoSiteURL = "https://raw.githubusercontent.com/Ground-Zerro/Geo-Aggregator/main/geodat/geosite_GA.dat"
+)
+
+// defaultURLForType returns the Ground-Zerro source URL for a known .dat
+// type, or "" for unsupported types.
+func defaultURLForType(fileType string) string {
+	switch fileType {
+	case "geoip":
+		return GroundZerroGeoIPURL
+	case "geosite":
+		return GroundZerroGeoSiteURL
+	default:
+		return ""
+	}
+}
+
 // geoDataJSON is the on-disk format for GeoDataStore persistence.
 type geoDataJSON struct {
 	Files []GeoFileEntry `json:"files"`
@@ -223,6 +247,9 @@ func (s *GeoDataStore) Update(path string) (*GeoFileEntry, error) {
 	}
 
 	entry := s.entries[idx]
+	if entry.URL == "" {
+		return nil, fmt.Errorf("cannot update external file: no source URL on record")
+	}
 
 	progress := s.progress
 	bytesProgress := func(downloaded, total int64) {
@@ -322,8 +349,31 @@ func (s *GeoDataStore) GetTags(path string) ([]GeoTag, error) {
 		return nil, err
 	}
 
+	// After a successful parse, persist the TagCount + Mtime to the store
+	// so the UI shows a useful count across restarts (without re-parsing the
+	// .dat file on every service start).
+	var persist bool
 	s.mu.Lock()
 	s.tagCache[path] = tags
+	if idx := s.findUnlocked(path); idx >= 0 {
+		info, statErr := os.Stat(path)
+		if statErr == nil {
+			mtime := info.ModTime().UTC().Format(time.RFC3339)
+			if s.entries[idx].TagCount != len(tags) ||
+				s.entries[idx].Size != info.Size() ||
+				s.entries[idx].Mtime != mtime {
+				s.entries[idx].TagCount = len(tags)
+				s.entries[idx].Size = info.Size()
+				s.entries[idx].Mtime = mtime
+				persist = true
+			}
+		}
+	}
+	if persist {
+		// Best-effort — if save fails the in-memory cache is still correct;
+		// the count will just re-compute on next service start.
+		_ = s.saveUnlocked()
+	}
 	s.mu.Unlock()
 
 	result := make([]GeoTag, len(tags))
@@ -345,6 +395,87 @@ func (s *GeoDataStore) GeoFilePaths() (geoIP, geoSite []string) {
 		}
 	}
 	return geoIP, geoSite
+}
+
+// AdoptExternalFiles scans the provided hrneo config for GeoSite/GeoIP file
+// paths not yet tracked by this store, and registers them as External entries.
+// Returns the number of files adopted.
+//
+// Adopted entries have URL="" and External=true — the user can delete them
+// (which removes the .dat from disk) but cannot "update" them because there
+// is no source URL on record.
+//
+// Only paths under hrDir are adopted. This mirrors the Delete path guard so
+// that every adopted entry is actually deletable via the UI. Files outside
+// hrDir listed in hrneo.conf are silently skipped.
+//
+// Missing files (listed in config but not present on disk) are skipped.
+// Tag counts are read on a best-effort basis; failures leave TagCount=0.
+func (s *GeoDataStore) AdoptExternalFiles(cfg *Config) (int, error) {
+	if cfg == nil {
+		return 0, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	known := make(map[string]struct{}, len(s.entries))
+	for _, e := range s.entries {
+		known[filepath.Clean(e.Path)] = struct{}{}
+	}
+
+	adopted := 0
+	paths := []struct {
+		path, fileType string
+	}{}
+	for _, p := range cfg.GeoIPFiles {
+		paths = append(paths, struct{ path, fileType string }{p, "geoip"})
+	}
+	for _, p := range cfg.GeoSiteFiles {
+		paths = append(paths, struct{ path, fileType string }{p, "geosite"})
+	}
+
+	for _, item := range paths {
+		clean := filepath.Clean(item.path)
+		if _, ok := known[clean]; ok {
+			continue
+		}
+		if !strings.HasPrefix(clean, hrDir) {
+			// Delete() refuses paths outside hrDir, so adopting them would
+			// yield undeletable entries. Skip.
+			continue
+		}
+		info, err := os.Stat(clean)
+		if err != nil {
+			// File in config but absent on disk — ignore silently.
+			continue
+		}
+		// IMPORTANT: do not parse the file here. On routers with low RAM a
+		// 66 MB geosite.dat read at startup evicts the squashfs page cache
+		// and stalls NDM. TagCount is left at 0 and populated lazily on the
+		// first GetTags call. Size comes from stat — no I/O beyond metadata.
+		mtime := info.ModTime().UTC().Format(time.RFC3339)
+		s.entries = append(s.entries, GeoFileEntry{
+			Type:     item.fileType,
+			Path:     clean,
+			URL:      defaultURLForType(item.fileType),
+			Size:     info.Size(),
+			TagCount: 0,
+			Updated:  mtime,
+			External: true,
+			Mtime:    mtime,
+		})
+		known[clean] = struct{}{}
+		adopted++
+	}
+
+	if adopted == 0 {
+		return 0, nil
+	}
+	if err := s.saveUnlocked(); err != nil {
+		return adopted, fmt.Errorf("save adopted entries: %w", err)
+	}
+	return adopted, nil
 }
 
 // load reads entries from the JSON storage file.

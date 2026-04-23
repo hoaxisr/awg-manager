@@ -1,5 +1,7 @@
 package events
 
+import "time"
+
 // Event represents a server-sent event.
 type Event struct {
 	ID   uint64 `json:"-"`    // monotonic, sent as SSE "id:" field
@@ -128,4 +130,15 @@ type GeoDownloadProgressEvent struct {
 	Total      int64  `json:"total"`                // 0 when unknown
 	Phase      string `json:"phase"`                // "download" | "validate" | "done" | "error"
 	Error      string `json:"error,omitempty"`
+}
+
+// SaveStatusEvent is published by the NDMS SaveCoordinator on every state
+// transition so the UI can show a Google-Docs-style save indicator.
+//
+// State is one of: "idle" | "pending" | "saving" | "error" | "failed".
+type SaveStatusEvent struct {
+	State        string    `json:"state"`
+	LastError    string    `json:"lastError,omitempty"`
+	LastSaveAt   time.Time `json:"lastSaveAt,omitempty"`
+	PendingCount int       `json:"pendingCount"`
 }

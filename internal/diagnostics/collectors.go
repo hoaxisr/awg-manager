@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -85,7 +86,14 @@ func (r *Runner) collectWAN(ctx context.Context) WANInfo {
 	info.AnyUp = model.AnyUp()
 
 	// NDMS route table (what AWG Manager sees via RCI)
-	info.NDMSRouteTable = r.deps.NDMSClient.DumpIPv4Routes(ctx)
+	if r.deps.NDMSQueries != nil {
+		routes, err := r.deps.NDMSQueries.Routes.List(ctx)
+		if err != nil {
+			info.NDMSRouteTable = "error: " + err.Error()
+		} else {
+			info.NDMSRouteTable = formatRouteTable(routes)
+		}
+	}
 
 	// Raw kernel network state
 	if result, err := exec.Run(ctx, "/opt/sbin/ip", "route", "show"); err == nil {
@@ -158,10 +166,10 @@ func (r *Runner) collectTunnels(ctx context.Context) []TunnelInfo {
 		// NDMS interface state (using resolved ndmsName)
 		// For nativewg, this output is reused for Connection data
 		var ndmsJSON string
-		if r.deps.NDMSClient != nil && ndmsName != "" {
-			if raw, err := r.deps.NDMSClient.ShowInterface(ctx, ndmsName); err == nil {
-				ndmsJSON = raw
-				ti.Interface.NDMSState = raw
+		if r.deps.NDMSTransport != nil && ndmsName != "" {
+			if raw, err := r.deps.NDMSTransport.GetRaw(ctx, "/show/interface/"+ndmsName); err == nil {
+				ndmsJSON = string(raw)
+				ti.Interface.NDMSState = ndmsJSON
 			}
 		}
 
@@ -535,6 +543,20 @@ func filterRules(iptablesOutput, ifaceName string) []string {
 		}
 	}
 	return rules
+}
+
+// formatRouteTable formats NDMS IPv4 routes for diagnostics output.
+// Matches the legacy tunnel/ndms.ClientImpl.DumpIPv4Routes format.
+func formatRouteTable(routes []ndms.Route) string {
+	var sb strings.Builder
+	for _, r := range routes {
+		gw := r.Gateway
+		if gw == "" {
+			gw = "*"
+		}
+		fmt.Fprintf(&sb, "%s via %s dev %s\n", r.Destination, gw, r.Interface)
+	}
+	return sb.String()
 }
 
 // sanitizeConfig returns a config summary from stored tunnel data without private keys.
