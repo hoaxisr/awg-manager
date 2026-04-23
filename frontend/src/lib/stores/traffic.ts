@@ -99,7 +99,7 @@ export async function loadHistory(tunnelId: string): Promise<void> {
 	initialized.add(tunnelId);
 
 	try {
-		const resp = await api.getTrafficHistory(tunnelId, '1h');
+		const resp = await api.getTraffic(tunnelId, '1h');
 
 		if (!initialized.has(tunnelId)) {
 			return;
@@ -146,7 +146,7 @@ export async function fetchTrafficDetail(tunnelId: string): Promise<{
 		currentTx: number;
 	};
 }> {
-	const resp = await api.getTrafficHistory(tunnelId, '24h');
+	const resp = await api.getTraffic(tunnelId, '24h');
 	return {
 		timestamps: resp.points.map((p) => p.t),
 		rxRates: resp.points.map((p) => p.rx),
