@@ -959,6 +959,14 @@ export interface SingboxTunnel {
 		latency: number | null;
 	};
 	kernelInterface?: string;
+	/**
+	 * True when sing-box process is alive AND the TUN interface (t2sX)
+	 * exists in the kernel. Distinct from connectivity.connected, which
+	 * reports latency health from the Clash API. Running=false with
+	 * connected=true is impossible; running=true with connected=false
+	 * means "process up, but outbound not reachable" (bad server, etc).
+	 */
+	running: boolean;
 }
 
 export interface SingboxStatus {
