@@ -71,7 +71,7 @@
 				{txRates}
 				rxTotal={tunnel.rxBytes ?? 0}
 				txTotal={tunnel.txBytes ?? 0}
-				height={68}
+				height={84}
 				onclick={() => ondetail?.(tunnelId)}
 			/>
 		</div>
