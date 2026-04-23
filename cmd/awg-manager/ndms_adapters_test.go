@@ -7,16 +7,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/metrics"
 	"github.com/hoaxisr/awg-manager/internal/storage"
-	trafficpkg "github.com/hoaxisr/awg-manager/internal/traffic"
 )
-
-type stubTunnelLister struct {
-	tunnels []trafficpkg.RunningTunnel
-}
-
-func (s *stubTunnelLister) RunningTunnels(ctx context.Context) []trafficpkg.RunningTunnel {
-	return s.tunnels
-}
 
 type stubSystemTunnels struct {
 	list []ndms.SystemWireguardTunnel
@@ -27,12 +18,15 @@ func (s *stubSystemTunnels) List(ctx context.Context) ([]ndms.SystemWireguardTun
 	return s.list, s.err
 }
 
-// TestRunningInterfaces_FiltersKernelAndDownServers verifies the two fixes:
-// 1. Kernel-backend tunnels are skipped (no /wireguard/peer in NDMS).
-// 2. Server interfaces whose system-tunnel Status != "up" are filtered out.
-// Up servers remain included, and an up NativeWG tunnel is included as a
-// non-server.
-func TestRunningInterfaces_FiltersKernelAndDownServers(t *testing.T) {
+// TestRunningInterfaces_FiltersDownServersAndIncludesSystemTunnels verifies:
+//  1. Server interfaces whose system-tunnel Status != "up" are filtered out.
+//  2. Up unmanaged system tunnels are included as non-servers.
+//  3. Managed server (InterfaceName) is included as a server when up.
+//
+// Managed AWGM tunnels are no longer handled here — they flow through
+// traffic.SysfsPoller — so this adapter is only tested for its NDMS-side
+// responsibilities.
+func TestRunningInterfaces_FiltersDownServersAndIncludesSystemTunnels(t *testing.T) {
 	dir := t.TempDir()
 	settings := storage.NewSettingsStore(dir)
 	if err := settings.Save(&storage.Settings{
@@ -40,13 +34,6 @@ func TestRunningInterfaces_FiltersKernelAndDownServers(t *testing.T) {
 		ManagedServer:    &storage.ManagedServer{InterfaceName: "Wireguard9"},
 	}); err != nil {
 		t.Fatalf("save settings: %v", err)
-	}
-
-	tunnels := &stubTunnelLister{
-		tunnels: []trafficpkg.RunningTunnel{
-			{ID: "kern-1", BackendType: "kernel", NDMSName: "OpkgTun10"},
-			{ID: "nwg-1", BackendType: "nativewg", NDMSName: "Wireguard3"},
-		},
 	}
 
 	sys := &stubSystemTunnels{
@@ -59,7 +46,7 @@ func TestRunningInterfaces_FiltersKernelAndDownServers(t *testing.T) {
 		},
 	}
 
-	a := newRunningInterfacesAdapter(tunnels, sys, settings)
+	a := newRunningInterfacesAdapter(sys, settings)
 	refs := a.RunningInterfaces(context.Background())
 
 	got := make(map[string]metrics.InterfaceRef, len(refs))
@@ -70,13 +57,12 @@ func TestRunningInterfaces_FiltersKernelAndDownServers(t *testing.T) {
 		got[r.ID] = r
 	}
 
-	// dedupeRefs now merges IsServer=true over IsServer=false, so IDs that
+	// dedupeRefs merges IsServer=true over IsServer=false, so IDs that
 	// appear in both systemTunnels (non-server) and the server list (or
 	// managed-server) end up with IsServer=true. That's the point of the
 	// merge: the poller must route peer changes on those IDs to the
 	// server-snapshot path, not the tunnel-traffic path.
 	wantIncluded := map[string]bool{
-		"Wireguard3": false, // nwg running tunnel (managed, not a server)
 		"Wireguard7": false, // up unmanaged system tunnel (not a server)
 		"Wireguard0": true,  // up marked server
 		"Wireguard9": true,  // up managed server (also in systemTunnels list)
@@ -93,7 +79,6 @@ func TestRunningInterfaces_FiltersKernelAndDownServers(t *testing.T) {
 	}
 
 	wantExcluded := []string{
-		"OpkgTun10",  // kernel-backend tunnel
 		"Wireguard5", // down marked server
 		"Wireguard8", // down unmanaged system tunnel
 	}
@@ -153,7 +138,7 @@ func TestRunningInterfaces_NilSystemTunnelsFallback(t *testing.T) {
 		t.Fatalf("save settings: %v", err)
 	}
 
-	a := newRunningInterfacesAdapter(&stubTunnelLister{}, nil, settings)
+	a := newRunningInterfacesAdapter(nil, settings)
 	refs := a.RunningInterfaces(context.Background())
 
 	wantIDs := map[string]bool{"Wireguard0": true, "Wireguard9": true}
