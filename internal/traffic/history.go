@@ -223,3 +223,65 @@ func downsample(pts []Point, maxPoints int) []Point {
 
 	return result
 }
+
+// Stats is a set of aggregates over a tunnel's recent rate history,
+// used by the detail modal to fill KPI tiles without forcing the
+// frontend to re-compute them from the raw point array.
+type Stats struct {
+	Points    int     `json:"points"`
+	PeakRate  float64 `json:"peakRate"`  // max of (RxRate, TxRate), bytes/sec
+	AvgRx     float64 `json:"avgRx"`     // bytes/sec
+	AvgTx     float64 `json:"avgTx"`     // bytes/sec
+	CurrentRx float64 `json:"currentRx"` // bytes/sec, last point
+	CurrentTx float64 `json:"currentTx"` // bytes/sec, last point
+}
+
+// Stats returns aggregates over the points within the given window.
+// An unknown tunnel or empty window returns a zero Stats.
+func (h *History) Stats(tunnelID string, since time.Duration) Stats {
+	cutoff := time.Now().Add(-since).Unix()
+
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	th := h.tunnels[tunnelID]
+	if th == nil || len(th.points) == 0 {
+		return Stats{}
+	}
+
+	pts := th.points
+	lo := 0
+	hi := len(pts)
+	for lo < hi {
+		mid := (lo + hi) / 2
+		if pts[mid].Timestamp < cutoff {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	window := pts[lo:]
+	if len(window) == 0 {
+		return Stats{}
+	}
+
+	var s Stats
+	s.Points = len(window)
+	var sumRx, sumTx float64
+	for _, p := range window {
+		sumRx += p.RxRate
+		sumTx += p.TxRate
+		if p.RxRate > s.PeakRate {
+			s.PeakRate = p.RxRate
+		}
+		if p.TxRate > s.PeakRate {
+			s.PeakRate = p.TxRate
+		}
+	}
+	s.AvgRx = sumRx / float64(len(window))
+	s.AvgTx = sumTx / float64(len(window))
+	last := window[len(window)-1]
+	s.CurrentRx = last.RxRate
+	s.CurrentTx = last.TxRate
+	return s
+}

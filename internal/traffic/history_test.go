@@ -133,3 +133,49 @@ func TestGetSinceFilter(t *testing.T) {
 		t.Fatalf("expected 4 points for 3h window, got %d", len(pts))
 	}
 }
+
+func TestStats(t *testing.T) {
+	h := New()
+	defer h.Stop()
+
+	h.Feed("t1", 1000, 100)
+
+	h.mu.Lock()
+	h.tunnels["t1"].lastTime -= 10
+	h.mu.Unlock()
+	h.Feed("t1", 2000, 200) // dRx=1000, dTx=100 over 10s -> rx=100 B/s, tx=10 B/s
+
+	h.mu.Lock()
+	h.tunnels["t1"].lastTime -= 10
+	h.mu.Unlock()
+	h.Feed("t1", 4000, 300) // dRx=2000, dTx=100 over 10s -> rx=200 B/s, tx=10 B/s
+
+	s := h.Stats("t1", time.Hour)
+	if s.Points != 2 {
+		t.Fatalf("Points: want 2, got %d", s.Points)
+	}
+	if s.PeakRate != 200 {
+		t.Errorf("PeakRate: want 200, got %f", s.PeakRate)
+	}
+	if s.CurrentRx != 200 {
+		t.Errorf("CurrentRx: want 200, got %f", s.CurrentRx)
+	}
+	if s.CurrentTx != 10 {
+		t.Errorf("CurrentTx: want 10, got %f", s.CurrentTx)
+	}
+	if s.AvgRx != 150 {
+		t.Errorf("AvgRx: want 150, got %f", s.AvgRx)
+	}
+	if s.AvgTx != 10 {
+		t.Errorf("AvgTx: want 10, got %f", s.AvgTx)
+	}
+}
+
+func TestStatsUnknownTunnel(t *testing.T) {
+	h := New()
+	defer h.Stop()
+	s := h.Stats("nope", time.Hour)
+	if s.Points != 0 {
+		t.Errorf("Points on unknown: want 0, got %d", s.Points)
+	}
+}
