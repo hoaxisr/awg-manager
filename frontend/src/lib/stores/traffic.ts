@@ -1,21 +1,25 @@
 /**
  * Traffic history store — SSE-driven rate accumulator.
  *
- * Architecture:
- * - feedTraffic() is called on every tunnel:traffic SSE event.
- * - Always appends to a single rates array per tunnel, regardless of period.
- * - loadHistory() loads server-side history ONCE on component mount,
- *   then live SSE updates take over.
- * - Period (1h/3h/24h) is a display window: components slice the last N points.
+ * Card-scoped flow:
+ * - loadHistory(id) fetches the last hour once on card mount; live SSE
+ *   events via feedTraffic append additional points.
+ * - getTrafficRates(id) returns the last CARD_WINDOW_POINTS points, forming
+ *   the sliding "last hour" window the card chart renders.
  *
- * Storage cap: MAX_POINTS limits memory. With 15s SSE interval, 5760 points
- * covers 24h. We round up to 6000 to handle bursts and slack.
+ * Modal-scoped flow:
+ * - fetchTrafficDetail(id) does a one-shot 24h fetch with server-side
+ *   aggregate stats. The result is held locally by the modal and
+ *   discarded on close. The shared SSE buffer is not touched.
+ *
+ * Storage cap: MAX_POINTS limits per-tunnel memory. With 10s SSE interval,
+ * 6000 points comfortably covers the card's 1h window plus slack for
+ * bursts and clock skew.
  */
 
 import { api } from '$lib/api/client';
 
 const MAX_POINTS = 6000;
-const LS_KEY = 'awgm-traffic-periods';
 
 interface Snapshot {
 	timestamp: number;
@@ -31,41 +35,11 @@ interface TunnelTraffic {
 
 const history = new Map<string, TunnelTraffic>();
 
-/** Current period per tunnel — loaded from localStorage on init. */
-const periods = new Map<string, string>();
-
 /** Listeners notified on every update */
 const listeners = new Set<() => void>();
 
 /** Tracks tunnels that have completed initial loadHistory to avoid duplicate fetches. */
 const initialized = new Set<string>();
-
-// Load saved periods from localStorage
-try {
-	const saved = localStorage.getItem(LS_KEY);
-	if (saved) {
-		const obj = JSON.parse(saved) as Record<string, string>;
-		for (const [k, v] of Object.entries(obj)) {
-			if (v === '1h' || v === '3h' || v === '24h') {
-				periods.set(k, v);
-			}
-		}
-	}
-} catch {
-	// Ignore parse errors
-}
-
-function savePeriods() {
-	try {
-		const obj: Record<string, string> = {};
-		for (const [k, v] of periods) {
-			obj[k] = v;
-		}
-		localStorage.setItem(LS_KEY, JSON.stringify(obj));
-	} catch {
-		// Ignore write errors
-	}
-}
 
 function notify() {
 	for (const fn of listeners) fn();
@@ -111,33 +85,22 @@ export function feedTraffic(tunnelId: string, rxBytes: number, txBytes: number):
 }
 
 /**
- * Load server-side history once per tunnel on mount.
- * Subsequent live updates come via feedTraffic from SSE events.
+ * Load the last hour of server-side history once per tunnel on card mount.
+ * Subsequent updates flow via feedTraffic from the tunnel:traffic SSE event.
  *
- * Always loads 24h worth of points so the local cache can serve any
- * display window. Period parameter is kept for backward-compat but
- * does not affect what's loaded — the loaded array is the same for all periods.
+ * The card chart shows a live sliding window of the last hour (360 points
+ * at 10-sec resolution). Longer history for the detail modal comes from a
+ * separate one-shot call — see fetchTrafficDetail.
  */
-export async function loadHistory(tunnelId: string, period: string): Promise<void> {
-	periods.set(tunnelId, period);
-	savePeriods();
-
+export async function loadHistory(tunnelId: string): Promise<void> {
 	if (initialized.has(tunnelId)) {
-		// Already loaded once — just persist the period preference.
 		return;
 	}
-
-	// Mark intent BEFORE await to dedupe concurrent calls.
 	initialized.add(tunnelId);
 
 	try {
-		// Always fetch 24h to fill the local cache.
-		// Server returns at most 360 points (downsampled), which is fine
-		// as a baseline; live SSE points get appended at full granularity.
-		const points = await api.getTrafficHistory(tunnelId, '24h');
+		const resp = await api.getTrafficHistory(tunnelId, '1h');
 
-		// Re-check: clearTraffic may have run during the await.
-		// initialized was cleared too — bail out without recreating the entry.
 		if (!initialized.has(tunnelId)) {
 			return;
 		}
@@ -148,14 +111,11 @@ export async function loadHistory(tunnelId: string, period: string): Promise<voi
 			history.set(tunnelId, entry);
 		}
 
-		// Prepend server history before any live SSE points that arrived during fetch.
-		// This preserves chronological order: server (older) → live (newer).
-		const serverRx = points.map((p) => p.rx);
-		const serverTx = points.map((p) => p.tx);
+		const serverRx = resp.points.map((p) => p.rx);
+		const serverTx = resp.points.map((p) => p.tx);
 		entry.rxRates = [...serverRx, ...entry.rxRates];
 		entry.txRates = [...serverTx, ...entry.txRates];
 
-		// Cap to MAX_POINTS, keeping the newest.
 		if (entry.rxRates.length > MAX_POINTS) {
 			entry.rxRates = entry.rxRates.slice(-MAX_POINTS);
 			entry.txRates = entry.txRates.slice(-MAX_POINTS);
@@ -163,68 +123,60 @@ export async function loadHistory(tunnelId: string, period: string): Promise<voi
 
 		notify();
 	} catch {
-		// Silently fail — chart will show whatever data it has.
-		// Clear the initialized flag so a retry on next mount can succeed.
 		initialized.delete(tunnelId);
 	}
 }
 
-/** Get the current period for a tunnel. */
-export function getTrafficPeriod(tunnelId: string): string {
-	return periods.get(tunnelId) || '1h';
-}
-
-/** Set the period for a tunnel without fetching. */
-export function setTrafficPeriod(tunnelId: string, period: string): void {
-	periods.set(tunnelId, period);
-	savePeriods();
-	notify();
-}
-
 /**
- * Get rate history for a tunnel, sliced to the requested period window.
- *
- * The store always accumulates raw points at full SSE granularity (~15s).
- * The period determines how many trailing points to return:
- * - 1h:  240 points (15s × 240 = 3600s = 1h)
- * - 3h:  720 points
- * - 24h: 5760 points
- *
- * If the local cache has fewer points than the window, returns all of them.
+ * Fetch the full 24h history + stats for the detail modal. Returns raw
+ * rate points and aggregates without touching the card-scoped SSE buffer.
+ * Callers typically invoke this when the modal opens and discard the
+ * result when it closes.
  */
-export function getTrafficRates(
-	tunnelId: string,
-	period?: string
-): { rx: number[]; tx: number[] } {
+export async function fetchTrafficDetail(tunnelId: string): Promise<{
+	timestamps: number[];
+	rxRates: number[];
+	txRates: number[];
+	stats: {
+		points: number;
+		peakRate: number;
+		avgRx: number;
+		avgTx: number;
+		currentRx: number;
+		currentTx: number;
+	};
+}> {
+	const resp = await api.getTrafficHistory(tunnelId, '24h');
+	return {
+		timestamps: resp.points.map((p) => p.t),
+		rxRates: resp.points.map((p) => p.rx),
+		txRates: resp.points.map((p) => p.tx),
+		stats: resp.stats
+	};
+}
+
+// Card window: last hour at 10s SSE resolution = 360 points. Live sliding.
+const CARD_WINDOW_POINTS = 360;
+
+export function getTrafficRates(tunnelId: string): { rx: number[]; tx: number[] } {
 	const entry = history.get(tunnelId);
 	if (!entry) return { rx: [], tx: [] };
 
-	const windowSize = pointsForPeriod(period ?? periods.get(tunnelId) ?? '1h');
-
-	const rx = entry.rxRates.length > windowSize ? entry.rxRates.slice(-windowSize) : entry.rxRates;
-	const tx = entry.txRates.length > windowSize ? entry.txRates.slice(-windowSize) : entry.txRates;
+	const rx =
+		entry.rxRates.length > CARD_WINDOW_POINTS
+			? entry.rxRates.slice(-CARD_WINDOW_POINTS)
+			: entry.rxRates;
+	const tx =
+		entry.txRates.length > CARD_WINDOW_POINTS
+			? entry.txRates.slice(-CARD_WINDOW_POINTS)
+			: entry.txRates;
 	return { rx, tx };
-}
-
-/** pointsForPeriod returns how many recent points correspond to the period window. */
-function pointsForPeriod(period: string): number {
-	switch (period) {
-		case '3h':
-			return 720;
-		case '24h':
-			return 5760;
-		case '1h':
-		default:
-			return 240;
-	}
 }
 
 /** Clear history for a tunnel (e.g. on delete). */
 export function clearTraffic(tunnelId: string): void {
 	history.delete(tunnelId);
-	periods.delete(tunnelId);
 	initialized.delete(tunnelId);
-	savePeriods();
 }
 
 /** Subscribe to traffic updates. Returns unsubscribe function. */
