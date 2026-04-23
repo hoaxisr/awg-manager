@@ -67,6 +67,13 @@ func (a *runningInterfacesAdapter) RunningInterfaces(ctx context.Context) []metr
 	out := make([]metrics.InterfaceRef, 0, 8)
 
 	for _, rt := range a.tunnels.RunningTunnels(ctx) {
+		// Kernel-backend tunnels (OpkgTunN) don't expose /wireguard/peer in
+		// NDMS — their peer stats come from userspace wg tooling, and their
+		// rx/tx is already fed into the tunnels polling store via
+		// /api/tunnels/all. Skip to avoid one wasted RCI call per minute.
+		if rt.BackendType == "kernel" {
+			continue
+		}
 		id := tunnelNDMSName(rt)
 		if id == "" {
 			continue
@@ -77,9 +84,14 @@ func (a *runningInterfacesAdapter) RunningInterfaces(ctx context.Context) []metr
 		})
 	}
 
+	// Fetch system WG tunnels once — used both for non-managed additions
+	// and for filtering server interfaces by up-status below.
+	var sysUp map[string]bool
 	if a.systemTunnels != nil {
 		if list, err := a.systemTunnels.List(ctx); err == nil {
+			sysUp = make(map[string]bool, len(list))
 			for _, st := range list {
+				sysUp[st.ID] = (st.Status == "up")
 				if st.Status != "up" {
 					continue
 				}
@@ -89,11 +101,19 @@ func (a *runningInterfacesAdapter) RunningInterfaces(ctx context.Context) []metr
 	}
 
 	for _, id := range a.settings.GetServerInterfaces() {
+		// Skip servers that aren't up — polling their /wireguard/peer
+		// yields 404 + wasted RCI traffic. sysUp == nil means we couldn't
+		// check; include by default to preserve previous behaviour.
+		if sysUp != nil && !sysUp[id] {
+			continue
+		}
 		out = append(out, metrics.InterfaceRef{ID: id, IsServer: true})
 	}
 
 	if ms := a.settings.GetManagedServer(); ms != nil && ms.InterfaceName != "" {
-		out = append(out, metrics.InterfaceRef{ID: ms.InterfaceName, IsServer: true})
+		if sysUp == nil || sysUp[ms.InterfaceName] {
+			out = append(out, metrics.InterfaceRef{ID: ms.InterfaceName, IsServer: true})
+		}
 	}
 
 	return dedupeRefs(out)
