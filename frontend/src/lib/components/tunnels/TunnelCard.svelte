@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import type { TunnelListItem } from '$lib/types';
 	import { TrafficChart } from '$lib/components/ui';
-	import { getTrafficRates, getTrafficPeriod, subscribeTraffic, loadHistory, setTrafficPeriod } from '$lib/stores/traffic';
+	import { getTrafficRates, subscribeTraffic, loadHistory } from '$lib/stores/traffic';
 	import TunnelCardHeader from './TunnelCardHeader.svelte';
 	import TunnelCardDetails from './TunnelCardDetails.svelte';
 	import TunnelCardActions from './TunnelCardActions.svelte';
@@ -13,6 +13,7 @@
 		deleteLoading?: boolean;
 		onToggleOnOff?: () => void;
 		ondelete?: () => void;
+		ondetail?: (id: string) => void;
 	}
 
 	let {
@@ -20,32 +21,20 @@
 		toggleLoading = false,
 		deleteLoading = false,
 		onToggleOnOff,
-		ondelete
+		ondelete,
+		ondetail
 	}: Props = $props();
 
 	let rxRates = $state<number[]>([]);
 	let txRates = $state<number[]>([]);
-	// svelte-ignore state_referenced_locally — intentional: initial value from tunnel.id, then user-controlled
-	let period = $state(getTrafficPeriod(tunnel.id));
 
-	const CHART_KEY_PREFIX = 'chart_expanded_';
-	// svelte-ignore state_referenced_locally — intentional: initial value from localStorage
-	let chartExpanded = $state(localStorage.getItem(CHART_KEY_PREFIX + tunnel.id) !== 'false');
-
-	function toggleChart() {
-		chartExpanded = !chartExpanded;
-		localStorage.setItem(CHART_KEY_PREFIX + tunnel.id, String(chartExpanded));
-	}
-
-	// Extract tunnel.id as derived — so effects only re-run when ID changes, not on every prop update
 	let tunnelId = $derived(tunnel.id);
 
 	// Subscribe to traffic data updates (rate changes from feedTraffic/loadHistory)
 	$effect(() => {
 		const id = tunnelId;
-		const p = period; // tracked dep — slice window depends on period
 		const update = () => {
-			const t = getTrafficRates(id, p);
+			const t = getTrafficRates(id);
 			rxRates = t.rx;
 			txRates = t.tx;
 		};
@@ -53,20 +42,15 @@
 		return subscribeTraffic(update);
 	});
 
-	// Load server history once per tunnel on mount.
+	// Load server history (last hour) once per tunnel on mount.
 	// Subsequent updates flow via SSE through feedTraffic.
 	let initialLoadDone = false;
 	$effect(() => {
 		const id = tunnelId;
 		if (initialLoadDone) return;
 		initialLoadDone = true;
-		untrack(() => loadHistory(id, period));
+		untrack(() => loadHistory(id));
 	});
-
-	function handlePeriodChange(newPeriod: string) {
-		period = newPeriod;
-		setTrafficPeriod(tunnelId, newPeriod);
-	}
 
 	let hasData = $derived(rxRates.length >= 2);
 </script>
@@ -80,25 +64,16 @@
 		ondelete={() => ondelete?.()}
 	/>
 
-	{#if tunnel.status === 'running'}
+	{#if tunnel.status === 'running' && hasData}
 		<div class="chart-section">
-			<button type="button" class="chart-header" onclick={toggleChart}>
-				<span class="chart-label">Трафик</span>
-				<span class="chart-chevron" class:expanded={chartExpanded}>▾</span>
-			</button>
-			<div class="chart-body" class:expanded={chartExpanded && hasData}>
-				{#if hasData}
-					<TrafficChart
-						{rxRates}
-						{txRates}
-						rxTotal={tunnel.rxBytes ?? 0}
-						txTotal={tunnel.txBytes ?? 0}
-						height={100}
-						{period}
-						onPeriodChange={handlePeriodChange}
-					/>
-				{/if}
-			</div>
+			<TrafficChart
+				{rxRates}
+				{txRates}
+				rxTotal={tunnel.rxBytes ?? 0}
+				txTotal={tunnel.txBytes ?? 0}
+				height={68}
+				onclick={() => ondetail?.(tunnelId)}
+			/>
 		</div>
 	{/if}
 </div>
@@ -122,56 +97,8 @@
 
 	.chart-section {
 		margin: 0 -1rem -1rem;
+		padding: 6px 12px;
 		border-radius: 0 0 var(--radius) var(--radius);
 		background: var(--bg-secondary, rgba(0,0,0,0.15));
-		overflow: hidden;
-	}
-
-	.chart-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		width: 100%;
-		padding: 6px 12px;
-		border: none;
-		background: none;
-		cursor: pointer;
-		user-select: none;
-		transition: background 0.15s;
-	}
-
-	.chart-header:hover {
-		background: rgba(255,255,255,0.03);
-	}
-
-	.chart-label {
-		font-size: 0.6875rem;
-		font-weight: 500;
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.03em;
-	}
-
-	.chart-chevron {
-		font-size: 0.875rem;
-		color: var(--text-muted);
-		transition: transform 0.2s ease;
-		transform: rotate(-90deg);
-	}
-
-	.chart-chevron.expanded {
-		transform: rotate(0deg);
-	}
-
-	.chart-body {
-		max-height: 0;
-		overflow: hidden;
-		transition: max-height 0.2s ease;
-		padding: 0 12px;
-	}
-
-	.chart-body.expanded {
-		max-height: 300px;
-		padding: 0 12px 4px;
 	}
 </style>

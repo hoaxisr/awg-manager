@@ -9,8 +9,7 @@
 	import { TunnelCard, ExternalTunnelCard, AdoptTunnelDialog, SystemTunnelCard } from '$lib/components/tunnels';
 	import TunnelTabs from '$lib/components/tunnels/TunnelTabs.svelte';
 	import { PageContainer, LoadingSpinner } from '$lib/components/layout';
-	import { Modal } from '$lib/components/ui';
-	import { StoreStatusBadge } from '$lib/components/ui';
+	import { Modal, StoreStatusBadge, TrafficChartModal } from '$lib/components/ui';
 	import { singboxStatus, singboxTunnels } from '$lib/stores/singbox';
 	import { SingboxInstallBanner, SingboxTunnelCard, SingboxGhostTerminal } from '$lib/components/singbox';
 	import { feedTraffic } from '$lib/stores/traffic';
@@ -65,6 +64,28 @@
 	let toggleLoading = $state<Record<string, boolean>>({});
 	let deleteLoading = $state<Record<string, boolean>>({});
 	let deleteConfirmId = $state<string | null>(null);
+
+	let detailId = $state<string | null>(null);
+
+	function openDetail(id: string) {
+		detailId = id;
+		const url = new URL(window.location.href);
+		url.searchParams.set('detail', id);
+		history.replaceState(history.state, '', url);
+	}
+
+	function closeDetail() {
+		detailId = null;
+		const url = new URL(window.location.href);
+		url.searchParams.delete('detail');
+		history.replaceState(history.state, '', url);
+	}
+
+	// Sync from URL on mount + whenever the page store changes (back/forward).
+	$effect(() => {
+		const q = $page.url.searchParams.get('detail');
+		detailId = q && q.length > 0 ? q : null;
+	});
 
 	async function hideSystemTunnel(id: string) {
 		try {
@@ -454,6 +475,7 @@
 						deleteLoading={deleteLoading[tunnel.id] ?? false}
 						onToggleOnOff={() => handleToggleOnOff(tunnel.id)}
 						ondelete={() => requestDelete(tunnel.id)}
+						ondetail={(id) => openDetail(id)}
 					/>
 				{/each}
 				{#each systemList.filter((st) =>
@@ -467,7 +489,12 @@
 						(mt.interfaceName && mt.interfaceName === st.id)
 					)
 				) as tunnel (tunnel.id)}
-					<SystemTunnelCard {tunnel} onHide={hideSystemTunnel} onMarkServer={markAsServer} />
+					<SystemTunnelCard
+						{tunnel}
+						onHide={hideSystemTunnel}
+						onMarkServer={markAsServer}
+						ondetail={(id) => openDetail(id)}
+					/>
 				{/each}
 			</div>
 
@@ -550,6 +577,18 @@
 			<button class="btn btn-danger" onclick={() => handleDelete(deleteConfirmId!)}>Удалить</button>
 		{/snippet}
 	</Modal>
+{/if}
+
+{#if detailId}
+	{@const managed = awgList.find((x) => x.id === detailId)}
+	{@const sys = systemList.find((x) => x.id === detailId)}
+	<TrafficChartModal
+		open={true}
+		tunnelId={detailId}
+		tunnelName={managed?.name ?? sys?.description ?? detailId}
+		ifaceName={managed?.interfaceName ?? sys?.interfaceName ?? ''}
+		onclose={closeDetail}
+	/>
 {/if}
 
 {#if showUnsupportedBlock}
