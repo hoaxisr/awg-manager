@@ -99,16 +99,6 @@
 		return m;
 	});
 
-	let peakRateLive = $derived.by(() => {
-		if (!hasData) return stats.peakRate;
-		let m = stats.peakRate;
-		for (let i = 0; i < len; i++) {
-			if (rxRates[i] > m) m = rxRates[i];
-			if (txRates[i] > m) m = txRates[i];
-		}
-		return m;
-	});
-
 	// y-up model — rate=0 at baseline (CHART_H - PAD_BOTTOM), rate=maxRate at top (PAD_TOP).
 	function rateToY(rate: number): number {
 		const innerH = CHART_H - PAD_TOP - PAD_BOTTOM;
@@ -232,27 +222,28 @@
 		<span class="pill-muted">последние 24 часа</span>
 	</div>
 
-	<div class="kpi-grid">
-		<div class="kpi">
-			<div class="kpi-label">Прием сейчас</div>
-			<div class="kpi-val rx">{formatBitRate(liveCurrentRx)}</div>
-		</div>
-		<div class="kpi">
-			<div class="kpi-label">Передача сейчас</div>
-			<div class="kpi-val tx">{formatBitRate(liveCurrentTx)}</div>
-		</div>
-		<div class="kpi">
-			<div class="kpi-label">Пик</div>
-			<div class="kpi-val">{formatBitRate(peakRateLive)}</div>
-		</div>
-		<div class="kpi">
-			<div class="kpi-label">Среднее ↓ / ↑</div>
-			<div class="kpi-val">
-				<span class="rx">{formatBitRate(stats.avgRx)}</span>
-				<span class="sep">/</span>
-				<span class="tx">{formatBitRate(stats.avgTx)}</span>
-			</div>
-		</div>
+	<div class="stats-line">
+		<span class="stat">
+			<span class="label">Прием:</span>
+			<span class="val rx">{formatBitRate(liveCurrentRx)}</span>
+		</span>
+		<span class="sep">·</span>
+		<span class="stat">
+			<span class="label">Передача:</span>
+			<span class="val tx">{formatBitRate(liveCurrentTx)}</span>
+		</span>
+		<span class="sep">·</span>
+		<span class="stat">
+			<span class="label">Пик:</span>
+			<span class="val">{formatBitRate(stats.peakRate)}</span>
+		</span>
+		<span class="sep">·</span>
+		<span class="stat">
+			<span class="label">Среднее</span>
+			<span class="val rx">↓ {formatBitRate(stats.avgRx)}</span>
+			<span class="label">/</span>
+			<span class="val tx">↑ {formatBitRate(stats.avgTx)}</span>
+		</span>
 	</div>
 
 	{#if loading}
@@ -468,40 +459,44 @@
 		color: var(--text-muted, #888);
 	}
 
-	.kpi-grid {
-		display: grid;
-		grid-template-columns: repeat(4, 1fr);
-		gap: 8px;
-		margin-bottom: 16px;
+	.stats-line {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 8px 14px;
+		margin-bottom: 12px;
+		font-size: 13px;
+		line-height: 1.4;
 	}
-	.kpi {
-		background: var(--bg-tertiary, rgba(255, 255, 255, 0.04));
-		border-radius: 6px;
-		padding: 8px 10px;
+
+	.stats-line .stat {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 5px;
 	}
-	.kpi-label {
-		font-size: 9px;
-		letter-spacing: 0.1em;
-		text-transform: uppercase;
-		color: var(--text-muted, #888);
+
+	.stats-line .label {
+		color: var(--text-muted);
+		font-size: 12px;
 	}
-	.kpi-val {
-		font-size: 15px;
-		font-weight: 600;
+
+	.stats-line .val {
 		font-family: var(--font-mono, monospace);
+		font-variant-numeric: tabular-nums;
 		color: var(--text-primary);
 	}
-	.kpi-val.rx,
-	.kpi-val .rx {
-		color: var(--accent, #60a5fa);
+
+	.stats-line .val.rx {
+		color: var(--accent);
 	}
-	.kpi-val.tx,
-	.kpi-val .tx {
+
+	.stats-line .val.tx {
 		color: var(--success, #4ade80);
 	}
-	.kpi-val .sep {
-		color: var(--text-muted, #888);
-		margin: 0 3px;
+
+	.stats-line .sep {
+		color: var(--text-muted);
+		opacity: 0.4;
 	}
 
 	.chart-wrap {
