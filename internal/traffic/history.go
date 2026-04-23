@@ -25,10 +25,11 @@ type tunnelHistory struct {
 
 // History accumulates traffic rate history for all tunnels.
 type History struct {
-	mu      sync.RWMutex
-	tunnels map[string]*tunnelHistory
-	maxAge  time.Duration
-	stopCh  chan struct{}
+	mu       sync.RWMutex
+	tunnels  map[string]*tunnelHistory
+	maxAge   time.Duration
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 // New creates a History that retains points for 24 hours.
@@ -149,9 +150,12 @@ func (h *History) Clear(tunnelID string) {
 	h.mu.Unlock()
 }
 
-// Stop terminates the background cleanup goroutine.
+// Stop terminates the background cleanup goroutine. Safe to call
+// multiple times; subsequent calls are no-ops.
 func (h *History) Stop() {
-	close(h.stopCh)
+	h.stopOnce.Do(func() {
+		close(h.stopCh)
+	})
 }
 
 // cleanupLoop periodically removes points older than maxAge.

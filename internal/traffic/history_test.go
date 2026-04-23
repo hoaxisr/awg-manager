@@ -179,3 +179,14 @@ func TestStatsUnknownTunnel(t *testing.T) {
 		t.Errorf("Points on unknown: want 0, got %d", s.Points)
 	}
 }
+
+func TestStopIsIdempotent(t *testing.T) {
+	h := New()
+	h.Stop()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("second Stop() panicked: %v", r)
+		}
+	}()
+	h.Stop()
+}
