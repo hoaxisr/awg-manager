@@ -153,7 +153,8 @@ func parseSingboxVersionOutput(out string) (string, []string) {
 	return version, features
 }
 
-// ListTunnels returns the current tunnels from config.json.
+// ListTunnels returns the current tunnels from config.json enriched with
+// per-tunnel runtime state (Running = process-alive && TUN exists).
 func (o *Operator) ListTunnels(ctx context.Context) ([]TunnelInfo, error) {
 	cfg, err := o.loadConfig()
 	if err != nil {
@@ -162,7 +163,24 @@ func (o *Operator) ListTunnels(ctx context.Context) ([]TunnelInfo, error) {
 		}
 		return nil, err
 	}
-	return cfg.Tunnels(), nil
+	tunnels := cfg.Tunnels()
+	procAlive, _ := o.proc.IsRunning()
+	for i := range tunnels {
+		tunnels[i].Running = procAlive && kernelInterfaceExists(tunnels[i].KernelInterface)
+	}
+	return tunnels, nil
+}
+
+// kernelInterfaceExists probes /sys/class/net/<name> to confirm the TUN
+// created by sing-box is currently present in the kernel. Empty name (the
+// tunnel has no kernelInterface hint) always returns false — we cannot
+// assert running state without a concrete interface to check.
+func kernelInterfaceExists(name string) bool {
+	if name == "" {
+		return false
+	}
+	_, err := os.Stat("/sys/class/net/" + name)
+	return err == nil
 }
 
 // GetTunnel returns the full outbound JSON for one tag.

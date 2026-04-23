@@ -34,8 +34,13 @@
 	);
 	const traffic = $derived($singboxTraffic.get(tunnel.tag));
 
-	type State = 'ok' | 'slow' | 'fail' | 'unknown';
+	type State = 'ok' | 'slow' | 'fail' | 'unknown' | 'stopped';
 	const cardState: State = $derived.by(() => {
+		// Runtime truth takes priority over delay history: if the process
+		// is dead or the TUN is missing, recent latency numbers are stale
+		// noise. Show 'stopped' so the user knows to restart the daemon
+		// instead of debugging a timeout that isn't actually a timeout.
+		if (tunnel.running === false) return 'stopped';
 		if (latest === undefined) return 'unknown';
 		if (latest <= 0) return 'fail';
 		if (latest < DELAY_OK) return 'ok';
@@ -44,6 +49,7 @@
 	});
 
 	const latText = $derived.by(() => {
+		if (cardState === 'stopped') return 'stopped';
 		if (cardState === 'unknown') return '—';
 		if (cardState === 'fail') return 'timeout';
 		return `${latest}ms`;
@@ -96,7 +102,7 @@
 	}
 </script>
 
-<div class="card" class:ok={cardState === 'ok'} class:slow={cardState === 'slow'} class:fail={cardState === 'fail'} class:unknown={cardState === 'unknown'}>
+<div class="card" class:ok={cardState === 'ok'} class:slow={cardState === 'slow'} class:fail={cardState === 'fail'} class:unknown={cardState === 'unknown'} class:stopped={cardState === 'stopped'}>
 	<div class="led-wrap">
 		<span class="dot {cardState}" aria-hidden="true"></span>
 		<button
@@ -276,6 +282,7 @@
 	.card.ok { border-color: rgba(16, 185, 129, 0.3); }
 	.card.slow { border-color: rgba(245, 158, 11, 0.3); }
 	.card.fail { border-color: rgba(239, 68, 68, 0.3); }
+	.card.stopped { border-color: rgba(148, 163, 184, 0.4); opacity: 0.7; }
 
 	.led-wrap {
 		position: absolute;
@@ -294,6 +301,7 @@
 	.dot.ok { background: #10b981; box-shadow: 0 0 6px rgba(16, 185, 129, 0.6); }
 	.dot.slow { background: #f59e0b; box-shadow: 0 0 6px rgba(245, 158, 11, 0.6); }
 	.dot.fail { background: #ef4444; box-shadow: 0 0 6px rgba(239, 68, 68, 0.6); }
+	.dot.stopped { background: #94a3b8; }
 
 	.lat-btn {
 		background: none;
@@ -318,6 +326,7 @@
 	.lat-btn.ok { color: #10b981; }
 	.lat-btn.slow { color: #fbbf24; }
 	.lat-btn.fail { color: #ef4444; }
+	.lat-btn.stopped { color: #94a3b8; }
 	.lat-btn svg {
 		width: 11px;
 		height: 11px;

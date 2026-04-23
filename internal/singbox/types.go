@@ -19,6 +19,13 @@ type TunnelInfo struct {
 	Fingerprint     string `json:"fingerprint,omitempty"`
 	Username        string `json:"username,omitempty"`
 	KernelInterface string `json:"kernelInterface,omitempty"`
+
+	// Running reports whether this specific tunnel is actually operational:
+	// the sing-box process is alive AND the expected TUN interface exists
+	// in the kernel. Computed at ListTunnels time (not persisted in config).
+	// False when: sing-box is dead, sing-box is alive but hasn't yet created
+	// the TUN (transient), or the tunnel has no kernelInterface hint.
+	Running bool `json:"running"`
 }
 
 // ParsedOutbound is the result of parsing a share link.
