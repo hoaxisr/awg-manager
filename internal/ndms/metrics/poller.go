@@ -28,10 +28,15 @@ func (nopLogger) Warnf(string, ...any) {}
 // NopLogger returns a Logger that drops everything. Use in tests.
 func NopLogger() Logger { return nopLogger{} }
 
-// Poller is the single ticker that fetches peer metrics for every
-// running interface (tunnel + server) at a fixed cadence. It replaces
-// the legacy traffic.Collector + api/servers.pollLoop — one ticker, not
-// two, using the narrow /show/interface/<name>/wireguard/peer endpoint.
+// Poller is a ticker that fetches peer metrics for non-managed system
+// WG tunnels and server interfaces at a fixed cadence. It uses the
+// narrow /show/interface/<name>/wireguard/peer endpoint, publishes
+// tunnel:traffic (non-managed system tunnels) and triggers
+// server:updated snapshots (server interfaces).
+//
+// Managed AWGM tunnels are NOT served from here — they are driven by
+// traffic.SysfsPoller via /sys/class/net counters (wired separately
+// in cmd/awg-manager/main.go).
 type Poller struct {
 	peers       *query.PeerStore
 	publisher   Publisher
