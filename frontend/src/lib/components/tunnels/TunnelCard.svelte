@@ -28,6 +28,15 @@
 	let rxRates = $state<number[]>([]);
 	let txRates = $state<number[]>([]);
 
+	const CHART_KEY_PREFIX = 'chart_expanded_';
+	// svelte-ignore state_referenced_locally — intentional: initial value from localStorage
+	let chartExpanded = $state(localStorage.getItem(CHART_KEY_PREFIX + tunnel.id) !== 'false');
+
+	function toggleChart() {
+		chartExpanded = !chartExpanded;
+		localStorage.setItem(CHART_KEY_PREFIX + tunnel.id, String(chartExpanded));
+	}
+
 	let tunnelId = $derived(tunnel.id);
 
 	// Subscribe to traffic data updates (rate changes from feedTraffic/loadHistory)
@@ -64,16 +73,24 @@
 		ondelete={() => ondelete?.()}
 	/>
 
-	{#if tunnel.status === 'running' && hasData}
+	{#if tunnel.status === 'running'}
 		<div class="chart-section">
-			<TrafficChart
-				{rxRates}
-				{txRates}
-				rxTotal={tunnel.rxBytes ?? 0}
-				txTotal={tunnel.txBytes ?? 0}
-				height={84}
-				onclick={() => ondetail?.(tunnelId)}
-			/>
+			<button type="button" class="chart-header" onclick={toggleChart}>
+				<span class="chart-label">Трафик</span>
+				<span class="chart-chevron" class:expanded={chartExpanded}>▾</span>
+			</button>
+			<div class="chart-body" class:expanded={chartExpanded && hasData}>
+				{#if hasData}
+					<TrafficChart
+						{rxRates}
+						{txRates}
+						rxTotal={tunnel.rxBytes ?? 0}
+						txTotal={tunnel.txBytes ?? 0}
+						height={100}
+						onclick={() => ondetail?.(tunnelId)}
+					/>
+				{/if}
+			</div>
 		</div>
 	{/if}
 </div>
@@ -97,8 +114,56 @@
 
 	.chart-section {
 		margin: 0 -1rem -1rem;
-		padding: 6px 12px;
 		border-radius: 0 0 var(--radius) var(--radius);
 		background: var(--bg-secondary, rgba(0,0,0,0.15));
+		overflow: hidden;
+	}
+
+	.chart-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		width: 100%;
+		padding: 6px 12px;
+		border: none;
+		background: none;
+		cursor: pointer;
+		user-select: none;
+		transition: background 0.15s;
+	}
+
+	.chart-header:hover {
+		background: rgba(255,255,255,0.03);
+	}
+
+	.chart-label {
+		font-size: 0.6875rem;
+		font-weight: 500;
+		color: var(--text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+	}
+
+	.chart-chevron {
+		font-size: 0.875rem;
+		color: var(--text-muted);
+		transition: transform 0.2s ease;
+		transform: rotate(-90deg);
+	}
+
+	.chart-chevron.expanded {
+		transform: rotate(0deg);
+	}
+
+	.chart-body {
+		max-height: 0;
+		overflow: hidden;
+		transition: max-height 0.2s ease;
+		padding: 0 12px;
+	}
+
+	.chart-body.expanded {
+		max-height: 300px;
+		padding: 0 12px 4px;
 	}
 </style>
