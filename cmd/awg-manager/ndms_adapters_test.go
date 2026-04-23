@@ -18,6 +18,17 @@ func (s *stubSystemTunnels) List(ctx context.Context) ([]ndms.SystemWireguardTun
 	return s.list, s.err
 }
 
+// stubAWGStore implements awgStoreLister for tests that need to configure
+// which managed tunnels exist (and at which NWGIndex) without touching disk.
+type stubAWGStore struct {
+	list []storage.AWGTunnel
+	err  error
+}
+
+func (s *stubAWGStore) List() ([]storage.AWGTunnel, error) {
+	return s.list, s.err
+}
+
 // TestRunningInterfaces_FiltersDownServersAndIncludesSystemTunnels verifies:
 //  1. Server interfaces whose system-tunnel Status != "up" are filtered out.
 //  2. Up unmanaged system tunnels are included as non-servers.
@@ -46,7 +57,7 @@ func TestRunningInterfaces_FiltersDownServersAndIncludesSystemTunnels(t *testing
 		},
 	}
 
-	a := newRunningInterfacesAdapter(sys, settings)
+	a := newRunningInterfacesAdapter(sys, nil, settings)
 	refs := a.RunningInterfaces(context.Background())
 
 	got := make(map[string]metrics.InterfaceRef, len(refs))
@@ -138,7 +149,7 @@ func TestRunningInterfaces_NilSystemTunnelsFallback(t *testing.T) {
 		t.Fatalf("save settings: %v", err)
 	}
 
-	a := newRunningInterfacesAdapter(nil, settings)
+	a := newRunningInterfacesAdapter(nil, nil, settings)
 	refs := a.RunningInterfaces(context.Background())
 
 	wantIDs := map[string]bool{"Wireguard0": true, "Wireguard9": true}
@@ -152,5 +163,49 @@ func TestRunningInterfaces_NilSystemTunnelsFallback(t *testing.T) {
 		if !r.IsServer {
 			t.Errorf("ref %+v should be marked server", r)
 		}
+	}
+}
+
+// TestRunningInterfaces_SkipsManagedNWGNames verifies that NDMS names of
+// AWG Manager-managed NativeWG tunnels are filtered out of the NDMS
+// poller's interface list. These tunnels are already polled via
+// traffic.SysfsPoller against the kernel iface (e.g. nwg3); emitting a
+// second tunnel:traffic event keyed by the NDMS name (e.g. Wireguard3)
+// wastes an RCI call per cycle and creates a stale traffic.History
+// entry the UI never reads.
+func TestRunningInterfaces_SkipsManagedNWGNames(t *testing.T) {
+	dir := t.TempDir()
+	settings := storage.NewSettingsStore(dir)
+	if err := settings.Save(&storage.Settings{}); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	awg := &stubAWGStore{
+		list: []storage.AWGTunnel{
+			{ID: "t-managed", Backend: "nativewg", NWGIndex: 3},
+			{ID: "t-kernel", Backend: "kernel"}, // not a NativeWG-managed iface
+		},
+	}
+
+	sys := &stubSystemTunnels{
+		list: []ndms.SystemWireguardTunnel{
+			{ID: "Wireguard0", Status: "up"}, // unmanaged -> include
+			{ID: "Wireguard3", Status: "up"}, // managed NWG (matches NWGIndex=3) -> skip
+		},
+	}
+
+	a := newRunningInterfacesAdapter(sys, awg, settings)
+	refs := a.RunningInterfaces(context.Background())
+
+	got := make(map[string]bool, len(refs))
+	for _, r := range refs {
+		got[r.ID] = true
+	}
+
+	if !got["Wireguard0"] {
+		t.Errorf("expected Wireguard0 in refs (unmanaged up tunnel), got: %+v", refs)
+	}
+	if got["Wireguard3"] {
+		t.Errorf("did not expect Wireguard3 in refs (managed NativeWG, polled via sysfs), got: %+v", refs)
 	}
 }
