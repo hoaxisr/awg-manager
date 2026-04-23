@@ -532,13 +532,14 @@ func main() {
 	singboxHandler := api.NewSingboxHandler(singboxOp, eventBus, delayChecker, testService)
 	clashProxy := api.NewClashProxy(singboxOp)
 
-	// Startup reconcile — if config.json exists from a previous run,
-	// this starts sing-box and syncs NDMS Proxy interfaces.
-	go func() {
-		if err := singboxOp.Reconcile(context.Background()); err != nil {
-			slog.Default().Warn("singbox startup reconcile", "err", err)
-		}
-	}()
+	// Watchdog: runs an immediate reconcile (replacing the old one-shot
+	// startup reconcile) and keeps checking every 30s. If sing-box crashes
+	// while awgm is running, the next tick detects the dead PID and
+	// restarts it; the UI is notified via resource:invalidated SSE hints
+	// only when the running state actually flips.
+	watchdogCtx, watchdogCancel := context.WithCancel(context.Background())
+	defer watchdogCancel()
+	go singbox.NewWatchdog(singboxOp, eventBus, slog.Default().With("component", "singbox-watchdog")).Run(watchdogCtx)
 
 	trafficCtx, trafficCancel := context.WithCancel(context.Background())
 	defer trafficCancel()
