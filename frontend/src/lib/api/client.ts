@@ -160,8 +160,23 @@ class ApiClient {
 		});
 	}
 
-	async getTrafficHistory(id: string, period: string): Promise<{ t: number; rx: number; tx: number }[]> {
-		return this.request(`/tunnels/traffic-history?id=${encodeURIComponent(id)}&period=${encodeURIComponent(period)}`);
+	async getTrafficHistory(
+		id: string,
+		period: '1h' | '24h'
+	): Promise<{
+		points: { t: number; rx: number; tx: number }[];
+		stats: {
+			points: number;
+			peakRate: number;
+			avgRx: number;
+			avgTx: number;
+			currentRx: number;
+			currentTx: number;
+		};
+	}> {
+		return this.request(
+			`/tunnels/traffic?id=${encodeURIComponent(id)}&period=${encodeURIComponent(period)}`
+		);
 	}
 
 	async deleteTunnel(id: string): Promise<DeleteResult> {
