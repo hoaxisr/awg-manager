@@ -60,8 +60,6 @@
 		initialLoadDone = true;
 		untrack(() => loadHistory(id));
 	});
-
-	let hasData = $derived(rxRates.length >= 2);
 </script>
 
 <div class="card flex flex-col gap-4 transition-[border-color] duration-200" class:running={tunnel.status === 'running'} class:transitional={tunnel.status === 'starting' || tunnel.status === 'broken' || tunnel.status === 'needs_start' || tunnel.status === 'needs_stop'} class:state-disabled={tunnel.status === 'disabled'} class:stopped={tunnel.status === 'stopped' || tunnel.status === 'not_created'}>
@@ -79,17 +77,15 @@
 				<span class="chart-label">Трафик</span>
 				<span class="chart-chevron" class:expanded={chartExpanded}>▾</span>
 			</button>
-			<div class="chart-body" class:expanded={chartExpanded && hasData}>
-				{#if hasData}
-					<TrafficChart
-						{rxRates}
-						{txRates}
-						rxTotal={tunnel.rxBytes ?? 0}
-						txTotal={tunnel.txBytes ?? 0}
-						height={100}
-						onclick={() => ondetail?.(tunnelId)}
-					/>
-				{/if}
+			<div class="chart-body" class:expanded={chartExpanded}>
+				<TrafficChart
+					{rxRates}
+					{txRates}
+					rxTotal={tunnel.rxBytes ?? 0}
+					txTotal={tunnel.txBytes ?? 0}
+					height={100}
+					onclick={() => ondetail?.(tunnelId)}
+				/>
 			</div>
 		</div>
 	{/if}

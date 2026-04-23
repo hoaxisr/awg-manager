@@ -95,8 +95,6 @@
 		chartExpanded = !chartExpanded;
 		localStorage.setItem(CHART_KEY_PREFIX + tunnel.id, String(chartExpanded));
 	}
-
-	let hasData = $derived(rxRates.length >= 2);
 </script>
 
 <div class="card flex flex-col gap-4 transition-[border-color] duration-200" class:status-up={tunnel.status === 'up'} class:status-down={tunnel.status !== 'up'}>
@@ -247,17 +245,15 @@
 				<span class="chart-label">Трафик</span>
 				<span class="chart-chevron" class:expanded={chartExpanded}>▾</span>
 			</button>
-			<div class="chart-body" class:expanded={chartExpanded && hasData}>
-				{#if hasData}
-					<TrafficChart
-						{rxRates}
-						{txRates}
-						rxTotal={tunnel.peer?.rxBytes ?? 0}
-						txTotal={tunnel.peer?.txBytes ?? 0}
-						height={100}
-						onclick={() => ondetail?.(tunnel.id)}
-					/>
-				{/if}
+			<div class="chart-body" class:expanded={chartExpanded}>
+				<TrafficChart
+					{rxRates}
+					{txRates}
+					rxTotal={tunnel.peer?.rxBytes ?? 0}
+					txTotal={tunnel.peer?.txBytes ?? 0}
+					height={100}
+					onclick={() => ondetail?.(tunnel.id)}
+				/>
 			</div>
 		</div>
 	{/if}

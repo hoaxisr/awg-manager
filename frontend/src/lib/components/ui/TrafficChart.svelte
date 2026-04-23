@@ -66,6 +66,12 @@
 		return s.replace(/(\d+)\.\d+/, '$1');
 	}
 
+	// Placeholder for the "no data yet" state — keeps stats-row layout stable
+	// before the first rate samples arrive.
+	function fmtRate(v: number): string {
+		return hasData ? formatBitRateRound(v) : '—';
+	}
+
 	// y-up model — rate=0 at baseline (height - PAD_BOTTOM), rate=maxRate at top (PAD_TOP).
 	function rateToY(rate: number): number {
 		const innerH = height - PAD_TOP - PAD_BOTTOM;
@@ -128,55 +134,55 @@
 	let gradY2 = $derived(height - PAD_BOTTOM);
 </script>
 
-{#if hasData}
-	<!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_tabindex -->
-	<div
-		class="traffic-chart"
-		class:clickable={!!onclick}
-		role={onclick ? 'button' : undefined}
-		tabindex={onclick ? 0 : undefined}
-		onclick={onclick}
-		onkeydown={onclick
-			? (e) => {
-					if (e.key === 'Enter' || e.key === ' ') {
-						e.preventDefault();
-						onclick();
-					}
+<!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_tabindex -->
+<div
+	class="traffic-chart"
+	class:clickable={!!onclick}
+	role={onclick ? 'button' : undefined}
+	tabindex={onclick ? 0 : undefined}
+	onclick={onclick}
+	onkeydown={onclick
+		? (e) => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					onclick();
 				}
-			: undefined}
-		aria-label={onclick ? 'Открыть детальный график' : undefined}
+			}
+		: undefined}
+	aria-label={onclick ? 'Открыть детальный график' : undefined}
+>
+	<svg
+		class="chart-svg"
+		viewBox={`0 0 ${CHART_W} ${height}`}
+		preserveAspectRatio="none"
+		aria-hidden="true"
 	>
-		<svg
-			class="chart-svg"
-			viewBox={`0 0 ${CHART_W} ${height}`}
-			preserveAspectRatio="none"
-			aria-hidden="true"
-		>
-			<defs>
-				<linearGradient
-					id="rx-grad-card"
-					x1="0"
-					y1={gradY1}
-					x2="0"
-					y2={gradY2}
-					gradientUnits="userSpaceOnUse"
-				>
-					<stop offset="0%" stop-color="var(--accent, #60a5fa)" stop-opacity="0.55" />
-					<stop offset="100%" stop-color="var(--accent, #60a5fa)" stop-opacity="0" />
-				</linearGradient>
-				<linearGradient
-					id="tx-grad-card"
-					x1="0"
-					y1={gradY1}
-					x2="0"
-					y2={gradY2}
-					gradientUnits="userSpaceOnUse"
-				>
-					<stop offset="0%" stop-color="var(--success, #4ade80)" stop-opacity="0.55" />
-					<stop offset="100%" stop-color="var(--success, #4ade80)" stop-opacity="0" />
-				</linearGradient>
-			</defs>
+		<defs>
+			<linearGradient
+				id="rx-grad-card"
+				x1="0"
+				y1={gradY1}
+				x2="0"
+				y2={gradY2}
+				gradientUnits="userSpaceOnUse"
+			>
+				<stop offset="0%" stop-color="var(--accent, #60a5fa)" stop-opacity="0.55" />
+				<stop offset="100%" stop-color="var(--accent, #60a5fa)" stop-opacity="0" />
+			</linearGradient>
+			<linearGradient
+				id="tx-grad-card"
+				x1="0"
+				y1={gradY1}
+				x2="0"
+				y2={gradY2}
+				gradientUnits="userSpaceOnUse"
+			>
+				<stop offset="0%" stop-color="var(--success, #4ade80)" stop-opacity="0.55" />
+				<stop offset="100%" stop-color="var(--success, #4ade80)" stop-opacity="0" />
+			</linearGradient>
+		</defs>
 
+		{#if hasData}
 			<!-- Max-scale label top-right -->
 			<text
 				x={CHART_W - 2}
@@ -207,15 +213,15 @@
 				stroke-linecap="round"
 				opacity="0.95"
 			/>
-		</svg>
-		<div class="stats-row">
-			<span class="rate rx">↓ {formatBitRateRound(currentRx)}</span>
-			<span class="rate tx">↑ {formatBitRateRound(currentTx)}</span>
-			<span class="peak">пик: {formatBitRateRound(peakRate)}</span>
-			<span class="total">всего за час: {formatBytes(rxTotal + txTotal)}</span>
-		</div>
+		{/if}
+	</svg>
+	<div class="stats-row">
+		<span class="rate rx">↓ {fmtRate(currentRx)}</span>
+		<span class="rate tx">↑ {fmtRate(currentTx)}</span>
+		<span class="peak">пик: {fmtRate(peakRate)}</span>
+		<span class="total">всего за час: {formatBytes(rxTotal + txTotal)}</span>
 	</div>
-{/if}
+</div>
 
 <style>
 	.traffic-chart {
