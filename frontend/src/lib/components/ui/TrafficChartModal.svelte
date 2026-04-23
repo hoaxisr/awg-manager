@@ -58,27 +58,33 @@
 		}
 	});
 
-	// Subscribe to SSE traffic updates while the modal is open so the
-	// "Сейчас" KPI reflects the latest rate rather than the value at
-	// open-time. Only the KPI updates; the 24h chart itself is not
-	// re-rendered on every tick (would be wasteful).
+	// Subscribe to SSE traffic updates while the modal is open. Both the
+	// legend KPIs and the chart itself advance in real time — the live
+	// buffer in the shared store is small, so a full swap is cheap.
 	$effect(() => {
 		if (!open || !tunnelId) return;
 		const unsub = subscribeTraffic(() => {
 			const { rx, tx } = getTrafficRates(tunnelId);
 			if (rx.length > 0) liveCurrentRx = rx[rx.length - 1];
 			if (tx.length > 0) liveCurrentTx = tx[tx.length - 1];
+			// Advance the chart's right edge in real time. Only overwrite
+			// if the live buffer has grown past what we fetched — never
+			// shrink the history window.
+			if (rx.length > rxRates.length) {
+				rxRates = rx.slice();
+				txRates = tx.slice();
+			}
 		});
 		return unsub;
 	});
 
 	// ---- Chart geometry --------------------------------------------------
-	const CHART_W = 800;
-	const CHART_H = 200;
-	const PAD_L = 80;
-	const PAD_R = 8;
-	const PAD_TOP = 8;
-	const PAD_BOTTOM = 20;
+	const CHART_W = 840;
+	const CHART_H = 220;
+	const PAD_L = 0;
+	const PAD_R = 0;
+	const PAD_TOP = 16;
+	const PAD_BOTTOM = 32;
 
 	let len = $derived(Math.min(rxRates.length, txRates.length));
 	let hasData = $derived(len >= 2);
@@ -93,60 +99,90 @@
 		return m;
 	});
 
-	function buildLine(rates: number[]): string {
-		if (len < 2) return '';
-		const innerW = CHART_W - PAD_L - PAD_R;
-		const innerH = CHART_H - PAD_TOP - PAD_BOTTOM;
-		const step = innerW / (len - 1);
-		const pts: string[] = [];
+	let peakRateLive = $derived.by(() => {
+		if (!hasData) return stats.peakRate;
+		let m = stats.peakRate;
 		for (let i = 0; i < len; i++) {
-			const x = PAD_L + i * step;
-			const norm = (rates[i] / maxRate) * innerH;
-			const y = CHART_H - PAD_BOTTOM - norm;
-			pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+			if (rxRates[i] > m) m = rxRates[i];
+			if (txRates[i] > m) m = txRates[i];
 		}
-		return `M${pts.join(' L')}`;
+		return m;
+	});
+
+	// y-up model — rate=0 at baseline (CHART_H - PAD_BOTTOM), rate=maxRate at top (PAD_TOP).
+	function rateToY(rate: number): number {
+		const innerH = CHART_H - PAD_TOP - PAD_BOTTOM;
+		const norm = (rate / maxRate) * innerH;
+		return CHART_H - PAD_BOTTOM - norm;
 	}
 
-	function buildArea(line: string): string {
-		if (!line) return '';
+	function indexToX(i: number): number {
+		if (len < 2) return PAD_L;
+		const innerW = CHART_W - PAD_L - PAD_R;
+		return PAD_L + (i * innerW) / (len - 1);
+	}
+
+	/**
+	 * Convert a series of points into a smooth cubic-Bezier path using
+	 * Catmull-Rom interpolation (tension ~0.5).
+	 */
+	function smoothPath(points: [number, number][]): string {
+		if (points.length < 2) return '';
+		if (points.length === 2) {
+			const [[x0, y0], [x1, y1]] = points;
+			return `M${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y1.toFixed(1)}`;
+		}
+		const tension = 0.5;
+		let d = `M${points[0][0].toFixed(1)},${points[0][1].toFixed(1)}`;
+		for (let i = 0; i < points.length - 1; i++) {
+			const p0 = points[Math.max(0, i - 1)];
+			const p1 = points[i];
+			const p2 = points[i + 1];
+			const p3 = points[Math.min(points.length - 1, i + 2)];
+			const cp1x = p1[0] + ((p2[0] - p0[0]) / 6) * tension;
+			const cp1y = p1[1] + ((p2[1] - p0[1]) / 6) * tension;
+			const cp2x = p2[0] - ((p3[0] - p1[0]) / 6) * tension;
+			const cp2y = p2[1] - ((p3[1] - p1[1]) / 6) * tension;
+			d += ` C${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+		}
+		return d;
+	}
+
+	function buildLine(rates: number[]): string {
+		if (len < 2) return '';
+		const pts: [number, number][] = [];
+		for (let i = 0; i < len; i++) {
+			pts.push([indexToX(i), rateToY(rates[i])]);
+		}
+		return smoothPath(pts);
+	}
+
+	function buildArea(linePath: string): string {
+		if (!linePath) return '';
 		const endX = (CHART_W - PAD_R).toFixed(1);
 		const startX = PAD_L.toFixed(1);
 		const baseY = (CHART_H - PAD_BOTTOM).toFixed(1);
-		return `${line} L${endX},${baseY} L${startX},${baseY} Z`;
+		return `${linePath} L${endX},${baseY} L${startX},${baseY} Z`;
 	}
 
 	let rxLine = $derived(buildLine(rxRates));
 	let txLine = $derived(buildLine(txRates));
 	let rxArea = $derived(buildArea(rxLine));
+	let txArea = $derived(buildArea(txLine));
 
-	// 3 horizontal grid lines at 25% / 50% / 75%; label each with the rate.
-	let gridLines = $derived.by(() => {
-		const innerH = CHART_H - PAD_TOP - PAD_BOTTOM;
-		return [0.25, 0.5, 0.75].map((frac) => ({
-			y: CHART_H - PAD_BOTTOM - innerH * frac,
-			label: formatBitRate(maxRate * frac)
-		}));
-	});
+	// Two timestamps at bottom corners (first + last point).
+	function fmtTime(t: number): string {
+		const d = new Date(t * 1000);
+		const hh = d.getHours().toString().padStart(2, '0');
+		const mm = d.getMinutes().toString().padStart(2, '0');
+		const ss = d.getSeconds().toString().padStart(2, '0');
+		return `${hh}:${mm}:${ss}`;
+	}
 
-	// Time axis — 5 labels across the window.
-	let xLabels = $derived.by(() => {
-		if (timestamps.length < 2) return [] as { x: number; label: string }[];
-		const t0 = timestamps[0];
-		const tN = timestamps[timestamps.length - 1];
-		const innerW = CHART_W - PAD_L - PAD_R;
-		const out: { x: number; label: string }[] = [];
-		for (let i = 0; i <= 4; i++) {
-			const frac = i / 4;
-			const x = PAD_L + innerW * frac;
-			const t = t0 + (tN - t0) * frac;
-			const d = new Date(t * 1000);
-			const hh = d.getHours().toString().padStart(2, '0');
-			const mm = d.getMinutes().toString().padStart(2, '0');
-			out.push({ x, label: `${hh}:${mm}` });
-		}
-		return out;
-	});
+	let firstLabel = $derived(timestamps.length >= 2 ? fmtTime(timestamps[0]) : '');
+	let lastLabel = $derived(
+		timestamps.length >= 2 ? fmtTime(timestamps[timestamps.length - 1]) : ''
+	);
 
 	// ---- Hover crosshair + tooltip ---------------------------------------
 	let svgEl = $state<SVGSVGElement | null>(null);
@@ -169,34 +205,13 @@
 		hoverIndex = null;
 	}
 
-	let hoverX = $derived.by(() => {
-		if (hoverIndex === null || len < 2) return 0;
-		const innerW = CHART_W - PAD_L - PAD_R;
-		const step = innerW / (len - 1);
-		return PAD_L + hoverIndex * step;
-	});
-
-	let hoverRxY = $derived.by(() => {
-		if (hoverIndex === null) return 0;
-		const innerH = CHART_H - PAD_TOP - PAD_BOTTOM;
-		const norm = (rxRates[hoverIndex] / maxRate) * innerH;
-		return CHART_H - PAD_BOTTOM - norm;
-	});
-
-	let hoverTxY = $derived.by(() => {
-		if (hoverIndex === null) return 0;
-		const innerH = CHART_H - PAD_TOP - PAD_BOTTOM;
-		const norm = (txRates[hoverIndex] / maxRate) * innerH;
-		return CHART_H - PAD_BOTTOM - norm;
-	});
+	let hoverX = $derived(hoverIndex === null ? 0 : indexToX(hoverIndex));
+	let hoverRxY = $derived(hoverIndex === null ? 0 : rateToY(rxRates[hoverIndex]));
+	let hoverTxY = $derived(hoverIndex === null ? 0 : rateToY(txRates[hoverIndex]));
 
 	let hoverTime = $derived.by(() => {
 		if (hoverIndex === null || timestamps.length === 0) return '';
-		const t = timestamps[Math.min(hoverIndex, timestamps.length - 1)];
-		const d = new Date(t * 1000);
-		const hh = d.getHours().toString().padStart(2, '0');
-		const mm = d.getMinutes().toString().padStart(2, '0');
-		return `${hh}:${mm}`;
+		return fmtTime(timestamps[Math.min(hoverIndex, timestamps.length - 1)]);
 	});
 
 	// Tooltip placement: flip to left of cursor on the right 30% of the
@@ -204,8 +219,8 @@
 	let tooltipFlip = $derived(
 		hoverIndex !== null && len >= 2 && hoverIndex / (len - 1) > 0.7
 	);
-	const TOOLTIP_W = 120;
-	const TOOLTIP_H = 52;
+	const TOOLTIP_W = 130;
+	const TOOLTIP_H = 58;
 	let tooltipX = $derived(tooltipFlip ? hoverX - TOOLTIP_W - 8 : hoverX + 8);
 	let tooltipY = $derived(Math.min(hoverRxY, hoverTxY) - TOOLTIP_H - 6);
 	let tooltipYClamped = $derived(Math.max(PAD_TOP, tooltipY));
@@ -219,12 +234,16 @@
 
 	<div class="kpi-grid">
 		<div class="kpi">
-			<div class="kpi-label">Сейчас ↓</div>
+			<div class="kpi-label">Прием сейчас</div>
 			<div class="kpi-val rx">{formatBitRate(liveCurrentRx)}</div>
 		</div>
 		<div class="kpi">
+			<div class="kpi-label">Передача сейчас</div>
+			<div class="kpi-val tx">{formatBitRate(liveCurrentTx)}</div>
+		</div>
+		<div class="kpi">
 			<div class="kpi-label">Пик</div>
-			<div class="kpi-val">{formatBitRate(stats.peakRate)}</div>
+			<div class="kpi-val">{formatBitRate(peakRateLive)}</div>
 		</div>
 		<div class="kpi">
 			<div class="kpi-label">Среднее ↓ / ↑</div>
@@ -256,60 +275,104 @@
 				onmouseleave={handleMouseLeave}
 			>
 				<defs>
-					<linearGradient id="rx-modal-grad" x1="0" x2="0" y1="0" y2="1">
-						<stop offset="0%" stop-color="var(--accent, #7aa2f7)" stop-opacity="0.5" />
-						<stop offset="100%" stop-color="var(--accent, #7aa2f7)" stop-opacity="0" />
+					<linearGradient
+						id="rx-grad-modal"
+						x1="0"
+						y1={PAD_TOP}
+						x2="0"
+						y2={CHART_H - PAD_BOTTOM}
+						gradientUnits="userSpaceOnUse"
+					>
+						<stop offset="0%" stop-color="var(--accent, #60a5fa)" stop-opacity="0.55" />
+						<stop offset="100%" stop-color="var(--accent, #60a5fa)" stop-opacity="0" />
+					</linearGradient>
+					<linearGradient
+						id="tx-grad-modal"
+						x1="0"
+						y1={PAD_TOP}
+						x2="0"
+						y2={CHART_H - PAD_BOTTOM}
+						gradientUnits="userSpaceOnUse"
+					>
+						<stop offset="0%" stop-color="var(--success, #4ade80)" stop-opacity="0.55" />
+						<stop offset="100%" stop-color="var(--success, #4ade80)" stop-opacity="0" />
 					</linearGradient>
 				</defs>
 
-				{#each gridLines as gl}
-					<line
-						x1={PAD_L}
-						y1={gl.y}
-						x2={CHART_W - PAD_R}
-						y2={gl.y}
-						stroke="var(--border, #333)"
-						stroke-width="0.4"
-						stroke-dasharray="2,3"
-						opacity="0.4"
-					/>
-					<text
-						x={PAD_L - 4}
-						y={gl.y}
-						text-anchor="end"
-						dominant-baseline="middle"
-						fill="var(--text-secondary, #bbb)"
-						font-size="9"
-						font-family="var(--font-mono, monospace)"
-					>{gl.label}</text>
-				{/each}
+				<!-- Max-scale top-right -->
+				<text
+					x={CHART_W - 8}
+					y="16"
+					text-anchor="end"
+					font-size="11"
+					font-family="var(--font-mono, monospace)"
+					fill="var(--text-secondary, #bbb)"
+				>{formatBitRate(maxRate)}</text>
 
-				<path d={rxArea} fill="url(#rx-modal-grad)" />
+				<!-- RX first (background), TX on top so smaller series stays visible -->
+				<path d={rxArea} fill="url(#rx-grad-modal)" />
 				<path
 					d={rxLine}
 					fill="none"
-					stroke="var(--accent, #7aa2f7)"
-					stroke-width="1.5"
+					stroke="var(--accent, #60a5fa)"
+					stroke-width="1.6"
 					stroke-linejoin="round"
+					stroke-linecap="round"
 				/>
+				<path d={txArea} fill="url(#tx-grad-modal)" />
 				<path
 					d={txLine}
 					fill="none"
-					stroke="var(--warning, #e0af68)"
-					stroke-width="1.3"
+					stroke="var(--success, #4ade80)"
+					stroke-width="1.4"
 					stroke-linejoin="round"
+					stroke-linecap="round"
+					opacity="0.95"
 				/>
 
-				{#each xLabels as xl}
-					<text
-						x={xl.x}
-						y={CHART_H - 4}
-						text-anchor="middle"
-						fill="var(--text-secondary, #bbb)"
-						font-size="9"
-						font-family="var(--font-mono, monospace)"
-					>{xl.label}</text>
-				{/each}
+				<!-- Bottom-corner timestamps -->
+				<text
+					x="4"
+					y={CHART_H - 10}
+					text-anchor="start"
+					font-size="10"
+					font-family="var(--font-mono, monospace)"
+					fill="var(--text-secondary, #bbb)"
+				>{firstLabel}</text>
+				<text
+					x={CHART_W - 4}
+					y={CHART_H - 10}
+					text-anchor="end"
+					font-size="10"
+					font-family="var(--font-mono, monospace)"
+					fill="var(--text-secondary, #bbb)"
+				>{lastLabel}</text>
+
+				<!-- Centered live legend -->
+				<g transform={`translate(${CHART_W / 2}, ${CHART_H - 10})`}>
+					<!-- RX legend item (left of center) -->
+					<g transform="translate(-110, 0)">
+						<circle cx="0" cy="-4" r="4" fill="var(--accent, #60a5fa)" />
+						<text
+							x="8"
+							y="0"
+							font-size="11"
+							font-family="var(--font-mono, monospace)"
+							fill="var(--text-primary, #eee)"
+						>Прием: {formatBitRate(liveCurrentRx)}</text>
+					</g>
+					<!-- TX legend item (right of center) -->
+					<g transform="translate(20, 0)">
+						<circle cx="0" cy="-4" r="4" fill="var(--success, #4ade80)" />
+						<text
+							x="8"
+							y="0"
+							font-size="11"
+							font-family="var(--font-mono, monospace)"
+							fill="var(--text-primary, #eee)"
+						>Передача: {formatBitRate(liveCurrentTx)}</text>
+					</g>
+				</g>
 
 				{#if hoverIndex !== null}
 					<g aria-hidden="true">
@@ -328,16 +391,16 @@
 						<circle
 							cx={hoverX}
 							cy={hoverRxY}
-							r="3"
-							fill="var(--accent, #7aa2f7)"
+							r="3.5"
+							fill="var(--accent, #60a5fa)"
 							stroke="var(--bg-primary, #1a1b26)"
 							stroke-width="1"
 						/>
 						<circle
 							cx={hoverX}
 							cy={hoverTxY}
-							r="3"
-							fill="var(--warning, #e0af68)"
+							r="3.5"
+							fill="var(--success, #4ade80)"
 							stroke="var(--bg-primary, #1a1b26)"
 							stroke-width="1"
 						/>
@@ -356,34 +419,29 @@
 							/>
 							<text
 								x="8"
-								y="14"
+								y="16"
 								fill="var(--text-muted, #888)"
-								font-size="9"
+								font-size="10"
 								font-family="var(--font-mono, monospace)"
 							>{hoverTime}</text>
 							<text
 								x="8"
-								y="28"
-								fill="var(--accent, #7aa2f7)"
-								font-size="10"
+								y="32"
+								fill="var(--accent, #60a5fa)"
+								font-size="11"
 								font-family="var(--font-mono, monospace)"
 							>↓ {formatBitRate(rxRates[hoverIndex])}</text>
 							<text
 								x="8"
-								y="42"
-								fill="var(--warning, #e0af68)"
-								font-size="10"
+								y="48"
+								fill="var(--success, #4ade80)"
+								font-size="11"
 								font-family="var(--font-mono, monospace)"
 							>↑ {formatBitRate(txRates[hoverIndex])}</text>
 						</g>
 					</g>
 				{/if}
 			</svg>
-		</div>
-
-		<div class="legend">
-			<span class="legend-item rx"><span class="sw"></span>RX</span>
-			<span class="legend-item tx"><span class="sw"></span>TX</span>
 		</div>
 	{/if}
 </Modal>
@@ -402,8 +460,8 @@
 		border-radius: 4px;
 	}
 	.pill {
-		background: rgba(122, 162, 247, 0.12);
-		color: var(--accent, #7aa2f7);
+		background: rgba(96, 165, 250, 0.12);
+		color: var(--accent, #60a5fa);
 	}
 	.pill-muted {
 		background: var(--bg-tertiary, rgba(255, 255, 255, 0.04));
@@ -412,7 +470,7 @@
 
 	.kpi-grid {
 		display: grid;
-		grid-template-columns: repeat(3, 1fr);
+		grid-template-columns: repeat(4, 1fr);
 		gap: 8px;
 		margin-bottom: 16px;
 	}
@@ -433,11 +491,13 @@
 		font-family: var(--font-mono, monospace);
 		color: var(--text-primary);
 	}
+	.kpi-val.rx,
 	.kpi-val .rx {
-		color: var(--accent, #7aa2f7);
+		color: var(--accent, #60a5fa);
 	}
+	.kpi-val.tx,
 	.kpi-val .tx {
-		color: var(--warning, #e0af68);
+		color: var(--success, #4ade80);
 	}
 	.kpi-val .sep {
 		color: var(--text-muted, #888);
@@ -453,30 +513,6 @@
 		display: block;
 		width: 100%;
 		height: auto;
-	}
-
-	.legend {
-		display: flex;
-		gap: 14px;
-		justify-content: flex-end;
-		font-size: 11px;
-		font-family: var(--font-mono, monospace);
-		margin-top: 10px;
-		color: var(--text-muted, #888);
-	}
-	.legend-item .sw {
-		display: inline-block;
-		width: 8px;
-		height: 8px;
-		border-radius: 2px;
-		margin-right: 4px;
-		vertical-align: middle;
-	}
-	.legend-item.rx .sw {
-		background: var(--accent, #7aa2f7);
-	}
-	.legend-item.tx .sw {
-		background: var(--warning, #e0af68);
 	}
 
 	.state-msg {
