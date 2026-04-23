@@ -91,6 +91,21 @@ func (h *History) Feed(tunnelID string, rxBytes, txBytes int64) {
 	})
 }
 
+// windowStart returns the index of the first point with Timestamp >= cutoff.
+// Assumes pts is time-sorted ascending, which is invariant by construction.
+func windowStart(pts []Point, cutoff int64) int {
+	lo, hi := 0, len(pts)
+	for lo < hi {
+		mid := (lo + hi) / 2
+		if pts[mid].Timestamp < cutoff {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	return lo
+}
+
 // Get returns rate points for a tunnel within the given duration,
 // downsampled to at most maxPoints using bucket averaging.
 //
@@ -109,20 +124,7 @@ func (h *History) Get(tunnelID string, since time.Duration, maxPoints int) []Poi
 		return nil
 	}
 
-	// Binary search — points are time-sorted by construction.
-	pts := th.points
-	lo := 0
-	hi := len(pts)
-	for lo < hi {
-		mid := (lo + hi) / 2
-		if pts[mid].Timestamp < cutoff {
-			lo = mid + 1
-		} else {
-			hi = mid
-		}
-	}
-
-	window := pts[lo:]
+	window := th.points[windowStart(th.points, cutoff):]
 	if len(window) == 0 {
 		return nil
 	}
@@ -227,6 +229,11 @@ func downsample(pts []Point, maxPoints int) []Point {
 // Stats is a set of aggregates over a tunnel's recent rate history,
 // used by the detail modal to fill KPI tiles without forcing the
 // frontend to re-compute them from the raw point array.
+//
+// JSON tags here use camelCase to match the rest of the HTTP API
+// (tunnels.go, managed.go etc.). Point above uses compact keys because
+// it ships as a large array; Stats is a single KPI bag where byte-size
+// optimization doesn't pay.
 type Stats struct {
 	Points    int     `json:"points"`
 	PeakRate  float64 `json:"peakRate"`  // max of (RxRate, TxRate), bytes/sec
@@ -249,18 +256,7 @@ func (h *History) Stats(tunnelID string, since time.Duration) Stats {
 		return Stats{}
 	}
 
-	pts := th.points
-	lo := 0
-	hi := len(pts)
-	for lo < hi {
-		mid := (lo + hi) / 2
-		if pts[mid].Timestamp < cutoff {
-			lo = mid + 1
-		} else {
-			hi = mid
-		}
-	}
-	window := pts[lo:]
+	window := th.points[windowStart(th.points, cutoff):]
 	if len(window) == 0 {
 		return Stats{}
 	}
