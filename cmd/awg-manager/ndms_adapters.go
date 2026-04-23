@@ -47,9 +47,9 @@ func metricsLogger(appLog logging.AppLogger) metrics.Logger {
 
 // runningInterfacesAdapter implements metrics.RunningInterfacesProvider
 // for non-managed system WG tunnels, user-configured server interfaces,
-// and the managed WG server. Managed AWGM tunnels are driven separately
-// by traffic.SysfsPoller via direct sysfs counters and do not pass
-// through this adapter.
+// and the managed WG server. Managed AWGM tunnels do not pass through
+// this adapter — they are driven by traffic.SysfsPoller via direct sysfs
+// counters (wired separately in main.go).
 type runningInterfacesAdapter struct {
 	systemTunnels systemTunnelLister
 	settings      *storage.SettingsStore

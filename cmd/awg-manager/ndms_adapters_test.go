@@ -23,9 +23,9 @@ func (s *stubSystemTunnels) List(ctx context.Context) ([]ndms.SystemWireguardTun
 //  2. Up unmanaged system tunnels are included as non-servers.
 //  3. Managed server (InterfaceName) is included as a server when up.
 //
-// Managed AWGM tunnels are no longer handled here — they flow through
-// traffic.SysfsPoller — so this adapter is only tested for its NDMS-side
-// responsibilities.
+// Managed AWGM tunnels do not pass through this adapter — they are driven
+// by traffic.SysfsPoller (wired in main.go) — so this adapter is only
+// tested for its NDMS-side responsibilities.
 func TestRunningInterfaces_FiltersDownServersAndIncludesSystemTunnels(t *testing.T) {
 	dir := t.TempDir()
 	settings := storage.NewSettingsStore(dir)
