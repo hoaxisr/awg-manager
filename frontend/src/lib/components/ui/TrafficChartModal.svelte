@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { formatBitRate } from '$lib/utils/format';
-	import { fetchTrafficDetail } from '$lib/stores/traffic';
+	import { fetchTrafficDetail, subscribeTraffic, getTrafficRates } from '$lib/stores/traffic';
 	import Modal from './Modal.svelte';
 
 	interface Props {
@@ -27,6 +27,12 @@
 		currentTx: 0
 	});
 
+	// Live "Сейчас" values driven by SSE while the modal is open. Seeded
+	// from the one-shot detail fetch; subsequently tracks the latest point
+	// from the shared traffic store so the KPI doesn't stay frozen.
+	let liveCurrentRx = $state(0);
+	let liveCurrentTx = $state(0);
+
 	async function load(id: string) {
 		loading = true;
 		error = null;
@@ -36,6 +42,8 @@
 			rxRates = d.rxRates;
 			txRates = d.txRates;
 			stats = d.stats;
+			liveCurrentRx = d.stats.currentRx;
+			liveCurrentTx = d.stats.currentTx;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Не удалось загрузить историю';
 		} finally {
@@ -50,10 +58,24 @@
 		}
 	});
 
+	// Subscribe to SSE traffic updates while the modal is open so the
+	// "Сейчас" KPI reflects the latest rate rather than the value at
+	// open-time. Only the KPI updates; the 24h chart itself is not
+	// re-rendered on every tick (would be wasteful).
+	$effect(() => {
+		if (!open || !tunnelId) return;
+		const unsub = subscribeTraffic(() => {
+			const { rx, tx } = getTrafficRates(tunnelId);
+			if (rx.length > 0) liveCurrentRx = rx[rx.length - 1];
+			if (tx.length > 0) liveCurrentTx = tx[tx.length - 1];
+		});
+		return unsub;
+	});
+
 	// ---- Chart geometry --------------------------------------------------
 	const CHART_W = 800;
 	const CHART_H = 200;
-	const PAD_L = 44;
+	const PAD_L = 60;
 	const PAD_R = 8;
 	const PAD_TOP = 8;
 	const PAD_BOTTOM = 20;
@@ -125,6 +147,68 @@
 		}
 		return out;
 	});
+
+	// ---- Hover crosshair + tooltip ---------------------------------------
+	let svgEl = $state<SVGSVGElement | null>(null);
+	let hoverIndex = $state<number | null>(null);
+
+	function handleMouseMove(e: MouseEvent) {
+		if (!svgEl || !hasData) return;
+		const rect = svgEl.getBoundingClientRect();
+		const mouseX = e.clientX - rect.left;
+		// Convert client px to viewBox coordinates so PAD_L/innerW match.
+		const scale = CHART_W / rect.width;
+		const vbX = mouseX * scale;
+		const innerW = CHART_W - PAD_L - PAD_R;
+		const step = innerW / (len - 1);
+		const idx = Math.round((vbX - PAD_L) / step);
+		hoverIndex = Math.max(0, Math.min(len - 1, idx));
+	}
+
+	function handleMouseLeave() {
+		hoverIndex = null;
+	}
+
+	let hoverX = $derived.by(() => {
+		if (hoverIndex === null || len < 2) return 0;
+		const innerW = CHART_W - PAD_L - PAD_R;
+		const step = innerW / (len - 1);
+		return PAD_L + hoverIndex * step;
+	});
+
+	let hoverRxY = $derived.by(() => {
+		if (hoverIndex === null) return 0;
+		const innerH = CHART_H - PAD_TOP - PAD_BOTTOM;
+		const norm = (rxRates[hoverIndex] / maxRate) * innerH;
+		return CHART_H - PAD_BOTTOM - norm;
+	});
+
+	let hoverTxY = $derived.by(() => {
+		if (hoverIndex === null) return 0;
+		const innerH = CHART_H - PAD_TOP - PAD_BOTTOM;
+		const norm = (txRates[hoverIndex] / maxRate) * innerH;
+		return CHART_H - PAD_BOTTOM - norm;
+	});
+
+	let hoverTime = $derived.by(() => {
+		if (hoverIndex === null || timestamps.length === 0) return '';
+		const t = timestamps[Math.min(hoverIndex, timestamps.length - 1)];
+		const d = new Date(t * 1000);
+		const hh = d.getHours().toString().padStart(2, '0');
+		const mm = d.getMinutes().toString().padStart(2, '0');
+		return `${hh}:${mm}`;
+	});
+
+	// Tooltip placement: flip to left of cursor on the right 30% of the
+	// chart so the tooltip doesn't clip off the SVG edge.
+	let tooltipFlip = $derived(
+		hoverIndex !== null && len >= 2 && hoverIndex / (len - 1) > 0.7
+	);
+	const TOOLTIP_W = 120;
+	const TOOLTIP_H = 52;
+	let tooltipX = $derived(tooltipFlip ? hoverX - TOOLTIP_W - 8 : hoverX + 8);
+	let tooltipY = $derived(Math.min(hoverRxY, hoverTxY) - TOOLTIP_H - 6);
+	let tooltipYClamped = $derived(Math.max(PAD_TOP, tooltipY));
 </script>
 
 <Modal {open} title={tunnelName || tunnelId} size="xl" {onclose}>
@@ -136,7 +220,7 @@
 	<div class="kpi-grid">
 		<div class="kpi">
 			<div class="kpi-label">Сейчас ↓</div>
-			<div class="kpi-val rx">{formatBitRate(stats.currentRx)}</div>
+			<div class="kpi-val rx">{formatBitRate(liveCurrentRx)}</div>
 		</div>
 		<div class="kpi">
 			<div class="kpi-label">Пик</div>
@@ -164,11 +248,16 @@
 		<div class="state-msg">Недостаточно данных за 24 часа</div>
 	{:else}
 		<div class="chart-wrap">
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<svg
+				bind:this={svgEl}
 				class="chart-svg"
 				viewBox={`0 0 ${CHART_W} ${CHART_H}`}
 				preserveAspectRatio="none"
-				aria-hidden="true"
+				role="img"
+				aria-label="График трафика за 24 часа"
+				onmousemove={handleMouseMove}
+				onmouseleave={handleMouseLeave}
 			>
 				<defs>
 					<linearGradient id="rx-modal-grad" x1="0" x2="0" y1="0" y2="1">
@@ -225,6 +314,74 @@
 						font-family="var(--font-mono, monospace)"
 					>{xl.label}</text>
 				{/each}
+
+				{#if hoverIndex !== null}
+					<g aria-hidden="true">
+						<!-- Vertical crosshair -->
+						<line
+							x1={hoverX}
+							y1={PAD_TOP}
+							x2={hoverX}
+							y2={CHART_H - PAD_BOTTOM}
+							stroke="var(--text-muted, #888)"
+							stroke-width="0.6"
+							stroke-dasharray="2,2"
+							opacity="0.8"
+						/>
+						<!-- Point dots -->
+						<circle
+							cx={hoverX}
+							cy={hoverRxY}
+							r="3"
+							fill="var(--accent, #7aa2f7)"
+							stroke="var(--bg-primary, #1a1b26)"
+							stroke-width="1"
+						/>
+						<circle
+							cx={hoverX}
+							cy={hoverTxY}
+							r="3"
+							fill="var(--warning, #e0af68)"
+							stroke="var(--bg-primary, #1a1b26)"
+							stroke-width="1"
+						/>
+						<!-- Tooltip -->
+						<g transform={`translate(${tooltipX}, ${tooltipYClamped})`}>
+							<rect
+								x="0"
+								y="0"
+								width={TOOLTIP_W}
+								height={TOOLTIP_H}
+								rx="4"
+								fill="var(--bg-secondary, #16161e)"
+								stroke="var(--border, #333)"
+								stroke-width="0.6"
+								opacity="0.96"
+							/>
+							<text
+								x="8"
+								y="14"
+								fill="var(--text-muted, #888)"
+								font-size="9"
+								font-family="var(--font-mono, monospace)"
+							>{hoverTime}</text>
+							<text
+								x="8"
+								y="28"
+								fill="var(--accent, #7aa2f7)"
+								font-size="10"
+								font-family="var(--font-mono, monospace)"
+							>↓ {formatBitRate(rxRates[hoverIndex])}</text>
+							<text
+								x="8"
+								y="42"
+								fill="var(--warning, #e0af68)"
+								font-size="10"
+								font-family="var(--font-mono, monospace)"
+							>↑ {formatBitRate(txRates[hoverIndex])}</text>
+						</g>
+					</g>
+				{/if}
 			</svg>
 		</div>
 
