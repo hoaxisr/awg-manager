@@ -16,22 +16,24 @@
 		txRates,
 		rxTotal = 0,
 		txTotal = 0,
-		height = 84,
+		height = 100,
 		onclick
 	}: Props = $props();
 
-	const PAD_X = 0;
-	const PAD_BOTTOM = 2;
-	const PAD_TOP = 2;
+	// Card chart is full-width (no horizontal padding) with a small
+	// vertical breathing margin so the top stroke and baseline fill don't
+	// touch the SVG edges.
 	const CHART_W = 300;
-
-	let centerY = $derived(height / 2);
+	const PAD_L = 0;
+	const PAD_R = 0;
+	const PAD_TOP = 6;
+	const PAD_BOTTOM = 6;
 
 	let len = $derived(Math.min(rxRates.length, txRates.length));
 	let hasData = $derived(len >= 2);
 
-	// Scale Y by the peak across both series so both halves of the mirror
-	// layout share the same reference — makes RX vs TX visually comparable.
+	// Scale Y by the peak across both series so RX and TX share the same
+	// reference — makes them visually comparable when overlaid.
 	let maxRate = $derived.by(() => {
 		if (!hasData) return 1;
 		let m = 1;
@@ -64,32 +66,66 @@
 		return s.replace(/(\d+)\.\d+/, '$1');
 	}
 
-	function buildLine(rates: number[], dir: 'up' | 'down'): string {
-		if (len < 2) return '';
-		const step = (CHART_W - PAD_X * 2) / (len - 1);
-		const half = dir === 'up' ? centerY - PAD_TOP : centerY - PAD_BOTTOM;
-		const pts: string[] = [];
-		for (let i = 0; i < len; i++) {
-			const x = PAD_X + i * step;
-			const norm = (rates[i] / maxRate) * half;
-			const y = dir === 'up' ? centerY - norm : centerY + norm;
-			pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+	// y-up model — rate=0 at baseline (height - PAD_BOTTOM), rate=maxRate at top (PAD_TOP).
+	function rateToY(rate: number): number {
+		const innerH = height - PAD_TOP - PAD_BOTTOM;
+		const norm = (rate / maxRate) * innerH;
+		return height - PAD_BOTTOM - norm;
+	}
+
+	/**
+	 * Convert a series of points into a smooth cubic-Bezier path using
+	 * Catmull-Rom interpolation (tension ~0.5). Input: [x,y] pairs.
+	 */
+	function smoothPath(points: [number, number][]): string {
+		if (points.length < 2) return '';
+		if (points.length === 2) {
+			const [[x0, y0], [x1, y1]] = points;
+			return `M${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y1.toFixed(1)}`;
 		}
-		return `M${pts.join(' L')}`;
+		const tension = 0.5;
+		let d = `M${points[0][0].toFixed(1)},${points[0][1].toFixed(1)}`;
+		for (let i = 0; i < points.length - 1; i++) {
+			const p0 = points[Math.max(0, i - 1)];
+			const p1 = points[i];
+			const p2 = points[i + 1];
+			const p3 = points[Math.min(points.length - 1, i + 2)];
+			const cp1x = p1[0] + ((p2[0] - p0[0]) / 6) * tension;
+			const cp1y = p1[1] + ((p2[1] - p0[1]) / 6) * tension;
+			const cp2x = p2[0] - ((p3[0] - p1[0]) / 6) * tension;
+			const cp2y = p2[1] - ((p3[1] - p1[1]) / 6) * tension;
+			d += ` C${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+		}
+		return d;
 	}
 
-	function buildArea(line: string): string {
-		if (!line) return '';
-		const endX = (CHART_W - PAD_X).toFixed(1);
-		const baseY = centerY.toFixed(1);
-		const startX = PAD_X.toFixed(1);
-		return `${line} L${endX},${baseY} L${startX},${baseY} Z`;
+	function buildLine(rates: number[]): string {
+		if (len < 2) return '';
+		const pts: [number, number][] = [];
+		const step = (CHART_W - PAD_L - PAD_R) / (len - 1);
+		for (let i = 0; i < len; i++) {
+			pts.push([PAD_L + i * step, rateToY(rates[i])]);
+		}
+		return smoothPath(pts);
 	}
 
-	let rxLine = $derived(buildLine(rxRates, 'down'));
-	let txLine = $derived(buildLine(txRates, 'up'));
+	function buildArea(linePath: string): string {
+		if (!linePath) return '';
+		const endX = (CHART_W - PAD_R).toFixed(1);
+		const startX = PAD_L.toFixed(1);
+		const baseY = (height - PAD_BOTTOM).toFixed(1);
+		return `${linePath} L${endX},${baseY} L${startX},${baseY} Z`;
+	}
+
+	let rxLine = $derived(buildLine(rxRates));
+	let txLine = $derived(buildLine(txRates));
 	let rxArea = $derived(buildArea(rxLine));
 	let txArea = $derived(buildArea(txLine));
+
+	// Gradient anchor points track chart bounds so a small peak doesn't
+	// fade to nothing before the baseline (userSpaceOnUse).
+	let gradY1 = $derived(PAD_TOP);
+	let gradY2 = $derived(height - PAD_BOTTOM);
 </script>
 
 {#if hasData}
@@ -117,51 +153,59 @@
 			aria-hidden="true"
 		>
 			<defs>
-				<!-- RX below centerline: opaque at top (center), fades toward bottom -->
-				<linearGradient id="rx-area-grad" x1="0" x2="0" y1="0" y2="1">
-					<stop offset="0%" stop-color="var(--accent, #7aa2f7)" stop-opacity="0.45" />
-					<stop offset="100%" stop-color="var(--accent, #7aa2f7)" stop-opacity="0" />
+				<linearGradient
+					id="rx-grad-card"
+					x1="0"
+					y1={gradY1}
+					x2="0"
+					y2={gradY2}
+					gradientUnits="userSpaceOnUse"
+				>
+					<stop offset="0%" stop-color="var(--accent, #60a5fa)" stop-opacity="0.55" />
+					<stop offset="100%" stop-color="var(--accent, #60a5fa)" stop-opacity="0" />
 				</linearGradient>
-				<!-- TX above centerline: opaque at bottom (center), fades toward top -->
-				<linearGradient id="tx-area-grad" x1="0" x2="0" y1="0" y2="1">
-					<stop offset="0%" stop-color="var(--warning, #e0af68)" stop-opacity="0" />
-					<stop offset="100%" stop-color="var(--warning, #e0af68)" stop-opacity="0.35" />
+				<linearGradient
+					id="tx-grad-card"
+					x1="0"
+					y1={gradY1}
+					x2="0"
+					y2={gradY2}
+					gradientUnits="userSpaceOnUse"
+				>
+					<stop offset="0%" stop-color="var(--success, #4ade80)" stop-opacity="0.55" />
+					<stop offset="100%" stop-color="var(--success, #4ade80)" stop-opacity="0" />
 				</linearGradient>
 			</defs>
 
-			<!-- Horizontal centerline dividing upload (above) and download (below) -->
-			<line
-				x1={PAD_X}
-				y1={centerY}
-				x2={CHART_W - PAD_X}
-				y2={centerY}
-				stroke="var(--border, #333)"
-				stroke-width="0.3"
-				stroke-dasharray="2,3"
-				opacity="0.45"
-			/>
+			<!-- Max-scale label top-right -->
+			<text
+				x={CHART_W - 2}
+				y="10"
+				text-anchor="end"
+				font-size="9"
+				font-family="var(--font-mono, monospace)"
+				fill="var(--text-secondary, #bbb)"
+			>{formatBitRate(maxRate)}</text>
 
-			<!-- TX area + line (above center) -->
-			<path d={txArea} fill="url(#tx-area-grad)" />
-			<path
-				d={txLine}
-				fill="none"
-				stroke="var(--warning, #e0af68)"
-				stroke-width="1.2"
-				stroke-linejoin="round"
-				stroke-linecap="round"
-				opacity="0.9"
-			/>
-
-			<!-- RX area + line (below center) -->
-			<path d={rxArea} fill="url(#rx-area-grad)" />
+			<!-- RX first (typically larger area), TX on top so the smaller series stays visible -->
+			<path d={rxArea} fill="url(#rx-grad-card)" />
 			<path
 				d={rxLine}
 				fill="none"
-				stroke="var(--accent, #7aa2f7)"
+				stroke="var(--accent, #60a5fa)"
 				stroke-width="1.4"
 				stroke-linejoin="round"
 				stroke-linecap="round"
+			/>
+			<path d={txArea} fill="url(#tx-grad-card)" />
+			<path
+				d={txLine}
+				fill="none"
+				stroke="var(--success, #4ade80)"
+				stroke-width="1.2"
+				stroke-linejoin="round"
+				stroke-linecap="round"
+				opacity="0.95"
 			/>
 		</svg>
 		<div class="stats-row">
@@ -188,7 +232,7 @@
 	}
 
 	.traffic-chart.clickable:hover {
-		background: rgba(122, 162, 247, 0.06);
+		background: rgba(96, 165, 250, 0.06);
 	}
 
 	.chart-svg {
@@ -209,11 +253,11 @@
 	}
 
 	.rate.rx {
-		color: var(--accent, #7aa2f7);
+		color: var(--accent, #60a5fa);
 	}
 
 	.rate.tx {
-		color: var(--warning, #e0af68);
+		color: var(--success, #4ade80);
 	}
 
 	.peak {
