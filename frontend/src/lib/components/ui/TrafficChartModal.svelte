@@ -169,8 +169,8 @@
 		return `${hh}:${mm}:${ss}`;
 	}
 
-	let firstLabel = $derived(timestamps.length >= 2 ? fmtTime(timestamps[0]) : '');
-	let lastLabel = $derived(
+	let timeStart = $derived(timestamps.length >= 2 ? fmtTime(timestamps[0]) : '');
+	let timeEnd = $derived(
 		timestamps.length >= 2 ? fmtTime(timestamps[timestamps.length - 1]) : ''
 	);
 
@@ -254,6 +254,9 @@
 		<div class="state-msg">Недостаточно данных за 24 часа</div>
 	{:else}
 		<div class="chart-wrap">
+			<div class="chart-top">
+				<span class="max-rate">{formatBitRate(maxRate)}</span>
+			</div>
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<svg
 				bind:this={svgEl}
@@ -290,16 +293,6 @@
 					</linearGradient>
 				</defs>
 
-				<!-- Max-scale top-right -->
-				<text
-					x={CHART_W - 8}
-					y="16"
-					text-anchor="end"
-					font-size="11"
-					font-family="var(--font-mono, monospace)"
-					fill="var(--text-secondary, #bbb)"
-				>{formatBitRate(maxRate)}</text>
-
 				<!-- RX first (background), TX on top so smaller series stays visible -->
 				<path d={rxArea} fill="url(#rx-grad-modal)" />
 				<path
@@ -320,50 +313,6 @@
 					stroke-linecap="round"
 					opacity="0.95"
 				/>
-
-				<!-- Bottom-corner timestamps -->
-				<text
-					x="4"
-					y={CHART_H - 10}
-					text-anchor="start"
-					font-size="10"
-					font-family="var(--font-mono, monospace)"
-					fill="var(--text-secondary, #bbb)"
-				>{firstLabel}</text>
-				<text
-					x={CHART_W - 4}
-					y={CHART_H - 10}
-					text-anchor="end"
-					font-size="10"
-					font-family="var(--font-mono, monospace)"
-					fill="var(--text-secondary, #bbb)"
-				>{lastLabel}</text>
-
-				<!-- Centered live legend -->
-				<g transform={`translate(${CHART_W / 2}, ${CHART_H - 10})`}>
-					<!-- RX legend item (left of center) -->
-					<g transform="translate(-110, 0)">
-						<circle cx="0" cy="-4" r="4" fill="var(--accent, #60a5fa)" />
-						<text
-							x="8"
-							y="0"
-							font-size="11"
-							font-family="var(--font-mono, monospace)"
-							fill="var(--text-primary, #eee)"
-						>Прием: {formatBitRate(liveCurrentRx)}</text>
-					</g>
-					<!-- TX legend item (right of center) -->
-					<g transform="translate(20, 0)">
-						<circle cx="0" cy="-4" r="4" fill="var(--success, #4ade80)" />
-						<text
-							x="8"
-							y="0"
-							font-size="11"
-							font-family="var(--font-mono, monospace)"
-							fill="var(--text-primary, #eee)"
-						>Передача: {formatBitRate(liveCurrentTx)}</text>
-					</g>
-				</g>
 
 				{#if hoverIndex !== null}
 					<g aria-hidden="true">
@@ -413,26 +362,32 @@
 								y="16"
 								fill="var(--text-muted, #888)"
 								font-size="10"
-								font-family="var(--font-mono, monospace)"
 							>{hoverTime}</text>
 							<text
 								x="8"
 								y="32"
 								fill="var(--accent, #60a5fa)"
 								font-size="11"
-								font-family="var(--font-mono, monospace)"
 							>↓ {formatBitRate(rxRates[hoverIndex])}</text>
 							<text
 								x="8"
 								y="48"
 								fill="var(--success, #4ade80)"
 								font-size="11"
-								font-family="var(--font-mono, monospace)"
 							>↑ {formatBitRate(txRates[hoverIndex])}</text>
 						</g>
 					</g>
 				{/if}
 			</svg>
+			<div class="chart-bottom">
+				<span class="time">{timeStart}</span>
+				<span class="legend">
+					<span class="dot rx"></span>Прием: <span class="val rx">{formatBitRate(liveCurrentRx)}</span>
+					<span class="sep">·</span>
+					<span class="dot tx"></span>Передача: <span class="val tx">{formatBitRate(liveCurrentTx)}</span>
+				</span>
+				<span class="time">{timeEnd}</span>
+			</div>
 		</div>
 	{/if}
 </Modal>
@@ -445,8 +400,7 @@
 	}
 	.pill,
 	.pill-muted {
-		font-family: var(--font-mono, monospace);
-		font-size: 11px;
+		font-size: 0.75rem;
 		padding: 2px 8px;
 		border-radius: 4px;
 	}
@@ -463,9 +417,9 @@
 		display: flex;
 		flex-wrap: wrap;
 		align-items: baseline;
-		gap: 8px 14px;
+		gap: 6px 14px;
 		margin-bottom: 12px;
-		font-size: 13px;
+		font-size: 0.8125rem;
 		line-height: 1.4;
 	}
 
@@ -473,17 +427,20 @@
 		display: inline-flex;
 		align-items: baseline;
 		gap: 5px;
+		white-space: nowrap;
 	}
 
 	.stats-line .label {
 		color: var(--text-muted);
-		font-size: 12px;
+		font-size: 0.75rem;
 	}
 
 	.stats-line .val {
-		font-family: var(--font-mono, monospace);
+		font-family: inherit;
 		font-variant-numeric: tabular-nums;
+		font-size: 0.8125rem;
 		color: var(--text-primary);
+		white-space: nowrap;
 	}
 
 	.stats-line .val.rx {
@@ -500,9 +457,7 @@
 	}
 
 	.chart-wrap {
-		background: var(--bg-tertiary, rgba(255, 255, 255, 0.04));
 		border-radius: 8px;
-		padding: 8px;
 	}
 	.chart-svg {
 		display: block;
@@ -510,11 +465,66 @@
 		height: auto;
 	}
 
+	.chart-top {
+		display: flex;
+		justify-content: flex-end;
+		font-size: 0.6875rem;
+		color: var(--text-muted);
+		font-variant-numeric: tabular-nums;
+		padding: 0 4px 2px;
+		min-height: 14px;
+	}
+
+	.chart-bottom {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 4px 4px 0;
+		font-size: 0.6875rem;
+		color: var(--text-muted);
+	}
+	.chart-bottom .time {
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+	.chart-bottom .legend {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		white-space: nowrap;
+	}
+	.chart-bottom .legend .dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		display: inline-block;
+	}
+	.chart-bottom .legend .dot.rx {
+		background: var(--accent);
+	}
+	.chart-bottom .legend .dot.tx {
+		background: var(--success, #4ade80);
+	}
+	.chart-bottom .legend .val {
+		font-variant-numeric: tabular-nums;
+	}
+	.chart-bottom .legend .val.rx {
+		color: var(--accent);
+	}
+	.chart-bottom .legend .val.tx {
+		color: var(--success, #4ade80);
+	}
+	.chart-bottom .legend .sep {
+		color: var(--text-muted);
+		opacity: 0.4;
+		margin: 0 4px;
+	}
+
 	.state-msg {
 		padding: 40px 0;
 		text-align: center;
 		color: var(--text-muted, #888);
-		font-size: 13px;
+		font-size: 0.8125rem;
 	}
 	.state-msg.state-err {
 		color: var(--error, #f52a65);
