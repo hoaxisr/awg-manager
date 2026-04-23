@@ -6,3 +6,4 @@ export { default as SpeedGauge } from './SpeedGauge.svelte';
 export { default as StoreStatusBadge } from './StoreStatusBadge.svelte';
 export { default as Toggle } from './Toggle.svelte';
 export { default as TrafficChart } from './TrafficChart.svelte';
+export { default as TrafficChartModal } from './TrafficChartModal.svelte';
