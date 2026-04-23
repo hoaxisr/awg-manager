@@ -478,7 +478,7 @@ func main() {
 		log.Warnf("ndms hook installer: %v", err)
 	}
 
-	ndmsRunningProvider := newRunningInterfacesAdapter(systemTunnelSvc, settingsStore)
+	ndmsRunningProvider := newRunningInterfacesAdapter(systemTunnelSvc, awgStore, settingsStore)
 
 	ndmsMetricsPoller := ndmsmetrics.New(
 		ndmsQueries.Peers,

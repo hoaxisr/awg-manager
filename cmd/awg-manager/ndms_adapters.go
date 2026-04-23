@@ -10,12 +10,19 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/metrics"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
 
 // systemTunnelLister returns non-managed WireGuard tunnels known to NDMS.
 // The subset the MetricsPoller cares about is the running ones.
 type systemTunnelLister interface {
 	List(ctx context.Context) ([]ndms.SystemWireguardTunnel, error)
+}
+
+// awgStoreLister is the narrow slice of *storage.AWGTunnelStore needed to
+// identify managed-NativeWG NDMS names for exclusion from the NDMS poller.
+type awgStoreLister interface {
+	List() ([]storage.AWGTunnel, error)
 }
 
 // ndmsLogAdapter bridges the Warnf-only interfaces from internal/ndms/query
@@ -52,18 +59,45 @@ func metricsLogger(appLog logging.AppLogger) metrics.Logger {
 // counters (wired separately in main.go).
 type runningInterfacesAdapter struct {
 	systemTunnels systemTunnelLister
+	awgStore      awgStoreLister
 	settings      *storage.SettingsStore
 }
 
-func newRunningInterfacesAdapter(systemTunnels systemTunnelLister, settings *storage.SettingsStore) *runningInterfacesAdapter {
+func newRunningInterfacesAdapter(systemTunnels systemTunnelLister, awgStore awgStoreLister, settings *storage.SettingsStore) *runningInterfacesAdapter {
 	return &runningInterfacesAdapter{
 		systemTunnels: systemTunnels,
+		awgStore:      awgStore,
 		settings:      settings,
 	}
 }
 
+// managedNWGNames returns the set of NDMS interface names (e.g. "Wireguard0")
+// belonging to AWG Manager-managed NativeWG tunnels. These are already polled
+// via sysfs by traffic.SysfsPoller, so the NDMS poller must skip them to
+// avoid double-polling and stale tunnel:traffic events keyed by NDMS name
+// that the UI does not consume. Mirrors the filter in
+// internal/api/systemtunnels.go:managedNativeWGNames.
+func (a *runningInterfacesAdapter) managedNWGNames() map[string]bool {
+	if a.awgStore == nil {
+		return nil
+	}
+	tunnels, err := a.awgStore.List()
+	if err != nil || len(tunnels) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(tunnels))
+	for _, t := range tunnels {
+		if t.Backend == "nativewg" {
+			set[nwg.NewNWGNames(t.NWGIndex).NDMSName] = true
+		}
+	}
+	return set
+}
+
 func (a *runningInterfacesAdapter) RunningInterfaces(ctx context.Context) []metrics.InterfaceRef {
 	out := make([]metrics.InterfaceRef, 0, 8)
+
+	managedNWG := a.managedNWGNames()
 
 	// Fetch system WG tunnels once — used both for non-managed additions
 	// and for filtering server interfaces by up-status below.
@@ -74,6 +108,13 @@ func (a *runningInterfacesAdapter) RunningInterfaces(ctx context.Context) []metr
 			for _, st := range list {
 				sysUp[st.ID] = (st.Status == "up")
 				if st.Status != "up" {
+					continue
+				}
+				// Managed NativeWG tunnels are polled via sysfs by
+				// traffic.SysfsPoller using their kernel iface name
+				// (nwgN). Skipping here prevents a duplicate
+				// tunnel:traffic event keyed by the NDMS name.
+				if managedNWG[st.ID] {
 					continue
 				}
 				out = append(out, metrics.InterfaceRef{ID: st.ID, IsServer: false})
