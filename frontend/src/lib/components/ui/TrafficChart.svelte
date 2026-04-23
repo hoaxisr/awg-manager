@@ -43,6 +43,14 @@
 	let currentRx = $derived(hasData ? rxRates[len - 1] : 0);
 	let currentTx = $derived(hasData ? txRates[len - 1] : 0);
 
+	// Strip the fractional part from formatBitRate output so live values
+	// stop jittering between frames ("819.9 bps" -> "819 bps", "1.2 Kbps" -> "1 Kbps").
+	// Local wrapper — do not touch the shared formatBitRate utility.
+	function formatBitRateRound(bytesPerSec: number): string {
+		const s = formatBitRate(bytesPerSec);
+		return s.replace(/(\d+)\.\d+/, '$1');
+	}
+
 	function buildLine(rates: number[]): string {
 		if (len < 2) return '';
 		const step = (CHART_W - PAD_X * 2) / (len - 1);
@@ -145,13 +153,9 @@
 				opacity="0.85"
 			/>
 		</svg>
-		<div class="x-labels">
-			<span>−1ч</span>
-			<span>сейчас</span>
-		</div>
 		<div class="stats-row">
-			<span class="rate rx">↓ {formatBitRate(currentRx)}</span>
-			<span class="rate tx">↑ {formatBitRate(currentTx)}</span>
+			<span class="rate rx">↓ {formatBitRateRound(currentRx)}</span>
+			<span class="rate tx">↑ {formatBitRateRound(currentTx)}</span>
 			<span class="total">за час: {formatBytes(rxTotal + txTotal)}</span>
 		</div>
 	</div>
@@ -179,17 +183,6 @@
 		display: block;
 		width: 100%;
 		height: auto;
-	}
-
-	.x-labels {
-		display: flex;
-		justify-content: space-between;
-		padding: 0 2px;
-		font-size: 9px;
-		font-family: var(--font-mono, monospace);
-		color: var(--text-muted, #555);
-		opacity: 0.7;
-		line-height: 1;
 	}
 
 	.stats-row {
