@@ -489,6 +489,18 @@ func main() {
 	)
 	ndmsMetricsPoller.SetHistoryFeeder(trafficHistory)
 
+	// Managed-tunnel metrics: read /sys/class/net/<iface>/statistics directly.
+	// One poller per process — handles both kernel (opkgtun*, awgm*) and
+	// nativewg (nwg*) tunnels. Runs alongside ndmsMetricsPoller, which now
+	// serves only servers and non-managed system WG tunnels.
+	sysfsTrafficPoller := traffic.NewSysfsPoller(
+		tunnelService,
+		trafficHistory,
+		eventBus,
+		metricsLogger(loggingService),
+	)
+	sysfsTrafficPoller.Start()
+
 	orch.SetEventBus(eventBus)
 	loggingService.SetEventBus(eventBus)
 	tunnelService.SetEventBus(eventBus)
@@ -696,6 +708,7 @@ func main() {
 		}
 	})
 	srv.AddShutdownHook(ndmsDispatcher.Stop)
+	srv.AddShutdownHook(sysfsTrafficPoller.Stop)
 	srv.AddShutdownHook(ndmsMetricsPoller.Stop)
 	srv.AddShutdownHook(loggingService.Stop)
 	srv.AddShutdownHook(trafficHistory.Stop)
