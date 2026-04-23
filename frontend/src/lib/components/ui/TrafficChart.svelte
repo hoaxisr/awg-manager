@@ -47,17 +47,6 @@
 	let currentRx = $derived(hasData ? rxRates[len - 1] : 0);
 	let currentTx = $derived(hasData ? txRates[len - 1] : 0);
 
-	// Peak rate within the current window — shown in the stats row so the
-	// user gets a sense of headroom beyond the instantaneous "Сейчас" values.
-	let peakRate = $derived.by(() => {
-		let m = 0;
-		for (let i = 0; i < len; i++) {
-			if (rxRates[i] > m) m = rxRates[i];
-			if (txRates[i] > m) m = txRates[i];
-		}
-		return m;
-	});
-
 	// Strip the fractional part from formatBitRate output so live values
 	// stop jittering between frames ("819.9 бит/с" -> "819 бит/с", "1.2 Кбит/с" -> "1 Кбит/с").
 	// Local wrapper — do not touch the shared formatBitRate utility.
@@ -151,6 +140,11 @@
 		: undefined}
 	aria-label={onclick ? 'Открыть детальный график' : undefined}
 >
+	{#if hasData}
+		<div class="chart-top">
+			<span class="max-rate">{formatBitRate(maxRate)}</span>
+		</div>
+	{/if}
 	<svg
 		class="chart-svg"
 		viewBox={`0 0 ${CHART_W} ${height}`}
@@ -183,16 +177,6 @@
 		</defs>
 
 		{#if hasData}
-			<!-- Max-scale label top-right -->
-			<text
-				x={CHART_W - 2}
-				y="10"
-				text-anchor="end"
-				font-size="9"
-				font-family="var(--font-mono, monospace)"
-				fill="var(--text-secondary, #bbb)"
-			>{formatBitRate(maxRate)}</text>
-
 			<!-- RX first (typically larger area), TX on top so the smaller series stays visible -->
 			<path d={rxArea} fill="url(#rx-grad-card)" />
 			<path
@@ -218,7 +202,6 @@
 	<div class="stats-row">
 		<span class="rate rx">↓ {fmtRate(currentRx)}</span>
 		<span class="rate tx">↑ {fmtRate(currentTx)}</span>
-		<span class="peak">пик: {fmtRate(peakRate)}</span>
 		<span class="total">всего за час: {formatBytes(rxTotal + txTotal)}</span>
 	</div>
 </div>
@@ -241,6 +224,16 @@
 		background: rgba(96, 165, 250, 0.06);
 	}
 
+	.chart-top {
+		display: flex;
+		justify-content: flex-end;
+		font-size: 0.6875rem;
+		color: var(--text-muted);
+		font-variant-numeric: tabular-nums;
+		padding: 0 2px 1px;
+		min-height: 12px;
+	}
+
 	.chart-svg {
 		display: block;
 		width: 100%;
@@ -254,8 +247,8 @@
 		justify-content: space-between;
 		align-items: baseline;
 		padding: 0 2px;
-		font-size: 11px;
-		font-family: var(--font-mono, monospace);
+		font-size: 0.6875rem;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.rate.rx {
@@ -264,10 +257,6 @@
 
 	.rate.tx {
 		color: var(--success, #4ade80);
-	}
-
-	.peak {
-		color: var(--text-secondary, #aaa);
 	}
 
 	.total {
