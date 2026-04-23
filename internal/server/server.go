@@ -460,7 +460,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/tunnels/export", guarded(tunnelsHandler.Export))
 	mux.HandleFunc("/api/tunnels/export-all", guarded(tunnelsHandler.ExportAll))
 	mux.HandleFunc("/api/tunnels/replace", guarded(tunnelsHandler.ReplaceConf))
-	mux.HandleFunc("/api/tunnels/traffic-history", guarded(tunnelsHandler.TrafficHistory))
+	mux.HandleFunc("/api/tunnels/traffic", guarded(tunnelsHandler.Traffic))
 
 	// Control operations (protected + boot guarded)
 	mux.HandleFunc("/api/control/start", guarded(controlHandler.Start))

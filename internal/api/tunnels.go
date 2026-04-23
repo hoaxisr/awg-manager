@@ -490,9 +490,13 @@ func (h *TunnelsHandler) writeAll(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// TrafficHistory returns rate history for a tunnel.
-// GET /api/tunnels/traffic-history?id=xxx&period=1h
-func (h *TunnelsHandler) TrafficHistory(w http.ResponseWriter, r *http.Request) {
+// Traffic returns rate history + aggregates for a single tunnel.
+// GET /api/tunnels/traffic?id=<tunnelID>&period=1h|24h
+//
+// Only 1h and 24h are accepted — anything else returns 400. 1h is
+// what the card chart fetches on mount to backfill before SSE takes
+// over; 24h is what the detail modal fetches when it opens.
+func (h *TunnelsHandler) Traffic(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
 		return
@@ -508,29 +512,32 @@ func (h *TunnelsHandler) TrafficHistory(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	period := r.URL.Query().Get("period")
 	var since time.Duration
-	switch period {
-	case "3h":
-		since = 3 * time.Hour
+	switch r.URL.Query().Get("period") {
+	case "1h":
+		since = time.Hour
 	case "24h":
 		since = 24 * time.Hour
 	default:
-		since = time.Hour
+		response.Error(w, "period must be 1h or 24h", "INVALID_PERIOD")
+		return
 	}
 
 	const maxPoints = 360
 
-	if h.traffic == nil {
-		response.Success(w, []traffic.Point{})
-		return
+	resp := map[string]any{
+		"points": []traffic.Point{},
+		"stats":  traffic.Stats{},
 	}
-
-	pts := h.traffic.Get(id, since, maxPoints)
-	if pts == nil {
-		pts = []traffic.Point{}
+	if h.traffic != nil {
+		pts := h.traffic.Get(id, since, maxPoints)
+		if pts == nil {
+			pts = []traffic.Point{}
+		}
+		resp["points"] = pts
+		resp["stats"] = h.traffic.Stats(id, since)
 	}
-	response.Success(w, pts)
+	response.Success(w, resp)
 }
 
 // Get returns a single tunnel by ID.
