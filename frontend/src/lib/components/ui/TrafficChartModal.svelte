@@ -75,7 +75,7 @@
 	// ---- Chart geometry --------------------------------------------------
 	const CHART_W = 800;
 	const CHART_H = 200;
-	const PAD_L = 60;
+	const PAD_L = 80;
 	const PAD_R = 8;
 	const PAD_TOP = 8;
 	const PAD_BOTTOM = 20;
@@ -234,10 +234,6 @@
 				<span class="tx">{formatBitRate(stats.avgTx)}</span>
 			</div>
 		</div>
-		<div class="kpi">
-			<div class="kpi-label">Точек</div>
-			<div class="kpi-val">{stats.points}</div>
-		</div>
 	</div>
 
 	{#if loading}
@@ -282,7 +278,7 @@
 						y={gl.y}
 						text-anchor="end"
 						dominant-baseline="middle"
-						fill="var(--text-muted, #888)"
+						fill="var(--text-secondary, #bbb)"
 						font-size="9"
 						font-family="var(--font-mono, monospace)"
 					>{gl.label}</text>
@@ -309,7 +305,7 @@
 						x={xl.x}
 						y={CHART_H - 4}
 						text-anchor="middle"
-						fill="var(--text-muted, #888)"
+						fill="var(--text-secondary, #bbb)"
 						font-size="9"
 						font-family="var(--font-mono, monospace)"
 					>{xl.label}</text>
@@ -416,7 +412,7 @@
 
 	.kpi-grid {
 		display: grid;
-		grid-template-columns: repeat(4, 1fr);
+		grid-template-columns: repeat(3, 1fr);
 		gap: 8px;
 		margin-bottom: 16px;
 	}

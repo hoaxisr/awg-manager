@@ -16,7 +16,7 @@
 		txRates,
 		rxTotal = 0,
 		txTotal = 0,
-		height = 68,
+		height = 84,
 		onclick
 	}: Props = $props();
 
@@ -25,11 +25,13 @@
 	const PAD_TOP = 2;
 	const CHART_W = 300;
 
+	let centerY = $derived(height / 2);
+
 	let len = $derived(Math.min(rxRates.length, txRates.length));
 	let hasData = $derived(len >= 2);
 
-	// Scale Y by the peak RX (area) so TX line stays visually subordinate
-	// but still visible when it's a small fraction of RX.
+	// Scale Y by the peak across both series so both halves of the mirror
+	// layout share the same reference — makes RX vs TX visually comparable.
 	let maxRate = $derived.by(() => {
 		if (!hasData) return 1;
 		let m = 1;
@@ -43,23 +45,34 @@
 	let currentRx = $derived(hasData ? rxRates[len - 1] : 0);
 	let currentTx = $derived(hasData ? txRates[len - 1] : 0);
 
+	// Peak rate within the current window — shown in the stats row so the
+	// user gets a sense of headroom beyond the instantaneous "Сейчас" values.
+	let peakRate = $derived.by(() => {
+		let m = 0;
+		for (let i = 0; i < len; i++) {
+			if (rxRates[i] > m) m = rxRates[i];
+			if (txRates[i] > m) m = txRates[i];
+		}
+		return m;
+	});
+
 	// Strip the fractional part from formatBitRate output so live values
-	// stop jittering between frames ("819.9 bps" -> "819 bps", "1.2 Kbps" -> "1 Kbps").
+	// stop jittering between frames ("819.9 бит/с" -> "819 бит/с", "1.2 Кбит/с" -> "1 Кбит/с").
 	// Local wrapper — do not touch the shared formatBitRate utility.
 	function formatBitRateRound(bytesPerSec: number): string {
 		const s = formatBitRate(bytesPerSec);
 		return s.replace(/(\d+)\.\d+/, '$1');
 	}
 
-	function buildLine(rates: number[]): string {
+	function buildLine(rates: number[], dir: 'up' | 'down'): string {
 		if (len < 2) return '';
 		const step = (CHART_W - PAD_X * 2) / (len - 1);
-		const h = height - PAD_TOP - PAD_BOTTOM;
+		const half = dir === 'up' ? centerY - PAD_TOP : centerY - PAD_BOTTOM;
 		const pts: string[] = [];
 		for (let i = 0; i < len; i++) {
 			const x = PAD_X + i * step;
-			const norm = (rates[i] / maxRate) * h;
-			const y = height - PAD_BOTTOM - norm;
+			const norm = (rates[i] / maxRate) * half;
+			const y = dir === 'up' ? centerY - norm : centerY + norm;
 			pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
 		}
 		return `M${pts.join(' L')}`;
@@ -68,14 +81,15 @@
 	function buildArea(line: string): string {
 		if (!line) return '';
 		const endX = (CHART_W - PAD_X).toFixed(1);
-		const baseY = (height - PAD_BOTTOM).toFixed(1);
+		const baseY = centerY.toFixed(1);
 		const startX = PAD_X.toFixed(1);
 		return `${line} L${endX},${baseY} L${startX},${baseY} Z`;
 	}
 
-	let rxLine = $derived(buildLine(rxRates));
-	let txLine = $derived(buildLine(txRates));
+	let rxLine = $derived(buildLine(rxRates, 'down'));
+	let txLine = $derived(buildLine(txRates, 'up'));
 	let rxArea = $derived(buildArea(rxLine));
+	let txArea = $derived(buildArea(txLine));
 </script>
 
 {#if hasData}
@@ -103,35 +117,43 @@
 			aria-hidden="true"
 		>
 			<defs>
+				<!-- RX below centerline: opaque at top (center), fades toward bottom -->
 				<linearGradient id="rx-area-grad" x1="0" x2="0" y1="0" y2="1">
 					<stop offset="0%" stop-color="var(--accent, #7aa2f7)" stop-opacity="0.45" />
 					<stop offset="100%" stop-color="var(--accent, #7aa2f7)" stop-opacity="0" />
 				</linearGradient>
+				<!-- TX above centerline: opaque at bottom (center), fades toward top -->
+				<linearGradient id="tx-area-grad" x1="0" x2="0" y1="0" y2="1">
+					<stop offset="0%" stop-color="var(--warning, #e0af68)" stop-opacity="0" />
+					<stop offset="100%" stop-color="var(--warning, #e0af68)" stop-opacity="0.35" />
+				</linearGradient>
 			</defs>
 
-			<!-- 50% + 25% grid lines -->
+			<!-- Horizontal centerline dividing upload (above) and download (below) -->
 			<line
 				x1={PAD_X}
-				y1={(height - PAD_TOP - PAD_BOTTOM) * 0.25 + PAD_TOP}
+				y1={centerY}
 				x2={CHART_W - PAD_X}
-				y2={(height - PAD_TOP - PAD_BOTTOM) * 0.25 + PAD_TOP}
+				y2={centerY}
 				stroke="var(--border, #333)"
 				stroke-width="0.3"
 				stroke-dasharray="2,3"
-				opacity="0.35"
-			/>
-			<line
-				x1={PAD_X}
-				y1={(height - PAD_TOP - PAD_BOTTOM) * 0.5 + PAD_TOP}
-				x2={CHART_W - PAD_X}
-				y2={(height - PAD_TOP - PAD_BOTTOM) * 0.5 + PAD_TOP}
-				stroke="var(--border, #333)"
-				stroke-width="0.3"
-				stroke-dasharray="2,3"
-				opacity="0.35"
+				opacity="0.45"
 			/>
 
-			<!-- RX area + line -->
+			<!-- TX area + line (above center) -->
+			<path d={txArea} fill="url(#tx-area-grad)" />
+			<path
+				d={txLine}
+				fill="none"
+				stroke="var(--warning, #e0af68)"
+				stroke-width="1.2"
+				stroke-linejoin="round"
+				stroke-linecap="round"
+				opacity="0.9"
+			/>
+
+			<!-- RX area + line (below center) -->
 			<path d={rxArea} fill="url(#rx-area-grad)" />
 			<path
 				d={rxLine}
@@ -141,22 +163,12 @@
 				stroke-linejoin="round"
 				stroke-linecap="round"
 			/>
-
-			<!-- TX line (no fill) -->
-			<path
-				d={txLine}
-				fill="none"
-				stroke="var(--warning, #e0af68)"
-				stroke-width="1.2"
-				stroke-linejoin="round"
-				stroke-linecap="round"
-				opacity="0.85"
-			/>
 		</svg>
 		<div class="stats-row">
 			<span class="rate rx">↓ {formatBitRateRound(currentRx)}</span>
 			<span class="rate tx">↑ {formatBitRateRound(currentTx)}</span>
-			<span class="total">за час: {formatBytes(rxTotal + txTotal)}</span>
+			<span class="peak">пик: {formatBitRateRound(peakRate)}</span>
+			<span class="total">всего за час: {formatBytes(rxTotal + txTotal)}</span>
 		</div>
 	</div>
 {/if}
@@ -187,6 +199,7 @@
 
 	.stats-row {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 10px;
 		justify-content: space-between;
 		align-items: baseline;
@@ -201,6 +214,10 @@
 
 	.rate.tx {
 		color: var(--warning, #e0af68);
+	}
+
+	.peak {
+		color: var(--text-secondary, #aaa);
 	}
 
 	.total {
