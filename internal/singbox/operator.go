@@ -9,10 +9,24 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
+)
+
+const (
+	// maxSingboxBootWait caps how long startAndWait polls the Clash API
+	// before declaring the cold start failed. On MIPS routers with gvisor
+	// enabled, sing-box boot can take 5–10s; 15s leaves headroom without
+	// letting a truly-broken config hang the caller indefinitely.
+	maxSingboxBootWait = 15 * time.Second
+
+	// singboxProbeInterval controls how often we poll Clash during boot.
+	// 200ms keeps the wait snappy on fast starts (~200ms to detect ready)
+	// without hammering the daemon when it takes the full 15s.
+	singboxProbeInterval = 200 * time.Millisecond
 )
 
 const (
@@ -320,11 +334,48 @@ func (o *Operator) Reconcile(ctx context.Context) error {
 		return nil
 	}
 	if running, _ := o.proc.IsRunning(); !running {
-		if err := o.proc.Start(); err != nil {
+		if err := o.startAndWait(ctx); err != nil {
 			return fmt.Errorf("start: %w", err)
 		}
 	}
 	return o.proxyMgr.SyncProxies(ctx, tunnels)
+}
+
+// startAndWait launches sing-box and blocks until Clash API responds or
+// maxSingboxBootWait elapses. Replaces raw proc.Start() in cold-start paths
+// so the caller never returns "success" for a daemon that exited, crashed
+// during init, or is still loading gvisor/TUN. On timeout the half-started
+// process is stopped to avoid a zombie PID file misleading future ticks.
+func (o *Operator) startAndWait(ctx context.Context) error {
+	if err := o.proc.Start(); err != nil {
+		return err
+	}
+	if err := o.waitClashReady(ctx, maxSingboxBootWait); err != nil {
+		o.log.Warn("sing-box start: clash API did not become ready, stopping", "err", err)
+		_ = o.proc.Stop()
+		return err
+	}
+	return nil
+}
+
+// waitClashReady polls ClashClient.IsHealthy until it returns true, the
+// timeout expires, or ctx is cancelled. First probe is immediate so a
+// fast start returns without a mandatory tick wait.
+func (o *Operator) waitClashReady(ctx context.Context, timeout time.Duration) error {
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(singboxProbeInterval)
+	defer ticker.Stop()
+	for {
+		if o.clash.IsHealthy() {
+			return nil
+		}
+		select {
+		case <-probeCtx.Done():
+			return fmt.Errorf("clash API not ready after %s", timeout)
+		case <-ticker.C:
+		}
+	}
 }
 
 // Install installs sing-box-naive from the awg-manager repo (Entware
@@ -415,7 +466,7 @@ func (o *Operator) applyConfig(ctx context.Context, cfg *Config) error {
 		return fmt.Errorf("promote config: %w", err)
 	}
 	if running, _ := o.proc.IsRunning(); !running {
-		return o.proc.Start()
+		return o.startAndWait(ctx)
 	}
 	return o.proc.Reload()
 }
