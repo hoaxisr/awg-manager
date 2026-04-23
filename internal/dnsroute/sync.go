@@ -20,7 +20,6 @@ type targetGroup struct {
 	name     string
 	includes []string
 	excludes []string
-	subnets  []string
 }
 
 type targetRoute struct {
@@ -219,11 +218,17 @@ func buildTargetState(data *StoreData, failedTunnels map[string]struct{}) target
 		// Keenetic's own UI toggle semantics.
 		routeDisabled := !list.Enabled
 
-		chunks := chunkDomains(list.Domains, MaxDomainsPerGroup)
-		// Ensure at least one group even if Domains is empty but Subnets is not.
-		if len(chunks) == 0 {
-			chunks = [][]string{{}}
-		}
+		// Domains and subnets are structurally identical inside an NDMS
+		// object-group fqdn — both consume one `include` slot and count
+		// against the same MaxDomainsPerGroup limit. Merge them before
+		// chunking so a huge CIDR list still gets split across groups.
+		items := make([]string, 0, len(list.Domains)+len(list.Subnets))
+		items = append(items, list.Domains...)
+		items = append(items, list.Subnets...)
+
+		// Excludes live in the first group only and also count against
+		// the group's capacity; shrink the first chunk's budget accordingly.
+		chunks := chunkWithFirstBudget(items, MaxDomainsPerGroup, len(list.Excludes))
 
 		for i, chunk := range chunks {
 			groupName := buildGroupName(list.ID, list.Name, i+1)
@@ -233,10 +238,8 @@ func buildTargetState(data *StoreData, failedTunnels map[string]struct{}) target
 				includes: chunk,
 			}
 
-			// Excludes and subnets go into the first group only.
 			if i == 0 {
 				g.excludes = list.Excludes
-				g.subnets = list.Subnets
 			}
 
 			ts.groups = append(ts.groups, g)
@@ -270,30 +273,53 @@ func buildTargetState(data *StoreData, failedTunnels map[string]struct{}) target
 	return ts
 }
 
-// chunkDomains splits a domain slice into chunks of at most maxSize.
-func chunkDomains(domains []string, maxSize int) [][]string {
-	if len(domains) == 0 {
+// chunkWithFirstBudget splits items into chunks of at most maxPerChunk, where
+// the first chunk is shrunk by firstReserved slots so the caller can inject
+// extra elements (excludes) into that group without overflowing NDMS's limit.
+//
+// The returned slice always has len == ceil-ish of items size; if firstReserved
+// consumes all of the first chunk's capacity, chunks[0] is empty (caller still
+// needs a group for the excludes) and items start in chunks[1].
+func chunkWithFirstBudget(items []string, maxPerChunk, firstReserved int) [][]string {
+	if maxPerChunk <= 0 || len(items) == 0 {
 		return nil
 	}
+	firstBudget := maxPerChunk - firstReserved
+	if firstBudget < 0 {
+		firstBudget = 0
+	}
 	var chunks [][]string
-	for i := 0; i < len(domains); i += maxSize {
-		end := i + maxSize
-		if end > len(domains) {
-			end = len(domains)
+	end := firstBudget
+	if end > len(items) {
+		end = len(items)
+	}
+	chunks = append(chunks, items[:end])
+	for i := end; i < len(items); i += maxPerChunk {
+		j := i + maxPerChunk
+		if j > len(items) {
+			j = len(items)
 		}
-		chunks = append(chunks, domains[i:end])
+		chunks = append(chunks, items[i:j])
 	}
 	return chunks
 }
 
-// filterAWGState extracts only AWG_* groups and their routes from the full router state.
+// filterAWGState extracts only awg-manager-owned groups and their routes from
+// the full router state. Ownership is determined by either the new name shape
+// ({slug}_p{N}) or the legacy "AWG_" prefix — the latter ensures pre-rename
+// groups from older versions are picked up as "ours" and get cleaned up by
+// reconcile on the next cycle, since they won't appear in the target state.
 func filterAWGState(groups []ndms.FQDNGroup, routes []ndms.DNSRouteRule) currentState {
 	cs := currentState{
 		groups: make(map[string]currentGroupData),
 	}
 
+	isOwned := func(name string) bool {
+		return IsAWGManagedName(name) || strings.HasPrefix(name, "AWG_")
+	}
+
 	for _, g := range groups {
-		if !strings.HasPrefix(g.Name, GroupPrefix) {
+		if !isOwned(g.Name) {
 			continue
 		}
 		cs.groups[g.Name] = currentGroupData{
@@ -303,7 +329,7 @@ func filterAWGState(groups []ndms.FQDNGroup, routes []ndms.DNSRouteRule) current
 	}
 
 	for _, r := range routes {
-		if !strings.HasPrefix(r.Group, GroupPrefix) {
+		if !isOwned(r.Group) {
 			continue
 		}
 		var fallback string
@@ -344,22 +370,18 @@ func computeDiff(current currentState, target targetState) rciDiff {
 	// Create or update
 	for _, tg := range target.groups {
 		cur, exists := current.groups[tg.name]
-		allIncludes := tg.includes
-		if len(tg.subnets) > 0 {
-			allIncludes = append(append([]string{}, tg.includes...), tg.subnets...)
-		}
 
 		if !exists {
 			diff.groupUpdates = append(diff.groupUpdates, rciGroupUpdate{
 				name:        tg.name,
-				addIncludes: allIncludes,
+				addIncludes: tg.includes,
 				addExcludes: tg.excludes,
 				isNew:       true,
 			})
 			continue
 		}
 
-		addInc, removeInc := diffStringSlices(cur.includes, allIncludes)
+		addInc, removeInc := diffStringSlices(cur.includes, tg.includes)
 		addExc, removeExc := diffStringSlices(cur.excludes, tg.excludes)
 
 		if len(addInc) > 0 || len(removeInc) > 0 || len(addExc) > 0 || len(removeExc) > 0 {
@@ -658,19 +680,44 @@ func routesEqual(current []currentRoute, target []targetRoute) bool {
 	return true
 }
 
-// buildGroupName generates a human-readable NDMS object-group name.
-// Format: AWG_{num}_{sanitized_name}_{chunk}
-// Example: list_2 "hetzner" chunk 1 → "AWG_2_hetzner_1"
+// buildGroupName generates a short NDMS object-group name.
+// Format: {slug}_p{chunk}
+// Example: list_2 "hetzner" chunk 1 → "hetzner_p1"
+//
+// slug is the sanitized list name. If the name sanitizes to empty (e.g. only
+// punctuation), the numeric portion of listID is used as a fallback so the
+// group name is never "_pN".
 func buildGroupName(listID, listName string, chunk int) string {
+	return fmt.Sprintf("%s_p%d", GroupSlug(listID, listName), chunk)
+}
+
+// GroupSlug returns the slug segment of an awg-managed group name (the part
+// before the _pN chunk suffix). Exported so consumers (e.g. connections.rules)
+// can build a reverse "slug → list-ID" lookup that matches our naming.
+func GroupSlug(listID, listName string) string {
+	slug := sanitizeGroupName(listName)
+	if slug != "" {
+		return slug
+	}
 	num := listID
 	if strings.HasPrefix(listID, "list_") {
 		num = strings.TrimPrefix(listID, "list_")
 	}
-	name := sanitizeGroupName(listName)
-	if name == "" {
-		name = num
-	}
-	return fmt.Sprintf("%s%s_%s_%d", GroupPrefix, num, name, chunk)
+	return num
+}
+
+// awgGroupNameRE matches group names produced by buildGroupName: a slug of
+// lowercase letters/digits/underscores followed by "_p<digits>". Used by
+// filterAWGState to tell our groups apart from user-created NDMS groups
+// without relying on a fixed name prefix.
+var awgGroupNameRE = regexp.MustCompile(`^[a-z0-9_]+_p[0-9]+$`)
+
+// IsAWGManagedName reports whether the given group/route name was produced
+// by buildGroupName. Conservative — requires the exact shape, so mixed-case
+// or dashed names (typical of user-created groups in Keenetic UI) are
+// excluded.
+func IsAWGManagedName(name string) bool {
+	return awgGroupNameRE.MatchString(name)
 }
 
 // maxGroupNamePart is the max length of the sanitized name portion.

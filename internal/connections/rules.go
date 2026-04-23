@@ -89,74 +89,60 @@ func parseObjectGroupRuntime(r io.Reader) ([]runtimeGroup, error) {
 	return groups, nil
 }
 
-// parseGroupNameToListID extracts the list ID from an awg-manager-managed
-// object-group name. Returns ("", false) for non-awg group names or names
-// without a numeric list segment.
+// parseGroupNameToSlug extracts the slug segment from an awg-manager-managed
+// object-group name of the form "<slug>_p<N>". Returns ("", false) for names
+// that don't match the expected shape (e.g. user-created NDMS groups).
 //
-// Format produced by dnsroute.buildGroupName:
+// Examples:
 //
-//	AWG_<num>_<sanitized_name>_<chunk>
-//
-// where num is the digit suffix from a "list_<num>" ID. Examples:
-//
-//	"AWG_6_youtube_1"             -> "list_6"
-//	"AWG_2_instagram_facebook_w_1" -> "list_2"
-func parseGroupNameToListID(groupName string) (string, bool) {
-	const prefix = "AWG_"
-	if !strings.HasPrefix(groupName, prefix) {
+//	"youtube_p1"              -> "youtube"
+//	"instagram_facebook_w_p3" -> "instagram_facebook_w"
+//	"1_p1"                    -> "1"   (fallback slug = numeric list ID)
+func parseGroupNameToSlug(groupName string) (string, bool) {
+	if !dnsroute.IsAWGManagedName(groupName) {
 		return "", false
 	}
-	rest := groupName[len(prefix):]
-	if rest == "" {
+	idx := strings.LastIndex(groupName, "_p")
+	if idx <= 0 {
 		return "", false
 	}
-	// First segment up to the next "_" must be all digits.
-	idx := strings.IndexByte(rest, '_')
-	var num string
-	if idx < 0 {
-		num = rest
-	} else {
-		num = rest[:idx]
-	}
-	if num == "" {
-		return "", false
-	}
-	for _, r := range num {
-		if r < '0' || r > '9' {
-			return "", false
-		}
-	}
-	return "list_" + num, true
+	return groupName[:idx], true
 }
 
 // buildIPRuleMap walks the parsed runtime groups and produces an IP -> []RuleHit
 // lookup table. Non-AWG groups are skipped. The lister is consulted once to
-// resolve list IDs to display names; lister failure is non-fatal — hits are
-// returned with empty ListName.
+// reverse-map a slug (sanitized list name) back to its list ID and display
+// name; lister failure is non-fatal — unresolved groups are simply skipped.
+//
+// Slug collisions (two lists sanitizing to the same slug) resolve to whichever
+// list lands in the map last. This is a deliberate trade-off accepted when the
+// group-name format was shortened from "AWG_<num>_<slug>_pN" to "AWG_<slug>_pN".
 func buildIPRuleMap(ctx context.Context, groups []runtimeGroup, lister DNSListLister) map[string][]RuleHit {
-	// Resolve list ID -> name once. lister may be nil or may fail; both
-	// are non-fatal for the resulting map.
-	names := make(map[string]string)
+	type listRef struct{ id, name string }
+	slugs := make(map[string]listRef)
 	if lister != nil {
 		if lists, err := lister.List(ctx); err == nil {
 			for _, l := range lists {
-				names[l.ID] = l.Name
+				slugs[dnsroute.GroupSlug(l.ID, l.Name)] = listRef{id: l.ID, name: l.Name}
 			}
 		}
 	}
 
 	out := make(map[string][]RuleHit)
 	for _, g := range groups {
-		listID, ok := parseGroupNameToListID(g.Name)
+		slug, ok := parseGroupNameToSlug(g.Name)
 		if !ok {
 			continue
 		}
-		listName := names[listID]
+		ref, known := slugs[slug]
+		if !known {
+			continue
+		}
 		for _, e := range g.Entries {
 			for _, ip := range e.IPs {
 				out[ip] = append(out[ip], RuleHit{
-					ListID:   listID,
-					ListName: listName,
+					ListID:   ref.id,
+					ListName: ref.name,
 					FQDN:     e.FQDN,
 					Pattern:  e.Parent,
 				})

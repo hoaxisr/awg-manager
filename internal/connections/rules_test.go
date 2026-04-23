@@ -18,32 +18,33 @@ func (f *fakeLister) List(_ context.Context) ([]dnsroute.DomainList, error) {
 	return f.lists, f.err
 }
 
-func TestParseGroupNameToListID(t *testing.T) {
+func TestParseGroupNameToSlug(t *testing.T) {
 	tests := []struct {
 		name string
 		want string
 		ok   bool
 	}{
-		{"AWG_6_youtube_1", "list_6", true},
-		{"AWG_1_youtube_1", "list_1", true},
-		{"AWG_2_instagram_facebook_w_1", "list_2", true},
-		{"AWG_42_my_long_list_5", "list_42", true},
-		{"AWG_1_a_1", "list_1", true},
-		{"NOT_AWG_1_x_1", "", false},
-		{"AWG", "", false},
-		{"AWG_", "", false},
-		{"AWG__no_num_1", "", false},
-		{"AWG_abc_x_1", "", false},
+		{"youtube_p1", "youtube", true},
+		{"instagram_facebook_w_p3", "instagram_facebook_w", true},
+		{"my_long_list_p5", "my_long_list", true},
+		{"a_p1", "a", true},
+		{"1_p1", "1", true}, // numeric fallback slug
+		{"Some-User-Group", "", false},
+		{"Youtube_p1", "", false}, // mixed case not produced by our sanitizer
+		{"youtube", "", false},    // missing _pN suffix
+		{"youtube_p", "", false},  // empty chunk
+		{"youtube_pxx", "", false},
+		{"_p1", "", false}, // empty slug
 		{"", "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := parseGroupNameToListID(tt.name)
+			got, ok := parseGroupNameToSlug(tt.name)
 			if ok != tt.ok {
-				t.Fatalf("parseGroupNameToListID(%q) ok = %v, want %v", tt.name, ok, tt.ok)
+				t.Fatalf("parseGroupNameToSlug(%q) ok = %v, want %v", tt.name, ok, tt.ok)
 			}
 			if got != tt.want {
-				t.Errorf("parseGroupNameToListID(%q) = %q, want %q", tt.name, got, tt.want)
+				t.Errorf("parseGroupNameToSlug(%q) = %q, want %q", tt.name, got, tt.want)
 			}
 		})
 	}
@@ -53,7 +54,7 @@ func TestParseObjectGroupRuntime_SingleEntry(t *testing.T) {
 	body := []byte(`{
 		"group": [
 			{
-				"group-name": "AWG_1_youtube_1",
+				"group-name": "youtube_p1",
 				"entry": [
 					{
 						"fqdn": "m.youtube.com",
@@ -78,8 +79,8 @@ func TestParseObjectGroupRuntime_SingleEntry(t *testing.T) {
 		t.Fatalf("groups = %d, want 1", len(groups))
 	}
 	g := groups[0]
-	if g.Name != "AWG_1_youtube_1" {
-		t.Errorf("Name = %q, want AWG_1_youtube_1", g.Name)
+	if g.Name != "youtube_p1" {
+		t.Errorf("Name = %q, want youtube_p1", g.Name)
 	}
 	if len(g.Entries) != 1 {
 		t.Fatalf("Entries = %d, want 1", len(g.Entries))
@@ -103,7 +104,7 @@ func TestParseObjectGroupRuntime_IPv4AndIPv6(t *testing.T) {
 	body := []byte(`{
 		"group": [
 			{
-				"group-name": "AWG_1_youtube_1",
+				"group-name": "youtube_p1",
 				"entry": [
 					{
 						"fqdn": "yt3.ggpht.com",
@@ -147,13 +148,13 @@ func TestParseObjectGroupRuntime_MultipleGroups(t *testing.T) {
 	body := []byte(`{
 		"group": [
 			{
-				"group-name": "AWG_1_youtube_1",
+				"group-name": "youtube_p1",
 				"entry": [
 					{"fqdn": "a.com", "parent": "a.com", "ipv4": [{"address": "1.1.1.1"}]}
 				]
 			},
 			{
-				"group-name": "AWG_2_other_1",
+				"group-name": "other_p1",
 				"entry": [
 					{"fqdn": "b.com", "parent": "b.com", "ipv4": [{"address": "2.2.2.2"}]}
 				]
@@ -190,7 +191,7 @@ func TestParseObjectGroupRuntime_MalformedJSON(t *testing.T) {
 func TestBuildIPRuleMap_SingleHit(t *testing.T) {
 	groups := []runtimeGroup{
 		{
-			Name: "AWG_6_youtube_1",
+			Name: "youtube_p1",
 			Entries: []runtimeEntry{
 				{
 					FQDN:   "m.youtube.com",
@@ -228,14 +229,14 @@ func TestBuildIPRuleMap_IPInMultipleRules(t *testing.T) {
 	// Same IP appears under two different lists (CDN shared by multiple sites)
 	groups := []runtimeGroup{
 		{
-			Name: "AWG_6_youtube_1",
+			Name: "youtube_p1",
 			Entries: []runtimeEntry{
 				{FQDN: "lh3.googleusercontent.com", Parent: "googleusercontent.com",
 					IPs: []string{"142.251.1.132"}},
 			},
 		},
 		{
-			Name: "AWG_5_other_1",
+			Name: "khostingi_p1",
 			Entries: []runtimeEntry{
 				{FQDN: "yt3.googleusercontent.com", Parent: "googleusercontent.com",
 					IPs: []string{"142.251.1.132"}},
@@ -255,11 +256,13 @@ func TestBuildIPRuleMap_IPInMultipleRules(t *testing.T) {
 	}
 }
 
-func TestBuildIPRuleMap_UnknownListID(t *testing.T) {
-	// Group exists on router but list was deleted from awg-manager — fall back gracefully.
+func TestBuildIPRuleMap_OrphanGroupSkipped(t *testing.T) {
+	// Group exists on router but the list was deleted from awg-manager. Without
+	// a list ID embedded in the group name we cannot attribute the hit, so it's
+	// skipped. Reconcile will delete the orphan group on the next cycle.
 	groups := []runtimeGroup{
 		{
-			Name: "AWG_99_orphan_1",
+			Name: "orphan_p1",
 			Entries: []runtimeEntry{
 				{FQDN: "x.example.com", Parent: "example.com", IPs: []string{"1.2.3.4"}},
 			},
@@ -270,24 +273,17 @@ func TestBuildIPRuleMap_UnknownListID(t *testing.T) {
 	}}
 
 	m := buildIPRuleMap(context.Background(), groups, lister)
-
-	hits := m["1.2.3.4"]
-	if len(hits) != 1 {
-		t.Fatalf("hits = %d, want 1 (orphan group should still produce a hit with unknown name)", len(hits))
-	}
-	if hits[0].ListID != "list_99" {
-		t.Errorf("ListID = %q, want list_99", hits[0].ListID)
-	}
-	if hits[0].ListName != "" {
-		t.Errorf("ListName = %q, want \"\" for unknown list", hits[0].ListName)
+	if len(m) != 0 {
+		t.Errorf("orphan group should produce no hits, got %d entries", len(m))
 	}
 }
 
 func TestBuildIPRuleMap_ListerError(t *testing.T) {
-	// If the lister fails, we still return rule hits but with empty ListName.
+	// If the lister fails, the slug map is empty and groups are skipped — we
+	// cannot attribute hits without the reverse mapping.
 	groups := []runtimeGroup{
 		{
-			Name: "AWG_6_youtube_1",
+			Name: "youtube_p1",
 			Entries: []runtimeEntry{
 				{FQDN: "m.youtube.com", Parent: "youtube.com", IPs: []string{"142.251.1.100"}},
 			},
@@ -296,20 +292,17 @@ func TestBuildIPRuleMap_ListerError(t *testing.T) {
 	lister := &fakeLister{err: context.Canceled}
 
 	m := buildIPRuleMap(context.Background(), groups, lister)
-	hits := m["142.251.1.100"]
-	if len(hits) != 1 {
-		t.Fatalf("hits = %d, want 1", len(hits))
-	}
-	if hits[0].ListID != "list_6" {
-		t.Errorf("ListID = %q, want list_6", hits[0].ListID)
+	if len(m) != 0 {
+		t.Errorf("lister error should skip all groups, got %d entries", len(m))
 	}
 }
 
 func TestBuildIPRuleMap_NonAWGGroupSkipped(t *testing.T) {
-	// Object groups not created by awg-manager (no AWG_ prefix) are ignored.
+	// Object groups that don't match our {slug}_p{N} shape are ignored —
+	// user-created NDMS groups typically have mixed case or dashes.
 	groups := []runtimeGroup{
 		{
-			Name: "Some_Other_Group",
+			Name: "Some-Other-Group",
 			Entries: []runtimeEntry{
 				{FQDN: "x.com", Parent: "x.com", IPs: []string{"1.1.1.1"}},
 			},
