@@ -70,20 +70,25 @@ func TestRunningInterfaces_FiltersKernelAndDownServers(t *testing.T) {
 		got[r.ID] = r
 	}
 
-	// Presence-only: dedupeRefs keeps first-seen, so IsServer gets fixed by
-	// the insertion order inside RunningInterfaces (non-server first when an
-	// ID appears in both systemTunnels and the server list). The fix under
-	// test is concerned with *which IDs* are emitted, not the IsServer
-	// marker — that's a separate, pre-existing dedupe quirk.
-	wantIncluded := []string{
-		"Wireguard3", // nwg running tunnel
-		"Wireguard7", // up unmanaged system tunnel
-		"Wireguard0", // up marked server
-		"Wireguard9", // up managed server
+	// dedupeRefs now merges IsServer=true over IsServer=false, so IDs that
+	// appear in both systemTunnels (non-server) and the server list (or
+	// managed-server) end up with IsServer=true. That's the point of the
+	// merge: the poller must route peer changes on those IDs to the
+	// server-snapshot path, not the tunnel-traffic path.
+	wantIncluded := map[string]bool{
+		"Wireguard3": false, // nwg running tunnel (managed, not a server)
+		"Wireguard7": false, // up unmanaged system tunnel (not a server)
+		"Wireguard0": true,  // up marked server
+		"Wireguard9": true,  // up managed server (also in systemTunnels list)
 	}
-	for _, id := range wantIncluded {
-		if _, ok := got[id]; !ok {
+	for id, wantServer := range wantIncluded {
+		r, ok := got[id]
+		if !ok {
 			t.Errorf("expected %q in refs, got: %+v", id, refs)
+			continue
+		}
+		if r.IsServer != wantServer {
+			t.Errorf("ref %q: IsServer = %v, want %v", id, r.IsServer, wantServer)
 		}
 	}
 
@@ -96,6 +101,42 @@ func TestRunningInterfaces_FiltersKernelAndDownServers(t *testing.T) {
 		if _, ok := got[id]; ok {
 			t.Errorf("did not expect %q in refs, got: %+v", id, refs)
 		}
+	}
+}
+
+// TestDedupeRefs_ServerFlagWins verifies that when the same ID appears
+// both as a non-server (IsServer=false) and a server (IsServer=true),
+// the merged entry has IsServer=true regardless of insertion order.
+func TestDedupeRefs_ServerFlagWins(t *testing.T) {
+	cases := []struct {
+		name  string
+		input []metrics.InterfaceRef
+	}{
+		{
+			name: "non-server then server",
+			input: []metrics.InterfaceRef{
+				{ID: "Wireguard0", IsServer: false},
+				{ID: "Wireguard0", IsServer: true},
+			},
+		},
+		{
+			name: "server then non-server",
+			input: []metrics.InterfaceRef{
+				{ID: "Wireguard0", IsServer: true},
+				{ID: "Wireguard0", IsServer: false},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := dedupeRefs(tc.input)
+			if len(out) != 1 {
+				t.Fatalf("expected 1 entry, got %d: %+v", len(out), out)
+			}
+			if !out[0].IsServer {
+				t.Errorf("IsServer = false, want true (server flag must win): %+v", out[0])
+			}
+		})
 	}
 }
 

@@ -132,14 +132,24 @@ func tunnelNDMSName(rt trafficpkg.RunningTunnel) string {
 	return rt.ID
 }
 
+// dedupeRefs merges duplicate IDs into a single entry. When an ID is
+// added both as a regular interface (IsServer=false) and as a server
+// (IsServer=true) — which happens for managed servers that also show
+// up via systemTunnels.List() — the server flag wins. Without this,
+// the poller routes managed-server peer changes to the tunnel-traffic
+// path instead of the server-snapshot path, delaying /servers page
+// updates until the next polling tick.
 func dedupeRefs(refs []metrics.InterfaceRef) []metrics.InterfaceRef {
-	seen := make(map[string]struct{}, len(refs))
-	out := refs[:0]
+	idx := make(map[string]int, len(refs))
+	out := make([]metrics.InterfaceRef, 0, len(refs))
 	for _, r := range refs {
-		if _, ok := seen[r.ID]; ok {
+		if i, ok := idx[r.ID]; ok {
+			if r.IsServer {
+				out[i].IsServer = true
+			}
 			continue
 		}
-		seen[r.ID] = struct{}{}
+		idx[r.ID] = len(out)
 		out = append(out, r)
 	}
 	return out
