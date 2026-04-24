@@ -119,7 +119,7 @@ func (f *fakeNDMSQuery) GetInterfaceAddress(_ context.Context, _ string) (string
 	return f.addr, nil
 }
 
-func TestService_SelectOutbound_HotSwitch(t *testing.T) {
+func TestService_SelectRuntimeOutbound_OnlyClashAPI(t *testing.T) {
 	sb := &fakeSingboxOperator{running: true, tags: []string{"VLESS-RU"}}
 	ndms := &fakeNDMSQuery{addr: "10.10.10.1"}
 	store := NewStore(filepath.Join(t.TempDir(), "deviceproxy.json"))
@@ -127,28 +127,32 @@ func TestService_SelectOutbound_HotSwitch(t *testing.T) {
 
 	s := NewService(Deps{Store: store, Singbox: sb, NDMSQuery: ndms})
 
-	if err := s.SelectOutbound(context.Background(), "VLESS-RU"); err != nil {
-		t.Fatalf("SelectOutbound: %v", err)
+	if err := s.SelectRuntimeOutbound(context.Background(), "VLESS-RU"); err != nil {
+		t.Fatalf("SelectRuntimeOutbound: %v", err)
 	}
 	if sb.lastSelector != "device-proxy-selector" || sb.lastMember != "VLESS-RU" {
-		t.Fatalf("selector switch not called: %+v", sb)
+		t.Fatalf("selector switch not called with expected args: %+v", sb)
 	}
-	if store.Get().SelectedOutbound != "VLESS-RU" {
-		t.Fatalf("storage not updated: %#v", store.Get())
+	// Storage must NOT be mutated — the switch is ephemeral.
+	if got := store.Get().SelectedOutbound; got != "direct" {
+		t.Fatalf("storage was written: SelectedOutbound=%q, want 'direct'", got)
 	}
-	// ApplyDeviceProxy must be called so config.json's selector.default stays in sync.
-	if sb.lastSpec == nil {
-		t.Fatalf("ApplyDeviceProxy was not called after SelectOutbound")
+	// ApplyDeviceProxy must NOT have been called.
+	if sb.lastSpec != nil {
+		t.Fatalf("ApplyDeviceProxy called but shouldn't have been: %+v", sb.lastSpec)
+	}
+	if sb.lastSpecNR != nil {
+		t.Fatalf("ApplyDeviceProxyNoReload called but shouldn't have been: %+v", sb.lastSpecNR)
 	}
 }
 
-func TestService_SelectOutbound_UnknownTag(t *testing.T) {
+func TestService_SelectRuntimeOutbound_UnknownTag(t *testing.T) {
 	sb := &fakeSingboxOperator{running: true}
 	store := NewStore(filepath.Join(t.TempDir(), "deviceproxy.json"))
 	_ = store.Save(Config{Enabled: true, ListenAll: true, Port: 1099})
 	s := NewService(Deps{Store: store, Singbox: sb})
 
-	err := s.SelectOutbound(context.Background(), "nope")
+	err := s.SelectRuntimeOutbound(context.Background(), "nope")
 	if err == nil || !errors.Is(err, ErrOutboundUnavailable) {
 		t.Fatalf("got %v, want ErrOutboundUnavailable", err)
 	}

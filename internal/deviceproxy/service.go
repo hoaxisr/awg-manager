@@ -75,7 +75,7 @@ type Service struct {
 	tunnelPorts TunnelInboundPortsFn
 }
 
-// ErrOutboundUnavailable is returned by SelectOutbound when the caller
+// ErrOutboundUnavailable is returned by SelectRuntimeOutbound when the caller
 // requests a tag that is not in the current list of available outbounds.
 var ErrOutboundUnavailable = errors.New("outbound is not available")
 
@@ -322,10 +322,15 @@ func (s *Service) listOutboundsLocked(ctx context.Context) []Outbound {
 	return out
 }
 
-// SelectOutbound switches the active member of the selector. Fast path:
-// no reload. If sing-box is alive, the change is applied via Clash API;
-// either way the choice is persisted so cold-start picks it up.
-func (s *Service) SelectOutbound(ctx context.Context, tag string) error {
+// SelectRuntimeOutbound switches the live selector.now via Clash API.
+// No storage write. No config.json write. The choice is ephemeral —
+// sing-box reload or restart reverts to the persisted default.
+//
+// Errors:
+//   - ErrOutboundUnavailable — tag is not in the currently-available list.
+//   - singbox.ErrSingboxNotRunning — bubbled up from the operator when
+//     the daemon is down, so API layer can map to 409.
+func (s *Service) SelectRuntimeOutbound(ctx context.Context, tag string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -341,36 +346,10 @@ func (s *Service) SelectOutbound(ctx context.Context, tag string) error {
 		return fmt.Errorf("%w: %q", ErrOutboundUnavailable, tag)
 	}
 
-	cfg := s.d.Store.Get()
-	cfg.SelectedOutbound = tag
-	if err := s.d.Store.Save(cfg); err != nil {
-		return fmt.Errorf("persist storage: %w", err)
+	if s.d.Singbox == nil {
+		return fmt.Errorf("singbox operator unavailable")
 	}
-
-	if s.d.Singbox != nil && s.d.Singbox.IsRunning() {
-		if err := s.d.Singbox.SetSelectorDefault(ctx, "device-proxy-selector", tag); err != nil {
-			return fmt.Errorf("clash selector switch: %w", err)
-		}
-	}
-
-	// Re-apply full spec so config.json's selector.default matches the
-	// new storage value. Without this, any unrelated sing-box reload
-	// (watchdog, new tunnel added) would re-read the stale default and
-	// snap the selector back to the previous choice.
-	spec, err := s.buildSpec(ctx, cfg)
-	if err != nil {
-		return fmt.Errorf("rebuild spec after select: %w", err)
-	}
-	if s.d.Singbox != nil {
-		if err := s.d.Singbox.ApplyDeviceProxy(ctx, spec); err != nil {
-			return fmt.Errorf("apply spec after select: %w", err)
-		}
-	}
-
-	if s.d.Bus != nil {
-		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy"})
-	}
-	return nil
+	return s.d.Singbox.SetSelectorDefault(ctx, "device-proxy-selector", tag)
 }
 
 // Reconcile is the single idempotent rebuild path. It verifies the
