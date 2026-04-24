@@ -2,6 +2,7 @@ package dnsroute
 
 // MaxDomainsPerGroup is the maximum number of domains in a single NDMS object-group fqdn.
 const MaxDomainsPerGroup = 300
+const MaxSubnetsPerList = 20000
 
 // GroupPrefix is the prefix for all AWG-managed NDMS object-group names.
 const GroupPrefix = "AWG_"

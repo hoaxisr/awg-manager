@@ -177,6 +177,9 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 	list.CreatedAt = now
 	list.UpdatedAt = now
 	list.Domains, list.Subnets = splitDomainsAndSubnets(deduplicateDomains(list.ManualDomains))
+	if err := validateSubnetsLimit(len(list.Subnets)); err != nil {
+		return nil, err
+	}
 
 	// Resolve tunnel IDs to NDMS interface names for RCI commands.
 	if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
@@ -351,6 +354,9 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 	manual := deduplicateDomains(list.ManualDomains)
 	subDomains := subscriptionDomains(existing.Domains, existing.ManualDomains)
 	list.Domains, list.Subnets = splitDomainsAndSubnets(deduplicateDomains(append(manual, subDomains...)))
+	if err := validateSubnetsLimit(len(list.Subnets)); err != nil {
+		return nil, err
+	}
 
 	// Resolve tunnel IDs to NDMS interface names for RCI commands.
 	if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
@@ -586,9 +592,21 @@ func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) e
 // validateSubscriptions fetches each subscription URL and verifies it returns
 // text/plain with at least one parseable domain. Returns the first error encountered.
 func (s *ServiceImpl) validateSubscriptions(ctx context.Context, subs []Subscription) error {
+	seenSubnets := make(map[string]struct{})
 	for _, sub := range subs {
-		if err := validateSubscriptionURL(ctx, sub.URL); err != nil {
+		domains, err := fetchSubscription(ctx, sub.URL)
+		if err != nil {
 			return fmt.Errorf("подписка %q: %w", sub.URL, err)
+		}
+		if len(domains) == 0 {
+			return fmt.Errorf("подписка %q: список пуст — URL не содержит доменов", sub.URL)
+		}
+		_, subnets := splitDomainsAndSubnets(domains)
+		for _, subnet := range subnets {
+			seenSubnets[subnet] = struct{}{}
+		}
+		if err := validateSubnetsLimit(len(seenSubnets)); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -642,7 +660,12 @@ func (s *ServiceImpl) refreshSubscriptions(ctx context.Context, id string) error
 	}
 
 	// Merge manual + subscription domains, then classify CIDRs → Subnets.
-	list.Domains, list.Subnets = splitDomainsAndSubnets(mergeDomains(list.ManualDomains, allSubDomains))
+	merged := mergeDomains(list.ManualDomains, allSubDomains)
+	domains, subnets := splitDomainsAndSubnets(merged)
+	if err := validateSubnetsLimit(len(subnets)); err != nil {
+		return err
+	}
+	list.Domains, list.Subnets = domains, subnets
 	s.dedup(list)
 	list.UpdatedAt = now
 
@@ -655,6 +678,13 @@ func (s *ServiceImpl) refreshSubscriptions(ctx context.Context, id string) error
 	})
 
 	return s.reconcileAll(ctx)
+}
+
+func validateSubnetsLimit(count int) error {
+	if count > MaxSubnetsPerList {
+		return fmt.Errorf("слишком много подсетей: %d (лимит %d)", count, MaxSubnetsPerList)
+	}
+	return nil
 }
 
 // RefreshAllSubscriptions fetches subscriptions for all lists.
