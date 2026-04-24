@@ -21,7 +21,9 @@ export type ResourceKey =
 	| 'routing.policyInterfaces'    // ResourceRoutingPolicyInterfaces
 	| 'routing.clientRoutes'        // ResourceRoutingClientRoutes
 	| 'routing.tunnels'             // ResourceRoutingTunnels
-	| 'routing.hydrarouteStatus';   // ResourceRoutingHydrarouteStatus
+	| 'routing.hydrarouteStatus'    // ResourceRoutingHydrarouteStatus
+	| 'deviceproxy.config'          // ResourceDeviceProxyConfig
+	| 'deviceproxy.outbounds';      // ResourceDeviceProxyOutbounds
 
 /**
  * Resource key → polling store. Populated as stores are migrated to
