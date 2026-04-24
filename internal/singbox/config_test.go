@@ -246,3 +246,41 @@ func TestConfig_Tunnels_KernelInterface(t *testing.T) {
 		t.Errorf("B: KernelInterface=%q, want t2s1", got["B"])
 	}
 }
+
+func TestConfig_EnsureDeviceProxy_InboundOnly(t *testing.T) {
+	c := NewConfig()
+
+	spec := DeviceProxySpec{
+		Enabled:    true,
+		ListenAddr: "0.0.0.0",
+		Port:       1099,
+	}
+	if err := c.EnsureDeviceProxy(spec); err != nil {
+		t.Fatalf("EnsureDeviceProxy: %v", err)
+	}
+
+	// Inbound present
+	var found map[string]any
+	for _, v := range c.inbounds() {
+		ib, _ := v.(map[string]any)
+		if ib["tag"] == "device-proxy-in" {
+			found = ib
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("inbound device-proxy-in not found; inbounds=%v", c.inbounds())
+	}
+	if found["type"] != "mixed" {
+		t.Fatalf("inbound type = %v, want mixed", found["type"])
+	}
+	if found["listen"] != "0.0.0.0" {
+		t.Fatalf("listen = %v, want 0.0.0.0", found["listen"])
+	}
+	if port, _ := toInt(found["listen_port"]); port != 1099 {
+		t.Fatalf("listen_port = %v, want 1099", found["listen_port"])
+	}
+	if _, hasUsers := found["users"]; hasUsers {
+		t.Fatalf("users should be absent when auth disabled")
+	}
+}

@@ -502,3 +502,104 @@ func detectFingerprint(ob map[string]any) string {
 	}
 	return strOr(utls["fingerprint"], "")
 }
+
+// DeviceProxySpec is the externally-supplied description of the
+// user-facing proxy. Each EnsureDeviceProxy call recomputes the
+// inbound / selector / direct-AWG outbounds from this spec, so it
+// represents the fully-resolved desired state, not a delta.
+type DeviceProxySpec struct {
+	Enabled     bool
+	ListenAddr  string           // already resolved to an IP literal
+	Port        int
+	Auth        DeviceProxyAuth
+	SelectedTag string           // member tag that becomes selector.default
+	AWGTargets  []DeviceProxyAWG // one per AWG tunnel known to storage
+	SBTags      []string         // sing-box tunnel tags (user outbounds)
+}
+
+type DeviceProxyAuth struct {
+	Enabled  bool
+	Username string
+	Password string
+}
+
+type DeviceProxyAWG struct {
+	TunnelID    string
+	KernelIface string
+}
+
+const (
+	deviceProxyInboundTag  = "device-proxy-in"
+	deviceProxySelectorTag = "device-proxy-selector"
+	deviceProxyAWGPrefix   = "awg-"
+)
+
+// EnsureDeviceProxy writes (or overwrites) the inbound + selector
+// outbound + AWG direct outbounds + route rule described by spec.
+// Idempotent: calling it twice with the same spec produces the same
+// config. Callers that toggle Enabled=false should use RemoveDeviceProxy.
+func (c *Config) EnsureDeviceProxy(spec DeviceProxySpec) error {
+	if !spec.Enabled {
+		c.RemoveDeviceProxy()
+		return nil
+	}
+
+	// Inbound
+	inbound := map[string]any{
+		"type":        "mixed",
+		"tag":         deviceProxyInboundTag,
+		"listen":      spec.ListenAddr,
+		"listen_port": spec.Port,
+	}
+	if spec.Auth.Enabled {
+		inbound["users"] = []any{
+			map[string]any{
+				"username": spec.Auth.Username,
+				"password": spec.Auth.Password,
+			},
+		}
+	}
+	c.upsertInbound(deviceProxyInboundTag, inbound)
+	return nil
+}
+
+// RemoveDeviceProxy strips every artefact EnsureDeviceProxy adds.
+// Idempotent — safe on a config that never had the proxy.
+func (c *Config) RemoveDeviceProxy() {
+	c.removeInbound(deviceProxyInboundTag)
+}
+
+// upsertInbound replaces the inbound whose tag matches, or appends if
+// none matches. Preserves the order of existing inbounds.
+func (c *Config) upsertInbound(tag string, inbound map[string]any) {
+	inbounds := c.inbounds()
+	for i, v := range inbounds {
+		ib, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		if t, _ := ib["tag"].(string); t == tag {
+			inbounds[i] = inbound
+			c.setInbounds(inbounds)
+			return
+		}
+	}
+	c.setInbounds(append(inbounds, inbound))
+}
+
+func (c *Config) removeInbound(tag string) {
+	inbounds := c.inbounds()
+	out := make([]any, 0, len(inbounds))
+	for _, v := range inbounds {
+		ib, ok := v.(map[string]any)
+		if !ok {
+			out = append(out, v)
+			continue
+		}
+		if t, _ := ib["tag"].(string); t == tag {
+			continue
+		}
+		out = append(out, v)
+	}
+	c.setInbounds(out)
+}
