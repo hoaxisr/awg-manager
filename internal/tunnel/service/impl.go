@@ -28,7 +28,7 @@ var confDir = "/opt/etc/awg-manager"
 // ServiceImpl is the concrete implementation of Service.
 type ServiceImpl struct {
 	store          *storage.AWGTunnelStore
-	state          state.Manager        // state detection for kernel tunnels only
+	state          state.Manager         // state detection for kernel tunnels only
 	nwgOperator    *nwg.OperatorNativeWG // NativeWG backend (nil if unavailable)
 	legacyOperator ops.Operator          // Kernel backend (OS5/OS4)
 	log            *logger.Logger
@@ -616,6 +616,12 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 		return fmt.Errorf("parse conf: %w", err)
 	}
 
+	wasNativeRunning := false
+	if s.nwgOperator != nil && s.isNativeWG(stored) {
+		stateInfo := s.nwgOperator.GetState(ctx, stored)
+		wasNativeRunning = stateInfo.State == tunnel.StateRunning || stateInfo.State == tunnel.StateStarting
+	}
+
 	// Replace Interface + Peer entirely
 	stored.Interface = parsed.Interface
 	stored.Peer = parsed.Peer
@@ -640,8 +646,18 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 		s.logWarn("replace-config", tunnelID, "Failed to write config file: "+err.Error())
 	}
 
-	// NativeWG: sync NDMS config (address, MTU). Peer sync happens on restart.
+	// NativeWG: sync peer + address/MTU to NDMS.
+	// If the tunnel was running, perform a soft restart so runtime/kmod state
+	// is rebuilt from the new peer config.
 	if s.nwgOperator != nil && s.isNativeWG(stored) {
+		if wasNativeRunning {
+			if err := s.nwgOperator.Stop(ctx, stored); err != nil {
+				s.logWarn("replace-config", tunnelID, "Stop before peer sync failed: "+err.Error())
+			}
+		}
+		if err := s.nwgOperator.SyncPeer(ctx, stored); err != nil {
+			s.logWarn("replace-config", tunnelID, "SyncPeer failed: "+err.Error())
+		}
 		if err := s.nwgOperator.SyncAddressMTU(ctx, stored); err != nil {
 			s.logWarn("replace-config", tunnelID, "SyncAddressMTU failed: "+err.Error())
 		}
@@ -649,6 +665,11 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 		if newName != "" {
 			if err := s.nwgOperator.UpdateDescription(ctx, stored, newName); err != nil {
 				s.logWarn("replace-config", tunnelID, "UpdateDescription failed: "+err.Error())
+			}
+		}
+		if wasNativeRunning {
+			if err := s.nwgOperator.Start(ctx, stored); err != nil {
+				s.logWarn("replace-config", tunnelID, "Start after peer sync failed: "+err.Error())
 			}
 		}
 	}
