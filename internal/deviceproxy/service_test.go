@@ -5,6 +5,8 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/events"
 )
 
 func TestService_GetConfig_ReturnsDefault(t *testing.T) {
@@ -132,5 +134,51 @@ func TestService_SelectOutbound_UnknownTag(t *testing.T) {
 	err := s.SelectOutbound(context.Background(), "nope")
 	if err == nil || !errors.Is(err, ErrOutboundUnavailable) {
 		t.Fatalf("got %v, want ErrOutboundUnavailable", err)
+	}
+}
+
+func TestService_Reconcile_MissingTargetDisables(t *testing.T) {
+	sb := &fakeSingboxOperator{running: true}
+	ndms := &fakeNDMSQuery{addr: "10.10.10.1"}
+	store := NewStore(filepath.Join(t.TempDir(), "deviceproxy.json"))
+	_ = store.Save(Config{
+		Enabled:          true,
+		ListenAll:        true,
+		Port:             1099,
+		SelectedOutbound: "awg-ghost", // tunnel that no longer exists
+	})
+
+	bus := events.NewBus()
+	_, evCh, unsub := bus.Subscribe()
+	defer unsub()
+
+	s := NewService(Deps{Store: store, Singbox: sb, NDMSQuery: ndms, Bus: bus})
+	if err := s.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	got := store.Get()
+	if got.Enabled {
+		t.Fatalf("expected disabled, got %#v", got)
+	}
+	if got.SelectedOutbound != "" {
+		t.Fatalf("expected cleared SelectedOutbound, got %q", got.SelectedOutbound)
+	}
+
+	// Drain events, check that missing-target was published.
+	sawMissing := false
+	// Non-blocking read loop.
+	for {
+		select {
+		case ev := <-evCh:
+			if ev.Type == "deviceproxy:missing-target" {
+				sawMissing = true
+			}
+		default:
+			if !sawMissing {
+				t.Fatalf("missing-target event was not published")
+			}
+			return
+		}
 	}
 }

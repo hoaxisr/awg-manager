@@ -325,3 +325,74 @@ func (s *Service) SelectOutbound(ctx context.Context, tag string) error {
 	}
 	return nil
 }
+
+// Reconcile is the single idempotent rebuild path. It verifies the
+// currently-selected outbound still exists in the available list
+// (disables the proxy + publishes deviceproxy:missing-target if not)
+// and re-applies the resulting spec to sing-box.
+func (s *Service) Reconcile(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cfg := s.d.Store.Get()
+	if cfg.Enabled && cfg.SelectedOutbound != "" {
+		available := s.listOutboundsLocked(ctx)
+		found := false
+		for _, ob := range available {
+			if ob.Tag == cfg.SelectedOutbound {
+				found = true
+				break
+			}
+		}
+		if !found {
+			wasTag := cfg.SelectedOutbound
+			cfg.Enabled = false
+			cfg.SelectedOutbound = ""
+			if err := s.d.Store.Save(cfg); err != nil {
+				return fmt.Errorf("persist after missing target: %w", err)
+			}
+			if s.d.Bus != nil {
+				s.d.Bus.Publish("deviceproxy:missing-target", map[string]string{"wasTag": wasTag})
+				s.d.Bus.Publish("resource:invalidated", map[string]string{"kind": "deviceproxy"})
+			}
+		}
+	}
+
+	// Rebuild sing-box config from whatever cfg is now.
+	spec, err := s.buildSpec(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if s.d.Singbox != nil {
+		if err := s.d.Singbox.ApplyDeviceProxy(ctx, spec); err != nil {
+			return fmt.Errorf("apply spec: %w", err)
+		}
+	}
+	return nil
+}
+
+// SubscribeBus registers event handlers that trigger Reconcile. Call
+// once at startup. Returns an unsubscribe function to call during
+// shutdown.
+func (s *Service) SubscribeBus(ctx context.Context) func() {
+	if s.d.Bus == nil {
+		return func() {}
+	}
+	_, ch, unsub := s.d.Bus.Subscribe()
+	go func() {
+		for ev := range ch {
+			switch ev.Type {
+			case "tunnel:created", "tunnel:deleted", "singbox:tunnels-changed":
+				if err := s.Reconcile(ctx); err != nil {
+					// Reconcile failure is non-fatal at the subscriber level;
+					// the user-facing flow already has its own error path.
+					// No logger is wired on Service yet (would be added in a
+					// future task); silent swallow matches the project's other
+					// similar subscribers.
+					_ = err
+				}
+			}
+		}
+	}()
+	return unsub
+}
