@@ -527,6 +527,13 @@ func (o *Operator) LoadCurrentConfig() (*Config, error) {
 	return cfg, nil
 }
 
+// IsRunningPublic exposes the internal IsRunning probe for external
+// callers (deviceproxy adapter uses it to decide whether to push a
+// live selector update via the Clash API).
+func (o *Operator) IsRunningPublic() (bool, int) {
+	return o.proc.IsRunning()
+}
+
 // SetSelectorDefault switches a selector's active member live via
 // Clash API. Returns ErrSingboxNotRunning if the daemon is not alive —
 // callers decide whether to treat that as fatal.
