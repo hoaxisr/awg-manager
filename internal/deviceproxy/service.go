@@ -260,6 +260,34 @@ func awgKernelIface(t *storage.AWGTunnel) string {
 	return t.ID
 }
 
+// RuntimeState is the UI-facing snapshot of the selector's live state.
+// Not persisted; returned on demand.
+type RuntimeState struct {
+	Alive      bool   `json:"alive"`
+	ActiveTag  string `json:"activeTag"`
+	DefaultTag string `json:"defaultTag"`
+}
+
+// GetRuntimeState returns the current selector.now from Clash API
+// (empty if sing-box is down) plus the persisted default for
+// convenient client-side diffing.
+func (s *Service) GetRuntimeState(ctx context.Context) RuntimeState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state := RuntimeState{
+		DefaultTag: s.d.Store.Get().SelectedOutbound,
+	}
+	if s.d.Singbox == nil || !s.d.Singbox.IsRunning() {
+		return state
+	}
+	state.Alive = true
+	if active, err := s.d.Singbox.GetSelectorActive(ctx, "device-proxy-selector"); err == nil {
+		state.ActiveTag = active
+	}
+	return state
+}
+
 // Outbound describes one selectable proxy target exposed to the UI.
 type Outbound struct {
 	Tag    string `json:"tag"`
