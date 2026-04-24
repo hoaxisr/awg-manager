@@ -2,7 +2,11 @@
     interface Tab {
         id: string;
         label: string;
-        badge?: number;
+        badge?: number | string;
+        // Optional visual tone for status-style string badges. Numbers keep
+        // the neutral default. `success` = green, `warning` = amber,
+        // `muted` = subdued grey (e.g. "stopped").
+        badgeTone?: 'default' | 'success' | 'warning' | 'muted';
     }
 
     interface Props {
@@ -80,7 +84,7 @@
             <button class="tab" tabindex="-1">
                 {tab.label}
                 {#if tab.badge !== undefined}
-                    <span class="tab-badge">{tab.badge}</span>
+                    <span class="tab-badge" class:success={tab.badgeTone === 'success'} class:warning={tab.badgeTone === 'warning'} class:muted={tab.badgeTone === 'muted'}>{tab.badge}</span>
                 {/if}
             </button>
         {/each}
@@ -96,7 +100,7 @@
             >
                 {tab.label}
                 {#if tab.badge !== undefined}
-                    <span class="tab-badge">{tab.badge}</span>
+                    <span class="tab-badge" class:success={tab.badgeTone === 'success'} class:warning={tab.badgeTone === 'warning'} class:muted={tab.badgeTone === 'muted'}>{tab.badge}</span>
                 {/if}
             </button>
         {/each}
@@ -209,6 +213,27 @@
         background: var(--accent);
         color: #fff;
     }
+
+    .tab-badge.success {
+        background: rgba(158, 206, 106, 0.18);
+        color: var(--success);
+    }
+    .tab-badge.warning {
+        background: rgba(224, 175, 104, 0.18);
+        color: var(--warning);
+    }
+    .tab-badge.muted {
+        background: var(--bg-hover);
+        color: var(--text-muted);
+        opacity: 0.75;
+    }
+    /* Active-tab overrides keep contrast on the selected tab. */
+    .tab.active .tab-badge.success,
+    .tab.active .tab-badge.warning {
+        color: #fff;
+    }
+    .tab.active .tab-badge.success { background: var(--success); }
+    .tab.active .tab-badge.warning { background: var(--warning); }
 
     /* ─── More chip ─── */
     .more-wrap {

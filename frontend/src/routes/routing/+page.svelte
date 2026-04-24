@@ -14,15 +14,27 @@
     import ClientRoutesTab from './ClientRoutesTab.svelte';
     import { HrNeoTab } from '$lib/components/hrneo';
     import { DeviceProxyTab } from '$lib/components/deviceproxy';
+    import { deviceProxyConfig, deviceProxyRuntime } from '$lib/stores/deviceproxy';
 
     // Per-section polling stores — subscribe here so all 8 fetch while
     // the routing page is open. Unsubscribed on destroy to stop polling.
     let unsubRouting: (() => void) | null = null;
+    let unsubDPConfig: (() => void) | null = null;
+    let unsubDPRuntime: (() => void) | null = null;
 
     onMount(() => {
         unsubRouting = subscribeRouting();
+        // Subscribe to the deviceproxy stores so the tab badge can
+        // reflect current enabled/alive state even when the user is
+        // not on the deviceproxy tab.
+        unsubDPConfig = deviceProxyConfig.subscribe(() => {});
+        unsubDPRuntime = deviceProxyRuntime.subscribe(() => {});
     });
-    onDestroy(() => { unsubRouting?.(); });
+    onDestroy(() => {
+        unsubRouting?.();
+        unsubDPConfig?.();
+        unsubDPRuntime?.();
+    });
 
     let activeTab = $state<'hrneo' | 'dns' | 'ip' | 'policy' | 'clientvpn' | 'deviceproxy'>('dns');
 
@@ -103,15 +115,48 @@
         }
     });
 
+    // Device-proxy tab status badge. None when proxy is disabled (badge
+    // hidden), green "вкл" when enabled and sing-box is alive, muted
+    // "стоп" when enabled but daemon is down.
+    let dpEnabled = $derived($deviceProxyConfig.data?.enabled ?? false);
+    let dpAlive = $derived($deviceProxyRuntime.data?.alive ?? false);
+    let deviceProxyTab = $derived.by(() => {
+        if (!singboxInstalled) return null;
+        if (!dpEnabled) {
+            return { id: 'deviceproxy', label: 'Прокси для устройств' } as const;
+        }
+        if (dpAlive) {
+            return {
+                id: 'deviceproxy',
+                label: 'Прокси для устройств',
+                badge: 'вкл',
+                badgeTone: 'success',
+            } as const;
+        }
+        return {
+            id: 'deviceproxy',
+            label: 'Прокси для устройств',
+            badge: 'стоп',
+            badgeTone: 'muted',
+        } as const;
+    });
+
+    type TabItem = {
+        id: string;
+        label: string;
+        badge?: number | string;
+        badgeTone?: 'default' | 'success' | 'warning' | 'muted';
+    };
+
     let tabItems = $derived(
-        [
+        ([
             hydrarouteInstalled ? { id: 'hrneo', label: 'HR NEO', badge: hrRuleCount } : null,
             { id: 'dns', label: 'NDMS', badge: dnsActiveCount },
             { id: 'ip', label: 'IP-адреса', badge: ipActiveCount },
             isOS5 ? { id: 'policy', label: 'Политики доступа', badge: policyCount } : null,
             { id: 'clientvpn', label: 'VPN для устройств', badge: clientRouteCount },
-            singboxInstalled ? { id: 'deviceproxy', label: 'Прокси для устройств', badge: 0 } : null,
-        ].filter((t): t is { id: string; label: string; badge: number } => t !== null)
+            deviceProxyTab,
+        ] as (TabItem | null)[]).filter((t): t is TabItem => t !== null)
     );
 
     // If the user deep-linked / had the tab active and sing-box disappeared
