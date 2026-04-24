@@ -28,8 +28,11 @@
 
 {#if config.enabled && resolvedListenIP}
 	<section class="card">
-		<h2 class="section-title">Подключение</h2>
-		<div class="settings-panel url-row">
+		<h2 class="section-title">Как подключиться</h2>
+		<p class="section-desc">
+			Вставьте этот адрес в настройки прокси на устройстве (телефон, компьютер, роутер клиента).
+		</p>
+		<div class="url-row">
 			<code class="url-code">{url}</code>
 			<button type="button" class="btn btn-ghost btn-sm" onclick={copy}>Копировать</button>
 		</div>
@@ -37,23 +40,22 @@
 {/if}
 
 <style>
-	.section-title {
-		font-size: 1rem;
-		font-weight: 600;
-		margin-bottom: 0.75rem;
-	}
-
+	.section-title { font-size: 1rem; font-weight: 600; margin: 0 0 0.25rem 0; }
+	.section-desc { font-size: 0.8125rem; color: var(--text-muted); margin: 0 0 0.75rem 0; }
 	.url-row {
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
+		padding: 0.625rem 0.75rem;
+		background: var(--bg-tertiary);
+		border-radius: 6px;
 	}
-
 	.url-code {
 		flex: 1;
 		overflow-x: auto;
 		font-family: var(--font-mono, monospace);
 		font-size: 0.875rem;
 		white-space: nowrap;
+		color: var(--text-primary);
 	}
 </style>
