@@ -227,15 +227,10 @@
                 </svg>
                 <div class="disclaimer-text">
                     <p>
-                        AWG Manager — независимый проект, не аффилированный с <strong
-                            >Amnezia.org</strong
-                        >
-                    </p>
-                    <p>
-                        Вопросы и поддержка — <a
-                            href="https://t.me/awgmanager"
+                        Документация по проекту доступна на сайте <a
+                            href="https://awgm.hoaxisr.ru"
                             target="_blank"
-                            rel="noopener">Telegram-группа</a
+                            rel="noopener">awgm.hoaxisr.ru</a
                         >
                     </p>
                 </div>
