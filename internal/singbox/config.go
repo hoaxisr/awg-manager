@@ -167,8 +167,13 @@ func (c *Config) setRouteRules(v []any) {
 	route["rules"] = v
 }
 
-// userOutbounds returns outbounds excluding system ones (direct, block, dns)
-// and device-proxy infrastructure (selector outbound, awg-* direct outbounds).
+// userOutbounds returns outbounds excluding system ones (direct, block, dns,
+// selector) and device-proxy AWG infrastructure outbounds.
+// Device-proxy AWG outbounds have type=direct with bind_interface set; they
+// are already excluded by the t=="direct" clause below. A tag-prefix filter
+// (awg-*) is deliberately not used: it would silently drop any legitimate
+// user tunnel whose tag happens to start with "awg-", which is a legal name
+// with no validation guard.
 func (c *Config) userOutbounds() []map[string]any {
 	var out []map[string]any
 	for _, v := range c.outbounds() {
@@ -178,10 +183,6 @@ func (c *Config) userOutbounds() []map[string]any {
 		}
 		t, _ := ob["type"].(string)
 		if t == "direct" || t == "block" || t == "dns" || t == "selector" {
-			continue
-		}
-		tag, _ := ob["tag"].(string)
-		if strings.HasPrefix(tag, deviceProxyAWGPrefix) {
 			continue
 		}
 		out = append(out, ob)
