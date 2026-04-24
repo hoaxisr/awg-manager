@@ -32,6 +32,13 @@ const (
 const (
 	defaultBinary = "sing-box"
 	defaultDir    = "/opt/etc/awg-manager/singbox"
+
+	// clashAPIAddr is the Clash API endpoint baked into our generated
+	// config.json. Port 9099 is chosen to not collide with a user-managed
+	// sing-box instance that might already be bound to the default 9090
+	// — otherwise our log forwarder / traffic aggregator would latch onto
+	// their process and stream their tunnels into our UI.
+	clashAPIAddr = "127.0.0.1:9099"
 )
 
 // Operator is the high-level facade for sing-box integration.
@@ -82,7 +89,7 @@ func NewOperator(d OperatorDeps) *Operator {
 		proc:       NewProcess(binary, configPath, pidPath),
 		validator:  NewValidator(binary),
 		proxyMgr:   NewProxyManager(d.Queries, d.Commands),
-		clash:      NewClashClient("127.0.0.1:9090"),
+		clash:      NewClashClient(clashAPIAddr),
 	}
 }
 
@@ -221,12 +228,23 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 	if err != nil {
 		return nil, parseErrs, err
 	}
+	// reserved tracks ProxyN indices we've handed out in this batch so
+	// NextFreeIndex doesn't reuse the same slot twice before the batch
+	// is committed to NDMS.
+	reserved := make(map[int]bool)
 	var addedTags []string
 	for _, p := range parsed {
-		if err := cfg.AddTunnel(p.Tag, p.Protocol, p.Server, p.Port, p.Outbound); err != nil {
+		freeIdx, idxErr := o.proxyMgr.NextFreeIndex(ctx, reserved)
+		if idxErr != nil {
+			parseErrs = append(parseErrs, BatchError{Input: p.Tag, Err: fmt.Errorf("allocate proxy slot: %w", idxErr)})
+			continue
+		}
+		listenPort := firstPort + freeIdx
+		if err := cfg.AddTunnelWithListenPort(p.Tag, p.Protocol, p.Server, p.Port, listenPort, p.Outbound); err != nil {
 			parseErrs = append(parseErrs, BatchError{Input: p.Tag, Err: err})
 			continue
 		}
+		reserved[freeIdx] = true
 		addedTags = append(addedTags, p.Tag)
 	}
 	if len(addedTags) == 0 {

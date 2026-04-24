@@ -10,7 +10,7 @@ import (
 
 // ClashClient is a thin HTTP client for sing-box's Clash API.
 type ClashClient struct {
-	address string // "127.0.0.1:9090"
+	address string // e.g. "127.0.0.1:9099" — see singbox.clashAPIAddr
 	http    *http.Client
 }
 

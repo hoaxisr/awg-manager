@@ -82,8 +82,12 @@ func NewConfig() *Config {
 				"final": "dns-doh",
 			},
 			"experimental": map[string]any{
+				// Port 9099 (not the default 9090) so a user-managed
+				// sing-box instance already bound to 9090 doesn't steal
+				// our log/traffic streams — we'd otherwise forward the
+				// user's tunnels into our UI and miss our own events.
 				"clash_api": map[string]any{
-					"external_controller": "127.0.0.1:9090",
+					"external_controller": "127.0.0.1:9099",
 				},
 			},
 			"inbounds":  []any{},
@@ -230,16 +234,38 @@ func (c *Config) Tunnels() []TunnelInfo {
 }
 
 // AddTunnel inserts inbound + outbound + route rule for a new tunnel.
-// Returns error if tag already exists.
+// Returns error if tag already exists. Picks listen_port internally via
+// allocPort — use AddTunnelWithListenPort when the caller needs the
+// listen_port to align with an externally-chosen ProxyN slot.
 func (c *Config) AddTunnel(tag, protocol, server string, port int, outbound json.RawMessage) error {
+	return c.AddTunnelWithListenPort(tag, protocol, server, port, 0, outbound)
+}
+
+// AddTunnelWithListenPort is like AddTunnel but lets the caller pin the
+// listen_port. Pass 0 to fall back to allocPort (equivalent to AddTunnel).
+// A non-zero listenPort is rejected if already taken in this config.
+func (c *Config) AddTunnelWithListenPort(tag, protocol, server string, port, listenPort int, outbound json.RawMessage) error {
 	for _, ob := range c.userOutbounds() {
 		if t, _ := ob["tag"].(string); t == tag {
 			return fmt.Errorf("tunnel tag %q already exists", tag)
 		}
 	}
-	listenPort, err := c.allocPort()
-	if err != nil {
-		return err
+	if listenPort == 0 {
+		p, err := c.allocPort()
+		if err != nil {
+			return err
+		}
+		listenPort = p
+	} else {
+		for _, v := range c.inbounds() {
+			ib, ok := v.(map[string]any)
+			if !ok {
+				continue
+			}
+			if p, ok := toInt(ib["listen_port"]); ok && p == listenPort {
+				return fmt.Errorf("listen_port %d already in use", listenPort)
+			}
+		}
 	}
 
 	// Unmarshal outbound and force tag
