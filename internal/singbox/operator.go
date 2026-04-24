@@ -493,6 +493,37 @@ func (o *Operator) loadConfig() (*Config, error) {
 	return LoadConfig(o.configPath)
 }
 
+// ApplyConfig runs the full Save + Validate + Promote + Reload sequence
+// on an externally-mutated Config. deviceproxy.Service uses this after
+// it has inserted its inbound/outbound/rule into the current config.
+func (o *Operator) ApplyConfig(ctx context.Context, cfg *Config) error {
+	return o.applyConfig(ctx, cfg)
+}
+
+// LoadCurrentConfig reads the on-disk config.json that sing-box is
+// running from. Returns a fresh NewConfig() if the file is missing
+// (first ever apply / tunnels never configured).
+func (o *Operator) LoadCurrentConfig() (*Config, error) {
+	cfg, err := o.loadConfig()
+	if err != nil {
+		if os.IsNotExist(err) {
+			return NewConfig(), nil
+		}
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// SetSelectorDefault switches a selector's active member live via
+// Clash API. Returns ErrSingboxNotRunning if the daemon is not alive —
+// callers decide whether to treat that as fatal.
+func (o *Operator) SetSelectorDefault(ctx context.Context, selectorTag, memberTag string) error {
+	if running, _ := o.proc.IsRunning(); !running {
+		return ErrSingboxNotRunning
+	}
+	return o.clash.SetSelector(selectorTag, memberTag)
+}
+
 func (o *Operator) loadOrInitConfig() (*Config, error) {
 	cfg, err := LoadConfig(o.configPath)
 	if err != nil {
