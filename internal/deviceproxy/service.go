@@ -198,6 +198,40 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 	return nil
 }
 
+// ForceApply re-applies the currently-persisted Config to sing-box via
+// the full reload path, regardless of whether anything changed since
+// last Save. Used by the "Применить сейчас" UI action when the user
+// has saved a new default via the no-reload surgical path and wants
+// the live selector.now to snap to that default immediately — the
+// reload causes sing-box to reinit selector.now from the updated
+// config.json's selector.default.
+//
+// Client SOCKS connections are interrupted during reload; that trade-off
+// is explicit since the user clicked a reload button.
+func (s *Service) ForceApply(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cfg := s.d.Store.Get()
+
+	spec, err := s.buildSpec(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
+	if s.d.Singbox != nil {
+		if err := s.d.Singbox.ApplyDeviceProxy(ctx, spec); err != nil {
+			return fmt.Errorf("force apply: %w", err)
+		}
+	}
+
+	if s.d.Bus != nil {
+		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.config"})
+		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.runtime"})
+	}
+	return nil
+}
+
 // onlySelectedOutboundChanged returns true when the only field that
 // differs between old and new is SelectedOutbound AND both states are
 // Enabled. Used by SaveConfig to decide whether to skip the sing-box
