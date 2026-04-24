@@ -408,8 +408,12 @@ class ApiClient {
 	}
 
 	async getUpdateChangelog(from: string, to: string): Promise<{ entries: ChangelogEntry[] }> {
-		const qs = `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
-		return this.request(`/system/update/changelog?${qs}`);
+		const parts = [`to=${encodeURIComponent(to)}`];
+		// Omit `from` to request the single-version view for `to` — backend
+		// returns just that one entry (used by "Что нового" when no update
+		// is pending).
+		if (from) parts.push(`from=${encodeURIComponent(from)}`);
+		return this.request(`/system/update/changelog?${parts.join('&')}`);
 	}
 
 	// #endregion

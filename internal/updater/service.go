@@ -184,3 +184,16 @@ func (s *Service) GetChangelog(ctx context.Context, fromVer, toVer string) ([]En
 	}
 	return Slice(entries, fromVer, toVer), nil
 }
+
+// GetChangelogSingle fetches the monolithic CHANGELOG.md and returns
+// only the entry that exactly matches version, or nil if there is no
+// such entry. The "what's new" button uses this when no upgrade is
+// pending so the UI can still show the user what's in their current
+// release.
+func (s *Service) GetChangelogSingle(ctx context.Context, version string) (*Entry, error) {
+	entries, err := s.changelog.Fetch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return Single(entries, version), nil
+}

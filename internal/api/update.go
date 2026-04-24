@@ -68,9 +68,14 @@ func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Changelog returns the slice of changelog entries between the caller's
-// current version and the latest version. Query params: from, to.
+// Changelog returns changelog entries. Two modes:
+//   - Range: from and to both supplied → entries in (from, to], newest-first.
+//   - Single: only to supplied → entry matching to exactly (used by the
+//     "what's new" button when no upgrade is pending, so the user can
+//     still review what's in their current release).
+//
 // GET /api/system/update/changelog?from=2.7.5&to=2.8.0
+// GET /api/system/update/changelog?to=2.8.1
 func (h *UpdateHandler) Changelog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -78,8 +83,22 @@ func (h *UpdateHandler) Changelog(w http.ResponseWriter, r *http.Request) {
 	}
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
-	if from == "" || to == "" {
-		response.Error(w, "missing from/to", "MISSING_PARAM")
+	if to == "" {
+		response.Error(w, "missing to", "MISSING_PARAM")
+		return
+	}
+
+	if from == "" {
+		entry, err := h.updater.GetChangelogSingle(r.Context(), to)
+		if err != nil {
+			response.ErrorWithStatus(w, http.StatusBadGateway, err.Error(), "CHANGELOG_FETCH_FAILED")
+			return
+		}
+		entries := []updater.Entry{}
+		if entry != nil {
+			entries = []updater.Entry{*entry}
+		}
+		response.Success(w, map[string]interface{}{"entries": entries})
 		return
 	}
 

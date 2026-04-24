@@ -83,6 +83,17 @@ func ParseChangelog(md string) (map[string]Entry, error) {
 	return out, nil
 }
 
+// Single returns the entry for an exact version, or nil if no entry
+// matches. Used by the "what's new" UI affordance when the user is
+// already on the latest release and only wants to see what landed in
+// the current version.
+func Single(entries map[string]Entry, version string) *Entry {
+	if e, ok := entries[version]; ok {
+		return &e
+	}
+	return nil
+}
+
 // Slice returns entries where fromVer < v <= toVer, sorted newest-first.
 // Version comparison reuses semver.Compare (dotted-numeric semver-like).
 func Slice(entries map[string]Entry, fromVer, toVer string) []Entry {
