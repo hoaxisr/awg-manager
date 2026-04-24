@@ -119,3 +119,30 @@ func (c *ClashClient) SetSelector(selectorTag, memberTag string) error {
 	}
 	return nil
 }
+
+// SelectorActive returns the currently-active member (`now`) of a
+// named selector outbound. Queries Clash GET /proxies/<tag>. Returns
+// ("", nil) when the selector is reported absent by the daemon so
+// callers can treat "no selector yet" as distinct from a transport
+// error.
+func (c *ClashClient) SelectorActive(selectorTag string) (string, error) {
+	u := fmt.Sprintf("http://%s/proxies/%s", c.address, url.PathEscape(selectorTag))
+	resp, err := c.http.Get(u)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("clash SelectorActive %s: HTTP %d", selectorTag, resp.StatusCode)
+	}
+	var body struct {
+		Now string `json:"now"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", fmt.Errorf("decode clash response: %w", err)
+	}
+	return body.Now, nil
+}
