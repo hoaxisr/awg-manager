@@ -32,20 +32,25 @@ func (s *Store) Get() Config {
 }
 
 // Save writes cfg to disk atomically and updates the in-memory copy.
+// Holds the write lock for the full operation so disk and in-memory
+// state stay in lock-step across concurrent callers.
 func (s *Store) Save(cfg Config) error {
 	raw, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := storage.AtomicWrite(s.path, raw); err != nil {
 		return err
 	}
-	s.mu.Lock()
 	s.cfg = cfg
-	s.mu.Unlock()
 	return nil
 }
 
+// load reads data from disk. On missing or corrupt file, initializes
+// default config. No error is returned — caller sees defaultConfig().
+// Caller must NOT hold the lock.
 func (s *Store) load() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
