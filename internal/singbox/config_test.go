@@ -247,6 +247,185 @@ func TestConfig_Tunnels_KernelInterface(t *testing.T) {
 	}
 }
 
+func TestConfig_EnsureDeviceProxy_Full(t *testing.T) {
+	c := NewConfig()
+
+	// Seed a sing-box user outbound so EnsureDeviceProxy has an sb tag to include.
+	ob := json.RawMessage(`{"type":"vless","server":"x","server_port":443}`)
+	if err := c.AddTunnel("VLESS-RU", "vless", "x", 443, ob); err != nil {
+		t.Fatalf("seed AddTunnel: %v", err)
+	}
+
+	spec := DeviceProxySpec{
+		Enabled:     true,
+		ListenAddr:  "10.10.10.1",
+		Port:        1099,
+		Auth:        DeviceProxyAuth{Enabled: true, Username: "u", Password: "p"},
+		SelectedTag: "awg-tun123",
+		AWGTargets:  []DeviceProxyAWG{{TunnelID: "tun123", KernelIface: "nwg0"}},
+		SBTags:      []string{"VLESS-RU"},
+	}
+	if err := c.EnsureDeviceProxy(spec); err != nil {
+		t.Fatalf("EnsureDeviceProxy: %v", err)
+	}
+
+	// Inbound has users
+	var inbound map[string]any
+	for _, v := range c.inbounds() {
+		ib := v.(map[string]any)
+		if ib["tag"] == "device-proxy-in" {
+			inbound = ib
+		}
+	}
+	users, _ := inbound["users"].([]any)
+	if len(users) != 1 {
+		t.Fatalf("users len = %d, want 1", len(users))
+	}
+	u := users[0].(map[string]any)
+	if u["username"] != "u" || u["password"] != "p" {
+		t.Fatalf("users = %v", users)
+	}
+
+	// Selector outbound present with correct members and default
+	var selector map[string]any
+	for _, v := range c.outbounds() {
+		ob := v.(map[string]any)
+		if ob["tag"] == "device-proxy-selector" {
+			selector = ob
+		}
+	}
+	if selector == nil {
+		t.Fatalf("device-proxy-selector missing; outbounds=%v", c.outbounds())
+	}
+	if selector["type"] != "selector" {
+		t.Fatalf("selector type = %v", selector["type"])
+	}
+	members, _ := selector["outbounds"].([]any)
+	want := []string{"direct", "VLESS-RU", "awg-tun123"}
+	if len(members) != len(want) {
+		t.Fatalf("members = %v, want %v", members, want)
+	}
+	for i, w := range want {
+		if members[i] != w {
+			t.Fatalf("members[%d] = %v, want %q", i, members[i], w)
+		}
+	}
+	if selector["default"] != "awg-tun123" {
+		t.Fatalf("default = %v, want awg-tun123", selector["default"])
+	}
+
+	// AWG direct outbound present
+	var awgOut map[string]any
+	for _, v := range c.outbounds() {
+		ob := v.(map[string]any)
+		if ob["tag"] == "awg-tun123" {
+			awgOut = ob
+		}
+	}
+	if awgOut == nil {
+		t.Fatalf("awg-tun123 outbound missing")
+	}
+	if awgOut["type"] != "direct" || awgOut["bind_interface"] != "nwg0" {
+		t.Fatalf("awg outbound = %v", awgOut)
+	}
+
+	// Route rule at front
+	rules := c.routeRules()
+	if len(rules) == 0 {
+		t.Fatalf("no route rules")
+	}
+	first := rules[0].(map[string]any)
+	if first["inbound"] != "device-proxy-in" || first["outbound"] != "device-proxy-selector" {
+		t.Fatalf("first rule = %v", first)
+	}
+}
+
+func TestConfig_EnsureDeviceProxy_Idempotent(t *testing.T) {
+	c := NewConfig()
+	spec := DeviceProxySpec{
+		Enabled:     true,
+		ListenAddr:  "0.0.0.0",
+		Port:        1099,
+		SelectedTag: "direct",
+	}
+	_ = c.EnsureDeviceProxy(spec)
+	snap1, _ := json.Marshal(c.raw)
+	_ = c.EnsureDeviceProxy(spec)
+	snap2, _ := json.Marshal(c.raw)
+	if string(snap1) != string(snap2) {
+		t.Fatalf("non-idempotent:\n%s\nvs\n%s", snap1, snap2)
+	}
+}
+
+func TestConfig_RemoveDeviceProxy_ClearsEverything(t *testing.T) {
+	c := NewConfig()
+	spec := DeviceProxySpec{
+		Enabled:     true,
+		ListenAddr:  "0.0.0.0",
+		Port:        1099,
+		SelectedTag: "awg-x",
+		AWGTargets:  []DeviceProxyAWG{{TunnelID: "x", KernelIface: "nwg0"}},
+	}
+	_ = c.EnsureDeviceProxy(spec)
+	c.RemoveDeviceProxy()
+
+	for _, v := range c.inbounds() {
+		if v.(map[string]any)["tag"] == "device-proxy-in" {
+			t.Fatalf("inbound not removed")
+		}
+	}
+	for _, v := range c.outbounds() {
+		tag, _ := v.(map[string]any)["tag"].(string)
+		if tag == "device-proxy-selector" || tag == "awg-x" {
+			t.Fatalf("outbound not removed: %s", tag)
+		}
+	}
+	for _, v := range c.routeRules() {
+		r := v.(map[string]any)
+		if r["inbound"] == "device-proxy-in" {
+			t.Fatalf("route rule not removed")
+		}
+	}
+}
+
+// Regression: Tunnels() must not surface the device-proxy-selector as a
+// user tunnel. userOutbounds filters by type; selector was not in the
+// original exclusion list.
+func TestConfig_EnsureDeviceProxy_SelectorNotInUserOutbounds(t *testing.T) {
+	c := NewConfig()
+	spec := DeviceProxySpec{
+		Enabled:     true,
+		ListenAddr:  "0.0.0.0",
+		Port:        1099,
+		SelectedTag: "direct",
+	}
+	_ = c.EnsureDeviceProxy(spec)
+	for _, t2 := range c.Tunnels() {
+		if t2.Tag == "device-proxy-selector" || t2.Tag == "" {
+			t.Fatalf("device-proxy-selector leaked into Tunnels(): %+v", t2)
+		}
+	}
+}
+
+// Regression: Tunnels() must not surface awg-<id> direct outbounds either —
+// they are infrastructure for the proxy, not user-created tunnels.
+func TestConfig_EnsureDeviceProxy_AWGDirectNotInUserOutbounds(t *testing.T) {
+	c := NewConfig()
+	spec := DeviceProxySpec{
+		Enabled:     true,
+		ListenAddr:  "0.0.0.0",
+		Port:        1099,
+		SelectedTag: "awg-tun123",
+		AWGTargets:  []DeviceProxyAWG{{TunnelID: "tun123", KernelIface: "nwg0"}},
+	}
+	_ = c.EnsureDeviceProxy(spec)
+	for _, t2 := range c.Tunnels() {
+		if t2.Tag == "awg-tun123" {
+			t.Fatalf("awg-tun123 leaked into Tunnels(): %+v", t2)
+		}
+	}
+}
+
 func TestConfig_EnsureDeviceProxy_InboundOnly(t *testing.T) {
 	c := NewConfig()
 
