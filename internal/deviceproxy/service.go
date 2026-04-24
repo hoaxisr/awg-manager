@@ -15,11 +15,12 @@ import (
 // startup in main.go. Nil fields are tolerated — Service degrades and
 // logs where applicable.
 type Deps struct {
-	Store     *Store
-	Tunnels   *storage.AWGTunnelStore // nil → treated as "no AWG tunnels"
-	Singbox   SingboxOperator         // nil → treated as "no sb tunnels, no apply"
-	NDMSQuery NDMSInterfaceQuery      // nil → ListenInterface resolution fails explicitly
-	Bus       *events.Bus             // nil → no event subscriptions or publishes
+	Store         *Store
+	Tunnels       *storage.AWGTunnelStore // nil → treated as "no AWG tunnels"
+	SystemTunnels SystemTunnelQuery       // nil → system tunnels not included in outbound list
+	Singbox       SingboxOperator         // nil → treated as "no sb tunnels, no apply"
+	NDMSQuery     NDMSInterfaceQuery      // nil → ListenInterface resolution fails explicitly
+	Bus           *events.Bus             // nil → no event subscriptions or publishes
 }
 
 // SingboxOperator is the narrow contract Service needs from
@@ -214,7 +215,7 @@ func (s *Service) buildSpec(ctx context.Context, cfg Config) (ExternalSpec, erro
 		spec.ListenAddr = addr
 	}
 
-	// AWG targets
+	// AWG targets (managed tunnels)
 	if s.d.Tunnels != nil {
 		tunnels, _ := s.d.Tunnels.List()
 		for _, t := range tunnels {
@@ -222,6 +223,20 @@ func (s *Service) buildSpec(ctx context.Context, cfg Config) (ExternalSpec, erro
 			spec.AWGTargets = append(spec.AWGTargets, AWGTarget{
 				TunnelID:    t.ID,
 				KernelIface: awgKernelIface(&t),
+			})
+		}
+	}
+
+	// System tunnels (Keenetic native WireGuard, not managed by storage).
+	// TunnelID is prefixed with "sys-" so the generated sing-box tag
+	// becomes "awg-sys-<ID>" (e.g. "awg-sys-Wireguard0"), avoiding
+	// collisions with managed AWG tunnel tags.
+	if s.d.SystemTunnels != nil {
+		sysTunnels, _ := s.d.SystemTunnels.List(ctx)
+		for _, t := range sysTunnels {
+			spec.AWGTargets = append(spec.AWGTargets, AWGTarget{
+				TunnelID:    "sys-" + t.ID,
+				KernelIface: t.InterfaceName,
 			})
 		}
 	}
@@ -261,7 +276,7 @@ func (s *Service) ListOutbounds(ctx context.Context) []Outbound {
 	return s.listOutboundsLocked(ctx)
 }
 
-func (s *Service) listOutboundsLocked(_ context.Context) []Outbound {
+func (s *Service) listOutboundsLocked(ctx context.Context) []Outbound {
 	out := []Outbound{{Tag: "direct", Kind: "direct", Label: "Direct (WAN)", Detail: "без туннеля"}}
 
 	if s.d.Singbox != nil {
@@ -283,6 +298,22 @@ func (s *Service) listOutboundsLocked(_ context.Context) []Outbound {
 				Kind:   "awg",
 				Label:  t.Name,
 				Detail: iface,
+			})
+		}
+	}
+
+	// System tunnels — Keenetic native WireGuard not managed by storage.
+	// Tag uses the "awg-sys-" prefix to match what buildSpec/EnsureDeviceProxy
+	// will generate for these entries.
+	if s.d.SystemTunnels != nil {
+		sysTunnels, _ := s.d.SystemTunnels.List(ctx)
+		sort.Slice(sysTunnels, func(i, j int) bool { return sysTunnels[i].ID < sysTunnels[j].ID })
+		for _, t := range sysTunnels {
+			out = append(out, Outbound{
+				Tag:    "awg-sys-" + t.ID,
+				Kind:   "awg",
+				Label:  t.Description,
+				Detail: t.InterfaceName,
 			})
 		}
 	}

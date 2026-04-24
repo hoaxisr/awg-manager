@@ -141,6 +141,83 @@ func TestService_SelectOutbound_UnknownTag(t *testing.T) {
 	}
 }
 
+// fakeSystemTunnelQuery is a test double for SystemTunnelQuery.
+type fakeSystemTunnelQuery struct {
+	tunnels []SystemTunnel
+}
+
+func (f *fakeSystemTunnelQuery) List(_ context.Context) ([]SystemTunnel, error) {
+	return f.tunnels, nil
+}
+
+func TestService_ListOutbounds_IncludesSystemTunnels(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "deviceproxy.json"))
+	sysTunnels := &fakeSystemTunnelQuery{
+		tunnels: []SystemTunnel{
+			{ID: "Wireguard0", InterfaceName: "nwg0", Description: "My VPN"},
+		},
+	}
+	s := NewService(Deps{Store: store, SystemTunnels: sysTunnels})
+
+	out := s.ListOutbounds(context.Background())
+
+	found := false
+	for _, ob := range out {
+		if ob.Tag == "awg-sys-Wireguard0" {
+			found = true
+			if ob.Kind != "awg" {
+				t.Fatalf("expected kind=awg, got %q", ob.Kind)
+			}
+			if ob.Label != "My VPN" {
+				t.Fatalf("expected label=My VPN, got %q", ob.Label)
+			}
+			if ob.Detail != "nwg0" {
+				t.Fatalf("expected detail=nwg0, got %q", ob.Detail)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("awg-sys-Wireguard0 not found in outbounds: %+v", out)
+	}
+}
+
+func TestService_SaveConfig_AppliesToSingbox_SystemTunnels(t *testing.T) {
+	sb := &fakeSingboxOperator{running: true}
+	ndms := &fakeNDMSQuery{addr: "10.10.10.1"}
+	store := NewStore(filepath.Join(t.TempDir(), "deviceproxy.json"))
+	sysTunnels := &fakeSystemTunnelQuery{
+		tunnels: []SystemTunnel{
+			{ID: "Wireguard0", InterfaceName: "nwg0", Description: "My VPN"},
+		},
+	}
+	s := NewService(Deps{Store: store, Singbox: sb, NDMSQuery: ndms, SystemTunnels: sysTunnels})
+
+	cfg := Config{
+		Enabled:          true,
+		ListenAll:        false,
+		ListenInterface:  "Bridge0",
+		Port:             1099,
+		SelectedOutbound: "awg-sys-Wireguard0",
+	}
+	if err := s.SaveConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	if sb.lastSpec == nil {
+		t.Fatalf("singbox spec was not applied")
+	}
+
+	found := false
+	for _, a := range sb.lastSpec.AWGTargets {
+		if a.TunnelID == "sys-Wireguard0" && a.KernelIface == "nwg0" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("sys-Wireguard0 AWGTarget not found in spec: %+v", sb.lastSpec.AWGTargets)
+	}
+}
+
 func TestService_Reconcile_MissingTargetDisables(t *testing.T) {
 	sb := &fakeSingboxOperator{running: true}
 	ndms := &fakeNDMSQuery{addr: "10.10.10.1"}

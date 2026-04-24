@@ -636,11 +636,12 @@ func main() {
 	// sing-box. See docs/superpowers/specs/2026-04-24-device-proxy-design.md.
 	deviceProxyStore := deviceproxy.NewStore(filepath.Join(*dataDir, "deviceproxy.json"))
 	deviceProxySvc := deviceproxy.NewService(deviceproxy.Deps{
-		Store:     deviceProxyStore,
-		Tunnels:   awgStore,
-		Singbox:   deviceproxy.NewSingboxAdapter(singboxOp),
-		NDMSQuery: deviceproxy.NewNDMSAdapter(ndmsQueries),
-		Bus:       eventBus,
+		Store:         deviceProxyStore,
+		Tunnels:       awgStore,
+		SystemTunnels: deviceproxy.NewSystemTunnelAdapter(systemTunnelSvc),
+		Singbox:       deviceproxy.NewSingboxAdapter(singboxOp),
+		NDMSQuery:     deviceproxy.NewNDMSAdapter(ndmsQueries),
+		Bus:           eventBus,
 	})
 	deviceProxySvc.SetTunnelInboundPorts(func() []int {
 		cfg, err := singboxOp.LoadCurrentConfig()
