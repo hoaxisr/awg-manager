@@ -262,6 +262,75 @@ func TestService_GetRuntimeState_Dead(t *testing.T) {
 	}
 }
 
+func TestService_SaveConfig_DefaultOnly_SkipsReload(t *testing.T) {
+	sb := &fakeSingboxOperator{running: true, tags: []string{"VLESS-RU"}}
+	ndms := &fakeNDMSQuery{addr: "10.10.10.1"}
+	store := NewStore(filepath.Join(t.TempDir(), "d.json"))
+	start := Config{Enabled: true, ListenAll: true, Port: 1099, SelectedOutbound: "direct"}
+	_ = store.Save(start)
+
+	s := NewService(Deps{Store: store, Singbox: sb, NDMSQuery: ndms})
+
+	next := start
+	next.SelectedOutbound = "VLESS-RU"
+	if err := s.SaveConfig(context.Background(), next); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	if sb.lastSpec != nil {
+		t.Fatalf("ApplyDeviceProxy (reload path) was called but shouldn't have been")
+	}
+	if sb.lastSpecNR == nil || sb.lastSpecNR.SelectedTag != "VLESS-RU" {
+		t.Fatalf("no-reload spec missing or wrong: %+v", sb.lastSpecNR)
+	}
+}
+
+func TestService_SaveConfig_PortChange_Reloads(t *testing.T) {
+	sb := &fakeSingboxOperator{running: true}
+	ndms := &fakeNDMSQuery{addr: "10.10.10.1"}
+	store := NewStore(filepath.Join(t.TempDir(), "d.json"))
+	start := Config{Enabled: true, ListenAll: true, Port: 1099, SelectedOutbound: "direct"}
+	_ = store.Save(start)
+
+	s := NewService(Deps{Store: store, Singbox: sb, NDMSQuery: ndms})
+
+	next := start
+	next.Port = 1100
+	if err := s.SaveConfig(context.Background(), next); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	if sb.lastSpec == nil {
+		t.Fatalf("ApplyDeviceProxy (reload path) was NOT called")
+	}
+	if sb.lastSpecNR != nil {
+		t.Fatalf("no-reload path was incorrectly used for a port change")
+	}
+}
+
+func TestService_SaveConfig_EnableToggle_Reloads(t *testing.T) {
+	sb := &fakeSingboxOperator{running: true}
+	ndms := &fakeNDMSQuery{addr: "10.10.10.1"}
+	store := NewStore(filepath.Join(t.TempDir(), "d.json"))
+	// Start disabled.
+	_ = store.Save(Config{Enabled: false, ListenAll: true, Port: 1099})
+	s := NewService(Deps{Store: store, Singbox: sb, NDMSQuery: ndms})
+
+	// Enable with a selected outbound — not a "default only" change because
+	// Enabled flipped from false to true.
+	next := Config{Enabled: true, ListenAll: true, Port: 1099, SelectedOutbound: "direct"}
+	if err := s.SaveConfig(context.Background(), next); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	if sb.lastSpec == nil {
+		t.Fatalf("Enable-toggle must go through the reload path")
+	}
+	if sb.lastSpecNR != nil {
+		t.Fatalf("no-reload path taken incorrectly for Enable toggle")
+	}
+}
+
 func TestService_Reconcile_MissingTargetDisables(t *testing.T) {
 	sb := &fakeSingboxOperator{running: true}
 	ndms := &fakeNDMSQuery{addr: "10.10.10.1"}
