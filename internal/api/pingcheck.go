@@ -6,6 +6,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
@@ -38,6 +39,7 @@ type PingCheckHandler struct {
 	nwgOp   *nwg.OperatorNativeWG
 	log     *logging.ScopedLogger
 	bus     *events.Bus
+	orch    *orchestrator.Orchestrator
 }
 
 // NewPingCheckHandler creates a new ping check handler.
@@ -52,6 +54,12 @@ func NewPingCheckHandler(service PingCheckService, tunnels *storage.AWGTunnelSto
 
 // SetEventBus sets the event bus for SSE invalidation hints.
 func (h *PingCheckHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
+
+// SetOrchestrator wires the orchestrator for in-memory state sync
+// after ping-check enable/disable mutations. Without this the decide
+// layer keeps a stale PingCheck.Enabled flag and fires spurious
+// ActionRemovePingCheck on the next lifecycle event.
+func (h *PingCheckHandler) SetOrchestrator(orch *orchestrator.Orchestrator) { h.orch = orch }
 
 // PublishSnapshot publishes a resource:invalidated hint for pingcheck so
 // subscribed polling stores refetch. The legacy `snapshot:pingcheck` event
@@ -256,6 +264,12 @@ func (h *PingCheckHandler) ConfigureTunnelPingCheck(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// Refresh orchestrator cache so subsequent lifecycle decisions see
+	// the new PingCheck config, not the pre-enable snapshot.
+	if h.orch != nil {
+		h.orch.RefreshTunnelState(id)
+	}
+
 	// Start NativeWG poll-based monitor for log generation.
 	// NDMS config already applied above — skip redundant configure.
 	h.service.StartMonitoring(id, stored.Name, true)
@@ -305,6 +319,13 @@ func (h *PingCheckHandler) RemoveTunnelPingCheck(w http.ResponseWriter, r *http.
 		stored.PingCheck.Enabled = false
 	}
 	_ = h.tunnels.Save(stored)
+
+	// Refresh orchestrator cache so the stale PingCheck.Enabled=true
+	// view doesn't drive phantom ActionRemovePingCheck on the next
+	// Stop/Restart hook.
+	if h.orch != nil {
+		h.orch.RefreshTunnelState(id)
+	}
 
 	h.log.Info("ping-check-remove", id, "Ping-check removed")
 	h.PublishSnapshot()

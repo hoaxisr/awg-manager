@@ -122,6 +122,39 @@ func (o *Orchestrator) SetSupportsASC(fn func() bool) {
 	o.state.supportsASC = fn()
 }
 
+// RefreshTunnelState re-reads a tunnel from storage and updates the
+// orchestrator's in-memory cache without emitting any actions.
+//
+// Settings-only mutations (ping-check toggle, name change, ISP interface
+// reassignment, etc.) happen directly against the store in the API
+// layer. Without this refresh the decide layer keeps making decisions
+// off a stale snapshot — e.g. seeing PingCheck.Enabled=true after the
+// user disabled it, which produces spurious ActionRemovePingCheck on
+// the next lifecycle event and triggers NDMS "interface has no
+// assigned profile" warnings.
+//
+// Runtime-only fields (Running, Monitoring, ExternalRestart counters)
+// live only in the orchestrator's cache, so they are preserved across
+// the refresh — reloading them from storage would clobber the action
+// layer's view of the world.
+func (o *Orchestrator) RefreshTunnelState(tunnelID string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	stored, err := o.store.Get(tunnelID)
+	if err != nil {
+		return
+	}
+	fresh := tunnelStateFromStored(stored)
+	if cur, ok := o.state.tunnels[tunnelID]; ok {
+		fresh.Running = cur.Running
+		fresh.Monitoring = cur.Monitoring
+		fresh.ExternalRestartCount = cur.ExternalRestartCount
+		fresh.LastExternalRestart = cur.LastExternalRestart
+	}
+	o.state.tunnels[tunnelID] = fresh
+}
+
 // LoadState populates the state cache from storage and live operator state.
 // Called once at startup before handling any events.
 func (o *Orchestrator) LoadState(ctx context.Context) {

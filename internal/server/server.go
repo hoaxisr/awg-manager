@@ -385,6 +385,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	wanHandler := api.NewWANHandler(s.tunnelService, s.log, appLog)
 	pingCheckHandler := api.NewPingCheckHandler(s.pingCheckService, s.tunnels, s.nwgOp, appLog)
 	pingCheckHandler.SetEventBus(s.bus)
+	pingCheckHandler.SetOrchestrator(s.orch)
 	tunnelsHandler.SetPingCheckSnapshot(pingCheckHandler.PublishSnapshot)
 	settingsHandler.SetPingCheckSnapshot(pingCheckHandler.PublishSnapshot)
 	loggingHandler := api.NewLoggingHandler(s.loggingService, appLog)
