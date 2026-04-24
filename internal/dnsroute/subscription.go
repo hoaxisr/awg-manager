@@ -15,7 +15,7 @@ var subscriptionHTTPClient = &http.Client{Timeout: 30 * time.Second}
 func isSupportedSubscriptionContentType(ct string) bool {
 	ct = strings.TrimSpace(strings.ToLower(ct))
 	if ct == "" {
-		return true
+		return false
 	}
 	return strings.HasPrefix(ct, "text/plain") || strings.HasPrefix(ct, "application/octet-stream")
 }

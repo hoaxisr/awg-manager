@@ -180,4 +180,20 @@ func TestFetchSubscription_ContentType(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+
+	t.Run("rejects missing content-type", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header()["Content-Type"] = nil
+			_, _ = w.Write([]byte("example.com\n"))
+		}))
+		defer srv.Close()
+
+		_, err := fetchSubscription(context.Background(), srv.URL)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "не указал Content-Type") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 }

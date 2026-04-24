@@ -28,7 +28,7 @@ var confDir = "/opt/etc/awg-manager"
 // ServiceImpl is the concrete implementation of Service.
 type ServiceImpl struct {
 	store          *storage.AWGTunnelStore
-	state          state.Manager         // state detection for kernel tunnels only
+	state          state.Manager        // state detection for kernel tunnels only
 	nwgOperator    *nwg.OperatorNativeWG // NativeWG backend (nil if unavailable)
 	legacyOperator ops.Operator          // Kernel backend (OS5/OS4)
 	log            *logger.Logger
