@@ -54,7 +54,8 @@ import type {
 	SingboxStatus,
 	SingboxImportResponse,
 	DeviceProxyConfig,
-	DeviceProxyOutbound
+	DeviceProxyOutbound,
+	DeviceProxyRuntime
 } from '$lib/types';
 
 interface ApiResponse<T> {
@@ -1205,6 +1206,18 @@ class ApiClient {
 		});
 	}
 
+	async getDeviceProxyRuntime(): Promise<DeviceProxyRuntime> {
+		return this.request('/proxy/runtime');
+	}
+
+	async selectDeviceProxyRuntime(tag: string): Promise<{ active: string }> {
+		return this.request('/proxy/runtime/select', {
+			method: 'POST',
+			body: JSON.stringify({ tag }),
+		});
+	}
+
+	/** @deprecated replaced by selectDeviceProxyRuntime — kept until Task 12 removes ActiveOutboundCard */
 	async selectDeviceProxyOutbound(tag: string): Promise<{ active: string }> {
 		return this.request('/proxy/select', {
 			method: 'POST',
