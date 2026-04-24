@@ -32,6 +32,27 @@ func (a *SingboxAdapter) ApplyDeviceProxy(ctx context.Context, spec ExternalSpec
 	return a.op.ApplyConfig(ctx, cfg)
 }
 
+// ApplyDeviceProxyNoReload is the no-SIGHUP twin of ApplyDeviceProxy.
+// Used by Service.SaveConfig when the diff is SelectedOutbound-only,
+// so writing the new selector.default to config.json does not disturb
+// the live selector.now that a hot-switch may have set.
+func (a *SingboxAdapter) ApplyDeviceProxyNoReload(ctx context.Context, spec ExternalSpec) error {
+	cfg, err := a.op.LoadCurrentConfig()
+	if err != nil {
+		return err
+	}
+	if err := cfg.EnsureDeviceProxy(toSingboxSpec(spec)); err != nil {
+		return err
+	}
+	return a.op.ApplyConfigNoReload(ctx, cfg)
+}
+
+// GetSelectorActive returns the currently-active member of the named
+// selector. Thin pass-through — see singbox.Operator for the contract.
+func (a *SingboxAdapter) GetSelectorActive(ctx context.Context, selectorTag string) (string, error) {
+	return a.op.GetSelectorActive(ctx, selectorTag)
+}
+
 func (a *SingboxAdapter) SetSelectorDefault(ctx context.Context, selectorTag, memberTag string) error {
 	return a.op.SetSelectorDefault(ctx, selectorTag, memberTag)
 }

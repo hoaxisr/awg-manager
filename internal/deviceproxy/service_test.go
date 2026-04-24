@@ -3,6 +3,7 @@ package deviceproxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -82,15 +83,21 @@ func TestService_SaveConfig_AppliesToSingbox(t *testing.T) {
 }
 
 type fakeSingboxOperator struct {
-	running      bool
-	tags         []string
-	lastSpec     *ExternalSpec
-	lastSelector string
-	lastMember   string
+	running       bool
+	tags          []string
+	lastSpec      *ExternalSpec
+	lastSpecNR    *ExternalSpec // ApplyDeviceProxyNoReload call
+	lastSelector  string
+	lastMember    string
+	runtimeActive string // what GetSelectorActive returns
 }
 
-func (f *fakeSingboxOperator) ApplyDeviceProxy(ctx context.Context, spec ExternalSpec) error {
+func (f *fakeSingboxOperator) ApplyDeviceProxy(_ context.Context, spec ExternalSpec) error {
 	f.lastSpec = &spec
+	return nil
+}
+func (f *fakeSingboxOperator) ApplyDeviceProxyNoReload(_ context.Context, spec ExternalSpec) error {
+	f.lastSpecNR = &spec
 	return nil
 }
 func (f *fakeSingboxOperator) TunnelTags() []string { return f.tags }
@@ -98,6 +105,12 @@ func (f *fakeSingboxOperator) IsRunning() bool      { return f.running }
 func (f *fakeSingboxOperator) SetSelectorDefault(_ context.Context, selector, member string) error {
 	f.lastSelector, f.lastMember = selector, member
 	return nil
+}
+func (f *fakeSingboxOperator) GetSelectorActive(_ context.Context, _ string) (string, error) {
+	if !f.running {
+		return "", fmt.Errorf("not running")
+	}
+	return f.runtimeActive, nil
 }
 
 type fakeNDMSQuery struct{ addr string }
