@@ -698,6 +698,75 @@ func (o *OperatorNativeWG) SyncAddressMTU(ctx context.Context, stored *storage.A
 	return nil
 }
 
+// SyncPeer pushes the stored peer configuration to the NDMS interface.
+// This applies key/allowed-ips/keepalive/preshared-key from storage.
+func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunnel) error {
+	ndmsName := NewNWGNames(stored.NWGIndex).NDMSName
+	o.appLog.Full("replace-config", stored.Name, "Syncing peer parameters to NDMS")
+
+	peerCfg := rci.PeerConfig{
+		PublicKey: stored.Peer.PublicKey,
+		Endpoint:  stored.Peer.Endpoint,
+	}
+	if stored.Peer.PersistentKeepalive > 0 {
+		peerCfg.KeepaliveInterval = stored.Peer.PersistentKeepalive
+	}
+	if stored.Peer.PresharedKey != "" {
+		peerCfg.PresharedKey = stored.Peer.PresharedKey
+	}
+
+	for _, raw := range stored.Peer.AllowedIPs {
+		s := strings.TrimSpace(raw)
+		if s == "" {
+			continue
+		}
+		// CIDR form ("10.0.0.0/24", "fd00::/64")
+		if _, netw, err := net.ParseCIDR(s); err == nil && netw != nil {
+			ones, _ := netw.Mask.Size()
+			item := rci.AllowedIP{Address: netw.IP.String(), Mask: strconv.Itoa(ones)}
+			if netw.IP.To4() != nil {
+				peerCfg.AllowedIPv4 = append(peerCfg.AllowedIPv4, item)
+			} else {
+				peerCfg.AllowedIPv6 = append(peerCfg.AllowedIPv6, item)
+			}
+			continue
+		}
+		// Single IP form ("10.0.0.2", "fd00::2")
+		if ip := net.ParseIP(s); ip != nil {
+			if v4 := ip.To4(); v4 != nil {
+				peerCfg.AllowedIPv4 = append(peerCfg.AllowedIPv4, rci.AllowedIP{
+					Address: v4.String(),
+					Mask:    "32",
+				})
+			} else {
+				peerCfg.AllowedIPv6 = append(peerCfg.AllowedIPv6, rci.AllowedIP{
+					Address: ip.String(),
+					Mask:    "128",
+				})
+			}
+		}
+	}
+
+	_, err := o.transport.PostBatch(ctx, []any{
+		rci.CmdWireguardPeer(ndmsName, peerCfg),
+		rci.CmdSave(),
+	})
+	if err != nil {
+		return fmt.Errorf("sync peer: %w", err)
+	}
+
+	// Re-apply peer "connect via" binding when set.
+	if stored.ISPInterface != "" {
+		if _, err := o.transport.Post(ctx, rci.CmdWireguardPeerConnect(ndmsName, stored.Peer.PublicKey, stored.ISPInterface)); err != nil {
+			o.log.Warnf("nwg: sync peer connect via on %s: %v", ndmsName, err)
+		}
+	}
+
+	o.appLog.Full("replace-config", stored.Name, "Peer sync complete")
+	o.log.Infof("nwg: synced peer on %s (allowed v4=%d, v6=%d)", ndmsName, len(peerCfg.AllowedIPv4), len(peerCfg.AllowedIPv6))
+	return nil
+}
+
 // UpdateDescription updates the NDMS interface description.
 func (o *OperatorNativeWG) UpdateDescription(ctx context.Context, stored *storage.AWGTunnel, name string) error {
 	return o.commands.Interfaces.SetDescription(ctx, NewNWGNames(stored.NWGIndex).NDMSName, name)
