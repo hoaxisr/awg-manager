@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 const (
@@ -166,7 +167,8 @@ func (c *Config) setRouteRules(v []any) {
 	route["rules"] = v
 }
 
-// userOutbounds returns outbounds excluding system ones (direct, block).
+// userOutbounds returns outbounds excluding system ones (direct, block, dns)
+// and device-proxy infrastructure (selector outbound, awg-* direct outbounds).
 func (c *Config) userOutbounds() []map[string]any {
 	var out []map[string]any
 	for _, v := range c.outbounds() {
@@ -175,7 +177,11 @@ func (c *Config) userOutbounds() []map[string]any {
 			continue
 		}
 		t, _ := ob["type"].(string)
-		if t == "direct" || t == "block" || t == "dns" {
+		if t == "direct" || t == "block" || t == "dns" || t == "selector" {
+			continue
+		}
+		tag, _ := ob["tag"].(string)
+		if strings.HasPrefix(tag, deviceProxyAWGPrefix) {
 			continue
 		}
 		out = append(out, ob)
@@ -560,6 +566,47 @@ func (c *Config) EnsureDeviceProxy(spec DeviceProxySpec) error {
 		}
 	}
 	c.upsertInbound(deviceProxyInboundTag, inbound)
+
+	// AWG direct outbounds — one per entry in spec.AWGTargets.
+	// First prune any awg-* outbound that is no longer in the spec.
+	wantAWG := make(map[string]string, len(spec.AWGTargets)) // tag → iface
+	for _, a := range spec.AWGTargets {
+		wantAWG[deviceProxyAWGPrefix+a.TunnelID] = a.KernelIface
+	}
+	c.pruneAWGOutbounds(wantAWG)
+	for tag, iface := range wantAWG {
+		c.upsertOutbound(tag, map[string]any{
+			"type":           "direct",
+			"tag":            tag,
+			"bind_interface": iface,
+		})
+	}
+
+	// Selector outbound — members in deterministic order: direct, sb tags, awg tags.
+	members := []any{"direct"}
+	for _, tag := range spec.SBTags {
+		members = append(members, tag)
+	}
+	awgTags := make([]string, 0, len(wantAWG))
+	for tag := range wantAWG {
+		awgTags = append(awgTags, tag)
+	}
+	sort.Strings(awgTags)
+	for _, tag := range awgTags {
+		members = append(members, tag)
+	}
+	selector := map[string]any{
+		"type":      "selector",
+		"tag":       deviceProxySelectorTag,
+		"outbounds": members,
+	}
+	if spec.SelectedTag != "" {
+		selector["default"] = spec.SelectedTag
+	}
+	c.upsertOutbound(deviceProxySelectorTag, selector)
+
+	// Route rule at front of rules list.
+	c.ensureDeviceProxyRouteRule()
 	return nil
 }
 
@@ -567,6 +614,9 @@ func (c *Config) EnsureDeviceProxy(spec DeviceProxySpec) error {
 // Idempotent — safe on a config that never had the proxy.
 func (c *Config) RemoveDeviceProxy() {
 	c.removeInbound(deviceProxyInboundTag)
+	c.removeOutbound(deviceProxySelectorTag)
+	c.pruneAWGOutbounds(nil)
+	c.removeDeviceProxyRouteRule()
 }
 
 // upsertInbound replaces the inbound whose tag matches, or appends if
@@ -602,4 +652,111 @@ func (c *Config) removeInbound(tag string) {
 		out = append(out, v)
 	}
 	c.setInbounds(out)
+}
+
+// upsertOutbound replaces or appends by tag. Inserts before the trailing
+// `direct` outbound so the route.final direct-fallback stays at the end.
+func (c *Config) upsertOutbound(tag string, outbound map[string]any) {
+	obs := c.outbounds()
+	for i, v := range obs {
+		ob, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		if t, _ := ob["tag"].(string); t == tag {
+			obs[i] = outbound
+			c.setOutbounds(obs)
+			return
+		}
+	}
+	insertAt := len(obs)
+	for i, v := range obs {
+		ob, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		if t, _ := ob["tag"].(string); t == "direct" {
+			insertAt = i
+			break
+		}
+	}
+	obs = append(obs[:insertAt], append([]any{outbound}, obs[insertAt:]...)...)
+	c.setOutbounds(obs)
+}
+
+func (c *Config) removeOutbound(tag string) {
+	obs := c.outbounds()
+	out := make([]any, 0, len(obs))
+	for _, v := range obs {
+		ob, ok := v.(map[string]any)
+		if !ok {
+			out = append(out, v)
+			continue
+		}
+		if t, _ := ob["tag"].(string); t == tag {
+			continue
+		}
+		out = append(out, v)
+	}
+	c.setOutbounds(out)
+}
+
+// pruneAWGOutbounds removes every `awg-*` outbound whose tag is not in
+// keep. Pass nil to remove all.
+func (c *Config) pruneAWGOutbounds(keep map[string]string) {
+	obs := c.outbounds()
+	out := make([]any, 0, len(obs))
+	for _, v := range obs {
+		ob, ok := v.(map[string]any)
+		if !ok {
+			out = append(out, v)
+			continue
+		}
+		tag, _ := ob["tag"].(string)
+		if strings.HasPrefix(tag, deviceProxyAWGPrefix) {
+			if _, stay := keep[tag]; !stay {
+				continue
+			}
+		}
+		out = append(out, v)
+	}
+	c.setOutbounds(out)
+}
+
+func (c *Config) ensureDeviceProxyRouteRule() {
+	rule := map[string]any{
+		"inbound":  deviceProxyInboundTag,
+		"outbound": deviceProxySelectorTag,
+	}
+	rules := c.routeRules()
+	filtered := make([]any, 0, len(rules))
+	for _, v := range rules {
+		r, ok := v.(map[string]any)
+		if !ok {
+			filtered = append(filtered, v)
+			continue
+		}
+		if r["inbound"] == deviceProxyInboundTag {
+			continue
+		}
+		filtered = append(filtered, v)
+	}
+	c.setRouteRules(append([]any{rule}, filtered...))
+}
+
+func (c *Config) removeDeviceProxyRouteRule() {
+	rules := c.routeRules()
+	out := make([]any, 0, len(rules))
+	for _, v := range rules {
+		r, ok := v.(map[string]any)
+		if !ok {
+			out = append(out, v)
+			continue
+		}
+		if r["inbound"] == deviceProxyInboundTag {
+			continue
+		}
+		out = append(out, v)
+	}
+	c.setRouteRules(out)
 }
