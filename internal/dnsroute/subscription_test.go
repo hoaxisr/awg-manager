@@ -1,6 +1,12 @@
 package dnsroute
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
 
 func TestParseDomainLine(t *testing.T) {
 	tests := []struct {
@@ -138,6 +144,40 @@ func TestMergeDomains(t *testing.T) {
 		got := mergeDomains(manual, nil)
 		if len(got) != 1 || got[0] != "a.com" {
 			t.Errorf("got %v, want [a.com]", got)
+		}
+	})
+}
+
+func TestFetchSubscription_ContentType(t *testing.T) {
+	t.Run("accepts application/octet-stream", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write([]byte("8.8.8.0/24\nexample.com\n"))
+		}))
+		defer srv.Close()
+
+		got, err := fetchSubscription(context.Background(), srv.URL)
+		if err != nil {
+			t.Fatalf("fetchSubscription() error = %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("len(got) = %d, want 2 (%v)", len(got), got)
+		}
+	})
+
+	t.Run("rejects json content-type", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		}))
+		defer srv.Close()
+
+		_, err := fetchSubscription(context.Background(), srv.URL)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "неподдерживаемый формат") {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 }

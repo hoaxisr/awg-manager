@@ -95,6 +95,15 @@ func TestSubscriptionDomains(t *testing.T) {
 	}
 }
 
+func TestValidateSubnetsLimit(t *testing.T) {
+	if err := validateSubnetsLimit(MaxSubnetsPerList); err != nil {
+		t.Fatalf("unexpected error at limit: %v", err)
+	}
+	if err := validateSubnetsLimit(MaxSubnetsPerList + 1); err == nil {
+		t.Fatal("expected error above limit, got nil")
+	}
+}
+
 func TestStore_LoadSave(t *testing.T) {
 	dir := t.TempDir()
 

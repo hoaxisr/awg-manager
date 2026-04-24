@@ -12,6 +12,14 @@ import (
 
 var subscriptionHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
+func isSupportedSubscriptionContentType(ct string) bool {
+	ct = strings.TrimSpace(strings.ToLower(ct))
+	if ct == "" {
+		return true
+	}
+	return strings.HasPrefix(ct, "text/plain") || strings.HasPrefix(ct, "application/octet-stream")
+}
+
 // fetchSubscription downloads a domain list from a URL and parses it.
 func fetchSubscription(ctx context.Context, url string) ([]string, error) {
 	url = normalizeGitHubURL(url)
@@ -31,13 +39,13 @@ func fetchSubscription(ctx context.Context, url string) ([]string, error) {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	// Only accept text/plain responses — reject HTML, JSON, binary, etc.
+	// Accept text lists from strict and generic servers.
 	ct := resp.Header.Get("Content-Type")
-	if !strings.HasPrefix(ct, "text/plain") {
-		if ct == "" {
-			return nil, fmt.Errorf("сервер не указал Content-Type (нужен text/plain)")
+	if !isSupportedSubscriptionContentType(ct) {
+		if strings.TrimSpace(ct) == "" {
+			return nil, fmt.Errorf("сервер не указал Content-Type (нужен text/plain или application/octet-stream)")
 		}
-		return nil, fmt.Errorf("неподдерживаемый формат: %s (нужен text/plain)", ct)
+		return nil, fmt.Errorf("неподдерживаемый формат: %s (нужен text/plain или application/octet-stream)", ct)
 	}
 
 	var domains []string
