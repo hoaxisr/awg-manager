@@ -7,7 +7,7 @@ import { writable } from 'svelte/store';
 import { api } from '$lib/api/client';
 import { createPollingStore, type PollingStore } from './polling';
 import { registerStore } from './storeRegistry';
-import type { DeviceProxyConfig, DeviceProxyOutbound } from '$lib/types';
+import type { DeviceProxyConfig, DeviceProxyOutbound, DeviceProxyRuntime } from '$lib/types';
 
 export const deviceProxyConfig: PollingStore<DeviceProxyConfig> = createPollingStore<DeviceProxyConfig>(
 	() => api.getDeviceProxyConfig(),
@@ -20,6 +20,12 @@ export const deviceProxyOutbounds: PollingStore<DeviceProxyOutbound[]> = createP
 	{ staleTime: 15_000, pollInterval: 15_000 },
 );
 registerStore('deviceproxy.outbounds', deviceProxyOutbounds);
+
+export const deviceProxyRuntime: PollingStore<DeviceProxyRuntime> = createPollingStore<DeviceProxyRuntime>(
+	() => api.getDeviceProxyRuntime(),
+	{ staleTime: 5_000, pollInterval: 5_000 },
+);
+registerStore('deviceproxy.runtime', deviceProxyRuntime);
 
 // missingTarget holds the tag name of the outbound that was deleted while
 // the proxy was active. Set by the deviceproxy:missing-target SSE event,
