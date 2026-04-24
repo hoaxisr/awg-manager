@@ -96,6 +96,10 @@ export interface SSEEventHandlers {
 
 	// Generic resource invalidation hint (state-sync redesign)
 	onResourceInvalidated?: (data: ResourceInvalidatedEvent) => void;
+
+	// Device-proxy: selected outbound was deleted while the proxy was active.
+	// Backend disables the proxy and emits this event so the UI can show a banner.
+	onDeviceProxyMissingTarget?: (data: { wasTag: string }) => void;
 }
 
 export function connectSSE(handlers: SSEEventHandlers): () => void {
@@ -134,6 +138,9 @@ export function connectSSE(handlers: SSEEventHandlers): () => void {
 
 	// Generic resource invalidation hint (state-sync redesign)
 	handle('resource:invalidated', handlers.onResourceInvalidated);
+
+	// Device-proxy missing-target notification
+	handle('deviceproxy:missing-target', handlers.onDeviceProxyMissingTarget);
 
 	// Server sends "connected" event immediately on stream start
 	es.addEventListener('connected', () => {

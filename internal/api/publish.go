@@ -20,6 +20,7 @@ const (
 	ResourceRoutingClientRoutes     = "routing.clientRoutes"
 	ResourceRoutingTunnels          = "routing.tunnels"
 	ResourceRoutingHydrarouteStatus = "routing.hydrarouteStatus"
+	ResourceDeviceProxy             = "deviceproxy"
 )
 
 // publishInvalidated posts a resource:invalidated hint to the SSE bus.
