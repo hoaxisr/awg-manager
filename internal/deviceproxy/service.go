@@ -2,7 +2,9 @@ package deviceproxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -72,7 +74,7 @@ type Service struct {
 
 // ErrOutboundUnavailable is returned by SelectOutbound when the caller
 // requests a tag that is not in the current list of available outbounds.
-var ErrOutboundUnavailable = fmt.Errorf("outbound is not available")
+var ErrOutboundUnavailable = errors.New("outbound is not available")
 
 func NewService(d Deps) *Service {
 	return &Service{d: d}
@@ -239,4 +241,87 @@ func awgKernelIface(t *storage.AWGTunnel) string {
 		return fmt.Sprintf("nwg%d", t.NWGIndex)
 	}
 	return t.ID
+}
+
+// Outbound describes one selectable proxy target exposed to the UI.
+type Outbound struct {
+	Tag    string `json:"tag"`
+	Kind   string `json:"kind"`   // "direct" | "singbox" | "awg"
+	Label  string `json:"label"`
+	Detail string `json:"detail"` // extra info for UI (kernel iface, protocol, etc)
+}
+
+// ListOutbounds returns all members that can be assigned as the
+// selector's active outbound — direct + every sb-tunnel tag + every
+// AWG tunnel's awg-<id> tag. Order is deterministic: direct first,
+// then sb by name, then AWG by id.
+func (s *Service) ListOutbounds(ctx context.Context) []Outbound {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.listOutboundsLocked(ctx)
+}
+
+func (s *Service) listOutboundsLocked(_ context.Context) []Outbound {
+	out := []Outbound{{Tag: "direct", Kind: "direct", Label: "Direct (WAN)", Detail: "без туннеля"}}
+
+	if s.d.Singbox != nil {
+		tags := append([]string(nil), s.d.Singbox.TunnelTags()...)
+		sort.Strings(tags)
+		for _, tag := range tags {
+			out = append(out, Outbound{Tag: tag, Kind: "singbox", Label: tag})
+		}
+	}
+
+	if s.d.Tunnels != nil {
+		tunnels, _ := s.d.Tunnels.List()
+		sort.Slice(tunnels, func(i, j int) bool { return tunnels[i].ID < tunnels[j].ID })
+		for _, t := range tunnels {
+			t := t
+			iface := awgKernelIface(&t)
+			out = append(out, Outbound{
+				Tag:    "awg-" + t.ID,
+				Kind:   "awg",
+				Label:  t.Name,
+				Detail: iface,
+			})
+		}
+	}
+	return out
+}
+
+// SelectOutbound switches the active member of the selector. Fast path:
+// no reload. If sing-box is alive, the change is applied via Clash API;
+// either way the choice is persisted so cold-start picks it up.
+func (s *Service) SelectOutbound(ctx context.Context, tag string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	available := s.listOutboundsLocked(ctx)
+	found := false
+	for _, ob := range available {
+		if ob.Tag == tag {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("%w: %q", ErrOutboundUnavailable, tag)
+	}
+
+	cfg := s.d.Store.Get()
+	cfg.SelectedOutbound = tag
+	if err := s.d.Store.Save(cfg); err != nil {
+		return fmt.Errorf("persist storage: %w", err)
+	}
+
+	if s.d.Singbox != nil && s.d.Singbox.IsRunning() {
+		if err := s.d.Singbox.SetSelectorDefault(ctx, "device-proxy-selector", tag); err != nil {
+			return fmt.Errorf("clash selector switch: %w", err)
+		}
+	}
+
+	if s.d.Bus != nil {
+		s.d.Bus.Publish("resource:invalidated", map[string]string{"kind": "deviceproxy"})
+	}
+	return nil
 }
