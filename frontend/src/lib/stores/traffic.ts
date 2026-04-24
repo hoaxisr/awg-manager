@@ -155,22 +155,50 @@ export async function fetchTrafficDetail(tunnelId: string): Promise<{
 	};
 }
 
-// Card window: last hour at 10s SSE resolution = 360 points. Live sliding.
+// Card window: last hour of raw 10s samples = 360 points. Live sliding.
 const CARD_WINDOW_POINTS = 360;
+
+// Visual downsample target for the card sparkline. 60 points ≈ one
+// bucket per minute over the 1h window — keeps ~5 px per node on a
+// typical ~300 px card viewport, which is the sweet spot where Bezier
+// smoothing reads as a clean curve instead of a comb. Peaks are
+// preserved via max-per-bucket; peak-readout at the top of the chart
+// stays accurate because max-of-maxes equals max-of-raw.
+const CARD_DISPLAY_POINTS = 60;
+
+function downsampleMax(src: number[], target: number): number[] {
+	if (src.length <= target) return src;
+	const bucket = src.length / target;
+	const out = new Array<number>(target);
+	for (let i = 0; i < target; i++) {
+		const start = Math.floor(i * bucket);
+		const end = Math.min(src.length, Math.floor((i + 1) * bucket));
+		let m = src[start];
+		for (let j = start + 1; j < end; j++) {
+			if (src[j] > m) m = src[j];
+		}
+		out[i] = m;
+	}
+	return out;
+}
 
 export function getTrafficRates(tunnelId: string): { rx: number[]; tx: number[] } {
 	const entry = history.get(tunnelId);
 	if (!entry) return { rx: [], tx: [] };
 
-	const rx =
+	const rxRaw =
 		entry.rxRates.length > CARD_WINDOW_POINTS
 			? entry.rxRates.slice(-CARD_WINDOW_POINTS)
 			: entry.rxRates;
-	const tx =
+	const txRaw =
 		entry.txRates.length > CARD_WINDOW_POINTS
 			? entry.txRates.slice(-CARD_WINDOW_POINTS)
 			: entry.txRates;
-	return { rx, tx };
+
+	return {
+		rx: downsampleMax(rxRaw, CARD_DISPLAY_POINTS),
+		tx: downsampleMax(txRaw, CARD_DISPLAY_POINTS)
+	};
 }
 
 /** Clear history for a tunnel (e.g. on delete). */
