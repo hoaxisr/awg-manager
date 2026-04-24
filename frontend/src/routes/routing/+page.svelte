@@ -90,8 +90,12 @@
     let policyCount = $derived(accessPolicies.length);
     let clientRouteCount = $derived(clientRoutes.length);
 
-    // Default to IP tab when no DNS engine available
+    // Default to IP tab when no DNS engine available.
+    // Gated on $routing.loaded: otherwise on cold load (direct URL hit)
+    // hasDnsEngine is transiently false before systemInfo + routing stores
+    // settle, and we'd silently kick an OS5 user off the NDMS tab.
     $effect(() => {
+        if (!$routing.loaded) return;
         if (!hasDnsEngine && activeTab === 'dns') {
             activeTab = 'ip';
         }
