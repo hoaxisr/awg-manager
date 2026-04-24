@@ -112,13 +112,15 @@
 		{#if upgrading}
 			<div class="update-spinner"></div>
 		{:else}
-			{#if updateInfo?.available}
+			{#if updateInfo?.currentVersion}
 				<button
 					class="btn btn-ghost btn-sm"
 					onclick={() => (showChangelog = true)}
 				>
 					Что нового
 				</button>
+			{/if}
+			{#if updateInfo?.available}
 				<button
 					class="btn btn-primary btn-sm"
 					onclick={confirmUpgrade}
@@ -152,11 +154,11 @@
 	{/snippet}
 </Modal>
 
-{#if updateInfo?.currentVersion && updateInfo?.latestVersion}
+{#if updateInfo?.currentVersion}
 	<ChangelogModal
 		open={showChangelog}
-		fromVersion={updateInfo.currentVersion}
-		toVersion={updateInfo.latestVersion}
+		fromVersion={updateInfo.available && updateInfo.latestVersion ? updateInfo.currentVersion : ''}
+		toVersion={updateInfo.available && updateInfo.latestVersion ? updateInfo.latestVersion : updateInfo.currentVersion}
 		onclose={() => (showChangelog = false)}
 	/>
 {/if}
