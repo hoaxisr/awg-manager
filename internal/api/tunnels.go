@@ -796,6 +796,14 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sync orchestrator's in-memory cache with the new storage state
+	// before we hit StopMonitoring / RestartEvent etc. — decide() reads
+	// the cache, and a stale PingCheck flag here causes later events to
+	// emit phantom ActionRemovePingCheck that warns NDMS.
+	if h.orch != nil {
+		h.orch.RefreshTunnelState(id)
+	}
+
 	// Handle pingCheck changes
 	if h.pingCheck != nil {
 		stateInfo := h.svc.GetState(r.Context(), id)
