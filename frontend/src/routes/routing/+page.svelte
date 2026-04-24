@@ -13,6 +13,7 @@
     import AccessPoliciesTab from './AccessPoliciesTab.svelte';
     import ClientRoutesTab from './ClientRoutesTab.svelte';
     import { HrNeoTab } from '$lib/components/hrneo';
+    import { DeviceProxyTab } from '$lib/components/deviceproxy';
 
     // Per-section polling stores — subscribe here so all 8 fetch while
     // the routing page is open. Unsubscribed on destroy to stop polling.
@@ -23,12 +24,12 @@
     });
     onDestroy(() => { unsubRouting?.(); });
 
-    let activeTab = $state<'hrneo' | 'dns' | 'ip' | 'policy' | 'clientvpn'>('dns');
+    let activeTab = $state<'hrneo' | 'dns' | 'ip' | 'policy' | 'clientvpn' | 'deviceproxy'>('dns');
 
     // Deep link: ?tab=hrneo from the Settings page HR NEO card, etc.
     $effect(() => {
         const t = $page.url.searchParams.get('tab');
-        if (t === 'hrneo' || t === 'dns' || t === 'ip' || t === 'policy' || t === 'clientvpn') {
+        if (t === 'hrneo' || t === 'dns' || t === 'ip' || t === 'policy' || t === 'clientvpn' || t === 'deviceproxy') {
             activeTab = t;
         }
     });
@@ -108,6 +109,7 @@
             { id: 'ip', label: 'IP-адреса', badge: ipActiveCount },
             isOS5 ? { id: 'policy', label: 'Политики доступа', badge: policyCount } : null,
             { id: 'clientvpn', label: 'VPN для устройств', badge: clientRouteCount },
+            { id: 'deviceproxy', label: 'Прокси для устройств', badge: 0 },
         ].filter((t): t is { id: string; label: string; badge: number } => t !== null)
     );
 
@@ -187,6 +189,8 @@
                 {policyDevices}
                 {routingTunnels}
             />
+        {:else if activeTab === 'deviceproxy'}
+            <DeviceProxyTab />
         {/if}
     {/if}
 </PageContainer>
