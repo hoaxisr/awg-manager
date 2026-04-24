@@ -85,3 +85,19 @@ func (h *DeviceProxyHandler) ListOutbounds(w http.ResponseWriter, r *http.Reques
 	}
 	response.Success(w, h.svc.ListOutbounds(r.Context()))
 }
+
+// ListenChoices handles GET /api/proxy/listen-choices.
+// Returns the bridge interface list, LAN IP, and singbox-running status
+// needed by the frontend inbound settings form.
+func (h *DeviceProxyHandler) ListenChoices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	choices, err := h.svc.ListenChoices(r.Context())
+	if err != nil {
+		response.Error(w, err.Error(), "LISTEN_CHOICES_FAILED")
+		return
+	}
+	response.Success(w, choices)
+}
