@@ -3,11 +3,18 @@ package singbox
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 )
+
+// maxProxySlots caps how many ProxyN slots we will scan when looking for
+// a free index. Keenetic does not publish an official ceiling; 128 is
+// well above any realistic tunnel count and bounds the loop in NextFreeIndex
+// in case NDMS ever returns something unexpected.
+const maxProxySlots = 128
 
 // ErrProxyComponentMissing is returned when the router lacks the NDMS
 // "proxy" component. Without it, no ProxyN interface can be created, so
@@ -38,6 +45,40 @@ func (pm *ProxyManager) EnsureProxy(ctx context.Context, index, port int, descri
 	}
 	name := fmt.Sprintf("%s%d", proxyIfacePrefix, index)
 	return pm.commands.Proxies.CreateProxy(ctx, name, description, "127.0.0.1", port, true)
+}
+
+// NextFreeIndex returns the lowest ProxyN index not occupied on the
+// router. The NDMS namespace is shared with whatever the user created
+// manually through the router UI, so we must scan /show/interface/
+// before picking a slot — otherwise CreateProxy would silently mutate
+// the user's existing Proxy0. reserved lets a batch allocator skip
+// indices it has already handed out earlier in the same batch, before
+// those ProxyN interfaces have been committed to NDMS.
+func (pm *ProxyManager) NextFreeIndex(ctx context.Context, reserved map[int]bool) (int, error) {
+	ifaces, err := pm.queries.Interfaces.List(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list interfaces: %w", err)
+	}
+	used := make(map[int]bool)
+	for idx := range reserved {
+		used[idx] = true
+	}
+	for _, iface := range ifaces {
+		if !strings.HasPrefix(iface.ID, proxyIfacePrefix) {
+			continue
+		}
+		var idx int
+		if n, err := fmt.Sscanf(iface.ID, proxyIfacePrefix+"%d", &idx); err != nil || n != 1 {
+			continue
+		}
+		used[idx] = true
+	}
+	for i := 0; i < maxProxySlots; i++ {
+		if !used[i] {
+			return i, nil
+		}
+	}
+	return 0, fmt.Errorf("no free Proxy slot (scanned %d)", maxProxySlots)
 }
 
 // RemoveProxy tears down ProxyN.
