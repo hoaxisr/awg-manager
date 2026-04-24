@@ -1217,14 +1217,6 @@ class ApiClient {
 		});
 	}
 
-	/** @deprecated replaced by selectDeviceProxyRuntime — kept until Task 12 removes ActiveOutboundCard */
-	async selectDeviceProxyOutbound(tag: string): Promise<{ active: string }> {
-		return this.request('/proxy/select', {
-			method: 'POST',
-			body: JSON.stringify({ tag }),
-		});
-	}
-
 	async listDeviceProxyOutbounds(): Promise<DeviceProxyOutbound[]> {
 		return this.request('/proxy/outbounds');
 	}
