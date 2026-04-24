@@ -2,6 +2,7 @@ package deviceproxy
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -79,17 +80,21 @@ func TestService_SaveConfig_AppliesToSingbox(t *testing.T) {
 }
 
 type fakeSingboxOperator struct {
-	running  bool
-	lastSpec *ExternalSpec
+	running      bool
+	tags         []string
+	lastSpec     *ExternalSpec
+	lastSelector string
+	lastMember   string
 }
 
 func (f *fakeSingboxOperator) ApplyDeviceProxy(ctx context.Context, spec ExternalSpec) error {
 	f.lastSpec = &spec
 	return nil
 }
-func (f *fakeSingboxOperator) TunnelTags() []string { return nil }
+func (f *fakeSingboxOperator) TunnelTags() []string { return f.tags }
 func (f *fakeSingboxOperator) IsRunning() bool      { return f.running }
-func (f *fakeSingboxOperator) SetSelectorDefault(_ context.Context, _, _ string) error {
+func (f *fakeSingboxOperator) SetSelectorDefault(_ context.Context, selector, member string) error {
+	f.lastSelector, f.lastMember = selector, member
 	return nil
 }
 
@@ -97,4 +102,35 @@ type fakeNDMSQuery struct{ addr string }
 
 func (f *fakeNDMSQuery) GetInterfaceAddress(_ context.Context, _ string) (string, error) {
 	return f.addr, nil
+}
+
+func TestService_SelectOutbound_HotSwitch(t *testing.T) {
+	sb := &fakeSingboxOperator{running: true, tags: []string{"VLESS-RU"}}
+	ndms := &fakeNDMSQuery{addr: "10.10.10.1"}
+	store := NewStore(filepath.Join(t.TempDir(), "deviceproxy.json"))
+	_ = store.Save(Config{Enabled: true, ListenAll: true, Port: 1099, SelectedOutbound: "direct"})
+
+	s := NewService(Deps{Store: store, Singbox: sb, NDMSQuery: ndms})
+
+	if err := s.SelectOutbound(context.Background(), "VLESS-RU"); err != nil {
+		t.Fatalf("SelectOutbound: %v", err)
+	}
+	if sb.lastSelector != "device-proxy-selector" || sb.lastMember != "VLESS-RU" {
+		t.Fatalf("selector switch not called: %+v", sb)
+	}
+	if store.Get().SelectedOutbound != "VLESS-RU" {
+		t.Fatalf("storage not updated: %#v", store.Get())
+	}
+}
+
+func TestService_SelectOutbound_UnknownTag(t *testing.T) {
+	sb := &fakeSingboxOperator{running: true}
+	store := NewStore(filepath.Join(t.TempDir(), "deviceproxy.json"))
+	_ = store.Save(Config{Enabled: true, ListenAll: true, Port: 1099})
+	s := NewService(Deps{Store: store, Singbox: sb})
+
+	err := s.SelectOutbound(context.Background(), "nope")
+	if err == nil || !errors.Is(err, ErrOutboundUnavailable) {
+		t.Fatalf("got %v, want ErrOutboundUnavailable", err)
+	}
 }
