@@ -598,6 +598,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("/api/proxy/select", guarded(deviceProxyHandler.SelectOutbound))
 	mux.HandleFunc("/api/proxy/outbounds", guarded(deviceProxyHandler.ListOutbounds))
+	mux.HandleFunc("/api/proxy/listen-choices", guarded(deviceProxyHandler.ListenChoices))
 
 	// Logging (protected + boot guarded)
 	mux.HandleFunc("/api/logs", guarded(loggingHandler.GetLogs))

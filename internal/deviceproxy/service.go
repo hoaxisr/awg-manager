@@ -371,6 +371,59 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	return nil
 }
 
+// BridgeChoice describes a single Bridge interface for the inbound
+// listen address dropdown.
+type BridgeChoice struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	IP    string `json:"ip"`
+}
+
+// ListenChoicesResult aggregates the data the UI needs to render the
+// inbound settings form.
+type ListenChoicesResult struct {
+	LanIP          string         `json:"lanIP"`
+	Bridges        []BridgeChoice `json:"bridges"`
+	SingboxRunning bool           `json:"singboxRunning"`
+}
+
+// bridgeLister is the optional interface NDMSAdapter implements so that
+// ListenChoices can enumerate Bridge interfaces. Guarded by a type
+// assertion so the rest of NDMSInterfaceQuery is unchanged.
+type bridgeLister interface {
+	ListBridges(ctx context.Context) ([]BridgeChoice, error)
+}
+
+// ListenChoices returns the bridge list, LAN IP, and singbox-running
+// status needed by the frontend inbound settings form.
+func (s *Service) ListenChoices(ctx context.Context) (ListenChoicesResult, error) {
+	res := ListenChoicesResult{Bridges: []BridgeChoice{}}
+	if s.d.Singbox != nil {
+		res.SingboxRunning = s.d.Singbox.IsRunning()
+	}
+	if lister, ok := s.d.NDMSQuery.(bridgeLister); ok {
+		bridges, err := lister.ListBridges(ctx)
+		if err == nil {
+			res.Bridges = bridges
+			for _, b := range bridges {
+				if b.ID == "Bridge0" && b.IP != "" {
+					res.LanIP = b.IP
+					break
+				}
+			}
+			if res.LanIP == "" {
+				for _, b := range bridges {
+					if b.IP != "" {
+						res.LanIP = b.IP
+						break
+					}
+				}
+			}
+		}
+	}
+	return res, nil
+}
+
 // SubscribeBus registers event handlers that trigger Reconcile. Call
 // once at startup. Returns an unsubscribe function to call during
 // shutdown.

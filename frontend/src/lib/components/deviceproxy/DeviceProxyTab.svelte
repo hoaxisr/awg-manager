@@ -4,14 +4,23 @@
 	import ActiveOutboundCard from './ActiveOutboundCard.svelte';
 	import InboundSettingsCard from './InboundSettingsCard.svelte';
 	import ConnectionInfoCard from './ConnectionInfoCard.svelte';
+	import { api } from '$lib/api/client';
 	import type { DeviceProxyConfig } from '$lib/types';
+
+	interface ListenChoices {
+		lanIP: string;
+		bridges: { id: string; label: string; ip: string }[];
+		singboxRunning: boolean;
+	}
 
 	let unsubConfig: (() => void) | null = null;
 	let unsubOutbounds: (() => void) | null = null;
+	let choices = $state<ListenChoices | null>(null);
 
 	onMount(() => {
 		unsubConfig = deviceProxyConfig.subscribe(() => {});
 		unsubOutbounds = deviceProxyOutbounds.subscribe(() => {});
+		api.getDeviceProxyListenChoices().then((v) => { choices = v; }).catch(() => {});
 	});
 	onDestroy(() => {
 		unsubConfig?.();
@@ -24,10 +33,19 @@
 	let config = $derived<DeviceProxyConfig | null>(configSnap.data ?? null);
 	let outbounds = $derived(outboundsSnap.data ?? []);
 
-	// TODO(task18): thread real systemInfo values.
-	let singboxRunning = $state(true);
-	let bridgeInterfaces = $state([{ id: 'Bridge0', label: 'Bridge0 (Home)' }]);
-	let resolvedListenIP = $derived(config?.listenAll ? 'router-lan-ip' : 'resolved-bridge-ip');
+	let singboxRunning = $derived(choices?.singboxRunning ?? false);
+	let bridgeInterfaces = $derived(
+		(choices?.bridges ?? [{ id: 'Bridge0', label: 'Bridge0' }]).map((b) => ({
+			id: b.id,
+			label: b.label,
+		})),
+	);
+	let resolvedListenIP = $derived.by(() => {
+		if (!config || !choices) return '';
+		if (config.listenAll) return choices.lanIP || '';
+		const match = choices.bridges.find((b) => b.id === config.listenInterface);
+		return match?.ip ?? '';
+	});
 
 	function handleOutboundChanged(_tag: string) {
 		deviceProxyConfig.invalidate();

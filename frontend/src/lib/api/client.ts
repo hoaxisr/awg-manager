@@ -1216,6 +1216,14 @@ class ApiClient {
 		return this.request('/proxy/outbounds');
 	}
 
+	async getDeviceProxyListenChoices(): Promise<{
+		lanIP: string;
+		bridges: { id: string; label: string; ip: string }[];
+		singboxRunning: boolean;
+	}> {
+		return this.request('/proxy/listen-choices');
+	}
+
 	// #endregion
 }
 
