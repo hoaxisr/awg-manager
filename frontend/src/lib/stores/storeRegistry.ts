@@ -22,10 +22,9 @@ export type ResourceKey =
 	| 'routing.clientRoutes'        // ResourceRoutingClientRoutes
 	| 'routing.tunnels'             // ResourceRoutingTunnels
 	| 'routing.hydrarouteStatus'    // ResourceRoutingHydrarouteStatus
-	| 'deviceproxy.config'          // ResourceDeviceProxyConfig
+	| 'deviceproxy.config'           // ResourceDeviceProxyConfig   — also clears missing-target banner
 	| 'deviceproxy.outbounds'       // ResourceDeviceProxyOutbounds
-	| 'deviceproxy.runtime'         // ResourceDeviceProxyRuntime
-	| 'deviceproxy';                // ResourceDeviceProxy (invalidation-only, no store — clears missing-target)
+	| 'deviceproxy.runtime';        // ResourceDeviceProxyRuntime
 
 /**
  * Resource key → polling store. Populated as stores are migrated to
