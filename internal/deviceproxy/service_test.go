@@ -235,6 +235,33 @@ func TestService_SaveConfig_AppliesToSingbox_SystemTunnels(t *testing.T) {
 	}
 }
 
+func TestService_GetRuntimeState_Alive(t *testing.T) {
+	sb := &fakeSingboxOperator{running: true, runtimeActive: "VLESS-RU"}
+	store := NewStore(filepath.Join(t.TempDir(), "d.json"))
+	_ = store.Save(Config{Enabled: true, ListenAll: true, Port: 1099, SelectedOutbound: "direct"})
+	s := NewService(Deps{Store: store, Singbox: sb})
+
+	got := s.GetRuntimeState(context.Background())
+	if !got.Alive || got.ActiveTag != "VLESS-RU" || got.DefaultTag != "direct" {
+		t.Fatalf("runtime = %#v", got)
+	}
+}
+
+func TestService_GetRuntimeState_Dead(t *testing.T) {
+	sb := &fakeSingboxOperator{running: false}
+	store := NewStore(filepath.Join(t.TempDir(), "d.json"))
+	_ = store.Save(Config{Enabled: true, ListenAll: true, Port: 1099, SelectedOutbound: "direct"})
+	s := NewService(Deps{Store: store, Singbox: sb})
+
+	got := s.GetRuntimeState(context.Background())
+	if got.Alive || got.ActiveTag != "" {
+		t.Fatalf("runtime = %#v, want Alive=false ActiveTag=''", got)
+	}
+	if got.DefaultTag != "direct" {
+		t.Fatalf("DefaultTag = %q, want 'direct'", got.DefaultTag)
+	}
+}
+
 func TestService_Reconcile_MissingTargetDisables(t *testing.T) {
 	sb := &fakeSingboxOperator{running: true}
 	ndms := &fakeNDMSQuery{addr: "10.10.10.1"}
