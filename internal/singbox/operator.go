@@ -513,6 +513,33 @@ func (o *Operator) ApplyConfig(ctx context.Context, cfg *Config) error {
 	return o.applyConfig(ctx, cfg)
 }
 
+// ApplyConfigNoReload runs Save + Validate + Promote on an externally
+// mutated Config WITHOUT sending SIGHUP to sing-box. The on-disk
+// config.json is updated so any future cold-start picks up the new
+// state, but the running process keeps serving clients with its
+// current in-memory config — notably, the selector.now value set via
+// Clash API stays intact.
+//
+// deviceproxy.Service uses this on the "default-only change" save
+// path: rewriting config.json changes selector.default for next boot
+// without disturbing the live selector.
+func (o *Operator) ApplyConfigNoReload(ctx context.Context, cfg *Config) error {
+	tmpPath := o.configPath + ".new"
+	if err := cfg.Save(tmpPath); err != nil {
+		return err
+	}
+	if err := o.validator.Validate(tmpPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("validate: %w", err)
+	}
+	if err := os.Rename(tmpPath, o.configPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("promote config: %w", err)
+	}
+	// Intentionally no reload — see doc comment.
+	return nil
+}
+
 // LoadCurrentConfig reads the on-disk config.json that sing-box is
 // running from. Returns a fresh NewConfig() if the file is missing
 // (first ever apply / tunnels never configured).
@@ -542,6 +569,17 @@ func (o *Operator) SetSelectorDefault(ctx context.Context, selectorTag, memberTa
 		return ErrSingboxNotRunning
 	}
 	return o.clash.SetSelector(selectorTag, memberTag)
+}
+
+// GetSelectorActive returns the currently-active member of a
+// selector. Returns ErrSingboxNotRunning if the daemon is down, so
+// callers can cheaply distinguish "no live state" from transport
+// errors.
+func (o *Operator) GetSelectorActive(ctx context.Context, selectorTag string) (string, error) {
+	if running, _ := o.proc.IsRunning(); !running {
+		return "", ErrSingboxNotRunning
+	}
+	return o.clash.SelectorActive(selectorTag)
 }
 
 func (o *Operator) loadOrInitConfig() (*Config, error) {
