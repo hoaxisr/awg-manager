@@ -52,7 +52,9 @@ import type {
 	DnsCheckStartResponse,
 	SingboxTunnel,
 	SingboxStatus,
-	SingboxImportResponse
+	SingboxImportResponse,
+	DeviceProxyConfig,
+	DeviceProxyOutbound
 } from '$lib/types';
 
 interface ApiResponse<T> {
@@ -1184,6 +1186,34 @@ class ApiClient {
 			es.close();
 		});
 		return es;
+	}
+
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Device Proxy
+	// ─────────────────────────────────────────────
+
+	async getDeviceProxyConfig(): Promise<DeviceProxyConfig> {
+		return this.request('/proxy/config');
+	}
+
+	async saveDeviceProxyConfig(cfg: DeviceProxyConfig): Promise<DeviceProxyConfig> {
+		return this.request('/proxy/config', {
+			method: 'PUT',
+			body: JSON.stringify(cfg),
+		});
+	}
+
+	async selectDeviceProxyOutbound(tag: string): Promise<{ active: string }> {
+		return this.request('/proxy/select', {
+			method: 'POST',
+			body: JSON.stringify({ tag }),
+		});
+	}
+
+	async listDeviceProxyOutbounds(): Promise<DeviceProxyOutbound[]> {
+		return this.request('/proxy/outbounds');
 	}
 
 	// #endregion
