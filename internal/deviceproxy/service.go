@@ -383,6 +383,7 @@ func (s *Service) SelectRuntimeOutbound(ctx context.Context, tag string) error {
 	s.mu.Lock()
 	available := s.listOutboundsLocked(ctx)
 	sb := s.d.Singbox
+	bus := s.d.Bus
 	s.mu.Unlock()
 
 	found := false
@@ -399,7 +400,17 @@ func (s *Service) SelectRuntimeOutbound(ctx context.Context, tag string) error {
 	if sb == nil {
 		return fmt.Errorf("singbox operator unavailable")
 	}
-	return sb.SetSelectorDefault(ctx, "device-proxy-selector", tag)
+	if err := sb.SetSelectorDefault(ctx, "device-proxy-selector", tag); err != nil {
+		return err
+	}
+
+	// Hot-switch changed runtime.activeTag — give the frontend SSE
+	// fast-path so the "Активный туннель" card updates sub-second,
+	// without waiting for the 5s runtime polling tick.
+	if bus != nil {
+		bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.runtime"})
+	}
+	return nil
 }
 
 // Reconcile is the single idempotent rebuild path. It verifies the
