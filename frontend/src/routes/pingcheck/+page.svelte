@@ -3,14 +3,22 @@
 	import type { NativePingCheckStatus } from '$lib/types';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { pingCheckStatus, pingCheckLogs, clearPingLogs } from '$lib/stores/pingcheck';
+	import { pingCheckStatus, pingCheckLogs, clearPingLogs, loadPingLogs } from '$lib/stores/pingcheck';
 	import { systemInfo } from '$lib/stores/system';
 	import { PageContainer, LoadingSpinner } from '$lib/components/layout';
 	import { StoreStatusBadge } from '$lib/components/ui';
 	import { PingCheckStatusCard, PingCheckLogsTable, KernelPingCheckModal, NativeWGPingCheckModal } from '$lib/components/pingcheck';
 
 	let unsub: (() => void) | undefined;
-	onMount(() => { unsub = pingCheckStatus.subscribe(() => {}); });
+	onMount(() => {
+		unsub = pingCheckStatus.subscribe(() => {});
+		// Seed the log list from the backend buffer so records produced
+		// before the page mounted (SSE started) are visible immediately.
+		// Live updates continue via the existing pingcheck:log subscriber.
+		loadPingLogs().catch(() => {
+			// Non-fatal: SSE will still populate the list as events arrive.
+		});
+	});
 	onDestroy(() => unsub?.());
 
 	let snap = $derived($pingCheckStatus);

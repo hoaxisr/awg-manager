@@ -30,8 +30,9 @@ type nwgMonitor struct {
 	latencyProbe func(context.Context, string) int
 	bus          *events.Bus
 
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	stopCh    chan struct{}
+	triggerCh chan struct{} // buffered(1); pokes run() to poll immediately
+	wg        sync.WaitGroup
 
 	// Previous snapshot for delta calculation.
 	initialized  bool
@@ -254,37 +255,52 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string, bo
 	}
 }
 
+// pollOnce performs a single NDMS poll and feeds the delta through
+// processDelta. MUST be called from run() only (accesses unsynchronised
+// monitor state). External callers use triggerPoll() to schedule a poll
+// via run()'s select loop.
+func (m *nwgMonitor) pollOnce(ctx context.Context) {
+	status, err := m.source.PollPingCheck(ctx, m.tunnelID)
+	if err != nil || status == nil || !status.Exists {
+		return // skip this poll, retry next interval
+	}
+	if m.latencyProbe != nil {
+		m.lastLatency = m.latencyProbe(ctx, m.tunnelID)
+	} else {
+		m.lastLatency = LatencyNotAvailable
+	}
+
+	// Sync poll interval with actual NDMS check interval on first poll.
+	// Prevents emitting N duplicate entries when our interval differs
+	// from the NDMS interval (e.g., we poll at 10s but NDMS checks at 5s).
+	if !m.initialized && status.Interval > 0 {
+		actual := time.Duration(status.Interval) * time.Second
+		if actual != m.interval && actual >= 3*time.Second {
+			m.interval = actual
+		}
+	}
+
+	m.threshold = status.MaxFails
+	m.processDelta(status.FailCount, status.SuccessCount, status.Status, status.Bound)
+}
+
+// triggerPoll asks run() to execute a poll out of schedule. Non-blocking:
+// if a trigger is already queued the call is a no-op. Safe to call from
+// any goroutine; the actual poll runs inside run() so there is no race
+// with ticker-driven polls.
+func (m *nwgMonitor) triggerPoll() {
+	select {
+	case m.triggerCh <- struct{}{}:
+	default:
+	}
+}
+
 // run starts the poll loop. Blocks until stop() is called.
 func (m *nwgMonitor) run(ctx context.Context) {
 	defer m.wg.Done()
 
-	pollOnce := func() {
-		status, err := m.source.PollPingCheck(ctx, m.tunnelID)
-		if err != nil || status == nil || !status.Exists {
-			return // skip this poll, retry next interval
-		}
-		if m.latencyProbe != nil {
-			m.lastLatency = m.latencyProbe(ctx, m.tunnelID)
-		} else {
-			m.lastLatency = LatencyNotAvailable
-		}
-
-		// Sync poll interval with actual NDMS check interval on first poll.
-		// Prevents emitting N duplicate entries when our interval differs
-		// from the NDMS interval (e.g., we poll at 10s but NDMS checks at 5s).
-		if !m.initialized && status.Interval > 0 {
-			actual := time.Duration(status.Interval) * time.Second
-			if actual != m.interval && actual >= 3*time.Second {
-				m.interval = actual
-			}
-		}
-
-		m.threshold = status.MaxFails
-		m.processDelta(status.FailCount, status.SuccessCount, status.Status, status.Bound)
-	}
-
 	// Run first poll immediately after monitor start.
-	pollOnce()
+	m.pollOnce(ctx)
 
 	ticker := time.NewTicker(m.interval)
 	defer ticker.Stop()
@@ -293,7 +309,14 @@ func (m *nwgMonitor) run(ctx context.Context) {
 		select {
 		case <-ticker.C:
 			prevInterval := m.interval
-			pollOnce()
+			m.pollOnce(ctx)
+			if m.interval != prevInterval {
+				ticker.Reset(m.interval)
+			}
+
+		case <-m.triggerCh:
+			prevInterval := m.interval
+			m.pollOnce(ctx)
 			if m.interval != prevInterval {
 				ticker.Reset(m.interval)
 			}

@@ -268,6 +268,7 @@ func (f *Facade) startNwgMonitor(tunnelID, tunnelName string) {
 		latencyProbe: f.nwgLatencyProbe,
 		bus:          f.bus,
 		stopCh:       make(chan struct{}),
+		triggerCh:    make(chan struct{}, 1),
 	}
 
 	// Extract and stop the old monitor (if any) outside the lock
@@ -412,9 +413,27 @@ func (f *Facade) ClearLogs() {
 	f.custom.ClearLogs()
 }
 
-// CheckAllNow triggers immediate checks (kernel only, NDMS checks on its own schedule).
+// CheckAllNow triggers immediate checks on every monitored tunnel.
+// Kernel tunnels: synchronous check via the custom loop.
+// NativeWG tunnels: pokes the nwgMonitor's poll loop so it hits NDMS on
+// the next scheduler tick instead of waiting for its periodic timer —
+// NDMS itself runs checks on its own schedule, but our delta→log
+// translation only happens when we poll, so "Проверить" would appear to
+// do nothing on NativeWG until the next natural tick. Pokes are
+// non-blocking; coalesced via the triggerCh's 1-slot buffer.
 func (f *Facade) CheckAllNow() {
 	f.custom.CheckAllNow()
+
+	f.nwgMonMu.Lock()
+	monitors := make([]*nwgMonitor, 0, len(f.nwgMonitors))
+	for _, m := range f.nwgMonitors {
+		monitors = append(monitors, m)
+	}
+	f.nwgMonMu.Unlock()
+
+	for _, m := range monitors {
+		m.triggerPoll()
+	}
 }
 
 // IsEnabled returns whether ping check is globally enabled.
