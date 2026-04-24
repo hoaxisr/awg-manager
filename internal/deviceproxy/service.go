@@ -1,16 +1,59 @@
 package deviceproxy
 
 import (
+	"context"
 	"fmt"
 	"sync"
+
+	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // Deps groups the external collaborators Service needs. Wired once at
-// startup in main.go. Fields are added by subsequent tasks as they
-// introduce new dependencies (singbox integration in Task 8, NDMS query
-// in Task 8, event bus in Task 10).
+// startup in main.go. Nil fields are tolerated — Service degrades and
+// logs where applicable.
 type Deps struct {
-	Store *Store
+	Store     *Store
+	Tunnels   *storage.AWGTunnelStore // nil → treated as "no AWG tunnels"
+	Singbox   SingboxOperator         // nil → treated as "no sb tunnels, no apply"
+	NDMSQuery NDMSInterfaceQuery      // nil → ListenInterface resolution fails explicitly
+	Bus       *events.Bus             // nil → no event subscriptions or publishes
+}
+
+// SingboxOperator is the narrow contract Service needs from
+// singbox.Operator. The adapter in singbox_adapter.go (Task 11)
+// implements this against the real Operator.
+type SingboxOperator interface {
+	ApplyDeviceProxy(ctx context.Context, spec ExternalSpec) error
+	SetSelectorDefault(ctx context.Context, selectorTag, memberTag string) error
+	TunnelTags() []string
+	IsRunning() bool
+}
+
+// NDMSInterfaceQuery resolves an NDMS interface id (e.g. "Bridge0") to
+// its current primary IPv4 address.
+type NDMSInterfaceQuery interface {
+	GetInterfaceAddress(ctx context.Context, ndmsID string) (string, error)
+}
+
+// ExternalSpec mirrors singbox.DeviceProxySpec but lives in this
+// package to keep deviceproxy independent of singbox at the type
+// level. The adapter translates.
+type ExternalSpec struct {
+	Enabled     bool
+	ListenAddr  string
+	Port        int
+	Auth        AuthSpec
+	SelectedTag string
+	AWGTargets  []AWGTarget
+	SBTags      []string
+}
+
+// AWGTarget is one AWG tunnel rendered into the sing-box config as a
+// direct outbound with bind_interface.
+type AWGTarget struct {
+	TunnelID    string
+	KernelIface string
 }
 
 // TunnelInboundPortsFn returns the set of listen_ports currently used
@@ -26,6 +69,10 @@ type Service struct {
 	mu          sync.Mutex
 	tunnelPorts TunnelInboundPortsFn
 }
+
+// ErrOutboundUnavailable is returned by SelectOutbound when the caller
+// requests a tag that is not in the current list of available outbounds.
+var ErrOutboundUnavailable = fmt.Errorf("outbound is not available")
 
 func NewService(d Deps) *Service {
 	return &Service{d: d}
@@ -54,7 +101,7 @@ func (s *Service) withTunnelInboundPorts(ports []int) {
 // layer can surface them as 400 responses with meaningful messages.
 func (s *Service) ValidateConfig(cfg Config) error {
 	if !cfg.Enabled {
-		return nil // disabled config doesn't need to pass validation
+		return nil
 	}
 	if cfg.Port < 1024 || cfg.Port > 65535 {
 		return fmt.Errorf("port %d is outside 1024-65535", cfg.Port)
@@ -81,4 +128,115 @@ func (s *Service) ValidateConfig(cfg Config) error {
 		return fmt.Errorf("listen set to specific interface but interface is empty")
 	}
 	return nil
+}
+
+// SaveConfig validates, applies to sing-box, persists, and publishes.
+// Transactional: on any failure nothing is persisted.
+func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.validateLocked(cfg); err != nil {
+		return err
+	}
+
+	spec, err := s.buildSpec(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
+	if s.d.Singbox != nil {
+		if err := s.d.Singbox.ApplyDeviceProxy(ctx, spec); err != nil {
+			return fmt.Errorf("apply to singbox: %w", err)
+		}
+	}
+
+	if err := s.d.Store.Save(cfg); err != nil {
+		return fmt.Errorf("persist storage: %w", err)
+	}
+
+	if s.d.Bus != nil {
+		s.d.Bus.Publish("resource:invalidated", map[string]string{"kind": "deviceproxy"})
+	}
+	return nil
+}
+
+// validateLocked is the mutex-holding variant used by SaveConfig to
+// avoid a nested Lock(). ValidateConfig (the public form) still works
+// standalone for API-layer input checking.
+func (s *Service) validateLocked(cfg Config) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if cfg.Port < 1024 || cfg.Port > 65535 {
+		return fmt.Errorf("port %d is outside 1024-65535", cfg.Port)
+	}
+	if s.tunnelPorts != nil {
+		for _, p := range s.tunnelPorts() {
+			if p == cfg.Port {
+				return fmt.Errorf("port %d is used by a sing-box tunnel inbound", cfg.Port)
+			}
+		}
+	}
+	if cfg.Auth.Enabled {
+		if cfg.Auth.Username == "" {
+			return fmt.Errorf("auth enabled but username is empty")
+		}
+		if cfg.Auth.Password == "" {
+			return fmt.Errorf("auth enabled but password is empty")
+		}
+	}
+	if !cfg.ListenAll && cfg.ListenInterface == "" {
+		return fmt.Errorf("listen set to specific interface but interface is empty")
+	}
+	return nil
+}
+
+func (s *Service) buildSpec(ctx context.Context, cfg Config) (ExternalSpec, error) {
+	spec := ExternalSpec{
+		Enabled:     cfg.Enabled,
+		Port:        cfg.Port,
+		Auth:        cfg.Auth,
+		SelectedTag: cfg.SelectedOutbound,
+	}
+	if cfg.ListenAll {
+		spec.ListenAddr = "0.0.0.0"
+	} else {
+		if s.d.NDMSQuery == nil {
+			return spec, fmt.Errorf("cannot resolve listen interface: NDMS query unavailable")
+		}
+		addr, err := s.d.NDMSQuery.GetInterfaceAddress(ctx, cfg.ListenInterface)
+		if err != nil || addr == "" {
+			return spec, fmt.Errorf("resolve listen interface %q: %w", cfg.ListenInterface, err)
+		}
+		spec.ListenAddr = addr
+	}
+
+	// AWG targets
+	if s.d.Tunnels != nil {
+		tunnels, _ := s.d.Tunnels.List()
+		for _, t := range tunnels {
+			t := t
+			spec.AWGTargets = append(spec.AWGTargets, AWGTarget{
+				TunnelID:    t.ID,
+				KernelIface: awgKernelIface(&t),
+			})
+		}
+	}
+
+	// Sing-box tunnel tags
+	if s.d.Singbox != nil {
+		spec.SBTags = s.d.Singbox.TunnelTags()
+	}
+	return spec, nil
+}
+
+// awgKernelIface picks the kernel iface name for an AWG tunnel.
+// NativeWG tunnels use nwg<Index>; legacy/kernel tunnels use the
+// storage.ID directly (matches the convention in tunnel/ops).
+func awgKernelIface(t *storage.AWGTunnel) string {
+	if t.Backend == "nativewg" {
+		return fmt.Sprintf("nwg%d", t.NWGIndex)
+	}
+	return t.ID
 }
