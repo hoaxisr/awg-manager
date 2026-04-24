@@ -24,6 +24,7 @@ export type ResourceKey =
 	| 'routing.hydrarouteStatus'    // ResourceRoutingHydrarouteStatus
 	| 'deviceproxy.config'          // ResourceDeviceProxyConfig
 	| 'deviceproxy.outbounds'       // ResourceDeviceProxyOutbounds
+	| 'deviceproxy.runtime'         // ResourceDeviceProxyRuntime
 	| 'deviceproxy';                // ResourceDeviceProxy (invalidation-only, no store — clears missing-target)
 
 /**
