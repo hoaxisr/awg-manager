@@ -123,6 +123,10 @@ func TestService_SelectOutbound_HotSwitch(t *testing.T) {
 	if store.Get().SelectedOutbound != "VLESS-RU" {
 		t.Fatalf("storage not updated: %#v", store.Get())
 	}
+	// ApplyDeviceProxy must be called so config.json's selector.default stays in sync.
+	if sb.lastSpec == nil {
+		t.Fatalf("ApplyDeviceProxy was not called after SelectOutbound")
+	}
 }
 
 func TestService_SelectOutbound_UnknownTag(t *testing.T) {
