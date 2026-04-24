@@ -158,7 +158,7 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 	}
 
 	if s.d.Bus != nil {
-		s.d.Bus.Publish("resource:invalidated", map[string]string{"kind": "deviceproxy"})
+		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy"})
 	}
 	return nil
 }
@@ -335,7 +335,7 @@ func (s *Service) SelectOutbound(ctx context.Context, tag string) error {
 	}
 
 	if s.d.Bus != nil {
-		s.d.Bus.Publish("resource:invalidated", map[string]string{"kind": "deviceproxy"})
+		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy"})
 	}
 	return nil
 }
@@ -367,7 +367,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			}
 			if s.d.Bus != nil {
 				s.d.Bus.Publish("deviceproxy:missing-target", map[string]string{"wasTag": wasTag})
-				s.d.Bus.Publish("resource:invalidated", map[string]string{"kind": "deviceproxy"})
+				s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy"})
 			}
 		}
 	}

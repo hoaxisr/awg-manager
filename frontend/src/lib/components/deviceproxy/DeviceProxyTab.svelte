@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { deviceProxyConfig, deviceProxyOutbounds } from '$lib/stores/deviceproxy';
+	import { deviceProxyConfig, deviceProxyOutbounds, deviceProxyMissingTarget } from '$lib/stores/deviceproxy';
 	import ActiveOutboundCard from './ActiveOutboundCard.svelte';
 	import InboundSettingsCard from './InboundSettingsCard.svelte';
 	import ConnectionInfoCard from './ConnectionInfoCard.svelte';
@@ -33,6 +33,7 @@
 	let config = $derived<DeviceProxyConfig | null>(configSnap.data ?? null);
 	let outbounds = $derived(outboundsSnap.data ?? []);
 
+	let missingTag = $derived($deviceProxyMissingTarget);
 	let singboxRunning = $derived(choices?.singboxRunning ?? false);
 	let bridgeInterfaces = $derived(
 		(choices?.bridges ?? [{ id: 'Bridge0', label: 'Bridge0' }]).map((b) => ({
@@ -56,6 +57,12 @@
 	}
 </script>
 
+{#if missingTag}
+	<div class="missing-banner">
+		Прокси отключён: выбранный outbound "{missingTag}" был удалён. Выберите другой и включите заново.
+	</div>
+{/if}
+
 {#if configSnap.status === 'loading'}
 	<p>Загрузка…</p>
 {:else if config}
@@ -75,3 +82,14 @@
 		{resolvedListenIP}
 	/>
 {/if}
+
+<style>
+	.missing-banner {
+		padding: 12px;
+		margin-bottom: 12px;
+		border: 1px solid var(--error, #ef4444);
+		border-radius: 8px;
+		background: rgba(239, 68, 68, 0.08);
+		color: var(--error, #ef4444);
+	}
+</style>

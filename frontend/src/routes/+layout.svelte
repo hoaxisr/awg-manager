@@ -17,6 +17,7 @@
 	import { feedTraffic } from '$lib/stores/traffic';
 	import { applyTraffic as singboxApplyTraffic, applyDelay as singboxApplyDelay } from '$lib/stores/singbox';
 	import { invalidateResource, invalidateAll } from '$lib/stores/storeRegistry';
+	import { setDeviceProxyMissingTarget, clearDeviceProxyMissingTarget } from '$lib/stores/deviceproxy';
 	// Task 15 note: no snapshot handlers remain — all cold-tier state is
 	// fetched via REST by polling stores, and the SSE stream now carries
 	// only incremental push-only events (traffic, connectivity, logs,
@@ -125,6 +126,15 @@
 			// Generic resource invalidation hint (state-sync redesign)
 			onResourceInvalidated: (data) => {
 				invalidateResource(data.resource);
+				// A saved-through deviceproxy config clears the missing-target banner.
+				if (data.resource === 'deviceproxy') {
+					clearDeviceProxyMissingTarget();
+				}
+			},
+
+			// Device-proxy: selected outbound was deleted — show a banner in the tab.
+			onDeviceProxyMissingTarget: (data) => {
+				setDeviceProxyMissingTarget(data.wasTag);
 			},
 		});
 	}
