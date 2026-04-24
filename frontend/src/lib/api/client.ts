@@ -1217,6 +1217,10 @@ class ApiClient {
 		});
 	}
 
+	async applyDeviceProxy(): Promise<{ applied: boolean }> {
+		return this.request('/proxy/apply', { method: 'POST' });
+	}
+
 	async listDeviceProxyOutbounds(): Promise<DeviceProxyOutbound[]> {
 		return this.request('/proxy/outbounds');
 	}

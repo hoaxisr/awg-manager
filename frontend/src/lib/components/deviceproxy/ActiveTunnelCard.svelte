@@ -12,6 +12,7 @@
 	let { outbounds, runtime, onSwitched }: Props = $props();
 
 	let switching = $state(false);
+	let applying = $state(false);
 
 	async function handleSelect(tag: string) {
 		if (switching || !runtime.alive) return;
@@ -27,6 +28,20 @@
 			notifications.error(`Не удалось переключить: ${(e as Error).message}`);
 		} finally {
 			switching = false;
+		}
+	}
+
+	async function applyNow() {
+		if (applying) return;
+		applying = true;
+		try {
+			await api.applyDeviceProxy();
+			notifications.success('Перезапуск выполнен, новая конфигурация активна');
+			onSwitched();
+		} catch (e) {
+			notifications.error(`Не удалось применить: ${(e as Error).message}`);
+		} finally {
+			applying = false;
 		}
 	}
 
@@ -51,27 +66,15 @@
 	<div class="card-header">
 		<h2 class="section-title">Активный туннель</h2>
 		<span class={runtime.alive ? 'badge badge-success' : 'badge badge-muted'}>
-			{runtime.alive ? '● Работает сейчас' : '○ Применится при запуске'}
+			{runtime.alive ? 'Работает сейчас' : 'Применится при запуске'}
 		</span>
 	</div>
 	<p class="section-desc">
 		Переключение применяется моментально, без перезапуска sing-box. Действует до следующей перезагрузки прокси — тогда возьмётся значение "По умолчанию" из настроек.
 	</p>
 
-	<div class="setting-row">
-		<div class="flex flex-col gap-1">
-			<span class="font-medium">Куда направляется трафик</span>
-			{#if isTemporary}
-				<span class="setting-description">
-					<span class="badge badge-warning">временно</span>
-					После перезапуска вернётся к "{defaultLabel}"
-				</span>
-			{:else if !runtime.alive}
-				<span class="setting-description">
-					Запустите sing-box, чтобы переключать вживую
-				</span>
-			{/if}
-		</div>
+	<div class="select-row">
+		<span class="row-label">Куда направляется трафик</span>
 		<select
 			class="select"
 			disabled={switching || !runtime.alive}
@@ -97,13 +100,49 @@
 			{/if}
 		</select>
 	</div>
+
+	{#if isTemporary}
+		<div class="hint-row">
+			<div class="hint-text">
+				<span class="badge badge-warning">временно</span>
+				После перезапуска вернётся к "{defaultLabel}"
+			</div>
+			<button
+				type="button"
+				class="btn btn-ghost btn-sm"
+				disabled={applying}
+				onclick={applyNow}
+			>
+				{applying ? 'Применяю…' : 'Применить сейчас'}
+			</button>
+		</div>
+	{:else if !runtime.alive}
+		<div class="hint-row">
+			<div class="hint-text">Запустите sing-box, чтобы переключать вживую.</div>
+		</div>
+	{/if}
 </section>
 
 <style>
 	.section-title { font-size: 1rem; font-weight: 600; margin: 0; }
 	.section-desc { font-size: 0.8125rem; color: var(--text-muted); margin: 0 0 0.75rem 0; }
+
+	.select-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.5rem 0;
+	}
+	.row-label {
+		color: var(--text-primary);
+		font-size: 0.875rem;
+		font-weight: 500;
+	}
+
 	.select {
-		min-width: 240px;
+		min-width: 260px;
+		max-width: 60%;
 		padding: 0.4rem 0.6rem;
 		background: var(--bg-tertiary);
 		border: 1px solid var(--border);
@@ -112,6 +151,26 @@
 		font-size: 0.8125rem;
 	}
 	.select:disabled { opacity: 0.5; cursor: not-allowed; }
+
+	.hint-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		margin-top: 0.5rem;
+		padding: 0.5rem 0.75rem;
+		background: var(--bg-tertiary);
+		border-radius: 6px;
+	}
+	.hint-text {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+		font-size: 0.8125rem;
+		color: var(--text-secondary);
+	}
+
 	.badge-muted {
 		background: rgba(107, 114, 128, 0.15);
 		color: var(--text-muted);

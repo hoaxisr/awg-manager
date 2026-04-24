@@ -62,6 +62,25 @@ func (h *DeviceProxyHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 	response.Success(w, h.svc.GetConfig())
 }
 
+// ForceApply — POST /api/proxy/apply
+//
+// Forces a full sing-box reload with the currently-persisted Config,
+// bypassing the smart-reload diff in SaveConfig. Used by the UI
+// "Применить сейчас" affordance when the user saved a new default via
+// the no-reload surgical path and now wants the live selector to
+// snap to that default.
+func (h *DeviceProxyHandler) ForceApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if err := h.svc.ForceApply(r.Context()); err != nil {
+		response.Error(w, err.Error(), "APPLY_FAILED")
+		return
+	}
+	response.Success(w, map[string]bool{"applied": true})
+}
+
 // GetRuntime — GET /api/proxy/runtime
 func (h *DeviceProxyHandler) GetRuntime(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

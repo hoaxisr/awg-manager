@@ -59,6 +59,33 @@
 		}
 	}
 
+	// Enable toggle auto-saves so turning the proxy on/off doesn't
+	// require clicking "Сохранить" afterwards. The rest of the form
+	// stays draft-based (the user may edit port / listen / auth /
+	// default incrementally and commit them together).
+	let togglingEnabled = $state(false);
+	async function toggleEnabled(next: boolean) {
+		if (togglingEnabled) return;
+		togglingEnabled = true;
+		// Merge the new enabled flag with ALL fields from the saved
+		// config — not draft — so uncommitted edits in other fields
+		// don't sneak into this save.
+		const payload = { ...config, enabled: next };
+		try {
+			const saved = await api.saveDeviceProxyConfig(payload);
+			// Mirror into the draft so the toggle control reflects the
+			// new state immediately and the "Отменить" snapshot is
+			// aligned with what's persisted.
+			draft = structuredClone(payload);
+			onSaved(saved);
+			notifications.success(next ? 'Прокси включён' : 'Прокси выключен');
+		} catch (e) {
+			notifications.error(`Ошибка: ${(e as Error).message}`);
+		} finally {
+			togglingEnabled = false;
+		}
+	}
+
 	let grouped = $derived.by(() => {
 		const direct = outbounds.filter((o) => o.kind === 'direct');
 		const sb = outbounds.filter((o) => o.kind === 'singbox');
@@ -75,9 +102,15 @@
 		<div class="setting-row">
 			<div class="flex flex-col gap-1">
 				<span class="font-medium">Прокси-сервер</span>
-				<span class="setting-description">SOCKS5 / HTTP для LAN-устройств</span>
+				<span class="setting-description">
+					SOCKS5 / HTTP для LAN-устройств. Изменение применяется сразу.
+				</span>
 			</div>
-			<Toggle checked={draft.enabled} onchange={(v) => (draft.enabled = v)} />
+			<Toggle
+				checked={config.enabled}
+				onchange={(v) => toggleEnabled(v)}
+				loading={togglingEnabled}
+			/>
 		</div>
 
 		<div class="setting-row">
