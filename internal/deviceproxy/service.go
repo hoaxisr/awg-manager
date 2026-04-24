@@ -135,8 +135,17 @@ func (s *Service) ValidateConfig(cfg Config) error {
 	return nil
 }
 
-// SaveConfig validates, applies to sing-box, persists, and publishes.
-// Transactional: on any failure nothing is persisted.
+// SaveConfig validates, applies to sing-box, and persists cfg.
+// Transactional on the pre-apply phase; post-apply errors are logged
+// but do not roll back persisted storage.
+//
+// Reload decision: if the diff between old and new is a SelectedOutbound-
+// only change (and both states are Enabled), the sing-box process is
+// NOT reloaded — we surgically rewrite config.json so the new
+// selector.default takes effect on next cold start, and the current
+// live selector.now (possibly set by a hot-switch) stays untouched.
+// Any other change (port, listen, auth, enabled toggle) requires a
+// full reload.
 func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -145,14 +154,22 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 		return err
 	}
 
+	oldCfg := s.d.Store.Get()
+
 	spec, err := s.buildSpec(ctx, cfg)
 	if err != nil {
 		return err
 	}
 
 	if s.d.Singbox != nil {
-		if err := s.d.Singbox.ApplyDeviceProxy(ctx, spec); err != nil {
-			return fmt.Errorf("apply to singbox: %w", err)
+		if onlySelectedOutboundChanged(oldCfg, cfg) {
+			if err := s.d.Singbox.ApplyDeviceProxyNoReload(ctx, spec); err != nil {
+				return fmt.Errorf("apply to singbox (no-reload): %w", err)
+			}
+		} else {
+			if err := s.d.Singbox.ApplyDeviceProxy(ctx, spec); err != nil {
+				return fmt.Errorf("apply to singbox: %w", err)
+			}
 		}
 	}
 
@@ -164,6 +181,19 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy"})
 	}
 	return nil
+}
+
+// onlySelectedOutboundChanged returns true when the only field that
+// differs between old and new is SelectedOutbound AND both states are
+// Enabled. Used by SaveConfig to decide whether to skip the sing-box
+// reload (live selector.now must be preserved through the save).
+func onlySelectedOutboundChanged(oldCfg, newCfg Config) bool {
+	if !oldCfg.Enabled || !newCfg.Enabled {
+		return false
+	}
+	copyNew := newCfg
+	copyNew.SelectedOutbound = oldCfg.SelectedOutbound
+	return copyNew == oldCfg
 }
 
 // validateLocked is the mutex-holding variant used by SaveConfig to
