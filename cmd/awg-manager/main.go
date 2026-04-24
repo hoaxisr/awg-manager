@@ -629,6 +629,7 @@ func main() {
 	)
 
 	srv.SetSingboxOperator(singboxOp)
+	singboxOp.SetEventBus(eventBus)
 	srv.SetNDMSDispatcher(ndmsDispatcher)
 	srv.SetNDMSTransport(ndmsTransportClient)
 	srv.SetNDMSSaveCoordinator(ndmsSaveCoord)

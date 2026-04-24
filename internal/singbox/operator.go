@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
@@ -53,6 +54,7 @@ type Operator struct {
 	validator *Validator
 	proxyMgr  *ProxyManager
 	clash     *ClashClient
+	bus       *events.Bus
 }
 
 // OperatorDeps are external dependencies for DI.
@@ -92,6 +94,11 @@ func NewOperator(d OperatorDeps) *Operator {
 		clash:      NewClashClient(clashAPIAddr),
 	}
 }
+
+// SetEventBus wires the event bus so Operator can publish tunnel-set
+// change events consumed by deviceproxy.Service (and potentially
+// other subscribers in the future).
+func (o *Operator) SetEventBus(bus *events.Bus) { o.bus = bus }
 
 // IsInstalled reports whether the sing-box binary is on PATH.
 // Cheap — just an exec.LookPath probe (does not read config or check process).
@@ -282,6 +289,9 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 			}
 		}
 	}
+	if o.bus != nil {
+		o.bus.Publish("singbox:tunnels-changed", nil)
+	}
 	return added, parseErrs, nil
 }
 
@@ -322,6 +332,9 @@ func (o *Operator) RemoveTunnel(ctx context.Context, tag string) error {
 		if err := o.proxyMgr.RemoveProxy(ctx, proxyIdx); err != nil {
 			o.log.Warn("remove proxy failed", "tag", tag, "err", err)
 		}
+	}
+	if o.bus != nil {
+		o.bus.Publish("singbox:tunnels-changed", nil)
 	}
 	return nil
 }
