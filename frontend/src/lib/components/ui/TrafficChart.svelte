@@ -202,7 +202,7 @@
 	<div class="stats-row">
 		<span class="rate rx">↓ {fmtRate(currentRx)}</span>
 		<span class="rate tx">↑ {fmtRate(currentTx)}</span>
-		<span class="total">всего за час: {formatBytes(rxTotal + txTotal)}</span>
+		<span class="total">всего: {formatBytes(rxTotal + txTotal)}</span>
 	</div>
 </div>
 
