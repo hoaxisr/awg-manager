@@ -320,6 +320,20 @@ func (s *Service) SelectOutbound(ctx context.Context, tag string) error {
 		}
 	}
 
+	// Re-apply full spec so config.json's selector.default matches the
+	// new storage value. Without this, any unrelated sing-box reload
+	// (watchdog, new tunnel added) would re-read the stale default and
+	// snap the selector back to the previous choice.
+	spec, err := s.buildSpec(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("rebuild spec after select: %w", err)
+	}
+	if s.d.Singbox != nil {
+		if err := s.d.Singbox.ApplyDeviceProxy(ctx, spec); err != nil {
+			return fmt.Errorf("apply spec after select: %w", err)
+		}
+	}
+
 	if s.d.Bus != nil {
 		s.d.Bus.Publish("resource:invalidated", map[string]string{"kind": "deviceproxy"})
 	}
