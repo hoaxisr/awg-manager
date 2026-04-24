@@ -38,6 +38,7 @@ import type {
 	UpdateManagedPeerRequest,
 	NativePingCheckConfig,
 	NativePingCheckStatus,
+	PingLogEntry,
 	TerminalStatus,
 	AccessPolicy,
 	ClientRoute,
@@ -489,6 +490,11 @@ class ApiClient {
 
 	async triggerPingCheck(): Promise<{ message: string }> {
 		return this.request('/pingcheck/check-now', { method: 'POST' });
+	}
+
+	async getPingCheckLogs(tunnelId?: string): Promise<PingLogEntry[]> {
+		const qs = tunnelId ? `?tunnelId=${encodeURIComponent(tunnelId)}` : '';
+		return this.request<PingLogEntry[]>(`/pingcheck/logs${qs}`);
 	}
 
 	async clearPingCheckLogs(): Promise<{ message: string }> {
