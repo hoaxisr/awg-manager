@@ -190,12 +190,6 @@
 		sessionStorage.setItem('tunnelsTab', activeTab);
 	});
 
-	$effect(() => {
-		if (activeTab === 'singbox' && sysInfo && !sysInfo.singbox?.installed) {
-			activeTab = 'awg';
-		}
-	});
-
 	// External tunnels
 	let adoptDialogOpen = $state(false);
 	let adoptingInterface = $state('');
