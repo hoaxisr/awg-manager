@@ -364,6 +364,12 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		return err
 	}
 	if s.d.Singbox != nil {
+		// Skip the apply if there is nothing meaningful to do — no proxy,
+		// no sing-box tunnels, no AWG tunnels. Applying in this case would
+		// just write an empty config.json + start sing-box for nothing.
+		if !spec.Enabled && len(spec.SBTags) == 0 && len(spec.AWGTargets) == 0 {
+			return nil
+		}
 		if err := s.d.Singbox.ApplyDeviceProxy(ctx, spec); err != nil {
 			return fmt.Errorf("apply spec: %w", err)
 		}
