@@ -765,6 +765,12 @@ export interface DeviceProxyOutbound {
 	detail: string;
 }
 
+export interface DeviceProxyRuntime {
+	alive: boolean;
+	activeTag: string;
+	defaultTag: string;
+}
+
 // #endregion
 
 // ─────────────────────────────────────────────
