@@ -434,16 +434,26 @@ func (s *Service) SubscribeBus(ctx context.Context) func() {
 	_, ch, unsub := s.d.Bus.Subscribe()
 	go func() {
 		for ev := range ch {
-			switch ev.Type {
-			case "tunnel:created", "tunnel:deleted", "singbox:tunnels-changed":
-				if err := s.Reconcile(ctx); err != nil {
-					// Reconcile failure is non-fatal at the subscriber level;
-					// the user-facing flow already has its own error path.
-					// No logger is wired on Service yet (would be added in a
-					// future task); silent swallow matches the project's other
-					// similar subscribers.
-					_ = err
+			if ev.Type != "resource:invalidated" && ev.Type != "singbox:tunnels-changed" {
+				continue
+			}
+			if ev.Type == "resource:invalidated" {
+				// Only react to invalidations that change our child list.
+				payload, ok := ev.Data.(events.ResourceInvalidatedEvent)
+				if !ok {
+					continue
 				}
+				if payload.Resource != "tunnels" && payload.Resource != "singbox.tunnels" {
+					continue
+				}
+			}
+			if err := s.Reconcile(ctx); err != nil {
+				// Reconcile failure is non-fatal at the subscriber level;
+				// the user-facing flow already has its own error path.
+				// No logger is wired on Service yet (would be added in a
+				// future task); silent swallow matches the project's other
+				// similar subscribers.
+				_ = err
 			}
 		}
 	}()
