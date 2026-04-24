@@ -12,6 +12,11 @@
 
 	let { config, bridgeInterfaces, onSaved }: Props = $props();
 
+	// Draft is a one-time snapshot of the prop so the user can edit
+	// without the form snapping back when the store polls. `config`
+	// changes intentionally do NOT re-sync the draft — reset() is the
+	// explicit resync affordance.
+	// svelte-ignore state_referenced_locally
 	let draft = $state<DeviceProxyConfig>(structuredClone(config));
 	let saving = $state(false);
 
@@ -46,7 +51,7 @@
 	<h3>Настройки inbound</h3>
 
 	<div class="row">
-		<label>Включён</label>
+		<span>Включён</span>
 		<Toggle checked={draft.enabled} onchange={(v) => (draft.enabled = v)} />
 	</div>
 
@@ -77,7 +82,7 @@
 	</div>
 
 	<div class="row">
-		<label>Требовать auth</label>
+		<span>Требовать auth</span>
 		<Toggle checked={draft.auth.enabled} onchange={(v) => (draft.auth.enabled = v)} />
 	</div>
 
