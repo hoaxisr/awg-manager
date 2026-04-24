@@ -738,6 +738,36 @@ export interface PingLogEntry {
 // #endregion
 
 // ─────────────────────────────────────────────
+// #region Device Proxy
+// ─────────────────────────────────────────────
+
+export interface DeviceProxyAuth {
+	enabled: boolean;
+	username: string;
+	password: string;
+}
+
+export interface DeviceProxyConfig {
+	enabled: boolean;
+	listenAll: boolean;
+	listenInterface: string;
+	port: number;
+	auth: DeviceProxyAuth;
+	selectedOutbound: string;
+}
+
+export type DeviceProxyOutboundKind = 'direct' | 'singbox' | 'awg';
+
+export interface DeviceProxyOutbound {
+	tag: string;
+	kind: DeviceProxyOutboundKind;
+	label: string;
+	detail: string;
+}
+
+// #endregion
+
+// ─────────────────────────────────────────────
 // #region Logging
 // ─────────────────────────────────────────────
 
