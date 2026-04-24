@@ -285,6 +285,32 @@ func TestService_SaveConfig_DefaultOnly_SkipsReload(t *testing.T) {
 	}
 }
 
+func TestService_SaveConfig_DefaultOnly_SingboxDown_Reloads(t *testing.T) {
+	// When sing-box is NOT running, the no-reload path must not be taken
+	// even if only SelectedOutbound changed — there's no live selector to
+	// preserve, and the full-apply path includes the cold-start safety net.
+	sb := &fakeSingboxOperator{running: false, tags: []string{"VLESS-RU"}}
+	ndms := &fakeNDMSQuery{addr: "10.10.10.1"}
+	store := NewStore(filepath.Join(t.TempDir(), "d.json"))
+	start := Config{Enabled: true, ListenAll: true, Port: 1099, SelectedOutbound: "direct"}
+	_ = store.Save(start)
+
+	s := NewService(Deps{Store: store, Singbox: sb, NDMSQuery: ndms})
+
+	next := start
+	next.SelectedOutbound = "VLESS-RU"
+	if err := s.SaveConfig(context.Background(), next); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	if sb.lastSpec == nil {
+		t.Fatalf("ApplyDeviceProxy (reload path) was NOT called when sing-box is down")
+	}
+	if sb.lastSpecNR != nil {
+		t.Fatalf("no-reload path taken incorrectly when sing-box is down")
+	}
+}
+
 func TestService_SaveConfig_PortChange_Reloads(t *testing.T) {
 	sb := &fakeSingboxOperator{running: true}
 	ndms := &fakeNDMSQuery{addr: "10.10.10.1"}
