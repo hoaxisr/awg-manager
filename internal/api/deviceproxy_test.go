@@ -55,15 +55,27 @@ func TestDeviceProxyHandler_SaveConfig_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestDeviceProxyHandler_SelectOutbound_MethodNotAllowed(t *testing.T) {
+func TestDeviceProxyHandler_GetRuntime_Default(t *testing.T) {
 	h := newTestDeviceProxyHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/proxy/select", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/runtime", nil)
 	rr := httptest.NewRecorder()
-	h.SelectOutbound(rr, req)
+	h.GetRuntime(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code = %d body = %s", rr.Code, rr.Body)
+	}
+}
+
+func TestDeviceProxyHandler_SelectRuntime_MethodNotAllowed(t *testing.T) {
+	h := newTestDeviceProxyHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/proxy/runtime/select", nil)
+	rr := httptest.NewRecorder()
+	h.SelectRuntime(rr, req)
 
 	if rr.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", rr.Code)
+		t.Fatalf("code = %d, want 405", rr.Code)
 	}
 }
 

@@ -596,7 +596,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	}))
-	mux.HandleFunc("/api/proxy/select", guarded(deviceProxyHandler.SelectOutbound))
+	mux.HandleFunc("/api/proxy/runtime", guarded(deviceProxyHandler.GetRuntime))
+	mux.HandleFunc("/api/proxy/runtime/select", guarded(deviceProxyHandler.SelectRuntime))
 	mux.HandleFunc("/api/proxy/outbounds", guarded(deviceProxyHandler.ListOutbounds))
 	mux.HandleFunc("/api/proxy/listen-choices", guarded(deviceProxyHandler.ListenChoices))
 

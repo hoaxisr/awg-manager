@@ -8,6 +8,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/singbox"
 )
 
 // DeviceProxyHandler handles /api/proxy/* endpoints.
@@ -52,8 +53,17 @@ func (h *DeviceProxyHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 	response.Success(w, h.svc.GetConfig())
 }
 
-// SelectOutbound handles POST /api/proxy/select — body {"tag":"..."}.
-func (h *DeviceProxyHandler) SelectOutbound(w http.ResponseWriter, r *http.Request) {
+// GetRuntime — GET /api/proxy/runtime
+func (h *DeviceProxyHandler) GetRuntime(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	response.Success(w, h.svc.GetRuntimeState(r.Context()))
+}
+
+// SelectRuntime — POST /api/proxy/runtime/select  body {"tag":"..."}
+func (h *DeviceProxyHandler) SelectRuntime(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
 		return
@@ -71,7 +81,11 @@ func (h *DeviceProxyHandler) SelectOutbound(w http.ResponseWriter, r *http.Reque
 			response.Error(w, err.Error(), "OUTBOUND_UNAVAILABLE")
 			return
 		}
-		response.Error(w, err.Error(), "SELECT_FAILED")
+		if errors.Is(err, singbox.ErrSingboxNotRunning) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "SINGBOX_DOWN")
+			return
+		}
+		response.Error(w, err.Error(), "RUNTIME_SELECT_FAILED")
 		return
 	}
 	response.Success(w, map[string]string{"active": body.Tag})
