@@ -24,11 +24,13 @@ type Deps struct {
 }
 
 // SingboxOperator is the narrow contract Service needs from
-// singbox.Operator. The adapter in singbox_adapter.go (Task 11)
-// implements this against the real Operator.
+// singbox.Operator. Adapter in singbox_adapter.go binds it to the
+// real Operator.
 type SingboxOperator interface {
 	ApplyDeviceProxy(ctx context.Context, spec ExternalSpec) error
+	ApplyDeviceProxyNoReload(ctx context.Context, spec ExternalSpec) error
 	SetSelectorDefault(ctx context.Context, selectorTag, memberTag string) error
+	GetSelectorActive(ctx context.Context, selectorTag string) (string, error)
 	TunnelTags() []string
 	IsRunning() bool
 }
