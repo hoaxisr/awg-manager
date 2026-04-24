@@ -369,7 +369,10 @@
 	}
 	.b-vless { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
 	.b-hysteria2 { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
-	.b-naive { background: rgba(34, 211, 238, 0.15); color: #22d3ee; }
+	/* Cyan-400 on 15% alpha perceptually washed out against the dark
+	   bg — bump to cyan-300 text with slightly denser background so
+	   NaiveProxy matches the contrast of the other protocol badges. */
+	.b-naive { background: rgba(34, 211, 238, 0.22); color: #67e8f9; }
 	.b-reality { background: rgba(236, 72, 153, 0.15); color: #f472b6; }
 	.b-tls { background: rgba(139, 92, 246, 0.15); color: #a78bfa; }
 	.b-transport { background: rgba(100, 100, 100, 0.3); color: var(--text-muted); }

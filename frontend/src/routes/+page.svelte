@@ -971,8 +971,8 @@
 		color: #fbbf24;
 	}
 	.tag-naive {
-		background: rgba(34, 211, 238, 0.15);
-		color: #22d3ee;
+		background: rgba(34, 211, 238, 0.22);
+		color: #67e8f9;
 	}
 
 </style>
