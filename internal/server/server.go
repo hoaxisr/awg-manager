@@ -17,6 +17,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/api"
+	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/connections"
@@ -96,6 +97,7 @@ type Server struct {
 	singboxHandler      *api.SingboxHandler
 	clashProxy          *api.ClashProxy
 	singboxOp           *singbox.Operator
+	deviceProxySvc      *deviceproxy.Service
 	dnsCheckService     *dnscheck.Service
 	authMiddleware      *auth.Middleware
 	httpServer          *http.Server
@@ -193,6 +195,12 @@ func (s *Server) SetDnsCheckService(svc *dnscheck.Service) {
 // SetSingboxOperator sets the sing-box operator so system info can report install status.
 func (s *Server) SetSingboxOperator(op *singbox.Operator) {
 	s.singboxOp = op
+}
+
+// SetDeviceProxyService wires the device-proxy service into the server
+// so the /api/proxy/* routes can be registered.
+func (s *Server) SetDeviceProxyService(svc *deviceproxy.Service) {
+	s.deviceProxySvc = svc
 }
 
 // generateInstanceID creates a random 16-byte hex string (32 chars).
@@ -575,6 +583,21 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		}
 	}))
 	mux.HandleFunc("/api/tunnels/pingcheck/remove", guarded(pingCheckHandler.RemoveTunnelPingCheck))
+
+	// Device proxy (protected + boot guarded)
+	deviceProxyHandler := api.NewDeviceProxyHandler(s.deviceProxySvc, appLog)
+	mux.HandleFunc("/api/proxy/config", guarded(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			deviceProxyHandler.GetConfig(w, r)
+		case http.MethodPut:
+			deviceProxyHandler.SaveConfig(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}))
+	mux.HandleFunc("/api/proxy/select", guarded(deviceProxyHandler.SelectOutbound))
+	mux.HandleFunc("/api/proxy/outbounds", guarded(deviceProxyHandler.ListOutbounds))
 
 	// Logging (protected + boot guarded)
 	mux.HandleFunc("/api/logs", guarded(loggingHandler.GetLogs))

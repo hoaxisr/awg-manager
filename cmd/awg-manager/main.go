@@ -20,6 +20,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/api"
+	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/cleanup"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
@@ -630,6 +631,40 @@ func main() {
 
 	srv.SetSingboxOperator(singboxOp)
 	singboxOp.SetEventBus(eventBus)
+
+	// Device-proxy service — LAN-facing SOCKS/HTTP proxy managed through
+	// sing-box. See docs/superpowers/specs/2026-04-24-device-proxy-design.md.
+	deviceProxyStore := deviceproxy.NewStore(filepath.Join(*dataDir, "deviceproxy.json"))
+	deviceProxySvc := deviceproxy.NewService(deviceproxy.Deps{
+		Store:     deviceProxyStore,
+		Tunnels:   awgStore,
+		Singbox:   deviceproxy.NewSingboxAdapter(singboxOp),
+		NDMSQuery: deviceproxy.NewNDMSAdapter(ndmsQueries),
+		Bus:       eventBus,
+	})
+	deviceProxySvc.SetTunnelInboundPorts(func() []int {
+		cfg, err := singboxOp.LoadCurrentConfig()
+		if err != nil {
+			return nil
+		}
+		ports := []int{}
+		for _, t := range cfg.Tunnels() {
+			if t.ListenPort > 0 {
+				ports = append(ports, t.ListenPort)
+			}
+		}
+		return ports
+	})
+	deviceProxyUnsub := deviceProxySvc.SubscribeBus(context.Background())
+	defer deviceProxyUnsub()
+
+	// Initial reconcile on boot — idempotent, brings config.json in sync
+	// with storage + current tunnel set.
+	if err := deviceProxySvc.Reconcile(context.Background()); err != nil {
+		log.Warn("deviceproxy: initial reconcile failed", map[string]interface{}{"err": err})
+	}
+
+	srv.SetDeviceProxyService(deviceProxySvc)
 	srv.SetNDMSDispatcher(ndmsDispatcher)
 	srv.SetNDMSTransport(ndmsTransportClient)
 	srv.SetNDMSSaveCoordinator(ndmsSaveCoord)
