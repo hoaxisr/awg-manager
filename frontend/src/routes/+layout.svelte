@@ -127,7 +127,9 @@
 			onResourceInvalidated: (data) => {
 				invalidateResource(data.resource);
 				// A saved-through deviceproxy config clears the missing-target banner.
-				if (data.resource === 'deviceproxy') {
+				// Backend publishes deviceproxy.config (not the bare "deviceproxy" key)
+				// immediately after Reconcile disables the proxy on a missing target.
+				if (data.resource === 'deviceproxy.config') {
 					clearDeviceProxyMissingTarget();
 				}
 			},
