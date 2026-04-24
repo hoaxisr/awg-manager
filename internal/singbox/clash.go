@@ -1,6 +1,7 @@
 package singbox
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -92,3 +93,29 @@ func (c *ClashClient) IsHealthy() bool {
 
 // Address returns the Clash API address for WebSocket proxying.
 func (c *ClashClient) Address() string { return c.address }
+
+// SetSelector tells a running sing-box via the Clash API to switch the
+// active member of a selector outbound. Live switch: existing
+// connections pinned to previous members stay alive; new connections
+// go through memberTag.
+func (c *ClashClient) SetSelector(selectorTag, memberTag string) error {
+	body, err := json.Marshal(map[string]string{"name": memberTag})
+	if err != nil {
+		return err
+	}
+	u := fmt.Sprintf("http://%s/proxies/%s", c.address, url.PathEscape(selectorTag))
+	req, err := http.NewRequest(http.MethodPut, u, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("clash SetSelector %s->%s: HTTP %d", selectorTag, memberTag, resp.StatusCode)
+	}
+	return nil
+}
