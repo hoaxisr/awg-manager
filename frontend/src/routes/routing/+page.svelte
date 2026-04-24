@@ -36,6 +36,7 @@
     let isOS5 = $derived($systemInfo.data?.isOS5 ?? false);
     let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
     let hasDnsEngine = $derived(isOS5 || hydrarouteInstalled);
+    let singboxInstalled = $derived($systemInfo.data?.singbox?.installed ?? false);
 
     // Search → edit rule integration
     let editRuleId = $state('');
@@ -109,9 +110,18 @@
             { id: 'ip', label: 'IP-адреса', badge: ipActiveCount },
             isOS5 ? { id: 'policy', label: 'Политики доступа', badge: policyCount } : null,
             { id: 'clientvpn', label: 'VPN для устройств', badge: clientRouteCount },
-            { id: 'deviceproxy', label: 'Прокси для устройств', badge: 0 },
+            singboxInstalled ? { id: 'deviceproxy', label: 'Прокси для устройств', badge: 0 } : null,
         ].filter((t): t is { id: string; label: string; badge: number } => t !== null)
     );
+
+    // If the user deep-linked / had the tab active and sing-box disappeared
+    // (uninstall while the page is open), bounce them off.
+    $effect(() => {
+        if (!$systemInfo.data) return;
+        if (!singboxInstalled && activeTab === 'deviceproxy') {
+            activeTab = 'dns';
+        }
+    });
 
 </script>
 
