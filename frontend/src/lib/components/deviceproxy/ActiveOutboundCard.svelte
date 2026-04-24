@@ -36,10 +36,10 @@
 	});
 </script>
 
-<div class="card">
-	<div class="header">
-		<h3>Активный outbound</h3>
-		<span class={singboxRunning ? 'indicator live' : 'indicator stale'}>
+<section class="card">
+	<div class="card-header">
+		<h2 class="section-title">Активный outbound</h2>
+		<span class={singboxRunning ? 'badge badge-success' : 'badge badge-warning'}>
 			{singboxRunning ? 'Live' : 'Применится при запуске'}
 		</span>
 	</div>
@@ -69,13 +69,17 @@
 			</optgroup>
 		{/if}
 	</select>
-</div>
+</section>
 
 <style>
-	.card { padding: 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; }
-	.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-	.indicator.live { color: var(--success); }
-	.indicator.stale { color: var(--text-muted); }
-	.sr-only { position: absolute; left: -9999px; }
-	select { width: 100%; padding: 8px; background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border); }
+	.section-title {
+		font-size: 1rem;
+		font-weight: 600;
+		margin: 0;
+	}
+
+	.sr-only {
+		position: absolute;
+		left: -9999px;
+	}
 </style>

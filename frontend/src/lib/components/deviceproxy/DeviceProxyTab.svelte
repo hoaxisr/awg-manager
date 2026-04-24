@@ -66,21 +66,23 @@
 {#if configSnap.status === 'loading'}
 	<p>Загрузка…</p>
 {:else if config}
-	<ActiveOutboundCard
-		outbounds={outbounds}
-		activeTag={config.selectedOutbound || 'direct'}
-		{singboxRunning}
-		onChanged={handleOutboundChanged}
-	/>
-	<InboundSettingsCard
-		{config}
-		{bridgeInterfaces}
-		onSaved={handleSaved}
-	/>
-	<ConnectionInfoCard
-		{config}
-		{resolvedListenIP}
-	/>
+	<div class="settings-stack">
+		<ActiveOutboundCard
+			outbounds={outbounds}
+			activeTag={config.selectedOutbound || 'direct'}
+			{singboxRunning}
+			onChanged={handleOutboundChanged}
+		/>
+		<InboundSettingsCard
+			{config}
+			{bridgeInterfaces}
+			onSaved={handleSaved}
+		/>
+		<ConnectionInfoCard
+			{config}
+			{resolvedListenIP}
+		/>
+	</div>
 {/if}
 
 <style>

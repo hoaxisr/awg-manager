@@ -47,66 +47,137 @@
 	}
 </script>
 
-<div class="card">
-	<h3>Настройки inbound</h3>
+<section class="card">
+	<h2 class="section-title">Настройки inbound</h2>
 
-	<div class="row">
-		<span>Включён</span>
-		<Toggle checked={draft.enabled} onchange={(v) => (draft.enabled = v)} />
-	</div>
-
-	<div class="row">
-		<label for="dp-port">Порт</label>
-		<input id="dp-port" type="number" min="1024" max="65535" bind:value={draft.port} />
-	</div>
-
-	<div class="row">
-		<span>Слушать на:</span>
-		<div class="listen-group">
-			<label>
-				<input type="radio" bind:group={draft.listenAll} value={true} />
-				Все интерфейсы
-			</label>
-			<label>
-				<input type="radio" bind:group={draft.listenAll} value={false} />
-				Конкретном интерфейсе
-			</label>
-			{#if !draft.listenAll}
-				<select bind:value={draft.listenInterface}>
-					{#each bridgeInterfaces as br (br.id)}
-						<option value={br.id}>{br.label}</option>
-					{/each}
-				</select>
-			{/if}
+	<div class="settings-stack">
+		<div class="setting-row">
+			<div class="flex flex-col gap-1">
+				<span class="font-medium">Включён</span>
+				<span class="setting-description">Запустить SOCKS5/HTTP-прокси на роутере</span>
+			</div>
+			<Toggle checked={draft.enabled} onchange={(v) => (draft.enabled = v)} />
 		</div>
+
+		<div class="setting-row">
+			<div class="flex flex-col gap-1">
+				<span class="font-medium">Порт</span>
+				<span class="setting-description">На котором слушает inbound. По умолчанию 1099.</span>
+			</div>
+			<input id="dp-port" type="number" min="1024" max="65535" bind:value={draft.port} class="port-input" />
+		</div>
+
+		<div class="setting-row">
+			<div class="flex flex-col gap-1">
+				<span class="font-medium">Слушать на</span>
+				<span class="setting-description">Все интерфейсы или конкретный bridge роутера</span>
+			</div>
+			<div class="radio-stack">
+				<label class="radio-item">
+					<input type="radio" bind:group={draft.listenAll} value={true} />
+					Все интерфейсы
+				</label>
+				<label class="radio-item">
+					<input type="radio" bind:group={draft.listenAll} value={false} />
+					Конкретный интерфейс
+				</label>
+				{#if !draft.listenAll}
+					<select bind:value={draft.listenInterface}>
+						{#each bridgeInterfaces as br (br.id)}
+							<option value={br.id}>{br.label}</option>
+						{/each}
+					</select>
+				{/if}
+			</div>
+		</div>
+
+		<div class="setting-row">
+			<div class="flex flex-col gap-1">
+				<span class="font-medium">Требовать auth</span>
+				<span class="setting-description">SOCKS5 и HTTP-прокси запросят логин/пароль</span>
+			</div>
+			<Toggle checked={draft.auth.enabled} onchange={(v) => (draft.auth.enabled = v)} />
+		</div>
+
+		{#if draft.auth.enabled}
+			<div class="setting-row">
+				<div class="flex flex-col gap-1">
+					<span class="font-medium">Имя пользователя</span>
+				</div>
+				<input id="dp-user" type="text" bind:value={draft.auth.username} class="text-input" />
+			</div>
+			<div class="setting-row">
+				<div class="flex flex-col gap-1">
+					<span class="font-medium">Пароль</span>
+				</div>
+				<div class="password-group">
+					<input id="dp-pass" type="text" bind:value={draft.auth.password} />
+					<button type="button" class="btn btn-ghost btn-sm" onclick={generatePassword}>
+						Сгенерировать
+					</button>
+				</div>
+			</div>
+		{/if}
 	</div>
 
-	<div class="row">
-		<span>Требовать auth</span>
-		<Toggle checked={draft.auth.enabled} onchange={(v) => (draft.auth.enabled = v)} />
-	</div>
-
-	{#if draft.auth.enabled}
-		<div class="row">
-			<label for="dp-user">Имя пользователя</label>
-			<input id="dp-user" type="text" bind:value={draft.auth.username} />
-		</div>
-		<div class="row">
-			<label for="dp-pass">Пароль</label>
-			<input id="dp-pass" type="text" bind:value={draft.auth.password} />
-			<button type="button" class="btn btn-sm" onclick={generatePassword}>Сгенерировать</button>
-		</div>
-	{/if}
-
-	<div class="actions">
-		<button type="button" class="btn btn-secondary" onclick={reset} disabled={saving}>Отменить</button>
+	<div class="form-actions">
+		<button type="button" class="btn btn-ghost" onclick={reset} disabled={saving}>Отменить</button>
 		<button type="button" class="btn btn-primary" onclick={save} disabled={saving}>Сохранить</button>
 	</div>
-</div>
+</section>
 
 <style>
-	.card { padding: 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; }
-	.row { display: grid; grid-template-columns: 180px 1fr auto; gap: 8px; align-items: center; margin: 6px 0; }
-	.listen-group { display: flex; flex-direction: column; gap: 4px; }
-	.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+	.section-title {
+		font-size: 1rem;
+		font-weight: 600;
+		margin-bottom: 1rem;
+	}
+
+	.radio-stack {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		min-width: 220px;
+	}
+
+	.radio-item {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		cursor: pointer;
+		margin: 0;
+		font-size: 0.875rem;
+		color: var(--text-primary);
+	}
+
+	.radio-item input[type='radio'] {
+		width: auto;
+		margin: 0;
+	}
+
+	.port-input {
+		width: 120px;
+		flex-shrink: 0;
+	}
+
+	.text-input {
+		min-width: 200px;
+		flex-shrink: 0;
+	}
+
+	.password-group {
+		display: flex;
+		gap: 0.5rem;
+		align-items: center;
+		min-width: 260px;
+	}
+
+	.form-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 0.5rem;
+		margin-top: 1rem;
+		padding-top: 1rem;
+		border-top: 1px solid var(--border);
+	}
 </style>

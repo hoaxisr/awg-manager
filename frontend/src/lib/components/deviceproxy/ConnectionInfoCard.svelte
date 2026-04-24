@@ -27,17 +27,33 @@
 </script>
 
 {#if config.enabled && resolvedListenIP}
-	<div class="card">
-		<h3>Подключение</h3>
-		<div class="url-row">
-			<code>{url}</code>
-			<button type="button" class="btn btn-sm" onclick={copy}>Копировать</button>
+	<section class="card">
+		<h2 class="section-title">Подключение</h2>
+		<div class="settings-panel url-row">
+			<code class="url-code">{url}</code>
+			<button type="button" class="btn btn-ghost btn-sm" onclick={copy}>Копировать</button>
 		</div>
-	</div>
+	</section>
 {/if}
 
 <style>
-	.card { padding: 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; }
-	.url-row { display: flex; align-items: center; gap: 8px; }
-	code { flex: 1; padding: 6px 10px; background: var(--bg-secondary); border-radius: 4px; overflow-x: auto; }
+	.section-title {
+		font-size: 1rem;
+		font-weight: 600;
+		margin-bottom: 0.75rem;
+	}
+
+	.url-row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.url-code {
+		flex: 1;
+		overflow-x: auto;
+		font-family: var(--font-mono, monospace);
+		font-size: 0.875rem;
+		white-space: nowrap;
+	}
 </style>
