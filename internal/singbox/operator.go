@@ -524,6 +524,13 @@ func (o *Operator) ApplyConfig(ctx context.Context, cfg *Config) error {
 // path: rewriting config.json changes selector.default for next boot
 // without disturbing the live selector.
 func (o *Operator) ApplyConfigNoReload(ctx context.Context, cfg *Config) error {
+	// Defense-in-depth: no-reload assumes the running daemon will continue
+	// serving with its current in-memory config. If the process is down,
+	// there is no live state to preserve and the caller should have taken
+	// the full-apply path (startAndWait).
+	if running, _ := o.proc.IsRunning(); !running {
+		return ErrSingboxNotRunning
+	}
 	tmpPath := o.configPath + ".new"
 	if err := cfg.Save(tmpPath); err != nil {
 		return err

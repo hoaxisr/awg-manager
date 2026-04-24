@@ -101,21 +101,18 @@ func (s *Service) withTunnelInboundPorts(ports []int) {
 	s.SetTunnelInboundPorts(func() []int { return ports })
 }
 
-// ValidateConfig checks the user-supplied Config for obvious errors
-// before it is persisted. Errors wrap validation context so the API
-// layer can surface them as 400 responses with meaningful messages.
-func (s *Service) ValidateConfig(cfg Config) error {
+// validateConfigRaw contains the stateless validation rules that both
+// ValidateConfig (public, takes the mutex) and validateLocked
+// (internal, caller holds the mutex) share.
+func validateConfigRaw(cfg Config, tunnelPorts TunnelInboundPortsFn) error {
 	if !cfg.Enabled {
 		return nil
 	}
 	if cfg.Port < 1024 || cfg.Port > 65535 {
 		return fmt.Errorf("port %d is outside 1024-65535", cfg.Port)
 	}
-	s.mu.Lock()
-	portFn := s.tunnelPorts
-	s.mu.Unlock()
-	if portFn != nil {
-		for _, p := range portFn() {
+	if tunnelPorts != nil {
+		for _, p := range tunnelPorts() {
 			if p == cfg.Port {
 				return fmt.Errorf("port %d is used by a sing-box tunnel inbound", cfg.Port)
 			}
@@ -135,17 +132,28 @@ func (s *Service) ValidateConfig(cfg Config) error {
 	return nil
 }
 
+// ValidateConfig checks the user-supplied Config for obvious errors
+// before it is persisted. Errors wrap validation context so the API
+// layer can surface them as 400 responses with meaningful messages.
+func (s *Service) ValidateConfig(cfg Config) error {
+	s.mu.Lock()
+	portFn := s.tunnelPorts
+	s.mu.Unlock()
+	return validateConfigRaw(cfg, portFn)
+}
+
 // SaveConfig validates, applies to sing-box, and persists cfg.
 // Transactional on the pre-apply phase; post-apply errors are logged
 // but do not roll back persisted storage.
 //
 // Reload decision: if the diff between old and new is a SelectedOutbound-
-// only change (and both states are Enabled), the sing-box process is
-// NOT reloaded — we surgically rewrite config.json so the new
-// selector.default takes effect on next cold start, and the current
+// only change (and both states are Enabled, and sing-box is running), the
+// process is NOT reloaded — we surgically rewrite config.json so the new
+// selector.default takes effect on next reload/restart, and the current
 // live selector.now (possibly set by a hot-switch) stays untouched.
 // Any other change (port, listen, auth, enabled toggle) requires a
-// full reload.
+// full reload. When sing-box is not running the full apply path is always
+// taken so the cold-start safety net (startAndWait) fires normally.
 func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -162,7 +170,11 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 	}
 
 	if s.d.Singbox != nil {
-		if onlySelectedOutboundChanged(oldCfg, cfg) {
+		// No-reload path only makes sense when the daemon is actually up —
+		// otherwise there's no live selector.now to preserve, AND the
+		// reload path includes a cold-start safety net that ApplyConfigNoReload
+		// deliberately skips. Require both conditions.
+		if onlySelectedOutboundChanged(oldCfg, cfg) && s.d.Singbox.IsRunning() {
 			if err := s.d.Singbox.ApplyDeviceProxyNoReload(ctx, spec); err != nil {
 				return fmt.Errorf("apply to singbox (no-reload): %w", err)
 			}
@@ -178,7 +190,10 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 	}
 
 	if s.d.Bus != nil {
-		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy"})
+		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.config"})
+		// A default-only change also shifts what the runtime store would
+		// derive "temporarily" against, so invalidate both.
+		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.runtime"})
 	}
 	return nil
 }
@@ -200,31 +215,7 @@ func onlySelectedOutboundChanged(oldCfg, newCfg Config) bool {
 // avoid a nested Lock(). ValidateConfig (the public form) still works
 // standalone for API-layer input checking.
 func (s *Service) validateLocked(cfg Config) error {
-	if !cfg.Enabled {
-		return nil
-	}
-	if cfg.Port < 1024 || cfg.Port > 65535 {
-		return fmt.Errorf("port %d is outside 1024-65535", cfg.Port)
-	}
-	if s.tunnelPorts != nil {
-		for _, p := range s.tunnelPorts() {
-			if p == cfg.Port {
-				return fmt.Errorf("port %d is used by a sing-box tunnel inbound", cfg.Port)
-			}
-		}
-	}
-	if cfg.Auth.Enabled {
-		if cfg.Auth.Username == "" {
-			return fmt.Errorf("auth enabled but username is empty")
-		}
-		if cfg.Auth.Password == "" {
-			return fmt.Errorf("auth enabled but password is empty")
-		}
-	}
-	if !cfg.ListenAll && cfg.ListenInterface == "" {
-		return fmt.Errorf("listen set to specific interface but interface is empty")
-	}
-	return nil
+	return validateConfigRaw(cfg, s.tunnelPorts)
 }
 
 func (s *Service) buildSpec(ctx context.Context, cfg Config) (ExternalSpec, error) {
@@ -303,16 +294,16 @@ type RuntimeState struct {
 // convenient client-side diffing.
 func (s *Service) GetRuntimeState(ctx context.Context) RuntimeState {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defaultTag := s.d.Store.Get().SelectedOutbound
+	sb := s.d.Singbox
+	s.mu.Unlock()
 
-	state := RuntimeState{
-		DefaultTag: s.d.Store.Get().SelectedOutbound,
-	}
-	if s.d.Singbox == nil || !s.d.Singbox.IsRunning() {
+	state := RuntimeState{DefaultTag: defaultTag}
+	if sb == nil || !sb.IsRunning() {
 		return state
 	}
 	state.Alive = true
-	if active, err := s.d.Singbox.GetSelectorActive(ctx, "device-proxy-selector"); err == nil {
+	if active, err := sb.GetSelectorActive(ctx, "device-proxy-selector"); err == nil {
 		state.ActiveTag = active
 	}
 	return state
@@ -390,9 +381,10 @@ func (s *Service) listOutboundsLocked(ctx context.Context) []Outbound {
 //     the daemon is down, so API layer can map to 409.
 func (s *Service) SelectRuntimeOutbound(ctx context.Context, tag string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	available := s.listOutboundsLocked(ctx)
+	sb := s.d.Singbox
+	s.mu.Unlock()
+
 	found := false
 	for _, ob := range available {
 		if ob.Tag == tag {
@@ -404,10 +396,10 @@ func (s *Service) SelectRuntimeOutbound(ctx context.Context, tag string) error {
 		return fmt.Errorf("%w: %q", ErrOutboundUnavailable, tag)
 	}
 
-	if s.d.Singbox == nil {
+	if sb == nil {
 		return fmt.Errorf("singbox operator unavailable")
 	}
-	return s.d.Singbox.SetSelectorDefault(ctx, "device-proxy-selector", tag)
+	return sb.SetSelectorDefault(ctx, "device-proxy-selector", tag)
 }
 
 // Reconcile is the single idempotent rebuild path. It verifies the
@@ -437,7 +429,8 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			}
 			if s.d.Bus != nil {
 				s.d.Bus.Publish("deviceproxy:missing-target", map[string]string{"wasTag": wasTag})
-				s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy"})
+				s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.config"})
+				s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.runtime"})
 			}
 		}
 	}
