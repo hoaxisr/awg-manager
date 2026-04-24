@@ -66,7 +66,7 @@ func (h *DeviceProxyHandler) SelectOutbound(w http.ResponseWriter, r *http.Reque
 		response.Error(w, "invalid JSON", "INVALID_JSON")
 		return
 	}
-	if err := h.svc.SelectOutbound(r.Context(), body.Tag); err != nil {
+	if err := h.svc.SelectRuntimeOutbound(r.Context(), body.Tag); err != nil {
 		if errors.Is(err, deviceproxy.ErrOutboundUnavailable) {
 			response.Error(w, err.Error(), "OUTBOUND_UNAVAILABLE")
 			return
