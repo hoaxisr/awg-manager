@@ -476,9 +476,10 @@
 	}
 
 	.chart-bottom {
-		display: flex;
-		justify-content: space-between;
+		display: grid;
+		grid-template-columns: auto 1fr auto;
 		align-items: center;
+		column-gap: 16px;
 		padding: 4px 4px 0;
 		font-size: 0.6875rem;
 		color: var(--text-muted);
@@ -487,11 +488,17 @@
 		font-variant-numeric: tabular-nums;
 		white-space: nowrap;
 	}
+	.chart-bottom .time:last-child {
+		justify-self: end;
+	}
 	.chart-bottom .legend {
 		display: inline-flex;
 		align-items: center;
 		gap: 4px;
-		white-space: nowrap;
+		justify-self: center;
+		flex-wrap: wrap;
+		justify-content: center;
+		row-gap: 2px;
 	}
 	.chart-bottom .legend .dot {
 		width: 7px;
