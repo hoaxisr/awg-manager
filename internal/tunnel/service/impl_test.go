@@ -228,12 +228,20 @@ func TestAWGInterfaceEqual_DifferentDNS(t *testing.T) {
 	}
 }
 
-func TestAWGPeerEqual_AllowedIPsOrder(t *testing.T) {
+func TestAWGPeerEqual_AllowedIPsOrderIgnored(t *testing.T) {
+	// AllowedIPs is a set — order does not matter semantically.
 	a := storage.AWGPeer{PublicKey: "k", AllowedIPs: []string{"10.0.0.0/24", "192.168.1.0/24"}}
 	b := storage.AWGPeer{PublicKey: "k", AllowedIPs: []string{"192.168.1.0/24", "10.0.0.0/24"}}
-	// Order matters in our equality check — different order = not equal.
+	if !awgPeerEqual(a, b) {
+		t.Fatal("expected equal when AllowedIPs differ only in order")
+	}
+}
+
+func TestAWGPeerEqual_AllowedIPsContent(t *testing.T) {
+	a := storage.AWGPeer{PublicKey: "k", AllowedIPs: []string{"10.0.0.0/24"}}
+	b := storage.AWGPeer{PublicKey: "k", AllowedIPs: []string{"192.168.1.0/24"}}
 	if awgPeerEqual(a, b) {
-		t.Fatal("expected not equal when AllowedIPs order differs")
+		t.Fatal("expected not equal when AllowedIPs content differs")
 	}
 }
 
