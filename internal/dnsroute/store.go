@@ -47,9 +47,47 @@ func (s *Store) Load() (*StoreData, error) {
 		data.Lists = []DomainList{}
 	}
 	normalizeLists(data.Lists)
+	migrateLegacyExcludes(&data)
 
 	s.data = &data
 	return s.data, nil
+}
+
+// migrateLegacyExcludes splits any CIDR-shaped entries out of Excludes
+// (legacy: Excludes used to be a free-form list and may contain CIDRs)
+// and merges them into ExcludeSubnets. In-memory only — written back
+// to disk only on the next Save().
+func migrateLegacyExcludes(data *StoreData) {
+	if data == nil {
+		return
+	}
+	for i := range data.Lists {
+		list := &data.Lists[i]
+		if len(list.Excludes) == 0 {
+			continue
+		}
+		domains, subnets := splitDomainsAndSubnets(list.Excludes)
+		if len(subnets) == 0 {
+			continue
+		}
+		list.Excludes = domains
+		// Merge subnets into ExcludeSubnets, dedup union.
+		seen := make(map[string]bool, len(list.ExcludeSubnets)+len(subnets))
+		merged := make([]string, 0, len(list.ExcludeSubnets)+len(subnets))
+		for _, s := range list.ExcludeSubnets {
+			if !seen[s] {
+				seen[s] = true
+				merged = append(merged, s)
+			}
+		}
+		for _, s := range subnets {
+			if !seen[s] {
+				seen[s] = true
+				merged = append(merged, s)
+			}
+		}
+		list.ExcludeSubnets = merged
+	}
 }
 
 // Save writes domain list data to disk atomically.
