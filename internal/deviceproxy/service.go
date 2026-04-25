@@ -372,12 +372,16 @@ func (s *Service) listOutboundsLocked(ctx context.Context) []Outbound {
 		}
 	}
 
+	managedIfaces := make(map[string]struct{})
 	if s.d.Tunnels != nil {
 		tunnels, _ := s.d.Tunnels.List()
 		sort.Slice(tunnels, func(i, j int) bool { return tunnels[i].ID < tunnels[j].ID })
 		for _, t := range tunnels {
 			t := t
 			iface := awgKernelIface(&t)
+			if iface != "" {
+				managedIfaces[iface] = struct{}{}
+			}
 			out = append(out, Outbound{
 				Tag:    "awg-" + t.ID,
 				Kind:   "awg",
@@ -389,11 +393,16 @@ func (s *Service) listOutboundsLocked(ctx context.Context) []Outbound {
 
 	// System tunnels — Keenetic native WireGuard not managed by storage.
 	// Tag uses the "awg-sys-" prefix to match what buildSpec/EnsureDeviceProxy
-	// will generate for these entries.
+	// will generate for these entries. Skip ifaces already added from the
+	// storage list: nativewg storage tunnels also surface in NDMS as system
+	// Wireguard interfaces, which would dupe them in the dropdown.
 	if s.d.SystemTunnels != nil {
 		sysTunnels, _ := s.d.SystemTunnels.List(ctx)
 		sort.Slice(sysTunnels, func(i, j int) bool { return sysTunnels[i].ID < sysTunnels[j].ID })
 		for _, t := range sysTunnels {
+			if _, dup := managedIfaces[t.InterfaceName]; dup {
+				continue
+			}
 			out = append(out, Outbound{
 				Tag:    "awg-sys-" + t.ID,
 				Kind:   "awg",
