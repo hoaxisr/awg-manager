@@ -366,3 +366,25 @@ func TestBuildIndex_ExcludeList(t *testing.T) {
 		t.Fatal("list_2 domains should still be in index")
 	}
 }
+
+func TestDedup_ParentWithExcludeAllowsChild(t *testing.T) {
+	lists := []DomainList{
+		{
+			ID:       "list_google",
+			Name:     "Google",
+			Domains:  []string{"google.com"},
+			Excludes: []string{"gemini.google.com"},
+		},
+	}
+	idx := BuildIndex(lists, "")
+	names := listNameMap(lists)
+
+	kept, report := idx.CheckBatch([]string{"gemini.google.com"}, "list_gemini", names)
+
+	if len(kept) != 1 || kept[0] != "gemini.google.com" {
+		t.Fatalf("expected gemini.google.com to survive, got kept=%v", kept)
+	}
+	if report.TotalRemoved != 0 {
+		t.Fatalf("expected no removals, got %d", report.TotalRemoved)
+	}
+}
