@@ -9,8 +9,10 @@
 		EditManagedServerModal,
 		AddManagedPeerModal,
 		EditManagedPeerModal,
-		PeerConfModal
+		PeerConfModal,
+		PeerSortControls
 	} from '$lib/components/servers';
+	import { comparePeerFields, type PeerSortKey } from '$lib/utils/peerSort';
 
 	interface Props {
 		server: ManagedServer;
@@ -34,30 +36,9 @@
 	let confirmDelete = $state(false);
 	let confirmDeletePeerKey = $state<string | null>(null);
 
-	// Peer sort & search
-	type SortKey = 'name' | 'traffic' | 'ip' | 'online' | 'handshake';
-	const SORT_DEFAULTS: Record<SortKey, boolean> = {
-		name: true,       // A→Z
-		traffic: false,   // most first
-		ip: true,         // low→high
-		online: false,    // online first
-		handshake: false, // recent first
-	};
-
-	let sortBy = $state<SortKey>('name');
+	let sortBy = $state<PeerSortKey>('name');
 	let sortAsc = $state(true);
 	let searchQuery = $state('');
-
-	function parseIP(ip: string): number {
-		const parts = ip.split('.').map(Number);
-		return ((parts[0] ?? 0) << 24) + ((parts[1] ?? 0) << 16) + ((parts[2] ?? 0) << 8) + (parts[3] ?? 0);
-	}
-
-	function setSortBy(key: SortKey) {
-		if (sortBy === key) return;
-		sortBy = key;
-		sortAsc = SORT_DEFAULTS[key];
-	}
 
 	function getPeerStats(publicKey: string): ManagedPeerStats | undefined {
 		return stats?.peers?.find(p => p.publicKey === publicKey);
@@ -75,50 +56,28 @@
 			);
 		}
 
-		// Sort
 		const sorted = [...peers].sort((a, b) => {
 			const sa = getPeerStats(a.publicKey);
 			const sb = getPeerStats(b.publicKey);
-			let cmp = 0;
-
-			switch (sortBy) {
-				case 'name': {
-					const na = (a.description || a.publicKey).toLowerCase();
-					const nb = (b.description || b.publicKey).toLowerCase();
-					cmp = na.localeCompare(nb);
-					break;
-				}
-				case 'traffic': {
-					const ta = sa ? sa.rxBytes + sa.txBytes : -1;
-					const tb = sb ? sb.rxBytes + sb.txBytes : -1;
-					if (ta === -1 && tb === -1) cmp = 0;
-					else if (ta === -1) cmp = 1;
-					else if (tb === -1) cmp = -1;
-					else cmp = ta - tb;
-					break;
-				}
-				case 'ip': {
-					cmp = parseIP(a.tunnelIP) - parseIP(b.tunnelIP);
-					break;
-				}
-				case 'online': {
-					if (!sa && !sb) cmp = 0;
-					else if (!sa) cmp = 1;
-					else if (!sb) cmp = -1;
-					else cmp = (sa.online ? 1 : 0) - (sb.online ? 1 : 0);
-					break;
-				}
-				case 'handshake': {
-					const ha = sa?.lastHandshake ? new Date(sa.lastHandshake).getTime() : -1;
-					const hb = sb?.lastHandshake ? new Date(sb.lastHandshake).getTime() : -1;
-					if (ha === -1 && hb === -1) cmp = 0;
-					else if (ha === -1) cmp = 1;
-					else if (hb === -1) cmp = -1;
-					else cmp = ha - hb;
-					break;
-				}
-			}
-
+			const cmp = comparePeerFields(
+				{
+					name: a.description || a.publicKey,
+					ip: a.tunnelIP,
+					rxBytes: sa?.rxBytes ?? null,
+					txBytes: sa?.txBytes ?? null,
+					online: sa?.online ?? null,
+					lastHandshake: sa?.lastHandshake ?? null,
+				},
+				{
+					name: b.description || b.publicKey,
+					ip: b.tunnelIP,
+					rxBytes: sb?.rxBytes ?? null,
+					txBytes: sb?.txBytes ?? null,
+					online: sb?.online ?? null,
+					lastHandshake: sb?.lastHandshake ?? null,
+				},
+				sortBy,
+			);
 			return sortAsc ? cmp : -cmp;
 		});
 
@@ -311,24 +270,12 @@
 		<div class="peers-header">
 			<span class="peers-title">Клиенты {#if stats}({onlineCount}/{(server.peers ?? []).length} онлайн){:else}({(server.peers ?? []).length}){/if}</span>
 			<div class="peers-controls">
-				{#if (server.peers ?? []).length >= 5}
-					<input
-						class="peer-search"
-						type="text"
-						placeholder="Поиск..."
-						bind:value={searchQuery}
-					/>
-				{/if}
-				<select class="peer-sort-select" value={sortBy} onchange={(e) => setSortBy(e.currentTarget.value as SortKey)}>
-					<option value="name">По имени</option>
-					<option value="traffic">По трафику</option>
-					<option value="ip">По IP</option>
-					<option value="online">Онлайн</option>
-					<option value="handshake">Handshake</option>
-				</select>
-				<button class="peer-sort-dir" onclick={() => sortAsc = !sortAsc} title="Направление сортировки">
-					{sortAsc ? '↑' : '↓'}
-				</button>
+				<PeerSortControls
+					bind:sortBy
+					bind:sortAsc
+					bind:searchQuery
+					showSearch={(server.peers ?? []).length >= 5}
+				/>
 				<button class="btn btn-secondary btn-sm" onclick={() => addPeerOpen = true}>
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 						<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -537,47 +484,6 @@
 		gap: 0.375rem;
 	}
 
-	.peer-search {
-		width: 120px;
-		padding: 0.25rem 0.5rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		background: var(--bg-primary);
-		color: var(--text-primary);
-		font-size: 0.6875rem;
-	}
-
-	.peer-search::placeholder {
-		color: var(--text-muted);
-	}
-
-	.peer-sort-select {
-		padding: 0.25rem 0.5rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		background: var(--bg-primary);
-		color: var(--text-secondary);
-		font-size: 0.6875rem;
-		cursor: pointer;
-	}
-
-	.peer-sort-dir {
-		padding: 0.125rem 0.375rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		background: var(--bg-primary);
-		color: var(--text-secondary);
-		font-size: 0.75rem;
-		cursor: pointer;
-		line-height: 1;
-		transition: color 0.15s ease, background 0.15s ease;
-	}
-
-	.peer-sort-dir:hover {
-		background: var(--bg-hover);
-		color: var(--text-primary);
-	}
-
 	.peers-title {
 		font-size: 0.875rem;
 		font-weight: 600;
@@ -748,11 +654,6 @@
 
 		.peers-controls {
 			flex-wrap: wrap;
-		}
-
-		.peer-search {
-			flex: 1;
-			min-width: 80px;
 		}
 
 		.card-header {

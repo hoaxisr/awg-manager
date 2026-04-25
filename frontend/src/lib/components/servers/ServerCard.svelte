@@ -1,9 +1,16 @@
 <script lang="ts">
-	import type { WireguardServer, WireguardServerConfig, ASCParams } from '$lib/types';
+	import type { WireguardServer, WireguardServerConfig, ASCParams, WireguardServerPeer } from '$lib/types';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { formatBytes } from '$lib/utils/format';
-	import { PeerTable, ConfGeneratorModal } from '$lib/components/servers';
+	import { comparePeerFields, type PeerSortKey } from '$lib/utils/peerSort';
+	import { PeerTable, ConfGeneratorModal, PeerSortControls } from '$lib/components/servers';
+
+	function peerIP(p: WireguardServerPeer): string {
+		return p.allowedIPs?.find(ip => ip.includes('/32'))?.split('/')[0]
+			?? p.allowedIPs?.[0]?.split('/')[0]
+			?? '';
+	}
 
 	interface Props {
 		server: WireguardServer;
@@ -20,11 +27,52 @@
 	let ascParams = $state<ASCParams | null>(null);
 	let loadingConfig = $state(false);
 
+	let sortBy = $state<PeerSortKey>('name');
+	let sortAsc = $state(true);
+	let searchQuery = $state('');
+
 	// Computed stats
 	let onlineCount = $derived((server.peers ?? []).filter(p => p.online && p.enabled).length);
 	let totalPeers = $derived((server.peers ?? []).length);
 	let totalRx = $derived((server.peers ?? []).reduce((sum, p) => sum + p.rxBytes, 0));
 	let totalTx = $derived((server.peers ?? []).reduce((sum, p) => sum + p.txBytes, 0));
+
+	let sortedPeers = $derived.by(() => {
+		let peers: WireguardServerPeer[] = server.peers ?? [];
+
+		if (searchQuery && peers.length >= 5) {
+			const q = searchQuery.toLowerCase();
+			peers = peers.filter(p =>
+				(p.description || '').toLowerCase().includes(q) ||
+				peerIP(p).toLowerCase().includes(q)
+			);
+		}
+
+		const sorted = [...peers].sort((a, b) => {
+			const cmp = comparePeerFields(
+				{
+					name: a.description || a.publicKey,
+					ip: peerIP(a),
+					rxBytes: a.rxBytes,
+					txBytes: a.txBytes,
+					online: a.online,
+					lastHandshake: a.lastHandshake || null,
+				},
+				{
+					name: b.description || b.publicKey,
+					ip: peerIP(b),
+					rxBytes: b.rxBytes,
+					txBytes: b.txBytes,
+					online: b.online,
+					lastHandshake: b.lastHandshake || null,
+				},
+				sortBy,
+			);
+			return sortAsc ? cmp : -cmp;
+		});
+
+		return sorted;
+	});
 
 	async function openConfModal(publicKey: string) {
 		confPeerKey = publicKey;
@@ -89,10 +137,21 @@
 
 	<!-- Peer table -->
 	{#if (server.peers ?? []).length > 0}
-		<PeerTable
-			peers={server.peers}
-			onDownloadConf={isBuiltIn ? undefined : openConfModal}
-		/>
+		<div class="peers-section">
+			<div class="peers-header">
+				<span class="peers-title">Клиенты ({onlineCount}/{totalPeers} онлайн)</span>
+				<PeerSortControls
+					bind:sortBy
+					bind:sortAsc
+					bind:searchQuery
+					showSearch={(server.peers ?? []).length >= 5}
+				/>
+			</div>
+			<PeerTable
+				peers={sortedPeers}
+				onDownloadConf={isBuiltIn ? undefined : openConfModal}
+			/>
+		</div>
 	{/if}
 
 	<!-- Actions -->
@@ -251,6 +310,26 @@
 	.server-actions {
 		display: flex;
 		gap: 0.5rem;
+	}
+
+	.peers-section {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.peers-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+	}
+
+	.peers-title {
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--text-secondary);
 	}
 
 </style>
