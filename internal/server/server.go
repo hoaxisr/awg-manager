@@ -652,6 +652,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/managed-server/peers/conf", guarded(managedHandler.PeerConf))
 	mux.HandleFunc("/api/managed-server/enabled", guarded(managedHandler.SetEnabled))
 	mux.HandleFunc("/api/managed-server/nat", guarded(managedHandler.NAT))
+	mux.HandleFunc("/api/managed-server/policy", guarded(managedHandler.SetPolicy))
+	mux.HandleFunc("/api/managed-server/policies", guarded(managedHandler.GetPolicies))
 	mux.HandleFunc("/api/managed-server/asc", guarded(managedHandler.ASC))
 
 	// Signature capture (protected + boot guarded)
