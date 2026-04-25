@@ -30,6 +30,7 @@ type managedServerResponse struct {
 	DNS           string              `json:"dns,omitempty"`
 	MTU           int                 `json:"mtu,omitempty"`
 	NATEnabled    bool                `json:"natEnabled"`
+	Policy        string              `json:"policy"`
 	Peers         []managedPeerPublic `json:"peers"`
 }
 
@@ -63,6 +64,7 @@ func toManagedServerResponse(s *storage.ManagedServer) *managedServerResponse {
 		DNS:           s.DNS,
 		MTU:           s.MTU,
 		NATEnabled:    s.NATEnabled,
+		Policy:        s.Policy,
 		Peers:         peers,
 	}
 }
@@ -324,6 +326,49 @@ func (h *ManagedServerHandler) PeerConf(w http.ResponseWriter, r *http.Request) 
 // enabledToggle is the shared request body for NAT and SetEnabled.
 type enabledToggle struct {
 	Enabled bool `json:"enabled"`
+}
+
+// setPolicyRequest is the request body for /api/managed-server/policy.
+type setPolicyRequest struct {
+	Policy string `json:"policy"`
+}
+
+// SetPolicy updates the ip hotspot policy for the managed server interface.
+// POST /api/managed-server/policy
+func (h *ManagedServerHandler) SetPolicy(w http.ResponseWriter, r *http.Request) {
+	req, ok := parseJSON[setPolicyRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	if req.Policy == "" {
+		response.Error(w, "policy must not be empty", "POLICY_INVALID")
+		return
+	}
+	if err := h.svc.SetPolicy(r.Context(), req.Policy); err != nil {
+		response.Error(w, err.Error(), "POLICY_FAILED")
+		return
+	}
+	h.publishServerUpdated()
+	h.writeServersSnapshot(w, r)
+}
+
+// GetPolicies returns every IP Policy profile available on the router,
+// for the managed server's policy dropdown.
+// GET /api/managed-server/policies
+func (h *ManagedServerHandler) GetPolicies(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	opts, err := h.svc.ListPolicies(r.Context())
+	if err != nil {
+		response.Error(w, err.Error(), "POLICIES_FAILED")
+		return
+	}
+	if opts == nil {
+		opts = []managed.PolicyOption{}
+	}
+	response.Success(w, opts)
 }
 
 // NAT enables or disables NAT on the managed server interface.
