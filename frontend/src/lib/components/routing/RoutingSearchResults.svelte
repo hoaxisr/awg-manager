@@ -9,14 +9,23 @@
         resolving: boolean;
         resolveError: string;
         onRuleClick?: (id: string, type: 'dns' | 'ip') => void;
+        onClose?: () => void;
     }
 
-    let { dnsResults, ipResults, resolveMatch, resolving, resolveError, onRuleClick }: Props = $props();
+    let { dnsResults, ipResults, resolveMatch, resolving, resolveError, onRuleClick, onClose }: Props = $props();
 
     const MAX_SHOWN = 4;
 </script>
 
 <div class="search-results">
+    {#if onClose}
+        <button class="results-close" onclick={onClose} title="Закрыть (Esc)" aria-label="Закрыть результаты">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+        </button>
+    {/if}
     {#if dnsResults.length > 0}
         <div class="results-group">
             <div class="results-group-title">DNS-правила</div>
@@ -167,6 +176,29 @@
         max-height: 450px;
         overflow-y: auto;
         padding: 6px;
+    }
+
+    .results-close {
+        position: sticky;
+        top: 0;
+        float: right;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        border: none;
+        background: var(--bg-secondary);
+        color: var(--text-muted);
+        cursor: pointer;
+        border-radius: 4px;
+        margin: -2px -2px 0 0;
+        z-index: 1;
+    }
+
+    .results-close:hover {
+        color: var(--text-primary);
+        background: var(--bg-tertiary);
     }
 
     .results-group {

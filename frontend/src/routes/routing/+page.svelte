@@ -56,7 +56,11 @@
 
     function handleSearchRuleClick(id: string, type: 'dns' | 'ip') {
         if (type === 'dns') {
-            activeTab = 'dns';
+            // dnsRoutes mixes NDMS and hydraroute backends in one array;
+            // route hydraroute hits to the HR NEO tab so the edit modal
+            // actually opens (DnsRoutesTab filters those out).
+            const route = dnsRoutes.find(r => r.id === id);
+            activeTab = route?.backend === 'hydraroute' ? 'hrneo' : 'dns';
         } else {
             activeTab = 'ip';
         }
@@ -214,6 +218,8 @@
                 tunnels={routingTunnels}
                 policies={accessPolicies}
                 {policyInterfaces}
+                {editRuleId}
+                {editRuleCounter}
             />
         {:else if activeTab === 'dns'}
             <DnsRoutesTab

@@ -27,9 +27,18 @@
 		tunnels: RoutingTunnel[];
 		policies: AccessPolicy[];
 		policyInterfaces: PolicyGlobalInterface[];
+		editRuleId?: string;
+		editRuleCounter?: number;
 	}
 
-	let { dnsRoutes, tunnels, policies, policyInterfaces }: Props = $props();
+	let {
+		dnsRoutes,
+		tunnels,
+		policies,
+		policyInterfaces,
+		editRuleId = '',
+		editRuleCounter = 0,
+	}: Props = $props();
 
 	let hrRules = $derived(dnsRoutes.filter((r) => r.backend === 'hydraroute'));
 
@@ -198,6 +207,23 @@
 		editInitialTarget = undefined;
 		editOpen = true;
 	}
+
+	// Open edit modal when a search result is clicked on the routing page.
+	// Capture counter at mount to skip the initial value on tab re-mount.
+	// svelte-ignore state_referenced_locally
+	const initialEditCounter = editRuleCounter;
+	$effect(() => {
+		if (editRuleCounter > initialEditCounter && editRuleId) {
+			const rule = hrRules.find((r) => r.id === editRuleId);
+			if (rule) {
+				// Auto-select the rule's target so when the modal closes the
+				// user lands on the right pane instead of the first target.
+				const t = targetOf(rule);
+				if (t) selection = { type: 'target', name: t.name };
+				openEditRule(rule);
+			}
+		}
+	});
 
 	async function handleSave(payload: Partial<DnsRoute>) {
 		saving = true;

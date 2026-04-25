@@ -267,11 +267,31 @@
     function handleKeydown(e: KeyboardEvent) {
         if (e.key === 'Enter') {
             handleSearch();
+        } else if (e.key === 'Escape' && hasSearched) {
+            hasSearched = false;
         }
     }
+
+    function handleResultClick(id: string, type: 'dns' | 'ip') {
+        onRuleClick?.(id, type);
+        hasSearched = false;
+    }
+
+    let containerEl: HTMLDivElement | undefined = $state();
+
+    $effect(() => {
+        if (!hasSearched) return;
+        function onDocPointer(e: MouseEvent) {
+            if (containerEl && !containerEl.contains(e.target as Node)) {
+                hasSearched = false;
+            }
+        }
+        document.addEventListener('mousedown', onDocPointer);
+        return () => document.removeEventListener('mousedown', onDocPointer);
+    });
 </script>
 
-<div class="routing-search">
+<div class="routing-search" bind:this={containerEl}>
     <div class="search-input-wrapper">
         <input
             type="text"
@@ -304,7 +324,8 @@
             {resolveMatch}
             {resolving}
             {resolveError}
-            {onRuleClick}
+            onRuleClick={handleResultClick}
+            onClose={() => (hasSearched = false)}
         />
     {/if}
 </div>
