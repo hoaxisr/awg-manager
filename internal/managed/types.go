@@ -58,3 +58,11 @@ type ManagedPeerStats struct {
 
 // ManagedServerDescription is the NDMS description for our managed server.
 const ManagedServerDescription = "AWGM WG Server"
+
+// PolicyOption is the dropdown-friendly representation of an IP Policy
+// profile fetched from the router. Surfaces both the stable id (sent
+// to RCI) and the user-facing description.
+type PolicyOption struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
+}

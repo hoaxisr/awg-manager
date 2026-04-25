@@ -32,6 +32,10 @@ type ManagedServerService interface {
 	// NAT
 	SetNAT(ctx context.Context, enabled bool) error
 
+	// Policy
+	SetPolicy(ctx context.Context, policy string) error
+	ListPolicies(ctx context.Context) ([]PolicyOption, error)
+
 	// Peer management
 	AddPeer(ctx context.Context, req AddPeerRequest) (*storage.ManagedPeer, error)
 	UpdatePeer(ctx context.Context, pubkey string, req UpdatePeerRequest) error
