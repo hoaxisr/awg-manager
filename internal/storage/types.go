@@ -27,7 +27,12 @@ type ManagedServer struct {
 	DNS           string        `json:"dns,omitempty"`      // custom DNS for client configs; empty = "1.1.1.1, 8.8.8.8"
 	MTU           int           `json:"mtu,omitempty"`      // custom MTU for client configs; 0 = 1376
 	NATEnabled    bool          `json:"natEnabled,omitempty"`
-	Peers         []ManagedPeer `json:"peers"`
+	// Policy is the ip hotspot policy applied to this server's interface.
+	// "none" = no policy (default-permit), "permit"/"deny" = literal RCI
+	// values, anything else = IP Policy profile name (e.g. "Policy0").
+	// Always serialized — empty string is normalized to "none" on read.
+	Policy string        `json:"policy"`
+	Peers  []ManagedPeer `json:"peers"`
 	// Signature packets for client configs (not stored on NDMS server)
 	I1 string `json:"i1,omitempty"`
 	I2 string `json:"i2,omitempty"`
