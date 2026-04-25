@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import type { ManagedServer, ManagedPeer, ManagedPeerStats, ManagedServerStats } from '$lib/types';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -194,6 +195,38 @@
 		confPeerName = peer.description || 'peer';
 		confModalOpen = true;
 	}
+
+	let policies = $state<{ id: string; description: string }[]>([]);
+	let policyChanging = $state(false);
+
+	onMount(async () => {
+		try {
+			policies = await api.getManagedServerPolicies();
+		} catch {
+			policies = [];
+		}
+	});
+
+	let orphanedPolicy = $derived.by(() => {
+		const p = server.policy;
+		if (!p || p === 'none' || p === 'permit' || p === 'deny') return null;
+		if (policies.some(o => o.id === p)) return null;
+		return p;
+	});
+
+	async function handlePolicyChange(newPolicy: string) {
+		if (newPolicy === server.policy) return;
+		policyChanging = true;
+		try {
+			const fresh = await api.setManagedServerPolicy(newPolicy);
+			servers.applyMutationResponse(fresh);
+			notifications.success('Политика обновлена');
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Ошибка изменения политики');
+		} finally {
+			policyChanging = false;
+		}
+	}
 </script>
 
 <div class="card managed-card" class:status-up={isUp}>
@@ -263,6 +296,32 @@
 			disabled={togglingNAT}
 			size="sm"
 		/>
+	</div>
+
+	<!-- Policy -->
+	<div class="policy-row">
+		<div class="policy-info">
+			<span class="policy-label">Политика доступа</span>
+			<span class="policy-hint">Регулирует выход в интернет для клиентов сервера. Применяется ко всем клиентам этого сервера.</span>
+		</div>
+		<select
+			class="policy-select"
+			value={server.policy}
+			disabled={policyChanging}
+			onchange={(e) => handlePolicyChange(e.currentTarget.value)}
+		>
+			<option value="none">Сбросить (по умолчанию)</option>
+			<option value="permit">Разрешить</option>
+			<option value="deny">Запретить</option>
+			{#if orphanedPolicy}
+				<option value={orphanedPolicy}>{orphanedPolicy} (отсутствует)</option>
+			{/if}
+			{#each policies as p (p.id)}
+				<option value={p.id}>
+					{p.description ? `${p.id} — ${p.description}` : p.id}
+				</option>
+			{/each}
+		</select>
 	</div>
 
 	<!-- Peers -->
@@ -464,6 +523,50 @@
 	.nat-hint {
 		font-size: 0.6875rem;
 		color: var(--text-muted);
+	}
+
+	.policy-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.625rem 0.75rem;
+		background: var(--bg-primary);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+	}
+
+	.policy-info {
+		display: flex;
+		flex-direction: column;
+		gap: 0.125rem;
+		min-width: 0;
+	}
+
+	.policy-label {
+		font-size: 0.8125rem;
+		font-weight: 500;
+	}
+
+	.policy-hint {
+		font-size: 0.6875rem;
+		color: var(--text-muted);
+	}
+
+	.policy-select {
+		flex-shrink: 0;
+		padding: 0.375rem 0.625rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--bg-primary);
+		color: var(--text-primary);
+		font-size: 0.8125rem;
+		cursor: pointer;
+	}
+
+	.policy-select:disabled {
+		opacity: 0.5;
+		cursor: wait;
 	}
 
 	.peers-section {
