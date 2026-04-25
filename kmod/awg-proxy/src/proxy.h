@@ -25,6 +25,13 @@
  *   c2s_thread: reads from listen_sock, transforms WG->AWG, sends to remote_sock
  *   s2c_thread: reads from remote_sock, transforms AWG->WG, sends to listen_sock
  */
+/*
+ * Forced 8-byte alignment: atomic64_t below requires 8-aligned address
+ * on 32-bit MIPS (ll/sc-pair ops trap on misalignment). Putting it
+ * first only aligns proxies[0]; without an explicit struct-level
+ * aligned(8), proxies[1..15] depend on sizeof(struct awg_proxy) being
+ * a multiple of 8, which is fragile across field reorders.
+ */
 struct awg_proxy {
 	/*
 	 * Stats — atomic64_t MUST be first for 8-byte alignment on 32-bit
@@ -62,7 +69,7 @@ struct awg_proxy {
 
 	/* Active flag */
 	bool active;
-};
+} __aligned(8);
 
 /*
  * Add a proxy from a procfs config line.
