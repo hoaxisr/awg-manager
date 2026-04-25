@@ -5,6 +5,7 @@
  */
 
 #include <linux/string.h>
+#include <asm/unaligned.h>
 #include "blake2s.h"
 
 static const u32 blake2s_iv[8] = {
@@ -30,17 +31,22 @@ static inline u32 rotr32(u32 x, unsigned int n)
 	return (x >> n) | (x << (32 - n));
 }
 
+/*
+ * BLAKE2s spec ingests message words in little-endian. On big-endian
+ * targets (most MIPS-based Keenetics) a bare memcpy reads the bytes
+ * raw and the compression function consumes them byte-reversed,
+ * yielding a wrong digest and — fatally — a wrong WG MAC1. Use the
+ * kernel's unaligned-LE helpers: they handle both endianness AND
+ * unaligned access (MIPS traps on misaligned 32-bit loads).
+ */
 static inline u32 load32_le(const void *p)
 {
-	u32 v;
-
-	memcpy(&v, p, 4);
-	return v;
+	return get_unaligned_le32(p);
 }
 
 static inline void store32_le(void *p, u32 v)
 {
-	memcpy(p, &v, 4);
+	put_unaligned_le32(v, p);
 }
 
 #define G(v, a, b, c, d, x, y) do {	\
