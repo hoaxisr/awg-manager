@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -499,8 +500,10 @@ func awgInterfaceEqual(a, b storage.AWGInterface) bool {
 	return a == b
 }
 
-// awgPeerEqual returns true when two AWGPeer structs hold the same data
-// (slices compared element-wise).
+// awgPeerEqual returns true when two AWGPeer structs hold the same data.
+// AllowedIPs is treated as a set (order-independent) — WireGuard itself
+// has no semantic ordering for allowed-ips, so [0.0.0.0/0, ::/0] and
+// [::/0, 0.0.0.0/0] are the same peer config.
 func awgPeerEqual(a, b storage.AWGPeer) bool {
 	if a.PublicKey != b.PublicKey ||
 		a.PresharedKey != b.PresharedKey ||
@@ -511,8 +514,15 @@ func awgPeerEqual(a, b storage.AWGPeer) bool {
 	if len(a.AllowedIPs) != len(b.AllowedIPs) {
 		return false
 	}
-	for i := range a.AllowedIPs {
-		if a.AllowedIPs[i] != b.AllowedIPs[i] {
+	if len(a.AllowedIPs) == 0 {
+		return true
+	}
+	aSorted := append([]string(nil), a.AllowedIPs...)
+	bSorted := append([]string(nil), b.AllowedIPs...)
+	sort.Strings(aSorted)
+	sort.Strings(bSorted)
+	for i := range aSorted {
+		if aSorted[i] != bSorted[i] {
 			return false
 		}
 	}
