@@ -455,6 +455,12 @@ func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel
 // from NDMS, then applies newDNS. Either side may be nil/empty —
 // passing both lists explicitly avoids needing applied-state tracking.
 //
+// Contract asymmetry vs OperatorOS5Impl.SyncDNS(ctx, id, dns): the OS5
+// path tracks applied DNS internally and computes its own diff. The NWG
+// path takes both lists as parameters and is stateless. This is
+// deliberate — caller already knows oldDNS (it's the previous stored
+// value), so the diff naturally lives at the call site.
+//
 // Use cases:
 //   - Start tunnel: SyncDNS(ctx, stored, nil, tunnel.ParseDNSList(stored.Interface.DNS))
 //   - Stop tunnel:  SyncDNS(ctx, stored, tunnel.ParseDNSList(stored.Interface.DNS), nil)

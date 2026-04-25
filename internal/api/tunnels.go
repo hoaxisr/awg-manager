@@ -771,9 +771,14 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Service handles runtime RCI based on the diff between existing
 	// (pre-merge snapshot) and req (post-merge state). Storage save
-	// happens AFTER service runs — handler is the sole writer.
+	// happens AFTER service runs — handler is the sole writer. Fail-closed:
+	// if the service can't apply the change to the running interface,
+	// we don't persist it either, otherwise on-disk state would diverge
+	// from the live state.
 	if err := h.svc.Update(r.Context(), existing, &req); err != nil {
-		h.log.Warn("update", req.Name, "Service update returned error: "+err.Error())
+		h.log.Warn("update", req.Name, "Service update failed: "+err.Error())
+		response.Error(w, err.Error(), "UPDATE_FAILED")
+		return
 	}
 
 	// Save updated tunnel

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -379,26 +380,36 @@ func (s *ServiceImpl) Update(ctx context.Context, oldStored, newStored *storage.
 
 // applyDiffKernel applies field-level diffs to a running kernel-backend
 // tunnel via the legacy operator.
+//
+// Each Sync* failure is logged AND collected into the returned error so
+// the handler can fail-closed (reject the storage save). All Sync*
+// dispatches still run regardless — one field's failure does not block
+// reconciliation of the others. Returns nil only if every dispatch
+// succeeded.
 func (s *ServiceImpl) applyDiffKernel(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error {
 	tunnelID := newStored.ID
 	confPath := tunnel.NewNames(tunnelID).ConfPath
+	var errs []error
 
 	if !awgInterfaceEqual(oldStored.Interface, newStored.Interface) ||
 		!awgPeerEqual(oldStored.Peer, newStored.Peer) {
 		if err := s.legacyOperator.ApplyConfig(ctx, tunnelID, confPath); err != nil {
 			s.logWarn("update", tunnelID, "Failed to apply config: "+err.Error())
+			errs = append(errs, fmt.Errorf("apply config: %w", err))
 		}
 	}
 
 	if oldStored.Interface.MTU != newStored.Interface.MTU {
 		if err := s.legacyOperator.SetMTU(ctx, tunnelID, newStored.Interface.MTU); err != nil {
 			s.logWarn("update", tunnelID, "Failed to apply MTU: "+err.Error())
+			errs = append(errs, fmt.Errorf("set MTU: %w", err))
 		}
 	}
 
 	if oldStored.Interface.DNS != newStored.Interface.DNS {
 		if err := s.legacyOperator.SyncDNS(ctx, tunnelID, tunnel.ParseDNSList(newStored.Interface.DNS)); err != nil {
 			s.logWarn("update", tunnelID, "Failed to sync DNS: "+err.Error())
+			errs = append(errs, fmt.Errorf("sync DNS: %w", err))
 		}
 	}
 
@@ -406,6 +417,7 @@ func (s *ServiceImpl) applyDiffKernel(ctx context.Context, oldStored, newStored 
 		ipv4, ipv6 := orchestrator.SplitAddresses(newStored.Interface.Address)
 		if err := s.legacyOperator.SyncAddress(ctx, tunnelID, ipv4, ipv6); err != nil {
 			s.logWarn("update", tunnelID, "Failed to sync address: "+err.Error())
+			errs = append(errs, fmt.Errorf("sync address: %w", err))
 		}
 	}
 
@@ -414,8 +426,10 @@ func (s *ServiceImpl) applyDiffKernel(ctx context.Context, oldStored, newStored 
 		resolvedWAN, resolveErr := s.resolveWAN(ctx, newStored.ISPInterface)
 		if resolveErr != nil {
 			s.logWarn("update", tunnelID, "Failed to resolve WAN: "+resolveErr.Error())
+			errs = append(errs, fmt.Errorf("resolve WAN: %w", resolveErr))
 		} else if ip, err := s.legacyOperator.SetupEndpointRoute(ctx, tunnelID, newStored.Peer.Endpoint, s.resolveKernelDevice(resolvedWAN), resolvedWAN); err != nil {
 			s.logWarn("update", tunnelID, "Failed to setup endpoint route: "+err.Error())
+			errs = append(errs, fmt.Errorf("setup endpoint route: %w", err))
 		} else {
 			newStored.ResolvedEndpointIP = ip
 			newStored.ActiveWAN = resolvedWAN
@@ -426,17 +440,20 @@ func (s *ServiceImpl) applyDiffKernel(ctx context.Context, oldStored, newStored 
 		s.logInfo("update", tunnelID, fmt.Sprintf("DefaultRoute changed to %v (apply via /api/control/toggle-default-route)", newStored.DefaultRoute))
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // applyDiffNWG applies field-level diffs to a running NativeWG tunnel.
+// See applyDiffKernel for the error-collection contract.
 func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error {
 	tunnelID := newStored.ID
+	var errs []error
 
 	if oldStored.Interface.Address != newStored.Interface.Address ||
 		oldStored.Interface.MTU != newStored.Interface.MTU {
 		if err := s.nwgOperator.SyncAddressMTU(ctx, newStored); err != nil {
 			s.logWarn("update", tunnelID, "Failed to sync NWG address/MTU: "+err.Error())
+			errs = append(errs, fmt.Errorf("sync address/MTU: %w", err))
 		}
 	}
 
@@ -445,17 +462,22 @@ func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *st
 		newList := tunnel.ParseDNSList(newStored.Interface.DNS)
 		if err := s.nwgOperator.SyncDNS(ctx, newStored, oldList, newList); err != nil {
 			s.logWarn("update", tunnelID, "Failed to sync NWG DNS: "+err.Error())
+			errs = append(errs, fmt.Errorf("sync DNS: %w", err))
 		}
 	}
 
 	if !awgPeerEqual(oldStored.Peer, newStored.Peer) {
 		if err := s.nwgOperator.SyncPeer(ctx, newStored); err != nil {
 			s.logWarn("update", tunnelID, "Failed to sync NWG peer: "+err.Error())
+			errs = append(errs, fmt.Errorf("sync peer: %w", err))
 		}
 	}
 
 	if !awgParamsEqual(oldStored.Interface, newStored.Interface) {
 		if err := s.nwgOperator.SyncAWGParams(ctx, newStored); err != nil {
+			// AWG params may need restart on some firmware — log Warn but
+			// don't fail the entire Update; user gets the rest of the diff
+			// applied and a restart hint.
 			s.logWarn("update", tunnelID, "Failed to sync NWG AWG params (restart may be required): "+err.Error())
 		}
 	}
@@ -468,7 +490,7 @@ func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *st
 		s.logInfo("update", tunnelID, fmt.Sprintf("DefaultRoute changed to %v (apply via NDMS toggle)", newStored.DefaultRoute))
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // awgInterfaceEqual returns true when two AWGInterface structs are
