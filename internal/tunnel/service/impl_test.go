@@ -39,6 +39,7 @@ type MockOperator struct {
 	deleteError        error
 	recoverError       error
 	applyConfigError   error
+	setMTUError        error
 
 	// SetupEndpointRouteIP is the IP returned by SetupEndpointRoute.
 	SetupEndpointRouteIP string
@@ -123,7 +124,27 @@ func (m *MockOperator) GetTrackedEndpointIP(tunnelID string) string {
 
 func (m *MockOperator) SetMTU(ctx context.Context, tunnelID string, mtu int) error {
 	m.SetMTUCalls = append(m.SetMTUCalls, struct{ ID string; MTU int }{tunnelID, mtu})
+	return m.setMTUError
+}
+
+func (m *MockOperator) Suspend(ctx context.Context, tunnelID string) error {
 	return nil
+}
+
+func (m *MockOperator) Resume(ctx context.Context, tunnelID string) error {
+	return nil
+}
+
+func (m *MockOperator) SetDefaultRoute(ctx context.Context, tunnelID string) error {
+	return nil
+}
+
+func (m *MockOperator) RemoveDefaultRoute(ctx context.Context, tunnelID string) error {
+	return nil
+}
+
+func (m *MockOperator) GetResolvedISP(tunnelID string) string {
+	return ""
 }
 
 func (m *MockOperator) UpdateDescription(ctx context.Context, tunnelID, description string) error {
@@ -131,11 +152,25 @@ func (m *MockOperator) UpdateDescription(ctx context.Context, tunnelID, descript
 	return nil
 }
 
+// SyncDNSCalls / SyncAddressCalls are populated by the MockOperator
+// per-method below — tests assert on these to verify diff dispatch.
+var (
+	mockSyncDNSCalls     [][]string
+	mockSyncAddressCalls []struct{ ID, Addr, IPv6 string }
+)
+
+func resetMockCounters() {
+	mockSyncDNSCalls = nil
+	mockSyncAddressCalls = nil
+}
+
 func (m *MockOperator) SyncDNS(ctx context.Context, tunnelID string, dns []string) error {
+	mockSyncDNSCalls = append(mockSyncDNSCalls, dns)
 	return nil
 }
 
 func (m *MockOperator) SyncAddress(ctx context.Context, tunnelID string, address, ipv6 string) error {
+	mockSyncAddressCalls = append(mockSyncAddressCalls, struct{ ID, Addr, IPv6 string }{tunnelID, address, ipv6})
 	return nil
 }
 
@@ -278,3 +313,144 @@ func TestAWGParamsEqual_IgnoresNonAWGFields(t *testing.T) {
 		t.Fatal("AWG params helper should ignore Address/MTU/DNS")
 	}
 }
+
+// === applyDiffKernel integration tests (Bug A/B/C/D/E coverage) ===
+//
+// These tests call applyDiffKernel directly with a MockOperator to verify
+// that field-level diffs trigger the correct Sync* dispatch. If any
+// regression removes a per-field branch, one of these tests fails.
+
+// newDiffTestService builds a minimal ServiceImpl wired to a MockOperator.
+// state.Manager and nwgOperator are nil — applyDiffKernel only touches
+// legacyOperator + lockTunnel/resolveWAN, which we drive through stub
+// fields. resolveWAN is not called for non-endpoint changes.
+func newDiffTestService(mockOp *MockOperator) *ServiceImpl {
+	return &ServiceImpl{
+		legacyOperator: mockOp,
+	}
+}
+
+func TestApplyDiffKernel_DNSChange_CallsSyncDNS(t *testing.T) {
+	resetMockCounters()
+	mockOp := &MockOperator{}
+	s := newDiffTestService(mockOp)
+	old := &storage.AWGTunnel{ID: "awg0", Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1420, DNS: "1.1.1.1"}}
+	new_ := &storage.AWGTunnel{ID: "awg0", Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1420, DNS: "8.8.8.8"}}
+
+	if err := s.applyDiffKernel(context.Background(), old, new_); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if len(mockSyncDNSCalls) != 1 {
+		t.Fatalf("expected 1 SyncDNS call, got %d", len(mockSyncDNSCalls))
+	}
+	if len(mockSyncDNSCalls[0]) != 1 || mockSyncDNSCalls[0][0] != "8.8.8.8" {
+		t.Fatalf("expected SyncDNS([8.8.8.8]), got %v", mockSyncDNSCalls[0])
+	}
+}
+
+func TestApplyDiffKernel_DNSCleared_CallsSyncDNSWithEmpty(t *testing.T) {
+	resetMockCounters()
+	mockOp := &MockOperator{}
+	s := newDiffTestService(mockOp)
+	old := &storage.AWGTunnel{ID: "awg0", Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1420, DNS: "1.1.1.1"}}
+	new_ := &storage.AWGTunnel{ID: "awg0", Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1420, DNS: ""}}
+
+	if err := s.applyDiffKernel(context.Background(), old, new_); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if len(mockSyncDNSCalls) != 1 {
+		t.Fatalf("expected 1 SyncDNS call, got %d", len(mockSyncDNSCalls))
+	}
+	if mockSyncDNSCalls[0] != nil {
+		t.Fatalf("expected SyncDNS(nil) for cleared DNS, got %v", mockSyncDNSCalls[0])
+	}
+}
+
+func TestApplyDiffKernel_NoOpWhenIdentical(t *testing.T) {
+	resetMockCounters()
+	mockOp := &MockOperator{}
+	s := newDiffTestService(mockOp)
+	old := &storage.AWGTunnel{ID: "awg0", Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1420, DNS: "1.1.1.1"}}
+	new_ := *old // identical
+
+	if err := s.applyDiffKernel(context.Background(), old, &new_); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if len(mockSyncDNSCalls) != 0 {
+		t.Fatalf("expected 0 SyncDNS for no-op, got %d", len(mockSyncDNSCalls))
+	}
+	if len(mockOp.ApplyConfigCalls) != 0 {
+		t.Fatalf("expected 0 ApplyConfig for no-op, got %d", len(mockOp.ApplyConfigCalls))
+	}
+	if len(mockOp.SetMTUCalls) != 0 {
+		t.Fatalf("expected 0 SetMTU for no-op, got %d", len(mockOp.SetMTUCalls))
+	}
+}
+
+func TestApplyDiffKernel_MTUChange_CallsSetMTU(t *testing.T) {
+	resetMockCounters()
+	mockOp := &MockOperator{}
+	s := newDiffTestService(mockOp)
+	old := &storage.AWGTunnel{ID: "awg0", Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1420}}
+	new_ := &storage.AWGTunnel{ID: "awg0", Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1280}}
+
+	if err := s.applyDiffKernel(context.Background(), old, new_); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if len(mockOp.SetMTUCalls) != 1 || mockOp.SetMTUCalls[0].MTU != 1280 {
+		t.Fatalf("expected SetMTU(1280), got %v", mockOp.SetMTUCalls)
+	}
+	// MTU change implies Interface differs → ApplyConfig also called
+	if len(mockOp.ApplyConfigCalls) != 1 {
+		t.Fatalf("expected 1 ApplyConfig (Interface differs), got %d", len(mockOp.ApplyConfigCalls))
+	}
+}
+
+func TestApplyDiffKernel_PeerChange_CallsApplyConfig(t *testing.T) {
+	resetMockCounters()
+	mockOp := &MockOperator{}
+	s := newDiffTestService(mockOp)
+	old := &storage.AWGTunnel{
+		ID:        "awg0",
+		Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1420},
+		Peer:      storage.AWGPeer{PublicKey: "k1", AllowedIPs: []string{"0.0.0.0/0"}},
+	}
+	new_ := &storage.AWGTunnel{
+		ID:        "awg0",
+		Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1420},
+		Peer:      storage.AWGPeer{PublicKey: "k1", AllowedIPs: []string{"10.0.0.0/8"}}, // changed
+	}
+
+	if err := s.applyDiffKernel(context.Background(), old, new_); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if len(mockOp.ApplyConfigCalls) != 1 {
+		t.Fatalf("expected ApplyConfig on peer change, got %d", len(mockOp.ApplyConfigCalls))
+	}
+}
+
+func TestApplyDiffKernel_AggregatesErrors(t *testing.T) {
+	resetMockCounters()
+	mockOp := &MockOperator{
+		setMTUError:      errStub("mtu boom"),
+		applyConfigError: errStub("apply boom"),
+	}
+	s := newDiffTestService(mockOp)
+	old := &storage.AWGTunnel{ID: "awg0", Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1420}}
+	new_ := &storage.AWGTunnel{ID: "awg0", Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1280}}
+
+	err := s.applyDiffKernel(context.Background(), old, new_)
+	if err == nil {
+		t.Fatal("expected aggregated error")
+	}
+	// Both ApplyConfig and SetMTU should have run despite errors.
+	if len(mockOp.ApplyConfigCalls) != 1 || len(mockOp.SetMTUCalls) != 1 {
+		t.Fatalf("expected all dispatches to run; got ApplyConfig=%d SetMTU=%d",
+			len(mockOp.ApplyConfigCalls), len(mockOp.SetMTUCalls))
+	}
+}
+
+// errStub builds a sentinel error for mocked failures.
+type errStub string
+
+func (e errStub) Error() string { return string(e) }
