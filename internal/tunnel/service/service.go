@@ -29,7 +29,17 @@ type Service interface {
 	// Update applies a tunnel configuration diff. The handler is the only
 	// writer of storage; this method performs runtime RCI commands based on
 	// the difference between oldStored (current persisted state) and newStored
-	// (the state about to be persisted). It does NOT save to storage.
+	// (the state about to be persisted). It does NOT save to storage itself.
+	//
+	// Mutation contract: Update MAY mutate runtime fields on newStored
+	// (currently ResolvedEndpointIP and ActiveWAN, populated when the
+	// endpoint route is re-set up). Callers must observe the mutation
+	// through the same pointer and persist newStored AFTER Update returns.
+	//
+	// Failure semantics: Update returns an error when an RCI command fails.
+	// The handler is responsible for translating this into a 4xx/5xx
+	// response and skipping the storage save (fail-closed) so on-disk
+	// state never diverges from the running interface.
 	Update(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error
 
 	// Lifecycle operations — thin delegators to orchestrator.
