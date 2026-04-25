@@ -383,7 +383,7 @@ func TestServiceImpl_OnTunnelDelete_PreservesListDomains(t *testing.T) {
 	if _, err := svc.Create(context.Background(), DomainList{
 		Name:          "solo",
 		ManualDomains: []string{"example.com", "another.test"},
-		Excludes:      []string{"deny.me"},
+		Excludes:      []string{"deny.example.com"},
 		Routes:        []RouteTarget{{Interface: "Wireguard0", TunnelID: "doomed"}},
 	}); err != nil {
 		t.Fatalf("Create solo: %v", err)
@@ -419,7 +419,7 @@ func TestServiceImpl_OnTunnelDelete_PreservesListDomains(t *testing.T) {
 	if len(solo.ManualDomains) != 2 || solo.ManualDomains[0] != "example.com" {
 		t.Errorf("solo.ManualDomains must survive, got %+v", solo.ManualDomains)
 	}
-	if len(solo.Excludes) != 1 || solo.Excludes[0] != "deny.me" {
+	if len(solo.Excludes) != 1 || solo.Excludes[0] != "deny.example.com" {
 		t.Errorf("solo.Excludes must survive, got %+v", solo.Excludes)
 	}
 
@@ -483,5 +483,60 @@ func TestServiceImpl_LookupAffectedLists_RestoredAction(t *testing.T) {
 	}
 	if restored[0].ToTunnel != "Wireguard0" {
 		t.Errorf("restored.To = %q, want Wireguard0 (recovered)", restored[0].ToTunnel)
+	}
+}
+
+func TestValidateExcludes_DomainNeedsInclude(t *testing.T) {
+	err := validateExcludes(
+		[]string{"google.com"},
+		nil,
+		[]string{"yandex.ru"},
+		nil,
+	)
+	if err == nil {
+		t.Fatal("expected error: yandex.ru has no matching include")
+	}
+}
+
+func TestValidateExcludes_SubdomainOK(t *testing.T) {
+	err := validateExcludes(
+		[]string{"google.com"},
+		nil,
+		[]string{"gemini.google.com"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateExcludes_SubnetNeedsInclude(t *testing.T) {
+	err := validateExcludes(
+		nil,
+		[]string{"10.0.0.0/8"},
+		nil,
+		[]string{"192.168.0.0/24"},
+	)
+	if err == nil {
+		t.Fatal("expected error: 192.168/24 not inside any include subnet")
+	}
+}
+
+func TestValidateExcludes_SubnetInsideOK(t *testing.T) {
+	err := validateExcludes(
+		nil,
+		[]string{"10.0.0.0/8"},
+		nil,
+		[]string{"10.0.0.0/24"},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateExcludes_InvalidCIDR(t *testing.T) {
+	err := validateExcludes(nil, nil, nil, []string{"not-a-cidr"})
+	if err == nil {
+		t.Fatal("expected error for invalid CIDR")
 	}
 }
