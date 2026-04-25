@@ -6,10 +6,14 @@ const MaxSubnetsPerList = 20000
 
 // DomainList represents a user-defined list of domains to route through specific tunnels.
 type DomainList struct {
-	ID               string         `json:"id"`
-	Name             string         `json:"name"`
-	Domains          []string       `json:"domains"`
-	Excludes         []string       `json:"excludes,omitempty"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Domains  []string `json:"domains"`
+	Excludes []string `json:"excludes,omitempty"`
+	// ExcludeSubnets carves holes inside this list's Subnets — used by the
+	// dedup layer only. NDMS object-group network has no exclude semantics,
+	// so these CIDRs are NEVER rendered to NDMS. They exist purely to allow
+	// another list to claim a child subnet without being marked as a dup.
 	ExcludeSubnets   []string       `json:"excludeSubnets,omitempty"`
 	Subnets          []string       `json:"subnets,omitempty"`
 	ManualDomains    []string       `json:"manualDomains"`
