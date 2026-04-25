@@ -57,6 +57,7 @@
 		<div class="text">
 			<strong>Sing-box не установлен</strong>
 			<span>Установите для поддержки VLESS/Reality, Hysteria2, NaiveProxy</span>
+			<span class="hint">Установка sing-box требует большого количества свободного пространства. Необходимо использовать Entware на внешнем носителе.</span>
 		</div>
 		<button class="btn btn-primary btn-sm" onclick={install} disabled={installing}>
 			{installing ? 'Установка...' : 'Установить'}
@@ -109,6 +110,11 @@
 		background: rgba(239, 68, 68, 0.08);
 	}
 	.text { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+	.text .hint {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+		margin-top: 2px;
+	}
 	.text code {
 		background: var(--bg-tertiary);
 		padding: 0 4px;

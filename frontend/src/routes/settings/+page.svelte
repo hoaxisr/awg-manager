@@ -2,6 +2,7 @@
     import { onMount } from "svelte";
     import { api } from "$lib/api/client";
     import { notifications } from "$lib/stores/notifications";
+    import { singboxStatus } from "$lib/stores/singbox";
     import { PageContainer, LoadingSpinner } from "$lib/components/layout";
     import { Toggle, Modal } from "$lib/components/ui";
     import {
@@ -28,6 +29,24 @@
     let hydraStatus = $state<HydraRouteStatus | null>(null);
     // hydraLoading removed — HydraRoute controls moved to the Routing page
     let creditsOpen = $state(false);
+    let singboxInstalling = $state(false);
+    let singboxInstallError = $state<string | null>(null);
+    let singboxInstalled = $derived($singboxStatus.data?.installed ?? false);
+
+    async function installSingbox() {
+        singboxInstalling = true;
+        singboxInstallError = null;
+        try {
+            const fresh = await api.singboxInstall();
+            singboxStatus.applyMutationResponse(fresh);
+            notifications.success("Sing-box установлен");
+        } catch (e) {
+            singboxInstallError = e instanceof Error ? e.message : String(e);
+            notifications.error(singboxInstallError);
+        } finally {
+            singboxInstalling = false;
+        }
+    }
 
     onMount(async () => {
         try {
@@ -307,6 +326,31 @@
                             >
                         {/if}
                     </div>
+
+                    {#if !singboxInstalled}
+                        <div class="setting-row">
+                            <div class="flex flex-col gap-1">
+                                <span class="font-medium">Sing-box</span>
+                                <span class="setting-description">
+                                    Поддержка VLESS/Reality, Hysteria2, NaiveProxy.
+                                    Установка sing-box требует большого количества свободного пространства.
+                                    Необходимо использовать Entware на внешнем носителе.
+                                </span>
+                                {#if singboxInstallError}
+                                    <span class="setting-description" style="color: var(--error)">
+                                        {singboxInstallError}
+                                    </span>
+                                {/if}
+                            </div>
+                            <button
+                                class="btn btn-primary btn-sm"
+                                onclick={installSingbox}
+                                disabled={singboxInstalling}
+                            >
+                                {singboxInstalling ? "Установка..." : "Установить"}
+                            </button>
+                        </div>
+                    {/if}
                 </div>
             </div>
 
