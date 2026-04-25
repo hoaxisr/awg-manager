@@ -14,13 +14,15 @@ type CheckResult struct {
 
 // trieNode is a node in the reverse-label trie.
 type trieNode struct {
-	children    map[string]*trieNode
-	ownerListID string // non-empty if a domain is registered at this node
-	domain      string // the full domain registered here (for CoveredBy reporting)
+	children map[string]*trieNode
+	// owners maps listID → original domain string for every list that
+	// has registered a domain at this node. Multiple lists may register
+	// the same domain — each contributes its own coverage independently.
+	owners map[string]string
 	// excludeOwners marks this node as an "exclude hole" for the listed
 	// owner lists: when traversing through a parent owned by ownerID, if
 	// any descendant on the path (including this node) has
-	// excludeOwners[ownerID] == true, the parent does NOT cover the
+	// excludeOwners[ownerID] == true, that owner does NOT cover the
 	// requested domain.
 	excludeOwners map[string]bool
 }
@@ -65,14 +67,14 @@ func splitLabels(domain string) []string {
 	return parts
 }
 
-// Add registers a domain as owned by the given list.
-// If the node already has an owner, the first owner wins.
+// Add registers `domain` as owned by `listID`. If multiple lists register
+// the same domain, all are remembered — each contributes independent
+// coverage (and is independently refuted by that list's own holes).
 func (idx *DomainIndex) Add(domain string, listID string) {
 	domain = normalizeDomain(domain)
-	if domain == "" {
+	if domain == "" || listID == "" {
 		return
 	}
-
 	labels := splitLabels(domain)
 	node := idx.root
 	for _, label := range labels {
@@ -83,10 +85,11 @@ func (idx *DomainIndex) Add(domain string, listID string) {
 		}
 		node = child
 	}
-	// First owner wins.
-	if node.ownerListID == "" {
-		node.ownerListID = listID
-		node.domain = domain
+	if node.owners == nil {
+		node.owners = make(map[string]string)
+	}
+	if _, exists := node.owners[listID]; !exists {
+		node.owners[listID] = domain
 	}
 }
 
@@ -143,8 +146,10 @@ func (idx *DomainIndex) Check(domain string) CheckResult {
 	for i, label := range labels {
 		// Before descending, check whether the current node provides
 		// new coverage from above (parent context, i.e. i > 0).
-		if i > 0 && node.ownerListID != "" {
-			stack = append(stack, pending{ownerListID: node.ownerListID, domain: node.domain})
+		if i > 0 {
+			for ownerID, ownerDomain := range node.owners {
+				stack = append(stack, pending{ownerListID: ownerID, domain: ownerDomain})
+			}
 		}
 
 		// Holes at THIS node refute pending owners that match.
@@ -171,12 +176,20 @@ func (idx *DomainIndex) Check(domain string) CheckResult {
 	}
 
 	// Final node — exact match always wins, holes don't apply.
-	if node.ownerListID != "" {
+	if len(node.owners) > 0 {
+		// Exact match — pick any one owner (deterministic via lex order on listID).
+		var bestID, bestDomain string
+		for id, dom := range node.owners {
+			if bestID == "" || id < bestID {
+				bestID = id
+				bestDomain = dom
+			}
+		}
 		return CheckResult{
 			Removed:     true,
 			Reason:      "exact",
-			CoveredBy:   node.domain,
-			OwnerListID: node.ownerListID,
+			CoveredBy:   bestDomain,
+			OwnerListID: bestID,
 		}
 	}
 
