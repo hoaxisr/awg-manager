@@ -265,11 +265,23 @@ static int c2s_thread_fn(void *data)
 			send_junk_packets(proxy);
 		}
 
-		/* Send transformed packet to remote AWG server */
-		if (proxy_sendmsg(proxy->remote_sock, out, out_len,
-				  NULL) >= 0) {
-			atomic_inc(&proxy->tx_packets);
-			atomic64_add(out_len, &proxy->tx_bytes);
+		/* Send transformed packet to remote AWG server.
+		 * Capture and log negative returns so we can confirm in the
+		 * field whether handshake retries correlate with -ENOBUFS
+		 * (ARP queue overflow) or transient errors. The log is
+		 * ratelimited to keep dmesg usable on flaky links. */
+		{
+			int sret = proxy_sendmsg(proxy->remote_sock, out,
+						 out_len, NULL);
+			if (sret < 0) {
+				pr_warn_ratelimited("awg_proxy: send to %pI4:%d failed: %d\n",
+						    &proxy->cfg.remote_ip,
+						    ntohs(proxy->cfg.remote_port),
+						    sret);
+			} else {
+				atomic_inc(&proxy->tx_packets);
+				atomic64_add(out_len, &proxy->tx_bytes);
+			}
 		}
 	}
 
@@ -422,6 +434,32 @@ int awg_proxy_add(const char *config_line)
 	if (ret) {
 		pr_err("awg_proxy: failed to create remote socket: %d\n", ret);
 		goto out_cleanup;
+	}
+
+	/*
+	 * ARP/neighbour warm-up.
+	 *
+	 * On the first sendmsg the kernel resolves the gateway MAC; until
+	 * resolution completes, outbound packets sit in arp_queue, whose
+	 * size on older kernels is only a handful of packets
+	 * (net.ipv4.neigh.default.unres_qlen). The first WG handshake is
+	 * a burst — up to 1 INIT + 5 CPS + Jc junk packets — sent without
+	 * pause, with INIT going LAST. Anything beyond unres_qlen is
+	 * silently dropped, and INIT is exactly the most expendable. The
+	 * peer never sees the handshake; WG kernel retries 5 s later
+	 * with the neighbour now cached. That is the "1 retry then it
+	 * works" pattern users have been reporting.
+	 *
+	 * Send a single zero-length probe here, while we still hold the
+	 * proxy_mutex and no thread is running, to drive the neighbour
+	 * resolution synchronously. The probe payload is empty (< 4
+	 * bytes) so any AmneziaWG peer will discard it as noise. We
+	 * intentionally ignore the return value: the only purpose of the
+	 * call is the side-effect of triggering ARP.
+	 */
+	{
+		u8 probe = 0;
+		(void)proxy_sendmsg(p->remote_sock, &probe, 0, NULL);
 	}
 
 	p->active = true;
