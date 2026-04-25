@@ -873,6 +873,10 @@ class ApiClient {
 		});
 	}
 
+	async suggestManagedServerAddress(): Promise<{ address: string; mask: string }> {
+		return this.request('/managed-server/suggest-address');
+	}
+
 	async updateManagedServer(req: UpdateManagedServerRequest): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request('/managed-server/update', {
 			method: 'PUT',

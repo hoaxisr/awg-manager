@@ -120,6 +120,21 @@ func (h *ManagedServerHandler) getManagedStats(ctx context.Context) interface{} 
 	return stats
 }
 
+// SuggestAddress returns a free private /24 for the create-server UI.
+// GET /api/managed-server/suggest-address
+func (h *ManagedServerHandler) SuggestAddress(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	addr, mask, err := h.svc.SuggestAddress(r.Context())
+	if err != nil {
+		response.Error(w, err.Error(), "SUGGEST_FAILED")
+		return
+	}
+	response.Success(w, map[string]string{"address": addr, "mask": mask})
+}
+
 // Get returns the managed server with runtime data, or null if not created.
 // GET /api/managed-server
 func (h *ManagedServerHandler) Get(w http.ResponseWriter, r *http.Request) {
