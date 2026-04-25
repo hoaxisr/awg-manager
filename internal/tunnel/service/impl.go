@@ -519,15 +519,12 @@ func awgPeerEqual(a, b storage.AWGPeer) bool {
 	return true
 }
 
-// awgParamsEqual reports whether AmneziaWG obfuscation parameters
-// (Qlen, Jc, Jmin, Jmax, S1-S4, H1-H4, I1-I5) are identical between two
-// interfaces. Other fields (Address, MTU, DNS, PrivateKey) are ignored.
+// awgParamsEqual reports whether AmneziaWG obfuscation parameters are
+// identical between two interfaces. Comparison is delegated to the
+// embedded AWGObfuscation value type — `==` automatically picks up
+// new obfuscation fields without manual enumeration.
 func awgParamsEqual(a, b storage.AWGInterface) bool {
-	return a.Qlen == b.Qlen &&
-		a.Jc == b.Jc && a.Jmin == b.Jmin && a.Jmax == b.Jmax &&
-		a.S1 == b.S1 && a.S2 == b.S2 && a.S3 == b.S3 && a.S4 == b.S4 &&
-		a.H1 == b.H1 && a.H2 == b.H2 && a.H3 == b.H3 && a.H4 == b.H4 &&
-		a.I1 == b.I1 && a.I2 == b.I2 && a.I3 == b.I3 && a.I4 == b.I4 && a.I5 == b.I5
+	return a.AWGObfuscation == b.AWGObfuscation
 }
 
 // SetEnabled changes the enabled/autostart state of a tunnel.

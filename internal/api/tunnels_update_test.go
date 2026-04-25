@@ -18,11 +18,13 @@ func TestMergeInterfaceWhitelist_PreservesAWGParams(t *testing.T) {
 			MTU:        1420,
 			DNS:        "1.1.1.1",
 			PrivateKey: "secret",
-			Qlen:       1000,
-			Jc:         5, Jmin: 50, Jmax: 1000,
-			S1: 100, S2: 200, S3: 300, S4: 400,
-			H1: "h1val", H2: "h2val", H3: "h3val", H4: "h4val",
-			I1: "i1val", I2: "i2val", I3: "i3val", I4: "i4val", I5: "i5val",
+			AWGObfuscation: storage.AWGObfuscation{
+				Qlen: 1000,
+				Jc:   5, Jmin: 50, Jmax: 1000,
+				S1: 100, S2: 200, S3: 300, S4: 400,
+				H1: "h1val", H2: "h2val", H3: "h3val", H4: "h4val",
+				I1: "i1val", I2: "i2val", I3: "i3val", I4: "i4val", I5: "i5val",
+			},
 		},
 	}
 	req := &storage.AWGTunnel{
@@ -52,7 +54,7 @@ func TestMergeInterfaceWhitelist_PreservesAWGParams(t *testing.T) {
 // Interface when Address is empty (routing-page partial update).
 func TestMergeInterfaceWhitelist_PartialNoAddress(t *testing.T) {
 	existing := &storage.AWGTunnel{
-		Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1420, DNS: "1.1.1.1", Qlen: 1000},
+		Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1420, DNS: "1.1.1.1", AWGObfuscation: storage.AWGObfuscation{Qlen: 1000}},
 	}
 	req := &storage.AWGTunnel{
 		Interface: storage.AWGInterface{}, // empty — partial update

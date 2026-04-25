@@ -488,15 +488,17 @@ func TestGenerate_WithObfuscation(t *testing.T) {
 	tunnel := &storage.AWGTunnel{
 		Interface: storage.AWGInterface{
 			PrivateKey: "privkey=",
-			Jc:         4,
-			Jmin:       50,
-			Jmax:       1000,
-			S1:         56,
-			S2:         78,
-			H1:         "111",
-			H2:         "222",
-			H3:         "333",
-			H4:         "444",
+			AWGObfuscation: storage.AWGObfuscation{
+				Jc:   4,
+				Jmin: 50,
+				Jmax: 1000,
+				S1:   56,
+				S2:   78,
+				H1:   "111",
+				H2:   "222",
+				H3:   "333",
+				H4:   "444",
+			},
 		},
 		Peer: storage.AWGPeer{
 			PublicKey:           "pubkey=",
@@ -526,11 +528,13 @@ func TestGenerate_WithSignaturePackets(t *testing.T) {
 	tunnel := &storage.AWGTunnel{
 		Interface: storage.AWGInterface{
 			PrivateKey: "privkey=",
-			I1:         "AABB",
-			I2:         "CCDD",
-			I3:         "EEFF",
-			I4:         "0011",
-			I5:         "2233",
+			AWGObfuscation: storage.AWGObfuscation{
+				I1: "AABB",
+				I2: "CCDD",
+				I3: "EEFF",
+				I4: "0011",
+				I5: "2233",
+			},
 		},
 		Peer: storage.AWGPeer{
 			PublicKey:           "pubkey=",
@@ -768,15 +772,17 @@ func TestRoundtrip_ParseThenGenerate(t *testing.T) {
 	tunnel := &storage.AWGTunnel{
 		Interface: storage.AWGInterface{
 			PrivateKey: "privkey=",
-			Jc:         4,
-			Jmin:       50,
-			Jmax:       1000,
-			S1:         56,
-			S2:         78,
-			H1:         "111",
-			H2:         "222",
-			H3:         "333",
-			H4:         "444",
+			AWGObfuscation: storage.AWGObfuscation{
+				Jc:   4,
+				Jmin: 50,
+				Jmax: 1000,
+				S1:   56,
+				S2:   78,
+				H1:   "111",
+				H2:   "222",
+				H3:   "333",
+				H4:   "444",
+			},
 		},
 		Peer: storage.AWGPeer{
 			PublicKey:           "pubkey=",
@@ -827,7 +833,7 @@ func TestClassifyAWGVersion_Nil(t *testing.T) {
 
 func TestClassifyAWGVersion_AWG10(t *testing.T) {
 	iface := &storage.AWGInterface{
-		H1: "111", H2: "222", H3: "333", H4: "444",
+		AWGObfuscation: storage.AWGObfuscation{H1: "111", H2: "222", H3: "333", H4: "444"},
 	}
 	if v := ClassifyAWGVersion(iface); v != "awg1.0" {
 		t.Errorf("ClassifyAWGVersion = %q, want %q", v, "awg1.0")
@@ -837,7 +843,7 @@ func TestClassifyAWGVersion_AWG10(t *testing.T) {
 func TestClassifyAWGVersion_AWG10_PartialH_IsWG(t *testing.T) {
 	// Only some H values set — not enough for AWG 1.0
 	iface := &storage.AWGInterface{
-		H1: "111", H2: "222",
+		AWGObfuscation: storage.AWGObfuscation{H1: "111", H2: "222"},
 	}
 	if v := ClassifyAWGVersion(iface); v != "wg" {
 		t.Errorf("ClassifyAWGVersion = %q, want %q", v, "wg")
@@ -846,8 +852,7 @@ func TestClassifyAWGVersion_AWG10_PartialH_IsWG(t *testing.T) {
 
 func TestClassifyAWGVersion_AWG15(t *testing.T) {
 	iface := &storage.AWGInterface{
-		H1: "111", H2: "222", H3: "333", H4: "444",
-		I1: "AABB",
+		AWGObfuscation: storage.AWGObfuscation{H1: "111", H2: "222", H3: "333", H4: "444", I1: "AABB"},
 	}
 	if v := ClassifyAWGVersion(iface); v != "awg1.5" {
 		t.Errorf("ClassifyAWGVersion = %q, want %q", v, "awg1.5")
@@ -856,8 +861,7 @@ func TestClassifyAWGVersion_AWG15(t *testing.T) {
 
 func TestClassifyAWGVersion_AWG20(t *testing.T) {
 	iface := &storage.AWGInterface{
-		H1: "100-200", H2: "222", H3: "333", H4: "444",
-		I1: "AABB",
+		AWGObfuscation: storage.AWGObfuscation{H1: "100-200", H2: "222", H3: "333", H4: "444", I1: "AABB"},
 	}
 	if v := ClassifyAWGVersion(iface); v != "awg2.0" {
 		t.Errorf("ClassifyAWGVersion = %q, want %q", v, "awg2.0")
@@ -867,7 +871,7 @@ func TestClassifyAWGVersion_AWG20(t *testing.T) {
 func TestClassifyAWGVersion_AWG20_AnyHRange(t *testing.T) {
 	// Even if only H3 is a range, it's still AWG 2.0
 	iface := &storage.AWGInterface{
-		H1: "111", H2: "222", H3: "10-20", H4: "444",
+		AWGObfuscation: storage.AWGObfuscation{H1: "111", H2: "222", H3: "10-20", H4: "444"},
 	}
 	if v := ClassifyAWGVersion(iface); v != "awg2.0" {
 		t.Errorf("ClassifyAWGVersion = %q, want %q", v, "awg2.0")
@@ -877,8 +881,7 @@ func TestClassifyAWGVersion_AWG20_AnyHRange(t *testing.T) {
 func TestClassifyAWGVersion_AWG15_TakesPriorityOverAWG10(t *testing.T) {
 	// I1 set + all H values → AWG 1.5 wins over AWG 1.0
 	iface := &storage.AWGInterface{
-		H1: "111", H2: "222", H3: "333", H4: "444",
-		I1: "sig",
+		AWGObfuscation: storage.AWGObfuscation{H1: "111", H2: "222", H3: "333", H4: "444", I1: "sig"},
 	}
 	if v := ClassifyAWGVersion(iface); v != "awg1.5" {
 		t.Errorf("ClassifyAWGVersion = %q, want %q", v, "awg1.5")
