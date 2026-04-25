@@ -254,6 +254,12 @@ func (s *SettingsStore) GetManagedServer() *ManagedServer {
 	cp := *orig
 	cp.Peers = make([]ManagedPeer, len(orig.Peers))
 	copy(cp.Peers, orig.Peers)
+	// Normalize Policy: legacy records (or fresh records before first
+	// SetPolicy) carry an empty string; surface as "none" everywhere.
+	// File is rewritten with "none" on next mutation, no migration needed.
+	if cp.Policy == "" {
+		cp.Policy = "none"
+	}
 	return &cp
 }
 
