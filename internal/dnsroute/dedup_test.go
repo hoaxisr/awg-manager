@@ -388,3 +388,100 @@ func TestDedup_ParentWithExcludeAllowsChild(t *testing.T) {
 		t.Fatalf("expected no removals, got %d", report.TotalRemoved)
 	}
 }
+
+func TestDedup_ParentWithExcludeStillCoversOtherChildren(t *testing.T) {
+	lists := []DomainList{
+		{
+			ID:       "list_google",
+			Name:     "Google",
+			Domains:  []string{"google.com"},
+			Excludes: []string{"gemini.google.com"},
+		},
+	}
+	idx := BuildIndex(lists, "")
+	names := listNameMap(lists)
+
+	kept, report := idx.CheckBatch([]string{"mail.google.com"}, "list_other", names)
+
+	if len(kept) != 0 {
+		t.Fatalf("expected mail.google.com to be removed (still covered), got kept=%v", kept)
+	}
+	if report.WildcardDupes != 1 {
+		t.Fatalf("expected 1 wildcard dup, got %d", report.WildcardDupes)
+	}
+}
+
+func TestDedup_ExcludeHoleSubtree(t *testing.T) {
+	lists := []DomainList{
+		{
+			ID:       "list_google",
+			Name:     "Google",
+			Domains:  []string{"google.com"},
+			Excludes: []string{"gemini.google.com"},
+		},
+	}
+	idx := BuildIndex(lists, "")
+	names := listNameMap(lists)
+
+	kept, report := idx.CheckBatch([]string{"chat.gemini.google.com"}, "list_gemini", names)
+
+	if len(kept) != 1 {
+		t.Fatalf("expected chat.gemini.google.com to survive (under hole subtree), got kept=%v", kept)
+	}
+	if report.TotalRemoved != 0 {
+		t.Fatalf("expected no removals, got %d", report.TotalRemoved)
+	}
+}
+
+func TestDedup_ExactMatchUnaffectedByExclude(t *testing.T) {
+	// Even if the parent list excludes itself (degenerate config), an
+	// exact match in another list still reports as a dup of the same
+	// domain. Validation outside the dedupe layer catches the absurd
+	// "exclude == include" config.
+	lists := []DomainList{
+		{
+			ID:       "list_a",
+			Name:     "A",
+			Domains:  []string{"google.com"},
+			Excludes: []string{"google.com"},
+		},
+	}
+	idx := BuildIndex(lists, "")
+	names := listNameMap(lists)
+
+	_, report := idx.CheckBatch([]string{"google.com"}, "list_b", names)
+
+	if report.ExactDupes != 1 {
+		t.Fatalf("expected 1 exact dup, got %d", report.ExactDupes)
+	}
+}
+
+func TestDedup_HoleDoesNotLeakAcrossLists(t *testing.T) {
+	// List A excludes gemini.google.com. List B owns google.com without
+	// excludes. List C tries to add gemini.google.com — must be removed
+	// because list B still fully covers it.
+	lists := []DomainList{
+		{
+			ID:       "list_a",
+			Name:     "A",
+			Domains:  []string{"google.com"},
+			Excludes: []string{"gemini.google.com"},
+		},
+		{
+			ID:      "list_b",
+			Name:    "B",
+			Domains: []string{"google.com"},
+		},
+	}
+	idx := BuildIndex(lists, "")
+	names := listNameMap(lists)
+
+	kept, report := idx.CheckBatch([]string{"gemini.google.com"}, "list_c", names)
+
+	if len(kept) != 0 {
+		t.Fatalf("expected gemini.google.com removed (covered by list B), got %v", kept)
+	}
+	if report.WildcardDupes != 1 {
+		t.Fatalf("expected 1 wildcard dup, got %d", report.WildcardDupes)
+	}
+}
