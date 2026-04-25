@@ -877,6 +877,17 @@ class ApiClient {
 		return this.request('/managed-server/suggest-address');
 	}
 
+	async setManagedServerPolicy(policy: string): Promise<import('$lib/stores/servers').ServersSnapshot> {
+		return this.request('/managed-server/policy', {
+			method: 'POST',
+			body: JSON.stringify({ policy })
+		});
+	}
+
+	async getManagedServerPolicies(): Promise<{ id: string; description: string }[]> {
+		return this.request('/managed-server/policies');
+	}
+
 	async updateManagedServer(req: UpdateManagedServerRequest): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request('/managed-server/update', {
 			method: 'PUT',
