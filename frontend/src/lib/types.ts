@@ -339,6 +339,7 @@ export interface ManagedServer {
 	dns?: string;
 	mtu?: number;
 	natEnabled?: boolean;
+	policy: string;
 	peers: ManagedPeer[];
 }
 
