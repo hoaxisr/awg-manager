@@ -2,10 +2,11 @@ package service
 
 import (
 	"context"
+	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/logging"
 )
 
 // === Mock implementations ===
@@ -163,4 +164,109 @@ func (m *MockOperator) CleanupClientRouteTable(ctx context.Context, tableNum int
 }
 func (m *MockOperator) ListUsedRoutingTables(ctx context.Context) ([]int, error) {
 	return nil, nil
+}
+
+// === Update tests (Bug F + diff sanity) ===
+
+// newTestUpdateService spins up a minimal ServiceImpl suitable for
+// Update precondition checks. Storage is not wired — we only need the
+// branches that fail before any storage access.
+func newTestUpdateService() *ServiceImpl {
+	return &ServiceImpl{}
+}
+
+func TestUpdate_RejectsEmptyAddress(t *testing.T) {
+	s := newTestUpdateService()
+	old := &storage.AWGTunnel{ID: "awg0", Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1420}}
+	new_ := &storage.AWGTunnel{ID: "awg0", Interface: storage.AWGInterface{Address: "", MTU: 1420}}
+	if err := s.Update(context.Background(), old, new_); err == nil {
+		t.Fatal("expected error for empty Address")
+	}
+}
+
+func TestUpdate_RejectsZeroMTU(t *testing.T) {
+	s := newTestUpdateService()
+	old := &storage.AWGTunnel{ID: "awg0", Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1420}}
+	new_ := &storage.AWGTunnel{ID: "awg0", Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 0}}
+	if err := s.Update(context.Background(), old, new_); err == nil {
+		t.Fatal("expected error for zero MTU")
+	}
+}
+
+func TestUpdate_RejectsNilStored(t *testing.T) {
+	s := newTestUpdateService()
+	if err := s.Update(context.Background(), nil, nil); err == nil {
+		t.Fatal("expected error for nil snapshots")
+	}
+}
+
+func TestUpdate_RejectsIDMismatch(t *testing.T) {
+	s := newTestUpdateService()
+	old := &storage.AWGTunnel{ID: "awg0", Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1420}}
+	new_ := &storage.AWGTunnel{ID: "awg1", Interface: storage.AWGInterface{Address: "10.0.0.1", MTU: 1420}}
+	if err := s.Update(context.Background(), old, new_); err == nil {
+		t.Fatal("expected error for id mismatch")
+	}
+}
+
+// === Diff helper tests ===
+
+func TestAWGInterfaceEqual_SameValues(t *testing.T) {
+	a := storage.AWGInterface{Address: "10.0.0.1", MTU: 1420, DNS: "1.1.1.1", Qlen: 1000, Jc: 5}
+	b := a
+	if !awgInterfaceEqual(a, b) {
+		t.Fatal("expected equal")
+	}
+}
+
+func TestAWGInterfaceEqual_DifferentDNS(t *testing.T) {
+	a := storage.AWGInterface{Address: "10.0.0.1", MTU: 1420, DNS: "1.1.1.1"}
+	b := a
+	b.DNS = "8.8.8.8"
+	if awgInterfaceEqual(a, b) {
+		t.Fatal("expected not equal when DNS differs")
+	}
+}
+
+func TestAWGPeerEqual_AllowedIPsOrder(t *testing.T) {
+	a := storage.AWGPeer{PublicKey: "k", AllowedIPs: []string{"10.0.0.0/24", "192.168.1.0/24"}}
+	b := storage.AWGPeer{PublicKey: "k", AllowedIPs: []string{"192.168.1.0/24", "10.0.0.0/24"}}
+	// Order matters in our equality check — different order = not equal.
+	if awgPeerEqual(a, b) {
+		t.Fatal("expected not equal when AllowedIPs order differs")
+	}
+}
+
+func TestAWGPeerEqual_PSKChange(t *testing.T) {
+	a := storage.AWGPeer{PublicKey: "k", PresharedKey: "psk1"}
+	b := storage.AWGPeer{PublicKey: "k", PresharedKey: "psk2"}
+	if awgPeerEqual(a, b) {
+		t.Fatal("expected not equal when PSK differs")
+	}
+}
+
+func TestAWGParamsEqual_Identical(t *testing.T) {
+	a := storage.AWGInterface{Qlen: 1000, Jc: 5, Jmin: 50, Jmax: 1000, S1: 100, H1: "h1"}
+	b := a
+	if !awgParamsEqual(a, b) {
+		t.Fatal("expected AWG params equal")
+	}
+}
+
+func TestAWGParamsEqual_DifferentJc(t *testing.T) {
+	a := storage.AWGInterface{Qlen: 1000, Jc: 5}
+	b := a
+	b.Jc = 7
+	if awgParamsEqual(a, b) {
+		t.Fatal("expected not equal when Jc differs")
+	}
+}
+
+func TestAWGParamsEqual_IgnoresNonAWGFields(t *testing.T) {
+	// Address/MTU/DNS/PrivateKey differ but AWG params are identical.
+	a := storage.AWGInterface{Address: "10.0.0.1", MTU: 1420, DNS: "1.1.1.1", Jc: 5, Qlen: 1000}
+	b := storage.AWGInterface{Address: "10.0.0.2", MTU: 1280, DNS: "8.8.8.8", Jc: 5, Qlen: 1000}
+	if !awgParamsEqual(a, b) {
+		t.Fatal("AWG params helper should ignore Address/MTU/DNS")
+	}
 }
