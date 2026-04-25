@@ -196,3 +196,43 @@ func TestDedupSubnets_IPv6(t *testing.T) {
 		t.Errorf("expected 1 removed, got %d", report.TotalRemoved)
 	}
 }
+
+func TestDedupSubnets_ParentWithExcludeAllowsChild(t *testing.T) {
+	existing := []DomainList{
+		{
+			ID:             "list_a",
+			Name:           "A",
+			Subnets:        []string{"10.0.0.0/16"},
+			ExcludeSubnets: []string{"10.0.0.0/24"},
+		},
+	}
+
+	kept, report := dedupSubnets([]string{"10.0.0.0/24"}, "list_b", existing)
+
+	if len(kept) != 1 || kept[0] != "10.0.0.0/24" {
+		t.Fatalf("expected 10.0.0.0/24 to survive, got kept=%v", kept)
+	}
+	if report.TotalRemoved != 0 {
+		t.Fatalf("expected no removals, got %d", report.TotalRemoved)
+	}
+}
+
+func TestDedupSubnets_ExcludeSubtree(t *testing.T) {
+	existing := []DomainList{
+		{
+			ID:             "list_a",
+			Name:           "A",
+			Subnets:        []string{"10.0.0.0/8"},
+			ExcludeSubnets: []string{"10.0.0.0/16"},
+		},
+	}
+
+	kept, report := dedupSubnets([]string{"10.0.5.0/24"}, "list_b", existing)
+
+	if len(kept) != 1 {
+		t.Fatalf("expected 10.0.5.0/24 to survive (under exclude subtree), got %v", kept)
+	}
+	if report.TotalRemoved != 0 {
+		t.Fatalf("expected no removals, got %d", report.TotalRemoved)
+	}
+}
