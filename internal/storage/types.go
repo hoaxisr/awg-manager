@@ -135,21 +135,20 @@ type TunnelPingCheck struct {
 	Restart            bool    `json:"restart"`             // restart tunnel on dead (nativewg)
 }
 
-// AWGInterface contains AmneziaWG interface configuration.
-type AWGInterface struct {
-	PrivateKey string `json:"privateKey"`
-	Address    string `json:"address"`
-	MTU        int    `json:"mtu"`
-	DNS        string `json:"dns,omitempty"` // Comma-separated DNS servers (e.g., "1.1.1.1, 8.8.8.8")
-	Qlen       int    `json:"qlen"`
-	// AmneziaWG obfuscation parameters
-	Jc   int    `json:"jc"`
-	Jmin int    `json:"jmin"`
-	Jmax int    `json:"jmax"`
-	S1   int    `json:"s1"`
-	S2   int    `json:"s2"`
-	S3   int    `json:"s3"`
-	S4   int    `json:"s4"`
+// AWGObfuscation groups all AmneziaWG obfuscation parameters into a
+// dedicated value type. Comparable via `==`, which lets diff helpers
+// stay future-proof: when a new obfuscation field appears, every
+// comparison automatically picks it up. Embedded into AWGInterface so
+// JSON serialization stays flat (no schema migration).
+type AWGObfuscation struct {
+	Qlen int `json:"qlen"`
+	Jc   int `json:"jc"`
+	Jmin int `json:"jmin"`
+	Jmax int `json:"jmax"`
+	S1   int `json:"s1"`
+	S2   int `json:"s2"`
+	S3   int `json:"s3"`
+	S4   int `json:"s4"`
 	H1   string `json:"h1"`
 	H2   string `json:"h2"`
 	H3   string `json:"h3"`
@@ -159,6 +158,15 @@ type AWGInterface struct {
 	I3   string `json:"i3,omitempty"`
 	I4   string `json:"i4,omitempty"`
 	I5   string `json:"i5,omitempty"`
+}
+
+// AWGInterface contains AmneziaWG interface configuration.
+type AWGInterface struct {
+	PrivateKey     string `json:"privateKey"`
+	Address        string `json:"address"`
+	MTU            int    `json:"mtu"`
+	DNS            string `json:"dns,omitempty"` // Comma-separated DNS servers (e.g., "1.1.1.1, 8.8.8.8")
+	AWGObfuscation        // embedded — JSON keys stay flat (qlen, jc, jmin, ..., i5)
 }
 
 // AWGPeer contains AmneziaWG peer configuration.

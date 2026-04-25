@@ -212,7 +212,7 @@ func TestUpdate_RejectsIDMismatch(t *testing.T) {
 // === Diff helper tests ===
 
 func TestAWGInterfaceEqual_SameValues(t *testing.T) {
-	a := storage.AWGInterface{Address: "10.0.0.1", MTU: 1420, DNS: "1.1.1.1", Qlen: 1000, Jc: 5}
+	a := storage.AWGInterface{Address: "10.0.0.1", MTU: 1420, DNS: "1.1.1.1", AWGObfuscation: storage.AWGObfuscation{Qlen: 1000, Jc: 5}}
 	b := a
 	if !awgInterfaceEqual(a, b) {
 		t.Fatal("expected equal")
@@ -246,7 +246,7 @@ func TestAWGPeerEqual_PSKChange(t *testing.T) {
 }
 
 func TestAWGParamsEqual_Identical(t *testing.T) {
-	a := storage.AWGInterface{Qlen: 1000, Jc: 5, Jmin: 50, Jmax: 1000, S1: 100, H1: "h1"}
+	a := storage.AWGInterface{AWGObfuscation: storage.AWGObfuscation{Qlen: 1000, Jc: 5, Jmin: 50, Jmax: 1000, S1: 100, H1: "h1"}}
 	b := a
 	if !awgParamsEqual(a, b) {
 		t.Fatal("expected AWG params equal")
@@ -254,7 +254,7 @@ func TestAWGParamsEqual_Identical(t *testing.T) {
 }
 
 func TestAWGParamsEqual_DifferentJc(t *testing.T) {
-	a := storage.AWGInterface{Qlen: 1000, Jc: 5}
+	a := storage.AWGInterface{AWGObfuscation: storage.AWGObfuscation{Qlen: 1000, Jc: 5}}
 	b := a
 	b.Jc = 7
 	if awgParamsEqual(a, b) {
@@ -264,8 +264,8 @@ func TestAWGParamsEqual_DifferentJc(t *testing.T) {
 
 func TestAWGParamsEqual_IgnoresNonAWGFields(t *testing.T) {
 	// Address/MTU/DNS/PrivateKey differ but AWG params are identical.
-	a := storage.AWGInterface{Address: "10.0.0.1", MTU: 1420, DNS: "1.1.1.1", Jc: 5, Qlen: 1000}
-	b := storage.AWGInterface{Address: "10.0.0.2", MTU: 1280, DNS: "8.8.8.8", Jc: 5, Qlen: 1000}
+	a := storage.AWGInterface{Address: "10.0.0.1", MTU: 1420, DNS: "1.1.1.1", AWGObfuscation: storage.AWGObfuscation{Jc: 5, Qlen: 1000}}
+	b := storage.AWGInterface{Address: "10.0.0.2", MTU: 1280, DNS: "8.8.8.8", AWGObfuscation: storage.AWGObfuscation{Jc: 5, Qlen: 1000}}
 	if !awgParamsEqual(a, b) {
 		t.Fatal("AWG params helper should ignore Address/MTU/DNS")
 	}
