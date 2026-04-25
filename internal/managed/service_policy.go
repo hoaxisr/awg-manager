@@ -23,6 +23,12 @@ func (s *Service) SetPolicy(ctx context.Context, policy string) error {
 		return fmt.Errorf("no managed server exists")
 	}
 
+	// No-op shortcut runs before profile-list validation so a repeat
+	// click on the same named policy doesn't waste an RCI round-trip.
+	if policy == server.Policy {
+		return nil
+	}
+
 	if policy != "none" && policy != "permit" && policy != "deny" {
 		opts, err := s.ListPolicies(ctx)
 		if err != nil {
@@ -38,10 +44,6 @@ func (s *Service) SetPolicy(ctx context.Context, policy string) error {
 		if !known {
 			return fmt.Errorf("unknown policy: %s", policy)
 		}
-	}
-
-	if policy == server.Policy {
-		return nil
 	}
 
 	if policy == "none" {

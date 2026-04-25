@@ -155,16 +155,13 @@ func (s *Service) rciSetNAT(ctx context.Context, ifaceName string, enabled bool)
 }
 
 // rciSetHotspotPolicy applies an ip hotspot policy to the interface.
-// policy must be "permit", "deny", or an IP Policy profile name
-// (e.g. "Policy0"). For "none" use rciClearHotspotPolicy instead.
+// policy is "permit", "deny", or an IP Policy profile name. For "none"
+// use rciClearHotspotPolicy.
 //
-// RCI shape mirrors the ndmc form `(config-hotspot)> policy <iface> <value>`:
-//   - permit/deny: {"ip":{"hotspot":{"policy":{"interface":<iface>,"<permit|deny>":true}}}}
-//   - named:      {"ip":{"hotspot":{"policy":{"interface":<iface>,"policy":<name>}}}}
-//
-// The exact JSON layout is verified against a live router during
-// integration; if NDMS rejects the payload, this is the only function
-// to adjust.
+// UNVERIFIED: the JSON shape was inferred from ndmc syntax and the NAT
+// RCI sibling. Confirm against a live router via /show/rc/ip/hotspot
+// after running `(config-hotspot)> policy <iface> <value>` and adjust
+// if NDMS rejects.
 func (s *Service) rciSetHotspotPolicy(ctx context.Context, ifaceName, policy string) error {
 	body := map[string]interface{}{
 		"interface": ifaceName,
@@ -186,9 +183,12 @@ func (s *Service) rciSetHotspotPolicy(ctx context.Context, ifaceName, policy str
 	})
 }
 
-// rciClearHotspotPolicy removes the ip hotspot policy from the interface,
-// returning behaviour to the default-permit. Mirrors `no policy <iface>`
-// in (config-hotspot) mode.
+// rciClearHotspotPolicy removes the ip hotspot policy from the interface
+// (default-permit). Mirrors `no policy <iface>`.
+//
+// UNVERIFIED: the array+"no":true shape was copied from rciSetNAT — sibling
+// RCI endpoints share this idiom but it is not confirmed for hotspot.
+// Verify the same way as rciSetHotspotPolicy.
 func (s *Service) rciClearHotspotPolicy(ctx context.Context, ifaceName string) error {
 	return s.rciPost(ctx, map[string]interface{}{
 		"ip": map[string]interface{}{

@@ -198,6 +198,16 @@
 
 	let policies = $state<{ id: string; description: string }[]>([]);
 	let policyChanging = $state(false);
+	// Local mirror of server.policy for the <select>. On error we reset
+	// it back to server.policy so the DOM reverts — without this the
+	// browser keeps the failed value because no fresh snapshot arrives.
+	// Empty initial value is overwritten by the $effect on mount before
+	// the select is interactive.
+	let selectedPolicy = $state('');
+
+	$effect(() => {
+		selectedPolicy = server.policy;
+	});
 
 	onMount(async () => {
 		try {
@@ -223,6 +233,7 @@
 			notifications.success('Политика обновлена');
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Ошибка изменения политики');
+			selectedPolicy = server.policy;
 		} finally {
 			policyChanging = false;
 		}
@@ -306,7 +317,7 @@
 		</div>
 		<select
 			class="policy-select"
-			value={server.policy}
+			bind:value={selectedPolicy}
 			disabled={policyChanging}
 			onchange={(e) => handlePolicyChange(e.currentTarget.value)}
 		>

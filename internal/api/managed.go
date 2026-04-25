@@ -340,10 +340,6 @@ func (h *ManagedServerHandler) SetPolicy(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if req.Policy == "" {
-		response.Error(w, "policy must not be empty", "POLICY_INVALID")
-		return
-	}
 	if err := h.svc.SetPolicy(r.Context(), req.Policy); err != nil {
 		response.Error(w, err.Error(), "POLICY_FAILED")
 		return
