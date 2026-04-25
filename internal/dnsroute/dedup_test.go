@@ -485,3 +485,30 @@ func TestDedup_HoleDoesNotLeakAcrossLists(t *testing.T) {
 		t.Fatalf("expected 1 wildcard dup, got %d", report.WildcardDupes)
 	}
 }
+
+func TestDedup_WildcardCoveredByIsDeterministic(t *testing.T) {
+	// Two lists own the same parent. Repeated Check calls must report
+	// the same CoveredBy / OwnerListID for a sub-domain, not flip
+	// between A and B due to randomized map iteration.
+	lists := []DomainList{
+		{ID: "list_a", Name: "A", Domains: []string{"google.com"}},
+		{ID: "list_b", Name: "B", Domains: []string{"google.com"}},
+	}
+	idx := BuildIndex(lists, "")
+	names := listNameMap(lists)
+
+	const runs = 50
+	var firstOwner string
+	for i := 0; i < runs; i++ {
+		_, report := idx.CheckBatch([]string{"mail.google.com"}, "list_c", names)
+		if len(report.Items) != 1 {
+			t.Fatalf("run %d: expected 1 dup, got %d", i, len(report.Items))
+		}
+		got := report.Items[0].ListID
+		if i == 0 {
+			firstOwner = got
+		} else if got != firstOwner {
+			t.Fatalf("run %d: CoveredBy flipped: first=%s now=%s", i, firstOwner, got)
+		}
+	}
+}
