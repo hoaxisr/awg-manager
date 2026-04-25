@@ -36,6 +36,7 @@ include $(INCLUDE_DIR)/package-defaults.mk
 define Build/Prepare
 	mkdir -p $(PKG_BUILD_DIR)/src
 	$(CP) ../src/* $(PKG_BUILD_DIR)/src/
+	$(CP) ../COPYING $(PKG_BUILD_DIR)/COPYING
 endef
 
 define Build/Compile
