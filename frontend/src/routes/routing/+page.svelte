@@ -108,14 +108,15 @@
     let policyCount = $derived(accessPolicies.length);
     let clientRouteCount = $derived(clientRoutes.length);
 
-    // Default to IP tab when no DNS engine available.
+    // NDMS tab is OS5-only (see tabItems gate). On OS4, bounce off `dns`
+    // to HR NEO when hydraroute is installed, otherwise IP.
     // Gated on $routing.loaded: otherwise on cold load (direct URL hit)
-    // hasDnsEngine is transiently false before systemInfo + routing stores
-    // settle, and we'd silently kick an OS5 user off the NDMS tab.
+    // isOS5/hydrarouteInstalled are transiently false before systemInfo +
+    // routing stores settle, and we'd silently kick an OS5 user off NDMS.
     $effect(() => {
         if (!$routing.loaded) return;
-        if (!hasDnsEngine && activeTab === 'dns') {
-            activeTab = 'ip';
+        if (!isOS5 && activeTab === 'dns') {
+            activeTab = hydrarouteInstalled ? 'hrneo' : 'ip';
         }
     });
 
@@ -155,7 +156,10 @@
     let tabItems = $derived(
         ([
             hydrarouteInstalled ? { id: 'hrneo', label: 'HR NEO', badge: hrRuleCount } : null,
-            { id: 'dns', label: 'NDMS', badge: dnsActiveCount },
+            // NDMS dns-proxy with object-group fqdn is OS5-only — gate the
+            // tab on isOS5 so OS4 routers don't see an unusable NDMS tab
+            // (hydraroute users on OS4 use the HR NEO tab instead).
+            isOS5 ? { id: 'dns', label: 'NDMS', badge: dnsActiveCount } : null,
             { id: 'ip', label: 'IP-адреса', badge: ipActiveCount },
             isOS5 ? { id: 'policy', label: 'Политики доступа', badge: policyCount } : null,
             { id: 'clientvpn', label: 'VPN для устройств', badge: clientRouteCount },
