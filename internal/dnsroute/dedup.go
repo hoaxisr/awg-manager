@@ -1,6 +1,7 @@
 package dnsroute
 
 import (
+	"sort"
 	"strings"
 )
 
@@ -146,9 +147,17 @@ func (idx *DomainIndex) Check(domain string) CheckResult {
 	for i, label := range labels {
 		// Before descending, check whether the current node provides
 		// new coverage from above (parent context, i.e. i > 0).
-		if i > 0 {
-			for ownerID, ownerDomain := range node.owners {
-				stack = append(stack, pending{ownerListID: ownerID, domain: ownerDomain})
+		if i > 0 && len(node.owners) > 0 {
+			// Push owners in lexicographic listID order so the wildcard
+			// fallback (`stack[len(stack)-1]`) is deterministic across runs;
+			// Go's map iteration is randomized.
+			ids := make([]string, 0, len(node.owners))
+			for id := range node.owners {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			for _, id := range ids {
+				stack = append(stack, pending{ownerListID: id, domain: node.owners[id]})
 			}
 		}
 
