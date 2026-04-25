@@ -237,6 +237,7 @@ export interface DnsRoute {
 	name: string;
 	domains: string[];
 	excludes?: string[];
+	excludeSubnets?: string[];
 	subnets?: string[];
 	manualDomains: string[];
 	subscriptions?: DnsRouteSubscription[];
