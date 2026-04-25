@@ -13,6 +13,8 @@
 
 	let address = $state('10.0.0.1');
 	let mask = $state('24');
+	let addressDirty = $state(false);
+	let maskDirty = $state(false);
 	let listenPort = $state(51820);
 	let endpoint = $state('');
 	let mtu = $state(1376);
@@ -30,6 +32,11 @@
 				wanIP = ip;
 				if (!endpoint) endpoint = ip;
 			}).catch(() => wanIP = '').finally(() => loadingWanIP = false);
+
+			api.suggestManagedServerAddress().then(s => {
+				if (!addressDirty) address = s.address;
+				if (!maskDirty) mask = s.mask;
+			}).catch(() => { /* keep defaults */ });
 		}
 		wasOpen = open;
 	});
@@ -76,11 +83,11 @@
 
 		<div class="form-group">
 			<label class="label" for="ms-address">IP адрес</label>
-			<input type="text" id="ms-address" class="input" bind:value={address} placeholder="10.0.0.1" />
+			<input type="text" id="ms-address" class="input" bind:value={address} oninput={() => addressDirty = true} placeholder="10.10.0.1" />
 		</div>
 		<div class="form-group">
 			<label class="label" for="ms-mask">Маска (CIDR)</label>
-			<input type="text" id="ms-mask" class="input" bind:value={mask} placeholder="24" />
+			<input type="text" id="ms-mask" class="input" bind:value={mask} oninput={() => maskDirty = true} placeholder="24" />
 		</div>
 		<div class="form-group">
 			<label class="label" for="ms-port">Порт</label>

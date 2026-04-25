@@ -21,6 +21,11 @@ type ManagedServerService interface {
 	Delete(ctx context.Context) error
 	GetInterfaceName() string
 
+	// SuggestAddress returns a free private /24 (host .1) for the
+	// "Create server" UI, scanning live router interfaces to avoid
+	// any subnet that is already configured.
+	SuggestAddress(ctx context.Context) (address string, mask string, err error)
+
 	// Enable/disable
 	SetEnabled(ctx context.Context, enabled bool) error
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"strconv"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -17,7 +16,7 @@ func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage
 	}
 
 	// Validate
-	if err := s.validateServerParams(req.Address, req.Mask, req.ListenPort); err != nil {
+	if err := s.validateServerParams(ctx, req.Address, req.Mask, req.ListenPort, ""); err != nil {
 		return nil, err
 	}
 
@@ -78,7 +77,7 @@ func (s *Service) Update(ctx context.Context, req UpdateServerRequest) error {
 		return fmt.Errorf("no managed server exists")
 	}
 
-	if err := s.validateServerParams(req.Address, req.Mask, req.ListenPort); err != nil {
+	if err := s.validateServerParams(ctx, req.Address, req.Mask, req.ListenPort, server.InterfaceName); err != nil {
 		return err
 	}
 
@@ -249,29 +248,47 @@ func (s *Service) GetInterfaceName() string {
 	return server.InterfaceName
 }
 
-func (s *Service) validateServerParams(address, mask string, port int) error {
+func (s *Service) validateServerParams(ctx context.Context, address, mask string, port int, excludeIface string) error {
 	if net.ParseIP(address) == nil {
 		return fmt.Errorf("invalid IP address: %s", address)
 	}
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("invalid port: %d (must be 1-65535)", port)
 	}
-	// Validate mask: accept CIDR prefix length or dotted notation
-	if _, err := strconv.Atoi(mask); err == nil {
-		n, _ := strconv.Atoi(mask)
-		if n < 8 || n > 30 {
-			return fmt.Errorf("invalid mask: /%s (must be /8-/30)", mask)
-		}
-	} else if net.ParseIP(mask) == nil {
-		return fmt.Errorf("invalid mask: %s", mask)
+	prefix, err := maskToPrefix(mask)
+	if err != nil {
+		return err
+	}
+	if prefix < 16 || prefix > 30 {
+		return fmt.Errorf("invalid mask: /%d (must be /16-/30)", prefix)
+	}
+
+	if err := validateRFC1918(address); err != nil {
+		return err
+	}
+
+	cidr, err := parseManagedSubnet(address, mask)
+	if err != nil {
+		return err
+	}
+	if err := validateHostAddress(address, cidr); err != nil {
+		return err
+	}
+
+	used, err := s.listUsedSubnets(ctx, excludeIface)
+	if err != nil {
+		s.log.Warn("validateServerParams: cannot read interface list, skipping overlap check", "error", err)
+		return nil
+	}
+	if conflict := findConflict(cidr, used); conflict != nil {
+		return fmt.Errorf("подсеть %s пересекается с интерфейсом «%s» (%s)", cidr.String(), conflict.label, conflict.cidr.String())
 	}
 	return nil
 }
 
 func (s *Service) resolveMask(mask string) string {
-	if n, err := strconv.Atoi(mask); err == nil {
-		// Convert CIDR prefix to dotted mask
-		m := net.CIDRMask(n, 32)
+	if prefix, err := maskToPrefix(mask); err == nil {
+		m := net.CIDRMask(prefix, 32)
 		return net.IP(m).String()
 	}
 	return mask
