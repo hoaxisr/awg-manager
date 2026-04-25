@@ -26,8 +26,11 @@ type Service interface {
 	// List returns all tunnels with their current states.
 	List(ctx context.Context) ([]TunnelWithStatus, error)
 
-	// Update updates a tunnel's configuration.
-	Update(ctx context.Context, tunnelID string, cfg tunnel.Config) error
+	// Update applies a tunnel configuration diff. The handler is the only
+	// writer of storage; this method performs runtime RCI commands based on
+	// the difference between oldStored (current persisted state) and newStored
+	// (the state about to be persisted). It does NOT save to storage.
+	Update(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error
 
 	// Lifecycle operations — thin delegators to orchestrator.
 
@@ -91,18 +94,18 @@ type Service interface {
 
 // TunnelWithStatus combines stored tunnel data with live status.
 type TunnelWithStatus struct {
-	ID                 string           `json:"id"`
-	Name               string           `json:"name"`
-	Config             tunnel.Config    `json:"-"`
-	State              tunnel.State     `json:"state"`
-	StateInfo          tunnel.StateInfo `json:"stateInfo"`
-	Enabled            bool             `json:"enabled"`
-	AutoStart          bool             `json:"autoStart,omitempty"`
-	PingCheckOn        bool             `json:"pingCheckOn,omitempty"`
-	DefaultRoute       bool             `json:"defaultRoute"`
-	ISPInterface       string           `json:"ispInterface,omitempty"`
-	InterfaceName      string           `json:"interfaceName"`      // Kernel interface name (opkgtun0 on OS5, awg0 on OS4, nwgN for NativeWG)
-	NDMSName           string           `json:"ndmsName,omitempty"` // NDMS interface name (WireguardN), NativeWG only — how SSE events key per tunnel
-	ConfigPreview      string           `json:"configPreview,omitempty"` // Generated .conf content for display
-	Backend            string           `json:"backend"`            // "nativewg" | "kernel"
+	ID            string           `json:"id"`
+	Name          string           `json:"name"`
+	Config        tunnel.Config    `json:"-"`
+	State         tunnel.State     `json:"state"`
+	StateInfo     tunnel.StateInfo `json:"stateInfo"`
+	Enabled       bool             `json:"enabled"`
+	AutoStart     bool             `json:"autoStart,omitempty"`
+	PingCheckOn   bool             `json:"pingCheckOn,omitempty"`
+	DefaultRoute  bool             `json:"defaultRoute"`
+	ISPInterface  string           `json:"ispInterface,omitempty"`
+	InterfaceName string           `json:"interfaceName"`           // Kernel interface name (opkgtun0 on OS5, awg0 on OS4, nwgN for NativeWG)
+	NDMSName      string           `json:"ndmsName,omitempty"`      // NDMS interface name (WireguardN), NativeWG only — how SSE events key per tunnel
+	ConfigPreview string           `json:"configPreview,omitempty"` // Generated .conf content for display
+	Backend       string           `json:"backend"`                 // "nativewg" | "kernel"
 }
