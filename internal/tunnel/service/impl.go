@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -28,7 +27,7 @@ var confDir = "/opt/etc/awg-manager"
 // ServiceImpl is the concrete implementation of Service.
 type ServiceImpl struct {
 	store          *storage.AWGTunnelStore
-	state          state.Manager        // state detection for kernel tunnels only
+	state          state.Manager         // state detection for kernel tunnels only
 	nwgOperator    *nwg.OperatorNativeWG // NativeWG backend (nil if unavailable)
 	legacyOperator ops.Operator          // Kernel backend (OS5/OS4)
 	log            *logger.Logger
@@ -296,130 +295,217 @@ func (s *ServiceImpl) List(ctx context.Context) ([]TunnelWithStatus, error) {
 	return result, nil
 }
 
-// Update updates a tunnel's configuration.
-func (s *ServiceImpl) Update(ctx context.Context, tunnelID string, cfg tunnel.Config) error {
+// Update applies the difference between oldStored and newStored to the
+// running tunnel via RCI commands. Storage save is the handler's
+// responsibility — this method does NOT persist anything.
+//
+// Per-field Sync* operations are dispatched only for fields that actually
+// changed, minimising RCI traffic. Pre-condition validation rejects empty
+// Address or non-positive MTU.
+func (s *ServiceImpl) Update(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error {
+	if oldStored == nil || newStored == nil {
+		return fmt.Errorf("oldStored and newStored must not be nil")
+	}
+	tunnelID := newStored.ID
+	if tunnelID == "" || tunnelID != oldStored.ID {
+		return fmt.Errorf("tunnel id mismatch")
+	}
+
 	s.lockTunnel(tunnelID)
 	defer s.unlockTunnel(tunnelID)
 
-	stored, err := s.store.Get(tunnelID)
-	if err != nil {
-		return tunnel.ErrNotFound
+	if newStored.Interface.Address == "" {
+		return fmt.Errorf("address must not be empty")
+	}
+	if newStored.Interface.MTU <= 0 {
+		return fmt.Errorf("MTU must be > 0")
 	}
 
-	// Block address changes in kernel mode — NDMS cannot change address on a kernel interface.
-	// NativeWG can change addresses via NDMS, so this check only applies to kernel tunnels.
-	if !s.isNativeWG(stored) {
+	// Block Address change in kernel mode (NDMS cannot rename kernel iface).
+	if !s.isNativeWG(newStored) {
 		stateInfo := s.state.GetState(ctx, tunnelID)
-		if stateInfo.BackendType == "kernel" && cfg.Address != "" && cfg.Address != stored.Interface.Address {
+		if stateInfo.BackendType == "kernel" && newStored.Interface.Address != oldStored.Interface.Address {
 			return fmt.Errorf("address change is not supported in kernel mode")
 		}
 	}
 
-	// Update NDMS description if name changed
-	if cfg.Name != "" && cfg.Name != stored.Name {
-		if s.isNativeWG(stored) && s.nwgOperator != nil {
-			if err := s.nwgOperator.UpdateDescription(ctx, stored, cfg.Name); err != nil {
-				s.logWarn("update", tunnelID, "Failed to update NWG description: "+err.Error())
+	// Regenerate kernel .conf if any conf-affecting field changed.
+	confChanged := !awgInterfaceEqual(oldStored.Interface, newStored.Interface) ||
+		!awgPeerEqual(oldStored.Peer, newStored.Peer)
+	if confChanged && !s.isNativeWG(newStored) {
+		if err := s.writeConfigFile(newStored); err != nil {
+			return fmt.Errorf("write config: %w", err)
+		}
+	}
+
+	// Description rename — cheap, dispatch on change.
+	if oldStored.Name != newStored.Name {
+		if s.isNativeWG(newStored) && s.nwgOperator != nil {
+			if err := s.nwgOperator.UpdateDescription(ctx, newStored, newStored.Name); err != nil {
+				s.logWarn("update", tunnelID, "Failed to update description: "+err.Error())
 			}
 		} else {
-			if err := s.legacyOperator.UpdateDescription(ctx, tunnelID, cfg.Name); err != nil {
-				s.logWarn("update", tunnelID, "Failed to update NDMS description: "+err.Error())
+			if err := s.legacyOperator.UpdateDescription(ctx, tunnelID, newStored.Name); err != nil {
+				s.logWarn("update", tunnelID, "Failed to update description: "+err.Error())
 			}
 		}
-		stored.Name = cfg.Name
 	}
 
-	// Capture old values before updating (for conditional sync)
-	oldEndpoint := stored.Peer.Endpoint
-	oldDNS := stored.Interface.DNS
-	oldAddress := stored.Interface.Address
-
-	// Update stored config
-	stored.Interface.Address = cfg.Address
-	stored.Interface.MTU = cfg.MTU
-	if cfg.Endpoint != "" {
-		stored.Peer.Endpoint = cfg.Endpoint
+	// Below this point we only act on the running interface. Skip if not.
+	var stateInfo tunnel.StateInfo
+	if s.isNativeWG(newStored) && s.nwgOperator != nil {
+		stateInfo = s.nwgOperator.GetState(ctx, newStored)
+	} else {
+		stateInfo = s.state.GetState(ctx, tunnelID)
+	}
+	if stateInfo.State != tunnel.StateRunning {
+		s.logInfo("update", tunnelID, "Tunnel updated (not running, runtime sync skipped)")
+		return nil
 	}
 
-	// Regenerate config file
-	if err := s.writeConfigFile(stored); err != nil {
-		return fmt.Errorf("write config: %w", err)
-	}
-
-	// Save to storage
-	if err := s.store.Save(stored); err != nil {
-		return fmt.Errorf("save tunnel: %w", err)
-	}
-
-	// If running, apply changes to live tunnel
-	if s.isNativeWG(stored) {
-		// NativeWG: sync address/MTU via NDMS
-		if s.nwgOperator != nil {
-			stateInfo := s.nwgOperator.GetState(ctx, stored)
-			if stateInfo.State == tunnel.StateRunning {
-				if err := s.nwgOperator.SyncAddressMTU(ctx, stored); err != nil {
-					s.logWarn("update", tunnelID, "Failed to sync NWG address/MTU: "+err.Error())
-				}
-			}
+	if s.isNativeWG(newStored) && s.nwgOperator != nil {
+		if err := s.applyDiffNWG(ctx, oldStored, newStored); err != nil {
+			return err
 		}
 	} else {
-		// Kernel path: ApplyConfig, SetMTU, endpoint route refresh
-		stateInfo := s.state.GetState(ctx, tunnelID)
-		if stateInfo.State == tunnel.StateRunning {
-			confPath := tunnel.NewNames(tunnelID).ConfPath
-			if err := s.legacyOperator.ApplyConfig(ctx, tunnelID, confPath); err != nil {
-				s.logWarn("update", tunnelID, "Failed to apply config to running tunnel: "+err.Error())
-			}
-			// Apply MTU immediately to running interface
-			if err := s.legacyOperator.SetMTU(ctx, tunnelID, cfg.MTU); err != nil {
-				s.logWarn("update", tunnelID, "Failed to apply MTU: "+err.Error())
-			}
-
-			// Sync DNS servers to NDMS (only if changed)
-			if stored.Interface.DNS != oldDNS {
-				var dnsServers []string
-				if stored.Interface.DNS != "" {
-					for _, part := range strings.Split(stored.Interface.DNS, ",") {
-						if d := strings.TrimSpace(part); d != "" {
-							dnsServers = append(dnsServers, d)
-						}
-					}
-				}
-				if err := s.legacyOperator.SyncDNS(ctx, tunnelID, dnsServers); err != nil {
-					s.logWarn("update", tunnelID, "Failed to sync DNS: "+err.Error())
-				}
-			}
-
-			// Sync address (IPv4 + IPv6) to NDMS (only if changed)
-			if stored.Interface.Address != oldAddress {
-				ipv4, ipv6 := orchestrator.SplitAddresses(stored.Interface.Address)
-				if err := s.legacyOperator.SyncAddress(ctx, tunnelID, ipv4, ipv6); err != nil {
-					s.logWarn("update", tunnelID, "Failed to sync address: "+err.Error())
-				}
-			}
-
-			// If endpoint changed, refresh endpoint route via ISP
-			if cfg.Endpoint != "" && cfg.Endpoint != oldEndpoint {
-				_ = s.legacyOperator.CleanupEndpointRoute(ctx, tunnelID)
-				resolvedWAN, resolveErr := s.resolveWAN(ctx, stored.ISPInterface)
-				if resolveErr != nil {
-					s.logWarn("update", tunnelID, "Failed to resolve WAN: "+resolveErr.Error())
-				} else if ip, err := s.legacyOperator.SetupEndpointRoute(ctx, tunnelID, stored.Peer.Endpoint, s.resolveKernelDevice(resolvedWAN), resolvedWAN); err != nil {
-					s.logWarn("update", tunnelID, "Failed to setup new endpoint route: "+err.Error())
-				} else {
-					stored.ResolvedEndpointIP = ip
-					if err := s.store.Save(stored); err != nil {
-						s.logWarn("save", stored.ID, "Failed to persist state: "+err.Error())
-					}
-				}
-			}
+		if err := s.applyDiffKernel(ctx, oldStored, newStored); err != nil {
+			return err
 		}
 	}
 
 	s.logInfo("update", tunnelID, "Tunnel updated")
-	// Legacy tunnel:updated publish removed (Task 14 sweep); handler
-	// layer emits resource:invalidated via publishTunnelList.
 	return nil
+}
+
+// applyDiffKernel applies field-level diffs to a running kernel-backend
+// tunnel via the legacy operator.
+func (s *ServiceImpl) applyDiffKernel(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error {
+	tunnelID := newStored.ID
+	confPath := tunnel.NewNames(tunnelID).ConfPath
+
+	if !awgInterfaceEqual(oldStored.Interface, newStored.Interface) ||
+		!awgPeerEqual(oldStored.Peer, newStored.Peer) {
+		if err := s.legacyOperator.ApplyConfig(ctx, tunnelID, confPath); err != nil {
+			s.logWarn("update", tunnelID, "Failed to apply config: "+err.Error())
+		}
+	}
+
+	if oldStored.Interface.MTU != newStored.Interface.MTU {
+		if err := s.legacyOperator.SetMTU(ctx, tunnelID, newStored.Interface.MTU); err != nil {
+			s.logWarn("update", tunnelID, "Failed to apply MTU: "+err.Error())
+		}
+	}
+
+	if oldStored.Interface.DNS != newStored.Interface.DNS {
+		if err := s.legacyOperator.SyncDNS(ctx, tunnelID, tunnel.ParseDNSList(newStored.Interface.DNS)); err != nil {
+			s.logWarn("update", tunnelID, "Failed to sync DNS: "+err.Error())
+		}
+	}
+
+	if oldStored.Interface.Address != newStored.Interface.Address {
+		ipv4, ipv6 := orchestrator.SplitAddresses(newStored.Interface.Address)
+		if err := s.legacyOperator.SyncAddress(ctx, tunnelID, ipv4, ipv6); err != nil {
+			s.logWarn("update", tunnelID, "Failed to sync address: "+err.Error())
+		}
+	}
+
+	if oldStored.Peer.Endpoint != newStored.Peer.Endpoint || oldStored.ISPInterface != newStored.ISPInterface {
+		_ = s.legacyOperator.CleanupEndpointRoute(ctx, tunnelID)
+		resolvedWAN, resolveErr := s.resolveWAN(ctx, newStored.ISPInterface)
+		if resolveErr != nil {
+			s.logWarn("update", tunnelID, "Failed to resolve WAN: "+resolveErr.Error())
+		} else if ip, err := s.legacyOperator.SetupEndpointRoute(ctx, tunnelID, newStored.Peer.Endpoint, s.resolveKernelDevice(resolvedWAN), resolvedWAN); err != nil {
+			s.logWarn("update", tunnelID, "Failed to setup endpoint route: "+err.Error())
+		} else {
+			newStored.ResolvedEndpointIP = ip
+			newStored.ActiveWAN = resolvedWAN
+		}
+	}
+
+	if oldStored.DefaultRoute != newStored.DefaultRoute {
+		s.logInfo("update", tunnelID, fmt.Sprintf("DefaultRoute changed to %v (apply via /api/control/toggle-default-route)", newStored.DefaultRoute))
+	}
+
+	return nil
+}
+
+// applyDiffNWG applies field-level diffs to a running NativeWG tunnel.
+func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error {
+	tunnelID := newStored.ID
+
+	if oldStored.Interface.Address != newStored.Interface.Address ||
+		oldStored.Interface.MTU != newStored.Interface.MTU {
+		if err := s.nwgOperator.SyncAddressMTU(ctx, newStored); err != nil {
+			s.logWarn("update", tunnelID, "Failed to sync NWG address/MTU: "+err.Error())
+		}
+	}
+
+	if oldStored.Interface.DNS != newStored.Interface.DNS {
+		oldList := tunnel.ParseDNSList(oldStored.Interface.DNS)
+		newList := tunnel.ParseDNSList(newStored.Interface.DNS)
+		if err := s.nwgOperator.SyncDNS(ctx, newStored, oldList, newList); err != nil {
+			s.logWarn("update", tunnelID, "Failed to sync NWG DNS: "+err.Error())
+		}
+	}
+
+	if !awgPeerEqual(oldStored.Peer, newStored.Peer) {
+		if err := s.nwgOperator.SyncPeer(ctx, newStored); err != nil {
+			s.logWarn("update", tunnelID, "Failed to sync NWG peer: "+err.Error())
+		}
+	}
+
+	if !awgParamsEqual(oldStored.Interface, newStored.Interface) {
+		if err := s.nwgOperator.SyncAWGParams(ctx, newStored); err != nil {
+			s.logWarn("update", tunnelID, "Failed to sync NWG AWG params (restart may be required): "+err.Error())
+		}
+	}
+
+	if oldStored.Peer.Endpoint != newStored.Peer.Endpoint || oldStored.ISPInterface != newStored.ISPInterface {
+		s.logInfo("update", tunnelID, "endpoint/ISPInterface changed; restart tunnel to apply route changes")
+	}
+
+	if oldStored.DefaultRoute != newStored.DefaultRoute {
+		s.logInfo("update", tunnelID, fmt.Sprintf("DefaultRoute changed to %v (apply via NDMS toggle)", newStored.DefaultRoute))
+	}
+
+	return nil
+}
+
+// awgInterfaceEqual returns true when two AWGInterface structs are
+// identical. Used to skip redundant config regeneration.
+func awgInterfaceEqual(a, b storage.AWGInterface) bool {
+	return a == b
+}
+
+// awgPeerEqual returns true when two AWGPeer structs hold the same data
+// (slices compared element-wise).
+func awgPeerEqual(a, b storage.AWGPeer) bool {
+	if a.PublicKey != b.PublicKey ||
+		a.PresharedKey != b.PresharedKey ||
+		a.Endpoint != b.Endpoint ||
+		a.PersistentKeepalive != b.PersistentKeepalive {
+		return false
+	}
+	if len(a.AllowedIPs) != len(b.AllowedIPs) {
+		return false
+	}
+	for i := range a.AllowedIPs {
+		if a.AllowedIPs[i] != b.AllowedIPs[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// awgParamsEqual reports whether AmneziaWG obfuscation parameters
+// (Qlen, Jc, Jmin, Jmax, S1-S4, H1-H4, I1-I5) are identical between two
+// interfaces. Other fields (Address, MTU, DNS, PrivateKey) are ignored.
+func awgParamsEqual(a, b storage.AWGInterface) bool {
+	return a.Qlen == b.Qlen &&
+		a.Jc == b.Jc && a.Jmin == b.Jmin && a.Jmax == b.Jmax &&
+		a.S1 == b.S1 && a.S2 == b.S2 && a.S3 == b.S3 && a.S4 == b.S4 &&
+		a.H1 == b.H1 && a.H2 == b.H2 && a.H3 == b.H3 && a.H4 == b.H4 &&
+		a.I1 == b.I1 && a.I2 == b.I2 && a.I3 == b.I3 && a.I4 == b.I4 && a.I5 == b.I5
 }
 
 // SetEnabled changes the enabled/autostart state of a tunnel.
@@ -678,8 +764,6 @@ func (s *ServiceImpl) CheckAddressConflicts(_ context.Context, tunnelID string) 
 	}
 	return checkStoredAddressConflicts(s.store, stored.Interface.Address, tunnelID)
 }
-
-
 
 // GetState returns the current state of a tunnel.
 func (s *ServiceImpl) GetState(ctx context.Context, tunnelID string) tunnel.StateInfo {

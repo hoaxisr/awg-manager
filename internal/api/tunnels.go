@@ -82,7 +82,7 @@ type TunnelService interface {
 	List(ctx context.Context) ([]service.TunnelWithStatus, error)
 	Get(ctx context.Context, tunnelID string) (*service.TunnelWithStatus, error)
 	Create(ctx context.Context, tunnelID, name string, cfg tunnel.Config, stored *storage.AWGTunnel) error
-	Update(ctx context.Context, tunnelID string, cfg tunnel.Config) error
+	Update(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error
 	Delete(ctx context.Context, tunnelID string) error
 
 	// Lifecycle (delegated to orchestrator)
@@ -168,9 +168,9 @@ func (h *TunnelsHandler) PublishTunnelList(ctx context.Context) { h.publishTunne
 // Start / Stop / Restart / Import / Adopt / Replace).
 //
 //   - ResourceTunnels         — the {tunnels, external, system} snapshot
-//                               now served by /api/tunnels/all.
+//     now served by /api/tunnels/all.
 //   - ResourceRoutingTunnels  — the routing-page catalog, served by
-//                               /api/routing/tunnels (Task 11).
+//     /api/routing/tunnels (Task 11).
 //
 // Also refreshes the pingcheck snapshot so monitoring picks up
 // new/deleted tunnels.
@@ -246,17 +246,17 @@ func BuildTunnelResponse(r *http.Request, svc TunnelService, store *storage.AWGT
 	}
 
 	resp := map[string]interface{}{
-		"id":                t.ID,
-		"name":              t.Name,
-		"type":              "awg",
-		"enabled":           t.Enabled,
-		"defaultRoute": t.DefaultRoute,
-		"ispInterface":      ispIface,
-		"interfaceName":     t.InterfaceName,
-		"ndmsName":          t.NDMSName,
-		"configPreview":     t.ConfigPreview,
-		"state":             t.State.String(),
-		"stateInfo":         t.StateInfo,
+		"id":            t.ID,
+		"name":          t.Name,
+		"type":          "awg",
+		"enabled":       t.Enabled,
+		"defaultRoute":  t.DefaultRoute,
+		"ispInterface":  ispIface,
+		"interfaceName": t.InterfaceName,
+		"ndmsName":      t.NDMSName,
+		"configPreview": t.ConfigPreview,
+		"state":         t.State.String(),
+		"stateInfo":     t.StateInfo,
 	}
 
 	if stored != nil {
@@ -277,29 +277,29 @@ func BuildTunnelResponse(r *http.Request, svc TunnelService, store *storage.AWGT
 
 // tunnelItem is the list-item DTO returned by List and used by SSE snapshots.
 type tunnelItem struct {
-	ID                        string `json:"id"`
-	Name                      string `json:"name"`
-	Type                      string `json:"type"`
-	Status                    string `json:"status"`
-	Enabled                   bool   `json:"enabled"`
-	DefaultRoute              bool   `json:"defaultRoute"`
-	ISPInterface              string `json:"ispInterface,omitempty"`
-	ISPInterfaceLabel         string `json:"ispInterfaceLabel,omitempty"`
-	ResolvedISPInterface      string `json:"resolvedIspInterface,omitempty"`
-	ResolvedISPInterfaceLabel string `json:"resolvedIspInterfaceLabel,omitempty"`
-	Endpoint                  string `json:"endpoint"`
-	Address                   string `json:"address"`
-	InterfaceName             string `json:"interfaceName"`
-	NDMSName                  string `json:"ndmsName,omitempty"`
-	HasAddressConflict        bool   `json:"hasAddressConflict"`
-	RxBytes                   int64  `json:"rxBytes"`
-	TxBytes                   int64  `json:"txBytes"`
-	LastHandshake             string `json:"lastHandshake"`
-	Backend                   string `json:"backend"`
-	BackendType               string `json:"backendType,omitempty"`
-	AWGVersion                string `json:"awgVersion"`
-	MTU                       int    `json:"mtu"`
-	StartedAt                 string                  `json:"startedAt,omitempty"`
+	ID                        string                   `json:"id"`
+	Name                      string                   `json:"name"`
+	Type                      string                   `json:"type"`
+	Status                    string                   `json:"status"`
+	Enabled                   bool                     `json:"enabled"`
+	DefaultRoute              bool                     `json:"defaultRoute"`
+	ISPInterface              string                   `json:"ispInterface,omitempty"`
+	ISPInterfaceLabel         string                   `json:"ispInterfaceLabel,omitempty"`
+	ResolvedISPInterface      string                   `json:"resolvedIspInterface,omitempty"`
+	ResolvedISPInterfaceLabel string                   `json:"resolvedIspInterfaceLabel,omitempty"`
+	Endpoint                  string                   `json:"endpoint"`
+	Address                   string                   `json:"address"`
+	InterfaceName             string                   `json:"interfaceName"`
+	NDMSName                  string                   `json:"ndmsName,omitempty"`
+	HasAddressConflict        bool                     `json:"hasAddressConflict"`
+	RxBytes                   int64                    `json:"rxBytes"`
+	TxBytes                   int64                    `json:"txBytes"`
+	LastHandshake             string                   `json:"lastHandshake"`
+	Backend                   string                   `json:"backend"`
+	BackendType               string                   `json:"backendType,omitempty"`
+	AWGVersion                string                   `json:"awgVersion"`
+	MTU                       int                      `json:"mtu"`
+	StartedAt                 string                   `json:"startedAt,omitempty"`
 	PingCheck                 pingcheck.TunnelPingInfo `json:"pingCheck"`
 }
 
@@ -418,19 +418,19 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			ResolvedISPInterface:      resolvedISPInterface,
 			ResolvedISPInterfaceLabel: resolvedISPInterfaceLabel,
 			Endpoint:                  endpoint,
-			Address:             address,
-			InterfaceName:       t.InterfaceName,
-			NDMSName:            t.NDMSName,
-			Backend:             backend,
-			HasAddressConflict:  hasConflict,
-			RxBytes:             t.StateInfo.RxBytes,
-			TxBytes:             t.StateInfo.TxBytes,
-			LastHandshake:       formatHandshake(t.StateInfo.LastHandshake),
-			BackendType:         t.StateInfo.BackendType,
-			AWGVersion:          awgVersion,
-			MTU:                 mtu,
-			StartedAt:           startedAt,
-			PingCheck:           pcInfo,
+			Address:                   address,
+			InterfaceName:             t.InterfaceName,
+			NDMSName:                  t.NDMSName,
+			Backend:                   backend,
+			HasAddressConflict:        hasConflict,
+			RxBytes:                   t.StateInfo.RxBytes,
+			TxBytes:                   t.StateInfo.TxBytes,
+			LastHandshake:             formatHandshake(t.StateInfo.LastHandshake),
+			BackendType:               t.StateInfo.BackendType,
+			AWGVersion:                awgVersion,
+			MTU:                       mtu,
+			StartedAt:                 startedAt,
+			PingCheck:                 pcInfo,
 		})
 	}
 
@@ -715,18 +715,8 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" {
 		req.Name = existing.Name
 	}
-	if req.Interface.PrivateKey == "" {
-		if req.Interface.Address == "" {
-			// No interface data sent (partial update like ISP change) — preserve everything.
-			req.Interface = existing.Interface
-		} else {
-			// Interface data sent without private key (edit page) — preserve only the key.
-			req.Interface.PrivateKey = existing.Interface.PrivateKey
-		}
-	}
-	if req.Peer.PublicKey == "" {
-		req.Peer = existing.Peer
-	}
+	mergeInterfaceWhitelist(&req, existing)
+	mergePeerWhitelist(&req, existing)
 	if !req.DefaultRouteSet {
 		req.DefaultRoute = existing.DefaultRoute
 		req.DefaultRouteSet = existing.DefaultRouteSet
@@ -779,15 +769,12 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Update service config before store.Save — service detects name change
-	// by comparing cfg.Name against the old name still in the store.
-	cfg := tunnel.Config{
-		ID:      id,
-		Name:    req.Name,
-		Address: req.Interface.Address,
-		MTU:     req.Interface.MTU,
+	// Service handles runtime RCI based on the diff between existing
+	// (pre-merge snapshot) and req (post-merge state). Storage save
+	// happens AFTER service runs — handler is the sole writer.
+	if err := h.svc.Update(r.Context(), existing, &req); err != nil {
+		h.log.Warn("update", req.Name, "Service update returned error: "+err.Error())
 	}
-	_ = h.svc.Update(r.Context(), id, cfg)
 
 	// Save updated tunnel
 	if err := h.store.Save(&req); err != nil {
@@ -1062,3 +1049,46 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, resp)
 }
 
+// mergeInterfaceWhitelist applies the edit-form whitelist on top of
+// existing.Interface. Only Address, MTU, DNS, and PrivateKey (when sent)
+// are taken from req; AmneziaWG obfuscation parameters, Qlen, and
+// signature packets always preserve from existing — protects against
+// silent loss when the frontend submits a form that omits those fields.
+//
+// When req.Interface.Address is empty the entire Interface is treated
+// as missing (routing-page partial update) and fully preserved.
+//
+// To extend the whitelist (e.g. when a new field becomes editable),
+// add the assignment here and update TestUpdate_PreservesAWGParams.
+func mergeInterfaceWhitelist(req *storage.AWGTunnel, existing *storage.AWGTunnel) {
+	if req.Interface.Address == "" {
+		req.Interface = existing.Interface
+		return
+	}
+	preserved := existing.Interface
+	preserved.Address = req.Interface.Address
+	preserved.MTU = req.Interface.MTU
+	preserved.DNS = req.Interface.DNS
+	if req.Interface.PrivateKey != "" {
+		preserved.PrivateKey = req.Interface.PrivateKey
+	}
+	req.Interface = preserved
+}
+
+// mergePeerWhitelist applies the edit-form whitelist on top of
+// existing.Peer. Five fields (PublicKey, PresharedKey, Endpoint,
+// AllowedIPs, PersistentKeepalive) are taken from req when PublicKey
+// is non-empty; otherwise the entire Peer preserves from existing.
+func mergePeerWhitelist(req *storage.AWGTunnel, existing *storage.AWGTunnel) {
+	if req.Peer.PublicKey == "" {
+		req.Peer = existing.Peer
+		return
+	}
+	preserved := existing.Peer
+	preserved.PublicKey = req.Peer.PublicKey
+	preserved.PresharedKey = req.Peer.PresharedKey
+	preserved.Endpoint = req.Peer.Endpoint
+	preserved.AllowedIPs = req.Peer.AllowedIPs
+	preserved.PersistentKeepalive = req.Peer.PersistentKeepalive
+	req.Peer = preserved
+}

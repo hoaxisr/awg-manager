@@ -267,7 +267,9 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 	}
 
 	// Register DNS servers with the router's DNS proxy
-	o.applyDNS(ctx, names.NDMSName, stored)
+	if err := o.SyncDNS(ctx, stored, nil, tunnel.ParseDNSList(stored.Interface.DNS)); err != nil {
+		o.log.Warnf("nwg: apply DNS: %v", err)
+	}
 
 	o.appLog.Full("start", stored.Name, "Setting peer endpoint, interface up")
 	if o.hookNotifier != nil {
@@ -337,7 +339,9 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 	}
 
 	// Register DNS servers with the router's DNS proxy
-	o.applyDNS(ctx, names.NDMSName, stored)
+	if err := o.SyncDNS(ctx, stored, nil, tunnel.ParseDNSList(stored.Interface.DNS)); err != nil {
+		o.log.Warnf("nwg: apply DNS: %v", err)
+	}
 
 	if o.hookNotifier != nil {
 		o.hookNotifier.ExpectHook(names.NDMSName, "running")
@@ -408,7 +412,9 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 	_, _ = o.transport.PostBatch(ctx, cmds)
 
 	// Clear DNS servers from the router's DNS proxy
-	o.clearDNS(ctx, names.NDMSName, stored)
+	if err := o.SyncDNS(ctx, stored, tunnel.ParseDNSList(stored.Interface.DNS), nil); err != nil {
+		o.log.Warnf("nwg: clear DNS: %v", err)
+	}
 	o.appLog.Full("stop", stored.Name, "DNS cleared")
 
 	// Only remove kmod proxy entry on older firmware
@@ -445,40 +451,52 @@ func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel
 	return nil
 }
 
-// applyDNS registers DNS servers from the tunnel config with the router's DNS proxy.
-// This tells the router to forward DNS queries arriving through this interface to these servers.
-func (o *OperatorNativeWG) applyDNS(ctx context.Context, ndmsName string, stored *storage.AWGTunnel) {
-	servers := parseDNSServers(stored.Interface.DNS)
-	if len(servers) == 0 {
-		return
-	}
-	if err := o.commands.Interfaces.SetDNS(ctx, ndmsName, servers); err != nil {
-		o.log.Warnf("nwg: set DNS for %s: %v", ndmsName, err)
-	}
-}
-
-// clearDNS removes DNS servers from the router's DNS proxy for this interface.
-func (o *OperatorNativeWG) clearDNS(ctx context.Context, ndmsName string, stored *storage.AWGTunnel) {
-	servers := parseDNSServers(stored.Interface.DNS)
-	if len(servers) == 0 {
-		return
-	}
-	_ = o.commands.Interfaces.ClearDNS(ctx, ndmsName, servers)
-}
-
-// parseDNSServers splits a comma-separated DNS string into a slice of trimmed, non-empty IPs.
-func parseDNSServers(dns string) []string {
-	if dns == "" {
-		return nil
-	}
-	var servers []string
-	for _, s := range strings.Split(dns, ",") {
-		s = strings.TrimSpace(s)
-		if s != "" {
-			servers = append(servers, s)
+// SyncDNS reconciles DNS servers for a NativeWG tunnel: clears oldDNS
+// from NDMS, then applies newDNS. Either side may be nil/empty —
+// passing both lists explicitly avoids needing applied-state tracking.
+//
+// Use cases:
+//   - Start tunnel: SyncDNS(ctx, stored, nil, tunnel.ParseDNSList(stored.Interface.DNS))
+//   - Stop tunnel:  SyncDNS(ctx, stored, tunnel.ParseDNSList(stored.Interface.DNS), nil)
+//   - Update DNS:   SyncDNS(ctx, stored, oldList, newList)
+func (o *OperatorNativeWG) SyncDNS(ctx context.Context, stored *storage.AWGTunnel, oldDNS, newDNS []string) error {
+	names := NewNWGNames(stored.NWGIndex)
+	if len(oldDNS) > 0 {
+		if err := o.commands.Interfaces.ClearDNS(ctx, names.NDMSName, oldDNS); err != nil {
+			o.log.Warnf("nwg: clear DNS for %s: %v", names.NDMSName, err)
 		}
 	}
-	return servers
+	if len(newDNS) > 0 {
+		if err := o.commands.Interfaces.SetDNS(ctx, names.NDMSName, newDNS); err != nil {
+			return fmt.Errorf("set DNS: %w", err)
+		}
+	}
+	return nil
+}
+
+// SyncAWGParams applies AmneziaWG obfuscation parameters (Jc, Jmin,
+// Jmax, S1-S4, H1-H4, I1-I5, Qlen) to a running NativeWG tunnel via
+// RCI. Best-effort: if NDMS rejects (some firmware versions require
+// interface down for ASC changes), failures bubble up so the caller
+// can log a Warn and instruct the user to restart the tunnel.
+func (o *OperatorNativeWG) SyncAWGParams(ctx context.Context, stored *storage.AWGTunnel) error {
+	if !ndmsinfo.SupportsWireguardASC() {
+		// On older firmware, ASC is handled by awg_proxy; restart the
+		// tunnel to pick up new params.
+		return fmt.Errorf("ASC not supported by firmware; restart tunnel to apply")
+	}
+	names := NewNWGNames(stored.NWGIndex)
+	ascJSON, err := buildASCJSON(&stored.Interface)
+	if err != nil {
+		return fmt.Errorf("build ASC params: %w", err)
+	}
+	if ascJSON == nil {
+		return nil
+	}
+	if err := o.commands.Wireguard.SetASCParams(ctx, names.NDMSName, ascJSON); err != nil {
+		return fmt.Errorf("set ASC params: %w", err)
+	}
+	return nil
 }
 
 // GetState returns the state of a NativeWG tunnel via RCI.

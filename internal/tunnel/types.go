@@ -112,11 +112,11 @@ type StateInfo struct {
 
 	// Component states
 	OpkgTunExists  bool      `json:"opkgTunExists"`  // OpkgTun registered in NDMS
-	InterfaceUp    bool      `json:"interfaceUp"`     // Interface is in UP state
-	ProcessRunning bool      `json:"processRunning"`  // tunnel process is alive
-	ProcessPID     int       `json:"processPID"`      // PID of the process (0 if not running)
-	HasPeer        bool      `json:"hasPeer"`         // WireGuard peer is configured
-	HasHandshake   bool      `json:"hasHandshake"`    // Recent handshake occurred
+	InterfaceUp    bool      `json:"interfaceUp"`    // Interface is in UP state
+	ProcessRunning bool      `json:"processRunning"` // tunnel process is alive
+	ProcessPID     int       `json:"processPID"`     // PID of the process (0 if not running)
+	HasPeer        bool      `json:"hasPeer"`        // WireGuard peer is configured
+	HasHandshake   bool      `json:"hasHandshake"`   // Recent handshake occurred
 	LastHandshake  time.Time `json:"lastHandshake"`
 
 	// Traffic statistics (from sysfs)
@@ -134,7 +134,7 @@ type StateInfo struct {
 	PeerVia string `json:"peerVia,omitempty"`
 
 	// Diagnostics
-	Error   error  `json:"error"`            // Error encountered during state detection
+	Error   error  `json:"error"`             // Error encountered during state detection
 	Details string `json:"details,omitempty"` // Human-readable details about the state
 }
 
@@ -159,6 +159,22 @@ type Config struct {
 	KernelDevice string // Kernel interface name for endpoint routing (e.g., "eth3"); empty = no oif constraint
 	EndpointIP   string // Resolved endpoint IP (for routing)
 	Endpoint     string // Original endpoint (host:port)
+}
+
+// ParseDNSList splits a comma-separated DNS string into trimmed,
+// non-empty entries. Used by both the legacy and NWG paths to convert
+// AWGInterface.DNS (stored as a single string) to a slice for RCI calls.
+func ParseDNSList(dns string) []string {
+	if dns == "" {
+		return nil
+	}
+	var out []string
+	for _, s := range strings.Split(dns, ",") {
+		if trimmed := strings.TrimSpace(s); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 // Validate checks if the configuration is valid.
@@ -235,4 +251,3 @@ func extractTunnelNum(id string) string {
 	}
 	return "0"
 }
-
