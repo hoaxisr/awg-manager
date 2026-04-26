@@ -78,7 +78,8 @@
 			if (!tunnel) return;
 
 			if (tunnel.backend === 'singbox') {
-				if (tunnel.enabled) {
+				const effectiveEnabled = tunnel.enabled && tunnel.status !== 'stopped';
+				if (effectiveEnabled) {
 					await api.removeSingboxPingCheck(tunnelId);
 					notifications.success(`Мониторинг для ${tunnel.tunnelName} отключен`);
 				} else {

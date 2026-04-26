@@ -21,10 +21,11 @@ type singboxMonitor struct {
 	delayChecker *singbox.DelayChecker
 	bus          *events.Bus
 
-	stopCh    chan struct{}
-	wg        sync.WaitGroup
-	mu        sync.Mutex
-	failCount int
+	stopCh       chan struct{}
+	wg           sync.WaitGroup
+	mu           sync.Mutex
+	failCount    int
+	successCount int
 }
 
 // run starts the monitoring loop. It should be launched as a goroutine.
@@ -62,8 +63,10 @@ func (m *singboxMonitor) runCheck(ctx context.Context) {
 	prevFailCount := m.failCount
 	if success {
 		m.failCount = 0
+		m.successCount++
 	} else {
 		m.failCount++
+		m.successCount = 0
 	}
 	currentFailCount := m.failCount
 	m.mu.Unlock()
@@ -124,6 +127,13 @@ func (m *singboxMonitor) getFailCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.failCount
+}
+
+// getSuccessCount returns the current success count in a thread-safe manner.
+func (m *singboxMonitor) getSuccessCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.successCount
 }
 
 // stop terminates the monitor loop and waits for the goroutine to exit.

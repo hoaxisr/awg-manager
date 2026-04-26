@@ -39,15 +39,13 @@
 	let isSingbox = $derived(tunnel.backend === 'singbox');
 
 	let monitorBadgeClass = $derived.by(() => {
-		if (!tunnel.enabled) return 'badge-disabled';
-		if (tunnel.status === 'stopped') return 'badge-warning';
+		if (!tunnel.enabled || tunnel.status === 'stopped') return 'badge-disabled';
 		return 'badge-success';
 	});
 
-	let showCheckBadge = $derived(tunnel.enabled);
+	let showCheckBadge = $derived(tunnel.enabled && tunnel.status !== 'stopped');
 	let checkBadgeClass = $derived.by(() => {
 		if (tunnel.status === 'recovering') return 'badge-warning';
-		if (tunnel.status === 'stopped') return 'badge-disabled';
 		return 'badge-success';
 	});
 </script>
@@ -80,7 +78,7 @@
 				</span>
 			{/if}
 			<Toggle
-				checked={tunnel.enabled}
+				checked={tunnel.enabled && tunnel.status !== 'stopped'}
 				onchange={() => onToggleEnabled(tunnel.tunnelId)}
 				loading={toggleLoading}
 				size="sm"
@@ -102,7 +100,18 @@
 						<span class="detail-label">Ошибок:</span> {tunnel.failCount}
 					</span>
 				{/if}
+			{:else if isSingbox}
+				<!-- Singbox: выводим успехи/ошибки, как и для nativewg -->
+				{#if tunnel.successCount != null || tunnel.failCount > 0 || tunnel.status === 'recovering'}
+					<span class="detail detail-success">
+						<span class="detail-label">Успехов:</span> {tunnel.successCount ?? 0}
+					</span>
+					<span class="detail" class:detail-fail={tunnel.failCount > 0}>
+						<span class="detail-label">Ошибок:</span> {tunnel.failCount}
+					</span>
+				{/if}
 			{:else}
+				<!-- kernel -->
 				{#if tunnel.lastCheck}
 					<span class="detail">
 						<span class="detail-label">Проверка:</span>
