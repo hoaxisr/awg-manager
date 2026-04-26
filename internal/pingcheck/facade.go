@@ -413,8 +413,6 @@ func (f *Facade) SaveSingboxConfig(tag string, cfg SingboxCheckConfig) error {
 	}
 	return err
 }
-	return err
-}
 
 // getSingboxStatuses возвращает список статусов для всех singbox-туннелей.
 func (f *Facade) getSingboxStatuses() []TunnelStatus {
