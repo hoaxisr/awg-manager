@@ -20,11 +20,11 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/api"
-	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/cleanup"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/connectivity"
+	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -330,16 +330,6 @@ func main() {
 	pingCheckService.Start()
 	defer pingCheckService.Stop()
 
-	// Unified facade: kernel → custom loop, NativeWG → NDMS native
-	pingCheckFacade := pingcheck.NewFacade(pingCheckService, awgStore, settingsStore, nwgOp)
-	pingCheckFacade.SetNativeWGLatencyProbe(func(ctx context.Context, tunnelID string) int {
-		res, err := testService.CheckConnectivity(ctx, tunnelID)
-		if err != nil || res == nil || !res.Connected || res.Latency == nil {
-			return pingcheck.LatencyNotAvailable
-		}
-		return *res.Latency
-	})
-
 	// Auth components
 	keeneticClient := auth.NewKeeneticClient()
 	sessionStore := auth.NewSessionStore()
@@ -372,7 +362,6 @@ func main() {
 		}
 	}
 
-
 	// Client route service (per-device VPN routing)
 	clientRouteStore := storage.NewClientRouteStore(*dataDir)
 	clientRouteService := clientroute.New(
@@ -392,7 +381,6 @@ func main() {
 		os5Op.SetHookNotifier(orch)
 	}
 	orch.SetSupportsASC(ndmsinfo.SupportsWireguardASC)
-	orch.SetPingCheck(pingCheckFacade)
 	// dnsRouteService wiring to orchestrator happens later, after ndmsCommands is built.
 	orch.SetClientRoute(clientRouteService)
 
@@ -505,7 +493,6 @@ func main() {
 	orch.SetEventBus(eventBus)
 	loggingService.SetEventBus(eventBus)
 	tunnelService.SetEventBus(eventBus)
-	pingCheckFacade.SetEventBus(eventBus)
 
 	// Stream geo-file download progress over SSE so the UI can show a
 	// real progress bar instead of a guess.
@@ -536,13 +523,29 @@ func main() {
 	defer connMonitor.Stop()
 
 	// Sing-box integration
+	singboxDir := filepath.Join(*dataDir, "singbox")
 	singboxOp := singbox.NewOperator(singbox.OperatorDeps{
 		Log:      slog.Default().With("component", "singbox"),
 		Queries:  ndmsQueries,
 		Commands: ndmsCommands,
+		Dir:      singboxDir,
 	})
 	delayChecker := singbox.NewDelayChecker(singboxOp.Clash(), singboxOp, eventBus)
+
+	// Unified facade: kernel → custom loop, NativeWG → NDMS native, Singbox → delay checker
+	pingCheckFacade := pingcheck.NewFacade(pingCheckService, awgStore, settingsStore, nwgOp, singboxDir, delayChecker)
+	pingCheckFacade.SetNativeWGLatencyProbe(func(ctx context.Context, tunnelID string) int {
+		res, err := testService.CheckConnectivity(ctx, tunnelID)
+		if err != nil || res == nil || !res.Connected || res.Latency == nil {
+			return pingcheck.LatencyNotAvailable
+		}
+		return *res.Latency
+	})
+	pingCheckFacade.SetEventBus(eventBus)
+	orch.SetPingCheck(pingCheckFacade)
+
 	singboxHandler := api.NewSingboxHandler(singboxOp, eventBus, delayChecker, testService)
+	singboxHandler.SetPingCheckService(pingCheckFacade)
 	clashProxy := api.NewClashProxy(singboxOp)
 
 	// Watchdog: runs an immediate reconcile (replacing the old one-shot

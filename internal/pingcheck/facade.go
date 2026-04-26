@@ -7,8 +7,9 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
-	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/singbox"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
@@ -27,7 +28,7 @@ func (a *nwgOpPollAdapter) PollPingCheck(ctx context.Context, tunnelID string) (
 	return a.op.GetPingCheckStatus(ctx, stored)
 }
 
-// Facade unifies kernel (custom loop) and NativeWG (NDMS native) ping-check
+// Facade unifies kernel (custom loop), NativeWG (NDMS native), and Singbox ping-check
 // behind a single interface. All dispatch is based on stored.Backend.
 type Facade struct {
 	custom   *Service
@@ -40,13 +41,23 @@ type Facade struct {
 	nwgMonMu        sync.RWMutex
 	nwgMonitors     map[string]*nwgMonitor
 	nwgLatencyProbe func(context.Context, string) int // returns latency in ms, <=0 when unavailable
-	ctx             context.Context
-	cancel          context.CancelFunc
+
+	// Singbox fields
+	singboxDir   string
+	delayChecker *singbox.DelayChecker
+
+	singboxMonMu     sync.Mutex
+	singboxMonitors  map[string]*singboxMonitor // key = tag
+	singboxConfigs   map[string]*SingboxCheckConfig
+	singboxCfgLoaded bool
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // NewFacade creates a unified ping-check facade.
 // nwgOp may be nil if NativeWG is unavailable.
-func NewFacade(custom *Service, tunnels *storage.AWGTunnelStore, settings *storage.SettingsStore, nwgOp *nwg.OperatorNativeWG) *Facade {
+func NewFacade(custom *Service, tunnels *storage.AWGTunnelStore, settings *storage.SettingsStore, nwgOp *nwg.OperatorNativeWG, singboxDir string, delayChecker *singbox.DelayChecker) *Facade {
 	ctx, cancel := context.WithCancel(context.Background())
 	f := &Facade{
 		custom:      custom,
@@ -54,8 +65,14 @@ func NewFacade(custom *Service, tunnels *storage.AWGTunnelStore, settings *stora
 		settings:    settings,
 		nwgOp:       nwgOp,
 		nwgMonitors: make(map[string]*nwgMonitor),
-		ctx:         ctx,
-		cancel:      cancel,
+
+		singboxDir:      singboxDir,
+		delayChecker:    delayChecker,
+		singboxMonitors: make(map[string]*singboxMonitor),
+		singboxConfigs:  make(map[string]*SingboxCheckConfig),
+
+		ctx:    ctx,
+		cancel: cancel,
 	}
 	if nwgOp != nil {
 		f.nwgSource = &nwgOpPollAdapter{op: nwgOp, tunnels: tunnels}
@@ -120,6 +137,12 @@ func (f *Facade) GetStatus() []TunnelStatus {
 	if f.nwgOp != nil {
 		nwgStatuses := f.getNativeWGStatuses()
 		result = append(result, nwgStatuses...)
+	}
+
+	// Merge Singbox statuses
+	if f.delayChecker != nil {
+		sbStatuses := f.getSingboxStatuses()
+		result = append(result, sbStatuses...)
 	}
 
 	sort.Slice(result, func(i, j int) bool {
@@ -237,6 +260,146 @@ func (f *Facade) isNwgRestartDetected(tunnelID string) bool {
 		return false
 	}
 	return mon.restartDetected
+}
+
+// loadSingboxConfigsIfNeeded загружает конфигурации мониторинга singbox из файла.
+func (f *Facade) loadSingboxConfigsIfNeeded() {
+	if f.singboxCfgLoaded {
+		return
+	}
+	cfgs, err := loadSingboxConfigs(f.singboxDir)
+	if err != nil {
+		return
+	}
+	f.singboxConfigs = cfgs
+	f.singboxCfgLoaded = true
+}
+
+// isSingbox проверяет, относится ли тег к singbox-туннелю.
+func (f *Facade) isSingbox(tag string) bool {
+	f.loadSingboxConfigsIfNeeded()
+	_, exists := f.singboxConfigs[tag]
+	return exists
+}
+
+// StartMonitoringByTag запускает мониторинг singbox туннеля по тегу.
+func (f *Facade) StartMonitoringByTag(tag, tunnelName string) {
+	f.loadSingboxConfigsIfNeeded()
+	cfg, ok := f.singboxConfigs[tag]
+	if !ok {
+		cfg = &SingboxCheckConfig{Enabled: false}
+		f.singboxConfigs[tag] = cfg
+	}
+	if !cfg.Enabled {
+		return
+	}
+
+	interval := time.Duration(cfg.Interval) * time.Second
+	if interval < 5*time.Second {
+		interval = 10 * time.Second
+	}
+
+	f.singboxMonMu.Lock()
+	// Stop existing monitor if any
+	if old, exists := f.singboxMonitors[tag]; exists {
+		old.stop()
+		delete(f.singboxMonitors, tag)
+	}
+
+	mon := &singboxMonitor{
+		tag:          tag,
+		tunnelName:   tunnelName,
+		interval:     interval,
+		threshold:    cfg.FailThreshold,
+		logBuffer:    f.custom.logBuffer,
+		delayChecker: f.delayChecker,
+		bus:          f.bus,
+		stopCh:       make(chan struct{}),
+	}
+	mon.wg.Add(1)
+	go mon.run(f.ctx)
+	f.singboxMonitors[tag] = mon
+	f.singboxMonMu.Unlock()
+}
+
+// StopMonitoringByTag останавливает мониторинг singbox туннеля.
+func (f *Facade) StopMonitoringByTag(tag string) {
+	f.singboxMonMu.Lock()
+	mon, ok := f.singboxMonitors[tag]
+	if ok {
+		delete(f.singboxMonitors, tag)
+	}
+	f.singboxMonMu.Unlock()
+	if ok {
+		mon.stop()
+	}
+}
+
+// GetTunnelPingStatusByTag возвращает легковесный статус для списка туннелей.
+func (f *Facade) GetTunnelPingStatusByTag(tag string) TunnelPingInfo {
+	f.loadSingboxConfigsIfNeeded()
+	cfg, ok := f.singboxConfigs[tag]
+	if !ok || !cfg.Enabled {
+		return TunnelPingInfo{Status: "disabled"}
+	}
+	f.singboxMonMu.Lock()
+	mon, active := f.singboxMonitors[tag]
+	f.singboxMonMu.Unlock()
+	if !active {
+		return TunnelPingInfo{Status: "disabled"}
+	}
+	if mon.failCount > 0 {
+		return TunnelPingInfo{
+			Status:        "recovering",
+			FailCount:     mon.failCount,
+			FailThreshold: cfg.FailThreshold,
+		}
+	}
+	return TunnelPingInfo{
+		Status:        "alive",
+		FailThreshold: cfg.FailThreshold,
+	}
+}
+
+// SaveSingboxConfig persists singbox monitoring configuration for a tag.
+func (f *Facade) SaveSingboxConfig(tag string, cfg SingboxCheckConfig) error {
+	f.loadSingboxConfigsIfNeeded()
+	f.singboxConfigs[tag] = &cfg
+	return saveSingboxConfigs(f.singboxDir, f.singboxConfigs)
+}
+
+// getSingboxStatuses возвращает список статусов для всех singbox-туннелей.
+func (f *Facade) getSingboxStatuses() []TunnelStatus {
+	f.loadSingboxConfigsIfNeeded()
+	var result []TunnelStatus
+	for tag, cfg := range f.singboxConfigs {
+		ts := TunnelStatus{
+			TunnelID:      tag,
+			TunnelName:    tag, // можно будет улучшить позже
+			Enabled:       cfg.Enabled,
+			Backend:       "singbox",
+			Status:        "disabled",
+			Method:        "delay",
+			FailThreshold: cfg.FailThreshold,
+		}
+		if cfg.Enabled {
+			f.singboxMonMu.Lock()
+			mon, active := f.singboxMonitors[tag]
+			f.singboxMonMu.Unlock()
+			if active {
+				ts.FailCount = mon.failCount
+				if mon.failCount >= cfg.FailThreshold {
+					ts.Status = "recovering"
+				} else {
+					ts.Status = "alive"
+				}
+			} else {
+				ts.Status = "stopped"
+			}
+		}
+		result = append(result, ts)
+	}
+	return result
 }
 
 // startNwgMonitor creates and starts a poll-based nwgMonitor for the given tunnel.
@@ -434,6 +597,13 @@ func (f *Facade) CheckAllNow() {
 	for _, m := range monitors {
 		m.triggerPoll()
 	}
+
+	// Poke singbox monitors
+	f.singboxMonMu.Lock()
+	for _, m := range f.singboxMonitors {
+		go m.runCheck(f.ctx)
+	}
+	f.singboxMonMu.Unlock()
 }
 
 // IsEnabled returns whether ping check is globally enabled.
@@ -457,6 +627,14 @@ func (f *Facade) StartMonitoringAllRunning() {
 		}
 		f.startNwgMonitor(t.ID, t.Name)
 	}
+
+	// Start singbox monitors for enabled configs
+	f.loadSingboxConfigsIfNeeded()
+	for tag, cfg := range f.singboxConfigs {
+		if cfg.Enabled {
+			f.StartMonitoringByTag(tag, tag) // name = tag for now
+		}
+	}
 }
 
 // StopMonitoringAll stops all monitoring.
@@ -475,6 +653,13 @@ func (f *Facade) StopMonitoringAll() {
 	for _, mon := range monitors {
 		mon.stop()
 	}
+
+	f.singboxMonMu.Lock()
+	for tag, mon := range f.singboxMonitors {
+		mon.stop()
+		delete(f.singboxMonitors, tag)
+	}
+	f.singboxMonMu.Unlock()
 }
 
 // Stop stops all monitoring: cancels nwgMonitor goroutines, then stops the custom service.
@@ -492,6 +677,13 @@ func (f *Facade) Stop() {
 	for _, mon := range monitors {
 		mon.stop()
 	}
+
+	f.singboxMonMu.Lock()
+	for _, mon := range f.singboxMonitors {
+		mon.stop()
+	}
+	f.singboxMonitors = make(map[string]*singboxMonitor)
+	f.singboxMonMu.Unlock()
 
 	f.custom.Stop()
 }

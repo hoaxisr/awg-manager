@@ -17,10 +17,10 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/api"
-	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/connections"
+	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -837,6 +837,18 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			}
 		}))
+		// Per-tunnel ping check for singbox
+		mux.HandleFunc("/api/singbox/tunnels/pingcheck", guarded(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				s.singboxHandler.GetPingCheckStatus(w, r)
+			case http.MethodPost:
+				s.singboxHandler.ConfigurePingCheck(w, r)
+			default:
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		}))
+		mux.HandleFunc("/api/singbox/tunnels/pingcheck/remove", guarded(s.singboxHandler.RemovePingCheck))
 	}
 	if s.clashProxy != nil {
 		mux.HandleFunc("/api/singbox/clash/", guarded(s.clashProxy.ServeHTTP))

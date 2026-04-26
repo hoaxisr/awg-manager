@@ -57,6 +57,14 @@ func (m *mockPingCheckService) GetTunnelPingStatus(tunnelID string) pingcheck.Tu
 
 func (m *mockPingCheckService) Stop() {}
 
+func (m *mockPingCheckService) StartMonitoringByTag(tag, tunnelName string) {}
+
+func (m *mockPingCheckService) StopMonitoringByTag(tag string) {}
+
+func (m *mockPingCheckService) GetTunnelPingStatusByTag(tag string) pingcheck.TunnelPingInfo {
+	return pingcheck.TunnelPingInfo{Status: "disabled"}
+}
+
 func TestPingCheckHandler_GetStatus(t *testing.T) {
 	now := time.Now()
 	svc := &mockPingCheckService{
@@ -86,7 +94,7 @@ func TestPingCheckHandler_GetStatus(t *testing.T) {
 
 	var resp struct {
 		Data struct {
-			Enabled bool               `json:"enabled"`
+			Enabled bool                     `json:"enabled"`
 			Tunnels []pingcheck.TunnelStatus `json:"tunnels"`
 		} `json:"data"`
 	}

@@ -6,10 +6,10 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/response"
-	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
@@ -30,6 +30,12 @@ type PingCheckService interface {
 	StartMonitoring(tunnelID, tunnelName string, skipConfigure ...bool)
 	StopMonitoring(tunnelID string)
 	GetTunnelPingStatus(tunnelID string) pingcheck.TunnelPingInfo
+
+	// Per-tag singbox monitoring
+	StartMonitoringByTag(tag, tunnelName string)
+	StopMonitoringByTag(tag string)
+	GetTunnelPingStatusByTag(tag string) pingcheck.TunnelPingInfo
+	SaveSingboxConfig(tag string, cfg pingcheck.SingboxCheckConfig) error
 }
 
 // PingCheckHandler handles ping check API endpoints.
@@ -331,4 +337,21 @@ func (h *PingCheckHandler) RemoveTunnelPingCheck(w http.ResponseWriter, r *http.
 	h.PublishSnapshot()
 
 	response.Success(w, map[string]bool{"success": true})
+}
+
+// --- Singbox per-tag monitoring methods ---
+
+// StartMonitoringByTag delegates to the underlying PingCheckService.
+func (h *PingCheckHandler) StartMonitoringByTag(tag, name string) {
+	h.service.StartMonitoringByTag(tag, name)
+}
+
+// StopMonitoringByTag delegates to the underlying PingCheckService.
+func (h *PingCheckHandler) StopMonitoringByTag(tag string) {
+	h.service.StopMonitoringByTag(tag)
+}
+
+// GetTunnelPingStatusByTag returns lightweight ping status for a singbox tunnel tag.
+func (h *PingCheckHandler) GetTunnelPingStatusByTag(tag string) pingcheck.TunnelPingInfo {
+	return h.service.GetTunnelPingStatusByTag(tag)
 }
