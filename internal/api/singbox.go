@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/testing"
@@ -20,11 +21,17 @@ type SingboxHandler struct {
 	bus          *events.Bus
 	delayChecker *singbox.DelayChecker
 	testingSvc   *testing.Service
+	pingCheckSvc PingCheckService
 }
 
 // NewSingboxHandler creates a new singbox handler.
 func NewSingboxHandler(op *singbox.Operator, bus *events.Bus, dc *singbox.DelayChecker, ts *testing.Service) *SingboxHandler {
 	return &SingboxHandler{op: op, bus: bus, delayChecker: dc, testingSvc: ts}
+}
+
+// SetPingCheckService wires the ping check service for per-tunnel monitoring.
+func (h *SingboxHandler) SetPingCheckService(svc PingCheckService) {
+	h.pingCheckSvc = svc
 }
 
 // DelayCheck handles POST /api/singbox/tunnels/delay-check?tag=X.
@@ -362,4 +369,80 @@ func (h *SingboxHandler) DeleteTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Success(w, out)
+}
+
+// ConfigurePingCheck handles POST /api/singbox/tunnels/pingcheck?tag=X
+// Body: {"enabled":bool,"interval":int,"failThreshold":int}
+func (h *SingboxHandler) ConfigurePingCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	tag := r.URL.Query().Get("tag")
+	if tag == "" {
+		response.BadRequest(w, "tag required")
+		return
+	}
+	if h.pingCheckSvc == nil {
+		response.InternalError(w, "ping check service not wired")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	var cfg pingcheck.SingboxCheckConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "invalid JSON", "INVALID_JSON")
+		return
+	}
+	if err := h.pingCheckSvc.SaveSingboxConfig(tag, cfg); err != nil {
+		response.InternalError(w, "failed to save config: "+err.Error())
+		return
+	}
+	if cfg.Enabled {
+		h.pingCheckSvc.StartMonitoringByTag(tag, tag) // name = tag for now
+	} else {
+		h.pingCheckSvc.StopMonitoringByTag(tag)
+	}
+	response.Success(w, map[string]bool{"success": true})
+}
+
+// RemovePingCheck handles POST /api/singbox/tunnels/pingcheck/remove?tag=X
+func (h *SingboxHandler) RemovePingCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	tag := r.URL.Query().Get("tag")
+	if tag == "" {
+		response.BadRequest(w, "tag required")
+		return
+	}
+	if h.pingCheckSvc == nil {
+		response.InternalError(w, "ping check service not wired")
+		return
+	}
+	if err := h.pingCheckSvc.SaveSingboxConfig(tag, pingcheck.SingboxCheckConfig{Enabled: false}); err != nil {
+		response.InternalError(w, "failed to update config: "+err.Error())
+		return
+	}
+	h.pingCheckSvc.StopMonitoringByTag(tag)
+	response.Success(w, map[string]bool{"success": true})
+}
+
+// GetPingCheckStatus handles GET /api/singbox/tunnels/pingcheck?tag=X
+func (h *SingboxHandler) GetPingCheckStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	tag := r.URL.Query().Get("tag")
+	if tag == "" {
+		response.BadRequest(w, "tag required")
+		return
+	}
+	if h.pingCheckSvc == nil {
+		response.InternalError(w, "ping check service not wired")
+		return
+	}
+	status := h.pingCheckSvc.GetTunnelPingStatusByTag(tag)
+	response.Success(w, status)
 }
