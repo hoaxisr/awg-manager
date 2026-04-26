@@ -142,14 +142,21 @@
 			singboxName = tunnel.tunnelName;
 			try {
 				const res = await api.getSingboxPingCheckStatus(tunnel.tunnelId);
-				singboxCurrentEnabled = res.status !== 'disabled' && res.status !== 'stopped';
-				singboxCurrentThreshold = res.failThreshold || 3;
-				const last = singboxLastConfig[tunnel.tunnelId];
-				singboxCurrentInterval = last?.interval ?? 30;
+				// Используем поля из нового ответа API, учитывая статус stopped
+				singboxCurrentEnabled = (res.enabled ?? false) && res.status !== 'stopped';
+				singboxCurrentThreshold = res.failThreshold ?? 3;
+				singboxCurrentInterval = res.intervalSec ?? 30; // fallback на локальное хранилище, если API не вернул
+				// Сохраняем как последнюю известную конфигурацию
+				singboxLastConfig[tunnel.tunnelId] = {
+					interval: singboxCurrentInterval,
+					threshold: singboxCurrentThreshold
+				};
 			} catch (e) {
+				// Ошибка – берём из локального кэша или дефолты
+				const last = singboxLastConfig[tunnel.tunnelId];
 				singboxCurrentEnabled = false;
-				singboxCurrentThreshold = 3;
-				singboxCurrentInterval = 30;
+				singboxCurrentThreshold = last?.threshold ?? 3;
+				singboxCurrentInterval = last?.interval ?? 30;
 			}
 			singboxSettingsOpen = true;
 			return;

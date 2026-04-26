@@ -1218,7 +1218,13 @@ class ApiClient {
 		});
 	}
 
-	async getSingboxPingCheckStatus(tag: string): Promise<{ status: string; failCount: number; failThreshold: number }> {
+	async getSingboxPingCheckStatus(tag: string): Promise<{
+		status: string;
+		failCount: number;
+		failThreshold: number;
+		enabled: boolean;
+		intervalSec: number;
+	}> {
 		return this.request(`/singbox/tunnels/pingcheck?tag=${encodeURIComponent(tag)}`);
 	}
 

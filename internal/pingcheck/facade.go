@@ -370,27 +370,49 @@ func (f *Facade) GetTunnelPingStatusByTag(tag string) TunnelPingInfo {
 	f.singboxCfgMu.RLock()
 	cfg, ok := f.singboxConfigs[tag]
 	f.singboxCfgMu.RUnlock()
+
 	if !ok || !cfg.Enabled {
-		return TunnelPingInfo{Status: "disabled"}
+		return TunnelPingInfo{
+			Status:  "disabled",
+			Enabled: cfg != nil && cfg.Enabled,
+			FailThreshold: func() int {
+				if cfg != nil {
+					return cfg.FailThreshold
+				}
+				return 3
+			}(),
+			IntervalSec: func() int {
+				if cfg != nil {
+					return cfg.Interval
+				}
+				return 30
+			}(),
+		}
 	}
+
 	f.singboxMonMu.Lock()
 	mon, active := f.singboxMonitors[tag]
 	f.singboxMonMu.Unlock()
-	if !active {
-		return TunnelPingInfo{Status: "disabled"}
+
+	failCount := 0
+	if active {
+		failCount = mon.getFailCount()
 	}
-	failCount := mon.getFailCount()
-	if failCount >= cfg.FailThreshold {
-		return TunnelPingInfo{
-			Status:        "recovering",
-			FailCount:     failCount,
-			FailThreshold: cfg.FailThreshold,
-		}
-	}
-	return TunnelPingInfo{
-		Status:        "alive",
+
+	info := TunnelPingInfo{
+		Enabled:       true,
 		FailThreshold: cfg.FailThreshold,
+		IntervalSec:   cfg.Interval,
+		Status:        "alive",
+		FailCount:     failCount,
 	}
+	if failCount >= cfg.FailThreshold {
+		info.Status = "recovering"
+	}
+	if !active {
+		info.Status = "stopped"
+	}
+	return info
 }
 
 // SaveSingboxConfig persists singbox monitoring configuration for a tag.
