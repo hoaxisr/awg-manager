@@ -439,7 +439,13 @@ func (h *SingboxHandler) RemovePingCheck(w http.ResponseWriter, r *http.Request)
 		response.InternalError(w, "ping check service not wired")
 		return
 	}
-	if err := h.pingCheckSvc.SaveSingboxConfig(tag, pingcheck.SingboxCheckConfig{Enabled: false}); err != nil {
+	// Получаем текущий конфиг (он точно существует, т.к. мы его ранее создавали)
+	current := h.pingCheckSvc.GetTunnelPingStatusByTag(tag)
+	if err := h.pingCheckSvc.SaveSingboxConfig(tag, pingcheck.SingboxCheckConfig{
+		Enabled:       false,
+		Interval:      current.IntervalSec,
+		FailThreshold: current.FailThreshold,
+	}); err != nil {
 		response.InternalError(w, "failed to update config: "+err.Error())
 		return
 	}
