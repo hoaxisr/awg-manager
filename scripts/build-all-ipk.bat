@@ -68,6 +68,49 @@ echo  Done! Both IPKs created in dist\
 echo ========================================
 dir "!PROJECT!\dist\*.ipk"
 
+echo.
+echo ========================================
+echo  Uploading and installing on rax1
+echo ========================================
+
+:: Find the latest aarch64 IPK
+set "LATEST_IPK="
+for /f "delims=" %%f in ('dir /b /o-d "!PROJECT!\dist\awg-manager*aarch64*.ipk" 2^>nul') do (
+    set "LATEST_IPK=%%f"
+    goto :found
+)
+:found
+if not defined LATEST_IPK (
+    echo ERROR: No aarch64 IPK found in dist\
+    pause
+    exit /b 1
+)
+
+echo Using latest aarch64 IPK: %LATEST_IPK%
+
+:: Upload and install on rax1
+echo Uploading %LATEST_IPK%...
+type "!PROJECT!\dist\%LATEST_IPK%" | ssh rax1 "cat > /opt/tmp/%LATEST_IPK%"
+if !errorlevel! neq 0 (
+    echo ERROR: Failed to upload %LATEST_IPK%
+    pause
+    exit /b 1
+)
+
+echo Installing %LATEST_IPK% on rax1?
+pause
+
+echo Installing %LATEST_IPK% on rax1...
+ssh rax1 "opkg install /opt/tmp/%LATEST_IPK%"
+if !errorlevel! neq 0 (
+    echo ERROR: Failed to install %LATEST_IPK%
+    pause
+    exit /b 1
+)
+
+echo.
+echo All IPKs uploaded and installed successfully!
+
 pause
 endlocal
 exit /b 0

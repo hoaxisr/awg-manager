@@ -109,7 +109,8 @@
 	let busy = $derived(saving || removing);
 </script>
 
-<Modal {open} title="Мониторинг: {tunnelName}" size="sm" {onclose}>
+<Modal {open} title="Мониторинг Native" size="sm" {onclose}>
+	<div class="modal-subtitle">{tunnelName}</div>
 	<div class="presets">
 		{#each presets as p}
 			<button class="preset-btn" onclick={() => applyPreset(p)} disabled={busy}>{p.label}</button>
@@ -274,6 +275,13 @@
 	.restart-hint {
 		font-size: 0.6875rem;
 		color: var(--text-muted);
+	}
+
+	.modal-subtitle {
+		font-size: 0.875rem;
+		color: var(--text-muted);
+		margin-bottom: 1rem;
+		font-weight: 500;
 	}
 
 	.actions-spacer {

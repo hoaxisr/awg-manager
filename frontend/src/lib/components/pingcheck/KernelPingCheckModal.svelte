@@ -85,7 +85,8 @@
 	}
 </script>
 
-<Modal {open} title="Настройки мониторинга: {tunnelName}" size="sm" {onclose}>
+<Modal {open} title="Мониторинг Kernel" size="sm" {onclose}>
+	<div class="modal-subtitle">{tunnelName}</div>
 	{#if loading}
 		<div class="loading-state">Загрузка...</div>
 	{:else}
@@ -145,6 +146,13 @@
 		font-size: 0.6875rem;
 		text-transform: uppercase;
 		color: var(--text-muted);
+	}
+
+	.modal-subtitle {
+		font-size: 0.875rem;
+		color: var(--text-muted);
+		margin-bottom: 1rem;
+		font-weight: 500;
 	}
 
 	.loading-state {
