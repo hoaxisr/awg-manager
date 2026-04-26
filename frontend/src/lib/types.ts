@@ -712,7 +712,7 @@ export interface TunnelPingStatus {
 	tunnelId: string;
 	tunnelName: string;
 	enabled: boolean;
-	backend: 'kernel' | 'nativewg';
+	backend: 'kernel' | 'nativewg' | 'singbox';
 	status: 'alive' | 'recovering' | 'disabled' | 'stopped';
 	method: string;
 	lastCheck?: string;

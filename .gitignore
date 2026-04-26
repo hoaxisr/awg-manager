@@ -49,3 +49,5 @@ scripts/release.sh
 scripts/backfill-changelog.sh
 scripts/build-singbox-naive.sh
 scripts/publish-github-release.sh
+
+frontend/tsconfig.tsbuildinfo

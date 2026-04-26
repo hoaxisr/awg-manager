@@ -1204,6 +1204,24 @@ class ApiClient {
 		return es;
 	}
 
+	// Singbox ping check
+	async configureSingboxPingCheck(tag: string, config: { enabled: boolean; intervalSec?: number; failThreshold?: number }): Promise<void> {
+		await this.request(`/singbox/tunnels/pingcheck?tag=${encodeURIComponent(tag)}`, {
+			method: 'POST',
+			body: JSON.stringify(config)
+		});
+	}
+
+	async removeSingboxPingCheck(tag: string): Promise<void> {
+		await this.request(`/singbox/tunnels/pingcheck/remove?tag=${encodeURIComponent(tag)}`, {
+			method: 'POST'
+		});
+	}
+
+	async getSingboxPingCheckStatus(tag: string): Promise<{ status: string; failCount: number; failThreshold: number }> {
+		return this.request(`/singbox/tunnels/pingcheck?tag=${encodeURIComponent(tag)}`);
+	}
+
 	// #endregion
 
 	// ─────────────────────────────────────────────

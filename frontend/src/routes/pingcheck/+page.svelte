@@ -7,7 +7,7 @@
 	import { systemInfo } from '$lib/stores/system';
 	import { PageContainer, LoadingSpinner } from '$lib/components/layout';
 	import { StoreStatusBadge } from '$lib/components/ui';
-	import { PingCheckStatusCard, PingCheckLogsTable, KernelPingCheckModal, NativeWGPingCheckModal } from '$lib/components/pingcheck';
+	import { PingCheckStatusCard, PingCheckLogsTable, KernelPingCheckModal, NativeWGPingCheckModal, SingboxPingCheckModal } from '$lib/components/pingcheck';
 
 	let unsub: (() => void) | undefined;
 	onMount(() => {
@@ -37,6 +37,10 @@
 	let settingsTunnelId = $state('');
 	let settingsTunnelName = $state('');
 	let nwgSettingsStatus = $state<NativePingCheckStatus | null>(null);
+
+	let singboxSettingsOpen = $state(false);
+	let singboxTag = $state('');
+	let singboxName = $state('');
 
 	async function triggerCheck() {
 		checking = true;
@@ -69,6 +73,12 @@
 			const tunnel = statuses.find(t => t.tunnelId === tunnelId);
 			if (!tunnel) return;
 
+			if (tunnel.backend === 'singbox') {
+				// Управление только через модалку
+				togglingTunnelId = null;
+				return;
+			}
+
 			if (tunnel.backend === 'nativewg') {
 				if (tunnel.enabled) {
 					await api.removeNativePingCheck(tunnelId);
@@ -100,6 +110,7 @@
 	function closeSettings() {
 		kernelSettingsOpen = false;
 		nwgSettingsOpen = false;
+		singboxSettingsOpen = false;
 	}
 
 	function openSettings(tunnelId: string) {
@@ -114,6 +125,10 @@
 			}).catch(() => {
 				notifications.error('Не удалось загрузить настройки');
 			});
+		} else if (tunnel.backend === 'singbox') {
+			singboxTag = tunnel.tunnelId;
+			singboxName = tunnel.tunnelName;
+			singboxSettingsOpen = true;
 		} else {
 			kernelSettingsOpen = true;
 		}
@@ -178,6 +193,14 @@
 		bind:open={kernelSettingsOpen}
 		tunnelId={settingsTunnelId}
 		tunnelName={settingsTunnelName}
+		onclose={() => closeSettings()}
+		onSaved={() => { pingCheckStatus.invalidate(); closeSettings(); }}
+	/>
+
+	<SingboxPingCheckModal
+		bind:open={singboxSettingsOpen}
+		tag={singboxTag}
+		tunnelName={singboxName}
 		onclose={() => closeSettings()}
 		onSaved={() => { pingCheckStatus.invalidate(); closeSettings(); }}
 	/>

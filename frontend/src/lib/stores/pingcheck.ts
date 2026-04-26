@@ -73,3 +73,15 @@ export function clearPingLogs() {
 	pingCheckLogs.set([]);
 	seenKeys.clear();
 }
+
+// Настройка мониторинга singbox-туннеля
+export async function configureSingboxPingCheck(tag: string, config: { enabled: boolean; intervalSec?: number; failThreshold?: number }) {
+	await api.configureSingboxPingCheck(tag, config);
+	pingCheckStatus.invalidate(); // обновить общий список статусов
+}
+
+// Удаление мониторинга singbox-туннеля
+export async function removeSingboxPingCheck(tag: string) {
+	await api.removeSingboxPingCheck(tag);
+	pingCheckStatus.invalidate();
+}
