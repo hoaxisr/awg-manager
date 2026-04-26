@@ -9,8 +9,8 @@ import (
 	"strconv"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
-	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/testing"
@@ -380,7 +380,7 @@ func (h *SingboxHandler) DeleteTunnel(w http.ResponseWriter, r *http.Request) {
 }
 
 // ConfigurePingCheck handles POST /api/singbox/tunnels/pingcheck?tag=X
-// Body: {"enabled":bool,"interval":int,"failThreshold":int}
+// Body: {"enabled":bool,"intervalSec":int,"failThreshold":int}
 func (h *SingboxHandler) ConfigurePingCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -400,6 +400,16 @@ func (h *SingboxHandler) ConfigurePingCheck(w http.ResponseWriter, r *http.Reque
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
 		response.ErrorWithStatus(w, http.StatusBadRequest, "invalid JSON", "INVALID_JSON")
 		return
+	}
+	if cfg.Enabled {
+		if cfg.Interval < 10 || cfg.Interval > 3600 {
+			response.ErrorWithStatus(w, http.StatusBadRequest, "intervalSec must be between 10 and 3600", "INVALID_INTERVAL")
+			return
+		}
+		if cfg.FailThreshold < 1 || cfg.FailThreshold > 100 {
+			response.ErrorWithStatus(w, http.StatusBadRequest, "failThreshold must be between 1 and 100", "INVALID_THRESHOLD")
+			return
+		}
 	}
 	if err := h.pingCheckSvc.SaveSingboxConfig(tag, cfg); err != nil {
 		response.InternalError(w, "failed to save config: "+err.Error())
