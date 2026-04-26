@@ -52,9 +52,7 @@ func (m *singboxMonitor) run(ctx context.Context) {
 // runCheck performs a single delay test and updates the monitor state.
 // It is also triggered externally by CheckAllNow.
 func (m *singboxMonitor) runCheck(ctx context.Context) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	// 1. Выполняем I/O (сетевой запрос) БЕЗ блокировки
 	delay, err := m.delayChecker.CheckOne(ctx, m.tag)
 	if err != nil {
 		delay = 0
@@ -63,55 +61,40 @@ func (m *singboxMonitor) runCheck(ctx context.Context) {
 	now := time.Now()
 	success := delay > 0
 
-	var prevFailCount int
-	prevFailCount = m.failCount
+	// 2. Блокируем ТОЛЬКО изменение счетчиков
+	m.mu.Lock()
+	prevFailCount := m.failCount
 	if success {
 		m.failCount = 0
 	} else {
 		m.failCount++
 	}
+	currentFailCount := m.failCount // сохраняем для безопасного использования ниже
+	m.mu.Unlock()
 
-	// Build log entry
+	// 3. Собираем лог (один раз!)
 	entry := LogEntry{
 		Timestamp:  now,
-		TunnelID:   m.tag, // using tag as identifier
+		TunnelID:   m.tag, // используем тег как идентификатор
 		TunnelName: m.tunnelName,
 		Success:    success,
 		Latency:    delay,
-		FailCount:  m.failCount,
+		FailCount:  currentFailCount,
 		Threshold:  m.threshold,
 		Backend:    "singbox",
 	}
 	if !success {
 		entry.Error = "timeout or unreachable"
 	}
+
+	// Используем prevFailCount для определения момента восстановления
 	if prevFailCount >= m.threshold && success {
 		entry.StateChange = "recovered"
-	} else if m.failCount >= m.threshold {
-		entry.StateChange = "link_toggle" // placeholder; no actual toggle possible
+	} else if currentFailCount >= m.threshold {
+		entry.StateChange = "link_toggle" // плейсхолдер; реального переключения пока нет
 	}
 
-	// Build log entry
-	entry := LogEntry{
-		Timestamp:  now,
-		TunnelID:   m.tag, // using tag as identifier
-		TunnelName: m.tunnelName,
-		Success:    success,
-		Latency:    delay,
-		FailCount:  m.failCount,
-		Threshold:  m.threshold,
-		Backend:    "singbox",
-	}
-	if !success {
-		entry.Error = "timeout or unreachable"
-	}
-	if m.failCount >= m.threshold && success {
-		entry.StateChange = "recovered"
-	} else if m.failCount >= m.threshold {
-		entry.StateChange = "link_toggle" // placeholder; no actual toggle possible
-	}
-
-	// Add to shared log buffer (same one used by kernel/nativewg monitors)
+	// 4. Публикуем события в шину и буфер логов
 	m.logBuffer.Add(entry)
 
 	// Publish SSE event if bus is set
@@ -139,7 +122,7 @@ func (m *singboxMonitor) runCheck(ctx context.Context) {
 		m.bus.Publish("pingcheck:state", events.PingCheckStateEvent{
 			TunnelID:  m.tag,
 			Status:    newStatus,
-			FailCount: m.failCount,
+			FailCount: currentFailCount,
 		})
 	}
 }
