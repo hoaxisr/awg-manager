@@ -47,4 +47,6 @@ type TunnelPingInfo struct {
 	RestartCount  int    `json:"restartCount"`  // link toggle attempts
 	FailCount     int    `json:"failCount"`     // current consecutive failures
 	FailThreshold int    `json:"failThreshold"` // threshold for link toggle
+	Enabled       bool   `json:"enabled"`       // whether monitoring is enabled
+	IntervalSec   int    `json:"intervalSec"`   // check interval in seconds
 }
