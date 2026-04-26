@@ -370,6 +370,11 @@ func (h *SingboxHandler) DeleteTunnel(w http.ResponseWriter, r *http.Request) {
 		response.InternalError(w, err.Error())
 		return
 	}
+	if h.pingCheckSvc != nil {
+		if err := h.pingCheckSvc.DeleteSingboxConfig(tag); err != nil {
+			h.log.Warn("ping-check-cleanup", tag, "Failed to delete ping check config after tunnel removal: "+err.Error())
+		}
+	}
 	publishInvalidated(h.bus, ResourceSingboxTunnels, "tunnel-removed")
 	out, err := h.enrichedTunnels(r.Context())
 	if err != nil {

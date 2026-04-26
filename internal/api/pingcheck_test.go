@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -66,6 +67,14 @@ func (m *mockPingCheckService) GetTunnelPingStatusByTag(tag string) pingcheck.Tu
 }
 
 func (m *mockPingCheckService) SaveSingboxConfig(tag string, cfg pingcheck.SingboxCheckConfig) error {
+	return nil
+}
+
+func (m *mockPingCheckService) DeleteSingboxConfig(tag string) error {
+	return nil
+}
+
+func (m *mockPingCheckService) CleanupOrphanedSingboxConfigs(ctx context.Context) error {
 	return nil
 }
 

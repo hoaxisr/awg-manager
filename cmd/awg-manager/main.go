@@ -149,6 +149,7 @@ func main() {
 
 	// Logging service (created early — injected into tunnel service, pingcheck, dnsroute, operator, state, firewall, nwg)
 	loggingService := logging.NewService(settingsStore)
+	bootLog := logging.NewScopedLogger(loggingService, logging.GroupSystem, logging.SubBoot)
 	defer loggingService.Stop()
 
 	// === NEW NDMS LAYER (CQRS: query.Queries + command.Commands) ===
@@ -542,6 +543,10 @@ func main() {
 		return *res.Latency
 	})
 	pingCheckFacade.SetEventBus(eventBus)
+	// Удаляем осиротевшие конфиги мониторинга singbox
+	if err := pingCheckFacade.CleanupOrphanedConfigs(context.Background()); err != nil {
+		bootLog.Warn("pingcheck", "", "Failed to cleanup orphan singbox configs: "+err.Error())
+	}
 	orch.SetPingCheck(pingCheckFacade)
 
 	singboxHandler := api.NewSingboxHandler(singboxOp, eventBus, delayChecker, testService, loggingService)
@@ -722,8 +727,6 @@ func main() {
 	dnsCheckService.EnsureIPHost(context.Background())
 	srv.SetDnsCheckService(dnsCheckService)
 
-	bootLog := logging.NewScopedLogger(loggingService, logging.GroupSystem, logging.SubBoot)
-
 	logStartup(bootLog, version, string(osdetect.Get()), listenAddr, settings)
 
 	// Shutdown context — cancelled on shutdown
@@ -753,6 +756,22 @@ func main() {
 	srv.AddShutdownHook(loggingService.Stop)
 	srv.AddShutdownHook(trafficHistory.Stop)
 	srv.AddShutdownHook(func() { terminalManager.Shutdown(context.Background()) })
+
+	// Фоновая очистка сирот singbox pingcheck каждые 5 минут
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := pingCheckFacade.CleanupOrphanedConfigs(context.Background()); err != nil {
+					bootLog.Warn("pingcheck", "", "Periodic orphan cleanup failed: "+err.Error())
+				}
+			case <-shutdownCtx.Done():
+				return
+			}
+		}
+	}()
 
 	// Boot vs restart detection
 	uptime = getUptime()
@@ -821,6 +840,9 @@ func main() {
 
 		orch.LoadState(context.Background())
 		orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventReconnect})
+
+		// Restore monitoring for all backends (including singbox) after reconnect
+		pingCheckFacade.StartMonitoringAllRunning()
 	}
 
 	sigCh := make(chan os.Signal, 1)

@@ -2,6 +2,7 @@ package pingcheck
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -435,6 +436,68 @@ func (f *Facade) SaveSingboxConfig(tag string, cfg SingboxCheckConfig) error {
 		f.appLog.Info("pingcheck", tag, "Singbox ping config saved")
 	}
 	return err
+}
+
+// DeleteSingboxConfig полностью удаляет конфигурацию мониторинга для тега.
+func (f *Facade) DeleteSingboxConfig(tag string) error {
+	f.loadSingboxConfigsIfNeeded()
+
+	// Останавливаем монитор (без опасности двойного удаления)
+	f.StopMonitoringByTag(tag)
+
+	f.singboxCfgMu.Lock()
+	delete(f.singboxConfigs, tag)
+	cfgsCopy := make(map[string]*SingboxCheckConfig, len(f.singboxConfigs))
+	for k, v := range f.singboxConfigs {
+		cfgsCopy[k] = v
+	}
+	f.singboxCfgMu.Unlock()
+
+	if err := saveSingboxConfigs(f.singboxDir, cfgsCopy); err != nil {
+		f.appLog.Warn("pingcheck", tag, "Failed to delete singbox config: "+err.Error())
+		return err
+	}
+	f.appLog.Info("pingcheck", tag, "Singbox ping config deleted")
+	return nil
+}
+
+// CleanupOrphanedConfigs удаляет конфиги мониторинга для тегов,
+// отсутствующих в реальном списке туннелей sing-box.
+func (f *Facade) CleanupOrphanedConfigs(ctx context.Context) error {
+	if f.delayChecker == nil {
+		return nil
+	}
+	tunnels, err := f.delayChecker.ListTunnels(ctx)
+	if err != nil {
+		return fmt.Errorf("list singbox tunnels: %w", err)
+	}
+
+	activeTags := make(map[string]bool, len(tunnels))
+	for _, t := range tunnels {
+		activeTags[t.Tag] = true
+	}
+
+	f.loadSingboxConfigsIfNeeded()
+	f.singboxCfgMu.RLock()
+	orphanTags := []string{}
+	for tag := range f.singboxConfigs {
+		if !activeTags[tag] {
+			orphanTags = append(orphanTags, tag)
+		}
+	}
+	f.singboxCfgMu.RUnlock()
+
+	for _, tag := range orphanTags {
+		if err := f.DeleteSingboxConfig(tag); err != nil {
+			f.appLog.Warn("pingcheck", tag, "Failed to clean orphan config: "+err.Error())
+		}
+	}
+	return nil
+}
+
+// CleanupOrphanedSingboxConfigs delegates to the underlying method.
+func (f *Facade) CleanupOrphanedSingboxConfigs(ctx context.Context) error {
+	return f.CleanupOrphanedConfigs(ctx)
 }
 
 // getSingboxStatuses возвращает список статусов для всех singbox-туннелей.
