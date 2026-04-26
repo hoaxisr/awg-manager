@@ -6,12 +6,14 @@ echo ========================================
 echo.
 
 set "BASH=C:\PROGRA~1\Git\bin\bash.exe"
-set "PROJECT=%USERPROFILE%\Documents\GitHub\awg\awg-manager"
 
-REM Преобразуем путь Windows в путь Unix для Git Bash
-REM C:\Users\username -> /c/Users/username
+:: Динамическое определение корня проекта
+for %%I in ("%~dp0..") do set "PROJECT=%%~fI"
+
+:: Преобразование в Unix-style path
 set "UNIX_PROJECT=%PROJECT:\=/%"
-set "UNIX_PROJECT=%UNIX_PROJECT:C:=/c%"
+set "UNIX_PROJECT=/%UNIX_PROJECT::=%"
+set "UNIX_PROJECT=%UNIX_PROJECT://=/%"
 
 echo [1/2] Building mipsel-3.4...
 "%BASH%" -lc "cd '%UNIX_PROJECT%' && ./scripts/build-ipk.sh mipsel-3.4"
@@ -35,3 +37,5 @@ echo ========================================
 echo  Done! Both IPKs created in dist/
 echo ========================================
 dir "%PROJECT%\dist\*.ipk"
+
+pause
