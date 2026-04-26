@@ -274,9 +274,11 @@ func (f *Facade) loadSingboxConfigsIfNeeded() {
 	}
 	cfgs, err := loadSingboxConfigs(f.singboxDir)
 	if err != nil {
-		return
+		f.appLog.Warn("pingcheck", "", "Failed to load singbox configs: "+err.Error())
+		f.singboxConfigs = make(map[string]*SingboxCheckConfig)
+	} else {
+		f.singboxConfigs = cfgs
 	}
-	f.singboxConfigs = cfgs
 	f.singboxCfgLoaded = true
 }
 
@@ -355,10 +357,11 @@ func (f *Facade) GetTunnelPingStatusByTag(tag string) TunnelPingInfo {
 	if !active {
 		return TunnelPingInfo{Status: "disabled"}
 	}
-	if mon.failCount > 0 {
+	failCount := mon.getFailCount()
+	if failCount > 0 {
 		return TunnelPingInfo{
 			Status:        "recovering",
-			FailCount:     mon.failCount,
+			FailCount:     failCount,
 			FailThreshold: cfg.FailThreshold,
 		}
 	}
@@ -400,8 +403,9 @@ func (f *Facade) getSingboxStatuses() []TunnelStatus {
 			mon, active := f.singboxMonitors[tag]
 			f.singboxMonMu.Unlock()
 			if active {
-				ts.FailCount = mon.failCount
-				if mon.failCount >= cfg.FailThreshold {
+				failCount := mon.getFailCount()
+				ts.FailCount = failCount
+				if failCount >= cfg.FailThreshold {
 					ts.Status = "recovering"
 				} else {
 					ts.Status = "alive"

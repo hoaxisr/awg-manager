@@ -60,7 +60,7 @@
 				<span class="backend-badge">NDMS</span>
 			{/if}
 			{#if isSingbox}
-				<span class="backend-badge" style="background: rgba(34,211,238,0.15); color:#67e8f9;">Sing-box</span>
+				<span class="backend-badge singbox-badge">Sing-box</span>
 			{/if}
 		</div>
 		<div class="tunnel-actions">
@@ -170,6 +170,11 @@
 		color: var(--accent);
 		white-space: nowrap;
 		flex-shrink: 0;
+	}
+
+	.singbox-badge {
+		background: rgba(34,211,238,0.15);
+		color: #67e8f9;
 	}
 
 	.tunnel-actions {

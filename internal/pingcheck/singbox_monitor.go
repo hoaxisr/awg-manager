@@ -23,6 +23,7 @@ type singboxMonitor struct {
 
 	stopCh    chan struct{}
 	wg        sync.WaitGroup
+	mu        sync.Mutex
 	failCount int
 }
 
@@ -51,6 +52,9 @@ func (m *singboxMonitor) run(ctx context.Context) {
 // runCheck performs a single delay test and updates the monitor state.
 // It is also triggered externally by CheckAllNow.
 func (m *singboxMonitor) runCheck(ctx context.Context) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	delay, err := m.delayChecker.CheckOne(ctx, m.tag)
 	if err != nil {
 		delay = 0
@@ -59,10 +63,32 @@ func (m *singboxMonitor) runCheck(ctx context.Context) {
 	now := time.Now()
 	success := delay > 0
 
+	var prevFailCount int
+	prevFailCount = m.failCount
 	if success {
 		m.failCount = 0
 	} else {
 		m.failCount++
+	}
+
+	// Build log entry
+	entry := LogEntry{
+		Timestamp:  now,
+		TunnelID:   m.tag, // using tag as identifier
+		TunnelName: m.tunnelName,
+		Success:    success,
+		Latency:    delay,
+		FailCount:  m.failCount,
+		Threshold:  m.threshold,
+		Backend:    "singbox",
+	}
+	if !success {
+		entry.Error = "timeout or unreachable"
+	}
+	if prevFailCount >= m.threshold && success {
+		entry.StateChange = "recovered"
+	} else if m.failCount >= m.threshold {
+		entry.StateChange = "link_toggle" // placeholder; no actual toggle possible
 	}
 
 	// Build log entry
@@ -116,6 +142,13 @@ func (m *singboxMonitor) runCheck(ctx context.Context) {
 			FailCount: m.failCount,
 		})
 	}
+}
+
+// getFailCount returns the current fail count in a thread-safe manner.
+func (m *singboxMonitor) getFailCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.failCount
 }
 
 // stop terminates the monitor loop and waits for the goroutine to exit.
