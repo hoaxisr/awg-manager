@@ -5,7 +5,66 @@ echo  AWG Manager - IPK Build
 echo ========================================
 echo.
 
-set "BASH=C:\PROGRA~1\Git\bin\bash.exe"
+:: ========================================================
+::  Автоматический поиск bash.exe (Git Bash)
+:: ========================================================
+set "BASH="
+set "SYSTEM_BASH=%SystemRoot%\System32\bash.exe"
+set "SYSTEM_BASH_WOW=%SystemRoot%\SysWOW64\bash.exe"
+
+:: 1. Основной способ: через git.exe
+for /f "delims=" %%i in ('where git 2^>nul') do (
+    if not defined BASH (
+        for %%g in ("%%i") do (
+            if exist "%%~dpg\..\bin\bash.exe" (
+                set "BASH=%%~dpg\..\bin\bash.exe"
+            ) else if exist "%%~dpg\..\..\bin\bash.exe" (
+                set "BASH=%%~dpg\..\..\bin\bash.exe"
+            )
+        )
+    )
+)
+
+:: 2. Поиск в реестре
+if not defined BASH (
+    for /f "tokens=2*" %%a in (
+        'reg query "HKLM\SOFTWARE\GitForWindows" /v InstallPath 2^>nul ^| find "InstallPath"'
+    ) do (
+        if exist "%%b\bin\bash.exe" set "BASH=%%b\bin\bash.exe"
+    )
+)
+if not defined BASH (
+    for /f "tokens=2*" %%a in (
+        'reg query "HKCU\SOFTWARE\GitForWindows" /v InstallPath 2^>nul ^| find "InstallPath"'
+    ) do (
+        if exist "%%b\bin\bash.exe" set "BASH=%%b\bin\bash.exe"
+    )
+)
+
+:: 3. Запасной вариант: поиск bash, исключая WSL
+if not defined BASH (
+    for /f "delims=" %%i in ('where bash 2^>nul') do (
+        if not defined BASH (
+            if /i not "%%i"=="%SYSTEM_BASH%" if /i not "%%i"=="%SYSTEM_BASH_WOW%" (
+                set "BASH=%%i"
+            )
+        )
+    )
+)
+
+:: Если не найден – ошибка
+if not defined BASH (
+    echo ERROR: Git Bash не найден.
+    echo Убедитесь, что Git for Windows установлен и добавлен в PATH.
+    pause
+    exit /b 1
+)
+
+:: Нормализация пути (убирает ".." и приводит к полному)
+for %%F in ("%BASH%") do set "BASH=%%~fF"
+
+echo Using bash: %BASH%
+:: --------------------------------------------------------
 
 :: Динамическое определение корня проекта
 for %%I in ("%~dp0..") do set "PROJECT=%%~fI"
