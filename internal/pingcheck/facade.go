@@ -421,11 +421,19 @@ func (f *Facade) getSingboxStatuses() []TunnelStatus {
 	f.singboxCfgMu.RLock()
 	defer f.singboxCfgMu.RUnlock()
 
+	// Захватываем мониторы один раз
+	f.singboxMonMu.Lock()
+	monsCopy := make(map[string]*singboxMonitor, len(f.singboxMonitors))
+	for tag, mon := range f.singboxMonitors {
+		monsCopy[tag] = mon
+	}
+	f.singboxMonMu.Unlock()
+
 	var result []TunnelStatus
 	for tag, cfg := range f.singboxConfigs {
 		ts := TunnelStatus{
 			TunnelID:      tag,
-			TunnelName:    tag, // можно будет улучшить позже
+			TunnelName:    tag,
 			Enabled:       cfg.Enabled,
 			Backend:       "singbox",
 			Status:        "disabled",
@@ -433,9 +441,7 @@ func (f *Facade) getSingboxStatuses() []TunnelStatus {
 			FailThreshold: cfg.FailThreshold,
 		}
 		if cfg.Enabled {
-			f.singboxMonMu.Lock()
-			mon, active := f.singboxMonitors[tag]
-			f.singboxMonMu.Unlock()
+			mon, active := monsCopy[tag]
 			if active {
 				failCount := mon.getFailCount()
 				ts.FailCount = failCount
