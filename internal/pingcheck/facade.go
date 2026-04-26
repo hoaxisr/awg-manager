@@ -504,6 +504,7 @@ func (f *Facade) CleanupOrphanedSingboxConfigs(ctx context.Context) error {
 func (f *Facade) getSingboxStatuses() []TunnelStatus {
 	f.loadSingboxConfigsIfNeeded()
 
+	// Lock order: singboxCfgMu MUST be acquired before singboxMonMu.
 	f.singboxCfgMu.RLock()
 	defer f.singboxCfgMu.RUnlock()
 

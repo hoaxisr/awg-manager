@@ -2,6 +2,7 @@ package singbox
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
@@ -27,6 +28,8 @@ const (
 	defaultDelayTestURL  = "http://www.gstatic.com/generate_204"
 	eventSingboxDelay    = "singbox:delay"
 )
+
+var ErrCheckInFlight = errors.New("check already in flight")
 
 // DelayChecker runs periodic Clash delay tests for all sing-box tunnels
 // and publishes per-tunnel SSE events.
@@ -64,7 +67,7 @@ func (d *DelayChecker) CheckOne(ctx context.Context, tag string) (int, error) {
 	d.mu.Lock()
 	if d.inflight[tag] {
 		d.mu.Unlock()
-		return 0, nil
+		return 0, ErrCheckInFlight
 	}
 	d.inflight[tag] = true
 	d.mu.Unlock()

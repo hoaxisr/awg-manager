@@ -37,6 +37,9 @@ func loadSingboxConfigs(dir string) (map[string]*SingboxCheckConfig, error) {
 
 // saveSingboxConfigs writes the configs atomically (tmp file + rename).
 func saveSingboxConfigs(dir string, cfgs map[string]*SingboxCheckConfig) error {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create singbox config dir: %w", err)
+	}
 	path := filepath.Join(dir, "pingcheck.json")
 	data, err := json.MarshalIndent(cfgs, "", "  ")
 	if err != nil {
