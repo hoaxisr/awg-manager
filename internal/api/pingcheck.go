@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -36,6 +37,8 @@ type PingCheckService interface {
 	StopMonitoringByTag(tag string)
 	GetTunnelPingStatusByTag(tag string) pingcheck.TunnelPingInfo
 	SaveSingboxConfig(tag string, cfg pingcheck.SingboxCheckConfig) error
+	DeleteSingboxConfig(tag string) error                    // новое
+	CleanupOrphanedSingboxConfigs(ctx context.Context) error // новое
 }
 
 // PingCheckHandler handles ping check API endpoints.
@@ -354,4 +357,12 @@ func (h *PingCheckHandler) StopMonitoringByTag(tag string) {
 // GetTunnelPingStatusByTag returns lightweight ping status for a singbox tunnel tag.
 func (h *PingCheckHandler) GetTunnelPingStatusByTag(tag string) pingcheck.TunnelPingInfo {
 	return h.service.GetTunnelPingStatusByTag(tag)
+}
+
+func (h *PingCheckHandler) DeleteSingboxConfig(tag string) error {
+	return h.service.DeleteSingboxConfig(tag)
+}
+
+func (h *PingCheckHandler) CleanupOrphanedSingboxConfigs(ctx context.Context) error {
+	return h.service.CleanupOrphanedSingboxConfigs(ctx)
 }

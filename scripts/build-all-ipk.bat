@@ -97,8 +97,8 @@ if !errorlevel! neq 0 (
     exit /b 1
 )
 
-echo Installing %LATEST_IPK% on rax1?
-pause
+rem echo Installing %LATEST_IPK% on rax1?
+rem pause
 
 echo Installing %LATEST_IPK% on rax1...
 ssh rax1 "opkg install /opt/tmp/%LATEST_IPK%"
