@@ -818,6 +818,9 @@ func main() {
 			} else {
 				orch.LoadState(shutdownCtx)
 				orch.HandleEvent(shutdownCtx, orchestrator.Event{Type: orchestrator.EventBoot})
+
+				// Restore monitoring for all backends (including singbox) after boot
+				pingCheckFacade.StartMonitoringAllRunning()
 			}
 
 			atomic.StoreInt32(&bootDone, 1)
