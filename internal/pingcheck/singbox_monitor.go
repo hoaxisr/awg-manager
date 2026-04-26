@@ -2,6 +2,7 @@ package pingcheck
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -52,8 +53,11 @@ func (m *singboxMonitor) run(ctx context.Context) {
 
 func (m *singboxMonitor) runCheck(ctx context.Context) {
 	delay, err := m.delayChecker.CheckOne(ctx, m.tag)
+	if errors.Is(err, singbox.ErrCheckInFlight) {
+		return // ничего не делаем, ждём следующего тика
+	}
 	if err != nil {
-		delay = 0
+		delay = 0 // прочие ошибки считаем таймаутом
 	}
 
 	now := time.Now()
