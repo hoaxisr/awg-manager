@@ -380,7 +380,7 @@ func (f *Facade) GetTunnelPingStatusByTag(tag string) TunnelPingInfo {
 		return TunnelPingInfo{Status: "disabled"}
 	}
 	failCount := mon.getFailCount()
-	if failCount > 0 {
+	if failCount >= cfg.FailThreshold {
 		return TunnelPingInfo{
 			Status:        "recovering",
 			FailCount:     failCount,
