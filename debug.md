@@ -1,3 +1,7 @@
+Вот полная версия документа без хардкода, с однострочными командами для PowerShell, которая автоматически находит Git Bash и работает на Win11 с WSL.
+
+---
+
 # DEBUG: Сборка IPK (руководство по командам для слабых ИИ-агентов)
 
 Ниже ровно те сценарии, по которым уже были успешно собраны пакеты:
@@ -6,11 +10,7 @@
 
 ## 1. Где запускать
 
-Открыть PowerShell в папке репозитория:
-
-```powershell
-cd C:\Users\iqubik\Documents\GitHub\awg\awg-manager
-```
+Откройте PowerShell в **корне репозитория** (там, где лежат `scripts`, `VERSION`, `go.mod`).
 
 ## 2. Быстрая проверка перед сборкой
 
@@ -23,12 +23,10 @@ Get-ChildItem scripts
 - `go version go1.23.12 windows/amd64` (или другой `go1.23.x`)
 - в `scripts` есть `build-ipk.sh`, `build-backend.sh`, `build-frontend.sh`
 
-## 3. Команда сборки IPK для MIPS (как делали)
-
-Запуск через Git Bash из PowerShell:
+## 3. Команда сборки IPK для MIPS (однострочная, без хардкода)
 
 ```powershell
-& 'C:\Program Files\Git\bin\bash.exe' -lc "cd /c/Users/iqubik/Documents/GitHub/awg/awg-manager && ./scripts/build-ipk.sh mipsel-3.4"
+$b="$(Split-Path -Parent (Split-Path -Parent (Get-Command git).Source))\bin\bash.exe";$w=(Get-Location).Path;$u="/$($w[0].ToString().ToLowerInvariant())"+$w.Substring(2).Replace('\','/');&$b -lc "cd '$u' && ./scripts/build-ipk.sh mipsel-3.4"
 ```
 
 ## 4. Что должно получиться
@@ -50,7 +48,7 @@ Get-Item .\dist\awg-manager_2.6.3_mipsel-3.4-kn.ipk
 Filogic 820 собираем как `aarch64-3.10`.
 
 ```powershell
-& 'C:\Program Files\Git\bin\bash.exe' -lc "cd /c/Users/iqubik/Documents/GitHub/awg/awg-manager && ./scripts/build-ipk.sh aarch64-3.10"
+$b="$(Split-Path -Parent (Split-Path -Parent (Get-Command git).Source))\bin\bash.exe";$w=(Get-Location).Path;$u="/$($w[0].ToString().ToLowerInvariant())"+$w.Substring(2).Replace('\','/');&$b -lc "cd '$u' && ./scripts/build-ipk.sh aarch64-3.10"
 ```
 
 Ожидаемая строка в конце:
@@ -75,7 +73,7 @@ fatal error - couldn't create signal pipe, Win32 error 5
 
 Что делать:
 - перезапустить PowerShell/терминал с повышенными правами
-- повторить ту же команду из пункта 3
+- повторить нужную однострочную команду из п.3 или п.5
 
 ## 7. Если ругается на CRLF в shell-скриптах
 
@@ -85,7 +83,7 @@ fatal error - couldn't create signal pipe, Win32 error 5
 *.sh text eol=lf
 ```
 
-И пересохранить `scripts/*.sh` в LF (не CRLF), затем снова выполнить пункт 3.
+И пересохранить `scripts/*.sh` в LF (не CRLF), затем снова выполнить сборку.
 
 ## 8. Замечания
 
@@ -93,6 +91,7 @@ fatal error - couldn't create signal pipe, Win32 error 5
 - Для Keenetic MIPS целевой арх — `mipsel-3.4`.
 - Для Filogic 820 целевой арх — `aarch64-3.10`.
 - Версия пакета берётся из файла `VERSION`.
+- **Как это работает:** Команда сама находит `git.exe` в системе, от него добирается до `bash.exe` из состава Git for Windows, конвертирует текущую папку в Unix‑путь и запускает сборочный скрипт. WSL‑bash не используется.
 
 ## 9. Установка IPK на роутер (если файл уже в `/opt/tmp`)
 
