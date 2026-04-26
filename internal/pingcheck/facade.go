@@ -372,21 +372,22 @@ func (f *Facade) GetTunnelPingStatusByTag(tag string) TunnelPingInfo {
 	f.singboxCfgMu.RUnlock()
 
 	if !ok || !cfg.Enabled {
+		var threshold, intervalSec int
+		if cfg != nil {
+			threshold = cfg.FailThreshold
+			intervalSec = cfg.Interval
+		}
+		if threshold <= 0 {
+			threshold = 3
+		}
+		if intervalSec <= 0 {
+			intervalSec = 30
+		}
 		return TunnelPingInfo{
-			Status:  "disabled",
-			Enabled: cfg != nil && cfg.Enabled,
-			FailThreshold: func() int {
-				if cfg != nil {
-					return cfg.FailThreshold
-				}
-				return 3
-			}(),
-			IntervalSec: func() int {
-				if cfg != nil {
-					return cfg.Interval
-				}
-				return 30
-			}(),
+			Status:        "disabled",
+			Enabled:       cfg != nil && cfg.Enabled,
+			FailThreshold: threshold,
+			IntervalSec:   intervalSec,
 		}
 	}
 
