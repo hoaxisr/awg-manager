@@ -125,3 +125,8 @@ func (d *DelayChecker) Run(ctx context.Context) {
 		}
 	}
 }
+
+// ListTunnels delegates to the underlying lister.
+func (d *DelayChecker) ListTunnels(ctx context.Context) ([]TunnelInfo, error) {
+	return d.lister.ListTunnels(ctx)
+}
