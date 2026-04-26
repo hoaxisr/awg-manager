@@ -448,6 +448,7 @@ func (f *Facade) getSingboxStatuses() []TunnelStatus {
 			if active {
 				failCount := mon.getFailCount()
 				ts.FailCount = failCount
+				ts.SuccessCount = mon.getSuccessCount()
 				if failCount >= cfg.FailThreshold {
 					ts.Status = "recovering"
 				} else {
