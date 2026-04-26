@@ -94,7 +94,7 @@ func TestSingboxHandler_MissingTag_DeleteTunnel(t *testing.T) {
 }
 
 func TestSingboxHandler_DelayCheck_MethodNotAllowed(t *testing.T) {
-	h := NewSingboxHandler(nil, nil, nil, nil)
+	h := NewSingboxHandler(nil, nil, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/singbox/tunnels/delay-check?tag=A", nil)
 	w := httptest.NewRecorder()
 	h.DelayCheck(w, req)
@@ -104,7 +104,7 @@ func TestSingboxHandler_DelayCheck_MethodNotAllowed(t *testing.T) {
 }
 
 func TestSingboxHandler_DelayCheck_MissingTag(t *testing.T) {
-	h := NewSingboxHandler(nil, nil, nil, nil)
+	h := NewSingboxHandler(nil, nil, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/singbox/tunnels/delay-check", nil)
 	w := httptest.NewRecorder()
 	h.DelayCheck(w, req)
