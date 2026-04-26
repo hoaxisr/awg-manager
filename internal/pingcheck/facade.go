@@ -51,6 +51,7 @@ type Facade struct {
 	singboxMonitors  map[string]*singboxMonitor // key = tag
 	singboxConfigs   map[string]*SingboxCheckConfig
 	singboxCfgLoaded bool
+	singboxCfgMu     sync.RWMutex
 
 	appLog *logging.ScopedLogger
 
@@ -269,9 +270,20 @@ func (f *Facade) isNwgRestartDetected(tunnelID string) bool {
 
 // loadSingboxConfigsIfNeeded загружает конфигурации мониторинга singbox из файла.
 func (f *Facade) loadSingboxConfigsIfNeeded() {
+	f.singboxCfgMu.RLock()
+	loaded := f.singboxCfgLoaded
+	f.singboxCfgMu.RUnlock()
+	if loaded {
+		return
+	}
+
+	f.singboxCfgMu.Lock()
+	defer f.singboxCfgMu.Unlock()
+	// Double-check inside lock
 	if f.singboxCfgLoaded {
 		return
 	}
+
 	cfgs, err := loadSingboxConfigs(f.singboxDir)
 	if err != nil {
 		f.appLog.Warn("pingcheck", "", "Failed to load singbox configs: "+err.Error())
@@ -285,17 +297,24 @@ func (f *Facade) loadSingboxConfigsIfNeeded() {
 // isSingbox проверяет, относится ли тег к singbox-туннелю.
 func (f *Facade) isSingbox(tag string) bool {
 	f.loadSingboxConfigsIfNeeded()
+	f.singboxCfgMu.RLock()
 	_, exists := f.singboxConfigs[tag]
+	f.singboxCfgMu.RUnlock()
 	return exists
 }
 
 // StartMonitoringByTag запускает мониторинг singbox туннеля по тегу.
 func (f *Facade) StartMonitoringByTag(tag, tunnelName string) {
 	f.loadSingboxConfigsIfNeeded()
+
+	f.singboxCfgMu.RLock()
 	cfg, ok := f.singboxConfigs[tag]
+	f.singboxCfgMu.RUnlock()
 	if !ok {
 		cfg = &SingboxCheckConfig{Enabled: false}
+		f.singboxCfgMu.Lock()
 		f.singboxConfigs[tag] = cfg
+		f.singboxCfgMu.Unlock()
 	}
 	if !cfg.Enabled {
 		return
@@ -347,7 +366,10 @@ func (f *Facade) StopMonitoringByTag(tag string) {
 // GetTunnelPingStatusByTag возвращает легковесный статус для списка туннелей.
 func (f *Facade) GetTunnelPingStatusByTag(tag string) TunnelPingInfo {
 	f.loadSingboxConfigsIfNeeded()
+
+	f.singboxCfgMu.RLock()
 	cfg, ok := f.singboxConfigs[tag]
+	f.singboxCfgMu.RUnlock()
 	if !ok || !cfg.Enabled {
 		return TunnelPingInfo{Status: "disabled"}
 	}
@@ -374,8 +396,16 @@ func (f *Facade) GetTunnelPingStatusByTag(tag string) TunnelPingInfo {
 // SaveSingboxConfig persists singbox monitoring configuration for a tag.
 func (f *Facade) SaveSingboxConfig(tag string, cfg SingboxCheckConfig) error {
 	f.loadSingboxConfigsIfNeeded()
+
+	f.singboxCfgMu.Lock()
 	f.singboxConfigs[tag] = &cfg
-	err := saveSingboxConfigs(f.singboxDir, f.singboxConfigs)
+	cfgsCopy := make(map[string]*SingboxCheckConfig, len(f.singboxConfigs))
+	for k, v := range f.singboxConfigs {
+		cfgsCopy[k] = v
+	}
+	f.singboxCfgMu.Unlock()
+
+	err := saveSingboxConfigs(f.singboxDir, cfgsCopy)
 	if err != nil {
 		f.appLog.Warn("pingcheck", tag, "Failed to save singbox config: "+err.Error())
 	} else {
@@ -383,10 +413,16 @@ func (f *Facade) SaveSingboxConfig(tag string, cfg SingboxCheckConfig) error {
 	}
 	return err
 }
+	return err
+}
 
 // getSingboxStatuses возвращает список статусов для всех singbox-туннелей.
 func (f *Facade) getSingboxStatuses() []TunnelStatus {
 	f.loadSingboxConfigsIfNeeded()
+
+	f.singboxCfgMu.RLock()
+	defer f.singboxCfgMu.RUnlock()
+
 	var result []TunnelStatus
 	for tag, cfg := range f.singboxConfigs {
 		ts := TunnelStatus{
@@ -647,11 +683,13 @@ func (f *Facade) StartMonitoringAllRunning() {
 
 	// Start singbox monitors for enabled configs
 	f.loadSingboxConfigsIfNeeded()
+	f.singboxCfgMu.RLock()
 	for tag, cfg := range f.singboxConfigs {
 		if cfg.Enabled {
 			f.StartMonitoringByTag(tag, tag) // name = tag for now
 		}
 	}
+	f.singboxCfgMu.RUnlock()
 }
 
 // StopMonitoringAll stops all monitoring.
