@@ -41,6 +41,10 @@
 	let singboxSettingsOpen = $state(false);
 	let singboxTag = $state('');
 	let singboxName = $state('');
+	let singboxLastConfig: Record<string, { interval: number; threshold: number }> = {};
+	let singboxCurrentEnabled = $state(false);
+	let singboxCurrentThreshold = $state(3);
+	let singboxCurrentInterval = $state(30);
 
 	async function triggerCheck() {
 		checking = true;
@@ -74,8 +78,20 @@
 			if (!tunnel) return;
 
 			if (tunnel.backend === 'singbox') {
-				// Управление только через модалку
-				togglingTunnelId = null;
+				if (tunnel.enabled) {
+					await api.removeSingboxPingCheck(tunnelId);
+					notifications.success(`Мониторинг для ${tunnel.tunnelName} отключен`);
+				} else {
+					// Включаем с настройками по умолчанию (или сохранёнными)
+					const last = singboxLastConfig[tunnelId];
+					await api.configureSingboxPingCheck(tunnelId, {
+						enabled: true,
+						intervalSec: last?.interval ?? 30,
+						failThreshold: last?.threshold ?? 3
+					});
+					notifications.success(`Мониторинг для ${tunnel.tunnelName} включен`);
+				}
+				pingCheckStatus.invalidate();
 				return;
 			}
 
@@ -87,7 +103,7 @@
 					// For NativeWG, open settings modal to configure.
 					// Clear toggle loading before opening modal — user interaction moves to modal.
 					togglingTunnelId = null;
-					openSettings(tunnelId);
+					await openSettings(tunnelId);
 					return;
 				}
 			} else {
@@ -113,22 +129,38 @@
 		singboxSettingsOpen = false;
 	}
 
-	function openSettings(tunnelId: string) {
+	async function openSettings(tunnelId: string) {
 		const tunnel = statuses.find(t => t.tunnelId === tunnelId);
 		if (!tunnel) return;
+
 		settingsTunnelId = tunnelId;
 		settingsTunnelName = tunnel.tunnelName;
-		if (tunnel.backend === 'nativewg') {
-			api.getNativePingCheckStatus(tunnelId).then(s => {
-				nwgSettingsStatus = s;
-				nwgSettingsOpen = true;
-			}).catch(() => {
-				notifications.error('Не удалось загрузить настройки');
-			});
-		} else if (tunnel.backend === 'singbox') {
+
+		if (tunnel.backend === 'singbox') {
 			singboxTag = tunnel.tunnelId;
 			singboxName = tunnel.tunnelName;
+			try {
+				const res = await api.getSingboxPingCheckStatus(tunnel.tunnelId);
+				singboxCurrentEnabled = res.status !== 'disabled' && res.status !== 'stopped';
+				singboxCurrentThreshold = res.failThreshold || 3;
+				const last = singboxLastConfig[tunnel.tunnelId];
+				singboxCurrentInterval = last?.interval ?? 30;
+			} catch (e) {
+				singboxCurrentEnabled = false;
+				singboxCurrentThreshold = 3;
+				singboxCurrentInterval = 30;
+			}
 			singboxSettingsOpen = true;
+			return;
+		}
+
+		if (tunnel.backend === 'nativewg') {
+			try {
+				nwgSettingsStatus = await api.getNativePingCheckStatus(tunnelId);
+				nwgSettingsOpen = true;
+			} catch (e) {
+				notifications.error('Не удалось загрузить настройки');
+			}
 		} else {
 			kernelSettingsOpen = true;
 		}
@@ -201,8 +233,19 @@
 		bind:open={singboxSettingsOpen}
 		tag={singboxTag}
 		tunnelName={singboxName}
+		currentEnabled={singboxCurrentEnabled}
+		currentThreshold={singboxCurrentThreshold}
+		currentInterval={singboxCurrentInterval}
 		onclose={() => closeSettings()}
-		onSaved={() => { pingCheckStatus.invalidate(); closeSettings(); }}
+		onSaved={() => {
+			// Сохраняем последнюю конфигурацию
+			singboxLastConfig[singboxTag] = {
+				interval: singboxCurrentInterval,
+				threshold: singboxCurrentThreshold
+			};
+			pingCheckStatus.invalidate();
+			closeSettings();
+		}}
 	/>
 
 	<NativeWGPingCheckModal

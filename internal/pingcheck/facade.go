@@ -453,6 +453,7 @@ func (f *Facade) getSingboxStatuses() []TunnelStatus {
 				} else {
 					ts.Status = "alive"
 				}
+				ts.TunnelRunning = true
 			} else {
 				ts.Status = "stopped"
 			}
@@ -476,6 +477,7 @@ func (f *Facade) getSingboxStatuses() []TunnelStatus {
 					Status:        "disabled",
 					Method:        "delay",
 					FailThreshold: 3, // значение по умолчанию
+					TunnelRunning: t.Running,
 				})
 			}
 		}
