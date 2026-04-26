@@ -65,6 +65,10 @@ func (m *mockPingCheckService) GetTunnelPingStatusByTag(tag string) pingcheck.Tu
 	return pingcheck.TunnelPingInfo{Status: "disabled"}
 }
 
+func (m *mockPingCheckService) SaveSingboxConfig(tag string, cfg pingcheck.SingboxCheckConfig) error {
+	return nil
+}
+
 func TestPingCheckHandler_GetStatus(t *testing.T) {
 	now := time.Now()
 	svc := &mockPingCheckService{

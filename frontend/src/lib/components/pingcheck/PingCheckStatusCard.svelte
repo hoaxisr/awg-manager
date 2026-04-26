@@ -36,6 +36,7 @@
 	}
 
 	let isNativeWG = $derived(tunnel.backend === 'nativewg');
+	let isSingbox = $derived(tunnel.backend === 'singbox');
 
 	let monitorBadgeClass = $derived.by(() => {
 		if (!tunnel.enabled) return 'badge-disabled';
@@ -57,6 +58,9 @@
 			<span class="tunnel-name" title={tunnel.tunnelName}>{tunnel.tunnelName}</span>
 			{#if isNativeWG}
 				<span class="backend-badge">NDMS</span>
+			{/if}
+			{#if isSingbox}
+				<span class="backend-badge" style="background: rgba(34,211,238,0.15); color:#67e8f9;">Sing-box</span>
 			{/if}
 		</div>
 		<div class="tunnel-actions">
