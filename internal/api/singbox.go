@@ -10,6 +10,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/testing"
@@ -22,11 +23,18 @@ type SingboxHandler struct {
 	delayChecker *singbox.DelayChecker
 	testingSvc   *testing.Service
 	pingCheckSvc PingCheckService
+	log          *logging.ScopedLogger
 }
 
 // NewSingboxHandler creates a new singbox handler.
-func NewSingboxHandler(op *singbox.Operator, bus *events.Bus, dc *singbox.DelayChecker, ts *testing.Service) *SingboxHandler {
-	return &SingboxHandler{op: op, bus: bus, delayChecker: dc, testingSvc: ts}
+func NewSingboxHandler(op *singbox.Operator, bus *events.Bus, dc *singbox.DelayChecker, ts *testing.Service, appLogger logging.AppLogger) *SingboxHandler {
+	return &SingboxHandler{
+		op:           op,
+		bus:          bus,
+		delayChecker: dc,
+		testingSvc:   ts,
+		log:          logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubPingcheck),
+	}
 }
 
 // SetPingCheckService wires the ping check service for per-tunnel monitoring.
@@ -402,6 +410,7 @@ func (h *SingboxHandler) ConfigurePingCheck(w http.ResponseWriter, r *http.Reque
 	} else {
 		h.pingCheckSvc.StopMonitoringByTag(tag)
 	}
+	h.log.Info("ping-check-configure", tag, "Singbox ping check configured")
 	response.Success(w, map[string]bool{"success": true})
 }
 
@@ -425,6 +434,7 @@ func (h *SingboxHandler) RemovePingCheck(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	h.pingCheckSvc.StopMonitoringByTag(tag)
+	h.log.Info("ping-check-remove", tag, "Singbox ping check removed")
 	response.Success(w, map[string]bool{"success": true})
 }
 

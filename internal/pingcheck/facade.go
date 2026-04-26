@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -51,13 +52,15 @@ type Facade struct {
 	singboxConfigs   map[string]*SingboxCheckConfig
 	singboxCfgLoaded bool
 
+	appLog *logging.ScopedLogger
+
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
 // NewFacade creates a unified ping-check facade.
 // nwgOp may be nil if NativeWG is unavailable.
-func NewFacade(custom *Service, tunnels *storage.AWGTunnelStore, settings *storage.SettingsStore, nwgOp *nwg.OperatorNativeWG, singboxDir string, delayChecker *singbox.DelayChecker) *Facade {
+func NewFacade(custom *Service, tunnels *storage.AWGTunnelStore, settings *storage.SettingsStore, nwgOp *nwg.OperatorNativeWG, singboxDir string, delayChecker *singbox.DelayChecker, appLogger logging.AppLogger) *Facade {
 	ctx, cancel := context.WithCancel(context.Background())
 	f := &Facade{
 		custom:      custom,
@@ -70,6 +73,8 @@ func NewFacade(custom *Service, tunnels *storage.AWGTunnelStore, settings *stora
 		delayChecker:    delayChecker,
 		singboxMonitors: make(map[string]*singboxMonitor),
 		singboxConfigs:  make(map[string]*SingboxCheckConfig),
+
+		appLog: logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubPingcheck),
 
 		ctx:    ctx,
 		cancel: cancel,
@@ -320,6 +325,7 @@ func (f *Facade) StartMonitoringByTag(tag, tunnelName string) {
 	go mon.run(f.ctx)
 	f.singboxMonitors[tag] = mon
 	f.singboxMonMu.Unlock()
+	f.appLog.Info("pingcheck", tag, "Singbox monitoring started")
 }
 
 // StopMonitoringByTag останавливает мониторинг singbox туннеля.
@@ -332,6 +338,7 @@ func (f *Facade) StopMonitoringByTag(tag string) {
 	f.singboxMonMu.Unlock()
 	if ok {
 		mon.stop()
+		f.appLog.Info("pingcheck", tag, "Singbox monitoring stopped")
 	}
 }
 
@@ -365,7 +372,13 @@ func (f *Facade) GetTunnelPingStatusByTag(tag string) TunnelPingInfo {
 func (f *Facade) SaveSingboxConfig(tag string, cfg SingboxCheckConfig) error {
 	f.loadSingboxConfigsIfNeeded()
 	f.singboxConfigs[tag] = &cfg
-	return saveSingboxConfigs(f.singboxDir, f.singboxConfigs)
+	err := saveSingboxConfigs(f.singboxDir, f.singboxConfigs)
+	if err != nil {
+		f.appLog.Warn("pingcheck", tag, "Failed to save singbox config: "+err.Error())
+	} else {
+		f.appLog.Info("pingcheck", tag, "Singbox ping config saved")
+	}
+	return err
 }
 
 // getSingboxStatuses возвращает список статусов для всех singbox-туннелей.
