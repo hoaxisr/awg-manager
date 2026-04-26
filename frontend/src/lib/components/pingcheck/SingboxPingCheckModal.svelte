@@ -27,11 +27,20 @@
 		onRemoved
 	}: Props = $props();
 
-	let enabled = $state(currentEnabled);
-	let interval = $state(currentInterval);
-	let failThreshold = $state(currentThreshold);
+	let enabled = $state(false);
+	let interval = $state(30);
+	let failThreshold = $state(3);
 	let saving = $state(false);
 	let error = $state('');
+
+	// Синхронизируем данные при открытии модалки (Svelte 5 way)
+	$effect(() => {
+		if (open) {
+			enabled = currentEnabled;
+			interval = currentInterval;
+			failThreshold = currentThreshold;
+		}
+	});
 
 	async function handleSave(): Promise<void> {
 		saving = true;
@@ -78,7 +87,7 @@
 <Modal bind:open title="Настройки мониторинга Sing-box" size="md" onclose={onclose}>
 	<div class="form">
 		<div class="form-group">
-			<label class="label">Статус</label>
+			<span class="label">Статус</span>
 			<div class="toggle-row">
 				<span class="toggle-label">{enabled ? 'Включен' : 'Отключен'}</span>
 				<button
