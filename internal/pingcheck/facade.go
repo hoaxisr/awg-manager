@@ -429,8 +429,11 @@ func (f *Facade) getSingboxStatuses() []TunnelStatus {
 	}
 	f.singboxMonMu.Unlock()
 
+	// 1. Проходим по сохранённым конфигам
+	seen := make(map[string]bool)
 	var result []TunnelStatus
 	for tag, cfg := range f.singboxConfigs {
+		seen[tag] = true
 		ts := TunnelStatus{
 			TunnelID:      tag,
 			TunnelName:    tag,
@@ -456,6 +459,28 @@ func (f *Facade) getSingboxStatuses() []TunnelStatus {
 		}
 		result = append(result, ts)
 	}
+
+	// 2. Добавляем туннели, которые есть в sing-box, но ещё не настраивались
+	if f.delayChecker != nil {
+		tunnels, err := f.delayChecker.ListTunnels(context.Background())
+		if err == nil {
+			for _, t := range tunnels {
+				if seen[t.Tag] {
+					continue
+				}
+				result = append(result, TunnelStatus{
+					TunnelID:      t.Tag,
+					TunnelName:    t.Tag,
+					Enabled:       false,
+					Backend:       "singbox",
+					Status:        "disabled",
+					Method:        "delay",
+					FailThreshold: 3, // значение по умолчанию
+				})
+			}
+		}
+	}
+
 	return result
 }
 
