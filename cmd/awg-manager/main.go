@@ -533,7 +533,7 @@ func main() {
 	delayChecker := singbox.NewDelayChecker(singboxOp.Clash(), singboxOp, eventBus)
 
 	// Unified facade: kernel → custom loop, NativeWG → NDMS native, Singbox → delay checker
-	pingCheckFacade := pingcheck.NewFacade(pingCheckService, awgStore, settingsStore, nwgOp, singboxDir, delayChecker)
+	pingCheckFacade := pingcheck.NewFacade(pingCheckService, awgStore, settingsStore, nwgOp, singboxDir, delayChecker, loggingService)
 	pingCheckFacade.SetNativeWGLatencyProbe(func(ctx context.Context, tunnelID string) int {
 		res, err := testService.CheckConnectivity(ctx, tunnelID)
 		if err != nil || res == nil || !res.Connected || res.Latency == nil {
@@ -544,7 +544,7 @@ func main() {
 	pingCheckFacade.SetEventBus(eventBus)
 	orch.SetPingCheck(pingCheckFacade)
 
-	singboxHandler := api.NewSingboxHandler(singboxOp, eventBus, delayChecker, testService)
+	singboxHandler := api.NewSingboxHandler(singboxOp, eventBus, delayChecker, testService, loggingService)
 	singboxHandler.SetPingCheckService(pingCheckFacade)
 	clashProxy := api.NewClashProxy(singboxOp)
 
