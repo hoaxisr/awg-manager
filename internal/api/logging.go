@@ -43,6 +43,13 @@ type LogsResponse struct {
 
 // GetLogs returns log entries with optional filtering.
 // GET /api/logs?group=&subgroup=&level= (new) or ?category=&level= (backward compat)
+//
+//	@Summary		Get logs
+//	@Tags			logs
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/logs [get]
 func (h *LoggingHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -103,6 +110,13 @@ func (h *LoggingHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 
 // ClearLogs removes all log entries.
 // POST /api/logs/clear
+//
+//	@Summary		Clear logs
+//	@Tags			logs
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/logs/clear [post]
 func (h *LoggingHandler) ClearLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")

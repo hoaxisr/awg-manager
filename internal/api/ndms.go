@@ -27,11 +27,11 @@ func NewNDMSHandler(save *ndmscommand.SaveCoordinator) *NDMSHandler {
 	return &NDMSHandler{save: save}
 }
 
-// saveStatusDTO is the wire shape returned by GET /api/ndms/save-status.
+// SaveStatusDTO is the wire shape returned by GET /api/ndms/save-status.
 // State is one of: "idle" | "pending" | "saving" | "error" | "failed".
 // Mirrors the shape UI consumers previously read from the SSE event bus
 // so the polling store keeps the same keys.
-type saveStatusDTO struct {
+type SaveStatusDTO struct {
 	State        string    `json:"state"`
 	LastError    string    `json:"lastError,omitempty"`
 	LastSaveAt   time.Time `json:"lastSaveAt,omitempty"`
@@ -40,6 +40,13 @@ type saveStatusDTO struct {
 
 // GetSaveStatus returns the current NDMS save-coordinator status as JSON.
 // GET /api/ndms/save-status
+//
+//	@Summary		NDMS save coordinator status
+//	@Tags			ndms
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	SaveStatusDTO
+//	@Router			/ndms/save-status [get]
 func (h *NDMSHandler) GetSaveStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -47,11 +54,11 @@ func (h *NDMSHandler) GetSaveStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.save == nil {
 		// Defensive: handler built without a coordinator. Return idle.
-		response.Success(w, saveStatusDTO{State: "idle"})
+		response.Success(w, SaveStatusDTO{State: "idle"})
 		return
 	}
 	s := h.save.Status()
-	response.Success(w, saveStatusDTO{
+	response.Success(w, SaveStatusDTO{
 		State:        s.State.String(),
 		LastError:    s.LastError,
 		LastSaveAt:   s.LastSaveAt,

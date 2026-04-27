@@ -33,6 +33,13 @@ func NewDiagnosticsHandler(runner DiagnosticsRunner) *DiagnosticsHandler {
 
 // Run starts a background diagnostic run.
 // POST /api/diagnostics/run
+//
+//	@Summary		Run diagnostics
+//	@Tags			diagnostics
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/diagnostics/run [post]
 func (h *DiagnosticsHandler) Run(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -51,6 +58,13 @@ func (h *DiagnosticsHandler) Run(w http.ResponseWriter, r *http.Request) {
 
 // Status returns the current diagnostic run status.
 // GET /api/diagnostics/status
+//
+//	@Summary		Diagnostics status
+//	@Tags			diagnostics
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/diagnostics/status [get]
 func (h *DiagnosticsHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -62,6 +76,13 @@ func (h *DiagnosticsHandler) Status(w http.ResponseWriter, r *http.Request) {
 
 // Result returns the last completed diagnostics report as a JSON file download.
 // GET /api/diagnostics/result
+//
+//	@Summary		Download diagnostics report
+//	@Tags			diagnostics
+//	@Produce		application/json
+//	@Security		CookieAuth
+//	@Success		200	{file}	binary
+//	@Router			/diagnostics/result [get]
 func (h *DiagnosticsHandler) Result(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -118,6 +139,13 @@ func sanitizeFilenamePart(s string) string {
 
 // Stream starts a diagnostic run and streams results via SSE.
 // GET /api/diagnostics/stream?mode=quick&restart=false&route=direct|tunnel&tunnelId=<id>
+//
+//	@Summary		Diagnostics SSE stream
+//	@Tags			diagnostics
+//	@Produce		text/event-stream
+//	@Security		CookieAuth
+//	@Success		200	{string}	string	"SSE stream"
+//	@Router			/diagnostics/stream [get]
 func (h *DiagnosticsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

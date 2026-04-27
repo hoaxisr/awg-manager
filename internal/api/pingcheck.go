@@ -70,6 +70,13 @@ func (h *PingCheckHandler) PublishSnapshot() {
 }
 
 // GetStatus returns the current status of all monitored tunnels.
+//
+//	@Summary		Ping check status
+//	@Tags			pingcheck
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/pingcheck/status [get]
 func (h *PingCheckHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -92,6 +99,14 @@ func (h *PingCheckHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetLogs returns ping check logs.
+//
+//	@Summary		Ping check logs
+//	@Tags			pingcheck
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			tunnelId	query	string	false	"Filter by tunnel id"
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/pingcheck/logs [get]
 func (h *PingCheckHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -123,6 +138,13 @@ func (h *PingCheckHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // ClearLogs removes all ping check log entries.
+//
+//	@Summary		Clear ping check logs
+//	@Tags			pingcheck
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/pingcheck/logs/clear [post]
 func (h *PingCheckHandler) ClearLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -142,6 +164,13 @@ func (h *PingCheckHandler) ClearLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // CheckNow triggers an immediate check on all tunnels.
+//
+//	@Summary		Trigger ping check now
+//	@Tags			pingcheck
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/pingcheck/check-now [post]
 func (h *PingCheckHandler) CheckNow(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -161,6 +190,14 @@ func (h *PingCheckHandler) CheckNow(w http.ResponseWriter, r *http.Request) {
 
 // GetTunnelPingCheckStatus returns NDMS ping-check status for a single nativewg tunnel.
 // GET /api/tunnels/pingcheck?id=xxx
+//
+//	@Summary		Get per-tunnel NDMS ping-check
+//	@Tags			pingcheck
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/tunnels/pingcheck [get]
 func (h *PingCheckHandler) GetTunnelPingCheckStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -206,6 +243,15 @@ func (h *PingCheckHandler) GetTunnelPingCheckStatus(w http.ResponseWriter, r *ht
 
 // ConfigureTunnelPingCheck creates/updates NDMS ping-check for a nativewg tunnel.
 // POST /api/tunnels/pingcheck?id=xxx
+//
+//	@Summary		Configure per-tunnel NDMS ping-check
+//	@Tags			pingcheck
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/tunnels/pingcheck [post]
 func (h *PingCheckHandler) ConfigureTunnelPingCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -282,6 +328,14 @@ func (h *PingCheckHandler) ConfigureTunnelPingCheck(w http.ResponseWriter, r *ht
 
 // RemoveTunnelPingCheck removes NDMS ping-check for a nativewg tunnel.
 // POST /api/tunnels/pingcheck/remove?id=xxx
+//
+//	@Summary		Remove per-tunnel NDMS ping-check
+//	@Tags			pingcheck
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/tunnels/pingcheck/remove [post]
 func (h *PingCheckHandler) RemoveTunnelPingCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")

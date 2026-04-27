@@ -18,6 +18,13 @@ func NewDnsCheckHandler(svc *dnscheck.Service) *DnsCheckHandler {
 }
 
 // Start initiates DNS diagnostic check (server-side checks only).
+//
+//	@Summary		Start DNS check
+//	@Tags			dns-check
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/dns-check/start [post]
 func (h *DnsCheckHandler) Start(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -35,6 +42,12 @@ func (h *DnsCheckHandler) Start(w http.ResponseWriter, r *http.Request) {
 // Probe — cross-origin endpoint hit by the client's DNS probe fetch.
 // If the client's DNS resolves awgm-dnscheck.test to the router, this
 // endpoint is reachable and responds with 200. NO auth required.
+//
+//	@Summary		DNS check probe (CORS)
+//	@Tags			dns-check
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/dns-check/probe [get]
 func (h *DnsCheckHandler) Probe(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")

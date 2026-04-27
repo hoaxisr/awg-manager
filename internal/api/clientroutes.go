@@ -30,6 +30,14 @@ func NewClientRouteHandler(svc clientroute.Service) *ClientRouteHandler {
 
 // HandleList returns all client routes.
 // GET /api/client-routes
+//
+//	@Summary		List client routes
+//	@Tags			client-routes
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/client-routes [get]
+//	@Router			/routing/client-routes [get]
 func (h *ClientRouteHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -46,6 +54,14 @@ func (h *ClientRouteHandler) HandleList(w http.ResponseWriter, r *http.Request) 
 // HandleCreate creates a new client route.
 // POST /api/client-routes/create
 // Body: ClientRoute JSON
+//
+//	@Summary		Create client route
+//	@Tags			client-routes
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/client-routes/create [post]
 func (h *ClientRouteHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 	route, ok := parseJSON[clientroute.ClientRoute](w, r, http.MethodPost)
 	if !ok {
@@ -63,6 +79,15 @@ func (h *ClientRouteHandler) HandleCreate(w http.ResponseWriter, r *http.Request
 // HandleUpdate updates an existing client route.
 // POST /api/client-routes/update?id=xxx
 // Body: ClientRoute JSON
+//
+//	@Summary		Update client route
+//	@Tags			client-routes
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Route id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/client-routes/update [post]
 func (h *ClientRouteHandler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	route, ok := parseJSON[clientroute.ClientRoute](w, r, http.MethodPost)
 	if !ok {
@@ -85,6 +110,14 @@ func (h *ClientRouteHandler) HandleUpdate(w http.ResponseWriter, r *http.Request
 
 // HandleDelete deletes a client route.
 // POST /api/client-routes/delete?id=xxx
+//
+//	@Summary		Delete client route
+//	@Tags			client-routes
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Route id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/client-routes/delete [post]
 func (h *ClientRouteHandler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -106,6 +139,15 @@ func (h *ClientRouteHandler) HandleDelete(w http.ResponseWriter, r *http.Request
 // HandleToggle enables or disables a client route.
 // POST /api/client-routes/toggle?id=xxx
 // Body: {"enabled": bool}
+//
+//	@Summary		Toggle client route
+//	@Tags			client-routes
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Route id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/client-routes/toggle [post]
 func (h *ClientRouteHandler) HandleToggle(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[enabledToggle](w, r, http.MethodPost)
 	if !ok {

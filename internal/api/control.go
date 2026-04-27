@@ -68,6 +68,14 @@ func (h *ControlHandler) getStatus(r *http.Request, id string) string {
 }
 
 // Start starts a tunnel.
+//
+//	@Summary		Start tunnel
+//	@Tags			control
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/control/start [post]
 func (h *ControlHandler) Start(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -111,6 +119,14 @@ func (h *ControlHandler) Start(w http.ResponseWriter, r *http.Request) {
 }
 
 // Stop stops a tunnel.
+//
+//	@Summary		Stop tunnel
+//	@Tags			control
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/control/stop [post]
 func (h *ControlHandler) Stop(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -154,6 +170,14 @@ func (h *ControlHandler) Stop(w http.ResponseWriter, r *http.Request) {
 }
 
 // Restart restarts a tunnel.
+//
+//	@Summary		Restart tunnel
+//	@Tags			control
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/control/restart [post]
 func (h *ControlHandler) Restart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -193,6 +217,13 @@ func (h *ControlHandler) Restart(w http.ResponseWriter, r *http.Request) {
 }
 
 // RestartAll restarts all enabled tunnels.
+//
+//	@Summary		Restart all enabled tunnels
+//	@Tags			control
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/control/restart-all [post]
 func (h *ControlHandler) RestartAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -242,6 +273,14 @@ func (h *ControlHandler) RestartAll(w http.ResponseWriter, r *http.Request) {
 }
 
 // ToggleEnabled toggles the auto-start setting for a tunnel.
+//
+//	@Summary		Toggle tunnel autostart
+//	@Tags			control
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/control/toggle-enabled [post]
 func (h *ControlHandler) ToggleEnabled(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -290,6 +329,14 @@ func (h *ControlHandler) ToggleEnabled(w http.ResponseWriter, r *http.Request) {
 }
 
 // ToggleDefaultRoute toggles the default route setting for a tunnel.
+//
+//	@Summary		Toggle default route
+//	@Tags			control
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/control/toggle-default-route [post]
 func (h *ControlHandler) ToggleDefaultRoute(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)

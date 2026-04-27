@@ -21,6 +21,15 @@ func NewTestingHandler(testingService *testing.Service) *TestingHandler {
 }
 
 // CheckIP tests if traffic goes through tunnel by comparing IPs.
+//
+//	@Summary		IP leak check
+//	@Tags			test
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		query	string	false	"Tunnel id"
+//	@Param			service	query	string	false	"Check service id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/test/ip [get]
 func (h *TestingHandler) CheckIP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -49,6 +58,13 @@ func (h *TestingHandler) CheckIP(w http.ResponseWriter, r *http.Request) {
 }
 
 // IPCheckServices returns the list of available IP check services.
+//
+//	@Summary		IP check services
+//	@Tags			test
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/test/ip/services [get]
 func (h *TestingHandler) IPCheckServices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -59,6 +75,14 @@ func (h *TestingHandler) IPCheckServices(w http.ResponseWriter, r *http.Request)
 }
 
 // CheckConnectivity performs a quick connectivity test through tunnel.
+//
+//	@Summary		Connectivity check
+//	@Tags			test
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/test/connectivity [get]
 func (h *TestingHandler) CheckConnectivity(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -85,6 +109,13 @@ func (h *TestingHandler) CheckConnectivity(w http.ResponseWriter, r *http.Reques
 }
 
 // SpeedTestServers returns iperf3 availability and server list.
+//
+//	@Summary		Speed test servers
+//	@Tags			test
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/test/speed/servers [get]
 func (h *TestingHandler) SpeedTestServers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -95,6 +126,13 @@ func (h *TestingHandler) SpeedTestServers(w http.ResponseWriter, r *http.Request
 }
 
 // SpeedTest runs iperf3 speed test through a tunnel.
+//
+//	@Summary		Speed test (sync)
+//	@Tags			test
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/test/speed [get]
 func (h *TestingHandler) SpeedTest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -144,6 +182,13 @@ func (h *TestingHandler) SpeedTest(w http.ResponseWriter, r *http.Request) {
 }
 
 // SpeedTestStream runs iperf3 speed test with SSE streaming of per-second intervals.
+//
+//	@Summary		Speed test stream
+//	@Tags			test
+//	@Produce		text/event-stream
+//	@Security		CookieAuth
+//	@Success		200	{string}	string	"SSE stream"
+//	@Router			/test/speed/stream [get]
 func (h *TestingHandler) SpeedTestStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

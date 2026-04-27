@@ -19,6 +19,13 @@ func NewConnectionsHandler(svc *connections.Service) *ConnectionsHandler {
 }
 
 // List returns filtered and paginated conntrack connections.
+//
+//	@Summary		Connections list
+//	@Tags			connections
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/connections [get]
 func (h *ConnectionsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

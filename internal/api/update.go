@@ -24,6 +24,14 @@ func NewUpdateHandler(updater *updater.Service, appLogger logging.AppLogger) *Up
 
 // Check returns cached update info or triggers a fresh check.
 // GET /api/system/update/check?force=true
+//
+//	@Summary		Update check
+//	@Tags			update
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			force	query	boolean	false	"Force refresh from upstream"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/system/update/check [get]
 func (h *UpdateHandler) Check(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -44,6 +52,13 @@ func (h *UpdateHandler) Check(w http.ResponseWriter, r *http.Request) {
 
 // Apply starts the opkg upgrade process.
 // POST /api/system/update/apply
+//
+//	@Summary		Apply system update
+//	@Tags			update
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/system/update/apply [post]
 func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -76,6 +91,15 @@ func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 //
 // GET /api/system/update/changelog?from=2.7.5&to=2.8.0
 // GET /api/system/update/changelog?to=2.8.1
+//
+//	@Summary		Update changelog
+//	@Tags			update
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			from	query	string	false	"From version"
+//	@Param			to		query	string	true	"To version"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/system/update/changelog [get]
 func (h *UpdateHandler) Changelog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

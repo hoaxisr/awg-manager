@@ -35,6 +35,14 @@ func NewAccessPolicyHandler(svc accesspolicy.Service) *AccessPolicyHandler {
 
 // List returns all access policies.
 // GET /api/access-policies
+//
+//	@Summary		List access policies
+//	@Description	KeeneticOS 5 only when route is registered.
+//	@Tags			access-policy
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/access-policies [get]
 func (h *AccessPolicyHandler) List(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -55,6 +63,14 @@ func (h *AccessPolicyHandler) List(w http.ResponseWriter, r *http.Request) {
 // Create creates a new access policy.
 // POST /api/access-policies/create
 // Body: {"description":"..."}
+//
+//	@Summary		Create access policy
+//	@Tags			access-policy
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/access-policies/create [post]
 func (h *AccessPolicyHandler) Create(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[struct {
 		Description string `json:"description"`
@@ -105,6 +121,14 @@ func (h *AccessPolicyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // SetDescription updates the description of an access policy.
 // POST /api/access-policies/description
 // Body: {"name":"Policy0","description":"..."}
+//
+//	@Summary		Set access policy description
+//	@Tags			access-policy
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/access-policies/description [post]
 func (h *AccessPolicyHandler) SetDescription(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[struct {
 		Name        string `json:"name"`
@@ -128,6 +152,14 @@ func (h *AccessPolicyHandler) SetDescription(w http.ResponseWriter, r *http.Requ
 // SetStandalone enables or disables standalone mode on an access policy.
 // POST /api/access-policies/standalone
 // Body: {"name":"Policy0","enabled":true}
+//
+//	@Summary		Set access policy standalone mode
+//	@Tags			access-policy
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/access-policies/standalone [post]
 func (h *AccessPolicyHandler) SetStandalone(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[struct {
 		Name    string `json:"name"`
@@ -148,18 +180,19 @@ func (h *AccessPolicyHandler) SetStandalone(w http.ResponseWriter, r *http.Reque
 	h.publishPoliciesUpdated("set-standalone")
 }
 
-// PermitInterface handles permit/deny operations for policy interfaces.
-// POST /api/access-policies/permit — add interface
-// Body: {"name":"Policy0","interface":"Wireguard0","order":0}
-// DELETE /api/access-policies/permit?name=Policy0&interface=Wireguard0 — remove interface
-func (h *AccessPolicyHandler) PermitInterface(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		h.permitInterfaceAdd(w, r)
-	case http.MethodDelete:
-		h.permitInterfaceRemove(w, r)
-	default:
+// PermitInterfaceAdd adds an interface to a policy (POST /api/access-policies/permit).
+//
+//	@Summary		Permit interface on policy
+//	@Tags			access-policy
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/access-policies/permit [post]
+func (h *AccessPolicyHandler) PermitInterfaceAdd(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
+		return
 	}
 }
 
@@ -315,6 +348,14 @@ func (h *AccessPolicyHandler) unassignDeviceDelete(w http.ResponseWriter, r *htt
 
 // ListDevices returns all LAN devices with their policy assignments.
 // GET /api/access-policies/devices
+//
+//	@Summary		List policy devices
+//	@Tags			access-policy
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/access-policies/devices [get]
+//	@Router			/routing/policy-devices [get]
 func (h *AccessPolicyHandler) ListDevices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -334,6 +375,13 @@ func (h *AccessPolicyHandler) ListDevices(w http.ResponseWriter, r *http.Request
 
 // ListGlobalInterfaces returns all router interfaces available for policy routing.
 // GET /api/access-policies/interfaces
+//
+//	@Summary		List global policy interfaces
+//	@Tags			access-policy
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/access-policies/interfaces [get]
 func (h *AccessPolicyHandler) ListGlobalInterfaces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -350,6 +398,14 @@ func (h *AccessPolicyHandler) ListGlobalInterfaces(w http.ResponseWriter, r *htt
 // SetInterfaceUp brings an interface up or down.
 // POST /api/access-policies/interface-up
 // Body: {"name":"Wireguard0","up":true}
+//
+//	@Summary		Set interface admin up
+//	@Tags			access-policy
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/access-policies/interface-up [post]
 func (h *AccessPolicyHandler) SetInterfaceUp(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[struct {
 		Name string `json:"name"`

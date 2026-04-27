@@ -1,0 +1,3111 @@
+basePath: /api
+definitions:
+  api.AdoptRequest:
+    properties:
+      content:
+        type: string
+      name:
+        type: string
+    type: object
+  api.LoginRequest:
+    properties:
+      login:
+        type: string
+      password:
+        type: string
+    type: object
+  api.ResolveResponse:
+    properties:
+      domain:
+        type: string
+      error:
+        type: string
+      ips:
+        items:
+          type: string
+        type: array
+    type: object
+  api.SaveStatusDTO:
+    properties:
+      lastError:
+        type: string
+      lastSaveAt:
+        type: string
+      pendingCount:
+        type: integer
+      state:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: HTTP API for the AWG Manager daemon (tunnels, routing, system).
+  title: AWG Manager API
+  version: "1.0"
+paths:
+  /access-policies:
+    get:
+      description: KeeneticOS 5 only when route is registered.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List access policies
+      tags:
+      - access-policy
+  /access-policies/assign:
+    delete:
+      parameters:
+      - description: Device MAC
+        in: query
+        name: mac
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Unassign device from policy
+      tags:
+      - access-policy
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Assign device to policy
+      tags:
+      - access-policy
+  /access-policies/create:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Create access policy
+      tags:
+      - access-policy
+  /access-policies/delete:
+    delete:
+      parameters:
+      - description: Policy name
+        in: query
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Delete access policy
+      tags:
+      - access-policy
+  /access-policies/description:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Set access policy description
+      tags:
+      - access-policy
+  /access-policies/devices:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List policy devices
+      tags:
+      - access-policy
+  /access-policies/interface-up:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Set interface admin up
+      tags:
+      - access-policy
+  /access-policies/interfaces:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List global policy interfaces
+      tags:
+      - access-policy
+  /access-policies/permit:
+    delete:
+      parameters:
+      - description: Policy name
+        in: query
+        name: name
+        required: true
+        type: string
+      - description: Interface name
+        in: query
+        name: interface
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Remove permitted interface
+      tags:
+      - access-policy
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Permit interface on policy
+      tags:
+      - access-policy
+  /access-policies/standalone:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Set access policy standalone mode
+      tags:
+      - access-policy
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticates with Keenetic credentials; sets HttpOnly session
+        cookie awg_session.
+      parameters:
+      - description: Router login and password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: success, login
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Login
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Logout
+      tags:
+      - auth
+  /auth/status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: authenticated, login, expiresIn, authDisabled
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Auth status
+      tags:
+      - auth
+  /boot-status:
+    get:
+      description: 'Public snapshot: initializing flag, phase, instance id.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Boot status
+      tags:
+      - system
+  /client-routes:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List client routes
+      tags:
+      - client-routes
+  /client-routes/create:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Create client route
+      tags:
+      - client-routes
+  /client-routes/delete:
+    post:
+      parameters:
+      - description: Route id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Delete client route
+      tags:
+      - client-routes
+  /client-routes/toggle:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Route id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Toggle client route
+      tags:
+      - client-routes
+  /client-routes/update:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Route id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Update client route
+      tags:
+      - client-routes
+  /connections:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Connections list
+      tags:
+      - connections
+  /control/restart:
+    post:
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Restart tunnel
+      tags:
+      - control
+  /control/restart-all:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: Restart all enabled tunnels
+      tags:
+      - control
+  /control/start:
+    post:
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Start tunnel
+      tags:
+      - control
+  /control/stop:
+    post:
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Stop tunnel
+      tags:
+      - control
+  /control/toggle-default-route:
+    post:
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Toggle default route
+      tags:
+      - control
+  /control/toggle-enabled:
+    post:
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Toggle tunnel autostart
+      tags:
+      - control
+  /diagnostics/result:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+      security:
+      - CookieAuth: []
+      summary: Download diagnostics report
+      tags:
+      - diagnostics
+  /diagnostics/run:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Run diagnostics
+      tags:
+      - diagnostics
+  /diagnostics/status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Diagnostics status
+      tags:
+      - diagnostics
+  /diagnostics/stream:
+    get:
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE stream
+          schema:
+            type: string
+      security:
+      - CookieAuth: []
+      summary: Diagnostics SSE stream
+      tags:
+      - diagnostics
+  /dns-check/probe:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: DNS check probe (CORS)
+      tags:
+      - dns-check
+  /dns-check/start:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Start DNS check
+      tags:
+      - dns-check
+  /dns-routes/bulk-backend:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: Bulk set DNS route backend
+      tags:
+      - dns-routes
+  /dns-routes/create:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Create DNS route list
+      tags:
+      - dns-routes
+  /dns-routes/create-batch:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Create DNS route lists (batch)
+      tags:
+      - dns-routes
+  /dns-routes/delete:
+    post:
+      parameters:
+      - description: List id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: Delete DNS route list
+      tags:
+      - dns-routes
+  /dns-routes/delete-batch:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: Delete DNS route lists (batch)
+      tags:
+      - dns-routes
+  /dns-routes/get:
+    get:
+      parameters:
+      - description: List id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Get DNS route list
+      tags:
+      - dns-routes
+  /dns-routes/list:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List DNS route lists
+      tags:
+      - dns-routes
+  /dns-routes/refresh:
+    post:
+      parameters:
+      - description: List id (omit for all)
+        in: query
+        name: id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Refresh DNS route subscriptions
+      tags:
+      - dns-routes
+  /dns-routes/set-enabled:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: List id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: Set DNS route list enabled
+      tags:
+      - dns-routes
+  /dns-routes/update:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: List id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Update DNS route list
+      tags:
+      - dns-routes
+  /events:
+    get:
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: Server-Sent Events
+          schema:
+            type: string
+      security:
+      - CookieAuth: []
+      summary: SSE event stream
+      tags:
+      - events
+  /external-tunnels:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List external tunnels
+      tags:
+      - tunnels
+  /external-tunnels/adopt:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: NDMS interface name
+        in: query
+        name: interface
+        required: true
+        type: string
+      - description: Tunnel config body
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.AdoptRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Adopt external tunnel
+      tags:
+      - tunnels
+  /health:
+    get:
+      description: Cheap check for frontend pollers; no NDMS or I/O.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: ok, version
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Health / liveness
+      tags:
+      - system
+  /hook/ndms:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: 'Called from router scripts (public). Form fields: type, id, system_name,
+        layer, etc.'
+      parameters:
+      - description: Event type (iflayerchanged, ifcreated, ...)
+        in: formData
+        name: type
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: NDMS shell hook
+      tags:
+      - hook
+  /hydraroute/config:
+    get:
+      description: Available when HydraRoute service is wired on the device.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Get HydraRoute config
+      tags:
+      - hydraroute
+  /hydraroute/config/update:
+    put:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Update HydraRoute config
+      tags:
+      - hydraroute
+  /hydraroute/geo-files:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List HydraRoute geo files
+      tags:
+      - hydraroute
+  /hydraroute/geo-files/add:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Add HydraRoute geo file
+      tags:
+      - hydraroute
+  /hydraroute/geo-files/delete:
+    delete:
+      parameters:
+      - description: File path
+        in: query
+        name: path
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Delete HydraRoute geo file
+      tags:
+      - hydraroute
+  /hydraroute/geo-files/update:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Refresh HydraRoute geo file(s)
+      tags:
+      - hydraroute
+  /hydraroute/geo-tags:
+    get:
+      parameters:
+      - description: Geo file path
+        in: query
+        name: path
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: string
+            type: array
+      security:
+      - CookieAuth: []
+      summary: HydraRoute geo tags
+      tags:
+      - hydraroute
+  /hydraroute/ipset-usage:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: HydraRoute ipset usage
+      tags:
+      - hydraroute
+  /hydraroute/oversized-tags:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: HydraRoute oversized geo tags
+      tags:
+      - hydraroute
+  /hydraroute/policy-order:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Set HydraRoute policy order
+      tags:
+      - hydraroute
+  /import/conf:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Import tunnel config
+      tags:
+      - import
+  /logs:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Get logs
+      tags:
+      - logs
+  /logs/clear:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Clear logs
+      tags:
+      - logs
+  /managed-server:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Get managed WireGuard server
+      tags:
+      - managed-server
+  /managed-server/asc:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Get managed server ASC
+      tags:
+      - managed-server
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Set managed server ASC
+      tags:
+      - managed-server
+  /managed-server/create:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Create managed server
+      tags:
+      - managed-server
+  /managed-server/delete:
+    delete:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Delete managed server
+      tags:
+      - managed-server
+  /managed-server/enabled:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Enable/disable managed server
+      tags:
+      - managed-server
+  /managed-server/nat:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Set managed server NAT
+      tags:
+      - managed-server
+  /managed-server/peers:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Add managed server peer
+      tags:
+      - managed-server
+  /managed-server/peers/conf:
+    get:
+      parameters:
+      - description: Peer public key
+        in: query
+        name: pubkey
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Peer WireGuard conf
+      tags:
+      - managed-server
+  /managed-server/peers/delete:
+    delete:
+      parameters:
+      - description: Peer public key
+        in: query
+        name: pubkey
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Delete managed server peer
+      tags:
+      - managed-server
+  /managed-server/peers/toggle:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Toggle managed server peer
+      tags:
+      - managed-server
+  /managed-server/peers/update:
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Peer public key
+        in: query
+        name: pubkey
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Update managed server peer
+      tags:
+      - managed-server
+  /managed-server/policies:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List IP policy profiles
+      tags:
+      - managed-server
+  /managed-server/policy:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Set managed server hotspot policy
+      tags:
+      - managed-server
+  /managed-server/stats:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Managed server stats
+      tags:
+      - managed-server
+  /managed-server/suggest-address:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Suggest managed server address
+      tags:
+      - managed-server
+  /managed-server/update:
+    put:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Update managed server
+      tags:
+      - managed-server
+  /ndms/save-status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SaveStatusDTO'
+      security:
+      - CookieAuth: []
+      summary: NDMS save coordinator status
+      tags:
+      - ndms
+  /pingcheck/check-now:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Trigger ping check now
+      tags:
+      - pingcheck
+  /pingcheck/logs:
+    get:
+      parameters:
+      - description: Filter by tunnel id
+        in: query
+        name: tunnelId
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: Ping check logs
+      tags:
+      - pingcheck
+  /pingcheck/logs/clear:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Clear ping check logs
+      tags:
+      - pingcheck
+  /pingcheck/status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Ping check status
+      tags:
+      - pingcheck
+  /proxy/apply:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Force apply device proxy
+      tags:
+      - device-proxy
+  /proxy/config:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Get device proxy config
+      tags:
+      - device-proxy
+    put:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Save device proxy config
+      tags:
+      - device-proxy
+  /proxy/listen-choices:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Device proxy listen choices
+      tags:
+      - device-proxy
+  /proxy/outbounds:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List device proxy outbounds
+      tags:
+      - device-proxy
+  /proxy/runtime:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Device proxy runtime state
+      tags:
+      - device-proxy
+  /proxy/runtime/select:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Select device proxy outbound
+      tags:
+      - device-proxy
+  /routing/access-policies:
+    get:
+      description: Always {"data":[]}. Real data on KeeneticOS 5 only.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: OS4 access policies stub
+      tags:
+      - routing
+  /routing/client-routes:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List client routes
+      tags:
+      - client-routes
+  /routing/dns-routes:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List DNS route lists
+      tags:
+      - dns-routes
+  /routing/policy-devices:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List policy devices
+      tags:
+      - access-policy
+  /routing/policy-interfaces:
+    get:
+      description: Always {"data":[]}. Real data on KeeneticOS 5 only.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: OS4 policy interfaces stub
+      tags:
+      - routing
+  /routing/refresh:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Invalidate routing caches
+      tags:
+      - routing
+  /routing/resolve:
+    get:
+      parameters:
+      - description: Hostname to resolve
+        in: query
+        name: domain
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ResolveResponse'
+      security:
+      - CookieAuth: []
+      summary: Resolve domain
+      tags:
+      - routing
+  /routing/static-routes:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List static routes
+      tags:
+      - static-routes
+  /routing/tunnels:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: Routing tunnel catalog
+      tags:
+      - routing
+  /servers:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List VPN server interfaces
+      tags:
+      - servers
+  /servers/all:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Servers composite snapshot
+      tags:
+      - servers
+  /servers/config:
+    get:
+      parameters:
+      - description: NDMS interface name
+        in: query
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Server RC config for export
+      tags:
+      - servers
+  /servers/get:
+    get:
+      parameters:
+      - description: NDMS interface name
+        in: query
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Get VPN server by name
+      tags:
+      - servers
+  /servers/mark:
+    delete:
+      parameters:
+      - description: NDMS interface name
+        in: query
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Unmark server interface
+      tags:
+      - servers
+    post:
+      parameters:
+      - description: NDMS interface name
+        in: query
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Mark server interface
+      tags:
+      - servers
+  /servers/marked:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: string
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List marked server interface ids
+      tags:
+      - servers
+  /servers/wan-ip:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: WAN IP for server conf
+      tags:
+      - servers
+  /settings/get:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Get settings
+      tags:
+      - settings
+  /settings/update:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Update settings
+      tags:
+      - settings
+  /signature/capture:
+    get:
+      parameters:
+      - description: Domain name
+        in: query
+        name: domain
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Signature capture
+      tags:
+      - signature
+  /singbox/install:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Install sing-box
+      tags:
+      - singbox
+  /singbox/status:
+    get:
+      description: Available when sing-box integration is enabled in the build.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Sing-box status
+      tags:
+      - singbox
+  /singbox/tunnels:
+    delete:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Delete sing-box tunnel
+      tags:
+      - singbox
+    get:
+      parameters:
+      - description: When set, returns single tunnel
+        in: query
+        name: tag
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: List or get sing-box tunnel(s)
+      tags:
+      - singbox
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Add sing-box tunnel(s)
+      tags:
+      - singbox
+    put:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Update sing-box tunnel
+      tags:
+      - singbox
+  /singbox/tunnels/delay-check:
+    post:
+      parameters:
+      - description: Tunnel tag
+        in: query
+        name: tag
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Sing-box delay check
+      tags:
+      - singbox
+  /singbox/tunnels/test/speed/stream:
+    get:
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE stream
+          schema:
+            type: string
+      security:
+      - CookieAuth: []
+      summary: Sing-box tunnel speed test stream
+      tags:
+      - singbox
+  /static-routes/create:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Create static route
+      tags:
+      - static-routes
+  /static-routes/delete:
+    post:
+      parameters:
+      - description: List id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Delete static route
+      tags:
+      - static-routes
+  /static-routes/import:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Import static routes
+      tags:
+      - static-routes
+  /static-routes/list:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List static routes
+      tags:
+      - static-routes
+  /static-routes/set-enabled:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: List id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Set static route enabled
+      tags:
+      - static-routes
+  /static-routes/update:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Update static route
+      tags:
+      - static-routes
+  /status/all:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: All tunnel statuses
+      tags:
+      - status
+  /status/get:
+    get:
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Tunnel status
+      tags:
+      - status
+  /system-tunnels:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List system WireGuard tunnels
+      tags:
+      - system-tunnels
+  /system-tunnels/asc:
+    get:
+      parameters:
+      - description: NDMS interface name
+        in: query
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Get system tunnel ASC params
+      tags:
+      - system-tunnels
+    post:
+      parameters:
+      - description: NDMS interface name
+        in: query
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Set system tunnel ASC params
+      tags:
+      - system-tunnels
+  /system-tunnels/get:
+    get:
+      parameters:
+      - description: NDMS interface name
+        in: query
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Get system tunnel
+      tags:
+      - system-tunnels
+  /system-tunnels/hidden:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: string
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List hidden system tunnels
+      tags:
+      - system-tunnels
+  /system-tunnels/hide:
+    delete:
+      parameters:
+      - description: NDMS interface name
+        in: query
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Unhide system tunnel
+      tags:
+      - system-tunnels
+    post:
+      parameters:
+      - description: NDMS interface name
+        in: query
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Hide system tunnel
+      tags:
+      - system-tunnels
+  /system-tunnels/test-connectivity:
+    get:
+      parameters:
+      - description: NDMS interface name
+        in: query
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: System tunnel connectivity test
+      tags:
+      - system-tunnels
+  /system-tunnels/test-ip:
+    get:
+      parameters:
+      - description: NDMS interface name
+        in: query
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: System tunnel IP check
+      tags:
+      - system-tunnels
+  /system-tunnels/test-speed:
+    get:
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE stream
+          schema:
+            type: string
+      security:
+      - CookieAuth: []
+      summary: System tunnel speed test (SSE)
+      tags:
+      - system-tunnels
+  /system/all-interfaces:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: All interfaces
+      tags:
+      - system
+  /system/hydraroute-control:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: HydraRoute control (system)
+      tags:
+      - system
+  /system/hydraroute-status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: HydraRoute status (system)
+      tags:
+      - system
+  /system/info:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: System info
+      tags:
+      - system
+  /system/restart:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Restart daemon
+      tags:
+      - system
+  /system/update/apply:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Apply system update
+      tags:
+      - update
+  /system/update/changelog:
+    get:
+      parameters:
+      - description: From version
+        in: query
+        name: from
+        type: string
+      - description: To version
+        in: query
+        name: to
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Update changelog
+      tags:
+      - update
+  /system/update/check:
+    get:
+      parameters:
+      - description: Force refresh from upstream
+        in: query
+        name: force
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Update check
+      tags:
+      - update
+  /system/wan-interfaces:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: WAN interfaces
+      tags:
+      - system
+  /terminal/install:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Install terminal (ttyd)
+      tags:
+      - terminal
+  /terminal/start:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Start terminal
+      tags:
+      - terminal
+  /terminal/status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Terminal status
+      tags:
+      - terminal
+  /terminal/stop:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Stop terminal
+      tags:
+      - terminal
+  /terminal/ws:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: WebSocket upgrade
+          schema:
+            type: string
+      security:
+      - CookieAuth: []
+      summary: Terminal WebSocket
+      tags:
+      - terminal
+  /test/connectivity:
+    get:
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Connectivity check
+      tags:
+      - test
+  /test/ip:
+    get:
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        type: string
+      - description: Check service id
+        in: query
+        name: service
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: IP leak check
+      tags:
+      - test
+  /test/ip/services:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: IP check services
+      tags:
+      - test
+  /test/speed:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Speed test (sync)
+      tags:
+      - test
+  /test/speed/servers:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Speed test servers
+      tags:
+      - test
+  /test/speed/stream:
+    get:
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE stream
+          schema:
+            type: string
+      security:
+      - CookieAuth: []
+      summary: Speed test stream
+      tags:
+      - test
+  /tunnels/all:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Composite tunnels snapshot
+      tags:
+      - tunnels
+  /tunnels/create:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Create tunnel
+      tags:
+      - tunnels
+  /tunnels/delete:
+    post:
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Delete tunnel
+      tags:
+      - tunnels
+  /tunnels/export:
+    get:
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+      security:
+      - CookieAuth: []
+      summary: Export tunnel config
+      tags:
+      - tunnels
+  /tunnels/export-all:
+    get:
+      produces:
+      - application/zip
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+      security:
+      - CookieAuth: []
+      summary: Export all tunnels (zip)
+      tags:
+      - tunnels
+  /tunnels/get:
+    get:
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Get tunnel
+      tags:
+      - tunnels
+  /tunnels/list:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List tunnels
+      tags:
+      - tunnels
+  /tunnels/pingcheck:
+    get:
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Get per-tunnel NDMS ping-check
+      tags:
+      - pingcheck
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Configure per-tunnel NDMS ping-check
+      tags:
+      - pingcheck
+  /tunnels/pingcheck/remove:
+    post:
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Remove per-tunnel NDMS ping-check
+      tags:
+      - pingcheck
+  /tunnels/replace:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Replace tunnel from conf
+      tags:
+      - tunnels
+  /tunnels/traffic:
+    get:
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      - description: 1h or 24h
+        in: query
+        name: period
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Tunnel traffic history
+      tags:
+      - tunnels
+  /tunnels/update:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Update tunnel
+      tags:
+      - tunnels
+  /wan/status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: WAN status
+      tags:
+      - wan
+securityDefinitions:
+  CookieAuth:
+    description: Session cookie set by POST /auth/login. Omit for public routes.
+    in: cookie
+    name: awg_session
+    type: apiKey
+swagger: "2.0"

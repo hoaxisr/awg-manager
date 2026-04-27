@@ -43,6 +43,14 @@ func (h *ImportHandler) SetTunnelsHandler(th *TunnelsHandler) {
 }
 
 // ImportConf imports a WireGuard/AmneziaWG config file.
+//
+//	@Summary		Import tunnel config
+//	@Tags			import
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/import/conf [post]
 func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[struct {
 		Content string `json:"content"`

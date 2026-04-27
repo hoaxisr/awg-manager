@@ -116,6 +116,13 @@ func (h *SystemHandler) SetSingboxOperator(op *singbox.Operator) {
 }
 
 // RestartDaemon triggers a self-restart of the AWG Manager daemon.
+//
+//	@Summary		Restart daemon
+//	@Tags			system
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/system/restart [post]
 func (h *SystemHandler) RestartDaemon(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -130,6 +137,13 @@ func (h *SystemHandler) RestartDaemon(w http.ResponseWriter, r *http.Request) {
 }
 
 // HydraRouteStatus returns HydraRoute Neo detection status.
+//
+//	@Summary		HydraRoute status (system)
+//	@Tags			system
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/system/hydraroute-status [get]
 func (h *SystemHandler) HydraRouteStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -143,6 +157,14 @@ func (h *SystemHandler) HydraRouteStatus(w http.ResponseWriter, r *http.Request)
 }
 
 // HydraRouteControl starts/stops/restarts the HydraRoute daemon.
+//
+//	@Summary		HydraRoute control (system)
+//	@Tags			system
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/system/hydraroute-control [post]
 func (h *SystemHandler) HydraRouteControl(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -168,6 +190,13 @@ func (h *SystemHandler) HydraRouteControl(w http.ResponseWriter, r *http.Request
 }
 
 // Info returns system information.
+//
+//	@Summary		System info
+//	@Tags			system
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/system/info [get]
 func (h *SystemHandler) Info(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -362,6 +391,13 @@ type wanInterfaceJSON struct {
 
 // WANInterfaces returns available WAN interfaces for routing.
 // GET /api/system/wan-interfaces
+//
+//	@Summary		WAN interfaces
+//	@Tags			system
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/system/wan-interfaces [get]
 func (h *SystemHandler) WANInterfaces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -389,6 +425,13 @@ func (h *SystemHandler) WANInterfaces(w http.ResponseWriter, r *http.Request) {
 
 // AllInterfaces returns all router interfaces for routing configuration.
 // GET /api/system/all-interfaces
+//
+//	@Summary		All interfaces
+//	@Tags			system
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/system/all-interfaces [get]
 func (h *SystemHandler) AllInterfaces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

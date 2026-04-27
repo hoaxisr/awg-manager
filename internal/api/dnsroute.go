@@ -54,6 +54,14 @@ func NewDNSRouteHandler(svc DNSRouteService, appLogger logging.AppLogger) *DNSRo
 }
 
 // List returns all domain lists.
+//
+//	@Summary		List DNS route lists
+//	@Tags			dns-routes
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/dns-routes/list [get]
+//	@Router			/routing/dns-routes [get]
 func (h *DNSRouteHandler) List(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -70,6 +78,14 @@ func (h *DNSRouteHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // Get returns a single domain list by ID.
+//
+//	@Summary		Get DNS route list
+//	@Tags			dns-routes
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"List id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/dns-routes/get [get]
 func (h *DNSRouteHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -92,6 +108,14 @@ func (h *DNSRouteHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // Create creates a new domain list.
+//
+//	@Summary		Create DNS route list
+//	@Tags			dns-routes
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/dns-routes/create [post]
 func (h *DNSRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
 	list, ok := parseJSON[dnsroute.DomainList](w, r, http.MethodPost)
 	if !ok {
@@ -110,6 +134,15 @@ func (h *DNSRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // Update updates an existing domain list.
+//
+//	@Summary		Update DNS route list
+//	@Tags			dns-routes
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"List id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/dns-routes/update [post]
 func (h *DNSRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
 	list, ok := parseJSON[dnsroute.DomainList](w, r, http.MethodPost)
 	if !ok {
@@ -136,6 +169,14 @@ func (h *DNSRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 // Delete deletes a domain list by ID and returns the fresh list so the
 // client can call applyMutationResponse without a separate refetch.
+//
+//	@Summary		Delete DNS route list
+//	@Tags			dns-routes
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"List id"
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/dns-routes/delete [post]
 func (h *DNSRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -166,6 +207,14 @@ func (h *DNSRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteBatch deletes multiple domain lists by IDs.
+//
+//	@Summary		Delete DNS route lists (batch)
+//	@Tags			dns-routes
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/dns-routes/delete-batch [post]
 func (h *DNSRouteHandler) DeleteBatch(w http.ResponseWriter, r *http.Request) {
 	body, ok := parseJSON[struct {
 		IDs []string `json:"ids"`
@@ -200,6 +249,14 @@ func (h *DNSRouteHandler) DeleteBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateBatch creates multiple domain lists at once.
+//
+//	@Summary		Create DNS route lists (batch)
+//	@Tags			dns-routes
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/dns-routes/create-batch [post]
 func (h *DNSRouteHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 	lists, ok := parseJSON[[]dnsroute.DomainList](w, r, http.MethodPost)
 	if !ok {
@@ -224,6 +281,15 @@ func (h *DNSRouteHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 // SetEnabled toggles the enabled state of a domain list.
+//
+//	@Summary		Set DNS route list enabled
+//	@Tags			dns-routes
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"List id"
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/dns-routes/set-enabled [post]
 func (h *DNSRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 	body, ok := parseJSON[enabledToggle](w, r, http.MethodPost)
 	if !ok {
@@ -258,6 +324,14 @@ func (h *DNSRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 }
 
 // BulkBackend switches the routing backend for multiple lists.
+//
+//	@Summary		Bulk set DNS route backend
+//	@Tags			dns-routes
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/dns-routes/bulk-backend [post]
 func (h *DNSRouteHandler) BulkBackend(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[struct {
 		ListIDs []string `json:"listIDs"`
@@ -300,6 +374,14 @@ func (h *DNSRouteHandler) BulkBackend(w http.ResponseWriter, r *http.Request) {
 }
 
 // Refresh refreshes subscriptions for a single list or all lists.
+//
+//	@Summary		Refresh DNS route subscriptions
+//	@Tags			dns-routes
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	false	"List id (omit for all)"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/dns-routes/refresh [post]
 func (h *DNSRouteHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)

@@ -15,12 +15,22 @@ func NewResolveHandler() *ResolveHandler {
 	return &ResolveHandler{}
 }
 
-type resolveResponse struct {
+// ResolveResponse is the JSON body for GET /api/routing/resolve.
+type ResolveResponse struct {
 	Domain string   `json:"domain"`
 	IPs    []string `json:"ips"`
 	Error  string   `json:"error,omitempty"`
 }
 
+// Resolve performs a DNS lookup (IPv4 only) for routing search.
+//
+//	@Summary		Resolve domain
+//	@Tags			routing
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			domain	query	string	true	"Hostname to resolve"
+//	@Success		200	{object}	ResolveResponse
+//	@Router			/routing/resolve [get]
 func (h *ResolveHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -39,7 +49,7 @@ func (h *ResolveHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	resolver := &net.Resolver{}
 	addrs, err := resolver.LookupHost(ctx, domain)
 	if err != nil {
-		response.Success(w, resolveResponse{
+		response.Success(w, ResolveResponse{
 			Domain: domain,
 			IPs:    []string{},
 			Error:  "Не удалось резолвить домен: " + err.Error(),
@@ -58,7 +68,7 @@ func (h *ResolveHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 		ipv4 = []string{}
 	}
 
-	response.Success(w, resolveResponse{
+	response.Success(w, ResolveResponse{
 		Domain: domain,
 		IPs:    ipv4,
 	})

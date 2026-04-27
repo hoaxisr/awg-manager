@@ -440,6 +440,13 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 }
 
 // List returns all tunnels.
+//
+//	@Summary		List tunnels
+//	@Tags			tunnels
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/tunnels/list [get]
 func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -459,6 +466,13 @@ func (h *TunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 // system}) the frontend polls instead of listening to a legacy
 // snapshot SSE event.
 // GET /api/tunnels/all
+//
+//	@Summary		Composite tunnels snapshot
+//	@Tags			tunnels
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/tunnels/all [get]
 func (h *TunnelsHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -498,6 +512,15 @@ func (h *TunnelsHandler) writeAll(w http.ResponseWriter, r *http.Request) {
 // Only 1h and 24h are accepted — anything else returns 400. 1h is
 // what the card chart fetches on mount to backfill before SSE takes
 // over; 24h is what the detail modal fetches when it opens.
+//
+//	@Summary		Tunnel traffic history
+//	@Tags			tunnels
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		query	string	true	"Tunnel id"
+//	@Param			period	query	string	true	"1h or 24h"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/tunnels/traffic [get]
 func (h *TunnelsHandler) Traffic(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -543,6 +566,14 @@ func (h *TunnelsHandler) Traffic(w http.ResponseWriter, r *http.Request) {
 }
 
 // Get returns a single tunnel by ID.
+//
+//	@Summary		Get tunnel
+//	@Tags			tunnels
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/tunnels/get [get]
 func (h *TunnelsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -568,6 +599,14 @@ func (h *TunnelsHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // Create creates a new tunnel.
+//
+//	@Summary		Create tunnel
+//	@Tags			tunnels
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/tunnels/create [post]
 func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[storage.AWGTunnel](w, r, http.MethodPost)
 	if !ok {
@@ -674,6 +713,15 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // Update updates an existing tunnel.
+//
+//	@Summary		Update tunnel
+//	@Tags			tunnels
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/tunnels/update [post]
 func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -854,6 +902,14 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 // Delete deletes a tunnel.
+//
+//	@Summary		Delete tunnel
+//	@Tags			tunnels
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/tunnels/delete [post]
 func (h *TunnelsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -916,6 +972,14 @@ func (h *TunnelsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // Export returns a single tunnel config as a downloadable .conf file.
+//
+//	@Summary		Export tunnel config
+//	@Tags			tunnels
+//	@Produce		plain
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{file}	binary
+//	@Router			/tunnels/export [get]
 func (h *TunnelsHandler) Export(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -947,6 +1011,13 @@ func (h *TunnelsHandler) Export(w http.ResponseWriter, r *http.Request) {
 }
 
 // ExportAll returns all tunnel configs as a downloadable ZIP archive.
+//
+//	@Summary		Export all tunnels (zip)
+//	@Tags			tunnels
+//	@Produce		application/zip
+//	@Security		CookieAuth
+//	@Success		200	{file}	binary
+//	@Router			/tunnels/export-all [get]
 func (h *TunnelsHandler) ExportAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -989,6 +1060,15 @@ func (h *TunnelsHandler) ExportAll(w http.ResponseWriter, r *http.Request) {
 
 // ReplaceConf replaces a tunnel's configuration from a new .conf file.
 // If the tunnel is running, it is stopped before replacement and restarted after.
+//
+//	@Summary		Replace tunnel from conf
+//	@Tags			tunnels
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/tunnels/replace [post]
 func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)

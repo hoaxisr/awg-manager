@@ -16,6 +16,15 @@ func NewSignatureHandler() *SignatureHandler {
 	return &SignatureHandler{}
 }
 
+// Capture runs TLS certificate capture for a domain.
+//
+//	@Summary		Signature capture
+//	@Tags			signature
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			domain	query	string	true	"Domain name"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/signature/capture [get]
 func (h *SignatureHandler) Capture(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

@@ -26,6 +26,13 @@ func NewDeviceProxyHandler(svc *deviceproxy.Service, appLogger logging.AppLogger
 }
 
 // GetConfig handles GET /api/proxy/config.
+//
+//	@Summary		Get device proxy config
+//	@Tags			device-proxy
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/proxy/config [get]
 func (h *DeviceProxyHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -35,6 +42,14 @@ func (h *DeviceProxyHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // SaveConfig handles PUT /api/proxy/config.
+//
+//	@Summary		Save device proxy config
+//	@Tags			device-proxy
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/proxy/config [put]
 func (h *DeviceProxyHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		response.MethodNotAllowed(w)
@@ -69,6 +84,13 @@ func (h *DeviceProxyHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 // "Применить сейчас" affordance when the user saved a new default via
 // the no-reload surgical path and now wants the live selector to
 // snap to that default.
+//
+//	@Summary		Force apply device proxy
+//	@Tags			device-proxy
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/proxy/apply [post]
 func (h *DeviceProxyHandler) ForceApply(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -82,6 +104,13 @@ func (h *DeviceProxyHandler) ForceApply(w http.ResponseWriter, r *http.Request) 
 }
 
 // GetRuntime — GET /api/proxy/runtime
+//
+//	@Summary		Device proxy runtime state
+//	@Tags			device-proxy
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/proxy/runtime [get]
 func (h *DeviceProxyHandler) GetRuntime(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -91,6 +120,14 @@ func (h *DeviceProxyHandler) GetRuntime(w http.ResponseWriter, r *http.Request) 
 }
 
 // SelectRuntime — POST /api/proxy/runtime/select  body {"tag":"..."}
+//
+//	@Summary		Select device proxy outbound
+//	@Tags			device-proxy
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/proxy/runtime/select [post]
 func (h *DeviceProxyHandler) SelectRuntime(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -120,6 +157,13 @@ func (h *DeviceProxyHandler) SelectRuntime(w http.ResponseWriter, r *http.Reques
 }
 
 // ListOutbounds handles GET /api/proxy/outbounds.
+//
+//	@Summary		List device proxy outbounds
+//	@Tags			device-proxy
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/proxy/outbounds [get]
 func (h *DeviceProxyHandler) ListOutbounds(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -131,6 +175,13 @@ func (h *DeviceProxyHandler) ListOutbounds(w http.ResponseWriter, r *http.Reques
 // ListenChoices handles GET /api/proxy/listen-choices.
 // Returns the bridge interface list, LAN IP, and singbox-running status
 // needed by the frontend inbound settings form.
+//
+//	@Summary		Device proxy listen choices
+//	@Tags			device-proxy
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/proxy/listen-choices [get]
 func (h *DeviceProxyHandler) ListenChoices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

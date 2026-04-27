@@ -34,6 +34,13 @@ type WANStatusResponse struct {
 
 // GetStatus returns current WAN interface state.
 // GET /api/wan/status
+//
+//	@Summary		WAN status
+//	@Tags			wan
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/wan/status [get]
 func (h *WANHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

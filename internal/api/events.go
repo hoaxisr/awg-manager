@@ -21,6 +21,13 @@ func NewEventsHandler(bus *events.Bus) *EventsHandler {
 // Stream serves the SSE event stream.
 // GET /api/events
 //
+//	@Summary		SSE event stream
+//	@Tags			events
+//	@Produce		text/event-stream
+//	@Security		CookieAuth
+//	@Success		200	{string}	string	"Server-Sent Events"
+//	@Router			/events [get]
+//
 // The stream carries only incremental/push-only events (traffic,
 // connectivity, logs, ping-check logs, sing-box delay/traffic, geo
 // download progress, DNS-route failover notifications, and the generic

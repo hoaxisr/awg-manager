@@ -28,6 +28,14 @@ func NewSingboxHandler(op *singbox.Operator, bus *events.Bus, dc *singbox.DelayC
 }
 
 // DelayCheck handles POST /api/singbox/tunnels/delay-check?tag=X.
+//
+//	@Summary		Sing-box delay check
+//	@Tags			singbox
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			tag	query	string	true	"Tunnel tag"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/singbox/tunnels/delay-check [post]
 func (h *SingboxHandler) DelayCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -51,6 +59,14 @@ func (h *SingboxHandler) DelayCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 // Status handles GET /api/singbox/status.
+//
+//	@Summary		Sing-box status
+//	@Tags			singbox
+//	@Description	Available when sing-box integration is enabled in the build.
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/singbox/status [get]
 func (h *SingboxHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -63,6 +79,13 @@ func (h *SingboxHandler) Status(w http.ResponseWriter, r *http.Request) {
 // Install handles POST /api/singbox/install.
 // Returns the fresh status so the client can update cache without refetch.
 // Also publishes a resource:invalidated hint so other tabs/subscribers refresh.
+//
+//	@Summary		Install sing-box
+//	@Tags			singbox
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/singbox/install [post]
 func (h *SingboxHandler) Install(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -134,6 +157,27 @@ func (h *SingboxHandler) ListTunnels(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, out)
 }
 
+// ServeGETTunnels handles GET /api/singbox/tunnels: list all tunnels, or single tunnel when query tag is set.
+//
+//	@Summary		List or get sing-box tunnel(s)
+//	@Tags			singbox
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			tag	query	string	false	"When set, returns single tunnel"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/singbox/tunnels [get]
+func (h *SingboxHandler) ServeGETTunnels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if r.URL.Query().Has("tag") {
+		h.GetTunnel(w, r)
+		return
+	}
+	h.ListTunnels(w, r)
+}
+
 type singboxConnectivity struct {
 	Connected bool `json:"connected"`
 	Latency   *int `json:"latency"`
@@ -171,6 +215,14 @@ func (h *SingboxHandler) enrichedTunnels(ctx context.Context) ([]singboxEnriched
 
 // AddTunnels handles POST /api/singbox/tunnels.
 // Body: {"links": "vless://...\nhy2://..."}. Returns imported tunnels and per-line errors.
+//
+//	@Summary		Add sing-box tunnel(s)
+//	@Tags			singbox
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/singbox/tunnels [post]
 func (h *SingboxHandler) AddTunnels(w http.ResponseWriter, r *http.Request) {
 	body, ok := parseJSON[struct {
 		Links string `json:"links"`
@@ -235,6 +287,14 @@ func (h *SingboxHandler) GetTunnel(w http.ResponseWriter, r *http.Request) {
 
 // UpdateTunnel handles PUT /api/singbox/tunnels?tag={tag}.
 // Body: {"outbound": {...}}.
+//
+//	@Summary		Update sing-box tunnel
+//	@Tags			singbox
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/singbox/tunnels [put]
 func (h *SingboxHandler) UpdateTunnel(w http.ResponseWriter, r *http.Request) {
 	body, ok := parseJSON[struct {
 		Outbound json.RawMessage `json:"outbound"`
@@ -263,6 +323,13 @@ func (h *SingboxHandler) UpdateTunnel(w http.ResponseWriter, r *http.Request) {
 // SpeedTestStream handles GET /api/singbox/tunnels/test/speed/stream?tag=X&server=Y&port=Z.
 // Runs download then upload sequentially, keyed by sing-box tunnel tag.
 // Streams events via SSE: phase, interval, result, done, error.
+//
+//	@Summary		Sing-box tunnel speed test stream
+//	@Tags			singbox
+//	@Produce		text/event-stream
+//	@Security		CookieAuth
+//	@Success		200	{string}	string	"SSE stream"
+//	@Router			/singbox/tunnels/test/speed/stream [get]
 func (h *SingboxHandler) SpeedTestStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -378,6 +445,13 @@ func (h *SingboxHandler) SpeedTestStream(w http.ResponseWriter, r *http.Request)
 }
 
 // DeleteTunnel handles DELETE /api/singbox/tunnels?tag={tag}.
+//
+//	@Summary		Delete sing-box tunnel
+//	@Tags			singbox
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/singbox/tunnels [delete]
 func (h *SingboxHandler) DeleteTunnel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		response.MethodNotAllowed(w)

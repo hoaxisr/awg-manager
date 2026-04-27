@@ -27,6 +27,14 @@ func NewHydraRouteHandler(svc *hydraroute.Service) *HydraRouteHandler {
 func (h *HydraRouteHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
 // GetConfig returns the current HydraRoute config.
+//
+//	@Summary		Get HydraRoute config
+//	@Description	Available when HydraRoute service is wired on the device.
+//	@Tags			hydraroute
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/hydraroute/config [get]
 func (h *HydraRouteHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -79,6 +87,13 @@ func (h *HydraRouteHandler) UpdateConfig(w http.ResponseWriter, r *http.Request)
 }
 
 // ListGeoFiles returns all tracked geo data files.
+//
+//	@Summary		List HydraRoute geo files
+//	@Tags			hydraroute
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/hydraroute/geo-files [get]
 func (h *HydraRouteHandler) ListGeoFiles(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -95,6 +110,14 @@ func (h *HydraRouteHandler) ListGeoFiles(w http.ResponseWriter, r *http.Request)
 }
 
 // AddGeoFile downloads and registers a new geo data file.
+//
+//	@Summary		Add HydraRoute geo file
+//	@Tags			hydraroute
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/hydraroute/geo-files/add [post]
 func (h *HydraRouteHandler) AddGeoFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -174,6 +197,14 @@ func (h *HydraRouteHandler) DeleteGeoFile(w http.ResponseWriter, r *http.Request
 }
 
 // UpdateGeoFile re-downloads a geo data file (or all files if path is empty).
+//
+//	@Summary		Refresh HydraRoute geo file(s)
+//	@Tags			hydraroute
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/hydraroute/geo-files/update [post]
 func (h *HydraRouteHandler) UpdateGeoFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -225,6 +256,14 @@ func (h *HydraRouteHandler) UpdateGeoFile(w http.ResponseWriter, r *http.Request
 }
 
 // GetGeoTags returns the tag list for a specific geo data file.
+//
+//	@Summary		HydraRoute geo tags
+//	@Tags			hydraroute
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			path	query	string	true	"Geo file path"
+//	@Success		200	{array}	string
+//	@Router			/hydraroute/geo-tags [get]
 func (h *HydraRouteHandler) GetGeoTags(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -253,6 +292,13 @@ func (h *HydraRouteHandler) GetGeoTags(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetIpsetUsage returns the current ipset usage per kernel interface.
+//
+//	@Summary		HydraRoute ipset usage
+//	@Tags			hydraroute
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/hydraroute/ipset-usage [get]
 func (h *HydraRouteHandler) GetIpsetUsage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -269,6 +315,14 @@ func (h *HydraRouteHandler) GetIpsetUsage(w http.ResponseWriter, r *http.Request
 }
 
 // SetPolicyOrder updates the PolicyOrder in hrneo.conf.
+//
+//	@Summary		Set HydraRoute policy order
+//	@Tags			hydraroute
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/hydraroute/policy-order [post]
 func (h *HydraRouteHandler) SetPolicyOrder(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -297,6 +351,13 @@ func (h *HydraRouteHandler) SetPolicyOrder(w http.ResponseWriter, r *http.Reques
 // GetOversizedTags returns the list of geoip tags HR Neo excluded plus
 // the current IpsetMaxElem so the frontend can render the 'Отключённые
 // теги' pane and enforce picker limits.
+//
+//	@Summary		HydraRoute oversized geo tags
+//	@Tags			hydraroute
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/hydraroute/oversized-tags [get]
 func (h *HydraRouteHandler) GetOversizedTags(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

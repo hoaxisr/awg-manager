@@ -36,7 +36,19 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
-// Login handles POST /api/auth/login
+// Login authenticates against the router and sets the session cookie.
+//
+//	@Summary		Login
+//	@Description	Authenticates with Keenetic credentials; sets HttpOnly session cookie awg_session.
+//	@Tags			auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		LoginRequest	true	"Router login and password"
+//	@Success		200		{object}	map[string]interface{}	"success, login"
+//	@Failure		400		{object}	map[string]interface{}
+//	@Failure		401		{object}	map[string]interface{}
+//	@Failure		503		{object}	map[string]interface{}
+//	@Router			/auth/login [post]
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -91,7 +103,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Logout handles POST /api/auth/logout
+// Logout clears the session cookie and invalidates the server-side session.
+//
+//	@Summary		Logout
+//	@Tags			auth
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/auth/logout [post]
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -119,7 +137,13 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Status handles GET /api/auth/status
+// Status returns whether the client is authenticated and optional session metadata.
+//
+//	@Summary		Auth status
+//	@Tags			auth
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}	"authenticated, login, expiresIn, authDisabled"
+//	@Router			/auth/status [get]
 func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

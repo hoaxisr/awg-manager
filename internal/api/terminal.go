@@ -33,6 +33,13 @@ type TerminalStatusResponse struct {
 
 // Status returns the current terminal state.
 // GET /api/terminal/status
+//
+//	@Summary		Terminal status
+//	@Tags			terminal
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/terminal/status [get]
 func (h *TerminalHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -47,6 +54,13 @@ func (h *TerminalHandler) Status(w http.ResponseWriter, r *http.Request) {
 
 // Install installs ttyd via opkg.
 // POST /api/terminal/install
+//
+//	@Summary		Install terminal (ttyd)
+//	@Tags			terminal
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/terminal/install [post]
 func (h *TerminalHandler) Install(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -68,6 +82,13 @@ func (h *TerminalHandler) Install(w http.ResponseWriter, r *http.Request) {
 
 // Start launches the ttyd process.
 // POST /api/terminal/start
+//
+//	@Summary		Start terminal
+//	@Tags			terminal
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/terminal/start [post]
 func (h *TerminalHandler) Start(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -90,6 +111,13 @@ func (h *TerminalHandler) Start(w http.ResponseWriter, r *http.Request) {
 
 // Stop kills the ttyd process.
 // POST /api/terminal/stop
+//
+//	@Summary		Stop terminal
+//	@Tags			terminal
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/terminal/stop [post]
 func (h *TerminalHandler) Stop(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -107,6 +135,13 @@ func (h *TerminalHandler) Stop(w http.ResponseWriter, r *http.Request) {
 
 // WebSocket proxies WebSocket connection to ttyd.
 // GET /api/terminal/ws
+//
+//	@Summary		Terminal WebSocket
+//	@Tags			terminal
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{string}	string	"WebSocket upgrade"
+//	@Router			/terminal/ws [get]
 func (h *TerminalHandler) WebSocket(w http.ResponseWriter, r *http.Request) {
 	if h.manager.HasActiveSession() {
 		response.ErrorWithStatus(w, http.StatusConflict, "Terminal already open in another tab", "SESSION_ACTIVE")

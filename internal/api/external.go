@@ -55,6 +55,13 @@ func (h *ExternalTunnelsHandler) listExternal(ctx context.Context) ([]external.T
 
 // List returns all external (unmanaged) tunnels.
 // Endpoint: GET /api/external-tunnels
+//
+//	@Summary		List external tunnels
+//	@Tags			tunnels
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{array}	object
+//	@Router			/external-tunnels [get]
 func (h *ExternalTunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -70,14 +77,24 @@ func (h *ExternalTunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, tunnels)
 }
 
-// adoptRequest represents the request body for adopting an external tunnel.
-type adoptRequest struct {
+// AdoptRequest is the request body for adopting an external tunnel.
+type AdoptRequest struct {
 	Content string `json:"content"`
 	Name    string `json:"name"`
 }
 
 // Adopt takes control of an external tunnel.
 // Endpoint: POST /api/external-tunnels/adopt?interface=opkgtunX
+//
+//	@Summary		Adopt external tunnel
+//	@Tags			tunnels
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			interface	query		string			true	"NDMS interface name"
+//	@Param			body		body		AdoptRequest	true	"Tunnel config body"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/external-tunnels/adopt [post]
 func (h *ExternalTunnelsHandler) Adopt(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -88,7 +105,7 @@ func (h *ExternalTunnelsHandler) Adopt(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, "missing interface parameter", "MISSING_INTERFACE")
 		return
 	}
-	req, ok := parseJSON[adoptRequest](w, r, http.MethodPost)
+	req, ok := parseJSON[AdoptRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}
