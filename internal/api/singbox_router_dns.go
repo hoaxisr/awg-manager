@@ -7,6 +7,103 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// SingboxDomainResolverDTO mirrors router.DomainResolver, the optional
+// nested resolver descriptor on a DNS server.
+type SingboxDomainResolverDTO struct {
+	Server   string `json:"server,omitempty" example:"local"`
+	Strategy string `json:"strategy,omitempty" example:"ipv4_only"`
+}
+
+// SingboxDNSServerDTO mirrors router.DNSServer.
+type SingboxDNSServerDTO struct {
+	Tag            string                    `json:"tag" example:"cloudflare"`
+	Type           string                    `json:"type" example:"udp"`
+	Server         string                    `json:"server" example:"1.1.1.1"`
+	ServerPort     int                       `json:"server_port,omitempty" example:"53"`
+	Path           string                    `json:"path,omitempty" example:"/dns-query"`
+	Detour         string                    `json:"detour,omitempty" example:"direct"`
+	Strategy       string                    `json:"domain_strategy,omitempty" example:"prefer_ipv4"`
+	DomainResolver *SingboxDomainResolverDTO `json:"domain_resolver,omitempty"`
+}
+
+// SingboxDNSServersListResponse is the envelope for
+// GET /singbox/router/dns/servers/list.
+type SingboxDNSServersListResponse struct {
+	Success bool                  `json:"success" example:"true"`
+	Data    []SingboxDNSServerDTO `json:"data"`
+}
+
+// SingboxDNSRuleDTO mirrors router.DNSRule.
+type SingboxDNSRuleDTO struct {
+	RuleSet       []string `json:"rule_set,omitempty" example:"geosite-cn"`
+	DomainSuffix  []string `json:"domain_suffix,omitempty" example:".example.com"`
+	Domain        []string `json:"domain,omitempty" example:"example.com"`
+	DomainKeyword []string `json:"domain_keyword,omitempty" example:"google"`
+	QueryType     []string `json:"query_type,omitempty" example:"A"`
+	Server        string   `json:"server,omitempty" example:"cloudflare"`
+	Action        string   `json:"action,omitempty" example:"route"`
+}
+
+// SingboxDNSRulesListResponse is the envelope for
+// GET /singbox/router/dns/rules/list.
+type SingboxDNSRulesListResponse struct {
+	Success bool                `json:"success" example:"true"`
+	Data    []SingboxDNSRuleDTO `json:"data"`
+}
+
+// SingboxDNSGlobalsData carries the global DNS settings exposed by
+// GET/PUT /singbox/router/dns/globals. Reused as the request body type.
+type SingboxDNSGlobalsData struct {
+	Final    string `json:"final" example:"cloudflare"`
+	Strategy string `json:"strategy" example:"prefer_ipv4"`
+}
+
+// SingboxDNSGlobalsResponse is the envelope for
+// GET/PUT /singbox/router/dns/globals.
+type SingboxDNSGlobalsResponse struct {
+	Success bool                  `json:"success" example:"true"`
+	Data    SingboxDNSGlobalsData `json:"data"`
+}
+
+// ── Request DTOs ─────────────────────────────────────────────────
+
+// SingboxDNSServerUpdateRequest is the body for
+// POST /singbox/router/dns/servers/update.
+type SingboxDNSServerUpdateRequest struct {
+	Tag    string              `json:"tag" example:"cloudflare"`
+	Server SingboxDNSServerDTO `json:"server"`
+}
+
+// SingboxDNSServerDeleteRequest is the body for
+// POST /singbox/router/dns/servers/delete. force=true overrides the
+// "still referenced by a rule" guard.
+type SingboxDNSServerDeleteRequest struct {
+	Tag   string `json:"tag" example:"cloudflare"`
+	Force bool   `json:"force" example:"false"`
+}
+
+// SingboxDNSRuleUpdateRequest is the body for
+// POST /singbox/router/dns/rules/update.
+type SingboxDNSRuleUpdateRequest struct {
+	Index int               `json:"index" example:"0"`
+	Rule  SingboxDNSRuleDTO `json:"rule"`
+}
+
+// SingboxDNSRuleDeleteRequest is the body for
+// POST /singbox/router/dns/rules/delete.
+type SingboxDNSRuleDeleteRequest struct {
+	Index int `json:"index" example:"0"`
+}
+
+// SingboxDNSRuleMoveRequest is the body for
+// POST /singbox/router/dns/rules/move.
+type SingboxDNSRuleMoveRequest struct {
+	From int `json:"from" example:"3"`
+	To   int `json:"to" example:"0"`
+}
+
 // ListDNSServers returns all configured DNS servers.
 //
 //	@Summary		List singbox-router DNS servers
@@ -14,9 +111,9 @@ import (
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	SingboxDNSServersListResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/dns/servers/list [get]
 func (h *SingboxRouterHandler) ListDNSServers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -42,10 +139,10 @@ func (h *SingboxRouterHandler) ListDNSServers(w http.ResponseWriter, r *http.Req
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"router.DNSServer"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxDNSServerDTO	true	"DNS server descriptor"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/dns/servers/add [post]
 func (h *SingboxRouterHandler) AddDNSServer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -61,7 +158,7 @@ func (h *SingboxRouterHandler) AddDNSServer(w http.ResponseWriter, r *http.Reque
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // UpdateDNSServer replaces the DNS upstream identified by tag.
@@ -72,10 +169,10 @@ func (h *SingboxRouterHandler) AddDNSServer(w http.ResponseWriter, r *http.Reque
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{tag, server}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxDNSServerUpdateRequest	true	"Tag + replacement server"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/dns/servers/update [post]
 func (h *SingboxRouterHandler) UpdateDNSServer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -94,7 +191,7 @@ func (h *SingboxRouterHandler) UpdateDNSServer(w http.ResponseWriter, r *http.Re
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // DeleteDNSServer removes the DNS upstream identified by tag.
@@ -105,21 +202,18 @@ func (h *SingboxRouterHandler) UpdateDNSServer(w http.ResponseWriter, r *http.Re
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{tag, force}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		409		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxDNSServerDeleteRequest	true	"Tag + optional force flag"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		409		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/dns/servers/delete [post]
 func (h *SingboxRouterHandler) DeleteDNSServer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
 		return
 	}
-	var body struct {
-		Tag   string `json:"tag"`
-		Force bool   `json:"force"`
-	}
+	var body SingboxDNSServerDeleteRequest
 	if err := decodeBody(r, &body); err != nil {
 		response.BadRequest(w, err.Error())
 		return
@@ -128,7 +222,7 @@ func (h *SingboxRouterHandler) DeleteDNSServer(w http.ResponseWriter, r *http.Re
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // ListDNSRules returns all DNS routing rules in priority order.
@@ -138,9 +232,9 @@ func (h *SingboxRouterHandler) DeleteDNSServer(w http.ResponseWriter, r *http.Re
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	SingboxDNSRulesListResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/dns/rules/list [get]
 func (h *SingboxRouterHandler) ListDNSRules(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -166,10 +260,10 @@ func (h *SingboxRouterHandler) ListDNSRules(w http.ResponseWriter, r *http.Reque
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"router.DNSRule"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxDNSRuleDTO	true	"DNS routing rule"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/dns/rules/add [post]
 func (h *SingboxRouterHandler) AddDNSRule(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -185,7 +279,7 @@ func (h *SingboxRouterHandler) AddDNSRule(w http.ResponseWriter, r *http.Request
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // UpdateDNSRule replaces the DNS rule at the given index.
@@ -196,10 +290,10 @@ func (h *SingboxRouterHandler) AddDNSRule(w http.ResponseWriter, r *http.Request
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{index, rule}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxDNSRuleUpdateRequest	true	"Index + replacement rule"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/dns/rules/update [post]
 func (h *SingboxRouterHandler) UpdateDNSRule(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -218,7 +312,7 @@ func (h *SingboxRouterHandler) UpdateDNSRule(w http.ResponseWriter, r *http.Requ
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // DeleteDNSRule removes the DNS rule at the given index.
@@ -229,19 +323,17 @@ func (h *SingboxRouterHandler) UpdateDNSRule(w http.ResponseWriter, r *http.Requ
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{index}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxDNSRuleDeleteRequest	true	"Index of the rule to remove"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/dns/rules/delete [post]
 func (h *SingboxRouterHandler) DeleteDNSRule(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
 		return
 	}
-	var body struct {
-		Index int `json:"index"`
-	}
+	var body SingboxDNSRuleDeleteRequest
 	if err := decodeBody(r, &body); err != nil {
 		response.BadRequest(w, err.Error())
 		return
@@ -250,7 +342,7 @@ func (h *SingboxRouterHandler) DeleteDNSRule(w http.ResponseWriter, r *http.Requ
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // MoveDNSRule moves a DNS rule from one priority slot to another.
@@ -261,20 +353,17 @@ func (h *SingboxRouterHandler) DeleteDNSRule(w http.ResponseWriter, r *http.Requ
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{from, to}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxDNSRuleMoveRequest	true	"From-index and to-index"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/dns/rules/move [post]
 func (h *SingboxRouterHandler) MoveDNSRule(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
 		return
 	}
-	var body struct {
-		From int `json:"from"`
-		To   int `json:"to"`
-	}
+	var body SingboxDNSRuleMoveRequest
 	if err := decodeBody(r, &body); err != nil {
 		response.BadRequest(w, err.Error())
 		return
@@ -283,7 +372,7 @@ func (h *SingboxRouterHandler) MoveDNSRule(w http.ResponseWriter, r *http.Reques
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // GetDNSGlobals returns the global DNS final/strategy fields.
@@ -293,9 +382,9 @@ func (h *SingboxRouterHandler) MoveDNSRule(w http.ResponseWriter, r *http.Reques
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	SingboxDNSGlobalsResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/dns/globals [get]
 func (h *SingboxRouterHandler) GetDNSGlobals(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -318,11 +407,11 @@ func (h *SingboxRouterHandler) GetDNSGlobals(w http.ResponseWriter, r *http.Requ
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{final, strategy}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		405		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxDNSGlobalsData	true	"final + strategy"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		405		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/dns/globals [post]
 //	@Router			/singbox/router/dns/globals [put]
 func (h *SingboxRouterHandler) PutDNSGlobals(w http.ResponseWriter, r *http.Request) {
@@ -330,10 +419,7 @@ func (h *SingboxRouterHandler) PutDNSGlobals(w http.ResponseWriter, r *http.Requ
 		response.MethodNotAllowed(w)
 		return
 	}
-	var body struct {
-		Final    string `json:"final"`
-		Strategy string `json:"strategy"`
-	}
+	var body SingboxDNSGlobalsData
 	if err := decodeBody(r, &body); err != nil {
 		response.BadRequest(w, err.Error())
 		return
@@ -342,5 +428,5 @@ func (h *SingboxRouterHandler) PutDNSGlobals(w http.ResponseWriter, r *http.Requ
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
