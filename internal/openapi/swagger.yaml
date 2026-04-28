@@ -1817,6 +1817,157 @@ definitions:
         example: start
         type: string
     type: object
+  api.SingboxDNSGlobalsData:
+    properties:
+      final:
+        example: cloudflare
+        type: string
+      strategy:
+        example: prefer_ipv4
+        type: string
+    type: object
+  api.SingboxDNSGlobalsResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SingboxDNSGlobalsData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxDNSRuleDTO:
+    properties:
+      action:
+        example: route
+        type: string
+      domain:
+        example:
+        - example.com
+        items:
+          type: string
+        type: array
+      domain_keyword:
+        example:
+        - google
+        items:
+          type: string
+        type: array
+      domain_suffix:
+        example:
+        - .example.com
+        items:
+          type: string
+        type: array
+      query_type:
+        example:
+        - A
+        items:
+          type: string
+        type: array
+      rule_set:
+        example:
+        - geosite-cn
+        items:
+          type: string
+        type: array
+      server:
+        example: cloudflare
+        type: string
+    type: object
+  api.SingboxDNSRuleDeleteRequest:
+    properties:
+      index:
+        example: 0
+        type: integer
+    type: object
+  api.SingboxDNSRuleMoveRequest:
+    properties:
+      from:
+        example: 3
+        type: integer
+      to:
+        example: 0
+        type: integer
+    type: object
+  api.SingboxDNSRuleUpdateRequest:
+    properties:
+      index:
+        example: 0
+        type: integer
+      rule:
+        $ref: '#/definitions/api.SingboxDNSRuleDTO'
+    type: object
+  api.SingboxDNSRulesListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.SingboxDNSRuleDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxDNSServerDTO:
+    properties:
+      detour:
+        example: direct
+        type: string
+      domain_resolver:
+        $ref: '#/definitions/api.SingboxDomainResolverDTO'
+      domain_strategy:
+        example: prefer_ipv4
+        type: string
+      path:
+        example: /dns-query
+        type: string
+      server:
+        example: 1.1.1.1
+        type: string
+      server_port:
+        example: 53
+        type: integer
+      tag:
+        example: cloudflare
+        type: string
+      type:
+        example: udp
+        type: string
+    type: object
+  api.SingboxDNSServerDeleteRequest:
+    properties:
+      force:
+        example: false
+        type: boolean
+      tag:
+        example: cloudflare
+        type: string
+    type: object
+  api.SingboxDNSServerUpdateRequest:
+    properties:
+      server:
+        $ref: '#/definitions/api.SingboxDNSServerDTO'
+      tag:
+        example: cloudflare
+        type: string
+    type: object
+  api.SingboxDNSServersListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.SingboxDNSServerDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxDomainResolverDTO:
+    properties:
+      server:
+        example: local
+        type: string
+      strategy:
+        example: ipv4_only
+        type: string
+    type: object
   api.SingboxStatusData:
     properties:
       features:
@@ -5819,18 +5970,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SingboxDNSGlobalsResponse'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Get singbox-router DNS globals
@@ -5842,36 +5990,31 @@ paths:
       description: 'Persists the global DNS settings: `final` (default server tag)
         and `strategy` (ipv4_only / prefer_ipv4 / etc.).'
       parameters:
-      - description: '{final, strategy}'
+      - description: final + strategy
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxDNSGlobalsData'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Update singbox-router DNS globals
@@ -5883,36 +6026,31 @@ paths:
       description: 'Persists the global DNS settings: `final` (default server tag)
         and `strategy` (ipv4_only / prefer_ipv4 / etc.).'
       parameters:
-      - description: '{final, strategy}'
+      - description: final + strategy
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxDNSGlobalsData'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Update singbox-router DNS globals
@@ -5925,31 +6063,27 @@ paths:
       description: Appends a new DNS routing rule. The rule's server tag must already
         exist.
       parameters:
-      - description: router.DNSRule
+      - description: DNS routing rule
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxDNSRuleDTO'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Add singbox-router DNS rule
@@ -5961,31 +6095,27 @@ paths:
       - application/json
       description: Removes the DNS rule at the given index (0-based priority slot).
       parameters:
-      - description: '{index}'
+      - description: Index of the rule to remove
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxDNSRuleDeleteRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Delete singbox-router DNS rule
@@ -6001,18 +6131,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SingboxDNSRulesListResponse'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: List singbox-router DNS rules
@@ -6024,31 +6151,27 @@ paths:
       - application/json
       description: Moves the DNS rule from index `from` to index `to` (both 0-based).
       parameters:
-      - description: '{from, to}'
+      - description: From-index and to-index
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxDNSRuleMoveRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Move singbox-router DNS rule
@@ -6061,31 +6184,27 @@ paths:
       description: Replaces the DNS rule at the given index (0-based priority slot)
         with the provided one.
       parameters:
-      - description: '{index, rule}'
+      - description: Index + replacement rule
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxDNSRuleUpdateRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Update singbox-router DNS rule
@@ -6097,31 +6216,27 @@ paths:
       - application/json
       description: Registers a new DNS upstream (tag must be unique).
       parameters:
-      - description: router.DNSServer
+      - description: DNS server descriptor
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxDNSServerDTO'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Add singbox-router DNS server
@@ -6134,36 +6249,31 @@ paths:
       description: Removes the DNS upstream identified by tag. Refuses if any DNS
         rule references it; pass force=true to override.
       parameters:
-      - description: '{tag, force}'
+      - description: Tag + optional force flag
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxDNSServerDeleteRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "409":
           description: Conflict
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Delete singbox-router DNS server
@@ -6179,18 +6289,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SingboxDNSServersListResponse'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: List singbox-router DNS servers
@@ -6202,31 +6309,27 @@ paths:
       - application/json
       description: Replaces the DNS upstream identified by tag with the provided one.
       parameters:
-      - description: '{tag, server}'
+      - description: Tag + replacement server
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxDNSServerUpdateRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Update singbox-router DNS server
