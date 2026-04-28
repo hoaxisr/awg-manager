@@ -15,6 +15,14 @@ type AWGOutboundsService interface {
 	ListTags(ctx context.Context) ([]awgoutbounds.TagInfo, error)
 }
 
+// AWGOutboundTagDTO mirrors awgoutbounds.TagInfo for OpenAPI exposure.
+type AWGOutboundTagDTO struct {
+	Tag   string `json:"tag" example:"awg-vpn0"`
+	Label string `json:"label" example:"My VPN"`
+	Kind  string `json:"kind" example:"managed"`
+	Iface string `json:"iface" example:"t2s0"`
+}
+
 // AWGOutboundsHandler exposes the catalog of AWG-direct outbound tags
 // for the frontend (singbox-router rule editor outbound dropdown).
 type AWGOutboundsHandler struct {
@@ -32,7 +40,7 @@ func NewAWGOutboundsHandler(svc AWGOutboundsService) *AWGOutboundsHandler {
 //	@Tags			singbox
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{array}		map[string]interface{}
+//	@Success		200	{array}		AWGOutboundTagDTO
 //	@Failure		405	{string}	string
 //	@Failure		500	{string}	string
 //	@Router			/singbox/awg-outbounds/tags [get]

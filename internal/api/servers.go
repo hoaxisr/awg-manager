@@ -335,9 +335,9 @@ func (h *ServersHandler) Config(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			name	query		string	true	"Interface name (e.g. Wireguard0)"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Success		200		{object}	ServersAllResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/servers/mark [post]
 //	@Router			/servers/mark [delete]
 func (h *ServersHandler) Mark(w http.ResponseWriter, r *http.Request) {

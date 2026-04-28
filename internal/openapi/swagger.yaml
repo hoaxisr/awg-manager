@@ -71,6 +71,21 @@ definitions:
         example: 0
         type: integer
     type: object
+  api.AWGOutboundTagDTO:
+    properties:
+      iface:
+        example: t2s0
+        type: string
+      kind:
+        example: managed
+        type: string
+      label:
+        example: My VPN
+        type: string
+      tag:
+        example: awg-vpn0
+        type: string
+    type: object
   api.AWGPeerDTO:
     properties:
       allowedIPs:
@@ -176,6 +191,15 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.AddGeoFileRequest:
+    properties:
+      type:
+        example: geosite
+        type: string
+      url:
+        example: https://cdn.example.com/geosite.db
+        type: string
     type: object
   api.AddPeerRequestDTO:
     properties:
@@ -723,6 +747,59 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.GeoFileEntryDTO:
+    properties:
+      path:
+        example: /opt/etc/hrneo/geosite.db
+        type: string
+      size:
+        example: 3145728
+        type: integer
+      tagCount:
+        example: 420
+        type: integer
+      type:
+        example: geosite
+        type: string
+      updated:
+        example: "2024-01-15T02:00:00Z"
+        type: string
+      url:
+        example: https://cdn.example.com/geosite.db
+        type: string
+    type: object
+  api.GeoFileResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.GeoFileEntryDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.GeoFileUpdatedData:
+    properties:
+      updated:
+        example: 1
+        type: integer
+    type: object
+  api.GeoFileUpdatedResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.GeoFileUpdatedData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.GeoFilesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.GeoFileEntryDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
   api.HealthData:
     properties:
       ok:
@@ -860,6 +937,24 @@ definitions:
         items:
           $ref: '#/definitions/api.IPCheckServiceDTO'
         type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.IpsetUsageData:
+    properties:
+      maxElem:
+        example: 65536
+        type: integer
+      usage:
+        additionalProperties:
+          type: integer
+        type: object
+    type: object
+  api.IpsetUsageResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.IpsetUsageData'
       success:
         example: true
         type: boolean
@@ -1134,6 +1229,39 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.OversizedTagDTO:
+    properties:
+      count:
+        example: 82000
+        type: integer
+      file:
+        example: /opt/etc/hrneo/geosite.db
+        type: string
+      name:
+        example: netflix
+        type: string
+    type: object
+  api.OversizedTagsData:
+    properties:
+      installed:
+        example: true
+        type: boolean
+      maxelem:
+        example: 65536
+        type: integer
+      tags:
+        items:
+          $ref: '#/definitions/api.OversizedTagDTO'
+        type: array
+    type: object
+  api.OversizedTagsResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.OversizedTagsData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.PermitInterfaceRequest:
     properties:
       interface:
@@ -1286,6 +1414,23 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.PolicyOrderData:
+    properties:
+      order:
+        example:
+        - default
+        items:
+          type: string
+        type: array
+    type: object
+  api.PolicyOrderResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.PolicyOrderData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.ProxyConfigResponse:
     properties:
       data:
@@ -1427,6 +1572,15 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.SetPolicyOrderRequest:
+    properties:
+      order:
+        example:
+        - default
+        items:
+          type: string
+        type: array
+    type: object
   api.SetStandaloneRequest:
     properties:
       enabled:
@@ -1504,6 +1658,16 @@ definitions:
         type: string
       i5:
         example: 6e7f8a9b
+        type: string
+    type: object
+  api.SingboxControlRequest:
+    properties:
+      action:
+        enum:
+        - start
+        - stop
+        - restart
+        example: start
         type: string
     type: object
   api.SingboxStatusData:
@@ -2187,6 +2351,12 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.UpdateGeoFileRequest:
+    properties:
+      path:
+        example: /opt/etc/hrneo/geosite.db
+        type: string
     type: object
   api.UpdateInfoData:
     properties:
@@ -3711,10 +3881,11 @@ paths:
         "200":
           description: OK
           schema:
-            items:
-              additionalProperties: true
-              type: object
-            type: array
+            $ref: '#/definitions/api.GeoFilesResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: List HydraRoute geo files
@@ -3724,14 +3895,28 @@ paths:
     post:
       consumes:
       - application/json
+      parameters:
+      - description: Geo file source descriptor
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.AddGeoFileRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.GeoFileResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Add HydraRoute geo file
@@ -3753,18 +3938,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Delete HydraRoute geo file
@@ -3774,14 +3956,31 @@ paths:
     post:
       consumes:
       - application/json
+      description: Empty path triggers a bulk refresh of every tracked geo file. Single
+        path refreshes one file. Both branches return an updated count for caller-side
+        feedback; the frontend refetches the list afterwards.
+      parameters:
+      - description: Path to refresh, or empty to refresh all
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.UpdateGeoFileRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.GeoFileUpdatedResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Refresh HydraRoute geo file(s)
@@ -3817,8 +4016,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.IpsetUsageResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: HydraRoute ipset usage
@@ -3832,8 +4034,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OversizedTagsResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: HydraRoute oversized geo tags
@@ -3843,14 +4048,28 @@ paths:
     post:
       consumes:
       - application/json
+      parameters:
+      - description: Ordered list of policy names
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SetPolicyOrderRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.PolicyOrderResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Set HydraRoute policy order
@@ -5182,18 +5401,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ServersAllResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Mark/unmark interface as server
@@ -5215,18 +5431,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ServersAllResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Mark/unmark interface as server
@@ -5328,13 +5541,12 @@ paths:
         (rotate via /settings/regenerate-api-key). Top-level bool flags (authEnabled,
         disableMemorySaving, onboardingCompleted) MUST be sent on every save.
       parameters:
-      - description: Settings
+      - description: Full settings object
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SettingsData'
       produces:
       - application/json
       responses:
@@ -5395,8 +5607,7 @@ paths:
           description: OK
           schema:
             items:
-              additionalProperties: true
-              type: object
+              $ref: '#/definitions/api.AWGOutboundTagDTO'
             type: array
         "405":
           description: Method Not Allowed
@@ -5418,31 +5629,27 @@ paths:
       description: Starts, stops, or restarts the sing-box engine. Returns the fresh
         status snapshot. Mirrors /system/hydraroute-control.
       parameters:
-      - description: '{action: start|stop|restart}'
+      - description: Action to perform
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxControlRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SingboxStatusResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Control sing-box process
