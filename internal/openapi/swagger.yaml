@@ -23,6 +23,14 @@ definitions:
         example: invalid request
         type: string
     type: object
+  api.ASCParamsResponse:
+    properties:
+      data:
+        type: object
+      success:
+        example: true
+        type: boolean
+    type: object
   api.AWGInterfaceDTO:
     properties:
       address:
@@ -713,6 +721,12 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.EnabledToggleRequest:
+    properties:
+      enabled:
+        example: true
+        type: boolean
+    type: object
   api.ExternalTunnelDTO:
     properties:
       endpoint:
@@ -1032,6 +1046,38 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.ManagedPeerDTO:
+    properties:
+      description:
+        example: My Phone
+        type: string
+      dns:
+        example: 8.8.8.8
+        type: string
+      enabled:
+        example: true
+        type: boolean
+      presharedKey:
+        example: JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ=
+        type: string
+      privateKey:
+        example: IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII=
+        type: string
+      publicKey:
+        example: HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH=
+        type: string
+      tunnelIP:
+        example: 10.10.0.2
+        type: string
+    type: object
+  api.ManagedPeerResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.ManagedPeerDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.ManagedPeerStatsDTO:
     properties:
       endpoint:
@@ -1053,6 +1099,48 @@ definitions:
         example: 1048576
         type: integer
     type: object
+  api.ManagedServerDTO:
+    properties:
+      address:
+        example: 10.10.0.1
+        type: string
+      dns:
+        example: 8.8.8.8
+        type: string
+      endpoint:
+        example: 203.0.113.42:51821
+        type: string
+      interfaceName:
+        example: Wireguard1
+        type: string
+      listenPort:
+        example: 51821
+        type: integer
+      mask:
+        example: 255.255.255.0
+        type: string
+      mtu:
+        example: 1420
+        type: integer
+      natEnabled:
+        example: true
+        type: boolean
+      peers:
+        items:
+          $ref: '#/definitions/api.ManagedPeerDTO'
+        type: array
+      policy:
+        example: default
+        type: string
+    type: object
+  api.ManagedServerResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.ManagedServerDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.ManagedServerStatsDTO:
     properties:
       peers:
@@ -1062,6 +1150,24 @@ definitions:
       status:
         example: up
         type: string
+    type: object
+  api.ManagedServerStatsResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.ManagedServerStatsDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.ManagedServersListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.ManagedServerDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
     type: object
   api.MonitoringCellDTO:
     properties:
@@ -1262,6 +1368,22 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.PeerConfData:
+    properties:
+      conf:
+        example: |-
+          [Interface]
+          PrivateKey = ...
+        type: string
+    type: object
+  api.PeerConfResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.PeerConfData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.PermitInterfaceRequest:
     properties:
       interface:
@@ -1358,6 +1480,16 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.PoliciesListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.PolicyOptionDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
   api.PolicyDeviceDTO:
     properties:
       active:
@@ -1413,6 +1545,15 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.PolicyOptionDTO:
+    properties:
+      description:
+        example: Default policy
+        type: string
+      id:
+        example: Policy0
+        type: string
     type: object
   api.PolicyOrderData:
     properties:
@@ -1580,6 +1721,12 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  api.SetServerPolicyRequest:
+    properties:
+      policy:
+        example: Policy0
+        type: string
     type: object
   api.SetStandaloneRequest:
     properties:
@@ -1857,6 +2004,23 @@ definitions:
         items:
           $ref: '#/definitions/api.StaticRouteDTO'
         type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SuggestAddressData:
+    properties:
+      address:
+        example: 10.10.0.1
+        type: string
+      mask:
+        example: 255.255.255.0
+        type: string
+    type: object
+  api.SuggestAddressResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SuggestAddressData'
       success:
         example: true
         type: boolean
@@ -4153,13 +4317,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ManagedServersListResponse'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: List managed servers
@@ -4183,18 +4345,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ManagedServerResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Create managed server
@@ -4216,18 +4375,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ServersAllResponse'
         "404":
           description: Not Found
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Delete managed server
@@ -4247,18 +4403,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ManagedServerResponse'
         "404":
           description: Not Found
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Get managed server
@@ -4287,23 +4440,19 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ServersAllResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "404":
           description: Not Found
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Update managed server
@@ -4313,19 +4462,19 @@ paths:
     get:
       consumes:
       - application/json
-      description: GET reads, PUT writes the AWG signature/obfuscation params for
-        the named managed server. PUT body is the raw ASC JSON object.
+      description: GET returns ASCParamsResponse with the current AWG signature/obfuscation
+        params object. PUT writes new params (raw object whose shape depends on the
+        active signature preset) and returns the fresh ServersSnapshot.
       parameters:
       - description: Server id
         in: path
         name: id
         required: true
         type: string
-      - description: ASC params (PUT only)
+      - description: ASC params object (PUT only)
         in: body
         name: body
         schema:
-          additionalProperties: true
           type: object
       produces:
       - application/json
@@ -4333,18 +4482,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ASCParamsResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Get/set managed-server ASC params
@@ -4353,19 +4499,19 @@ paths:
     put:
       consumes:
       - application/json
-      description: GET reads, PUT writes the AWG signature/obfuscation params for
-        the named managed server. PUT body is the raw ASC JSON object.
+      description: GET returns ASCParamsResponse with the current AWG signature/obfuscation
+        params object. PUT writes new params (raw object whose shape depends on the
+        active signature preset) and returns the fresh ServersSnapshot.
       parameters:
       - description: Server id
         in: path
         name: id
         required: true
         type: string
-      - description: ASC params (PUT only)
+      - description: ASC params object (PUT only)
         in: body
         name: body
         schema:
-          additionalProperties: true
           type: object
       produces:
       - application/json
@@ -4373,18 +4519,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ASCParamsResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Get/set managed-server ASC params
@@ -4402,31 +4545,27 @@ paths:
         name: id
         required: true
         type: string
-      - description: '{enabled: bool}'
+      - description: Enabled flag
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.EnabledToggleRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ServersAllResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Toggle managed-server enabled
@@ -4444,31 +4583,27 @@ paths:
         name: id
         required: true
         type: string
-      - description: '{enabled: bool}'
+      - description: Enabled flag
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.EnabledToggleRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ServersAllResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Toggle managed-server NAT
@@ -4498,18 +4633,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ManagedPeerResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Add managed-server peer
@@ -4535,18 +4667,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ServersAllResponse'
         "404":
           description: Not Found
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Delete managed-server peer
@@ -4580,23 +4709,19 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ServersAllResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "404":
           description: Not Found
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Update managed-server peer
@@ -4623,18 +4748,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.PeerConfResponse'
         "404":
           description: Not Found
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Generate peer .conf
@@ -4657,31 +4779,27 @@ paths:
         name: pubkey
         required: true
         type: string
-      - description: '{enabled: bool}'
+      - description: Enabled flag
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.EnabledToggleRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ServersAllResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Toggle managed-server peer enabled
@@ -4699,31 +4817,27 @@ paths:
         name: id
         required: true
         type: string
-      - description: '{policy: string}'
+      - description: Policy id (router-side)
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SetServerPolicyRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ServersAllResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Set managed-server IP policy
@@ -4745,18 +4859,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ManagedServerStatsResponse'
         "404":
           description: Not Found
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Get managed-server peer stats
@@ -4772,18 +4883,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.PoliciesListResponse'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: List IP Policy profiles
@@ -4799,18 +4907,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SuggestAddressResponse'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Suggest managed-server address

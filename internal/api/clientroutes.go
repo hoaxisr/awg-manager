@@ -177,7 +177,7 @@ func (h *ClientRouteHandler) HandleDelete(w http.ResponseWriter, r *http.Request
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/client-routes/toggle [post]
 func (h *ClientRouteHandler) HandleToggle(w http.ResponseWriter, r *http.Request) {
-	req, ok := parseJSON[enabledToggle](w, r, http.MethodPost)
+	req, ok := parseJSON[EnabledToggleRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}

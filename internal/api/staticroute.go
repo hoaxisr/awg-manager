@@ -199,7 +199,7 @@ func (h *StaticRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/static-routes/set-enabled [post]
 func (h *StaticRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
-	body, ok := parseJSON[enabledToggle](w, r, http.MethodPost)
+	body, ok := parseJSON[EnabledToggleRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}

@@ -46,6 +46,81 @@ type ManagedServerResponse struct {
 	Data    ManagedServerDTO `json:"data"`
 }
 
+// ManagedServersListResponse is the envelope for GET /managed-servers.
+type ManagedServersListResponse struct {
+	Success bool               `json:"success" example:"true"`
+	Data    []ManagedServerDTO `json:"data"`
+}
+
+// ManagedPeerResponse is the envelope for endpoints that return a
+// single managed-server peer (POST /managed-servers/{id}/peers).
+type ManagedPeerResponse struct {
+	Success bool           `json:"success" example:"true"`
+	Data    ManagedPeerDTO `json:"data"`
+}
+
+// ManagedServerStatsResponse is the envelope for GET /managed-servers/{id}/stats.
+// Reuses ManagedServerStatsDTO from servers.go (also referenced by ServersAllData).
+type ManagedServerStatsResponse struct {
+	Success bool                  `json:"success" example:"true"`
+	Data    ManagedServerStatsDTO `json:"data"`
+}
+
+// SuggestAddressData carries a free private /24 for the create-server UI.
+type SuggestAddressData struct {
+	Address string `json:"address" example:"10.10.0.1"`
+	Mask    string `json:"mask" example:"255.255.255.0"`
+}
+
+// SuggestAddressResponse is the envelope for GET /managed-servers/suggest-address.
+type SuggestAddressResponse struct {
+	Success bool               `json:"success" example:"true"`
+	Data    SuggestAddressData `json:"data"`
+}
+
+// PolicyOptionDTO mirrors managed.PolicyOption (router IP Policy profile entry).
+type PolicyOptionDTO struct {
+	ID          string `json:"id" example:"Policy0"`
+	Description string `json:"description" example:"Default policy"`
+}
+
+// PoliciesListResponse is the envelope for GET /managed-servers/policies.
+type PoliciesListResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Data    []PolicyOptionDTO `json:"data"`
+}
+
+// ASCParamsResponse is the envelope for GET /managed-servers/{id}/asc.
+// The data field is the AWG signature/obfuscation params object — its
+// shape depends on the active signature preset, so it is intentionally
+// an opaque object in OpenAPI.
+type ASCParamsResponse struct {
+	Success bool                   `json:"success" example:"true"`
+	Data    map[string]interface{} `json:"data" swaggertype:"object"`
+}
+
+// PeerConfData carries a generated WireGuard client .conf as a string.
+type PeerConfData struct {
+	Conf string `json:"conf" example:"[Interface]\nPrivateKey = ..."`
+}
+
+// PeerConfResponse is the envelope for GET /managed-servers/{id}/peers/{pubkey}/conf.
+type PeerConfResponse struct {
+	Success bool         `json:"success" example:"true"`
+	Data    PeerConfData `json:"data"`
+}
+
+// EnabledToggleRequest is the body for endpoints that flip an enabled
+// flag (NAT, SetEnabled, TogglePeer).
+type EnabledToggleRequest struct {
+	Enabled bool `json:"enabled" example:"true"`
+}
+
+// SetServerPolicyRequest is the body for POST /managed-servers/{id}/policy.
+type SetServerPolicyRequest struct {
+	Policy string `json:"policy" example:"Policy0"`
+}
+
 // CreateServerRequestDTO is the swagger-visible body for POST /managed-servers.
 type CreateServerRequestDTO struct {
 	Address     string `json:"address" example:"10.10.0.1"`
@@ -395,8 +470,8 @@ func (h *ManagedServerHandler) Subtree(w http.ResponseWriter, r *http.Request) {
 //	@Tags			managed-servers
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
+//	@Success		200	{object}	ManagedServersListResponse
+//	@Failure		405	{object}	APIErrorEnvelope
 //	@Router			/managed-servers [get]
 func (h *ManagedServerHandler) List(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -414,9 +489,9 @@ func (h *ManagedServerHandler) List(w http.ResponseWriter, r *http.Request) {
 //	@Tags			managed-servers
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	SuggestAddressResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/managed-servers/suggest-address [get]
 func (h *ManagedServerHandler) SuggestAddress(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -440,9 +515,9 @@ func (h *ManagedServerHandler) SuggestAddress(w http.ResponseWriter, r *http.Req
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	path		string	true	"Server id (e.g. Wireguard0)"
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		404	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
+//	@Success		200	{object}	ManagedServerResponse
+//	@Failure		404	{object}	APIErrorEnvelope
+//	@Failure		405	{object}	APIErrorEnvelope
 //	@Router			/managed-servers/{id} [get]
 func (h *ManagedServerHandler) Get(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
@@ -466,9 +541,9 @@ func (h *ManagedServerHandler) Get(w http.ResponseWriter, r *http.Request, id st
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	path		string	true	"Server id"
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		404	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	ManagedServerStatsResponse
+//	@Failure		404	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/managed-servers/{id}/stats [get]
 func (h *ManagedServerHandler) Stats(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
@@ -494,9 +569,9 @@ func (h *ManagedServerHandler) Stats(w http.ResponseWriter, r *http.Request, id 
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			body	body		CreateServerRequestDTO	true	"Address, mask, port, ASC, name"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Success		200		{object}	ManagedServerResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/managed-servers [post]
 func (h *ManagedServerHandler) Create(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[managed.CreateServerRequest](w, r, http.MethodPost)
@@ -523,10 +598,10 @@ func (h *ManagedServerHandler) Create(w http.ResponseWriter, r *http.Request) {
 //	@Security		CookieAuth
 //	@Param			id		path		string						true	"Server id"
 //	@Param			body	body		UpdateServerRequestDTO	true	"Update payload"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		404		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Success		200		{object}	ServersAllResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		404		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/managed-servers/{id} [put]
 func (h *ManagedServerHandler) Update(w http.ResponseWriter, r *http.Request, id string) {
 	req, ok := parseJSON[managed.UpdateServerRequest](w, r, http.MethodPut)
@@ -550,9 +625,9 @@ func (h *ManagedServerHandler) Update(w http.ResponseWriter, r *http.Request, id
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	path		string	true	"Server id"
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		404	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	ServersAllResponse
+//	@Failure		404	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/managed-servers/{id} [delete]
 func (h *ManagedServerHandler) Delete(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodDelete {
@@ -567,16 +642,6 @@ func (h *ManagedServerHandler) Delete(w http.ResponseWriter, r *http.Request, id
 	h.writeServersSnapshot(w, r)
 }
 
-// enabledToggle is the shared request body for NAT and SetEnabled.
-type enabledToggle struct {
-	Enabled bool `json:"enabled"`
-}
-
-// setPolicyRequest is the request body for /api/managed-servers/{id}/policy.
-type setPolicyRequest struct {
-	Policy string `json:"policy"`
-}
-
 // SetPolicy updates the ip hotspot policy for one managed server interface.
 // POST /api/managed-servers/{id}/policy
 //
@@ -587,13 +652,13 @@ type setPolicyRequest struct {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id		path		string					true	"Server id"
-//	@Param			body	body		map[string]interface{}	true	"{policy: string}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SetServerPolicyRequest	true	"Policy id (router-side)"
+//	@Success		200		{object}	ServersAllResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/managed-servers/{id}/policy [post]
 func (h *ManagedServerHandler) SetPolicy(w http.ResponseWriter, r *http.Request, id string) {
-	req, ok := parseJSON[setPolicyRequest](w, r, http.MethodPost)
+	req, ok := parseJSON[SetServerPolicyRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}
@@ -615,9 +680,9 @@ func (h *ManagedServerHandler) SetPolicy(w http.ResponseWriter, r *http.Request,
 //	@Tags			managed-servers
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	PoliciesListResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/managed-servers/policies [get]
 func (h *ManagedServerHandler) GetPolicies(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -645,13 +710,13 @@ func (h *ManagedServerHandler) GetPolicies(w http.ResponseWriter, r *http.Reques
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id		path		string					true	"Server id"
-//	@Param			body	body		map[string]interface{}	true	"{enabled: bool}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		EnabledToggleRequest	true	"Enabled flag"
+//	@Success		200		{object}	ServersAllResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/managed-servers/{id}/nat [post]
 func (h *ManagedServerHandler) NAT(w http.ResponseWriter, r *http.Request, id string) {
-	req, ok := parseJSON[enabledToggle](w, r, http.MethodPost)
+	req, ok := parseJSON[EnabledToggleRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}
@@ -673,13 +738,13 @@ func (h *ManagedServerHandler) NAT(w http.ResponseWriter, r *http.Request, id st
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id		path		string					true	"Server id"
-//	@Param			body	body		map[string]interface{}	true	"{enabled: bool}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		EnabledToggleRequest	true	"Enabled flag"
+//	@Success		200		{object}	ServersAllResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/managed-servers/{id}/enabled [post]
 func (h *ManagedServerHandler) SetEnabled(w http.ResponseWriter, r *http.Request, id string) {
-	req, ok := parseJSON[enabledToggle](w, r, http.MethodPost)
+	req, ok := parseJSON[EnabledToggleRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}
@@ -697,16 +762,16 @@ func (h *ManagedServerHandler) SetEnabled(w http.ResponseWriter, r *http.Request
 // PUT /api/managed-servers/{id}/asc — write params
 //
 //	@Summary		Get/set managed-server ASC params
-//	@Description	GET reads, PUT writes the AWG signature/obfuscation params for the named managed server. PUT body is the raw ASC JSON object.
+//	@Description	GET returns ASCParamsResponse with the current AWG signature/obfuscation params object. PUT writes new params (raw object whose shape depends on the active signature preset) and returns the fresh ServersSnapshot.
 //	@Tags			managed-servers
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			id		path		string					true	"Server id"
-//	@Param			body	body		map[string]interface{}	false	"ASC params (PUT only)"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			id		path		string	true	"Server id"
+//	@Param			body	body		object	false	"ASC params object (PUT only)"
+//	@Success		200		{object}	ASCParamsResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/managed-servers/{id}/asc [get]
 //	@Router			/managed-servers/{id}/asc [put]
 func (h *ManagedServerHandler) ASC(w http.ResponseWriter, r *http.Request, id string) {
