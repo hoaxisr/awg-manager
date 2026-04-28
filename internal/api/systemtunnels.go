@@ -175,14 +175,14 @@ func (h *SystemTunnelsHandler) ASC(w http.ResponseWriter, r *http.Request) {
 // getASC reads AWG signature/obfuscation params for a system tunnel.
 //
 //	@Summary		Get system tunnel ASC params
-//	@Description	Reads AWG signature/obfuscation parameters for the named system (NativeWG / kernel-WG) tunnel.
+//	@Description	Reads AWG signature/obfuscation parameters for the named system (NativeWG / kernel-WG) tunnel. Data is the raw signature preset object whose shape depends on the active preset.
 //	@Tags			system-tunnels
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			name	query		string	true	"Tunnel name"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Success		200		{object}	ASCParamsResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/system-tunnels/asc [get]
 func (h *SystemTunnelsHandler) getASC(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
@@ -200,16 +200,16 @@ func (h *SystemTunnelsHandler) getASC(w http.ResponseWriter, r *http.Request) {
 // setASC writes AWG signature/obfuscation params for a system tunnel.
 //
 //	@Summary		Set system tunnel ASC params
-//	@Description	Persists AWG signature/obfuscation parameters for the named system tunnel. Body is the raw ASC JSON object.
+//	@Description	Persists AWG signature/obfuscation parameters for the named system tunnel. Body is the raw ASC JSON object whose shape depends on the active signature preset.
 //	@Tags			system-tunnels
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			name	query		string					true	"Tunnel name"
-//	@Param			body	body		map[string]interface{}	true	"ASC params"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			name	query		string	true	"Tunnel name"
+//	@Param			body	body		object	true	"ASC params object"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/system-tunnels/asc [post]
 func (h *SystemTunnelsHandler) setASC(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
