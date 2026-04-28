@@ -491,7 +491,8 @@
 			</div>
 
 			{#if externalList.length > 0}
-				<h2 class="text-lg font-semibold mt-6 mb-4">Внешние туннели</h2>
+			<div class="external-section">
+				<h2 class="section-title">Внешние туннели</h2>
 				<div class="tunnel-grid">
 					{#each externalList as extTunnel (extTunnel.interfaceName)}
 						<ExternalTunnelCard
@@ -500,7 +501,8 @@
 						/>
 					{/each}
 				</div>
-			{/if}
+			</div>
+		{/if}
 		{/if}
 		{:else}
 			<SingboxInstallBanner />
@@ -939,5 +941,18 @@
 		background: var(--color-accent);
 		color: #fff;
 		border-color: var(--color-accent);
+	}
+
+	.external-section {
+		margin-top: 2rem;
+		padding-top: 1.5rem;
+		border-top: 1px solid var(--border);
+	}
+
+	.section-title {
+		font-size: 1rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+		margin-bottom: 1rem;
 	}
 </style>

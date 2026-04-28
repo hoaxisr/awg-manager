@@ -16,68 +16,56 @@
 	}
 </script>
 
-<div class="card flex flex-col gap-4 border-2 border-dashed border-warning-500/30">
+<div class="card ext-card flex flex-col gap-4">
 	<div class="flex justify-between items-start gap-3">
-		<div class="flex flex-col gap-1">
-			<div class="flex items-center gap-2">
-				<h3 class="text-lg font-semibold">{tunnel.interfaceName}</h3>
-				<span
-					class="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-full bg-warning-500/15 text-warning-500"
-				>
-					Внешний
-				</span>
+		<div class="flex flex-col gap-1 min-w-0">
+			<h3 class="tunnel-name">{tunnel.interfaceName}</h3>
+			<div class="flex items-center gap-2 flex-wrap">
+				<span class="iface-name">WG туннель</span>
+				<span class="version-badge badge-external">Внешний</span>
 			</div>
-			<span class="text-xs text-surface-400 font-mono">AWG туннель</span>
 		</div>
-		<div>
+		<div class="shrink-0">
 			{#if tunnel.lastHandshake}
-				<span
-					class="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-full bg-success-500/15 text-success-500"
-				>
-					<span class="w-1.5 h-1.5 rounded-full bg-current"></span>
+				<span class="status-badge status-active">
+					<span class="led-dot"></span>
 					Подключён
 				</span>
 			{:else}
-				<span
-					class="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-full bg-surface-400/15 text-surface-400"
-				>
-					<span class="w-1.5 h-1.5 rounded-full bg-current"></span>
+				<span class="status-badge status-inactive">
+					<span class="led-dot"></span>
 					Неактивен
 				</span>
 			{/if}
 		</div>
 	</div>
 
-	<div class="flex flex-col gap-2 pt-3 border-t border-surface-300-700">
+	<div class="details">
 		{#if tunnel.endpoint}
-			<div class="flex gap-4">
-				<div class="flex flex-col gap-0.5 min-w-0">
-					<span class="text-xs text-surface-400 uppercase">Endpoint</span>
-					<span class="text-sm font-mono">{tunnel.endpoint}</span>
-				</div>
+			<div class="flex flex-col gap-0.5 min-w-0">
+				<span class="detail-label">Endpoint</span>
+				<span class="detail-value">{tunnel.endpoint}</span>
 			</div>
 		{/if}
 		{#if tunnel.lastHandshake}
-			<div class="flex gap-4">
-				<div class="flex flex-col gap-0.5 min-w-0">
-					<span class="text-xs text-surface-400 uppercase">Handshake</span>
-					<span class="text-sm font-mono">{tunnel.lastHandshake}</span>
-				</div>
+			<div class="flex flex-col gap-0.5 min-w-0">
+				<span class="detail-label">Handshake</span>
+				<span class="detail-value">{tunnel.lastHandshake}</span>
 			</div>
 		{/if}
-		<div class="flex gap-4">
+		<div class="flex gap-6">
 			<div class="flex flex-col gap-0.5 min-w-0">
-				<span class="text-xs text-surface-400 uppercase">RX</span>
-				<span class="text-sm font-mono">{formatBytes(tunnel.rxBytes)}</span>
+				<span class="detail-label">RX</span>
+				<span class="detail-value">{formatBytes(tunnel.rxBytes)}</span>
 			</div>
 			<div class="flex flex-col gap-0.5 min-w-0">
-				<span class="text-xs text-surface-400 uppercase">TX</span>
-				<span class="text-sm font-mono">{formatBytes(tunnel.txBytes)}</span>
+				<span class="detail-label">TX</span>
+				<span class="detail-value">{formatBytes(tunnel.txBytes)}</span>
 			</div>
 		</div>
 	</div>
 
-	<div class="pt-3 border-t border-surface-300-700">
+	<div class="actions-wrapper">
 		<Button variant="primary" onclick={handleAdopt}>
 			{#snippet iconBefore()}
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -89,3 +77,91 @@
 		</Button>
 	</div>
 </div>
+
+<style>
+	.ext-card {
+		border: 1px dashed color-mix(in srgb, var(--warning, #f59e0b) 40%, transparent);
+	}
+
+	.tunnel-name {
+		font-size: 1rem;
+		font-weight: 600;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.iface-name {
+		font-size: 12px;
+		font-family: var(--font-mono, monospace);
+		color: var(--text-muted);
+	}
+
+	.version-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 2px 8px;
+		font-size: 11px;
+		font-weight: 500;
+		border-radius: 10px;
+	}
+
+	.badge-external {
+		background: rgba(245, 158, 11, 0.15);
+		color: var(--warning, #f59e0b);
+	}
+
+	.status-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 2px 10px;
+		font-size: 12px;
+		font-weight: 500;
+		border-radius: 10px;
+	}
+
+	.status-active {
+		background: rgba(16, 185, 129, 0.15);
+		color: var(--success, #10b981);
+	}
+
+	.status-inactive {
+		background: rgba(148, 163, 184, 0.15);
+		color: var(--text-muted);
+	}
+
+	.led-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: currentColor;
+		flex-shrink: 0;
+	}
+
+	.details {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		padding-top: 12px;
+		border-top: 1px solid var(--border);
+	}
+
+	.detail-label {
+		font-size: 11px;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--text-muted);
+	}
+
+	.detail-value {
+		font-size: 13px;
+		font-family: var(--font-mono, monospace);
+		color: var(--text-secondary);
+	}
+
+	.actions-wrapper {
+		padding-top: 12px;
+		border-top: 1px solid var(--border);
+	}
+</style>
