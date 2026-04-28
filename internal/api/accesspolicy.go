@@ -63,6 +63,51 @@ type PolicyInterfacesListResponse struct {
 	Data    []PolicyGlobalInterfaceDTO `json:"data"`
 }
 
+// AccessPolicyResponse is the envelope for endpoints that return a
+// single access policy (e.g. POST /access-policies/create).
+type AccessPolicyResponse struct {
+	Success bool            `json:"success" example:"true"`
+	Data    AccessPolicyDTO `json:"data"`
+}
+
+// ── Request DTOs ─────────────────────────────────────────────────
+
+// CreateAccessPolicyRequest is the body for POST /access-policies/create.
+type CreateAccessPolicyRequest struct {
+	Description string `json:"description" example:"My VPN policy"`
+}
+
+// SetDescriptionRequest is the body for POST /access-policies/description.
+type SetDescriptionRequest struct {
+	Name        string `json:"name" example:"Policy0"`
+	Description string `json:"description" example:"My VPN policy"`
+}
+
+// SetStandaloneRequest is the body for POST /access-policies/standalone.
+type SetStandaloneRequest struct {
+	Name    string `json:"name" example:"Policy0"`
+	Enabled bool   `json:"enabled" example:"true"`
+}
+
+// PermitInterfaceRequest is the body for POST /access-policies/permit.
+type PermitInterfaceRequest struct {
+	Name      string `json:"name" example:"Policy0"`
+	Interface string `json:"interface" example:"Wireguard0"`
+	Order     int    `json:"order" example:"0"`
+}
+
+// AssignDeviceRequest is the body for POST /access-policies/assign.
+type AssignDeviceRequest struct {
+	MAC    string `json:"mac" example:"aa:bb:cc:dd:ee:ff"`
+	Policy string `json:"policy" example:"Policy0"`
+}
+
+// SetInterfaceUpRequest is the body for POST /access-policies/interface-up.
+type SetInterfaceUpRequest struct {
+	Name string `json:"name" example:"Wireguard0"`
+	Up   bool   `json:"up" example:"true"`
+}
+
 // AccessPolicyHandler handles access policy CRUD and device assignment operations.
 type AccessPolicyHandler struct {
 	svc accesspolicy.Service
@@ -96,7 +141,9 @@ func NewAccessPolicyHandler(svc accesspolicy.Service) *AccessPolicyHandler {
 //	@Tags			access-policy
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{array}	map[string]interface{}
+//	@Param			refresh	query		string	false	"Pass 'true' to bypass NDMS cache"
+//	@Success		200		{object}	AccessPoliciesListResponse
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/access-policies [get]
 func (h *AccessPolicyHandler) List(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -124,12 +171,13 @@ func (h *AccessPolicyHandler) List(w http.ResponseWriter, r *http.Request) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Param			body	body		CreateAccessPolicyRequest	true	"Policy description"
+//	@Success		200		{object}	AccessPolicyResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/access-policies/create [post]
 func (h *AccessPolicyHandler) Create(w http.ResponseWriter, r *http.Request) {
-	req, ok := parseJSON[struct {
-		Description string `json:"description"`
-	}](w, r, http.MethodPost)
+	req, ok := parseJSON[CreateAccessPolicyRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}
@@ -151,9 +199,9 @@ func (h *AccessPolicyHandler) Create(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			name	query		string	true	"Policy name (e.g. Policy0)"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/access-policies/delete [delete]
 func (h *AccessPolicyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
@@ -182,13 +230,13 @@ func (h *AccessPolicyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Param			body	body		SetDescriptionRequest	true	"Policy name + new description"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/access-policies/description [post]
 func (h *AccessPolicyHandler) SetDescription(w http.ResponseWriter, r *http.Request) {
-	req, ok := parseJSON[struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-	}](w, r, http.MethodPost)
+	req, ok := parseJSON[SetDescriptionRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}
@@ -213,13 +261,13 @@ func (h *AccessPolicyHandler) SetDescription(w http.ResponseWriter, r *http.Requ
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Param			body	body		SetStandaloneRequest	true	"Policy name + enabled flag"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/access-policies/standalone [post]
 func (h *AccessPolicyHandler) SetStandalone(w http.ResponseWriter, r *http.Request) {
-	req, ok := parseJSON[struct {
-		Name    string `json:"name"`
-		Enabled bool   `json:"enabled"`
-	}](w, r, http.MethodPost)
+	req, ok := parseJSON[SetStandaloneRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}
@@ -257,17 +305,13 @@ func (h *AccessPolicyHandler) PermitInterface(w http.ResponseWriter, r *http.Req
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{name, interface, order}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		PermitInterfaceRequest	true	"Policy name, interface name, priority order"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/access-policies/permit [post]
 func (h *AccessPolicyHandler) permitInterfaceAdd(w http.ResponseWriter, r *http.Request) {
-	req, ok := parseJSON[struct {
-		Name      string `json:"name"`
-		Interface string `json:"interface"`
-		Order     int    `json:"order"`
-	}](w, r, http.MethodPost)
+	req, ok := parseJSON[PermitInterfaceRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}
@@ -296,9 +340,9 @@ func (h *AccessPolicyHandler) permitInterfaceAdd(w http.ResponseWriter, r *http.
 //	@Security		CookieAuth
 //	@Param			name		query		string	true	"Policy name"
 //	@Param			interface	query		string	true	"Interface name"
-//	@Success		200			{object}	map[string]interface{}
-//	@Failure		400			{object}	map[string]interface{}
-//	@Failure		500			{object}	map[string]interface{}
+//	@Success		200			{object}	OkResponse
+//	@Failure		400			{object}	APIErrorEnvelope
+//	@Failure		500			{object}	APIErrorEnvelope
 //	@Router			/access-policies/permit [delete]
 func (h *AccessPolicyHandler) permitInterfaceRemove(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
@@ -342,16 +386,13 @@ func (h *AccessPolicyHandler) AssignDevice(w http.ResponseWriter, r *http.Reques
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{mac, policy}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		AssignDeviceRequest	true	"Device MAC + target policy name"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/access-policies/assign [post]
 func (h *AccessPolicyHandler) assignDevicePost(w http.ResponseWriter, r *http.Request) {
-	req, ok := parseJSON[struct {
-		MAC    string `json:"mac"`
-		Policy string `json:"policy"`
-	}](w, r, http.MethodPost)
+	req, ok := parseJSON[AssignDeviceRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}
@@ -380,9 +421,9 @@ func (h *AccessPolicyHandler) assignDevicePost(w http.ResponseWriter, r *http.Re
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			mac	query		string	true	"Device MAC address"
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		400	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	OkResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/access-policies/assign [delete]
 func (h *AccessPolicyHandler) unassignDeviceDelete(w http.ResponseWriter, r *http.Request) {
 	mac := r.URL.Query().Get("mac")
@@ -406,7 +447,9 @@ func (h *AccessPolicyHandler) unassignDeviceDelete(w http.ResponseWriter, r *htt
 //	@Tags			access-policy
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{array}	map[string]interface{}
+//	@Param			refresh	query		string	false	"Pass 'true' to bypass NDMS cache"
+//	@Success		200		{object}	PolicyDevicesListResponse
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/access-policies/devices [get]
 //	@Router			/routing/policy-devices [get]
 func (h *AccessPolicyHandler) ListDevices(w http.ResponseWriter, r *http.Request) {
@@ -433,7 +476,8 @@ func (h *AccessPolicyHandler) ListDevices(w http.ResponseWriter, r *http.Request
 //	@Tags			access-policy
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{array}	map[string]interface{}
+//	@Success		200	{object}	PolicyInterfacesListResponse
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/access-policies/interfaces [get]
 func (h *AccessPolicyHandler) ListGlobalInterfaces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -457,13 +501,13 @@ func (h *AccessPolicyHandler) ListGlobalInterfaces(w http.ResponseWriter, r *htt
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Param			body	body		SetInterfaceUpRequest	true	"Interface name + admin up flag"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/access-policies/interface-up [post]
 func (h *AccessPolicyHandler) SetInterfaceUp(w http.ResponseWriter, r *http.Request) {
-	req, ok := parseJSON[struct {
-		Name string `json:"name"`
-		Up   bool   `json:"up"`
-	}](w, r, http.MethodPost)
+	req, ok := parseJSON[SetInterfaceUpRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}
