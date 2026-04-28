@@ -22,6 +22,7 @@ type Commands struct {
 	DNSRoutes    *DNSRouteCommands
 	ObjectGroups *ObjectGroupCommands
 	PingCheck    *PingCheckCommands
+	Save         *SaveCoordinator
 }
 
 // Deps groups the non-Command dependencies NewCommands needs.
@@ -56,5 +57,6 @@ func NewCommands(d Deps) *Commands {
 		DNSRoutes:    NewDNSRouteCommands(d.Poster, d.Save, d.Queries, d.IsOS5),
 		ObjectGroups: NewObjectGroupCommands(d.Poster, d.Save, d.Queries),
 		PingCheck:    NewPingCheckCommands(d.Poster, d.Save, d.Queries),
+		Save:         d.Save,
 	}
 }

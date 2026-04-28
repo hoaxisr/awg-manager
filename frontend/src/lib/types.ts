@@ -1005,6 +1005,7 @@ export interface SingboxTunnel {
 	 * means "process up, but outbound not reachable" (bad server, etc).
 	 */
 	running: boolean;
+	enabled: boolean;
 }
 
 export interface SingboxStatus {

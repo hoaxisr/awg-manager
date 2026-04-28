@@ -44,17 +44,21 @@ const (
 
 // Operator is the high-level facade for sing-box integration.
 type Operator struct {
-	log        *slog.Logger
-	dir        string
-	binary     string
-	configPath string
-	pidPath    string
+	log                   *slog.Logger
+	dir                   string
+	binary                string
+	configPath            string
+	pidPath               string
+	disabledOutboundsPath string
 
 	proc      *Process
 	validator *Validator
 	proxyMgr  *ProxyManager
 	clash     *ClashClient
+	commands  *command.Commands
 	bus       *events.Bus
+	// Called when a tunnel is enabled or disabled, so subsystems can react
+	OnTunnelEnabledChanged func(tag string, enabled bool)
 }
 
 // OperatorDeps are external dependencies for DI.
@@ -81,18 +85,83 @@ func NewOperator(d OperatorDeps) *Operator {
 	}
 	configPath := filepath.Join(dir, "config.json")
 	pidPath := filepath.Join(dir, "sing-box.pid")
+	disabledOutboundsPath := filepath.Join(dir, "awg_disabled_outbounds.json")
 
 	return &Operator{
-		log:        log,
-		dir:        dir,
-		binary:     binary,
-		configPath: configPath,
-		pidPath:    pidPath,
-		proc:       NewProcess(binary, configPath, pidPath),
-		validator:  NewValidator(binary),
-		proxyMgr:   NewProxyManager(d.Queries, d.Commands),
-		clash:      NewClashClient(clashAPIAddr),
+		log:                   log,
+		dir:                   dir,
+		binary:                binary,
+		configPath:            configPath,
+		pidPath:               pidPath,
+		disabledOutboundsPath: disabledOutboundsPath,
+		proc:                  NewProcess(binary, configPath, pidPath),
+		validator:             NewValidator(binary),
+		proxyMgr:              NewProxyManager(d.Queries, d.Commands),
+		clash:                 NewClashClient(clashAPIAddr),
+		commands:              d.Commands,
 	}
+}
+
+// SetTunnelEnabled enables or disables a sing-box tunnel by tag.
+// It adjusts the config and reloads sing-box. On success, fires
+// OnTunnelEnabledChanged callback (if set) so subsystems like pingcheck
+// can start/stop per-tunnel monitoring.
+func (o *Operator) SetTunnelEnabled(ctx context.Context, tag string, enabled bool) error {
+	o.log.Info("set tunnel enabled", "tag", tag, "enabled", fmt.Sprintf("%v", enabled))
+
+	cfg, err := o.loadConfig()
+	if err != nil {
+		o.log.Error("load config failed", "tag", tag, "err", err)
+		return err
+	}
+	if err := cfg.SetTunnelEnabled(tag, enabled); err != nil {
+		o.log.Error("set tunnel enabled in config failed", "tag", tag, "err", err)
+		return err
+	}
+
+	// Toggle NDMS proxy state before applying config
+	tunnels := cfg.Tunnels()
+	for _, t := range tunnels {
+		if t.Tag == tag {
+			if t.ProxyInterface == "" || strings.Contains(t.ProxyInterface, "-") {
+				o.log.Warn("skip proxy toggle: invalid proxy interface", "tag", tag, "iface", t.ProxyInterface)
+				break
+			}
+			idx, err := parseProxyIdx(t.ProxyInterface)
+			if err != nil {
+				o.log.Warn("skip proxy toggle: bad proxy interface", "tag", tag, "iface", t.ProxyInterface, "err", err)
+				break
+			}
+			if enabled {
+				if err := o.proxyMgr.EnableProxy(ctx, idx); err != nil {
+					o.log.Warn("enable proxy failed", "tag", tag, "err", err)
+				}
+			} else {
+				if err := o.proxyMgr.DisableProxy(ctx, idx); err != nil {
+					o.log.Warn("disable proxy failed", "tag", tag, "err", err)
+				}
+			}
+			// Save NDMS config to sync UI
+			o.commands.Save.Request()
+			break
+		}
+	}
+
+	if err := o.applyConfig(ctx, cfg); err != nil {
+		o.log.Error("apply config after toggle failed", "tag", tag, "err", err)
+		return err
+	}
+
+	o.log.Info("tunnel toggled successfully", "tag", tag, "enabled", fmt.Sprintf("%v", enabled))
+
+	if o.OnTunnelEnabledChanged != nil {
+		o.OnTunnelEnabledChanged(tag, enabled)
+	}
+	// Publish event so deviceproxy and other consumers know about the change.
+	if o.bus != nil {
+		o.bus.Publish("singbox:tunnels-changed", nil)
+	}
+	return nil
 }
 
 // SetEventBus wires the event bus so Operator can publish tunnel-set
@@ -304,9 +373,14 @@ func (o *Operator) RemoveTunnel(ctx context.Context, tag string) error {
 	proxyIdx := -1
 	for _, t := range cfg.Tunnels() {
 		if t.Tag == tag {
+			if t.ProxyInterface == "" {
+				o.log.Warn("remove tunnel: empty proxy interface", "tag", tag)
+				break
+			}
 			idx, err := parseProxyIdx(t.ProxyInterface)
 			if err != nil {
-				return fmt.Errorf("tunnel %q has malformed proxy interface %q: %w", tag, t.ProxyInterface, err)
+				o.log.Warn("remove tunnel: bad proxy interface", "tag", tag, "iface", t.ProxyInterface, "err", err)
+				break
 			}
 			proxyIdx = idx
 			break
@@ -496,14 +570,25 @@ func (o *Operator) applyConfig(ctx context.Context, cfg *Config) error {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("promote config: %w", err)
 	}
+	if err := cfg.saveDisabled(o.disabledOutboundsPath); err != nil {
+		return fmt.Errorf("save disabled outbounds: %w", err)
+	}
 	if running, _ := o.proc.IsRunning(); !running {
 		return o.startAndWait(ctx)
 	}
+
 	return o.proc.Reload()
 }
 
 func (o *Operator) loadConfig() (*Config, error) {
-	return LoadConfig(o.configPath)
+	cfg, err := LoadConfig(o.configPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.loadDisabled(o.disabledOutboundsPath); err != nil {
+		o.log.Warn("failed to load disabled outbounds", "err", err)
+	}
+	return cfg, nil
 }
 
 // ApplyConfig runs the full Save + Validate + Promote + Reload sequence
@@ -542,6 +627,9 @@ func (o *Operator) ApplyConfigNoReload(ctx context.Context, cfg *Config) error {
 	if err := os.Rename(tmpPath, o.configPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("promote config: %w", err)
+	}
+	if err := cfg.saveDisabled(o.disabledOutboundsPath); err != nil {
+		return fmt.Errorf("save disabled outbounds: %w", err)
 	}
 	// Intentionally no reload — see doc comment.
 	return nil
@@ -596,6 +684,9 @@ func (o *Operator) loadOrInitConfig() (*Config, error) {
 			return NewConfig(), nil
 		}
 		return nil, err
+	}
+	if err := cfg.loadDisabled(o.disabledOutboundsPath); err != nil {
+		o.log.Warn("failed to load disabled outbounds", "err", err)
 	}
 	return cfg, nil
 }

@@ -3,7 +3,8 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
-	import { singboxTunnels } from '$lib/stores/singbox';
+	import { singboxTunnels, toggleTunnelEnabled } from '$lib/stores/singbox';
+	import { notifications } from '$lib/stores/notifications';
 	import { PageContainer } from '$lib/components/layout';
 
 	let tag = $derived($page.params.tag!);
@@ -12,6 +13,9 @@
 	let error = $state<string | null>(null);
 	let outbound = $state<Record<string, any> | null>(null);
 	let protocol = $state<string>('');
+
+	let tunnel = $derived($singboxTunnels.data?.find(t => t.tag === tag));
+	let enabled = $derived(tunnel?.enabled ?? true);
 
 	onMount(async () => {
 		try {
@@ -24,6 +28,17 @@
 			loading = false;
 		}
 	});
+
+	async function handleToggle(): Promise<void> {
+		if (!tunnel) return;
+		try {
+			await toggleTunnelEnabled(tag, !enabled);
+			enabled = !enabled;
+			notifications.show(`Туннель ${enabled ? 'включен' : 'выключен'}`, 'success');
+		} catch (e) {
+			notifications.show('Ошибка переключения', 'error');
+		}
+	}
 
 	async function save(): Promise<void> {
 		if (!outbound) return;
@@ -78,6 +93,9 @@
 			{#if protocol}
 				<span class="badge-protocol">{protocol}</span>
 			{/if}
+			<button class="btn btn-sm toggle-btn {enabled ? 'btn-primary' : 'btn-ghost'}" onclick={handleToggle}>
+				{enabled ? 'Активен' : 'Отключён'}
+			</button>
 		</div>
 		<button
 			class="btn btn-primary"
@@ -355,6 +373,10 @@
 		border-radius: 9999px;
 		background: rgba(148, 163, 184, 0.15);
 		color: var(--text-muted);
+	}
+
+	.toggle-btn {
+		transition: all 0.2s;
 	}
 
 	.section {

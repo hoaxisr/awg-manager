@@ -11,10 +11,10 @@ import (
 )
 
 // maxProxySlots caps how many ProxyN slots we will scan when looking for
-// a free index. Keenetic does not publish an official ceiling; 128 is
+// a free index. Keenetic does not publish an official ceiling; 1000 is
 // well above any realistic tunnel count and bounds the loop in NextFreeIndex
 // in case NDMS ever returns something unexpected.
-const maxProxySlots = 128
+const maxProxySlots = 1000
 
 // ErrProxyComponentMissing is returned when the router lacks the NDMS
 // "proxy" component. Without it, no ProxyN interface can be created, so
@@ -79,6 +79,22 @@ func (pm *ProxyManager) NextFreeIndex(ctx context.Context, reserved map[int]bool
 		}
 	}
 	return 0, fmt.Errorf("no free Proxy slot (scanned %d)", maxProxySlots)
+}
+
+// DisableProxy stops ProxyN without deleting it.
+func (pm *ProxyManager) DisableProxy(ctx context.Context, index int) error {
+	name := fmt.Sprintf("%s%d", proxyIfacePrefix, index)
+	err := pm.commands.Proxies.ProxyDown(ctx, name)
+	pm.commands.Save.Request()
+	return err
+}
+
+// EnableProxy starts ProxyN if it exists.
+func (pm *ProxyManager) EnableProxy(ctx context.Context, index int) error {
+	name := fmt.Sprintf("%s%d", proxyIfacePrefix, index)
+	err := pm.commands.Proxies.ProxyUp(ctx, name)
+	pm.commands.Save.Request()
+	return err
 }
 
 // RemoveProxy tears down ProxyN.

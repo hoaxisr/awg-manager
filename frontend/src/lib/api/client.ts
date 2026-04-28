@@ -1218,6 +1218,13 @@ class ApiClient {
 		});
 	}
 
+	async toggleSingboxTunnel(tag: string, enabled: boolean): Promise<SingboxTunnel[]> {
+		return this.request(`/singbox/tunnels/toggle?tag=${encodeURIComponent(tag)}`, {
+			method: 'POST',
+			body: JSON.stringify({ enabled })
+		});
+	}
+
 	async getSingboxPingCheckStatus(tag: string): Promise<{
 		status: string;
 		failCount: number;

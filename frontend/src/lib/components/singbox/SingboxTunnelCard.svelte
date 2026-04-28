@@ -7,8 +7,9 @@
 		singboxDelayHistory,
 		singboxTraffic,
 		triggerDelayCheck,
+		toggleTunnelEnabled,
 	} from '$lib/stores/singbox';
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Toggle } from '$lib/components/ui';
 	import SingboxSpeedTestModal from './SingboxSpeedTestModal.svelte';
 
 	interface Props {
@@ -21,6 +22,9 @@
 	let confirmDeleteOpen = $state(false);
 	let showServer = $state(false);
 	let checking = $state(false);
+	let toggling = $state(false);
+	let lastPingTime = $state(0);
+	let initialCheckDone = $state(false);
 
 	const DELAY_OK = 200;
 	const DELAY_SLOW = 500;
@@ -33,6 +37,15 @@
 			: 0,
 	);
 	const traffic = $derived($singboxTraffic.get(tunnel.tag));
+
+	const lastPingTimeStr = $derived(lastPingTime > 0 ? new Date(lastPingTime).toLocaleTimeString() : null);
+
+	$effect(() => {
+		if (!initialCheckDone && tunnel.enabled && tunnel.running && history.length === 0) {
+			initialCheckDone = true;
+			triggerCheck();
+		}
+	});
 
 	type State = 'ok' | 'slow' | 'fail' | 'unknown' | 'stopped';
 	const cardState: State = $derived.by(() => {
@@ -66,6 +79,7 @@
 		checking = true;
 		try {
 			await triggerDelayCheck(tunnel.tag);
+			lastPingTime = Date.now();
 		} finally {
 			checking = false;
 		}
@@ -118,6 +132,21 @@
 				<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
 			</svg>
 		</button>
+		<Toggle
+			checked={tunnel.enabled}
+			onchange={async () => {
+				if (toggling) return;
+				toggling = true;
+				try {
+					await toggleTunnelEnabled(tunnel.tag, !tunnel.enabled);
+				} finally {
+					toggling = false;
+				}
+			}}
+			loading={toggling}
+			disabled={toggling}
+			variant="flip"
+		/>
 	</div>
 
 	<h3 class="title">{tunnel.tag}</h3>
@@ -171,6 +200,13 @@
 					<span class="server-hidden">●●●●●●●●</span>
 				{/if}
 			</span>
+		</div>
+	{/if}
+
+	{#if lastPingTimeStr !== null}
+		<div class="row">
+			<span class="label">Ping</span>
+			<span class="value">{lastPingTimeStr}</span>
 		</div>
 	{/if}
 
@@ -283,6 +319,7 @@
 	.card.slow { border-color: rgba(245, 158, 11, 0.3); }
 	.card.fail { border-color: rgba(239, 68, 68, 0.3); }
 	.card.stopped { border-color: rgba(148, 163, 184, 0.4); opacity: 0.7; }
+
 
 	.led-wrap {
 		position: absolute;

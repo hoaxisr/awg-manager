@@ -849,6 +849,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 			}
 		}))
 		mux.HandleFunc("/api/singbox/tunnels/pingcheck/remove", guarded(s.singboxHandler.RemovePingCheck))
+		mux.HandleFunc("/api/singbox/tunnels/toggle", guarded(s.singboxHandler.ToggleTunnel))
 	}
 	if s.clashProxy != nil {
 		mux.HandleFunc("/api/singbox/clash/", guarded(s.clashProxy.ServeHTTP))

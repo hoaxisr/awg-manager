@@ -19,7 +19,8 @@ const (
 // We use map[string]any because sing-box config has many optional fields
 // and we only manipulate inbounds/outbounds/route.rules.
 type Config struct {
-	raw map[string]any
+	raw               map[string]any
+	disabledOutbounds []map[string]any
 }
 
 // NewConfig creates a fresh empty config skeleton.
@@ -120,6 +121,22 @@ func LoadConfig(path string) (*Config, error) {
 	return &Config{raw: m}, nil
 }
 
+// LoadDisabledOutbounds loads disabled outbounds from a separate file.
+func LoadDisabledOutbounds(path string) ([]map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var list []map[string]any
+	if err := json.Unmarshal(data, &list); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
 // Save atomically writes config.json to disk (tmp file + rename).
 func (c *Config) Save(path string) error {
 	b, err := json.MarshalIndent(c.raw, "", "  ")
@@ -140,6 +157,42 @@ func (c *Config) Save(path string) error {
 	return nil
 }
 
+func (c *Config) loadDisabled(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.disabledOutbounds = nil
+			return nil
+		}
+		return err
+	}
+	var list []map[string]any
+	if err := json.Unmarshal(data, &list); err != nil {
+		return err
+	}
+	c.disabledOutbounds = list
+	return nil
+}
+
+func (c *Config) saveDisabled(path string) error {
+	if len(c.disabledOutbounds) == 0 {
+		os.Remove(path) // удалить файл, если нет отключённых туннелей
+		return nil
+	}
+	data, err := json.MarshalIndent(c.disabledOutbounds, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 func (c *Config) inbounds() []any {
 	v, _ := c.raw["inbounds"].([]any)
 	return v
@@ -158,6 +211,7 @@ func (c *Config) routeRules() []any {
 
 func (c *Config) setInbounds(v []any)  { c.raw["inbounds"] = v }
 func (c *Config) setOutbounds(v []any) { c.raw["outbounds"] = v }
+
 func (c *Config) setRouteRules(v []any) {
 	route, _ := c.raw["route"].(map[string]any)
 	if route == nil {
@@ -176,6 +230,7 @@ func (c *Config) setRouteRules(v []any) {
 // with no validation guard.
 func (c *Config) userOutbounds() []map[string]any {
 	var out []map[string]any
+	// Active outbounds
 	for _, v := range c.outbounds() {
 		ob, ok := v.(map[string]any)
 		if !ok {
@@ -185,6 +240,10 @@ func (c *Config) userOutbounds() []map[string]any {
 		if t == "direct" || t == "block" || t == "dns" || t == "selector" {
 			continue
 		}
+		out = append(out, ob)
+	}
+	// Disabled outbounds
+	for _, ob := range c.disabledOutbounds {
 		out = append(out, ob)
 	}
 	return out
@@ -234,10 +293,156 @@ func (c *Config) Tunnels() []TunnelInfo {
 			SNI:             detectSNI(ob),
 			Fingerprint:     detectFingerprint(ob),
 			Username:        strOr(ob["username"], ""),
+			Enabled:         !isFalse(ob["enabled"]), // true unless explicitly false
 		}
 		out = append(out, info)
 	}
 	return out
+}
+
+// isFalse helper: returns true if v is bool and true.
+func isFalse(v any) bool {
+	b, ok := v.(bool)
+	return ok && !b
+}
+
+// SetTunnelEnabled enables or disables a tunnel by moving it between
+// active outbounds and disabled storage. Disabled tunnels are stored
+// under awg_disabled_outbounds key with "enabled": false.
+func (c *Config) SetTunnelEnabled(tag string, enabled bool) error {
+	if enabled {
+		// Enable: move from disabled to active
+		disabled := c.disabledOutbounds
+		newDisabled := make([]map[string]any, 0, len(disabled))
+		var found map[string]any
+		for _, ob := range disabled {
+			if t, _ := ob["tag"].(string); t == tag {
+				found = ob
+				continue
+			}
+			newDisabled = append(newDisabled, ob)
+		}
+		if found == nil {
+			return fmt.Errorf("%w: %q", ErrTunnelNotFound, tag)
+		}
+		// Restore original listen_port or allocate new if missing
+		listenPort, hasPort := toInt(found["listen_port"])
+		delete(found, "listen_port") // в любом случае удаляем из outbound
+		if !hasPort || listenPort == 0 {
+			// No saved port (old disabled item) – allocate a fresh one
+			var err error
+			listenPort, err = c.allocPort()
+			if err != nil {
+				return err
+			}
+		}
+		delete(found, "enabled")
+
+		// Проверить, что порт не занят (на всякий случай)
+		for _, v := range c.inbounds() {
+			ib, ok := v.(map[string]any)
+			if ok {
+				if p, _ := toInt(ib["listen_port"]); p == listenPort {
+					return fmt.Errorf("listen_port %d already in use", listenPort)
+				}
+			}
+		}
+		// Add to outbounds before direct
+		obs := c.outbounds()
+		insertAt := len(obs)
+		for i, v := range obs {
+			if ob, ok := v.(map[string]any); ok {
+				if t, _ := ob["type"].(string); t == "direct" {
+					insertAt = i
+					break
+				}
+			}
+		}
+		obs = append(obs[:insertAt], append([]any{found}, obs[insertAt:]...)...)
+		c.setOutbounds(obs)
+		c.disabledOutbounds = newDisabled
+		// Add inbound and route rule
+		inbound := map[string]any{
+			"type":        "mixed",
+			"tag":         tag + "-in",
+			"listen":      "127.0.0.1",
+			"listen_port": listenPort,
+		}
+		c.setInbounds(append(c.inbounds(), inbound))
+		rule := map[string]any{"inbound": tag + "-in", "outbound": tag}
+		c.setRouteRules(append([]any{rule}, c.routeRules()...))
+	} else {
+		// Disable: move from active to disabled
+		obs := c.outbounds()
+		newObs := make([]any, 0, len(obs))
+		var found map[string]any
+		for _, v := range obs {
+			ob, ok := v.(map[string]any)
+			if !ok {
+				newObs = append(newObs, v)
+				continue
+			}
+			if t, _ := ob["tag"].(string); t == tag {
+				found = ob
+				continue
+			}
+			newObs = append(newObs, v)
+		}
+		if found == nil {
+			return fmt.Errorf("%w: %q", ErrTunnelNotFound, tag)
+		}
+		// Find inbound port before removing
+		var listenPort int
+		inTag := tag + "-in"
+		for _, v := range c.inbounds() {
+			ib, ok := v.(map[string]any)
+			if !ok {
+				continue
+			}
+			if t, _ := ib["tag"].(string); t == inTag {
+				if p, ok := toInt(ib["listen_port"]); ok {
+					listenPort = p
+				}
+				break
+			}
+		}
+		// Add "enabled": false and listen_port
+		found["enabled"] = false
+		if listenPort > 0 {
+			found["listen_port"] = listenPort
+		}
+		// Add to disabled
+		c.disabledOutbounds = append(c.disabledOutbounds, found)
+		c.setOutbounds(newObs)
+		// Remove inbound
+		newIbs := make([]any, 0, len(c.inbounds()))
+		for _, v := range c.inbounds() {
+			ib, ok := v.(map[string]any)
+			if !ok {
+				newIbs = append(newIbs, v)
+				continue
+			}
+			if t, _ := ib["tag"].(string); t == inTag {
+				continue
+			}
+			newIbs = append(newIbs, v)
+		}
+		c.setInbounds(newIbs)
+		newRules := make([]any, 0, len(c.routeRules()))
+		for _, v := range c.routeRules() {
+			r, ok := v.(map[string]any)
+			if !ok {
+				newRules = append(newRules, v)
+				continue
+			}
+			if ob, _ := r["outbound"].(string); ob == tag {
+				continue
+			}
+			newRules = append(newRules, v)
+		}
+		c.setRouteRules(newRules)
+	}
+	return nil
 }
 
 // AddTunnel inserts inbound + outbound + route rule for a new tunnel.
@@ -314,10 +519,11 @@ func (c *Config) AddTunnelWithListenPort(tag, protocol, server string, port, lis
 }
 
 // RemoveTunnel strips inbound, outbound, and route rule with matching tag.
+// If tunnel is disabled, removes only from disabled storage.
 func (c *Config) RemoveTunnel(tag string) error {
-	found := false
-	// outbounds
+	// Check active outbounds
 	newObs := make([]any, 0, len(c.outbounds()))
+	foundActive := false
 	for _, v := range c.outbounds() {
 		ob, ok := v.(map[string]any)
 		if !ok {
@@ -325,48 +531,59 @@ func (c *Config) RemoveTunnel(tag string) error {
 			continue
 		}
 		if t, _ := ob["tag"].(string); t == tag {
-			found = true
+			foundActive = true
 			continue
 		}
 		newObs = append(newObs, v)
 	}
-	if !found {
-		return fmt.Errorf("%w: %q", ErrTunnelNotFound, tag)
-	}
-	c.setOutbounds(newObs)
-
-	// inbounds
-	inTag := tag + "-in"
-	newIbs := make([]any, 0, len(c.inbounds()))
-	for _, v := range c.inbounds() {
-		ib, ok := v.(map[string]any)
-		if !ok {
+	if foundActive {
+		c.setOutbounds(newObs)
+		// Remove inbound and route rule
+		inTag := tag + "-in"
+		newIbs := make([]any, 0, len(c.inbounds()))
+		for _, v := range c.inbounds() {
+			ib, ok := v.(map[string]any)
+			if !ok {
+				newIbs = append(newIbs, v)
+				continue
+			}
+			if t, _ := ib["tag"].(string); t == inTag {
+				continue
+			}
 			newIbs = append(newIbs, v)
-			continue
 		}
-		if t, _ := ib["tag"].(string); t == inTag {
-			continue
-		}
-		newIbs = append(newIbs, v)
-	}
-	c.setInbounds(newIbs)
-
-	// route rules
-	newRules := make([]any, 0, len(c.routeRules()))
-	for _, v := range c.routeRules() {
-		r, ok := v.(map[string]any)
-		if !ok {
+		c.setInbounds(newIbs)
+		newRules := make([]any, 0, len(c.routeRules()))
+		for _, v := range c.routeRules() {
+			r, ok := v.(map[string]any)
+			if !ok {
+				newRules = append(newRules, v)
+				continue
+			}
+			if ob, _ := r["outbound"].(string); ob == tag {
+				continue
+			}
 			newRules = append(newRules, v)
-			continue
 		}
-		if ob, _ := r["outbound"].(string); ob == tag {
-			continue
-		}
-		newRules = append(newRules, v)
+		c.setRouteRules(newRules)
+		return nil
 	}
-	c.setRouteRules(newRules)
 
-	return nil
+	// Check disabled outbounds
+	newDisabled := make([]map[string]any, 0, len(c.disabledOutbounds))
+	for _, ob := range c.disabledOutbounds {
+		if t, _ := ob["tag"].(string); t == tag {
+			// Found in disabled, remove only from there
+			continue
+		}
+		newDisabled = append(newDisabled, ob)
+	}
+	if len(newDisabled) != len(c.disabledOutbounds) {
+		c.disabledOutbounds = newDisabled
+		return nil
+	}
+
+	return fmt.Errorf("%w: %q", ErrTunnelNotFound, tag)
 }
 
 // UpdateTunnel replaces the outbound JSON for an existing tag. Inbound and route stay.
@@ -415,12 +632,19 @@ func (c *Config) GetOutbound(tag string) (json.RawMessage, error) {
 // allocPort finds the lowest free port starting from firstPort.
 func (c *Config) allocPort() (int, error) {
 	used := map[int]bool{}
+	// Check active inbounds
 	for _, v := range c.inbounds() {
 		ib, ok := v.(map[string]any)
 		if !ok {
 			continue
 		}
 		if p, ok := toInt(ib["listen_port"]); ok {
+			used[p] = true
+		}
+	}
+	// Check disabled outbounds for reserved listen_ports
+	for _, ob := range c.disabledOutbounds {
+		if p, ok := toInt(ob["listen_port"]); ok {
 			used[p] = true
 		}
 	}
@@ -516,7 +740,7 @@ func detectFingerprint(ob map[string]any) string {
 // represents the fully-resolved desired state, not a delta.
 type DeviceProxySpec struct {
 	Enabled     bool
-	ListenAddr  string           // already resolved to an IP literal
+	ListenAddr  string // already resolved to an IP literal
 	Port        int
 	Auth        DeviceProxyAuth
 	SelectedTag string           // member tag that becomes selector.default

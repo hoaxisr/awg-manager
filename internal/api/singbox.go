@@ -477,3 +477,39 @@ func (h *SingboxHandler) GetPingCheckStatus(w http.ResponseWriter, r *http.Reque
 	status := h.pingCheckSvc.GetTunnelPingStatusByTag(tag)
 	response.Success(w, status)
 }
+
+// ToggleTunnel handles POST /api/singbox/tunnels/toggle?tag=X
+func (h *SingboxHandler) ToggleTunnel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	tag := r.URL.Query().Get("tag")
+	if tag == "" {
+		response.BadRequest(w, "tag required")
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		response.BadRequest(w, "invalid JSON body")
+		return
+	}
+	h.log.Info("singbox-toggle-start", tag, fmt.Sprintf("enabled=%v", body.Enabled))
+
+	if err := h.op.SetTunnelEnabled(r.Context(), tag, body.Enabled); err != nil {
+		h.log.Warn("singbox-toggle-failed", tag, err.Error())
+		response.InternalError(w, err.Error())
+		return
+	}
+	// Return updated list so frontend can replace store
+	out, err := h.enrichedTunnels(r.Context())
+	if err != nil {
+		h.log.Warn("singbox-toggle-list-failed", tag, err.Error())
+		response.InternalError(w, err.Error())
+		return
+	}
+	h.log.Info("singbox-toggle-success", tag, fmt.Sprintf("enabled=%v", body.Enabled))
+	response.Success(w, out)
+}

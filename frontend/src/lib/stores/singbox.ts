@@ -88,3 +88,13 @@ export async function triggerDelayCheck(tag: string): Promise<void> {
 	}
 }
 
+export async function toggleTunnelEnabled(tag: string, enabled: boolean): Promise<void> {
+	try {
+		const fresh = await api.toggleSingboxTunnel(tag, enabled);
+		singboxTunnels.applyMutationResponse(fresh);
+	} catch (e) {
+		console.error('toggle singbox tunnel', tag, e);
+		throw e;
+	}
+}
+

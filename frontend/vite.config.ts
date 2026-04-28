@@ -11,5 +11,15 @@ export default defineConfig({
 				changeOrigin: true
 			}
 		}
+	},
+	build: {
+		rollupOptions: {
+			external: ['node:dns/promises'],
+			onwarn(warning, warn) {
+				// Ignore node:dns/promises externalized warning from @vinejs/vine
+				if (warning.message.includes('node:dns/promises')) return;
+				warn(warning);
+			}
+		}
 	}
 });

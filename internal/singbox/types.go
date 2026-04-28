@@ -26,6 +26,12 @@ type TunnelInfo struct {
 	// False when: sing-box is dead, sing-box is alive but hasn't yet created
 	// the TUN (transient), or the tunnel has no kernelInterface hint.
 	Running bool `json:"running"`
+
+	// Enabled reflects the current state of the outbound in sing-box
+	// config.json. Defaults to true for existing tunnels without an
+	// explicit "enabled" key (sing-box treats missing as true).
+	// Setting it to false makes the outbound unavailable without deleting it.
+	Enabled bool `json:"enabled"`
 }
 
 // ParsedOutbound is the result of parsing a share link.

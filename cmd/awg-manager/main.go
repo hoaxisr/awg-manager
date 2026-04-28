@@ -640,6 +640,30 @@ func main() {
 	srv.SetSingboxOperator(singboxOp)
 	singboxOp.SetEventBus(eventBus)
 
+	pingCancels := make(map[string]context.CancelFunc)
+	singboxOp.OnTunnelEnabledChanged = func(tag string, enabled bool) {
+		bootLog.Info("tunnel-enabled-changed", tag, fmt.Sprintf("enabled=%v", enabled))
+		if enabled {
+			ctx, cancel := context.WithCancel(context.Background())
+			pingCancels[tag] = cancel
+			go func() {
+				time.Sleep(10 * time.Second)
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					pingCheckFacade.StartMonitoringByTag(tag, tag) // tag = name for now
+				}
+			}()
+		} else {
+			if cancel, ok := pingCancels[tag]; ok {
+				cancel()
+				delete(pingCancels, tag)
+			}
+			pingCheckFacade.StopMonitoringByTag(tag)
+		}
+	}
+
 	// Device-proxy service — LAN-facing SOCKS/HTTP proxy managed through
 	// sing-box. See docs/superpowers/specs/2026-04-24-device-proxy-design.md.
 	deviceProxyStore := deviceproxy.NewStore(filepath.Join(*dataDir, "deviceproxy.json"))
