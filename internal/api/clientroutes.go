@@ -8,6 +8,24 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// ClientRouteDTO mirrors frontend ClientRoute.
+type ClientRouteDTO struct {
+	ID             string `json:"id" example:"cr_001"`
+	ClientIp       string `json:"clientIp" example:"192.168.1.100"`
+	ClientHostname string `json:"clientHostname" example:"My-Phone"`
+	TunnelId       string `json:"tunnelId" example:"tun_abc123"`
+	Fallback       string `json:"fallback" example:"drop"`
+	Enabled        bool   `json:"enabled" example:"true"`
+}
+
+// ClientRoutesListResponse is the envelope for GET /client-routes.
+type ClientRoutesListResponse struct {
+	Success bool             `json:"success" example:"true"`
+	Data    []ClientRouteDTO `json:"data"`
+}
+
 // ClientRouteHandler handles client route CRUD operations.
 type ClientRouteHandler struct {
 	svc clientroute.Service
@@ -35,7 +53,9 @@ func NewClientRouteHandler(svc clientroute.Service) *ClientRouteHandler {
 //	@Tags			client-routes
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{array}	map[string]interface{}
+//	@Success		200	{object}	ClientRoutesListResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/client-routes [get]
 //	@Router			/routing/client-routes [get]
 func (h *ClientRouteHandler) HandleList(w http.ResponseWriter, r *http.Request) {
@@ -60,7 +80,9 @@ func (h *ClientRouteHandler) HandleList(w http.ResponseWriter, r *http.Request) 
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	ClientRoutesListResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/client-routes/create [post]
 func (h *ClientRouteHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 	route, ok := parseJSON[clientroute.ClientRoute](w, r, http.MethodPost)
@@ -86,7 +108,9 @@ func (h *ClientRouteHandler) HandleCreate(w http.ResponseWriter, r *http.Request
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	query	string	true	"Route id"
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	ClientRoutesListResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/client-routes/update [post]
 func (h *ClientRouteHandler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	route, ok := parseJSON[clientroute.ClientRoute](w, r, http.MethodPost)
@@ -116,7 +140,9 @@ func (h *ClientRouteHandler) HandleUpdate(w http.ResponseWriter, r *http.Request
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	query	string	true	"Route id"
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	ClientRoutesListResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/client-routes/delete [post]
 func (h *ClientRouteHandler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -146,7 +172,9 @@ func (h *ClientRouteHandler) HandleDelete(w http.ResponseWriter, r *http.Request
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	query	string	true	"Route id"
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	ClientRoutesListResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/client-routes/toggle [post]
 func (h *ClientRouteHandler) HandleToggle(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[enabledToggle](w, r, http.MethodPost)

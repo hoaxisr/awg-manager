@@ -26,6 +26,8 @@ func NewEventsHandler(bus *events.Bus) *EventsHandler {
 //	@Produce		text/event-stream
 //	@Security		CookieAuth
 //	@Success		200	{string}	string	"Server-Sent Events"
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/events [get]
 //
 // The stream carries only incremental/push-only events (traffic,

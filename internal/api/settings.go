@@ -10,6 +10,67 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// ServerSettingsDTO mirrors frontend ServerSettings.
+type ServerSettingsDTO struct {
+	Port      int    `json:"port" example:"8080"`
+	Interface string `json:"interface" example:""`
+}
+
+// PingCheckDefaultsDTO mirrors frontend PingCheckDefaults.
+type PingCheckDefaultsDTO struct {
+	Method        string `json:"method" example:"http"`
+	Target        string `json:"target" example:"https://www.google.com"`
+	Interval      int    `json:"interval" example:"30"`
+	DeadInterval  int    `json:"deadInterval" example:"120"`
+	FailThreshold int    `json:"failThreshold" example:"3"`
+}
+
+// PingCheckSettingsDTO mirrors frontend PingCheckSettings.
+type PingCheckSettingsDTO struct {
+	Enabled  bool                 `json:"enabled" example:"true"`
+	Defaults PingCheckDefaultsDTO `json:"defaults"`
+}
+
+// LoggingSettingsDTO mirrors frontend LoggingSettings.
+type LoggingSettingsDTO struct {
+	Enabled  bool   `json:"enabled" example:"true"`
+	MaxAge   int    `json:"maxAge" example:"7"`
+	LogLevel string `json:"logLevel" example:"info"`
+}
+
+// UpdateSettingsDTO mirrors frontend UpdateSettings.
+type UpdateSettingsDTO struct {
+	CheckEnabled bool `json:"checkEnabled" example:"true"`
+}
+
+// DNSRouteSettingsDTO mirrors frontend DNSRouteSettings.
+type DNSRouteSettingsDTO struct {
+	AutoRefreshEnabled   bool   `json:"autoRefreshEnabled" example:"true"`
+	RefreshIntervalHours int    `json:"refreshIntervalHours" example:"24"`
+	RefreshMode          string `json:"refreshMode" example:"interval"`
+	RefreshDailyTime     string `json:"refreshDailyTime" example:"03:00"`
+}
+
+// SettingsData is the payload for GET /settings/get.
+type SettingsData struct {
+	SchemaVersion       int                  `json:"schemaVersion" example:"3"`
+	AuthEnabled         bool                 `json:"authEnabled" example:"false"`
+	Server              ServerSettingsDTO    `json:"server"`
+	PingCheck           PingCheckSettingsDTO `json:"pingCheck"`
+	Logging             LoggingSettingsDTO   `json:"logging"`
+	DisableMemorySaving bool                 `json:"disableMemorySaving" example:"false"`
+	Updates             UpdateSettingsDTO    `json:"updates"`
+	DnsRoute            DNSRouteSettingsDTO  `json:"dnsRoute"`
+}
+
+// SettingsResponse is the envelope for GET /settings/get.
+type SettingsResponse struct {
+	Success bool         `json:"success" example:"true"`
+	Data    SettingsData `json:"data"`
+}
+
 // PingCheckToggleService defines the interface for ping check toggle operations.
 type PingCheckToggleService interface {
 	StartMonitoringAllRunning()
@@ -57,10 +118,10 @@ func (h *SettingsHandler) SetLogsSnapshot(fn func()) { h.logsSnapshot = fn }
 //	@Tags			settings
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
-//	@Router			/settings [get]
+//	@Success		200	{object}	SettingsResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/settings/get [get]
 func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -85,10 +146,10 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			body	body		map[string]interface{}	true	"Settings"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
-//	@Router			/settings [post]
+//	@Success		200		{object}	SettingsResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/settings/update [post]
 func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	settings, ok := parseJSON[storage.Settings](w, r, http.MethodPost)
 	if !ok {
@@ -243,9 +304,9 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 //	@Tags			settings
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	SettingsResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/settings/regenerate-api-key [post]
 func (h *SettingsHandler) RegenerateApiKey(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

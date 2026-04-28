@@ -46,6 +46,8 @@ type SaveStatusDTO struct {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Success		200	{object}	SaveStatusDTO
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/ndms/save-status [get]
 func (h *NDMSHandler) GetSaveStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

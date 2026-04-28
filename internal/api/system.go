@@ -19,6 +19,106 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// SystemInfoBackendAvailability shows which tunnel backends are available.
+type SystemInfoBackendAvailability struct {
+	Nativewg bool `json:"nativewg" example:"true"`
+	Kernel   bool `json:"kernel" example:"false"`
+}
+
+// SystemInfoSingbox shows sing-box component info embedded in system info.
+type SystemInfoSingbox struct {
+	Installed bool   `json:"installed" example:"true"`
+	Version   string `json:"version" example:"1.9.3"`
+}
+
+// SystemInfoData is the payload returned by GET /system/info.
+type SystemInfoData struct {
+	Version              string                        `json:"version" example:"2.5.0"`
+	GoVersion            string                        `json:"goVersion" example:"go1.23.0"`
+	GoArch               string                        `json:"goArch" example:"arm64"`
+	GoOS                 string                        `json:"goOS" example:"linux"`
+	KeeneticOS           string                        `json:"keeneticOS" example:"ndms"`
+	IsOS5                bool                          `json:"isOS5" example:"true"`
+	FirmwareVersion      string                        `json:"firmwareVersion" example:"4.2.1"`
+	SupportsExtendedASC  bool                          `json:"supportsExtendedASC" example:"true"`
+	SupportsHRanges      bool                          `json:"supportsHRanges" example:"true"`
+	SupportsPingCheck    bool                          `json:"supportsPingCheck" example:"true"`
+	TotalMemoryMB        int                           `json:"totalMemoryMB" example:"512"`
+	IsLowMemory          bool                          `json:"isLowMemory" example:"false"`
+	GcMemLimit           string                        `json:"gcMemLimit" example:"128MiB"`
+	Gogc                 string                        `json:"gogc" example:"25"`
+	DisableMemorySaving  bool                          `json:"disableMemorySaving" example:"false"`
+	KernelModuleExists   bool                          `json:"kernelModuleExists" example:"true"`
+	KernelModuleLoaded   bool                          `json:"kernelModuleLoaded" example:"false"`
+	KernelModuleModel    string                        `json:"kernelModuleModel" example:"MT7981"`
+	KernelModuleVersion  string                        `json:"kernelModuleVersion" example:""`
+	IsAarch64            bool                          `json:"isAarch64" example:"true"`
+	ActiveBackend        string                        `json:"activeBackend" example:"nativewg"`
+	RouterIP             string                        `json:"routerIP" example:"192.168.1.1"`
+	BootInProgress       bool                          `json:"bootInProgress" example:"false"`
+	BackendAvailability  SystemInfoBackendAvailability `json:"backendAvailability"`
+	Singbox              SystemInfoSingbox             `json:"singbox"`
+}
+
+// SystemInfoResponse is the envelope for GET /system/info.
+type SystemInfoResponse struct {
+	Success bool           `json:"success" example:"true"`
+	Data    SystemInfoData `json:"data"`
+}
+
+// HydraRouteStatusData mirrors frontend HydraRouteStatus.
+type HydraRouteStatusData struct {
+	Installed bool   `json:"installed" example:"true"`
+	Running   bool   `json:"running" example:"true"`
+	Version   string `json:"version,omitempty" example:"0.3.1"`
+}
+
+// HydraRouteStatusResponse is the envelope for GET /system/hydraroute-status.
+type HydraRouteStatusResponse struct {
+	Success bool                 `json:"success" example:"true"`
+	Data    HydraRouteStatusData `json:"data"`
+}
+
+// WANInterfaceDTO mirrors frontend WANInterface.
+type WANInterfaceDTO struct {
+	Name  string `json:"name" example:"ISP1"`
+	Label string `json:"label" example:"Home Internet"`
+	State string `json:"state" example:"up"`
+}
+
+// WANInterfacesResponse is the envelope for GET /system/wan-interfaces.
+type WANInterfacesResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Data    []WANInterfaceDTO `json:"data"`
+}
+
+// RouterInterfaceDTO mirrors frontend RouterInterface.
+type RouterInterfaceDTO struct {
+	Name  string `json:"name" example:"br0"`
+	Label string `json:"label" example:"Home Network"`
+	Up    bool   `json:"up" example:"true"`
+}
+
+// AllInterfacesResponse is the envelope for GET /system/all-interfaces.
+type AllInterfacesResponse struct {
+	Success bool                 `json:"success" example:"true"`
+	Data    []RouterInterfaceDTO `json:"data"`
+}
+
+// WANInterfaceStatusDTO is a single WAN interface status.
+type WANInterfaceStatusDTO struct {
+	Up    bool   `json:"up" example:"true"`
+	Label string `json:"label" example:"Home Internet"`
+}
+
+// WANInterfaceStatusDTO is a single WAN interface status entry.
+type WANInterfaceStatusItemDTO struct {
+	Up    bool   `json:"up" example:"true"`
+	Label string `json:"label" example:"Home Internet"`
+}
+
 // SettingsProvider provides access to settings.
 type SettingsProvider interface {
 	Get() (*storage.Settings, error)
@@ -121,7 +221,9 @@ func (h *SystemHandler) SetSingboxOperator(op *singbox.Operator) {
 //	@Tags			system
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/system/restart [post]
 func (h *SystemHandler) RestartDaemon(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -142,7 +244,9 @@ func (h *SystemHandler) RestartDaemon(w http.ResponseWriter, r *http.Request) {
 //	@Tags			system
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	HydraRouteStatusResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/system/hydraroute-status [get]
 func (h *SystemHandler) HydraRouteStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -163,7 +267,9 @@ func (h *SystemHandler) HydraRouteStatus(w http.ResponseWriter, r *http.Request)
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/system/hydraroute-control [post]
 func (h *SystemHandler) HydraRouteControl(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -195,7 +301,9 @@ func (h *SystemHandler) HydraRouteControl(w http.ResponseWriter, r *http.Request
 //	@Tags			system
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	SystemInfoResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/system/info [get]
 func (h *SystemHandler) Info(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -396,7 +504,9 @@ type wanInterfaceJSON struct {
 //	@Tags			system
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{array}	map[string]interface{}
+//	@Success		200	{object}	WANInterfacesResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/system/wan-interfaces [get]
 func (h *SystemHandler) WANInterfaces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -430,7 +540,9 @@ func (h *SystemHandler) WANInterfaces(w http.ResponseWriter, r *http.Request) {
 //	@Tags			system
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{array}	map[string]interface{}
+//	@Success		200	{object}	AllInterfacesResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/system/all-interfaces [get]
 func (h *SystemHandler) AllInterfaces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

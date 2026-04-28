@@ -13,6 +13,61 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// ManagedPeerDTO mirrors frontend ManagedPeer.
+type ManagedPeerDTO struct {
+	PublicKey    string `json:"publicKey" example:"HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH="`
+	PrivateKey   string `json:"privateKey" example:"IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII="`
+	PresharedKey string `json:"presharedKey" example:"JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ="`
+	Description  string `json:"description" example:"My Phone"`
+	TunnelIP     string `json:"tunnelIP" example:"10.10.0.2"`
+	DNS          string `json:"dns,omitempty" example:"8.8.8.8"`
+	Enabled      bool   `json:"enabled" example:"true"`
+}
+
+// ManagedServerDTO mirrors frontend ManagedServer.
+type ManagedServerDTO struct {
+	InterfaceName string           `json:"interfaceName" example:"Wireguard1"`
+	Address       string           `json:"address" example:"10.10.0.1"`
+	Mask          string           `json:"mask" example:"255.255.255.0"`
+	ListenPort    int              `json:"listenPort" example:"51821"`
+	Endpoint      string           `json:"endpoint,omitempty" example:"203.0.113.42:51821"`
+	DNS           string           `json:"dns,omitempty" example:"8.8.8.8"`
+	MTU           int              `json:"mtu,omitempty" example:"1420"`
+	NatEnabled    bool             `json:"natEnabled,omitempty" example:"true"`
+	Policy        string           `json:"policy" example:"default"`
+	Peers         []ManagedPeerDTO `json:"peers"`
+}
+
+// ManagedServerResponse is the envelope for GET /managed-server.
+type ManagedServerResponse struct {
+	Success bool             `json:"success" example:"true"`
+	Data    ManagedServerDTO `json:"data"`
+}
+
+// CreateServerRequestDTO is the swagger-visible body for POST /managed-servers.
+type CreateServerRequestDTO struct {
+	Address     string `json:"address" example:"10.10.0.1"`
+	Mask        string `json:"mask" example:"255.255.255.0"`
+	ListenPort  int    `json:"listenPort" example:"51821"`
+	Description string `json:"description,omitempty" example:"My WG Server"`
+	Endpoint    string `json:"endpoint,omitempty" example:"203.0.113.42:51821"`
+	DNS         string `json:"dns,omitempty" example:"8.8.8.8"`
+	MTU         int    `json:"mtu,omitempty" example:"1420"`
+}
+
+// UpdateServerRequestDTO is the swagger-visible body for PUT /managed-servers/{id}.
+type UpdateServerRequestDTO struct {
+	Address     string  `json:"address" example:"10.10.0.1"`
+	Mask        string  `json:"mask" example:"255.255.255.0"`
+	ListenPort  int     `json:"listenPort" example:"51821"`
+	Description *string `json:"description,omitempty" example:"My WG Server"`
+	Endpoint    *string `json:"endpoint,omitempty" example:"203.0.113.42:51821"`
+	DNS         *string `json:"dns,omitempty" example:"8.8.8.8"`
+	MTU         *int    `json:"mtu,omitempty" example:"1420"`
+}
+
 // isValidWGKey checks that a string is a valid WireGuard key (44-char base64, 32 bytes decoded).
 func isValidWGKey(key string) bool {
 	if len(key) != 44 || key[43] != '=' {
@@ -438,7 +493,7 @@ func (h *ManagedServerHandler) Stats(w http.ResponseWriter, r *http.Request, id 
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		managed.CreateServerRequest	true	"Address, mask, port, ASC, name"
+//	@Param			body	body		CreateServerRequestDTO	true	"Address, mask, port, ASC, name"
 //	@Success		200		{object}	map[string]interface{}
 //	@Failure		400		{object}	map[string]interface{}
 //	@Failure		500		{object}	map[string]interface{}
@@ -467,7 +522,7 @@ func (h *ManagedServerHandler) Create(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id		path		string						true	"Server id"
-//	@Param			body	body		managed.UpdateServerRequest	true	"Update payload"
+//	@Param			body	body		UpdateServerRequestDTO	true	"Update payload"
 //	@Success		200		{object}	map[string]interface{}
 //	@Failure		400		{object}	map[string]interface{}
 //	@Failure		404		{object}	map[string]interface{}

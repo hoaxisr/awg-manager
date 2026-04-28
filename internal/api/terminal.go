@@ -13,6 +13,19 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/terminal"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// TerminalStartData is the payload returned by POST /terminal/start.
+type TerminalStartData struct {
+	Port int `json:"port" example:"7681"`
+}
+
+// TerminalStartResponse is the envelope for POST /terminal/start.
+type TerminalStartResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Data    TerminalStartData `json:"data"`
+}
+
 // TerminalHandler handles terminal API endpoints.
 type TerminalHandler struct {
 	manager terminal.Manager
@@ -26,9 +39,9 @@ func NewTerminalHandler(manager terminal.Manager, log logging.AppLogger) *Termin
 
 // TerminalStatusResponse represents terminal status.
 type TerminalStatusResponse struct {
-	Installed     bool `json:"installed"`
-	Running       bool `json:"running"`
-	SessionActive bool `json:"sessionActive"`
+	Installed     bool `json:"installed" example:"true"`
+	Running       bool `json:"running" example:"false"`
+	SessionActive bool `json:"sessionActive" example:"false"`
 }
 
 // Status returns the current terminal state.
@@ -38,7 +51,9 @@ type TerminalStatusResponse struct {
 //	@Tags			terminal
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope{data=TerminalStatusResponse}
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/terminal/status [get]
 func (h *TerminalHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -59,7 +74,9 @@ func (h *TerminalHandler) Status(w http.ResponseWriter, r *http.Request) {
 //	@Tags			terminal
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	TerminalStatusResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/terminal/install [post]
 func (h *TerminalHandler) Install(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -87,7 +104,9 @@ func (h *TerminalHandler) Install(w http.ResponseWriter, r *http.Request) {
 //	@Tags			terminal
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	TerminalStartResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/terminal/start [post]
 func (h *TerminalHandler) Start(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -116,7 +135,9 @@ func (h *TerminalHandler) Start(w http.ResponseWriter, r *http.Request) {
 //	@Tags			terminal
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/terminal/stop [post]
 func (h *TerminalHandler) Stop(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -141,6 +162,8 @@ func (h *TerminalHandler) Stop(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Success		200	{string}	string	"WebSocket upgrade"
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/terminal/ws [get]
 func (h *TerminalHandler) WebSocket(w http.ResponseWriter, r *http.Request) {
 	if h.manager.HasActiveSession() {

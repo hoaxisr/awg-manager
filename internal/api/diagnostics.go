@@ -13,6 +13,20 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// DiagnosticsStatusData mirrors frontend DiagnosticsStatus.
+type DiagnosticsStatusData struct {
+	Status   string `json:"status" example:"idle"`
+	Progress string `json:"progress" example:""`
+}
+
+// DiagnosticsStatusResponse is the envelope for GET /diagnostics/status.
+type DiagnosticsStatusResponse struct {
+	Success bool                  `json:"success" example:"true"`
+	Data    DiagnosticsStatusData `json:"data"`
+}
+
 // DiagnosticsRunner is the interface for running diagnostics.
 type DiagnosticsRunner interface {
 	Run(ctx context.Context) error
@@ -38,7 +52,9 @@ func NewDiagnosticsHandler(runner DiagnosticsRunner) *DiagnosticsHandler {
 //	@Tags			diagnostics
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/diagnostics/run [post]
 func (h *DiagnosticsHandler) Run(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -63,7 +79,9 @@ func (h *DiagnosticsHandler) Run(w http.ResponseWriter, r *http.Request) {
 //	@Tags			diagnostics
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	DiagnosticsStatusResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/diagnostics/status [get]
 func (h *DiagnosticsHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -82,6 +100,8 @@ func (h *DiagnosticsHandler) Status(w http.ResponseWriter, r *http.Request) {
 //	@Produce		application/json
 //	@Security		CookieAuth
 //	@Success		200	{file}	binary
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/diagnostics/result [get]
 func (h *DiagnosticsHandler) Result(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -145,6 +165,8 @@ func sanitizeFilenamePart(s string) string {
 //	@Produce		text/event-stream
 //	@Security		CookieAuth
 //	@Success		200	{string}	string	"SSE stream"
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/diagnostics/stream [get]
 func (h *DiagnosticsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

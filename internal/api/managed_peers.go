@@ -7,6 +7,20 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
+// AddPeerRequestDTO is the swagger-visible body for POST /managed-servers/{id}/peers.
+type AddPeerRequestDTO struct {
+	Description string `json:"description" example:"My Phone"`
+	TunnelIP    string `json:"tunnelIP" example:"10.10.0.2/32"`
+	DNS         string `json:"dns,omitempty" example:"8.8.8.8"`
+}
+
+// UpdatePeerRequestDTO is the swagger-visible body for PUT /managed-servers/{id}/peers/{pubkey}.
+type UpdatePeerRequestDTO struct {
+	Description string `json:"description" example:"My Phone"`
+	TunnelIP    string `json:"tunnelIP" example:"10.10.0.2/32"`
+	DNS         string `json:"dns,omitempty" example:"8.8.8.8"`
+}
+
 // AddPeer adds a new peer to a managed server.
 // POST /api/managed-servers/{id}/peers
 //
@@ -17,7 +31,7 @@ import (
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id		path		string					true	"Server id"
-//	@Param			body	body		managed.AddPeerRequest	true	"Peer payload"
+//	@Param			body	body		AddPeerRequestDTO	true	"Peer payload"
 //	@Success		200		{object}	map[string]interface{}
 //	@Failure		400		{object}	map[string]interface{}
 //	@Failure		500		{object}	map[string]interface{}
@@ -47,7 +61,7 @@ func (h *ManagedServerHandler) AddPeer(w http.ResponseWriter, r *http.Request, i
 //	@Security		CookieAuth
 //	@Param			id		path		string						true	"Server id"
 //	@Param			pubkey	path		string						true	"Peer public key (URL-encoded)"
-//	@Param			body	body		managed.UpdatePeerRequest	true	"Peer update payload"
+//	@Param			body	body		UpdatePeerRequestDTO	true	"Peer update payload"
 //	@Success		200		{object}	map[string]interface{}
 //	@Failure		400		{object}	map[string]interface{}
 //	@Failure		404		{object}	map[string]interface{}

@@ -9,6 +9,35 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/routing"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// RoutingTunnelDTO mirrors frontend RoutingTunnel.
+type RoutingTunnelDTO struct {
+	ID        string `json:"id" example:"tun_abc123"`
+	Name      string `json:"name" example:"My VPN"`
+	Iface     string `json:"iface,omitempty" example:"nwg0"`
+	Type      string `json:"type" example:"managed"`
+	Status    string `json:"status" example:"connected"`
+	Available bool   `json:"available" example:"true"`
+}
+
+// RoutingTunnelsResponse is the envelope for GET /routing/tunnels.
+type RoutingTunnelsResponse struct {
+	Success bool               `json:"success" example:"true"`
+	Data    []RoutingTunnelDTO `json:"data"`
+}
+
+// RoutingRefreshData is the payload for POST /routing/refresh.
+type RoutingRefreshData struct {
+	Missing []string `json:"missing" example:""`
+}
+
+// RoutingRefreshResponse is the envelope for POST /routing/refresh.
+type RoutingRefreshResponse struct {
+	Success bool               `json:"success" example:"true"`
+	Data    RoutingRefreshData `json:"data"`
+}
+
 // RoutingHandler handles routing API endpoints.
 type RoutingHandler struct {
 	catalog routing.Catalog
@@ -33,6 +62,8 @@ func (h *RoutingHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Success		200	{array}	object
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/routing/tunnels [get]
 func (h *RoutingHandler) Tunnels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -54,7 +85,9 @@ func (h *RoutingHandler) Tunnels(w http.ResponseWriter, r *http.Request) {
 //	@Tags			routing
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	RoutingRefreshResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/routing/refresh [post]
 func (h *RoutingHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -96,7 +129,9 @@ func (h *RoutingHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 //	@Tags			routing
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	AccessPoliciesListResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/routing/access-policies [get]
 func ServeOS4EmptyAccessPolicies(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -114,7 +149,9 @@ func ServeOS4EmptyAccessPolicies(w http.ResponseWriter, r *http.Request) {
 //	@Tags			routing
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	PolicyInterfacesListResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/routing/policy-interfaces [get]
 func ServeOS4EmptyPolicyInterfaces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

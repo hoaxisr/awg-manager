@@ -10,6 +10,49 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// DnsRouteSubscriptionDTO mirrors frontend DnsRouteSubscription.
+type DnsRouteSubscriptionDTO struct {
+	URL         string `json:"url" example:"https://example.com/list.txt"`
+	Name        string `json:"name" example:"Block list"`
+	LastFetched string `json:"lastFetched,omitempty" example:"2024-01-15T02:00:00Z"`
+	LastCount   int    `json:"lastCount,omitempty" example:"1500"`
+}
+
+// DnsRouteTargetDTO mirrors frontend DnsRouteTarget.
+type DnsRouteTargetDTO struct {
+	Interface string `json:"interface" example:"nwg0"`
+	TunnelId  string `json:"tunnelId" example:"tun_abc123"`
+	Fallback  string `json:"fallback,omitempty" example:"auto"`
+}
+
+// DnsRouteDTO mirrors frontend DnsRoute.
+type DnsRouteDTO struct {
+	ID            string                    `json:"id" example:"dns_xyz789"`
+	Name          string                    `json:"name" example:"Work VPN"`
+	Domains       []string                  `json:"domains" example:"example.com"`
+	ManualDomains []string                  `json:"manualDomains" example:"corp.internal"`
+	Subscriptions []DnsRouteSubscriptionDTO `json:"subscriptions,omitempty"`
+	Routes        []DnsRouteTargetDTO       `json:"routes"`
+	Enabled       bool                      `json:"enabled" example:"true"`
+	CreatedAt     string                    `json:"createdAt" example:"2024-01-01T00:00:00Z"`
+	UpdatedAt     string                    `json:"updatedAt" example:"2024-01-15T12:00:00Z"`
+	Backend       string                    `json:"backend,omitempty" example:"ndms"`
+}
+
+// DnsRoutesListResponse is the envelope for GET /dns-routes/list.
+type DnsRoutesListResponse struct {
+	Success bool          `json:"success" example:"true"`
+	Data    []DnsRouteDTO `json:"data"`
+}
+
+// DnsRouteResponse is the envelope for GET /dns-routes/get and mutations.
+type DnsRouteResponse struct {
+	Success bool        `json:"success" example:"true"`
+	Data    DnsRouteDTO `json:"data"`
+}
+
 // DNSRouteService defines what the DNS route handler needs from the service.
 type DNSRouteService interface {
 	Create(ctx context.Context, list dnsroute.DomainList) (*dnsroute.DomainList, error)
@@ -59,7 +102,9 @@ func NewDNSRouteHandler(svc DNSRouteService, appLogger logging.AppLogger) *DNSRo
 //	@Tags			dns-routes
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{array}	map[string]interface{}
+//	@Success		200	{object}	DnsRoutesListResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/list [get]
 //	@Router			/routing/dns-routes [get]
 func (h *DNSRouteHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +129,9 @@ func (h *DNSRouteHandler) List(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	query	string	true	"List id"
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	DnsRouteResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/get [get]
 func (h *DNSRouteHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -114,7 +161,9 @@ func (h *DNSRouteHandler) Get(w http.ResponseWriter, r *http.Request) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	DnsRouteResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/create [post]
 func (h *DNSRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
 	list, ok := parseJSON[dnsroute.DomainList](w, r, http.MethodPost)
@@ -141,7 +190,9 @@ func (h *DNSRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	query	string	true	"List id"
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	DnsRouteResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/update [post]
 func (h *DNSRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
 	list, ok := parseJSON[dnsroute.DomainList](w, r, http.MethodPost)
@@ -175,7 +226,9 @@ func (h *DNSRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	query	string	true	"List id"
-//	@Success		200	{array}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/delete [post]
 func (h *DNSRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -213,7 +266,9 @@ func (h *DNSRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{array}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/delete-batch [post]
 func (h *DNSRouteHandler) DeleteBatch(w http.ResponseWriter, r *http.Request) {
 	body, ok := parseJSON[struct {
@@ -255,7 +310,9 @@ func (h *DNSRouteHandler) DeleteBatch(w http.ResponseWriter, r *http.Request) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/create-batch [post]
 func (h *DNSRouteHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 	lists, ok := parseJSON[[]dnsroute.DomainList](w, r, http.MethodPost)
@@ -288,7 +345,9 @@ func (h *DNSRouteHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	query	string	true	"List id"
-//	@Success		200	{array}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/set-enabled [post]
 func (h *DNSRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 	body, ok := parseJSON[enabledToggle](w, r, http.MethodPost)
@@ -330,7 +389,9 @@ func (h *DNSRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{array}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/bulk-backend [post]
 func (h *DNSRouteHandler) BulkBackend(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[struct {
@@ -380,7 +441,9 @@ func (h *DNSRouteHandler) BulkBackend(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	query	string	false	"List id (omit for all)"
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/refresh [post]
 func (h *DNSRouteHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

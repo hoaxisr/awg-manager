@@ -17,6 +17,35 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// SystemTunnelPeerDTO mirrors the peer field in SystemTunnel.
+type SystemTunnelPeerDTO struct {
+	PublicKey     string `json:"publicKey" example:"CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC="`
+	Endpoint      string `json:"endpoint" example:"vpn2.example.com:51820"`
+	RxBytes       int64  `json:"rxBytes" example:"2097152"`
+	TxBytes       int64  `json:"txBytes" example:"1048576"`
+	LastHandshake string `json:"lastHandshake" example:"2024-01-15T10:30:00Z"`
+	Online        bool   `json:"online" example:"true"`
+}
+
+// SystemTunnelDTO mirrors frontend SystemTunnel.
+type SystemTunnelDTO struct {
+	ID            string               `json:"id" example:"Wireguard0"`
+	InterfaceName string               `json:"interfaceName" example:"Wireguard0"`
+	Description   string               `json:"description" example:"Home Server"`
+	Status        string               `json:"status" example:"up"`
+	Connected     bool                 `json:"connected" example:"true"`
+	MTU           int                  `json:"mtu" example:"1420"`
+	Peer          *SystemTunnelPeerDTO `json:"peer,omitempty"`
+}
+
+// SystemTunnelsResponse is the envelope for GET /system-tunnels.
+type SystemTunnelsResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Data    []SystemTunnelDTO `json:"data"`
+}
+
 // SystemTunnelsHandler handles system WireGuard tunnel operations.
 type SystemTunnelsHandler struct {
 	svc      systemtunnel.Service
@@ -86,6 +115,15 @@ func (h *SystemTunnelsHandler) listSystemTunnels(ctx context.Context) ([]ndms.Sy
 
 // List returns all visible (non-hidden) system WireGuard tunnels.
 // GET /api/system-tunnels
+//
+//	@Summary		List system tunnels
+//	@Description	Returns all WireGuard tunnels managed by the router OS itself (non-hidden).
+//	@Tags			system-tunnels
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	SystemTunnelsResponse
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/system-tunnels [get]
 func (h *SystemTunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

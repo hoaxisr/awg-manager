@@ -9,6 +9,30 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// DnsCheckResultDTO mirrors frontend DnsCheckResult.
+type DnsCheckResultDTO struct {
+	ID      string `json:"id" example:"dns_leak"`
+	Status  string `json:"status" example:"ok"`
+	Title   string `json:"title" example:"DNS Leak Test"`
+	Message string `json:"message" example:"No DNS leak detected"`
+	Detail  string `json:"detail,omitempty" example:""`
+}
+
+// DnsCheckStartData mirrors frontend DnsCheckStartResponse.
+type DnsCheckStartData struct {
+	ClientIP string              `json:"clientIP" example:"192.168.1.100"`
+	Hostname string              `json:"hostname" example:"my-phone.local"`
+	Checks   []DnsCheckResultDTO `json:"checks"`
+}
+
+// DnsCheckStartResponseEnvelope is the envelope for POST /dns-check/start.
+type DnsCheckStartResponseEnvelope struct {
+	Success bool              `json:"success" example:"true"`
+	Data    DnsCheckStartData `json:"data"`
+}
+
 type DnsCheckHandler struct {
 	svc *dnscheck.Service
 }
@@ -23,7 +47,9 @@ func NewDnsCheckHandler(svc *dnscheck.Service) *DnsCheckHandler {
 //	@Tags			dns-check
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	DnsCheckStartResponseEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-check/start [post]
 func (h *DnsCheckHandler) Start(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -46,7 +72,9 @@ func (h *DnsCheckHandler) Start(w http.ResponseWriter, r *http.Request) {
 //	@Summary		DNS check probe (CORS)
 //	@Tags			dns-check
 //	@Produce		json
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-check/probe [get]
 func (h *DnsCheckHandler) Probe(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")

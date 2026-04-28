@@ -8,6 +8,58 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/updater"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// UpdateInfoData mirrors frontend UpdateInfo.
+type UpdateInfoData struct {
+	Available      bool   `json:"available" example:"false"`
+	CurrentVersion string `json:"currentVersion" example:"2.5.0"`
+	LatestVersion  string `json:"latestVersion,omitempty" example:"2.5.0"`
+	CheckedAt      string `json:"checkedAt" example:"2024-01-15T10:00:00Z"`
+	Checking       bool   `json:"checking" example:"false"`
+}
+
+// UpdateCheckResponse is the envelope for GET /system/update/check.
+type UpdateCheckResponse struct {
+	Success bool           `json:"success" example:"true"`
+	Data    UpdateInfoData `json:"data"`
+}
+
+// ChangelogGroupDTO mirrors frontend ChangelogGroup.
+type ChangelogGroupDTO struct {
+	Heading string   `json:"heading" example:"Bug Fixes"`
+	Items   []string `json:"items" example:"Fixed tunnel restart loop"`
+}
+
+// ChangelogEntryDTO mirrors frontend ChangelogEntry.
+type ChangelogEntryDTO struct {
+	Version string              `json:"version" example:"2.5.0"`
+	Date    string              `json:"date" example:"2024-01-15"`
+	Groups  []ChangelogGroupDTO `json:"groups"`
+}
+
+// ChangelogData is the payload for GET /system/update/changelog.
+type ChangelogData struct {
+	Entries []ChangelogEntryDTO `json:"entries"`
+}
+
+// ChangelogResponse is the envelope for GET /system/update/changelog.
+type ChangelogResponse struct {
+	Success bool          `json:"success" example:"true"`
+	Data    ChangelogData `json:"data"`
+}
+
+// UpdateApplyData is the payload for POST /system/update/apply.
+type UpdateApplyData struct {
+	Status string `json:"status" example:"updating"`
+}
+
+// UpdateApplyResponse is the envelope for POST /system/update/apply.
+type UpdateApplyResponse struct {
+	Success bool            `json:"success" example:"true"`
+	Data    UpdateApplyData `json:"data"`
+}
+
 // UpdateHandler handles update check and apply endpoints.
 type UpdateHandler struct {
 	updater *updater.Service
@@ -30,7 +82,9 @@ func NewUpdateHandler(updater *updater.Service, appLogger logging.AppLogger) *Up
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			force	query	boolean	false	"Force refresh from upstream"
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	UpdateCheckResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/system/update/check [get]
 func (h *UpdateHandler) Check(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -57,7 +111,9 @@ func (h *UpdateHandler) Check(w http.ResponseWriter, r *http.Request) {
 //	@Tags			update
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	UpdateApplyResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/system/update/apply [post]
 func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -98,7 +154,9 @@ func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 //	@Security		CookieAuth
 //	@Param			from	query	string	false	"From version"
 //	@Param			to		query	string	true	"To version"
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	ChangelogResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/system/update/changelog [get]
 func (h *UpdateHandler) Changelog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

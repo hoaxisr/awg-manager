@@ -11,6 +11,25 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// ExternalTunnelDTO mirrors frontend ExternalTunnel.
+type ExternalTunnelDTO struct {
+	InterfaceName string `json:"interfaceName" example:"Wireguard2"`
+	TunnelNumber  int    `json:"tunnelNumber" example:"2"`
+	IsAWG         bool   `json:"isAWG" example:"true"`
+	PublicKey     string `json:"publicKey,omitempty" example:"KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK="`
+	Endpoint      string `json:"endpoint,omitempty" example:"ext.example.com:51820"`
+	RxBytes       int64  `json:"rxBytes" example:"1048576"`
+	TxBytes       int64  `json:"txBytes" example:"524288"`
+}
+
+// ExternalTunnelsResponse is the envelope for GET /external-tunnels.
+type ExternalTunnelsResponse struct {
+	Success bool                `json:"success" example:"true"`
+	Data    []ExternalTunnelDTO `json:"data"`
+}
+
 // ExternalTunnelService defines the interface for external tunnel operations.
 type ExternalTunnelService interface {
 	List(ctx context.Context) ([]external.TunnelInfo, error)
@@ -60,7 +79,9 @@ func (h *ExternalTunnelsHandler) listExternal(ctx context.Context) ([]external.T
 //	@Tags			tunnels
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{array}	object
+//	@Success		200	{object}	ExternalTunnelsResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/external-tunnels [get]
 func (h *ExternalTunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -93,7 +114,9 @@ type AdoptRequest struct {
 //	@Security		CookieAuth
 //	@Param			interface	query		string			true	"NDMS interface name"
 //	@Param			body		body		AdoptRequest	true	"Tunnel config body"
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/external-tunnels/adopt [post]
 func (h *ExternalTunnelsHandler) Adopt(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
