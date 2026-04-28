@@ -78,7 +78,7 @@
 
 	async function loadGeoFiles() {
 		try {
-			geoFiles = await api.getGeoFiles();
+			geoFiles = (await api.getGeoFiles()) ?? [];
 		} catch {
 			geoFiles = [];
 		}

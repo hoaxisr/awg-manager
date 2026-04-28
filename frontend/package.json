@@ -7,6 +7,7 @@
     "sync:openapi": "cp ../internal/openapi/swagger.yaml ./static/openapi.yaml",
     "dev:mock": "npm run sync:openapi && VITE_API_STRIP_PREFIX=1 VITE_API_TARGET=http://127.0.0.1:8080 vite dev",
     "mock": "npx -y @stoplight/prism-cli mock ../internal/openapi/swagger.yaml -p 8080 --host 0.0.0.0",
+    "mock:dynamic": "npx -y @stoplight/prism-cli mock ../internal/openapi/swagger.yaml -p 8080 --host 0.0.0.0 --dynamic",
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
