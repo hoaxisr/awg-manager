@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import type { ClientRoute, PolicyDevice, RoutingTunnel } from '$lib/types';
 
 	interface Props {
@@ -31,6 +31,10 @@
 	// Until it is, exclude WAN targets here so users can't save rules the
 	// backend can't apply.
 	let availableTunnels = $derived(tunnels.filter(t => t.type !== 'wan' && t.available));
+	let tunnelOpts = $derived<DropdownOption[]>(availableTunnels.map((t) => ({
+		value: t.id,
+		label: t.name,
+	})));
 
 	let selectedDevice = $state<{ ip: string; name: string } | null>(null);
 	let searchText = $state('');
@@ -57,7 +61,6 @@
 
 	let canSave = $derived(selectedDevice !== null && selectedTunnel !== '');
 	let attempted = $state(false);
-	let shaking = $state(false);
 	let wasOpen = $state(false);
 
 	let deviceError = $derived(attempted && selectedDevice === null);
@@ -87,8 +90,7 @@
 	function handleSave() {
 		attempted = true;
 		if (!canSave) {
-			shaking = true;
-			setTimeout(() => shaking = false, 400);
+			// TODO Phase 1: restore shake animation feedback on invalid submit
 			return;
 		}
 		onsave({
@@ -157,12 +159,13 @@
 
 		<!-- Tunnel dropdown -->
 		<div class="section">
-			<label class="section-label" for="tunnel-select">Туннель</label>
-			<select id="tunnel-select" class="field-select" bind:value={selectedTunnel}>
-				{#each availableTunnels as tunnel (tunnel.id)}
-					<option value={tunnel.id}>{tunnel.name}</option>
-				{/each}
-			</select>
+			<Dropdown
+				id="tunnel-select"
+				label="Туннель"
+				bind:value={selectedTunnel}
+				options={tunnelOpts}
+				fullWidth
+			/>
 		</div>
 
 		<!-- Fallback selector -->
@@ -199,10 +202,11 @@
 	</div>
 
 	{#snippet actions()}
-		<button class="btn btn-ghost" onclick={onclose} disabled={saving}>Отмена</button>
-		<button class="btn btn-primary" class:shake={shaking} onclick={handleSave} disabled={saving}>
-			{saving ? 'Сохранение...' : editing ? 'Сохранить' : 'Создать'}
-		</button>
+		<Button variant="ghost" onclick={onclose} disabled={saving}>Отмена</Button>
+		<!-- TODO Phase 1: shake animation on save when invalid (was class:shake={shaking}) -->
+		<Button variant="primary" onclick={handleSave} loading={saving}>
+			{editing ? 'Сохранить' : 'Создать'}
+		</Button>
 	{/snippet}
 </Modal>
 
@@ -222,23 +226,23 @@
 	.section-label {
 		font-size: 0.875rem;
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 	}
 
 	.search-input {
 		width: 100%;
 		padding: 8px 12px;
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: 6px;
-		background: var(--bg-primary);
-		color: var(--text-primary);
+		background: var(--color-bg-primary);
+		color: var(--color-text-primary);
 		font-size: 0.875rem;
 		outline: none;
 		transition: border-color 0.15s;
 	}
 
 	.search-input:focus {
-		border-color: var(--accent);
+		border-color: var(--color-accent);
 	}
 
 	.search-input:disabled {
@@ -248,9 +252,9 @@
 	.device-list {
 		max-height: 150px;
 		overflow-y: auto;
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: 6px;
-		background: var(--bg-primary);
+		background: var(--color-bg-primary);
 	}
 
 	.device-list.disabled {
@@ -266,7 +270,7 @@
 		padding: 8px 12px;
 		border: none;
 		background: transparent;
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 		font-size: 0.875rem;
 		cursor: pointer;
 		text-align: left;
@@ -274,11 +278,11 @@
 	}
 
 	.device-row:hover:not(.disabled) {
-		background: var(--bg-hover);
+		background: var(--color-bg-hover);
 	}
 
 	.device-row.selected {
-		background: color-mix(in srgb, var(--accent) 15%, transparent);
+		background: color-mix(in srgb, var(--color-accent) 15%, transparent);
 	}
 
 	.device-row.disabled {
@@ -287,7 +291,7 @@
 	}
 
 	.device-row + .device-row {
-		border-top: 1px solid var(--border);
+		border-top: 1px solid var(--color-border);
 	}
 
 	.device-name {
@@ -302,7 +306,7 @@
 		width: 8px;
 		height: 8px;
 		border-radius: 50%;
-		background: var(--text-muted);
+		background: var(--color-text-muted);
 		flex-shrink: 0;
 	}
 
@@ -311,7 +315,7 @@
 	}
 
 	.device-ip {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		font-size: 0.8rem;
 		flex-shrink: 0;
 	}
@@ -319,7 +323,7 @@
 	.empty-list {
 		padding: 1rem;
 		text-align: center;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 	}
 
@@ -328,9 +332,9 @@
 		width: 100%;
 		padding: 8px 12px;
 		border: none;
-		border-top: 1px solid var(--border);
+		border-top: 1px solid var(--color-border);
 		background: transparent;
-		color: var(--accent);
+		color: var(--color-accent);
 		font-size: 0.875rem;
 		cursor: pointer;
 		text-align: left;
@@ -338,27 +342,11 @@
 	}
 
 	.manual-ip-btn:hover {
-		background: var(--bg-hover);
+		background: var(--color-bg-hover);
 	}
 
 	.manual-ip-btn.selected {
-		background: color-mix(in srgb, var(--accent) 15%, transparent);
-	}
-
-	.field-select {
-		width: 100%;
-		padding: 8px 12px;
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		background: var(--bg-primary);
-		color: var(--text-primary);
-		font-size: 0.875rem;
-		outline: none;
-		transition: border-color 0.15s;
-	}
-
-	.field-select:focus {
-		border-color: var(--accent);
+		background: color-mix(in srgb, var(--color-accent) 15%, transparent);
 	}
 
 	.fallback-cards {
@@ -373,30 +361,30 @@
 		align-items: center;
 		gap: 0.25rem;
 		padding: 0.75rem;
-		border: 2px solid var(--border);
+		border: 2px solid var(--color-border);
 		border-radius: 8px;
-		background: var(--bg-primary);
+		background: var(--color-bg-primary);
 		cursor: pointer;
 		transition: border-color 0.15s;
 	}
 
 	.fallback-card:hover {
-		border-color: var(--text-muted);
+		border-color: var(--color-text-muted);
 	}
 
 	.fallback-card.active {
-		border-color: var(--accent);
+		border-color: var(--color-accent);
 	}
 
 	.fallback-title {
 		font-size: 0.875rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 	}
 
 	.fallback-subtitle {
 		font-size: 0.75rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.field-error .device-list {

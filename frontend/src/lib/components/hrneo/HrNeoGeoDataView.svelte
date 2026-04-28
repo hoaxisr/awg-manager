@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
 	import type { GeoFileEntry } from '$lib/types';
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button, Dropdown } from '$lib/components/ui';
 	import { geoDownloadProgress } from '$lib/stores/geoDownload';
 
 	interface Props {
@@ -146,21 +146,25 @@
 					</div>
 					<div class="file-actions">
 						{#if f.url}
-							<button
-								class="btn btn-ghost btn-sm"
+							<Button
+								variant="ghost"
+								size="sm"
 								disabled={busy === f.path}
+								loading={busy === f.path}
 								onclick={() => update(f.path)}
 							>
-								{busy === f.path ? 'Обновление…' : 'Обновить'}
-							</button>
+								Обновить
+							</Button>
 						{/if}
-						<button
-							class="btn btn-ghost btn-sm row-danger"
+						<!-- TODO Phase 1: ghost variant with red danger hover (was .row-danger) -->
+						<Button
+							variant="ghost"
+							size="sm"
 							disabled={busy === f.path}
 							onclick={() => requestRemove(f)}
 						>
 							Удалить
-						</button>
+						</Button>
 					</div>
 				</div>
 			{/each}
@@ -170,28 +174,37 @@
 	<div class="add-form">
 		<div class="form-label">Пресеты Ground-Zerro</div>
 		<div class="preset-row">
-			<button
-				class="btn btn-secondary btn-sm"
+			<Button
+				variant="secondary"
+				size="sm"
 				disabled={busy === 'add'}
 				onclick={() => addPreset('geoip', GROUND_ZERRO_GEOIP_URL)}
 			>
 				+ geoip_GA.dat
-			</button>
-			<button
-				class="btn btn-secondary btn-sm"
+			</Button>
+			<Button
+				variant="secondary"
+				size="sm"
 				disabled={busy === 'add'}
 				onclick={() => addPreset('geosite', GROUND_ZERRO_GEOSITE_URL)}
 			>
 				+ geosite_GA.dat
-			</button>
+			</Button>
 			<span class="preset-hint">Агрегат v2fly + RU-блоклистов, обновляется ежедневно.</span>
 		</div>
 		<div class="form-label form-label-spaced">Добавить по URL</div>
 		<div class="add-row">
-			<select class="form-select" bind:value={addType} disabled={busy === 'add'}>
-				<option value="geosite">geosite</option>
-				<option value="geoip">geoip</option>
-			</select>
+			<div class="add-type-select">
+				<Dropdown
+					bind:value={addType}
+					options={[
+						{ value: 'geosite' as const, label: 'geosite' },
+						{ value: 'geoip' as const, label: 'geoip' },
+					]}
+					disabled={busy === 'add'}
+					fullWidth
+				/>
+			</div>
 			<input
 				class="form-input"
 				type="url"
@@ -199,18 +212,15 @@
 				bind:value={addUrl}
 				disabled={busy === 'add'}
 			/>
-			<button
-				class="btn btn-primary btn-sm"
+			<Button
+				variant="primary"
+				size="sm"
 				onclick={add}
-				disabled={busy === 'add' || !addUrl.trim()}
+				disabled={!addUrl.trim()}
+				loading={busy === 'add'}
 			>
-				{#if busy === 'add'}
-					<span class="spinner" aria-hidden="true"></span>
-					Загрузка…
-				{:else}
-					+ Добавить
-				{/if}
-			</button>
+				+ Добавить
+			</Button>
 		</div>
 		{#if busy === 'add'}
 			<div class="busy-hint">
@@ -255,14 +265,12 @@
 			Правила, использующие теги из этого файла, перестанут резолвиться.
 		</p>
 		{#snippet actions()}
-			<button
-				class="btn btn-secondary"
-				onclick={() => (pendingDelete = null)}
-				disabled={busy === pd.path}>Отмена</button
-			>
-			<button class="btn btn-danger" onclick={confirmRemove} disabled={busy === pd.path}>
-				{busy === pd.path ? 'Удаление…' : 'Удалить'}
-			</button>
+			<Button variant="secondary" onclick={() => (pendingDelete = null)} disabled={busy === pd.path}>
+				Отмена
+			</Button>
+			<Button variant="danger" onclick={confirmRemove} loading={busy === pd.path}>
+				Удалить
+			</Button>
 		{/snippet}
 	</Modal>
 {/if}
@@ -381,11 +389,6 @@
 		flex-shrink: 0;
 	}
 
-	.row-danger:hover:not(:disabled) {
-		color: var(--error);
-		border-color: var(--error);
-	}
-
 	.add-form {
 		padding: 12px;
 		background: var(--bg-secondary);
@@ -421,6 +424,10 @@
 		display: grid;
 		grid-template-columns: auto 1fr auto;
 		gap: 6px;
+	}
+
+	.add-type-select {
+		min-width: 110px;
 	}
 
 	.busy-hint {
@@ -492,23 +499,6 @@
 		border-radius: 3px;
 		font-family: ui-monospace, monospace;
 		font-size: 0.75rem;
-	}
-
-	.spinner {
-		display: inline-block;
-		width: 12px;
-		height: 12px;
-		border: 2px solid currentColor;
-		border-right-color: transparent;
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-		margin-right: 6px;
-		vertical-align: -2px;
-	}
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
 	}
 
 	@media (max-width: 640px) {

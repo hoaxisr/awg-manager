@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { FormToggle } from '$lib/components/ui';
+	import { FormToggle, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import type { SpeedTestInfo, SpeedTestResult } from '$lib/types';
 
 	interface Props {
@@ -196,11 +196,17 @@
 					disabled={isRunning}
 				/>
 			{:else}
-				<select bind:value={selectedServerIndex} disabled={isRunning}>
-					{#each speedTestInfo.servers as server, i}
-						<option value={i}>{server.label}</option>
-					{/each}
-				</select>
+				{@const serverOpts: DropdownOption[] = speedTestInfo.servers.map((server, i) => ({
+					value: String(i),
+					label: server.label,
+				}))}
+				<Dropdown
+					value={String(selectedServerIndex)}
+					options={serverOpts}
+					onchange={(v) => (selectedServerIndex = Number(v))}
+					disabled={isRunning}
+					fullWidth
+				/>
 			{/if}
 		</div>
 
@@ -296,16 +302,15 @@
 		<a class="servers-link" href="https://iperf3serverlist.net" target="_blank" rel="noopener noreferrer">
 			Публично доступные серверы iperf3 ↗
 		</a>
-		<button
-			class="btn btn-primary btn-block"
+		<Button
+			variant="primary"
+			fullWidth
 			onclick={runSpeedTest}
 			disabled={isRunning}
+			loading={isRunning}
 		>
-			{#if isRunning}
-				<span class="spinner"></span>
-			{/if}
 			{speedPhase === 'done' || speedPhase === 'error' ? 'Повторить тест' : 'Начать тест'}
-		</button>
+		</Button>
 	{/if}
 </div>
 
@@ -577,10 +582,5 @@
 
 	.servers-link:hover {
 		color: var(--accent);
-	}
-
-	/* Full-width button */
-	.btn-block {
-		width: 100%;
 	}
 </style>

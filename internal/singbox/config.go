@@ -22,31 +22,6 @@ type Config struct {
 	raw map[string]any
 }
 
-// NewConfig creates a fresh empty config skeleton.
-//
-// The DNS block is explicit (rather than leaving sing-box to fall back
-// on the OS resolver) for three reasons:
-//
-//  1. Keenetic's local resolver on 127.0.0.1:53 is flaky under load —
-//     we saw i/o timeouts in production.
-//  2. sing-box's default dual-stack resolution returns AAAA records that
-//     router with no IPv6 egress can't route, producing
-//     "network is unreachable" on outbound connects.
-//  3. DoH upstream (cloudflare-dns.com) needs its hostname resolved
-//     before the first query — hence the bootstrap server that speaks
-//     plain UDP to an IP literal (1.1.1.1). The DoH server points its
-//     domain_resolver at the bootstrap tag, breaking the chicken-and-
-//     egg. The bootstrap stays on detour="direct" forever — if we
-//     routed it through a tunnel, the tunnel's own hostname couldn't
-//     be resolved.
-//
-// The DoH server has NO detour: it follows route.rules / route.final,
-// so when later milestones route outbound traffic through a sing-box
-// tunnel, DNS queries naturally follow and the ISP sees only ciphered
-// DoH traffic to the tunnel endpoint — no DNS leak.
-//
-// The M1 UI will let users pick different upstreams (Google / Quad9 /
-// NextDNS / custom).
 func NewConfig() *Config {
 	return &Config{
 		raw: map[string]any{
@@ -92,16 +67,9 @@ func NewConfig() *Config {
 				},
 			},
 			"inbounds":  []any{},
-			"outbounds": []any{map[string]any{"type": "direct", "tag": "direct"}},
+			"outbounds": []any{},
 			"route": map[string]any{
 				"rules": []any{},
-				"final": "direct",
-				// sing-box 1.12+ requires a default resolver for
-				// outbound `server` hostnames (naive / vless / etc.).
-				// Pointing at dns-bootstrap uses plain UDP to an IP
-				// literal — no chicken-and-egg when the tunnel itself
-				// is what needs resolving at startup.
-				"default_domain_resolver": "dns-bootstrap",
 			},
 		},
 	}
@@ -291,20 +259,7 @@ func (c *Config) AddTunnelWithListenPort(tag, protocol, server string, port, lis
 	}
 	c.setInbounds(append(c.inbounds(), inbound))
 
-	// Insert outbound before direct
-	obs := c.outbounds()
-	// direct always last — insert user outbound before it
-	insertAt := len(obs)
-	for i, v := range obs {
-		if ob, ok := v.(map[string]any); ok {
-			if t, _ := ob["type"].(string); t == "direct" {
-				insertAt = i
-				break
-			}
-		}
-	}
-	obs = append(obs[:insertAt], append([]any{obMap}, obs[insertAt:]...)...)
-	c.setOutbounds(obs)
+	c.setOutbounds(append(c.outbounds(), obMap))
 
 	// Insert route rule at front (specific-before-general)
 	rule := map[string]any{"inbound": tag + "-in", "outbound": tag}
@@ -512,27 +467,23 @@ func detectFingerprint(ob map[string]any) string {
 
 // DeviceProxySpec is the externally-supplied description of the
 // user-facing proxy. Each EnsureDeviceProxy call recomputes the
-// inbound / selector / direct-AWG outbounds from this spec, so it
-// represents the fully-resolved desired state, not a delta.
+// inbound + selector outbound from this spec. AWG-direct outbounds
+// are NOT created here — they live in 15-awg.json owned by the
+// awgoutbounds package. Spec only references their tags.
 type DeviceProxySpec struct {
 	Enabled     bool
-	ListenAddr  string           // already resolved to an IP literal
+	ListenAddr  string   // already resolved to an IP literal
 	Port        int
 	Auth        DeviceProxyAuth
-	SelectedTag string           // member tag that becomes selector.default
-	AWGTargets  []DeviceProxyAWG // one per AWG tunnel known to storage
-	SBTags      []string         // sing-box tunnel tags (user outbounds)
+	SelectedTag string   // member tag that becomes selector.default
+	AWGTags     []string // canonical tags from awgoutbounds (e.g. "awg-foo", "awg-sys-Wireguard0")
+	SBTags      []string // sing-box tunnel tags (user outbounds)
 }
 
 type DeviceProxyAuth struct {
 	Enabled  bool
 	Username string
 	Password string
-}
-
-type DeviceProxyAWG struct {
-	TunnelID    string
-	KernelIface string
 }
 
 const (
@@ -542,9 +493,13 @@ const (
 )
 
 // EnsureDeviceProxy writes (or overwrites) the inbound + selector
-// outbound + AWG direct outbounds + route rule described by spec.
-// Idempotent: calling it twice with the same spec produces the same
-// config. Callers that toggle Enabled=false should use RemoveDeviceProxy.
+// outbound + route rule described by spec. Idempotent. Callers that
+// toggle Enabled=false should use RemoveDeviceProxy.
+//
+// AWG-direct outbounds are NOT created or touched by this function —
+// awgoutbounds owns 15-awg.json and tags from spec.AWGTags must
+// resolve to outbounds already declared there. Legacy awg-* outbounds
+// from pre-refactor builds are stripped on every call (idempotent).
 func (c *Config) EnsureDeviceProxy(spec DeviceProxySpec) error {
 	if !spec.Enabled {
 		c.RemoveDeviceProxy()
@@ -568,32 +523,20 @@ func (c *Config) EnsureDeviceProxy(spec DeviceProxySpec) error {
 	}
 	c.upsertInbound(deviceProxyInboundTag, inbound)
 
-	// AWG direct outbounds — one per entry in spec.AWGTargets.
-	// First prune any awg-* outbound that is no longer in the spec.
-	wantAWG := make(map[string]string, len(spec.AWGTargets)) // tag → iface
-	for _, a := range spec.AWGTargets {
-		wantAWG[deviceProxyAWGPrefix+a.TunnelID] = a.KernelIface
-	}
-	c.pruneAWGOutbounds(wantAWG)
-	for tag, iface := range wantAWG {
-		c.upsertOutbound(tag, map[string]any{
-			"type":           "direct",
-			"tag":            tag,
-			"bind_interface": iface,
-		})
-	}
+	// Strip any legacy awg-* outbounds left over from the pre-15-awg.json
+	// era (one-shot cleanup; idempotent, no-op once the file is clean).
+	c.pruneAWGOutbounds(nil)
 
-	// Selector outbound — members in deterministic order: direct, sb tags, awg tags.
+	// Selector outbound — members in deterministic order: direct, sb tags,
+	// sorted awg tags from spec. AWG outbounds themselves live in
+	// 15-awg.json; the selector just references them by tag.
 	members := []any{"direct"}
 	for _, tag := range spec.SBTags {
 		members = append(members, tag)
 	}
-	awgTags := make([]string, 0, len(wantAWG))
-	for tag := range wantAWG {
-		awgTags = append(awgTags, tag)
-	}
-	sort.Strings(awgTags)
-	for _, tag := range awgTags {
+	awgTagsCopy := append([]string(nil), spec.AWGTags...)
+	sort.Strings(awgTagsCopy)
+	for _, tag := range awgTagsCopy {
 		members = append(members, tag)
 	}
 	selector := map[string]any{
@@ -760,4 +703,66 @@ func (c *Config) removeDeviceProxyRouteRule() {
 		out = append(out, v)
 	}
 	c.setRouteRules(out)
+}
+
+// MigrateLegacyConfigDir splits an old monolithic config.json into the
+// new config.d/ layout (00-base.json + 10-tunnels.json) on first run.
+// No-op when config.d already exists. Used by Operator.New to handle
+// upgrades from pre-router-engine builds.
+func MigrateLegacyConfigDir(dir string) error {
+	configDir := filepath.Join(dir, "config.d")
+	if _, err := os.Stat(configDir); err == nil {
+		return nil
+	}
+
+	legacyPath := filepath.Join(dir, "config.json")
+	raw, err := os.ReadFile(legacyPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return os.MkdirAll(configDir, 0755)
+		}
+		return err
+	}
+
+	var cfg map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return fmt.Errorf("parse legacy config: %w", err)
+	}
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return err
+	}
+
+	base := map[string]json.RawMessage{}
+	for _, k := range []string{"log", "experimental", "dns"} {
+		if v, ok := cfg[k]; ok {
+			base[k] = v
+		}
+	}
+	if err := writeJSONFile(filepath.Join(configDir, "00-base.json"), base); err != nil {
+		return err
+	}
+
+	tunnels := map[string]json.RawMessage{}
+	for _, k := range []string{"inbounds", "outbounds", "route"} {
+		if v, ok := cfg[k]; ok {
+			tunnels[k] = v
+		}
+	}
+	if err := writeJSONFile(filepath.Join(configDir, "10-tunnels.json"), tunnels); err != nil {
+		return err
+	}
+
+	return os.Remove(legacyPath)
+}
+
+// writeJSONFile is the shared atomic-ish JSON writer used by
+// MigrateLegacyConfigDir + ensureBaseConfig. Marshals with indent for
+// human-editable fragments.
+func writeJSONFile(path string, data any) error {
+	raw, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0644)
 }

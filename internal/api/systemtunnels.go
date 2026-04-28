@@ -54,23 +54,21 @@ func (h *SystemTunnelsHandler) listSystemTunnels(ctx context.Context) ([]ndms.Sy
 		return nil, err
 	}
 
-	// Filter out hidden, server-marked, managed server, and AWG Manager-managed NativeWG tunnels
-	hidden := h.settings.GetHiddenSystemTunnels()
+	// Filter out server-marked, managed server, and AWG Manager-managed NativeWG tunnels
 	serverIfaces := h.settings.GetServerInterfaces()
 	managedNWG := managedNativeWGNames(h.awgStore)
-	excludeSet := make(map[string]bool, len(hidden)+len(serverIfaces)+len(managedNWG)+1)
-	for _, id := range hidden {
-		excludeSet[id] = true
-	}
+	excludeSet := make(map[string]bool, len(serverIfaces)+len(managedNWG)+1)
 	for _, id := range serverIfaces {
 		excludeSet[id] = true
 	}
 	for _, id := range managedNWG {
 		excludeSet[id] = true
 	}
-	// Exclude managed server interface (shown on /servers page)
-	if ms := h.settings.GetManagedServer(); ms != nil {
-		excludeSet[ms.InterfaceName] = true
+	// Exclude managed server interfaces (shown on /servers page)
+	for _, ms := range h.settings.GetManagedServers() {
+		if ms.InterfaceName != "" {
+			excludeSet[ms.InterfaceName] = true
+		}
 	}
 
 	visible := make([]ndms.SystemWireguardTunnel, 0, len(tunnels))
@@ -136,6 +134,18 @@ func (h *SystemTunnelsHandler) ASC(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// getASC reads AWG signature/obfuscation params for a system tunnel.
+//
+//	@Summary		Get system tunnel ASC params
+//	@Description	Reads AWG signature/obfuscation parameters for the named system (NativeWG / kernel-WG) tunnel.
+//	@Tags			system-tunnels
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			name	query		string	true	"Tunnel name"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	map[string]interface{}
+//	@Failure		500		{object}	map[string]interface{}
+//	@Router			/system-tunnels/asc [get]
 func (h *SystemTunnelsHandler) getASC(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	if !h.validateName(w, name) {
@@ -149,6 +159,20 @@ func (h *SystemTunnelsHandler) getASC(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, json.RawMessage(params))
 }
 
+// setASC writes AWG signature/obfuscation params for a system tunnel.
+//
+//	@Summary		Set system tunnel ASC params
+//	@Description	Persists AWG signature/obfuscation parameters for the named system tunnel. Body is the raw ASC JSON object.
+//	@Tags			system-tunnels
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			name	query		string					true	"Tunnel name"
+//	@Param			body	body		map[string]interface{}	true	"ASC params"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	map[string]interface{}
+//	@Failure		500		{object}	map[string]interface{}
+//	@Router			/system-tunnels/asc [post]
 func (h *SystemTunnelsHandler) setASC(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	if !h.validateName(w, name) {
@@ -287,47 +311,6 @@ func (h *SystemTunnelsHandler) SpeedTestStream(w http.ResponseWriter, r *http.Re
 	data, _ := json.Marshal(result)
 	fmt.Fprintf(w, "event: result\ndata: %s\n\n", data)
 	flusher.Flush()
-}
-
-// Hide handles hide/unhide operations for system tunnels.
-// POST /api/system-tunnels/hide?name=Wireguard0 — hide
-// DELETE /api/system-tunnels/hide?name=Wireguard0 — unhide
-func (h *SystemTunnelsHandler) Hide(w http.ResponseWriter, r *http.Request) {
-	name := r.URL.Query().Get("name")
-	if !h.validateName(w, name) {
-		return
-	}
-
-	switch r.Method {
-	case http.MethodPost:
-		if err := h.settings.HideSystemTunnel(name); err != nil {
-			response.Error(w, err.Error(), "HIDE_FAILED")
-			return
-		}
-		response.Success(w, map[string]bool{"ok": true})
-	case http.MethodDelete:
-		if err := h.settings.UnhideSystemTunnel(name); err != nil {
-			response.Error(w, err.Error(), "UNHIDE_FAILED")
-			return
-		}
-		response.Success(w, map[string]bool{"ok": true})
-	default:
-		response.MethodNotAllowed(w)
-	}
-}
-
-// Hidden returns the list of hidden system tunnel IDs.
-// GET /api/system-tunnels/hidden
-func (h *SystemTunnelsHandler) Hidden(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		response.MethodNotAllowed(w)
-		return
-	}
-	hidden := h.settings.GetHiddenSystemTunnels()
-	if hidden == nil {
-		hidden = []string{}
-	}
-	response.Success(w, hidden)
 }
 
 // managedNativeWGNames returns NDMS interface names (e.g. "Wireguard0") of

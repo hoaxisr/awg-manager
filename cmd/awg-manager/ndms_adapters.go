@@ -132,10 +132,14 @@ func (a *runningInterfacesAdapter) RunningInterfaces(ctx context.Context) []metr
 		out = append(out, metrics.InterfaceRef{ID: id, IsServer: true})
 	}
 
-	if ms := a.settings.GetManagedServer(); ms != nil && ms.InterfaceName != "" {
-		if sysUp == nil || sysUp[ms.InterfaceName] {
-			out = append(out, metrics.InterfaceRef{ID: ms.InterfaceName, IsServer: true})
+	for _, ms := range a.settings.GetManagedServers() {
+		if ms.InterfaceName == "" {
+			continue
 		}
+		if sysUp != nil && !sysUp[ms.InterfaceName] {
+			continue
+		}
+		out = append(out, metrics.InterfaceRef{ID: ms.InterfaceName, IsServer: true})
 	}
 
 	return dedupeRefs(out)

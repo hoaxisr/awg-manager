@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { Modal } from '$lib/components/ui';
+    import { Modal, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
     import { ServiceIcon } from '$lib/components/dnsroutes';
     import { SERVICE_PRESETS, type ServicePreset } from '$lib/data/presets';
     import type { RoutingTunnel } from '$lib/types';
@@ -139,38 +139,35 @@
     {/if}
 
     <!-- Backend + Tunnel selector -->
+    {@const tunnelOpts: DropdownOption[] = [
+        ...userTunnels.map((t) => ({ value: t.id, label: t.name, group: 'Пользовательские' })),
+        ...systemTunnels.map((t) => ({ value: t.id, label: t.name, group: 'Системные' })),
+        ...wanTunnels.map((t) => ({ value: t.id, label: t.name, group: 'WAN' })),
+    ]}
     <div class="tunnel-bar">
         {#if showBackendSelector}
             <span class="tunnel-label">Движок:</span>
-            <select class="tunnel-select" style="flex: 0 1 auto; max-width: 180px;" bind:value={backend} disabled={creating}>
-                <option value="ndms">NDMS</option>
-                <option value="hydraroute">HydraRoute Neo</option>
-            </select>
+            <div class="backend-select">
+                <Dropdown
+                    bind:value={backend}
+                    options={[
+                        { value: 'ndms' as const, label: 'NDMS' },
+                        { value: 'hydraroute' as const, label: 'HydraRoute Neo' },
+                    ]}
+                    disabled={creating}
+                    fullWidth
+                />
+            </div>
         {/if}
         <span class="tunnel-label">Туннель:</span>
-        <select class="tunnel-select" bind:value={defaultTunnelId} disabled={creating}>
-            {#if userTunnels.length > 0}
-                <optgroup label="Пользовательские">
-                    {#each userTunnels as t}
-                        <option value={t.id}>{t.name}</option>
-                    {/each}
-                </optgroup>
-            {/if}
-            {#if systemTunnels.length > 0}
-                <optgroup label="Системные">
-                    {#each systemTunnels as t}
-                        <option value={t.id}>{t.name}</option>
-                    {/each}
-                </optgroup>
-            {/if}
-            {#if wanTunnels.length > 0}
-                <optgroup label="WAN">
-                    {#each wanTunnels as t}
-                        <option value={t.id}>{t.name}</option>
-                    {/each}
-                </optgroup>
-            {/if}
-        </select>
+        <div class="tunnel-select">
+            <Dropdown
+                bind:value={defaultTunnelId}
+                options={tunnelOpts}
+                disabled={creating}
+                fullWidth
+            />
+        </div>
     </div>
 
     {#if noTunnels}
@@ -178,14 +175,15 @@
     {/if}
 
     {#snippet actions()}
-        <button class="btn btn-ghost" onclick={onclose} disabled={creating}>Отмена</button>
-        <button
-            class="btn btn-primary"
+        <Button variant="ghost" onclick={onclose} disabled={creating}>Отмена</Button>
+        <Button
+            variant="primary"
             onclick={handleCreate}
-            disabled={creating || selected.size === 0 || noTunnels}
+            disabled={selected.size === 0 || noTunnels}
+            loading={creating}
         >
-            {creating ? 'Создание...' : `Создать (${selected.size})`}
-        </button>
+            {`Создать (${selected.size})`}
+        </Button>
     {/snippet}
 </Modal>
 
@@ -215,8 +213,8 @@
         align-items: center;
         gap: 0.375rem;
         padding: 0.875rem 0.5rem;
-        background: var(--bg-primary);
-        border: 2px solid var(--border);
+        background: var(--color-bg-primary);
+        border: 2px solid var(--color-border);
         border-radius: 10px;
         cursor: pointer;
         transition: border-color 0.15s;
@@ -224,11 +222,11 @@
     }
 
     .preset-card:hover:not(.added) {
-        border-color: var(--text-muted);
+        border-color: var(--color-text-muted);
     }
 
     .preset-card.selected {
-        border-color: var(--accent);
+        border-color: var(--color-accent);
     }
 
     .preset-card.added {
@@ -248,7 +246,7 @@
         width: 18px;
         height: 18px;
         border-radius: 4px;
-        background: var(--accent);
+        background: var(--color-accent);
         color: #fff;
         font-size: 11px;
         display: flex;
@@ -261,7 +259,7 @@
         top: 6px;
         right: 6px;
         font-size: 0.5625rem;
-        color: var(--text-muted);
+        color: var(--color-text-muted);
     }
 
     .preset-notice-mark {
@@ -277,7 +275,7 @@
     .preset-name {
         font-size: 0.6875rem;
         font-weight: 500;
-        color: var(--text-primary);
+        color: var(--color-text-primary);
         text-align: center;
     }
 
@@ -286,30 +284,31 @@
         align-items: center;
         gap: 0.75rem;
         padding: 0.625rem 0.75rem;
-        background: var(--bg-primary);
-        border: 1px solid var(--border);
+        background: var(--color-bg-primary);
+        border: 1px solid var(--color-border);
         border-radius: 8px;
         margin-bottom: 0.75rem;
     }
 
     .tunnel-label {
-        color: var(--text-muted);
+        color: var(--color-text-muted);
         font-size: 0.75rem;
         white-space: nowrap;
     }
 
     .tunnel-select {
         flex: 1;
-        background: var(--bg-secondary);
-        border: 1px solid var(--border);
-        border-radius: 4px;
-        padding: 0.375rem 0.5rem;
-        color: var(--text-primary);
-        font-size: 0.8125rem;
+        min-width: 160px;
+    }
+
+    .backend-select {
+        flex: 0 1 auto;
+        max-width: 180px;
+        min-width: 140px;
     }
 
     .no-tunnels {
-        color: var(--error);
+        color: var(--color-error);
         font-size: 0.8125rem;
     }
 
@@ -340,14 +339,14 @@
         gap: 0.125rem;
         font-size: 0.75rem;
         line-height: 1.4;
-        color: var(--text-secondary);
+        color: var(--color-text-secondary);
     }
     .notice-title {
-        color: var(--text-primary);
+        color: var(--color-text-primary);
         font-weight: 500;
         font-size: 0.75rem;
     }
     .notice-text {
-        color: var(--text-secondary);
+        color: var(--color-text-secondary);
     }
 </style>

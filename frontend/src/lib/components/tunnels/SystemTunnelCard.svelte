@@ -2,18 +2,17 @@
 	import { untrack } from 'svelte';
 	import type { SystemTunnel, ConnectivityResult } from '$lib/types';
 	import { api } from '$lib/api/client';
-	import { formatRelativeTime } from '$lib/utils/format';
-	import { TrafficChart } from '$lib/components/ui';
+	import { formatRelativeTime, formatDuration } from '$lib/utils/format';
+	import { TrafficChart, Button } from '$lib/components/ui';
 	import { getTrafficRates, subscribeTraffic, loadHistory } from '$lib/stores/traffic';
 
 	interface Props {
 		tunnel: SystemTunnel;
-		onHide?: (id: string) => void;
 		onMarkServer?: (id: string) => void;
 		ondetail?: (id: string) => void;
 	}
 
-	let { tunnel, onHide, onMarkServer, ondetail }: Props = $props();
+	let { tunnel, onMarkServer, ondetail }: Props = $props();
 
 	let connectivity = $state<ConnectivityResult | null>(null);
 	let checking = $state(false);
@@ -157,7 +156,7 @@
 		</div>
 	</div>
 
-	<!-- Details: endpoint + handshake -->
+	<!-- Details: endpoint + via + IPv4 + uptime + handshake -->
 	<div class="details">
 		{#if tunnel.peer?.endpoint}
 			<div class="flex gap-4 items-start">
@@ -180,11 +179,36 @@
 				</div>
 			</div>
 		{/if}
-		{#if tunnel.status === 'up' && tunnel.peer?.lastHandshake}
-			<div class="flex items-start">
+		{#if tunnel.peer?.via}
+			<div class="flex gap-4 items-start">
+				<div class="flex flex-col gap-0.5 min-w-0 flex-1">
+					<span class="detail-label">Подключение</span>
+					<span class="detail-value">{tunnel.peer.via}</span>
+				</div>
+			</div>
+		{/if}
+		{#if tunnel.address}
+			<div class="flex gap-4 items-start">
+				<div class="flex flex-col gap-0.5 min-w-0">
+					<span class="detail-label">IPv4</span>
+					<span class="detail-value">{tunnel.address}</span>
+				</div>
+			</div>
+		{/if}
+		{#if tunnel.status === 'up' && (tunnel.uptime || tunnel.peer?.lastHandshake)}
+			<hr class="divider" />
+			<div class="flex items-start stats-row">
+				<div class="flex flex-col gap-0.5 min-w-0 flex-1">
+					<span class="detail-label">Uptime</span>
+					<span class="detail-value text-[11px] whitespace-nowrap">
+						{tunnel.uptime ? formatDuration(tunnel.uptime) : '—'}
+					</span>
+				</div>
 				<div class="flex flex-col gap-0.5 min-w-0 flex-1 items-end">
 					<span class="detail-label">Handshake</span>
-					<span class="detail-value text-[11px] whitespace-nowrap">{formatRelativeTime(tunnel.peer.lastHandshake)}</span>
+					<span class="detail-value text-[11px] whitespace-nowrap">
+						{tunnel.peer?.lastHandshake ? formatRelativeTime(tunnel.peer.lastHandshake) : '—'}
+					</span>
 				</div>
 			</div>
 		{/if}
@@ -193,49 +217,40 @@
 	<!-- Actions -->
 	<div class="actions-wrapper">
 		<div class="actions-row">
-			<a href="/system-tunnels/{tunnel.id}" class="btn btn-ghost">
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-					<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-				</svg>
+			<Button variant="ghost" href="/system-tunnels/{tunnel.id}">
+				{#snippet iconBefore()}
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+						<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+					</svg>
+				{/snippet}
 				Изменить
-			</a>
+			</Button>
 
-			<a href="/system-tunnels/{tunnel.id}/test" class="btn btn-ghost" title="Тестирование туннеля">
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-					<polyline points="22,4 12,14.01 9,11.01"/>
-				</svg>
+			<Button variant="ghost" href="/system-tunnels/{tunnel.id}/test">
+				{#snippet iconBefore()}
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+						<polyline points="22,4 12,14.01 9,11.01"/>
+					</svg>
+				{/snippet}
 				Тест
-			</a>
-		</div>
+			</Button>
 
-		{#if onMarkServer || onHide}
-			<div class="actions-row">
-				{#if onMarkServer}
-					<button class="btn btn-ghost" title="Перенести в серверы" onclick={() => onMarkServer?.(tunnel.id)}>
+			{#if onMarkServer}
+				<Button variant="ghost" onclick={() => onMarkServer?.(tunnel.id)}>
+					{#snippet iconBefore()}
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 							<rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
 							<rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
 							<line x1="6" y1="6" x2="6.01" y2="6"/>
 							<line x1="6" y1="18" x2="6.01" y2="18"/>
 						</svg>
-						В серверы
-					</button>
-				{/if}
-
-				{#if onHide}
-					<button class="btn btn-ghost btn-hide" title="Скрыть туннель" onclick={() => onHide?.(tunnel.id)}>
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
-							<path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
-							<line x1="1" y1="1" x2="23" y2="23"/>
-						</svg>
-						Скрыть
-					</button>
-				{/if}
-			</div>
-		{/if}
+					{/snippet}
+					В серверы
+				</Button>
+			{/if}
+		</div>
 	</div>
 
 	<!-- Traffic chart (collapsible) -->
@@ -413,6 +428,16 @@
 		color: var(--text-secondary);
 	}
 
+	.divider {
+		border: none;
+		border-top: 1px dashed var(--color-border);
+		margin: 4px 0;
+	}
+
+	.stats-row {
+		white-space: nowrap;
+	}
+
 	/* Actions */
 	.actions-wrapper {
 		display: flex;
@@ -422,10 +447,6 @@
 		border-top: 1px solid var(--border);
 	}
 
-
-	.btn-hide:hover {
-		color: var(--error);
-	}
 
 	/* Connectivity gear */
 	.connectivity-gear {
@@ -509,6 +530,6 @@
 		display: flex;
 		gap: 0.5rem;
 		align-items: center;
-		justify-content: center;
+		flex-wrap: wrap;
 	}
 </style>

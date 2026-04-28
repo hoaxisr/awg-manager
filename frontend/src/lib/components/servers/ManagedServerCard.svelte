@@ -5,7 +5,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { servers } from '$lib/stores/servers';
 	import { formatBytes, formatRelativeTime } from '$lib/utils/format';
-	import { Toggle } from '$lib/components/ui';
+	import { Toggle, Button, IconButton, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import {
 		EditManagedServerModal,
 		AddManagedPeerModal,
@@ -25,6 +25,8 @@
 	}
 
 	let { server, stats, routerIP = '', onDeleted = () => {}, onUpdated = () => {}, onOpenASC }: Props = $props();
+
+	let serverId = $derived(server.interfaceName);
 
 	let editServerOpen = $state(false);
 	let addPeerOpen = $state(false);
@@ -98,7 +100,7 @@
 		}
 		deleting = true;
 		try {
-			const fresh = await api.deleteManagedServer();
+			const fresh = await api.deleteManagedServer(serverId);
 			servers.applyMutationResponse(fresh);
 			notifications.success('Сервер удалён');
 			onDeleted();
@@ -112,7 +114,7 @@
 
 	async function handleTogglePeer(peer: ManagedPeer) {
 		try {
-			const fresh = await api.toggleManagedPeer(peer.publicKey, !peer.enabled);
+			const fresh = await api.toggleManagedPeer(serverId, peer.publicKey, !peer.enabled);
 			servers.applyMutationResponse(fresh);
 			onUpdated();
 		} catch (e) {
@@ -136,7 +138,7 @@
 	async function doDeletePeer(peer: ManagedPeer) {
 		try {
 			confirmDeletePeerKey = null;
-			const fresh = await api.deleteManagedPeer(peer.publicKey);
+			const fresh = await api.deleteManagedPeer(serverId, peer.publicKey);
 			servers.applyMutationResponse(fresh);
 			notifications.success('Клиент удалён');
 			onUpdated();
@@ -165,7 +167,7 @@
 	async function handleToggleEnabled() {
 		togglingEnabled = true;
 		try {
-			const fresh = await api.setManagedServerEnabled(!isUp);
+			const fresh = await api.setManagedServerEnabled(serverId, !isUp);
 			servers.applyMutationResponse(fresh);
 			onUpdated();
 		} catch (e) {
@@ -180,7 +182,7 @@
 	async function handleToggleNAT() {
 		togglingNAT = true;
 		try {
-			const fresh = await api.setManagedServerNAT(!server.natEnabled);
+			const fresh = await api.setManagedServerNAT(serverId, !server.natEnabled);
 			servers.applyMutationResponse(fresh);
 			onUpdated();
 		} catch (e) {
@@ -224,11 +226,20 @@
 		return p;
 	});
 
+	let policyOptions = $derived<DropdownOption[]>([
+		{ value: 'none', label: 'Политика по умолчанию' },
+		...(orphanedPolicy ? [{ value: orphanedPolicy, label: `${orphanedPolicy} (отсутствует)` }] : []),
+		...policies.map((p) => ({
+			value: p.id,
+			label: p.description ? `${p.id} — ${p.description}` : p.id,
+		})),
+	]);
+
 	async function handlePolicyChange(newPolicy: string) {
 		if (newPolicy === server.policy) return;
 		policyChanging = true;
 		try {
-			const fresh = await api.setManagedServerPolicy(newPolicy);
+			const fresh = await api.setManagedServerPolicy(serverId, newPolicy);
 			servers.applyMutationResponse(fresh);
 			notifications.success('Политика обновлена');
 		} catch (e) {
@@ -246,7 +257,7 @@
 		<div class="header-info">
 			<div class="flex items-center gap-2">
 				<span class="led" class:led-up={isUp} class:led-down={!isUp}></span>
-				<h3 class="card-title">Мой WireGuard сервер</h3>
+				<h3 class="card-title">{server.description || server.interfaceName}</h3>
 				<span class="badge-managed">Управляемый</span>
 			</div>
 			<div class="server-meta">
@@ -265,33 +276,38 @@
 				disabled={togglingEnabled}
 				size="sm"
 			/>
-			<button class="btn btn-ghost btn-sm" onclick={onOpenASC} title="Параметры обфускации">
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+			<IconButton ariaLabel="Параметры обфускации" onclick={onOpenASC}>
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 					<path d="M12 20V10M18 20V4M6 20v-4"/>
 				</svg>
-			</button>
-			<button class="btn btn-ghost btn-sm" onclick={() => editServerOpen = true} title="Настройки">
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+			</IconButton>
+			<IconButton ariaLabel="Настройки" onclick={() => editServerOpen = true}>
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 					<path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/>
 					<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>
 				</svg>
-			</button>
-			<button
-				class="btn btn-sm"
-				class:btn-ghost={!confirmDelete}
-				class:btn-danger={confirmDelete}
-				onclick={handleDeleteServer}
-				disabled={deleting}
-				title="Удалить сервер"
-			>
-				{#if confirmDelete}
+			</IconButton>
+			{#if confirmDelete}
+				<Button
+					variant="danger"
+					size="sm"
+					onclick={handleDeleteServer}
+					loading={deleting}
+				>
 					Подтвердить?
-				{:else}
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				</Button>
+			{:else}
+				<IconButton
+					variant="danger"
+					ariaLabel="Удалить сервер"
+					onclick={handleDeleteServer}
+					disabled={deleting}
+				>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 						<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
 					</svg>
-				{/if}
-			</button>
+				</IconButton>
+			{/if}
 		</div>
 	</div>
 
@@ -315,24 +331,15 @@
 			<span class="policy-label">Политика доступа</span>
 			<span class="policy-hint">Регулирует выход в интернет для клиентов сервера. Применяется ко всем клиентам этого сервера.</span>
 		</div>
-		<select
-			class="policy-select"
-			bind:value={selectedPolicy}
-			disabled={policyChanging}
-			onchange={(e) => handlePolicyChange(e.currentTarget.value)}
-		>
-			<option value="none">Сбросить (по умолчанию)</option>
-			<option value="permit">Разрешить</option>
-			<option value="deny">Запретить</option>
-			{#if orphanedPolicy}
-				<option value={orphanedPolicy}>{orphanedPolicy} (отсутствует)</option>
-			{/if}
-			{#each policies as p (p.id)}
-				<option value={p.id}>
-					{p.description ? `${p.id} — ${p.description}` : p.id}
-				</option>
-			{/each}
-		</select>
+		<div class="policy-select">
+			<Dropdown
+				value={selectedPolicy}
+				options={policyOptions}
+				disabled={policyChanging}
+				onchange={handlePolicyChange}
+				fullWidth
+			/>
+		</div>
 	</div>
 
 	<!-- Peers -->
@@ -346,12 +353,9 @@
 					bind:searchQuery
 					showSearch={(server.peers ?? []).length >= 5}
 				/>
-				<button class="btn btn-secondary btn-sm" onclick={() => addPeerOpen = true}>
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-					</svg>
+				<Button variant="secondary" size="sm" onclick={() => addPeerOpen = true} iconBefore={addPeerIcon}>
 					Добавить
-				</button>
+				</Button>
 			</div>
 		</div>
 
@@ -419,6 +423,7 @@
 <!-- Modals -->
 <EditManagedServerModal
 	bind:open={editServerOpen}
+	{serverId}
 	{server}
 	onclose={() => editServerOpen = false}
 	onUpdated={onUpdated}
@@ -426,6 +431,7 @@
 
 <AddManagedPeerModal
 	bind:open={addPeerOpen}
+	{serverId}
 	{server}
 	{routerIP}
 	onclose={() => addPeerOpen = false}
@@ -435,6 +441,7 @@
 {#if selectedPeer}
 	<EditManagedPeerModal
 		bind:open={editPeerOpen}
+		{serverId}
 		peer={selectedPeer}
 		{routerIP}
 		onclose={() => { editPeerOpen = false; selectedPeer = null; }}
@@ -444,10 +451,17 @@
 
 <PeerConfModal
 	bind:open={confModalOpen}
+	{serverId}
 	pubkey={confPubkey}
 	peerName={confPeerName}
 	onclose={() => confModalOpen = false}
 />
+
+{#snippet addPeerIcon()}
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+		<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+	</svg>
+{/snippet}
 
 
 <style>
@@ -545,9 +559,11 @@
 		background: var(--bg-primary);
 		border: 1px solid var(--border);
 		border-radius: 6px;
+		flex-wrap: wrap;
 	}
 
 	.policy-info {
+		flex: 1 1 200px;
 		display: flex;
 		flex-direction: column;
 		gap: 0.125rem;
@@ -565,14 +581,9 @@
 	}
 
 	.policy-select {
-		flex-shrink: 0;
-		padding: 0.375rem 0.625rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		background: var(--bg-primary);
-		color: var(--text-primary);
-		font-size: 0.8125rem;
-		cursor: pointer;
+		flex: 0 0 auto;
+		min-width: 240px;
+		max-width: 320px;
 	}
 
 	.policy-select:disabled {

@@ -56,6 +56,10 @@ type Status struct {
 	// isn't supported by the installed build (e.g. NaiveProxy needs
 	// with_naive_outbound).
 	Features []string `json:"features,omitempty"`
+	// LastError is the last fatal sing-box stderr message captured by
+	// Process.OnExit. Cleared on successful start. UI surfaces this when
+	// Running=false to explain why sing-box is down.
+	LastError string `json:"lastError,omitempty"`
 }
 
 // ProcessState is the internal lifecycle state.

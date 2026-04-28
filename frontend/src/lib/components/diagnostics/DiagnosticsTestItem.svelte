@@ -4,11 +4,12 @@
 
 	interface Props {
 		test: DiagTestEvent;
+		compact?: boolean;
 		expandGeneration?: number;
 		expandDirection?: boolean;
 	}
 
-	let { test, expandGeneration = 0, expandDirection = false }: Props = $props();
+	let { test, compact = false, expandGeneration = 0, expandDirection = false }: Props = $props();
 	// svelte-ignore state_referenced_locally — intentional: initial value from test.status, then user-controlled
 	let expanded = $state(test.status === 'fail' || test.status === 'error');
 
@@ -21,6 +22,7 @@
 	const icons: Record<string, string> = {
 		pass: '\u2713',
 		fail: '\u2717',
+		warn: '\u25b3',
 		skip: '\u2014',
 		error: '!'
 	};
@@ -28,6 +30,7 @@
 
 <button
 	class="test-item test-{test.status}"
+	class:compact
 	onclick={() => expanded = !expanded}
 	transition:slide={{ duration: 200 }}
 >
@@ -39,7 +42,7 @@
 </button>
 
 {#if expanded && test.detail}
-	<div class="test-detail" transition:slide={{ duration: 150 }}>
+	<div class="test-detail" class:compact transition:slide={{ duration: 150 }}>
 		{test.detail}
 	</div>
 {/if}
@@ -86,6 +89,11 @@
 		color: #ef4444;
 	}
 
+	.test-warn .test-icon {
+		background: rgba(224, 175, 104, 0.15);
+		color: var(--color-warning);
+	}
+
 	.test-skip .test-icon {
 		background: rgba(156, 163, 175, 0.15);
 		color: #9ca3af;
@@ -110,5 +118,28 @@
 		font-size: 13px;
 		color: var(--text-secondary);
 		line-height: 1.4;
+	}
+
+	.test-item.compact {
+		gap: 6px;
+		padding: 4px 6px;
+		font-size: 12px;
+		border-radius: 4px;
+	}
+
+	.test-item.compact .test-icon {
+		width: 14px;
+		height: 14px;
+		font-size: 10px;
+	}
+
+	.test-item.compact .test-expand {
+		font-size: 10px;
+	}
+
+	.test-detail.compact {
+		padding: 2px 6px 4px 26px;
+		font-size: 11px;
+		line-height: 1.35;
 	}
 </style>

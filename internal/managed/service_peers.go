@@ -9,12 +9,12 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
-// AddPeer adds a new client peer to the managed server.
+// AddPeer adds a new client peer to the managed server identified by id.
 // Returns the created peer (including private key for .conf generation).
-func (s *Service) AddPeer(ctx context.Context, req AddPeerRequest) (*storage.ManagedPeer, error) {
-	server := s.settings.GetManagedServer()
-	if server == nil {
-		return nil, fmt.Errorf("no managed server exists")
+func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*storage.ManagedPeer, error) {
+	server, ok := s.settings.GetManagedServerByID(id)
+	if !ok {
+		return nil, fmt.Errorf("managed server not found: %s", id)
 	}
 
 	// Validate tunnel IP
@@ -57,15 +57,17 @@ func (s *Service) AddPeer(ctx context.Context, req AddPeerRequest) (*storage.Man
 	// Save to storage
 	peer := storage.ManagedPeer{
 		PublicKey:    pubKey,
-		PrivateKey:  privKey,
+		PrivateKey:   privKey,
 		PresharedKey: psk,
-		Description: req.Description,
-		TunnelIP:    req.TunnelIP,
-		DNS:         req.DNS,
-		Enabled:     true,
+		Description:  req.Description,
+		TunnelIP:     req.TunnelIP,
+		DNS:          req.DNS,
+		Enabled:      true,
 	}
-	server.Peers = append(server.Peers, peer)
-	if err := s.settings.SaveManagedServer(server); err != nil {
+	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
+		sv.Peers = append(sv.Peers, peer)
+		return nil
+	}); err != nil {
 		return nil, fmt.Errorf("save to storage: %w", err)
 	}
 
@@ -75,10 +77,10 @@ func (s *Service) AddPeer(ctx context.Context, req AddPeerRequest) (*storage.Man
 }
 
 // UpdatePeer updates an existing peer's description and/or tunnel IP.
-func (s *Service) UpdatePeer(ctx context.Context, pubkey string, req UpdatePeerRequest) error {
-	server := s.settings.GetManagedServer()
-	if server == nil {
-		return fmt.Errorf("no managed server exists")
+func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdatePeerRequest) error {
+	server, ok := s.settings.GetManagedServerByID(id)
+	if !ok {
+		return fmt.Errorf("managed server not found: %s", id)
 	}
 
 	idx := s.findPeerIndex(server, pubkey)
@@ -88,8 +90,9 @@ func (s *Service) UpdatePeer(ctx context.Context, pubkey string, req UpdatePeerR
 	peer := &server.Peers[idx]
 	iface := server.InterfaceName
 
-	// Update tunnel IP if changed
-	if req.TunnelIP != "" && req.TunnelIP != peer.TunnelIP {
+	// Validate inputs BEFORE touching RCI or storage so we can fail clean.
+	wantTunnelChange := req.TunnelIP != "" && req.TunnelIP != peer.TunnelIP
+	if wantTunnelChange {
 		if err := s.validateTunnelIP(server, req.TunnelIP); err != nil {
 			return err
 		}
@@ -99,15 +102,15 @@ func (s *Service) UpdatePeer(ctx context.Context, pubkey string, req UpdatePeerR
 				return fmt.Errorf("tunnel IP %s already in use", req.TunnelIP)
 			}
 		}
+	}
 
-		// Parse IPs
+	// Apply RCI changes (tunnel IP, description) before persisting.
+	if wantTunnelChange {
 		oldIP, _, _ := net.ParseCIDR(peer.TunnelIP)
 		newIP, _, err := net.ParseCIDR(req.TunnelIP)
 		if err != nil {
 			return fmt.Errorf("invalid tunnel IP: %w", err)
 		}
-
-		// Update allow-ips via RCI (remove old + add new)
 		oldIPStr := ""
 		if oldIP != nil {
 			oldIPStr = oldIP.String()
@@ -115,36 +118,42 @@ func (s *Service) UpdatePeer(ctx context.Context, pubkey string, req UpdatePeerR
 		if err := s.rciUpdatePeerAllowIPs(ctx, iface, pubkey, oldIPStr, newIP.String()); err != nil {
 			return fmt.Errorf("update allow-ips: %w", err)
 		}
-
-		peer.TunnelIP = req.TunnelIP
 	}
 
-	// Update description if changed
 	if req.Description != peer.Description {
 		if err := s.rciSetPeerComment(ctx, iface, pubkey, strings.TrimSpace(req.Description)); err != nil {
 			s.log.Warn("failed to set peer comment", "error", err)
 		}
-		peer.Description = req.Description
 	}
 
-	// Update DNS (per-peer, only stored locally)
-	peer.DNS = req.DNS
-
-	// Save to storage
-	if err := s.settings.SaveManagedServer(server); err != nil {
+	// Persist mutations atomically.
+	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
+		// Re-resolve under the storage lock — the index from the pre-lock copy
+		// may be stale if another goroutine added/removed peers in between.
+		i := s.findPeerIndex(sv, pubkey)
+		if i < 0 {
+			return fmt.Errorf("peer not found: %s", pubkey)
+		}
+		if wantTunnelChange {
+			sv.Peers[i].TunnelIP = req.TunnelIP
+		}
+		sv.Peers[i].Description = req.Description
+		sv.Peers[i].DNS = req.DNS
+		return nil
+	}); err != nil {
 		return fmt.Errorf("save to storage: %w", err)
 	}
 
 	s.log.Info("peer updated", "interface", iface, "pubkey", pubkey[:8]+"...")
-	s.appLog.Full("update-peer", peer.Description, fmt.Sprintf("Peer %s updated", peer.Description))
+	s.appLog.Full("update-peer", req.Description, fmt.Sprintf("Peer %s updated", req.Description))
 	return nil
 }
 
 // DeletePeer removes a peer from the managed server.
-func (s *Service) DeletePeer(ctx context.Context, pubkey string) error {
-	server := s.settings.GetManagedServer()
-	if server == nil {
-		return fmt.Errorf("no managed server exists")
+func (s *Service) DeletePeer(ctx context.Context, id, pubkey string) error {
+	server, ok := s.settings.GetManagedServerByID(id)
+	if !ok {
+		return fmt.Errorf("managed server not found: %s", id)
 	}
 
 	idx := s.findPeerIndex(server, pubkey)
@@ -161,8 +170,16 @@ func (s *Service) DeletePeer(ctx context.Context, pubkey string) error {
 	}
 
 	// Remove from storage
-	server.Peers = append(server.Peers[:idx], server.Peers[idx+1:]...)
-	if err := s.settings.SaveManagedServer(server); err != nil {
+	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
+		// Re-resolve under the storage lock — the index from the pre-lock copy
+		// may be stale if another goroutine added/removed peers in between.
+		i := s.findPeerIndex(sv, pubkey)
+		if i < 0 {
+			return fmt.Errorf("peer not found: %s", pubkey)
+		}
+		sv.Peers = append(sv.Peers[:i], sv.Peers[i+1:]...)
+		return nil
+	}); err != nil {
 		return fmt.Errorf("save to storage: %w", err)
 	}
 
@@ -172,10 +189,10 @@ func (s *Service) DeletePeer(ctx context.Context, pubkey string) error {
 }
 
 // TogglePeer enables or disables a peer.
-func (s *Service) TogglePeer(ctx context.Context, pubkey string, enabled bool) error {
-	server := s.settings.GetManagedServer()
-	if server == nil {
-		return fmt.Errorf("no managed server exists")
+func (s *Service) TogglePeer(ctx context.Context, id, pubkey string, enabled bool) error {
+	server, ok := s.settings.GetManagedServerByID(id)
+	if !ok {
+		return fmt.Errorf("managed server not found: %s", id)
 	}
 
 	idx := s.findPeerIndex(server, pubkey)
@@ -189,14 +206,21 @@ func (s *Service) TogglePeer(ctx context.Context, pubkey string, enabled bool) e
 		return fmt.Errorf("toggle peer: %w", err)
 	}
 
-	// Update storage
-	server.Peers[idx].Enabled = enabled
-	if err := s.settings.SaveManagedServer(server); err != nil {
+	peerName := server.Peers[idx].Description
+	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
+		// Re-resolve under the storage lock — the index from the pre-lock copy
+		// may be stale if another goroutine added/removed peers in between.
+		i := s.findPeerIndex(sv, pubkey)
+		if i < 0 {
+			return fmt.Errorf("peer not found: %s", pubkey)
+		}
+		sv.Peers[i].Enabled = enabled
+		return nil
+	}); err != nil {
 		return fmt.Errorf("save to storage: %w", err)
 	}
 
 	s.log.Info("peer toggled", "interface", iface, "pubkey", pubkey[:8]+"...", "enabled", enabled)
-	peerName := server.Peers[idx].Description
 	state := "disabled"
 	if enabled {
 		state = "enabled"

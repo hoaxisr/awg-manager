@@ -2,11 +2,14 @@ package auth
 
 import (
 	"net/http"
+	"strings"
 )
 
-// AuthChecker checks if authentication is enabled.
+// AuthChecker checks if authentication is enabled and exposes the
+// configured API key (empty when none).
 type AuthChecker interface {
 	IsAuthEnabled() bool
+	GetApiKey() string
 }
 
 // AuthLogger provides structured logging for auth events.
@@ -39,6 +42,17 @@ func (m *Middleware) RequireAuthFunc(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// Accept `Authorization: Bearer <apiKey>` as a session-cookie
+		// substitute. Empty configured key disables this path entirely.
+		if m.authChecker != nil {
+			if configured := m.authChecker.GetApiKey(); configured != "" {
+				if presented := bearerToken(r); presented != "" && presented == configured {
+					next(w, r)
+					return
+				}
+			}
+		}
+
 		cookie, err := r.Cookie(SessionCookie)
 		if err != nil {
 			if m.log != nil {
@@ -64,4 +78,15 @@ func (m *Middleware) RequireAuthFunc(next http.HandlerFunc) http.HandlerFunc {
 		// Session is valid, proceed
 		next(w, r)
 	}
+}
+
+// bearerToken extracts the token from `Authorization: Bearer <token>`.
+// Returns empty if the header is absent or not a Bearer scheme.
+func bearerToken(r *http.Request) string {
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(h[len(prefix):])
 }

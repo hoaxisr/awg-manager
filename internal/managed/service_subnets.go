@@ -170,6 +170,45 @@ func findConflict(candidate *net.IPNet, used []usedSubnet) *usedSubnet {
 	return nil
 }
 
+// usedPort pairs a Wireguard listen port with the interface name that
+// owns it; returned by listUsedListenPorts so the caller can produce
+// a useful error message if the candidate collides.
+type usedPort struct {
+	iface string
+	port  int
+}
+
+// listUsedListenPorts returns the listen ports already claimed by other
+// AWGM-managed servers. Only the local ManagedServers slice is consulted
+// — system Wireguard servers are out of scope (the operator picks their
+// ports through Keenetic's own UI). The interface whose name matches
+// excludeIface is skipped so Update can keep its current port.
+func (s *Service) listUsedListenPorts(excludeIface string) []usedPort {
+	all := s.settings.GetManagedServers()
+	out := make([]usedPort, 0, len(all))
+	for _, sv := range all {
+		if sv.InterfaceName == excludeIface {
+			continue
+		}
+		if sv.ListenPort == 0 {
+			continue
+		}
+		out = append(out, usedPort{iface: sv.InterfaceName, port: sv.ListenPort})
+	}
+	return out
+}
+
+// findPortConflict returns the first interface that already uses port,
+// or nil if free.
+func findPortConflict(port int, used []usedPort) *usedPort {
+	for i := range used {
+		if used[i].port == port {
+			return &used[i]
+		}
+	}
+	return nil
+}
+
 // SuggestAddress is the exported entry point for the API handler.
 func (s *Service) SuggestAddress(ctx context.Context) (string, string, error) {
 	return s.suggestAddress(ctx)

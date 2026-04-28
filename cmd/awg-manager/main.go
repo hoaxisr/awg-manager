@@ -32,6 +32,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
+	"github.com/hoaxisr/awg-manager/internal/monitoring"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsevents "github.com/hoaxisr/awg-manager/internal/ndms/events"
 	ndmsmetrics "github.com/hoaxisr/awg-manager/internal/ndms/metrics"
@@ -43,6 +44,8 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/server"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
+	"github.com/hoaxisr/awg-manager/internal/singbox/awgoutbounds"
+	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/staticroute"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
@@ -340,6 +343,10 @@ func main() {
 		return *res.Latency
 	})
 
+	// monitoringService is constructed below after systemTunnelSvc is wired,
+	// so the matrix can include Keenetic-native tunnels.
+	var monitoringService *monitoring.Service
+
 	// Auth components
 	keeneticClient := auth.NewKeeneticClient()
 	sessionStore := auth.NewSessionStore()
@@ -402,6 +409,19 @@ func main() {
 	// System WireGuard tunnels (read-only + ASC editing) — wired to NDMS CQRS layer.
 	systemTunnelSvc = systemtunnel.New(ndmsQueries, ndmsCommands)
 
+	// Monitoring service (target × tunnel matrix probing). Constructed here so
+	// it can include Keenetic-native (system) tunnels in the matrix via the
+	// systemTunnelLister adapter.
+	monitoringService = monitoring.NewService(monitoring.SchedulerDeps{
+		TunnelLister:  tunnelService,
+		TunnelStore:   awgStore,
+		SystemTunnels: &monitoringSystemTunnelAdapter{svc: systemTunnelSvc},
+		Prober:        monitoring.NewHTTPProber(),
+		ICMPProber:    monitoring.NewICMPProber(),
+		Log:           loggingService,
+	})
+	defer monitoringService.Stop()
+
 	// Managed WireGuard server service — wired to the new NDMS layer.
 	managedService = managed.New(
 		ndmsTransportClient,
@@ -444,7 +464,7 @@ func main() {
 	dnsRefreshScheduler.Start()
 
 	// Access policy service (NDMS ip policy management) — wired to CQRS layer.
-	accessPolicySvc := accesspolicy.New(ndmsCommands.Policies, ndmsCommands.Interfaces, ndmsQueries, settingsStore, log, loggingService)
+	accessPolicySvc := accesspolicy.New(ndmsCommands.Policies, ndmsCommands.Interfaces, ndmsQueries, settingsStore, log, loggingService, ndmsquery.NewPolicyMarkStore(ndmsTransportClient, log))
 
 	// HydraRoute NDMS wiring — now that ndmsCommands/Queries are ready.
 	hydraService.SetQueries(ndmsQueries)
@@ -506,6 +526,7 @@ func main() {
 	loggingService.SetEventBus(eventBus)
 	tunnelService.SetEventBus(eventBus)
 	pingCheckFacade.SetEventBus(eventBus)
+	monitoringService.SetEventBus(eventBus)
 
 	// Stream geo-file download progress over SSE so the UI can show a
 	// real progress bar instead of a guess.
@@ -529,9 +550,12 @@ func main() {
 	// Server.SetMetricsPoller wiring). It feeds trafficHistory and emits
 	// tunnel:traffic + server:updated events via one ticker + narrow RCI.
 
-	// Connectivity Monitor — periodically checks tunnel connectivity, publishes via SSE.
-	connAdapter := connectivity.NewAdapter(tunnelService, awgStore, testService)
-	connMonitor := connectivity.NewMonitor(eventBus, connAdapter, connAdapter, connAdapter)
+	// Connectivity Monitor — handshake-trigger only. After a tunnel reaches
+	// "running" + handshake we ask the monitoring scheduler for an immediate
+	// matrix tick so cards show fresh latency without waiting up to 60s.
+	// All actual probing happens inside monitoring.Scheduler.
+	connAdapter := connectivity.NewAdapter(tunnelService)
+	connMonitor := connectivity.NewMonitor(eventBus, monitoringService.Scheduler(), connAdapter)
 	connMonitor.Start()
 	defer connMonitor.Stop()
 
@@ -627,21 +651,46 @@ func main() {
 		hydraService,
 		singboxHandler,
 		clashProxy,
+		monitoringService,
 	)
 
 	srv.SetSingboxOperator(singboxOp)
 	singboxOp.SetEventBus(eventBus)
 
+	// systemTunnelDPAdapter bridges Keenetic NativeWG tunnels (from NDMS)
+	// into both awgoutbounds (canonical tag writer) and deviceproxy
+	// (SystemTunnelQuery — kept for its List interface in adapters).
+	systemTunnelDPAdapter := deviceproxy.NewSystemTunnelAdapter(systemTunnelSvc)
+
+	// awgoutbounds — canonical writer of AWG-direct outbounds in
+	// config.d/15-awg.json. Sources managed AWG tunnels from storage
+	// and system (NativeWG) tunnels via the deviceproxy adapter.
+	// Must be constructed before deviceProxySvc so we can pass it as
+	// AWGOutbounds dep (deviceproxy now queries tags instead of enumerating).
+	awgoutboundsSvc := awgoutbounds.NewService(awgoutbounds.Deps{
+		AWGTunnels:    newAWGStoreAdapter(awgStore),
+		SystemTunnels: newSystemTunnelStoreAdapter(systemTunnelDPAdapter),
+		Singbox:       newAwgoutboundsSingboxAdapter(singboxOp),
+		AppLog:        logging.NewScopedLogger(loggingService, logging.GroupRouting, logging.SubAWGOutbounds),
+		Bus:           eventBus,
+	})
+	awgoutboundsUnsub := awgoutboundsSvc.SubscribeBus(context.Background())
+	defer awgoutboundsUnsub()
+	// Boot reconcile — populates 15-awg.json before sing-box starts so
+	// the merged config.d is consistent on first read. Reload-free.
+	if err := awgoutboundsSvc.Reconcile(context.Background()); err != nil {
+		log.Warn("awgoutbounds: initial reconcile failed", map[string]interface{}{"err": err})
+	}
+
 	// Device-proxy service — LAN-facing SOCKS/HTTP proxy managed through
 	// sing-box. See docs/superpowers/specs/2026-04-24-device-proxy-design.md.
 	deviceProxyStore := deviceproxy.NewStore(filepath.Join(*dataDir, "deviceproxy.json"))
 	deviceProxySvc := deviceproxy.NewService(deviceproxy.Deps{
-		Store:         deviceProxyStore,
-		Tunnels:       awgStore,
-		SystemTunnels: deviceproxy.NewSystemTunnelAdapter(systemTunnelSvc),
-		Singbox:       deviceproxy.NewSingboxAdapter(singboxOp),
-		NDMSQuery:     deviceproxy.NewNDMSAdapter(ndmsQueries),
-		Bus:           eventBus,
+		Store:        deviceProxyStore,
+		Singbox:      deviceproxy.NewSingboxAdapter(singboxOp),
+		NDMSQuery:    deviceproxy.NewNDMSAdapter(ndmsQueries),
+		Bus:          eventBus,
+		AWGOutbounds: &deviceproxyAWGOutboundsAdapter{src: awgoutboundsSvc},
 	})
 	deviceProxySvc.SetTunnelInboundPorts(func() []int {
 		cfg, err := singboxOp.LoadCurrentConfig()
@@ -666,10 +715,42 @@ func main() {
 	}
 
 	srv.SetDeviceProxyService(deviceProxySvc)
+	// Note: legacy awg-* outbound cleanup happens lazily on first
+	// deviceproxy CRUD via pruneAWGOutbounds(nil) inside EnsureDeviceProxy.
+	// We deliberately do NOT call ForceApply on boot because it triggers
+	// ApplyConfig → startAndWait, which spuriously starts sing-box even
+	// when both the deviceproxy and the router engine are disabled —
+	// once started, only an explicit Stop call (no UI today) brings it
+	// back down. Reconcile already handles cleanup on the next legitimate
+	// trigger; the migration tax is at most one stale file fragment that
+	// gets stripped on the next Save/Enable.
 	srv.SetNDMSDispatcher(ndmsDispatcher)
 	srv.SetNDMSTransport(ndmsTransportClient)
 	srv.SetNDMSSaveCoordinator(ndmsSaveCoord)
 	srv.SetMetricsPoller(ndmsMetricsPoller)
+
+	routerSvc := router.NewService(router.Deps{
+		Log:      log,
+		Settings: settingsStore,
+		Singbox:  singboxOp,
+		Policies: &routerAccessPolicyAdapter{svc: accessPolicySvc, wan: wanModel},
+		Events:   eventBus,
+		AWGTags:  &routerAWGTagAdapter{src: awgoutboundsSvc},
+	})
+	tunnelService.SetAWGSyncer(awgoutboundsSvc)
+	tunnelService.SetDeviceProxyRefChecker(deviceProxySvc)
+	tunnelService.SetRouterRefChecker(routerSvc)
+	routerStartupLog := logging.NewScopedLogger(loggingService, logging.GroupRouting, logging.SubSingboxRouter)
+	go func() {
+		if err := routerSvc.Reconcile(context.Background()); err != nil {
+			routerStartupLog.Error("reconcile", "startup", err.Error())
+		}
+	}()
+	routerScheduler := router.NewScheduler(routerSvc, settingsStore, log)
+	routerScheduler.Start()
+
+	srv.SetSingboxRouterHandler(api.NewSingboxRouterHandler(routerSvc, loggingService))
+	srv.SetAWGOutboundsHandler(api.NewAWGOutboundsHandler(awgoutboundsSvc))
 
 	// Boot status: 0 = booting, 1 = done. Used by /api/system/info.
 	var bootDone int32
@@ -727,6 +808,9 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 	defer shutdownCancel()
 
+	// Start the monitoring scheduler now that shutdownCtx exists.
+	monitoringService.Start(shutdownCtx)
+
 	// Register shutdown hooks for graceful cleanup before syscall.Exec restart.
 	srv.AddShutdownHook(shutdownCancel)
 	if !ndmsinfo.SupportsWireguardASC() {
@@ -735,7 +819,9 @@ func main() {
 		})
 	}
 	srv.AddShutdownHook(pingCheckService.Stop)
+	srv.AddShutdownHook(monitoringService.Stop)
 	srv.AddShutdownHook(dnsRefreshScheduler.Stop)
+	srv.AddShutdownHook(routerScheduler.Stop)
 	srv.AddShutdownHook(sessionStore.Stop)
 	srv.AddShutdownHook(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1342,7 +1428,7 @@ func runCleanup(dataDir string) {
 		Commands: cleanupNDMSCommands,
 	})
 
-	accessPolicySvc := accesspolicy.New(cleanupNDMSCommands.Policies, cleanupNDMSCommands.Interfaces, cleanupNDMSQueries, settingsStore, log, nil)
+	accessPolicySvc := accesspolicy.New(cleanupNDMSCommands.Policies, cleanupNDMSCommands.Interfaces, cleanupNDMSQueries, settingsStore, log, nil, ndmsquery.NewPolicyMarkStore(cleanupNDMSTransport, log))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -1365,4 +1451,31 @@ func runCleanup(dataDir string) {
 	os.RemoveAll("/opt/var/run/awg-manager")
 
 	fmt.Println("Done.")
+}
+
+// monitoringSystemTunnelAdapter adapts systemtunnel.Service to
+// monitoring.SystemTunnelLister (a small typed view of just the fields the
+// monitoring scheduler needs).
+type monitoringSystemTunnelAdapter struct {
+	svc *systemtunnel.ServiceImpl
+}
+
+func (s *monitoringSystemTunnelAdapter) List(ctx context.Context) ([]monitoring.SystemTunnelInfo, error) {
+	if s == nil || s.svc == nil {
+		return nil, nil
+	}
+	list, err := s.svc.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]monitoring.SystemTunnelInfo, 0, len(list))
+	for _, t := range list {
+		out = append(out, monitoring.SystemTunnelInfo{
+			ID:            t.ID,
+			InterfaceName: t.InterfaceName,
+			Description:   t.Description,
+			Connected:     t.Connected,
+		})
+	}
+	return out, nil
 }

@@ -8,21 +8,18 @@ import (
 
 func TestValidator_Success(t *testing.T) {
 	v := &Validator{
-		binary: "echo", // echo returns 0 always
+		binary: "echo",
 		exec: func(bin string, args ...string) ([]byte, error) {
 			if bin != "echo" {
 				t.Errorf("binary: %s", bin)
 			}
-			if len(args) != 2 || args[0] != "check" || args[1] != "-c" {
-				// our impl always passes absolute path as last arg
-				if len(args) < 3 || args[0] != "check" || args[1] != "-c" {
-					t.Errorf("args: %v", args)
-				}
+			if len(args) != 3 || args[0] != "check" || args[1] != "-C" || args[2] != "/tmp/config.d" {
+				t.Errorf("args: %v", args)
 			}
 			return nil, nil
 		},
 	}
-	if err := v.Validate("/tmp/config.json"); err != nil {
+	if err := v.Validate("/tmp/config.d"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -34,7 +31,7 @@ func TestValidator_Failure(t *testing.T) {
 			return []byte("config error: invalid outbound"), errors.New("exit 1")
 		},
 	}
-	err := v.Validate("/tmp/config.json")
+	err := v.Validate("/tmp/config.d")
 	if err == nil {
 		t.Fatal("expected error")
 	}

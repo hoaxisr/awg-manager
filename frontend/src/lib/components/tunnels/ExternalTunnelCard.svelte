@@ -2,6 +2,7 @@
 <script lang="ts">
 	import type { ExternalTunnel } from '$lib/types';
 	import { formatBytes } from '$lib/utils/format';
+	import { Button } from '$lib/components/ui';
 
 	interface Props {
 		tunnel: ExternalTunnel;
@@ -77,12 +78,14 @@
 	</div>
 
 	<div class="pt-3 border-t border-surface-300-700">
-		<button class="btn btn-primary" onclick={handleAdopt}>
-			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-				<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-				<polyline points="9 12 12 15 16 10"/>
-			</svg>
+		<Button variant="primary" onclick={handleAdopt}>
+			{#snippet iconBefore()}
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+					<polyline points="9 12 12 15 16 10"/>
+				</svg>
+			{/snippet}
 			Взять под управление
-		</button>
+		</Button>
 	</div>
 </div>

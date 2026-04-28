@@ -7,12 +7,14 @@
 	import { goto } from '$app/navigation';
 	import { PageContainer } from '$lib/components/layout';
 	import { LoadingSpinner, EmptyState } from '$lib/components/layout';
-	import { StoreStatusBadge } from '$lib/components/ui';
+	import { StoreStatusBadge, Button } from '$lib/components/ui';
+	import type { ManagedServer, ManagedServerStats } from '$lib/types';
 	import {
 		ServerCard,
-		AddServerModal,
 		ManagedServerCard,
-		CreateManagedServerModal
+		CreateManagedServerModal,
+		ServerRail,
+		type RailItem,
 	} from '$lib/components/servers';
 
 	let unsub: (() => void) | undefined;
@@ -21,16 +23,84 @@
 
 	let snap = $derived($servers);
 	let serverList = $derived(snap.data?.servers ?? []);
-	let managedServer = $derived(snap.data?.managed ?? null);
-	let managedStats = $derived(snap.data?.managedStats ?? null);
+	let managedServers: ManagedServer[] = $derived(snap.data?.managed ?? []);
+	let managedStatsMap: Record<string, ManagedServerStats> = $derived(snap.data?.managedStats ?? {});
 	let wanIP = $derived(snap.data?.wanIP ?? '');
 	let loading = $derived(snap.lastFetchedAt === 0);
 	let routerIP = $derived($systemInfo.data?.routerIP ?? '');
 
-	let addModalOpen = $state(false);
 	let createManagedOpen = $state(false);
 
-	let existingServerIds = $derived(serverList.map(s => s.id));
+	// ─── Rail item ids for managed servers ─────────────────────────
+	// Format: '__managed__:Wireguard5'. Prefix lets us distinguish managed
+	// rail items from system server ids without an extra `kind` lookup.
+	const MANAGED_PREFIX = '__managed__:';
+	function managedRailId(iface: string): string {
+		return MANAGED_PREFIX + iface;
+	}
+
+	let railItems = $derived.by<RailItem[]>(() => {
+		const items: RailItem[] = [];
+		for (const m of managedServers) {
+			const stats = managedStatsMap[m.interfaceName] ?? null;
+			const mPeers = m.peers ?? [];
+			const statsPeers = stats?.peers ?? [];
+			items.push({
+				id: managedRailId(m.interfaceName),
+				name: m.description || m.interfaceName,
+				iface: m.interfaceName,
+				listenPort: m.listenPort,
+				status: stats?.status === 'running' ? 'running' : 'stopped',
+				peerActive: statsPeers.filter((p) => p.online).length,
+				peerCount: mPeers.length,
+				kind: 'managed',
+			});
+		}
+		for (const s of serverList) {
+			const sPeers = s.peers ?? [];
+			items.push({
+				id: s.id,
+				name: s.description || s.interfaceName,
+				iface: s.interfaceName,
+				listenPort: s.listenPort,
+				status: s.status === 'up' ? 'running' : 'stopped',
+				peerCount: sPeers.length,
+				peerActive: sPeers.filter((p) => p.rxBytes > 0 || p.txBytes > 0).length,
+				kind: 'system',
+			});
+		}
+		return items;
+	});
+
+	// Default to empty; the effect below snaps to the first item once the rail loads
+	// and re-snaps if the current activeId disappears (e.g. after a delete).
+	let activeId = $state<string>('');
+	$effect(() => {
+		if (railItems.length === 0) {
+			activeId = '';
+			return;
+		}
+		if (!railItems.some((i) => i.id === activeId)) {
+			activeId = railItems[0].id;
+		}
+	});
+
+	let activeItem = $derived(railItems.find((i) => i.id === activeId));
+
+	let activeManaged = $derived.by<ManagedServer | null>(() => {
+		if (activeItem?.kind !== 'managed') return null;
+		const iface = activeId.startsWith(MANAGED_PREFIX)
+			? activeId.slice(MANAGED_PREFIX.length)
+			: '';
+		return managedServers.find((m) => m.interfaceName === iface) ?? null;
+	});
+	let activeManagedStats = $derived(
+		activeManaged ? managedStatsMap[activeManaged.interfaceName] ?? null : null,
+	);
+
+	let activeServer = $derived(
+		activeItem?.kind === 'system' ? serverList.find((s) => s.id === activeId) : null,
+	);
 
 	async function unmarkServer(id: string) {
 		try {
@@ -42,19 +112,20 @@
 		}
 	}
 
-	function onServerAdded() {
-		// AddServerModal already applied the fresh snapshot inline;
-		// nothing to refetch here.
-		notifications.success('Интерфейс добавлен в серверы');
-	}
-
-	function onManagedCreated() {
+	function onManagedCreated(newId?: string) {
 		notifications.success('Сервер создан');
 		servers.invalidate();
+		if (newId) {
+			activeId = managedRailId(newId);
+		}
 	}
 
-	function openManagedASC() {
-		goto('/servers/managed-asc');
+	function openManagedASC(serverId: string) {
+		goto(`/servers/managed-asc?id=${encodeURIComponent(serverId)}`);
+	}
+
+	function openCreate() {
+		createManagedOpen = true;
 	}
 </script>
 
@@ -62,29 +133,11 @@
 	<title>Серверы - AWG Manager</title>
 </svelte:head>
 
-<PageContainer>
+<PageContainer width="full">
 	<div class="page-header">
 		<div class="title-group">
 			<h1 class="page-title">Серверы</h1>
 			<StoreStatusBadge store={servers} />
-		</div>
-		<div class="header-actions">
-			{#if !managedServer}
-				<button class="btn btn-primary btn-sm" onclick={() => createManagedOpen = true}>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<line x1="12" y1="5" x2="12" y2="19"/>
-						<line x1="5" y1="12" x2="19" y2="12"/>
-					</svg>
-					Создать сервер
-				</button>
-			{/if}
-			<button class="btn btn-secondary btn-sm" onclick={() => addModalOpen = true}>
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<line x1="12" y1="5" x2="12" y2="19"/>
-					<line x1="5" y1="12" x2="19" y2="12"/>
-				</svg>
-				Добавить
-			</button>
 		</div>
 	</div>
 
@@ -92,43 +145,38 @@
 		<div class="flex justify-center py-8">
 			<LoadingSpinner size="md" />
 		</div>
+	{:else if railItems.length === 0}
+		<EmptyState
+			title="Нет серверов"
+			description="Создайте свой WireGuard-сервер или добавьте существующий интерфейс."
+		/>
 	{:else}
-		<div class="servers-grid">
-			<!-- Managed server first -->
-			{#if managedServer}
-				<ManagedServerCard
-					server={managedServer}
-					stats={managedStats}
-					{routerIP}
-					onOpenASC={openManagedASC}
-				/>
-			{/if}
-
-			<!-- System/marked servers -->
-			{#each serverList as server (server.id)}
-				<ServerCard
-					{server}
-					isBuiltIn={server.description === 'Wireguard VPN Server'}
-					{wanIP}
-					onUnmark={unmarkServer}
-				/>
-			{/each}
-
-			{#if !managedServer && serverList.length === 0}
-				<EmptyState
-					title="Нет серверов"
-					description="Создайте свой WireGuard-сервер или добавьте существующий интерфейс."
-				/>
-			{/if}
+		<div class="layout">
+			<ServerRail
+				items={railItems}
+				activeId={activeId}
+				onSelect={(id) => (activeId = id)}
+				onCreate={openCreate}
+			/>
+			<main class="detail">
+				{#if activeItem?.kind === 'managed' && activeManaged}
+					<ManagedServerCard
+						server={activeManaged}
+						stats={activeManagedStats}
+						{routerIP}
+						onOpenASC={() => openManagedASC(activeManaged!.interfaceName)}
+					/>
+				{:else if activeItem?.kind === 'system' && activeServer}
+					<ServerCard
+						server={activeServer}
+						isBuiltIn={activeServer.description === 'Wireguard VPN Server'}
+						{wanIP}
+						onUnmark={unmarkServer}
+					/>
+				{/if}
+			</main>
 		</div>
 	{/if}
-
-	<AddServerModal
-		bind:open={addModalOpen}
-		{existingServerIds}
-		onclose={() => addModalOpen = false}
-		onAdded={onServerAdded}
-	/>
 
 	<CreateManagedServerModal
 		bind:open={createManagedOpen}
@@ -143,6 +191,8 @@
 		justify-content: space-between;
 		align-items: center;
 		margin-bottom: 1rem;
+		gap: 0.75rem;
+		flex-wrap: wrap;
 	}
 
 	.title-group {
@@ -156,14 +206,24 @@
 		font-weight: 600;
 	}
 
-	.header-actions {
+	.layout {
 		display: flex;
-		gap: 0.5rem;
+		gap: 1rem;
+		align-items: flex-start;
 	}
 
-	.servers-grid {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
+	.detail {
+		flex: 1;
+		min-width: 0;
+	}
+
+	@media (max-width: 768px) {
+		.layout {
+			flex-direction: column;
+			gap: 0.75rem;
+		}
+		.detail {
+			width: 100%;
+		}
 	}
 </style>

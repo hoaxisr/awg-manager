@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { Modal } from '$lib/components/ui';
+    import { Modal, Button } from '$lib/components/ui';
     import { api } from '$lib/api/client';
     import { notifications } from '$lib/stores/notifications';
     import { decodeVpnLink, isVpnLink } from '$lib/utils/vpnlink';
@@ -246,13 +246,10 @@
     </div>
 
     {#snippet actions()}
-        <button class="btn btn-secondary" onclick={onclose} disabled={loading}>Отмена</button>
-        <button class="btn btn-primary" onclick={handleReplace} disabled={loading || !importContent.trim()}>
-            {#if loading}
-                <span class="spinner"></span>
-            {/if}
+        <Button variant="secondary" onclick={onclose} disabled={loading}>Отмена</Button>
+        <Button variant="primary" onclick={handleReplace} disabled={!importContent.trim()} loading={loading}>
             Заменить
-        </button>
+        </Button>
     {/snippet}
 </Modal>
 
@@ -460,19 +457,5 @@
         font-size: 0.6875rem;
         color: var(--text-muted);
         margin-top: 2px;
-    }
-
-    .spinner {
-        width: 14px;
-        height: 14px;
-        border: 2px solid currentColor;
-        border-top-color: transparent;
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-        margin-right: 6px;
-    }
-
-    @keyframes spin {
-        to { transform: rotate(360deg); }
     }
 </style>

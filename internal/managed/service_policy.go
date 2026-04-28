@@ -3,6 +3,8 @@ package managed
 import (
 	"context"
 	"fmt"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // SetPolicy applies an ip hotspot policy to the managed server's
@@ -14,13 +16,13 @@ import (
 //
 // When the new value equals the current one the call is a no-op
 // (no RCI traffic, no save). Validation runs before any RCI command.
-func (s *Service) SetPolicy(ctx context.Context, policy string) error {
+func (s *Service) SetPolicy(ctx context.Context, id, policy string) error {
 	if policy == "" {
 		return fmt.Errorf("policy must not be empty")
 	}
-	server := s.settings.GetManagedServer()
-	if server == nil {
-		return fmt.Errorf("no managed server exists")
+	server, ok := s.settings.GetManagedServerByID(id)
+	if !ok {
+		return fmt.Errorf("managed server not found: %s", id)
 	}
 
 	// No-op shortcut runs before profile-list validation so a repeat
@@ -56,8 +58,10 @@ func (s *Service) SetPolicy(ctx context.Context, policy string) error {
 		}
 	}
 
-	server.Policy = policy
-	if err := s.settings.SaveManagedServer(server); err != nil {
+	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
+		sv.Policy = policy
+		return nil
+	}); err != nil {
 		s.log.Warn("policy applied via RCI but failed to persist", "error", err, "policy", policy)
 		return fmt.Errorf("save policy: %w", err)
 	}

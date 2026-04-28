@@ -6,53 +6,50 @@
 	}
 
 	let { systemInfo }: Props = $props();
-
-
 </script>
 
-<div class="info-grid">
-	<div class="flex flex-col gap-1">
-		<span class="grid-label">Версия</span>
-		<span class="grid-value">{systemInfo.version}</span>
+<div class="card">
+	<div class="section-label">Система</div>
+
+	<div class="setting-row">
+		<span class="info-key">AWGM</span>
+		<span class="info-val">{systemInfo.version}</span>
 	</div>
-	<div class="flex flex-col gap-1">
-		<span class="grid-label">Модель роутера</span>
-		<span class="grid-value">{systemInfo.kernelModuleModel || '—'}</span>
+	<div class="setting-row">
+		<span class="info-key">Роутер</span>
+		<span class="info-val">{systemInfo.kernelModuleModel || '—'}</span>
 	</div>
-	<div class="flex flex-col gap-1">
-		<span class="grid-label">Версия ОС</span>
-		<span class="grid-value">{systemInfo.firmwareVersion || systemInfo.keeneticOS || '—'}</span>
+	<div class="setting-row">
+		<span class="info-key">ОС</span>
+		<span class="info-val">{systemInfo.firmwareVersion || systemInfo.keeneticOS || '—'}</span>
 	</div>
-	<div class="flex flex-col gap-1">
-		<span class="grid-label">Канал общения</span>
-		<a class="grid-value tg-link" href="https://t.me/awgmanager" target="_blank" rel="noopener">Telegram</a>
+	<div class="setting-row">
+		<span class="info-key">Связь</span>
+		<a class="info-link" href="https://t.me/awgmanager" target="_blank" rel="noopener noreferrer">Telegram →</a>
 	</div>
 </div>
 
 <style>
-	.info-grid {
-		display: grid;
-		grid-template-columns: repeat(4, 1fr);
-		gap: 1rem;
-	}
-
-	.grid-label {
+	.info-key {
 		font-size: 0.6875rem;
 		text-transform: uppercase;
-		color: var(--text-muted);
+		letter-spacing: 0.05em;
+		color: var(--color-text-muted);
 	}
 
-	.grid-value {
-		font-size: 0.9375rem;
-		font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+	.info-val {
+		font-size: 0.8125rem;
+		font-family: var(--font-mono);
+		color: var(--color-text-secondary);
 	}
 
-	.tg-link {
-		color: var(--accent);
+	.info-link {
+		font-size: 0.8125rem;
+		color: var(--color-accent);
 		text-decoration: none;
 	}
 
-	.tg-link:hover {
+	.info-link:hover {
 		text-decoration: underline;
 	}
 </style>

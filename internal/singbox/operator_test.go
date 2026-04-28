@@ -1,6 +1,9 @@
 package singbox
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -64,4 +67,88 @@ func TestParseSingboxVersionOutput(t *testing.T) {
 			t.Errorf("features = %v, want empty", f)
 		}
 	})
+}
+
+func TestOperator_ConfigPaths(t *testing.T) {
+	dir := t.TempDir()
+	op := NewOperator(OperatorDeps{Dir: dir})
+	if op.configPath != filepath.Join(dir, "config.d") {
+		t.Errorf("configPath: %s", op.configPath)
+	}
+	if op.pidPath != filepath.Join(dir, "sing-box.pid") {
+		t.Errorf("pidPath: %s", op.pidPath)
+	}
+	if op.tunnelsFile() != filepath.Join(dir, "config.d", "10-tunnels.json") {
+		t.Errorf("tunnelsFile: %s", op.tunnelsFile())
+	}
+}
+
+func TestEnsureBaseConfig_FullSkeleton(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "config.d")
+	ensureBaseConfig(configDir)
+
+	raw, err := os.ReadFile(filepath.Join(configDir, "00-base.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var base map[string]any
+	if err := json.Unmarshal(raw, &base); err != nil {
+		t.Fatal(err)
+	}
+
+	outbounds, ok := base["outbounds"].([]any)
+	if !ok || len(outbounds) != 1 {
+		t.Fatalf("outbounds: want 1 (direct), got %#v", base["outbounds"])
+	}
+	direct := outbounds[0].(map[string]any)
+	if direct["tag"] != "direct" || direct["type"] != "direct" {
+		t.Errorf("direct outbound: %#v", direct)
+	}
+
+	route, ok := base["route"].(map[string]any)
+	if !ok {
+		t.Fatalf("route block missing: %#v", base["route"])
+	}
+	if route["final"] != "direct" {
+		t.Errorf("route.final: want direct, got %v", route["final"])
+	}
+	if route["default_domain_resolver"] != "dns-bootstrap" {
+		t.Errorf("default_domain_resolver: want dns-bootstrap, got %v", route["default_domain_resolver"])
+	}
+
+	dns, ok := base["dns"].(map[string]any)
+	if !ok {
+		t.Fatalf("dns block missing: %#v", base["dns"])
+	}
+	if dns["strategy"] != "ipv4_only" {
+		t.Errorf("dns.strategy: want ipv4_only, got %v", dns["strategy"])
+	}
+	servers, _ := dns["servers"].([]any)
+	if len(servers) != 1 {
+		t.Fatalf("dns.servers: want 1 bootstrap, got %d", len(servers))
+	}
+	bs := servers[0].(map[string]any)
+	if bs["tag"] != "dns-bootstrap" || bs["type"] != "udp" || bs["server"] != "1.1.1.1" {
+		t.Errorf("bootstrap: %#v", bs)
+	}
+	if dns["final"] != "dns-bootstrap" {
+		t.Errorf("dns.final: want dns-bootstrap, got %v", dns["final"])
+	}
+}
+
+func TestEnsureBaseConfig_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "config.d")
+	_ = os.MkdirAll(configDir, 0755)
+	existing := `{"log":{"level":"debug"}}`
+	basePath := filepath.Join(configDir, "00-base.json")
+	if err := os.WriteFile(basePath, []byte(existing), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ensureBaseConfig(configDir)
+	raw, _ := os.ReadFile(basePath)
+	if string(raw) != existing {
+		t.Errorf("existing base must not be overwritten, got %s", raw)
+	}
 }

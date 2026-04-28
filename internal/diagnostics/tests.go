@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +35,7 @@ func (r *Runner) runTestsWithEvents(ctx context.Context, report *Report) []TestR
 	run(r.testWANConnectivity(ctx))
 	run(r.testNDMSHealth(ctx))
 	run(r.testKernelModule(ctx, report))
+	run(r.testClockSkew(ctx))
 
 	for _, t := range report.Tunnels {
 		r.emitPhase("tunnel_tests", fmt.Sprintf("Тестирование %s...", t.Name))
@@ -48,6 +51,7 @@ func (r *Runner) runTestsWithEvents(ctx context.Context, report *Report) []TestR
 		run(r.testMTUCheck(ctx, t))
 		run(r.testProxyHealth(t))
 		run(r.testPingCheckHealth(t))
+		run(r.testRPFilter(t))
 	}
 
 	r.emitPhase("cross_tunnel_tests", "Проверка маршрутов...")
@@ -59,7 +63,7 @@ func (r *Runner) runTestsWithEvents(ctx context.Context, report *Report) []TestR
 		}
 	}
 
-	includeRestart := r.opts.Mode == ModeFull || r.opts.IncludeRestart
+	includeRestart := r.opts.IncludeRestart
 	if includeRestart {
 		for _, t := range report.Tunnels {
 			if t.Enabled && t.Status == "running" {
@@ -170,6 +174,85 @@ func (r *Runner) testKernelModule(ctx context.Context, report *Report) TestResul
 		res.Status = StatusFail
 	}
 	res.Detail = strings.Join(details, "; ")
+	return res
+}
+
+// clockSkewProbeTargets is the ordered list of HTTPS endpoints we ask for a
+// `Date` response header to compute time drift. Russian-friendly hosts come
+// first because Cloudflare/Google are routinely blocked by RKN — falling
+// back through several targets keeps the probe useful behind the firewall.
+var clockSkewProbeTargets = []string{
+	"https://ya.ru/",
+	"https://mail.ru/",
+	"https://www.microsoft.com/",
+	"https://www.apple.com/",
+	"https://www.cloudflare.com/",
+}
+
+// testClockSkew compares local time against an HTTPS server's Date header.
+// Wireguard handshakes fail when the local clock skew exceeds ~3 minutes;
+// a skew above 60s is worth flagging. Tries clockSkewProbeTargets in order
+// and uses the first one that responds with a parseable Date header.
+func (r *Runner) testClockSkew(ctx context.Context) TestResult {
+	res := TestResult{Name: "clock_skew", Description: "Расхождение времени с эталоном"}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	var (
+		serverTime time.Time
+		usedTarget string
+		lastErr    string
+	)
+	for _, target := range clockSkewProbeTargets {
+		req, err := http.NewRequestWithContext(ctx, http.MethodHead, target, nil)
+		if err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		dateHeader := resp.Header.Get("Date")
+		resp.Body.Close()
+		if dateHeader == "" {
+			lastErr = "сервер не вернул Date header"
+			continue
+		}
+		t, err := http.ParseTime(dateHeader)
+		if err != nil {
+			lastErr = "не удалось распарсить Date: " + err.Error()
+			continue
+		}
+		serverTime = t
+		usedTarget = target
+		break
+	}
+
+	if usedTarget == "" {
+		res.Status = StatusSkip
+		res.Detail = "Нет ответа ни от одного из эталонных серверов: " + lastErr
+		return res
+	}
+
+	skew := time.Since(serverTime)
+	if skew < 0 {
+		skew = -skew
+	}
+
+	skewSec := int(skew.Seconds())
+	switch {
+	case skewSec > 300:
+		res.Status = StatusFail
+		res.Detail = fmt.Sprintf("Системное время отличается от эталона на %ds (источник: %s). Wireguard handshake может работать некорректно.", skewSec, usedTarget)
+	case skewSec > 60:
+		res.Status = StatusWarn
+		res.Detail = fmt.Sprintf("Системное время отличается на %ds (источник: %s). Рекомендуется настроить NTP.", skewSec, usedTarget)
+	default:
+		res.Status = StatusPass
+		res.Detail = fmt.Sprintf("Расхождение %ds (норма, источник: %s)", skewSec, usedTarget)
+	}
 	return res
 }
 
@@ -855,6 +938,67 @@ func (r *Runner) testPingCheckHealth(t TunnelInfo) TestResult {
 	default:
 		res.Status = StatusPass
 		res.Detail = "Status: " + t.PingCheck.Status
+	}
+	return res
+}
+
+// testRPFilter checks reverse-path filter setting for the tunnel's interface.
+// rp_filter=1 (strict) blocks return traffic on VPN interfaces — common cause
+// of "tunnel up but no connectivity" symptoms.
+func (r *Runner) testRPFilter(t TunnelInfo) TestResult {
+	res := TestResult{Name: "rp_filter", Description: "Reverse path filter", TunnelID: t.ID, TunnelName: t.Name}
+
+	if t.Status != "running" {
+		res.Status = StatusSkip
+		res.Detail = "Туннель не запущен"
+		return res
+	}
+
+	ifname := t.InterfaceName
+	if ifname == "" {
+		res.Status = StatusSkip
+		res.Detail = "Имя интерфейса неизвестно"
+		return res
+	}
+
+	readVal := func(path string) (int, error) {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return 0, err
+		}
+		v, err := strconv.Atoi(strings.TrimSpace(string(b)))
+		if err != nil {
+			return 0, err
+		}
+		return v, nil
+	}
+
+	perIface, err1 := readVal(fmt.Sprintf("/proc/sys/net/ipv4/conf/%s/rp_filter", ifname))
+	allConf, err2 := readVal("/proc/sys/net/ipv4/conf/all/rp_filter")
+	if err1 != nil && err2 != nil {
+		res.Status = StatusError
+		res.Detail = "Не удалось прочитать /proc/sys/net/ipv4/conf/.../rp_filter"
+		return res
+	}
+
+	effective := perIface
+	if allConf > effective {
+		effective = allConf
+	}
+
+	switch effective {
+	case 1:
+		res.Status = StatusFail
+		res.Detail = fmt.Sprintf("rp_filter=1 (strict) на %s блокирует обратный трафик через туннель. Установите 0 или 2: sysctl -w net.ipv4.conf.%s.rp_filter=2", ifname, ifname)
+	case 2:
+		res.Status = StatusPass
+		res.Detail = "rp_filter=2 (loose) — корректно для VPN-интерфейса"
+	case 0:
+		res.Status = StatusPass
+		res.Detail = "rp_filter=0 (off)"
+	default:
+		res.Status = StatusWarn
+		res.Detail = fmt.Sprintf("rp_filter=%d — нестандартное значение", effective)
 	}
 	return res
 }

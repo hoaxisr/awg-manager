@@ -2,11 +2,12 @@
     import { onMount, onDestroy } from 'svelte';
     import { page } from '$app/stores';
     import { routing, subscribeRouting, invalidateAllRouting } from '$lib/stores/routing';
+    import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
     import { systemInfo } from '$lib/stores/system';
     import { api } from '$lib/api/client';
     import { notifications } from '$lib/stores/notifications';
     import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
-    import { OverflowTabs } from '$lib/components/ui';
+    import { Tabs, Button } from '$lib/components/ui';
     import { RoutingSearch } from '$lib/components/routing';
     import DnsRoutesTab from './DnsRoutesTab.svelte';
     import IpRoutesTab from './IpRoutesTab.svelte';
@@ -15,6 +16,7 @@
     import { HrNeoTab } from '$lib/components/hrneo';
     import { DeviceProxyTab } from '$lib/components/deviceproxy';
     import { deviceProxyConfig, deviceProxyRuntime } from '$lib/stores/deviceproxy';
+    import SingboxRouterTab from './SingboxRouterTab.svelte';
 
     // Per-section polling stores — subscribe here so all 8 fetch while
     // the routing page is open. Unsubscribed on destroy to stop polling.
@@ -36,12 +38,12 @@
         unsubDPRuntime?.();
     });
 
-    let activeTab = $state<'hrneo' | 'dns' | 'ip' | 'policy' | 'clientvpn' | 'deviceproxy'>('dns');
+    let activeTab = $state<'hrneo' | 'dns' | 'ip' | 'policy' | 'clientvpn' | 'deviceproxy' | 'singbox'>('dns');
 
     // Deep link: ?tab=hrneo from the Settings page HR NEO card, etc.
     $effect(() => {
         const t = $page.url.searchParams.get('tab');
-        if (t === 'hrneo' || t === 'dns' || t === 'ip' || t === 'policy' || t === 'clientvpn' || t === 'deviceproxy') {
+        if (t === 'hrneo' || t === 'dns' || t === 'ip' || t === 'policy' || t === 'clientvpn' || t === 'deviceproxy' || t === 'singbox') {
             activeTab = t;
         }
     });
@@ -153,6 +155,9 @@
         badgeTone?: 'default' | 'success' | 'warning' | 'muted';
     };
 
+    const singboxRouterStatus = singboxRouterStore.status;
+    let singboxRuleCount = $derived($singboxRouterStatus?.ruleCount ?? 0);
+
     let tabItems = $derived(
         ([
             hydrarouteInstalled ? { id: 'hrneo', label: 'HR NEO', badge: hrRuleCount } : null,
@@ -164,6 +169,7 @@
             isOS5 ? { id: 'policy', label: 'Политики доступа', badge: policyCount } : null,
             { id: 'clientvpn', label: 'VPN для устройств', badge: clientRouteCount },
             deviceProxyTab,
+            singboxInstalled ? { id: 'singbox', label: 'Sing-box Router', badge: singboxRuleCount } : null,
         ] as (TabItem | null)[]).filter((t): t is TabItem => t !== null)
     );
 
@@ -171,7 +177,7 @@
     // (uninstall while the page is open), bounce them off.
     $effect(() => {
         if (!$systemInfo.data) return;
-        if (!singboxInstalled && activeTab === 'deviceproxy') {
+        if (!singboxInstalled && (activeTab === 'deviceproxy' || activeTab === 'singbox')) {
             activeTab = 'dns';
         }
     });
@@ -185,22 +191,20 @@
 <PageContainer>
     <PageHeader title="Маршрутизация">
         {#snippet actions()}
-            <button
-                class="btn btn-sm"
-                class:btn-warning={missing.length > 0}
-                class:btn-ghost={missing.length === 0}
+            <!-- TODO Phase 1: warning variant for missing>0 -->
+            <Button
+                variant={missing.length > 0 ? 'secondary' : 'ghost'}
+                size="sm"
                 onclick={handleRefresh}
                 disabled={refreshing}
-                title={missing.length > 0 ? `Не загружено: ${missing.join(', ')}` : 'Обновить данные маршрутизации'}
+                loading={refreshing}
             >
-                {#if refreshing}
-                    Загрузка…
-                {:else if missing.length > 0}
+                {#if missing.length > 0}
                     Загрузить недостающее ({missing.length})
                 {:else}
                     Обновить
                 {/if}
-            </button>
+            </Button>
         {/snippet}
     </PageHeader>
 
@@ -210,7 +214,7 @@
         <LoadingSpinner />
     {:else}
         <!-- Tab bar -->
-        <OverflowTabs
+        <Tabs
             tabs={tabItems}
             active={activeTab}
             onchange={(id) => activeTab = id as typeof activeTab}
@@ -256,6 +260,8 @@
             />
         {:else if activeTab === 'deviceproxy'}
             <DeviceProxyTab />
+        {:else if activeTab === 'singbox'}
+            <SingboxRouterTab {routingTunnels} />
         {/if}
     {/if}
 </PageContainer>

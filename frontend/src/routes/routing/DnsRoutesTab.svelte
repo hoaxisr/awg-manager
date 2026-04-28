@@ -3,7 +3,7 @@
     import { api } from '$lib/api/client';
     import type { DnsRoute, RoutingTunnel } from '$lib/types';
     import type { ServicePreset } from '$lib/data/presets';
-    import { Modal, StoreStatusBadge } from '$lib/components/ui';
+    import { Modal, StoreStatusBadge, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
     import { DnsRouteCard, DnsRouteEditModal, DnsRouteImportModal, DnsRoutePresetModal } from '$lib/components/dnsroutes';
     import { exportRoutes, downloadJson } from '$lib/utils/dns-export';
     import { notifications } from '$lib/stores/notifications';
@@ -298,13 +298,15 @@
         <div class="section-buttons">
             <StoreStatusBadge store={dnsRoutesStore} />
             {#if dnsRoutes.length > 0}
-                <button class="btn btn-sm btn-ghost" onclick={() => { dnsSelectionMode = true; dnsSelected = new Set(); }}>Выбрать</button>
+                <Button variant="ghost" size="sm" onclick={() => { dnsSelectionMode = true; dnsSelected = new Set(); }}>Выбрать</Button>
             {/if}
             <div class="dropdown-wrapper">
-                <button class="btn btn-sm btn-primary" onclick={(e) => { e.stopPropagation(); addMenuOpen = !addMenuOpen; }}>
+                <Button variant="primary" size="sm" onclick={(e) => { e.stopPropagation(); addMenuOpen = !addMenuOpen; }}>
                     + Добавить
-                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M2 4l3 3 3-3"/></svg>
-                </button>
+                    {#snippet iconAfter()}
+                        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M2 4l3 3 3-3"/></svg>
+                    {/snippet}
+                </Button>
                 {#if addMenuOpen}
                     <div class="dropdown-menu">
                         <button class="dropdown-item" onclick={() => { addMenuOpen = false; dnsPresetOpen = true; }}>
@@ -340,16 +342,20 @@
                     <button class="bulk-btn bulk-btn-export" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={downloadDnsExport}>Экспорт</button>
                 </div>
             {:else}
+                {@const dnsBulkTunnelOpts: DropdownOption[] = [
+                    ...routingTunnels.filter(t => t.type === 'managed' && t.available).map((t) => ({ value: t.id, label: t.name })),
+                    ...routingTunnels.filter(t => t.type === 'system' && t.available).map((t) => ({ value: t.id, label: t.name })),
+                ]}
                 <div class="bulk-tunnel-bar">
                     <span class="bulk-tunnel-label">Туннель:</span>
-                    <select class="bulk-tunnel-select" bind:value={dnsBulkTunnelId} disabled={dnsBulkLoading}>
-                        {#each routingTunnels.filter(t => t.type === 'managed' && t.available) as t}
-                            <option value={t.id}>{t.name}</option>
-                        {/each}
-                        {#each routingTunnels.filter(t => t.type === 'system' && t.available) as t}
-                            <option value={t.id}>{t.name}</option>
-                        {/each}
-                    </select>
+                    <div class="bulk-tunnel-select">
+                        <Dropdown
+                            bind:value={dnsBulkTunnelId}
+                            options={dnsBulkTunnelOpts}
+                            disabled={dnsBulkLoading}
+                            fullWidth
+                        />
+                    </div>
                     <button class="bulk-tunnel-apply" disabled={dnsBulkLoading} onclick={bulkDnsChangeTunnel}>Применить ({dnsSelected.size})</button>
                     <button class="bulk-tunnel-close" onclick={() => dnsTunnelMode = false}>✕</button>
                 </div>
@@ -370,15 +376,19 @@
         <div class="empty-title">DNS-маршрутов пока нет</div>
         <div class="empty-desc">Выберите сервисы из каталога или создайте правило вручную</div>
         <div class="empty-actions">
-            <button class="btn btn-primary" onclick={() => dnsPresetOpen = true}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+            <Button variant="primary" onclick={() => dnsPresetOpen = true}>
+                {#snippet iconBefore()}
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                {/snippet}
                 Из каталога
-            </button>
-            <button class="btn btn-secondary" onclick={() => { editingDnsRoute = null; dnsModalOpen = true; }}>+ Создать вручную</button>
-            <button class="btn btn-ghost" onclick={() => dnsImportOpen = true}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            </Button>
+            <Button variant="secondary" onclick={() => { editingDnsRoute = null; dnsModalOpen = true; }}>+ Создать вручную</Button>
+            <Button variant="ghost" onclick={() => dnsImportOpen = true}>
+                {#snippet iconBefore()}
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                {/snippet}
                 Загрузить конфигурацию
-            </button>
+            </Button>
         </div>
     </div>
 {:else}
@@ -459,8 +469,8 @@
     <Modal open={true} title="Удалить DNS-маршрут" size="sm" onclose={() => dnsDeleteId = null}>
         <p class="confirm-text">Удалить DNS-маршрут <strong>{routeToDelete?.name ?? dnsDeleteId}</strong>?</p>
         {#snippet actions()}
-            <button class="btn btn-secondary" onclick={() => dnsDeleteId = null}>Отмена</button>
-            <button class="btn btn-danger" onclick={deleteDnsRoute}>Удалить</button>
+            <Button variant="secondary" onclick={() => dnsDeleteId = null}>Отмена</Button>
+            <Button variant="danger" onclick={deleteDnsRoute}>Удалить</Button>
         {/snippet}
     </Modal>
 {/if}
@@ -469,8 +479,8 @@
     <Modal open={true} title="Удаление" size="sm" onclose={() => dnsBulkDeleteConfirm = false}>
         <p class="confirm-text">Удалить {dnsSelected.size} DNS-маршрутов?</p>
         {#snippet actions()}
-            <button class="btn btn-ghost" onclick={() => dnsBulkDeleteConfirm = false}>Отмена</button>
-            <button class="btn btn-danger" onclick={bulkDnsDelete}>Удалить</button>
+            <Button variant="ghost" onclick={() => dnsBulkDeleteConfirm = false}>Отмена</Button>
+            <Button variant="danger" onclick={bulkDnsDelete}>Удалить</Button>
         {/snippet}
     </Modal>
 {/if}
@@ -546,12 +556,6 @@
         flex-wrap: wrap;
     }
 
-    .empty-actions .btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-    }
-
     /* Dropdown menu */
     .dropdown-wrapper {
         position: relative;
@@ -624,10 +628,6 @@
             flex-direction: column;
             align-items: center;
         }
-
-        .empty-actions .btn {
-            width: 100%;
-            justify-content: center;
-        }
+        /* TODO Phase 1: full-width Button on narrow viewport (was .empty-actions .btn { width: 100% }) */
     }
 </style>

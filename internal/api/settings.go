@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/rand"
+	"fmt"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -49,6 +51,16 @@ func (h *SettingsHandler) SetPingCheckSnapshot(fn func()) { h.pingCheckSnapshot 
 func (h *SettingsHandler) SetLogsSnapshot(fn func()) { h.logsSnapshot = fn }
 
 // Get returns current settings.
+//
+//	@Summary		Get settings
+//	@Description	Returns the full Settings object (server, pingCheck, logging, dnsRoute, managed, apiKey, ...).
+//	@Tags			settings
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		405	{object}	map[string]interface{}
+//	@Failure		500	{object}	map[string]interface{}
+//	@Router			/settings [get]
 func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -65,6 +77,18 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // Update saves settings.
+//
+//	@Summary		Update settings
+//	@Description	Persists Settings. Sub-structs (server, pingCheck, logging, dnsRoute, managedServers, ...) preserved when zero/nil. ApiKey preserved when empty (rotate via /settings/regenerate-api-key). Top-level bool flags (authEnabled, disableMemorySaving, onboardingCompleted) MUST be sent on every save.
+//	@Tags			settings
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		map[string]interface{}	true	"Settings"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	map[string]interface{}
+//	@Failure		500		{object}	map[string]interface{}
+//	@Router			/settings [post]
 func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	settings, ok := parseJSON[storage.Settings](w, r, http.MethodPost)
 	if !ok {
@@ -102,9 +126,6 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if settings.DNSRoute == (storage.DNSRouteSettings{}) {
 		settings.DNSRoute = oldSettings.DNSRoute
 	}
-	if settings.HiddenSystemTunnels == nil {
-		settings.HiddenSystemTunnels = oldSettings.HiddenSystemTunnels
-	}
 	if settings.ServerInterfaces == nil {
 		settings.ServerInterfaces = oldSettings.ServerInterfaces
 	}
@@ -114,8 +135,19 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if settings.ManagedServer == nil {
 		settings.ManagedServer = oldSettings.ManagedServer
 	}
+	if settings.ManagedServers == nil {
+		settings.ManagedServers = oldSettings.ManagedServers
+	}
 	if settings.SchemaVersion == 0 {
 		settings.SchemaVersion = oldSettings.SchemaVersion
+	}
+	// ApiKey is omitempty: a payload that omits the field decodes to "".
+	// Preserve the existing key in that case so a partial update can't
+	// silently revoke API access. To ROTATE the key the caller sends a new
+	// non-empty value; to CLEAR it the caller currently has no path —
+	// matches the behavior of other secret fields.
+	if settings.ApiKey == "" {
+		settings.ApiKey = oldSettings.ApiKey
 	}
 
 	// Detect ping check toggle change before saving
@@ -198,6 +230,60 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.Success(w, settings)
+}
+
+// RegenerateApiKey generates a fresh UUID v4 server-side, persists it
+// into Settings.ApiKey, and returns the updated Settings. Lives on the
+// backend (not in browser via crypto.randomUUID) because the UI is
+// served over plain HTTP and the WebCrypto API is unavailable in
+// non-secure contexts.
+//
+//	@Summary		Regenerate API key
+//	@Description	Generates a fresh UUID v4 via crypto/rand, stores it into Settings.ApiKey, and returns the updated Settings. The new key takes effect immediately as a `Authorization: Bearer <key>` substitute for the session cookie.
+//	@Tags			settings
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		405	{object}	map[string]interface{}
+//	@Failure		500	{object}	map[string]interface{}
+//	@Router			/settings/regenerate-api-key [post]
+func (h *SettingsHandler) RegenerateApiKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+		return
+	}
+
+	key, err := generateUUIDv4()
+	if err != nil {
+		response.Error(w, "failed to generate key: "+err.Error(), "API_KEY_GENERATE_ERROR")
+		return
+	}
+
+	settings, err := h.store.Get()
+	if err != nil {
+		response.Error(w, err.Error(), "SETTINGS_LOAD_ERROR")
+		return
+	}
+	settings.ApiKey = key
+	if err := h.store.Save(settings); err != nil {
+		response.Error(w, err.Error(), "SETTINGS_SAVE_ERROR")
+		return
+	}
+
+	h.log.Info("api-key", "", "API key regenerated")
+	response.Success(w, settings)
+}
+
+// generateUUIDv4 produces an RFC 4122 v4 UUID using crypto/rand.
+// Format: 8-4-4-4-12 lowercase hex.
+func generateUUIDv4() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant RFC 4122
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
 // enablePingCheckOnAllTunnels adds pingCheck config with defaults to all tunnels.

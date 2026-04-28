@@ -2,26 +2,47 @@
 package singbox
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
 // Process manages the sing-box process lifecycle (single-process model).
 //
-// sing-box's stdout/stderr is discarded to /dev/null — runtime logs are
-// streamed over clash_api /logs and forwarded into the UI log view
-// (loggingService), avoiding flash wear from an ever-growing log file
-// and surfacing logs in the same place as every other subsystem.
+// stdout is /dev/null'd. stderr is scanned line-by-line for the entire
+// process lifetime — each line is forwarded to OnStderrLine (so FATAL
+// messages from sing-box reach the app log even after the startup
+// grace period passes) AND retained in a bounded buffer so a startup
+// failure can include the message in its returned error. cmd.Wait is
+// monitored even past the grace window so OnExit fires on every
+// post-grace exit (e.g. config-rejection FATAL after rule-set fetch).
 type Process struct {
 	binary     string
 	configPath string
 	pidPath    string
+
+	// OnStderrLine is invoked once per newline-terminated line written to
+	// sing-box's stderr. Nil = stderr is silently consumed (still scanned,
+	// just not forwarded). Set by Operator construction.
+	OnStderrLine func(string)
+
+	// OnExit is invoked when cmd.Wait returns AFTER the startup grace
+	// period — i.e., a "successful start that died later". The error is
+	// the result of cmd.Wait (typically *exec.ExitError). The captured
+	// stderr buffer (last ~16KB) is passed as the second argument.
+	OnExit func(err error, stderrTail string)
+
+	// stderrMu protects lastStderr so OnExit / GetLastStderr concurrent.
+	stderrMu    sync.RWMutex
+	lastStderr  string
 
 	// For tests
 	startCmd func(bin string, args ...string) (*exec.Cmd, error)
@@ -42,37 +63,110 @@ func NewProcess(binary, configPath, pidPath string) *Process {
 	}
 }
 
+const (
+	startupGracePeriod = 500 * time.Millisecond
+	stderrBufferSize   = 16 * 1024
+)
+
 // Start launches sing-box with `sing-box run -c <configPath>` and records PID.
+// Returns within startupGracePeriod. If sing-box exits before the grace
+// elapses, the returned error includes the last stderr output. If sing-box
+// exits AFTER the grace period (the typical way config-validation fails on
+// rule-set fetch), p.OnExit is invoked in a background goroutine and the
+// PID file is cleaned up — callers must rely on OnExit / IsRunning to
+// observe these late deaths.
 func (p *Process) Start() error {
 	if running, _ := p.IsRunning(); running {
-		return nil // already running
+		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(p.pidPath), 0755); err != nil {
 		return err
 	}
-	cmd, err := p.startCmd(p.binary, "run", "-c", p.configPath)
+	cmd, err := p.startCmd(p.binary, "run", "-C", p.configPath)
 	if err != nil {
 		return err
 	}
-	// Discard stdout/stderr — logs flow via clash_api /logs into the
-	// app's loggingService. Keeping a file here would cause flash wear
-	// and unbounded growth.
+	pr, pw := io.Pipe()
+	cmd.Stderr = pw
 	if devnull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0); err == nil {
 		cmd.Stdout = devnull
-		cmd.Stderr = devnull
 	}
-	// Detach so sing-box survives the parent
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+
+	stderr := newLimitedBuffer(stderrBufferSize)
+	scannerDone := make(chan struct{})
+	go func() {
+		defer close(scannerDone)
+		scanner := bufio.NewScanner(pr)
+		scanner.Buffer(make([]byte, 0, 4096), 64*1024)
+		for scanner.Scan() {
+			line := scanner.Text()
+			stderr.Write([]byte(line + "\n"))
+			if p.OnStderrLine != nil {
+				p.OnStderrLine(line)
+			}
+		}
+	}()
+	p.setLastStderr("")
+
 	if err := cmd.Start(); err != nil {
+		_ = pw.Close()
+		<-scannerDone
 		return fmt.Errorf("start sing-box: %w", err)
 	}
 	if err := p.writePID(cmd.Process.Pid); err != nil {
 		_ = syscall.Kill(cmd.Process.Pid, syscall.SIGTERM)
+		_ = cmd.Wait()
+		_ = pw.Close()
+		<-scannerDone
 		return err
 	}
-	// Release the child so we don't wait on it
-	_ = cmd.Process.Release()
-	return nil
+	errCh := make(chan error, 1)
+	go func() {
+		err := cmd.Wait()
+		_ = pw.Close()
+		<-scannerDone
+		errCh <- err
+	}()
+	select {
+	case waitErr := <-errCh:
+		_ = os.Remove(p.pidPath)
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			if waitErr != nil {
+				msg = waitErr.Error()
+			} else {
+				msg = "no output on stderr"
+			}
+		}
+		p.setLastStderr(msg)
+		return fmt.Errorf("sing-box exited during startup: %s", msg)
+	case <-time.After(startupGracePeriod):
+		go func() {
+			waitErr := <-errCh
+			_ = os.Remove(p.pidPath)
+			tail := strings.TrimSpace(stderr.String())
+			p.setLastStderr(tail)
+			if p.OnExit != nil {
+				p.OnExit(waitErr, tail)
+			}
+		}()
+		return nil
+	}
+}
+
+// LastStderr returns the most recent captured stderr tail (~16KB) from the
+// last sing-box run. Empty when there has been no exit since process start.
+func (p *Process) LastStderr() string {
+	p.stderrMu.RLock()
+	defer p.stderrMu.RUnlock()
+	return p.lastStderr
+}
+
+func (p *Process) setLastStderr(s string) {
+	p.stderrMu.Lock()
+	p.lastStderr = s
+	p.stderrMu.Unlock()
 }
 
 // Stop sends SIGTERM, then SIGKILL after grace period.

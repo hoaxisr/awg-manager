@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -16,8 +17,12 @@ import (
 )
 
 const (
-	portRangeStart = 7681
-	portRangeEnd   = 7690
+	// ttydPort is the SINGLE fixed port we reserve for ttyd. The previous
+	// port-range search [7681..7690] let orphan ttyd processes from
+	// nechistogo-zавершённых awg-manager runs occupy slots one-by-one,
+	// up to 10 zombies. With a fixed port + killOrphanTtyd at startup,
+	// at most one ttyd process exists at any time.
+	ttydPort       = 7681
 	ttydBinary     = "ttyd"
 	loginBinary    = "login"
 	opkgBinary     = "opkg"
@@ -64,7 +69,9 @@ func (m *ManagerImpl) Install(ctx context.Context) error {
 	return nil
 }
 
-// Start launches ttyd on a free localhost port.
+// Start launches ttyd on the reserved port. Kills any orphan ttyd
+// processes from prior unclean shutdowns of awg-manager before binding —
+// see killOrphanTtyd.
 func (m *ManagerImpl) Start(ctx context.Context) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -74,11 +81,24 @@ func (m *ManagerImpl) Start(ctx context.Context) (int, error) {
 		return m.port, nil // already running
 	}
 
+	// Reap orphan ttyd zombies before claiming the port. No-op on success
+	// path; logs how many were killed when there were any.
+	if killed := killOrphanTtyd(); len(killed) > 0 {
+		pids := make([]string, len(killed))
+		for i, p := range killed {
+			pids[i] = strconv.Itoa(p)
+		}
+		m.log.AppLog(logging.LevelInfo, logGroup, logSubgroup, "cleanup", "ttyd",
+			fmt.Sprintf("killed %d orphan ttyd process(es): %s", len(killed), strings.Join(pids, ", ")))
+		// Kernel needs a moment to release the TCP socket after SIGKILL.
+		time.Sleep(200 * time.Millisecond)
+	}
+
 	m.log.AppLog(logging.LevelInfo, logGroup, logSubgroup, "start", "ttyd", "starting ttyd")
 
 	var lastErr error
 	for attempt := 1; attempt <= startAttempts; attempt++ {
-		port, err := m.findFreePort()
+		port, err := m.claimPort()
 		if err != nil {
 			return 0, err
 		}
@@ -338,15 +358,16 @@ func (m *ManagerImpl) Port() int {
 	return m.port
 }
 
-// findFreePort finds an available port in the range [7681, 7690].
+// claimPort returns the reserved ttyd port if it is free. Called after
+// killOrphanTtyd, so a busy port here means something else (not our prior
+// orphan) is holding it — surface as error rather than fall back to a
+// different port.
 // Must be called with mu held.
-func (m *ManagerImpl) findFreePort() (int, error) {
-	for port := portRangeStart; port <= portRangeEnd; port++ {
-		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-		if err == nil {
-			ln.Close()
-			return port, nil
-		}
+func (m *ManagerImpl) claimPort() (int, error) {
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", ttydPort))
+	if err != nil {
+		return 0, fmt.Errorf("port %d busy after orphan cleanup: %w", ttydPort, err)
 	}
-	return 0, fmt.Errorf("no free port in range %d-%d", portRangeStart, portRangeEnd)
+	ln.Close()
+	return ttydPort, nil
 }

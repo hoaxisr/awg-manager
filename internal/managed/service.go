@@ -13,13 +13,16 @@ import (
 )
 
 // ManagedServerService defines the interface for managed WireGuard server operations.
+//
+// Every per-server method takes the server id (InterfaceName, e.g. "Wireguard0")
+// as the first argument after ctx. List() returns every configured server.
 type ManagedServerService interface {
 	// Server CRUD
 	Create(ctx context.Context, req CreateServerRequest) (*storage.ManagedServer, error)
-	Get() *storage.ManagedServer
-	Update(ctx context.Context, req UpdateServerRequest) error
-	Delete(ctx context.Context) error
-	GetInterfaceName() string
+	List() []storage.ManagedServer
+	Get(id string) (*storage.ManagedServer, error)
+	Update(ctx context.Context, id string, req UpdateServerRequest) error
+	Delete(ctx context.Context, id string) error
 
 	// SuggestAddress returns a free private /24 (host .1) for the
 	// "Create server" UI, scanning live router interfaces to avoid
@@ -27,30 +30,30 @@ type ManagedServerService interface {
 	SuggestAddress(ctx context.Context) (address string, mask string, err error)
 
 	// Enable/disable
-	SetEnabled(ctx context.Context, enabled bool) error
+	SetEnabled(ctx context.Context, id string, enabled bool) error
 
 	// NAT
-	SetNAT(ctx context.Context, enabled bool) error
+	SetNAT(ctx context.Context, id string, enabled bool) error
 
 	// Policy
-	SetPolicy(ctx context.Context, policy string) error
+	SetPolicy(ctx context.Context, id, policy string) error
 	ListPolicies(ctx context.Context) ([]PolicyOption, error)
 
 	// Peer management
-	AddPeer(ctx context.Context, req AddPeerRequest) (*storage.ManagedPeer, error)
-	UpdatePeer(ctx context.Context, pubkey string, req UpdatePeerRequest) error
-	DeletePeer(ctx context.Context, pubkey string) error
-	TogglePeer(ctx context.Context, pubkey string, enabled bool) error
+	AddPeer(ctx context.Context, id string, req AddPeerRequest) (*storage.ManagedPeer, error)
+	UpdatePeer(ctx context.Context, id, pubkey string, req UpdatePeerRequest) error
+	DeletePeer(ctx context.Context, id, pubkey string) error
+	TogglePeer(ctx context.Context, id, pubkey string, enabled bool) error
 
 	// Config generation
-	GenerateConf(ctx context.Context, pubkey string) (string, error)
+	GenerateConf(ctx context.Context, id, pubkey string) (string, error)
 
 	// Runtime stats
-	GetStats(ctx context.Context) (*ManagedServerStats, error)
+	GetStats(ctx context.Context, id string) (*ManagedServerStats, error)
 
 	// ASC params
-	GetASCParams(ctx context.Context) (json.RawMessage, error)
-	SetASCParams(ctx context.Context, params json.RawMessage) error
+	GetASCParams(ctx context.Context, id string) (json.RawMessage, error)
+	SetASCParams(ctx context.Context, id string, params json.RawMessage) error
 }
 
 // rciPoster is the minimal POST surface managed needs from the NDMS transport.

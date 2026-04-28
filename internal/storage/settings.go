@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion = 13
+	CurrentSchemaVersion = 15
 	DefaultPort          = 2222
 	DefaultInterface     = "br0"
 )
@@ -97,6 +97,12 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		if settings.SchemaVersion < 13 {
 			s.migrateToV13(&settings)
 		}
+		if settings.SchemaVersion < 14 {
+			s.migrateToV14(&settings)
+		}
+		if settings.SchemaVersion < 15 {
+			s.migrateToV15(&settings)
+		}
 		// Save migrated settings
 		if err := s.saveUnlocked(&settings); err != nil {
 			return nil, err
@@ -132,6 +138,11 @@ func (s *SettingsStore) defaultSettings() *Settings {
 		},
 		Updates: UpdateSettings{
 			CheckEnabled: true,
+		},
+		SingboxRouter: SingboxRouterSettings{
+			Enabled:         false,
+			RefreshMode:     "interval",
+			RefreshInterval: 24,
 		},
 	}
 }
@@ -219,7 +230,6 @@ func (s *SettingsStore) migrateToV9(settings *Settings) {
 
 // migrateToV10 migrates settings from v9 to v10.
 func (s *SettingsStore) migrateToV10(settings *Settings) {
-	// HiddenSystemTunnels zero value (nil) is correct default
 	settings.SchemaVersion = 10
 }
 
@@ -240,55 +250,146 @@ func (s *SettingsStore) migrateToV13(settings *Settings) {
 	settings.SchemaVersion = 13
 }
 
-// GetManagedServer returns a deep copy of the managed server or nil if not created.
-func (s *SettingsStore) GetManagedServer() *ManagedServer {
-	settings, err := s.Get()
-	if err != nil {
-		return nil
+// migrateToV14 sets SingboxRouter defaults for the new TProxy routing
+// engine. Idempotent — fields that are non-zero stay as-is.
+// Note: Mode field was removed in V15; only RefreshMode/RefreshInterval are set here.
+func (s *SettingsStore) migrateToV14(settings *Settings) {
+	if settings.SingboxRouter.RefreshMode == "" {
+		settings.SingboxRouter.RefreshMode = "interval"
 	}
-	if settings.ManagedServer == nil {
-		return nil
+	if settings.SingboxRouter.RefreshInterval == 0 {
+		settings.SingboxRouter.RefreshInterval = 24
 	}
-	// Deep copy to prevent mutation of shared state
-	orig := settings.ManagedServer
-	cp := *orig
-	cp.Peers = make([]ManagedPeer, len(orig.Peers))
-	copy(cp.Peers, orig.Peers)
-	// Normalize Policy: legacy records (or fresh records before first
-	// SetPolicy) carry an empty string; surface as "none" everywhere.
-	// File is rewritten with "none" on next mutation, no migration needed.
-	if cp.Policy == "" {
-		cp.Policy = "none"
-	}
-	return &cp
+	settings.SchemaVersion = 14
 }
 
-// SaveManagedServer saves the managed server configuration.
-func (s *SettingsStore) SaveManagedServer(server *ManagedServer) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	settings := s.settings
-	if settings == nil {
-		return fmt.Errorf("settings not loaded")
-	}
-
-	settings.ManagedServer = server
-	return s.saveUnlocked(settings)
+// migrateToV15 wipes deprecated SingboxRouterSettings fields (Mode,
+// ClientScope) and force-disables the router so the user re-selects
+// a policy via the new policy-mode UI. Per redesign 2026-04-28:
+// no users to preserve, simplest fail-safe.
+func (s *SettingsStore) migrateToV15(settings *Settings) {
+	settings.SingboxRouter.PolicyName = ""
+	settings.SingboxRouter.Enabled = false
+	settings.SchemaVersion = 15
 }
 
-// DeleteManagedServer removes the managed server configuration.
-func (s *SettingsStore) DeleteManagedServer() error {
+// migrateManagedServers moves a legacy singular managedServer into the
+// new ManagedServers slice. Idempotent. Caller holds s.mu.
+func (s *SettingsStore) migrateManagedServers() {
+	if s.settings == nil || s.settings.ManagedServer == nil {
+		return
+	}
+	// Prepend so an existing slice (theoretically already migrated) keeps
+	// its order — but in practice mass migration only fires once, when
+	// the slice is empty.
+	migrated := append([]ManagedServer{*s.settings.ManagedServer}, s.settings.ManagedServers...)
+	s.settings.ManagedServers = migrated
+	s.settings.ManagedServer = nil
+}
+
+// GetManagedServers returns a deep copy of all managed servers, ordered
+// by creation time. Empty slice (never nil) when no servers exist.
+func (s *SettingsStore) GetManagedServers() []ManagedServer {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.settings == nil {
+		return []ManagedServer{}
+	}
+	s.migrateManagedServers()
+	out := make([]ManagedServer, len(s.settings.ManagedServers))
+	for i, src := range s.settings.ManagedServers {
+		cp := src
+		cp.Peers = append([]ManagedPeer(nil), src.Peers...)
+		if cp.Policy == "" {
+			cp.Policy = "none"
+		}
+		out[i] = cp
+	}
+	return out
+}
 
-	settings := s.settings
-	if settings == nil {
+// GetManagedServerByID returns a deep copy of one server, or (nil, false)
+// when not found. id == server.InterfaceName.
+func (s *SettingsStore) GetManagedServerByID(id string) (*ManagedServer, bool) {
+	for _, sv := range s.GetManagedServers() {
+		if sv.InterfaceName == id {
+			cp := sv
+			return &cp, true
+		}
+	}
+	return nil, false
+}
+
+// AddManagedServer appends a new server. Errors if interfaceName collides.
+func (s *SettingsStore) AddManagedServer(server ManagedServer) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
+	s.migrateManagedServers()
+	for _, existing := range s.settings.ManagedServers {
+		if existing.InterfaceName == server.InterfaceName {
+			return fmt.Errorf("server %q already exists", server.InterfaceName)
+		}
+	}
+	s.settings.ManagedServers = append(s.settings.ManagedServers, server)
+	return s.saveUnlocked(s.settings)
+}
 
-	settings.ManagedServer = nil
-	return s.saveUnlocked(settings)
+// UpdateManagedServer applies mut to the server with the given id and
+// persists. Errors if id not found or mut returns error.
+//
+// mut MUST be effect-free on error: validate inputs before any mutation,
+// because a returned error skips persistence and leaves the in-memory
+// struct partially mutated otherwise — subsequent reads would observe
+// the divergence.
+func (s *SettingsStore) UpdateManagedServer(id string, mut func(*ManagedServer) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	s.migrateManagedServers()
+	for i := range s.settings.ManagedServers {
+		if s.settings.ManagedServers[i].InterfaceName == id {
+			if err := mut(&s.settings.ManagedServers[i]); err != nil {
+				return err
+			}
+			return s.saveUnlocked(s.settings)
+		}
+	}
+	return fmt.Errorf("server %q not found", id)
+}
+
+// DeleteManagedServer removes the server with the given id.
+func (s *SettingsStore) DeleteManagedServer(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	s.migrateManagedServers()
+	for i, existing := range s.settings.ManagedServers {
+		if existing.InterfaceName == id {
+			s.settings.ManagedServers = append(s.settings.ManagedServers[:i], s.settings.ManagedServers[i+1:]...)
+			return s.saveUnlocked(s.settings)
+		}
+	}
+	return fmt.Errorf("server %q not found", id)
+}
+
+// SaveManagedServers replaces the entire slice — used by migration tests
+// and bulk-rewrite callers. Most code should use Add/Update/Delete.
+func (s *SettingsStore) SaveManagedServers(servers []ManagedServer) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	s.settings.ManagedServers = servers
+	s.settings.ManagedServer = nil
+	return s.saveUnlocked(s.settings)
 }
 
 // MarkServerInterface adds an interface ID to the server interfaces list.
@@ -339,56 +440,6 @@ func (s *SettingsStore) IsServerInterface(id string) bool {
 		return false
 	}
 	return contains(settings.ServerInterfaces, id)
-}
-
-// IsSystemTunnelHidden checks if a system tunnel ID is in the hidden list.
-func (s *SettingsStore) IsSystemTunnelHidden(tunnelID string) bool {
-	settings, err := s.Get()
-	if err != nil {
-		return false
-	}
-	return contains(settings.HiddenSystemTunnels, tunnelID)
-}
-
-// HideSystemTunnel adds a tunnel ID to the hidden list.
-func (s *SettingsStore) HideSystemTunnel(tunnelID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	settings := s.settings
-	if settings == nil {
-		return fmt.Errorf("settings not loaded")
-	}
-
-	next, added := appendUnique(settings.HiddenSystemTunnels, tunnelID)
-	if !added {
-		return nil
-	}
-	settings.HiddenSystemTunnels = next
-	return s.saveUnlocked(settings)
-}
-
-// UnhideSystemTunnel removes a tunnel ID from the hidden list.
-func (s *SettingsStore) UnhideSystemTunnel(tunnelID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	settings := s.settings
-	if settings == nil {
-		return fmt.Errorf("settings not loaded")
-	}
-
-	settings.HiddenSystemTunnels = filterOut(settings.HiddenSystemTunnels, tunnelID)
-	return s.saveUnlocked(settings)
-}
-
-// GetHiddenSystemTunnels returns the list of hidden system tunnel IDs.
-func (s *SettingsStore) GetHiddenSystemTunnels() []string {
-	settings, err := s.Get()
-	if err != nil {
-		return nil
-	}
-	return settings.HiddenSystemTunnels
 }
 
 // migratePortFile reads port from old port file and removes it.
@@ -451,6 +502,18 @@ func (s *SettingsStore) IsAuthEnabled() bool {
 		return true // Default to auth enabled on error
 	}
 	return settings.AuthEnabled
+}
+
+// GetApiKey returns the configured API key, or empty string if none.
+// Used by the auth middleware to accept `Authorization: Bearer <key>` as
+// an alternative to a session cookie. On error returns empty (no key
+// match → request falls through to the session check).
+func (s *SettingsStore) GetApiKey() string {
+	settings, err := s.Get()
+	if err != nil {
+		return ""
+	}
+	return settings.ApiKey
 }
 
 // IsMemorySavingDisabled returns whether memory saving mode is disabled.

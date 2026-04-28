@@ -6,44 +6,42 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 )
 
-// LogForwarder streams sing-box's runtime log over the Clash API /logs
-// endpoint and republishes each line into the app's AppLogger under
-// (GroupSystem, SubSingbox). This replaces file-based logging — sing-box
-// itself writes stdout/stderr to /dev/null, and all runtime output
-// surfaces inside the awg-manager UI's log view like every other subsystem.
 type LogForwarder struct {
 	clashAddr string
-	logger    *logging.ScopedLogger
+	app       logging.AppLogger
 
-	// http is reused across reconnects; no Timeout because /logs is open-ended.
+	inbound  *logging.ScopedLogger
+	outbound *logging.ScopedLogger
+	dns      *logging.ScopedLogger
+	router   *logging.ScopedLogger
+	runtime  *logging.ScopedLogger
+
 	http *http.Client
 
-	// backoff between reconnect attempts when /logs is unavailable
-	// (e.g. sing-box not running yet, or just restarted).
 	reconnect time.Duration
 }
 
-// NewLogForwarder returns a forwarder that pushes log lines from the clash
-// API at clashAddr into appLogger. A nil appLogger is accepted — the
-// forwarder is still safe to Run but becomes a no-op.
 func NewLogForwarder(clashAddr string, appLogger logging.AppLogger) *LogForwarder {
 	return &LogForwarder{
 		clashAddr: clashAddr,
-		logger:    logging.NewScopedLogger(appLogger, logging.GroupSystem, logging.SubSingbox),
+		app:       appLogger,
+		inbound:   logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBInbound),
+		outbound:  logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBOutbound),
+		dns:       logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBDNS),
+		router:    logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBRouter),
+		runtime:   logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBRuntime),
 		http:      &http.Client{},
 		reconnect: 3 * time.Second,
 	}
 }
 
-// Run blocks until ctx is canceled. Reconnects to the /logs stream with
-// a small backoff whenever the connection drops (sing-box not running,
-// restart, network blip).
 func (f *LogForwarder) Run(ctx context.Context) {
 	for {
 		if ctx.Err() != nil {
@@ -59,7 +57,7 @@ func (f *LogForwarder) Run(ctx context.Context) {
 }
 
 func (f *LogForwarder) runOnce(ctx context.Context) {
-	url := fmt.Sprintf("http://%s/logs?level=info", f.clashAddr)
+	url := fmt.Sprintf("http://%s/logs?level=trace", f.clashAddr)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return
@@ -72,10 +70,6 @@ func (f *LogForwarder) runOnce(ctx context.Context) {
 	if resp.StatusCode != http.StatusOK {
 		return
 	}
-
-	// /logs is a streaming endpoint — one JSON object per line, no EOF
-	// until the server goes away. Bump the scanner buffer so a long
-	// single-line payload (e.g. a fatal stacktrace) isn't dropped.
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for sc.Scan() {
@@ -83,10 +77,66 @@ func (f *LogForwarder) runOnce(ctx context.Context) {
 	}
 }
 
-// clashLogEntry is the shape emitted by clash_api /logs.
 type clashLogEntry struct {
 	Type    string `json:"type"`
 	Payload string `json:"payload"`
+}
+
+var timestampPrefix = regexp.MustCompile(`^[+\-]\d{4}\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+(?:FATAL|ERROR|WARN|INFO|DEBUG|TRACE)\s+`)
+
+var connIDPrefix = regexp.MustCompile(`^\[\d+\s+[\d.]+[a-zµ]+\]\s+`)
+
+var contextBracket = regexp.MustCompile(`\[[^\]]*\]`)
+
+func classifyPayload(payload string) (subgroup, target, message string) {
+	msg := timestampPrefix.ReplaceAllString(payload, "")
+	msg = connIDPrefix.ReplaceAllString(msg, "")
+	msg = strings.TrimSpace(msg)
+
+	head, rest, hasSep := cutSegment(msg)
+	if !hasSep {
+		return logging.SubSBRuntime, "sing-box", msg
+	}
+
+	category, tag := splitCategory(head)
+	switch category {
+	case "inbound":
+		return logging.SubSBInbound, tagOr(tag, "inbound"), rest
+	case "outbound":
+		return logging.SubSBOutbound, tagOr(tag, "outbound"), rest
+	case "dns":
+		return logging.SubSBDNS, tagOr(tag, "dns"), rest
+	case "router", "route":
+		return logging.SubSBRouter, tagOr(tag, "router"), rest
+	default:
+		return logging.SubSBRuntime, tagOr(tag, "sing-box"), msg
+	}
+}
+
+func cutSegment(msg string) (head, rest string, ok bool) {
+	idx := strings.Index(msg, ": ")
+	if idx < 0 {
+		return msg, "", false
+	}
+	return msg[:idx], strings.TrimSpace(msg[idx+2:]), true
+}
+
+func splitCategory(head string) (category, tag string) {
+	if br := contextBracket.FindStringIndex(head); br != nil {
+		tag = strings.TrimSpace(head[br[0]+1 : br[1]-1])
+		head = strings.TrimSpace(head[:br[0]])
+	}
+	if i := strings.IndexAny(head, "/ "); i >= 0 {
+		return head[:i], tag
+	}
+	return head, tag
+}
+
+func tagOr(tag, fallback string) string {
+	if tag == "" {
+		return fallback
+	}
+	return tag
 }
 
 func (f *LogForwarder) forward(line []byte) {
@@ -101,16 +151,36 @@ func (f *LogForwarder) forward(line []byte) {
 	if payload == "" {
 		return
 	}
+	subgroup, target, message := classifyPayload(payload)
+	scoped := f.scopedFor(subgroup)
+	if scoped == nil {
+		return
+	}
 	switch strings.ToLower(strings.TrimSpace(e.Type)) {
 	case "error", "fatal", "panic":
-		f.logger.Error("run", "sing-box", payload)
+		scoped.Error("run", target, message)
 	case "warn", "warning":
-		f.logger.Warn("run", "sing-box", payload)
+		scoped.Warn("run", target, message)
 	case "info":
-		f.logger.Info("run", "sing-box", payload)
+		scoped.Info("run", target, message)
 	case "debug":
-		f.logger.Debug("run", "sing-box", payload)
+		scoped.Debug("run", target, message)
 	default:
-		f.logger.Full("run", "sing-box", payload)
+		scoped.Full("run", target, message)
+	}
+}
+
+func (f *LogForwarder) scopedFor(subgroup string) *logging.ScopedLogger {
+	switch subgroup {
+	case logging.SubSBInbound:
+		return f.inbound
+	case logging.SubSBOutbound:
+		return f.outbound
+	case logging.SubSBDNS:
+		return f.dns
+	case logging.SubSBRouter:
+		return f.router
+	default:
+		return f.runtime
 	}
 }

@@ -1,86 +1,218 @@
 @import 'tailwindcss';
 @import '@skeletonlabs/skeleton';
 
-/* Keep existing Tokyo Night custom styles below */
+/* ─── Self-hosted IBM Plex (Latin + Cyrillic subsets) ─── */
+@font-face {
+  font-family: 'IBM Plex Sans'; font-weight: 400; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-sans-latin-400-normal.woff2') format('woff2');
+  unicode-range: U+0000-007F, U+0080-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
+  font-family: 'IBM Plex Sans'; font-weight: 400; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-sans-cyrillic-400-normal.woff2') format('woff2');
+  unicode-range: U+0400-04FF, U+0500-052F;
+}
+@font-face {
+  font-family: 'IBM Plex Sans'; font-weight: 500; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-sans-latin-500-normal.woff2') format('woff2');
+  unicode-range: U+0000-007F, U+0080-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
+  font-family: 'IBM Plex Sans'; font-weight: 500; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-sans-cyrillic-500-normal.woff2') format('woff2');
+  unicode-range: U+0400-04FF, U+0500-052F;
+}
+@font-face {
+  font-family: 'IBM Plex Sans'; font-weight: 600; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-sans-latin-600-normal.woff2') format('woff2');
+  unicode-range: U+0000-007F, U+0080-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
+  font-family: 'IBM Plex Sans'; font-weight: 600; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-sans-cyrillic-600-normal.woff2') format('woff2');
+  unicode-range: U+0400-04FF, U+0500-052F;
+}
+@font-face {
+  font-family: 'IBM Plex Sans'; font-weight: 700; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-sans-latin-700-normal.woff2') format('woff2');
+  unicode-range: U+0000-007F, U+0080-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
+  font-family: 'IBM Plex Sans'; font-weight: 700; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-sans-cyrillic-700-normal.woff2') format('woff2');
+  unicode-range: U+0400-04FF, U+0500-052F;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; font-weight: 400; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-mono-latin-400-normal.woff2') format('woff2');
+  unicode-range: U+0000-007F, U+0080-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; font-weight: 400; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-mono-cyrillic-400-normal.woff2') format('woff2');
+  unicode-range: U+0400-04FF, U+0500-052F;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; font-weight: 500; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2');
+  unicode-range: U+0000-007F, U+0080-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; font-weight: 500; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-mono-cyrillic-500-normal.woff2') format('woff2');
+  unicode-range: U+0400-04FF, U+0500-052F;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; font-weight: 600; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-mono-latin-600-normal.woff2') format('woff2');
+  unicode-range: U+0000-007F, U+0080-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; font-weight: 600; font-style: normal; font-display: swap;
+  src: url('/fonts/ibm-plex-mono-cyrillic-600-normal.woff2') format('woff2');
+  unicode-range: U+0400-04FF, U+0500-052F;
+}
 
-/* Tokyo Night Theme */
+/* ─── Design tokens (Tailwind v4 @theme — single source of truth) ─── */
+@theme {
+  /* Colors — semantic */
+  --color-accent: #7aa2f7;
+  --color-accent-hover: #6e8bbb;
+  --color-success: #9ece6a;
+  --color-error: #f7768e;
+  --color-warning: #e0af68;
+  --color-info: #7dcfff;
+
+  /* Surfaces — 4-step ramp */
+  --color-bg-primary: #1a1b26;
+  --color-bg-secondary: #16161e;
+  --color-bg-tertiary: #24283b;
+  --color-bg-hover: #292e42;
+
+  /* Text */
+  --color-text-primary: #c0caf5;
+  --color-text-secondary: #a9b1d6;
+  --color-text-muted: #737aa2;
+
+  /* Borders */
+  --color-border: #3b4261;
+  --color-border-hover: #565f89;
+
+  /* Typography */
+  --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', SFMono-Regular, ui-monospace, monospace;
+
+  /* Radii — bumped 8/4 → 12/6 per design */
+  --radius: 12px;
+  --radius-sm: 6px;
+  --radius-pill: 999px;
+
+  /* Motion */
+  --t-fast: 150ms;
+  --t-med: 200ms;
+
+  /* Shadow */
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+
+  /* Tunneled row tint (3% accent wash for tables) */
+  --color-tunneled-row: rgba(122, 162, 247, 0.03);
+
+  /* Semantic tints — derived from semantic colors so light theme tracks automatically */
+  --color-error-tint: color-mix(in srgb, var(--color-error) 18%, transparent);
+  --color-error-border: color-mix(in srgb, var(--color-error) 40%, transparent);
+  --color-warning-tint: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  --color-warning-border: color-mix(in srgb, var(--color-warning) 40%, transparent);
+  --color-accent-tint: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  --color-accent-border: color-mix(in srgb, var(--color-accent) 40%, transparent);
+  --color-success-tint: color-mix(in srgb, var(--color-success) 18%, transparent);
+  --color-success-border: color-mix(in srgb, var(--color-success) 40%, transparent);
+  --color-broken: #f97316;
+  --color-broken-tint: color-mix(in srgb, var(--color-broken) 14%, transparent);
+  --color-broken-border: color-mix(in srgb, var(--color-broken) 40%, transparent);
+  --color-info-tint: color-mix(in srgb, var(--color-info) 18%, transparent);
+  --color-info-border: color-mix(in srgb, var(--color-info) 40%, transparent);
+  --color-muted-tint: color-mix(in srgb, var(--color-text-secondary) 12%, transparent);
+  --color-muted-border: color-mix(in srgb, var(--color-text-secondary) 30%, transparent);
+
+  /* Override Tailwind utility radii to match our scale */
+  --radius-md: var(--radius-sm);
+  --radius-lg: var(--radius);
+  --radius-xl: var(--radius);
+}
+
+/* ─── Light theme override ─── */
+html.light, [data-theme="light"] {
+  --color-accent: #4f6e9c;
+  --color-accent-hover: #6082b0;
+  --color-success: #5b8568;
+  --color-error: #9a4f60;
+  --color-warning: #a07a3f;
+  --color-info: #547e91;
+
+  --color-bg-primary: #e9e9ed;
+  --color-bg-secondary: #f0f0f3;
+  --color-bg-tertiary: #d5d6db;
+  --color-bg-hover: #cacbd2;
+
+  --color-text-primary: #343b58;
+  --color-text-secondary: #434754;
+  --color-text-muted: #545760;
+
+  --color-border: #b8b9c0;
+  --color-border-hover: #9a9ba2;
+
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+
+  --color-tunneled-row: rgba(46, 125, 233, 0.05);
+}
+
+/* ─── Backwards-compatible aliases (will be removed phase-by-phase) ─── */
 :root {
-	/* Dark theme (default) */
-	--bg-primary: #1a1b26;
-	--bg-secondary: #16161e;
-	--bg-tertiary: #24283b;
-	--bg-hover: #292e42;
-
-	--text-primary: #c0caf5;
-	--text-secondary: #a9b1d6;
-	--text-muted: #737aa2;
-
-	--accent: #7aa2f7;
-	--accent-hover: #89b4fa;
-
-	--success: #9ece6a;
-	--error: #f7768e;
-	--warning: #e0af68;
-	--info: #7dcfff;
-
-	--border: #3b4261;
-	--border-hover: #565f89;
-
-	--shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-	--radius: 8px;
-	--radius-sm: 4px;
+  --accent: var(--color-accent);
+  --accent-hover: var(--color-accent-hover);
+  --success: var(--color-success);
+  --error: var(--color-error);
+  --warning: var(--color-warning);
+  --info: var(--color-info);
+  --bg-primary: var(--color-bg-primary);
+  --bg-secondary: var(--color-bg-secondary);
+  --bg-tertiary: var(--color-bg-tertiary);
+  --bg-hover: var(--color-bg-hover);
+  --text-primary: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-muted: var(--color-text-muted);
+  --text-tertiary: var(--color-text-muted);
+  --border: var(--color-border);
+  --border-hover: var(--color-border-hover);
 }
 
-[data-theme="light"] {
-	--bg-primary: #e9e9ed;
-	--bg-secondary: #f0f0f3;
-	--bg-tertiary: #d5d6db;
-	--bg-hover: #cacbd2;
-
-	--text-primary: #343b58;
-	--text-secondary: #434754;
-	--text-muted: #545760;
-
-	--accent: #2e7de9;
-	--accent-hover: #166bda;
-
-	--success: #118c74;
-	--error: #f52a65;
-	--warning: #bf8f00;
-	--info: #007197;
-
-	--border: #b8b9c0;
-	--border-hover: #9a9ba2;
-
-	--shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-/* Reset */
+/* ─── Reset ─── */
 *, *::before, *::after {
-	box-sizing: border-box;
-	margin: 0;
-	padding: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
 html, body {
-	height: 100%;
-	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-	font-size: 14px;
-	line-height: 1.5;
-	background: var(--bg-primary);
-	color: var(--text-primary);
+  height: 100%;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
 }
 
 #app {
-	min-height: 100%;
-	display: flex;
-	flex-direction: column;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
-/* Typography */
+/* ─── Typography ─── */
 h1, h2, h3, h4 {
-	font-weight: 600;
-	color: var(--text-primary);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  line-height: 1.2;
 }
 
 h1 { font-size: 1.75rem; }
@@ -89,112 +221,12 @@ h3 { font-size: 1.25rem; }
 h4 { font-size: 1.1rem; }
 
 a {
-	color: var(--accent);
-	text-decoration: none;
+  color: var(--color-accent);
+  text-decoration: none;
 }
 
 a:hover {
-	color: var(--accent-hover);
-}
-
-/* Buttons */
-.btn {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	gap: 0.5rem;
-	padding: 0.5rem 1rem;
-	border: none;
-	border-radius: var(--radius-sm);
-	font-size: 0.875rem;
-	font-weight: 500;
-	cursor: pointer;
-	transition: all 0.15s ease;
-}
-
-.btn:disabled {
-	opacity: 0.5;
-	cursor: not-allowed;
-}
-
-.btn-primary {
-	background: var(--accent);
-	color: white;
-}
-
-.btn-primary:hover:not(:disabled) {
-	background: var(--accent-hover);
-	color: white;
-}
-
-.btn-secondary {
-	background: var(--bg-tertiary);
-	color: var(--text-primary);
-	border: 1px solid var(--border);
-}
-
-.btn-secondary:hover:not(:disabled) {
-	background: var(--bg-hover);
-	border-color: var(--border-hover);
-}
-
-.btn-danger {
-	background: var(--error);
-	color: white;
-}
-
-.btn-danger:hover:not(:disabled) {
-	filter: brightness(1.1);
-}
-
-.btn-success {
-	background: var(--success);
-	color: white;
-}
-
-.btn-success:hover:not(:disabled) {
-	filter: brightness(1.1);
-}
-
-.btn-warning {
-	background: var(--warning);
-	color: #1a1b26;
-}
-
-.btn-warning:hover:not(:disabled) {
-	filter: brightness(1.1);
-}
-
-.btn-ghost {
-	background: transparent;
-	color: var(--text-secondary);
-	border: none;
-}
-
-.btn-ghost:hover:not(:disabled) {
-	background: var(--bg-hover);
-	color: var(--text-primary);
-}
-
-.btn-icon {
-	padding: 0.5rem;
-	background: transparent;
-	color: var(--text-secondary);
-}
-
-.btn-icon:hover:not(:disabled) {
-	color: var(--text-primary);
-	background: var(--bg-hover);
-}
-
-.btn-sm {
-	padding: 0.25rem 0.5rem;
-	font-size: 0.75rem;
-}
-
-.btn-lg {
-	padding: 0.75rem 1.5rem;
-	font-size: 1rem;
+  color: var(--color-accent-hover);
 }
 
 /* Form elements */
@@ -913,3 +945,173 @@ label {
 .proto-tcp { background: rgba(122,162,247,0.15); color: var(--accent); }
 .proto-udp { background: rgba(34,197,94,0.15); color: var(--success, #22c55e); }
 .proto-icmp { background: rgba(245,158,11,0.15); color: var(--warning, #f59e0b); }
+
+/* ─── Tunnel/server card grid (auto-fill 360px min) ─── */
+.tunnel-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+	gap: 14px;
+}
+
+/* ─── Bare form-control primitives (for inline grid contexts where the Input/Select
+       components' column-layout doesn't fit). Visual styling matches Input.svelte
+       and Select.svelte — keep them in sync if either one changes. ─── */
+.field-input,
+.field-select,
+.field-textarea {
+	width: 100%;
+	background: var(--color-bg-primary);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+	color: var(--color-text-primary);
+	font: inherit;
+	font-size: 13px;
+	padding: 0.4375rem 0.625rem;
+	line-height: 1.4;
+	transition: border-color var(--t-fast) ease;
+}
+
+.field-input::placeholder,
+.field-textarea::placeholder {
+	color: var(--color-text-muted);
+}
+
+.field-input:focus,
+.field-select:focus,
+.field-textarea:focus {
+	outline: none;
+	border-color: var(--color-accent);
+}
+
+.field-input:disabled,
+.field-select:disabled,
+.field-textarea:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.field-input.is-error,
+.field-select.is-error,
+.field-textarea.is-error {
+	border-color: var(--color-error);
+}
+
+.field-input[type="number"] {
+	-moz-appearance: textfield;
+	appearance: textfield;
+}
+.field-input[type="number"]::-webkit-outer-spin-button,
+.field-input[type="number"]::-webkit-inner-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+}
+
+.field-select {
+	padding-right: 2rem;
+	appearance: none;
+	-webkit-appearance: none;
+	cursor: pointer;
+	background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23737aa2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+	background-repeat: no-repeat;
+	background-position: right 0.5rem center;
+	background-size: 16px;
+}
+
+.field-textarea {
+	resize: vertical;
+	min-height: 4rem;
+	font-family: var(--font-mono);
+}
+
+/* Compact modifier — used in dense filter rows, inline toolbars, etc. */
+.field-input.compact,
+.field-select.compact {
+	font-size: 0.75rem;
+	padding: 0.3rem 0.5rem;
+}
+.field-select.compact {
+	padding-right: 1.75rem;
+	background-position: right 0.375rem center;
+	background-size: 14px;
+}
+
+.field-hint {
+	font-size: 12px;
+	color: var(--color-text-muted);
+	line-height: 1.5;
+	margin-top: 4px;
+}
+
+.field-hint.is-error {
+	color: var(--color-error);
+}
+
+.field-label {
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--color-text-secondary);
+}
+
+/* ─── Chip primitive (filter pills, action pills, level toggles) ─── */
+.chip {
+	display: inline-flex;
+	align-items: center;
+	background: transparent;
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-pill);
+	padding: 0.25rem 0.625rem;
+	font-family: var(--font-mono);
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--color-text-muted);
+	cursor: pointer;
+	transition: background var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
+	white-space: nowrap;
+}
+
+.chip:hover:not(:disabled) {
+	color: var(--color-text-primary);
+	border-color: var(--color-border-hover);
+}
+
+.chip:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+.chip-level-error.chip-active {
+	background: var(--color-error-tint);
+	color: var(--color-error);
+	border-color: var(--color-error-border);
+}
+.chip-level-warn.chip-active {
+	background: var(--color-warning-tint);
+	color: var(--color-warning);
+	border-color: var(--color-warning-border);
+}
+.chip-level-info.chip-active {
+	background: var(--color-accent-tint);
+	color: var(--color-accent);
+	border-color: var(--color-accent-border);
+}
+.chip-level-full.chip-active {
+	background: var(--color-info-tint);
+	color: var(--color-info);
+	border-color: var(--color-info-border);
+}
+.chip-level-debug.chip-active {
+	background: var(--color-muted-tint);
+	color: var(--color-text-secondary);
+	border-color: var(--color-muted-border);
+}
+
+.chip-group-pill.chip-active {
+	background: var(--color-bg-hover);
+	color: var(--color-text-primary);
+	border-color: var(--color-text-muted);
+}
+
+.chip-danger:hover:not(:disabled) {
+	color: var(--color-error);
+	border-color: var(--color-error-border);
+}

@@ -212,7 +212,7 @@
 		flex-direction: column;
 		gap: 2px;
 		padding: 4px;
-		border-radius: 6px;
+		border-radius: var(--radius-sm);
 		transition: background 0.15s;
 	}
 

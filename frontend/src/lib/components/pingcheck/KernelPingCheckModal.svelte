@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { Modal } from '$lib/components/ui';
+	import { SideDrawer, Button, Dropdown } from '$lib/components/ui';
 	import type { AWGTunnel } from '$lib/types';
 
 	interface Props {
@@ -85,48 +85,53 @@
 	}
 </script>
 
-<Modal {open} title="Настройки мониторинга: {tunnelName}" size="sm" {onclose}>
+<SideDrawer {open} onClose={onclose} title="Pingcheck: {tunnelName}">
 	{#if loading}
 		<div class="loading-state">Загрузка...</div>
 	{:else}
 		<div class="form-grid">
 			<div class="field">
-				<label class="field-label" for="kpc-method">Метод</label>
-				<select id="kpc-method" class="input" bind:value={method}>
-					<option value="http">HTTP 204</option>
-					<option value="icmp">ICMP</option>
-				</select>
+				<Dropdown
+					id="kpc-method"
+					label="Метод"
+					bind:value={method}
+					options={[
+						{ value: 'http', label: 'HTTP 204' },
+						{ value: 'icmp', label: 'ICMP' },
+					]}
+					fullWidth
+				/>
 			</div>
 
 			<div class="field">
 				<label class="field-label" for="kpc-target">Цель</label>
-				<input id="kpc-target" type="text" class="input" bind:value={target} placeholder="8.8.8.8" />
+				<input id="kpc-target" type="text" class="field-input" bind:value={target} placeholder="8.8.8.8" />
 			</div>
 
 			<div class="field">
 				<label class="field-label" for="kpc-interval">Интервал (сек)</label>
-				<input id="kpc-interval" type="number" class="input" bind:value={interval} min="10" max="600" />
+				<input id="kpc-interval" type="number" class="field-input" bind:value={interval} min="10" max="600" />
 			</div>
 
 			<div class="field">
 				<label class="field-label" for="kpc-dead">Интервал при dead (сек)</label>
-				<input id="kpc-dead" type="number" class="input" bind:value={deadInterval} min="30" max="600" />
+				<input id="kpc-dead" type="number" class="field-input" bind:value={deadInterval} min="30" max="600" />
 			</div>
 
 			<div class="field">
 				<label class="field-label" for="kpc-threshold">Порог ошибок</label>
-				<input id="kpc-threshold" type="number" class="input" bind:value={failThreshold} min="1" max="20" />
+				<input id="kpc-threshold" type="number" class="field-input" bind:value={failThreshold} min="1" max="20" />
 			</div>
 		</div>
 	{/if}
 
-	{#snippet actions()}
-		<button class="btn btn-ghost" onclick={onclose}>Отмена</button>
-		<button class="btn btn-primary" onclick={handleSave} disabled={saving || loading}>
-			{saving ? 'Сохранение...' : 'Сохранить'}
-		</button>
+	{#snippet footer()}
+		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
+		<Button variant="primary" size="md" onclick={handleSave} disabled={loading} loading={saving}>
+			Сохранить
+		</Button>
 	{/snippet}
-</Modal>
+</SideDrawer>
 
 <style>
 	.form-grid {
@@ -144,12 +149,12 @@
 	.field-label {
 		font-size: 0.6875rem;
 		text-transform: uppercase;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.loading-state {
 		text-align: center;
 		padding: 2rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 </style>

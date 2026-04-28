@@ -37,7 +37,7 @@
     .indicator {
         font-size: 0.75rem;
         padding: 2px 8px;
-        border-radius: 4px;
+        border-radius: var(--radius-sm);
         white-space: nowrap;
     }
     .indicator-pending {

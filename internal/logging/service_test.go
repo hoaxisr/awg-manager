@@ -2,6 +2,7 @@ package logging
 
 import (
 	"testing"
+	"time"
 )
 
 // mockSettings implements SettingsGetter for testing.
@@ -89,7 +90,7 @@ func TestService_AppLogWhenEnabled(t *testing.T) {
 		t.Errorf("Len() = %d, want 1", svc.Len())
 	}
 
-	logs, _ := svc.GetLogs("", "", "", 200, 0)
+	logs, _ := svc.GetLogs("", "", "", time.Time{}, 200, 0)
 	if len(logs) != 1 {
 		t.Fatalf("GetLogs() len = %d, want 1", len(logs))
 	}
@@ -119,7 +120,7 @@ func TestService_AppLogWarn(t *testing.T) {
 
 	svc.AppLog(LevelWarn, GroupTunnel, SubLifecycle, "start", "awg0", "Tunnel already running")
 
-	logs, _ := svc.GetLogs("", "", "", 200, 0)
+	logs, _ := svc.GetLogs("", "", "", time.Time{}, 200, 0)
 	if len(logs) != 1 {
 		t.Fatalf("GetLogs() len = %d, want 1", len(logs))
 	}
@@ -141,7 +142,7 @@ func TestService_AppLogError(t *testing.T) {
 		t.Errorf("Len() = %d, want 1 (error always visible)", svc.Len())
 	}
 
-	logs, total := svc.GetLogs("", "", "", 200, 0)
+	logs, total := svc.GetLogs("", "", "", time.Time{}, 200, 0)
 	if total != 1 {
 		t.Errorf("total = %d, want 1", total)
 	}
@@ -160,7 +161,7 @@ func TestService_GetLogsPagination(t *testing.T) {
 	}
 
 	// First page
-	logs, total := svc.GetLogs("", "", "", 3, 0)
+	logs, total := svc.GetLogs("", "", "", time.Time{}, 3, 0)
 	if total != 10 {
 		t.Errorf("total = %d, want 10", total)
 	}
@@ -169,7 +170,7 @@ func TestService_GetLogsPagination(t *testing.T) {
 	}
 
 	// Last page
-	logs, total = svc.GetLogs("", "", "", 3, 9)
+	logs, total = svc.GetLogs("", "", "", time.Time{}, 3, 9)
 	if total != 10 {
 		t.Errorf("total = %d, want 10", total)
 	}
@@ -178,7 +179,7 @@ func TestService_GetLogsPagination(t *testing.T) {
 	}
 
 	// Default limit (0 → 200)
-	logs, total = svc.GetLogs("", "", "", 0, 0)
+	logs, total = svc.GetLogs("", "", "", time.Time{}, 0, 0)
 	if total != 10 {
 		t.Errorf("total (default limit) = %d, want 10", total)
 	}
@@ -246,27 +247,28 @@ func TestService_GetLogsFiltered(t *testing.T) {
 	svc.AppLog(LevelInfo, GroupSystem, SubSettings, "update", "", "msg3")
 
 	// Filter by group
-	logs, _ := svc.GetLogs(GroupTunnel, "", "", 200, 0)
+	logs, _ := svc.GetLogs(GroupTunnel, "", "", time.Time{}, 200, 0)
 	if len(logs) != 2 {
 		t.Errorf("GetLogs(tunnel) len = %d, want 2", len(logs))
 	}
 
 	// Filter by level
-	logs, _ = svc.GetLogs("", "", string(LevelWarn), 200, 0)
+	logs, _ = svc.GetLogs("", "", string(LevelWarn), time.Time{}, 200, 0)
 	if len(logs) != 1 {
 		t.Errorf("GetLogs(warn) len = %d, want 1", len(logs))
 	}
 
 	// Filter by subgroup
-	logs, _ = svc.GetLogs("", SubLifecycle, "", 200, 0)
+	logs, _ = svc.GetLogs("", SubLifecycle, "", time.Time{}, 200, 0)
 	if len(logs) != 1 {
 		t.Errorf("GetLogs(lifecycle) len = %d, want 1", len(logs))
 	}
 
-	// Filter by group + level
-	logs, _ = svc.GetLogs(GroupTunnel, "", string(LevelInfo), 200, 0)
-	if len(logs) != 1 {
-		t.Errorf("GetLogs(tunnel, info) len = %d, want 1", len(logs))
+	// Filter by group + level (info): tunnel has info+warn; warn is always
+	// visible AND info <= info → both match → 2.
+	logs, _ = svc.GetLogs(GroupTunnel, "", string(LevelInfo), time.Time{}, 200, 0)
+	if len(logs) != 2 {
+		t.Errorf("GetLogs(tunnel, info) len = %d, want 2", len(logs))
 	}
 }
 
@@ -315,7 +317,7 @@ func TestScopedLogger(t *testing.T) {
 		t.Errorf("Len() = %d, want 5", svc.Len())
 	}
 
-	logs, _ := svc.GetLogs("", "", "", 200, 0)
+	logs, _ := svc.GetLogs("", "", "", time.Time{}, 200, 0)
 	// All should have GroupTunnel and SubLifecycle
 	for _, entry := range logs {
 		if entry.Group != GroupTunnel {

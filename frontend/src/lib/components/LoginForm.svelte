@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { auth } from '$lib/stores/auth';
+	import { Button } from '$lib/components/ui';
 
 	let login = $state('');
 	let password = $state('');
@@ -65,18 +66,19 @@
 				/>
 			</div>
 
-			<button
-				type="submit"
-				class="btn btn-primary btn-lg login-button"
-				disabled={submitting || !login || !password}
-			>
-				{#if submitting}
-					<span class="spinner"></span>
-					Вход...
-				{:else}
-					Войти
-				{/if}
-			</button>
+			<!-- TODO Phase 1: Button primitive has no `lg` size yet — using `md`; revisit when `lg` lands. -->
+			<div class="login-button">
+				<Button
+					type="submit"
+					variant="primary"
+					size="md"
+					fullWidth
+					disabled={!login || !password}
+					loading={submitting}
+				>
+					{submitting ? 'Вход...' : 'Войти'}
+				</Button>
+			</div>
 		</form>
 
 		<p class="login-hint">
@@ -151,7 +153,6 @@
 	}
 
 	.login-button {
-		width: 100%;
 		margin-top: 0.5rem;
 	}
 
@@ -160,18 +161,5 @@
 		text-align: center;
 		font-size: 0.75rem;
 		color: var(--text-muted);
-	}
-
-	.spinner {
-		width: 16px;
-		height: 16px;
-		border: 2px solid transparent;
-		border-top-color: currentColor;
-		border-radius: 50%;
-		animation: spin 0.6s linear infinite;
-	}
-
-	@keyframes spin {
-		to { transform: rotate(360deg); }
 	}
 </style>

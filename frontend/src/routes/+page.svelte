@@ -6,10 +6,9 @@
 	import { systemInfo as systemInfoStore } from '$lib/stores/system';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
-	import { TunnelCard, ExternalTunnelCard, AdoptTunnelDialog, SystemTunnelCard } from '$lib/components/tunnels';
-	import TunnelTabs from '$lib/components/tunnels/TunnelTabs.svelte';
+	import { TunnelCard, ExternalTunnelCard, AdoptTunnelDialog, SystemTunnelCard, TunnelReferencedModal } from '$lib/components/tunnels';
 	import { PageContainer, LoadingSpinner } from '$lib/components/layout';
-	import { Modal, StoreStatusBadge, TrafficChartModal } from '$lib/components/ui';
+	import { Modal, StoreStatusBadge, TrafficChartModal, Button, Badge, Tabs } from '$lib/components/ui';
 	import { singboxStatus, singboxTunnels } from '$lib/stores/singbox';
 	import { SingboxInstallBanner, SingboxTunnelCard, SingboxGhostTerminal } from '$lib/components/singbox';
 	import { feedTraffic } from '$lib/stores/traffic';
@@ -64,6 +63,8 @@
 	let toggleLoading = $state<Record<string, boolean>>({});
 	let deleteLoading = $state<Record<string, boolean>>({});
 	let deleteConfirmId = $state<string | null>(null);
+	let referencedDetails = $state<import('$lib/types').TunnelReferencedError | null>(null);
+	let referencedTunnelName = $state<string>('');
 
 	let detailId = $state<string | null>(null);
 
@@ -86,16 +87,6 @@
 		const q = $page.url.searchParams.get('detail');
 		detailId = q && q.length > 0 ? q : null;
 	});
-
-	async function hideSystemTunnel(id: string) {
-		try {
-			await api.hideSystemTunnel(id);
-			tunnels.invalidate();
-			notifications.success(`Туннель ${id} скрыт. Вернуть можно в настройках.`);
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка скрытия туннеля');
-		}
-	}
 
 	async function markAsServer(id: string) {
 		try {
@@ -147,7 +138,15 @@
 				notifications.error('Не удалось верифицировать удаление');
 			}
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Не удалось удалить туннель');
+			if (e instanceof Error && e.message === 'tunnel_referenced') {
+				const refErr = e as Error & {
+					details: import('$lib/types').TunnelReferencedError;
+				};
+				referencedDetails = refErr.details;
+				referencedTunnelName = awgList.find((t) => t.id === id)?.name ?? id;
+			} else {
+				notifications.error(e instanceof Error ? e.message : 'Не удалось удалить туннель');
+			}
 		} finally {
 			const { [id]: _, ...rest } = deleteLoading;
 			deleteLoading = rest;
@@ -171,6 +170,11 @@
 
 	// Tabs
 	let activeTab = $state<TunnelTab>('awg');
+
+	const tunnelTabs = $derived([
+		{ id: 'awg', label: 'AWG', badge: awgList.length + systemList.length },
+		{ id: 'singbox', label: 'Sing-box', badge: singboxTunnelsList.length },
+	]);
 
 	onMount(() => {
 		// URL query wins over sessionStorage — lets other pages
@@ -310,16 +314,16 @@
 	<title>Туннели - AWG Manager</title>
 </svelte:head>
 
-<PageContainer>
+<PageContainer width="full">
 	{#if loading}
 		<div class="py-12">
 			<LoadingSpinner size="lg" message="Загрузка туннелей..." />
 		</div>
 	{:else}
-		<TunnelTabs
-			bind:active={activeTab}
-			awgCount={awgList.length + systemList.length}
-			singboxCount={singboxTunnelsList.length}
+		<Tabs
+			tabs={tunnelTabs}
+			active={activeTab}
+			onchange={(id) => (activeTab = id as TunnelTab)}
 		/>
 
 		{#if activeTab === 'awg'}
@@ -425,15 +429,15 @@
 			</p>
 			<div class="info-versions">
 				<div class="info-version">
-					<span class="info-version-tag">AWG 1.0</span>
+					<Badge variant="accent" size="sm" mono>AWG 1.0</Badge>
 					<span class="info-version-desc">Базовая обфускация: модификация заголовков (H1–H4), junk-пакеты (Jc/Jmin/Jmax), размеры сообщений (S1–S2).</span>
 				</div>
 				<div class="info-version">
-					<span class="info-version-tag tag-15">AWG 1.5</span>
+					<Badge variant="info" size="sm" mono>AWG 1.5</Badge>
 					<span class="info-version-desc">Мимикрия протоколов: initiation-пакеты (I1–I5) маскируют соединение под QUIC, DTLS, STUN, DNS.</span>
 				</div>
 				<div class="info-version">
-					<span class="info-version-tag tag-20">AWG 2.0</span>
+					<Badge variant="success" size="sm" mono>AWG 2.0</Badge>
 					<span class="info-version-desc">Рандомизация заголовков: H1–H4 задаются диапазонами, генерируются при каждом хэндшейке.</span>
 				</div>
 			</div>
@@ -450,18 +454,13 @@
 					<StoreStatusBadge store={tunnels} />
 				</div>
 				<div class="toolbar-actions">
-					<button class="btn btn-secondary" onclick={handleExportAll} disabled={exporting}>
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-							<polyline points="7 10 12 15 17 10"/>
-							<line x1="12" y1="15" x2="12" y2="3"/>
-						</svg>
+					<Button variant="secondary" size="md" onclick={handleExportAll} disabled={exporting} iconBefore={exportIcon}>
 						Экспорт
-					</button>
-					<a href="/tunnels/new" class="btn btn-primary">+ Создать</a>
+					</Button>
+					<Button variant="primary" size="md" href="/tunnels/new">+ Создать</Button>
 				</div>
 			</div>
-			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+			<div class="tunnel-grid">
 				{#each awgList as tunnel (tunnel.id)}
 					<TunnelCard
 						{tunnel}
@@ -485,7 +484,6 @@
 				) as tunnel (tunnel.id)}
 					<SystemTunnelCard
 						{tunnel}
-						onHide={hideSystemTunnel}
 						onMarkServer={markAsServer}
 						ondetail={(id) => openDetail(id)}
 					/>
@@ -494,7 +492,7 @@
 
 			{#if externalList.length > 0}
 				<h2 class="text-lg font-semibold mt-6 mb-4">Внешние туннели</h2>
-				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+				<div class="tunnel-grid">
 					{#each externalList as extTunnel (extTunnel.interfaceName)}
 						<ExternalTunnelCard
 							tunnel={extTunnel}
@@ -515,15 +513,15 @@
 					</p>
 					<div class="info-versions">
 						<div class="info-version">
-							<span class="info-version-tag tag-vless">VLESS</span>
+							<Badge variant="accent" size="sm" mono>VLESS</Badge>
 							<span class="info-version-desc">Лёгкий протокол без шифрования на уровне протокола. Поддерживает <strong>Reality</strong> (маскировка под настоящий TLS-сервер) и транспорт gRPC для обхода DPI.</span>
 						</div>
 						<div class="info-version">
-							<span class="info-version-tag tag-hy2">Hysteria2</span>
+							<Badge variant="warning" size="sm" mono>Hysteria2</Badge>
 							<span class="info-version-desc">QUIC-based, устойчив к потерям пакетов и работает поверх UDP. Паролевая аутентификация, обфускация salamander.</span>
 						</div>
 						<div class="info-version">
-							<span class="info-version-tag tag-naive">NaiveProxy</span>
+							<Badge variant="info" size="sm" mono>NaiveProxy</Badge>
 							<span class="info-version-desc">HTTP/2 с полноценным TLS-маскированием под обычный HTTPS-сервер. Сложно отличим от браузерного трафика.</span>
 						</div>
 					</div>
@@ -535,10 +533,10 @@
 						{singboxTunnelsList.length === 1 ? 'туннель' : singboxTunnelsList.length < 5 ? 'туннеля' : 'туннелей'}
 					</span>
 					<div class="toolbar-actions">
-						<a href="/singbox/new" class="btn btn-primary">+ Добавить</a>
+						<Button variant="primary" size="md" href="/singbox/new">+ Добавить</Button>
 					</div>
 				</div>
-				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+				<div class="tunnel-grid">
 					{#each singboxTunnelsList as tunnel (tunnel.tag)}
 						<SingboxTunnelCard {tunnel} />
 					{/each}
@@ -567,11 +565,18 @@
 	>
 		<p class="confirm-text">Удалить туннель <strong>{tunnelName}</strong>?</p>
 		{#snippet actions()}
-			<button class="btn btn-ghost" onclick={() => deleteConfirmId = null}>Отмена</button>
-			<button class="btn btn-danger" onclick={() => handleDelete(deleteConfirmId!)}>Удалить</button>
+			<Button variant="ghost" size="md" onclick={() => deleteConfirmId = null}>Отмена</Button>
+			<Button variant="danger" size="md" onclick={() => handleDelete(deleteConfirmId!)}>Удалить</Button>
 		{/snippet}
 	</Modal>
 {/if}
+
+<TunnelReferencedModal
+	open={referencedDetails !== null}
+	details={referencedDetails}
+	tunnelName={referencedTunnelName}
+	onclose={() => { referencedDetails = null; referencedTunnelName = ''; }}
+/>
 
 {#if detailId}
 	{@const managed = awgList.find((x) => x.id === detailId)}
@@ -584,6 +589,14 @@
 		onclose={closeDetail}
 	/>
 {/if}
+
+{#snippet exportIcon()}
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+		<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+		<polyline points="7 10 12 15 17 10"/>
+		<line x1="12" y1="15" x2="12" y2="3"/>
+	</svg>
+{/snippet}
 
 {#if showUnsupportedBlock}
 	<div class="unsupported-overlay">
@@ -612,12 +625,7 @@
 {/if}
 
 <style>
-	.confirm-text {
-		font-size: 0.875rem;
-		color: var(--text-secondary);
-		margin: 0;
-	}
-
+	/* Toolbar (count + actions row above the tunnel grid) */
 	.tunnels-toolbar {
 		display: flex;
 		align-items: center;
@@ -627,7 +635,7 @@
 
 	.tunnel-count {
 		font-size: 0.8125rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.count-group {
@@ -642,50 +650,44 @@
 		gap: 0.5rem;
 	}
 
-	.toolbar-actions .btn svg {
-		vertical-align: middle;
-		margin-right: 4px;
-	}
-
+	/* Empty-state ghost terminal — page-specific */
 	.ghost-terminal {
 		margin: 3rem 0;
-		border: 2px dashed var(--border);
-		border-radius: 12px;
+		border: 2px dashed var(--color-border);
+		border-radius: var(--radius);
 		padding: 2rem 2rem 1.5rem;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 1.5rem;
-		transition: border-color 0.2s, background 0.2s;
+		transition: border-color var(--t-fast) ease, background var(--t-fast) ease;
 	}
 
 	.ghost-terminal.drag-over {
-		border-color: var(--accent);
+		border-color: var(--color-accent);
 		border-style: solid;
-		background: rgba(122, 162, 247, 0.06);
+		background: var(--color-accent-tint);
 	}
 
-	/* Terminal status line */
 	.term-status {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 0.25rem;
-		font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+		font-family: var(--font-mono);
 	}
 
 	.term-prompt {
 		font-size: 0.8125rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.term-info {
 		font-size: 0.75rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		opacity: 0.7;
 	}
 
-	/* Group: drop hint + commands */
 	.term-action-group {
 		display: flex;
 		flex-direction: column;
@@ -693,12 +695,11 @@
 		gap: 1.5rem;
 	}
 
-	/* Drop hint — the visual accent */
 	.term-drop-hint {
 		display: flex;
 		align-items: center;
 		gap: 0.625rem;
-		color: var(--accent);
+		color: var(--color-accent);
 		font-size: 1.0625rem;
 		font-weight: 500;
 	}
@@ -713,12 +714,12 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 0.125rem;
-		font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+		font-family: var(--font-mono);
 	}
 
 	.term-found {
 		font-size: 0.8125rem;
-		color: var(--accent);
+		color: var(--color-accent);
 		margin-bottom: 0.375rem;
 	}
 
@@ -728,60 +729,60 @@
 		gap: 0.5rem;
 		background: none;
 		border: none;
-		color: var(--text-secondary);
+		color: var(--color-text-secondary);
 		font-family: inherit;
 		font-size: 0.875rem;
 		padding: 0.375rem 0.5rem;
-		border-radius: 6px;
+		border-radius: var(--radius-sm);
 		cursor: pointer;
-		transition: color 0.15s, background 0.15s;
+		transition: color var(--t-fast) ease, background var(--t-fast) ease;
 		text-decoration: none;
 	}
 
 	.term-cmd:hover {
-		color: var(--text-primary);
-		background: var(--bg-hover);
+		color: var(--color-text-primary);
+		background: var(--color-bg-hover);
 	}
 
 	.term-cmd-primary {
-		color: var(--accent);
+		color: var(--color-accent);
 	}
 
 	.term-cmd-primary:hover {
-		color: var(--accent-hover);
+		color: var(--color-accent-hover);
 	}
 
 	.term-arrow {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
-	/* Backend selector */
+	/* Backend selector — chip-like toggles for nativewg/kernel */
 	.term-backend-selector {
 		display: flex;
 		gap: 8px;
 	}
 
 	.term-backend-btn {
-		font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+		font-family: var(--font-mono);
 		font-size: 0.8125rem;
 		padding: 0.375rem 1rem;
-		border: 1px solid var(--border);
-		border-radius: 6px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
 		background: transparent;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		cursor: pointer;
-		transition: all 0.15s;
+		transition: border-color var(--t-fast) ease, color var(--t-fast) ease, background var(--t-fast) ease;
 	}
 
 	.term-backend-btn:hover:not(.disabled) {
-		border-color: var(--accent);
-		color: var(--text-secondary);
+		border-color: var(--color-accent);
+		color: var(--color-text-secondary);
 	}
 
 	.term-backend-btn.selected {
-		border-color: var(--accent);
-		color: var(--accent);
-		background: rgba(122, 162, 247, 0.08);
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+		background: var(--color-accent-tint);
 	}
 
 	.term-backend-btn.disabled {
@@ -789,14 +790,14 @@
 		cursor: not-allowed;
 	}
 
-	/* Drop overlay (drag-over & importing states) */
+	/* Drag-over / importing overlays */
 	.drop-overlay {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 0.75rem;
 		padding: 2rem 0;
-		color: var(--accent);
+		color: var(--color-accent);
 	}
 
 	.drop-text {
@@ -804,11 +805,11 @@
 		font-weight: 500;
 	}
 
-	/* Info card */
+	/* "About AmneziaWG / Sing-box" info card — page-specific */
 	.info-card {
-		border-left: 3px solid var(--accent);
-		background: var(--bg-secondary);
-		border-radius: 0 8px 8px 0;
+		border-left: 3px solid var(--color-accent);
+		background: var(--color-bg-secondary);
+		border-radius: 0 var(--radius) var(--radius) 0;
 		padding: 1.25rem 1.5rem;
 		margin-top: 1.5rem;
 	}
@@ -821,9 +822,15 @@
 
 	.info-text {
 		font-size: 0.8125rem;
-		color: var(--text-secondary);
+		color: var(--color-text-secondary);
 		line-height: 1.6;
 		margin: 0;
+	}
+
+	.info-section-desc {
+		font-size: 0.85rem;
+		color: var(--color-text-muted);
+		margin: 0 0 0.75rem 0;
 	}
 
 	.info-versions {
@@ -839,45 +846,23 @@
 		align-items: baseline;
 	}
 
-	.info-version-tag {
-		flex-shrink: 0;
-		font-size: 0.6875rem;
-		font-weight: 600;
-		font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
-		padding: 0.2rem 0.5rem;
-		border-radius: 4px;
-		background: rgba(122, 162, 247, 0.12);
-		color: var(--accent);
-		white-space: nowrap;
-	}
-
-	.info-version-tag.tag-15 {
-		background: rgba(125, 207, 255, 0.12);
-		color: var(--info);
-	}
-
-	.info-version-tag.tag-20 {
-		background: rgba(158, 206, 106, 0.12);
-		color: var(--success);
-	}
-
 	.info-version-desc {
 		font-size: 0.8125rem;
-		color: var(--text-secondary);
+		color: var(--color-text-secondary);
 		line-height: 1.5;
 	}
 
 	.info-kernel {
 		margin-top: 0.75rem;
 		padding-top: 0.75rem;
-		border-top: 1px solid var(--border);
+		border-top: 1px solid var(--color-border);
 	}
 
 	.info-kernel strong {
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 	}
 
-	/* Unsupported overlay */
+	/* "Kernel module unavailable" full-screen overlay — page-specific */
 	.unsupported-overlay {
 		position: fixed;
 		inset: 0;
@@ -890,9 +875,9 @@
 	}
 
 	.unsupported-card {
-		background: var(--bg-primary);
-		border: 1px solid var(--border);
-		border-radius: 12px;
+		background: var(--color-bg-primary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
 		padding: 2rem;
 		max-width: 420px;
 		width: 100%;
@@ -904,7 +889,7 @@
 	}
 
 	.unsupported-icon {
-		color: var(--warning, #e0af68);
+		color: var(--color-warning);
 	}
 
 	.unsupported-title {
@@ -915,13 +900,13 @@
 
 	.unsupported-text {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
+		color: var(--color-text-secondary);
 		line-height: 1.6;
 		margin: 0;
 	}
 
 	.unsupported-text strong {
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 	}
 
 	.unsupported-actions {
@@ -935,15 +920,15 @@
 	.unsupported-link {
 		display: block;
 		padding: 0.625rem 1rem;
-		border-radius: 8px;
+		border-radius: var(--radius-sm);
 		font-size: 0.875rem;
 		font-weight: 500;
 		text-decoration: none;
 		text-align: center;
-		transition: opacity 0.15s;
-		border: 1px solid var(--border);
-		color: var(--text-secondary);
-		background: var(--bg-secondary);
+		transition: opacity var(--t-fast) ease;
+		border: 1px solid var(--color-border);
+		color: var(--color-text-secondary);
+		background: var(--color-bg-secondary);
 	}
 
 	.unsupported-link:hover {
@@ -951,28 +936,8 @@
 	}
 
 	.unsupported-link-primary {
-		background: var(--accent);
+		background: var(--color-accent);
 		color: #fff;
-		border-color: var(--accent);
+		border-color: var(--color-accent);
 	}
-
-	.info-section-desc {
-		font-size: 0.85rem;
-		color: var(--text-muted);
-		margin: 0 0 0.75rem 0;
-	}
-
-	.tag-vless {
-		background: rgba(59, 130, 246, 0.15);
-		color: #60a5fa;
-	}
-	.tag-hy2 {
-		background: rgba(245, 158, 11, 0.15);
-		color: #fbbf24;
-	}
-	.tag-naive {
-		background: rgba(34, 211, 238, 0.22);
-		color: #67e8f9;
-	}
-
 </style>

@@ -8,24 +8,11 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 )
 
-const checkInterval = 60 * time.Second
-
-// TunnelForCheck describes a tunnel that needs connectivity checking.
-type TunnelForCheck struct {
-	ID        string
-	IfaceName string
-	Method    string // "http", "ping", "handshake", "disabled"
-	Target    string
-}
-
-// CheckLister returns tunnels that need connectivity checks.
-type CheckLister interface {
-	ListCheckableTunnels(ctx context.Context) []TunnelForCheck
-}
-
-// Checker performs a single connectivity check for a tunnel.
-type Checker interface {
-	Check(ctx context.Context, tunnelID string) (connected bool, latencyMs *int, err error)
+// MatrixRunner triggers a single monitoring-matrix tick. Concrete impl is
+// monitoring.Scheduler.RunOnce, but stays decoupled here so connectivity has
+// no compile-time dependency on the monitoring package.
+type MatrixRunner interface {
+	RunOnce(ctx context.Context)
 }
 
 // HandshakeChecker verifies if a tunnel has completed WireGuard handshake.
@@ -33,32 +20,32 @@ type HandshakeChecker interface {
 	HasHandshake(ctx context.Context, tunnelID string) bool
 }
 
-// Monitor periodically checks connectivity for running tunnels
-// and publishes tunnel:connectivity events via the event bus.
-// Also listens for tunnel:state "running" events — waits for handshake, then checks.
+// Monitor reacts to "tunnel:state running" events: after the WireGuard
+// handshake lands, it asks the monitoring scheduler to run an extra matrix
+// tick. The matrix snapshot then drives card latency via the
+// monitoring:matrix-update SSE event — no separate per-tunnel probe loop.
 type Monitor struct {
 	bus       *events.Bus
-	lister    CheckLister
-	checker   Checker
+	matrix    MatrixRunner
 	handshake HandshakeChecker
-	triggerCh chan string // tunnel ID to check after handshake
+	triggerCh chan string
 	stopCh    chan struct{}
 	wg        sync.WaitGroup
 }
 
-// NewMonitor creates a Monitor. Call Start() to begin checking.
-func NewMonitor(bus *events.Bus, lister CheckLister, checker Checker, hs HandshakeChecker) *Monitor {
+// NewMonitor creates a Monitor that pokes the matrix scheduler after
+// handshake. Call Start() to begin listening.
+func NewMonitor(bus *events.Bus, matrix MatrixRunner, hs HandshakeChecker) *Monitor {
 	return &Monitor{
 		bus:       bus,
-		lister:    lister,
-		checker:   checker,
+		matrix:    matrix,
 		handshake: hs,
 		triggerCh: make(chan string, 16),
 		stopCh:    make(chan struct{}),
 	}
 }
 
-// Start launches the background check loop and event listener.
+// Start launches the background event listener.
 func (m *Monitor) Start() {
 	m.wg.Add(2)
 	go m.loop()
@@ -71,8 +58,8 @@ func (m *Monitor) Stop() {
 	m.wg.Wait()
 }
 
-// listenStateEvents subscribes to the event bus and triggers immediate
-// connectivity check when a tunnel transitions to "running".
+// listenStateEvents subscribes to the event bus and queues a matrix tick
+// when a tunnel transitions to "running".
 func (m *Monitor) listenStateEvents() {
 	defer m.wg.Done()
 
@@ -106,34 +93,28 @@ func (m *Monitor) listenStateEvents() {
 
 func (m *Monitor) loop() {
 	defer m.wg.Done()
-	ticker := time.NewTicker(checkInterval)
-	defer ticker.Stop()
-
 	for {
 		select {
-		case <-ticker.C:
-			m.checkAll()
 		case tunnelID := <-m.triggerCh:
-			go m.checkOne(tunnelID)
+			go m.runAfterHandshake(tunnelID)
 		case <-m.stopCh:
 			return
 		}
 	}
 }
 
-// checkOne waits for handshake then checks connectivity for a single tunnel.
-// Runs in its own goroutine (fire-and-forget from loop).
-func (m *Monitor) checkOne(tunnelID string) {
-	if m.bus.SubscriberCount() == 0 {
+// runAfterHandshake waits up to 30s for the tunnel's WireGuard handshake,
+// then asks the matrix scheduler to run an immediate tick. The matrix
+// snapshot is what cards display, so the user sees fresh latency right
+// after the tunnel comes up — without waiting for the next 60s tick.
+func (m *Monitor) runAfterHandshake(tunnelID string) {
+	if m.matrix == nil {
 		return
 	}
-
-	// Wait for handshake (poll every 2s, timeout 30s).
 	if m.handshake != nil {
 		deadline := time.After(30 * time.Second)
 		poll := time.NewTicker(2 * time.Second)
 		defer poll.Stop()
-
 		for {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			has := m.handshake.HasHandshake(ctx, tunnelID)
@@ -145,46 +126,14 @@ func (m *Monitor) checkOne(tunnelID string) {
 			case <-poll.C:
 				continue
 			case <-deadline:
-				return // no handshake within 30s — skip check
+				return
 			case <-m.stopCh:
 				return
 			}
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	connected, latency, _ := m.checker.Check(ctx, tunnelID)
-
-	m.bus.Publish("tunnel:connectivity", events.TunnelConnectivityEvent{
-		ID:        tunnelID,
-		Connected: connected,
-		Latency:   latency,
-	})
-}
-
-func (m *Monitor) checkAll() {
-	if m.bus.SubscriberCount() == 0 {
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
-	tunnels := m.lister.ListCheckableTunnels(ctx)
-
-	for _, t := range tunnels {
-		if t.Method == "disabled" {
-			continue
-		}
-
-		connected, latency, _ := m.checker.Check(ctx, t.ID)
-
-		m.bus.Publish("tunnel:connectivity", events.TunnelConnectivityEvent{
-			ID:        t.ID,
-			Connected: connected,
-			Latency:   latency,
-		})
-	}
+	m.matrix.RunOnce(ctx)
 }

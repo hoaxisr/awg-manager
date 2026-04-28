@@ -1,18 +1,19 @@
 <script lang="ts">
 	import type { ManagedServer } from '$lib/types';
-	import { Modal, FormToggle } from '$lib/components/ui';
+	import { Modal, FormToggle, Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 
 	interface Props {
 		open: boolean;
+		serverId: string;
 		server: ManagedServer;
 		routerIP?: string;
 		onclose: () => void;
 		onAdded: () => void;
 	}
 
-	let { open = $bindable(false), server, routerIP = '', onclose, onAdded }: Props = $props();
+	let { open = $bindable(false), serverId, server, routerIP = '', onclose, onAdded }: Props = $props();
 
 	let description = $state('');
 	let tunnelIP = $state('');
@@ -49,7 +50,7 @@
 	async function handleAdd() {
 		adding = true;
 		try {
-			await api.addManagedPeer({ description, tunnelIP, dns: dns || undefined });
+			await api.addManagedPeer(serverId, { description, tunnelIP, dns: dns || undefined });
 			notifications.success('Клиент добавлен');
 			onclose();
 			onAdded();
@@ -86,10 +87,10 @@
 	</div>
 
 	{#snippet actions()}
-		<button class="btn btn-ghost" onclick={onclose}>Отмена</button>
-		<button class="btn btn-primary" onclick={handleAdd} disabled={adding || !tunnelIP}>
-			{adding ? 'Добавление...' : 'Добавить'}
-		</button>
+		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
+		<Button variant="primary" size="md" onclick={handleAdd} disabled={!tunnelIP} loading={adding}>
+			Добавить
+		</Button>
 	{/snippet}
 </Modal>
 

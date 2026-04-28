@@ -1,588 +1,479 @@
 <script lang="ts">
-    import { onMount } from "svelte";
-    import { api } from "$lib/api/client";
-    import { notifications } from "$lib/stores/notifications";
-    import { singboxStatus } from "$lib/stores/singbox";
-    import { PageContainer, LoadingSpinner } from "$lib/components/layout";
-    import { Toggle, Modal } from "$lib/components/ui";
-    import {
-        SystemInfoGrid,
-        LoggingSettings,
-        UpdateSection,
-        DnsRouteSettings,
-        HiddenTunnelsSettings,
-    } from "$lib/components/settings";
-    import type {
-        SystemInfo,
-        Settings,
-        UpdateInfo,
-        HydraRouteStatus,
-    } from "$lib/types";
+	import { onMount } from "svelte";
+	import { api } from "$lib/api/client";
+	import { notifications } from "$lib/stores/notifications";
+	import { singboxStatus } from "$lib/stores/singbox";
+	import { PageContainer, LoadingSpinner } from "$lib/components/layout";
+	import { Toggle, Modal, Button } from "$lib/components/ui";
+	import {
+		SystemInfoGrid,
+		LoggingSettings,
+		UpdateSection,
+		DnsRouteSettings,
+		IntegrationsCard,
+		SettingsFooter,
+	} from "$lib/components/settings";
+	import type {
+		SystemInfo,
+		Settings,
+		UpdateInfo,
+		HydraRouteStatus,
+	} from "$lib/types";
 
-    let systemInfo: SystemInfo | null = $state(null);
-    let settings = $state<Settings | null>(null);
-    let loading = $state(true);
-    let saving = $state(false);
-    let updateInfo: UpdateInfo | null = $state(null);
-    let restarting = $state(false);
-    let restartConfirmOpen = $state(false);
-    let hydraStatus = $state<HydraRouteStatus | null>(null);
-    // hydraLoading removed — HydraRoute controls moved to the Routing page
-    let creditsOpen = $state(false);
-    let singboxInstalling = $state(false);
-    let singboxInstallError = $state<string | null>(null);
-    let singboxInstalled = $derived($singboxStatus.data?.installed ?? false);
+	let systemInfo: SystemInfo | null = $state(null);
+	let settings = $state<Settings | null>(null);
+	let loading = $state(true);
+	let saving = $state(false);
+	const origin = $derived(typeof window !== "undefined" ? window.location.origin : "");
+	let updateInfo: UpdateInfo | null = $state(null);
+	let restarting = $state(false);
+	let restartConfirmOpen = $state(false);
+	let hydraStatus = $state<HydraRouteStatus | null>(null);
+	let hydraBusy = $state(false);
+	let singboxInstalling = $state(false);
+	let singboxInstallError = $state<string | null>(null);
+	let singboxBusy = $state(false);
 
-    async function installSingbox() {
-        singboxInstalling = true;
-        singboxInstallError = null;
-        try {
-            const fresh = await api.singboxInstall();
-            singboxStatus.applyMutationResponse(fresh);
-            notifications.success("Sing-box установлен");
-        } catch (e) {
-            singboxInstallError = e instanceof Error ? e.message : String(e);
-            notifications.error(singboxInstallError);
-        } finally {
-            singboxInstalling = false;
-        }
-    }
+	const singboxStatusValue = $derived($singboxStatus.data ?? null);
+	const singboxInstalled = $derived(singboxStatusValue?.installed ?? false);
+	const singboxRunning = $derived(singboxStatusValue?.running ?? false);
+	const hydraInstalled = $derived(hydraStatus?.installed ?? false);
+	const hydraRunning = $derived(hydraStatus?.running ?? false);
 
-    onMount(async () => {
-        try {
-            [systemInfo, settings, updateInfo] = await Promise.all([
-                api.getSystemInfo(),
-                api.getSettings(),
-                api.checkUpdate(),
-            ]);
-        } catch (e) {
-            notifications.error("Не удалось загрузить настройки");
-        } finally {
-            loading = false;
-        }
-        try {
-            hydraStatus = await api.getHydraRouteStatus();
-        } catch {
-            /* ignore - HR may not be available */
-        }
-    });
+	async function controlSingbox(action: 'start' | 'stop' | 'restart') {
+		singboxBusy = true;
+		try {
+			const fresh = await api.singboxControl(action);
+			singboxStatus.applyMutationResponse(fresh);
+			notifications.success(
+				action === 'restart' ? 'Sing-box перезапущен' :
+				action === 'stop' ? 'Sing-box остановлен' : 'Sing-box запущен',
+			);
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Не удалось управлять sing-box');
+		} finally {
+			singboxBusy = false;
+		}
+	}
 
-    async function toggleAuth() {
-        if (!settings) return;
+	async function controlHydra(action: 'start' | 'stop' | 'restart') {
+		hydraBusy = true;
+		try {
+			hydraStatus = await api.controlHydraRoute(action);
+			notifications.success(
+				action === 'restart' ? 'HydraRoute перезапущен' :
+				action === 'stop' ? 'HydraRoute остановлен' : 'HydraRoute запущен',
+			);
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Не удалось управлять HydraRoute');
+		} finally {
+			hydraBusy = false;
+		}
+	}
 
-        saving = true;
-        try {
-            const newSettings = {
-                ...settings,
-                authEnabled: !settings.authEnabled,
-            };
-            settings = await api.updateSettings(newSettings);
-            notifications.success(
-                settings.authEnabled
-                    ? "Авторизация включена"
-                    : "Авторизация отключена",
-            );
-        } catch (e) {
-            notifications.error("Ошибка сохранения настроек");
-        } finally {
-            saving = false;
-        }
-    }
+	async function installSingbox() {
+		singboxInstalling = true;
+		singboxInstallError = null;
+		try {
+			const fresh = await api.singboxInstall();
+			singboxStatus.applyMutationResponse(fresh);
+			notifications.success("Sing-box установлен");
+		} catch (e) {
+			singboxInstallError = e instanceof Error ? e.message : String(e);
+		} finally {
+			singboxInstalling = false;
+		}
+	}
 
-    async function toggleLogging() {
-        if (!settings) return;
+	onMount(async () => {
+		try {
+			[systemInfo, settings, updateInfo] = await Promise.all([
+				api.getSystemInfo(),
+				api.getSettings(),
+				api.checkUpdate(),
+			]);
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : "Не удалось загрузить настройки");
+		} finally {
+			loading = false;
+		}
+		try {
+			hydraStatus = await api.getHydraRouteStatus();
+		} catch {
+			/* ignore - HR may not be available */
+		}
+	});
 
-        saving = true;
-        try {
-            const newSettings = {
-                ...settings,
-                logging: {
-                    ...settings.logging,
-                    enabled: !settings.logging.enabled,
-                },
-            };
-            settings = await api.updateSettings(newSettings);
-            notifications.success(
-                settings.logging.enabled
-                    ? "Логирование включено"
-                    : "Логирование отключено",
-            );
-        } catch (e) {
-            notifications.error("Ошибка сохранения настроек");
-        } finally {
-            saving = false;
-        }
-    }
+	async function toggleAuth(enabled: boolean) {
+		if (!settings) return;
+		saving = true;
+		try {
+			settings = await api.updateSettings({ ...settings, authEnabled: enabled });
+			notifications.success(enabled ? "Авторизация включена" : "Авторизация отключена");
+		} catch {
+			notifications.error("Ошибка сохранения настроек");
+		} finally {
+			saving = false;
+		}
+	}
 
-    async function saveLoggingSettings() {
-        if (!settings) return;
+	async function generateApiKey() {
+		if (!settings) return;
+		saving = true;
+		try {
+			// Server-side generation: WebCrypto's randomUUID is unavailable
+			// over plain HTTP (router LAN context), so the backend produces
+			// the UUID via crypto/rand and persists it in one round-trip.
+			settings = await api.regenerateApiKey();
+			notifications.success("API ключ сгенерирован");
+		} catch {
+			notifications.error("Ошибка генерации ключа");
+		} finally {
+			saving = false;
+		}
+	}
 
-        saving = true;
-        try {
-            settings = await api.updateSettings(settings);
-            notifications.success("Настройки логирования сохранены");
-        } catch (e) {
-            notifications.error("Ошибка сохранения настроек");
-        } finally {
-            saving = false;
-        }
-    }
+	async function toggleLogging(enabled: boolean) {
+		if (!settings) return;
+		saving = true;
+		try {
+			settings = await api.updateSettings({
+				...settings,
+				logging: { ...settings.logging, enabled },
+			});
+			notifications.success(enabled ? "Логирование включено" : "Логирование отключено");
+		} catch {
+			notifications.error("Ошибка сохранения настроек");
+		} finally {
+			saving = false;
+		}
+	}
 
-    async function toggleDnsAutoRefresh() {
-        if (!settings) return;
+	async function saveLoggingSettings() {
+		if (!settings) return;
+		saving = true;
+		try {
+			settings = await api.updateSettings(settings);
+			notifications.success("Настройки логирования сохранены");
+		} catch {
+			notifications.error("Ошибка сохранения настроек");
+		} finally {
+			saving = false;
+		}
+	}
 
-        saving = true;
-        try {
-            const enabled = !settings.dnsRoute.autoRefreshEnabled;
-            const newSettings = {
-                ...settings,
-                dnsRoute: {
-                    ...settings.dnsRoute,
-                    autoRefreshEnabled: enabled,
-                    refreshIntervalHours:
-                        enabled && settings.dnsRoute.refreshIntervalHours === 0
-                            ? 6
-                            : settings.dnsRoute.refreshIntervalHours,
-                    refreshMode: settings.dnsRoute.refreshMode || "interval",
-                },
-            };
-            settings = await api.updateSettings(newSettings);
-            notifications.success(
-                settings.dnsRoute.autoRefreshEnabled
-                    ? "Автообновление подписок включено"
-                    : "Автообновление подписок отключено",
-            );
-        } catch (e) {
-            notifications.error("Ошибка сохранения настроек");
-        } finally {
-            saving = false;
-        }
-    }
+	async function toggleDnsAutoRefresh(enabled: boolean) {
+		if (!settings) return;
+		saving = true;
+		try {
+			settings = await api.updateSettings({
+				...settings,
+				dnsRoute: {
+					...settings.dnsRoute,
+					autoRefreshEnabled: enabled,
+					refreshIntervalHours:
+						enabled && settings.dnsRoute.refreshIntervalHours === 0
+							? 6
+							: settings.dnsRoute.refreshIntervalHours,
+					refreshMode: settings.dnsRoute.refreshMode || "interval",
+				},
+			});
+			notifications.success(enabled ? "Автообновление подписок включено" : "Автообновление подписок отключено");
+		} catch {
+			notifications.error("Ошибка сохранения настроек");
+		} finally {
+			saving = false;
+		}
+	}
 
-    async function saveDnsRouteSettings() {
-        if (!settings) return;
+	async function saveDnsRouteSettings() {
+		if (!settings) return;
+		saving = true;
+		try {
+			settings = await api.updateSettings(settings);
+			notifications.success("Настройки автообновления сохранены");
+		} catch {
+			notifications.error("Ошибка сохранения настроек");
+		} finally {
+			saving = false;
+		}
+	}
 
-        saving = true;
-        try {
-            settings = await api.updateSettings(settings);
-            notifications.success("Настройки автообновления сохранены");
-        } catch (e) {
-            notifications.error("Ошибка сохранения настроек");
-        } finally {
-            saving = false;
-        }
-    }
+	async function toggleUpdateCheck(enabled: boolean) {
+		if (!settings) return;
+		saving = true;
+		try {
+			settings = await api.updateSettings({
+				...settings,
+				updates: { ...settings.updates, checkEnabled: enabled },
+			});
+			notifications.success(enabled ? "Автопроверка обновлений включена" : "Автопроверка обновлений отключена");
+		} catch {
+			notifications.error("Ошибка сохранения настроек");
+		} finally {
+			saving = false;
+		}
+	}
 
-    async function toggleUpdateCheck() {
-        if (!settings) return;
-
-        saving = true;
-        try {
-            const newSettings = {
-                ...settings,
-                updates: {
-                    ...settings.updates,
-                    checkEnabled: !settings.updates.checkEnabled,
-                },
-            };
-            settings = await api.updateSettings(newSettings);
-            notifications.success(
-                settings.updates.checkEnabled
-                    ? "Автопроверка обновлений включена"
-                    : "Автопроверка обновлений отключена",
-            );
-        } catch (e) {
-            notifications.error("Ошибка сохранения настроек");
-        } finally {
-            saving = false;
-        }
-    }
-
-    async function refreshSystemInfo() {
-        try {
-            systemInfo = await api.getSystemInfo();
-        } catch {
-            /* ignore */
-        }
-    }
-
-    async function restartDaemon() {
-        restartConfirmOpen = false;
-        restarting = true;
-        try {
-            await api.restartDaemon();
-            notifications.success("AWG Manager перезапускается...");
-        } catch (e) {
-            notifications.error("Не удалось перезапустить");
-            restarting = false;
-        }
-    }
+	async function restartDaemon() {
+		restartConfirmOpen = false;
+		restarting = true;
+		try {
+			await api.restartDaemon();
+			notifications.success("AWG Manager перезапускается...");
+		} catch {
+			notifications.error("Не удалось перезапустить");
+			restarting = false;
+		}
+	}
 </script>
 
 <svelte:head>
-    <title>Настройки - AWG Manager</title>
+	<title>Настройки - AWG Manager</title>
 </svelte:head>
 
 <PageContainer>
-    {#if loading}
-        <div class="flex justify-center py-8">
-            <LoadingSpinner size="md" />
-        </div>
-    {:else if settings && systemInfo}
-        <div class="disclaimer-card">
-            <div class="disclaimer-content">
-                <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    width="16"
-                    height="16"
-                    class="disclaimer-icon"
-                >
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="12" y1="16" x2="12" y2="12" />
-                    <line x1="12" y1="8" x2="12.01" y2="8" />
-                </svg>
-                <div class="disclaimer-text">
-                    <p>
-                        Документация по проекту доступна на сайте <a
-                            href="https://awgm.hoaxisr.ru"
-                            target="_blank"
-                            rel="noopener">awgm.hoaxisr.ru</a
-                        >
-                    </p>
-                </div>
-            </div>
-        </div>
+	{#if loading}
+		<div class="flex justify-center py-8">
+			<LoadingSpinner size="md" />
+		</div>
+	{:else if settings && systemInfo}
+		<div class="settings-grid">
+			<aside class="settings-left">
+				<SystemInfoGrid {systemInfo} />
 
-        <div class="settings-stack">
-            <!-- СЕКЦИЯ: Система -->
-            <div>
-                <div class="section-label">Система</div>
-                <div class="card">
-                    <SystemInfoGrid {systemInfo} />
+				<div class="card">
+					<div class="section-label">Обновление</div>
+					<UpdateSection bind:updateInfo />
+				</div>
 
-                    <UpdateSection bind:updateInfo />
+				<IntegrationsCard
+					singboxStatus={singboxStatusValue}
+					{hydraStatus}
+					{singboxInstalling}
+					{singboxInstallError}
+					oninstallSingbox={installSingbox}
+				/>
+			</aside>
 
-                    <div class="setting-row">
-                        <div class="flex flex-col gap-1">
-                            <span class="font-medium"
-                                >Автопроверка обновлений</span
-                            >
-                            <span class="setting-description">
-                                Проверять наличие новых версий раз в сутки
-                            </span>
-                        </div>
-                        <Toggle
-                            checked={settings.updates.checkEnabled}
-                            onchange={() => toggleUpdateCheck()}
-                            disabled={saving}
-                        />
-                    </div>
+			<main class="settings-right">
+				<div class="card">
+					<div class="section-label">Доступ</div>
+					<div class="setting-row">
+						<div class="flex flex-col gap-1">
+							<span class="font-medium">Авторизация</span>
+							<span class="setting-description">
+								Требовать вход через учётную запись Keenetic для доступа к панели управления
+							</span>
+						</div>
+						<Toggle checked={settings.authEnabled} onchange={toggleAuth} disabled={saving} />
+					</div>
+				</div>
 
-                    <div class="setting-row">
-                        <div class="flex flex-col gap-1">
-                            <span class="font-medium">Перезапуск</span>
-                            <span class="setting-description">
-                                Перезапустить процесс AWG Manager. Туннели
-                                продолжат работать.
-                            </span>
-                        </div>
-                        <button
-                            class="btn btn-ghost btn-sm"
-                            onclick={() => (restartConfirmOpen = true)}
-                            disabled={restarting}
-                        >
-                            {restarting ? "Перезапуск..." : "Перезапустить"}
-                        </button>
-                    </div>
+				<div class="card">
+					<div class="section-label">Обновления</div>
+					<div class="setting-row">
+						<div class="flex flex-col gap-1">
+							<span class="font-medium">Автопроверка обновлений</span>
+							<span class="setting-description">Проверять наличие новых версий раз в сутки</span>
+						</div>
+						<Toggle
+							checked={settings.updates.checkEnabled}
+							onchange={toggleUpdateCheck}
+							disabled={saving}
+						/>
+					</div>
+				</div>
 
-                    <div class="setting-row">
-                        <div class="flex flex-col gap-1">
-                            <span class="font-medium">HydraRoute Neo</span>
-                            <span class="setting-description">
-                                {#if !hydraStatus || !hydraStatus.installed}
-                                    Не обнаружен — <a
-                                        href="https://github.com/Ground-Zerro/HydraRoute"
-                                        target="_blank"
-                                        rel="noopener">установить</a
-                                    >
-                                {:else if hydraStatus.running}
-                                    <span style="color: var(--success)"
-                                        >Работает</span
-                                    >
-                                {:else}
-                                    <span style="color: var(--text-muted)"
-                                        >Остановлен</span
-                                    >
-                                {/if}
-                            </span>
-                        </div>
-                        {#if hydraStatus?.installed}
-                            <a
-                                href="/routing?tab=hrneo"
-                                class="btn btn-ghost btn-sm">Открыть</a
-                            >
-                        {/if}
-                    </div>
+				<div class="card">
+					<div class="section-label">Логирование</div>
+					<LoggingSettings
+						bind:settings
+						{saving}
+						onToggle={toggleLogging}
+						onSave={saveLoggingSettings}
+					/>
+				</div>
 
-                    {#if !singboxInstalled}
-                        <div class="setting-row">
-                            <div class="flex flex-col gap-1">
-                                <span class="font-medium">Sing-box</span>
-                                <span class="setting-description">
-                                    Поддержка VLESS/Reality, Hysteria2, NaiveProxy.
-                                    Установка sing-box требует большого количества свободного пространства.
-                                    Необходимо использовать Entware на внешнем носителе.
-                                </span>
-                                {#if singboxInstallError}
-                                    <span class="setting-description" style="color: var(--error)">
-                                        {singboxInstallError}
-                                    </span>
-                                {/if}
-                            </div>
-                            <button
-                                class="btn btn-primary btn-sm"
-                                onclick={installSingbox}
-                                disabled={singboxInstalling}
-                            >
-                                {singboxInstalling ? "Установка..." : "Установить"}
-                            </button>
-                        </div>
-                    {/if}
-                </div>
-            </div>
+				{#if systemInfo.isOS5}
+					<div class="card">
+						<div class="section-label">DNS-маршрутизация</div>
+						<DnsRouteSettings
+							bind:settings
+							{saving}
+							onToggle={toggleDnsAutoRefresh}
+							onSave={saveDnsRouteSettings}
+						/>
+					</div>
+				{/if}
 
-            <!-- СЕКЦИЯ: Основные -->
-            <div>
-                <div class="section-label">Основные</div>
-                <div class="card">
-                    <div class="setting-row">
-                        <div class="flex flex-col gap-1">
-                            <span class="font-medium">Авторизация</span>
-                            <span class="setting-description">
-                                Требовать вход через учётную запись Keenetic для
-                                доступа к панели управления
-                            </span>
-                        </div>
-                        <Toggle
-                            checked={settings.authEnabled}
-                            onchange={() => toggleAuth()}
-                            disabled={saving}
-                        />
-                    </div>
+				<div class="card">
+					<div class="section-label">Расширенные</div>
+					<div class="setting-row">
+						<div class="flex flex-col gap-1">
+							<span class="font-medium">API Key</span>
+							<span class="setting-description">
+								API ключ для доступа к&nbsp;<code>{origin}/api/</code>, если включена авторизация. Передавайте в заголовке <code>Authorization: Bearer &lt;ключ&gt;</code>.
+							</span>
+						</div>
+						<div class="api-key-row">
+							<input
+								type="text"
+								class="api-key-input"
+								value={settings.apiKey ?? ""}
+								readonly
+								placeholder="не сгенерирован"
+							/>
+							<Button variant="ghost" size="sm" onclick={generateApiKey} disabled={saving}>
+								Сгенерировать
+							</Button>
+						</div>
+					</div>
+				</div>
+			</main>
+		</div>
 
-                    <LoggingSettings
-                        bind:settings
-                        {saving}
-                        onToggle={toggleLogging}
-                        onSave={saveLoggingSettings}
-                    />
+		<div class="card actions-card">
+			<div class="section-label">Действия</div>
+			<div class="setting-row">
+				<div class="flex flex-col gap-1">
+					<span class="font-medium">Перезапуск AWGM</span>
+					<span class="setting-description">Туннели продолжат работать</span>
+				</div>
+				<Button
+					variant="ghost"
+					size="sm"
+					onclick={() => (restartConfirmOpen = true)}
+					loading={restarting}
+				>
+					{restarting ? "Перезапуск..." : "Перезапустить"}
+				</Button>
+			</div>
 
-                    {#if systemInfo.isOS5}
-                        <DnsRouteSettings
-                            bind:settings
-                            {saving}
-                            onToggle={toggleDnsAutoRefresh}
-                            onSave={saveDnsRouteSettings}
-                        />
-                    {/if}
-                </div>
-            </div>
-        </div>
+			{#if singboxInstalled}
+				<div class="setting-row">
+					<div class="flex flex-col gap-1">
+						<span class="font-medium">Sing-box</span>
+						<span class="setting-description">
+							{singboxRunning ? "Процесс работает" : "Процесс остановлен"}
+						</span>
+					</div>
+					<div class="action-buttons">
+						{#if singboxRunning}
+							<Button variant="ghost" size="sm" onclick={() => controlSingbox('restart')} loading={singboxBusy}>Перезапустить</Button>
+							<Button variant="ghost" size="sm" onclick={() => controlSingbox('stop')} loading={singboxBusy}>Остановить</Button>
+						{:else}
+							<Button variant="ghost" size="sm" onclick={() => controlSingbox('start')} loading={singboxBusy}>Запустить</Button>
+						{/if}
+					</div>
+				</div>
+			{/if}
 
-        <HiddenTunnelsSettings />
+			{#if hydraInstalled}
+				<div class="setting-row">
+					<div class="flex flex-col gap-1">
+						<span class="font-medium">HydraRoute Neo</span>
+						<span class="setting-description">
+							{hydraRunning ? "Демон работает" : "Демон остановлен"}
+						</span>
+					</div>
+					<div class="action-buttons">
+						{#if hydraRunning}
+							<Button variant="ghost" size="sm" onclick={() => controlHydra('restart')} loading={hydraBusy}>Перезапустить</Button>
+							<Button variant="ghost" size="sm" onclick={() => controlHydra('stop')} loading={hydraBusy}>Остановить</Button>
+						{:else}
+							<Button variant="ghost" size="sm" onclick={() => controlHydra('start')} loading={hydraBusy}>Запустить</Button>
+						{/if}
+					</div>
+				</div>
+			{/if}
+		</div>
 
-        <div class="credits-section">
-            <button
-                type="button"
-                class="collapse-trigger section-label"
-                class:open={creditsOpen}
-                aria-expanded={creditsOpen}
-                onclick={() => (creditsOpen = !creditsOpen)}
-            >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M9 6l6 6-6 6"/>
-                </svg>
-                Благодарности
-            </button>
-            {#if creditsOpen}
-            <div class="card">
-                <div class="credits-content">
-                    <span class="credits-nick">@paris19891</span>
-                    <span class="credits-nick">@The_Immortal</span>
-                    <span class="credits-nick">@LionEvil</span>
-                    <span class="credits-nick">@dio1122</span>
-                    <span class="credits-nick">@Nidre</span>
-                    <span class="credits-nick">@rexsniper</span>
-                    <span class="credits-nick">@tiffolk</span>
-                    <span class="credits-nick">@Shidla</span>
-                    <span class="credits-nick">@palik_lelyakin</span>
-                    <span class="credits-nick">@user_shurik</span>
-                    <span class="credits-nick">@metasevss</span>
-                    <span class="credits-nick">@reSigo</span>
-                    <span class="credits-nick">@dnstkrv</span>
-                    <span class="credits-nick">@JentRy</span>
-                    <span class="credits-nick">@Il131</span>
-                    <span class="credits-nick">@Gjkmpjdfntkm</span>
-                    <span class="credits-nick">@NGC4563</span>
-                    <span class="credits-nick">@NickHG55</span>
-                    <span class="credits-nick">@moskinnickolas</span>
-                    <span class="credits-nick">@antdocraf</span>
-                    <span class="credits-nick">@primus_ultima</span>
-                    <span class="credits-nick">@ninja1000sx70</span>
-                    <span class="credits-nick">@neverny</span>
-                    <span class="credits-nick">@ToDDiiN</span>
-                    <span class="credits-nick">@vlzSilver</span>
-                    <span class="credits-nick">@KomarovIgor</span>
-                    <span class="credits-nick">@Skverna84</span>
-                    <span class="credits-nick">@SBogolyubov</span>
-                    <span class="credits-nick">@Kub26</span>
-                    <span class="credits-nick">@kentbrokeman</span>
-                    <span class="credits-nick">@Sergej_Kopyshev</span>
-                    <span class="credits-nick">@Green_snakee</span>
-                    <span class="credits-nick">@Console4ka</span>
-                    <span class="credits-nick">@Vorlam Vorlamov</span>
-                    <span class="credits-nick">@ras****.com</span>
-                    <span class="credits-nick">@Даниил_***ов</span>
-                    <span class="credits-nick">@White3d3</span>
-                    <span class="credits-nick">@neoplazma</span>
-                    <span class="credits-nick">@Борис_Д******о</span>
-                    <span class="credits-nick">@N1KN0</span>
-                    <span class="credits-nick">@GregMSK</span>
-                    <span class="credits-nick">@vadim_uv</span>
-                    <span class="credits-nick">@xProtosx</span>
-                    <span class="credits-nick">@RaggaSimpson</span>
-                    <span class="credits-nick">@М****л Л*****о</span>
-                    <span class="credits-nick">@D***s C************o</span>
-                    <span class="credits-nick">@MrUndefined86</span>
-                    <span class="credits-nick">@А*******р Ч******н</span>
-                    <span class="credits-nick">@vkh_ent</span>
-                    <span class="credits-nick">@momomol777</span>
-                    <span class="credits-nick">@Grimrade</span>
-                    <span class="credits-nick">@N0news</span>
-                    <span class="credits-nick">@zixstass</span>
-                    <span class="credits-nick">@Agenstily</span>
-                    <span class="credits-nick">@Russlan_89</span>
-                    <span class="credits-nick">@fr0z3n_rzr</span>
-                    <span class="credits-nick">@boris_e</span>
-                    <span class="credits-nick">@Vgjkuj</span>
-                    <span class="credits-nick">@tkrv09</span>
-                    <span class="credits-nick">@Sadrutdin</span>
-                    <span class="credits-nick">@Clawa1984</span>
-                    <span class="credits-nick">@beautiful_lion</span>
-                    <span class="credits-nick">@Link_Sergey</span>
-                    <span class="credits-nick">@Dannis_CH</span>
-                    <span class="credits-nick">@vano_milah</span>
-                    <span class="credits-nick">@Il131</span>
-                    <span class="credits-nick">@VylenSV</span>
-                    <span class="credits-nick">@verbee09</span>
-                    <span class="credits-nick">@EfimovYuriy</span>
-                    <span class="credits-nick">@vumaximov</span>
-                    <span class="credits-nick">@Maximus</span>
-                    <span class="credits-nick">@VlZlVlZ</span>
-                    <span class="credits-nick">@sergeinesl</span>
-                    <span class="credits-nick">@unclownartist</span>
-                    <span class="credits-nick">@game47</span>
-                    <span class="credits-nick">@A_Valerich</span>
-                    <span class="credits-nick">@Влад*** С***н</span>
-                    <span class="credits-nick">@Space_Voyager_Telegram</span>
-                    <span class="credits-nick">@moskinnickolas</span>
-                    <span class="credits-nick">@Brown2Fox</span>
-                    <span class="credits-nick">@Mr_SiB</span>
-                    <span class="credits-nick">@moskinnickolas</span>
-                    <span class="credits-nick">@moskinnickolas</span>
-                </div>
-            </div>
-            {/if}
-        </div>
-    {/if}
+		<SettingsFooter />
+	{/if}
 
-    <Modal
-        open={restartConfirmOpen}
-        title="Перезапуск AWG Manager"
-        size="sm"
-        onclose={() => (restartConfirmOpen = false)}
-    >
-        <p
-            style="color: var(--text-secondary); font-size: 0.875rem; margin: 0;"
-        >
-            Перезапустить процесс AWG Manager? Туннели продолжат работать.
-        </p>
-        {#snippet actions()}
-            <button
-                class="btn btn-ghost"
-                onclick={() => (restartConfirmOpen = false)}>Отмена</button
-            >
-            <button class="btn btn-primary" onclick={restartDaemon}
-                >Перезапустить</button
-            >
-        {/snippet}
-    </Modal>
+	<Modal
+		open={restartConfirmOpen}
+		title="Перезапуск AWG Manager"
+		size="sm"
+		onclose={() => (restartConfirmOpen = false)}
+	>
+		<p class="modal-text">
+			Перезапустить процесс AWG Manager? Туннели продолжат работать.
+		</p>
+		{#snippet actions()}
+			<Button variant="ghost" size="md" onclick={() => (restartConfirmOpen = false)}>Отмена</Button>
+			<Button variant="primary" size="md" onclick={restartDaemon}>Перезапустить</Button>
+		{/snippet}
+	</Modal>
 </PageContainer>
 
 <style>
-    .credits-section {
-        margin-top: 0.5rem;
-    }
+	.settings-grid {
+		display: grid;
+		grid-template-columns: 360px 1fr;
+		gap: 1rem;
+		align-items: start;
+	}
 
-    .credits-content {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.375rem;
-    }
+	.settings-left,
+	.settings-right {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
 
-    .credits-nick {
-        font-size: 0.75rem;
-        font-family: var(--font-mono, monospace);
-        color: var(--text-muted);
-        background: var(--bg-primary);
-        padding: 0.125rem 0.5rem;
-        border-radius: 10px;
-        border: 1px solid var(--border);
-    }
+	.settings-left {
+		position: sticky;
+		top: 1rem;
+		align-self: start;
+	}
 
-    .disclaimer-card {
-        margin-bottom: 0.5rem;
-    }
+	.modal-text {
+		color: var(--color-text-secondary);
+		font-size: 0.875rem;
+		margin: 0;
+	}
 
-    .disclaimer-content {
-        display: flex;
-        align-items: flex-start;
-        gap: 0.75rem;
-        padding: 0.875rem 1rem;
-        background: var(--bg-secondary);
-        border: 1px solid var(--border);
-        border-left: 3px solid var(--text-muted);
-        border-radius: var(--radius);
-        font-size: 0.8125rem;
-        color: var(--text-secondary);
-        line-height: 1.5;
-    }
+	.actions-card {
+		margin-top: 0.75rem;
+	}
 
-    .disclaimer-icon {
-        flex-shrink: 0;
-        color: var(--text-muted);
-        margin-top: 1px;
-    }
+	.action-buttons {
+		display: inline-flex;
+		gap: 0.375rem;
+		flex-shrink: 0;
+	}
 
-    .disclaimer-text {
-        display: flex;
-        flex-direction: column;
-        gap: 0.25rem;
-    }
+	.api-key-row {
+		display: inline-flex;
+		gap: 0.5rem;
+		align-items: center;
+		flex-shrink: 0;
+	}
 
-    .disclaimer-text p {
-        margin: 0;
-    }
+	.api-key-input {
+		width: 22rem;
+		max-width: 100%;
+		padding: 0.375rem 0.5rem;
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 0.8rem;
+		background: var(--bg, var(--color-bg));
+		border: 1px solid var(--border, var(--color-border));
+		border-radius: 4px;
+		color: var(--text, var(--color-text));
+	}
+	.api-key-input:read-only {
+		opacity: 0.85;
+		cursor: text;
+	}
 
-    .disclaimer-text a {
-        color: var(--accent);
-        text-decoration: none;
-    }
-
-    .disclaimer-text a:hover {
-        text-decoration: underline;
-    }
+	@media (max-width: 900px) {
+		.settings-grid {
+			grid-template-columns: 1fr;
+		}
+		.settings-left {
+			position: static;
+		}
+	}
 </style>

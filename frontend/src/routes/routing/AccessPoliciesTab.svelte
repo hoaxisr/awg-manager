@@ -1,7 +1,7 @@
 <script lang="ts">
     import { api } from '$lib/api/client';
     import type { AccessPolicy, PolicyDevice, PolicyGlobalInterface } from '$lib/types';
-    import { Modal, StoreStatusBadge } from '$lib/components/ui';
+    import { Modal, StoreStatusBadge, Button } from '$lib/components/ui';
     import { PolicyTable, PolicyCreateModal, PolicyEditView } from '$lib/components/accesspolicy';
     import { notifications } from '$lib/stores/notifications';
     import { accessPoliciesStore, policyDevicesStore, policyInterfacesStore } from '$lib/stores/routing';
@@ -123,9 +123,9 @@
                 <StoreStatusBadge store={policyDevicesStore} />
                 <StoreStatusBadge store={policyInterfacesStore} />
                 {#if accessPolicies.length > 0}
-                    <button class="btn btn-sm btn-ghost" onclick={() => { policySelectionMode = true; policySelected = new Set(); }}>Выбрать</button>
+                    <Button variant="ghost" size="sm" onclick={() => { policySelectionMode = true; policySelected = new Set(); }}>Выбрать</Button>
                 {/if}
-                <button class="btn btn-sm btn-primary" onclick={() => policyCreateOpen = true}>+ Создать</button>
+                <Button variant="primary" size="sm" onclick={() => policyCreateOpen = true}>+ Создать</Button>
             </div>
         {:else}
             <div class="bulk-bar">
@@ -175,8 +175,8 @@
             <p class="confirm-text">Удалить политику «{pol?.description || policyDeleteName}»?</p>
             <p class="delete-hint">Все устройства будут отвязаны от этой политики.</p>
             {#snippet actions()}
-                <button class="btn btn-ghost" onclick={() => policyDeleteName = null}>Отмена</button>
-                <button class="btn btn-danger" onclick={() => deletePolicy(policyDeleteName!)}>Удалить</button>
+                <Button variant="ghost" onclick={() => policyDeleteName = null}>Отмена</Button>
+                <Button variant="danger" onclick={() => deletePolicy(policyDeleteName!)}>Удалить</Button>
             {/snippet}
         </Modal>
     {/if}
@@ -185,8 +185,8 @@
         <Modal open={true} title="Удаление" size="sm" onclose={() => policyBulkDeleteConfirm = false}>
             <p class="confirm-text">Удалить {policySelected.size} политик? Все устройства будут отвязаны.</p>
             {#snippet actions()}
-                <button class="btn btn-ghost" onclick={() => policyBulkDeleteConfirm = false}>Отмена</button>
-                <button class="btn btn-danger" onclick={bulkPolicyDelete}>Удалить</button>
+                <Button variant="ghost" onclick={() => policyBulkDeleteConfirm = false}>Отмена</Button>
+                <Button variant="danger" onclick={bulkPolicyDelete}>Удалить</Button>
             {/snippet}
         </Modal>
     {/if}

@@ -10,11 +10,12 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/testing"
 )
 
-// GenerateConf generates a WireGuard client .conf file for a peer.
-func (s *Service) GenerateConf(ctx context.Context, pubkey string) (string, error) {
-	server := s.settings.GetManagedServer()
-	if server == nil {
-		return "", fmt.Errorf("no managed server exists")
+// GenerateConf generates a WireGuard client .conf file for a peer of the
+// managed server identified by id.
+func (s *Service) GenerateConf(ctx context.Context, id, pubkey string) (string, error) {
+	server, ok := s.settings.GetManagedServerByID(id)
+	if !ok {
+		return "", fmt.Errorf("managed server not found: %s", id)
 	}
 
 	idx := s.findPeerIndex(server, pubkey)
@@ -57,7 +58,7 @@ func (s *Service) GenerateConf(ctx context.Context, pubkey string) (string, erro
 	}
 
 	// Get ASC params from NDMS + locally stored I1-I5
-	ascRaw, _ := s.GetASCParams(ctx)
+	ascRaw, _ := s.GetASCParams(ctx, id)
 
 	// Build .conf
 	var b strings.Builder

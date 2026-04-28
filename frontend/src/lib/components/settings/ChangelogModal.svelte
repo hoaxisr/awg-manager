@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button } from '$lib/components/ui';
 	import { LoadingSpinner } from '$lib/components/layout';
 	import ChangelogRender from './ChangelogRender.svelte';
 	import type { ChangelogEntry } from '$lib/types';
@@ -49,7 +49,7 @@
 		{/if}
 	</div>
 	{#snippet actions()}
-		<button class="btn btn-primary" onclick={onclose}>Закрыть</button>
+		<Button variant="primary" size="md" onclick={onclose}>Закрыть</Button>
 	{/snippet}
 </Modal>
 

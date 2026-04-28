@@ -5,6 +5,7 @@
 	import { formatBytes } from '$lib/utils/format';
 	import { comparePeerFields, type PeerSortKey } from '$lib/utils/peerSort';
 	import { PeerTable, ConfGeneratorModal, PeerSortControls } from '$lib/components/servers';
+	import { Button } from '$lib/components/ui';
 
 	function peerIP(p: WireguardServerPeer): string {
 		return p.allowedIPs?.find(ip => ip.includes('/32'))?.split('/')[0]
@@ -157,17 +158,20 @@
 	<!-- Actions -->
 	{#if !isBuiltIn && onUnmark}
 		<div class="server-actions">
-			<button class="btn btn-ghost btn-sm" onclick={() => onUnmark?.(server.id)}>
-				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<polyline points="15,3 21,3 21,9"/>
-					<polyline points="9,21 3,21 3,15"/>
-					<line x1="21" y1="3" x2="14" y2="10"/>
-					<line x1="3" y1="21" x2="10" y2="14"/>
-				</svg>
+			<Button variant="ghost" size="sm" onclick={() => onUnmark?.(server.id)} {iconBefore}>
 				Вернуть в туннели
-			</button>
+			</Button>
 		</div>
 	{/if}
+
+	{#snippet iconBefore()}
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+			<polyline points="15,3 21,3 21,9"/>
+			<polyline points="9,21 3,21 3,15"/>
+			<line x1="21" y1="3" x2="14" y2="10"/>
+			<line x1="3" y1="21" x2="10" y2="14"/>
+		</svg>
+	{/snippet}
 
 </div>
 

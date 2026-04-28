@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { WireguardServerPeer } from '$lib/types';
 	import { formatRelativeTime, formatBytes } from '$lib/utils/format';
+	import { IconButton } from '$lib/components/ui';
 
 	interface Props {
 		peers: WireguardServerPeer[];
@@ -55,17 +56,16 @@
 						</td>
 						{#if onDownloadConf}
 							<td>
-								<button
-									class="btn btn-ghost btn-sm conf-btn"
-									title="Скачать .conf"
+								<IconButton
+									ariaLabel="Скачать .conf"
 									onclick={() => onDownloadConf?.(peer.publicKey)}
 								>
-									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 										<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
 										<polyline points="7,10 12,15 17,10"/>
 										<line x1="12" y1="15" x2="12" y2="3"/>
 									</svg>
-								</button>
+								</IconButton>
 							</td>
 						{/if}
 					</tr>
@@ -142,15 +142,6 @@
 
 	.peer-disabled td {
 		opacity: 0.4;
-	}
-
-	.conf-btn {
-		padding: 0.25rem;
-	}
-
-	.btn-sm {
-		padding: 0.25rem 0.5rem;
-		font-size: 0.8125rem;
 	}
 
 	@media (max-width: 640px) {

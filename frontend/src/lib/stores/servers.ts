@@ -4,8 +4,8 @@ import type { WireguardServer, ManagedServer, ManagedServerStats } from '$lib/ty
 
 export interface ServersSnapshot {
 	servers: WireguardServer[];
-	managed: ManagedServer | null;
-	managedStats: ManagedServerStats | null;
+	managed: ManagedServer[];
+	managedStats: Record<string, ManagedServerStats>;
 	wanIP: string;
 }
 

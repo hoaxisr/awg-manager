@@ -196,13 +196,17 @@ type SystemWireguardTunnel struct {
 	Status        string             `json:"status"`
 	Connected     bool               `json:"connected"`
 	MTU           int                `json:"mtu"`
-	Peer          *WireguardPeerInfo `json:"peer,omitempty"` // FIRST peer only
+	Address       string             `json:"address,omitempty"` // IPv4 e.g. "10.8.1.3"
+	Mask          string             `json:"mask,omitempty"`    // IPv4 mask
+	Uptime        int64              `json:"uptime,omitempty"`  // seconds since up
+	Peer          *WireguardPeerInfo `json:"peer,omitempty"`    // FIRST peer only
 }
 
 // WireguardPeerInfo is the minimal tunnel-peer view (first peer only, for system-tunnel UI).
 type WireguardPeerInfo struct {
 	PublicKey     string `json:"publicKey"`
 	Endpoint      string `json:"endpoint"` // "ip:port"
+	Via           string `json:"via,omitempty"` // ISP/connection interface (e.g. "PPPoE0")
 	RxBytes       int64  `json:"rxBytes"`
 	TxBytes       int64  `json:"txBytes"`
 	LastHandshake string `json:"lastHandshake"` // RFC3339 or ""

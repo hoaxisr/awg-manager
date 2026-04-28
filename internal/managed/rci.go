@@ -86,6 +86,72 @@ func (s *Service) rciConfigureServer(ctx context.Context, name, description, add
 	})
 }
 
+// rciSetDescription updates the NDMS description for the interface.
+// The description is the user-facing display name on the router and in our UI.
+func (s *Service) rciSetDescription(ctx context.Context, ifaceName, description string) error {
+	return s.rciPost(ctx, map[string]interface{}{
+		"interface": map[string]interface{}{
+			ifaceName: map[string]interface{}{
+				"description": description,
+			},
+		},
+	})
+}
+
+// updateServerChanges holds the optional set of mutations rciUpdateServer
+// applies in a single atomic POST. Only fields with the corresponding flag
+// set are emitted into the payload.
+type updateServerChanges struct {
+	descriptionSet bool
+	description    string
+
+	portSet bool
+	port    int
+
+	addressChanged                  bool
+	oldAddress, oldMask             string
+	newAddress, newMask             string
+}
+
+// rciUpdateServer applies multiple managed-server property changes in a
+// single RCI POST. NDMS treats the nested `interface.<name>.{...}` object
+// as one config transaction — either every leaf applies or the whole
+// payload is rejected, so partial-failure divergence cannot occur.
+//
+// For an address change, both the removal of the old address and the
+// installation of the new one are sent as an `ip.address` array of two
+// entries; this mirrors the array-of-ops shape NDMS already uses for
+// peers, hotspot policy, and NAT.
+func (s *Service) rciUpdateServer(ctx context.Context, ifaceName string, c updateServerChanges) error {
+	iface := map[string]interface{}{}
+	if c.descriptionSet {
+		iface["description"] = c.description
+	}
+	if c.portSet {
+		iface["wireguard"] = map[string]interface{}{
+			"listen-port": map[string]interface{}{
+				"port": c.port,
+			},
+		}
+	}
+	if c.addressChanged {
+		iface["ip"] = map[string]interface{}{
+			"address": []map[string]interface{}{
+				{"no": true, "address": c.oldAddress, "mask": c.oldMask},
+				{"address": c.newAddress, "mask": c.newMask},
+			},
+		}
+	}
+	if len(iface) == 0 {
+		return nil
+	}
+	return s.rciPost(ctx, map[string]interface{}{
+		"interface": map[string]interface{}{
+			ifaceName: iface,
+		},
+	})
+}
+
 // rciSetListenPort updates the listen port.
 func (s *Service) rciSetListenPort(ctx context.Context, ifaceName string, port int) error {
 	return s.rciPost(ctx, map[string]interface{}{

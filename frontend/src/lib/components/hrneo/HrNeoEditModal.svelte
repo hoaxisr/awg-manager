@@ -6,7 +6,7 @@
 		RoutingTunnel,
 	} from '$lib/types';
 	import { SERVICE_PRESETS, type ServicePreset } from '$lib/data/presets';
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button, IconButton, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { ServiceIcon } from '$lib/components/dnsroutes';
 	import { InterfaceList } from '$lib/components/accesspolicy';
 	import HrNeoGeoTagPicker from './HrNeoGeoTagPicker.svelte';
@@ -288,14 +288,14 @@
 					<div class="preset-bar-name">{selectedPreset.name}</div>
 					<div class="preset-bar-meta">{selectedPreset.domains?.length ?? 0} записей</div>
 				</div>
-				<button class="btn btn-ghost btn-sm" onclick={clearPreset} aria-label="Clear preset">×</button>
+				<IconButton ariaLabel="Очистить пресет" onclick={clearPreset}>×</IconButton>
 			{:else}
 				<span class="preset-bar-label">Пресет не выбран</span>
 			{/if}
 		</div>
-		<button class="btn btn-secondary btn-sm" onclick={() => (presetPickerOpen = !presetPickerOpen)}>
+		<Button variant="secondary" size="sm" onclick={() => (presetPickerOpen = !presetPickerOpen)}>
 			{presetPickerOpen ? 'Скрыть каталог' : 'Выбрать из каталога'}
-		</button>
+		</Button>
 	</div>
 
 	{#if presetPickerOpen}
@@ -314,10 +314,10 @@
 
 	<!-- Name -->
 	<div class="form-group" class:field-error={attempted && !name.trim()}>
-		<label class="form-label" for="hr-rule-name">Название</label>
+		<label class="field-label" for="hr-rule-name">Название</label>
 		<input
 			id="hr-rule-name"
-			class="form-input"
+			class="field-input"
 			type="text"
 			placeholder="Youtube"
 			bind:value={name}
@@ -334,13 +334,13 @@
 			</div>
 			<div class="section-row-tools">
 				<span class="badge-mono">domain.conf</span>
-				<button
-					type="button"
-					class="btn btn-ghost btn-sm"
+				<Button
+					variant="ghost"
+					size="sm"
 					onclick={() => (geositePickerOpen = !geositePickerOpen)}
 				>
 					+ geosite:TAG
-				</button>
+				</Button>
 			</div>
 		</header>
 
@@ -353,7 +353,7 @@
 			/>
 		{/if}
 
-		<textarea class="form-textarea mono" rows="8" bind:value={domainsText}
+		<textarea class="field-textarea" rows="8" bind:value={domainsText}
 			placeholder="youtube.com&#10;.googlevideo.com&#10;geosite:GOOGLE"
 		></textarea>
 		<div class="form-hint">
@@ -370,13 +370,13 @@
 			</div>
 			<div class="section-row-tools">
 				<span class="badge-mono">ip.list</span>
-				<button
-					type="button"
-					class="btn btn-ghost btn-sm"
+				<Button
+					variant="ghost"
+					size="sm"
 					onclick={() => (geoipPickerOpen = !geoipPickerOpen)}
 				>
 					+ geoip:TAG
-				</button>
+				</Button>
 			</div>
 		</header>
 
@@ -390,7 +390,7 @@
 			/>
 		{/if}
 
-		<textarea class="form-textarea mono" rows="5" bind:value={cidrText}
+		<textarea class="field-textarea" rows="5" bind:value={cidrText}
 			placeholder="10.0.0.0/8&#10;2001:db8::/32&#10;geoip:RU"
 		></textarea>
 		<div class="form-hint">CIDR · geoip:TAG — строкой на запись. Блок в ip.list.</div>
@@ -398,7 +398,7 @@
 
 	<!-- Target -->
 	<section class="form-section">
-		<div class="form-label">Target</div>
+		<div class="field-label">Target</div>
 		<div class="seg-tabs">
 			<button
 				type="button"
@@ -415,11 +415,11 @@
 		</div>
 
 		{#if mode === 'interface'}
-			<select class="form-select" bind:value={tunnelId}>
-				{#each tunnels as t}
-					<option value={t.id}>{t.name}{t.iface ? ` · ${t.iface}` : ''}</option>
-				{/each}
-			</select>
+			{@const tunnelOpts: DropdownOption[] = tunnels.map((t) => ({
+				value: t.id,
+				label: t.name + (t.iface ? ` · ${t.iface}` : ''),
+			}))}
+			<Dropdown bind:value={tunnelId} options={tunnelOpts} fullWidth />
 		{:else}
 			<div class="radio-block">
 				<label class="radio-option" class:active={policyChoice === 'existing'}>
@@ -442,13 +442,11 @@
 						{/if}
 					</div>
 				{:else}
-					<select class="form-select" bind:value={existingPolicyName}>
-						{#each hrCompatiblePolicies as p}
-							<option value={p.name}>
-								{p.name}{p.description ? ` (${p.description})` : ''}
-							</option>
-						{/each}
-					</select>
+					{@const policyOpts: DropdownOption[] = hrCompatiblePolicies.map((p) => ({
+						value: p.name,
+						label: p.name + (p.description ? ` (${p.description})` : ''),
+					}))}
+					<Dropdown bind:value={existingPolicyName} options={policyOpts} fullWidth />
 					<div class="form-hint">
 						Интерфейсы политики редактируются на её карточке в сайдбаре.
 					</div>
@@ -457,10 +455,10 @@
 				<div class="policy-card">
 					<div class="policy-card-header">Новая политика Keenetic</div>
 					<div class="form-group" class:field-error={attempted && newPolicyNameValidationError !== ''}>
-						<label class="form-label" for="hr-new-policy-name">Имя политики</label>
+						<label class="field-label" for="hr-new-policy-name">Имя политики</label>
 						<input
 							id="hr-new-policy-name"
-							class="form-input"
+							class="field-input"
 							type="text"
 							placeholder="Streaming"
 							maxlength={HR_POLICY_NAME_MAX}
@@ -497,10 +495,10 @@
 	</section>
 
 	{#snippet actions()}
-		<button class="btn btn-secondary" onclick={onclose}>Отмена</button>
-		<button class="btn btn-primary" onclick={handleSave} disabled={saving || !canSave}>
-			{saving ? 'Сохранение…' : 'Сохранить'}
-		</button>
+		<Button variant="secondary" onclick={onclose}>Отмена</Button>
+		<Button variant="primary" onclick={handleSave} disabled={!canSave} loading={saving}>
+			Сохранить
+		</Button>
 	{/snippet}
 </Modal>
 
@@ -511,8 +509,8 @@
 		justify-content: space-between;
 		gap: 12px;
 		padding: 10px 12px;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border);
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		margin-bottom: 14px;
 	}
@@ -529,14 +527,14 @@
 	}
 	.preset-bar-name {
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 	}
 	.preset-bar-meta {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 	}
 	.preset-bar-label {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		font-size: 0.875rem;
 	}
 
@@ -545,8 +543,8 @@
 		grid-template-columns: repeat(2, 1fr);
 		gap: 6px;
 		padding: 10px;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border);
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		margin-bottom: 14px;
 		max-height: 260px;
@@ -557,17 +555,17 @@
 		align-items: center;
 		gap: 8px;
 		padding: 8px;
-		background: var(--bg-tertiary);
-		border: 1px solid var(--border);
+		background: var(--color-bg-tertiary);
+		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		cursor: pointer;
 		text-align: left;
 		font-family: inherit;
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 		transition: border-color 0.15s;
 	}
 	.preset-card:hover {
-		border-color: var(--accent);
+		border-color: var(--color-accent);
 	}
 	.preset-card-body {
 		display: flex;
@@ -578,7 +576,7 @@
 		font-weight: 600;
 	}
 	.preset-card-meta {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 	}
 
@@ -600,10 +598,10 @@
 	.section-row-title {
 		font-size: 0.8125rem;
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 	}
 	.section-row-count {
-		color: var(--accent);
+		color: var(--color-accent);
 		font-weight: 600;
 	}
 	.section-row-tools {
@@ -613,23 +611,18 @@
 	}
 
 	.badge-mono {
-		background: var(--bg-tertiary);
-		color: var(--text-muted);
+		background: var(--color-bg-tertiary);
+		color: var(--color-text-muted);
 		font-size: 0.6875rem;
 		padding: 2px 6px;
 		border-radius: 10px;
 		font-family: ui-monospace, monospace;
 	}
 
-	.mono {
-		font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-		font-size: 0.8125rem;
-	}
-
 	.seg-tabs {
 		display: flex;
 		gap: 2px;
-		background: var(--bg-tertiary);
+		background: var(--color-bg-tertiary);
 		padding: 3px;
 		border-radius: 6px;
 		margin-bottom: 8px;
@@ -641,14 +634,14 @@
 		border-radius: 4px;
 		border: none;
 		background: transparent;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		cursor: pointer;
 		font-family: inherit;
 		font-size: 0.8125rem;
 	}
 	.seg-tab.active {
-		background: var(--bg-hover);
-		color: var(--text-primary);
+		background: var(--color-bg-hover);
+		color: var(--color-text-primary);
 	}
 
 	.radio-block {
@@ -662,46 +655,46 @@
 		align-items: center;
 		gap: 8px;
 		padding: 8px 12px;
-		background: var(--bg-tertiary);
-		border: 1px solid var(--border);
+		background: var(--color-bg-tertiary);
+		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		cursor: pointer;
 		white-space: nowrap;
 	}
 	.radio-option.active {
-		border-color: var(--accent);
-		background: var(--bg-hover);
+		border-color: var(--color-accent);
+		background: var(--color-bg-hover);
 	}
 	.radio-option input[type='radio'] {
-		accent-color: var(--accent);
+		accent-color: var(--color-accent);
 	}
 	.radio-option span {
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 		font-size: 0.875rem;
 	}
 
 	.policy-card {
-		border: 1px solid var(--accent);
+		border: 1px solid var(--color-accent);
 		border-radius: 8px;
 		padding: 12px;
 		background: linear-gradient(180deg, rgba(122, 162, 247, 0.08) 0%, transparent 100%);
 	}
 	.policy-card-header {
-		color: var(--accent);
+		color: var(--color-accent);
 		font-size: 0.6875rem;
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 		margin-bottom: 10px;
 		padding-bottom: 6px;
-		border-bottom: 1px solid var(--accent);
+		border-bottom: 1px solid var(--color-accent);
 	}
 
 	.form-hint.muted {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 	.error-text {
-		color: var(--error);
+		color: var(--color-error);
 		font-size: 0.75rem;
 		margin-top: 4px;
 	}
@@ -710,8 +703,8 @@
 		font-size: 0.75rem;
 		margin-top: 4px;
 	}
-	.field-error .form-input {
-		border-color: var(--error);
+	.field-error :global(.field-input) {
+		border-color: var(--color-error);
 	}
 
 	@media (max-width: 640px) {

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button } from '$lib/components/ui';
 
 	interface Props {
 		open: boolean;
@@ -16,7 +16,6 @@
 
 	let isValid = $derived(description.trim().length > 0 && description.trim().length <= MAX_LEN && VALID_PATTERN.test(description.trim()));
 	let attempted = $state(false);
-	let shaking = $state(false);
 
 	let descriptionError = $derived.by(() => {
 		if (!attempted) return '';
@@ -37,8 +36,7 @@
 	function handleSave() {
 		attempted = true;
 		if (!isValid) {
-			shaking = true;
-			setTimeout(() => shaking = false, 400);
+			// TODO Phase 1: restore shake animation feedback on invalid submit
 			return;
 		}
 		oncreate(description.trim());
@@ -62,15 +60,11 @@
 	</div>
 
 	{#snippet actions()}
-		<button class="btn btn-ghost" onclick={onclose} disabled={saving}>Отмена</button>
-		<button
-			class="btn btn-primary"
-			class:shake={shaking}
-			onclick={handleSave}
-			disabled={saving}
-		>
-			{#if saving}Создание...{:else}Создать{/if}
-		</button>
+		<Button variant="ghost" onclick={onclose} disabled={saving}>Отмена</Button>
+		<!-- TODO Phase 1: shake animation on save when invalid (was class:shake={shaking}) -->
+		<Button variant="primary" onclick={handleSave} loading={saving}>
+			Создать
+		</Button>
 	{/snippet}
 </Modal>
 

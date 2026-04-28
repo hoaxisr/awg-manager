@@ -8,7 +8,9 @@
 		singboxTraffic,
 		triggerDelayCheck,
 	} from '$lib/stores/singbox';
-	import { Modal } from '$lib/components/ui';
+	import { untrack } from 'svelte';
+	import { Modal, Button, TrafficChart } from '$lib/components/ui';
+	import { getTrafficRates, subscribeTraffic, loadHistory } from '$lib/stores/traffic';
 	import SingboxSpeedTestModal from './SingboxSpeedTestModal.svelte';
 
 	interface Props {
@@ -100,6 +102,30 @@
 		if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 		return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 	}
+
+	// ─── Traffic sparkline (rate history fed by +layout SSE handler) ─
+	let rxRates = $state<number[]>([]);
+	let txRates = $state<number[]>([]);
+	let tunnelTag = $derived(tunnel.tag);
+
+	$effect(() => {
+		const tag = tunnelTag;
+		const update = () => {
+			const t = getTrafficRates(tag);
+			rxRates = t.rx;
+			txRates = t.tx;
+		};
+		update();
+		return subscribeTraffic(update);
+	});
+
+	let initialLoadDone = false;
+	$effect(() => {
+		const tag = tunnelTag;
+		if (initialLoadDone) return;
+		initialLoadDone = true;
+		untrack(() => loadHistory(tag));
+	});
 </script>
 
 <div class="card" class:ok={cardState === 'ok'} class:slow={cardState === 'slow'} class:fail={cardState === 'fail'} class:unknown={cardState === 'unknown'} class:stopped={cardState === 'stopped'}>
@@ -210,40 +236,35 @@
 		</div>
 	</div>
 
-	<div class="chart-block">
+	<div class="chart-block traffic-block">
 		<div class="chart-head">
 			<span>Трафик</span>
 			<span class="stats">
 				↓ {formatBytes(traffic?.download ?? 0)} · ↑ {formatBytes(traffic?.upload ?? 0)}
 			</span>
 		</div>
-		<div class="traffic-spark">
-			<div class="track dl">
-				{#each Array(8) as _, i}
-					<div class="bar" style="height: {traffic && traffic.download > 0 ? Math.min((traffic.download / (1024 * 1024)) * 2, 18) : 1}px;"></div>
-				{/each}
-			</div>
-			<div class="track ul">
-				{#each Array(8) as _, i}
-					<div class="bar" style="height: {traffic && traffic.upload > 0 ? Math.min((traffic.upload / (1024 * 1024)) * 2, 10) : 1}px;"></div>
-				{/each}
-			</div>
-		</div>
+		<TrafficChart
+			{rxRates}
+			{txRates}
+			rxTotal={traffic?.download ?? 0}
+			txTotal={traffic?.upload ?? 0}
+			height={56}
+		/>
 	</div>
 
 	<div class="actions">
-		<button
-			class="btn btn-ghost btn-sm"
+		<Button
+			variant="ghost"
+			size="sm"
 			onclick={openSpeedtest}
 			disabled={!tunnel.kernelInterface}
-			title={tunnel.kernelInterface ? 'iperf3 через ' + tunnel.kernelInterface : 'Kernel interface не определён'}
 		>
 			Тест скорости
-		</button>
-		<button class="btn btn-ghost btn-sm" onclick={edit}>Изменить</button>
-		<button class="btn btn-danger btn-sm" onclick={() => (confirmDeleteOpen = true)} disabled={deleting}>
-			{deleting ? 'Удаление...' : 'Удалить'}
-		</button>
+		</Button>
+		<Button variant="ghost" size="sm" onclick={edit}>Изменить</Button>
+		<Button variant="danger" size="sm" onclick={() => (confirmDeleteOpen = true)} loading={deleting}>
+			Удалить
+		</Button>
 	</div>
 </div>
 
@@ -262,8 +283,8 @@
 >
 	<p class="confirm-text">Удалить туннель <strong>{tunnel.tag}</strong>?</p>
 	{#snippet actions()}
-		<button class="btn btn-ghost" onclick={() => (confirmDeleteOpen = false)}>Отмена</button>
-		<button class="btn btn-danger" onclick={remove}>Удалить</button>
+		<Button variant="ghost" size="md" onclick={() => (confirmDeleteOpen = false)}>Отмена</Button>
+		<Button variant="danger" size="md" onclick={remove}>Удалить</Button>
 	{/snippet}
 </Modal>
 
@@ -457,26 +478,6 @@
 		background: var(--border);
 		height: 30% !important;
 	}
-
-	.traffic-spark {
-		height: 22px;
-		display: flex;
-		flex-direction: column;
-		gap: 1px;
-	}
-	.traffic-spark .track {
-		display: flex;
-		gap: 1px;
-		flex: 1;
-		align-items: flex-end;
-	}
-	.traffic-spark .track .bar {
-		flex: 1;
-		min-height: 1px;
-		border-radius: 1px;
-	}
-	.traffic-spark .track.dl .bar { background: rgba(16, 185, 129, 0.7); }
-	.traffic-spark .track.ul .bar { background: rgba(59, 130, 246, 0.7); }
 
 	.actions {
 		display: flex;

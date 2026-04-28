@@ -1,17 +1,19 @@
 <script lang="ts">
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
+	import { copyToClipboard } from '$lib/utils/clipboard';
 	import QRCode from 'qrcode';
 
 	interface Props {
 		open: boolean;
+		serverId: string;
 		pubkey: string;
 		peerName: string;
 		onclose: () => void;
 	}
 
-	let { open = $bindable(false), pubkey, peerName, onclose }: Props = $props();
+	let { open = $bindable(false), serverId, pubkey, peerName, onclose }: Props = $props();
 
 	let conf = $state('');
 	let loading = $state(false);
@@ -30,7 +32,7 @@
 	async function loadConf() {
 		loading = true;
 		try {
-			conf = await api.getManagedPeerConf(pubkey);
+			conf = await api.getManagedPeerConf(serverId, pubkey);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Ошибка загрузки');
 			conf = '';
@@ -80,9 +82,12 @@
 		URL.revokeObjectURL(url);
 	}
 
-	function copyConf() {
-		navigator.clipboard.writeText(conf);
-		notifications.success('Скопировано');
+	async function copyConf() {
+		if (await copyToClipboard(conf)) {
+			notifications.success('Скопировано');
+		} else {
+			notifications.error('Не удалось скопировать');
+		}
 	}
 </script>
 
@@ -103,21 +108,15 @@
 	{/if}
 
 	{#snippet actions()}
-		<button class="btn btn-ghost" onclick={toggleQR} disabled={!conf || qrGenerating}>
-			{#if qrGenerating}
-				Генерация...
-			{:else if showQR}
-				Конфиг
-			{:else}
-				QR-код
-			{/if}
-		</button>
-		<button class="btn btn-ghost" onclick={copyConf} disabled={!conf}>
+		<Button variant="ghost" size="md" onclick={toggleQR} disabled={!conf} loading={qrGenerating}>
+			{showQR ? 'Конфиг' : 'QR-код'}
+		</Button>
+		<Button variant="ghost" size="md" onclick={copyConf} disabled={!conf}>
 			Копировать
-		</button>
-		<button class="btn btn-primary" onclick={downloadConf} disabled={!conf}>
+		</Button>
+		<Button variant="primary" size="md" onclick={downloadConf} disabled={!conf}>
 			Скачать .conf
-		</button>
+		</Button>
 	{/snippet}
 </Modal>
 

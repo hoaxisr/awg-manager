@@ -32,6 +32,7 @@ import type {
 	WireguardServerConfig,
 	ManagedServer,
 	ManagedPeer,
+	ManagedServerStats,
 	CreateManagedServerRequest,
 	UpdateManagedServerRequest,
 	AddManagedPeerRequest,
@@ -55,7 +56,22 @@ import type {
 	SingboxImportResponse,
 	DeviceProxyConfig,
 	DeviceProxyOutbound,
-	DeviceProxyRuntime
+	DeviceProxyRuntime,
+	AWGTagInfo,
+	TunnelReferencedError,
+	MonitoringSnapshot,
+	MonitoringSample,
+	SingboxRouterStatus,
+	SingboxRouterSettings,
+	SingboxRouterRule,
+	SingboxRouterRuleSet,
+	SingboxRouterOutbound,
+	SingboxRouterPreset,
+	RouterPolicy,
+	RouterPolicyDevice,
+	SingboxRouterDNSServer,
+	SingboxRouterDNSRule,
+	SingboxRouterDNSGlobals
 } from '$lib/types';
 
 interface ApiResponse<T> {
@@ -184,9 +200,51 @@ class ApiClient {
 	}
 
 	async deleteTunnel(id: string): Promise<DeleteResult> {
-		return this.request(`/tunnels/delete?id=${encodeURIComponent(id)}`, {
-			method: 'POST'
-		});
+		// Direct fetch (not via this.request) so we can inspect HTTP 409
+		// for the structured TunnelReferencedError payload before the
+		// generic error handler swallows it.
+		const url = `${this.baseUrl}/tunnels/delete?id=${encodeURIComponent(id)}`;
+		let res: Response;
+		try {
+			res = await fetch(url, {
+				method: 'POST',
+				credentials: 'same-origin',
+				signal: this.abortController.signal,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		} catch (e) {
+			if (e instanceof DOMException && e.name === 'AbortError') throw e;
+			this.onConnectionLost?.();
+			throw new Error('Ошибка сети: не удалось подключиться к серверу');
+		}
+		if (res.status === 409) {
+			const body = await res.json().catch(() => ({}));
+			const details: TunnelReferencedError = body?.details ?? {
+				tunnelId: id,
+				deviceProxy: false,
+				routerRules: []
+			};
+			const err = new Error('tunnel_referenced') as Error & {
+				details: TunnelReferencedError;
+			};
+			err.details = details;
+			throw err;
+		}
+		if (res.status === 401) {
+			this.onUnauthorized?.();
+			throw new Error('Сессия истекла');
+		}
+		if (!res.ok) {
+			const text = await res.text().catch(() => '');
+			throw new Error(`Ошибка удаления (${res.status}): ${text.substring(0, 100)}`);
+		}
+		const data = (await res.json()) as ApiResponse<DeleteResult>;
+		if (data.error) throw new Error(data.message || 'Ошибка удаления');
+		return data.data as DeleteResult;
+	}
+
+	async getAWGTags(): Promise<AWGTagInfo[]> {
+		return this.request<AWGTagInfo[]>('/singbox/awg-outbounds/tags');
 	}
 
 	async exportTunnel(id: string): Promise<Blob> {
@@ -436,6 +494,10 @@ class ApiClient {
 		});
 	}
 
+	async regenerateApiKey(): Promise<Settings> {
+		return this.request('/settings/regenerate-api-key', { method: 'POST' });
+	}
+
 	// #endregion
 
 	// ─────────────────────────────────────────────
@@ -536,6 +598,7 @@ class ApiClient {
 		group?: string;
 		subgroup?: string;
 		level?: string;
+		since?: number;
 		limit?: number;
 		offset?: number;
 	}): Promise<LogsResponse> {
@@ -543,6 +606,7 @@ class ApiClient {
 		if (params?.group) query.set('group', params.group);
 		if (params?.subgroup) query.set('subgroup', params.subgroup);
 		if (params?.level) query.set('level', params.level);
+		if (params?.since != null && params.since > 0) query.set('since', String(params.since));
 		if (params?.limit) query.set('limit', String(params.limit));
 		if (params?.offset) query.set('offset', String(params.offset));
 		const qs = query.toString();
@@ -593,22 +657,6 @@ class ApiClient {
 			method: 'POST',
 			body: JSON.stringify(params)
 		});
-	}
-
-	async hideSystemTunnel(name: string): Promise<void> {
-		return this.request(`/system-tunnels/hide?name=${encodeURIComponent(name)}`, {
-			method: 'POST'
-		});
-	}
-
-	async unhideSystemTunnel(name: string): Promise<void> {
-		return this.request(`/system-tunnels/hide?name=${encodeURIComponent(name)}`, {
-			method: 'DELETE'
-		});
-	}
-
-	async getHiddenSystemTunnels(): Promise<string[]> {
-		return this.request('/system-tunnels/hidden');
 	}
 
 	async checkSystemTunnelConnectivity(name: string): Promise<ConnectivityResult> {
@@ -862,98 +910,106 @@ class ApiClient {
 	// #region Managed WireGuard Server — CRUD, peers, ASC
 	// ─────────────────────────────────────────────
 
-	async getManagedServer(): Promise<ManagedServer | null> {
-		return this.request('/managed-server');
+	async getManagedServers(): Promise<ManagedServer[]> {
+		return this.request('/managed-servers');
+	}
+
+	async getManagedServer(serverId: string): Promise<ManagedServer> {
+		return this.request(`/managed-servers/${encodeURIComponent(serverId)}`);
 	}
 
 	async createManagedServer(req: CreateManagedServerRequest): Promise<ManagedServer> {
-		return this.request('/managed-server/create', {
+		return this.request('/managed-servers', {
 			method: 'POST',
 			body: JSON.stringify(req)
 		});
 	}
 
 	async suggestManagedServerAddress(): Promise<{ address: string; mask: string }> {
-		return this.request('/managed-server/suggest-address');
+		return this.request('/managed-servers/suggest-address');
 	}
 
-	async setManagedServerPolicy(policy: string): Promise<import('$lib/stores/servers').ServersSnapshot> {
-		return this.request('/managed-server/policy', {
+	async getManagedServerPolicies(): Promise<{ id: string; description: string }[]> {
+		return this.request('/managed-servers/policies');
+	}
+
+	async getManagedServerStats(serverId: string): Promise<ManagedServerStats> {
+		return this.request(`/managed-servers/${encodeURIComponent(serverId)}/stats`);
+	}
+
+	async setManagedServerPolicy(serverId: string, policy: string): Promise<import('$lib/stores/servers').ServersSnapshot> {
+		return this.request(`/managed-servers/${encodeURIComponent(serverId)}/policy`, {
 			method: 'POST',
 			body: JSON.stringify({ policy })
 		});
 	}
 
-	async getManagedServerPolicies(): Promise<{ id: string; description: string }[]> {
-		return this.request('/managed-server/policies');
-	}
-
-	async updateManagedServer(req: UpdateManagedServerRequest): Promise<import('$lib/stores/servers').ServersSnapshot> {
-		return this.request('/managed-server/update', {
+	async updateManagedServer(serverId: string, req: UpdateManagedServerRequest): Promise<import('$lib/stores/servers').ServersSnapshot> {
+		return this.request(`/managed-servers/${encodeURIComponent(serverId)}`, {
 			method: 'PUT',
 			body: JSON.stringify(req)
 		});
 	}
 
-	async setManagedServerEnabled(enabled: boolean): Promise<import('$lib/stores/servers').ServersSnapshot> {
-		return this.request('/managed-server/enabled', {
+	async setManagedServerEnabled(serverId: string, enabled: boolean): Promise<import('$lib/stores/servers').ServersSnapshot> {
+		return this.request(`/managed-servers/${encodeURIComponent(serverId)}/enabled`, {
 			method: 'POST',
 			body: JSON.stringify({ enabled })
 		});
 	}
 
-	async setManagedServerNAT(enabled: boolean): Promise<import('$lib/stores/servers').ServersSnapshot> {
-		return this.request('/managed-server/nat', {
+	async setManagedServerNAT(serverId: string, enabled: boolean): Promise<import('$lib/stores/servers').ServersSnapshot> {
+		return this.request(`/managed-servers/${encodeURIComponent(serverId)}/nat`, {
 			method: 'POST',
 			body: JSON.stringify({ enabled })
 		});
 	}
 
-	async deleteManagedServer(): Promise<import('$lib/stores/servers').ServersSnapshot> {
-		return this.request('/managed-server/delete', {
+	async deleteManagedServer(serverId: string): Promise<import('$lib/stores/servers').ServersSnapshot> {
+		return this.request(`/managed-servers/${encodeURIComponent(serverId)}`, {
 			method: 'DELETE'
 		});
 	}
 
-	async addManagedPeer(req: AddManagedPeerRequest): Promise<ManagedPeer> {
-		return this.request('/managed-server/peers', {
+	async addManagedPeer(serverId: string, req: AddManagedPeerRequest): Promise<ManagedPeer> {
+		return this.request(`/managed-servers/${encodeURIComponent(serverId)}/peers`, {
 			method: 'POST',
 			body: JSON.stringify(req)
 		});
 	}
 
-	async updateManagedPeer(pubkey: string, req: UpdateManagedPeerRequest): Promise<import('$lib/stores/servers').ServersSnapshot> {
-		return this.request(`/managed-server/peers/update?pubkey=${encodeURIComponent(pubkey)}`, {
+	async updateManagedPeer(serverId: string, pubkey: string, req: UpdateManagedPeerRequest): Promise<import('$lib/stores/servers').ServersSnapshot> {
+		return this.request(`/managed-servers/${encodeURIComponent(serverId)}/peers/${encodeURIComponent(pubkey)}`, {
 			method: 'PUT',
 			body: JSON.stringify(req)
 		});
 	}
 
-	async deleteManagedPeer(pubkey: string): Promise<import('$lib/stores/servers').ServersSnapshot> {
-		return this.request(`/managed-server/peers/delete?pubkey=${encodeURIComponent(pubkey)}`, {
+	async deleteManagedPeer(serverId: string, pubkey: string): Promise<import('$lib/stores/servers').ServersSnapshot> {
+		return this.request(`/managed-servers/${encodeURIComponent(serverId)}/peers/${encodeURIComponent(pubkey)}`, {
 			method: 'DELETE'
 		});
 	}
 
-	async toggleManagedPeer(publicKey: string, enabled: boolean): Promise<import('$lib/stores/servers').ServersSnapshot> {
-		return this.request('/managed-server/peers/toggle', {
+	async toggleManagedPeer(serverId: string, publicKey: string, enabled: boolean): Promise<import('$lib/stores/servers').ServersSnapshot> {
+		return this.request(`/managed-servers/${encodeURIComponent(serverId)}/peers/${encodeURIComponent(publicKey)}/toggle`, {
 			method: 'POST',
-			body: JSON.stringify({ publicKey, enabled })
+			body: JSON.stringify({ enabled })
 		});
 	}
 
-	async getManagedPeerConf(pubkey: string): Promise<string> {
-		const res = await this.request<{ conf: string }>(`/managed-server/peers/conf?pubkey=${encodeURIComponent(pubkey)}`);
+	async getManagedPeerConf(serverId: string, pubkey: string): Promise<string> {
+		const res = await this.request<{ conf: string }>(`/managed-servers/${encodeURIComponent(serverId)}/peers/${encodeURIComponent(pubkey)}/conf`);
 		return res.conf;
 	}
 
-	async getManagedServerASC(): Promise<ASCParams> {
-		return this.request('/managed-server/asc');
+	async getManagedServerASC(serverId: string): Promise<ASCParams> {
+		return this.request(`/managed-servers/${encodeURIComponent(serverId)}/asc`);
 	}
 
-	async setManagedServerASC(params: ASCParams): Promise<import('$lib/stores/servers').ServersSnapshot> {
-		return this.request('/managed-server/asc', {
-			method: 'POST',
+	async setManagedServerASC(serverId: string, params: ASCParams): Promise<import('$lib/stores/servers').ServersSnapshot> {
+		return this.request(`/managed-servers/${encodeURIComponent(serverId)}/asc`, {
+			method: 'PUT',
 			body: JSON.stringify(params)
 		});
 	}
@@ -1140,6 +1196,13 @@ class ApiClient {
 		return this.request('/singbox/install', { method: 'POST' });
 	}
 
+	async singboxControl(action: 'start' | 'stop' | 'restart'): Promise<SingboxStatus> {
+		return this.request('/singbox/control', {
+			method: 'POST',
+			body: JSON.stringify({ action }),
+		});
+	}
+
 	async singboxListTunnels(): Promise<SingboxTunnel[]> {
 		return this.request('/singbox/tunnels');
 	}
@@ -1246,6 +1309,250 @@ class ApiClient {
 		singboxRunning: boolean;
 	}> {
 		return this.request('/proxy/listen-choices');
+	}
+
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Monitoring (Phase 3)
+	// ─────────────────────────────────────────────
+
+	async getMonitoringMatrix(): Promise<MonitoringSnapshot> {
+		return this.request<MonitoringSnapshot>('/monitoring/matrix');
+	}
+
+	async getMonitoringHistory(params: {
+		target: string;
+		tunnelId: string;
+		limit?: number;
+	}): Promise<MonitoringSample[]> {
+		const qs = new URLSearchParams({
+			target: params.target,
+			tunnelId: params.tunnelId,
+		});
+		if (params.limit && params.limit > 0) qs.set('limit', String(params.limit));
+		return this.request<MonitoringSample[]>(`/monitoring/history?${qs.toString()}`);
+	}
+
+	// #endregion
+
+	// ─────────────────────────────────────────────
+	// #region Sing-box Router (TProxy routing engine)
+	// ─────────────────────────────────────────────
+
+	async singboxRouterStatus(): Promise<SingboxRouterStatus> {
+		return this.request('/singbox/router/status');
+	}
+
+	async singboxRouterEnable(): Promise<void> {
+		await this.request('/singbox/router/enable', { method: 'POST' });
+	}
+
+	async singboxRouterDisable(): Promise<void> {
+		await this.request('/singbox/router/disable', { method: 'POST' });
+	}
+
+	async singboxRouterGetSettings(): Promise<SingboxRouterSettings> {
+		return this.request('/singbox/router/settings');
+	}
+
+	async singboxRouterPutSettings(settings: SingboxRouterSettings): Promise<void> {
+		await this.request('/singbox/router/settings', {
+			method: 'PUT',
+			body: JSON.stringify(settings),
+		});
+	}
+
+	async singboxRouterListRules(): Promise<SingboxRouterRule[]> {
+		return this.request('/singbox/router/rules/list');
+	}
+
+	async singboxRouterAddRule(rule: SingboxRouterRule): Promise<void> {
+		await this.request('/singbox/router/rules/add', {
+			method: 'POST',
+			body: JSON.stringify(rule),
+		});
+	}
+
+	async singboxRouterUpdateRule(index: number, rule: SingboxRouterRule): Promise<void> {
+		await this.request('/singbox/router/rules/update', {
+			method: 'POST',
+			body: JSON.stringify({ index, rule }),
+		});
+	}
+
+	async singboxRouterDeleteRule(index: number): Promise<void> {
+		await this.request('/singbox/router/rules/delete', {
+			method: 'POST',
+			body: JSON.stringify({ index }),
+		});
+	}
+
+	async singboxRouterMoveRule(from: number, to: number): Promise<void> {
+		await this.request('/singbox/router/rules/move', {
+			method: 'POST',
+			body: JSON.stringify({ from, to }),
+		});
+	}
+
+	async singboxRouterListRuleSets(): Promise<SingboxRouterRuleSet[]> {
+		return this.request('/singbox/router/rulesets/list');
+	}
+
+	async singboxRouterAddRuleSet(rs: SingboxRouterRuleSet): Promise<void> {
+		await this.request('/singbox/router/rulesets/add', {
+			method: 'POST',
+			body: JSON.stringify(rs),
+		});
+	}
+
+	async singboxRouterDeleteRuleSet(tag: string, force = false): Promise<void> {
+		await this.request('/singbox/router/rulesets/delete', {
+			method: 'POST',
+			body: JSON.stringify({ tag, force }),
+		});
+	}
+
+	async singboxRouterRefreshRuleSet(tag: string): Promise<void> {
+		await this.request('/singbox/router/rulesets/refresh', {
+			method: 'POST',
+			body: JSON.stringify({ tag }),
+		});
+	}
+
+	async singboxRouterListOutbounds(): Promise<SingboxRouterOutbound[]> {
+		return this.request('/singbox/router/outbounds/list');
+	}
+
+	async singboxRouterAddOutbound(o: SingboxRouterOutbound): Promise<void> {
+		await this.request('/singbox/router/outbounds/add', {
+			method: 'POST',
+			body: JSON.stringify(o),
+		});
+	}
+
+	async singboxRouterUpdateOutbound(tag: string, o: SingboxRouterOutbound): Promise<void> {
+		await this.request('/singbox/router/outbounds/update', {
+			method: 'POST',
+			body: JSON.stringify({ tag, outbound: o }),
+		});
+	}
+
+	async singboxRouterDeleteOutbound(tag: string, force = false): Promise<void> {
+		await this.request('/singbox/router/outbounds/delete', {
+			method: 'POST',
+			body: JSON.stringify({ tag, force }),
+		});
+	}
+
+	async singboxRouterListPresets(): Promise<SingboxRouterPreset[]> {
+		return this.request('/singbox/router/presets/list');
+	}
+
+	async singboxRouterApplyPreset(id: string, outbound: string): Promise<void> {
+		await this.request('/singbox/router/presets/apply', {
+			method: 'POST',
+			body: JSON.stringify({ id, outbound }),
+		});
+	}
+
+	async singboxRouterListPolicies(): Promise<RouterPolicy[]> {
+		return this.request<RouterPolicy[]>('/singbox/router/policies');
+	}
+
+	async singboxRouterCreatePolicy(description?: string): Promise<RouterPolicy> {
+		return this.request<RouterPolicy>('/singbox/router/policies', {
+			method: 'POST',
+			body: JSON.stringify({ description: description ?? 'awgm-router' }),
+		});
+	}
+
+	async singboxRouterPolicyDevices(policyName: string): Promise<RouterPolicyDevice[]> {
+		return this.request<RouterPolicyDevice[]>(
+			`/singbox/router/policy-devices?name=${encodeURIComponent(policyName)}`
+		);
+	}
+
+	async singboxRouterPolicyBind(mac: string, policyName: string): Promise<void> {
+		await this.request('/singbox/router/policy-devices/bind', {
+			method: 'POST',
+			body: JSON.stringify({ mac, policyName }),
+		});
+	}
+
+	async singboxRouterPolicyUnbind(mac: string): Promise<void> {
+		await this.request('/singbox/router/policy-devices/unbind', {
+			method: 'POST',
+			body: JSON.stringify({ mac }),
+		});
+	}
+
+	async singboxRouterListDNSServers(): Promise<SingboxRouterDNSServer[]> {
+		return this.request('/singbox/router/dns/servers/list');
+	}
+
+	async singboxRouterAddDNSServer(server: SingboxRouterDNSServer): Promise<void> {
+		await this.request('/singbox/router/dns/servers/add', {
+			method: 'POST',
+			body: JSON.stringify(server),
+		});
+	}
+
+	async singboxRouterUpdateDNSServer(tag: string, server: SingboxRouterDNSServer): Promise<void> {
+		await this.request('/singbox/router/dns/servers/update', {
+			method: 'POST',
+			body: JSON.stringify({ tag, server }),
+		});
+	}
+
+	async singboxRouterDeleteDNSServer(tag: string, force = false): Promise<void> {
+		await this.request('/singbox/router/dns/servers/delete', {
+			method: 'POST',
+			body: JSON.stringify({ tag, force }),
+		});
+	}
+
+	async singboxRouterListDNSRules(): Promise<SingboxRouterDNSRule[]> {
+		return this.request('/singbox/router/dns/rules/list');
+	}
+
+	async singboxRouterAddDNSRule(rule: SingboxRouterDNSRule): Promise<void> {
+		await this.request('/singbox/router/dns/rules/add', {
+			method: 'POST',
+			body: JSON.stringify(rule),
+		});
+	}
+
+	async singboxRouterUpdateDNSRule(index: number, rule: SingboxRouterDNSRule): Promise<void> {
+		await this.request('/singbox/router/dns/rules/update', {
+			method: 'POST',
+			body: JSON.stringify({ index, rule }),
+		});
+	}
+
+	async singboxRouterDeleteDNSRule(index: number): Promise<void> {
+		await this.request('/singbox/router/dns/rules/delete', {
+			method: 'POST',
+			body: JSON.stringify({ index }),
+		});
+	}
+
+	async singboxRouterMoveDNSRule(from: number, to: number): Promise<void> {
+		await this.request('/singbox/router/dns/rules/move', {
+			method: 'POST',
+			body: JSON.stringify({ from, to }),
+		});
+	}
+
+	async singboxRouterGetDNSGlobals(): Promise<SingboxRouterDNSGlobals> {
+		return this.request('/singbox/router/dns/globals');
+	}
+
+	async singboxRouterPutDNSGlobals(globals: SingboxRouterDNSGlobals): Promise<void> {
+		await this.request('/singbox/router/dns/globals', {
+			method: 'PUT',
+			body: JSON.stringify(globals),
+		});
 	}
 
 	// #endregion

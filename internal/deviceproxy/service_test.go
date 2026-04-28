@@ -158,23 +158,24 @@ func TestService_SelectRuntimeOutbound_UnknownTag(t *testing.T) {
 	}
 }
 
-// fakeSystemTunnelQuery is a test double for SystemTunnelQuery.
-type fakeSystemTunnelQuery struct {
-	tunnels []SystemTunnel
+// fakeAWGOutboundsCatalog is a test double for AWGOutboundsCatalog.
+type fakeAWGOutboundsCatalog struct {
+	tags []AWGTagInfo
+	err  error
 }
 
-func (f *fakeSystemTunnelQuery) List(_ context.Context) ([]SystemTunnel, error) {
-	return f.tunnels, nil
+func (f *fakeAWGOutboundsCatalog) ListTags(_ context.Context) ([]AWGTagInfo, error) {
+	return f.tags, f.err
 }
 
 func TestService_ListOutbounds_IncludesSystemTunnels(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "deviceproxy.json"))
-	sysTunnels := &fakeSystemTunnelQuery{
-		tunnels: []SystemTunnel{
-			{ID: "Wireguard0", InterfaceName: "nwg0", Description: "My VPN"},
+	awgCatalog := &fakeAWGOutboundsCatalog{
+		tags: []AWGTagInfo{
+			{Tag: "awg-sys-Wireguard0", Label: "My VPN", Kind: "system", Iface: "nwg0"},
 		},
 	}
-	s := NewService(Deps{Store: store, SystemTunnels: sysTunnels})
+	s := NewService(Deps{Store: store, AWGOutbounds: awgCatalog})
 
 	out := s.ListOutbounds(context.Background())
 
@@ -202,12 +203,12 @@ func TestService_SaveConfig_AppliesToSingbox_SystemTunnels(t *testing.T) {
 	sb := &fakeSingboxOperator{running: true}
 	ndms := &fakeNDMSQuery{addr: "10.10.10.1"}
 	store := NewStore(filepath.Join(t.TempDir(), "deviceproxy.json"))
-	sysTunnels := &fakeSystemTunnelQuery{
-		tunnels: []SystemTunnel{
-			{ID: "Wireguard0", InterfaceName: "nwg0", Description: "My VPN"},
+	awgCatalog := &fakeAWGOutboundsCatalog{
+		tags: []AWGTagInfo{
+			{Tag: "awg-sys-Wireguard0", Label: "My VPN", Kind: "system", Iface: "nwg0"},
 		},
 	}
-	s := NewService(Deps{Store: store, Singbox: sb, NDMSQuery: ndms, SystemTunnels: sysTunnels})
+	s := NewService(Deps{Store: store, Singbox: sb, NDMSQuery: ndms, AWGOutbounds: awgCatalog})
 
 	cfg := Config{
 		Enabled:          true,
@@ -225,13 +226,13 @@ func TestService_SaveConfig_AppliesToSingbox_SystemTunnels(t *testing.T) {
 	}
 
 	found := false
-	for _, a := range sb.lastSpec.AWGTargets {
-		if a.TunnelID == "sys-Wireguard0" && a.KernelIface == "nwg0" {
+	for _, tag := range sb.lastSpec.AWGTags {
+		if tag == "awg-sys-Wireguard0" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("sys-Wireguard0 AWGTarget not found in spec: %+v", sb.lastSpec.AWGTargets)
+		t.Fatalf("awg-sys-Wireguard0 not found in spec AWGTags: %+v", sb.lastSpec.AWGTags)
 	}
 }
 

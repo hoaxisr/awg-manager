@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { PeerSortKey } from '$lib/utils/peerSort';
 	import { PEER_SORT_DEFAULTS } from '$lib/utils/peerSort';
+	import { Dropdown, type DropdownOption } from '$lib/components/ui';
 
 	interface Props {
 		sortBy: PeerSortKey;
@@ -15,6 +16,14 @@
 		searchQuery = $bindable(),
 		showSearch = false,
 	}: Props = $props();
+
+	const sortOptions: DropdownOption<PeerSortKey>[] = [
+		{ value: 'name', label: 'По имени' },
+		{ value: 'traffic', label: 'По трафику' },
+		{ value: 'ip', label: 'По IP' },
+		{ value: 'online', label: 'Онлайн' },
+		{ value: 'handshake', label: 'Handshake' },
+	];
 
 	function setSortBy(key: PeerSortKey) {
 		if (sortBy === key) return;
@@ -32,13 +41,9 @@
 			bind:value={searchQuery}
 		/>
 	{/if}
-	<select class="peer-sort-select" value={sortBy} onchange={(e) => setSortBy(e.currentTarget.value as PeerSortKey)}>
-		<option value="name">По имени</option>
-		<option value="traffic">По трафику</option>
-		<option value="ip">По IP</option>
-		<option value="online">Онлайн</option>
-		<option value="handshake">Handshake</option>
-	</select>
+	<div class="peer-sort-select">
+		<Dropdown value={sortBy} options={sortOptions} onchange={setSortBy} fullWidth />
+	</div>
 	<button class="peer-sort-dir" onclick={() => sortAsc = !sortAsc} title="Направление сортировки">
 		{sortAsc ? '↑' : '↓'}
 	</button>
@@ -66,13 +71,7 @@
 	}
 
 	.peer-sort-select {
-		padding: 0.25rem 0.5rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		background: var(--bg-primary);
-		color: var(--text-secondary);
-		font-size: 0.6875rem;
-		cursor: pointer;
+		min-width: 130px;
 	}
 
 	.peer-sort-dir {

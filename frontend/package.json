@@ -6,14 +6,18 @@
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "gen:icons": "node scripts/generate-tabler-icons.mjs"
   },
   "devDependencies": {
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource/ibm-plex-sans": "^5.2.8",
     "@skeletonlabs/skeleton": "^4.0.0-next.33",
     "@skeletonlabs/skeleton-svelte": "^4.0.0-next.33",
     "@sveltejs/adapter-static": "^3.0.10",
     "@sveltejs/kit": "^2.50.2",
     "@sveltejs/vite-plugin-svelte": "^6.2.4",
+    "@tabler/icons": "^3.41.1",
     "@tailwindcss/forms": "^0.5.11",
     "@tailwindcss/vite": "^4.1.18",
     "@types/pako": "^2.0.4",
@@ -21,6 +25,7 @@
     "@valibot/to-json-schema": "^1.5.0",
     "autoprefixer": "^10.4.24",
     "postcss": "^8.5.6",
+    "simple-icons": "^16.17.0",
     "svelte": "^5.49.2",
     "svelte-check": "^4.3.6",
     "sveltekit-superforms": "^2.29.1",
@@ -37,6 +42,7 @@
     "@xterm/addon-attach": "^0.12.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "lucide-svelte": "^1.0.1",
     "pako": "^2.1.0",
     "qrcode": "^1.5.4"
   }

@@ -6,6 +6,7 @@
 	interface Props {
 		tests: DiagTestEvent[];
 		currentPhase?: string;
+		compact?: boolean;
 	}
 
 	interface TunnelGroup {
@@ -14,7 +15,7 @@
 		tests: DiagTestEvent[];
 	}
 
-	let { tests, currentPhase = '' }: Props = $props();
+	let { tests, currentPhase = '', compact = false }: Props = $props();
 	let showDetailed = $state(false);
 	let expandGeneration = $state(0);
 	let expandAll = $state(false);
@@ -61,9 +62,9 @@
 	</button>
 {/if}
 
-<div class="test-list">
+<div class="test-list" class:compact>
 	{#each basicGrouped.global as test (test.name)}
-		<DiagnosticsTestItem {test} {expandGeneration} expandDirection={expandAll} />
+		<DiagnosticsTestItem {test} {compact} {expandGeneration} expandDirection={expandAll} />
 	{/each}
 
 	{#each basicGrouped.groups as group (group.tunnelId)}
@@ -72,7 +73,7 @@
 			<span class="tunnel-group-id">{group.tunnelId}</span>
 		</div>
 		{#each group.tests as test (test.name + test.tunnelId)}
-			<DiagnosticsTestItem {test} {expandGeneration} expandDirection={expandAll} />
+			<DiagnosticsTestItem {test} {compact} {expandGeneration} expandDirection={expandAll} />
 		{/each}
 	{/each}
 </div>
@@ -86,9 +87,9 @@
 	</button>
 
 	{#if showDetailed}
-		<div class="test-list" transition:slide={{ duration: 200 }}>
+		<div class="test-list" class:compact transition:slide={{ duration: 200 }}>
 			{#each detailedGrouped.global as test (test.name)}
-				<DiagnosticsTestItem {test} {expandGeneration} expandDirection={expandAll} />
+				<DiagnosticsTestItem {test} {compact} {expandGeneration} expandDirection={expandAll} />
 			{/each}
 
 			{#each detailedGrouped.groups as group (group.tunnelId)}
@@ -97,7 +98,7 @@
 					<span class="tunnel-group-id">{group.tunnelId}</span>
 				</div>
 				{#each group.tests as test (test.name + test.tunnelId)}
-					<DiagnosticsTestItem {test} {expandGeneration} expandDirection={expandAll} />
+					<DiagnosticsTestItem {test} {compact} {expandGeneration} expandDirection={expandAll} />
 				{/each}
 			{/each}
 		</div>
@@ -108,6 +109,23 @@
 	.test-list {
 		display: flex;
 		flex-direction: column;
+	}
+
+	.test-list.compact {
+		gap: 0;
+	}
+
+	.test-list.compact .tunnel-group-header {
+		padding: 5px 6px 2px;
+		margin-top: 2px;
+	}
+
+	.test-list.compact .tunnel-group-name {
+		font-size: 12px;
+	}
+
+	.test-list.compact .tunnel-group-id {
+		font-size: 11px;
 	}
 
 	.phase-label {

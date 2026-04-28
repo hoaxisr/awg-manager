@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -193,6 +194,44 @@ func TestSettingsStore_BackwardCompatibility(t *testing.T) {
 	// DisableMemorySaving should default to false when missing
 	if settings.DisableMemorySaving {
 		t.Error("DisableMemorySaving should be false for old settings files")
+	}
+}
+
+func TestSettings_MigrateLegacyManagedServer(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "settings.json")
+	// Seed with legacy singular shape.
+	legacy := `{
+        "schemaVersion": 13,
+        "managedServer": {"interfaceName":"Wireguard4","address":"10.66.66.1","mask":"255.255.255.0","listenPort":51820,"policy":"none","peers":[]}
+    }`
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewSettingsStore(tmpDir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	servers := store.GetManagedServers()
+	if len(servers) != 1 {
+		t.Fatalf("expected 1 migrated server, got %d", len(servers))
+	}
+	if servers[0].InterfaceName != "Wireguard4" {
+		t.Errorf("interface mismatch: %s", servers[0].InterfaceName)
+	}
+
+	// Force a save and re-read raw bytes — legacy field must be gone.
+	if err := store.SaveManagedServers(servers); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	raw, _ := os.ReadFile(path)
+	if strings.Contains(string(raw), `"managedServer":`) {
+		t.Errorf("legacy field not cleared:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), `"managedServers":`) {
+		t.Errorf("new field not written")
 	}
 }
 

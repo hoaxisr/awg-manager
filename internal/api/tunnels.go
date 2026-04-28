@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -874,10 +876,25 @@ func (h *TunnelsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		tunnelName = t.Name
 	}
 
-	// Delete via orchestrator (handles stop + config file + store + NDMS cleanup + monitoring)
-	if err := h.orch.HandleEvent(r.Context(), orchestrator.Event{
-		Type: orchestrator.EventDelete, Tunnel: id,
-	}); err != nil {
+	// Route through svc.Delete so the refuse-on-delete check fires
+	// (returns ErrTunnelReferenced if the tunnel's awg-{id} tag is
+	// referenced by deviceproxy selector or any router rule).
+	if err := h.svc.Delete(r.Context(), id); err != nil {
+		var refErr service.ErrTunnelReferenced
+		if errors.As(err, &refErr) {
+			h.log.Info("delete", tunnelName, "Refused: "+refErr.Error())
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]any{
+				"error": "tunnel_referenced",
+				"details": map[string]any{
+					"tunnelId":    refErr.TunnelID,
+					"deviceProxy": refErr.DeviceProxy,
+					"routerRules": refErr.RouterRules,
+				},
+			})
+			return
+		}
 		h.log.Warn("delete", tunnelName, "Failed to delete tunnel: "+err.Error())
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "DELETE_FAILED")
 		return

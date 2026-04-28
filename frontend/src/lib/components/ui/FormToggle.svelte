@@ -62,7 +62,7 @@
         width: 44px;
         height: 24px;
         background: var(--bg-tertiary);
-        border-radius: 12px;
+        border-radius: var(--radius-pill);
         transition: background 0.2s ease;
     }
 
@@ -98,7 +98,7 @@
     .toggle-container.sm .toggle-slider {
         width: 32px;
         height: 18px;
-        border-radius: 9px;
+        border-radius: var(--radius-pill);
     }
 
     .toggle-container.sm .toggle-slider::before {

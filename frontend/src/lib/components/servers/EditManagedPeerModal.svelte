@@ -1,19 +1,20 @@
 <script lang="ts">
 	import type { ManagedPeer } from '$lib/types';
-	import { Modal, FormToggle } from '$lib/components/ui';
+	import { Modal, FormToggle, Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { servers } from '$lib/stores/servers';
 
 	interface Props {
 		open: boolean;
+		serverId: string;
 		peer: ManagedPeer;
 		routerIP?: string;
 		onclose: () => void;
 		onUpdated: () => void;
 	}
 
-	let { open = $bindable(false), peer, routerIP = '', onclose, onUpdated }: Props = $props();
+	let { open = $bindable(false), serverId, peer, routerIP = '', onclose, onUpdated }: Props = $props();
 
 	let description = $state('');
 	let tunnelIP = $state('');
@@ -35,7 +36,7 @@
 	async function handleSave() {
 		saving = true;
 		try {
-			const fresh = await api.updateManagedPeer(peer.publicKey, { description, tunnelIP, dns: dns || undefined });
+			const fresh = await api.updateManagedPeer(serverId, peer.publicKey, { description, tunnelIP, dns: dns || undefined });
 			servers.applyMutationResponse(fresh);
 			notifications.success('Клиент обновлён');
 			onclose();
@@ -72,10 +73,10 @@
 	</div>
 
 	{#snippet actions()}
-		<button class="btn btn-ghost" onclick={onclose}>Отмена</button>
-		<button class="btn btn-primary" onclick={handleSave} disabled={saving}>
-			{saving ? 'Сохранение...' : 'Сохранить'}
-		</button>
+		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
+		<Button variant="primary" size="md" onclick={handleSave} loading={saving}>
+			Сохранить
+		</Button>
 	{/snippet}
 </Modal>
 

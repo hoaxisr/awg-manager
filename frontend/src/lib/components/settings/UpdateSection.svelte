@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button } from '$lib/components/ui';
 	import ChangelogModal from './ChangelogModal.svelte';
 	import type { UpdateInfo } from '$lib/types';
 
@@ -113,28 +113,31 @@
 			<div class="update-spinner"></div>
 		{:else}
 			{#if updateInfo?.currentVersion}
-				<button
-					class="btn btn-ghost btn-sm"
+				<Button
+					variant="ghost"
+					size="sm"
 					onclick={() => (showChangelog = true)}
 				>
 					Что нового
-				</button>
+				</Button>
 			{/if}
 			{#if updateInfo?.available}
-				<button
-					class="btn btn-primary btn-sm"
+				<Button
+					variant="primary"
+					size="sm"
 					onclick={confirmUpgrade}
 				>
 					Обновить
-				</button>
+				</Button>
 			{/if}
-			<button
-				class="btn btn-secondary btn-sm"
+			<Button
+				variant="secondary"
+				size="sm"
 				onclick={checkForUpdates}
-				disabled={checking}
+				loading={checking}
 			>
 				{checking ? 'Проверка...' : 'Проверить'}
-			</button>
+			</Button>
 		{/if}
 	</div>
 </div>
@@ -149,8 +152,8 @@
 	</p>
 
 	{#snippet actions()}
-		<button class="btn btn-secondary" onclick={() => showConfirm = false}>Отмена</button>
-		<button class="btn btn-primary" onclick={applyUpgrade}>Обновить</button>
+		<Button variant="secondary" size="md" onclick={() => showConfirm = false}>Отмена</Button>
+		<Button variant="primary" size="md" onclick={applyUpgrade}>Обновить</Button>
 	{/snippet}
 </Modal>
 

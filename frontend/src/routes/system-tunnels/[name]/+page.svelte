@@ -5,6 +5,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import type { SystemTunnel, ASCParams, ASCParamsExtended } from '$lib/types';
 	import { PageContainer } from '$lib/components/layout';
+	import { Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { formatBytes } from '$lib/utils/format';
 	import { protocols, getSignaturePackets, calcByteSize, calcTotalSize, type ProtocolKey } from '$lib/utils/protocols';
 
@@ -117,22 +118,21 @@
 <PageContainer>
 	<div class="sticky-header">
 		<div class="header-left">
-			<button class="btn btn-ghost btn-sm" onclick={() => goto('/')}>
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<path d="M19 12H5M12 19l-7-7 7-7"/>
-				</svg>
+			<Button variant="ghost" size="sm" onclick={() => goto('/')} iconBefore={backIcon}>
 				Назад
-			</button>
+			</Button>
 			<h1 class="page-title">{tunnel?.description || name}</h1>
 			<span class="badge-system">Системный</span>
 		</div>
-		<button
-			class="btn btn-primary"
+		<Button
+			variant="primary"
+			size="md"
 			onclick={handleSave}
-			disabled={saving || !ascParams}
+			disabled={!ascParams}
+			loading={saving}
 		>
 			{saving ? 'Сохранение...' : 'Сохранить'}
-		</button>
+		</Button>
 	</div>
 
 	{#if loading}
@@ -240,15 +240,18 @@
 				</div>
 
 				{#if generateMode === 'protocol'}
+					{@const protocolOpts: DropdownOption<ProtocolKey>[] = Object.entries(protocols).map(([key, proto]) => ({
+						value: key as ProtocolKey,
+						label: proto.name,
+						description: proto.description,
+					}))}
 					<div class="generate-row">
-						<select bind:value={selectedProtocol} class="input protocol-select">
-							{#each Object.entries(protocols) as [key, proto]}
-								<option value={key}>{proto.name} — {proto.description}</option>
-							{/each}
-						</select>
-						<button class="btn btn-secondary btn-sm" onclick={handleGenerate}>
+						<div class="protocol-select">
+							<Dropdown bind:value={selectedProtocol} options={protocolOpts} fullWidth />
+						</div>
+						<Button variant="secondary" size="sm" onclick={handleGenerate}>
 							Сгенерировать
-						</button>
+						</Button>
 					</div>
 				{:else}
 					<div class="generate-row">
@@ -260,13 +263,15 @@
 							disabled={capturing}
 							onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCapture(); } }}
 						/>
-						<button
-							class="btn btn-secondary btn-sm"
+						<Button
+							variant="secondary"
+							size="sm"
 							onclick={handleCapture}
-							disabled={capturing || !domainInput.trim()}
+							disabled={!domainInput.trim()}
+							loading={capturing}
 						>
 							{capturing ? 'Захват...' : 'Захватить'}
-						</button>
+						</Button>
 					</div>
 					{#if captureError}
 						<p class="capture-info" class:capture-warning={!!captureSource}>{captureError}</p>
@@ -304,6 +309,12 @@
 		</div>
 	{/if}
 </PageContainer>
+
+{#snippet backIcon()}
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+		<path d="M19 12H5M12 19l-7-7 7-7"/>
+	</svg>
+{/snippet}
 
 <style>
 	.sticky-header {

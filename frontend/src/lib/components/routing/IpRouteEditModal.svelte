@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { StaticRouteList, RoutingTunnel } from '$lib/types';
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 
 	interface Props {
 		open: boolean;
@@ -21,7 +21,6 @@
 	let subnetsText = $state('');
 	let isInitialized = $state(false);
 	let attempted = $state(false);
-	let shaking = $state(false);
 
 	// Reset form when modal opens (only once per open, not on every poll tick)
 	$effect(() => {
@@ -139,8 +138,7 @@
 	function handleSave() {
 		attempted = true;
 		if (!canSave) {
-			shaking = true;
-			setTimeout(() => shaking = false, 400);
+			// TODO Phase 1: restore shake animation feedback on invalid submit
 			return;
 		}
 		onsave({
@@ -156,9 +154,9 @@
 	<!-- Name -->
 	<div class="form-group" class:field-error={nameError}>
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label class="form-label">Название</label>
+		<label class="field-label">Название</label>
 		<input
-			class="form-input"
+			class="field-input"
 			type="text"
 			placeholder="Заблокированные подсети"
 			value={name}
@@ -168,53 +166,35 @@
 	</div>
 
 	<!-- Tunnel -->
+	{@const tunnelOpts: DropdownOption[] = [
+		...userTunnels.map((t) => ({ value: t.id, label: t.name, group: 'Пользовательские' })),
+		...systemTunnels.map((t) => ({ value: t.id, label: t.name, group: 'Системные' })),
+		...wanInterfaces.map((t) => ({ value: t.id, label: t.name, group: 'WAN' })),
+	]}
 	<div class="form-group" class:field-error={tunnelError}>
-		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label class="form-label">Туннель</label>
-		<select
-			class="form-select"
+		<Dropdown
+			label="Туннель"
 			value={tunnelID}
-			onchange={(e) => { tunnelID = (e.target as HTMLSelectElement).value; }}
-		>
-			{#if userTunnels.length > 0}
-				<optgroup label="Пользовательские">
-					{#each userTunnels as tunnel}
-						<option value={tunnel.id}>{tunnel.name}</option>
-					{/each}
-				</optgroup>
-			{/if}
-			{#if systemTunnels.length > 0}
-				<optgroup label="Системные">
-					{#each systemTunnels as tunnel}
-						<option value={tunnel.id}>{tunnel.name}</option>
-					{/each}
-				</optgroup>
-			{/if}
-			{#if wanInterfaces.length > 0}
-				<optgroup label="WAN">
-					{#each wanInterfaces as tunnel}
-						<option value={tunnel.id}>{tunnel.name}</option>
-					{/each}
-				</optgroup>
-			{/if}
-		</select>
-		<div class="error-text" class:visible={tunnelError}>Выберите туннель</div>
+			options={tunnelOpts}
+			onchange={(v) => (tunnelID = v)}
+			error={tunnelError ? 'Выберите туннель' : undefined}
+			fullWidth
+		/>
 	</div>
 
 	<!-- Fallback -->
+	{@const fallbackOpts: DropdownOption<'' | 'reject'>[] = [
+		{ value: '', label: 'Bypass — трафик пойдёт обычным маршрутом' },
+		...(!isOS4Kernel ? [{ value: 'reject' as const, label: 'Kill Switch — трафик будет заблокирован' }] : []),
+	]}
 	<div class="form-group">
-		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label class="form-label">При недоступности интерфейса</label>
-		<select
-			class="form-select"
+		<Dropdown
+			label="При недоступности интерфейса"
 			value={fallback}
-			onchange={(e) => { fallback = (e.target as HTMLSelectElement).value as '' | 'reject'; }}
-		>
-			<option value="">Bypass — трафик пойдёт обычным маршрутом</option>
-			{#if !isOS4Kernel}
-				<option value="reject">Kill Switch — трафик будет заблокирован</option>
-			{/if}
-		</select>
+			options={fallbackOpts}
+			onchange={(v) => (fallback = v)}
+			fullWidth
+		/>
 	</div>
 
 	<!-- Subnets -->
@@ -238,7 +218,7 @@
 			/>
 		</div>
 		<textarea
-			class="form-textarea"
+			class="field-textarea"
 			placeholder="10.0.0.0/8&#10;192.168.1.0/24&#10;172.16.0.0/12"
 			value={subnetsText}
 			oninput={(e) => { subnetsText = (e.target as HTMLTextAreaElement).value; }}
@@ -251,42 +231,17 @@
 	</div>
 
 	{#snippet actions()}
-		<button class="btn btn-secondary" onclick={onclose}>Отмена</button>
-		<button class="btn btn-primary" class:shake={shaking} onclick={handleSave} disabled={saving}>
-			{saving ? 'Сохранение...' : 'Сохранить'}
-		</button>
+		<Button variant="secondary" onclick={onclose}>Отмена</Button>
+		<!-- TODO Phase 1: shake animation on save when invalid (was class:shake={shaking}) -->
+		<Button variant="primary" onclick={handleSave} loading={saving}>
+			Сохранить
+		</Button>
 	{/snippet}
 </Modal>
 
 <style>
 	.form-group {
 		margin-bottom: 1rem;
-	}
-
-	.form-label {
-		display: block;
-		font-size: 0.8125rem;
-		font-weight: 500;
-		color: var(--text-primary);
-		margin-bottom: 0.375rem;
-	}
-
-	.form-input,
-	.form-select {
-		width: 100%;
-		padding: 0.375rem 0.625rem;
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		background: var(--bg-primary);
-		color: var(--text-primary);
-		font-size: 0.8125rem;
-		box-sizing: border-box;
-	}
-
-	.form-input:focus,
-	.form-select:focus {
-		outline: none;
-		border-color: var(--accent);
 	}
 
 	.form-section {
@@ -299,13 +254,13 @@
 		gap: 0.75rem;
 		margin-bottom: 0.5rem;
 		padding-bottom: 0.375rem;
-		border-bottom: 1px solid var(--border);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.section-title {
 		font-size: 0.75rem;
 		font-weight: 600;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
@@ -315,55 +270,36 @@
 		align-items: center;
 		gap: 4px;
 		margin-left: auto;
-		background: var(--bg-tertiary, #2d2f45);
-		border: 1px solid var(--border);
-		color: var(--text-secondary);
+		background: var(--color-bg-tertiary);
+		border: 1px solid var(--color-border);
+		color: var(--color-text-secondary);
 		font-size: 0.6875rem;
 		cursor: pointer;
 		padding: 3px 10px;
-		border-radius: 4px;
-		transition: border-color 0.15s, color 0.15s;
+		border-radius: var(--radius-sm);
+		transition: border-color var(--t-fast) ease, color var(--t-fast) ease;
 	}
 
 	.btn-bat-import:hover {
-		border-color: var(--accent);
-		color: var(--text-primary);
+		border-color: var(--color-accent);
+		color: var(--color-text-primary);
 	}
 
 	.hidden-input {
 		display: none;
 	}
 
-	.form-textarea {
-		width: 100%;
-		padding: 0.5rem 0.625rem;
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		background: var(--bg-primary);
-		color: var(--text-primary);
-		font-size: 0.8125rem;
-		font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
-		box-sizing: border-box;
-		resize: vertical;
-		line-height: 1.5;
-	}
-
-	.form-textarea:focus {
-		outline: none;
-		border-color: var(--accent);
-	}
-
 	.subnet-count {
 		display: block;
 		font-size: 0.6875rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		margin-top: 0.25rem;
 	}
 
-	.field-error .form-input,
-	.field-error .form-select,
-	.field-error .form-textarea {
-		border-color: var(--error, #ef4444);
-		box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.15);
+	.field-error :global(.field-input),
+	.field-error :global(.field-select),
+	.field-error :global(.field-textarea) {
+		border-color: var(--color-error);
+		box-shadow: 0 0 0 2px var(--color-error-tint);
 	}
 </style>

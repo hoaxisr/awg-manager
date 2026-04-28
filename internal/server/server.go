@@ -33,6 +33,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
+	"github.com/hoaxisr/awg-manager/internal/monitoring"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsmetrics "github.com/hoaxisr/awg-manager/internal/ndms/metrics"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -94,10 +95,13 @@ type Server struct {
 	hydraService        *hydraroute.Service
 	orch                *orchestrator.Orchestrator
 	bus                 *events.Bus
-	singboxHandler      *api.SingboxHandler
+	singboxHandler       *api.SingboxHandler
+	singboxRouterHandler *api.SingboxRouterHandler
+	awgOutboundsHandler  *api.AWGOutboundsHandler
 	clashProxy          *api.ClashProxy
 	singboxOp           *singbox.Operator
 	deviceProxySvc      *deviceproxy.Service
+	monitoringService   *monitoring.Service
 	dnsCheckService     *dnscheck.Service
 	authMiddleware      *auth.Middleware
 	httpServer          *http.Server
@@ -118,7 +122,7 @@ type Server struct {
 }
 
 // New creates a new server instance.
-func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, externalService api.ExternalTunnelService, testingService *testing.Service, keenetic *auth.KeeneticClient, sessions *auth.SessionStore, settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore, pingCheckService api.PingCheckService, loggingService *logging.Service, activeBackend backend.Backend, kmodLoader *kmod.Loader, updaterService *updater.Service, ndmsQueries *ndmsquery.Queries, trafficHistory *traffic.History, dnsRouteService api.DNSRouteService, staticRouteService api.StaticRouteService, systemTunnelService systemtunnel.Service, managedService managed.ManagedServerService, nwgOp *nwg.OperatorNativeWG, terminalManager terminal.Manager, accessPolicySvc accesspolicy.Service, clientRouteSvc clientroute.Service, catalog routing.Catalog, orch *orchestrator.Orchestrator, bus *events.Bus, hydraService *hydraroute.Service, singboxHandler *api.SingboxHandler, clashProxy *api.ClashProxy) *Server {
+func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, externalService api.ExternalTunnelService, testingService *testing.Service, keenetic *auth.KeeneticClient, sessions *auth.SessionStore, settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore, pingCheckService api.PingCheckService, loggingService *logging.Service, activeBackend backend.Backend, kmodLoader *kmod.Loader, updaterService *updater.Service, ndmsQueries *ndmsquery.Queries, trafficHistory *traffic.History, dnsRouteService api.DNSRouteService, staticRouteService api.StaticRouteService, systemTunnelService systemtunnel.Service, managedService managed.ManagedServerService, nwgOp *nwg.OperatorNativeWG, terminalManager terminal.Manager, accessPolicySvc accesspolicy.Service, clientRouteSvc clientroute.Service, catalog routing.Catalog, orch *orchestrator.Orchestrator, bus *events.Bus, hydraService *hydraroute.Service, singboxHandler *api.SingboxHandler, clashProxy *api.ClashProxy, monitoringService *monitoring.Service) *Server {
 	id := generateInstanceID()
 	log.Infof("Server instance: %s", id)
 
@@ -153,6 +157,7 @@ func New(cfg Config, log *logger.Logger, tunnelService api.TunnelService, extern
 		bus:                 bus,
 		singboxHandler:      singboxHandler,
 		clashProxy:          clashProxy,
+		monitoringService:   monitoringService,
 		authMiddleware:      auth.NewMiddleware(sessions, settings, log),
 		instanceID:          id,
 	}
@@ -201,6 +206,18 @@ func (s *Server) SetSingboxOperator(op *singbox.Operator) {
 // so the /api/proxy/* routes can be registered.
 func (s *Server) SetDeviceProxyService(svc *deviceproxy.Service) {
 	s.deviceProxySvc = svc
+}
+
+// SetSingboxRouterHandler wires the sing-box router HTTP handler so the
+// /api/singbox/router/* routes can be registered.
+func (s *Server) SetSingboxRouterHandler(h *api.SingboxRouterHandler) {
+	s.singboxRouterHandler = h
+}
+
+// SetAWGOutboundsHandler wires the AWG outbounds tag catalog handler
+// so /api/singbox/awg-outbounds/tags can be registered.
+func (s *Server) SetAWGOutboundsHandler(h *api.AWGOutboundsHandler) {
+	s.awgOutboundsHandler = h
 }
 
 // generateInstanceID creates a random 16-byte hex string (32 chars).
@@ -564,12 +581,18 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Settings (protected + boot guarded)
 	mux.HandleFunc("/api/settings/get", guarded(settingsHandler.Get))
 	mux.HandleFunc("/api/settings/update", guarded(settingsHandler.Update))
+	mux.HandleFunc("/api/settings/regenerate-api-key", guarded(settingsHandler.RegenerateApiKey))
 
 	// Ping check (protected + boot guarded)
 	mux.HandleFunc("/api/pingcheck/status", guarded(pingCheckHandler.GetStatus))
 	mux.HandleFunc("/api/pingcheck/logs", guarded(pingCheckHandler.GetLogs))
 	mux.HandleFunc("/api/pingcheck/check-now", guarded(pingCheckHandler.CheckNow))
 	mux.HandleFunc("/api/pingcheck/logs/clear", guarded(pingCheckHandler.ClearLogs))
+
+	// Monitoring matrix (protected)
+	monitoringHandler := api.NewMonitoringHandler(s.monitoringService)
+	mux.HandleFunc("/api/monitoring/matrix", guarded(monitoringHandler.GetMatrix))
+	mux.HandleFunc("/api/monitoring/history", guarded(monitoringHandler.GetHistory))
 
 	// Per-tunnel NDMS ping-check (nativewg)
 	mux.HandleFunc("/api/tunnels/pingcheck", guarded(func(w http.ResponseWriter, r *http.Request) {
@@ -618,8 +641,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/system-tunnels", guarded(systemTunnelHandler.List))
 	mux.HandleFunc("/api/system-tunnels/get", guarded(systemTunnelHandler.Get))
 	mux.HandleFunc("/api/system-tunnels/asc", guarded(systemTunnelHandler.ASC))
-	mux.HandleFunc("/api/system-tunnels/hide", guarded(systemTunnelHandler.Hide))
-	mux.HandleFunc("/api/system-tunnels/hidden", guarded(systemTunnelHandler.Hidden))
 	mux.HandleFunc("/api/system-tunnels/test-connectivity", guarded(systemTunnelHandler.CheckConnectivity))
 	mux.HandleFunc("/api/system-tunnels/test-ip", guarded(systemTunnelHandler.CheckIP))
 	mux.HandleFunc("/api/system-tunnels/test-speed", guarded(systemTunnelHandler.SpeedTestStream))
@@ -637,24 +658,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/servers/marked", guarded(serverHandler.Marked))
 	mux.HandleFunc("/api/servers/wan-ip", guarded(serverHandler.WANIP))
 
-	// Managed WireGuard Server (protected + boot guarded)
+	// Managed WireGuard Servers (protected + boot guarded). The new
+	// route table is id-keyed: see ManagedServerHandler.Subtree for the
+	// full sub-path dispatch (peers, conf, asc, etc).
 	managedHandler := api.NewManagedServerHandler(s.managedService)
-	mux.HandleFunc("/api/managed-server", guarded(managedHandler.Get))
-	mux.HandleFunc("/api/managed-server/stats", guarded(managedHandler.Stats))
-	mux.HandleFunc("/api/managed-server/create", guarded(managedHandler.Create))
-	mux.HandleFunc("/api/managed-server/suggest-address", guarded(managedHandler.SuggestAddress))
-	mux.HandleFunc("/api/managed-server/update", guarded(managedHandler.Update))
-	mux.HandleFunc("/api/managed-server/delete", guarded(managedHandler.Delete))
-	mux.HandleFunc("/api/managed-server/peers", guarded(managedHandler.AddPeer))
-	mux.HandleFunc("/api/managed-server/peers/update", guarded(managedHandler.UpdatePeer))
-	mux.HandleFunc("/api/managed-server/peers/delete", guarded(managedHandler.DeletePeer))
-	mux.HandleFunc("/api/managed-server/peers/toggle", guarded(managedHandler.TogglePeer))
-	mux.HandleFunc("/api/managed-server/peers/conf", guarded(managedHandler.PeerConf))
-	mux.HandleFunc("/api/managed-server/enabled", guarded(managedHandler.SetEnabled))
-	mux.HandleFunc("/api/managed-server/nat", guarded(managedHandler.NAT))
-	mux.HandleFunc("/api/managed-server/policy", guarded(managedHandler.SetPolicy))
-	mux.HandleFunc("/api/managed-server/policies", guarded(managedHandler.GetPolicies))
-	mux.HandleFunc("/api/managed-server/asc", guarded(managedHandler.ASC))
+	mux.HandleFunc("/api/managed-servers", guarded(managedHandler.Collection))
+	mux.HandleFunc("/api/managed-servers/", guarded(managedHandler.Subtree))
 
 	// Signature capture (protected + boot guarded)
 	mux.HandleFunc("/api/signature/capture", guarded(signatureHandler.Capture))
@@ -817,6 +826,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	if s.singboxHandler != nil {
 		mux.HandleFunc("/api/singbox/status", guarded(s.singboxHandler.Status))
 		mux.HandleFunc("/api/singbox/install", guarded(s.singboxHandler.Install))
+		mux.HandleFunc("/api/singbox/control", guarded(s.singboxHandler.Control))
 		mux.HandleFunc("/api/singbox/tunnels/delay-check", guarded(s.singboxHandler.DelayCheck))
 		mux.HandleFunc("/api/singbox/tunnels/test/speed/stream", guarded(s.singboxHandler.SpeedTestStream))
 		mux.HandleFunc("/api/singbox/tunnels", guarded(func(w http.ResponseWriter, r *http.Request) {
@@ -841,6 +851,59 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	if s.clashProxy != nil {
 		mux.HandleFunc("/api/singbox/clash/", guarded(s.clashProxy.ServeHTTP))
 		mux.HandleFunc("/api/singbox/clash", guarded(s.clashProxy.ServeHTTP))
+	}
+
+	if s.singboxRouterHandler != nil {
+		rh := s.singboxRouterHandler
+		mux.HandleFunc("/api/singbox/router/status", guarded(rh.GetStatus))
+		mux.HandleFunc("/api/singbox/router/enable", guarded(rh.Enable))
+		mux.HandleFunc("/api/singbox/router/disable", guarded(rh.Disable))
+		mux.HandleFunc("/api/singbox/router/settings", guarded(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				rh.GetSettings(w, r)
+			} else {
+				rh.PutSettings(w, r)
+			}
+		}))
+		mux.HandleFunc("/api/singbox/router/rules/list", guarded(rh.ListRules))
+		mux.HandleFunc("/api/singbox/router/rules/add", guarded(rh.AddRule))
+		mux.HandleFunc("/api/singbox/router/rules/update", guarded(rh.UpdateRule))
+		mux.HandleFunc("/api/singbox/router/rules/delete", guarded(rh.DeleteRule))
+		mux.HandleFunc("/api/singbox/router/rules/move", guarded(rh.MoveRule))
+		mux.HandleFunc("/api/singbox/router/rulesets/list", guarded(rh.ListRuleSets))
+		mux.HandleFunc("/api/singbox/router/rulesets/add", guarded(rh.AddRuleSet))
+		mux.HandleFunc("/api/singbox/router/rulesets/delete", guarded(rh.DeleteRuleSet))
+		mux.HandleFunc("/api/singbox/router/rulesets/refresh", guarded(rh.RefreshRuleSet))
+		mux.HandleFunc("/api/singbox/router/outbounds/list", guarded(rh.ListOutbounds))
+		mux.HandleFunc("/api/singbox/router/outbounds/add", guarded(rh.AddOutbound))
+		mux.HandleFunc("/api/singbox/router/outbounds/update", guarded(rh.UpdateOutbound))
+		mux.HandleFunc("/api/singbox/router/outbounds/delete", guarded(rh.DeleteOutbound))
+		mux.HandleFunc("/api/singbox/router/presets/list", guarded(rh.ListPresets))
+		mux.HandleFunc("/api/singbox/router/presets/apply", guarded(rh.ApplyPreset))
+		mux.HandleFunc("/api/singbox/router/policies", guarded(rh.PoliciesCollection))
+		mux.HandleFunc("/api/singbox/router/policy-devices", guarded(rh.ListPolicyDevices))
+		mux.HandleFunc("/api/singbox/router/policy-devices/bind", guarded(rh.BindDevice))
+		mux.HandleFunc("/api/singbox/router/policy-devices/unbind", guarded(rh.UnbindDevice))
+		mux.HandleFunc("/api/singbox/router/dns/servers/list", guarded(rh.ListDNSServers))
+		mux.HandleFunc("/api/singbox/router/dns/servers/add", guarded(rh.AddDNSServer))
+		mux.HandleFunc("/api/singbox/router/dns/servers/update", guarded(rh.UpdateDNSServer))
+		mux.HandleFunc("/api/singbox/router/dns/servers/delete", guarded(rh.DeleteDNSServer))
+		mux.HandleFunc("/api/singbox/router/dns/rules/list", guarded(rh.ListDNSRules))
+		mux.HandleFunc("/api/singbox/router/dns/rules/add", guarded(rh.AddDNSRule))
+		mux.HandleFunc("/api/singbox/router/dns/rules/update", guarded(rh.UpdateDNSRule))
+		mux.HandleFunc("/api/singbox/router/dns/rules/delete", guarded(rh.DeleteDNSRule))
+		mux.HandleFunc("/api/singbox/router/dns/rules/move", guarded(rh.MoveDNSRule))
+		mux.HandleFunc("/api/singbox/router/dns/globals", guarded(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				rh.GetDNSGlobals(w, r)
+			} else {
+				rh.PutDNSGlobals(w, r)
+			}
+		}))
+	}
+
+	if s.awgOutboundsHandler != nil {
+		mux.HandleFunc("/api/singbox/awg-outbounds/tags", guarded(s.awgOutboundsHandler.ServeHTTP))
 	}
 
 	// Static files (SPA) - must be last
@@ -905,7 +968,7 @@ type diagLogAdapter struct {
 
 func (a *diagLogAdapter) GetLogs(category, level string) []logging.LogEntry {
 	// For diagnostics, category maps to group (empty = all); return all entries (no pagination)
-	logs, _ := a.svc.GetLogs(category, "", level, 10000, 0)
+	logs, _ := a.svc.GetLogs(category, "", level, time.Time{}, 10000, 0)
 	return logs
 }
 

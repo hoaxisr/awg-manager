@@ -112,12 +112,11 @@
 		font-size: 12px;
 	}
 	.term-singbox {
-		max-width: 720px;
-		margin: 0 auto;
+		width: 100%;
 	}
 	.term-singbox-input {
 		width: 100%;
-		min-height: 160px;
+		min-height: 220px;
 		background: var(--bg-secondary);
 		border: 1px solid var(--border);
 		border-radius: 6px;

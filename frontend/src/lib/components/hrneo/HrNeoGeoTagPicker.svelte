@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
+	import { Button } from '$lib/components/ui';
 
 	interface GeoTag {
 		name: string;
@@ -60,7 +61,7 @@
 			placeholder="Поиск {kind}:TAG…"
 			bind:value={query}
 		/>
-		<button class="btn btn-ghost btn-sm" onclick={onclose}>Закрыть</button>
+		<Button variant="ghost" size="sm" onclick={onclose}>Закрыть</Button>
 	</div>
 
 	{#if files.length === 0}

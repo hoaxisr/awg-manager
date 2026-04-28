@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { protocols, getSignaturePackets, calcByteSize, calcTotalSize, type ProtocolKey } from '$lib/utils/protocols';
 	import { api } from '$lib/api/client';
+	import { Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 
 	interface AWGFormFields {
 		mtu: number;
@@ -114,12 +115,12 @@
 		<h3 class="section-title">Junk пакеты</h3>
 		<p class="group-desc">Фейковые пакеты перед handshake — сбивают анализ трафика</p>
 		<div class="inline-row inline-row-3">
-			<label class="label" for="jc">Jc {#if hints}<span class="hint" title={hints.jc}>?</span>{/if}</label>
-			<input type="number" id="jc" class="input" bind:value={form.jc} />
-			<label class="label" for="jmin">Jmin {#if hints}<span class="hint" title={hints.jmin}>?</span>{/if}</label>
-			<input type="number" id="jmin" class="input" bind:value={form.jmin} />
-			<label class="label" for="jmax">Jmax {#if hints}<span class="hint" title={hints.jmax}>?</span>{/if}</label>
-			<input type="number" id="jmax" class="input" bind:value={form.jmax} />
+			<label class="field-label" for="jc">Jc {#if hints}<span class="hint" title={hints.jc}>?</span>{/if}</label>
+			<input type="number" id="jc" class="field-input" bind:value={form.jc} />
+			<label class="field-label" for="jmin">Jmin {#if hints}<span class="hint" title={hints.jmin}>?</span>{/if}</label>
+			<input type="number" id="jmin" class="field-input" bind:value={form.jmin} />
+			<label class="field-label" for="jmax">Jmax {#if hints}<span class="hint" title={hints.jmax}>?</span>{/if}</label>
+			<input type="number" id="jmax" class="field-input" bind:value={form.jmax} />
 		</div>
 	</section>
 
@@ -127,14 +128,14 @@
 		<h3 class="section-title">Padding (S1-S4)</h3>
 		<p class="group-desc">Дополнительные байты в handshake — меняют размер пакетов WireGuard</p>
 		<div class="inline-row inline-row-2">
-			<label class="label" for="s1">S1 {#if hints}<span class="hint" title={hints.s1}>?</span>{/if}</label>
-			<input type="number" id="s1" class="input" bind:value={form.s1} />
-			<label class="label" for="s2">S2 {#if hints}<span class="hint" title={hints.s2}>?</span>{/if}</label>
-			<input type="number" id="s2" class="input" bind:value={form.s2} />
-			<label class="label" for="s3">S3 {#if hints}<span class="hint" title={hints.s3}>?</span>{/if}</label>
-			<input type="number" id="s3" class="input" bind:value={form.s3} />
-			<label class="label" for="s4">S4 {#if hints}<span class="hint" title={hints.s4}>?</span>{/if}</label>
-			<input type="number" id="s4" class="input" bind:value={form.s4} />
+			<label class="field-label" for="s1">S1 {#if hints}<span class="hint" title={hints.s1}>?</span>{/if}</label>
+			<input type="number" id="s1" class="field-input" bind:value={form.s1} />
+			<label class="field-label" for="s2">S2 {#if hints}<span class="hint" title={hints.s2}>?</span>{/if}</label>
+			<input type="number" id="s2" class="field-input" bind:value={form.s2} />
+			<label class="field-label" for="s3">S3 {#if hints}<span class="hint" title={hints.s3}>?</span>{/if}</label>
+			<input type="number" id="s3" class="field-input" bind:value={form.s3} />
+			<label class="field-label" for="s4">S4 {#if hints}<span class="hint" title={hints.s4}>?</span>{/if}</label>
+			<input type="number" id="s4" class="field-input" bind:value={form.s4} />
 		</div>
 	</section>
 
@@ -142,14 +143,14 @@
 		<h3 class="section-title">Заголовки (H1-H4)</h3>
 		<p class="group-desc">Подмена типов пакетов WireGuard на произвольные значения</p>
 		<div class="inline-row inline-row-2">
-			<label class="label" for="h1">H1 {#if hints}<span class="hint" title={hints.h1}>?</span>{/if}</label>
-			<input type="text" id="h1" class="input" bind:value={form.h1} />
-			<label class="label" for="h2">H2 {#if hints}<span class="hint" title={hints.h2}>?</span>{/if}</label>
-			<input type="text" id="h2" class="input" bind:value={form.h2} />
-			<label class="label" for="h3">H3 {#if hints}<span class="hint" title={hints.h3}>?</span>{/if}</label>
-			<input type="text" id="h3" class="input" bind:value={form.h3} />
-			<label class="label" for="h4">H4 {#if hints}<span class="hint" title={hints.h4}>?</span>{/if}</label>
-			<input type="text" id="h4" class="input" bind:value={form.h4} />
+			<label class="field-label" for="h1">H1 {#if hints}<span class="hint" title={hints.h1}>?</span>{/if}</label>
+			<input type="text" id="h1" class="field-input" bind:value={form.h1} />
+			<label class="field-label" for="h2">H2 {#if hints}<span class="hint" title={hints.h2}>?</span>{/if}</label>
+			<input type="text" id="h2" class="field-input" bind:value={form.h2} />
+			<label class="field-label" for="h3">H3 {#if hints}<span class="hint" title={hints.h3}>?</span>{/if}</label>
+			<input type="text" id="h3" class="field-input" bind:value={form.h3} />
+			<label class="field-label" for="h4">H4 {#if hints}<span class="hint" title={hints.h4}>?</span>{/if}</label>
+			<input type="text" id="h4" class="field-input" bind:value={form.h4} />
 		</div>
 	</section>
 
@@ -169,33 +170,37 @@
 		</div>
 
 		{#if generateMode === 'protocol'}
+			{@const protocolOpts: DropdownOption<ProtocolKey>[] = Object.entries(protocols).map(([key, proto]) => ({
+				value: key as ProtocolKey,
+				label: proto.name,
+				description: proto.description,
+			}))}
 			<div class="generate-row">
-				<select bind:value={selectedProtocol} class="input protocol-select">
-					{#each Object.entries(protocols) as [key, proto]}
-						<option value={key}>{proto.name} — {proto.description}</option>
-					{/each}
-				</select>
-				<button class="btn btn-secondary btn-sm" onclick={handleGenerate}>
+				<div class="protocol-select">
+					<Dropdown bind:value={selectedProtocol} options={protocolOpts} fullWidth />
+				</div>
+				<Button variant="secondary" size="sm" onclick={handleGenerate}>
 					Сгенерировать
-				</button>
+				</Button>
 			</div>
 		{:else}
 			<div class="generate-row">
 				<input
 					type="text"
-					class="input"
+					class="field-input"
 					bind:value={domainInput}
 					placeholder="example.com"
 					disabled={capturing}
 					onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCapture(); } }}
 				/>
-				<button
-					class="btn btn-secondary btn-sm"
+				<Button
+					variant="secondary"
+					size="sm"
 					onclick={handleCapture}
 					disabled={capturing || !domainInput.trim()}
 				>
 					{capturing ? 'Захват...' : 'Захватить'}
-				</button>
+				</Button>
 			</div>
 			{#if captureError}
 				<p class="capture-info" class:capture-warning={!!captureSource}>{captureError}</p>
@@ -208,7 +213,7 @@
 		<div class="signature-fields">
 			{#each ['i1', 'i2', 'i3', 'i4', 'i5'] as field, idx}
 				<div class="form-group">
-					<input type="text" id={field} class="input" bind:value={form[field]} placeholder={field.toUpperCase() + (idx === 0 ? ' (обязательный)' : '')} />
+					<input type="text" id={field} class="field-input" bind:value={form[field]} placeholder={field.toUpperCase() + (idx === 0 ? ' (обязательный)' : '')} />
 					{#if errors[field]}<p class="field-error">{errors[field]}</p>{/if}
 				</div>
 			{/each}
@@ -224,6 +229,7 @@
 </div>
 
 <style>
+	/* Layout-only. Form-control visuals come from .field-input / .field-select / .field-label in app.css. */
 	.awg-params {
 		display: flex;
 		flex-direction: column;
@@ -231,9 +237,9 @@
 	}
 
 	.param-section {
-		background: var(--bg-secondary);
-		border: 1px solid var(--border);
-		border-radius: var(--radius, 8px);
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
 		padding: 16px;
 	}
 
@@ -241,7 +247,7 @@
 		font-size: 14px;
 		font-weight: 600;
 		padding-bottom: 10px;
-		border-bottom: 1px solid var(--border);
+		border-bottom: 1px solid var(--color-border);
 		margin-bottom: 12px;
 	}
 
@@ -270,21 +276,12 @@
 		grid-template-columns: auto 1fr auto 1fr auto 1fr;
 	}
 
-	.compact .inline-row-3 {
-		grid-template-columns: auto 1fr auto 1fr auto 1fr;
-	}
-
 	.field-error {
 		font-size: 11px;
-		color: var(--error);
+		color: var(--color-error);
 	}
 
-	.label {
-		font-size: 13px;
-		font-weight: 500;
-		color: var(--text-secondary);
-	}
-
+	/* "?" help marker next to a field label */
 	.hint {
 		display: inline-flex;
 		align-items: center;
@@ -292,51 +289,24 @@
 		width: 14px;
 		height: 14px;
 		font-size: 10px;
-		background: var(--bg-tertiary);
+		background: var(--color-bg-tertiary);
 		border-radius: 50%;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		cursor: help;
-	}
-
-	.input {
-		padding: 8px 12px;
-		font-size: 13px;
-		background: var(--bg-primary);
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		color: var(--text-primary);
-		transition: border-color 0.15s;
-	}
-
-	.input:focus {
-		outline: none;
-		border-color: var(--accent);
-	}
-
-	.input[type="number"] {
-		-moz-appearance: textfield;
-		appearance: textfield;
-	}
-
-	.input[type="number"]::-webkit-outer-spin-button,
-	.input[type="number"]::-webkit-inner-spin-button {
-		-webkit-appearance: none;
-		margin: 0;
 	}
 
 	.group-desc {
 		font-size: 11px;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		margin: 0 0 10px 0;
 		line-height: 1.4;
 	}
 
-.signature-fields {
+	.signature-fields {
 		display: flex;
 		flex-direction: column;
 	}
 
-	/* Mode switcher */
 	.mode-options {
 		display: flex;
 		flex-wrap: wrap;
@@ -349,16 +319,15 @@
 		align-items: center;
 		gap: 0.375rem;
 		font-size: 13px;
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 		cursor: pointer;
 		white-space: nowrap;
 	}
 
 	.mode-option input[type="radio"] {
-		accent-color: var(--accent);
+		accent-color: var(--color-accent);
 	}
 
-	/* Generator UI */
 	.generate-row {
 		display: flex;
 		flex-direction: column;
@@ -372,12 +341,12 @@
 
 	.size-indicator {
 		font-size: 12px;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		margin-top: 4px;
 	}
 
 	.size-indicator.over-limit {
-		color: var(--error);
+		color: var(--color-error);
 		font-weight: 500;
 	}
 
@@ -387,12 +356,12 @@
 
 	.capture-info {
 		font-size: 11px;
-		color: var(--error);
+		color: var(--color-error);
 		margin-top: 4px;
 	}
 
 	.capture-info.capture-warning {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.capture-badge {
@@ -400,9 +369,9 @@
 		font-size: 11px;
 		font-weight: 600;
 		padding: 2px 8px;
-		border-radius: 4px;
-		background: var(--bg-tertiary);
-		color: var(--accent);
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-tertiary);
+		color: var(--color-accent);
 		margin-top: 4px;
 	}
 

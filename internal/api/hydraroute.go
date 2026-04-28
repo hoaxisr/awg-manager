@@ -43,6 +43,18 @@ func (h *HydraRouteHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateConfig writes the HydraRoute config.
+//
+//	@Summary		Update HydraRoute config
+//	@Description	Persists the HydraRoute (HrNeo) config and schedules a neo restart. The cached status becomes stale and is invalidated via SSE.
+//	@Tags			hydraroute
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		map[string]interface{}	true	"hydraroute.Config"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	map[string]interface{}
+//	@Failure		500		{object}	map[string]interface{}
+//	@Router			/hydraroute/config/update [put]
 func (h *HydraRouteHandler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		response.MethodNotAllowed(w)
@@ -119,6 +131,17 @@ func (h *HydraRouteHandler) AddGeoFile(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteGeoFile removes a tracked geo data file.
+//
+//	@Summary		Delete HydraRoute geo file
+//	@Description	Removes the tracked geo data file at the given path and re-syncs the geo file list to config.
+//	@Tags			hydraroute
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			path	query		string	true	"Filesystem path of the geo file"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	map[string]interface{}
+//	@Failure		500		{object}	map[string]interface{}
+//	@Router			/hydraroute/geo-files/delete [delete]
 func (h *HydraRouteHandler) DeleteGeoFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		response.MethodNotAllowed(w)

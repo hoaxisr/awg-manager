@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { Toggle } from '$lib/components/ui';
+	import { Toggle, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import type { DeviceProxyConfig, DeviceProxyOutbound } from '$lib/types';
 
 	interface Props {
@@ -9,9 +9,10 @@
 		outbounds: DeviceProxyOutbound[];
 		bridgeInterfaces: { id: string; label: string }[];
 		onSaved: (cfg: DeviceProxyConfig) => void;
+		onCancel?: () => void;
 	}
 
-	let { config, outbounds, bridgeInterfaces, onSaved }: Props = $props();
+	let { config, outbounds, bridgeInterfaces, onSaved, onCancel }: Props = $props();
 
 	// Draft is a one-time snapshot of the prop. Edits survive store
 	// refreshes — reset() is the explicit resync affordance.
@@ -35,6 +36,7 @@
 
 	function reset() {
 		draft = structuredClone(config);
+		onCancel?.();
 	}
 
 	function generatePassword() {
@@ -92,6 +94,17 @@
 		const awg = outbounds.filter((o) => o.kind === 'awg');
 		return { direct, sb, awg };
 	});
+
+	let listenOpts = $derived<DropdownOption[]>([
+		{ value: '__all', label: 'Всех интерфейсах роутера' },
+		...bridgeInterfaces.map((br) => ({ value: br.id, label: br.label })),
+	]);
+
+	let outboundOpts = $derived<DropdownOption[]>([
+		...grouped.direct.map((ob) => ({ value: ob.tag, label: ob.label })),
+		...grouped.sb.map((ob) => ({ value: ob.tag, label: ob.label, group: 'Sing-box туннели' })),
+		...grouped.awg.map((ob) => ({ value: ob.tag, label: `${ob.label} · ${ob.detail}`, group: 'Туннели' })),
+	]);
 </script>
 
 <section class="card">
@@ -126,16 +139,14 @@
 				<span class="font-medium">Доступен на</span>
 				<span class="setting-description">Все интерфейсы или конкретный мост</span>
 			</div>
-			<select
-				class="select"
-				value={listenChoice}
-				onchange={(e) => setListenChoice((e.target as HTMLSelectElement).value)}
-			>
-				<option value="__all">Всех интерфейсах роутера</option>
-				{#each bridgeInterfaces as br (br.id)}
-					<option value={br.id}>{br.label}</option>
-				{/each}
-			</select>
+			<div class="select">
+				<Dropdown
+					value={listenChoice}
+					options={listenOpts}
+					onchange={setListenChoice}
+					fullWidth
+				/>
+			</div>
 		</div>
 
 		<div class="setting-row">
@@ -143,25 +154,9 @@
 				<span class="font-medium">По умолчанию направлять в</span>
 				<span class="setting-description">Применяется при запуске sing-box</span>
 			</div>
-			<select class="select" bind:value={draft.selectedOutbound}>
-				{#each grouped.direct as ob (ob.tag)}
-					<option value={ob.tag}>{ob.label}</option>
-				{/each}
-				{#if grouped.sb.length > 0}
-					<optgroup label="Sing-box туннели">
-						{#each grouped.sb as ob (ob.tag)}
-							<option value={ob.tag}>{ob.label}</option>
-						{/each}
-					</optgroup>
-				{/if}
-				{#if grouped.awg.length > 0}
-					<optgroup label="Туннели">
-						{#each grouped.awg as ob (ob.tag)}
-							<option value={ob.tag}>{ob.label} · {ob.detail}</option>
-						{/each}
-					</optgroup>
-				{/if}
-			</select>
+			<div class="select">
+				<Dropdown bind:value={draft.selectedOutbound} options={outboundOpts} fullWidth />
+			</div>
 		</div>
 
 		<div class="setting-row">
@@ -185,24 +180,24 @@
 				</div>
 				<div class="pw-group">
 					<input type="text" bind:value={draft.auth.password} class="text-input" />
-					<button type="button" class="btn btn-ghost btn-sm" onclick={generatePassword}>
+					<Button variant="ghost" size="sm" onclick={generatePassword}>
 						Сгенерировать
-					</button>
+					</Button>
 				</div>
 			</div>
 		{/if}
 	</div>
 
 	<div class="form-actions">
-		<button type="button" class="btn btn-ghost" onclick={reset} disabled={saving}>Отменить</button>
-		<button type="button" class="btn btn-primary" onclick={save} disabled={saving}>Сохранить</button>
+		<Button variant="ghost" size="md" onclick={reset} disabled={saving}>Отменить</Button>
+		<Button variant="primary" size="md" onclick={save} loading={saving}>Сохранить</Button>
 	</div>
 </section>
 
 <style>
 	.section-title { font-size: 1rem; font-weight: 600; margin: 0 0 0.25rem 0; }
 	.section-desc { font-size: 0.8125rem; color: var(--text-muted); margin: 0 0 0.75rem 0; }
-	.num-input, .text-input, .select {
+	.num-input, .text-input {
 		padding: 0.4rem 0.6rem;
 		background: var(--bg-tertiary);
 		border: 1px solid var(--border);

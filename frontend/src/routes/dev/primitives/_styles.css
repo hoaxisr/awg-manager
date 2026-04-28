@@ -1,0 +1,113 @@
+.dev-page {
+  padding: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  font-family: var(--font-sans);
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
+  min-height: 100vh;
+}
+
+.dev-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dev-title {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+}
+
+.dev-theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.25rem;
+}
+
+.dev-theme-toggle button {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.dev-theme-toggle button.active {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.dev-nav {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 2rem;
+}
+
+.dev-nav a {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+}
+
+.dev-nav a:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.dev-section {
+  margin-bottom: 3rem;
+}
+
+.dev-section-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  margin-bottom: 1rem;
+}
+
+.dev-row {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 1rem;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+}
+
+.dev-row-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  flex-basis: 100%;
+  margin-bottom: 0.5rem;
+}

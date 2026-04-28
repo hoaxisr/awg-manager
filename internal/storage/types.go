@@ -4,6 +4,11 @@ package storage
 type Settings struct {
 	SchemaVersion       int               `json:"schemaVersion,omitempty"`
 	AuthEnabled         bool              `json:"authEnabled"`
+	// ApiKey is an opaque secret accepted in place of a session cookie via
+	// `Authorization: Bearer <key>` header. Empty disables key-based access
+	// (session is still required when AuthEnabled). Generated client-side
+	// via crypto.randomUUID(); the server treats it as opaque.
+	ApiKey              string            `json:"apiKey,omitempty"`
 	Server              ServerSettings    `json:"server"`
 	PingCheck           PingCheckSettings `json:"pingCheck"`
 	Logging             LoggingSettings   `json:"logging"`
@@ -11,15 +16,28 @@ type Settings struct {
 	Updates             UpdateSettings    `json:"updates"`
 	DNSRoute            DNSRouteSettings  `json:"dnsRoute"`
 	OnboardingCompleted    bool              `json:"onboardingCompleted"`
-	HiddenSystemTunnels    []string          `json:"hiddenSystemTunnels,omitempty"`
 	ServerInterfaces       []string          `json:"serverInterfaces,omitempty"`
+	ManagedServers         []ManagedServer   `json:"managedServers,omitempty"`
+	// ManagedServer is retained for one release as the migration source.
+	// migrateManagedServers() moves it into ManagedServers[0] on first read
+	// and clears it on the next save.
 	ManagedServer          *ManagedServer    `json:"managedServer,omitempty"`
 	ManagedPolicies        []string          `json:"managedPolicies,omitempty"`
+	SingboxRouter          SingboxRouterSettings `json:"singboxRouter"`
+}
+
+type SingboxRouterSettings struct {
+	Enabled         bool   `json:"enabled"`
+	PolicyName      string `json:"policyName"`
+	RefreshMode     string `json:"refreshMode,omitempty"`
+	RefreshInterval int    `json:"refreshIntervalHours,omitempty"`
+	RefreshDaily    string `json:"refreshDailyTime,omitempty"`
 }
 
 // ManagedServer represents the user-created WireGuard server interface.
 type ManagedServer struct {
 	InterfaceName string        `json:"interfaceName"` // e.g. "Wireguard3"
+	Description   string        `json:"description,omitempty"` // user-facing display name, synced to NDMS interface description
 	Address       string        `json:"address"`       // e.g. "10.0.0.1"
 	Mask          string        `json:"mask"`          // e.g. "255.255.255.0"
 	ListenPort    int           `json:"listenPort"`

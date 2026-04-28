@@ -89,11 +89,6 @@ func toSingboxSpec(s ExternalSpec) singbox.DeviceProxySpec {
 			Password: s.Auth.Password,
 		}
 	}
-	for _, a := range s.AWGTargets {
-		out.AWGTargets = append(out.AWGTargets, singbox.DeviceProxyAWG{
-			TunnelID:    a.TunnelID,
-			KernelIface: a.KernelIface,
-		})
-	}
+	out.AWGTags = append([]string(nil), s.AWGTags...)
 	return out
 }

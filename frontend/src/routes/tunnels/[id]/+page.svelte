@@ -7,7 +7,7 @@
 	import { api } from '$lib/api/client';
 	import type { AWGTunnel, SystemInfo, WANInterface, RouterInterface, TunnelListItem } from '$lib/types';
 	import { PageContainer, LoadingSpinner } from '$lib/components/layout';
-	import { Toggle } from '$lib/components/ui';
+	import { Toggle, Dropdown, Tabs, type DropdownOption } from '$lib/components/ui';
 	import { superForm } from 'sveltekit-superforms';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import { editTunnelSchema } from '$lib/schemas/tunnel';
@@ -44,7 +44,13 @@
 
 	type ActionStatus = 'loading' | 'success' | 'error';
 
-	let activeTab = $state<'basic' | 'obfuscation' | 'routing'>('basic');
+	type TunnelDetailTab = 'basic' | 'obfuscation' | 'routing';
+	let activeTab = $state<TunnelDetailTab>('basic');
+	const detailTabs = [
+		{ id: 'basic', label: 'Основное' },
+		{ id: 'obfuscation', label: 'Обфускация' },
+		{ id: 'routing', label: 'Маршрутизация' },
+	];
 	let replaceModalOpen = $state(false);
 
 	let tunnel = $state<AWGTunnel | null>(null);
@@ -309,13 +315,13 @@
 </svelte:head>
 
 {#if loading}
-	<PageContainer maxWidth="lg">
+	<PageContainer width="narrow">
 		<div class="flex flex-col items-center gap-4 p-12 text-secondary">
 			<LoadingSpinner size="lg" message="Загрузка..." />
 		</div>
 	</PageContainer>
 {:else if tunnel}
-	<PageContainer maxWidth="xl" padding={false}>
+	<PageContainer width="wide">
 	<div class="edit-wrapper">
 		<TunnelEditHeader
 			tunnelName={tunnel.name ?? ''}
@@ -328,11 +334,11 @@
 			onSaveAndStart={handleSaveAndStart}
 		/>
 
-		<div class="tab-bar">
-			<button class="tab" class:active={activeTab === 'basic'} onclick={() => activeTab = 'basic'}>Основное</button>
-			<button class="tab" class:active={activeTab === 'obfuscation'} onclick={() => activeTab = 'obfuscation'}>Обфускация</button>
-			<button class="tab" class:active={activeTab === 'routing'} onclick={() => activeTab = 'routing'}>Маршрутизация</button>
-		</div>
+		<Tabs
+			tabs={detailTabs}
+			active={activeTab}
+			onchange={(id) => (activeTab = id as TunnelDetailTab)}
+		/>
 
 		<div class="tab-content">
 			{#if activeTab === 'basic'}
@@ -340,8 +346,8 @@
 					<section class="form-section">
 						<h2 class="section-title">Название</h2>
 						<div class="flex flex-col gap-1.5">
-							<label class="label" for="name">Название туннеля</label>
-							<input type="text" id="name" class="input" bind:value={$form.name} />
+							<label class="field-label" for="name">Название туннеля</label>
+							<input type="text" id="name" class="field-input" bind:value={$form.name} />
 							{#if $errors.name}<p class="text-xs text-error-500 mt-1">{$errors.name}</p>{/if}
 						</div>
 					</section>
@@ -350,26 +356,26 @@
 						<h2 class="section-title">Интерфейс [Interface]</h2>
 						<div class="inline-fields">
 							<div class="flex flex-col gap-1.5" style="flex:1">
-								<label class="label" for="address-v4">IPv4 адрес</label>
-								<input type="text" id="address-v4" class="input" bind:value={ipv4Address} disabled={addressDisabled} placeholder="10.0.0.2/32" />
+								<label class="field-label" for="address-v4">IPv4 адрес</label>
+								<input type="text" id="address-v4" class="field-input" bind:value={ipv4Address} disabled={addressDisabled} placeholder="10.0.0.2/32" />
 							</div>
 							<div class="flex flex-col gap-1.5" style="width:120px">
-								<label class="label" for="mtu">MTU</label>
-								<input type="number" id="mtu" class="input" bind:value={$form.mtu} />
+								<label class="field-label" for="mtu">MTU</label>
+								<input type="number" id="mtu" class="field-input" bind:value={$form.mtu} />
 								{#if $errors.mtu}<p class="text-xs text-error-500 mt-1">{$errors.mtu}</p>{/if}
 							</div>
 						</div>
 						<div class="flex flex-col gap-1.5" style="margin-top:12px">
-							<label class="label" for="address-v6">IPv6 адрес</label>
-							<input type="text" id="address-v6" class="input" bind:value={ipv6Address} disabled={addressDisabled} placeholder="fd00::2/128 (необязательно)" />
+							<label class="field-label" for="address-v6">IPv6 адрес</label>
+							<input type="text" id="address-v6" class="field-input" bind:value={ipv6Address} disabled={addressDisabled} placeholder="fd00::2/128 (необязательно)" />
 						</div>
 						{#if addressDisabled}
 							<p class="field-hint">Адрес нельзя изменить для запущенного туннеля в режиме kernel</p>
 						{/if}
 						{#if $errors.address}<p class="text-xs text-error-500 mt-1">{$errors.address}</p>{/if}
 						<div class="flex flex-col gap-1.5" style="margin-top:12px">
-							<label class="label" for="dns">DNS</label>
-							<input type="text" id="dns" class="input" bind:value={$form.dns} placeholder="1.1.1.1, 8.8.8.8" />
+							<label class="field-label" for="dns">DNS</label>
+							<input type="text" id="dns" class="field-input" bind:value={$form.dns} placeholder="1.1.1.1, 8.8.8.8" />
 							<p class="field-hint">DNS-серверы через запятую. Применяются на роутере при старте туннеля.</p>
 						</div>
 					</section>
@@ -377,23 +383,23 @@
 					<section class="form-section">
 						<h2 class="section-title">Сервер [Peer]</h2>
 						<div class="flex flex-col gap-1.5 pubkey-row">
-							<span class="label">Публичный ключ</span>
+							<span class="field-label">Публичный ключ</span>
 							<code class="pubkey-value">{publicKey}</code>
 						</div>
 						<div class="flex flex-col gap-1.5" style="margin-bottom:12px">
-							<label class="label" for="endpoint">Endpoint</label>
-							<input type="text" id="endpoint" class="input" bind:value={$form.endpoint} />
+							<label class="field-label" for="endpoint">Endpoint</label>
+							<input type="text" id="endpoint" class="field-input" bind:value={$form.endpoint} />
 							{#if $errors.endpoint}<p class="text-xs text-error-500 mt-1">{$errors.endpoint}</p>{/if}
 						</div>
 						<div class="inline-fields">
 							<div class="flex flex-col gap-1.5" style="flex:1">
-								<label class="label" for="allowedIPs">AllowedIPs</label>
-								<input type="text" id="allowedIPs" class="input" bind:value={$form.allowedIPs} />
+								<label class="field-label" for="allowedIPs">AllowedIPs</label>
+								<input type="text" id="allowedIPs" class="field-input" bind:value={$form.allowedIPs} />
 								{#if $errors.allowedIPs}<p class="text-xs text-error-500 mt-1">{$errors.allowedIPs}</p>{/if}
 							</div>
 							<div class="flex flex-col gap-1.5" style="width:120px">
-								<label class="label" for="persistentKeepalive">Keepalive</label>
-								<input type="number" id="persistentKeepalive" class="input" bind:value={$form.persistentKeepalive} />
+								<label class="field-label" for="persistentKeepalive">Keepalive</label>
+								<input type="number" id="persistentKeepalive" class="field-input" bind:value={$form.persistentKeepalive} />
 								{#if $errors.persistentKeepalive}<p class="text-xs text-error-500 mt-1">{$errors.persistentKeepalive}</p>{/if}
 							</div>
 						</div>
@@ -410,34 +416,27 @@
 				</div>
 
 			{:else if activeTab === 'routing'}
+				{@const ispOpts: DropdownOption[] = [
+					{ value: 'auto', label: 'Автоматически' },
+					...wanInterfaces.map((iface) => ({ value: iface.name, label: `${iface.label} (${iface.name})` })),
+					...(showAllInterfaces
+						? allInterfaces
+							.filter((i) => !wanInterfaces.some((w) => w.name === i.name))
+							.map((iface) => ({ value: iface.name, label: `${iface.label} (${iface.name})` }))
+						: []),
+					...otherTunnels.map((t) => ({ value: `tunnel:${t.id}`, label: t.name, group: 'Через туннель' })),
+				]}
 				<div class="tab-form">
 					<section class="form-section">
 						<h2 class="section-title">Подключение (ISP)</h2>
 						<p class="section-hint">Через какой WAN-интерфейс роутер будет подключаться к серверу VPN. По умолчанию используется основной интернет-канал.</p>
-						<select
-							class="input"
-							style="width:100%"
+						<Dropdown
 							value={ispValue}
-							onchange={(e) => updateIspInterface((e.target as HTMLSelectElement).value)}
+							options={ispOpts}
+							onchange={updateIspInterface}
 							disabled={savingIsp}
-						>
-							<option value="auto">Автоматически</option>
-							{#each wanInterfaces as iface}
-								<option value={iface.name}>{iface.label} ({iface.name})</option>
-							{/each}
-							{#if showAllInterfaces}
-								{#each allInterfaces.filter(i => !wanInterfaces.some(w => w.name === i.name)) as iface}
-									<option value={iface.name}>{iface.label} ({iface.name})</option>
-								{/each}
-							{/if}
-							{#if otherTunnels.length > 0}
-								<optgroup label="Через туннель">
-									{#each otherTunnels as t}
-										<option value="tunnel:{t.id}">{t.name}</option>
-									{/each}
-								</optgroup>
-							{/if}
-						</select>
+							fullWidth
+						/>
 						<div class="advanced-toggle">
 							<Toggle
 								checked={showAllInterfaces}
@@ -485,41 +484,12 @@
 
 <style>
 	.text-secondary {
-		color: var(--text-secondary);
+		color: var(--color-text-secondary);
 	}
 
 	.edit-wrapper {
 		max-width: 1200px;
 		width: 100%;
-	}
-
-	/* Tab bar */
-	.tab-bar {
-		display: flex;
-		border-bottom: 2px solid var(--border);
-	}
-
-	.tab {
-		padding: 10px 20px;
-		font-size: 13px;
-		font-weight: 500;
-		color: var(--text-muted);
-		background: none;
-		border: none;
-		border-bottom: 2px solid transparent;
-		margin-bottom: -2px;
-		cursor: pointer;
-		transition: color 0.15s;
-	}
-
-	.tab:hover {
-		color: var(--text-secondary);
-	}
-
-	.tab.active {
-		color: var(--text-primary);
-		font-weight: 600;
-		border-bottom-color: var(--accent);
 	}
 
 	.tab-content {
@@ -533,7 +503,7 @@
 	}
 
 	.section-hint {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		margin: 4px 0 12px 0;
 	}
@@ -541,7 +511,7 @@
 	.advanced-toggle {
 		margin-top: 12px;
 		padding-top: 12px;
-		border-top: 1px solid var(--border);
+		border-top: 1px solid var(--color-border);
 	}
 
 	/* Inline fields row (e.g. Address + MTU, AllowedIPs + Keepalive) */
@@ -552,8 +522,8 @@
 	}
 
 	.form-section {
-		background: var(--bg-secondary);
-		border: 1px solid var(--border);
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius);
 		padding: 16px;
 	}
@@ -562,68 +532,23 @@
 		font-size: 14px;
 		font-weight: 600;
 		padding-bottom: 10px;
-		border-bottom: 1px solid var(--border);
-	}
-
-	.field-hint {
-		margin-top: 4px;
-		font-size: 12px;
-		color: var(--text-muted);
-		line-height: 1.5;
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.pubkey-row {
 		margin-bottom: 16px;
 		padding-bottom: 16px;
-		border-bottom: 1px solid var(--border);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.pubkey-value {
-		font-family: monospace;
+		font-family: var(--font-mono);
 		font-size: 12px;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		word-break: break-all;
 		padding: 6px 10px;
-		background: var(--bg-tertiary);
-		border-radius: 4px;
-	}
-
-	.label {
-		font-size: 13px;
-		font-weight: 500;
-		color: var(--text-secondary);
-	}
-
-	.input {
-		padding: 8px 12px;
-		font-size: 13px;
-		background: var(--bg-primary);
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		color: var(--text-primary);
-		transition: border-color 0.15s;
-	}
-
-	.input:focus {
-		outline: none;
-		border-color: var(--accent);
-	}
-
-	.input:disabled {
-		background: var(--bg-tertiary);
-		color: var(--text-muted);
-		cursor: not-allowed;
-	}
-
-	.input[type="number"] {
-		-moz-appearance: textfield;
-		appearance: textfield;
-	}
-
-	.input[type="number"]::-webkit-outer-spin-button,
-	.input[type="number"]::-webkit-inner-spin-button {
-		-webkit-appearance: none;
-		margin: 0;
+		background: var(--color-bg-tertiary);
+		border-radius: var(--radius-sm);
 	}
 
 	@media (max-width: 600px) {

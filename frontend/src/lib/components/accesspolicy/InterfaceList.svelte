@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { AccessPolicyInterface, PolicyGlobalInterface } from '$lib/types';
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 
@@ -180,11 +180,11 @@
 			{/if}
 		</div>
 		{#snippet actions()}
-			<button class="btn btn-ghost" onclick={() => confirmToggle = null}>Отмена</button>
+			<Button variant="ghost" onclick={() => confirmToggle = null}>Отмена</Button>
 			{#if confirmToggle?.currentlyUp}
-				<button class="btn btn-danger" onclick={executeToggle}>Выключить</button>
+				<Button variant="danger" onclick={executeToggle}>Выключить</Button>
 			{:else}
-				<button class="btn btn-primary" onclick={executeToggle}>Включить</button>
+				<Button variant="primary" onclick={executeToggle}>Включить</Button>
 			{/if}
 		{/snippet}
 	</Modal>

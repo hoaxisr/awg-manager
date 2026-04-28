@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { WireguardServerConfig, WireguardServerPeerConfig, ASCParams } from '$lib/types';
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button } from '$lib/components/ui';
 
 	interface Props {
 		open: boolean;
@@ -122,10 +122,10 @@
 	</div>
 
 	{#snippet actions()}
-		<button class="btn btn-secondary" onclick={onclose}>Отмена</button>
-		<button class="btn btn-primary" onclick={download} disabled={!privateKey.trim()}>
+		<Button variant="secondary" size="md" onclick={onclose}>Отмена</Button>
+		<Button variant="primary" size="md" onclick={download} disabled={!privateKey.trim()}>
 			Скачать .conf
-		</button>
+		</Button>
 	{/snippet}
 </Modal>
 

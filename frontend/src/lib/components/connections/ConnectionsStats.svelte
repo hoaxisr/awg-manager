@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ConnectionStats } from '$lib/types';
+	import { Badge } from '$lib/components/ui';
 
 	interface Props {
 		stats: ConnectionStats;
@@ -9,31 +10,31 @@
 </script>
 
 <div class="stats-grid">
-	<div class="stat-card">
-		<div class="stat-value">{stats.total}</div>
-		<div class="stat-label">Всего</div>
+	<div class="tile tile-info">
+		<div class="label">Всего</div>
+		<div class="value">{stats.total}</div>
 	</div>
-	<div class="stat-card">
-		<div class="stat-value stat-direct">{stats.direct}</div>
-		<div class="stat-label">Напрямую</div>
+	<div class="tile tile-muted">
+		<div class="label">Напрямую</div>
+		<div class="value">{stats.direct}</div>
 	</div>
-	<div class="stat-card">
-		<div class="stat-value stat-tunneled">{stats.tunneled}</div>
-		<div class="stat-label">Через туннели</div>
+	<div class="tile tile-accent">
+		<div class="label">Через туннели</div>
+		<div class="value">{stats.tunneled}</div>
 	</div>
-	<div class="stat-card">
-		<div class="stat-protocols">
+	<div class="tile tile-warning">
+		<div class="label">Протоколы</div>
+		<div class="protos">
 			{#if stats.protocols.tcp > 0}
-				<span class="proto-badge proto-tcp">TCP {stats.protocols.tcp}</span>
+				<Badge variant="accent" size="sm" mono>TCP {stats.protocols.tcp}</Badge>
 			{/if}
 			{#if stats.protocols.udp > 0}
-				<span class="proto-badge proto-udp">UDP {stats.protocols.udp}</span>
+				<Badge variant="info" size="sm" mono>UDP {stats.protocols.udp}</Badge>
 			{/if}
 			{#if stats.protocols.icmp > 0}
-				<span class="proto-badge proto-icmp">ICMP {stats.protocols.icmp}</span>
+				<Badge variant="warning" size="sm" mono>ICMP {stats.protocols.icmp}</Badge>
 			{/if}
 		</div>
-		<div class="stat-label">Протоколы</div>
 	</div>
 </div>
 
@@ -41,41 +42,52 @@
 	.stats-grid {
 		display: grid;
 		grid-template-columns: repeat(4, 1fr);
-		gap: 0.75rem;
+		gap: 0.625rem;
 		margin-bottom: 1rem;
 	}
 
-	.stat-card {
-		background: var(--bg-secondary);
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		padding: 0.75rem;
-		text-align: center;
-	}
-
-	.stat-value {
-		font-size: 1.5rem;
-		font-weight: 700;
-		line-height: 1;
-	}
-
-	.stat-direct { color: var(--text-secondary); }
-	.stat-tunneled { color: var(--accent); }
-
-	.stat-label {
-		font-size: 0.6875rem;
-		color: var(--text-muted);
-		margin-top: 0.25rem;
-	}
-
-	.stat-protocols {
+	.tile {
+		padding: 0.625rem 0.75rem;
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		min-height: 64px;
 		display: flex;
-		gap: 0.5rem;
+		flex-direction: column;
 		justify-content: center;
-		margin-top: 0.25rem;
+		gap: 0.25rem;
 	}
 
+	.tile-info { border-left: 3px solid var(--color-info); }
+	.tile-muted { border-left: 3px solid var(--color-text-secondary); }
+	.tile-accent { border-left: 3px solid var(--color-accent); }
+	.tile-warning { border-left: 3px solid var(--color-warning); }
 
+	.label {
+		font-size: 10px;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		color: var(--color-text-muted);
+		text-transform: uppercase;
+	}
+
+	.value {
+		font-size: 22px;
+		font-weight: 600;
+		font-family: var(--font-mono);
+		font-variant-numeric: tabular-nums;
+		line-height: 1.1;
+	}
+
+	.tile-info .value { color: var(--color-info); }
+	.tile-muted .value { color: var(--color-text-secondary); }
+	.tile-accent .value { color: var(--color-accent); }
+
+	.protos {
+		display: flex;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
 
 	@media (max-width: 640px) {
 		.stats-grid { grid-template-columns: repeat(2, 1fr); }

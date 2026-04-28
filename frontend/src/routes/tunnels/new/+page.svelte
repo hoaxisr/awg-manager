@@ -4,6 +4,7 @@
 	import { tunnels } from '$lib/stores/tunnels';
 	import { notifications } from '$lib/stores/notifications';
 	import { PageContainer } from '$lib/components/layout';
+	import { Button } from '$lib/components/ui';
 	import { decodeVpnLink, isVpnLink } from '$lib/utils/vpnlink';
 	import { api } from '$lib/api/client';
 	import type { SystemInfo } from '$lib/types';
@@ -156,12 +157,12 @@
 	<label class="field-label" for="import-name">Название туннеля</label>
 	<div class="top-row">
 		<input type="text" id="import-name" class="name-input" bind:value={importName} placeholder="Мой VPN">
-		<button class="btn btn-primary btn-import" onclick={handleImport} disabled={loading || !importContent.trim()}>
-			{#if loading}
-				<span class="spinner"></span>
-			{/if}
-			Импортировать
-		</button>
+		<!-- TODO Phase 1: button needs to match 42px name-input height (size="md" is 32px) -->
+		<div class="btn-import-wrap">
+			<Button variant="primary" size="md" onclick={handleImport} disabled={!importContent.trim()} loading={loading}>
+				Импортировать
+			</Button>
+		</div>
 	</div>
 
 	<div class="backend-selector">
@@ -320,7 +321,7 @@ AllowedIPs = 0.0.0.0/0"
 		display: flex;
 		align-items: center;
 		gap: 4px;
-		color: var(--text-secondary);
+		color: var(--color-text-secondary);
 		font-size: 13px;
 		padding: 6px 10px;
 		border-radius: 6px;
@@ -328,8 +329,8 @@ AllowedIPs = 0.0.0.0/0"
 	}
 
 	.back-link:hover {
-		background: var(--bg-tertiary);
-		color: var(--text-primary);
+		background: var(--color-bg-tertiary);
+		color: var(--color-text-primary);
 	}
 
 	.import-container {
@@ -342,7 +343,7 @@ AllowedIPs = 0.0.0.0/0"
 		display: block;
 		font-size: 13px;
 		font-weight: 500;
-		color: var(--text-secondary);
+		color: var(--color-text-secondary);
 		margin-bottom: 6px;
 	}
 
@@ -359,28 +360,33 @@ AllowedIPs = 0.0.0.0/0"
 		height: 42px;
 		padding: 0 12px;
 		font-size: 14px;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border);
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
 		border-radius: 6px;
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 		transition: border-color 0.15s;
 	}
 
 	.name-input:focus {
 		outline: none;
-		border-color: var(--accent);
+		border-color: var(--color-accent);
 	}
 
-	.btn-import {
-		padding: 0 24px !important;
-		font-size: 14px;
-		white-space: nowrap;
+	.btn-import-wrap {
+		display: flex;
+		align-items: stretch;
 		flex-shrink: 0;
+	}
+
+	.btn-import-wrap :global(.btn) {
+		height: 42px;
+		padding: 0 24px;
+		font-size: 14px;
 	}
 
 	.tabs {
 		display: flex;
-		border-bottom: 1px solid var(--border);
+		border-bottom: 1px solid var(--color-border);
 		gap: 0;
 	}
 
@@ -391,7 +397,7 @@ AllowedIPs = 0.0.0.0/0"
 		padding: 10px 16px;
 		font-size: 13px;
 		font-weight: 500;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		background: none;
 		border: none;
 		border-bottom: 2px solid transparent;
@@ -401,12 +407,12 @@ AllowedIPs = 0.0.0.0/0"
 	}
 
 	.tab:hover {
-		color: var(--text-secondary);
+		color: var(--color-text-secondary);
 	}
 
 	.tab-active {
-		color: var(--accent);
-		border-bottom-color: var(--accent);
+		color: var(--color-accent);
+		border-bottom-color: var(--color-accent);
 	}
 
 	.tab-content {
@@ -420,11 +426,11 @@ AllowedIPs = 0.0.0.0/0"
 		font-family: monospace;
 		font-size: 13px;
 		line-height: 1.5;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border);
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
 		border-top: none;
 		border-radius: 0 0 8px 8px;
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 		resize: vertical;
 		transition: border-color 0.15s;
 		white-space: pre;
@@ -433,17 +439,17 @@ AllowedIPs = 0.0.0.0/0"
 
 	.config-textarea:focus {
 		outline: none;
-		border-color: var(--accent);
+		border-color: var(--color-accent);
 	}
 
 	.config-textarea::placeholder {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.file-drop-zone {
 		min-height: 220px;
-		border: 2px dashed var(--border);
-		border-top: 2px dashed var(--border);
+		border: 2px dashed var(--color-border);
+		border-top: 2px dashed var(--color-border);
 		border-radius: 0 0 8px 8px;
 		display: flex;
 		align-items: center;
@@ -454,22 +460,22 @@ AllowedIPs = 0.0.0.0/0"
 	}
 
 	.file-drop-zone:hover {
-		border-color: var(--accent);
-		background: var(--bg-tertiary);
+		border-color: var(--color-accent);
+		background: var(--color-bg-tertiary);
 	}
 
 	.file-drop-zone.drag-over {
-		border-color: var(--accent);
+		border-color: var(--color-accent);
 		background: rgba(122, 162, 247, 0.1);
 	}
 
 	.file-drop-zone.has-content {
-		border-color: var(--success);
+		border-color: var(--color-success);
 		border-style: solid;
 	}
 
 	.file-drop-zone.has-content svg {
-		color: var(--success);
+		color: var(--color-success);
 	}
 
 	.drop-content {
@@ -479,20 +485,20 @@ AllowedIPs = 0.0.0.0/0"
 	}
 
 	.drop-content svg {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		flex-shrink: 0;
 	}
 
 	.drop-title {
 		font-size: 17px;
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 		margin-bottom: 4px;
 	}
 
 	.drop-hint {
 		font-size: 14px;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.link-input {
@@ -502,7 +508,7 @@ AllowedIPs = 0.0.0.0/0"
 
 	.link-error {
 		font-size: 13px;
-		color: var(--error);
+		color: var(--color-error);
 		margin: 8px 0 0;
 		padding: 0 2px;
 	}
@@ -510,7 +516,7 @@ AllowedIPs = 0.0.0.0/0"
 	.link-preview {
 		min-height: 200px;
 		margin-top: 12px;
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		opacity: 0.85;
 		cursor: default;
@@ -518,22 +524,8 @@ AllowedIPs = 0.0.0.0/0"
 
 	.form-hint {
 		font-size: 12px;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		margin-top: 1rem;
-	}
-
-	.spinner {
-		width: 16px;
-		height: 16px;
-		border: 2px solid currentColor;
-		border-top-color: transparent;
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-		margin-right: 8px;
-	}
-
-	@keyframes spin {
-		to { transform: rotate(360deg); }
 	}
 
 	.backend-selector {
@@ -554,20 +546,20 @@ AllowedIPs = 0.0.0.0/0"
 		justify-content: center;
 		gap: 4px;
 		padding: 14px;
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		cursor: pointer;
 		transition: all 0.15s;
-		background: var(--bg-secondary);
+		background: var(--color-bg-secondary);
 		text-align: center;
 	}
 
 	.backend-option:hover:not(.disabled) {
-		border-color: var(--accent);
+		border-color: var(--color-accent);
 	}
 
 	.backend-option.selected {
-		border-color: var(--accent);
+		border-color: var(--color-accent);
 		background: rgba(122, 162, 247, 0.08);
 	}
 
@@ -579,12 +571,12 @@ AllowedIPs = 0.0.0.0/0"
 	.backend-name {
 		font-size: 14px;
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 	}
 
 	.backend-desc {
 		font-size: 12px;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	@media (max-width: 500px) {
@@ -597,7 +589,7 @@ AllowedIPs = 0.0.0.0/0"
 			max-width: none;
 		}
 
-		.btn-import {
+		.btn-import-wrap {
 			align-self: flex-start;
 		}
 

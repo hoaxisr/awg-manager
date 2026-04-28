@@ -1,5 +1,6 @@
 <script lang="ts">
     import type { PollingStore } from '$lib/stores/polling';
+    import Badge from './Badge.svelte';
 
     interface Props {
         // `PollingStore<any>` because the badge only reads status/error/age/
@@ -33,21 +34,23 @@
 </script>
 
 {#if s.status === 'error' && s.consecutiveFailures >= threshold}
-    <div class="badge badge-error" role="status" aria-live="polite">
-        <span>обновлено {humanAge(s.lastFetchedAt)}</span>
-        <button type="button" onclick={retry}>повторить</button>
-    </div>
+    <span role="status" aria-live="polite">
+        <Badge variant="error">
+            <span>обновлено {humanAge(s.lastFetchedAt)}</span>
+            <button type="button" onclick={retry}>повторить</button>
+        </Badge>
+    </span>
 {/if}
 
 <style>
     button {
         background: transparent;
         border: none;
-        color: var(--error);
+        color: inherit;
         cursor: pointer;
         padding: 0;
         text-decoration: underline;
-        font-size: 0.75rem;
+        font: inherit;
     }
     button:hover {
         opacity: 0.8;

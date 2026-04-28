@@ -40,4 +40,9 @@ type Service interface {
 
 	// SetInterfaceUp brings an interface up or down.
 	SetInterfaceUp(ctx context.Context, ndmsName string, up bool) error
+
+	// GetPolicyMark returns the hex-formatted NDMS-assigned fwmark for the
+	// named policy (e.g. "0xffffaaa"). Returns query.ErrPolicyMarkNotFound
+	// if the policy is absent or has no mark.
+	GetPolicyMark(ctx context.Context, policyName string) (string, error)
 }

@@ -1,4 +1,14 @@
 export { default as DiagnosticsControls } from './DiagnosticsControls.svelte';
 export { default as DiagnosticsTestList } from './DiagnosticsTestList.svelte';
 export { default as DiagnosticsTestItem } from './DiagnosticsTestItem.svelte';
-export { default as DiagnosticsSummary } from './DiagnosticsSummary.svelte';
+export { default as LogsLiveIndicator } from './LogsLiveIndicator.svelte';
+export { default as LogRow } from './LogRow.svelte';
+export { default as LogsToolbar } from './LogsToolbar.svelte';
+export type { LogsFilter } from './LogsToolbar.svelte';
+export { default as LogsTerminal } from './LogsTerminal.svelte';
+export { default as LogsContextMenu } from './LogsContextMenu.svelte';
+export { default as HealthRailRunChecks } from './HealthRailRunChecks.svelte';
+export { default as HealthRailChecks } from './HealthRailChecks.svelte';
+export { default as HealthRailDnsCheck } from './HealthRailDnsCheck.svelte';
+export { contextMenu, openContextMenu, closeContextMenu } from './log-row-context-menu';
+export type { ContextMenuState } from './log-row-context-menu';

@@ -39,7 +39,8 @@ func TestLogBuffer_GetFiltered(t *testing.T) {
 	buf.Add(LogEntry{Timestamp: time.Now(), Group: GroupSystem, Subgroup: SubSettings, Level: string(LevelInfo)})
 	buf.Add(LogEntry{Timestamp: time.Now(), Group: GroupSystem, Subgroup: SubSettings, Level: string(LevelError)})
 
-	// Filter by group and level
+	// Filter by group and level (warn): tunnel has info+warn; warn is
+	// always visible regardless of configured level → 1 (only the warn entry).
 	logs := buf.GetFiltered(GroupTunnel, "", string(LevelWarn))
 	if len(logs) != 1 {
 		t.Errorf("GetFiltered(tunnel, '', warn) len = %d, want 1", len(logs))
@@ -51,16 +52,17 @@ func TestLogBuffer_GetFiltered(t *testing.T) {
 		t.Errorf("GetFiltered(group only) len = %d, want 2", len(logs))
 	}
 
-	// Filter by level only
+	// Filter by level only (warn): error and warn are both always visible
+	// regardless of configured level → warn entry + error entry → 2.
 	logs = buf.GetFiltered("", "", string(LevelWarn))
-	if len(logs) != 1 {
-		t.Errorf("GetFiltered(level only) len = %d, want 1", len(logs))
+	if len(logs) != 2 {
+		t.Errorf("GetFiltered(level only) len = %d, want 2", len(logs))
 	}
 
-	// Filter by error level
+	// Filter by error level: error and warn are both always visible → 2.
 	logs = buf.GetFiltered("", "", string(LevelError))
-	if len(logs) != 1 {
-		t.Errorf("GetFiltered(error only) len = %d, want 1", len(logs))
+	if len(logs) != 2 {
+		t.Errorf("GetFiltered(error only) len = %d, want 2", len(logs))
 	}
 
 	// Filter by subgroup only
@@ -87,7 +89,7 @@ func TestLogBuffer_GetPaginated(t *testing.T) {
 	buf.Add(LogEntry{Timestamp: time.Now(), Group: GroupSystem, Level: string(LevelWarn), Target: "other"})
 
 	// Get first page of tunnel entries (limit 2, offset 0)
-	logs, total := buf.GetPaginated(GroupTunnel, "", "", 2, 0)
+	logs, total := buf.GetPaginated(GroupTunnel, "", "", time.Time{}, 2, 0)
 	if total != 5 {
 		t.Errorf("total = %d, want 5", total)
 	}
@@ -96,7 +98,7 @@ func TestLogBuffer_GetPaginated(t *testing.T) {
 	}
 
 	// Get second page (limit 2, offset 2)
-	logs, total = buf.GetPaginated(GroupTunnel, "", "", 2, 2)
+	logs, total = buf.GetPaginated(GroupTunnel, "", "", time.Time{}, 2, 2)
 	if total != 5 {
 		t.Errorf("total = %d, want 5", total)
 	}
@@ -105,7 +107,7 @@ func TestLogBuffer_GetPaginated(t *testing.T) {
 	}
 
 	// Get last page (limit 2, offset 4)
-	logs, total = buf.GetPaginated(GroupTunnel, "", "", 2, 4)
+	logs, total = buf.GetPaginated(GroupTunnel, "", "", time.Time{}, 2, 4)
 	if total != 5 {
 		t.Errorf("total = %d, want 5", total)
 	}
@@ -114,7 +116,7 @@ func TestLogBuffer_GetPaginated(t *testing.T) {
 	}
 
 	// Offset beyond total
-	logs, total = buf.GetPaginated(GroupTunnel, "", "", 2, 10)
+	logs, total = buf.GetPaginated(GroupTunnel, "", "", time.Time{}, 2, 10)
 	if total != 5 {
 		t.Errorf("total = %d, want 5", total)
 	}
@@ -123,7 +125,7 @@ func TestLogBuffer_GetPaginated(t *testing.T) {
 	}
 
 	// All entries (no filter)
-	_, total = buf.GetPaginated("", "", "", 100, 0)
+	_, total = buf.GetPaginated("", "", "", time.Time{}, 100, 0)
 	if total != 6 {
 		t.Errorf("total all = %d, want 6", total)
 	}
@@ -252,5 +254,101 @@ func TestLogBuffer_Len(t *testing.T) {
 
 	if buf.Len() != 2 {
 		t.Errorf("Len() = %d, want 2", buf.Len())
+	}
+}
+
+func TestLogBuffer_LevelCumulative(t *testing.T) {
+	lb := NewLogBuffer()
+	defer lb.Stop()
+
+	// Add entries at every level
+	base := time.Now()
+	levels := []Level{LevelError, LevelWarn, LevelInfo, LevelFull, LevelDebug}
+	for i, lv := range levels {
+		lb.Add(LogEntry{
+			Timestamp: base.Add(time.Duration(i) * time.Second),
+			Level:     string(lv),
+			Group:     GroupSystem,
+			Action:    "test",
+			Target:    "x",
+			Message:   "m",
+		})
+	}
+
+	// Per IsVisible: error and warn are always visible.
+	// - level=error → returns error + warn (both special-cased visible)
+	// - level=warn  → returns error + warn (same)
+	// - level=info  → adds info → 3 entries (error, warn, info)
+	// - level=full  → adds full → 4 entries
+	// - level=debug → all 5
+	cases := []struct {
+		filter   string
+		wantLen  int
+		wantHave []string
+	}{
+		{filter: "error", wantLen: 2, wantHave: []string{"error", "warn"}},
+		{filter: "warn", wantLen: 2, wantHave: []string{"error", "warn"}},
+		{filter: "info", wantLen: 3, wantHave: []string{"error", "warn", "info"}},
+		{filter: "full", wantLen: 4, wantHave: []string{"error", "warn", "info", "full"}},
+		{filter: "debug", wantLen: 5, wantHave: []string{"error", "warn", "info", "full", "debug"}},
+	}
+
+	for _, c := range cases {
+		got, total := lb.GetPaginated("", "", c.filter, time.Time{}, 100, 0)
+		if total != c.wantLen {
+			t.Errorf("level=%q: got total=%d, want %d", c.filter, total, c.wantLen)
+		}
+		for _, must := range c.wantHave {
+			found := false
+			for _, e := range got {
+				if e.Level == must {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("level=%q: expected to find level %q in result", c.filter, must)
+			}
+		}
+	}
+}
+
+func TestLogBuffer_SinceFilter(t *testing.T) {
+	lb := NewLogBuffer()
+	defer lb.Stop()
+
+	base := time.Now()
+	// Three entries spaced 10 seconds apart
+	for i := 0; i < 3; i++ {
+		lb.Add(LogEntry{
+			Timestamp: base.Add(time.Duration(i*10) * time.Second),
+			Level:     "info",
+			Group:     "system",
+			Action:    "test",
+			Target:    "x",
+			Message:   "m",
+		})
+	}
+
+	// since = base + 5s → expect 2 entries (those at +10s and +20s)
+	since := base.Add(5 * time.Second)
+	got, total := lb.GetPaginated("", "", "", since, 100, 0)
+	if total != 2 {
+		t.Errorf("since=base+5s: got total=%d, want 2", total)
+	}
+	if len(got) != 2 {
+		t.Errorf("since=base+5s: got %d entries, want 2", len(got))
+	}
+
+	// since = zero → all 3 (no filter)
+	_, total = lb.GetPaginated("", "", "", time.Time{}, 100, 0)
+	if total != 3 {
+		t.Errorf("since=zero: got total=%d, want 3", total)
+	}
+
+	// since = far future → 0
+	_, total = lb.GetPaginated("", "", "", base.Add(1*time.Hour), 100, 0)
+	if total != 0 {
+		t.Errorf("since=far future: got total=%d, want 0", total)
 	}
 }

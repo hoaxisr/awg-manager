@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { DnsRoute } from '$lib/types';
+	import { Button } from '$lib/components/ui';
 	import HrNeoRuleCard from './HrNeoRuleCard.svelte';
 
 	interface Props {
@@ -32,7 +33,7 @@
 			<span class="kind-badge kind-{targetKind}">{targetKind}</span>
 			<span class="count">{rules.length} правил</span>
 		</div>
-		<button class="btn btn-primary btn-sm" onclick={onaddrule}>+ Добавить правило</button>
+		<Button variant="primary" size="sm" onclick={onaddrule}>+ Добавить правило</Button>
 	</header>
 
 	{#if sortedRules.length === 0}

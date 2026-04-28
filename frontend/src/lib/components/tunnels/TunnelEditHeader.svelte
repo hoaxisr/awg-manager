@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { Button, type ButtonVariant } from '$lib/components/ui';
+
 	type ActionStatus = 'loading' | 'success' | 'error';
 
 	interface Props {
@@ -22,6 +24,12 @@
 		onSaveOnly,
 		onSaveAndStart
 	}: Props = $props();
+
+	const primaryVariant = $derived<ButtonVariant>(
+		actionStatus === 'success' ? 'success' :
+		actionStatus === 'error' ? 'danger' :
+		'primary'
+	);
 </script>
 
 <div class="sticky-header">
@@ -50,76 +58,69 @@
 
 	<div class="header-actions flex items-center gap-2">
 		{#if onReplace}
-			<button
-				type="button"
-				class="btn btn-secondary btn-replace"
-				title="Заменить конфигурацию"
-				onclick={onReplace}
-			>
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<polyline points="1 4 1 10 7 10"/>
-					<polyline points="23 20 23 14 17 14"/>
-					<path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/>
-				</svg>
+			<!-- TODO Phase 1: secondary variant with accent-tinted border (was .btn-replace) -->
+			<Button variant="secondary" onclick={onReplace}>
+				{#snippet iconBefore()}
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<polyline points="1 4 1 10 7 10"/>
+						<polyline points="23 20 23 14 17 14"/>
+						<path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/>
+					</svg>
+				{/snippet}
 				<span class="btn-label">Заменить</span>
-			</button>
+			</Button>
 		{/if}
 		{#if onExport}
-			<button
-				type="button"
-				class="btn btn-secondary"
-				title="Скачать .conf"
-				onclick={onExport}
-			>
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-					<polyline points="7 10 12 15 17 10"/>
-					<line x1="12" y1="15" x2="12" y2="3"/>
-				</svg>
+			<Button variant="secondary" onclick={onExport}>
+				{#snippet iconBefore()}
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+						<polyline points="7 10 12 15 17 10"/>
+						<line x1="12" y1="15" x2="12" y2="3"/>
+					</svg>
+				{/snippet}
 				<span class="btn-label">Скачать</span>
-			</button>
+			</Button>
 		{/if}
 		{#if onSaveOnly}
-			<button
-				type="button"
-				class="btn btn-secondary"
-				disabled={saving}
-				onclick={onSaveOnly}
-			>
+			<Button variant="secondary" disabled={saving} onclick={onSaveOnly}>
 				Сохранить
-			</button>
+			</Button>
 		{/if}
-		<button
-			type="button"
-			class="btn btn-primary"
-			class:btn-loading={actionStatus === 'loading'}
-			class:btn-success={actionStatus === 'success'}
-			class:btn-error={actionStatus === 'error'}
+		{#snippet successIcon()}
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<polyline points="20 6 9 17 4 12"/>
+			</svg>
+		{/snippet}
+		{#snippet errorIcon()}
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+			</svg>
+		{/snippet}
+		{#snippet saveIcon()}
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+				<polyline points="17 21 17 13 7 13 7 21"/>
+				<polyline points="7 3 7 8 15 8"/>
+			</svg>
+		{/snippet}
+		<Button
+			variant={primaryVariant}
 			disabled={saving}
+			loading={actionStatus === 'loading'}
+			iconBefore={actionStatus === 'success' ? successIcon : actionStatus === 'error' ? errorIcon : actionStatus === 'loading' ? undefined : saveIcon}
 			onclick={onSaveAndStart}
 		>
 			{#if actionStatus === 'loading'}
-				<span class="spinner"></span>
 				Сохранение...
 			{:else if actionStatus === 'success'}
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<polyline points="20 6 9 17 4 12"/>
-				</svg>
 				Сохранено
 			{:else if actionStatus === 'error'}
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-				</svg>
 				Ошибка
 			{:else}
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-					<polyline points="17 21 17 13 7 13 7 21"/>
-					<polyline points="7 3 7 8 15 8"/>
-				</svg>
 				{tunnelState === 'running' ? 'Сохранить и перезапустить' : 'Сохранить и запустить'}
 			{/if}
-		</button>
+		</Button>
 	</div>
 </div>
 
@@ -185,27 +186,6 @@
 	.badge-muted {
 		background: var(--bg-tertiary);
 		color: var(--text-muted);
-	}
-
-	.btn-success {
-		background: var(--success) !important;
-		color: white !important;
-		pointer-events: none;
-	}
-
-	.btn-error {
-		background: var(--error) !important;
-		color: white !important;
-		pointer-events: none;
-	}
-
-	.btn-replace {
-		color: var(--accent);
-		border-color: rgba(122, 162, 247, 0.3);
-	}
-
-	.btn-replace:hover {
-		background: rgba(122, 162, 247, 0.08);
 	}
 
 	@media (max-width: 600px) {

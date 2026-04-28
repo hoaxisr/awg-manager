@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Modal } from '$lib/components/ui';
+	import { copyToClipboard } from '$lib/utils/clipboard';
 	import type { GeoTag } from '$lib/types';
 
 	interface Props {
@@ -61,12 +62,9 @@
 
 	async function copyTag(tag: GeoTag) {
 		const text = `${prefix}:${tag.name}`;
-		try {
-			await navigator.clipboard.writeText(text);
+		if (await copyToClipboard(text)) {
 			copiedTag = tag.name;
 			setTimeout(() => { copiedTag = null; }, 1500);
-		} catch {
-			// clipboard not available
 		}
 	}
 

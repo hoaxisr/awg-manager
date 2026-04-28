@@ -16,78 +16,6 @@ func TestConfig_NewEmpty(t *testing.T) {
 	}
 }
 
-func TestConfig_NewDNSBootstrap(t *testing.T) {
-	// The fresh skeleton ships an explicit DNS block with a UDP
-	// bootstrap (IP literal, no hostname resolution needed) and a DoH
-	// upstream that points domain_resolver at the bootstrap tag. Both
-	// detour="direct" so DNS never loops through a tunnel that itself
-	// needs DNS to start.
-	c := NewConfig()
-	dns, ok := c.raw["dns"].(map[string]any)
-	if !ok {
-		t.Fatalf("dns block missing or not an object: %#v", c.raw["dns"])
-	}
-	if dns["strategy"] != "ipv4_only" {
-		t.Errorf("strategy: want ipv4_only (Keenetic has no IPv6 egress by default), got %v", dns["strategy"])
-	}
-	servers, ok := dns["servers"].([]any)
-	if !ok || len(servers) != 2 {
-		t.Fatalf("servers: want 2 (bootstrap + DoH), got %#v", dns["servers"])
-	}
-
-	bootstrap := servers[0].(map[string]any)
-	if bootstrap["tag"] != "dns-bootstrap" || bootstrap["type"] != "udp" {
-		t.Errorf("bootstrap server: %#v", bootstrap)
-	}
-	// sing-box 1.13 native schema uses `server`, not `address`. If we
-	// ever regress to the legacy key, `sing-box check` will reject the
-	// config with "unknown field 'address'".
-	if _, hasLegacyAddress := bootstrap["address"]; hasLegacyAddress {
-		t.Errorf("bootstrap must NOT use legacy `address` field, got %#v", bootstrap)
-	}
-	if bootstrap["server"] != "1.1.1.1" {
-		t.Errorf("bootstrap server must be an IP literal (no hostname to resolve), got %v", bootstrap["server"])
-	}
-	// Bootstrap must NOT carry detour=direct — sing-box 1.13 FATALs on
-	// "detour to an empty direct outbound makes no sense" at startup.
-	// When M2+ adds tunnel routes we'll pin bootstrap via route rules.
-	if _, hasDetour := bootstrap["detour"]; hasDetour {
-		t.Errorf("bootstrap must not set detour (fails sing-box 1.13 startup), got %v", bootstrap["detour"])
-	}
-
-	doh := servers[1].(map[string]any)
-	if doh["tag"] != "dns-doh" || doh["type"] != "https" {
-		t.Errorf("DoH server: %#v", doh)
-	}
-	if _, hasLegacyAddress := doh["address"]; hasLegacyAddress {
-		t.Errorf("DoH must NOT use legacy `address` field, got %#v", doh)
-	}
-	if doh["server"] != "cloudflare-dns.com" {
-		t.Errorf("DoH server hostname: want cloudflare-dns.com, got %v", doh["server"])
-	}
-	if doh["domain_resolver"] != "dns-bootstrap" {
-		t.Errorf("DoH must point domain_resolver at the bootstrap tag to avoid chicken-and-egg, got %v", doh["domain_resolver"])
-	}
-	// DoH must NOT set detour: following route.final lets DNS flow
-	// through whichever tunnel the user later makes default, giving
-	// automatic leak protection once routing is wired up.
-	if _, hasDetour := doh["detour"]; hasDetour {
-		t.Errorf("DoH must not pin a detour; found %v", doh["detour"])
-	}
-	if dns["final"] != "dns-doh" {
-		t.Errorf("final: want dns-doh, got %v", dns["final"])
-	}
-
-	// sing-box 1.12+ requires route.default_domain_resolver; without
-	// it outbound hostname resolution is deprecated and emits a FATAL
-	// on `sing-box check`. Pinning it to dns-bootstrap stays safe
-	// even when the user later routes everything through a tunnel.
-	route := c.raw["route"].(map[string]any)
-	if route["default_domain_resolver"] != "dns-bootstrap" {
-		t.Errorf("route.default_domain_resolver: want dns-bootstrap, got %v", route["default_domain_resolver"])
-	}
-}
-
 func TestConfig_AddTunnel_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
@@ -262,7 +190,7 @@ func TestConfig_EnsureDeviceProxy_Full(t *testing.T) {
 		Port:        1099,
 		Auth:        DeviceProxyAuth{Enabled: true, Username: "u", Password: "p"},
 		SelectedTag: "awg-tun123",
-		AWGTargets:  []DeviceProxyAWG{{TunnelID: "tun123", KernelIface: "nwg0"}},
+		AWGTags:     []string{"awg-tun123"},
 		SBTags:      []string{"VLESS-RU"},
 	}
 	if err := c.EnsureDeviceProxy(spec); err != nil {
@@ -314,19 +242,15 @@ func TestConfig_EnsureDeviceProxy_Full(t *testing.T) {
 		t.Fatalf("default = %v, want awg-tun123", selector["default"])
 	}
 
-	// AWG direct outbound present
-	var awgOut map[string]any
+	// AWG-direct outbound must NOT be written by EnsureDeviceProxy —
+	// it now lives in 15-awg.json owned by awgoutbounds.
 	for _, v := range c.outbounds() {
 		ob := v.(map[string]any)
-		if ob["tag"] == "awg-tun123" {
-			awgOut = ob
+		tag, _ := ob["tag"].(string)
+		obType, _ := ob["type"].(string)
+		if obType == "direct" && tag == "awg-tun123" {
+			t.Fatalf("EnsureDeviceProxy must NOT write awg-* direct outbounds; found awg-tun123")
 		}
-	}
-	if awgOut == nil {
-		t.Fatalf("awg-tun123 outbound missing")
-	}
-	if awgOut["type"] != "direct" || awgOut["bind_interface"] != "nwg0" {
-		t.Fatalf("awg outbound = %v", awgOut)
 	}
 
 	// Route rule at front
@@ -364,7 +288,7 @@ func TestConfig_RemoveDeviceProxy_ClearsEverything(t *testing.T) {
 		ListenAddr:  "0.0.0.0",
 		Port:        1099,
 		SelectedTag: "awg-x",
-		AWGTargets:  []DeviceProxyAWG{{TunnelID: "x", KernelIface: "nwg0"}},
+		AWGTags:     []string{"awg-x"},
 	}
 	_ = c.EnsureDeviceProxy(spec)
 	c.RemoveDeviceProxy()
@@ -376,7 +300,7 @@ func TestConfig_RemoveDeviceProxy_ClearsEverything(t *testing.T) {
 	}
 	for _, v := range c.outbounds() {
 		tag, _ := v.(map[string]any)["tag"].(string)
-		if tag == "device-proxy-selector" || tag == "awg-x" {
+		if tag == "device-proxy-selector" {
 			t.Fatalf("outbound not removed: %s", tag)
 		}
 	}
@@ -407,8 +331,10 @@ func TestConfig_EnsureDeviceProxy_SelectorNotInUserOutbounds(t *testing.T) {
 	}
 }
 
-// Regression: Tunnels() must not surface awg-<id> direct outbounds either —
-// they are infrastructure for the proxy, not user-created tunnels.
+// Regression: Tunnels() must not surface awg-<id> tags as user tunnels.
+// EnsureDeviceProxy no longer writes awg-* direct outbounds, but if they
+// were present (e.g. written by awgoutbounds into another file) they should
+// not be surfaced through the device-proxy selector either.
 func TestConfig_EnsureDeviceProxy_AWGDirectNotInUserOutbounds(t *testing.T) {
 	c := NewConfig()
 	spec := DeviceProxySpec{
@@ -416,12 +342,17 @@ func TestConfig_EnsureDeviceProxy_AWGDirectNotInUserOutbounds(t *testing.T) {
 		ListenAddr:  "0.0.0.0",
 		Port:        1099,
 		SelectedTag: "awg-tun123",
-		AWGTargets:  []DeviceProxyAWG{{TunnelID: "tun123", KernelIface: "nwg0"}},
+		AWGTags:     []string{"awg-tun123"},
 	}
 	_ = c.EnsureDeviceProxy(spec)
-	for _, t2 := range c.Tunnels() {
-		if t2.Tag == "awg-tun123" {
-			t.Fatalf("awg-tun123 leaked into Tunnels(): %+v", t2)
+	// EnsureDeviceProxy must not write an awg-tun123 direct outbound into
+	// the top-level outbounds list (those now live in 15-awg.json).
+	for _, v := range c.outbounds() {
+		ob := v.(map[string]any)
+		tag, _ := ob["tag"].(string)
+		obType, _ := ob["type"].(string)
+		if obType == "direct" && tag == "awg-tun123" {
+			t.Fatalf("awg-tun123 direct outbound must not be written by EnsureDeviceProxy: %+v", ob)
 		}
 	}
 }
@@ -461,5 +392,70 @@ func TestConfig_EnsureDeviceProxy_InboundOnly(t *testing.T) {
 	}
 	if _, hasUsers := found["users"]; hasUsers {
 		t.Fatalf("users should be absent when auth disabled")
+	}
+}
+
+func TestEnsureDeviceProxy_NoLongerWritesAWGOutbounds(t *testing.T) {
+	c := NewConfig()
+	spec := DeviceProxySpec{
+		Enabled:    true,
+		ListenAddr: "127.0.0.1",
+		Port:       1080,
+		AWGTags:    []string{"awg-x", "awg-sys-Wireguard0"},
+	}
+	if err := c.EnsureDeviceProxy(spec); err != nil {
+		t.Fatalf("EnsureDeviceProxy: %v", err)
+	}
+	// Verify: selector contains both AWG tags as members
+	for _, ob := range c.outbounds() {
+		obMap := ob.(map[string]any)
+		if obMap["tag"] == deviceProxySelectorTag {
+			members := obMap["outbounds"].([]any)
+			memberStrs := make([]string, 0, len(members))
+			for _, m := range members {
+				memberStrs = append(memberStrs, m.(string))
+			}
+			has := func(s string) bool {
+				for _, m := range memberStrs {
+					if m == s {
+						return true
+					}
+				}
+				return false
+			}
+			if !has("awg-x") || !has("awg-sys-Wireguard0") {
+				t.Errorf("selector members missing AWG tags: %v", memberStrs)
+			}
+		}
+	}
+	// Verify: no awg-* direct outbound in top-level outbounds
+	for _, ob := range c.outbounds() {
+		obMap := ob.(map[string]any)
+		tag, _ := obMap["tag"].(string)
+		obType, _ := obMap["type"].(string)
+		if obType == "direct" && len(tag) >= 4 && tag[:4] == "awg-" {
+			t.Errorf("EnsureDeviceProxy must NOT write awg-* outbounds anymore, found: %s", tag)
+		}
+	}
+}
+
+func TestEnsureDeviceProxy_StripsLegacyAWGOutbounds(t *testing.T) {
+	c := NewConfig()
+	// Seed config with legacy awg-* outbound (as old version would have written)
+	c.setOutbounds([]any{
+		map[string]any{"type": "direct", "tag": "awg-legacy", "bind_interface": "t2s0"},
+		map[string]any{"type": "direct", "tag": "direct"},
+	})
+	spec := DeviceProxySpec{
+		Enabled: true, ListenAddr: "127.0.0.1", Port: 1080,
+	}
+	if err := c.EnsureDeviceProxy(spec); err != nil {
+		t.Fatalf("EnsureDeviceProxy: %v", err)
+	}
+	// awg-legacy must be gone
+	for _, ob := range c.outbounds() {
+		if obMap := ob.(map[string]any); obMap["tag"] == "awg-legacy" {
+			t.Errorf("legacy awg-* outbound was not stripped")
+		}
 	}
 }

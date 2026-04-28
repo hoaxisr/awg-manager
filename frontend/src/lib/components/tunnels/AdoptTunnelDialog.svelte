@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button } from '$lib/components/ui';
 
 	interface Props {
 		interfaceName: string;
@@ -143,18 +143,17 @@
 
 	{#snippet actions()}
 		{#if step === 'upload'}
-			<button class="btn btn-secondary" onclick={handleClose}>Отмена</button>
-			<button class="btn btn-primary" onclick={handleNext} disabled={!configContent}>
+			<Button variant="secondary" onclick={handleClose}>Отмена</Button>
+			<Button variant="primary" onclick={handleNext} disabled={!configContent}>
 				Далее
-			</button>
+			</Button>
 		{:else if step === 'instructions'}
-			<button class="btn btn-secondary" onclick={() => step = 'upload'}>Назад</button>
-			<button class="btn btn-primary" onclick={handleConfirm} disabled={loading}>
-				{#if loading}<span class="spinner"></span>{/if}
+			<Button variant="secondary" onclick={() => step = 'upload'}>Назад</Button>
+			<Button variant="primary" onclick={handleConfirm} loading={loading}>
 				Продолжить
-			</button>
+			</Button>
 		{:else if step === 'error'}
-			<button class="btn btn-secondary" onclick={() => step = 'instructions'}>Назад</button>
+			<Button variant="secondary" onclick={() => step = 'instructions'}>Назад</Button>
 		{/if}
 	{/snippet}
 </Modal>
@@ -226,20 +225,5 @@
 	.alert-error {
 		background: rgba(247, 118, 142, 0.1);
 		color: var(--error);
-	}
-
-	.spinner {
-		width: 14px;
-		height: 14px;
-		border: 2px solid currentColor;
-		border-top-color: transparent;
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-		display: inline-block;
-		margin-right: 4px;
-	}
-
-	@keyframes spin {
-		to { transform: rotate(360deg); }
 	}
 </style>

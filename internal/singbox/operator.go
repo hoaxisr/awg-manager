@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -55,6 +56,24 @@ type Operator struct {
 	proxyMgr  *ProxyManager
 	clash     *ClashClient
 	bus       *events.Bus
+
+	// lastError holds the last fatal exit reason (stderr tail or wait
+	// error) captured by Process.OnExit. Surfaced via Status.LastError so
+	// the UI can explain crashes without forcing the user to ssh in.
+	lastErrorMu sync.RWMutex
+	lastError   string
+
+	// reloadFn is the underlying SIGHUP function; defaults to o.proc.Reload.
+	// Tests inject a closure to bypass real signal delivery.
+	reloadFn func() error
+
+	// Reload coalescing — see Reload() comment for the contract.
+	reloadMu       sync.Mutex
+	reloadTimer    *time.Timer
+	reloadFirstAt  time.Time
+	reloadPending  bool
+	reloadLastErr  error
+	reloadDoneChan chan struct{}
 }
 
 // OperatorDeps are external dependencies for DI.
@@ -79,10 +98,17 @@ func NewOperator(d OperatorDeps) *Operator {
 	if log == nil {
 		log = slog.Default()
 	}
-	configPath := filepath.Join(dir, "config.json")
+
+	if err := MigrateLegacyConfigDir(dir); err != nil {
+		log.Warn("singbox config.d migration", "err", err)
+	}
+
+	configPath := filepath.Join(dir, "config.d")
 	pidPath := filepath.Join(dir, "sing-box.pid")
 
-	return &Operator{
+	ensureBaseConfig(configPath)
+
+	op := &Operator{
 		log:        log,
 		dir:        dir,
 		binary:     binary,
@@ -93,12 +119,241 @@ func NewOperator(d OperatorDeps) *Operator {
 		proxyMgr:   NewProxyManager(d.Queries, d.Commands),
 		clash:      NewClashClient(clashAPIAddr),
 	}
+	op.proc.OnStderrLine = op.handleStderrLine
+	op.proc.OnExit = op.handleExit
+	op.reloadFn = op.proc.Reload
+	op.reloadDoneChan = make(chan struct{})
+	return op
+}
+
+// handleStderrLine is invoked by Process for every line sing-box writes
+// to stderr while running. Forwards each line to the slog (which the app
+// log handler attaches to and persists in the in-memory log buffer
+// surfaced at /diagnostics?tab=logs). FATAL/ERROR lines are also stored
+// as lastError so the UI shows them when sing-box subsequently dies.
+func (o *Operator) handleStderrLine(line string) {
+	upper := strings.ToUpper(line)
+	switch {
+	case strings.Contains(upper, "FATAL"):
+		o.log.Error("singbox stderr", "line", line)
+		o.setLastError(line)
+	case strings.Contains(upper, "ERROR"):
+		o.log.Warn("singbox stderr", "line", line)
+	default:
+		o.log.Info("singbox stderr", "line", line)
+	}
+}
+
+// handleExit is invoked when the sing-box process exits AFTER the
+// startup grace period (i.e., a "successful start that died later" —
+// the typical path for FATAL on rule-set fetch failure or runtime
+// crash). The captured stderr tail is logged and stored as lastError so
+// the next /singbox/status poll surfaces it in the UI; the SSE bus is
+// also nudged so subscribers refetch immediately instead of waiting
+// for the next 30s poll tick.
+func (o *Operator) handleExit(err error, stderrTail string) {
+	msg := stderrTail
+	if msg == "" && err != nil {
+		msg = err.Error()
+	}
+	if msg == "" {
+		msg = "sing-box exited (no diagnostic output)"
+	}
+	o.log.Error("singbox exited", "err", err, "stderrTail", stderrTail)
+	o.setLastError(msg)
+	if o.bus != nil {
+		o.bus.Publish("resource:invalidated", map[string]any{
+			"resource": "singbox.status",
+			"reason":   "exit",
+		})
+	}
+}
+
+// setLastError stores the most recent fatal/exit reason. Cleared on
+// a successful Start (see startAndWait below).
+func (o *Operator) setLastError(s string) {
+	o.lastErrorMu.Lock()
+	o.lastError = s
+	o.lastErrorMu.Unlock()
+}
+
+// LastError returns the most recent captured fatal/exit reason.
+func (o *Operator) LastError() string {
+	o.lastErrorMu.RLock()
+	defer o.lastErrorMu.RUnlock()
+	return o.lastError
 }
 
 // SetEventBus wires the event bus so Operator can publish tunnel-set
 // change events consumed by deviceproxy.Service (and potentially
 // other subscribers in the future).
 func (o *Operator) SetEventBus(bus *events.Bus) { o.bus = bus }
+
+// tunnelsFile is the canonical path for the tunnels.json fragment
+// (config.d/10-tunnels.json). Used by applyConfig + RemoveTunnel.
+func (o *Operator) tunnelsFile() string {
+	return filepath.Join(o.configPath, "10-tunnels.json")
+}
+
+// ensureBaseConfig writes a minimal 00-base.json if config.d is empty,
+// so sing-box starts standalone (direct outbound + bootstrap DNS) before
+// any tunnels are added.
+func ensureBaseConfig(configDir string) {
+	basePath := filepath.Join(configDir, "00-base.json")
+	if _, err := os.Stat(basePath); err == nil {
+		return
+	}
+	_ = os.MkdirAll(configDir, 0755)
+	base := map[string]any{
+		"log": map[string]any{"level": "trace", "timestamp": true},
+		"experimental": map[string]any{
+			"clash_api":  map[string]any{"external_controller": "127.0.0.1:9090"},
+			"cache_file": map[string]any{"enabled": true, "path": "cache.db"},
+		},
+		"dns": map[string]any{
+			"strategy": "ipv4_only",
+			"servers": []any{
+				map[string]any{"type": "udp", "tag": "dns-bootstrap", "server": "1.1.1.1"},
+			},
+			"final": "dns-bootstrap",
+		},
+		"outbounds": []any{
+			map[string]any{"type": "direct", "tag": "direct"},
+		},
+		"route": map[string]any{
+			"final":                   "direct",
+			"default_domain_resolver": "dns-bootstrap",
+		},
+	}
+	_ = writeJSONFile(basePath, base)
+}
+
+// ConfigDir returns the config.d directory path (used by sing-box-router
+// to drop additional config fragments alongside ours).
+func (o *Operator) ConfigDir() string { return o.configPath }
+
+// ValidateConfigDir runs `sing-box check` over the entire config.d.
+// Used by callers that just wrote a fragment and want to verify the
+// merged config is valid before reload.
+func (o *Operator) ValidateConfigDir(ctx context.Context) error {
+	return o.validator.Validate(o.configPath)
+}
+
+const (
+	reloadDebounce = 200 * time.Millisecond
+	reloadMaxWait  = 500 * time.Millisecond
+)
+
+// Reload schedules a coalesced sing-box config reload (SIGHUP).
+//
+// Behavior:
+//   - Returns nil immediately; the actual reload happens after a
+//     trailing-debounce window (reloadDebounce) — successive calls
+//     within the window reset the timer so a burst of writers
+//     produces a single SIGHUP.
+//   - If the burst keeps going past reloadMaxWait from the first call
+//     in the burst, the existing scheduled reload fires anyway
+//     (starvation guard).
+//   - Errors from the underlying SIGHUP are stored in reloadLastErr
+//     and reachable via ReloadAndWait. Production callers ignore them
+//     here and rely on Status.LastError populated by Process.OnExit.
+func (o *Operator) Reload() error {
+	o.reloadMu.Lock()
+	defer o.reloadMu.Unlock()
+
+	now := time.Now()
+	if !o.reloadPending {
+		o.reloadFirstAt = now
+		o.reloadPending = true
+		// Lazy-init for zero-value test structs that bypass NewOperator;
+		// production paths always have it pre-initialised.
+		if o.reloadDoneChan == nil {
+			o.reloadDoneChan = make(chan struct{})
+		}
+	}
+
+	// Past max-wait — let the already-scheduled timer fire on schedule.
+	if now.Sub(o.reloadFirstAt) >= reloadMaxWait {
+		return nil
+	}
+
+	if o.reloadTimer != nil {
+		o.reloadTimer.Stop()
+	}
+
+	delay := reloadDebounce
+	if remaining := reloadMaxWait - now.Sub(o.reloadFirstAt); remaining < delay {
+		delay = remaining
+	}
+	o.reloadTimer = time.AfterFunc(delay, o.fireReload)
+	return nil
+}
+
+func (o *Operator) fireReload() {
+	o.reloadMu.Lock()
+	o.reloadPending = false
+	o.reloadFirstAt = time.Time{}
+	done := o.reloadDoneChan
+	o.reloadDoneChan = make(chan struct{})
+	fn := o.reloadFn
+	o.reloadMu.Unlock()
+
+	if fn == nil {
+		fn = o.proc.Reload
+	}
+	err := fn()
+
+	o.reloadMu.Lock()
+	o.reloadLastErr = err
+	o.reloadMu.Unlock()
+
+	close(done)
+}
+
+// ReloadAndWait blocks until the next reload (already-scheduled or
+// freshly-triggered) completes, returning that reload's error. Used
+// by tests and the rare blocking caller that must observe the result.
+func (o *Operator) ReloadAndWait(ctx context.Context) error {
+	o.reloadMu.Lock()
+	if !o.reloadPending {
+		o.reloadMu.Unlock()
+		fn := o.reloadFn
+		if fn == nil {
+			fn = o.proc.Reload
+		}
+		err := fn()
+		o.reloadMu.Lock()
+		o.reloadLastErr = err
+		o.reloadMu.Unlock()
+		return err
+	}
+	done := o.reloadDoneChan
+	o.reloadMu.Unlock()
+
+	select {
+	case <-done:
+		o.reloadMu.Lock()
+		err := o.reloadLastErr
+		o.reloadMu.Unlock()
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// IsRunning reports whether the sing-box process is alive (and its PID).
+// Public version of o.proc.IsRunning for cross-package callers.
+func (o *Operator) IsRunning() (bool, int) { return o.proc.IsRunning() }
+
+// Start cold-starts sing-box after validating the config.d. Public
+// version of the internal startAndWait — used by router.Service.Enable
+// when sing-box wasn't already running.
+func (o *Operator) Start() error {
+	if err := o.validator.Validate(o.configPath); err != nil {
+		return err
+	}
+	return o.proc.Start()
+}
 
 // IsInstalled reports whether the sing-box binary is on PATH.
 // Cheap — just an exec.LookPath probe (does not read config or check process).
@@ -126,6 +381,9 @@ func (o *Operator) GetStatus(ctx context.Context) Status {
 		s.TunnelCount = len(cfg.Tunnels())
 	}
 	s.ProxyComponent = ndmsinfo.HasProxyComponent()
+	if !s.Running {
+		s.LastError = o.LastError()
+	}
 	return s
 }
 
@@ -320,7 +578,7 @@ func (o *Operator) RemoveTunnel(ctx context.Context, tag string) error {
 	// a consistent recoverable state (sing-box config matches on-disk reality).
 	if len(cfg.Tunnels()) == 0 {
 		_ = o.proc.Stop()
-		_ = os.Remove(o.configPath)
+		_ = os.Remove(o.tunnelsFile())
 	} else {
 		if err := o.applyConfig(ctx, cfg); err != nil {
 			return err
@@ -372,6 +630,39 @@ func (o *Operator) Reconcile(ctx context.Context) error {
 	return o.proxyMgr.SyncProxies(ctx, tunnels)
 }
 
+// Control starts/stops/restarts the sing-box daemon. Mirrors the shape of
+// hydraroute.Service.Control so the API handler can dispatch by action
+// name. "start" is a no-op when already running; "stop" is a no-op when
+// already stopped; "restart" is stop + start regardless of current state.
+// Errors only on actual transition failures.
+func (o *Operator) Control(ctx context.Context, action string) error {
+	if installed, _ := o.IsInstalled(); !installed {
+		return fmt.Errorf("sing-box is not installed")
+	}
+	running, _ := o.IsRunningPublic()
+	switch action {
+	case "start":
+		if running {
+			return nil
+		}
+		return o.startAndWait(ctx)
+	case "stop":
+		if !running {
+			return nil
+		}
+		return o.proc.Stop()
+	case "restart":
+		if running {
+			if err := o.proc.Stop(); err != nil {
+				return fmt.Errorf("stop: %w", err)
+			}
+		}
+		return o.startAndWait(ctx)
+	default:
+		return fmt.Errorf("unknown action: %s", action)
+	}
+}
+
 // startAndWait launches sing-box and blocks until Clash API responds or
 // maxSingboxBootWait elapses. Replaces raw proc.Start() in cold-start paths
 // so the caller never returns "success" for a daemon that exited, crashed
@@ -379,13 +670,22 @@ func (o *Operator) Reconcile(ctx context.Context) error {
 // process is stopped to avoid a zombie PID file misleading future ticks.
 func (o *Operator) startAndWait(ctx context.Context) error {
 	if err := o.proc.Start(); err != nil {
+		o.setLastError(err.Error())
 		return err
 	}
 	if err := o.waitClashReady(ctx, maxSingboxBootWait); err != nil {
 		o.log.Warn("sing-box start: clash API did not become ready, stopping", "err", err)
 		_ = o.proc.Stop()
+		// LastError is populated either by handleExit (post-grace death)
+		// or here (clash never came up); prefer the more specific stderr
+		// tail captured by handleExit if it fired, otherwise note the
+		// clash timeout.
+		if o.LastError() == "" {
+			o.setLastError("sing-box запущен, но Clash API не отвечает: " + err.Error())
+		}
 		return err
 	}
+	o.setLastError("")
 	return nil
 }
 
@@ -471,7 +771,7 @@ func (o *Operator) Cleanup(ctx context.Context) error {
 	// sing-box.log is a legacy path (pre-log-forwarding) — removed here so
 	// upgrades from older installs don't leave an orphaned file behind.
 	legacyLogPath := filepath.Join(o.dir, "sing-box.log")
-	for _, path := range []string{o.configPath, o.pidPath, legacyLogPath} {
+	for _, path := range []string{o.tunnelsFile(), o.pidPath, legacyLogPath} {
 		if path == "" {
 			continue
 		}
@@ -482,28 +782,46 @@ func (o *Operator) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-// applyConfig: save to tmp path → validate → promote → reload.
 func (o *Operator) applyConfig(ctx context.Context, cfg *Config) error {
-	tmpPath := o.configPath + ".new"
-	if err := cfg.Save(tmpPath); err != nil {
+	tunnelsPath := o.tunnelsFile()
+	backupPath := tunnelsPath + ".bak"
+
+	_, hadExisting := os.Stat(tunnelsPath)
+	if hadExisting == nil {
+		if err := os.Rename(tunnelsPath, backupPath); err != nil {
+			return fmt.Errorf("backup tunnels: %w", err)
+		}
+	}
+
+	restore := func() {
+		_ = os.Remove(tunnelsPath)
+		if hadExisting == nil {
+			_ = os.Rename(backupPath, tunnelsPath)
+		}
+	}
+
+	if err := cfg.Save(tunnelsPath); err != nil {
+		restore()
 		return err
 	}
-	if err := o.validator.Validate(tmpPath); err != nil {
-		_ = os.Remove(tmpPath)
+	if err := o.validator.Validate(o.configPath); err != nil {
+		restore()
 		return fmt.Errorf("validate: %w", err)
 	}
-	if err := os.Rename(tmpPath, o.configPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("promote config: %w", err)
-	}
+	var runErr error
 	if running, _ := o.proc.IsRunning(); !running {
-		return o.startAndWait(ctx)
+		runErr = o.startAndWait(ctx)
+	} else {
+		runErr = o.proc.Reload()
 	}
-	return o.proc.Reload()
+	if hadExisting == nil {
+		_ = os.Remove(backupPath)
+	}
+	return runErr
 }
 
 func (o *Operator) loadConfig() (*Config, error) {
-	return LoadConfig(o.configPath)
+	return LoadConfig(o.tunnelsFile())
 }
 
 // ApplyConfig runs the full Save + Validate + Promote + Reload sequence
@@ -590,7 +908,7 @@ func (o *Operator) GetSelectorActive(ctx context.Context, selectorTag string) (s
 }
 
 func (o *Operator) loadOrInitConfig() (*Config, error) {
-	cfg, err := LoadConfig(o.configPath)
+	cfg, err := LoadConfig(o.tunnelsFile())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return NewConfig(), nil

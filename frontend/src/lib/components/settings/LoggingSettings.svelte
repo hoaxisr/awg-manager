@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { Toggle } from '$lib/components/ui';
+	import { Toggle, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import type { Settings } from '$lib/types';
 
 	interface Props {
 		settings: Settings;
 		saving: boolean;
-		onToggle: () => void;
+		onToggle: (enabled: boolean) => void;
 		onSave: () => void;
 	}
 
@@ -17,11 +17,13 @@
 	}: Props = $props();
 
 	let localMaxAge = $state(settings.logging.maxAge);
-	let localLogLevel = $state(settings.logging.logLevel || 'info');
+	let localLogLevel = $state<'info' | 'full' | 'debug'>(
+		(settings.logging.logLevel as 'info' | 'full' | 'debug') || 'info',
+	);
 
 	$effect(() => {
 		localMaxAge = settings.logging.maxAge;
-		localLogLevel = settings.logging.logLevel || 'info';
+		localLogLevel = (settings.logging.logLevel as 'info' | 'full' | 'debug') || 'info';
 	});
 
 	function handleSave() {
@@ -30,8 +32,28 @@
 		onSave();
 	}
 
-	function handleLogLevelChange(e: Event) {
-		localLogLevel = (e.currentTarget as HTMLSelectElement).value;
+	const hoursOptions: DropdownOption[] = [
+		{ value: '1', label: '1 ч' },
+		{ value: '2', label: '2 ч' },
+		{ value: '4', label: '4 ч' },
+		{ value: '8', label: '8 ч' },
+		{ value: '12', label: '12 ч' },
+		{ value: '24', label: '24 ч' },
+	];
+
+	const levelOptions: DropdownOption<'info' | 'full' | 'debug'>[] = [
+		{ value: 'info', label: 'INFO' },
+		{ value: 'full', label: 'FULL' },
+		{ value: 'debug', label: 'DEBUG' },
+	];
+
+	function handleHoursChange(v: string) {
+		localMaxAge = Number(v);
+		handleSave();
+	}
+
+	function handleLevelChange(v: 'info' | 'full' | 'debug') {
+		localLogLevel = v;
 		handleSave();
 	}
 </script>
@@ -45,21 +67,17 @@
 	</div>
 	<div class="setting-controls">
 		{#if settings.logging.enabled}
-			<select
-				class="hours-select"
-				value={localMaxAge}
-				onchange={(e) => { localMaxAge = Number(e.currentTarget.value); handleSave(); }}
-				disabled={saving}
-			>
-				<option value={1}>1 ч</option>
-				<option value={2}>2 ч</option>
-				<option value={4}>4 ч</option>
-				<option value={8}>8 ч</option>
-				<option value={12}>12 ч</option>
-				<option value={24}>24 ч</option>
-			</select>
+			<div class="hours-select">
+				<Dropdown
+					value={String(localMaxAge)}
+					options={hoursOptions}
+					onchange={handleHoursChange}
+					disabled={saving}
+					fullWidth
+				/>
+			</div>
 		{/if}
-		<Toggle checked={settings.logging.enabled} onchange={() => onToggle()} disabled={saving} />
+		<Toggle checked={settings.logging.enabled} onchange={onToggle} disabled={saving} />
 	</div>
 </div>
 
@@ -69,11 +87,15 @@
 			<span class="font-medium">Уровень логирования</span>
 			<span class="setting-description">INFO — результаты операций. FULL — промежуточные шаги. DEBUG — полная информация.</span>
 		</div>
-		<select class="hours-select" value={localLogLevel} onchange={handleLogLevelChange} disabled={saving}>
-			<option value="info">INFO</option>
-			<option value="full">FULL</option>
-			<option value="debug">DEBUG</option>
-		</select>
+		<div class="hours-select">
+			<Dropdown
+				value={localLogLevel}
+				options={levelOptions}
+				onchange={handleLevelChange}
+				disabled={saving}
+				fullWidth
+			/>
+		</div>
 	</div>
 {/if}
 
@@ -86,17 +108,6 @@
 	}
 
 	.hours-select {
-		padding: 0.25rem 0.5rem;
-		background: var(--bg-primary);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		color: var(--text-primary);
-		font-size: 0.8125rem;
-		cursor: pointer;
-	}
-
-	.hours-select:focus {
-		outline: none;
-		border-color: var(--accent);
+		min-width: 110px;
 	}
 </style>

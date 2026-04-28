@@ -93,7 +93,7 @@
     .modal-card {
         background: var(--bg-secondary);
         border: 1px solid var(--border);
-        border-radius: var(--radius, 8px);
+        border-radius: var(--radius);
         width: 100%;
         /* 100vh on mobile includes hidden browser chrome (address bar,
            toolbar) so the card overflows the visible area. dvh (dynamic
@@ -129,7 +129,7 @@
         justify-content: center;
         padding: 0.375rem;
         border: none;
-        border-radius: var(--radius-sm, 4px);
+        border-radius: var(--radius-sm);
         background: transparent;
         color: var(--text-secondary);
         cursor: pointer;

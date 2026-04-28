@@ -189,13 +189,14 @@ type TestResult struct {
 	Description string `json:"description"`
 	TunnelID    string `json:"tunnelId,omitempty"`
 	TunnelName  string `json:"tunnelName,omitempty"`
-	Status      string `json:"status"` // pass, fail, skip, error
+	Status      string `json:"status"` // pass, fail, warn, skip, error
 	Detail      string `json:"detail"`
 }
 
 const (
 	StatusPass  = "pass"
 	StatusFail  = "fail"
+	StatusWarn  = "warn"
 	StatusSkip  = "skip"
 	StatusError = "error"
 )

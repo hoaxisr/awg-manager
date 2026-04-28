@@ -2,7 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { Modal, SpeedGauge } from '$lib/components/ui';
+	import { Modal, SpeedGauge, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import type { SpeedTestInfo, SpeedTestServer } from '$lib/types';
 
 	interface Props {
@@ -221,20 +221,26 @@
 			</div>
 
 			{#if info}
-				<select bind:value={selectedServerIdx} disabled={isRunning}>
-					{#each info.servers as srv, i}
-						<option value={i}>{srv.label} ({srv.host}:{srv.port})</option>
-					{/each}
-				</select>
+				{@const serverOpts: DropdownOption[] = info.servers.map((srv, i) => ({
+					value: String(i),
+					label: `${srv.label} (${srv.host}:${srv.port})`,
+				}))}
+				<Dropdown
+					value={String(selectedServerIdx)}
+					options={serverOpts}
+					onchange={(v) => (selectedServerIdx = Number(v))}
+					disabled={isRunning}
+					fullWidth
+				/>
 			{/if}
 
 			<div class="actions">
 				{#if isRunning}
-					<button class="btn btn-ghost btn-sm" onclick={cancelTest}>Отмена</button>
+					<Button variant="ghost" size="sm" onclick={cancelTest}>Отмена</Button>
 				{:else}
-					<button class="btn btn-primary btn-sm" onclick={runTest} disabled={!selectedServer}>
+					<Button variant="primary" size="sm" onclick={runTest} disabled={!selectedServer}>
 						{phase === 'idle' ? 'Запустить' : phase === 'cancelled' ? 'Запустить заново' : 'Повторить'}
-					</button>
+					</Button>
 				{/if}
 			</div>
 
@@ -309,15 +315,6 @@
 		padding: 2px 8px;
 		border-radius: 4px;
 		font-family: var(--font-mono, monospace);
-	}
-	select {
-		background: var(--bg-secondary);
-		border: 1px solid var(--border);
-		color: var(--text);
-		padding: 6px 10px;
-		border-radius: 4px;
-		font-size: 12px;
-		font-family: inherit;
 	}
 	.actions {
 		display: flex;

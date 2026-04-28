@@ -49,7 +49,8 @@ type rciInterfaceInfo struct {
 // WireGuard interface, adding the nested "wireguard" object.
 type rciWireguardDetail struct {
 	rciInterfaceInfo
-	MTU       int `json:"mtu"`
+	MTU       int   `json:"mtu"`
+	Uptime    int64 `json:"uptime"`
 	Wireguard *struct {
 		PublicKey  string             `json:"public-key"`
 		ListenPort int                `json:"listen-port"`
@@ -62,6 +63,7 @@ type rciWireguardPeer struct {
 	Description           string `json:"description"`
 	RemoteEndpointAddress string `json:"remote-endpoint-address"`
 	RemotePort            int    `json:"remote-port"`
+	Via                   string `json:"via"`
 	RxBytes               int64  `json:"rxbytes"`
 	TxBytes               int64  `json:"txbytes"`
 	LastHandshake         int64  `json:"last-handshake"`
@@ -508,12 +510,16 @@ func rciToSystemTunnel(iface rciWireguardDetail) ndms.SystemWireguardTunnel {
 		Status:      iface.State,
 		Connected:   iface.Connected == "yes",
 		MTU:         iface.MTU,
+		Address:     iface.Address,
+		Mask:        iface.Mask,
+		Uptime:      iface.Uptime,
 	}
 	if iface.Wireguard != nil && len(iface.Wireguard.Peer) > 0 {
 		peer := iface.Wireguard.Peer[0]
 		t.Peer = &ndms.WireguardPeerInfo{
 			PublicKey:     peer.PublicKey,
 			Endpoint:      formatPeerEndpoint(peer),
+			Via:           peer.Via,
 			RxBytes:       peer.RxBytes,
 			TxBytes:       peer.TxBytes,
 			LastHandshake: FormatHandshakeSecondsAgo(peer.LastHandshake),

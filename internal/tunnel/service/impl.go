@@ -54,6 +54,29 @@ type ServiceImpl struct {
 	// our own store.Save completes — producing a transient ghost entry in
 	// the system tunnels list.
 	selfCreateGate tunnel.SelfCreateGater
+
+	awgSyncer AWGSyncer
+
+	deviceProxyRefs DeviceProxyRefChecker
+	routerRefs      RouterRefChecker
+}
+
+type AWGSyncer interface {
+	SyncAWGOutbounds(ctx context.Context) error
+}
+
+func (s *ServiceImpl) SetAWGSyncer(sync AWGSyncer) { s.awgSyncer = sync }
+
+func (s *ServiceImpl) SetDeviceProxyRefChecker(c DeviceProxyRefChecker) { s.deviceProxyRefs = c }
+func (s *ServiceImpl) SetRouterRefChecker(c RouterRefChecker)            { s.routerRefs = c }
+
+func (s *ServiceImpl) notifyAWGSyncer(ctx context.Context) {
+	if s.awgSyncer == nil {
+		return
+	}
+	if err := s.awgSyncer.SyncAWGOutbounds(ctx); err != nil {
+		s.log.Warnf("awg syncer: %v", err)
+	}
 }
 
 // New creates a new TunnelService.
@@ -193,6 +216,7 @@ func (s *ServiceImpl) Create(ctx context.Context, tunnelID, name string, cfg tun
 		// Legacy tunnel:created publish removed (Task 14 sweep); handler
 		// layer calls publishTunnelList → resource:invalidated after all
 		// mutations, so no subscriber missed an update.
+		s.notifyAWGSyncer(ctx)
 		return nil
 	}
 
@@ -204,6 +228,7 @@ func (s *ServiceImpl) Create(ctx context.Context, tunnelID, name string, cfg tun
 	s.logInfo("create", tunnelID, "Tunnel created")
 	// Legacy tunnel:created publish removed (Task 14 sweep); handler
 	// layer emits resource:invalidated via publishTunnelList.
+	s.notifyAWGSyncer(ctx)
 	return nil
 }
 
@@ -376,6 +401,7 @@ func (s *ServiceImpl) Update(ctx context.Context, oldStored, newStored *storage.
 	}
 
 	s.logInfo("update", tunnelID, "Tunnel updated")
+	s.notifyAWGSyncer(ctx)
 	return nil
 }
 

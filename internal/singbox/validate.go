@@ -6,7 +6,6 @@ import (
 	"os/exec"
 )
 
-// Validator runs `sing-box check -c <abs-path>`.
 type Validator struct {
 	binary string
 	exec   func(bin string, args ...string) ([]byte, error)
@@ -21,9 +20,8 @@ func NewValidator(binary string) *Validator {
 	}
 }
 
-// Validate runs `sing-box check -c <absPath>`. absPath MUST be absolute.
-func (v *Validator) Validate(absPath string) error {
-	out, err := v.exec(v.binary, "check", "-c", absPath)
+func (v *Validator) Validate(configDir string) error {
+	out, err := v.exec(v.binary, "check", "-C", configDir)
 	if err != nil {
 		return fmt.Errorf("sing-box check failed: %s: %w", string(out), err)
 	}

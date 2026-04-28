@@ -39,13 +39,15 @@ func (lb *LogBuffer) GetAll() []LogEntry { return lb.inner.GetAll() }
 // GetFiltered returns log entries matching group/subgroup/level, newest first.
 // Empty string for any field means "no constraint on that field".
 func (lb *LogBuffer) GetFiltered(group, subgroup, level string) []LogEntry {
-	return lb.inner.Filter(matcher(group, subgroup, level))
+	return lb.inner.Filter(matcher(group, subgroup, level, time.Time{}))
 }
 
 // GetPaginated returns filtered entries with pagination, newest first,
-// plus the total count of filtered entries.
-func (lb *LogBuffer) GetPaginated(group, subgroup, level string, limit, offset int) ([]LogEntry, int) {
-	return lb.inner.FilterPage(matcher(group, subgroup, level), limit, offset)
+// plus the total count of filtered entries. A non-zero `since` restricts
+// the result to entries whose Timestamp is strictly after `since`
+// (used for SSE catch-up after a reconnect).
+func (lb *LogBuffer) GetPaginated(group, subgroup, level string, since time.Time, limit, offset int) ([]LogEntry, int) {
+	return lb.inner.FilterPage(matcher(group, subgroup, level, since), limit, offset)
 }
 
 // Clear removes all entries.
@@ -60,17 +62,21 @@ func (lb *LogBuffer) Stop() { lb.inner.Stop() }
 // Len returns the number of entries in the buffer.
 func (lb *LogBuffer) Len() int { return lb.inner.Len() }
 
-// matcher builds the group/subgroup/level composite predicate once so
-// Filter/FilterPage don't recompute the closure shape per entry.
-func matcher(group, subgroup, level string) func(LogEntry) bool {
+// matcher builds the group/subgroup/level/since composite predicate once so
+// Filter/FilterPage don't recompute the closure shape per entry. A zero
+// `since` disables the timestamp cutoff.
+func matcher(group, subgroup, level string, since time.Time) func(LogEntry) bool {
 	return func(e LogEntry) bool {
+		if !since.IsZero() && !e.Timestamp.After(since) {
+			return false
+		}
 		if group != "" && e.Group != group {
 			return false
 		}
 		if subgroup != "" && e.Subgroup != subgroup {
 			return false
 		}
-		if level != "" && e.Level != level {
+		if level != "" && !IsVisible(Level(e.Level), Level(level)) {
 			return false
 		}
 		return true

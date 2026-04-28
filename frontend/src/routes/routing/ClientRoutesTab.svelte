@@ -1,7 +1,7 @@
 <script lang="ts">
     import { api } from '$lib/api/client';
     import type { ClientRoute, PolicyDevice, RoutingTunnel } from '$lib/types';
-    import { Modal, StoreStatusBadge } from '$lib/components/ui';
+    import { Modal, StoreStatusBadge, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
     import { ClientRouteCard, ClientRouteCreateModal } from '$lib/components/clientroute';
     import { notifications } from '$lib/stores/notifications';
     import { clientRoutesStore } from '$lib/stores/routing';
@@ -156,9 +156,9 @@
         <div class="section-buttons">
             <StoreStatusBadge store={clientRoutesStore} />
             {#if clientRoutes.length > 0}
-                <button class="btn btn-sm btn-ghost" onclick={() => { clientSelectionMode = true; clientSelected = new Set(); }}>Выбрать</button>
+                <Button variant="ghost" size="sm" onclick={() => { clientSelectionMode = true; clientSelected = new Set(); }}>Выбрать</Button>
             {/if}
-            <button class="btn btn-sm btn-primary" onclick={() => { editingClientRoute = null; clientRouteModalOpen = true; }}>+ Создать</button>
+            <Button variant="primary" size="sm" onclick={() => { editingClientRoute = null; clientRouteModalOpen = true; }}>+ Создать</Button>
         </div>
     {:else}
         <div class="bulk-bar">
@@ -175,16 +175,20 @@
                     <button class="bulk-btn bulk-btn-tunnel" disabled={clientSelected.size === 0 || clientBulkLoading} onclick={() => { clientTunnelMode = true; clientBulkTunnelId = routingTunnels.find(t => t.available)?.id ?? ''; }}>Туннель ▾</button>
                 </div>
             {:else}
+                {@const bulkTunnelOpts: DropdownOption[] = [
+                    ...routingTunnels.filter(t => t.type === 'managed' && t.available).map((t) => ({ value: t.id, label: t.name })),
+                    ...routingTunnels.filter(t => t.type === 'system' && t.available).map((t) => ({ value: t.id, label: t.name })),
+                ]}
                 <div class="bulk-tunnel-bar">
                     <span class="bulk-tunnel-label">Туннель:</span>
-                    <select class="bulk-tunnel-select" bind:value={clientBulkTunnelId} disabled={clientBulkLoading}>
-                        {#each routingTunnels.filter(t => t.type === 'managed' && t.available) as t}
-                            <option value={t.id}>{t.name}</option>
-                        {/each}
-                        {#each routingTunnels.filter(t => t.type === 'system' && t.available) as t}
-                            <option value={t.id}>{t.name}</option>
-                        {/each}
-                    </select>
+                    <div class="bulk-tunnel-select">
+                        <Dropdown
+                            bind:value={clientBulkTunnelId}
+                            options={bulkTunnelOpts}
+                            disabled={clientBulkLoading}
+                            fullWidth
+                        />
+                    </div>
                     <button class="bulk-tunnel-apply" disabled={clientBulkLoading} onclick={bulkClientChangeTunnel}>Применить ({clientSelected.size})</button>
                     <button class="bulk-tunnel-close" onclick={() => clientTunnelMode = false}>✕</button>
                 </div>
@@ -228,8 +232,8 @@
     <Modal open={true} title="Удаление правила" size="sm" onclose={() => clientRouteDeleteId = null}>
         <p class="confirm-text">Удалить VPN-правило для «{clientRoutes.find(r => r.id === clientRouteDeleteId)?.clientHostname}»?</p>
         {#snippet actions()}
-            <button class="btn btn-ghost" onclick={() => clientRouteDeleteId = null}>Отмена</button>
-            <button class="btn btn-danger" onclick={deleteClientRoute}>Удалить</button>
+            <Button variant="ghost" onclick={() => clientRouteDeleteId = null}>Отмена</Button>
+            <Button variant="danger" onclick={deleteClientRoute}>Удалить</Button>
         {/snippet}
     </Modal>
 {/if}
@@ -238,8 +242,8 @@
     <Modal open={true} title="Удаление" size="sm" onclose={() => clientBulkDeleteConfirm = false}>
         <p class="confirm-text">Удалить {clientSelected.size} VPN-правил?</p>
         {#snippet actions()}
-            <button class="btn btn-ghost" onclick={() => clientBulkDeleteConfirm = false}>Отмена</button>
-            <button class="btn btn-danger" onclick={bulkClientDelete}>Удалить</button>
+            <Button variant="ghost" onclick={() => clientBulkDeleteConfirm = false}>Отмена</Button>
+            <Button variant="danger" onclick={bulkClientDelete}>Удалить</Button>
         {/snippet}
     </Modal>
 {/if}

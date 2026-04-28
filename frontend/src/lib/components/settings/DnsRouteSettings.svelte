@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { Toggle } from '$lib/components/ui';
+	import { Toggle, Button } from '$lib/components/ui';
 	import type { Settings } from '$lib/types';
 
 	interface Props {
 		settings: Settings;
 		saving: boolean;
-		onToggle: () => void;
+		onToggle: (enabled: boolean) => void;
 		onSave: () => void;
 	}
 
@@ -62,7 +62,7 @@
 			Периодически обновлять списки доменов из подписок DNS-маршрутизации
 		</span>
 	</div>
-	<Toggle checked={settings.dnsRoute.autoRefreshEnabled} onchange={() => onToggle()} disabled={saving} />
+	<Toggle checked={settings.dnsRoute.autoRefreshEnabled} onchange={onToggle} disabled={saving} />
 </div>
 
 {#if settings.dnsRoute.autoRefreshEnabled}
@@ -93,13 +93,14 @@
 					/>
 					<span class="input-suffix">ч.</span>
 					{#if settingsChanged}
-						<button
-							class="btn btn-primary btn-sm"
+						<Button
+							variant="primary"
+							size="sm"
 							onclick={handleSave}
-							disabled={saving}
+							loading={saving}
 						>
 							{saving ? 'Сохранение...' : 'Сохранить'}
-						</button>
+						</Button>
 					{/if}
 				</div>
 				<p class="form-hint">Рекомендуется от 6 до 24 часов</p>
@@ -114,13 +115,14 @@
 						disabled={saving}
 					/>
 					{#if settingsChanged}
-						<button
-							class="btn btn-primary btn-sm"
+						<Button
+							variant="primary"
+							size="sm"
 							onclick={handleSave}
-							disabled={saving}
+							loading={saving}
 						>
 							{saving ? 'Сохранение...' : 'Сохранить'}
-						</button>
+						</Button>
 					{/if}
 				</div>
 				<p class="form-hint">Локальное время роутера</p>

@@ -27,6 +27,7 @@ import type {
 	ExternalTunnel,
 	SystemTunnel,
 	DeleteResult,
+	MonitoringSnapshot,
 } from '$lib/types';
 import type { TunnelTrafficEvent } from '$lib/api/events';
 
@@ -75,10 +76,11 @@ function endOperation(id: string): void {
 }
 
 // ─────────────────────────────────────────────
-// Connectivity side-channel (stream-only; not in /api/tunnels/all)
-// TunnelCardHeader reads `connectivityMap` directly; onTunnelConnectivity
-// in +layout.svelte writes via `updateConnectivity`. Latency cannot come
-// from REST without a pervasive check loop, so it stays streamed.
+// Connectivity side-channel — derived from the monitoring matrix snapshot.
+// The card reads `connectivityMap[tunnelId]`; the map is rebuilt on every
+// monitoring:matrix-update SSE event by picking the cell flagged isSelf
+// (the per-tunnel connectivity-check probe). updateConnectivity() is still
+// exported for the manual one-shot recheck button (api.checkConnectivity).
 // ─────────────────────────────────────────────
 const connectivityMap = writable<Map<string, { connected: boolean; latency: number | null }>>(
 	new Map()
@@ -90,6 +92,18 @@ function updateConnectivity(id: string, connected: boolean, latency: number | nu
 		next.set(id, { connected, latency });
 		return next;
 	});
+}
+
+function applyMatrixSnapshot(snap: MonitoringSnapshot): void {
+	const next = new Map<string, { connected: boolean; latency: number | null }>();
+	for (const cell of snap.cells) {
+		if (!cell.isSelf) continue;
+		next.set(cell.tunnelId, {
+			connected: cell.ok,
+			latency: cell.latencyMs,
+		});
+	}
+	connectivityMap.set(next);
 }
 
 function clearConnectivity(): void {
@@ -209,6 +223,7 @@ async function adoptExternal(
 export interface TunnelsStore extends PollingStore<TunnelsSnapshot> {
 	connectivityMap: { subscribe: typeof connectivityMap.subscribe };
 	updateConnectivity: typeof updateConnectivity;
+	applyMatrixSnapshot: typeof applyMatrixSnapshot;
 	clearConnectivity: () => void;
 	updateTraffic: typeof updateTraffic;
 	update: typeof updateTunnel;
@@ -227,6 +242,7 @@ export const tunnels: TunnelsStore = {
 	applyMutationResponse: basePolling.applyMutationResponse,
 	connectivityMap: { subscribe: connectivityMap.subscribe },
 	updateConnectivity,
+	applyMatrixSnapshot,
 	clearConnectivity,
 	updateTraffic,
 	update: updateTunnel,

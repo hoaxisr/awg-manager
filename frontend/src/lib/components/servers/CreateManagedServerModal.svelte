@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 
 	interface Props {
 		open: boolean;
 		onclose: () => void;
-		onCreated: () => void;
+		onCreated: (serverId: string) => void;
 	}
 
 	let { open = $bindable(false), onclose, onCreated }: Props = $props();
@@ -16,6 +16,7 @@
 	let addressDirty = $state(false);
 	let maskDirty = $state(false);
 	let listenPort = $state(51820);
+	let description = $state('');
 	let endpoint = $state('');
 	let mtu = $state(1376);
 	let creating = $state(false);
@@ -55,10 +56,17 @@
 		}
 		creating = true;
 		try {
-			await api.createManagedServer({ address, mask, listenPort, endpoint: endpoint || undefined, mtu });
+			const created = await api.createManagedServer({
+				address,
+				mask,
+				listenPort,
+				description: description || undefined,
+				endpoint: endpoint || undefined,
+				mtu,
+			});
 			notifications.success('Сервер создан');
 			onclose();
-			onCreated();
+			onCreated(created.interfaceName);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Ошибка создания');
 		} finally {
@@ -81,6 +89,17 @@
 			<span class="wan-hint">Клиенты будут подключаться к {endpoint || wanIP || '...'}:{listenPort}</span>
 		</div>
 
+		<div class="form-group">
+			<label class="label" for="ms-description">Название</label>
+			<input
+				type="text"
+				id="ms-description"
+				class="input"
+				bind:value={description}
+				placeholder="AWGM WG Server"
+				maxlength="64"
+			/>
+		</div>
 		<div class="form-group">
 			<label class="label" for="ms-address">IP адрес</label>
 			<input type="text" id="ms-address" class="input" bind:value={address} oninput={() => addressDirty = true} placeholder="10.10.0.1" />
@@ -119,10 +138,10 @@
 	</div>
 
 	{#snippet actions()}
-		<button class="btn btn-ghost" onclick={onclose}>Отмена</button>
-		<button class="btn btn-primary" onclick={handleCreate} disabled={creating || !address || !mask}>
-			{creating ? 'Создание...' : 'Создать'}
-		</button>
+		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
+		<Button variant="primary" size="md" onclick={handleCreate} disabled={!address || !mask} loading={creating}>
+			Создать
+		</Button>
 	{/snippet}
 </Modal>
 

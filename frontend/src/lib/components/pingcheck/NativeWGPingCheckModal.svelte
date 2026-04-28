@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { Modal, FormToggle } from '$lib/components/ui';
+	import { SideDrawer, FormToggle, Button, Dropdown } from '$lib/components/ui';
 	import type { NativePingCheckConfig, NativePingCheckStatus } from '$lib/types';
 
 	interface Props {
@@ -109,7 +109,7 @@
 	let busy = $derived(saving || removing);
 </script>
 
-<Modal {open} title="Мониторинг: {tunnelName}" size="sm" {onclose}>
+<SideDrawer {open} onClose={onclose} title="Pingcheck: {tunnelName}">
 	<div class="presets">
 		{#each presets as p}
 			<button class="preset-btn" onclick={() => applyPreset(p)} disabled={busy}>{p.label}</button>
@@ -119,46 +119,51 @@
 	<div class="form-grid">
 		<div class="field">
 			<label class="field-label" for="npc-host">Хост</label>
-			<input id="npc-host" type="text" class="input" bind:value={host} />
+			<input id="npc-host" type="text" class="field-input" bind:value={host} />
 		</div>
 
 		<div class="field">
-			<label class="field-label" for="npc-mode">Метод</label>
-			<select id="npc-mode" class="input" bind:value={mode}>
-				<option value="icmp">ICMP</option>
-				<option value="connect">TCP Connect</option>
-				<option value="tls">TLS</option>
-			</select>
+			<Dropdown
+				id="npc-mode"
+				label="Метод"
+				bind:value={mode}
+				options={[
+					{ value: 'icmp', label: 'ICMP' },
+					{ value: 'connect', label: 'TCP Connect' },
+					{ value: 'tls', label: 'TLS' },
+				]}
+				fullWidth
+			/>
 		</div>
 
 		{#if needsPort}
 			<div class="field">
 				<label class="field-label" for="npc-port">Порт</label>
-				<input id="npc-port" type="number" class="input" bind:value={port} min="1" max="65535" />
+				<input id="npc-port" type="number" class="field-input" bind:value={port} min="1" max="65535" />
 			</div>
 		{/if}
 
 		<div class="field">
 			<label class="field-label" for="npc-interval">Интервал (сек)</label>
-			<input id="npc-interval" type="number" class="input" bind:value={updateInterval} min="3" max="3600" />
+			<input id="npc-interval" type="number" class="field-input" bind:value={updateInterval} min="3" max="3600" />
 			<span class="field-hint">3–3600</span>
 		</div>
 
 		<div class="field">
 			<label class="field-label" for="npc-maxfails">Максимум сбоев</label>
-			<input id="npc-maxfails" type="number" class="input" bind:value={maxFails} min="1" max="10" />
+			<input id="npc-maxfails" type="number" class="field-input" bind:value={maxFails} min="1" max="10" />
 			<span class="field-hint">1–10</span>
 		</div>
 
 		<div class="field">
 			<label class="field-label" for="npc-minsuccess">Минимум успехов</label>
-			<input id="npc-minsuccess" type="number" class="input" bind:value={minSuccess} min="1" max="10" />
+			<input id="npc-minsuccess" type="number" class="field-input" bind:value={minSuccess} min="1" max="10" />
 			<span class="field-hint">1–10</span>
 		</div>
 
 		<div class="field">
 			<label class="field-label" for="npc-timeout">Таймаут (сек)</label>
-			<input id="npc-timeout" type="number" class="input" bind:value={timeout} min="1" max="10" />
+			<input id="npc-timeout" type="number" class="field-input" bind:value={timeout} min="1" max="10" />
 			<span class="field-hint">1–10</span>
 		</div>
 	</div>
@@ -172,19 +177,19 @@
 		<FormToggle bind:checked={restart} size="sm" />
 	</div>
 
-	{#snippet actions()}
+	{#snippet footer()}
 		{#if status?.exists}
-			<button class="btn btn-danger" onclick={handleRemove} disabled={busy}>
-				{removing ? 'Отключение...' : 'Отключить'}
-			</button>
+			<Button variant="danger" size="md" onclick={handleRemove} disabled={busy} loading={removing}>
+				Отключить
+			</Button>
 		{/if}
 		<div class="actions-spacer"></div>
-		<button class="btn btn-ghost" onclick={onclose}>Отмена</button>
-		<button class="btn btn-primary" onclick={handleSave} disabled={busy}>
-			{saving ? 'Сохранение...' : status?.exists ? 'Обновить' : 'Включить'}
-		</button>
+		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
+		<Button variant="primary" size="md" onclick={handleSave} disabled={busy} loading={saving}>
+			{status?.exists ? 'Обновить' : 'Включить'}
+		</Button>
 	{/snippet}
-</Modal>
+</SideDrawer>
 
 <style>
 	.presets {
@@ -199,16 +204,16 @@
 		font-size: 0.75rem;
 		font-family: var(--font-mono, monospace);
 		border-radius: 10px;
-		border: 1px solid var(--border);
-		background: var(--bg-primary);
-		color: var(--text-muted);
+		border: 1px solid var(--color-border);
+		background: var(--color-bg-primary);
+		color: var(--color-text-muted);
 		cursor: pointer;
 		transition: all 0.15s ease;
 	}
 
 	.preset-btn:hover:not(:disabled) {
-		background: var(--accent);
-		border-color: var(--accent);
+		background: var(--color-accent);
+		border-color: var(--color-accent);
 		color: white;
 	}
 
@@ -232,12 +237,12 @@
 	.field-label {
 		font-size: 0.6875rem;
 		text-transform: uppercase;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.field-hint {
 		font-size: 0.6875rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		opacity: 0.75;
 		font-variant-numeric: tabular-nums;
 	}
@@ -245,7 +250,7 @@
 	.limits-note {
 		margin: 0.625rem 0 0;
 		font-size: 0.6875rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		opacity: 0.7;
 	}
 
@@ -254,8 +259,8 @@
 		justify-content: space-between;
 		align-items: center;
 		padding: 0.625rem 0.75rem;
-		background: var(--bg-primary);
-		border: 1px solid var(--border);
+		background: var(--color-bg-primary);
+		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		margin-top: 0.5rem;
 	}
@@ -273,7 +278,7 @@
 
 	.restart-hint {
 		font-size: 0.6875rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.actions-spacer {

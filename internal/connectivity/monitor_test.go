@@ -2,99 +2,91 @@ package connectivity
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 )
 
-// mockCheckLister returns a fixed list of tunnels.
-type mockCheckLister struct {
-	tunnels []TunnelForCheck
+// mockMatrix counts RunOnce calls; safe under goroutines.
+type mockMatrix struct {
+	calls atomic.Int64
 }
 
-func (m *mockCheckLister) ListCheckableTunnels(_ context.Context) []TunnelForCheck {
-	return m.tunnels
+func (m *mockMatrix) RunOnce(_ context.Context) {
+	m.calls.Add(1)
 }
 
-// mockChecker returns fixed check results.
-type mockChecker struct {
-	connected bool
-	latencyMs *int
-	err       error
+type mockHandshake struct {
+	hasHandshake atomic.Bool
 }
 
-func (m *mockChecker) Check(_ context.Context, _ string) (bool, *int, error) {
-	return m.connected, m.latencyMs, m.err
+func (m *mockHandshake) HasHandshake(_ context.Context, _ string) bool {
+	return m.hasHandshake.Load()
 }
 
-func TestMonitor_PublishesConnectivity(t *testing.T) {
+func TestMonitor_TriggersMatrixOnRunningEvent(t *testing.T) {
 	bus := events.NewBus()
+	matrix := &mockMatrix{}
+	hs := &mockHandshake{}
+	hs.hasHandshake.Store(true) // skip handshake wait
 
-	latency := 42
-	lister := &mockCheckLister{
-		tunnels: []TunnelForCheck{
-			{ID: "awg0", IfaceName: "opkgtun0", Method: "http", Target: "https://example.com"},
-		},
+	mon := NewMonitor(bus, matrix, hs)
+	mon.Start()
+	defer mon.Stop()
+
+	// Wait for listener to subscribe before publishing.
+	deadline := time.After(time.Second)
+	for bus.SubscriberCount() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for subscriber")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
 	}
-	checker := &mockChecker{
-		connected: true,
-		latencyMs: &latency,
-	}
 
-	mon := NewMonitor(bus, lister, checker, nil)
+	bus.Publish("tunnel:state", events.TunnelStateEvent{
+		ID:    "awg0",
+		State: "running",
+	})
 
-	// Subscribe so SubscriberCount > 0.
-	_, ch, unsub := bus.Subscribe()
-	defer unsub()
-
-	// Call checkAll directly.
-	mon.checkAll()
-
-	select {
-	case ev := <-ch:
-		if ev.Type != "tunnel:connectivity" {
-			t.Fatalf("expected tunnel:connectivity, got %s", ev.Type)
+	deadline = time.After(2 * time.Second)
+	for matrix.calls.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("RunOnce was never invoked after running event")
+		default:
+			time.Sleep(10 * time.Millisecond)
 		}
-		payload := ev.Data.(events.TunnelConnectivityEvent)
-		if payload.ID != "awg0" {
-			t.Fatalf("expected ID awg0, got %s", payload.ID)
-		}
-		if !payload.Connected {
-			t.Fatal("expected Connected=true")
-		}
-		if payload.Latency == nil || *payload.Latency != 42 {
-			t.Fatalf("expected Latency=42, got %v", payload.Latency)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timeout waiting for connectivity event")
 	}
 }
 
-func TestMonitor_SkipsDisabled(t *testing.T) {
+func TestMonitor_IgnoresNonRunningStateEvents(t *testing.T) {
 	bus := events.NewBus()
+	matrix := &mockMatrix{}
+	mon := NewMonitor(bus, matrix, nil)
+	mon.Start()
+	defer mon.Stop()
 
-	lister := &mockCheckLister{
-		tunnels: []TunnelForCheck{
-			{ID: "awg0", IfaceName: "opkgtun0", Method: "disabled"},
-		},
+	deadline := time.After(time.Second)
+	for bus.SubscriberCount() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for subscriber")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
 	}
-	checker := &mockChecker{
-		connected: true,
-	}
 
-	mon := NewMonitor(bus, lister, checker, nil)
+	bus.Publish("tunnel:state", events.TunnelStateEvent{
+		ID:    "awg0",
+		State: "stopped",
+	})
 
-	// Subscribe so SubscriberCount > 0.
-	_, ch, unsub := bus.Subscribe()
-	defer unsub()
-
-	mon.checkAll()
-
-	select {
-	case ev := <-ch:
-		t.Fatalf("expected no event for disabled tunnel, got %+v", ev)
-	case <-time.After(50 * time.Millisecond):
-		// good — no event published
+	time.Sleep(80 * time.Millisecond)
+	if matrix.calls.Load() != 0 {
+		t.Fatalf("expected no RunOnce for non-running state, got %d", matrix.calls.Load())
 	}
 }

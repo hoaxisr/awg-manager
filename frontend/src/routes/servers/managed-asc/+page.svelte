@@ -1,12 +1,18 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
 	import { notifications } from '$lib/stores/notifications';
 	import { servers } from '$lib/stores/servers';
 	import type { ASCParams, ASCParamsExtended, SystemInfo } from '$lib/types';
 	import { PageContainer } from '$lib/components/layout';
+	import { Button } from '$lib/components/ui';
 	import { calcByteSize, calcTotalSize } from '$lib/utils/protocols';
 	import { generateASCParams } from '$lib/utils/asc-generator';
+
+	// Managed-server id (interfaceName) is read from ?id= query param.
+	// Page is opened via openManagedASC(serverId) on /servers.
+	let serverId = $derived($page.url.searchParams.get('id') ?? '');
 
 	let ascParams = $state<ASCParams | null>(null);
 	let systemInfo = $state<SystemInfo | null>(null);
@@ -93,15 +99,22 @@
 	}
 
 	$effect(() => {
-		loadData();
+		// Re-load if serverId changes (e.g. user navigates to a different ?id=).
+		if (serverId) {
+			loadData();
+		} else {
+			loading = false;
+			error = 'Не указан идентификатор сервера';
+		}
 	});
 
 	async function loadData() {
+		if (!serverId) return;
 		loading = true;
 		error = null;
 		try {
 			[ascParams, systemInfo] = await Promise.all([
-				api.getManagedServerASC(),
+				api.getManagedServerASC(serverId),
 				api.getSystemInfo()
 			]);
 		} catch (e) {
@@ -112,15 +125,15 @@
 	}
 
 	async function handleSave() {
-		if (!ascParams) return;
+		if (!ascParams || !serverId) return;
 		saving = true;
 		try {
-			const fresh = await api.setManagedServerASC(ascParams);
+			const fresh = await api.setManagedServerASC(serverId, ascParams);
 			servers.applyMutationResponse(fresh);
 			notifications.success('Параметры обфускации сохранены');
 			// Warn about existing peers needing reconfiguration
 			try {
-				const server = await api.getManagedServer();
+				const server = await api.getManagedServer(serverId);
 				if (server && server.peers.length > 0) {
 					const n = server.peers.length;
 					notifications.warning(
@@ -146,30 +159,31 @@
 <PageContainer>
 	<div class="sticky-header">
 		<div class="header-left">
-			<button class="btn btn-ghost btn-sm" onclick={() => goto('/servers')}>
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<path d="M19 12H5M12 19l-7-7 7-7"/>
-				</svg>
+			<Button variant="ghost" size="sm" onclick={() => goto('/servers')} iconBefore={backIcon}>
 				Назад
-			</button>
+			</Button>
 			<h1 class="page-title">Обфускация (ASC)</h1>
 			<span class="badge-managed">Управляемый сервер</span>
 		</div>
 		<div class="header-actions">
-			<button
-				class="btn btn-secondary"
+			<Button
+				variant="secondary"
+				size="md"
 				onclick={handleGenerateAll}
-				disabled={generating || !ascParams}
+				disabled={!ascParams}
+				loading={generating}
 			>
-				{generating ? 'Генерация...' : 'Сгенерировать параметры'}
-			</button>
-			<button
-				class="btn btn-primary"
+				Сгенерировать параметры
+			</Button>
+			<Button
+				variant="primary"
+				size="md"
 				onclick={handleSave}
-				disabled={saving || generating || capturing || !ascParams}
+				disabled={generating || capturing || !ascParams}
+				loading={saving}
 			>
-				{saving ? 'Сохранение...' : 'Сохранить'}
-			</button>
+				Сохранить
+			</Button>
 		</div>
 	</div>
 
@@ -237,13 +251,15 @@
 						disabled={capturing}
 						onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCapture(); } }}
 					/>
-					<button
-						class="btn btn-secondary btn-sm"
+					<Button
+						variant="secondary"
+						size="sm"
 						onclick={handleCapture}
-						disabled={capturing || !domainInput.trim()}
+						disabled={!domainInput.trim()}
+						loading={capturing}
 					>
-						{capturing ? 'Захват...' : 'Захватить'}
-					</button>
+						Захватить
+					</Button>
 				</div>
 				{#if captureError}
 					<p class="capture-info" class:capture-warning={!!captureSource}>{captureError}</p>
@@ -280,6 +296,12 @@
 		</div>
 	{/if}
 </PageContainer>
+
+{#snippet backIcon()}
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+		<path d="M19 12H5M12 19l-7-7 7-7"/>
+	</svg>
+{/snippet}
 
 <style>
 	.sticky-header {

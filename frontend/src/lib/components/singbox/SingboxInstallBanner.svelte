@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { singboxStatus } from '$lib/stores/singbox';
 	import { api } from '$lib/api/client';
+	import { Button, IconButton } from '$lib/components/ui';
 
 	let installing = $state(false);
 	let error = $state<string | null>(null);
@@ -59,10 +60,10 @@
 			<span>Установите для поддержки VLESS/Reality, Hysteria2, NaiveProxy</span>
 			<span class="hint">Установка sing-box требует большого количества свободного пространства. Необходимо использовать Entware на внешнем носителе.</span>
 		</div>
-		<button class="btn btn-primary btn-sm" onclick={install} disabled={installing}>
+		<Button variant="primary" size="sm" onclick={install} loading={installing}>
 			{installing ? 'Установка...' : 'Установить'}
-		</button>
-		<button class="dismiss" onclick={dismiss} title="Скрыть" aria-label="Скрыть">&times;</button>
+		</Button>
+		<IconButton ariaLabel="Скрыть" onclick={dismiss}>&times;</IconButton>
 		{#if error}
 			<div class="error">{error}</div>
 		{/if}
@@ -78,7 +79,7 @@
 				и перезапустите этот демон.
 			</span>
 		</div>
-		<button class="dismiss" onclick={dismiss} title="Скрыть" aria-label="Скрыть">&times;</button>
+		<IconButton ariaLabel="Скрыть" onclick={dismiss}>&times;</IconButton>
 	</div>
 {:else if visible && signature === 'no-naive'}
 	<div class="banner">
@@ -90,7 +91,7 @@
 				отвергнуты сингбоксом. Установите сборку с этим тегом, если нужен NaiveProxy.
 			</span>
 		</div>
-		<button class="dismiss" onclick={dismiss} title="Скрыть" aria-label="Скрыть">&times;</button>
+		<IconButton ariaLabel="Скрыть" onclick={dismiss}>&times;</IconButton>
 	</div>
 {/if}
 
@@ -123,21 +124,4 @@
 		font-size: 0.8125rem;
 	}
 	.error { color: var(--error); font-size: 12px; }
-	.dismiss {
-		flex-shrink: 0;
-		align-self: flex-start;
-		background: transparent;
-		border: none;
-		color: var(--text-muted);
-		font-size: 1.25rem;
-		line-height: 1;
-		padding: 2px 6px;
-		border-radius: 4px;
-		cursor: pointer;
-		transition: color 0.15s, background 0.15s;
-	}
-	.dismiss:hover {
-		color: var(--text-primary);
-		background: var(--bg-hover);
-	}
 </style>

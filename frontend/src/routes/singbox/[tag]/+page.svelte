@@ -5,6 +5,7 @@
 	import { api } from '$lib/api/client';
 	import { singboxTunnels } from '$lib/stores/singbox';
 	import { PageContainer } from '$lib/components/layout';
+	import { Button, Dropdown } from '$lib/components/ui';
 
 	let tag = $derived($page.params.tag!);
 	let loading = $state(true);
@@ -68,24 +69,23 @@
 <PageContainer>
 	<div class="sticky-header">
 		<div class="header-left">
-			<button class="btn btn-ghost btn-sm" onclick={() => goto('/')}>
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-					<path d="M19 12H5M12 19l-7-7 7-7"/>
-				</svg>
+			<Button variant="ghost" size="sm" onclick={() => goto('/')} iconBefore={backIcon}>
 				Назад
-			</button>
+			</Button>
 			<h1 class="page-title">{tag}</h1>
 			{#if protocol}
 				<span class="badge-protocol">{protocol}</span>
 			{/if}
 		</div>
-		<button
-			class="btn btn-primary"
+		<Button
+			variant="primary"
+			size="md"
 			onclick={save}
-			disabled={saving || !outbound}
+			disabled={!outbound}
+			loading={saving}
 		>
-			{saving ? 'Сохранение...' : 'Сохранить'}
-		</button>
+			Сохранить
+		</Button>
 	</div>
 
 	{#if loading}
@@ -158,19 +158,20 @@
 					</div>
 
 					<div class="form-group">
-						<label class="label" for="fingerprint">Fingerprint</label>
-						<select
+						<Dropdown
 							id="fingerprint"
-							class="input"
+							label="Fingerprint"
 							value={getField(['tls', 'utls', 'fingerprint']) ?? ''}
-							onchange={(e) => setField(['tls', 'utls', 'fingerprint'], (e.target as HTMLSelectElement).value)}
-						>
-							<option value="">—</option>
-							<option value="chrome">chrome</option>
-							<option value="firefox">firefox</option>
-							<option value="safari">safari</option>
-							<option value="edge">edge</option>
-						</select>
+							options={[
+								{ value: '', label: '—' },
+								{ value: 'chrome', label: 'chrome' },
+								{ value: 'firefox', label: 'firefox' },
+								{ value: 'safari', label: 'safari' },
+								{ value: 'edge', label: 'edge' },
+							]}
+							onchange={(v) => setField(['tls', 'utls', 'fingerprint'], v)}
+							fullWidth
+						/>
 					</div>
 
 					{#if getField(['tls', 'reality'])}
@@ -311,14 +312,20 @@
 			{/if}
 
 			<div class="form-actions">
-				<button type="button" class="btn btn-secondary btn-sm" onclick={() => goto('/')}>Отмена</button>
-				<button type="submit" class="btn btn-primary btn-sm" disabled={saving}>
-					{saving ? 'Сохранение...' : 'Сохранить'}
-				</button>
+				<Button variant="secondary" size="sm" onclick={() => goto('/')}>Отмена</Button>
+				<Button variant="primary" size="sm" type="submit" loading={saving}>
+					Сохранить
+				</Button>
 			</div>
 		</form>
 	{/if}
 </PageContainer>
+
+{#snippet backIcon()}
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+		<path d="M19 12H5M12 19l-7-7 7-7"/>
+	</svg>
+{/snippet}
 
 <style>
 	.sticky-header {

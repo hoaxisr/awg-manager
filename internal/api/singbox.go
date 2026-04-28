@@ -82,6 +82,43 @@ func (h *SingboxHandler) Install(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, s)
 }
 
+// Control handles POST /api/singbox/control.
+// Body: {"action": "start"|"stop"|"restart"}.
+// Returns the fresh status so the client can update its cache. Mirrors the
+// shape of /api/system/hydraroute-control.
+//
+//	@Summary		Control sing-box process
+//	@Description	Starts, stops, or restarts the sing-box engine. Returns the fresh status snapshot. Mirrors /system/hydraroute-control.
+//	@Tags			singbox
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		map[string]interface{}	true	"{action: start|stop|restart}"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	map[string]interface{}
+//	@Failure		500		{object}	map[string]interface{}
+//	@Router			/singbox/control [post]
+func (h *SingboxHandler) Control(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	var req struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid request", "INVALID_REQUEST")
+		return
+	}
+	if err := h.op.Control(r.Context(), req.Action); err != nil {
+		response.Error(w, err.Error(), "SINGBOX_CONTROL_ERROR")
+		return
+	}
+	s := h.op.GetStatus(r.Context())
+	publishInvalidated(h.bus, ResourceSingboxStatus, "control-"+req.Action)
+	response.Success(w, s)
+}
+
 // ListTunnels handles GET /api/singbox/tunnels.
 // Returns all tunnels enriched with per-tunnel connectivity from the Clash API.
 func (h *SingboxHandler) ListTunnels(w http.ResponseWriter, r *http.Request) {

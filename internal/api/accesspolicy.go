@@ -73,6 +73,17 @@ func (h *AccessPolicyHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Delete removes an access policy.
 // DELETE /api/access-policies/delete?name=Policy0
+//
+//	@Summary		Delete access policy
+//	@Description	Removes the named access policy. Bound LAN devices revert to the default policy.
+//	@Tags			access-policies
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			name	query		string	true	"Policy name (e.g. Policy0)"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	map[string]interface{}
+//	@Failure		500		{object}	map[string]interface{}
+//	@Router			/access-policies/delete [delete]
 func (h *AccessPolicyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		response.MethodNotAllowed(w)
@@ -152,6 +163,19 @@ func (h *AccessPolicyHandler) PermitInterface(w http.ResponseWriter, r *http.Req
 	}
 }
 
+// permitInterfaceAdd adds an interface to a policy at the given priority.
+//
+//	@Summary		Permit interface for policy
+//	@Description	Adds the named interface to the policy at the given order (lower = higher priority).
+//	@Tags			access-policies
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		map[string]interface{}	true	"{name, interface, order}"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	map[string]interface{}
+//	@Failure		500		{object}	map[string]interface{}
+//	@Router			/access-policies/permit [post]
 func (h *AccessPolicyHandler) permitInterfaceAdd(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[struct {
 		Name      string `json:"name"`
@@ -177,6 +201,19 @@ func (h *AccessPolicyHandler) permitInterfaceAdd(w http.ResponseWriter, r *http.
 	h.publishPoliciesUpdated("permit-interface")
 }
 
+// permitInterfaceRemove removes an interface from a policy.
+//
+//	@Summary		Deny interface for policy
+//	@Description	Removes the named interface from the policy.
+//	@Tags			access-policies
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			name		query		string	true	"Policy name"
+//	@Param			interface	query		string	true	"Interface name"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	map[string]interface{}
+//	@Failure		500			{object}	map[string]interface{}
+//	@Router			/access-policies/permit [delete]
 func (h *AccessPolicyHandler) permitInterfaceRemove(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	iface := r.URL.Query().Get("interface")
@@ -211,6 +248,19 @@ func (h *AccessPolicyHandler) AssignDevice(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// assignDevicePost binds a LAN device to an access policy.
+//
+//	@Summary		Assign device to policy
+//	@Description	Binds the LAN device identified by MAC to the named policy. Replaces any existing assignment.
+//	@Tags			access-policies
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		map[string]interface{}	true	"{mac, policy}"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	map[string]interface{}
+//	@Failure		500		{object}	map[string]interface{}
+//	@Router			/access-policies/assign [post]
 func (h *AccessPolicyHandler) assignDevicePost(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[struct {
 		MAC    string `json:"mac"`
@@ -236,6 +286,18 @@ func (h *AccessPolicyHandler) assignDevicePost(w http.ResponseWriter, r *http.Re
 	h.publishDevicesUpdated("assign-device")
 }
 
+// unassignDeviceDelete removes a LAN device from any access policy.
+//
+//	@Summary		Unassign device from policy
+//	@Description	Removes the policy binding for the LAN device identified by MAC. The device falls back to the default policy.
+//	@Tags			access-policies
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			mac	query		string	true	"Device MAC address"
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	map[string]interface{}
+//	@Failure		500	{object}	map[string]interface{}
+//	@Router			/access-policies/assign [delete]
 func (h *AccessPolicyHandler) unassignDeviceDelete(w http.ResponseWriter, r *http.Request) {
 	mac := r.URL.Query().Get("mac")
 	if mac == "" {

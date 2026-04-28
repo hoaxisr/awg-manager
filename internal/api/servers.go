@@ -6,6 +6,7 @@ import (
 	"regexp"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/response"
@@ -95,15 +96,18 @@ func (h *ServersHandler) listServers(ctx context.Context) ([]ndms.WireguardServe
 		managedSet[id] = true
 	}
 
-	// Exclude managed server interface (it's shown separately)
-	var managedServerIface string
-	if ms := h.settings.GetManagedServer(); ms != nil {
-		managedServerIface = ms.InterfaceName
+	// Exclude managed server interfaces (they're shown separately)
+	managedServerIfaces := h.settings.GetManagedServers()
+	managedServerSet := make(map[string]bool, len(managedServerIfaces))
+	for _, ms := range managedServerIfaces {
+		if ms.InterfaceName != "" {
+			managedServerSet[ms.InterfaceName] = true
+		}
 	}
 
 	var servers []ndms.WireguardServer
 	for _, s := range all {
-		if managedSet[s.ID] || s.ID == managedServerIface {
+		if managedSet[s.ID] || managedServerSet[s.ID] {
 			continue
 		}
 		isBuiltIn := s.Description == "Wireguard VPN Server"
@@ -138,6 +142,11 @@ func (h *ServersHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // writeAll writes the composite servers snapshot. Used by GetAll (REST)
 // and by Mark/Unmark so mutations return fresh state inline.
+//
+// `managed` is always an array (never null) and `managedStats` is always
+// a `{id: stats}` map (never null). The frontend types depend on this:
+// returning null for an empty managed-server set would force every
+// consumer to handle the null case.
 func (h *ServersHandler) writeAll(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	list, err := h.listServers(ctx)
@@ -145,15 +154,17 @@ func (h *ServersHandler) writeAll(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err.Error(), "LIST_FAILED")
 		return
 	}
+	managedList := []*managedServerResponse{}
+	managedStats := map[string]*managed.ManagedServerStats{}
+	if h.managed != nil {
+		managedList = h.managed.getManagedList()
+		managedStats = h.managed.getManagedStatsMap(ctx)
+	}
 	payload := map[string]any{
 		"servers":      list,
-		"managed":      nil,
-		"managedStats": nil,
+		"managed":      managedList,
+		"managedStats": managedStats,
 		"wanIP":        "",
-	}
-	if h.managed != nil {
-		payload["managed"] = h.managed.getManaged()
-		payload["managedStats"] = h.managed.getManagedStats(ctx)
 	}
 	if ip, err := testing.GetWANIPWithFallback(ctx, h.queries.WANInterfaceAddress); err == nil {
 		payload["wanIP"] = ip
@@ -214,6 +225,18 @@ func (h *ServersHandler) Config(w http.ResponseWriter, r *http.Request) {
 // POST /api/servers/mark?name=Wireguard0 — mark as server
 // DELETE /api/servers/mark?name=Wireguard0 — unmark (return to tunnels)
 // Both return the fresh ServersSnapshot as body.
+//
+//	@Summary		Mark/unmark interface as server
+//	@Description	POST marks the named WG interface as a server (visible under Servers, hidden from Tunnels). DELETE unmarks (returns it to the Tunnels list). Both return the fresh ServersSnapshot.
+//	@Tags			servers
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			name	query		string	true	"Interface name (e.g. Wireguard0)"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	map[string]interface{}
+//	@Failure		500		{object}	map[string]interface{}
+//	@Router			/servers/mark [post]
+//	@Router			/servers/mark [delete]
 func (h *ServersHandler) Mark(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	if !h.validateName(w, name) {

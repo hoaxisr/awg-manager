@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { Button } from '$lib/components/ui';
+
 	interface Props {
 		installing: boolean;
 		error: string | null;
@@ -24,13 +26,9 @@
 			<pre>{error}</pre>
 		</div>
 	{/if}
-	<button class="btn btn-primary" onclick={oninstall} disabled={installing}>
-		{#if installing}
-			Установка...
-		{:else}
-			Установить ttyd
-		{/if}
-	</button>
+	<Button variant="primary" size="md" onclick={oninstall} loading={installing}>
+		{installing ? 'Установка...' : 'Установить ttyd'}
+	</Button>
 </div>
 
 <style>

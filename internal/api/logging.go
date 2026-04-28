@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -79,7 +80,16 @@ func (h *LoggingHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	logs, total := h.svc.GetLogs(group, subgroup, level, limit, offset)
+	// `since` (unix seconds) is used by the frontend on SSE reconnect to
+	// catch up only the log entries that arrived while it was disconnected.
+	var since time.Time
+	if s := r.URL.Query().Get("since"); s != "" {
+		if ts, err := strconv.ParseInt(s, 10, 64); err == nil && ts > 0 {
+			since = time.Unix(ts, 0)
+		}
+	}
+
+	logs, total := h.svc.GetLogs(group, subgroup, level, since, limit, offset)
 	if logs == nil {
 		logs = []logging.LogEntry{}
 	}

@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { PageContainer } from '$lib/components/layout';
 	import { SingboxGhostTerminal } from '$lib/components/singbox';
+	import { Button } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 
 	function onComplete(imported: number): void {
@@ -19,19 +20,9 @@
 <PageContainer>
 	<div class="sticky-header">
 		<div class="header-left">
-			<button class="btn btn-ghost btn-sm" onclick={() => goto('/')}>
-				<svg
-					width="16"
-					height="16"
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-				>
-					<path d="M19 12H5M12 19l-7-7 7-7" />
-				</svg>
+			<Button variant="ghost" size="sm" onclick={() => goto('/')} iconBefore={backIcon}>
 				Назад
-			</button>
+			</Button>
 			<h1 class="page-title">Новый Sing-box туннель</h1>
 		</div>
 	</div>
@@ -43,6 +34,12 @@
 
 	<SingboxGhostTerminal oncomplete={onComplete} />
 </PageContainer>
+
+{#snippet backIcon()}
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+		<path d="M19 12H5M12 19l-7-7 7-7" />
+	</svg>
+{/snippet}
 
 <style>
 	.sticky-header {

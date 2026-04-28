@@ -4,7 +4,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import type { IPResult, ConnectivityResult, IPCheckService, SpeedTestInfo, SpeedTestResult } from '$lib/types';
-	import { FormToggle } from '$lib/components/ui';
+	import { FormToggle, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { PageContainer } from '$lib/components/layout';
 
 	let tunnelName = $derived($page.params.name as string);
@@ -210,12 +210,9 @@
 		{/if}
 
 		<div class="card-spacer"></div>
-		<button class="btn btn-primary btn-block" onclick={checkConnectivity} disabled={connectivityLoading}>
-			{#if connectivityLoading}
-				<span class="spinner"></span>
-			{/if}
+		<Button variant="primary" size="md" fullWidth onclick={checkConnectivity} loading={connectivityLoading}>
 			Проверить соединение
-		</button>
+		</Button>
 	</div>
 
 	<!-- IP Test -->
@@ -250,11 +247,17 @@
 						disabled={ipLoading}
 					/>
 				{:else}
-					<select bind:value={selectedServiceIndex} disabled={ipLoading}>
-						{#each ipServices as service, i}
-							<option value={i}>{service.label}</option>
-						{/each}
-					</select>
+					{@const serviceOpts: DropdownOption[] = ipServices.map((service, i) => ({
+						value: String(i),
+						label: service.label,
+					}))}
+					<Dropdown
+						value={String(selectedServiceIndex)}
+						options={serviceOpts}
+						onchange={(v) => (selectedServiceIndex = Number(v))}
+						disabled={ipLoading}
+						fullWidth
+					/>
 				{/if}
 			</div>
 		{/if}
@@ -286,12 +289,9 @@
 		{/if}
 
 		<div class="card-spacer"></div>
-		<button class="btn btn-primary btn-block" onclick={checkIP} disabled={ipLoading}>
-			{#if ipLoading}
-				<span class="spinner"></span>
-			{/if}
+		<Button variant="primary" size="md" fullWidth onclick={checkIP} loading={ipLoading}>
 			Проверить IP
-		</button>
+		</Button>
 	</div>
 
 	<!-- Speed Test -->
@@ -324,11 +324,17 @@
 						disabled={speedPhase !== 'idle' && speedPhase !== 'done' && speedPhase !== 'error'}
 					/>
 				{:else}
-					<select bind:value={selectedServerIndex} disabled={speedPhase !== 'idle' && speedPhase !== 'done' && speedPhase !== 'error'}>
-						{#each speedTestInfo.servers as server, i}
-							<option value={i}>{server.label}</option>
-						{/each}
-					</select>
+					{@const serverOpts: DropdownOption[] = speedTestInfo.servers.map((server, i) => ({
+						value: String(i),
+						label: server.label,
+					}))}
+					<Dropdown
+						value={String(selectedServerIndex)}
+						options={serverOpts}
+						onchange={(v) => (selectedServerIndex = Number(v))}
+						disabled={speedPhase !== 'idle' && speedPhase !== 'done' && speedPhase !== 'error'}
+						fullWidth
+					/>
 				{/if}
 			</div>
 		{/if}
@@ -365,13 +371,13 @@
 
 		<div class="card-spacer"></div>
 		{#if speedPhase === 'download' || speedPhase === 'upload'}
-			<button class="btn btn-secondary btn-block" onclick={cancelSpeedTest}>
+			<Button variant="secondary" size="md" fullWidth onclick={cancelSpeedTest}>
 				Отмена
-			</button>
+			</Button>
 		{:else}
-			<button class="btn btn-primary btn-block" onclick={runSpeedTest} disabled={infoLoading || (!speedTestInfo?.servers?.length && !useCustomServer)}>
+			<Button variant="primary" size="md" fullWidth onclick={runSpeedTest} disabled={infoLoading || (!speedTestInfo?.servers?.length && !useCustomServer)}>
 				Запустить тест
-			</button>
+			</Button>
 		{/if}
 	</div>
 </div>
@@ -502,10 +508,6 @@
 
 	.card-spacer {
 		flex: 1;
-	}
-
-	.btn-block {
-		width: 100%;
 	}
 
 	.speed-phase {

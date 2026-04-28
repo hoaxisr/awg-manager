@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { DiagMode, DiagRouteMode, TunnelListItem } from '$lib/types';
+	import { Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 
 	interface Props {
 		onStart: (mode: DiagMode, restart: boolean, routeMode: DiagRouteMode, routeTunnelId: string) => void;
@@ -20,57 +21,65 @@
 	});
 
 	const startDisabled = $derived(disabled || (routeMode === 'tunnel' && !routeTunnelId));
+
+	const routeOptions: DropdownOption<DiagRouteMode>[] = [
+		{ value: 'direct', label: 'Через текущий маршрут по умолчанию' },
+		{ value: 'tunnel', label: 'Через выбранный туннель' },
+	];
+	const tunnelOptions = $derived<DropdownOption[]>(
+		runningTunnels.length === 0
+			? [{ value: '', label: 'Нет запущенных туннелей', disabled: true }]
+			: runningTunnels.map((t) => ({ value: t.id, label: `${t.name} (${t.interfaceName ?? t.id})` })),
+	);
 </script>
 
 <div class="controls">
 	<div class="controls-bar">
-		<select
-			class="controls-select"
-			bind:value={routeMode}
-			disabled={disabled}
-		>
-			<option value="direct">Через текущий маршрут по умолчанию</option>
-			<option value="tunnel">Через выбранный туннель</option>
-		</select>
+		<div class="controls-select">
+			<Dropdown
+				bind:value={routeMode}
+				options={routeOptions}
+				disabled={disabled}
+				fullWidth
+			/>
+		</div>
 
 		{#if routeMode === 'tunnel'}
-			<select
-				class="controls-select"
-				bind:value={routeTunnelId}
-				disabled={disabled || runningTunnels.length === 0}
-			>
-				{#if runningTunnels.length === 0}
-					<option value="">Нет запущенных туннелей</option>
-				{:else}
-					{#each runningTunnels as t}
-						<option value={t.id}>{t.name} ({t.interfaceName ?? t.id})</option>
-					{/each}
-				{/if}
-			</select>
+			<div class="controls-select">
+				<Dropdown
+					bind:value={routeTunnelId}
+					options={tunnelOptions}
+					disabled={disabled || runningTunnels.length === 0}
+					fullWidth
+				/>
+			</div>
 		{/if}
 
 		<div class="controls-buttons">
-			<button
-				class="btn btn-secondary"
+			<Button
+				variant="secondary"
+				size="md"
 				onclick={() => onStart('quick', false, routeMode, routeTunnelId)}
 				disabled={startDisabled}
 			>
 				Быстрый тест
-			</button>
-			<button
-				class="btn btn-primary"
+			</Button>
+			<Button
+				variant="primary"
+				size="md"
 				onclick={() => onStart('quick', true, routeMode, routeTunnelId)}
 				disabled={startDisabled}
 			>
 				Полная диагностика
-			</button>
-			<button
-				class="btn btn-ghost"
+			</Button>
+			<Button
+				variant="ghost"
+				size="md"
 				onclick={() => onStart('full', true, routeMode, routeTunnelId)}
 				disabled={startDisabled}
 			>
 				Сформировать отчёт
-			</button>
+			</Button>
 		</div>
 	</div>
 
@@ -96,20 +105,9 @@
 	}
 
 	.controls-select {
-		padding: 0.375rem 0.625rem;
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		background: var(--bg-primary);
-		color: var(--text-primary);
-		font-size: 0.8125rem;
-		font-family: inherit;
 		width: auto;
 		max-width: 280px;
-	}
-
-	.controls-select:focus {
-		outline: none;
-		border-color: var(--accent);
+		flex: 0 1 280px;
 	}
 
 	.controls-buttons {

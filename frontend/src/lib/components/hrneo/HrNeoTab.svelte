@@ -9,7 +9,7 @@
 		RoutingTunnel,
 	} from '$lib/types';
 	import { notifications } from '$lib/stores/notifications';
-	import { Modal, StoreStatusBadge } from '$lib/components/ui';
+	import { Modal, StoreStatusBadge, Button } from '$lib/components/ui';
 	import { dnsRoutesStore } from '$lib/stores/routing';
 	import { InterfaceList } from '$lib/components/accesspolicy';
 	import HrNeoTargetSidebar, {
@@ -462,14 +462,12 @@
 			HR Neo будет перезапущен автоматически.
 		</p>
 		{#snippet actions()}
-			<button
-				class="btn btn-secondary"
-				onclick={() => (pendingDelete = null)}
-				disabled={deleting}>Отмена</button
-			>
-			<button class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
-				{deleting ? 'Удаление…' : 'Удалить'}
-			</button>
+			<Button variant="secondary" onclick={() => (pendingDelete = null)} disabled={deleting}>
+				Отмена
+			</Button>
+			<Button variant="danger" onclick={confirmDelete} loading={deleting}>
+				Удалить
+			</Button>
 		{/snippet}
 	</Modal>
 {/if}

@@ -402,7 +402,7 @@
 	.pill-muted {
 		font-size: 0.75rem;
 		padding: 2px 8px;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 	}
 	.pill {
 		background: rgba(96, 165, 250, 0.12);
@@ -457,7 +457,7 @@
 	}
 
 	.chart-wrap {
-		border-radius: 8px;
+		border-radius: var(--radius);
 	}
 	.chart-svg {
 		display: block;

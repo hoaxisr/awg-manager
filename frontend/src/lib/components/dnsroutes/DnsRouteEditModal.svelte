@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { DnsRoute, DnsRouteTarget, DnsRouteSubscription, RoutingTunnel } from '$lib/types';
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { formatRelativeTime } from '$lib/utils/format';
 	import DnsRouteDomainEditor from './DnsRouteDomainEditor.svelte';
 
@@ -43,7 +43,6 @@
 
 	let isInitialized = $state(false);
 	let attempted = $state(false);
-	let shaking = $state(false);
 
 	let nameError = $derived(attempted && name.trim() === '');
 	let routeError = $derived(attempted && routes.length === 0);
@@ -183,8 +182,7 @@
 	function handleSave() {
 		attempted = true;
 		if (!canSave) {
-			shaking = true;
-			setTimeout(() => shaking = false, 400);
+			// TODO Phase 1: restore shake animation feedback on invalid submit
 			return;
 		}
 
@@ -221,9 +219,9 @@
 	<!-- Name -->
 	<div class="form-group" class:field-error={nameError}>
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label class="form-label">Название</label>
+		<label class="field-label">Название</label>
 		<input
-			class="form-input"
+			class="field-input"
 			type="text"
 			placeholder="Заблокированные сайты"
 			value={name}
@@ -235,12 +233,15 @@
 	<!-- Backend selector -->
 	{#if showBackendSelector}
 		<div class="form-group">
-			<!-- svelte-ignore a11y_label_has_associated_control -->
-			<label class="form-label">Движок маршрутизации</label>
-			<select class="form-select" value={backend} onchange={(e) => backend = (e.target as HTMLSelectElement).value as 'ndms' | 'hydraroute'}>
-				<option value="ndms">ПО роутера (NDMS)</option>
-				<option value="hydraroute">HydraRoute Neo</option>
-			</select>
+			<Dropdown
+				label="Движок маршрутизации"
+				bind:value={backend}
+				options={[
+					{ value: 'ndms' as const, label: 'ПО роутера (NDMS)' },
+					{ value: 'hydraroute' as const, label: 'HydraRoute Neo' },
+				]}
+				fullWidth
+			/>
 		</div>
 	{/if}
 
@@ -282,16 +283,16 @@
 		{/if}
 		<div class="sub-add">
 			<input
-				class="form-input"
+				class="field-input"
 				type="url"
 				placeholder="https://example.com/domains.txt"
 				value={newSubUrl}
 				oninput={(e) => { newSubUrl = (e.target as HTMLInputElement).value; }}
 				onkeydown={handleSubKeydown}
 			/>
-			<button class="btn btn-sm btn-secondary" onclick={addSubscription} disabled={!newSubUrl.trim()}>
+			<Button variant="secondary" size="sm" onclick={addSubscription} disabled={!newSubUrl.trim()}>
 				Добавить
-			</button>
+			</Button>
 		</div>
 	</div>
 
@@ -306,21 +307,19 @@
 
 	<!-- HR Interface mode: single selector -->
 	{#if isInterfaceMode}
+		{@const interfaceOpts: DropdownOption[] = [
+			...tunnels.filter(t => t.type === 'managed' && t.available).map(t => ({ value: t.id, label: t.name })),
+			...tunnels.filter(t => t.type === 'system').map(t => ({ value: t.id, label: t.name })),
+			...tunnels.filter(t => t.type === 'wan').map(t => ({ value: t.id, label: t.name })),
+		]}
 		<div class="form-group">
-			<!-- svelte-ignore a11y_label_has_associated_control -->
-			<label class="form-label">Целевой интерфейс</label>
-			<select class="form-select" value={hrInterfaceId} onchange={(e) => hrInterfaceId = (e.target as HTMLSelectElement).value}>
-				{#each tunnels.filter(t => t.type === 'managed' && t.available) as tunnel}
-					<option value={tunnel.id}>{tunnel.name}</option>
-				{/each}
-				{#each tunnels.filter(t => t.type === 'system') as tunnel}
-					<option value={tunnel.id}>{tunnel.name}</option>
-				{/each}
-				{#each tunnels.filter(t => t.type === 'wan') as tunnel}
-					<option value={tunnel.id}>{tunnel.name}</option>
-				{/each}
-			</select>
-			<span class="field-hint">Трафик направляется напрямую на интерфейс (DirectRoute)</span>
+			<Dropdown
+				label="Целевой интерфейс"
+				bind:value={hrInterfaceId}
+				options={interfaceOpts}
+				hint="Трафик направляется напрямую на интерфейс (DirectRoute)"
+				fullWidth
+			/>
 		</div>
 	{/if}
 
@@ -350,24 +349,27 @@
 				</div>
 			{/if}
 			{#if availableTunnels.length > 0}
+				{@const addOpts: DropdownOption[] = availableTunnels.map((t) => ({
+					value: t.id,
+					label: t.name + (t.type === 'system' ? ' (системный)' : ''),
+				}))}
 				<div class="route-add">
-					<select
-						class="form-select"
-						value={newRouteTunnelId || availableTunnels[0]?.id || ''}
-						onchange={(e) => { newRouteTunnelId = (e.target as HTMLSelectElement).value; }}
-					>
-						{#each availableTunnels as tunnel}
-							<option value={tunnel.id}>{tunnel.name}{tunnel.type === 'system' ? ' (системный)' : ''}</option>
-						{/each}
-					</select>
-					<button class="btn btn-sm btn-primary" onclick={addRoute}>+ Добавить</button>
+					<div class="route-add-select">
+						<Dropdown
+							value={newRouteTunnelId || availableTunnels[0]?.id || ''}
+							options={addOpts}
+							onchange={(v) => (newRouteTunnelId = v)}
+							fullWidth
+						/>
+					</div>
+					<Button variant="primary" size="sm" onclick={addRoute}>+ Добавить</Button>
 				</div>
 			{/if}
 
 			{#if isNDMS && routes.length > 0}
 				<div class="fallback-group">
 					<!-- svelte-ignore a11y_label_has_associated_control -->
-					<label class="form-label">Если все недоступны:</label>
+					<label class="field-label">Если все недоступны:</label>
 					<div class="fallback-options">
 						<label class="fallback-option">
 							<input
@@ -407,7 +409,7 @@
 	{#if isNDMS}
 		<div class="form-section">
 			<div class="section-title">Исключения</div>
-			<textarea class="form-textarea" rows="3" placeholder="Домены, которые НЕ маршрутизировать (по одному на строку)" value={excludesText} oninput={(e) => excludesText = (e.target as HTMLTextAreaElement).value}></textarea>
+			<textarea class="field-textarea" rows="3" placeholder="Домены, которые НЕ маршрутизировать (по одному на строку)" value={excludesText} oninput={(e) => excludesText = (e.target as HTMLTextAreaElement).value}></textarea>
 			<span class="field-hint">Эти домены будут исключены из маршрутизации через туннель</span>
 		</div>
 	{/if}
@@ -449,60 +451,17 @@
 	{/if}
 
 	{#snippet actions()}
-		<button class="btn btn-secondary" onclick={onclose}>Отмена</button>
-		<button class="btn btn-primary" class:shake={shaking} onclick={handleSave} disabled={saving}>
-			{saving ? 'Сохранение...' : 'Сохранить'}
-		</button>
+		<Button variant="secondary" onclick={onclose}>Отмена</Button>
+		<!-- TODO Phase 1: shake animation on save when invalid (was class:shake={shaking}) -->
+		<Button variant="primary" onclick={handleSave} loading={saving}>
+			Сохранить
+		</Button>
 	{/snippet}
 </Modal>
 
 <style>
 	.form-group {
 		margin-bottom: 1rem;
-	}
-
-	.form-label {
-		display: block;
-		font-size: 0.8125rem;
-		font-weight: 500;
-		color: var(--text-primary);
-		margin-bottom: 0.375rem;
-	}
-
-	.form-input,
-	.form-select {
-		width: 100%;
-		padding: 0.375rem 0.625rem;
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		background: var(--bg-primary);
-		color: var(--text-primary);
-		font-size: 0.8125rem;
-		box-sizing: border-box;
-	}
-
-	.form-input:focus,
-	.form-select:focus {
-		outline: none;
-		border-color: var(--accent);
-	}
-
-	.form-textarea {
-		width: 100%;
-		padding: 0.375rem 0.625rem;
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		background: var(--bg-primary);
-		color: var(--text-primary);
-		font-size: 0.8125rem;
-		box-sizing: border-box;
-		resize: vertical;
-		font-family: inherit;
-	}
-
-	.form-textarea:focus {
-		outline: none;
-		border-color: var(--accent);
 	}
 
 	.form-section {
@@ -512,12 +471,12 @@
 	.section-title {
 		font-size: 0.75rem;
 		font-weight: 600;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		margin-bottom: 0.5rem;
 		padding-bottom: 0.375rem;
-		border-bottom: 1px solid var(--border);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	/* Subscriptions */
@@ -534,7 +493,7 @@
 		justify-content: space-between;
 		gap: 0.5rem;
 		padding: 0.5rem;
-		background: var(--bg-secondary);
+		background: var(--color-bg-secondary);
 		border-radius: 6px;
 	}
 
@@ -547,14 +506,14 @@
 
 	.sub-url {
 		font-size: 0.75rem;
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 		font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
 		word-break: break-all;
 	}
 
 	.sub-meta {
 		font-size: 0.6875rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.sub-ok {
@@ -566,7 +525,7 @@
 	}
 
 	.sub-time {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.sub-add {
@@ -575,7 +534,7 @@
 		align-items: center;
 	}
 
-	.sub-add .form-input {
+	.sub-add :global(.field-input) {
 		flex: 1;
 	}
 
@@ -595,7 +554,7 @@
 
 	.route-index {
 		font-size: 0.8125rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		font-weight: 500;
 		width: 1.5rem;
 		flex-shrink: 0;
@@ -604,7 +563,7 @@
 	.route-name {
 		flex: 1;
 		font-size: 0.8125rem;
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -614,8 +573,8 @@
 	.route-id {
 		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 		font-size: 0.6875rem;
-		color: var(--text-muted);
-		background: var(--bg-tertiary);
+		color: var(--color-text-muted);
+		background: var(--color-bg-tertiary);
 		padding: 1px 6px;
 		border-radius: 4px;
 		flex-shrink: 0;
@@ -637,14 +596,17 @@
 		align-items: center;
 	}
 
-	.route-add .form-select {
+	.route-add-select {
+		flex: 1;
+	}
+	.route-add :global(.field-select) {
 		flex: 1;
 	}
 
 	.btn-move {
 		background: none;
-		border: 1px solid var(--border);
-		color: var(--text-muted);
+		border: 1px solid var(--color-border);
+		color: var(--color-text-muted);
 		font-size: 0.75rem;
 		cursor: pointer;
 		padding: 0.125rem 0.375rem;
@@ -653,8 +615,8 @@
 	}
 
 	.btn-move:hover:not(:disabled) {
-		color: var(--accent);
-		border-color: var(--accent);
+		color: var(--color-accent);
+		border-color: var(--color-accent);
 	}
 
 	.btn-move:disabled {
@@ -665,7 +627,7 @@
 	.btn-remove {
 		background: none;
 		border: none;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		font-size: 1.25rem;
 		cursor: pointer;
 		padding: 0 0.375rem;
@@ -703,13 +665,13 @@
 		align-items: center;
 		gap: 0.375rem;
 		font-size: 0.8125rem;
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 		cursor: pointer;
 		white-space: nowrap;
 	}
 
 	.fallback-option input[type="radio"] {
-		accent-color: var(--accent);
+		accent-color: var(--color-accent);
 	}
 
 	.route-hint {
@@ -718,13 +680,13 @@
 		margin: 0 0 0.5rem 0;
 	}
 
-	.field-error .form-input {
-		border-color: var(--error, #ef4444);
-		box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.15);
+	.field-error :global(.field-input) {
+		border-color: var(--color-error);
+		box-shadow: 0 0 0 2px var(--color-error-tint);
 	}
 
 	.route-hint-error {
-		color: var(--error, #ef4444);
+		color: var(--color-error);
 		background: rgba(239, 68, 68, 0.08);
 		padding: 0.5rem;
 		border-radius: 6px;
@@ -733,7 +695,7 @@
 
 	.dedup-details {
 		margin-top: 12px;
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		overflow: hidden;
 	}
@@ -743,7 +705,7 @@
 		font-size: 0.75rem;
 		color: var(--warning, #f59e0b);
 		cursor: pointer;
-		background: var(--bg-hover);
+		background: var(--color-bg-hover);
 	}
 
 	.dedup-list {
@@ -763,11 +725,11 @@
 	.dedup-item code {
 		font-family: monospace;
 		font-size: 0.625rem;
-		color: var(--text-primary);
+		color: var(--color-text-primary);
 	}
 
 	.dedup-reason {
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		text-align: right;
 		white-space: nowrap;
 	}
@@ -775,9 +737,9 @@
 	/* Summary */
 	.summary {
 		font-size: 0.8125rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		padding: 0.5rem 0;
-		border-top: 1px dashed var(--border);
+		border-top: 1px dashed var(--color-border);
 	}
 
 	.field-hint {
@@ -787,7 +749,7 @@
 	}
 
 	.geo-hint {
-		color: var(--accent);
+		color: var(--color-accent);
 		font-style: italic;
 	}
 
@@ -796,7 +758,7 @@
 		display: flex;
 		gap: 0;
 		margin-bottom: 0.75rem;
-		background: var(--bg-primary);
+		background: var(--color-bg-primary);
 		border-radius: 6px;
 		padding: 3px;
 	}
@@ -811,14 +773,14 @@
 		cursor: pointer;
 		border: none;
 		background: transparent;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		font-family: inherit;
 		transition: all 0.15s;
 	}
 
 	.mode-tab.active {
-		background: var(--bg-hover);
-		color: var(--text-primary);
+		background: var(--color-bg-hover);
+		color: var(--color-text-primary);
 		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 	}
 
@@ -829,30 +791,30 @@
 		gap: 0.5rem;
 		margin-top: 0.75rem;
 		padding: 0.5rem 0.625rem;
-		background: var(--bg-primary);
-		border: 1px solid var(--border);
+		background: var(--color-bg-primary);
+		border: 1px solid var(--color-border);
 		border-radius: 6px;
 	}
 
 	.policy-label {
 		font-size: 0.75rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 		white-space: nowrap;
 	}
 
 	.policy-input {
 		flex: 1;
 		padding: 0.25rem 0.5rem;
-		border: 1px solid var(--border);
+		border: 1px solid var(--color-border);
 		border-radius: 4px;
-		background: var(--bg-secondary, var(--bg-card));
-		color: var(--text-primary);
+		background: var(--color-bg-secondary);
+		color: var(--color-text-primary);
 		font-size: 0.8125rem;
 		font-family: inherit;
 	}
 
 	.policy-input:focus {
 		outline: none;
-		border-color: var(--accent);
+		border-color: var(--color-accent);
 	}
 </style>

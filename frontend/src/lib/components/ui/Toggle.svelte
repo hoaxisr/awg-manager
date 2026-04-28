@@ -112,8 +112,8 @@
         position: relative;
         width: 44px;
         height: 24px;
-        background: var(--bg-tertiary);
-        border-radius: 12px;
+        background: var(--color-bg-tertiary);
+        border-radius: var(--radius);
         transition: background 0.2s ease;
     }
 
@@ -124,13 +124,13 @@
         left: 2px;
         width: 20px;
         height: 20px;
-        background: var(--text-muted);
+        background: var(--color-text-muted);
         border-radius: 50%;
         transition: transform 0.2s ease, background 0.2s ease;
     }
 
     .toggle-container input:checked ~ .toggle-slider {
-        background: var(--accent);
+        background: var(--color-accent);
     }
 
     .toggle-container input:checked ~ .toggle-slider::before {
@@ -139,7 +139,7 @@
     }
 
     .toggle-container:hover .toggle-slider {
-        background: var(--border);
+        background: var(--color-border);
     }
 
     .toggle-container input:checked:hover ~ .toggle-slider {
@@ -170,8 +170,8 @@
         position: relative;
         width: 26px;
         height: 42px;
-        background: var(--bg-tertiary);
-        border-radius: 6px;
+        background: var(--color-bg-tertiary);
+        border-radius: var(--radius-sm);
         box-shadow:
             inset 0 2px 4px rgba(0, 0, 0, 0.3),
             inset 0 -1px 2px rgba(255, 255, 255, 0.05);
@@ -185,8 +185,12 @@
         bottom: 3px;
         width: 20px;
         height: 20px;
-        background: linear-gradient(to bottom, #6b7280, #4b5563);
-        border-radius: 4px;
+        background: linear-gradient(
+            to bottom,
+            color-mix(in srgb, var(--color-text-muted) 80%, white),
+            var(--color-text-muted)
+        );
+        border-radius: var(--radius-sm);
         box-shadow:
             0 1px 3px rgba(0, 0, 0, 0.3),
             inset 0 1px 0 rgba(255, 255, 255, 0.1);
@@ -207,19 +211,23 @@
 
     /* ON state: lever at top */
     .toggle-container.flip input:checked + .flip-track {
-        background: rgba(16, 185, 129, 0.15);
+        background: var(--color-success-tint);
         box-shadow:
             inset 0 2px 4px rgba(0, 0, 0, 0.2),
-            inset 0 -1px 2px rgba(16, 185, 129, 0.1),
-            0 0 8px rgba(16, 185, 129, 0.15);
+            inset 0 -1px 2px var(--color-success-tint),
+            0 0 8px var(--color-success-tint);
     }
 
     .toggle-container.flip input:checked + .flip-track .flip-lever {
         transform: translateY(-16px);
-        background: linear-gradient(to bottom, #34d399, #10b981);
+        background: linear-gradient(
+            to bottom,
+            color-mix(in srgb, var(--color-success) 75%, white),
+            var(--color-success)
+        );
         box-shadow:
             0 1px 3px rgba(0, 0, 0, 0.3),
-            0 0 6px rgba(16, 185, 129, 0.4),
+            0 0 6px var(--color-success-border),
             inset 0 1px 0 rgba(255, 255, 255, 0.2);
     }
 
@@ -242,8 +250,8 @@
     .toggle-spinner {
         width: 12px;
         height: 12px;
-        border: 2px solid var(--text-muted);
-        border-top-color: var(--accent);
+        border: 2px solid var(--color-text-muted);
+        border-top-color: var(--color-accent);
         border-radius: 50%;
         animation: spin 0.8s linear infinite;
     }
@@ -279,12 +287,12 @@
     .toggle-label {
         font-size: 14px;
         font-weight: 500;
-        color: var(--text-primary);
+        color: var(--color-text-primary);
     }
 
     .toggle-hint {
         font-size: 12px;
-        color: var(--text-muted);
+        color: var(--color-text-muted);
         line-height: 1.5;
         margin-top: 2px;
     }

@@ -148,9 +148,13 @@ export interface SystemTunnel {
 	status: 'up' | 'down';
 	connected: boolean;
 	mtu: number;
+	address?: string; // IPv4 e.g. "10.8.1.3"
+	mask?: string;
+	uptime?: number; // seconds since up
 	peer?: {
 		publicKey: string;
 		endpoint: string;
+		via?: string; // ISP/connection iface (e.g. "PPPoE0")
 		rxBytes: number;
 		txBytes: number;
 		lastHandshake: string;
@@ -333,6 +337,7 @@ export interface WireguardServerPeerConfig {
 
 export interface ManagedServer {
 	interfaceName: string;
+	description?: string;
 	address: string;
 	mask: string;
 	listenPort: number;
@@ -372,15 +377,22 @@ export interface CreateManagedServerRequest {
 	address: string;
 	mask: string;
 	listenPort: number;
+	description?: string;
 	endpoint?: string;
 	dns?: string;
 	mtu?: number;
 }
 
+// UpdateManagedServerRequest matches the Go-side pointer-field semantics:
+// - omit a field entirely (do not include it in the body) to PRESERVE the existing value
+// - include a field (even with empty string / 0) to SET it (empty string CLEARS)
+// Build the payload conditionally on the call site so a value the user
+// didn't touch never appears in the request.
 export interface UpdateManagedServerRequest {
 	address: string;
 	mask: string;
 	listenPort: number;
+	description?: string;
 	endpoint?: string;
 	dns?: string;
 	mtu?: number;
@@ -615,6 +627,7 @@ export interface DNSRouteSettings {
 export interface Settings {
 	schemaVersion?: number;
 	authEnabled: boolean;
+	apiKey?: string;
 	server: ServerSettings;
 	pingCheck: PingCheckSettings;
 	logging: LoggingSettings;
@@ -855,7 +868,7 @@ export interface DiagnosticsStatus {
 export interface DiagTestEvent {
 	name: string;
 	description: string;
-	status: 'pass' | 'fail' | 'skip' | 'error';
+	status: 'pass' | 'fail' | 'warn' | 'skip' | 'error';
 	detail: string;
 	tunnelId?: string;
 	tunnelName?: string;
@@ -1020,6 +1033,13 @@ export interface SingboxStatus {
 	 * Example: ["with_gvisor","with_quic","with_naive_outbound"].
 	 */
 	features?: string[];
+	/**
+	 * Last fatal stderr message captured when sing-box exited (if any).
+	 * Surfaced when `running === false` to explain why the daemon is
+	 * down — typically a config-validation FATAL after a rule-set
+	 * download failed.
+	 */
+	lastError?: string;
 }
 
 export interface SingboxImportResponse {
@@ -1038,6 +1058,235 @@ export interface SingboxDelayEvent {
 	tag: string;
 	delay: number;
 	timestamp: number;
+}
+
+// #endregion
+
+// #region Monitoring (Phase 3)
+
+export interface MonitoringTarget {
+	id: string;
+	host: string;
+	name: string;
+}
+
+export interface MonitoringTunnel {
+	id: string;
+	name: string;
+	ifaceName: string;
+	pingcheckTarget: string;
+	selfTarget: string;
+	selfMethod: string;
+}
+
+export interface MonitoringCell {
+	targetId: string;
+	tunnelId: string;
+	latencyMs: number | null;
+	ok: boolean;
+	activeForRestart: boolean;
+	isSelf: boolean;
+	ts: string;
+}
+
+export interface MonitoringSnapshot {
+	targets: MonitoringTarget[];
+	tunnels: MonitoringTunnel[];
+	cells: MonitoringCell[];
+	updatedAt: string;
+}
+
+export interface MonitoringSample {
+	ts: string;
+	latencyMs: number | null;
+	ok: boolean;
+}
+
+// #endregion
+
+// ─────────────────────────────────────────────
+// #region Singbox Router (Phase 2 — TProxy routing engine)
+// ─────────────────────────────────────────────
+
+export interface SingboxRouterSettings {
+	enabled: boolean;
+	policyName: string;
+	refreshMode?: 'interval' | 'daily';
+	refreshIntervalHours?: number;
+	refreshDailyTime?: string;
+}
+
+export interface SingboxRouterIssue {
+	severity: 'warning' | 'error';
+	kind: 'orphan-rule' | 'policy-missing';
+	ruleIndex?: number;
+	tag?: string;
+	message: string;
+}
+
+export interface SingboxRouterStatus {
+	enabled: boolean;
+	installed: boolean;
+	netfilterAvailable: boolean;
+	netfilterComponentName?: string;
+	tproxyTargetAvailable: boolean;
+	policyName: string;
+	policyMark?: string;
+	policyExists: boolean;
+	deviceCount: number;
+	ruleCount: number;
+	ruleSetCount: number;
+	outboundAwgCount: number;
+	outboundCompositeCount: number;
+	final: string;
+	issues?: SingboxRouterIssue[];
+}
+
+/**
+ * One NDMS access policy as exposed to the router-policy UI dropdown.
+ * Source: GET /api/singbox/router/policies.
+ */
+export interface RouterPolicy {
+	name: string;
+	description: string;
+	mark: string;
+	deviceCount: number;
+	isOurDefault: boolean;
+}
+
+/**
+ * One LAN device known to NDMS hotspot, annotated with whether it's
+ * currently bound to a specific policy. Distinct from the broader
+ * PolicyDevice (accesspolicy domain, includes hostname/active/link/policy):
+ * router only needs the bind decision + identifying fields.
+ * Source: GET /api/singbox/router/policy-devices?name=X.
+ */
+export interface RouterPolicyDevice {
+	mac: string;
+	ip: string;
+	name: string;
+	bound: boolean;
+}
+
+export interface SingboxRouterRule {
+	domain_suffix?: string[];
+	ip_cidr?: string[];
+	source_ip_cidr?: string[];
+	port?: number[];
+	rule_set?: string[];
+	protocol?: string;
+	action: 'route' | 'reject' | 'sniff' | 'hijack-dns';
+	outbound?: string;
+}
+
+export interface SingboxRouterRuleSet {
+	tag: string;
+	type: 'remote' | 'local';
+	format: 'binary' | 'source';
+	url?: string;
+	update_interval?: string;
+	download_detour?: string;
+	path?: string;
+}
+
+export interface SingboxRouterOutbound {
+	type: 'direct' | 'urltest' | 'selector' | 'loadbalance';
+	tag: string;
+	bind_interface?: string;
+	outbounds?: string[];
+	url?: string;
+	interval?: string;
+	tolerance?: number;
+	default?: string;
+	strategy?: string;
+}
+
+export interface SingboxRouterPresetLink {
+	ruleSetRef: string;
+	actionTarget: 'tunnel' | 'reject' | 'direct';
+}
+
+export interface SingboxRouterPreset {
+	id: string;
+	name: string;
+	iconSlug?: string;
+	ruleSets: Array<{ tag: string; url: string }>;
+	rules: SingboxRouterPresetLink[];
+	notice?: string;
+	featured?: boolean;
+	sensitive?: boolean;
+}
+
+export interface SingboxRouterAvailableClient {
+	mac: string;
+	name?: string;
+	ip?: string;
+	registered?: boolean;
+	active?: boolean;
+}
+
+export type SingboxRouterDNSType = 'udp' | 'tls' | 'https' | 'quic' | 'h3';
+
+export type SingboxRouterDNSStrategy =
+	| ''
+	| 'prefer_ipv4'
+	| 'prefer_ipv6'
+	| 'ipv4_only'
+	| 'ipv6_only';
+
+export interface SingboxRouterDNSDomainResolver {
+	server: string;
+	strategy?: SingboxRouterDNSStrategy;
+}
+
+export interface SingboxRouterDNSServer {
+	tag: string;
+	type: SingboxRouterDNSType;
+	server: string;
+	server_port?: number;
+	path?: string;
+	detour?: string;
+	domain_strategy?: SingboxRouterDNSStrategy;
+	domain_resolver?: SingboxRouterDNSDomainResolver;
+}
+
+export interface SingboxRouterDNSRule {
+	rule_set?: string[];
+	domain_suffix?: string[];
+	domain?: string[];
+	domain_keyword?: string[];
+	query_type?: string[];
+	server?: string;
+	action?: '' | 'route' | 'reject';
+}
+
+export interface SingboxRouterDNSGlobals {
+	final: string;
+	strategy: SingboxRouterDNSStrategy;
+}
+
+// #endregion
+
+// ─────────────────────────────────────────────
+// #region AWG outbounds catalog (15-awg.json)
+// ─────────────────────────────────────────────
+
+export interface AWGTagInfo {
+	tag: string;
+	label: string;
+	kind: 'managed' | 'system';
+	iface: string;
+}
+
+/**
+ * Structured payload returned by DELETE /api/tunnels/{id} when the
+ * tunnel is referenced by deviceproxy or a router rule (HTTP 409).
+ * The frontend uses this to render TunnelReferencedModal.
+ */
+export interface TunnelReferencedError {
+	tunnelId: string;
+	deviceProxy: boolean;
+	routerRules: number[];
 }
 
 // #endregion

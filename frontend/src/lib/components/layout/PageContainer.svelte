@@ -1,35 +1,35 @@
-<script lang="ts">
-    import type { Snippet } from 'svelte';
-
-    interface Props {
-        maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full';
-        padding?: boolean;
-        children: Snippet;
-    }
-
-    let { maxWidth = 'xl', padding = true, children }: Props = $props();
-
-    const maxWidthClasses = {
-        sm: 'max-w-screen-sm',
-        md: 'max-w-screen-md',
-        lg: 'max-w-screen-lg',
-        xl: 'max-w-screen-xl',
-        '2xl': 'max-w-screen-2xl',
-        full: 'max-w-full'
-    };
+<script lang="ts" module>
+  import type { Snippet } from 'svelte';
+  export type PageWidth = 'narrow' | 'wide' | 'full';
 </script>
 
-<div class="page-container {maxWidthClasses[maxWidth]}" class:has-padding={padding}>
-    {@render children()}
+<script lang="ts">
+  interface Props {
+    width?: PageWidth;
+    children: Snippet;
+  }
+
+  let { width = 'wide', children }: Props = $props();
+</script>
+
+<div
+  class="page-container"
+  class:width-narrow={width === 'narrow'}
+  class:width-wide={width === 'wide'}
+  class:width-full={width === 'full'}
+>
+  {@render children()}
 </div>
 
 <style>
-    .page-container {
-        margin-left: auto;
-        margin-right: auto;
-    }
-    .has-padding {
-        padding-top: 2.5rem;
-        padding-bottom: 1.5rem;
-    }
+  .page-container {
+    flex: 1;
+    margin: 0 auto;
+    padding: 1.5rem;
+    width: 100%;
+  }
+
+  .width-narrow { max-width: 960px; }
+  .width-wide { max-width: 1440px; }
+  .width-full { max-width: 100%; }
 </style>

@@ -5,7 +5,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import type { IPResult, ConnectivityResult, AWGTunnel, IPCheckService } from '$lib/types';
 	import { SpeedTestCard } from '$lib/components/tunnels';
-	import { FormToggle } from '$lib/components/ui';
+	import { FormToggle, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { PageContainer } from '$lib/components/layout';
 
 	let tunnelId = $derived($page.params.id as string);
@@ -134,12 +134,9 @@
 		{/if}
 
 		<div class="card-spacer"></div>
-		<button class="btn btn-primary btn-block" onclick={checkConnectivity} disabled={connectivityLoading}>
-			{#if connectivityLoading}
-				<span class="spinner"></span>
-			{/if}
+		<Button variant="primary" fullWidth onclick={checkConnectivity} loading={connectivityLoading}>
 			Проверить соединение
-		</button>
+		</Button>
 	</div>
 
 	<!-- IP Test -->
@@ -175,11 +172,17 @@
 						disabled={ipLoading}
 					/>
 				{:else}
-					<select bind:value={selectedServiceIndex} disabled={ipLoading}>
-						{#each ipServices as service, i}
-							<option value={i}>{service.label}</option>
-						{/each}
-					</select>
+					{@const serviceOpts: DropdownOption[] = ipServices.map((service, i) => ({
+						value: String(i),
+						label: service.label,
+					}))}
+					<Dropdown
+						value={String(selectedServiceIndex)}
+						options={serviceOpts}
+						onchange={(v) => (selectedServiceIndex = Number(v))}
+						disabled={ipLoading}
+						fullWidth
+					/>
 				{/if}
 			</div>
 		{/if}
@@ -211,12 +214,9 @@
 		{/if}
 
 		<div class="card-spacer"></div>
-		<button class="btn btn-primary btn-block" onclick={checkIP} disabled={ipLoading}>
-			{#if ipLoading}
-				<span class="spinner"></span>
-			{/if}
+		<Button variant="primary" fullWidth onclick={checkIP} loading={ipLoading}>
 			Проверить IP
-		</button>
+		</Button>
 	</div>
 
 	<!-- Speed Test -->
@@ -350,9 +350,5 @@
 
 	.card-spacer {
 		flex: 1;
-	}
-
-	.btn-block {
-		width: 100%;
 	}
 </style>

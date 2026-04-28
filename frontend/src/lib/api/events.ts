@@ -1,5 +1,13 @@
 // SSE event payloads
-import type { SingboxTraffic, SingboxDelayEvent } from '$lib/types';
+import type {
+	SingboxTraffic,
+	SingboxDelayEvent,
+	MonitoringSnapshot,
+	SingboxRouterStatus,
+	SingboxRouterRule,
+	SingboxRouterRuleSet,
+	SingboxRouterOutbound,
+} from '$lib/types';
 
 export interface LogEntryEvent {
 	timestamp: string;
@@ -88,6 +96,12 @@ export interface SSEEventHandlers {
 	onSingboxTraffic?: (data: SingboxTraffic[]) => void;
 	onSingboxDelay?: (data: SingboxDelayEvent) => void;
 
+	// Sing-box Router push events (status + rules/rule-sets/outbounds snapshots)
+	onSingboxRouterStatus?: (data: SingboxRouterStatus) => void;
+	onSingboxRouterRules?: (data: SingboxRouterRule[]) => void;
+	onSingboxRouterRuleSets?: (data: SingboxRouterRuleSet[]) => void;
+	onSingboxRouterOutbounds?: (data: SingboxRouterOutbound[]) => void;
+
 	// HydraRoute geo download progress
 	onHydraRouteGeoProgress?: (data: GeoDownloadProgressEvent) => void;
 
@@ -100,6 +114,9 @@ export interface SSEEventHandlers {
 	// Device-proxy: selected outbound was deleted while the proxy was active.
 	// Backend disables the proxy and emits this event so the UI can show a banner.
 	onDeviceProxyMissingTarget?: (data: { wasTag: string }) => void;
+
+	// Monitoring matrix snapshot (every scheduler tick).
+	onMonitoringMatrixUpdate?: (data: MonitoringSnapshot) => void;
 }
 
 export function connectSSE(handlers: SSEEventHandlers): () => void {
@@ -130,6 +147,12 @@ export function connectSSE(handlers: SSEEventHandlers): () => void {
 	handle('singbox:traffic', handlers.onSingboxTraffic);
 	handle('singbox:delay', handlers.onSingboxDelay);
 
+	// Sing-box Router events
+	handle('singbox-router:status', handlers.onSingboxRouterStatus);
+	handle('singbox-router:rules', handlers.onSingboxRouterRules);
+	handle('singbox-router:rulesets', handlers.onSingboxRouterRuleSets);
+	handle('singbox-router:outbounds', handlers.onSingboxRouterOutbounds);
+
 	// HydraRoute events
 	handle('hydraroute:geo-progress', handlers.onHydraRouteGeoProgress);
 
@@ -141,6 +164,9 @@ export function connectSSE(handlers: SSEEventHandlers): () => void {
 
 	// Device-proxy missing-target notification
 	handle('deviceproxy:missing-target', handlers.onDeviceProxyMissingTarget);
+
+	// Monitoring matrix snapshots
+	handle('monitoring:matrix-update', handlers.onMonitoringMatrixUpdate);
 
 	// Server sends "connected" event immediately on stream start
 	es.addEventListener('connected', () => {

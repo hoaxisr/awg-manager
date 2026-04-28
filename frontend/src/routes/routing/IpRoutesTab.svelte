@@ -1,7 +1,7 @@
 <script lang="ts">
     import { api } from '$lib/api/client';
     import type { StaticRouteList, RoutingTunnel } from '$lib/types';
-    import { Modal, StoreStatusBadge } from '$lib/components/ui';
+    import { Modal, StoreStatusBadge, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
     import { IpRouteCard, IpRouteEditModal, IpRouteImportModal } from '$lib/components/routing';
     import { exportStaticRoutes, type PortableStaticRoute } from '$lib/utils/staticroute-export';
     import { downloadJson } from '$lib/utils/dns-export';
@@ -213,11 +213,11 @@
         </span>
         <div class="section-buttons">
             <StoreStatusBadge store={staticRoutesStore} />
-            <button class="btn btn-sm btn-ghost" onclick={() => ipImportOpen = true}>Загрузить набор правил</button>
+            <Button variant="ghost" size="sm" onclick={() => ipImportOpen = true}>Загрузить набор правил</Button>
             {#if ipRoutes.length > 0}
-                <button class="btn btn-sm btn-ghost" onclick={() => { ipSelectionMode = true; ipSelected = new Set(); }}>Выбрать</button>
+                <Button variant="ghost" size="sm" onclick={() => { ipSelectionMode = true; ipSelected = new Set(); }}>Выбрать</Button>
             {/if}
-            <button class="btn btn-sm btn-primary" onclick={() => { editingIpRoute = null; ipCreateOpen = true; }}>+ Новое правило</button>
+            <Button variant="primary" size="sm" onclick={() => { editingIpRoute = null; ipCreateOpen = true; }}>+ Новое правило</Button>
         </div>
     {:else}
         <div class="bulk-bar">
@@ -235,16 +235,20 @@
                     <button class="bulk-btn bulk-btn-export" disabled={ipSelected.size === 0 || ipBulkLoading} onclick={downloadIpExport}>Экспорт</button>
                 </div>
             {:else}
+                {@const ipBulkTunnelOpts: DropdownOption[] = [
+                    ...routingTunnels.filter(t => t.type === 'managed' && t.available).map((t) => ({ value: t.id, label: t.name })),
+                    ...routingTunnels.filter(t => t.type === 'system' && t.available).map((t) => ({ value: t.id, label: t.name })),
+                ]}
                 <div class="bulk-tunnel-bar">
                     <span class="bulk-tunnel-label">Туннель:</span>
-                    <select class="bulk-tunnel-select" bind:value={ipBulkTunnelId} disabled={ipBulkLoading}>
-                        {#each routingTunnels.filter(t => t.type === 'managed' && t.available) as t}
-                            <option value={t.id}>{t.name}</option>
-                        {/each}
-                        {#each routingTunnels.filter(t => t.type === 'system' && t.available) as t}
-                            <option value={t.id}>{t.name}</option>
-                        {/each}
-                    </select>
+                    <div class="bulk-tunnel-select">
+                        <Dropdown
+                            bind:value={ipBulkTunnelId}
+                            options={ipBulkTunnelOpts}
+                            disabled={ipBulkLoading}
+                            fullWidth
+                        />
+                    </div>
                     <button class="bulk-tunnel-apply" disabled={ipBulkLoading} onclick={bulkIpChangeTunnel}>Применить ({ipSelected.size})</button>
                     <button class="bulk-tunnel-close" onclick={() => ipTunnelMode = false}>✕</button>
                 </div>
@@ -319,8 +323,8 @@
     <Modal open={true} title="Удаление" size="sm" onclose={() => ipDeleteId = null}>
         <p class="confirm-text">Удалить список маршрутов «{routeToDelete?.name ?? ipDeleteId}»?</p>
         {#snippet actions()}
-            <button class="btn btn-ghost" onclick={() => ipDeleteId = null}>Отмена</button>
-            <button class="btn btn-danger" onclick={() => deleteIpRoute()}>Удалить</button>
+            <Button variant="ghost" onclick={() => ipDeleteId = null}>Отмена</Button>
+            <Button variant="danger" onclick={() => deleteIpRoute()}>Удалить</Button>
         {/snippet}
     </Modal>
 {/if}
@@ -329,8 +333,8 @@
     <Modal open={true} title="Удаление" size="sm" onclose={() => ipBulkDeleteConfirm = false}>
         <p class="confirm-text">Удалить {ipSelected.size} IP-маршрутов?</p>
         {#snippet actions()}
-            <button class="btn btn-ghost" onclick={() => ipBulkDeleteConfirm = false}>Отмена</button>
-            <button class="btn btn-danger" onclick={bulkIpDelete}>Удалить</button>
+            <Button variant="ghost" onclick={() => ipBulkDeleteConfirm = false}>Отмена</Button>
+            <Button variant="danger" onclick={bulkIpDelete}>Удалить</Button>
         {/snippet}
     </Modal>
 {/if}

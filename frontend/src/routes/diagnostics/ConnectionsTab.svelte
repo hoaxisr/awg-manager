@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import type { ConnectionsResponse } from '$lib/types';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { ConnectionsStats, ConnectionsFilters, ConnectionsTable } from '$lib/components/connections';
+	import { ConnectionsStats, ConnectionsTable } from '$lib/components/connections';
 
 	let data = $state<ConnectionsResponse | null>(null);
 	let loading = $state(false);
@@ -35,16 +35,24 @@
 		}
 	}
 
-	function handleTunnelChange(value: string) {
+	function setTunnel(value: string) {
+		if (tunnel === value) return;
 		tunnel = value;
 		offset = 0;
 		fetchData();
 	}
 
-	function handleProtocolChange(value: string) {
+	function setProtocol(value: string) {
+		if (protocol === value) return;
 		protocol = value;
 		offset = 0;
 		fetchData();
+	}
+
+	function handleTunnelChipClick(chipId: string) {
+		// chipId from data.tunnels: '' = direct, otherwise tunnel id.
+		const target = chipId === '' ? 'direct' : chipId;
+		setTunnel(tunnel === target ? 'all' : target);
 	}
 
 	function handleSortChange(column: 'proto' | 'src' | 'dst' | 'iface' | 'state' | 'bytes') {
@@ -58,16 +66,8 @@
 		fetchData();
 	}
 
-	function handleChipClick(chipId: string) {
-		// chipId is the raw key from data.tunnels: '' for direct, tunnel ID otherwise.
-		// Map to the filter value used by the dropdown ('direct' for empty, tunnel ID otherwise).
-		const target = chipId === '' ? 'direct' : chipId;
-		// Toggle: clicking the active chip resets to 'all'.
-		handleTunnelChange(tunnel === target ? 'all' : target);
-	}
-
 	let searchTimeout: ReturnType<typeof setTimeout> | null = null;
-	function handleSearchChange(value: string) {
+	function handleSearchInput(value: string) {
 		search = value;
 		if (searchTimeout) clearTimeout(searchTimeout);
 		searchTimeout = setTimeout(() => {
@@ -75,6 +75,10 @@
 			fetchData();
 		}, 300);
 	}
+
+	onMount(() => {
+		fetchData();
+	});
 
 	onDestroy(() => {
 		if (searchTimeout) clearTimeout(searchTimeout);
@@ -86,48 +90,64 @@
 	}
 </script>
 
-<div class="page-header">
-	<div class="header-right">
-		{#if data?.fetchedAt}
-			<span class="fetched-at">{new Date(data.fetchedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
-		{/if}
-		<button class="btn btn-primary btn-sm" onclick={fetchData} disabled={loading}>
-			{loading ? 'Загрузка...' : data ? 'Обновить' : 'Показать'}
-		</button>
-	</div>
-</div>
-
 {#if data}
 	<ConnectionsStats stats={data.stats} />
 
+	<!-- Filter row 1: tunnel chips -->
 	{#if Object.keys(data.tunnels).length > 0}
-		<div class="tunnel-chips">
+		<div class="filter-row">
+			<button
+				type="button"
+				class="chip"
+				class:chip-active={tunnel === 'all'}
+				onclick={() => setTunnel('all')}
+			>
+				ALL <span class="chip-count">{data.stats.total}</span>
+			</button>
 			{#each Object.entries(data.tunnels).sort((a, b) => b[1].count - a[1].count) as [id, info]}
+				{@const target = id === '' ? 'direct' : id}
+				{@const isActive = tunnel === target}
 				<button
 					type="button"
-					class="tunnel-chip"
-					class:active={(tunnel === 'direct' && id === '') || tunnel === id}
-					onclick={() => handleChipClick(id)}
+					class="chip"
+					class:chip-active={isActive}
+					onclick={() => handleTunnelChipClick(id)}
 				>
-					<span class="tunnel-chip-dot" class:tunnel-chip-dot-vpn={id !== ''} class:tunnel-chip-dot-direct={id === ''}></span>
-					<span>{info.name}</span>
-					<span class="tunnel-chip-count">{#if info.interface && id !== ''}{info.interface} &middot; {/if}{info.count}</span>
+					<span class="chip-led" class:chip-led-vpn={id !== ''}></span>
+					{info.name}
+					<span class="chip-count">{info.count}</span>
 				</button>
 			{/each}
 		</div>
 	{/if}
 
-	<ConnectionsFilters
-		tunnels={data.tunnels}
-		{tunnel}
-		{protocol}
-		{search}
-		filteredCount={data.pagination.total}
-		totalCount={data.stats.total}
-		onTunnelChange={handleTunnelChange}
-		onProtocolChange={handleProtocolChange}
-		onSearchChange={handleSearchChange}
-	/>
+	<!-- Filter row 2: proto chips + search + counter -->
+	<div class="filter-row filter-row-secondary">
+		<div class="proto-chips">
+			{#each [['all', 'ALL'], ['tcp', 'TCP'], ['udp', 'UDP'], ['icmp', 'ICMP']] as [val, label]}
+				<button
+					type="button"
+					class="chip"
+					class:chip-active={protocol === val}
+					onclick={() => setProtocol(val)}
+				>{label}</button>
+			{/each}
+		</div>
+		<input
+			type="search"
+			class="field-input compact search-input"
+			placeholder="Поиск по IP, порту, имени..."
+			value={search}
+			oninput={(e) => handleSearchInput(e.currentTarget.value)}
+		/>
+		<span class="counter">
+			<span class="live-dot" class:live-dot-loading={loading}></span>
+			{#if data.fetchedAt}
+				{new Date(data.fetchedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })} ·
+			{/if}
+			{data.pagination.total} из {data.stats.total}
+		</span>
+	</div>
 
 	<ConnectionsTable
 		connections={data.connections}
@@ -140,69 +160,80 @@
 {/if}
 
 <style>
-	.page-header {
+	.filter-row {
 		display: flex;
-		justify-content: flex-end;
-		align-items: center;
-		margin-bottom: 1rem;
-	}
-
-	.header-right {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-	}
-
-	.fetched-at {
-		font-size: 0.75rem;
-		font-variant-numeric: tabular-nums;
-		color: var(--text-muted);
-	}
-
-	.tunnel-chips {
-		display: flex;
-		gap: 0.5rem;
-		margin-bottom: 1rem;
 		flex-wrap: wrap;
-	}
-
-	.tunnel-chip {
-		display: flex;
 		align-items: center;
 		gap: 0.375rem;
-		padding: 0.375rem 0.625rem;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		font-size: 0.75rem;
-		cursor: pointer;
-		font-family: inherit;
-		color: inherit;
-		transition: border-color 0.15s, background 0.15s;
+		margin-bottom: 0.625rem;
 	}
 
-	.tunnel-chip:hover {
-		border-color: var(--accent);
+	.filter-row-secondary {
+		gap: 0.5rem;
 	}
 
-	.tunnel-chip.active {
-		border-color: var(--accent);
-		background: rgba(122, 162, 247, 0.15);
+	.proto-chips {
+		display: inline-flex;
+		gap: 0.25rem;
 	}
 
-	.tunnel-chip-dot {
+	.search-input {
+		flex: 1;
+		min-width: 180px;
+		max-width: 280px;
+	}
+
+	.counter {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		margin-left: auto;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--color-text-muted);
+	}
+
+	.live-dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--color-success);
+		box-shadow: 0 0 0 3px var(--color-success-tint);
+		transition: background 0.2s ease;
+	}
+
+	.live-dot-loading {
+		background: var(--color-warning, var(--color-accent));
+		animation: pulse 1s ease-in-out infinite;
+	}
+
+	@keyframes pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.4; }
+	}
+
+	.chip-count {
+		font-family: var(--font-mono);
+		font-size: 10px;
+		opacity: 0.7;
+		margin-left: 0.25rem;
+	}
+
+	.chip-led {
 		width: 6px;
 		height: 6px;
 		border-radius: 50%;
-		flex-shrink: 0;
+		background: var(--color-text-muted);
+		display: inline-block;
+		margin-right: 0.25rem;
 	}
 
-	.tunnel-chip-dot-vpn { background: var(--accent); }
-	.tunnel-chip-dot-direct { background: var(--text-muted); }
+	.chip-led-vpn {
+		background: var(--color-accent);
+	}
 
-	.tunnel-chip-count {
-		color: var(--text-muted);
-		font-family: var(--font-mono, monospace);
-		font-size: 0.6875rem;
+	@media (max-width: 640px) {
+		.search-input { max-width: 100%; }
+		.counter { margin-left: 0; }
 	}
 </style>

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
-	import { Toggle } from '$lib/components/ui';
+	import { Toggle, Button, Dropdown } from '$lib/components/ui';
 	import type { HydraRouteConfig } from '$lib/types';
 
 	let cfg = $state<HydraRouteConfig | null>(null);
@@ -48,9 +48,9 @@
 	<header class="pane-header">
 		<h2>Настройки демона hrneo</h2>
 		{#if dirty}
-			<button class="btn btn-primary btn-sm" onclick={save} disabled={saving}>
-				{saving ? 'Сохранение…' : 'Сохранить'}
-			</button>
+			<Button variant="primary" size="sm" onclick={save} loading={saving}>
+				Сохранить
+			</Button>
 		{/if}
 	</header>
 
@@ -149,16 +149,18 @@
 						<div class="flex flex-col gap-1">
 							<span class="font-medium">Log mode</span>
 						</div>
-						<select
-							class="form-select"
-							value={cfg.log}
-							onchange={(e) =>
-								touch('log', (e.target as HTMLSelectElement).value)}
-						>
-							<option value="off">off</option>
-							<option value="console">console</option>
-							<option value="file">file</option>
-						</select>
+						<div class="log-select">
+							<Dropdown
+								value={cfg.log}
+								options={[
+									{ value: 'off', label: 'off' },
+									{ value: 'console', label: 'console' },
+									{ value: 'file', label: 'file' },
+								]}
+								onchange={(v) => touch('log', v)}
+								fullWidth
+							/>
+						</div>
 					</div>
 					{#if cfg.log === 'file'}
 						<div class="setting-row">
@@ -205,6 +207,10 @@
 		display: flex;
 		flex-direction: column;
 		gap: 14px;
+	}
+
+	.log-select {
+		min-width: 130px;
 	}
 
 	.pane-header {

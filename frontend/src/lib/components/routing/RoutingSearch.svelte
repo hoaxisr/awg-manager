@@ -2,6 +2,7 @@
     import type { DnsRoute, StaticRouteList, RoutingTunnel } from '$lib/types';
     import { api } from '$lib/api/client';
     import { detectQueryType, ipInCIDR, cidrOverlaps, isCIDR } from '$lib/utils/cidr';
+    import { Button } from '$lib/components/ui';
     import RoutingSearchResults from './RoutingSearchResults.svelte';
     import type { MatchedRule, ResolveMatch } from './types';
 
@@ -308,13 +309,15 @@
                 </svg>
             </button>
         {/if}
-        <button class="btn btn-sm btn-primary search-btn" onclick={handleSearch} disabled={!query.trim()}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                <circle cx="11" cy="11" r="8"/>
-                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
+        <Button variant="primary" size="sm" onclick={handleSearch} disabled={!query.trim()}>
+            {#snippet iconBefore()}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <circle cx="11" cy="11" r="8"/>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+            {/snippet}
             Поиск
-        </button>
+        </Button>
     </div>
 
     {#if hasSearched}
@@ -378,12 +381,5 @@
 
     .btn-clear:hover {
         color: var(--text-secondary);
-    }
-
-    .search-btn {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        white-space: nowrap;
     }
 </style>

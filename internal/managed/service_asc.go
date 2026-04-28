@@ -7,15 +7,16 @@ import (
 	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 )
 
 // GetASCParams returns ASC parameters for the managed server's interface.
 // Numeric params (Jc..H4, S3, S4) come from NDMS; I1-I5 come from local storage.
-func (s *Service) GetASCParams(ctx context.Context) (json.RawMessage, error) {
-	server := s.settings.GetManagedServer()
-	if server == nil {
-		return nil, fmt.Errorf("no managed server exists")
+func (s *Service) GetASCParams(ctx context.Context, id string) (json.RawMessage, error) {
+	server, ok := s.settings.GetManagedServerByID(id)
+	if !ok {
+		return nil, fmt.Errorf("managed server not found: %s", id)
 	}
 
 	raw, err := s.queries.WGServers.GetASCParams(ctx, server.InterfaceName, osdetect.AtLeast(5, 1))
@@ -60,24 +61,31 @@ func (s *Service) GetASCParams(ctx context.Context) (json.RawMessage, error) {
 
 // SetASCParams sets ASC parameters on the managed server's interface.
 // I1-I5 are saved locally (not sent to NDMS — server doesn't use them).
-func (s *Service) SetASCParams(ctx context.Context, params json.RawMessage) error {
-	server := s.settings.GetManagedServer()
-	if server == nil {
-		return fmt.Errorf("no managed server exists")
+func (s *Service) SetASCParams(ctx context.Context, id string, params json.RawMessage) error {
+	server, ok := s.settings.GetManagedServerByID(id)
+	if !ok {
+		return fmt.Errorf("managed server not found: %s", id)
 	}
 
-	// Extract I1-I5 from params and save locally
+	// Extract I1-I5 from params and persist locally first so the strip-and-send
+	// path below can fail without leaving stale local state.
 	var ext ndms.ASCParamsExtended
+	hasI := false
 	if err := json.Unmarshal(params, &ext); err == nil {
-		server.I1 = ext.I1
-		server.I2 = ext.I2
-		server.I3 = ext.I3
-		server.I4 = ext.I4
-		server.I5 = ext.I5
+		hasI = true
 	}
 
-	if err := s.settings.SaveManagedServer(server); err != nil {
-		return fmt.Errorf("save I1-I5: %w", err)
+	if hasI {
+		if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
+			sv.I1 = ext.I1
+			sv.I2 = ext.I2
+			sv.I3 = ext.I3
+			sv.I4 = ext.I4
+			sv.I5 = ext.I5
+			return nil
+		}); err != nil {
+			return fmt.Errorf("save I1-I5: %w", err)
+		}
 	}
 
 	// Strip I1-I5 before sending to NDMS

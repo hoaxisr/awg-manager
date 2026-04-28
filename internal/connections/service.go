@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -314,9 +315,14 @@ func applyFilters(conns []Connection, params ListParams) []Connection {
 			}
 		}
 
-		// Search filter
+		// Search filter — matches src/dst IPs, client name, and either port
+		// (rendered as decimal so "443" or ":443" both hit).
 		if search != "" {
-			haystack := strings.ToLower(c.Src + " " + c.Dst + " " + c.ClientName)
+			haystack := strings.ToLower(
+				c.Src + ":" + strconv.Itoa(c.SrcPort) + " " +
+					c.Dst + ":" + strconv.Itoa(c.DstPort) + " " +
+					c.ClientName,
+			)
 			if !strings.Contains(haystack, search) {
 				continue
 			}

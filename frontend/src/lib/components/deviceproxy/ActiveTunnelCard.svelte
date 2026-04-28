@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
+	import { Button } from '$lib/components/ui';
 	import type { DeviceProxyOutbound, DeviceProxyRuntime } from '$lib/types';
 
 	interface Props {
@@ -50,15 +51,21 @@
 		return ob?.label ?? tag;
 	}
 
-	let currentTag = $derived(runtime.alive ? (runtime.activeTag || runtime.defaultTag) : runtime.defaultTag);
-	let isTemporary = $derived(runtime.alive && runtime.activeTag !== '' && runtime.activeTag !== runtime.defaultTag);
-	let defaultLabel = $derived(labelFor(runtime.defaultTag));
+	const currentTag = $derived(runtime.alive ? (runtime.activeTag || runtime.defaultTag) : runtime.defaultTag);
+	const isTemporary = $derived(runtime.alive && runtime.activeTag !== '' && runtime.activeTag !== runtime.defaultTag);
+	const defaultLabel = $derived(labelFor(runtime.defaultTag));
 
-	let grouped = $derived.by(() => {
+	type Group = { title: string; items: DeviceProxyOutbound[] };
+
+	const groups = $derived.by<Group[]>(() => {
 		const direct = outbounds.filter((o) => o.kind === 'direct');
 		const sb = outbounds.filter((o) => o.kind === 'singbox');
 		const awg = outbounds.filter((o) => o.kind === 'awg');
-		return { direct, sb, awg };
+		const out: Group[] = [];
+		if (direct.length > 0) out.push({ title: '', items: direct });
+		if (awg.length > 0) out.push({ title: 'Туннели', items: awg });
+		if (sb.length > 0) out.push({ title: 'Sing-box туннели', items: sb });
+		return out;
 	});
 </script>
 
@@ -69,36 +76,39 @@
 			{runtime.alive ? 'Работает сейчас' : 'Применится при запуске'}
 		</span>
 	</div>
-	<p class="section-desc">
-		Переключение применяется моментально, без перезапуска sing-box. Действует до следующей перезагрузки прокси — тогда возьмётся значение "По умолчанию" из настроек.
-	</p>
 
-	<div class="select-row">
-		<span class="row-label">Куда направляется трафик</span>
-		<select
-			class="select"
-			disabled={switching || !runtime.alive}
-			onchange={(e) => handleSelect((e.target as HTMLSelectElement).value)}
-			value={currentTag}
-		>
-			{#each grouped.direct as ob (ob.tag)}
-				<option value={ob.tag}>{ob.label}</option>
+	<div class="radio-list" class:disabled={switching || !runtime.alive}>
+		{#each groups as group}
+			{#if group.title}
+				<div class="group-title">{group.title}</div>
+			{/if}
+			{#each group.items as ob}
+				{@const checked = currentTag === ob.tag}
+				<label class="option" class:checked>
+					<input
+						type="radio"
+						name="device-proxy-active-tunnel"
+						value={ob.tag}
+						checked={checked}
+						disabled={switching || !runtime.alive}
+						onchange={() => handleSelect(ob.tag)}
+					/>
+					<span class="option-content">
+						<span class="option-name">{ob.label || ob.tag}</span>
+						{#if ob.detail || (ob.label && ob.label !== ob.tag)}
+							<span class="option-meta">{ob.tag}{ob.detail ? ' · ' + ob.detail : ''}</span>
+						{/if}
+					</span>
+					<span class="option-check" aria-hidden="true">
+						{#if checked}
+							<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+								<polyline points="20 6 9 17 4 12"/>
+							</svg>
+						{/if}
+					</span>
+				</label>
 			{/each}
-			{#if grouped.sb.length > 0}
-				<optgroup label="Sing-box туннели">
-					{#each grouped.sb as ob (ob.tag)}
-						<option value={ob.tag}>{ob.label}</option>
-					{/each}
-				</optgroup>
-			{/if}
-			{#if grouped.awg.length > 0}
-				<optgroup label="Туннели">
-					{#each grouped.awg as ob (ob.tag)}
-						<option value={ob.tag}>{ob.label} · {ob.detail}</option>
-					{/each}
-				</optgroup>
-			{/if}
-		</select>
+		{/each}
 	</div>
 
 	{#if isTemporary}
@@ -107,14 +117,14 @@
 				<span class="badge badge-warning">временно</span>
 				После перезапуска вернётся к "{defaultLabel}"
 			</div>
-			<button
-				type="button"
-				class="btn btn-ghost btn-sm"
-				disabled={applying}
+			<Button
+				variant="ghost"
+				size="sm"
+				loading={applying}
 				onclick={applyNow}
 			>
-				{applying ? 'Применяю…' : 'Применить сейчас'}
-			</button>
+				Применить сейчас
+			</Button>
 		</div>
 	{:else if !runtime.alive}
 		<div class="hint-row">
@@ -125,32 +135,101 @@
 
 <style>
 	.section-title { font-size: 1rem; font-weight: 600; margin: 0; }
-	.section-desc { font-size: 0.8125rem; color: var(--text-muted); margin: 0 0 0.75rem 0; }
 
-	.select-row {
+	.card-header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 1rem;
-		padding: 0.5rem 0;
-	}
-	.row-label {
-		color: var(--text-primary);
-		font-size: 0.875rem;
-		font-weight: 500;
+		gap: 0.75rem;
+		margin-bottom: 0.75rem;
 	}
 
-	.select {
-		min-width: 260px;
-		max-width: 60%;
-		padding: 0.4rem 0.6rem;
-		background: var(--bg-tertiary);
-		border: 1px solid var(--border);
-		border-radius: 4px;
-		color: var(--text-primary);
-		font-size: 0.8125rem;
+	.radio-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.375rem;
+		max-height: 360px;
+		overflow-y: auto;
 	}
-	.select:disabled { opacity: 0.5; cursor: not-allowed; }
+
+	.radio-list.disabled {
+		opacity: 0.6;
+	}
+
+	.group-title {
+		font-size: 0.6875rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--color-text-muted);
+		padding: 0.5rem 0 0.125rem;
+	}
+
+	.option {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.625rem 0.875rem;
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		cursor: pointer;
+		transition: background 0.15s ease, border-color 0.15s ease;
+		min-width: 0;
+	}
+
+	.option:hover:not(.checked) {
+		border-color: var(--color-border-hover);
+		background: var(--color-bg-hover);
+	}
+
+	.option.checked {
+		border-color: var(--color-accent);
+		background: rgba(122, 162, 247, 0.08);
+	}
+
+	.option input[type='radio'] {
+		position: absolute;
+		opacity: 0;
+		pointer-events: none;
+		width: 0;
+		height: 0;
+	}
+
+	.option-content {
+		display: flex;
+		flex-direction: column;
+		gap: 0.125rem;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.option-name {
+		font-size: 0.875rem;
+		color: var(--color-text-primary);
+		font-weight: 500;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.option-meta {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		color: var(--color-text-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.option-check {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 18px;
+		height: 18px;
+		flex-shrink: 0;
+		color: var(--color-accent);
+	}
 
 	.hint-row {
 		display: flex;
@@ -159,20 +238,21 @@
 		gap: 0.75rem;
 		margin-top: 0.5rem;
 		padding: 0.5rem 0.75rem;
-		background: var(--bg-tertiary);
+		background: var(--color-bg-tertiary, var(--color-bg-secondary));
 		border-radius: 6px;
 	}
+
 	.hint-text {
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
 		flex-wrap: wrap;
 		font-size: 0.8125rem;
-		color: var(--text-secondary);
+		color: var(--color-text-secondary);
 	}
 
 	.badge-muted {
 		background: rgba(107, 114, 128, 0.15);
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 </style>

@@ -3,6 +3,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { PageContainer } from '$lib/components/layout';
+	import { Button } from '$lib/components/ui';
 	import { TerminalInstall, TerminalView } from '$lib/components/terminal';
 	import type { TerminalStatus } from '$lib/types';
 
@@ -91,7 +92,7 @@
 	<PageContainer>
 		<div class="terminal-loading">
 			<p>Терминал уже открыт в другой вкладке</p>
-			<button class="btn btn-primary" onclick={checkStatus}>Повторить</button>
+			<Button variant="primary" size="md" onclick={checkStatus}>Повторить</Button>
 		</div>
 	</PageContainer>
 {:else if pageState === 'active'}
@@ -102,7 +103,7 @@
 	<PageContainer>
 		<div class="terminal-loading">
 			<p>Ошибка подключения к терминалу</p>
-			<button class="btn btn-primary" onclick={checkStatus}>Повторить</button>
+			<Button variant="primary" size="md" onclick={checkStatus}>Повторить</Button>
 		</div>
 	</PageContainer>
 {/if}

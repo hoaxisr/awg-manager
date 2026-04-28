@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button, Dropdown } from '$lib/components/ui';
 	import type { AWGTunnel, ConnectivityCheckConfig } from '$lib/types';
 
 	interface Props {
@@ -77,18 +77,23 @@
 	{:else}
 		<div class="form-fields">
 			<div class="field">
-				<label class="field-label" for="cc-method">Метод проверки</label>
-				<select id="cc-method" class="input" bind:value={method}>
-					<option value="http">HTTP 204 (интернет)</option>
-					<option value="ping">Ping IP</option>
-					<option value="disabled">Выключено</option>
-				</select>
+				<Dropdown
+					id="cc-method"
+					label="Метод проверки"
+					bind:value={method}
+					options={[
+						{ value: 'http', label: 'HTTP 204 (интернет)' },
+						{ value: 'ping', label: 'Ping IP' },
+						{ value: 'disabled', label: 'Выключено' },
+					]}
+					fullWidth
+				/>
 			</div>
 
 			{#if method === 'ping'}
 				<div class="field">
 					<label class="field-label" for="cc-target">IP для ping</label>
-					<input id="cc-target" type="text" class="input" bind:value={pingTarget} placeholder="10.0.0.1" />
+					<input id="cc-target" type="text" class="field-input" bind:value={pingTarget} placeholder="10.0.0.1" />
 					<span class="hint-text">По умолчанию: gateway (.1) из адреса туннеля</span>
 				</div>
 			{/if}
@@ -102,10 +107,10 @@
 	{/if}
 
 	{#snippet actions()}
-		<button class="btn btn-ghost" onclick={onclose}>Отмена</button>
-		<button class="btn btn-primary" onclick={handleSave} disabled={saving || loading}>
-			{saving ? 'Сохранение...' : 'Сохранить'}
-		</button>
+		<Button variant="ghost" onclick={onclose}>Отмена</Button>
+		<Button variant="primary" onclick={handleSave} disabled={loading} loading={saving}>
+			Сохранить
+		</Button>
 	{/snippet}
 </Modal>
 
@@ -125,17 +130,17 @@
 	.field-label {
 		font-size: 0.6875rem;
 		text-transform: uppercase;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.hint-text {
 		font-size: 0.6875rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 
 	.loading-state {
 		text-align: center;
 		padding: 2rem;
-		color: var(--text-muted);
+		color: var(--color-text-muted);
 	}
 </style>

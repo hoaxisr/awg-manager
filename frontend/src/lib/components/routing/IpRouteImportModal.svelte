@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Modal } from '$lib/components/ui';
+	import { Modal, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { parseStaticRouteImport, type PortableStaticRoute } from '$lib/utils/staticroute-export';
 	import type { RoutingTunnel } from '$lib/types';
 
@@ -144,24 +144,20 @@
 		</div>
 	{:else}
 		<!-- Default tunnel selector -->
+		{@const tunnelOpts: DropdownOption[] = [
+			...userTunnels.map((t) => ({ value: t.id, label: t.name, group: 'Пользовательские' })),
+			...systemTunnels.map((t) => ({ value: t.id, label: t.name, group: 'Системные' })),
+		]}
 		<div class="tunnel-default-bar">
 			<span class="tunnel-default-label">Туннель для всех:</span>
-			<select class="tunnel-select" bind:value={defaultTunnelId} disabled={importing}>
-				{#if userTunnels.length > 0}
-					<optgroup label="Пользовательские">
-						{#each userTunnels as t}
-							<option value={t.id}>{t.name}</option>
-						{/each}
-					</optgroup>
-				{/if}
-				{#if systemTunnels.length > 0}
-					<optgroup label="Системные">
-						{#each systemTunnels as t}
-							<option value={t.id}>{t.name}</option>
-						{/each}
-					</optgroup>
-				{/if}
-			</select>
+			<div class="tunnel-select">
+				<Dropdown
+					bind:value={defaultTunnelId}
+					options={tunnelOpts}
+					disabled={importing}
+					fullWidth
+				/>
+			</div>
 		</div>
 
 		{#if noTunnels}
@@ -182,36 +178,23 @@
 						<span class="import-dup">(дубликат)</span>
 					{/if}
 					{#if editingTunnelIdx === i}
-						<select
-							class="tunnel-select-inline"
-							value={effectiveTunnel(i)}
-							onchange={(e) => {
-								const val = (e.target as HTMLSelectElement).value;
-								if (val === defaultTunnelId) {
-									const next = { ...tunnelOverrides };
-									delete next[i];
-									tunnelOverrides = next;
-								} else {
-									tunnelOverrides = { ...tunnelOverrides, [i]: val };
-								}
-								editingTunnelIdx = null;
-							}}
-						>
-							{#if userTunnels.length > 0}
-								<optgroup label="Пользовательские">
-									{#each userTunnels as t}
-										<option value={t.id}>{t.name}</option>
-									{/each}
-								</optgroup>
-							{/if}
-							{#if systemTunnels.length > 0}
-								<optgroup label="Системные">
-									{#each systemTunnels as t}
-										<option value={t.id}>{t.name}</option>
-									{/each}
-								</optgroup>
-							{/if}
-						</select>
+						<div class="tunnel-select-inline">
+							<Dropdown
+								value={effectiveTunnel(i)}
+								options={tunnelOpts}
+								onchange={(val) => {
+									if (val === defaultTunnelId) {
+										const next = { ...tunnelOverrides };
+										delete next[i];
+										tunnelOverrides = next;
+									} else {
+										tunnelOverrides = { ...tunnelOverrides, [i]: val };
+									}
+									editingTunnelIdx = null;
+								}}
+								fullWidth
+							/>
+						</div>
 					{:else}
 						<button
 							class="tunnel-name-btn"
@@ -228,11 +211,11 @@
 	{/if}
 
 	{#snippet actions()}
-		<button class="btn btn-ghost" onclick={onclose} disabled={importing}>Отмена</button>
+		<Button variant="ghost" onclick={onclose} disabled={importing}>Отмена</Button>
 		{#if parsed}
-			<button class="btn btn-primary" onclick={handleImport} disabled={importing || selectedCount === 0 || noTunnels}>
-				{importing ? 'Импорт...' : `Импортировать (${selectedCount})`}
-			</button>
+			<Button variant="primary" onclick={handleImport} disabled={selectedCount === 0 || noTunnels} loading={importing}>
+				{`Импортировать (${selectedCount})`}
+			</Button>
 		{/if}
 	{/snippet}
 </Modal>

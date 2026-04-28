@@ -77,12 +77,14 @@ func (s *Service) AppLog(level Level, group, subgroup, action, target, message s
 }
 
 // GetLogs returns entries filtered by group, subgroup, level with pagination.
-// Returns the page slice and the total count of filtered entries.
-func (s *Service) GetLogs(group, subgroup, level string, limit, offset int) ([]LogEntry, int) {
+// A non-zero `since` restricts results to entries strictly after that time
+// (SSE catch-up after reconnect). Returns the page slice and the total count
+// of filtered entries.
+func (s *Service) GetLogs(group, subgroup, level string, since time.Time, limit, offset int) ([]LogEntry, int) {
 	if limit <= 0 {
 		limit = 200
 	}
-	return s.buffer.GetPaginated(group, subgroup, level, limit, offset)
+	return s.buffer.GetPaginated(group, subgroup, level, since, limit, offset)
 }
 
 func (s *Service) Clear()  { s.buffer.Clear() }

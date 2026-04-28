@@ -8,13 +8,10 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
-// Create creates a new managed WireGuard server interface.
+// Create creates a new managed WireGuard server interface and persists it.
+// Multiple managed servers may coexist; the only collision check is on the
+// allocated NDMS interface name.
 func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage.ManagedServer, error) {
-	// Check no existing managed server
-	if existing := s.settings.GetManagedServer(); existing != nil {
-		return nil, fmt.Errorf("managed server already exists: %s", existing.InterfaceName)
-	}
-
 	// Validate
 	if err := s.validateServerParams(ctx, req.Address, req.Mask, req.ListenPort, ""); err != nil {
 		return nil, err
@@ -30,6 +27,13 @@ func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage
 	// Resolve mask to dotted notation for storage
 	mask := s.resolveMask(req.Mask)
 
+	// Description: default to ManagedServerDescription when caller omits one,
+	// preserving the legacy hardcoded value so existing behaviour is unchanged.
+	description := req.Description
+	if description == "" {
+		description = ManagedServerDescription
+	}
+
 	// Create interface via RCI
 	if err := s.rciCreateInterface(ctx, ifaceName); err != nil {
 		return nil, fmt.Errorf("create interface: %w", err)
@@ -37,7 +41,7 @@ func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage
 
 	// Configure all properties in a single RCI call:
 	// description, security-level, listen-port, ip address, name-servers, tcp adjust-mss, up
-	if err := s.rciConfigureServer(ctx, ifaceName, ManagedServerDescription, req.Address, mask, req.ListenPort); err != nil {
+	if err := s.rciConfigureServer(ctx, ifaceName, description, req.Address, mask, req.ListenPort); err != nil {
 		s.cleanupInterface(ctx, ifaceName)
 		return nil, fmt.Errorf("configure interface: %w", err)
 	}
@@ -49,8 +53,9 @@ func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage
 	}
 
 	// Save to storage
-	server := &storage.ManagedServer{
+	server := storage.ManagedServer{
 		InterfaceName: ifaceName,
+		Description:   description,
 		Address:       req.Address,
 		Mask:          mask,
 		ListenPort:    req.ListenPort,
@@ -60,21 +65,22 @@ func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage
 		NATEnabled:    true,
 		Peers:         []storage.ManagedPeer{},
 	}
-	if err := s.settings.SaveManagedServer(server); err != nil {
+	if err := s.settings.AddManagedServer(server); err != nil {
 		s.cleanupInterface(ctx, ifaceName)
 		return nil, fmt.Errorf("save to storage: %w", err)
 	}
 
 	s.log.Info("managed server created", "interface", ifaceName, "address", req.Address, "port", req.ListenPort)
 	s.appLog.Info("create", ifaceName, fmt.Sprintf("Managed server created on %s", ifaceName))
-	return server, nil
+	saved := server
+	return &saved, nil
 }
 
 // Update updates the managed server's address and/or listen port.
-func (s *Service) Update(ctx context.Context, req UpdateServerRequest) error {
-	server := s.settings.GetManagedServer()
-	if server == nil {
-		return fmt.Errorf("no managed server exists")
+func (s *Service) Update(ctx context.Context, id string, req UpdateServerRequest) error {
+	server, ok := s.settings.GetManagedServerByID(id)
+	if !ok {
+		return fmt.Errorf("managed server not found: %s", id)
 	}
 
 	if err := s.validateServerParams(ctx, req.Address, req.Mask, req.ListenPort, server.InterfaceName); err != nil {
@@ -83,43 +89,65 @@ func (s *Service) Update(ctx context.Context, req UpdateServerRequest) error {
 
 	mask := s.resolveMask(req.Mask)
 
-	// Update listen port if changed
-	if req.ListenPort != server.ListenPort {
-		if err := s.rciSetListenPort(ctx, server.InterfaceName, req.ListenPort); err != nil {
-			return fmt.Errorf("set listen-port: %w", err)
+	// Build the set of NDMS-side mutations and send them in a single atomic
+	// RCI POST. Either every change applies or the whole payload is rejected,
+	// so router and storage cannot end up partially diverged on a multi-leg
+	// edit. Description's empty current value is treated as the legacy
+	// default (ManagedServerDescription) for the changed-check so the first
+	// edit on a pre-Description-field server doesn't spuriously emit a
+	// no-op rename to the default.
+	changes := updateServerChanges{}
+	if req.Description != nil {
+		currentDesc := server.Description
+		if currentDesc == "" {
+			currentDesc = ManagedServerDescription
+		}
+		newDesc := *req.Description
+		if newDesc == "" {
+			newDesc = ManagedServerDescription
+		}
+		if newDesc != currentDesc {
+			changes.descriptionSet = true
+			changes.description = newDesc
 		}
 	}
-
-	// Update address if changed
+	if req.ListenPort != server.ListenPort {
+		changes.portSet = true
+		changes.port = req.ListenPort
+	}
 	if req.Address != server.Address || mask != server.Mask {
-		// Remove old address first
-		if err := s.rciRemoveAddress(ctx, server.InterfaceName, server.Address, server.Mask); err != nil {
-			s.log.Warn("failed to remove old IP address", "error", err, "address", server.Address)
-		}
-		// Set new address
-		if err := s.rciSetAddress(ctx, server.InterfaceName, req.Address, mask); err != nil {
-			return fmt.Errorf("set address: %w", err)
-		}
+		changes.addressChanged = true
+		changes.oldAddress = server.Address
+		changes.oldMask = server.Mask
+		changes.newAddress = req.Address
+		changes.newMask = mask
+	}
+	if err := s.rciUpdateServer(ctx, server.InterfaceName, changes); err != nil {
+		return fmt.Errorf("update server: %w", err)
 	}
 
 	// Update storage. Required fields (Address, Mask, ListenPort) were
-	// validated above. Optional fields (Endpoint, DNS, MTU) must be
-	// preserved from existing when the caller omits them in the request —
-	// Go's json decoder cannot distinguish "absent" from "zero value", so
-	// a payload missing Endpoint/DNS/MTU would otherwise wipe them.
-	server.Address = req.Address
-	server.Mask = mask
-	server.ListenPort = req.ListenPort
-	if req.Endpoint != "" {
-		server.Endpoint = req.Endpoint
-	}
-	if req.DNS != "" {
-		server.DNS = req.DNS
-	}
-	if req.MTU != 0 {
-		server.MTU = req.MTU
-	}
-	if err := s.settings.SaveManagedServer(server); err != nil {
+	// validated above. Optional fields (Description, Endpoint, DNS, MTU)
+	// use pointer semantics: nil = preserve existing, non-nil = set
+	// (including empty/zero, which CLEARS the field).
+	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
+		sv.Address = req.Address
+		sv.Mask = mask
+		sv.ListenPort = req.ListenPort
+		if req.Description != nil {
+			sv.Description = *req.Description
+		}
+		if req.Endpoint != nil {
+			sv.Endpoint = *req.Endpoint
+		}
+		if req.DNS != nil {
+			sv.DNS = *req.DNS
+		}
+		if req.MTU != nil {
+			sv.MTU = *req.MTU
+		}
+		return nil
+	}); err != nil {
 		return fmt.Errorf("save to storage: %w", err)
 	}
 
@@ -128,18 +156,20 @@ func (s *Service) Update(ctx context.Context, req UpdateServerRequest) error {
 }
 
 // SetNAT enables or disables NAT on the managed server interface.
-func (s *Service) SetNAT(ctx context.Context, enabled bool) error {
-	server := s.settings.GetManagedServer()
-	if server == nil {
-		return fmt.Errorf("no managed server exists")
+func (s *Service) SetNAT(ctx context.Context, id string, enabled bool) error {
+	server, ok := s.settings.GetManagedServerByID(id)
+	if !ok {
+		return fmt.Errorf("managed server not found: %s", id)
 	}
 
 	if err := s.rciSetNAT(ctx, server.InterfaceName, enabled); err != nil {
 		return fmt.Errorf("set NAT: %w", err)
 	}
 
-	server.NATEnabled = enabled
-	if err := s.settings.SaveManagedServer(server); err != nil {
+	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
+		sv.NATEnabled = enabled
+		return nil
+	}); err != nil {
 		return fmt.Errorf("save to storage: %w", err)
 	}
 
@@ -148,10 +178,10 @@ func (s *Service) SetNAT(ctx context.Context, enabled bool) error {
 }
 
 // SetEnabled brings the managed server interface up or down.
-func (s *Service) SetEnabled(ctx context.Context, enabled bool) error {
-	server := s.settings.GetManagedServer()
-	if server == nil {
-		return fmt.Errorf("no managed server exists")
+func (s *Service) SetEnabled(ctx context.Context, id string, enabled bool) error {
+	server, ok := s.settings.GetManagedServerByID(id)
+	if !ok {
+		return fmt.Errorf("managed server not found: %s", id)
 	}
 
 	if enabled {
@@ -169,25 +199,49 @@ func (s *Service) SetEnabled(ctx context.Context, enabled bool) error {
 }
 
 // Delete removes the managed server and all its peers.
-func (s *Service) Delete(ctx context.Context) error {
-	server := s.settings.GetManagedServer()
-	if server == nil {
-		return fmt.Errorf("no managed server exists")
+//
+// Order matters: NDMS interface deletion happens FIRST. If it fails, storage
+// stays intact so the next attempt can retry. Otherwise we'd leak an orphan
+// kernel/NDMS interface with no storage entry to clean it up later — which is
+// especially bad in the multi-server world (the user might re-create a server
+// at the same Wireguard<N> slot and collide with the orphan).
+//
+// NAT removal and interface-down are best-effort: failing to undo NAT or to
+// down the interface should not block deletion, since rciDeleteInterface will
+// destroy both anyway. Errors are logged via appLog (visible in /logs).
+func (s *Service) Delete(ctx context.Context, id string) error {
+	server, ok := s.settings.GetManagedServerByID(id)
+	if !ok {
+		return fmt.Errorf("managed server not found: %s", id)
 	}
 
-	// Disable NAT if enabled
+	// Disable NAT if enabled — best-effort. NAT cleanup is opportunistic;
+	// rciDeleteInterface below removes the interface (and thus its NAT rule)
+	// regardless.
 	if server.NATEnabled {
-		_ = s.rciSetNAT(ctx, server.InterfaceName, false)
+		if err := s.rciSetNAT(ctx, server.InterfaceName, false); err != nil {
+			s.log.Warn("failed to disable NAT during delete", "error", err, "interface", server.InterfaceName)
+			s.appLog.Warn("delete", server.InterfaceName, fmt.Sprintf("Failed to disable NAT before delete: %v (continuing)", err))
+		}
 	}
 
-	// Bring down
-	_ = s.rciInterfaceDown(ctx, server.InterfaceName)
+	// Bring down — best-effort. rciDeleteInterface implies down.
+	if err := s.rciInterfaceDown(ctx, server.InterfaceName); err != nil {
+		s.log.Warn("failed to bring interface down during delete", "error", err, "interface", server.InterfaceName)
+		s.appLog.Warn("delete", server.InterfaceName, fmt.Sprintf("Failed to bring interface down before delete: %v (continuing)", err))
+	}
 
-	// Delete interface (removes all peers too)
-	_ = s.rciDeleteInterface(ctx, server.InterfaceName)
+	// Delete interface (removes all peers too). This is the CRITICAL step:
+	// if it fails we MUST NOT proceed with the storage delete, otherwise we
+	// leak an orphan kernel/NDMS interface that has no storage entry to
+	// retry the cleanup from.
+	if err := s.rciDeleteInterface(ctx, server.InterfaceName); err != nil {
+		s.appLog.Warn("delete", server.InterfaceName, fmt.Sprintf("Failed to delete NDMS interface: %v", err))
+		return fmt.Errorf("delete interface: %w", err)
+	}
 
 	// Delete from storage
-	if err := s.settings.DeleteManagedServer(); err != nil {
+	if err := s.settings.DeleteManagedServer(id); err != nil {
 		return fmt.Errorf("delete from storage: %w", err)
 	}
 
@@ -196,24 +250,42 @@ func (s *Service) Delete(ctx context.Context) error {
 	return nil
 }
 
-// DeleteIfExists deletes the managed server if one exists.
+// DeleteIfExists deletes every persisted managed server. Used by the cleanup
+// service on uninstall — best-effort, errors on individual servers are
+// returned but later servers still get a chance to be deleted.
 func (s *Service) DeleteIfExists(ctx context.Context) error {
-	if s.Get() == nil {
+	servers := s.settings.GetManagedServers()
+	if len(servers) == 0 {
 		return nil
 	}
-	return s.Delete(ctx)
+	var firstErr error
+	for _, sv := range servers {
+		if err := s.Delete(ctx, sv.InterfaceName); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
-// Get returns the managed server from storage, or nil if not created.
-func (s *Service) Get() *storage.ManagedServer {
-	return s.settings.GetManagedServer()
+// List returns every persisted managed server.
+func (s *Service) List() []storage.ManagedServer {
+	return s.settings.GetManagedServers()
+}
+
+// Get returns the managed server with the given id, or an error if not found.
+func (s *Service) Get(id string) (*storage.ManagedServer, error) {
+	server, ok := s.settings.GetManagedServerByID(id)
+	if !ok {
+		return nil, fmt.Errorf("managed server not found: %s", id)
+	}
+	return server, nil
 }
 
 // GetStats returns runtime statistics for the managed server and its peers from RCI.
-func (s *Service) GetStats(ctx context.Context) (*ManagedServerStats, error) {
-	server := s.settings.GetManagedServer()
-	if server == nil {
-		return nil, fmt.Errorf("no managed server exists")
+func (s *Service) GetStats(ctx context.Context, id string) (*ManagedServerStats, error) {
+	server, ok := s.settings.GetManagedServerByID(id)
+	if !ok {
+		return nil, fmt.Errorf("managed server not found: %s", id)
 	}
 
 	wgServer, err := s.queries.WGServers.Get(ctx, server.InterfaceName)
@@ -237,15 +309,6 @@ func (s *Service) GetStats(ctx context.Context) (*ManagedServerStats, error) {
 		Status: wgServer.Status,
 		Peers:  peers,
 	}, nil
-}
-
-// GetInterfaceName returns the managed server's interface name, or "" if not created.
-func (s *Service) GetInterfaceName() string {
-	server := s.settings.GetManagedServer()
-	if server == nil {
-		return ""
-	}
-	return server.InterfaceName
 }
 
 func (s *Service) validateServerParams(ctx context.Context, address, mask string, port int, excludeIface string) error {
@@ -273,6 +336,10 @@ func (s *Service) validateServerParams(ctx context.Context, address, mask string
 	}
 	if err := validateHostAddress(address, cidr); err != nil {
 		return err
+	}
+
+	if portConflict := findPortConflict(port, s.listUsedListenPorts(excludeIface)); portConflict != nil {
+		return fmt.Errorf("listen-port %d уже используется managed-сервером %q", port, portConflict.iface)
 	}
 
 	used, err := s.listUsedSubnets(ctx, excludeIface)

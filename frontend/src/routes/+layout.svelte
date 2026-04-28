@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { get } from 'svelte/store';
 	import type { Snippet } from 'svelte';
-	import { page } from '$app/stores';
 	import { theme } from '$lib/stores/theme';
 	import { auth, isAuthenticated, isLoading } from '$lib/stores/auth';
 	import { notifications } from '$lib/stores/notifications';
@@ -12,20 +12,18 @@
 	import { healthMonitor } from '$lib/stores/health';
 	import { tunnels } from '$lib/stores/tunnels';
 	import { logEntries } from '$lib/stores/logs';
+	import { monitoringStore } from '$lib/stores/monitoring';
 	import { appendPingLog } from '$lib/stores/pingcheck';
 	import { systemInfo } from '$lib/stores/system';
 	import { feedTraffic } from '$lib/stores/traffic';
 	import { applyTraffic as singboxApplyTraffic, applyDelay as singboxApplyDelay } from '$lib/stores/singbox';
+	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { invalidateResource, invalidateAll } from '$lib/stores/storeRegistry';
 	import { setDeviceProxyMissingTarget, clearDeviceProxyMissingTarget } from '$lib/stores/deviceproxy';
-	// Task 15 note: no snapshot handlers remain — all cold-tier state is
-	// fetched via REST by polling stores, and the SSE stream now carries
-	// only incremental push-only events (traffic, connectivity, logs,
-	// ping-check logs, sing-box delay/traffic, geo progress, DNS-route
-	// failover) plus the generic resource:invalidated hint.
 	import type { UpdateInfo } from '$lib/types';
 	import LoginForm from '$lib/components/LoginForm.svelte';
-	import { Modal, SaveStatusIndicator } from '$lib/components/ui';
+	import { Modal } from '$lib/components/ui';
+	import { AppHeader } from '$lib/components/layout';
 	import '../app.css';
 
 	let { children }: { children: Snippet } = $props();
@@ -33,10 +31,6 @@
 	let mobileMenuOpen = $state(false);
 	let donateModalOpen = $state(false);
 	let booting = $state(false);
-
-	function closeMobileMenu() {
-		mobileMenuOpen = false;
-	}
 
 	let backendOffline = $derived(!$serverOnline);
 
@@ -66,6 +60,23 @@
 				// fresh fetch of tunnel state to catch any drift during the outage.
 				tunnels.clearConnectivity();
 				tunnels.invalidate();
+
+				// Log catch-up: fetch entries we missed during the outage so the
+				// terminal feed has no gap. Use lastSeenTs - 1s for safe overlap
+				// (appendMany dedupes by composite key).
+				const lastTs = get(logEntries.lastSeenTs);
+				if (lastTs > 0) {
+					const sinceUnix = Math.floor((lastTs - 1000) / 1000);
+					api.getLogs({ since: sinceUnix, limit: 1000 })
+						.then((resp) => {
+							if (resp.logs.length > 0) {
+								logEntries.appendMany(resp.logs);
+							}
+						})
+						.catch(() => {
+							// silent — next SSE event will resume the stream
+						});
+				}
 			},
 			onDisconnected: () => {
 				// Phase C: serverOnline.set() is gone (derived from healthMonitor);
@@ -99,14 +110,28 @@
 					feedTraffic(resolvedId, data.rxBytes, data.txBytes);
 				}
 			},
-			onTunnelConnectivity: (data) => tunnels.updateConnectivity(data.id, data.connected, data.latency),
+			// tunnel:connectivity event was deprecated together with the
+			// per-tunnel polling loop in internal/connectivity. Card latency
+			// now derives from the monitoring matrix snapshot via
+			// applyMatrixSnapshot below; the manual recheck button still
+			// flows through api.checkConnectivity → updateConnectivity.
 
 			// Logs & ping-check streams
 			onLogEntry: (data) => logEntries.append(data),
+			onMonitoringMatrixUpdate: (data) => {
+				monitoringStore.setSnapshot(data);
+				tunnels.applyMatrixSnapshot(data);
+			},
 			onPingCheckLog: appendPingLog,
 
-			// Sing-box streams
-			onSingboxTraffic: singboxApplyTraffic,
+			// Sing-box streams — also feed the rate-history store so the
+			// per-tunnel sparkline on the home card has data.
+			onSingboxTraffic: (data) => {
+				singboxApplyTraffic(data);
+				for (const t of data) {
+					feedTraffic(t.tag, t.download, t.upload);
+				}
+			},
 			onSingboxDelay: (data) => singboxApplyDelay(data.tag, data.delay),
 
 			// HydraRoute geo download progress
@@ -138,6 +163,12 @@
 			onDeviceProxyMissingTarget: (data) => {
 				setDeviceProxyMissingTarget(data.wasTag);
 			},
+
+			// Sing-box Router state streams (rules, rule-sets, outbounds, status)
+			onSingboxRouterStatus: singboxRouter.applyStatus,
+			onSingboxRouterRules: singboxRouter.applyRules,
+			onSingboxRouterRuleSets: singboxRouter.applyRuleSets,
+			onSingboxRouterOutbounds: singboxRouter.applyOutbounds,
 		});
 	}
 
@@ -224,130 +255,19 @@
 		<div class="loading-spinner"></div>
 	</div>
 {:else}
-	<header class="header">
-		<div class="header-content">
-			<div class="logo-group">
-				<a href="/" class="logo" onclick={closeMobileMenu}>
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-					</svg>
-					<span class="logo-text">AWG Manager</span>
-				</a>
-				{#if currentVersion}
-					{#if hasUpdate && $isAuthenticated}
-						<a href="/settings" class="version-badge version-clickable" class:version-update-stable={!isPreRelease} class:version-update-prerelease={isPreRelease}>
-							v{currentVersion} ↑
-						</a>
-					{:else}
-						<span class="version-badge" class:version-stable={!isPreRelease} class:version-prerelease={isPreRelease}>
-							v{currentVersion}
-						</span>
-					{/if}
-				{/if}
-				{#if $isAuthenticated}
-					<SaveStatusIndicator />
-				{/if}
-			</div>
-
-			{#if $isAuthenticated}
-				<nav class="nav">
-					<a href="/" class="nav-link" class:active={$page.url.pathname === '/' || $page.url.pathname.startsWith('/tunnels')}>Туннели</a>
-					<a href="/servers" class="nav-link" class:active={$page.url.pathname.startsWith('/servers')}>Серверы</a>
-					<a href="/routing" class="nav-link" class:active={$page.url.pathname.startsWith('/routing')}>Маршрутизация</a>
-					<a href="/pingcheck" class="nav-link" class:active={$page.url.pathname.startsWith('/pingcheck')}>Мониторинг</a>
-					<a href="/diagnostics" class="nav-link" class:active={$page.url.pathname.startsWith('/diagnostics') || $page.url.pathname.startsWith('/connections') || $page.url.pathname.startsWith('/logs')}>Диагностика</a>
-					<a href="/settings" class="nav-link" class:active={$page.url.pathname.startsWith('/settings')}>Настройки</a>
-				</nav>
-			{:else}
-				<div></div>
-			{/if}
-
-			<div class="header-actions">
-				{#if $isAuthenticated && !$auth.authDisabled}
-					<span class="user-info">{$auth.login}</span>
-				{/if}
-
-				{#if $isAuthenticated}
-				<a href="/terminal" class="btn btn-icon btn-header-icon" title="Терминал">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-						<polyline points="4 17 10 11 4 5" />
-						<line x1="12" y1="19" x2="20" y2="19" />
-					</svg>
-				</a>
-			{/if}
-
-			<button class="btn btn-icon btn-header-icon" onclick={() => theme.toggle()} title="Переключить тему">
-					{#if $theme === 'dark'}
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-							<circle cx="12" cy="12" r="5"/>
-							<line x1="12" y1="1" x2="12" y2="3"/>
-							<line x1="12" y1="21" x2="12" y2="23"/>
-							<line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
-							<line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
-							<line x1="1" y1="12" x2="3" y2="12"/>
-							<line x1="21" y1="12" x2="23" y2="12"/>
-							<line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
-							<line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-						</svg>
-					{:else}
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-							<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-						</svg>
-					{/if}
-				</button>
-
-				{#if $isAuthenticated}
-					<button class="btn btn-icon btn-donate" onclick={() => donateModalOpen = true} title="Поддержать проект">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-							<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-						</svg>
-					</button>
-				{/if}
-
-				{#if $isAuthenticated && !$auth.authDisabled}
-					<button class="btn btn-icon btn-logout" onclick={() => auth.logout()} title="Выйти" aria-label="Выйти">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-							<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-							<polyline points="16 17 21 12 16 7"/>
-							<line x1="21" y1="12" x2="9" y2="12"/>
-						</svg>
-					</button>
-				{/if}
-
-				{#if $isAuthenticated}
-					<button
-						class="btn btn-icon btn-hamburger"
-						onclick={() => mobileMenuOpen = !mobileMenuOpen}
-						title="Меню"
-						aria-label="Меню"
-						aria-expanded={mobileMenuOpen}
-					>
-						{#if mobileMenuOpen}
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-								<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-							</svg>
-						{:else}
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-								<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
-							</svg>
-						{/if}
-					</button>
-				{/if}
-			</div>
-		</div>
-
-		{#if mobileMenuOpen && $isAuthenticated}
-			<button type="button" class="mobile-backdrop" onclick={closeMobileMenu} aria-label="Закрыть меню"></button>
-			<nav class="mobile-nav">
-				<a href="/" class="mobile-nav-link" class:active={$page.url.pathname === '/'} onclick={closeMobileMenu}>Туннели</a>
-				<a href="/servers" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/servers')} onclick={closeMobileMenu}>Серверы</a>
-				<a href="/routing" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/routing')} onclick={closeMobileMenu}>Маршрутизация</a>
-				<a href="/pingcheck" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/pingcheck')} onclick={closeMobileMenu}>Мониторинг</a>
-				<a href="/diagnostics" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/diagnostics') || $page.url.pathname.startsWith('/connections') || $page.url.pathname.startsWith('/logs')} onclick={closeMobileMenu}>Диагностика</a>
-				<a href="/settings" class="mobile-nav-link" class:active={$page.url.pathname.startsWith('/settings')} onclick={closeMobileMenu}>Настройки</a>
-			</nav>
-		{/if}
-	</header>
+	<AppHeader
+		authenticated={$isAuthenticated}
+		authDisabled={$auth.authDisabled}
+		username={$auth.login}
+		theme={$theme}
+		{currentVersion}
+		{hasUpdate}
+		{isPreRelease}
+		bind:mobileMenuOpen
+		onToggleTheme={() => theme.toggle()}
+		onLogout={() => auth.logout()}
+		onOpenDonate={() => (donateModalOpen = true)}
+	/>
 
 	{#if !$isAuthenticated}
 		<LoginForm />
@@ -420,89 +340,11 @@
 		to { transform: rotate(360deg); }
 	}
 
-	.header {
-		background: var(--bg-secondary);
-		border-bottom: 1px solid var(--border);
-		height: 56px;
-		position: sticky;
-		top: 0;
-		z-index: 100;
-	}
-
-	.header-content {
-		max-width: 1120px;
-		margin: 0 auto;
-		padding: 0 1rem;
-		height: 100%;
-		display: grid;
-		grid-template-columns: auto 1fr auto;
-		align-items: center;
-	}
-
-	.logo-group {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.logo {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		font-size: 1.125rem;
-		font-weight: 600;
-		color: var(--text-primary);
-		white-space: nowrap;
-	}
-
-	.logo svg {
-		width: 24px;
-		height: 24px;
-		color: var(--accent);
-	}
-
-	.nav {
-		display: flex;
-		gap: 0.25rem;
-		justify-content: center;
-	}
-
-	.nav-link {
-		color: var(--text-secondary);
-		padding: 0.375rem 0.625rem;
-		border-radius: var(--radius-sm);
-		font-size: 0.875rem;
-		transition: all 0.15s ease;
-	}
-
-	.nav-link:hover {
-		color: var(--text-primary);
-		background: var(--bg-hover);
-	}
-
-	.nav-link.active {
-		color: var(--accent);
-		background: rgba(122, 162, 247, 0.1);
-	}
-
-	.header-actions {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		justify-self: end;
-	}
-
-	.user-info {
-		font-size: 0.8125rem;
-		color: var(--text-muted);
-	}
-
 	.main {
 		flex: 1;
 		width: 100%;
-		max-width: 960px;
-		margin: 0 auto;
-		padding: 0 1rem;
+		display: flex;
+		flex-direction: column;
 	}
 
 	.offline-screen {
@@ -547,183 +389,6 @@
 		color: var(--text-tertiary);
 		font-size: 0.8125rem;
 		margin: 0;
-	}
-
-	.version-badge {
-		font-size: 9px;
-		font-weight: 600;
-		letter-spacing: 0.3px;
-		padding: 2px 5px;
-		border-radius: 6px;
-		line-height: 1;
-		text-decoration: none;
-		white-space: nowrap;
-	}
-
-	.version-stable {
-		background: rgba(34, 197, 94, 0.15);
-		color: var(--success, #22c55e);
-	}
-
-	.version-prerelease {
-		background: rgba(245, 158, 11, 0.2);
-		color: var(--warning, #f59e0b);
-	}
-
-	.version-update-stable {
-		background: rgba(34, 197, 94, 0.15);
-		color: var(--success, #22c55e);
-		animation: badge-pulse 4s ease-in-out infinite;
-	}
-
-	.version-update-prerelease {
-		background: rgba(245, 158, 11, 0.2);
-		color: var(--warning, #f59e0b);
-		animation: badge-pulse 4s ease-in-out infinite;
-	}
-
-	.version-clickable {
-		cursor: pointer;
-	}
-
-	.version-clickable:hover {
-		filter: brightness(1.2);
-	}
-
-	@keyframes badge-pulse {
-		0%, 100% { opacity: 1; }
-		50% { opacity: 0.5; }
-	}
-
-	/* Header icon buttons */
-	.btn-header-icon,
-	.btn-logout {
-		width: 32px;
-		height: 32px;
-		border-radius: 6px;
-		border: none;
-		background: transparent;
-		color: var(--text-muted);
-		transition: all 0.15s ease;
-	}
-
-	.btn-header-icon:hover {
-		background: var(--bg-hover);
-		color: var(--accent);
-	}
-
-	.btn-donate {
-		width: 32px;
-		height: 32px;
-		border-radius: 6px;
-		border: none;
-		background: transparent;
-		color: var(--text-muted);
-		cursor: pointer;
-		transition: all 0.15s ease;
-	}
-
-	.btn-donate:hover {
-		background: rgba(226, 85, 85, 0.1);
-		color: #e25555;
-	}
-
-	.btn-logout:hover {
-		background: rgba(239, 68, 68, 0.1);
-		color: var(--error);
-	}
-
-	/* Hamburger — hidden on desktop */
-	.btn-hamburger {
-		display: none;
-		width: 32px;
-		height: 32px;
-		border-radius: 6px;
-		border: none;
-		background: transparent;
-		color: var(--text-muted);
-		transition: all 0.15s ease;
-	}
-
-	.btn-hamburger:hover {
-		background: var(--bg-hover);
-		color: var(--text-primary);
-	}
-
-	/* Mobile nav dropdown */
-	.mobile-backdrop {
-		display: none;
-		border: none;
-		padding: 0;
-		cursor: pointer;
-		-webkit-appearance: none;
-		appearance: none;
-	}
-
-	.mobile-nav {
-		display: none;
-	}
-
-	@media (max-width: 640px) {
-		.header-content {
-			grid-template-columns: 1fr auto;
-		}
-
-		.nav {
-			display: none;
-		}
-
-		.logo-text {
-			display: none;
-		}
-
-		.user-info {
-			display: none;
-		}
-
-		.btn-hamburger {
-			display: flex;
-		}
-
-		.mobile-backdrop {
-			display: block;
-			position: fixed;
-			inset: 56px 0 0 0;
-			background: rgba(0, 0, 0, 0.4);
-			z-index: 99;
-		}
-
-		.mobile-nav {
-			display: flex;
-			flex-direction: column;
-			position: absolute;
-			top: 100%;
-			left: 0;
-			right: 0;
-			background: var(--bg-secondary);
-			border-bottom: 1px solid var(--border);
-			padding: 0.5rem 0;
-			z-index: 100;
-			box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-		}
-
-		.mobile-nav-link {
-			padding: 0.75rem 1.25rem;
-			color: var(--text-secondary);
-			font-size: 0.9375rem;
-			transition: all 0.15s;
-		}
-
-		.mobile-nav-link:hover {
-			color: var(--text-primary);
-			background: var(--bg-hover);
-		}
-
-		.mobile-nav-link.active {
-			color: var(--accent);
-			background: rgba(122, 162, 247, 0.1);
-			border-left: 3px solid var(--accent);
-		}
 	}
 
 	.donate-wallets {

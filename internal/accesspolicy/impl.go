@@ -50,25 +50,27 @@ type PolicyTracker interface {
 // canonical Up/Down implementations — no duplicate behaviour inside
 // PolicyCommands.
 type ServiceImpl struct {
-	policies   *command.PolicyCommands
-	interfaces *command.InterfaceCommands
-	queries    *query.Queries
-	tracker    PolicyTracker
-	log        *logger.Logger
-	appLog     *logging.ScopedLogger
+	policies    *command.PolicyCommands
+	interfaces  *command.InterfaceCommands
+	queries     *query.Queries
+	tracker     PolicyTracker
+	log         *logger.Logger
+	appLog      *logging.ScopedLogger
+	policyMarks PolicyMarkSource
 }
 
 // New creates a new access policy service backed by the NDMS CQRS layer.
 // Stores handle their own caching and single-flight — no boot-time
 // pre-warm is needed.
-func New(policies *command.PolicyCommands, interfaces *command.InterfaceCommands, queries *query.Queries, tracker PolicyTracker, log *logger.Logger, appLogger logging.AppLogger) *ServiceImpl {
+func New(policies *command.PolicyCommands, interfaces *command.InterfaceCommands, queries *query.Queries, tracker PolicyTracker, log *logger.Logger, appLogger logging.AppLogger, policyMarks PolicyMarkSource) *ServiceImpl {
 	return &ServiceImpl{
-		policies:   policies,
-		interfaces: interfaces,
-		queries:    queries,
-		tracker:    tracker,
-		log:        log.WithComponent("accesspolicy"),
-		appLog:     logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubAccessPolicy),
+		policies:    policies,
+		interfaces:  interfaces,
+		queries:     queries,
+		tracker:     tracker,
+		log:         log.WithComponent("accesspolicy"),
+		appLog:      logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubAccessPolicy),
+		policyMarks: policyMarks,
 	}
 }
 

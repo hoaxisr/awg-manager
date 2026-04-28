@@ -8,19 +8,34 @@ import (
 	"sync"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
-	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // Deps groups the external collaborators Service needs. Wired once at
 // startup in main.go. Nil fields are tolerated — Service degrades and
 // logs where applicable.
 type Deps struct {
-	Store         *Store
-	Tunnels       *storage.AWGTunnelStore // nil → treated as "no AWG tunnels"
-	SystemTunnels SystemTunnelQuery       // nil → system tunnels not included in outbound list
-	Singbox       SingboxOperator         // nil → treated as "no sb tunnels, no apply"
-	NDMSQuery     NDMSInterfaceQuery      // nil → ListenInterface resolution fails explicitly
-	Bus           *events.Bus             // nil → no event subscriptions or publishes
+	Store        *Store
+	Singbox      SingboxOperator     // nil → treated as "no sb tunnels, no apply"
+	NDMSQuery    NDMSInterfaceQuery  // nil → ListenInterface resolution fails explicitly
+	Bus          *events.Bus         // nil → no event subscriptions or publishes
+	AWGOutbounds AWGOutboundsCatalog // nil → AWG-related selector members empty
+}
+
+// AWGOutboundsCatalog is the narrow contract Service needs from the
+// awgoutbounds package. Defined here (not imported) to keep the
+// dependency direction clean — main.go injects the real impl.
+type AWGOutboundsCatalog interface {
+	ListTags(ctx context.Context) ([]AWGTagInfo, error)
+}
+
+// AWGTagInfo is deviceproxy's projection of awgoutbounds.TagInfo.
+// Same shape; lives here so deviceproxy doesn't depend on the
+// awgoutbounds package types.
+type AWGTagInfo struct {
+	Tag   string
+	Label string
+	Kind  string
+	Iface string
 }
 
 // SingboxOperator is the narrow contract Service needs from
@@ -50,15 +65,8 @@ type ExternalSpec struct {
 	Port        int
 	Auth        AuthSpec
 	SelectedTag string
-	AWGTargets  []AWGTarget
+	AWGTags     []string
 	SBTags      []string
-}
-
-// AWGTarget is one AWG tunnel rendered into the sing-box config as a
-// direct outbound with bind_interface.
-type AWGTarget struct {
-	TunnelID    string
-	KernelIface string
 }
 
 // TunnelInboundPortsFn returns the set of listen_ports currently used
@@ -272,29 +280,15 @@ func (s *Service) buildSpec(ctx context.Context, cfg Config) (ExternalSpec, erro
 		spec.ListenAddr = addr
 	}
 
-	// AWG targets (managed tunnels)
-	if s.d.Tunnels != nil {
-		tunnels, _ := s.d.Tunnels.List()
-		for _, t := range tunnels {
-			t := t
-			spec.AWGTargets = append(spec.AWGTargets, AWGTarget{
-				TunnelID:    t.ID,
-				KernelIface: awgKernelIface(&t),
-			})
-		}
-	}
-
-	// System tunnels (Keenetic native WireGuard, not managed by storage).
-	// TunnelID is prefixed with "sys-" so the generated sing-box tag
-	// becomes "awg-sys-<ID>" (e.g. "awg-sys-Wireguard0"), avoiding
-	// collisions with managed AWG tunnel tags.
-	if s.d.SystemTunnels != nil {
-		sysTunnels, _ := s.d.SystemTunnels.List(ctx)
-		for _, t := range sysTunnels {
-			spec.AWGTargets = append(spec.AWGTargets, AWGTarget{
-				TunnelID:    "sys-" + t.ID,
-				KernelIface: t.InterfaceName,
-			})
+	// AWG tags — single source of truth is the awgoutbounds package,
+	// which enumerates managed + system tunnels and emits canonical
+	// awg-{id} / awg-sys-{id} tags. We just collect the tags.
+	if s.d.AWGOutbounds != nil {
+		tags, err := s.d.AWGOutbounds.ListTags(ctx)
+		if err == nil {
+			for _, t := range tags {
+				spec.AWGTags = append(spec.AWGTags, t.Tag)
+			}
 		}
 	}
 
@@ -303,16 +297,6 @@ func (s *Service) buildSpec(ctx context.Context, cfg Config) (ExternalSpec, erro
 		spec.SBTags = s.d.Singbox.TunnelTags()
 	}
 	return spec, nil
-}
-
-// awgKernelIface picks the kernel iface name for an AWG tunnel.
-// NativeWG tunnels use nwg<Index>; legacy/kernel tunnels use the
-// storage.ID directly (matches the convention in tunnel/ops).
-func awgKernelIface(t *storage.AWGTunnel) string {
-	if t.Backend == "nativewg" {
-		return fmt.Sprintf("nwg%d", t.NWGIndex)
-	}
-	return t.ID
 }
 
 // RuntimeState is the UI-facing snapshot of the selector's live state.
@@ -372,43 +356,17 @@ func (s *Service) listOutboundsLocked(ctx context.Context) []Outbound {
 		}
 	}
 
-	managedIfaces := make(map[string]struct{})
-	if s.d.Tunnels != nil {
-		tunnels, _ := s.d.Tunnels.List()
-		sort.Slice(tunnels, func(i, j int) bool { return tunnels[i].ID < tunnels[j].ID })
-		for _, t := range tunnels {
-			t := t
-			iface := awgKernelIface(&t)
-			if iface != "" {
-				managedIfaces[iface] = struct{}{}
+	if s.d.AWGOutbounds != nil {
+		tags, err := s.d.AWGOutbounds.ListTags(ctx)
+		if err == nil {
+			for _, t := range tags {
+				out = append(out, Outbound{
+					Tag:    t.Tag,
+					Kind:   "awg",
+					Label:  t.Label,
+					Detail: t.Iface,
+				})
 			}
-			out = append(out, Outbound{
-				Tag:    "awg-" + t.ID,
-				Kind:   "awg",
-				Label:  t.Name,
-				Detail: iface,
-			})
-		}
-	}
-
-	// System tunnels — Keenetic native WireGuard not managed by storage.
-	// Tag uses the "awg-sys-" prefix to match what buildSpec/EnsureDeviceProxy
-	// will generate for these entries. Skip ifaces already added from the
-	// storage list: nativewg storage tunnels also surface in NDMS as system
-	// Wireguard interfaces, which would dupe them in the dropdown.
-	if s.d.SystemTunnels != nil {
-		sysTunnels, _ := s.d.SystemTunnels.List(ctx)
-		sort.Slice(sysTunnels, func(i, j int) bool { return sysTunnels[i].ID < sysTunnels[j].ID })
-		for _, t := range sysTunnels {
-			if _, dup := managedIfaces[t.InterfaceName]; dup {
-				continue
-			}
-			out = append(out, Outbound{
-				Tag:    "awg-sys-" + t.ID,
-				Kind:   "awg",
-				Label:  t.Description,
-				Detail: t.InterfaceName,
-			})
 		}
 	}
 	return out
@@ -498,7 +456,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		// Skip the apply if there is nothing meaningful to do — no proxy,
 		// no sing-box tunnels, no AWG tunnels. Applying in this case would
 		// just write an empty config.json + start sing-box for nothing.
-		if !spec.Enabled && len(spec.SBTags) == 0 && len(spec.AWGTargets) == 0 {
+		if !spec.Enabled && len(spec.SBTags) == 0 && len(spec.AWGTags) == 0 {
 			return nil
 		}
 		if err := s.d.Singbox.ApplyDeviceProxy(ctx, spec); err != nil {
@@ -595,4 +553,22 @@ func (s *Service) SubscribeBus(ctx context.Context) func() {
 		}
 	}()
 	return unsub
+}
+
+// HasSelectorReference reports whether the persisted Config references
+// the given outbound tag as the user-chosen SelectedOutbound default.
+// Used by tunnel.Service.Delete to refuse deletions that would orphan
+// the user's explicit choice.
+//
+// Selector membership (the dynamic awg-* member list rebuilt every
+// buildSpec call) is NOT consulted: every existing AWG tunnel is in
+// that list by construction, so consulting it would refuse every
+// delete. Membership disappears naturally on the next Reconcile after
+// the tunnel is gone, and the awgoutbounds + deviceproxy reload chain
+// is debounce-coalesced so sing-box never sees an inconsistent state.
+func (s *Service) HasSelectorReference(tag string) bool {
+	s.mu.Lock()
+	cfg := s.d.Store.Get()
+	s.mu.Unlock()
+	return cfg.SelectedOutbound == tag
 }

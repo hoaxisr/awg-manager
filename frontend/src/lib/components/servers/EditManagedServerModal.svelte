@@ -1,22 +1,24 @@
 <script lang="ts">
-	import type { ManagedServer } from '$lib/types';
-	import { Modal } from '$lib/components/ui';
+	import type { ManagedServer, UpdateManagedServerRequest } from '$lib/types';
+	import { Modal, Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { servers } from '$lib/stores/servers';
 
 	interface Props {
 		open: boolean;
+		serverId: string;
 		server: ManagedServer;
 		onclose: () => void;
 		onUpdated: () => void;
 	}
 
-	let { open = $bindable(false), server, onclose, onUpdated }: Props = $props();
+	let { open = $bindable(false), serverId, server, onclose, onUpdated }: Props = $props();
 
 	let address = $state('');
 	let mask = $state('');
 	let listenPort = $state(0);
+	let description = $state('');
 	let endpoint = $state('');
 	let mtu = $state(1376);
 	let saving = $state(false);
@@ -31,7 +33,8 @@
 			// Convert dotted mask back to CIDR for editing
 			mask = dotToPrefix(server.mask);
 			listenPort = server.listenPort;
-			endpoint = server.endpoint || '';
+			description = server.description ?? '';
+			endpoint = server.endpoint ?? '';
 			mtu = server.mtu || 1376;
 
 			// Fetch WAN IP as placeholder for endpoint
@@ -68,7 +71,21 @@
 		}
 		saving = true;
 		try {
-			const fresh = await api.updateManagedServer({ address, mask, listenPort, endpoint: endpoint || undefined, mtu });
+			// Build conditional payload — only include optional fields when the
+			// user actually changed them. Backend semantics: nil pointer =
+			// preserve, non-nil pointer = set (empty string CLEARS). Mapping
+			// from TS: omit (undefined) = preserve, present = set.
+			const payload: UpdateManagedServerRequest = { address, mask, listenPort };
+			if (description !== (server.description ?? '')) {
+				payload.description = description;
+			}
+			if (endpoint !== (server.endpoint ?? '')) {
+				payload.endpoint = endpoint;
+			}
+			if (mtu !== (server.mtu || 1376)) {
+				payload.mtu = mtu;
+			}
+			const fresh = await api.updateManagedServer(serverId, payload);
 			servers.applyMutationResponse(fresh);
 			notifications.success('Сервер обновлён');
 			onclose();
@@ -83,6 +100,17 @@
 
 <Modal {open} title="Настройки сервера" size="sm" {onclose}>
 	<div class="form-fields">
+		<div class="form-group">
+			<label class="label" for="ems-description">Название</label>
+			<input
+				type="text"
+				id="ems-description"
+				class="input"
+				bind:value={description}
+				placeholder="AWGM WG Server"
+				maxlength="64"
+			/>
+		</div>
 		<div class="form-group">
 			<label class="label" for="ems-address">IP адрес</label>
 			<input type="text" id="ems-address" class="input" bind:value={address} />
@@ -124,10 +152,10 @@
 	</div>
 
 	{#snippet actions()}
-		<button class="btn btn-ghost" onclick={onclose}>Отмена</button>
-		<button class="btn btn-primary" onclick={handleSave} disabled={saving}>
-			{saving ? 'Сохранение...' : 'Сохранить'}
-		</button>
+		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
+		<Button variant="primary" size="md" onclick={handleSave} loading={saving}>
+			Сохранить
+		</Button>
 	{/snippet}
 </Modal>
 

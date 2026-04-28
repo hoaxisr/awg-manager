@@ -4,17 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
-)
-
-const (
-	iptablesCmd  = "/opt/sbin/iptables"
-	restoreCmd   = "/opt/sbin/iptables-restore"
-	maxRetries   = 3
-	retryBaseWait = time.Second
+	sysiptables "github.com/hoaxisr/awg-manager/internal/sys/iptables"
 )
 
 // ManagerImpl is the iptables firewall manager implementation.
@@ -50,21 +43,11 @@ func (m *ManagerImpl) AddRules(ctx context.Context, iface string) error {
 	m.appLog.Full("add-rules", iface, fmt.Sprintf("Adding FORWARD rules for %s", iface))
 	m.appLog.Debug("add-rules", iface, fmt.Sprintf("iptables-restore input: ndmsManaged=%v mssClamp=%v", m.ndmsManaged, m.mssClamp))
 
-	var lastErr error
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * retryBaseWait)
-		}
-		_, err := exec.RunWithOptions(ctx, restoreCmd, []string{"--noflush"}, exec.Options{
-			Stdin: strings.NewReader(input),
-		})
-		if err == nil {
-			return nil
-		}
-		lastErr = err
+	if err := sysiptables.RestoreNoflush(ctx, input); err != nil {
+		m.appLog.Warn("add-rules", iface, fmt.Sprintf("iptables-restore failed: %v", err))
+		return fmt.Errorf("iptables-restore --noflush for %s: %w", iface, err)
 	}
-	m.appLog.Warn("add-rules", iface, fmt.Sprintf("iptables-restore failed: %v", lastErr))
-	return fmt.Errorf("iptables-restore --noflush for %s: %w", iface, lastErr)
+	return nil
 }
 
 // RemoveRules removes iptables rules for a tunnel interface.
@@ -90,9 +73,7 @@ func (m *ManagerImpl) RemoveRules(ctx context.Context, iface string) error {
 
 // HasRules checks if rules exist for an interface.
 func (m *ManagerImpl) HasRules(ctx context.Context, iface string) bool {
-	args := []string{"-w", "-C", "INPUT", "-i", iface, "-j", "ACCEPT"}
-	_, err := exec.Run(ctx, iptablesCmd, args...)
-	return err == nil
+	return sysiptables.Run(ctx, "-C", "INPUT", "-i", iface, "-j", "ACCEPT") == nil
 }
 
 // buildRestoreInput generates iptables-restore format input for all rules.
@@ -127,8 +108,8 @@ func (m *ManagerImpl) buildRestoreInput(iface string) string {
 
 // removeMSSClamp removes the TCP MSS clamping rule (ignore errors).
 func (m *ManagerImpl) removeMSSClamp(ctx context.Context, iface string) {
-	exec.Run(ctx, iptablesCmd,
-		"-w", "-t", "mangle", "-D", "FORWARD",
+	sysiptables.Run(ctx,
+		"-t", "mangle", "-D", "FORWARD",
 		"-o", iface, "-p", "tcp", "-m", "tcp",
 		"--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu")
 }
@@ -136,7 +117,7 @@ func (m *ManagerImpl) removeMSSClamp(ctx context.Context, iface string) {
 // deleteRule removes a single iptables rule.
 func (m *ManagerImpl) deleteRule(ctx context.Context, rule Rule) error {
 	args := m.buildRuleArgs("-D", rule)
-	result, err := exec.Run(ctx, iptablesCmd, args...)
+	result, err := exec.Run(ctx, sysiptables.Binary, args...)
 	if err != nil {
 		return fmt.Errorf("iptables -D %s -i/o %s: %w", rule.Chain, rule.Interface, exec.FormatError(result, err))
 	}

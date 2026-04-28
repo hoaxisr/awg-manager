@@ -2,22 +2,32 @@ package managed
 
 // CreateServerRequest contains parameters for creating a managed WireGuard server.
 type CreateServerRequest struct {
-	Address    string `json:"address"`              // e.g. "10.0.0.1"
-	Mask       string `json:"mask"`                 // e.g. "24" or "255.255.255.0"
-	ListenPort int    `json:"listenPort"`           // 1-65535
-	Endpoint   string `json:"endpoint,omitempty"`   // custom endpoint (IP or domain)
-	DNS        string `json:"dns,omitempty"`        // custom DNS for client configs
-	MTU        int    `json:"mtu,omitempty"`        // custom MTU for client configs
+	Address     string `json:"address"`               // e.g. "10.0.0.1"
+	Mask        string `json:"mask"`                  // e.g. "24" or "255.255.255.0"
+	ListenPort  int    `json:"listenPort"`            // 1-65535
+	Description string `json:"description,omitempty"` // user-facing display name; defaults to ManagedServerDescription if empty
+	Endpoint    string `json:"endpoint,omitempty"`    // custom endpoint (IP or domain)
+	DNS         string `json:"dns,omitempty"`         // custom DNS for client configs
+	MTU         int    `json:"mtu,omitempty"`         // custom MTU for client configs
 }
 
 // UpdateServerRequest contains parameters for updating the managed server.
+//
+// Description, Endpoint, DNS, and MTU are pointers so callers can distinguish
+// "absent" (preserve existing) from "explicit set" (including empty/zero).
+//
+// Semantics: nil pointer = preserve, non-nil pointer = set to that value.
+// Sending an empty string or zero value via a non-nil pointer DOES clear the
+// stored field. This is the cleanest way to support clearing without
+// inventing a sentinel value, and it matches what the frontend can express.
 type UpdateServerRequest struct {
-	Address    string `json:"address"`
-	Mask       string `json:"mask"`
-	ListenPort int    `json:"listenPort"`
-	Endpoint   string `json:"endpoint,omitempty"`
-	DNS        string `json:"dns,omitempty"`
-	MTU        int    `json:"mtu,omitempty"`
+	Address     string  `json:"address"`
+	Mask        string  `json:"mask"`
+	ListenPort  int     `json:"listenPort"`
+	Description *string `json:"description,omitempty"`
+	Endpoint    *string `json:"endpoint,omitempty"`
+	DNS         *string `json:"dns,omitempty"`
+	MTU         *int    `json:"mtu,omitempty"`
 }
 
 // AddPeerRequest contains parameters for adding a peer to the managed server.
