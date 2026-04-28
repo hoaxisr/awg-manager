@@ -169,6 +169,14 @@ definitions:
         example: 1
         type: integer
     type: object
+  api.AccessPolicyResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.AccessPolicyDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.AddPeerRequestDTO:
     properties:
       description:
@@ -197,6 +205,15 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.AssignDeviceRequest:
+    properties:
+      mac:
+        example: aa:bb:cc:dd:ee:ff
+        type: string
+      policy:
+        example: Policy0
+        type: string
     type: object
   api.AuthStatusResponse:
     properties:
@@ -424,6 +441,12 @@ definitions:
         type: string
       tunnelName:
         example: My VPN
+        type: string
+    type: object
+  api.CreateAccessPolicyRequest:
+    properties:
+      description:
+        example: My VPN policy
         type: string
     type: object
   api.CreateServerRequestDTO:
@@ -1097,6 +1120,32 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.OkData:
+    properties:
+      ok:
+        example: true
+        type: boolean
+    type: object
+  api.OkResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.OkData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.PermitInterfaceRequest:
+    properties:
+      interface:
+        example: Wireguard0
+        type: string
+      name:
+        example: Policy0
+        type: string
+      order:
+        example: 0
+        type: integer
+    type: object
   api.PingCheckDefaultsDTO:
     properties:
       deadInterval:
@@ -1176,6 +1225,40 @@ definitions:
       data:
         items:
           $ref: '#/definitions/api.PingLogEntryDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.PolicyDeviceDTO:
+    properties:
+      active:
+        example: true
+        type: boolean
+      hostname:
+        example: my-phone
+        type: string
+      ip:
+        example: 192.168.1.100
+        type: string
+      link:
+        example: WiFi
+        type: string
+      mac:
+        example: aa:bb:cc:dd:ee:ff
+        type: string
+      name:
+        example: My Phone
+        type: string
+      policy:
+        example: default
+        type: string
+    type: object
+  api.PolicyDevicesListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.PolicyDeviceDTO'
         type: array
       success:
         example: true
@@ -1325,6 +1408,33 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.SetDescriptionRequest:
+    properties:
+      description:
+        example: My VPN policy
+        type: string
+      name:
+        example: Policy0
+        type: string
+    type: object
+  api.SetInterfaceUpRequest:
+    properties:
+      name:
+        example: Wireguard0
+        type: string
+      up:
+        example: true
+        type: boolean
+    type: object
+  api.SetStandaloneRequest:
+    properties:
+      enabled:
+        example: true
+        type: boolean
+      name:
+        example: Policy0
+        type: string
     type: object
   api.SettingsData:
     properties:
@@ -2265,16 +2375,22 @@ paths:
   /access-policies:
     get:
       description: KeeneticOS 5 only when route is registered.
+      parameters:
+      - description: Pass 'true' to bypass NDMS cache
+        in: query
+        name: refresh
+        type: string
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            items:
-              additionalProperties: true
-              type: object
-            type: array
+            $ref: '#/definitions/api.AccessPoliciesListResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: List access policies
@@ -2296,71 +2412,78 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Unassign device from policy
       tags:
-      - access-policies
+      - access-policy
     post:
       consumes:
       - application/json
       description: Binds the LAN device identified by MAC to the named policy. Replaces
         any existing assignment.
       parameters:
-      - description: '{mac, policy}'
+      - description: Device MAC + target policy name
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.AssignDeviceRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Assign device to policy
       tags:
-      - access-policies
+      - access-policy
   /access-policies/create:
     post:
       consumes:
       - application/json
+      parameters:
+      - description: Policy description
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.CreateAccessPolicyRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.AccessPolicyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Create access policy
@@ -2382,35 +2505,46 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Delete access policy
       tags:
-      - access-policies
+      - access-policy
   /access-policies/description:
     post:
       consumes:
       - application/json
+      parameters:
+      - description: Policy name + new description
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SetDescriptionRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Set access policy description
@@ -2418,16 +2552,22 @@ paths:
       - access-policy
   /access-policies/devices:
     get:
+      parameters:
+      - description: Pass 'true' to bypass NDMS cache
+        in: query
+        name: refresh
+        type: string
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            items:
-              additionalProperties: true
-              type: object
-            type: array
+            $ref: '#/definitions/api.PolicyDevicesListResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: List policy devices
@@ -2437,14 +2577,28 @@ paths:
     post:
       consumes:
       - application/json
+      parameters:
+      - description: Interface name + admin up flag
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SetInterfaceUpRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Set interface admin up
@@ -2458,10 +2612,11 @@ paths:
         "200":
           description: OK
           schema:
-            items:
-              additionalProperties: true
-              type: object
-            type: array
+            $ref: '#/definitions/api.PolicyInterfacesListResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: List global policy interfaces
@@ -2487,71 +2642,78 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Deny interface for policy
       tags:
-      - access-policies
+      - access-policy
     post:
       consumes:
       - application/json
       description: Adds the named interface to the policy at the given order (lower
         = higher priority).
       parameters:
-      - description: '{name, interface, order}'
+      - description: Policy name, interface name, priority order
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.PermitInterfaceRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Permit interface for policy
       tags:
-      - access-policies
+      - access-policy
   /access-policies/standalone:
     post:
       consumes:
       - application/json
+      parameters:
+      - description: Policy name + enabled flag
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SetStandaloneRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Set access policy standalone mode
@@ -4843,16 +5005,22 @@ paths:
       - dns-routes
   /routing/policy-devices:
     get:
+      parameters:
+      - description: Pass 'true' to bypass NDMS cache
+        in: query
+        name: refresh
+        type: string
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            items:
-              additionalProperties: true
-              type: object
-            type: array
+            $ref: '#/definitions/api.PolicyDevicesListResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: List policy devices

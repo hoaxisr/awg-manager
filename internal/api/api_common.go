@@ -15,3 +15,16 @@ type APIErrorEnvelope struct {
 	Message string `json:"message" example:"invalid request"`
 	Code    string `json:"code" example:"BAD_REQUEST"`
 }
+
+// OkData is the {ok: true} confirmation payload returned by mutation
+// endpoints that have no entity to send back.
+type OkData struct {
+	Ok bool `json:"ok" example:"true"`
+}
+
+// OkResponse is the typed envelope for endpoints that return only a
+// confirmation (success + ok). Use as @Success {object} OkResponse.
+type OkResponse struct {
+	Success bool   `json:"success" example:"true"`
+	Data    OkData `json:"data"`
+}
