@@ -117,8 +117,9 @@ func TestDefaultIfaceExists_NonExistent(t *testing.T) {
 }
 
 func TestDefaultIfaceExists_Loopback(t *testing.T) {
-	if !defaultIfaceExists("lo") {
-		t.Error("loopback interface should exist")
+	// Linux: "lo"; BSD/macOS: "lo0"
+	if !defaultIfaceExists("lo") && !defaultIfaceExists("lo0") {
+		t.Error("loopback interface should exist (lo on Linux, lo0 on Darwin/BSD)")
 	}
 }
 

@@ -12,6 +12,22 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// LoginResponseRaw is the raw response for POST /auth/login.
+type LoginResponseRaw struct {
+	Success bool   `json:"success" example:"true"`
+	Login   string `json:"login" example:"admin"`
+}
+
+// AuthStatusResponse is the raw (non-enveloped) payload for GET /auth/status.
+type AuthStatusResponse struct {
+	Authenticated bool   `json:"authenticated" example:"true"`
+	AuthDisabled  bool   `json:"authDisabled" example:"false"`
+	Login         string `json:"login,omitempty" example:"admin"`
+	ExpiresIn     int    `json:"expiresIn,omitempty" example:"3600"`
+}
+
 // AuthHandler handles authentication endpoints.
 type AuthHandler struct {
 	keenetic *auth.KeeneticClient
@@ -36,7 +52,19 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
-// Login handles POST /api/auth/login
+// Login authenticates against the router and sets the session cookie.
+//
+//	@Summary		Login
+//	@Description	Authenticates with Keenetic credentials; sets HttpOnly session cookie awg_session.
+//	@Tags			auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		LoginRequest	true	"Router login and password"
+//	@Success		200		{object}	LoginResponseRaw
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		401		{object}	APIErrorEnvelope
+//	@Failure		503		{object}	APIErrorEnvelope
+//	@Router			/auth/login [post]
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -91,7 +119,15 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Logout handles POST /api/auth/logout
+// Logout clears the session cookie and invalidates the server-side session.
+//
+//	@Summary		Logout
+//	@Tags			auth
+//	@Produce		json
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/auth/logout [post]
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -119,7 +155,15 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Status handles GET /api/auth/status
+// Status returns whether the client is authenticated and optional session metadata.
+//
+//	@Summary		Auth status
+//	@Tags			auth
+//	@Produce		json
+//	@Success		200	{object}	AuthStatusResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/auth/status [get]
 func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

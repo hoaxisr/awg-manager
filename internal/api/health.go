@@ -6,6 +6,20 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// HealthData is the response data for GET /health.
+type HealthData struct {
+	OK      bool   `json:"ok" example:"true"`
+	Version string `json:"version" example:"2.5.0"`
+}
+
+// HealthResponse is the envelope for GET /health.
+type HealthResponse struct {
+	Success bool       `json:"success" example:"true"`
+	Data    HealthData `json:"data"`
+}
+
 // HealthHandler serves GET /api/health. A cheap liveness check that
 // does no I/O, no NDMS calls — used by the frontend 5-second poller
 // to decide when to show the full-screen "backend offline" overlay
@@ -23,6 +37,15 @@ func NewHealthHandler(version string) *HealthHandler {
 
 // ServeHTTP responds to GET with { ok: true, version: "..." }. Any
 // other method returns 405 Method Not Allowed.
+//
+//	@Summary		Health / liveness
+//	@Description	Cheap check for frontend pollers; no NDMS or I/O.
+//	@Tags			system
+//	@Produce		json
+//	@Success		200	{object}	HealthResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/health [get]
 func (h *HealthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

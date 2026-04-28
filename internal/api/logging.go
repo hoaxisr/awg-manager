@@ -10,6 +10,32 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// LogEntryDTO mirrors frontend LogEntry.
+type LogEntryDTO struct {
+	Timestamp string `json:"timestamp" example:"2024-01-15T10:30:00Z"`
+	Level     string `json:"level" example:"info"`
+	Group     string `json:"group" example:"tunnel"`
+	Subgroup  string `json:"subgroup" example:"tun_abc123"`
+	Action    string `json:"action" example:"connect"`
+	Target    string `json:"target" example:"vpn.example.com:51820"`
+	Message   string `json:"message" example:"Tunnel connected"`
+}
+
+// LogsData mirrors frontend LogsResponse.
+type LogsData struct {
+	Enabled bool          `json:"enabled" example:"true"`
+	Logs    []LogEntryDTO `json:"logs"`
+	Total   int           `json:"total" example:"42"`
+}
+
+// LogsResponse is the envelope for GET /logs.
+type LogsResponseEnvelope struct {
+	Success bool     `json:"success" example:"true"`
+	Data    LogsData `json:"data"`
+}
+
 // LoggingHandler handles logging API endpoints.
 type LoggingHandler struct {
 	svc *logging.Service
@@ -43,6 +69,15 @@ type LogsResponse struct {
 
 // GetLogs returns log entries with optional filtering.
 // GET /api/logs?group=&subgroup=&level= (new) or ?category=&level= (backward compat)
+//
+//	@Summary		Get logs
+//	@Tags			logs
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	LogsResponseEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/logs [get]
 func (h *LoggingHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -103,6 +138,15 @@ func (h *LoggingHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 
 // ClearLogs removes all log entries.
 // POST /api/logs/clear
+//
+//	@Summary		Clear logs
+//	@Tags			logs
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/logs/clear [post]
 func (h *LoggingHandler) ClearLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")

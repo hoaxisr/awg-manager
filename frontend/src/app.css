@@ -250,6 +250,10 @@ input::placeholder {
 	color: var(--text-muted);
 }
 
+.setting-row input, .setting-row textarea, .setting-row select {
+	max-width: 276px;
+}
+
 label {
 	display: block;
 	margin-bottom: 0.25rem;

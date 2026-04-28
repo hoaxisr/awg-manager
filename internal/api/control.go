@@ -14,6 +14,20 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// TunnelControlData is the response data for control operations (start/stop/restart).
+type TunnelControlData struct {
+	ID     string `json:"id" example:"tun_abc123"`
+	Status string `json:"status" example:"connected"`
+}
+
+// TunnelControlResponse is the envelope for control operations.
+type TunnelControlResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Data    TunnelControlData `json:"data"`
+}
+
 // ControlHandler handles tunnel start/stop/restart operations.
 type ControlHandler struct {
 	svc            TunnelService
@@ -68,6 +82,16 @@ func (h *ControlHandler) getStatus(r *http.Request, id string) string {
 }
 
 // Start starts a tunnel.
+//
+//	@Summary		Start tunnel
+//	@Tags			control
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	TunnelControlResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/control/start [post]
 func (h *ControlHandler) Start(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -111,6 +135,16 @@ func (h *ControlHandler) Start(w http.ResponseWriter, r *http.Request) {
 }
 
 // Stop stops a tunnel.
+//
+//	@Summary		Stop tunnel
+//	@Tags			control
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	TunnelControlResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/control/stop [post]
 func (h *ControlHandler) Stop(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -154,6 +188,16 @@ func (h *ControlHandler) Stop(w http.ResponseWriter, r *http.Request) {
 }
 
 // Restart restarts a tunnel.
+//
+//	@Summary		Restart tunnel
+//	@Tags			control
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	TunnelControlResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/control/restart [post]
 func (h *ControlHandler) Restart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -193,6 +237,15 @@ func (h *ControlHandler) Restart(w http.ResponseWriter, r *http.Request) {
 }
 
 // RestartAll restarts all enabled tunnels.
+//
+//	@Summary		Restart all enabled tunnels
+//	@Tags			control
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/control/restart-all [post]
 func (h *ControlHandler) RestartAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -242,6 +295,16 @@ func (h *ControlHandler) RestartAll(w http.ResponseWriter, r *http.Request) {
 }
 
 // ToggleEnabled toggles the auto-start setting for a tunnel.
+//
+//	@Summary		Toggle tunnel autostart
+//	@Tags			control
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/control/toggle-enabled [post]
 func (h *ControlHandler) ToggleEnabled(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -290,6 +353,16 @@ func (h *ControlHandler) ToggleEnabled(w http.ResponseWriter, r *http.Request) {
 }
 
 // ToggleDefaultRoute toggles the default route setting for a tunnel.
+//
+//	@Summary		Toggle default route
+//	@Tags			control
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/control/toggle-default-route [post]
 func (h *ControlHandler) ToggleDefaultRoute(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)

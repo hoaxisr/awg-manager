@@ -14,6 +14,75 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// TunnelPingStatusDTO mirrors frontend TunnelPingStatus.
+type TunnelPingStatusDTO struct {
+	TunnelId      string `json:"tunnelId" example:"tun_abc123"`
+	TunnelName    string `json:"tunnelName" example:"My VPN"`
+	Enabled       bool   `json:"enabled" example:"true"`
+	Backend       string `json:"backend" example:"nativewg"`
+	Status        string `json:"status" example:"alive"`
+	Method        string `json:"method" example:"http"`
+	LastLatency   int    `json:"lastLatency" example:"35"`
+	FailCount     int    `json:"failCount" example:"0"`
+	FailThreshold int    `json:"failThreshold" example:"3"`
+	RestartCount  int    `json:"restartCount" example:"0"`
+}
+
+// PingCheckStatusData mirrors frontend PingCheckStatus.
+type PingCheckStatusData struct {
+	Enabled bool                  `json:"enabled" example:"true"`
+	Tunnels []TunnelPingStatusDTO `json:"tunnels"`
+}
+
+// PingCheckStatusResponse is the envelope for GET /pingcheck/status.
+type PingCheckStatusResponse struct {
+	Success bool                `json:"success" example:"true"`
+	Data    PingCheckStatusData `json:"data"`
+}
+
+// PingLogEntryDTO mirrors frontend PingLogEntry.
+type PingLogEntryDTO struct {
+	Timestamp   string `json:"timestamp" example:"2024-01-15T10:30:00Z"`
+	TunnelId    string `json:"tunnelId" example:"tun_abc123"`
+	TunnelName  string `json:"tunnelName" example:"My VPN"`
+	Success     bool   `json:"success" example:"true"`
+	Latency     int    `json:"latency" example:"35"`
+	Error       string `json:"error" example:""`
+	FailCount   int    `json:"failCount" example:"0"`
+	Threshold   int    `json:"threshold" example:"3"`
+	StateChange string `json:"stateChange" example:""`
+}
+
+// PingLogsResponse is the envelope for GET /pingcheck/logs.
+type PingLogsResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Data    []PingLogEntryDTO `json:"data"`
+}
+
+// NativePingCheckStatusDTO mirrors frontend NativePingCheckStatus.
+type NativePingCheckStatusDTO struct {
+	Exists       bool   `json:"exists" example:"true"`
+	Host         string `json:"host" example:"https://www.google.com"`
+	Mode         string `json:"mode" example:"connect"`
+	Interval     int    `json:"interval" example:"30"`
+	MaxFails     int    `json:"maxFails" example:"3"`
+	MinSuccess   int    `json:"minSuccess" example:"1"`
+	Timeout      int    `json:"timeout" example:"5"`
+	Restart      bool   `json:"restart" example:"true"`
+	Bound        bool   `json:"bound" example:"true"`
+	Status       string `json:"status" example:"alive"`
+	FailCount    int    `json:"failCount" example:"0"`
+	SuccessCount int    `json:"successCount" example:"120"`
+}
+
+// NativePingCheckStatusResponse is the envelope for GET /tunnels/pingcheck.
+type NativePingCheckStatusResponse struct {
+	Success bool                     `json:"success" example:"true"`
+	Data    NativePingCheckStatusDTO `json:"data"`
+}
+
 // PingCheckService defines the interface for ping check operations.
 // Uses pingcheck types directly — no adapter needed.
 type PingCheckService interface {
@@ -70,6 +139,15 @@ func (h *PingCheckHandler) PublishSnapshot() {
 }
 
 // GetStatus returns the current status of all monitored tunnels.
+//
+//	@Summary		Ping check status
+//	@Tags			pingcheck
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	PingCheckStatusResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/pingcheck/status [get]
 func (h *PingCheckHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -92,6 +170,16 @@ func (h *PingCheckHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetLogs returns ping check logs.
+//
+//	@Summary		Ping check logs
+//	@Tags			pingcheck
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			tunnelId	query	string	false	"Filter by tunnel id"
+//	@Success		200	{object}	PingLogsResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/pingcheck/logs [get]
 func (h *PingCheckHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -123,6 +211,15 @@ func (h *PingCheckHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // ClearLogs removes all ping check log entries.
+//
+//	@Summary		Clear ping check logs
+//	@Tags			pingcheck
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/pingcheck/logs/clear [post]
 func (h *PingCheckHandler) ClearLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -142,6 +239,15 @@ func (h *PingCheckHandler) ClearLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // CheckNow triggers an immediate check on all tunnels.
+//
+//	@Summary		Trigger ping check now
+//	@Tags			pingcheck
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/pingcheck/check-now [post]
 func (h *PingCheckHandler) CheckNow(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -161,6 +267,16 @@ func (h *PingCheckHandler) CheckNow(w http.ResponseWriter, r *http.Request) {
 
 // GetTunnelPingCheckStatus returns NDMS ping-check status for a single nativewg tunnel.
 // GET /api/tunnels/pingcheck?id=xxx
+//
+//	@Summary		Get per-tunnel NDMS ping-check
+//	@Tags			pingcheck
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	NativePingCheckStatusResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/tunnels/pingcheck [get]
 func (h *PingCheckHandler) GetTunnelPingCheckStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -206,6 +322,17 @@ func (h *PingCheckHandler) GetTunnelPingCheckStatus(w http.ResponseWriter, r *ht
 
 // ConfigureTunnelPingCheck creates/updates NDMS ping-check for a nativewg tunnel.
 // POST /api/tunnels/pingcheck?id=xxx
+//
+//	@Summary		Configure per-tunnel NDMS ping-check
+//	@Tags			pingcheck
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/tunnels/pingcheck [post]
 func (h *PingCheckHandler) ConfigureTunnelPingCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -282,6 +409,16 @@ func (h *PingCheckHandler) ConfigureTunnelPingCheck(w http.ResponseWriter, r *ht
 
 // RemoveTunnelPingCheck removes NDMS ping-check for a nativewg tunnel.
 // POST /api/tunnels/pingcheck/remove?id=xxx
+//
+//	@Summary		Remove per-tunnel NDMS ping-check
+//	@Tags			pingcheck
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/tunnels/pingcheck/remove [post]
 func (h *PingCheckHandler) RemoveTunnelPingCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")

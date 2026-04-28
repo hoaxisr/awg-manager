@@ -17,6 +17,16 @@ func NewStatusHandler(svc TunnelService) *StatusHandler {
 }
 
 // Get returns the status of a single tunnel.
+//
+//	@Summary		Tunnel status
+//	@Tags			status
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/status/get [get]
 func (h *StatusHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -47,6 +57,15 @@ func (h *StatusHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // All returns the status of all tunnels.
+//
+//	@Summary		All tunnel statuses
+//	@Tags			status
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/status/all [get]
 func (h *StatusHandler) All(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

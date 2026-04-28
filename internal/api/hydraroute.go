@@ -9,6 +9,60 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// HydraRouteConfigData mirrors frontend HydraRouteConfig.
+type HydraRouteConfigData struct {
+	AutoStart          bool     `json:"autoStart" example:"true"`
+	ClearIPSet         bool     `json:"clearIPSet" example:"false"`
+	CIDR               bool     `json:"cidr" example:"true"`
+	IpsetEnableTimeout bool     `json:"ipsetEnableTimeout" example:"false"`
+	IpsetTimeout       int      `json:"ipsetTimeout" example:"0"`
+	IpsetMaxElem       int      `json:"ipsetMaxElem" example:"65536"`
+	DirectRouteEnabled bool     `json:"directRouteEnabled" example:"false"`
+	GlobalRouting      bool     `json:"globalRouting" example:"false"`
+	ConntrackFlush     bool     `json:"conntrackFlush" example:"true"`
+	Log                string   `json:"log" example:"warn"`
+	LogFile            string   `json:"logFile" example:"/var/log/hrneo.log"`
+	GeoIPFiles         []string `json:"geoIPFiles" example:"/opt/etc/hrneo/geoip.db"`
+	GeoSiteFiles       []string `json:"geoSiteFiles" example:"/opt/etc/hrneo/geosite.db"`
+	PolicyOrder        []string `json:"policyOrder" example:"default"`
+}
+
+// HydraRouteConfigResponse is the envelope for GET /hydraroute/config.
+type HydraRouteConfigResponse struct {
+	Success bool                 `json:"success" example:"true"`
+	Data    HydraRouteConfigData `json:"data"`
+}
+
+// GeoFileEntryDTO mirrors frontend GeoFileEntry.
+type GeoFileEntryDTO struct {
+	Type     string `json:"type" example:"geosite"`
+	Path     string `json:"path" example:"/opt/etc/hrneo/geosite.db"`
+	URL      string `json:"url" example:"https://cdn.example.com/geosite.db"`
+	Size     int64  `json:"size" example:"3145728"`
+	TagCount int    `json:"tagCount" example:"420"`
+	Updated  string `json:"updated" example:"2024-01-15T02:00:00Z"`
+}
+
+// GeoFilesResponse is the envelope for GET /hydraroute/geo-files.
+type GeoFilesResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Data    []GeoFileEntryDTO `json:"data"`
+}
+
+// GeoTagDTO mirrors frontend GeoTag.
+type GeoTagDTO struct {
+	Name  string `json:"name" example:"google"`
+	Count int    `json:"count" example:"1250"`
+}
+
+// GeoTagsResponse is the envelope for GET /hydraroute/geo-tags.
+type GeoTagsResponse struct {
+	Success bool        `json:"success" example:"true"`
+	Data    []GeoTagDTO `json:"data"`
+}
+
 // HydraRouteHandler handles HydraRoute Neo settings API endpoints.
 type HydraRouteHandler struct {
 	svc *hydraroute.Service
@@ -27,6 +81,14 @@ func NewHydraRouteHandler(svc *hydraroute.Service) *HydraRouteHandler {
 func (h *HydraRouteHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
 // GetConfig returns the current HydraRoute config.
+//
+//	@Summary		Get HydraRoute config
+//	@Description	Available when HydraRoute service is wired on the device.
+//	@Tags			hydraroute
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	HydraRouteConfigResponse
+//	@Router			/hydraroute/config [get]
 func (h *HydraRouteHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -50,10 +112,10 @@ func (h *HydraRouteHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"hydraroute.Config"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		HydraRouteConfigData	true	"hydraroute.Config"
+//	@Success		200		{object}	HydraRouteConfigResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/hydraroute/config/update [put]
 func (h *HydraRouteHandler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
@@ -79,6 +141,13 @@ func (h *HydraRouteHandler) UpdateConfig(w http.ResponseWriter, r *http.Request)
 }
 
 // ListGeoFiles returns all tracked geo data files.
+//
+//	@Summary		List HydraRoute geo files
+//	@Tags			hydraroute
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{array}	map[string]interface{}
+//	@Router			/hydraroute/geo-files [get]
 func (h *HydraRouteHandler) ListGeoFiles(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -95,6 +164,14 @@ func (h *HydraRouteHandler) ListGeoFiles(w http.ResponseWriter, r *http.Request)
 }
 
 // AddGeoFile downloads and registers a new geo data file.
+//
+//	@Summary		Add HydraRoute geo file
+//	@Tags			hydraroute
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/hydraroute/geo-files/add [post]
 func (h *HydraRouteHandler) AddGeoFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -174,6 +251,14 @@ func (h *HydraRouteHandler) DeleteGeoFile(w http.ResponseWriter, r *http.Request
 }
 
 // UpdateGeoFile re-downloads a geo data file (or all files if path is empty).
+//
+//	@Summary		Refresh HydraRoute geo file(s)
+//	@Tags			hydraroute
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/hydraroute/geo-files/update [post]
 func (h *HydraRouteHandler) UpdateGeoFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -225,6 +310,14 @@ func (h *HydraRouteHandler) UpdateGeoFile(w http.ResponseWriter, r *http.Request
 }
 
 // GetGeoTags returns the tag list for a specific geo data file.
+//
+//	@Summary		HydraRoute geo tags
+//	@Tags			hydraroute
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			path	query	string	true	"Geo file path"
+//	@Success		200	{array}	string
+//	@Router			/hydraroute/geo-tags [get]
 func (h *HydraRouteHandler) GetGeoTags(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -253,6 +346,13 @@ func (h *HydraRouteHandler) GetGeoTags(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetIpsetUsage returns the current ipset usage per kernel interface.
+//
+//	@Summary		HydraRoute ipset usage
+//	@Tags			hydraroute
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/hydraroute/ipset-usage [get]
 func (h *HydraRouteHandler) GetIpsetUsage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -269,6 +369,14 @@ func (h *HydraRouteHandler) GetIpsetUsage(w http.ResponseWriter, r *http.Request
 }
 
 // SetPolicyOrder updates the PolicyOrder in hrneo.conf.
+//
+//	@Summary		Set HydraRoute policy order
+//	@Tags			hydraroute
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/hydraroute/policy-order [post]
 func (h *HydraRouteHandler) SetPolicyOrder(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -297,6 +405,13 @@ func (h *HydraRouteHandler) SetPolicyOrder(w http.ResponseWriter, r *http.Reques
 // GetOversizedTags returns the list of geoip tags HR Neo excluded plus
 // the current IpsetMaxElem so the frontend can render the 'Отключённые
 // теги' pane and enforce picker limits.
+//
+//	@Summary		HydraRoute oversized geo tags
+//	@Tags			hydraroute
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/hydraroute/oversized-tags [get]
 func (h *HydraRouteHandler) GetOversizedTags(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

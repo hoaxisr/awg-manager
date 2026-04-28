@@ -108,6 +108,17 @@ func (h *HookHandler) SetTunnelRefresher(fn TunnelHookInvalidator) {
 //   address=<ipv4>                        (ipchanged only)
 //   up=<0|1>
 //   connected=<0|1>
+//
+//	@Summary		NDMS shell hook
+//	@Description	Called from router scripts (public). Form fields: type, id, system_name, layer, etc.
+//	@Tags			hook
+//	@Accept			x-www-form-urlencoded
+//	@Produce		json
+//	@Param			type	formData	string	true	"Event type (iflayerchanged, ifcreated, ...)"
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/hook/ndms [post]
 func (h *HookHandler) HandleNDMS(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)

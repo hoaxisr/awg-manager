@@ -11,6 +11,25 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// ExternalTunnelDTO mirrors frontend ExternalTunnel.
+type ExternalTunnelDTO struct {
+	InterfaceName string `json:"interfaceName" example:"Wireguard2"`
+	TunnelNumber  int    `json:"tunnelNumber" example:"2"`
+	IsAWG         bool   `json:"isAWG" example:"true"`
+	PublicKey     string `json:"publicKey,omitempty" example:"KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK="`
+	Endpoint      string `json:"endpoint,omitempty" example:"ext.example.com:51820"`
+	RxBytes       int64  `json:"rxBytes" example:"1048576"`
+	TxBytes       int64  `json:"txBytes" example:"524288"`
+}
+
+// ExternalTunnelsResponse is the envelope for GET /external-tunnels.
+type ExternalTunnelsResponse struct {
+	Success bool                `json:"success" example:"true"`
+	Data    []ExternalTunnelDTO `json:"data"`
+}
+
 // ExternalTunnelService defines the interface for external tunnel operations.
 type ExternalTunnelService interface {
 	List(ctx context.Context) ([]external.TunnelInfo, error)
@@ -55,6 +74,15 @@ func (h *ExternalTunnelsHandler) listExternal(ctx context.Context) ([]external.T
 
 // List returns all external (unmanaged) tunnels.
 // Endpoint: GET /api/external-tunnels
+//
+//	@Summary		List external tunnels
+//	@Tags			tunnels
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	ExternalTunnelsResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/external-tunnels [get]
 func (h *ExternalTunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -70,14 +98,26 @@ func (h *ExternalTunnelsHandler) List(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, tunnels)
 }
 
-// adoptRequest represents the request body for adopting an external tunnel.
-type adoptRequest struct {
+// AdoptRequest is the request body for adopting an external tunnel.
+type AdoptRequest struct {
 	Content string `json:"content"`
 	Name    string `json:"name"`
 }
 
 // Adopt takes control of an external tunnel.
 // Endpoint: POST /api/external-tunnels/adopt?interface=opkgtunX
+//
+//	@Summary		Adopt external tunnel
+//	@Tags			tunnels
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			interface	query		string			true	"NDMS interface name"
+//	@Param			body		body		AdoptRequest	true	"Tunnel config body"
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/external-tunnels/adopt [post]
 func (h *ExternalTunnelsHandler) Adopt(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -88,7 +128,7 @@ func (h *ExternalTunnelsHandler) Adopt(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, "missing interface parameter", "MISSING_INTERFACE")
 		return
 	}
-	req, ok := parseJSON[adoptRequest](w, r, http.MethodPost)
+	req, ok := parseJSON[AdoptRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}

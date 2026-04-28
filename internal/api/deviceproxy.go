@@ -11,6 +11,70 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// DeviceProxyAuthDTO mirrors frontend DeviceProxyAuth.
+type DeviceProxyAuthDTO struct {
+	Enabled  bool   `json:"enabled" example:"false"`
+	Username string `json:"username" example:""`
+	Password string `json:"password" example:""`
+}
+
+// DeviceProxyConfigData mirrors frontend DeviceProxyConfig.
+type DeviceProxyConfigData struct {
+	Enabled          bool               `json:"enabled" example:"false"`
+	ListenAll        bool               `json:"listenAll" example:"true"`
+	ListenInterface  string             `json:"listenInterface" example:"br0"`
+	Port             int                `json:"port" example:"1080"`
+	Auth             DeviceProxyAuthDTO `json:"auth"`
+	SelectedOutbound string             `json:"selectedOutbound" example:"proxy-01"`
+}
+
+// ProxyConfigResponse is the envelope for GET /proxy/config.
+type ProxyConfigResponse struct {
+	Success bool                  `json:"success" example:"true"`
+	Data    DeviceProxyConfigData `json:"data"`
+}
+
+// DeviceProxyRuntimeData mirrors frontend DeviceProxyRuntime.
+type DeviceProxyRuntimeData struct {
+	Alive      bool   `json:"alive" example:"true"`
+	ActiveTag  string `json:"activeTag" example:"proxy-01"`
+	DefaultTag string `json:"defaultTag" example:"proxy-01"`
+}
+
+// ProxyRuntimeResponse is the envelope for GET /proxy/runtime.
+type ProxyRuntimeResponse struct {
+	Success bool                   `json:"success" example:"true"`
+	Data    DeviceProxyRuntimeData `json:"data"`
+}
+
+// DeviceProxyOutboundDTO mirrors frontend DeviceProxyOutbound.
+type DeviceProxyOutboundDTO struct {
+	Tag    string `json:"tag" example:"proxy-01"`
+	Kind   string `json:"kind" example:"singbox"`
+	Label  string `json:"label" example:"proxy-01 (VLESS)"`
+	Detail string `json:"detail" example:"proxy.example.com:443"`
+}
+
+// ProxyOutboundsResponse is the envelope for GET /proxy/outbounds.
+type ProxyOutboundsResponse struct {
+	Success bool                     `json:"success" example:"true"`
+	Data    []DeviceProxyOutboundDTO `json:"data"`
+}
+
+// ProxyListenChoicesData mirrors the listen-choices payload.
+type ProxyListenChoicesData struct {
+	LanIP         string `json:"lanIP" example:"192.168.1.1"`
+	SingboxRunning bool  `json:"singboxRunning" example:"true"`
+}
+
+// ProxyListenChoicesResponse is the envelope for GET /proxy/listen-choices.
+type ProxyListenChoicesResponse struct {
+	Success bool                   `json:"success" example:"true"`
+	Data    ProxyListenChoicesData `json:"data"`
+}
+
 // DeviceProxyHandler handles /api/proxy/* endpoints.
 type DeviceProxyHandler struct {
 	svc *deviceproxy.Service
@@ -26,6 +90,15 @@ func NewDeviceProxyHandler(svc *deviceproxy.Service, appLogger logging.AppLogger
 }
 
 // GetConfig handles GET /api/proxy/config.
+//
+//	@Summary		Get device proxy config
+//	@Tags			device-proxy
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	ProxyConfigResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/proxy/config [get]
 func (h *DeviceProxyHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -35,6 +108,16 @@ func (h *DeviceProxyHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // SaveConfig handles PUT /api/proxy/config.
+//
+//	@Summary		Save device proxy config
+//	@Tags			device-proxy
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	ProxyConfigResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/proxy/config [put]
 func (h *DeviceProxyHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		response.MethodNotAllowed(w)
@@ -69,6 +152,15 @@ func (h *DeviceProxyHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 // "Применить сейчас" affordance when the user saved a new default via
 // the no-reload surgical path and now wants the live selector to
 // snap to that default.
+//
+//	@Summary		Force apply device proxy
+//	@Tags			device-proxy
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/proxy/apply [post]
 func (h *DeviceProxyHandler) ForceApply(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -82,6 +174,15 @@ func (h *DeviceProxyHandler) ForceApply(w http.ResponseWriter, r *http.Request) 
 }
 
 // GetRuntime — GET /api/proxy/runtime
+//
+//	@Summary		Device proxy runtime state
+//	@Tags			device-proxy
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	ProxyRuntimeResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/proxy/runtime [get]
 func (h *DeviceProxyHandler) GetRuntime(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -91,6 +192,16 @@ func (h *DeviceProxyHandler) GetRuntime(w http.ResponseWriter, r *http.Request) 
 }
 
 // SelectRuntime — POST /api/proxy/runtime/select  body {"tag":"..."}
+//
+//	@Summary		Select device proxy outbound
+//	@Tags			device-proxy
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	ProxyRuntimeResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/proxy/runtime/select [post]
 func (h *DeviceProxyHandler) SelectRuntime(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -120,6 +231,15 @@ func (h *DeviceProxyHandler) SelectRuntime(w http.ResponseWriter, r *http.Reques
 }
 
 // ListOutbounds handles GET /api/proxy/outbounds.
+//
+//	@Summary		List device proxy outbounds
+//	@Tags			device-proxy
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	ProxyOutboundsResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/proxy/outbounds [get]
 func (h *DeviceProxyHandler) ListOutbounds(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -131,6 +251,15 @@ func (h *DeviceProxyHandler) ListOutbounds(w http.ResponseWriter, r *http.Reques
 // ListenChoices handles GET /api/proxy/listen-choices.
 // Returns the bridge interface list, LAN IP, and singbox-running status
 // needed by the frontend inbound settings form.
+//
+//	@Summary		Device proxy listen choices
+//	@Tags			device-proxy
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	ProxyListenChoicesResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/proxy/listen-choices [get]
 func (h *DeviceProxyHandler) ListenChoices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

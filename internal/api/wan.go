@@ -9,6 +9,17 @@ import (
 	wanpkg "github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// WANStatusEnvelope is the swagger-friendly envelope for GET /wan/status.
+// (The actual handler uses the local WANStatusResponse which embeds wanpkg types.)
+type WANStatusEnvelope struct {
+	Success bool   `json:"success" example:"true"`
+	Data    struct {
+		AnyWANUp bool `json:"anyWANUp" example:"true"`
+	} `json:"data"`
+}
+
 // WANHandler serves WAN status queries. WAN up/down events are handled
 // by HookHandler (/api/hook/ndms layer=ipv4).
 type WANHandler struct {
@@ -34,6 +45,15 @@ type WANStatusResponse struct {
 
 // GetStatus returns current WAN interface state.
 // GET /api/wan/status
+//
+//	@Summary		WAN status
+//	@Tags			wan
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	WANStatusEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/wan/status [get]
 func (h *WANHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

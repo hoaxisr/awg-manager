@@ -13,6 +13,20 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// DiagnosticsStatusData mirrors frontend DiagnosticsStatus.
+type DiagnosticsStatusData struct {
+	Status   string `json:"status" example:"idle"`
+	Progress string `json:"progress" example:""`
+}
+
+// DiagnosticsStatusResponse is the envelope for GET /diagnostics/status.
+type DiagnosticsStatusResponse struct {
+	Success bool                  `json:"success" example:"true"`
+	Data    DiagnosticsStatusData `json:"data"`
+}
+
 // DiagnosticsRunner is the interface for running diagnostics.
 type DiagnosticsRunner interface {
 	Run(ctx context.Context) error
@@ -33,6 +47,15 @@ func NewDiagnosticsHandler(runner DiagnosticsRunner) *DiagnosticsHandler {
 
 // Run starts a background diagnostic run.
 // POST /api/diagnostics/run
+//
+//	@Summary		Run diagnostics
+//	@Tags			diagnostics
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/diagnostics/run [post]
 func (h *DiagnosticsHandler) Run(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -51,6 +74,15 @@ func (h *DiagnosticsHandler) Run(w http.ResponseWriter, r *http.Request) {
 
 // Status returns the current diagnostic run status.
 // GET /api/diagnostics/status
+//
+//	@Summary		Diagnostics status
+//	@Tags			diagnostics
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	DiagnosticsStatusResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/diagnostics/status [get]
 func (h *DiagnosticsHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -62,6 +94,15 @@ func (h *DiagnosticsHandler) Status(w http.ResponseWriter, r *http.Request) {
 
 // Result returns the last completed diagnostics report as a JSON file download.
 // GET /api/diagnostics/result
+//
+//	@Summary		Download diagnostics report
+//	@Tags			diagnostics
+//	@Produce		application/json
+//	@Security		CookieAuth
+//	@Success		200	{file}	binary
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/diagnostics/result [get]
 func (h *DiagnosticsHandler) Result(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -118,6 +159,15 @@ func sanitizeFilenamePart(s string) string {
 
 // Stream starts a diagnostic run and streams results via SSE.
 // GET /api/diagnostics/stream?mode=quick&restart=false&route=direct|tunnel&tunnelId=<id>
+//
+//	@Summary		Diagnostics SSE stream
+//	@Tags			diagnostics
+//	@Produce		text/event-stream
+//	@Security		CookieAuth
+//	@Success		200	{string}	string	"SSE stream"
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/diagnostics/stream [get]
 func (h *DiagnosticsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)

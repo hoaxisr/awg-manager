@@ -19,6 +19,100 @@ import (
 // file no longer depends on the legacy tunnel/ndms package.
 var wireguardNamePattern = regexp.MustCompile(`^Wireguard\d+$`)
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// WireguardServerPeerDTO mirrors frontend WireguardServerPeer.
+type WireguardServerPeerDTO struct {
+	PublicKey     string   `json:"publicKey" example:"DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD="`
+	Description   string   `json:"description" example:"Phone"`
+	Endpoint      string   `json:"endpoint" example:"1.2.3.4:12345"`
+	AllowedIPs    []string `json:"allowedIPs" example:"10.0.1.2/32"`
+	RxBytes       int64    `json:"rxBytes" example:"1048576"`
+	TxBytes       int64    `json:"txBytes" example:"524288"`
+	LastHandshake string   `json:"lastHandshake" example:"2024-01-15T10:30:00Z"`
+	Online        bool     `json:"online" example:"true"`
+	Enabled       bool     `json:"enabled" example:"true"`
+}
+
+// WireguardServerDTO mirrors frontend WireguardServer.
+type WireguardServerDTO struct {
+	ID            string                   `json:"id" example:"Wireguard0"`
+	InterfaceName string                   `json:"interfaceName" example:"Wireguard0"`
+	Description   string                   `json:"description" example:"Wireguard VPN Server"`
+	Status        string                   `json:"status" example:"up"`
+	Connected     bool                     `json:"connected" example:"true"`
+	MTU           int                      `json:"mtu" example:"1420"`
+	Address       string                   `json:"address" example:"10.0.1.1"`
+	Mask          string                   `json:"mask" example:"255.255.255.0"`
+	PublicKey     string                   `json:"publicKey" example:"EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE="`
+	ListenPort    int                      `json:"listenPort" example:"51820"`
+	Peers         []WireguardServerPeerDTO `json:"peers"`
+}
+
+// ManagedPeerStatsDTO mirrors frontend ManagedPeerStats.
+type ManagedPeerStatsDTO struct {
+	PublicKey     string `json:"publicKey" example:"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF="`
+	Endpoint      string `json:"endpoint" example:"5.6.7.8:54321"`
+	RxBytes       int64  `json:"rxBytes" example:"2097152"`
+	TxBytes       int64  `json:"txBytes" example:"1048576"`
+	LastHandshake string `json:"lastHandshake" example:"2024-01-15T10:30:00Z"`
+	Online        bool   `json:"online" example:"true"`
+}
+
+// ManagedServerStatsDTO mirrors frontend ManagedServerStats.
+type ManagedServerStatsDTO struct {
+	Status string                `json:"status" example:"up"`
+	Peers  []ManagedPeerStatsDTO `json:"peers"`
+}
+
+// ServersAllData is the composite payload for GET /servers/all.
+type ServersAllData struct {
+	Servers      []WireguardServerDTO   `json:"servers"`
+	ManagedStats *ManagedServerStatsDTO `json:"managedStats"`
+	WANIP        string                 `json:"wanIP" example:"203.0.113.42"`
+}
+
+// ServersAllResponse is the envelope for GET /servers/all.
+type ServersAllResponse struct {
+	Success bool           `json:"success" example:"true"`
+	Data    ServersAllData `json:"data"`
+}
+
+// WANIPData is the data for GET /servers/wan-ip.
+type WANIPData struct {
+	IP string `json:"ip" example:"203.0.113.42"`
+}
+
+// WANIPResponse is the envelope for GET /servers/wan-ip.
+type WANIPResponse struct {
+	Success bool      `json:"success" example:"true"`
+	Data    WANIPData `json:"data"`
+}
+
+// WireguardServerConfigPeerDTO mirrors frontend WireguardServerPeerConfig.
+type WireguardServerConfigPeerDTO struct {
+	PublicKey    string   `json:"publicKey" example:"DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD="`
+	Description  string   `json:"description" example:"Phone"`
+	PresharedKey string   `json:"presharedKey" example:"GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG="`
+	AllowedIPs   []string `json:"allowedIPs" example:"10.0.1.2/32"`
+	Address      string   `json:"address" example:"10.0.1.2"`
+}
+
+// WireguardServerConfigDTO mirrors frontend WireguardServerConfig.
+type WireguardServerConfigDTO struct {
+	PublicKey  string                         `json:"publicKey" example:"EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE="`
+	ListenPort int                            `json:"listenPort" example:"51820"`
+	MTU        int                            `json:"mtu" example:"1420"`
+	Address    string                         `json:"address" example:"10.0.1.1"`
+	Peers      []WireguardServerConfigPeerDTO `json:"peers"`
+}
+
+// ServerConfigResponse is the envelope for GET /servers/config.
+type ServerConfigResponse struct {
+	Success bool                     `json:"success" example:"true"`
+	Data    WireguardServerConfigDTO `json:"data"`
+}
+
 // isValidWireguardName checks that the name matches "WireguardN" pattern.
 // Used to prevent command injection in ndmc/RCI calls.
 func isValidWireguardName(name string) bool {
@@ -175,6 +269,15 @@ func (h *ServersHandler) writeAll(w http.ResponseWriter, r *http.Request) {
 // GetAll returns the composite servers snapshot (list + managed + stats + wanIP).
 // Replaces the snapshot:servers SSE event — the frontend polls this.
 // GET /api/servers/all
+//
+//	@Summary		Get all servers snapshot
+//	@Description	Returns the composite servers snapshot: WireGuard servers list, managed server, stats and WAN IP.
+//	@Tags			servers
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	ServersAllResponse
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/servers/all [get]
 func (h *ServersHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -265,6 +368,15 @@ func (h *ServersHandler) Mark(w http.ResponseWriter, r *http.Request) {
 
 // WANIP returns the external WAN IP for .conf generation.
 // GET /api/servers/wan-ip
+//
+//	@Summary		Get WAN IP
+//	@Description	Returns the router's external WAN IP address.
+//	@Tags			servers
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	WANIPResponse
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/servers/wan-ip [get]
 func (h *ServersHandler) WANIP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -280,6 +392,15 @@ func (h *ServersHandler) WANIP(w http.ResponseWriter, r *http.Request) {
 
 // Marked returns the list of server interface IDs.
 // GET /api/servers/marked
+//
+//	@Summary		Get marked server interfaces
+//	@Description	Returns the list of interface IDs that have been marked as servers.
+//	@Tags			servers
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/servers/marked [get]
 func (h *ServersHandler) Marked(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
