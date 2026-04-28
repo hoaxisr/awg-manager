@@ -9,6 +9,60 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// HydraRouteConfigData mirrors frontend HydraRouteConfig.
+type HydraRouteConfigData struct {
+	AutoStart          bool     `json:"autoStart" example:"true"`
+	ClearIPSet         bool     `json:"clearIPSet" example:"false"`
+	CIDR               bool     `json:"cidr" example:"true"`
+	IpsetEnableTimeout bool     `json:"ipsetEnableTimeout" example:"false"`
+	IpsetTimeout       int      `json:"ipsetTimeout" example:"0"`
+	IpsetMaxElem       int      `json:"ipsetMaxElem" example:"65536"`
+	DirectRouteEnabled bool     `json:"directRouteEnabled" example:"false"`
+	GlobalRouting      bool     `json:"globalRouting" example:"false"`
+	ConntrackFlush     bool     `json:"conntrackFlush" example:"true"`
+	Log                string   `json:"log" example:"warn"`
+	LogFile            string   `json:"logFile" example:"/var/log/hrneo.log"`
+	GeoIPFiles         []string `json:"geoIPFiles" example:"/opt/etc/hrneo/geoip.db"`
+	GeoSiteFiles       []string `json:"geoSiteFiles" example:"/opt/etc/hrneo/geosite.db"`
+	PolicyOrder        []string `json:"policyOrder" example:"default"`
+}
+
+// HydraRouteConfigResponse is the envelope for GET /hydraroute/config.
+type HydraRouteConfigResponse struct {
+	Success bool                 `json:"success" example:"true"`
+	Data    HydraRouteConfigData `json:"data"`
+}
+
+// GeoFileEntryDTO mirrors frontend GeoFileEntry.
+type GeoFileEntryDTO struct {
+	Type     string `json:"type" example:"geosite"`
+	Path     string `json:"path" example:"/opt/etc/hrneo/geosite.db"`
+	URL      string `json:"url" example:"https://cdn.example.com/geosite.db"`
+	Size     int64  `json:"size" example:"3145728"`
+	TagCount int    `json:"tagCount" example:"420"`
+	Updated  string `json:"updated" example:"2024-01-15T02:00:00Z"`
+}
+
+// GeoFilesResponse is the envelope for GET /hydraroute/geo-files.
+type GeoFilesResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Data    []GeoFileEntryDTO `json:"data"`
+}
+
+// GeoTagDTO mirrors frontend GeoTag.
+type GeoTagDTO struct {
+	Name  string `json:"name" example:"google"`
+	Count int    `json:"count" example:"1250"`
+}
+
+// GeoTagsResponse is the envelope for GET /hydraroute/geo-tags.
+type GeoTagsResponse struct {
+	Success bool        `json:"success" example:"true"`
+	Data    []GeoTagDTO `json:"data"`
+}
+
 // HydraRouteHandler handles HydraRoute Neo settings API endpoints.
 type HydraRouteHandler struct {
 	svc *hydraroute.Service

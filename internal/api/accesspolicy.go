@@ -8,6 +8,61 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// AccessPolicyInterfaceDTO mirrors frontend AccessPolicyInterface.
+type AccessPolicyInterfaceDTO struct {
+	Name   string `json:"name" example:"nwg0"`
+	Label  string `json:"label,omitempty" example:"My VPN"`
+	Order  int    `json:"order" example:"1"`
+	Denied bool   `json:"denied,omitempty" example:"false"`
+}
+
+// AccessPolicyDTO mirrors frontend AccessPolicy.
+type AccessPolicyDTO struct {
+	Name        string                     `json:"name" example:"default"`
+	Description string                     `json:"description" example:"Default policy"`
+	Standalone  bool                       `json:"standalone" example:"false"`
+	Interfaces  []AccessPolicyInterfaceDTO `json:"interfaces"`
+	DeviceCount int                        `json:"deviceCount" example:"5"`
+}
+
+// AccessPoliciesListResponse is the envelope for GET /access-policies.
+type AccessPoliciesListResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Data    []AccessPolicyDTO `json:"data"`
+}
+
+// PolicyDeviceDTO mirrors frontend PolicyDevice.
+type PolicyDeviceDTO struct {
+	MAC      string `json:"mac" example:"aa:bb:cc:dd:ee:ff"`
+	IP       string `json:"ip" example:"192.168.1.100"`
+	Name     string `json:"name" example:"My Phone"`
+	Hostname string `json:"hostname" example:"my-phone"`
+	Active   bool   `json:"active" example:"true"`
+	Link     string `json:"link" example:"WiFi"`
+	Policy   string `json:"policy" example:"default"`
+}
+
+// PolicyDevicesListResponse is the envelope for GET /access-policies/devices.
+type PolicyDevicesListResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Data    []PolicyDeviceDTO `json:"data"`
+}
+
+// PolicyGlobalInterfaceDTO mirrors frontend PolicyGlobalInterface.
+type PolicyGlobalInterfaceDTO struct {
+	Name  string `json:"name" example:"nwg0"`
+	Label string `json:"label" example:"My VPN"`
+	Up    bool   `json:"up" example:"true"`
+}
+
+// PolicyInterfacesListResponse is the envelope for GET /access-policies/interfaces.
+type PolicyInterfacesListResponse struct {
+	Success bool                       `json:"success" example:"true"`
+	Data    []PolicyGlobalInterfaceDTO `json:"data"`
+}
+
 // AccessPolicyHandler handles access policy CRUD and device assignment operations.
 type AccessPolicyHandler struct {
 	svc accesspolicy.Service

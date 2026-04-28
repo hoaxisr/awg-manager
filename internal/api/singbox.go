@@ -14,6 +14,53 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/testing"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// SingboxStatusData mirrors frontend SingboxStatus.
+type SingboxStatusData struct {
+	Installed      bool     `json:"installed" example:"true"`
+	Version        string   `json:"version,omitempty" example:"1.9.3"`
+	Running        bool     `json:"running" example:"true"`
+	PID            int      `json:"pid,omitempty" example:"12345"`
+	TunnelCount    int      `json:"tunnelCount" example:"2"`
+	ProxyComponent bool     `json:"proxyComponent" example:"true"`
+	Features       []string `json:"features,omitempty" example:"with_quic"`
+}
+
+// SingboxStatusResponse is the envelope for GET /singbox/status.
+type SingboxStatusResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Data    SingboxStatusData `json:"data"`
+}
+
+// SingboxTunnelConnectivity is the connectivity field in SingboxTunnel.
+type SingboxTunnelConnectivity struct {
+	Connected bool `json:"connected" example:"true"`
+	Latency   *int `json:"latency" swaggertype:"integer" example:"42"`
+}
+
+// SingboxTunnelDTO mirrors frontend SingboxTunnel.
+type SingboxTunnelDTO struct {
+	Tag            string                    `json:"tag" example:"proxy-01"`
+	Protocol       string                    `json:"protocol" example:"vless"`
+	Server         string                    `json:"server" example:"proxy.example.com"`
+	Port           int                       `json:"port" example:"443"`
+	Security       string                    `json:"security" example:"reality"`
+	Transport      string                    `json:"transport" example:"tcp"`
+	ListenPort     int                       `json:"listenPort" example:"7891"`
+	ProxyInterface string                    `json:"proxyInterface" example:"br0"`
+	SNI            string                    `json:"sni,omitempty" example:"cdn.example.com"`
+	Fingerprint    string                    `json:"fingerprint,omitempty" example:"chrome"`
+	Connectivity   SingboxTunnelConnectivity `json:"connectivity"`
+	Running        bool                      `json:"running" example:"true"`
+}
+
+// SingboxTunnelsResponse is the envelope for GET /singbox/tunnels.
+type SingboxTunnelsResponse struct {
+	Success bool               `json:"success" example:"true"`
+	Data    []SingboxTunnelDTO `json:"data"`
+}
+
 // SingboxHandler serves /api/singbox/* routes.
 type SingboxHandler struct {
 	op           *singbox.Operator
@@ -34,7 +81,9 @@ func NewSingboxHandler(op *singbox.Operator, bus *events.Bus, dc *singbox.DelayC
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			tag	query	string	true	"Tunnel tag"
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/tunnels/delay-check [post]
 func (h *SingboxHandler) DelayCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -65,7 +114,9 @@ func (h *SingboxHandler) DelayCheck(w http.ResponseWriter, r *http.Request) {
 //	@Description	Available when sing-box integration is enabled in the build.
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	SingboxStatusResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/status [get]
 func (h *SingboxHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -84,7 +135,9 @@ func (h *SingboxHandler) Status(w http.ResponseWriter, r *http.Request) {
 //	@Tags			singbox
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/install [post]
 func (h *SingboxHandler) Install(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -164,7 +217,9 @@ func (h *SingboxHandler) ListTunnels(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			tag	query	string	false	"When set, returns single tunnel"
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	SingboxTunnelsResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/tunnels [get]
 func (h *SingboxHandler) ServeGETTunnels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -221,7 +276,9 @@ func (h *SingboxHandler) enrichedTunnels(ctx context.Context) ([]singboxEnriched
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/tunnels [post]
 func (h *SingboxHandler) AddTunnels(w http.ResponseWriter, r *http.Request) {
 	body, ok := parseJSON[struct {
@@ -293,7 +350,9 @@ func (h *SingboxHandler) GetTunnel(w http.ResponseWriter, r *http.Request) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/tunnels [put]
 func (h *SingboxHandler) UpdateTunnel(w http.ResponseWriter, r *http.Request) {
 	body, ok := parseJSON[struct {
@@ -329,6 +388,8 @@ func (h *SingboxHandler) UpdateTunnel(w http.ResponseWriter, r *http.Request) {
 //	@Produce		text/event-stream
 //	@Security		CookieAuth
 //	@Success		200	{string}	string	"SSE stream"
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/tunnels/test/speed/stream [get]
 func (h *SingboxHandler) SpeedTestStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -450,7 +511,9 @@ func (h *SingboxHandler) SpeedTestStream(w http.ResponseWriter, r *http.Request)
 //	@Tags			singbox
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/tunnels [delete]
 func (h *SingboxHandler) DeleteTunnel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {

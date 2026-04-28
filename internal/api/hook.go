@@ -115,7 +115,9 @@ func (h *HookHandler) SetTunnelRefresher(fn TunnelHookInvalidator) {
 //	@Accept			x-www-form-urlencoded
 //	@Produce		json
 //	@Param			type	formData	string	true	"Event type (iflayerchanged, ifcreated, ...)"
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/hook/ndms [post]
 func (h *HookHandler) HandleNDMS(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

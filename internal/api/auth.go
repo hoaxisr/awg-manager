@@ -12,6 +12,22 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// LoginResponseRaw is the raw response for POST /auth/login.
+type LoginResponseRaw struct {
+	Success bool   `json:"success" example:"true"`
+	Login   string `json:"login" example:"admin"`
+}
+
+// AuthStatusResponse is the raw (non-enveloped) payload for GET /auth/status.
+type AuthStatusResponse struct {
+	Authenticated bool   `json:"authenticated" example:"true"`
+	AuthDisabled  bool   `json:"authDisabled" example:"false"`
+	Login         string `json:"login,omitempty" example:"admin"`
+	ExpiresIn     int    `json:"expiresIn,omitempty" example:"3600"`
+}
+
 // AuthHandler handles authentication endpoints.
 type AuthHandler struct {
 	keenetic *auth.KeeneticClient
@@ -44,10 +60,10 @@ type LoginRequest struct {
 //	@Accept			json
 //	@Produce		json
 //	@Param			body	body		LoginRequest	true	"Router login and password"
-//	@Success		200		{object}	map[string]interface{}	"success, login"
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		401		{object}	map[string]interface{}
-//	@Failure		503		{object}	map[string]interface{}
+//	@Success		200		{object}	LoginResponseRaw
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		401		{object}	APIErrorEnvelope
+//	@Failure		503		{object}	APIErrorEnvelope
 //	@Router			/auth/login [post]
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -108,7 +124,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 //	@Summary		Logout
 //	@Tags			auth
 //	@Produce		json
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/auth/logout [post]
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -142,7 +160,9 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 //	@Summary		Auth status
 //	@Tags			auth
 //	@Produce		json
-//	@Success		200	{object}	map[string]interface{}	"authenticated, login, expiresIn, authDisabled"
+//	@Success		200	{object}	AuthStatusResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/auth/status [get]
 func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

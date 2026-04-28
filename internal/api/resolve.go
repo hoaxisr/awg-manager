@@ -30,6 +30,8 @@ type ResolveResponse struct {
 //	@Security		CookieAuth
 //	@Param			domain	query	string	true	"Hostname to resolve"
 //	@Success		200	{object}	ResolveResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/routing/resolve [get]
 func (h *ResolveHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

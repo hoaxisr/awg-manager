@@ -5,6 +5,16 @@ import (
 	"net/http"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// BootStatusResponse is the raw (non-enveloped) payload for GET /boot-status.
+type BootStatusResponse struct {
+	Initializing     bool   `json:"initializing" example:"false"`
+	RemainingSeconds int    `json:"remainingSeconds" example:"0"`
+	Phase            string `json:"phase" example:"ready"`
+	InstanceId       string `json:"instanceId" example:"a1b2c3d4e5f6"`
+}
+
 // BootStatusHandler serves GET /api/boot-status (public).
 type BootStatusHandler struct {
 	InstanceID string
@@ -21,7 +31,9 @@ func NewBootStatusHandler(instanceID string) *BootStatusHandler {
 //	@Description	Public snapshot: initializing flag, phase, instance id.
 //	@Tags			system
 //	@Produce		json
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	BootStatusResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/boot-status [get]
 func (h *BootStatusHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

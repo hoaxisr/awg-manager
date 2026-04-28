@@ -11,6 +11,26 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// StaticRouteDTO mirrors frontend StaticRouteList.
+type StaticRouteDTO struct {
+	ID        string   `json:"id" example:"sr_001"`
+	Name      string   `json:"name" example:"Office subnets"`
+	TunnelID  string   `json:"tunnelID" example:"tun_abc123"`
+	Subnets   []string `json:"subnets" example:"192.168.10.0/24"`
+	Fallback  string   `json:"fallback,omitempty" example:""`
+	Enabled   bool     `json:"enabled" example:"true"`
+	CreatedAt string   `json:"createdAt" example:"2024-01-01T00:00:00Z"`
+	UpdatedAt string   `json:"updatedAt" example:"2024-01-15T12:00:00Z"`
+}
+
+// StaticRoutesListResponse is the envelope for GET /static-routes/list.
+type StaticRoutesListResponse struct {
+	Success bool             `json:"success" example:"true"`
+	Data    []StaticRouteDTO `json:"data"`
+}
+
 // StaticRouteService defines what the static route handler needs from the service.
 type StaticRouteService interface {
 	List() ([]storage.StaticRouteList, error)
@@ -54,7 +74,9 @@ func NewStaticRouteHandler(svc StaticRouteService, appLogger logging.AppLogger) 
 //	@Tags			static-routes
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{array}	map[string]interface{}
+//	@Success		200	{object}	StaticRoutesListResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/static-routes/list [get]
 //	@Router			/routing/static-routes [get]
 func (h *StaticRouteHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +101,9 @@ func (h *StaticRouteHandler) List(w http.ResponseWriter, r *http.Request) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	StaticRoutesListResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/static-routes/create [post]
 func (h *StaticRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
 	rl, ok := parseJSON[storage.StaticRouteList](w, r, http.MethodPost)
@@ -106,7 +130,9 @@ func (h *StaticRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	StaticRoutesListResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/static-routes/update [post]
 func (h *StaticRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
 	rl, ok := parseJSON[storage.StaticRouteList](w, r, http.MethodPost)
@@ -133,7 +159,9 @@ func (h *StaticRouteHandler) Update(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	query	string	true	"List id"
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/static-routes/delete [post]
 func (h *StaticRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -166,7 +194,9 @@ func (h *StaticRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	query	string	true	"List id"
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/static-routes/set-enabled [post]
 func (h *StaticRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 	body, ok := parseJSON[enabledToggle](w, r, http.MethodPost)
@@ -209,7 +239,9 @@ type staticRouteImportReq struct {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	StaticRoutesListResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/static-routes/import [post]
 func (h *StaticRouteHandler) Import(w http.ResponseWriter, r *http.Request) {
 	body, ok := parseJSON[staticRouteImportReq](w, r, http.MethodPost)

@@ -49,7 +49,9 @@ func (h *ImportHandler) SetTunnelsHandler(th *TunnelsHandler) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/import/conf [post]
 func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[struct {

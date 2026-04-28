@@ -23,7 +23,9 @@ func NewStatusHandler(svc TunnelService) *StatusHandler {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	query	string	true	"Tunnel id"
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/status/get [get]
 func (h *StatusHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -60,7 +62,9 @@ func (h *StatusHandler) Get(w http.ResponseWriter, r *http.Request) {
 //	@Tags			status
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{array}	map[string]interface{}
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/status/all [get]
 func (h *StatusHandler) All(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
