@@ -52,18 +52,37 @@ registerStore('singbox.tunnels', singboxTunnels);
 // Fed by +layout SSE handlers (onSingboxTraffic / onSingboxDelay).
 // Kept as Map so consumer `.get(tag)` patterns continue to work.
 // ─────────────────────────────────────────────
-const MAX_DELAY_HISTORY = 10;
+const MAX_DELAY_HISTORY = 20;
 
 export const singboxTraffic = writable<Map<string, SingboxTraffic>>(new Map());
 
 export function applyTraffic(data: SingboxTraffic[]): void {
 	const m = new Map<string, SingboxTraffic>();
-	for (const t of data) m.set(t.tag, t);
+	const now = Date.now();
+	for (const t of data) {
+		m.set(t.tag, t);
+		const last = lastTraffic.get(t.tag);
+		if (last) {
+			const dt = (now - last.timestamp) / 1000; // seconds
+			if (dt > 0) {
+				const rxDiff = t.download - last.download;
+				const txDiff = t.upload - last.upload;
+				if (rxDiff >= 0 && txDiff >= 0) {
+					const rxRate = rxDiff * 8 / dt; // bps
+					const txRate = txDiff * 8 / dt;
+					applyTrafficRate(t.tag, rxRate, txRate);
+				}
+			}
+		}
+		lastTraffic.set(t.tag, {download: t.download, upload: t.upload, timestamp: now});
+	}
 	singboxTraffic.set(m);
 }
 
 export const singboxDelayHistory = writable<Map<string, number[]>>(new Map());
 export const singboxLastPingTimes = writable<Map<string, number>>(new Map());
+export const singboxTrafficHistory = writable<Map<string, {rx: number[], tx: number[]}>>(new Map());
+const lastTraffic = new Map<string, {download: number, upload: number, timestamp: number}>();
 
 export function applyDelay(tag: string, delay: number, timestamp?: number): void {
 	singboxDelayHistory.update((map) => {
@@ -83,6 +102,19 @@ export function applyDelay(tag: string, delay: number, timestamp?: number): void
 			return next;
 		});
 	}
+}
+
+export function applyTrafficRate(tag: string, rx: number, tx: number): void {
+	singboxTrafficHistory.update((map) => {
+		const next = new Map(map);
+		const existing = next.get(tag) ?? {rx: [], tx: []};
+		const updatedRx = [...existing.rx, rx];
+		const updatedTx = [...existing.tx, tx];
+		if (updatedRx.length > 20) updatedRx.shift();
+		if (updatedTx.length > 20) updatedTx.shift();
+		next.set(tag, {rx: updatedRx, tx: updatedTx});
+		return next;
+	});
 }
 
 // ─────────────────────────────────────────────

@@ -3,3 +3,4 @@ export { default as SingboxTunnelCard } from './SingboxTunnelCard.svelte';
 export { default as SingboxTunnelDetails } from './SingboxTunnelDetails.svelte';
 export { default as SingboxGhostTerminal } from './SingboxGhostTerminal.svelte';
 export { default as SingboxSpeedTestModal } from './SingboxSpeedTestModal.svelte';
+export { default as SingboxSparkline } from './SingboxSparkline.svelte';

@@ -8,10 +8,12 @@
 		singboxDelayHistory,
 		singboxTraffic,
 		singboxLastPingTimes,
+		singboxTrafficHistory,
 		triggerDelayCheck,
 		toggleTunnelEnabled,
 	} from '$lib/stores/singbox';
-	import { Modal, Toggle } from '$lib/components/ui';
+	import { Modal, Toggle, TrafficChart } from '$lib/components/ui';
+	import { SingboxSparkline } from '$lib/components/singbox';
 	import SingboxSpeedTestModal from './SingboxSpeedTestModal.svelte';
 
 	interface Props {
@@ -79,7 +81,15 @@
 			? Math.round(history.reduce((s, v) => s + v, 0) / history.length)
 			: 0,
 	);
+	const validHistory = $derived(history.filter(v => v > 0));
+	const minDelay = $derived(
+		validHistory.length > 0 ? Math.min(...validHistory) : 0
+	);
+	const maxDelay = $derived(
+		validHistory.length > 0 ? Math.max(...validHistory) : 0
+	);
 	const traffic = $derived($singboxTraffic.get(tunnel.tag));
+	const trafficHistory = $derived($singboxTrafficHistory.get(tunnel.tag));
 	const lastPing = $derived($singboxLastPingTimes.get(tunnel.tag) || 0);
 
 
@@ -268,29 +278,15 @@
 				{:else if cardState === 'fail'}
 					<span class="err">не отвечает</span>
 				{:else}
-					avg {avg}ms
+					min {minDelay}ms · avg {avg}ms · max {maxDelay}ms
 				{/if}
 			</span>
 		</div>
-		<div
-			class="spark {cardState}"
-			onclick={triggerCheck}
-			onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && triggerCheck()}
-			role="button"
-			tabindex="0"
-			title="Клик — обновить delay"
-		>
-			{#if history.length === 0}
-				{#each Array(6) as _}
-					<div class="bar empty"></div>
-				{/each}
-			{:else}
-				{@const max = Math.max(...history.map((v) => (v <= 0 ? 100 : v)), 100)}
-				{#each history as d}
-					<div class="bar" style="height: {Math.max((d <= 0 ? max : d) / max, 0.1) * 100}%;"></div>
-				{/each}
-			{/if}
-		</div>
+		<SingboxSparkline
+			history={history}
+			height={26}
+			onclick={() => goto(`/singbox/${encodeURIComponent(tunnel.tag)}`)}
+		/>
 	</div>
 
 	<div class="chart-block">
@@ -300,18 +296,14 @@
 				↓ {formatBytes(traffic?.download ?? 0)} · ↑ {formatBytes(traffic?.upload ?? 0)}
 			</span>
 		</div>
-		<div class="traffic-spark">
-			<div class="track dl">
-				{#each Array(8) as _, i}
-					<div class="bar" style="height: {traffic && traffic.download > 0 ? Math.min((traffic.download / (1024 * 1024)) * 2, 18) : 1}px;"></div>
-				{/each}
-			</div>
-			<div class="track ul">
-				{#each Array(8) as _, i}
-					<div class="bar" style="height: {traffic && traffic.upload > 0 ? Math.min((traffic.upload / (1024 * 1024)) * 2, 10) : 1}px;"></div>
-				{/each}
-			</div>
-		</div>
+		<TrafficChart
+			rxRates={trafficHistory?.rx ?? []}
+			txRates={trafficHistory?.tx ?? []}
+			rxTotal={traffic?.download ?? 0}
+			txTotal={traffic?.upload ?? 0}
+			height={60}
+			onclick={() => goto(`/singbox/${encodeURIComponent(tunnel.tag)}`)}
+		/>
 	</div>
 
 	<div class="actions">
@@ -520,47 +512,7 @@
 	}
 	.chart-head .err { color: #ef4444; }
 
-	.spark {
-		height: 26px;
-		display: flex;
-		align-items: flex-end;
-		gap: 2px;
-		cursor: pointer;
-		padding: 2px 0;
-	}
-	.spark:focus { outline: 1px dashed var(--text-muted); }
-	.spark .bar {
-		flex: 1;
-		background: linear-gradient(to top, rgba(59, 130, 246, 0.6), rgba(96, 165, 250, 0.9));
-		border-radius: 1px;
-		min-height: 2px;
-	}
-	.spark.fail .bar { background: rgba(239, 68, 68, 0.4); height: 100% !important; }
-	.spark.unknown .bar,
-	.spark .bar.empty {
-		background: var(--border);
-		height: 30% !important;
-	}
 
-	.traffic-spark {
-		height: 22px;
-		display: flex;
-		flex-direction: column;
-		gap: 1px;
-	}
-	.traffic-spark .track {
-		display: flex;
-		gap: 1px;
-		flex: 1;
-		align-items: flex-end;
-	}
-	.traffic-spark .track .bar {
-		flex: 1;
-		min-height: 1px;
-		border-radius: 1px;
-	}
-	.traffic-spark .track.dl .bar { background: rgba(16, 185, 129, 0.7); }
-	.traffic-spark .track.ul .bar { background: rgba(59, 130, 246, 0.7); }
 
 	.actions {
 		display: flex;
