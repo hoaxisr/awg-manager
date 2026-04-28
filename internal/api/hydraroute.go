@@ -63,6 +63,90 @@ type GeoTagsResponse struct {
 	Data    []GeoTagDTO `json:"data"`
 }
 
+// GeoFileResponse is the envelope for endpoints that return a single
+// geo file entry (POST /hydraroute/geo-files/add).
+type GeoFileResponse struct {
+	Success bool            `json:"success" example:"true"`
+	Data    GeoFileEntryDTO `json:"data"`
+}
+
+// GeoFileUpdatedData reports how many geo files were re-downloaded by
+// POST /hydraroute/geo-files/update. The shape is the same whether the
+// caller targeted one path or all paths.
+type GeoFileUpdatedData struct {
+	Updated int `json:"updated" example:"1"`
+}
+
+// GeoFileUpdatedResponse is the envelope for POST /hydraroute/geo-files/update.
+type GeoFileUpdatedResponse struct {
+	Success bool               `json:"success" example:"true"`
+	Data    GeoFileUpdatedData `json:"data"`
+}
+
+// IpsetUsageData mirrors hydraroute.IpsetUsage.
+type IpsetUsageData struct {
+	MaxElem int            `json:"maxElem" example:"65536"`
+	Usage   map[string]int `json:"usage"`
+}
+
+// IpsetUsageResponse is the envelope for GET /hydraroute/ipset-usage.
+type IpsetUsageResponse struct {
+	Success bool           `json:"success" example:"true"`
+	Data    IpsetUsageData `json:"data"`
+}
+
+// PolicyOrderData reports the current HrNeo policy order.
+type PolicyOrderData struct {
+	Order []string `json:"order" example:"default"`
+}
+
+// PolicyOrderResponse is the envelope for POST /hydraroute/policy-order.
+type PolicyOrderResponse struct {
+	Success bool            `json:"success" example:"true"`
+	Data    PolicyOrderData `json:"data"`
+}
+
+// OversizedTagDTO mirrors hydraroute.OversizedTag.
+type OversizedTagDTO struct {
+	Name  string `json:"name" example:"netflix"`
+	Count int    `json:"count" example:"82000"`
+	File  string `json:"file" example:"/opt/etc/hrneo/geosite.db"`
+}
+
+// OversizedTagsData reports geoip tags excluded by HrNeo together with
+// the active IpsetMaxElem so the frontend can render the disabled-tags
+// pane and enforce picker limits.
+type OversizedTagsData struct {
+	Installed bool              `json:"installed" example:"true"`
+	MaxElem   int               `json:"maxelem" example:"65536"`
+	Tags      []OversizedTagDTO `json:"tags"`
+}
+
+// OversizedTagsResponse is the envelope for GET /hydraroute/oversized-tags.
+type OversizedTagsResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Data    OversizedTagsData `json:"data"`
+}
+
+// ── Request DTOs ─────────────────────────────────────────────────
+
+// AddGeoFileRequest is the body for POST /hydraroute/geo-files/add.
+type AddGeoFileRequest struct {
+	Type string `json:"type" example:"geosite"`
+	URL  string `json:"url" example:"https://cdn.example.com/geosite.db"`
+}
+
+// UpdateGeoFileRequest is the body for POST /hydraroute/geo-files/update.
+// Empty path triggers a bulk refresh of every tracked geo file.
+type UpdateGeoFileRequest struct {
+	Path string `json:"path" example:"/opt/etc/hrneo/geosite.db"`
+}
+
+// SetPolicyOrderRequest is the body for POST /hydraroute/policy-order.
+type SetPolicyOrderRequest struct {
+	Order []string `json:"order" example:"default"`
+}
+
 // HydraRouteHandler handles HydraRoute Neo settings API endpoints.
 type HydraRouteHandler struct {
 	svc *hydraroute.Service
@@ -146,7 +230,8 @@ func (h *HydraRouteHandler) UpdateConfig(w http.ResponseWriter, r *http.Request)
 //	@Tags			hydraroute
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{array}	map[string]interface{}
+//	@Success		200	{object}	GeoFilesResponse
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/hydraroute/geo-files [get]
 func (h *HydraRouteHandler) ListGeoFiles(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -170,7 +255,10 @@ func (h *HydraRouteHandler) ListGeoFiles(w http.ResponseWriter, r *http.Request)
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Param			body	body		AddGeoFileRequest	true	"Geo file source descriptor"
+//	@Success		200		{object}	GeoFileResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/hydraroute/geo-files/add [post]
 func (h *HydraRouteHandler) AddGeoFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -215,9 +303,9 @@ func (h *HydraRouteHandler) AddGeoFile(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			path	query		string	true	"Filesystem path of the geo file"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/hydraroute/geo-files/delete [delete]
 func (h *HydraRouteHandler) DeleteGeoFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
@@ -247,17 +335,21 @@ func (h *HydraRouteHandler) DeleteGeoFile(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // UpdateGeoFile re-downloads a geo data file (or all files if path is empty).
 //
 //	@Summary		Refresh HydraRoute geo file(s)
+//	@Description	Empty path triggers a bulk refresh of every tracked geo file. Single path refreshes one file. Both branches return an updated count for caller-side feedback; the frontend refetches the list afterwards.
 //	@Tags			hydraroute
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Param			body	body		UpdateGeoFileRequest	true	"Path to refresh, or empty to refresh all"
+//	@Success		200		{object}	GeoFileUpdatedResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/hydraroute/geo-files/update [post]
 func (h *HydraRouteHandler) UpdateGeoFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -265,9 +357,7 @@ func (h *HydraRouteHandler) UpdateGeoFile(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var req struct {
-		Path string `json:"path"`
-	}
+	var req UpdateGeoFileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, "invalid request body: "+err.Error(), "BAD_REQUEST")
 		return
@@ -279,26 +369,20 @@ func (h *HydraRouteHandler) UpdateGeoFile(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	updated := 0
 	if req.Path == "" {
 		count, err := gds.UpdateAll()
 		if err != nil {
 			response.Error(w, err.Error(), "GEO_UPDATE_ERROR")
 			return
 		}
-
-		if err := h.svc.SyncGeoFilesToConfig(); err != nil {
-			response.Error(w, "updated but failed to sync config: "+err.Error(), "SYNC_ERROR")
+		updated = count
+	} else {
+		if _, err := gds.Update(req.Path); err != nil {
+			response.Error(w, err.Error(), "GEO_UPDATE_ERROR")
 			return
 		}
-
-		response.Success(w, map[string]int{"updated": count})
-		return
-	}
-
-	entry, err := gds.Update(req.Path)
-	if err != nil {
-		response.Error(w, err.Error(), "GEO_UPDATE_ERROR")
-		return
+		updated = 1
 	}
 
 	if err := h.svc.SyncGeoFilesToConfig(); err != nil {
@@ -306,7 +390,7 @@ func (h *HydraRouteHandler) UpdateGeoFile(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	response.Success(w, entry)
+	response.Success(w, map[string]int{"updated": updated})
 }
 
 // GetGeoTags returns the tag list for a specific geo data file.
@@ -351,7 +435,8 @@ func (h *HydraRouteHandler) GetGeoTags(w http.ResponseWriter, r *http.Request) {
 //	@Tags			hydraroute
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	IpsetUsageResponse
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/hydraroute/ipset-usage [get]
 func (h *HydraRouteHandler) GetIpsetUsage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -375,7 +460,10 @@ func (h *HydraRouteHandler) GetIpsetUsage(w http.ResponseWriter, r *http.Request
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Param			body	body		SetPolicyOrderRequest	true	"Ordered list of policy names"
+//	@Success		200		{object}	PolicyOrderResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/hydraroute/policy-order [post]
 func (h *HydraRouteHandler) SetPolicyOrder(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -383,9 +471,7 @@ func (h *HydraRouteHandler) SetPolicyOrder(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var req struct {
-		Order []string `json:"order"`
-	}
+	var req SetPolicyOrderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, "invalid request body: "+err.Error(), "BAD_REQUEST")
 		return
@@ -410,7 +496,8 @@ func (h *HydraRouteHandler) SetPolicyOrder(w http.ResponseWriter, r *http.Reques
 //	@Tags			hydraroute
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
+//	@Success		200	{object}	OversizedTagsResponse
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/hydraroute/oversized-tags [get]
 func (h *HydraRouteHandler) GetOversizedTags(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

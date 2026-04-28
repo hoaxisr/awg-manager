@@ -145,7 +145,7 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"Settings"
+//	@Param			body	body		SettingsData	true	"Full settings object"
 //	@Success		200		{object}	SettingsResponse
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		500		{object}	APIErrorEnvelope

@@ -61,6 +61,11 @@ type SingboxTunnelsResponse struct {
 	Data    []SingboxTunnelDTO `json:"data"`
 }
 
+// SingboxControlRequest is the body for POST /singbox/control.
+type SingboxControlRequest struct {
+	Action string `json:"action" example:"start" enums:"start,stop,restart"`
+}
+
 // SingboxHandler serves /api/singbox/* routes.
 type SingboxHandler struct {
 	op           *singbox.Operator
@@ -169,19 +174,17 @@ func (h *SingboxHandler) Install(w http.ResponseWriter, r *http.Request) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{action: start|stop|restart}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxControlRequest	true	"Action to perform"
+//	@Success		200		{object}	SingboxStatusResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/control [post]
 func (h *SingboxHandler) Control(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
 		return
 	}
-	var req struct {
-		Action string `json:"action"`
-	}
+	var req SingboxControlRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, "invalid request", "INVALID_REQUEST")
 		return
