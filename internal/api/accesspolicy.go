@@ -147,7 +147,7 @@ func (h *AccessPolicyHandler) Create(w http.ResponseWriter, r *http.Request) {
 //
 //	@Summary		Delete access policy
 //	@Description	Removes the named access policy. Bound LAN devices revert to the default policy.
-//	@Tags			access-policies
+//	@Tags			access-policy
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			name	query		string	true	"Policy name (e.g. Policy0)"
@@ -235,19 +235,17 @@ func (h *AccessPolicyHandler) SetStandalone(w http.ResponseWriter, r *http.Reque
 	h.publishPoliciesUpdated("set-standalone")
 }
 
-// PermitInterfaceAdd adds an interface to a policy (POST /api/access-policies/permit).
-//
-//	@Summary		Permit interface on policy
-//	@Tags			access-policy
-//	@Accept			json
-//	@Produce		json
-//	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Router			/access-policies/permit [post]
-func (h *AccessPolicyHandler) PermitInterfaceAdd(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+// PermitInterface handles permit/deny operations for policy interfaces.
+// POST /api/access-policies/permit — add interface
+// DELETE /api/access-policies/permit?name=...&interface=... — remove interface
+func (h *AccessPolicyHandler) PermitInterface(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		h.permitInterfaceAdd(w, r)
+	case http.MethodDelete:
+		h.permitInterfaceRemove(w, r)
+	default:
 		response.MethodNotAllowed(w)
-		return
 	}
 }
 
@@ -255,7 +253,7 @@ func (h *AccessPolicyHandler) PermitInterfaceAdd(w http.ResponseWriter, r *http.
 //
 //	@Summary		Permit interface for policy
 //	@Description	Adds the named interface to the policy at the given order (lower = higher priority).
-//	@Tags			access-policies
+//	@Tags			access-policy
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
@@ -293,7 +291,7 @@ func (h *AccessPolicyHandler) permitInterfaceAdd(w http.ResponseWriter, r *http.
 //
 //	@Summary		Deny interface for policy
 //	@Description	Removes the named interface from the policy.
-//	@Tags			access-policies
+//	@Tags			access-policy
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			name		query		string	true	"Policy name"
@@ -340,7 +338,7 @@ func (h *AccessPolicyHandler) AssignDevice(w http.ResponseWriter, r *http.Reques
 //
 //	@Summary		Assign device to policy
 //	@Description	Binds the LAN device identified by MAC to the named policy. Replaces any existing assignment.
-//	@Tags			access-policies
+//	@Tags			access-policy
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
@@ -378,7 +376,7 @@ func (h *AccessPolicyHandler) assignDevicePost(w http.ResponseWriter, r *http.Re
 //
 //	@Summary		Unassign device from policy
 //	@Description	Removes the policy binding for the LAN device identified by MAC. The device falls back to the default policy.
-//	@Tags			access-policies
+//	@Tags			access-policy
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			mac	query		string	true	"Device MAC address"
