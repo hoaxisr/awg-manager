@@ -63,8 +63,9 @@ export function applyTraffic(data: SingboxTraffic[]): void {
 }
 
 export const singboxDelayHistory = writable<Map<string, number[]>>(new Map());
+export const singboxLastPingTimes = writable<Map<string, number>>(new Map());
 
-export function applyDelay(tag: string, delay: number): void {
+export function applyDelay(tag: string, delay: number, timestamp?: number): void {
 	singboxDelayHistory.update((map) => {
 		const next = new Map(map);
 		const existing = next.get(tag) ?? [];
@@ -75,6 +76,13 @@ export function applyDelay(tag: string, delay: number): void {
 		next.set(tag, updated);
 		return next;
 	});
+	if (timestamp !== undefined) {
+		singboxLastPingTimes.update((map) => {
+			const next = new Map(map);
+			next.set(tag, timestamp * 1000); // timestamp in seconds to milliseconds
+			return next;
+		});
+	}
 }
 
 // ─────────────────────────────────────────────
@@ -82,9 +90,19 @@ export function applyDelay(tag: string, delay: number): void {
 // ─────────────────────────────────────────────
 export async function triggerDelayCheck(tag: string): Promise<void> {
 	try {
-		await api.singboxDelayCheck(tag);
+		const result = await api.singboxDelayCheck(tag);
+		// Immediately update last ping time for instant UI feedback
+		singboxLastPingTimes.update((map) => {
+			const next = new Map(map);
+			next.set(tag, Date.now());
+			return next;
+		});
+		applyDelay(tag, result.delay); // Also update history immediately
 	} catch (e) {
-		console.error('singbox delay check', tag, e);
+		// Ignore "check already in flight" as it's not a real error, just concurrent request protection
+		if (!e.message?.includes('check already in flight')) {
+			console.error('singbox delay check', tag, e);
+		}
 	}
 }
 

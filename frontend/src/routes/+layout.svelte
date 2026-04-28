@@ -107,7 +107,7 @@
 
 			// Sing-box streams
 			onSingboxTraffic: singboxApplyTraffic,
-			onSingboxDelay: (data) => singboxApplyDelay(data.tag, data.delay),
+			onSingboxDelay: (data) => singboxApplyDelay(data.tag, data.delay, data.timestamp),
 
 			// HydraRoute geo download progress
 			onHydraRouteGeoProgress: (data) => geoDownloadProgress.ingest(data),

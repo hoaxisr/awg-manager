@@ -114,24 +114,37 @@ func (o *Operator) SetTunnelEnabled(ctx context.Context, tag string, enabled boo
 		o.log.Error("load config failed", "tag", tag, "err", err)
 		return err
 	}
+
+	var proxyIface string
+
+	// Если ВЫКЛЮЧАЕМ туннель, нужно запомнить интерфейс ДО его удаления из активного конфига
+	if !enabled {
+		for _, t := range cfg.Tunnels() {
+			if t.Tag == tag {
+				proxyIface = t.ProxyInterface
+				break
+			}
+		}
+	}
+
 	if err := cfg.SetTunnelEnabled(tag, enabled); err != nil {
 		o.log.Error("set tunnel enabled in config failed", "tag", tag, "err", err)
 		return err
 	}
 
-	// Toggle NDMS proxy state before applying config
-	tunnels := cfg.Tunnels()
-	for _, t := range tunnels {
-		if t.Tag == tag {
-			if t.ProxyInterface == "" || strings.Contains(t.ProxyInterface, "-") {
-				o.log.Warn("skip proxy toggle: invalid proxy interface", "tag", tag, "iface", t.ProxyInterface)
+	// Если ВКЛЮЧАЕМ туннель, интерфейс появится в конфиге только ПОСЛЕ его активации (когда подтянется порт)
+	if enabled {
+		for _, t := range cfg.Tunnels() {
+			if t.Tag == tag {
+				proxyIface = t.ProxyInterface
 				break
 			}
-			idx, err := parseProxyIdx(t.ProxyInterface)
-			if err != nil {
-				o.log.Warn("skip proxy toggle: bad proxy interface", "tag", tag, "iface", t.ProxyInterface, "err", err)
-				break
-			}
+		}
+	}
+
+	// Переключаем интерфейс в NDMS
+	if proxyIface != "" && !strings.Contains(proxyIface, "-") {
+		if idx, err := parseProxyIdx(proxyIface); err == nil {
 			if enabled {
 				if err := o.proxyMgr.EnableProxy(ctx, idx); err != nil {
 					o.log.Warn("enable proxy failed", "tag", tag, "err", err)
@@ -141,10 +154,13 @@ func (o *Operator) SetTunnelEnabled(ctx context.Context, tag string, enabled boo
 					o.log.Warn("disable proxy failed", "tag", tag, "err", err)
 				}
 			}
-			// Save NDMS config to sync UI
+			// Сохраняем состояние NDMS для синхронизации с UI роутера
 			o.commands.Save.Request()
-			break
+		} else {
+			o.log.Warn("skip proxy toggle: bad proxy interface format", "tag", tag, "iface", proxyIface, "err", err)
 		}
+	} else {
+		o.log.Warn("skip proxy toggle: empty or invalid proxy interface", "tag", tag)
 	}
 
 	if err := o.applyConfig(ctx, cfg); err != nil {

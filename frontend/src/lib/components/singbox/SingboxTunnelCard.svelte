@@ -1,11 +1,13 @@
 <script lang="ts">
 	import type { SingboxTunnel } from '$lib/types';
 	import { goto } from '$app/navigation';
+	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api/client';
 	import {
 		singboxTunnels,
 		singboxDelayHistory,
 		singboxTraffic,
+		singboxLastPingTimes,
 		triggerDelayCheck,
 		toggleTunnelEnabled,
 	} from '$lib/stores/singbox';
@@ -23,8 +25,49 @@
 	let showServer = $state(false);
 	let checking = $state(false);
 	let toggling = $state(false);
-	let lastPingTime = $state(0);
 	let initialCheckDone = $state(false);
+
+	// Создаем "тикающую" переменную текущего времени
+	let now = $state(Date.now());
+	let animationFrameId: number;
+
+	function updateNow() {
+		now = Date.now();
+		animationFrameId = requestAnimationFrame(updateNow);
+	}
+
+	function handleVisibilityChange() {
+		if (!document.hidden) {
+			now = Date.now(); // Обновляем при возвращении на вкладку
+		}
+	}
+
+	onMount(() => {
+		updateNow(); // Запускаем цикл обновления
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+	});
+
+	onDestroy(() => {
+		if (animationFrameId) cancelAnimationFrame(animationFrameId);
+		document.removeEventListener('visibilitychange', handleVisibilityChange);
+	});
+
+	// Реактивно вычисляем красивый текст для пинга
+	const pingText = $derived.by(() => {
+		if (lastPing === 0) return 'нет данных';
+
+		const pingTime = lastPing;
+		const diffSecs = Math.floor((now - pingTime) / 1000);
+
+		if (diffSecs < 0) return 'только что'; // защита от рассинхрона времени
+		if (diffSecs < 5) return 'только что';
+		if (diffSecs < 60) return `${diffSecs} сек назад`;
+		if (diffSecs < 3600) return `${Math.floor(diffSecs / 60)} мин назад`;
+
+		const hours = Math.floor(diffSecs / 3600);
+		const mins = Math.floor((diffSecs % 3600) / 60);
+		return mins > 0 ? `${hours} ч ${mins} мин назад` : `${hours} ч назад`;
+	});
 
 	const DELAY_OK = 200;
 	const DELAY_SLOW = 500;
@@ -37,8 +80,9 @@
 			: 0,
 	);
 	const traffic = $derived($singboxTraffic.get(tunnel.tag));
+	const lastPing = $derived($singboxLastPingTimes.get(tunnel.tag) || 0);
 
-	const lastPingTimeStr = $derived(lastPingTime > 0 ? new Date(lastPingTime).toLocaleTimeString() : null);
+
 
 	$effect(() => {
 		if (!initialCheckDone && tunnel.enabled && tunnel.running && history.length === 0) {
@@ -79,7 +123,7 @@
 		checking = true;
 		try {
 			await triggerDelayCheck(tunnel.tag);
-			lastPingTime = Date.now();
+			// lastPingTime will be updated via SSE
 		} finally {
 			checking = false;
 		}
@@ -203,12 +247,15 @@
 		</div>
 	{/if}
 
-	{#if lastPingTimeStr !== null}
-		<div class="row">
-			<span class="label">Ping</span>
-			<span class="value">{lastPingTimeStr}</span>
-		</div>
-	{/if}
+	<div class="row">
+		<span class="label">PING</span>
+		<span class="value">{pingText}</span>
+	</div>
+
+	<div class="row">
+		<span class="label">SOCKS5</span>
+		<span class="value">{tunnel.listenPort}</span>
+	</div>
 
 	<div class="divider"></div>
 
