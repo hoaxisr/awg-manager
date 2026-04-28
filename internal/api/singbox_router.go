@@ -12,6 +12,240 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
+// ── Response DTOs ────────────────────────────────────────────────
+
+// SingboxRouterIssueDTO mirrors router.Issue (one entry of Status.Issues).
+type SingboxRouterIssueDTO struct {
+	Severity  string `json:"severity" example:"warning"`
+	Kind      string `json:"kind" example:"missing-outbound"`
+	RuleIndex int    `json:"ruleIndex,omitempty" example:"0"`
+	Tag       string `json:"tag,omitempty" example:"selector"`
+	Message   string `json:"message" example:"outbound 'selector' is referenced but does not exist"`
+}
+
+// SingboxRouterStatusData mirrors router.Status.
+type SingboxRouterStatusData struct {
+	Enabled                bool                    `json:"enabled" example:"true"`
+	Installed              bool                    `json:"installed" example:"true"`
+	NetfilterAvailable     bool                    `json:"netfilterAvailable" example:"true"`
+	NetfilterComponentName string                  `json:"netfilterComponentName,omitempty" example:"iptables-mod-tproxy"`
+	TProxyTargetAvailable  bool                    `json:"tproxyTargetAvailable" example:"true"`
+	PolicyName             string                  `json:"policyName" example:"awgm-router"`
+	PolicyMark             string                  `json:"policyMark,omitempty" example:"0xffffaaa"`
+	PolicyExists           bool                    `json:"policyExists" example:"true"`
+	DeviceCount            int                     `json:"deviceCount" example:"3"`
+	RuleCount              int                     `json:"ruleCount" example:"12"`
+	RuleSetCount           int                     `json:"ruleSetCount" example:"4"`
+	OutboundAWGCount       int                     `json:"outboundAwgCount" example:"2"`
+	OutboundCompositeCount int                     `json:"outboundCompositeCount" example:"1"`
+	Final                  string                  `json:"final" example:"direct"`
+	Issues                 []SingboxRouterIssueDTO `json:"issues,omitempty"`
+}
+
+// SingboxRouterStatusResponse is the envelope for GET /singbox/router/status.
+type SingboxRouterStatusResponse struct {
+	Success bool                    `json:"success" example:"true"`
+	Data    SingboxRouterStatusData `json:"data"`
+}
+
+// SingboxRouterSettingsData mirrors storage.SingboxRouterSettings.
+type SingboxRouterSettingsData struct {
+	Enabled         bool   `json:"enabled" example:"true"`
+	PolicyName      string `json:"policyName" example:"awgm-router"`
+	RefreshMode     string `json:"refreshMode,omitempty" example:"interval"`
+	RefreshInterval int    `json:"refreshIntervalHours,omitempty" example:"24"`
+	RefreshDaily    string `json:"refreshDailyTime,omitempty" example:"03:00"`
+}
+
+// SingboxRouterSettingsResponse is the envelope for GET /singbox/router/settings.
+type SingboxRouterSettingsResponse struct {
+	Success bool                      `json:"success" example:"true"`
+	Data    SingboxRouterSettingsData `json:"data"`
+}
+
+// SingboxRouterRuleDTO mirrors router.Rule (a routing rule in priority order).
+type SingboxRouterRuleDTO struct {
+	DomainSuffix []string `json:"domain_suffix,omitempty" example:".example.com"`
+	IPCIDR       []string `json:"ip_cidr,omitempty" example:"10.0.0.0/8"`
+	SourceIPCIDR []string `json:"source_ip_cidr,omitempty" example:"192.168.1.100/32"`
+	Port         []int    `json:"port,omitempty" example:"443"`
+	RuleSet      []string `json:"rule_set,omitempty" example:"geosite-cn"`
+	Protocol     string   `json:"protocol,omitempty" example:"tcp"`
+	Action       string   `json:"action" example:"route"`
+	Outbound     string   `json:"outbound,omitempty" example:"selector"`
+}
+
+// SingboxRouterRulesListResponse is the envelope for GET /singbox/router/rules/list.
+type SingboxRouterRulesListResponse struct {
+	Success bool                   `json:"success" example:"true"`
+	Data    []SingboxRouterRuleDTO `json:"data"`
+}
+
+// SingboxRouterRuleSetDTO mirrors router.RuleSet.
+type SingboxRouterRuleSetDTO struct {
+	Tag            string `json:"tag" example:"geosite-cn"`
+	Type           string `json:"type" example:"remote"`
+	Format         string `json:"format" example:"binary"`
+	URL            string `json:"url,omitempty" example:"https://cdn.example.com/geosite-cn.srs"`
+	UpdateInterval string `json:"update_interval,omitempty" example:"24h"`
+	DownloadDetour string `json:"download_detour,omitempty" example:"direct"`
+	Path           string `json:"path,omitempty" example:"/opt/etc/singbox/rulesets/geosite-cn.srs"`
+}
+
+// SingboxRouterRuleSetsListResponse is the envelope for GET /singbox/router/rulesets/list.
+type SingboxRouterRuleSetsListResponse struct {
+	Success bool                      `json:"success" example:"true"`
+	Data    []SingboxRouterRuleSetDTO `json:"data"`
+}
+
+// SingboxRouterOutboundDTO mirrors router.Outbound (composite outbound).
+type SingboxRouterOutboundDTO struct {
+	Type          string   `json:"type" example:"selector"`
+	Tag           string   `json:"tag" example:"my-selector"`
+	BindInterface string   `json:"bind_interface,omitempty" example:"awg-vpn0"`
+	Outbounds     []string `json:"outbounds,omitempty" example:"awg-vpn0"`
+	URL           string   `json:"url,omitempty" example:"https://www.gstatic.com/generate_204"`
+	Interval      string   `json:"interval,omitempty" example:"3m"`
+	Tolerance     int      `json:"tolerance,omitempty" example:"50"`
+	Default       string   `json:"default,omitempty" example:"awg-vpn0"`
+	Strategy      string   `json:"strategy,omitempty" example:"prefer_ipv4"`
+}
+
+// SingboxRouterOutboundsListResponse is the envelope for GET /singbox/router/outbounds/list.
+type SingboxRouterOutboundsListResponse struct {
+	Success bool                       `json:"success" example:"true"`
+	Data    []SingboxRouterOutboundDTO `json:"data"`
+}
+
+// SingboxRouterPresetRuleRefDTO mirrors internalpresets.RuleRef.
+type SingboxRouterPresetRuleRefDTO struct {
+	Tag string `json:"tag" example:"geosite-cn"`
+}
+
+// SingboxRouterPresetRuleLinkDTO mirrors internalpresets.RuleLink.
+type SingboxRouterPresetRuleLinkDTO struct {
+	RuleSet      []string `json:"rule_set,omitempty" example:"geosite-cn"`
+	DomainSuffix []string `json:"domain_suffix,omitempty" example:".cn"`
+	Action       string   `json:"action,omitempty" example:"route"`
+}
+
+// SingboxRouterPresetDTO mirrors router.Preset (one entry of the preset catalog).
+type SingboxRouterPresetDTO struct {
+	ID        string                           `json:"id" example:"china-direct"`
+	Name      string                           `json:"name" example:"China Direct"`
+	IconSlug  string                           `json:"iconSlug,omitempty" example:"china"`
+	RuleSets  []SingboxRouterPresetRuleRefDTO  `json:"ruleSets"`
+	Rules     []SingboxRouterPresetRuleLinkDTO `json:"rules"`
+	Notice    string                           `json:"notice,omitempty" example:"Routes mainland China traffic via the direct outbound."`
+	Featured  bool                             `json:"featured,omitempty" example:"true"`
+	Sensitive bool                             `json:"sensitive,omitempty" example:"false"`
+}
+
+// SingboxRouterPresetsListResponse is the envelope for GET /singbox/router/presets/list.
+type SingboxRouterPresetsListResponse struct {
+	Success bool                     `json:"success" example:"true"`
+	Data    []SingboxRouterPresetDTO `json:"data"`
+}
+
+// SingboxRouterPolicyInfoDTO mirrors router.PolicyInfo (NDMS policy projection).
+type SingboxRouterPolicyInfoDTO struct {
+	Name         string `json:"name" example:"Policy0"`
+	Description  string `json:"description" example:"Default policy"`
+	Mark         string `json:"mark,omitempty" example:"0xffffaaa"`
+	DeviceCount  int    `json:"deviceCount" example:"3"`
+	IsOurDefault bool   `json:"isOurDefault" example:"false"`
+}
+
+// SingboxRouterPoliciesListResponse is the envelope for GET /singbox/router/policies.
+type SingboxRouterPoliciesListResponse struct {
+	Success bool                         `json:"success" example:"true"`
+	Data    []SingboxRouterPolicyInfoDTO `json:"data"`
+}
+
+// SingboxRouterPolicyResponse is the envelope for POST /singbox/router/policies (single policy).
+type SingboxRouterPolicyResponse struct {
+	Success bool                       `json:"success" example:"true"`
+	Data    SingboxRouterPolicyInfoDTO `json:"data"`
+}
+
+// SingboxRouterPolicyDeviceDTO mirrors router.PolicyDevice.
+type SingboxRouterPolicyDeviceDTO struct {
+	MAC   string `json:"mac" example:"aa:bb:cc:dd:ee:ff"`
+	IP    string `json:"ip" example:"192.168.1.100"`
+	Name  string `json:"name,omitempty" example:"My Phone"`
+	Bound bool   `json:"bound" example:"true"`
+}
+
+// SingboxRouterPolicyDevicesListResponse is the envelope for GET /singbox/router/policy-devices.
+type SingboxRouterPolicyDevicesListResponse struct {
+	Success bool                           `json:"success" example:"true"`
+	Data    []SingboxRouterPolicyDeviceDTO `json:"data"`
+}
+
+// ── Request DTOs ─────────────────────────────────────────────────
+
+// SingboxRouterRuleUpdateRequest is the body for POST /singbox/router/rules/update.
+type SingboxRouterRuleUpdateRequest struct {
+	Index int                  `json:"index" example:"0"`
+	Rule  SingboxRouterRuleDTO `json:"rule"`
+}
+
+// SingboxRouterRuleDeleteRequest is the body for POST /singbox/router/rules/delete.
+type SingboxRouterRuleDeleteRequest struct {
+	Index int `json:"index" example:"0"`
+}
+
+// SingboxRouterRuleMoveRequest is the body for POST /singbox/router/rules/move.
+type SingboxRouterRuleMoveRequest struct {
+	From int `json:"from" example:"3"`
+	To   int `json:"to" example:"0"`
+}
+
+// SingboxRouterRuleSetDeleteRequest is the body for POST /singbox/router/rulesets/delete.
+type SingboxRouterRuleSetDeleteRequest struct {
+	Tag   string `json:"tag" example:"geosite-cn"`
+	Force bool   `json:"force" example:"false"`
+}
+
+// SingboxRouterRuleSetRefreshRequest is the body for POST /singbox/router/rulesets/refresh.
+type SingboxRouterRuleSetRefreshRequest struct {
+	Tag string `json:"tag" example:"geosite-cn"`
+}
+
+// SingboxRouterOutboundUpdateRequest is the body for POST /singbox/router/outbounds/update.
+type SingboxRouterOutboundUpdateRequest struct {
+	Tag      string                   `json:"tag" example:"my-selector"`
+	Outbound SingboxRouterOutboundDTO `json:"outbound"`
+}
+
+// SingboxRouterOutboundDeleteRequest is the body for POST /singbox/router/outbounds/delete.
+type SingboxRouterOutboundDeleteRequest struct {
+	Tag   string `json:"tag" example:"my-selector"`
+	Force bool   `json:"force" example:"false"`
+}
+
+// SingboxRouterApplyPresetRequest is the body for POST /singbox/router/presets/apply.
+type SingboxRouterApplyPresetRequest struct {
+	ID       string `json:"id" example:"china-direct"`
+	Outbound string `json:"outbound" example:"awg-vpn0"`
+}
+
+// SingboxRouterCreatePolicyRequest is the body for POST /singbox/router/policies.
+type SingboxRouterCreatePolicyRequest struct {
+	Description string `json:"description" example:"My VPN policy"`
+}
+
+// SingboxRouterBindDeviceRequest is the body for POST /singbox/router/policy-devices/bind.
+type SingboxRouterBindDeviceRequest struct {
+	MAC        string `json:"mac" example:"aa:bb:cc:dd:ee:ff"`
+	PolicyName string `json:"policyName" example:"Policy0"`
+}
+
+// SingboxRouterUnbindDeviceRequest is the body for POST /singbox/router/policy-devices/unbind.
+type SingboxRouterUnbindDeviceRequest struct {
+	MAC string `json:"mac" example:"aa:bb:cc:dd:ee:ff"`
+}
+
 type SingboxRouterHandler struct {
 	svc router.Service
 	log *logging.ScopedLogger
@@ -31,9 +265,9 @@ func NewSingboxRouterHandler(svc router.Service, appLogger logging.AppLogger) *S
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	SingboxRouterStatusResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/status [get]
 func (h *SingboxRouterHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -55,10 +289,10 @@ func (h *SingboxRouterHandler) GetStatus(w http.ResponseWriter, r *http.Request)
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		400	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	OkResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/enable [post]
 func (h *SingboxRouterHandler) Enable(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -77,7 +311,7 @@ func (h *SingboxRouterHandler) Enable(w http.ResponseWriter, r *http.Request) {
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // Disable stops the singbox-router engine and uninstalls iptables/policy rules.
@@ -87,9 +321,9 @@ func (h *SingboxRouterHandler) Enable(w http.ResponseWriter, r *http.Request) {
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	OkResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/disable [post]
 func (h *SingboxRouterHandler) Disable(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -100,7 +334,7 @@ func (h *SingboxRouterHandler) Disable(w http.ResponseWriter, r *http.Request) {
 		response.InternalError(w, err.Error())
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // GetSettings reads singbox-router settings (policy-mode, defaults, etc.).
@@ -110,9 +344,9 @@ func (h *SingboxRouterHandler) Disable(w http.ResponseWriter, r *http.Request) {
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	SingboxRouterSettingsResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/settings [get]
 func (h *SingboxRouterHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -135,11 +369,11 @@ func (h *SingboxRouterHandler) GetSettings(w http.ResponseWriter, r *http.Reques
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"storage.SingboxRouterSettings"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		405		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxRouterSettingsData	true	"Singbox-router settings payload"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		405		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/settings [post]
 //	@Router			/singbox/router/settings [put]
 func (h *SingboxRouterHandler) PutSettings(w http.ResponseWriter, r *http.Request) {
@@ -156,7 +390,7 @@ func (h *SingboxRouterHandler) PutSettings(w http.ResponseWriter, r *http.Reques
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // ListRules returns all singbox-router routing rules in priority order.
@@ -166,9 +400,9 @@ func (h *SingboxRouterHandler) PutSettings(w http.ResponseWriter, r *http.Reques
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	SingboxRouterRulesListResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/rules/list [get]
 func (h *SingboxRouterHandler) ListRules(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -191,10 +425,10 @@ func (h *SingboxRouterHandler) ListRules(w http.ResponseWriter, r *http.Request)
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"router.Rule"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxRouterRuleDTO	true	"Routing rule payload"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/rules/add [post]
 func (h *SingboxRouterHandler) AddRule(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -210,7 +444,7 @@ func (h *SingboxRouterHandler) AddRule(w http.ResponseWriter, r *http.Request) {
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // UpdateRule replaces a rule at the given index with the provided one.
@@ -221,10 +455,10 @@ func (h *SingboxRouterHandler) AddRule(w http.ResponseWriter, r *http.Request) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{index, rule}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxRouterRuleUpdateRequest	true	"Index + replacement rule"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/rules/update [post]
 func (h *SingboxRouterHandler) UpdateRule(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -243,7 +477,7 @@ func (h *SingboxRouterHandler) UpdateRule(w http.ResponseWriter, r *http.Request
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // DeleteRule removes the rule at the given index.
@@ -254,10 +488,10 @@ func (h *SingboxRouterHandler) UpdateRule(w http.ResponseWriter, r *http.Request
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{index}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxRouterRuleDeleteRequest	true	"Index of the rule to remove"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/rules/delete [post]
 func (h *SingboxRouterHandler) DeleteRule(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -275,7 +509,7 @@ func (h *SingboxRouterHandler) DeleteRule(w http.ResponseWriter, r *http.Request
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // MoveRule moves the rule from one priority slot to another.
@@ -286,10 +520,10 @@ func (h *SingboxRouterHandler) DeleteRule(w http.ResponseWriter, r *http.Request
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{from, to}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxRouterRuleMoveRequest	true	"From-index and to-index"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/rules/move [post]
 func (h *SingboxRouterHandler) MoveRule(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -308,7 +542,7 @@ func (h *SingboxRouterHandler) MoveRule(w http.ResponseWriter, r *http.Request) 
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // ListRuleSets returns all configured rulesets.
@@ -318,9 +552,9 @@ func (h *SingboxRouterHandler) MoveRule(w http.ResponseWriter, r *http.Request) 
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	SingboxRouterRuleSetsListResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/rulesets/list [get]
 func (h *SingboxRouterHandler) ListRuleSets(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -343,10 +577,10 @@ func (h *SingboxRouterHandler) ListRuleSets(w http.ResponseWriter, r *http.Reque
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"router.RuleSet"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxRouterRuleSetDTO	true	"RuleSet payload"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/rulesets/add [post]
 func (h *SingboxRouterHandler) AddRuleSet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -362,7 +596,7 @@ func (h *SingboxRouterHandler) AddRuleSet(w http.ResponseWriter, r *http.Request
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // DeleteRuleSet removes the ruleset identified by tag.
@@ -373,11 +607,11 @@ func (h *SingboxRouterHandler) AddRuleSet(w http.ResponseWriter, r *http.Request
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{tag, force}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		409		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxRouterRuleSetDeleteRequest	true	"Tag + optional force flag"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		409		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/rulesets/delete [post]
 func (h *SingboxRouterHandler) DeleteRuleSet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -396,7 +630,7 @@ func (h *SingboxRouterHandler) DeleteRuleSet(w http.ResponseWriter, r *http.Requ
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // RefreshRuleSet re-downloads the ruleset identified by tag.
@@ -407,10 +641,10 @@ func (h *SingboxRouterHandler) DeleteRuleSet(w http.ResponseWriter, r *http.Requ
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{tag}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxRouterRuleSetRefreshRequest	true	"Ruleset tag to re-download"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/rulesets/refresh [post]
 func (h *SingboxRouterHandler) RefreshRuleSet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -428,7 +662,7 @@ func (h *SingboxRouterHandler) RefreshRuleSet(w http.ResponseWriter, r *http.Req
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // ListOutbounds returns all composite outbounds.
@@ -438,9 +672,9 @@ func (h *SingboxRouterHandler) RefreshRuleSet(w http.ResponseWriter, r *http.Req
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	SingboxRouterOutboundsListResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/outbounds/list [get]
 func (h *SingboxRouterHandler) ListOutbounds(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -463,10 +697,10 @@ func (h *SingboxRouterHandler) ListOutbounds(w http.ResponseWriter, r *http.Requ
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"router.Outbound"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxRouterOutboundDTO	true	"Composite outbound payload"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/outbounds/add [post]
 func (h *SingboxRouterHandler) AddOutbound(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -482,7 +716,7 @@ func (h *SingboxRouterHandler) AddOutbound(w http.ResponseWriter, r *http.Reques
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // UpdateOutbound replaces the composite outbound identified by tag.
@@ -493,10 +727,10 @@ func (h *SingboxRouterHandler) AddOutbound(w http.ResponseWriter, r *http.Reques
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{tag, outbound}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxRouterOutboundUpdateRequest	true	"Tag + replacement outbound"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/outbounds/update [post]
 func (h *SingboxRouterHandler) UpdateOutbound(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -515,7 +749,7 @@ func (h *SingboxRouterHandler) UpdateOutbound(w http.ResponseWriter, r *http.Req
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // DeleteOutbound removes the composite outbound identified by tag.
@@ -526,11 +760,11 @@ func (h *SingboxRouterHandler) UpdateOutbound(w http.ResponseWriter, r *http.Req
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{tag, force}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		409		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxRouterOutboundDeleteRequest	true	"Tag + optional force flag"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		409		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/outbounds/delete [post]
 func (h *SingboxRouterHandler) DeleteOutbound(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -549,7 +783,7 @@ func (h *SingboxRouterHandler) DeleteOutbound(w http.ResponseWriter, r *http.Req
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // ListPresets returns the catalog of built-in singbox-router presets.
@@ -559,8 +793,8 @@ func (h *SingboxRouterHandler) DeleteOutbound(w http.ResponseWriter, r *http.Req
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		405	{object}	map[string]interface{}
+//	@Success		200	{object}	SingboxRouterPresetsListResponse
+//	@Failure		405	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/presets/list [get]
 func (h *SingboxRouterHandler) ListPresets(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -578,10 +812,10 @@ func (h *SingboxRouterHandler) ListPresets(w http.ResponseWriter, r *http.Reques
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{id, outbound}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxRouterApplyPresetRequest	true	"Preset id + target outbound"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/presets/apply [post]
 func (h *SingboxRouterHandler) ApplyPreset(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -600,7 +834,7 @@ func (h *SingboxRouterHandler) ApplyPreset(w http.ResponseWriter, r *http.Reques
 		h.handleErr(w, "request", err)
 		return
 	}
-	response.Success(w, nil)
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // PoliciesCollection routes by HTTP method:
@@ -625,8 +859,8 @@ func (h *SingboxRouterHandler) PoliciesCollection(w http.ResponseWriter, r *http
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	map[string]interface{}
-//	@Failure		500	{object}	map[string]interface{}
+//	@Success		200	{object}	SingboxRouterPoliciesListResponse
+//	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/policies [get]
 func (h *SingboxRouterHandler) listPolicies(w http.ResponseWriter, r *http.Request) {
 	policies, err := h.svc.ListPolicies(r.Context())
@@ -648,10 +882,10 @@ func (h *SingboxRouterHandler) listPolicies(w http.ResponseWriter, r *http.Reque
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{description}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxRouterCreatePolicyRequest	true	"Policy description"
+//	@Success		200		{object}	SingboxRouterPolicyResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/policies [post]
 func (h *SingboxRouterHandler) createPolicy(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -677,9 +911,9 @@ func (h *SingboxRouterHandler) createPolicy(w http.ResponseWriter, r *http.Reque
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			name	query		string	true	"Policy name"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Success		200		{object}	SingboxRouterPolicyDevicesListResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/policy-devices [get]
 func (h *SingboxRouterHandler) ListPolicyDevices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -710,10 +944,10 @@ func (h *SingboxRouterHandler) ListPolicyDevices(w http.ResponseWriter, r *http.
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{mac, policyName}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxRouterBindDeviceRequest	true	"Device MAC + target policy name"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/policy-devices/bind [post]
 func (h *SingboxRouterHandler) BindDevice(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -732,7 +966,7 @@ func (h *SingboxRouterHandler) BindDevice(w http.ResponseWriter, r *http.Request
 		response.InternalError(w, err.Error())
 		return
 	}
-	response.Success(w, map[string]any{"success": true})
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 // UnbindDevice handles POST /api/singbox/router/policy-devices/unbind
@@ -743,10 +977,10 @@ func (h *SingboxRouterHandler) BindDevice(w http.ResponseWriter, r *http.Request
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		map[string]interface{}	true	"{mac}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		SingboxRouterUnbindDeviceRequest	true	"Device MAC"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/policy-devices/unbind [post]
 func (h *SingboxRouterHandler) UnbindDevice(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -764,7 +998,7 @@ func (h *SingboxRouterHandler) UnbindDevice(w http.ResponseWriter, r *http.Reque
 		response.InternalError(w, err.Error())
 		return
 	}
-	response.Success(w, map[string]any{"success": true})
+	response.Success(w, map[string]bool{"ok": true})
 }
 
 func decodeBody(r *http.Request, dst any) error {
