@@ -1968,6 +1968,445 @@ definitions:
         example: ipv4_only
         type: string
     type: object
+  api.SingboxRouterApplyPresetRequest:
+    properties:
+      id:
+        example: china-direct
+        type: string
+      outbound:
+        example: awg-vpn0
+        type: string
+    type: object
+  api.SingboxRouterBindDeviceRequest:
+    properties:
+      mac:
+        example: aa:bb:cc:dd:ee:ff
+        type: string
+      policyName:
+        example: Policy0
+        type: string
+    type: object
+  api.SingboxRouterCreatePolicyRequest:
+    properties:
+      description:
+        example: My VPN policy
+        type: string
+    type: object
+  api.SingboxRouterIssueDTO:
+    properties:
+      kind:
+        example: missing-outbound
+        type: string
+      message:
+        example: outbound 'selector' is referenced but does not exist
+        type: string
+      ruleIndex:
+        example: 0
+        type: integer
+      severity:
+        example: warning
+        type: string
+      tag:
+        example: selector
+        type: string
+    type: object
+  api.SingboxRouterOutboundDTO:
+    properties:
+      bind_interface:
+        example: awg-vpn0
+        type: string
+      default:
+        example: awg-vpn0
+        type: string
+      interval:
+        example: 3m
+        type: string
+      outbounds:
+        example:
+        - awg-vpn0
+        items:
+          type: string
+        type: array
+      strategy:
+        example: prefer_ipv4
+        type: string
+      tag:
+        example: my-selector
+        type: string
+      tolerance:
+        example: 50
+        type: integer
+      type:
+        example: selector
+        type: string
+      url:
+        example: https://www.gstatic.com/generate_204
+        type: string
+    type: object
+  api.SingboxRouterOutboundDeleteRequest:
+    properties:
+      force:
+        example: false
+        type: boolean
+      tag:
+        example: my-selector
+        type: string
+    type: object
+  api.SingboxRouterOutboundUpdateRequest:
+    properties:
+      outbound:
+        $ref: '#/definitions/api.SingboxRouterOutboundDTO'
+      tag:
+        example: my-selector
+        type: string
+    type: object
+  api.SingboxRouterOutboundsListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.SingboxRouterOutboundDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxRouterPoliciesListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.SingboxRouterPolicyInfoDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxRouterPolicyDeviceDTO:
+    properties:
+      bound:
+        example: true
+        type: boolean
+      ip:
+        example: 192.168.1.100
+        type: string
+      mac:
+        example: aa:bb:cc:dd:ee:ff
+        type: string
+      name:
+        example: My Phone
+        type: string
+    type: object
+  api.SingboxRouterPolicyDevicesListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.SingboxRouterPolicyDeviceDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxRouterPolicyInfoDTO:
+    properties:
+      description:
+        example: Default policy
+        type: string
+      deviceCount:
+        example: 3
+        type: integer
+      isOurDefault:
+        example: false
+        type: boolean
+      mark:
+        example: "0xffffaaa"
+        type: string
+      name:
+        example: Policy0
+        type: string
+    type: object
+  api.SingboxRouterPolicyResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SingboxRouterPolicyInfoDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxRouterPresetDTO:
+    properties:
+      featured:
+        example: true
+        type: boolean
+      iconSlug:
+        example: china
+        type: string
+      id:
+        example: china-direct
+        type: string
+      name:
+        example: China Direct
+        type: string
+      notice:
+        example: Routes mainland China traffic via the direct outbound.
+        type: string
+      ruleSets:
+        items:
+          $ref: '#/definitions/api.SingboxRouterPresetRuleRefDTO'
+        type: array
+      rules:
+        items:
+          $ref: '#/definitions/api.SingboxRouterPresetRuleLinkDTO'
+        type: array
+      sensitive:
+        example: false
+        type: boolean
+    type: object
+  api.SingboxRouterPresetRuleLinkDTO:
+    properties:
+      action:
+        example: route
+        type: string
+      domain_suffix:
+        example:
+        - .cn
+        items:
+          type: string
+        type: array
+      rule_set:
+        example:
+        - geosite-cn
+        items:
+          type: string
+        type: array
+    type: object
+  api.SingboxRouterPresetRuleRefDTO:
+    properties:
+      tag:
+        example: geosite-cn
+        type: string
+    type: object
+  api.SingboxRouterPresetsListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.SingboxRouterPresetDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxRouterRuleDTO:
+    properties:
+      action:
+        example: route
+        type: string
+      domain_suffix:
+        example:
+        - .example.com
+        items:
+          type: string
+        type: array
+      ip_cidr:
+        example:
+        - 10.0.0.0/8
+        items:
+          type: string
+        type: array
+      outbound:
+        example: selector
+        type: string
+      port:
+        example:
+        - 443
+        items:
+          type: integer
+        type: array
+      protocol:
+        example: tcp
+        type: string
+      rule_set:
+        example:
+        - geosite-cn
+        items:
+          type: string
+        type: array
+      source_ip_cidr:
+        example:
+        - 192.168.1.100/32
+        items:
+          type: string
+        type: array
+    type: object
+  api.SingboxRouterRuleDeleteRequest:
+    properties:
+      index:
+        example: 0
+        type: integer
+    type: object
+  api.SingboxRouterRuleMoveRequest:
+    properties:
+      from:
+        example: 3
+        type: integer
+      to:
+        example: 0
+        type: integer
+    type: object
+  api.SingboxRouterRuleSetDTO:
+    properties:
+      download_detour:
+        example: direct
+        type: string
+      format:
+        example: binary
+        type: string
+      path:
+        example: /opt/etc/singbox/rulesets/geosite-cn.srs
+        type: string
+      tag:
+        example: geosite-cn
+        type: string
+      type:
+        example: remote
+        type: string
+      update_interval:
+        example: 24h
+        type: string
+      url:
+        example: https://cdn.example.com/geosite-cn.srs
+        type: string
+    type: object
+  api.SingboxRouterRuleSetDeleteRequest:
+    properties:
+      force:
+        example: false
+        type: boolean
+      tag:
+        example: geosite-cn
+        type: string
+    type: object
+  api.SingboxRouterRuleSetRefreshRequest:
+    properties:
+      tag:
+        example: geosite-cn
+        type: string
+    type: object
+  api.SingboxRouterRuleSetsListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.SingboxRouterRuleSetDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxRouterRuleUpdateRequest:
+    properties:
+      index:
+        example: 0
+        type: integer
+      rule:
+        $ref: '#/definitions/api.SingboxRouterRuleDTO'
+    type: object
+  api.SingboxRouterRulesListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.SingboxRouterRuleDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxRouterSettingsData:
+    properties:
+      enabled:
+        example: true
+        type: boolean
+      policyName:
+        example: awgm-router
+        type: string
+      refreshDailyTime:
+        example: "03:00"
+        type: string
+      refreshIntervalHours:
+        example: 24
+        type: integer
+      refreshMode:
+        example: interval
+        type: string
+    type: object
+  api.SingboxRouterSettingsResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SingboxRouterSettingsData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxRouterStatusData:
+    properties:
+      deviceCount:
+        example: 3
+        type: integer
+      enabled:
+        example: true
+        type: boolean
+      final:
+        example: direct
+        type: string
+      installed:
+        example: true
+        type: boolean
+      issues:
+        items:
+          $ref: '#/definitions/api.SingboxRouterIssueDTO'
+        type: array
+      netfilterAvailable:
+        example: true
+        type: boolean
+      netfilterComponentName:
+        example: iptables-mod-tproxy
+        type: string
+      outboundAwgCount:
+        example: 2
+        type: integer
+      outboundCompositeCount:
+        example: 1
+        type: integer
+      policyExists:
+        example: true
+        type: boolean
+      policyMark:
+        example: "0xffffaaa"
+        type: string
+      policyName:
+        example: awgm-router
+        type: string
+      ruleCount:
+        example: 12
+        type: integer
+      ruleSetCount:
+        example: 4
+        type: integer
+      tproxyTargetAvailable:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxRouterStatusResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SingboxRouterStatusData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxRouterUnbindDeviceRequest:
+    properties:
+      mac:
+        example: aa:bb:cc:dd:ee:ff
+        type: string
+    type: object
   api.SingboxStatusData:
     properties:
       features:
@@ -5943,18 +6382,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Disable singbox-router
@@ -6346,23 +6782,19 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Enable singbox-router
@@ -6375,31 +6807,27 @@ paths:
       description: Creates a new composite outbound. The base outbounds it references
         must already exist.
       parameters:
-      - description: router.Outbound
+      - description: Composite outbound payload
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxRouterOutboundDTO'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Add singbox-router outbound
@@ -6412,36 +6840,31 @@ paths:
       description: Removes the composite outbound identified by tag. Refuses if any
         rule references it; pass force=true to override.
       parameters:
-      - description: '{tag, force}'
+      - description: Tag + optional force flag
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxRouterOutboundDeleteRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "409":
           description: Conflict
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Delete singbox-router outbound
@@ -6457,18 +6880,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SingboxRouterOutboundsListResponse'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: List singbox-router outbounds
@@ -6481,31 +6901,27 @@ paths:
       description: Replaces the composite outbound identified by tag with the provided
         one.
       parameters:
-      - description: '{tag, outbound}'
+      - description: Tag + replacement outbound
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxRouterOutboundUpdateRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Update singbox-router outbound
@@ -6521,13 +6937,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SingboxRouterPoliciesListResponse'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: List singbox-router policies
@@ -6539,31 +6953,27 @@ paths:
       description: Creates a new NDMS policy with the given description. Returns the
         created policy.
       parameters:
-      - description: '{description}'
+      - description: Policy description
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxRouterCreatePolicyRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SingboxRouterPolicyResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Create singbox-router policy
@@ -6585,18 +6995,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SingboxRouterPolicyDevicesListResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: List singbox-router policy devices
@@ -6609,31 +7016,27 @@ paths:
       description: Binds the LAN device (MAC) to the named policy. Replaces any existing
         binding.
       parameters:
-      - description: '{mac, policyName}'
+      - description: Device MAC + target policy name
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxRouterBindDeviceRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Bind device to singbox-router policy
@@ -6645,31 +7048,27 @@ paths:
       - application/json
       description: Removes any policy binding for the LAN device identified by MAC.
       parameters:
-      - description: '{mac}'
+      - description: Device MAC
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxRouterUnbindDeviceRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Unbind device from singbox-router policy
@@ -6682,31 +7081,27 @@ paths:
       description: Materialises the preset (id) into rules + rulesets, routing matched
         traffic via the selected outbound. Existing rules with the same tag are overwritten.
       parameters:
-      - description: '{id, outbound}'
+      - description: Preset id + target outbound
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxRouterApplyPresetRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Apply singbox-router preset
@@ -6722,13 +7117,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SingboxRouterPresetsListResponse'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: List singbox-router presets
@@ -6741,31 +7134,27 @@ paths:
       description: Appends a new routing rule. Rule conditions reference rulesets/outbounds
         that must already exist.
       parameters:
-      - description: router.Rule
+      - description: Routing rule payload
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxRouterRuleDTO'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Add singbox-router rule
@@ -6777,31 +7166,27 @@ paths:
       - application/json
       description: Removes the rule at the given index (0-based priority slot).
       parameters:
-      - description: '{index}'
+      - description: Index of the rule to remove
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxRouterRuleDeleteRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Delete singbox-router rule
@@ -6816,18 +7201,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SingboxRouterRulesListResponse'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: List singbox-router rules
@@ -6840,31 +7222,27 @@ paths:
       description: Moves the rule from index `from` to index `to` (both 0-based).
         Adjusts other rules' indices accordingly.
       parameters:
-      - description: '{from, to}'
+      - description: From-index and to-index
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxRouterRuleMoveRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Move singbox-router rule
@@ -6877,31 +7255,27 @@ paths:
       description: Replaces the rule at index with the provided one. Index is the
         priority slot (0-based).
       parameters:
-      - description: '{index, rule}'
+      - description: Index + replacement rule
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxRouterRuleUpdateRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Update singbox-router rule
@@ -6914,31 +7288,27 @@ paths:
       description: Registers a new ruleset. For remote rulesets the file is downloaded
         synchronously.
       parameters:
-      - description: router.RuleSet
+      - description: RuleSet payload
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxRouterRuleSetDTO'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Add singbox-router ruleset
@@ -6951,36 +7321,31 @@ paths:
       description: Removes the ruleset identified by tag. Refuses if any rule references
         it; pass force=true to ignore references.
       parameters:
-      - description: '{tag, force}'
+      - description: Tag + optional force flag
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxRouterRuleSetDeleteRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "409":
           description: Conflict
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Delete singbox-router ruleset
@@ -6996,18 +7361,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SingboxRouterRuleSetsListResponse'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: List singbox-router rulesets
@@ -7020,31 +7382,27 @@ paths:
       description: Re-downloads the remote ruleset identified by tag and updates its
         content/timestamp.
       parameters:
-      - description: '{tag}'
+      - description: Ruleset tag to re-download
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxRouterRuleSetRefreshRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Refresh singbox-router ruleset
@@ -7060,18 +7418,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SingboxRouterSettingsResponse'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Get singbox-router settings
@@ -7083,36 +7438,31 @@ paths:
       description: Persists singbox-router settings. The router is restarted only
         when fields that affect the running config change.
       parameters:
-      - description: storage.SingboxRouterSettings
+      - description: Singbox-router settings payload
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxRouterSettingsData'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Update singbox-router settings
@@ -7124,36 +7474,31 @@ paths:
       description: Persists singbox-router settings. The router is restarted only
         when fields that affect the running config change.
       parameters:
-      - description: storage.SingboxRouterSettings
+      - description: Singbox-router settings payload
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
-          type: object
+          $ref: '#/definitions/api.SingboxRouterSettingsData'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Update singbox-router settings
@@ -7169,18 +7514,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SingboxRouterStatusResponse'
         "405":
           description: Method Not Allowed
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Get sing-box router status
