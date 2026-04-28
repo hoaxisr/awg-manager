@@ -7919,7 +7919,8 @@ paths:
   /system-tunnels/asc:
     get:
       description: Reads AWG signature/obfuscation parameters for the named system
-        (NativeWG / kernel-WG) tunnel.
+        (NativeWG / kernel-WG) tunnel. Data is the raw signature preset object whose
+        shape depends on the active preset.
       parameters:
       - description: Tunnel name
         in: query
@@ -7932,18 +7933,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.ASCParamsResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Get system tunnel ASC params
@@ -7953,19 +7951,19 @@ paths:
       consumes:
       - application/json
       description: Persists AWG signature/obfuscation parameters for the named system
-        tunnel. Body is the raw ASC JSON object.
+        tunnel. Body is the raw ASC JSON object whose shape depends on the active
+        signature preset.
       parameters:
       - description: Tunnel name
         in: query
         name: name
         required: true
         type: string
-      - description: ASC params
+      - description: ASC params object
         in: body
         name: body
         required: true
         schema:
-          additionalProperties: true
           type: object
       produces:
       - application/json
@@ -7973,18 +7971,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Set system tunnel ASC params
