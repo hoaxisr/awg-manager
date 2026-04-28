@@ -350,7 +350,7 @@ func (h *DNSRouteHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/dns-routes/set-enabled [post]
 func (h *DNSRouteHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
-	body, ok := parseJSON[enabledToggle](w, r, http.MethodPost)
+	body, ok := parseJSON[EnabledToggleRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}

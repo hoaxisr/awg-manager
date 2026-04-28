@@ -32,9 +32,9 @@ type UpdatePeerRequestDTO struct {
 //	@Security		CookieAuth
 //	@Param			id		path		string					true	"Server id"
 //	@Param			body	body		AddPeerRequestDTO	true	"Peer payload"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Success		200		{object}	ManagedPeerResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/managed-servers/{id}/peers [post]
 func (h *ManagedServerHandler) AddPeer(w http.ResponseWriter, r *http.Request, id string) {
 	req, ok := parseJSON[managed.AddPeerRequest](w, r, http.MethodPost)
@@ -62,10 +62,10 @@ func (h *ManagedServerHandler) AddPeer(w http.ResponseWriter, r *http.Request, i
 //	@Param			id		path		string						true	"Server id"
 //	@Param			pubkey	path		string						true	"Peer public key (URL-encoded)"
 //	@Param			body	body		UpdatePeerRequestDTO	true	"Peer update payload"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		404		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Success		200		{object}	ServersAllResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		404		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/managed-servers/{id}/peers/{pubkey} [put]
 func (h *ManagedServerHandler) UpdatePeer(w http.ResponseWriter, r *http.Request, id, pubkey string) {
 	req, ok := parseJSON[managed.UpdatePeerRequest](w, r, http.MethodPut)
@@ -90,9 +90,9 @@ func (h *ManagedServerHandler) UpdatePeer(w http.ResponseWriter, r *http.Request
 //	@Security		CookieAuth
 //	@Param			id		path		string	true	"Server id"
 //	@Param			pubkey	path		string	true	"Peer public key (URL-encoded)"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		404		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Success		200		{object}	ServersAllResponse
+//	@Failure		404		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/managed-servers/{id}/peers/{pubkey} [delete]
 func (h *ManagedServerHandler) DeletePeer(w http.ResponseWriter, r *http.Request, id, pubkey string) {
 	if r.Method != http.MethodDelete {
@@ -107,12 +107,6 @@ func (h *ManagedServerHandler) DeletePeer(w http.ResponseWriter, r *http.Request
 	h.writeServersSnapshot(w, r)
 }
 
-// togglePeerRequest is the body for the toggle endpoint. Only carries
-// the new enabled state — the pubkey now travels in the URL.
-type togglePeerRequest struct {
-	Enabled bool `json:"enabled"`
-}
-
 // TogglePeer enables or disables a peer.
 // POST /api/managed-servers/{id}/peers/{pubkey}/toggle
 //
@@ -124,13 +118,13 @@ type togglePeerRequest struct {
 //	@Security		CookieAuth
 //	@Param			id		path		string					true	"Server id"
 //	@Param			pubkey	path		string					true	"Peer public key (URL-encoded)"
-//	@Param			body	body		map[string]interface{}	true	"{enabled: bool}"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Param			body	body		EnabledToggleRequest	true	"Enabled flag"
+//	@Success		200		{object}	ServersAllResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/managed-servers/{id}/peers/{pubkey}/toggle [post]
 func (h *ManagedServerHandler) TogglePeer(w http.ResponseWriter, r *http.Request, id, pubkey string) {
-	req, ok := parseJSON[togglePeerRequest](w, r, http.MethodPost)
+	req, ok := parseJSON[EnabledToggleRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}
@@ -152,9 +146,9 @@ func (h *ManagedServerHandler) TogglePeer(w http.ResponseWriter, r *http.Request
 //	@Security		CookieAuth
 //	@Param			id		path		string	true	"Server id"
 //	@Param			pubkey	path		string	true	"Peer public key (URL-encoded)"
-//	@Success		200		{object}	map[string]interface{}
-//	@Failure		404		{object}	map[string]interface{}
-//	@Failure		500		{object}	map[string]interface{}
+//	@Success		200		{object}	PeerConfResponse
+//	@Failure		404		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/managed-servers/{id}/peers/{pubkey}/conf [get]
 func (h *ManagedServerHandler) PeerConf(w http.ResponseWriter, r *http.Request, id, pubkey string) {
 	if r.Method != http.MethodGet {
