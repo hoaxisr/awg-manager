@@ -158,7 +158,8 @@ func sanitizeFilenamePart(s string) string {
 }
 
 // Stream starts a diagnostic run and streams results via SSE.
-// GET /api/diagnostics/stream?mode=quick&restart=false&route=direct|tunnel&tunnelId=<id>
+// GET /api/diagnostics/stream?restart=false&route=direct|tunnel&tunnelId=<id>
+// Legacy `mode` query param is silently ignored for back-compat.
 //
 //	@Summary		Diagnostics SSE stream
 //	@Tags			diagnostics
@@ -180,10 +181,6 @@ func (h *DiagnosticsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mode := diagnostics.RunMode(r.URL.Query().Get("mode"))
-	if mode == "" {
-		mode = diagnostics.ModeQuick
-	}
 	restart := r.URL.Query().Get("restart") == "true"
 	routeMode := diagnostics.RouteMode(r.URL.Query().Get("route"))
 	if routeMode == "" {
@@ -199,7 +196,6 @@ func (h *DiagnosticsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	opts := diagnostics.RunOptions{
-		Mode:           mode,
 		IncludeRestart: restart,
 		RouteMode:      routeMode,
 		RouteTunnelID:  routeTunnelID,

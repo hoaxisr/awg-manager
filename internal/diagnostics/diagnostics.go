@@ -208,14 +208,6 @@ type RunStatus struct {
 	Error    string `json:"error,omitempty"`
 }
 
-// RunMode determines what the diagnostic run does.
-type RunMode string
-
-const (
-	ModeQuick RunMode = "quick"
-	ModeFull  RunMode = "full"
-)
-
 // RouteMode controls how outbound network checks are routed during diagnostics.
 type RouteMode string
 
@@ -226,7 +218,6 @@ const (
 
 // RunOptions configures a diagnostic run.
 type RunOptions struct {
-	Mode           RunMode
 	IncludeRestart bool
 	RouteMode      RouteMode
 	RouteTunnelID  string
@@ -477,7 +468,6 @@ func (r *Runner) RunWithStream(ctx context.Context, opts RunOptions) (<-chan Dia
 
 func (r *Runner) execute(ctx context.Context) {
 	r.opts = RunOptions{
-		Mode:           ModeFull,
 		IncludeRestart: true,
 		RouteMode:      RouteDirect,
 	}
@@ -522,13 +512,11 @@ func (r *Runner) executeStream(ctx context.Context) {
 			}
 		}
 
-		if r.opts.Mode == ModeFull {
-			anonymize(report)
-			r.mu.Lock()
-			r.result = report
-			r.mu.Unlock()
-			summary.HasReport = true
-		}
+		anonymize(report)
+		r.mu.Lock()
+		r.result = report
+		r.mu.Unlock()
+		summary.HasReport = true
 
 		r.emit(DiagEvent{Type: "done", Summary: summary})
 
@@ -539,24 +527,18 @@ func (r *Runner) executeStream(ctx context.Context) {
 		r.closeSubscribers()
 	}()
 
-	if r.opts.Mode == ModeFull {
-		r.emitPhase("collect_system", "Сбор информации о системе...")
-		report.System = r.collectSystem(ctx)
+	r.emitPhase("collect_system", "Сбор информации о системе...")
+	report.System = r.collectSystem(ctx)
 
-		r.emitPhase("collect_wan", "Сбор информации о WAN...")
-		report.WAN = r.collectWAN(ctx)
+	r.emitPhase("collect_wan", "Сбор информации о WAN...")
+	report.WAN = r.collectWAN(ctx)
 
-		r.emitPhase("collect_tunnels", "Сбор информации о туннелях...")
-		report.Tunnels = r.collectTunnels(ctx)
-		report.Route.TunnelName = resolveRouteTunnelName(report.Tunnels, report.Route.TunnelID)
+	r.emitPhase("collect_tunnels", "Сбор информации о туннелях...")
+	report.Tunnels = r.collectTunnels(ctx)
+	report.Route.TunnelName = resolveRouteTunnelName(report.Tunnels, report.Route.TunnelID)
 
-		r.emitPhase("collect_logs", "Сбор логов...")
-		report.Logs = r.collectLogs()
-	} else {
-		r.emitPhase("collect_tunnels", "Получение списка туннелей...")
-		report.Tunnels = r.collectTunnels(ctx)
-		report.Route.TunnelName = resolveRouteTunnelName(report.Tunnels, report.Route.TunnelID)
-	}
+	r.emitPhase("collect_logs", "Сбор логов...")
+	report.Logs = r.collectLogs()
 
 	allResults = r.runTestsWithEvents(ctx, report)
 }
