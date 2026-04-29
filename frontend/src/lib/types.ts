@@ -883,6 +883,24 @@ export interface DiagDoneSummary {
 	hasReport: boolean;
 }
 
+export interface TargetSummary {
+	id: string; // '__global__' | tunnelId
+	name: string;
+	isGlobal: boolean;
+	tunnelStatus?: 'running' | 'stopped';
+	counts: {
+		pass: number;
+		warn: number;
+		fail: number;
+		error: number;
+		skip: number;
+		total: number;
+	};
+	overallLed: 'gray' | 'green' | 'yellow' | 'red';
+}
+
+export const GLOBAL_TARGET_ID = '__global__';
+
 export interface DiagEvent {
 	type: 'phase' | 'test' | 'done' | 'error';
 	phase?: string;
@@ -891,9 +909,6 @@ export interface DiagEvent {
 	summary?: DiagDoneSummary;
 	message?: string;
 }
-
-export type DiagMode = 'quick' | 'full';
-export type DiagRouteMode = 'direct' | 'tunnel';
 
 // #endregion
 

@@ -23,8 +23,6 @@ import type {
 	UpdateInfo,
 	DiagnosticsStatus,
 	DiagEvent,
-	DiagMode,
-	DiagRouteMode,
 	DnsRoute,
 	SignatureCaptureResult,
 	StaticRouteList,
@@ -868,21 +866,13 @@ class ApiClient {
 	}
 
 	streamDiagnostics(
-		mode: DiagMode,
 		restart: boolean,
-		routeMode: DiagRouteMode,
-		routeTunnelId: string,
 		onEvent: (event: DiagEvent) => void,
 		onError: (error: Event) => void
 	): EventSource {
 		const params = new URLSearchParams({
-			mode,
 			restart: String(restart),
-			route: routeMode
 		});
-		if (routeMode === 'tunnel' && routeTunnelId) {
-			params.set('tunnelId', routeTunnelId);
-		}
 		const es = new EventSource(`/api/diagnostics/stream?${params}`);
 
 		const handleEvent = (e: MessageEvent) => {

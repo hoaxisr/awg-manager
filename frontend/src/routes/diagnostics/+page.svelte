@@ -35,8 +35,14 @@
 	});
 
 	onMount(async () => {
+		// Use /api/tunnels/all to get the partitioned snapshot — we want
+		// only `tunnels` (regular AWG / managed tunnels), excluding
+		// `system` (system NativeWG servers) and `external` (adopted
+		// external tunnels). Diagnostics checks must not run against
+		// managed servers or system Wireguard servers.
 		try {
-			tunnels = await api.listTunnels();
+			const snap = await api.getTunnelsAll();
+			tunnels = snap.tunnels ?? [];
 		} catch {
 			tunnels = [];
 		}
