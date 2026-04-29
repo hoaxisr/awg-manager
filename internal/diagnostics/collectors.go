@@ -580,3 +580,101 @@ func sanitizeConfig(stored *storage.AWGTunnel) string {
 	}
 	return sb.String()
 }
+
+// bootHealthInput is the per-tunnel slice needed by computeBootHealth.
+// Extracted from awgStore + stateMgr; isolated into its own struct so
+// computeBootHealth can be tested without mocks.
+type bootHealthInput struct {
+	ID              string
+	Name            string
+	Backend         string
+	Enabled         bool
+	AutoStart       bool
+	Status          string // "running" | "stopped" | etc.
+	StoredStartedAt string // RFC3339, may be empty
+}
+
+// bootHealthGracePeriod is how many seconds after daemon start we wait
+// before considering an enabled tunnel "not started".
+const bootHealthGracePeriod = 120
+
+// computeBootHealth is a pure function that computes BootHealth from inputs.
+// No I/O — all required data is passed in bootHealthInput.
+// This allows logic to be tested in isolation.
+func computeBootHealth(inputs []bootHealthInput) BootHealth {
+	now := time.Now()
+	uptimeSec := int(now.Sub(processStartedAt).Seconds())
+
+	bh := BootHealth{
+		DaemonStartedAt: processStartedAt,
+		DaemonUptimeSec: uptimeSec,
+		GracePeriodSec:  bootHealthGracePeriod,
+	}
+
+	expectedSet := make(map[string]bootHealthInput)
+	for _, in := range inputs {
+		if in.Enabled && in.AutoStart {
+			bh.ExpectedRunning = append(bh.ExpectedRunning, in.ID)
+			expectedSet[in.ID] = in
+		}
+		if in.Status == "running" {
+			bh.ActualRunning = append(bh.ActualRunning, in.ID)
+		}
+	}
+
+	if uptimeSec < bootHealthGracePeriod {
+		// grace period not yet elapsed — do not draw conclusions
+		return bh
+	}
+
+	actualSet := make(map[string]bool)
+	for _, id := range bh.ActualRunning {
+		actualSet[id] = true
+	}
+
+	for id, in := range expectedSet {
+		if actualSet[id] {
+			continue
+		}
+		bh.NotStartedOnBoot = append(bh.NotStartedOnBoot, TunnelBootIssue{
+			TunnelID:        in.ID,
+			TunnelName:      in.Name,
+			Backend:         in.Backend,
+			Enabled:         in.Enabled,
+			AutoStart:       in.AutoStart,
+			StoredStartedAt: in.StoredStartedAt,
+			Reason:          "never_started",
+		})
+	}
+
+	return bh
+}
+
+// collectBootHealth assembles a per-tunnel snapshot and computes BootHealth.
+// Uses TunnelService.List for state + TunnelStore for StartedAt.
+func (r *Runner) collectBootHealth(ctx context.Context) BootHealth {
+	tunnels, err := r.deps.TunnelService.List(ctx)
+	if err != nil {
+		// service unavailable — return minimally populated BootHealth
+		return computeBootHealth(nil)
+	}
+
+	inputs := make([]bootHealthInput, 0, len(tunnels))
+	for _, t := range tunnels {
+		var startedAt string
+		if stored, _ := r.deps.TunnelStore.Get(t.ID); stored != nil {
+			startedAt = stored.StartedAt
+		}
+		inputs = append(inputs, bootHealthInput{
+			ID:              t.ID,
+			Name:            t.Name,
+			Backend:         t.Backend,
+			Enabled:         t.Enabled,
+			AutoStart:       t.AutoStart,
+			Status:          t.State.String(),
+			StoredStartedAt: startedAt,
+		})
+	}
+
+	return computeBootHealth(inputs)
+}
