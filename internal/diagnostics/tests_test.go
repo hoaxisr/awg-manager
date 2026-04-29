@@ -1,6 +1,7 @@
 package diagnostics
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -112,5 +113,40 @@ func TestBootHealth_DisabledTunnelExcluded(t *testing.T) {
 	}
 	if len(bh.NotStartedOnBoot) != 0 {
 		t.Errorf("NotStartedOnBoot=%v, want []", bh.NotStartedOnBoot)
+	}
+}
+
+func TestAnonymize_AWGProxyModule_MasksRawListIPs(t *testing.T) {
+	report := &Report{
+		AWGProxyModule: AWGProxyModule{
+			Loaded:        true,
+			Version:       "1.2",
+			EndpointCount: 1,
+			RawList:       "203.0.113.42:51820 -> 127.0.0.1:7891 rx=1024 tx=512\n",
+			DmesgLines: []string{
+				"[12345.678] awg_proxy: client at 127.0.0.1:7891",
+				"[12345.679] awg_proxy: send to 198.51.100.5:443 failed: -110",
+			},
+		},
+	}
+	anonymize(report)
+
+	if strings.Contains(report.AWGProxyModule.RawList, "203.0.113.42") {
+		t.Errorf("RawList still contains public IP: %q", report.AWGProxyModule.RawList)
+	}
+	for _, line := range report.AWGProxyModule.DmesgLines {
+		if strings.Contains(line, "198.51.100.5") {
+			t.Errorf("DmesgLines still contains public IP: %q", line)
+		}
+	}
+	// Private IPs (127.0.0.1) MUST remain — see isPrivateIP() contract.
+	hasPrivate := false
+	for _, line := range report.AWGProxyModule.DmesgLines {
+		if strings.Contains(line, "127.0.0.1") {
+			hasPrivate = true
+		}
+	}
+	if !hasPrivate {
+		t.Errorf("expected 127.0.0.1 to remain in dmesg lines (private IPs must not be masked)")
 	}
 }

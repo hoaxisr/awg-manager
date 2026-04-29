@@ -27,8 +27,9 @@ type Report struct {
 	Route       RouteInfoMeta      `json:"route"`
 	System      SystemInfo         `json:"system"`
 	WAN         WANInfo            `json:"wan"`
-	BootHealth  BootHealth         `json:"bootHealth"`
-	Tunnels     []TunnelInfo       `json:"tunnels"`
+	BootHealth      BootHealth         `json:"bootHealth"`
+	AWGProxyModule  AWGProxyModule     `json:"awgProxyModule"`
+	Tunnels         []TunnelInfo       `json:"tunnels"`
 	Tests       []TestResult       `json:"tests"`
 	Logs        []logging.LogEntry `json:"logs"`
 }
@@ -92,6 +93,16 @@ type TunnelBootIssue struct {
 	AutoStart       bool   `json:"autoStart"`
 	StoredStartedAt string `json:"storedStartedAt,omitempty"`
 	Reason          string `json:"reason"` // "never_started"
+}
+
+// AWGProxyModule — состояние kmod awg-proxy (включая dmesg-сигналы).
+// Заполняется collectAWGProxyModule. Всё в этой секции anonymized.
+type AWGProxyModule struct {
+	Loaded        bool     `json:"loaded"`
+	Version       string   `json:"version,omitempty"`
+	EndpointCount int      `json:"endpointCount"`
+	RawList       string   `json:"rawList,omitempty"`
+	DmesgLines    []string `json:"dmesgLines,omitempty"`
 }
 
 // TunnelInfo contains per-tunnel diagnostics.
@@ -570,6 +581,9 @@ func (r *Runner) executeStream(ctx context.Context) {
 
 	r.emitPhase("collect_boot_health", "Проверка boot-состояния...")
 	report.BootHealth = r.collectBootHealth(ctx)
+
+	r.emitPhase("collect_proxy_module", "Состояние awg-proxy...")
+	report.AWGProxyModule = r.collectAWGProxyModule(ctx)
 
 	r.emitPhase("collect_tunnels", "Сбор информации о туннелях...")
 	report.Tunnels = r.collectTunnels(ctx)

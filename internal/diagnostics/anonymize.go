@@ -125,12 +125,22 @@ func (a *anonymizer) registerFromReport(report *Report) {
 	// Register public IPs found in ip route / ip addr output
 	a.registerPublicIPsFromOutput(report.WAN.IPRouteTable)
 	a.registerPublicIPsFromOutput(report.WAN.IPAddr)
+
+	// AWGProxyModule fields are free-text and may contain endpoint IPs.
+	a.registerPublicIPsFromOutput(report.AWGProxyModule.RawList)
+	for _, line := range report.AWGProxyModule.DmesgLines {
+		a.registerPublicIPsFromOutput(line)
+	}
 }
 
 func (a *anonymizer) registerPublicIPsFromOutput(output string) {
 	for _, word := range strings.Fields(output) {
-		// Strip /prefix if present
+		// Strip /prefix if present (CIDR notation)
 		ipStr := strings.Split(word, "/")[0]
+		// Strip :port if present (host:port notation)
+		if host, _, err := net.SplitHostPort(ipStr); err == nil {
+			ipStr = host
+		}
 		if ip := net.ParseIP(ipStr); ip != nil {
 			a.registerIP(ipStr)
 		}

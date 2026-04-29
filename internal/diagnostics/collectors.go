@@ -581,6 +581,50 @@ func sanitizeConfig(stored *storage.AWGTunnel) string {
 	return sb.String()
 }
 
+// collectAWGProxyModule reads kmod awg-proxy state and greps dmesg.
+// Never panics on missing /proc files (kernel-backend without proxy);
+// returns Loaded=false in that case. dmesg is grepped without a time
+// window because the kernel does not expose reliable timestamps in our
+// environment, and the support team wants the complete error history.
+func (r *Runner) collectAWGProxyModule(ctx context.Context) AWGProxyModule {
+	mod := AWGProxyModule{}
+
+	// /proc/awg_proxy/version → Loaded + Version
+	if versionData, err := os.ReadFile("/proc/awg_proxy/version"); err == nil {
+		mod.Loaded = true
+		mod.Version = strings.TrimSpace(string(versionData))
+	}
+
+	// /proc/awg_proxy/list → RawList + EndpointCount
+	if listData, err := os.ReadFile("/proc/awg_proxy/list"); err == nil {
+		mod.RawList = string(listData)
+		count := 0
+		for _, line := range strings.Split(mod.RawList, "\n") {
+			if strings.TrimSpace(line) != "" {
+				count++
+			}
+		}
+		mod.EndpointCount = count
+	}
+
+	// dmesg | grep -i awg_proxy — every matched line. No tail, no time
+	// window: the kernel does not expose reliable timestamps in our
+	// environment, and support wants full error history.
+	if result, err := exec.Shell(ctx, "dmesg | grep -i awg_proxy"); err == nil {
+		raw := strings.TrimSpace(result.Stdout)
+		if raw != "" {
+			for _, line := range strings.Split(raw, "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" {
+					mod.DmesgLines = append(mod.DmesgLines, line)
+				}
+			}
+		}
+	}
+
+	return mod
+}
+
 // bootHealthInput is the per-tunnel slice needed by computeBootHealth.
 // Extracted from awgStore + stateMgr; isolated into its own struct so
 // computeBootHealth can be tested without mocks.
