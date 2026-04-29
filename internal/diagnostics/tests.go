@@ -898,10 +898,19 @@ func (r *Runner) testProxyHealth(t TunnelInfo) TestResult {
 	}
 
 	var details []string
-	details = append(details, fmt.Sprintf("proxy 127.0.0.1:%d", t.Proxy.ListenPort))
 	if t.Proxy.Version != "" {
 		details = append(details, "v"+t.Proxy.Version)
 	}
+	if t.Proxy.RxBytes != "" {
+		details = append(details, "rx "+t.Proxy.RxBytes)
+	}
+	if t.Proxy.TxBytes != "" {
+		details = append(details, "tx "+t.Proxy.TxBytes)
+	}
+	if t.Proxy.BindIface != "" {
+		details = append(details, "bind="+t.Proxy.BindIface)
+	}
+	details = append(details, fmt.Sprintf("listen=127.0.0.1:%d", t.Proxy.ListenPort))
 
 	if !t.Proxy.RouteMatch && t.Proxy.WantedISP != "" {
 		details = append(details, fmt.Sprintf("WAN mismatch: actual=%s, wanted=%s", t.Proxy.ActualRouteIface, t.Proxy.WantedISP))
