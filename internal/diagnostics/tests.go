@@ -16,15 +16,8 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 )
 
-type diagEgress struct {
-	mode      RouteMode
-	ifaceName string
-	label     string
-}
-
 func (r *Runner) runTestsWithEvents(ctx context.Context, report *Report) []TestResult {
 	var results []TestResult
-	egress := r.resolveEgress(report)
 
 	run := func(tr TestResult) {
 		results = append(results, tr)
@@ -40,11 +33,11 @@ func (r *Runner) runTestsWithEvents(ctx context.Context, report *Report) []TestR
 	for _, t := range report.Tunnels {
 		r.emitPhase("tunnel_tests", fmt.Sprintf("Тестирование %s...", t.Name))
 
-		run(r.testDNSResolve(ctx, t, egress))
-		run(r.testEndpointReachable(ctx, t, egress))
+		run(r.testDNSResolve(t))
+		run(r.testEndpointReachable(ctx, t))
 		run(r.testEndpointRouteCheck(t))
 		run(r.testAWGHandshake(t))
-		run(r.testTunnelConnectivity(ctx, t, egress))
+		run(r.testTunnelConnectivity(ctx, t))
 		run(r.testFirewallRules(t))
 		run(r.testConfigParse(t))
 		run(r.testInterfaceStateConsistency(ctx, t))
@@ -59,7 +52,7 @@ func (r *Runner) runTestsWithEvents(ctx context.Context, report *Report) []TestR
 
 	for _, t := range report.Tunnels {
 		if t.Status == "running" {
-			run(r.testDNSLeak(ctx, t, egress))
+			run(r.testDNSLeak(ctx, t))
 		}
 	}
 
@@ -258,7 +251,7 @@ func (r *Runner) testClockSkew(ctx context.Context) TestResult {
 
 // --- Per-tunnel tests ---
 
-func (r *Runner) testDNSResolve(ctx context.Context, t TunnelInfo, egress diagEgress) TestResult {
+func (r *Runner) testDNSResolve(t TunnelInfo) TestResult {
 	res := TestResult{Name: "dns_resolve", Description: "Резолв endpoint", TunnelID: t.ID, TunnelName: t.Name}
 
 	endpoint := extractEndpointFromConfig(t.ConfigFile)
@@ -283,27 +276,12 @@ func (r *Runner) testDNSResolve(ctx context.Context, t TunnelInfo, egress diagEg
 		return res
 	}
 
-	if egress.mode == RouteTunnel && egress.ifaceName != "" && len(ips) > 0 {
-		routeResult, err := exec.Run(ctx, "/opt/sbin/ip", "route", "get", ips[0])
-		if err != nil {
-			res.Status = StatusError
-			res.Detail = fmt.Sprintf("Резолв %s OK, но маршрут до %s не проверен (%s)", host, ips[0], egress.label)
-			return res
-		}
-		routeDev := extractRouteGetDev(routeResult.Stdout)
-		if routeDev != egress.ifaceName {
-			res.Status = StatusFail
-			res.Detail = fmt.Sprintf("Резолв %s OK, но маршрут до %s идёт через %s, ожидался %s", host, ips[0], routeDev, egress.ifaceName)
-			return res
-		}
-	}
-
 	res.Status = StatusPass
-	res.Detail = fmt.Sprintf("%s -> %s (%s)", host, strings.Join(ips, ", "), egress.label)
+	res.Detail = fmt.Sprintf("%s -> %s", host, strings.Join(ips, ", "))
 	return res
 }
 
-func (r *Runner) testEndpointReachable(ctx context.Context, t TunnelInfo, egress diagEgress) TestResult {
+func (r *Runner) testEndpointReachable(ctx context.Context, t TunnelInfo) TestResult {
 	res := TestResult{Name: "endpoint_reachable", Description: "Ping endpoint", TunnelID: t.ID, TunnelName: t.Name}
 
 	if t.Status != "running" {
@@ -332,16 +310,10 @@ func (r *Runner) testEndpointReachable(ctx context.Context, t TunnelInfo, egress
 		ip = resolved
 	}
 
-	args := []string{"-c", "3"}
-	if egress.mode == RouteTunnel && egress.ifaceName != "" {
-		args = append(args, "-I", egress.ifaceName)
-	}
-	args = append(args, ip)
-
-	result, err := exec.Run(ctx, "ping", args...)
+	result, err := exec.Run(ctx, "ping", "-c", "3", ip)
 	if err != nil {
 		res.Status = StatusFail
-		res.Detail = fmt.Sprintf("Ping %s: недоступен (%s)", ip, egress.label)
+		res.Detail = fmt.Sprintf("Ping %s: недоступен", ip)
 		return res
 	}
 
@@ -354,9 +326,7 @@ func (r *Runner) testEndpointReachable(ctx context.Context, t TunnelInfo, egress
 	}
 	res.Status = StatusPass
 	if res.Detail == "" {
-		res.Detail = fmt.Sprintf("Ping %s: доступен (%s)", ip, egress.label)
-	} else {
-		res.Detail = fmt.Sprintf("%s [%s]", res.Detail, egress.label)
+		res.Detail = fmt.Sprintf("Ping %s: доступен", ip)
 	}
 	return res
 }
@@ -431,7 +401,7 @@ func (r *Runner) testAWGHandshake(t TunnelInfo) TestResult {
 	return res
 }
 
-func (r *Runner) testTunnelConnectivity(ctx context.Context, t TunnelInfo, egress diagEgress) TestResult {
+func (r *Runner) testTunnelConnectivity(ctx context.Context, t TunnelInfo) TestResult {
 	res := TestResult{Name: "tunnel_connectivity", Description: "Связность через туннель", TunnelID: t.ID, TunnelName: t.Name}
 
 	if t.Status != "running" {
@@ -440,26 +410,20 @@ func (r *Runner) testTunnelConnectivity(ctx context.Context, t TunnelInfo, egres
 		return res
 	}
 
-	// Try multiple IP check services
+	// Try multiple IP check services. Egress uses default route (WAN).
 	urls := []string{"https://ifconfig.me", "https://icanhazip.com", "https://ip.me"}
 	for _, url := range urls {
-		args := []string{"-s", "--max-time", "5"}
-		if egress.mode == RouteTunnel && egress.ifaceName != "" {
-			args = append(args, "--interface", egress.ifaceName)
-		}
-		args = append(args, url)
-
-		result, err := exec.Run(ctx, "/opt/bin/curl", args...)
+		result, err := exec.Run(ctx, "/opt/bin/curl", "-s", "--max-time", "5", url)
 		if err == nil && strings.TrimSpace(result.Stdout) != "" {
 			ip := strings.TrimSpace(result.Stdout)
 			res.Status = StatusPass
-			res.Detail = fmt.Sprintf("IP: %s (via %s, %s)", ip, url, egress.label)
+			res.Detail = fmt.Sprintf("IP: %s (via %s)", ip, url)
 			return res
 		}
 	}
 
 	res.Status = StatusSkip
-	res.Detail = fmt.Sprintf("Все IP-сервисы недоступны (%s)", egress.label)
+	res.Detail = "Все IP-сервисы недоступны"
 	return res
 }
 
@@ -637,7 +601,7 @@ func (r *Runner) testRouteLeak(ctx context.Context, report *Report) TestResult {
 	return res
 }
 
-func (r *Runner) testDNSLeak(ctx context.Context, t TunnelInfo, egress diagEgress) TestResult {
+func (r *Runner) testDNSLeak(ctx context.Context, t TunnelInfo) TestResult {
 	res := TestResult{Name: "dns_leak_check", Description: "DNS leak проверка", TunnelID: t.ID, TunnelName: t.Name}
 
 	if t.Settings.DNS == "" {
@@ -657,117 +621,23 @@ func (r *Runner) testDNSLeak(ctx context.Context, t TunnelInfo, egress diagEgres
 	}
 
 	// The DNS server sits inside the tunnel network and is only reachable
-	// through the tunnel.  Successful resolution proves no DNS leak.
-	routeNote := ""
-	if egress.mode == RouteTunnel && egress.ifaceName != "" {
-		routeResult, err := exec.Run(ctx, "/opt/sbin/ip", "route", "get", dnsServer)
-		if err != nil {
-			res.Status = StatusError
-			res.Detail = fmt.Sprintf("Не удалось проверить маршрут до DNS %s (%s)", dnsServer, egress.label)
-			return res
-		}
-		routeDev := extractRouteGetDev(routeResult.Stdout)
-		if routeDev != egress.ifaceName {
-			routeNote = fmt.Sprintf("route_get_dev=%s, expected=%s", routeDev, egress.ifaceName)
-		}
-	}
-
+	// through the tunnel. Successful resolution proves no DNS leak.
 	result, err := exec.Run(ctx, "nslookup", "example.com", dnsServer)
 	if err != nil {
-		// NativeWG/policy-routing systems may not expose private tunnel DNS
-		// to router-originated nslookup even when tunnel egress works.
-		// Fallback to DoH and plain HTTPS over selected egress as a practical
-		// connectivity signal; otherwise report SKIP (not FAIL) to avoid
-		// false negatives on policy-routing setups.
-		if egress.mode == RouteTunnel && egress.ifaceName != "" {
-			doh, dohErr := exec.Run(ctx, "/opt/bin/curl", "-s", "--max-time", "5",
-				"--interface", egress.ifaceName,
-				"https://dns.google/resolve?name=example.com&type=A")
-			if dohErr == nil && strings.Contains(doh.Stdout, "\"Answer\"") {
-				res.Status = StatusPass
-				if routeNote != "" {
-					res.Detail = fmt.Sprintf("Туннельный DNS %s недоступен из контекста роутера, но DoH через %s работает (%s)",
-						dnsServer, egress.ifaceName, routeNote)
-				} else {
-					res.Detail = fmt.Sprintf("Туннельный DNS %s недоступен из контекста роутера, но DoH через %s работает",
-						dnsServer, egress.ifaceName)
-				}
-				return res
-			}
-
-			httpsProbe, httpsErr := exec.Run(ctx, "/opt/bin/curl", "-s", "--max-time", "5",
-				"--interface", egress.ifaceName, "https://ifconfig.me")
-			if httpsErr == nil && strings.TrimSpace(httpsProbe.Stdout) != "" {
-				res.Status = StatusSkip
-				if routeNote != "" {
-					res.Detail = fmt.Sprintf("Туннельный DNS %s недоступен из контекста роутера, но egress через %s работает (%s)",
-						dnsServer, egress.ifaceName, routeNote)
-				} else {
-					res.Detail = fmt.Sprintf("Туннельный DNS %s недоступен из контекста роутера, но egress через %s работает",
-						dnsServer, egress.ifaceName)
-				}
-				return res
-			}
-		}
-
 		res.Status = StatusFail
-		if routeNote != "" {
-			res.Detail = fmt.Sprintf("Туннельный DNS %s недоступен (%s, %s)", dnsServer, egress.label, routeNote)
-		} else {
-			res.Detail = fmt.Sprintf("Туннельный DNS %s недоступен (%s)", dnsServer, egress.label)
-		}
+		res.Detail = fmt.Sprintf("Туннельный DNS %s недоступен", dnsServer)
 		return res
 	}
 
 	output := result.Stdout + result.Stderr
 	if strings.Contains(output, "Address") && !strings.Contains(output, "server can't find") {
 		res.Status = StatusPass
-		if routeNote != "" {
-			res.Detail = fmt.Sprintf("Ответ получен через туннельный DNS %s (%s, %s)", dnsServer, egress.label, routeNote)
-		} else {
-			res.Detail = fmt.Sprintf("Ответ получен через туннельный DNS %s (%s)", dnsServer, egress.label)
-		}
+		res.Detail = fmt.Sprintf("Ответ получен через туннельный DNS %s", dnsServer)
 	} else {
 		res.Status = StatusFail
-		if routeNote != "" {
-			res.Detail = fmt.Sprintf("Туннельный DNS %s не резолвит (%s, %s)", dnsServer, egress.label, routeNote)
-		} else {
-			res.Detail = fmt.Sprintf("Туннельный DNS %s не резолвит (%s)", dnsServer, egress.label)
-		}
+		res.Detail = fmt.Sprintf("Туннельный DNS %s не резолвит", dnsServer)
 	}
 	return res
-}
-
-func (r *Runner) resolveEgress(report *Report) diagEgress {
-	direct := diagEgress{
-		mode:  RouteDirect,
-		label: "маршрут по умолчанию",
-	}
-
-	if r.opts.RouteMode != RouteTunnel {
-		return direct
-	}
-
-	targetID := strings.TrimSpace(r.opts.RouteTunnelID)
-	if targetID == "" {
-		return direct
-	}
-
-	for _, t := range report.Tunnels {
-		if t.ID != targetID {
-			continue
-		}
-		if t.InterfaceName == "" {
-			return direct
-		}
-		return diagEgress{
-			mode:      RouteTunnel,
-			ifaceName: t.InterfaceName,
-			label:     fmt.Sprintf("через туннель %s (%s)", t.Name, t.InterfaceName),
-		}
-	}
-
-	return direct
 }
 
 // findTunnelDNS returns the first private/CGNAT DNS server from a

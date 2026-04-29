@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
@@ -115,51 +113,16 @@ func (h *DiagnosticsHandler) Result(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prefix := diagnosticsFilenamePrefix(data)
-	filename := fmt.Sprintf("%sawg-diagnostics-%s.json", prefix, time.Now().Format("2006-01-02_15-04-05"))
+	filename := fmt.Sprintf("awg-diagnostics-%s.json", time.Now().Format("2006-01-02_15-04-05"))
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 	w.Write(data)
 }
 
-func diagnosticsFilenamePrefix(reportJSON []byte) string {
-	var report diagnostics.Report
-	if err := json.Unmarshal(reportJSON, &report); err != nil {
-		return ""
-	}
-
-	switch report.Route.Mode {
-	case diagnostics.RouteDirect:
-		return "direct-"
-	case diagnostics.RouteTunnel:
-		candidate := strings.TrimSpace(report.Route.TunnelName)
-		if candidate == "" {
-			candidate = strings.TrimSpace(report.Route.TunnelID)
-		}
-		if candidate == "" {
-			return "tunnel-"
-		}
-		return sanitizeFilenamePart(candidate) + "-"
-	default:
-		return ""
-	}
-}
-
-var unsafeFilenameChars = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
-
-func sanitizeFilenamePart(s string) string {
-	s = strings.TrimSpace(s)
-	s = unsafeFilenameChars.ReplaceAllString(s, "_")
-	s = strings.Trim(s, "._-")
-	if s == "" {
-		return "tunnel"
-	}
-	return s
-}
-
 // Stream starts a diagnostic run and streams results via SSE.
-// GET /api/diagnostics/stream?restart=false&route=direct|tunnel&tunnelId=<id>
-// Legacy `mode` query param is silently ignored for back-compat.
+// GET /api/diagnostics/stream?restart=false
+// Legacy `mode`, `route`, `tunnelId` query params are silently ignored for
+// back-compat with old clients.
 //
 //	@Summary		Diagnostics SSE stream
 //	@Tags			diagnostics
@@ -182,23 +145,8 @@ func (h *DiagnosticsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	restart := r.URL.Query().Get("restart") == "true"
-	routeMode := diagnostics.RouteMode(r.URL.Query().Get("route"))
-	if routeMode == "" {
-		routeMode = diagnostics.RouteDirect
-	}
-	if routeMode != diagnostics.RouteDirect && routeMode != diagnostics.RouteTunnel {
-		response.BadRequest(w, "invalid route mode")
-		return
-	}
-	routeTunnelID := r.URL.Query().Get("tunnelId")
-	if routeMode == diagnostics.RouteTunnel && routeTunnelID == "" {
-		response.BadRequest(w, "tunnelId is required when route=tunnel")
-		return
-	}
 	opts := diagnostics.RunOptions{
 		IncludeRestart: restart,
-		RouteMode:      routeMode,
-		RouteTunnelID:  routeTunnelID,
 	}
 
 	ch, err := h.runner.RunWithStream(r.Context(), opts)

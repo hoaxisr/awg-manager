@@ -22,23 +22,15 @@ import (
 // Report is the top-level diagnostics report.
 type Report struct {
 	Version     string             `json:"version"`
-	GeneratedAt time.Time          `json:"generatedAt"`
-	DurationMs  int64              `json:"durationMs"`
-	Route       RouteInfoMeta      `json:"route"`
-	System      SystemInfo         `json:"system"`
-	WAN         WANInfo            `json:"wan"`
-	BootHealth      BootHealth         `json:"bootHealth"`
-	AWGProxyModule  AWGProxyModule     `json:"awgProxyModule"`
-	Tunnels         []TunnelInfo       `json:"tunnels"`
-	Tests       []TestResult       `json:"tests"`
-	Logs        []logging.LogEntry `json:"logs"`
-}
-
-// RouteInfoMeta captures diagnostics route selection used for network tests.
-type RouteInfoMeta struct {
-	Mode       RouteMode `json:"mode"`
-	TunnelID   string    `json:"tunnelId,omitempty"`
-	TunnelName string    `json:"tunnelName,omitempty"`
+	GeneratedAt    time.Time          `json:"generatedAt"`
+	DurationMs     int64              `json:"durationMs"`
+	System         SystemInfo         `json:"system"`
+	WAN            WANInfo            `json:"wan"`
+	BootHealth     BootHealth         `json:"bootHealth"`
+	AWGProxyModule AWGProxyModule     `json:"awgProxyModule"`
+	Tunnels        []TunnelInfo       `json:"tunnels"`
+	Tests          []TestResult       `json:"tests"`
+	Logs           []logging.LogEntry `json:"logs"`
 }
 
 // SystemInfo contains system-level diagnostics.
@@ -241,14 +233,6 @@ type RunStatus struct {
 	Error    string `json:"error,omitempty"`
 }
 
-// RouteMode controls how outbound network checks are routed during diagnostics.
-type RouteMode string
-
-const (
-	RouteDirect RouteMode = "direct"
-	RouteTunnel RouteMode = "tunnel"
-)
-
 // processStartedAt записывает момент старта процесса демона. Используется
 // collectBootHealth чтобы понимать прошёл ли grace-период с boot.
 // По умолчанию инициализируется временем импорта пакета (это близко к
@@ -265,8 +249,6 @@ func SetProcessStartedAt(t time.Time) {
 // RunOptions configures a diagnostic run.
 type RunOptions struct {
 	IncludeRestart bool
-	RouteMode      RouteMode
-	RouteTunnelID  string
 }
 
 // DiagEvent is a single event emitted during a diagnostic run.
@@ -515,7 +497,6 @@ func (r *Runner) RunWithStream(ctx context.Context, opts RunOptions) (<-chan Dia
 func (r *Runner) execute(ctx context.Context) {
 	r.opts = RunOptions{
 		IncludeRestart: true,
-		RouteMode:      RouteDirect,
 	}
 	r.executeStream(ctx)
 }
@@ -525,10 +506,6 @@ func (r *Runner) executeStream(ctx context.Context) {
 	report := &Report{
 		Version:     "1.0",
 		GeneratedAt: start,
-		Route: RouteInfoMeta{
-			Mode:     r.opts.RouteMode,
-			TunnelID: r.opts.RouteTunnelID,
-		},
 	}
 
 	var allResults []TestResult
@@ -587,22 +564,9 @@ func (r *Runner) executeStream(ctx context.Context) {
 
 	r.emitPhase("collect_tunnels", "Сбор информации о туннелях...")
 	report.Tunnels = r.collectTunnels(ctx)
-	report.Route.TunnelName = resolveRouteTunnelName(report.Tunnels, report.Route.TunnelID)
 
 	r.emitPhase("collect_logs", "Сбор логов...")
 	report.Logs = r.collectLogs()
 
 	allResults = r.runTestsWithEvents(ctx, report)
-}
-
-func resolveRouteTunnelName(tunnels []TunnelInfo, tunnelID string) string {
-	if tunnelID == "" {
-		return ""
-	}
-	for _, t := range tunnels {
-		if t.ID == tunnelID {
-			return t.Name
-		}
-	}
-	return ""
 }
