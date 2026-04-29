@@ -20,8 +20,9 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/api"
-	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/auth"
+	"github.com/hoaxisr/awg-manager/internal/diagnostics"
+	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/cleanup"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/connectivity"
@@ -111,6 +112,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to create data dir: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Record the exact moment main() enters the daemon path so BootHealth
+	// can compute uptime accurately. Must happen before any goroutines start.
+	diagnostics.SetProcessStartedAt(time.Now())
 
 	uptime := getUptime()
 

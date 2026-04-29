@@ -27,6 +27,7 @@ type Report struct {
 	Route       RouteInfoMeta      `json:"route"`
 	System      SystemInfo         `json:"system"`
 	WAN         WANInfo            `json:"wan"`
+	BootHealth  BootHealth         `json:"bootHealth"`
 	Tunnels     []TunnelInfo       `json:"tunnels"`
 	Tests       []TestResult       `json:"tests"`
 	Logs        []logging.LogEntry `json:"logs"`
@@ -70,6 +71,27 @@ type WANInfo struct {
 type WANIfaceInfo struct {
 	Up    bool   `json:"up"`
 	Label string `json:"label"`
+}
+
+// BootHealth детектит регрессию "enabled-туннели не были перезапущены
+// при старте демона". Заполняется collectBootHealth.
+type BootHealth struct {
+	DaemonStartedAt  time.Time         `json:"daemonStartedAt"`
+	DaemonUptimeSec  int               `json:"daemonUptimeSec"`
+	GracePeriodSec   int               `json:"gracePeriodSec"`
+	ExpectedRunning  []string          `json:"expectedRunning"`
+	ActualRunning    []string          `json:"actualRunning"`
+	NotStartedOnBoot []TunnelBootIssue `json:"notStartedOnBoot,omitempty"`
+}
+
+type TunnelBootIssue struct {
+	TunnelID        string `json:"tunnelId"`
+	TunnelName      string `json:"tunnelName"`
+	Backend         string `json:"backend"`
+	Enabled         bool   `json:"enabled"`
+	AutoStart       bool   `json:"autoStart"`
+	StoredStartedAt string `json:"storedStartedAt,omitempty"`
+	Reason          string `json:"reason"` // "never_started"
 }
 
 // TunnelInfo contains per-tunnel diagnostics.
@@ -215,6 +237,19 @@ const (
 	RouteDirect RouteMode = "direct"
 	RouteTunnel RouteMode = "tunnel"
 )
+
+// processStartedAt записывает момент старта процесса демона. Используется
+// collectBootHealth чтобы понимать прошёл ли grace-период с boot.
+// По умолчанию инициализируется временем импорта пакета (это близко к
+// старту демона, потому что main.go импортирует пакет рано). Чтобы зафиксировать
+// точный момент старта main, вызови SetProcessStartedAt(time.Now()) из main.go.
+var processStartedAt = time.Now()
+
+// SetProcessStartedAt позволяет main установить точное время старта.
+// Тесты могут вызывать с фиксированным временем для детерминированности.
+func SetProcessStartedAt(t time.Time) {
+	processStartedAt = t
+}
 
 // RunOptions configures a diagnostic run.
 type RunOptions struct {
@@ -532,6 +567,9 @@ func (r *Runner) executeStream(ctx context.Context) {
 
 	r.emitPhase("collect_wan", "Сбор информации о WAN...")
 	report.WAN = r.collectWAN(ctx)
+
+	r.emitPhase("collect_boot_health", "Проверка boot-состояния...")
+	report.BootHealth = r.collectBootHealth(ctx)
 
 	r.emitPhase("collect_tunnels", "Сбор информации о туннелях...")
 	report.Tunnels = r.collectTunnels(ctx)
