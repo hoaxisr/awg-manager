@@ -90,6 +90,25 @@
 			domainsText = allDomains.join('\n');
 			cidrText = allSubnets.join('\n');
 			mode = rule.hrRouteMode === 'policy' ? 'policy' : 'interface';
+			// Self-correcting reclassification: HR Neo stores Target as a
+			// single string. The backend classifies it as policy/interface
+			// by checking against the live policy list. If the user's router
+			// has a policy with the same name as one of their interfaces
+			// (e.g. legacy "Wireguard0" auto-created by Keenetic or imported
+			// configs) the rule is misclassified as policy mode, and saving
+			// fails because validateHRPolicyName rejects digits in the name.
+			// When the policy-mode hrPolicyName actually matches an existing
+			// interface, treat it as interface mode — that's how HR Neo
+			// itself routes the traffic anyway.
+			if (mode === 'policy' && rule.hrPolicyName) {
+				const ifaceMatch = tunnels.find(
+					(t) => t.iface === rule.hrPolicyName || t.name === rule.hrPolicyName || t.id === rule.hrPolicyName,
+				);
+				const policyIfaceMatch = policyInterfaces.find((i) => i.name === rule.hrPolicyName);
+				if (ifaceMatch || policyIfaceMatch) {
+					mode = 'interface';
+				}
+			}
 			if (mode === 'policy') {
 				policyChoice = 'existing';
 				existingPolicyName = rule.hrPolicyName ?? '';
@@ -101,13 +120,16 @@
 				// ("nwg0"), not our internal tunnel id ("awg10"). Resolve
 				// the select's value by matching any of those fields against
 				// every tunnel property so the dropdown shows the right
-				// option instead of blanking out.
+				// option instead of blanking out. Also handle the
+				// reclassification case above where the iface name lived in
+				// hrPolicyName.
 				const route = rule.routes?.[0];
+				const candidate = route?.tunnelId || route?.interface || rule.hrPolicyName || '';
 				const match = tunnels.find(
 					(x) =>
-						x.id === route?.tunnelId ||
-						x.iface === route?.tunnelId ||
-						x.iface === route?.interface,
+						x.id === candidate ||
+						x.iface === candidate ||
+						x.name === candidate,
 				);
 				tunnelId = match?.id ?? tunnels[0]?.id ?? '';
 			}
@@ -325,78 +347,9 @@
 		{#if attempted && !name.trim()}<div class="error-text">Введите название</div>{/if}
 	</div>
 
-	<!-- Domains -->
-	<section class="form-section">
-		<header class="section-row">
-			<div class="section-row-label">
-				<span class="section-row-title">Домены</span>
-				<span class="section-row-count">{splitLines(domainsText).length}</span>
-			</div>
-			<div class="section-row-tools">
-				<span class="badge-mono">domain.conf</span>
-				<Button
-					variant="ghost"
-					size="sm"
-					onclick={() => (geositePickerOpen = !geositePickerOpen)}
-				>
-					+ geosite:TAG
-				</Button>
-			</div>
-		</header>
-
-		{#if geositePickerOpen}
-			<HrNeoGeoTagPicker
-				kind="geosite"
-				files={geositeFiles}
-				onpick={(t) => appendLine('domains', t)}
-				onclose={() => (geositePickerOpen = false)}
-			/>
-		{/if}
-
-		<textarea class="field-textarea" rows="8" bind:value={domainsText}
-			placeholder="youtube.com&#10;.googlevideo.com&#10;geosite:GOOGLE"
-		></textarea>
-		<div class="form-hint">
-			Домены · .суффикс · geosite:TAG — строкой на запись. Записываются через запятую в одну строку.
-		</div>
-	</section>
-
-	<!-- CIDR -->
-	<section class="form-section">
-		<header class="section-row">
-			<div class="section-row-label">
-				<span class="section-row-title">CIDR</span>
-				<span class="section-row-count">{splitLines(cidrText).length}</span>
-			</div>
-			<div class="section-row-tools">
-				<span class="badge-mono">ip.list</span>
-				<Button
-					variant="ghost"
-					size="sm"
-					onclick={() => (geoipPickerOpen = !geoipPickerOpen)}
-				>
-					+ geoip:TAG
-				</Button>
-			</div>
-		</header>
-
-		{#if geoipPickerOpen}
-			<HrNeoGeoTagPicker
-				kind="geoip"
-				files={geoipFiles}
-				{maxelem}
-				onpick={(t) => appendLine('cidr', t)}
-				onclose={() => (geoipPickerOpen = false)}
-			/>
-		{/if}
-
-		<textarea class="field-textarea" rows="5" bind:value={cidrText}
-			placeholder="10.0.0.0/8&#10;2001:db8::/32&#10;geoip:RU"
-		></textarea>
-		<div class="form-hint">CIDR · geoip:TAG — строкой на запись. Блок в ip.list.</div>
-	</section>
-
-	<!-- Target -->
+	<!-- Target — placed near the top so the routing decision (the most
+	     important user choice) is visible without scrolling past long
+	     domain/CIDR textareas. -->
 	<section class="form-section">
 		<div class="field-label">Target</div>
 		<div class="seg-tabs">
@@ -492,6 +445,77 @@
 				</div>
 			{/if}
 		{/if}
+	</section>
+
+	<!-- Domains -->
+	<section class="form-section">
+		<header class="section-row">
+			<div class="section-row-label">
+				<span class="section-row-title">Домены</span>
+				<span class="section-row-count">{splitLines(domainsText).length}</span>
+			</div>
+			<div class="section-row-tools">
+				<span class="badge-mono">domain.conf</span>
+				<Button
+					variant="ghost"
+					size="sm"
+					onclick={() => (geositePickerOpen = !geositePickerOpen)}
+				>
+					+ geosite:TAG
+				</Button>
+			</div>
+		</header>
+
+		{#if geositePickerOpen}
+			<HrNeoGeoTagPicker
+				kind="geosite"
+				files={geositeFiles}
+				onpick={(t) => appendLine('domains', t)}
+				onclose={() => (geositePickerOpen = false)}
+			/>
+		{/if}
+
+		<textarea class="field-textarea" rows="8" bind:value={domainsText}
+			placeholder="youtube.com&#10;.googlevideo.com&#10;geosite:GOOGLE"
+		></textarea>
+		<div class="form-hint">
+			Домены · .суффикс · geosite:TAG — строкой на запись. Записываются через запятую в одну строку.
+		</div>
+	</section>
+
+	<!-- CIDR -->
+	<section class="form-section">
+		<header class="section-row">
+			<div class="section-row-label">
+				<span class="section-row-title">CIDR</span>
+				<span class="section-row-count">{splitLines(cidrText).length}</span>
+			</div>
+			<div class="section-row-tools">
+				<span class="badge-mono">ip.list</span>
+				<Button
+					variant="ghost"
+					size="sm"
+					onclick={() => (geoipPickerOpen = !geoipPickerOpen)}
+				>
+					+ geoip:TAG
+				</Button>
+			</div>
+		</header>
+
+		{#if geoipPickerOpen}
+			<HrNeoGeoTagPicker
+				kind="geoip"
+				files={geoipFiles}
+				{maxelem}
+				onpick={(t) => appendLine('cidr', t)}
+				onclose={() => (geoipPickerOpen = false)}
+			/>
+		{/if}
+
+		<textarea class="field-textarea" rows="5" bind:value={cidrText}
+			placeholder="10.0.0.0/8&#10;2001:db8::/32&#10;geoip:RU"
+		></textarea>
+		<div class="form-hint">CIDR · geoip:TAG — строкой на запись. Блок в ip.list.</div>
 	</section>
 
 	{#snippet actions()}
