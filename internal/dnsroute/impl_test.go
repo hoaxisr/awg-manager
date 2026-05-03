@@ -602,7 +602,7 @@ func TestServiceCreate_SplitsAndDedupsMixedExcludes(t *testing.T) {
 	}
 
 	// Sub-subnet inside the CIDR-form hole — should survive.
-	keptSubs, _ := dedupSubnets([]string{"10.0.0.0/24"}, "list_b", []DomainList{listA})
+	keptSubs, _ := dedupSubnets([]string{"10.0.0.0/24"}, "list_b", "List B", []DomainList{listA})
 	if len(keptSubs) != 1 || keptSubs[0] != "10.0.0.0/24" {
 		t.Fatalf("expected 10.0.0.0/24 to survive, got %v", keptSubs)
 	}

@@ -127,7 +127,7 @@ func TestDedupSubnets_ExactDupe(t *testing.T) {
 	existing := []DomainList{
 		{ID: "list1", Name: "List 1", Subnets: []string{"10.0.0.0/24"}},
 	}
-	kept, report := dedupSubnets([]string{"10.0.0.0/24"}, "list2", existing)
+	kept, report := dedupSubnets([]string{"10.0.0.0/24"}, "list2", "List Two", existing)
 	if len(kept) != 0 {
 		t.Errorf("expected 0 kept, got %d: %v", len(kept), kept)
 	}
@@ -143,7 +143,7 @@ func TestDedupSubnets_CoveredByParent(t *testing.T) {
 	existing := []DomainList{
 		{ID: "list1", Name: "List 1", Subnets: []string{"10.0.0.0/16"}},
 	}
-	kept, report := dedupSubnets([]string{"10.0.1.0/24"}, "list2", existing)
+	kept, report := dedupSubnets([]string{"10.0.1.0/24"}, "list2", "List Two", existing)
 	if len(kept) != 0 {
 		t.Errorf("expected 0 kept, got %d: %v", len(kept), kept)
 	}
@@ -158,7 +158,7 @@ func TestDedupSubnets_CoveredByParent(t *testing.T) {
 func TestDedupSubnets_InternalDedup(t *testing.T) {
 	// Within the same batch: 10.0.0.0/16 covers 10.0.1.0/24 and 10.0.2.0/24
 	input := []string{"10.0.0.0/16", "10.0.1.0/24", "10.0.2.0/24"}
-	kept, report := dedupSubnets(input, "list1", nil)
+	kept, report := dedupSubnets(input, "list1", "List One", nil)
 	if len(kept) != 1 {
 		t.Errorf("expected 1 kept, got %d: %v", len(kept), kept)
 	}
@@ -168,10 +168,20 @@ func TestDedupSubnets_InternalDedup(t *testing.T) {
 	if report.TotalRemoved != 2 {
 		t.Errorf("expected 2 removed, got %d", report.TotalRemoved)
 	}
+	// Each removed item must carry the current list's name so the UI tooltip
+	// shows "covered by ... (List One)" instead of falling back to the raw ID.
+	for _, it := range report.Items {
+		if it.ListID != "list1" {
+			t.Errorf("ListID = %q, want list1", it.ListID)
+		}
+		if it.ListName != "List One" {
+			t.Errorf("ListName = %q, want \"List One\"", it.ListName)
+		}
+	}
 }
 
 func TestDedupSubnets_InvalidCIDR(t *testing.T) {
-	kept, report := dedupSubnets([]string{"not-a-cidr", "10.0.0.0/24"}, "list1", nil)
+	kept, report := dedupSubnets([]string{"not-a-cidr", "10.0.0.0/24"}, "list1", "List One", nil)
 	if len(kept) != 1 {
 		t.Errorf("expected 1 kept, got %d: %v", len(kept), kept)
 	}
@@ -188,7 +198,7 @@ func TestDedupSubnets_IPv6(t *testing.T) {
 	existing := []DomainList{
 		{ID: "list1", Name: "List 1", Subnets: []string{"fd00::/48"}},
 	}
-	kept, report := dedupSubnets([]string{"fd00::/64"}, "list2", existing)
+	kept, report := dedupSubnets([]string{"fd00::/64"}, "list2", "List Two", existing)
 	if len(kept) != 0 {
 		t.Errorf("expected 0 kept, got %d: %v", len(kept), kept)
 	}
@@ -207,7 +217,7 @@ func TestDedupSubnets_ParentWithExcludeAllowsChild(t *testing.T) {
 		},
 	}
 
-	kept, report := dedupSubnets([]string{"10.0.0.0/24"}, "list_b", existing)
+	kept, report := dedupSubnets([]string{"10.0.0.0/24"}, "list_b", "List B", existing)
 
 	if len(kept) != 1 || kept[0] != "10.0.0.0/24" {
 		t.Fatalf("expected 10.0.0.0/24 to survive, got kept=%v", kept)
@@ -227,7 +237,7 @@ func TestDedupSubnets_ExcludeSubtree(t *testing.T) {
 		},
 	}
 
-	kept, report := dedupSubnets([]string{"10.0.5.0/24"}, "list_b", existing)
+	kept, report := dedupSubnets([]string{"10.0.5.0/24"}, "list_b", "List B", existing)
 
 	if len(kept) != 1 {
 		t.Fatalf("expected 10.0.5.0/24 to survive (under exclude subtree), got %v", kept)

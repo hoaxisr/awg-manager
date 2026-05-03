@@ -883,7 +883,7 @@ func (s *ServiceImpl) dedup(list *DomainList) {
 	keptDomains, domainReport := idx.CheckBatch(list.Domains, list.ID, names)
 
 	// Deduplicate subnets.
-	keptSubnets, subnetReport := dedupSubnets(list.Subnets, list.ID, data.Lists)
+	keptSubnets, subnetReport := dedupSubnets(list.Subnets, list.ID, list.Name, data.Lists)
 
 	// Merge reports.
 	report := DedupeReport{

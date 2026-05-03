@@ -34,7 +34,7 @@ func candidateInHoles(c *net.IPNet, holes []*net.IPNet) bool {
 	return false
 }
 
-func dedupSubnets(input []string, currentListID string, existingLists []DomainList) ([]string, DedupeReport) {
+func dedupSubnets(input []string, currentListID, currentListName string, existingLists []DomainList) ([]string, DedupeReport) {
 	report := DedupeReport{TotalInput: len(input)}
 	if len(input) == 0 {
 		return nil, report
@@ -107,14 +107,14 @@ func dedupSubnets(input []string, currentListID string, existingLists []DomainLi
 			if k.raw == normalized {
 				report.TotalRemoved++
 				report.ExactDupes++
-				report.Items = append(report.Items, DedupeItem{Domain: normalized, Reason: "exact", CoveredBy: k.raw, ListID: currentListID})
+				report.Items = append(report.Items, DedupeItem{Domain: normalized, Reason: "exact", CoveredBy: k.raw, ListID: currentListID, ListName: currentListName})
 				removed = true
 				break
 			}
 			if cidrCovers(k.net, n) {
 				report.TotalRemoved++
 				report.WildcardDupes++
-				report.Items = append(report.Items, DedupeItem{Domain: normalized, Reason: "subnet_covered", CoveredBy: k.raw, ListID: currentListID})
+				report.Items = append(report.Items, DedupeItem{Domain: normalized, Reason: "subnet_covered", CoveredBy: k.raw, ListID: currentListID, ListName: currentListName})
 				removed = true
 				break
 			}
@@ -124,7 +124,7 @@ func dedupSubnets(input []string, currentListID string, existingLists []DomainLi
 		}
 
 		kept = append(kept, normalized)
-		keptParsed = append(keptParsed, parsedSubnet{raw: normalized, net: n, listID: currentListID})
+		keptParsed = append(keptParsed, parsedSubnet{raw: normalized, net: n, listID: currentListID, listName: currentListName})
 	}
 
 	report.TotalKept = len(kept)
