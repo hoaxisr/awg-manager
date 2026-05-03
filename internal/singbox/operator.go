@@ -129,6 +129,7 @@ func NewOperator(d OperatorDeps) *Operator {
 	pidPath := filepath.Join(dir, "sing-box.pid")
 
 	ensureBaseConfig(configPath)
+	ensureLegacyConfigMigrated(dir)
 
 	op := &Operator{
 		log:           log,
@@ -281,6 +282,71 @@ func ensureBaseConfig(configDir string) {
 	}
 	_ = os.MkdirAll(configDir, 0755)
 	_ = writeJSONFile(basePath, freshBaseConfig())
+}
+
+// ensureLegacyConfigMigrated copies user-added sing-box tunnels from a
+// pre-2.9.10 single-file config.json into the new slot layout
+// (config.d/10-tunnels.json), then removes the legacy file.
+//
+// pre-2.9.10 layout: <dir>/config.json — sing-box read this single file.
+// 2.9.10+ layout:    <dir>/config.d/<NN-name>.json — directory merged.
+//
+// Idempotent: returns silently when legacy is absent, when 10-tunnels.json
+// already exists, when legacy is unparseable, or when legacy is a
+// directory (degenerate). On parse failure we leave the legacy file in
+// place so a manual fix or next-boot retry can recover.
+//
+// dir is the singbox parent dir (e.g. /opt/etc/awg-manager/singbox).
+func ensureLegacyConfigMigrated(dir string) {
+	legacy := filepath.Join(dir, "config.json")
+	target := filepath.Join(dir, "config.d", "10-tunnels.json")
+
+	st, err := os.Stat(legacy)
+	if err != nil || st.IsDir() {
+		return
+	}
+	if _, err := os.Stat(target); err == nil {
+		return
+	}
+
+	cfg, err := LoadConfig(legacy)
+	if err != nil {
+		// Parse failure — leave legacy in place for retry.
+		return
+	}
+
+	slot := &Config{raw: map[string]any{
+		"inbounds":  cfg.inbounds(),
+		"outbounds": filterOutDirectPlaceholder(cfg.outbounds()),
+		"route":     map[string]any{"rules": cfg.routeRules()},
+	}}
+
+	if err := slot.Save(target); err != nil {
+		return
+	}
+	_ = os.Remove(legacy)
+}
+
+// filterOutDirectPlaceholder drops the {type:"direct", tag:"direct"}
+// outbound that v2.8.2 wrote into its skeleton. Modern config.d/00-base.json
+// owns no placeholder direct, but the configmerge collision check rejects
+// duplicate tags — so we strip it here. Other entries pass through verbatim.
+func filterOutDirectPlaceholder(in []any) []any {
+	out := make([]any, 0, len(in))
+	for _, v := range in {
+		ob, ok := v.(map[string]any)
+		if !ok {
+			out = append(out, v)
+			continue
+		}
+		typ, _ := ob["type"].(string)
+		tag, _ := ob["tag"].(string)
+		if typ == "direct" && tag == "direct" {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 // patchBaseLogLevel raises the sing-box log level to "trace" when it is
