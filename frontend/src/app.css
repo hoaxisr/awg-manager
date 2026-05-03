@@ -235,7 +235,11 @@ a:hover {
 }
 
 /* Form elements */
-input, textarea, select {
+/* Form-control reset for text-shaped inputs only. Checkbox/radio keep
+ * their native rendering — applying width:100% / padding / bg here
+ * stretched checkboxes to fill the parent flex row and broke layouts
+ * that mix a checkbox with text content (e.g. import preview rows). */
+input:not([type="checkbox"]):not([type="radio"]), textarea, select {
 	width: 100%;
 	padding: 0.5rem 0.75rem;
 	background: var(--bg-secondary);
@@ -246,7 +250,7 @@ input, textarea, select {
 	transition: border-color 0.15s ease;
 }
 
-input:focus, textarea:focus, select:focus {
+input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus, select:focus {
 	outline: none;
 	border-color: var(--accent);
 }
