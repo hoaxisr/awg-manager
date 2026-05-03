@@ -139,6 +139,10 @@
 </div>
 
 <style>
+	/* Fixed height + overflow:auto creates the scrolling ancestor required
+	   by position:sticky on .t th below. If a parent ever wraps this in
+	   another scroll container, sticky will still work — but if a parent
+	   removes the height/overflow combo here, the header stops sticking. */
 	.wrap { overflow: auto; height: 540px; }
 	.t {
 		width: 100%;
@@ -164,7 +168,10 @@
 		text-transform: uppercase; letter-spacing: 0.04em;
 		color: var(--text-secondary, #b8b6b3);
 		background: var(--surface-1, #1f2425);
-		position: sticky; top: 0;
+		/* z-index lifts the header above tbody rows so they don't bleed
+		   through during scroll (sticky elements get a stacking context
+		   but tbody rows have z-index:auto by default). */
+		position: sticky; top: 0; z-index: 2;
 	}
 	.t .num { text-align: right; font-variant-numeric: tabular-nums; }
 	.sortable { cursor: pointer; user-select: none; }
