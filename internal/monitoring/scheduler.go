@@ -3,6 +3,8 @@ package monitoring
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +19,7 @@ import (
 type Cell struct {
 	TargetID         string    `json:"targetId"`
 	TunnelID         string    `json:"tunnelId"`
-	LatencyMs        *int      `json:"latencyMs"`        // nil when probe failed
+	LatencyMs        *int      `json:"latencyMs"` // nil when probe failed
 	OK               bool      `json:"ok"`
 	ActiveForRestart bool      `json:"activeForRestart"` // tunnel.PingcheckTarget == target.Host
 	IsSelf           bool      `json:"isSelf"`           // tunnel.SelfTarget == target.Host — the cell the card displays
@@ -66,6 +68,7 @@ type SingboxTunnelInfo struct {
 	Tag           string // sing-box outbound tag, e.g. "veesp"
 	Name          string // human-readable name (often equals Tag)
 	InterfaceName string // kernel iface, e.g. "t2s0"
+	Server        string // server host for self-target measurement
 }
 
 // CompositeOutboundLister exposes the router's composite outbound
@@ -247,7 +250,12 @@ func (s *Scheduler) RunOnce(ctx context.Context) {
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				latency, ok := p.Probe(ctx, t.Host, tn.IfaceName, s.probeTimeout)
+				latency, ok := 0, false
+				if self && tn.Source == "singbox" && tn.ClashDelay > 0 {
+					latency, ok = tn.ClashDelay, true
+				} else {
+					latency, ok = p.Probe(ctx, t.Host, tn.IfaceName, s.probeTimeout)
+				}
 				now := time.Now()
 
 				sample := Sample{TS: now, OK: ok}
@@ -304,6 +312,9 @@ func (s *Scheduler) RunOnce(ctx context.Context) {
 // the tunnel's method=="ping" use the ICMP prober when available; everything
 // else falls back to the default HTTPS prober.
 func (s *Scheduler) proberFor(tun Tunnel, isSelf bool) Prober {
+	if isSelf && tun.Source == "singbox" && s.deps.ICMPProber != nil {
+		return s.deps.ICMPProber
+	}
 	if isSelf && tun.SelfMethod == "ping" && s.deps.ICMPProber != nil {
 		return s.deps.ICMPProber
 	}
@@ -420,11 +431,18 @@ func (s *Scheduler) collectTunnels(ctx context.Context) []Tunnel {
 				if sbt.InterfaceName == "" || seenIface[sbt.InterfaceName] {
 					continue
 				}
+				selfTarget := normalizeProbeHost(sbt.Server)
+				selfTarget = resolveHostForProbe(selfTarget)
+				if selfTarget == "" {
+					selfTarget = "1.1.1.1"
+				}
 				out = append(out, Tunnel{
-					ID:        sbt.Tag, // tag is unique per outbound; safe as ID
-					Name:      sbt.Name,
-					IfaceName: sbt.InterfaceName,
-					// PingcheckTarget / SelfTarget left empty — sing-box
+					ID:         sbt.Tag, // tag is unique per outbound; safe as ID
+					Name:       sbt.Name,
+					IfaceName:  sbt.InterfaceName,
+					SelfTarget: selfTarget,
+					SelfMethod: "http",
+					// PingcheckTarget left empty — sing-box
 					// tunnels don't have a per-tunnel restart pingcheck;
 					// matrix row uses BaseTargets only, augmented later
 					// with Clash data.
@@ -484,4 +502,52 @@ func (s *Scheduler) augmentSingboxClashData(ctx context.Context, tunnels []Tunne
 		tunnels[i].ClashDelay = delay
 		tunnels[i].UrltestGroup = group
 	}
+}
+
+// normalizeProbeHost converts a server value (hostname, host:port, or URL)
+// to a host that can be used by the HTTP prober.
+func normalizeProbeHost(in string) string {
+	s := strings.TrimSpace(in)
+	if s == "" {
+		return ""
+	}
+	if u, err := url.Parse(s); err == nil && u.Host != "" {
+		return u.Hostname()
+	}
+	if h, _, err := net.SplitHostPort(s); err == nil {
+		return h
+	}
+	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+		return strings.Trim(s, "[]")
+	}
+	return s
+}
+
+// resolveHostForProbe converts a hostname to an IP when possible so
+// interface-bound probes do not depend on in-tunnel DNS resolution.
+// If input is already an IP (or lookup fails), returns it unchanged.
+func resolveHostForProbe(host string) string {
+	h := strings.TrimSpace(host)
+	if h == "" {
+		return ""
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return h
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, h)
+	if err != nil || len(addrs) == 0 {
+		return h
+	}
+	for _, a := range addrs {
+		if a.IP == nil {
+			continue
+		}
+		// Prefer IPv4 for wider compatibility with router ping/curl paths.
+		if v4 := a.IP.To4(); v4 != nil {
+			return v4.String()
+		}
+	}
+	return addrs[0].IP.String()
 }

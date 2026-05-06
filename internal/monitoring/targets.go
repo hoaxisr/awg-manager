@@ -48,11 +48,10 @@ var BaseTargets = []Target{
 	{ID: "q-9.9.9.9", Host: "9.9.9.9", Name: "Quad9 DNS"},
 }
 
-// EffectiveTargets returns BaseTargets ∪ unique pingcheck targets ∪ unique
-// self-check targets from tunnels. Synthesised entries get id "pc-<host>"
-// (restart pingcheck target) or "cc-<host>" (connectivity-check self
-// target). Base order is preserved; dynamic entries appended in tunnel-
-// iteration order, deduplicated by Host.
+// EffectiveTargets returns BaseTargets ∪ unique pingcheck targets.
+// Synthesised entries get id "pc-<host>" (restart pingcheck target).
+// Base order is preserved; dynamic entries appended in tunnel iteration
+// order, deduplicated by Host.
 func EffectiveTargets(tunnels []Tunnel) []Target {
 	seen := make(map[string]bool, len(BaseTargets))
 	for _, t := range BaseTargets {
@@ -67,14 +66,6 @@ func EffectiveTargets(tunnels []Tunnel) []Target {
 				ID:   "pc-" + tun.PingcheckTarget,
 				Host: tun.PingcheckTarget,
 				Name: tun.PingcheckTarget,
-			})
-		}
-		if tun.SelfTarget != "" && !seen[tun.SelfTarget] {
-			seen[tun.SelfTarget] = true
-			out = append(out, Target{
-				ID:   "cc-" + tun.SelfTarget,
-				Host: tun.SelfTarget,
-				Name: tun.SelfTarget,
 			})
 		}
 	}

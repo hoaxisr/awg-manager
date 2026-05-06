@@ -471,3 +471,59 @@ func TestEnsureRuntimeBinaryBinding_PrefersManagedBinary(t *testing.T) {
 		t.Fatalf("validator binary = %q, want %q", got, managed)
 	}
 }
+
+func TestIsManagedInboundServerMap(t *testing.T) {
+	if !isManagedInboundServerMap(map[string]any{"tag": "srv-vless-1", "type": "vless"}) {
+		t.Fatal("expected vless server inbound to be managed")
+	}
+	if isManagedInboundServerMap(map[string]any{"tag": "tun-a-in", "type": "mixed"}) {
+		t.Fatal("mixed tunnel inbound must not be managed server")
+	}
+	if isManagedInboundServerMap(map[string]any{"tag": "device-proxy-in", "type": "mixed"}) {
+		t.Fatal("device-proxy inbound must not be managed server")
+	}
+}
+
+func TestValidateInboundServerInfo(t *testing.T) {
+	base := InboundServerInfo{
+		Tag:        "srv-vless-1",
+		Protocol:   "vless",
+		Listen:     "0.0.0.0",
+		ListenPort: 443,
+		TLS:        &TLSConfig{Enabled: true},
+		Users:      []InboundUser{{UUID: "bf000d23-0752-40b4-affe-68f7707a9661"}},
+	}
+	if err := validateInboundServerInfo(base); err != nil {
+		t.Fatalf("unexpected vless validation error: %v", err)
+	}
+
+	hy2 := InboundServerInfo{
+		Tag:        "srv-hy2-1",
+		Protocol:   "hysteria2",
+		Listen:     "0.0.0.0",
+		ListenPort: 8443,
+		TLS:        &TLSConfig{Enabled: true},
+		Users:      []InboundUser{{Name: "user", Password: "secret"}},
+	}
+	if err := validateInboundServerInfo(hy2); err != nil {
+		t.Fatalf("unexpected hysteria2 validation error: %v", err)
+	}
+
+	naive := InboundServerInfo{
+		Tag:        "srv-naive-1",
+		Protocol:   "naive",
+		Listen:     "0.0.0.0",
+		ListenPort: 443,
+		TLS:        &TLSConfig{Enabled: true},
+		Users:      []InboundUser{{Username: "u", Password: "p"}},
+	}
+	if err := validateInboundServerInfo(naive); err != nil {
+		t.Fatalf("unexpected naive validation error: %v", err)
+	}
+
+	bad := base
+	bad.Users = nil
+	if err := validateInboundServerInfo(bad); err == nil {
+		t.Fatal("expected validation error for missing vless uuid")
+	}
+}

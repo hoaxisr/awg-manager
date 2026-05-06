@@ -48,9 +48,6 @@
 		<div class="err">{error}</div>
 	{:else}
 		<PageHeader title={subscription.label || subscription.url} />
-		<div class="actions">
-			<Button variant="primary" size="sm" onclick={goBack}>Назад к подпискам</Button>
-		</div>
 		<Tabs
 			tabs={[
 				{ id: 'members', label: `Серверы (${subscription.memberTags.length})` },
@@ -66,6 +63,9 @@
 				<SubscriptionSettingsTab {subscription} onUpdated={reload} />
 			{/if}
 		</section>
+		<div class="actions">
+			<Button variant="primary" size="sm" onclick={goBack}>Назад к подпискам</Button>
+		</div>
 	{/if}
 </PageContainer>
 

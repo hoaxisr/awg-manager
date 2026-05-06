@@ -47,6 +47,7 @@
 	let singboxBusy = $state(false);
 
 	const singboxStatusValue = $derived($singboxStatus.data ?? null);
+	const singboxStatusReady = $derived($singboxStatus.lastFetchedAt > 0);
 	const singboxInstalled = $derived(singboxStatusValue?.installed ?? false);
 	const singboxRunning = $derived(singboxStatusValue?.running ?? false);
 	const hydraInstalled = $derived(hydraStatus?.installed ?? false);
@@ -98,9 +99,9 @@
 	}
 
 	onMount(async () => {
+		// Load critical data first (settings and update check)
 		try {
-			[systemInfo, settings, updateInfo] = await Promise.all([
-				api.getSystemInfo(),
+			[settings, updateInfo] = await Promise.all([
 				api.getSettings(),
 				api.checkUpdate(),
 			]);
@@ -109,6 +110,15 @@
 		} finally {
 			loading = false;
 		}
+
+		// Load system info in background (non-blocking)
+		try {
+			systemInfo = await api.getSystemInfo();
+		} catch (e) {
+			console.warn("Failed to load system info:", e);
+		}
+
+		// Load hydra status
 		try {
 			hydraStatus = await api.getHydraRouteStatus();
 		} catch {
@@ -270,10 +280,20 @@
 		<div class="flex justify-center py-8">
 			<LoadingSpinner size="md" />
 		</div>
-	{:else if settings && systemInfo}
+	{:else if settings}
 		<div class="settings-grid">
 			<aside class="settings-left">
-				<SystemInfoGrid {systemInfo} />
+				{#if systemInfo}
+					<SystemInfoGrid {systemInfo} />
+				{:else}
+					<div class="card">
+						<div class="section-label">Информация о системе</div>
+						<div class="loading-placeholder">
+							<LoadingSpinner size="sm" />
+							<span>Загрузка...</span>
+						</div>
+					</div>
+				{/if}
 
 				<div class="card">
 					<div class="section-label">Обновление</div>
@@ -282,6 +302,7 @@
 
 				<IntegrationsCard
 					singboxStatus={singboxStatusValue}
+					singboxStatusReady={singboxStatusReady}
 					{hydraStatus}
 					{singboxInstalling}
 					{singboxInstallError}
@@ -336,7 +357,7 @@
 					/>
 				</div>
 
-				{#if systemInfo.isOS5 && showDnsRouteCard}
+				{#if systemInfo?.isOS5 && showDnsRouteCard}
 					<div class="card">
 						<div class="section-label">DNS-маршрутизация</div>
 						<DnsRouteSettings
@@ -522,6 +543,15 @@
 	.api-key-input:read-only {
 		opacity: 0.85;
 		cursor: text;
+	}
+
+	.loading-placeholder {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 1rem;
+		color: var(--color-text-secondary);
+		font-size: 0.875rem;
 	}
 
 	@media (max-width: 900px) {

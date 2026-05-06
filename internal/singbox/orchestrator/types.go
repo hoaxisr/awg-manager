@@ -16,12 +16,13 @@ import "time"
 type Slot string
 
 const (
-	SlotBase          Slot = "base"          // 00-base.json — always on
-	SlotTunnels       Slot = "tunnels"       // 10-tunnels.json
-	SlotAwg           Slot = "awg"           // 15-awg.json
-	SlotRouter        Slot = "router"        // 20-router.json
-	SlotDeviceProxy   Slot = "deviceproxy"   // 30-deviceproxy.json
-	SlotSubscriptions Slot = "subscriptions" // 40-subscriptions.json
+	SlotBase           Slot = "base"            // 00-base.json — always on
+	SlotTunnels        Slot = "tunnels"         // 10-tunnels.json
+	SlotAwg            Slot = "awg"             // 15-awg.json
+	SlotRouter         Slot = "router"          // 20-router.json
+	SlotDeviceProxy    Slot = "deviceproxy"     // 30-deviceproxy.json
+	SlotSubscriptions  Slot = "subscriptions"   // 40-subscriptions.json
+	SlotInboundServers Slot = "inbound_servers" // 50-inbound-servers.json
 )
 
 // SlotMeta describes a producer's contract with the orchestrator.
@@ -50,6 +51,7 @@ func KnownSlots() []SlotMeta {
 		{Slot: SlotRouter, Filename: "20-router.json"},
 		{Slot: SlotDeviceProxy, Filename: "30-deviceproxy.json"},
 		{Slot: SlotSubscriptions, Filename: "40-subscriptions.json"},
+		{Slot: SlotInboundServers, Filename: "50-inbound-servers.json"},
 	}
 }
 

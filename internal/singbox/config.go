@@ -342,6 +342,69 @@ func (c *Config) RemoveTunnel(tag string) error {
 	return nil
 }
 
+// AddInboundServer inserts a new inbound server.
+func (c *Config) AddInboundServer(tag, protocol, listen string, listenPort int, inbound json.RawMessage) error {
+	// Check for duplicate tag
+	for _, v := range c.inbounds() {
+		ib, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		if t, _ := ib["tag"].(string); t == tag {
+			return fmt.Errorf("inbound server tag %q already exists", tag)
+		}
+	}
+	// Check listen_port
+	for _, v := range c.inbounds() {
+		ib, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		if p, ok := toInt(ib["listen_port"]); ok && p == listenPort {
+			return fmt.Errorf("listen_port %d already in use", listenPort)
+		}
+	}
+	// Unmarshal and set fields
+	var ibMap map[string]any
+	if len(inbound) > 0 {
+		if err := json.Unmarshal(inbound, &ibMap); err != nil {
+			return fmt.Errorf("bad inbound json: %w", err)
+		}
+	} else {
+		ibMap = make(map[string]any)
+	}
+	ibMap["tag"] = tag
+	ibMap["type"] = protocol
+	ibMap["listen"] = listen
+	ibMap["listen_port"] = listenPort
+	// Append to inbounds
+	c.setInbounds(append(c.inbounds(), ibMap))
+	return nil
+}
+
+// RemoveInboundServer removes an inbound server by tag.
+func (c *Config) RemoveInboundServer(tag string) error {
+	found := false
+	newIbs := make([]any, 0, len(c.inbounds()))
+	for _, v := range c.inbounds() {
+		ib, ok := v.(map[string]any)
+		if !ok {
+			newIbs = append(newIbs, v)
+			continue
+		}
+		if t, _ := ib["tag"].(string); t == tag {
+			found = true
+			continue
+		}
+		newIbs = append(newIbs, v)
+	}
+	if !found {
+		return fmt.Errorf("%w: %q", ErrInboundServerNotFound, tag)
+	}
+	c.setInbounds(newIbs)
+	return nil
+}
+
 // UpdateTunnel replaces the outbound JSON for an existing tag. Inbound and route stay.
 func (c *Config) UpdateTunnel(tag string, outbound json.RawMessage) error {
 	var obMap map[string]any

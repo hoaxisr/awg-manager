@@ -7,7 +7,7 @@ chcp 65001 >nul
 :: - "both": Build both MIPS and ARM64 (default)
 :: - "mips": Build only MIPS
 :: - "arm" or "aarch64": Build only ARM64
-set "BUILD_MODE=arm"
+set "BUILD_MODE=both"
 
 :: Set UPLOAD_MODE to: "on" or "off"
 :: - "on": Upload and install the built IPK on rax1 (default if ARM64 built)

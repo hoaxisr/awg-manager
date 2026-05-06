@@ -9,5 +9,7 @@ export { default as EditManagedServerModal } from './EditManagedServerModal.svel
 export { default as AddManagedPeerModal } from './AddManagedPeerModal.svelte';
 export { default as EditManagedPeerModal } from './EditManagedPeerModal.svelte';
 export { default as PeerConfModal } from './PeerConfModal.svelte';
+export { default as SingboxServerCard } from './SingboxServerCard.svelte';
+export { default as CreateSingboxServerModal } from './CreateSingboxServerModal.svelte';
 export { default as ServerRail } from './ServerRail.svelte';
 export type { RailItem } from './ServerRail.svelte';

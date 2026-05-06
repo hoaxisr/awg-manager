@@ -3,6 +3,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { servers } from '$lib/stores/servers';
+	import { singboxServers } from '$lib/stores/singboxServers';
 	import { systemInfo } from '$lib/stores/system';
 	import { goto } from '$app/navigation';
 	import { PageContainer } from '$lib/components/layout';
@@ -13,6 +14,8 @@
 		ServerCard,
 		ManagedServerCard,
 		CreateManagedServerModal,
+		SingboxServerCard,
+		CreateSingboxServerModal,
 		ServerRail,
 		type RailItem,
 	} from '$lib/components/servers';
@@ -29,7 +32,14 @@
 	let loading = $derived(snap.lastFetchedAt === 0);
 	let routerIP = $derived($systemInfo.data?.routerIP ?? '');
 
+let singboxServerList = $derived(
+	Array.isArray($singboxServers.data)
+		? $singboxServers.data
+		: ($singboxServers.data?.servers ?? [])
+);
+
 	let createManagedOpen = $state(false);
+	let createSingboxOpen = $state(false);
 
 	// ─── Rail item ids for managed servers ─────────────────────────
 	// Format: '__managed__:Wireguard5'. Prefix lets us distinguish managed
@@ -135,8 +145,7 @@
 
 <PageContainer width="full">
 	<div class="page-header">
-		<div class="title-group">
-			<h1 class="page-title">Серверы</h1>
+		<div class="title-group">			
 			<StoreStatusBadge store={servers} />
 		</div>
 	</div>
@@ -145,41 +154,75 @@
 		<div class="flex justify-center py-8">
 			<LoadingSpinner size="md" />
 		</div>
-	{:else if railItems.length === 0}
-		<EmptyState
-			title="Нет серверов"
-			description="Создайте свой WireGuard-сервер или добавьте существующий интерфейс."
-		>
-			{#snippet action()}
-				<Button variant="primary" size="md" onclick={openCreate}>Добавить сервер</Button>
-			{/snippet}
-		</EmptyState>
 	{:else}
-		<div class="layout">
-			<ServerRail
-				items={railItems}
-				activeId={activeId}
-				onSelect={(id) => (activeId = id)}
-				onCreate={openCreate}
-			/>
-			<main class="detail">
-				{#if activeItem?.kind === 'managed' && activeManaged}
-					<ManagedServerCard
-						server={activeManaged}
-						stats={activeManagedStats}
-						{routerIP}
-						onOpenASC={() => openManagedASC(activeManaged!.interfaceName)}
+		<section class="awg-section">
+			<div class="section-header">
+				<h2>Серверы AWG</h2>
+			</div>
+			{#if railItems.length === 0}
+				<EmptyState
+					title="Нет серверов AWG"
+					description="Создайте свой WireGuard-сервер или добавьте существующий интерфейс."
+				>
+					{#snippet action()}
+						<Button variant="primary" size="md" onclick={openCreate}>Добавить сервер</Button>
+					{/snippet}
+				</EmptyState>
+			{:else}
+				<div class="layout">
+					<ServerRail
+						items={railItems}
+						activeId={activeId}
+						onSelect={(id) => (activeId = id)}
+						onCreate={openCreate}
 					/>
-				{:else if activeItem?.kind === 'system' && activeServer}
-					<ServerCard
-						server={activeServer}
-						isBuiltIn={activeServer.description === 'Wireguard VPN Server'}
-						{wanIP}
-						onUnmark={unmarkServer}
-					/>
+					<main class="detail">
+						{#if activeItem?.kind === 'managed' && activeManaged}
+							<ManagedServerCard
+								server={activeManaged}
+								stats={activeManagedStats}
+								{routerIP}
+								onOpenASC={() => openManagedASC(activeManaged!.interfaceName)}
+							/>
+						{:else if activeItem?.kind === 'system' && activeServer}
+							<ServerCard
+								server={activeServer}
+								isBuiltIn={activeServer.description === 'Wireguard VPN Server'}
+								{wanIP}
+								onUnmark={unmarkServer}
+							/>
+						{/if}
+					</main>
+				</div>
+			{/if}
+		</section>
+
+		<section class="singbox-section">
+			<div class="singbox-shell">
+				<div class="section-header">
+					<h2>Sing-box серверы</h2>
+					{#if singboxServerList.length > 0}
+						<Button variant="primary" size="sm" onclick={() => createSingboxOpen = true}>Добавить сервер</Button>
+					{/if}
+				</div>
+				{#if singboxServerList.length === 0}
+					<EmptyState
+						title="Нет sing-box серверов"
+						description={`Создайте сервер VLESS Reality,\nHysteria2 или NaiveProxy.`}
+					>
+						{#snippet action()}
+							<Button variant="primary" size="md" onclick={() => createSingboxOpen = true}>Добавить сервер</Button>
+						{/snippet}
+					</EmptyState>
+				{:else}
+					<div class="singbox-servers">
+						{#each singboxServerList as server (server.tag)}
+							<SingboxServerCard {server} onDeleted={() => singboxServers.invalidate()} />
+						{/each}
+					</div>
 				{/if}
-			</main>
-		</div>
+			</div>
+		</section>
 	{/if}
 
 	<CreateManagedServerModal
@@ -187,6 +230,13 @@
 		onclose={() => createManagedOpen = false}
 		onCreated={onManagedCreated}
 	/>
+	{#if createSingboxOpen}
+		<CreateSingboxServerModal
+			open={createSingboxOpen}
+			onclose={() => createSingboxOpen = false}
+			onCreated={() => singboxServers.invalidate()}
+		/>
+	{/if}
 </PageContainer>
 
 <style>
@@ -205,11 +255,6 @@
 		gap: 0.75rem;
 	}
 
-	.page-title {
-		font-size: 1.25rem;
-		font-weight: 600;
-	}
-
 	.layout {
 		display: flex;
 		gap: 1rem;
@@ -221,10 +266,56 @@
 		min-width: 0;
 	}
 
+	.awg-section {
+		margin-top: 0.25rem;
+	}
+
+	.singbox-section {
+		margin-top: 2rem;
+	}
+	.singbox-shell {
+		background: color-mix(in oklab, var(--color-bg-secondary) 75%, #000 25%);
+		border: 1px solid var(--color-border);
+		border-radius: 0.75rem;
+		padding: 1rem;
+	}
+
+	.section-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 1rem;
+		gap: 0.75rem;
+	}
+
+	.section-header h2 {
+		margin: 0;
+		font-size: 1.25rem;
+		font-weight: 600;
+	}
+
+	.singbox-servers {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.singbox-section :global(.empty-state-description) {
+		white-space: pre-line;
+	}
+
 	@media (max-width: 768px) {
 		.layout {
 			flex-direction: column;
 			gap: 0.75rem;
+		}
+		.detail {
+			width: 100%;
+		}
+		.section-header {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.5rem;
 		}
 		.detail {
 			width: 100%;

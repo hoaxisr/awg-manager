@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -62,6 +63,86 @@ type SingboxTunnelDTO struct {
 type SingboxTunnelsResponse struct {
 	Success bool               `json:"success" example:"true"`
 	Data    []SingboxTunnelDTO `json:"data"`
+}
+
+// SingboxInboundServerDTO mirrors frontend SingboxInboundServer.
+type SingboxInboundServerDTO struct {
+	Tag        string              `json:"tag" example:"server-01"`
+	Protocol   string              `json:"protocol" example:"vless"`
+	Listen     string              `json:"listen" example:"0.0.0.0"`
+	ListenPort int                 `json:"listenPort" example:"443"`
+	TLS        *TLSConfigDTO       `json:"tls,omitempty"`
+	Users      []InboundUserDTO    `json:"users,omitempty"`
+	Reality    *RealityConfigDTO   `json:"reality,omitempty"`
+	Hysteria2  *Hysteria2ConfigDTO `json:"hysteria2,omitempty"`
+	Naive      *NaiveConfigDTO     `json:"naive,omitempty"`
+	Running    bool                `json:"running" example:"true"`
+}
+
+// TLSConfigDTO for inbound TLS settings.
+type TLSConfigDTO struct {
+	Enabled         bool           `json:"enabled"`
+	ServerName      string         `json:"serverName,omitempty"`
+	CertificatePath string         `json:"certificatePath,omitempty"`
+	KeyPath         string         `json:"keyPath,omitempty"`
+	ACME            *ACMEConfigDTO `json:"acme,omitempty"`
+}
+
+// ACMEConfigDTO for automatic certificates.
+type ACMEConfigDTO struct {
+	Domain   string `json:"domain"`
+	Email    string `json:"email"`
+	Provider string `json:"provider"`
+}
+
+// InboundUserDTO for protocols requiring authentication.
+type InboundUserDTO struct {
+	Name     string `json:"name,omitempty"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	UUID     string `json:"uuid,omitempty"`
+	Flow     string `json:"flow,omitempty"`
+}
+
+// RealityConfigDTO for VLESS Reality server mode.
+type RealityConfigDTO struct {
+	Enabled           bool   `json:"enabled"`
+	HandshakeServer   string `json:"handshakeServer,omitempty"`
+	HandshakePort     int    `json:"handshakePort,omitempty"`
+	PrivateKey        string `json:"privateKey,omitempty"`
+	ShortID           string `json:"shortId,omitempty"`
+	MaxTimeDifference string `json:"maxTimeDifference,omitempty"`
+}
+
+// Hysteria2ConfigDTO for Hysteria2 inbound-specific settings.
+type Hysteria2ConfigDTO struct {
+	UpMbps                int    `json:"upMbps,omitempty"`
+	DownMbps              int    `json:"downMbps,omitempty"`
+	ObfsPassword          string `json:"obfsPassword,omitempty"`
+	IgnoreClientBandwidth bool   `json:"ignoreClientBandwidth,omitempty"`
+}
+
+// NaiveConfigDTO for Naive inbound-specific settings.
+type NaiveConfigDTO struct {
+	Network               string `json:"network,omitempty"`
+	QuicCongestionControl string `json:"quicCongestionControl,omitempty"`
+}
+
+// SingboxInboundServerCreateDTO is a simplified DTO for creating servers with auto-generated defaults.
+type SingboxInboundServerCreateDTO struct {
+	Mode       string `json:"mode,omitempty" example:"simple"`            // Optional: "simple" for auto-generated, omit or "full" for manual
+	Protocol   string `json:"protocol" example:"vless"`                   // Required: "vless", "hysteria2", "naive"
+	Tag        string `json:"tag,omitempty" example:"srv-vless-001"`      // Optional: auto-generated if empty (simple mode)
+	Listen     string `json:"listen,omitempty" example:"0.0.0.0"`         // Optional: defaults to "0.0.0.0"
+	ListenPort int    `json:"listenPort,omitempty" example:"443"`         // Optional: defaults to 443
+	ServerName string `json:"serverName,omitempty" example:"example.com"` // Optional: for TLS SNI
+	UseReality bool   `json:"useReality,omitempty" example:"true"`        // Optional: for VLESS, enable Reality
+}
+
+// SingboxInboundServersResponse is the envelope for GET /singbox/servers.
+type SingboxInboundServersResponse struct {
+	Success bool                      `json:"success" example:"true"`
+	Data    []SingboxInboundServerDTO `json:"data"`
 }
 
 // SingboxControlRequest is the body for POST /singbox/control.
@@ -286,7 +367,13 @@ func (h *SingboxHandler) enrichedTunnels(ctx context.Context) ([]singboxEnriched
 	out := make([]singboxEnrichedTunnel, 0, len(list))
 	proxies, _ := h.op.Clash().GetProxies() // best-effort; ignore error
 	for _, t := range list {
-		e := singboxEnrichedTunnel{TunnelInfo: t}
+		e := singboxEnrichedTunnel{
+			TunnelInfo: t,
+			// Runtime state is the primary signal: when the sing-box
+			// tunnel process-side iface is running, treat connectivity
+			// as up even if Clash hasn't produced delay history yet.
+			Connectivity: singboxConnectivity{Connected: t.Running},
+		}
 		if p, ok := proxies[t.Tag]; ok && len(p.History) > 0 {
 			d := p.History[len(p.History)-1].Delay
 			if d > 0 {
@@ -575,4 +662,404 @@ func (h *SingboxHandler) DeleteTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Success(w, out)
+}
+
+// GetServers handles GET /api/singbox/servers.
+func (h *SingboxHandler) GetServers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	servers, err := h.op.ListInboundServers()
+	if err != nil {
+		response.InternalError(w, err.Error())
+		return
+	}
+	response.Success(w, servers)
+}
+
+// buildServerFromSimpleDTO creates a full InboundServerInfo from the simplified DTO with auto-generated defaults.
+func (h *SingboxHandler) buildServerFromSimpleDTO(dto SingboxInboundServerCreateDTO) (singbox.InboundServerInfo, error) {
+	// Set defaults
+	if dto.Listen == "" {
+		dto.Listen = "0.0.0.0"
+	}
+	if dto.ListenPort == 0 {
+		dto.ListenPort = 443
+	}
+	if dto.Tag == "" {
+		tag, err := h.op.GenerateUniqueTag(dto.Protocol)
+		if err != nil {
+			return singbox.InboundServerInfo{}, fmt.Errorf("generate tag: %w", err)
+		}
+		dto.Tag = tag
+	}
+
+	server := singbox.InboundServerInfo{
+		Tag:        dto.Tag,
+		Protocol:   dto.Protocol,
+		Listen:     dto.Listen,
+		ListenPort: dto.ListenPort,
+		TLS: &singbox.TLSConfig{
+			Enabled:    true,
+			ServerName: dto.ServerName,
+		},
+		Users: nil,
+	}
+
+	// Generate user credentials based on protocol
+	switch dto.Protocol {
+	case "vless":
+		uuid, err := singbox.GenerateUUID()
+		if err != nil {
+			return singbox.InboundServerInfo{}, fmt.Errorf("generate UUID: %w", err)
+		}
+		server.Users = []singbox.InboundUser{{
+			Name: "user",
+			UUID: uuid,
+		}}
+		if dto.UseReality {
+			privKey, err := singbox.GenerateRealityPrivateKey()
+			if err != nil {
+				return singbox.InboundServerInfo{}, fmt.Errorf("generate reality key: %w", err)
+			}
+			shortID, err := singbox.GenerateRealityShortID()
+			if err != nil {
+				return singbox.InboundServerInfo{}, fmt.Errorf("generate short ID: %w", err)
+			}
+			server.Reality = &singbox.RealityConfig{
+				Enabled:         true,
+				HandshakeServer: "www.cloudflare.com",
+				HandshakePort:   443,
+				PrivateKey:      privKey,
+				ShortID:         shortID,
+			}
+		}
+	case "hysteria2":
+		password, err := singbox.GeneratePassword(16)
+		if err != nil {
+			return singbox.InboundServerInfo{}, fmt.Errorf("generate password: %w", err)
+		}
+		server.Users = []singbox.InboundUser{{
+			Name:     "user",
+			Password: password,
+		}}
+	case "naive":
+		username := "user"
+		password, err := singbox.GeneratePassword(16)
+		if err != nil {
+			return singbox.InboundServerInfo{}, fmt.Errorf("generate password: %w", err)
+		}
+		server.Users = []singbox.InboundUser{{
+			Username: username,
+			Password: password,
+		}}
+		server.Naive = &singbox.NaiveConfig{
+			Network: "tcp",
+		}
+	default:
+		return singbox.InboundServerInfo{}, fmt.Errorf("unsupported protocol: %s", dto.Protocol)
+	}
+
+	return server, nil
+}
+
+// ValidateServer handles POST /api/singbox/servers/validate.
+func (h *SingboxHandler) ValidateServer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+
+	// Read the entire request body
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1024*1024)) // 1MB limit
+	if err != nil {
+		response.Error(w, "invalid request", "INVALID_REQUEST")
+		return
+	}
+
+	// Detect full vs simple payload the same way as CreateServer.
+	var temp map[string]interface{}
+	if err := json.Unmarshal(body, &temp); err != nil {
+		response.Error(w, "invalid request", "INVALID_REQUEST")
+		return
+	}
+	mode, _ := temp["mode"].(string)
+	hasFullFields := mode == "full"
+	for _, field := range []string{"tls", "users", "reality", "hysteria2", "naive", "running"} {
+		if _, exists := temp[field]; exists {
+			hasFullFields = true
+			break
+		}
+	}
+
+	var server singbox.InboundServerInfo
+	if hasFullFields && mode != "simple" {
+		var dto SingboxInboundServerDTO
+		if err := json.Unmarshal(body, &dto); err != nil {
+			response.Error(w, "invalid request", "INVALID_REQUEST")
+			return
+		}
+		server = singbox.InboundServerInfo{
+			Tag:        dto.Tag,
+			Protocol:   dto.Protocol,
+			Listen:     dto.Listen,
+			ListenPort: dto.ListenPort,
+		}
+		if dto.TLS != nil {
+			server.TLS = &singbox.TLSConfig{
+				Enabled:         dto.TLS.Enabled,
+				ServerName:      dto.TLS.ServerName,
+				CertificatePath: dto.TLS.CertificatePath,
+				KeyPath:         dto.TLS.KeyPath,
+			}
+			if dto.TLS.ACME != nil {
+				server.TLS.ACME = &singbox.ACMEConfig{
+					Domain:   dto.TLS.ACME.Domain,
+					Email:    dto.TLS.ACME.Email,
+					Provider: dto.TLS.ACME.Provider,
+				}
+			}
+		}
+		for _, u := range dto.Users {
+			server.Users = append(server.Users, singbox.InboundUser{
+				Name:     u.Name,
+				Username: u.Username,
+				Password: u.Password,
+				UUID:     u.UUID,
+				Flow:     u.Flow,
+			})
+		}
+		if dto.Reality != nil {
+			server.Reality = &singbox.RealityConfig{
+				Enabled:           dto.Reality.Enabled,
+				HandshakeServer:   dto.Reality.HandshakeServer,
+				HandshakePort:     dto.Reality.HandshakePort,
+				PrivateKey:        dto.Reality.PrivateKey,
+				ShortID:           dto.Reality.ShortID,
+				MaxTimeDifference: dto.Reality.MaxTimeDifference,
+			}
+		}
+		if dto.Hysteria2 != nil {
+			server.Hysteria2 = &singbox.Hysteria2Config{
+				UpMbps:                dto.Hysteria2.UpMbps,
+				DownMbps:              dto.Hysteria2.DownMbps,
+				ObfsPassword:          dto.Hysteria2.ObfsPassword,
+				IgnoreClientBandwidth: dto.Hysteria2.IgnoreClientBandwidth,
+			}
+		}
+		if dto.Naive != nil {
+			server.Naive = &singbox.NaiveConfig{
+				Network:               dto.Naive.Network,
+				QuicCongestionControl: dto.Naive.QuicCongestionControl,
+			}
+		}
+	} else {
+		var simpleDTO SingboxInboundServerCreateDTO
+		if err := json.Unmarshal(body, &simpleDTO); err != nil {
+			response.Error(w, "invalid request", "INVALID_REQUEST")
+			return
+		}
+		var err error
+		server, err = h.buildServerFromSimpleDTO(simpleDTO)
+		if err != nil {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_REQUEST")
+			return
+		}
+	}
+	inboundJSON, err := singbox.BuildInboundServerJSON(server)
+	if err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_REQUEST")
+		return
+	}
+	cfg, err := h.op.LoadConfig()
+	if err != nil {
+		response.InternalError(w, "failed to load config")
+		return
+	}
+	if err := cfg.AddInboundServer(server.Tag, server.Protocol, server.Listen, server.ListenPort, inboundJSON); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "config validation failed: "+err.Error(), "INVALID_REQUEST")
+		return
+	}
+
+	if err := h.op.ValidateConfig(cfg); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "validation failed: "+err.Error(), "INVALID_REQUEST")
+		return
+	}
+
+	response.Success(w, map[string]bool{"valid": true})
+}
+
+// CreateServer handles POST /api/singbox/servers.
+func (h *SingboxHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+
+	// Read the entire request body
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1024*1024)) // 1MB limit
+	if err != nil {
+		response.Error(w, "invalid request", "INVALID_REQUEST")
+		return
+	}
+
+	// Check if this is a full DTO or simple DTO
+	var temp map[string]interface{}
+	if err := json.Unmarshal(body, &temp); err != nil {
+		response.Error(w, "invalid request", "INVALID_REQUEST")
+		return
+	}
+
+	// Check mode or presence of full DTO fields
+	mode, _ := temp["mode"].(string)
+	hasFullFields := mode == "full"
+	fullFields := []string{"tls", "users", "reality", "hysteria2", "naive", "running"}
+	for _, field := range fullFields {
+		if _, exists := temp[field]; exists {
+			hasFullFields = true
+			break
+		}
+	}
+
+	if hasFullFields && mode != "simple" {
+		// Handle full DTO
+		var dto SingboxInboundServerDTO
+		if err := json.Unmarshal(body, &dto); err != nil {
+			response.Error(w, "invalid request", "INVALID_REQUEST")
+			return
+		}
+		server := singbox.InboundServerInfo{
+			Tag:        dto.Tag,
+			Protocol:   dto.Protocol,
+			Listen:     dto.Listen,
+			ListenPort: dto.ListenPort,
+			TLS:        nil,
+			Users:      nil,
+		}
+		if dto.TLS != nil {
+			server.TLS = &singbox.TLSConfig{
+				Enabled:         dto.TLS.Enabled,
+				ServerName:      dto.TLS.ServerName,
+				CertificatePath: dto.TLS.CertificatePath,
+				KeyPath:         dto.TLS.KeyPath,
+			}
+			if dto.TLS.ACME != nil {
+				server.TLS.ACME = &singbox.ACMEConfig{
+					Domain:   dto.TLS.ACME.Domain,
+					Email:    dto.TLS.ACME.Email,
+					Provider: dto.TLS.ACME.Provider,
+				}
+			}
+		}
+		for _, u := range dto.Users {
+			server.Users = append(server.Users, singbox.InboundUser{
+				Name:     u.Name,
+				Username: u.Username,
+				Password: u.Password,
+				UUID:     u.UUID,
+				Flow:     u.Flow,
+			})
+		}
+		if dto.Reality != nil {
+			server.Reality = &singbox.RealityConfig{
+				Enabled:           dto.Reality.Enabled,
+				HandshakeServer:   dto.Reality.HandshakeServer,
+				HandshakePort:     dto.Reality.HandshakePort,
+				PrivateKey:        dto.Reality.PrivateKey,
+				ShortID:           dto.Reality.ShortID,
+				MaxTimeDifference: dto.Reality.MaxTimeDifference,
+			}
+		}
+		if dto.Hysteria2 != nil {
+			server.Hysteria2 = &singbox.Hysteria2Config{
+				UpMbps:                dto.Hysteria2.UpMbps,
+				DownMbps:              dto.Hysteria2.DownMbps,
+				ObfsPassword:          dto.Hysteria2.ObfsPassword,
+				IgnoreClientBandwidth: dto.Hysteria2.IgnoreClientBandwidth,
+			}
+		}
+		if dto.Naive != nil {
+			server.Naive = &singbox.NaiveConfig{
+				Network:               dto.Naive.Network,
+				QuicCongestionControl: dto.Naive.QuicCongestionControl,
+			}
+		}
+		err := h.op.AddInboundServer(server)
+		if err != nil {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_REQUEST")
+			return
+		}
+		publishInvalidated(h.bus, ResourceSingboxServers, "server-added")
+		publishInvalidated(h.bus, ResourceSingboxStatus, "server-added")
+		response.Success(w, map[string]bool{"success": true})
+		return
+	}
+
+	// Handle simplified DTO with auto-generation
+	var simpleDTO SingboxInboundServerCreateDTO
+	if err := json.Unmarshal(body, &simpleDTO); err != nil {
+		response.Error(w, "invalid request", "INVALID_REQUEST")
+		return
+	}
+
+	server, err := h.buildServerFromSimpleDTO(simpleDTO)
+	if err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_REQUEST")
+		return
+	}
+	inboundJSON, err := singbox.BuildInboundServerJSON(server)
+	if err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_REQUEST")
+		return
+	}
+	cfg, err := h.op.LoadConfig()
+	if err != nil {
+		response.InternalError(w, "failed to load config")
+		return
+	}
+	if err := cfg.AddInboundServer(server.Tag, server.Protocol, server.Listen, server.ListenPort, inboundJSON); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "invalid server config: "+err.Error(), "INVALID_REQUEST")
+		return
+	}
+	if err := h.op.ValidateConfig(cfg); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "config validation failed: "+err.Error(), "INVALID_REQUEST")
+		return
+	}
+
+	// Add the server
+	err = h.op.AddInboundServer(server)
+	if err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_REQUEST")
+		return
+	}
+	publishInvalidated(h.bus, ResourceSingboxServers, "server-added")
+	publishInvalidated(h.bus, ResourceSingboxStatus, "server-added")
+	response.Success(w, map[string]bool{"success": true})
+}
+
+// DeleteServer handles DELETE /api/singbox/servers?tag={tag}.
+func (h *SingboxHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		response.MethodNotAllowed(w)
+		return
+	}
+	tag := r.URL.Query().Get("tag")
+	if tag == "" {
+		response.BadRequest(w, "tag required")
+		return
+	}
+	err := h.op.RemoveInboundServer(tag)
+	if err != nil {
+		switch {
+		case errors.Is(err, singbox.ErrInboundServerNotFound):
+			response.ErrorWithStatus(w, http.StatusNotFound, err.Error(), "NOT_FOUND")
+		default:
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_REQUEST")
+		}
+		return
+	}
+	publishInvalidated(h.bus, ResourceSingboxServers, "server-removed")
+	publishInvalidated(h.bus, ResourceSingboxStatus, "server-removed")
+	response.Success(w, map[string]bool{"success": true})
 }

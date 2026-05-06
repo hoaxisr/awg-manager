@@ -82,6 +82,69 @@ type Status struct {
 	UpdateAvailable bool `json:"updateAvailable"`
 }
 
+// InboundServerInfo represents a sing-box inbound server configuration.
+type InboundServerInfo struct {
+	Tag        string           `json:"tag"`
+	Protocol   string           `json:"protocol"` // e.g., "vless", "hysteria2", "naive"
+	Listen     string           `json:"listen"`   // e.g., "0.0.0.0"
+	ListenPort int              `json:"listenPort"`
+	TLS        *TLSConfig       `json:"tls,omitempty"`
+	Users      []InboundUser    `json:"users,omitempty"`
+	Reality    *RealityConfig   `json:"reality,omitempty"`
+	Hysteria2  *Hysteria2Config `json:"hysteria2,omitempty"`
+	Naive      *NaiveConfig     `json:"naive,omitempty"`
+	Running    bool             `json:"running"` // computed at list time
+}
+
+// TLSConfig for inbound TLS settings.
+type TLSConfig struct {
+	Enabled         bool        `json:"enabled"`
+	ServerName      string      `json:"serverName,omitempty"`
+	CertificatePath string      `json:"certificatePath,omitempty"`
+	KeyPath         string      `json:"keyPath,omitempty"`
+	ACME            *ACMEConfig `json:"acme,omitempty"`
+}
+
+// ACMEConfig for automatic certificates.
+type ACMEConfig struct {
+	Domain   string `json:"domain"`
+	Email    string `json:"email"`
+	Provider string `json:"provider"` // e.g., "letsencrypt"
+}
+
+// InboundUser for protocols requiring authentication.
+type InboundUser struct {
+	Name     string `json:"name,omitempty"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	UUID     string `json:"uuid,omitempty"` // for vless
+	Flow     string `json:"flow,omitempty"` // for vless
+}
+
+// RealityConfig for VLESS Reality server mode.
+type RealityConfig struct {
+	Enabled           bool   `json:"enabled"`
+	HandshakeServer   string `json:"handshakeServer,omitempty"`
+	HandshakePort     int    `json:"handshakePort,omitempty"`
+	PrivateKey        string `json:"privateKey,omitempty"`
+	ShortID           string `json:"shortId,omitempty"`
+	MaxTimeDifference string `json:"maxTimeDifference,omitempty"`
+}
+
+// Hysteria2Config for Hysteria2 inbound-specific settings.
+type Hysteria2Config struct {
+	UpMbps                int    `json:"upMbps,omitempty"`
+	DownMbps              int    `json:"downMbps,omitempty"`
+	ObfsPassword          string `json:"obfsPassword,omitempty"`
+	IgnoreClientBandwidth bool   `json:"ignoreClientBandwidth,omitempty"`
+}
+
+// NaiveConfig for Naive inbound-specific settings.
+type NaiveConfig struct {
+	Network               string `json:"network,omitempty"` // "tcp" | "udp" | ""
+	QuicCongestionControl string `json:"quicCongestionControl,omitempty"`
+}
+
 // ProcessState is the internal lifecycle state.
 type ProcessState int
 

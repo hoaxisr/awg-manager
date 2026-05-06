@@ -2,6 +2,7 @@ package singbox
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -273,6 +274,12 @@ func (o *Operator) SetInstaller(inst *installer.Installer) { o.inst = inst }
 // (config.d/10-tunnels.json). Used by applyConfig + RemoveTunnel.
 func (o *Operator) tunnelsFile() string {
 	return filepath.Join(o.configPath, "10-tunnels.json")
+}
+
+// inboundServersFile is the dedicated managed slot for user-created
+// sing-box inbound servers.
+func (o *Operator) inboundServersFile() string {
+	return filepath.Join(o.configPath, "50-inbound-servers.json")
 }
 
 // ensureBaseConfig writes a minimal 00-base.json if config.d is empty,
@@ -685,7 +692,12 @@ func (o *Operator) IsInstalled() (bool, string) {
 		return false, ""
 	}
 	if o.inst != nil && bin == o.binary {
-		return true, o.inst.CurrentVersion(context.Background())
+		v := o.inst.CurrentVersion(context.Background())
+		if strings.TrimSpace(v) != "" {
+			return true, v
+		}
+		dv, _ := detectVersionAndFeatures(bin)
+		return true, dv
 	}
 	v, _ := detectVersionAndFeatures(bin)
 	return true, v
@@ -707,7 +719,11 @@ func (o *Operator) GetStatus(ctx context.Context) Status {
 		s.Installed = true
 		if o.inst != nil && bin == o.binary {
 			s.Version = o.inst.CurrentVersion(ctx)
-			_, s.Features = detectVersionAndFeatures(bin)
+			detectedVersion, detectedFeatures := detectVersionAndFeatures(bin)
+			s.Features = detectedFeatures
+			if strings.TrimSpace(s.Version) == "" {
+				s.Version = detectedVersion
+			}
 		} else {
 			s.Version, s.Features = detectVersionAndFeatures(bin)
 		}
@@ -953,6 +969,403 @@ func (o *Operator) UpdateTunnel(ctx context.Context, tag string, outbound json.R
 		return err
 	}
 	return o.applyConfig(ctx, cfg)
+}
+
+var managedInboundProtocols = map[string]struct{}{
+	"vless":     {},
+	"hysteria2": {},
+	"naive":     {},
+}
+
+func isManagedInboundProtocol(protocol string) bool {
+	_, ok := managedInboundProtocols[strings.ToLower(strings.TrimSpace(protocol))]
+	return ok
+}
+
+func isManagedInboundServerMap(ib map[string]any) bool {
+	tag := strings.TrimSpace(strOr(ib["tag"], ""))
+	if tag == "" {
+		return false
+	}
+	// Tunnel adapter inbounds and service infra are not user server entries.
+	if strings.HasSuffix(tag, "-in") || strings.HasPrefix(tag, "device-proxy") {
+		return false
+	}
+	return isManagedInboundProtocol(strOr(ib["type"], ""))
+}
+
+// ListInboundServers returns all configured inbound servers.
+func (o *Operator) ListInboundServers() ([]InboundServerInfo, error) {
+	cfg, err := o.loadInboundServersConfig()
+	if err != nil {
+		return nil, err
+	}
+	legacyCfg, _ := o.loadConfig()
+	seenTags := map[string]struct{}{}
+	var servers []InboundServerInfo
+	running, _ := o.proc.IsRunning()
+	collect := func(inbounds []any) {
+		for _, v := range inbounds {
+			ib, ok := v.(map[string]any)
+			if !ok {
+				continue
+			}
+			if !isManagedInboundServerMap(ib) {
+				continue
+			}
+			tag, _ := ib["tag"].(string)
+			if _, dup := seenTags[tag]; dup {
+				continue
+			}
+			seenTags[tag] = struct{}{}
+			protocol, _ := ib["type"].(string)
+			listen, _ := ib["listen"].(string)
+			listenPort, _ := toInt(ib["listen_port"])
+			info := InboundServerInfo{
+				Tag:        tag,
+				Protocol:   protocol,
+				Listen:     listen,
+				ListenPort: listenPort,
+				Running:    running,
+			}
+
+			if tlsMap, ok := ib["tls"].(map[string]any); ok {
+				tls := &TLSConfig{
+					Enabled:         boolOr(tlsMap["enabled"]),
+					ServerName:      strOr(tlsMap["server_name"], ""),
+					CertificatePath: strOr(tlsMap["certificate_path"], ""),
+					KeyPath:         strOr(tlsMap["key_path"], ""),
+				}
+				if acmeMap, ok := tlsMap["acme"].(map[string]any); ok {
+					tls.ACME = &ACMEConfig{
+						Domain:   strOr(acmeMap["domain"], ""),
+						Email:    strOr(acmeMap["email"], ""),
+						Provider: strOr(acmeMap["provider"], ""),
+					}
+				}
+				if realityMap, ok := tlsMap["reality"].(map[string]any); ok {
+					r := &RealityConfig{
+						Enabled:           boolOr(realityMap["enabled"]),
+						PrivateKey:        maskSecret(strOr(realityMap["private_key"], "")),
+						MaxTimeDifference: strOr(realityMap["max_time_difference"], ""),
+					}
+					if hs, ok := realityMap["handshake"].(map[string]any); ok {
+						r.HandshakeServer = strOr(hs["server"], "")
+						r.HandshakePort, _ = toInt(hs["server_port"])
+					}
+					if sidList, ok := realityMap["short_id"].([]any); ok && len(sidList) > 0 {
+						r.ShortID = maskSecret(strOr(sidList[0], ""))
+					} else {
+						r.ShortID = maskSecret(strOr(realityMap["short_id"], ""))
+					}
+					info.Reality = r
+				}
+				info.TLS = tls
+			}
+
+			if usersList, ok := ib["users"].([]any); ok && len(usersList) > 0 {
+				users := make([]InboundUser, 0, len(usersList))
+				for _, uv := range usersList {
+					um, ok := uv.(map[string]any)
+					if !ok {
+						continue
+					}
+					users = append(users, InboundUser{
+						Name:     strOr(um["name"], ""),
+						Username: strOr(um["username"], ""),
+						Password: maskSecret(strOr(um["password"], "")),
+						UUID:     maskSecret(strOr(um["uuid"], "")),
+						Flow:     strOr(um["flow"], ""),
+					})
+				}
+				info.Users = users
+			}
+
+			if strings.EqualFold(protocol, "hysteria2") {
+				hy := &Hysteria2Config{}
+				if v, ok := toInt(ib["up_mbps"]); ok {
+					hy.UpMbps = v
+				}
+				if v, ok := toInt(ib["down_mbps"]); ok {
+					hy.DownMbps = v
+				}
+				if obfs, ok := ib["obfs"].(map[string]any); ok {
+					hy.ObfsPassword = strOr(obfs["password"], "")
+				}
+				hy.IgnoreClientBandwidth = boolOr(ib["ignore_client_bandwidth"])
+				if hy.UpMbps > 0 || hy.DownMbps > 0 || hy.ObfsPassword != "" || hy.IgnoreClientBandwidth {
+					info.Hysteria2 = hy
+				}
+			}
+			if strings.EqualFold(protocol, "naive") {
+				nv := &NaiveConfig{
+					Network:               strOr(ib["network"], ""),
+					QuicCongestionControl: strOr(ib["quic_congestion_control"], ""),
+				}
+				if nv.Network != "" || nv.QuicCongestionControl != "" {
+					info.Naive = nv
+				}
+			}
+
+			servers = append(servers, info)
+		}
+	}
+	collect(cfg.inbounds())
+	if legacyCfg != nil {
+		collect(legacyCfg.inbounds())
+	}
+	return servers, nil
+}
+
+// AddInboundServer adds a new inbound server.
+func (o *Operator) AddInboundServer(info InboundServerInfo) error {
+	if err := validateInboundServerInfo(info); err != nil {
+		return err
+	}
+	cfg, err := o.loadInboundServersConfig()
+	if err != nil {
+		return err
+	}
+	legacyCfg, _ := o.loadConfig()
+	for _, source := range []*Config{cfg, legacyCfg} {
+		if source == nil {
+			continue
+		}
+		for _, v := range source.inbounds() {
+			ib, ok := v.(map[string]any)
+			if !ok {
+				continue
+			}
+			if t, _ := ib["tag"].(string); t == info.Tag {
+				return fmt.Errorf("inbound server tag %q already exists", info.Tag)
+			}
+			if p, ok := toInt(ib["listen_port"]); ok && p == info.ListenPort {
+				return fmt.Errorf("listen_port %d already in use", info.ListenPort)
+			}
+		}
+	}
+	inbound, err := buildInboundServerMap(info)
+	if err != nil {
+		return err
+	}
+	inboundJSON, err := json.Marshal(inbound)
+	if err != nil {
+		return fmt.Errorf("marshal inbound server: %w", err)
+	}
+	if err := cfg.AddInboundServer(info.Tag, info.Protocol, info.Listen, info.ListenPort, inboundJSON); err != nil {
+		return err
+	}
+	return o.applyInboundServersConfig(context.Background(), cfg)
+}
+
+func buildInboundServerMap(info InboundServerInfo) (map[string]any, error) {
+	inbound := map[string]any{}
+	if info.TLS != nil {
+		tls := map[string]any{"enabled": info.TLS.Enabled}
+		if info.TLS.ServerName != "" {
+			tls["server_name"] = info.TLS.ServerName
+		}
+		if info.TLS.CertificatePath != "" {
+			tls["certificate_path"] = info.TLS.CertificatePath
+			tls["key_path"] = info.TLS.KeyPath
+		}
+		if info.TLS.ACME != nil {
+			tls["acme"] = map[string]any{
+				"domain":   info.TLS.ACME.Domain,
+				"email":    info.TLS.ACME.Email,
+				"provider": info.TLS.ACME.Provider,
+			}
+		}
+		if strings.EqualFold(info.Protocol, "vless") && info.Reality != nil && info.Reality.Enabled {
+			reality := map[string]any{
+				"enabled": true,
+				"handshake": map[string]any{
+					"server":      info.Reality.HandshakeServer,
+					"server_port": info.Reality.HandshakePort,
+				},
+				"private_key": info.Reality.PrivateKey,
+				"short_id":    []any{info.Reality.ShortID},
+			}
+			if info.Reality.MaxTimeDifference != "" {
+				reality["max_time_difference"] = info.Reality.MaxTimeDifference
+			}
+			tls["reality"] = reality
+		}
+		inbound["tls"] = tls
+	}
+	if len(info.Users) > 0 {
+		users := make([]any, len(info.Users))
+		for i, u := range info.Users {
+			user := make(map[string]any)
+			if u.Name != "" {
+				user["name"] = u.Name
+			}
+			if u.Username != "" {
+				user["username"] = u.Username
+			}
+			if u.Password != "" {
+				user["password"] = u.Password
+			}
+			if u.UUID != "" {
+				user["uuid"] = u.UUID
+			}
+			if u.Flow != "" {
+				user["flow"] = u.Flow
+			}
+			// Hysteria2 requires "name" (username alias for UI compatibility).
+			if strings.EqualFold(info.Protocol, "hysteria2") && u.Name == "" {
+				if u.Username != "" {
+					user["name"] = u.Username
+				}
+			}
+			users[i] = user
+		}
+		inbound["users"] = users
+	}
+	if strings.EqualFold(info.Protocol, "hysteria2") && info.Hysteria2 != nil {
+		if info.Hysteria2.UpMbps > 0 {
+			inbound["up_mbps"] = info.Hysteria2.UpMbps
+		}
+		if info.Hysteria2.DownMbps > 0 {
+			inbound["down_mbps"] = info.Hysteria2.DownMbps
+		}
+		if info.Hysteria2.ObfsPassword != "" {
+			inbound["obfs"] = map[string]any{
+				"type":     "salamander",
+				"password": info.Hysteria2.ObfsPassword,
+			}
+		}
+		if info.Hysteria2.IgnoreClientBandwidth {
+			inbound["ignore_client_bandwidth"] = true
+		}
+	}
+	if strings.EqualFold(info.Protocol, "naive") && info.Naive != nil {
+		if info.Naive.Network != "" {
+			inbound["network"] = info.Naive.Network
+		}
+		if info.Naive.QuicCongestionControl != "" {
+			inbound["quic_congestion_control"] = info.Naive.QuicCongestionControl
+		}
+	}
+	return inbound, nil
+}
+
+// BuildInboundServerJSON converts an inbound server DTO to raw inbound JSON.
+func BuildInboundServerJSON(info InboundServerInfo) (json.RawMessage, error) {
+	if err := validateInboundServerInfo(info); err != nil {
+		return nil, err
+	}
+	inbound, err := buildInboundServerMap(info)
+	if err != nil {
+		return nil, err
+	}
+	b, err := json.Marshal(inbound)
+	if err != nil {
+		return nil, fmt.Errorf("marshal inbound server: %w", err)
+	}
+	return b, nil
+}
+
+// RemoveInboundServer removes an inbound server by tag.
+func (o *Operator) RemoveInboundServer(tag string) error {
+	cfg, err := o.loadInboundServersConfig()
+	if err != nil {
+		return err
+	}
+	foundManaged := false
+	for _, v := range cfg.inbounds() {
+		ib, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strOr(ib["tag"], "") != tag {
+			continue
+		}
+		if !isManagedInboundServerMap(ib) {
+			return fmt.Errorf("inbound server %q is not managed by awg-manager", tag)
+		}
+		foundManaged = true
+		break
+	}
+	if !foundManaged {
+		legacyCfg, legacyErr := o.loadConfig()
+		if legacyErr == nil && legacyCfg != nil {
+			for _, v := range legacyCfg.inbounds() {
+				ib, ok := v.(map[string]any)
+				if !ok {
+					continue
+				}
+				if strOr(ib["tag"], "") != tag {
+					continue
+				}
+				if !isManagedInboundServerMap(ib) {
+					return fmt.Errorf("inbound server %q is not managed by awg-manager", tag)
+				}
+				if err := legacyCfg.RemoveInboundServer(tag); err != nil {
+					return err
+				}
+				return o.applyConfig(context.Background(), legacyCfg)
+			}
+		}
+		return fmt.Errorf("%w: %q", ErrInboundServerNotFound, tag)
+	}
+	if err := cfg.RemoveInboundServer(tag); err != nil {
+		return err
+	}
+	return o.applyInboundServersConfig(context.Background(), cfg)
+}
+
+func validateInboundServerInfo(info InboundServerInfo) error {
+	if strings.TrimSpace(info.Tag) == "" {
+		return fmt.Errorf("tag required")
+	}
+	if !isManagedInboundProtocol(info.Protocol) {
+		return fmt.Errorf("unsupported inbound server protocol: %q", info.Protocol)
+	}
+	if strings.TrimSpace(info.Listen) == "" {
+		return fmt.Errorf("listen required")
+	}
+	if info.ListenPort < 1 || info.ListenPort > 65535 {
+		return fmt.Errorf("invalid listenPort")
+	}
+
+	switch strings.ToLower(strings.TrimSpace(info.Protocol)) {
+	case "vless":
+		if len(info.Users) == 0 || strings.TrimSpace(info.Users[0].UUID) == "" {
+			return fmt.Errorf("vless requires user uuid")
+		}
+		if info.TLS == nil || !info.TLS.Enabled {
+			return fmt.Errorf("vless requires tls")
+		}
+		if info.Reality != nil && info.Reality.Enabled {
+			if strings.TrimSpace(info.Reality.HandshakeServer) == "" || info.Reality.HandshakePort < 1 || info.Reality.HandshakePort > 65535 {
+				return fmt.Errorf("vless reality requires handshake server and port")
+			}
+			if strings.TrimSpace(info.Reality.PrivateKey) == "" {
+				return fmt.Errorf("vless reality requires private key")
+			}
+		}
+	case "hysteria2":
+		if len(info.Users) == 0 || strings.TrimSpace(info.Users[0].Password) == "" {
+			return fmt.Errorf("hysteria2 requires user password")
+		}
+		if info.TLS == nil || !info.TLS.Enabled {
+			return fmt.Errorf("hysteria2 requires tls")
+		}
+	case "naive":
+		if len(info.Users) == 0 || strings.TrimSpace(info.Users[0].Username) == "" || strings.TrimSpace(info.Users[0].Password) == "" {
+			return fmt.Errorf("naive requires username and password")
+		}
+		if info.TLS == nil || !info.TLS.Enabled {
+			return fmt.Errorf("naive requires tls")
+		}
+	}
+	return nil
+}
+
+func boolOr(v any) bool {
+	b, _ := v.(bool)
+	return b
 }
 
 // Reconcile: ensure process is running if config has tunnels; ensure Proxies are up.
@@ -1214,6 +1627,165 @@ func (o *Operator) applyConfig(ctx context.Context, cfg *Config) error {
 
 func (o *Operator) loadConfig() (*Config, error) {
 	return LoadConfig(o.tunnelsFile())
+}
+
+// ValidateConfig validates the given config without saving or applying it.
+func (o *Operator) ValidateConfig(cfg *Config) error {
+	tmpDir, err := os.MkdirTemp("", "awg-singbox-validate-*")
+	if err != nil {
+		return fmt.Errorf("create temp config dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	if err := copyDirContents(o.configPath, tmpDir); err != nil {
+		return fmt.Errorf("copy config.d: %w", err)
+	}
+	if err := cfg.Save(filepath.Join(tmpDir, "10-tunnels.json")); err != nil {
+		return fmt.Errorf("save temp tunnels: %w", err)
+	}
+	if err := o.validator.Validate(tmpDir); err != nil {
+		return fmt.Errorf("validate config: %w", err)
+	}
+	return nil
+}
+
+func maskSecret(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return ""
+	}
+	return "__hidden__"
+}
+
+// LoadConfig loads the current configuration.
+func (o *Operator) LoadConfig() (*Config, error) {
+	return o.loadConfig()
+}
+
+// GenerateUniqueTag generates a unique tag for the given protocol.
+// It checks existing servers and appends a number if needed.
+func (o *Operator) GenerateUniqueTag(protocol string) (string, error) {
+	cfg, err := o.loadInboundServersConfig()
+	if err != nil {
+		return "", err
+	}
+	legacyCfg, _ := o.loadConfig()
+
+	prefix := protocolToTagPrefix(protocol)
+	if prefix == "" {
+		return "", fmt.Errorf("unsupported protocol: %s", protocol)
+	}
+
+	existingTags := make(map[string]bool)
+	for _, source := range []*Config{cfg, legacyCfg} {
+		if source == nil {
+			continue
+		}
+		for _, v := range source.inbounds() {
+			ib, ok := v.(map[string]any)
+			if !ok {
+				continue
+			}
+			if tag := strOr(ib["tag"], ""); tag != "" {
+				existingTags[tag] = true
+			}
+		}
+	}
+
+	for i := 1; i < 1000; i++ {
+		tag := fmt.Sprintf("%s-%03d", prefix, i)
+		if !existingTags[tag] {
+			return tag, nil
+		}
+	}
+
+	// Fallback: use random suffix
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s-%x", prefix, b), nil
+}
+
+func (o *Operator) loadInboundServersConfig() (*Config, error) {
+	cfg, err := LoadConfig(o.inboundServersFile())
+	if err == nil {
+		return cfg, nil
+	}
+	if os.IsNotExist(err) {
+		return NewConfig(), nil
+	}
+	return nil, err
+}
+
+func (o *Operator) applyInboundServersConfig(ctx context.Context, cfg *Config) error {
+	if o.orch != nil {
+		data, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal inbound servers config: %w", err)
+		}
+		if err := o.orch.Save(orchestrator.SlotInboundServers, data); err != nil {
+			return err
+		}
+		return o.orch.SetEnabled(orchestrator.SlotInboundServers, true)
+	}
+	path := o.inboundServersFile()
+	backupPath := path + ".bak"
+	_, hadExisting := os.Stat(path)
+	if hadExisting == nil {
+		if err := os.Rename(path, backupPath); err != nil {
+			return fmt.Errorf("backup inbound servers: %w", err)
+		}
+	}
+	restore := func() {
+		_ = os.Remove(path)
+		if hadExisting == nil {
+			_ = os.Rename(backupPath, path)
+		}
+	}
+	if err := cfg.Save(path); err != nil {
+		restore()
+		return err
+	}
+	if err := o.validator.Validate(o.configPath); err != nil {
+		restore()
+		return fmt.Errorf("validate: %w", err)
+	}
+	var runErr error
+	if running, _ := o.proc.IsRunning(); !running {
+		runErr = o.startAndWait(ctx)
+	} else {
+		runErr = o.proc.Reload()
+	}
+	if hadExisting == nil {
+		_ = os.Remove(backupPath)
+	}
+	return runErr
+}
+
+func copyDirContents(srcDir, dstDir string) error {
+	return filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		target := filepath.Join(dstDir, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, b, 0644)
+	})
 }
 
 // ApplyConfig runs the full Save + Validate + Promote + Reload sequence

@@ -5,6 +5,7 @@
 
 	interface Props {
 		singboxStatus: SingboxStatus | null;
+		singboxStatusReady?: boolean;
 		hydraStatus: HydraRouteStatus | null;
 		singboxInstalling: boolean;
 		singboxInstallError: string | null;
@@ -15,6 +16,7 @@
 
 	let {
 		singboxStatus,
+		singboxStatusReady = false,
 		hydraStatus,
 		singboxInstalling,
 		singboxInstallError,
@@ -62,7 +64,9 @@
 					/>
 					<div class="integration-meta">
 						<span class="font-medium">Sing-box</span>
-						{#if singboxInstalled && singboxStatus}
+						{#if !singboxStatusReady}
+							<span class="integration-sub">Проверяем состояние...</span>
+						{:else if singboxInstalled && singboxStatus}
 							<span class="integration-sub">
 								v{singboxStatus.version ?? '?'}
 								{#if singboxRunning && singboxStatus.pid}· pid {singboxStatus.pid}{:else if !singboxRunning}· остановлен{/if}
@@ -85,7 +89,9 @@
 						{/if}
 					</div>
 				</div>
-				{#if singboxInstalled}
+				{#if !singboxStatusReady}
+					<Button variant="ghost" size="sm" disabled>Проверка...</Button>
+				{:else if singboxInstalled}
 					<Button variant="ghost" size="sm" href="/?tab=singbox">Открыть</Button>
 				{:else}
 					<Button variant="primary" size="sm" onclick={oninstallSingbox} loading={singboxInstalling}>

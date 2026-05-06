@@ -459,3 +459,10 @@ func TestEnsureDeviceProxy_StripsLegacyAWGOutbounds(t *testing.T) {
 		}
 	}
 }
+
+func TestConfig_RemoveInboundServer_NotFound(t *testing.T) {
+	c := NewConfig()
+	if err := c.RemoveInboundServer("missing-tag"); err == nil {
+		t.Fatal("expected not found error")
+	}
+}

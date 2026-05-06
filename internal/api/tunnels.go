@@ -41,29 +41,29 @@ type TunnelPingCheckStatus struct {
 
 // TunnelListItemDTO mirrors frontend TunnelListItem.
 type TunnelListItemDTO struct {
-	ID                       string                `json:"id" example:"tun_abc123"`
-	Name                     string                `json:"name" example:"My AWG Tunnel"`
-	Type                     string                `json:"type" example:"awg" enums:"awg,wg"`
-	Status                   string                `json:"status" example:"connected" enums:"connected,disconnected,error,disabled"`
-	Enabled                  bool                  `json:"enabled" example:"true"`
-	DefaultRoute             bool                  `json:"defaultRoute" example:"false"`
-	Endpoint                 string                `json:"endpoint" example:"vpn.example.com:51820"`
-	Address                  string                `json:"address" example:"10.0.0.2/32"`
-	InterfaceName            string                `json:"interfaceName,omitempty" example:"nwg0"`
-	NdmsName                 string                `json:"ndmsName,omitempty" example:"Wireguard0"`
-	Backend                  string                `json:"backend,omitempty" example:"nativewg" enums:"nativewg,kernel"`
-	AWGVersion               string                `json:"awgVersion,omitempty" example:"awg2.0" enums:"wg,awg1.0,awg1.5,awg2.0"`
-	MTU                      int                   `json:"mtu,omitempty" example:"1420"`
-	IspInterface             string                `json:"ispInterface,omitempty" example:"PPPoE0"`
-	IspInterfaceLabel        string                `json:"ispInterfaceLabel,omitempty" example:"WAN"`
-	ResolvedIspInterface     string                `json:"resolvedIspInterface,omitempty" example:"PPPoE0"`
-	ResolvedIspInterfaceLabel string               `json:"resolvedIspInterfaceLabel,omitempty" example:"WAN"`
-	HasAddressConflict       bool                  `json:"hasAddressConflict,omitempty" example:"false"`
-	StartedAt                string                `json:"startedAt,omitempty" example:"2024-01-15T10:00:00Z"`
-	RxBytes                  int64                 `json:"rxBytes,omitempty" example:"10485760"`
-	TxBytes                  int64                 `json:"txBytes,omitempty" example:"5242880"`
-	LastHandshake            string                `json:"lastHandshake,omitempty" example:"2024-01-15T10:30:00Z"`
-	PingCheck                TunnelPingCheckStatus `json:"pingCheck"`
+	ID                        string                `json:"id" example:"tun_abc123"`
+	Name                      string                `json:"name" example:"My AWG Tunnel"`
+	Type                      string                `json:"type" example:"awg" enums:"awg,wg"`
+	Status                    string                `json:"status" example:"connected" enums:"connected,disconnected,error,disabled"`
+	Enabled                   bool                  `json:"enabled" example:"true"`
+	DefaultRoute              bool                  `json:"defaultRoute" example:"false"`
+	Endpoint                  string                `json:"endpoint" example:"vpn.example.com:51820"`
+	Address                   string                `json:"address" example:"10.0.0.2/32"`
+	InterfaceName             string                `json:"interfaceName,omitempty" example:"nwg0"`
+	NdmsName                  string                `json:"ndmsName,omitempty" example:"Wireguard0"`
+	Backend                   string                `json:"backend,omitempty" example:"nativewg" enums:"nativewg,kernel"`
+	AWGVersion                string                `json:"awgVersion,omitempty" example:"awg2.0" enums:"wg,awg1.0,awg1.5,awg2.0"`
+	MTU                       int                   `json:"mtu,omitempty" example:"1420"`
+	IspInterface              string                `json:"ispInterface,omitempty" example:"PPPoE0"`
+	IspInterfaceLabel         string                `json:"ispInterfaceLabel,omitempty" example:"WAN"`
+	ResolvedIspInterface      string                `json:"resolvedIspInterface,omitempty" example:"PPPoE0"`
+	ResolvedIspInterfaceLabel string                `json:"resolvedIspInterfaceLabel,omitempty" example:"WAN"`
+	HasAddressConflict        bool                  `json:"hasAddressConflict,omitempty" example:"false"`
+	StartedAt                 string                `json:"startedAt,omitempty" example:"2024-01-15T10:00:00Z"`
+	RxBytes                   int64                 `json:"rxBytes,omitempty" example:"10485760"`
+	TxBytes                   int64                 `json:"txBytes,omitempty" example:"5242880"`
+	LastHandshake             string                `json:"lastHandshake,omitempty" example:"2024-01-15T10:30:00Z"`
+	PingCheck                 TunnelPingCheckStatus `json:"pingCheck"`
 }
 
 // TunnelListResponse is the envelope for GET /tunnels/list.
@@ -74,9 +74,9 @@ type TunnelListResponse struct {
 
 // TunnelsAllSnapshotData is the payload for GET /tunnels/all.
 type TunnelsAllSnapshotData struct {
-	Tunnels  []TunnelListItemDTO  `json:"tunnels"`
-	External []ExternalTunnelDTO  `json:"external"`
-	System   []SystemTunnelDTO    `json:"system"`
+	Tunnels  []TunnelListItemDTO `json:"tunnels"`
+	External []ExternalTunnelDTO `json:"external"`
+	System   []SystemTunnelDTO   `json:"system"`
 }
 
 // TunnelsAllResponse is the envelope for GET /tunnels/all.
@@ -125,17 +125,17 @@ type TunnelStateInfoDTO struct {
 
 // AWGTunnelDTO mirrors frontend AWGTunnel.
 type AWGTunnelDTO struct {
-	ID             string             `json:"id" example:"tun_abc123"`
-	Name           string             `json:"name" example:"My VPN"`
-	Type           string             `json:"type" example:"awg" enums:"awg,wg"`
-	Enabled        bool               `json:"enabled" example:"true"`
-	DefaultRoute   bool               `json:"defaultRoute" example:"false"`
-	InterfaceName  string             `json:"interfaceName,omitempty" example:"nwg0"`
-	State          string             `json:"state,omitempty" example:"connected"`
-	Backend        string             `json:"backend,omitempty" example:"nativewg"`
-	Interface      AWGInterfaceDTO    `json:"interface"`
-	Peer           AWGPeerDTO         `json:"peer"`
-	StateInfo      *TunnelStateInfoDTO `json:"stateInfo,omitempty"`
+	ID            string              `json:"id" example:"tun_abc123"`
+	Name          string              `json:"name" example:"My VPN"`
+	Type          string              `json:"type" example:"awg" enums:"awg,wg"`
+	Enabled       bool                `json:"enabled" example:"true"`
+	DefaultRoute  bool                `json:"defaultRoute" example:"false"`
+	InterfaceName string              `json:"interfaceName,omitempty" example:"nwg0"`
+	State         string              `json:"state,omitempty" example:"connected"`
+	Backend       string              `json:"backend,omitempty" example:"nativewg"`
+	Interface     AWGInterfaceDTO     `json:"interface"`
+	Peer          AWGPeerDTO          `json:"peer"`
+	StateInfo     *TunnelStateInfoDTO `json:"stateInfo,omitempty"`
 }
 
 // TunnelDetailResponse is the envelope for GET /tunnels/get.
@@ -188,9 +188,9 @@ type TunnelDeleteResponse struct {
 
 const maxBodySize = 1 << 20 // 1 MB
 
-// validTunnelID matches safe tunnel identifiers: starts with a letter,
-// followed by up to 31 alphanumeric characters, hyphens, or underscores.
-var validTunnelID = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,31}$`)
+// validTunnelID matches ASCII-safe tunnel identifiers.
+// Starts with letter/digit, then letter/digit/underscore/hyphen. Max 32 chars.
+var validTunnelID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$`)
 
 // isValidTunnelID reports whether id is a safe tunnel identifier.
 func isValidTunnelID(id string) bool {

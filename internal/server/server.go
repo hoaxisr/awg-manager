@@ -25,6 +25,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/openapi"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/routing"
@@ -530,6 +531,17 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Health liveness endpoint (public - used by frontend 5s poller to
 	// detect backend offline independently of SSE connection state).
 	mux.Handle("/api/health", api.NewHealthHandler(s.config.Version))
+	openAPIHandler := guarded(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(openapi.RawSpec)
+	})
+	mux.HandleFunc("/api/openapi.yaml", openAPIHandler)
+	mux.HandleFunc("/openapi.yaml", openAPIHandler)
 
 	// SSE event stream (protected)
 	mux.HandleFunc("/api/events", guarded(eventsHandler.Stream))
@@ -922,6 +934,25 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 			case http.MethodDelete:
 				s.singboxHandler.DeleteTunnel(w, r)
 			default:
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		}))
+		mux.HandleFunc("/api/singbox/servers", guarded(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				s.singboxHandler.GetServers(w, r)
+			case http.MethodPost:
+				s.singboxHandler.CreateServer(w, r)
+			case http.MethodDelete:
+				s.singboxHandler.DeleteServer(w, r)
+			default:
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		}))
+		mux.HandleFunc("/api/singbox/servers/validate", guarded(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost {
+				s.singboxHandler.ValidateServer(w, r)
+			} else {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			}
 		}))

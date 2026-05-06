@@ -1044,6 +1044,50 @@ export interface SingboxTunnel {
 	running: boolean;
 }
 
+export interface SingboxInboundServer {
+	tag: string;
+	protocol: 'vless' | 'hysteria2' | 'naive';
+	listen: string;
+	listenPort: number;
+	tls?: {
+		enabled: boolean;
+		serverName?: string;
+		certificatePath?: string;
+		keyPath?: string;
+		acme?: {
+			domain: string;
+			email: string;
+			provider: string;
+		};
+	};
+	reality?: {
+		enabled: boolean;
+		handshakeServer?: string;
+		handshakePort?: number;
+		privateKey?: string;
+		shortId?: string;
+		maxTimeDifference?: string;
+	};
+	hysteria2?: {
+		upMbps?: number;
+		downMbps?: number;
+		obfsPassword?: string;
+		ignoreClientBandwidth?: boolean;
+	};
+	naive?: {
+		network?: 'tcp' | 'udp';
+		quicCongestionControl?: string;
+	};
+	users?: {
+		name?: string;
+		username?: string;
+		password?: string;
+		uuid?: string;
+		flow?: string;
+	}[];
+	running: boolean;
+}
+
 export interface SingboxStatus {
 	installed: boolean;
 	version?: string;

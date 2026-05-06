@@ -226,6 +226,7 @@ func (a *monitoringSingboxTunnelAdapter) List(ctx context.Context) ([]monitoring
 			Tag:           t.Tag,
 			Name:          t.Tag, // sing-box TunnelInfo doesn't carry a separate Name field
 			InterfaceName: t.KernelInterface,
+			Server:        t.Server,
 		})
 	}
 	return out, nil

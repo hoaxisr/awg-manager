@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
@@ -148,6 +149,15 @@ type SystemHandler struct {
 	hydra            *hydraroute.Service
 	singboxOp        *singbox.Operator
 	bus              *events.Bus
+
+	// Cached singbox info to avoid slow exec calls
+	singboxInfoCache *singboxInfoCache
+}
+
+type singboxInfoCache struct {
+	installed bool
+	version   string
+	at        time.Time
 }
 
 // SetEventBus wires the SSE bus so HR Neo control actions emit
@@ -413,10 +423,7 @@ func (h *SystemHandler) BuildSystemInfo() map[string]interface{} {
 }
 
 func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, gogc string, kernelModuleExists, kernelModuleLoaded bool, kernelModuleModel, kernelModuleVersion string, isAarch64 bool, activeBackendType, routerIP string) map[string]interface{} {
-	singboxInstalled, singboxVersion := false, ""
-	if h.singboxOp != nil {
-		singboxInstalled, singboxVersion = h.singboxOp.IsInstalled()
-	}
+	singboxInstalled, singboxVersion := h.getCachedSingboxInfo()
 
 	return map[string]interface{}{
 		"version":                     h.version,
@@ -453,6 +460,29 @@ func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, go
 			"version":   singboxVersion,
 		},
 	}
+}
+
+// getCachedSingboxInfo returns cached singbox installation status and version.
+// The info check is cached for 5 minutes to avoid slow exec calls.
+func (h *SystemHandler) getCachedSingboxInfo() (installed bool, version string) {
+	if h.singboxOp == nil {
+		return false, ""
+	}
+
+	// Check if cache is still valid (5 minutes)
+	if h.singboxInfoCache != nil && time.Since(h.singboxInfoCache.at) < 5*time.Minute {
+		return h.singboxInfoCache.installed, h.singboxInfoCache.version
+	}
+
+	// Refresh cache
+	installed, version = h.singboxOp.IsInstalled()
+	h.singboxInfoCache = &singboxInfoCache{
+		installed: installed,
+		version:   version,
+		at:        time.Now(),
+	}
+
+	return installed, version
 }
 
 // nativewgAvailable returns true if NativeWG backend can work:

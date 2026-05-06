@@ -46,8 +46,8 @@ func (defaultRunner) Run(ctx context.Context, name string, args ...string) (*exe
 }
 
 // Probe issues a single HTTPS HEAD request through ifaceName.
-// ok=false on context cancellation, exec error, non-zero exit code, or
-// http_code == 0 (no response received).
+// ok=false on context cancellation, exec error, malformed timing output,
+// or when neither HTTP nor TCP connect succeeded.
 func (p *HTTPProber) Probe(ctx context.Context, host, ifaceName string, timeout time.Duration) (int, bool) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout+1*time.Second)
 	defer cancel()
@@ -76,12 +76,15 @@ func (p *HTTPProber) Probe(ctx context.Context, host, ifaceName string, timeout 
 		return 0, false
 	}
 	httpCode, _ := strconv.Atoi(parts[0])
-	if httpCode == 0 {
-		return 0, false
-	}
 	timeNameLookup, _ := strconv.ParseFloat(parts[1], 64)
 	timeConnect, _ := strconv.ParseFloat(parts[2], 64)
 	timeTotal, _ := strconv.ParseFloat(parts[3], 64)
+	// For non-HTTP endpoints (for example VLESS/Reality server:port),
+	// curl can report http_code=000 but still provide a valid connect time.
+	// Treat that as reachability success.
+	if httpCode == 0 && timeConnect <= 0 && timeTotal <= 0 {
+		return 0, false
+	}
 
 	// Prefer pure TCP RTT — DNS resolution can dominate time_total on first
 	// requests after a tunnel comes up. Fall back to time_total when the

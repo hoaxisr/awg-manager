@@ -68,20 +68,23 @@
 									<span class="settings-icon" aria-hidden="true">›</span>
 								</a>
 							{/if}
-							{#if t.source === 'singbox' && t.clashDelay && t.clashDelay > 0}
-								<Badge
-									variant={latencyTier(t.clashDelay)}
-									size="sm"
-									mono
-									title={`Источник: urltest группа "${t.urltestGroup ?? ''}"`}
-								>
-									<span class="clash-num">clash: <span class="clash-val">{t.clashDelay}</span>ms</span>
-									<LatencySparkline
-										history={$latencyHistory.get(t.singboxTag ?? '') ?? []}
-										width={36}
-										height={10}
-									/>
-								</Badge>
+							{#if t.source === 'singbox'}
+								{@const serverCell = snapshot.cells.find(c => c.tunnelId === t.id && c.isSelf && c.latencyMs !== null)}
+								{@const tunnelLatency = serverCell ? serverCell.latencyMs : (t.clashDelay > 0 ? t.clashDelay : null)}
+								{@const hist = $latencyHistory.get(t.singboxTag) ?? []}
+								{#if tunnelLatency !== null}
+									<Badge
+										variant={latencyTier(tunnelLatency)}
+										size="sm"
+										mono
+										title={serverCell ? 'Self-check задержка до сервера туннеля' : `Источник: urltest группа "${t.urltestGroup ?? ''}"`}
+									>
+										<span class="clash-num">{serverCell ? 'self' : 'clash'}: <span class="clash-val">{tunnelLatency}</span>ms</span>
+										{#if hist.length >= 2}
+											<LatencySparkline history={hist} />
+										{/if}
+									</Badge>
+								{/if}
 							{/if}
 						</th>
 					{/each}

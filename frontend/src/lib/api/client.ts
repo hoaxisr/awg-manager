@@ -50,6 +50,7 @@ import type {
 	IpsetUsage,
 	DnsCheckStartResponse,
 	PolicyDevice,
+	SingboxInboundServer,
 	SingboxTunnel,
 	SingboxStatus,
 	SingboxImportResponse,
@@ -1252,6 +1253,31 @@ class ApiClient {
 
 	async singboxListTunnels(): Promise<SingboxTunnel[]> {
 		return this.request('/singbox/tunnels');
+	}
+
+	async singboxListServers(): Promise<SingboxInboundServer[]> {
+		return this.request('/singbox/servers');
+	}
+
+	async singboxValidateServer(server: Record<string, unknown>): Promise<{ valid: boolean }> {
+		const response = await this.request('/singbox/servers/validate', {
+			method: 'POST',
+			body: JSON.stringify(server),
+		});
+		return response as { valid: boolean };
+	}
+
+	async singboxCreateServer(server: Record<string, unknown> | Omit<SingboxInboundServer, 'running'>): Promise<void> {
+		await this.request('/singbox/servers', {
+			method: 'POST',
+			body: JSON.stringify(server),
+		});
+	}
+
+	async singboxDeleteServer(tag: string): Promise<void> {
+		await this.request(`/singbox/servers?tag=${encodeURIComponent(tag)}`, {
+			method: 'DELETE',
+		});
 	}
 
 	async singboxImportLinks(links: string): Promise<SingboxImportResponse> {
