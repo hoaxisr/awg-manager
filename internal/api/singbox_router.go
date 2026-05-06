@@ -83,13 +83,14 @@ type SingboxRouterRulesListResponse struct {
 
 // SingboxRouterRuleSetDTO mirrors router.RuleSet.
 type SingboxRouterRuleSetDTO struct {
-	Tag            string `json:"tag" example:"geosite-cn"`
-	Type           string `json:"type" example:"remote"`
-	Format         string `json:"format" example:"binary"`
-	URL            string `json:"url,omitempty" example:"https://cdn.example.com/geosite-cn.srs"`
-	UpdateInterval string `json:"update_interval,omitempty" example:"24h"`
-	DownloadDetour string `json:"download_detour,omitempty" example:"direct"`
-	Path           string `json:"path,omitempty" example:"/opt/etc/singbox/rulesets/geosite-cn.srs"`
+	Tag            string           `json:"tag" example:"geosite-cn"`
+	Type           string           `json:"type" example:"remote"`
+	Format         string           `json:"format" example:"binary"`
+	URL            string           `json:"url,omitempty" example:"https://cdn.example.com/geosite-cn.srs"`
+	UpdateInterval string           `json:"update_interval,omitempty" example:"24h"`
+	DownloadDetour string           `json:"download_detour,omitempty" example:"direct"`
+	Path           string           `json:"path,omitempty" example:"/opt/etc/singbox/rulesets/geosite-cn.srs"`
+	Rules          []map[string]any `json:"rules,omitempty"`
 }
 
 // SingboxRouterRuleSetsListResponse is the envelope for GET /singbox/router/rulesets/list.
@@ -211,6 +212,12 @@ type SingboxRouterRuleSetDeleteRequest struct {
 // SingboxRouterRuleSetRefreshRequest is the body for POST /singbox/router/rulesets/refresh.
 type SingboxRouterRuleSetRefreshRequest struct {
 	Tag string `json:"tag" example:"geosite-cn"`
+}
+
+// SingboxRouterRuleSetUpdateRequest is the body for POST /singbox/router/rulesets/update.
+type SingboxRouterRuleSetUpdateRequest struct {
+	Tag     string         `json:"tag" example:"geosite-cn"`
+	RuleSet router.RuleSet `json:"ruleSet"`
 }
 
 // SingboxRouterOutboundUpdateRequest is the body for POST /singbox/router/outbounds/update.
@@ -594,6 +601,36 @@ func (h *SingboxRouterHandler) AddRuleSet(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := h.svc.AddRuleSet(r.Context(), rs); err != nil {
+		h.handleErr(w, "request", err)
+		return
+	}
+	response.Success(w, map[string]bool{"ok": true})
+}
+
+// UpdateRuleSet replaces a ruleset in-place while keeping its tag stable.
+//
+//	@Summary		Update singbox-router ruleset
+//	@Description	Updates one existing ruleset identified by tag. Changing the tag is not supported.
+//	@Tags			singbox-router
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		SingboxRouterRuleSetUpdateRequest	true	"RuleSet update payload"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/singbox/router/rulesets/update [post]
+func (h *SingboxRouterHandler) UpdateRuleSet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	var body SingboxRouterRuleSetUpdateRequest
+	if err := decodeBody(r, &body); err != nil {
+		response.BadRequest(w, err.Error())
+		return
+	}
+	if err := h.svc.UpdateRuleSet(r.Context(), body.Tag, body.RuleSet); err != nil {
 		h.handleErr(w, "request", err)
 		return
 	}
@@ -1030,6 +1067,7 @@ func (h *SingboxRouterHandler) handleErr(w http.ResponseWriter, action string, e
 		response.Error(w, err.Error(), "CONFLICT")
 	case errors.Is(err, router.ErrRuleIndexOutOfRange),
 		errors.Is(err, router.ErrDNSRuleIndexOutOfRange),
+		errors.Is(err, router.ErrRuleSetNotFound),
 		errors.Is(err, router.ErrDNSServerNotFound):
 		response.Error(w, err.Error(), "NOT_FOUND")
 	case errors.Is(err, router.ErrInvalidMatchers),

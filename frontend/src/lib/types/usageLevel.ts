@@ -51,7 +51,7 @@ const ROUTING_SUBTAB_MIN_LEVEL: Record<RoutingSubTab, UsageLevel> = {
 	dnsRoutes: 'advanced',
 	ipRoutes: 'advanced',
 	hrNeo: 'expert',
-	singboxRouter: 'expert',
+	singboxRouter: 'advanced',
 };
 
 const LEVEL_RANK: Record<UsageLevel, number> = { basic: 0, advanced: 1, expert: 2 };

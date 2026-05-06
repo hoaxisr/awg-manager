@@ -54,7 +54,10 @@
 </script>
 
 <div class="title">Какие сервисы пустить через VPN?</div>
-<div class="subtitle">Отметьте пресеты — для каждого мастер настроит и маршрутизацию, и DNS.</div>
+<div class="subtitle">
+	Отметьте пресеты — для каждого мастер настроит и маршрутизацию, и DNS.
+	Источники: публичные SagerNet rule-set URL (<code>.srs</code>), актуальные для РФ-сценариев.
+</div>
 
 <div class="chip-row" role="tablist" aria-label="Категории">
 	<button

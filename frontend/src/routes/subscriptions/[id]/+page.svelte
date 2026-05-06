@@ -63,6 +63,7 @@
 				<SubscriptionSettingsTab {subscription} onUpdated={reload} />
 			{/if}
 		</section>
+		<hr class="divider">
 		<div class="actions">
 			<Button variant="primary" size="sm" onclick={goBack}>Назад к подпискам</Button>
 		</div>
@@ -73,4 +74,5 @@
 	.err { color: #f85149; }
 	.actions { margin-top: 0.5rem; }
 	.content { margin-top: 1rem; }
+	.divider { margin: 1rem 0; }
 </style>

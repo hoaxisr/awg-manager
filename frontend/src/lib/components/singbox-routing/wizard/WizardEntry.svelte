@@ -11,6 +11,9 @@
 	<div class="sub">
 		Запустите мастер быстрой настройки — он за 4 шага создаст policy, привяжет устройства,
 		применит выбранные пресеты и запустит движок.
+		<br />
+		Мастер использует реальные публичные rule-set источники SagerNet (файлы <code>.srs</code>),
+		а не приватные URL подписок VLESS/VMess.
 	</div>
 	<button type="button" class="btn primary" onclick={start}>Запустить мастер</button>
 </div>

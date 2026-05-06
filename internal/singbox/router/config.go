@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func NewEmptyConfig() *RouterConfig {
@@ -94,6 +96,25 @@ func (c *RouterConfig) DeleteRuleSet(tag string, force bool) error {
 	}
 	c.Route.RuleSet = filtered
 	return nil
+}
+
+func (c *RouterConfig) UpdateRuleSet(tag string, next RuleSet) error {
+	if next.Tag == "" {
+		next.Tag = tag
+	}
+	if next.Tag != tag {
+		return fmt.Errorf("rule_set %q: changing tag is not supported", tag)
+	}
+	if err := validateRuleSet(next); err != nil {
+		return err
+	}
+	for i, existing := range c.Route.RuleSet {
+		if existing.Tag == tag {
+			c.Route.RuleSet[i] = next
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %q", ErrRuleSetNotFound, tag)
 }
 
 func (c *RouterConfig) rulesReferencingRuleSet(tag string) []int {
@@ -286,9 +307,28 @@ func validateRuleSet(rs RuleSet) error {
 		return fmt.Errorf("rule_set tag is required")
 	}
 	switch rs.Type {
+	case "inline":
+		if len(rs.Rules) == 0 {
+			return fmt.Errorf("rule_set %q: rules required for type=inline", rs.Tag)
+		}
+		for i, rule := range rs.Rules {
+			if len(rule) == 0 {
+				return fmt.Errorf("rule_set %q: inline rule at index %d is empty", rs.Tag, i)
+			}
+			if !inlineRuleHasKnownField(rule) {
+				return fmt.Errorf("rule_set %q: inline rule at index %d has no known matcher/action fields", rs.Tag, i)
+			}
+		}
 	case "remote":
 		if rs.URL == "" {
 			return fmt.Errorf("rule_set %q: url required for type=remote", rs.Tag)
+		}
+		u, err := url.Parse(rs.URL)
+		if err != nil || u == nil || u.Host == "" {
+			return fmt.Errorf("rule_set %q: invalid url: %w", rs.Tag, err)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("rule_set %q: url scheme must be http or https", rs.Tag)
 		}
 	case "local":
 		if rs.Path == "" {
@@ -301,4 +341,40 @@ func validateRuleSet(rs RuleSet) error {
 		return fmt.Errorf("rule_set %q: unknown type %q", rs.Tag, rs.Type)
 	}
 	return nil
+}
+
+func inlineRuleHasKnownField(rule map[string]any) bool {
+	known := []string{
+		"domain", "domain_suffix", "domain_keyword", "domain_regex",
+		"ip_cidr", "source_ip_cidr", "port", "source_port",
+		"process_name", "process_path", "package_name",
+		"protocol", "network", "rule_set",
+	}
+	for _, k := range known {
+		v, ok := rule[k]
+		if !ok {
+			continue
+		}
+		if inlineRuleValueNonEmpty(v) {
+			return true
+		}
+	}
+	return false
+}
+
+func inlineRuleValueNonEmpty(v any) bool {
+	switch t := v.(type) {
+	case nil:
+		return false
+	case string:
+		return strings.TrimSpace(t) != ""
+	case []any:
+		return len(t) > 0
+	case []string:
+		return len(t) > 0
+	case []int:
+		return len(t) > 0
+	default:
+		return true
+	}
 }

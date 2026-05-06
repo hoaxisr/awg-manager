@@ -22,6 +22,7 @@
     let pickerOpen = $state(false);
     let checking = $state(false);
     let speedtestOpen = $state(false);
+    let showServer = $state(false);
 
     // NDMS Proxy interface name (Proxy<N>) and matching kernel TUN
     // (t2s<N>) — same naming convention sing-box tunnels use, just
@@ -64,6 +65,21 @@
             case 'naive':         return 'Naive';
             default:              return activeMember.protocol;
         }
+    });
+
+    const memberSNI = $derived.by(() => {
+        const m = activeMember as unknown as Record<string, unknown>;
+        const candidates = [
+            m.sni,
+            m.serverName,
+            m.server_name,
+            m.tlsServerName,
+            m.tls_server_name,
+        ];
+        for (const v of candidates) {
+            if (typeof v === 'string' && v.trim() !== '') return v.trim();
+        }
+        return '';
     });
 
     async function triggerCheck(e?: MouseEvent | KeyboardEvent): Promise<void> {
@@ -161,7 +177,36 @@
                 aria-haspopup="listbox"
                 aria-expanded={pickerOpen}
             >
-                <span class="server-text">{activeMember.server}:{activeMember.port}</span>
+                <span class="server-value-wrap">
+                    {#if showServer}
+                        <span class="server-text">{activeMember.server}</span>
+                    {:else}
+                        <span class="server-hidden">●●●●●●●●</span>
+                    {/if}
+                    <span
+                        class="icon-btn"
+                        role="button"
+                        tabindex="0"
+                        aria-label={showServer ? 'Скрыть сервер и SNI' : 'Показать сервер и SNI'}
+                        onclick={(e) => {
+                            e.stopPropagation();
+                            showServer = !showServer;
+                        }}
+                        onkeydown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                showServer = !showServer;
+                            }
+                        }}
+                    >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                            <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                    </span>
+                    <span class="port">:{activeMember.port}</span>
+                </span>
                 <span class="caret" aria-hidden="true">▾</span>
             </button>
             {#if pickerOpen}
@@ -174,6 +219,19 @@
             {/if}
         </div>
     </div>
+
+    {#if memberSNI}
+        <div class="server-row">
+            <span class="label">SNI</span>
+            <span class="sni-value">
+                {#if showServer}
+                    {memberSNI}
+                {:else}
+                    <span class="server-hidden">●●●●●●●●</span>
+                {/if}
+            </span>
+        </div>
+    {/if}
 
     <div class="divider"></div>
 
@@ -343,6 +401,44 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+    }
+    .server-value-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        min-width: 0;
+    }
+    .server-hidden {
+        font-family: var(--font-mono, ui-monospace, monospace);
+        letter-spacing: 1px;
+        color: var(--color-text-primary);
+    }
+    .icon-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        border: none;
+        background: transparent;
+        color: var(--color-text-muted);
+        cursor: pointer;
+        padding: 0;
+    }
+    .icon-btn svg {
+        width: 14px;
+        height: 14px;
+    }
+    .icon-btn:hover { color: var(--color-accent); }
+    .port {
+        font-family: var(--font-mono, ui-monospace, monospace);
+        color: var(--color-text-primary);
+        white-space: nowrap;
+    }
+    .sni-value {
+        font-family: var(--font-mono, ui-monospace, monospace);
+        font-size: 0.78rem;
+        color: var(--color-text-primary);
     }
     .caret { color: var(--color-text-muted); font-size: 0.7rem; }
     .divider { height: 1px; background: var(--color-border); margin: 0.4rem 0; }

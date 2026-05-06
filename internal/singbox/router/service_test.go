@@ -94,18 +94,32 @@ func newTestService(_ *testing.T, deps Deps) *ServiceImpl {
 // Enable error-path tests
 // ---------------------------------------------------------------------------
 
-func TestEnable_NoPolicy_Refused(t *testing.T) {
+func TestEnable_NoPolicy_AutoCreatesDefaultPolicy(t *testing.T) {
 	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{PolicyName: ""})
-	policies := &fakeAccessPolicyProvider{}
+	policies := &fakeAccessPolicyProvider{
+		createReturn: PolicyInfo{Name: "Policy0", Description: "awgm-router"},
+		mark:         "0xffffaaa",
+	}
 	fe := &fakeExec{}
 	svc := newTestService(t, Deps{
 		Settings: settingsStore,
 		Policies: policies,
 		IPTables: newTestIPTables(fe),
+		Singbox:  newTestSingbox(t),
 	})
 	err := svc.Enable(context.Background())
-	if !errors.Is(err, ErrPolicyNotConfigured) {
-		t.Errorf("want ErrPolicyNotConfigured, got %v", err)
+	if err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	all, loadErr := settingsStore.Load()
+	if loadErr != nil {
+		t.Fatalf("Load: %v", loadErr)
+	}
+	if all.SingboxRouter.PolicyName == "" {
+		t.Fatalf("expected auto-created policy name, got empty")
+	}
+	if !all.SingboxRouter.Enabled {
+		t.Fatalf("expected router enabled after bootstrap")
 	}
 }
 

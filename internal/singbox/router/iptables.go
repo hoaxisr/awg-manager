@@ -270,11 +270,11 @@ func (it *IPTables) Install(ctx context.Context, mark string) error {
 			return fmt.Errorf("ip rule add: %w", err)
 		}
 	}
-	if err := it.runIP(ctx, "route", "add", "local", "0.0.0.0/0", "dev", "lo",
+	// Keep the local route idempotent across repeated enable/reconcile runs.
+	// `replace` updates existing entry and creates it if missing.
+	if err := it.runIP(ctx, "route", "replace", "local", "0.0.0.0/0", "dev", "lo",
 		"table", fmt.Sprintf("%d", RoutingTable)); err != nil {
-		if !strings.Contains(err.Error(), "File exists") {
-			return fmt.Errorf("ip route add: %w", err)
-		}
+		return fmt.Errorf("ip route replace: %w", err)
 	}
 	return nil
 }
@@ -301,7 +301,7 @@ mangle_ok=0; nat_ok=0
 if [ "$mangle_ok" -eq 0 ] || [ "$nat_ok" -eq 0 ]; then
   /opt/sbin/iptables-restore --noflush < %[1]q
   /opt/sbin/ip rule add fwmark 0x%[3]x table %[4]d priority %[5]d 2>/dev/null || true
-  /opt/sbin/ip route add local 0.0.0.0/0 dev lo table %[4]d 2>/dev/null || true
+  /opt/sbin/ip route replace local 0.0.0.0/0 dev lo table %[4]d 2>/dev/null || true
   logger -t awgm-tproxy "netfilter.d: restored AWGM chains after NDMS reload"
 fi
 `, netfilterRulesPath, ChainName, Fwmark, RoutingTable, IPRulePriority, RedirectChain)

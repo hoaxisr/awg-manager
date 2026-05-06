@@ -1482,6 +1482,13 @@ class ApiClient {
 		});
 	}
 
+	async singboxRouterUpdateRuleSet(tag: string, ruleSet: SingboxRouterRuleSet): Promise<void> {
+		await this.request('/singbox/router/rulesets/update', {
+			method: 'POST',
+			body: JSON.stringify({ tag, ruleSet }),
+		});
+	}
+
 	async singboxRouterDeleteRuleSet(tag: string, force = false): Promise<void> {
 		await this.request('/singbox/router/rulesets/delete', {
 			method: 'POST',

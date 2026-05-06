@@ -38,13 +38,14 @@ type Rule struct {
 }
 
 type RuleSet struct {
-	Tag            string `json:"tag"`
-	Type           string `json:"type"`
-	Format         string `json:"format"`
-	URL            string `json:"url,omitempty"`
-	UpdateInterval string `json:"update_interval,omitempty"`
-	DownloadDetour string `json:"download_detour,omitempty"`
-	Path           string `json:"path,omitempty"`
+	Tag            string           `json:"tag"`
+	Type           string           `json:"type"`
+	Format         string           `json:"format,omitempty"`
+	URL            string           `json:"url,omitempty"`
+	UpdateInterval string           `json:"update_interval,omitempty"`
+	DownloadDetour string           `json:"download_detour,omitempty"`
+	Path           string           `json:"path,omitempty"`
+	Rules          []map[string]any `json:"rules,omitempty"`
 }
 
 type Outbound struct {
@@ -60,15 +61,15 @@ type Outbound struct {
 }
 
 type Inbound struct {
-	Type         string `json:"type"`
-	Tag          string `json:"tag"`
-	Listen       string `json:"listen"`
-	ListenPort   int    `json:"listen_port"`
-	Network      string `json:"network,omitempty"`
-	UDPTimeout   string `json:"udp_timeout,omitempty"`
-	UDPFragment  bool   `json:"udp_fragment,omitempty"`
-	TCPFastOpen  bool   `json:"tcp_fast_open,omitempty"`
-	RoutingMark  int    `json:"routing_mark,omitempty"`
+	Type        string `json:"type"`
+	Tag         string `json:"tag"`
+	Listen      string `json:"listen"`
+	ListenPort  int    `json:"listen_port"`
+	Network     string `json:"network,omitempty"`
+	UDPTimeout  string `json:"udp_timeout,omitempty"`
+	UDPFragment bool   `json:"udp_fragment,omitempty"`
+	TCPFastOpen bool   `json:"tcp_fast_open,omitempty"`
+	RoutingMark int    `json:"routing_mark,omitempty"`
 }
 
 type Route struct {

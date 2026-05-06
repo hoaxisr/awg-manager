@@ -176,6 +176,23 @@ func All() []Preset {
 		Notice:    "Контент 18+ через VPN",
 	})
 
+	// Regional default emphasis: keep the same preset behavior, but
+	// surface the most common Russia-first starters in the featured row.
+	featured := map[string]string{
+		"telegram": "Рекомендуется как первый шаг для РФ-сценариев.",
+		"youtube":  "Частый стартовый кейс для РФ-маршрутизации.",
+		"openai":   "Популярный AI-маршрут для РФ-сетей.",
+		"github":   "Базовый рабочий маршрут для разработчиков.",
+	}
+	for i := range out {
+		if notice, ok := featured[out[i].ID]; ok {
+			out[i].Featured = true
+			if out[i].Notice == "" {
+				out[i].Notice = notice
+			}
+		}
+	}
+
 	return out
 }
 

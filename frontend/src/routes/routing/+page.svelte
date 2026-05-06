@@ -163,7 +163,7 @@
             isOS5 ? { id: 'policy', label: 'Политики доступа', badge: policyCount } : null,
             // Visual gap separates the NDMS-stack tabs above from the
             // sing-box / hydraroute stack below.
-            singboxInstalled ? { id: 'singbox', label: 'Sing-box Router', badge: singboxRuleCount, separatorBefore: true } : null,
+			singboxInstalled ? { id: 'singbox', label: 'Sing-box маршрутизация', badge: singboxRuleCount, separatorBefore: true } : null,
             hydrarouteInstalled ? { id: 'hrneo', label: 'HR NEO', badge: hrRuleCount, separatorBefore: !singboxInstalled } : null,
         ] as (TabItem | null)[])
             .filter((t): t is TabItem => t !== null)

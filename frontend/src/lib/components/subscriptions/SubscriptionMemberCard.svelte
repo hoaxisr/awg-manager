@@ -15,6 +15,7 @@
 	const latest = $derived(history.length > 0 ? history[history.length - 1] : -1);
 
 	let testing = $state(false);
+	let showServer = $state(false);
 	async function runTest(e: MouseEvent | KeyboardEvent): Promise<void> {
 		e.stopPropagation(); // don't trigger card-as-radio click
 		if (testing) return;
@@ -59,6 +60,25 @@
 			default: return member.protocol;
 		}
 	});
+	const memberSNI = $derived.by(() => {
+		const m = member as unknown as Record<string, unknown>;
+		const candidates = [
+			m.sni,
+			m.serverName,
+			m.server_name,
+			m.tlsServerName,
+			m.tls_server_name,
+		];
+		for (const v of candidates) {
+			if (typeof v === 'string' && v.trim() !== '') return v.trim();
+		}
+		return '';
+	});
+
+	const titleText = $derived.by(() => {
+		if (member.label && member.label.trim() !== '') return member.label;
+		return showServer ? member.server : '●●●●●●●●';
+	});
 </script>
 
 <button
@@ -72,7 +92,29 @@
 >
 	<div class="header">
 		<span class="led" class:on={active} aria-hidden="true"></span>
-		<span class="title" title={member.tag}>{member.label || member.server}</span>
+		<span class="title" title={member.tag}>{titleText}</span>
+		<span
+			class="icon-btn"
+			role="button"
+			tabindex="0"
+			aria-label={showServer ? 'Скрыть сервер' : 'Показать сервер'}
+			onclick={(e) => {
+				e.stopPropagation();
+				showServer = !showServer;
+			}}
+			onkeydown={(e) => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					e.stopPropagation();
+					showServer = !showServer;
+				}
+			}}
+		>
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+				<circle cx="12" cy="12" r="3"/>
+			</svg>
+		</span>
 		<span class="port mono">:{member.port}</span>
 	</div>
 	<div class="badges">
@@ -86,8 +128,25 @@
 			<span class="badge tls">TLS</span>
 		{/if}
 	</div>
+	{#if memberSNI}
+		<div class="sni-under-title mono" title={memberSNI}>
+			SNI:
+			{#if showServer}
+				{memberSNI}
+			{:else}
+				●●●●●●●●
+			{/if}
+		</div>
+	{/if}
 	{#if member.label}
-		<div class="server-line mono" title={member.tag}>{member.server}:{member.port}</div>
+		<div class="server-line mono" title={member.tag}>
+			{#if showServer}
+				{member.server}
+			{:else}
+				●●●●●●●●
+			{/if}
+			:{member.port}
+		</div>
 	{/if}
 	<div class="delay-row">
 		<span
@@ -166,6 +225,17 @@
 		white-space: nowrap;
 	}
 	.port { font-size: 0.78rem; color: var(--color-text-muted); }
+	.icon-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 20px;
+		height: 20px;
+		color: var(--color-text-muted);
+		cursor: pointer;
+	}
+	.icon-btn:hover { color: var(--color-accent); }
+	.icon-btn svg { width: 14px; height: 14px; }
 	.badges { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 	.badge {
 		font-size: 0.68rem;
@@ -243,6 +313,15 @@
 		color: var(--color-text-muted);
 		opacity: 0.85;
 		margin: 0.15rem 0 0.35rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.sni-under-title {
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+		opacity: 0.85;
+		margin-top: 0.15rem;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;

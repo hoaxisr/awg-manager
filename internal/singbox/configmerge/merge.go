@@ -49,6 +49,14 @@ var taggedArrays = map[string]bool{
 	"rule_set":  true, // route.rule_set
 }
 
+// baseOwnedDNSTags are created by 00-base.json. Older installs may still
+// carry the same entries in 10-tunnels.json; for preview merges we skip the
+// duplicate from the later slot instead of failing hard.
+var baseOwnedDNSTags = map[string]bool{
+	"dns-bootstrap": true,
+	"dns-doh":       true,
+}
+
 // CollisionError is returned when the same tag appears in two slot
 // files within a tag-bearing array. Callers should surface it verbatim
 // — the message names the offending tag, kind, and both files.
@@ -153,17 +161,25 @@ func mergeSources(sources []fileSource) (map[string]any, error) {
 		for i, src := range parsed {
 			arr := getArrayAt(src, ap.parent, ap.key)
 			if taggedArrays[ap.key] {
+				filtered := make([]any, 0, len(arr))
 				for _, item := range arr {
 					obj, _ := item.(map[string]any)
 					if obj == nil {
+						filtered = append(filtered, item)
 						continue
 					}
 					tag, _ := obj["tag"].(string)
 					if tag == "" {
+						filtered = append(filtered, item)
 						continue
 					}
 					seenKey := ap.key + ":" + tag
 					if first, dup := seen[seenKey]; dup {
+						if ap.key == "servers" && baseOwnedDNSTags[tag] {
+							// Keep the first copy (normally from 00-base.json),
+							// silently drop duplicates from later slots.
+							continue
+						}
 						return nil, &CollisionError{
 							Tag:        tag,
 							Kind:       ap.key,
@@ -172,7 +188,10 @@ func mergeSources(sources []fileSource) (map[string]any, error) {
 						}
 					}
 					seen[seenKey] = sources[i].name
+					filtered = append(filtered, item)
 				}
+				concat = append(concat, filtered...)
+				continue
 			}
 			concat = append(concat, arr...)
 		}

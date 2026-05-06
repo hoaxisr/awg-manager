@@ -70,8 +70,9 @@
 							{/if}
 							{#if t.source === 'singbox'}
 								{@const serverCell = snapshot.cells.find(c => c.tunnelId === t.id && c.isSelf && c.latencyMs !== null)}
-								{@const tunnelLatency = serverCell ? serverCell.latencyMs : (t.clashDelay > 0 ? t.clashDelay : null)}
-								{@const hist = $latencyHistory.get(t.singboxTag) ?? []}
+								{@const clashDelay = typeof t.clashDelay === 'number' ? t.clashDelay : 0}
+								{@const tunnelLatency = serverCell ? serverCell.latencyMs : (clashDelay > 0 ? clashDelay : null)}
+								{@const hist = t.singboxTag ? ($latencyHistory.get(t.singboxTag) ?? []) : []}
 								{#if tunnelLatency !== null}
 									<Badge
 										variant={latencyTier(tunnelLatency)}

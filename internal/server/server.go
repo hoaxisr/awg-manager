@@ -17,10 +17,10 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/api"
-	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/connections"
+	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -68,49 +68,49 @@ type Config struct {
 
 // Server is the HTTP server for awg-manager.
 type Server struct {
-	config              Config
-	log                 *logger.Logger
-	tunnelService       api.TunnelService
-	externalService     api.ExternalTunnelService
-	testingService      *testing.Service
-	keenetic            *auth.KeeneticClient
-	sessions            *auth.SessionStore
-	settings            *storage.SettingsStore
-	tunnels             *storage.AWGTunnelStore
-	pingCheckService    api.PingCheckService
-	loggingService      *logging.Service
-	activeBackend       backend.Backend
-	kmodLoader          *kmod.Loader
-	updaterService      *updater.Service
-	ndmsQueries         *ndmsquery.Queries
-	trafficHistory      *traffic.History
-	dnsRouteService     api.DNSRouteService
-	staticRouteService  api.StaticRouteService
-	systemTunnelService systemtunnel.Service
-	managedService      managed.ManagedServerService
-	nwgOp               *nwg.OperatorNativeWG
-	terminalManager     terminal.Manager
-	accessPolicyService accesspolicy.Service
-	clientRouteService  clientroute.Service
-	catalog             routing.Catalog
-	hydraService        *hydraroute.Service
-	orch                *orchestrator.Orchestrator
-	bus                 *events.Bus
+	config                Config
+	log                   *logger.Logger
+	tunnelService         api.TunnelService
+	externalService       api.ExternalTunnelService
+	testingService        *testing.Service
+	keenetic              *auth.KeeneticClient
+	sessions              *auth.SessionStore
+	settings              *storage.SettingsStore
+	tunnels               *storage.AWGTunnelStore
+	pingCheckService      api.PingCheckService
+	loggingService        *logging.Service
+	activeBackend         backend.Backend
+	kmodLoader            *kmod.Loader
+	updaterService        *updater.Service
+	ndmsQueries           *ndmsquery.Queries
+	trafficHistory        *traffic.History
+	dnsRouteService       api.DNSRouteService
+	staticRouteService    api.StaticRouteService
+	systemTunnelService   systemtunnel.Service
+	managedService        managed.ManagedServerService
+	nwgOp                 *nwg.OperatorNativeWG
+	terminalManager       terminal.Manager
+	accessPolicyService   accesspolicy.Service
+	clientRouteService    clientroute.Service
+	catalog               routing.Catalog
+	hydraService          *hydraroute.Service
+	orch                  *orchestrator.Orchestrator
+	bus                   *events.Bus
 	singboxHandler        *api.SingboxHandler
 	singboxConnsHandler   *api.SingboxConnectionsHandler
 	singboxRouterHandler  *api.SingboxRouterHandler
 	singboxConfigHandler  *api.SingboxConfigHandler
-	singboxProxiesHandler   *api.SingboxProxiesHandler
-	awgOutboundsHandler     *api.AWGOutboundsHandler
-	subscriptionHandler     *api.SubscriptionHandler
-	clashProxy          *api.ClashProxy
-	singboxOp           *singbox.Operator
-	deviceProxySvc      *deviceproxy.Service
-	monitoringService   *monitoring.Service
-	dnsCheckService     *dnscheck.Service
-	authMiddleware      *auth.Middleware
-	httpServer          *http.Server
-	loopbackListener    net.Listener // optional loopback listener for reverse proxy
+	singboxProxiesHandler *api.SingboxProxiesHandler
+	awgOutboundsHandler   *api.AWGOutboundsHandler
+	subscriptionHandler   *api.SubscriptionHandler
+	clashProxy            *api.ClashProxy
+	singboxOp             *singbox.Operator
+	deviceProxySvc        *deviceproxy.Service
+	monitoringService     *monitoring.Service
+	dnsCheckService       *dnscheck.Service
+	authMiddleware        *auth.Middleware
+	httpServer            *http.Server
+	loopbackListener      net.Listener // optional loopback listener for reverse proxy
 
 	ndmsDispatcher api.HookDispatcher
 	ndmsTransport  *ndmstransport.Client
@@ -987,6 +987,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/singbox/router/rules/move", guarded(rh.MoveRule))
 		mux.HandleFunc("/api/singbox/router/rulesets/list", guarded(rh.ListRuleSets))
 		mux.HandleFunc("/api/singbox/router/rulesets/add", guarded(rh.AddRuleSet))
+		mux.HandleFunc("/api/singbox/router/rulesets/update", guarded(rh.UpdateRuleSet))
 		mux.HandleFunc("/api/singbox/router/rulesets/delete", guarded(rh.DeleteRuleSet))
 		mux.HandleFunc("/api/singbox/router/rulesets/refresh", guarded(rh.RefreshRuleSet))
 		mux.HandleFunc("/api/singbox/router/outbounds/list", guarded(rh.ListOutbounds))

@@ -55,11 +55,12 @@
 		buildOutboundOptions(awgTags, phase1Tunnels, outbounds, true),
 	);
 
-	type SourceFilter = 'all' | 'remote' | 'local';
+	type SourceFilter = 'all' | 'remote' | 'local' | 'inline';
 	let sourceFilter = $state<SourceFilter>('all');
 
 	const remoteCount = $derived(ruleSets.filter((r) => r.type === 'remote').length);
 	const localCount = $derived(ruleSets.filter((r) => r.type === 'local').length);
+	const inlineCount = $derived(ruleSets.filter((r) => r.type === 'inline').length);
 
 	const visibleRuleSets = $derived(
 		sourceFilter === 'all'
@@ -71,9 +72,11 @@
 		{ label: 'Наборов', value: ruleSets.length },
 		{ label: 'Удалённых', value: remoteCount },
 		{ label: 'Локальных', value: localCount },
+		{ label: 'Inline', value: inlineCount },
 	]);
 
 	let addMode = $state(false);
+	let editTag = $state<string | null>(null);
 	let refreshSettingsOpen = $state(false);
 	let refreshing = $state<Set<string>>(new Set());
 	let deleteTag = $state<string | null>(null);
@@ -140,18 +143,21 @@
 	}
 
 	function sourceLabel(rs: SingboxRouterRuleSet): string {
+		if (rs.type === 'inline') {
+			return `${rs.rules?.length ?? 0} правил`;
+		}
 		if (rs.type === 'remote') return rs.url ?? '';
 		return rs.path ?? '';
 	}
 
-	function detourLabel(rs: SingboxRouterRuleSet): string {
-		if (rs.type === 'local') return '';
+	function transportLabel(rs: SingboxRouterRuleSet): string {
+		if (rs.type !== 'remote') return '';
 		return rs.download_detour ?? '';
 	}
 </script>
 
 <div class="stat-row-wrap">
-	<StatRow tiles={statTiles} columns={3} />
+	<StatRow tiles={statTiles} columns={4} />
 </div>
 
 <div class="action-row">
@@ -182,6 +188,15 @@
 			onclick={() => (sourceFilter = 'local')}
 		>
 			Local <span class="chip-count">{localCount}</span>
+		</button>
+		<button
+			type="button"
+			role="tab"
+			aria-selected={sourceFilter === 'inline'}
+			class:active={sourceFilter === 'inline'}
+			onclick={() => (sourceFilter = 'inline')}
+		>
+			Inline <span class="chip-count">{inlineCount}</span>
 		</button>
 	</div>
 
@@ -244,7 +259,7 @@
 
 				<div class="meta-row">
 					<div class="meta-label">
-						{rs.type === 'remote' ? 'URL' : 'Путь'}
+						{rs.type === 'remote' ? 'URL' : rs.type === 'local' ? 'Путь' : 'Содержимое'}
 					</div>
 					<div class="meta-value mono src" title={sourceLabel(rs)}>
 						{sourceLabel(rs) || '—'}
@@ -258,10 +273,10 @@
 					</div>
 
 					<div class="meta-row">
-						<div class="meta-label">Detour</div>
+						<div class="meta-label">HTTP client</div>
 						<div class="meta-value mono">
-							{#if detourLabel(rs)}
-								<Badge variant="muted" size="sm" mono>{detourLabel(rs)}</Badge>
+							{#if transportLabel(rs)}
+								<Badge variant="muted" size="sm" mono>{transportLabel(rs)}</Badge>
 							{:else}
 								<span class="dim">автоматически</span>
 							{/if}
@@ -270,6 +285,13 @@
 				{/if}
 
 				<div class="card-actions">
+					<Button
+						variant="ghost"
+						size="sm"
+						onclick={() => (editTag = rs.tag)}
+					>
+						Изменить
+					</Button>
 					{#if rs.type === 'remote'}
 						<Button
 							variant="ghost"
@@ -316,6 +338,22 @@
 			await refresh();
 		}}
 	/>
+{/if}
+
+{#if editTag !== null}
+	{@const current = ruleSets.find((rs) => rs.tag === editTag)}
+	{#if current}
+		<RuleSetAddModal
+			ruleSet={current}
+			{outboundOptions}
+			onClose={() => (editTag = null)}
+			onSave={async (rs) => {
+				await api.singboxRouterUpdateRuleSet(current.tag, rs);
+				editTag = null;
+				await refresh();
+			}}
+		/>
+	{/if}
 {/if}
 
 {#if refreshSettingsOpen && settings}

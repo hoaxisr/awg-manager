@@ -29,10 +29,14 @@
 
 	const history = $derived($singboxDelayHistory.get(tunnel.tag) ?? []);
 	const latest = $derived(history.length > 0 ? history[history.length - 1] : undefined);
+	const backendLatency = $derived(
+		typeof tunnel.connectivity?.latency === 'number' ? tunnel.connectivity.latency : undefined,
+	);
+	const effectiveLatest = $derived(latest ?? backendLatency);
 	const avg = $derived(
 		history.length > 0
 			? Math.round(history.reduce((s, v) => s + v, 0) / history.length)
-			: 0,
+			: (typeof backendLatency === 'number' ? backendLatency : 0),
 	);
 	const traffic = $derived($singboxTraffic.get(tunnel.tag));
 
@@ -43,10 +47,10 @@
 		// noise. Show 'stopped' so the user knows to restart the daemon
 		// instead of debugging a timeout that isn't actually a timeout.
 		if (tunnel.running === false) return 'stopped';
-		if (latest === undefined) return 'unknown';
-		if (latest <= 0) return 'fail';
-		if (latest < DELAY_OK) return 'ok';
-		if (latest < DELAY_SLOW) return 'slow';
+		if (effectiveLatest === undefined) return 'unknown';
+		if (effectiveLatest <= 0) return 'fail';
+		if (effectiveLatest < DELAY_OK) return 'ok';
+		if (effectiveLatest < DELAY_SLOW) return 'slow';
 		return 'fail';
 	});
 
@@ -54,7 +58,7 @@
 		if (cardState === 'stopped') return 'stopped';
 		if (cardState === 'unknown') return '—';
 		if (cardState === 'fail') return 'timeout';
-		return `${latest}ms`;
+		return `${effectiveLatest}ms`;
 	});
 
 	const protocolLabel = $derived.by(() => {

@@ -15,11 +15,22 @@
 	const wizardOpen = singboxWizard.open;
 	const wizardState = singboxWizard.state;
 	const presetsStore = singboxRouter.presets;
+	const routerLoading = singboxRouter.loading;
+	const routerError = singboxRouter.error;
 
 	const STEPS: WizardStep[] = ['presets', 'tunnel', 'devices', 'summary'];
 
 	const stepIdx = $derived(STEPS.indexOf($wizardState.step));
 	const presets = $derived($presetsStore);
+	const loadingPresets = $derived($routerLoading);
+	const presetsLoadError = $derived($routerError);
+
+	$effect(() => {
+		if (!$wizardOpen) return;
+		// Wizard can be opened before any sub-tab called loadAll().
+		// Ensure presets/rules/outbounds are hydrated for step #1.
+		void singboxRouter.loadAll();
+	});
 
 	function nextStep(): void {
 		const idx = STEPS.indexOf($wizardState.step);
@@ -101,7 +112,14 @@
 			</header>
 			<div class="body">
 				{#if $wizardState.step === 'presets'}
-					<StepPresets {presets} />
+					{#if loadingPresets && presets.length === 0}
+						<div class="wizard-load">Загружаем пресеты...</div>
+					{:else}
+						<StepPresets {presets} />
+					{/if}
+					{#if presetsLoadError}
+						<div class="wizard-error">{presetsLoadError}</div>
+					{/if}
 				{:else if $wizardState.step === 'tunnel'}
 					<StepTunnel onAdvance={nextStep} />
 				{:else if $wizardState.step === 'devices'}
@@ -189,4 +207,17 @@
 	.btn:disabled { opacity: 0.4; cursor: not-allowed; }
 	.ghost { color: var(--color-text-muted); background: transparent; }
 	.primary { color: white; background: #238636; border-color: #2ea043; }
+	.wizard-load {
+		color: var(--color-text-muted);
+		font-size: 0.9rem;
+	}
+	.wizard-error {
+		margin-top: 0.8rem;
+		padding: 0.55rem 0.7rem;
+		border-radius: 6px;
+		background: color-mix(in srgb, var(--color-error, #ef4444) 14%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-error, #ef4444) 30%, transparent);
+		color: var(--color-error, #ef4444);
+		font-size: 0.82rem;
+	}
 </style>

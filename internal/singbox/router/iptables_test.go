@@ -165,7 +165,7 @@ func TestIPTablesInstallSequence(t *testing.T) {
 				ruleAddSeen = true
 				ruleAddArgs = args
 			}
-			if strings.Contains(args, "route add local") {
+			if strings.Contains(args, "route replace local") {
 				routeAddSeen = true
 			}
 		}
@@ -180,7 +180,7 @@ func TestIPTablesInstallSequence(t *testing.T) {
 		t.Errorf("expected ip rule add with priority 30000, got %q", ruleAddArgs)
 	}
 	if !routeAddSeen {
-		t.Errorf("expected ip route add local")
+		t.Errorf("expected ip route replace local")
 	}
 }
 

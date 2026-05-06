@@ -138,6 +138,24 @@
 			deletingBusy = false;
 		}
 	}
+
+	function canMoveRule(index: number, direction: -1 | 1): boolean {
+		const current = rules[index];
+		const target = rules[index + direction];
+		if (!current || !target) return false;
+		if (isSystem(current) || isSystem(target)) return false;
+		return true;
+	}
+
+	async function moveRule(index: number, to: number): Promise<void> {
+		if (to < 0 || to >= rules.length) return;
+		try {
+			await api.singboxRouterMoveRule(index, to);
+			await refresh();
+		} catch (e) {
+			notifications.error((e as Error).message);
+		}
+	}
 </script>
 
 {#if status}
@@ -158,6 +176,7 @@
 			<div class="col-action">Действие</div>
 			<div class="col-match">Matchers</div>
 			<div class="col-out">Outbound</div>
+			<div class="col-order">Порядок</div>
 			<div class="col-edit"></div>
 		</div>
 
@@ -182,6 +201,22 @@
 						{:else}
 							<span class="dim">—</span>
 						{/if}
+					</div>
+					<div class="order">
+						<button
+							class="arrow"
+							onclick={() => moveRule(i, i - 1)}
+							disabled={!canMoveRule(i, -1)}
+							aria-label="Выше"
+							type="button">↑</button
+						>
+						<button
+							class="arrow"
+							onclick={() => moveRule(i, i + 1)}
+							disabled={!canMoveRule(i, 1)}
+							aria-label="Ниже"
+							type="button">↓</button
+						>
 					</div>
 					<div class="col-edit">
 						{#if !sys}
@@ -306,7 +341,7 @@
 	.t-head,
 	.t-row {
 		display: grid;
-		grid-template-columns: 36px 80px 1fr 160px 72px;
+		grid-template-columns: 36px 80px 1fr 160px 64px 72px;
 		gap: 0.625rem;
 		align-items: center;
 		padding: 0.5rem 0.875rem;
@@ -344,6 +379,26 @@
 		gap: 0.25rem;
 		justify-content: flex-end;
 	}
+	.col-order,
+	.order {
+		display: flex;
+		gap: 0.25rem;
+		justify-content: center;
+	}
+	.arrow {
+		background: var(--color-bg);
+		border: 1px solid var(--color-border);
+		color: var(--color-text-muted);
+		width: 26px;
+		height: 26px;
+		border-radius: 6px;
+		cursor: pointer;
+		font-size: 0.75rem;
+	}
+	.arrow:disabled {
+		opacity: 0.3;
+		cursor: not-allowed;
+	}
 	.mono {
 		font-family: var(--font-mono, ui-monospace, monospace);
 		font-size: 0.8rem;
@@ -365,9 +420,11 @@
 	@media (max-width: 720px) {
 		.t-head,
 		.t-row {
-			grid-template-columns: 28px 70px 1fr 60px;
+			grid-template-columns: 28px 70px 1fr 60px 64px;
 		}
-		.col-out {
+		.col-out,
+		.t-head > :nth-child(4),
+		.t-row > :nth-child(4) {
 			display: none;
 		}
 	}

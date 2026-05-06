@@ -31,6 +31,7 @@ type Service interface {
 
 	ListRuleSets(ctx context.Context) ([]RuleSet, error)
 	AddRuleSet(ctx context.Context, rs RuleSet) error
+	UpdateRuleSet(ctx context.Context, tag string, rs RuleSet) error
 	DeleteRuleSet(ctx context.Context, tag string, force bool) error
 	RefreshRuleSet(ctx context.Context, tag string) error
 
@@ -133,13 +134,13 @@ type SingboxTunnelCatalog interface {
 }
 
 type Deps struct {
-	Log          *logger.Logger
-	Settings     *storage.SettingsStore
-	Singbox      SingboxController
-	Policies     AccessPolicyProvider
-	Events       *events.Bus
-	IPTables     *IPTables
-	AWGTags      AWGTagCatalog        // optional — when nil, computeIssues only sees cfg.Outbounds
+	Log            *logger.Logger
+	Settings       *storage.SettingsStore
+	Singbox        SingboxController
+	Policies       AccessPolicyProvider
+	Events         *events.Bus
+	IPTables       *IPTables
+	AWGTags        AWGTagCatalog        // optional — when nil, computeIssues only sees cfg.Outbounds
 	SingboxTunnels SingboxTunnelCatalog // optional — when nil, computeIssues skips cross-slot tunnel tags
 	// Orch is the config.d orchestrator. When non-nil (production),
 	// persistConfig writes 20-router.json through the slot writer and
@@ -300,7 +301,14 @@ func (s *ServiceImpl) Enable(ctx context.Context) error {
 	}
 	sr := settings.SingboxRouter
 	if sr.PolicyName == "" {
-		return ErrPolicyNotConfigured
+		// First-run UX: bootstrap a default access policy automatically
+		// so "Enable routing" works without forcing users through a
+		// separate policy-creation screen.
+		p, err := s.CreatePolicy(ctx, "awgm-router")
+		if err != nil {
+			return fmt.Errorf("auto-create router policy: %w", err)
+		}
+		sr.PolicyName = p.Name
 	}
 	mark, err := s.deps.Policies.GetPolicyMark(ctx, sr.PolicyName)
 	if err != nil || mark == "" {
@@ -476,7 +484,6 @@ func ensureTProxyInbound(in []Inbound) []Inbound {
 	}
 	return out
 }
-
 
 func (s *ServiceImpl) emitStatus(ctx context.Context) {
 	if s.deps.Events == nil {
@@ -695,7 +702,7 @@ func (s *ServiceImpl) AddRuleSet(ctx context.Context, rs RuleSet) error {
 	if rs.Type == "" {
 		rs.Type = "remote"
 	}
-	if rs.Format == "" {
+	if rs.Format == "" && rs.Type != "inline" {
 		rs.Format = "binary"
 	}
 	if rs.UpdateInterval == "" {
@@ -704,10 +711,22 @@ func (s *ServiceImpl) AddRuleSet(ctx context.Context, rs RuleSet) error {
 	return s.withConfig(ctx, "rulesets", func(c *RouterConfig) error { return c.AddRuleSet(rs) })
 }
 
+func (s *ServiceImpl) UpdateRuleSet(ctx context.Context, tag string, rs RuleSet) error {
+	if rs.Type == "" {
+		rs.Type = "remote"
+	}
+	if rs.Format == "" && rs.Type != "inline" {
+		rs.Format = "binary"
+	}
+	if rs.UpdateInterval == "" && rs.Type == "remote" {
+		rs.UpdateInterval = "24h"
+	}
+	return s.withConfig(ctx, "rulesets", func(c *RouterConfig) error { return c.UpdateRuleSet(tag, rs) })
+}
+
 func (s *ServiceImpl) DeleteRuleSet(ctx context.Context, tag string, force bool) error {
 	return s.withConfig(ctx, "rulesets", func(c *RouterConfig) error { return c.DeleteRuleSet(tag, force) })
 }
-
 
 func (s *ServiceImpl) RefreshRuleSet(ctx context.Context, tag string) error {
 	cfg, err := s.loadRouterConfig()
