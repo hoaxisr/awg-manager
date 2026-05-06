@@ -47,11 +47,18 @@ const (
 	// — otherwise our log forwarder / traffic aggregator would latch onto
 	// their process and stream their tunnels into our UI.
 	clashAPIAddr = "127.0.0.1:9099"
+
+	// legacyBinary is the historical opkg/entware path used by older
+	// sing-box installs that predate managed-binary mode.
+	legacyBinary = "/opt/bin/sing-box"
 )
 
 // defaultDir is the directory of the managed binary. var (not const) so
 // it stays in lockstep with installer.DefaultBinaryPath if that ever moves.
 var defaultDir = filepath.Dir(installer.DefaultBinaryPath)
+
+// legacyBinaryPath is var (not const) so tests can override it safely.
+var legacyBinaryPath = legacyBinary
 
 // Operator is the high-level facade for sing-box integration.
 type Operator struct {
@@ -599,6 +606,7 @@ func (o *Operator) Binary() string { return o.binary }
 // Used by callers that just wrote a fragment and want to verify the
 // merged config is valid before reload.
 func (o *Operator) ValidateConfigDir(ctx context.Context) error {
+	o.ensureRuntimeBinaryBinding()
 	return o.validator.Validate(o.configPath)
 }
 
@@ -618,6 +626,7 @@ func (o *Operator) Reload() error { return o.proc.Reload() }
 // version of the internal startAndWait — used by router.Service.Enable
 // when sing-box wasn't already running.
 func (o *Operator) Start() error {
+	o.ensureRuntimeBinaryBinding()
 	if err := o.validator.Validate(o.configPath); err != nil {
 		return err
 	}
@@ -635,18 +644,50 @@ func isExecutable(path string) bool {
 	return st.Mode().Perm()&0111 != 0
 }
 
+func (o *Operator) rebindRuntimeBinary(binary string) {
+	if o.proc != nil && o.proc.Binary() == binary && o.validator != nil && o.validator.binary == binary {
+		return
+	}
+	o.proc = NewProcess(binary, o.configPath, o.pidPath)
+	o.proc.OnStderrLine = o.handleStderrLine
+	o.proc.OnStdoutLine = o.handleStdoutLine
+	o.proc.OnExit = o.handleExit
+	o.validator = NewValidator(binary)
+}
+
+// installedBinaryPath returns the executable path we should treat as
+// "installed": managed binary first, legacy fallback second.
+func (o *Operator) installedBinaryPath() (string, bool) {
+	if isExecutable(o.binary) {
+		return o.binary, true
+	}
+	if legacyBinaryPath != "" && legacyBinaryPath != o.binary && isExecutable(legacyBinaryPath) {
+		return legacyBinaryPath, true
+	}
+	return "", false
+}
+
+// ensureRuntimeBinaryBinding aligns Process/Validator with the currently
+// selected installed binary (managed preferred, legacy fallback).
+func (o *Operator) ensureRuntimeBinaryBinding() {
+	if bin, ok := o.installedBinaryPath(); ok {
+		o.rebindRuntimeBinary(bin)
+	}
+}
+
 // IsInstalled reports whether the sing-box binary exists at the absolute
 // path and is executable. Uses os.Stat instead of exec.LookPath so it
 // checks our managed path only — not an unrelated user-installed sing-box
 // somewhere on PATH.
 func (o *Operator) IsInstalled() (bool, string) {
-	if !isExecutable(o.binary) {
+	bin, ok := o.installedBinaryPath()
+	if !ok {
 		return false, ""
 	}
-	if o.inst != nil {
+	if o.inst != nil && bin == o.binary {
 		return true, o.inst.CurrentVersion(context.Background())
 	}
-	v, _ := detectVersionAndFeatures(o.binary)
+	v, _ := detectVersionAndFeatures(bin)
 	return true, v
 }
 
@@ -662,13 +703,13 @@ func (o *Operator) RequiredVersion() string {
 // GetStatus returns install + run status.
 func (o *Operator) GetStatus(ctx context.Context) Status {
 	s := Status{}
-	if isExecutable(o.binary) {
+	if bin, ok := o.installedBinaryPath(); ok {
 		s.Installed = true
-		if o.inst != nil {
+		if o.inst != nil && bin == o.binary {
 			s.Version = o.inst.CurrentVersion(ctx)
-			_, s.Features = detectVersionAndFeatures(o.binary)
+			_, s.Features = detectVersionAndFeatures(bin)
 		} else {
-			s.Version, s.Features = detectVersionAndFeatures(o.binary)
+			s.Version, s.Features = detectVersionAndFeatures(bin)
 		}
 	}
 	if running, pid := o.proc.IsRunning(); running {
@@ -974,6 +1015,7 @@ func (o *Operator) Control(ctx context.Context, action string) error {
 // during init, or is still loading gvisor/TUN. On timeout the half-started
 // process is stopped to avoid a zombie PID file misleading future ticks.
 func (o *Operator) startAndWait(ctx context.Context) error {
+	o.ensureRuntimeBinaryBinding()
 	if err := o.proc.Start(); err != nil {
 		o.setLastError(err.Error())
 		return err

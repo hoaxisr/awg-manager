@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import type { Subscription } from '$lib/types';
 	import { PageContainer, PageHeader } from '$lib/components/layout';
-	import { Tabs } from '$lib/components/ui';
+	import { Tabs, Button } from '$lib/components/ui';
 	import SubscriptionMembersTab from '$lib/components/subscriptions/SubscriptionMembersTab.svelte';
 	import SubscriptionSettingsTab from '$lib/components/subscriptions/SubscriptionSettingsTab.svelte';
 
@@ -14,6 +15,14 @@
 	let error = $state('');
 
 	let active = $state<'members' | 'settings'>('members');
+
+	function goBack(): void {
+		if (typeof window !== 'undefined' && window.history.length > 1) {
+			window.history.back();
+			return;
+		}
+		goto('/');
+	}
 
 	async function reload(): Promise<void> {
 		try {
@@ -39,6 +48,9 @@
 		<div class="err">{error}</div>
 	{:else}
 		<PageHeader title={subscription.label || subscription.url} />
+		<div class="actions">
+			<Button variant="primary" size="sm" onclick={goBack}>Назад к подпискам</Button>
+		</div>
 		<Tabs
 			tabs={[
 				{ id: 'members', label: `Серверы (${subscription.memberTags.length})` },
@@ -59,5 +71,6 @@
 
 <style>
 	.err { color: #f85149; }
+	.actions { margin-top: 0.5rem; }
 	.content { margin-top: 1rem; }
 </style>

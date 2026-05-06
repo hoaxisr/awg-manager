@@ -377,3 +377,97 @@ func TestClassifyProcessLine(t *testing.T) {
 		}
 	}
 }
+
+func TestInstalledBinaryPath_PrefersManagedBinary(t *testing.T) {
+	dir := t.TempDir()
+	managed := filepath.Join(dir, "managed-sing-box")
+	if err := os.WriteFile(managed, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(dir, "legacy-sing-box")
+	if err := os.WriteFile(legacy, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	prevLegacy := legacyBinaryPath
+	legacyBinaryPath = legacy
+	t.Cleanup(func() { legacyBinaryPath = prevLegacy })
+
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: managed})
+	got, ok := op.installedBinaryPath()
+	if !ok {
+		t.Fatal("installedBinaryPath() reported not installed")
+	}
+	if got != managed {
+		t.Fatalf("installedBinaryPath() = %q, want %q", got, managed)
+	}
+}
+
+func TestInstalledBinaryPath_FallsBackToLegacyBinary(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "legacy-sing-box")
+	if err := os.WriteFile(legacy, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	prevLegacy := legacyBinaryPath
+	legacyBinaryPath = legacy
+	t.Cleanup(func() { legacyBinaryPath = prevLegacy })
+
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: filepath.Join(dir, "missing-managed")})
+	got, ok := op.installedBinaryPath()
+	if !ok {
+		t.Fatal("installedBinaryPath() reported not installed")
+	}
+	if got != legacy {
+		t.Fatalf("installedBinaryPath() = %q, want %q", got, legacy)
+	}
+}
+
+func TestEnsureRuntimeBinaryBinding_RebindsToLegacyBinary(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "legacy-sing-box")
+	if err := os.WriteFile(legacy, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	prevLegacy := legacyBinaryPath
+	legacyBinaryPath = legacy
+	t.Cleanup(func() { legacyBinaryPath = prevLegacy })
+
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: filepath.Join(dir, "missing-managed")})
+	op.ensureRuntimeBinaryBinding()
+
+	if got := op.proc.Binary(); got != legacy {
+		t.Fatalf("proc binary = %q, want %q", got, legacy)
+	}
+	if got := op.validator.binary; got != legacy {
+		t.Fatalf("validator binary = %q, want %q", got, legacy)
+	}
+}
+
+func TestEnsureRuntimeBinaryBinding_PrefersManagedBinary(t *testing.T) {
+	dir := t.TempDir()
+	managed := filepath.Join(dir, "managed-sing-box")
+	if err := os.WriteFile(managed, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(dir, "legacy-sing-box")
+	if err := os.WriteFile(legacy, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	prevLegacy := legacyBinaryPath
+	legacyBinaryPath = legacy
+	t.Cleanup(func() { legacyBinaryPath = prevLegacy })
+
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: managed})
+	op.ensureRuntimeBinaryBinding()
+
+	if got := op.proc.Binary(); got != managed {
+		t.Fatalf("proc binary = %q, want %q", got, managed)
+	}
+	if got := op.validator.binary; got != managed {
+		t.Fatalf("validator binary = %q, want %q", got, managed)
+	}
+}

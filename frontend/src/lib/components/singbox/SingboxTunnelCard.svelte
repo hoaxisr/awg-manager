@@ -107,6 +107,7 @@
 	let rxRates = $state<number[]>([]);
 	let txRates = $state<number[]>([]);
 	let tunnelTag = $derived(tunnel.tag);
+	const trafficHistoryIDRe = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
 
 	$effect(() => {
 		const tag = tunnelTag;
@@ -119,13 +120,17 @@
 		return subscribeTraffic(update);
 	});
 
+	// /api/tunnels/traffic validates IDs strictly; many sing-box tags
+	// (emoji/spaces) are not valid tunnel IDs and would spam 400s.
 	let initialLoadDone = false;
 	$effect(() => {
 		const tag = tunnelTag;
 		if (initialLoadDone) return;
 		initialLoadDone = true;
+		if (!trafficHistoryIDRe.test(tag)) return;
 		untrack(() => loadHistory(tag));
 	});
+
 </script>
 
 <div class="card" class:ok={cardState === 'ok'} class:slow={cardState === 'slow'} class:fail={cardState === 'fail'} class:unknown={cardState === 'unknown'} class:stopped={cardState === 'stopped'}>

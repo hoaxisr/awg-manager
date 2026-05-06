@@ -1,6 +1,7 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
+import { fileURLToPath, URL } from 'node:url';
 
 /**
  * Strip /routes/dev/* contents during production build so dev-only
@@ -43,6 +44,11 @@ export default defineConfig(({ mode }) => {
 
 	return {
 		plugins: [stubDevRoutes(), tailwindcss(), sveltekit()],
+		resolve: {
+			alias: {
+				'node:dns/promises': fileURLToPath(new URL('./src/lib/shims/node-dns-promises.ts', import.meta.url))
+			}
+		},
 		server: {
 			proxy: {
 				'/api': {
