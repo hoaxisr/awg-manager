@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -285,6 +286,7 @@ func (s *Scheduler) RunOnce(ctx context.Context) {
 		}
 	}
 	wg.Wait()
+	s.applySingboxLatencyPenalty(cells, tunnels)
 
 	snap := Snapshot{
 		Targets:   targets,
@@ -305,6 +307,64 @@ func (s *Scheduler) RunOnce(ctx context.Context) {
 
 	if s.deps.Bus != nil {
 		s.deps.Bus.Publish("monitoring:matrix-update", snap)
+	}
+}
+
+// applySingboxLatencyPenalty adjusts successful sing-box matrix cells so they
+// are closer to user-visible tunnel delay (Clash urltest). Raw interface-bound
+// probe latency is often too optimistic compared to end-to-end proxy delay.
+//
+// Heuristic:
+//  1. For each sing-box tunnel with ClashDelay > 0, collect successful cell
+//     latencies from this tick.
+//  2. Use the median of those latencies as "raw baseline".
+//  3. penalty = max(0, ClashDelay - baseline).
+//  4. Add penalty to every successful cell latency of that sing-box tunnel.
+func (s *Scheduler) applySingboxLatencyPenalty(cells []Cell, tunnels []Tunnel) {
+	type penaltyInfo struct {
+		penalty int
+	}
+	penaltyByTunnel := make(map[string]penaltyInfo, len(tunnels))
+	for _, tun := range tunnels {
+		if tun.Source != "singbox" || tun.ClashDelay <= 0 {
+			continue
+		}
+		vals := make([]int, 0, 8)
+		for _, c := range cells {
+			if c.TunnelID != tun.ID || !c.OK || c.LatencyMs == nil {
+				continue
+			}
+			vals = append(vals, *c.LatencyMs)
+		}
+		if len(vals) == 0 {
+			continue
+		}
+		slices.Sort(vals)
+		baseline := vals[len(vals)/2] // median
+		penalty := max(0, tun.ClashDelay-baseline)
+		if penalty <= 0 {
+			continue
+		}
+		penaltyByTunnel[tun.ID] = penaltyInfo{penalty: penalty}
+	}
+	if len(penaltyByTunnel) == 0 {
+		return
+	}
+	for i := range cells {
+		c := &cells[i]
+		if !c.OK || c.LatencyMs == nil {
+			continue
+		}
+		p, ok := penaltyByTunnel[c.TunnelID]
+		if !ok {
+			continue
+		}
+		v := *c.LatencyMs + p.penalty
+		// Clamp to a sane upper bound so one bad sample doesn't wreck UI scale.
+		if v > 10_000 {
+			v = 10_000
+		}
+		c.LatencyMs = &v
 	}
 }
 
@@ -456,34 +516,34 @@ func (s *Scheduler) collectTunnels(ctx context.Context) []Tunnel {
 	return out
 }
 
-// augmentSingboxClashData walks the tunnels list and, for each
-// sing-box tunnel that is a member of a urltest composite group AND
-// has a recorded latency in the ClashState cache, populates
-// ClashDelay + UrltestGroup. No-op for non-sing-box tunnels and for
-// sing-box tunnels with no urltest membership or no recorded delay.
+// augmentSingboxClashData walks the tunnels list and, for each sing-box
+// tunnel that has a recorded latency in the ClashState cache, populates
+// ClashDelay. If the tunnel is known as a member of a urltest composite
+// group, UrltestGroup is populated too.
 //
 // Mutates `tunnels` in place. Safe to call when Composites or
 // ClashState deps are nil — short-circuits.
 func (s *Scheduler) augmentSingboxClashData(ctx context.Context, tunnels []Tunnel) {
-	if s.deps.Composites == nil || s.deps.ClashState == nil {
+	if s.deps.ClashState == nil {
 		return
 	}
-	composites, err := s.deps.Composites.List(ctx)
-	if err != nil {
-		return
-	}
-	// Build memberTag → urltestGroupTag map. First urltest group wins
-	// per member (sing-box does the same — a member can technically
-	// appear in multiple groups but only one urltest tracks its delay
-	// authoritatively).
 	urltestOf := make(map[string]string)
-	for _, c := range composites {
-		if strings.ToLower(c.Type) != "urltest" {
-			continue
-		}
-		for _, m := range c.Members {
-			if _, exists := urltestOf[m]; !exists {
-				urltestOf[m] = c.Tag
+	if s.deps.Composites != nil {
+		composites, err := s.deps.Composites.List(ctx)
+		if err == nil {
+			// Build memberTag → urltestGroupTag map. First urltest group wins
+			// per member (sing-box does the same — a member can technically
+			// appear in multiple groups but only one urltest tracks its delay
+			// authoritatively).
+			for _, c := range composites {
+				if strings.ToLower(c.Type) != "urltest" {
+					continue
+				}
+				for _, m := range c.Members {
+					if _, exists := urltestOf[m]; !exists {
+						urltestOf[m] = c.Tag
+					}
+				}
 			}
 		}
 	}
@@ -491,16 +551,14 @@ func (s *Scheduler) augmentSingboxClashData(ctx context.Context, tunnels []Tunne
 		if tunnels[i].Source != "singbox" {
 			continue
 		}
-		group, ok := urltestOf[tunnels[i].SingboxTag]
-		if !ok {
-			continue
-		}
 		delay, hasDelay := s.deps.ClashState.LatencyForOutbound(ctx, tunnels[i].SingboxTag)
 		if !hasDelay {
 			continue
 		}
 		tunnels[i].ClashDelay = delay
-		tunnels[i].UrltestGroup = group
+		if group, ok := urltestOf[tunnels[i].SingboxTag]; ok {
+			tunnels[i].UrltestGroup = group
+		}
 	}
 }
 
