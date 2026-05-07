@@ -109,9 +109,18 @@ func (h *SingboxProxiesHandler) List(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
+	known := h.knownComposites()
+	if len(known) == 0 {
+		response.Success(w, SingboxProxiesListResponse{Groups: []SingboxProxyGroup{}})
+		return
+	}
+
 	raw, err := h.clashGet(r.Context(), "/proxies", "")
 	if err != nil {
-		response.InternalError(w, "clash unreachable: "+err.Error())
+		// Runtime endpoint may be temporarily unavailable while sing-box
+		// starts/reloads. Returning an empty snapshot keeps polling quiet
+		// and avoids flooding UI console with repeated 500s.
+		response.Success(w, SingboxProxiesListResponse{Groups: []SingboxProxyGroup{}})
 		return
 	}
 	var parsed struct {
@@ -130,7 +139,6 @@ func (h *SingboxProxiesHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	known := h.knownComposites()
 	groups := make([]SingboxProxyGroup, 0, len(known))
 	for _, p := range parsed.Proxies {
 		if _, ok := known[p.Name]; !ok {

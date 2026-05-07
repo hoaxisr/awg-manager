@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +61,7 @@ var defaultDir = filepath.Dir(installer.DefaultBinaryPath)
 
 // legacyBinaryPath is var (not const) so tests can override it safely.
 var legacyBinaryPath = legacyBinary
+var ansiSeqRE = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 // Operator is the high-level facade for sing-box integration.
 type Operator struct {
@@ -164,15 +166,25 @@ func NewOperator(d OperatorDeps) *Operator {
 // surfaced at /diagnostics?tab=logs). FATAL/ERROR lines are also stored
 // as lastError so the UI shows them when sing-box subsequently dies.
 func (o *Operator) handleStderrLine(line string) {
-	upper := strings.ToUpper(line)
+	clean := normalizeProcessLogLine(line)
+	upper := strings.ToUpper(clean)
 	switch {
 	case strings.Contains(upper, "FATAL"):
-		o.log.Error("singbox stderr", "line", line)
-		o.setLastError(line)
+		o.log.Error("singbox stderr", "line", clean)
+		if o.processLogger != nil {
+			o.processLogger.Error("stderr", "", clean)
+		}
+		o.setLastError(clean)
 	case strings.Contains(upper, "ERROR"):
-		o.log.Warn("singbox stderr", "line", line)
+		o.log.Warn("singbox stderr", "line", clean)
+		if o.processLogger != nil {
+			o.processLogger.Warn("stderr", "", clean)
+		}
 	default:
-		o.log.Info("singbox stderr", "line", line)
+		o.log.Info("singbox stderr", "line", clean)
+		if o.processLogger != nil {
+			o.processLogger.Info("stderr", "", clean)
+		}
 	}
 }
 
@@ -182,14 +194,22 @@ func (o *Operator) handleStdoutLine(line string) {
 	if o.processLogger == nil {
 		return
 	}
-	switch classifyProcessLine(line) {
+	clean := normalizeProcessLogLine(line)
+	switch classifyProcessLine(clean) {
 	case logging.LevelError:
-		o.processLogger.Error("stdout", "", line)
+		o.processLogger.Error("stdout", "", clean)
 	case logging.LevelWarn:
-		o.processLogger.Warn("stdout", "", line)
+		o.processLogger.Warn("stdout", "", clean)
 	default:
-		o.processLogger.Info("stdout", "", line)
+		o.processLogger.Info("stdout", "", clean)
 	}
+}
+
+func normalizeProcessLogLine(line string) string {
+	if line == "" {
+		return ""
+	}
+	return strings.TrimSpace(ansiSeqRE.ReplaceAllString(line, ""))
 }
 
 // classifyProcessLine picks a log level from a sing-box stdout/stderr
@@ -226,6 +246,9 @@ func (o *Operator) handleExit(err error, stderrTail string) {
 		msg = "sing-box exited (no diagnostic output)"
 	}
 	o.log.Error("singbox exited", "err", err, "stderrTail", stderrTail)
+	if o.processLogger != nil {
+		o.processLogger.Error("exit", "", msg)
+	}
 	o.setLastError(msg)
 	if o.bus != nil {
 		o.bus.Publish("resource:invalidated", map[string]any{

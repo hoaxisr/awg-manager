@@ -7,6 +7,18 @@ import (
 	"sort"
 )
 
+var baseOwnedDNSTags = map[string]bool{
+	"dns-bootstrap": true,
+	"dns-doh":       true,
+}
+
+func isLegacyBaseTunnelsDNSDuplicate(tag string, first, second Slot) bool {
+	if !baseOwnedDNSTags[tag] {
+		return false
+	}
+	return (first == SlotBase && second == SlotTunnels) || (first == SlotTunnels && second == SlotBase)
+}
+
 // ValidationError describes one cross-slot consistency problem.
 // Slot is the slot whose JSON contained the offending construct;
 // References (when set) names what was referenced.
@@ -139,6 +151,12 @@ func (o *Orchestrator) validateLocked() ValidationResult {
 				continue
 			}
 			if existing, dup := dnsServers[ds.Tag]; dup {
+				if isLegacyBaseTunnelsDNSDuplicate(ds.Tag, existing.slot, os.slot) {
+					// Backward-compat: older installs may still have
+					// dns-bootstrap / dns-doh in 10-tunnels.json while
+					// 00-base.json already owns them.
+					continue
+				}
 				errs = append(errs, ValidationError{
 					Slot:    os.slot,
 					Kind:    "duplicate-dns",

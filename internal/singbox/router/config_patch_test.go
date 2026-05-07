@@ -118,3 +118,33 @@ func TestCompositeOutboundDeleteReferenced(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCompositeOutboundRejectsDirectMember(t *testing.T) {
+	cfg := NewEmptyConfig()
+	err := cfg.AddCompositeOutbound(Outbound{
+		Type:      "urltest",
+		Tag:       "de-out",
+		Outbounds: []string{"vpn-a", "direct"},
+	})
+	if err == nil {
+		t.Fatal("expected validation error for direct member")
+	}
+}
+
+func TestNormalizeCompositeOutboundsDropsDirectMembers(t *testing.T) {
+	got := normalizeCompositeOutbounds([]Outbound{{
+		Type:      "selector",
+		Tag:       "sel",
+		Outbounds: []string{"vpn-a", "direct", "vpn-b"},
+		Default:   "direct",
+	}})
+	if len(got) != 1 {
+		t.Fatalf("want 1 outbound, got %d", len(got))
+	}
+	if len(got[0].Outbounds) != 2 {
+		t.Fatalf("want 2 members after normalize, got %d (%v)", len(got[0].Outbounds), got[0].Outbounds)
+	}
+	if got[0].Default != "vpn-a" {
+		t.Fatalf("want default switched to first member vpn-a, got %q", got[0].Default)
+	}
+}

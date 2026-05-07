@@ -312,7 +312,19 @@ func (s *ServiceImpl) Enable(ctx context.Context) error {
 	}
 	mark, err := s.deps.Policies.GetPolicyMark(ctx, sr.PolicyName)
 	if err != nil || mark == "" {
-		return ErrPolicyMissing
+		// Recovery UX: policy may have been deleted manually in NDMS
+		// while awg-manager still stores its name. Auto-create a fresh
+		// default policy and continue enable flow without forcing
+		// users to repair it manually.
+		p, createErr := s.CreatePolicy(ctx, "awgm-router")
+		if createErr != nil {
+			return ErrPolicyMissing
+		}
+		sr.PolicyName = p.Name
+		mark, err = s.deps.Policies.GetPolicyMark(ctx, sr.PolicyName)
+		if err != nil || mark == "" {
+			return ErrPolicyMissing
+		}
 	}
 
 	if err := EnsureTProxyModule(ctx); err != nil {

@@ -38,6 +38,7 @@
 
 	onMount(() => {
 		loadAWGTags();
+		void refresh();
 		unsubProxies = singboxProxies.subscribe(() => {});
 	});
 
@@ -46,7 +47,9 @@
 	});
 
 	const outboundOptions = $derived(
-		buildOutboundOptions(awgTags, phase1Tunnels, outbounds, true),
+		// Composite members must reference real declared outbounds/tunnels.
+		// Do not offer synthetic "direct" here.
+		buildOutboundOptions(awgTags, phase1Tunnels, outbounds, false),
 	);
 
 	const awgManagedCount = $derived(

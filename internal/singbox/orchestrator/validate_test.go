@@ -136,3 +136,19 @@ func TestValidateSelectorDefaultUnknown(t *testing.T) {
 		t.Errorf("missing tag: %s", res.Error())
 	}
 }
+
+func TestValidateLegacyBaseTunnelDNSServersAllowed(t *testing.T) {
+	o, dir := newTestOrch(t)
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "00-base.json", `{"dns":{"servers":[{"tag":"dns-bootstrap","type":"udp","server":"1.1.1.1"},{"tag":"dns-doh","type":"https","server":"dns.google"}]}}`)
+	writeSlot(t, dir, "10-tunnels.json", `{"dns":{"servers":[{"tag":"dns-bootstrap","type":"udp","server":"1.1.1.1"},{"tag":"dns-doh","type":"https","server":"dns.google"}]}}`)
+	o.enabled[SlotBase] = true
+	o.enabled[SlotTunnels] = true
+
+	res := o.Validate()
+	if !res.Ok() {
+		t.Fatalf("legacy base+tunnels dns tags should be tolerated, got: %s", res.Error())
+	}
+}

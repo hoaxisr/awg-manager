@@ -108,7 +108,21 @@
 	let editIndex = $state<number | null>(null);
 	let addMode = $state(false);
 	let deleteIndex = $state<number | null>(null);
+	let deleteSnapshot = $state<SingboxRouterRule | null>(null);
 	let deletingBusy = $state(false);
+
+	function ruleKey(r: SingboxRouterRule): string {
+		return JSON.stringify({
+			action: r.action,
+			outbound: r.outbound ?? '',
+			protocol: r.protocol ?? '',
+			domain_suffix: r.domain_suffix ?? [],
+			ip_cidr: r.ip_cidr ?? [],
+			source_ip_cidr: r.source_ip_cidr ?? [],
+			port: r.port ?? [],
+			rule_set: r.rule_set ?? [],
+		});
+	}
 
 	function openAdd(): void {
 		editIndex = null;
@@ -123,6 +137,7 @@
 
 	function requestDelete(i: number): void {
 		deleteIndex = i;
+		deleteSnapshot = rules[i] ? { ...rules[i] } : null;
 	}
 
 	async function confirmDelete(): Promise<void> {
@@ -131,8 +146,27 @@
 		try {
 			await api.singboxRouterDeleteRule(deleteIndex);
 			deleteIndex = null;
+			deleteSnapshot = null;
 			await refresh();
 		} catch (e) {
+			// Rules can shift (concurrent edits / system rule reconciliation).
+			// Retry once by matching the captured rule snapshot.
+			if (deleteSnapshot) {
+				try {
+					await refresh();
+					const targetKey = ruleKey(deleteSnapshot);
+					const fallbackIndex = rules.findIndex((r) => ruleKey(r) === targetKey);
+					if (fallbackIndex >= 0) {
+						await api.singboxRouterDeleteRule(fallbackIndex);
+						deleteIndex = null;
+						deleteSnapshot = null;
+						await refresh();
+						return;
+					}
+				} catch {
+					// fall through to notify original error below
+				}
+			}
 			notifications.error((e as Error).message);
 		} finally {
 			deletingBusy = false;
@@ -300,7 +334,10 @@
 	busy={deletingBusy}
 	onConfirm={confirmDelete}
 	onClose={() => {
-		if (!deletingBusy) deleteIndex = null;
+		if (!deletingBusy) {
+			deleteIndex = null;
+			deleteSnapshot = null;
+		}
 	}}
 />
 

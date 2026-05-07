@@ -116,16 +116,51 @@
 	const statusState = $derived($singboxStatus);
 	const status = $derived(statusState.data);
 	const statusReady = $derived(statusState.lastFetchedAt > 0 || statusState.status === 'error');
+	const singboxInstalled = $derived(status?.installed ?? false);
 	const running = $derived(status?.running ?? false);
 	const version = $derived(status?.version ?? '—');
-	const statusLabel = $derived(
-		!statusReady ? 'получение данных…' : running ? `v${version}` : 'остановлен',
-	);
 	const routerStatusStore = singboxRouter.status;
 	const routerStatus = $derived($routerStatusStore);
 	const routerInstalled = $derived(routerStatus?.installed ?? false);
 	const routerNetfilterReady = $derived(routerStatus?.netfilterAvailable ?? false);
 	const routerNetfilterName = $derived(routerStatus?.netfilterComponentName ?? 'Компонент netfilter');
+	const routerEnabled = $derived(routerStatus?.enabled ?? false);
+	const routerPolicyOK = $derived(routerStatus?.policyExists ?? false);
+	const routerIssuesCount = $derived((routerStatus?.issues ?? []).length);
+	const singboxLastError = $derived(status?.lastError?.trim() ?? '');
+
+	type HeaderState = 'loading' | 'ready' | 'warn' | 'error';
+	const headerState = $derived.by<HeaderState>(() => {
+		if (!statusReady) return 'loading';
+		if (!singboxInstalled) return 'error';
+		if (!running) return 'error';
+		if (!routerEnabled) return 'warn';
+		if (!routerNetfilterReady || !routerPolicyOK || routerIssuesCount > 0) return 'warn';
+		return 'ready';
+	});
+	const headerLabel = $derived.by(() => {
+		if (!statusReady) return 'получение данных…';
+		if (!singboxInstalled) return 'не установлен';
+		if (!running) return `v${version} · остановлен`;
+		if (!routerInstalled) return `v${version} · роутинг не активирован`;
+		if (!routerEnabled) return `v${version} · роутинг выключен`;
+		if (!routerPolicyOK) return `v${version} · нет policy`;
+		if (!routerNetfilterReady) return `v${version} · нет netfilter`;
+		if (routerIssuesCount > 0) return `v${version} · ${routerIssuesCount} проблем`;
+		return `v${version} · готов`;
+	});
+	const headerReason = $derived.by(() => {
+		if (!statusReady) return '';
+		if (singboxLastError) return singboxLastError;
+		if (!singboxInstalled) return 'Базовый sing-box не установлен.';
+		if (!running) return 'Процесс sing-box не запущен.';
+		if (!routerInstalled) return 'Маршрутизация ещё не активирована (iptables/policy не инициализированы).';
+		if (!routerEnabled) return 'Модуль маршрутизации ещё не включён.';
+		if (!routerPolicyOK) return 'Не настроена/не найдена policy для маршрутизации.';
+		if (!routerNetfilterReady) return `Недоступен компонент: ${routerNetfilterName}.`;
+		if ((routerStatus?.issues?.length ?? 0) > 0) return routerStatus?.issues?.[0]?.message ?? '';
+		return '';
+	});
 	const tabsItems = $derived(
 		(mode === 'advanced' ? advancedOrder : simpleOrder).map((id) => ({ id, label: labels[id] })),
 	);
@@ -179,28 +214,22 @@
 		</div>
 	</div>
 	<div class="header-right">
-		<span class="status-badge" class:running={statusReady && running}>
+		<span
+			class="status-badge"
+			class:loading={headerState === 'loading'}
+			class:running={headerState === 'ready'}
+			class:warn={headerState === 'warn'}
+			class:error={headerState === 'error'}
+			title={headerReason}
+		>
 			<span class="status-dot"></span>
-			sing-box · {statusLabel}
+			sing-box · {headerLabel}
 		</span>
 		<Button size="sm" variant="primary" onclick={() => singboxWizard.start()}>Мастер</Button>
 		<Button size="sm" variant="ghost" onclick={() => (inspectorOpen = true)}>Инспектор</Button>
 		<Button size="sm" variant="ghost" onclick={() => (drawerOpen = true)}>Конфиг</Button>
 	</div>
 </header>
-
-{#if isEmpty}
-	<WizardEntry />
-{/if}
-
-{#if mode === 'simple'}
-	<section class="simple-note">
-		<div class="note-title">Рекомендуем для России</div>
-		<div class="note-text">
-			Начните с пресетов Telegram / YouTube / OpenAI / GitHub, затем уточняйте через rule-set и DNS.
-		</div>
-	</section>
-{/if}
 
 {#if !routerInstalled && mode === 'simple'}
 	<section class="router-onboarding">
@@ -218,9 +247,24 @@
 			Включить маршрутизацию Sing-box
 		</Button>
 	</section>
-{:else}
-	<Tabs tabs={tabsItems} active={active} onchange={(id) => setSub(id as SubTab)} />
+{/if}
 
+<Tabs tabs={tabsItems} active={active} onchange={(id) => setSub(id as SubTab)} />
+
+{#if isEmpty}
+	<WizardEntry />
+{/if}
+
+{#if mode === 'simple'}
+	<section class="simple-note">
+		<div class="note-title">Рекомендуем для России</div>
+		<div class="note-text">
+			Начните с пресетов Telegram / YouTube / OpenAI / GitHub, затем уточняйте через rule-set и DNS.
+		</div>
+	</section>
+{/if}
+
+{#if routerInstalled || mode !== 'simple'}
 	<section class="sub-content">
 		{#if active === 'engine'}
 			<EngineSubTab />
@@ -298,12 +342,39 @@
 		width: 7px;
 		height: 7px;
 		border-radius: 999px;
-		background: var(--color-error);
-		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-error) 22%, transparent);
+		background: var(--color-text-muted);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-text-muted) 22%, transparent);
+	}
+	.status-badge.loading .status-dot {
+		background: var(--color-accent, #6ea8ff);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent, #6ea8ff) 25%, transparent);
+		animation: status-pulse 1.15s ease-in-out infinite;
 	}
 	.status-badge.running .status-dot {
 		background: var(--color-success);
 		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 28%, transparent);
+	}
+	.status-badge.warn .status-dot {
+		background: var(--color-warning);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-warning) 28%, transparent);
+	}
+	.status-badge.error .status-dot {
+		background: var(--color-error);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-error) 28%, transparent);
+	}
+	@keyframes status-pulse {
+		0% {
+			transform: scale(1);
+			opacity: 0.7;
+		}
+		50% {
+			transform: scale(1.12);
+			opacity: 1;
+		}
+		100% {
+			transform: scale(1);
+			opacity: 0.7;
+		}
 	}
 	.sub-content {
 		margin-top: 1rem;
@@ -335,7 +406,7 @@
 		background: var(--color-bg-secondary);
 		display: grid;
 		gap: 0.65rem;
-		max-width: 760px;
+		width: 100%;
 	}
 	.router-onboarding h3 {
 		margin: 0;

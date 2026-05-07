@@ -2,7 +2,6 @@ package router
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -123,18 +122,32 @@ func TestEnable_NoPolicy_AutoCreatesDefaultPolicy(t *testing.T) {
 	}
 }
 
-func TestEnable_PolicyMissing_Refused(t *testing.T) {
+func TestEnable_PolicyMissing_AutoRecreated(t *testing.T) {
 	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{PolicyName: "Policy0"})
-	policies := &fakeAccessPolicyProvider{markErr: query.ErrPolicyMarkNotFound}
+	policies := &fakeAccessPolicyProvider{
+		markErr:       query.ErrPolicyMarkNotFound,
+		createReturn:  PolicyInfo{Name: "Policy1", Description: "awgm-router"},
+	}
 	fe := &fakeExec{}
 	svc := newTestService(t, Deps{
 		Settings: settingsStore,
 		Policies: policies,
 		IPTables: newTestIPTables(fe),
+		Singbox:  newTestSingbox(t),
 	})
 	err := svc.Enable(context.Background())
-	if !errors.Is(err, ErrPolicyMissing) {
-		t.Errorf("want ErrPolicyMissing, got %v", err)
+	if err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	all, loadErr := settingsStore.Load()
+	if loadErr != nil {
+		t.Fatalf("Load: %v", loadErr)
+	}
+	if all.SingboxRouter.PolicyName == "" {
+		t.Fatalf("expected recreated policy name, got empty")
+	}
+	if !all.SingboxRouter.Enabled {
+		t.Fatalf("expected router enabled after policy recreation")
 	}
 }
 

@@ -43,6 +43,7 @@ func LoadConfig(path string) (*RouterConfig, error) {
 	if cfg.Outbounds == nil {
 		cfg.Outbounds = []Outbound{}
 	}
+	cfg.Outbounds = normalizeCompositeOutbounds(cfg.Outbounds)
 	if cfg.Route.RuleSet == nil {
 		cfg.Route.RuleSet = []RuleSet{}
 	}
@@ -205,6 +206,9 @@ func (c *RouterConfig) EnsureSystemRules() {
 }
 
 func (c *RouterConfig) AddCompositeOutbound(o Outbound) error {
+	if err := validateCompositeOutbound(o); err != nil {
+		return err
+	}
 	for _, existing := range c.Outbounds {
 		if existing.Tag == o.Tag {
 			return fmt.Errorf("%w: %q", ErrOutboundTagConflict, o.Tag)
@@ -215,6 +219,9 @@ func (c *RouterConfig) AddCompositeOutbound(o Outbound) error {
 }
 
 func (c *RouterConfig) UpdateCompositeOutbound(tag string, o Outbound) error {
+	if err := validateCompositeOutbound(o); err != nil {
+		return err
+	}
 	for i, existing := range c.Outbounds {
 		if existing.Tag == tag {
 			c.Outbounds[i] = o
@@ -272,6 +279,50 @@ func stripLegacyAWGDirect(in []Outbound) []Outbound {
 		out = append(out, o)
 	}
 	return out
+}
+
+func normalizeCompositeOutbounds(in []Outbound) []Outbound {
+	out := make([]Outbound, 0, len(in))
+	for _, o := range in {
+		o.Outbounds = dropDirectMembers(o.Outbounds)
+		if o.Default == "direct" {
+			o.Default = ""
+			if len(o.Outbounds) > 0 {
+				o.Default = o.Outbounds[0]
+			}
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
+func dropDirectMembers(members []string) []string {
+	if len(members) == 0 {
+		return members
+	}
+	out := make([]string, 0, len(members))
+	for _, m := range members {
+		if strings.EqualFold(strings.TrimSpace(m), "direct") {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+func validateCompositeOutbound(o Outbound) error {
+	if strings.TrimSpace(o.Tag) == "" {
+		return fmt.Errorf("outbound tag is required")
+	}
+	if len(o.Outbounds) == 0 {
+		return fmt.Errorf("outbound %q: at least one member is required", o.Tag)
+	}
+	for _, m := range o.Outbounds {
+		if strings.EqualFold(strings.TrimSpace(m), "direct") {
+			return fmt.Errorf("outbound %q: member \"direct\" is not allowed in composite groups", o.Tag)
+		}
+	}
+	return nil
 }
 
 func (r Rule) hasAnyMatcher() bool {
