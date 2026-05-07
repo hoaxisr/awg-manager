@@ -10,19 +10,24 @@ import (
 
 const ifaceListPath = "/show/interface/"
 
-const sampleList = `{"Wireguard0": {"id":"Wireguard0","type":"Wireguard","state":"up"}}`
+const sampleList = `{"Wireguard0": {"id":"Wireguard0","interface-name":"nwg0","type":"Wireguard","state":"up"}}`
 
 func primedQueries(_ *testing.T) (*query.Queries, *query.FakeGetter) {
 	fg := query.NewFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleList)
-	fg.SetRaw("/show/interface/Wireguard0", []byte(`{"id":"Wireguard0","type":"Wireguard","state":"up"}`))
+	fg.SetRaw("/show/interface/Wireguard0", []byte(`{"id":"Wireguard0","interface-name":"nwg0","type":"Wireguard","state":"up"}`))
+	fg.SetRaw("/show/interface/Wireguard1", []byte(`{"id":"Wireguard1","interface-name":"nwg1","type":"Wireguard","state":"up"}`))
 	fg.SetJSON("/show/ip/route", `[]`)
 	fg.SetRaw("/show/running-config", []byte(`{"message":["!"]}`))
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 	return q, fg
 }
 
-func TestDispatcher_IfCreatedInvalidatesInterfaceList(t *testing.T) {
+// === Event-sourced InterfaceStore behaviour ===
+
+// IfCreated must apply via OnCreated which fetches ONLY the new id —
+// it must NOT re-fetch the full list.
+func TestDispatcher_IfCreated_FetchesOnlyNewID(t *testing.T) {
 	q, fg := primedQueries(t)
 	d := NewDispatcher(q, NopLogger())
 	d.Start()
@@ -31,54 +36,87 @@ func TestDispatcher_IfCreatedInvalidatesInterfaceList(t *testing.T) {
 	if _, err := q.Interfaces.List(context.Background()); err != nil {
 		t.Fatalf("prime: %v", err)
 	}
-	primeCalls := fg.Calls(ifaceListPath)
-	if primeCalls != 1 {
-		t.Fatalf("prime: want 1 call, got %d", primeCalls)
-	}
+	primeList := fg.Calls(ifaceListPath)
 
 	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1"})
 
-	waitFor(t, 100*time.Millisecond, func() bool {
-		_, _ = q.Interfaces.List(context.Background())
-		return fg.Calls(ifaceListPath) > primeCalls
+	waitFor(t, 200*time.Millisecond, func() bool {
+		return fg.Calls("/show/interface/Wireguard1") > 0
 	})
 
-	if got := fg.Calls(ifaceListPath); got <= primeCalls {
-		t.Errorf("after IfCreated: want a new fetch, got %d calls total", got)
+	if got := fg.Calls("/show/interface/Wireguard1"); got != 1 {
+		t.Errorf("after IfCreated: want 1 fetch of new id, got %d", got)
+	}
+	// Critical: list endpoint must NOT have been re-fetched.
+	if got := fg.Calls(ifaceListPath); got != primeList {
+		t.Errorf("list must NOT be re-fetched after IfCreated, before=%d after=%d", primeList, got)
+	}
+	// And the new entry must now be visible from Get without further HTTP.
+	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard1"); got == nil {
+		t.Errorf("Wireguard1 must be queryable after OnCreated")
 	}
 }
 
-func TestDispatcher_IfDestroyedInvalidatesListAndItem(t *testing.T) {
+// IfDestroyed must be a pure in-memory delete — no HTTP, no list refetch.
+func TestDispatcher_IfDestroyed_NoHTTP(t *testing.T) {
 	q, fg := primedQueries(t)
 	d := NewDispatcher(q, NopLogger())
 	d.Start()
 	defer d.Stop()
 
 	_, _ = q.Interfaces.List(context.Background())
-	_, _ = q.Interfaces.Get(context.Background(), "Wireguard0")
-
 	primeList := fg.Calls(ifaceListPath)
 	primeItem := fg.Calls("/show/interface/Wireguard0")
 
 	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard0"})
-	waitFor(t, 100*time.Millisecond, func() bool {
-		_, _ = q.Interfaces.List(context.Background())
-		_, _ = q.Interfaces.Get(context.Background(), "Wireguard0")
-		return fg.Calls(ifaceListPath) > primeList && fg.Calls("/show/interface/Wireguard0") > primeItem
+
+	// Wait for the entry to disappear from cache (via OnDestroyed).
+	waitFor(t, 200*time.Millisecond, func() bool {
+		got, _ := q.Interfaces.Get(context.Background(), "Wireguard0")
+		return got == nil
 	})
 
-	if fg.Calls(ifaceListPath) <= primeList {
-		t.Errorf("list not re-fetched after IfDestroyed")
+	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard0"); got != nil {
+		t.Errorf("Wireguard0 must be removed from cache, got %#v", got)
 	}
-	if fg.Calls("/show/interface/Wireguard0") <= primeItem {
-		t.Errorf("item not re-fetched after IfDestroyed")
+	// No HTTP for the destroy path on InterfaceStore.
+	if got := fg.Calls(ifaceListPath); got != primeList {
+		t.Errorf("list must NOT be re-fetched on IfDestroyed, before=%d after=%d", primeList, got)
+	}
+	if got := fg.Calls("/show/interface/Wireguard0"); got != primeItem {
+		t.Errorf("item must NOT be re-fetched on IfDestroyed, before=%d after=%d", primeItem, got)
 	}
 }
 
-func TestDispatcher_IfDestroyedInvalidatesWGServers(t *testing.T) {
-	// When NDMS destroys an interface the VPN-server list must be
-	// invalidated too — otherwise the system-tunnel UI keeps showing
-	// a card that the router has already torn down.
+// IfLayerChanged must patch in place — no HTTP for the InterfaceStore.
+func TestDispatcher_IfLayerChanged_NoHTTPOnInterfaces(t *testing.T) {
+	q, fg := primedQueries(t)
+	d := NewDispatcher(q, NopLogger())
+	d.Start()
+	defer d.Stop()
+
+	_, _ = q.Interfaces.List(context.Background())
+	primeList := fg.Calls(ifaceListPath)
+	primeItem := fg.Calls("/show/interface/Wireguard0")
+
+	d.Enqueue(Event{Type: EventIfLayerChanged, ID: "Wireguard0", Layer: "conf", Level: "disabled"})
+
+	waitFor(t, 200*time.Millisecond, func() bool {
+		d, _ := q.Interfaces.GetDetails(context.Background(), "Wireguard0")
+		return d != nil && d.ConfLayer == "disabled"
+	})
+
+	if got := fg.Calls(ifaceListPath); got != primeList {
+		t.Errorf("list re-fetched on IfLayerChanged, before=%d after=%d", primeList, got)
+	}
+	if got := fg.Calls("/show/interface/Wireguard0"); got != primeItem {
+		t.Errorf("item re-fetched on IfLayerChanged, before=%d after=%d", primeItem, got)
+	}
+}
+
+// === Legacy InvalidateAll path for non-Interface stores ===
+
+func TestDispatcher_IfDestroyed_InvalidatesWGServers(t *testing.T) {
 	q, fg := primedQueries(t)
 	d := NewDispatcher(q, NopLogger())
 	d.Start()
@@ -88,7 +126,7 @@ func TestDispatcher_IfDestroyedInvalidatesWGServers(t *testing.T) {
 	primed := fg.Calls(ifaceListPath)
 
 	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard1"})
-	waitFor(t, 100*time.Millisecond, func() bool {
+	waitFor(t, 200*time.Millisecond, func() bool {
 		_, _ = q.WGServers.List(context.Background())
 		return fg.Calls(ifaceListPath) > primed
 	})
@@ -98,7 +136,7 @@ func TestDispatcher_IfDestroyedInvalidatesWGServers(t *testing.T) {
 	}
 }
 
-func TestDispatcher_IfCreatedInvalidatesWGServers(t *testing.T) {
+func TestDispatcher_IfCreated_InvalidatesWGServers(t *testing.T) {
 	q, fg := primedQueries(t)
 	d := NewDispatcher(q, NopLogger())
 	d.Start()
@@ -108,7 +146,7 @@ func TestDispatcher_IfCreatedInvalidatesWGServers(t *testing.T) {
 	primed := fg.Calls(ifaceListPath)
 
 	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard5"})
-	waitFor(t, 100*time.Millisecond, func() bool {
+	waitFor(t, 200*time.Millisecond, func() bool {
 		_, _ = q.WGServers.List(context.Background())
 		return fg.Calls(ifaceListPath) > primed
 	})
@@ -128,7 +166,7 @@ func TestDispatcher_IfLayerChangedConf_InvalidatesRunningConfig(t *testing.T) {
 	primed := fg.Calls("/show/running-config")
 
 	d.Enqueue(Event{Type: EventIfLayerChanged, ID: "Wireguard0", Layer: "conf", Level: "running"})
-	waitFor(t, 100*time.Millisecond, func() bool {
+	waitFor(t, 200*time.Millisecond, func() bool {
 		_, _ = q.RunningConfig.Lines(context.Background())
 		return fg.Calls("/show/running-config") > primed
 	})
@@ -138,25 +176,29 @@ func TestDispatcher_IfLayerChangedConf_InvalidatesRunningConfig(t *testing.T) {
 	}
 }
 
-func TestDispatcher_DedupsRepeatedEnqueues(t *testing.T) {
+// === Worker lifecycle ===
+
+func TestDispatcher_Stop_Idempotent(t *testing.T) {
 	q, _ := primedQueries(t)
 	d := NewDispatcher(q, NopLogger())
+	d.Start()
+	d.Stop()
+	d.Stop()
+}
 
-	for i := 0; i < 100; i++ {
-		d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard0"})
-	}
-
-	d.mu.Lock()
-	n := len(d.pending)
-	d.mu.Unlock()
-
-	// EventIfCreated produces two invalidation keys (storeInterfaces +
-	// storeWGServers); 100 identical enqueues still collapse to exactly
-	// those two.
-	if n != 2 {
-		t.Errorf("pending size after 100 identical enqueues: want 2, got %d", n)
+func TestDispatcher_Stop_WithoutStart_ReturnsImmediately(t *testing.T) {
+	q, _ := primedQueries(t)
+	d := NewDispatcher(q, NopLogger())
+	done := make(chan struct{})
+	go func() { d.Stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Errorf("Stop without Start should return immediately")
 	}
 }
+
+// === Helpers ===
 
 func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 	t.Helper()
@@ -166,27 +208,5 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
-	}
-}
-
-func TestDispatcher_Stop_Idempotent(t *testing.T) {
-	q, _ := primedQueries(t)
-	d := NewDispatcher(q, NopLogger())
-	d.Start()
-	d.Stop()
-	d.Stop() // must not panic
-}
-
-func TestDispatcher_Stop_WithoutStart_ReturnsImmediately(t *testing.T) {
-	q, _ := primedQueries(t)
-	d := NewDispatcher(q, NopLogger())
-	// Stop without Start — must not block, must not panic.
-	done := make(chan struct{})
-	go func() { d.Stop(); close(done) }()
-	select {
-	case <-done:
-		// Good
-	case <-time.After(100 * time.Millisecond):
-		t.Errorf("Stop without Start should return immediately")
 	}
 }

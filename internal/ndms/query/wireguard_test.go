@@ -208,8 +208,11 @@ func TestWGServerStore_GetAll_CacheHitSkipsFetch(t *testing.T) {
 
 	_, _ = s.List(context.Background())
 	_, _ = s.List(context.Background())
-	if got := fg.Calls("/show/interface/"); got != 1 {
-		t.Errorf("/show/interface/ calls: want 1, got %d", got)
+	// 2 calls total: one from WGServerStore's own /show/interface/ fetch,
+	// one from InterfaceStore.ensureBootstrap which fires when WGServer
+	// resolves system names. Subsequent List() hits both caches.
+	if got := fg.Calls("/show/interface/"); got != 2 {
+		t.Errorf("/show/interface/ calls: want 2 (WG fetch + Interfaces bootstrap), got %d", got)
 	}
 }
 
@@ -405,8 +408,12 @@ func TestWGServerStore_InvalidateName_DropsListCache(t *testing.T) {
 	_, _ = s.List(context.Background())
 	_, _ = s.Get(context.Background(), "Wireguard1")
 
-	if got := fg.Calls("/show/interface/"); got != 2 {
-		t.Errorf("/show/interface/ should be hit twice (list invalidated), got %d", got)
+	// 3 calls: WGServer list before invalidation + Interfaces bootstrap +
+	// WGServer list after invalidation. (Interfaces is bootstrapped
+	// lazily on first ResolveSystemName, then cached for the rest of
+	// the test.)
+	if got := fg.Calls("/show/interface/"); got != 3 {
+		t.Errorf("/show/interface/ calls: want 3 (WG list ×2 + Interfaces bootstrap), got %d", got)
 	}
 	if got := fg.Calls("/show/interface/Wireguard1"); got != 2 {
 		t.Errorf("/show/interface/Wireguard1 should be hit twice (item invalidated), got %d", got)
@@ -429,9 +436,10 @@ func TestWGServerStore_InvalidateAll(t *testing.T) {
 	_, _ = s.Get(context.Background(), "Wireguard1")
 	_, _ = s.GetConfig(context.Background(), "Wireguard1")
 
-	// /show/interface/ is called by GetAll twice (cache busted).
-	if got := fg.Calls("/show/interface/"); got != 2 {
-		t.Errorf("/show/interface/: want 2, got %d", got)
+	// /show/interface/ is called: WGServer.List ×2 (cache busted) +
+	// Interfaces bootstrap ×1 = 3 total.
+	if got := fg.Calls("/show/interface/"); got != 3 {
+		t.Errorf("/show/interface/: want 3 (WG list ×2 + Interfaces bootstrap), got %d", got)
 	}
 	// Single-interface GET happens once per Get() and once per GetConfig() → 4 total.
 	if got := fg.Calls("/show/interface/Wireguard1"); got != 4 {

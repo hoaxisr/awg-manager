@@ -70,6 +70,16 @@ func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage
 		return nil, fmt.Errorf("save to storage: %w", err)
 	}
 
+	// Refresh InterfaceStore so a subsequent Create call sees the
+	// freshly-created interface (subnet/listen-port conflict checks
+	// rely on Interfaces.List). In production the NDMS ifcreated hook
+	// reaches the same store via Dispatcher.OnCreated; this call also
+	// covers the no-hook test path and any race where validation runs
+	// before the hook arrives.
+	if s.queries != nil && s.queries.Interfaces != nil {
+		s.queries.Interfaces.InvalidateAll()
+	}
+
 	s.log.Info("managed server created", "interface", ifaceName, "address", req.Address, "port", req.ListenPort)
 	s.appLog.Info("create", ifaceName, fmt.Sprintf("Managed server created on %s", ifaceName))
 	saved := server
@@ -149,6 +159,12 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateServerRequest
 		return nil
 	}); err != nil {
 		return fmt.Errorf("save to storage: %w", err)
+	}
+
+	// Refresh InterfaceStore so subsequent subnet/listen-port checks
+	// see the new address/port. Mirrors the post-Create invalidate.
+	if s.queries != nil && s.queries.Interfaces != nil {
+		s.queries.Interfaces.InvalidateAll()
 	}
 
 	s.log.Info("managed server updated", "interface", server.InterfaceName, "address", req.Address, "port", req.ListenPort)
@@ -243,6 +259,13 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	// Delete from storage
 	if err := s.settings.DeleteManagedServer(id); err != nil {
 		return fmt.Errorf("delete from storage: %w", err)
+	}
+
+	// Refresh InterfaceStore so its map drops the deleted entry
+	// without waiting for the eventual ifdestroyed hook. Mirrors the
+	// post-Create / post-Update invalidate.
+	if s.queries != nil && s.queries.Interfaces != nil {
+		s.queries.Interfaces.InvalidateAll()
 	}
 
 	s.log.Info("managed server deleted", "interface", server.InterfaceName)
