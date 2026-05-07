@@ -1,4 +1,4 @@
-package rci
+package payloads
 
 // PeerConfig holds WireGuard peer parameters for CmdWireguardPeer.
 type PeerConfig struct {

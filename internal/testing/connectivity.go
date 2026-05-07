@@ -101,7 +101,7 @@ func (s *Service) checkHTTP(ctx context.Context, tunnelID string) (*Connectivity
 	}
 
 	if httpCode == 204 {
-		s.appLog.Info("http-check", tunnelID, fmt.Sprintf("HTTP check successful: code=204, latency=%dms", latencyMs))
+		s.appLog.Debug("http-check", tunnelID, fmt.Sprintf("HTTP check successful: code=204, latency=%dms", latencyMs))
 		return &ConnectivityResult{Connected: true, Latency: &latencyMs}, nil
 	}
 
@@ -157,7 +157,7 @@ func (s *Service) checkPing(ctx context.Context, tunnelID string, stored *storag
 		return &ConnectivityResult{Connected: true, Latency: intPtr(1)}, nil
 	}
 
-	s.appLog.Info("ping-check", tunnelID, fmt.Sprintf("Ping successful: target=%s, latency=%dms", target, *latency))
+	s.appLog.Debug("ping-check", tunnelID, fmt.Sprintf("Ping successful: target=%s, latency=%dms", target, *latency))
 	return &ConnectivityResult{Connected: true, Latency: latency}, nil
 }
 

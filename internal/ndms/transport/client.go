@@ -79,7 +79,8 @@ func (c *Client) Post(ctx context.Context, payload any) (json.RawMessage, error)
 }
 
 // PostBatch sends commands as a JSON array via POST /. Returns one raw
-// response per command in the same order.
+// response per command in the same order. Per-element NDMS error envelopes
+// trigger a *BatchError aggregating all failures.
 func (c *Client) PostBatch(ctx context.Context, commands []any) ([]json.RawMessage, error) {
 	raw, err := c.postJSON(ctx, commands)
 	if err != nil {
@@ -89,13 +90,27 @@ func (c *Client) PostBatch(ctx context.Context, commands []any) ([]json.RawMessa
 	if err := json.Unmarshal(raw, &results); err != nil {
 		return nil, fmt.Errorf("rci batch: decode array: %w", err)
 	}
+
+	// Per-element envelope check. Each element of the array may carry the
+	// NDMS error envelope independently — silent partial failures must not
+	// slip through.
+	var failures []BatchElementError
+	for i, elem := range results {
+		if msg := ExtractError(elem); msg != "" {
+			failures = append(failures, BatchElementError{Index: i, Message: msg})
+		}
+	}
+	if len(failures) > 0 {
+		c.appLog.Warn("POST", "/",
+			fmt.Sprintf("batch ndms-errors: %d/%d failed", len(failures), len(results)))
+		return results, &BatchError{Failures: failures, Total: len(results), Body: raw}
+	}
 	return results, nil
 }
 
 func (c *Client) postJSON(ctx context.Context, payload any) (json.RawMessage, error) {
-	start := time.Now()
 	if err := c.sem.Acquire(ctx); err != nil {
-		c.appLog.Debug("POST", "/", fmt.Sprintf("semaphore: %v", err))
+		c.appLog.Error("POST", "/", fmt.Sprintf("semaphore: %v", err))
 		return nil, fmt.Errorf("rci POST: %w", err)
 	}
 	defer c.sem.Release()
@@ -104,66 +119,71 @@ func (c *Client) postJSON(ctx context.Context, payload any) (json.RawMessage, er
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(payload); err != nil {
-		c.appLog.Debug("POST", "/", fmt.Sprintf("marshal: %v", err))
+		c.appLog.Error("POST", "/", fmt.Sprintf("marshal: %v", err))
 		return nil, fmt.Errorf("rci POST: marshal: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/", &buf)
 	if err != nil {
-		c.appLog.Debug("POST", "/", fmt.Sprintf("build request: %v", err))
+		c.appLog.Error("POST", "/", fmt.Sprintf("build request: %v", err))
 		return nil, fmt.Errorf("rci POST: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		c.appLog.Debug("POST", "/", fmt.Sprintf("transport: %v", err))
+		c.appLog.Error("POST", "/", fmt.Sprintf("transport: %v", err))
 		return nil, fmt.Errorf("rci POST: %w", err)
 	}
 	defer resp.Body.Close()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		c.appLog.Debug("POST", "/", fmt.Sprintf("read body: %v", err))
+		c.appLog.Error("POST", "/", fmt.Sprintf("read body: %v", err))
 		return nil, fmt.Errorf("rci POST: read: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		c.appLog.Debug("POST", "/", fmt.Sprintf("status %d", resp.StatusCode))
+		c.appLog.Error("POST", "/", fmt.Sprintf("status %d", resp.StatusCode))
 		return nil, &HTTPError{Method: "POST", Path: "/", Status: resp.StatusCode, Body: data}
 	}
-	c.appLog.Debug("POST", "/", fmt.Sprintf("200 in %dms", time.Since(start).Milliseconds()))
+
+	// NDMS returns HTTP 200 even on application errors — check body envelope.
+	if msg := ExtractError(data); msg != "" {
+		c.appLog.Warn("POST", "/", fmt.Sprintf("ndms-error: %s", msg))
+		return data, &NDMSAppError{Method: "POST", Path: "/", Message: msg, Body: data}
+	}
+
 	return json.RawMessage(data), nil
 }
 
 // GetRaw performs GET {baseURL}{path} and returns the raw body bytes.
+// On success no log entry is emitted; every failure path is logged at Error.
 func (c *Client) GetRaw(ctx context.Context, path string) ([]byte, error) {
-	start := time.Now()
 	if err := c.sem.Acquire(ctx); err != nil {
-		c.appLog.Debug("GET", path, fmt.Sprintf("semaphore: %v", err))
+		c.appLog.Error("GET", path, fmt.Sprintf("semaphore: %v", err))
 		return nil, fmt.Errorf("rci GET %s: %w", path, err)
 	}
 	defer c.sem.Release()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
-		c.appLog.Debug("GET", path, fmt.Sprintf("build request: %v", err))
+		c.appLog.Error("GET", path, fmt.Sprintf("build request: %v", err))
 		return nil, fmt.Errorf("rci GET %s: %w", path, err)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		c.appLog.Debug("GET", path, fmt.Sprintf("transport: %v", err))
+		c.appLog.Error("GET", path, fmt.Sprintf("transport: %v", err))
 		return nil, fmt.Errorf("rci GET %s: %w", path, err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		c.appLog.Debug("GET", path, fmt.Sprintf("read body: %v", err))
+		c.appLog.Error("GET", path, fmt.Sprintf("read body: %v", err))
 		return nil, fmt.Errorf("rci GET %s: read: %w", path, err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		c.appLog.Debug("GET", path, fmt.Sprintf("status %d", resp.StatusCode))
+		c.appLog.Error("GET", path, fmt.Sprintf("status %d", resp.StatusCode))
 		return nil, &HTTPError{Method: "GET", Path: path, Status: resp.StatusCode, Body: body}
 	}
-	c.appLog.Debug("GET", path, fmt.Sprintf("200 in %dms", time.Since(start).Milliseconds()))
 	return body, nil
 }

@@ -23,7 +23,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
-	"github.com/hoaxisr/awg-manager/internal/rci"
+	"github.com/hoaxisr/awg-manager/internal/ndms/payloads"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
@@ -36,22 +36,18 @@ type OperatorNativeWG struct {
 	queries   *query.Queries
 	commands  *command.Commands
 	transport *transport.Client
-	// Legacy rci.Client retained only for ImportWireguardConfig (multipart upload).
-	// Will move to new layer in cleanup phase.
-	rci          *rci.Client
-	kmod         *KmodManager
-	log          *logger.Logger
-	appLog       *logging.ScopedLogger
+	kmod      *KmodManager
+	log       *logger.Logger
+	appLog    *logging.ScopedLogger
 	hookNotifier tunnel.HookNotifier
 }
 
 // NewOperator creates a new NativeWG operator.
-func NewOperator(log *logger.Logger, queries *query.Queries, commands *command.Commands, tr *transport.Client, rciClient *rci.Client, appLogger logging.AppLogger) *OperatorNativeWG {
+func NewOperator(log *logger.Logger, queries *query.Queries, commands *command.Commands, tr *transport.Client, appLogger logging.AppLogger) *OperatorNativeWG {
 	return &OperatorNativeWG{
 		queries:   queries,
 		commands:  commands,
 		transport: tr,
-		rci:       rciClient,
 		kmod:      NewKmodManager(log),
 		log:       log,
 		appLog:    logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubOps),
@@ -82,7 +78,7 @@ func (o *OperatorNativeWG) createViaImport(ctx context.Context, stored *storage.
 
 	// Import via RCI — NDMS creates the interface and parses all params.
 	// ImportWireguardConfig is a multipart-upload helper with no new-layer equivalent yet.
-	ndmsName, err := o.rci.ImportWireguardConfig(ctx, []byte(confData), stored.Name+".conf")
+	ndmsName, err := o.commands.Wireguard.ImportWireguardConfig(ctx, []byte(confData), stored.Name+".conf")
 	if err != nil {
 		return 0, fmt.Errorf("import wireguard config: %w", err)
 	}
@@ -100,18 +96,18 @@ func (o *OperatorNativeWG) createViaImport(ctx context.Context, stored *storage.
 
 	// Post-import settings that aren't in .conf
 	cmds := []any{
-		rci.CmdInterfaceDescription(ndmsName, stored.Name),
-		rci.CmdInterfaceSecurityLevel(ndmsName, "public"),
-		rci.CmdInterfaceIPGlobal(ndmsName, true),
-		rci.CmdInterfaceAdjustMSS(ndmsName, true),
-		rci.CmdSave(),
+		payloads.CmdInterfaceDescription(ndmsName, stored.Name),
+		payloads.CmdInterfaceSecurityLevel(ndmsName, "public"),
+		payloads.CmdInterfaceIPGlobal(ndmsName, true),
+		payloads.CmdInterfaceAdjustMSS(ndmsName, true),
+		payloads.CmdSave(),
 	}
 
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		// Cleanup on failure
 		cleanup := []any{
-			rci.CmdInterfaceDelete(ndmsName),
-			rci.CmdSave(),
+			payloads.CmdInterfaceDelete(ndmsName),
+			payloads.CmdSave(),
 		}
 		_, _ = o.transport.PostBatch(ctx, cleanup)
 		return 0, fmt.Errorf("post-import settings: %w", err)
@@ -140,14 +136,14 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	}
 
 	cmds := []any{
-		rci.CmdInterfaceCreate(ndmsName),
-		rci.CmdInterfaceDescription(ndmsName, stored.Name),
-		rci.CmdInterfaceSecurityLevel(ndmsName, "public"),
-		rci.CmdInterfaceIPAddress(ndmsName, extractIPv4(stored.Interface.Address), "255.255.255.255"),
-		rci.CmdInterfaceMTU(ndmsName, stored.Interface.MTU),
-		rci.CmdInterfaceAdjustMSS(ndmsName, true),
-		rci.CmdInterfaceIPGlobal(ndmsName, true),
-		rci.CmdWireguardPrivateKey(ndmsName, stored.Interface.PrivateKey),
+		payloads.CmdInterfaceCreate(ndmsName),
+		payloads.CmdInterfaceDescription(ndmsName, stored.Name),
+		payloads.CmdInterfaceSecurityLevel(ndmsName, "public"),
+		payloads.CmdInterfaceIPAddress(ndmsName, extractIPv4(stored.Interface.Address), "255.255.255.255"),
+		payloads.CmdInterfaceMTU(ndmsName, stored.Interface.MTU),
+		payloads.CmdInterfaceAdjustMSS(ndmsName, true),
+		payloads.CmdInterfaceIPGlobal(ndmsName, true),
+		payloads.CmdWireguardPrivateKey(ndmsName, stored.Interface.PrivateKey),
 	}
 
 	// DNS
@@ -159,24 +155,24 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 			}
 		}
 		if len(servers) > 0 {
-			cmds = append(cmds, rci.CmdInterfaceDNS(ndmsName, servers))
+			cmds = append(cmds, payloads.CmdInterfaceDNS(ndmsName, servers))
 		}
 	}
 
 	// IPv6 if present
 	ipv6Addr := extractIPv6(stored.Interface.Address)
 	if ipv6Addr != "" {
-		cmds = append(cmds, rci.CmdInterfaceIPv6Address(ndmsName, ipv6Addr))
+		cmds = append(cmds, payloads.CmdInterfaceIPv6Address(ndmsName, ipv6Addr))
 	}
 
 	// Peer
-	peerCfg := rci.PeerConfig{
+	peerCfg := payloads.PeerConfig{
 		PublicKey:   stored.Peer.PublicKey,
 		Endpoint:    fmt.Sprintf("%s:%d", endpointIP, endpointPort),
-		AllowedIPv4: []rci.AllowedIP{{Address: "0.0.0.0", Mask: "0"}},
+		AllowedIPv4: []payloads.AllowedIP{{Address: "0.0.0.0", Mask: "0"}},
 	}
 	if hasIPv6AllowedIPs(stored.Peer.AllowedIPs) {
-		peerCfg.AllowedIPv6 = []rci.AllowedIP{{Address: "::", Mask: "0"}}
+		peerCfg.AllowedIPv6 = []payloads.AllowedIP{{Address: "::", Mask: "0"}}
 	}
 	if stored.Peer.PersistentKeepalive > 0 {
 		peerCfg.KeepaliveInterval = stored.Peer.PersistentKeepalive
@@ -184,13 +180,13 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	if stored.Peer.PresharedKey != "" {
 		peerCfg.PresharedKey = stored.Peer.PresharedKey
 	}
-	cmds = append(cmds, rci.CmdWireguardPeer(ndmsName, peerCfg), rci.CmdSave())
+	cmds = append(cmds, payloads.CmdWireguardPeer(ndmsName, peerCfg), payloads.CmdSave())
 
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		// Cleanup on failure
 		cleanup := []any{
-			rci.CmdInterfaceDelete(ndmsName),
-			rci.CmdSave(),
+			payloads.CmdInterfaceDelete(ndmsName),
+			payloads.CmdSave(),
 		}
 		_, _ = o.transport.PostBatch(ctx, cleanup)
 		return 0, fmt.Errorf("create batch: %w", err)
@@ -278,9 +274,9 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 
 	// Batch: set endpoint + connect via + up
 	cmds := []any{
-		rci.CmdWireguardPeerEndpoint(names.NDMSName, pubkey, realEndpoint),
-		rci.CmdWireguardPeerConnect(names.NDMSName, pubkey, stored.ISPInterface),
-		rci.CmdInterfaceUp(names.NDMSName, true),
+		payloads.CmdWireguardPeerEndpoint(names.NDMSName, pubkey, realEndpoint),
+		payloads.CmdWireguardPeerConnect(names.NDMSName, pubkey, stored.ISPInterface),
+		payloads.CmdInterfaceUp(names.NDMSName, true),
 	}
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		return fmt.Errorf("start native: %w", err)
@@ -349,9 +345,9 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 
 	// Batch: set proxy endpoint + connect + up
 	cmds := []any{
-		rci.CmdWireguardPeerEndpoint(names.NDMSName, pubkey, proxyEndpoint),
-		rci.CmdWireguardPeerConnect(names.NDMSName, pubkey, stored.ISPInterface),
-		rci.CmdInterfaceUp(names.NDMSName, true),
+		payloads.CmdWireguardPeerEndpoint(names.NDMSName, pubkey, proxyEndpoint),
+		payloads.CmdWireguardPeerConnect(names.NDMSName, pubkey, stored.ISPInterface),
+		payloads.CmdInterfaceUp(names.NDMSName, true),
 	}
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		_ = o.kmod.RemoveTunnel(stored.ID)
@@ -383,7 +379,7 @@ func (o *OperatorNativeWG) SuspendProxy(ctx context.Context, stored *storage.AWG
 	// 2. Disconnect peer — NDMS sets link: pending, connected: no.
 	// conf stays "running" so NDMS knows the tunnel wants to be up.
 	cmds := []any{
-		rci.CmdWireguardPeerDisconnect(names.NDMSName, pubkey),
+		payloads.CmdWireguardPeerDisconnect(names.NDMSName, pubkey),
 	}
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		o.log.Warnf("nwg: suspend proxy %s: peer disconnect: %v", names.NDMSName, err)
@@ -406,8 +402,8 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 		o.hookNotifier.ExpectHook(names.NDMSName, "disabled")
 	}
 	cmds := []any{
-		rci.CmdInterfaceUp(names.NDMSName, false),
-		rci.CmdSave(),
+		payloads.CmdInterfaceUp(names.NDMSName, false),
+		payloads.CmdSave(),
 	}
 	_, _ = o.transport.PostBatch(ctx, cmds)
 
@@ -442,10 +438,10 @@ func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel
 
 	// 3. Remove NDMS interface — cleans everything:
 	//    peer, DNS (ip + ipv6 name-server), ASC params, kernel Wireguard interface
-	_, _ = o.transport.Post(ctx, rci.CmdInterfaceDelete(names.NDMSName))
+	_, _ = o.transport.Post(ctx, payloads.CmdInterfaceDelete(names.NDMSName))
 
 	// 4. Persist
-	_, _ = o.transport.Post(ctx, rci.CmdSave())
+	_, _ = o.transport.Post(ctx, payloads.CmdSave())
 
 	o.log.Infof("nwg: deleted %s", names.NDMSName)
 	return nil
@@ -628,7 +624,7 @@ func (o *OperatorNativeWG) RestoreKmodTunnel(ctx context.Context, stored *storag
 	// Update NDMS peer endpoint to proxy address
 	names := NewNWGNames(stored.NWGIndex)
 	proxyEndpoint := fmt.Sprintf("127.0.0.1:%d", result.ListenPort)
-	_, err = o.transport.Post(ctx, rci.CmdWireguardPeerEndpoint(names.NDMSName, stored.Peer.PublicKey, proxyEndpoint))
+	_, err = o.transport.Post(ctx, payloads.CmdWireguardPeerEndpoint(names.NDMSName, stored.Peer.PublicKey, proxyEndpoint))
 	if err != nil {
 		o.log.Warnf("nwg: restored kmod but failed to update endpoint to %s: %v", proxyEndpoint, err)
 	}

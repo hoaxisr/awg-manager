@@ -249,17 +249,18 @@ func (d InterfaceDetails) LinkUp() bool { return d.Link == "up" }
 
 // Version — NDMS system version from /show/version. Cached write-once at boot.
 type Version struct {
-	Release     string `json:"release"`     // e.g. "4.2.5"
-	Title       string `json:"title"`       // product name
-	HardwareID  string `json:"hardwareId"`
-	Description string `json:"description"`
-	Manufacturer string `json:"manufacturer,omitempty"`
-	Vendor       string `json:"vendor,omitempty"`
-	Series       string `json:"series,omitempty"`
-	Model        string `json:"model,omitempty"`
-	Region       string `json:"region,omitempty"`
-	Components   []string `json:"components,omitempty"`
-	Uptime       int64    `json:"uptime,omitempty"` // seconds
+	Release      string    `json:"release"`      // e.g. "4.2.5"
+	Title        string    `json:"title"`        // product name
+	HardwareID   string    `json:"hardwareId"`
+	Description  string    `json:"description"`
+	Manufacturer string    `json:"manufacturer,omitempty"`
+	Vendor       string    `json:"vendor,omitempty"`
+	Series       string    `json:"series,omitempty"`
+	Model        string    `json:"model,omitempty"`
+	Device       string    `json:"device,omitempty"`
+	Region       string    `json:"region,omitempty"`
+	Components   []string  `json:"components,omitempty"`
+	Uptime       int64     `json:"uptime,omitempty"` // seconds
 	// LastFetched is set by SystemInfoStore.Init (not from NDMS).
 	LastFetched time.Time `json:"lastFetched"`
 }

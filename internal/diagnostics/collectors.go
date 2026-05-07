@@ -14,8 +14,8 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/types"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
-	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
@@ -247,7 +247,7 @@ func (r *Runner) collectNativeWGConnection(ti *TunnelInfo, ndmsJSON string) {
 		return
 	}
 
-	var wg rci.WGInterface
+	var wg types.WGInterface
 	if err := json.Unmarshal([]byte(ndmsJSON), &wg); err != nil {
 		return
 	}
@@ -256,7 +256,7 @@ func (r *Runner) collectNativeWGConnection(ti *TunnelInfo, ndmsJSON string) {
 		peer := wg.WireGuard.Peer[0]
 
 		ts := peer.LastHandshake
-		if ts > 0 && ts < rci.NeverHandshake {
+		if ts > 0 && ts < types.NeverHandshake {
 			hsTime := time.Unix(ts, 0)
 			ago := time.Since(hsTime).Round(time.Second)
 			ti.Connection.LatestHandshake = fmt.Sprintf("%s ago", ago)

@@ -128,29 +128,46 @@ func (s *Service) refreshLocked(ctx context.Context, id string) (*RefreshResult,
 		return nil, masked
 	}
 	isClash := vlink.IsClashYAML(body)
+	isSbJSON := !isClash && vlink.IsSingboxJSON(body)
+	// Body that's valid JSON but not a recognised sing-box subscription
+	// (no outbounds key in the right place) gets a precise error rather
+	// than a fall-through into share-link parsing — otherwise the user
+	// sees "ни одной валидной ссылки" with a meaningless prefix from
+	// scanning JSON bytes for "://".
+	if !isClash && !isSbJSON && vlink.LooksLikeJSON(body) {
+		err := errors.New("subscription: тело подписки выглядит как JSON, но не похоже на sing-box config (нет outbounds). Поддерживаются: sing-box JSON config (одиночный, массив конфигов, или массив outbounds), Clash / mihomo YAML, base64 share-links, plain text vless://, trojan://, ss://, hysteria2://.")
+		s.store.UpdateState(id, RefreshResult{When: time.Now(), Err: err})
+		return nil, err
+	}
 	var parseRes vlink.BatchResult
-	if isClash {
+	switch {
+	case isClash:
 		parseRes = vlink.ParseClashBody(body)
-	} else {
+	case isSbJSON:
+		parseRes = vlink.ParseSingboxBody(body)
+	default:
 		lines := NormalizeBody(body, ct)
 		parseRes = vlink.ParseBatch(lines)
 	}
 
 	if len(parseRes.Outbounds) == 0 {
-		// Distinguish three failure shapes:
+		// Distinguish failure shapes:
 		//  1. Clash YAML parsed cleanly with proxies: []  → subscription empty
-		//     (often: account expired, quota exhausted, or not yet activated).
-		//  2. Clash YAML / share-link body parsed with errors → bad entries.
-		//  3. Body in unsupported format → 0 entries, 0 errors, not Clash.
+		//  2. sing-box JSON parsed cleanly with outbounds: [] → empty
+		//  3. Clash YAML / sing-box JSON / share-link parsed with errors → bad entries.
+		//  4. Body in unsupported format → 0 entries, 0 errors, not structured.
+		emptyClean := len(parseRes.Errors) == 0 && parseRes.SkippedVmess == 0 && parseRes.SkippedUnsupp == 0
 		var errMsg string
 		switch {
-		case isClash && len(parseRes.Errors) == 0 && parseRes.SkippedVmess == 0 && parseRes.SkippedUnsupp == 0:
+		case isClash && emptyClean:
 			errMsg = "subscription: подписка пуста (proxies: []). Возможно, истекла или ещё не активирована — проверь на стороне провайдера."
+		case isSbJSON && emptyClean:
+			errMsg = "subscription: подписка пуста (outbounds: []). Возможно, истекла или ещё не активирована — проверь на стороне провайдера."
 		case len(parseRes.Errors) > 0:
-			hint := "ни одной валидной ссылки. Поддерживаются: base64-encoded share-links, HTML с share-link якорями, plain text со ссылками vless://, trojan://, ss://, hysteria2://, а также Clash YAML / mihomo (типы vless, trojan, ss, hysteria2). Записи vmess пропускаются."
+			hint := "ни одной валидной ссылки. Поддерживаются: base64-encoded share-links, HTML с share-link якорями, plain text со ссылками vless://, trojan://, ss://, hysteria2://, Clash YAML / mihomo, а также sing-box JSON (одиночный, массив конфигов, или массив outbounds; типы vless, trojan, ss, hysteria2). Записи vmess пропускаются."
 			errMsg = fmt.Sprintf("subscription: %s Первая ошибка парсера: %s", hint, parseRes.Errors[0].Error())
 		default:
-			hint := "ни одной валидной ссылки. Поддерживаются: base64-encoded share-links, HTML с share-link якорями, plain text со ссылками vless://, trojan://, ss://, hysteria2://, а также Clash YAML / mihomo (типы vless, trojan, ss, hysteria2). Записи vmess пропускаются."
+			hint := "ни одной валидной ссылки. Поддерживаются: base64-encoded share-links, HTML с share-link якорями, plain text со ссылками vless://, trojan://, ss://, hysteria2://, Clash YAML / mihomo, а также sing-box JSON (одиночный, массив конфигов, или массив outbounds; типы vless, trojan, ss, hysteria2). Записи vmess пропускаются."
 			errMsg = fmt.Sprintf("subscription: %s", hint)
 		}
 		err := errors.New(errMsg)

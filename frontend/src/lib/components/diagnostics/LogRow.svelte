@@ -5,6 +5,7 @@
 <script lang="ts">
   import { openContextMenu } from './log-row-context-menu';
   import { formatTime } from '$lib/utils/format';
+  import { familyOf } from './subgroup-palette';
 
   interface Props {
     log: LogEntry;
@@ -27,6 +28,8 @@
   }: Props = $props();
 
   const isExpanded = $derived(expanded || log.level === 'error' || log.level === 'warn');
+
+  const subgroupFamily = $derived(familyOf(log.subgroup));
 
   const levelLabel: Record<string, string> = {
     error: 'ERROR',
@@ -101,7 +104,10 @@
     onclick={handleClickScope}
     aria-label="Фильтр по scope {log.group}{log.subgroup ? '/' + log.subgroup : ''}"
   >
-    {log.group}{log.subgroup ? '/' + log.subgroup : ''}
+    <span class="scope-group">{log.group}</span>
+    {#if log.subgroup}
+      <span class="subgroup-pill" data-family={subgroupFamily ?? 'unknown'}>{log.subgroup}</span>
+    {/if}
   </button>
   <span class="action">{log.action}</span>
   <span class="target">{log.target}</span>
@@ -169,6 +175,9 @@
   .level-chip-debug { color: var(--color-text-muted); }
 
   .scope-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.25rem;
     background: transparent;
     border: none;
     font: inherit;
@@ -177,7 +186,11 @@
     cursor: pointer;
     white-space: nowrap;
   }
-  .scope-chip:hover { color: var(--color-accent); text-decoration: underline; }
+  .scope-chip:hover .scope-group { color: var(--color-accent); text-decoration: underline; }
+
+  .scope-group {
+    color: var(--color-text-muted);
+  }
 
   .action { color: var(--color-text-secondary); white-space: nowrap; }
   .target { color: var(--color-text-primary); white-space: nowrap; }

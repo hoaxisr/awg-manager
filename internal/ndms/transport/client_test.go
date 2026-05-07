@@ -3,13 +3,17 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/logging"
 )
 
 func newTestClient(t *testing.T, handler http.Handler) (*Client, *httptest.Server) {
@@ -175,5 +179,153 @@ func TestClient_SemaphoreLimitsConcurrency(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&peak); got < 3 {
 		t.Errorf("peak concurrent requests: semaphore should fill, got %d", got)
+	}
+}
+
+// recordedEntry captures one AppLog call for assertions.
+type recordedEntry struct {
+	level    logging.Level
+	group    string
+	subgroup string
+	action   string
+	target   string
+	message  string
+}
+
+// recordingLogger implements logging.AppLogger by storing every call.
+type recordingLogger struct {
+	entries []recordedEntry
+}
+
+func (r *recordingLogger) AppLog(level logging.Level, group, subgroup, action, target, message string) {
+	r.entries = append(r.entries, recordedEntry{level, group, subgroup, action, target, message})
+}
+
+func TestExtractError_TopLevelEnvelope(t *testing.T) {
+	body := []byte(`{"status":"error","message":"address conflict"}`)
+	if got := ExtractError(body); got != "address conflict" {
+		t.Errorf("ExtractError = %q, want %q", got, "address conflict")
+	}
+}
+
+func TestExtractError_NoEnvelope(t *testing.T) {
+	body := []byte(`{"status":"ok","data":[1,2,3]}`)
+	if got := ExtractError(body); got != "" {
+		t.Errorf("ExtractError = %q, want empty", got)
+	}
+}
+
+func TestExtractError_MalformedJSON(t *testing.T) {
+	body := []byte(`not json`)
+	if got := ExtractError(body); got != "" {
+		t.Errorf("ExtractError on malformed = %q, want empty", got)
+	}
+}
+
+func TestPost_NDMSError_ReturnsTypedError(t *testing.T) {
+	c, _ := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"status":"error","message":"address conflict"}`)
+	}))
+	rec := &recordingLogger{}
+	c.SetAppLogger(rec)
+
+	data, err := c.Post(context.Background(), map[string]any{"x": 1})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var appErr *NDMSAppError
+	if !errors.As(err, &appErr) {
+		t.Fatalf("expected *NDMSAppError, got %T: %v", err, err)
+	}
+	if appErr.Message != "address conflict" {
+		t.Errorf("Message = %q, want %q", appErr.Message, "address conflict")
+	}
+	if data == nil {
+		t.Error("expected body returned alongside error")
+	}
+}
+
+func TestPost_NDMSError_LogsWarn(t *testing.T) {
+	c, _ := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"status":"error","message":"bad"}`)
+	}))
+	rec := &recordingLogger{}
+	c.SetAppLogger(rec)
+
+	_, _ = c.Post(context.Background(), map[string]any{})
+	if len(rec.entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(rec.entries))
+	}
+	if rec.entries[0].level != logging.LevelWarn {
+		t.Errorf("level = %q, want warn", rec.entries[0].level)
+	}
+	if !strings.HasPrefix(rec.entries[0].message, "ndms-error:") {
+		t.Errorf("message = %q, want prefix 'ndms-error:'", rec.entries[0].message)
+	}
+}
+
+func TestPostBatch_AllSuccess_NoError(t *testing.T) {
+	c, _ := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `[{"status":"ok"},{"status":"ok"}]`)
+	}))
+	results, err := c.PostBatch(context.Background(), []any{
+		map[string]any{"a": 1},
+		map[string]any{"b": 2},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("len(results) = %d, want 2", len(results))
+	}
+}
+
+func TestPostBatch_PartialFailure_ReturnsBatchError(t *testing.T) {
+	c, _ := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `[{"status":"ok"},{"status":"error","message":"oops"},{"status":"ok"}]`)
+	}))
+	results, err := c.PostBatch(context.Background(), []any{
+		map[string]any{"a": 1},
+		map[string]any{"b": 2},
+		map[string]any{"c": 3},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var be *BatchError
+	if !errors.As(err, &be) {
+		t.Fatalf("expected *BatchError, got %T: %v", err, err)
+	}
+	if be.Total != 3 {
+		t.Errorf("Total = %d, want 3", be.Total)
+	}
+	if len(be.Failures) != 1 {
+		t.Fatalf("len(Failures) = %d, want 1", len(be.Failures))
+	}
+	if be.Failures[0].Index != 1 {
+		t.Errorf("Failures[0].Index = %d, want 1", be.Failures[0].Index)
+	}
+	if be.Failures[0].Message != "oops" {
+		t.Errorf("Failures[0].Message = %q, want %q", be.Failures[0].Message, "oops")
+	}
+	if len(results) != 3 {
+		t.Errorf("results len = %d, want 3 (results returned even on partial fail)", len(results))
+	}
+}
+
+func TestPostBatch_AllFail_ReturnsBatchError(t *testing.T) {
+	c, _ := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `[{"status":"error","message":"e1"},{"status":"error","message":"e2"}]`)
+	}))
+	_, err := c.PostBatch(context.Background(), []any{
+		map[string]any{"a": 1},
+		map[string]any{"b": 2},
+	})
+	var be *BatchError
+	if !errors.As(err, &be) {
+		t.Fatalf("expected *BatchError, got %T: %v", err, err)
+	}
+	if len(be.Failures) != 2 {
+		t.Errorf("len(Failures) = %d, want 2", len(be.Failures))
 	}
 }

@@ -11,7 +11,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
-	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
@@ -344,7 +343,6 @@ type PingCheckForDiag interface {
 // Deps holds all dependencies needed by the diagnostics runner.
 type Deps struct {
 	TunnelService   TunnelServiceForDiag
-	RCI             *rci.Client
 	NDMSQueries     *query.Queries
 	NDMSTransport   *transport.Client
 	Backend         backend.Backend

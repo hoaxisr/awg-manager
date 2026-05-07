@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -71,8 +72,9 @@ func (s *SystemInfoStore) Init(ctx context.Context) error {
 			Vendor:       wire.Vendor,
 			Series:       wire.Series,
 			Model:        wire.Model,
+			Device:       wire.Device,
 			Region:       wire.Region,
-			Components:   append([]string(nil), wire.Components...),
+			Components:   splitComponents(wire.NDW.Components),
 			Uptime:       wire.Uptime,
 			LastFetched:  time.Now(),
 		}
@@ -98,15 +100,35 @@ func (s *SystemInfoStore) Get() (ndms.Version, error) {
 }
 
 type versionWire struct {
-	Release      string   `json:"release"`
-	Title        string   `json:"title"`
-	HwID         string   `json:"hw_id"`
-	Description  string   `json:"description"`
-	Manufacturer string   `json:"manufacturer"`
-	Vendor       string   `json:"vendor"`
-	Series       string   `json:"series"`
-	Model        string   `json:"model"`
-	Region       string   `json:"region"`
-	Components   []string `json:"components"`
-	Uptime       int64    `json:"uptime"`
+	Release      string `json:"release"`
+	Title        string `json:"title"`
+	HwID         string `json:"hw_id"`
+	Description  string `json:"description"`
+	Manufacturer string `json:"manufacturer"`
+	Vendor       string `json:"vendor"`
+	Series       string `json:"series"`
+	Model        string `json:"model"`
+	Device       string `json:"device"`
+	Region       string `json:"region"`
+	Uptime       int64  `json:"uptime"`
+	NDW          struct {
+		Components string `json:"components"`
+	} `json:"ndw"`
+}
+
+// splitComponents parses the comma-separated NDMS ndw.components string into
+// a clean list. Empty input returns nil.
+func splitComponents(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
