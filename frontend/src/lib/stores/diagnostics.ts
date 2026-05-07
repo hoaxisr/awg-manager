@@ -1,6 +1,12 @@
 import { writable } from 'svelte/store';
-import type { DiagTestEvent, DiagDoneSummary, TargetSummary, TunnelListItem } from '$lib/types';
+import type { DiagTestEvent, DiagDoneSummary, TargetSummary } from '$lib/types';
 import { GLOBAL_TARGET_ID } from '$lib/types';
+
+export interface DiagnosticsTargetSeed {
+	id: string;
+	name: string;
+	status: string;
+}
 
 interface DiagnosticsState {
 	running: boolean;
@@ -23,7 +29,7 @@ function ledFromCounts(c: TargetSummary['counts']): TargetSummary['overallLed'] 
 	return 'green';
 }
 
-function rebuildTargets(tests: DiagTestEvent[], tunnels: TunnelListItem[]): TargetSummary[] {
+function rebuildTargets(tests: DiagTestEvent[], tunnels: DiagnosticsTargetSeed[]): TargetSummary[] {
 	const map = new Map<string, TargetSummary>();
 
 	// Always seed Global pseudo-target first
@@ -91,10 +97,10 @@ function createDiagnosticsStore() {
 
 	return {
 		subscribe,
-		seedTargets(tunnels: TunnelListItem[]) {
+		seedTargets(tunnels: DiagnosticsTargetSeed[]) {
 			update((s) => ({ ...s, targets: rebuildTargets(s.tests, tunnels) }));
 		},
-		start(tunnels: TunnelListItem[]) {
+		start(tunnels: DiagnosticsTargetSeed[]) {
 			update((s) => ({
 				...s,
 				running: true,
@@ -108,7 +114,7 @@ function createDiagnosticsStore() {
 		setPhase(phase: string) {
 			update((s) => ({ ...s, currentPhase: phase }));
 		},
-		addTest(test: DiagTestEvent, tunnels: TunnelListItem[]) {
+		addTest(test: DiagTestEvent, tunnels: DiagnosticsTargetSeed[]) {
 			update((s) => {
 				const tests = [...s.tests, test];
 				return { ...s, tests, targets: rebuildTargets(tests, tunnels) };

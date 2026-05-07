@@ -33,6 +33,9 @@
             goto(`?${sp.toString()}`, { replaceState: true });
         }
         unsubRouting = subscribeRouting();
+        // Prime sing-box router badge count early so the tab badge is correct
+        // immediately after page load, not only after opening the tab.
+        void singboxRouterStore.reloadStatus();
     });
     onDestroy(() => {
         unsubRouting?.();

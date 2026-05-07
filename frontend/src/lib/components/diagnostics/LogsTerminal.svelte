@@ -88,8 +88,17 @@
   const loadedStore = $derived(activeStore.loaded);
   const statsStore = $derived(activeStore.stats);
 
-  function logKey(log: LogEntry, idx: number): string {
-    return `${log.timestamp}|${log.level}|${log.group}|${log.subgroup}|${log.action}|${log.target}|${log.message.length}|${idx}`;
+  // Stable row ids: keep DOM nodes for existing lines when new logs are
+  // prepended, so text selection/copy is not disrupted by full re-render.
+  const rowIdByLog = new WeakMap<LogEntry, string>();
+  let rowSeq = 0;
+  function logKey(log: LogEntry): string {
+    const known = rowIdByLog.get(log);
+    if (known) return known;
+    rowSeq += 1;
+    const id = `log-row-${rowSeq}`;
+    rowIdByLog.set(log, id);
+    return id;
   }
 
   // Initial fetch + every bucket switch: replace the entire active store.
@@ -417,8 +426,8 @@
           <span class="cursor"></span>
         </div>
       {/if}
-      {#each displayLogs as log, i (logKey(log, i))}
-        {@const k = logKey(log, i)}
+      {#each displayLogs as log (logKey(log))}
+        {@const k = logKey(log)}
         <LogRow
           {log}
           expanded={expanded[k] ?? false}

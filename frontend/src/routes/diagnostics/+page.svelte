@@ -2,7 +2,8 @@
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
-	import type { TunnelListItem } from '$lib/types';
+	import type { Subscription, TunnelListItem } from '$lib/types';
+	import type { DiagnosticsTargetSeed } from '$lib/stores/diagnostics';
 	import { PageContainer, PageHeader } from '$lib/components/layout';
 	import { Tabs } from '$lib/components/ui';
 	import { LogsTerminal } from '$lib/components/diagnostics';
@@ -12,7 +13,7 @@
 	type ActiveTab = 'logs' | 'connections' | 'checks';
 
 	let activeTab = $state<ActiveTab>('logs');
-	let tunnels = $state<TunnelListItem[]>([]);
+	let tunnels = $state<DiagnosticsTargetSeed[]>([]);
 
 	const diagnosticsTabs = [
 		{ id: 'logs', label: 'Журнал' },
@@ -41,8 +42,43 @@
 		// external tunnels). Diagnostics checks must not run against
 		// managed servers or system Wireguard servers.
 		try {
-			const snap = await api.getTunnelsAll();
-			tunnels = snap.tunnels ?? [];
+			const [snap, singboxTunnels, subscriptions] = await Promise.all([
+				api.getTunnelsAll(),
+				api.singboxListTunnels().catch(() => []),
+				api.listSubscriptions().catch(() => [] as Subscription[]),
+			]);
+
+			const awg: DiagnosticsTargetSeed[] = (snap.tunnels ?? []).map((t: TunnelListItem) => ({
+				id: t.id,
+				name: t.name,
+				status: t.status,
+			}));
+
+			const singbox: DiagnosticsTargetSeed[] = singboxTunnels.map((t) => ({
+				id: `singbox:${t.tag}`,
+				name: t.tag,
+				status: t.running ? 'running' : 'stopped',
+			}));
+
+			const subscriptionMembers: DiagnosticsTargetSeed[] = [];
+			for (const sub of subscriptions) {
+				if (!sub.enabled) continue;
+				for (const m of sub.members ?? []) {
+					subscriptionMembers.push({
+						id: `singbox:${m.tag}`,
+						name: m.label || m.tag,
+						// Connectivity for members is checked through sing-box process;
+						// keep them visible in diagnostics rail by default.
+						status: 'running',
+					});
+				}
+			}
+
+			const uniq = new Map<string, DiagnosticsTargetSeed>();
+			for (const t of [...awg, ...singbox, ...subscriptionMembers]) {
+				if (!uniq.has(t.id)) uniq.set(t.id, t);
+			}
+			tunnels = [...uniq.values()];
 		} catch {
 			tunnels = [];
 		}

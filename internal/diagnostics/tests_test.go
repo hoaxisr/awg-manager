@@ -150,3 +150,46 @@ func TestAnonymize_AWGProxyModule_MasksRawListIPs(t *testing.T) {
 		t.Errorf("expected 127.0.0.1 to remain in dmesg lines (private IPs must not be masked)")
 	}
 }
+
+func TestRouteDevFromIPRouteGet(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "via gateway",
+			in:   "1.1.1.1 via 192.168.1.1 dev eth0 src 192.168.1.10 uid 0\n    cache",
+			want: "eth0",
+		},
+		{
+			name: "direct dev",
+			in:   "10.8.0.1 dev wg0 src 10.8.0.2 uid 0\n    cache",
+			want: "wg0",
+		},
+		{
+			name: "local dev",
+			in:   "local 127.0.0.1 dev lo src 127.0.0.1 uid 0",
+			want: "lo",
+		},
+		{
+			name: "no dev",
+			in:   "unreachable 10.0.0.1",
+			want: "",
+		},
+		{
+			name: "empty",
+			in:   "",
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := routeDevFromIPRouteGet(tt.in)
+			if got != tt.want {
+				t.Errorf("routeDevFromIPRouteGet(%q) = %q; want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

@@ -22,11 +22,11 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/auth"
-	"github.com/hoaxisr/awg-manager/internal/diagnostics"
-	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/cleanup"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/connectivity"
+	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
+	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -408,7 +408,6 @@ func main() {
 		}
 	}
 
-
 	// Client route service (per-device VPN routing)
 	clientRouteStore := storage.NewClientRouteStore(*dataDir)
 	clientRouteService := clientroute.New(
@@ -785,6 +784,24 @@ func main() {
 			ClashProxy:          clashProxy,
 			SingboxConnsHandler: singboxConnsHandler,
 			MonitoringService:   monitoringService,
+			SingboxSubMembers: func() []diagnostics.SingboxSubMember {
+				subs := subSvc.List()
+				out := make([]diagnostics.SingboxSubMember, 0, len(subs)*2)
+				for _, sub := range subs {
+					activeKnown := sub.ActiveMember != ""
+					for _, m := range sub.MemberTags {
+						active := activeKnown && sub.ActiveMember == m
+						out = append(out, diagnostics.SingboxSubMember{
+							Tag:         m,
+							ListenPort:  int(sub.ListenPort),
+							Enabled:     sub.Enabled,
+							Active:      active,
+							ActiveKnown: activeKnown,
+						})
+					}
+				}
+				return out
+			},
 		},
 	)
 

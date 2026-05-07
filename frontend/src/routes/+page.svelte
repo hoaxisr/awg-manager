@@ -604,7 +604,7 @@
 						</div>
 					</div>
 				</div>
-			{:else if singboxTunnelsList.length > 0}
+			{:else}
 				<div class="tunnels-toolbar">
 					<span class="tunnel-count">
 						{singboxTunnelsList.length}
@@ -614,11 +614,13 @@
 						<Button variant="primary" size="md" href="/singbox/new">+ Добавить</Button>
 					</div>
 				</div>
-				<div class="tunnel-grid">
-					{#each singboxTunnelsList as tunnel (tunnel.tag)}
-						<SingboxTunnelCard {tunnel} />
-					{/each}
-				</div>
+				{#if singboxTunnelsList.length > 0}
+					<div class="tunnel-grid">
+						{#each singboxTunnelsList as tunnel (tunnel.tag)}
+							<SingboxTunnelCard {tunnel} />
+						{/each}
+					</div>
+				{/if}
 			{/if}
 			{#if subscriptionsActiveCards.length > 0}
 				<h3 class="section-head">Подписки — активные ({subscriptionsActiveCards.length})</h3>

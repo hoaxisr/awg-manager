@@ -2,6 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { diagnosticsStore } from '$lib/stores/diagnostics';
+	import type { DiagnosticsTargetSeed } from '$lib/stores/diagnostics';
 	import {
 		ChecksToolbar,
 		ChecksGroup,
@@ -10,13 +11,12 @@
 	import {
 		GLOBAL_TARGET_ID,
 		type DiagTestEvent,
-		type TunnelListItem,
 		type TargetSummary,
 	} from '$lib/types';
 	import type { GroupLed } from '$lib/components/diagnostics/ChecksGroup.svelte';
 
 	interface Props {
-		tunnels: TunnelListItem[];
+		tunnels: DiagnosticsTargetSeed[];
 	}
 
 	let { tunnels }: Props = $props();

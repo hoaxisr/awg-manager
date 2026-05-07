@@ -106,6 +106,7 @@ type Server struct {
 	singboxOp             *singbox.Operator
 	deviceProxySvc        *deviceproxy.Service
 	monitoringService     *monitoring.Service
+	singboxSubMembersFn   func() []diagnostics.SingboxSubMember
 	dnsCheckService       *dnscheck.Service
 	authMiddleware        *auth.Middleware
 	httpServer            *http.Server
@@ -165,6 +166,7 @@ type Deps struct {
 	ClashProxy          *api.ClashProxy
 	SingboxConnsHandler *api.SingboxConnectionsHandler
 	MonitoringService   *monitoring.Service
+	SingboxSubMembers   func() []diagnostics.SingboxSubMember
 }
 
 // New creates a new server instance.
@@ -205,6 +207,7 @@ func New(cfg Config, deps Deps) *Server {
 		singboxConnsHandler: deps.SingboxConnsHandler,
 		clashProxy:          deps.ClashProxy,
 		monitoringService:   deps.MonitoringService,
+		singboxSubMembersFn: deps.SingboxSubMembers,
 		authMiddleware:      auth.NewMiddleware(deps.Sessions, deps.Settings, deps.Log),
 		instanceID:          id,
 	}
@@ -494,16 +497,18 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	updateHandler := api.NewUpdateHandler(s.updaterService, appLog)
 	dnsRouteHandler := api.NewDNSRouteHandler(s.dnsRouteService, appLog)
 	diagRunner := diagnostics.NewRunner(diagnostics.Deps{
-		TunnelService:   s.tunnelService,
-		NDMSQueries:     s.ndmsQueries,
-		NDMSTransport:   s.ndmsTransport,
-		Backend:         s.activeBackend,
-		KmodLoader:      s.kmodLoader,
-		TunnelStore:     s.tunnels,
-		LogService:      &diagLogAdapter{svc: s.loggingService},
-		AppVersion:      s.config.Version,
-		PingCheckFacade: s.pingCheckService,
-		AppLogger:       s.loggingService,
+		TunnelService:     s.tunnelService,
+		NDMSQueries:       s.ndmsQueries,
+		NDMSTransport:     s.ndmsTransport,
+		Backend:           s.activeBackend,
+		KmodLoader:        s.kmodLoader,
+		TunnelStore:       s.tunnels,
+		LogService:        &diagLogAdapter{svc: s.loggingService},
+		AppVersion:        s.config.Version,
+		PingCheckFacade:   s.pingCheckService,
+		Singbox:           s.singboxOp,
+		SingboxSubMembers: s.singboxSubMembersFn,
+		AppLogger:         s.loggingService,
 	})
 	diagHandler := api.NewDiagnosticsHandler(diagRunner)
 

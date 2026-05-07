@@ -11,11 +11,33 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 )
+
+// curlPath returns the path to curl, preferring /opt/bin/curl if available, otherwise "curl"
+func curlPath() string {
+	if _, err := os.Stat("/opt/bin/curl"); err == nil {
+		return "/opt/bin/curl"
+	}
+	return "curl"
+}
+
+// ipPath returns the path to ip, preferring /opt/sbin/ip, then /sbin/ip, /bin/ip, otherwise "ip"
+func ipPath() string {
+	for _, p := range []string{"/opt/sbin/ip", "/sbin/ip", "/bin/ip", "ip"} {
+		if p == "ip" {
+			return p
+		}
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "ip"
+}
 
 func (r *Runner) runTestsWithEvents(ctx context.Context, report *Report) []TestResult {
 	var results []TestResult
@@ -30,6 +52,11 @@ func (r *Runner) runTestsWithEvents(ctx context.Context, report *Report) []TestR
 	run(r.testNDMSHealth(ctx))
 	run(r.testKernelModule(ctx, report))
 	run(r.testClockSkew(ctx))
+	run(r.testDirectConnectivity(ctx))
+	run(r.testSingboxRuntime(ctx))
+	for _, tr := range r.testSingboxTunnelConnectivity(ctx) {
+		run(tr)
+	}
 
 	for _, t := range report.Tunnels {
 		r.emitPhase("tunnel_tests", fmt.Sprintf("Тестирование %s...", t.Name))
@@ -258,6 +285,290 @@ func (r *Runner) testClockSkew(ctx context.Context) TestResult {
 	return res
 }
 
+func (r *Runner) testDirectConnectivity(ctx context.Context) TestResult {
+	res := TestResult{Name: "direct_connectivity", Description: "Direct связность (без прокси/туннеля)"}
+
+	curl := curlPath()
+	result, err := exec.Run(ctx, curl, "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "6", "https://www.gstatic.com/generate_204")
+	if err != nil {
+		res.Status = StatusWarn
+		res.Detail = "Не удалось выполнить direct HTTP-проверку"
+		return res
+	}
+	code := strings.TrimSpace(result.Stdout)
+	if code == "204" || code == "200" {
+		res.Status = StatusPass
+		res.Detail = "Direct egress работает (HTTP " + code + ")"
+		return res
+	}
+	res.Status = StatusWarn
+	res.Detail = "Direct egress ответил неожиданным кодом: " + code
+	return res
+}
+
+func (r *Runner) testSingboxRuntime(ctx context.Context) TestResult {
+	res := TestResult{Name: "singbox_runtime", Description: "Sing-box runtime"}
+
+	if r.deps.Singbox == nil {
+		res.Status = StatusSkip
+		res.Detail = "Sing-box не подключён в diagnostics deps"
+		return res
+	}
+
+	st := r.deps.Singbox.GetStatus(ctx)
+	if !st.Installed {
+		res.Status = StatusSkip
+		res.Detail = "Sing-box не установлен"
+		return res
+	}
+	if !st.Running {
+		res.Status = StatusFail
+		if st.LastError != "" {
+			res.Detail = "Sing-box остановлен: " + st.LastError
+		} else {
+			res.Detail = "Sing-box остановлен"
+		}
+		return res
+	}
+
+	res.Status = StatusPass
+	res.Detail = fmt.Sprintf("Sing-box запущен (v%s), туннелей: %d", st.Version, st.TunnelCount)
+	return res
+}
+
+func (r *Runner) testSingboxTunnelConnectivity(ctx context.Context) []TestResult {
+	if r.deps.Singbox == nil {
+		return []TestResult{{
+			Name:        "singbox_tunnel_connectivity",
+			Description: "Sing-box туннели: связность",
+			Status:      StatusSkip,
+			Detail:      "Sing-box не подключён в diagnostics deps",
+		}}
+	}
+
+	st := r.deps.Singbox.GetStatus(ctx)
+	if !st.Installed {
+		return []TestResult{{
+			Name:        "singbox_tunnel_connectivity",
+			Description: "Sing-box туннели: связность",
+			Status:      StatusSkip,
+			Detail:      "Sing-box не установлен",
+		}}
+	}
+
+	tunnels, err := r.deps.Singbox.ListTunnels(ctx)
+	if err != nil {
+		return []TestResult{{
+			Name:        "singbox_tunnel_connectivity",
+			Description: "Sing-box туннели: связность",
+			Status:      StatusError,
+			Detail:      "Не удалось получить список sing-box туннелей: " + err.Error(),
+		}}
+	}
+	if len(tunnels) == 0 {
+		// Don't early-return yet: subscription members (active/inactive)
+		// may still exist even when the regular tunnel list is empty.
+		tunnels = []singbox.TunnelInfo{}
+	}
+
+	subByTag := map[string]SingboxSubMember{}
+	duplicateSubTags := map[string]bool{}
+	if r.deps.SingboxSubMembers != nil {
+		for _, m := range r.deps.SingboxSubMembers() {
+			if m.Tag == "" {
+				continue
+			}
+			if existing, ok := subByTag[m.Tag]; ok {
+				// Handle duplicate tags
+				duplicateSubTags[m.Tag] = true
+				// Keep the first one or the active one
+				if !existing.Active && m.Active {
+					subByTag[m.Tag] = m
+				}
+			} else {
+				subByTag[m.Tag] = m
+			}
+		}
+	}
+
+	seen := make(map[string]bool, len(tunnels)+len(subByTag))
+	for _, t := range tunnels {
+		seen[t.Tag] = true
+	}
+
+	if len(subByTag) > 0 {
+		for tag, m := range subByTag {
+			if seen[tag] {
+				continue
+			}
+			// Add synthetic tunnels only for checkable subscription members
+			if m.ActiveKnown && m.Active && m.Enabled {
+				tunnels = append(tunnels, singbox.TunnelInfo{
+					Tag:        tag,
+					ListenPort: m.ListenPort,
+					Running:    st.Running && m.Enabled && m.Active,
+				})
+				seen[tag] = true
+			}
+		}
+	}
+
+	out := make([]TestResult, 0, len(tunnels)+len(subByTag))
+	curl := curlPath()
+	reported := make(map[string]bool)
+	for _, t := range tunnels {
+		tunnelID := "singbox:" + t.Tag
+		tunnelName := t.Tag
+
+		stateRes := TestResult{
+			Name:        "singbox_tunnel_state",
+			Description: "Sing-box туннель: " + t.Tag,
+			TunnelID:    tunnelID,
+			TunnelName:  tunnelName,
+		}
+
+		if duplicateSubTags[t.Tag] {
+			stateRes.Status = StatusWarn
+			stateRes.Detail = "Дублирующийся member tag в подписках, диагностика по tag неоднозначна"
+			out = append(out, stateRes)
+			reported[t.Tag] = true
+			continue
+		}
+
+		if m, ok := subByTag[t.Tag]; ok {
+			if !m.Enabled {
+				stateRes.Status = StatusSkip
+				stateRes.Detail = "Подписка отключена"
+				out = append(out, stateRes)
+				continue
+			}
+			if !m.ActiveKnown {
+				stateRes.Status = StatusWarn
+				stateRes.Detail = "Не удалось определить активный member подписки"
+				out = append(out, stateRes)
+				continue
+			}
+			if !m.Active {
+				stateRes.Status = StatusSkip
+				stateRes.Detail = "Member подписки не активен (проверяется только активный)"
+				out = append(out, stateRes)
+				continue
+			}
+		}
+
+		if !t.Running {
+			stateRes.Status = StatusFail
+			stateRes.Detail = "Туннель не в running state"
+			out = append(out, stateRes)
+			continue
+		}
+		if t.ListenPort <= 0 {
+			stateRes.Status = StatusWarn
+			stateRes.Detail = "Не задан listenPort для proxy-check"
+			out = append(out, stateRes)
+			continue
+		}
+		stateRes.Status = StatusPass
+		stateRes.Detail = fmt.Sprintf("running=true, local proxy 127.0.0.1:%d", t.ListenPort)
+		out = append(out, stateRes)
+
+		proxy := fmt.Sprintf("http://127.0.0.1:%d", t.ListenPort)
+
+		mainProbe := TestResult{
+			Name:        "singbox_tunnel_connectivity",
+			Description: "Sing-box tunnel HTTP-check",
+			TunnelID:    tunnelID,
+			TunnelName:  tunnelName,
+		}
+		result, err := exec.Run(ctx, curl, "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "8", "-x", proxy, "https://www.gstatic.com/generate_204")
+		if err != nil {
+			mainProbe.Status = StatusFail
+			mainProbe.Detail = fmt.Sprintf("Proxy-check не удался (%s)", proxy)
+		} else {
+			code := strings.TrimSpace(result.Stdout)
+			if code == "204" || code == "200" {
+				mainProbe.Status = StatusPass
+				mainProbe.Detail = fmt.Sprintf("Proxy-check через %s OK (HTTP %s)", proxy, code)
+			} else {
+				mainProbe.Status = StatusWarn
+				mainProbe.Detail = fmt.Sprintf("Proxy-check через %s вернул HTTP %s", proxy, code)
+			}
+		}
+		out = append(out, mainProbe)
+
+		// Multi-target probe: gives a broader picture than a single URL and
+		// makes sing-box checks closer to AWG per-tunnel diagnostics depth.
+		targetsProbe := TestResult{
+			Name:        "singbox_tunnel_targets",
+			Description: "Sing-box tunnel multi-target check",
+			TunnelID:    tunnelID,
+			TunnelName:  tunnelName,
+		}
+		targets := []string{
+			"https://1.1.1.1/",
+			"https://8.8.8.8/",
+			"https://www.gstatic.com/generate_204",
+		}
+		okCount := 0
+		details := make([]string, 0, len(targets))
+		for _, u := range targets {
+			res, e := exec.Run(ctx, curl, "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "8", "-x", proxy, u)
+			if e != nil {
+				details = append(details, fmt.Sprintf("%s=ERR", u))
+				continue
+			}
+			code := strings.TrimSpace(res.Stdout)
+			if code == "204" || code == "200" || code == "301" || code == "302" {
+				okCount++
+			}
+			details = append(details, fmt.Sprintf("%s=%s", u, code))
+		}
+		switch {
+		case okCount == len(targets):
+			targetsProbe.Status = StatusPass
+		case okCount > 0:
+			targetsProbe.Status = StatusWarn
+		default:
+			targetsProbe.Status = StatusFail
+		}
+		targetsProbe.Detail = fmt.Sprintf("OK %d/%d; %s", okCount, len(targets), strings.Join(details, "; "))
+		out = append(out, targetsProbe)
+	}
+
+	// Add warnings for duplicate tags not in tunnels and unknown active members without tunnels
+	for tag, m := range subByTag {
+		if duplicateSubTags[tag] && !reported[tag] {
+			out = append(out, TestResult{
+				Name:        "singbox_tunnel_state",
+				Description: "Sing-box туннель: " + tag,
+				TunnelID:    "singbox:" + tag,
+				TunnelName:  tag,
+				Status:      StatusWarn,
+				Detail:      "Дублирующийся member tag в подписках, диагностика по tag неоднозначна",
+			})
+		} else if !m.ActiveKnown && m.Enabled && !seen[tag] {
+			out = append(out, TestResult{
+				Name:        "singbox_tunnel_state",
+				Description: "Sing-box туннель: " + tag,
+				TunnelID:    "singbox:" + tag,
+				TunnelName:  tag,
+				Status:      StatusWarn,
+				Detail:      "Не удалось определить активный member подписки",
+			})
+		}
+	}
+
+	if len(out) == 0 {
+		return []TestResult{{
+			Name:        "singbox_tunnel_connectivity",
+			Description: "Sing-box туннели: связность",
+			Status:      StatusSkip,
+			Detail:      "Нет sing-box туннелей и активных подписок",
+		}}
+	}
+	return out
+}
+
 // --- Per-tunnel tests ---
 
 func (r *Runner) testDNSResolve(t TunnelInfo) TestResult {
@@ -422,7 +733,8 @@ func (r *Runner) testTunnelConnectivity(ctx context.Context, t TunnelInfo) TestR
 	// Try multiple IP check services. Egress uses default route (WAN).
 	urls := []string{"https://ifconfig.me", "https://icanhazip.com", "https://ip.me"}
 	for _, url := range urls {
-		result, err := exec.Run(ctx, "/opt/bin/curl", "-s", "--max-time", "5", url)
+		curl := curlPath()
+		result, err := exec.Run(ctx, curl, "-s", "--max-time", "5", url)
 		if err == nil && strings.TrimSpace(result.Stdout) != "" {
 			ip := strings.TrimSpace(result.Stdout)
 			res.Status = StatusPass
@@ -629,24 +941,70 @@ func (r *Runner) testDNSLeak(ctx context.Context, t TunnelInfo) TestResult {
 		return res
 	}
 
+	// Guardrail: before resolving, verify where the OS routes packets to this
+	// DNS server. If route does not go via the tunnel interface, this is a
+	// deterministic leak/misrouting condition and resolution check below would
+	// be misleading.
+	ip := ipPath()
+	routeResult, routeErr := exec.Run(ctx, ip, "route", "get", dnsServer)
+	if routeErr != nil || strings.TrimSpace(routeResult.Stdout) == "" {
+		res.Status = StatusError
+		res.Detail = fmt.Sprintf("Не удалось проверить маршрут до DNS %s", dnsServer)
+		return res
+	}
+	routeDev := routeDevFromIPRouteGet(routeResult.Stdout)
+	if routeDev == "" {
+		res.Status = StatusWarn
+		res.Detail = fmt.Sprintf("Маршрут до DNS %s не содержит dev: %s", dnsServer, strings.TrimSpace(routeResult.Stdout))
+		return res
+	}
+	if t.InterfaceName != "" && routeDev != t.InterfaceName {
+		// NativeWG on Keenetic can policy-route client LAN traffic through the
+		// tunnel while router-origin traffic (this diagnostics probe) still uses
+		// WAN/main table. Treat as warning to avoid false hard-fail.
+		if t.Backend == "nativewg" {
+			res.Status = StatusWarn
+			res.Detail = fmt.Sprintf("DNS %s маршрутизируется через %s, ожидался %s (локальный трафик роутера может обходить policy NativeWG)", dnsServer, routeDev, t.InterfaceName)
+			return res
+		}
+		res.Status = StatusFail
+		res.Detail = fmt.Sprintf("DNS %s маршрутизируется через %s, ожидался %s", dnsServer, routeDev, t.InterfaceName)
+		return res
+	}
+
 	// The DNS server sits inside the tunnel network and is only reachable
 	// through the tunnel. Successful resolution proves no DNS leak.
 	result, err := exec.Run(ctx, "nslookup", "example.com", dnsServer)
 	if err != nil {
 		res.Status = StatusFail
-		res.Detail = fmt.Sprintf("Туннельный DNS %s недоступен", dnsServer)
+		res.Detail = fmt.Sprintf("Туннельный DNS %s недоступен через %s", dnsServer, routeDev)
 		return res
 	}
 
 	output := result.Stdout + result.Stderr
-	if strings.Contains(output, "Address") && !strings.Contains(output, "server can't find") {
+	if strings.Contains(output, "Address") &&
+		!strings.Contains(output, "server can't find") &&
+		!strings.Contains(output, "Temporary failure") {
 		res.Status = StatusPass
-		res.Detail = fmt.Sprintf("Ответ получен через туннельный DNS %s", dnsServer)
+		res.Detail = fmt.Sprintf("Ответ получен через туннельный DNS %s (%s)", dnsServer, routeDev)
 	} else {
 		res.Status = StatusFail
-		res.Detail = fmt.Sprintf("Туннельный DNS %s не резолвит", dnsServer)
+		res.Detail = fmt.Sprintf("Туннельный DNS %s не резолвит через %s", dnsServer, routeDev)
 	}
 	return res
+}
+
+// routeDevFromIPRouteGet extracts device name from `ip route get` output.
+func routeDevFromIPRouteGet(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		for i := 0; i < len(fields)-1; i++ {
+			if fields[i] == "dev" {
+				return fields[i+1]
+			}
+		}
+	}
+	return ""
 }
 
 // findTunnelDNS returns the first private/CGNAT DNS server from a
