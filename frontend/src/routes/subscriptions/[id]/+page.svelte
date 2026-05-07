@@ -75,7 +75,7 @@
 	{:else if error || !subscription}
 		<div class="err">{error}</div>
 	{:else}
-		<PageHeader title={subscription.label || subscription.url} />
+		<PageHeader title={subscription.label || subscription.url} backTo="/?tab=subscriptions" />
 		<Tabs
 			tabs={[
 				{ id: 'members', label: `Серверы (${subscription.memberTags.length})` },

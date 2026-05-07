@@ -49,9 +49,11 @@ func (c *InterfaceCommands) DeleteOpkgTun(ctx context.Context, name string) erro
 			name: map[string]any{"no": true},
 		},
 	}
+	// InvalidateAll already drops the deleted interface from the
+	// rebuilt map; a per-name Invalidate would issue a now-pointless
+	// GET that 404s for the just-deleted resource.
 	return postMutation(ctx, c.poster, c.save, payload, "delete interface "+name,
 		c.queries.Interfaces.InvalidateAll,
-		func() { c.queries.Interfaces.Invalidate(name) },
 		func() { c.queries.Peers.Invalidate(name) },
 		c.queries.RunningConfig.InvalidateAll)
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, type ButtonVariant } from '$lib/components/ui';
+	import { Button, BackLink, type ButtonVariant } from '$lib/components/ui';
 
 	type ActionStatus = 'loading' | 'success' | 'error';
 
@@ -34,13 +34,7 @@
 
 <div class="sticky-header">
 	<div class="header-left flex items-center gap-4">
-		<a href="/" class="back-link">
-			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-				<line x1="19" y1="12" x2="5" y2="12"/>
-				<polyline points="12 19 5 12 12 5"/>
-			</svg>
-			Назад
-		</a>
+		<BackLink href="/" />
 		<div class="flex items-center gap-2.5">
 			<h1 class="page-title text-lg font-semibold">{tunnelName}</h1>
 			<span class="badge" class:badge-success={tunnelState === 'running'} class:badge-warning={tunnelState === 'starting' || tunnelState === 'broken' || tunnelState === 'needs_start' || tunnelState === 'needs_stop'} class:badge-muted={tunnelState === 'disabled'} class:badge-error={tunnelState === 'stopped' || tunnelState === 'not_created'}>
@@ -139,22 +133,6 @@
 		background: var(--bg-primary);
 		border-bottom: 1px solid var(--border);
 		flex-wrap: wrap;
-	}
-
-	.back-link {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		color: var(--text-secondary);
-		font-size: 13px;
-		padding: 6px 10px;
-		border-radius: 6px;
-		transition: all 0.15s;
-	}
-
-	.back-link:hover {
-		background: var(--bg-tertiary);
-		color: var(--text-primary);
 	}
 
 	/* Badge */

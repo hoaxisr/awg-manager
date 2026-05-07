@@ -19,6 +19,7 @@
 	let result = $state<SingboxImportResponse | null>(null);
 
 	const singboxVersion = $derived($systemInfo.data?.singbox?.version ?? '');
+	const singboxInstalled = $derived($systemInfo.data?.singbox?.installed ?? false);
 
 	async function submit(): Promise<void> {
 		importing = true;
@@ -47,10 +48,15 @@
 	<div class="term-status">
 		<span class="term-prompt">$ sing-box status</span>
 		<span class="term-info">
-			{singboxVersion ? singboxVersion + ' · ' : ''}installed · 0 туннелей
+			{#if singboxInstalled}
+				{singboxVersion ? singboxVersion + ' · ' : ''}installed
+			{:else}
+				not installed
+			{/if}
 		</span>
 	</div>
 
+	{#if singboxInstalled}
 	<div class="term-singbox">
 		<textarea
 			class="term-singbox-input"
@@ -88,6 +94,7 @@
 			{/if}
 		{/if}
 	</div>
+	{/if}
 </div>
 
 <style>
