@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hoaxisr/awg-manager/internal/rci"
+	"github.com/hoaxisr/awg-manager/internal/ndms/types"
 )
 
 // neverHandshake is the sentinel value RCI uses when no handshake has occurred.
 // It equals math.MaxInt32 (2^31 - 1).
-const neverHandshake int64 = rci.NeverHandshake
+const neverHandshake int64 = types.NeverHandshake
 
 // NWGState holds parsed state from an RCI response for a single
 // Wireguard interface.
@@ -32,7 +32,7 @@ type NWGState struct {
 // parseRCIInterfaceResponse parses a raw RCI JSON response for a single
 // Wireguard interface into NWGState.
 func parseRCIInterfaceResponse(data []byte) (NWGState, error) {
-	var iface rci.WGInterface
+	var iface types.WGInterface
 	if err := json.Unmarshal(data, &iface); err != nil {
 		return NWGState{}, fmt.Errorf("decode rci interface: %w", err)
 	}
@@ -112,7 +112,7 @@ func parseConnectedField(raw json.RawMessage) string {
 // which returns a map of interface objects keyed by interface ID.
 // It filters by type == "Wireguard" and returns matching interface names.
 func parseRCIInterfaceList(data []byte) ([]string, error) {
-	var allIfaces map[string]rci.WGInterface
+	var allIfaces map[string]types.WGInterface
 	if err := json.Unmarshal(data, &allIfaces); err != nil {
 		return nil, fmt.Errorf("decode rci interface list: %w", err)
 	}

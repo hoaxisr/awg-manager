@@ -42,7 +42,6 @@ import (
 	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
-	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/server"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
@@ -163,26 +162,6 @@ func main() {
 		log,
 	)
 
-	// Fetch NDMS version info via RCI (single HTTP call, cached for all consumers).
-	// At early boot, retry until NDMS responds (up to 30s).
-	ndmsTimeout := time.Second // normal restart: single attempt
-	if uptime > 0 && uptime < 120 {
-		ndmsTimeout = 30 * time.Second // boot: wait for NDMS
-	}
-	if err := ndmsinfo.Init(context.Background(), ndmsTimeout); err != nil {
-		log.Warn("NDMS version info not available", map[string]interface{}{"error": err.Error()})
-	}
-
-	// Load kernel module if available (before backend detection)
-	kmodLoader := kmod.New()
-
-	// Clean up old SoC-based module directories from previous IPK versions
-	kmodLoader.CleanupLegacyModules()
-	// EnsureModule: select bundled .ko if available → insmod
-	if err := kmodLoader.EnsureModule(context.Background()); err != nil {
-		log.Warn("Kernel module not available", map[string]interface{}{"error": err.Error()})
-	}
-
 	// Logging service (created early — injected into tunnel service, pingcheck, dnsroute, operator, state, firewall, nwg)
 	loggingService := logging.NewService(settingsStore)
 	defer loggingService.Stop()
@@ -203,12 +182,27 @@ func main() {
 	})
 
 	// Initialize SystemInfoStore at boot — one-shot fetch of /show/version.
-	{
-		initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		if err := ndmsQueries.SystemInfo.Init(initCtx); err != nil {
-			log.Warnf("ndms sysinfo init: %v", err)
-		}
-		initCancel()
+	// Compute timeout based on system uptime (wait longer at early boot).
+	ndmsTimeout := time.Second // normal restart: single attempt
+	if uptime > 0 && uptime < 120 {
+		ndmsTimeout = 30 * time.Second // boot: wait for NDMS
+	}
+	// Wire ndmsinfo to the SystemInfoStore, then initialize with retry.
+	// MUST run before kmod.New(): the kmod loader reads model/SoC from
+	// ndmsinfo.Get() at construction time.
+	if err := ndmsinfo.Init(context.Background(), ndmsQueries.SystemInfo, ndmsTimeout); err != nil {
+		log.Warn("NDMS version info not available", map[string]interface{}{"error": err.Error()})
+	}
+
+	// Load kernel module if available (before backend detection).
+	// kmod.New() reads model/SoC from ndmsinfo, so it must run after Init above.
+	kmodLoader := kmod.New()
+
+	// Clean up old SoC-based module directories from previous IPK versions
+	kmodLoader.CleanupLegacyModules()
+	// EnsureModule: select bundled .ko if available → insmod
+	if err := kmodLoader.EnsureModule(context.Background()); err != nil {
+		log.Warn("Kernel module not available", map[string]interface{}{"error": err.Error()})
 	}
 
 	// Warm NDMS list caches before accepting clients so the first SSE snapshot
@@ -259,9 +253,7 @@ func main() {
 	operator := ops.NewOperator(ndmsQueries, ndmsCommands, wgClient, backendImpl, firewallMgr, log)
 
 	// Create NativeWG operator
-	rciClient := rci.New()
-	rciClient.SetAppLogger(loggingService)
-	nwgOp := nwg.NewOperator(log, ndmsQueries, ndmsCommands, ndmsTransportClient, rciClient, loggingService)
+	nwgOp := nwg.NewOperator(log, ndmsQueries, ndmsCommands, ndmsTransportClient, loggingService)
 
 	// Load awg_proxy.ko if firmware < 5.1 Alpha 4
 	if !ndmsinfo.SupportsWireguardASC() {
@@ -1531,11 +1523,6 @@ func runCleanup(dataDir string) {
 	log := logger.New()
 	defer log.Close()
 
-	// Init NDMS info (needed for OS detection)
-	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	_ = ndmsinfo.Init(initCtx, 10*time.Second)
-	initCancel()
-
 	settingsStore := storage.NewSettingsStore(dataDir)
 	settingsStore.Load()
 
@@ -1551,6 +1538,12 @@ func runCleanup(dataDir string) {
 		Logger: nil,
 		IsOS5:  osdetect.Is5,
 	})
+
+	// Init NDMS info (needed for OS detection). Wire ndmsinfo to the
+	// SystemInfoStore, then initialize with retry.
+	if err := ndmsinfo.Init(context.Background(), cleanupNDMSQueries.SystemInfo, 10*time.Second); err != nil {
+		log.Warnf("cleanup: NDMS version info not available: %v", err)
+	}
 
 	// Create service components
 	wgClient := wg.New()
@@ -1569,8 +1562,8 @@ func runCleanup(dataDir string) {
 	})
 
 	operator := ops.NewOperator(cleanupNDMSQueries, cleanupNDMSCommands, wgClient, backendImpl, firewallMgr, log)
-	cleanupRCI := rci.New()
-	nwgOp := nwg.NewOperator(log, cleanupNDMSQueries, cleanupNDMSCommands, cleanupNDMSTransport, cleanupRCI, nil)
+
+	nwgOp := nwg.NewOperator(log, cleanupNDMSQueries, cleanupNDMSCommands, cleanupNDMSTransport, nil)
 	tunnelService := service.New(awgStore, nwgOp, operator, stateMgr, log, wan.NewModel(), nil)
 
 	// Wire orchestrator for lifecycle operations (Delete needs it)

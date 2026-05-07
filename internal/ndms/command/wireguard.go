@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 
@@ -37,4 +38,43 @@ func (c *WireguardCommands) SetASCParams(ctx context.Context, name string, param
 	return postMutation(ctx, c.poster, c.save, payload, "set asc params "+name,
 		func() { c.queries.Interfaces.Invalidate(name) },
 		c.queries.RunningConfig.InvalidateAll)
+}
+
+// ImportWireguardConfig uploads a .conf file to NDMS and returns the
+// NDMS interface name created from the import (e.g. "Wireguard1").
+// confData is the raw .conf body (NOT base64 — encoded internally).
+func (c *WireguardCommands) ImportWireguardConfig(ctx context.Context, confData []byte, filename string) (string, error) {
+	encoded := base64.StdEncoding.EncodeToString(confData)
+	payload := map[string]any{
+		"interface": map[string]any{
+			"wireguard": map[string]any{
+				"import":   encoded,
+				"name":     "",
+				"filename": filename,
+			},
+		},
+	}
+	resp, err := c.poster.Post(ctx, payload)
+	if err != nil {
+		return "", fmt.Errorf("import wireguard: %w", err)
+	}
+
+	// Real NDMS response shape:
+	// {"interface":{"wireguard":{"import":{"created":"Wireguard0",...}}}}
+	var parsed struct {
+		Interface struct {
+			Wireguard struct {
+				Import struct {
+					Created string `json:"created"`
+				} `json:"import"`
+			} `json:"wireguard"`
+		} `json:"interface"`
+	}
+	if err := json.Unmarshal(resp, &parsed); err != nil {
+		return "", fmt.Errorf("import wireguard: decode: %w", err)
+	}
+	if parsed.Interface.Wireguard.Import.Created == "" {
+		return "", fmt.Errorf("import wireguard: empty created field in response")
+	}
+	return parsed.Interface.Wireguard.Import.Created, nil
 }

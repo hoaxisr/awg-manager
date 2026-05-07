@@ -14,7 +14,9 @@ const sampleVersionJSON = `{
 	"title": "Keenetic",
 	"hw_id": "KN-1011",
 	"description": "KeeneticOS",
-	"components": ["firewall", "wireguard"]
+	"ndw": {
+		"components": "firewall,wireguard"
+	}
 }`
 
 func TestSystemInfoStore_Init_FetchesOnce(t *testing.T) {

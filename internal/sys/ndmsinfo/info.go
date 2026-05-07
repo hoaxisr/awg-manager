@@ -1,5 +1,7 @@
-// Package ndmsinfo provides cached NDMS system information fetched via RCI API.
-// Call Init() once at startup; all subsequent Get() calls return cached data.
+// Package ndmsinfo provides cached NDMS system information backed by the
+// query.SystemInfoStore. Call Init() once at startup with a SystemInfoStore
+// reference; all subsequent Get() / HasComponent() / Supports*() calls read
+// from that store.
 package ndmsinfo
 
 import (
@@ -10,57 +12,31 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hoaxisr/awg-manager/internal/rci"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
-
-// VersionInfo holds parsed response from /rci/show/version.
-type VersionInfo struct {
-	Release      string `json:"release"`
-	Title        string `json:"title"`
-	Arch         string `json:"arch"`
-	HwID         string `json:"hw_id"`
-	HwType       string `json:"hw_type"`
-	Model        string `json:"model"`
-	Device       string `json:"device"`
-	Manufacturer string `json:"manufacturer"`
-	Vendor       string `json:"vendor"`
-	Series       string `json:"series"`
-	NDW          struct {
-		Components string `json:"components"`
-	} `json:"ndw"`
-}
 
 var (
-	cached *VersionInfo
-	mu     sync.RWMutex
+	storeMu sync.RWMutex
+	store   *query.SystemInfoStore
 )
 
-// Init fetches version info from NDMS RCI API with retry.
-// Blocks until NDMS responds or timeout expires.
-// Should be called once at startup before any Get() calls.
-func Init(ctx context.Context, timeout time.Duration) error {
-	client := rci.NewWithTimeout(5 * time.Second)
+// Init initialises the version store reference and blocks until the
+// underlying SystemInfoStore is loaded or the timeout expires. Retries
+// every second on failure (e.g. NDMS not yet up at boot).
+func Init(ctx context.Context, sysInfo *query.SystemInfoStore, timeout time.Duration) error {
+	storeMu.Lock()
+	store = sysInfo
+	storeMu.Unlock()
+
 	deadline := time.After(timeout)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
-	fetch := func() (*VersionInfo, error) {
-		var info VersionInfo
-		if err := client.Get(ctx, "/show/version", &info); err != nil {
-			return nil, err
-		}
-		return &info, nil
-	}
-
-	// Try immediately
-	if info, err := fetch(); err == nil {
-		mu.Lock()
-		cached = info
-		mu.Unlock()
+	if err := sysInfo.Init(ctx); err == nil {
 		return nil
 	}
 
-	// Retry until timeout
 	for {
 		select {
 		case <-deadline:
@@ -68,30 +44,44 @@ func Init(ctx context.Context, timeout time.Duration) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if info, err := fetch(); err == nil {
-				mu.Lock()
-				cached = info
-				mu.Unlock()
+			if err := sysInfo.Init(ctx); err == nil {
 				return nil
 			}
 		}
 	}
 }
 
-// Get returns cached version info, or nil if Init was not called or failed.
-func Get() *VersionInfo {
-	mu.RLock()
-	defer mu.RUnlock()
-	return cached
+// Get returns the cached Version, or nil if Init was not called or the
+// store is empty.
+func Get() *ndms.Version {
+	storeMu.RLock()
+	s := store
+	storeMu.RUnlock()
+	if s == nil {
+		return nil
+	}
+	v, err := s.Get()
+	if err != nil {
+		return nil
+	}
+	return &v
 }
 
-// HasComponent checks if the given component name is present in the NDW components list.
+// Reset clears the store reference. Used in tests.
+func Reset() {
+	storeMu.Lock()
+	store = nil
+	storeMu.Unlock()
+}
+
+// HasComponent checks if the given component name is present in the
+// NDW components list.
 func HasComponent(name string) bool {
 	info := Get()
-	if info == nil || info.NDW.Components == "" {
+	if info == nil {
 		return false
 	}
-	for _, c := range strings.Split(info.NDW.Components, ",") {
+	for _, c := range info.Components {
 		if c == name {
 			return true
 		}
@@ -100,24 +90,19 @@ func HasComponent(name string) bool {
 }
 
 // HasWireguardComponent returns true if the NDMS firmware has the
-// "wireguard" component installed. Required for the nativewg backend
-// (NDMS-managed Wireguard interfaces).
+// "wireguard" component installed. Required for the nativewg backend.
 func HasWireguardComponent() bool {
 	return HasComponent("wireguard")
 }
 
 // HasPingCheckComponent returns true if the NDMS firmware has the
-// "pingcheck" component installed. Required for NDMS-native ping-check
-// profiles used by the nativewg backend. Kernel backend uses a custom
-// loop and does not depend on this component.
+// "pingcheck" component installed.
 func HasPingCheckComponent() bool {
 	return HasComponent("pingcheck")
 }
 
 // HasProxyComponent returns true if the NDMS firmware has the "proxy"
-// component installed. Required for sing-box integration — ProxyN
-// interfaces (SOCKS5 upstream to sing-box) cannot be created without
-// this NDMS component.
+// component installed.
 func HasProxyComponent() bool {
 	return HasComponent("proxy")
 }
@@ -133,9 +118,8 @@ func SupportsWireguardASC() bool {
 }
 
 // SupportsHRanges returns true if the current NDMS release supports
-// H1-H4 header parameters as ranges (AWG 2.0).
-// Shares the same gate as SupportsASC — both features landed in the
-// same firmware release.
+// H1-H4 header parameters as ranges (AWG 2.0). Shares the same firmware
+// gate as SupportsASC — both features landed in the same release.
 func SupportsHRanges() bool {
 	info := Get()
 	if info == nil || info.Release == "" {
@@ -163,7 +147,6 @@ func isAtLeast501A3(release string) bool {
 	if minor > 1 {
 		return true
 	}
-	// major == 5, minor == 1
 	stage := parts[2]
 	if stage == "A" {
 		if len(parts) < 4 {
@@ -174,11 +157,3 @@ func isAtLeast501A3(release string) bool {
 	}
 	return true
 }
-
-// Reset clears the cached version info. Used in tests.
-func Reset() {
-	mu.Lock()
-	cached = nil
-	mu.Unlock()
-}
-

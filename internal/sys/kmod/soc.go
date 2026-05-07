@@ -166,10 +166,10 @@ func DetectDevice() string {
 // Returns e.g. "KN-1810", "ki_rb".
 func DetectModel() string {
 	info := ndmsinfo.Get()
-	if info == nil || info.HwID == "" {
+	if info == nil || info.HardwareID == "" {
 		return ""
 	}
-	model := info.HwID
+	model := info.HardwareID
 	if strings.HasPrefix(strings.ToUpper(model), "NC-") {
 		model = "KN-" + model[3:]
 	}
@@ -179,10 +179,10 @@ func DetectModel() string {
 // DetectSoC returns the router's SoC from cached NDMS version info.
 func DetectSoC() SoC {
 	info := ndmsinfo.Get()
-	if info == nil || info.HwID == "" {
+	if info == nil || info.HardwareID == "" {
 		return SoCUnknown
 	}
-	return ParseModelToSoC(info.HwID)
+	return ParseModelToSoC(info.HardwareID)
 }
 
 // ParseModelToSoC converts a model string (KN-1810 or NC-1810) to SoC type.

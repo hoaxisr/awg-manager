@@ -2,6 +2,7 @@ package diagnostics
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -97,10 +98,18 @@ func (r *Runner) testWANConnectivity(ctx context.Context) TestResult {
 func (r *Runner) testNDMSHealth(ctx context.Context) TestResult {
 	res := TestResult{Name: "ndms_health", Description: "NDMS отвечает"}
 
-	info, err := r.deps.RCI.ShowVersion(ctx)
+	raw, err := r.deps.NDMSTransport.GetRaw(ctx, "/show/version")
 	if err != nil {
 		res.Status = StatusFail
 		res.Detail = "NDMS не отвечает: " + err.Error()
+		return res
+	}
+	var info struct {
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal(raw, &info); err != nil {
+		res.Status = StatusFail
+		res.Detail = "NDMS вернул невалидный JSON: " + err.Error()
 		return res
 	}
 

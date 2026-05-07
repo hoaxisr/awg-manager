@@ -184,6 +184,35 @@ html.light, [data-theme="light"] {
   --text-tertiary: var(--color-text-muted);
   --border: var(--color-border);
   --border-hover: var(--color-border-hover);
+
+  /* Log subgroup family palette — fg/bg/border per family. */
+  --family-routing-fg:           #5b8def;
+  --family-routing-bg:           rgba(91, 141, 239, 0.12);
+  --family-routing-bd:           rgba(91, 141, 239, 0.32);
+
+  --family-lifecycle-fg:         #e89243;
+  --family-lifecycle-bg:         rgba(232, 146, 67, 0.12);
+  --family-lifecycle-bd:         rgba(232, 146, 67, 0.32);
+
+  --family-network-fg:           #4caf78;
+  --family-network-bg:           rgba(76, 175, 120, 0.12);
+  --family-network-bd:           rgba(76, 175, 120, 0.32);
+
+  --family-policy-fg:            #a874e0;
+  --family-policy-bg:            rgba(168, 116, 224, 0.12);
+  --family-policy-bd:            rgba(168, 116, 224, 0.32);
+
+  --family-system-fg:            #8a9099;
+  --family-system-bg:            rgba(138, 144, 153, 0.12);
+  --family-system-bd:            rgba(138, 144, 153, 0.32);
+
+  --family-feature-fg:           #2dbdb6;
+  --family-feature-bg:           rgba(45, 189, 182, 0.12);
+  --family-feature-bd:           rgba(45, 189, 182, 0.32);
+
+  --family-singbox-runtime-fg:   #c46b8a;
+  --family-singbox-runtime-bg:   rgba(196, 107, 138, 0.12);
+  --family-singbox-runtime-bd:   rgba(196, 107, 138, 0.32);
 }
 
 /* ─── Reset ─── */
@@ -1132,6 +1161,15 @@ label {
 	cursor: not-allowed;
 }
 
+/* Base active state for any .chip without a -level-* / -group-* modifier.
+   Specializations below match this rule's specificity (0,2,0); they win by
+   source order — keep this rule above the .chip-level-* / .chip-group-* blocks. */
+.chip.chip-active {
+	background: var(--color-accent);
+	color: white;
+	border-color: var(--color-accent);
+}
+
 .chip-level-error.chip-active {
 	background: var(--color-error-tint);
 	color: var(--color-error);
@@ -1174,3 +1212,26 @@ label {
 	color: var(--color-error);
 	border-color: var(--color-error-border);
 }
+
+/* Subgroup pill — colored badge keyed by family via [data-family]. */
+.subgroup-pill {
+	display: inline-block;
+	padding: 0.0625rem 0.375rem;
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 1.4;
+	border-radius: var(--radius-pill);
+	font-variant-numeric: tabular-nums;
+	border: 1px solid transparent;
+	/* default for unknown family: muted */
+	color: var(--color-text-muted);
+	background: var(--color-bg-secondary);
+	white-space: nowrap;
+}
+.subgroup-pill[data-family="routing"]         { color: var(--family-routing-fg);         background: var(--family-routing-bg);         border-color: var(--family-routing-bd); }
+.subgroup-pill[data-family="lifecycle"]       { color: var(--family-lifecycle-fg);       background: var(--family-lifecycle-bg);       border-color: var(--family-lifecycle-bd); }
+.subgroup-pill[data-family="network"]         { color: var(--family-network-fg);         background: var(--family-network-bg);         border-color: var(--family-network-bd); }
+.subgroup-pill[data-family="policy"]          { color: var(--family-policy-fg);          background: var(--family-policy-bg);          border-color: var(--family-policy-bd); }
+.subgroup-pill[data-family="system"]          { color: var(--family-system-fg);          background: var(--family-system-bg);          border-color: var(--family-system-bd); }
+.subgroup-pill[data-family="feature"]         { color: var(--family-feature-fg);         background: var(--family-feature-bg);         border-color: var(--family-feature-bd); }
+.subgroup-pill[data-family="singbox-runtime"] { color: var(--family-singbox-runtime-fg); background: var(--family-singbox-runtime-bg); border-color: var(--family-singbox-runtime-bd); }

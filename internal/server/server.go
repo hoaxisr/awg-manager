@@ -27,7 +27,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/openapi"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
-	"github.com/hoaxisr/awg-manager/internal/rci"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 
@@ -494,11 +493,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	externalHandler.SetTunnelListPublisher(tunnelsHandler.PublishTunnelList)
 	updateHandler := api.NewUpdateHandler(s.updaterService, appLog)
 	dnsRouteHandler := api.NewDNSRouteHandler(s.dnsRouteService, appLog)
-	diagRCI := rci.New()
-	diagRCI.SetAppLogger(s.loggingService)
 	diagRunner := diagnostics.NewRunner(diagnostics.Deps{
 		TunnelService:   s.tunnelService,
-		RCI:             diagRCI,
 		NDMSQueries:     s.ndmsQueries,
 		NDMSTransport:   s.ndmsTransport,
 		Backend:         s.activeBackend,

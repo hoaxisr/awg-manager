@@ -485,3 +485,158 @@ proxies:
 		t.Errorf("Refresh result Added=%d Updated=%d, want Added=1 Updated=1", res.Added, res.Updated)
 	}
 }
+
+func TestService_Create_SingboxJSONConfig_Happy(t *testing.T) {
+	// Real Happ-style body: a single sing-box config with outbounds for
+	// vless+trojan+ss+hy2 plus the usual selector / direct service
+	// outbounds the parser must silently drop.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"dns": {"servers": [{"address": "8.8.8.8"}]},
+			"route": {"rules": []},
+			"outbounds": [
+				{"type":"vless","tag":"NL","server":"nl.example.com","server_port":443,"uuid":"3a3b1c2e-9999-4321-aaaa-1234567890ab","flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"sni","reality":{"enabled":true,"public_key":"PK","short_id":"SID"}}},
+				{"type":"trojan","tag":"DE","server":"de.example.com","server_port":443,"password":"p"},
+				{"type":"shadowsocks","tag":"SS","server":"ss.example.com","server_port":8388,"method":"aes-256-gcm","password":"sp"},
+				{"type":"hysteria2","tag":"HY","server":"hy.example.com","server_port":8443,"password":"hp"},
+				{"type":"selector","tag":"select","outbounds":["NL","DE"]},
+				{"type":"direct","tag":"direct"}
+			]
+		}`))
+	}))
+	defer srv.Close()
+
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "happ", URL: srv.URL, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(sub.MemberTags) != 4 {
+		t.Errorf("MemberTags=%d want 4 (vless+trojan+ss+hy2; selector & direct must be dropped)", len(sub.MemberTags))
+	}
+	// 4 members + 1 selector outbound.
+	if len(mutator.addedOutbounds) < 5 {
+		t.Errorf("addedOutbounds=%d want >=5 (4 members + 1 selector)", len(mutator.addedOutbounds))
+	}
+	if len(mutator.addedInbounds) != 1 {
+		t.Errorf("expected 1 mixed inbound, got %d", len(mutator.addedInbounds))
+	}
+}
+
+func TestService_Create_SingboxJSON_EmptyOutbounds(t *testing.T) {
+	// outbounds: [] is the sing-box equivalent of Clash proxies: [] —
+	// account expired / quota exhausted. User must see a specific
+	// "пуста" message rather than the generic share-link hint.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"dns":{"servers":[]},"outbounds":[]}`))
+	}))
+	defer srv.Close()
+
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+
+	_, err := svc.Create(context.Background(), CreateInput{Label: "empty-sb", URL: srv.URL, Enabled: true})
+	if err == nil {
+		t.Fatalf("Create with empty sing-box outbounds must fail")
+	}
+	if !strings.Contains(err.Error(), "пуста") {
+		t.Errorf("error must hint subscription is empty, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "outbounds: []") {
+		t.Errorf("error should mention outbounds: [], got: %v", err)
+	}
+	// ProxyN rollback (same fail-closed contract as the Clash empty path).
+	if len(mutator.removedProxies) != 1 {
+		t.Errorf("expected 1 RemoveProxy rollback, got %d", len(mutator.removedProxies))
+	}
+}
+
+func TestService_Create_JSONBodyWithoutOutbounds_Errors(t *testing.T) {
+	// Body parses as JSON but has no outbounds key anywhere — must
+	// produce a specific "JSON without outbounds" error rather than
+	// fall through to share-link parsing (which would emit
+	// "ни одной валидной ссылки" with a meaningless prefix).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"dns":{"servers":[]},"route":{"rules":[]}}`))
+	}))
+	defer srv.Close()
+
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+
+	_, err := svc.Create(context.Background(), CreateInput{Label: "json-no-outbounds", URL: srv.URL, Enabled: true})
+	if err == nil {
+		t.Fatalf("Create with JSON-shaped body without outbounds must fail")
+	}
+	if !strings.Contains(err.Error(), "JSON") {
+		t.Errorf("error must mention JSON, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "outbounds") {
+		t.Errorf("error must mention missing outbounds, got: %v", err)
+	}
+	if len(mutator.removedProxies) != 1 {
+		t.Errorf("expected 1 RemoveProxy rollback, got %d", len(mutator.removedProxies))
+	}
+}
+
+func TestService_Create_SingboxJSON_BareOutboundsArray(t *testing.T) {
+	// Hiddify-style export: top-level array of outbound objects without
+	// a config envelope. Detection must accept this (Shape 3) and
+	// flatten through the standard Create path.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[
+			{"type":"vless","tag":"v","server":"h1","server_port":443,"uuid":"3a3b1c2e-9999-4321-aaaa-1234567890ab"},
+			{"type":"trojan","tag":"t","server":"h2","server_port":443,"password":"p"}
+		]`))
+	}))
+	defer srv.Close()
+
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "hiddify", URL: srv.URL, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(sub.MemberTags) != 2 {
+		t.Errorf("MemberTags=%d want 2", len(sub.MemberTags))
+	}
+	if len(mutator.addedInbounds) != 1 {
+		t.Errorf("expected 1 mixed inbound, got %d", len(mutator.addedInbounds))
+	}
+}
+
+func TestService_Create_SingboxJSON_ArrayOfConfigs(t *testing.T) {
+	// Multi-config Happ shape: top-level array of sing-box configs.
+	// Outbounds must be flattened in order.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[
+			{"outbounds":[{"type":"vless","tag":"a","server":"h1","server_port":443,"uuid":"3a3b1c2e-9999-4321-aaaa-1234567890ab"}]},
+			{"outbounds":[{"type":"trojan","tag":"b","server":"h2","server_port":443,"password":"p"}]}
+		]`))
+	}))
+	defer srv.Close()
+
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "multi", URL: srv.URL, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(sub.MemberTags) != 2 {
+		t.Errorf("MemberTags=%d want 2 (one per config)", len(sub.MemberTags))
+	}
+}

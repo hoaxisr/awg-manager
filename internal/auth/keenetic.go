@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hoaxisr/awg-manager/internal/rci"
+	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 )
 
 const (
@@ -65,12 +65,15 @@ func (c *KeeneticClient) resolveAddr() {
 
 // getHTTPPort returns router HTTP port from NDMS RCI API.
 func getHTTPPort() int {
-	client := rci.NewWithTimeout(5 * time.Second)
+	client := transport.New(transport.NewSemaphore(1))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
 	var result struct {
 		Message []string `json:"message"`
 	}
-	if err := client.Get(context.Background(), "/show/running-config", &result); err != nil {
+	if err := client.Get(ctx, "/show/running-config", &result); err != nil {
 		return 80
 	}
 

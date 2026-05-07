@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hoaxisr/awg-manager/internal/rci"
+	"github.com/hoaxisr/awg-manager/internal/ndms/payloads"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 )
@@ -106,7 +106,7 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 	ndmsName := NewNWGNames(stored.NWGIndex).NDMSName
 	o.appLog.Full("replace-config", stored.Name, "Syncing peer parameters to NDMS")
 
-	peerCfg := rci.PeerConfig{
+	peerCfg := payloads.PeerConfig{
 		PublicKey: stored.Peer.PublicKey,
 		Endpoint:  stored.Peer.Endpoint,
 	}
@@ -124,7 +124,7 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 		}
 		if _, netw, err := net.ParseCIDR(s); err == nil && netw != nil {
 			ones, _ := netw.Mask.Size()
-			item := rci.AllowedIP{Address: netw.IP.String(), Mask: strconv.Itoa(ones)}
+			item := payloads.AllowedIP{Address: netw.IP.String(), Mask: strconv.Itoa(ones)}
 			if netw.IP.To4() != nil {
 				peerCfg.AllowedIPv4 = append(peerCfg.AllowedIPv4, item)
 			} else {
@@ -134,12 +134,12 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 		}
 		if ip := net.ParseIP(s); ip != nil {
 			if v4 := ip.To4(); v4 != nil {
-				peerCfg.AllowedIPv4 = append(peerCfg.AllowedIPv4, rci.AllowedIP{
+				peerCfg.AllowedIPv4 = append(peerCfg.AllowedIPv4, payloads.AllowedIP{
 					Address: v4.String(),
 					Mask:    "32",
 				})
 			} else {
-				peerCfg.AllowedIPv6 = append(peerCfg.AllowedIPv6, rci.AllowedIP{
+				peerCfg.AllowedIPv6 = append(peerCfg.AllowedIPv6, payloads.AllowedIP{
 					Address: ip.String(),
 					Mask:    "128",
 				})
@@ -148,15 +148,15 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 	}
 
 	_, err := o.transport.PostBatch(ctx, []any{
-		rci.CmdWireguardPeer(ndmsName, peerCfg),
-		rci.CmdSave(),
+		payloads.CmdWireguardPeer(ndmsName, peerCfg),
+		payloads.CmdSave(),
 	})
 	if err != nil {
 		return fmt.Errorf("sync peer: %w", err)
 	}
 
 	if stored.ISPInterface != "" {
-		if _, err := o.transport.Post(ctx, rci.CmdWireguardPeerConnect(ndmsName, stored.Peer.PublicKey, stored.ISPInterface)); err != nil {
+		if _, err := o.transport.Post(ctx, payloads.CmdWireguardPeerConnect(ndmsName, stored.Peer.PublicKey, stored.ISPInterface)); err != nil {
 			o.log.Warnf("nwg: sync peer connect via on %s: %v", ndmsName, err)
 		}
 	}
