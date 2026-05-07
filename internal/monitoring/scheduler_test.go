@@ -2,12 +2,16 @@ package monitoring
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/traffic"
 )
+
+var errFakeDelay = errors.New("fake delay error")
 
 type fakeProber struct {
 	calls   atomic.Int64
@@ -192,6 +196,115 @@ func (f *fakeClashState) LatencyForOutbound(ctx context.Context, tag string) (in
 }
 
 func (f *fakeClashState) Invalidate() {}
+
+type fakeSingboxDelay struct {
+	calls atomic.Int64
+	// last captured args
+	mu      sync.Mutex
+	lastTag string
+	lastURL string
+	delay   int
+	err     error
+}
+
+func (f *fakeSingboxDelay) TestDelay(outboundTag, testURL string, _ time.Duration) (int, error) {
+	f.calls.Add(1)
+	f.mu.Lock()
+	f.lastTag = outboundTag
+	f.lastURL = testURL
+	f.mu.Unlock()
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.delay, nil
+}
+
+func TestScheduler_RunOnce_SingboxRowsUseClashDelay(t *testing.T) {
+	httpProber := &fakeProber{ok: true, latency: 14}
+	clashDelay := &fakeSingboxDelay{delay: 87}
+	hist := NewHistory()
+	sched := NewScheduler(SchedulerDeps{
+		TunnelLister: &fakeLister{tunnels: []traffic.RunningTunnel{
+			{ID: "tn-A", IfaceName: "wg0"},
+		}},
+		SingboxTunnels: &fakeSingboxTunnels{items: []SingboxTunnelInfo{
+			{Tag: "veesp", Name: "veesp", InterfaceName: "t2s0"},
+		}},
+		Prober:       httpProber,
+		SingboxDelay: clashDelay,
+	}, hist)
+
+	sched.RunOnce(context.Background())
+
+	snap := sched.LatestSnapshot()
+	awgCells := 0
+	sbCells := 0
+	for _, c := range snap.Cells {
+		if c.TunnelID == "veesp" {
+			sbCells++
+			if !c.OK || c.LatencyMs == nil || *c.LatencyMs != 87 {
+				t.Errorf("sing-box cell expected latency=87 ok=true, got %+v", c)
+			}
+		}
+		if c.TunnelID == "tn-A" {
+			awgCells++
+			if !c.OK || c.LatencyMs == nil || *c.LatencyMs != 14 {
+				t.Errorf("awg cell expected latency=14 ok=true, got %+v", c)
+			}
+		}
+	}
+	if sbCells == 0 || awgCells == 0 {
+		t.Fatalf("expected cells for both rows, got sb=%d awg=%d", sbCells, awgCells)
+	}
+	// 3 BaseTargets + 1 default self-target for the AWG tunnel = 4 targets
+	// shared with sing-box; sing-box probes only the 3 base ones (no self).
+	// Probe count for HTTPProber should be awg-only (4 cells × 1 awg tunnel).
+	if httpProber.calls.Load() != int64(awgCells) {
+		t.Errorf("HTTPProber called %d times, expected %d (awg cells only)",
+			httpProber.calls.Load(), awgCells)
+	}
+	// SingboxDelay called once per sing-box cell.
+	if clashDelay.calls.Load() != int64(sbCells) {
+		t.Errorf("SingboxDelay called %d times, expected %d (sb cells)",
+			clashDelay.calls.Load(), sbCells)
+	}
+	// Confirm the URL passed to SingboxDelay matches a BaseTarget URL.
+	clashDelay.mu.Lock()
+	gotTag := clashDelay.lastTag
+	gotURL := clashDelay.lastURL
+	clashDelay.mu.Unlock()
+	if gotTag != "veesp" {
+		t.Errorf("SingboxDelay tag = %q, want veesp", gotTag)
+	}
+	if gotURL == "" || gotURL[:5] != "https" {
+		t.Errorf("SingboxDelay URL = %q, want https://...", gotURL)
+	}
+}
+
+func TestScheduler_RunOnce_SingboxDelayErrorMarksCellNotOK(t *testing.T) {
+	httpProber := &fakeProber{ok: true, latency: 14}
+	clashDelay := &fakeSingboxDelay{err: errFakeDelay}
+	hist := NewHistory()
+	sched := NewScheduler(SchedulerDeps{
+		TunnelLister: &fakeLister{},
+		SingboxTunnels: &fakeSingboxTunnels{items: []SingboxTunnelInfo{
+			{Tag: "veesp", Name: "veesp", InterfaceName: "t2s0"},
+		}},
+		Prober:       httpProber,
+		SingboxDelay: clashDelay,
+	}, hist)
+
+	sched.RunOnce(context.Background())
+
+	for _, c := range sched.LatestSnapshot().Cells {
+		if c.TunnelID == "veesp" && (c.OK || c.LatencyMs != nil) {
+			t.Errorf("expected sing-box cell to be not-OK on TestDelay error, got %+v", c)
+		}
+	}
+	if httpProber.calls.Load() != 0 {
+		t.Errorf("HTTPProber must NOT be called for sing-box rows when SingboxDelay is wired, got %d", httpProber.calls.Load())
+	}
+}
 
 func TestScheduler_AugmentSingboxClashData_PopulatesUrltestMembers(t *testing.T) {
 	s := NewScheduler(SchedulerDeps{

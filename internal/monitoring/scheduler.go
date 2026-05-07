@@ -95,6 +95,18 @@ type ClashStateProvider interface {
 	Invalidate()
 }
 
+// SingboxDelayProber issues an honest end-to-end latency probe through
+// a specific sing-box outbound to a specific URL via the Clash API
+// (/proxies/<tag>/delay). Used for sing-box matrix rows in place of
+// the curl-through-interface path, which can be short-circuited by
+// the user's sing-box DNS/route config and produce nonsense (1-2 ms)
+// numbers. Returns delay in ms, or error on transport / non-2xx /
+// outbound-failed responses. Optional — when nil, sing-box rows fall
+// back to the default Prober.
+type SingboxDelayProber interface {
+	TestDelay(outboundTag, testURL string, timeout time.Duration) (int, error)
+}
+
 // SchedulerDeps wires Scheduler against the rest of the system.
 type SchedulerDeps struct {
 	TunnelLister   traffic.TunnelLister
@@ -103,6 +115,7 @@ type SchedulerDeps struct {
 	SingboxTunnels SingboxTunnelLister     // optional — when nil, sing-box tunnels are skipped
 	Composites     CompositeOutboundLister // optional — when nil, urltest membership is skipped
 	ClashState     ClashStateProvider      // optional — when nil, ClashDelay/UrltestGroup are not populated
+	SingboxDelay   SingboxDelayProber      // optional — when nil, sing-box rows use the default Prober
 	Prober         Prober                  // default prober for all cells
 	ICMPProber     Prober                  // optional — used for self-target cells when tunnel.SelfMethod=="ping"
 	Log            logging.AppLogger
@@ -162,6 +175,13 @@ func (s *Scheduler) SetComposites(l CompositeOutboundLister) {
 // set, ClashDelay/UrltestGroup are not populated.
 func (s *Scheduler) SetClashState(p ClashStateProvider) {
 	s.deps.ClashState = p
+}
+
+// SetSingboxDelay wires the Clash-API delay prober after construction.
+// Optional — when never set, sing-box rows fall back to the default
+// Prober (curl-through-interface).
+func (s *Scheduler) SetSingboxDelay(p SingboxDelayProber) {
+	s.deps.SingboxDelay = p
 }
 
 // Start launches the background loop and returns immediately.
@@ -244,19 +264,13 @@ func (s *Scheduler) RunOnce(ctx context.Context) {
 			if isSelf && (tun.SelfMethod == "disabled" || tun.SelfMethod == "handshake") {
 				continue
 			}
-			prober := s.proberFor(tun, isSelf)
 			wg.Add(1)
 			sem <- struct{}{}
-			go func(t Target, tn Tunnel, self bool, p Prober) {
+			go func(t Target, tn Tunnel, self bool) {
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				latency, ok := 0, false
-				if self && tn.Source == "singbox" && tn.ClashDelay > 0 {
-					latency, ok = tn.ClashDelay, true
-				} else {
-					latency, ok = p.Probe(ctx, t.Host, tn.IfaceName, s.probeTimeout)
-				}
+	      latency, ok := s.runProbeCell(ctx, t, tn, self)	  
 				now := time.Now()
 
 				sample := Sample{TS: now, OK: ok}
@@ -282,7 +296,7 @@ func (s *Scheduler) RunOnce(ctx context.Context) {
 				cellsMu.Lock()
 				cells = append(cells, cell)
 				cellsMu.Unlock()
-			}(target, tun, isSelf, prober)
+			}(target, tun, isSelf)
 		}
 	}
 	wg.Wait()
@@ -379,6 +393,28 @@ func (s *Scheduler) proberFor(tun Tunnel, isSelf bool) Prober {
 		return s.deps.ICMPProber
 	}
 	return s.deps.Prober
+}
+
+// runProbeCell measures latency for one (target × tunnel) cell.
+// Sing-box tunnels go through the Clash API delay endpoint when wired —
+// honest end-to-end through the proxy outbound. Everything else uses the
+// interface-bound Prober.
+func (s *Scheduler) runProbeCell(ctx context.Context, t Target, tn Tunnel, isSelf bool) (int, bool) {
+	if tn.Source == "singbox" && s.deps.SingboxDelay != nil && tn.SingboxTag != "" {
+		probeURL := t.URL
+		if probeURL == "" && t.Host != "" {
+			probeURL = "https://" + t.Host + "/"
+		}
+		if probeURL == "" {
+			return 0, false
+		}
+		d, err := s.deps.SingboxDelay.TestDelay(tn.SingboxTag, probeURL, s.probeTimeout)
+		if err != nil || d <= 0 {
+			return 0, false
+		}
+		return d, true
+	}
+	return s.proberFor(tn, isSelf).Probe(ctx, t.Host, tn.IfaceName, s.probeTimeout)
 }
 
 // collectTunnels assembles Tunnel records from:

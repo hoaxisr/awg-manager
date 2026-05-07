@@ -8,10 +8,17 @@
 package monitoring
 
 // Target is a single monitoring probe target.
+//
+// URL is the HTTPS endpoint used by sing-box rows (Clash API
+// /proxies/<tag>/delay). HTTP is unsafe — sing-box upstream
+// forces HTTPS in this endpoint (sagernet/sing-box#3604) — so
+// callers must pass HTTPS URLs only. AWG rows ignore URL and
+// probe Host directly via curl bound to the tunnel interface.
 type Target struct {
 	ID   string `json:"id"`
 	Host string `json:"host"`
 	Name string `json:"name"`
+	URL  string `json:"url,omitempty"`
 }
 
 // Tunnel is a running tunnel relevant for monitoring (subset of the full
@@ -43,9 +50,9 @@ type Tunnel struct {
 // BaseTargets is the hardcoded base list. Extend by code change only — there
 // is no CRUD UI for targets.
 var BaseTargets = []Target{
-	{ID: "cf-1.1.1.1", Host: "1.1.1.1", Name: "Cloudflare DNS"},
-	{ID: "g-8.8.8.8", Host: "8.8.8.8", Name: "Google DNS"},
-	{ID: "q-9.9.9.9", Host: "9.9.9.9", Name: "Quad9 DNS"},
+	{ID: "cf-1.1.1.1", Host: "1.1.1.1", Name: "Cloudflare DNS", URL: "https://1.1.1.1/"},
+	{ID: "g-8.8.8.8", Host: "8.8.8.8", Name: "Google DNS", URL: "https://8.8.8.8/"},
+	{ID: "q-9.9.9.9", Host: "9.9.9.9", Name: "Quad9 DNS", URL: "https://9.9.9.9/"},
 }
 
 // EffectiveTargets returns BaseTargets ∪ unique pingcheck targets.

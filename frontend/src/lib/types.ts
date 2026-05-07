@@ -1151,6 +1151,7 @@ export interface MonitoringTarget {
 	id: string;
 	host: string;
 	name: string;
+	url?: string;
 }
 
 export interface MonitoringTunnel {

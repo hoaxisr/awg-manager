@@ -918,6 +918,7 @@ func main() {
 	monitoringService.SetSingboxTunnels(&monitoringSingboxTunnelAdapter{op: singboxOp})
 	monitoringService.SetComposites(&monitoringCompositesAdapter{svc: routerSvc})
 	monitoringService.SetClashState(monitoring.NewClashState(clashProxy.ClashBaseURL, nil))
+	monitoringService.SetSingboxDelay(singboxOp.Clash())
 
 	srv.SetSingboxRouterHandler(api.NewSingboxRouterHandler(routerSvc, loggingService))
 	srv.SetAWGOutboundsHandler(api.NewAWGOutboundsHandler(awgoutboundsSvc))
