@@ -21,6 +21,8 @@
 	import type { Subscription, SubscriptionMember } from '$lib/types';
 
 	type TunnelTab = 'awg' | 'singbox' | 'subscriptions';
+	type SoftWarmupTarget = 'awg' | 'singbox';
+	const SOFT_CARD_LATENCY_EVENT = 'awgm:soft-card-latency-refresh';
 
 	// Polling-store subscription: first subscriber triggers the fetch,
 	// the last unsubscribe stops polling. `$tunnels` yields a
@@ -194,6 +196,10 @@
 
 	// Tabs
 	let activeTab = $state<TunnelTab>('awg');
+	let tabsReady = $state(false);
+	let lastWarmupTab = $state<TunnelTab | ''>('');
+	let warmupTimer: ReturnType<typeof setTimeout> | null = null;
+	const warmupDelayMs = 1_100;
 
 	const tunnelTabs = $derived(
 		[
@@ -226,10 +232,30 @@
 		if (stored === 'awg' || stored === 'singbox' || stored === 'subscriptions') {
 			activeTab = stored;
 		}
+		tabsReady = true;
+	});
+
+	onDestroy(() => {
+		if (warmupTimer) clearTimeout(warmupTimer);
 	});
 
 	$effect(() => {
 		sessionStorage.setItem('tunnelsTab', activeTab);
+	});
+
+	function scheduleSoftCardWarmup(target: SoftWarmupTarget): void {
+		if (warmupTimer) clearTimeout(warmupTimer);
+		warmupTimer = setTimeout(() => {
+			window.dispatchEvent(new CustomEvent(SOFT_CARD_LATENCY_EVENT, { detail: { target } }));
+		}, warmupDelayMs);
+	}
+
+	$effect(() => {
+		if (!tabsReady || loading) return;
+		if (activeTab === 'subscriptions') return;
+		if (lastWarmupTab === activeTab) return;
+		lastWarmupTab = activeTab;
+		scheduleSoftCardWarmup(activeTab === 'awg' ? 'awg' : 'singbox');
 	});
 
 	// External tunnels

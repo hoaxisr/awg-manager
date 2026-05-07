@@ -156,7 +156,7 @@ func (f *LogForwarder) forward(line []byte) {
 	if scoped == nil {
 		return
 	}
-	switch strings.ToLower(strings.TrimSpace(e.Type)) {
+	switch classifyForwardedLogLevel(strings.ToLower(strings.TrimSpace(e.Type)), payload) {
 	case "error", "fatal", "panic":
 		scoped.Error("run", target, message)
 	case "warn", "warning":
@@ -168,6 +168,25 @@ func (f *LogForwarder) forward(line []byte) {
 	default:
 		scoped.Full("run", target, message)
 	}
+}
+
+func classifyForwardedLogLevel(kind, payload string) string {
+	switch kind {
+	case "trace":
+		if isForwardedTraceNoise(payload) {
+			return "debug"
+		}
+		return "full"
+	default:
+		return kind
+	}
+}
+
+func isForwardedTraceNoise(payload string) bool {
+	lower := strings.ToLower(strings.TrimSpace(payload))
+	return strings.Contains(lower, "xtls") ||
+		strings.Contains(lower, "connection: connection upload finished") ||
+		strings.Contains(lower, "connection: connection download closed")
 }
 
 func (f *LogForwarder) scopedFor(subgroup string) *logging.ScopedLogger {

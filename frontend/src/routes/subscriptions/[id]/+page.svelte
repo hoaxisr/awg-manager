@@ -8,6 +8,9 @@
 	import { Tabs, Button } from '$lib/components/ui';
 	import SubscriptionMembersTab from '$lib/components/subscriptions/SubscriptionMembersTab.svelte';
 	import SubscriptionSettingsTab from '$lib/components/subscriptions/SubscriptionSettingsTab.svelte';
+	const SOFT_CARD_LATENCY_EVENT = 'awgm:soft-card-latency-refresh';
+	let warmupTimer: ReturnType<typeof setTimeout> | null = null;
+	let lastWarmupTab = $state<'members' | 'settings' | ''>('');
 
 	const id = $derived($page.params.id ?? '');
 	let subscription = $state<Subscription | null>(null);
@@ -34,7 +37,32 @@
 		}
 	}
 
-	onMount(reload);
+	function scheduleMembersWarmup(): void {
+		if (warmupTimer) clearTimeout(warmupTimer);
+		warmupTimer = setTimeout(() => {
+			window.dispatchEvent(
+				new CustomEvent(SOFT_CARD_LATENCY_EVENT, { detail: { target: 'subscription-members' } }),
+			);
+		}, 900);
+	}
+
+	onMount(() => {
+		void reload();
+		return () => {
+			if (warmupTimer) clearTimeout(warmupTimer);
+		};
+	});
+
+	$effect(() => {
+		if (active !== 'members') {
+			lastWarmupTab = '';
+			return;
+		}
+		if (loading || !subscription) return;
+		if (lastWarmupTab === active) return;
+		lastWarmupTab = active;
+		scheduleMembersWarmup();
+	});
 </script>
 
 <svelte:head>

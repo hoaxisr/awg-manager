@@ -378,6 +378,33 @@ func TestClassifyProcessLine(t *testing.T) {
 	}
 }
 
+func TestClassifyProcessMirrorLine(t *testing.T) {
+	tests := []struct {
+		name  string
+		in    string
+		want  logging.Level
+		keep  bool
+	}{
+		{"startup kept", "+0000 2026-05-07 13:04:54 INFO sing-box started (0.12s)", logging.LevelInfo, true},
+		{"listener kept", "+0000 2026-05-07 13:04:54 INFO inbound/mixed[x]: tcp server started at 127.0.0.1:1080", logging.LevelInfo, true},
+		{"warning kept", "+0000 2026-05-07 13:04:54 WARN deprecated config field", logging.LevelWarn, true},
+		{"trace xtls downgraded", "+0000 2026-05-07 13:05:59 TRACE outbound/vless[x]: XtlsPadding 64 1235 0", logging.LevelDebug, true},
+		{"structured duplicate dropped", "+0000 2026-05-07 13:05:59 INFO outbound/vless[x]: outbound connection to 8.8.8.8:443", "", false},
+		{"dns duplicate dropped", "+0000 2026-05-07 13:05:59 DEBUG dns: lookup domain iq0.mooo.com", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := classifyProcessMirrorLine(tc.in)
+			if ok != tc.keep {
+				t.Fatalf("classifyProcessMirrorLine(%q) keep=%v want %v", tc.in, ok, tc.keep)
+			}
+			if got != tc.want {
+				t.Fatalf("classifyProcessMirrorLine(%q) level=%q want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestInstalledBinaryPath_PrefersManagedBinary(t *testing.T) {
 	dir := t.TempDir()
 	managed := filepath.Join(dir, "managed-sing-box")

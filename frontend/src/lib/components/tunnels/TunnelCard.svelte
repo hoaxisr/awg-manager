@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { onMount, onDestroy, untrack } from 'svelte';
 	import type { TunnelListItem } from '$lib/types';
 	import { Toggle, TrafficChart, VersionBadge, Badge } from '$lib/components/ui';
 	import { tunnels } from '$lib/stores/tunnels';
@@ -7,6 +7,7 @@
 	import { formatRelativeTime, formatDuration, secondsSince } from '$lib/utils/format';
 	import { getTrafficRates, subscribeTraffic, loadHistory } from '$lib/stores/traffic';
 	import ConnectivitySettingsModal from './ConnectivitySettingsModal.svelte';
+	const SOFT_CARD_LATENCY_EVENT = 'awgm:soft-card-latency-refresh';
 
 	interface Props {
 		tunnel: TunnelListItem;
@@ -82,6 +83,7 @@
 	let latencyMs = $derived(connData?.latency ?? null);
 
 	let manualChecking = $state(false);
+	let lastSoftWarmupAt = 0;
 	async function checkConnectivityManual(): Promise<void> {
 		if (manualChecking) return;
 		manualChecking = true;
@@ -93,6 +95,14 @@
 		} finally {
 			manualChecking = false;
 		}
+	}
+
+	async function runSoftConnectivityWarmup(): Promise<void> {
+		if (!isActive || isCheckDisabled || manualChecking) return;
+		const now = Date.now();
+		if (now - lastSoftWarmupAt < 15_000) return;
+		lastSoftWarmupAt = now;
+		await checkConnectivityManual();
 	}
 
 	// ─── Server / address parsing ───────────────────────────────────
@@ -157,6 +167,16 @@
 		if (initialLoadDone) return;
 		initialLoadDone = true;
 		untrack(() => loadHistory(id));
+	});
+
+	onMount(() => {
+		const onSoftRefresh = (event: Event) => {
+			const detail = (event as CustomEvent<{ target?: string }>).detail;
+			if (detail?.target !== 'awg') return;
+			void runSoftConnectivityWarmup();
+		};
+		window.addEventListener(SOFT_CARD_LATENCY_EVENT, onSoftRefresh as EventListener);
+		return () => window.removeEventListener(SOFT_CARD_LATENCY_EVENT, onSoftRefresh as EventListener);
 	});
 
 	// ─── Card border class hook (status-tinted) ─────────────────────

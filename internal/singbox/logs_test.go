@@ -181,3 +181,24 @@ func TestLogForwarder_NilAppLoggerIsSafe(t *testing.T) {
 	f := NewLogForwarder("unused", nil)
 	f.forward([]byte(`{"type":"info","payload":"hello"}`))
 }
+
+func TestClassifyForwardedLogLevel_TraceNoiseToDebug(t *testing.T) {
+	cases := []struct {
+		name    string
+		kind    string
+		payload string
+		want    string
+	}{
+		{"xtls noise", "trace", "outbound/vless[x]: XtlsPadding 64 1235 0", "debug"},
+		{"connection close noise", "trace", "connection: connection download closed", "debug"},
+		{"router trace stays full", "trace", "router: match rule inbound=tproxy-in -> outbound=awg10", "full"},
+		{"info unchanged", "info", "outbound/direct[direct]: outbound connection to 1.1.1.1:443", "info"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyForwardedLogLevel(tc.kind, tc.payload); got != tc.want {
+				t.Fatalf("classifyForwardedLogLevel(%q,%q)=%q want %q", tc.kind, tc.payload, got, tc.want)
+			}
+		})
+	}
+}

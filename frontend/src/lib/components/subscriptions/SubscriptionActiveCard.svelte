@@ -12,6 +12,7 @@
     import type { Subscription, SubscriptionMember } from '$lib/types';
     import SubscriptionMemberPicker from './SubscriptionMemberPicker.svelte';
     import SingboxSpeedTestModal from '$lib/components/singbox/SingboxSpeedTestModal.svelte';
+    const SOFT_CARD_LATENCY_EVENT = 'awgm:soft-card-latency-refresh';
 
     interface Props {
         subscription: Subscription;
@@ -23,6 +24,7 @@
     let checking = $state(false);
     let speedtestOpen = $state(false);
     let showServer = $state(false);
+    let lastSoftWarmupAt = 0;
 
     // NDMS Proxy interface name (Proxy<N>) and matching kernel TUN
     // (t2s<N>) — same naming convention sing-box tunnels use, just
@@ -93,6 +95,14 @@
         }
     }
 
+    async function runSoftDelayWarmup(): Promise<void> {
+        if (checking) return;
+        const now = Date.now();
+        if (now - lastSoftWarmupAt < 15_000) return;
+        lastSoftWarmupAt = now;
+        await triggerCheck();
+    }
+
     async function pickMember(memberTag: string): Promise<void> {
         await api.setSubscriptionActiveMember(subscription.id, memberTag);
         await subscriptionsStore.refetch();
@@ -109,13 +119,15 @@
         return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
     }
 
-    // Auto-trigger an initial delay check on mount if history is empty,
-    // so a freshly-opened tab paints meaningful data without the user
-    // pressing the button.
     onMount(() => {
-        if (history.length === 0) {
-            void triggerCheck();
-        }
+        const onSoftRefresh = (event: Event) => {
+            const detail = (event as CustomEvent<{ target?: string }>).detail;
+            if (detail?.target !== 'singbox') return;
+            void runSoftDelayWarmup();
+        };
+        window.addEventListener(SOFT_CARD_LATENCY_EVENT, onSoftRefresh as EventListener);
+        return () =>
+            window.removeEventListener(SOFT_CARD_LATENCY_EVENT, onSoftRefresh as EventListener);
     });
 </script>
 

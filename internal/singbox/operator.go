@@ -167,6 +167,9 @@ func NewOperator(d OperatorDeps) *Operator {
 // as lastError so the UI shows them when sing-box subsequently dies.
 func (o *Operator) handleStderrLine(line string) {
 	clean := normalizeProcessLogLine(line)
+	if clean == "" {
+		return
+	}
 	upper := strings.ToUpper(clean)
 	switch {
 	case strings.Contains(upper, "FATAL"):
@@ -181,8 +184,18 @@ func (o *Operator) handleStderrLine(line string) {
 			o.processLogger.Warn("stderr", "", clean)
 		}
 	default:
-		o.log.Info("singbox stderr", "line", clean)
-		if o.processLogger != nil {
+		level, ok := classifyProcessMirrorLine(clean)
+		if !ok || o.processLogger == nil {
+			return
+		}
+		switch level {
+		case logging.LevelWarn:
+			o.processLogger.Warn("stderr", "", clean)
+		case logging.LevelFull:
+			o.processLogger.Full("stderr", "", clean)
+		case logging.LevelDebug:
+			o.processLogger.Debug("stderr", "", clean)
+		default:
 			o.processLogger.Info("stderr", "", clean)
 		}
 	}
@@ -228,6 +241,58 @@ func classifyProcessLine(line string) logging.Level {
 	default:
 		return logging.LevelInfo
 	}
+}
+
+// classifyProcessMirrorLine decides whether a raw sing-box stderr line should
+// be mirrored into the user-facing `singbox/process` stream. The clash log
+// forwarder already surfaces structured inbound/outbound/dns/router/runtime
+// events, so this stream is reserved for lifecycle messages, warnings and
+// fatal diagnostics. Highly repetitive trace/debug transport chatter is
+// either suppressed here or pushed down to DEBUG only.
+func classifyProcessMirrorLine(line string) (logging.Level, bool) {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	if lower == "" {
+		return "", false
+	}
+	switch {
+	case strings.Contains(lower, "warn"):
+		return logging.LevelWarn, true
+	case strings.Contains(lower, "trace") && isProcessTraceNoise(lower):
+		return logging.LevelDebug, true
+	case isProcessStructuredDuplicate(lower):
+		return "", false
+	case isProcessLifecycleMessage(lower):
+		return logging.LevelInfo, true
+	case strings.Contains(lower, "debug"):
+		return logging.LevelDebug, true
+	default:
+		return logging.LevelFull, true
+	}
+}
+
+func isProcessStructuredDuplicate(lower string) bool {
+	return strings.Contains(lower, " inbound/") ||
+		strings.Contains(lower, " outbound/") ||
+		strings.Contains(lower, " router:") ||
+		strings.Contains(lower, " dns:")
+}
+
+func isProcessTraceNoise(lower string) bool {
+	return strings.Contains(lower, "xtls") ||
+		strings.Contains(lower, "connection upload finished") ||
+		strings.Contains(lower, "connection download closed") ||
+		strings.Contains(lower, "lookup domain ") ||
+		strings.Contains(lower, "lookup succeed") ||
+		strings.Contains(lower, "cached ") ||
+		strings.Contains(lower, "exchanged ")
+}
+
+func isProcessLifecycleMessage(lower string) bool {
+	return strings.Contains(lower, "sing-box started") ||
+		strings.Contains(lower, "server started at") ||
+		strings.Contains(lower, "restful api listening") ||
+		strings.Contains(lower, "updated default interface") ||
+		strings.Contains(lower, "updated default network")
 }
 
 // handleExit is invoked when the sing-box process exits AFTER the

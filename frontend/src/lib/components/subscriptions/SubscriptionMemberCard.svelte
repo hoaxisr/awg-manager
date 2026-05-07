@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import type { SubscriptionMember } from '$lib/types';
 	import { singboxDelayHistory, triggerDelayCheck } from '$lib/stores/singbox';
+	const SOFT_CARD_LATENCY_EVENT = 'awgm:soft-card-latency-refresh';
 
 	interface Props {
 		member: SubscriptionMember;
@@ -16,6 +18,7 @@
 
 	let testing = $state(false);
 	let showServer = $state(false);
+	let lastSoftWarmupAt = 0;
 	async function runTest(e: MouseEvent | KeyboardEvent): Promise<void> {
 		e.stopPropagation(); // don't trigger card-as-radio click
 		if (testing) return;
@@ -25,6 +28,13 @@
 		} finally {
 			testing = false;
 		}
+	}
+	async function runSoftDelayWarmup(): Promise<void> {
+		if (testing) return;
+		const now = Date.now();
+		if (now - lastSoftWarmupAt < 15_000) return;
+		lastSoftWarmupAt = now;
+		await runTest(new MouseEvent('click'));
 	}
 	function onTestKeydown(e: KeyboardEvent): void {
 		if (e.key === 'Enter' || e.key === ' ') {
@@ -78,6 +88,16 @@
 	const titleText = $derived.by(() => {
 		if (member.label && member.label.trim() !== '') return member.label;
 		return showServer ? member.server : '●●●●●●●●';
+	});
+
+	onMount(() => {
+		const onSoftRefresh = (event: Event) => {
+			const detail = (event as CustomEvent<{ target?: string }>).detail;
+			if (detail?.target !== 'subscription-members') return;
+			void runSoftDelayWarmup();
+		};
+		window.addEventListener(SOFT_CARD_LATENCY_EVENT, onSoftRefresh as EventListener);
+		return () => window.removeEventListener(SOFT_CARD_LATENCY_EVENT, onSoftRefresh as EventListener);
 	});
 </script>
 

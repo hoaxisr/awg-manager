@@ -8,10 +8,11 @@
 		singboxTraffic,
 		triggerDelayCheck,
 	} from '$lib/stores/singbox';
-	import { untrack } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { Modal, Button, TrafficChart } from '$lib/components/ui';
 	import { getTrafficRates, subscribeTraffic, loadHistory } from '$lib/stores/traffic';
 	import SingboxSpeedTestModal from './SingboxSpeedTestModal.svelte';
+	const SOFT_CARD_LATENCY_EVENT = 'awgm:soft-card-latency-refresh';
 
 	interface Props {
 		tunnel: SingboxTunnel;
@@ -23,6 +24,7 @@
 	let confirmDeleteOpen = $state(false);
 	let showServer = $state(false);
 	let checking = $state(false);
+	let lastSoftWarmupAt = 0;
 
 	const DELAY_OK = 200;
 	const DELAY_SLOW = 500;
@@ -40,14 +42,14 @@
 	);
 	const traffic = $derived($singboxTraffic.get(tunnel.tag));
 
-	type State = 'ok' | 'slow' | 'fail' | 'unknown' | 'stopped';
+	type State = 'ok' | 'slow' | 'fail' | 'pending' | 'stopped';
 	const cardState: State = $derived.by(() => {
 		// Runtime truth takes priority over delay history: if the process
 		// is dead or the TUN is missing, recent latency numbers are stale
 		// noise. Show 'stopped' so the user knows to restart the daemon
 		// instead of debugging a timeout that isn't actually a timeout.
 		if (tunnel.running === false) return 'stopped';
-		if (effectiveLatest === undefined) return 'unknown';
+		if (checking || effectiveLatest === undefined) return 'pending';
 		if (effectiveLatest <= 0) return 'fail';
 		if (effectiveLatest < DELAY_OK) return 'ok';
 		if (effectiveLatest < DELAY_SLOW) return 'slow';
@@ -56,7 +58,7 @@
 
 	const latText = $derived.by(() => {
 		if (cardState === 'stopped') return 'stopped';
-		if (cardState === 'unknown') return '—';
+		if (cardState === 'pending') return 'получение…';
 		if (cardState === 'fail') return 'timeout';
 		return `${effectiveLatest}ms`;
 	});
@@ -75,6 +77,14 @@
 		} finally {
 			checking = false;
 		}
+	}
+
+	async function runSoftDelayWarmup(): Promise<void> {
+		if (tunnel.running === false || checking) return;
+		const now = Date.now();
+		if (now - lastSoftWarmupAt < 15_000) return;
+		lastSoftWarmupAt = now;
+		await triggerCheck();
 	}
 
 	async function remove(): Promise<void> {
@@ -135,9 +145,19 @@
 		untrack(() => loadHistory(tag));
 	});
 
+	onMount(() => {
+		const onSoftRefresh = (event: Event) => {
+			const detail = (event as CustomEvent<{ target?: string }>).detail;
+			if (detail?.target !== 'singbox') return;
+			void runSoftDelayWarmup();
+		};
+		window.addEventListener(SOFT_CARD_LATENCY_EVENT, onSoftRefresh as EventListener);
+		return () => window.removeEventListener(SOFT_CARD_LATENCY_EVENT, onSoftRefresh as EventListener);
+	});
+
 </script>
 
-<div class="card" class:ok={cardState === 'ok'} class:slow={cardState === 'slow'} class:fail={cardState === 'fail'} class:unknown={cardState === 'unknown'} class:stopped={cardState === 'stopped'}>
+<div class="card" class:ok={cardState === 'ok'} class:slow={cardState === 'slow'} class:fail={cardState === 'fail'} class:pending={cardState === 'pending'} class:stopped={cardState === 'stopped'}>
 	<div class="led-wrap">
 		<span class="dot {cardState}" aria-hidden="true"></span>
 		<button
@@ -215,8 +235,8 @@
 		<div class="chart-head">
 			<span>Delay (5 мин)</span>
 			<span class="stats">
-				{#if cardState === 'unknown'}
-					ещё не тестировали
+				{#if cardState === 'pending'}
+					получаем первые данные
 				{:else if cardState === 'fail'}
 					<span class="err">не отвечает</span>
 				{:else}
@@ -312,6 +332,7 @@
 	.card.ok { border-color: rgba(16, 185, 129, 0.3); }
 	.card.slow { border-color: rgba(245, 158, 11, 0.3); }
 	.card.fail { border-color: rgba(239, 68, 68, 0.3); }
+	.card.pending { border-color: rgba(96, 165, 250, 0.35); }
 	.card.stopped { border-color: rgba(148, 163, 184, 0.4); opacity: 0.7; }
 
 	.led-wrap {
@@ -331,6 +352,11 @@
 	.dot.ok { background: #10b981; box-shadow: 0 0 6px rgba(16, 185, 129, 0.6); }
 	.dot.slow { background: #f59e0b; box-shadow: 0 0 6px rgba(245, 158, 11, 0.6); }
 	.dot.fail { background: #ef4444; box-shadow: 0 0 6px rgba(239, 68, 68, 0.6); }
+	.dot.pending {
+		background: #60a5fa;
+		box-shadow: 0 0 6px rgba(96, 165, 250, 0.5);
+		animation: pulse-pending 1.2s ease-in-out infinite;
+	}
 	.dot.stopped { background: #94a3b8; }
 
 	.lat-btn {
@@ -356,6 +382,7 @@
 	.lat-btn.ok { color: #10b981; }
 	.lat-btn.slow { color: #fbbf24; }
 	.lat-btn.fail { color: #ef4444; }
+	.lat-btn.pending { color: #93c5fd; }
 	.lat-btn.stopped { color: #94a3b8; }
 	.lat-btn svg {
 		width: 11px;
@@ -366,6 +393,10 @@
 	.lat-btn:hover:not(:disabled) svg { opacity: 1; }
 	.lat-btn.checking svg { animation: spin 1s linear infinite; }
 	@keyframes spin { to { transform: rotate(360deg); } }
+	@keyframes pulse-pending {
+		0%, 100% { opacity: 0.55; transform: scale(0.95); }
+		50% { opacity: 1; transform: scale(1); }
+	}
 
 	.title {
 		margin: 0 0 3px;
@@ -482,9 +513,9 @@
 		min-height: 2px;
 	}
 	.spark.fail .bar { background: rgba(239, 68, 68, 0.4); height: 100% !important; }
-	.spark.unknown .bar,
+	.spark.pending .bar,
 	.spark .bar.empty {
-		background: var(--border);
+		background: linear-gradient(to top, rgba(96, 165, 250, 0.22), rgba(147, 197, 253, 0.45));
 		height: 30% !important;
 	}
 
