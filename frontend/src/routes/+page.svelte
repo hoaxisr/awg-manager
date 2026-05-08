@@ -232,6 +232,79 @@
 		sessionStorage.setItem('tunnelsTab', activeTab);
 	});
 
+	let awgAutoConnectivityNonce = $state(0);
+	let singboxAutoDelayCheckNonce = $state(0);
+	let lastAutoCheckKey = '';
+	let currentTunnelSurface = '';
+	let tunnelSurfaceEntryNonce = $state(0);
+
+	function activeAwgConnectivityIds(): string {
+		return awgList
+			.filter((t) =>
+				t.enabled &&
+				(t.status === 'running' || t.status === 'broken') &&
+				(t.connectivityCheck?.method ?? 'http') !== 'disabled'
+			)
+			.map((t) => t.id)
+			.sort()
+			.join(',');
+	}
+
+	function activeSingboxDelayTags(): string {
+		return singboxTunnelsList
+			.filter((t) => t.running === true)
+			.map((t) => t.tag)
+			.sort()
+			.join(',');
+	}
+
+	function activeSubscriptionDelayTags(): string {
+		return subscriptionsActiveCards
+			.map((card) => card.activeMember.tag)
+			.filter(Boolean)
+			.sort()
+			.join(',');
+	}
+
+	$effect(() => {
+		const surface = $page.url.pathname === '/' ? activeTab : 'outside';
+		if (surface === currentTunnelSurface) return;
+		currentTunnelSurface = surface;
+		tunnelSurfaceEntryNonce += 1;
+	});
+
+	$effect(() => {
+		const path = $page.url.pathname;
+		const tab = activeTab;
+		const entry = tunnelSurfaceEntryNonce;
+		if (path !== '/' || tab !== 'awg' || loading) return;
+
+		const ids = activeAwgConnectivityIds();
+		if (!ids) return;
+
+		const key = `awg:${entry}:${ids}`;
+		if (key === lastAutoCheckKey) return;
+		lastAutoCheckKey = key;
+		awgAutoConnectivityNonce += 1;
+	});
+
+	$effect(() => {
+		const path = $page.url.pathname;
+		const tab = activeTab;
+		const entry = tunnelSurfaceEntryNonce;
+		if (path !== '/' || tab !== 'singbox') return;
+
+		const tags = [activeSingboxDelayTags(), activeSubscriptionDelayTags()]
+			.filter(Boolean)
+			.join('|');
+		if (!tags) return;
+
+		const key = `singbox:${entry}:${tags}`;
+		if (key === lastAutoCheckKey) return;
+		lastAutoCheckKey = key;
+		singboxAutoDelayCheckNonce += 1;
+	});
+
 	// External tunnels
 	let adoptDialogOpen = $state(false);
 	let adoptingInterface = $state('');
@@ -500,11 +573,13 @@
 				</div>
 			</div>
 			<div class="tunnel-grid">
-				{#each awgList as tunnel (tunnel.id)}
+				{#each awgList as tunnel, i (tunnel.id)}
 					<TunnelCard
 						{tunnel}
 						toggleLoading={toggleLoading[tunnel.id] ?? false}
 						deleteLoading={deleteLoading[tunnel.id] ?? false}
+						autoConnectivityNonce={awgAutoConnectivityNonce}
+						autoConnectivityDelayMs={i * 180}
 						onToggleOnOff={() => handleToggleOnOff(tunnel.id)}
 						ondelete={() => requestDelete(tunnel.id)}
 						ondetail={(id) => openDetail(id)}
@@ -591,18 +666,24 @@
 				</div>
 			{:else if singboxTunnelsList.length > 0}
 				<div class="tunnel-grid">
-					{#each singboxTunnelsList as tunnel (tunnel.tag)}
-						<SingboxTunnelCard {tunnel} />
+					{#each singboxTunnelsList as tunnel, i (tunnel.tag)}
+						<SingboxTunnelCard
+							{tunnel}
+							autoDelayCheckNonce={singboxAutoDelayCheckNonce}
+							autoDelayCheckDelayMs={i * 180}
+						/>
 					{/each}
 				</div>
 			{/if}
 			{#if subscriptionsActiveCards.length > 0}
 				<h3 class="section-head">Подписки — активные ({subscriptionsActiveCards.length})</h3>
 				<div class="active-grid">
-					{#each subscriptionsActiveCards as card (card.subscription.id)}
+					{#each subscriptionsActiveCards as card, i (card.subscription.id)}
 						<SubscriptionActiveCard
 							subscription={card.subscription}
 							activeMember={card.activeMember}
+							autoDelayCheckNonce={singboxAutoDelayCheckNonce}
+							autoDelayCheckDelayMs={(singboxTunnelsList.length + i) * 180}
 						/>
 					{/each}
 				</div>

@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
+    import { untrack } from 'svelte';
     import { goto } from '$app/navigation';
     import { api } from '$lib/api/client';
     import { Button } from '$lib/components/ui';
@@ -16,8 +16,15 @@
     interface Props {
         subscription: Subscription;
         activeMember: SubscriptionMember;
+        autoDelayCheckNonce?: number;
+        autoDelayCheckDelayMs?: number;
     }
-    let { subscription, activeMember }: Props = $props();
+    let {
+        subscription,
+        activeMember,
+        autoDelayCheckNonce = 0,
+        autoDelayCheckDelayMs = 0,
+    }: Props = $props();
 
     let pickerOpen = $state(false);
     let checking = $state(false);
@@ -79,6 +86,22 @@
         }
     }
 
+    let lastAutoDelayCheckNonce = 0;
+    $effect(() => {
+        const nonce = autoDelayCheckNonce;
+        const delay = autoDelayCheckDelayMs;
+        const tag = activeMember.tag;
+
+        if (nonce <= 0 || nonce === lastAutoDelayCheckNonce) return;
+        lastAutoDelayCheckNonce = nonce;
+        if (!tag || checking) return;
+
+        const timer = setTimeout(() => {
+            untrack(() => void triggerCheck());
+        }, delay);
+        return () => clearTimeout(timer);
+    });
+
     async function pickMember(memberTag: string): Promise<void> {
         await api.setSubscriptionActiveMember(subscription.id, memberTag);
         await subscriptionsStore.refetch();
@@ -95,14 +118,6 @@
         return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
     }
 
-    // Auto-trigger an initial delay check on mount if history is empty,
-    // so a freshly-opened tab paints meaningful data without the user
-    // pressing the button.
-    onMount(() => {
-        if (history.length === 0) {
-            void triggerCheck();
-        }
-    });
 </script>
 
 <div

@@ -14,6 +14,10 @@
 	let error = $state('');
 
 	let active = $state<'members' | 'settings'>('members');
+	let membersAutoDelayCheckNonce = $state(0);
+	let currentSubscriptionSurface = '';
+	let subscriptionSurfaceEntryNonce = $state(0);
+	let lastAutoDelayCheckKey = '';
 
 	async function reload(): Promise<void> {
 		try {
@@ -26,6 +30,33 @@
 	}
 
 	onMount(reload);
+
+	$effect(() => {
+		const surface = `${id}:${active}`;
+		if (surface === currentSubscriptionSurface) return;
+		currentSubscriptionSurface = surface;
+		subscriptionSurfaceEntryNonce += 1;
+	});
+
+	$effect(() => {
+		const sub = subscription;
+		const entryNonce = subscriptionSurfaceEntryNonce;
+
+		if (loading || error || !sub || active !== 'members') return;
+
+		const tags = (sub.members && sub.members.length > 0 ? sub.members.map((m) => m.tag) : sub.memberTags)
+			.filter(Boolean)
+			.sort()
+			.join(',');
+
+		if (!tags) return;
+
+		const key = `${entryNonce}:${sub.id}:${tags}`;
+		if (key === lastAutoDelayCheckKey) return;
+
+		lastAutoDelayCheckKey = key;
+		membersAutoDelayCheckNonce += 1;
+	});
 </script>
 
 <svelte:head>
@@ -49,7 +80,11 @@
 		/>
 		<section class="content">
 			{#if active === 'members'}
-				<SubscriptionMembersTab {subscription} onUpdated={reload} />
+				<SubscriptionMembersTab
+					{subscription}
+					onUpdated={reload}
+					autoDelayCheckNonce={membersAutoDelayCheckNonce}
+				/>
 			{:else}
 				<SubscriptionSettingsTab {subscription} onUpdated={reload} />
 			{/if}

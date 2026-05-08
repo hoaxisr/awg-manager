@@ -15,9 +15,15 @@
 
 	interface Props {
 		tunnel: SingboxTunnel;
+		autoDelayCheckNonce?: number;
+		autoDelayCheckDelayMs?: number;
 	}
 
-	let { tunnel }: Props = $props();
+	let {
+		tunnel,
+		autoDelayCheckNonce = 0,
+		autoDelayCheckDelayMs = 0,
+	}: Props = $props();
 
 	let deleting = $state(false);
 	let confirmDeleteOpen = $state(false);
@@ -72,6 +78,20 @@
 			checking = false;
 		}
 	}
+
+	let lastAutoDelayCheckNonce = 0;
+	$effect(() => {
+		const nonce = autoDelayCheckNonce;
+		const delay = autoDelayCheckDelayMs;
+		if (nonce <= 0 || nonce === lastAutoDelayCheckNonce) return;
+		lastAutoDelayCheckNonce = nonce;
+		if (tunnel.running !== true) return;
+
+		const timer = setTimeout(() => {
+			untrack(() => void triggerCheck());
+		}, delay);
+		return () => clearTimeout(timer);
+	});
 
 	async function remove(): Promise<void> {
 		deleting = true;

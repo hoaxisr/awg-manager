@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import type { Subscription, SubscriptionMember } from '$lib/types';
 	import { api } from '$lib/api/client';
 	import { Button } from '$lib/components/ui';
@@ -8,14 +9,18 @@
 	interface Props {
 		subscription: Subscription;
 		onUpdated: () => void;
+		autoDelayCheckNonce?: number;
 	}
-	let { subscription, onUpdated }: Props = $props();
+	let { subscription, onUpdated, autoDelayCheckNonce = 0 }: Props = $props();
 
 	let refreshing = $state(false);
 	let switching = $state<string | null>(null);
 	let lastError = $state('');
 	let batchTesting = $state(false);
 	let batchProgress = $state({ done: 0, total: 0 });
+	let lastAutoDelayCheckNonce = 0;
+	let confirmClearOrphans = $state(false);
+	let clearingOrphans = $state(false);
 
 	// Derive member list from members[] when available; fall back to stubs
 	// built from memberTags[] for subscriptions persisted before this change.
@@ -74,6 +79,34 @@
 			batchTesting = false;
 		}
 	}
+
+	async function clearOrphans(): Promise<void> {
+		if (clearingOrphans || subscription.orphanTags.length === 0) return;
+		clearingOrphans = true;
+		lastError = '';
+		try {
+			await api.deleteSubscriptionOrphans(subscription.id);
+			confirmClearOrphans = false;
+			onUpdated();
+		} catch (e) {
+			lastError = e instanceof Error ? e.message : 'Не удалось очистить сироты';
+		} finally {
+			clearingOrphans = false;
+		}
+	}
+
+	$effect(() => {
+		const nonce = autoDelayCheckNonce;
+		const hasMembers = memberList.length > 0;
+
+		if (nonce <= 0 || nonce === lastAutoDelayCheckNonce) return;
+		lastAutoDelayCheckNonce = nonce;
+		if (!hasMembers || batchTesting) return;
+
+		untrack(() => {
+			void testAll();
+		});
+	});
 </script>
 
 <header class="head">
@@ -95,7 +128,7 @@
 			{#if batchTesting}
 				Тестируем {batchProgress.done}/{batchProgress.total}
 			{:else}
-				Проверить все
+				Проверить всё
 			{/if}
 		</Button>
 	</div>
@@ -124,10 +157,39 @@
 
 {#if subscription.orphanTags.length > 0}
 	<section class="orphans">
-		<div class="lbl warn">Orphan ({subscription.orphanTags.length})</div>
-		<div class="hint">
-			Серверы из прошлой версии подписки, не вернувшиеся при последнем refresh.
-			Удалить можно из настроек.
+		<div class="orphans-head">
+			<div>
+				<div class="lbl warn">Сироты ({subscription.orphanTags.length})</div>
+				<div class="hint">
+					Эти серверы были в прошлой версии подписки, но не вернулись при последнем обновлении.
+					Они не участвуют в выборе, но остаются в конфиге sing-box до очистки.
+				</div>
+			</div>
+			<div class="orphan-actions">
+				{#if confirmClearOrphans}
+					<Button
+						variant="danger"
+						size="sm"
+						disabled={clearingOrphans}
+						loading={clearingOrphans}
+						onclick={clearOrphans}
+					>
+						{clearingOrphans ? 'Очищаем...' : 'Удалить'}
+					</Button>
+					<Button
+						variant="ghost"
+						size="sm"
+						disabled={clearingOrphans}
+						onclick={() => (confirmClearOrphans = false)}
+					>
+						Отмена
+					</Button>
+				{:else}
+					<Button variant="ghost" size="sm" onclick={() => (confirmClearOrphans = true)}>
+						Очистить сироты
+					</Button>
+				{/if}
+			</div>
 		</div>
 		<div class="grid">
 			{#each subscription.orphanTags as tag (tag)}
@@ -174,6 +236,18 @@
 		padding-top: 1rem;
 		border-top: 1px solid var(--color-border);
 	}
+	.orphans-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
+		gap: 1rem;
+		margin-bottom: 0.8rem;
+	}
+	.orphan-actions {
+		display: flex;
+		gap: 0.5rem;
+		flex-shrink: 0;
+	}
 	.orphan-card {
 		padding: 14px 16px;
 		border: 1px dashed var(--color-border);
@@ -182,4 +256,13 @@
 		color: var(--color-text-muted);
 	}
 	.mono { font-family: var(--font-mono, ui-monospace, monospace); }
+	@media (max-width: 720px) {
+		.orphans-head {
+			flex-direction: column;
+		}
+		.orphan-actions {
+			width: 100%;
+			flex-wrap: wrap;
+		}
+	}
 </style>

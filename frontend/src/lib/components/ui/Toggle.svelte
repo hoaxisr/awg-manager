@@ -235,6 +235,10 @@
         background: rgba(255, 255, 255, 0.3);
     }
 
+    .toggle-container.flip.loading .flip-lever::before {
+        display: none;
+    }
+
     /* Hover */
     .toggle-container.flip:hover .flip-lever {
         filter: brightness(1.15);
@@ -259,6 +263,7 @@
     .flip-spinner {
         width: 10px;
         height: 10px;
+        box-sizing: border-box;
         border: 2px solid rgba(255, 255, 255, 0.3);
         border-top-color: rgba(255, 255, 255, 0.8);
         border-radius: 50%;

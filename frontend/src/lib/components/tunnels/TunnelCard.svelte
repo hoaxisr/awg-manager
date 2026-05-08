@@ -15,6 +15,8 @@
 		onToggleOnOff?: () => void;
 		ondelete?: () => void;
 		ondetail?: (id: string) => void;
+		autoConnectivityNonce?: number;
+		autoConnectivityDelayMs?: number;
 	}
 
 	let {
@@ -24,6 +26,8 @@
 		onToggleOnOff,
 		ondelete,
 		ondetail,
+		autoConnectivityNonce = 0,
+		autoConnectivityDelayMs = 0,
 	}: Props = $props();
 
 	// ─── Toggle / status logic ─────────────────────────────────────
@@ -94,6 +98,20 @@
 			manualChecking = false;
 		}
 	}
+
+	let lastAutoConnectivityNonce = 0;
+	$effect(() => {
+		const nonce = autoConnectivityNonce;
+		const delay = autoConnectivityDelayMs;
+		if (nonce <= 0 || nonce === lastAutoConnectivityNonce) return;
+		lastAutoConnectivityNonce = nonce;
+		if (!isActive || isCheckDisabled) return;
+
+		const timer = setTimeout(() => {
+			untrack(() => void checkConnectivityManual());
+		}, delay);
+		return () => clearTimeout(timer);
+	});
 
 	// ─── Server / address parsing ───────────────────────────────────
 	let showEndpoint = $state(false);
