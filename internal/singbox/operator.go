@@ -34,6 +34,15 @@ const (
 	// 200ms keeps the wait snappy on fast starts (~200ms to detect ready)
 	// without hammering the daemon when it takes the full 15s.
 	singboxProbeInterval = 200 * time.Millisecond
+
+	// singboxVersionProbeTimeout bounds external `sing-box version` probe
+	// duration so a broken/blocked binary cannot accumulate hung child
+	// processes and starve router memory.
+	singboxVersionProbeTimeout = 2 * time.Second
+
+	// singboxVersionCacheTTL keeps version/features probe reasonably fresh
+	// while avoiding process-spawn on every /singbox/status poll.
+	singboxVersionCacheTTL = 5 * time.Minute
 )
 
 const (
@@ -92,6 +101,12 @@ type Operator struct {
 	// SetInstaller so existing tests that build an Operator without an
 	// installer still work for non-install-related code paths.
 	inst *installer.Installer
+
+	// versionProbeMu guards cached output of `sing-box version`.
+	versionProbeMu       sync.Mutex
+	versionProbeValue    string
+	versionProbeFeatures []string
+	versionProbeAt       time.Time
 }
 
 // OperatorDeps are external dependencies for DI.
@@ -647,7 +662,7 @@ func (o *Operator) IsInstalled() (bool, string) {
 	if o.inst != nil {
 		return true, o.inst.CurrentVersion(context.Background())
 	}
-	v, _ := detectVersionAndFeatures(o.binary)
+	v, _ := o.detectVersionAndFeaturesCached(context.Background())
 	return true, v
 }
 
@@ -665,10 +680,10 @@ func (o *Operator) GetStatus(ctx context.Context) Status {
 	s := Status{}
 	if isExecutable(o.binary) {
 		s.Installed = true
+		detectedVersion, detectedFeatures := o.detectVersionAndFeaturesCached(ctx)
+		s.Features = detectedFeatures
 		if o.inst != nil {
 			s.Version = o.inst.CurrentVersion(ctx)
-			detectedVersion, detectedFeatures := detectVersionAndFeatures(o.binary)
-			s.Features = detectedFeatures
 			// Some builds print a slightly different version banner that
 			// CurrentVersion may fail to parse. Fall back to runtime detect
 			// so status always exposes a usable semantic version.
@@ -676,7 +691,7 @@ func (o *Operator) GetStatus(ctx context.Context) Status {
 				s.Version = detectedVersion
 			}
 		} else {
-			s.Version, s.Features = detectVersionAndFeatures(o.binary)
+			s.Version = detectedVersion
 		}
 	}
 	if running, pid := o.proc.IsRunning(); running {
@@ -699,12 +714,30 @@ func (o *Operator) GetStatus(ctx context.Context) Status {
 // detectVersionAndFeatures shells out to `<binary> version` and returns
 // the version string and build tags parsed from its output. Exec
 // failure returns empty values.
-func detectVersionAndFeatures(binary string) (string, []string) {
-	out, err := exec.Command(binary, "version").Output()
+func detectVersionAndFeatures(ctx context.Context, binary string) (string, []string) {
+	probeCtx, cancel := context.WithTimeout(ctx, singboxVersionProbeTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(probeCtx, binary, "version").Output()
 	if err != nil {
 		return "", nil
 	}
 	return parseSingboxVersionOutput(string(out))
+}
+
+func (o *Operator) detectVersionAndFeaturesCached(ctx context.Context) (string, []string) {
+	now := time.Now()
+	o.versionProbeMu.Lock()
+	defer o.versionProbeMu.Unlock()
+
+	if !o.versionProbeAt.IsZero() && now.Sub(o.versionProbeAt) < singboxVersionCacheTTL {
+		return o.versionProbeValue, append([]string(nil), o.versionProbeFeatures...)
+	}
+
+	v, f := detectVersionAndFeatures(ctx, o.binary)
+	o.versionProbeValue = v
+	o.versionProbeFeatures = append([]string(nil), f...)
+	o.versionProbeAt = now
+	return v, append([]string(nil), f...)
 }
 
 // parseSingboxVersionOutput parses the multi-line text produced by
