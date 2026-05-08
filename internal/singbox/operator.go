@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -666,7 +667,14 @@ func (o *Operator) GetStatus(ctx context.Context) Status {
 		s.Installed = true
 		if o.inst != nil {
 			s.Version = o.inst.CurrentVersion(ctx)
-			_, s.Features = detectVersionAndFeatures(o.binary)
+			detectedVersion, detectedFeatures := detectVersionAndFeatures(o.binary)
+			s.Features = detectedFeatures
+			// Some builds print a slightly different version banner that
+			// CurrentVersion may fail to parse. Fall back to runtime detect
+			// so status always exposes a usable semantic version.
+			if s.Version == "" {
+				s.Version = detectedVersion
+			}
 		} else {
 			s.Version, s.Features = detectVersionAndFeatures(o.binary)
 		}
@@ -715,20 +723,21 @@ func detectVersionAndFeatures(binary string) (string, []string) {
 func parseSingboxVersionOutput(out string) (string, []string) {
 	var version string
 	var features []string
+	versionRe := regexp.MustCompile(`(?i)\bsing-?box\b\s+version\b\s+([^\s]+)`)
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		if version == "" && strings.HasPrefix(line, "sing-box version") {
-			parts := strings.Fields(line)
-			if len(parts) >= 3 {
-				version = parts[2]
+		if version == "" {
+			if m := versionRe.FindStringSubmatch(line); len(m) == 2 {
+				version = strings.TrimSpace(m[1])
+				continue
 			}
-			continue
 		}
-		if strings.HasPrefix(line, "Tags:") {
-			tagsRaw := strings.TrimSpace(strings.TrimPrefix(line, "Tags:"))
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "tags:") {
+			tagsRaw := strings.TrimSpace(line[len("Tags:"):])
 			for _, t := range strings.Split(tagsRaw, ",") {
 				t = strings.TrimSpace(t)
 				if t != "" {
@@ -738,6 +747,12 @@ func parseSingboxVersionOutput(out string) (string, []string) {
 		}
 	}
 	return version, features
+}
+
+// IsPresent reports whether the managed sing-box binary exists and is executable.
+// Fast path for UI/system probes that must not block on `sing-box version`.
+func (o *Operator) IsPresent() bool {
+	return isExecutable(o.binary)
 }
 
 // ListTunnels returns the current tunnels from config.json enriched with

@@ -122,7 +122,7 @@ func TestDecide_Reconnect_StartsMonitoringOnce(t *testing.T) {
 	}
 }
 
-func TestDecide_Reconnect_RestoresKmodWithoutASC(t *testing.T) {
+func TestDecide_Reconnect_ResyncsRunningNativeWGWithoutASC(t *testing.T) {
 	s := newState()
 	s.supportsASC = false
 	s.tunnels["awg0"] = &tunnelState{
@@ -132,23 +132,86 @@ func TestDecide_Reconnect_RestoresKmodWithoutASC(t *testing.T) {
 	actions := decide(Event{Type: EventReconnect}, &s)
 
 	restores := filterActions(actions, ActionRestoreKmod)
-	if len(restores) != 1 {
-		t.Errorf("expected 1 RestoreKmod, got %d", len(restores))
+	if len(restores) != 0 {
+		t.Errorf("running NativeWG should resync via Start instead of RestoreKmod, got %d restores", len(restores))
+	}
+	stops := filterActions(actions, ActionStopNativeWG)
+	if len(stops) != 0 {
+		t.Errorf("reconnect resync must not drop NDMS to disabled, got %d stops", len(stops))
+	}
+	starts := filterActions(actions, ActionStartNativeWG)
+	if len(starts) != 1 {
+		t.Errorf("expected 1 StartNativeWG, got %d", len(starts))
 	}
 }
 
-func TestDecide_Reconnect_SkipsStoppedTunnels(t *testing.T) {
+func TestDecide_Reconnect_NonASCResync_StartsMonitoringOnce(t *testing.T) {
 	s := newState()
+	s.supportsASC = false
 	s.tunnels["awg0"] = &tunnelState{
-		ID: "awg0", Backend: "kernel", Running: false,
+		ID: "awg0", Backend: "nativewg", Running: true, NWGIndex: 0, Monitoring: true,
 		PingCheck: &storage.TunnelPingCheck{Enabled: true},
 	}
 
 	actions := decide(Event{Type: EventReconnect}, &s)
 
-	monitors := filterActions(actions, ActionStartMonitoring)
-	if len(monitors) != 0 {
-		t.Errorf("stopped tunnel should not get monitoring, got %d", len(monitors))
+	stopMon := filterActions(actions, ActionStopMonitoring)
+	if len(stopMon) != 0 {
+		t.Errorf("reconnect resync should not stop monitoring first, got %d StopMonitoring", len(stopMon))
+	}
+	startMon := filterActions(actions, ActionStartMonitoring)
+	if len(startMon) != 1 {
+		t.Errorf("expected exactly 1 StartMonitoring during non-ASC resync, got %d", len(startMon))
+	}
+}
+
+func TestDecide_Reconnect_NativeWGResyncDoesNotPersistStopped(t *testing.T) {
+	s := newState()
+	s.supportsASC = false
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	if hasAction(actions, ActionPersistStopped) {
+		t.Error("reconnect resync must not persist Enabled=false")
+	}
+	if !hasAction(actions, ActionPersistRunning) {
+		t.Error("reconnect resync should persist running state after start")
+	}
+}
+
+func TestDecide_Restart_NativeWGDoesNotPersistStopped(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: true, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventRestart, Tunnel: "awg0"}, &s)
+
+	if hasAction(actions, ActionPersistStopped) {
+		t.Error("restart must not persist Enabled=false")
+	}
+	if !hasAction(actions, ActionPersistRunning) {
+		t.Error("restart should persist running state after start")
+	}
+}
+
+func TestDecide_Reconnect_EnabledStoppedKernelTunnelIsColdStarted(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "kernel", Enabled: true, Running: false,
+		PingCheck: &storage.TunnelPingCheck{Enabled: true},
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	if !hasAction(actions, ActionColdStartKernel) {
+		t.Error("enabled stopped kernel tunnel should be cold-started on reconnect")
+	}
+	if !hasAction(actions, ActionStartMonitoring) {
+		t.Error("enabled stopped tunnel with ping-check should start monitoring after cold-start")
 	}
 }
 
@@ -176,7 +239,7 @@ func TestDecide_Reconnect_IncludesRoutingReconcile(t *testing.T) {
 	}
 }
 
-func TestDecide_Reconnect_SkipsKmodWithASC(t *testing.T) {
+func TestDecide_Reconnect_ASCResyncsRunningNativeWG(t *testing.T) {
 	s := newState()
 	s.supportsASC = true
 	s.tunnels["awg0"] = &tunnelState{
@@ -188,6 +251,34 @@ func TestDecide_Reconnect_SkipsKmodWithASC(t *testing.T) {
 	restores := filterActions(actions, ActionRestoreKmod)
 	if len(restores) != 0 {
 		t.Errorf("ASC firmware should not restore kmod, got %d", len(restores))
+	}
+	stops := filterActions(actions, ActionStopNativeWG)
+	if len(stops) != 0 {
+		t.Errorf("ASC reconnect resync must not stop NativeWG, got %d stops", len(stops))
+	}
+	starts := filterActions(actions, ActionStartNativeWG)
+	if len(starts) != 1 {
+		t.Errorf("ASC firmware should resync running NativeWG, got %d starts", len(starts))
+	}
+}
+
+func TestDecide_Reconnect_ASCResync_StartsMonitoringOnce(t *testing.T) {
+	s := newState()
+	s.supportsASC = true
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Running: true, NWGIndex: 0, Monitoring: true,
+		PingCheck: &storage.TunnelPingCheck{Enabled: true},
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	stopMon := filterActions(actions, ActionStopMonitoring)
+	if len(stopMon) != 0 {
+		t.Errorf("ASC reconnect resync should not stop monitoring first, got %d StopMonitoring", len(stopMon))
+	}
+	startMon := filterActions(actions, ActionStartMonitoring)
+	if len(startMon) != 1 {
+		t.Errorf("expected exactly 1 StartMonitoring during ASC resync, got %d", len(startMon))
 	}
 }
 
@@ -1047,7 +1138,7 @@ func TestDecide_Reconnect_ReconcilesRunningKernelTunnel(t *testing.T) {
 	}
 }
 
-func TestDecide_Reconnect_DoesNotReconcileStoppedKernelTunnel(t *testing.T) {
+func TestDecide_Reconnect_EnabledStoppedKernelTunnelNotReconciled(t *testing.T) {
 	s := newState()
 	s.tunnels["awg10"] = &tunnelState{
 		ID: "awg10", Backend: "kernel", Enabled: true, Running: false,
@@ -1058,6 +1149,43 @@ func TestDecide_Reconnect_DoesNotReconcileStoppedKernelTunnel(t *testing.T) {
 	reconciles := filterActions(actions, ActionReconcileKernel)
 	if len(reconciles) != 0 {
 		t.Errorf("stopped tunnel should not be reconciled on reconnect, got %d", len(reconciles))
+	}
+	coldStarts := filterActions(actions, ActionColdStartKernel)
+	if len(coldStarts) != 1 {
+		t.Errorf("enabled stopped tunnel should be cold-started on reconnect, got %d", len(coldStarts))
+	}
+}
+
+func TestDecide_Reconnect_DisabledStoppedKernelTunnelSkipped(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: false, Running: false,
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	if hasAction(actions, ActionColdStartKernel) {
+		t.Error("disabled tunnel must not be started on reconnect")
+	}
+	if hasAction(actions, ActionStartMonitoring) {
+		t.Error("disabled tunnel must not start monitoring on reconnect")
+	}
+}
+
+func TestDecide_Reconnect_EnabledStoppedNativeWGWithASCIsStarted(t *testing.T) {
+	s := newState()
+	s.supportsASC = true
+	s.tunnels["awg20"] = &tunnelState{
+		ID: "awg20", Backend: "nativewg", Enabled: true, Running: false, NWGIndex: 0,
+	}
+
+	actions := decide(Event{Type: EventReconnect}, &s)
+
+	if !hasAction(actions, ActionStartNativeWG) {
+		t.Error("enabled stopped nativewg tunnel should be started on reconnect even with ASC")
+	}
+	if !hasAction(actions, ActionPersistRunning) {
+		t.Error("reconnect-started nativewg tunnel should persist running state")
 	}
 }
 

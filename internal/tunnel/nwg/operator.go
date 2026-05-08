@@ -21,9 +21,9 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/payloads"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
-	"github.com/hoaxisr/awg-manager/internal/ndms/payloads"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
@@ -33,12 +33,12 @@ import (
 
 // OperatorNativeWG manages tunnels via Keenetic native WireGuard + awg_proxy.ko.
 type OperatorNativeWG struct {
-	queries   *query.Queries
-	commands  *command.Commands
-	transport *transport.Client
-	kmod      *KmodManager
-	log       *logger.Logger
-	appLog    *logging.ScopedLogger
+	queries      *query.Queries
+	commands     *command.Commands
+	transport    *transport.Client
+	kmod         *KmodManager
+	log          *logger.Logger
+	appLog       *logging.ScopedLogger
 	hookNotifier tunnel.HookNotifier
 }
 
@@ -324,7 +324,11 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 	if err != nil {
 		return fmt.Errorf("kmod add: %w", err)
 	}
-	o.appLog.Full("start", stored.Name, fmt.Sprintf("Adding tunnel to kmod, listen port %d", result.ListenPort))
+	if result.Adopted {
+		o.appLog.Full("start", stored.Name, fmt.Sprintf("Using existing kmod proxy, listen port %d", result.ListenPort))
+	} else {
+		o.appLog.Full("start", stored.Name, fmt.Sprintf("Adding tunnel to kmod, listen port %d", result.ListenPort))
+	}
 	o.appLog.Debug("start", stored.Name, fmt.Sprintf("Kmod proxy %s:%d -> 127.0.0.1:%d, bind=%s", endpointIP, endpointPort, result.ListenPort, bindIface))
 
 	proxyEndpoint := fmt.Sprintf("127.0.0.1:%d", result.ListenPort)

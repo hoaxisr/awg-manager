@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
-	import { systemInfo } from '$lib/stores/system';
-	import { singboxTunnels } from '$lib/stores/singbox';
+	import { singboxStatus, singboxTunnels } from '$lib/stores/singbox';
 	import type { SingboxImportResponse } from '$lib/types';
 
 	interface Props {
@@ -18,8 +17,29 @@
 	let importing = $state(false);
 	let result = $state<SingboxImportResponse | null>(null);
 
-	const singboxVersion = $derived($systemInfo.data?.singbox?.version ?? '');
-	const singboxInstalled = $derived($systemInfo.data?.singbox?.installed ?? false);
+	const status = $derived($singboxStatus.data);
+	const singboxInstalled = $derived(status?.installed ?? false);
+	const statusTone = $derived.by(() => {
+		if ($singboxStatus.status === 'loading' && !status) return 'pending';
+		if ($singboxStatus.status === 'error' && !status) return 'error';
+		if (!status?.installed) return 'error';
+		if (!status.proxyComponent || status.updateAvailable) return 'warn';
+		return status.running ? 'ok' : 'ready';
+	});
+	const statusLine = $derived.by(() => {
+		if ($singboxStatus.status === 'loading' && !status) return 'получаю статус...';
+		if ($singboxStatus.status === 'error' && !status) return 'статус недоступен';
+		if (!status?.installed) return 'sing-box · не установлен';
+
+		const parts = ['sing-box'];
+		const version = status.version || status.currentVersion;
+		if (version) parts.push(`v${version}`);
+		parts.push(status.running ? 'работает' : 'готов');
+		if (status.running && status.pid) parts.push(`pid ${status.pid}`);
+		if (status.updateAvailable) parts.push('доступно обновление');
+		if (!status.proxyComponent) parts.push('нет компонента proxy');
+		return parts.join(' · ');
+	});
 
 	async function submit(): Promise<void> {
 		importing = true;
@@ -46,14 +66,8 @@
 
 <div class="ghost-terminal">
 	<div class="term-status">
-		<span class="term-prompt">$ sing-box status</span>
-		<span class="term-info">
-			{#if singboxInstalled}
-				{singboxVersion ? singboxVersion + ' · ' : ''}installed
-			{:else}
-				not installed
-			{/if}
-		</span>
+		<span class="status-dot {statusTone}" aria-hidden="true"></span>
+		<span class="term-info">{statusLine}</span>
 	</div>
 
 	{#if singboxInstalled}
@@ -105,14 +119,34 @@
 		font-family: var(--font-mono, monospace);
 	}
 	.term-status {
-		text-align: center;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
 		margin-bottom: 20px;
 	}
-	.term-prompt {
-		display: block;
-		color: var(--primary, #60a5fa);
-		font-size: 14px;
-		margin-bottom: 4px;
+	.status-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 999px;
+		background: var(--text-muted);
+		box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.14);
+	}
+	.status-dot.ok {
+		background: var(--success, #10b981);
+		box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
+	}
+	.status-dot.ready {
+		background: var(--primary, #60a5fa);
+		box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.16);
+	}
+	.status-dot.warn {
+		background: var(--warning, #f59e0b);
+		box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.16);
+	}
+	.status-dot.error {
+		background: var(--error, #ef4444);
+		box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16);
 	}
 	.term-info {
 		color: var(--text-muted);

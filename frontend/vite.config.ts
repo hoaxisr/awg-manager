@@ -43,6 +43,12 @@ export default defineConfig(({ mode }) => {
 
 	return {
 		plugins: [stubDevRoutes(), tailwindcss(), sveltekit()],
+		resolve: {
+			alias: {
+				'node:dns/promises': '/src/lib/shims/node-dns-promises.ts',
+				'dns/promises': '/src/lib/shims/node-dns-promises.ts'
+			}
+		},
 		server: {
 			proxy: {
 				'/api': {

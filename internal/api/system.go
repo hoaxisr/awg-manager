@@ -2,10 +2,14 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
+	"sync"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
@@ -35,31 +39,31 @@ type SystemInfoSingbox struct {
 
 // SystemInfoData is the payload returned by GET /system/info.
 type SystemInfoData struct {
-	Version              string                        `json:"version" example:"2.5.0"`
-	GoVersion            string                        `json:"goVersion" example:"go1.23.0"`
-	GoArch               string                        `json:"goArch" example:"arm64"`
-	GoOS                 string                        `json:"goOS" example:"linux"`
-	KeeneticOS           string                        `json:"keeneticOS" example:"ndms"`
-	IsOS5                bool                          `json:"isOS5" example:"true"`
-	FirmwareVersion      string                        `json:"firmwareVersion" example:"4.2.1"`
-	SupportsExtendedASC  bool                          `json:"supportsExtendedASC" example:"true"`
-	SupportsHRanges      bool                          `json:"supportsHRanges" example:"true"`
-	SupportsPingCheck    bool                          `json:"supportsPingCheck" example:"true"`
-	TotalMemoryMB        int                           `json:"totalMemoryMB" example:"512"`
-	IsLowMemory          bool                          `json:"isLowMemory" example:"false"`
-	GcMemLimit           string                        `json:"gcMemLimit" example:"128MiB"`
-	Gogc                 string                        `json:"gogc" example:"25"`
-	DisableMemorySaving  bool                          `json:"disableMemorySaving" example:"false"`
-	KernelModuleExists   bool                          `json:"kernelModuleExists" example:"true"`
-	KernelModuleLoaded   bool                          `json:"kernelModuleLoaded" example:"false"`
-	KernelModuleModel    string                        `json:"kernelModuleModel" example:"MT7981"`
-	KernelModuleVersion  string                        `json:"kernelModuleVersion" example:""`
-	IsAarch64            bool                          `json:"isAarch64" example:"true"`
-	ActiveBackend        string                        `json:"activeBackend" example:"nativewg"`
-	RouterIP             string                        `json:"routerIP" example:"192.168.1.1"`
-	BootInProgress       bool                          `json:"bootInProgress" example:"false"`
-	BackendAvailability  SystemInfoBackendAvailability `json:"backendAvailability"`
-	Singbox              SystemInfoSingbox             `json:"singbox"`
+	Version             string                        `json:"version" example:"2.5.0"`
+	GoVersion           string                        `json:"goVersion" example:"go1.23.0"`
+	GoArch              string                        `json:"goArch" example:"arm64"`
+	GoOS                string                        `json:"goOS" example:"linux"`
+	KeeneticOS          string                        `json:"keeneticOS" example:"ndms"`
+	IsOS5               bool                          `json:"isOS5" example:"true"`
+	FirmwareVersion     string                        `json:"firmwareVersion" example:"4.2.1"`
+	SupportsExtendedASC bool                          `json:"supportsExtendedASC" example:"true"`
+	SupportsHRanges     bool                          `json:"supportsHRanges" example:"true"`
+	SupportsPingCheck   bool                          `json:"supportsPingCheck" example:"true"`
+	TotalMemoryMB       int                           `json:"totalMemoryMB" example:"512"`
+	IsLowMemory         bool                          `json:"isLowMemory" example:"false"`
+	GcMemLimit          string                        `json:"gcMemLimit" example:"128MiB"`
+	Gogc                string                        `json:"gogc" example:"25"`
+	DisableMemorySaving bool                          `json:"disableMemorySaving" example:"false"`
+	KernelModuleExists  bool                          `json:"kernelModuleExists" example:"true"`
+	KernelModuleLoaded  bool                          `json:"kernelModuleLoaded" example:"false"`
+	KernelModuleModel   string                        `json:"kernelModuleModel" example:"MT7981"`
+	KernelModuleVersion string                        `json:"kernelModuleVersion" example:""`
+	IsAarch64           bool                          `json:"isAarch64" example:"true"`
+	ActiveBackend       string                        `json:"activeBackend" example:"nativewg"`
+	RouterIP            string                        `json:"routerIP" example:"192.168.1.1"`
+	BootInProgress      bool                          `json:"bootInProgress" example:"false"`
+	BackendAvailability SystemInfoBackendAvailability `json:"backendAvailability"`
+	Singbox             SystemInfoSingbox             `json:"singbox"`
 }
 
 // SystemInfoResponse is the envelope for GET /system/info.
@@ -148,7 +152,15 @@ type SystemHandler struct {
 	hydra            *hydraroute.Service
 	singboxOp        *singbox.Operator
 	bus              *events.Bus
+
+	singboxInfoMu                sync.RWMutex
+	singboxVersionCached         string
+	singboxVersionFetchedAt      time.Time
+	singboxVersionRefreshRunning bool
+	singboxBinaryFingerprint     string
 }
+
+const singboxVersionCacheTTL = 45 * time.Second
 
 // SetEventBus wires the SSE bus so HR Neo control actions emit
 // `routing.hydrarouteStatus` resource:invalidated hints.
@@ -413,33 +425,30 @@ func (h *SystemHandler) BuildSystemInfo() map[string]interface{} {
 }
 
 func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, gogc string, kernelModuleExists, kernelModuleLoaded bool, kernelModuleModel, kernelModuleVersion string, isAarch64 bool, activeBackendType, routerIP string) map[string]interface{} {
-	singboxInstalled, singboxVersion := false, ""
-	if h.singboxOp != nil {
-		singboxInstalled, singboxVersion = h.singboxOp.IsInstalled()
-	}
+	singboxInstalled, singboxVersion := h.getSingboxInfoFast()
 
 	return map[string]interface{}{
-		"version":                     h.version,
-		"goVersion":                   runtime.Version(),
-		"goArch":                      runtime.GOARCH,
-		"goOS":                        runtime.GOOS,
-		"keeneticOS":                  string(osdetect.Get()),
-		"isOS5":                       osdetect.Is5(),
-		"firmwareVersion":             osdetect.ReleaseString(),
-		"supportsExtendedASC":         osdetect.AtLeast(5, 1),
-		"supportsHRanges":             ndmsinfo.SupportsHRanges(),
-		"supportsPingCheck":           ndmsinfo.HasPingCheckComponent(),
-		"totalMemoryMB":               osdetect.GetTotalMemoryMB(),
-		"isLowMemory":                 osdetect.IsLowMemoryDevice(),
-		"gcMemLimit":                  gcMemLimit,
-		"gogc":                        gogc,
-		"disableMemorySaving":         disableMemorySaving,
-		"kernelModuleExists":          kernelModuleExists,
-		"kernelModuleLoaded":          kernelModuleLoaded,
-		"kernelModuleModel":           kernelModuleModel,
-		"kernelModuleVersion":         kernelModuleVersion,
-		"isAarch64":                   isAarch64,
-		"activeBackend":               activeBackendType,
+		"version":             h.version,
+		"goVersion":           runtime.Version(),
+		"goArch":              runtime.GOARCH,
+		"goOS":                runtime.GOOS,
+		"keeneticOS":          string(osdetect.Get()),
+		"isOS5":               osdetect.Is5(),
+		"firmwareVersion":     osdetect.ReleaseString(),
+		"supportsExtendedASC": osdetect.AtLeast(5, 1),
+		"supportsHRanges":     ndmsinfo.SupportsHRanges(),
+		"supportsPingCheck":   ndmsinfo.HasPingCheckComponent(),
+		"totalMemoryMB":       osdetect.GetTotalMemoryMB(),
+		"isLowMemory":         osdetect.IsLowMemoryDevice(),
+		"gcMemLimit":          gcMemLimit,
+		"gogc":                gogc,
+		"disableMemorySaving": disableMemorySaving,
+		"kernelModuleExists":  kernelModuleExists,
+		"kernelModuleLoaded":  kernelModuleLoaded,
+		"kernelModuleModel":   kernelModuleModel,
+		"kernelModuleVersion": kernelModuleVersion,
+		"isAarch64":           isAarch64,
+		"activeBackend":       activeBackendType,
 		"routerIP":            routerIP,
 		"bootInProgress":      h.bootStatusFn != nil && h.bootStatusFn(),
 		"backendAvailability": map[string]bool{
@@ -453,6 +462,100 @@ func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, go
 			"version":   singboxVersion,
 		},
 	}
+}
+
+// getSingboxInfoFast returns sing-box install/version data without blocking
+// system/info on slow version probes. Version is served from short-lived cache;
+// stale/missing cache is refreshed in background.
+func (h *SystemHandler) getSingboxInfoFast() (bool, string) {
+	if h.singboxOp == nil {
+		return false, ""
+	}
+
+	// Fast presence check: avoid running external process on hot path.
+	if !h.singboxOp.IsPresent() {
+		h.resetSingboxVersionCacheLocked()
+		return false, ""
+	}
+
+	now := time.Now()
+	currentFingerprint := h.currentSingboxBinaryFingerprint()
+	h.singboxInfoMu.RLock()
+	cachedVersion := h.singboxVersionCached
+	fetchedAt := h.singboxVersionFetchedAt
+	cachedFingerprint := h.singboxBinaryFingerprint
+	h.singboxInfoMu.RUnlock()
+
+	// Lifecycle safety: install/update/replace changes binary fingerprint.
+	// Invalidate stale version immediately so next refresh reads new banner.
+	if currentFingerprint != "" && cachedFingerprint != "" && currentFingerprint != cachedFingerprint {
+		h.singboxInfoMu.Lock()
+		h.singboxVersionCached = ""
+		h.singboxVersionFetchedAt = time.Time{}
+		h.singboxBinaryFingerprint = currentFingerprint
+		h.singboxInfoMu.Unlock()
+		cachedVersion = ""
+		fetchedAt = time.Time{}
+	}
+
+	if !fetchedAt.IsZero() && now.Sub(fetchedAt) < singboxVersionCacheTTL {
+		return true, cachedVersion
+	}
+
+	h.startSingboxVersionRefresh(currentFingerprint)
+	return true, cachedVersion
+}
+
+func (h *SystemHandler) startSingboxVersionRefresh(binaryFingerprint string) {
+	h.singboxInfoMu.Lock()
+	if h.singboxVersionRefreshRunning {
+		h.singboxInfoMu.Unlock()
+		return
+	}
+	h.singboxVersionRefreshRunning = true
+	if binaryFingerprint != "" {
+		h.singboxBinaryFingerprint = binaryFingerprint
+	}
+	h.singboxInfoMu.Unlock()
+
+	go func() {
+		_, version := h.singboxOp.IsInstalled()
+		h.singboxInfoMu.Lock()
+		h.singboxVersionCached = version
+		h.singboxVersionFetchedAt = time.Now()
+		h.singboxVersionRefreshRunning = false
+		h.singboxInfoMu.Unlock()
+	}()
+}
+
+func (h *SystemHandler) resetSingboxVersionCacheLocked() {
+	h.singboxInfoMu.Lock()
+	h.singboxVersionCached = ""
+	h.singboxVersionFetchedAt = time.Time{}
+	h.singboxVersionRefreshRunning = false
+	h.singboxBinaryFingerprint = ""
+	h.singboxInfoMu.Unlock()
+}
+
+func (h *SystemHandler) currentSingboxBinaryFingerprint() string {
+	if h.singboxOp == nil {
+		return ""
+	}
+	binPath := h.singboxOp.Binary()
+	if binPath == "" {
+		return ""
+	}
+	st, err := os.Stat(binPath)
+	if err != nil || st.IsDir() {
+		return ""
+	}
+	return fmt.Sprintf(
+		"%s|%s|%s|%d",
+		filepath.Clean(binPath),
+		st.ModTime().UTC().Format(time.RFC3339Nano),
+		st.Mode().String(),
+		st.Size(),
+	)
 }
 
 // nativewgAvailable returns true if NativeWG backend can work:

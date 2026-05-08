@@ -56,7 +56,7 @@
 			case 'running':
 				if (tunnel.pingCheck.status === 'recovering') {
 					const n = tunnel.pingCheck.restartCount;
-					return `Восстановление (попытка ${n})`;
+					return n > 0 ? `Восстановление (попытка ${n})` : 'Проверка связи...';
 				}
 				return '';
 			default: return '';

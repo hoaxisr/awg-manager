@@ -5,7 +5,10 @@
 
 	interface Props {
 		singboxStatus: SingboxStatus | null;
+		singboxStatusLoading?: boolean;
 		hydraStatus: HydraRouteStatus | null;
+		hydraStatusLoading?: boolean;
+		hydraProbeNote?: string | null;
 		singboxInstalling: boolean;
 		singboxInstallError: string | null;
 		oninstallSingbox: () => void;
@@ -15,7 +18,10 @@
 
 	let {
 		singboxStatus,
+		singboxStatusLoading = false,
 		hydraStatus,
+		hydraStatusLoading = false,
+		hydraProbeNote = null,
 		singboxInstalling,
 		singboxInstallError,
 		oninstallSingbox,
@@ -56,15 +62,23 @@
 			<div class="setting-row">
 				<div class="integration-item">
 					<StatusDot
-						variant={singboxInstalled && singboxRunning ? 'success' : 'muted'}
+						variant={singboxStatusLoading ? 'muted' : (singboxInstalled && singboxRunning ? 'success' : 'muted')}
 						size="md"
-						ariaLabel={singboxInstalled && singboxRunning ? 'Sing-box работает' : 'Sing-box остановлен'}
+						ariaLabel={
+							singboxStatusLoading
+								? 'Sing-box: получение данных'
+								: singboxInstalled && singboxRunning
+									? 'Sing-box работает'
+									: 'Sing-box остановлен'
+						}
 					/>
 					<div class="integration-meta">
 						<span class="font-medium">Sing-box</span>
-						{#if singboxInstalled && singboxStatus}
+						{#if singboxStatusLoading}
+							<span class="integration-sub">получаю данные…</span>
+						{:else if singboxInstalled && singboxStatus}
 							<span class="integration-sub">
-								v{singboxStatus.version ?? '?'}
+								v{singboxStatus.version ?? singboxStatus.currentVersion ?? '?'}
 								{#if singboxRunning && singboxStatus.pid}· pid {singboxStatus.pid}{:else if !singboxRunning}· остановлен{/if}
 							</span>
 							{#if !singboxRunning && singboxStatus.lastError}
@@ -87,6 +101,8 @@
 				</div>
 				{#if singboxInstalled}
 					<Button variant="ghost" size="sm" href="/?tab=singbox">Открыть</Button>
+				{:else if singboxStatusLoading}
+					<Button variant="ghost" size="sm" disabled>Ожидание…</Button>
 				{:else}
 					<Button variant="primary" size="sm" onclick={oninstallSingbox} loading={singboxInstalling}>
 						{singboxInstalling ? 'Установка...' : 'Установить'}
@@ -99,21 +115,34 @@
 			<div class="setting-row">
 				<div class="integration-item">
 					<StatusDot
-						variant={hydraInstalled && hydraRunning ? 'success' : 'muted'}
+						variant={hydraStatusLoading ? 'muted' : (hydraInstalled && hydraRunning ? 'success' : 'muted')}
 						size="md"
-						ariaLabel={hydraInstalled && hydraRunning ? 'HydraRoute работает' : 'HydraRoute остановлен'}
+						ariaLabel={
+							hydraStatusLoading
+								? 'HydraRoute: получение данных'
+								: hydraInstalled && hydraRunning
+									? 'HydraRoute работает'
+									: 'HydraRoute остановлен'
+						}
 					/>
 					<div class="integration-meta">
 						<span class="font-medium">HydraRoute Neo</span>
-						{#if hydraInstalled}
+						{#if hydraStatusLoading}
+							<span class="integration-sub">получаю данные…</span>
+						{:else if hydraInstalled}
 							<span class="integration-sub">{hydraRunning ? 'работает' : 'остановлен'}</span>
 						{:else}
 							<span class="integration-sub">не установлен</span>
+						{/if}
+						{#if !hydraStatusLoading && hydraProbeNote}
+							<span class="integration-probe-note">{hydraProbeNote}</span>
 						{/if}
 					</div>
 				</div>
 				{#if hydraInstalled}
 					<Button variant="ghost" size="sm" href="/routing?tab=hrneo">Открыть</Button>
+				{:else if hydraStatusLoading}
+					<Button variant="ghost" size="sm" disabled>Ожидание…</Button>
 				{:else}
 					<Button
 						variant="ghost"
@@ -169,6 +198,11 @@
 
 	.error {
 		color: var(--color-error);
+	}
+	.integration-probe-note {
+		font-size: 0.6875rem;
+		font-family: var(--font-mono);
+		color: var(--color-text-secondary);
 	}
 
 	.install-error-row {

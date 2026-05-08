@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -150,13 +151,11 @@ func (i *Installer) CurrentVersion(ctx context.Context) string {
 	if err != nil {
 		return ""
 	}
+	versionRe := regexp.MustCompile(`(?i)\bsing-?box\b\s+version\b\s+([^\s]+)`)
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "sing-box version") {
-			parts := strings.Fields(line)
-			if len(parts) >= 3 {
-				return parts[2]
-			}
+		if m := versionRe.FindStringSubmatch(line); len(m) == 2 {
+			return strings.TrimSpace(m[1])
 		}
 	}
 	return ""

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from "svelte";
+	import { onDestroy, onMount } from "svelte";
 	import { api } from "$lib/api/client";
 	import { notifications } from "$lib/stores/notifications";
 	import { singboxStatus } from "$lib/stores/singbox";
@@ -41,16 +41,41 @@
 	let restarting = $state(false);
 	let restartConfirmOpen = $state(false);
 	let hydraStatus = $state<HydraRouteStatus | null>(null);
+	let hydraStatusLoading = $state(true);
+	let hydraProbeNote = $state<string | null>(null);
 	let hydraBusy = $state(false);
 	let singboxInstalling = $state(false);
 	let singboxInstallError = $state<string | null>(null);
 	let singboxBusy = $state(false);
+	let hydraProbeNoteTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const singboxStatusValue = $derived($singboxStatus.data ?? null);
+	const singboxStatusLoading = $derived(
+		$singboxStatus.lastFetchedAt === 0 &&
+		($singboxStatus.status === 'idle' || $singboxStatus.status === 'loading')
+	);
 	const singboxInstalled = $derived(singboxStatusValue?.installed ?? false);
 	const singboxRunning = $derived(singboxStatusValue?.running ?? false);
 	const hydraInstalled = $derived(hydraStatus?.installed ?? false);
 	const hydraRunning = $derived(hydraStatus?.running ?? false);
+
+	function setHydraProbeNote(note: string) {
+		hydraProbeNote = note;
+		if (hydraProbeNoteTimer) {
+			clearTimeout(hydraProbeNoteTimer);
+		}
+		hydraProbeNoteTimer = setTimeout(() => {
+			hydraProbeNote = null;
+			hydraProbeNoteTimer = null;
+		}, 4000);
+	}
+
+	onDestroy(() => {
+		if (hydraProbeNoteTimer) {
+			clearTimeout(hydraProbeNoteTimer);
+			hydraProbeNoteTimer = null;
+		}
+	});
 
 	async function controlSingbox(action: 'start' | 'stop' | 'restart') {
 		singboxBusy = true;
@@ -99,20 +124,41 @@
 
 	onMount(async () => {
 		try {
-			[systemInfo, settings, updateInfo] = await Promise.all([
+			[systemInfo, settings] = await Promise.all([
 				api.getSystemInfo(),
 				api.getSettings(),
-				api.checkUpdate(),
 			]);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : "Не удалось загрузить настройки");
 		} finally {
 			loading = false;
 		}
+
+		// Non-critical for first paint: load update state in background.
+		api.checkUpdate()
+			.then((info) => {
+				updateInfo = info;
+			})
+			.catch(() => {
+				// Keep the page interactive; update widget can stay empty on transient errors.
+			});
+
 		try {
+			const hydraLoadStartedAt = Date.now();
 			hydraStatus = await api.getHydraRouteStatus();
+			setHydraProbeNote("данные получены");
+			// Keep a tiny visible loading phase so users can perceive that
+			// the probe actually happened, even on very fast responses.
+			const elapsed = Date.now() - hydraLoadStartedAt;
+			const minLoadingMs = 350;
+			if (elapsed < minLoadingMs) {
+				await new Promise((resolve) => setTimeout(resolve, minLoadingMs - elapsed));
+			}
 		} catch {
+			setHydraProbeNote("нет ответа");
 			/* ignore - HR may not be available */
+		} finally {
+			hydraStatusLoading = false;
 		}
 	});
 
@@ -282,7 +328,10 @@
 
 				<IntegrationsCard
 					singboxStatus={singboxStatusValue}
+					{singboxStatusLoading}
 					{hydraStatus}
+					{hydraStatusLoading}
+					{hydraProbeNote}
 					{singboxInstalling}
 					{singboxInstallError}
 					oninstallSingbox={installSingbox}
@@ -300,7 +349,7 @@
 
 				<div class="card">
 					<div class="section-label">Доступ</div>
-					<div class="setting-row">
+					<div class="setting-row api-key-setting">
 						<div class="flex flex-col gap-1">
 							<span class="font-medium">Авторизация</span>
 							<span class="setting-description">
@@ -366,9 +415,11 @@
 								readonly
 								placeholder="не сгенерирован"
 							/>
-							<Button variant="ghost" size="sm" onclick={generateApiKey} disabled={saving}>
-								Сгенерировать
-							</Button>
+							<div class="api-key-action">
+								<Button variant="ghost" size="sm" onclick={generateApiKey} disabled={saving}>
+									Сгенерировать
+								</Button>
+							</div>
 						</div>
 					</div>
 				</div>
@@ -499,18 +550,16 @@
 	}
 
 	.api-key-row {
-		display: inline-flex;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
 		gap: 0.5rem;
 		align-items: center;
-		flex-shrink: 1;
-		min-width: 0;
-		flex-wrap: wrap;
+		min-width: 18rem;
+		width: min(34rem, 100%);
 	}
 
 	.api-key-input {
-		width: 22rem;
-		min-width: 0;
-		max-width: 100%;
+		width: 100%;
 		padding: 0.375rem 0.5rem;
 		font-family: var(--font-mono, ui-monospace, monospace);
 		font-size: 0.8rem;
@@ -523,6 +572,12 @@
 		opacity: 0.85;
 		cursor: text;
 	}
+	.api-key-action {
+		white-space: nowrap;
+	}
+	.api-key-setting {
+		align-items: start;
+	}
 
 	@media (max-width: 900px) {
 		.settings-grid {
@@ -530,6 +585,11 @@
 		}
 		.settings-left {
 			position: static;
+		}
+		.api-key-row {
+			grid-template-columns: 1fr;
+			min-width: 0;
+			width: 100%;
 		}
 	}
 </style>

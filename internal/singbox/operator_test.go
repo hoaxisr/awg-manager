@@ -69,6 +69,18 @@ func TestParseSingboxVersionOutput(t *testing.T) {
 			t.Errorf("features = %v, want empty", f)
 		}
 	})
+
+	t.Run("accepts singbox alias and mixed case", func(t *testing.T) {
+		out := "SingBox Version 1.13.11\nTaGs: with_quic, with_naive_outbound\n"
+		v, f := parseSingboxVersionOutput(out)
+		if v != "1.13.11" {
+			t.Errorf("version = %q, want 1.13.11", v)
+		}
+		want := []string{"with_quic", "with_naive_outbound"}
+		if !reflect.DeepEqual(f, want) {
+			t.Errorf("features = %v, want %v", f, want)
+		}
+	})
 }
 
 func TestOperator_ConfigPaths(t *testing.T) {

@@ -331,10 +331,10 @@ func (o *Orchestrator) executeStopKernel(ctx context.Context, action Action) err
 		return err
 	}
 
-	// Clear runtime state
+	// Clear runtime-only fields. User intent (Enabled=false) is persisted by
+	// ActionPersistStopped; restart/reconnect paths deliberately omit it.
 	stored, err := o.store.Get(action.Tunnel)
 	if err == nil {
-		stored.Enabled = false
 		stored.ActiveWAN = ""
 		stored.StartedAt = ""
 		_ = o.store.Save(stored)
@@ -359,8 +359,8 @@ func (o *Orchestrator) executeStopNativeWG(ctx context.Context, action Action) e
 		return err
 	}
 
-	// Clear runtime state
-	stored.Enabled = false
+	// Clear runtime-only fields. User intent (Enabled=false) is persisted by
+	// ActionPersistStopped; restart/reconnect paths deliberately omit it.
 	stored.ActiveWAN = ""
 	stored.StartedAt = ""
 	_ = o.store.Save(stored)

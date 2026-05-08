@@ -73,22 +73,47 @@ func decideReconnect(state *State) []Action {
 	actions = append(actions, Action{Type: ActionRestoreEndpointTracking})
 
 	for _, t := range state.tunnels {
-		if !t.Running {
+		if t.Running {
+			switch t.Backend {
+			case "kernel":
+				// Re-apply NDMS config, firewall, routing around the running process.
+				actions = append(actions, Action{Type: ActionReconcileKernel, Tunnel: t.ID})
+			case "nativewg":
+				// NativeWG can look "running" after daemon restart while its
+				// proxy/runtime state is stale. Re-run Start as a resync: in
+				// proxy/kmod mode it recreates the proxy slot and updates the
+				// peer endpoint/connect/up without dropping NDMS intent to
+				// conf=disabled.
+				actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+				actions = appendPostStartActions(actions, t)
+			}
+
+			// NativeWG already gets StartMonitoring inside appendPostStartActions above.
+			if t.Backend == "nativewg" {
+				continue
+			}
+			if t.PingCheck != nil && t.PingCheck.Enabled {
+				actions = append(actions, Action{Type: ActionStartMonitoring, Tunnel: t.ID})
+			}
 			continue
 		}
 
+		// Reconnect after daemon reinstall/restart: an enabled tunnel may no
+		// longer be running. Bring it back just like on boot.
+		if !t.Enabled {
+			continue
+		}
 		switch t.Backend {
 		case "kernel":
-			// Re-apply NDMS config, firewall, routing around the running process.
-			actions = append(actions, Action{Type: ActionReconcileKernel, Tunnel: t.ID})
+			actions = append(actions, Action{Type: ActionColdStartKernel, Tunnel: t.ID})
+			actions = appendPostStartActions(actions, t)
 		case "nativewg":
-			if !state.supportsASC {
-				actions = append(actions, Action{Type: ActionRestoreKmod, Tunnel: t.ID})
-			}
-		}
-
-		if t.PingCheck != nil && t.PingCheck.Enabled {
-			actions = append(actions, Action{Type: ActionStartMonitoring, Tunnel: t.ID})
+			// Reconnect must restore desired state from storage regardless of
+			// ASC support. After daemon reinstall/restart, an enabled NativeWG
+			// tunnel may be down and NDMS might not emit a fresh conf=running
+			// edge by itself, so we explicitly start it.
+			actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+			actions = appendPostStartActions(actions, t)
 		}
 	}
 

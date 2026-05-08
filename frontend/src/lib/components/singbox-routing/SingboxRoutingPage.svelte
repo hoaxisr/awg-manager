@@ -91,7 +91,7 @@
 	const statusReady = $derived(statusState.lastFetchedAt > 0 || statusState.status === 'error');
 	const singboxInstalled = $derived(status?.installed ?? false);
 	const running = $derived(status?.running ?? false);
-	const version = $derived(status?.version ?? '—');
+	const version = $derived(status?.version ?? status?.currentVersion ?? '—');
 	const singboxLastError = $derived(status?.lastError?.trim() ?? '');
 
 	const routerStatusStore = singboxRouter.status;

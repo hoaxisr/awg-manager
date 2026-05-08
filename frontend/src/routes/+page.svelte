@@ -556,6 +556,17 @@
 			<SubscriptionList subscriptions={subscriptionsList} onAdd={() => (createModalOpen = true)} />
 		{:else}
 			<SingboxInstallBanner />
+			{#if singboxTunnelsList.length > 0 || subscriptionsActiveCards.length > 0}
+				<div class="tunnels-toolbar">
+					<span class="tunnel-count">
+						{singboxTunnelsList.length}
+						{singboxTunnelsList.length === 1 ? 'туннель' : singboxTunnelsList.length < 5 ? 'туннеля' : 'туннелей'}
+					</span>
+					<div class="toolbar-actions">
+						<Button variant="primary" size="md" href="/singbox/new">+ Добавить</Button>
+					</div>
+				</div>
+			{/if}
 			{#if singboxTunnelsList.length === 0 && subscriptionsActiveCards.length === 0}
 				<SingboxGhostTerminal />
 				<div class="info-card">
@@ -579,15 +590,6 @@
 					</div>
 				</div>
 			{:else if singboxTunnelsList.length > 0}
-				<div class="tunnels-toolbar">
-					<span class="tunnel-count">
-						{singboxTunnelsList.length}
-						{singboxTunnelsList.length === 1 ? 'туннель' : singboxTunnelsList.length < 5 ? 'туннеля' : 'туннелей'}
-					</span>
-					<div class="toolbar-actions">
-						<Button variant="primary" size="md" href="/singbox/new">+ Добавить</Button>
-					</div>
-				</div>
 				<div class="tunnel-grid">
 					{#each singboxTunnelsList as tunnel (tunnel.tag)}
 						<SingboxTunnelCard {tunnel} />

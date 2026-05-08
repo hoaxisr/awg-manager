@@ -40,20 +40,21 @@ type kmodEntry struct {
 
 // KmodConfig holds AWG obfuscation parameters for the kernel module.
 type KmodConfig struct {
-	EndpointIP   string
-	EndpointPort int
-	H1, H2, H3, H4        string // "min-max" or single value
-	S1, S2, S3, S4         int
-	Jc, Jmin, Jmax         int
-	PubServerHex           string // 64-char hex
-	PubClientHex           string // 64-char hex
-	I1, I2, I3, I4, I5     string // CPS template strings
-	BindIface              string // kernel iface for SO_BINDTODEVICE (e.g. "eth3")
+	EndpointIP         string
+	EndpointPort       int
+	H1, H2, H3, H4     string // "min-max" or single value
+	S1, S2, S3, S4     int
+	Jc, Jmin, Jmax     int
+	PubServerHex       string // 64-char hex
+	PubClientHex       string // 64-char hex
+	I1, I2, I3, I4, I5 string // CPS template strings
+	BindIface          string // kernel iface for SO_BINDTODEVICE (e.g. "eth3")
 }
 
 // KmodResult holds the result of adding a tunnel to the kernel module.
 type KmodResult struct {
-	ListenPort int // proxy listen port on 127.0.0.1
+	ListenPort int  // proxy listen port on 127.0.0.1
+	Adopted    bool // true when an existing live slot was reused
 }
 
 // NewKmodManager creates a new KmodManager.
@@ -102,8 +103,8 @@ func (km *KmodManager) resolveKoPath() string {
 }
 
 // EnsureLoaded loads awg_proxy.ko if not already loaded.
-// If the module is loaded but has a different version, it is reloaded.
-// Cleans up stale proxy slots left from previous daemon runs.
+// If the module is loaded but has a different version, it is reloaded only
+// when the kernel proxy has no live slots.
 func (km *KmodManager) EnsureLoaded() error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
@@ -118,16 +119,18 @@ func (km *KmodManager) EnsureLoaded() error {
 		if loaded != "" && semver.Compare(loaded, expectedKmodVersion) < 0 {
 			// Don't reload if there are active proxy entries —
 			// rmmod would destroy ALL running tunnels' proxies.
-			if len(km.tunnels) > 0 {
-				km.log.Warnf("kmod: outdated (loaded=%s, want>=%s) but %d active tunnels, skipping reload",
-					loaded, expectedKmodVersion, len(km.tunnels))
+			if activeSlots := km.loadedSlotCountLocked(); activeSlots > 0 {
+				km.log.Warnf("kmod: outdated (loaded=%s, want>=%s) but %d active proxy slots, skipping reload",
+					loaded, expectedKmodVersion, activeSlots)
 				return nil
 			}
 			km.log.Infof("kmod: outdated (loaded=%s, want>=%s), reloading", loaded, expectedKmodVersion)
 			_, _ = exec.Run(context.Background(), "rmmod", "awg_proxy")
 			// Fall through to insmod below.
 		} else {
-			km.purgeStaleSlots()
+			// Do not purge unknown slots here. After daemon restart km.tunnels
+			// is empty while /proc/awg_proxy/list may still contain live slots
+			// used by NDMS. AddTunnel adopts the matching slot instead.
 			return nil
 		}
 	}
@@ -144,34 +147,12 @@ func (km *KmodManager) EnsureLoaded() error {
 	return nil
 }
 
-// purgeStaleSlots reads /proc/awg_proxy/list and removes any proxy entries
-// that are not tracked in km.tunnels. This handles daemon restarts where
-// the in-memory map is empty but kernel slots are still active.
-func (km *KmodManager) purgeStaleSlots() {
+func (km *KmodManager) loadedSlotCountLocked() int {
 	data, err := os.ReadFile("/proc/awg_proxy/list")
 	if err != nil {
-		return
+		return 0
 	}
-
-	// Build set of known endpoints from tracked tunnels
-	known := make(map[string]bool)
-	for _, entry := range km.tunnels {
-		known[fmt.Sprintf("%s:%d", entry.endpointIP, entry.endpointPort)] = true
-	}
-
-	// Parse each line: "IP:PORT listen=..."
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		if line == "" || strings.HasPrefix(line, "(") {
-			continue
-		}
-		endpoint := strings.SplitN(line, " ", 2)[0]
-		if known[endpoint] {
-			continue
-		}
-		// Stale slot — remove it
-		km.log.Infof("kmod: purging stale proxy slot %s", endpoint)
-		_ = os.WriteFile("/proc/awg_proxy/del", []byte(endpoint), 0)
-	}
+	return countProxySlotsList(string(data))
 }
 
 // readVersionLocked reads the loaded module version from /proc/awg_proxy/version.
@@ -185,13 +166,26 @@ func (km *KmodManager) readVersionLocked() string {
 
 // AddTunnel writes a tunnel config to /proc/awg_proxy/add and reads back the
 // assigned proxy listen port from /proc/awg_proxy/list.
-// Idempotent: removes any stale entry for the same endpoint before adding.
+// After daemon restart, the in-memory map is empty while a live kernel slot can
+// still exist; in that case we adopt it instead of deleting a running proxy.
 func (km *KmodManager) AddTunnel(tunnelID string, cfg KmodConfig) (KmodResult, error) {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
-	// Remove stale entry if endpoint already registered (daemon restart, test.sh leftover, etc.)
 	delLine := fmt.Sprintf("%s:%d", cfg.EndpointIP, cfg.EndpointPort)
+	if _, tracked := km.tunnels[tunnelID]; !tracked {
+		if listenPort, err := km.readListenPortLocked(cfg.EndpointIP, cfg.EndpointPort); err == nil {
+			km.tunnels[tunnelID] = kmodEntry{
+				endpointIP:   cfg.EndpointIP,
+				endpointPort: cfg.EndpointPort,
+				listenPort:   listenPort,
+			}
+			km.log.Infof("kmod: adopted existing tunnel %s (%s -> 127.0.0.1:%d)", tunnelID, delLine, listenPort)
+			return KmodResult{ListenPort: listenPort, Adopted: true}, nil
+		}
+	}
+
+	// Replace stale or already-tracked entry before adding a fresh slot.
 	_ = os.WriteFile("/proc/awg_proxy/del", []byte(delLine), 0)
 
 	line := buildProcLine(cfg)
@@ -223,6 +217,20 @@ func (km *KmodManager) AddTunnel(tunnelID string, cfg KmodConfig) (KmodResult, e
 
 // listenPortRe matches "listen=127.0.0.1:PORT" in the proxy list output.
 var listenPortRe = regexp.MustCompile(`listen=127\.0\.0\.1:(\d+)`)
+
+func countProxySlotsList(data string) int {
+	count := 0
+	for _, line := range strings.Split(strings.TrimSpace(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "(") {
+			continue
+		}
+		if strings.Contains(line, "listen=127.0.0.1:") {
+			count++
+		}
+	}
+	return count
+}
 
 // readListenPortLocked reads /proc/awg_proxy/list and finds the listen port
 // for the given endpoint. Must be called with km.mu held.
