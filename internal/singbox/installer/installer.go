@@ -145,7 +145,8 @@ func (i *Installer) CurrentVersion(ctx context.Context) string {
 	if _, err := os.Stat(i.binaryPath); err != nil {
 		return ""
 	}
-	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	// Entware builds can take several seconds to emit the version banner.
+	cctx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(cctx, i.binaryPath, "version").Output()
 	if err != nil {

@@ -38,7 +38,11 @@ const (
 	// singboxVersionProbeTimeout bounds external `sing-box version` probe
 	// duration so a broken/blocked binary cannot accumulate hung child
 	// processes and starve router memory.
-	singboxVersionProbeTimeout = 2 * time.Second
+	//
+	// Entware/UPX builds on Keenetic can spend several seconds inflating and
+	// printing the banner, so keep enough headroom for the first probe to
+	// complete successfully.
+	singboxVersionProbeTimeout = 6 * time.Second
 
 	// singboxVersionCacheTTL keeps version/features probe reasonably fresh
 	// while avoiding process-spawn on every /singbox/status poll.
@@ -659,11 +663,18 @@ func (o *Operator) IsInstalled() (bool, string) {
 	if !isExecutable(o.binary) {
 		return false, ""
 	}
-	if o.inst != nil {
-		return true, o.inst.CurrentVersion(context.Background())
-	}
 	v, _ := o.detectVersionAndFeaturesCached(context.Background())
 	return true, v
+}
+
+// VersionInfo returns the cached sing-box version banner and build tags.
+// It is the shared probe used by UI-facing status endpoints so we do not
+// spawn a fresh `sing-box version` process on every poll.
+func (o *Operator) VersionInfo(ctx context.Context) (string, []string) {
+	if o == nil {
+		return "", nil
+	}
+	return o.detectVersionAndFeaturesCached(ctx)
 }
 
 // RequiredVersion is the version this awg-manager build is pinned to.
@@ -680,18 +691,12 @@ func (o *Operator) GetStatus(ctx context.Context) Status {
 	s := Status{}
 	if isExecutable(o.binary) {
 		s.Installed = true
-		detectedVersion, detectedFeatures := o.detectVersionAndFeaturesCached(ctx)
-		s.Features = detectedFeatures
-		if o.inst != nil {
-			s.Version = o.inst.CurrentVersion(ctx)
-			// Some builds print a slightly different version banner that
-			// CurrentVersion may fail to parse. Fall back to runtime detect
-			// so status always exposes a usable semantic version.
-			if s.Version == "" {
-				s.Version = detectedVersion
-			}
-		} else {
-			s.Version = detectedVersion
+		s.Version, s.Features = o.detectVersionAndFeaturesCached(ctx)
+		// Keep a slow-path fallback for odd banners or a cancelled request.
+		// This is intentionally only reached when the cached runtime probe
+		// could not produce a semantic version.
+		if s.Version == "" && o.inst != nil {
+			s.Version = o.inst.CurrentVersion(context.Background())
 		}
 	}
 	if running, pid := o.proc.IsRunning(); running {

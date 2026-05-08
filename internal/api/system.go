@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -519,7 +520,7 @@ func (h *SystemHandler) startSingboxVersionRefresh(binaryFingerprint string) {
 	h.singboxInfoMu.Unlock()
 
 	go func() {
-		_, version := h.singboxOp.IsInstalled()
+		version, _ := h.singboxOp.VersionInfo(context.Background())
 		h.singboxInfoMu.Lock()
 		h.singboxVersionCached = version
 		h.singboxVersionFetchedAt = time.Now()
@@ -561,7 +562,8 @@ func (h *SystemHandler) currentSingboxBinaryFingerprint() string {
 // nativewgAvailable returns true if NativeWG backend can work:
 // (1) the firmware has the 'wireguard' component installed, AND
 // (2) either firmware supports WireGuard ASC natively (>= 5.01.A.4)
-//     or awg_proxy.ko is loaded (provides obfuscation proxy for older firmware).
+//
+//	or awg_proxy.ko is loaded (provides obfuscation proxy for older firmware).
 func nativewgAvailable() bool {
 	if !ndmsinfo.HasWireguardComponent() {
 		return false

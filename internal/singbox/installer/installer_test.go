@@ -125,6 +125,22 @@ func TestInstaller_CurrentVersion_AcceptsMixedCaseBanner(t *testing.T) {
 	}
 }
 
+func TestInstaller_CurrentVersion_AllowsSlowBanner(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executable script fixture is POSIX-only")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sing-box")
+	script := "#!/bin/sh\nsleep 4\necho 'sing-box version 1.13.11'\n"
+	if err := os.WriteFile(target, []byte(script), 0755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	inst := New(target, "x", BinarySpec{}, nil)
+	if v := inst.CurrentVersion(context.Background()); v != "1.13.11" {
+		t.Errorf("CurrentVersion() = %q, want 1.13.11", v)
+	}
+}
+
 func TestInstaller_BinaryPathAndRequiredVersion(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "sing-box")
