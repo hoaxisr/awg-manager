@@ -35,9 +35,15 @@
 
 	const history = $derived($singboxDelayHistory.get(tunnel.tag) ?? []);
 	const latest = $derived(history.length > 0 ? history[history.length - 1] : undefined);
+	const hasConsecutiveTimeout = $derived(
+		history.length >= 2 &&
+			history[history.length - 1] <= 0 &&
+			history[history.length - 2] <= 0,
+	);
+	const positiveHistory = $derived(history.filter((v) => v > 0));
 	const avg = $derived(
-		history.length > 0
-			? Math.round(history.reduce((s, v) => s + v, 0) / history.length)
+		positiveHistory.length > 0
+			? Math.round(positiveHistory.reduce((s, v) => s + v, 0) / positiveHistory.length)
 			: 0,
 	);
 	const traffic = $derived($singboxTraffic.get(tunnel.tag));
@@ -50,16 +56,17 @@
 		// instead of debugging a timeout that isn't actually a timeout.
 		if (tunnel.running === false) return 'stopped';
 		if (latest === undefined) return 'unknown';
-		if (latest <= 0) return 'fail';
+		if (latest <= 0) return hasConsecutiveTimeout ? 'fail' : 'slow';
 		if (latest < DELAY_OK) return 'ok';
 		if (latest < DELAY_SLOW) return 'slow';
-		return 'fail';
+		return 'slow';
 	});
 
 	const latText = $derived.by(() => {
 		if (cardState === 'stopped') return 'stopped';
 		if (cardState === 'unknown') return '—';
 		if (cardState === 'fail') return 'timeout';
+		if (latest !== undefined && latest <= 0) return 'проверка...';
 		return `${latest}ms`;
 	});
 

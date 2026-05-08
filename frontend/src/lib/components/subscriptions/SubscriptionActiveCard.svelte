@@ -48,20 +48,26 @@
 
     const history = $derived($singboxDelayHistory.get(activeMember.tag) ?? []);
     const latest = $derived(history.length > 0 ? history[history.length - 1] : -1);
+    const hasConsecutiveTimeout = $derived(
+        history.length >= 2 &&
+            history[history.length - 1] <= 0 &&
+            history[history.length - 2] <= 0,
+    );
     const traffic = $derived($singboxTraffic.get(activeMember.tag));
     const endpointText = $derived(`${activeMember.server}:${activeMember.port}`);
 
     type State = 'ok' | 'slow' | 'fail' | 'unknown';
     const cardState: State = $derived.by(() => {
         if (latest < 0) return 'unknown';
-        if (latest <= 0) return 'fail';
+        if (latest <= 0) return hasConsecutiveTimeout ? 'fail' : 'slow';
         if (latest < DELAY_OK) return 'ok';
         if (latest < DELAY_SLOW) return 'slow';
-        return 'fail';
+        return 'slow';
     });
     const latText = $derived.by(() => {
         if (cardState === 'unknown') return '—';
         if (cardState === 'fail') return 'timeout';
+        if (latest <= 0) return 'проверка...';
         return `${latest}ms`;
     });
     const protocolLabel = $derived.by(() => {

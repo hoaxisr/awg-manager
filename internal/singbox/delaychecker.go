@@ -30,6 +30,7 @@ const (
 	defaultDelayInterval = 60 * time.Second
 	defaultDelayTimeout  = 5 * time.Second
 	defaultDelayTestURL  = "http://www.gstatic.com/generate_204"
+	defaultRetryDelay    = 150 * time.Millisecond
 	eventSingboxDelay    = "singbox:delay"
 )
 
@@ -79,9 +80,23 @@ func (d *DelayChecker) CheckOne(ctx context.Context, tag string) (int, error) {
 		d.mu.Unlock()
 	}()
 
-	delay, err := d.clash.TestDelay(tag, d.testURL, d.timeout)
-	if err != nil {
-		delay = 0
+	delay := 0
+	if firstDelay, firstErr := d.clash.TestDelay(tag, d.testURL, d.timeout); firstErr == nil && firstDelay > 0 {
+		delay = firstDelay
+	} else {
+		// Anti-flap: one transient Clash timeout/spike should not immediately
+		// mark the card as failed. Retry once with a short backoff.
+		timer := time.NewTimer(defaultRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return 0, ctx.Err()
+		case <-timer.C:
+			retryDelay, retryErr := d.clash.TestDelay(tag, d.testURL, d.timeout)
+			if retryErr == nil && retryDelay > 0 {
+				delay = retryDelay
+			}
+		}
 	}
 	if d.publisher != nil {
 		d.publisher.Publish(eventSingboxDelay, map[string]any{

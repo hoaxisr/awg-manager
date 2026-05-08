@@ -13,6 +13,11 @@
 
 	const history = $derived($singboxDelayHistory.get(member.tag) ?? []);
 	const latest = $derived(history.length > 0 ? history[history.length - 1] : -1);
+	const hasConsecutiveTimeout = $derived(
+		history.length >= 2 &&
+			history[history.length - 1] <= 0 &&
+			history[history.length - 2] <= 0
+	);
 
 	let testing = $state(false);
 	async function runTest(e: MouseEvent | KeyboardEvent): Promise<void> {
@@ -35,17 +40,17 @@
 	const DELAY_OK = 200;
 	const DELAY_SLOW = 500;
 
-	function delayStateOf(d: number): 'ok' | 'slow' | 'fail' | 'unknown' {
-		if (d < 0) return 'unknown';
-		if (d === 0) return 'fail';
-		if (d < DELAY_OK) return 'ok';
-		if (d < DELAY_SLOW) return 'slow';
-		return 'fail';
-	}
-	const delayState = $derived(delayStateOf(latest));
+	const delayState = $derived.by((): 'ok' | 'slow' | 'fail' | 'unknown' => {
+		if (latest < 0) return 'unknown';
+		if (latest <= 0) return hasConsecutiveTimeout ? 'fail' : 'slow';
+		if (latest < DELAY_OK) return 'ok';
+		if (latest < DELAY_SLOW) return 'slow';
+		return 'slow';
+	});
 	const delayText = $derived.by(() => {
 		if (delayState === 'unknown') return '—';
 		if (delayState === 'fail') return 'timeout';
+		if (latest <= 0) return 'проверка...';
 		return `${latest}ms`;
 	});
 
