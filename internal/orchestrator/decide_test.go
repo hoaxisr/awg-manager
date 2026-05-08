@@ -132,16 +132,16 @@ func TestDecide_Reconnect_ResyncsRunningNativeWGWithoutASC(t *testing.T) {
 	actions := decide(Event{Type: EventReconnect}, &s)
 
 	restores := filterActions(actions, ActionRestoreKmod)
-	if len(restores) != 0 {
-		t.Errorf("running NativeWG should resync via Start instead of RestoreKmod, got %d restores", len(restores))
+	if len(restores) != 1 {
+		t.Errorf("running NativeWG without ASC should restore kmod proxy, got %d restores", len(restores))
 	}
 	stops := filterActions(actions, ActionStopNativeWG)
 	if len(stops) != 0 {
 		t.Errorf("reconnect resync must not drop NDMS to disabled, got %d stops", len(stops))
 	}
 	starts := filterActions(actions, ActionStartNativeWG)
-	if len(starts) != 1 {
-		t.Errorf("expected 1 StartNativeWG, got %d", len(starts))
+	if len(starts) != 0 {
+		t.Errorf("running NativeWG without ASC must not full-start on reconnect, got %d starts", len(starts))
 	}
 }
 
@@ -177,8 +177,11 @@ func TestDecide_Reconnect_NativeWGResyncDoesNotPersistStopped(t *testing.T) {
 	if hasAction(actions, ActionPersistStopped) {
 		t.Error("reconnect resync must not persist Enabled=false")
 	}
-	if !hasAction(actions, ActionPersistRunning) {
-		t.Error("reconnect resync should persist running state after start")
+	if !hasAction(actions, ActionRestoreKmod) {
+		t.Error("reconnect resync without ASC should restore kmod proxy")
+	}
+	if hasAction(actions, ActionPersistRunning) {
+		t.Error("reconnect resync without ASC should not rewrite running state for an already-running tunnel")
 	}
 }
 

@@ -79,16 +79,26 @@ func decideReconnect(state *State) []Action {
 				// Re-apply NDMS config, firewall, routing around the running process.
 				actions = append(actions, Action{Type: ActionReconcileKernel, Tunnel: t.ID})
 			case "nativewg":
-				// NativeWG can look "running" after daemon restart while its
-				// proxy/runtime state is stale. Re-run Start as a resync: in
-				// proxy/kmod mode it recreates the proxy slot and updates the
-				// peer endpoint/connect/up without dropping NDMS intent to
-				// conf=disabled.
-				actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
-				actions = appendPostStartActions(actions, t)
+				if state.supportsASC {
+					// KeenOS 5+ ASC mode has no kmod proxy to restore. A running
+					// NativeWG interface may still need a full resync after awgm
+					// restart/update so ASC bindings, routes and persistence are
+					// refreshed without first dropping NDMS to conf=disabled.
+					actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+					actions = appendPostStartActions(actions, t)
+				} else {
+					// KeenOS 4 proxy/kmod mode is more sensitive: the NDMS
+					// interface is already running, so a full Start can flap the
+					// interface and trigger repeated restart hooks. Restore only
+					// the proxy slot and peer endpoint around the live tunnel.
+					actions = append(actions, Action{Type: ActionRestoreKmod, Tunnel: t.ID})
+					if t.PingCheck != nil && t.PingCheck.Enabled {
+						actions = append(actions, Action{Type: ActionStartMonitoring, Tunnel: t.ID})
+					}
+				}
 			}
 
-			// NativeWG already gets StartMonitoring inside appendPostStartActions above.
+			// NativeWG monitoring is handled inside the backend-specific branch above.
 			if t.Backend == "nativewg" {
 				continue
 			}
