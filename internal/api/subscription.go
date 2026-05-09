@@ -35,6 +35,7 @@ type SubscriptionMemberDTO struct {
 	Protocol  string `json:"protocol" example:"vless"`
 	Server    string `json:"server" example:"de01.example.com"`
 	Port      int    `json:"port" example:"443"`
+	SNI       string `json:"sni,omitempty" example:"de01.example.com"`
 	Transport string `json:"transport,omitempty" example:"ws"`
 	Security  string `json:"security,omitempty" example:"tls"`
 }
@@ -173,6 +174,7 @@ func toSubscriptionDTO(s subscription.Subscription) SubscriptionDTO {
 			Protocol:  m.Protocol,
 			Server:    m.Server,
 			Port:      int(m.Port),
+			SNI:       m.SNI,
 			Transport: m.Transport,
 			Security:  m.Security,
 		}

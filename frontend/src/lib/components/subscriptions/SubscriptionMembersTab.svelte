@@ -393,8 +393,10 @@
 	}
 	.grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-		gap: 0.7rem;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+		gap: 0.8rem;
+		justify-items: stretch;
+		align-items: stretch;
 	}
 	.orphans {
 		margin-top: 1.5rem;
@@ -431,7 +433,10 @@
 		}
 	}
 
-	.member-slot { position: relative; }
+	.member-slot {
+		position: relative;
+		min-width: 0;
+	}
 	.member-remove {
 		position: absolute;
 		top: 6px;
@@ -469,4 +474,16 @@
 		font-size: 0.82rem;
 	}
 	.warn { color: #d29922; font-size: 0.85rem; }
+
+	@media (max-width: 900px) {
+		.grid {
+			grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+		}
+	}
+
+	@media (max-width: 640px) {
+		.grid {
+			grid-template-columns: 1fr;
+		}
+	}
 </style>

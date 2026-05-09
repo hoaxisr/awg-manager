@@ -20,6 +20,7 @@
 	);
 
 	let testing = $state(false);
+
 	async function runTest(e: MouseEvent | KeyboardEvent): Promise<void> {
 		e.stopPropagation(); // don't trigger card-as-radio click
 		if (testing) return;
@@ -94,6 +95,12 @@
 	{#if member.label}
 		<div class="server-line mono" title={member.tag}>{member.server}:{member.port}</div>
 	{/if}
+	{#if member.sni}
+		<div class="sni-row">
+			<span class="sni-label">SNI</span>
+			<span class="sni-value mono" title={member.sni}>{member.sni}</span>
+		</div>
+	{/if}
 	<div class="delay-row">
 		<span
 			role="button"
@@ -133,6 +140,9 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.55rem;
+		width: 100%;
+		min-width: 0;
+		min-height: 170px;
 		padding: 14px 16px;
 		border: 1px solid var(--color-border);
 		border-radius: 10px;
@@ -251,5 +261,31 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.sni-row {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+		margin-top: -0.15rem;
+	}
+	.sni-label {
+		text-transform: uppercase;
+		letter-spacing: 0.4px;
+		opacity: 0.85;
+	}
+	.sni-value {
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	@media (max-width: 640px) {
+		.card {
+			padding: 13px 14px;
+			min-height: 0;
+		}
 	}
 </style>

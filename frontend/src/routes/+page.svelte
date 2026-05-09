@@ -59,7 +59,12 @@
 	});
 
 	const goArch = $derived(sysInfo?.goArch ?? '');
+	let singboxStatusState = $derived($singboxStatus);
 	const singboxInstalled = $derived($singboxStatus.data?.installed ?? false);
+	const singboxStatusLoading = $derived(
+		singboxStatusState.lastFetchedAt === 0 &&
+		(singboxStatusState.status === 'idle' || singboxStatusState.status === 'loading'),
+	);
 
 	let showUnsupportedBlock = $derived(
 		sysInfo !== null &&
@@ -180,7 +185,12 @@
 	onMount(() => { unsubSubs = subscriptionsStore.subscribe(() => {}); });
 	onDestroy(() => unsubSubs?.());
 
-	let subscriptionsList = $derived($subscriptionsStore.data ?? []);
+	let subscriptionsState = $derived($subscriptionsStore);
+	let subscriptionsList = $derived(subscriptionsState.data ?? []);
+	let subscriptionsInitialLoading = $derived(
+		subscriptionsState.data === null &&
+		(subscriptionsState.status === 'idle' || subscriptionsState.status === 'loading' || subscriptionsState.status === 'stale'),
+	);
 	let createModalOpen = $state(false);
 	let wizardPreselect = $state<'choose' | 'single' | 'inline' | 'url'>('choose');
 
@@ -251,16 +261,7 @@
 		const fromQuery = $page.url.searchParams.get('tab');
 		if (fromQuery === 'awg' || fromQuery === 'singbox' || fromQuery === 'subscriptions') {
 			activeTab = fromQuery;
-			return;
 		}
-		const stored = sessionStorage.getItem('tunnelsTab');
-		if (stored === 'awg' || stored === 'singbox' || stored === 'subscriptions') {
-			activeTab = stored;
-		}
-	});
-
-	$effect(() => {
-		sessionStorage.setItem('tunnelsTab', activeTab);
 	});
 
 	let awgAutoConnectivityNonce = $state(0);
@@ -651,21 +652,31 @@
 		{/if}
 		{:else if activeTab === 'subscriptions'}
 			<SingboxInstallBanner />
-			{#if singboxInstalled}
-				<div class="tunnels-toolbar">
-					<span class="tunnel-count">
-						{subscriptionsList.length}
-						{subscriptionsList.length === 1 ? 'подписка' : subscriptionsList.length < 5 ? 'подписки' : 'подписок'}
-					</span>
-					<div class="toolbar-actions">
-						<Button variant="primary" size="md" onclick={() => openWizard('url')}>+ Добавить</Button>
-					</div>
+			{#if singboxStatusLoading}
+				<div class="tab-loading">
+					<LoadingSpinner size="md" message="Проверяем sing-box..." />
 				</div>
-				<SubscriptionList
-				subscriptions={subscriptionsList}
-				onAdd={() => openWizard('url')}
-				ondelete={requestSubscriptionDelete}
-			/>
+			{:else if singboxInstalled}
+				{#if subscriptionsInitialLoading}
+					<div class="tab-loading">
+						<LoadingSpinner size="md" message="Загружаем подписки..." />
+					</div>
+				{:else}
+					<div class="tunnels-toolbar">
+						<span class="tunnel-count">
+							{subscriptionsList.length}
+							{subscriptionsList.length === 1 ? 'подписка' : subscriptionsList.length < 5 ? 'подписки' : 'подписок'}
+						</span>
+						<div class="toolbar-actions">
+							<Button variant="primary" size="md" onclick={() => openWizard('url')}>+ Добавить</Button>
+						</div>
+					</div>
+					<SubscriptionList
+					subscriptions={subscriptionsList}
+					onAdd={() => openWizard('url')}
+					ondelete={requestSubscriptionDelete}
+				/>
+				{/if}
 			{/if}
 		{:else}
 			<SingboxInstallBanner />
@@ -900,6 +911,12 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
+	}
+
+	.tab-loading {
+		min-height: 220px;
+		display: grid;
+		place-items: center;
 	}
 
 	/* Empty-state ghost terminal — page-specific */

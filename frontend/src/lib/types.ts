@@ -1460,6 +1460,7 @@ export interface SubscriptionMember {
 	protocol: string;
 	server: string;
 	port: number;
+	sni?: string;
 	transport?: string;
 	security?: string;
 }
