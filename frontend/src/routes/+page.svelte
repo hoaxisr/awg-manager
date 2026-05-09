@@ -844,13 +844,15 @@
 {#if detailId}
 	{@const managed = awgList.find((x) => x.id === detailId)}
 	{@const sys = systemList.find((x) => x.id === detailId)}
-	<TrafficChartModal
-		open={true}
-		tunnelId={detailId}
-		tunnelName={managed?.name ?? sys?.description ?? detailId}
-		ifaceName={managed?.interfaceName ?? sys?.interfaceName ?? ''}
-		onclose={closeDetail}
-	/>
+	{#if managed || sys}
+		<TrafficChartModal
+			open={true}
+			tunnelId={detailId}
+			tunnelName={managed?.name ?? sys?.description ?? detailId}
+			ifaceName={managed?.interfaceName ?? sys?.interfaceName ?? ''}
+			onclose={closeDetail}
+		/>
+	{/if}
 {/if}
 
 {#snippet exportIcon()}

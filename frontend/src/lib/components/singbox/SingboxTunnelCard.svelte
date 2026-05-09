@@ -10,7 +10,7 @@
 	} from '$lib/stores/singbox';
 	import { untrack } from 'svelte';
 	import { Modal, Button, TrafficChart } from '$lib/components/ui';
-	import { getTrafficRates, subscribeTraffic, loadHistory } from '$lib/stores/traffic';
+	import { getTrafficRates, subscribeTraffic } from '$lib/stores/traffic';
 	import SingboxSpeedTestModal from './SingboxSpeedTestModal.svelte';
 
 	interface Props {
@@ -146,13 +146,6 @@
 		return subscribeTraffic(update);
 	});
 
-	let initialLoadDone = false;
-	$effect(() => {
-		const tag = tunnelTag;
-		if (initialLoadDone) return;
-		initialLoadDone = true;
-		untrack(() => loadHistory(tag));
-	});
 </script>
 
 <div class="card" class:ok={cardState === 'ok'} class:slow={cardState === 'slow'} class:fail={cardState === 'fail'} class:unknown={cardState === 'unknown'} class:stopped={cardState === 'stopped'}>
