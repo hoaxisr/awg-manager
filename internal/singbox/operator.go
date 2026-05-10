@@ -68,6 +68,13 @@ const (
 // it stays in lockstep with installer.DefaultBinaryPath if that ever moves.
 var defaultDir = filepath.Dir(installer.DefaultBinaryPath)
 
+// defaultCacheDBPath is the absolute path for sing-box's experimental.cache_file.
+// Must live in a writable directory — sing-box resolves relative paths against
+// CWD ("/" when the manager runs as a service on Entware), which is read-only.
+// var (not const) because filepath.Join requires runtime evaluation; tests can
+// override defaultDir to redirect this too.
+var defaultCacheDBPath = filepath.Join(defaultDir, "cache.db")
+
 // Operator is the high-level facade for sing-box integration.
 type Operator struct {
 	log        *slog.Logger
@@ -320,6 +327,7 @@ func ensureBaseConfig(configDir string) {
 		patchBaseClashPort(basePath)
 		patchBaseLogLevel(basePath)
 		patchBaseDomainResolver(basePath)
+		patchBaseCacheFilePath(basePath)
 		return
 	}
 	_ = os.MkdirAll(configDir, 0755)
@@ -597,6 +605,39 @@ func patchBaseDomainResolver(basePath string) {
 	_ = writeJSONFile(basePath, m)
 }
 
+// patchBaseCacheFilePath rewrites a relative cache_file.path ("cache.db")
+// to the absolute writable location. Older installs had the relative form
+// which fails with "read-only file system" because sing-box resolves it
+// against CWD (which is "/" when the manager runs as a service on Entware).
+// Custom user-set paths (anything starting with "/") are left untouched.
+func patchBaseCacheFilePath(basePath string) {
+	raw, err := os.ReadFile(basePath)
+	if err != nil {
+		return
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return
+	}
+	exp, ok := m["experimental"].(map[string]any)
+	if !ok {
+		return
+	}
+	cf, ok := exp["cache_file"].(map[string]any)
+	if !ok {
+		return
+	}
+	path, ok := cf["path"].(string)
+	if !ok || path == "" {
+		return
+	}
+	if strings.HasPrefix(path, "/") {
+		return // user-customized absolute path — leave alone
+	}
+	cf["path"] = defaultCacheDBPath
+	_ = writeJSONFile(basePath, m)
+}
+
 // freshBaseConfig returns the canonical base sing-box config. Single
 // source of truth for ensureBaseConfig (initial write + self-heal path).
 func freshBaseConfig() map[string]any {
@@ -606,8 +647,14 @@ func freshBaseConfig() map[string]any {
 			// MUST match clashAPIAddr — our ClashClient and LogForwarder
 			// connect here. Hard-coding 9090 (sing-box default) used to
 			// silently break log forwarding on existing installs.
-			"clash_api":  map[string]any{"external_controller": clashAPIAddr},
-			"cache_file": map[string]any{"enabled": true, "path": "cache.db"},
+			"clash_api": map[string]any{"external_controller": clashAPIAddr},
+			// Absolute path to writable dir. Sing-box default resolves
+			// relative path against CWD which is "/" (read-only on Entware) —
+			// caused FATAL on user installs.
+			"cache_file": map[string]any{
+				"enabled": true,
+				"path":    defaultCacheDBPath,
+			},
 		},
 		"dns": map[string]any{
 			"strategy": "ipv4_only",

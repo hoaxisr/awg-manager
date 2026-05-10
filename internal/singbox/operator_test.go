@@ -389,3 +389,63 @@ func TestClassifyProcessLine(t *testing.T) {
 		}
 	}
 }
+
+func TestFreshBaseConfig_CacheFilePathIsAbsolute(t *testing.T) {
+	cfg := freshBaseConfig()
+	exp := cfg["experimental"].(map[string]any)
+	cf := exp["cache_file"].(map[string]any)
+	if cf["enabled"] != true {
+		t.Errorf("cache_file.enabled=%v want true", cf["enabled"])
+	}
+	got := cf["path"]
+	want := defaultCacheDBPath
+	if got != want {
+		t.Errorf("cache_file.path=%q want %q", got, want)
+	}
+}
+
+func TestEnsureBaseConfig_PatchesRelativeCachePath(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "config.d")
+	_ = os.MkdirAll(configDir, 0755)
+	stale := `{"log":{"level":"debug"},"experimental":{"clash_api":{"external_controller":"127.0.0.1:9099"},"cache_file":{"enabled":true,"path":"cache.db"}}}`
+	basePath := filepath.Join(configDir, "00-base.json")
+	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ensureBaseConfig(configDir)
+	raw, _ := os.ReadFile(basePath)
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	exp := m["experimental"].(map[string]any)
+	cf := exp["cache_file"].(map[string]any)
+	if cf["path"] != defaultCacheDBPath {
+		t.Errorf("expected %s, got %v", defaultCacheDBPath, cf["path"])
+	}
+	// User customizations preserved (log.level)
+	if m["log"].(map[string]any)["level"] != "debug" {
+		t.Errorf("log.level lost: %v", m["log"])
+	}
+}
+
+func TestEnsureBaseConfig_LeavesAbsoluteCachePathUntouched(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "config.d")
+	_ = os.MkdirAll(configDir, 0755)
+	custom := `{"experimental":{"clash_api":{"external_controller":"127.0.0.1:9099"},"cache_file":{"enabled":true,"path":"/custom/path/cache.db"}}}`
+	basePath := filepath.Join(configDir, "00-base.json")
+	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ensureBaseConfig(configDir)
+	raw, _ := os.ReadFile(basePath)
+	var m map[string]any
+	json.Unmarshal(raw, &m)
+	exp := m["experimental"].(map[string]any)
+	cf := exp["cache_file"].(map[string]any)
+	if cf["path"] != "/custom/path/cache.db" {
+		t.Errorf("user-customized path overwritten: %v", cf["path"])
+	}
+}
