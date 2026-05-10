@@ -146,12 +146,13 @@ type UpdatePatch struct {
 
 // RefreshResult is the outcome of a single refresh cycle.
 type RefreshResult struct {
-	When         time.Time
-	Err          error
-	Added        int
-	Updated      int
-	Orphaned     int
-	SkippedVmess int
-	SkippedOther int
-	ParseErrors  []string
+	When             time.Time `json:"when"`
+	Err              error     `json:"-"`
+	Added            int       `json:"added"`
+	Updated          int       `json:"updated"`
+	Orphaned         int       `json:"orphaned"`
+	SkippedVmess     int       `json:"skippedVmess"`
+	SkippedOther     int       `json:"skippedOther"`
+	SkippedDuplicate int       `json:"skippedDuplicate"`
+	ParseErrors      []string  `json:"parseErrors,omitempty"`
 }

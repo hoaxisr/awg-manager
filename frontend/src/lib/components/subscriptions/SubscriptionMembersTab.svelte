@@ -5,6 +5,7 @@
 	import { api } from '$lib/api/client';
 	import { Button, Modal } from '$lib/components/ui';
 	import { triggerDelayCheck } from '$lib/stores/singbox';
+	import { notifications } from '$lib/stores/notifications';
 	import SubscriptionMemberCard from './SubscriptionMemberCard.svelte';
 
 	interface Props {
@@ -94,7 +95,14 @@
 		refreshing = true;
 		lastError = '';
 		try {
-			await api.refreshSubscription(subscription.id);
+			const result = await api.refreshSubscription(subscription.id);
+			const skipped: string[] = [];
+			if (result.skippedDuplicate > 0) skipped.push(`дубликатов: ${result.skippedDuplicate}`);
+			if (result.skippedVmess > 0) skipped.push(`vmess: ${result.skippedVmess}`);
+			if (result.skippedOther > 0) skipped.push(`не поддерживаемых: ${result.skippedOther}`);
+			if (skipped.length > 0) {
+				notifications.warning(`Пропущено — ${skipped.join(', ')}`);
+			}
 			onUpdated();
 		} catch (e) {
 			lastError = e instanceof Error ? e.message : 'Не удалось обновить';

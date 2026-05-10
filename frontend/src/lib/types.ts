@@ -1508,6 +1508,7 @@ export interface SubscriptionRefreshResult {
 	orphaned: number;
 	skippedVmess: number;
 	skippedOther: number;
+	skippedDuplicate: number;
 	parseErrors?: string[];
 }
 

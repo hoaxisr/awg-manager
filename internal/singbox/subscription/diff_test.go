@@ -75,3 +75,34 @@ func TestApplyDiff_OrphanDetected(t *testing.T) {
 		t.Errorf("expected Orphan=[sub-subID-orphanhash], got %+v", diff.Orphan)
 	}
 }
+
+func TestApplyDiff_SkipsDuplicates(t *testing.T) {
+	current := []string{}
+	// Three identical outbounds (same protocol+server+port+credential → same StableTag)
+	parsed := []vlink.ParsedOutbound{
+		mkParsed("h1", 443, "vless"),
+		mkParsed("h1", 443, "vless"),
+		mkParsed("h1", 443, "vless"),
+	}
+	diff := ApplyDiff("subID", current, parsed)
+	if len(diff.New) != 1 {
+		t.Errorf("New=%d want 1 (dedup)", len(diff.New))
+	}
+	if diff.SkippedDuplicate != 2 {
+		t.Errorf("SkippedDuplicate=%d want 2", diff.SkippedDuplicate)
+	}
+}
+
+func TestApplyDiff_DuplicatesAcrossNewAndExisting(t *testing.T) {
+	parsed1 := mkParsed("h1", 443, "vless")
+	tag := StableTag("subID", parsed1)
+	current := []string{tag}
+	parsed := []vlink.ParsedOutbound{parsed1, parsed1}
+	diff := ApplyDiff("subID", current, parsed)
+	if len(diff.Existing) != 1 || len(diff.New) != 0 {
+		t.Errorf("expected Existing=1 New=0, got %+v", diff)
+	}
+	if diff.SkippedDuplicate != 1 {
+		t.Errorf("SkippedDuplicate=%d want 1", diff.SkippedDuplicate)
+	}
+}

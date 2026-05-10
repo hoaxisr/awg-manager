@@ -12,9 +12,10 @@ import (
 // sing-box config: new members get added, existing get updated in-place,
 // orphans are flagged but not removed (UI choice).
 type DiffResult struct {
-	New      []TaggedOutbound
-	Existing []TaggedOutbound
-	Orphan   []string
+	New              []TaggedOutbound
+	Existing         []TaggedOutbound
+	Orphan           []string
+	SkippedDuplicate int
 }
 
 // TaggedOutbound pairs a stable tag with a parsed outbound.
@@ -72,6 +73,10 @@ func ApplyDiff(subID string, current []string, parsed []vlink.ParsedOutbound) Di
 	parsedSet := make(map[string]bool, len(parsed))
 	for _, p := range parsed {
 		t := StableTag(subID, p)
+		if parsedSet[t] {
+			out.SkippedDuplicate++
+			continue
+		}
 		parsedSet[t] = true
 		tagged := TaggedOutbound{Tag: t, Out: p}
 		if currSet[t] {

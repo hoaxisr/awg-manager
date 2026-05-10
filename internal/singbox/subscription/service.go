@@ -225,12 +225,13 @@ func (s *Service) refreshLocked(ctx context.Context, id string) (*RefreshResult,
 	}
 
 	res := &RefreshResult{
-		When:         time.Now(),
-		Added:        len(diff.New),
-		Updated:      len(diff.Existing),
-		Orphaned:     len(diff.Orphan),
-		SkippedVmess: parseRes.SkippedVmess,
-		SkippedOther: parseRes.SkippedUnsupp,
+		When:             time.Now(),
+		Added:            len(diff.New),
+		Updated:          len(diff.Existing),
+		Orphaned:         len(diff.Orphan),
+		SkippedVmess:     parseRes.SkippedVmess,
+		SkippedOther:     parseRes.SkippedUnsupp,
+		SkippedDuplicate: diff.SkippedDuplicate,
 	}
 	for _, e := range parseRes.Errors {
 		res.ParseErrors = append(res.ParseErrors, e.Error())
