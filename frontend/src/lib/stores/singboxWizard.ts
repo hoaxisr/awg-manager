@@ -1,6 +1,10 @@
 import { writable } from 'svelte/store';
 import type { WizardState, WizardStep, ApplyLogEntry } from '$lib/types';
 
+// Default state. `policyName` here is the description we PASS to NDMS when
+// creating the policy on first run; the actual NDMS-assigned name comes back
+// from singboxRouterCreatePolicy and is persisted to settings — see
+// wizardOrchestrator.ts Phase 1.
 const initialState = (): WizardState => ({
 	step: 'presets',
 	presetIds: [],

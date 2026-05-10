@@ -15,7 +15,9 @@ const baseState = (): WizardState => ({
 
 const fakeApi = () => ({
 	singboxRouterListPolicies: vi.fn().mockResolvedValue([]),
-	singboxRouterCreatePolicy: vi.fn().mockResolvedValue({ name: 'SBRouter' }),
+	singboxRouterCreatePolicy: vi.fn().mockResolvedValue({ name: 'Policy0', description: 'SBRouter' }),
+	singboxRouterGetSettings: vi.fn().mockResolvedValue({ policyName: '', enabled: false }),
+	singboxRouterPutSettings: vi.fn().mockResolvedValue(undefined),
 	assignDeviceToPolicy: vi.fn().mockResolvedValue(undefined),
 	singboxRouterListDNSServers: vi.fn().mockResolvedValue([]),
 	singboxRouterAddDNSServer: vi.fn().mockResolvedValue(undefined),
@@ -42,7 +44,7 @@ describe('runWizard', () => {
 		api = fakeApi();
 	});
 
-	it('happy path: 7 phases all succeed', async () => {
+	it('happy path: settings empty → creates policy, persists, runs all phases', async () => {
 		const onProgress = vi.fn();
 		const result = await runWizard(baseState(), { api, presets, onProgress });
 		expect(result).toEqual({
@@ -53,8 +55,12 @@ describe('runWizard', () => {
 			dnsRuleApplied: true,
 			engineStarted: true,
 		});
+		expect(api.singboxRouterGetSettings).toHaveBeenCalled();
 		expect(api.singboxRouterCreatePolicy).toHaveBeenCalledWith('SBRouter');
-		expect(api.assignDeviceToPolicy).toHaveBeenCalledWith('aa:aa:aa:aa:aa:01', 'SBRouter');
+		expect(api.singboxRouterPutSettings).toHaveBeenCalledWith(
+			expect.objectContaining({ policyName: 'Policy0' }),
+		);
+		expect(api.assignDeviceToPolicy).toHaveBeenCalledWith('aa:aa:aa:aa:aa:01', 'Policy0');
 		expect(api.singboxRouterAddDNSServer).toHaveBeenCalled();
 		expect(api.singboxRouterApplyPreset).toHaveBeenCalledWith('netflix', 'awg-vpn0');
 		expect(api.singboxRouterAddDNSRule).toHaveBeenCalled();
@@ -62,10 +68,24 @@ describe('runWizard', () => {
 		expect(onProgress).toHaveBeenCalled();
 	});
 
-	it('skips createPolicy if SBRouter already exists', async () => {
-		api.singboxRouterListPolicies.mockResolvedValueOnce([{ name: 'SBRouter' }]);
+	it('reuses persisted policyName from settings (retry-safe)', async () => {
+		api.singboxRouterGetSettings.mockResolvedValueOnce({ policyName: 'SBRouter', enabled: false });
 		const result = await runWizard(baseState(), { api, presets, onProgress: vi.fn() });
 		expect(api.singboxRouterCreatePolicy).not.toHaveBeenCalled();
+		expect(api.singboxRouterPutSettings).not.toHaveBeenCalled();
+		expect(result.policyCreated).toBe(false);
+		expect(api.assignDeviceToPolicy).toHaveBeenCalledWith('aa:aa:aa:aa:aa:01', 'SBRouter');
+	});
+
+	it('skips createPolicy if SBRouter already exists in NDMS but not in settings', async () => {
+		api.singboxRouterGetSettings.mockResolvedValueOnce({ policyName: '', enabled: false });
+		// Realistic NDMS shape: name is auto-assigned ("Policy0"), description is the user label
+		api.singboxRouterListPolicies.mockResolvedValueOnce([{ name: 'Policy0', description: 'SBRouter' }]);
+		const result = await runWizard(baseState(), { api, presets, onProgress: vi.fn() });
+		expect(api.singboxRouterCreatePolicy).not.toHaveBeenCalled();
+		expect(api.singboxRouterPutSettings).toHaveBeenCalledWith(
+			expect.objectContaining({ policyName: 'Policy0' }),
+		);
 		expect(result.policyCreated).toBe(false);
 	});
 

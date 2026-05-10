@@ -1,8 +1,10 @@
 import type { WizardState, SingboxRouterPreset, SingboxRouterDNSRule, WizardResult } from '$lib/types';
 
 export interface OrchestratorApi {
-	singboxRouterListPolicies(): Promise<{ name: string }[]>;
-	singboxRouterCreatePolicy(description: string): Promise<{ name: string }>;
+	singboxRouterListPolicies(): Promise<{ name: string; description?: string }[]>;
+	singboxRouterCreatePolicy(description: string): Promise<{ name: string; description?: string }>;
+	singboxRouterGetSettings(): Promise<{ policyName?: string; enabled?: boolean; refreshMode?: string; refreshIntervalHours?: number; refreshDailyTime?: string }>;
+	singboxRouterPutSettings(settings: { policyName: string; enabled?: boolean; refreshMode?: string; refreshIntervalHours?: number; refreshDailyTime?: string }): Promise<void>;
 	assignDeviceToPolicy(mac: string, policy: string): Promise<void>;
 	singboxRouterListDNSServers(): Promise<{ tag: string }[]>;
 	singboxRouterAddDNSServer(server: {
@@ -99,24 +101,45 @@ export async function runWizard(
 		engineStarted: false,
 	};
 
-	// Phase 1: createPolicy (idempotent — skip if already exists)
-	const existingPolicies = await step(
-		`Policy ${state.policyName}`,
-		'createPolicy',
-		onProgress,
-		() => api.singboxRouterListPolicies(),
+	// Phase 1: resolve policy name. If already persisted in settings, reuse it.
+	// Otherwise: create + persist immediately. This is what makes retries safe —
+	// on second attempt settings.policyName is non-empty so we skip create.
+	const currentSettings = await step('Читаем настройки', 'getSettings', onProgress, () =>
+		api.singboxRouterGetSettings(),
 	);
-	if (!existingPolicies.find((p) => p.name === state.policyName)) {
-		await step(`Создаём policy ${state.policyName}`, 'createPolicy', onProgress, () =>
-			api.singboxRouterCreatePolicy(state.policyName),
+	let policyName: string;
+	if (currentSettings.policyName) {
+		policyName = currentSettings.policyName;
+	} else {
+		const existing = await step('Список политик', 'listPolicies', onProgress, () =>
+			api.singboxRouterListPolicies(),
 		);
-		result.policyCreated = true;
+		// Match by description (the user-supplied label). NDMS auto-assigns
+		// p.name like "Policy0", "Policy1" — these never equal state.policyName.
+		const found = existing.find((p) => p.description === state.policyName);
+		if (found) {
+			policyName = found.name;
+		} else {
+			const created = await step(
+				`Создаём policy ${state.policyName}`,
+				'createPolicy',
+				onProgress,
+				() => api.singboxRouterCreatePolicy(state.policyName),
+			);
+			policyName = created.name;
+			result.policyCreated = true;
+		}
+		// Merge policyName into existing settings to avoid zeroing other fields
+		await step('Сохраняем настройки', 'saveSettings', onProgress, () =>
+			api.singboxRouterPutSettings({ ...currentSettings, policyName }),
+		);
 	}
 
-	// Phase 2: bind devices
+	// Phase 2: bind devices (use resolved policyName, not the wizard's
+	// local default — what's in settings/NDMS is the source of truth)
 	for (const mac of state.deviceMacs) {
 		await step(`Привязка ${mac}`, 'bindDevice', onProgress, () =>
-			api.assignDeviceToPolicy(mac, state.policyName),
+			api.assignDeviceToPolicy(mac, policyName),
 		);
 		result.devicesBound++;
 	}
