@@ -11,6 +11,7 @@ type MemberInfo struct {
 	Protocol  string `json:"protocol"`            // "vless" | "trojan" | "shadowsocks" | "hysteria2" | "naive"
 	Server    string `json:"server"`              // host
 	Port      uint16 `json:"port"`
+	SNI       string `json:"sni,omitempty"`
 	Transport string `json:"transport,omitempty"` // "tcp" | "ws" | "grpc" | "http" — empty if N/A
 	Security  string `json:"security,omitempty"`  // "tls" | "reality" | "" (none/Hy2 always tls)
 }

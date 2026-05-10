@@ -884,3 +884,119 @@ func TestService_Create_SingboxJSON_ArrayOfConfigs(t *testing.T) {
 		t.Errorf("MemberTags=%d want 2 (one per config)", len(sub.MemberTags))
 	}
 }
+
+func TestService_Create_SNI_ExplicitTrimmed(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+
+	link := "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=%20userapi.com%20"
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "sni", Inline: link, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(sub.Members) != 1 {
+		t.Fatalf("Members=%d want 1", len(sub.Members))
+	}
+	if sub.Members[0].SNI != "userapi.com" {
+		t.Errorf("SNI=%q want %q", sub.Members[0].SNI, "userapi.com")
+	}
+	if sub.Members[0].Security != "tls" {
+		t.Errorf("Security=%q want %q", sub.Members[0].Security, "tls")
+	}
+}
+
+func TestService_Create_SNI_RealityWithoutServerName_IsEmpty(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+
+	inline := `{
+		"outbounds": [
+			{
+				"type": "vless",
+				"tag": "node1",
+				"server": "h.example",
+				"server_port": 443,
+				"uuid": "3a3b1c2e-9999-4321-aaaa-1234567890ab",
+				"tls": {
+					"enabled": true,
+					"reality": {
+						"enabled": true,
+						"public_key": "PK",
+						"short_id": "ab12"
+					}
+				}
+			}
+		]
+	}`
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "reality", Inline: inline, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(sub.Members) != 1 {
+		t.Fatalf("Members=%d want 1", len(sub.Members))
+	}
+	if sub.Members[0].SNI != "" {
+		t.Errorf("SNI=%q want empty", sub.Members[0].SNI)
+	}
+	if sub.Members[0].Security != "reality" {
+		t.Errorf("Security=%q want %q", sub.Members[0].Security, "reality")
+	}
+}
+
+func TestService_Create_SNI_NoTLS_IsEmpty(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+
+	link := "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=none"
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "notls", Inline: link, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(sub.Members) != 1 {
+		t.Fatalf("Members=%d want 1", len(sub.Members))
+	}
+	if sub.Members[0].SNI != "" {
+		t.Errorf("SNI=%q want empty", sub.Members[0].SNI)
+	}
+	if sub.Members[0].Security != "" {
+		t.Errorf("Security=%q want empty", sub.Members[0].Security)
+	}
+}
+
+func TestService_Create_SNI_FromSingboxJSONServerName(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+
+	inline := `{
+		"outbounds": [
+			{
+				"type": "vless",
+				"tag": "json-sni",
+				"server": "h.example",
+				"server_port": 443,
+				"uuid": "3a3b1c2e-9999-4321-aaaa-1234567890ab",
+				"tls": {
+					"enabled": true,
+					"server_name": "api.example.com"
+				}
+			}
+		]
+	}`
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "json-sni", Inline: inline, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(sub.Members) != 1 {
+		t.Fatalf("Members=%d want 1", len(sub.Members))
+	}
+	if sub.Members[0].SNI != "api.example.com" {
+		t.Errorf("SNI=%q want %q", sub.Members[0].SNI, "api.example.com")
+	}
+	if sub.Members[0].Security != "tls" {
+		t.Errorf("Security=%q want %q", sub.Members[0].Security, "tls")
+	}
+}

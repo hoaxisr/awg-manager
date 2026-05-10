@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -351,6 +352,9 @@ func toMemberInfo(tag string, p vlink.ParsedOutbound) MemberInfo {
 		}
 	}
 	if tls, ok := ob["tls"].(map[string]any); ok {
+		if serverName, ok := tls["server_name"].(string); ok {
+			mi.SNI = strings.TrimSpace(serverName)
+		}
 		if _, hasReality := tls["reality"]; hasReality {
 			mi.Security = "reality"
 		} else if enabled, _ := tls["enabled"].(bool); enabled {
