@@ -142,7 +142,7 @@
 		gap: 0.55rem;
 		width: 100%;
 		min-width: 0;
-		min-height: 170px;
+		min-height: 220px;
 		padding: 14px 16px;
 		border: 1px solid var(--color-border);
 		border-radius: 10px;
