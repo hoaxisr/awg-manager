@@ -1057,11 +1057,14 @@ label {
 .proto-udp { background: rgba(34,197,94,0.15); color: var(--success, #22c55e); }
 .proto-icmp { background: rgba(245,158,11,0.15); color: var(--warning, #f59e0b); }
 
-/* ─── Tunnel/server card grid (auto-fill 360px min) ─── */
+/* ─── Tunnel/server card grid (responsive: column shrinks to 100% on narrow viewports) ─── */
 .tunnel-grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
 	gap: 14px;
+}
+.tunnel-grid > * {
+	min-width: 0;
 }
 
 /* ─── Bare form-control primitives (for inline grid contexts where the Input/Select
