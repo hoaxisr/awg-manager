@@ -176,3 +176,36 @@ func TestParseVless_AutoTag(t *testing.T) {
 		t.Error("expected auto-generated tag")
 	}
 }
+
+func TestParseVless_FragmentBecomesLabel(t *testing.T) {
+	link := "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?security=tls&type=tcp#GermanyDE-01"
+	got, err := ParseLink(link)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got.Label != "GermanyDE-01" {
+		t.Errorf("Label=%q want %q", got.Label, "GermanyDE-01")
+	}
+}
+
+func TestParseVless_EncodedFragmentBecomesLabel(t *testing.T) {
+	link := "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?security=tls&type=tcp#%E2%9C%93%20Tokyo"
+	got, err := ParseLink(link)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got.Label != "✓ Tokyo" {
+		t.Errorf("Label=%q want %q", got.Label, "✓ Tokyo")
+	}
+}
+
+func TestParseVless_NoFragmentLabelEmpty(t *testing.T) {
+	link := "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?security=tls&type=tcp"
+	got, err := ParseLink(link)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got.Label != "" {
+		t.Errorf("Label=%q want empty", got.Label)
+	}
+}

@@ -92,3 +92,14 @@ func TestParseShadowsocks_MissingMethod(t *testing.T) {
 		t.Error("expected error")
 	}
 }
+
+func TestParseShadowsocks_FragmentBecomesLabel(t *testing.T) {
+	link := "ss://aes-256-gcm:password@example.com:8388#SS-Server-01"
+	got, err := ParseLink(link)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got.Label != "SS-Server-01" {
+		t.Errorf("Label=%q want %q", got.Label, "SS-Server-01")
+	}
+}

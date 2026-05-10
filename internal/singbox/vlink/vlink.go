@@ -18,7 +18,7 @@ type ParsedOutbound struct {
 	Server   string
 	Port     uint16
 	Outbound json.RawMessage // sing-box outbound JSON
-	Label    string          // human-readable name (Clash "name" field), empty for share-links
+	Label    string          // human-readable name: Clash "name" field, or URI #fragment for share-links (empty if no fragment)
 }
 
 // ParseError describes a single failed link in ParseBatch.

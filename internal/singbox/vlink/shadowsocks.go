@@ -16,6 +16,7 @@ func parseShadowsocks(input string) (*ParsedOutbound, error) {
 	}
 
 	tag := ""
+	label := ""
 	queryStr := ""
 	body := input[len(prefix):]
 	if hash := strings.Index(body, "#"); hash >= 0 {
@@ -62,8 +63,11 @@ func parseShadowsocks(input string) (*ParsedOutbound, error) {
 
 	if tag == "" {
 		tag = fmt.Sprintf("ss-%s-%d", host, port)
-	} else if decoded, err := url.QueryUnescape(tag); err == nil {
-		tag = decoded
+	} else {
+		if decoded, err := url.QueryUnescape(tag); err == nil {
+			tag = decoded
+		}
+		label = tag
 	}
 	out["tag"] = tag
 
@@ -77,6 +81,7 @@ func parseShadowsocks(input string) (*ParsedOutbound, error) {
 		Server:   host,
 		Port:     uint16(port),
 		Outbound: raw,
+		Label:    label,
 	}, nil
 }
 

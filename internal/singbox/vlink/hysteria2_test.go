@@ -117,3 +117,14 @@ func TestParseHysteria2_HopInterval(t *testing.T) {
 		t.Errorf("hop_interval=%v", ob["hop_interval"])
 	}
 }
+
+func TestParseHysteria2_FragmentBecomesLabel(t *testing.T) {
+	link := "hysteria2://password123@example.com:443?sni=foo.com#Hy2-Tokyo"
+	got, err := ParseLink(link)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got.Label != "Hy2-Tokyo" {
+		t.Errorf("Label=%q want %q", got.Label, "Hy2-Tokyo")
+	}
+}

@@ -71,6 +71,7 @@ func parseVless(input string) (*ParsedOutbound, error) {
 		Server:   host,
 		Port:     uint16(port),
 		Outbound: raw,
+		Label:    u.Fragment,
 	}, nil
 }
 

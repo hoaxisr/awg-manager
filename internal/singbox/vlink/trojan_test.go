@@ -72,3 +72,14 @@ func TestParseTrojan_FingerprintAlias(t *testing.T) {
 		t.Errorf("utls.fingerprint=%v", utls["fingerprint"])
 	}
 }
+
+func TestParseTrojan_FragmentBecomesLabel(t *testing.T) {
+	link := "trojan://password123@example.com:443?security=tls&sni=foo.com#TrojanDE-02"
+	got, err := ParseLink(link)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got.Label != "TrojanDE-02" {
+		t.Errorf("Label=%q want %q", got.Label, "TrojanDE-02")
+	}
+}

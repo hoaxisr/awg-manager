@@ -42,3 +42,14 @@ func TestParseNaive_MissingCreds(t *testing.T) {
 		t.Error("expected error on missing credentials")
 	}
 }
+
+func TestParseNaive_FragmentBecomesLabel(t *testing.T) {
+	link := "naive+https://user:password@example.com:443?padding=true#Naive-CDN"
+	got, err := ParseLink(link)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got.Label != "Naive-CDN" {
+		t.Errorf("Label=%q want %q", got.Label, "Naive-CDN")
+	}
+}
