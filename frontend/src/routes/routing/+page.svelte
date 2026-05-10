@@ -111,11 +111,10 @@
 
     // NDMS tab is OS5-only (see tabItems gate). On OS4, bounce off `dns`
     // to HR NEO when hydraroute is installed, otherwise IP.
-    // Gated on $routing.loaded: otherwise on cold load (direct URL hit)
-    // isOS5/hydrarouteInstalled are transiently false before systemInfo +
-    // routing stores settle, and we'd silently kick an OS5 user off NDMS.
+    // Gated on systemInfo + $routing.loaded...
     $effect(() => {
-        if (!$routing.loaded) return;
+        if (!$systemInfo.data || !$routing.loaded) return;
+
         if (!isOS5 && activeTab === 'dns') {
             activeTab = hydrarouteInstalled ? 'hrneo' : 'ip';
         }
@@ -177,6 +176,8 @@
     // If the active tab becomes invisible (user lowered usage level while the
     // HR NEO or Sing-box Router tab was active), pick the first visible tab.
     $effect(() => {
+        if (!$systemInfo.data || !$routing.loaded) return;
+
         if (!tabItems.find((it) => it.id === activeTab)) {
             const next = tabItems[0]?.id;
             if (next) {
