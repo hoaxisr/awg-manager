@@ -116,3 +116,17 @@ func TestTrafficHandler_RejectsControlCharID(t *testing.T) {
 		t.Errorf("control-char id: want 400, got %d", rr.Code)
 	}
 }
+
+func TestTrafficHandler_AcceptsExactly256ByteID(t *testing.T) {
+	h := &TunnelsHandler{}
+	h.SetTrafficHistory(traffic.New())
+	v := url.Values{}
+	v.Set("id", strings.Repeat("a", 256))
+	v.Set("period", "1h")
+	req := httptest.NewRequest(http.MethodGet, "/api/tunnels/traffic?"+v.Encode(), nil)
+	rr := httptest.NewRecorder()
+	h.Traffic(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("256-byte id (boundary): want 200, got %d", rr.Code)
+	}
+}

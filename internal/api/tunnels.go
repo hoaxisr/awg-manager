@@ -699,7 +699,7 @@ func (h *TunnelsHandler) Traffic(w http.ResponseWriter, r *http.Request) {
 	// Read-only handler reading an in-memory map: tolerate non-AWG ids
 	// (singbox subscription tags include emoji/spaces). Sanity-check still
 	// rejects binary garbage and oversized ids. Unknown id → 200 + empty.
-	if len(id) > 256 || !utf8.ValidString(id) || strings.IndexFunc(id, func(r rune) bool { return r < 0x20 }) != -1 {
+	if len(id) > 256 || !utf8.ValidString(id) || strings.ContainsFunc(id, func(r rune) bool { return r < 0x20 }) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
 		return
 	}
