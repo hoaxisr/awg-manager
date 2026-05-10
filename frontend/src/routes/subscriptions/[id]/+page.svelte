@@ -44,6 +44,9 @@
 		evtSrc = new EventSource(
 			`/api/singbox/subscriptions/get-stream?id=${encodeURIComponent(id)}`,
 		);
+		// Guard against onerror firing right after a clean done — browser emits
+		// onerror on the closed connection, but we treat that as success.
+		let streamDone = false;
 
 		evtSrc.addEventListener('meta', (e) => {
 			const meta = JSON.parse((e as MessageEvent).data);
@@ -71,12 +74,14 @@
 				subscription.orphanTags = data.orphanTags ?? [];
 				subscription.activeMember = data.activeMember ?? '';
 			}
+			streamDone = true;
 			loading = false;
 			evtSrc?.close();
 			evtSrc = null;
 		});
 
 		evtSrc.onerror = () => {
+			if (streamDone) return; // already completed cleanly — ignore connection-close error
 			// Browser fires onerror on connection drop. Surface partial state
 			// if we got members, generic error otherwise.
 			if (progressLoaded > 0 && progressTotal > 0) {
