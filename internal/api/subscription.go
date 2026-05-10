@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
@@ -125,6 +126,12 @@ type UpdateSubscriptionRequest struct {
 // ActiveMemberRequest is the body for POST /api/singbox/subscriptions/active-member.
 type ActiveMemberRequest struct {
 	MemberTag string `json:"memberTag"`
+}
+
+// ActiveNowResponse is the payload for GET /api/singbox/subscriptions/active-now.
+// Surface only the live "now" pointer from Clash for urltest mode UI.
+type ActiveNowResponse struct {
+	Now string `json:"now" example:"sub-abc-aaaa"`
 }
 
 // AddMemberRequest is the body for POST /api/singbox/subscriptions/members/add.
@@ -444,6 +451,42 @@ func (h *SubscriptionHandler) ActiveMember(w http.ResponseWriter, r *http.Reques
 	response.Success(w, struct {
 		OK bool `json:"ok"`
 	}{true})
+}
+
+// ActiveNow handles GET /api/singbox/subscriptions/active-now?id=
+//
+//	@Summary		Live active member from Clash
+//	@Description	Returns the currently-active member tag as reported by the running sing-box Clash API. For urltest mode this reflects the auto-selected fastest member. Empty `now` means Clash is unreachable or no member selected yet.
+//	@Tags			subscriptions
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Subscription id"
+//	@Success		200	{object}	OkResponse{data=ActiveNowResponse}
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		404	{object}	APIErrorEnvelope
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/subscriptions/active-now [get]
+func (h *SubscriptionHandler) ActiveNow(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		response.Error(w, "missing id parameter", "MISSING_ID")
+		return
+	}
+	now, err := h.svc.GetActiveNow(r.Context(), id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			response.ErrorWithStatus(w, http.StatusNotFound, err.Error(), "NOT_FOUND")
+			return
+		}
+		response.InternalError(w, err.Error())
+		return
+	}
+	response.Success(w, ActiveNowResponse{Now: now})
 }
 
 // OrphansDelete handles POST /api/singbox/subscriptions/orphans/delete?id=

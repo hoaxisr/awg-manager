@@ -50,6 +50,7 @@ type ProxyRegistrar interface {
 // *singbox.ClashClient. A local interface avoids circular import.
 type ClashSelector interface {
 	SetSelector(selectorTag, memberTag string) error
+	SelectorActive(selectorTag string) (string, error)
 }
 
 // OperatorAdapter implements ConfigMutator by maintaining its own
@@ -314,6 +315,17 @@ func (a *OperatorAdapter) SelectClashProxy(selectorTag, memberTag string) error 
 		return fmt.Errorf("subscription adapter: ClashSelector not configured")
 	}
 	return a.clash.SetSelector(selectorTag, memberTag)
+}
+
+// GetClashSelectorActive queries the running sing-box Clash API to read
+// the currently-active member of a selector/urltest outbound. Returns
+// ("", nil) when Clash is unreachable or the selector isn't yet known
+// — callers treat this as "no live data" rather than as an error.
+func (a *OperatorAdapter) GetClashSelectorActive(selectorTag string) (string, error) {
+	if a.clash == nil {
+		return "", nil
+	}
+	return a.clash.SelectorActive(selectorTag)
 }
 
 // --- internal helpers (caller must hold a.mu) ---

@@ -80,6 +80,7 @@ import type {
 	Subscription,
 	SubscriptionHeader,
 	SubscriptionRefreshResult,
+	SubscriptionActiveNowResponse,
 	CreateSubscriptionInput,
 	UpdateSubscriptionInput
 } from '$lib/types';
@@ -1663,6 +1664,12 @@ class ApiClient {
 		return this.request<SubscriptionRefreshResult>(
 			`/singbox/subscriptions/refresh?id=${encodeURIComponent(id)}`,
 			{ method: 'POST' },
+		);
+	}
+
+	async getSubscriptionActiveNow(id: string): Promise<SubscriptionActiveNowResponse> {
+		return this.request<SubscriptionActiveNowResponse>(
+			`/singbox/subscriptions/active-now?id=${encodeURIComponent(id)}`,
 		);
 	}
 

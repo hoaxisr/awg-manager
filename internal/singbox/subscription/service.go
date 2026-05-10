@@ -32,6 +32,11 @@ type ConfigMutator interface {
 	// triggering a reload. The config slot's stored selector.default
 	// should be updated separately for restart persistence.
 	SelectClashProxy(selectorTag, memberTag string) error
+	// GetClashSelectorActive reads the currently-active member of a
+	// selector/urltest outbound from the running sing-box Clash API.
+	// Returns ("", nil) when Clash is unreachable — callers treat this
+	// as "no live data" rather than as an error.
+	GetClashSelectorActive(selectorTag string) (string, error)
 }
 
 // Service is the subscription business-logic facade.
@@ -669,6 +674,19 @@ func (s *Service) RemoveMember(ctx context.Context, id, memberTag string) (*Subs
 		return updated, fmt.Errorf("reload: %w", err)
 	}
 	return updated, nil
+}
+
+// GetActiveNow returns the currently-active member tag as reported by the
+// running sing-box Clash API. For urltest-mode subscriptions this reflects
+// the auto-selected fastest member, which can drift from the persisted
+// ActiveMember. Returns ("", nil) when Clash is unreachable so callers can
+// fall back to stored ActiveMember.
+func (s *Service) GetActiveNow(_ context.Context, id string) (string, error) {
+	sub, err := s.store.Get(id)
+	if err != nil {
+		return "", err
+	}
+	return s.mutator.GetClashSelectorActive(sub.SelectorTag)
 }
 
 // DeleteOrphans removes orphan-flagged outbounds from sing-box config and

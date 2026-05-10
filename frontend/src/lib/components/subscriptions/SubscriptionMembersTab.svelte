@@ -12,8 +12,9 @@
 		subscription: Subscription;
 		onUpdated: () => void;
 		autoDelayCheckNonce?: number;
+		liveActiveMember?: string | null;
 	}
-	let { subscription, onUpdated, autoDelayCheckNonce = 0 }: Props = $props();
+	let { subscription, onUpdated, autoDelayCheckNonce = 0, liveActiveMember = null }: Props = $props();
 
 	let refreshing = $state(false);
 	let switching = $state<string | null>(null);
@@ -91,6 +92,11 @@
 			: 'Выберите активный сервер. Selector направит трафик в выбранный outbound.',
 	);
 
+	// For urltest mode, liveActiveMember reflects the auto-selected member as reported
+	// by the running Clash API (polled every 5s by the parent page). For selector mode
+	// this is always null, so we fall back to the persisted activeMember.
+	const effectiveActiveMember = $derived(liveActiveMember || subscription.activeMember);
+
 	async function refresh(): Promise<void> {
 		refreshing = true;
 		lastError = '';
@@ -112,6 +118,9 @@
 	}
 
 	async function pickActive(memberTag: string): Promise<void> {
+		// Urltest auto-selects fastest member; manual pick is rejected by backend
+		// with 409. Surface no error, just no-op the click.
+		if (subscription.mode === 'urltest') return;
 		if (memberTag === subscription.activeMember) return;
 		switching = memberTag;
 		lastError = '';
@@ -216,7 +225,7 @@
 			<div class="member-slot">
 				<SubscriptionMemberCard
 					{member}
-					active={member.tag === subscription.activeMember}
+					active={member.tag === effectiveActiveMember}
 					switching={switching === member.tag}
 					disabled={switching !== null}
 					onclick={() => pickActive(member.tag)}

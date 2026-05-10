@@ -1512,6 +1512,10 @@ export interface SubscriptionRefreshResult {
 	parseErrors?: string[];
 }
 
+export interface SubscriptionActiveNowResponse {
+	now: string;
+}
+
 export interface CreateSubscriptionInput {
 	label: string;
 	url?: string;

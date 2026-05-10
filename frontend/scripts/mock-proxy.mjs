@@ -986,6 +986,25 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// Live "active now" — for urltest mode, simulate auto-switching by rotating
+	// through members based on time. For selector, return persisted activeMember.
+	if (req.method === 'GET' && path === '/singbox/subscriptions/active-now') {
+		const id = new URL(req.url, 'http://x').searchParams.get('id');
+		const sub = mockSubscriptions.find((s) => s.id === id);
+		if (!sub) {
+			send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'subscription not found' } });
+			return;
+		}
+		let now = sub.activeMember || '';
+		if (sub.mode === 'urltest' && sub.memberTags && sub.memberTags.length > 0) {
+			// Rotate every 15 seconds — visible auto-switching for testing.
+			const idx = Math.floor(Date.now() / 15000) % sub.memberTags.length;
+			now = sub.memberTags[idx];
+		}
+		send(res, 200, { success: true, data: { now } });
+		return;
+	}
+
 	if (req.method === 'POST' && path === '/singbox/subscriptions/active-member') {
 		let raw = '';
 		req.on('data', (c) => (raw += c));

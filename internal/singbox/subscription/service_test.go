@@ -23,7 +23,8 @@ type fakeMutator struct {
 	proxyIndex       int
 	ensuredProxies   []int
 	removedProxies   []int
-	selectedSelector []string // "selectorTag→memberTag" pairs recorded by SelectClashProxy
+	selectedSelector []string            // "selectorTag→memberTag" pairs recorded by SelectClashProxy
+	clashActiveByTag map[string]string   // selectorTag → live active member
 }
 
 func (f *fakeMutator) AllocListenPort() (uint16, error) {
@@ -77,6 +78,12 @@ func (f *fakeMutator) Reload(ctx context.Context) error { return nil }
 func (f *fakeMutator) SelectClashProxy(selectorTag, memberTag string) error {
 	f.selectedSelector = append(f.selectedSelector, selectorTag+"→"+memberTag)
 	return nil
+}
+func (f *fakeMutator) GetClashSelectorActive(selectorTag string) (string, error) {
+	if f.clashActiveByTag == nil {
+		return "", nil
+	}
+	return f.clashActiveByTag[selectorTag], nil
 }
 
 func TestService_Create_FetchAndMaterialize(t *testing.T) {
@@ -998,5 +1005,48 @@ func TestService_Create_SNI_FromSingboxJSONServerName(t *testing.T) {
 	}
 	if sub.Members[0].Security != "tls" {
 		t.Errorf("Security=%q want %q", sub.Members[0].Security, "tls")
+	}
+}
+
+func TestService_GetActiveNow_ReturnsClashLive(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{clashActiveByTag: map[string]string{}}
+	svc := NewService(store, mutator)
+
+	link := "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls"
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "test", Inline: link, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Simulate Clash reporting a live active member different from stored.
+	mutator.clashActiveByTag[sub.SelectorTag] = "sub-test-livetag"
+
+	got, err := svc.GetActiveNow(context.Background(), sub.ID)
+	if err != nil {
+		t.Fatalf("GetActiveNow: %v", err)
+	}
+	if got != "sub-test-livetag" {
+		t.Errorf("got %q want %q", got, "sub-test-livetag")
+	}
+}
+
+func TestService_GetActiveNow_ClashUnreachable_ReturnsEmpty(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{} // clashActiveByTag is nil → returns ""
+	svc := NewService(store, mutator)
+
+	link := "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls"
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "test", Inline: link, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := svc.GetActiveNow(context.Background(), sub.ID)
+	if err != nil {
+		t.Errorf("expected nil err for clash-unreachable, got %v", err)
+	}
+	if got != "" {
+		t.Errorf("expected empty for clash-unreachable, got %q", got)
 	}
 }

@@ -8,6 +8,10 @@
 	import SubscriptionMembersTab from '$lib/components/subscriptions/SubscriptionMembersTab.svelte';
 	import SubscriptionSettingsTab from '$lib/components/subscriptions/SubscriptionSettingsTab.svelte';
 
+	// Poll Clash for the live "now" pointer this often when on members tab in urltest
+	// mode. 5s balances responsiveness with Clash API load.
+	const URLTEST_POLL_MS = 5000;
+
 	const id = $derived($page.params.id ?? '');
 	let subscription = $state<Subscription | null>(null);
 	let loading = $state(true);
@@ -15,6 +19,7 @@
 
 	let active = $state<'members' | 'settings'>('members');
 	let membersAutoDelayCheckNonce = $state(0);
+	let liveActiveMember = $state<string | null>(null);
 	let currentSubscriptionSurface = '';
 	let subscriptionSurfaceEntryNonce = $state(0);
 	let lastAutoDelayCheckKey = '';
@@ -36,6 +41,31 @@
 		if (surface === currentSubscriptionSurface) return;
 		currentSubscriptionSurface = surface;
 		subscriptionSurfaceEntryNonce += 1;
+	});
+
+	// Poll Clash live "now" every 5s for urltest mode. Selector mode doesn't need
+	// this — its activeMember is whatever the user picked and Clash echoes it.
+	$effect(() => {
+		const sub = subscription;
+		if (loading || error || !sub || sub.mode !== 'urltest' || active !== 'members') {
+			liveActiveMember = null;
+			return;
+		}
+		let cancelled = false;
+		const tick = async (): Promise<void> => {
+			try {
+				const res = await api.getSubscriptionActiveNow(sub.id);
+				if (!cancelled) liveActiveMember = res.now || null;
+			} catch {
+				if (!cancelled) liveActiveMember = null;
+			}
+		};
+		void tick();
+		const handle = setInterval(() => void tick(), URLTEST_POLL_MS);
+		return () => {
+			cancelled = true;
+			clearInterval(handle);
+		};
 	});
 
 	$effect(() => {
@@ -84,6 +114,7 @@
 			{#if active === 'members'}
 				<SubscriptionMembersTab
 					{subscription}
+					{liveActiveMember}
 					onUpdated={reload}
 					autoDelayCheckNonce={membersAutoDelayCheckNonce}
 				/>
