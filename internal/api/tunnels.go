@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -695,7 +696,10 @@ func (h *TunnelsHandler) Traffic(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, "missing id parameter", "MISSING_ID")
 		return
 	}
-	if !isValidTunnelID(id) {
+	// Read-only handler reading an in-memory map: tolerate non-AWG ids
+	// (singbox subscription tags include emoji/spaces). Sanity-check still
+	// rejects binary garbage and oversized ids. Unknown id → 200 + empty.
+	if len(id) > 256 || !utf8.ValidString(id) || strings.IndexFunc(id, func(r rune) bool { return r < 0x20 }) != -1 {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
 		return
 	}

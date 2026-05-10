@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/traffic"
@@ -56,5 +58,61 @@ func TestTrafficHandler_WrongMethod(t *testing.T) {
 	h.Traffic(rr, req)
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Errorf("want 405 for POST, got %d", rr.Code)
+	}
+}
+
+func TestTrafficHandler_AcceptsEmojiID(t *testing.T) {
+	h := &TunnelsHandler{}
+	h.SetTrafficHistory(traffic.New())
+	v := url.Values{}
+	v.Set("id", "🇷🇺 Russia [*CIDR] YA")
+	v.Set("period", "1h")
+	req := httptest.NewRequest(http.MethodGet, "/api/tunnels/traffic?"+v.Encode(), nil)
+	rr := httptest.NewRecorder()
+	h.Traffic(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("emoji id: want 200, got %d (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+func TestTrafficHandler_AcceptsSpaceID(t *testing.T) {
+	h := &TunnelsHandler{}
+	h.SetTrafficHistory(traffic.New())
+	v := url.Values{}
+	v.Set("id", "AWG Test")
+	v.Set("period", "1h")
+	req := httptest.NewRequest(http.MethodGet, "/api/tunnels/traffic?"+v.Encode(), nil)
+	rr := httptest.NewRecorder()
+	h.Traffic(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("space id: want 200, got %d (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+func TestTrafficHandler_RejectsOversizedID(t *testing.T) {
+	h := &TunnelsHandler{}
+	h.SetTrafficHistory(traffic.New())
+	v := url.Values{}
+	v.Set("id", strings.Repeat("a", 257))
+	v.Set("period", "1h")
+	req := httptest.NewRequest(http.MethodGet, "/api/tunnels/traffic?"+v.Encode(), nil)
+	rr := httptest.NewRecorder()
+	h.Traffic(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("oversized id: want 400, got %d", rr.Code)
+	}
+}
+
+func TestTrafficHandler_RejectsControlCharID(t *testing.T) {
+	h := &TunnelsHandler{}
+	h.SetTrafficHistory(traffic.New())
+	v := url.Values{}
+	v.Set("id", "foo\x00bar")
+	v.Set("period", "1h")
+	req := httptest.NewRequest(http.MethodGet, "/api/tunnels/traffic?"+v.Encode(), nil)
+	rr := httptest.NewRecorder()
+	h.Traffic(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("control-char id: want 400, got %d", rr.Code)
 	}
 }
