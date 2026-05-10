@@ -276,6 +276,14 @@
 			.filter((x): x is { subscription: Subscription; activeMember: SubscriptionMember } => x !== null),
 	);
 
+	const subscriptionActiveIds = $derived(
+		new Set(subscriptionsActiveCards.map((card) => card.subscription.id)),
+	);
+
+	const subscriptionsListRows = $derived(
+		subscriptionsList.filter((subscription) => !subscriptionActiveIds.has(subscription.id)),
+	);
+
 	// Tabs
 	let activeTab = $state<TunnelTab>('awg');
 
@@ -283,10 +291,10 @@
 		[
 			{ id: 'awg', label: 'AWG', badge: awgList.length + systemList.length },
 			isSectionVisible($usageLevel, 'singboxTunnels')
-				? { id: 'singbox', label: 'Sing-box', badge: singboxTunnelsList.length }
+				? { id: 'singbox', label: 'Sing-box туннели', badge: singboxTunnelsList.length }
 				: null,
 			isSectionVisible($usageLevel, 'singboxTunnels')
-				? { id: 'subscriptions', label: 'Подписки', badge: subscriptionsList.length }
+				? { id: 'subscriptions', label: 'Sing-box подписки', badge: subscriptionsList.length }
 				: null,
 		].filter((t): t is { id: string; label: string; badge: number } => t !== null),
 	);
@@ -359,14 +367,14 @@
 		const path = $page.url.pathname;
 		const tab = activeTab;
 		const entry = tunnelSurfaceEntryNonce;
-		if (path !== '/' || tab !== 'singbox') return;
+		if (path !== '/' || (tab !== 'singbox' && tab !== 'subscriptions')) return;
 
-		const tags = [activeSingboxDelayTags(), activeSubscriptionDelayTags()]
-			.filter(Boolean)
-			.join('|');
+		const tags = tab === 'singbox'
+			? activeSingboxDelayTags()
+			: activeSubscriptionDelayTags();
 		if (!tags) return;
 
-		const key = `singbox:${entry}:${tags}`;
+		const key = `${tab}:${entry}:${tags}`;
 		if (key === lastAutoCheckKey) return;
 		lastAutoCheckKey = key;
 		singboxAutoDelayCheckNonce += 1;
@@ -688,17 +696,16 @@
 		{/if}
 		{/if}
 		{:else if activeTab === 'subscriptions'}
-			<SingboxInstallBanner />
-			{#if singboxStatusLoading}
+			{#if subscriptionsInitialLoading}
 				<div class="loading-centered">
-					<LoadingSpinner size="md" message="Проверяем sing-box..." />
+					<LoadingSpinner size="md" message="Загружаем подписки..." />
 				</div>
-			{:else if singboxInstalled}
-				{#if subscriptionsInitialLoading}
-					<div class="loading-centered">
-						<LoadingSpinner size="md" message="Загружаем подписки..." />
-					</div>
-				{:else}
+			{:else}
+				{#if !singboxStatusLoading}
+					<SingboxInstallBanner />
+				{/if}
+
+				{#if singboxStatusLoading || singboxInstalled}
 					<div class="tunnels-toolbar">
 						<span class="tunnel-count">
 							{subscriptionsList.length}
@@ -708,11 +715,25 @@
 							<Button variant="primary" size="md" onclick={() => openWizard('url')}>+ Добавить</Button>
 						</div>
 					</div>
-					<SubscriptionList
-					subscriptions={subscriptionsList}
-					onAdd={() => openWizard('url')}
-					ondelete={requestSubscriptionDelete}
-				/>
+					{#if subscriptionsActiveCards.length > 0}
+						<div class="subscription-active-grid">
+							{#each subscriptionsActiveCards as card, i (card.subscription.id)}
+								<SubscriptionActiveCard
+									subscription={card.subscription}
+									activeMember={card.activeMember}
+									autoDelayCheckNonce={singboxAutoDelayCheckNonce}
+									autoDelayCheckDelayMs={i * 180}
+								/>
+							{/each}
+						</div>
+					{/if}
+					{#if subscriptionsListRows.length > 0}
+						<SubscriptionList
+							subscriptions={subscriptionsListRows}
+							onAdd={() => openWizard('url')}
+							ondelete={requestSubscriptionDelete}
+						/>
+					{/if}
 				{/if}
 			{/if}
 		{:else}
@@ -794,21 +815,8 @@
 						/>
 					{/each}
 				</div>
-			{/if}
-			{#if subscriptionsActiveCards.length > 0}
-				<h3 class="section-head">Подписки — активные ({subscriptionsActiveCards.length})</h3>
-				<div class="active-grid">
-					{#each subscriptionsActiveCards as card, i (card.subscription.id)}
-						<SubscriptionActiveCard
-							subscription={card.subscription}
-							activeMember={card.activeMember}
-							autoDelayCheckNonce={singboxAutoDelayCheckNonce}
-							autoDelayCheckDelayMs={(singboxTunnelsList.length + i) * 180}
-						/>
-					{/each}
-				</div>
-			{/if}
 		{/if}
+	{/if}
 	{/if}
 </PageContainer>
 
@@ -1295,16 +1303,10 @@
 		margin-bottom: 1rem;
 	}
 
-	.section-head {
-		margin: 1.5rem 0 0.75rem;
-		font-size: 0.85rem;
-		text-transform: uppercase;
-		letter-spacing: 0.5px;
-		color: var(--color-text-muted);
-	}
-	.active-grid {
+	.subscription-active-grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-		gap: 0.75rem;
+		gap: 1rem;
+		margin-bottom: 1rem;
 	}
 </style>

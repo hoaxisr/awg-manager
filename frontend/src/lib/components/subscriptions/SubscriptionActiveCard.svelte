@@ -56,6 +56,9 @@
     const traffic = $derived($singboxTraffic.get(activeMember.tag));
     const endpointText = $derived(`${activeMember.server}:${activeMember.port}`);
     const isURLTest = $derived(subscription.mode === 'urltest');
+    const lastFetchedHuman = $derived(
+        subscription.lastFetched ? formatRelative(subscription.lastFetched) : '—',
+    );
 
     type State = 'ok' | 'slow' | 'fail' | 'unknown';
     const cardState: State = $derived.by(() => {
@@ -125,6 +128,15 @@
         return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
     }
 
+    function formatRelative(iso: string): string {
+        const d = new Date(iso);
+        const diff = Date.now() - d.getTime();
+        const hours = Math.floor(diff / 3_600_000);
+        if (hours < 1) return 'только что';
+        if (hours < 24) return `${hours}ч назад`;
+        return `${Math.floor(hours / 24)}д назад`;
+    }
+
 </script>
 
 <div
@@ -159,7 +171,27 @@
         {:else}
             {subscription.inboundTag}
         {/if}
+        <span class="kernel">· :{subscription.listenPort}</span>
     </div>
+
+    <div class="sub-meta">
+        <div>
+            <span>{subscription.memberTags.length} серверов</span>
+            {#if subscription.activeMember}
+                <span>· активен <span class="mono">{subscription.activeMember}</span></span>
+            {/if}
+        </div>
+        <div>
+            <span>обновлено {lastFetchedHuman}</span>
+            {#if subscription.refreshHours > 0}
+                <span>· auto {subscription.refreshHours}ч</span>
+            {/if}
+        </div>
+    </div>
+
+    {#if subscription.lastError}
+        <div class="sub-error mono">{subscription.lastError}</div>
+    {/if}
 
     <div class="badges">
         <span class="badge proto">{protocolLabel}</span>
@@ -189,13 +221,17 @@
                     aria-expanded={isURLTest ? undefined : pickerOpen}
                     title={isURLTest ? 'Sing-box выбирает самый быстрый сервер автоматически' : ''}
                 >
-                    <span class="server-text" class:mono={showEndpoint || !activeMember.label} title={showEndpoint ? endpointText : (activeMember.label || endpointText)}>
+                    <span
+                        class="server-text"
+                        class:mono={showEndpoint || !activeMember.label}
+                        title={activeMember.label ? `${activeMember.label} · ${endpointText}` : endpointText}
+                    >
                         {#if showEndpoint}
                             {endpointText}
                         {:else if activeMember.label}
                             {activeMember.label}
                         {:else}
-                            •••••••••
+                            {endpointText}
                         {/if}
                     </span>
                     {#if !isURLTest}
@@ -450,4 +486,20 @@
     .spark.fail .bar  { background: #f85149; }
     .bar.empty        { opacity: 0.3; }
     .actions { display: flex; gap: 0.4rem; justify-content: flex-end; margin-top: 0.4rem; }
+
+    .sub-meta {
+        font-size: 0.78rem;
+        color: var(--color-text-muted);
+        line-height: 1.35;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+    .sub-error {
+        font-size: 0.75rem;
+        color: #f85149;
+    }
+    .mono {
+        font-family: var(--font-mono, ui-monospace, monospace);
+    }
 </style>
