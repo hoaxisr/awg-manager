@@ -22,21 +22,32 @@ type TrafficPublisher interface {
 	Publish(event string, data any)
 }
 
+// HistoryFeeder is the minimal traffic-history surface the aggregator uses
+// for sparkline backfill. *traffic.History satisfies this. Optional — pass
+// nil to skip the per-publish feed (used in unit tests).
+type HistoryFeeder interface {
+	Feed(tunnelID string, rxBytes, txBytes int64)
+}
+
 // TrafficAggregator watches the Clash /connections WebSocket and aggregates
 // upload/download bytes per outbound tag, publishing periodic snapshots.
+// When a HistoryFeeder is provided, each publish also feeds the rate-history
+// store so /api/tunnels/traffic backfill works for singbox tags.
 type TrafficAggregator struct {
 	clashAddr string
 	publisher TrafficPublisher
+	feeder    HistoryFeeder
 	interval  time.Duration
 
 	mu   sync.Mutex
 	tags map[string]*TrafficSnapshot
 }
 
-func NewTrafficAggregator(clashAddr string, pub TrafficPublisher) *TrafficAggregator {
+func NewTrafficAggregator(clashAddr string, pub TrafficPublisher, feeder HistoryFeeder) *TrafficAggregator {
 	return &TrafficAggregator{
 		clashAddr: clashAddr,
 		publisher: pub,
+		feeder:    feeder,
 		interval:  2 * time.Second,
 		tags:      map[string]*TrafficSnapshot{},
 	}
@@ -141,7 +152,8 @@ func (t *TrafficAggregator) ingest(msg []byte) {
 	t.mu.Unlock()
 }
 
-// publish emits the current snapshot.
+// publish emits the current snapshot to SSE and (optionally) feeds the
+// history store. Download maps to rxBytes (received), Upload to txBytes (sent).
 func (t *TrafficAggregator) publish() {
 	t.mu.Lock()
 	snap := make([]TrafficSnapshot, 0, len(t.tags))
@@ -151,5 +163,10 @@ func (t *TrafficAggregator) publish() {
 	t.mu.Unlock()
 	if t.publisher != nil {
 		t.publisher.Publish("singbox:traffic", snap)
+	}
+	if t.feeder != nil {
+		for _, s := range snap {
+			t.feeder.Feed(s.Tag, s.Download, s.Upload)
+		}
 	}
 }

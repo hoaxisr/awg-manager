@@ -729,7 +729,7 @@ func main() {
 
 	trafficCtx, trafficCancel := context.WithCancel(context.Background())
 	defer trafficCancel()
-	go singbox.NewTrafficAggregator(singboxOp.Clash().Address(), eventBus).Run(trafficCtx)
+	go singbox.NewTrafficAggregator(singboxOp.Clash().Address(), eventBus, trafficHistory).Run(trafficCtx)
 
 	delayCtx, delayCancel := context.WithCancel(context.Background())
 	defer delayCancel()
