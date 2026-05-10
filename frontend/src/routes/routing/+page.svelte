@@ -19,6 +19,18 @@
     import { isRoutingSubTabVisible, type RoutingSubTab, type UsageLevel } from '$lib/types/usageLevel';
     import { usageLevel } from '$lib/stores/settings';
 
+    type RoutingTab = 'hrneo' | 'dns' | 'ip' | 'policy' | 'clientvpn' | 'singbox';
+    const ROUTING_TAB_STORAGE_KEY = 'routingTab';
+
+    function isRoutingTab(value: string | null): value is RoutingTab {
+        return value === 'hrneo'
+            || value === 'dns'
+            || value === 'ip'
+            || value === 'policy'
+            || value === 'clientvpn'
+            || value === 'singbox';
+    }
+
     // Per-section polling stores — subscribe here so all 8 fetch while
     // the routing page is open. Unsubscribed on destroy to stop polling.
     let unsubRouting: (() => void) | null = null;
@@ -31,7 +43,20 @@
             sp.set('tab', 'singbox');
             sp.set('sub', 'deviceproxy');
             goto(`?${sp.toString()}`, { replaceState: true });
+            return;
         }
+
+        // Restore tab from URL or sessionStorage
+        const fromQuery = $page.url.searchParams.get('tab');
+        if (isRoutingTab(fromQuery) && tabVisible(fromQuery)) {
+            activeTab = fromQuery;
+        } else {
+            const stored = sessionStorage.getItem(ROUTING_TAB_STORAGE_KEY);
+            if (isRoutingTab(stored) && tabVisible(stored)) {
+                activeTab = stored;
+            }
+        }
+
         unsubRouting = subscribeRouting();
         // Prime sing-box router status so the tab badge count is correct
         // immediately on page load instead of waiting for the next polling
@@ -42,15 +67,20 @@
         unsubRouting?.();
     });
 
-    let activeTab = $state<'hrneo' | 'dns' | 'ip' | 'policy' | 'clientvpn' | 'singbox'>('dns');
+    let activeTab = $state<RoutingTab>('dns');
 
     // Deep link: ?tab=hrneo from the Settings page HR NEO card, etc.
     $effect(() => {
         const t = $page.url.searchParams.get('tab');
-        if (t === 'hrneo' || t === 'dns' || t === 'ip' || t === 'policy' || t === 'clientvpn' || t === 'singbox') {
-            if (tabVisible(t)) {
-                activeTab = t;
-            }
+        if (isRoutingTab(t) && tabVisible(t)) {
+            activeTab = t;
+        }
+    });
+
+    // Persist active tab in sessionStorage
+    $effect(() => {
+        if (isRoutingTab(activeTab)) {
+            sessionStorage.setItem(ROUTING_TAB_STORAGE_KEY, activeTab);
         }
     });
     let isOS5 = $derived($systemInfo.data?.isOS5 ?? false);
@@ -111,6 +141,21 @@
         }
     }
 
+    function handleTabChange(id: string) {
+        if (!isRoutingTab(id)) return;
+
+        activeTab = id;
+
+        const sp = new URLSearchParams($page.url.search);
+        sp.set('tab', id);
+
+        if (id !== 'singbox') {
+            sp.delete('sub');
+        }
+
+        goto(`?${sp.toString()}`, { replaceState: true, keepFocus: true, noScroll: true });
+    }
+
     // Derived: tab badges
     let hrRuleCount = $derived(dnsRoutes.filter(r => r.backend === 'hydraroute').length);
     let dnsActiveCount = $derived(dnsRoutes.filter(r => r.enabled && r.backend !== 'hydraroute').length);
@@ -120,11 +165,12 @@
 
     // NDMS tab is OS5-only (see tabItems gate). On OS4, bounce off `dns`
     // to HR NEO when hydraroute is installed, otherwise IP.
-    // Gated on $routing.loaded: otherwise on cold load (direct URL hit)
-    // isOS5/hydrarouteInstalled are transiently false before systemInfo +
-    // routing stores settle, and we'd silently kick an OS5 user off NDMS.
+    // Gated on systemInfo + $routing.loaded: otherwise on cold load
+    // (direct URL hit) isOS5/hydrarouteInstalled are transiently false
+    // before systemInfo + routing stores settle, and we'd silently kick an
+    // OS5 user off NDMS.
     $effect(() => {
-        if (!$routing.loaded) return;
+        if (!$systemInfo.data || !$routing.loaded) return;
         if (!isOS5 && activeTab === 'dns') {
             activeTab = hydrarouteInstalled ? 'hrneo' : 'ip';
         }
@@ -174,22 +220,15 @@
             .filter((t) => tabVisible(t.id))
     );
 
-    // If the user deep-linked / had the tab active and sing-box disappeared
-    // (uninstall while the page is open), bounce them off.
-    $effect(() => {
-        if (!$systemInfo.data) return;
-        if (!singboxInstalled && activeTab === 'singbox') {
-            activeTab = 'dns';
-        }
-    });
-
     // If the active tab becomes invisible (user lowered usage level while the
     // HR NEO or Sing-box Router tab was active), pick the first visible tab.
     $effect(() => {
+        if (!$systemInfo.data || !$routing.loaded) return;
+
         if (!tabItems.find((it) => it.id === activeTab)) {
             const next = tabItems[0]?.id;
             if (next) {
-                activeTab = next as typeof activeTab;
+                activeTab = next as RoutingTab;
             }
         }
     });
@@ -235,7 +274,7 @@
         <Tabs
             tabs={tabItems}
             active={activeTab}
-            onchange={(id) => activeTab = id as typeof activeTab}
+            onchange={handleTabChange}
         />
 
         {#if activeTab === 'hrneo'}
