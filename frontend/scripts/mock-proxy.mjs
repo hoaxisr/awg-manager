@@ -940,6 +940,62 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// SSE stream — meta + member×N + done with 200ms delay between members
+	// for visible UX progress in dev. Production backend has no artificial delay.
+	if (req.method === 'GET' && path === '/singbox/subscriptions/get-stream') {
+		const id = new URL(req.url, 'http://x').searchParams.get('id');
+		const sub = mockSubscriptions.find((s) => s.id === id);
+		if (!sub) {
+			send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'subscription not found' } });
+			return;
+		}
+		res.writeHead(200, {
+			'Content-Type': 'text/event-stream',
+			'Cache-Control': 'no-cache',
+			'Connection': 'keep-alive',
+			'X-Accel-Buffering': 'no',
+		});
+
+		const meta = {
+			id: sub.id,
+			label: sub.label,
+			url: sub.url,
+			isInline: !sub.url,
+			headers: sub.headers ?? [],
+			refreshHours: sub.refreshHours ?? 0,
+			lastFetched: sub.lastFetched ?? '',
+			lastError: sub.lastError ?? '',
+			selectorTag: sub.selectorTag,
+			inboundTag: sub.inboundTag,
+			listenPort: sub.listenPort,
+			proxyIndex: sub.proxyIndex,
+			enabled: sub.enabled,
+			mode: sub.mode ?? 'selector',
+			urlTest: sub.urlTest,
+			total: (sub.members ?? []).length,
+		};
+		res.write(`event: meta\ndata: ${JSON.stringify(meta)}\n\n`);
+
+		const members = sub.members ?? [];
+		let i = 0;
+		const tick = () => {
+			if (i >= members.length) {
+				const done = {
+					orphanTags: sub.orphanTags ?? [],
+					activeMember: sub.activeMember ?? '',
+				};
+				res.write(`event: done\ndata: ${JSON.stringify(done)}\n\n`);
+				res.end();
+				return;
+			}
+			res.write(`event: member\ndata: ${JSON.stringify({ index: i, member: members[i] })}\n\n`);
+			i += 1;
+			setTimeout(tick, 200);
+		};
+		setTimeout(tick, 0);
+		return;
+	}
+
 	if (req.method === 'POST' && path === '/singbox/subscriptions/refresh') {
 		const id = new URL(req.url, 'http://x').searchParams.get('id');
 		const sub = mockSubscriptions.find((s) => s.id === id);
