@@ -662,12 +662,12 @@
 		{:else if activeTab === 'subscriptions'}
 			<SingboxInstallBanner />
 			{#if singboxStatusLoading}
-				<div class="tab-loading">
+				<div class="loading-centered">
 					<LoadingSpinner size="md" message="Проверяем sing-box..." />
 				</div>
 			{:else if singboxInstalled}
 				{#if subscriptionsInitialLoading}
-					<div class="tab-loading">
+					<div class="loading-centered">
 						<LoadingSpinner size="md" message="Загружаем подписки..." />
 					</div>
 				{:else}
@@ -922,12 +922,6 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-	}
-
-	.tab-loading {
-		min-height: 220px;
-		display: grid;
-		place-items: center;
 	}
 
 	/* Empty-state ghost terminal — page-specific */

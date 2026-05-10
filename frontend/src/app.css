@@ -403,6 +403,13 @@ label {
 	to { transform: rotate(360deg); }
 }
 
+/* Loading-centered wrapper (used by tab-loading panels and full-page loaders) */
+.loading-centered {
+	min-height: 220px;
+	display: grid;
+	place-items: center;
+}
+
 /* Page layout */
 .page {
 	flex: 1;

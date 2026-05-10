@@ -65,7 +65,7 @@
 
 <PageContainer width="full">
 	{#if loading}
-		<div class="loading-wrap">
+		<div class="loading-centered">
 			<LoadingSpinner size="md" message="Загружаем подписку..." />
 		</div>
 	{:else if error || !subscription}
@@ -96,10 +96,5 @@
 
 <style>
 	.err { color: #f85149; }
-	.loading-wrap {
-		min-height: 220px;
-		display: grid;
-		place-items: center;
-	}
 	.content { margin-top: 1rem; }
 </style>
