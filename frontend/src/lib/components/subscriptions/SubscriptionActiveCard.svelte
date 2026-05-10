@@ -189,8 +189,14 @@
                     aria-expanded={isURLTest ? undefined : pickerOpen}
                     title={isURLTest ? 'Sing-box выбирает самый быстрый сервер автоматически' : ''}
                 >
-                    <span class="server-text" title={showEndpoint ? endpointText : ''}>
-                        {showEndpoint ? endpointText : '•••••••••'}
+                    <span class="server-text" class:mono={showEndpoint || !activeMember.label} title={showEndpoint ? endpointText : (activeMember.label || endpointText)}>
+                        {#if showEndpoint}
+                            {endpointText}
+                        {:else if activeMember.label}
+                            {activeMember.label}
+                        {:else}
+                            •••••••••
+                        {/if}
                     </span>
                     {#if !isURLTest}
                         <span class="caret" aria-hidden="true">▾</span>
@@ -203,8 +209,8 @@
                         e.stopPropagation();
                         showEndpoint = !showEndpoint;
                     }}
-                    title={showEndpoint ? 'Скрыть' : 'Показать'}
-                    aria-label={showEndpoint ? 'Скрыть сервер' : 'Показать сервер'}
+                    title={showEndpoint ? 'Скрыть IP' : 'Показать IP'}
+                    aria-label={showEndpoint ? 'Скрыть IP сервера' : 'Показать IP сервера'}
                 >
                     {#if showEndpoint}
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -396,11 +402,14 @@
     .server-btn-readonly { cursor: default; }
     .server-btn-readonly:hover { border-color: var(--color-border); }
     .server-text {
-        font-family: var(--font-mono, ui-monospace, monospace);
-        font-size: 0.78rem;
+        font-size: 0.82rem;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+    }
+    .server-text.mono {
+        font-family: var(--font-mono, ui-monospace, monospace);
+        font-size: 0.78rem;
     }
     .caret { color: var(--color-text-muted); font-size: 0.7rem; }
     .eye-btn {

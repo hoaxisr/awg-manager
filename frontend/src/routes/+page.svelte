@@ -223,11 +223,54 @@
 		return s ? s.label || s.url : id;
 	});
 
+	// Same as detail page — poll Clash for live "now" pointer this often.
+	const URLTEST_POLL_MS = 5000;
+
+	let liveActives = $state<Record<string, string>>({});
+
+	$effect(() => {
+		const urltestSubs = ($subscriptionsStore.data ?? []).filter(
+			(s) => s.enabled && s.mode === 'urltest',
+		);
+		if (urltestSubs.length === 0) {
+			liveActives = {};
+			return;
+		}
+		let cancelled = false;
+		const tick = async (): Promise<void> => {
+			try {
+				const results = await Promise.all(
+					urltestSubs.map((s) =>
+						api
+							.getSubscriptionActiveNow(s.id)
+							.then((r) => [s.id, r.now] as const)
+							.catch(() => [s.id, ''] as const),
+					),
+				);
+				if (cancelled) return;
+				const next: Record<string, string> = {};
+				for (const [id, now] of results) {
+					if (now) next[id] = now;
+				}
+				liveActives = next;
+			} catch {
+				/* ignore — keep last known */
+			}
+		};
+		void tick();
+		const handle = setInterval(() => void tick(), URLTEST_POLL_MS);
+		return () => {
+			cancelled = true;
+			clearInterval(handle);
+		};
+	});
+
 	const subscriptionsActiveCards = $derived(
 		($subscriptionsStore.data ?? [])
-			.filter((s) => s.enabled && s.activeMember)
+			.filter((s) => s.enabled && (liveActives[s.id] || s.activeMember))
 			.map((s) => {
-				const m = s.members?.find((mm) => mm.tag === s.activeMember);
+				const tag = liveActives[s.id] || s.activeMember;
+				const m = s.members?.find((mm) => mm.tag === tag);
 				return m ? { subscription: s, activeMember: m } : null;
 			})
 			.filter((x): x is { subscription: Subscription; activeMember: SubscriptionMember } => x !== null),
