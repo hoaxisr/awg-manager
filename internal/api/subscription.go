@@ -175,16 +175,7 @@ func toSubscriptionDTO(s subscription.Subscription) SubscriptionDTO {
 	}
 	memberDTOs := make([]SubscriptionMemberDTO, len(s.Members))
 	for i, m := range s.Members {
-		memberDTOs[i] = SubscriptionMemberDTO{
-			Tag:       m.Tag,
-			Label:     m.Label,
-			Protocol:  m.Protocol,
-			Server:    m.Server,
-			Port:      int(m.Port),
-			SNI:       m.SNI,
-			Transport: m.Transport,
-			Security:  m.Security,
-		}
+		memberDTOs[i] = subscriptionMemberToDTO(m)
 	}
 	mode := string(s.EffectiveMode())
 	var urltest *SubscriptionURLTestDTO
@@ -216,6 +207,102 @@ func toSubscriptionDTO(s subscription.Subscription) SubscriptionDTO {
 		Enabled:      s.Enabled,
 		Mode:         mode,
 		URLTest:      urltest,
+	}
+}
+
+// SubscriptionMetaDTO is the meta-event payload for the streaming
+// /get-stream endpoint. Mirrors SubscriptionDTO minus Members (those
+// arrive as separate member events). The `total` field tells the UI
+// how many member events to expect for progress.
+type SubscriptionMetaDTO struct {
+	ID           string                  `json:"id"`
+	Label        string                  `json:"label"`
+	URL          string                  `json:"url"`
+	IsInline     bool                    `json:"isInline"`
+	Headers      []SubscriptionHeader    `json:"headers"`
+	RefreshHours int                     `json:"refreshHours"`
+	LastFetched  string                  `json:"lastFetched"`
+	LastError    string                  `json:"lastError,omitempty"`
+	SelectorTag  string                  `json:"selectorTag"`
+	InboundTag   string                  `json:"inboundTag"`
+	ListenPort   int                     `json:"listenPort"`
+	ProxyIndex   int                     `json:"proxyIndex"`
+	Enabled      bool                    `json:"enabled"`
+	Mode         string                  `json:"mode"`
+	URLTest      *SubscriptionURLTestDTO `json:"urlTest,omitempty"`
+	Total        int                     `json:"total"`
+}
+
+// SubscriptionStreamMemberDTO wraps a single member with its index for
+// the member-event payload. Index lets the frontend reason about
+// progress (i+1 / total) and detect gaps if events arrive out of order.
+type SubscriptionStreamMemberDTO struct {
+	Index  int                   `json:"index"`
+	Member SubscriptionMemberDTO `json:"member"`
+}
+
+// SubscriptionStreamDoneDTO is the done-event payload — finalisation
+// fields that don't fit the meta header but the frontend needs to
+// complete the rendering.
+type SubscriptionStreamDoneDTO struct {
+	OrphanTags   []string `json:"orphanTags"`
+	ActiveMember string   `json:"activeMember"`
+}
+
+// buildSubscriptionMetaDTO extracts the meta-event payload from a
+// domain Subscription. Same field semantics as toSubscriptionDTO but
+// no Members slice (those stream as member events).
+func buildSubscriptionMetaDTO(s subscription.Subscription) SubscriptionMetaDTO {
+	hh := make([]SubscriptionHeader, len(s.Headers))
+	for i, h := range s.Headers {
+		hh[i] = SubscriptionHeader{Name: h.Name, Value: h.Value}
+	}
+	last := ""
+	if !s.LastFetched.IsZero() {
+		last = s.LastFetched.Format("2006-01-02T15:04:05Z07:00")
+	}
+	mode := string(s.EffectiveMode())
+	var urltest *SubscriptionURLTestDTO
+	if s.EffectiveMode() == subscription.ModeURLTest {
+		ut := s.EffectiveURLTest()
+		urltest = &SubscriptionURLTestDTO{
+			URL:         ut.URL,
+			IntervalSec: ut.IntervalSec,
+			ToleranceMs: ut.ToleranceMs,
+		}
+	}
+	return SubscriptionMetaDTO{
+		ID:           s.ID,
+		Label:        s.Label,
+		URL:          s.URL,
+		IsInline:     s.IsInline(),
+		Headers:      hh,
+		RefreshHours: s.RefreshHours,
+		LastFetched:  last,
+		LastError:    s.LastError,
+		SelectorTag:  s.SelectorTag,
+		InboundTag:   s.InboundTag,
+		ListenPort:   int(s.ListenPort),
+		ProxyIndex:   s.ProxyIndex,
+		Enabled:      s.Enabled,
+		Mode:         mode,
+		URLTest:      urltest,
+		Total:        len(s.Members),
+	}
+}
+
+// subscriptionMemberToDTO extracts the per-member DTO. Same shape as
+// the Members slice element in toSubscriptionDTO.
+func subscriptionMemberToDTO(m subscription.MemberInfo) SubscriptionMemberDTO {
+	return SubscriptionMemberDTO{
+		Tag:       m.Tag,
+		Label:     m.Label,
+		Protocol:  m.Protocol,
+		Server:    m.Server,
+		Port:      int(m.Port),
+		SNI:       m.SNI,
+		Transport: m.Transport,
+		Security:  m.Security,
 	}
 }
 
@@ -487,6 +574,78 @@ func (h *SubscriptionHandler) ActiveNow(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	response.Success(w, ActiveNowResponse{Now: now})
+}
+
+// GetStream handles GET /api/singbox/subscriptions/get-stream?id=
+//
+//	@Summary		Stream subscription details progressively (SSE)
+//	@Description	Streams a subscription as Server-Sent Events: one `meta` event with subscription header (incl. total member count), then one `member` event per server member, then a `done` event with finalisation (orphans, active member). Frontend uses this to show a progress bar and render cards as they arrive instead of waiting for the full payload. Service.Get is itself sync; the streaming is the handler's contract — it writes events with Flush() between, so TCP + browser deliver progressively.
+//	@Tags			subscriptions
+//	@Produce		text/event-stream
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Subscription id"
+//	@Success		200	"Stream of SSE events: meta, member×N, done"
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		404	{object}	APIErrorEnvelope
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/subscriptions/get-stream [get]
+func (h *SubscriptionHandler) GetStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		response.Error(w, "missing id parameter", "MISSING_ID")
+		return
+	}
+
+	sub, err := h.svc.Get(id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			response.ErrorWithStatus(w, http.StatusNotFound, err.Error(), "NOT_FOUND")
+			return
+		}
+		response.InternalError(w, err.Error())
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		response.InternalError(w, "streaming not supported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	metaJSON, _ := json.Marshal(buildSubscriptionMetaDTO(*sub))
+	fmt.Fprintf(w, "event: meta\ndata: %s\n\n", metaJSON)
+	flusher.Flush()
+
+	for i, m := range sub.Members {
+		payload, _ := json.Marshal(SubscriptionStreamMemberDTO{
+			Index:  i,
+			Member: subscriptionMemberToDTO(m),
+		})
+		fmt.Fprintf(w, "event: member\ndata: %s\n\n", payload)
+		flusher.Flush()
+	}
+
+	orphans := sub.OrphanTags
+	if orphans == nil {
+		orphans = []string{}
+	}
+	doneJSON, _ := json.Marshal(SubscriptionStreamDoneDTO{
+		OrphanTags:   orphans,
+		ActiveMember: sub.ActiveMember,
+	})
+	fmt.Fprintf(w, "event: done\ndata: %s\n\n", doneJSON)
+	flusher.Flush()
 }
 
 // OrphansDelete handles POST /api/singbox/subscriptions/orphans/delete?id=
