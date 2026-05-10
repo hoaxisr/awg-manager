@@ -3,7 +3,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import type { Subscription } from '$lib/types';
-	import { PageContainer, PageHeader } from '$lib/components/layout';
+	import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
 	import { Tabs } from '$lib/components/ui';
 	import SubscriptionMembersTab from '$lib/components/subscriptions/SubscriptionMembersTab.svelte';
 	import SubscriptionSettingsTab from '$lib/components/subscriptions/SubscriptionSettingsTab.svelte';
@@ -65,7 +65,9 @@
 
 <PageContainer width="full">
 	{#if loading}
-		<div>Загрузка...</div>
+		<div class="loading-wrap">
+			<LoadingSpinner size="md" message="Загружаем подписку..." />
+		</div>
 	{:else if error || !subscription}
 		<div class="err">{error}</div>
 	{:else}
@@ -94,5 +96,10 @@
 
 <style>
 	.err { color: #f85149; }
+	.loading-wrap {
+		min-height: 220px;
+		display: grid;
+		place-items: center;
+	}
 	.content { margin-top: 1rem; }
 </style>
