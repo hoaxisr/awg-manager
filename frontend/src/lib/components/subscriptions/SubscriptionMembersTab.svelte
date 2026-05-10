@@ -83,6 +83,13 @@
 			  })),
 	);
 
+	const modeLabel = $derived(subscription.mode === 'urltest' ? 'URLTest' : 'Selector');
+	const modeHint = $derived(
+		subscription.mode === 'urltest'
+			? 'Sing-box автоматически выбирает быстрейший сервер по latency-тесту.'
+			: 'Выберите активный сервер. Selector направит трафик в выбранный outbound.',
+	);
+
 	async function refresh(): Promise<void> {
 		refreshing = true;
 		lastError = '';
@@ -159,7 +166,7 @@
 
 <header class="head">
 	<div class="head-info">
-		<div class="lbl">Selector</div>
+		<div class="lbl">{modeLabel}</div>
 		<div class="val mono">{subscription.selectorTag}</div>
 	</div>
 	<div class="actions">
@@ -195,7 +202,7 @@
 {#if memberList.length === 0}
 	<div class="empty">Подписка ещё не загружена. Нажмите «Обновить сейчас».</div>
 {:else}
-	<div class="hint">Выберите активный сервер. Selector направит трафик в выбранный outbound.</div>
+	<div class="hint">{modeHint}</div>
 	<div class="grid">
 		{#each memberList as member (member.tag)}
 			<div class="member-slot">
