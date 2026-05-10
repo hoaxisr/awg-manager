@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api/client';
 	import type { Subscription } from '$lib/types';
 	import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
@@ -12,10 +12,17 @@
 	// mode. 5s balances responsiveness with Clash API load.
 	const URLTEST_POLL_MS = 5000;
 
+	// Show explicit progress bar only for subscriptions where the per-member
+	// stream is long enough to be worth the visual. Below this threshold the
+	// generic spinner suffices because total render is sub-second.
+	const PROGRESS_BAR_THRESHOLD = 5;
+
 	const id = $derived($page.params.id ?? '');
 	let subscription = $state<Subscription | null>(null);
 	let loading = $state(true);
 	let error = $state('');
+	let progressTotal = $state(0);
+	let progressLoaded = $state(0);
 
 	let active = $state<'members' | 'settings'>('members');
 	let membersAutoDelayCheckNonce = $state(0);
@@ -24,17 +31,70 @@
 	let subscriptionSurfaceEntryNonce = $state(0);
 	let lastAutoDelayCheckKey = '';
 
-	async function reload(): Promise<void> {
-		try {
-			subscription = await api.getSubscription(id);
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Не удалось загрузить';
-		} finally {
+	let evtSrc: EventSource | null = null;
+
+	function loadStream(): void {
+		if (!id) return;
+		progressLoaded = 0;
+		progressTotal = 0;
+		loading = true;
+		error = '';
+		subscription = null;
+		evtSrc?.close();
+		evtSrc = new EventSource(
+			`/api/singbox/subscriptions/get-stream?id=${encodeURIComponent(id)}`,
+		);
+
+		evtSrc.addEventListener('meta', (e) => {
+			const meta = JSON.parse((e as MessageEvent).data);
+			subscription = {
+				...meta,
+				members: [],
+				memberTags: [],
+				orphanTags: [],
+				activeMember: '',
+			} as Subscription;
+			progressTotal = meta.total ?? 0;
+		});
+
+		evtSrc.addEventListener('member', (e) => {
+			if (!subscription) return;
+			const { member } = JSON.parse((e as MessageEvent).data);
+			subscription.members = [...(subscription.members ?? []), member];
+			subscription.memberTags = [...subscription.memberTags, member.tag];
+			progressLoaded += 1;
+		});
+
+		evtSrc.addEventListener('done', (e) => {
+			if (subscription) {
+				const data = JSON.parse((e as MessageEvent).data);
+				subscription.orphanTags = data.orphanTags ?? [];
+				subscription.activeMember = data.activeMember ?? '';
+			}
 			loading = false;
-		}
+			evtSrc?.close();
+			evtSrc = null;
+		});
+
+		evtSrc.onerror = () => {
+			// Browser fires onerror on connection drop. Surface partial state
+			// if we got members, generic error otherwise.
+			if (progressLoaded > 0 && progressTotal > 0) {
+				error = `Загружено ${progressLoaded} из ${progressTotal} серверов. Соединение прервалось.`;
+			} else {
+				error = 'Не удалось загрузить подписку';
+			}
+			loading = false;
+			evtSrc?.close();
+			evtSrc = null;
+		};
 	}
 
-	onMount(reload);
+	onMount(loadStream);
+	onDestroy(() => {
+		evtSrc?.close();
+		evtSrc = null;
+	});
 
 	$effect(() => {
 		const surface = `${id}:${active}`;
@@ -94,13 +154,14 @@
 </svelte:head>
 
 <PageContainer width="full">
-	{#if loading}
+	{#if !subscription && loading}
+		<!-- Initial spinner before meta arrives (any subscription size) -->
 		<div class="loading-centered">
 			<LoadingSpinner size="md" message="Загружаем подписку..." />
 		</div>
-	{:else if error || !subscription}
+	{:else if !subscription && error}
 		<div class="err">{error}</div>
-	{:else}
+	{:else if subscription}
 		<PageHeader title={subscription.label || subscription.url} backTo="/?tab=subscriptions" />
 		<Tabs
 			tabs={[
@@ -110,22 +171,57 @@
 			active={active}
 			onchange={(tabId) => (active = tabId as 'members' | 'settings')}
 		/>
+		{#if loading && progressTotal > PROGRESS_BAR_THRESHOLD}
+			<div class="loading-progress">
+				<div class="progress-text">
+					Загружено {progressLoaded} из {progressTotal} серверов
+				</div>
+				<div class="progress-bar">
+					<div class="progress-fill" style="width: {(progressLoaded / progressTotal) * 100}%"></div>
+				</div>
+			</div>
+		{/if}
+		{#if error}
+			<div class="err">{error}</div>
+		{/if}
 		<section class="content">
 			{#if active === 'members'}
 				<SubscriptionMembersTab
 					{subscription}
 					{liveActiveMember}
-					onUpdated={reload}
+					onUpdated={loadStream}
 					autoDelayCheckNonce={membersAutoDelayCheckNonce}
 				/>
 			{:else}
-				<SubscriptionSettingsTab {subscription} onUpdated={reload} />
+				<SubscriptionSettingsTab {subscription} onUpdated={loadStream} />
 			{/if}
 		</section>
 	{/if}
 </PageContainer>
 
 <style>
-	.err { color: #f85149; }
+	.err { color: #f85149; margin-top: 1rem; }
 	.content { margin-top: 1rem; }
+	.loading-progress {
+		margin: 1rem 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+	.progress-text {
+		font-size: 0.9rem;
+		color: var(--color-text-muted);
+		text-align: center;
+	}
+	.progress-bar {
+		height: 6px;
+		background: var(--color-bg-tertiary);
+		border-radius: 3px;
+		overflow: hidden;
+	}
+	.progress-fill {
+		height: 100%;
+		background: var(--color-accent);
+		transition: width 200ms ease-out;
+	}
 </style>
