@@ -119,7 +119,7 @@
 	}
 </script>
 
-<header class="app-header">
+<header class="app-header" class:unauthenticated={!authenticated}>
 	<div class="header-inner">
 		<div class="brand-group">
 			<a href="/" class="brand" aria-label="AWG Manager" onclick={closeMobileMenu}>
@@ -525,6 +525,12 @@
 
 	@media (max-width: 768px) {
 		.nav {
+			display: none;
+		}
+	}
+
+	@media (max-width: 640px) {
+		.app-header.unauthenticated .user-tools {
 			display: none;
 		}
 	}

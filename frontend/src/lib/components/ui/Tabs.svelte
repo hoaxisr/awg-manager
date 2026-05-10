@@ -320,6 +320,13 @@
         overflow: hidden;
     }
 
+    @media (max-width: 768px) {
+        .dropdown {
+            max-height: calc(100vh - 200px);
+            overflow-y: auto;
+        }
+    }
+
     .dropdown-item {
         display: flex;
         align-items: center;
