@@ -140,7 +140,6 @@
 					bind:value={description}
 					onblur={saveDescription}
 					maxlength={MAX_LEN}
-					pattern="[a-zA-Z0-9_-]+"
 				/>
 				<span class="field-hint">Латинские буквы, цифры, дефисы, подчёркивания</span>
 			</label>
