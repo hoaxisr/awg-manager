@@ -434,6 +434,32 @@ func TestReloadStartsForBothAlwaysOnContentAndConsumerSlot(t *testing.T) {
 	}
 }
 
+func TestPendingPath_ReturnsExpectedPath(t *testing.T) {
+	o := New("/tmp/cfg", nil)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	meta := o.slots[SlotRouter]
+	got := o.pendingPath(meta)
+	want := "/tmp/cfg/pending/20-router.json"
+	if got != want {
+		t.Errorf("pendingPath: got %q want %q", got, want)
+	}
+}
+
+func TestEnsureDirs_CreatesPendingSubdir(t *testing.T) {
+	dir := t.TempDir()
+	o := New(dir, nil)
+	if err := o.ensureDirs(); err != nil {
+		t.Fatalf("ensureDirs: %v", err)
+	}
+	st, err := os.Stat(filepath.Join(dir, "pending"))
+	if err != nil {
+		t.Fatalf("pending dir missing: %v", err)
+	}
+	if !st.IsDir() {
+		t.Errorf("pending exists but is not a dir")
+	}
+}
+
 func TestBootstrapResolvesBothLocationsConflict(t *testing.T) {
 	o, dir := newTestOrch(t)
 	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})

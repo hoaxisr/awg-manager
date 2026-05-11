@@ -18,6 +18,18 @@ func (o *Orchestrator) disabledPath(meta SlotMeta) string {
 	return filepath.Join(o.configDir, disabledSubdir, meta.Filename)
 }
 
+// pendingDir is the subdirectory holding draft slot files. Sing-box's
+// non-recursive -C skips it; orchestrator writes pending files here
+// during staging and renames them into the active location on Apply.
+func (o *Orchestrator) pendingDir() string {
+	return filepath.Join(o.configDir, "pending")
+}
+
+// pendingPath returns where the pending (draft) copy of a slot lives.
+func (o *Orchestrator) pendingPath(meta SlotMeta) string {
+	return filepath.Join(o.pendingDir(), meta.Filename)
+}
+
 // ensureDirs creates configDir and configDir/disabled if missing.
 func (o *Orchestrator) ensureDirs() error {
 	if err := os.MkdirAll(o.configDir, 0755); err != nil {
@@ -25,6 +37,9 @@ func (o *Orchestrator) ensureDirs() error {
 	}
 	if err := os.MkdirAll(filepath.Join(o.configDir, disabledSubdir), 0755); err != nil {
 		return fmt.Errorf("mkdir disabledSubdir: %w", err)
+	}
+	if err := os.MkdirAll(o.pendingDir(), 0755); err != nil {
+		return fmt.Errorf("ensureDirs pending: %w", err)
 	}
 	return nil
 }
