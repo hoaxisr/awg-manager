@@ -1005,6 +1005,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		}))
 		mux.HandleFunc("/api/singbox/router/route/final", guarded(rh.SetRouteFinal))
 		mux.HandleFunc("/api/singbox/router/inspect", guarded(rh.Inspect))
+		mux.HandleFunc("/api/singbox/router/staging", guarded(rh.GetStaging))
+		mux.HandleFunc("/api/singbox/router/staging/apply", guarded(rh.PostStagingApply))
+		mux.HandleFunc("/api/singbox/router/staging/discard", guarded(rh.PostStagingDiscard))
 	}
 
 	if s.singboxProxiesHandler != nil {

@@ -5,9 +5,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -1053,6 +1056,70 @@ type SingboxRouterRouteFinalRequest struct {
 	Final string `json:"final" example:"direct"`
 }
 
+// ── Staging DTOs ──────────────────────────────────────────────────
+
+// RouterStagingStatusResponse is the body of GET /api/singbox/router/staging.
+// HasDraft=false means DraftedAt and Validation are absent.
+type RouterStagingStatusResponse struct {
+	HasDraft   bool                 `json:"hasDraft"`
+	DraftedAt  *time.Time           `json:"draftedAt,omitempty"`
+	Validation *RouterValidationDTO `json:"validation,omitempty"`
+}
+
+// RouterValidationDTO carries a structured list of cross-slot validation errors.
+// Used by the staging-status payload (preview) and by 422 responses from /staging/apply.
+type RouterValidationDTO struct {
+	Errors []RouterValidationErrorDTO `json:"errors"`
+}
+
+// RouterValidationErrorDTO mirrors orchestrator.ValidationError.
+type RouterValidationErrorDTO struct {
+	Slot    string `json:"slot"`
+	Kind    string `json:"kind"`
+	Tag     string `json:"tag,omitempty"`
+	InRule  string `json:"inRule,omitempty"`
+	Message string `json:"message"`
+}
+
+// RouterStagingValidationError is the body of 422 responses from /staging/apply.
+// Either Validation or SbCheck is populated (exclusive).
+type RouterStagingValidationError struct {
+	Validation *RouterValidationDTO `json:"validation,omitempty"`
+	SbCheck    string               `json:"sbCheck,omitempty"`
+}
+
+// validationDTOFrom converts orchestrator.ValidationResult to the DTO.
+// Returns nil if the result is Ok.
+func validationDTOFrom(res orchestrator.ValidationResult) *RouterValidationDTO {
+	if res.Ok() {
+		return nil
+	}
+	out := &RouterValidationDTO{Errors: make([]RouterValidationErrorDTO, 0, len(res.Errors))}
+	for _, e := range res.Errors {
+		out.Errors = append(out.Errors, RouterValidationErrorDTO{
+			Slot: string(e.Slot), Kind: e.Kind, Tag: e.Tag,
+			InRule: e.InRule, Message: e.Message,
+		})
+	}
+	return out
+}
+
+// ansiCSIRegex strips ECMA-48 CSI escapes from sing-box check error output.
+var ansiCSIRegex = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]")
+
+func stripAnsiFromErr(err error) string {
+	return ansiCSIRegex.ReplaceAllString(err.Error(), "")
+}
+
+// writeJSONStatus writes v as JSON with the given HTTP status code.
+func writeJSONStatus(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	enc.Encode(v)
+}
+
 // SetRouteFinal updates route.final.
 //
 //	@Summary		Set route.final outbound
@@ -1095,6 +1162,76 @@ func decodeBody(r *http.Request, dst any) error {
 		return nil
 	}
 	return json.Unmarshal(raw, dst)
+}
+
+// GetStaging returns the current draft state for the router slot.
+//
+//	@Summary		Get router staging status
+//	@Description	Returns whether a pending draft exists for the router slot and, if so, its draft timestamp and a preview of the cross-slot validation result.
+//	@Tags			singbox-router
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	RouterStagingStatusResponse
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/router/staging [get]
+func (h *SingboxRouterHandler) GetStaging(w http.ResponseWriter, r *http.Request) {
+	st := h.svc.StagingStatus(r.Context())
+	out := RouterStagingStatusResponse{HasDraft: st.HasDraft}
+	if st.HasDraft {
+		t := st.DraftedAt
+		out.DraftedAt = &t
+		if st.Validation != nil {
+			out.Validation = validationDTOFrom(*st.Validation)
+		}
+	}
+	response.Success(w, out)
+}
+
+// PostStagingApply commits the pending draft.
+//
+//	@Summary		Apply router staging draft
+//	@Description	Validates the pending draft (cross-slot + sing-box check) then atomically swaps pending → active and arms a reload.
+//	@Tags			singbox-router
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	OkResponse
+//	@Failure		409	{object}	APIErrorEnvelope	"no draft to apply"
+//	@Failure		422	{object}	RouterStagingValidationError
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/router/staging/apply [post]
+func (h *SingboxRouterHandler) PostStagingApply(w http.ResponseWriter, r *http.Request) {
+	res, err := h.svc.ApplyStaging(r.Context())
+	if errors.Is(err, orchestrator.ErrNoDraft) {
+		response.ErrorWithStatus(w, http.StatusConflict, "no draft to apply", "NO_DRAFT")
+		return
+	}
+	if err != nil {
+		writeJSONStatus(w, http.StatusUnprocessableEntity, RouterStagingValidationError{SbCheck: stripAnsiFromErr(err)})
+		return
+	}
+	if !res.Ok() {
+		writeJSONStatus(w, http.StatusUnprocessableEntity, RouterStagingValidationError{Validation: validationDTOFrom(res)})
+		return
+	}
+	response.Success(w, OkData{Ok: true})
+}
+
+// PostStagingDiscard removes the pending draft.
+//
+//	@Summary		Discard router staging draft
+//	@Description	Removes pending/20-router.json. Idempotent.
+//	@Tags			singbox-router
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	OkResponse
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/router/staging/discard [post]
+func (h *SingboxRouterHandler) PostStagingDiscard(w http.ResponseWriter, r *http.Request) {
+	if err := h.svc.DiscardStaging(r.Context()); err != nil {
+		response.InternalError(w, err.Error())
+		return
+	}
+	response.Success(w, OkData{Ok: true})
 }
 
 func (h *SingboxRouterHandler) handleErr(w http.ResponseWriter, action string, err error) {
