@@ -178,6 +178,15 @@ func (o *Orchestrator) ApplyDraft(slot Slot) (ValidationResult, error) {
 	return ValidationResult{}, nil
 }
 
+// ValidateDraft is the lock-acquiring public form of validateDraftLocked.
+// Used by handlers that want to surface "would this draft apply" in the
+// UI without committing.
+func (o *Orchestrator) ValidateDraft(slot Slot, draftBytes []byte) ValidationResult {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.validateDraftLocked(slot, draftBytes)
+}
+
 // copyFile copies src → dst. dst is overwritten if it exists. Used by
 // ApplyDraft to assemble the tmpdir snapshot.
 func copyFile(src, dst string) error {

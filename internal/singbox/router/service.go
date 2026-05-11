@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logger"
@@ -65,6 +66,10 @@ type Service interface {
 	SetDNSGlobals(ctx context.Context, final, strategy string) error
 
 	Inspect(ctx context.Context, input InspectInput) (InspectResult, error)
+
+	StagingStatus(ctx context.Context) StagingStatus
+	ApplyStaging(ctx context.Context) (orchestrator.ValidationResult, error)
+	DiscardStaging(ctx context.Context) error
 }
 
 type SingboxController interface {
@@ -135,6 +140,13 @@ type SingboxTunnelCatalog interface {
 	ListTunnelTags(ctx context.Context) ([]string, error)
 }
 
+// StagingEventBus is the narrow interface the router service uses to
+// publish resource:invalidated events for the staging/draft flow.
+// *events.Bus satisfies it; tests pass a mockBus.
+type StagingEventBus interface {
+	Publish(event string, data any)
+}
+
 type Deps struct {
 	Log          *logger.Logger
 	Settings     *storage.SettingsStore
@@ -155,6 +167,10 @@ type Deps struct {
 	// router is enabled. When nil (tests), persistConfig falls back
 	// to the legacy in-place write at routerConfigPath().
 	Orch *orchestrator.Orchestrator
+	// Bus receives resource:invalidated events for the staging/draft
+	// flow (SaveDraft, ApplyDraft, DiscardDraft). Optional — when nil,
+	// staging event emission is silently skipped.
+	Bus StagingEventBus
 }
 
 type ServiceImpl struct {
@@ -185,55 +201,67 @@ func (s *ServiceImpl) routerConfigPath() string {
 	return filepath.Join(s.deps.Singbox.ConfigDir(), "20-router.json")
 }
 
-// disabledRouterConfigPath returns where the orchestrator parks the
-// router slot when SlotRouter is disabled. We keep this knowledge here
-// (rather than asking the orchestrator) so reads remain a pure file
-// operation that does not require taking the orch's lock.
-func (s *ServiceImpl) disabledRouterConfigPath() string {
-	return filepath.Join(s.deps.Singbox.ConfigDir(), "disabled", "20-router.json")
-}
-
-// loadRouterConfig reads the router slot from whichever location holds
-// the file. When the orchestrator is wired and the slot is disabled,
-// the file lives under disabled/ — but UI callers (ListRules etc.)
-// must still see the saved rules so the user can edit them. Falls back
-// to the disabled path when the active path is missing OR returns the
-// "no file" sentinel (LoadConfig hides ENOENT inside an empty config,
-// which would otherwise mask the real on-disk state and overwrite the
-// user's saved rules on the next persistConfig).
+// loadRouterConfig returns the router config the user is currently editing.
+// When the orchestrator is wired, it delegates to LoadEffective which
+// prefers pending/ over active/ — so UI callers (ListRules etc.) always
+// see "what's being edited" rather than "what's currently live". Falls
+// back to an empty config when neither file exists yet.
 func (s *ServiceImpl) loadRouterConfig() (*RouterConfig, error) {
+	if s.deps.Orch != nil {
+		data, err := s.deps.Orch.LoadEffective(orchestrator.SlotRouter)
+		if err != nil {
+			return nil, fmt.Errorf("load router config: %w", err)
+		}
+		if data == nil {
+			return NewEmptyConfig(), nil
+		}
+		cfg := NewEmptyConfig()
+		if err := json.Unmarshal(data, cfg); err != nil {
+			return nil, fmt.Errorf("parse router config: %w", err)
+		}
+		if cfg.Inbounds == nil {
+			cfg.Inbounds = []Inbound{}
+		}
+		if cfg.Outbounds == nil {
+			cfg.Outbounds = []Outbound{}
+		}
+		if cfg.Route.RuleSet == nil {
+			cfg.Route.RuleSet = []RuleSet{}
+		}
+		if cfg.Route.Rules == nil {
+			cfg.Route.Rules = []Rule{}
+		}
+		if cfg.DNS.Servers == nil {
+			cfg.DNS.Servers = []DNSServer{}
+		}
+		if cfg.DNS.Rules == nil {
+			cfg.DNS.Rules = []DNSRule{}
+		}
+		return cfg, nil
+	}
+	// Legacy fallback (no orchestrator): read from active path directly.
 	activePath := s.routerConfigPath()
 	if _, statErr := os.Stat(activePath); statErr == nil {
 		return LoadConfig(activePath)
 	} else if !os.IsNotExist(statErr) {
 		return nil, statErr
 	}
-	// Active path is empty. Try disabled (orch-wired only).
-	if s.deps.Orch == nil {
-		return LoadConfig(activePath) // returns NewEmptyConfig per contract
-	}
-	disabledPath := s.disabledRouterConfigPath()
-	if _, statErr := os.Stat(disabledPath); statErr == nil {
-		return LoadConfig(disabledPath)
-	} else if !os.IsNotExist(statErr) {
-		return nil, statErr
-	}
-	// Neither path holds the file — return the empty-config sentinel.
-	return LoadConfig(activePath)
+	return LoadConfig(activePath) // returns NewEmptyConfig per contract
 }
 
 func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) error {
 	if s.deps.Orch != nil {
-		// Orchestrator path — slot writer handles atomic write,
-		// cross-slot validation and debounced SIGHUP. We just
-		// marshal and hand off the bytes.
+		// Orchestrator path — write to pending/ (staging). The draft will
+		// be applied explicitly via ApplyStaging. No SIGHUP is triggered
+		// here; sing-box keeps running with the previously-applied config.
 		data, err := json.MarshalIndent(cfg, "", "  ")
 		if err != nil {
 			return fmt.Errorf("marshal router config: %w", err)
 		}
-		if err := s.deps.Orch.Save(orchestrator.SlotRouter, data); err != nil {
+		if err := s.deps.Orch.SaveDraft(orchestrator.SlotRouter, data); err != nil {
 			return err
 		}
+		s.emitStagingEvent("staged")
 		return nil
 	}
 
@@ -491,6 +519,25 @@ func (s *ServiceImpl) emitStatus(ctx context.Context) {
 	}
 	status, _ := s.GetStatus(ctx)
 	s.deps.Events.Publish("singbox-router:status", status)
+}
+
+func (s *ServiceImpl) emitStagingEvent(reason string) {
+	if s.deps.Bus == nil {
+		return
+	}
+	s.deps.Bus.Publish("resource:invalidated", map[string]any{
+		"resource": "singbox.router.staging",
+		"reason":   reason,
+	})
+}
+
+func (s *ServiceImpl) emitRulesEvent() {
+	if s.deps.Bus == nil {
+		return
+	}
+	s.deps.Bus.Publish("resource:invalidated", map[string]any{
+		"resource": "singbox.router.rules",
+	})
 }
 
 func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
@@ -977,4 +1024,56 @@ func (s *ServiceImpl) Inspect(ctx context.Context, input InspectInput) (InspectR
 		s.inspectCache = newRuleSetCache("")
 	})
 	return Inspect(input, cfg.Route.Rules, cfg.Route.RuleSet, final, binary, s.inspectCache), nil
+}
+
+// ---------------------------------------------------------------------------
+// Staging API
+// ---------------------------------------------------------------------------
+
+// StagingStatus is what /api/singbox/router/staging returns.
+type StagingStatus struct {
+	HasDraft   bool
+	DraftedAt  time.Time
+	Validation *orchestrator.ValidationResult
+}
+
+// StagingStatus returns metadata about the current pending draft for the
+// router slot. When a draft exists, Validation is populated with the
+// current cross-slot diagnostic so the UI can render a preview of "what
+// Apply would say".
+func (s *ServiceImpl) StagingStatus(ctx context.Context) StagingStatus {
+	info := s.deps.Orch.DraftInfo(orchestrator.SlotRouter)
+	st := StagingStatus{HasDraft: info.HasDraft, DraftedAt: info.DraftedAt}
+	if !info.HasDraft {
+		return st
+	}
+	bytes, err := s.deps.Orch.LoadEffective(orchestrator.SlotRouter)
+	if err != nil || bytes == nil {
+		return st
+	}
+	res := s.deps.Orch.ValidateDraft(orchestrator.SlotRouter, bytes)
+	st.Validation = &res
+	return st
+}
+
+// ApplyStaging is the service-level wrapper around Orch.ApplyDraft. On
+// success it emits "singbox.router.staging" + "singbox.router.rules" SSE
+// invalidations.
+func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.ValidationResult, error) {
+	res, err := s.deps.Orch.ApplyDraft(orchestrator.SlotRouter)
+	if err == nil && res.Ok() {
+		s.emitStagingEvent("applied")
+		s.emitRulesEvent()
+	}
+	return res, err
+}
+
+// DiscardStaging removes the pending draft for the router slot.
+func (s *ServiceImpl) DiscardStaging(ctx context.Context) error {
+	if err := s.deps.Orch.DiscardDraft(orchestrator.SlotRouter); err != nil {
+		return err
+	}
+	s.emitStagingEvent("discarded")
+	s.emitRulesEvent()
+	return nil
 }

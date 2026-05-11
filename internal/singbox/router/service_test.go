@@ -3,9 +3,13 @@ package router
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -200,5 +204,186 @@ func TestReconcile_PolicyDeleted_Disables(t *testing.T) {
 	}
 	if all.SingboxRouter.Enabled {
 		t.Error("expected SingboxRouter.Enabled=false after policy-missing disable")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// mockBus — captures resource:invalidated events for assertion.
+// ---------------------------------------------------------------------------
+
+type mockBus struct {
+	mu     sync.Mutex
+	events []map[string]any
+}
+
+func (m *mockBus) Publish(event string, data any) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if event != "resource:invalidated" {
+		return
+	}
+	d, _ := data.(map[string]any)
+	m.events = append(m.events, d)
+}
+
+func (m *mockBus) Reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.events = nil
+}
+
+func (m *mockBus) HasEvent(resource string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, e := range m.events {
+		if r, _ := e["resource"].(string); r == resource {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *mockBus) Events() []map[string]any {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]map[string]any, len(m.events))
+	copy(out, m.events)
+	return out
+}
+
+// EventPublisher is the narrow interface emitStagingEvent / emitRulesEvent use.
+type EventPublisher interface {
+	Publish(event string, data any)
+}
+
+// ---------------------------------------------------------------------------
+// newOrchedTestService — orchestrator-backed ServiceImpl for staging tests.
+// ---------------------------------------------------------------------------
+
+// newOrchedTestService creates a *ServiceImpl backed by a real orchestrator
+// rooted in t.TempDir() with SlotRouter registered, and a mockBus wired as
+// the event publisher. Returns the service and the config directory path so
+// tests can inspect files.
+func newOrchedTestService(t *testing.T) (*ServiceImpl, string) {
+	t.Helper()
+	dir := t.TempDir()
+
+	orch := orchestrator.New(dir, nil)
+	if err := orch.Register(orchestrator.SlotMeta{
+		Slot:     orchestrator.SlotRouter,
+		Filename: "20-router.json",
+	}); err != nil {
+		t.Fatalf("orch.Register: %v", err)
+	}
+	if err := orch.Bootstrap(); err != nil {
+		t.Fatalf("orch.Bootstrap: %v", err)
+	}
+
+	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{})
+	bus := &mockBus{}
+
+	svc := &ServiceImpl{
+		deps: Deps{
+			Settings: settingsStore,
+			Singbox:  &fakeSingbox{dir: dir},
+			Orch:     orch,
+			Bus:      bus,
+		},
+	}
+	return svc, dir
+}
+
+// ---------------------------------------------------------------------------
+// Staging tests — Step 3 (failing before Step 4)
+// ---------------------------------------------------------------------------
+
+func TestPersistConfig_WritesPending_NotActive(t *testing.T) {
+	svc, dir := newOrchedTestService(t)
+	cfg := NewEmptyConfig()
+	cfg.Route.Rules = append(cfg.Route.Rules, Rule{Action: "route", Outbound: "direct"})
+	if err := svc.persistConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("persistConfig: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "pending", "20-router.json")); err != nil {
+		t.Fatalf("pending missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "20-router.json")); !os.IsNotExist(err) {
+		t.Errorf("active should not exist after staged write: %v", err)
+	}
+}
+
+func TestLoadRouterConfig_PrefersPending(t *testing.T) {
+	svc, dir := newOrchedTestService(t)
+	_ = os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(`{"outbounds":[]}`), 0644)
+	_ = os.MkdirAll(filepath.Join(dir, "pending"), 0755)
+	_ = os.WriteFile(filepath.Join(dir, "pending", "20-router.json"),
+		[]byte(`{"outbounds":[{"tag":"draft-tag","type":"direct"}]}`), 0644)
+
+	cfg, err := svc.loadRouterConfig()
+	if err != nil {
+		t.Fatalf("loadRouterConfig: %v", err)
+	}
+	if len(cfg.Outbounds) != 1 || cfg.Outbounds[0].Tag != "draft-tag" {
+		t.Errorf("expected draft-tag, got %#v", cfg.Outbounds)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Staging service method tests
+// ---------------------------------------------------------------------------
+
+func TestApplyStaging_DelegatesAndEmitsEvent(t *testing.T) {
+	svc, dir := newOrchedTestService(t)
+	bus := svc.deps.Bus.(*mockBus)
+	// Register SlotBase so the orchestrator has a "direct" outbound in
+	// scope for cross-slot validation.
+	_ = svc.deps.Orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotBase, Filename: "00-base.json", AlwaysOn: true})
+	_ = os.WriteFile(filepath.Join(dir, "00-base.json"),
+		[]byte(`{"outbounds":[{"tag":"direct","type":"direct"}]}`), 0644)
+	// Stage a router config whose route.final references "direct" (always known).
+	cfg := NewEmptyConfig()
+	cfg.Route.Final = "direct"
+	if err := svc.persistConfig(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	bus.Reset()
+
+	res, err := svc.ApplyStaging(context.Background())
+	if err != nil || !res.Ok() {
+		t.Fatalf("ApplyStaging: err=%v res=%s", err, res.Error())
+	}
+	if !bus.HasEvent("singbox.router.staging") {
+		t.Errorf("staging event not published; got: %v", bus.Events())
+	}
+	if !bus.HasEvent("singbox.router.rules") {
+		t.Errorf("rules event not published; got: %v", bus.Events())
+	}
+}
+
+func TestDiscardStaging_DelegatesAndEmitsEvent(t *testing.T) {
+	svc, _ := newOrchedTestService(t)
+	bus := svc.deps.Bus.(*mockBus)
+	_ = svc.deps.Orch.SaveDraft(orchestrator.SlotRouter, []byte(`{}`))
+	bus.Reset()
+	if err := svc.DiscardStaging(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !bus.HasEvent("singbox.router.staging") {
+		t.Errorf("staging event not published")
+	}
+}
+
+func TestStagingStatus_HasDraftAfterPersist(t *testing.T) {
+	svc, _ := newOrchedTestService(t)
+	st := svc.StagingStatus(context.Background())
+	if st.HasDraft {
+		t.Error("HasDraft true on fresh setup")
+	}
+	cfg := NewEmptyConfig()
+	cfg.Route.Final = "direct"
+	_ = svc.persistConfig(context.Background(), cfg)
+	st = svc.StagingStatus(context.Background())
+	if !st.HasDraft {
+		t.Error("HasDraft false after persistConfig")
 	}
 }

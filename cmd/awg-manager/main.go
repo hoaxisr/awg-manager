@@ -913,6 +913,7 @@ func main() {
 		Singbox:                singboxOp,
 		Policies:               &routerAccessPolicyAdapter{svc: accessPolicySvc, wan: wanModel},
 		Events:                 eventBus,
+		Bus:                    eventBus,
 		AWGTags:                &routerAWGTagAdapter{src: awgoutboundsSvc},
 		SingboxTunnels:         &routerSingboxTunnelAdapter{src: singboxOp},
 		SubscriptionComposites: router.NewSubscriptionCompositesAdapter(subAdapter),
