@@ -43,13 +43,33 @@ func (r ValidationResult) Error() string {
 	return s
 }
 
-// validate scans the slot files and returns a ValidationResult.
-// Caller holds o.mu OR calls Validate (which locks).
+// validateLocked is the public-facing entry kept for backward
+// compatibility: it validates the current active state of every
+// enabled slot. Caller MUST hold o.mu.
+func (o *Orchestrator) validateLocked() ValidationResult {
+	return o.validateWith(o.readActiveBytes)
+}
+
+// readActiveBytes is the default bytes source: read the active path
+// for a slot, return nil if it doesn't exist (slot is enabled but the
+// producer hasn't written anything yet — not a validation error).
+func (o *Orchestrator) readActiveBytes(slot Slot) ([]byte, error) {
+	meta, ok := o.slots[slot]
+	if !ok {
+		return nil, nil
+	}
+	return readIfExists(o.activePath(meta))
+}
+
+// validateWith runs the cross-slot consistency algorithm. bytesFor is
+// the source of slot JSON — callers pass readActiveBytes for normal
+// validation and a swapping variant for draft validation. Caller MUST
+// hold o.mu.
 //
 // We deliberately tolerate JSON parse errors: a single broken slot file
 // is reported as one error, scan continues. This makes the result more
 // useful when developing.
-func (o *Orchestrator) validateLocked() ValidationResult {
+func (o *Orchestrator) validateWith(bytesFor func(Slot) ([]byte, error)) ValidationResult {
 	type tagOrigin struct {
 		slot Slot
 	}
@@ -82,8 +102,7 @@ func (o *Orchestrator) validateLocked() ValidationResult {
 		if !o.enabled[os.slot] {
 			continue
 		}
-		path := o.activePath(os.meta)
-		data, err := readIfExists(path)
+		data, err := bytesFor(os.slot)
 		if err != nil {
 			errs = append(errs, ValidationError{
 				Slot:    os.slot,
