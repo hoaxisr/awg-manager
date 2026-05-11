@@ -67,6 +67,63 @@
 		},
 	]);
 
+	const firstUserRuleIndex = $derived.by(() => {
+		const idx = rules.findIndex((r) => !isSystem(r));
+		return idx === -1 ? rules.length : idx;
+	});
+
+	async function moveRule(from: number, to: number): Promise<void> {
+		if (movingIndex !== null) return;
+		if (from < firstUserRuleIndex || to < firstUserRuleIndex) return;
+		if (from < 0 || from >= rules.length || to < 0 || to >= rules.length) return;
+		if (from === to) return;
+
+		movingIndex = from;
+		try {
+			await api.singboxRouterMoveRule(from, to);
+			await refresh();
+		} catch (e) {
+			notifications.error((e as Error).message);
+		} finally {
+			movingIndex = null;
+		}
+	}
+
+	function onDragStart(i: number, e: DragEvent): void {
+		if (isSystem(rules[i])) return;
+		if (i < firstUserRuleIndex) return;
+		draggingIndex = i;
+		e.dataTransfer?.setData('text/plain', String(i));
+		if (e.dataTransfer) {
+			e.dataTransfer.effectAllowed = 'move';
+		}
+	}
+
+	function onDragOver(i: number, e: DragEvent): void {
+		if (draggingIndex === null) return;
+		if (i < firstUserRuleIndex) return;
+		e.preventDefault();
+		dragOverIndex = i;
+		if (e.dataTransfer) {
+			e.dataTransfer.dropEffect = 'move';
+		}
+	}
+
+	async function onDrop(i: number, e: DragEvent): Promise<void> {
+		e.preventDefault();
+		const from = draggingIndex;
+		draggingIndex = null;
+		dragOverIndex = null;
+		if (from === null) return;
+		if (i < firstUserRuleIndex) return;
+		await moveRule(from, i);
+	}
+
+	function onDragEnd(): void {
+		draggingIndex = null;
+		dragOverIndex = null;
+	}
+
 	function actionVariant(
 		r: SingboxRouterRule,
 	): 'success' | 'error' | 'muted' {
@@ -106,6 +163,9 @@
 	let prefillRuleSet = $state<string | null>(null);
 	let deleteIndex = $state<number | null>(null);
 	let deletingBusy = $state(false);
+	let movingIndex = $state<number | null>(null);
+	let draggingIndex = $state<number | null>(null);
+	let dragOverIndex = $state<number | null>(null);
 
 	function openAdd(): void {
 		editIndex = null;
@@ -155,9 +215,10 @@
 		</div>
 	</div>
 
-	<div class="table">
+	<div class="table" role="list">
 		<div class="t-head">
 			<div class="col-idx">#</div>
+			<div class="col-order">Порядок</div>
 			<div class="col-action">Действие</div>
 			<div class="col-match">Matchers</div>
 			<div class="col-out">Outbound</div>
@@ -169,8 +230,44 @@
 		{:else}
 			{#each rules as r, i (i)}
 				{@const sys = isSystem(r)}
-				<div class="t-row" class:system={sys}>
+				<div
+					class="t-row"
+					class:system={sys}
+					class:dragging={draggingIndex === i}
+					class:drag-over={dragOverIndex === i && draggingIndex !== i}
+					role="listitem"
+					tabindex="-1"
+					ondragover={(e) => onDragOver(i, e)}
+					ondrop={(e) => onDrop(i, e)}
+					ondragend={onDragEnd}
+				>
 					<div class="col-idx mono">{i}</div>
+					<div class="col-order">
+						{#if !sys}
+							<span
+								class="drag-handle"
+								title="Перетащить"
+								role="button"
+								aria-label={`Перетащить правило #${i}`}
+								tabindex="-1"
+								draggable={movingIndex === null}
+								ondragstart={(e) => onDragStart(i, e)}
+								ondragend={onDragEnd}
+							>⋮⋮</span>
+							<button
+								class="move-btn"
+								title="Выше"
+								disabled={movingIndex !== null || i <= firstUserRuleIndex}
+								onclick={() => moveRule(i, i - 1)}
+							>↑</button>
+							<button
+								class="move-btn"
+								title="Ниже"
+								disabled={movingIndex !== null || i >= rules.length - 1}
+								onclick={() => moveRule(i, i + 1)}
+							>↓</button>
+						{/if}
+					</div>
 					<div class="col-action">
 						<Badge variant={actionVariant(r)} size="sm" uppercase mono>
 							{actionLabel(r)}
@@ -313,7 +410,7 @@
 	.t-head,
 	.t-row {
 		display: grid;
-		grid-template-columns: 36px 80px 1fr 160px 72px;
+		grid-template-columns: 36px 64px 80px 1fr 160px 72px;
 		gap: 0.625rem;
 		align-items: center;
 		padding: 0.5rem 0.875rem;
@@ -336,6 +433,30 @@
 	.t-row.system {
 		opacity: 0.7;
 	}
+	.drag-handle {
+		cursor: grab;
+		color: var(--color-text-muted);
+		user-select: none;
+		line-height: 1;
+		padding: 0 0.125rem;
+	}
+	.drag-handle:active {
+		cursor: grabbing;
+	}
+	.col-order {
+		display: flex;
+		gap: 0.25rem;
+		justify-content: center;
+		align-items: center;
+	}
+	.t-row.dragging {
+		opacity: 0.45;
+	}
+	.t-row.drag-over {
+		outline: 1px dashed var(--color-accent);
+		outline-offset: -2px;
+		background: var(--color-bg-tertiary);
+	}
 	.col-idx {
 		color: var(--color-text-muted);
 	}
@@ -350,6 +471,25 @@
 		display: flex;
 		gap: 0.25rem;
 		justify-content: flex-end;
+	}
+	.move-btn {
+		width: 1.5rem;
+		height: 1.5rem;
+		border: 1px solid var(--color-border);
+		border-radius: 0.375rem;
+		background: var(--color-bg-tertiary);
+		color: var(--color-text-secondary);
+		cursor: pointer;
+		font-size: 0.75rem;
+		line-height: 1;
+	}
+	.move-btn:hover:not(:disabled) {
+		border-color: var(--color-accent);
+		color: var(--color-text-primary);
+	}
+	.move-btn:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
 	}
 	.mono {
 		font-family: var(--font-mono, ui-monospace, monospace);
@@ -372,7 +512,7 @@
 	@media (max-width: 720px) {
 		.t-head,
 		.t-row {
-			grid-template-columns: 28px 70px 1fr 60px;
+			grid-template-columns: 28px 52px 70px 1fr 60px;
 		}
 		.col-out {
 			display: none;
