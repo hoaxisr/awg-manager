@@ -261,6 +261,21 @@ func (o *Orchestrator) validateWith(bytesFor func(Slot) ([]byte, error)) Validat
 	return ValidationResult{Errors: errs}
 }
 
+// validateDraftLocked validates the merged config with one slot's bytes
+// swapped for the supplied draft bytes. Other slots use their active
+// content. Caller MUST hold o.mu.
+//
+// Use case: ApplyDraft pre-flights cross-slot consistency before
+// renaming pending → active.
+func (o *Orchestrator) validateDraftLocked(target Slot, draftBytes []byte) ValidationResult {
+	return o.validateWith(func(slot Slot) ([]byte, error) {
+		if slot == target {
+			return draftBytes, nil
+		}
+		return o.readActiveBytes(slot)
+	})
+}
+
 // Validate is the public, lock-acquiring entry point.
 func (o *Orchestrator) Validate() ValidationResult {
 	o.mu.Lock()
