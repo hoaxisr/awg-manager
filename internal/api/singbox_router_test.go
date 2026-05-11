@@ -325,3 +325,33 @@ func TestPostStagingDiscard_200(t *testing.T) {
 		t.Errorf("status: %d body=%s", rr.Code, rr.Body)
 	}
 }
+
+func TestGetStaging_405OnWrongMethod(t *testing.T) {
+	h := newMockRouterHandler(&mockRouterSvc{})
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/staging", nil)
+	rr := httptest.NewRecorder()
+	h.GetStaging(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status: got %d, want 405", rr.Code)
+	}
+}
+
+func TestPostStagingApply_405OnWrongMethod(t *testing.T) {
+	h := newMockRouterHandler(&mockRouterSvc{})
+	req := httptest.NewRequest(http.MethodGet, "/api/singbox/router/staging/apply", nil)
+	rr := httptest.NewRecorder()
+	h.PostStagingApply(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status: got %d, want 405", rr.Code)
+	}
+}
+
+func TestPostStagingDiscard_405OnWrongMethod(t *testing.T) {
+	h := newMockRouterHandler(&mockRouterSvc{})
+	req := httptest.NewRequest(http.MethodGet, "/api/singbox/router/staging/discard", nil)
+	rr := httptest.NewRecorder()
+	h.PostStagingDiscard(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status: got %d, want 405", rr.Code)
+	}
+}

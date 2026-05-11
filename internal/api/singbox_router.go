@@ -1172,9 +1172,14 @@ func decodeBody(r *http.Request, dst any) error {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Success		200	{object}	RouterStagingStatusResponse
+//	@Failure		405	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/staging [get]
 func (h *SingboxRouterHandler) GetStaging(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
 	st := h.svc.StagingStatus(r.Context())
 	out := RouterStagingStatusResponse{HasDraft: st.HasDraft}
 	if st.HasDraft {
@@ -1195,11 +1200,16 @@ func (h *SingboxRouterHandler) GetStaging(w http.ResponseWriter, r *http.Request
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Success		200	{object}	OkResponse
+//	@Failure		405	{object}	APIErrorEnvelope
 //	@Failure		409	{object}	APIErrorEnvelope	"no draft to apply"
 //	@Failure		422	{object}	RouterStagingValidationError
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/staging/apply [post]
 func (h *SingboxRouterHandler) PostStagingApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
 	res, err := h.svc.ApplyStaging(r.Context())
 	if errors.Is(err, orchestrator.ErrNoDraft) {
 		response.ErrorWithStatus(w, http.StatusConflict, "no draft to apply", "NO_DRAFT")
@@ -1224,9 +1234,14 @@ func (h *SingboxRouterHandler) PostStagingApply(w http.ResponseWriter, r *http.R
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Success		200	{object}	OkResponse
+//	@Failure		405	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/staging/discard [post]
 func (h *SingboxRouterHandler) PostStagingDiscard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
 	if err := h.svc.DiscardStaging(r.Context()); err != nil {
 		response.InternalError(w, err.Error())
 		return
