@@ -920,6 +920,15 @@ func (s *ServiceImpl) computeIssues(cfg *RouterConfig) []Issue {
 			}
 		}
 	}
+	// Subscription composites live in 40-subscriptions.json owned by subscription slot.
+	// Their tags are valid route targets but invisible to a router-only view of cfg.Outbounds.
+	if s.deps.SubscriptionComposites != nil {
+		for _, o := range s.deps.SubscriptionComposites.ListSubscriptionComposites() {
+			if o.Tag != "" {
+				outboundTags[o.Tag] = struct{}{}
+			}
+		}
+	}
 	for i, r := range cfg.Route.Rules {
 		if r.Action == "route" && r.Outbound != "" && r.Outbound != "direct" {
 			if _, ok := outboundTags[r.Outbound]; !ok {
