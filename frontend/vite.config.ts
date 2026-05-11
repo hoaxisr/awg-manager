@@ -1,5 +1,6 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
+import { svelteTesting } from '@testing-library/svelte/vite';
 import { fileURLToPath, URL } from 'node:url';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 
@@ -43,7 +44,11 @@ export default defineConfig(({ mode }) => {
 	const useMockRewrite = env.VITE_API_STRIP_PREFIX === '1';
 
 	return {
-		plugins: [stubDevRoutes(), tailwindcss(), sveltekit()],
+		plugins: [stubDevRoutes(), tailwindcss(), sveltekit(), svelteTesting()],
+		test: {
+			environment: 'jsdom',
+			include: ['src/**/*.test.ts'],
+		},
 		resolve: {
 			alias: {
 				// Filesystem-absolute paths so esbuild's optimize-deps can

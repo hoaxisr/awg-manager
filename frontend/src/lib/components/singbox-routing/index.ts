@@ -1,3 +1,4 @@
+export { default as StagingBanner } from './StagingBanner.svelte';
 export { default as SingboxRoutingPage } from './SingboxRoutingPage.svelte';
 export { default as JsonConfigDrawer } from './JsonConfigDrawer.svelte';
 export { default as RouteInspector } from './RouteInspector.svelte';
