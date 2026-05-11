@@ -9,11 +9,12 @@
     "dev:mock:proxy": "npm run sync:openapi && node scripts/mock-stack.mjs",
     "mock": "npx -y @stoplight/prism-cli mock ../internal/openapi/swagger.yaml -p 8080 --host 0.0.0.0",
     "mock:dynamic": "npx -y @stoplight/prism-cli mock ../internal/openapi/swagger.yaml -p 8080 --host 0.0.0.0 --dynamic",
-    "build": "vite build",
+    "build": "svelte-kit sync && vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "gen:icons": "node scripts/generate-tabler-icons.mjs",
-    "gen:qure-icons": "node scripts/generate-qure-icons.mjs"
+    "gen:qure-icons": "node scripts/generate-qure-icons.mjs",
+    "prepare": "svelte-kit sync || echo ''"
   },
   "devDependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.7",
