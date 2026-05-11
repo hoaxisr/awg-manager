@@ -4,7 +4,7 @@
     import { Modal, StoreStatusBadge, Button } from '$lib/components/ui';
     import { PolicyTable, PolicyCreateModal, PolicyEditView } from '$lib/components/accesspolicy';
     import { notifications } from '$lib/stores/notifications';
-    import { accessPoliciesStore, policyDevicesStore, policyInterfacesStore } from '$lib/stores/routing';
+    import { accessPoliciesStore, policyDevicesStore, policyInterfacesStore, invalidateAllRouting } from '$lib/stores/routing';
 
     interface Props {
         accessPolicies: AccessPolicy[];
@@ -22,8 +22,9 @@
     let editingPolicyData = $state<AccessPolicy | null>(null);
     let policySelectionMode = $state(false);
     let policySelected = $state<Set<string>>(new Set());
-    let policyBulkLoading = $state(false);
-    let policyBulkDeleteConfirm = $state(false);
+	let policyBulkLoading = $state(false);
+	let policyBulkDeleteConfirm = $state(false);
+	let policyRefreshing = $state(false);
 
     let policyCount = $derived(accessPolicies.length);
 
@@ -62,6 +63,24 @@
 
     // No-op: SSE updates the store; PolicyEditView expects an async callback
     async function refreshPolicyData() {}
+
+    async function refreshPolicies() {
+        if (policyRefreshing) return;
+        policyRefreshing = true;
+        try {
+            const res = await api.refreshRouting();
+            invalidateAllRouting();
+            if (res.missing?.includes('accessPolicies')) {
+                notifications.warning('Не удалось обновить политики доступа');
+            } else {
+                notifications.success('Политики обновлены');
+            }
+        } catch (e) {
+            notifications.error(`Ошибка обновления политик: ${(e as Error).message}`);
+        } finally {
+            policyRefreshing = false;
+        }
+    }
 
     function handleDeviceAssigned(_mac: string, _policyName: string) {
         // SSE will push updated policyDevices and accessPolicies
@@ -122,6 +141,15 @@
                 <StoreStatusBadge store={accessPoliciesStore} />
                 <StoreStatusBadge store={policyDevicesStore} />
                 <StoreStatusBadge store={policyInterfacesStore} />
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    onclick={refreshPolicies}
+                    disabled={policyRefreshing}
+                    loading={policyRefreshing}
+                >
+                    Обновить
+                </Button>
                 {#if accessPolicies.length > 0}
                     <Button variant="ghost" size="sm" onclick={() => { policySelectionMode = true; policySelected = new Set(); }}>Выбрать</Button>
                 {/if}
