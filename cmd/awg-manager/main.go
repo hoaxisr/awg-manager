@@ -617,6 +617,7 @@ func main() {
 			loggingService.AppLog(logging.LevelInfo, logging.GroupSingbox, logging.SubSBProcess, "orchestrator", "", msg)
 		}
 	})
+	sbOrch.SetValidator(&orchValidatorAdapter{v: singbox.NewValidator(installer.DefaultBinaryPath)})
 	for _, meta := range singboxorch.KnownSlots() {
 		// SlotTunnels is AlwaysOn but only counts as "active work" when
 		// the user has defined sing-box tunnels — wire HasContent so
@@ -1756,4 +1757,14 @@ func (l *singboxAndSubLister) ListTunnels(ctx context.Context) ([]singbox.Tunnel
 
 func (l *singboxAndSubLister) ListSubActiveTags() []string {
 	return l.sub.ListActiveMemberTags()
+}
+
+// orchValidatorAdapter bridges singbox.Validator (no context) to the
+// singboxorch.DraftValidator interface (with context).
+type orchValidatorAdapter struct {
+	v *singbox.Validator
+}
+
+func (a *orchValidatorAdapter) Validate(ctx context.Context, configDir string) error {
+	return a.v.Validate(configDir)
 }
