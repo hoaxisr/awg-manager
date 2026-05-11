@@ -69,6 +69,13 @@ func KnownSlots() []SlotMeta {
 	}
 }
 
+// DraftInfo is what DraftInfo() returns about a slot's pending file.
+// HasDraft false means no pending file; in that case DraftedAt is zero.
+type DraftInfo struct {
+	HasDraft  bool
+	DraftedAt time.Time
+}
+
 // reloadDebounce coalesces multiple Save/SetEnabled calls within this
 // window into a single SIGHUP. 250ms is small enough to feel instant
 // in UI flows, large enough to absorb chained internal mutations.
