@@ -371,6 +371,9 @@ func TestDiscardStaging_DelegatesAndEmitsEvent(t *testing.T) {
 	if !bus.HasEvent("singbox.router.staging") {
 		t.Errorf("staging event not published")
 	}
+	if !bus.HasEvent("singbox.router.rules") {
+		t.Errorf("rules event not published")
+	}
 }
 
 func TestStagingStatus_HasDraftAfterPersist(t *testing.T) {
