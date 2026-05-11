@@ -1,8 +1,11 @@
 package orchestrator
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 )
 
 // SaveDraft writes the slot's JSON to pending/<filename> atomically.
@@ -93,4 +96,103 @@ func (o *Orchestrator) DraftInfo(slot Slot) DraftInfo {
 		return DraftInfo{}
 	}
 	return DraftInfo{HasDraft: true, DraftedAt: st.ModTime()}
+}
+
+// ApplyDraft validates the pending draft and, if it passes, atomically
+// renames pending → active and arms a reload. The validation pipeline
+// is: (1) cross-slot validateDraftLocked → (2) sing-box check on a
+// tmpdir snapshot mirroring all enabled slots with the target swapped
+// for the draft → (3) os.Rename(pending, active).
+//
+// Returns (ValidationResult, nil) when the logical check fails — the
+// caller should surface the errors to the user; pending is preserved
+// for further editing.
+//
+// Returns (ZeroResult, ErrNoDraft) when there is no pending file.
+//
+// Returns (ZeroResult, wrapped error) on FS or external-check failures.
+// In all error paths, pending is preserved and active is unchanged.
+func (o *Orchestrator) ApplyDraft(slot Slot) (ValidationResult, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	meta, ok := o.slots[slot]
+	if !ok {
+		return ValidationResult{}, ErrUnknownSlot
+	}
+	pendingPath := o.pendingPath(meta)
+	draftBytes, err := os.ReadFile(pendingPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ValidationResult{}, ErrNoDraft
+		}
+		return ValidationResult{}, fmt.Errorf("ApplyDraft read pending %s: %w", slot, err)
+	}
+
+	// Cross-slot validation against draft.
+	if res := o.validateDraftLocked(slot, draftBytes); !res.Ok() {
+		return res, nil
+	}
+
+	// sing-box check against tmpdir snapshot.
+	if o.validator != nil {
+		tmpdir, err := os.MkdirTemp(o.configDir, ".apply-check-*")
+		if err != nil {
+			return ValidationResult{}, fmt.Errorf("ApplyDraft tmpdir: %w", err)
+		}
+		defer os.RemoveAll(tmpdir)
+
+		for s, en := range o.enabled {
+			if !en {
+				continue
+			}
+			m, ok := o.slots[s]
+			if !ok {
+				continue
+			}
+			dst := filepath.Join(tmpdir, m.Filename)
+			if s == slot {
+				if err := writeAtomic(dst, draftBytes); err != nil {
+					return ValidationResult{}, fmt.Errorf("ApplyDraft snapshot draft: %w", err)
+				}
+				continue
+			}
+			if err := copyFile(o.activePath(m), dst); err != nil {
+				if os.IsNotExist(err) {
+					continue // slot enabled but file not yet written — fine
+				}
+				return ValidationResult{}, fmt.Errorf("ApplyDraft snapshot %s: %w", s, err)
+			}
+		}
+
+		if err := o.validator.Validate(context.Background(), tmpdir); err != nil {
+			return ValidationResult{}, fmt.Errorf("sing-box check: %w", err)
+		}
+	}
+
+	// Atomic commit.
+	if err := os.Rename(pendingPath, o.activePath(meta)); err != nil {
+		return ValidationResult{}, fmt.Errorf("ApplyDraft rename: %w", err)
+	}
+	o.dirty = true
+	o.scheduleReload()
+	return ValidationResult{}, nil
+}
+
+// copyFile copies src → dst. dst is overwritten if it exists. Used by
+// ApplyDraft to assemble the tmpdir snapshot.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(out, in)
+	if cErr := out.Close(); err == nil {
+		err = cErr
+	}
+	return err
 }
