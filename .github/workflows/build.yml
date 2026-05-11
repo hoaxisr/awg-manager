@@ -1,0 +1,80 @@
+name: "Build"
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache result
+        uses: actions/cache@v4
+        with:
+          key: result-${{ github.sha }}
+          path: dist
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 22
+
+      - name: Setup go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.23
+
+      - name: Install dependencies
+        run: go install golang.org/dl/go1.23.12@latest && go1.23.12 download
+
+      - name: Build
+        id: build
+        run: |
+          ./scripts/build-ipk.sh mipsel-3.4
+          ./scripts/build-ipk.sh mips-3.4
+          ./scripts/build-ipk.sh aarch64-3.10
+
+  pre-release:
+    name: Pre-release
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore cache
+        uses: actions/cache/restore@v4
+        with:
+          key: result-${{ github.sha }}
+          path: dist
+          fail-on-cache-miss: true
+
+      - name: Delete latest tag via API
+        run: |
+          curl -X DELETE \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/${{ github.repository }}/git/refs/tags/latest \
+            || true
+
+      - name: Publish pre-release
+        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631
+        with:
+          token: "${{ secrets.GITHUB_TOKEN }}"
+          tag_name: "latest"
+          name: Development build
+          generate_release_notes: true
+          prerelease: true
+          draft: false
+          files: |
+            ./dist/awg-manager_*
