@@ -1686,6 +1686,42 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.RouterStagingStatusResponse:
+    properties:
+      draftedAt:
+        type: string
+      hasDraft:
+        type: boolean
+      validation:
+        $ref: '#/definitions/api.RouterValidationDTO'
+    type: object
+  api.RouterStagingValidationError:
+    properties:
+      sbCheck:
+        type: string
+      validation:
+        $ref: '#/definitions/api.RouterValidationDTO'
+    type: object
+  api.RouterValidationDTO:
+    properties:
+      errors:
+        items:
+          $ref: '#/definitions/api.RouterValidationErrorDTO'
+        type: array
+    type: object
+  api.RouterValidationErrorDTO:
+    properties:
+      inRule:
+        type: string
+      kind:
+        type: string
+      message:
+        type: string
+      slot:
+        type: string
+      tag:
+        type: string
+    type: object
   api.RoutingRefreshData:
     properties:
       missing:
@@ -2404,6 +2440,12 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.SingboxRouterRouteFinalRequest:
+    properties:
+      final:
+        example: direct
+        type: string
     type: object
   api.SingboxRouterRuleDTO:
     properties:
@@ -7779,6 +7821,44 @@ paths:
       summary: Force latency test for all members of a composite group
       tags:
       - singbox-router
+  /singbox/router/route/final:
+    post:
+      consumes:
+      - application/json
+      description: Updates the route.final fallback outbound. Use "direct" for default
+        sing-box direct, or the tag of any existing outbound (composite, AWG, sing-box
+        tunnel).
+      parameters:
+      - description: New final outbound tag
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterRouteFinalRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Set route.final outbound
+      tags:
+      - singbox-router
   /singbox/router/rules/add:
     post:
       consumes:
@@ -8191,6 +8271,85 @@ paths:
       security:
       - CookieAuth: []
       summary: Update singbox-router settings
+      tags:
+      - singbox-router
+  /singbox/router/staging:
+    get:
+      description: Returns whether a pending draft exists for the router slot and,
+        if so, its draft timestamp and a preview of the cross-slot validation result.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.RouterStagingStatusResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Get router staging status
+      tags:
+      - singbox-router
+  /singbox/router/staging/apply:
+    post:
+      description: Validates the pending draft (cross-slot + sing-box check) then
+        atomically swaps pending → active and arms a reload.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: no draft to apply
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.RouterStagingValidationError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Apply router staging draft
+      tags:
+      - singbox-router
+  /singbox/router/staging/discard:
+    post:
+      description: Removes pending/20-router.json. Idempotent.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Discard router staging draft
       tags:
       - singbox-router
   /singbox/router/status:
