@@ -18,6 +18,7 @@
 	import { singboxWizard } from '$lib/stores/singboxWizard';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { stripAnsi } from '$lib/utils/ansi';
+	import { StagingBanner } from '.';
 
 	type SubTab =
 		| 'engine'
@@ -180,6 +181,8 @@
 {#if isEmpty}
 	<WizardEntry />
 {/if}
+
+<StagingBanner />
 
 <Tabs tabs={tabsItems} active={active} onchange={(id) => setSub(id as SubTab)} />
 
