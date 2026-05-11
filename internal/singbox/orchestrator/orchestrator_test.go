@@ -484,3 +484,52 @@ func TestBootstrapResolvesBothLocationsConflict(t *testing.T) {
 		t.Errorf("router should be enabled after both-locations resolution: %+v", snap)
 	}
 }
+
+func TestBootstrap_SweepsStaleApplyCheckDirs(t *testing.T) {
+	dir := t.TempDir()
+	// Pre-create a leftover from a crashed Apply.
+	stale := filepath.Join(dir, ".apply-check-abc123")
+	if err := os.MkdirAll(stale, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, "20-router.json"), []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	o := New(dir, nil)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale .apply-check-* dir not swept: %v", err)
+	}
+}
+
+func TestBootstrap_LeavesPendingFileIntact(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(dir, "pending"), 0755)
+	pendingFile := filepath.Join(dir, "pending", "20-router.json")
+	bytes := []byte(`{"draft":"survives"}`)
+	if err := os.WriteFile(pendingFile, bytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	o := New(dir, nil)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(pendingFile)
+	if err != nil {
+		t.Fatalf("pending file lost: %v", err)
+	}
+	if string(got) != string(bytes) {
+		t.Errorf("pending bytes mutated: got %s", got)
+	}
+	if !o.HasDraft(SlotRouter) {
+		t.Errorf("HasDraft should be true after Bootstrap")
+	}
+}

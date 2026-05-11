@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -113,6 +115,11 @@ func (o *Orchestrator) Bootstrap() error {
 	if err := o.ensureDirs(); err != nil {
 		return err
 	}
+	if err := o.sweepStaleApplyCheckDirs(); err != nil {
+		// Sweep failure is non-fatal — log and continue. Stale dirs
+		// are harmless cosmetic noise.
+		o.log("warn", fmt.Sprintf("orchestrator: sweep .apply-check: %v", err))
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	for slot, meta := range o.slots {
@@ -156,6 +163,29 @@ func (o *Orchestrator) Bootstrap() error {
 // only to resolve a both-locations conflict during Bootstrap.
 func (o *Orchestrator) removeDisabledCopy(meta SlotMeta) error {
 	return removeIfExists(o.disabledPath(meta))
+}
+
+// sweepStaleApplyCheckDirs removes leftover .apply-check-* directories
+// from crashed Apply runs. Tmpdir creation uses MkdirTemp with a
+// well-known prefix; cleanup is best-effort.
+func (o *Orchestrator) sweepStaleApplyCheckDirs() error {
+	entries, err := os.ReadDir(o.configDir)
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if !strings.HasPrefix(e.Name(), ".apply-check-") {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(o.configDir, e.Name())); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // Save writes the slot's JSON atomically to whichever location matches
