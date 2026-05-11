@@ -5,6 +5,10 @@ on:
     branches:
       - develop
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -59,22 +63,24 @@ jobs:
           path: dist
           fail-on-cache-miss: true
 
-      - name: Delete latest tag via API
-        run: |
-          curl -X DELETE \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/${{ github.repository }}/git/refs/tags/latest \
-            || true
-
       - name: Publish pre-release
-        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631
-        with:
-          token: "${{ secrets.GITHUB_TOKEN }}"
-          tag_name: "latest"
-          name: Development build
-          generate_release_notes: true
-          prerelease: true
-          draft: false
-          files: |
-            ./dist/awg-manager_*
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          files=(./dist/awg-manager_*)
+
+          if (( ${#files[@]} == 0 )); then
+            echo "No release files found in ./dist"
+            exit 1
+          fi
+
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest "${files[@]}" \
+            --target "${GITHUB_SHA}" \
+            --title "Development build" \
+            --generate-notes \
+            --prerelease
