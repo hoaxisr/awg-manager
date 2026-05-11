@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -353,5 +355,52 @@ func TestPostStagingDiscard_405OnWrongMethod(t *testing.T) {
 	h.PostStagingDiscard(rr, req)
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status: got %d, want 405", rr.Code)
+	}
+}
+
+// newTestRouterHandlerReal wires a real *router.ServiceImpl over a real
+// *orchestrator.Orchestrator rooted at t.TempDir(). This gives the
+// regression test a full file-system path to verify staging behaviour.
+func newTestRouterHandlerReal(t *testing.T) (*SingboxRouterHandler, string) {
+	t.Helper()
+	dir := t.TempDir()
+	orch := orchestrator.New(dir, nil)
+	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouter, Filename: "20-router.json"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.SetEnabled(orchestrator.SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	deps := router.Deps{
+		Orch: orch,
+	}
+	svc := router.NewService(deps)
+	h := NewSingboxRouterHandler(svc, nil)
+	return h, dir
+}
+
+func TestAddRule_RegressionStagesNotApplies(t *testing.T) {
+	h, dir := newTestRouterHandlerReal(t)
+
+	body := `{"action":"route","outbound":"direct","domain_suffix":["example.com"]}`
+	req := httptest.NewRequest("POST", "/api/singbox/router/rules",
+		strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.AddRule(rr, req)
+
+	if rr.Code != http.StatusOK && rr.Code != http.StatusCreated {
+		t.Fatalf("AddRule status: %d body=%s", rr.Code, rr.Body)
+	}
+	pendingPath := filepath.Join(dir, "pending", "20-router.json")
+	if _, err := os.Stat(pendingPath); err != nil {
+		t.Errorf("pending file missing: %v", err)
+	}
+	activePath := filepath.Join(dir, "20-router.json")
+	if _, err := os.Stat(activePath); !os.IsNotExist(err) {
+		t.Errorf("active file should not exist, got err=%v", err)
 	}
 }
