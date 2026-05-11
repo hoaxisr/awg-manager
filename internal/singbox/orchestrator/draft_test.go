@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func setupOrch(t *testing.T) (*Orchestrator, string) {
@@ -287,13 +286,17 @@ func TestApplyDraft_CleansTmpdir_OnSbCheckFail(t *testing.T) {
 	}
 }
 
-// slowValidator blocks until Release is called.
+// slowValidator blocks until gate is closed.
+// ready is closed immediately on entry so callers can synchronise on goroutine #1
+// actually being inside Validate (i.e. holding the orchestrator mu).
 type slowValidator struct {
-	gate chan struct{}
-	err  error
+	ready chan struct{} // closed when Validate is entered
+	gate  chan struct{}
+	err   error
 }
 
 func (s *slowValidator) Validate(ctx context.Context, dir string) error {
+	close(s.ready)
 	<-s.gate
 	return s.err
 }
@@ -306,7 +309,7 @@ func TestApplyDraft_ConcurrentSecondCallReturnsNoDraft(t *testing.T) {
 		[]byte(`{"outbounds":[{"tag":"direct","type":"direct"}]}`), 0644)
 	_ = o.SaveDraft(SlotRouter, []byte(`{"route":{"final":"direct"}}`))
 
-	sv := &slowValidator{gate: make(chan struct{})}
+	sv := &slowValidator{ready: make(chan struct{}), gate: make(chan struct{})}
 	o.SetValidator(sv)
 
 	type result struct {
@@ -319,9 +322,9 @@ func TestApplyDraft_ConcurrentSecondCallReturnsNoDraft(t *testing.T) {
 		first <- result{r, e}
 	}()
 
-	// Give goroutine #1 a moment to acquire mu and read pending.
-	time.Sleep(50 * time.Millisecond)
-	// Release first's validator so it can finish step 4 and proceed.
+	// Wait until goroutine #1 is actually inside Validate (holding mu).
+	<-sv.ready
+	// Release first's validator so it can finish and proceed.
 	close(sv.gate)
 	r1 := <-first
 	if r1.err != nil {
