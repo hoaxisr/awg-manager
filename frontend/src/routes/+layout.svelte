@@ -197,7 +197,7 @@
 			onSingboxRouterRules: singboxRouter.applyRules,
 			onSingboxRouterRuleSets: singboxRouter.applyRuleSets,
 			onSingboxRouterOutbounds: singboxRouter.applyOutbounds,
-			onSingboxRouterStaging: singboxRouter.applyStaging,
+			onSingboxRouterStaging: singboxRouter.receiveStaging,
 		});
 	}
 

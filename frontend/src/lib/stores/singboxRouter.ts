@@ -138,7 +138,7 @@ function createSingboxRouterStore() {
 		dnsGlobals.set(data);
 	}
 
-	function applyStaging(data: RouterStagingStatusResponse): void {
+	function receiveStaging(data: RouterStagingStatusResponse): void {
 		staging.set(data);
 	}
 
@@ -167,7 +167,7 @@ function createSingboxRouterStore() {
 		applyDNSServers,
 		applyDNSRules,
 		applyDNSGlobals,
-		applyStaging,
+		receiveStaging,
 		setSettings: settings.set,
 	};
 }
