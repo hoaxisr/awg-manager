@@ -14,6 +14,7 @@ import type {
 	SingboxRouterDNSServer,
 	SingboxRouterDNSRule,
 	SingboxRouterDNSGlobals,
+	RouterStagingStatusResponse,
 } from '$lib/types';
 
 function createSingboxRouterStore() {
@@ -26,6 +27,7 @@ function createSingboxRouterStore() {
 	const dnsServers = writable<SingboxRouterDNSServer[]>([]);
 	const dnsRules = writable<SingboxRouterDNSRule[]>([]);
 	const dnsGlobals = writable<SingboxRouterDNSGlobals>({ final: '', strategy: '' });
+	const staging = writable<RouterStagingStatusResponse | null>(null);
 	const loading = writable(false);
 	const error = writable<string | null>(null);
 
@@ -88,6 +90,16 @@ function createSingboxRouterStore() {
 		} finally {
 			loading.set(false);
 		}
+		void loadStaging();
+	}
+
+	async function loadStaging(): Promise<void> {
+		try {
+			const data = await api.singboxRouterStagingStatus();
+			staging.set(data);
+		} catch {
+			staging.set(null);
+		}
 	}
 
 	async function reloadStatus(): Promise<void> {
@@ -126,6 +138,10 @@ function createSingboxRouterStore() {
 		dnsGlobals.set(data);
 	}
 
+	function applyStaging(data: RouterStagingStatusResponse): void {
+		staging.set(data);
+	}
+
 	return {
 		status: { subscribe: status.subscribe },
 		settings: { subscribe: settings.subscribe },
@@ -136,12 +152,14 @@ function createSingboxRouterStore() {
 		dnsServers: { subscribe: dnsServers.subscribe },
 		dnsRules: { subscribe: dnsRules.subscribe },
 		dnsGlobals: { subscribe: dnsGlobals.subscribe },
+		staging: { subscribe: staging.subscribe } as import('svelte/store').Readable<RouterStagingStatusResponse | null>,
 		options: { subscribe: options.subscribe },
 		optionsReady: { subscribe: optionsReady.subscribe },
 		loading: { subscribe: loading.subscribe },
 		error: { subscribe: error.subscribe },
 		loadAll,
 		reloadStatus,
+		loadStaging,
 		applyStatus,
 		applyRules,
 		applyRuleSets,
@@ -149,6 +167,7 @@ function createSingboxRouterStore() {
 		applyDNSServers,
 		applyDNSRules,
 		applyDNSGlobals,
+		applyStaging,
 		setSettings: settings.set,
 	};
 }

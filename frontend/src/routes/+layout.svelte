@@ -192,11 +192,12 @@
 				setDeviceProxyMissingTarget(data.wasTag);
 			},
 
-			// Sing-box Router state streams (rules, rule-sets, outbounds, status)
+			// Sing-box Router state streams (rules, rule-sets, outbounds, status, staging)
 			onSingboxRouterStatus: singboxRouter.applyStatus,
 			onSingboxRouterRules: singboxRouter.applyRules,
 			onSingboxRouterRuleSets: singboxRouter.applyRuleSets,
 			onSingboxRouterOutbounds: singboxRouter.applyOutbounds,
+			onSingboxRouterStaging: singboxRouter.applyStaging,
 		});
 	}
 

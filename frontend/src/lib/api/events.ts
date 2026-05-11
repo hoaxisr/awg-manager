@@ -7,6 +7,7 @@ import type {
 	SingboxRouterRule,
 	SingboxRouterRuleSet,
 	SingboxRouterOutbound,
+	RouterStagingStatusResponse,
 } from '$lib/types';
 
 export interface LogEntryEvent {
@@ -110,6 +111,7 @@ export interface SSEEventHandlers {
 	onSingboxRouterRules?: (data: SingboxRouterRule[]) => void;
 	onSingboxRouterRuleSets?: (data: SingboxRouterRuleSet[]) => void;
 	onSingboxRouterOutbounds?: (data: SingboxRouterOutbound[]) => void;
+	onSingboxRouterStaging?: (data: RouterStagingStatusResponse) => void;
 
 	// HydraRoute geo download progress
 	onHydraRouteGeoProgress?: (data: GeoDownloadProgressEvent) => void;
@@ -164,6 +166,7 @@ export function connectSSE(handlers: SSEEventHandlers): () => void {
 	handle('singbox-router:rules', handlers.onSingboxRouterRules);
 	handle('singbox-router:rulesets', handlers.onSingboxRouterRuleSets);
 	handle('singbox-router:outbounds', handlers.onSingboxRouterOutbounds);
+	handle('singbox-router:staging', handlers.onSingboxRouterStaging);
 
 	// HydraRoute events
 	handle('hydraroute:geo-progress', handlers.onHydraRouteGeoProgress);
