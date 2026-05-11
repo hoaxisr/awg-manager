@@ -102,6 +102,25 @@ function createSingboxRouterStore() {
 		}
 	}
 
+	// Reload the live rule snapshot (rules + rule-sets + outbounds + status)
+	// after a staging apply/discard flips the running config.
+	async function loadRulesSnapshot(): Promise<void> {
+		try {
+			const [r, rs, o, st] = await Promise.all([
+				api.singboxRouterListRules(),
+				api.singboxRouterListRuleSets(),
+				api.singboxRouterListOutbounds(),
+				api.singboxRouterStatus(),
+			]);
+			rules.set(r);
+			ruleSets.set(rs);
+			outbounds.set(o);
+			status.set(st);
+		} catch {
+			// silent — stale data is better than an uncaught error
+		}
+	}
+
 	async function reloadStatus(): Promise<void> {
 		try {
 			status.set(await api.singboxRouterStatus());
@@ -138,10 +157,6 @@ function createSingboxRouterStore() {
 		dnsGlobals.set(data);
 	}
 
-	function receiveStaging(data: RouterStagingStatusResponse): void {
-		staging.set(data);
-	}
-
 	return {
 		status: { subscribe: status.subscribe },
 		settings: { subscribe: settings.subscribe },
@@ -160,6 +175,7 @@ function createSingboxRouterStore() {
 		loadAll,
 		reloadStatus,
 		loadStaging,
+		loadRulesSnapshot,
 		applyStatus,
 		applyRules,
 		applyRuleSets,
@@ -167,7 +183,6 @@ function createSingboxRouterStore() {
 		applyDNSServers,
 		applyDNSRules,
 		applyDNSGlobals,
-		receiveStaging,
 		setSettings: settings.set,
 	};
 }

@@ -7,7 +7,6 @@ import type {
 	SingboxRouterRule,
 	SingboxRouterRuleSet,
 	SingboxRouterOutbound,
-	RouterStagingStatusResponse,
 } from '$lib/types';
 
 export interface LogEntryEvent {
@@ -111,7 +110,8 @@ export interface SSEEventHandlers {
 	onSingboxRouterRules?: (data: SingboxRouterRule[]) => void;
 	onSingboxRouterRuleSets?: (data: SingboxRouterRuleSet[]) => void;
 	onSingboxRouterOutbounds?: (data: SingboxRouterOutbound[]) => void;
-	onSingboxRouterStaging?: (data: RouterStagingStatusResponse) => void;
+	// NOTE: staging updates arrive via resource:invalidated ("singbox.router.staging"),
+	// not as a direct push event. No onSingboxRouterStaging handler here.
 
 	// HydraRoute geo download progress
 	onHydraRouteGeoProgress?: (data: GeoDownloadProgressEvent) => void;
@@ -166,7 +166,8 @@ export function connectSSE(handlers: SSEEventHandlers): () => void {
 	handle('singbox-router:rules', handlers.onSingboxRouterRules);
 	handle('singbox-router:rulesets', handlers.onSingboxRouterRuleSets);
 	handle('singbox-router:outbounds', handlers.onSingboxRouterOutbounds);
-	handle('singbox-router:staging', handlers.onSingboxRouterStaging);
+	// singbox-router:staging is NOT a direct push event; staging state arrives via
+	// resource:invalidated → onResourceInvalidated → singboxRouter.loadStaging()
 
 	// HydraRoute events
 	handle('hydraroute:geo-progress', handlers.onHydraRouteGeoProgress);

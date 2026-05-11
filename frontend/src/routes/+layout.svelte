@@ -185,6 +185,16 @@
 				if (data.resource === 'settings') {
 					void reloadSettings();
 				}
+				// Staging banner: emitted by emitStagingEvent after draft save/apply/discard.
+				// singboxRouter is not a PollingStore, so we call loadStaging() directly.
+				if (data.resource === 'singbox.router.staging') {
+					void singboxRouter.loadStaging();
+				}
+				// Rules snapshot: emitted by emitRulesEvent after staging apply/discard
+				// flips the live config. Reloads rules + rule-sets + outbounds + status.
+				if (data.resource === 'singbox.router.rules') {
+					void singboxRouter.loadRulesSnapshot();
+				}
 			},
 
 			// Device-proxy: selected outbound was deleted — show a banner in the tab.
@@ -192,12 +202,12 @@
 				setDeviceProxyMissingTarget(data.wasTag);
 			},
 
-			// Sing-box Router state streams (rules, rule-sets, outbounds, status, staging)
+			// Sing-box Router state streams (rules, rule-sets, outbounds, status).
+			// Staging updates arrive via resource:invalidated → onResourceInvalidated above.
 			onSingboxRouterStatus: singboxRouter.applyStatus,
 			onSingboxRouterRules: singboxRouter.applyRules,
 			onSingboxRouterRuleSets: singboxRouter.applyRuleSets,
 			onSingboxRouterOutbounds: singboxRouter.applyOutbounds,
-			onSingboxRouterStaging: singboxRouter.receiveStaging,
 		});
 	}
 

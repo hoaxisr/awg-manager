@@ -26,7 +26,9 @@ export type ResourceKey =
 	| 'routing.hydrarouteStatus'    // ResourceRoutingHydrarouteStatus
 	| 'deviceproxy.config'           // ResourceDeviceProxyConfig   — also clears missing-target banner
 	| 'deviceproxy.outbounds'       // ResourceDeviceProxyOutbounds
-	| 'deviceproxy.runtime';        // ResourceDeviceProxyRuntime
+	| 'deviceproxy.runtime'         // ResourceDeviceProxyRuntime
+	| 'singbox.router.staging'      // emitted by emitStagingEvent — triggers loadStaging()
+	| 'singbox.router.rules';       // emitted by emitRulesEvent — triggers loadRulesSnapshot()
 
 /**
  * Resource key → polling store. Populated as stores are migrated to
