@@ -1547,3 +1547,28 @@ export interface UpdateSubscriptionInput {
 	mode?: SubscriptionMode;
 	urlTest?: SubscriptionURLTest;
 }
+
+// === Singbox Router Staging ===
+
+export interface RouterValidationErrorDTO {
+	slot: string;
+	kind: string;
+	tag?: string;
+	inRule?: string;
+	message: string;
+}
+
+export interface RouterValidationDTO {
+	errors: RouterValidationErrorDTO[];
+}
+
+export interface RouterStagingStatusResponse {
+	hasDraft: boolean;
+	draftedAt?: string;
+	validation?: RouterValidationDTO;
+}
+
+export interface RouterStagingValidationError {
+	validation?: RouterValidationDTO;
+	sbCheck?: string;
+}

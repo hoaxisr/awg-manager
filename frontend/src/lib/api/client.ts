@@ -82,7 +82,8 @@ import type {
 	SubscriptionRefreshResult,
 	SubscriptionActiveNowResponse,
 	CreateSubscriptionInput,
-	UpdateSubscriptionInput
+	UpdateSubscriptionInput,
+	RouterStagingStatusResponse
 } from '$lib/types';
 
 interface ApiResponse<T> {
@@ -1625,6 +1626,22 @@ class ApiClient {
 		return this.request('/singbox/router/inspect', {
 			method: 'POST',
 			body: JSON.stringify(req),
+		});
+	}
+
+	async singboxRouterStagingStatus(): Promise<RouterStagingStatusResponse> {
+		return this.request('/singbox/router/staging');
+	}
+
+	async singboxRouterStagingApply(): Promise<void> {
+		await this.request('/singbox/router/staging/apply', {
+			method: 'POST',
+		});
+	}
+
+	async singboxRouterStagingDiscard(): Promise<void> {
+		await this.request('/singbox/router/staging/discard', {
+			method: 'POST',
 		});
 	}
 
