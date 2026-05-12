@@ -67,7 +67,7 @@ func TestLoadEffective_FallsBackToActive(t *testing.T) {
 	}
 }
 
-func TestLoadEffective_ReturnsNilWhenBothMissing(t *testing.T) {
+func TestLoadEffective_ReturnsNilWhenAllMissing(t *testing.T) {
 	o, _ := setupOrch(t)
 	got, err := o.LoadEffective(SlotRouter)
 	if err != nil {
@@ -75,6 +75,25 @@ func TestLoadEffective_ReturnsNilWhenBothMissing(t *testing.T) {
 	}
 	if got != nil {
 		t.Errorf("want nil, got %s", got)
+	}
+}
+
+func TestLoadEffective_FallsBackToDisabled(t *testing.T) {
+	o, dir := setupOrch(t)
+	// Slot file lives only in disabled/ — simulates a slot that was
+	// configured by the user but is currently turned off.
+	if err := os.MkdirAll(filepath.Join(dir, "disabled"), 0755); err != nil {
+		t.Fatalf("mkdir disabled: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "disabled", "20-router.json"), []byte(`{"disabled":true}`), 0644); err != nil {
+		t.Fatalf("write disabled file: %v", err)
+	}
+	got, err := o.LoadEffective(SlotRouter)
+	if err != nil {
+		t.Fatalf("LoadEffective: %v", err)
+	}
+	if string(got) != `{"disabled":true}` {
+		t.Errorf("want disabled bytes, got %s", got)
 	}
 }
 

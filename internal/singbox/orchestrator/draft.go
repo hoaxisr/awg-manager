@@ -26,12 +26,18 @@ func (o *Orchestrator) SaveDraft(slot Slot, jsonBytes []byte) error {
 	return nil
 }
 
-// LoadEffective returns pending/<filename> bytes if present, otherwise
-// active path bytes. (nil, nil) when neither exists. ErrUnknownSlot if
-// the slot is not registered.
+// LoadEffective returns the bytes of the "most relevant" copy of a slot
+// for UI consumers. Priority chain:
 //
-// Source of truth for "what the user is currently editing": handlers
-// reading data for the UI should use this instead of direct file reads.
+//   1. pending/<filename>  — user's in-flight edits (SaveDraft target)
+//   2. active/<filename>   — applied config, slot enabled
+//   3. disabled/<filename> — saved config, slot disabled
+//   4. (nil, nil)          — slot never configured
+//
+// Including disabled/ makes "engine off" mean "inactive but editable":
+// UI handlers (ListRules etc.) keep showing the user's rules so they can
+// be reviewed and re-enabled without re-entering. Returns ErrUnknownSlot
+// when the slot is not registered.
 func (o *Orchestrator) LoadEffective(slot Slot) ([]byte, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -49,6 +55,13 @@ func (o *Orchestrator) LoadEffective(slot Slot) ([]byte, error) {
 	data, err = readIfExists(o.activePath(meta))
 	if err != nil {
 		return nil, fmt.Errorf("LoadEffective active %s: %w", slot, err)
+	}
+	if data != nil {
+		return data, nil
+	}
+	data, err = readIfExists(o.disabledPath(meta))
+	if err != nil {
+		return nil, fmt.Errorf("LoadEffective disabled %s: %w", slot, err)
 	}
 	return data, nil
 }
