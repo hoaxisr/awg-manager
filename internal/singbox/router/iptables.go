@@ -189,6 +189,10 @@ func buildRestoreInput(spec RestoreInputSpec) string {
 	// on this kernel.
 	b.WriteString("*nat\n")
 	fmt.Fprintf(&b, ":%s - [0:0]\n", RedirectChain)
+
+	// DNS-перехват on TCP — same ordering rationale as mangle chain.
+	fmt.Fprintf(&b, "-A %s -p tcp --dport 53 -j REDIRECT --to-ports %d\n", RedirectChain, RedirectPort)
+
 	for _, cidr := range bypassCIDRs {
 		fmt.Fprintf(&b, "-A %s -d %s -j RETURN\n", RedirectChain, cidr)
 	}

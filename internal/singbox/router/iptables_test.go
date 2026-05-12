@@ -334,3 +334,23 @@ func TestBuildRestoreInput_DNSInterceptUDP(t *testing.T) {
 	}
 }
 
+func TestBuildRestoreInput_DNSInterceptTCP(t *testing.T) {
+	input := buildRestoreInput(RestoreInputSpec{PolicyMark: "0xffffaaa"})
+
+	// TCP DNS rule MUST exist in AWGM-REDIRECT.
+	wantDNS := "-A AWGM-REDIRECT -p tcp --dport 53 -j REDIRECT --to-ports 51272"
+	if !strings.Contains(input, wantDNS) {
+		t.Errorf("missing DNS TCP REDIRECT rule\nwant: %s\ngot:\n%s", wantDNS, input)
+	}
+
+	// Ordering: DNS rule MUST precede the 192.168/16 bypass in AWGM-REDIRECT.
+	dnsIdx := strings.Index(input, wantDNS)
+	bypassIdx := strings.Index(input, "-A AWGM-REDIRECT -d 192.168.0.0/16 -j RETURN")
+	if dnsIdx < 0 || bypassIdx < 0 {
+		t.Fatalf("DNS or bypass rule not found")
+	}
+	if dnsIdx > bypassIdx {
+		t.Errorf("TCP DNS rule at offset %d must precede 192.168/16 bypass at offset %d", dnsIdx, bypassIdx)
+	}
+}
+
