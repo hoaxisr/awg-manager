@@ -354,3 +354,38 @@ func TestBuildRestoreInput_DNSInterceptTCP(t *testing.T) {
 	}
 }
 
+func TestBuildRestoreInput_WANIPsRendered(t *testing.T) {
+	// Synthetic RFC 5737 TEST-NET-3 + RFC 1918 — mirrors a real multi-WAN
+	// router with public WAN + tunnel addresses.
+	spec := RestoreInputSpec{
+		PolicyMark: "0xffffaaa",
+		WANIPs:     []string{"203.0.113.207/32", "10.8.1.3/32"},
+	}
+	input := buildRestoreInput(spec)
+
+	// WAN-IP rules MUST appear in BOTH chains.
+	expected := []string{
+		"-A AWGM-TPROXY -d 203.0.113.207/32 -j RETURN",
+		"-A AWGM-TPROXY -d 10.8.1.3/32 -j RETURN",
+		"-A AWGM-REDIRECT -d 203.0.113.207/32 -j RETURN",
+		"-A AWGM-REDIRECT -d 10.8.1.3/32 -j RETURN",
+	}
+	for _, line := range expected {
+		if !strings.Contains(input, line) {
+			t.Errorf("missing WAN-IP line: %q\nin:\n%s", line, input)
+		}
+	}
+}
+
+func TestBuildRestoreInput_EmptyWANIPs_NoExclusions(t *testing.T) {
+	spec := RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: nil}
+	input := buildRestoreInput(spec)
+
+	// No /32 host-routes should appear other than 255.255.255.255/32.
+	for _, line := range strings.Split(input, "\n") {
+		if strings.Contains(line, "/32 -j RETURN") && !strings.Contains(line, "255.255.255.255") {
+			t.Errorf("unexpected /32 exclusion when WANIPs empty: %s", line)
+		}
+	}
+}
+

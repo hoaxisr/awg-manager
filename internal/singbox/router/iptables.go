@@ -133,6 +133,14 @@ type RestoreInputSpec struct {
 	// policy. Empty means no PREROUTING jump (defensive — caller should
 	// never reach Install with empty mark, but iptables doesn't panic).
 	PolicyMark string
+
+	// WANIPs is a list of router-owned IP addresses (in "X.X.X.X/32" form)
+	// that must NOT be TPROXY'd: traffic from LAN to the router's own
+	// public-WAN or tunnel-endpoint IPs would otherwise loop back into
+	// sing-box. Collected dynamically by WANIPCollector before Install.
+	// Empty list = no extra exclusions (router still works, just exposes
+	// the WAN-IP loop edge case).
+	WANIPs []string
 }
 
 var bypassCIDRs = []string{
@@ -165,6 +173,9 @@ func buildRestoreInput(spec RestoreInputSpec) string {
 	for _, cidr := range bypassCIDRs {
 		fmt.Fprintf(&b, "-A %s -d %s -j RETURN\n", ChainName, cidr)
 	}
+	for _, ip := range spec.WANIPs {
+		fmt.Fprintf(&b, "-A %s -d %s -j RETURN\n", ChainName, ip)
+	}
 	fmt.Fprintf(&b, "-A %s -m mark --mark 0xff -j RETURN\n", ChainName)
 	fmt.Fprintf(&b, "-A %s -p udp -j TPROXY --on-port %d --on-ip 127.0.0.1 --tproxy-mark 0x%x\n",
 		ChainName, TPROXYPort, Fwmark)
@@ -195,6 +206,9 @@ func buildRestoreInput(spec RestoreInputSpec) string {
 
 	for _, cidr := range bypassCIDRs {
 		fmt.Fprintf(&b, "-A %s -d %s -j RETURN\n", RedirectChain, cidr)
+	}
+	for _, ip := range spec.WANIPs {
+		fmt.Fprintf(&b, "-A %s -d %s -j RETURN\n", RedirectChain, ip)
 	}
 	// Bypass router admin port so we don't redirect our own UI traffic.
 	fmt.Fprintf(&b, "-A %s -p tcp --dport 79 -j RETURN\n", RedirectChain)
