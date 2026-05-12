@@ -643,6 +643,7 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 		s.deps.Log.Warn(fmt.Sprintf("router iptables uninstall: %v", err))
 	}
 	s.currentMark = ""
+	s.currentWANIPs = nil
 
 	if s.deps.Orch != nil {
 		// Move 20-router.json under disabled/ — sing-box's non-recursive
