@@ -313,3 +313,24 @@ func TestBuildRestoreInput_ExpandedBypassCIDRs(t *testing.T) {
 	}
 }
 
+func TestBuildRestoreInput_DNSInterceptUDP(t *testing.T) {
+	input := buildRestoreInput(RestoreInputSpec{PolicyMark: "0xffffaaa"})
+
+	// DNS rule MUST exist in AWGM-TPROXY: -p udp --dport 53 -j TPROXY ...
+	wantDNS := "-A AWGM-TPROXY -p udp --dport 53 -j TPROXY --on-port 51271 --on-ip 127.0.0.1 --tproxy-mark 0x1"
+	if !strings.Contains(input, wantDNS) {
+		t.Errorf("missing DNS UDP TPROXY rule\nwant: %s\ngot:\n%s", wantDNS, input)
+	}
+
+	// CRITICAL ORDERING: DNS rule MUST precede the 192.168.0.0/16 bypass.
+	// Otherwise DNS-to-router-LAN-IP gets bypassed before the DNS rule fires.
+	dnsIdx := strings.Index(input, wantDNS)
+	bypassIdx := strings.Index(input, "-A AWGM-TPROXY -d 192.168.0.0/16 -j RETURN")
+	if dnsIdx < 0 || bypassIdx < 0 {
+		t.Fatalf("DNS or bypass rule not found")
+	}
+	if dnsIdx > bypassIdx {
+		t.Errorf("DNS rule at offset %d must precede 192.168/16 bypass at offset %d", dnsIdx, bypassIdx)
+	}
+}
+

@@ -155,6 +155,13 @@ func buildRestoreInput(spec RestoreInputSpec) string {
 	b.WriteString("*mangle\n")
 	fmt.Fprintf(&b, ":%s - [0:0]\n", ChainName)
 
+	// DNS-перехват MUST precede the dst-based bypass: LAN clients
+	// configured with DNS=router-LAN-IP (e.g. 192.168.1.1) would
+	// otherwise hit the 192.168.0.0/16 RETURN below before this rule
+	// gets a chance to fire, leaking DNS into NDMS-resolver.
+	fmt.Fprintf(&b, "-A %s -p udp --dport 53 -j TPROXY --on-port %d --on-ip 127.0.0.1 --tproxy-mark 0x%x\n",
+		ChainName, TPROXYPort, Fwmark)
+
 	for _, cidr := range bypassCIDRs {
 		fmt.Fprintf(&b, "-A %s -d %s -j RETURN\n", ChainName, cidr)
 	}
