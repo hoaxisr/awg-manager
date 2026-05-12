@@ -1,10 +1,10 @@
 package router
 
 import (
-	// "context"     // TODO: used in Task 7 (collector tests)
-	// "errors"      // TODO: used in Task 7 (collector tests)
+	"context"
+	"errors"
 	"slices"
-	// "strings"     // unused here, will be needed for wanipsCollector test setup
+	"strings"
 	"testing"
 )
 
@@ -89,5 +89,123 @@ func TestParseInetAddrs_NoAddrs(t *testing.T) {
 `
 	if got := parseInetAddrs(out); len(got) != 0 {
 		t.Errorf("empty inet expected empty slice, got %v", got)
+	}
+}
+
+// fakeWANRunner records calls and returns canned outputs per arg-prefix.
+type fakeWANRunner struct {
+	routeOut   string
+	addrByDev  map[string]string
+	addrErr    map[string]error
+	routeErr   error
+}
+
+func (f *fakeWANRunner) run(_ context.Context, args ...string) (string, error) {
+	// "ip route show table all"
+	if len(args) >= 3 && args[0] == "route" && args[1] == "show" && args[2] == "table" {
+		if f.routeErr != nil {
+			return "", f.routeErr
+		}
+		return f.routeOut, nil
+	}
+	// "ip -4 addr show dev <iface>"
+	if len(args) >= 5 && args[0] == "-4" && args[1] == "addr" && args[2] == "show" && args[3] == "dev" {
+		iface := args[4]
+		if err, ok := f.addrErr[iface]; ok && err != nil {
+			return "", err
+		}
+		if out, ok := f.addrByDev[iface]; ok {
+			return out, nil
+		}
+		return "", nil
+	}
+	return "", errors.New("unexpected ip args: " + strings.Join(args, " "))
+}
+
+// fakeWANLogger captures warnings so tests assert diagnostic visibility.
+type fakeWANLogger struct{ warns []string }
+
+func (l *fakeWANLogger) Warn(msg string) { l.warns = append(l.warns, msg) }
+func (l *fakeWANLogger) Info(msg string) {}
+
+func TestWANIPCollector_Collect_HappyPath(t *testing.T) {
+	r := &fakeWANRunner{
+		routeOut: "default dev ppp0  table 16395  src 203.0.113.207\ndefault dev nwg0  table 16396  src 10.8.1.3\n",
+		addrByDev: map[string]string{
+			"ppp0": "    inet 203.0.113.207 peer 198.51.100.1/32 scope global ppp0\n",
+			"nwg0": "    inet 10.8.1.3/32 scope global nwg0\n",
+		},
+	}
+	c := &wanIPCollectorImpl{run: r.run, log: &fakeWANLogger{}}
+	got, err := c.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect err: %v", err)
+	}
+	want := []string{"10.8.1.3/32", "203.0.113.207/32"} // sorted
+	if !slices.Equal(got, want) {
+		t.Errorf("Collect:\ngot:  %v\nwant: %v", got, want)
+	}
+}
+
+func TestWANIPCollector_Collect_NoDefaults_ReturnsEmpty(t *testing.T) {
+	r := &fakeWANRunner{routeOut: ""}
+	c := &wanIPCollectorImpl{run: r.run, log: &fakeWANLogger{}}
+	got, err := c.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect err: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("empty routes expected empty result, got %v", got)
+	}
+}
+
+func TestWANIPCollector_Collect_RouteCommandFails_ReturnsError(t *testing.T) {
+	r := &fakeWANRunner{routeErr: errors.New("boom")}
+	c := &wanIPCollectorImpl{run: r.run, log: &fakeWANLogger{}}
+	if _, err := c.Collect(context.Background()); err == nil {
+		t.Fatalf("expected error from failed ip route, got nil")
+	}
+}
+
+func TestWANIPCollector_Collect_IfaceWithoutAddrs_WarnsAndSkips(t *testing.T) {
+	log := &fakeWANLogger{}
+	r := &fakeWANRunner{
+		routeOut:  "default dev ppp0  table 16395\n",
+		addrByDev: map[string]string{"ppp0": ""}, // no inet lines
+	}
+	c := &wanIPCollectorImpl{run: r.run, log: log}
+	got, err := c.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect err: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("addr-less iface expected empty result, got %v", got)
+	}
+	if len(log.warns) == 0 {
+		t.Errorf("expected WARN about ppp0 without addresses, got none")
+	}
+	if !strings.Contains(log.warns[0], "ppp0") {
+		t.Errorf("WARN should name the iface, got %q", log.warns[0])
+	}
+}
+
+func TestWANIPCollector_Collect_AddrCommandFailsForOneIface_WarnsAndContinues(t *testing.T) {
+	log := &fakeWANLogger{}
+	r := &fakeWANRunner{
+		routeOut:  "default dev ppp0\ndefault dev nwg0\n",
+		addrByDev: map[string]string{"nwg0": "    inet 10.8.1.3/32 scope global nwg0\n"},
+		addrErr:   map[string]error{"ppp0": errors.New("device gone")},
+	}
+	c := &wanIPCollectorImpl{run: r.run, log: log}
+	got, err := c.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect should not fail on per-iface addr error, got %v", err)
+	}
+	want := []string{"10.8.1.3/32"}
+	if !slices.Equal(got, want) {
+		t.Errorf("expected nwg0 only:\ngot:  %v\nwant: %v", got, want)
+	}
+	if len(log.warns) == 0 {
+		t.Errorf("expected WARN about ppp0 addr error")
 	}
 }
