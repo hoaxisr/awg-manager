@@ -378,7 +378,7 @@ func (s *ServiceImpl) Enable(ctx context.Context) error {
 		}
 	}
 
-	if err := s.deps.IPTables.Install(ctx, mark); err != nil {
+	if err := s.deps.IPTables.Install(ctx, RestoreInputSpec{PolicyMark: mark}); err != nil {
 		// Stop sing-box from listening on the now-orphan TPROXY port,
 		// but DO NOT corrupt the persisted user config. With orchestrator
 		// wired we just park the slot back under disabled/ — sing-box
@@ -656,7 +656,7 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 		}
 		if mark != s.currentMark {
 			s.mu.Lock()
-			if err := s.deps.IPTables.Install(ctx, mark); err != nil {
+			if err := s.deps.IPTables.Install(ctx, RestoreInputSpec{PolicyMark: mark}); err != nil {
 				s.mu.Unlock()
 				return err
 			}

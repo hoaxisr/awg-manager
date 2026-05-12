@@ -249,7 +249,7 @@ func NewIPTables() *IPTables {
 	}
 }
 
-func (it *IPTables) Install(ctx context.Context, mark string) error {
+func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 	// Scrub any existing PREROUTING jumps to AWGM-TPROXY before inserting
 	// the new one. iptables-restore --noflush + -I PREROUTING 1 would
 	// otherwise stack a duplicate jump on every restart / mark-change /
@@ -258,9 +258,7 @@ func (it *IPTables) Install(ctx context.Context, mark string) error {
 	// Idempotent: a no-op when no prior jumps exist.
 	it.removeSourceHooks(ctx)
 
-	input := buildRestoreInput(RestoreInputSpec{
-		PolicyMark: mark,
-	})
+	input := buildRestoreInput(spec)
 	if it.persistRules != nil {
 		if err := it.persistRules(input); err != nil {
 			return fmt.Errorf("write netfilter rules: %w", err)

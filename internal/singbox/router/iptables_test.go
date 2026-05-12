@@ -141,7 +141,7 @@ func TestBuildRestoreInput_TablesAndRulesPresent(t *testing.T) {
 func TestIPTablesInstallSequence(t *testing.T) {
 	fe := &fakeExec{}
 	it := newFakeIPTables(fe)
-	if err := it.Install(context.Background(), "0xffffaaa"); err != nil {
+	if err := it.Install(context.Background(), RestoreInputSpec{PolicyMark: "0xffffaaa"}); err != nil {
 		t.Fatal(err)
 	}
 	// Find the operation phases in the call list rather than asserting
@@ -280,13 +280,13 @@ func TestInstall_IdempotentOnFileExists(t *testing.T) {
 		persistHook:    func() error { return nil },
 		cleanupHook:    func() {},
 	}
-	if err := it.Install(context.Background(), "0xff"); err != nil {
+	if err := it.Install(context.Background(), RestoreInputSpec{PolicyMark: "0xff"}); err != nil {
 		t.Fatalf("first Install: %v", err)
 	}
 
 	// Simulate "File exists" failure on subsequent ip-rule/ip-route add.
 	rec.runIPErr = errors.New("exit status 2 (exit 2, stderr: RTNETLINK answers: File exists)")
-	if err := it.Install(context.Background(), "0xff"); err != nil {
+	if err := it.Install(context.Background(), RestoreInputSpec{PolicyMark: "0xff"}); err != nil {
 		t.Fatalf("second Install (idempotent): %v", err)
 	}
 }
