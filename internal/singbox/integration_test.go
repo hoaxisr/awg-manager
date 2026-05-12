@@ -162,6 +162,13 @@ func (s *integrationSingbox) ValidateConfigDir(_ context.Context) error { return
 func (s *integrationSingbox) ConfigDir() string                         { return s.dir }
 func (s *integrationSingbox) Binary() string                            { return "" }
 
+// noopWANIPCollector is a test double that returns no WAN IPs. Wired
+// into router.Deps so NewService doesn't fall back to the production
+// collector (which shells out to /opt/sbin/ip — unavailable in tests).
+type noopWANIPCollector struct{}
+
+func (noopWANIPCollector) Collect(_ context.Context) ([]string, error) { return nil, nil }
+
 // integrationBus captures Publish calls for assertions.
 type integrationBus struct {
 	mu     sync.Mutex
@@ -229,10 +236,11 @@ func newIntegrationEnv(t *testing.T) *integrationEnv {
 	bus := &integrationBus{}
 
 	svc := router.NewService(router.Deps{
-		Settings: settings,
-		Singbox:  &integrationSingbox{dir: dir},
-		Orch:     orch,
-		Bus:      bus,
+		Settings:       settings,
+		Singbox:        &integrationSingbox{dir: dir},
+		Orch:           orch,
+		Bus:            bus,
+		WANIPCollector: &noopWANIPCollector{},
 	})
 
 	return &integrationEnv{

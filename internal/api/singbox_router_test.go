@@ -375,12 +375,20 @@ func newTestRouterHandlerReal(t *testing.T) (*SingboxRouterHandler, string) {
 		t.Fatal(err)
 	}
 	deps := router.Deps{
-		Orch: orch,
+		Orch:           orch,
+		WANIPCollector: &noopWANIPCollector{},
 	}
 	svc := router.NewService(deps)
 	h := NewSingboxRouterHandler(svc, nil)
 	return h, dir
 }
+
+// noopWANIPCollector is a test double that returns no WAN IPs. Wired
+// into router.Deps so NewService doesn't fall back to the production
+// collector (which shells out to /opt/sbin/ip — unavailable in tests).
+type noopWANIPCollector struct{}
+
+func (noopWANIPCollector) Collect(_ context.Context) ([]string, error) { return nil, nil }
 
 func TestAddRule_RegressionStagesNotApplies(t *testing.T) {
 	h, dir := newTestRouterHandlerReal(t)
