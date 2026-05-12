@@ -138,6 +138,9 @@ type RestoreInputSpec struct {
 var bypassCIDRs = []string{
 	"127.0.0.0/8",
 	"169.254.0.0/16",
+	"100.64.0.0/10",  // CGNAT (RFC 6598)
+	"0.0.0.0/8",      // this network (RFC 1122)
+	"192.0.0.0/24",   // IETF Protocol Assignments (NAT64 well-known)
 	"224.0.0.0/4",
 	"255.255.255.255/32",
 	"10.0.0.0/8",

@@ -291,3 +291,25 @@ func TestInstall_IdempotentOnFileExists(t *testing.T) {
 	}
 }
 
+func TestBuildRestoreInput_ExpandedBypassCIDRs(t *testing.T) {
+	input := buildRestoreInput(RestoreInputSpec{PolicyMark: "0xffffaaa"})
+
+	// New CIDRs that close edge cases SKeen covered:
+	// - CGNAT (RFC 6598) — ISPs deploying carrier-grade NAT
+	// - 0.0.0.0/8 "this network" (RFC 1122) — never routable
+	// - 192.0.0.0/24 IETF Protocol Assignments — includes NAT64 well-known
+	expected := []string{
+		"-A AWGM-TPROXY -d 100.64.0.0/10 -j RETURN",
+		"-A AWGM-TPROXY -d 0.0.0.0/8 -j RETURN",
+		"-A AWGM-TPROXY -d 192.0.0.0/24 -j RETURN",
+		"-A AWGM-REDIRECT -d 100.64.0.0/10 -j RETURN",
+		"-A AWGM-REDIRECT -d 0.0.0.0/8 -j RETURN",
+		"-A AWGM-REDIRECT -d 192.0.0.0/24 -j RETURN",
+	}
+	for _, line := range expected {
+		if !strings.Contains(input, line) {
+			t.Errorf("missing expanded-bypass line: %q\nin:\n%s", line, input)
+		}
+	}
+}
+
