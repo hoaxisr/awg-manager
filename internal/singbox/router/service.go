@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -694,26 +695,47 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	case !sr.Enabled && installed:
 		return s.Disable(ctx)
 	case sr.Enabled && installed:
-		mark, err := s.deps.Policies.GetPolicyMark(ctx, sr.PolicyName)
-		if err != nil || mark == "" {
-			// Policy gone upstream — fail-safe disable, no auto-recovery.
-			return s.Disable(ctx)
-		}
-		if mark != s.currentMark {
-			s.mu.Lock()
-			if err := s.deps.IPTables.Install(ctx, RestoreInputSpec{PolicyMark: mark}); err != nil {
-				s.mu.Unlock()
-				return err
-			}
-			s.currentMark = mark
+		return s.reconcileInstalled(ctx, sr)
+	}
+	return nil
+}
+
+// reconcileInstalled handles the "Enabled && installed" branch:
+// detect mark or WAN-IP changes and re-Install. Extracted from Reconcile
+// to keep the decision tree testable without stubbing IsInstalled.
+func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.SingboxRouterSettings) error {
+	mark, err := s.deps.Policies.GetPolicyMark(ctx, sr.PolicyName)
+	if err != nil || mark == "" {
+		// Policy gone upstream — fail-safe disable, no auto-recovery.
+		return s.Disable(ctx)
+	}
+	wanIPs, err := s.deps.WANIPCollector.Collect(ctx)
+	if err != nil {
+		return fmt.Errorf("collect WAN IPs: %w", err)
+	}
+
+	markChanged := mark != s.currentMark
+	wanIPsChanged := !slices.Equal(s.currentWANIPs, wanIPs)
+
+	if markChanged || wanIPsChanged {
+		s.mu.Lock()
+		if err := s.deps.IPTables.Install(ctx, RestoreInputSpec{
+			PolicyMark: mark,
+			WANIPs:     wanIPs,
+		}); err != nil {
 			s.mu.Unlock()
+			return err
 		}
-		// Self-heal: a previous Install rollback or upgrade hop may
-		// have left 20-router.json without the tproxy-in inbound. Re-add
-		// it idempotently so sing-box keeps listening on TPROXYPort.
-		if err := s.healTProxyInbound(ctx); err != nil {
-			s.deps.Log.Warn(fmt.Sprintf("router: heal tproxy inbound: %v", err))
-		}
+		s.currentMark = mark
+		s.currentWANIPs = wanIPs
+		s.mu.Unlock()
+	}
+
+	// Self-heal: a previous Install rollback or upgrade hop may
+	// have left 20-router.json without the tproxy-in inbound. Re-add
+	// it idempotently so sing-box keeps listening on TPROXYPort.
+	if err := s.healTProxyInbound(ctx); err != nil {
+		s.deps.Log.Warn(fmt.Sprintf("router: heal tproxy inbound: %v", err))
 	}
 	return nil
 }

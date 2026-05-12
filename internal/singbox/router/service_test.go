@@ -5,9 +5,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/logger"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -44,6 +46,29 @@ func (f *fakeAccessPolicyProvider) ListPolicies(_ context.Context) ([]PolicyInfo
 }
 func (f *fakeAccessPolicyProvider) CreatePolicy(_ context.Context, _ string) (PolicyInfo, error) {
 	return f.createReturn, f.createErr
+}
+
+// fakeWANIPCollector is a test double for WANIPCollector.
+type fakeWANIPCollector struct {
+	ips []string
+	err error
+}
+
+func (f *fakeWANIPCollector) Collect(_ context.Context) ([]string, error) {
+	return f.ips, f.err
+}
+
+// newStubIPTables returns an *IPTables whose I/O is fully stubbed; the
+// recorder callback gets a call on each restoreNoflush (= per Install).
+func newStubIPTables(restoreRecorder func(context.Context, string) error) *IPTables {
+	return &IPTables{
+		restoreNoflush: restoreRecorder,
+		runIPTables:    func(_ context.Context, _ ...string) error { return nil },
+		runIP:          func(_ context.Context, _ ...string) error { return nil },
+		persistRules:   func(_ string) error { return nil },
+		persistHook:    func() error { return nil },
+		cleanupHook:    func() {},
+	}
 }
 
 // newTestSettingsStore creates a real SettingsStore backed by a temp dir and
@@ -133,37 +158,32 @@ func TestEnable_PolicyMissing_Refused(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReconcile_PolicyMarkChanged_Reinstalls(t *testing.T) {
-	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
+	restoreCalls := 0
+	ipt := newStubIPTables(func(_ context.Context, _ string) error {
+		restoreCalls++
+		return nil
+	})
+	collector := &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}}
+
+	svc := &ServiceImpl{
+		deps: Deps{
+			Log:            logger.New(),
+			Policies:       &fakeAccessPolicyProvider{mark: "0xffffaab"},
+			IPTables:       ipt,
+			WANIPCollector: collector,
+			Singbox:        newTestSingbox(t),
+		},
+		currentMark:   "0xffffaaa",
+		currentWANIPs: []string{"203.0.113.207/32"}, // same as collector — only mark differs
+	}
+	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
 		Enabled:    true,
 		PolicyName: "Policy0",
-	})
-	policies := &fakeAccessPolicyProvider{mark: "0xffffaab"}
-	fe := &fakeExec{}
-	it := newTestIPTables(fe)
-
-	svc := newTestService(t, Deps{
-		Settings: settingsStore,
-		Policies: policies,
-		IPTables: it,
-		Singbox:  newTestSingbox(t),
-	})
-	svc.currentMark = "0xffffaaa"
-
-	// IsInstalled calls runIPTables — fakeExec.err is nil so it returns nil
-	// meaning "installed".  Reconcile should detect the mark changed and call
-	// Install with the new mark.
-	if err := svc.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile: %v", err)
+	}); err != nil {
+		t.Fatalf("reconcileInstalled: %v", err)
 	}
-	// Verify Install was called: look for a "restore" call containing the new mark.
-	var found bool
-	for _, c := range fe.calls {
-		if c.kind == "restore" && len(c.stdin) > 0 {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("expected IPTables.Install (restore call) after mark change, none found")
+	if restoreCalls != 1 {
+		t.Errorf("expected 1 restore (Install) after mark change, got %d", restoreCalls)
 	}
 	if svc.currentMark != "0xffffaab" {
 		t.Errorf("expected currentMark=0xffffaab after reinstall, got %q", svc.currentMark)
@@ -204,6 +224,69 @@ func TestReconcile_PolicyDeleted_Disables(t *testing.T) {
 	}
 	if all.SingboxRouter.Enabled {
 		t.Error("expected SingboxRouter.Enabled=false after policy-missing disable")
+	}
+}
+
+func TestReconcile_WANIPsChanged_Reinstalls(t *testing.T) {
+	restoreCalls := 0
+	ipt := newStubIPTables(func(_ context.Context, _ string) error {
+		restoreCalls++
+		return nil
+	})
+	collector := &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}}
+
+	svc := &ServiceImpl{
+		deps: Deps{
+			Log:            logger.New(),
+			Policies:       &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+			IPTables:       ipt,
+			WANIPCollector: collector,
+			Singbox:        newTestSingbox(t),
+		},
+		currentMark:   "0xffffaaa",
+		currentWANIPs: []string{"198.51.100.1/32"}, // different
+	}
+	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
+		Enabled:    true,
+		PolicyName: "Policy0",
+	}); err != nil {
+		t.Fatalf("reconcileInstalled err: %v", err)
+	}
+	if restoreCalls != 1 {
+		t.Errorf("expected 1 restore (Install) due to WAN-IP change, got %d", restoreCalls)
+	}
+	if !slices.Equal(svc.currentWANIPs, []string{"203.0.113.207/32"}) {
+		t.Errorf("currentWANIPs not updated: %v", svc.currentWANIPs)
+	}
+}
+
+func TestReconcile_WANIPsSame_NoOp(t *testing.T) {
+	restoreCalls := 0
+	ipt := newStubIPTables(func(_ context.Context, _ string) error {
+		restoreCalls++
+		return nil
+	})
+	collector := &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}}
+
+	svc := &ServiceImpl{
+		deps: Deps{
+			Log:            logger.New(),
+			Policies:       &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+			IPTables:       ipt,
+			WANIPCollector: collector,
+			Singbox:        newTestSingbox(t),
+		},
+		currentMark:   "0xffffaaa",
+		currentWANIPs: []string{"203.0.113.207/32"}, // same
+	}
+	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
+		Enabled:    true,
+		PolicyName: "Policy0",
+	}); err != nil {
+		t.Fatalf("reconcileInstalled err: %v", err)
+	}
+	if restoreCalls != 0 {
+		t.Errorf("expected no restore (no-op), got %d Install calls", restoreCalls)
 	}
 }
 
