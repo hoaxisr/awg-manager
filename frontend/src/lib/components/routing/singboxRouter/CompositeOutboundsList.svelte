@@ -6,6 +6,7 @@
 	import CompositeOutboundEditModal from './CompositeOutboundEditModal.svelte';
 	import ConfirmModal from '$lib/components/ui/ConfirmModal.svelte';
 	import { LatencySparkline } from '$lib/components/ui';
+	import Button from '$lib/components/ui/Button.svelte';
 	import { latencyTier } from '$lib/utils/latencyTier';
 
 	interface Props {
@@ -123,7 +124,9 @@
 
 <div class="header">
 	<div class="hint">{outbounds.length} composite outbound'ов</div>
-	<button class="btn btn-primary" onclick={() => (addMode = true)}>+ Создать outbound</button>
+	<Button variant="primary" size="sm" onclick={() => (addMode = true)}>
+		+ Создать outbound
+	</Button>
 </div>
 
 <div class="cards">

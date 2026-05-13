@@ -559,6 +559,33 @@ export interface SystemInfo {
 		installed: boolean;
 		version: string;
 	};
+	routerDetails?: {
+		model?: string;
+		modelDisplay?: string;
+		portedBuild?: boolean;
+		hardwareId?: string;
+		region?: string;
+		architecture?: string;
+		cpuModel?: string;
+		cpuTempC?: number;
+		wifi24TempC?: number;
+		wifi5TempC?: number;
+		memoryUsedMB?: number;
+		memoryTotalMB?: number;
+		memoryUsedPercent?: number;
+		firmwareTitle?: string;
+		firmwareRelease?: string;
+		firmwareSandbox?: string;
+		firmwareBuildDate?: string;
+		bootSlot?: string;
+		uptimeHuman?: string;
+		loadAverage?: string;
+		opkgStorage?: string;
+		vpnComponents?: string[];
+		storageComponents?: string[];
+		featureComponents?: string[];
+		meshMembers?: string[];
+	};
 }
 
 export interface WANInterface {

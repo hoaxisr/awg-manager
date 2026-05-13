@@ -82,7 +82,7 @@
 	}
 </script>
 
-<div id="logging" class="setting-row">
+<div id="logging" class="setting-row logging-main-row">
 	<div class="flex flex-col gap-1">
 		<span class="font-medium">Логирование</span>
 		<span class="setting-description">
@@ -106,7 +106,7 @@
 </div>
 
 {#if settings.logging.enabled}
-	<div class="setting-row">
+	<div class="setting-row logging-level-row">
 		<div class="flex flex-col gap-1">
 			<span class="font-medium">Уровень логирования</span>
 			<span class="setting-description">INFO — результаты операций. FULL — промежуточные шаги. DEBUG — полная информация.</span>
@@ -122,7 +122,7 @@
 		</div>
 	</div>
 
-	<div class="setting-row">
+	<div class="setting-row logging-buffer-row">
 		<div class="flex flex-col gap-1">
 			<span class="font-medium">Размер буфера приложения</span>
 			<span class="setting-description">Сколько записей удерживать в журнале приложения (туннели, маршрутизация, серверы, система). По умолчанию 5000.</span>
@@ -140,7 +140,7 @@
 		</div>
 	</div>
 
-	<div class="setting-row">
+	<div class="setting-row logging-buffer-row">
 		<div class="flex flex-col gap-1">
 			<span class="font-medium">Размер буфера sing-box</span>
 			<span class="setting-description">Sing-box форвардер шумный — отдельный буфер, чтобы не вытеснять записи приложения. По умолчанию 5000.</span>
@@ -165,14 +165,18 @@
 		align-items: center;
 		gap: 0.75rem;
 		flex-shrink: 0;
+		flex-wrap: wrap;
+		justify-content: flex-end;
 	}
 
 	.hours-select {
-		min-width: 110px;
+		width: 132px;
+		min-width: 132px;
 	}
 
 	.num-input {
-		min-width: 110px;
+		width: 180px;
+		min-width: 180px;
 	}
 
 	.num-input input {
@@ -193,5 +197,46 @@
 	}
 	.num-input input:disabled {
 		opacity: 0.6;
+	}
+
+	.logging-buffer-row {
+		align-items: center;
+	}
+
+	.logging-level-row {
+		align-items: center;
+	}
+
+	@media (max-width: 900px) {
+		.logging-main-row {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) auto;
+			align-items: center;
+			gap: 0.75rem;
+			flex-wrap: nowrap;
+		}
+
+		.setting-controls {
+			flex-wrap: nowrap;
+		}
+
+		.logging-level-row,
+		.logging-buffer-row {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 0.5rem;
+		}
+
+		.hours-select,
+		.num-input {
+			width: 100%;
+			min-width: 0;
+		}
+
+		.num-input input {
+			width: 100%;
+			max-width: 100%;
+			display: block;
+		}
 	}
 </style>

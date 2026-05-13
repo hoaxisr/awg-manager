@@ -243,6 +243,7 @@
 	.card-title h3 {
 		font-size: 0.875rem;
 		font-weight: 600;
+		color: var(--text-primary);
 		margin: 0;
 		white-space: nowrap;
 		overflow: hidden;
@@ -257,17 +258,18 @@
 
 	.card-source {
 		font-size: 0.625rem;
-		color: var(--border-hover);
+		color: var(--text-secondary);
 	}
 
 	.card-route {
 		font-size: 0.6875rem;
-		color: var(--border-hover);
+		color: var(--text-secondary);
 		margin-top: 3px;
 	}
 
 	.card-route code {
 		background: var(--bg-hover);
+		color: var(--text-primary);
 		padding: 1px 6px;
 		border-radius: 3px;
 		font-size: 0.625rem;
@@ -377,5 +379,15 @@
 	.badge-hr-warn {
 		background: rgba(245, 158, 11, 0.15);
 		color: var(--warning);
+	}
+
+	:global(html[data-theme-preset='neo']) .card-source,
+	:global(html[data-theme-preset='neo']) .card-route {
+		color: var(--text-primary);
+	}
+
+	:global(html[data-theme-preset='neo']) .card-route code {
+		background: color-mix(in srgb, var(--bg-hover) 80%, var(--accent) 20%);
+		color: var(--color-accent-contrast, #0b0b0b);
 	}
 </style>

@@ -26,7 +26,17 @@
 	const TOTAL_SECONDS = 10; // iperf3 -t 10 on backend
 
 	const selectedServer = $derived<SpeedTestServer | null>(info?.servers[selectedServerIdx] ?? null);
-	const gaugeMax = $derived(Math.max(1000, (downloadMbps ?? 0) * 1.2, (uploadMbps ?? 0) * 1.2));
+	// Dynamic gauge range: keep some headroom above observed speeds but avoid
+	// a huge fixed floor that makes normal 20-200 Mbps results look like a
+	// tiny sliver.
+	const gaugeMax = $derived(
+		Math.max(
+			25,
+			currentBandwidth * 1.15,
+			(downloadMbps ?? 0) * 1.2,
+			(uploadMbps ?? 0) * 1.2,
+		)
+	);
 	const gaugePhase = $derived<'idle' | 'download' | 'upload' | 'done'>(
 		phase === 'download' ? 'download'
 			: phase === 'upload' ? 'upload'

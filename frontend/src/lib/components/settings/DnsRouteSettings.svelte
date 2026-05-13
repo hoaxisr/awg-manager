@@ -55,7 +55,7 @@
 	}
 </script>
 
-<div class="setting-row">
+<div class="setting-row dns-header-row">
 	<div class="flex flex-col gap-1">
 		<span class="font-medium">Автообновление подписок DNS</span>
 		<span class="setting-description">
@@ -165,6 +165,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
+		flex-wrap: wrap;
 	}
 
 	.input-suffix {
@@ -197,11 +198,33 @@
 		border-color: var(--accent);
 	}
 
-	@media (max-width: 480px) {
+	@media (max-width: 640px) {
+		.dns-header-row {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) auto;
+			align-items: center;
+			gap: 0.75rem;
+		}
+
 		.mode-options {
 			flex-direction: column;
 			gap: 0.5rem;
 			align-items: flex-start;
+		}
+
+		.inline-form {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 0.5rem;
+		}
+
+		.inline-form input[type="number"],
+		.inline-form input[type="time"] {
+			width: 100%;
+		}
+
+		.input-suffix {
+			margin-left: 0;
 		}
 	}
 </style>

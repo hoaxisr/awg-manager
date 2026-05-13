@@ -366,7 +366,12 @@
         gap: 0.5rem;
         margin-right: 90px; /* room for led-wrap */
     }
-    .title { font-size: 1rem; font-weight: 600; margin: 0; flex: 1; }
+    .title {
+        font-size: 1rem;
+        font-weight: 600;
+        margin: 0;
+        flex: 0 1 auto;
+    }
     .kind-badge {
         font-size: 0.65rem;
         padding: 0.1rem 0.45rem;

@@ -93,6 +93,15 @@
         attemptClose();
     }
 
+    function handleBackdropKeydown(e: KeyboardEvent) {
+        if (!closeOnBackdrop) return;
+        if (confirmOpen) return;
+        if (e.target !== backdropEl) return;
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        attemptClose();
+    }
+
     // Portal action: moves the backdrop to <body> so it escapes any
     // ancestor stacking context (e.g. position: sticky, transform, filter).
     // Without this, an ancestor with z-index: auto becomes the cap of our
@@ -122,12 +131,10 @@
         tabindex="-1"
         onpointerdown={handleBackdropPointerDown}
         onclick={handleBackdropClick}
+        onkeydown={handleBackdropKeydown}
     >
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <div
             class="modal-card {sizeClasses[size]}"
-            onclick={(e) => e.stopPropagation()}
-            onkeydown={(e) => e.stopPropagation()}
             role="document"
         >
             <header class="modal-header">
