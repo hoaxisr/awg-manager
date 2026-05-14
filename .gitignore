@@ -20,6 +20,7 @@ node_modules/
 frontend/build/
 frontend/.svelte-kit/
 frontend/static/openapi.yaml
+yarn.lock
 
 # Planning & docs (internal only)
 docs/
