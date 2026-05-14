@@ -8,19 +8,42 @@
 	import { PageContainer, PageHeader } from '$lib/components/layout';
 	import { Tabs } from '$lib/components/ui';
 	import { LogsTerminal } from '$lib/components/diagnostics';
+	import { usageLevel } from '$lib/stores/settings';
 	import ConnectionsTab from './ConnectionsTab.svelte';
 	import ChecksTab from './ChecksTab.svelte';
+	import AwgConfigAnalyzerTab from './AwgConfigAnalyzerTab.svelte';
 
-	type ActiveTab = 'logs' | 'connections' | 'checks';
+	type ActiveTab = 'logs' | 'connections' | 'checks' | 'awgConfig';
 
 	let activeTab = $state<ActiveTab>('logs');
 	let tunnels = $state<DiagnosticsTargetSeed[]>([]);
 
-	const diagnosticsTabs = [
-		{ id: 'logs', label: 'Журнал' },
-		{ id: 'connections', label: 'Соединения' },
-		{ id: 'checks', label: 'Проверки' },
-	];
+	const diagnosticsTabs = $derived.by((): { id: ActiveTab; label: string }[] => {
+		const base: { id: ActiveTab; label: string }[] = [
+			{ id: 'logs', label: 'Журнал' },
+			{ id: 'connections', label: 'Соединения' },
+			{ id: 'checks', label: 'Проверки' },
+		];
+		if ($usageLevel === 'expert') {
+			base.push({ id: 'awgConfig', label: 'Конфиг AWG' });
+		}
+		return base;
+	});
+
+	$effect(() => {
+		if ($usageLevel === 'expert') return;
+		if (activeTab === 'awgConfig') {
+			activeTab = 'logs';
+		}
+		const tab = $page.url.searchParams.get('tab');
+		if (tab === 'awgConfig') {
+			const url = new URL($page.url);
+			url.searchParams.delete('tab');
+			const q = url.searchParams.toString();
+			const target = url.pathname + (q ? `?${q}` : '') + url.hash;
+			void goto(target, { replaceState: true, keepFocus: true, noScroll: true });
+		}
+	});
 
 	// Legacy URL sanitizer — rewrite ?tab=tests / ?tab=dnscheck (which used
 	// to render the health rail inside the logs tab) to ?tab=checks BEFORE
@@ -88,6 +111,7 @@
 	const pageTitle = $derived(
 		activeTab === 'connections' ? 'Соединения · Диагностика' :
 		activeTab === 'checks' ? 'Проверки · Диагностика' :
+		activeTab === 'awgConfig' ? 'Конфиг AWG · Диагностика' :
 		'Журнал · Диагностика',
 	);
 </script>
@@ -113,5 +137,7 @@
 		<ConnectionsTab />
 	{:else if activeTab === 'checks'}
 		<ChecksTab {tunnels} />
+	{:else if activeTab === 'awgConfig'}
+		<AwgConfigAnalyzerTab />
 	{/if}
 </PageContainer>
