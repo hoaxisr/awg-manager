@@ -125,6 +125,12 @@
 		box-sizing: border-box;
 	}
 
+	@media (max-width: 640px) {
+		.save-status-slot {
+			width: 4rem;
+		}
+	}
+
 	.save-status-placeholder {
 		display: block;
 		width: 100%;
