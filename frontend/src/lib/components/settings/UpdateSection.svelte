@@ -82,9 +82,9 @@
 	}
 </script>
 
-<div class="setting-row">
-	<div class="flex flex-col gap-1">
-		<span class="font-medium">Обновление</span>
+<div class="setting-row update-row">
+	<div class="flex flex-col gap-1 update-info">
+		<span class="font-medium">Версия</span>
 		{#if upgrading}
 			<span class="setting-description update-status">
 				Обновление... не закрывайте страницу
@@ -167,11 +167,35 @@
 {/if}
 
 <style>
+	.update-row.setting-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.update-info {
+		min-width: 0;
+	}
+
 	.update-actions {
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
 		flex-shrink: 0;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+	}
+
+	@media (max-width: 860px) {
+		.update-row.setting-row {
+			grid-template-columns: 1fr;
+			align-items: start;
+		}
+
+		.update-actions {
+			justify-content: flex-start;
+		}
 	}
 
 	.update-available {

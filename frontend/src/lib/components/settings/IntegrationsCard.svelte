@@ -143,9 +143,9 @@
 						</div>
 					</div>
 				{:else if singboxInstalled}
-					<Button variant="ghost" size="sm" href="/?tab=singbox">Открыть</Button>
+					<Button variant="secondary" size="sm" href="/?tab=singbox">Открыть</Button>
 				{:else if singboxStatusLoading}
-					<Button variant="ghost" size="sm" disabled>Ожидание…</Button>
+					<Button variant="secondary" size="sm" disabled>Ожидание…</Button>
 				{:else}
 					<Button variant="primary" size="sm" onclick={oninstallSingbox} loading={singboxInstalling}>
 						{singboxInstalling ? 'Установка...' : 'Установить'}
@@ -183,12 +183,12 @@
 					</div>
 				</div>
 				{#if hydraInstalled}
-					<Button variant="ghost" size="sm" href="/routing?tab=hrneo">Открыть</Button>
+					<Button variant="secondary" size="sm" href="/routing?tab=hrneo">Открыть</Button>
 				{:else if hydraStatusLoading}
-					<Button variant="ghost" size="sm" disabled>Ожидание…</Button>
+					<Button variant="secondary" size="sm" disabled>Ожидание…</Button>
 				{:else}
 					<Button
-						variant="ghost"
+						variant="primary"
 						size="sm"
 						href="https://github.com/Ground-Zerro/HydraRoute"
 						target="_blank"

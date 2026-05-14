@@ -10,6 +10,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/awgoutbounds"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
+	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
@@ -209,7 +210,8 @@ func (a *routerSingboxTunnelAdapter) ListTunnelTags(ctx context.Context) ([]stri
 // shape monitoring.Scheduler expects. Lives here so the monitoring
 // package stays free of singbox imports.
 type monitoringSingboxTunnelAdapter struct {
-	op *singbox.Operator
+	op  *singbox.Operator
+	sub *subscription.Service
 }
 
 func (a *monitoringSingboxTunnelAdapter) List(ctx context.Context) ([]monitoring.SingboxTunnelInfo, error) {
@@ -218,15 +220,36 @@ func (a *monitoringSingboxTunnelAdapter) List(ctx context.Context) ([]monitoring
 		return nil, err
 	}
 	out := make([]monitoring.SingboxTunnelInfo, 0, len(tunnels))
+	seen := make(map[string]bool, len(tunnels))
 	for _, t := range tunnels {
+		// Keep config-backed sing-box rows probeable by interface.
+		// Runtime-only subscription member tags are appended separately below.
 		if t.Tag == "" || t.KernelInterface == "" {
 			continue
 		}
+		seen[t.Tag] = true
 		out = append(out, monitoring.SingboxTunnelInfo{
 			Tag:           t.Tag,
 			Name:          t.Tag, // sing-box TunnelInfo doesn't carry a separate Name field
 			InterfaceName: t.KernelInterface,
 		})
+	}
+	// Add active member tags from enabled subscriptions. These outbounds are
+	// often "runtime-only" (no dedicated inbound/listen_port), so they may not
+	// have a kernel interface in config-derived TunnelInfo, but they are still
+	// probeable via Clash /proxies/<tag>/delay and should appear in monitoring.
+	if a.sub != nil {
+		for _, tag := range a.sub.ListActiveMemberTags() {
+			if tag == "" || seen[tag] {
+				continue
+			}
+			seen[tag] = true
+			out = append(out, monitoring.SingboxTunnelInfo{
+				Tag:           tag,
+				Name:          tag,
+				InterfaceName: "",
+			})
+		}
 	}
 	return out, nil
 }

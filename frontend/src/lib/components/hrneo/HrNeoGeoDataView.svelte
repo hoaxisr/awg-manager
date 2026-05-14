@@ -488,16 +488,6 @@
 		font-family: ui-monospace, monospace;
 	}
 
-	.confirm-text {
-		margin: 0 0 8px;
-		color: var(--text-primary);
-	}
-	.confirm-hint {
-		margin: 0;
-		color: var(--text-muted);
-		font-size: 0.8125rem;
-	}
-
 	@media (max-width: 640px) {
 		.file-row {
 			flex-direction: column;

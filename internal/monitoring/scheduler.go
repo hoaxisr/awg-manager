@@ -17,7 +17,7 @@ import (
 type Cell struct {
 	TargetID         string    `json:"targetId"`
 	TunnelID         string    `json:"tunnelId"`
-	LatencyMs        *int      `json:"latencyMs"`        // nil when probe failed
+	LatencyMs        *int      `json:"latencyMs"` // nil when probe failed
 	OK               bool      `json:"ok"`
 	ActiveForRestart bool      `json:"activeForRestart"` // tunnel.PingcheckTarget == target.Host
 	IsSelf           bool      `json:"isSelf"`           // tunnel.SelfTarget == target.Host — the cell the card displays
@@ -452,13 +452,20 @@ func (s *Scheduler) collectTunnels(ctx context.Context) []Tunnel {
 			// Dedupe by interface against rows already collected (AWG/system).
 			// In practice no overlap is possible, but the contract is defensive.
 			seenIface := make(map[string]bool, len(out))
+			seenID := make(map[string]bool, len(out))
 			for _, t := range out {
+				if t.ID != "" {
+					seenID[t.ID] = true
+				}
 				if t.IfaceName != "" {
 					seenIface[t.IfaceName] = true
 				}
 			}
 			for _, sbt := range sb {
-				if sbt.InterfaceName == "" || seenIface[sbt.InterfaceName] {
+				if sbt.Tag == "" || seenID[sbt.Tag] {
+					continue
+				}
+				if sbt.InterfaceName != "" && seenIface[sbt.InterfaceName] {
 					continue
 				}
 				out = append(out, Tunnel{
@@ -472,6 +479,10 @@ func (s *Scheduler) collectTunnels(ctx context.Context) []Tunnel {
 					Source:     "singbox",
 					SingboxTag: sbt.Tag,
 				})
+				seenID[sbt.Tag] = true
+				if sbt.InterfaceName != "" {
+					seenIface[sbt.InterfaceName] = true
+				}
 			}
 		}
 	}

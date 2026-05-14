@@ -1198,7 +1198,7 @@ label {
    source order — keep this rule above the .chip-level-* / .chip-group-* blocks. */
 .chip.chip-active {
 	background: var(--color-accent);
-	color: white;
+	color: var(--color-accent-contrast, #ffffff);
 	border-color: var(--color-accent);
 }
 

@@ -160,18 +160,18 @@
 </script>
 
 <header class="page-header">
-	<div class="header-right">
-		<span
-			class="status-badge"
-			class:loading={headerState === 'loading'}
-			class:running={headerState === 'ready'}
-			class:warn={headerState === 'warn'}
-			class:error={headerState === 'error'}
-			title={headerReason}
-		>
-			<span class="status-dot"></span>
-			sing-box · {headerLabel}
-		</span>
+	<span
+		class="status-badge"
+		class:loading={headerState === 'loading'}
+		class:running={headerState === 'ready'}
+		class:warn={headerState === 'warn'}
+		class:error={headerState === 'error'}
+		title={headerReason}
+	>
+		<span class="status-dot"></span>
+		sing-box · {headerLabel}
+	</span>
+	<div class="header-actions">
 		<Button size="sm" variant="primary" onclick={() => singboxWizard.start()}>Мастер</Button>
 		<Button size="sm" variant="ghost" onclick={() => (inspectorOpen = true)}>Инспектор</Button>
 		<Button size="sm" variant="ghost" onclick={() => (drawerOpen = true)}>Конфиг</Button>
@@ -214,11 +214,12 @@
 	.page-header {
 		display: flex;
 		align-items: center;
-		justify-content: flex-end;
+		justify-content: space-between;
+		flex-wrap: wrap;
 		gap: 0.75rem;
 		margin-bottom: 0.75rem;
 	}
-	.header-right {
+	.header-actions {
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;

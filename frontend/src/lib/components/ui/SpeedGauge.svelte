@@ -8,25 +8,19 @@
 
 	let { value, max = 1000, phase = 'idle', label }: Props = $props();
 
-	const clampedValue = $derived(Math.max(0, Math.min(value, max)));
-	const fraction = $derived(clampedValue / max);
+	const safeMax = $derived(max > 0 ? max : 1);
+	const clampedValue = $derived(Math.max(0, Math.min(value, safeMax)));
+	const fraction = $derived(clampedValue / safeMax);
 
-	const startAngle = 135;
-	const arcSpan = 270;
+	// Render the gauge as a 270deg circle segment. This is more stable than
+	// hand-crafted SVG arc paths and avoids odd cap artifacts at edge angles.
 	const radius = 80;
-	const cx = 100;
-	const cy = 100;
-
-	function polar(angle: number): [number, number] {
-		const rad = ((angle - 90) * Math.PI) / 180;
-		return [cx + radius * Math.cos(rad), cy + radius * Math.sin(rad)];
-	}
-
-	const startPt = polar(startAngle);
-	const fullEnd = polar(startAngle + arcSpan);
-
-	const progressEnd = $derived(polar(startAngle + arcSpan * fraction));
-	const progressLargeArc = $derived(arcSpan * fraction > 180 ? 1 : 0);
+	const circumference = 2 * Math.PI * radius;
+	const arcSpan = 270 / 360;
+	const arcLen = $derived(circumference * arcSpan);
+	const trackGap = $derived(circumference - arcLen);
+	const progressLen = $derived(arcLen * fraction);
+	const progressGap = $derived(circumference - progressLen);
 
 	const progressColor = $derived(
 		phase === 'download' ? '#10b981'
@@ -56,21 +50,29 @@
 
 <div class="gauge-wrap">
 	<svg class="gauge" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-		<path
-			d="M {startPt[0]} {startPt[1]} A {radius} {radius} 0 1 1 {fullEnd[0]} {fullEnd[1]}"
+		<circle
+			cx="100"
+			cy="100"
+			r={radius}
 			fill="none"
 			stroke="rgba(100,100,100,0.25)"
 			stroke-width="8"
 			stroke-linecap="round"
+			stroke-dasharray="{arcLen} {trackGap}"
+			transform="rotate(135 100 100)"
 		/>
 		{#if fraction > 0}
-			<path
+			<circle
 				class="progress"
-				d="M {startPt[0]} {startPt[1]} A {radius} {radius} 0 {progressLargeArc} 1 {progressEnd[0]} {progressEnd[1]}"
+				cx="100"
+				cy="100"
+				r={radius}
 				fill="none"
 				stroke={progressColor}
 				stroke-width="8"
 				stroke-linecap="round"
+				stroke-dasharray="{progressLen} {progressGap}"
+				transform="rotate(135 100 100)"
 			/>
 		{/if}
 	</svg>

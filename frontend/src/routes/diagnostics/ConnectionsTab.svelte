@@ -4,9 +4,13 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { ConnectionsStats, ConnectionsTable } from '$lib/components/connections';
+	import { LoadingSpinner } from '$lib/components/layout';
 
 	let data = $state<ConnectionsResponse | null>(null);
 	let loading = $state(false);
+	const AUTO_REFRESH_MS = 30_000;
+	let nowTs = $state(Date.now());
+	let lastFetchedAtTs = $state(0);
 
 	let tunnel = $state('all');
 	let protocol = $state('all');
@@ -14,11 +18,20 @@
 	let offset = $state(0);
 	let sortBy = $state<'' | 'proto' | 'src' | 'dst' | 'iface' | 'state' | 'bytes'>('');
 	let sortDir = $state<'asc' | 'desc'>('asc');
+	let autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
+	let progressTimer: ReturnType<typeof setInterval> | null = null;
+	let requestSeq = 0;
+	const refreshProgress = $derived.by(() => {
+		if (lastFetchedAtTs <= 0) return 0;
+		const elapsed = Math.max(0, nowTs - lastFetchedAtTs);
+		return Math.min(1, elapsed / AUTO_REFRESH_MS);
+	});
 
 	async function fetchData() {
+		const seq = ++requestSeq;
 		loading = true;
 		try {
-			data = await api.getConnections({
+			const nextData = await api.getConnections({
 				tunnel,
 				protocol,
 				search,
@@ -27,11 +40,17 @@
 				sortBy: sortBy || undefined,
 				sortDir,
 			});
+			if (seq !== requestSeq) return;
+			data = nextData;
+			lastFetchedAtTs = Date.now();
 		} catch (e) {
+			if (seq !== requestSeq) return;
 			notifications.error('Не удалось загрузить соединения');
 			data = null;
 		} finally {
-			loading = false;
+			if (seq === requestSeq) {
+				loading = false;
+			}
 		}
 	}
 
@@ -78,10 +97,16 @@
 
 	onMount(() => {
 		fetchData();
+		autoRefreshTimer = setInterval(fetchData, AUTO_REFRESH_MS);
+		progressTimer = setInterval(() => {
+			nowTs = Date.now();
+		}, 200);
 	});
 
 	onDestroy(() => {
 		if (searchTimeout) clearTimeout(searchTimeout);
+		if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+		if (progressTimer) clearInterval(progressTimer);
 	});
 
 	function handlePageChange(newOffset: number) {
@@ -90,7 +115,11 @@
 	}
 </script>
 
-{#if data}
+{#if loading && !data}
+	<div class="loading-wrap">
+		<LoadingSpinner size="lg" message="Загрузка соединений..." />
+	</div>
+{:else if data}
 	<ConnectionsStats stats={data.stats} />
 
 	<!-- Filter row 1: tunnel chips -->
@@ -140,13 +169,27 @@
 			value={search}
 			oninput={(e) => handleSearchInput(e.currentTarget.value)}
 		/>
-		<span class="counter">
-			<span class="live-dot" class:live-dot-loading={loading}></span>
-			{#if data.fetchedAt}
-				{new Date(data.fetchedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })} ·
-			{/if}
-			{data.pagination.total} из {data.stats.total}
-		</span>
+		<div class="row-tail">
+			<span class="counter">
+				<span class="live-dot" class:live-dot-loading={loading}></span>
+				{#if data.fetchedAt}
+					{new Date(data.fetchedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+				{/if}
+			</span>
+			<button
+				type="button"
+				class="refresh-btn timer-enabled"
+				onclick={fetchData}
+				disabled={loading}
+				aria-label="Обновить соединения"
+				title="Обновить"
+				style={`--refresh-progress:${refreshProgress * 360}deg;`}
+			>
+				<svg class="refresh-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+					<path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v6h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+				</svg>
+			</button>
+		</div>
 	</div>
 
 	<ConnectionsTable
@@ -160,6 +203,12 @@
 {/if}
 
 <style>
+	.loading-wrap {
+		display: flex;
+		justify-content: center;
+		padding: 2rem 0 1rem;
+	}
+
 	.filter-row {
 		display: flex;
 		flex-wrap: wrap;
@@ -183,11 +232,64 @@
 		max-width: 280px;
 	}
 
+	.row-tail {
+		margin-left: auto;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.refresh-btn {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		border-radius: 6px;
+		border: 1px solid var(--color-border);
+		background: transparent;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		transition: all var(--t-fast) ease;
+	}
+
+	.refresh-btn.timer-enabled::before {
+		content: '';
+		position: absolute;
+		inset: -1px;
+		border-radius: inherit;
+		padding: 1px;
+		background: conic-gradient(var(--color-accent) var(--refresh-progress), transparent 0deg);
+		-webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+		mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+		-webkit-mask-composite: xor;
+		mask-composite: exclude;
+		pointer-events: none;
+		opacity: 0.95;
+	}
+
+	.refresh-btn:hover:not(:disabled) {
+		color: var(--color-accent);
+		background: var(--color-bg-hover);
+	}
+
+	.refresh-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.refresh-icon {
+		position: relative;
+		z-index: 1;
+		width: 15px;
+		height: 15px;
+	}
+
 	.counter {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.375rem;
-		margin-left: auto;
 		font-family: var(--font-mono);
 		font-size: 11px;
 		color: var(--color-text-muted);
@@ -232,8 +334,30 @@
 		background: var(--color-accent);
 	}
 
+	/* Active chips on bright accent must keep dark readable text. */
+	.filter-row .chip.chip-active,
+	.filter-row .chip.chip-active:hover:not(:disabled) {
+		color: var(--color-bg-primary);
+	}
+
+	.filter-row .chip.chip-active .chip-count {
+		color: inherit;
+		opacity: 0.7;
+	}
+
+	/* Keep hover readable across themes (avoid white-on-accent collisions). */
+	.chip:hover:not(.chip-active) {
+		color: var(--color-text-primary);
+		background: var(--color-bg-hover);
+		border-color: var(--color-border-strong, var(--color-border));
+	}
+
 	@media (max-width: 640px) {
 		.search-input { max-width: 100%; }
-		.counter { margin-left: 0; }
+		.row-tail {
+			margin-left: 0;
+			width: 100%;
+			justify-content: flex-end;
+		}
 	}
 </style>

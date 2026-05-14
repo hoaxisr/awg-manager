@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from "svelte";
+	import { afterNavigate } from "$app/navigation";
 	import { api } from "$lib/api/client";
 	import { notifications } from "$lib/stores/notifications";
 	import { singboxStatus } from "$lib/stores/singbox";
@@ -49,6 +50,9 @@
 	let singboxInstallError = $state<string | null>(null);
 	let singboxBusy = $state(false);
 	let hydraProbeNoteTimer: ReturnType<typeof setTimeout> | null = null;
+	let systemInfoRefreshing = $state(false);
+	let systemInfoUpdatedAt = $state<string | null>(null);
+	let systemInfoInFlight: Promise<void> | null = null;
 
 	const singboxStatusValue = $derived($singboxStatus.data ?? null);
 	const singboxStatusLoading = $derived(
@@ -123,12 +127,42 @@
 		}
 	}
 
-	onMount(async () => {
+	async function fetchSystemInfo(silent = true) {
+		if (systemInfoInFlight) {
+			return systemInfoInFlight;
+		}
+		systemInfoRefreshing = true;
+		systemInfoInFlight = (async () => {
+			try {
+				systemInfo = await api.getSystemInfo();
+				systemInfoUpdatedAt = new Date().toISOString();
+				if (!silent) {
+					notifications.success("Информация о роутере обновлена");
+				}
+			} catch (e) {
+				if (!silent) {
+					notifications.error(e instanceof Error ? e.message : "Не удалось обновить системную информацию");
+				}
+			} finally {
+				systemInfoRefreshing = false;
+				systemInfoInFlight = null;
+			}
+		})();
+		return systemInfoInFlight;
+	}
+
+onMount(() => {
+	const timer = setInterval(() => {
+		void fetchSystemInfo(true);
+	}, 30000);
+
+	void (async () => {
 		try {
-			[systemInfo, settings] = await Promise.all([
-				api.getSystemInfo(),
+			const [_, appSettings] = await Promise.all([
+				fetchSystemInfo(true),
 				api.getSettings(),
 			]);
+			settings = appSettings;
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : "Не удалось загрузить настройки");
 		} finally {
@@ -161,7 +195,12 @@
 		} finally {
 			hydraStatusLoading = false;
 		}
-	});
+	})();
+
+	return () => {
+		clearInterval(timer);
+	};
+});
 
 	async function toggleAuth(enabled: boolean) {
 		if (!settings) return;
@@ -201,11 +240,45 @@
 			notifications.info("Сначала сгенерируйте API ключ");
 			return;
 		}
+		const fallbackCopy = (text: string): boolean => {
+			try {
+				const textarea = document.createElement("textarea");
+				textarea.value = text;
+				textarea.setAttribute("readonly", "");
+				textarea.style.position = "fixed";
+				textarea.style.top = "-1000px";
+				textarea.style.left = "-1000px";
+				textarea.style.opacity = "0";
+				document.body.appendChild(textarea);
+				textarea.focus();
+				textarea.select();
+				textarea.setSelectionRange(0, textarea.value.length);
+				const copied = document.execCommand("copy");
+				document.body.removeChild(textarea);
+				return copied;
+			} catch {
+				return false;
+			}
+		};
+
+		let copied = false;
 		try {
-			await navigator.clipboard.writeText(key);
-			notifications.success("API ключ скопирован в буфер обмена");
+			if (navigator.clipboard?.writeText) {
+				await navigator.clipboard.writeText(key);
+				copied = true;
+			}
 		} catch {
-			notifications.error("Не удалось скопировать — проверьте разрешения браузера");
+			copied = false;
+		}
+
+		if (!copied) {
+			copied = fallbackCopy(key);
+		}
+
+		if (copied) {
+			notifications.success("API ключ скопирован в буфер обмена");
+		} else {
+			notifications.error("Не удалось скопировать API ключ");
 		}
 	}
 
@@ -321,6 +394,17 @@
 			restarting = false;
 		}
 	}
+
+	async function refreshSystemInfo() {
+		await fetchSystemInfo(false);
+	}
+
+	afterNavigate(async ({ to, from }) => {
+		if (!to || to.url.pathname !== "/settings") return;
+		if (!from || from.url.pathname !== "/settings") {
+			await fetchSystemInfo(true);
+		}
+	});
 </script>
 
 <svelte:head>
@@ -337,7 +421,14 @@
 		<div class="settings-layout">
 		<div class="settings-grid">
 			<aside class="settings-left">
-				<SystemInfoGrid {systemInfo} />
+				<SystemInfoGrid
+					{systemInfo}
+					usageLevel={settings.usageLevel}
+					onrefresh={refreshSystemInfo}
+					refreshing={systemInfoRefreshing}
+					lastUpdated={systemInfoUpdatedAt}
+					autoRefreshMs={30000}
+				/>
 
 				<div class="card">
 					<div class="section-label">Обновление</div>
@@ -371,7 +462,7 @@
 
 				<div class="card">
 					<div class="section-label">Доступ</div>
-					<div class="setting-row">
+					<div class="setting-row toggle-inline-row">
 						<div class="flex flex-col gap-1">
 							<span class="font-medium">Авторизация</span>
 							<span class="setting-description">
@@ -384,7 +475,7 @@
 
 				<div class="card">
 					<div class="section-label">Обновления</div>
-					<div class="setting-row">
+					<div class="setting-row toggle-inline-row">
 						<div class="flex flex-col gap-1">
 							<span class="font-medium">Автопроверка обновлений</span>
 							<span class="setting-description">Проверять наличие новых версий раз в сутки</span>
@@ -442,7 +533,7 @@
 									: "Сначала нажмите «Сгенерировать»"}
 							/>
 							<div class="api-key-action">
-								<Button variant="ghost" size="sm" onclick={generateApiKey} disabled={saving}>
+								<Button variant="secondary" size="sm" onclick={generateApiKey} disabled={saving}>
 									Сгенерировать
 								</Button>
 							</div>
@@ -461,7 +552,7 @@
 					<span class="setting-description">Туннели продолжат работать</span>
 				</div>
 				<Button
-					variant="ghost"
+					variant="secondary"
 					size="sm"
 					onclick={() => (restartConfirmOpen = true)}
 					loading={restarting}
@@ -482,7 +573,7 @@
 						{#if singboxRunning}
 							<span title={singboxStatusValue?.updateAvailable ? `Сначала обновите sing-box до ${singboxStatusValue.requiredVersion}` : ''}>
 								<Button
-									variant="ghost"
+									variant="secondary"
 									size="sm"
 									onclick={() => controlSingbox('restart')}
 									loading={singboxBusy}
@@ -491,9 +582,9 @@
 									Перезапустить
 								</Button>
 							</span>
-							<Button variant="ghost" size="sm" onclick={() => controlSingbox('stop')} loading={singboxBusy}>Остановить</Button>
+							<Button variant="danger" size="sm" onclick={() => controlSingbox('stop')} loading={singboxBusy}>Остановить</Button>
 						{:else}
-							<Button variant="ghost" size="sm" onclick={() => controlSingbox('start')} loading={singboxBusy}>Запустить</Button>
+							<Button variant="success" size="sm" onclick={() => controlSingbox('start')} loading={singboxBusy}>Запустить</Button>
 						{/if}
 					</div>
 				</div>
@@ -509,10 +600,10 @@
 					</div>
 					<div class="action-buttons">
 						{#if hydraRunning}
-							<Button variant="ghost" size="sm" onclick={() => controlHydra('restart')} loading={hydraBusy}>Перезапустить</Button>
-							<Button variant="ghost" size="sm" onclick={() => controlHydra('stop')} loading={hydraBusy}>Остановить</Button>
+							<Button variant="secondary" size="sm" onclick={() => controlHydra('restart')} loading={hydraBusy}>Перезапустить</Button>
+							<Button variant="danger" size="sm" onclick={() => controlHydra('stop')} loading={hydraBusy}>Остановить</Button>
 						{:else}
-							<Button variant="ghost" size="sm" onclick={() => controlHydra('start')} loading={hydraBusy}>Запустить</Button>
+							<Button variant="success" size="sm" onclick={() => controlHydra('start')} loading={hydraBusy}>Запустить</Button>
 						{/if}
 					</div>
 				</div>
@@ -584,6 +675,7 @@
 	/* Между строками — тот же шаг, что и между карточками (сумма половин padding) */
 	.actions-card > .setting-row {
 		padding-block: calc(var(--settings-gap) * 0.5);
+		align-items: center;
 	}
 
 	.actions-card > .setting-row:last-of-type {
@@ -594,12 +686,13 @@
 		display: inline-flex;
 		gap: 0.375rem;
 		flex-shrink: 0;
+		align-items: center;
 	}
 
 	.api-key-controls {
-		display: flex;
-		flex-direction: column;
-		align-items: stretch;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: center;
 		gap: 0.5rem;
 		width: 100%;
 		min-width: 0;
@@ -622,7 +715,7 @@
 		cursor: text;
 	}
 	.api-key-action {
-		align-self: flex-end;
+		align-self: auto;
 		white-space: nowrap;
 	}
 
@@ -637,8 +730,41 @@
 	}
 
 	@media (max-width: 640px) {
+		.api-key-controls {
+			grid-template-columns: minmax(0, 1fr) auto;
+		}
+
 		.api-key-setting {
 			grid-template-columns: 1fr;
+		}
+
+		.toggle-inline-row {
+			flex-direction: row;
+			align-items: center;
+			flex-wrap: nowrap;
+			gap: 0.75rem;
+		}
+
+		.toggle-inline-row > *:first-child {
+			flex: 1 1 auto;
+			min-width: 0;
+		}
+
+		.actions-card > .setting-row {
+			flex-direction: row;
+			align-items: center;
+			flex-wrap: nowrap;
+			gap: 0.75rem;
+		}
+
+		.actions-card > .setting-row > *:first-child {
+			flex: 1 1 auto;
+			min-width: 0;
+		}
+
+		.action-buttons {
+			justify-content: flex-end;
+			flex-wrap: nowrap;
 		}
 	}
 

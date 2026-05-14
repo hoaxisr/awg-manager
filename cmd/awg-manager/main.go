@@ -1011,7 +1011,7 @@ func main() {
 	// monitoringService is constructed early (line ~421) so the matrix can
 	// include Keenetic-native tunnels; singboxOp + routerSvc + clashProxy
 	// are constructed later in the bootstrap, hence the deferred wiring.
-	monitoringService.SetSingboxTunnels(&monitoringSingboxTunnelAdapter{op: singboxOp})
+	monitoringService.SetSingboxTunnels(&monitoringSingboxTunnelAdapter{op: singboxOp, sub: subSvc})
 	monitoringService.SetComposites(&monitoringCompositesAdapter{svc: routerSvc})
 	monitoringService.SetClashState(monitoring.NewClashState(clashProxy.ClashBaseURL, nil))
 	monitoringService.SetSingboxDelay(singboxOp.Clash())
