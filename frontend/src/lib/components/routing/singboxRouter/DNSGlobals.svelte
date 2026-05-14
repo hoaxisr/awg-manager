@@ -66,7 +66,7 @@
 		<label class="field">
 			<div class="lbl">Стратегия (глобальная)</div>
 			<Dropdown bind:value={draftStrategy} options={STRATEGY_OPTIONS} fullWidth />
-			<div class="hint">Для Keenetic без IPv6 — <code>ipv4_only</code>.</div>
+			<div class="hint">Для роутера без IPv6 — <code>ipv4_only</code>.</div>
 		</label>
 	</div>
 	<div class="actions">

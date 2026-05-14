@@ -29,7 +29,7 @@
 				<BrandLogoMark dimension={52} />
 			</div>
 			<h1>AWG Manager</h1>
-			<p class="login-subtitle">Введите данные от роутера Keenetic</p>
+			<p class="login-subtitle">Введите данные от входа в админ-панель роутера</p>
 		</div>
 
 		{#if $auth.error}

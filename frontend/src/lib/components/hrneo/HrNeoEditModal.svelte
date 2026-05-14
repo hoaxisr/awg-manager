@@ -240,7 +240,7 @@
 		if (v === '') return 'Введите имя политики';
 		if (v.length > HR_POLICY_NAME_MAX) return `Максимум ${HR_POLICY_NAME_MAX} символов`;
 		if (SYSTEM_POLICY_RE.test(v))
-			return `Имя ${v} зарезервировано для системных политик Keenetic — HR Neo не может в них маршрутизировать`;
+			return `Имя ${v} зарезервировано для системных политик роутера — HR Neo не может в них маршрутизировать`;
 		if (!HR_POLICY_NAME_RE.test(v))
 			return 'Только латинские буквы (a-z, A-Z), без цифр, пробелов и спецсимволов';
 		return '';
@@ -443,7 +443,7 @@
 					<div class="form-hint muted">
 						Нет HR-совместимых политик. Создайте новую.
 						{#if policies.length > hrCompatiblePolicies.length}
-							Системные политики Keenetic (<code>PolicyN</code>) не отображаются —
+							Системные политики роутера (<code>PolicyN</code>) не отображаются —
 							HR Neo не может маршрутизировать в них.
 						{/if}
 					</div>
@@ -459,7 +459,7 @@
 				{/if}
 			{:else}
 				<div class="policy-card">
-					<div class="policy-card-header">Новая политика Keenetic</div>
+					<div class="policy-card-header">Новая политика на роутере</div>
 					<div class="form-group" class:field-error={attempted && newPolicyNameValidationError !== ''}>
 						<label class="field-label" for="hr-new-policy-name">Имя политики</label>
 						<input

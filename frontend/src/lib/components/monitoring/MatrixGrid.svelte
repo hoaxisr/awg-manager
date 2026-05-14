@@ -55,7 +55,7 @@
 					{#each sortedTunnels as t (t.id)}
 						<th class="th-tunnel">
 							{#if isSystem(t)}
-								<span class="tunnel-system" title="Системный туннель Keenetic — pingcheck управляется в системе">
+								<span class="tunnel-system" title="Системный туннель роутера — pingcheck управляется в системе">
 									{t.name}
 								</span>
 							{:else if isSingbox(t)}
