@@ -82,10 +82,14 @@
 			</div>
 		</form>
 
-		<p class="login-hint">
-			Используйте логин и пароль администратора роутера
-		</p>
-	</div>
+	<p class="login-hint">
+		Используйте логин и пароль администратора роутера
+	</p>
+
+	<p class="login-hint" style="margin-top: 0.2rem;">
+		Продолжая использование, вы соглашаетесь с <a href="/terms">пользовательским соглашением</a>
+	</p>
+</div>
 </div>
 
 <style>
@@ -161,5 +165,15 @@
 		text-align: center;
 		font-size: 0.75rem;
 		color: var(--text-muted);
+	}
+
+	.login-hint a {
+		color: var(--color-accent, var(--text-muted));
+		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+
+	.login-hint a:hover {
+		opacity: 0.8;
 	}
 </style>

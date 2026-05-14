@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { LegacyTabs, LegacyTab, IconButton, SaveStatusIndicator } from '$lib/components/ui';
+	import { LegacyTabs, LegacyTab, IconButton } from '$lib/components/ui';
 	import BrandLogoMark from './BrandLogoMark.svelte';
 	import { usageLevel } from '$lib/stores/settings';
 	import type { ThemeState } from '$lib/stores/theme';
@@ -180,10 +180,6 @@
 						</span>
 					{/if}
 				</span>
-			{/if}
-
-			{#if authenticated}
-				<SaveStatusIndicator />
 			{/if}
 		</div>
 
@@ -368,12 +364,12 @@
 	.header-inner {
 		max-width: 1120px;
 		margin: 0 auto;
-		padding: 0 1rem;
+		padding: 0 1.25rem;
 		height: 56px;
 		display: grid;
 		grid-template-columns: auto 1fr auto;
 		align-items: center;
-		gap: 1.5rem;
+		gap: 1rem;
 	}
 
 	.brand-group {
@@ -401,10 +397,11 @@
 
 	.nav {
 		min-width: 0;
+		display: flex;
 		overflow-x: auto;
 		scrollbar-width: none;
-		justify-self: center;
 	}
+
 	.nav::-webkit-scrollbar {
 		display: none;
 	}
@@ -413,6 +410,13 @@
 	.nav :global(.tabs.variant-underline) {
 		border-bottom: none;
 		gap: 1.25rem;
+		flex-shrink: 0;
+		margin-left: auto;
+		margin-right: auto;
+	}
+
+	.nav :global(.tab) {
+		white-space: nowrap;
 	}
 
 	.nav-spacer {
@@ -559,13 +563,17 @@
 		display: none;
 	}
 
-	@media (max-width: 900px) {
+	@media (max-width: 1050px) {
 		.nav {
 			display: none;
 		}
 
 		.hamburger {
 			display: inline-flex;
+		}
+
+		.header-inner {
+			grid-template-columns: 1fr auto;
 		}
 
 		.mobile-backdrop {
@@ -615,10 +623,6 @@
 	@media (max-width: 640px) {
 		.app-header.unauthenticated .user-tools {
 			display: none;
-		}
-
-		.header-inner {
-			grid-template-columns: 1fr auto;
 		}
 
 		.wordmark {

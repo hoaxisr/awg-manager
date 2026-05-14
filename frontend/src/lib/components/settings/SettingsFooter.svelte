@@ -30,6 +30,8 @@
 	<div class="settings-footer-bar">
 		<span class="footer-link-group">
 			Документация: <a href="https://awgm.hoaxisr.ru" target="_blank" rel="noopener noreferrer">awgm.hoaxisr.ru</a>
+			<span class="footer-sep">·</span>
+			<a href="/terms">Пользовательское соглашение</a>
 		</span>
 		<button
 			type="button"
@@ -82,6 +84,11 @@
 
 	.footer-link-group a:hover {
 		text-decoration: underline;
+	}
+
+	.footer-sep {
+		margin: 0 0.375rem;
+		opacity: 0.4;
 	}
 
 	.footer-collapse {

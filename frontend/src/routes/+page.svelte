@@ -20,18 +20,24 @@
 		StatusDot,
 		Stat,
 		StatStrip,
+		GridListToggle,
 	} from '$lib/components/ui';
-	import { singboxStatus, singboxTunnels } from '$lib/stores/singbox';
+	import { singboxDelayHistory, singboxStatus, singboxTraffic, singboxTunnels } from '$lib/stores/singbox';
 	import { SingboxInstallBanner, SingboxTunnelCard } from '$lib/components/singbox';
 	import { feedTraffic, getTrafficRates, subscribeTraffic } from '$lib/stores/traffic';
 	import { usageLevel } from '$lib/stores/settings';
 	import { isSectionVisible } from '$lib/types/usageLevel';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
-	import SubscriptionList from '$lib/components/subscriptions/SubscriptionList.svelte';
+	import SubscriptionCard from '$lib/components/subscriptions/SubscriptionCard.svelte';
 	import AddTunnelWizard from '$lib/components/subscriptions/AddTunnelWizard.svelte';
 	import SubscriptionActiveCard from '$lib/components/subscriptions/SubscriptionActiveCard.svelte';
 	import type { ExternalTunnel, Subscription, SubscriptionMember, SystemTunnel, TunnelListItem } from '$lib/types';
 	import { formatBitRate, formatBytes, formatDuration, formatRelativeTime, secondsSince } from '$lib/utils/format';
+	import {
+		SINGBOX_LAYOUT_STORAGE_KEY,
+		TUNNEL_MOBILE_LAYOUT_MAX_WIDTH_PX,
+		type SingboxLayoutMode,
+	} from '$lib/constants/singboxLayout';
 
 	type TunnelTab = 'awg' | 'singbox' | 'subscriptions';
 	type AwgTunnelViewMode = 'cards' | 'compact' | 'list';
@@ -39,7 +45,6 @@
 	type EndpointScope = 'managed' | 'system' | 'external';
 
 	const AWG_TUNNEL_VIEW_STORAGE_KEY = 'awg_tunnel_view_mode';
-	const AWG_MOBILE_VIEW_MAX_WIDTH = 760;
 
 	// Polling-store subscription: first subscriber triggers the fetch,
 	// the last unsubscribe stops polling. `$tunnels` yields a
@@ -241,6 +246,40 @@
 
 	let singboxTunnelsList = $derived($singboxTunnels.data ?? []);
 
+	const singboxTunnelListStats = $derived.by(() => {
+		void trafficTick;
+		const list = singboxTunnelsList;
+		let running = 0;
+		let down = 0;
+		let up = 0;
+		let delaySum = 0;
+		let delayN = 0;
+		const trMap = $singboxTraffic;
+		const histMap = $singboxDelayHistory;
+		for (const t of list) {
+			if (t.running === true) running++;
+			const tr = trMap.get(t.tag);
+			if (tr) {
+				down += tr.download ?? 0;
+				up += tr.upload ?? 0;
+			}
+			const h = histMap.get(t.tag) ?? [];
+			const last = h.length > 0 ? h[h.length - 1] : 0;
+			if (typeof last === 'number' && last > 0) {
+				delaySum += last;
+				delayN++;
+			}
+		}
+		return {
+			count: list.length,
+			running,
+			stopped: list.length - running,
+			down,
+			up,
+			avgDelayMs: delayN > 0 ? Math.round(delaySum / delayN) : null,
+		};
+	});
+
 	let unsubSubs: (() => void) | undefined;
 	onMount(() => { unsubSubs = subscriptionsStore.subscribe(() => {}); });
 	onDestroy(() => unsubSubs?.());
@@ -344,18 +383,62 @@
 		subscriptionsList.filter((subscription) => !subscriptionActiveIds.has(subscription.id)),
 	);
 
+	const singboxSubscriptionsTrafficStats = $derived.by(() => {
+		void trafficTick;
+		let down = 0;
+		let up = 0;
+		const map = $singboxTraffic;
+		for (const card of subscriptionsActiveCards) {
+			const tr = map.get(card.activeMember.tag);
+			if (tr) {
+				down += tr.download ?? 0;
+				up += tr.upload ?? 0;
+			}
+		}
+		for (const sub of subscriptionsListRows) {
+			const tag =
+				sub.activeMember && sub.memberTags.includes(sub.activeMember)
+					? sub.activeMember
+					: sub.memberTags[0] ?? '';
+			if (!tag) continue;
+			const tr = map.get(tag);
+			if (tr) {
+				down += tr.download ?? 0;
+				up += tr.upload ?? 0;
+			}
+		}
+		return {
+			count: subscriptionsList.length,
+			activeCount: subscriptionsActiveCards.length,
+			inactiveCount: subscriptionsListRows.length,
+			down,
+			up,
+		};
+	});
+
 	// Tabs
 	let activeTab = $state<TunnelTab>('awg');
 	let awgViewMode = $state<AwgTunnelViewMode>('compact');
 	let awgViewModeReady = false;
 	let isAwgMobile = $state(false);
 	let showAwgListViewOption = $derived($usageLevel !== 'basic');
+	let singboxLayoutMode = $state<SingboxLayoutMode>('grid');
+	let singboxLayoutReady = false;
+	let showSingboxListOption = $derived($usageLevel !== 'basic');
+	let singboxEffectiveLayout = $derived<SingboxLayoutMode>(
+		isAwgMobile || (!showSingboxListOption && singboxLayoutMode === 'list') ? 'grid' : singboxLayoutMode,
+	);
+	let showSingboxGridListToggle = $derived(showSingboxListOption && !isAwgMobile);
 	let awgEffectiveViewMode = $derived<AwgTunnelViewMode>(
 		isAwgMobile || (!showAwgListViewOption && awgViewMode === 'list') ? 'compact' : awgViewMode
 	);
 
 	function isAwgTunnelViewMode(value: string | null): value is AwgTunnelViewMode {
 		return value === 'cards' || value === 'compact' || value === 'list';
+	}
+
+	function isSingboxLayoutMode(value: string | null): value is SingboxLayoutMode {
+		return value === 'grid' || value === 'list';
 	}
 
 	const tunnelTabs = $derived(
@@ -383,10 +466,15 @@
 			awgViewMode = stored;
 		}
 		awgViewModeReady = true;
+		const sb = localStorage.getItem(SINGBOX_LAYOUT_STORAGE_KEY);
+		if (isSingboxLayoutMode(sb)) {
+			singboxLayoutMode = sb;
+		}
+		singboxLayoutReady = true;
 	});
 
 	onMount(() => {
-		const media = window.matchMedia(`(max-width: ${AWG_MOBILE_VIEW_MAX_WIDTH}px)`);
+		const media = window.matchMedia(`(max-width: ${TUNNEL_MOBILE_LAYOUT_MAX_WIDTH_PX}px)`);
 		const sync = (event?: MediaQueryList | MediaQueryListEvent) => {
 			isAwgMobile = event ? event.matches : media.matches;
 		};
@@ -399,6 +487,11 @@
 	$effect(() => {
 		if (!awgViewModeReady) return;
 		localStorage.setItem(AWG_TUNNEL_VIEW_STORAGE_KEY, awgViewMode);
+	});
+
+	$effect(() => {
+		if (!singboxLayoutReady) return;
+		localStorage.setItem(SINGBOX_LAYOUT_STORAGE_KEY, singboxLayoutMode);
 	});
 
 
@@ -1488,27 +1581,116 @@
 							{subscriptionsList.length === 1 ? 'подписка' : subscriptionsList.length < 5 ? 'подписки' : 'подписок'}
 						</span>
 						<div class="toolbar-actions">
+							{#if subscriptionsList.length > 0}
+								<GridListToggle
+									value={singboxEffectiveLayout}
+									showListOption={showSingboxGridListToggle}
+									onchange={(v) => (singboxLayoutMode = v)}
+								/>
+							{/if}
 							<Button variant="primary" size="md" onclick={() => openWizard('url')}>+ Добавить</Button>
 						</div>
 					</div>
-					{#if subscriptionsActiveCards.length > 0}
-						<div class="subscription-active-grid">
-							{#each subscriptionsActiveCards as card, i (card.subscription.id)}
-								<SubscriptionActiveCard
-									subscription={card.subscription}
-									activeMember={card.activeMember}
-									autoDelayCheckNonce={singboxAutoDelayCheckNonce}
-									autoDelayCheckDelayMs={i * 180}
-								/>
-							{/each}
+					{#if subscriptionsList.length === 0}
+						<div class="subscription-empty">
+							<div class="subscription-empty-title">Нет подписок</div>
+							<p class="subscription-empty-desc">
+								Добавьте подписку — мастер скачает список серверов и создаст selector-туннель.
+							</p>
+							<Button variant="primary" size="md" onclick={() => openWizard('url')}>+ Добавить подписку</Button>
 						</div>
-					{/if}
-					{#if subscriptionsListRows.length > 0}
-						<SubscriptionList
-							subscriptions={subscriptionsListRows}
-							onAdd={() => openWizard('url')}
-							ondelete={requestSubscriptionDelete}
-						/>
+					{:else if singboxEffectiveLayout === 'list'}
+						<div class="awg-summary-row">
+							<StatStrip>
+								<Stat
+									value={`${singboxSubscriptionsTrafficStats.count}`}
+									label="Подписок"
+									sub={`в работе ${singboxSubscriptionsTrafficStats.activeCount} · не активные ${singboxSubscriptionsTrafficStats.inactiveCount}`}
+								/>
+								<Stat
+									value={formatBytes(
+										singboxSubscriptionsTrafficStats.down + singboxSubscriptionsTrafficStats.up,
+									)}
+									label="Суммарный трафик"
+									sub={`↓ ${formatBytes(singboxSubscriptionsTrafficStats.down)} · ↑ ${formatBytes(singboxSubscriptionsTrafficStats.up)}`}
+								/>
+							</StatStrip>
+						</div>
+						{#if subscriptionsActiveCards.length > 0}
+							<h2 class="section-title">В работе</h2>
+							<div class="awg-list-table singbox-sub-list-table singbox-sub-list-table--active">
+								<div class="sbx-sub-list-row sbx-sub-list-row--head">
+									<span>Delay</span>
+									<span>Подписка</span>
+									<span>Режим</span>
+									<span>Активный сервер</span>
+									<span>Серверов</span>
+									<span>Обновлено</span>
+									<span>Трафик</span>
+									<span>Ping</span>
+									<span class="sbx-sub-list-head-actions">Действия</span>
+								</div>
+								{#each subscriptionsActiveCards as card, i (card.subscription.id)}
+									<SubscriptionActiveCard
+										subscription={card.subscription}
+										activeMember={card.activeMember}
+										autoDelayCheckNonce={singboxAutoDelayCheckNonce}
+										autoDelayCheckDelayMs={i * 180}
+										layout="list"
+									/>
+								{/each}
+							</div>
+						{/if}
+						{#if subscriptionsListRows.length > 0}
+							<h2 class="section-title">Не активные</h2>
+							<div class="awg-list-table singbox-sub-list-table singbox-sub-list-table--inactive">
+								<div class="sbx-sub-list-row sbx-sub-list-row--head sbx-sub-inactive-head">
+									<span>Статус</span>
+									<span>Delay</span>
+									<span>Подписка</span>
+									<span>Серверов</span>
+									<span>Активен</span>
+									<span>Трафик</span>
+									<span>Ping</span>
+									<span>Обновлено</span>
+									<span class="sbx-sub-list-head-actions"></span>
+								</div>
+								{#each subscriptionsListRows as sub (sub.id)}
+									<SubscriptionCard
+										subscription={sub}
+										layout="list"
+										ondelete={requestSubscriptionDelete}
+									/>
+								{/each}
+							</div>
+						{/if}
+					{:else}
+						{#if subscriptionsActiveCards.length > 0}
+							<h2 class="section-title">В работе</h2>
+							<div class="subscription-active-grid">
+								{#each subscriptionsActiveCards as card, i (card.subscription.id)}
+									<SubscriptionActiveCard
+										subscription={card.subscription}
+										activeMember={card.activeMember}
+										autoDelayCheckNonce={singboxAutoDelayCheckNonce}
+										autoDelayCheckDelayMs={i * 180}
+										layout="grid"
+									/>
+								{/each}
+							</div>
+						{/if}
+						{#if subscriptionsListRows.length > 0}
+							<h2 class="section-title">Не активные</h2>
+							<div class="subscription-active-grid">
+								{#each subscriptionsListRows as sub (sub.id)}
+									<SubscriptionCard
+										subscription={sub}
+										layout="grid"
+										ondelete={requestSubscriptionDelete}
+									/>
+								{/each}
+							</div>
+						{/if}
 					{/if}
 				{/if}
 			{/if}
@@ -1521,6 +1703,13 @@
 						{singboxTunnelsList.length === 1 ? 'туннель' : singboxTunnelsList.length < 5 ? 'туннеля' : 'туннелей'}
 					</span>
 					<div class="toolbar-actions">
+						{#if singboxTunnelsList.length > 0}
+							<GridListToggle
+								value={singboxEffectiveLayout}
+								showListOption={showSingboxGridListToggle}
+								onchange={(v) => (singboxLayoutMode = v)}
+							/>
+						{/if}
 						<Button variant="primary" size="md" onclick={() => openWizard('choose')}>+ Добавить</Button>
 					</div>
 				</div>
@@ -1582,15 +1771,60 @@
 					</div>
 				</div>
 			{:else if singboxTunnelsList.length > 0}
-				<div class="tunnel-grid">
-					{#each singboxTunnelsList as tunnel, i (tunnel.tag)}
-						<SingboxTunnelCard
-							{tunnel}
-							autoDelayCheckNonce={singboxAutoDelayCheckNonce}
-							autoDelayCheckDelayMs={i * 180}
-						/>
-					{/each}
-				</div>
+				{#if singboxEffectiveLayout === 'list'}
+					<div class="awg-summary-row">
+						<StatStrip>
+							<Stat
+								value={`${singboxTunnelListStats.running}/${singboxTunnelListStats.count}`}
+								label="Процессы"
+								sub={`${singboxTunnelListStats.running} running · ${singboxTunnelListStats.stopped} stopped`}
+							/>
+							<Stat
+								value={formatBytes(singboxTunnelListStats.down + singboxTunnelListStats.up)}
+								label="Суммарный трафик"
+								sub={`↓ ${formatBytes(singboxTunnelListStats.down)} · ↑ ${formatBytes(singboxTunnelListStats.up)}`}
+							/>
+							<Stat
+								value={singboxTunnelListStats.avgDelayMs !== null
+									? `${singboxTunnelListStats.avgDelayMs} ms`
+									: '—'}
+								label="Средний delay"
+								sub="по последним проверкам"
+							/>
+						</StatStrip>
+					</div>
+					<div class="awg-list-table singbox-tunnel-list-table">
+						<div class="sbx-tunnel-list-row sbx-tunnel-list-row--head">
+							<span>Delay</span>
+							<span>Туннель</span>
+							<span>Протокол</span>
+							<span>Сервер</span>
+							<span>Процесс</span>
+							<span>Трафик</span>
+							<span>Ping</span>
+							<span class="sbx-tunnel-list-head-actions">Действия</span>
+						</div>
+						{#each singboxTunnelsList as tunnel, i (tunnel.tag)}
+							<SingboxTunnelCard
+								{tunnel}
+								layout="list"
+								autoDelayCheckNonce={singboxAutoDelayCheckNonce}
+								autoDelayCheckDelayMs={i * 180}
+							/>
+						{/each}
+					</div>
+				{:else}
+					<div class="tunnel-grid">
+						{#each singboxTunnelsList as tunnel, i (tunnel.tag)}
+							<SingboxTunnelCard
+								{tunnel}
+								layout="grid"
+								autoDelayCheckNonce={singboxAutoDelayCheckNonce}
+								autoDelayCheckDelayMs={i * 180}
+							/>
+						{/each}
+					</div>
+				{/if}
 		{/if}
 	{/if}
 	{/if}
@@ -2535,6 +2769,111 @@
 		grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
 		gap: 1rem;
 		margin-bottom: 1rem;
+	}
+
+	.subscription-empty {
+		padding: 3rem 1.5rem;
+		text-align: center;
+		border: 1px dashed var(--color-border);
+		border-radius: 6px;
+		margin-top: 0.5rem;
+	}
+	.subscription-empty-title {
+		color: var(--color-text-primary);
+		font-size: 1.1rem;
+		font-weight: 600;
+		margin-bottom: 0.4rem;
+	}
+	.subscription-empty-desc {
+		color: var(--color-text-muted);
+		font-size: 0.88rem;
+		margin-bottom: 1.2rem;
+	}
+
+	.singbox-tunnel-list-table :global(.sbx-tunnel-list-row) {
+		display: grid;
+		grid-template-columns:
+			minmax(88px, 1fr)
+			minmax(0, 1.2fr)
+			minmax(0, 1fr)
+			minmax(0, 1.05fr)
+			minmax(76px, 0.95fr)
+			minmax(150px, 1.1fr)
+			minmax(72px, 0.95fr)
+			minmax(150px, 1fr);
+		gap: 0.75rem 1rem;
+		align-items: center;
+		padding: 0.75rem 1rem;
+		border-bottom: 1px solid var(--color-border);
+		min-width: 960px;
+	}
+	.singbox-tunnel-list-table :global(.sbx-tunnel-list-row:last-child) {
+		border-bottom: none;
+	}
+	.singbox-tunnel-list-table .sbx-tunnel-list-row--head {
+		background: var(--color-bg-tertiary);
+		font-size: 0.6875rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--color-text-muted);
+		padding-top: 0.65rem;
+		padding-bottom: 0.65rem;
+	}
+	.sbx-tunnel-list-head-actions {
+		text-align: right;
+	}
+
+	.singbox-sub-list-table {
+		margin-bottom: 1.25rem;
+	}
+	.singbox-sub-list-table :global(.sbx-sub-active-row) {
+		min-width: 1040px;
+	}
+	.singbox-sub-list-table--inactive :global(.sbx-sub-inactive-row) {
+		min-width: 960px;
+	}
+	.singbox-sub-list-table .sbx-sub-list-row--head {
+		display: grid;
+		gap: 0 1rem;
+		align-items: center;
+		padding: 0.65rem 1rem;
+		background: var(--color-bg-tertiary);
+		font-size: 0.6875rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--color-text-muted);
+		border-bottom: 1px solid var(--color-border);
+	}
+	.singbox-sub-list-table--active .sbx-sub-list-row--head {
+		grid-template-columns:
+			minmax(92px, 1fr)
+			minmax(132px, 1.1fr)
+			minmax(72px, 0.9fr)
+			minmax(112px, 1fr)
+			minmax(52px, 0.75fr)
+			minmax(88px, 0.95fr)
+			minmax(148px, 1.1fr)
+			minmax(72px, 0.88fr)
+			minmax(150px, 1fr);
+		min-width: 1040px;
+	}
+	.singbox-sub-list-table--inactive .sbx-sub-inactive-head {
+		grid-template-columns:
+			minmax(64px, 0.9fr)
+			minmax(84px, 1fr)
+			minmax(140px, 1.25fr)
+			minmax(56px, 0.85fr)
+			minmax(88px, 1fr)
+			minmax(150px, 1.15fr)
+			minmax(56px, 0.85fr)
+			minmax(88px, 1fr)
+			minmax(44px, 0.75fr);
+		min-width: 960px;
+	}
+	.sbx-sub-list-head-actions {
+		text-align: right;
 	}
 
 	@media (max-width: 700px) {

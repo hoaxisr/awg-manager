@@ -5,6 +5,19 @@ import (
 	"testing"
 )
 
+func TestNormalize_SpaceInFragmentAndConcatenated(t *testing.T) {
+	a := "vless://u@localhost:80?x=1#📆 Осталось: 28 дней"
+	b := "vless://u2@localhost:444#➡️t.me/bot"
+	body := []byte(a + " " + b)
+	lines := NormalizeBody(body, "text/plain")
+	if len(lines) != 2 {
+		t.Fatalf("lines=%d %v want 2", len(lines), lines)
+	}
+	if lines[0] != a || lines[1] != b {
+		t.Errorf("got\n%q\n%q\nwant\n%q\n%q", lines[0], lines[1], a, b)
+	}
+}
+
 func TestNormalize_PlainText(t *testing.T) {
 	body := []byte("vless://a@b:1\ntrojan://c@d:2\n#comment\n\n")
 	lines := NormalizeBody(body, "text/plain")

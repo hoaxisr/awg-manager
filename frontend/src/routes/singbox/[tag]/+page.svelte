@@ -33,7 +33,7 @@
 		try {
 			const fresh = await api.singboxUpdateTunnel(tag, outbound);
 			singboxTunnels.applyMutationResponse(fresh);
-			goto('/');
+			goto('/?tab=singbox');
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -69,7 +69,7 @@
 <PageContainer>
 	<div class="sticky-header">
 		<div class="header-left">
-			<Button variant="ghost" size="sm" onclick={() => goto('/')} iconBefore={backIcon}>
+			<Button variant="ghost" size="sm" onclick={() => goto('/?tab=singbox')} iconBefore={backIcon}>
 				Назад
 			</Button>
 			<h1 class="page-title">{tag}</h1>
@@ -312,7 +312,7 @@
 			{/if}
 
 			<div class="form-actions">
-				<Button variant="secondary" size="sm" onclick={() => goto('/')}>Отмена</Button>
+				<Button variant="secondary" size="sm" onclick={() => goto('/?tab=singbox')}>Отмена</Button>
 				<Button variant="primary" size="sm" type="submit" loading={saving}>
 					Сохранить
 				</Button>

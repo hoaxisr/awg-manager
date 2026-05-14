@@ -39,7 +39,15 @@
 	const singboxFatalLines = $derived.by(() => {
 		const raw = stripAnsi(singboxStatus?.lastError ?? '').trim();
 		if (!raw) return '';
-		const fatal = raw.split('\n').filter((l) => /FATAL/i.test(l));
+		// Match backend stderrLineIndicatesSingBoxFatal: real sing-box text
+		// fatals start with "+TZO YYYY-MM-DD …" or contain "FATAL[" — avoid
+		// JSON keys like "type":"fatal" polluting the settings card.
+		const fatal = raw.split('\n').filter((l) => {
+			const u = l.toUpperCase();
+			if (!u.includes('FATAL')) return false;
+			if (u.includes('FATAL[')) return true;
+			return /^\s*\+[0-9]{1,4}\s+\d{4}-\d{2}-\d{2}\b/.test(l);
+		});
 		return fatal.join('\n');
 	});
 

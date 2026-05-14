@@ -220,6 +220,37 @@ const MOCK_SINGBOX_TUNNELS = [
 		connectivity: { connected: false, latency: null },
 		running: true,
 	},
+	// Process up + TUN present, but outbound unreachable (Clash delay = timeout).
+	{
+		tag: 'vless-blackhole',
+		protocol: 'vless',
+		server: 'blackhole.demo.example',
+		port: 443,
+		security: 'reality',
+		transport: 'tcp',
+		listenPort: 11014,
+		proxyInterface: 't2s3',
+		kernelInterface: 'sb3',
+		sni: 'cdn.cloudflare.com',
+		fingerprint: 'chrome',
+		connectivity: { connected: false, latency: null },
+		running: true,
+	},
+	// sing-box / kernel iface down — card shows "stopped", not a latency timeout.
+	{
+		tag: 'hysteria-stopped',
+		protocol: 'hysteria2',
+		server: 'jp-stale.demo.example',
+		port: 8443,
+		security: 'tls',
+		transport: 'tcp',
+		listenPort: 11015,
+		proxyInterface: 't2s4',
+		kernelInterface: 'sb4',
+		sni: 'jp-stale.demo.example',
+		connectivity: { connected: false, latency: null },
+		running: false,
+	},
 ];
 
 const TRAFFIC_PROFILES = {
@@ -312,6 +343,36 @@ const TRAFFIC_PROFILES = {
 		burstEvery: 8,
 		burstRx: 260_000,
 		burstTx: 90_000,
+	},
+	'vless-blackhole': {
+		baseRx: 8_000,
+		baseTx: 2_000,
+		waveRx: 4_000,
+		waveTx: 1_000,
+		driftRx: 2_000,
+		driftTx: 500,
+		rxStep: 6_000,
+		txStep: 2_000,
+		jitterRx: 1_000,
+		jitterTx: 400,
+		burstEvery: 0,
+		burstRx: 0,
+		burstTx: 0,
+	},
+	'hysteria-stopped': {
+		baseRx: 0,
+		baseTx: 0,
+		waveRx: 0,
+		waveTx: 0,
+		driftRx: 0,
+		driftTx: 0,
+		rxStep: 0,
+		txStep: 0,
+		jitterRx: 0,
+		jitterTx: 0,
+		burstEvery: 0,
+		burstRx: 0,
+		burstTx: 0,
 	},
 };
 
@@ -514,11 +575,37 @@ function tickSingboxTraffic() {
 	});
 }
 
-function currentSingboxDelays() {
-	return MOCK_SINGBOX_TUNNELS.map((t, i) => ({
-		tag: t.tag,
-		delay: 70 + i * 35 + Math.floor(Math.random() * 45),
-	}));
+/** Member tags that always report delay timeout in mocks (matches proxies.test + SSE). */
+const MOCK_SUB_DEAD_MEMBER_TAGS = new Set([
+	'sub-demo0001-deadrelay',
+	'sub-bigprov-rudead01',
+]);
+
+function delayMsForSubscriptionMemberTag(tag) {
+	if (MOCK_SUB_DEAD_MEMBER_TAGS.has(tag)) return 0;
+	let h = 0;
+	for (let i = 0; i < tag.length; i++) h = ((h << 5) - h + tag.charCodeAt(i)) | 0;
+	const base = Math.abs(h) % 370 + 30;
+	const jitter = Math.floor(Math.random() * 40) - 20;
+	return Math.max(1, base + jitter);
+}
+
+/** Samples for SSE `singbox:delay`: managed tunnels + every subscription member tag. */
+function buildSingboxDelayEventBatch() {
+	const out = [];
+	MOCK_SINGBOX_TUNNELS.forEach((t, i) => {
+		let delay;
+		if (t.running === false) delay = 0;
+		else if (!t.connectivity?.connected) delay = 0;
+		else delay = 70 + i * 35 + Math.floor(Math.random() * 45);
+		out.push({ tag: t.tag, delay });
+	});
+	for (const sub of mockSubscriptions) {
+		for (const tag of sub.memberTags) {
+			out.push({ tag, delay: delayMsForSubscriptionMemberTag(tag) });
+		}
+	}
+	return out;
 }
 
 // ── Subscriptions mock state ───────────────────────────────────
@@ -543,11 +630,13 @@ let mockSubscriptions = [
 			'sub-demo0001-aabbccdd',
 			'sub-demo0001-eeff0011',
 			'sub-demo0001-22334455',
+			'sub-demo0001-deadrelay',
 		],
 		members: [
 			{ tag: 'sub-demo0001-aabbccdd', protocol: 'vless', server: 'de01.demo.example', port: 443, transport: 'tcp', security: 'reality' },
 			{ tag: 'sub-demo0001-eeff0011', protocol: 'vless', server: 'nl02.demo.example', port: 443, transport: 'ws', security: 'tls' },
 			{ tag: 'sub-demo0001-22334455', protocol: 'trojan', server: 'fi03.demo.example', port: 443, transport: 'tcp', security: 'tls' },
+			{ tag: 'sub-demo0001-deadrelay', label: 'DE — мёртвый relay', protocol: 'vless', server: '0.0.0.1', port: 443, transport: 'tcp', security: 'reality' },
 		],
 		orphanTags: [],
 		activeMember: 'sub-demo0001-aabbccdd',
@@ -578,7 +667,7 @@ let mockSubscriptions = [
 		// - urltest mode header (Issue 1)
 		// - per-member labels from #fragment (Issue 2): country names, mixed languages
 		// - SNI row visibility (Issue from previous PR)
-		// - 11 members (above the "10+ feels slow" threshold)
+		// - 12 members (above the "10+ feels slow" threshold)
 		id: 'sub-bigprov',
 		label: 'Big Provider Pro',
 		url: 'https://bigprovider.example/sub/xyz',
@@ -610,6 +699,7 @@ let mockSubscriptions = [
 			'sub-bigprov-hk09q7r8',
 			'sub-bigprov-ca10s9t0',
 			'sub-bigprov-au11u1v2',
+			'sub-bigprov-rudead01',
 		],
 		members: [
 			{ tag: 'sub-bigprov-de01a1b2', label: '🇩🇪 Germany — Frankfurt', protocol: 'vless',       server: 'de01.bigprov.example',  port: 443,   sni: 'cdn.example.com',     transport: 'tcp', security: 'reality' },
@@ -623,10 +713,52 @@ let mockSubscriptions = [
 			{ tag: 'sub-bigprov-hk09q7r8', label: '🇭🇰 Hong Kong',            protocol: 'trojan',     server: 'hk09.bigprov.example',  port: 443,                                transport: 'ws',  security: 'tls' },
 			{ tag: 'sub-bigprov-ca10s9t0', label: '🇨🇦 Canada — Toronto',     protocol: 'vless',      server: 'ca10.bigprov.example',  port: 21123, sni: 'ca.example.cloud',    transport: 'tcp', security: 'tls' },
 			{ tag: 'sub-bigprov-au11u1v2',                                    protocol: 'naive',      server: 'au11.bigprov.example',  port: 443,   sni: 'au.example.app',      transport: 'tcp', security: 'tls' },
+			{ tag: 'sub-bigprov-rudead01', label: '🇷🇺 RU — offline',          protocol: 'vless',      server: '10.255.255.1',        port: 443,   sni: 'dead.bigprov.example', transport: 'tcp', security: 'tls' },
 		],
 		orphanTags: [],
 		activeMember: 'sub-bigprov-de01a1b2',
 		enabled: true,
+	},
+	{
+		id: 'sub-off-legacy',
+		label: 'Legacy EU (выключена)',
+		url: 'https://legacy.example/sub/old',
+		headers: [],
+		refreshHours: 0,
+		lastFetched: new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString(),
+		lastError: '',
+		selectorTag: 'sub-off-legacy',
+		inboundTag: 'sub-off-legacy-in',
+		listenPort: 11004,
+		proxyIndex: 14,
+		memberTags: ['sub-off-legacy-m01'],
+		members: [
+			{ tag: 'sub-off-legacy-m01', protocol: 'vless', server: 'legacy.example', port: 443, transport: 'tcp', security: 'tls' },
+		],
+		orphanTags: [],
+		activeMember: 'sub-off-legacy-m01',
+		enabled: false,
+	},
+	{
+		id: 'sub-off-trial',
+		label: 'Пробный период (выключена)',
+		url: 'https://trial.example/sub/expired',
+		headers: [],
+		refreshHours: 12,
+		lastFetched: new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString(),
+		lastError: 'subscription expired',
+		selectorTag: 'sub-off-trial',
+		inboundTag: 'sub-off-trial-in',
+		listenPort: 11005,
+		proxyIndex: 15,
+		memberTags: ['sub-off-trial-m01', 'sub-off-trial-m02'],
+		members: [
+			{ tag: 'sub-off-trial-m01', label: 'Node A', protocol: 'trojan', server: 'trial.example', port: 443, transport: 'ws', security: 'tls' },
+			{ tag: 'sub-off-trial-m02', label: 'Node B', protocol: 'vless', server: 'trial2.example', port: 443, transport: 'tcp', security: 'reality' },
+		],
+		orphanTags: [],
+		activeMember: 'sub-off-trial-m01',
+		enabled: false,
 	},
 ];
 let mockSubID = 2;
@@ -911,7 +1043,7 @@ const mockProxies = {
 	'veesp-fast': {
 		type: 'selector',
 		now: 'vless-1',
-		all: ['vless-1', 'vless-2', 'vless-3'],
+		all: ['vless-1', 'vless-dead', 'vless-2', 'vless-3'],
 	},
 	'auto': {
 		type: 'urltest',
@@ -921,12 +1053,18 @@ const mockProxies = {
 };
 const mockProxyDelays = {
 	'vless-1': 45,
+	'vless-dead': 0,
 	'vless-2': 78,
 	'vless-3': 180,
 	'vless-4': 320,
 };
+const PROXY_DELAY_ALWAYS_DEAD = new Set(['vless-dead']);
 function randomizeDelays() {
 	for (const k of Object.keys(mockProxyDelays)) {
+		if (PROXY_DELAY_ALWAYS_DEAD.has(k)) {
+			mockProxyDelays[k] = 0;
+			continue;
+		}
 		const base = mockProxyDelays[k];
 		if (Math.random() < 0.05) {
 			mockProxyDelays[k] = 0; // 5% timeout
@@ -1034,7 +1172,7 @@ const server = http.createServer(async (req, res) => {
 			sendEvent('tunnel:traffic', event);
 		}
 		sendEvent('singbox:traffic', tickSingboxTraffic());
-		for (const delay of currentSingboxDelays()) {
+		for (const delay of buildSingboxDelayEventBatch()) {
 			sendEvent('singbox:delay', delay);
 		}
 
@@ -1043,7 +1181,7 @@ const server = http.createServer(async (req, res) => {
 				sendEvent('tunnel:traffic', event);
 			}
 			sendEvent('singbox:traffic', tickSingboxTraffic());
-			for (const delay of currentSingboxDelays()) {
+			for (const delay of buildSingboxDelayEventBatch()) {
 				sendEvent('singbox:delay', delay);
 			}
 		}, 1500);
@@ -1244,12 +1382,7 @@ const server = http.createServer(async (req, res) => {
 				}
 				const delays = {};
 				for (const tag of sub.memberTags) {
-					// Stable hash of the tag → base latency 30..400 ms, plus jitter.
-					let h = 0;
-					for (let i = 0; i < tag.length; i++) h = ((h << 5) - h + tag.charCodeAt(i)) | 0;
-					const base = Math.abs(h) % 370 + 30;
-					const jitter = Math.floor(Math.random() * 40) - 20;
-					delays[tag] = Math.max(1, base + jitter);
+					delays[tag] = delayMsForSubscriptionMemberTag(tag);
 				}
 				send(res, 200, { success: true, data: { delays } });
 				console.log(`[mock-proxy] proxies.test sub ${group} → ${JSON.stringify(delays)}`);
@@ -1357,6 +1490,33 @@ const server = http.createServer(async (req, res) => {
 			success: true,
 			data: MOCK_SINGBOX_TUNNELS.map((t) => ({ ...t })),
 		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/tunnels/delay-check') {
+		const tag = new URL(req.url, 'http://x').searchParams.get('tag') ?? '';
+		if (!tag) {
+			send(res, 400, { success: false, error: 'tag required' });
+			return;
+		}
+		const tunnel = MOCK_SINGBOX_TUNNELS.find((t) => t.tag === tag);
+		let delay = 0;
+		if (tunnel) {
+			if (tunnel.running === false) delay = 0;
+			else if (!tunnel.connectivity?.connected) delay = 0;
+			else {
+				const i = MOCK_SINGBOX_TUNNELS.indexOf(tunnel);
+				delay = 70 + i * 35 + Math.floor(Math.random() * 45);
+			}
+		} else {
+			const knownMember = mockSubscriptions.some((s) => s.memberTags.includes(tag));
+			if (!knownMember) {
+				send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: `unknown tag ${tag}` } });
+				return;
+			}
+			delay = delayMsForSubscriptionMemberTag(tag);
+		}
+		send(res, 200, { success: true, data: { tag, delay } });
 		return;
 	}
 

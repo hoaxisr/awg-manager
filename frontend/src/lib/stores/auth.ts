@@ -47,7 +47,7 @@ function createAuthStore() {
 			if (import.meta.env.DEV) {
 				set({
 					authenticated: true,
-					authDisabled: true,
+					authDisabled: false,
 					login: 'dev',
 					loading: false,
 					error: null

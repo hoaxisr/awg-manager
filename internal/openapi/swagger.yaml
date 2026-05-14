@@ -1745,6 +1745,67 @@ definitions:
           type: string
         type: array
     type: object
+  api.RouterDetails:
+    properties:
+      architecture:
+        type: string
+      bootSlot:
+        type: string
+      cpuModel:
+        type: string
+      cpuTempC:
+        type: integer
+      featureComponents:
+        items:
+          type: string
+        type: array
+      firmwareBuildDate:
+        type: string
+      firmwareRelease:
+        type: string
+      firmwareSandbox:
+        type: string
+      firmwareTitle:
+        type: string
+      hardwareId:
+        type: string
+      loadAverage:
+        type: string
+      memoryTotalMB:
+        type: integer
+      memoryUsedMB:
+        type: integer
+      memoryUsedPercent:
+        type: integer
+      meshMembers:
+        items:
+          type: string
+        type: array
+      model:
+        type: string
+      modelDisplay:
+        type: string
+      opkgStorage:
+        type: string
+      portedBuild:
+        type: boolean
+      region:
+        type: string
+      storageComponents:
+        items:
+          type: string
+        type: array
+      uptimeHuman:
+        type: string
+      vpnComponents:
+        items:
+          type: string
+        type: array
+      wifi5TempC:
+        type: integer
+      wifi24TempC:
+        type: integer
+    type: object
   api.RouterInterfaceDTO:
     properties:
       label:
@@ -3161,6 +3222,8 @@ definitions:
       kernelModuleVersion:
         example: ""
         type: string
+      routerDetails:
+        $ref: '#/definitions/api.RouterDetails'
       routerIP:
         example: 192.168.1.1
         type: string

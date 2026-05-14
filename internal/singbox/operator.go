@@ -210,6 +210,23 @@ func NewOperator(d OperatorDeps) *Operator {
 	return op
 }
 
+// singBoxStderrTextHead matches the wall-clock prefix sing-box's text logger
+// emits on stderr (e.g. "+0000 2026-05-14 21:45:56 …"). Used so JSON or
+// other structured blobs that mention "fatal" do not populate LastError.
+var singBoxStderrTextHead = regexp.MustCompile(`^\s*\+[0-9]{1,4}\s+\d{4}-\d{2}-\d{2}\b`)
+
+func stderrLineIndicatesSingBoxFatal(line string) bool {
+	u := strings.ToUpper(line)
+	if !strings.Contains(u, "FATAL") {
+		return false
+	}
+	// Bracket level token (… FATAL[0000] …) without requiring the date prefix.
+	if strings.Contains(u, "FATAL[") {
+		return true
+	}
+	return singBoxStderrTextHead.MatchString(line)
+}
+
 // handleStderrLine is invoked by Process for every line sing-box writes
 // to stderr while running. Forwards each line to the slog (which the app
 // log handler attaches to and persists in the in-memory log buffer
@@ -218,7 +235,7 @@ func NewOperator(d OperatorDeps) *Operator {
 func (o *Operator) handleStderrLine(line string) {
 	upper := strings.ToUpper(line)
 	switch {
-	case strings.Contains(upper, "FATAL"):
+	case stderrLineIndicatesSingBoxFatal(line):
 		o.log.Error("singbox stderr", "line", line)
 		o.setLastError(line)
 	case strings.Contains(upper, "ERROR"):
@@ -1141,6 +1158,47 @@ func (o *Operator) GetTunnel(ctx context.Context, tag string) (json.RawMessage, 
 	return cfg.GetOutbound(tag)
 }
 
+// tunnelTagsInUse returns outbound tags already present in cfg.
+func tunnelTagsInUse(cfg *Config) map[string]bool {
+	used := make(map[string]bool)
+	for _, t := range cfg.Tunnels() {
+		used[t.Tag] = true
+	}
+	return used
+}
+
+// allocUniqueTunnelTag returns base if unused; otherwise base-2, base-3, …
+// (Share links often reuse the same URI fragment for different nodes — sing-box
+// tags must stay unique.)
+func allocUniqueTunnelTag(used map[string]bool, base string) string {
+	if base == "" {
+		base = "tunnel"
+	}
+	candidate := base
+	if !used[candidate] {
+		return candidate
+	}
+	for n := 2; ; n++ {
+		candidate = fmt.Sprintf("%s-%d", base, n)
+		if !used[candidate] {
+			return candidate
+		}
+	}
+}
+
+func outboundJSONWithTag(raw json.RawMessage, tag string) (json.RawMessage, error) {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("outbound json: %w", err)
+	}
+	m["tag"] = tag
+	out, err := json.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(out), nil
+}
+
 // AddTunnels parses one or more links and atomically adds them.
 // Returns successfully-added tunnels and parse errors.
 func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelInfo, []BatchError, error) {
@@ -1157,6 +1215,7 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 	if err != nil {
 		return nil, parseErrs, err
 	}
+	tagOccupied := tunnelTagsInUse(cfg)
 	// reserved tracks ProxyN indices we've handed out in this batch so
 	// NextFreeIndex doesn't reuse the same slot twice before the batch
 	// is committed to NDMS.
@@ -1169,12 +1228,19 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 			continue
 		}
 		listenPort := firstPort + freeIdx
-		if err := cfg.AddTunnelWithListenPort(p.Tag, p.Protocol, p.Server, int(p.Port), listenPort, p.Outbound); err != nil {
+		tag := allocUniqueTunnelTag(tagOccupied, p.Tag)
+		outbound, jerr := outboundJSONWithTag(p.Outbound, tag)
+		if jerr != nil {
+			parseErrs = append(parseErrs, BatchError{Input: p.Tag, Err: jerr})
+			continue
+		}
+		if err := cfg.AddTunnelWithListenPort(tag, p.Protocol, p.Server, int(p.Port), listenPort, outbound); err != nil {
 			parseErrs = append(parseErrs, BatchError{Input: p.Tag, Err: err})
 			continue
 		}
+		tagOccupied[tag] = true
 		reserved[freeIdx] = true
-		addedTags = append(addedTags, p.Tag)
+		addedTags = append(addedTags, tag)
 	}
 	if len(addedTags) == 0 {
 		return nil, parseErrs, nil

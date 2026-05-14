@@ -9,18 +9,21 @@
 		triggerDelayCheck,
 	} from '$lib/stores/singbox';
 	import { untrack } from 'svelte';
-	import { Modal, Button, TrafficChart } from '$lib/components/ui';
+	import { Modal, Button, TrafficChart, TrafficSparkline } from '$lib/components/ui';
 	import { getTrafficRates, subscribeTraffic, loadHistory } from '$lib/stores/traffic';
 	import SingboxSpeedTestModal from './SingboxSpeedTestModal.svelte';
+	import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
 
 	interface Props {
 		tunnel: SingboxTunnel;
+		layout?: SingboxLayoutMode;
 		autoDelayCheckNonce?: number;
 		autoDelayCheckDelayMs?: number;
 	}
 
 	let {
 		tunnel,
+		layout = 'grid',
 		autoDelayCheckNonce = 0,
 		autoDelayCheckDelayMs = 0,
 	}: Props = $props();
@@ -47,6 +50,17 @@
 			: 0,
 	);
 	const traffic = $derived($singboxTraffic.get(tunnel.tag));
+
+	const trafficSparkData = $derived.by(() => {
+		const n = Math.min(rxRates.length, txRates.length);
+		if (n === 0) return [];
+		const take = Math.min(36, n);
+		const out: number[] = [];
+		for (let i = n - take; i < n; i++) {
+			out.push(Math.max(0, rxRates[i] ?? 0) + Math.max(0, txRates[i] ?? 0));
+		}
+		return out;
+	});
 
 	type State = 'ok' | 'slow' | 'fail' | 'unknown' | 'stopped';
 	const cardState: State = $derived.by(() => {
@@ -155,6 +169,116 @@
 	});
 </script>
 
+{#if layout === 'list'}
+	<div
+		class="sbx-tunnel-list-row"
+		class:ok={cardState === 'ok'}
+		class:slow={cardState === 'slow'}
+		class:fail={cardState === 'fail'}
+		class:unknown={cardState === 'unknown'}
+		class:stopped={cardState === 'stopped'}
+	>
+		<div class="list-cell list-cell-delay" data-label="Delay">
+			<span class="dot {cardState}" aria-hidden="true"></span>
+			<button
+				type="button"
+				class="lat-btn {cardState}"
+				class:checking
+				onclick={triggerCheck}
+				title="Обновить delay"
+				disabled={checking}
+			>
+				{checking ? '...' : latText}
+			</button>
+		</div>
+		<div class="list-cell list-cell-name" data-label="Туннель">
+			<button type="button" class="name-btn" onclick={edit}>{tunnel.tag}</button>
+			<div class="list-sub mono">
+				{tunnel.proxyInterface}
+				{#if tunnel.kernelInterface}<span> · {tunnel.kernelInterface}</span>{/if}
+			</div>
+		</div>
+		<div class="list-cell list-cell-badges" data-label="Протокол">
+			<div class="badges-inline">
+				<span class="badge b-{tunnel.protocol}">{protocolLabel}</span>
+				{#if tunnel.security === 'reality'}
+					<span class="badge b-reality">Reality</span>
+				{:else if tunnel.security === 'tls'}
+					<span class="badge b-tls">TLS</span>
+				{/if}
+				<span class="badge b-transport">{tunnel.transport.toUpperCase()}</span>
+			</div>
+		</div>
+		<div class="list-cell list-cell-server" data-label="Сервер">
+			<div class="server-line">
+				{#if showServer}
+					<span class="mono">{tunnel.server}</span>
+				{:else}
+					<span class="muted">••••••••</span>
+				{/if}
+				<button
+					type="button"
+					class="eye-inline"
+					onclick={() => (showServer = !showServer)}
+					aria-label={showServer ? 'Скрыть' : 'Показать'}
+				>
+					{#if showServer}
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+					{:else}
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+					{/if}
+				</button>
+				<span class="mono">:{tunnel.port}</span>
+			</div>
+		</div>
+		<div class="list-cell list-cell-run" data-label="Процесс">
+			<span class="run-pill" class:run-on={tunnel.running === true}>{tunnel.running === true ? 'running' : 'stopped'}</span>
+		</div>
+		<div class="list-cell list-cell-traffic" data-label="Трафик">
+			<div class="traffic-row-list">
+				<TrafficSparkline
+					data={trafficSparkData}
+					width={84}
+					height={22}
+					color={tunnel.running === true ? 'var(--color-accent)' : 'var(--color-border-hover)'}
+				/>
+				<div class="traffic-mini-col mono">
+					<span>↓ {formatBytes(traffic?.download ?? 0)}</span>
+					<span>↑ {formatBytes(traffic?.upload ?? 0)}</span>
+				</div>
+			</div>
+		</div>
+		<div class="list-cell list-cell-ping-mini" data-label="Ping">
+			<div
+				class="spark-mini spark {cardState}"
+				onclick={triggerCheck}
+				onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && triggerCheck()}
+				role="button"
+				tabindex="0"
+				title="Клик — обновить delay"
+			>
+				{#if history.length === 0}
+					{#each Array(10) as _, i (i)}
+						<div class="bar empty"></div>
+					{/each}
+				{:else}
+					{@const max = Math.max(...history.map((v) => (v <= 0 ? 100 : v)), 100)}
+					{#each history.slice(-14) as d, i (i)}
+						<div class="bar" style="height: {Math.max((d <= 0 ? max : d) / max, 0.08) * 100}%;"></div>
+					{/each}
+				{/if}
+			</div>
+		</div>
+		<div class="list-cell list-cell-actions" data-label="Действия">
+			<div class="list-actions">
+				<Button variant="ghost" size="sm" onclick={edit}>Изменить</Button>
+				<Button variant="danger" size="sm" onclick={() => (confirmDeleteOpen = true)} loading={deleting}>
+					Удалить
+				</Button>
+			</div>
+		</div>
+	</div>
+{:else}
 <div class="card" class:ok={cardState === 'ok'} class:slow={cardState === 'slow'} class:fail={cardState === 'fail'} class:unknown={cardState === 'unknown'} class:stopped={cardState === 'stopped'}>
 	<div class="led-wrap">
 		<span class="dot {cardState}" aria-hidden="true"></span>
@@ -294,6 +418,7 @@
 		</Button>
 	</div>
 </div>
+{/if}
 
 <SingboxSpeedTestModal
 	open={speedtestOpen}
@@ -506,6 +631,35 @@
 		height: 30% !important;
 	}
 
+	.spark-mini {
+		height: 22px;
+		max-width: 100%;
+		gap: 1px;
+		padding: 1px 0;
+	}
+	.spark-mini .bar {
+		min-width: 0;
+		min-height: 2px;
+	}
+	.list-cell-ping-mini {
+		justify-content: flex-start;
+	}
+	.traffic-row-list {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		min-width: 0;
+	}
+	.traffic-mini-col {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+		font-size: 0.7rem;
+		line-height: 1.15;
+		color: var(--text-muted);
+		flex-shrink: 0;
+	}
+
 	.actions {
 		display: flex;
 		gap: 6px;
@@ -513,5 +667,88 @@
 		margin-top: 12px;
 		padding-top: 10px;
 		border-top: 1px solid var(--border);
+	}
+
+	/* List row (grid columns set on parent .singbox-tunnel-list-table) */
+	.sbx-tunnel-list-row {
+		align-items: center;
+		min-width: 0;
+	}
+	.sbx-tunnel-list-row .list-cell {
+		min-width: 0;
+	}
+	.sbx-tunnel-list-row .list-cell-delay {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+	.sbx-tunnel-list-row .name-btn {
+		font: inherit;
+		font-size: 0.9375rem;
+		font-weight: 600;
+		color: var(--text);
+		background: none;
+		border: none;
+		padding: 0;
+		cursor: pointer;
+		text-align: left;
+	}
+	.sbx-tunnel-list-row .name-btn:hover {
+		color: var(--color-accent, #58a6ff);
+	}
+	.sbx-tunnel-list-row .list-sub {
+		margin-top: 0.2rem;
+		font-size: 0.75rem;
+		color: var(--text-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.badges-inline {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.25rem;
+	}
+	.server-line {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-size: 0.8125rem;
+		overflow: hidden;
+	}
+	.muted {
+		color: var(--text-muted);
+	}
+	.eye-inline {
+		display: inline-flex;
+		padding: 0.1rem;
+		border: none;
+		background: none;
+		color: var(--text-muted);
+		cursor: pointer;
+	}
+	.run-pill {
+		font-size: 0.68rem;
+		font-weight: 600;
+		padding: 0.15rem 0.45rem;
+		border-radius: 999px;
+		background: var(--bg-tertiary, rgba(100, 100, 100, 0.25));
+		color: var(--text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+	.run-pill.run-on {
+		background: rgba(16, 185, 129, 0.2);
+		color: #10b981;
+	}
+	.traffic-mini {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+	}
+	.list-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.35rem;
+		justify-content: flex-end;
 	}
 </style>

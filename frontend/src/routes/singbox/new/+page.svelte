@@ -20,7 +20,7 @@
 <PageContainer>
 	<div class="sticky-header">
 		<div class="header-left">
-			<Button variant="ghost" size="sm" onclick={() => goto('/')} iconBefore={backIcon}>
+			<Button variant="ghost" size="sm" onclick={() => goto('/?tab=singbox')} iconBefore={backIcon}>
 				Назад
 			</Button>
 			<h1 class="page-title">Новый Sing-box туннель</h1>

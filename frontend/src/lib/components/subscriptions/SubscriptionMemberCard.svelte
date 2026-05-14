@@ -1,6 +1,11 @@
 <script lang="ts">
 	import type { SubscriptionMember } from '$lib/types';
-	import { singboxDelayHistory, triggerDelayCheck } from '$lib/stores/singbox';
+	import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
+	import { untrack } from 'svelte';
+	import { singboxDelayHistory, singboxTraffic, triggerDelayCheck } from '$lib/stores/singbox';
+	import { getTrafficRates, subscribeTraffic, loadHistory } from '$lib/stores/traffic';
+	import { TrafficSparkline } from '$lib/components/ui';
+	import { formatBytes } from '$lib/utils/format';
 
 	interface Props {
 		member: SubscriptionMember;
@@ -8,8 +13,9 @@
 		switching: boolean;
 		disabled: boolean;
 		onclick: () => void;
+		layout?: SingboxLayoutMode;
 	}
-	let { member, active, switching, disabled, onclick }: Props = $props();
+	let { member, active, switching, disabled, onclick, layout = 'grid' }: Props = $props();
 
 	const history = $derived($singboxDelayHistory.get(member.tag) ?? []);
 	const latest = $derived(history.length > 0 ? history[history.length - 1] : -1);
@@ -21,8 +27,8 @@
 
 	let testing = $state(false);
 
-	async function runTest(e: MouseEvent | KeyboardEvent): Promise<void> {
-		e.stopPropagation(); // don't trigger card-as-radio click
+	async function runTest(e?: MouseEvent | KeyboardEvent): Promise<void> {
+		e?.stopPropagation(); // don't trigger card-as-radio click
 		if (testing) return;
 		testing = true;
 		try {
@@ -65,8 +71,115 @@
 			default: return member.protocol;
 		}
 	});
+
+	const heading = $derived(member.label || member.server);
+
+	const traffic = $derived($singboxTraffic.get(member.tag));
+
+	const trafficSparkData = $derived.by(() => {
+		const n = Math.min(rxRates.length, txRates.length);
+		if (n === 0) return [];
+		const take = Math.min(36, n);
+		const out: number[] = [];
+		for (let i = n - take; i < n; i++) {
+			out.push(Math.max(0, rxRates[i] ?? 0) + Math.max(0, txRates[i] ?? 0));
+		}
+		return out;
+	});
+
+	let rxRates = $state<number[]>([]);
+	let txRates = $state<number[]>([]);
+	let memberTag = $derived(member.tag);
+
+	$effect(() => {
+		const tag = memberTag;
+		const update = () => {
+			const t = getTrafficRates(tag);
+			rxRates = t.rx;
+			txRates = t.tx;
+		};
+		update();
+		return subscribeTraffic(update);
+	});
+
+	let trafficHistoryLoaded = false;
+	$effect(() => {
+		const tag = memberTag;
+		if (trafficHistoryLoaded) return;
+		trafficHistoryLoaded = true;
+		untrack(() => loadHistory(tag));
+	});
 </script>
 
+{#if layout === 'list'}
+	<div class="mbr-flatten">
+		<div class="c c-delay" data-label="Delay">
+			<span
+				role="button"
+				tabindex="0"
+				class="delay-btn {delayState}"
+				class:is-disabled={testing}
+				onclick={runTest}
+				onkeydown={onTestKeydown}
+			>
+				{testing ? '...' : delayText}
+			</span>
+		</div>
+		<div class="c c-name" data-label="Сервер">
+			<span class="n1" title={heading}>{heading}</span>
+			<span class="n2 mono" title={member.tag}>{member.server}:{member.port}</span>
+		</div>
+		<div class="c c-badges" data-label="Протокол">
+			<span class="badge proto">{protocolLabel}</span>
+			{#if member.transport && member.transport !== 'tcp'}
+				<span class="badge transport">{member.transport.toUpperCase()}</span>
+			{/if}
+		</div>
+		<div class="c c-traffic-mini" data-label="Трафик">
+			<div class="traffic-row-list">
+				<TrafficSparkline
+					data={trafficSparkData}
+					width={84}
+					height={22}
+					color={active ? 'var(--color-accent)' : 'var(--color-border-hover)'}
+				/>
+				<div class="traffic-mini-col mono">
+					<span>↓ {formatBytes(traffic?.download ?? 0)}</span>
+					<span>↑ {formatBytes(traffic?.upload ?? 0)}</span>
+				</div>
+			</div>
+		</div>
+		<div class="c c-ping-mini" data-label="Ping">
+			<div
+				class="spark-mini {delayState}"
+				role="button"
+				tabindex="0"
+				onclick={(e) => runTest(e)}
+				onkeydown={onTestKeydown}
+				title="Клик — обновить delay"
+			>
+				{#if history.length === 0}
+					{#each Array(10) as _, i (i)}
+						<div class="bar empty"></div>
+					{/each}
+				{:else}
+					{@const max = Math.max(...history.map((v) => (v <= 0 ? 100 : v)), 100)}
+					{#each history.slice(-14) as d, i (i)}
+						<div class="bar" style="height: {Math.max((d <= 0 ? max : d) / max, 0.08) * 100}%;"></div>
+					{/each}
+				{/if}
+			</div>
+		</div>
+		<div class="c mono c-tag" data-label="Тег">{member.tag}</div>
+		<div class="c c-state" data-label="">
+			{#if active}
+				<span class="state-badge active-badge">активен</span>
+			{:else if switching}
+				<span class="state-badge switching-badge">…</span>
+			{/if}
+		</div>
+	</div>
+{:else}
 <button
 	type="button"
 	class="card"
@@ -78,7 +191,7 @@
 >
 	<div class="header">
 		<span class="led" class:on={active} aria-hidden="true"></span>
-		<span class="title" title={member.tag}>{member.label || member.server}</span>
+		<span class="title" title={heading}>{heading}</span>
 		<span class="port mono">:{member.port}</span>
 	</div>
 	<div class="badges">
@@ -134,6 +247,7 @@
 		{/if}
 	</div>
 </button>
+{/if}
 
 <style>
 	.card {
@@ -176,9 +290,15 @@
 		font-size: 0.92rem;
 		font-weight: 600;
 		flex: 1;
+		min-width: 0;
 		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		white-space: normal;
+		word-break: break-word;
+		overflow-wrap: anywhere;
 	}
 	.port { font-size: 0.78rem; color: var(--color-text-muted); }
 	.badges { display: flex; gap: 0.4rem; flex-wrap: wrap; }
@@ -287,5 +407,98 @@
 			padding: 13px 14px;
 			min-height: 0;
 		}
+	}
+
+	.c {
+		display: flex;
+		align-items: center;
+		min-width: 0;
+		padding: 0.65rem 0;
+		font-size: 0.8125rem;
+		color: var(--color-text-secondary);
+	}
+	.c-name {
+		flex-direction: column;
+		align-items: flex-start !important;
+		gap: 0.12rem;
+	}
+	.n1 {
+		font-weight: 600;
+		color: var(--color-text-primary);
+		font-size: 0.9rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 100%;
+	}
+	.n2 {
+		font-size: 0.72rem;
+		color: var(--color-text-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 100%;
+	}
+	.c-badges {
+		gap: 0.3rem;
+		flex-wrap: wrap;
+	}
+	.c-tag {
+		font-size: 0.72rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.c-ping-mini {
+		padding-left: 0;
+		padding-right: 0;
+	}
+	.spark-mini {
+		display: flex;
+		align-items: flex-end;
+		gap: 1px;
+		height: 20px;
+		width: 100%;
+		max-width: 82px;
+		cursor: pointer;
+	}
+	.spark-mini .bar {
+		flex: 1;
+		min-width: 0;
+		min-height: 2px;
+		border-radius: 1px;
+		background: var(--color-bg-tertiary);
+	}
+	.spark-mini.ok .bar {
+		background: #3fb950;
+	}
+	.spark-mini.slow .bar {
+		background: #d29922;
+	}
+	.spark-mini.fail .bar {
+		background: #f85149;
+	}
+	.spark-mini.unknown .bar,
+	.spark-mini .bar.empty {
+		opacity: 0.35;
+		height: 30% !important;
+	}
+	.c-traffic-mini {
+		min-width: 0;
+	}
+	.traffic-row-list {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		min-width: 0;
+		width: 100%;
+	}
+	.traffic-mini-col {
+		display: flex;
+		flex-direction: column;
+		gap: 0.08rem;
+		font-size: 0.68rem;
+		line-height: 1.15;
+		color: var(--color-text-muted);
+		flex-shrink: 0;
 	}
 </style>

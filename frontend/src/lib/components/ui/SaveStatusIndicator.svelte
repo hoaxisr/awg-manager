@@ -119,16 +119,8 @@
 		align-items: center;
 		justify-content: flex-start;
 		flex-shrink: 0;
-		width: 8rem;
-        text-align: center;
 		min-height: 1.375rem;
 		box-sizing: border-box;
-	}
-
-	@media (max-width: 640px) {
-		.save-status-slot {
-			width: 4rem;
-		}
 	}
 
 	.save-status-placeholder {

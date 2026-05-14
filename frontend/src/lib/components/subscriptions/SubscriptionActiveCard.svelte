@@ -2,29 +2,34 @@
     import { untrack } from 'svelte';
     import { goto } from '$app/navigation';
     import { api } from '$lib/api/client';
-    import { Button } from '$lib/components/ui';
+    import { Button, TrafficSparkline } from '$lib/components/ui';
+    import { getTrafficRates, subscribeTraffic, loadHistory } from '$lib/stores/traffic';
     import {
         singboxDelayHistory,
         singboxTraffic,
         triggerDelayCheck,
     } from '$lib/stores/singbox';
     import { subscriptionsStore } from '$lib/stores/subscriptions';
+    import { notifications } from '$lib/stores/notifications';
     import type { Subscription, SubscriptionMember } from '$lib/types';
     import { formatRelativeTime } from '$lib/utils/format';
     import SubscriptionMemberPicker from './SubscriptionMemberPicker.svelte';
     import SingboxSpeedTestModal from '$lib/components/singbox/SingboxSpeedTestModal.svelte';
+    import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
 
     interface Props {
         subscription: Subscription;
         activeMember: SubscriptionMember;
         autoDelayCheckNonce?: number;
         autoDelayCheckDelayMs?: number;
+        layout?: SingboxLayoutMode;
     }
     let {
         subscription,
         activeMember,
         autoDelayCheckNonce = 0,
         autoDelayCheckDelayMs = 0,
+        layout = 'grid',
     }: Props = $props();
 
     let pickerOpen = $state(false);
@@ -55,7 +60,45 @@
             history[history.length - 2] <= 0,
     );
     const traffic = $derived($singboxTraffic.get(activeMember.tag));
+
+    const trafficSparkData = $derived.by(() => {
+        const n = Math.min(rxRates.length, txRates.length);
+        if (n === 0) return [];
+        const take = Math.min(36, n);
+        const out: number[] = [];
+        for (let i = n - take; i < n; i++) {
+            out.push(Math.max(0, rxRates[i] ?? 0) + Math.max(0, txRates[i] ?? 0));
+        }
+        return out;
+    });
+
+    let rxRates = $state<number[]>([]);
+    let txRates = $state<number[]>([]);
+    let trafficMemberTag = $derived(activeMember.tag);
+
+    $effect(() => {
+        const tag = trafficMemberTag;
+        const update = () => {
+            const t = getTrafficRates(tag);
+            rxRates = t.rx;
+            txRates = t.tx;
+        };
+        update();
+        return subscribeTraffic(update);
+    });
+
+    $effect(() => {
+        const tag = trafficMemberTag;
+        untrack(() => loadHistory(tag));
+    });
     const endpointText = $derived(`${activeMember.server}:${activeMember.port}`);
+    /** List row: title above IP — prefer remark, else outbound tag. */
+    const listActiveServerName = $derived(
+        activeMember.label?.trim() || activeMember.tag?.trim() || '',
+    );
+    const activeEndpointTitle = $derived(
+        listActiveServerName ? `${listActiveServerName} · ${endpointText}` : endpointText,
+    );
     const isURLTest = $derived(subscription.mode === 'urltest');
     const lastFetchedHuman = $derived(
         subscription.lastFetched ? formatRelativeTime(subscription.lastFetched) : '—',
@@ -132,6 +175,165 @@
 
 </script>
 
+{#if layout === 'list'}
+    <div
+        class="sub-active-list-group"
+        class:ok={cardState === 'ok'}
+        class:slow={cardState === 'slow'}
+        class:fail={cardState === 'fail'}
+        class:unknown={cardState === 'unknown'}
+    >
+        <div
+            class="sbx-sub-active-row"
+            onclick={openDetail}
+            onkeydown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    openDetail();
+                }
+            }}
+            role="button"
+            tabindex="0"
+        >
+            <div class="lc lc-delay" data-label="Delay">
+                {#if subscription.lastError}
+                    <span class="dot fail" aria-hidden="true"></span>
+                    <span class="delay-inline-err mono" title={subscription.lastError}>
+                        {subscription.lastError}
+                    </span>
+                {:else}
+                    <span class="dot {cardState}" aria-hidden="true"></span>
+                    <button
+                        type="button"
+                        class="lat-btn {cardState}"
+                        class:checking
+                        onclick={(e) => {
+                            e.stopPropagation();
+                            void triggerCheck(e);
+                        }}
+                        title="Обновить delay"
+                        disabled={checking}
+                    >
+                        {checking ? '...' : latText}
+                    </button>
+                {/if}
+            </div>
+            <div class="lc lc-name" data-label="Подписка">
+                <div class="t1">{subscription.label}</div>
+                <div class="t2 mono">{proxyIface}{#if kernelIface} · {kernelIface}{/if}</div>
+            </div>
+            <div class="lc lc-mode" data-label="Режим">
+                {isURLTest ? 'URLTest' : 'Selector'}
+            </div>
+            <div class="lc lc-endpoint" data-label="Активный сервер" title={activeEndpointTitle}>
+                <div class="lc-endpoint-stack">
+                    {#if listActiveServerName}
+                        <span class="lc-endpoint-name" title={listActiveServerName}>{listActiveServerName}</span>
+                    {/if}
+                    <span class="lc-endpoint-host mono">
+                        {#if showEndpoint}{endpointText}{:else}••••••••{/if}
+                    </span>
+                </div>
+                <button
+                    type="button"
+                    class="eye-mini"
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        showEndpoint = !showEndpoint;
+                    }}
+                    aria-label={showEndpoint ? 'Скрыть' : 'Показать'}
+                >
+                    {#if showEndpoint}
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    {:else}
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                    {/if}
+                </button>
+            </div>
+            <div class="lc lc-members" data-label="Серверов">
+                {subscription.memberTags.length}
+            </div>
+            <div class="lc lc-updated mono" data-label="Обновлено">
+                {lastFetchedHuman}
+            </div>
+            <div class="lc lc-traffic" data-label="Трафик">
+                {#if subscription.lastError}
+                    <span class="delay-dash">—</span>
+                {:else}
+                    <div class="traffic-row-list">
+                        <TrafficSparkline
+                            data={trafficSparkData}
+                            width={84}
+                            height={22}
+                            color="var(--color-accent)"
+                        />
+                        <div class="traffic-mini-col mono">
+                            <span>↓ {formatBytes(traffic?.download ?? 0)}</span>
+                            <span>↑ {formatBytes(traffic?.upload ?? 0)}</span>
+                        </div>
+                    </div>
+                {/if}
+            </div>
+            <div class="lc lc-ping-mini" data-label="Ping">
+                {#if subscription.lastError}
+                    <span class="delay-dash">—</span>
+                {:else}
+                    <div
+                        class="spark-mini {cardState}"
+                        role="button"
+                        tabindex="0"
+                        onclick={(e) => {
+                            e.stopPropagation();
+                            void triggerCheck(e);
+                        }}
+                        onkeydown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                void triggerCheck(e);
+                            }
+                        }}
+                        title="Клик — обновить delay"
+                    >
+                        {#if history.length === 0}
+                            {#each Array(10) as _, i (i)}
+                                <div class="bar empty"></div>
+                            {/each}
+                        {:else}
+                            {@const max = Math.max(...history.map((v) => (v <= 0 ? 100 : v)), 100)}
+                            {#each history.slice(-14) as d, i (i)}
+                                <div class="bar" style="height: {Math.max((d <= 0 ? max : d) / max, 0.08) * 100}%;"></div>
+                            {/each}
+                        {/if}
+                    </div>
+                {/if}
+            </div>
+            <div class="lc lc-actions" data-label="">
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={!kernelIface}
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        if (kernelIface) speedtestOpen = true;
+                    }}
+                >
+                    Скорость
+                </Button>
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        openDetail();
+                    }}
+                >
+                    Открыть
+                </Button>
+            </div>
+        </div>
+    </div>
+{:else}
 <div
     class="card"
     class:ok={cardState === 'ok'}
@@ -207,7 +409,13 @@
                     class:server-btn-readonly={isURLTest}
                     onclick={(e) => {
                         e.stopPropagation();
-                        if (isURLTest) return;
+                        if (isURLTest) {
+                            notifications.info(
+                                'Включён автовыбор (URLTest). Чтобы выбирать сервер вручную, откройте подписку → вкладка «Настройки» → режим «Вручную».',
+                                { duration: 9000 },
+                            );
+                            return;
+                        }
                         pickerOpen = !pickerOpen;
                     }}
                     aria-haspopup={isURLTest ? undefined : 'listbox'}
@@ -310,6 +518,7 @@
         <Button variant="ghost" size="sm" onclick={openDetail}>Открыть подписку</Button>
     </div>
 </div>
+{/if}
 
 <SingboxSpeedTestModal
     open={speedtestOpen}
@@ -438,8 +647,14 @@
     .server-text {
         font-size: 0.82rem;
         overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+        white-space: normal;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+        min-width: 0;
     }
     .server-text.mono {
         font-family: var(--font-mono, ui-monospace, monospace);
@@ -499,5 +714,175 @@
     }
     .mono {
         font-family: var(--font-mono, ui-monospace, monospace);
+    }
+
+    .sub-active-list-group {
+        border-bottom: 1px solid var(--color-border);
+    }
+    .sub-active-list-group:last-child {
+        border-bottom: none;
+    }
+    .sbx-sub-active-row {
+        display: grid;
+        grid-template-columns:
+            minmax(92px, 1fr)
+            minmax(132px, 1.1fr)
+            minmax(72px, 0.9fr)
+            minmax(112px, 1fr)
+            minmax(52px, 0.75fr)
+            minmax(88px, 0.95fr)
+            minmax(148px, 1.1fr)
+            minmax(72px, 0.88fr)
+            minmax(150px, 1fr);
+        gap: 0.75rem 1rem;
+        align-items: center;
+        padding: 0.75rem 1rem;
+        cursor: pointer;
+        min-width: 1040px;
+    }
+    .sbx-sub-active-row:focus-visible {
+        outline: 2px solid var(--color-accent);
+        outline-offset: -2px;
+    }
+    .lc {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        font-size: 0.8125rem;
+        color: var(--color-text-secondary);
+    }
+    .lc-delay {
+        gap: 0.35rem;
+        min-width: 0;
+    }
+    .delay-inline-err {
+        font-size: 0.68rem;
+        line-height: 1.25;
+        color: #f85149;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+        flex: 1;
+    }
+    .delay-dash {
+        font-size: 0.8125rem;
+        color: var(--color-text-muted);
+    }
+    .lc-ping-mini {
+        justify-content: flex-start;
+    }
+    .spark-mini {
+        height: 22px;
+        max-width: 100%;
+        display: flex;
+        align-items: flex-end;
+        gap: 1px;
+        padding: 1px 0;
+        cursor: pointer;
+    }
+    .spark-mini:focus {
+        outline: 1px dashed var(--color-text-muted);
+        outline-offset: 2px;
+    }
+    .spark-mini .bar {
+        flex: 1;
+        min-width: 0;
+        min-height: 2px;
+        border-radius: 1px;
+        background: var(--color-bg-tertiary);
+    }
+    .spark-mini.ok .bar {
+        background: #3fb950;
+    }
+    .spark-mini.slow .bar {
+        background: #d29922;
+    }
+    .spark-mini.fail .bar {
+        background: #f85149;
+    }
+    .spark-mini.unknown .bar,
+    .spark-mini .bar.empty {
+        opacity: 0.35;
+        height: 30% !important;
+    }
+    .traffic-row-list {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        min-width: 0;
+        width: 100%;
+    }
+    .traffic-mini-col {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
+        font-size: 0.7rem;
+        line-height: 1.15;
+        color: var(--color-text-muted);
+        flex-shrink: 0;
+    }
+    .lc-name {
+        flex-direction: column;
+        align-items: flex-start !important;
+        gap: 0.15rem;
+    }
+    .lc-name .t1 {
+        font-weight: 600;
+        font-size: 0.9375rem;
+        color: var(--color-text-primary);
+    }
+    .lc-name .t2 {
+        font-size: 0.72rem;
+        color: var(--color-text-muted);
+    }
+    .lc-endpoint {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.25rem;
+        min-width: 0;
+        overflow: hidden;
+    }
+    .lc-endpoint-stack {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.12rem;
+        min-width: 0;
+        flex: 1;
+    }
+    .lc-endpoint-name {
+        width: 100%;
+        font-size: 0.78rem;
+        font-weight: 500;
+        color: var(--color-text-primary);
+        line-height: 1.2;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .lc-endpoint-host {
+        width: 100%;
+        font-size: 0.72rem;
+        line-height: 1.2;
+        color: var(--color-text-muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .eye-mini {
+        display: inline-flex;
+        padding: 0.15rem;
+        border: none;
+        background: none;
+        color: var(--color-text-muted);
+        cursor: pointer;
+        flex-shrink: 0;
+        align-self: center;
+    }
+    .lc-actions {
+        flex-wrap: wrap;
+        gap: 0.25rem;
+        justify-content: flex-end;
     }
 </style>

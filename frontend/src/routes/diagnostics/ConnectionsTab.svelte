@@ -397,10 +397,6 @@
 		width: 4.5rem;
 	}
 
-	.counter-skel-pair {
-		width: 5.5rem;
-	}
-
 	@media (max-width: 640px) {
 		.search-input { max-width: 100%; }
 		.row-tail {

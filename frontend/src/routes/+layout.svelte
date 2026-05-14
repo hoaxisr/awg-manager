@@ -358,7 +358,7 @@
 		onOpenDonate={() => (donateModalOpen = true)}
 	/>
 
-	{#if !$isAuthenticated}
+	{#if !$isAuthenticated && $page.url.pathname !== '/terms'}
 		<LoginForm />
 	{:else}
 		<main class="main">

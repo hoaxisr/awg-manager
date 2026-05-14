@@ -3,18 +3,22 @@
 	import { goto } from '$app/navigation';
 	import type { Subscription, SubscriptionMember } from '$lib/types';
 	import { api } from '$lib/api/client';
-	import { Button, Modal } from '$lib/components/ui';
-	import { triggerDelayCheck } from '$lib/stores/singbox';
+	import { Button, Modal, Stat, StatStrip } from '$lib/components/ui';
+	import { singboxDelayHistory, singboxTraffic, triggerDelayCheck } from '$lib/stores/singbox';
+	import { subscribeTraffic } from '$lib/stores/traffic';
+	import { formatBytes } from '$lib/utils/format';
 	import { notifications } from '$lib/stores/notifications';
 	import SubscriptionMemberCard from './SubscriptionMemberCard.svelte';
+	import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
 
 	interface Props {
 		subscription: Subscription;
 		onUpdated: () => void;
 		autoDelayCheckNonce?: number;
 		liveActiveMember?: string | null;
+		layout?: SingboxLayoutMode;
 	}
-	let { subscription, onUpdated, autoDelayCheckNonce = 0, liveActiveMember = null }: Props = $props();
+	let { subscription, onUpdated, autoDelayCheckNonce = 0, liveActiveMember = null, layout = 'grid' }: Props = $props();
 
 	let refreshing = $state(false);
 	let switching = $state<string | null>(null);
@@ -85,6 +89,45 @@
 			  })),
 	);
 
+	let memberTrafficTick = $state(0);
+	$effect(() => {
+		return subscribeTraffic(() => {
+			memberTrafficTick++;
+		});
+	});
+
+	const membersListStats = $derived.by(() => {
+		void memberTrafficTick;
+		let down = 0;
+		let up = 0;
+		let delaySum = 0;
+		let delayN = 0;
+		let minLatest = Infinity;
+		const trMap = $singboxTraffic;
+		const histMap = $singboxDelayHistory;
+		for (const m of memberList) {
+			const tr = trMap.get(m.tag);
+			if (tr) {
+				down += tr.download ?? 0;
+				up += tr.upload ?? 0;
+			}
+			const h = histMap.get(m.tag) ?? [];
+			const last = h.length > 0 ? h[h.length - 1] : 0;
+			if (typeof last === 'number' && last > 0) {
+				delaySum += last;
+				delayN++;
+				if (last < minLatest) minLatest = last;
+			}
+		}
+		return {
+			count: memberList.length,
+			down,
+			up,
+			avgDelayMs: delayN > 0 ? Math.round(delaySum / delayN) : null,
+			minDelayMs: minLatest === Infinity ? null : Math.round(minLatest),
+		};
+	});
+
 	const modeLabel = $derived(subscription.mode === 'urltest' ? 'URLTest' : 'Selector');
 	const modeHint = $derived(
 		subscription.mode === 'urltest'
@@ -119,8 +162,14 @@
 
 	async function pickActive(memberTag: string): Promise<void> {
 		// Urltest auto-selects fastest member; manual pick is rejected by backend
-		// with 409. Surface no error, just no-op the click.
-		if (subscription.mode === 'urltest') return;
+		// with 409. Tell the user how to switch to selector mode.
+		if (subscription.mode === 'urltest') {
+			notifications.info(
+				'Включён автовыбор (URLTest). Чтобы переключать сервер вручную, откройте вкладку «Настройки» этой подписки и выберите режим «Вручную».',
+				{ duration: 9000 },
+			);
+			return;
+		}
 		if (memberTag === subscription.activeMember) return;
 		switching = memberTag;
 		lastError = '';
@@ -220,6 +269,99 @@
 	<div class="empty">Подписка ещё не загружена. Нажмите «Обновить сейчас».</div>
 {:else}
 	<div class="hint">{modeHint}</div>
+	{#if layout === 'list'}
+		<div class="awg-summary-row">
+			<StatStrip>
+				<Stat value={`${membersListStats.count}`} label="Серверов" sub="в подписке" />
+				<Stat
+					value={formatBytes(membersListStats.down + membersListStats.up)}
+					label="Суммарный трафик"
+					sub={`↓ ${formatBytes(membersListStats.down)} · ↑ ${formatBytes(membersListStats.up)}`}
+				/>
+				<Stat
+					value={membersListStats.avgDelayMs !== null ? `${membersListStats.avgDelayMs} ms` : '—'}
+					label="Средний delay"
+					sub="по последним проверкам"
+				/>
+				<Stat
+					value={membersListStats.minDelayMs !== null ? `${membersListStats.minDelayMs} ms` : '—'}
+					label="Мин. delay"
+					sub="лучший из последних по серверам"
+				/>
+			</StatStrip>
+		</div>
+		<div class="awg-list-table member-list-table" class:with-inline-remove={subscription.isInline}>
+			<div
+				class="sbx-member-list-row sbx-member-list-row--head">
+				<span>Delay</span>
+				<span>Сервер</span>
+				<span>Протокол</span>
+				<span>Трафик</span>
+				<span>Ping</span>
+				<span>Тег</span>
+				<span>Статус</span>
+				{#if subscription.isInline}<span class="h-rm" aria-hidden="true"></span>{/if}
+			</div>
+			<div class="member-list-meta-row mono">
+				<span class="meta-lbl">Мин. delay</span>
+				{#if membersListStats.minDelayMs !== null}
+					<span class="meta-val"><strong>{membersListStats.minDelayMs} ms</strong></span>
+					<span class="meta-hint">по последним проверкам среди серверов</span>
+				{:else}
+					<span class="meta-empty">—</span>
+				{/if}
+			</div>
+			{#each memberList as member (member.tag)}
+				<div
+					class="member-list-line"
+					class:active-line={member.tag === effectiveActiveMember}
+					class:switching-line={switching === member.tag}
+					class:is-disabled={switching !== null}
+					role="button"
+					tabindex="0"
+					aria-pressed={member.tag === effectiveActiveMember}
+					onclick={() => {
+						if (switching !== null) return;
+						pickActive(member.tag);
+					}}
+					onkeydown={(e) => {
+						if (switching !== null) return;
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							pickActive(member.tag);
+						}
+					}}
+				>
+					<SubscriptionMemberCard
+						{member}
+						active={member.tag === effectiveActiveMember}
+						switching={switching === member.tag}
+						disabled={switching !== null}
+						onclick={() => pickActive(member.tag)}
+						layout="list"
+					/>
+					{#if subscription.isInline}
+						<button
+							type="button"
+							class="member-remove-list"
+							title="Удалить сервер"
+							aria-label="Удалить сервер {member.label || member.tag}"
+							disabled={removingTag !== null}
+							onclick={(e) => {
+								e.stopPropagation();
+								requestRemove(member);
+							}}
+						>
+							<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<line x1="18" y1="6" x2="6" y2="18" />
+								<line x1="6" y1="6" x2="18" y2="18" />
+							</svg>
+						</button>
+					{/if}
+				</div>
+			{/each}
+		</div>
+	{:else}
 	<div class="grid">
 		{#each memberList as member (member.tag)}
 			<div class="member-slot">
@@ -251,6 +393,7 @@
 			</div>
 		{/each}
 	</div>
+	{/if}
 {/if}
 
 <Modal
@@ -509,5 +652,153 @@
 		.grid {
 			grid-template-columns: 1fr;
 		}
+	}
+
+	.member-list-table {
+		border: 1px solid var(--color-border);
+		border-radius: 12px;
+		background: var(--color-bg-secondary);
+		overflow-x: auto;
+		overflow-y: hidden;
+		margin-top: 0.25rem;
+	}
+	.awg-summary-row {
+		margin-bottom: 0.75rem;
+	}
+	.sbx-member-list-row {
+		display: grid;
+		grid-template-columns:
+			minmax(80px, 1fr)
+			minmax(0, 1.35fr)
+			minmax(0, 1fr)
+			minmax(140px, 1.1fr)
+			minmax(56px, 0.9fr)
+			minmax(0, 0.95fr)
+			minmax(88px, 1fr);
+		gap: 0 1rem;
+		align-items: center;
+		padding: 0.65rem 1rem;
+		min-width: 940px;
+		border-bottom: 1px solid var(--color-border);
+	}
+	.member-list-table.with-inline-remove .sbx-member-list-row {
+		grid-template-columns:
+			minmax(80px, 1fr)
+			minmax(0, 1.35fr)
+			minmax(0, 1fr)
+			minmax(140px, 1.1fr)
+			minmax(56px, 0.9fr)
+			minmax(0, 0.95fr)
+			minmax(88px, 1fr)
+			42px;
+		min-width: 980px;
+	}
+	.sbx-member-list-row--head {
+		background: var(--color-bg-tertiary);
+		font-size: 0.6875rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--color-text-muted);
+	}
+	.sbx-member-list-row--head .h-rm {
+		display: block;
+	}
+	.member-list-meta-row {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.25rem 0.4rem;
+		padding: 0.45rem 1rem;
+		border-bottom: 1px solid var(--color-border);
+		background: var(--color-bg-primary);
+		font-size: 0.78rem;
+		color: var(--color-text-muted);
+		min-width: 940px;
+	}
+	.member-list-table.with-inline-remove .member-list-meta-row {
+		min-width: 980px;
+	}
+	.member-list-meta-row .meta-lbl {
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		font-size: 0.65rem;
+		font-weight: 700;
+	}
+	.member-list-meta-row .meta-val {
+		color: var(--color-text-primary);
+	}
+	.member-list-meta-row .meta-val strong {
+		color: #3fb950;
+		font-weight: 600;
+	}
+	.member-list-meta-row .meta-empty {
+		color: var(--color-text-muted);
+	}
+	.member-list-meta-row .meta-hint {
+		font-size: 0.7rem;
+		opacity: 0.85;
+		margin-left: 0.25rem;
+	}
+	.member-list-line {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.15rem 1rem;
+		border-bottom: 1px solid var(--color-border);
+		cursor: pointer;
+		min-width: 940px;
+	}
+	.member-list-table.with-inline-remove .member-list-line {
+		min-width: 980px;
+	}
+	.member-list-line:last-child {
+		border-bottom: none;
+	}
+	.member-list-line.active-line {
+		background: rgba(63, 185, 80, 0.06);
+	}
+	.member-list-line.switching-line {
+		opacity: 0.65;
+		cursor: wait;
+	}
+	.member-list-line.is-disabled {
+		cursor: not-allowed;
+	}
+	.member-list-line :global(.mbr-flatten) {
+		flex: 1;
+		min-width: 0;
+		display: grid;
+		grid-template-columns:
+			minmax(80px, 1fr)
+			minmax(0, 1.35fr)
+			minmax(0, 1fr)
+			minmax(0, 1.1fr)
+			minmax(56px, 0.9fr)
+			minmax(0, 0.95fr)
+			minmax(88px, 1fr);
+		gap: 0 0.75rem;
+		align-items: center;
+	}
+	.member-remove-list {
+		flex: 0 0 38px;
+		width: 32px;
+		height: 32px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		background: var(--color-bg-primary);
+		border: 1px solid var(--color-border);
+		border-radius: 50%;
+		color: var(--color-text-muted);
+		cursor: pointer;
+	}
+	.member-remove-list:hover {
+		color: var(--color-error, #ef4444);
+		border-color: var(--color-error, #ef4444);
+	}
+	.member-remove-list:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 </style>

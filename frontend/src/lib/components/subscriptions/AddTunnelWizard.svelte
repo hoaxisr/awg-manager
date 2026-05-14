@@ -8,7 +8,12 @@
 		type SubscriptionMode,
 	} from '$lib/types';
 	import HeadersTextarea from './HeadersTextarea.svelte';
+	import ShareLinksTextarea from './ShareLinksTextarea.svelte';
 	import { DEFAULT_PRESET, parseHeadersText } from './headersParser';
+	import {
+		mergePastedShareList,
+		normalizeSpaceSeparatedShareLinks,
+	} from '$lib/utils/shareLinkListInput';
 
 	type WizardKind = 'single' | 'inline' | 'url';
 
@@ -119,6 +124,29 @@
 		error = '';
 	}
 
+	function onShareListPaste(
+		e: ClipboardEvent & { currentTarget: HTMLTextAreaElement },
+		get: () => string,
+		set: (v: string) => void,
+	): void {
+		const data = e.clipboardData?.getData('text/plain');
+		if (data == null) return;
+		const normalized = normalizeSpaceSeparatedShareLinks(data);
+		if (normalized === data) return;
+		e.preventDefault();
+		const ta = e.currentTarget;
+		const { next, caret } = mergePastedShareList(
+			get(),
+			ta.selectionStart ?? 0,
+			ta.selectionEnd ?? 0,
+			data,
+		);
+		set(next);
+		queueMicrotask(() => {
+			ta.selectionStart = ta.selectionEnd = caret;
+		});
+	}
+
 	const titleByKind: Record<WizardKind | 'choose', string> = {
 		choose: 'Добавить',
 		single: 'Один сервер',
@@ -127,6 +155,7 @@
 	};
 
 	async function submitSingle(): Promise<void> {
+		singleLinks = normalizeSpaceSeparatedShareLinks(singleLinks);
 		if (!singleLinks.trim() || submitting) return;
 		submitting = true;
 		error = '';
@@ -153,6 +182,9 @@
 	async function submitSubscription(): Promise<void> {
 		if (submitting) return;
 		const isInline = kind === 'inline';
+		if (isInline) {
+			inlineText = normalizeSpaceSeparatedShareLinks(inlineText);
+		}
 		if (isInline && !inlineText.trim()) {
 			error = 'Вставьте хотя бы одну ссылку';
 			return;
@@ -239,22 +271,23 @@
 		>
 			<p class="lead">
 				Каждая строка — отдельный sing-box туннель со своим Proxy NDMS.
-				Поддерживаются <code>vless://</code>, <code>trojan://</code>,
-				<code>ss://</code>, <code>hysteria2://</code>,
-				<code>naive+https://</code>.
+				Поддерживаются <code>vless://</code>, <code>hy2://</code>,
+				<code>trojan://</code>, <code>ss://</code>, <code>hysteria2://</code>,
+				<code>naive+http://</code>, <code>naive+https://</code>.
+				Список через пробел при вставке разбивается на строки автоматически.
 			</p>
 			{#if !singboxInstalled}
 				<div class="warn">
 					Sing-box не установлен — установи в настройках перед добавлением туннелей.
 				</div>
 			{/if}
-			<textarea
-				class="inp links-area"
+			<ShareLinksTextarea
 				bind:value={singleLinks}
 				placeholder={`vless://uuid@host:443?...#Germany\nhysteria2://pass@host:8443#Finland`}
-				rows="6"
+				rows={6}
 				disabled={!singboxInstalled || submitting}
-			></textarea>
+				onpaste={(e) => onShareListPaste(e, () => singleLinks, (v) => (singleLinks = v))}
+			/>
 			{#if error}<div class="err">{error}</div>{/if}
 			{#if singleResult && singleResult.errors.length > 0}
 				<div class="err">
@@ -302,14 +335,15 @@
 			{:else}
 				<label class="row">
 					<span class="lbl">Ссылки на серверы (по одной на строку)</span>
-					<textarea
-						class="inp inline-area"
+					<ShareLinksTextarea
 						bind:value={inlineText}
-						placeholder={`vless://...\ntrojan://...\nhysteria2://...`}
-						rows="6"
-					></textarea>
+						placeholder={`vless://...\ntrojan://...\nhysteria2://...\nnaive+https://\nss://...`}
+						rows={6}
+						onpaste={(e) => onShareListPaste(e, () => inlineText, (v) => (inlineText = v))}
+					/>
 					<span class="hint">
 						Поддерживаются share-link'и, Clash YAML и sing-box JSON.
+						Список ссылок через пробел при вставке разбивается на строки.
 						Авто-обновления нет — список замораживается на момент создания,
 						редактируется во вкладке «Серверы».
 					</span>
@@ -474,12 +508,6 @@
 		border: 1px solid var(--color-border);
 		border-radius: 4px;
 		color: var(--color-text-primary);
-	}
-	.inline-area, .links-area {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 0.78rem;
-		min-height: 140px;
-		resize: vertical;
 	}
 	.hint {
 		font-size: 0.74rem;
