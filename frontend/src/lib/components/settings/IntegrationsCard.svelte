@@ -4,6 +4,7 @@
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { singboxInstallProgress } from '$lib/stores/singboxInstall';
 	import { formatBytes } from '$lib/utils/format';
+	import { stripAnsi } from '$lib/utils/ansi';
 
 	interface Props {
 		singboxStatus: SingboxStatus | null;
@@ -35,6 +36,12 @@
 	const singboxRunning = $derived(singboxStatus?.running ?? false);
 	const hydraInstalled = $derived(hydraStatus?.installed ?? false);
 	const hydraRunning = $derived(hydraStatus?.running ?? false);
+	const singboxFatalLines = $derived.by(() => {
+		const raw = stripAnsi(singboxStatus?.lastError ?? '').trim();
+		if (!raw) return '';
+		const fatal = raw.split('\n').filter((l) => /FATAL/i.test(l));
+		return fatal.join('\n');
+	});
 
 	const installProgress = $derived($singboxInstallProgress);
 	const installPhaseLabel = $derived.by(() => {
@@ -114,8 +121,8 @@
 								v{singboxStatus.version ?? singboxStatus.currentVersion ?? '?'}
 								{#if singboxRunning && singboxStatus.pid}· pid {singboxStatus.pid}{:else if !singboxRunning}· остановлен{/if}
 							</span>
-							{#if !singboxRunning && singboxStatus.lastError}
-								<span class="setting-description error" title={singboxStatus.lastError}>{singboxStatus.lastError}</span>
+							{#if singboxFatalLines}
+								<span class="setting-description warning" title={singboxFatalLines}>{singboxFatalLines}</span>
 							{/if}
 						{:else}
 							<span class="setting-description">
@@ -239,8 +246,8 @@
 		color: var(--color-text-muted);
 	}
 
-	.error {
-		color: var(--color-error);
+	.warning {
+		color: var(--color-warning);
 	}
 	.integration-probe-note {
 		font-size: 0.6875rem;
