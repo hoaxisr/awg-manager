@@ -11,6 +11,11 @@
 //   can be smoke-tested without a real router. Selections persist in-memory.
 // - /monitoring/matrix injects 2 sample t2sX rows so the redesigned monitoring
 //   badge can be smoke-tested.
+// - GET /connections: optional MOCK_CONNECTIONS_DELAY_MS (default 900) before
+//   forwarding to Prism so the diagnostics connections skeleton is visible in dev.
+//   After Prism, injects data.tunnels: "" → Direct (count = stats.direct) plus
+//   MOCK_AWG_TUNNELS rows with counts split from stats.tunneled so the tunnel chip
+//   row matches diagnostics UI (same as a real router).
 // Default upstream: http://127.0.0.1:8080 (Prism). Listen: 8081.
 
 import http from 'node:http';
@@ -112,6 +117,39 @@ const MOCK_SYSTEM_TUNNELS = [
 		},
 	},
 ];
+
+/** Merge tunnel summary for GET /connections mocks (Prism omits map entries). */
+function enrichConnectionsTunnels(body) {
+	if (!body || typeof body !== 'object' || !body.data || typeof body.data !== 'object') return body;
+	const data = body.data;
+	const stats = data.stats;
+	if (!stats || typeof stats !== 'object') return body;
+
+	const direct = Math.max(0, Number(stats.direct) || 0);
+	const tunneled = Math.max(0, Number(stats.tunneled) || 0);
+	const tunnels = {
+		'': {
+			name: 'Direct',
+			interface: '—',
+			count: direct,
+		},
+	};
+	const list = MOCK_AWG_TUNNELS;
+	const n = list.length;
+	let rem = tunneled;
+	for (let i = 0; i < n; i++) {
+		const t = list[i];
+		const share = i === n - 1 ? rem : Math.floor(tunneled / n);
+		if (i < n - 1) rem -= share;
+		tunnels[t.id] = {
+			name: t.name,
+			interface: t.interfaceName ?? '—',
+			count: share,
+		};
+	}
+	data.tunnels = tunnels;
+	return body;
+}
 
 const MOCK_EXTERNAL_TUNNELS = [
 	{
@@ -952,6 +990,29 @@ const server = http.createServer(async (req, res) => {
 		const requestedPeriod = url.searchParams.get('period') ?? '1h';
 		const period = Object.prototype.hasOwnProperty.call(TRAFFIC_PERIOD_MS, requestedPeriod) ? requestedPeriod : '1h';
 		send(res, 200, buildTrafficResponse(id || 'awg-demo-1', period));
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/connections') {
+		const raw = process.env.MOCK_CONNECTIONS_DELAY_MS;
+		const defaultMs = 900;
+		let delayMs = defaultMs;
+		if (raw !== undefined && raw !== '') {
+			const n = Number(raw);
+			delayMs = Number.isFinite(n) && n >= 0 ? n : defaultMs;
+		}
+		if (delayMs > 0) {
+			await new Promise((r) => setTimeout(r, delayMs));
+		}
+		try {
+			const { status, body } = await fetchJSON(`${path}${url.search}`);
+			if (status === 200 && body && typeof body === 'object') {
+				enrichConnectionsTunnels(body);
+			}
+			send(res, status, body);
+		} catch (e) {
+			send(res, 502, { success: false, error: String(e) });
+		}
 		return;
 	}
 

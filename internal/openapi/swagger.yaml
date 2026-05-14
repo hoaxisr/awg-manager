@@ -410,6 +410,10 @@ definitions:
       stats:
         $ref: '#/definitions/api.ConnectionStatsDTO'
       tunnels:
+        additionalProperties:
+          $ref: '#/definitions/api.TunnelConnectionInfoDTO'
+        description: 'Tunnels: per-tunnel counts; key "" is direct traffic (same as
+          query tunnel=direct / UI Direct chip).'
         type: object
     type: object
   api.ConnectionsPaginationDTO:
@@ -572,6 +576,55 @@ definitions:
         type: integer
       selectedOutbound:
         example: proxy-01
+        type: string
+    type: object
+  api.DeviceProxyInstanceData:
+    properties:
+      auth:
+        $ref: '#/definitions/api.DeviceProxyAuthDTO'
+      enabled:
+        example: false
+        type: boolean
+      id:
+        example: default
+        type: string
+      listenAll:
+        example: true
+        type: boolean
+      listenInterface:
+        example: br0
+        type: string
+      name:
+        example: Прокси
+        type: string
+      port:
+        example: 1099
+        type: integer
+      selectedOutbound:
+        example: proxy-01
+        type: string
+    type: object
+  api.DeviceProxyInstanceIPCheckResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.DeviceProxyInstanceIPCheckResultDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.DeviceProxyInstanceIPCheckResultDTO:
+    properties:
+      directIp:
+        example: 203.0.113.1
+        type: string
+      ipChanged:
+        example: false
+        type: boolean
+      proxyIp:
+        example: 198.51.100.42
+        type: string
+      service:
+        example: https://api.ipify.org
         type: string
     type: object
   api.DeviceProxyOutboundDTO:
@@ -1619,6 +1672,24 @@ definitions:
     properties:
       data:
         $ref: '#/definitions/api.DeviceProxyConfigData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.ProxyInstanceResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.DeviceProxyInstanceData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.ProxyInstancesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.DeviceProxyInstanceData'
+        type: array
       success:
         example: true
         type: boolean
@@ -3208,6 +3279,18 @@ definitions:
         example: false
         type: boolean
     type: object
+  api.TunnelConnectionInfoDTO:
+    properties:
+      count:
+        example: 12
+        type: integer
+      interface:
+        example: nwg0
+        type: string
+      name:
+        example: My VPN
+        type: string
+    type: object
   api.TunnelControlData:
     properties:
       id:
@@ -3470,6 +3553,16 @@ definitions:
         type: number
       points:
         example: 60
+        type: integer
+      volumeRx:
+        description: VolumeRx is estimated bytes received over the selected window
+          (Σ rxRate×Δt on raw history samples).
+        example: 1073741824
+        type: integer
+      volumeTx:
+        description: VolumeTx is estimated bytes sent over the selected window (Σ
+          txRate×Δt on raw history samples).
+        example: 536870912
         type: integer
     type: object
   api.TunnelsAllResponse:
@@ -6255,6 +6348,214 @@ paths:
       security:
       - CookieAuth: []
       summary: Save device proxy config
+      tags:
+      - device-proxy
+  /proxy/instance:
+    delete:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Delete one device proxy instance
+      tags:
+      - device-proxy
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ProxyInstanceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Get one device proxy instance
+      tags:
+      - device-proxy
+    put:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ProxyInstanceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Save one device proxy instance
+      tags:
+      - device-proxy
+  /proxy/instance/check-ip:
+    get:
+      parameters:
+      - description: Instance ID
+        in: query
+        name: id
+        required: true
+        type: string
+      - description: Specific IP service URL
+        in: query
+        name: service
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.DeviceProxyInstanceIPCheckResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Check external IP through one device proxy instance
+      tags:
+      - device-proxy
+  /proxy/instance/runtime:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ProxyRuntimeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Get device proxy instance runtime state
+      tags:
+      - device-proxy
+  /proxy/instance/runtime/select:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ProxyRuntimeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Select device proxy instance outbound
+      tags:
+      - device-proxy
+  /proxy/instances:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ProxyInstancesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List device proxy instances
+      tags:
+      - device-proxy
+  /proxy/instances/apply:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Apply all device proxy instances
       tags:
       - device-proxy
   /proxy/listen-choices:

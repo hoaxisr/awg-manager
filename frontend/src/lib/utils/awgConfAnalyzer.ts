@@ -10,6 +10,10 @@ export type AwgParsed = { iface: AwgIface; peer: AwgIface };
 export type AwgVersionInfo = {
 	ver: string;
 	desc: string;
+	/** Уровень CPS / обфускации для UI (как в awg-analyzer) */
+	obfLevel: string | null;
+	/** Распознанный протокол мимикрии из I1, если есть */
+	protocol: string | null;
 };
 
 export type CheckStatus = 'pass' | 'warn' | 'fail' | 'info';
@@ -29,6 +33,183 @@ export type AwgScores = { total: number; dpi: number; stealth: number };
 export type AwgVerdict = { label: string; color: string; tint: string; text: string };
 
 export type AwgCamouflage = 'LOW' | 'MEDIUM' | 'HIGH';
+
+export type I1Parsed = {
+	tags: { tag: string; arg: string }[];
+	firstTag: string | null;
+	hexData: string;
+	rTagSizes: number[];
+	rcTagSizes: number[];
+	totalRBytes: number;
+	hasT: boolean;
+	hasC: boolean;
+	hasRc: boolean;
+	firstByte: number | null;
+	firstByteOk: boolean;
+	startsWith_b: boolean;
+	maxRSize: number;
+	errors: string[];
+	protocol: string;
+};
+
+function legacyProtoFromRawI1(i1: string): string {
+	if (i1.includes('0xc0') || i1.includes('0xC0')) return 'QUIC';
+	if (i1.includes('160303') || i1.includes('0x1603')) return 'TLS';
+	if (i1.toLowerCase().includes('register') || i1.toLowerCase().includes('sip')) return 'SIP';
+	if (i1.includes('0x0001') || i1.includes('0x0000')) return 'DNS';
+	return 'Custom';
+}
+
+/** Распознавание протокола по hex после тега `<b 0x…>` (логика близка к pumbax/awg-analyzer). */
+export function detectI1ProtocolFromHex(hex: string): string {
+	if (!hex) return 'Unknown';
+	const h = hex.toLowerCase();
+	if (/^16030[0-3]/.test(h)) return 'TLS';
+	if (/^16fefd/.test(h) || /^16feff/.test(h)) return 'DTLS';
+	const knownQuic = ['00000001', '6b3343cf', 'ff00001d', 'ff00001e'];
+	if (h.length >= 10) {
+		const fb = parseInt(h.substring(0, 2), 16);
+		const ver = h.substring(2, 10);
+		if (fb >= 0xc0 && fb <= 0xef && (knownQuic.includes(ver) || h.startsWith('c0000'))) return 'QUIC';
+	}
+	const sipHex = [
+		'494e56495445',
+		'5245474953544552',
+		'4f5054494f4e53',
+		'4d455353414745',
+		'5355425343524942',
+		'4e4f54494659',
+		'535542',
+	];
+	if (sipHex.some((s) => h.startsWith(s))) return 'SIP';
+	if (/^[0-9a-f]{4}01[02]0000[12]/.test(h)) return 'DNS';
+	if (h.startsWith('474554') || h.startsWith('504f5354') || h.startsWith('48545450')) return 'HTTP';
+	if (h.startsWith('0001') && h.includes('2112a442')) return 'STUN';
+	return 'Custom';
+}
+
+/** Разбор CPS-строки I1 с тегами `<b>`, `<r>`, … (pumbax/awg-analyzer). */
+export function parseI1(i1: string): I1Parsed {
+	const result: I1Parsed = {
+		tags: [],
+		firstTag: null,
+		hexData: '',
+		rTagSizes: [],
+		rcTagSizes: [],
+		totalRBytes: 0,
+		hasT: false,
+		hasC: false,
+		hasRc: false,
+		firstByte: null,
+		firstByteOk: true,
+		startsWith_b: false,
+		maxRSize: 0,
+		errors: [],
+		protocol: 'Unknown',
+	};
+
+	const tagRegex = /<(\w+)(?:\s+([^>]*))?>/g;
+	let m: RegExpExecArray | null;
+	while ((m = tagRegex.exec(i1)) !== null) {
+		const tag = m[1].toLowerCase();
+		const arg = (m[2] || '').trim();
+		result.tags.push({ tag, arg });
+
+		if (tag === 'b') {
+			const hexMatch = arg.match(/0x([0-9a-fA-F]+)/);
+			if (hexMatch) result.hexData = hexMatch[1].toLowerCase();
+		} else if (tag === 'r') {
+			const n = parseInt(arg, 10);
+			if (!Number.isNaN(n)) {
+				result.rTagSizes.push(n);
+				result.totalRBytes += n;
+				if (n > result.maxRSize) result.maxRSize = n;
+			}
+		} else if (tag === 'rc') {
+			result.hasRc = true;
+			const n = parseInt(arg, 10);
+			if (!Number.isNaN(n)) result.rcTagSizes.push(n);
+		} else if (tag === 't') {
+			result.hasT = true;
+		} else if (tag === 'c') {
+			result.hasC = true;
+		}
+	}
+
+	if (result.tags.length === 0) {
+		return result;
+	}
+
+	result.firstTag = result.tags[0].tag;
+	result.startsWith_b = result.firstTag === 'b';
+	if (!result.startsWith_b) {
+		result.errors.push(
+			'Первый тег в I1 должен быть <b …> — иначе парсер amneziawg-go может отказать в handshake.',
+		);
+	}
+
+	for (const n of result.rTagSizes) {
+		if (n >= 1000) {
+			result.errors.push(
+				`Тег <r> с размером ${n} ≥ 1000 — разбейте на части ≤999, иначе риск поломки парсера.`,
+			);
+		}
+	}
+
+	if (result.hasC) {
+		result.errors.push('Тег <c> устарел — на старых клиентах AmneziaVPN возможен ErrorCode 1000.');
+	}
+
+	result.protocol = detectI1ProtocolFromHex(result.hexData);
+	if (result.hexData.length >= 2) {
+		const firstByte = parseInt(result.hexData.substring(0, 2), 16);
+		result.firstByte = firstByte;
+
+		if (result.protocol === 'QUIC') {
+			result.firstByteOk = firstByte >= 0xc0 && firstByte <= 0xef;
+			if (!result.firstByteOk) {
+				result.errors.push(
+					`Первый байт 0x${firstByte.toString(16)} — для QUIC long header ожидается 0xC0–0xEF.`,
+				);
+			}
+		} else if (result.protocol === 'TLS' || result.protocol === 'DTLS') {
+			result.firstByteOk = firstByte === 0x16;
+			if (!result.firstByteOk) {
+				result.errors.push(
+					`Первый байт 0x${firstByte.toString(16)} — для ${result.protocol} ожидается 0x16.`,
+				);
+			}
+		} else if (result.protocol === 'SIP') {
+			result.firstByteOk =
+				(firstByte >= 0x41 && firstByte <= 0x5a) || (firstByte >= 0x61 && firstByte <= 0x7a);
+		}
+	}
+
+	return result;
+}
+
+function protocolFromI1(iface: AwgIface): string | null {
+	const i1 = getStr(iface, 'i1');
+	if (!i1) return null;
+	if (/<\s*b\b/i.test(i1)) {
+		return parseI1(i1).protocol;
+	}
+	const hex = i1.replace(/[^0-9a-f]/gi, '');
+	if (hex.length >= 4) return detectI1ProtocolFromHex(hex);
+	return legacyProtoFromRawI1(i1);
+}
+
+function cpsObfLevelLabel(iface: AwgIface): string {
+	const i1 = getStr(iface, 'i1');
+	const i2 = getStr(iface, 'i2');
+	const i3 = getStr(iface, 'i3');
+	const i4 = getStr(iface, 'i4');
+	const i5 = getStr(iface, 'i5');
+	if (!i1) return 'Без CPS (нет I1)';
+	const chain = [i1, i2, i3, i4, i5].filter(Boolean).length;
+	if (chain <= 1) return 'CPS: только I1';
+	return `CPS: полная цепочка I1–I${chain}`;
+}
 
 function getInt(obj: AwgIface, key: string, def: number | null = null): number | null {
 	const v = obj[key.toLowerCase()];
@@ -90,8 +271,7 @@ export function parseAWG(raw: string): AwgParsed {
 export function detectVersion(iface: AwgIface): AwgVersionInfo {
 	const hasJc = hasKey(iface, 'jc');
 	const hasS1 = hasKey(iface, 's1');
-	const hasH1 = hasKey(iface, 'h1');
-	const hasI1 = hasKey(iface, 'i1');
+	const i1Present = !!getStr(iface, 'i1');
 	const hasS3 = hasKey(iface, 's3');
 	const hasS4 = hasKey(iface, 's4');
 
@@ -116,35 +296,44 @@ export function detectVersion(iface: AwgIface): AwgVersionInfo {
 	const headersDefault =
 		!headersHaveRanges && h1.val === 1 && h2.val === 2 && h3.val === 3 && h4.val === 4;
 
-	function getProto(): string {
-		const i1 = getStr(iface, 'i1');
-		if (i1.includes('0xc0') || i1.includes('0xC0')) return 'QUIC';
-		if (i1.includes('160303') || i1.includes('0x1603')) return 'TLS';
-		if (i1.toLowerCase().includes('register') || i1.toLowerCase().includes('sip')) return 'SIP';
-		if (i1.includes('0x0001') || i1.includes('0x0000')) return 'DNS';
-		return 'Custom';
-	}
+	const proto = protocolFromI1(iface);
 
 	const noObfuscation =
-		(!hasJc || Jc === 0) && (!hasS1 || (S1 === 0 && S2 === 0)) && headersDefault && !hasI1;
+		(!hasJc || Jc === 0) && (!hasS1 || (S1 === 0 && S2 === 0)) && headersDefault && !i1Present;
 	if (noObfuscation) {
 		return {
 			ver: 'WireGuard',
 			desc: 'Стандартный WireGuard без обфускации. DPI легко обнаружит трафик.',
+			obfLevel: null,
+			protocol: null,
 		};
 	}
 
-	if ((hasS3 || hasS4) && hasI1 && headersHaveRanges) {
+	/* AWG 2.0: (S3 или S4) + H1–H4 диапазоны; I1 не обязателен (как в pumbax/awg-analyzer). */
+	if ((hasS3 || hasS4) && headersHaveRanges) {
+		const obf = cpsObfLevelLabel(iface);
+		const protoKnown = proto && proto !== 'Unknown';
+		const desc =
+			i1Present && protoKnown
+				? `AmneziaWG 2.0 — S3/S4, H1–H4 диапазоны и CPS: I1 имитирует ${proto}.`
+				: i1Present
+					? 'AmneziaWG 2.0 — S3/S4 и H1–H4 диапазоны; I1 задан — проверьте теги/hex, если тип мимикрии неочевиден.'
+					: 'AmneziaWG 2.0 — S3/S4 и H1–H4 диапазоны; I1 не задан — мимикрия первого пакета (CPS) опциональна.';
 		return {
 			ver: 'AWG 2.0',
-			desc: `AmneziaWG 2.0 — максимальная обфускация. H1-H4 диапазоны + S3/S4 рандомизируют все типы пакетов + CPS (I1 имитирует ${getProto()}).`,
+			desc,
+			obfLevel: obf,
+			protocol: i1Present && protoKnown ? proto : null,
 		};
 	}
 
-	if (hasI1) {
+	if (i1Present) {
+		const pLabel = proto && proto !== 'Unknown' ? proto : null;
 		return {
 			ver: 'AWG 1.5',
-			desc: `AmneziaWG 1.5 — Jc/S1/S2/H1-H4 + CPS (I1 имитирует ${getProto()} handshake). Для AWG 2.0 нужны S3/S4 и H1-H4 в виде диапазонов.`,
+			desc: `AmneziaWG 1.5 — Jc/S1/S2/H1–H4 + CPS (I1 имитирует ${pLabel ?? 'Custom'}). Для AWG 2.0 добавьте S3/S4 и задайте H1–H4 диапазонами.`,
+			obfLevel: cpsObfLevelLabel(iface),
+			protocol: pLabel,
 		};
 	}
 
@@ -152,12 +341,16 @@ export function detectVersion(iface: AwgIface): AwgVersionInfo {
 		return {
 			ver: 'AWG 1.0',
 			desc: 'AmneziaWG 1.0 — junk-пакеты (Jc/Jmin/Jmax) + S1/S2 рандомизируют размер handshake + кастомные H1-H4 скрывают сигнатуру WireGuard.',
+			obfLevel: 'Jc + S1/S2 + H (без CPS)',
+			protocol: null,
 		};
 	}
 
 	return {
 		ver: 'AWG 1.0',
 		desc: 'AmneziaWG 1.0 — минимальная обфускация.',
+		obfLevel: 'Минимальная',
+		protocol: null,
 	};
 }
 
@@ -189,6 +382,65 @@ export function mtuCheatsheetRu(): string {
 		'1320 — AWG 2.0 + CPS (рекомендуется)',
 		'1280 — Максимальная совместимость по пути',
 	].join('\n');
+}
+
+export type AwgSummaryRow = { label: string; value: string };
+
+/** Карточка «Что это за конфиг» (по мотивам pumbax/awg-analyzer). */
+export function buildConfigSummary(
+	iface: AwgIface,
+	peer: AwgIface,
+	version: AwgVersionInfo,
+): AwgSummaryRow[] {
+	const rows: AwgSummaryRow[] = [{ label: 'Профиль', value: version.ver }];
+	if (version.obfLevel) rows.push({ label: 'Обфускация / CPS', value: version.obfLevel });
+	if (version.protocol) rows.push({ label: 'Мимикрия (I1)', value: version.protocol });
+
+	const ep = getStr(peer, 'endpoint');
+	if (ep) rows.push({ label: 'Endpoint', value: ep });
+
+	const jc = getInt(iface, 'jc', null);
+	if (jc !== null) rows.push({ label: 'Jc', value: String(jc) });
+
+	const s34 = [getStr(iface, 's3'), getStr(iface, 's4')].filter(Boolean).join(' / ');
+	if (s34) rows.push({ label: 'S3 / S4', value: s34 });
+
+	const hraw = ['h1', 'h2', 'h3', 'h4'].map((k) => getStr(iface, k)).filter(Boolean);
+	if (hraw.length) rows.push({ label: 'H1–H4', value: hraw.join(' · ') });
+
+	return rows;
+}
+
+/** Подсказки «как усилить» поверх рекомендаций по чекам. */
+export function buildUpgradeHints(iface: AwgIface, version: AwgVersionInfo): string[] {
+	const hints: string[] = [];
+	const i1 = getStr(iface, 'i1');
+
+	if (i1 && /<\s*b\b/i.test(i1)) {
+		const p = parseI1(i1);
+		for (const e of p.errors) hints.push(e);
+	}
+
+	if (version.ver === 'WireGuard') {
+		hints.push('Перейдите на AmneziaWG, добавив параметры Jc/Jmin/Jmax, S1/S2 и уникальные H1–H4 вместо дефолта 1–4.');
+	}
+
+	if (version.ver === 'AWG 1.0') {
+		hints.push('Добавьте I1 (CPS) для мимикрии под живой протокол → уровень AWG 1.5.');
+		hints.push('Или доведите до AWG 2.0: параметры S3/S4 и H1–H4 в виде диапазонов.');
+	}
+
+	if (version.ver === 'AWG 1.5') {
+		hints.push('Для AWG 2.0: задайте S3 и S4, H1–H4 — диапазоны (например 5–60000), а не одиночные числа.');
+	}
+
+	if (version.ver === 'AWG 2.0' && !i1) {
+		hints.push(
+			'Опционально: добавьте I1 с QUIC/TLS/DNS — первый пакет будет похож на обычный протокол.',
+		);
+	}
+
+	return hints;
 }
 
 export function runChecks(iface: AwgIface, peer: AwgIface, version: AwgVersionInfo): AwgCheck[] {
@@ -426,7 +678,7 @@ export function runChecks(iface: AwgIface, peer: AwgIface, version: AwgVersionIn
 		hDetail = 'H1-H4 уникальны — сигнатура хандшейка скрыта ✓';
 	}
 
-		addChk('Magic Headers (H1-H4)', 'H1-H4', hStatus, hDisplayVal, hDetail, hPts, 12);
+	addChk('Magic Headers (H1-H4)', 'H1-H4', hStatus, hDisplayVal, hDetail, hPts, 12);
 
 	if (hHaveRanges) {
 		const ranges = allHraw.map((h) => h.raw).filter((v): v is string => !!v && v.includes('-'));
@@ -463,59 +715,116 @@ export function runChecks(iface: AwgIface, peer: AwgIface, version: AwgVersionIn
 	}
 
 	const hasI1 = !!I1;
+	const i1MissingDetail =
+		version.ver === 'AWG 2.0'
+			? 'I1 не задан — профиль уже AWG 2.0 по S3/S4 и H-диапазонам; I1 опционально усиливает мимикрию первого пакета (QUIC/TLS/DNS).'
+			: 'I1 не задан — для CPS и мимикрии под QUIC/TLS/DNS добавьте параметр I1.';
+
 	addChk(
 		'CPS Мимикрий (I1-I5)',
 		'I1 — Protocol Signature',
 		hasI1 ? 'pass' : 'info',
 		hasI1 ? `${I1.slice(0, 40)}${I1.length > 40 ? '…' : ''}` : '(не задан)',
-		hasI1
-			? `CPS активен — трафик имитирует реальный протокол. Параметр I1: ${I1.length} байт описания`
-			: 'I1 не задан — AWG 2.0 мимикрий отключён. Для максимальной защиты добавьте I1 с QUIC или DNS handshake.',
+		hasI1 ? `CPS активен — параметр I1: ${I1.length} символов.` : i1MissingDetail,
 		hasI1 ? 15 : 0,
 		15,
 	);
 
 	if (hasI1) {
-		const i1lower = I1.toLowerCase();
-		const hex = i1lower.replace(/[^0-9a-f]/g, '');
+		const tagged = /<\s*b\b/i.test(I1);
+		let protoName: string;
+		let protoDetail: string;
+		let protoPts: number;
 
-		const isQuic =
-			hex.startsWith('c0') || hex.includes('c0000001') || hex.includes('c3000000');
-		const isTls = hex.startsWith('1603') || hex.includes('160301') || hex.includes('160303');
-		const isDns =
-			hex.includes('00010001') || hex.includes('000001000001') || hex.endsWith('00010001');
-		const isHttp =
-			hex.includes('474554') || hex.includes('504f5354') || hex.includes('48545450');
-		const isStun = hex.startsWith('0001') && hex.includes('2112a442');
-		const isDtls = hex.startsWith('16feff');
+		if (tagged) {
+			const p = parseI1(I1);
+			const pr = p.protocol;
+			protoName =
+				pr === 'QUIC'
+					? 'QUIC Initial'
+					: pr === 'TLS'
+						? 'TLS ClientHello'
+						: pr === 'DNS'
+							? 'DNS Query'
+							: pr === 'HTTP'
+								? 'HTTP Request'
+								: pr === 'STUN'
+									? 'STUN'
+									: pr === 'DTLS'
+										? 'DTLS'
+										: pr === 'SIP'
+											? 'SIP'
+											: 'Custom';
 
-		const protoName = isQuic
-			? 'QUIC Initial'
-			: isTls
-				? 'TLS ClientHello'
-				: isDns
-					? 'DNS Query'
-					: isHttp
-						? 'HTTP Request'
-						: isStun
-							? 'STUN'
-							: isDtls
-								? 'DTLS'
-								: 'Custom';
+			protoDetail =
+				pr === 'QUIC'
+					? 'QUIC Initial handshake — идеальный выбор. QUIC — популярный протокол (YouTube, Google). DPI трудно отличить.'
+					: pr === 'TLS'
+						? 'TLS ClientHello — отлично маскируется под HTTPS трафик'
+						: pr === 'DNS'
+							? 'DNS Query имитация — трудно блокировать (порт 53 обычно открыт)'
+							: 'Кастомный или смешанный профиль. Убедитесь, что hex после <b> реалистичен.';
+
+			protoPts = pr === 'QUIC' ? 5 : pr === 'DNS' ? 4 : 3;
+
+			const structOk = p.errors.length === 0;
+			addChk(
+				'CPS Мимикрий (I1-I5)',
+				'Структура I1 (теги)',
+				structOk ? 'pass' : 'fail',
+				p.firstTag ? `<${p.firstTag}>` : '—',
+				structOk
+					? 'Теги `<b>`, `<r>` в ожидаемом виде; критичных замечаний нет.'
+					: p.errors.join(' '),
+				structOk ? 3 : 0,
+				3,
+			);
+		} else {
+			const i1lower = I1.toLowerCase();
+			const hex = i1lower.replace(/[^0-9a-f]/g, '');
+
+			const isQuic =
+				hex.startsWith('c0') || hex.includes('c0000001') || hex.includes('c3000000');
+			const isTls = hex.startsWith('1603') || hex.includes('160301') || hex.includes('160303');
+			const isDns =
+				hex.includes('00010001') || hex.includes('000001000001') || hex.endsWith('00010001');
+			const isHttp =
+				hex.includes('474554') || hex.includes('504f5354') || hex.includes('48545450');
+			const isStun = hex.startsWith('0001') && hex.includes('2112a442');
+			const isDtls = hex.startsWith('16feff');
+
+			protoName = isQuic
+				? 'QUIC Initial'
+				: isTls
+					? 'TLS ClientHello'
+					: isDns
+						? 'DNS Query'
+						: isHttp
+							? 'HTTP Request'
+							: isStun
+								? 'STUN'
+								: isDtls
+									? 'DTLS'
+									: 'Custom';
+
+			protoDetail = isQuic
+				? 'QUIC Initial handshake — идеальный выбор. QUIC — популярный протокол (YouTube, Google). DPI трудно отличить.'
+				: isTls
+					? 'TLS ClientHello — отлично маскируется под HTTPS трафик'
+					: isDns
+						? 'DNS Query имитация — трудно блокировать (порт 53 обычно открыт)'
+						: 'Кастомный протокол. Убедитесь что hex-последовательность реалистична.';
+
+			protoPts = isQuic ? 5 : isDns ? 4 : 3;
+		}
 
 		addChk(
 			'CPS Мимикрий (I1-I5)',
 			'Протокол имитации',
 			'pass',
 			protoName,
-			isQuic
-				? 'QUIC Initial handshake — идеальный выбор. QUIC — популярный протокол (YouTube, Google). DPI трудно отличить.'
-				: isTls
-					? 'TLS ClientHello — отлично маскируется под HTTPS трафик'
-					: isDns
-						? 'DNS Query имитация — трудно блокировать (порт 53 обычно открыт)'
-						: 'Кастомный протокол. Убедитесь что hex-последовательность реалистична.',
-			isQuic ? 5 : isDns ? 4 : 3,
+			protoDetail,
+			protoPts,
 			5,
 		);
 
@@ -772,7 +1081,7 @@ export function buildFixes(checks: AwgCheck[], iface: AwgIface, peer: AwgIface, 
 		);
 	}
 
-	if (!getStr(iface, 'i1')) {
+	if (!getStr(iface, 'i1') && version.ver !== 'AWG 2.0') {
 		fixes.push(
 			'Добавьте CPS сигнатуру (I1) чтобы трафик имитировал реальный протокол (DNS, TLS или QUIC).',
 		);
@@ -814,7 +1123,7 @@ export function getVerdict(score: number): AwgVerdict {
 			label: 'Максимальная защита',
 			color: 'var(--color-accent, #a855f7)',
 			tint: 'color-mix(in srgb, var(--color-accent, #a855f7) 18%, transparent)',
-			text: 'AWG 2.0 с CPS мимикрием. Трафик неотличим от реального протокола. Высочайшая устойчивость к DPI и глубокому анализу.',
+			text: 'AWG 2.0 с CPS мимикрией. Трафик неотличим от реального протокола. Высочайшая устойчивость к DPI и глубокому анализу.',
 		};
 	}
 	if (score >= 70) {
@@ -856,10 +1165,18 @@ export function dpiLabel(d: number): { text: string; color: string } {
 }
 
 export function camouflageFromI1(iface: AwgIface): AwgCamouflage {
-	const i1 = (iface.i1 || '').toLowerCase();
-	if (i1.includes('quic') || i1.includes('0xc0')) return 'HIGH';
-	if (i1.includes('1603') || i1.includes('tls')) return 'HIGH';
-	if (i1.includes('dns') || i1.includes('0001')) return 'MEDIUM';
+	const i1 = getStr(iface, 'i1');
+	if (!i1) return 'LOW';
+	if (/<\s*b\b/i.test(i1)) {
+		const pr = parseI1(i1).protocol;
+		if (pr === 'QUIC' || pr === 'TLS' || pr === 'DTLS') return 'HIGH';
+		if (pr === 'DNS' || pr === 'SIP' || pr === 'HTTP' || pr === 'STUN') return 'MEDIUM';
+		return 'LOW';
+	}
+	const low = i1.toLowerCase();
+	if (low.includes('quic') || low.includes('0xc0')) return 'HIGH';
+	if (low.includes('1603') || low.includes('tls')) return 'HIGH';
+	if (low.includes('dns') || low.includes('0001')) return 'MEDIUM';
 	return 'LOW';
 }
 

@@ -63,6 +63,8 @@
 		username?: string | null;
 		theme?: ThemeState;
 		currentVersion?: string;
+		/** Первый запрос версии ещё идёт — показываем плейсхолдер вместо пустоты. */
+		versionPending?: boolean;
 		hasUpdate?: boolean;
 		isPreRelease?: boolean;
 		mobileMenuOpen?: boolean;
@@ -89,6 +91,7 @@
 			supportsModeToggle: true,
 		},
 		currentVersion = '',
+		versionPending = false,
 		hasUpdate = false,
 		isPreRelease = false,
 		mobileMenuOpen = $bindable(false),
@@ -150,25 +153,33 @@
 				<span class="wordmark">AWG⋅Manager</span>
 			</a>
 
-			{#if currentVersion}
-				{#if hasUpdate && authenticated}
-					<a
-						href="/settings"
-						class="version-badge version-clickable"
-						class:version-update-stable={!isPreRelease}
-						class:version-update-prerelease={isPreRelease}
-					>
-						v{currentVersion} ↑
-					</a>
-				{:else}
-					<span
-						class="version-badge"
-						class:version-stable={!isPreRelease}
-						class:version-prerelease={isPreRelease}
-					>
-						v{currentVersion}
-					</span>
-				{/if}
+			{#if currentVersion || (versionPending && authenticated)}
+				<span class="version-slot">
+					{#if currentVersion}
+						{#if hasUpdate && authenticated}
+							<a
+								href="/settings"
+								class="version-badge version-clickable"
+								class:version-update-stable={!isPreRelease}
+								class:version-update-prerelease={isPreRelease}
+							>
+								v{currentVersion} ↑
+							</a>
+						{:else}
+							<span
+								class="version-badge"
+								class:version-stable={!isPreRelease}
+								class:version-prerelease={isPreRelease}
+							>
+								v{currentVersion}
+							</span>
+						{/if}
+					{:else}
+						<span class="version-badge version-pending" aria-busy="true" title="Проверка версии…">
+							<span class="version-pending-dots">···</span>
+						</span>
+					{/if}
+				</span>
 			{/if}
 
 			{#if authenticated}
@@ -426,6 +437,16 @@
 		white-space: nowrap;
 	}
 
+	.version-slot {
+		display: inline-flex;
+		justify-content: flex-start;
+		align-items: center;
+		flex-shrink: 0;
+		width: 10ch;
+		min-width: 10ch;
+		overflow: visible;
+	}
+
 	.version-badge {
 		font-size: 9px;
 		font-weight: 600;
@@ -435,6 +456,22 @@
 		line-height: 1;
 		text-decoration: none;
 		white-space: nowrap;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		box-sizing: border-box;
+		font-family: var(--font-mono, monospace);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.version-pending {
+		background: var(--color-bg-tertiary);
+		color: var(--color-text-muted);
+		letter-spacing: 0.12em;
+	}
+
+	.version-pending-dots {
+		opacity: 0.55;
 	}
 
 	.version-stable {

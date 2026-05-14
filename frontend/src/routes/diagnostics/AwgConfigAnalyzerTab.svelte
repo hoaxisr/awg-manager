@@ -6,6 +6,8 @@
 		runChecks,
 		calcScores,
 		buildFixes,
+		buildConfigSummary,
+		buildUpgradeHints,
 		getVerdict,
 		dpiLabel,
 		camouflageFromI1,
@@ -15,6 +17,7 @@
 		type AwgCheck,
 		type AwgScores,
 		type AwgVerdict,
+		type AwgSummaryRow,
 	} from '$lib/utils/awgConfAnalyzer';
 
 	let raw = $state('');
@@ -154,13 +157,23 @@
 		if (!s) return { text: '—', color: 'var(--text-tertiary)' };
 		return dpiLabel(s.dpi);
 	});
+
+	let summaryRows = $derived.by((): AwgSummaryRow[] => {
+		if (!parsed || !version) return [];
+		return buildConfigSummary(parsed.iface, parsed.peer, version);
+	});
+
+	let upgradeHints = $derived.by(() => {
+		if (!parsed || !version) return [] as string[];
+		return buildUpgradeHints(parsed.iface, version);
+	});
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
 <div class="shell">
 	<p class="hint">
-		Анализ выполняется только в браузере; конфиг не отправляется на сервер. Оценки эвристические, не
+		Анализ выполняется только в браузере: конфиг не отправляется на сервер. Оценки эвристические, не
 		гарантируют обход DPI.
 	</p>
 
@@ -187,7 +200,7 @@
 				<Button variant="primary" onclick={analyze}>Анализировать</Button>
 				<Button variant="secondary" onclick={() => fileInput?.click()}>Файл…</Button>
 				<Button variant="ghost" onclick={clearAll}>Очистить</Button>
-				<span class="kbd">Ctrl+Enter</span>
+				<span class="kbd">⌘/Ctrl+Enter</span>
 			</div>
 			<input
 				bind:this={fileInput}
@@ -208,6 +221,43 @@
 			<span class="ver-badge">{version.ver}</span>
 			<p class="ver-desc">{version.desc}</p>
 		</section>
+
+		{#if upgradeHints.length > 0}
+			<section
+				class="card fixes"
+				aria-labelledby="awg-upgrade-h"
+				style:--awg-fix-accent={verdict.color}
+				style:--awg-fix-tint={verdict.tint}
+			>
+				<div class="fixes-head">
+					<span class="fixes-head-icon" aria-hidden="true">
+						<svg
+							width="18"
+							height="18"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+							<polyline points="17 6 23 6 23 12" />
+						</svg>
+					</span>
+					<h3 id="awg-upgrade-h" class="fixes-h">Как усилить</h3>
+					<span class="fixes-count">{upgradeHints.length}</span>
+				</div>
+				<ul class="fix-list">
+					{#each upgradeHints as hint, idx (idx)}
+						<li class="fix-item">
+							<span class="fix-bullet" aria-hidden="true">→</span>
+							<span class="fix-text">{hint}</span>
+						</li>
+					{/each}
+				</ul>
+			</section>
+		{/if}
 
 		<section class="card score">
 			<div class="score-row">
@@ -244,6 +294,18 @@
 					<div class="mini-l">Версия</div>
 					<div class="mini-v accent">{version.ver}</div>
 				</div>
+				{#if version.obfLevel}
+					<div class="mini">
+						<div class="mini-l">CPS / обфускация</div>
+						<div class="mini-v soft">{version.obfLevel}</div>
+					</div>
+				{/if}
+				{#if version.protocol}
+					<div class="mini">
+						<div class="mini-l">Протокол I1</div>
+						<div class="mini-v soft">{version.protocol}</div>
+					</div>
+				{/if}
 				<div class="mini">
 					<div class="mini-l">DPI риск</div>
 					<div class="mini-v" style:color={dpiL.color}>{dpiL.text}</div>
@@ -263,8 +325,26 @@
 			</div>
 		</section>
 
+		{#if summaryRows.length > 0}
+			<section class="card summary" aria-labelledby="awg-summary-h">
+				<h3 id="awg-summary-h" class="block-h">Что это за конфиг</h3>
+				<dl class="summary-dl">
+					{#each summaryRows as row (`${row.label}-${row.value}`)}
+						<div class="summary-row">
+							<dt>{row.label}</dt>
+							<dd>{row.value}</dd>
+						</div>
+					{/each}
+				</dl>
+			</section>
+		{/if}
+
 		{#if fixes.length > 0}
-			<section class="card fixes">
+			<section
+				class="card fixes"
+				style:--awg-fix-accent={verdict.color}
+				style:--awg-fix-tint={verdict.tint}
+			>
 				<div class="fixes-head">
 					<span class="fixes-head-icon" aria-hidden="true">
 						<svg
@@ -516,6 +596,37 @@
 		color: var(--text-secondary);
 	}
 
+	.summary-dl {
+		margin: 4px 0 0;
+	}
+
+	.summary-row {
+		display: grid;
+		grid-template-columns: minmax(7.5rem, 36%) 1fr;
+		gap: 4px 12px;
+		padding: 7px 0;
+		border-bottom: 1px solid var(--color-border);
+		font-size: 12px;
+		line-height: 1.45;
+	}
+
+	.summary-row:last-child {
+		border-bottom: none;
+		padding-bottom: 0;
+	}
+
+	.summary-row dt {
+		margin: 0;
+		font-weight: 600;
+		color: var(--text-tertiary);
+	}
+
+	.summary-row dd {
+		margin: 0;
+		color: var(--text-primary);
+		word-break: break-word;
+	}
+
 	.score-row {
 		display: flex;
 		flex-wrap: wrap;
@@ -650,10 +761,12 @@
 	}
 
 	.card.fixes {
-		border-color: color-mix(in srgb, var(--color-success, #22c55e) 28%, var(--color-border));
+		--awg-fix-accent: var(--color-success, #22c55e);
+		--awg-fix-tint: var(--color-success-tint);
+		border-color: color-mix(in srgb, var(--awg-fix-accent) 28%, var(--color-border));
 		background: linear-gradient(
 			165deg,
-			color-mix(in srgb, var(--color-success, #22c55e) 12%, var(--bg-secondary)) 0%,
+			color-mix(in srgb, var(--awg-fix-accent) 12%, var(--bg-secondary)) 0%,
 			var(--bg-secondary) 55%
 		);
 	}
@@ -673,9 +786,9 @@
 		height: 34px;
 		border-radius: 10px;
 		flex-shrink: 0;
-		color: var(--color-success, #22c55e);
-		background: var(--color-success-tint);
-		border: 1px solid color-mix(in srgb, var(--color-success, #22c55e) 35%, transparent);
+		color: var(--awg-fix-accent);
+		background: var(--awg-fix-tint);
+		border: 1px solid color-mix(in srgb, var(--awg-fix-accent) 35%, transparent);
 	}
 
 	.fixes-head-icon svg {
@@ -690,7 +803,7 @@
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
-		color: var(--color-success, #22c55e);
+		color: var(--awg-fix-accent);
 	}
 
 	.fixes-count {
@@ -700,9 +813,9 @@
 		padding: 4px 10px;
 		border-radius: 999px;
 		font-variant-numeric: tabular-nums;
-		background: var(--color-success-tint);
-		color: var(--color-success, #22c55e);
-		border: 1px solid color-mix(in srgb, var(--color-success, #22c55e) 30%, transparent);
+		background: var(--awg-fix-tint);
+		color: var(--awg-fix-accent);
+		border: 1px solid color-mix(in srgb, var(--awg-fix-accent) 30%, transparent);
 	}
 
 	.fix-list {
@@ -726,8 +839,8 @@
 	}
 
 	.fix-item:hover {
-		border-color: color-mix(in srgb, var(--color-success, #22c55e) 35%, var(--color-border));
-		background: color-mix(in srgb, var(--color-success-tint) 40%, var(--bg-primary, rgba(0, 0, 0, 0.12)));
+		border-color: color-mix(in srgb, var(--awg-fix-accent) 35%, var(--color-border));
+		background: color-mix(in srgb, var(--awg-fix-tint) 40%, var(--bg-primary, rgba(0, 0, 0, 0.12)));
 	}
 
 	.fix-bullet {
@@ -742,9 +855,9 @@
 		font-size: 13px;
 		font-weight: 700;
 		line-height: 1;
-		color: var(--color-success, #22c55e);
-		background: var(--color-success-tint);
-		border: 1px solid color-mix(in srgb, var(--color-success, #22c55e) 25%, transparent);
+		color: var(--awg-fix-accent);
+		background: var(--awg-fix-tint);
+		border: 1px solid color-mix(in srgb, var(--awg-fix-accent) 25%, transparent);
 	}
 
 	.fix-text {

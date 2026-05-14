@@ -5,14 +5,16 @@
     import { ClientRouteCard, ClientRouteCreateModal } from '$lib/components/clientroute';
     import { notifications } from '$lib/stores/notifications';
     import { clientRoutesStore } from '$lib/stores/routing';
+    import RoutingTabBodySkeleton from './RoutingTabBodySkeleton.svelte';
 
     interface Props {
         clientRoutes: ClientRoute[];
         policyDevices: PolicyDevice[];
         routingTunnels: RoutingTunnel[];
+        bodyLoading?: boolean;
     }
 
-    let { clientRoutes, policyDevices, routingTunnels }: Props = $props();
+    let { clientRoutes, policyDevices, routingTunnels, bodyLoading = false }: Props = $props();
 
     let clientRouteSaving = $state(false);
     let clientRouteDeleteId = $state<string | null>(null);
@@ -152,13 +154,19 @@
 
 <div class="section-header">
     {#if !clientSelectionMode}
-        <span class="section-summary">{clientRoutes.length} правил</span>
+        <span class="section-summary">
+            {#if bodyLoading}
+                …
+            {:else}
+                {clientRoutes.length} правил
+            {/if}
+        </span>
         <div class="section-buttons">
             <StoreStatusBadge store={clientRoutesStore} />
             {#if clientRoutes.length > 0}
-                <Button variant="ghost" size="sm" onclick={() => { clientSelectionMode = true; clientSelected = new Set(); }}>Выбрать</Button>
+                <Button variant="ghost" size="sm" disabled={bodyLoading} onclick={() => { clientSelectionMode = true; clientSelected = new Set(); }}>Выбрать</Button>
             {/if}
-            <Button variant="primary" size="sm" onclick={() => { editingClientRoute = null; clientRouteModalOpen = true; }}>+ Создать</Button>
+            <Button variant="primary" size="sm" disabled={bodyLoading} onclick={() => { editingClientRoute = null; clientRouteModalOpen = true; }}>+ Создать</Button>
         </div>
     {:else}
         <div class="bulk-bar">
@@ -197,7 +205,9 @@
     {/if}
 </div>
 
-{#if clientRoutes.length === 0}
+{#if bodyLoading}
+    <RoutingTabBodySkeleton />
+{:else if clientRoutes.length === 0}
     <div class="empty-hint">Нет правил VPN для устройств. Создайте правило, чтобы направить трафик устройства через VPN-туннель.</div>
 {:else}
     <div class="route-grid">
