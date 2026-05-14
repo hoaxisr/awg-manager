@@ -76,7 +76,16 @@ import (
 const (
 	defaultDataDir = "/opt/etc/awg-manager"
 	defaultWebRoot = "/opt/share/www/awg-manager"
-	pidFile        = "/opt/var/run/awg-manager.pid"
+	// pidFile lives on the system tmpfs (cleared on every boot) so an
+	// unclean reboot can never leave a stale PID pointing at whatever
+	// process eventually inherits that PID slot on the next uptime.
+	// /var/run is FHS-canonical and always tmpfs on Keenetic; /opt/var/run
+	// is Entware-persistent storage and was the source of the stale-PID
+	// startup-block bug.
+	pidFile = "/var/run/awg-manager.pid"
+	// legacyPidFile is the pre-move location; one-shot cleanup on startup
+	// removes it after an upgrade so the old file does not linger.
+	legacyPidFile = "/opt/var/run/awg-manager.pid"
 )
 
 // version is set via ldflags at build time
@@ -199,6 +208,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to create data dir: %v\n", err)
 		os.Exit(1)
 	}
+
+	// One-shot cleanup of the pre-move PID file. Older awgm wrote it to
+	// /opt/var/run/awg-manager.pid (persistent Entware storage); after
+	// the move to /var/run we never reference that path again, so remove
+	// it so a stale upgrade artifact does not linger.
+	_ = os.Remove(legacyPidFile)
 
 	// Record the exact moment main() enters the daemon path so BootHealth
 	// can compute uptime accurately. Must happen before any goroutines start.
@@ -1155,12 +1170,6 @@ func main() {
 				}
 			}
 
-			// Clean up stale userspace PID files (kernel doesn't need cleanup —
-			// bootTunnels handles it via lifecycle-based Start).
-			if backendImpl.Type() != backend.TypeKernel {
-				cleanupStaleUserspaceState(log)
-			}
-
 			// Seed WAN model with current interface state from NDMS.
 			// Must happen before tunnel start so ISP resolution works.
 			populateWANModel(shutdownCtx, ndmsQueries, wanModel, log)
@@ -1189,7 +1198,6 @@ func main() {
 		// syscall.Exec preserves child processes — amneziawg-go, TUN devices,
 		// iptables rules, routes, NDMS config all survive. Only in-memory
 		// operator maps (endpointRoutes, resolvedISP) need restoration.
-		// PID files are valid (not stale) — do NOT call cleanupStaleUserspaceState.
 		populateWANModel(context.Background(), ndmsQueries, wanModel, log)
 
 		// Migrate legacy NDMS ID values to kernel names (one-time after model is populated).
@@ -1405,26 +1413,6 @@ func getUptime() float64 {
 	return uptime
 }
 
-// cleanupStaleUserspaceState removes stale PID files and sockets after router reboot.
-// After reboot, /tmp (tmpfs) is wiped but PID files in /opt/var/run persist,
-// and processes they reference no longer exist.
-func cleanupStaleUserspaceState(log *logger.Logger) {
-	pidDir := "/opt/var/run/awg-manager"
-
-	entries, err := os.ReadDir(pidDir)
-	if err != nil {
-		return // Directory doesn't exist yet — nothing to clean
-	}
-
-	for _, e := range entries {
-		if !e.IsDir() && filepath.Ext(e.Name()) == ".pid" {
-			pidPath := filepath.Join(pidDir, e.Name())
-			_ = os.Remove(pidPath)
-			log.Info("reboot cleanup: removed stale PID file", map[string]interface{}{"file": e.Name()})
-		}
-	}
-}
-
 // runService handles --service flag: start/stop/restart/status.
 // This replaces the shell logic that was previously in S99awg-manager.
 func runService(action, dataDir, webRoot string) {
@@ -1455,8 +1443,9 @@ func serviceStart(dataDir, webRoot string) {
 
 	fmt.Println("Starting AWG Manager...")
 
-	// Ensure directories
-	os.MkdirAll("/opt/var/run", 0755)
+	// Ensure directories. /var/run is system tmpfs and always exists,
+	// but MkdirAll is idempotent so harmless to call.
+	os.MkdirAll("/var/run", 0755)
 	os.MkdirAll("/opt/var/log", 0755)
 	os.MkdirAll(dataDir, 0755)
 
@@ -1577,14 +1566,22 @@ func readPIDFile() (int, bool) {
 	return pid, true
 }
 
-// isProcessRunning checks if a process with the given PID is an awg-manager instance.
-// Reading /proc/<pid>/cmdline avoids false positives from PID reuse after reboot.
+// isProcessRunning checks if a process with the given PID is an awg-manager
+// instance. /proc/<pid>/cmdline is the NUL-separated argv. We match on the
+// basename of argv[0] rather than on the whole buffer so an argument that
+// happens to contain "awg-manager" (e.g. "-data-dir /opt/etc/awg-manager")
+// for an unrelated process that inherited the recycled PID does not
+// produce a false positive.
 func isProcessRunning(pid int) bool {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(data), "awg-manager")
+	argv0 := string(data)
+	if i := strings.IndexByte(argv0, 0); i >= 0 {
+		argv0 = argv0[:i]
+	}
+	return filepath.Base(argv0) == "awg-manager"
 }
 
 // getServiceEndpoint reads settings to determine the service host:port for display.
@@ -1769,7 +1766,6 @@ func runCleanup(dataDir string) {
 	}
 	os.Remove(filepath.Join(dataDir, "port"))
 	os.Remove(filepath.Join(dataDir, "dns-routes.json"))
-	os.RemoveAll("/opt/var/run/awg-manager")
 
 	fmt.Println("Done.")
 }

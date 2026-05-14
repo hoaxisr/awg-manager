@@ -60,7 +60,27 @@
 	];
 
 	const singboxInstalled = $derived($singboxStatus.data?.installed ?? false);
-	const isDirty = $derived(kind !== 'choose');
+	// Compare every form field against its reset() default. The previous
+	// `kind !== 'choose'` heuristic mis-fired the moment the user picked
+	// a step (or arrived with a preselect), claiming dirty without any
+	// input. Now dirty reflects actual edits.
+	const isDirty = $derived.by(() => {
+		if (kind === 'choose') return false;
+		if (kind === 'single') return singleLinks.trim() !== '';
+		// 'inline' and 'url' share the subscription form below.
+		return (
+			label.trim() !== '' ||
+			url.trim() !== '' ||
+			inlineText.trim() !== '' ||
+			headersText !== DEFAULT_PRESET ||
+			refreshHoursStr !== '24' ||
+			enabled !== true ||
+			mode !== 'selector' ||
+			utUrl !== DEFAULT_SUBSCRIPTION_URLTEST.url ||
+			utIntervalSec !== DEFAULT_SUBSCRIPTION_URLTEST.intervalSec ||
+			utToleranceMs !== DEFAULT_SUBSCRIPTION_URLTEST.toleranceMs
+		);
+	});
 
 	$effect(() => {
 		if (open) {

@@ -164,10 +164,10 @@
     {#if hasUnsavedChanges}
         <ConfirmModal
             open={confirmOpen}
-            title="Несохранённые изменения"
-            message="Вы внесли изменения в форме. Закрыть без сохранения?"
-            confirmLabel="Закрыть без сохранения"
-            cancelLabel="Продолжить редактирование"
+            title="Закрыть без сохранения?"
+            message="Все правки будут потеряны."
+            confirmLabel="Закрыть"
+            cancelLabel="Остаться"
             variant="danger"
             onConfirm={() => { confirmOpen = false; onclose(); }}
             onClose={() => { confirmOpen = false; }}

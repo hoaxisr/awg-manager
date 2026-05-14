@@ -3,7 +3,7 @@ package router
 import "errors"
 
 var (
-	ErrNetfilterComponentMissing = errors.New("kernel module xt_TPROXY.ko not found: install Keenetic 'Netfilter kernel modules' component")
+	ErrNetfilterComponentMissing = errors.New("kernel module xt_TPROXY.ko not found: install the router firmware 'Netfilter kernel modules' component")
 	ErrIPTablesModTProxyMissing  = errors.New("iptables-mod-tproxy package not installed")
 	ErrRuleSetReferenced         = errors.New("rule set is referenced by one or more rules")
 	ErrOutboundReferenced        = errors.New("outbound is referenced by one or more rules")

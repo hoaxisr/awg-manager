@@ -15,7 +15,7 @@
  * order change).
  */
 import { derived, type Readable } from 'svelte/store';
-import { createPollingStore, type PollingStore } from './polling';
+import { createPollingStore, type PollingStore, type PollingState } from './polling';
 import { registerStore, type ResourceKey } from './storeRegistry';
 import type {
 	DnsRoute,
@@ -90,6 +90,26 @@ export const hydrarouteStatusStore: PollingStore<HydraRouteStatus> = createPolli
 	}
 );
 registerStore('routing.hydrarouteStatus', hydrarouteStatusStore);
+
+/** First successful fetch or terminal error — section can render cached/empty body. */
+function sectionFetched(s: PollingState<unknown>): boolean {
+	return s.lastFetchedAt > 0 || s.status === 'error';
+}
+
+/** NDMS DNS tab: dns lists + tunnels + HR install flag (for hasDnsEngine on OS4). */
+export const routingDnsNdmsTabReady = derived(
+	[dnsRoutesStore, routingTunnelsStore, hydrarouteStatusStore],
+	([d, t, hr]) => sectionFetched(d) && sectionFetched(t) && sectionFetched(hr)
+);
+
+export const routingIpTabReady = derived([staticRoutesStore, routingTunnelsStore], ([s, t]) =>
+	sectionFetched(s) && sectionFetched(t)
+);
+
+export const routingClientVpnTabReady = derived(
+	[clientRoutesStore, policyDevicesStore, routingTunnelsStore],
+	([cr, pd, t]) => sectionFetched(cr) && sectionFetched(pd) && sectionFetched(t)
+);
 
 export type RoutingComposite = {
 	dnsRoutes: DnsRoute[];

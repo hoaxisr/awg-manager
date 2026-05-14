@@ -58,7 +58,6 @@ func TestNewNames(t *testing.T) {
 		wantNDMS     string
 		wantIface    string
 		wantConf     string
-		wantPID      string
 		wantSocket   string
 	}{
 		{
@@ -67,7 +66,6 @@ func TestNewNames(t *testing.T) {
 			wantNDMS:   "OpkgTun0",
 			wantIface:  "opkgtun0",
 			wantConf:   "/opt/etc/awg-manager/awg0.conf",
-			wantPID:    "/opt/var/run/awg-manager/awg0.pid",
 			wantSocket: "/tmp/run/amneziawg/opkgtun0.sock",
 		},
 		{
@@ -76,7 +74,6 @@ func TestNewNames(t *testing.T) {
 			wantNDMS:   "OpkgTun10",
 			wantIface:  "opkgtun10",
 			wantConf:   "/opt/etc/awg-manager/awg10.conf",
-			wantPID:    "/opt/var/run/awg-manager/awg10.pid",
 			wantSocket: "/tmp/run/amneziawg/opkgtun10.sock",
 		},
 		{
@@ -85,7 +82,6 @@ func TestNewNames(t *testing.T) {
 			wantNDMS:   "OpkgTun5",
 			wantIface:  "opkgtun5",
 			wantConf:   "/opt/etc/awg-manager/tunnel5.conf",
-			wantPID:    "/opt/var/run/awg-manager/tunnel5.pid",
 			wantSocket: "/tmp/run/amneziawg/opkgtun5.sock",
 		},
 		{
@@ -94,7 +90,6 @@ func TestNewNames(t *testing.T) {
 			wantNDMS:   "OpkgTun0",
 			wantIface:  "opkgtun0",
 			wantConf:   "/opt/etc/awg-manager/nodigits.conf",
-			wantPID:    "/opt/var/run/awg-manager/nodigits.pid",
 			wantSocket: "/tmp/run/amneziawg/opkgtun0.sock",
 		},
 	}
@@ -117,9 +112,6 @@ func TestNewNames(t *testing.T) {
 			}
 			if names.ConfPath != tt.wantConf {
 				t.Errorf("ConfPath = %v, want %v", names.ConfPath, tt.wantConf)
-			}
-			if names.PIDPath != tt.wantPID {
-				t.Errorf("PIDPath = %v, want %v", names.PIDPath, tt.wantPID)
 			}
 			if names.SocketPath != tt.wantSocket {
 				t.Errorf("SocketPath = %v, want %v", names.SocketPath, tt.wantSocket)

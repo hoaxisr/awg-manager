@@ -2,9 +2,11 @@
 
 OLD_VERSION="$2"
 
-# Create directories
+# Create directories. /var/run is system tmpfs (always present) and
+# is the new PID-file location since the migration off persistent
+# /opt/var/run; explicit mkdir is defensive against unusual mount layouts.
 mkdir -p /opt/etc/awg-manager/tunnels
-mkdir -p /opt/var/run
+mkdir -p /var/run
 mkdir -p /opt/var/log
 
 # Set permissions

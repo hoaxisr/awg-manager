@@ -45,6 +45,8 @@
 	let backendOffline = $derived(!$serverOnline);
 
 	let updateInfo = $state<UpdateInfo | null>(null);
+	/** idle | loading | done — чтобы в шапке не мигал бейдж при первом checkUpdate. */
+	let updateFetchState = $state<'idle' | 'loading' | 'done'>('idle');
 	const currentVersion = $derived(updateInfo?.currentVersion ?? '');
 	const isPreRelease = $derived(
 		currentVersion.includes('-rc') ||
@@ -250,13 +252,28 @@
 		}
 	});
 
-	// Fetch update info when authenticated
+	// Fetch update info when authenticated (placeholder in header until done)
 	$effect(() => {
-		if ($isAuthenticated) {
-			api.checkUpdate().then(info => updateInfo = info).catch(() => null);
-		} else {
+		if (!$isAuthenticated) {
 			updateInfo = null;
+			updateFetchState = 'idle';
+			return;
 		}
+		updateFetchState = 'loading';
+		let cancelled = false;
+		api.checkUpdate()
+			.then((info) => {
+				if (!cancelled) updateInfo = info;
+			})
+			.catch(() => {
+				if (!cancelled) updateInfo = null;
+			})
+			.finally(() => {
+				if (!cancelled) updateFetchState = 'done';
+			});
+		return () => {
+			cancelled = true;
+		};
 	});
 
 	// Load settings store on first authentication (not a PollingStore).
@@ -332,6 +349,7 @@
 		username={$auth.login}
 		theme={$theme}
 		{currentVersion}
+		versionPending={$isAuthenticated && updateFetchState === 'loading'}
 		{hasUpdate}
 		{isPreRelease}
 		bind:mobileMenuOpen

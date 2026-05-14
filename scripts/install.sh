@@ -22,7 +22,7 @@ error() { printf "\033[1;31m[-]\033[0m %s\n" "$1"; exit 1; }
 detect_arch() {
     info "Определяю архитектуру..."
     ARCH=$(opkg print-architecture 2>/dev/null | grep '_kn' | awk '{print $2}' | sed 's/_kn.*//')
-    [ -z "$ARCH" ] && error "Не удалось определить архитектуру. Это роутер Keenetic с Entware?"
+    [ -z "$ARCH" ] && error "Не удалось определить архитектуру. Это роутер с Entware?"
 
     case "$ARCH" in
         mipsel-3.4|mips-3.4|aarch64-3.10) ;;

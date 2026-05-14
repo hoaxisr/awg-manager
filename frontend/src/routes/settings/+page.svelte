@@ -466,7 +466,7 @@ onMount(() => {
 						<div class="flex flex-col gap-1">
 							<span class="font-medium">Авторизация</span>
 							<span class="setting-description">
-								Требовать вход через учётную запись Keenetic для доступа к панели управления
+								Требовать вход через учётную запись роутера для доступа к панели управления
 							</span>
 						</div>
 						<Toggle checked={settings.authEnabled} onchange={toggleAuth} disabled={saving} />

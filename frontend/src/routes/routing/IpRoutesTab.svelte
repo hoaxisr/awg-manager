@@ -8,15 +8,17 @@
     import { downloadJson } from '$lib/utils/dns-export';
     import { notifications } from '$lib/stores/notifications';
     import { staticRoutesStore } from '$lib/stores/routing';
+    import RoutingTabBodySkeleton from './RoutingTabBodySkeleton.svelte';
 
     interface Props {
         ipRoutes: StaticRouteList[];
         routingTunnels: RoutingTunnel[];
         editRuleId?: string;
         editRuleCounter?: number;
+        bodyLoading?: boolean;
     }
 
-    let { ipRoutes, routingTunnels, editRuleId = '', editRuleCounter = 0 }: Props = $props();
+    let { ipRoutes, routingTunnels, editRuleId = '', editRuleCounter = 0, bodyLoading = false }: Props = $props();
 
     // Open edit modal when search result is clicked.
     // Capture counter at mount to skip stale values on tab re-mount.
@@ -214,15 +216,19 @@
 <div class="section-header">
     {#if !ipSelectionMode}
         <span class="section-summary">
-            {boundRoutes.length} правил, {ipActiveCount} активных{#if orphanRoutes.length > 0}, <span class="orphan-count">несвязанных: {orphanRoutes.length}</span>{/if}
+            {#if bodyLoading}
+                …
+            {:else}
+                {boundRoutes.length} правил, {ipActiveCount} активных{#if orphanRoutes.length > 0}, <span class="orphan-count">несвязанных: {orphanRoutes.length}</span>{/if}
+            {/if}
         </span>
         <div class="section-buttons">
             <StoreStatusBadge store={staticRoutesStore} />
-            <Button variant="ghost" size="sm" onclick={() => ipImportOpen = true}>Загрузить набор правил</Button>
+            <Button variant="ghost" size="sm" disabled={bodyLoading} onclick={() => ipImportOpen = true}>Загрузить набор правил</Button>
             {#if ipRoutes.length > 0}
-                <Button variant="ghost" size="sm" onclick={() => { ipSelectionMode = true; ipSelected = new Set(); }}>Выбрать</Button>
+                <Button variant="ghost" size="sm" disabled={bodyLoading} onclick={() => { ipSelectionMode = true; ipSelected = new Set(); }}>Выбрать</Button>
             {/if}
-            <Button variant="primary" size="sm" onclick={() => { editingIpRoute = null; ipCreateOpen = true; }}>+ Новое правило</Button>
+            <Button variant="primary" size="sm" disabled={bodyLoading} onclick={() => { editingIpRoute = null; ipCreateOpen = true; }}>+ Новое правило</Button>
         </div>
     {:else}
         <div class="bulk-bar">
@@ -262,7 +268,9 @@
     {/if}
 </div>
 
-{#if ipRoutes.length === 0}
+{#if bodyLoading}
+    <RoutingTabBodySkeleton />
+{:else if ipRoutes.length === 0}
     <div class="empty-hint">Нет IP-маршрутов</div>
 {:else}
     {#if orphanRoutes.length > 0}

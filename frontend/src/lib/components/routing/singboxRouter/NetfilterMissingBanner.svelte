@@ -6,7 +6,7 @@
 </script>
 
 <div class="banner">
-	<div class="title">Требуется компонент Keenetic</div>
+	<div class="title">Требуется компонент прошивки роутера</div>
 	<div class="body">
 		Установите компонент <strong>{componentName}</strong> через веб-интерфейс роутера:
 		<em>Общие настройки → Настройка компонентов → Компоненты</em>. После установки перезагрузите роутер.

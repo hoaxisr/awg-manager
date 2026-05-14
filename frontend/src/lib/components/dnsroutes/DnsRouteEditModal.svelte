@@ -495,7 +495,7 @@
 					<span class="policy-label">Имя политики:</span>
 					<input class="policy-input" value={hrPolicyName} oninput={(e) => hrPolicyName = (e.target as HTMLInputElement).value} placeholder="HydraRoute">
 				</div>
-				<span class="field-hint">Порядок = приоритет. Политика создаётся автоматически в Keenetic.</span>
+				<span class="field-hint">Порядок = приоритет. Политика создаётся автоматически на роутере.</span>
 			{/if}
 		</div>
 	{/if}

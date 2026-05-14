@@ -16,7 +16,7 @@
     "firewall",
     "router"
   ],
-  "description": "AWG Manager is a tool for managing AmneziaWG VPN tunnels and other network services on Keenetic routers",
+  "description": "AWG Manager is a tool for managing AmneziaWG VPN tunnels and other network services on compatible routers",
   "lang": "ru",
   "icons": [
     {

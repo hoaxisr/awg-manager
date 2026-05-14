@@ -59,11 +59,12 @@ type TunnelConnectionInfoDTO struct {
 
 // ConnectionsData mirrors frontend ConnectionsResponse.
 type ConnectionsData struct {
-	Stats      ConnectionStatsDTO               `json:"stats"`
-	Tunnels    map[string]TunnelConnectionInfoDTO `json:"tunnels" swaggertype:"object"`
-	Connections []ConntrackConnectionDTO         `json:"connections"`
-	Pagination ConnectionsPaginationDTO          `json:"pagination"`
-	FetchedAt  string                           `json:"fetchedAt" example:"2024-01-15T10:30:00Z"`
+	Stats ConnectionStatsDTO `json:"stats"`
+	// Tunnels: per-tunnel counts; key "" is direct traffic (same as query tunnel=direct / UI Direct chip).
+	Tunnels     map[string]TunnelConnectionInfoDTO `json:"tunnels"`
+	Connections []ConntrackConnectionDTO           `json:"connections"`
+	Pagination  ConnectionsPaginationDTO           `json:"pagination"`
+	FetchedAt   string                             `json:"fetchedAt" example:"2024-01-15T10:30:00Z"`
 }
 
 // ConnectionsResponseEnvelope is the envelope for GET /connections.

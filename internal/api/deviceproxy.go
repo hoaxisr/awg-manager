@@ -89,8 +89,8 @@ type ProxyOutboundsResponse struct {
 
 // ProxyListenChoicesData mirrors the listen-choices payload.
 type ProxyListenChoicesData struct {
-	LanIP         string `json:"lanIP" example:"192.168.1.1"`
-	SingboxRunning bool  `json:"singboxRunning" example:"true"`
+	LanIP          string `json:"lanIP" example:"192.168.1.1"`
+	SingboxRunning bool   `json:"singboxRunning" example:"true"`
 }
 
 // ProxyListenChoicesResponse is the envelope for GET /proxy/listen-choices.
@@ -99,11 +99,20 @@ type ProxyListenChoicesResponse struct {
 	Data    ProxyListenChoicesData `json:"data"`
 }
 
+// DeviceProxyInstanceIPCheckResultDTO mirrors frontend DeviceProxyInstanceIPCheckResult
+// and deviceproxy.InstanceIPCheckResult (OpenAPI / swag only sees types in internal/api).
+type DeviceProxyInstanceIPCheckResultDTO struct {
+	DirectIP  string `json:"directIp" example:"203.0.113.1"`
+	ProxyIP   string `json:"proxyIp" example:"198.51.100.42"`
+	IPChanged bool   `json:"ipChanged" example:"false"`
+	Service   string `json:"service" example:"https://api.ipify.org"`
+}
+
 // DeviceProxyInstanceIPCheckResponse is the envelope for
 // GET /proxy/instance/check-ip.
 type DeviceProxyInstanceIPCheckResponse struct {
-	Success bool                              `json:"success" example:"true"`
-	Data    deviceproxy.InstanceIPCheckResult `json:"data"`
+	Success bool                                `json:"success" example:"true"`
+	Data    DeviceProxyInstanceIPCheckResultDTO `json:"data"`
 }
 
 // DeviceProxyHandler handles /api/proxy/* endpoints.
@@ -153,6 +162,15 @@ func fromDeviceProxyInstanceData(in DeviceProxyInstanceData) deviceproxy.Instanc
 			Password: in.Auth.Password,
 		},
 		SelectedOutbound: in.SelectedOutbound,
+	}
+}
+
+func toDeviceProxyInstanceIPCheckResultDTO(r deviceproxy.InstanceIPCheckResult) DeviceProxyInstanceIPCheckResultDTO {
+	return DeviceProxyInstanceIPCheckResultDTO{
+		DirectIP:  r.DirectIP,
+		ProxyIP:   r.ProxyIP,
+		IPChanged: r.IPChanged,
+		Service:   r.Service,
 	}
 }
 
@@ -630,5 +648,5 @@ func (h *DeviceProxyHandler) CheckInstanceExternalIP(w http.ResponseWriter, r *h
 		return
 	}
 
-	response.Success(w, result)
+	response.Success(w, toDeviceProxyInstanceIPCheckResultDTO(result))
 }

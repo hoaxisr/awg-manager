@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { tunnels } from '$lib/stores/tunnels';
@@ -456,6 +456,44 @@
 		if (key === lastAutoCheckKey) return;
 		lastAutoCheckKey = key;
 		awgAutoConnectivityNonce += 1;
+	});
+
+	// В режиме «список» не рендерятся TunnelCard — там срабатывает autoConnectivity.
+	// Иначе connectivityMap не заполняется и подстрока статуса залипает на «Проверка…».
+	$effect(() => {
+		const mode = awgEffectiveViewMode;
+		const nonce = awgAutoConnectivityNonce;
+		if (mode !== 'list' || loading || nonce <= 0) return;
+
+		const targets = untrack(() =>
+			awgList.filter(
+				(t) =>
+					t.enabled &&
+					(t.status === 'running' || t.status === 'broken') &&
+					(t.connectivityCheck?.method ?? 'http') !== 'disabled',
+			),
+		);
+		if (targets.length === 0) return;
+
+		const timers: ReturnType<typeof setTimeout>[] = [];
+		for (let i = 0; i < targets.length; i++) {
+			const id = targets[i].id;
+			timers.push(
+				setTimeout(() => {
+					void api
+						.checkConnectivity(id)
+						.then((result) => {
+							tunnels.updateConnectivity(id, result.connected, result.latency ?? null);
+						})
+						.catch(() => {
+							tunnels.updateConnectivity(id, false, null);
+						});
+				}, i * 180),
+			);
+		}
+		return () => {
+			for (const t of timers) clearTimeout(t);
+		};
 	});
 
 	$effect(() => {

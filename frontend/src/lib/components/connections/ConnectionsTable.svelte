@@ -10,9 +10,25 @@
 		sortDir: 'asc' | 'desc';
 		onSortChange: (column: 'proto' | 'src' | 'dst' | 'iface' | 'state' | 'bytes') => void;
 		onPageChange: (offset: number) => void;
+		/** Плейсхолдер-строки при первой загрузке (пустой список) */
+		showSkeleton?: boolean;
 	}
 
-	let { connections, pagination, sortBy, sortDir, onSortChange, onPageChange }: Props = $props();
+	let {
+		connections,
+		pagination,
+		sortBy,
+		sortDir,
+		onSortChange,
+		onPageChange,
+		showSkeleton = false,
+	}: Props = $props();
+
+	const skelRowWidths = [
+		['42%', '55%', '48%', '36%', '52%', '40%'],
+		['38%', '62%', '44%', '40%', '44%', '36%'],
+		['45%', '50%', '58%', '38%', '48%', '44%'],
+	] as const;
 
 	let currentPage = $derived(Math.floor(pagination.offset / pagination.limit) + 1);
 	let totalPages = $derived(Math.ceil(pagination.total / pagination.limit) || 1);
@@ -92,6 +108,17 @@
 					<td class="mono">{formatBytes(conn.bytes)}</td>
 				</tr>
 			{/each}
+			{#if showSkeleton && connections.length === 0}
+				{#each skelRowWidths as widths, ri (ri)}
+					<tr class="row-skel" aria-hidden="true">
+						{#each widths as w, ci (ci)}
+							<td>
+								<span class="cell-skel" style:width={w}></span>
+							</td>
+						{/each}
+					</tr>
+				{/each}
+			{/if}
 		</tbody>
 	</table>
 </div>
@@ -136,6 +163,35 @@
 
 	.conn-table tr:hover td {
 		background: var(--color-bg-hover);
+	}
+
+	.row-skel td {
+		padding-top: 0.5rem;
+		padding-bottom: 0.5rem;
+	}
+
+	.row-skel:hover td {
+		background: transparent;
+	}
+
+	.cell-skel {
+		display: inline-block;
+		height: 0.6875rem;
+		max-width: 100%;
+		border-radius: 4px;
+		background: var(--color-border);
+		vertical-align: middle;
+		animation: skel-pulse 1.1s ease-in-out infinite;
+	}
+
+	@keyframes skel-pulse {
+		0%,
+		100% {
+			opacity: 0.38;
+		}
+		50% {
+			opacity: 0.72;
+		}
 	}
 
 	.mono {

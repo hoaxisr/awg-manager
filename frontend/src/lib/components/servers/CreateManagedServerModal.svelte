@@ -56,7 +56,13 @@
 			loadingWanIP = true;
 			api.getWANIP().then(ip => {
 				wanIP = ip;
-				if (!endpoint) endpoint = ip;
+				// Update initialEndpoint in lockstep so the async-resolved
+				// suggestion is not mistaken for user input by the dirty
+				// check (which compares endpoint to initialEndpoint).
+				if (!endpoint) {
+					endpoint = ip;
+					initialEndpoint = ip;
+				}
 			}).catch(() => wanIP = '').finally(() => loadingWanIP = false);
 
 			api.suggestManagedServerAddress().then(s => {

@@ -1,6 +1,6 @@
 <script lang="ts" module>
   import type { Snippet } from 'svelte';
-  export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success';
+  export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success' | 'outline-danger' | 'outline-primary';
   export type ButtonSize = 'sm' | 'md';
 </script>
 
@@ -48,6 +48,8 @@
     class:variant-ghost={variant === 'ghost'}
     class:variant-danger={variant === 'danger'}
     class:variant-success={variant === 'success'}
+    class:variant-outline-danger={variant === 'outline-danger'}
+    class:variant-outline-primary={variant === 'outline-primary'}
     class:size-sm={size === 'sm'}
     class:size-md={size === 'md'}
     class:full-width={fullWidth}
@@ -72,6 +74,8 @@
     class:variant-ghost={variant === 'ghost'}
     class:variant-danger={variant === 'danger'}
     class:variant-success={variant === 'success'}
+    class:variant-outline-danger={variant === 'outline-danger'}
+    class:variant-outline-primary={variant === 'outline-primary'}
     class:size-sm={size === 'sm'}
     class:size-md={size === 'md'}
     class:full-width={fullWidth}
@@ -160,6 +164,26 @@
   }
   .variant-success:hover:not(:disabled):not(.is-disabled) {
     filter: brightness(1.1);
+  }
+
+  .variant-outline-danger {
+    background: transparent;
+    color: var(--color-error);
+    border-color: var(--color-error-border);
+  }
+  .variant-outline-danger:hover:not(:disabled):not(.is-disabled) {
+    background: var(--color-error-tint);
+    border-color: var(--color-error);
+  }
+
+  .variant-outline-primary {
+    background: transparent;
+    color: var(--color-accent);
+    border-color: var(--color-accent-border);
+  }
+  .variant-outline-primary:hover:not(:disabled):not(.is-disabled) {
+    background: var(--color-accent-tint);
+    border-color: var(--color-accent);
   }
 
   .spinner {

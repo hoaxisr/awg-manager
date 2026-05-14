@@ -38,10 +38,15 @@
 		<p class="confirm-secondary">{secondary}</p>
 	{/if}
 	{#snippet actions()}
-		<Button variant="ghost" size="md" onclick={onClose} disabled={busy}>
+		<Button variant="secondary" size="md" onclick={onClose} disabled={busy}>
 			{cancelLabel}
 		</Button>
-		<Button {variant} size="md" onclick={onConfirm} disabled={busy}>
+		<Button
+			variant={variant === 'danger' ? 'outline-danger' : 'outline-primary'}
+			size="md"
+			onclick={onConfirm}
+			disabled={busy}
+		>
 			{busy ? 'Выполнение…' : confirmLabel}
 		</Button>
 	{/snippet}

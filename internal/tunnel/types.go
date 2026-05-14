@@ -201,7 +201,6 @@ type Names struct {
 	NDMSName   string // NDMS interface name (e.g., "OpkgTun0")
 	IfaceName  string // Kernel interface name (e.g., "opkgtun0")
 	ConfPath   string // Config file path
-	PIDPath    string // PID file path
 	SocketPath string // Control socket path
 }
 
@@ -232,7 +231,6 @@ func NewNames(tunnelID string) Names {
 		NDMSName:   ndmsName,
 		IfaceName:  ifaceName,
 		ConfPath:   fmt.Sprintf("/opt/etc/awg-manager/%s.conf", tunnelID),
-		PIDPath:    fmt.Sprintf("/opt/var/run/awg-manager/%s.pid", tunnelID),
 		SocketPath: fmt.Sprintf("/tmp/run/amneziawg/%s.sock", ifaceName),
 	}
 }

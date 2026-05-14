@@ -8,7 +8,7 @@ ENABLED=yes
 PROCS=awg-manager
 DESC="AWG Manager"
 BIN="/opt/bin/awg-manager"
-PID_FILE="/opt/var/run/awg-manager.pid"
+PID_FILE="/var/run/awg-manager.pid"
 DATA_DIR="/opt/etc/awg-manager"
 WEB_ROOT="/opt/share/www/awg-manager"
 SETTINGS_FILE="$DATA_DIR/settings.json"
@@ -30,13 +30,22 @@ get_host() {
 # Check if binary exists
 [ -x "$BIN" ] || exit 0
 
-# Ensure directories exist
-mkdir -p /opt/var/run /opt/var/log "$DATA_DIR"
+# Ensure directories exist. /var/run is system tmpfs and always present.
+mkdir -p /var/run /opt/var/log "$DATA_DIR"
+
+# is_our_pid returns 0 (true) if $1 is a live awg-manager process, 1
+# otherwise. Guards against PID-reuse: after an unclean kill (or the
+# pre-move legacy stale-pid case) /proc/$pid may exist but belong to
+# some other process that happened to be assigned the same PID.
+is_our_pid() {
+    local p="$1"
+    [ -n "$p" ] && [ -d "/proc/$p" ] && grep -q "awg-manager" "/proc/$p/cmdline" 2>/dev/null
+}
 
 start() {
     if [ -f "$PID_FILE" ]; then
         local pid=$(cat "$PID_FILE" 2>/dev/null)
-        if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+        if is_our_pid "$pid"; then
             echo "$DESC already running (PID $pid)"
             return 0
         fi
@@ -56,7 +65,7 @@ start() {
         sleep 1
         count=$((count + 1))
         local pid=$(cat "$PID_FILE" 2>/dev/null)
-        if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+        if is_our_pid "$pid"; then
             local port=$(get_port)
             local host=$(get_host)
             echo "$DESC started: http://${host}:${port}"
@@ -71,17 +80,17 @@ start() {
 stop() {
     if [ -f "$PID_FILE" ]; then
         local pid=$(cat "$PID_FILE" 2>/dev/null)
-        if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+        if is_our_pid "$pid"; then
             echo "Stopping $DESC..."
             kill "$pid" 2>/dev/null
 
             local count=0
-            while [ -d "/proc/$pid" ] && [ $count -lt 5 ]; do
+            while is_our_pid "$pid" && [ $count -lt 5 ]; do
                 sleep 1
                 count=$((count + 1))
             done
 
-            [ -d "/proc/$pid" ] && kill -9 "$pid" 2>/dev/null
+            is_our_pid "$pid" && kill -9 "$pid" 2>/dev/null
         fi
         rm -f "$PID_FILE"
     fi
@@ -97,7 +106,7 @@ restart() {
 status() {
     if [ -f "$PID_FILE" ]; then
         local pid=$(cat "$PID_FILE" 2>/dev/null)
-        if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+        if is_our_pid "$pid"; then
             local port=$(get_port)
             local host=$(get_host)
             echo "$DESC running (PID $pid): http://${host}:${port}"

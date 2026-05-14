@@ -2,12 +2,20 @@
     import { onMount, onDestroy } from 'svelte';
     import { goto } from '$app/navigation';
     import { page } from '$app/stores';
-    import { routing, subscribeRouting, invalidateAllRouting } from '$lib/stores/routing';
+    import {
+        routing,
+        subscribeRouting,
+        invalidateAllRouting,
+        routingDnsNdmsTabReady,
+        routingIpTabReady,
+        routingClientVpnTabReady,
+        hydrarouteStatusStore,
+    } from '$lib/stores/routing';
     import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
     import { systemInfo } from '$lib/stores/system';
     import { api } from '$lib/api/client';
     import { notifications } from '$lib/stores/notifications';
-    import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
+    import { PageContainer, PageHeader } from '$lib/components/layout';
     import { Tabs, Button, Modal } from '$lib/components/ui';
     import { RoutingSearch } from '$lib/components/routing';
     import DnsRoutesTab from './DnsRoutesTab.svelte';
@@ -69,8 +77,19 @@
         searchOpen = false;
     }
 
+    // NDMS tab is OS5-only (see tabItems gate). On OS4, bounce off `dns`
+    // to HR NEO when hydraroute is installed, otherwise IP.
+    $effect(() => {
+        if (!$systemInfo.data) return;
+        const hr = $hydrarouteStatusStore;
+        if (hr.lastFetchedAt === 0 && hr.status !== 'error') return;
+
+        if (!isOS5 && activeTab === 'dns') {
+            activeTab = hydrarouteInstalled ? 'hrneo' : 'ip';
+        }
+    });
+
     // Data from SSE-driven store
-    let loading = $derived(!$routing.loaded);
     let dnsRoutes = $derived($routing.dnsRoutes);
     let ipRoutes = $derived($routing.staticRoutes);
     let accessPolicies = $derived($routing.accessPolicies);
@@ -108,17 +127,6 @@
     let ipActiveCount = $derived(ipRoutes.filter(r => r.enabled).length);
     let policyCount = $derived(accessPolicies.length);
     let clientRouteCount = $derived(clientRoutes.length);
-
-    // NDMS tab is OS5-only (see tabItems gate). On OS4, bounce off `dns`
-    // to HR NEO when hydraroute is installed, otherwise IP.
-    // Gated on systemInfo + $routing.loaded...
-    $effect(() => {
-        if (!$systemInfo.data || !$routing.loaded) return;
-
-        if (!isOS5 && activeTab === 'dns') {
-            activeTab = hydrarouteInstalled ? 'hrneo' : 'ip';
-        }
-    });
 
     type TabItem = {
         id: string;
@@ -173,16 +181,33 @@
         }
     });
 
-    // If the active tab becomes invisible (user lowered usage level while the
-    // HR NEO or Sing-box Router tab was active), pick the first visible tab.
+    // Пока список вкладок меняется (systemInfo, HR, уровень), не держим
+    // active на id, которого ещё нет в tabItems — иначе пустой контент.
+    // Не сбрасываем NDMS/политики/sing-box до прихода systemInfo: до fetch
+    // isOS5=false и вкладки dns|policy ещё нет в списке — иначе F5 с NDMS
+    // уводил на IP. Аналогично HR NEO — ждём hydraroute-status.
     $effect(() => {
-        if (!$systemInfo.data || !$routing.loaded) return;
+        const items = tabItems;
+        if (items.length === 0) return;
 
-        if (!tabItems.find((it) => it.id === activeTab)) {
-            const next = tabItems[0]?.id;
-            if (next) {
-                activeTab = next as typeof activeTab;
-            }
+        const si = $systemInfo;
+        const systemKnown = si.lastFetchedAt > 0 || si.status === 'error';
+        const hr = $hydrarouteStatusStore;
+        const hrKnown = hr.lastFetchedAt > 0 || hr.status === 'error';
+
+        if (
+            !systemKnown &&
+            (activeTab === 'dns' || activeTab === 'policy' || activeTab === 'singbox') &&
+            !items.some((it) => it.id === activeTab)
+        ) {
+            return;
+        }
+        if (!hrKnown && activeTab === 'hrneo' && !items.some((it) => it.id === 'hrneo')) {
+            return;
+        }
+
+        if (!items.some((it) => it.id === activeTab)) {
+            activeTab = items[0].id as typeof activeTab;
         }
     });
 
@@ -220,59 +245,57 @@
         {/snippet}
     </PageHeader>
 
-    {#if loading}
-        <LoadingSpinner />
-    {:else}
-        <!-- Tab bar -->
-        <Tabs
-            tabs={tabItems}
-            active={activeTab}
-            onchange={(id) => activeTab = id as typeof activeTab}
-            urlParam="tab"
-            defaultTab="dns"
-        />
+    <Tabs
+        tabs={tabItems}
+        active={activeTab}
+        onchange={(id) => (activeTab = id as typeof activeTab)}
+        urlParam="tab"
+        defaultTab="dns"
+    />
 
-        {#if activeTab === 'hrneo'}
-            <HrNeoTab
-                {dnsRoutes}
-                tunnels={routingTunnels}
-                policies={accessPolicies}
-                {policyInterfaces}
-                {editRuleId}
-                {editRuleCounter}
-            />
-        {:else if activeTab === 'dns'}
-            <DnsRoutesTab
-                {dnsRoutes}
-                {routingTunnels}
-                {editRuleId}
-                {editRuleCounter}
-                {isOS5}
-                {hasDnsEngine}
-            />
-        {:else if activeTab === 'ip'}
-            <IpRoutesTab
-                {ipRoutes}
-                {routingTunnels}
-                {editRuleId}
-                {editRuleCounter}
-            />
-        {:else if activeTab === 'policy'}
+    {#if activeTab === 'hrneo'}
+        <HrNeoTab
+            {dnsRoutes}
+            tunnels={routingTunnels}
+            policies={accessPolicies}
+            {policyInterfaces}
+            {editRuleId}
+            {editRuleCounter}
+        />
+    {:else if activeTab === 'dns'}
+        <DnsRoutesTab
+            {dnsRoutes}
+            {routingTunnels}
+            {editRuleId}
+            {editRuleCounter}
+            {isOS5}
+            {hasDnsEngine}
+            bodyLoading={!$routingDnsNdmsTabReady}
+        />
+    {:else if activeTab === 'ip'}
+        <IpRoutesTab
+            {ipRoutes}
+            {routingTunnels}
+            {editRuleId}
+            {editRuleCounter}
+            bodyLoading={!$routingIpTabReady}
+        />
+    {:else if activeTab === 'policy'}
             <AccessPoliciesTab
                 {accessPolicies}
                 {policyDevices}
                 {policyInterfaces}
                 missing={missing.includes('accessPolicies')}
             />
-        {:else if activeTab === 'clientvpn'}
-            <ClientRoutesTab
-                {clientRoutes}
-                {policyDevices}
-                {routingTunnels}
-            />
-        {:else if activeTab === 'singbox'}
-            <SingboxRoutingPage />
-        {/if}
+    {:else if activeTab === 'clientvpn'}
+        <ClientRoutesTab
+            {clientRoutes}
+            {policyDevices}
+            {routingTunnels}
+            bodyLoading={!$routingClientVpnTabReady}
+        />
+    {:else if activeTab === 'singbox'}
+        <SingboxRoutingPage />
     {/if}
 </PageContainer>
 
