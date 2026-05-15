@@ -1418,6 +1418,19 @@ class ApiClient {
 		});
 	}
 
+	async singboxCheckConnectivity(tag: string, iface?: string): Promise<ConnectivityResult> {
+		let url = `/singbox/tunnels/test/connectivity?tag=${encodeURIComponent(tag)}`;
+		if (iface) url += `&iface=${encodeURIComponent(iface)}`;
+		return this.request(url);
+	}
+
+	async singboxCheckIP(tag: string, serviceURL?: string, iface?: string): Promise<IPResult> {
+		let url = `/singbox/tunnels/test/ip?tag=${encodeURIComponent(tag)}`;
+		if (serviceURL) url += `&service=${encodeURIComponent(serviceURL)}`;
+		if (iface) url += `&iface=${encodeURIComponent(iface)}`;
+		return this.request(url);
+	}
+
 	singboxSpeedTestStream(
 		tag: string,
 		server: string,

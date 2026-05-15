@@ -1,8 +1,9 @@
 <script lang="ts">
-    import { untrack } from 'svelte';
+    import { onMount, untrack } from 'svelte';
     import { goto } from '$app/navigation';
+    import { browser } from '$app/environment';
     import { api } from '$lib/api/client';
-    import { Button, TrafficSparkline } from '$lib/components/ui';
+    import { Button, Modal, TrafficChart, TrafficSparkline } from '$lib/components/ui';
     import { getTrafficRates, subscribeTraffic, loadHistory } from '$lib/stores/traffic';
     import {
         singboxDelayHistory,
@@ -14,7 +15,6 @@
     import type { Subscription, SubscriptionMember } from '$lib/types';
     import { formatRelativeTime } from '$lib/utils/format';
     import SubscriptionMemberPicker from './SubscriptionMemberPicker.svelte';
-    import SingboxSpeedTestModal from '$lib/components/singbox/SingboxSpeedTestModal.svelte';
     import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
 
     interface Props {
@@ -34,8 +34,9 @@
 
     let pickerOpen = $state(false);
     let checking = $state(false);
-    let speedtestOpen = $state(false);
     let showEndpoint = $state(false);
+    let confirmDeleteOpen = $state(false);
+    let deleting = $state(false);
 
     // NDMS Proxy interface name (Proxy<N>) and matching kernel TUN
     // (t2s<N>) — same naming convention sing-box tunnels use, just
@@ -91,6 +92,18 @@
         const tag = trafficMemberTag;
         untrack(() => loadHistory(tag));
     });
+    const CHART_KEY_PREFIX = 'sub_chart_expanded_';
+    let chartStorageKey = $derived(`${CHART_KEY_PREFIX}${subscription.id}`);
+    let chartExpanded = $state(true);
+    onMount(() => {
+        chartExpanded = localStorage.getItem(chartStorageKey) !== 'false';
+    });
+    function toggleCharts() {
+        chartExpanded = !chartExpanded;
+        if (browser) {
+            localStorage.setItem(chartStorageKey, String(chartExpanded));
+        }
+    }
     const endpointText = $derived(`${activeMember.server}:${activeMember.port}`);
     /** List row: title above IP — prefer remark, else outbound tag. */
     const listActiveServerName = $derived(
@@ -163,6 +176,20 @@
 
     function openDetail(): void {
         goto(`/subscriptions/${subscription.id}`);
+    }
+
+    async function removeSubscription(): Promise<void> {
+        if (deleting) return;
+        deleting = true;
+        try {
+            await api.deleteSubscription(subscription.id);
+            await subscriptionsStore.refetch();
+            confirmDeleteOpen = false;
+        } catch (e) {
+            notifications.error(e instanceof Error ? e.message : 'Не удалось удалить подписку');
+        } finally {
+            deleting = false;
+        }
     }
 
     function formatBytes(n: number): string {
@@ -309,27 +336,46 @@
                 {/if}
             </div>
             <div class="lc lc-actions" data-label="">
-                <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={!kernelIface}
-                    onclick={(e) => {
-                        e.stopPropagation();
-                        if (kernelIface) speedtestOpen = true;
-                    }}
-                >
-                    Скорость
-                </Button>
-                <Button
-                    variant="ghost"
-                    size="sm"
+                <button
+                    class="action-btn"
                     onclick={(e) => {
                         e.stopPropagation();
                         openDetail();
                     }}
                 >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                    </svg>
                     Открыть
-                </Button>
+                </button>
+                <button
+                    class="action-btn"
+                    disabled={!kernelIface}
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        if (kernelIface) goto(`/subscriptions/${subscription.id}/test`);
+                    }}
+                >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                        <polyline points="22,4 12,14.01 9,11.01"/>
+                    </svg>
+                    Тест
+                </button>
+                <button
+                    class="action-btn action-danger"
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        confirmDeleteOpen = true;
+                    }}
+                >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3,6 5,6 21,6"/>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                    Удалить
+                </button>
             </div>
         </div>
     </div>
@@ -467,65 +513,106 @@
         </div>
     </div>
 
-    <div class="divider"></div>
-
-    <div class="chart-block">
-        <div class="chart-head">
-            <span>Delay (5 мин)</span>
-            <span class="stats">
-                {#if cardState === 'unknown'}ещё не тестировали
-                {:else if cardState === 'fail'}<span class="err">не отвечает</span>
-                {:else}{latText}{/if}
-            </span>
-        </div>
-        <div
-            class="spark {cardState}"
-            onclick={triggerCheck}
-            onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && triggerCheck(e)}
-            role="button"
-            tabindex="0"
-            title="Клик — обновить delay"
-        >
-            {#if history.length === 0}
-                {#each Array(6) as _, i (i)}<div class="bar empty"></div>{/each}
-            {:else}
-                {@const max = Math.max(...history.map((v) => (v <= 0 ? 100 : v)), 100)}
-                {#each history as d, i (i)}
-                    <div class="bar" style="height: {Math.max((d <= 0 ? max : d) / max, 0.1) * 100}%;"></div>
-                {/each}
-            {/if}
-        </div>
-    </div>
-
-    <div class="chart-block">
-        <div class="chart-head">
-            <span>Трафик</span>
-            <span class="stats">
-                ↓ {formatBytes(traffic?.download ?? 0)} · ↑ {formatBytes(traffic?.upload ?? 0)}
-            </span>
-        </div>
-    </div>
-
     <div class="actions">
-        <Button
-            variant="ghost"
-            size="sm"
+        <button class="action-btn" onclick={openDetail}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+            Открыть подписку
+        </button>
+        <button
+            class="action-btn"
             disabled={!kernelIface}
-            onclick={() => kernelIface && (speedtestOpen = true)}
+            onclick={() => kernelIface && goto(`/subscriptions/${subscription.id}/test`)}
         >
-            Тест скорости
-        </Button>
-        <Button variant="ghost" size="sm" onclick={openDetail}>Открыть подписку</Button>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22,4 12,14.01 9,11.01"/>
+            </svg>
+            Тест
+        </button>
+        <button class="action-btn action-danger" onclick={() => (confirmDeleteOpen = true)}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3,6 5,6 21,6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </svg>
+            Удалить
+        </button>
+    </div>
+
+    <div class="chart-section">
+        <button type="button" class="chart-header" onclick={toggleCharts}>
+            <span class="chart-label">Графики</span>
+            <span class="chart-chevron" class:expanded={chartExpanded}>▾</span>
+        </button>
+        <div class="chart-body" class:expanded={chartExpanded}>
+            <div class="chart-head">
+                <span>Delay (5 мин)</span>
+                <span class="stats">
+                    {#if cardState === 'unknown'}ещё не тестировали
+                    {:else if cardState === 'fail'}<span class="err">не отвечает</span>
+                    {:else}{latText}{/if}
+                </span>
+            </div>
+            <div
+                class="spark {cardState}"
+                onclick={triggerCheck}
+                onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && triggerCheck(e)}
+                role="button"
+                tabindex="0"
+                title="Клик — обновить delay"
+            >
+                {#if history.length === 0}
+                    {#each Array(6) as _, i (i)}<div class="bar empty"></div>{/each}
+                {:else}
+                    {@const max = Math.max(...history.map((v) => (v <= 0 ? 100 : v)), 100)}
+                    {#each history as d, i (i)}
+                        <div class="bar" style="height: {Math.max((d <= 0 ? max : d) / max, 0.1) * 100}%;"></div>
+                    {/each}
+                {/if}
+            </div>
+            <div class="chart-head traffic-head">
+                <span>Трафик</span>
+                <span class="stats">
+                    ↓ {formatBytes(traffic?.download ?? 0)} · ↑ {formatBytes(traffic?.upload ?? 0)}
+                </span>
+            </div>
+            <TrafficChart
+                {rxRates}
+                {txRates}
+                rxTotal={traffic?.download ?? 0}
+                txTotal={traffic?.upload ?? 0}
+                height={56}
+            />
+        </div>
     </div>
 </div>
 {/if}
 
-<SingboxSpeedTestModal
-    open={speedtestOpen}
-    tag={subscription.selectorTag}
-    kernelInterface={kernelIface}
-    onclose={() => (speedtestOpen = false)}
-/>
+<Modal
+    open={confirmDeleteOpen}
+    title="Удалить подписку?"
+    size="md"
+    onclose={() => {
+        if (deleting) return;
+        confirmDeleteOpen = false;
+    }}
+>
+    <p>
+        Подписка <strong>{subscription.label || subscription.url}</strong> будет
+        удалена вместе с её sing-box outbound'ами и NDMS Proxy
+        <code class="mono">Proxy{subscription.proxyIndex}</code>.
+    </p>
+    {#snippet actions()}
+        <Button variant="ghost" disabled={deleting} onclick={() => (confirmDeleteOpen = false)}>
+            Отмена
+        </Button>
+        <Button variant="danger" disabled={deleting} loading={deleting} onclick={removeSubscription}>
+            {deleting ? 'Удаляем...' : 'Удалить'}
+        </Button>
+    {/snippet}
+</Modal>
 
 <style>
     .card {
@@ -676,6 +763,7 @@
     .eye-btn:hover { color: var(--color-text-secondary); }
     .divider { height: 1px; background: var(--color-border); margin: 0.4rem 0; }
     .chart-block { display: flex; flex-direction: column; gap: 0.3rem; }
+    .traffic-block { margin-bottom: 0.25rem; }
     .chart-head {
         display: flex;
         justify-content: space-between;
@@ -698,7 +786,93 @@
     .spark.slow .bar  { background: #d29922; }
     .spark.fail .bar  { background: #f85149; }
     .bar.empty        { opacity: 0.3; }
-    .actions { display: flex; gap: 0.4rem; justify-content: flex-end; margin-top: 0.4rem; }
+    .actions {
+        display: flex;
+        gap: 0.4rem;
+        justify-content: flex-end;
+        align-items: center;
+        margin-top: 12px;
+        padding: 10px 0;
+        border-top: 1px solid var(--color-border);
+        border-bottom: 1px solid var(--color-border);
+    }
+    .action-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 5px 9px;
+        font-size: 11px;
+        font-weight: 500;
+        border: none;
+        background: transparent;
+        color: var(--color-text-secondary);
+        cursor: pointer;
+        border-radius: var(--radius-sm);
+        text-decoration: none;
+        font-family: inherit;
+        transition: background var(--t-fast) ease, color var(--t-fast) ease;
+    }
+    .action-btn:hover:not(:disabled) {
+        background: var(--color-bg-hover);
+        color: var(--color-text-primary);
+    }
+    .action-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    .action-danger:hover:not(:disabled) {
+        color: var(--color-error);
+        background: var(--color-error-tint);
+    }
+    .chart-section {
+        margin: 0 -16px -16px;
+        border-radius: 0 0 10px 10px;
+        background: var(--color-bg-secondary);
+        overflow: hidden;
+    }
+    .chart-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        padding: 6px 12px;
+        border: none;
+        background: none;
+        cursor: pointer;
+        user-select: none;
+        font: inherit;
+        transition: background var(--t-fast) ease;
+    }
+    .chart-header:hover {
+        background: var(--color-bg-tertiary);
+    }
+    .chart-label {
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--color-text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }
+    .chart-chevron {
+        font-size: 14px;
+        color: var(--color-text-muted);
+        transition: transform var(--t-fast) ease;
+        transform: rotate(-90deg);
+    }
+    .chart-chevron.expanded {
+        transform: rotate(0deg);
+    }
+    .chart-body {
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height var(--t-med) ease;
+        padding: 0 12px;
+    }
+    .chart-body.expanded {
+        max-height: 300px;
+        padding: 0 12px 8px;
+    }
+    .traffic-head { margin-top: 8px; }
 
     .sub-meta {
         font-size: 0.78rem;
