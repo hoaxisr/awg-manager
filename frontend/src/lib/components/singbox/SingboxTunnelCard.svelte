@@ -702,7 +702,7 @@
 		gap: 6px;
 		justify-content: flex-end;
 		margin-top: 12px;
-		padding-top: 10px;
+		padding: 10px 0;
 		border-top: 1px solid var(--border);
 		border-bottom: 1px solid var(--border);
 	}
