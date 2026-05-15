@@ -210,6 +210,12 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.ActiveMemberRequest:
+    properties:
+      memberTag:
+        example: sub-demo-001
+        type: string
+    type: object
   api.ActiveNowResponse:
     properties:
       now:
@@ -530,6 +536,33 @@ definitions:
       mtu:
         example: 1420
         type: integer
+    type: object
+  api.CreateSubscriptionRequest:
+    properties:
+      enabled:
+        example: true
+        type: boolean
+      headers:
+        items:
+          $ref: '#/definitions/api.SubscriptionHeader'
+        type: array
+      inline:
+        example: vless://11111111-2222-3333-4444-555555555555@demo.example.com:443?type=tcp&encryption=none&security=reality&pbk=EXAMPLE_PUBLIC_KEY&fp=chrome&sni=cdn.example.com&sid=abcd1234&spx=%2F&flow=xtls-rprx-vision#Demo-vless-reality
+        type: string
+      label:
+        example: Demo Provider
+        type: string
+      mode:
+        description: '"selector" (default) | "urltest"'
+        type: string
+      refreshHours:
+        example: 24
+        type: integer
+      url:
+        example: https://example.com/subscriptions/demo.txt
+        type: string
+      urlTest:
+        $ref: '#/definitions/api.SubscriptionURLTestDTO'
     type: object
   api.DNSRouteSettingsDTO:
     properties:
@@ -1732,6 +1765,7 @@ definitions:
   api.RemoveMemberRequest:
     properties:
       memberTag:
+        example: sub-demo-003
         type: string
     type: object
   api.ResolveResponse:
@@ -1748,62 +1782,104 @@ definitions:
   api.RouterDetails:
     properties:
       architecture:
+        example: aarch64
         type: string
       bootSlot:
+        example: "1"
         type: string
       cpuModel:
+        example: MT7981
         type: string
       cpuTempC:
+        example: 79
         type: integer
       featureComponents:
+        example:
+        - HW-NAT
+        - Wi-Fi 5GHz
+        - WPA3
+        - USB
         items:
           type: string
         type: array
       firmwareBuildDate:
+        example: 7 Apr 2026
         type: string
       firmwareRelease:
+        example: 5.0.9 (5.00.C.9.0-1)
         type: string
       firmwareSandbox:
+        example: preview
         type: string
       firmwareTitle:
+        example: CMCC RAX3000M (KN-3812) [Port]
         type: string
       hardwareId:
+        example: KN-3812
         type: string
       loadAverage:
+        example: 1.82, 1.58, 1.58
         type: string
       memoryTotalMB:
+        example: 486
         type: integer
       memoryUsedMB:
+        example: 303
         type: integer
       memoryUsedPercent:
+        example: 62
         type: integer
       meshMembers:
+        example:
+        - RAX3000M (KN-3812) | 5.0.9 | 1921 Мбит/с | 13 дн. 06:22:26
+        - SmartBox Giga (KN-1913) | 5.0.9 | 260 Мбит/с | 13 дн. 06:21:52
         items:
           type: string
         type: array
       model:
+        example: KN-3812
         type: string
       modelDisplay:
+        example: CMCC RAX3000M (KN-3812)
         type: string
       opkgStorage:
+        example: 451 MB / 205 GB
         type: string
       portedBuild:
+        example: true
         type: boolean
       region:
+        example: EA
         type: string
       storageComponents:
+        example:
+        - NTFS
+        - ExFAT
+        - EXT4
+        - SMB
+        - FTP
         items:
           type: string
         type: array
       uptimeHuman:
+        example: 7d 16h 57m
         type: string
       vpnComponents:
+        example:
+        - WireGuard
+        - OpenVPN
+        - IPsec/IKEv2
+        - L2TP
+        - SSTP
+        - ZeroTier
         items:
           type: string
         type: array
       wifi5TempC:
+        example: 68
         type: integer
       wifi24TempC:
+        example: 70
         type: integer
     type: object
   api.RouterInterfaceDTO:
@@ -3029,34 +3105,41 @@ definitions:
   api.SubscriptionDTO:
     properties:
       activeMember:
-        example: sub-abc-aaaa
+        example: sub-demo-001
         type: string
       enabled:
+        example: true
         type: boolean
       headers:
         items:
           $ref: '#/definitions/api.SubscriptionHeader'
         type: array
       id:
-        example: abc123
+        example: sub-demo
         type: string
       inboundTag:
-        example: sub-abc12345-in
+        example: sub-demo-in
         type: string
       isInline:
         example: false
         type: boolean
       label:
-        example: Provider X
+        example: Demo Provider
         type: string
       lastError:
+        example: ""
         type: string
       lastFetched:
+        example: "2026-05-14T21:30:00Z"
         type: string
       listenPort:
-        example: 11080
+        example: 11000
         type: integer
       memberTags:
+        example:
+        - sub-demo-001
+        - sub-demo-002
+        - sub-demo-003
         items:
           type: string
         type: array
@@ -3068,20 +3151,22 @@ definitions:
         example: selector
         type: string
       orphanTags:
+        example:
+        - ""
         items:
           type: string
         type: array
       proxyIndex:
-        example: 3
+        example: 1
         type: integer
       refreshHours:
         example: 24
         type: integer
       selectorTag:
-        example: sub-abc12345
+        example: sub-demo
         type: string
       url:
-        example: https://prov.example/sub/a
+        example: https://example.com/subscriptions/demo.txt
         type: string
       urlTest:
         $ref: '#/definitions/api.SubscriptionURLTestDTO'
@@ -3094,6 +3179,16 @@ definitions:
       value:
         example: Happ/4.6.0
         type: string
+    type: object
+  api.SubscriptionListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.SubscriptionDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
     type: object
   api.SubscriptionMemberDTO:
     properties:
@@ -3127,6 +3222,7 @@ definitions:
       data:
         $ref: '#/definitions/api.SubscriptionDTO'
       success:
+        example: true
         type: boolean
     type: object
   api.SubscriptionURLTestDTO:
@@ -3738,6 +3834,28 @@ definitions:
       checkEnabled:
         example: true
         type: boolean
+    type: object
+  api.UpdateSubscriptionRequest:
+    properties:
+      enabled:
+        type: boolean
+      headers:
+        items:
+          $ref: '#/definitions/api.SubscriptionHeader'
+        type: array
+      label:
+        example: Demo Provider Updated
+        type: string
+      mode:
+        example: selector
+        type: string
+      refreshHours:
+        type: integer
+      url:
+        example: https://example.com/subscriptions/demo.txt
+        type: string
+      urlTest:
+        $ref: '#/definitions/api.SubscriptionURLTestDTO'
     type: object
   api.WANIPData:
     properties:
@@ -8763,6 +8881,58 @@ paths:
       summary: Sing-box status
       tags:
       - singbox
+  /singbox/subscriptions:
+    get:
+      description: Returns configured subscriptions with parsed members. Mocked examples
+        include vless/reality members.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SubscriptionListResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: List sing-box subscriptions
+      tags:
+      - subscriptions
+  /singbox/subscriptions/active-member:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: subscription id
+        in: query
+        name: id
+        required: true
+        type: string
+      - description: member tag
+        in: body
+        name: req
+        required: true
+        schema:
+          $ref: '#/definitions/api.ActiveMemberRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SubscriptionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Set active member
+      tags:
+      - subscriptions
   /singbox/subscriptions/active-now:
     get:
       description: Returns the currently-active member tag as reported by the running
@@ -8805,6 +8975,88 @@ paths:
       security:
       - CookieAuth: []
       summary: Live active member from Clash
+      tags:
+      - subscriptions
+  /singbox/subscriptions/create:
+    post:
+      consumes:
+      - application/json
+      description: Creates subscription from URL or inline share links.
+      parameters:
+      - description: create request
+        in: body
+        name: req
+        required: true
+        schema:
+          $ref: '#/definitions/api.CreateSubscriptionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SubscriptionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "412":
+          description: Precondition Failed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Create sing-box subscription
+      tags:
+      - subscriptions
+  /singbox/subscriptions/delete:
+    delete:
+      parameters:
+      - description: subscription id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Delete sing-box subscription
+      tags:
+      - subscriptions
+  /singbox/subscriptions/get:
+    get:
+      parameters:
+      - description: subscription id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SubscriptionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Get sing-box subscription
       tags:
       - subscriptions
   /singbox/subscriptions/get-stream:
@@ -8922,6 +9174,83 @@ paths:
       security:
       - CookieAuth: []
       summary: Remove a member from an inline subscription
+      tags:
+      - subscriptions
+  /singbox/subscriptions/orphans/delete:
+    post:
+      parameters:
+      - description: subscription id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SubscriptionResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Delete orphan members from subscription
+      tags:
+      - subscriptions
+  /singbox/subscriptions/refresh:
+    post:
+      parameters:
+      - description: subscription id
+        in: query
+        name: id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SubscriptionResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Refresh sing-box subscription
+      tags:
+      - subscriptions
+  /singbox/subscriptions/update:
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: subscription id
+        in: query
+        name: id
+        required: true
+        type: string
+      - description: update request
+        in: body
+        name: req
+        required: true
+        schema:
+          $ref: '#/definitions/api.UpdateSubscriptionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SubscriptionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update sing-box subscription
       tags:
       - subscriptions
   /singbox/tunnels:
