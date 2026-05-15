@@ -2807,13 +2807,13 @@
 			minmax(0, 1.05fr)
 			minmax(76px, 0.95fr)
 			minmax(150px, 1.1fr)
-			minmax(72px, 0.95fr)
-			minmax(150px, 1fr);
+			minmax(128px, 0.95fr)
+			minmax(220px, 1.15fr);
 		gap: 0.75rem 1rem;
 		align-items: center;
 		padding: 0.75rem 1rem;
 		border-bottom: 1px solid var(--color-border);
-		min-width: 960px;
+		min-width: 1120px;
 	}
 	.singbox-tunnel-list-table :global(.sbx-tunnel-list-row:last-child) {
 		border-bottom: none;
@@ -2836,7 +2836,7 @@
 		margin-bottom: 1.25rem;
 	}
 	.singbox-sub-list-table :global(.sbx-sub-active-row) {
-		min-width: 1040px;
+		min-width: 1120px;
 	}
 	.singbox-sub-list-table--inactive :global(.sbx-sub-inactive-row) {
 		min-width: 960px;
@@ -2863,9 +2863,9 @@
 			minmax(52px, 0.75fr)
 			minmax(88px, 0.95fr)
 			minmax(148px, 1.1fr)
-			minmax(72px, 0.88fr)
-			minmax(150px, 1fr);
-		min-width: 1040px;
+			minmax(120px, 0.95fr)
+			minmax(220px, 1.15fr);
+		min-width: 1120px;
 	}
 	.singbox-sub-list-table--inactive .sbx-sub-inactive-head {
 		grid-template-columns:

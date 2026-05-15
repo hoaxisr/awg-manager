@@ -909,8 +909,8 @@
             minmax(52px, 0.75fr)
             minmax(88px, 0.95fr)
             minmax(148px, 1.1fr)
-            minmax(72px, 0.88fr)
-            minmax(150px, 1fr);
+            minmax(120px, 0.95fr)
+            minmax(220px, 1.15fr);
         gap: 0.75rem 1rem;
         align-items: center;
         padding: 0.75rem 1rem;
@@ -950,6 +950,7 @@
         justify-content: flex-start;
     }
     .spark-mini {
+        width: 100%;
         height: 22px;
         max-width: 100%;
         display: flex;
@@ -1058,8 +1059,10 @@
         align-self: center;
     }
     .lc-actions {
-        flex-wrap: wrap;
-        gap: 0.25rem;
+        flex-wrap: nowrap;
+        gap: 0.5rem;
         justify-content: flex-end;
+        align-items: center;
+        white-space: nowrap;
     }
 </style>

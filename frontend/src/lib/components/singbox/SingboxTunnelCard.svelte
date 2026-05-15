@@ -280,10 +280,41 @@
 		</div>
 		<div class="list-cell list-cell-actions" data-label="Действия">
 			<div class="list-actions">
-				<Button variant="ghost" size="sm" onclick={edit}>Изменить</Button>
-				<Button variant="danger" size="sm" onclick={() => (confirmDeleteOpen = true)} loading={deleting}>
+				<button class="action-btn" type="button" onclick={edit}>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+						<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+					</svg>
+					Изменить
+				</button>
+				{#if resolvedTestHref}
+					<a class="action-btn" href={resolvedTestHref}>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+							<polyline points="22,4 12,14.01 9,11.01"/>
+						</svg>
+						Тест
+					</a>
+				{:else}
+					<button class="action-btn" type="button" disabled>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+							<polyline points="22,4 12,14.01 9,11.01"/>
+						</svg>
+						Тест
+					</button>
+				{/if}
+				<button class="action-btn action-danger" type="button" onclick={() => (confirmDeleteOpen = true)} disabled={deleting}>
+					{#if deleting}
+						<span class="action-spinner"></span>
+					{:else}
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<polyline points="3,6 5,6 21,6"/>
+							<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+						</svg>
+					{/if}
 					Удалить
-				</Button>
+				</button>
 			</div>
 		</div>
 	</div>
@@ -680,6 +711,7 @@
 	}
 	.list-cell-ping-mini {
 		justify-content: flex-start;
+		padding-right: 0.6rem;
 	}
 	.traffic-row-list {
 		display: flex;
@@ -857,9 +889,12 @@
 	}
 	.list-actions {
 		display: flex;
-		flex-wrap: wrap;
-		gap: 0.35rem;
+		flex-wrap: nowrap;
+		gap: 0.5rem;
 		justify-content: flex-end;
+		align-items: center;
+		white-space: nowrap;
+		margin-left: 0.5rem;
 	}
 	.action-danger:hover:not(:disabled),
 	.list-actions :global(.action-danger:hover:not(:disabled)) {
