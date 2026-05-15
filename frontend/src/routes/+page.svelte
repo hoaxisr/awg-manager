@@ -38,6 +38,7 @@
 		TUNNEL_MOBILE_LAYOUT_MAX_WIDTH_PX,
 		type SingboxLayoutMode,
 	} from '$lib/constants/singboxLayout';
+	import { isMockDevMode as getIsMockDevMode } from '$lib/env';
 
 	type TunnelTab = 'awg' | 'singbox' | 'subscriptions';
 	type AwgTunnelViewMode = 'cards' | 'compact' | 'list';
@@ -45,6 +46,7 @@
 	type EndpointScope = 'managed' | 'system' | 'external';
 
 	const AWG_TUNNEL_VIEW_STORAGE_KEY = 'awg_tunnel_view_mode';
+	const isMockDevMode = getIsMockDevMode();
 
 	// Polling-store subscription: first subscriber triggers the fetch,
 	// the last unsubscribe stops polling. `$tunnels` yields a
@@ -369,7 +371,13 @@
 			.filter((s) => s.enabled && (liveActives[s.id] || s.activeMember))
 			.map((s) => {
 				const tag = liveActives[s.id] || s.activeMember;
-				const m = s.members?.find((mm) => mm.tag === tag);
+				let m = s.members?.find((mm) => mm.tag === tag);
+				if (!m && isMockDevMode && s.members?.length) {
+					const first = s.members[0];
+					m = tag
+						? { ...first, tag, label: first.label || tag }
+						: first;
+				}
 				return m ? { subscription: s, activeMember: m } : null;
 			})
 			.filter((x): x is { subscription: Subscription; activeMember: SubscriptionMember } => x !== null),

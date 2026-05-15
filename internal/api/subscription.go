@@ -59,23 +59,23 @@ type SubscriptionURLTestDTO struct {
 // only needs IsInline to gate UI affordances; raw paste stays
 // server-side until a future single-record endpoint requires it.
 type SubscriptionDTO struct {
-	ID           string                  `json:"id" example:"abc123"`
-	Label        string                  `json:"label" example:"Provider X"`
-	URL          string                  `json:"url" example:"https://prov.example/sub/a"`
+	ID           string                  `json:"id" example:"sub-demo"`
+	Label        string                  `json:"label" example:"Demo Provider"`
+	URL          string                  `json:"url" example:"https://example.com/subscriptions/demo.txt"`
 	IsInline     bool                    `json:"isInline" example:"false"`
 	Headers      []SubscriptionHeader    `json:"headers"`
 	RefreshHours int                     `json:"refreshHours" example:"24"`
-	LastFetched  string                  `json:"lastFetched"`
-	LastError    string                  `json:"lastError,omitempty"`
-	SelectorTag  string                  `json:"selectorTag" example:"sub-abc12345"`
-	InboundTag   string                  `json:"inboundTag" example:"sub-abc12345-in"`
-	ListenPort   int                     `json:"listenPort" example:"11080"`
-	ProxyIndex   int                     `json:"proxyIndex" example:"3"`
-	MemberTags   []string                `json:"memberTags"`
+	LastFetched  string                  `json:"lastFetched" example:"2026-05-14T21:30:00Z"`
+	LastError    string                  `json:"lastError,omitempty" example:""`
+	SelectorTag  string                  `json:"selectorTag" example:"sub-demo"`
+	InboundTag   string                  `json:"inboundTag" example:"sub-demo-in"`
+	ListenPort   int                     `json:"listenPort" example:"11000"`
+	ProxyIndex   int                     `json:"proxyIndex" example:"1"`
+	MemberTags   []string                `json:"memberTags" example:"sub-demo-001,sub-demo-002,sub-demo-003"`
 	Members      []SubscriptionMemberDTO `json:"members"`
-	OrphanTags   []string                `json:"orphanTags"`
-	ActiveMember string                  `json:"activeMember" example:"sub-abc-aaaa"`
-	Enabled      bool                    `json:"enabled"`
+	OrphanTags   []string                `json:"orphanTags" example:""`
+	ActiveMember string                  `json:"activeMember" example:"sub-demo-001"`
+	Enabled      bool                    `json:"enabled" example:"true"`
 	Mode         string                  `json:"mode" example:"selector"`
 	URLTest      *SubscriptionURLTestDTO `json:"urlTest,omitempty"`
 }
@@ -88,25 +88,25 @@ type SubscriptionHeader struct {
 
 // SubscriptionListResponse is the envelope for GET /api/singbox/subscriptions.
 type SubscriptionListResponse struct {
-	Success bool              `json:"success"`
+	Success bool              `json:"success" example:"true"`
 	Data    []SubscriptionDTO `json:"data"`
 }
 
 // SubscriptionResponse is the envelope for single-subscription responses.
 type SubscriptionResponse struct {
-	Success bool            `json:"success"`
+	Success bool            `json:"success" example:"true"`
 	Data    SubscriptionDTO `json:"data"`
 }
 
 // CreateSubscriptionRequest is the body for POST /api/singbox/subscriptions/create.
 // Exactly one of URL or Inline must be provided.
 type CreateSubscriptionRequest struct {
-	Label        string                  `json:"label"`
-	URL          string                  `json:"url,omitempty"`
-	Inline       string                  `json:"inline,omitempty"`
+	Label        string                  `json:"label" example:"Demo Provider"`
+	URL          string                  `json:"url,omitempty" example:"https://example.com/subscriptions/demo.txt"`
+	Inline       string                  `json:"inline,omitempty" example:"vless://11111111-2222-3333-4444-555555555555@demo.example.com:443?type=tcp&encryption=none&security=reality&pbk=EXAMPLE_PUBLIC_KEY&fp=chrome&sni=cdn.example.com&sid=abcd1234&spx=%2F&flow=xtls-rprx-vision#Demo-vless-reality"`
 	Headers      []SubscriptionHeader    `json:"headers"`
-	RefreshHours int                     `json:"refreshHours"`
-	Enabled      bool                    `json:"enabled"`
+	RefreshHours int                     `json:"refreshHours" example:"24"`
+	Enabled      bool                    `json:"enabled" example:"true"`
 	Mode         string                  `json:"mode,omitempty"` // "selector" (default) | "urltest"
 	URLTest      *SubscriptionURLTestDTO `json:"urlTest,omitempty"`
 }
@@ -114,18 +114,18 @@ type CreateSubscriptionRequest struct {
 // UpdateSubscriptionRequest is the body for PUT /api/singbox/subscriptions/update.
 // All fields are optional; absent fields leave the stored value unchanged.
 type UpdateSubscriptionRequest struct {
-	Label        *string                 `json:"label,omitempty"`
-	URL          *string                 `json:"url,omitempty"`
+	Label        *string                 `json:"label,omitempty" example:"Demo Provider Updated"`
+	URL          *string                 `json:"url,omitempty" example:"https://example.com/subscriptions/demo.txt"`
 	Headers      *[]SubscriptionHeader   `json:"headers,omitempty"`
 	RefreshHours *int                    `json:"refreshHours,omitempty"`
 	Enabled      *bool                   `json:"enabled,omitempty"`
-	Mode         *string                 `json:"mode,omitempty"`
+	Mode         *string                 `json:"mode,omitempty" example:"selector"`
 	URLTest      *SubscriptionURLTestDTO `json:"urlTest,omitempty"`
 }
 
 // ActiveMemberRequest is the body for POST /api/singbox/subscriptions/active-member.
 type ActiveMemberRequest struct {
-	MemberTag string `json:"memberTag"`
+	MemberTag string `json:"memberTag" example:"sub-demo-001"`
 }
 
 // ActiveNowResponse is the payload for GET /api/singbox/subscriptions/active-now.
@@ -146,12 +146,12 @@ type AddMemberRequest struct {
 // meaningful empty subscription); the response carries deleted=true in
 // that case so the UI can navigate away.
 type RemoveMemberRequest struct {
-	MemberTag string `json:"memberTag"`
+	MemberTag string `json:"memberTag" example:"sub-demo-003"`
 }
 
 // RemoveMemberResponseData is the data envelope for remove-member.
 type RemoveMemberResponseData struct {
-	Deleted      bool             `json:"deleted"`
+	Deleted      bool             `json:"deleted" example:"false"`
 	Subscription *SubscriptionDTO `json:"subscription,omitempty"`
 }
 
@@ -221,8 +221,8 @@ type SubscriptionMetaDTO struct {
 	IsInline     bool                    `json:"isInline"`
 	Headers      []SubscriptionHeader    `json:"headers"`
 	RefreshHours int                     `json:"refreshHours"`
-	LastFetched  string                  `json:"lastFetched"`
-	LastError    string                  `json:"lastError,omitempty"`
+	LastFetched  string                  `json:"lastFetched" example:"2026-05-14T21:30:00Z"`
+	LastError    string                  `json:"lastError,omitempty" example:""`
 	SelectorTag  string                  `json:"selectorTag"`
 	InboundTag   string                  `json:"inboundTag"`
 	ListenPort   int                     `json:"listenPort"`
@@ -361,6 +361,14 @@ func validateSubscriptionHeaders(hh []SubscriptionHeader) error {
 }
 
 // List handles GET /api/singbox/subscriptions
+//
+//	@Summary		List sing-box subscriptions
+//	@Description	Returns configured subscriptions with parsed members. Mocked examples include vless/reality members.
+//	@Tags			subscriptions
+//	@Produce		json
+//	@Success		200	{object}	SubscriptionListResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Router			/singbox/subscriptions [get]
 func (h *SubscriptionHandler) List(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -374,6 +382,18 @@ func (h *SubscriptionHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // Create handles POST /api/singbox/subscriptions/create
+//
+//	@Summary		Create sing-box subscription
+//	@Description	Creates subscription from URL or inline share links.
+//	@Tags			subscriptions
+//	@Accept			json
+//	@Produce		json
+//	@Param			req	body		CreateSubscriptionRequest	true	"create request"
+//	@Success		200	{object}	SubscriptionResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		412	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/subscriptions/create [post]
 func (h *SubscriptionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -418,6 +438,15 @@ func (h *SubscriptionHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // Get handles GET /api/singbox/subscriptions/get?id=
+//
+//	@Summary		Get sing-box subscription
+//	@Tags			subscriptions
+//	@Produce		json
+//	@Param			id	query		string	true	"subscription id"
+//	@Success		200	{object}	SubscriptionResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		404	{object}	APIErrorEnvelope
+//	@Router			/singbox/subscriptions/get [get]
 func (h *SubscriptionHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -437,6 +466,17 @@ func (h *SubscriptionHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // Update handles PUT /api/singbox/subscriptions/update?id=
+//
+//	@Summary		Update sing-box subscription
+//	@Tags			subscriptions
+//	@Accept			json
+//	@Produce		json
+//	@Param			id	query		string						true	"subscription id"
+//	@Param			req	body		UpdateSubscriptionRequest	true	"update request"
+//	@Success		200	{object}	SubscriptionResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/subscriptions/update [put]
 func (h *SubscriptionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		response.MethodNotAllowed(w)
@@ -484,6 +524,14 @@ func (h *SubscriptionHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 // Delete handles DELETE /api/singbox/subscriptions/delete?id=  Always performs full cleanup (no cascade flag).
+//
+//	@Summary		Delete sing-box subscription
+//	@Tags			subscriptions
+//	@Produce		json
+//	@Param			id	query		string	true	"subscription id"
+//	@Success		200	{object}	APIEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/subscriptions/delete [delete]
 func (h *SubscriptionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		response.MethodNotAllowed(w)
@@ -500,6 +548,14 @@ func (h *SubscriptionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // Refresh handles POST /api/singbox/subscriptions/refresh?id=
+//
+//	@Summary		Refresh sing-box subscription
+//	@Tags			subscriptions
+//	@Produce		json
+//	@Param			id	query		string	false	"subscription id"
+//	@Success		200	{object}	SubscriptionResponse
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/subscriptions/refresh [post]
 func (h *SubscriptionHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -515,6 +571,17 @@ func (h *SubscriptionHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 // ActiveMember handles POST /api/singbox/subscriptions/active-member?id=
+//
+//	@Summary		Set active member
+//	@Tags			subscriptions
+//	@Accept			json
+//	@Produce		json
+//	@Param			id	query		string				true	"subscription id"
+//	@Param			req	body		ActiveMemberRequest	true	"member tag"
+//	@Success		200	{object}	SubscriptionResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/subscriptions/active-member [post]
 func (h *SubscriptionHandler) ActiveMember(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -649,6 +716,14 @@ func (h *SubscriptionHandler) GetStream(w http.ResponseWriter, r *http.Request) 
 }
 
 // OrphansDelete handles POST /api/singbox/subscriptions/orphans/delete?id=
+//
+//	@Summary		Delete orphan members from subscription
+//	@Tags			subscriptions
+//	@Produce		json
+//	@Param			id	query		string	true	"subscription id"
+//	@Success		200	{object}	SubscriptionResponse
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/subscriptions/orphans/delete [post]
 func (h *SubscriptionHandler) OrphansDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)

@@ -40,8 +40,10 @@ const stubDevRoutes = (): Plugin => ({
 
 export default defineConfig(({ mode }) => {
 	const env = loadEnv(mode, process.cwd(), '');
-	const apiTarget = env.VITE_API_TARGET || 'http://127.0.0.1:8080';
-	const useMockRewrite = env.VITE_API_STRIP_PREFIX === '1';
+	const envValue = (key: string) => env[key] ?? process.env[key] ?? '';
+	const isTruthy = (value: string) => ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+	const apiTarget = envValue('VITE_API_TARGET') || 'http://127.0.0.1:8080';
+	const useMockRewrite = isTruthy(envValue('VITE_API_STRIP_PREFIX'));
 
 	return {
 		plugins: [stubDevRoutes(), tailwindcss(), sveltekit(), svelteTesting()],

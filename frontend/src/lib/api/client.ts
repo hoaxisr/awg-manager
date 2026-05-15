@@ -87,6 +87,7 @@ import type {
 	UpdateSubscriptionInput,
 	RouterStagingStatusResponse
 } from '$lib/types';
+import { isMockDevMode } from '$lib/env';
 
 export type TrafficPeriod = '5m' | '10m' | '30m' | '1h' | '3h' | '6h' | '12h' | '24h' | '48h';
 
@@ -506,10 +507,17 @@ class ApiClient {
 	}
 
 	async updateSettings(settings: Settings): Promise<Settings> {
-		return this.request('/settings/update', {
+		const updated = await this.request<Settings>('/settings/update', {
 			method: 'POST',
 			body: JSON.stringify(settings)
 		});
+		// Prism mock is stateless: it often returns schema examples instead of
+		// echoing persisted values. In mock-dev mode keep UI controls usable by
+		// honoring the submitted payload.
+		if (this.isMockDevMode()) {
+			return settings;
+		}
+		return updated;
 	}
 
 	async regenerateApiKey(): Promise<Settings> {
@@ -1255,6 +1263,74 @@ class ApiClient {
 		});
 	}
 
+	private isMockDevMode(): boolean {
+		return isMockDevMode();
+	}
+
+	private ensureMockSubscriptionMembers(sub: Subscription): Subscription {
+		if (!this.isMockDevMode()) return sub;
+		const baseMembers = Array.isArray(sub.members) ? [...sub.members] : [];
+		const normalized: Subscription = {
+			...sub,
+			id: sub.id || 'sub-demo',
+			label: sub.label || 'Demo Provider',
+			selectorTag: sub.selectorTag || 'sub-demo',
+			inboundTag: sub.inboundTag || 'sub-demo-in',
+			listenPort: sub.listenPort || 11000,
+			enabled: sub.enabled ?? true,
+			lastError: '',
+		};
+		if (baseMembers.length >= 3) {
+			const memberTags = baseMembers.map((m) => m.tag).filter(Boolean);
+			const activeMember = normalized.activeMember && memberTags.includes(normalized.activeMember)
+				? normalized.activeMember
+				: memberTags[0] || '';
+			return {
+				...normalized,
+				memberTags,
+				members: baseMembers,
+				activeMember,
+				enabled: true,
+			};
+		}
+
+		const seed = baseMembers[0] ?? {
+			tag: `${normalized.selectorTag || 'sub-demo'}-001`,
+			label: 'DE vless-tcp-reality #1',
+			protocol: 'vless',
+			server: 'demo-1.example.com',
+			port: 443,
+			sni: 'cdn.example.com',
+			transport: 'tcp',
+			security: 'reality',
+		};
+
+		for (let i = baseMembers.length; i < 3; i++) {
+			const n = i + 1;
+			const tag = `${normalized.selectorTag || 'sub-demo'}-${String(n).padStart(3, '0')}`;
+			baseMembers.push({
+				...seed,
+				tag,
+				label: `DE vless-tcp-reality #${n}`,
+				server: `demo-${n}.example.com`,
+				port: 443 + i,
+			});
+		}
+
+		const memberTags = baseMembers.map((m) => m.tag).filter(Boolean);
+		const activeMember = normalized.activeMember && memberTags.includes(normalized.activeMember)
+			? normalized.activeMember
+			: memberTags[0] || '';
+
+		return {
+			...normalized,
+			memberTags,
+			members: baseMembers,
+			activeMember,
+			enabled: true,
+		};
+	}
+
 	async singboxGetConfigPreview(): Promise<SingboxConfigPreview> {
 		return this.request<SingboxConfigPreview>('/singbox/config-preview');
 	}
@@ -1271,7 +1347,56 @@ class ApiClient {
 	}
 
 	async singboxGetTunnel(tag: string): Promise<{ tag: string; outbound: unknown }> {
-		return this.request(`/singbox/tunnels?tag=${encodeURIComponent(tag)}`);
+		const isMockDev = this.isMockDevMode();
+		try {
+			const raw = await this.request<unknown>(`/singbox/tunnels?tag=${encodeURIComponent(tag)}`);
+			// Normal backend shape.
+			if (raw && typeof raw === 'object' && 'outbound' in raw && 'tag' in raw) {
+				const obj = raw as { tag: string; outbound: unknown };
+				if (obj.outbound) return obj;
+			}
+			// Prism may return a SingboxTunnel-like item directly instead of {tag,outbound}.
+			if (isMockDev && raw && typeof raw === 'object' && 'tag' in raw) {
+				const t = raw as SingboxTunnel;
+				return { tag: t.tag, outbound: this.buildMockOutboundFromTunnel(t) };
+			}
+		} catch (err) {
+			if (!isMockDev) throw err;
+		}
+
+		if (isMockDev) {
+			const tunnels = await this.singboxListTunnels();
+			const found = tunnels.find((t) => t.tag === tag) ?? tunnels[0];
+			if (found) {
+				return { tag: found.tag, outbound: this.buildMockOutboundFromTunnel(found) };
+			}
+		}
+		throw new Error('Туннель не найден');
+	}
+
+	private buildMockOutboundFromTunnel(t: SingboxTunnel): Record<string, unknown> {
+		const outbound: Record<string, unknown> = {
+			type: t.protocol,
+			tag: t.tag,
+			server: t.server,
+			server_port: t.port,
+		};
+
+		if (t.protocol === 'vless') {
+			const tls: Record<string, unknown> = {};
+			if (t.sni) tls.server_name = t.sni;
+			if (t.fingerprint) tls.utls = { enabled: true, fingerprint: t.fingerprint };
+			if (t.security === 'reality') {
+				tls.enabled = true;
+				tls.reality = { enabled: true, public_key: 'EXAMPLE_PUBLIC_KEY', short_id: 'abcd1234' };
+			} else if (t.security === 'tls') {
+				tls.enabled = true;
+			}
+			outbound.transport = { type: t.transport || 'tcp' };
+			if (Object.keys(tls).length > 0) outbound.tls = tls;
+		}
+
+		return outbound;
 	}
 
 	async singboxUpdateTunnel(tag: string, outbound: unknown): Promise<SingboxTunnel[]> {
@@ -1709,7 +1834,8 @@ class ApiClient {
 	// #region Subscriptions
 
 	async listSubscriptions(): Promise<Subscription[]> {
-		return this.request<Subscription[]>('/singbox/subscriptions');
+		const subs = await this.request<Subscription[]>('/singbox/subscriptions');
+		return this.isMockDevMode() ? subs.map((s) => this.ensureMockSubscriptionMembers(s)) : subs;
 	}
 
 	async createSubscription(in_: CreateSubscriptionInput): Promise<Subscription> {
@@ -1720,9 +1846,10 @@ class ApiClient {
 	}
 
 	async getSubscription(id: string): Promise<Subscription> {
-		return this.request<Subscription>(
+		const sub = await this.request<Subscription>(
 			`/singbox/subscriptions/get?id=${encodeURIComponent(id)}`,
 		);
+		return this.ensureMockSubscriptionMembers(sub);
 	}
 
 	async updateSubscription(
