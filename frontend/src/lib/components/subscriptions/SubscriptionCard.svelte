@@ -14,8 +14,9 @@
 		liveActiveMember?: string | null;
 		layout?: SingboxLayoutMode;
 		ondelete?: (id: string) => void;
+		ondetail?: (tag: string) => void;
 	}
-	let { subscription, liveActiveMember = null, layout = 'grid', ondelete }: Props = $props();
+	let { subscription, liveActiveMember = null, layout = 'grid', ondelete, ondetail }: Props = $props();
 
 	const resolvedMemberTag = $derived(resolveSubscriptionMemberTag(subscription, liveActiveMember));
 
@@ -188,12 +189,30 @@
 						<span class="delay-dash">—</span>
 					{:else if resolvedMemberTag}
 						<div class="traffic-row-list">
-							<TrafficSparkline
-								data={trafficSparkData}
-								width={84}
-								height={22}
-								color="var(--color-accent)"
-							/>
+							<div
+								role="button"
+								tabindex="0"
+								class="traffic-mini-click"
+								onclick={(e) => {
+									e.stopPropagation();
+									ondetail?.(resolvedMemberTag);
+								}}
+								onkeydown={(e) => {
+									if (e.key === 'Enter' || e.key === ' ') {
+										e.preventDefault();
+										e.stopPropagation();
+										ondetail?.(resolvedMemberTag);
+									}
+								}}
+								title="Открыть детальный график"
+							>
+								<TrafficSparkline
+									data={trafficSparkData}
+									width={84}
+									height={22}
+									color="var(--color-accent)"
+								/>
+							</div>
 							<div class="traffic-mini-col mono">
 								<span>↓ {formatBytes(traffic?.download ?? 0)}</span>
 								<span>↑ {formatBytes(traffic?.upload ?? 0)}</span>
@@ -209,11 +228,7 @@
 					{:else if resolvedMemberTag}
 						<div
 							class="spark-mini {delayState}"
-							role="button"
-							tabindex="0"
-							onclick={(e) => runDelayCheck(e)}
-							onkeydown={onDelayKeydown}
-							title="Клик — обновить delay"
+							title="Delay за последние проверки"
 						>
 							{#if history.length === 0}
 								{#each Array(10) as _, i (i)}
@@ -417,7 +432,6 @@
 		height: 20px;
 		width: 100%;
 		max-width: 82px;
-		cursor: pointer;
 	}
 	.spark-mini .bar {
 		flex: 1;
@@ -454,6 +468,19 @@
 		line-height: 1.15;
 		color: var(--color-text-muted);
 		flex-shrink: 0;
+	}
+	.traffic-mini-click {
+		display: inline-flex;
+		border-radius: 4px;
+		cursor: pointer;
+		transition: background var(--t-fast) ease;
+	}
+	.traffic-mini-click:hover {
+		background: rgba(96, 165, 250, 0.06);
+	}
+	.traffic-mini-click:focus-visible {
+		outline: 1px solid var(--color-accent, #58a6ff);
+		outline-offset: 1px;
 	}
 	.card:focus-visible {
 		outline: 2px solid var(--color-primary, #3b82f6);

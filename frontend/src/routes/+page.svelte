@@ -120,6 +120,7 @@
 	let referencedTunnelName = $state<string>('');
 
 	let detailId = $state<string | null>(null);
+	let singboxDetailTag = $state<string | null>(null);
 	let endpointVisibility = $state<Record<string, boolean>>({});
 
 	function endpointVisibilityKey(scope: EndpointScope, id: string): string {
@@ -153,8 +154,10 @@
 
 	function openDetail(id: string) {
 		detailId = id;
+		singboxDetailTag = null;
 		const url = new URL(window.location.href);
 		url.searchParams.set('detail', id);
+		url.searchParams.delete('sbDetail');
 		history.replaceState(history.state, '', url);
 	}
 
@@ -165,10 +168,28 @@
 		history.replaceState(history.state, '', url);
 	}
 
+	function openSingboxDetail(tag: string) {
+		singboxDetailTag = tag;
+		detailId = null;
+		const url = new URL(window.location.href);
+		url.searchParams.set('sbDetail', tag);
+		url.searchParams.delete('detail');
+		history.replaceState(history.state, '', url);
+	}
+
+	function closeSingboxDetail() {
+		singboxDetailTag = null;
+		const url = new URL(window.location.href);
+		url.searchParams.delete('sbDetail');
+		history.replaceState(history.state, '', url);
+	}
+
 	// Sync from URL on mount + whenever the page store changes (back/forward).
 	$effect(() => {
-		const q = $page.url.searchParams.get('detail');
-		detailId = q && q.length > 0 ? q : null;
+		const awgQ = $page.url.searchParams.get('detail');
+		const sbQ = $page.url.searchParams.get('sbDetail');
+		detailId = awgQ && awgQ.length > 0 ? awgQ : null;
+		singboxDetailTag = sbQ && sbQ.length > 0 ? sbQ : null;
 	});
 
 	async function markAsServer(id: string) {
@@ -1674,6 +1695,7 @@
 										autoDelayCheckNonce={singboxAutoDelayCheckNonce}
 										autoDelayCheckDelayMs={i * 180}
 										layout="list"
+										ondetail={(tag) => openSingboxDetail(tag)}
 									/>
 								{/each}
 							</div>
@@ -1698,6 +1720,7 @@
 										liveActiveMember={liveActives[sub.id] || null}
 										layout="list"
 										ondelete={requestSubscriptionDelete}
+										ondetail={(tag) => openSingboxDetail(tag)}
 									/>
 								{/each}
 							</div>
@@ -1713,6 +1736,7 @@
 										autoDelayCheckNonce={singboxAutoDelayCheckNonce}
 										autoDelayCheckDelayMs={i * 180}
 										layout="grid"
+										ondetail={(tag) => openSingboxDetail(tag)}
 									/>
 								{/each}
 							</div>
@@ -1726,6 +1750,7 @@
 										liveActiveMember={liveActives[sub.id] || null}
 										layout="grid"
 										ondelete={requestSubscriptionDelete}
+										ondetail={(tag) => openSingboxDetail(tag)}
 									/>
 								{/each}
 							</div>
@@ -1849,6 +1874,7 @@
 								layout="list"
 								autoDelayCheckNonce={singboxAutoDelayCheckNonce}
 								autoDelayCheckDelayMs={i * 180}
+								ondetail={(tag) => openSingboxDetail(tag)}
 							/>
 						{/each}
 					</div>
@@ -1860,6 +1886,7 @@
 								layout="grid"
 								autoDelayCheckNonce={singboxAutoDelayCheckNonce}
 								autoDelayCheckDelayMs={i * 180}
+								ondetail={(tag) => openSingboxDetail(tag)}
 							/>
 						{/each}
 					</div>
@@ -1947,6 +1974,32 @@
 			onclose={closeDetail}
 		/>
 	{/if}
+{/if}
+
+{#if singboxDetailTag}
+	{@const sb = singboxTunnelsList.find((x) => x.tag === singboxDetailTag)}
+	{@const subActiveCard = subscriptionsActiveCards.find((c) => c.activeMember.tag === singboxDetailTag)}
+	{@const subListRow = subscriptionsListRows.find(
+		(s) => resolveSubscriptionMemberTag(s, liveActives[s.id] || null) === singboxDetailTag,
+	)}
+	{@const detailName =
+		subActiveCard?.subscription.label
+		?? subListRow?.label
+		?? sb?.tag
+		?? singboxDetailTag}
+	{@const detailIface =
+		subActiveCard
+			? (subActiveCard.subscription.proxyIndex >= 0 ? `Proxy${subActiveCard.subscription.proxyIndex}` : '')
+			: (subListRow
+				? (subListRow.proxyIndex >= 0 ? `Proxy${subListRow.proxyIndex}` : '')
+				: (sb?.proxyInterface ?? ''))}
+	<TrafficChartModal
+		open={true}
+		tunnelId={singboxDetailTag}
+		tunnelName={detailName}
+		ifaceName={detailIface}
+		onclose={closeSingboxDetail}
+	/>
 {/if}
 
 {#snippet exportIcon()}

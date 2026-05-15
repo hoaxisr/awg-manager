@@ -19,6 +19,7 @@
 		layout?: SingboxLayoutMode;
 		autoDelayCheckNonce?: number;
 		autoDelayCheckDelayMs?: number;
+		ondetail?: (tag: string) => void;
 	}
 
 	let {
@@ -26,6 +27,7 @@
 		layout = 'grid',
 		autoDelayCheckNonce = 0,
 		autoDelayCheckDelayMs = 0,
+		ondetail,
 	}: Props = $props();
 
 	let deleting = $state(false);
@@ -245,12 +247,26 @@
 		</div>
 		<div class="list-cell list-cell-traffic" data-label="Трафик">
 			<div class="traffic-row-list">
-				<TrafficSparkline
-					data={trafficSparkData}
-					width={84}
-					height={22}
-					color={tunnel.running === true ? 'var(--color-accent)' : 'var(--color-border-hover)'}
-				/>
+				<div
+					role="button"
+					tabindex="0"
+					class="traffic-mini-click"
+					onclick={() => ondetail?.(tunnel.tag)}
+					onkeydown={(e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							ondetail?.(tunnel.tag);
+						}
+					}}
+					title="Открыть детальный график"
+				>
+					<TrafficSparkline
+						data={trafficSparkData}
+						width={84}
+						height={22}
+						color={tunnel.running === true ? 'var(--color-accent)' : 'var(--color-border-hover)'}
+					/>
+				</div>
 				<div class="traffic-mini-col mono">
 					<span>↓ {formatBytes(traffic?.download ?? 0)}</span>
 					<span>↑ {formatBytes(traffic?.upload ?? 0)}</span>
@@ -438,11 +454,7 @@
 			</div>
 			<div
 				class="spark {cardState}"
-				onclick={triggerCheck}
-				onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && triggerCheck()}
-				role="button"
-				tabindex="0"
-				title="Клик — обновить delay"
+				title="Delay за последние проверки"
 			>
 				{#if history.length === 0}
 					{#each Array(6) as _}
@@ -467,6 +479,7 @@
 				rxTotal={traffic?.download ?? 0}
 				txTotal={traffic?.upload ?? 0}
 				height={56}
+				onclick={() => ondetail?.(tunnel.tag)}
 			/>
 		</div>
 	</div>
@@ -682,10 +695,8 @@
 		display: flex;
 		align-items: flex-end;
 		gap: 2px;
-		cursor: pointer;
 		padding: 2px 0;
 	}
-	.spark:focus { outline: 1px dashed var(--text-muted); }
 	.spark .bar {
 		flex: 1;
 		background: linear-gradient(to top, rgba(59, 130, 246, 0.6), rgba(96, 165, 250, 0.9));
@@ -727,6 +738,19 @@
 		line-height: 1.15;
 		color: var(--text-muted);
 		flex-shrink: 0;
+	}
+	.traffic-mini-click {
+		display: inline-flex;
+		border-radius: 4px;
+		cursor: pointer;
+		transition: background var(--t-fast) ease;
+	}
+	.traffic-mini-click:hover {
+		background: rgba(96, 165, 250, 0.06);
+	}
+	.traffic-mini-click:focus-visible {
+		outline: 1px solid var(--color-accent, #58a6ff);
+		outline-offset: 1px;
 	}
 
 	.actions {

@@ -23,6 +23,7 @@
         autoDelayCheckNonce?: number;
         autoDelayCheckDelayMs?: number;
         layout?: SingboxLayoutMode;
+        ondetail?: (tag: string) => void;
     }
     let {
         subscription,
@@ -30,6 +31,7 @@
         autoDelayCheckNonce = 0,
         autoDelayCheckDelayMs = 0,
         layout = 'grid',
+        ondetail,
     }: Props = $props();
 
     let pickerOpen = $state(false);
@@ -288,12 +290,30 @@
                     <span class="delay-dash">—</span>
                 {:else}
                     <div class="traffic-row-list">
-                        <TrafficSparkline
-                            data={trafficSparkData}
-                            width={84}
-                            height={22}
-                            color="var(--color-accent)"
-                        />
+                        <div
+                            role="button"
+                            tabindex="0"
+                            class="traffic-mini-click"
+                            onclick={(e) => {
+                                e.stopPropagation();
+                                ondetail?.(activeMember.tag);
+                            }}
+                            onkeydown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    ondetail?.(activeMember.tag);
+                                }
+                            }}
+                            title="Открыть детальный график"
+                        >
+                            <TrafficSparkline
+                                data={trafficSparkData}
+                                width={84}
+                                height={22}
+                                color="var(--color-accent)"
+                            />
+                        </div>
                         <div class="traffic-mini-col mono">
                             <span>↓ {formatBytes(traffic?.download ?? 0)}</span>
                             <span>↑ {formatBytes(traffic?.upload ?? 0)}</span>
@@ -307,20 +327,7 @@
                 {:else}
                     <div
                         class="spark-mini {cardState}"
-                        role="button"
-                        tabindex="0"
-                        onclick={(e) => {
-                            e.stopPropagation();
-                            void triggerCheck(e);
-                        }}
-                        onkeydown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                void triggerCheck(e);
-                            }
-                        }}
-                        title="Клик — обновить delay"
+                        title="Delay за последние проверки"
                     >
                         {#if history.length === 0}
                             {#each Array(10) as _, i (i)}
@@ -560,11 +567,7 @@
             </div>
             <div
                 class="spark {cardState}"
-                onclick={triggerCheck}
-                onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && triggerCheck(e)}
-                role="button"
-                tabindex="0"
-                title="Клик — обновить delay"
+                title="Delay за последние проверки"
             >
                 {#if history.length === 0}
                     {#each Array(6) as _, i (i)}<div class="bar empty"></div>{/each}
@@ -587,6 +590,7 @@
                 rxTotal={traffic?.download ?? 0}
                 txTotal={traffic?.upload ?? 0}
                 height={56}
+                onclick={() => ondetail?.(activeMember.tag)}
             />
         </div>
     </div>
@@ -783,7 +787,6 @@
         gap: 1px;
         align-items: flex-end;
         height: 28px;
-        cursor: pointer;
     }
     .bar { flex: 1; background: var(--color-bg-tertiary); border-radius: 1px; }
     .spark.ok .bar    { background: #3fb950; }
@@ -957,11 +960,6 @@
         align-items: flex-end;
         gap: 1px;
         padding: 1px 0;
-        cursor: pointer;
-    }
-    .spark-mini:focus {
-        outline: 1px dashed var(--color-text-muted);
-        outline-offset: 2px;
     }
     .spark-mini .bar {
         flex: 1;
@@ -999,6 +997,19 @@
         line-height: 1.15;
         color: var(--color-text-muted);
         flex-shrink: 0;
+    }
+    .traffic-mini-click {
+        display: inline-flex;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background var(--t-fast) ease;
+    }
+    .traffic-mini-click:hover {
+        background: rgba(96, 165, 250, 0.06);
+    }
+    .traffic-mini-click:focus-visible {
+        outline: 1px solid var(--color-accent, #58a6ff);
+        outline-offset: 1px;
     }
     .lc-name {
         flex-direction: column;
