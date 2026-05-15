@@ -415,6 +415,18 @@
         <span class="kernel">· :{subscription.listenPort}</span>
     </div>
 
+    <div class="badges">
+        <span class="badge proto">{protocolLabel}</span>
+        {#if activeMember.transport && activeMember.transport !== 'tcp'}
+            <span class="badge transport">{activeMember.transport.toUpperCase()}</span>
+        {/if}
+        {#if activeMember.security === 'reality'}
+            <span class="badge reality">Reality</span>
+        {:else if activeMember.security === 'tls'}
+            <span class="badge tls">TLS</span>
+        {/if}
+    </div>
+
     <div class="sub-meta">
         <div>
             <span>{subscription.memberTags.length} серверов</span>
@@ -434,17 +446,7 @@
         <div class="sub-error mono">{subscription.lastError}</div>
     {/if}
 
-    <div class="badges">
-        <span class="badge proto">{protocolLabel}</span>
-        {#if activeMember.transport && activeMember.transport !== 'tcp'}
-            <span class="badge transport">{activeMember.transport.toUpperCase()}</span>
-        {/if}
-        {#if activeMember.security === 'reality'}
-            <span class="badge reality">Reality</span>
-        {:else if activeMember.security === 'tls'}
-            <span class="badge tls">TLS</span>
-        {/if}
-    </div>
+    <div class="divider"></div>
 
     <div class="server-row">
         <span class="label">{isURLTest ? 'Авто' : 'Сервер'}</span>
@@ -512,6 +514,7 @@
             {/if}
         </div>
     </div>
+    <div class="divider"></div>
 
     <div class="actions">
         <button class="action-btn" onclick={openDetail}>
@@ -703,6 +706,7 @@
         gap: 0.5rem;
         align-items: center;
         font-size: 0.82rem;
+        margin: 0.2rem 0;
     }
     .label { color: var(--color-text-muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; }
     .picker-anchor { position: relative; min-width: 0; }
@@ -761,7 +765,7 @@
         transition: color var(--t-fast) ease;
     }
     .eye-btn:hover { color: var(--color-text-secondary); }
-    .divider { height: 1px; background: var(--color-border); margin: 0.4rem 0; }
+    .divider { height: 1px; background: var(--color-border); margin: 0.2rem 0; }
     .chart-block { display: flex; flex-direction: column; gap: 0.3rem; }
     .traffic-block { margin-bottom: 0.25rem; }
     .chart-head {
@@ -791,9 +795,8 @@
         gap: 0.4rem;
         justify-content: flex-end;
         align-items: center;
-        margin-top: 12px;
+        margin-top: 0;
         padding: 10px 0;
-        border-top: 1px solid var(--color-border);
         border-bottom: 1px solid var(--color-border);
     }
     .action-btn {
