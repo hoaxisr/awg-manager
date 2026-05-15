@@ -74,31 +74,31 @@ type SystemInfoData struct {
 
 // RouterDetails contains extended router metadata derived from NDMS/RCI and local procfs.
 type RouterDetails struct {
-	Model             string   `json:"model,omitempty"`
-	ModelDisplay      string   `json:"modelDisplay,omitempty"`
-	PortedBuild       bool     `json:"portedBuild"`
-	HardwareID        string   `json:"hardwareId,omitempty"`
-	Region            string   `json:"region,omitempty"`
-	Architecture      string   `json:"architecture,omitempty"`
-	CPUModel          string   `json:"cpuModel,omitempty"`
-	CPUTempC          int      `json:"cpuTempC,omitempty"`
-	WiFi24TempC       int      `json:"wifi24TempC,omitempty"`
-	WiFi5TempC        int      `json:"wifi5TempC,omitempty"`
-	MemoryUsedMB      int      `json:"memoryUsedMB,omitempty"`
-	MemoryTotalMB     int      `json:"memoryTotalMB,omitempty"`
-	MemoryUsedPercent int      `json:"memoryUsedPercent,omitempty"`
-	FirmwareTitle     string   `json:"firmwareTitle,omitempty"`
-	FirmwareRelease   string   `json:"firmwareRelease,omitempty"`
-	FirmwareSandbox   string   `json:"firmwareSandbox,omitempty"`
-	FirmwareBuildDate string   `json:"firmwareBuildDate,omitempty"`
-	BootSlot          string   `json:"bootSlot,omitempty"`
-	UptimeHuman       string   `json:"uptimeHuman,omitempty"`
-	LoadAverage       string   `json:"loadAverage,omitempty"`
-	OpkgStorage       string   `json:"opkgStorage,omitempty"`
-	VPNComponents     []string `json:"vpnComponents,omitempty"`
-	StorageComponents []string `json:"storageComponents,omitempty"`
-	FeatureComponents []string `json:"featureComponents,omitempty"`
-	MeshMembers       []string `json:"meshMembers,omitempty"`
+	Model             string   `json:"model,omitempty" example:"KN-3812"`
+	ModelDisplay      string   `json:"modelDisplay,omitempty" example:"CMCC RAX3000M (KN-3812)"`
+	PortedBuild       bool     `json:"portedBuild" example:"true"`
+	HardwareID        string   `json:"hardwareId,omitempty" example:"KN-3812"`
+	Region            string   `json:"region,omitempty" example:"EA"`
+	Architecture      string   `json:"architecture,omitempty" example:"aarch64"`
+	CPUModel          string   `json:"cpuModel,omitempty" example:"MT7981"`
+	CPUTempC          int      `json:"cpuTempC,omitempty" example:"79"`
+	WiFi24TempC       int      `json:"wifi24TempC,omitempty" example:"70"`
+	WiFi5TempC        int      `json:"wifi5TempC,omitempty" example:"68"`
+	MemoryUsedMB      int      `json:"memoryUsedMB,omitempty" example:"303"`
+	MemoryTotalMB     int      `json:"memoryTotalMB,omitempty" example:"486"`
+	MemoryUsedPercent int      `json:"memoryUsedPercent,omitempty" example:"62"`
+	FirmwareTitle     string   `json:"firmwareTitle,omitempty" example:"CMCC RAX3000M (KN-3812) [Port]"`
+	FirmwareRelease   string   `json:"firmwareRelease,omitempty" example:"5.0.9 (5.00.C.9.0-1)"`
+	FirmwareSandbox   string   `json:"firmwareSandbox,omitempty" example:"preview"`
+	FirmwareBuildDate string   `json:"firmwareBuildDate,omitempty" example:"7 Apr 2026"`
+	BootSlot          string   `json:"bootSlot,omitempty" example:"1"`
+	UptimeHuman       string   `json:"uptimeHuman,omitempty" example:"7d 16h 57m"`
+	LoadAverage       string   `json:"loadAverage,omitempty" example:"1.82, 1.58, 1.58"`
+	OpkgStorage       string   `json:"opkgStorage,omitempty" example:"451 MB / 205 GB"`
+	VPNComponents     []string `json:"vpnComponents,omitempty" example:"WireGuard,OpenVPN,IPsec/IKEv2,L2TP,SSTP,ZeroTier"`
+	StorageComponents []string `json:"storageComponents,omitempty" example:"NTFS,ExFAT,EXT4,SMB,FTP"`
+	FeatureComponents []string `json:"featureComponents,omitempty" example:"HW-NAT,Wi-Fi 5GHz,WPA3,USB"`
+	MeshMembers       []string `json:"meshMembers,omitempty" example:"RAX3000M (KN-3812) | 5.0.9 | 1921 Мбит/с | 13 дн. 06:22:26,SmartBox Giga (KN-1913) | 5.0.9 | 260 Мбит/с | 13 дн. 06:21:52"`
 }
 
 // SystemInfoResponse is the envelope for GET /system/info.

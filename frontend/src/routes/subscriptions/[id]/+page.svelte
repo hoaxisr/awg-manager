@@ -4,15 +4,10 @@
 	import { api } from '$lib/api/client';
 	import type { Subscription } from '$lib/types';
 	import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
-	import { Tabs, GridListToggle } from '$lib/components/ui';
+	import { Tabs } from '$lib/components/ui';
 	import SubscriptionMembersTab from '$lib/components/subscriptions/SubscriptionMembersTab.svelte';
 	import SubscriptionSettingsTab from '$lib/components/subscriptions/SubscriptionSettingsTab.svelte';
-	import { usageLevel } from '$lib/stores/settings';
-	import {
-		SINGBOX_LAYOUT_STORAGE_KEY,
-		TUNNEL_MOBILE_LAYOUT_MAX_WIDTH_PX,
-		type SingboxLayoutMode,
-	} from '$lib/constants/singboxLayout';
+	import { isMockDevMode } from '$lib/env';
 
 	// Poll Clash for the live "now" pointer this often when on members tab in urltest
 	// mode. 5s balances responsiveness with Clash API load.
@@ -37,37 +32,39 @@
 	let subscriptionSurfaceEntryNonce = $state(0);
 	let lastAutoDelayCheckKey = '';
 
-	let singboxLayoutMode = $state<SingboxLayoutMode>('grid');
-	let singboxLayoutReady = false;
-	let isSingboxMembersMobile = $state(false);
-	const showSingboxListOption = $derived($usageLevel !== 'basic');
-	const singboxEffectiveLayout = $derived<SingboxLayoutMode>(
-		isSingboxMembersMobile || (!showSingboxListOption && singboxLayoutMode === 'list')
-			? 'grid'
-			: singboxLayoutMode,
-	);
-	const showSingboxGridListToggle = $derived(showSingboxListOption && !isSingboxMembersMobile);
-
-	function isSingboxLayoutMode(value: string | null): value is SingboxLayoutMode {
-		return value === 'grid' || value === 'list';
-	}
-
 	let evtSrc: EventSource | null = null;
 
 	function loadStream(): void {
 		if (!id) return;
+		const isMockDev = isMockDevMode();
 		progressLoaded = 0;
 		progressTotal = 0;
 		loading = true;
 		error = '';
 		subscription = null;
 		evtSrc?.close();
+		if (isMockDev) {
+			void (async () => {
+				try {
+					const sub = await api.getSubscription(id);
+					subscription = sub;
+					progressTotal = sub.memberTags?.length ?? sub.members?.length ?? 0;
+					progressLoaded = progressTotal;
+				} catch {
+					error = 'Не удалось загрузить подписку';
+				} finally {
+					loading = false;
+				}
+			})();
+			return;
+		}
 		evtSrc = new EventSource(
 			`/api/singbox/subscriptions/get-stream?id=${encodeURIComponent(id)}`,
 		);
 		// Guard against onerror firing right after a clean done — browser emits
 		// onerror on the closed connection, but we treat that as success.
 		let streamDone = false;
+		let fallbackTried = false;
 
 		evtSrc.addEventListener('meta', (e) => {
 			const meta = JSON.parse((e as MessageEvent).data);
@@ -101,8 +98,26 @@
 			evtSrc = null;
 		});
 
-		evtSrc.onerror = () => {
+		evtSrc.onerror = async () => {
 			if (streamDone) return; // already completed cleanly — ignore connection-close error
+			// Prism mock backend does not emulate SSE streaming events reliably.
+			// Fall back to the regular subscription GET so local mock UI remains usable.
+			if (isMockDev && !fallbackTried && progressLoaded === 0) {
+				fallbackTried = true;
+				try {
+					const sub = await api.getSubscription(id);
+					subscription = sub;
+					progressTotal = sub.memberTags?.length ?? sub.members?.length ?? 0;
+					progressLoaded = progressTotal;
+					loading = false;
+					error = '';
+					evtSrc?.close();
+					evtSrc = null;
+					return;
+				} catch {
+					// Keep default error handling below.
+				}
+			}
 			// Browser fires onerror on connection drop. Surface partial state
 			// if we got members, generic error otherwise.
 			if (progressLoaded > 0 && progressTotal > 0) {
@@ -116,22 +131,7 @@
 		};
 	}
 
-	onMount(() => {
-		const sb = localStorage.getItem(SINGBOX_LAYOUT_STORAGE_KEY);
-		if (isSingboxLayoutMode(sb)) singboxLayoutMode = sb;
-		singboxLayoutReady = true;
-		loadStream();
-	});
-
-	onMount(() => {
-		const media = window.matchMedia(`(max-width: ${TUNNEL_MOBILE_LAYOUT_MAX_WIDTH_PX}px)`);
-		const sync = (event?: MediaQueryList | MediaQueryListEvent) => {
-			isSingboxMembersMobile = event ? event.matches : media.matches;
-		};
-		sync(media);
-		media.addEventListener('change', sync);
-		return () => media.removeEventListener('change', sync);
-	});
+	onMount(loadStream);
 	onDestroy(() => {
 		evtSrc?.close();
 		evtSrc = null;
@@ -188,11 +188,6 @@
 		lastAutoDelayCheckKey = key;
 		membersAutoDelayCheckNonce += 1;
 	});
-
-	$effect(() => {
-		if (!singboxLayoutReady) return;
-		localStorage.setItem(SINGBOX_LAYOUT_STORAGE_KEY, singboxLayoutMode);
-	});
 </script>
 
 <svelte:head>
@@ -232,21 +227,11 @@
 		{/if}
 		<section class="content">
 			{#if active === 'members'}
-				{#if subscription.memberTags.length > 0}
-					<div class="members-toolbar">
-						<GridListToggle
-							value={singboxEffectiveLayout}
-							showListOption={showSingboxGridListToggle}
-							onchange={(v) => (singboxLayoutMode = v)}
-						/>
-					</div>
-				{/if}
 				<SubscriptionMembersTab
 					{subscription}
 					{liveActiveMember}
 					onUpdated={loadStream}
 					autoDelayCheckNonce={membersAutoDelayCheckNonce}
-					layout={singboxEffectiveLayout}
 				/>
 			{:else}
 				<SubscriptionSettingsTab {subscription} onUpdated={loadStream} />
@@ -258,11 +243,6 @@
 <style>
 	.err { color: #f85149; margin-top: 1rem; }
 	.content { margin-top: 1rem; }
-	.members-toolbar {
-		display: flex;
-		justify-content: flex-end;
-		margin-bottom: 0.75rem;
-	}
 	.loading-progress {
 		margin: 1rem 0;
 		display: flex;

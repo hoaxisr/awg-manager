@@ -50,12 +50,7 @@
 		if (pct === undefined || pct === null || Number.isNaN(pct)) return '';
 		return `${pct}%`;
 	});
-	const osMainTitle = $derived.by(() => {
-		const title = details?.firmwareTitle || '';
-		const release = details?.firmwareRelease || '';
-		const base = title && release ? `${title} (${release})` : (release || title || osTitle);
-		return base;
-	});
+	const osMainTitle = $derived(osTitle);
 	const osPortTitle = $derived(details?.portedBuild ? '[Port]' : '');
 	const vpnLine = $derived((details?.vpnComponents || []).join(' ') || '—');
 	const storageLine = $derived((details?.storageComponents || []).join(' ') || '—');
