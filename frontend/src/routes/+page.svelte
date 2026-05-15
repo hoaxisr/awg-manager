@@ -47,6 +47,8 @@
 	type EndpointScope = 'managed' | 'system' | 'external';
 
 	const AWG_TUNNEL_VIEW_STORAGE_KEY = 'awg_tunnel_view_mode';
+	const SINGBOX_TUNNELS_LAYOUT_STORAGE_KEY = 'singbox_tunnels_layout_mode';
+	const SINGBOX_SUBSCRIPTIONS_LAYOUT_STORAGE_KEY = 'singbox_subscriptions_layout_mode';
 	const isMockDevMode = getIsMockDevMode();
 
 	// Polling-store subscription: first subscriber triggers the fetch,
@@ -428,11 +430,20 @@
 	let awgViewModeReady = false;
 	let isAwgMobile = $state(false);
 	let showAwgListViewOption = $derived($usageLevel !== 'basic');
-	let singboxLayoutMode = $state<SingboxLayoutMode>('grid');
-	let singboxLayoutReady = false;
+	let singboxTunnelsLayoutMode = $state<SingboxLayoutMode>('grid');
+	let singboxSubscriptionsLayoutMode = $state<SingboxLayoutMode>('grid');
+	let singboxTunnelsLayoutReady = false;
+	let singboxSubscriptionsLayoutReady = false;
 	let showSingboxListOption = $derived($usageLevel !== 'basic');
-	let singboxEffectiveLayout = $derived<SingboxLayoutMode>(
-		isAwgMobile || (!showSingboxListOption && singboxLayoutMode === 'list') ? 'grid' : singboxLayoutMode,
+	let singboxTunnelsEffectiveLayout = $derived<SingboxLayoutMode>(
+		isAwgMobile || (!showSingboxListOption && singboxTunnelsLayoutMode === 'list')
+			? 'grid'
+			: singboxTunnelsLayoutMode,
+	);
+	let singboxSubscriptionsEffectiveLayout = $derived<SingboxLayoutMode>(
+		isAwgMobile || (!showSingboxListOption && singboxSubscriptionsLayoutMode === 'list')
+			? 'grid'
+			: singboxSubscriptionsLayoutMode,
 	);
 	let showSingboxGridListToggle = $derived(showSingboxListOption && !isAwgMobile);
 	let awgEffectiveViewMode = $derived<AwgTunnelViewMode>(
@@ -472,11 +483,23 @@
 			awgViewMode = stored;
 		}
 		awgViewModeReady = true;
-		const sb = localStorage.getItem(SINGBOX_LAYOUT_STORAGE_KEY);
-		if (isSingboxLayoutMode(sb)) {
-			singboxLayoutMode = sb;
+
+		// Backward compatible migration:
+		// if per-tab keys are missing, fall back to the old shared sing-box layout key.
+		const legacyShared = localStorage.getItem(SINGBOX_LAYOUT_STORAGE_KEY);
+
+		const sbTunnels = localStorage.getItem(SINGBOX_TUNNELS_LAYOUT_STORAGE_KEY) ?? legacyShared;
+		if (isSingboxLayoutMode(sbTunnels)) {
+			singboxTunnelsLayoutMode = sbTunnels;
 		}
-		singboxLayoutReady = true;
+		singboxTunnelsLayoutReady = true;
+
+		const sbSubscriptions =
+			localStorage.getItem(SINGBOX_SUBSCRIPTIONS_LAYOUT_STORAGE_KEY) ?? legacyShared;
+		if (isSingboxLayoutMode(sbSubscriptions)) {
+			singboxSubscriptionsLayoutMode = sbSubscriptions;
+		}
+		singboxSubscriptionsLayoutReady = true;
 	});
 
 	onMount(() => {
@@ -496,8 +519,16 @@
 	});
 
 	$effect(() => {
-		if (!singboxLayoutReady) return;
-		localStorage.setItem(SINGBOX_LAYOUT_STORAGE_KEY, singboxLayoutMode);
+		if (!singboxTunnelsLayoutReady) return;
+		localStorage.setItem(SINGBOX_TUNNELS_LAYOUT_STORAGE_KEY, singboxTunnelsLayoutMode);
+	});
+
+	$effect(() => {
+		if (!singboxSubscriptionsLayoutReady) return;
+		localStorage.setItem(
+			SINGBOX_SUBSCRIPTIONS_LAYOUT_STORAGE_KEY,
+			singboxSubscriptionsLayoutMode,
+		);
 	});
 
 
@@ -1589,9 +1620,9 @@
 						<div class="toolbar-actions">
 							{#if subscriptionsList.length > 0}
 								<GridListToggle
-									value={singboxEffectiveLayout}
+									value={singboxSubscriptionsEffectiveLayout}
 									showListOption={showSingboxGridListToggle}
-									onchange={(v) => (singboxLayoutMode = v)}
+									onchange={(v) => (singboxSubscriptionsLayoutMode = v)}
 								/>
 							{/if}
 							<Button variant="primary" size="md" onclick={() => openWizard('url')}>+ Добавить</Button>
@@ -1605,7 +1636,7 @@
 							</p>
 							<Button variant="primary" size="md" onclick={() => openWizard('url')}>+ Добавить подписку</Button>
 						</div>
-					{:else if singboxEffectiveLayout === 'list'}
+					{:else if singboxSubscriptionsEffectiveLayout === 'list'}
 						<div class="awg-summary-row">
 							<StatStrip>
 								<Stat
@@ -1713,9 +1744,9 @@
 					<div class="toolbar-actions">
 						{#if singboxTunnelsList.length > 0}
 							<GridListToggle
-								value={singboxEffectiveLayout}
+								value={singboxTunnelsEffectiveLayout}
 								showListOption={showSingboxGridListToggle}
-								onchange={(v) => (singboxLayoutMode = v)}
+								onchange={(v) => (singboxTunnelsLayoutMode = v)}
 							/>
 						{/if}
 						<Button variant="primary" size="md" onclick={() => openWizard('choose')}>+ Добавить</Button>
@@ -1779,7 +1810,7 @@
 					</div>
 				</div>
 			{:else if singboxTunnelsList.length > 0}
-				{#if singboxEffectiveLayout === 'list'}
+				{#if singboxTunnelsEffectiveLayout === 'list'}
 					<div class="awg-summary-row">
 						<StatStrip>
 							<Stat
