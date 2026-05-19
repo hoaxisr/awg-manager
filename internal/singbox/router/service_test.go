@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -104,6 +105,7 @@ func newTestIPTables(fe *fakeExec) *IPTables {
 // their own callback without touching the rest of the stub.
 type fakeSingbox struct {
 	dir         string
+	binary      string
 	isRunningFn func() (bool, int)
 }
 
@@ -117,7 +119,7 @@ func (f *fakeSingbox) IsRunning() (bool, int) {
 func (f *fakeSingbox) Start() error                              { return nil }
 func (f *fakeSingbox) ValidateConfigDir(_ context.Context) error { return nil }
 func (f *fakeSingbox) ConfigDir() string                         { return f.dir }
-func (f *fakeSingbox) Binary() string                            { return "" }
+func (f *fakeSingbox) Binary() string                            { return f.binary }
 
 // newTestSingbox creates a fakeSingbox backed by a temp directory.
 func newTestSingbox(t *testing.T) *fakeSingbox {
@@ -273,11 +275,11 @@ func TestReconcile_WANIPsChanged_Reinstalls(t *testing.T) {
 
 	svc := &ServiceImpl{
 		deps: Deps{
-			Log:            logger.New(),
-			Policies:       &fakeAccessPolicyProvider{mark: "0xffffaaa"},
-			IPTables:       ipt,
-			WANIPCollector: collector,
-			Singbox:        newTestSingbox(t),
+			Log:                logger.New(),
+			Policies:           &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+			IPTables:           ipt,
+			WANIPCollector:     collector,
+			Singbox:            newTestSingbox(t),
 			NetfilterPreflight: func(context.Context) error { return nil },
 		},
 		currentMark:   "0xffffaaa",
@@ -310,11 +312,11 @@ func TestReconcile_WANIPsSame_NoOp(t *testing.T) {
 	// stored values, so no re-install should be triggered.
 	svc := &ServiceImpl{
 		deps: Deps{
-			Log:            logger.New(),
-			Policies:       &fakeAccessPolicyProvider{mark: "0xffffaaa"},
-			IPTables:       ipt,
-			WANIPCollector: collector,
-			Singbox:        newTestSingbox(t),
+			Log:                logger.New(),
+			Policies:           &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+			IPTables:           ipt,
+			WANIPCollector:     collector,
+			Singbox:            newTestSingbox(t),
 			NetfilterPreflight: func(context.Context) error { return nil },
 		},
 		currentMark:         "0xffffaaa",
@@ -362,10 +364,10 @@ func TestReconcile_DisabledPartialInstall_CleansUp(t *testing.T) {
 	policies := &fakeAccessPolicyProvider{mark: "0xffffaaa"}
 
 	svc := newTestService(t, Deps{
-		Settings:     settingsStore,
-		Policies:     policies,
-		IPTables:     ipt,
-		Singbox:      newTestSingbox(t),
+		Settings:       settingsStore,
+		Policies:       policies,
+		IPTables:       ipt,
+		Singbox:        newTestSingbox(t),
 		WANIPCollector: &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}},
 	})
 
@@ -619,5 +621,107 @@ func TestStagingStatus_HasDraftAfterPersist(t *testing.T) {
 	st = svc.StagingStatus(context.Background())
 	if !st.HasDraft {
 		t.Error("HasDraft false after persistConfig")
+	}
+}
+
+func TestAddRuleSet_InlineWritesLocalBinaryToPendingAndListsInline(t *testing.T) {
+	svc, dir := newOrchedTestService(t)
+	svc.deps.Singbox.(*fakeSingbox).binary = "/opt/bin/sing-box"
+	withFakeRuleSetCompiler(t, func(binary string, args []string) (string, string, error) {
+		writeCompiledOutput(t, args, "compiled")
+		return "", "", nil
+	})
+
+	err := svc.AddRuleSet(context.Background(), RuleSet{
+		Tag:  "custom-inline",
+		Type: "inline",
+		Rules: []map[string]any{
+			{"domain_suffix": []any{".example.com"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("AddRuleSet: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "pending", "20-router.json"))
+	if err != nil {
+		t.Fatalf("read pending router config: %v", err)
+	}
+	var cfg RouterConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("pending config json: %v", err)
+	}
+	if len(cfg.Route.RuleSet) != 1 {
+		t.Fatalf("rule_set len = %d", len(cfg.Route.RuleSet))
+	}
+	stored := cfg.Route.RuleSet[0]
+	if stored.Tag != "custom-inline" || stored.Type != "local" || stored.Format != "binary" {
+		t.Fatalf("stored rule_set not materialized local binary: %+v", stored)
+	}
+	if _, err := os.Stat(stored.Path); err != nil {
+		t.Fatalf("compiled .srs missing: %v", err)
+	}
+
+	listed, err := svc.ListRuleSets(context.Background())
+	if err != nil {
+		t.Fatalf("ListRuleSets: %v", err)
+	}
+	if len(listed) != 1 || listed[0].Type != "inline" || len(listed[0].Rules) != 1 {
+		t.Fatalf("expected inline projection, got %+v", listed)
+	}
+}
+
+func TestUpdateRuleSet_InlineUsesNewContentAddressedFileWithoutChangingOld(t *testing.T) {
+	svc, dir := newOrchedTestService(t)
+	svc.deps.Singbox.(*fakeSingbox).binary = "/opt/bin/sing-box"
+	withFakeRuleSetCompiler(t, func(binary string, args []string) (string, string, error) {
+		writeCompiledOutput(t, args, "compiled")
+		return "", "", nil
+	})
+
+	if err := svc.AddRuleSet(context.Background(), RuleSet{
+		Tag:   "custom-inline",
+		Type:  "inline",
+		Rules: []map[string]any{{"domain_suffix": []any{".one.example"}}},
+	}); err != nil {
+		t.Fatalf("AddRuleSet: %v", err)
+	}
+	firstRaw, err := os.ReadFile(filepath.Join(dir, "pending", "20-router.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var firstCfg RouterConfig
+	if err := json.Unmarshal(firstRaw, &firstCfg); err != nil {
+		t.Fatal(err)
+	}
+	firstPath := firstCfg.Route.RuleSet[0].Path
+	if _, err := os.Stat(firstPath); err != nil {
+		t.Fatalf("first .srs missing: %v", err)
+	}
+
+	if err := svc.UpdateRuleSet(context.Background(), "custom-inline", RuleSet{
+		Tag:   "custom-inline",
+		Type:  "inline",
+		Rules: []map[string]any{{"domain_suffix": []any{".two.example"}}},
+	}); err != nil {
+		t.Fatalf("UpdateRuleSet: %v", err)
+	}
+	secondRaw, err := os.ReadFile(filepath.Join(dir, "pending", "20-router.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var secondCfg RouterConfig
+	if err := json.Unmarshal(secondRaw, &secondCfg); err != nil {
+		t.Fatal(err)
+	}
+	secondPath := secondCfg.Route.RuleSet[0].Path
+	if firstPath == secondPath {
+		t.Fatalf("updated inline content reused old path: %q", firstPath)
+	}
+	if _, err := os.Stat(firstPath); err != nil {
+		t.Fatalf("old .srs should remain for live safety: %v", err)
+	}
+	if _, err := os.Stat(secondPath); err != nil {
+		t.Fatalf("new .srs missing: %v", err)
 	}
 }

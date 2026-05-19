@@ -176,13 +176,13 @@ type StagingEventBus interface {
 }
 
 type Deps struct {
-	Log          *logger.Logger
-	Settings     *storage.SettingsStore
-	Singbox      SingboxController
-	Policies     AccessPolicyProvider
-	Events       *events.Bus
-	IPTables     *IPTables
-	AWGTags      AWGTagCatalog        // optional — when nil, computeIssues only sees cfg.Outbounds
+	Log            *logger.Logger
+	Settings       *storage.SettingsStore
+	Singbox        SingboxController
+	Policies       AccessPolicyProvider
+	Events         *events.Bus
+	IPTables       *IPTables
+	AWGTags        AWGTagCatalog        // optional — when nil, computeIssues only sees cfg.Outbounds
 	SingboxTunnels SingboxTunnelCatalog // optional — when nil, computeIssues skips cross-slot tunnel tags
 	// SubscriptionComposites lists composite outbounds owned by the
 	// subscription slot (40-subscriptions.json). Optional — when nil,
@@ -244,10 +244,10 @@ func (a *routerLoggerAdapter) Info(msg string) {
 }
 
 type ServiceImpl struct {
-	deps           Deps
-	mu             sync.Mutex
-	currentMark       string          // last-installed iptables mark; used by Reconcile to detect change
-	currentWANIPs     []string        // last-collected WAN IPs; used by Reconcile to detect change
+	deps              Deps
+	mu                sync.Mutex
+	currentMark       string              // last-installed iptables mark; used by Reconcile to detect change
+	currentWANIPs     []string            // last-collected WAN IPs; used by Reconcile to detect change
 	currentLANBridges []LANBridgeDNSRedir // last-discovered LAN-bridge (name, ndnproxy port) pairs; reconcile triggers re-install when this changes (e.g. NDMS hotspot reconfigured, bridge added/removed, port reassigned)
 
 	// netfilterStateKnown tracks whether we know for certain that the
@@ -282,6 +282,19 @@ func NewService(d Deps) *ServiceImpl {
 
 func (s *ServiceImpl) routerConfigPath() string {
 	return filepath.Join(s.deps.Singbox.ConfigDir(), "20-router.json")
+}
+
+func (s *ServiceImpl) ruleSetMaterializer() ruleSetMaterializer {
+	var configDir, binary string
+	if s.deps.Orch != nil {
+		configDir = s.deps.Orch.ConfigDir()
+	} else if s.deps.Singbox != nil {
+		configDir = s.deps.Singbox.ConfigDir()
+	}
+	if s.deps.Singbox != nil {
+		binary = s.deps.Singbox.Binary()
+	}
+	return ruleSetMaterializer{configDir: configDir, binary: binary}
 }
 
 // loadRouterConfig returns the router config the user is currently editing.
@@ -352,7 +365,11 @@ func (s *ServiceImpl) persistConfigDirect(ctx context.Context, cfg *RouterConfig
 		// Test-only legacy fallback: reuse the in-place writer.
 		return s.persistConfig(ctx, cfg)
 	}
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	materialized, err := s.ruleSetMaterializer().materializeConfig(cfg)
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(materialized, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal router config: %w", err)
 	}
@@ -429,11 +446,15 @@ func (s *ServiceImpl) waitForSingbox(ctx context.Context, timeout time.Duration)
 }
 
 func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) error {
+	materialized, err := s.ruleSetMaterializer().materializeConfig(cfg)
+	if err != nil {
+		return err
+	}
 	if s.deps.Orch != nil {
 		// Orchestrator path — write to pending/ (staging). The draft will
 		// be applied explicitly via ApplyStaging. No SIGHUP is triggered
 		// here; sing-box keeps running with the previously-applied config.
-		data, err := json.MarshalIndent(cfg, "", "  ")
+		data, err := json.MarshalIndent(materialized, "", "  ")
 		if err != nil {
 			return fmt.Errorf("marshal router config: %w", err)
 		}
@@ -462,7 +483,7 @@ func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) erro
 		}
 	}
 
-	if err := SaveConfig(path, cfg); err != nil {
+	if err := SaveConfig(path, materialized); err != nil {
 		restore()
 		return err
 	}
@@ -742,7 +763,6 @@ func ensureTProxyInbound(in []Inbound) []Inbound {
 	}
 	return out
 }
-
 
 func (s *ServiceImpl) emitStatus(ctx context.Context) {
 	if s.deps.Events == nil {
@@ -1064,7 +1084,8 @@ func (s *ServiceImpl) ListRuleSets(ctx context.Context) ([]RuleSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	return cfg.Route.RuleSet, nil
+	restored := s.ruleSetMaterializer().restoreConfig(cfg)
+	return restored.Route.RuleSet, nil
 }
 
 func (s *ServiceImpl) AddRuleSet(ctx context.Context, rs RuleSet) error {
@@ -1096,7 +1117,6 @@ func (s *ServiceImpl) UpdateRuleSet(ctx context.Context, tag string, rs RuleSet)
 func (s *ServiceImpl) DeleteRuleSet(ctx context.Context, tag string, force bool) error {
 	return s.withConfig(ctx, "rulesets", func(c *RouterConfig) error { return c.DeleteRuleSet(tag, force) })
 }
-
 
 func (s *ServiceImpl) ListCompositeOutbounds(ctx context.Context) ([]CompositeOutboundView, error) {
 	cfg, err := s.loadRouterConfig()
