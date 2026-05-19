@@ -55,9 +55,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          ./scripts/build-singbox.sh mipsel-3.4 1.14.0-alpha.24
-          ./scripts/build-singbox.sh mips-3.4 1.14.0-alpha.24
-          ./scripts/build-singbox.sh aarch64-3.10 1.14.0-alpha.24
+          ./scripts/build-singbox.sh mipsel-3.4 1.14.0-alpha.21
+          ./scripts/build-singbox.sh mips-3.4 1.14.0-alpha.21
+          ./scripts/build-singbox.sh aarch64-3.10 1.14.0-alpha.21
 
           BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
           IPK_VERSION="$(cat VERSION)+r${BUILD_NUMBER}"
