@@ -3,3 +3,5 @@ test_transform
 *.dSYM
 manual_tunnel.sh
 manual_tunnel_kernel.sh
+mac1_aad_cookie.py
+ab_phase2_kernel.sh
