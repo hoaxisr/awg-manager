@@ -26,6 +26,8 @@
 #include "proxy.h"
 #include "transform.h"
 #include "cps.h"
+#include "cookie.h"
+#include "blake2s.h"
 
 static struct awg_proxy proxies[AWG_MAX_TUNNELS];
 static DEFINE_MUTEX(proxy_mutex);
@@ -309,6 +311,8 @@ static int c2s_thread_fn(void *data)
 		int n, out_len, sendJunk;
 		u32 msgType;
 		u64 rand_val;
+		u8 captured_mac1_old[16];
+		bool mac1_capture_pending = false;
 
 		/* Receive from listen socket (WG sends here) */
 		payload = raw_buf + headroom;
@@ -346,6 +350,29 @@ static int c2s_thread_fn(void *data)
 			spin_unlock(&proxy->client_lock);
 		}
 
+		/*
+		 * Cookie-reply AAD prep: capture vanilla WG's MAC1 BEFORE
+		 * transform substitutes it (sits at payload[116..132] for init,
+		 * payload[60..76] for response). We commit the (old, new) pair
+		 * atomically AFTER transform so an s2c reader can never observe
+		 * a mismatched pair from two different handshake cycles.
+		 *
+		 * Only relevant when has_server_pub (i.e. proxy will recompute
+		 * MAC1).
+		 */
+		if (proxy->cookie_aead) {
+			u8 first_byte = payload[0];
+			if (first_byte == WG_HANDSHAKE_INIT &&
+			    n == WG_INIT_SIZE) {
+				memcpy(captured_mac1_old, payload + 116, 16);
+				mac1_capture_pending = true;
+			} else if (first_byte == WG_HANDSHAKE_RESPONSE &&
+				   n == WG_RESP_SIZE) {
+				memcpy(captured_mac1_old, payload + 60, 16);
+				mac1_capture_pending = true;
+			}
+		}
+
 		/* Get random value for H range selection */
 		get_random_bytes(&rand_val, sizeof(rand_val));
 
@@ -353,6 +380,27 @@ static int c2s_thread_fn(void *data)
 		out = transform_outbound(raw_buf, headroom, n,
 					 &proxy->cfg, rand_val,
 					 &out_len, &sendJunk, &msgType);
+
+		/* Commit MAC1 pair atomically (both values from the SAME
+		 * handshake cycle). */
+		if (mac1_capture_pending && proxy->cookie_aead) {
+			int s_prefix = (msgType == WG_HANDSHAKE_INIT)
+				? proxy->cfg.s1 :
+				(msgType == WG_HANDSHAKE_RESPONSE)
+				? proxy->cfg.s2 : -1;
+			int mac1_off = (msgType == WG_HANDSHAKE_INIT) ? 116
+				: (msgType == WG_HANDSHAKE_RESPONSE) ? 60 : -1;
+			if (s_prefix >= 0 && mac1_off >= 0 &&
+			    out_len >= s_prefix + mac1_off + 16) {
+				spin_lock(&proxy->mac1_lock);
+				memcpy(proxy->last_mac1_old,
+				       captured_mac1_old, 16);
+				memcpy(proxy->last_mac1_new,
+				       out + s_prefix + mac1_off, 16);
+				WRITE_ONCE(proxy->have_last_mac1, true);
+				spin_unlock(&proxy->mac1_lock);
+			}
+		}
 
 		/* Send CPS + junk before handshake init if needed */
 		if (sendJunk) {
@@ -473,6 +521,58 @@ static int s2c_thread_fn(void *data)
 
 		/* Transform inbound AWG -> WG */
 		out = transform_inbound(buf, n, &proxy->cfg, &out_len);
+
+		/*
+		 * Cookie-reply AAD translation.
+		 *
+		 * Server encrypted the cookie's AEAD with AAD = MAC1 it received
+		 * (= MAC1_new, our recomputed). Vanilla WG client will decrypt
+		 * with AAD = its stored last_mac1_sent (= MAC1_old). Without
+		 * translation, AEAD verification fails on the client side, the
+		 * cookie is silently dropped, and subsequent handshakes carry
+		 * MAC2=zeros — which the server (under_load) refuses.
+		 *
+		 * Layout of the forwarded cookie_reply (out[0..64]):
+		 *   [0..4]   type = WG_COOKIE_REPLY (already restored)
+		 *   [4..8]   receiver_index
+		 *   [8..32]  nonce (24 bytes, XChaCha20)
+		 *   [32..64] encrypted_cookie (16 ciphertext + 16 Poly1305 tag)
+		 */
+		if (out && out_len == WG_COOKIE_SIZE &&
+		    out[0] == WG_COOKIE_REPLY &&
+		    proxy->cookie_aead &&
+		    READ_ONCE(proxy->have_last_mac1)) {
+			u8 mac1_old[16], mac1_new[16];
+			u8 ct_buf[32];
+			int dret;
+
+			spin_lock(&proxy->mac1_lock);
+			memcpy(mac1_old, proxy->last_mac1_old, 16);
+			memcpy(mac1_new, proxy->last_mac1_new, 16);
+			spin_unlock(&proxy->mac1_lock);
+
+			memcpy(ct_buf, out + 32, 32);
+			dret = awg_xchacha20p1305_decrypt(
+				proxy->cookie_aead,
+				proxy->cookie_decryption_key,
+				out + 8 /* 24-byte nonce */,
+				mac1_new, 16,
+				ct_buf, 32);
+			if (dret == 0) {
+				/* ct_buf[0..16] holds the 16-byte cookie now.
+				 * Re-encrypt with MAC1_old AAD; output fills
+				 * ct_buf[0..32] (16 ct + 16 tag). */
+				dret = awg_xchacha20p1305_encrypt(
+					proxy->cookie_aead,
+					proxy->cookie_decryption_key,
+					out + 8, mac1_old, 16,
+					ct_buf, 16);
+				if (dret == 0)
+					memcpy(out + 32, ct_buf, 32);
+			}
+			/* Any failure: leave the cookie_reply unchanged. */
+		}
+
 		if (!out)
 			continue; /* junk/CPS — drop silently */
 
@@ -556,8 +656,30 @@ int awg_proxy_add(const char *config_line)
 	memcpy(&p->cfg, &tmp, sizeof(tmp));
 	memset(tmp.cps, 0, sizeof(tmp.cps)); /* prevent double-free */
 	spin_lock_init(&p->client_lock);
+	spin_lock_init(&p->mac1_lock);
 	p->cps_counter = 0;
+	p->have_last_mac1 = false;
+	p->cookie_aead = NULL;
 	p->headroom = compute_headroom(&p->cfg);
+
+	/*
+	 * Cookie translation setup. Only relevant when we recompute MAC1 (i.e.
+	 * has_server_pub). Failure here is non-fatal: cookie path just won't be
+	 * translatable, server's cookie_reply will be silently rejected by the
+	 * vanilla WG client as today.
+	 */
+	if (p->cfg.has_server_pub) {
+		compute_cookie_key(p->cfg.server_pub, p->cookie_decryption_key);
+		ret = awg_cookie_aead_create(&p->cookie_aead);
+		if (ret) {
+			pr_warn("awg_proxy: cookie AEAD setup failed: %d "
+				"(cookie translation disabled for this slot)\n",
+				ret);
+			p->cookie_aead = NULL;
+			/* not fatal — proceed */
+			ret = 0;
+		}
+	}
 	atomic64_set(&p->rx_bytes, 0);
 	atomic64_set(&p->tx_bytes, 0);
 	atomic_set(&p->rx_packets, 0);
@@ -644,6 +766,10 @@ out_cleanup:
 		sock_release(p->remote_sock);
 		p->remote_sock = NULL;
 	}
+	if (p->cookie_aead) {
+		awg_cookie_aead_destroy(p->cookie_aead);
+		p->cookie_aead = NULL;
+	}
 	p->active = false;
 	awg_config_free(&p->cfg);
 out_free:
@@ -683,6 +809,10 @@ static void proxy_stop(struct awg_proxy *p)
 	if (p->remote_sock) {
 		sock_release(p->remote_sock);
 		p->remote_sock = NULL;
+	}
+	if (p->cookie_aead) {
+		awg_cookie_aead_destroy(p->cookie_aead);
+		p->cookie_aead = NULL;
 	}
 
 	awg_config_free(&p->cfg);

@@ -13,6 +13,9 @@ void blake2s_128mac(const u8 key[32], const void *data, size_t len, u8 out[16]);
 /* Derive MAC1 key: BLAKE2s-256("mac1----" || pubkey) */
 void compute_mac1_key(const u8 pubkey[32], u8 mac1key[32]);
 
+/* Derive cookie en/decryption key: BLAKE2s-256("cookie--" || pubkey) */
+void compute_cookie_key(const u8 pubkey[32], u8 cookie_key[32]);
+
 /* Recompute MAC1 in handshake init (148 bytes). MAC1 at [116:132], covers [0:116]. */
 void recompute_mac1(u8 *buf, const u8 mac1key[32]);
 

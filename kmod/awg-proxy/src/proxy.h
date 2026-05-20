@@ -69,6 +69,23 @@ struct awg_proxy {
 
 	/* Active flag */
 	bool active;
+
+	/*
+	 * Cookie-reply AAD translation state (only used when has_server_pub).
+	 *
+	 * Why: server encrypts cookie_reply with AAD = MAC1 it received in our
+	 * init/response = MAC1_new (post-recompute). Vanilla WG decrypts with
+	 * AAD = last_mac1_sent = MAC1_old (pre-recompute). Without translation
+	 * the AEAD verification on the client side fails and the cookie is
+	 * silently dropped, leaving subsequent handshakes with MAC2=zeros which
+	 * the server (under_load) refuses.
+	 */
+	u8 cookie_decryption_key[32];  /* blake2s_256("cookie--" || server_pub) */
+	u8 last_mac1_old[16];          /* MAC1 vanilla WG computed for [01...] */
+	u8 last_mac1_new[16];          /* MAC1 we recomputed for [H1...] */
+	bool have_last_mac1;
+	spinlock_t mac1_lock;
+	struct crypto_aead *cookie_aead;
 } __aligned(8);
 
 /*

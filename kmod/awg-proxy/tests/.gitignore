@@ -1,3 +1,5 @@
 test_cps
 test_transform
 *.dSYM
+manual_tunnel.sh
+manual_tunnel_kernel.sh

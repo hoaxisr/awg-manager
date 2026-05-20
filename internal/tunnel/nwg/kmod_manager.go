@@ -20,7 +20,7 @@ import (
 const (
 	awgProxyDir         = "/opt/etc/awg-manager/modules"
 	defaultKoPath       = awgProxyDir + "/awg_proxy.ko"
-	expectedKmodVersion = "1.1.6" // minimum required awg_proxy.ko version
+	expectedKmodVersion = "1.1.7" // minimum required awg_proxy.ko version
 )
 
 // KmodManager manages the awg_proxy.ko kernel module for NativeWG tunnels.

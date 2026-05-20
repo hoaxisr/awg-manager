@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=awg-proxy
-PKG_VERSION:=1.1.6
+PKG_VERSION:=1.1.7
 
 PKG_LICENSE:=GPL-2.0
 PKG_LICENSE_FILES:=COPYING
@@ -57,6 +57,7 @@ define KernelPackage/awg-proxy
   CATEGORY:=Kernel modules
   SUBMENU:=Network Support
   TITLE:=AWG Proxy netfilter module
+  DEPENDS:=+kmod-crypto-aead +kmod-crypto-chacha20poly1305
   FILES:=$(PKG_BUILD_DIR)/src/awg_proxy.ko
 endef
 
