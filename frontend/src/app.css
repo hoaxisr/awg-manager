@@ -424,6 +424,13 @@ label {
 	padding: 0 1rem;
 }
 
+/* Страницы редактирования (AWG / sing-box / подписка) — уже основной колонки. */
+.edit-wrapper {
+	max-width: 1200px;
+	margin: 0 auto;
+	width: 100%;
+}
+
 .flex {
 	display: flex;
 }

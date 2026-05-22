@@ -503,12 +503,6 @@
 		color: var(--color-text-secondary);
 	}
 
-	.edit-wrapper {
-		max-width: 1200px;
-		margin: 0 auto;
-		width: 100%;
-	}
-
 	.tab-content {
 		padding: 20px 0;
 	}

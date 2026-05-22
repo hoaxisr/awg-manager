@@ -8,7 +8,7 @@
 	import { goto } from '$app/navigation';
 	import HeadersTextarea from './HeadersTextarea.svelte';
 	import { parseHeadersText, serializeHeaders } from './headersParser';
-	import { Button, Dropdown, Modal } from '$lib/components/ui';
+	import { Button, Dropdown, Modal, Toggle } from '$lib/components/ui';
 	import { untrack } from 'svelte';
 
 	interface Props {
@@ -107,6 +107,22 @@
 	<Button variant="danger" onclick={() => (confirmDelete = true)}>Удалить подписку</Button>
 </div>
 
+<div class="enabled-card" class:off={!enabled}>
+	<div class="enabled-row">
+		<Toggle bind:checked={enabled} variant="flip" />
+		<div class="enabled-text">
+			<span class="enabled-title">Включена</span>
+			<span class="enabled-hint">
+				{#if enabled}
+					Подписка включена и участвует в маршрутизации
+				{:else}
+					Подписка выключена — не используется в маршрутизации
+				{/if}
+			</span>
+		</div>
+	</div>
+</div>
+
 <form
 	class="form-grid"
 	onsubmit={(e) => {
@@ -145,10 +161,6 @@
 				fullWidth
 			/>
 		{/if}
-		<label class="chk">
-			<input type="checkbox" bind:checked={enabled} />
-			<span>Включена</span>
-		</label>
 	</section>
 
 	<section class="col">
@@ -247,6 +259,43 @@
 		margin-bottom: 1rem;
 	}
 
+	.enabled-card {
+		margin-bottom: 1.25rem;
+		padding: 12px 14px;
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius, 8px);
+		transition:
+			border-color var(--t-fast, 120ms) ease,
+			background var(--t-fast, 120ms) ease;
+	}
+	.enabled-card.off {
+		border-color: color-mix(in srgb, var(--color-text-muted) 35%, var(--color-border));
+	}
+	.enabled-row {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		min-width: 0;
+	}
+	.enabled-text {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		min-width: 0;
+	}
+	.enabled-title {
+		font-size: var(--sbx-card-title, 14px);
+		font-weight: 600;
+		color: var(--color-text-primary);
+	}
+	.enabled-hint {
+		font-size: var(--sbx-card-meta, 11px);
+		line-height: 1.4;
+		color: var(--color-text-muted);
+	}
+
 	.form-grid {
 		display: grid;
 		grid-template-columns: 1fr;
@@ -285,13 +334,6 @@
 		width: 100%;
 		box-sizing: border-box;
 	}
-	.chk {
-		display: flex;
-		flex-direction: row;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
 	.mode-grid {
 		display: grid;
 		grid-template-columns: 1fr 1fr;

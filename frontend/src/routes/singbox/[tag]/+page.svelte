@@ -66,7 +66,8 @@
 	<title>{tag} — Sing-box</title>
 </svelte:head>
 
-<PageContainer>
+<PageContainer width="wide">
+	<div class="edit-wrapper">
 	<div class="sticky-header">
 		<div class="header-left">
 			<Button variant="ghost" size="sm" onclick={() => goto('/?tab=singbox')} iconBefore={backIcon}>
@@ -319,6 +320,7 @@
 			</div>
 		</form>
 	{/if}
+	</div>
 </PageContainer>
 
 {#snippet backIcon()}

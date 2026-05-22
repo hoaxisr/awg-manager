@@ -235,7 +235,8 @@
 	<title>{subscription?.label ?? 'Подписка'} - AWG Manager</title>
 </svelte:head>
 
-<PageContainer width="full">
+<PageContainer width="wide">
+	<div class="edit-wrapper">
 	{#if !subscription && loading}
 		<!-- Initial spinner before meta arrives (any subscription size) -->
 		<div class="loading-centered">
@@ -289,6 +290,7 @@
 			{/if}
 		</section>
 	{/if}
+	</div>
 </PageContainer>
 
 <style>
