@@ -1373,7 +1373,7 @@ class ApiClient {
 				memberTags,
 				members: baseMembers,
 				activeMember,
-				enabled: true,
+				enabled: normalized.enabled,
 			};
 		}
 
@@ -1410,7 +1410,7 @@ class ApiClient {
 			memberTags,
 			members: baseMembers,
 			activeMember,
-			enabled: true,
+			enabled: normalized.enabled,
 		};
 	}
 

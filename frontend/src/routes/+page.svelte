@@ -1786,19 +1786,23 @@
 								/>
 							</StatStrip>
 						</div>
-						{#if subscriptionsActiveCards.length > 0}
-							<h2 class="section-title">В работе</h2>
-							<div class="awg-list-table singbox-sub-list-table singbox-sub-list-table--active">
-								<div class="sbx-sub-list-row sbx-sub-list-row--head">
-									<span>Delay</span>
-									<span>Подписка</span>
-									<span>Режим</span>
-									<span>Активный сервер</span>
-									<span>Серверов</span>
-									<span>Обновлено</span>
-									<span>Трафик</span>
-									<span>Ping</span>
-									<span class="sbx-sub-list-head-actions">Действия</span>
+						<div class="awg-list-table singbox-sub-list-table">
+							<div class="sbx-sub-list-row sbx-sub-list-row--head">
+								<span>Delay</span>
+								<span>Подписка</span>
+								<span>Режим</span>
+								<span>Активный сервер</span>
+								<span>Серверов</span>
+								<span>Обновлено</span>
+								<span>Трафик</span>
+								<span>Ping</span>
+								<span class="sbx-sub-list-head-actions">Действия</span>
+							</div>
+							{#if subscriptionsActiveCards.length > 0}
+								<div class="awg-list-row awg-list-row--section">
+									<div class="awg-list-section-title">
+										В работе · {subscriptionsActiveCards.length}
+									</div>
 								</div>
 								{#each subscriptionsActiveCards as card, i (card.subscription.id)}
 									<SubscriptionActiveCard
@@ -1810,21 +1814,12 @@
 										ondetail={(tag) => openSingboxDetail(tag)}
 									/>
 								{/each}
-							</div>
-						{/if}
-						{#if subscriptionsListRows.length > 0}
-							<h2 class="section-title">Не активные</h2>
-							<div class="awg-list-table singbox-sub-list-table singbox-sub-list-table--inactive">
-								<div class="sbx-sub-list-row sbx-sub-list-row--head sbx-sub-inactive-head">
-									<span>Статус</span>
-									<span>Delay</span>
-									<span>Подписка</span>
-									<span>Серверов</span>
-									<span>Активен</span>
-									<span>Трафик</span>
-									<span>Ping</span>
-									<span>Обновлено</span>
-									<span class="sbx-sub-list-head-actions"></span>
+							{/if}
+							{#if subscriptionsListRows.length > 0}
+								<div class="awg-list-row awg-list-row--section">
+									<div class="awg-list-section-title">
+										Не активные · {subscriptionsListRows.length}
+									</div>
 								</div>
 								{#each subscriptionsListRows as sub (sub.id)}
 									<SubscriptionCard
@@ -1835,8 +1830,8 @@
 										ondetail={(tag) => openSingboxDetail(tag)}
 									/>
 								{/each}
-							</div>
-						{/if}
+							{/if}
+						</div>
 					{:else}
 						{#if subscriptionsActiveCards.length > 0}
 							<h2 class="section-title">В работе</h2>
@@ -3198,9 +3193,6 @@
 	.singbox-sub-list-table :global(.sbx-sub-active-row) {
 		min-width: 920px;
 	}
-	.singbox-sub-list-table--inactive :global(.sbx-sub-inactive-row) {
-		min-width: 960px;
-	}
 	.singbox-sub-list-table .sbx-sub-list-row--head {
 		display: grid;
 		gap: 0 1rem;
@@ -3213,8 +3205,6 @@
 		text-transform: uppercase;
 		color: var(--color-text-muted);
 		border-bottom: 1px solid var(--color-border);
-	}
-	.singbox-sub-list-table--active .sbx-sub-list-row--head {
 		grid-template-columns:
 			minmax(92px, 1fr)
 			minmax(132px, 1.1fr)
@@ -3226,19 +3216,6 @@
 			minmax(120px, 0.95fr)
 			minmax(100px, 0.95fr);
 		min-width: 920px;
-	}
-	.singbox-sub-list-table--inactive .sbx-sub-inactive-head {
-		grid-template-columns:
-			minmax(64px, 0.9fr)
-			minmax(84px, 1fr)
-			minmax(140px, 1.25fr)
-			minmax(56px, 0.85fr)
-			minmax(88px, 1fr)
-			minmax(150px, 1.15fr)
-			minmax(56px, 0.85fr)
-			minmax(88px, 1fr)
-			minmax(44px, 0.75fr);
-		min-width: 960px;
 	}
 	.sbx-sub-list-head-actions {
 		text-align: right;
