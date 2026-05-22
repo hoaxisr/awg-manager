@@ -1066,3 +1066,154 @@ func TestPreflightConfigDir_FallsThroughToValidator(t *testing.T) {
 		t.Errorf("validator error must propagate verbatim, got: %s", err)
 	}
 }
+
+// --- removeFinalFromBase tests ---
+
+func TestRemoveFinalFromBase_DropsKey(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "00-base.json")
+	if err := os.WriteFile(basePath,
+		[]byte(`{"log":{"level":"trace"},"route":{"final":"direct","rules":[]},"outbounds":[{"type":"direct","tag":"direct"}]}`),
+		0644); err != nil {
+		t.Fatal(err)
+	}
+
+	removeFinalFromBase(basePath)
+
+	raw, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	route, _ := m["route"].(map[string]any)
+	if _, has := route["final"]; has {
+		t.Errorf("route.final should be removed, got %v", route["final"])
+	}
+	// Other route keys preserved.
+	if _, has := route["rules"]; !has {
+		t.Errorf("route.rules unexpectedly removed")
+	}
+	// Outbounds preserved.
+	if _, has := m["outbounds"]; !has {
+		t.Errorf("outbounds unexpectedly removed")
+	}
+}
+
+func TestRemoveFinalFromBase_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "00-base.json")
+	original := `{"route":{"rules":[]},"outbounds":[{"type":"direct","tag":"direct"}]}`
+	if err := os.WriteFile(basePath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	removeFinalFromBase(basePath)
+	removeFinalFromBase(basePath) // second call: should be no-op
+
+	raw, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	route, _ := m["route"].(map[string]any)
+	if _, has := route["final"]; has {
+		t.Errorf("route.final should remain absent")
+	}
+}
+
+func TestRemoveFinalFromBase_PreservesOtherRouteFields(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "00-base.json")
+	if err := os.WriteFile(basePath,
+		[]byte(`{"route":{"final":"direct","default_domain_resolver":"dns-bootstrap","rules":[{"action":"sniff"}]}}`),
+		0644); err != nil {
+		t.Fatal(err)
+	}
+
+	removeFinalFromBase(basePath)
+
+	raw, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	route, _ := m["route"].(map[string]any)
+	if _, has := route["final"]; has {
+		t.Errorf("route.final not removed")
+	}
+	if route["default_domain_resolver"] != "dns-bootstrap" {
+		t.Errorf("default_domain_resolver lost: %v", route["default_domain_resolver"])
+	}
+	rules, _ := route["rules"].([]any)
+	if len(rules) != 1 {
+		t.Errorf("rules lost: %v", route["rules"])
+	}
+}
+
+func TestRemoveFinalFromBase_NoRouteSection_NoOp(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "00-base.json")
+	original := `{"log":{"level":"trace"},"outbounds":[{"type":"direct","tag":"direct"}]}`
+	if err := os.WriteFile(basePath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	removeFinalFromBase(basePath)
+
+	raw, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) == "" {
+		t.Errorf("file truncated")
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("file became invalid JSON: %v", err)
+	}
+	if _, has := m["outbounds"]; !has {
+		t.Errorf("outbounds lost")
+	}
+}
+
+func TestRemoveFinalFromBase_MissingFile_NoPanic(t *testing.T) {
+	// No setup — file does not exist.
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "00-base.json")
+
+	// Should not panic, should not create the file.
+	removeFinalFromBase(basePath)
+
+	if _, err := os.Stat(basePath); !os.IsNotExist(err) {
+		t.Errorf("file should not be created when missing")
+	}
+}
+
+func TestRemoveFinalFromBase_MalformedJSON_NoOp(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "00-base.json")
+	garbage := `{this is not json`
+	if err := os.WriteFile(basePath, []byte(garbage), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	removeFinalFromBase(basePath)
+
+	// Файл должен остаться неизменным — мы не должны trash bad config.
+	raw, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != garbage {
+		t.Errorf("malformed file mutated: got %q, want %q", string(raw), garbage)
+	}
+}

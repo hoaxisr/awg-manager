@@ -686,6 +686,41 @@ func patchBaseDirectOutbound(basePath string) {
 	_ = writeJSONFile(basePath, m)
 }
 
+// removeFinalFromBase strips the legacy route.final key from
+// 00-base.json. Pre-spec installs wrote {route:{final:"direct"}} in
+// base; under config.d merge semantics (scalar = first-file-wins),
+// that base value shadowed any router-slot final. This patch lets
+// 20-router.json own route.final exclusively.
+//
+// Sing-box behavior when route.final is absent: "The first outbound
+// will be used if empty" (per upstream docs). 00-base.json's outbound
+// list starts with {type:"direct", tag:"direct"} (also self-healed by
+// patchBaseDirectOutbound), so the implicit fallback stays direct —
+// same observable behavior as the old explicit "final":"direct".
+//
+// Idempotent: no-op when route.final is already absent. Silent skip on
+// missing file / read error / malformed JSON / missing route section
+// (matches patchBaseDirectOutbound and patchTunnelsSlotStripBaseDNS).
+func removeFinalFromBase(basePath string) {
+	data, err := os.ReadFile(basePath)
+	if err != nil {
+		return
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return
+	}
+	route, _ := m["route"].(map[string]any)
+	if route == nil {
+		return
+	}
+	if _, has := route["final"]; !has {
+		return
+	}
+	delete(route, "final")
+	_ = writeJSONFile(basePath, m)
+}
+
 // stripStrayDirectPlaceholder removes the canonical
 // {type:"direct", tag:"direct"} placeholder from every slot file in
 // configDir EXCEPT 00-base.json. Sing-box rejects the merged config
