@@ -348,7 +348,10 @@ func TestEnsureBaseConfig_PatchesMissingDomainResolver(t *testing.T) {
 	if route["default_domain_resolver"] != "dns-bootstrap" {
 		t.Errorf("default_domain_resolver want dns-bootstrap, got %v", route["default_domain_resolver"])
 	}
-	// Existing route fields preserved (for now; removal wired in Task 3).
+	// ensureBaseConfig preserves existing route.final — removal is done
+	// separately by removeFinalFromBase, called after ensureBaseConfig in
+	// Operator.New. This test only exercises ensureBaseConfig, so final
+	// stays "direct" here.
 	if route["final"] != "direct" {
 		t.Errorf("route.final lost: %v", route["final"])
 	}
