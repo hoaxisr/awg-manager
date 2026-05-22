@@ -456,7 +456,7 @@ const MOCK_EXTERNAL_TUNNELS = [
 
 const MOCK_SINGBOX_TUNNELS = [
 	{
-		tag: 'vless-de-main',
+		tag: 'Kto-VLESS-kto-po-drova',
 		protocol: 'vless',
 		server: 'de01.demo.example',
 		port: 443,
@@ -576,7 +576,7 @@ const TRAFFIC_PROFILES = {
 		burstRx: 0,
 		burstTx: 0,
 	},
-	'vless-de-main': {
+	'Kto-VLESS-kto-po-drova': {
 		baseRx: 260_000,
 		baseTx: 96_000,
 		waveRx: 42_000,

@@ -139,6 +139,10 @@
 	const status = $derived(
 		subscription.lastError ? 'error' : subscription.lastFetched ? 'ok' : 'pending',
 	);
+	const feedStatusLabel = $derived(
+		!subscription.enabled ? 'Выключена' : subscription.lastError ? 'Ошибка' : 'OK',
+	);
+	const modeLabel = $derived(subscription.mode === 'urltest' ? 'URLTest' : 'Selector');
 	const lastFetchedHuman = $derived(
 		subscription.lastFetched ? formatRelative(subscription.lastFetched) : '—',
 	);
@@ -345,66 +349,112 @@
 	</div>
 {:else}
 <div
-	role="button"
-	tabindex="0"
-	class="card"
-	class:panel={layout === 'grid'}
+	class="card panel inactive-panel"
 	class:err={status === 'error'}
-	onclick={(e) => open(e)}
-	onkeydown={(e) => {
-		if (e.key === 'Enter' || e.key === ' ') {
-			e.preventDefault();
-			open(e);
-		}
-	}}
+	class:off={!subscription.enabled}
 >
-	<div class="head">
-		<div class="label">{subscription.label || subscription.url}</div>
-		<div class="head-right">
-			<div class="badge {status}">
-				{#if status === 'ok'}OK{:else if status === 'error'}Ошибка{:else}—{/if}
+	<div class="inactive-header">
+		<div class="inactive-header-main">
+			<h3 class="inactive-title">{subscription.label || subscription.url}</h3>
+			<div class="inactive-meta-line">
+				{#if proxyIface}
+					<span class="inactive-iface mono">{proxyIface}{#if kernelIface} · {kernelIface}{/if}</span>
+				{:else}
+					<span class="inactive-iface mono">{subscription.inboundTag}</span>
+				{/if}
+				<span class="inactive-kind">{modeLabel}</span>
 			</div>
+			<div class="inactive-note">Sing-box подписка · :{subscription.listenPort}</div>
+		</div>
+		<div class="inactive-status-wrap">
+			<span
+				class="status-badge"
+				class:status-off={!subscription.enabled}
+				class:status-error={subscription.enabled && status === 'error'}
+				class:status-ok={subscription.enabled && status === 'ok'}
+				class:status-pending={subscription.enabled && status === 'pending'}
+			>
+				<span class="led-dot" aria-hidden="true"></span>
+				{feedStatusLabel}
+			</span>
+		</div>
+	</div>
+
+	<div class="inactive-details">
+		<div class="detail-row">
+			<span class="detail-label">Серверов</span>
+			<span class="detail-value">{subscription.memberTags.length}</span>
+		</div>
+		<div class="detail-row">
+			<span class="detail-label">Активный</span>
+			<span class="detail-value mono">{subscription.activeMember || '—'}</span>
+		</div>
+		<div class="detail-row">
+			<span class="detail-label">Обновлено</span>
+			<span class="detail-value">{lastFetchedHuman}</span>
+		</div>
+		{#if subscription.refreshHours > 0}
+			<div class="detail-row">
+				<span class="detail-label">Авто-обновление</span>
+				<span class="detail-value">каждые {subscription.refreshHours} ч</span>
+			</div>
+		{/if}
+		{#if subscription.lastError}
+			<div class="detail-row detail-row-err">
+				<span class="detail-label">Ошибка</span>
+				<span class="detail-value mono" title={subscription.lastError}>{subscription.lastError}</span>
+			</div>
+		{/if}
+	</div>
+
+	<div class="inactive-actions">
+		<div class="actions">
 			<button
 				type="button"
-				class="card-test"
-				title="Открыть диагностику"
-				aria-label="Открыть диагностику подписки {subscription.label || subscription.url}"
+				class="action-btn"
+				title="Открыть подписку «{subscription.label || subscription.url}»"
+				onclick={(e) => {
+					e.stopPropagation();
+					open();
+				}}
+			>
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+					<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+				</svg>
+				Открыть подписку
+			</button>
+			<button
+				type="button"
+				class="action-btn action-test"
+				title="Открыть диагностику подписки «{subscription.label || subscription.url}»"
 				onpointerdown={stopNestedAction}
 				onmousedown={stopNestedAction}
 				onclick={openDiagnostics}
 				onkeydown={stopNestedActionKeydown}
 			>
-				<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-					<polyline points="22 4 12 14.01 9 11.01" />
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+					<polyline points="22,4 12,14.01 9,11.01"/>
 				</svg>
+				Тест
 			</button>
 			{#if ondelete}
 				<button
 					type="button"
-					class="card-remove"
-					title="Удалить подписку"
-					aria-label="Удалить подписку {subscription.label || subscription.url}"
+					class="action-btn action-danger"
+					title="Удалить подписку «{subscription.label || subscription.url}»"
 					onclick={requestDelete}
 				>
-					<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						<line x1="18" y1="6" x2="6" y2="18" />
-						<line x1="6" y1="6" x2="18" y2="18" />
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<polyline points="3,6 5,6 21,6"/>
+						<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
 					</svg>
+					Удалить
 				</button>
 			{/if}
 		</div>
 	</div>
-	<div class="meta mono">{subscription.inboundTag} · :{subscription.listenPort}</div>
-	<div class="info">
-		{subscription.memberTags.length} серверов
-		{#if subscription.activeMember}· активен <span class="mono">{subscription.activeMember}</span>{/if}
-		· обновлено {lastFetchedHuman}
-		{#if subscription.refreshHours > 0}· auto {subscription.refreshHours}ч{/if}
-	</div>
-	{#if subscription.lastError}
-		<div class="err-msg mono">{subscription.lastError}</div>
-	{/if}
 </div>
 {/if}
 
@@ -424,19 +474,185 @@
 	.card {
 		display: flex;
 		flex-direction: column;
-		gap: 0.3rem;
-		padding: 0.85rem 1rem;
+		gap: 12px;
+		padding: 12px 14px;
 		background: var(--color-bg-secondary);
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius);
 		font: inherit;
 		text-align: left;
 		color: var(--color-text-primary);
 		cursor: pointer;
+		transition: border-color var(--t-fast) ease;
 	}
+	.card.ok { border-color: var(--color-success-border); }
+	.card.slow { border-color: var(--color-warning-border); }
+	.card.fail { border-color: var(--color-error-border); }
+	.card.unknown { border-color: var(--color-border); }
+	.card.off { border-color: var(--color-muted-border); opacity: 0.72; }
 	.card.panel {
-		padding: 16px;
+		gap: 0;
+		padding: 12px 14px;
+		cursor: default;
+	}
+	.card.panel.inactive-panel {
+		border: 1px dashed color-mix(in srgb, var(--color-text-muted) 38%, transparent);
+	}
+	.card.panel.inactive-panel.off {
+		opacity: 1;
+	}
+	.card.panel.inactive-panel.err {
+		border-color: color-mix(in srgb, var(--color-error) 45%, transparent);
+	}
+	.inactive-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
+		gap: 12px;
+	}
+	.inactive-header-main {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		min-width: 0;
+	}
+	.inactive-title {
+		margin: 0;
+		font-size: var(--sbx-card-title);
+		font-weight: 600;
+		color: var(--color-text-primary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.inactive-meta-line {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+	.inactive-iface {
+		font-size: var(--sbx-card-meta);
+		font-family: var(--font-mono, ui-monospace, monospace);
+		color: var(--color-text-muted);
+	}
+	.inactive-kind {
+		display: inline-flex;
+		align-items: center;
+		padding: 2px 8px;
+		font-size: var(--sbx-card-badge);
+		font-weight: 500;
 		border-radius: 10px;
+		background: rgba(88, 166, 255, 0.15);
+		color: var(--color-accent);
+	}
+	.inactive-note {
+		font-size: var(--sbx-card-note);
+		color: var(--color-text-muted);
+	}
+	.inactive-status-wrap {
+		flex-shrink: 0;
+	}
+	.status-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 2px 10px;
+		font-size: var(--sbx-card-status);
+		font-weight: 500;
+		border-radius: 10px;
+	}
+	.status-badge.status-ok {
+		background: rgba(16, 185, 129, 0.15);
+		color: var(--color-success, #10b981);
+	}
+	.status-badge.status-error {
+		background: rgba(248, 81, 73, 0.15);
+		color: var(--color-error, #f85149);
+	}
+	.status-badge.status-off,
+	.status-badge.status-pending {
+		background: rgba(148, 163, 184, 0.15);
+		color: var(--color-text-muted);
+	}
+	.led-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: currentColor;
+		flex-shrink: 0;
+	}
+	.inactive-details {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		margin-top: 12px;
+		padding-top: 12px;
+		border-top: 1px solid var(--color-border);
+	}
+	.detail-row {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 0;
+	}
+	.detail-label {
+		font-size: var(--sbx-card-label);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--color-text-muted);
+	}
+	.detail-value {
+		font-size: var(--sbx-card-value);
+		font-family: var(--font-mono, ui-monospace, monospace);
+		color: var(--color-text-secondary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.detail-row-err .detail-value {
+		color: var(--color-error, #f85149);
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+	.inactive-actions {
+		margin-top: 12px;
+		padding-top: 12px;
+		border-top: 1px solid var(--color-border);
+	}
+	.inactive-panel .actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+		justify-content: flex-end;
+		align-items: center;
+	}
+	.inactive-panel .action-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 5px 9px;
+		font-size: var(--sbx-card-action);
+		font-weight: 500;
+		border: none;
+		background: transparent;
+		color: var(--color-text-secondary);
+		cursor: pointer;
+		border-radius: var(--radius-sm);
+		font-family: inherit;
+		transition: background var(--t-fast) ease, color var(--t-fast) ease;
+	}
+	.inactive-panel .action-btn:hover:not(:disabled) {
+		background: var(--color-bg-hover);
+		color: var(--color-text-primary);
+	}
+	.inactive-panel .action-btn.action-test:hover:not(:disabled) {
+		color: var(--color-success);
+		background: var(--color-success-tint);
+	}
+	.inactive-panel .action-btn.action-danger:hover:not(:disabled) {
+		color: var(--color-error);
+		background: var(--color-error-tint);
 	}
 	.sub-list-group {
 		border-bottom: 1px solid var(--color-border);
@@ -476,7 +692,7 @@
 		display: flex;
 		align-items: center;
 		min-width: 0;
-		font-size: 0.8125rem;
+		font-size: var(--sbx-card-value);
 		color: var(--color-text-secondary);
 	}
 	.lc-delay {
@@ -490,11 +706,11 @@
 	}
 	.t1 {
 		font-weight: 600;
-		font-size: 0.9375rem;
+		font-size: var(--sbx-card-title);
 		color: var(--color-text-primary);
 	}
 	.t2 {
-		font-size: 0.75rem;
+		font-size: var(--sbx-card-meta);
 		color: var(--color-text-muted);
 	}
 	.mono {
@@ -510,21 +726,21 @@
 		gap: 0.1rem;
 	}
 	.lc-endpoint-name {
-		font-size: 0.75rem;
+		font-size: var(--sbx-card-value);
 		color: var(--color-text-primary);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 	.lc-endpoint-host {
-		font-size: 0.72rem;
+		font-size: var(--sbx-card-meta);
 		color: var(--color-text-muted);
 	}
 	.off-label {
-		font-size: 0.75rem;
+		font-size: var(--sbx-card-badge);
 		font-weight: 600;
 		text-transform: uppercase;
-		letter-spacing: 0.06em;
+		letter-spacing: 0.04em;
 		color: var(--color-text-muted);
 	}
 	.eye-mini {
@@ -567,7 +783,7 @@
 		align-items: center;
 		gap: 4px;
 		padding: 5px 9px;
-		font-size: 11px;
+		font-size: var(--sbx-card-action);
 		font-weight: 500;
 		border: none;
 		background: transparent;
@@ -599,7 +815,7 @@
 		background: var(--color-success-tint);
 	}
 	.delay-inline-err {
-		font-size: 0.68rem;
+		font-size: var(--sbx-card-badge);
 		line-height: 1.25;
 		color: #f85149;
 		overflow: hidden;
@@ -608,7 +824,7 @@
 		width: 100%;
 	}
 	.delay-dash {
-		font-size: 0.8125rem;
+		font-size: var(--sbx-card-value);
 		color: var(--color-text-muted);
 	}
 	.spark-mini {
@@ -650,7 +866,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.08rem;
-		font-size: 0.68rem;
+		font-size: var(--sbx-card-note);
 		line-height: 1.15;
 		flex-shrink: 0;
 	}
@@ -667,68 +883,5 @@
 		outline: 1px solid var(--color-accent, #58a6ff);
 		outline-offset: 1px;
 	}
-	.card:focus-visible {
-		outline: 2px solid var(--color-primary, #3b82f6);
-		outline-offset: 2px;
-	}
-	.card.err { border-color: #f85149; }
-	.head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
-	.head-right { display: flex; align-items: center; gap: 0.5rem; }
-	.card-test {
-		width: 22px;
-		height: 22px;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		background: transparent;
-		border: 1px solid var(--color-border);
-		border-radius: 50%;
-		color: var(--color-text-muted);
-		cursor: pointer;
-		transition: color 120ms, border-color 120ms, background 120ms;
-	}
-	.card-test:hover:not(:disabled) {
-		color: var(--color-success);
-		border-color: var(--color-success);
-		background: var(--color-success-tint);
-	}
-	.card-test:disabled {
-		opacity: 0.45;
-		cursor: not-allowed;
-	}
-	.card-test:focus-visible {
-		outline: 2px solid var(--color-accent, #58a6ff);
-		outline-offset: 1px;
-	}
-	.card-remove {
-		width: 22px;
-		height: 22px;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		background: transparent;
-		border: 1px solid var(--color-border);
-		border-radius: 50%;
-		color: var(--color-text-muted);
-		cursor: pointer;
-		transition: color 120ms, border-color 120ms, background 120ms;
-	}
-	.card-remove:hover {
-		color: var(--color-error, #f85149);
-		border-color: var(--color-error, #f85149);
-		background: rgba(248, 81, 73, 0.08);
-	}
-	.card-remove:focus-visible {
-		outline: 2px solid var(--color-error, #f85149);
-		outline-offset: 1px;
-	}
-	.label { font-weight: 600; font-size: 0.95rem; }
-	.badge { font-size: 0.72rem; padding: 0.15rem 0.5rem; border-radius: 999px; }
-	.badge.ok { background: rgba(63, 185, 80, 0.15); color: #3fb950; }
-	.badge.error { background: rgba(248, 81, 73, 0.15); color: #f85149; }
-	.badge.pending { background: var(--color-bg-tertiary); color: var(--color-text-muted); }
-	.meta { font-size: 0.75rem; color: var(--color-text-muted); }
-	.info { font-size: 0.82rem; color: var(--color-text-muted); }
-	.err-msg { font-size: 0.78rem; color: #f85149; margin-top: 0.3rem; }
 	.mono { font-family: var(--font-mono, ui-monospace, monospace); }
 </style>

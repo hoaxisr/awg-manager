@@ -657,16 +657,22 @@
         position: relative;
         display: flex;
         flex-direction: column;
-        padding: 16px;
+        gap: 10px;
+        padding: 12px 14px;
         border: 1px solid var(--color-border);
-        border-radius: 10px;
+        border-radius: var(--radius);
         background: var(--color-bg-secondary);
         color: var(--color-text-primary);
-        gap: 0.5rem;
+        transition: border-color var(--t-fast) ease;
     }
+    .card.ok { border-color: var(--color-success-border); }
+    .card.slow { border-color: var(--color-warning-border); }
+    .card.fail { border-color: var(--color-error-border); }
+    .card.unknown { border-color: var(--color-border); }
     .led-wrap {
         position: absolute;
-        top: 12px; right: 12px;
+        top: 12px;
+        right: 12px;
         display: flex;
         align-items: center;
         gap: 0.4rem;
@@ -686,21 +692,21 @@
         margin-right: 90px; /* room for led-wrap */
     }
     .title {
-        font-size: 1rem;
+        font-size: var(--sbx-card-title);
         font-weight: 600;
         margin: 0;
         flex: 0 1 auto;
     }
     .kind-badge {
-        font-size: 0.65rem;
-        padding: 0.1rem 0.45rem;
-        border-radius: 999px;
+        font-size: var(--sbx-card-badge);
+        padding: 2px 8px;
+        border-radius: 10px;
         background: rgba(88, 166, 255, 0.15);
         color: var(--color-accent);
-        font-weight: 600;
+        font-weight: 500;
     }
     .iface {
-        font-size: 0.75rem;
+        font-size: var(--sbx-card-meta);
         color: var(--color-text-muted);
         font-family: var(--font-mono, ui-monospace, monospace);
     }
@@ -711,10 +717,10 @@
     }
     .badges { display: flex; gap: 0.4rem; flex-wrap: wrap; }
     .badge {
-        font-size: 0.68rem;
-        padding: 0.15rem 0.5rem;
-        border-radius: 4px;
-        font-weight: 600;
+        font-size: var(--sbx-card-badge);
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-weight: 500;
     }
     .badge.proto    { background: rgba(88,166,255,0.15); color: var(--color-accent); }
     .badge.transport{ background: var(--color-bg-tertiary); color: var(--color-text-muted); }
@@ -725,10 +731,14 @@
         grid-template-columns: 80px 1fr;
         gap: 0.5rem;
         align-items: center;
-        font-size: 0.82rem;
-        margin: 0.2rem 0;
+        margin: 0;
     }
-    .label { color: var(--color-text-muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; }
+    .label {
+        color: var(--color-text-muted);
+        font-size: var(--sbx-card-label);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
     .picker-anchor { position: relative; min-width: 0; }
     .server-control {
         display: flex;
@@ -747,7 +757,7 @@
         border: 1px solid var(--color-border);
         border-radius: 4px;
         font: inherit;
-        font-size: 0.82rem;
+        font-size: var(--sbx-card-value);
         color: var(--color-text-primary);
         cursor: pointer;
         min-width: 0;
@@ -756,7 +766,7 @@
     .server-btn-readonly { cursor: default; }
     .server-btn-readonly:hover { border-color: var(--color-border); }
     .server-text {
-        font-size: 0.82rem;
+        font-size: var(--sbx-card-value);
         overflow: hidden;
         display: -webkit-box;
         -webkit-box-orient: vertical;
@@ -769,9 +779,9 @@
     }
     .server-text.mono {
         font-family: var(--font-mono, ui-monospace, monospace);
-        font-size: 0.78rem;
+        font-size: var(--sbx-card-value);
     }
-    .caret { color: var(--color-text-muted); font-size: 0.7rem; }
+    .caret { color: var(--color-text-muted); font-size: var(--sbx-card-note); }
     .eye-btn {
         display: inline-flex;
         align-items: center;
@@ -791,10 +801,13 @@
     .chart-head {
         display: flex;
         justify-content: space-between;
-        font-size: 0.7rem;
+        font-size: var(--sbx-card-label);
         color: var(--color-text-muted);
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.04em;
+    }
+    .chart-head .stats {
+        font-size: var(--sbx-card-value);
     }
     .stats { font-family: var(--font-mono, ui-monospace, monospace); }
     .err { color: #f85149; text-transform: none; }
@@ -823,7 +836,7 @@
         align-items: center;
         gap: 4px;
         padding: 5px 9px;
-        font-size: 11px;
+        font-size: var(--sbx-card-action);
         font-weight: 500;
         border: none;
         background: transparent;
@@ -851,8 +864,8 @@
         background: var(--color-success-tint);
     }
     .chart-section {
-        margin: 0 -16px -16px;
-        border-radius: 0 0 10px 10px;
+        margin: 0 -14px -12px;
+        border-radius: 0 0 var(--radius) var(--radius);
         background: var(--color-bg-secondary);
         overflow: hidden;
     }
@@ -873,7 +886,7 @@
         background: var(--color-bg-tertiary);
     }
     .chart-label {
-        font-size: 11px;
+        font-size: var(--sbx-card-note);
         font-weight: 500;
         color: var(--color-text-muted);
         text-transform: uppercase;
@@ -901,7 +914,7 @@
     .traffic-head { margin-top: 8px; }
 
     .sub-meta {
-        font-size: 0.78rem;
+        font-size: var(--sbx-card-meta);
         color: var(--color-text-muted);
         line-height: 1.35;
         display: flex;
@@ -909,7 +922,7 @@
         gap: 0.25rem;
     }
     .sub-error {
-        font-size: 0.75rem;
+        font-size: var(--sbx-card-meta);
         color: #f85149;
     }
     .mono {
@@ -948,7 +961,7 @@
         display: flex;
         align-items: center;
         min-width: 0;
-        font-size: 0.8125rem;
+        font-size: var(--sbx-card-value);
         color: var(--color-text-secondary);
     }
     .lc-delay {
@@ -956,7 +969,7 @@
         min-width: 0;
     }
     .delay-inline-err {
-        font-size: 0.68rem;
+        font-size: var(--sbx-card-badge);
         line-height: 1.25;
         color: #f85149;
         overflow: hidden;
@@ -966,7 +979,7 @@
         flex: 1;
     }
     .delay-dash {
-        font-size: 0.8125rem;
+        font-size: var(--sbx-card-value);
         color: var(--color-text-muted);
     }
     .lc-ping-mini {
@@ -1013,7 +1026,7 @@
         display: flex;
         flex-direction: column;
         gap: 0.1rem;
-        font-size: 0.7rem;
+        font-size: var(--sbx-card-note);
         line-height: 1.15;
         flex-shrink: 0;
     }
@@ -1037,11 +1050,11 @@
     }
     .lc-name .t1 {
         font-weight: 600;
-        font-size: 0.9375rem;
+        font-size: var(--sbx-card-title);
         color: var(--color-text-primary);
     }
     .lc-name .t2 {
-        font-size: 0.72rem;
+        font-size: var(--sbx-card-meta);
         color: var(--color-text-muted);
     }
     .lc-endpoint {
@@ -1061,7 +1074,7 @@
     }
     .lc-endpoint-name {
         width: 100%;
-        font-size: 0.78rem;
+        font-size: var(--sbx-card-value);
         font-weight: 500;
         color: var(--color-text-primary);
         line-height: 1.2;
@@ -1071,7 +1084,7 @@
     }
     .lc-endpoint-host {
         width: 100%;
-        font-size: 0.72rem;
+        font-size: var(--sbx-card-meta);
         line-height: 1.2;
         color: var(--color-text-muted);
         overflow: hidden;

@@ -1799,11 +1799,6 @@
 								<span class="sbx-sub-list-head-actions">Действия</span>
 							</div>
 							{#if subscriptionsActiveCards.length > 0}
-								<div class="awg-list-row awg-list-row--section">
-									<div class="awg-list-section-title">
-										В работе · {subscriptionsActiveCards.length}
-									</div>
-								</div>
 								{#each subscriptionsActiveCards as card, i (card.subscription.id)}
 									<SubscriptionActiveCard
 										subscription={card.subscription}
@@ -1834,8 +1829,7 @@
 						</div>
 					{:else}
 						{#if subscriptionsActiveCards.length > 0}
-							<h2 class="section-title">В работе</h2>
-							<div class="subscription-active-grid">
+							<div class="tunnel-grid tunnel-grid--compact">
 								{#each subscriptionsActiveCards as card, i (card.subscription.id)}
 									<SubscriptionActiveCard
 										subscription={card.subscription}
@@ -1849,17 +1843,22 @@
 							</div>
 						{/if}
 						{#if subscriptionsListRows.length > 0}
-							<h2 class="section-title">Не активные</h2>
-							<div class="subscription-active-grid">
-								{#each subscriptionsListRows as sub (sub.id)}
-									<SubscriptionCard
-										subscription={sub}
-										liveActiveMember={liveActives[sub.id] || null}
-										layout="grid"
-										ondelete={requestSubscriptionDelete}
-										ondetail={(tag) => openSingboxDetail(tag)}
-									/>
-								{/each}
+							<div
+								class="external-section"
+								class:singbox-sub-inactive-section={subscriptionsActiveCards.length === 0}
+							>
+								<h2 class="section-title">Не активные</h2>
+								<div class="tunnel-grid tunnel-grid--compact">
+									{#each subscriptionsListRows as sub (sub.id)}
+										<SubscriptionCard
+											subscription={sub}
+											liveActiveMember={liveActives[sub.id] || null}
+											layout="grid"
+											ondelete={requestSubscriptionDelete}
+											ondetail={(tag) => openSingboxDetail(tag)}
+										/>
+									{/each}
+								</div>
 							</div>
 						{/if}
 					{/if}
@@ -1986,7 +1985,7 @@
 						{/each}
 					</div>
 				{:else}
-					<div class="tunnel-grid">
+					<div class="tunnel-grid tunnel-grid--compact">
 						{#each singboxTunnelsList as tunnel, i (tunnel.tag)}
 							<SingboxTunnelCard
 								{tunnel}
@@ -2264,11 +2263,6 @@
 	:global(.tunnel-grid--dense) :global(.detail-value),
 	:global(.tunnel-grid--dense) :global(.kv-value) {
 		font-size: 12px;
-	}
-
-	:global(.tunnel-grid--compact) {
-		grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
-		gap: 12px;
 	}
 
 	:global(.tunnel-grid--list) {
@@ -3119,18 +3113,15 @@
 		padding-top: 1.5rem;
 		border-top: 1px solid var(--border);
 	}
-
+	.singbox-sub-inactive-section {
+		margin-top: 0;
+		padding-top: 0;
+		border-top: none;
+	}
 	.section-title {
 		font-size: 1rem;
 		font-weight: 600;
 		color: var(--text-secondary);
-		margin-bottom: 1rem;
-	}
-
-	.subscription-active-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-		gap: 1rem;
 		margin-bottom: 1rem;
 	}
 

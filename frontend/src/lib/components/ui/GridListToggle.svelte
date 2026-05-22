@@ -22,10 +22,9 @@
 			onclick={() => onchange('grid')}
 		>
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-				<rect x="4" y="5" width="7" height="6" rx="1.5" />
-				<rect x="13" y="5" width="7" height="6" rx="1.5" />
-				<rect x="4" y="13" width="7" height="6" rx="1.5" />
-				<rect x="13" y="13" width="7" height="6" rx="1.5" />
+				<rect x="4" y="5" width="16" height="14" rx="2" />
+				<path d="M7 9h10" />
+				<path d="M7 13h6" />
 			</svg>
 		</button>
 		<button
