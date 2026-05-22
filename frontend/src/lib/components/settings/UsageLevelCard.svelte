@@ -45,6 +45,7 @@
 				'Веб-терминал и режим списка для AWG',
 				'Системный мониторинг',
 				'Карточка «Система»: добавляются данные по железу',
+				'Настройка цветовой схемы',
 			],
 		},
 		{
@@ -56,7 +57,6 @@
 			    'HydraRoute Neo', 
 				'Sing-box Router', 
 				'Проверка конфигурации AWG',
-				'Настройка цветовой схемы',
 				'Создание API-ключа',
 				'Карточка «Система»: полные подробные данные + спойлер',
 			],
@@ -83,15 +83,22 @@
 </script>
 
 <div class="card" class:highlighted>
-	<button
-		type="button"
-		class="collapsible-header"
-		aria-expanded={expanded}
-		aria-controls="usage-level-body"
-		onclick={() => (expanded = !expanded)}
-	>
-		<span class="section-label">Уровень использования</span>
-		<span class="header-meta">
+	<div class="section-label">Общие</div>
+	<div class="setting-row level-header-row">
+		<div class="flex flex-col gap-1">
+			<span class="font-medium">Уровень использования</span>
+			<span class="setting-description">
+				Скрывает разделы, которые вам не нужны. Данные при понижении уровня не удаляются.
+			</span>
+		</div>
+		<button
+			type="button"
+			class="level-expand-control"
+			aria-expanded={expanded}
+			aria-controls="usage-level-picker"
+			aria-label="Показать или скрыть выбор уровня"
+			onclick={() => (expanded = !expanded)}
+		>
 			<span class="current-level">{USAGE_LEVEL_LABELS[value]}</span>
 			<svg
 				class="chevron"
@@ -104,15 +111,11 @@
 			>
 				<polyline points="6 9 12 15 18 9" />
 			</svg>
-		</span>
-	</button>
+		</button>
+	</div>
 
 	{#if expanded}
-		<div id="usage-level-body" class="collapsible-body">
-			<p class="card-hint">
-				Скрывает разделы, которые вам не нужны. Данные при понижении уровня не удаляются.
-			</p>
-
+		<div id="usage-level-picker" class="level-picker">
 			<div
 				class="level-grid"
 				role="radiogroup"
@@ -196,38 +199,30 @@
 </Modal>
 
 <style>
-	.collapsible-header {
-		display: flex;
+	.level-header-row {
 		align-items: center;
-		justify-content: space-between;
-		width: 100%;
-		min-width: 0;
+	}
+
+	.level-expand-control {
+		display: inline-flex;
+		align-items: center;
 		gap: 0.5rem;
+		flex-shrink: 0;
 		background: transparent;
 		border: 0;
 		padding: 0;
 		margin: 0;
-		color: inherit;
-		font: inherit;
+		color: var(--color-text-muted);
+		font-size: 0.8125rem;
 		cursor: pointer;
-		text-align: left;
 	}
-	.collapsible-header > .section-label {
-		min-width: 0;
-		flex-shrink: 1;
-	}
-	.collapsible-header:focus-visible {
+
+	.level-expand-control:focus-visible {
 		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 		border-radius: var(--radius-sm);
 	}
-	.header-meta {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.5rem;
-		color: var(--color-text-muted);
-		font-size: 0.8125rem;
-	}
+
 	.current-level {
 		color: var(--color-text-secondary);
 		white-space: nowrap;
@@ -235,22 +230,23 @@
 		text-overflow: ellipsis;
 		max-width: 8rem;
 	}
+
 	.chevron {
 		width: 14px;
 		height: 14px;
 		transition: transform var(--t-fast) ease;
 	}
+
 	.chevron.open {
 		transform: rotate(180deg);
 	}
 
-	.collapsible-body {
-		margin-top: 0.75rem;
+	.level-picker {
+		border-top: 1px solid var(--color-border);
 	}
-	.card-hint {
-		color: var(--color-text-muted);
-		font-size: 0.8125rem;
-		margin: 0 0 0.75rem 0;
+
+	.level-picker .level-grid {
+		padding-top: 0.875rem;
 	}
 
 	.level-grid {

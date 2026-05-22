@@ -47,37 +47,40 @@
 </script>
 
 <div class="card">
-	<button
-		type="button"
-		class="collapsible-header"
-		aria-expanded={expanded}
-		aria-controls="theme-scheme-body"
-		onclick={() => (expanded = !expanded)}
-	>
-		<span class="section-label">Цветовая схема</span>
-		<span class="header-meta">
-			<span class="current-theme">{currentThemeLabel}</span>
-			<svg
-				class="chevron"
-				class:open={expanded}
-				viewBox="0 0 24 24"
-				fill="none"
-				stroke="currentColor"
-				stroke-width="2"
-				aria-hidden="true"
-			>
-				<polyline points="6 9 12 15 18 9" />
-			</svg>
-		</span>
-	</button>
+	<div class="section-label">Внешний вид</div>
+	<div class="setting-row">
+		<button
+			type="button"
+			class="collapsible-header scheme-toggle"
+			aria-expanded={expanded}
+			aria-controls="theme-scheme-body"
+			onclick={() => (expanded = !expanded)}
+		>
+			<div class="flex flex-col gap-1">
+				<span class="font-medium">Цветовая схема</span>
+				<span class="setting-description">
+					Применяется сразу и сохраняется локально в этом браузере
+				</span>
+			</div>
+			<span class="header-meta">
+				<span class="current-theme">{currentThemeLabel}</span>
+				<svg
+					class="chevron"
+					class:open={expanded}
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					aria-hidden="true"
+				>
+					<polyline points="6 9 12 15 18 9" />
+				</svg>
+			</span>
+		</button>
+	</div>
 
 	{#if expanded}
 		<div id="theme-scheme-body" class="collapsible-body">
-			<p class="card-hint">
-				Применяется сразу и сохраняется локально в этом браузере. <code>Custom</code>
-				управляет только тремя цветами, остальные оттенки выводятся автоматически.
-			</p>
-
 			<div class="theme-grid" role="radiogroup" aria-label="Цветовая схема">
 				{#each PRESET_ORDER as preset (preset)}
 					{@const selected = $theme.preset === preset}
@@ -219,9 +222,18 @@
 		text-align: left;
 	}
 
-	.collapsible-header > .section-label {
+	.setting-row > .scheme-toggle {
+		width: 100%;
 		min-width: 0;
-		flex-shrink: 1;
+	}
+
+	.scheme-toggle {
+		align-items: center;
+	}
+
+	.scheme-toggle > :first-child {
+		min-width: 0;
+		flex: 1 1 auto;
 	}
 
 	.collapsible-header:focus-visible {
@@ -258,12 +270,6 @@
 
 	.collapsible-body {
 		margin-top: 0.75rem;
-	}
-
-	.card-hint {
-		color: var(--color-text-muted);
-		font-size: 0.8125rem;
-		margin: 0 0 0.75rem 0;
 	}
 
 	.theme-grid {

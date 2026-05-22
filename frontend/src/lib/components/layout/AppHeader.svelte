@@ -5,7 +5,7 @@
 	import BrandLogoMark from './BrandLogoMark.svelte';
 	import { usageLevel } from '$lib/stores/settings';
 	import type { ThemeState } from '$lib/stores/theme';
-	import { isSectionVisible, type Section } from '$lib/types/usageLevel';
+	import { isAppearanceSettingsVisible, isSectionVisible, type Section } from '$lib/types/usageLevel';
 
 	type NavItem = {
 		section: Section;
@@ -221,7 +221,7 @@
 				</IconButton>
 			{/if}
 
-			{#if theme.preset !== 'custom'}
+			{#if isAppearanceSettingsVisible($usageLevel) && theme.preset !== 'custom'}
 				<IconButton ariaLabel={themeButtonLabel} onclick={onToggleThemeMode}>
 					{#if themeDisplayMode === 'dark'}
 						<svg

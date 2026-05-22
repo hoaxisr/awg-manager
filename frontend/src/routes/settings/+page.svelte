@@ -26,6 +26,7 @@
 	} from "$lib/types";
 	import {
 		USAGE_LEVEL_LABELS,
+		isAppearanceSettingsVisible,
 		isSectionVisible,
 		isRoutingSubTabVisible,
 		type UsageLevel,
@@ -182,6 +183,7 @@ onMount(() => {
 				api.getSettings(),
 			]);
 			settings = appSettings;
+			setGlobalSettings(appSettings);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : "Не удалось загрузить настройки");
 		} finally {
@@ -480,7 +482,7 @@ onMount(() => {
 				highlighted={expandUsageLevel}
 			/>
 
-			{#if $usageLevel === "advanced" || $usageLevel === "expert"}
+			{#if isAppearanceSettingsVisible(settings.usageLevel)}
 				<ThemeSchemeCard />
 			{/if}
 

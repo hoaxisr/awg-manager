@@ -58,6 +58,17 @@ const ROUTING_SUBTAB_MIN_LEVEL: Record<RoutingSubTab, UsageLevel> = {
 
 const LEVEL_RANK: Record<UsageLevel, number> = { basic: 0, advanced: 1, expert: 2 };
 
+/** Блок «Внешний вид» / цветовая схема — не ниже «Расширенного». */
+export const APPEARANCE_SETTINGS_MIN_LEVEL: UsageLevel = 'advanced';
+
+export function isUsageLevelAtLeast(level: UsageLevel, minimum: UsageLevel): boolean {
+	return LEVEL_RANK[level] >= LEVEL_RANK[minimum];
+}
+
+export function isAppearanceSettingsVisible(level: UsageLevel): boolean {
+	return isUsageLevelAtLeast(level, APPEARANCE_SETTINGS_MIN_LEVEL);
+}
+
 export function isSectionVisible(level: UsageLevel, section: Section): boolean {
 	return LEVEL_RANK[level] >= LEVEL_RANK[SECTION_MIN_LEVEL[section]];
 }
