@@ -252,7 +252,7 @@ html.light, [data-theme="light"] {
   --sbx-card-status: 12px;
   --sbx-card-action: 11px;
 
-  /* Page / header gutters (expert/advanced — defaults; basic → v2.8.2). */
+  /* Page / header gutters (по умолчанию; компакт — data-layout-compact). */
   --layout-gutter-x: 1.5rem;
   --layout-gutter-y: 1.5rem;
   --layout-gutter-y-top: var(--layout-gutter-y);
@@ -260,15 +260,15 @@ html.light, [data-theme="light"] {
   --header-gutter-x: 1.25rem;
 }
 
-/* Базовый режим — как в v2.8.2: main 960px + 1rem, PageContainer без боковых полей. */
-html[data-usage-level='basic'] {
+/* Компактная ширина — как в v2.8.2 / базовом режиме: main 960px, узкие боковые поля. */
+html[data-layout-compact='true'] {
   --layout-gutter-x: 0;
   --layout-gutter-y-top: 2.5rem;
   --layout-gutter-y-bottom: 1.5rem;
   --header-gutter-x: 1rem;
 }
 
-html[data-usage-level='basic'] .page-container {
+html[data-layout-compact='true'] .page-container {
   max-width: 100% !important;
 }
 

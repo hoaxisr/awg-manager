@@ -844,7 +844,7 @@
 		align-items: center;
 		padding: 0.75rem 1rem;
 		cursor: pointer;
-		min-width: 940px;
+		min-width: var(--awg-list-min-width, 940px);
 	}
 	.sbx-sub-active-row:focus-visible {
 		outline: 2px solid var(--color-accent);

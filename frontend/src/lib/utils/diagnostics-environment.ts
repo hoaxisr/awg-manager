@@ -193,7 +193,7 @@ export async function collectDiagnosticsEnvironmentSnapshot(): Promise<Diagnosti
 	const sys = get(systemInfo).data ?? null;
 	const routerOffset = sys?.routerTimezoneOffsetMinutes;
 
-	const browser = collectBrowserSnapshot(get(theme));
+	const browser = collectBrowserSnapshot();
 	let routerClient: RouterClientContext | null = null;
 	let awgm: AwgmServicesSnapshot | null = null;
 
@@ -261,6 +261,7 @@ export async function collectDiagnosticsEnvironmentSnapshot(): Promise<Diagnosti
 		async () =>
 			buildAwgmServicesSnapshot({
 				level,
+				theme: get(theme),
 				settings: get(settings),
 				authDisabled: get(auth).authDisabled,
 				authenticated: get(auth).authenticated,

@@ -1265,6 +1265,7 @@
 				</div>
 
 				<div class="awg-list-table">
+					<div class="awg-list-table-track">
 					<div class="awg-list-row awg-list-row--head">
 						<span></span>
 						<span>Туннель</span>
@@ -1678,6 +1679,7 @@
 							</div>
 						{/each}
 					{/if}
+					</div>
 				</div>
 			{:else}
 				<div
@@ -1782,6 +1784,7 @@
 							</StatStrip>
 						</div>
 						<div class="awg-list-table singbox-sub-list-table">
+							<div class="awg-list-table-track">
 							<div class="sbx-sub-list-row sbx-sub-list-row--head">
 								<span>Delay</span>
 								<span>Подписка</span>
@@ -1821,6 +1824,7 @@
 									/>
 								{/each}
 							{/if}
+							</div>
 						</div>
 					{:else}
 						{#if subscriptionsActiveCards.length > 0}
@@ -1967,6 +1971,7 @@
 						</StatStrip>
 					</div>
 					<div class="awg-list-table singbox-tunnel-list-table">
+						<div class="awg-list-table-track">
 						<div class="sbx-tunnel-list-row sbx-tunnel-list-row--head">
 							<span>Delay</span>
 							<span>Туннель</span>
@@ -1986,6 +1991,7 @@
 								ondetail={(tag) => openSingboxDetail(tag)}
 							/>
 						{/each}
+						</div>
 					</div>
 				{:else}
 					<div
@@ -2307,11 +2313,21 @@
 	}
 
 	.awg-list-table {
+		--awg-list-min-width: 1040px;
 		border: 1px solid var(--color-border);
 		border-radius: 12px;
 		background: var(--color-bg-secondary);
 		overflow-x: auto;
 		overflow-y: hidden;
+		/* width/max-width/min-width — в app.css, чтобы подписки не раздували страницу */
+	}
+
+	.singbox-tunnel-list-table {
+		--awg-list-min-width: 1000px;
+	}
+
+	.singbox-sub-list-table {
+		--awg-list-min-width: 940px;
 	}
 
 	.awg-list-row {
@@ -2329,7 +2345,7 @@
 		align-items: center;
 		padding: 0.875rem 1rem;
 		border-bottom: 1px solid var(--color-border);
-		min-width: 1040px;
+		min-width: var(--awg-list-min-width);
 	}
 
 	.awg-list-row:last-child {
@@ -2755,6 +2771,10 @@
 	}
 
 	@media (max-width: 1280px) {
+		.awg-list-table:not(.singbox-tunnel-list-table):not(.singbox-sub-list-table) {
+			--awg-list-min-width: 960px;
+		}
+
 		.awg-list-row {
 			grid-template-columns:
 				40px
@@ -2766,11 +2786,14 @@
 				84px
 				minmax(76px, 0.7fr);
 			gap: 12px;
-			min-width: 960px;
 		}
 	}
 
 	@media (max-width: 1120px) {
+		.awg-list-table:not(.singbox-tunnel-list-table):not(.singbox-sub-list-table) {
+			--awg-list-min-width: 990px;
+		}
+
 		.awg-list-row {
 			grid-template-columns:
 				36px
@@ -2783,7 +2806,6 @@
 				minmax(76px, 0.7fr);
 			padding: 0.8125rem 0.875rem;
 			gap: 10px;
-			min-width: 990px;
 		}
 
 		.awg-list-name-button,
@@ -3191,7 +3213,7 @@
 		align-items: center;
 		padding: 0.75rem 1rem;
 		border-bottom: 1px solid var(--color-border);
-		min-width: 1000px;
+		min-width: var(--awg-list-min-width);
 	}
 	.singbox-tunnel-list-table :global(.sbx-tunnel-list-row:last-child) {
 		border-bottom: none;
@@ -3214,7 +3236,7 @@
 		margin-bottom: 1.25rem;
 	}
 	.singbox-sub-list-table :global(.sbx-sub-active-row) {
-		min-width: 940px;
+		min-width: var(--awg-list-min-width);
 	}
 	.singbox-sub-list-table .sbx-sub-list-row--head {
 		display: grid;
@@ -3238,7 +3260,7 @@
 			minmax(148px, 1.1fr)
 			minmax(120px, 0.95fr)
 			minmax(76px, 0.7fr);
-		min-width: 940px;
+		min-width: var(--awg-list-min-width);
 	}
 	.sbx-sub-list-head-actions {
 		text-align: right;

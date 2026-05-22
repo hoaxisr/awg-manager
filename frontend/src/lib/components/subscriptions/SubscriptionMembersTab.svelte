@@ -266,6 +266,7 @@
 			</StatStrip>
 		</div>
 		<div class="awg-list-table member-list-table" class:with-inline-remove={subscription.isInline}>
+			<div class="awg-list-table-track">
 			<div
 				class="sbx-member-list-row sbx-member-list-row--head">
 				<span>Delay</span>
@@ -366,6 +367,7 @@
 				{/if}
 			</div>
 		{/each}
+			</div>
 	</div>
 	{/if}
 {/if}
@@ -639,6 +641,14 @@
 	.awg-summary-row {
 		margin-bottom: 0.75rem;
 	}
+	.member-list-table {
+		--awg-list-min-width: 800px;
+	}
+
+	.member-list-table.with-inline-remove {
+		--awg-list-min-width: 840px;
+	}
+
 	.sbx-member-list-row {
 		display: grid;
 		grid-template-columns:
@@ -651,7 +661,7 @@
 		gap: 0 1rem;
 		align-items: center;
 		padding: 0.65rem 1rem;
-		min-width: 800px;
+		min-width: var(--awg-list-min-width);
 		border-bottom: 1px solid var(--color-border);
 	}
 	.member-list-table.with-inline-remove .sbx-member-list-row {
@@ -663,7 +673,6 @@
 			minmax(0, 0.95fr)
 			minmax(88px, 1fr)
 			42px;
-		min-width: 840px;
 	}
 	.sbx-member-list-row--head {
 		background: var(--color-bg-tertiary);
@@ -686,7 +695,7 @@
 		background: var(--color-bg-primary);
 		font-size: 0.78rem;
 		color: var(--color-text-muted);
-		min-width: 800px;
+		min-width: var(--awg-list-min-width);
 	}
 	.member-list-table.with-inline-remove .member-list-meta-row {
 		min-width: 840px;

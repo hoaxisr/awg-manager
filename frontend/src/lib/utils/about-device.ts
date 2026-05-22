@@ -39,7 +39,6 @@ export interface BrowserSnapshot {
 	secureContext: string;
 	maxTouchPoints: string;
 	connection: string;
-	theme: string;
 	usageLevelAttr: string;
 	pageUrl: string;
 }
@@ -69,6 +68,8 @@ export function buildPolicyNameLookup(policies: AccessPolicy[]): PolicyNameLooku
 
 export interface AwgmServicesSnapshot {
 	usageLevel: string;
+	interfaceWidth: string;
+	theme: string;
 	auth: string;
 	logging: string;
 	pingCheck: string;
@@ -122,6 +123,18 @@ function estimatePageZoom(): string {
 	return `~${Math.round(ratio * 100)}%`;
 }
 
+export function formatAwgmTheme(theme: ThemeState | null): string {
+	return theme ? `${theme.label} (${theme.mode})` : '—';
+}
+
+/** Фактически применённая ширина (data-layout-compact на html). */
+export function formatInterfaceWidth(): string {
+	if (!browser) return '—';
+	return document.documentElement.getAttribute('data-layout-compact') === 'true'
+		? 'Компактная'
+		: 'Классическая';
+}
+
 function connectionSummary(): string {
 	if (!browser) return '—';
 	const conn = (navigator as Navigator & { connection?: { effectiveType?: string; downlink?: number; rtt?: number } })
@@ -134,7 +147,7 @@ function connectionSummary(): string {
 	return parts.length ? parts.join(', ') : '—';
 }
 
-export function collectBrowserSnapshot(theme: ThemeState | null): BrowserSnapshot {
+export function collectBrowserSnapshot(): BrowserSnapshot {
 	if (!browser) {
 		return {
 			userAgent: '—',
@@ -152,7 +165,6 @@ export function collectBrowserSnapshot(theme: ThemeState | null): BrowserSnapsho
 			secureContext: '—',
 			maxTouchPoints: '—',
 			connection: '—',
-			theme: '—',
 			usageLevelAttr: '—',
 			pageUrl: '—',
 		};
@@ -180,7 +192,6 @@ export function collectBrowserSnapshot(theme: ThemeState | null): BrowserSnapsho
 		secureContext: window.isSecureContext ? 'да' : 'нет',
 		maxTouchPoints: String(navigator.maxTouchPoints ?? 0),
 		connection: connectionSummary(),
-		theme: theme ? `${theme.label} (${theme.mode})` : '—',
 		usageLevelAttr: root.getAttribute('data-usage-level') ?? '—',
 		pageUrl: location.href,
 	};
@@ -198,7 +209,6 @@ export function browserSnapshotRows(s: BrowserSnapshot): AboutInfoRow[] {
 		{ label: 'DPR', value: s.devicePixelRatio },
 		{ label: 'Глубина цвета', value: s.colorDepth },
 		{ label: 'Тема ОС', value: s.prefersColorScheme },
-		{ label: 'Тема AWGM', value: s.theme },
 		{ label: 'Режим UI (атрибут)', value: s.usageLevelAttr },
 		{ label: 'Сеть', value: s.connection },
 		{ label: 'Ядра CPU', value: s.hardwareConcurrency },
@@ -341,6 +351,7 @@ export function buildRouterClientContext(
 
 export function buildAwgmServicesSnapshot(input: {
 	level: UsageLevel;
+	theme: ThemeState | null;
 	settings: Settings | null;
 	authDisabled: boolean;
 	authenticated: boolean;
@@ -434,6 +445,8 @@ export function buildAwgmServicesSnapshot(input: {
 
 	return {
 		usageLevel: USAGE_LEVEL_LABELS[level],
+		interfaceWidth: formatInterfaceWidth(),
+		theme: formatAwgmTheme(input.theme),
 		auth,
 		logging,
 		pingCheck: ping,
@@ -449,6 +462,8 @@ export function buildAwgmServicesSnapshot(input: {
 export function awgmServicesRows(s: AwgmServicesSnapshot): AboutInfoRow[] {
 	const rows: AboutInfoRow[] = [
 		{ label: 'Режим интерфейса', value: s.usageLevel },
+		{ label: 'Ширина интерфейса', value: s.interfaceWidth },
+		{ label: 'Тема AWGM', value: s.theme },
 		{ label: 'Авторизация', value: s.auth },
 		{ label: 'Журналирование', value: s.logging },
 		{ label: 'Ping-check', value: s.pingCheck },

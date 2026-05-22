@@ -74,6 +74,7 @@
 		const level = get(usageLevel);
 		awgmSnap = buildAwgmServicesSnapshot({
 			level,
+			theme: get(theme),
 			settings: get(settings),
 			authDisabled: get(auth).authDisabled,
 			authenticated: get(auth).authenticated,
@@ -208,7 +209,7 @@
 
 	async function refresh() {
 		refreshing = true;
-		browserSnap = collectBrowserSnapshot(get(theme));
+		browserSnap = collectBrowserSnapshot();
 		patchAwgmFromStores();
 
 		try {
@@ -225,7 +226,7 @@
 	}
 
 	onMount(() => {
-		browserSnap = collectBrowserSnapshot(get(theme));
+		browserSnap = collectBrowserSnapshot();
 		patchAwgmFromStores();
 		void loadRemoteContext();
 	});

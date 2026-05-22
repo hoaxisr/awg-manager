@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { Button } from '$lib/components/ui';
+	import { Button, Toggle } from '$lib/components/ui';
+	import { compactLayout } from '$lib/stores/compactLayout';
+	import { usageLevel } from '$lib/stores/settings';
 	import {
 		theme,
 		THEME_PRESETS,
@@ -22,6 +24,8 @@
 	];
 
 	let expanded = $state(false);
+	const compactForced = $derived($usageLevel === 'basic');
+	const compactChecked = $derived(compactForced || $compactLayout);
 
 	const currentThemeLabel = $derived.by(() => {
 		if ($theme.preset !== 'custom') {
@@ -48,6 +52,23 @@
 
 <div class="card">
 	<div class="section-label">Внешний вид</div>
+	<div class="setting-row compact-layout-row">
+		<div class="flex flex-col gap-1">
+			<span class="font-medium">Компактная ширина</span>
+			<span class="setting-description">
+				{#if compactForced}
+					В базовом режиме всегда включена: колонка 960px и меньшие боковые отступы.
+				{:else}
+					Сужает интерфейс с краев — как в версии 2.8.2 (полная поддержка не гарантирована, рекомендуется использовать только в базовом режиме).
+				{/if}
+			</span>
+		</div>
+		<Toggle
+			checked={compactChecked}
+			disabled={compactForced}
+			onchange={(enabled) => compactLayout.setEnabled(enabled)}
+		/>
+	</div>
 	<div class="setting-row">
 		<button
 			type="button"
@@ -205,6 +226,10 @@
 </div>
 
 <style>
+	.compact-layout-row {
+		align-items: center;
+	}
+
 	.collapsible-header {
 		display: flex;
 		align-items: center;

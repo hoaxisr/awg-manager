@@ -5,6 +5,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { theme } from '$lib/stores/theme';
+	import { compactLayout, isCompactLayoutActive } from '$lib/stores/compactLayout';
 	import { auth, isAuthenticated, isLoading } from '$lib/stores/auth';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
@@ -283,9 +284,11 @@
 		}
 	});
 
-	// Sync usage level to <html> for layout gutter tokens (basic = tighter sides).
+	// Sync usage level and compact layout to <html> for gutter tokens.
 	$effect(() => {
 		document.documentElement.setAttribute('data-usage-level', $usageLevel);
+		const compact = isCompactLayoutActive($usageLevel, $compactLayout);
+		document.documentElement.setAttribute('data-layout-compact', compact ? 'true' : 'false');
 	});
 
 	// Route guard: redirect away from sections hidden at the current usage level.
@@ -315,6 +318,7 @@
 
 	onMount(async () => {
 		theme.init();
+		compactLayout.init();
 		await auth.checkStatus();
 	});
 
@@ -453,8 +457,8 @@
 		flex-direction: column;
 	}
 
-	/* v2.8.2: колонка контента 960px, боковые поля 1rem (только базовый режим). */
-	:global(html[data-usage-level='basic']) .main {
+	/* v2.8.2: колонка контента 960px, боковые поля 1rem (компактная ширина). */
+	:global(html[data-layout-compact='true']) .main {
 		max-width: 960px;
 		margin-left: auto;
 		margin-right: auto;
