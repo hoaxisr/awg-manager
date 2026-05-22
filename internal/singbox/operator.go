@@ -190,6 +190,7 @@ func NewOperator(d OperatorDeps) *Operator {
 	ensureLegacyConfigMigrated(dir)
 	patchTunnelsSlotStripBaseDNS(filepath.Join(configPath, "10-tunnels.json"))
 	stripStrayDirectPlaceholder(configPath)
+	removeFinalFromBase(filepath.Join(configPath, "00-base.json"))
 
 	op := &Operator{
 		log:               log,
