@@ -13,7 +13,7 @@
 		onclick: () => void;
 		layout?: SingboxLayoutMode;
 	}
-	let { member, active, switching, disabled, onclick, layout = 'grid' }: Props = $props();
+	let { member, active, switching, disabled, onclick, layout = 'compact' }: Props = $props();
 
 	const history = $derived($singboxDelayHistory.get(member.tag) ?? []);
 	const delayPresentation = $derived(singboxDelayFromHistory(history));

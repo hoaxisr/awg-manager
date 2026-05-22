@@ -51,6 +51,7 @@
 	import {
 		SINGBOX_LAYOUT_STORAGE_KEY,
 		TUNNEL_MOBILE_LAYOUT_MAX_WIDTH_PX,
+		parseSingboxLayoutMode,
 		type SingboxLayoutMode,
 	} from '$lib/constants/singboxLayout';
 	import { isMockDevMode as getIsMockDevMode } from '$lib/env';
@@ -504,19 +505,19 @@
 	let awgViewModeReady = false;
 	let isAwgMobile = $state(false);
 	let showAwgViewModeSwitch = $derived($usageLevel !== 'basic');
-	let singboxTunnelsLayoutMode = $state<SingboxLayoutMode>('grid');
-	let singboxSubscriptionsLayoutMode = $state<SingboxLayoutMode>('grid');
+	let singboxTunnelsLayoutMode = $state<SingboxLayoutMode>('compact');
+	let singboxSubscriptionsLayoutMode = $state<SingboxLayoutMode>('compact');
 	let singboxTunnelsLayoutReady = false;
 	let singboxSubscriptionsLayoutReady = false;
 	let showSingboxListOption = $derived($usageLevel !== 'basic');
 	let singboxTunnelsEffectiveLayout = $derived<SingboxLayoutMode>(
 		isAwgMobile || (!showSingboxListOption && singboxTunnelsLayoutMode === 'list')
-			? 'grid'
+			? 'compact'
 			: singboxTunnelsLayoutMode,
 	);
 	let singboxSubscriptionsEffectiveLayout = $derived<SingboxLayoutMode>(
 		isAwgMobile || (!showSingboxListOption && singboxSubscriptionsLayoutMode === 'list')
-			? 'grid'
+			? 'compact'
 			: singboxSubscriptionsLayoutMode,
 	);
 	let showSingboxGridListToggle = $derived(showSingboxListOption && !isAwgMobile);
@@ -526,10 +527,6 @@
 
 	function isAwgTunnelViewMode(value: string | null): value is AwgTunnelViewMode {
 		return value === 'cards' || value === 'compact' || value === 'list';
-	}
-
-	function isSingboxLayoutMode(value: string | null): value is SingboxLayoutMode {
-		return value === 'grid' || value === 'list';
 	}
 
 	const tunnelTabs = $derived(
@@ -563,16 +560,14 @@
 		const legacyShared = localStorage.getItem(SINGBOX_LAYOUT_STORAGE_KEY);
 
 		const sbTunnels = localStorage.getItem(SINGBOX_TUNNELS_LAYOUT_STORAGE_KEY) ?? legacyShared;
-		if (isSingboxLayoutMode(sbTunnels)) {
-			singboxTunnelsLayoutMode = sbTunnels;
-		}
+		const parsedTunnels = parseSingboxLayoutMode(sbTunnels);
+		if (parsedTunnels) singboxTunnelsLayoutMode = parsedTunnels;
 		singboxTunnelsLayoutReady = true;
 
 		const sbSubscriptions =
 			localStorage.getItem(SINGBOX_SUBSCRIPTIONS_LAYOUT_STORAGE_KEY) ?? legacyShared;
-		if (isSingboxLayoutMode(sbSubscriptions)) {
-			singboxSubscriptionsLayoutMode = sbSubscriptions;
-		}
+		const parsedSubscriptions = parseSingboxLayoutMode(sbSubscriptions);
+		if (parsedSubscriptions) singboxSubscriptionsLayoutMode = parsedSubscriptions;
 		singboxSubscriptionsLayoutReady = true;
 	});
 
@@ -1829,14 +1824,18 @@
 						</div>
 					{:else}
 						{#if subscriptionsActiveCards.length > 0}
-							<div class="tunnel-grid tunnel-grid--compact">
+							<div
+								class="tunnel-grid"
+								class:tunnel-grid--dense={singboxSubscriptionsEffectiveLayout === 'dense'}
+								class:tunnel-grid--compact={singboxSubscriptionsEffectiveLayout === 'compact'}
+							>
 								{#each subscriptionsActiveCards as card, i (card.subscription.id)}
 									<SubscriptionActiveCard
 										subscription={card.subscription}
 										activeMember={card.activeMember}
 										autoDelayCheckNonce={singboxAutoDelayCheckNonce}
 										autoDelayCheckDelayMs={i * 180}
-										layout="grid"
+										layout={singboxSubscriptionsEffectiveLayout}
 										ondetail={(tag) => openSingboxDetail(tag)}
 									/>
 								{/each}
@@ -1848,12 +1847,16 @@
 								class:singbox-sub-inactive-section={subscriptionsActiveCards.length === 0}
 							>
 								<h2 class="section-title">Не активные</h2>
-								<div class="tunnel-grid tunnel-grid--compact">
+								<div
+									class="tunnel-grid"
+									class:tunnel-grid--dense={singboxSubscriptionsEffectiveLayout === 'dense'}
+									class:tunnel-grid--compact={singboxSubscriptionsEffectiveLayout === 'compact'}
+								>
 									{#each subscriptionsListRows as sub (sub.id)}
 										<SubscriptionCard
 											subscription={sub}
 											liveActiveMember={liveActives[sub.id] || null}
-											layout="grid"
+											layout={singboxSubscriptionsEffectiveLayout}
 											ondelete={requestSubscriptionDelete}
 											ondetail={(tag) => openSingboxDetail(tag)}
 										/>
@@ -1985,11 +1988,15 @@
 						{/each}
 					</div>
 				{:else}
-					<div class="tunnel-grid tunnel-grid--compact">
+					<div
+						class="tunnel-grid"
+						class:tunnel-grid--dense={singboxTunnelsEffectiveLayout === 'dense'}
+						class:tunnel-grid--compact={singboxTunnelsEffectiveLayout === 'compact'}
+					>
 						{#each singboxTunnelsList as tunnel, i (tunnel.tag)}
 							<SingboxTunnelCard
 								{tunnel}
-								layout="grid"
+								layout={singboxTunnelsEffectiveLayout}
 								autoDelayCheckNonce={singboxAutoDelayCheckNonce}
 								autoDelayCheckDelayMs={i * 180}
 								ondetail={(tag) => openSingboxDetail(tag)}
@@ -2235,7 +2242,7 @@
 	}
 
 	:global(.tunnel-grid--dense) {
-		grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 248px), 1fr));
 		gap: 8px;
 	}
 
@@ -2265,6 +2272,31 @@
 		font-size: 12px;
 	}
 
+	:global(.tunnel-grid--dense) :global(.title) {
+		font-size: 13px;
+	}
+
+	:global(.tunnel-grid--dense) :global(.iface),
+	:global(.tunnel-grid--dense) :global(.label),
+	:global(.tunnel-grid--dense) :global(.chart-label) {
+		font-size: 10px;
+	}
+
+	:global(.tunnel-grid--dense) :global(.badge) {
+		font-size: 9px;
+		padding: 1px 5px;
+	}
+
+	:global(.tunnel-grid--dense) :global(.value),
+	:global(.tunnel-grid--dense) :global(.port) {
+		font-size: 12px;
+	}
+
+	:global(.tunnel-grid--compact) {
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+		gap: 12px;
+	}
+
 	:global(.tunnel-grid--list) {
 		grid-template-columns: minmax(0, 1fr);
 		gap: 10px;
@@ -2292,7 +2324,7 @@
 			minmax(210px, 1.3fr)
 			110px
 			90px
-			minmax(100px, 0.95fr);
+			minmax(76px, 0.7fr);
 		gap: 14px;
 		align-items: center;
 		padding: 0.875rem 1rem;
@@ -2386,7 +2418,7 @@
 		margin-top: 0.25rem;
 		font-size: 0.75rem;
 		color: var(--color-text-muted);
-		white-space: nowrap;
+		white-space: break-spaces;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
@@ -2732,7 +2764,7 @@
 				minmax(180px, 1.15fr)
 				100px
 				84px
-				minmax(100px, 0.95fr);
+				minmax(76px, 0.7fr);
 			gap: 12px;
 			min-width: 960px;
 		}
@@ -2743,12 +2775,12 @@
 			grid-template-columns:
 				36px
 				minmax(180px, 1.45fr)
-				minmax(132px, 0.9fr)
+				minmax(112px, 0.9fr)
 				minmax(145px, 1fr)
-				minmax(170px, 1.05fr)
+				minmax(180px, 1.05fr)
 				92px
 				78px
-				minmax(100px, 0.95fr);
+				minmax(76px, 0.7fr);
 			padding: 0.8125rem 0.875rem;
 			gap: 10px;
 			min-width: 990px;
@@ -3151,10 +3183,10 @@
 			minmax(0, 1.2fr)
 			minmax(0, 1fr)
 			minmax(0, 1.05fr)
-			minmax(76px, 0.95fr)
+			minmax(0px, 0.65fr)
 			minmax(150px, 1.1fr)
 			minmax(128px, 0.95fr)
-			minmax(100px, 0.95fr);
+			minmax(70px, 0.7fr);
 		gap: 0.75rem 1rem;
 		align-items: center;
 		padding: 0.75rem 1rem;
@@ -3182,7 +3214,7 @@
 		margin-bottom: 1.25rem;
 	}
 	.singbox-sub-list-table :global(.sbx-sub-active-row) {
-		min-width: 920px;
+		min-width: 940px;
 	}
 	.singbox-sub-list-table .sbx-sub-list-row--head {
 		display: grid;
@@ -3199,14 +3231,14 @@
 		grid-template-columns:
 			minmax(92px, 1fr)
 			minmax(132px, 1.1fr)
-			minmax(72px, 0.9fr)
-			minmax(112px, 1fr)
-			minmax(52px, 0.75fr)
-			minmax(88px, 0.95fr)
+			minmax(52px, 0.9fr)
+			minmax(162px, 1fr)
+			minmax(60px, 0.85fr)
+			minmax(100px, 1.05fr)
 			minmax(148px, 1.1fr)
 			minmax(120px, 0.95fr)
-			minmax(100px, 0.95fr);
-		min-width: 920px;
+			minmax(76px, 0.7fr);
+		min-width: 940px;
 	}
 	.sbx-sub-list-head-actions {
 		text-align: right;

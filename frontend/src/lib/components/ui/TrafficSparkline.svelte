@@ -6,6 +6,8 @@
 		txData?: number[];
 		width?: number;
 		height?: number;
+		/** Stretch SVG to container width; plot uses a fixed viewBox width. */
+		responsive?: boolean;
 		/** Stroke for single-line mode */
 		color?: string;
 		rxColor?: string;
@@ -18,12 +20,14 @@
 		txData,
 		width = 92,
 		height = 28,
+		responsive = false,
 		color = 'var(--color-accent)',
 		rxColor = 'var(--accent, #60a5fa)',
 		txColor = 'var(--success, #4ade80)',
 	}: Props = $props();
 
 	const padding = 2;
+	const plotWidth = $derived(responsive ? 100 : width);
 
 	const dualMode = $derived(rxData !== undefined && txData !== undefined);
 
@@ -31,14 +35,14 @@
 		if (series.length === 0) return '';
 
 		const max = Math.max(maxValue, 1);
-		const innerWidth = Math.max(width - padding * 2, 1);
+		const innerWidth = Math.max(plotWidth - padding * 2, 1);
 		const innerHeight = Math.max(height - padding * 2, 1);
 
 		return series
 			.map((value, index) => {
 				const x =
 					series.length === 1
-						? width / 2
+						? plotWidth / 2
 						: padding + (innerWidth * index) / (series.length - 1);
 				const y = padding + innerHeight * (1 - value / max);
 				return `${x},${y}`;
@@ -72,10 +76,17 @@
 	});
 </script>
 
-<svg {width} {height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Traffic sparkline">
+<svg
+	class:responsive
+	width={responsive ? undefined : width}
+	{height}
+	viewBox={`0 0 ${plotWidth} ${height}`}
+	role="img"
+	aria-label="Traffic sparkline"
+>
 	<line
 		x1={padding}
-		x2={width - padding}
+		x2={plotWidth - padding}
 		y1={height - padding}
 		y2={height - padding}
 		class="baseline"
@@ -118,6 +129,12 @@
 	svg {
 		display: block;
 		flex-shrink: 0;
+	}
+
+	svg.responsive {
+		width: 100%;
+		min-width: 0;
+		flex-shrink: 1;
 	}
 
 	.baseline {

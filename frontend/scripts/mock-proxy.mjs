@@ -1096,6 +1096,30 @@ function currentSingboxDelays() {
 // Pre-populated for visual testing — shows non-empty list state, selector with members.
 let mockSubscriptions = [
 	{
+		// Inline server group (wizard «Группа серверов») — no subscription URL.
+		id: 'sub-inlinegrp',
+		label: 'Neo Inline Group',
+		url: '',
+		isInline: true,
+		headers: [],
+		refreshHours: 0,
+		lastFetched: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+		lastError: '',
+		selectorTag: 'sub-inlinegrp',
+		inboundTag: 'sb2',
+		listenPort: 11020,
+		proxyIndex: 2,
+		memberTags: ['sub-inlinegrp-node-a', 'sub-inlinegrp-node-b', 'sub-inlinegrp-node-c'],
+		members: [
+			{ tag: 'sub-inlinegrp-node-a', label: 'Frankfurt', protocol: 'vless', server: 'de.inline.example', port: 443, transport: 'tcp', security: 'reality' },
+			{ tag: 'sub-inlinegrp-node-b', label: 'Amsterdam', protocol: 'vless', server: 'nl.inline.example', port: 443, transport: 'ws', security: 'tls' },
+			{ tag: 'sub-inlinegrp-node-c', label: 'Helsinki', protocol: 'trojan', server: 'fi.inline.example', port: 443, transport: 'tcp', security: 'tls' },
+		],
+		orphanTags: [],
+		activeMember: 'sub-inlinegrp-node-a',
+		enabled: true,
+	},
+	{
 		id: 'sub-demo0001',
 		label: 'Provider Demo',
 		url: 'https://demo-provider.example/sub/aaa',
@@ -1327,15 +1351,38 @@ let mockSubscriptions = [
 ];
 let mockSubID = mockSubscriptions.length;
 
+/** Align list/get payloads with production SubscriptionDTO (incl. isInline). */
+function toMockSubscriptionDTO(sub) {
+	const url = sub.url ?? '';
+	const isInline = sub.isInline ?? !String(url).trim();
+	const mode = sub.mode ?? 'selector';
+	const dto = {
+		...sub,
+		url,
+		isInline,
+		mode,
+		enabled: sub.enabled !== false,
+		headers: sub.headers ?? [],
+		memberTags: sub.memberTags ?? [],
+		members: sub.members ?? [],
+		orphanTags: sub.orphanTags ?? [],
+	};
+	if (mode === 'urltest' && sub.urlTest) dto.urlTest = sub.urlTest;
+	return dto;
+}
+
 function newSub(input) {
 	mockSubID++;
 	const id = `sub-${mockSubID.toString().padStart(8, '0')}`;
 	const shortID = id.slice(0, 8);
 	const memberTags = [`sub-${shortID}-aaaa`, `sub-${shortID}-bbbb`];
+	const url = input.url ?? (input.inline ? '' : 'https://test');
+	const isInline = !!input.inline || !String(url).trim();
 	return {
 		id,
 		label: input.label || 'Test',
-		url: input.url || 'https://test',
+		url,
+		isInline,
 		headers: input.headers || [],
 		refreshHours: input.refreshHours || 0,
 		lastFetched: new Date().toISOString(),
@@ -3279,7 +3326,10 @@ const server = http.createServer(async (req, res) => {
 	// === Subscriptions mock overrides ===
 
 	if (req.method === 'GET' && path === '/singbox/subscriptions') {
-		send(res, 200, { success: true, data: mockSubscriptions });
+		send(res, 200, {
+			success: true,
+			data: mockSubscriptions.map(toMockSubscriptionDTO),
+		});
 		return;
 	}
 
@@ -3341,7 +3391,7 @@ const server = http.createServer(async (req, res) => {
 					sub.orphanTags = [];
 				}
 				mockSubscriptions.push(sub);
-				send(res, 200, { success: true, data: sub });
+				send(res, 200, { success: true, data: toMockSubscriptionDTO(sub) });
 			} catch (e) {
 				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
 			}
@@ -3356,7 +3406,7 @@ const server = http.createServer(async (req, res) => {
 			send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'no such id' } });
 			return;
 		}
-		send(res, 200, { success: true, data: sub });
+		send(res, 200, { success: true, data: toMockSubscriptionDTO(sub) });
 		return;
 	}
 
@@ -3454,7 +3504,7 @@ const server = http.createServer(async (req, res) => {
 					return;
 				}
 				Object.assign(sub, body);
-				send(res, 200, { success: true, data: sub });
+				send(res, 200, { success: true, data: toMockSubscriptionDTO(sub) });
 			} catch (e) {
 				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
 			}

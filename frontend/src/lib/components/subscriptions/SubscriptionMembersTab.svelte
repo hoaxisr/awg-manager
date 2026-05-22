@@ -16,7 +16,7 @@
 		liveActiveMember?: string | null;
 		layout?: SingboxLayoutMode;
 	}
-	let { subscription, onUpdated, autoDelayCheckNonce = 0, liveActiveMember = null, layout = 'grid' }: Props = $props();
+	let { subscription, onUpdated, autoDelayCheckNonce = 0, liveActiveMember = null, layout = 'compact' }: Props = $props();
 
 	let refreshing = $state(false);
 	let switching = $state<string | null>(null);

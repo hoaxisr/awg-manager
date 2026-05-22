@@ -5,7 +5,7 @@
 	import { untrack } from 'svelte';
 	import { singboxDelayHistory, singboxTraffic, triggerDelayCheck } from '$lib/stores/singbox';
 	import { getTrafficRates, subscribeTraffic, loadHistory } from '$lib/stores/traffic';
-	import { TrafficSparkline, PingButton } from '$lib/components/ui';
+	import { Badge, TrafficSparkline, PingButton } from '$lib/components/ui';
 	import { singboxDelayFromHistory } from '$lib/utils/singboxDelay';
 	import { formatBytes } from '$lib/utils/format';
 	import { resolveSubscriptionMemberTag } from '$lib/utils/subscriptionMember';
@@ -18,7 +18,7 @@
 		ondelete?: (id: string) => void;
 		ondetail?: (tag: string) => void;
 	}
-	let { subscription, liveActiveMember = null, layout = 'grid', ondelete, ondetail }: Props = $props();
+	let { subscription, liveActiveMember = null, layout = 'compact', ondelete, ondetail }: Props = $props();
 
 	const resolvedMemberTag = $derived(resolveSubscriptionMemberTag(subscription, liveActiveMember));
 
@@ -143,6 +143,8 @@
 		!subscription.enabled ? 'Выключена' : subscription.lastError ? 'Ошибка' : 'OK',
 	);
 	const modeLabel = $derived(subscription.mode === 'urltest' ? 'URLTest' : 'Selector');
+	const isInlineGroup = $derived(subscription.isInline || !subscription.url?.trim());
+	const sourceKindLabel = $derived(isInlineGroup ? 'группа' : 'подписка');
 	const lastFetchedHuman = $derived(
 		subscription.lastFetched ? formatRelative(subscription.lastFetched) : '—',
 	);
@@ -194,7 +196,10 @@
 				{/if}
 			</div>
 			<div class="lc lc-name" data-label="Подписка">
-				<div class="t1">{subscription.label || subscription.url}</div>
+				<div class="name-title-row">
+					<div class="t1">{subscription.label || subscription.url}</div>
+					<Badge variant="accent" size="sm">{sourceKindLabel}</Badge>
+				</div>
 				<div class="t2 mono">{proxyIface}{#if kernelIface} · {kernelIface}{/if}</div>
 			</div>
 			<div class="lc lc-mode" data-label="Режим">
@@ -347,9 +352,65 @@
 			</div>
 		</div>
 	</div>
+{:else if layout === 'dense'}
+<div
+	role="button"
+	tabindex="0"
+	class="card view-dense inactive-panel"
+	class:err={status === 'error'}
+	class:off={!subscription.enabled}
+	onclick={(e) => open(e)}
+	onkeydown={(e) => {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			open(e);
+		}
+	}}
+>
+	<div class="inactive-header-dense">
+		<div class="inactive-header-main">
+			<div class="inactive-title-row">
+				<h3 class="inactive-title">{subscription.label || subscription.url}</h3>
+				<Badge variant="accent" size="sm">{sourceKindLabel}</Badge>
+			</div>
+			<div class="inactive-meta-dense mono">
+				{#if proxyIface}
+					<span>{proxyIface}</span>
+					{#if kernelIface}<span class="meta-dot" aria-hidden="true">·</span><span>{kernelIface}</span>{/if}
+				{:else}
+					<span>{subscription.inboundTag}</span>
+				{/if}
+				<span class="meta-dot" aria-hidden="true">·</span><span>:{subscription.listenPort}</span>
+				<span class="meta-dot" aria-hidden="true">·</span><span>{subscription.memberTags.length} серв.</span>
+			</div>
+		</div>
+		<span
+			class="status-badge status-badge-dense"
+			class:status-off={!subscription.enabled}
+			class:status-error={subscription.enabled && status === 'error'}
+			class:status-ok={subscription.enabled && status === 'ok'}
+			class:status-pending={subscription.enabled && status === 'pending'}
+		>
+			{feedStatusLabel}
+		</span>
+	</div>
+	<hr class="divider" />
+	<div class="inactive-meta-dense secondary mono">
+		<span>{modeLabel}</span>
+		<span class="meta-dot" aria-hidden="true">·</span>
+		<span>обновлено {lastFetchedHuman}</span>
+		{#if subscription.activeMember}
+			<span class="meta-dot" aria-hidden="true">·</span>
+			<span>{subscription.activeMember}</span>
+		{/if}
+	</div>
+	{#if subscription.lastError}
+		<div class="inactive-err mono" title={subscription.lastError}>{subscription.lastError}</div>
+	{/if}
+</div>
 {:else}
 <div
-	class="card panel inactive-panel"
+	class="card panel inactive-panel view-compact"
 	class:err={status === 'error'}
 	class:off={!subscription.enabled}
 >
@@ -364,7 +425,11 @@
 				{/if}
 				<span class="inactive-kind">{modeLabel}</span>
 			</div>
-			<div class="inactive-note">Sing-box подписка · :{subscription.listenPort}</div>
+			<div class="inactive-note">
+				<Badge variant="accent" size="sm">{sourceKindLabel}</Badge>
+				<span class="meta-dot" aria-hidden="true">·</span>
+				:{subscription.listenPort}
+			</div>
 		</div>
 		<div class="inactive-status-wrap">
 			<span
@@ -503,6 +568,103 @@
 	}
 	.card.panel.inactive-panel.err {
 		border-color: color-mix(in srgb, var(--color-error) 45%, transparent);
+	}
+	.card.view-dense.inactive-panel {
+		gap: 6px;
+		padding: 10px 12px;
+		cursor: pointer;
+		text-align: left;
+		font: inherit;
+		color: inherit;
+	}
+	.inactive-header-dense {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
+		gap: 8px;
+	}
+	.card.view-dense .inactive-title {
+		font-size: 13px;
+	}
+	.inactive-meta-dense {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		font-size: 9px;
+		color: var(--color-text-muted);
+		line-height: 1.3;
+	}
+
+	.meta-dot {
+		margin: 0 0.35em;
+		opacity: 0.75;
+	}
+
+	.inactive-title-row {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		min-width: 0;
+		overflow: hidden;
+	}
+
+	.inactive-title-row .inactive-title {
+		flex: 0 1 auto;
+		min-width: 0;
+	}
+
+	.inactive-title-row :global(.badge) {
+		flex-shrink: 0;
+		font-size: 9px;
+		padding: 1px 5px;
+	}
+
+	.name-title-row {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		min-width: 0;
+		max-width: 100%;
+	}
+
+	.name-title-row .t1 {
+		flex: 0 1 auto;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.name-title-row :global(.badge) {
+		flex-shrink: 0;
+		font-size: 10px;
+		padding: 1px 5px;
+	}
+
+	.card.view-dense .divider {
+		border: none;
+		border-top: 1px dashed var(--color-border);
+		margin: 4px 0;
+		height: 0;
+		background: none;
+	}
+	.inactive-meta-dense.secondary {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		margin-top: 2px;
+	}
+	.status-badge-dense {
+		font-size: 9px;
+		padding: 1px 6px;
+		flex-shrink: 0;
+	}
+	.inactive-err {
+		font-size: 9px;
+		color: var(--color-error);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.inactive-header {
 		display: flex;
@@ -671,18 +833,18 @@
 		grid-template-columns:
 			minmax(92px, 1fr)
 			minmax(132px, 1.1fr)
-			minmax(72px, 0.9fr)
-			minmax(112px, 1fr)
-			minmax(52px, 0.75fr)
-			minmax(88px, 0.95fr)
+			minmax(52px, 0.9fr)
+			minmax(162px, 1fr)
+			minmax(60px, 0.85fr)
+			minmax(100px, 1.05fr)
 			minmax(148px, 1.1fr)
 			minmax(120px, 0.95fr)
-			minmax(100px, 0.95fr);
+			minmax(76px, 0.7fr);
 		gap: 0.75rem 1rem;
 		align-items: center;
 		padding: 0.75rem 1rem;
 		cursor: pointer;
-		min-width: 920px;
+		min-width: 940px;
 	}
 	.sbx-sub-active-row:focus-visible {
 		outline: 2px solid var(--color-accent);

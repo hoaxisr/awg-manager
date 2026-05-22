@@ -11,6 +11,7 @@
 	import {
 		SINGBOX_LAYOUT_STORAGE_KEY,
 		TUNNEL_MOBILE_LAYOUT_MAX_WIDTH_PX,
+		parseSingboxLayoutMode,
 		type SingboxLayoutMode,
 	} from '$lib/constants/singboxLayout';
 	import { isMockDevMode } from '$lib/env';
@@ -38,20 +39,19 @@
 	let subscriptionSurfaceEntryNonce = $state(0);
 	let lastAutoDelayCheckKey = '';
 
-	let singboxLayoutMode = $state<SingboxLayoutMode>('grid');
+	let singboxLayoutMode = $state<SingboxLayoutMode>('compact');
 	let singboxLayoutReady = false;
 	let isSingboxMembersMobile = $state(false);
 	const showSingboxListOption = $derived($usageLevel !== 'basic');
-	const singboxEffectiveLayout = $derived<SingboxLayoutMode>(
-		isSingboxMembersMobile || (!showSingboxListOption && singboxLayoutMode === 'list')
-			? 'grid'
-			: singboxLayoutMode,
-	);
+	const singboxEffectiveLayout = $derived.by((): SingboxLayoutMode => {
+		if (isSingboxMembersMobile || (!showSingboxListOption && singboxLayoutMode === 'list')) {
+			return 'compact';
+		}
+		// Members tab has no dense cards — same grid as compact.
+		if (singboxLayoutMode === 'dense') return 'compact';
+		return singboxLayoutMode;
+	});
 	const showSingboxGridListToggle = $derived(showSingboxListOption && !isSingboxMembersMobile);
-
-	function isSingboxLayoutMode(value: string | null): value is SingboxLayoutMode {
-		return value === 'grid' || value === 'list';
-	}
 
 	let evtSrc: EventSource | null = null;
 
@@ -154,7 +154,8 @@
 
 	onMount(() => {
 		const sb = localStorage.getItem(SINGBOX_LAYOUT_STORAGE_KEY);
-		if (isSingboxLayoutMode(sb)) singboxLayoutMode = sb;
+		const parsed = parseSingboxLayoutMode(sb);
+		if (parsed) singboxLayoutMode = parsed;
 		singboxLayoutReady = true;
 		loadStream();
 	});
@@ -236,7 +237,6 @@
 </svelte:head>
 
 <PageContainer width="wide">
-	<div class="edit-wrapper">
 	{#if !subscription && loading}
 		<!-- Initial spinner before meta arrives (any subscription size) -->
 		<div class="loading-centered">
@@ -274,6 +274,7 @@
 						<GridListToggle
 							value={singboxEffectiveLayout}
 							showListOption={showSingboxGridListToggle}
+							showDenseOption={false}
 							onchange={(v) => (singboxLayoutMode = v)}
 						/>
 					</div>
@@ -286,11 +287,12 @@
 					layout={singboxEffectiveLayout}
 				/>
 			{:else}
-				<SubscriptionSettingsTab {subscription} onUpdated={loadStream} />
+				<div class="edit-wrapper">
+					<SubscriptionSettingsTab {subscription} onUpdated={loadStream} />
+				</div>
 			{/if}
 		</section>
 	{/if}
-	</div>
 </PageContainer>
 
 <style>
