@@ -165,8 +165,8 @@ func TestEnsureBaseConfig_FullSkeleton(t *testing.T) {
 	if !ok {
 		t.Fatalf("route block missing: %#v", base["route"])
 	}
-	if route["final"] != "direct" {
-		t.Errorf("route.final: want direct, got %v", route["final"])
+	if _, has := route["final"]; has {
+		t.Errorf("route.final should be absent (owned by 20-router.json), got %v", route["final"])
 	}
 	if route["default_domain_resolver"] != "dns-bootstrap" {
 		t.Errorf("default_domain_resolver: want dns-bootstrap, got %v", route["default_domain_resolver"])
@@ -348,7 +348,7 @@ func TestEnsureBaseConfig_PatchesMissingDomainResolver(t *testing.T) {
 	if route["default_domain_resolver"] != "dns-bootstrap" {
 		t.Errorf("default_domain_resolver want dns-bootstrap, got %v", route["default_domain_resolver"])
 	}
-	// Existing route fields preserved.
+	// Existing route fields preserved (for now; removal wired in Task 3).
 	if route["final"] != "direct" {
 		t.Errorf("route.final lost: %v", route["final"])
 	}

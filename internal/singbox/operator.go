@@ -903,7 +903,10 @@ func freshBaseConfig() map[string]any {
 			map[string]any{"type": "direct", "tag": "direct"},
 		},
 		"route": map[string]any{
-			"final":                   "direct",
+			// route.final intentionally omitted — owned by 20-router.json.
+			// Sing-box uses first outbound (= direct, see outbounds above)
+			// as fallback when final is absent. See spec
+			// 2026-05-21-route-final-router-owned-design.md.
 			"default_domain_resolver": "dns-bootstrap",
 		},
 	}
