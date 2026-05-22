@@ -289,6 +289,7 @@
 			{#each memberList as member (member.tag)}
 				<div
 					class="member-list-line"
+					class:with-inline-remove={subscription.isInline}
 					class:active-line={member.tag === effectiveActiveMember}
 					class:switching-line={switching === member.tag}
 					class:is-disabled={switching !== null}
@@ -318,7 +319,7 @@
 					{#if subscription.isInline}
 						<button
 							type="button"
-							class="member-remove-list"
+							class="member-remove-btn"
 							title="Удалить сервер"
 							aria-label="Удалить сервер {member.label || member.tag}"
 							disabled={removingTag !== null}
@@ -327,10 +328,11 @@
 								requestRemove(member);
 							}}
 						>
-							<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<line x1="18" y1="6" x2="6" y2="18" />
-								<line x1="6" y1="6" x2="18" y2="18" />
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<polyline points="3,6 5,6 21,6" />
+								<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
 							</svg>
+							Удалить
 						</button>
 					{/if}
 				</div>
@@ -351,7 +353,7 @@
 				{#if subscription.isInline}
 					<button
 						type="button"
-						class="member-remove"
+						class="member-remove-btn"
 						title="Удалить сервер"
 						aria-label="Удалить сервер {member.label || member.tag}"
 						disabled={removingTag !== null}
@@ -360,10 +362,11 @@
 							requestRemove(member);
 						}}
 					>
-						<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<line x1="18" y1="6" x2="6" y2="18" />
-							<line x1="6" y1="6" x2="18" y2="18" />
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<polyline points="3,6 5,6 21,6" />
+							<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
 						</svg>
+						Удалить
 					</button>
 				{/if}
 			</div>
@@ -580,29 +583,43 @@
 		position: relative;
 		min-width: 0;
 	}
-	.member-remove {
-		position: absolute;
-		top: 6px;
-		right: 6px;
-		width: 22px;
-		height: 22px;
+	.member-remove-btn {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		background: var(--color-bg-primary);
-		border: 1px solid var(--color-border);
-		border-radius: 50%;
+		gap: 4px;
+		padding: 0.375rem 0.5rem;
+		border: none;
+		border-radius: var(--radius-sm);
+		background: transparent;
 		color: var(--color-text-muted);
+		font: inherit;
+		font-size: var(--sbx-card-action);
+		font-weight: 500;
+		white-space: nowrap;
 		cursor: pointer;
-		transition: color 120ms, border-color 120ms, background 120ms;
+		flex-shrink: 0;
+		transition: background var(--t-fast) ease, color var(--t-fast) ease;
+	}
+	.member-remove-btn:hover:not(:disabled) {
+		color: var(--color-error);
+		background: var(--color-error-tint);
+	}
+	.member-remove-btn:disabled {
+		cursor: not-allowed;
+		opacity: 0.5;
+	}
+	.member-remove-btn:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 2px;
+	}
+	.member-slot .member-remove-btn {
+		position: absolute;
+		right: 6px;
+		bottom: 6px;
+		top: auto;
 		z-index: 1;
 	}
-	.member-remove:hover {
-		color: var(--color-error, #ef4444);
-		border-color: var(--color-error, #ef4444);
-		background: rgba(239, 68, 68, 0.08);
-	}
-	.member-remove:disabled { cursor: not-allowed; opacity: 0.5; }
 
 	.add-form { display: flex; flex-direction: column; gap: 0.5rem; }
 	.add-row { display: flex; flex-direction: column; gap: 0.3rem; }
@@ -646,7 +663,7 @@
 	}
 
 	.member-list-table.with-inline-remove {
-		--awg-list-min-width: 840px;
+		--awg-list-min-width: 880px;
 	}
 
 	.sbx-member-list-row {
@@ -672,7 +689,7 @@
 			minmax(56px, 0.9fr)
 			minmax(0, 0.95fr)
 			minmax(88px, 1fr)
-			42px;
+			minmax(72px, max-content);
 	}
 	.sbx-member-list-row--head {
 		background: var(--color-bg-tertiary);
@@ -681,6 +698,8 @@
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
 		color: var(--color-text-muted);
+		padding-top: 0.75rem;
+		padding-bottom: 0.75rem;
 	}
 	.sbx-member-list-row--head .h-rm {
 		display: block;
@@ -693,7 +712,7 @@
 		padding: 0.45rem 1rem;
 		border-bottom: 1px solid var(--color-border);
 		background: var(--color-bg-primary);
-		font-size: 0.78rem;
+		font-size: var(--sbx-card-meta);
 		color: var(--color-text-muted);
 	}
 	.member-list-meta-row .meta-lbl {
@@ -718,12 +737,47 @@
 		margin-left: 0.25rem;
 	}
 	.member-list-line {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		padding: 0.15rem 1rem;
+		padding: 0.65rem 1rem;
 		border-bottom: 1px solid var(--color-border);
 		cursor: pointer;
+		min-width: max(100%, max(var(--awg-list-min-width, 0px), max-content));
+	}
+	.member-list-line:not(.with-inline-remove) {
+		display: flex;
+		align-items: center;
+	}
+	.member-list-line:not(.with-inline-remove) :global(.mbr-flatten) {
+		flex: 1;
+		min-width: 0;
+		display: grid;
+		grid-template-columns:
+			minmax(80px, 1fr)
+			minmax(0, 1.35fr)
+			minmax(0, 1fr)
+			minmax(56px, 0.9fr)
+			minmax(0, 0.95fr)
+			minmax(88px, 1fr);
+		gap: 0 1rem;
+		align-items: center;
+	}
+	.member-list-line.with-inline-remove {
+		display: grid;
+		grid-template-columns:
+			minmax(80px, 1fr)
+			minmax(0, 1.35fr)
+			minmax(0, 1fr)
+			minmax(56px, 0.9fr)
+			minmax(0, 0.95fr)
+			minmax(88px, 1fr)
+			minmax(72px, max-content);
+		gap: 0 1rem;
+		align-items: center;
+	}
+	.member-list-line.with-inline-remove :global(.mbr-flatten) {
+		display: contents;
+	}
+	.member-list-line.with-inline-remove .member-remove-btn {
+		justify-self: end;
 	}
 	.member-list-line:last-child {
 		border-bottom: none;
@@ -736,41 +790,6 @@
 		cursor: wait;
 	}
 	.member-list-line.is-disabled {
-		cursor: not-allowed;
-	}
-	.member-list-line :global(.mbr-flatten) {
-		flex: 1;
-		min-width: 0;
-		display: grid;
-		grid-template-columns:
-			minmax(80px, 1fr)
-			minmax(0, 1.35fr)
-			minmax(0, 1fr)
-			minmax(56px, 0.9fr)
-			minmax(0, 0.95fr)
-			minmax(88px, 1fr);
-		gap: 0 0.75rem;
-		align-items: center;
-	}
-	.member-remove-list {
-		flex: 0 0 38px;
-		width: 32px;
-		height: 32px;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		background: var(--color-bg-primary);
-		border: 1px solid var(--color-border);
-		border-radius: 50%;
-		color: var(--color-text-muted);
-		cursor: pointer;
-	}
-	.member-remove-list:hover {
-		color: var(--color-error, #ef4444);
-		border-color: var(--color-error, #ef4444);
-	}
-	.member-remove-list:disabled {
-		opacity: 0.5;
 		cursor: not-allowed;
 	}
 </style>

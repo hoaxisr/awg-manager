@@ -798,7 +798,7 @@
 		font-weight: 500;
 		border: none;
 		background: transparent;
-		color: var(--color-text-secondary);
+		color: var(--color-text-muted);
 		cursor: pointer;
 		border-radius: var(--radius-sm);
 		font-family: inherit;
@@ -949,7 +949,7 @@
 		font-weight: 500;
 		border: none;
 		background: transparent;
-		color: var(--color-text-secondary);
+		color: var(--color-text-muted);
 		cursor: pointer;
 		border-radius: var(--radius-sm);
 		text-decoration: none;

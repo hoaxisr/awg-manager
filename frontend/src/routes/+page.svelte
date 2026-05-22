@@ -3226,8 +3226,8 @@
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
 		color: var(--color-text-muted);
-		padding-top: 0.65rem;
-		padding-bottom: 0.65rem;
+		padding-top: 0.75rem;
+		padding-bottom: 0.75rem;
 	}
 	.sbx-tunnel-list-head-actions {
 		text-align: right;
@@ -3240,7 +3240,7 @@
 		display: grid;
 		gap: 0 1rem;
 		align-items: center;
-		padding: 0.65rem 1rem;
+		padding: 0.75rem 1rem;
 		background: var(--color-bg-tertiary);
 		font-size: 0.6875rem;
 		font-weight: 700;

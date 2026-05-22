@@ -1023,7 +1023,7 @@
 
     .card.view-dense .action-btn {
         padding: 3px 6px;
-        font-size: 10px;
+        font-size: var(--sbx-card-action-dense);
         gap: 3px;
     }
 
@@ -1350,7 +1350,7 @@
         font-weight: 500;
         border: none;
         background: transparent;
-        color: var(--color-text-secondary);
+        color: var(--color-text-muted);
         cursor: pointer;
         border-radius: var(--radius-sm);
         text-decoration: none;

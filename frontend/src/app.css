@@ -242,7 +242,7 @@ html.light, [data-theme="light"] {
   --family-singbox-runtime-bg:   rgba(196, 107, 138, 0.12);
   --family-singbox-runtime-bd:   rgba(196, 107, 138, 0.32);
 
-  /* Sing-box card typography — matches AWG tunnel cards (.view-compact). */
+  /* Sing-box / subscription card typography — AWG TunnelCard .view-compact (px). */
   --sbx-card-title: 14px;
   --sbx-card-meta: 11px;
   --sbx-card-note: 11px;
@@ -251,6 +251,7 @@ html.light, [data-theme="light"] {
   --sbx-card-badge: 10px;
   --sbx-card-status: 12px;
   --sbx-card-action: 11px;
+  --sbx-card-action-dense: 10px;
 
   /* Page / header gutters (по умолчанию; компакт — data-layout-compact). */
   --layout-gutter-x: 1.5rem;
@@ -258,6 +259,23 @@ html.light, [data-theme="light"] {
   --layout-gutter-y-top: var(--layout-gutter-y);
   --layout-gutter-y-bottom: var(--layout-gutter-y);
   --header-gutter-x: 1.25rem;
+}
+
+/* List mode — rem scale aligned with .awg-list-* (+page.svelte). */
+:is(
+  .singbox-tunnel-list-table,
+  .singbox-sub-list-table,
+  .member-list-table,
+  .awg-list-table-track > .sub-list-group,
+  .awg-list-table-track > .sub-active-list-group
+) {
+  --sbx-card-title: 0.9375rem;
+  --sbx-card-meta: 0.75rem;
+  --sbx-card-value: 0.8125rem;
+  --sbx-card-note: 0.75rem;
+  --sbx-card-badge: 0.625rem;
+  --sbx-card-status: 0.8125rem;
+  --sbx-card-action: 0.75rem;
 }
 
 /* Компактная ширина — как в v2.8.2 / базовом режиме: main 960px, узкие боковые поля. */

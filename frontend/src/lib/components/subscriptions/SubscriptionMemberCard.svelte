@@ -216,7 +216,7 @@
 		box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.22);
 	}
 	.title {
-		font-size: 0.92rem;
+		font-size: var(--sbx-card-title);
 		font-weight: 600;
 		flex: 1;
 		min-width: 0;
@@ -229,10 +229,10 @@
 		word-break: break-word;
 		overflow-wrap: anywhere;
 	}
-	.port { font-size: 0.78rem; color: var(--color-text-muted); }
+	.port { font-size: var(--sbx-card-meta); color: var(--color-text-muted); }
 	.badges { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 	.badge {
-		font-size: 0.68rem;
+		font-size: var(--sbx-card-badge);
 		padding: 0.15rem 0.5rem;
 		border-radius: 4px;
 		font-weight: 600;
@@ -250,7 +250,7 @@
 		border-top: 1px solid var(--color-border);
 	}
 	.tag {
-		font-size: 0.68rem;
+		font-size: var(--sbx-card-badge);
 		color: var(--color-text-muted);
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -258,7 +258,7 @@
 		max-width: 150px;
 	}
 	.state-badge {
-		font-size: 0.7rem;
+		font-size: var(--sbx-card-note);
 		padding: 0.1rem 0.45rem;
 		border-radius: 999px;
 	}
@@ -288,7 +288,7 @@
 	.spark.fail .bar { background: var(--latency-bar-fail); }
 	.bar.empty       { opacity: 0.3; }
 	.server-line {
-		font-size: 0.72rem;
+		font-size: var(--sbx-card-meta);
 		color: var(--color-text-muted);
 		opacity: 0.85;
 		margin: 0.15rem 0 0.35rem;
@@ -300,7 +300,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.35rem;
-		font-size: 0.7rem;
+		font-size: var(--sbx-card-label);
 		color: var(--color-text-muted);
 		margin-top: -0.15rem;
 	}
@@ -328,7 +328,7 @@
 		align-items: center;
 		min-width: 0;
 		padding: 0.65rem 0;
-		font-size: 0.8125rem;
+		font-size: var(--sbx-card-value);
 		color: var(--color-text-secondary);
 	}
 	.c-name {
@@ -339,14 +339,14 @@
 	.n1 {
 		font-weight: 600;
 		color: var(--color-text-primary);
-		font-size: 0.9rem;
+		font-size: var(--sbx-card-title);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		max-width: 100%;
 	}
 	.n2 {
-		font-size: 0.72rem;
+		font-size: var(--sbx-card-meta);
 		color: var(--color-text-muted);
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -358,7 +358,7 @@
 		flex-wrap: wrap;
 	}
 	.c-tag {
-		font-size: 0.72rem;
+		font-size: var(--sbx-card-meta);
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
