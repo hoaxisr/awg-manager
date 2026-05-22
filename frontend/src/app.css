@@ -1148,6 +1148,45 @@ label {
 	min-width: 0;
 }
 
+/*
+ * List tables (AWG / sing-box): track shrink-wraps to the widest grid row.
+ * Fixed --awg-list-min-width alone is not enough — column minmax() sums can exceed it,
+ * which leaves header bg / row borders short while cells scroll underneath.
+ */
+.awg-list-table-track {
+	display: inline-block;
+	min-width: 100%;
+	max-width: none;
+	vertical-align: top;
+	box-sizing: border-box;
+}
+
+.awg-list-table-track > :is(
+	.member-list-meta-row,
+	.member-list-line,
+	.sub-list-group,
+	.sub-active-list-group
+) {
+	min-width: max(100%, max-content);
+	box-sizing: border-box;
+}
+
+.awg-list-table-track > :is(
+	.awg-list-row,
+	.sbx-sub-list-row,
+	.sbx-tunnel-list-row,
+	.sbx-member-list-row
+) {
+	min-width: max(100%, max-content);
+	box-sizing: border-box;
+}
+
+.awg-list-table-track > :is(.sub-list-group, .sub-active-list-group) .sbx-sub-active-row {
+	width: 100%;
+	min-width: 100%;
+	box-sizing: border-box;
+}
+
 /* ─── Bare form-control primitives (for inline grid contexts where the Input/Select
        components' column-layout doesn't fit). Visual styling matches Input.svelte
        and Select.svelte — keep them in sync if either one changes. ─── */

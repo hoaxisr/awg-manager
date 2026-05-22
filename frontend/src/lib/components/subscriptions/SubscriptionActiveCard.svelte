@@ -1448,20 +1448,20 @@
     .sbx-sub-active-row {
         display: grid;
         grid-template-columns:
-            minmax(92px, 1fr)
+            minmax(80px, 80px)
             minmax(132px, 1.1fr)
             minmax(52px, 0.9fr)
             minmax(162px, 1fr)
             minmax(60px, 0.85fr)
             minmax(100px, 1.05fr)
             minmax(148px, 1.1fr)
-            minmax(120px, 0.95fr)
+            minmax(80px, 80px)
             minmax(76px, 0.7fr);
         gap: 0.75rem 1rem;
         align-items: center;
         padding: 0.75rem 1rem;
         cursor: pointer;
-        min-width: var(--awg-list-min-width, 940px);
+        min-width: max(100%, max(var(--awg-list-min-width, 0px), max-content));
     }
     .sbx-sub-active-row:focus-visible {
         outline: 2px solid var(--color-accent);

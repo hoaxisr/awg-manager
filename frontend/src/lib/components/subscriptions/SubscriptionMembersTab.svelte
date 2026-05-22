@@ -335,6 +335,7 @@
 					{/if}
 				</div>
 			{/each}
+			</div>
 		</div>
 	{:else}
 	<div class="grid">
@@ -367,7 +368,6 @@
 				{/if}
 			</div>
 		{/each}
-			</div>
 	</div>
 	{/if}
 {/if}
@@ -661,8 +661,8 @@
 		gap: 0 1rem;
 		align-items: center;
 		padding: 0.65rem 1rem;
-		min-width: var(--awg-list-min-width);
 		border-bottom: 1px solid var(--color-border);
+		min-width: max(100%, max(var(--awg-list-min-width, 0px), max-content));
 	}
 	.member-list-table.with-inline-remove .sbx-member-list-row {
 		grid-template-columns:
@@ -695,10 +695,6 @@
 		background: var(--color-bg-primary);
 		font-size: 0.78rem;
 		color: var(--color-text-muted);
-		min-width: var(--awg-list-min-width);
-	}
-	.member-list-table.with-inline-remove .member-list-meta-row {
-		min-width: 840px;
 	}
 	.member-list-meta-row .meta-lbl {
 		text-transform: uppercase;
@@ -728,10 +724,6 @@
 		padding: 0.15rem 1rem;
 		border-bottom: 1px solid var(--color-border);
 		cursor: pointer;
-		min-width: 800px;
-	}
-	.member-list-table.with-inline-remove .member-list-line {
-		min-width: 840px;
 	}
 	.member-list-line:last-child {
 		border-bottom: none;
