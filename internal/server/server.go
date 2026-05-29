@@ -503,8 +503,21 @@ func (s *Server) ScheduleRestart() {
 			s.appLog.Info("restart", executable, "restarting daemon")
 
 			// Run shutdown hooks (stop PingCheck, sessions, log buffer, etc.)
-			for _, fn := range s.shutdownHooks {
-				fn()
+			// Per-hook timeout: a stuck hook (e.g. NDMS save coordinator
+			// waiting on a hanging RCI call) must not block syscall.Exec.
+			// All registered hooks are idempotent/abort-safe.
+			const hookTimeout = 5 * time.Second
+			for i, fn := range s.shutdownHooks {
+				done := make(chan struct{})
+				go func(f func()) {
+					defer close(done)
+					f()
+				}(fn)
+				select {
+				case <-done:
+				case <-time.After(hookTimeout):
+					s.appLog.Warn("restart", "", fmt.Sprintf("shutdown hook #%d timed out after %s, proceeding", i, hookTimeout))
+				}
 			}
 
 			if err := syscall.Exec(executable, os.Args, os.Environ()); err != nil {

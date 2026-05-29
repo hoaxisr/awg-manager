@@ -339,14 +339,26 @@ static int c2s_thread_fn(void *data)
 
 		n = kernel_recvmsg(proxy->listen_sock, &msg, &iov, 1,
 				   bufsize, 0);
-		if (n < 0) {
-			if (n == -ERESTARTSYS || kthread_should_stop())
+		/*
+		 * After kernel_sock_shutdown(SHUT_RDWR) UDP recv returns 0
+		 * (no errno, no signal). Treat as EOF and exit cleanly —
+		 * without this the loop tight-spins on the dead socket and
+		 * monopolises CPU0 on single-core non-preempt MIPS until
+		 * the hardware watchdog fires (issue #234).
+		 */
+		if (n <= 0) {
+			if (n == 0 || n == -ERESTARTSYS || n == -EINTR ||
+			    n == -ESHUTDOWN || n == -EBADF || n == -EPIPE)
+				break;
+			if (kthread_should_stop())
 				break;
 			msleep(10);
 			continue;
 		}
-		if (n < 4)
+		if (n < 4) {
+			cond_resched();
 			continue;
+		}
 
 		/* Always update client address (reference behavior) */
 		spin_lock(&proxy->client_lock);
@@ -544,14 +556,20 @@ static int s2c_thread_fn(void *data)
 
 		n = kernel_recvmsg(proxy->remote_sock, &msg, &iov, 1,
 				   AWG_BUF_SIZE, 0);
-		if (n < 0) {
-			if (n == -ERESTARTSYS || kthread_should_stop())
+		/* See c2s_thread_fn: identical EOF/shutdown semantics. */
+		if (n <= 0) {
+			if (n == 0 || n == -ERESTARTSYS || n == -EINTR ||
+			    n == -ESHUTDOWN || n == -EBADF || n == -EPIPE)
+				break;
+			if (kthread_should_stop())
 				break;
 			msleep(10);
 			continue;
 		}
-		if (n < 4)
+		if (n < 4) {
+			cond_resched();
 			continue;
+		}
 
 		atomic_inc(&proxy->rx_packets);
 		atomic64_add(n, &proxy->rx_bytes);

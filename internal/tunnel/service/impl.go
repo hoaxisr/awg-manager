@@ -14,6 +14,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
@@ -192,14 +193,30 @@ func (s *ServiceImpl) RunningTunnels(ctx context.Context) []traffic.RunningTunne
 	return result
 }
 
-// lockTunnel acquires the per-tunnel mutex.
+// lockTunnel acquires the per-tunnel mutex. When the orchestrator is wired
+// (always, after main.go's SetOrchestrator), the service delegates to its
+// per-tunnel mutex so Update/ReplaceConfig serialize against orchestrator-
+// driven Stop/Start/Delete on the same tunnel — otherwise the two layers
+// hold independent mutexes and can interleave NDMS commands.
 func (s *ServiceImpl) lockTunnel(tunnelID string) {
+	if s.orch != nil {
+		s.orch.LockTunnel(tunnelID)
+		return
+	}
 	mu, _ := s.tunnelMu.LoadOrStore(tunnelID, &sync.Mutex{})
 	mu.(*sync.Mutex).Lock()
 }
 
 // unlockTunnel releases the per-tunnel mutex.
 func (s *ServiceImpl) unlockTunnel(tunnelID string) {
+	if s.orch != nil {
+		// Use the same underlying mutex via the orchestrator.
+		// LockTunnel returns a closure but the lock/unlock split here
+		// mirrors the existing call sites; we call the public Unlock
+		// path directly.
+		s.orch.UnlockTunnel(tunnelID)
+		return
+	}
 	if mu, ok := s.tunnelMu.Load(tunnelID); ok {
 		mu.(*sync.Mutex).Unlock()
 	}
@@ -803,6 +820,13 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 	// orphaned (pointing to the previous conf's servers).
 	oldDNS := stored.Interface.DNS
 
+	// Capture inputs that drive the awg_proxy.ko slot config. If any of
+	// them changes the slot has to be torn down explicitly — adopt would
+	// otherwise resurrect a slot with stale obfuscation/keys.
+	oldEndpoint := stored.Peer.Endpoint
+	oldPrivateKey := stored.Interface.PrivateKey
+	oldObfuscation := stored.Interface.AWGObfuscation
+
 	// Replace Interface + Peer entirely
 	stored.Interface = parsed.Interface
 	stored.Peer = parsed.Peer
@@ -834,6 +858,22 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 		if wasNativeRunning {
 			if err := s.nwgOperator.Stop(ctx, stored); err != nil {
 				s.logWarn("replace-config", tunnelID, "Stop before peer sync failed: "+err.Error())
+			}
+			// On proxy firmware Stop intentionally does NOT touch the
+			// awg_proxy.ko slot — adopt at Start reuses the same listen
+			// port for free. But if the inputs that shaped the slot
+			// changed (endpoint, keys, obfuscation), adopt would resurrect
+			// a stale slot. Drop it explicitly here — one /proc/del per
+			// user-initiated config replace is acceptable risk on .ko
+			// < 1.1.10, and harmless on .ko >= 1.1.10.
+			if !ndmsinfo.SupportsWireguardASC() &&
+				(oldEndpoint != stored.Peer.Endpoint ||
+					oldPublicKey != stored.Peer.PublicKey ||
+					oldPrivateKey != stored.Interface.PrivateKey ||
+					oldObfuscation != stored.Interface.AWGObfuscation) {
+				if err := s.nwgOperator.KmodManager().RemoveTunnel(tunnelID); err != nil {
+					s.logWarn("replace-config", tunnelID, "kmod rebuild: "+err.Error())
+				}
 			}
 		} else if oldDNS != stored.Interface.DNS {
 			// Tunnel was not running — handler skipped Stop (which would

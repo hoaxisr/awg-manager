@@ -306,6 +306,22 @@ func (o *Orchestrator) unlockTunnel(tunnelID string) {
 	}
 }
 
+// LockTunnel acquires the per-tunnel mutex and returns an unlock callback.
+// Exposed so the service layer can serialize Update/ReplaceConfig against
+// orchestrator-driven Stop/Start/Delete on the same tunnel — otherwise the
+// two layers held independent mutexes and could interleave NDMS commands.
+func (o *Orchestrator) LockTunnel(tunnelID string) func() {
+	o.lockTunnel(tunnelID)
+	return func() { o.unlockTunnel(tunnelID) }
+}
+
+// UnlockTunnel releases the per-tunnel mutex acquired via LockTunnel.
+// Provided for symmetric Lock+defer Unlock at call sites that already use
+// that pattern with the service-local lockTunnel/unlockTunnel pair.
+func (o *Orchestrator) UnlockTunnel(tunnelID string) {
+	o.unlockTunnel(tunnelID)
+}
+
 // cleanupTunnelLock removes the lock entry for a deleted tunnel.
 func (o *Orchestrator) cleanupTunnelLock(tunnelID string) {
 	o.tunnelMu.Delete(tunnelID)

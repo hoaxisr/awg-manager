@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
@@ -20,7 +22,7 @@ import (
 const (
 	awgProxyDir         = "/opt/etc/awg-manager/modules"
 	defaultKoPath       = awgProxyDir + "/awg_proxy.ko"
-	expectedKmodVersion = "1.1.9" // minimum required awg_proxy.ko version
+	expectedKmodVersion = "1.1.10" // minimum required awg_proxy.ko version (issue #234 fix)
 )
 
 // KmodManager manages the awg_proxy.ko kernel module for NativeWG tunnels.
@@ -182,12 +184,20 @@ func (km *KmodManager) AddTunnel(tunnelID string, cfg KmodConfig) (KmodResult, e
 		}
 	}
 
-	// Replace stale or already-tracked entry before adding a fresh slot.
-	_ = os.WriteFile("/proc/awg_proxy/del", []byte(delLine), 0)
-
 	line := buildProcLine(cfg)
 
-	if err := os.WriteFile("/proc/awg_proxy/add", []byte(line), 0); err != nil {
+	// Try add first. /proc/awg_proxy/add returns -EEXIST if a slot for this
+	// endpoint already exists (adopt above missed it for whatever reason —
+	// stale tunnelID mapping, list-read race). Only then do we fall back
+	// to del+add. This avoids dragging /proc/awg_proxy/del into the hot
+	// path on every Start, which on awg_proxy < 1.1.10 races the recv-loop
+	// and can soft-lockup CPU0 (#234).
+	err := os.WriteFile("/proc/awg_proxy/add", []byte(line), 0)
+	if err != nil && errors.Is(err, syscall.EEXIST) {
+		_ = os.WriteFile("/proc/awg_proxy/del", []byte(delLine), 0)
+		err = os.WriteFile("/proc/awg_proxy/add", []byte(line), 0)
+	}
+	if err != nil {
 		return KmodResult{}, fmt.Errorf("kmod add tunnel %s: %w", tunnelID, err)
 	}
 
@@ -300,6 +310,80 @@ func (km *KmodManager) RemoveTunnel(tunnelID string) error {
 	delete(km.tunnels, tunnelID)
 	km.appLog.Info("remove-tunnel", tunnelID, "removed")
 	return nil
+}
+
+// ForgetTunnel drops the in-memory mapping for tunnelID without touching
+// /proc/awg_proxy/del. Used by Delete on proxy firmware — the kernel slot
+// is left as an orphan and reclaimed by SweepOrphans on the next boot.
+// This avoids the kernel-side race in awg_proxy < 1.1.10 (#234).
+func (km *KmodManager) ForgetTunnel(tunnelID string) {
+	km.mu.Lock()
+	defer km.mu.Unlock()
+	if _, ok := km.tunnels[tunnelID]; ok {
+		delete(km.tunnels, tunnelID)
+		km.appLog.Info("forget-tunnel", tunnelID, "untracked (slot left for boot sweep)")
+	}
+}
+
+// KnownEndpoint identifies a kmod proxy slot by its remote endpoint —
+// the only field /proc/awg_proxy/list keys by.
+type KnownEndpoint struct {
+	IP   string
+	Port int
+}
+
+// SweepOrphans removes kmod proxy slots whose (IP:Port) is not in the
+// caller-provided known set. Intended to run **once at boot**, before
+// any tunnel Start, when the recv-loop on each surviving slot is idle
+// (no peer traffic yet) — the safe window for /proc/awg_proxy/del.
+//
+// On awg_proxy >= 1.1.10 the kernel race is fixed and SweepOrphans is
+// purely a slot-budget hygiene step; on older .ko it must still run at
+// boot so we don't accumulate orphan slots forever.
+func (km *KmodManager) SweepOrphans(known []KnownEndpoint) {
+	km.mu.Lock()
+	defer km.mu.Unlock()
+
+	if !km.isLoadedLocked() {
+		return
+	}
+
+	data, err := os.ReadFile("/proc/awg_proxy/list")
+	if err != nil {
+		km.appLog.Warn("sweep-orphans", "", "read list: "+err.Error())
+		return
+	}
+
+	keep := make(map[string]struct{}, len(known))
+	for _, e := range known {
+		keep[fmt.Sprintf("%s:%d", e.IP, e.Port)] = struct{}{}
+	}
+
+	// Each line: "IP:PORT listen=127.0.0.1:LPORT rx=... tx=..."
+	swept := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "(") {
+			continue
+		}
+		idx := strings.IndexByte(line, ' ')
+		if idx <= 0 {
+			continue
+		}
+		endpoint := line[:idx]
+		if _, ok := keep[endpoint]; ok {
+			continue
+		}
+		if err := os.WriteFile("/proc/awg_proxy/del", []byte(endpoint), 0); err != nil {
+			km.appLog.Warn("sweep-orphans", endpoint, err.Error())
+			continue
+		}
+		swept++
+		km.appLog.Info("sweep-orphans", endpoint, "removed orphan slot")
+	}
+	if swept > 0 {
+		km.appLog.Info("sweep-orphans", "", fmt.Sprintf("%d orphan slot(s) reclaimed", swept))
+	}
 }
 
 // HasSlotListening reports whether a live kmod proxy slot is listening on

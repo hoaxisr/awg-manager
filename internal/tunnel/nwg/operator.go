@@ -394,21 +394,19 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 	return nil
 }
 
-// SuspendProxy disconnects the peer and removes kmod proxy entry.
-// Called on WAN down for firmware < 5.01.A.3 (proxy mode).
-// Preserves NDMS intent (conf stays "running") — peer goes to link: pending.
-// Does NOT call InterfaceDown (that would set conf: disabled, losing user intent).
-// Does NOT clear DNS (interface stays up in NDMS, DNS binding is intact).
-// Resume path: call Start() which routes through startProxy().
+// SuspendProxy disconnects the peer on WAN down for firmware < 5.01.A.3
+// (proxy mode). Preserves NDMS intent (conf stays "running") — peer goes
+// to link: pending. Does NOT call InterfaceDown (that would set conf:
+// disabled, losing user intent). Does NOT clear DNS (interface stays up
+// in NDMS, DNS binding is intact). Does NOT touch the kmod proxy entry:
+// the slot's remote socket goes ENETUNREACH while WAN is down, but it
+// costs nothing to keep, and on WAN up Start adopts it without /proc/del
+// (which on awg_proxy < 1.1.10 races the recv-loop — issue #234).
 func (o *OperatorNativeWG) SuspendProxy(ctx context.Context, stored *storage.AWGTunnel) error {
 	names := NewNWGNames(stored.NWGIndex)
 	pubkey := stored.Peer.PublicKey
 
-	// 1. Remove kmod proxy entry (socket is dead after WAN down anyway).
-	// Module stays loaded — only the tunnel entry is removed.
-	_ = o.kmod.RemoveTunnel(stored.ID)
-
-	// 2. Disconnect peer — NDMS sets link: pending, connected: no.
+	// Disconnect peer — NDMS sets link: pending, connected: no.
 	// conf stays "running" so NDMS knows the tunnel wants to be up.
 	cmds := []any{
 		payloads.CmdWireguardPeerDisconnect(names.NDMSName, pubkey),
@@ -423,8 +421,12 @@ func (o *OperatorNativeWG) SuspendProxy(ctx context.Context, stored *storage.AWG
 	return nil
 }
 
-// Stop stops a NativeWG tunnel: interface down -> kmod remove (proxy only).
-// Peer binding is not reset here — Start sets it fresh via WireguardPeerConnect.
+// Stop stops a NativeWG tunnel by setting its NDMS interface conf to
+// disabled and clearing DNS. On proxy firmware the kmod slot is left in
+// place — its peer-socket goes idle once NDMS tears down WireGuard, and
+// the next Start adopts the slot without /proc/del (which on awg_proxy
+// < 1.1.10 races the recv-loop — issue #234). Endpoint-change cleanup
+// happens in ReplaceConfig and at boot-time orphan sweep, not here.
 func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) error {
 	names := NewNWGNames(stored.NWGIndex)
 
@@ -445,34 +447,33 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 	}
 	o.appLog.Full("stop", stored.Name, "DNS cleared")
 
-	// Only remove kmod proxy entry on older firmware
-	if !ndmsinfo.SupportsWireguardASC() {
-		_ = o.kmod.RemoveTunnel(stored.ID)
-	}
-
 	o.appLog.Info("stop", names.NDMSName, "tunnel stopped")
 	return nil
 }
 
-// Delete removes a NativeWG tunnel from NDMS completely.
+// Delete removes a NativeWG tunnel from NDMS completely. On proxy firmware
+// the kmod slot is intentionally left orphan — its peer socket is dead
+// after the NDMS interface goes away, and the boot-time orphan sweep
+// reclaims it on the next daemon start. We avoid /proc/awg_proxy/del at
+// runtime because on awg_proxy < 1.1.10 it races the recv-loop (#234).
 func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel) error {
 	names := NewNWGNames(stored.NWGIndex)
 
-	// 1. Remove kmod proxy entry (older firmware only, before interface deletion)
-	if !ndmsinfo.SupportsWireguardASC() {
-		_ = o.kmod.RemoveTunnel(stored.ID)
-	}
+	// Best-effort: forget the slot in our in-memory map so AddTunnel
+	// won't try to adopt-by-tracking. The kernel slot itself stays —
+	// the boot sweep will collect it.
+	o.kmod.ForgetTunnel(stored.ID)
 
-	// 2. Remove ping-check profile (before interface deletion)
+	// Remove ping-check profile (before interface deletion)
 	if stored.PingCheck != nil && stored.PingCheck.Enabled {
 		_ = o.RemovePingCheck(ctx, stored)
 	}
 
-	// 3. Remove NDMS interface — cleans everything:
+	// Remove NDMS interface — cleans everything:
 	//    peer, DNS (ip + ipv6 name-server), ASC params, kernel Wireguard interface
 	_, _ = o.transport.Post(ctx, payloads.CmdInterfaceDelete(names.NDMSName))
 
-	// 4. Persist
+	// Persist
 	_, _ = o.transport.Post(ctx, payloads.CmdSave())
 
 	o.appLog.Info("delete", names.NDMSName, "tunnel deleted")

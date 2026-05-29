@@ -1207,11 +1207,12 @@ func main() {
 
 	// Register shutdown hooks for graceful cleanup before syscall.Exec restart.
 	srv.AddShutdownHook(shutdownCancel)
-	if !ndmsinfo.SupportsWireguardASC() {
-		srv.AddShutdownHook(func() {
-			nwgOp.KmodManager().RemoveAllTunnels()
-		})
-	}
+	// Intentionally NOT removing kmod proxy slots on restart: reconnect path
+	// (EventReconnect → ActionRestoreKmod) adopts existing slots without
+	// touching /proc/awg_proxy/del. This keeps "Перезапуск AWGM, туннели
+	// продолжат работать" honest — kernel WG keeps forwarding through the
+	// live slot across syscall.Exec. Touching /proc/del here also opened a
+	// kernel-side race on awg_proxy < 1.1.10 (issue #234).
 	srv.AddShutdownHook(pingCheckService.Stop)
 	srv.AddShutdownHook(monitoringService.Stop)
 	srv.AddShutdownHook(dnsRefreshScheduler.Stop)
@@ -1272,6 +1273,12 @@ func main() {
 			// (legacy garbage from the pre-hardened resolver, e.g. "ISP").
 			tunnelService.HealStaleActiveWAN()
 
+			// Reclaim orphan kmod proxy slots left by prior Delete/Stop. Safe
+			// here: no tunnel has been started yet, so the slots are idle
+			// (no peer traffic) — /proc/awg_proxy/del does not race the
+			// recv-loop. After Start, we never call del at runtime.
+			sweepOrphanKmodSlots(nwgOp, awgStore, bootLog)
+
 			// Detect actual WAN state.
 			if _, err := ndmsQueries.Routes.GetDefaultGatewayInterface(shutdownCtx); err != nil {
 				bootLog.Info("startup", "",
@@ -1297,6 +1304,11 @@ func main() {
 		// Clear stored.ActiveWAN entries that don't name a real kernel iface
 		// (legacy garbage from the pre-hardened resolver, e.g. "ISP").
 		tunnelService.HealStaleActiveWAN()
+
+		// Reclaim orphan kmod proxy slots left by prior Delete on the old
+		// process. Safe here too: about to Reconnect → adopt, no /proc/del
+		// will be issued after this point during the daemon's lifetime.
+		sweepOrphanKmodSlots(nwgOp, awgStore, bootLog)
 
 		bootLog.Info("startup", "",
 			"Daemon restart detected — reconnecting to running tunnels")
@@ -1452,6 +1464,48 @@ func populateWANModel(ctx context.Context, queries *ndmsquery.Queries, model *wa
 	}
 	model.Populate(interfaces)
 	appLog.Info("populate-wan", "", fmt.Sprintf("WAN model populated, count=%d", len(interfaces)))
+}
+
+// sweepOrphanKmodSlots reclaims awg_proxy kmod slots whose remote endpoint
+// matches no enabled NativeWG tunnel in storage. Called once at daemon
+// startup (boot and daemon-restart paths), before any tunnel is started
+// or adopted — the only window when /proc/awg_proxy/del cannot race the
+// recv-loop on an active slot. After this point we never call del at
+// runtime; Stop/Delete/Restart leave slots in place and a later Start
+// adopts or re-uses them.
+//
+// If a tunnel has no ResolvedEndpointIP yet (never started, DNS not done),
+// we conservatively keep all slots — better leak one slot than wipe a
+// live tunnel's proxy entry on a fresh install.
+func sweepOrphanKmodSlots(nwgOp *nwg.OperatorNativeWG, store *storage.AWGTunnelStore, appLog *logging.ScopedLogger) {
+	if ndmsinfo.SupportsWireguardASC() {
+		return
+	}
+	if nwgOp == nil || !nwgOp.KmodManager().IsLoaded() {
+		return
+	}
+	tunnels, err := store.List()
+	if err != nil {
+		appLog.Warn("sweep-orphans", "", "list tunnels: "+err.Error())
+		return
+	}
+	var known []nwg.KnownEndpoint
+	for i := range tunnels {
+		t := &tunnels[i]
+		if t.Backend != "nativewg" || t.ResolvedEndpointIP == "" {
+			continue
+		}
+		_, portStr, perr := net.SplitHostPort(t.Peer.Endpoint)
+		if perr != nil {
+			continue
+		}
+		port, perr := strconv.Atoi(portStr)
+		if perr != nil || port <= 0 {
+			continue
+		}
+		known = append(known, nwg.KnownEndpoint{IP: t.ResolvedEndpointIP, Port: port})
+	}
+	nwgOp.KmodManager().SweepOrphans(known)
 }
 
 // getInterfaceIP returns the first IPv4 address of the given interface.
