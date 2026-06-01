@@ -50,7 +50,7 @@ function normalizeKey(s: string): string {
 /** True when PresetIcon can render this slug (not the "?" fallback). */
 export function isPresetIconResolvable(slug: string): boolean {
 	if (!slug) return false;
-	if (isPresetInlineSlug(slug) || slug === 'instagram' || LUCIDE_SLUGS.has(slug)) return true;
+	if (isPresetInlineSlug(slug) || LUCIDE_SLUGS.has(slug)) return true;
 	return slug in brandIcons;
 }
 
