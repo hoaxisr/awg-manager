@@ -1842,3 +1842,42 @@ export interface DnsProxyInfo {
 }
 
 // #endregion
+
+// ─────────────────────────────────────────────
+// #region Preset Catalog
+// ─────────────────────────────────────────────
+
+export interface PresetRuleRef {
+	tag: string;
+	url: string;
+}
+export interface PresetDNSEngine {
+	domains?: string[];
+	subnets?: string[];
+	subscriptionUrl?: string;
+}
+export interface PresetSingboxEngine {
+	ruleSets?: PresetRuleRef[];
+	action: string;
+}
+export interface PresetHydraRouteEngine {
+	geoTags?: string[];
+}
+export interface PresetEngines {
+	dns?: PresetDNSEngine;
+	singbox?: PresetSingboxEngine;
+	hydraroute?: PresetHydraRouteEngine;
+}
+export interface CatalogPreset {
+	id: string;
+	name: string;
+	iconSlug: string;
+	category: string;
+	notice?: string;
+	featured?: boolean;
+	sensitive?: boolean;
+	origin: 'builtin' | 'user';
+	engines: PresetEngines;
+}
+
+// #endregion

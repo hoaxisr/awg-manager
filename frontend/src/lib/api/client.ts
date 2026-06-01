@@ -97,6 +97,7 @@ import type {
 	ManagedServerRestoreResponse,
 	RestoreOptions,
 	DnsProxyInfo,
+	CatalogPreset,
 } from '$lib/types';
 import { isMockDevMode } from '$lib/env';
 
@@ -1866,6 +1867,10 @@ class ApiClient {
 
 	async singboxRouterListPresets(): Promise<SingboxRouterPreset[]> {
 		return this.request('/singbox/router/presets/list');
+	}
+
+	async listPresets(): Promise<{ presets: CatalogPreset[] }> {
+		return this.request('/presets');
 	}
 
 	async singboxRouterApplyPreset(id: string, outbound: string): Promise<void> {
