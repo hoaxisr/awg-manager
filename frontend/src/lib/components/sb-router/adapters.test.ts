@@ -232,4 +232,23 @@ describe('singboxRuleToCard', () => {
     expect(card.title).toBe('Локальная сеть');
     expect(card.subtitle).toBe('RFC1918 · loopback · link-local · CGNAT');
   });
+
+  it('resolves icon and title from geosite rule_set via router presets', () => {
+    const presets = [{
+      id: 'openai',
+      name: 'OpenAI',
+      iconSlug: 'openai',
+      ruleSets: [{ tag: 'geosite-openai', url: 'https://example/openai.srs' }],
+      rules: [{ ruleSetRef: 'geosite-openai', actionTarget: 'tunnel' as const }],
+    }];
+    const card = singboxRuleToCard(
+      { rule_set: ['geosite-openai'], outbound: 'warp' },
+      0,
+      [{ tag: 'warp', type: 'wireguard' } as unknown as SingboxRouterOutbound],
+      {},
+      presets,
+    );
+    expect(card.serviceKey).toBe('openai');
+    expect(card.title).toBe('OpenAI');
+  });
 });

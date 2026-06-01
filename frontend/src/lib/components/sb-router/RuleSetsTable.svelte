@@ -72,11 +72,23 @@
         <div class="source" title={sourceFor(rs)}>{sourceFor(rs)}</div>
         <div class="detour">{rs.download_detour ?? '—'}</div>
         <div class="actions-col actions">
-          <button type="button" class="icon-btn" title="Редактировать" onclick={() => onEdit(rs.tag)}>
-            <Edit3 size={12} />
+          <button
+            type="button"
+            class="route-action-btn"
+            title={`Редактировать набор правил «${rs.tag}»`}
+            aria-label={`Редактировать набор правил ${rs.tag}`}
+            onclick={() => onEdit(rs.tag)}
+          >
+            <Edit3 size={15} />
           </button>
-          <button type="button" class="icon-btn danger" title="Удалить" onclick={() => onDelete(rs.tag)}>
-            <Trash2 size={12} />
+          <button
+            type="button"
+            class="route-action-btn danger"
+            title={`Удалить набор правил «${rs.tag}»`}
+            aria-label={`Удалить набор правил ${rs.tag}`}
+            onclick={() => onDelete(rs.tag)}
+          >
+            <Trash2 size={15} />
           </button>
         </div>
       </div>
@@ -141,7 +153,7 @@
   }
   .header, .row {
     display: grid;
-    grid-template-columns: 150px 76px minmax(0, 1fr) 84px 68px;
+    grid-template-columns: 150px 76px minmax(0, 1fr) 84px 76px;
     padding: 7px 14px;
     align-items: center;
     gap: 8px;
@@ -200,36 +212,124 @@
   .actions {
     display: flex;
     justify-content: flex-end;
-    gap: 2px;
+    gap: 4px;
   }
-  .icon-btn {
-    background: transparent;
-    border: 0;
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 4px;
-    border-radius: var(--radius-sm);
-    display: inline-flex;
-  }
-  .icon-btn:hover {
-    color: var(--text-primary);
-    background: var(--bg-tertiary);
-  }
-  .icon-btn.danger:hover {
-    color: var(--color-error, #dc2626);
-  }
+
   .empty {
     padding: 14px;
     color: var(--text-muted);
     text-align: center;
     font-size: 12px;
   }
-  @media (max-width: 768px) {
-    .table {
-      overflow-x: auto;
+  @media (max-width: 720px) {
+    .wrap {
+      gap: 0.625rem;
     }
-    .header, .row {
-      min-width: 600px;
+
+    .segment-row {
+      border-bottom: 0;
+      background: transparent;
+    }
+
+    .seg {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      background: var(--bg-tertiary);
+    }
+
+    .chip {
+      justify-content: center;
+      padding-inline: 0.35rem;
+      min-width: 0;
+    }
+
+    .table {
+      border: 0;
+      background: transparent;
+      overflow: visible;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.875rem;
+    }
+
+    .header {
+      display: none;
+    }
+
+    .row {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 36px;
+      grid-template-areas:
+        "tag type"
+        "source edit"
+        "detour delete";
+      align-items: center;
+      gap: 0.625rem;
+      padding: 0.875rem 1rem;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--bg-secondary);
+      overflow: hidden;
+    }
+
+    .row > div:nth-child(1) { grid-area: tag; }
+    .row > div:nth-child(2) { grid-area: type; justify-self: end; }
+    .row > div:nth-child(3) { grid-area: source; }
+    .row > div:nth-child(4) { grid-area: detour; }
+    .row > div:nth-child(5) { display: contents; }
+
+    .row > div:nth-child(5) .route-action-btn:first-child {
+      grid-area: edit;
+      justify-self: end;
+    }
+
+    .row > div:nth-child(5) .route-action-btn.danger {
+      grid-area: delete;
+      justify-self: end;
+    }
+
+    .tag {
+      font-size: 0.95rem;
+      line-height: 1.25;
+      white-space: normal;
+      overflow: visible;
+      text-overflow: initial;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .source,
+    .detour {
+      display: block;
+      width: 100%;
+      min-width: 0;
+      font-size: 0.78rem;
+      line-height: 1.35;
+      white-space: normal;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      padding: 0.625rem 0.75rem;
+      border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--bg-primary) 45%, transparent);
+      justify-self: stretch;
+      text-align: left;
+    }
+
+    .actions {
+      display: contents;
+    }
+
+    .actions-col {
+      text-align: left;
     }
   }
   /* Bare mode для embed внутри SidePanel — parent даёт chrome */

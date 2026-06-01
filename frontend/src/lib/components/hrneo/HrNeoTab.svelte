@@ -20,6 +20,7 @@
 	import HrNeoSettingsView from './HrNeoSettingsView.svelte';
 	import HrNeoDisabledTagsView from './HrNeoDisabledTagsView.svelte';
 	import HrNeoEditModal from './HrNeoEditModal.svelte';
+	import { IconPickerModal } from '$lib/components/dnsroutes';
 
 	interface Props {
 		dnsRoutes: DnsRoute[];
@@ -261,10 +262,17 @@
 	}
 
 	let pendingDelete = $state<DnsRoute | null>(null);
+	let iconPickerOpen = $state(false);
+	let pickingForRule = $state<DnsRoute | null>(null);
 	let deleting = $state(false);
 
 	function handleDelete(r: DnsRoute) {
 		pendingDelete = r;
+	}
+
+	function openIconPicker(rule: DnsRoute) {
+		pickingForRule = rule;
+		iconPickerOpen = true;
 	}
 
 	async function confirmDelete() {
@@ -381,6 +389,7 @@
 					onaddrule={openNewRuleForSelectedTarget}
 					oneditrule={openEditRule}
 					ondeleterule={handleDelete}
+					oniconrule={openIconPicker}
 				/>
 			{:else if selection?.type === 'service' && selection.item === 'disabled-tags'}
 				<HrNeoDisabledTagsView tags={oversizedTags} {maxelem} />
@@ -429,6 +438,7 @@
 							}}
 							oneditrule={openEditRule}
 							ondeleterule={handleDelete}
+							oniconrule={openIconPicker}
 						/>
 					</div>
 				</details>
@@ -480,6 +490,31 @@
 			</Button>
 		{/snippet}
 	</Modal>
+{/if}
+
+{#if pickingForRule}
+	<IconPickerModal
+		open={iconPickerOpen}
+		iconUrl={pickingForRule.iconUrl}
+		ruleName={pickingForRule.name}
+		onclose={() => {
+			iconPickerOpen = false;
+			pickingForRule = null;
+		}}
+		onapply={async (newUrl) => {
+			if (!pickingForRule) return;
+			const rule = pickingForRule;
+			iconPickerOpen = false;
+			pickingForRule = null;
+			try {
+				await api.updateDnsRoute(rule.id, { ...rule, iconUrl: newUrl ?? undefined });
+				invalidateAllRouting();
+				notifications.success(newUrl ? 'Иконка изменена' : 'Иконка сброшена');
+			} catch (e: unknown) {
+				notifications.error(e instanceof Error ? e.message : 'Не удалось обновить иконку');
+			}
+		}}
+	/>
 {/if}
 
 <style>

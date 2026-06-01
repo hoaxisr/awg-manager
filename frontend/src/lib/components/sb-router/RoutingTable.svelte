@@ -106,19 +106,38 @@
       <div class="idx">{row.idx}</div>
       <div class="reorder">
         {#if !row.sys}
-          <button type="button" class="icon-btn" title="Вверх" disabled={row.idx === 0} onclick={() => onMove(row.idx, 'up')}>
-            <ChevronUp size={12} />
+          <button
+            type="button"
+            class="route-reorder-btn"
+            title={`Поднять правило #${row.idx}`}
+            aria-label={`Поднять правило ${row.idx}`}
+            disabled={row.idx === 0}
+            onclick={() => onMove(row.idx, 'up')}
+          >
+            <ChevronUp size={15} />
           </button>
-          <button type="button" class="icon-btn" title="Вниз" disabled={row.idx === rules.length - 1} onclick={() => onMove(row.idx, 'down')}>
-            <ChevronDown size={12} />
+          <button
+            type="button"
+            class="route-reorder-btn"
+            title={`Опустить правило #${row.idx}`}
+            aria-label={`Опустить правило ${row.idx}`}
+            disabled={row.idx === rules.length - 1}
+            onclick={() => onMove(row.idx, 'down')}
+          >
+            <ChevronDown size={15} />
           </button>
         {/if}
       </div>
-      <div>
+      <div class="action-badge-cell">
+        <span class="mobile-label">Действие</span>
         <Badge variant={row.actionVariant} size="sm" mono>{row.actionLabel}</Badge>
       </div>
-      <div class="matchers" title={row.matchers}>{row.matchers}</div>
-      <div>
+      <div class="matchers" title={row.matchers}>
+        <span class="mobile-label">Условия</span>
+        <span class="matcher-text">{row.matchers}</span>
+      </div>
+      <div class="outbound-cell">
+        <span class="mobile-label">Выход</span>
         {#if row.outboundKind === 'none'}
           <span class="dash">—</span>
         {:else if row.outboundKind === 'direct'}
@@ -131,11 +150,23 @@
       </div>
       <div class="actions-col actions">
         {#if !row.sys}
-          <button type="button" class="icon-btn" title={`Редактировать правило #${row.idx}`} onclick={() => onEdit(row.idx)}>
-            <Edit3 size={12} />
+          <button
+            type="button"
+            class="route-action-btn"
+            title={`Редактировать правило #${row.idx}`}
+            aria-label={`Редактировать правило ${row.idx}`}
+            onclick={() => onEdit(row.idx)}
+          >
+            <Edit3 size={15} />
           </button>
-          <button type="button" class="icon-btn danger" title={`Удалить правило #${row.idx}`} onclick={() => onDelete(row.idx)}>
-            <Trash2 size={12} />
+          <button
+            type="button"
+            class="route-action-btn danger"
+            title={`Удалить правило #${row.idx}`}
+            aria-label={`Удалить правило ${row.idx}`}
+            onclick={() => onDelete(row.idx)}
+          >
+            <Trash2 size={15} />
           </button>
         {/if}
       </div>
@@ -155,7 +186,7 @@
   }
   .header, .row {
     display: grid;
-    grid-template-columns: 24px 52px 92px minmax(0, 1fr) 96px 72px;
+    grid-template-columns: 24px 64px 92px minmax(0, 1fr) 96px 76px;
     align-items: center;
     gap: 8px;
     padding: 8px 14px;
@@ -171,6 +202,7 @@
   }
   .header > div:nth-child(2),
   .header > div:nth-child(3),
+  .row > div:nth-child(2),
   .row > div:nth-child(3),
   .header > div:nth-child(4),
   .header > div:nth-child(5) {
@@ -203,6 +235,7 @@
   .reorder {
     display: flex;
     gap: 2px;
+    justify-content: center;
   }
   .matchers {
     min-width: 0;
@@ -214,6 +247,16 @@
     word-break: break-word;
     line-height: 1.45;
   }
+  .mobile-label {
+    display: none;
+  }
+  .matcher-text {
+    display: contents;
+  }
+  .action-badge-cell {
+    min-width: 0;
+    justify-self: center;
+  }
   .dash {
     color: var(--text-muted);
   }
@@ -223,29 +266,7 @@
   .actions {
     display: flex;
     justify-content: flex-end;
-    gap: 2px;
-  }
-  .icon-btn {
-    background: transparent;
-    border: 0;
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 4px;
-    border-radius: var(--radius-sm);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .icon-btn:hover:not(:disabled) {
-    color: var(--text-primary);
-    background: var(--bg-tertiary);
-  }
-  .icon-btn:disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
-  }
-  .icon-btn.danger:hover {
-    color: var(--color-error, #dc2626);
+    gap: 4px;
   }
   .empty {
     padding: 14px;
@@ -255,13 +276,132 @@
   }
   @media (max-width: 768px) {
     .table {
-      overflow-x: auto;
+      overflow-x: visible;
+      border: 0;
+      background: transparent;
     }
-    .header, .row {
-      grid-template-columns: 24px 50px 88px 1fr 60px;
-    }
-    .header > div:nth-child(5), .row > div:nth-child(5) {
+    .header {
       display: none;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      grid-template-areas:
+        "idx match actions"
+        "idx action outbound"
+        "idx reorder reorder";
+      gap: 6px 8px;
+      padding: 8px 10px;
+      margin-bottom: 6px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-secondary);
+      min-width: 0;
+    }
+    .row:last-child {
+      margin-bottom: 0;
+    }
+    .row.sys .reorder {
+      display: none;
+    }
+    .row.sys {
+      grid-template-areas:
+        "idx match actions"
+        "idx action outbound";
+    }
+    .idx {
+      grid-area: idx;
+      align-self: start;
+      padding-top: 2px;
+      font-size: 11px;
+      text-align: center;
+    }
+    .matchers {
+      grid-area: match;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      white-space: normal;
+      overflow-wrap: break-word;
+      word-break: break-word;
+      line-height: 1.35;
+    }
+    .matcher-text {
+      display: inline;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+    .action-badge-cell {
+      grid-area: action;
+      justify-self: start;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .outbound-cell {
+      grid-area: outbound;
+      justify-self: end;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .outbound-cell :global(.badge) {
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .actions-col {
+      grid-area: actions;
+      justify-self: end;
+      width: auto;
+      min-width: 0;
+      text-align: right;
+    }
+    .actions {
+      display: flex;
+      flex-direction: row;
+      justify-content: flex-end;
+      gap: 4px;
+    }
+    .reorder {
+      grid-area: reorder;
+      justify-content: flex-start;
+      gap: 4px;
+      padding-left: 0;
+    }
+    .reorder::before {
+      content: 'Порядок';
+      align-self: center;
+      margin-right: 4px;
+      font-size: 9px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .mobile-label {
+      display: inline;
+      font-size: 9px;
+      line-height: 1;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .route-reorder-btn,
+    .route-action-btn {
+      width: 28px;
+      min-width: 28px;
+      height: 24px;
+      min-height: 24px;
+    }
+    .route-reorder-btn :global(svg),
+    .route-action-btn :global(svg) {
+      width: 13px;
+      height: 13px;
     }
   }
   /* Bare mode для embed внутри SidePanel — parent даёт chrome */

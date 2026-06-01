@@ -24,6 +24,7 @@ const NAME_ALIASES: Record<string, string> = {
 	'twitter/x': 'x',
 	twitter: 'x',
 	'google gemini': 'googlegemini',
+	'google-gemini': 'googlegemini',
 	gemini: 'googlegemini',
 	торренты: 'torrents',
 	'заблокировано в рф': 'rkn',
@@ -41,7 +42,7 @@ const NAME_ALIASES: Record<string, string> = {
 };
 
 function normalizeKey(s: string): string {
-	return s.trim().toLowerCase();
+	return s.trim().toLowerCase().replace(/^geo(site|ip)[-_]/, '');
 }
 
 /** True when PresetIcon can render this slug (not the "?" fallback). */

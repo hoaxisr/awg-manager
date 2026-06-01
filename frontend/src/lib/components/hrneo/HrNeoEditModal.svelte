@@ -424,7 +424,7 @@
 				{/if}
 			</div>
 			<Button variant="ghost" size="sm" onclick={() => (iconPickerOpen = true)}>
-				{iconUrl ? 'Сменить' : 'Загрузить иконку'}
+				{iconUrl ? 'Сменить иконку' : 'Выбрать иконку'}
 			</Button>
 		</div>
 	</div>

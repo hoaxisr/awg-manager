@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import '@skeletonlabs/skeleton';
+@import './lib/styles/route-actions.css';
 
 /* ─── Self-hosted IBM Plex (Latin + Cyrillic subsets) ─── */
 @font-face {

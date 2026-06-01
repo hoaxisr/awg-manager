@@ -69,11 +69,44 @@ describe('detectServiceKey', () => {
     expect(detectServiceKey(rule({ rule_set: ['geosite-ru'] }))).toBe('russian-services');
   });
 
-  it('domain_suffix takes precedence over rule_set', () => {
+  it('domain_suffix takes precedence over rule_set when rule_set is empty', () => {
     expect(detectServiceKey(rule({
       domain_suffix: ['netflix.com'],
-      rule_set: ['geoip-ru'],
+      rule_set: [],
     }))).toBe('netflix');
+  });
+
+  it('rule_set takes precedence over domain_suffix (geosite-youtube beats googleapis.com)', () => {
+    const presets = [{
+      id: 'youtube',
+      name: 'YouTube',
+      iconSlug: 'youtube',
+      ruleSets: [{ tag: 'geosite-youtube', url: 'https://example/youtube.srs' }],
+      rules: [{ ruleSetRef: 'geosite-youtube', actionTarget: 'tunnel' as const }],
+    }];
+    expect(detectServiceKey(rule({
+      rule_set: ['geosite-youtube'],
+      domain_suffix: ['googleapis.com'],
+    }), presets)).toBe('youtube');
+  });
+
+  it('detects youtube for ytimg.l.google.com (longest suffix, not bare google.com)', () => {
+    expect(detectServiceKey(rule({ domain_suffix: ['ytimg.l.google.com'] }))).toBe('youtube');
+  });
+
+  it('detects from rule_set tag without geosite- prefix', () => {
+    const presets = [{
+      id: 'netflix',
+      name: 'Netflix',
+      iconSlug: 'netflix',
+      ruleSets: [{ tag: 'netflix-remote', url: 'https://example/netflix.srs' }],
+      rules: [{ ruleSetRef: 'netflix-remote', actionTarget: 'tunnel' as const }],
+    }];
+    expect(detectServiceKey(rule({ rule_set: ['netflix-remote'] }), presets)).toBe('netflix');
+  });
+
+  it('detects from bare preset id rule_set without geosite- via SERVICE_PRESETS', () => {
+    expect(detectServiceKey(rule({ rule_set: ['telegram'] }))).toBe('telegram');
   });
 
   it('falls back to "custom" for unknown domain', () => {
@@ -86,5 +119,42 @@ describe('detectServiceKey', () => {
 
   it('handles empty arrays', () => {
     expect(detectServiceKey(rule({ domain_suffix: [], rule_set: [] }))).toBe('custom');
+  });
+
+  it('detects netflix from geosite-netflix rule_set via router presets', () => {
+    const presets = [{
+      id: 'netflix',
+      name: 'Netflix',
+      iconSlug: 'netflix',
+      ruleSets: [{ tag: 'geosite-netflix', url: 'https://example/netflix.srs' }],
+      rules: [{ ruleSetRef: 'geosite-netflix', actionTarget: 'tunnel' as const }],
+    }];
+    expect(detectServiceKey(rule({ rule_set: ['geosite-netflix'] }), presets)).toBe('netflix');
+  });
+
+  it('detects openai from geosite-openai (id mismatch with SERVICE_PRESETS chatgpt)', () => {
+    const presets = [{
+      id: 'openai',
+      name: 'OpenAI',
+      iconSlug: 'openai',
+      ruleSets: [{ tag: 'geosite-openai', url: 'https://example/openai.srs' }],
+      rules: [{ ruleSetRef: 'geosite-openai', actionTarget: 'tunnel' as const }],
+    }];
+    expect(detectServiceKey(rule({ rule_set: ['geosite-openai'] }), presets)).toBe('openai');
+  });
+
+  it('detects gemini from geosite-google-gemini legacy tag', () => {
+    const presets = [{
+      id: 'gemini',
+      name: 'Gemini',
+      iconSlug: 'googlegemini',
+      ruleSets: [{ tag: 'geosite-google-gemini', url: 'https://example/gemini.srs' }],
+      rules: [{ ruleSetRef: 'geosite-google-gemini', actionTarget: 'tunnel' as const }],
+    }];
+    expect(detectServiceKey(rule({ rule_set: ['geosite-google-gemini'] }), presets)).toBe('googlegemini');
+  });
+
+  it('returns custom for geosite rule_set without router presets', () => {
+    expect(detectServiceKey(rule({ rule_set: ['geosite-openai'] }))).toBe('custom');
   });
 });

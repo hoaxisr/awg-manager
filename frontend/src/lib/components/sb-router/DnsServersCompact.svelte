@@ -148,16 +148,31 @@
   .rule-row {
     font-family: var(--font-mono);
     font-size: 11.5px;
+    align-items: flex-start;
   }
   .rule-matchers {
-    color: var(--text-secondary);
     flex: 1;
+    min-width: 0;
+    color: var(--text-secondary);
+    white-space: normal;
+    overflow: hidden;
+    text-overflow: initial;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    line-height: 1.25;
+    display: -webkit-box;
+    line-clamp: 2;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .rule-server {
+    flex-shrink: 0;
+    color: var(--accent);
+    min-width: 0;
+    max-width: 108px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .rule-server {
-    color: var(--accent);
   }
   .empty {
     padding: 14px;

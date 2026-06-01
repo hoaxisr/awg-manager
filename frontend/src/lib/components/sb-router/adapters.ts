@@ -10,14 +10,14 @@
  * (всё остальное где outbound найден в списке).
  */
 
-import type { SingboxRouterRule, SingboxRouterOutbound } from '$lib/types';
+import type { SingboxRouterPreset, SingboxRouterRule, SingboxRouterOutbound } from '$lib/types';
 import type {
   MatcherChip,
   OutboundDisplay,
   RuleAction,
   RuleCardData,
 } from './types';
-import { detectServiceKey } from './serviceDetection';
+import { detectService } from './serviceDetection';
 
 /* ─── System rule detection ─────────────────────────────────────────── */
 
@@ -111,7 +111,13 @@ export function extractMatcherChips(
 
 /* ─── Title fallback ────────────────────────────────────────────────── */
 
-function fallbackTitle(rule: SingboxRouterRule, serviceKey: string, index: number): string {
+function fallbackTitle(
+  rule: SingboxRouterRule,
+  serviceKey: string,
+  index: number,
+  displayName?: string,
+): string {
+  if (displayName) return displayName;
   if (serviceKey !== 'custom') {
     return serviceKey.charAt(0).toUpperCase() + serviceKey.slice(1).replace('_', ' ');
   }
@@ -153,13 +159,15 @@ export function singboxRuleToCard(
   index: number,
   outbounds: SingboxRouterOutbound[],
   rulesetLabels: Record<string, string>,
+  routerPresets: SingboxRouterPreset[] = [],
 ): RuleCardData {
-  const serviceKey = detectServiceKey(rule);
+  const detected = detectService(rule, routerPresets);
+  const serviceKey = detected.iconSlug;
   const action = mapAction(rule);
   const outbound = resolveOutboundDisplay(rule.outbound, action, outbounds);
   const matchers = extractMatcherChips(rule, rulesetLabels);
   const isSystem = isSystemRule(rule);
-  const title = fallbackTitle(rule, serviceKey, index);
+  const title = fallbackTitle(rule, serviceKey, index, detected.displayName);
   const subtitle = isSystem
     ? systemSubtitle(rule)
     : matchers.length > 4

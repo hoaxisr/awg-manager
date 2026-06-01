@@ -1,0 +1,84 @@
+/* Shared CRUD action buttons for routing / NDMS / sing-box router views */
+.route-action-btn {
+	--route-action-color: var(--accent);
+	--route-idle-color: var(--text-muted);
+	background: transparent;
+	border: 1px solid color-mix(in srgb, var(--route-idle-color) 42%, var(--border));
+	color: var(--route-idle-color);
+	padding: 6px;
+	border-radius: 6px;
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	box-shadow: 0 0 6px color-mix(in srgb, var(--route-idle-color) 16%, transparent);
+	transition:
+		color 0.15s,
+		border-color 0.15s,
+		background 0.15s,
+		box-shadow 0.15s;
+}
+
+.route-action-btn svg {
+	width: 15px;
+	height: 15px;
+	flex-shrink: 0;
+}
+
+.route-action-btn:hover:not(:disabled) {
+	color: var(--route-action-color);
+	border-color: color-mix(in srgb, var(--route-action-color) 72%, transparent);
+	background: color-mix(in srgb, var(--route-action-color) 10%, transparent);
+	box-shadow: 0 0 10px color-mix(in srgb, var(--route-action-color) 30%, transparent);
+}
+
+.route-action-btn.danger {
+	--route-action-color: var(--error, var(--color-error, #dc2626));
+}
+
+.route-action-btn.success {
+	--route-action-color: var(--success, var(--color-success, #22c55e));
+}
+
+.route-action-btn:focus-visible {
+	outline: 1px solid color-mix(in srgb, var(--route-action-color) 85%, transparent);
+	outline-offset: 2px;
+}
+
+.route-action-btn:disabled {
+	opacity: 0.3;
+	cursor: not-allowed;
+	box-shadow: none;
+}
+
+/* Ghost up/down reorder controls (expert routing table) */
+.route-reorder-btn {
+	background: transparent;
+	border: none;
+	color: var(--text-muted);
+	padding: 4px;
+	border-radius: 4px;
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	transition: color 0.15s, background 0.15s;
+}
+
+.route-reorder-btn svg {
+	width: 15px;
+	height: 15px;
+	flex-shrink: 0;
+}
+
+.route-reorder-btn:hover:not(:disabled) {
+	color: var(--text-primary);
+	background: var(--bg-tertiary);
+}
+
+.route-reorder-btn:disabled {
+	opacity: 0.3;
+	cursor: not-allowed;
+}

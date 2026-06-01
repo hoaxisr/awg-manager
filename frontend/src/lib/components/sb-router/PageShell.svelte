@@ -63,16 +63,20 @@
 
     <LiveConnectionsChip />
 
-    {#if onOpenJson}
-      <button type="button" class="icon-btn" onclick={onOpenJson} aria-label="JSON-конфиг" title="JSON-конфиг">
-        <FileJson size={16} />
-      </button>
-    {/if}
-    {#if onOpenInspector}
-      <button type="button" class="icon-btn" onclick={onOpenInspector} aria-label="Инспектор маршрута" title="Инспектор маршрута">
-        <Search size={16} />
-      </button>
-    {/if}
+    <div class="header-actions">
+      {#if onOpenInspector}
+        <button type="button" class="icon-btn" onclick={onOpenInspector} aria-label="Инспектор маршрута" title="Инспектор маршрута">
+          <span class="action-icon"><Search size={16} /></span>
+          <span class="action-text">Инспектор</span>
+        </button>
+      {/if}
+      {#if onOpenJson}
+        <button type="button" class="icon-btn" onclick={onOpenJson} aria-label="JSON-конфиг" title="JSON-конфиг">
+          <span class="action-icon"><FileJson size={16} /></span>
+          <span class="action-text">Конфиг</span>
+        </button>
+      {/if}
+    </div>
 
     <div class="mode-toggle" role="tablist" aria-label="Режим интерфейса">
       <button
@@ -126,6 +130,14 @@
   }
 
   .status-slot { flex-shrink: 0; }
+  .status-slot :global(.badge) {
+    min-height: 22px;
+    padding-top: 0.1875rem;
+    padding-bottom: 0.1875rem;
+    display: inline-flex;
+    align-items: center;
+    line-height: 1.1;
+  }
 
   .icon-btn {
     background: transparent;
@@ -139,9 +151,17 @@
     justify-content: center;
     flex-shrink: 0;
   }
+  .action-text { display: none; }
   .icon-btn:hover {
     color: var(--text-primary);
     background: var(--bg-tertiary);
+  }
+
+  .header-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
   }
 
   .mode-toggle {
@@ -202,12 +222,8 @@
     .title {
       font-size: 18px;
     }
-    .status-slot {
-      align-self: flex-start;
-    }
     .pill-button {
       width: 100%;
-      justify-content: flex-start;
     }
     .mode-toggle {
       width: 100%;
@@ -220,6 +236,73 @@
     }
     .sb-body {
       padding: 0 12px;
+    }
+  }
+
+  @media (max-width: 700px) {
+    .sb-header {
+      display: grid;
+      grid-template-columns: 1fr;
+      align-items: stretch;
+      gap: 0.625rem;
+    }
+
+    .status-slot {
+      width: 100%;
+      min-width: 0;
+      align-self: stretch;
+    }
+
+    .pill-button {
+      width: 100%;
+      min-width: 0;
+      min-height: 36px;
+      display: flex;
+      align-items: stretch;
+      justify-content: stretch;
+      padding: 0;
+    }
+
+    .status-slot :global(.badge) {
+      width: 100%;
+      min-width: 0;
+      min-height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 0.625rem;
+      line-height: 1.1;
+      border-radius: var(--radius-sm);
+    }
+
+    .header-actions {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      align-items: stretch;
+      gap: 0.5rem;
+      width: 100%;
+      min-width: 0;
+    }
+
+    .header-actions .icon-btn,
+    .header-actions :global(button) {
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+      min-height: 36px;
+      justify-content: center;
+      white-space: nowrap;
+    }
+
+    .header-actions .icon-btn {
+      gap: 0.375rem;
+      padding-inline: 0.625rem;
+    }
+
+    .header-actions .action-text {
+      display: inline;
+      font-size: var(--fs-sm);
+      font-weight: 500;
     }
   }
 </style>

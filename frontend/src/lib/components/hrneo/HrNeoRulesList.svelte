@@ -12,6 +12,7 @@
 		onaddrule: () => void;
 		oneditrule: (rule: DnsRoute) => void;
 		ondeleterule: (rule: DnsRoute) => void;
+		oniconrule?: (rule: DnsRoute) => void;
 	}
 
 	let {
@@ -22,6 +23,7 @@
 		onaddrule,
 		oneditrule,
 		ondeleterule,
+		oniconrule,
 	}: Props = $props();
 
 	let sortedRules = $derived([...rules].sort((a, b) => a.name.localeCompare(b.name)));
@@ -53,6 +55,7 @@
 					broken={brokenRuleIds.has(rule.id)}
 					onedit={() => oneditrule(rule)}
 					ondelete={() => ondeleterule(rule)}
+					onicon={oniconrule ? () => oniconrule(rule) : undefined}
 				/>
 			{/each}
 		</div>

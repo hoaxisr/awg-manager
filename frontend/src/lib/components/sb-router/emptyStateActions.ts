@@ -77,9 +77,18 @@ export async function syncTunnelDnsRule(): Promise<void> {
   const agg = collectTunnelDomainMatchers(rules);
   const hasAny = agg.rule_set.length || agg.domain_suffix.length;
 
+  const servers = await api.singboxRouterListDNSServers();
+  const hasTunnelServer = servers.some((s) => s.tag === DNS_TUNNEL_TAG);
   const dnsRules = await api.singboxRouterListDNSRules();
   const tunnelIdx: number[] = [];
   dnsRules.forEach((r, i) => { if (r.server === DNS_TUNNEL_TAG) tunnelIdx.push(i); });
+
+  if (!hasTunnelServer) {
+    for (let k = tunnelIdx.length - 1; k >= 0; k--) {
+      await api.singboxRouterDeleteDNSRule(tunnelIdx[k]);
+    }
+    return;
+  }
 
   if (!hasAny) {
     for (let k = tunnelIdx.length - 1; k >= 0; k--) {

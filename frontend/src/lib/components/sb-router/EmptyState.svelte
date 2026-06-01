@@ -157,4 +157,105 @@
   .picker-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
   .picker-chev { color: var(--text-muted); font-size: 18px; }
   .enable-hint { margin: 0 0 12px; font-size: 13px; color: var(--text-secondary); }
+
+  @media (max-width: 720px) {
+    .wrap {
+      min-width: 0;
+      max-width: 100%;
+      padding: 0.875rem;
+      overflow: hidden;
+    }
+
+    .stepper {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      align-items: stretch;
+      gap: 0.5rem;
+      width: 100%;
+      min-width: 0;
+      margin: 0.875rem 0 1rem;
+      padding: 0.75rem;
+      overflow: hidden;
+    }
+
+    .connector {
+      display: none;
+    }
+
+    .stepper :global(button),
+    .stepper :global(.step),
+    .stepper :global(.wizard-step) {
+      min-width: 0;
+      width: 100%;
+      justify-content: center;
+      padding-inline: 0.5rem;
+    }
+
+    .stepper :global(.label),
+    .stepper :global(.step-label),
+    .stepper :global(.wizard-step-label) {
+      min-width: 0;
+      max-width: 100%;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      text-align: center;
+      line-height: 1.15;
+      font-size: 0.75rem;
+    }
+
+    :global(.wz-step),
+    :global(.wizard-step-card),
+    :global(.step-card),
+    :global(.preset-step-card) {
+      min-width: 0;
+      max-width: 100%;
+      overflow: hidden;
+    }
+
+    .tunnel-chips,
+    .picker-btn,
+    :global(.selected-row),
+    :global(.sel-row) {
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .t-chip {
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .t-chip .tag,
+    .t-chip .ttype,
+    .picker-title,
+    .picker-sub,
+    .enable-hint {
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .picker-btn {
+      grid-template-columns: 36px minmax(0, 1fr) auto;
+      gap: 0.625rem;
+      padding: 0.75rem;
+    }
+
+    .picker-icon {
+      width: 36px;
+      height: 36px;
+    }
+
+    .picker-chev {
+      align-self: center;
+    }
+
+    :global(.wz-step :global(button)),
+    :global(.wz-step :global(.btn)),
+    :global(.wz-step :global(select)),
+    :global(.wz-step :global(.dropdown)),
+    :global(.wz-step :global(.select)) {
+      min-width: 0;
+      max-width: 100%;
+    }
+  }
 </style>

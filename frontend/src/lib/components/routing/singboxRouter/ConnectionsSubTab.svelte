@@ -46,8 +46,12 @@
 		Array.from(new Set(snapshot.connections.map((c) => c.rule).filter(Boolean))).sort()
 	);
 
-	const totalUp = $derived(filteredConns.reduce((s, c) => s + c.upload, 0));
-	const totalDown = $derived(filteredConns.reduce((s, c) => s + c.download, 0));
+const totalUp = $derived(filteredConns.reduce((s, c) => s + c.upload, 0));
+const totalDown = $derived(filteredConns.reduce((s, c) => s + c.download, 0));
+const showEmptyState = $derived(snapshot.connections.length === 0);
+const emptyStateText = $derived(
+	wsStatus === 'open' ? 'Активных соединений сейчас нет' : 'Ожидаем поток Clash API…'
+);
 
 	const statusLabel = $derived.by(() => {
 		void tick; // re-evaluate every tick
@@ -168,13 +172,17 @@
 
 <ConnectionsBulkBar visible={filteredConns} total={snapshot.connectionsTotal} onConfirmKill={killVisible} />
 
-<ConnectionsTable
-	connections={filteredConns}
-	{sortBy} {sortDir} {onSortChange}
-	onKill={killOne}
-	{page} {pageSize}
-	onPageChange={(p) => (page = p)}
-/>
+{#if showEmptyState}
+	<div class="empty-state">{emptyStateText}</div>
+{:else}
+	<ConnectionsTable
+		connections={filteredConns}
+		{sortBy} {sortDir} {onSortChange}
+		onKill={killOne}
+		{page} {pageSize}
+		onPageChange={(p) => (page = p)}
+	/>
+{/if}
 
 <style>
 	.totals {
@@ -216,6 +224,15 @@
 	.status-ok .dot-icon { color: #3d9970; }
 	.status-warn .dot-icon { color: #dab856; }
 	.status-err .dot-icon { color: #ff6b6b; }
+	.empty-state {
+		margin-top: 10px;
+		padding: 12px;
+		border: 1px dashed var(--color-border);
+		border-radius: 8px;
+		background: var(--color-bg-secondary);
+		color: var(--color-text-muted);
+		font-size: 13px;
+	}
 
 	@media (max-width: 768px) {
 		.totals {

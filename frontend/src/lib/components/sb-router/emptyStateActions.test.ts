@@ -76,6 +76,9 @@ describe('syncTunnelDnsRule', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('туннельные правила → upsert union в dns-tunnel (add, если правила нет)', async () => {
+    (api.singboxRouterListDNSServers as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { tag: 'dns-tunnel', type: 'udp', server: '9.9.9.9', detour: 'wg-nl' },
+    ]);
     (api.singboxRouterListRules as ReturnType<typeof vi.fn>).mockResolvedValue([
       { rule_set: ['geosite-netflix'], outbound: 'wg-nl', action: 'route' },
       { domain_suffix: ['x.com'], outbound: 'wg-nl', action: 'route' },
@@ -90,6 +93,9 @@ describe('syncTunnelDnsRule', () => {
   });
 
   it('существующее dns-tunnel правило обновляется (не добавляется); лишние удаляются', async () => {
+    (api.singboxRouterListDNSServers as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { tag: 'dns-tunnel', type: 'udp', server: '9.9.9.9', detour: 'wg-nl' },
+    ]);
     (api.singboxRouterListRules as ReturnType<typeof vi.fn>).mockResolvedValue([
       { rule_set: ['geosite-netflix'], outbound: 'wg-nl', action: 'route' },
     ]);

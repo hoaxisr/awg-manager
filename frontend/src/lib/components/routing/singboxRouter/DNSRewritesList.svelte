@@ -2,7 +2,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Button, ConfirmModal } from '$lib/components/ui';
-	import { Trash2 } from 'lucide-svelte';
+	import { Trash2, Edit3 } from 'lucide-svelte';
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
 	import type { SingboxRouterDNSRewrite } from '$lib/types';
 	import DNSRewriteEditModal from './DNSRewriteEditModal.svelte';
@@ -68,11 +68,27 @@
 	<div class="rows">
 		{#each rewrites as rw, i (i)}
 			<div class="row">
-				<code class="pat mono">{rw.pattern}</code>
+				<code class="pat mono" title={rw.pattern}>{rw.pattern}</code>
 				<span class="arrow">→</span>
-				<span class="ips mono">{rw.ips.join(', ')}</span>
-				<button class="icon-btn" onclick={() => (editIndex = i)} aria-label="Редактировать">✎</button>
-				<button class="icon-btn danger" onclick={() => requestDelete(i)} aria-label="Удалить" title="Удалить"><Trash2 size={14} /></button>
+				<span class="ips mono" title={rw.ips.join(', ')}>{rw.ips.join(', ')}</span>
+				<button
+					type="button"
+					class="route-action-btn"
+					onclick={() => (editIndex = i)}
+					aria-label={`Редактировать DNS-перезапись ${rw.pattern}`}
+					title={`Редактировать DNS-перезапись «${rw.pattern}»`}
+				>
+					<Edit3 size={15} />
+				</button>
+				<button
+					type="button"
+					class="route-action-btn danger"
+					onclick={() => requestDelete(i)}
+					aria-label={`Удалить DNS-перезапись ${rw.pattern}`}
+					title={`Удалить DNS-перезапись «${rw.pattern}»`}
+				>
+					<Trash2 size={15} />
+				</button>
 			</div>
 		{/each}
 	</div>
@@ -131,7 +147,7 @@
 	}
 	.col-header {
 		display: grid;
-		grid-template-columns: 1fr 16px 1fr 24px 24px;
+		grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr) 36px 36px;
 		gap: 0.4rem;
 		padding: 0.25rem 0.75rem;
 		font-size: 0.65rem;
@@ -142,53 +158,62 @@
 	.rows {
 		display: grid;
 		gap: 0.2rem;
+		min-width: 0;
 	}
 	.row {
 		display: grid;
-		grid-template-columns: 1fr 16px 1fr 24px 24px;
+		grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr) 36px 36px;
 		gap: 0.4rem;
 		align-items: center;
+		min-width: 0;
 		background: var(--surface-bg);
 		padding: 0.5rem 0.75rem;
 		border-radius: 4px;
+		overflow: hidden;
 	}
+
 	.mono {
 		font-family: ui-monospace, monospace;
 		font-size: 0.8rem;
 	}
 	.pat {
 		color: var(--text);
+		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-	}
-	.arrow {
-		opacity: 0.5;
-		text-align: center;
 	}
 	.ips {
 		color: var(--success, #22c55e);
+		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-	.icon-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		background: transparent;
-		border: none;
-		color: var(--muted-text);
-		cursor: pointer;
-		font-size: 0.9rem;
-		padding: 0.15rem;
-		border-radius: 4px;
-	}
-	.icon-btn:hover {
-		color: var(--text);
-		background: var(--surface-bg);
-	}
-	.icon-btn.danger:hover {
-		color: var(--danger, #dc2626);
+	@media (max-width: 720px) {
+		.col-header {
+			display: none;
+		}
+
+		.row {
+			grid-template-columns: minmax(0, 1fr) 40px;
+			grid-template-areas:
+				'pattern edit'
+				'ips delete';
+			gap: 0.5rem 0.625rem;
+			padding: 0.75rem 0.875rem;
+			border: 1px solid var(--border);
+			overflow: hidden;
+		}
+
+		.pat { grid-area: pattern; }
+		.ips { grid-area: ips; }
+		.arrow { display: none; }
+		.route-action-btn:first-of-type { grid-area: edit; }
+		.route-action-btn.danger { grid-area: delete; }
+		.route-action-btn {
+			justify-self: end;
+			align-self: center;
+		}
 	}
 </style>

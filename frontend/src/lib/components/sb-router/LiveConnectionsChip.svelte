@@ -23,7 +23,25 @@
   const totalUp = $derived(snapshot.connections.reduce((s, c) => s + c.upload, 0));
   const totalDown = $derived(snapshot.connections.reduce((s, c) => s + c.download, 0));
   const count = $derived(snapshot.connectionsTotal);
-  let visible = $derived(engineOn && count > 0);
+  let visible = $derived(engineOn);
+  let isStale = $derived(wsStatus !== 'open');
+  let stateTitle = $derived.by(() => {
+    if (wsStatus === 'open') {
+      return count > 0 ? 'Открыть живые соединения' : 'Живые соединения: активных подключений нет';
+    }
+    if (wsStatus === 'connecting') return 'Живые соединения: подключение…';
+    if (wsStatus === 'closed') return 'Живые соединения: переподключение…';
+    return 'Живые соединения недоступны';
+  });
+  let stateAria = $derived.by(() => {
+    if (wsStatus === 'open') return `Живые соединения: ${count}`;
+    return 'Живые соединения недоступны';
+  });
+  let trafficText = $derived.by(() => {
+    if (wsStatus !== 'open') return '—';
+    if (count === 0) return '';
+    return `↑ ${formatBytes(totalUp)} ↓ ${formatBytes(totalDown)}`;
+  });
 
   $effect(() => {
     if (engineOn && !wsClose) {
@@ -46,10 +64,10 @@
 </script>
 
 {#if visible}
-  <button type="button" class="chip" onclick={openFull} title="Открыть живые соединения" aria-label="Живые соединения">
-    <span class="dot" data-stale={wsStatus !== 'open'}></span>
+  <button type="button" class="chip" onclick={openFull} title={stateTitle} aria-label={stateAria}>
+    <span class="dot" data-stale={isStale}></span>
     <span class="n">{count}</span> conn
-    <span class="b">↑ {formatBytes(totalUp)} ↓ {formatBytes(totalDown)}</span>
+    <span class="b">{trafficText}</span>
   </button>
 {/if}
 

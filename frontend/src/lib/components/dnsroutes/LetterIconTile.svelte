@@ -29,7 +29,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		border-radius: 10px;
+		border-radius: 6px;
 		flex-shrink: 0;
 		color: #fff;
 		font-weight: 600;

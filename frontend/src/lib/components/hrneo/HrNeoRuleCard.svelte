@@ -7,9 +7,10 @@
 		broken?: boolean;
 		onedit: () => void;
 		ondelete: () => void;
+		onicon?: () => void;
 	}
 
-	let { rule, broken = false, onedit, ondelete }: Props = $props();
+	let { rule, broken = false, onedit, ondelete, onicon }: Props = $props();
 
 	let counts = $derived.by(() => {
 		const domains = rule.domains ?? [];
@@ -24,7 +25,19 @@
 
 <div class="hr-card" class:broken>
 	<div class="card-main">
-		<ServiceIcon name={rule.name} iconUrl={rule.iconUrl} size={36} />
+		{#if onicon}
+			<button
+				class="icon-btn"
+				type="button"
+				onclick={() => onicon()}
+				aria-label="Сменить иконку"
+				title="Сменить иконку"
+			>
+				<ServiceIcon name={rule.name} iconUrl={rule.iconUrl} size={36} />
+			</button>
+		{:else}
+			<ServiceIcon name={rule.name} iconUrl={rule.iconUrl} size={36} />
+		{/if}
 		<div class="card-info">
 			<div class="card-title">
 				<span class="led" class:led-green={!broken} class:led-red={broken}></span>
@@ -40,13 +53,13 @@
 		</div>
 	</div>
 	<div class="card-actions">
-		<button class="action-btn" title="Изменить" onclick={() => onedit()} aria-label="Edit">
+		<button class="route-action-btn" title="Изменить" onclick={() => onedit()} aria-label="Edit">
 			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
 				<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
 			</svg>
 		</button>
-		<button class="action-btn danger" title="Удалить" onclick={() => ondelete()} aria-label="Delete">
+		<button class="route-action-btn danger" title="Удалить" onclick={() => ondelete()} aria-label="Delete">
 			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<polyline points="3 6 5 6 21 6" />
 				<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -155,24 +168,25 @@
 		flex-shrink: 0;
 	}
 
-	.action-btn {
-		background: transparent;
-		border: 1px solid var(--border);
-		color: var(--text-muted);
-		padding: 6px;
-		border-radius: 6px;
+	.icon-btn {
+		padding: 0;
+		background: none;
+		border: 1px solid transparent;
+		border-radius: 7px;
 		cursor: pointer;
+		transition: border-color 0.15s;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		transition: color 0.15s, border-color 0.15s;
+		flex-shrink: 0;
 	}
-	.action-btn:hover {
-		color: var(--text-primary);
+
+	.icon-btn:hover {
 		border-color: var(--border-hover);
 	}
-	.action-btn.danger:hover {
-		color: var(--error);
-		border-color: var(--error);
+
+	.icon-btn:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
 	}
 </style>
