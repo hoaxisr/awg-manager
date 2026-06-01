@@ -1,0 +1,41 @@
+[
+  {
+    "id": "youtube",
+    "name": "YouTube",
+    "iconSlug": "youtube",
+    "category": "social",
+    "engines": {
+      "dns": { "domains": ["youtube.com", "youtu.be", "ytimg.com", "googlevideo.com"] },
+      "singbox": {
+        "ruleSets": [{ "tag": "geosite-youtube", "url": "https://github.com/vernette/rulesets/raw/master/srs/youtube.srs" }],
+        "action": "tunnel"
+      },
+      "hydraroute": { "geoTags": ["YOUTUBE"] }
+    }
+  },
+  {
+    "id": "category-ads",
+    "name": "Реклама и трекеры",
+    "iconSlug": "lucide-circle-slash",
+    "category": "block",
+    "notice": "Блокирует рекламу и трекеры через action:reject",
+    "engines": {
+      "singbox": {
+        "ruleSets": [{ "tag": "geosite-category-ads-all", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs" }],
+        "action": "reject"
+      }
+    }
+  },
+  {
+    "id": "russian-services",
+    "name": "Российские сервисы",
+    "iconSlug": "rkn",
+    "category": "block",
+    "engines": {
+      "dns": {
+        "domains": ["yandex.ru", "vk.com", "mail.ru"],
+        "subscriptionUrl": "https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/inside-raw.lst"
+      }
+    }
+  }
+]
