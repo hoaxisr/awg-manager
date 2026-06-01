@@ -2175,6 +2175,13 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.PresetsListResponse:
+    properties:
+      presets:
+        items:
+          $ref: '#/definitions/presets.Preset'
+        type: array
+    type: object
   api.ProxyConfigResponse:
     properties:
       data:
@@ -4814,6 +4821,82 @@ definitions:
         type: string
       sni:
         type: string
+    type: object
+  presets.DNSEngine:
+    properties:
+      domains:
+        items:
+          type: string
+        type: array
+      subnets:
+        items:
+          type: string
+        type: array
+      subscriptionUrl:
+        type: string
+    type: object
+  presets.Engines:
+    properties:
+      dns:
+        $ref: '#/definitions/presets.DNSEngine'
+      hydraroute:
+        $ref: '#/definitions/presets.HydraRouteEngine'
+      singbox:
+        $ref: '#/definitions/presets.SingboxEngine'
+    type: object
+  presets.HydraRouteEngine:
+    properties:
+      geoTags:
+        items:
+          type: string
+        type: array
+    type: object
+  presets.Origin:
+    enum:
+    - builtin
+    - user
+    type: string
+    x-enum-varnames:
+    - OriginBuiltin
+    - OriginUser
+  presets.Preset:
+    properties:
+      category:
+        description: social|media|ai|developer|cloud|gaming|block (free string)
+        type: string
+      engines:
+        $ref: '#/definitions/presets.Engines'
+      featured:
+        type: boolean
+      iconSlug:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      notice:
+        type: string
+      origin:
+        $ref: '#/definitions/presets.Origin'
+      sensitive:
+        type: boolean
+    type: object
+  presets.RuleRef:
+    properties:
+      tag:
+        type: string
+      url:
+        type: string
+    type: object
+  presets.SingboxEngine:
+    properties:
+      action:
+        description: tunnel|reject|direct
+        type: string
+      ruleSets:
+        items:
+          $ref: '#/definitions/presets.RuleRef'
+        type: array
     type: object
 info:
   contact: {}
@@ -7723,6 +7806,18 @@ paths:
       summary: Ping check status
       tags:
       - pingcheck
+  /presets:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.PresetsListResponse'
+      summary: List unified presets
+      tags:
+      - presets
   /proxy/apply:
     post:
       produces:
@@ -8775,6 +8870,27 @@ paths:
       summary: Toggle NDMS Proxy creation for sing-box tunnels
       tags:
       - singbox
+  /singbox/router/bindable-interfaces:
+    get:
+      description: Returns router interfaces (minus our own and AWG/WG auto-covered)
+        that a direct outbound can bind to. Fields id and priority are not populated
+        for this endpoint (only name, label, up are meaningful).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxRouterWANInterfacesListResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List bindable interfaces for direct outbounds
+      tags:
+      - singbox-router
   /singbox/router/disable:
     post:
       description: Stops the singbox-router engine and uninstalls iptables/policy
@@ -10396,26 +10512,6 @@ paths:
       security:
       - CookieAuth: []
       summary: Get sing-box router status
-      tags:
-      - singbox-router
-  /singbox/router/bindable-interfaces:
-    get:
-      description: Returns router interfaces (minus our own and AWG/WG auto-covered)
-        that a direct outbound can bind to.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.SingboxRouterWANInterfacesListResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: List bindable interfaces for direct outbounds
       tags:
       - singbox-router
   /singbox/router/wan-interfaces:
