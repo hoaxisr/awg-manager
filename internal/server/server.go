@@ -19,7 +19,6 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/api"
-	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/connections"
@@ -31,6 +30,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/openapi"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
