@@ -26,6 +26,7 @@
     SingboxRouterOutbound,
     SingboxRouterDNSServer,
     SingboxRouterDNSRule,
+    SingboxRouterDNSStrategy,
     DeviceProxyInstance,
   } from '$lib/types';
   import { newDeviceProxyInstance } from '$lib/utils/deviceProxyInstance';
@@ -45,7 +46,7 @@
   import DNSServerEditModal from '$lib/components/routing/singboxRouter/DNSServerEditModal.svelte';
   import DNSRuleEditModal from '$lib/components/routing/singboxRouter/DNSRuleEditModal.svelte';
   import { DNSRewritesList } from '$lib/components/routing/singboxRouter';
-  import { ConfirmModal } from '$lib/components/ui';
+  import { ConfirmModal, Dropdown, type DropdownOption } from '$lib/components/ui';
 
   // Store subscriptions
   const storeStatus = singboxRouterStore.status;
@@ -55,7 +56,77 @@
   const storeDnsServers = singboxRouterStore.dnsServers;
   const storeDnsRules = singboxRouterStore.dnsRules;
   const storeDnsRewrites = singboxRouterStore.dnsRewrites;
+  const storeDnsGlobals = singboxRouterStore.dnsGlobals;
   const storeOptions = singboxRouterStore.options;
+
+  // ── Globals (route-final + DNS final/strategy) ──────────────────────
+  const STRATEGY_OPTIONS: DropdownOption<SingboxRouterDNSStrategy>[] = [
+    { value: '', label: '— default —' },
+    { value: 'ipv4_only', label: 'ipv4_only' },
+    { value: 'ipv6_only', label: 'ipv6_only' },
+    { value: 'prefer_ipv4', label: 'prefer_ipv4' },
+    { value: 'prefer_ipv6', label: 'prefer_ipv6' },
+  ];
+
+  // route-final: direct + все outbounds, кроме группы «Специальные»
+  const routeFinalOptions = $derived<DropdownOption[]>([
+    { value: 'direct', label: 'direct (мимо VPN)' },
+    ...$storeOptions
+      .filter((g) => g.group !== 'Специальные')
+      .flatMap((g) => g.items.map((i) => ({ value: i.value, label: i.label, group: g.group }))),
+  ]);
+
+  // DNS-final: серверы из стора
+  const dnsFinalOptions = $derived<DropdownOption[]>([
+    { value: '', label: '— не задан —' },
+    ...$storeDnsServers.map((s) => ({ value: s.tag, label: s.tag })),
+  ]);
+
+  let draftRouteFinal = $state('direct');
+  let draftDnsFinal = $state('');
+  let draftDnsStrategy = $state<SingboxRouterDNSStrategy>('');
+  let routeFinalBusy = $state(false);
+  let dnsGlobalsBusy = $state(false);
+
+  // draft синхронизируется со стором (как в исходных DNSGlobals/RouteGlobals)
+  $effect(() => {
+    draftRouteFinal = $storeStatus?.final || 'direct';
+  });
+  $effect(() => {
+    draftDnsFinal = $storeDnsGlobals.final;
+    draftDnsStrategy = $storeDnsGlobals.strategy;
+  });
+
+  const routeFinalDirty = $derived(draftRouteFinal !== ($storeStatus?.final || 'direct'));
+  const dnsGlobalsDirty = $derived(
+    draftDnsFinal !== $storeDnsGlobals.final || draftDnsStrategy !== $storeDnsGlobals.strategy,
+  );
+
+  async function saveRouteFinal() {
+    if (!routeFinalDirty || routeFinalBusy) return;
+    routeFinalBusy = true;
+    try {
+      await api.singboxRouterPutRouteFinal(draftRouteFinal);
+      await singboxRouterStore.loadAll();
+    } catch (e) {
+      notifications.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      routeFinalBusy = false;
+    }
+  }
+
+  async function saveDnsGlobals() {
+    if (!dnsGlobalsDirty || dnsGlobalsBusy) return;
+    dnsGlobalsBusy = true;
+    try {
+      await api.singboxRouterPutDNSGlobals({ final: draftDnsFinal, strategy: draftDnsStrategy });
+      await singboxRouterStore.loadAll();
+    } catch (e) {
+      notifications.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      dnsGlobalsBusy = false;
+    }
+  }
 
   let activeProxyCount = $state<number | null>(null);
 
@@ -317,7 +388,15 @@
         actionVariant="filled"
         onAction={() => (ruleAddOpen = true)}
       >
-        <div class="panel-cap">first-match-wins · final → direct</div>
+        <div class="globals-bar">
+          <span class="gb-label">first-match-wins · если ничего не подошло →</span>
+          <Dropdown bind:value={draftRouteFinal} options={routeFinalOptions} />
+          {#if routeFinalDirty}
+            <button class="gb-save" onclick={saveRouteFinal} disabled={routeFinalBusy} type="button">
+              Сохранить
+            </button>
+          {/if}
+        </div>
         <RoutingTable
           bare
           rules={$storeRules}
@@ -366,6 +445,29 @@
         actionVariant="filled"
         onAction={() => (dnsServerAddOpen = true)}
       >
+        <div class="globals-col">
+          <div class="gb-col-head">
+            <span class="gb-label">DNS по умолчанию</span>
+            {#if dnsGlobalsDirty}
+              <button class="gb-save" onclick={saveDnsGlobals} disabled={dnsGlobalsBusy} type="button">
+                Сохранить
+              </button>
+            {/if}
+          </div>
+          <label class="gb-field">
+            <span class="gb-flabel">Final-сервер</span>
+            <Dropdown
+              bind:value={draftDnsFinal}
+              options={dnsFinalOptions}
+              disabled={$storeDnsServers.length === 0}
+              fullWidth
+            />
+          </label>
+          <label class="gb-field">
+            <span class="gb-flabel">Стратегия</span>
+            <Dropdown bind:value={draftDnsStrategy} options={STRATEGY_OPTIONS} fullWidth />
+          </label>
+        </div>
         <DnsServersCompact
           servers={$storeDnsServers}
           rules={$storeDnsRules}
@@ -543,6 +645,63 @@
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
+  }
+  /* Globals-бар route-final (шапка панели «Правила») */
+  .globals-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 8px 14px;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+  }
+  .gb-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  /* Globals-секция DNS (шапка панели «DNS-серверы») */
+  .globals-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 14px;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+  }
+  .gb-col-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .gb-field {
+    display: grid;
+    grid-template-columns: 84px 1fr;
+    align-items: center;
+    gap: 8px;
+  }
+  .gb-flabel {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .gb-save {
+    background: transparent;
+    border: 0;
+    color: var(--accent);
+    font-size: 11.5px;
+    cursor: pointer;
+    font-family: inherit;
+    padding: 0;
+  }
+  .gb-save:hover:not(:disabled) {
+    text-decoration: underline;
+  }
+  .gb-save:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
   }
   .main-grid {
     display: grid;
