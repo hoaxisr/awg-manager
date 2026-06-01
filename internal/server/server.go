@@ -1202,8 +1202,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	}
 
 	// Unified preset catalog (protected, read-only in U0)
-	presetsHandler := api.NewPresetsHandler(s.presetCatalog)
-	mux.HandleFunc("/api/presets", guarded(presetsHandler.List))
+	if s.presetCatalog != nil {
+		presetsHandler := api.NewPresetsHandler(s.presetCatalog)
+		mux.HandleFunc("/api/presets", guarded(presetsHandler.List))
+	}
 
 	// Static files (SPA) - must be last.
 	if s.config.FrontendFS != nil {
