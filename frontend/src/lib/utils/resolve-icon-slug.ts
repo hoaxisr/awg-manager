@@ -23,6 +23,8 @@ const LUCIDE_SLUGS = new Set([
 const NAME_ALIASES: Record<string, string> = {
 	'twitter/x': 'x',
 	twitter: 'x',
+	chatgpt: 'openai',
+	'x.com': 'x',
 	'google gemini': 'googlegemini',
 	'google-gemini': 'googlegemini',
 	gemini: 'googlegemini',
