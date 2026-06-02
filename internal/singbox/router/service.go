@@ -14,6 +14,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
@@ -56,6 +57,7 @@ type Service interface {
 	DeleteCompositeOutbound(ctx context.Context, tag string, force bool) error
 
 	ApplyPreset(ctx context.Context, presetID, outboundTag string) error
+	ListPresets() ([]Preset, error)
 
 	ListPolicies(ctx context.Context) ([]PolicyInfo, error)
 	CreatePolicy(ctx context.Context, description string) (PolicyInfo, error)
@@ -198,6 +200,8 @@ type StagingEventBus interface {
 type Deps struct {
 	AppLog         logging.AppLogger
 	Settings       *storage.SettingsStore
+	// PresetCatalog is the unified preset catalog. Required for ListPresets and ApplyPreset.
+	PresetCatalog *presets.Catalog
 	Singbox        SingboxController
 	Policies       AccessPolicyProvider
 	Events         *events.Bus
@@ -1393,9 +1397,17 @@ func (s *ServiceImpl) DeleteCompositeOutbound(ctx context.Context, tag string, f
 	return s.withConfig(ctx, "outbounds", func(c *RouterConfig) error { return c.DeleteCompositeOutbound(tag, force) })
 }
 
+func (s *ServiceImpl) ListPresets() ([]Preset, error) {
+	return listRouterPresets(s.deps.PresetCatalog)
+}
+
 func (s *ServiceImpl) ApplyPreset(ctx context.Context, presetID, outboundTag string) error {
+	p, err := findRouterPreset(s.deps.PresetCatalog, presetID)
+	if err != nil {
+		return err
+	}
 	return s.withConfig(ctx, "status", func(c *RouterConfig) error {
-		return ApplyPresetToConfig(c, presetID, outboundTag)
+		return ApplyPresetToConfig(c, p, outboundTag)
 	})
 }
 

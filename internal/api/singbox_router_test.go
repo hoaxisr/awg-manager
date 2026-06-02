@@ -79,6 +79,7 @@ func (m *mockRouterSvc) DeleteCompositeOutbound(ctx context.Context, tag string,
 func (m *mockRouterSvc) ApplyPreset(ctx context.Context, presetID, outboundTag string) error {
 	return nil
 }
+func (m *mockRouterSvc) ListPresets() ([]router.Preset, error) { return nil, nil }
 func (m *mockRouterSvc) ListPolicies(ctx context.Context) ([]router.PolicyInfo, error) {
 	return []router.PolicyInfo{}, nil
 }

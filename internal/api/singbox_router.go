@@ -148,12 +148,12 @@ type SingboxRouterOutboundsListResponse struct {
 	Data    []SingboxRouterOutboundDTO `json:"data"`
 }
 
-// SingboxRouterPresetRuleRefDTO mirrors internalpresets.RuleRef.
+// SingboxRouterPresetRuleRefDTO mirrors router.RuleRef.
 type SingboxRouterPresetRuleRefDTO struct {
 	Tag string `json:"tag" example:"geosite-cn"`
 }
 
-// SingboxRouterPresetRuleLinkDTO mirrors internalpresets.RuleLink.
+// SingboxRouterPresetRuleLinkDTO mirrors router.RuleLink.
 type SingboxRouterPresetRuleLinkDTO struct {
 	RuleSet      []string `json:"rule_set,omitempty" example:"geosite-cn"`
 	DomainSuffix []string `json:"domain_suffix,omitempty" example:".cn"`
@@ -857,7 +857,12 @@ func (h *SingboxRouterHandler) ListPresets(w http.ResponseWriter, r *http.Reques
 		response.MethodNotAllowed(w)
 		return
 	}
-	response.Success(w, router.ListPresets())
+	list, err := h.svc.ListPresets()
+	if err != nil {
+		response.InternalError(w, err.Error())
+		return
+	}
+	response.Success(w, list)
 }
 
 // ApplyPreset materialises the named preset against the chosen outbound.
