@@ -7,10 +7,9 @@ func TestLoadBuiltins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadBuiltins: %v", err)
 	}
-	if len(ps) < 3 {
-		t.Fatalf("want >=3 builtins, got %d", len(ps))
+	if len(ps) < 50 {
+		t.Fatalf("expected the full catalog (>=50), got %d", len(ps))
 	}
-	byID := map[string]Preset{}
 	for _, p := range ps {
 		if p.ID == "" || p.Name == "" || p.IconSlug == "" {
 			t.Errorf("preset %q has empty id/name/iconSlug", p.ID)
@@ -18,15 +17,49 @@ func TestLoadBuiltins(t *testing.T) {
 		if p.Origin != OriginBuiltin {
 			t.Errorf("preset %q origin = %q, want builtin", p.ID, p.Origin)
 		}
-		byID[p.ID] = p
 	}
-	if yt, ok := byID["youtube"]; !ok || yt.Engines.DNS == nil || yt.Engines.Singbox == nil || yt.Engines.HydraRoute == nil {
-		t.Errorf("youtube must carry all three engines")
+}
+
+func TestDefaultsCatalogInvariants(t *testing.T) {
+	ps, err := LoadBuiltins()
+	if err != nil {
+		t.Fatalf("LoadBuiltins: %v", err)
 	}
-	if ads, ok := byID["category-ads"]; !ok || ads.Engines.Singbox == nil || ads.Engines.DNS != nil {
-		t.Errorf("category-ads must be singbox-only")
+	seen := map[string]bool{}
+	for _, p := range ps {
+		if seen[p.ID] {
+			t.Errorf("duplicate id %q", p.ID)
+		}
+		seen[p.ID] = true
+		if sb := p.Engines.Singbox; sb != nil && sb.Action == "" {
+			t.Errorf("preset %q singbox has empty action", p.ID)
+		}
+		if dns := p.Engines.DNS; dns != nil {
+			if len(dns.Domains) == 0 && len(dns.Subnets) == 0 && dns.SubscriptionURL == "" {
+				t.Errorf("preset %q dns engine is empty", p.ID)
+			}
+			if len(dns.Domains) > 500 {
+				t.Errorf("preset %q dns domains %d exceed the 500 cap", p.ID, len(dns.Domains))
+			}
+		}
 	}
-	if ru, ok := byID["russian-services"]; !ok || ru.Engines.DNS == nil || ru.Engines.Singbox != nil {
-		t.Errorf("russian-services must be dns-only")
+	// Alias ids collapsed to canonical.
+	for _, bad := range []string{"twitter", "chatgpt", "cloudflare-ips", "social"} {
+		if seen[bad] {
+			t.Errorf("alias id %q must be collapsed", bad)
+		}
+	}
+	for _, need := range []string{"x", "openai", "cloudflare", "meta", "oculus", "russian-services"} {
+		if !seen[need] {
+			t.Errorf("expected id %q present", need)
+		}
+	}
+	// russian-services is DNS-only (no .srs).
+	for _, p := range ps {
+		if p.ID == "russian-services" {
+			if p.Engines.DNS == nil || p.Engines.Singbox != nil {
+				t.Errorf("russian-services must be dns-only, got %+v", p.Engines)
+			}
+		}
 	}
 }

@@ -30,8 +30,8 @@ func TestPresetsHandlerListGET(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("json: %v", err)
 	}
-	if !env.Success || len(env.Data.Presets) < 3 {
-		t.Fatalf("want success + >=3 presets, got %+v", env)
+	if !env.Success || len(env.Data.Presets) < 50 {
+		t.Fatalf("want success + full catalog (>=50), got %d", len(env.Data.Presets))
 	}
 }
 
