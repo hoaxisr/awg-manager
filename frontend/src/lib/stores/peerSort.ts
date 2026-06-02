@@ -4,7 +4,7 @@ import { PEER_SORT_DEFAULTS, type PeerSortKey } from '$lib/utils/peerSort';
 
 const storageKey = 'awg-manager-peer-sort';
 
-const VALID_KEYS = new Set<PeerSortKey>(['name', 'traffic', 'ip', 'online', 'handshake']);
+const VALID_KEYS = new Set<PeerSortKey>(['name', 'traffic', 'ip', 'endpoint', 'online', 'handshake']);
 
 export interface PeerSortState {
 	sortBy: PeerSortKey;
@@ -43,10 +43,15 @@ function persist(state: PeerSortState) {
 }
 
 function createPeerSortStore() {
-	const { subscribe, update } = writable<PeerSortState>(getInitial());
+	const { subscribe, set, update } = writable<PeerSortState>(getInitial());
 
 	return {
 		subscribe,
+		setSort(sortBy: PeerSortKey, sortAsc: boolean) {
+			const next: PeerSortState = { sortBy, sortAsc };
+			persist(next);
+			set(next);
+		},
 		setSortBy(key: PeerSortKey) {
 			update((s) => {
 				if (s.sortBy === key) return s;

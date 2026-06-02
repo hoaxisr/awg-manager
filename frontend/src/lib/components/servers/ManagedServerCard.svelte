@@ -69,6 +69,7 @@
 				{
 					name: a.description || a.publicKey,
 					ip: a.tunnelIP,
+					endpoint: sa?.endpoint || '-',
 					rxBytes: sa?.rxBytes ?? null,
 					txBytes: sa?.txBytes ?? null,
 					online: sa?.online ?? null,
@@ -77,6 +78,7 @@
 				{
 					name: b.description || b.publicKey,
 					ip: b.tunnelIP,
+					endpoint: sb?.endpoint || '-',
 					rxBytes: sb?.rxBytes ?? null,
 					txBytes: sb?.txBytes ?? null,
 					online: sb?.online ?? null,
@@ -399,6 +401,7 @@
 				<PeerSortControls
 					bind:searchQuery
 					showSearch={(server.peers ?? []).length >= 5}
+					hideSortOnDesktop
 				/>
 				<Button variant="secondary" size="sm" onclick={() => addPeerOpen = true} iconBefore={addPeerIcon}>
 					Добавить клиента

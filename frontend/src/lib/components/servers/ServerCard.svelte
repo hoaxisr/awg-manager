@@ -58,6 +58,7 @@
 				{
 					name: a.description || a.publicKey,
 					ip: peerIP(a),
+					endpoint: a.endpoint || '-',
 					rxBytes: a.rxBytes,
 					txBytes: a.txBytes,
 					online: a.online,
@@ -66,6 +67,7 @@
 				{
 					name: b.description || b.publicKey,
 					ip: peerIP(b),
+					endpoint: b.endpoint || '-',
 					rxBytes: b.rxBytes,
 					txBytes: b.txBytes,
 					online: b.online,
@@ -185,6 +187,7 @@
 				<PeerSortControls
 					bind:searchQuery
 					showSearch={(server.peers ?? []).length >= 5}
+					hideSortOnDesktop
 				/>
 			</div>
 			<PeerTable
@@ -337,17 +340,23 @@
 	}
 
 	.server-stats {
-		display: flex;
-		gap: 1.5rem;
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 0.5rem;
 		padding: 0.5rem 0;
 		border-top: 1px solid var(--border);
 		border-bottom: 1px solid var(--border);
 	}
 
 	.stat {
+		min-width: 0;
 		display: flex;
 		flex-direction: column;
 		gap: 0.125rem;
+		padding: 0.5rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--bg-primary);
 	}
 
 	.stat-label {
@@ -396,20 +405,6 @@
 		.server-header-right {
 			width: 100%;
 			justify-content: space-between;
-		}
-
-		.server-stats {
-			display: grid;
-			grid-template-columns: repeat(3, minmax(0, 1fr));
-			gap: 0.5rem;
-		}
-
-		.stat {
-			min-width: 0;
-			padding: 0.5rem;
-			border: 1px solid var(--border);
-			border-radius: var(--radius-sm);
-			background: var(--bg-primary);
 		}
 
 		.peers-header {

@@ -4,6 +4,8 @@
 	import { IconButton } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard } from '$lib/utils/clipboard';
+	import { peerSort } from '$lib/stores/peerSort';
+	import type { PeerSortKey } from '$lib/utils/peerSort';
 
 	interface Props {
 		peers: WireguardServerPeer[];
@@ -58,7 +60,80 @@
 			notifications.error(`Не удалось скопировать ${label.toLowerCase()}`);
 		}
 	}
+
+	function ariaSort(key: PeerSortKey): 'ascending' | 'descending' | 'none' {
+		if ($peerSort.sortBy !== key) return 'none';
+		return $peerSort.sortAsc ? 'ascending' : 'descending';
+	}
+
+	function toggleHeaderSort(key: PeerSortKey) {
+		if ($peerSort.sortBy === key) {
+			peerSort.toggleDir();
+		} else {
+			peerSort.setSortBy(key);
+		}
+	}
+
+	function cycleNameHeaderSort() {
+		const { sortBy, sortAsc } = $peerSort;
+
+		if (sortBy !== 'name' && sortBy !== 'online') {
+			peerSort.setSort('name', true);
+			return;
+		}
+
+		if (sortBy === 'name' && sortAsc) {
+			peerSort.setSort('name', false);
+			return;
+		}
+
+		if (sortBy === 'name' && !sortAsc) {
+			peerSort.setSort('online', false);
+			return;
+		}
+
+		if (sortBy === 'online' && !sortAsc) {
+			peerSort.setSort('online', true);
+			return;
+		}
+
+		peerSort.setSort('name', true);
+	}
+
+	function isNameHeaderActive(): boolean {
+		return $peerSort.sortBy === 'name' || $peerSort.sortBy === 'online';
+	}
+
+	function nameHeaderIndicator(): string {
+		if ($peerSort.sortBy === 'name') return $peerSort.sortAsc ? 'A↑' : 'A↓';
+		if ($peerSort.sortBy === 'online') return $peerSort.sortAsc ? '○↑' : '●↓';
+		return '↕';
+	}
+
+	function nameAriaSort(): 'ascending' | 'descending' | 'none' {
+		if ($peerSort.sortBy !== 'name' && $peerSort.sortBy !== 'online') return 'none';
+		return $peerSort.sortAsc ? 'ascending' : 'descending';
+	}
 </script>
+
+{#snippet SortHeader(label: string, key: PeerSortKey)}
+	<button
+		type="button"
+		class="sort-header-btn"
+		class:active={$peerSort.sortBy === key}
+		onclick={() => toggleHeaderSort(key)}
+		title={`Сортировать по колонке «${label}»`}
+	>
+		<span>{label}</span>
+		<span class="sort-indicator" aria-hidden="true">
+			{#if $peerSort.sortBy === key}
+				{$peerSort.sortAsc ? '↑' : '↓'}
+			{:else}
+				↕
+			{/if}
+		</span>
+	</button>
+{/snippet}
 
 {#if peers.length === 0}
 	<p class="text-muted">Нет пиров</p>
@@ -68,11 +143,23 @@
 			<table class="peer-table" class:has-actions={!!onDownloadConf}>
 				<thead>
 					<tr>
-						<th class="col-name">Имя</th>
-						<th class="col-ip">IP</th>
-						<th class="col-endpoint">Endpoint</th>
-						<th class="col-traffic">Трафик</th>
-						<th class="col-handshake">Handshake</th>
+						<th class="col-name" aria-sort={nameAriaSort()}>
+							<button
+								type="button"
+								class="sort-header-btn name-sort-header"
+								class:active={isNameHeaderActive()}
+								onclick={cycleNameHeaderSort}
+								title="Сортировка: имя A→Z, имя Z→A, онлайн сверху, офлайн сверху"
+							>
+								<span>Имя</span>
+								<span class="sort-subhint" aria-hidden="true">/ онлайн</span>
+								<span class="sort-indicator" aria-hidden="true">{nameHeaderIndicator()}</span>
+							</button>
+						</th>
+						<th class="col-ip" aria-sort={ariaSort('ip')}>{@render SortHeader('IP', 'ip')}</th>
+						<th class="col-endpoint" aria-sort={ariaSort('endpoint')}>{@render SortHeader('Endpoint', 'endpoint')}</th>
+						<th class="col-traffic" aria-sort={ariaSort('traffic')}>{@render SortHeader('Трафик', 'traffic')}</th>
+						<th class="col-handshake" aria-sort={ariaSort('handshake')}>{@render SortHeader('Handshake', 'handshake')}</th>
 						{#if onDownloadConf}
 							<th class="col-action"></th>
 						{/if}
@@ -413,6 +500,59 @@
 	.cell-copy:hover {
 		text-decoration: underline;
 		color: var(--text-primary);
+	}
+
+	.sort-header-btn {
+		width: 100%;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.3rem;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		font-weight: inherit;
+		text-transform: inherit;
+		letter-spacing: inherit;
+		cursor: pointer;
+	}
+
+	.sort-header-btn:hover {
+		color: var(--text-primary);
+	}
+
+	.sort-header-btn.active {
+		color: var(--accent);
+	}
+
+	.name-sort-header {
+		justify-content: center;
+	}
+
+	.sort-subhint {
+		opacity: 0.65;
+		font-size: 0.85em;
+		font-weight: inherit;
+		text-transform: none;
+		letter-spacing: normal;
+	}
+
+	.sort-header-btn.active .sort-subhint {
+		opacity: 0.85;
+	}
+
+	.sort-indicator {
+		min-width: 1.8em;
+		text-align: left;
+		flex: 0 0 auto;
+		opacity: 0.65;
+		font-size: 0.8em;
+	}
+
+	.sort-header-btn.active .sort-indicator {
+		opacity: 1;
 	}
 
 	@media (max-width: 640px) {
