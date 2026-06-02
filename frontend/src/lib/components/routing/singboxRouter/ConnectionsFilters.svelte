@@ -6,7 +6,7 @@
 
 	interface Props {
 		filters: ConnectionFilters;
-		outboundOptions: string[];
+		outboundOptions: DropdownOption[];
 		ruleOptions: string[];
 		onChange: (next: ConnectionFilters) => void;
 	}
@@ -49,7 +49,7 @@
 
 	const outboundDropdown = $derived<DropdownOption[]>([
 		{ value: '', label: 'Все' },
-		...outboundOptions.map((o) => ({ value: o, label: o })),
+		...outboundOptions,
 	]);
 
 	const networkDropdown: DropdownOption<NetworkFilter>[] = [

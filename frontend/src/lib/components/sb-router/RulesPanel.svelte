@@ -41,7 +41,9 @@
   });
 
   let cards: RuleCardData[] = $derived.by(() =>
-    $rules.map((r, i) => singboxRuleToCard(r, i, $outbounds, rulesetLabels, $presets, $presetCatalog)),
+    $rules.map((r, i) =>
+      singboxRuleToCard(r, i, $outbounds, rulesetLabels, $presets, $options, $presetCatalog),
+    ),
   );
 
   let dragState = $state<null | {

@@ -5,20 +5,25 @@
 
 <script lang="ts">
   import type { SingboxRouterRule, SingboxRouterOutbound } from '$lib/types';
+  import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
   import { Badge } from '$lib/components/ui';
   import { ChevronUp, ChevronDown, Edit3, Trash2 } from 'lucide-svelte';
   import { isSystemRule } from './adapters';
+  import { resolveMemberLabel } from '$lib/utils/memberLabel';
+
+  const AWG_OPTION_GROUPS = new Set(['AWG туннели', 'Системные WireGuard']);
 
   interface Props {
     rules: SingboxRouterRule[];
     outbounds: SingboxRouterOutbound[];
+    outboundOptions?: OutboundGroup[];
     onEdit: (idx: number) => void;
     onDelete: (idx: number) => void;
     onMove: (idx: number, dir: 'up' | 'down') => void;
     bare?: boolean;
   }
 
-  let { rules, onEdit, onDelete, onMove, bare = false }: Props = $props();
+  let { rules, outboundOptions = [], onEdit, onDelete, onMove, bare = false }: Props = $props();
 
   type ActionLabel = 'SNIFF' | 'HIJACK' | 'BYPASS' | 'REJECT' | 'ROUTE';
   type ActionVariant = 'default' | 'accent' | 'success' | 'error' | 'warning' | 'info' | 'muted';
@@ -30,6 +35,8 @@
     actionVariant: ActionVariant;
     matchers: string;
     outbound: string;
+    outboundLabel: string;
+    outboundVariant: 'accent' | 'purple';
     outboundKind: 'route' | 'direct' | 'reject' | 'none';
   }
 
@@ -79,6 +86,12 @@
       const outboundKind: RowData['outboundKind'] = outbound === '—' ? 'none'
         : outbound === 'direct' ? 'direct'
         : outbound === 'reject' ? 'reject' : 'route';
+      const outboundLabel = outboundKind === 'route'
+        ? resolveMemberLabel(outbound, null, outboundOptions)
+        : outbound;
+      const outboundVariant = outboundOptions.some((g) =>
+        AWG_OPTION_GROUPS.has(g.group) && g.items.some((i) => i.value === outbound)
+      ) ? 'purple' : 'accent';
       return {
         idx,
         sys,
@@ -86,6 +99,8 @@
         actionVariant: a.variant,
         matchers: compileMatchers(r),
         outbound,
+        outboundLabel,
+        outboundVariant,
         outboundKind,
       };
     }),
@@ -145,7 +160,7 @@
         {:else if row.outboundKind === 'reject'}
           <Badge variant="error" mono size="sm">reject</Badge>
         {:else}
-          <Badge variant="accent" mono size="sm">{row.outbound}</Badge>
+          <Badge variant={row.outboundVariant} mono size="sm" title={row.outbound}>{row.outboundLabel}</Badge>
         {/if}
       </div>
       <div class="actions-col actions">

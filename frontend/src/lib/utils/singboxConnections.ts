@@ -63,13 +63,14 @@ export function matchFilters(c: Connection, f: ConnectionFilters): boolean {
 export function aggregateBy(
 	conns: Connection[],
 	keyFn: (c: Connection) => string,
+	labelFn: (c: Connection) => string = keyFn,
 ): ConnectionBucket[] {
 	const acc = new Map<string, ConnectionBucket>();
 	let totalDown = 0;
 	for (const c of conns) {
 		const k = keyFn(c);
 		totalDown += c.download;
-		const cur = acc.get(k) ?? { key: k, upload: 0, download: 0, count: 0, pct: 0 };
+		const cur = acc.get(k) ?? { key: k, label: labelFn(c), upload: 0, download: 0, count: 0, pct: 0 };
 		cur.upload += c.upload;
 		cur.download += c.download;
 		cur.count += 1;

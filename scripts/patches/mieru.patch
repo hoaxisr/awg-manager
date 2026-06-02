@@ -359,8 +359,8 @@ diff --git a/go.mod b/go.mod
 index 5683d57b..9a4d1d64 100644
 --- a/go.mod
 +++ b/go.mod
-@@ -10,6 +10,7 @@ require (
- 	github.com/coder/websocket v1.8.14
+@@ -11,6 +11,7 @@ require (
+ 	github.com/creack/pty v1.1.24
  	github.com/cretz/bine v0.2.0
  	github.com/database64128/tfo-go/v2 v2.3.2
 +	github.com/enfein/mieru/v3 v3.32.0

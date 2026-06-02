@@ -9,6 +9,7 @@
 	import VpnLinkPasteImport from '$lib/components/tunnels/VpnLinkPasteImport.svelte';
 	import { decodeVpnLink, isVpnLink, vpnLinkUnsupportedPortalReason } from '$lib/utils/vpnlink';
 	import { getVpnPastePresentation } from '$lib/utils/amneziaPremiumVpnPaste';
+	import { nativewgUnavailableHint } from '$lib/utils/backendAvailability';
 	import { api } from '$lib/api/client';
 	import type { SystemInfo } from '$lib/types';
 
@@ -37,6 +38,12 @@
 	let selectedBackend = $state<'nativewg' | 'kernel'>('nativewg');
 
 	let vpnPastePresentation = $derived(getVpnPastePresentation(vpnPasteInput));
+
+	let nativewgHint = $derived(
+		systemInfo !== null && !systemInfo.backendAvailability?.nativewg
+			? nativewgUnavailableHint(systemInfo.nativewgReason)
+			: ''
+	);
 
 	// Sync activeTab → URL (?tab=). Mirrors what canonical Tabs urlParam
 	// does — kept inline because this page uses a custom div-based tab UI.
@@ -204,7 +211,7 @@
 				class:selected={selectedBackend === 'nativewg'}
 				class:disabled={systemInfo !== null && !systemInfo.backendAvailability?.nativewg}
 				disabled={systemInfo !== null && !systemInfo.backendAvailability?.nativewg}
-				title={systemInfo !== null && !systemInfo.backendAvailability?.nativewg ? 'Прошивка не поддерживает нативный WireGuard' : ''}
+				title={nativewgHint}
 				onclick={() => selectedBackend = 'nativewg'}
 			>
 				<span class="backend-name">NativeWG</span>
@@ -223,6 +230,9 @@
 				<span class="backend-desc">Без интеграции в роутер, для сторонних проектов</span>
 			</button>
 		</div>
+		{#if nativewgHint}
+			<p class="backend-hint">{nativewgHint}</p>
+		{/if}
 	</div>
 
 	<div class="tabs">
@@ -562,6 +572,13 @@ AllowedIPs = 0.0.0.0/0"
 
 	.backend-desc {
 		font-size: 12px;
+		color: var(--color-text-muted);
+	}
+
+	.backend-hint {
+		margin: 8px 0 0;
+		font-size: 12px;
+		line-height: 1.4;
 		color: var(--color-text-muted);
 	}
 

@@ -18,7 +18,8 @@
   import { buildTemplateList } from './templatesData';
   import { finishSetup } from './emptyStateActions';
 
-  const outbounds = singboxRouterStore.outbounds;
+  const options = singboxRouterStore.options;
+  const optionsReady = singboxRouterStore.optionsReady;
   const presets = singboxRouterStore.presets;
   const ruleSets = singboxRouterStore.ruleSets;
 
@@ -29,7 +30,9 @@
   let selectedTunnel = $state<string | null>(null);
   let finishing = $state(false);
 
-  const tunnelOutbounds = $derived($outbounds.filter((o) => o.type !== 'direct'));
+  const tunnelOutbounds = $derived(
+    $options.filter((g) => g.group !== 'Специальные').flatMap((g) => g.items),
+  );
   const groups = $derived(buildTemplateList($presets, $ruleSets, ''));
 
   const hasServices = $derived($templatesSelection.size > 0);
@@ -85,21 +88,20 @@
   </div>
 
   <WizardStep n={1} title="Выберите туннель" hint="весь трафик идёт напрямую, кроме выбранных сервисов" active={true}>
-    {#if tunnelOutbounds.length === 0}
+    {#if tunnelOutbounds.length > 0}
+      <div class="tunnel-chips">
+        {#each tunnelOutbounds as ob (ob.value)}
+          {@const selected = selectedTunnel === ob.value}
+          <button type="button" class="t-chip" class:selected onclick={() => (selectedTunnel = ob.value)}>
+            <span class="tag">{ob.label}</span>
+          </button>
+        {/each}
+      </div>
+    {:else if $optionsReady}
       <div class="empty-tunnels">
         Нет доступных туннелей.
         <button type="button" class="link" onclick={() => goto('/')}>Создайте туннель</button>
         и вернитесь сюда.
-      </div>
-    {:else}
-      <div class="tunnel-chips">
-        {#each tunnelOutbounds as ob (ob.tag)}
-          {@const selected = selectedTunnel === ob.tag}
-          <button type="button" class="t-chip" class:selected onclick={() => (selectedTunnel = ob.tag)}>
-            <span class="tag">{ob.tag}</span>
-            <span class="ttype">· {ob.type}</span>
-          </button>
-        {/each}
       </div>
     {/if}
   </WizardStep>
@@ -140,7 +142,6 @@
   }
   .t-chip.selected { background: var(--accent-soft); border-color: var(--accent); }
   .t-chip .tag { font-family: var(--font-mono); font-size: 12px; font-weight: 500; }
-  .t-chip .ttype { font-size: 11px; color: var(--text-muted); }
   .empty-tunnels { font-size: 13px; color: var(--text-muted); }
   .link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
   .picker-btn {
@@ -226,7 +227,6 @@
     }
 
     .t-chip .tag,
-    .t-chip .ttype,
     .picker-title,
     .picker-sub,
     .enable-hint {

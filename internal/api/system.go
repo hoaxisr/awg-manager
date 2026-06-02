@@ -487,6 +487,7 @@ func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, go
 	singboxInstalled, singboxVersion := h.getSingboxInfoFast()
 	routerDetails := h.getRouterDetailsCached()
 	clock := routerclock.Get()
+	nativewgAvail, nativewgReason := nativewgStatus()
 
 	return map[string]interface{}{
 		"version":                     h.version,
@@ -517,11 +518,14 @@ func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, go
 		"bootInProgress":              h.bootStatusFn != nil && h.bootStatusFn(),
 		"slowRequestThresholdMs":      h.slowRequestThresholdMs,
 		"backendAvailability": map[string]bool{
-			"nativewg": nativewgAvailable(),
+			"nativewg": nativewgAvail,
 			// Kernel backend works on any OS where amneziawg.ko is loaded.
 			// On OS5 it uses the OpkgTun two-layer architecture (NDMS + kernel).
 			"kernel": kernelModuleLoaded,
 		},
+		// Why NativeWG is gated (empty when available) — lets the UI explain
+		// the disabled toggle instead of silently greying it out.
+		"nativewgReason": nativewgReason,
 		"singbox": map[string]interface{}{
 			"installed": singboxInstalled,
 			"version":   singboxVersion,
@@ -652,20 +656,32 @@ func (h *SystemHandler) currentSingboxBinaryFingerprint() string {
 	)
 }
 
-// nativewgAvailable returns true if NativeWG backend can work:
-// (1) the firmware has the 'wireguard' component installed, AND
-// (2) either firmware supports WireGuard ASC natively (>= 5.01.A.4)
-//
-//	or awg_proxy.ko is loaded (provides obfuscation proxy for older firmware).
-func nativewgAvailable() bool {
-	if !ndmsinfo.HasWireguardComponent() {
-		return false
+// Reasons NativeWG is unavailable, surfaced to the UI via system/info so the
+// disabled toggle can explain itself instead of silently greying out.
+const (
+	nwgReasonNoComponent   = "no-component"   // firmware lacks the 'wireguard' component
+	nwgReasonNoObfuscation = "no-obfuscation" // component present but no ASC firmware and awg_proxy.ko not loaded
+)
+
+// evalNativewg decides whether the NativeWG backend can work and, when it
+// cannot, why. Pure (all router state passed in) so it stays unit-testable.
+// NativeWG needs: (1) the firmware 'wireguard' component, AND (2) either
+// native WireGuard ASC firmware (>= 5.01.A.3) or a loaded awg_proxy.ko for
+// obfuscation on older firmware.
+func evalNativewg(hasWireguardComponent, supportsASC, awgProxyLoaded bool) (available bool, reason string) {
+	if !hasWireguardComponent {
+		return false, nwgReasonNoComponent
 	}
-	if ndmsinfo.SupportsWireguardASC() {
-		return true
+	if supportsASC || awgProxyLoaded {
+		return true, ""
 	}
+	return false, nwgReasonNoObfuscation
+}
+
+// nativewgStatus wires evalNativewg to live router state.
+func nativewgStatus() (available bool, reason string) {
 	_, err := os.Stat("/proc/awg_proxy/version")
-	return err == nil
+	return evalNativewg(ndmsinfo.HasWireguardComponent(), ndmsinfo.SupportsWireguardASC(), err == nil)
 }
 
 // getBr0IP returns the first IPv4 address of the br0 (Bridge0) interface.

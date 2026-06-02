@@ -193,6 +193,14 @@ describe('aggregateBy', () => {
 		expect(buckets[1].key).toBe('B');
 		expect(buckets[1].download).toBe(50);
 	});
+	it('keeps raw key and separate display label', () => {
+		const conns = [
+			makeConn({ id: '1', chains: ['awg-awg10'], outboundLabel: 'Office VPN (t2s10)', download: 100 }),
+		];
+		const [bucket] = aggregateBy(conns, (c) => c.chains[0] ?? '', (c) => c.outboundLabel);
+		expect(bucket.key).toBe('awg-awg10');
+		expect(bucket.label).toBe('Office VPN (t2s10)');
+	});
 	it('pct rounds against total download', () => {
 		const conns = [
 			makeConn({ id: '1', outboundLabel: 'A', download: 750 }),

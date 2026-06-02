@@ -147,6 +147,10 @@ func (o *OperatorNativeWG) createViaImport(ctx context.Context, stored *storage.
 		return 0, fmt.Errorf("post-import settings: %w", err)
 	}
 
+	// Keep the interface cache coherent with the freshly-imported interface
+	// (same rationale as the batch path — issue #255).
+	o.queries.Interfaces.Invalidate(ndmsName)
+
 	o.appLog.Full("create", stored.Name, fmt.Sprintf("Created NDMS interface %s via import", ndmsName))
 	o.appLog.Info("create", ndmsName, "via import path")
 	return idx, nil
@@ -235,6 +239,11 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 			}
 		}
 	}
+
+	// Refresh the interface cache so the next nextFreeIndex sees this slot
+	// as occupied. Without it, back-to-back creates (no Start in between)
+	// re-read the stale map and allocate the same index — issue #255.
+	o.queries.Interfaces.OnCreated(ctx, ndmsName)
 
 	o.appLog.Full("create", stored.Name, fmt.Sprintf("Creating NDMS interface %s", ndmsName))
 	o.appLog.Info("create", ndmsName, "interface created")
@@ -474,6 +483,10 @@ func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel
 
 	// 4. Persist
 	_, _ = o.transport.Post(ctx, payloads.CmdSave())
+
+	// 5. Free the slot in the interface cache so the index can be reused
+	// without an AWGM restart — issue #255.
+	o.queries.Interfaces.OnDestroyed(names.NDMSName)
 
 	o.appLog.Info("delete", names.NDMSName, "tunnel deleted")
 	return nil

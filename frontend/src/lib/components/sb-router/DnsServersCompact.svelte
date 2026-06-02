@@ -4,8 +4,12 @@
 
 <script lang="ts">
   import type { SingboxRouterDNSServer, SingboxRouterDNSRule } from '$lib/types';
+  import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
   import { Badge, Button } from '$lib/components/ui';
   import { ArrowRight } from 'lucide-svelte';
+  import { resolveMemberLabel } from '$lib/utils/memberLabel';
+
+  const AWG_OPTION_GROUPS = new Set(['AWG туннели', 'Системные WireGuard']);
 
   interface Props {
     servers: SingboxRouterDNSServer[];
@@ -15,10 +19,12 @@
     onAddRule?: () => void;
     addRuleDisabled?: boolean;
     addRuleTitle?: string;
+    outboundOptions?: OutboundGroup[];
   }
 
   let {
     servers, rules, onEditServer, onEditRule, onAddRule, addRuleDisabled = false, addRuleTitle,
+    outboundOptions = [],
   }: Props = $props();
 
   function subFor(s: SingboxRouterDNSServer): string {
@@ -27,6 +33,20 @@
 
   function detourFor(s: SingboxRouterDNSServer): string {
     return s.detour ?? 'direct';
+  }
+
+  function detourLabelFor(s: SingboxRouterDNSServer): string {
+    const detour = detourFor(s);
+    if (detour === 'direct') return detour;
+    return resolveMemberLabel(detour, null, outboundOptions);
+  }
+
+  function detourVariantFor(s: SingboxRouterDNSServer): 'default' | 'accent' | 'purple' {
+    const detour = detourFor(s);
+    if (detour === 'direct') return 'default';
+    return outboundOptions.some((g) =>
+      AWG_OPTION_GROUPS.has(g.group) && g.items.some((i) => i.value === detour)
+    ) ? 'purple' : 'accent';
   }
 
   function matcherSummary(r: SingboxRouterDNSRule): string {
@@ -48,8 +68,8 @@
           <div class="tag">{s.tag}</div>
           <div class="sub">{subFor(s)}</div>
         </div>
-        <Badge variant={detourFor(s) === 'direct' ? 'default' : 'accent'} size="sm" mono>
-          {detourFor(s)}
+        <Badge variant={detourVariantFor(s)} size="sm" mono title={detourFor(s)}>
+          {detourLabelFor(s)}
         </Badge>
       </button>
     {/each}
