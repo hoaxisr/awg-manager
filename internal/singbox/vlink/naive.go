@@ -43,6 +43,10 @@ func parseNaive(input string) (*ParsedOutbound, error) {
 		"server_port": port,
 		"username":    username,
 		"password":    password,
+		"udp_over_tcp": map[string]any{
+			"enabled": true,
+			"version": 2,
+		},
 	}
 	if innerScheme == "https" {
 		out["tls"] = map[string]any{

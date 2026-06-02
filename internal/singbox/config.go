@@ -73,6 +73,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 
 // Save atomically writes config.json to disk (tmp file + rename).
 func (c *Config) Save(path string) error {
+	c.ensureNaiveUDPOverTCPOutbounds()
 	b, err := json.MarshalIndent(c.raw, "", "  ")
 	if err != nil {
 		return err
@@ -232,6 +233,7 @@ func (c *Config) AddTunnelWithListenPort(tag, protocol, server string, port, lis
 		return fmt.Errorf("bad outbound json: %w", err)
 	}
 	obMap["tag"] = tag
+	ensureNaiveUDPOverTCP(obMap)
 
 	// Insert inbound before existing (any order works)
 	inbound := map[string]any{
@@ -314,6 +316,7 @@ func (c *Config) UpdateTunnel(tag string, outbound json.RawMessage) error {
 		return fmt.Errorf("bad outbound json: %w", err)
 	}
 	obMap["tag"] = tag
+	ensureNaiveUDPOverTCP(obMap)
 
 	found := false
 	obs := c.outbounds()
@@ -402,6 +405,34 @@ func (c *Config) RenameTunnel(oldTag, newTag string) error {
 
 	renameTunnelRouteRefs(c.routeRules(), oldTag, newTag, oldInTag, newInTag)
 	return nil
+}
+
+func ensureNaiveUDPOverTCP(ob map[string]any) bool {
+	if strOr(ob["type"], "") != "naive" {
+		return false
+	}
+	if _, ok := ob["udp_over_tcp"]; ok {
+		return false
+	}
+	ob["udp_over_tcp"] = map[string]any{
+		"enabled": true,
+		"version": 2,
+	}
+	return true
+}
+
+func (c *Config) ensureNaiveUDPOverTCPOutbounds() bool {
+	changed := false
+	for _, raw := range c.outbounds() {
+		ob, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if ensureNaiveUDPOverTCP(ob) {
+			changed = true
+		}
+	}
+	return changed
 }
 
 func renameTunnelRouteRefs(values []any, oldOut, newOut, oldIn, newIn string) {

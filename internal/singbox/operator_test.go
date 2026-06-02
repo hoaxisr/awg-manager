@@ -944,6 +944,43 @@ func TestPatchTunnelsSlotStripBaseOwnedBlocks_StripsTopLevelLog(t *testing.T) {
 	}
 }
 
+func TestPatchTunnelsSlotEnsureNaiveUDPOverTCP(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "10-tunnels.json")
+	legacy := `{
+		"inbounds": [],
+		"outbounds": [
+			{"type":"naive","tag":"N","server":"h","server_port":443,"username":"u","password":"p"},
+			{"type":"vless","tag":"V","server":"h","server_port":443,"uuid":"u"}
+		],
+		"route": {"rules":[]}
+	}`
+	if err := os.WriteFile(p, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	patchTunnelsSlotEnsureNaiveUDPOverTCP(p)
+
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	outbounds := m["outbounds"].([]any)
+	naive := outbounds[0].(map[string]any)
+	uot, _ := naive["udp_over_tcp"].(map[string]any)
+	if uot == nil || uot["enabled"] != true || uot["version"] != float64(2) {
+		t.Fatalf("udp_over_tcp=%v", uot)
+	}
+	vless := outbounds[1].(map[string]any)
+	if _, ok := vless["udp_over_tcp"]; ok {
+		t.Fatalf("vless must not get udp_over_tcp: %v", vless)
+	}
+}
+
 // TestPatchTunnelsSlotStripBaseOwnedBlocks_IdempotentOnClean is the steady-state
 // case: a clean slot file (no dns block) must round-trip unchanged.
 func TestPatchTunnelsSlotStripBaseOwnedBlocks_IdempotentOnClean(t *testing.T) {

@@ -284,6 +284,7 @@ func NewOperator(d OperatorDeps) *Operator {
 	ensureBaseConfigWithLogLevel(configPath, desiredSingboxLogLevel, log)
 	ensureLegacyConfigMigrated(dir)
 	patchTunnelsSlotStripBaseOwnedBlocks(filepath.Join(configPath, "10-tunnels.json"))
+	patchTunnelsSlotEnsureNaiveUDPOverTCP(filepath.Join(configPath, "10-tunnels.json"))
 	stripStrayDirectPlaceholder(configPath)
 	removeFinalFromBase(filepath.Join(configPath, "00-base.json"), log)
 
@@ -1153,6 +1154,22 @@ func patchTunnelsSlotStripBaseOwnedBlocks(tunnelsPath string) {
 		}
 	}
 	if changed {
+		_ = writeJSONFile(tunnelsPath, m)
+	}
+}
+
+func patchTunnelsSlotEnsureNaiveUDPOverTCP(tunnelsPath string) {
+	data, err := os.ReadFile(tunnelsPath)
+	if err != nil {
+		return
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return
+	}
+	outbounds, _ := m["outbounds"].([]any)
+	cfg := &Config{raw: map[string]any{"outbounds": outbounds}}
+	if cfg.ensureNaiveUDPOverTCPOutbounds() {
 		_ = writeJSONFile(tunnelsPath, m)
 	}
 }

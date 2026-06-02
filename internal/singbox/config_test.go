@@ -55,6 +55,26 @@ func TestConfig_AddTunnel_TagConflict(t *testing.T) {
 	}
 }
 
+func TestConfig_AddTunnel_EnsuresNaiveUDPOverTCP(t *testing.T) {
+	c := NewConfig()
+	ob := json.RawMessage(`{"type":"naive","tag":"N","server":"h","server_port":443,"username":"u","password":"p"}`)
+	if err := c.AddTunnel("N", "naive", "h", 443, ob); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := c.GetOutbound("N")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	uot, _ := got["udp_over_tcp"].(map[string]any)
+	if uot == nil || uot["enabled"] != true || uot["version"] != float64(2) {
+		t.Fatalf("udp_over_tcp=%v", uot)
+	}
+}
+
 func TestConfig_RemoveTunnel(t *testing.T) {
 	c := NewConfig()
 	c.AddTunnel("A", "vless", "h", 1, json.RawMessage(`{"type":"vless","tag":"A"}`))

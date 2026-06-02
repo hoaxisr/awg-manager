@@ -35,6 +35,20 @@ func TestParseNaive_HTTP_NoTLS(t *testing.T) {
 	}
 }
 
+func TestParseNaive_EnablesUDPOverTCP(t *testing.T) {
+	link := "naive+https://user:pass@example.com:443#n"
+	got, err := ParseLink(link)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	var ob map[string]any
+	json.Unmarshal(got.Outbound, &ob)
+	uot, _ := ob["udp_over_tcp"].(map[string]any)
+	if uot == nil || uot["enabled"] != true || uot["version"] != float64(2) {
+		t.Errorf("udp_over_tcp=%v", uot)
+	}
+}
+
 func TestParseNaive_MissingCreds(t *testing.T) {
 	link := "naive+https://example.com:443"
 	_, err := ParseLink(link)
