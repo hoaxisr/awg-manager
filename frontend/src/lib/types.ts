@@ -584,6 +584,8 @@ export interface SystemInfo {
 	/** >0 when started with -slow-request-ms (init script); drives Profiling log filter chip */
 	slowRequestThresholdMs?: number;
 	backendAvailability: { nativewg: boolean; kernel: boolean };
+	/** Why NativeWG is unavailable (empty when available): 'no-component' | 'no-obfuscation'. */
+	nativewgReason?: string;
 	singbox?: {
 		installed: boolean;
 		version: string;

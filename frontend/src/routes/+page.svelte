@@ -49,6 +49,7 @@
 		awgShowConnectivityRow,
 	} from '$lib/utils/awgPingStatus';
 	import { resolveSubscriptionMemberTag } from '$lib/utils/subscriptionMember';
+	import { nativewgUnavailableHint } from '$lib/utils/backendAvailability';
 	import {
 		SINGBOX_LAYOUT_STORAGE_KEY,
 		parseSingboxLayoutMode,
@@ -821,6 +822,12 @@
 
 	let selectedBackend = $state<'nativewg' | 'kernel'>('nativewg');
 
+	let nativewgHint = $derived(
+		sysInfo !== null && !sysInfo.backendAvailability?.nativewg
+			? nativewgUnavailableHint(sysInfo.nativewgReason)
+			: ''
+	);
+
 	// Auto-select backend based on availability
 	$effect(() => {
 		if (sysInfo?.backendAvailability && !sysInfo.backendAvailability.nativewg && sysInfo.backendAvailability.kernel) {
@@ -1147,6 +1154,7 @@
 							class:selected={selectedBackend === 'nativewg'}
 							class:disabled={sysInfo !== null && !sysInfo.backendAvailability?.nativewg}
 							disabled={sysInfo !== null && !sysInfo.backendAvailability?.nativewg}
+							title={nativewgHint}
 							onclick={() => selectedBackend = 'nativewg'}
 						>
 							NativeWG
@@ -1162,6 +1170,9 @@
 							Kernel
 						</button>
 					</div>
+					{#if nativewgHint}
+						<p class="term-backend-hint">{nativewgHint}</p>
+					{/if}
 
 					<div class="term-commands">
 						{#if externalList.length > 0}
@@ -3316,6 +3327,14 @@
 	.term-backend-btn.disabled {
 		opacity: 0.4;
 		cursor: not-allowed;
+	}
+
+	.term-backend-hint {
+		margin: 8px 0 0;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		line-height: 1.4;
+		color: var(--color-text-muted);
 	}
 
 	/* Drag-over / importing overlays */
