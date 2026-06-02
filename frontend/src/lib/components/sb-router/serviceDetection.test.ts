@@ -69,10 +69,10 @@ const catalog: CatalogPreset[] = [
     },
   },
   {
-    id: 'chatgpt',
-    name: 'ChatGPT',
-    iconSlug: 'chatgpt',
-    category: 'social',
+    id: 'openai',
+    name: 'OpenAI',
+    iconSlug: 'openai',
+    category: 'ai',
     origin: 'builtin',
     engines: {
       dns: { domains: ['openai.com', 'chatgpt.com'] },
@@ -99,9 +99,9 @@ const catalog: CatalogPreset[] = [
     },
   },
   {
-    id: 'social',
-    name: 'Social',
-    iconSlug: 'social',
+    id: 'meta',
+    name: 'Meta (все сервисы)',
+    iconSlug: 'meta',
     category: 'social',
     origin: 'builtin',
     engines: {
@@ -151,9 +151,9 @@ describe('detectServiceKey', () => {
     expect(detectServiceKey(rule({ domain_suffix: ['githubusercontent.com'] }), undefined, catalog)).toBe('github');
   });
 
-  it('detects chatgpt (openai.com/chatgpt.com → preset id "chatgpt")', () => {
-    expect(detectServiceKey(rule({ domain_suffix: ['openai.com'] }), undefined, catalog)).toBe('chatgpt');
-    expect(detectServiceKey(rule({ domain_suffix: ['chatgpt.com'] }), undefined, catalog)).toBe('chatgpt');
+  it('detects openai (openai.com/chatgpt.com → preset id "openai")', () => {
+    expect(detectServiceKey(rule({ domain_suffix: ['openai.com'] }), undefined, catalog)).toBe('openai');
+    expect(detectServiceKey(rule({ domain_suffix: ['chatgpt.com'] }), undefined, catalog)).toBe('openai');
   });
 
   it('detects discord', () => {
@@ -165,10 +165,10 @@ describe('detectServiceKey', () => {
     expect(detectServiceKey(rule({ domain_suffix: ['twitch.tv'] }), undefined, catalog)).toBe('twitch');
   });
 
-  it('detects social (facebook/instagram/whatsapp → preset id "social")', () => {
-    expect(detectServiceKey(rule({ domain_suffix: ['facebook.com'] }), undefined, catalog)).toBe('social');
-    expect(detectServiceKey(rule({ domain_suffix: ['instagram.com'] }), undefined, catalog)).toBe('social');
-    expect(detectServiceKey(rule({ domain_suffix: ['whatsapp.com'] }), undefined, catalog)).toBe('social');
+  it('detects meta (facebook/instagram/whatsapp → preset id "meta")', () => {
+    expect(detectServiceKey(rule({ domain_suffix: ['facebook.com'] }), undefined, catalog)).toBe('meta');
+    expect(detectServiceKey(rule({ domain_suffix: ['instagram.com'] }), undefined, catalog)).toBe('meta');
+    expect(detectServiceKey(rule({ domain_suffix: ['whatsapp.com'] }), undefined, catalog)).toBe('meta');
   });
 
   it('returns "custom" for apple domains (no apple preset in catalog)', () => {
@@ -268,6 +268,6 @@ describe('detectServiceKey', () => {
   });
 
   it('returns custom for geosite rule_set without router presets and no catalog match', () => {
-    expect(detectServiceKey(rule({ rule_set: ['geosite-openai'] }), undefined, catalog)).toBe('custom');
+    expect(detectServiceKey(rule({ rule_set: ['geosite-unknownservice'] }), undefined, catalog)).toBe('custom');
   });
 });
