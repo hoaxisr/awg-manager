@@ -41,6 +41,10 @@ const (
 	// discovered from _NDM_HOTSPOT_DNSREDIR (see lanbridges.go).
 	// Issue #132.
 	DNSRescueTag = "AWGM-DNS-RESCUE"
+	// IngressTag identifies our MARK/CONNMARK rules in mangle PREROUTING
+	// that force selected interfaces' connections to carry the policy
+	// mark (ingress-scope feature). Comment-tagged for idempotent cleanup.
+	IngressTag = "AWGM-INGRESS"
 	// DNSNoPolicyTag is the legacy tag for the previous (failed)
 	// attempt: re-mark mark=0 DNS in mangle PREROUTING up to an NDMS
 	// catch-all mark, expecting _NDM_HOTSPOT_DNSREDIR to forward to
@@ -229,6 +233,11 @@ type RestoreInputSpec struct {
 	// Note: port 79 (NDMS admin) is always excluded by a hardcoded rule;
 	// including 79 here produces a harmless duplicate RETURN rule.
 	BypassTCPPorts []int
+
+	// IngressInterfaces — уже резолвленные kernel-имена (напр. "nwg3"),
+	// чей ingress-трафик помечается policy-меткой в mangle PREROUTING до
+	// connmark-jump'а. Пусто / MatchAll / пустой PolicyMark = no-op.
+	IngressInterfaces []string
 }
 
 var bypassCIDRs = []string{
@@ -298,6 +307,19 @@ func buildRestoreInput(spec RestoreInputSpec) string {
 	// add_tproxy_rules: catch-all TPROXY for UDP.
 	fmt.Fprintf(&b, "-A %s -p udp -j TPROXY --on-port %d --on-ip 127.0.0.1 --tproxy-mark 0x%x\n",
 		ChainName, TPROXYPort, Fwmark)
+
+	// Ingress-scope: пометить выбранные интерфейсы policy-меткой ДО jump'а,
+	// чтобы connmark-jump (ниже в mangle и в nat) принял их за членов
+	// политики. Эмитится перед jump'ом → в PREROUTING MARK/save сработают
+	// раньше. Skip в MatchAll / при пустой метке (там и так всё проксируется).
+	if !spec.MatchAll && spec.PolicyMark != "" {
+		for _, iface := range spec.IngressInterfaces {
+			fmt.Fprintf(&b, "-A PREROUTING -i %s -m comment --comment %s -j MARK --set-xmark %s/0xffffffff\n",
+				iface, IngressTag, spec.PolicyMark)
+			fmt.Fprintf(&b, "-A PREROUTING -i %s -m comment --comment %s -j CONNMARK --save-mark --nfmask 0xffffffff --ctmask 0xffffffff\n",
+				iface, IngressTag)
+		}
+	}
 
 	// set_prerouting_rules: policy connmark filter ON THE JUMP, no `-p`
 	// matcher (SKeen jumps unconditionally; per-proto matching happens

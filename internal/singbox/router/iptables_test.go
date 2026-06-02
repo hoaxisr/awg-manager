@@ -1055,3 +1055,36 @@ func TestBuildRestoreInput_BypassTCPPortsBeforeCatchAll(t *testing.T) {
 		t.Errorf("TCP bypass rule appears AFTER catch-all REDIRECT — must be before it")
 	}
 }
+
+func TestBuildRestoreInput_IngressScope(t *testing.T) {
+	spec := RestoreInputSpec{PolicyMark: "0xffffaad", IngressInterfaces: []string{"nwg3"}}
+	got := buildRestoreInput(spec)
+
+	markRule := "-A PREROUTING -i nwg3 -m comment --comment AWGM-INGRESS -j MARK --set-xmark 0xffffaad/0xffffffff"
+	saveRule := "-A PREROUTING -i nwg3 -m comment --comment AWGM-INGRESS -j CONNMARK --save-mark --nfmask 0xffffffff --ctmask 0xffffffff"
+	jump := "-A PREROUTING -m connmark --mark 0xffffaad -m conntrack ! --ctstate INVALID -j " + ChainName
+
+	if !strings.Contains(got, markRule) {
+		t.Fatalf("missing MARK rule in:\n%s", got)
+	}
+	if !strings.Contains(got, saveRule) {
+		t.Fatalf("missing CONNMARK save rule in:\n%s", got)
+	}
+	if strings.Index(got, markRule) > strings.Index(got, jump) {
+		t.Fatalf("MARK rule must precede the connmark jump")
+	}
+}
+
+func TestBuildRestoreInput_IngressScope_MatchAllSkips(t *testing.T) {
+	spec := RestoreInputSpec{MatchAll: true, IngressInterfaces: []string{"nwg3"}}
+	if strings.Contains(buildRestoreInput(spec), "AWGM-INGRESS") {
+		t.Fatalf("ingress rules must be skipped in MatchAll mode")
+	}
+}
+
+func TestBuildRestoreInput_IngressScope_EmptyMarkSkips(t *testing.T) {
+	spec := RestoreInputSpec{PolicyMark: "", IngressInterfaces: []string{"nwg3"}}
+	if strings.Contains(buildRestoreInput(spec), "AWGM-INGRESS") {
+		t.Fatalf("ingress rules must be skipped when PolicyMark empty")
+	}
+}
