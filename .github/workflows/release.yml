@@ -55,6 +55,9 @@ jobs:
         working-directory: frontend
         run: |
           npm ci
+          node scripts/generate-brand-icons.mjs
+          git diff --exit-code src/lib/generated/brandIcons.ts \
+            || { echo "::error::brandIcons.ts is stale — run 'node scripts/generate-brand-icons.mjs' and commit"; exit 1; }
           npm run build
 
       - name: Build .ipk
