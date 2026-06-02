@@ -1343,6 +1343,24 @@ func TestReconcile_BypassPresetsSame_NoOp(t *testing.T) {
 	}
 }
 
+type fakeIngressResolver struct{ m map[string]string }
+
+func (f fakeIngressResolver) Resolve(_ context.Context, ref string) string { return f.m[ref] }
+
+func TestResolveIngressInterfaces(t *testing.T) {
+	s := &ServiceImpl{deps: Deps{IngressResolver: fakeIngressResolver{m: map[string]string{
+		"managed:Wireguard3": "nwg3",
+		"managed:Wireguard9": "", // удалён/не поднят
+	}}}}
+	got := s.resolveIngressInterfaces(context.Background(), []string{
+		"managed:Wireguard3", "iface:nwg5", "managed:Wireguard9", "iface:nwg5",
+	})
+	want := []string{"nwg3", "nwg5"} // dead-ref пропущен, дубль убран
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
 func TestNormalizeSingboxRouterSettings_IngressRefs(t *testing.T) {
 	base := storage.SingboxRouterSettings{PolicyName: "awgm-router", WANAutoDetect: true}
 

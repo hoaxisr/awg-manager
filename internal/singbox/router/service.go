@@ -142,6 +142,15 @@ type BindableInterfaceLister interface {
 	ListBindable(ctx context.Context) ([]WANInterfaceInfo, error)
 }
 
+// IngressResolver резолвит ref интерфейса ("managed:Wireguard3") в
+// kernel-имя ("nwg3"). Возвращает "" если не резолвится (сервер удалён /
+// интерфейс ещё не поднят). Реализуется адаптером в cmd/awg-manager
+// поверх InterfaceStore.ResolveSystemName (router не может импортить
+// internal/ndms — цикл через internal/tunnel/wan).
+type IngressResolver interface {
+	Resolve(ctx context.Context, ref string) string
+}
+
 // PolicyInfo is the public projection of one NDMS access policy that
 // the router UI consumes for the policy selector.
 type PolicyInfo struct {
@@ -235,6 +244,10 @@ type Deps struct {
 	// outbound to. Optional — when nil, ListBindableInterfaces returns an
 	// empty slice and bind_interface existence is not enforced.
 	BindableInterfaces BindableInterfaceLister
+	// IngressResolver резолвит managed:-ref'ы ingress-интерфейсов в
+	// kernel-имена на сборке спека. Optional — nil → managed:-ref'ы
+	// пропускаются (iface:-ref'ы резолвятся без него).
+	IngressResolver IngressResolver
 	// NetfilterPreflight is an optional override for the module-load /
 	// target-availability check that Enable and reconcileInstalled both
 	// call before every Install. When nil, prepareNetfilter runs the
@@ -309,6 +322,28 @@ func NewService(d Deps) *ServiceImpl {
 
 func (s *ServiceImpl) routerConfigPath() string {
 	return filepath.Join(s.deps.Singbox.ConfigDir(), "20-router.json")
+}
+
+func (s *ServiceImpl) resolveIngressInterfaces(ctx context.Context, refs []string) []string {
+	out := make([]string, 0, len(refs))
+	seen := map[string]bool{}
+	for _, ref := range refs {
+		var name string
+		switch {
+		case strings.HasPrefix(ref, "iface:"):
+			name = strings.TrimPrefix(ref, "iface:")
+		case strings.HasPrefix(ref, "managed:"):
+			if s.deps.IngressResolver != nil {
+				name = s.deps.IngressResolver.Resolve(ctx, ref)
+			}
+		}
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
 }
 
 func (s *ServiceImpl) ruleSetMaterializer() ruleSetMaterializer {
