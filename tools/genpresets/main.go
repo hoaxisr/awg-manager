@@ -1,7 +1,7 @@
-// Command genpresets regenerates internal/presets/defaults.json from the two
-// existing catalogs, reconciling DNS domains by decompiling each .srs with a
-// host sing-box. DEV TOOL — needs network + a host sing-box; never run on the
-// router and never in CI. See README.md.
+// Command genpresets maintains internal/presets/defaults.json: it loads the
+// committed catalog as base, refreshes DNS by decompiling each sing-box preset's
+// .srs with a host sing-box, and appends new presets from the additions table.
+// DEV TOOL — needs network + a host sing-box; never run on the router or in CI.
 package main
 
 import (
@@ -18,26 +18,25 @@ import (
 	"path/filepath"
 	"time"
 
-	ip "github.com/hoaxisr/awg-manager/internal/singbox/router/internalpresets"
+	"github.com/hoaxisr/awg-manager/internal/presets"
 )
 
 func main() {
 	singbox := flag.String("singbox", "sing-box", "path to a host sing-box binary")
-	svcJSON := flag.String("service-presets", "/tmp/service-presets.json", "SERVICE_PRESETS JSON export")
-	out := flag.String("out", "internal/presets/defaults.json", "output path")
+	out := flag.String("out", "internal/presets/defaults.json", "catalog path (read as base, rewritten)")
 	cacheDir := flag.String("cache", filepath.Join(os.TempDir(), "genpresets-srs"), "srs download cache dir")
 	flag.Parse()
 
-	svc, err := loadServicePresets(*svcJSON)
+	base, err := loadCatalog(*out)
 	if err != nil {
-		log.Fatalf("load service presets: %v", err)
+		log.Fatalf("load base catalog %s: %v", *out, err)
 	}
 	if err := os.MkdirAll(*cacheDir, 0o755); err != nil {
 		log.Fatalf("cache dir: %v", err)
 	}
 	dc := newDecompiler(*singbox, *cacheDir)
 
-	catalog := build(ip.All(), svc, additions, dc)
+	catalog := build(base, additions, dc)
 
 	raw, err := json.MarshalIndent(catalog, "", "  ")
 	if err != nil {
@@ -49,16 +48,13 @@ func main() {
 	log.Printf("wrote %d presets to %s", len(catalog), *out)
 }
 
-// (main.go does not import internal/presets directly — the catalog's element
-// type is inferred from build()'s return value, so no named use is needed.)
-
-func loadServicePresets(path string) ([]servicePreset, error) {
+func loadCatalog(path string) ([]presets.Preset, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var sp []servicePreset
-	return sp, json.Unmarshal(raw, &sp)
+	var ps []presets.Preset
+	return ps, json.Unmarshal(raw, &ps)
 }
 
 // newDecompiler downloads each .srs (cached by URL hash) and decompiles it via

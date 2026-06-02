@@ -1,9 +1,9 @@
 # genpresets — unified preset catalog generator (DEV TOOL)
 
-Regenerates `internal/presets/defaults.json` by merging the two existing
-catalogs (`internalpresets.All()` + the frontend `SERVICE_PRESETS`) into unified
-per-engine entries, reconciling DNS domains by decompiling each `.srs` with a
-host sing-box, and adding the new presets in `catalog.go`'s `additions` table.
+Maintains `internal/presets/defaults.json` by loading the committed catalog as
+base, refreshing DNS for every sing-box preset by re-decompiling its `.srs` with
+a host sing-box, and appending any new presets from the `additions` table in
+`catalog.go`.
 
 **Not** run on the router and **not** in CI. Needs network (downloads `.srs`)
 and a host sing-box.
@@ -11,18 +11,27 @@ and a host sing-box.
 ## Run
 
 ```bash
-# 1) export the frontend DNS catalog
-cd frontend && node scripts/export-service-presets.mjs > /tmp/service-presets.json && cd ..
-
-# 2) get a host sing-box pinned to the project's runtime version
+# 1) get a host sing-box pinned to the project's runtime version
 ver="$(sed -n 's/^const RequiredVersion = "\(.*\)"/\1/p' internal/singbox/installer/embedded.go)"
 curl -fsSL -o /tmp/sb.tgz "https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box-${ver}-linux-amd64.tar.gz"
 tar -xzf /tmp/sb.tgz -C /tmp
 SB=$(find /tmp -type f -name sing-box -path "*${ver}-linux-amd64*" | head -1)
 
-# 3) generate, then review the diff and commit internal/presets/defaults.json
-go run ./tools/genpresets -singbox "$SB" -service-presets /tmp/service-presets.json
+# 2) generate — base is read from internal/presets/defaults.json, then rewritten
+go run ./tools/genpresets -singbox "$SB"
+
+# 3) review the diff and commit internal/presets/defaults.json
+git diff internal/presets/defaults.json
 ```
+
+## Self-hosting flow
+
+- **Base** = `internal/presets/defaults.json` (the committed catalog).
+- The generator re-decompiles each sing-box preset's `.srs` to refresh its
+  inlined DNS domains/subnets. Non-DNS fields of base presets are preserved as-is.
+- Entries from the `additions` table in `catalog.go` that are not yet in the
+  base are appended with freshly decompiled DNS.
+- The file is rewritten in place; review the diff and commit it.
 
 ## Pinned sing-box
 
