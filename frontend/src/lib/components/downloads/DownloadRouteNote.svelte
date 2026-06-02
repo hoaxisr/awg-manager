@@ -1,6 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { settings } from '$lib/stores/settings';
+	import { settings, usageLevel } from '$lib/stores/settings';
 	import {
 		downloadOutbounds,
 		downloadOutboundsError,
@@ -9,15 +8,19 @@
 		ensureDownloadOutboundsLoaded,
 		resolveDownloadRouteLabel,
 	} from '$lib/stores/downloadRoute';
+	import { areDownloadRouteDetailsVisible } from '$lib/types/usageLevel';
 
 	interface Props {
 		text: string;
 	}
 
 	let { text }: Props = $props();
+	const showDownloadRouteDetails = $derived(areDownloadRouteDetailsVisible($usageLevel));
 
-	onMount(() => {
-		void ensureDownloadOutboundsLoaded();
+	$effect(() => {
+		if (showDownloadRouteDetails) {
+			void ensureDownloadOutboundsLoaded();
+		}
 	});
 
 	const routeLabel = $derived(resolveDownloadRouteLabel($settings, $downloadOutbounds));
@@ -42,15 +45,17 @@
 	});
 </script>
 
-<div
-	class="download-route-note"
-	class:download-route-note-loading={isInitialLoading}
-	class:download-route-note-warn={isStale}
-	class:download-route-note-error={isHardError}
-	title={noteTitle}
->
-	{noteText}
-</div>
+{#if showDownloadRouteDetails}
+	<div
+		class="download-route-note"
+		class:download-route-note-loading={isInitialLoading}
+		class:download-route-note-warn={isStale}
+		class:download-route-note-error={isHardError}
+		title={noteTitle}
+	>
+		{noteText}
+	</div>
+{/if}
 
 <style>
 	.download-route-note {

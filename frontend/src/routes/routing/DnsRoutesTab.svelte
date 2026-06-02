@@ -16,12 +16,13 @@
     import { buildRoutingTunnelDropdownOptions } from '$lib/utils/routingTunnelOptions';
     import { notifications } from '$lib/stores/notifications';
     import { dnsRoutesStore } from '$lib/stores/routing';
-    import { settings } from '$lib/stores/settings';
+    import { settings, usageLevel } from '$lib/stores/settings';
     import {
         downloadOutbounds,
         ensureDownloadOutboundsLoaded,
         resolveDownloadRouteLabel,
     } from '$lib/stores/downloadRoute';
+    import { areDownloadRouteDetailsVisible } from '$lib/types/usageLevel';
     import RoutingTabBodySkeleton from './RoutingTabBodySkeleton.svelte';
     import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
 
@@ -90,7 +91,9 @@
     let orphanDnsRoutes = $derived(dnsRoutes.filter(r => (r.routes?.length ?? 0) === 0));
     let boundDnsRoutes = $derived(dnsRoutes.filter(r => (r.routes?.length ?? 0) > 0));
     let dnsActiveCount = $derived(boundDnsRoutes.filter(r => r.enabled).length);
+    const showDownloadRouteDetails = $derived(areDownloadRouteDetailsVisible($usageLevel));
     const downloadRouteLabel = $derived(resolveDownloadRouteLabel($settings, $downloadOutbounds));
+    const visibleDownloadRouteLabel = $derived(showDownloadRouteDetails ? downloadRouteLabel : '');
 
     async function createDnsRoute(data: Partial<DnsRoute>) {
         dnsSaving = true;
@@ -114,8 +117,10 @@
         }
     }
 
-    onMount(() => {
-        void ensureDownloadOutboundsLoaded();
+    $effect(() => {
+        if (showDownloadRouteDetails) {
+            void ensureDownloadOutboundsLoaded();
+        }
     });
 
     async function updateDnsRoute(data: Partial<DnsRoute>) {
@@ -465,7 +470,7 @@
                         selected={dnsSelected.has(route.id)}
                         onselect={() => toggleDnsSelect(route.id)}
                         onicon={() => { pickingForRoute = route; iconPickerOpen = true; }}
-                        {downloadRouteLabel}
+                        downloadRouteLabel={visibleDownloadRouteLabel}
                     />
                 {/each}
             </div>
@@ -487,7 +492,7 @@
                     selected={dnsSelected.has(route.id)}
                     onselect={() => toggleDnsSelect(route.id)}
                     onicon={() => { pickingForRoute = route; iconPickerOpen = true; }}
-                    {downloadRouteLabel}
+                    downloadRouteLabel={visibleDownloadRouteLabel}
                 />
             {/each}
         </div>

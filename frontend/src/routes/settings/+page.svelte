@@ -40,6 +40,7 @@
 		isSectionVisible,
 		isRoutingSubTabVisible,
 		isUpdateChannelSwitchVisible,
+		areDownloadRouteDetailsVisible,
 		type UsageLevel,
 	} from "$lib/types/usageLevel";
 	import { usageLevel } from "$lib/stores/settings";
@@ -56,7 +57,9 @@
 	const showSingboxIntegration = $derived(isSectionVisible($usageLevel, "singboxTunnels"));
 	const showHydraIntegration = $derived(isRoutingSubTabVisible($usageLevel, "hrNeo"));
 	const showDnsRouteCard = $derived(isRoutingSubTabVisible($usageLevel, "dnsRoutes"));
+	const showDownloadRouteDetails = $derived(areDownloadRouteDetailsVisible($usageLevel));
 	const downloadRouteLabel = $derived(resolveDownloadRouteLabel(settings, $downloadOutbounds));
+	const visibleDownloadRouteLabel = $derived(showDownloadRouteDetails ? downloadRouteLabel : '');
 	let updateInfo: UpdateInfo | null = $state(null);
 	let restarting = $state(false);
 	let restartConfirmOpen = $state(false);
@@ -267,7 +270,6 @@ onMount(() => {
 			]);
 			settings = appSettings;
 			setGlobalSettings(appSettings);
-			await ensureDownloadOutboundsLoaded();
 			scrollToSettingsHashTarget();
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : "Не удалось загрузить настройки");
@@ -289,6 +291,12 @@ onMount(() => {
 	return () => {
 		clearInterval(timer);
 	};
+});
+
+$effect(() => {
+	if (showDownloadRouteDetails) {
+		void ensureDownloadOutboundsLoaded();
+	}
 });
 
 	async function toggleAuth(enabled: boolean) {
@@ -629,11 +637,13 @@ onMount(() => {
 				<div class="card">
 					<div class="section-label section-label-with-route">
 						<span>Обновление AWGM</span>
-						<span class="section-label-route" title={downloadRouteLabel}>
-							через {downloadRouteLabel}
-						</span>
+						{#if showDownloadRouteDetails}
+							<span class="section-label-route" title={downloadRouteLabel}>
+								через {downloadRouteLabel}
+							</span>
+						{/if}
 					</div>
-					<UpdateSection bind:updateInfo {downloadRouteLabel} />
+					<UpdateSection bind:updateInfo downloadRouteLabel={visibleDownloadRouteLabel} />
 				</div>
 
 				<IntegrationsCard
@@ -650,7 +660,7 @@ onMount(() => {
 					onupdateSingbox={updateSingbox}
 					showSingbox={showSingboxIntegration}
 					showHydra={showHydraIntegration}
-					{downloadRouteLabel}
+					downloadRouteLabel={visibleDownloadRouteLabel}
 				/>
 			</aside>
 
@@ -731,16 +741,18 @@ onMount(() => {
 							</div>
 						</div>
 					{/if}
-					<DownloadSettings
-						bind:settings
-						{saving}
-						outbounds={$downloadOutbounds}
-						loading={$downloadOutboundsLoading}
-						error={$downloadOutboundsError}
-						routeSelectorEnabled={singboxInstalled || singboxStatusLoading}
-						onRefresh={refreshDownloadOutbounds}
-						onSelectRoute={selectDownloadRoute}
-					/>
+					{#if showDownloadRouteDetails}
+						<DownloadSettings
+							bind:settings
+							{saving}
+							outbounds={$downloadOutbounds}
+							loading={$downloadOutboundsLoading}
+							error={$downloadOutboundsError}
+							routeSelectorEnabled={singboxInstalled || singboxStatusLoading}
+							onRefresh={refreshDownloadOutbounds}
+							onSelectRoute={selectDownloadRoute}
+						/>
+					{/if}
 				</div>
 
 				<div class="card">
