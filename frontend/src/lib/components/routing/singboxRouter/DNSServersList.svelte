@@ -3,6 +3,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import type { SingboxRouterDNSServer } from '$lib/types';
 	import type { OutboundGroup } from './outboundOptions';
+	import { resolveMemberLabel } from '$lib/utils/memberLabel';
 	import DNSServerEditModal from './DNSServerEditModal.svelte';
 	import { Button } from '$lib/components/ui';
 	import ConfirmModal from '$lib/components/ui/ConfirmModal.svelte';
@@ -20,14 +21,18 @@
 	let deleteTag = $state<string | null>(null);
 	let forceDeleteTag = $state<string | null>(null);
 	let busy = $state(false);
+	const AWG_OPTION_GROUPS = new Set(['AWG туннели', 'Системные WireGuard']);
 
 	function detourLabel(s: SingboxRouterDNSServer): string {
 		if (!s.detour) return 'default';
-		return s.detour;
+		return resolveMemberLabel(s.detour, null, outboundOptions);
 	}
 
 	function detourClass(s: SingboxRouterDNSServer): string {
 		if (!s.detour || s.detour === 'direct') return 'detour-direct';
+		if (outboundOptions.some((g) => AWG_OPTION_GROUPS.has(g.group) && g.items.some((i) => i.value === s.detour))) {
+			return 'detour-awg';
+		}
 		return 'detour-tunnel';
 	}
 
@@ -117,7 +122,7 @@
 				<div class="server mono">
 					{s.server}{#if s.server_port}:{s.server_port}{/if}{#if s.path}{s.path}{/if}
 				</div>
-				<div class={`detour mono ${detourClass(s)}`}>{detourLabel(s)}</div>
+				<div class={`detour mono ${detourClass(s)}`} title={s.detour ?? ''}>{detourLabel(s)}</div>
 				<div class="resolver mono">{resolverLabel(s) || '—'}</div>
 				<button class="icon-btn" onclick={() => (editTag = s.tag)} aria-label="Редактировать">✎</button>
 				<button class="icon-btn danger" onclick={() => requestDelete(s.tag)} aria-label="Удалить">✕</button>
@@ -258,6 +263,7 @@
 		white-space: nowrap;
 	}
 	.detour-direct { color: var(--muted-text); }
+	.detour-awg { color: #9c8aff; }
 	.detour-tunnel { color: var(--accent, #3b82f6); }
 	.resolver { color: var(--muted-text); }
 	.icon-btn {

@@ -20,7 +20,7 @@ export interface MatcherChip {
   mono?: boolean;
 }
 
-export type OutboundKind = 'tunnel' | 'direct' | 'block' | 'composite' | 'unknown' | 'sniff' | 'hijack-dns';
+export type OutboundKind = 'tunnel' | 'awg' | 'direct' | 'block' | 'composite' | 'unknown' | 'sniff' | 'hijack-dns';
 
 export interface OutboundDisplay {
   /** Имя outbound'а из singbox config (raw key) */

@@ -28,10 +28,11 @@ type mockRouterSvc struct {
 	applyErr      error
 	applyRes      orchestrator.ValidationResult
 	discardErr    error
+	datFileErr    error
 }
 
-func (m *mockRouterSvc) Enable(ctx context.Context) error  { return m.enableErr }
-func (m *mockRouterSvc) Disable(ctx context.Context) error { return nil }
+func (m *mockRouterSvc) Enable(ctx context.Context) error    { return m.enableErr }
+func (m *mockRouterSvc) Disable(ctx context.Context) error   { return nil }
 func (m *mockRouterSvc) Reconcile(ctx context.Context) error { return nil }
 func (m *mockRouterSvc) GetStatus(ctx context.Context) (router.Status, error) {
 	return router.Status{}, nil
@@ -56,16 +57,25 @@ func (m *mockRouterSvc) AddRule(ctx context.Context, rule router.Rule) error  { 
 func (m *mockRouterSvc) UpdateRule(ctx context.Context, index int, rule router.Rule) error {
 	return nil
 }
-func (m *mockRouterSvc) DeleteRule(ctx context.Context, index int) error           { return nil }
-func (m *mockRouterSvc) MoveRule(ctx context.Context, from, to int) error          { return nil }
-func (m *mockRouterSvc) SetRouteFinal(ctx context.Context, tag string) error       { return nil }
+func (m *mockRouterSvc) DeleteRule(ctx context.Context, index int) error            { return nil }
+func (m *mockRouterSvc) MoveRule(ctx context.Context, from, to int) error           { return nil }
+func (m *mockRouterSvc) SetRouteFinal(ctx context.Context, tag string) error        { return nil }
 func (m *mockRouterSvc) ListRuleSets(ctx context.Context) ([]router.RuleSet, error) { return nil, nil }
-func (m *mockRouterSvc) AddRuleSet(ctx context.Context, rs router.RuleSet) error { return nil }
+func (m *mockRouterSvc) AddRuleSet(ctx context.Context, rs router.RuleSet) error    { return nil }
 func (m *mockRouterSvc) UpdateRuleSet(ctx context.Context, tag string, rs router.RuleSet) error {
 	return nil
 }
 func (m *mockRouterSvc) DeleteRuleSet(ctx context.Context, tag string, force bool) error {
 	return nil
+}
+func (m *mockRouterSvc) DatRuleSetURL(ctx context.Context, kind, tag string) (string, error) {
+	return "http://127.0.0.1:2222/api/singbox/router/rulesets/dat-srs?kind=" + kind + "&tag=" + tag + "&token=test", nil
+}
+func (m *mockRouterSvc) DatRuleSetFile(ctx context.Context, kind, tag, token string) (string, error) {
+	if m.datFileErr != nil {
+		return "", m.datFileErr
+	}
+	return "", router.ErrDatRuleSetForbidden
 }
 func (m *mockRouterSvc) ListCompositeOutbounds(ctx context.Context) ([]router.CompositeOutboundView, error) {
 	return nil, nil
@@ -108,13 +118,15 @@ func (m *mockRouterSvc) DeleteDNSServer(ctx context.Context, tag string, force b
 	return nil
 }
 func (m *mockRouterSvc) ListDNSRules(ctx context.Context) ([]router.DNSRule, error) { return nil, nil }
-func (m *mockRouterSvc) AddDNSRule(ctx context.Context, r router.DNSRule) error      { return nil }
+func (m *mockRouterSvc) AddDNSRule(ctx context.Context, r router.DNSRule) error     { return nil }
 func (m *mockRouterSvc) UpdateDNSRule(ctx context.Context, index int, r router.DNSRule) error {
 	return nil
 }
-func (m *mockRouterSvc) DeleteDNSRule(ctx context.Context, index int) error          { return nil }
-func (m *mockRouterSvc) MoveDNSRule(ctx context.Context, from, to int) error          { return nil }
-func (m *mockRouterSvc) GetDNSGlobals(ctx context.Context) (string, string, error)   { return "", "", nil }
+func (m *mockRouterSvc) DeleteDNSRule(ctx context.Context, index int) error  { return nil }
+func (m *mockRouterSvc) MoveDNSRule(ctx context.Context, from, to int) error { return nil }
+func (m *mockRouterSvc) GetDNSGlobals(ctx context.Context) (string, string, error) {
+	return "", "", nil
+}
 func (m *mockRouterSvc) SetDNSGlobals(ctx context.Context, final, strategy string) error {
 	return nil
 }
@@ -516,5 +528,25 @@ func TestListBindableInterfaces_405OnWrongMethod(t *testing.T) {
 	h.ListBindableInterfaces(rr, req)
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Errorf("want 405, got %d", rr.Code)
+	}
+}
+
+func TestDatRuleSetURL_InvalidQuery_Returns400(t *testing.T) {
+	h := newMockRouterHandler(&mockRouterSvc{})
+	req := httptest.NewRequest(http.MethodGet, "/api/singbox/router/rulesets/dat-url?kind=bad&tag=GOOGLE", nil)
+	rr := httptest.NewRecorder()
+	h.DatRuleSetURL(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestDatRuleSetSRS_BadToken_Returns403(t *testing.T) {
+	h := newMockRouterHandler(&mockRouterSvc{datFileErr: router.ErrDatRuleSetForbidden})
+	req := httptest.NewRequest(http.MethodGet, "/api/singbox/router/rulesets/dat-srs?kind=geosite&tag=GOOGLE&token=bad", nil)
+	rr := httptest.NewRecorder()
+	h.DatRuleSetSRS(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("want 403, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }

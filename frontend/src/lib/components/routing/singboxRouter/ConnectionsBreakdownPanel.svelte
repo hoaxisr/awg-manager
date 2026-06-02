@@ -45,6 +45,7 @@
 	}
 
 	function bucketColor(key: string): string {
+		if (key.startsWith('awg-')) return '#9c8aff';
 		const idx = donutSlices.findIndex((s) => s.key === key);
 		if (idx < 0) return OTHER_COLOR;
 		return donutSlices[idx].color;
@@ -81,7 +82,7 @@
 			{#each donutSlices as s}
 				<div class="legend-row">
 					<span class="legend-dot" style="background:{s.color}"></span>
-					<span class="legend-name">{s.key}</span>
+					<span class="legend-name">{buckets.find((b) => b.key === s.key)?.label ?? s.key}</span>
 					<span class="legend-pct">{s.pct}%</span>
 				</div>
 			{/each}
@@ -99,7 +100,7 @@
 			>
 				<span class="bg" style="width: {b.pct}%; background:{bucketColor(b.key)}1a"></span>
 				<span class="bucket-row">
-					<span class="bucket-key">{b.key}</span>
+					<span class="bucket-key">{b.label ?? b.key}</span>
 					<span class="bucket-stats">
 						↑{formatBytes(b.upload)} · ↓{formatBytes(b.download)} <span class="dot">·</span>
 						<span class="count">{b.count}</span>

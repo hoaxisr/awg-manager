@@ -11,6 +11,7 @@
  */
 
 import type { SingboxRouterPreset, SingboxRouterRule, SingboxRouterOutbound } from '$lib/types';
+import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
 import type {
   MatcherChip,
   OutboundDisplay,
@@ -40,11 +41,24 @@ function mapAction(rule: SingboxRouterRule): RuleAction {
 /* ─── Outbound display ──────────────────────────────────────────────── */
 
 const COMPOSITE_TYPES = new Set(['selector', 'urltest']);
+const AWG_OPTION_GROUPS = new Set(['AWG туннели', 'Системные WireGuard']);
+
+function findOutboundOption(
+  tag: string,
+  outboundOptions: OutboundGroup[] | undefined,
+): { label: string; group: string } | null {
+  for (const group of outboundOptions ?? []) {
+    const item = group.items?.find((x) => x.value === tag);
+    if (item) return { label: item.label, group: group.group };
+  }
+  return null;
+}
 
 export function resolveOutboundDisplay(
   name: string | undefined,
   action: RuleAction,
   outbounds: SingboxRouterOutbound[],
+  outboundOptions: OutboundGroup[] = [],
 ): OutboundDisplay {
   // System actions — render as mono badges instead of destination tile.
   if (action === 'sniff') {
@@ -65,15 +79,19 @@ export function resolveOutboundDisplay(
     return { name, label: 'Блок', kind: 'block' };
   }
 
+  const option = findOutboundOption(name, outboundOptions);
   const ob = outbounds.find((o) => (o as { tag?: string }).tag === name);
+  if (option && AWG_OPTION_GROUPS.has(option.group)) {
+    return { name, label: option.label, kind: 'awg' };
+  }
   if (!ob) {
-    return { name, label: name, kind: 'unknown' };
+    return { name, label: option?.label ?? name, kind: option ? 'tunnel' : 'unknown' };
   }
   const obType = (ob as { type?: string }).type ?? '';
   if (COMPOSITE_TYPES.has(obType)) {
-    return { name, label: name, kind: 'composite' };
+    return { name, label: option?.label ?? name, kind: 'composite' };
   }
-  return { name, label: name, kind: 'tunnel' };
+  return { name, label: option?.label ?? name, kind: 'tunnel' };
 }
 
 /* ─── Matcher chip extraction ───────────────────────────────────────── */
@@ -160,11 +178,12 @@ export function singboxRuleToCard(
   outbounds: SingboxRouterOutbound[],
   rulesetLabels: Record<string, string>,
   routerPresets: SingboxRouterPreset[] = [],
+  outboundOptions: OutboundGroup[] = [],
 ): RuleCardData {
   const detected = detectService(rule, routerPresets);
   const serviceKey = detected.iconSlug;
   const action = mapAction(rule);
-  const outbound = resolveOutboundDisplay(rule.outbound, action, outbounds);
+  const outbound = resolveOutboundDisplay(rule.outbound, action, outbounds, outboundOptions);
   const matchers = extractMatcherChips(rule, rulesetLabels);
   const isSystem = isSystemRule(rule);
   const title = fallbackTitle(rule, serviceKey, index, detected.displayName);

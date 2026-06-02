@@ -1,12 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { deriveRoutingSummary } from './flowData';
 import type { SingboxRouterRule, SingboxRouterDNSServer, SingboxRouterDNSGlobals } from '$lib/types';
+import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
 
 const dnsServers: SingboxRouterDNSServer[] = [
   { tag: 'dns-direct', type: 'udp', server: '77.88.8.8' },
   { tag: 'dns-tunnel', type: 'udp', server: '9.9.9.9', detour: 'my-selector' },
 ];
 const globals: SingboxRouterDNSGlobals = { final: 'dns-direct', strategy: 'ipv4_only' };
+const outboundOptions: OutboundGroup[] = [
+  { group: 'AWG туннели', items: [{ value: 'awg-awg10', label: 'Office VPN (t2s10)' }] },
+];
 
 describe('deriveRoutingSummary', () => {
   it('1 туннель + 2 сервиса: defaultLabel Напрямую, dns по веткам', () => {
@@ -49,5 +53,14 @@ describe('deriveRoutingSummary', () => {
     expect(s.defaultDnsLabel).toBe('1.1.1.1');
     expect(s.tunnelDnsLabel).toBeNull();
     expect(s.tunnels).toEqual([]);
+  });
+
+  it('подписывает AWG tunnel в summary по каталогу, а не raw tag', () => {
+    const rules: SingboxRouterRule[] = [
+      { rule_set: ['svc'], outbound: 'awg-awg10', action: 'route' },
+    ];
+    const s = deriveRoutingSummary(rules, 'awg-awg10', dnsServers, globals, outboundOptions);
+    expect(s.defaultLabel).toBe('Office VPN (t2s10)');
+    expect(s.tunnels).toEqual(['Office VPN (t2s10)']);
   });
 });

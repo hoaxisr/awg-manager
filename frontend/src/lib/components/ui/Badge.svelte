@@ -1,6 +1,6 @@
 <script lang="ts" module>
   import type { Snippet } from 'svelte';
-  export type BadgeVariant = 'default' | 'accent' | 'success' | 'error' | 'warning' | 'info' | 'muted';
+  export type BadgeVariant = 'default' | 'accent' | 'purple' | 'success' | 'error' | 'warning' | 'info' | 'muted';
   export type BadgeSize = 'sm' | 'md';
 </script>
 
@@ -29,6 +29,7 @@
   class="badge"
   class:variant-default={variant === 'default'}
   class:variant-accent={variant === 'accent'}
+  class:variant-purple={variant === 'purple'}
   class:variant-success={variant === 'success'}
   class:variant-error={variant === 'error'}
   class:variant-warning={variant === 'warning'}
@@ -72,6 +73,12 @@
     background: var(--color-accent-tint);
     color: var(--color-accent);
     border-color: var(--color-accent-border);
+  }
+
+  .variant-purple {
+    background: color-mix(in srgb, #9c8aff 14%, transparent);
+    color: #9c8aff;
+    border-color: color-mix(in srgb, #9c8aff 36%, transparent);
   }
 
   .variant-success {

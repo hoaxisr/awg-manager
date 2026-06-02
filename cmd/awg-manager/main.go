@@ -1085,6 +1085,7 @@ func main() {
 		WANInterfaces:          &routerWANInterfaceAdapter{store: ndmsQueries.Interfaces},
 		BindableInterfaces:     &routerWANInterfaceAdapter{store: ndmsQueries.Interfaces},
 		IngressResolver:        &routerIngressResolverAdapter{store: ndmsQueries.Interfaces},
+		GeoData:                geoDataStore,
 	})
 	singboxOp.SetOutboundReferenceRenamer(routerSvc)
 	tunnelService.SetAWGSyncer(awgoutboundsSvc)

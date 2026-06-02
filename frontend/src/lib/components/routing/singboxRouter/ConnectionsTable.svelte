@@ -59,6 +59,10 @@
 		if (sortBy !== col) return '';
 		return sortDir === 'asc' ? '▲' : '▼';
 	}
+
+	function outboundClass(c: Connection): string {
+		return (c.chains[0] ?? '').startsWith('awg-') ? 'awg' : '';
+	}
 </script>
 
 <div class="wrap">
@@ -109,7 +113,7 @@
 							<div class="mono">{c.metadata.destinationIP}<span class="muted">:{c.metadata.destinationPort}</span></div>
 						{/if}
 					</td>
-					<td><span class="badge">{c.outboundLabel}</span></td>
+					<td><span class="badge {outboundClass(c)}" title={c.chains[0] ?? c.outboundLabel}>{c.outboundLabel}</span></td>
 					<td title={`${c.rule} ${c.rulePayload}`.trim()}>
 						<span class="badge muted">{c.rule || '—'}</span>
 					</td>
@@ -193,6 +197,10 @@
 		color: #da7756;
 		font-size: 11px;
 		font-family: ui-monospace, monospace;
+	}
+	.badge.awg {
+		background: rgba(156, 138, 255, 0.14);
+		color: #9c8aff;
 	}
 	.badge.muted { background: rgba(110, 110, 110, 0.15); color: var(--text-tertiary, #6e6e6e); }
 	.kill {

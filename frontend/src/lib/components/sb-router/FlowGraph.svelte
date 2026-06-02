@@ -13,6 +13,7 @@
   const rulesStore = singboxRouterStore.rules;
   const dnsServersStore = singboxRouterStore.dnsServers;
   const dnsGlobalsStore = singboxRouterStore.dnsGlobals;
+  const options = singboxRouterStore.options;
 
   let s = $derived($status);
   let engineOn = $derived(s?.enabled ?? false);
@@ -27,7 +28,7 @@
   ).trim());
 
   let summary = $derived(
-    deriveRoutingSummary($rulesStore ?? [], routeFinal, $dnsServersStore ?? [], $dnsGlobalsStore),
+    deriveRoutingSummary($rulesStore ?? [], routeFinal, $dnsServersStore ?? [], $dnsGlobalsStore, $options),
   );
 
   let sourceTitle = $derived(deviceMode === 'all' ? 'Весь роутер' : 'Устройства');

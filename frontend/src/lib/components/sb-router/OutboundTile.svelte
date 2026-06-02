@@ -33,8 +33,8 @@
   <div class="tile tile-system">
     <span class="label-mono">{outbound.label}</span>
   </div>
-{:else if outbound.kind === 'tunnel' || outbound.kind === 'composite'}
-  <div class="tile tile-tunnel">
+{:else if outbound.kind === 'tunnel' || outbound.kind === 'awg' || outbound.kind === 'composite'}
+  <div class="tile" class:tile-tunnel={outbound.kind === 'tunnel' || outbound.kind === 'composite'} class:tile-awg={outbound.kind === 'awg'}>
     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M2 22V12a10 10 0 1 1 20 0v10" />
       <path d="M8 22V12a4 4 0 1 1 8 0v10" />
@@ -84,6 +84,14 @@
     background: var(--accent-soft);
     border-color: var(--accent-line);
     color: var(--accent);
+    font-weight: 600;
+    gap: 8px;
+  }
+
+  .tile-awg {
+    background: color-mix(in srgb, #9c8aff 12%, transparent);
+    border-color: color-mix(in srgb, #9c8aff 34%, transparent);
+    color: #9c8aff;
     font-weight: 600;
     gap: 8px;
   }

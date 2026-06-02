@@ -1,4 +1,5 @@
 import type { SingboxRouterRule, SingboxRouterDNSServer, SingboxRouterDNSGlobals } from '$lib/types';
+import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
 
 export interface RoutingSummary {
   /** Подпись выхода по умолчанию: «Напрямую» если route.final = direct, иначе тег. */
@@ -23,11 +24,20 @@ function dnsLabelByTag(servers: SingboxRouterDNSServer[], tag: string): string |
   return s.server || s.tag;
 }
 
+function outboundLabelByTag(groups: OutboundGroup[] | undefined, tag: string): string {
+  for (const group of groups ?? []) {
+    const item = group.items?.find((x) => x.value === tag);
+    if (item) return item.label;
+  }
+  return tag;
+}
+
 export function deriveRoutingSummary(
   rules: SingboxRouterRule[],
   routeFinal: string,
   dnsServers: SingboxRouterDNSServer[],
   dnsGlobals: SingboxRouterDNSGlobals,
+  outboundOptions: OutboundGroup[] = [],
 ): RoutingSummary {
   const tunneled = rules.filter(isTunneled);
   const tunnels: string[] = [];
@@ -36,7 +46,7 @@ export function deriveRoutingSummary(
     if (!tunnels.includes(tag)) tunnels.push(tag);
   }
 
-  const defaultLabel = routeFinal && routeFinal !== 'direct' ? routeFinal : 'Напрямую';
+  const defaultLabel = routeFinal && routeFinal !== 'direct' ? outboundLabelByTag(outboundOptions, routeFinal) : 'Напрямую';
   const defaultDnsLabel = dnsLabelByTag(dnsServers, dnsGlobals.final) ?? 'системный';
 
   const detourServer = dnsServers.find((s) => !!s.detour);
@@ -45,7 +55,7 @@ export function deriveRoutingSummary(
   return {
     defaultLabel,
     defaultDnsLabel,
-    tunnels,
+    tunnels: tunnels.map((tag) => outboundLabelByTag(outboundOptions, tag)),
     tunneledRuleCount: tunneled.length,
     tunnelDnsLabel,
   };

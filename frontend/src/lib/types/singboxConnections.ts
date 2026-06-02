@@ -44,6 +44,7 @@ export interface ConnectionFilters {
 
 export interface ConnectionBucket {
 	key: string;
+	label?: string;
 	upload: number;
 	download: number;
 	count: number;

@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { singboxRuleToCard, resolveOutboundDisplay, extractMatcherChips, isSystemRule } from './adapters';
 import type { SingboxRouterRule, SingboxRouterOutbound } from '$lib/types';
+import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
 
 const noOutbounds: SingboxRouterOutbound[] = [];
 const noRulesets: Record<string, string> = {};
+const awgOptions: OutboundGroup[] = [
+  { group: 'AWG туннели', items: [{ value: 'awg-awg10', label: 'Office VPN (t2s10)' }] },
+];
 
 describe('isSystemRule', () => {
   it('ip_is_private with direct outbound is system', () => {
@@ -63,6 +67,11 @@ describe('resolveOutboundDisplay', () => {
   it('unknown outbound by name', () => {
     const d = resolveOutboundDisplay('mystery', 'route', noOutbounds);
     expect(d).toEqual({ name: 'mystery', label: 'mystery', kind: 'unknown' });
+  });
+
+  it('AWG outbound tag uses catalog label and AWG visual kind', () => {
+    const d = resolveOutboundDisplay('awg-awg10', 'route', noOutbounds, awgOptions);
+    expect(d).toEqual({ name: 'awg-awg10', label: 'Office VPN (t2s10)', kind: 'awg' });
   });
 
   it('undefined outbound → direct fallback', () => {
@@ -161,6 +170,19 @@ describe('singboxRuleToCard', () => {
     expect(card.isSystem).toBe(false);
     expect(card.matchers).toHaveLength(1);
     expect(card.matchers[0].kind).toBe('domain');
+  });
+
+  it('renders AWG rule destination as tunnel name instead of raw tag', () => {
+    const card = singboxRuleToCard(
+      { domain_suffix: ['example.com'], outbound: 'awg-awg10' },
+      0,
+      [],
+      {},
+      [],
+      awgOptions,
+    );
+    expect(card.outbound.kind).toBe('awg');
+    expect(card.outbound.label).toBe('Office VPN (t2s10)');
   });
 
   it('produces a system rule card', () => {

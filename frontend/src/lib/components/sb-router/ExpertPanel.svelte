@@ -401,6 +401,7 @@
           bare
           rules={$storeRules}
           outbounds={$storeOutbounds}
+          outboundOptions={$storeOptions}
           onEdit={(idx) => (ruleEditIdx = idx)}
           onDelete={handleDeleteRule}
           onMove={handleMoveRule}
@@ -471,6 +472,7 @@
         <DnsServersCompact
           servers={$storeDnsServers}
           rules={$storeDnsRules}
+          outboundOptions={$storeOptions}
           onEditServer={(tag) => (dnsServerEditTag = tag)}
           onEditRule={(idx) => (dnsRuleEditIdx = idx)}
           onAddRule={() => (dnsRuleAddOpen = true)}
