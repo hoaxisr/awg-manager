@@ -5,6 +5,10 @@ import type { CatalogPreset } from '$lib/types';
 /** Unified preset catalog, loaded once from GET /api/presets. */
 export const presetCatalog = writable<CatalogPreset[]>([]);
 
+/** True once a load attempt has completed (success OR error) — lets consumers
+ * distinguish "still loading" from "loaded, legitimately empty". */
+export const presetCatalogLoaded = writable(false);
+
 let loaded = false;
 
 /** Loads the catalog once (idempotent). Non-fatal on error — leaves it empty. */
@@ -16,6 +20,8 @@ export async function loadPresetCatalog(force = false): Promise<void> {
 		loaded = true;
 	} catch (e) {
 		console.error('failed to load preset catalog', e);
+	} finally {
+		presetCatalogLoaded.set(true);
 	}
 }
 

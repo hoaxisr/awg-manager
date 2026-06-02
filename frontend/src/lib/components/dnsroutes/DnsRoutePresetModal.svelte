@@ -1,7 +1,7 @@
 <script lang="ts">
     import { Modal, Button, Dropdown } from '$lib/components/ui';
     import { ServiceIcon } from '$lib/components/dnsroutes';
-    import { dnsPresets } from '$lib/stores/presets';
+    import { dnsPresets, presetCatalogLoaded } from '$lib/stores/presets';
     import { buildRoutingTunnelDropdownOptions } from '$lib/utils/routingTunnelOptions';
     import type { RoutingTunnel, CatalogPreset } from '$lib/types';
     import DownloadRouteNote from '$lib/components/downloads/DownloadRouteNote.svelte';
@@ -74,8 +74,10 @@
 </script>
 
 <Modal {open} title="Каталог сервисов" size="lg" {onclose}>
-    {#if $dnsPresets.length === 0}
+    {#if !$presetCatalogLoaded}
         <p class="catalog-loading">Загрузка каталога…</p>
+    {:else if $dnsPresets.length === 0}
+        <p class="catalog-loading">Каталог пуст</p>
     {:else}
     <div class="preset-grid">
         {#each $dnsPresets as preset (preset.id)}
