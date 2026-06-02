@@ -14,7 +14,7 @@
   import { resolveIconSlug } from '$lib/utils/resolve-icon-slug';
 
   interface Props {
-    /** Slug — соответствует SERVICE_PRESETS.id или известному brandIcons key. */
+    /** Slug — preset iconSlug из каталога или известный brandIcons key. */
     serviceKey: string;
     /** Имя для подписи справа и для letter-fallback. */
     name?: string;
