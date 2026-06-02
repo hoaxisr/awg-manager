@@ -62,7 +62,7 @@ func loadCatalog(path string) ([]presets.Preset, error) {
 func newDecompiler(singbox, cacheDir string) decompiler {
 	client := &http.Client{Timeout: 60 * time.Second}
 	return func(url string) ([]string, []string, error) {
-		srsPath, err := fetchCached(client, url, cacheDir)
+		srsPath, err := fetchCached(client, pinnedFetchURL(url), cacheDir)
 		if err != nil {
 			return nil, nil, err
 		}

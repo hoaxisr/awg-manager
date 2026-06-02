@@ -48,3 +48,17 @@ that version's `rule-set decompile` reads the SagerNet rule-set-branch `.srs`
 - `domain_keyword` / `domain_regex` rules cannot be expressed by the DNS engine;
   they are skipped and logged (`note: ... skipped ...`).
 - Output is deterministic (sorted by category then id) so re-run diffs stay small.
+
+## Updating the pin
+
+`.srs` are decompiled from pinned commits (`sagerNetPinSHA` / `vernettePinSHA` in
+`catalog.go`) so generation is deterministic and the release drift-check is stable.
+To refresh from upstream:
+
+1. Get new commit SHAs:
+   `git ls-remote https://github.com/SagerNet/sing-geosite rule-set`
+   `git ls-remote https://github.com/vernette/rulesets master`
+2. Update `sagerNetPinSHA` / `vernettePinSHA` (with the date) in `catalog.go`.
+3. `go run ./tools/genpresets -singbox <sb>` and review the `defaults.json` diff.
+4. Commit `catalog.go` + `defaults.json`. The release `catalog-drift` check then
+   passes against the new pin.

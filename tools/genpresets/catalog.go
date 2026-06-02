@@ -1,7 +1,30 @@
 package main
 
+import "strings"
+
 // SagerNet rule-set branch raw root for new-preset .srs files.
 const sagerNetSiteRoot = "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/"
+
+// Upstream .srs are decompiled from these immutable commits so generation is
+// deterministic. Bump intentionally, then re-run the generator + commit.
+const (
+	sagerNetPinSHA = "4fe72acfd29178e56c9d4699a12062097a16f755" // pinned 2026-06-02 (SagerNet/sing-geosite rule-set)
+	vernettePinSHA = "1e1fd57f2ff0533f09ca95da895ee2ea367e2720" // pinned 2026-06-02 (vernette/rulesets master)
+)
+
+// pinnedFetchURL rewrites a moving-branch .srs URL to its pinned-commit form,
+// used ONLY for the deterministic decompile fetch. The catalog keeps the branch
+// URL (runtime: sing-box re-fetches fresh per update_interval). A URL matching
+// neither pattern is returned unchanged.
+func pinnedFetchURL(url string) string {
+	url = strings.Replace(url,
+		"raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/",
+		"raw.githubusercontent.com/SagerNet/sing-geosite/"+sagerNetPinSHA+"/", 1)
+	url = strings.Replace(url,
+		"github.com/vernette/rulesets/raw/master/",
+		"github.com/vernette/rulesets/raw/"+vernettePinSHA+"/", 1)
+	return url
+}
 
 // addition is a new preset (meta/oculus + popular) sourced from SagerNet.
 type addition struct {
