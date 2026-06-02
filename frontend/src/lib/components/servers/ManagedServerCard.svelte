@@ -25,9 +25,11 @@
 		onDeleted?: () => void;
 		onUpdated?: () => void;
 		onOpenASC: () => void;
+		ingressEnabled?: boolean;
+		onToggleIngress?: (interfaceName: string, enabled: boolean) => Promise<void>;
 	}
 
-	let { server, stats, routerIP = '', onDeleted = () => {}, onUpdated = () => {}, onOpenASC }: Props = $props();
+	let { server, stats, routerIP = '', onDeleted = () => {}, onUpdated = () => {}, onOpenASC, ingressEnabled = false, onToggleIngress = async () => {} }: Props = $props();
 
 	let serverId = $derived(server.interfaceName);
 
@@ -197,6 +199,18 @@
 	}
 
 	let togglingNAT = $state(false);
+	let togglingIngress = $state(false);
+
+	async function handleToggleIngress() {
+		togglingIngress = true;
+		try {
+			await onToggleIngress(server.interfaceName, !ingressEnabled);
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Ошибка переключения egress в sing-box');
+		} finally {
+			togglingIngress = false;
+		}
+	}
 
 	async function handleToggleNAT() {
 		togglingNAT = true;
@@ -372,6 +386,15 @@
 			disabled={togglingNAT}
 			size="sm"
 		/>
+	</div>
+
+	<!-- Egress в sing-box -->
+	<div class="nat-row">
+		<div class="nat-info">
+			<span class="nat-label">Egress через sing-box</span>
+			<span class="nat-hint">Заворачивать интернет-трафик клиентов сервера в sing-box (туннель)</span>
+		</div>
+		<Toggle checked={ingressEnabled} onchange={handleToggleIngress} disabled={togglingIngress} size="sm" />
 	</div>
 
 	<!-- Policy -->

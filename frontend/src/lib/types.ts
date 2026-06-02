@@ -1288,6 +1288,7 @@ export interface SingboxRouterSettings {
 	wanInterface?: string; // kernel system-name (e.g. "ppp0"); empty when wanAutoDetect=true
 	bypassPresets?: string[];
 	bypassExtraPorts?: string;
+	ingressInterfaces?: string[];
 }
 
 // WAN interface for the sing-box router WAN-binding picker. `name` is
