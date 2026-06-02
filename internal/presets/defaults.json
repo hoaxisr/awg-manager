@@ -1,25 +1,5 @@
 [
   {
-    "id": "porn",
-    "name": "Adult content (18+)",
-    "iconSlug": "lucide-lock",
-    "category": "",
-    "notice": "Контент 18+ через VPN",
-    "sensitive": true,
-    "origin": "",
-    "engines": {
-      "singbox": {
-        "ruleSets": [
-          {
-            "tag": "geosite-category-porn",
-            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-porn.srs"
-          }
-        ],
-        "action": "tunnel"
-      }
-    }
-  },
-  {
     "id": "anthropic",
     "name": "Anthropic / Claude",
     "iconSlug": "anthropic",
@@ -380,6 +360,26 @@
     "engines": {
       "dns": {
         "subscriptionUrl": "https://raw.githubusercontent.com/itdoginfo/allow-domains/master/Russia/inside-raw.lst"
+      }
+    }
+  },
+  {
+    "id": "porn",
+    "name": "Adult content (18+)",
+    "iconSlug": "lucide-lock",
+    "category": "block",
+    "notice": "Контент 18+ через VPN",
+    "sensitive": true,
+    "origin": "",
+    "engines": {
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-category-porn",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-porn.srs"
+          }
+        ],
+        "action": "tunnel"
       }
     }
   },
