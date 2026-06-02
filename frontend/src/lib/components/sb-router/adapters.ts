@@ -10,7 +10,7 @@
  * (всё остальное где outbound найден в списке).
  */
 
-import type { SingboxRouterPreset, SingboxRouterRule, SingboxRouterOutbound } from '$lib/types';
+import type { CatalogPreset, SingboxRouterPreset, SingboxRouterRule, SingboxRouterOutbound } from '$lib/types';
 import type {
   MatcherChip,
   OutboundDisplay,
@@ -160,8 +160,9 @@ export function singboxRuleToCard(
   outbounds: SingboxRouterOutbound[],
   rulesetLabels: Record<string, string>,
   routerPresets: SingboxRouterPreset[] = [],
+  catalog: CatalogPreset[] = [],
 ): RuleCardData {
-  const detected = detectService(rule, routerPresets);
+  const detected = detectService(rule, routerPresets, catalog);
   const serviceKey = detected.iconSlug;
   const action = mapAction(rule);
   const outbound = resolveOutboundDisplay(rule.outbound, action, outbounds);

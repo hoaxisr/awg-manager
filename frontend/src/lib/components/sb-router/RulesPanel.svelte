@@ -14,6 +14,7 @@
   import { openAddWizard } from './addWizardStore';
   import RuleCard from './RuleCard.svelte';
   import { isSystemRule, singboxRuleToCard } from './adapters';
+  import { presetCatalog } from '$lib/stores/presets';
   import RuleEditModal from '$lib/components/routing/singboxRouter/RuleEditModal.svelte';
   import { computeRuleSetUsage } from '$lib/components/routing/singboxRouter';
   import { api } from '$lib/api/client';
@@ -40,7 +41,7 @@
   });
 
   let cards: RuleCardData[] = $derived.by(() =>
-    $rules.map((r, i) => singboxRuleToCard(r, i, $outbounds, rulesetLabels, $presets)),
+    $rules.map((r, i) => singboxRuleToCard(r, i, $outbounds, rulesetLabels, $presets, $presetCatalog)),
   );
 
   let dragState = $state<null | {
