@@ -80,7 +80,7 @@ var additions = []addition{
 	{"adobe", "Adobe", "adobe", "developer", srs("adobe"), "tunnel"},
 	{"epicgames", "Epic Games", "epicgames", "gaming", srs("epicgames"), "tunnel"},
 	{"ea", "EA", "ea", "gaming", srs("ea"), "tunnel"},
-	{"blizzard", "Blizzard", "blizzard", "gaming", srs("blizzard"), "tunnel"},
+	{"blizzard", "Blizzard", "lucide-gamepad-2", "gaming", srs("blizzard"), "tunnel"},
 	{"duckduckgo", "DuckDuckGo", "duckduckgo", "social", srs("duckduckgo"), "tunnel"},
 	{"paypal", "PayPal", "paypal", "cloud", srs("paypal"), "tunnel"},
 	{"binance", "Binance", "binance", "cloud", srs("binance"), "tunnel"},

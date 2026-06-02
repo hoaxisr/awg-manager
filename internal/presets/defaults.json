@@ -2114,7 +2114,7 @@
   {
     "id": "blizzard",
     "name": "Blizzard",
-    "iconSlug": "blizzard",
+    "iconSlug": "lucide-gamepad-2",
     "category": "gaming",
     "origin": "",
     "engines": {
