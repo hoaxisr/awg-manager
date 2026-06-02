@@ -7,7 +7,7 @@
   import { Badge } from '$lib/components/ui';
   import { Edit3, Trash2 } from 'lucide-svelte';
 
-  type RsFilter = 'all' | 'remote' | 'local' | 'inline';
+  type RsFilter = 'all' | 'remote' | 'local' | 'inline' | 'dat';
 
   interface Props {
     ruleSets: SingboxRouterRuleSet[];
@@ -22,6 +22,7 @@
 
   const filtered = $derived.by(() => {
     if (filter === 'all') return ruleSets;
+    if (filter === 'dat') return ruleSets.filter((rs) => datInfo(rs) !== null);
     return ruleSets.filter((rs) => (rs.type ?? 'remote') === filter);
   });
 
@@ -31,18 +32,43 @@
     return 'accent';
   }
 
+  function datInfo(rs: SingboxRouterRuleSet): { kind: string; tag: string } | null {
+    if (rs.type !== 'remote' || !rs.url) return null;
+    try {
+      const u = new URL(rs.url);
+      if (u.pathname !== '/api/singbox/router/rulesets/dat-srs') return null;
+      const kind = u.searchParams.get('kind') ?? '';
+      const tag = u.searchParams.get('tag') ?? '';
+      if ((kind !== 'geosite' && kind !== 'geoip') || !tag) return null;
+      return { kind, tag };
+    } catch {
+      return null;
+    }
+  }
+
+  function typeLabel(rs: SingboxRouterRuleSet): string {
+    return datInfo(rs) ? 'dat' : (rs.type ?? 'remote');
+  }
+
   function sourceFor(rs: SingboxRouterRuleSet): string {
+    const dat = datInfo(rs);
+    if (dat) return `${dat.kind}:${dat.tag}`;
     if (rs.type === 'remote') return rs.url ?? '—';
     if (rs.type === 'local') return rs.path ?? '—';
     if (rs.type === 'inline') return `${rs.rules?.length ?? 0} rules`;
     return '—';
+  }
+
+  function detourFor(rs: SingboxRouterRuleSet): string {
+    if (datInfo(rs)) return 'direct';
+    return rs.download_detour ?? '—';
   }
 </script>
 
 <div class="wrap">
   <div class="segment-row">
     <div class="seg" role="tablist">
-      {#each [{ k: 'all', l: 'Все' }, { k: 'remote', l: 'Remote' }, { k: 'local', l: 'Local' }, { k: 'inline', l: 'Inline' }] as opt (opt.k)}
+      {#each [{ k: 'all', l: 'Все' }, { k: 'remote', l: 'Remote' }, { k: 'local', l: 'Local' }, { k: 'inline', l: 'Inline' }, { k: 'dat', l: 'Dat' }] as opt (opt.k)}
         <button
           type="button"
           class="chip"
@@ -67,10 +93,10 @@
       <div class="row">
         <div class="tag">{rs.tag}</div>
         <div>
-          <Badge variant={typeVariant(rs.type)} size="sm" mono>{rs.type ?? 'remote'}</Badge>
+          <Badge variant={typeVariant(typeLabel(rs))} size="sm" mono>{typeLabel(rs)}</Badge>
         </div>
         <div class="source" title={sourceFor(rs)}>{sourceFor(rs)}</div>
-        <div class="detour">{rs.download_detour ?? '—'}</div>
+        <div class="detour">{detourFor(rs)}</div>
         <div class="actions-col actions">
           <button
             type="button"
@@ -113,7 +139,7 @@
   }
   .seg {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     width: 100%;
     gap: 0;
     padding: 0;
@@ -233,7 +259,7 @@
 
     .seg {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       width: 100%;
       min-width: 0;
       border: 1px solid var(--border);

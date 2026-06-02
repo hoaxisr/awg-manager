@@ -128,6 +128,17 @@ type SingboxRouterRuleSetsListResponse struct {
 	Data    []SingboxRouterRuleSetDTO `json:"data"`
 }
 
+// SingboxRouterDatRuleSetURLData is the payload for GET /singbox/router/rulesets/dat-url.
+type SingboxRouterDatRuleSetURLData struct {
+	URL string `json:"url" example:"http://127.0.0.1:2222/api/singbox/router/rulesets/dat-srs?kind=geosite&tag=GOOGLE&token=..."`
+}
+
+// SingboxRouterDatRuleSetURLResponse is the envelope for dat rule-set URL metadata.
+type SingboxRouterDatRuleSetURLResponse struct {
+	Success bool                           `json:"success" example:"true"`
+	Data    SingboxRouterDatRuleSetURLData `json:"data"`
+}
+
 // SingboxRouterOutboundDTO mirrors router.Outbound (composite outbound).
 type SingboxRouterOutboundDTO struct {
 	Type          string   `json:"type" example:"selector"`
@@ -719,6 +730,70 @@ func (h *SingboxRouterHandler) DeleteRuleSet(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
+}
+
+// DatRuleSetURL returns the local tokenized URL that sing-box can fetch directly.
+//
+//	@Summary		Build dat→SRS rule-set URL
+//	@Tags			singbox-router
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			kind	query	string	true	"geosite or geoip"
+//	@Param			tag		query	string	true	"Geo tag"
+//	@Success		200	{object}	SingboxRouterDatRuleSetURLResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/router/rulesets/dat-url [get]
+func (h *SingboxRouterHandler) DatRuleSetURL(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	kind := r.URL.Query().Get("kind")
+	tag := r.URL.Query().Get("tag")
+	if (kind != "geosite" && kind != "geoip") || tag == "" {
+		response.BadRequest(w, "kind must be geosite or geoip, tag is required")
+		return
+	}
+	u, err := h.svc.DatRuleSetURL(r.Context(), kind, tag)
+	if err != nil {
+		h.handleErr(w, "dat-url", err)
+		return
+	}
+	response.Success(w, SingboxRouterDatRuleSetURLData{URL: u})
+}
+
+// DatRuleSetSRS serves a compiled .srs artifact for sing-box. It is intentionally
+// not protected by session cookies because sing-box fetches it as a plain remote
+// rule_set URL; access is controlled by the token in the URL.
+func (h *SingboxRouterHandler) DatRuleSetSRS(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	kind := r.URL.Query().Get("kind")
+	tag := r.URL.Query().Get("tag")
+	if (kind != "geosite" && kind != "geoip") || tag == "" {
+		response.BadRequest(w, "kind must be geosite or geoip, tag is required")
+		return
+	}
+	p, err := h.svc.DatRuleSetFile(
+		r.Context(),
+		kind,
+		tag,
+		r.URL.Query().Get("token"),
+	)
+	if err != nil {
+		if errors.Is(err, router.ErrDatRuleSetForbidden) {
+			response.ErrorWithStatus(w, http.StatusForbidden, "invalid dat rule-set token", "FORBIDDEN")
+			return
+		}
+		h.handleErr(w, "dat-srs", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="rule-set.srs"`)
+	http.ServeFile(w, r, p)
 }
 
 // ListOutbounds returns all composite outbounds.

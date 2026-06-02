@@ -11,6 +11,7 @@ var (
 	ErrRuleIndexOutOfRange       = errors.New("rule index out of range")
 	ErrRuleSetTagConflict        = errors.New("rule set with this tag already exists")
 	ErrRuleSetNotFound           = errors.New("rule set not found")
+	ErrDatRuleSetForbidden       = errors.New("dat rule set token is invalid")
 	ErrOutboundTagConflict       = errors.New("outbound with this tag already exists")
 	ErrDNSServerTagConflict      = errors.New("dns server with this tag already exists")
 	ErrDNSServerReferenced       = errors.New("dns server is referenced by one or more dns rules or used as final/default")

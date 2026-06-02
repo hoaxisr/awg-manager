@@ -50,6 +50,8 @@ type Service interface {
 	AddRuleSet(ctx context.Context, rs RuleSet) error
 	UpdateRuleSet(ctx context.Context, tag string, rs RuleSet) error
 	DeleteRuleSet(ctx context.Context, tag string, force bool) error
+	DatRuleSetURL(ctx context.Context, kind, tag string) (string, error)
+	DatRuleSetFile(ctx context.Context, kind, tag, token string) (string, error)
 
 	ListCompositeOutbounds(ctx context.Context) ([]CompositeOutboundView, error)
 	AddCompositeOutbound(ctx context.Context, o Outbound) error
@@ -105,6 +107,13 @@ type SingboxController interface {
 	// evaluation. May return empty string when the binary is unknown —
 	// callers must tolerate that and degrade gracefully.
 	Binary() string
+}
+
+// GeoTagExpander is the narrow contract used by dat→SRS rule-set export.
+// *hydraroute.GeoDataStore satisfies it without making router depend on the
+// hydraroute package.
+type GeoTagExpander interface {
+	ExpandGeoTag(kind, tag string) (lines []string, filePath string, err error)
 }
 
 // PolicyDevice is one LAN device known to NDMS hotspot, annotated with
@@ -247,6 +256,7 @@ type Deps struct {
 	// xt_connmark, xt_conntrack, xt_pkttype via
 	// EnsureRouterNetfilterModules). Tests set this to avoid real syscalls.
 	NetfilterPreflight func(context.Context) error
+	GeoData            GeoTagExpander
 }
 
 // routerLoggerAdapter narrows *logging.ScopedLogger to the wanLogger
@@ -293,6 +303,7 @@ type ServiceImpl struct {
 	// sing-box binary, no /tmp writes during NewService) stay clean.
 	inspectCacheOnce sync.Once
 	inspectCache     *ruleSetCache
+	datRuleSetMu     sync.Mutex
 }
 
 func NewService(d Deps) *ServiceImpl {
@@ -1803,12 +1814,12 @@ func (s *ServiceImpl) InspectStream(ctx context.Context, input InspectInput) (<-
 			usingDraft = s.deps.Orch.DraftInfo(orchestrator.SlotRouter).HasDraft
 		}
 		if !emitEvent(InspectStreamEvent{Type: "progress", Progress: &InspectProgress{
-			Phase:      "config_loaded",
-			Message:    fmt.Sprintf("Конфигурация загружена: %d правил, %d rule_set, final: %s", len(cfg.Route.Rules), len(cfg.Route.RuleSet), final),
-			RuleTotal:  intPtr(len(cfg.Route.Rules)),
+			Phase:        "config_loaded",
+			Message:      fmt.Sprintf("Конфигурация загружена: %d правил, %d rule_set, final: %s", len(cfg.Route.Rules), len(cfg.Route.RuleSet), final),
+			RuleTotal:    intPtr(len(cfg.Route.Rules)),
 			RuleSetTotal: intPtr(len(cfg.Route.RuleSet)),
-			Final:      final,
-			UsingDraft: usingDraft,
+			Final:        final,
+			UsingDraft:   usingDraft,
 		}}) {
 			return
 		}

@@ -3,7 +3,8 @@
 	import { Button, Dropdown, SyntaxHighlightedTextarea, type DropdownOption } from '$lib/components/ui';
 	import { highlightJson } from '$lib/utils/shareEditorHighlight';
 	import { api } from '$lib/api/client';
-	import type { SingboxRouterRuleSet } from '$lib/types';
+	import type { GeoFileEntry, SingboxRouterRuleSet } from '$lib/types';
+	import { HrNeoGeoTagPicker } from '$lib/components/hrneo';
 	import type { OutboundGroup } from './outboundOptions';
 	import {
 		analyzeInlineRuleListLossy,
@@ -61,7 +62,9 @@
 
 	let rulesList = $state('');
 
-	let type: 'remote' | 'local' | 'inline' = $state('remote');
+	type RuleSetFormType = 'remote' | 'local' | 'inline' | 'geosite' | 'geoip';
+
+	let type = $state<RuleSetFormType>('remote');
 	let format: 'binary' | 'source' = $state('binary');
 	let tag = $state('');
 	let url = $state('');
@@ -69,6 +72,10 @@
 	let downloadDetour = $state('');
 	let path = $state('');
 	let rulesJson = $state('');
+	let geoFiles = $state<GeoFileEntry[]>([]);
+	let geoPickerOpen = $state(false);
+	let selectedGeoTag = $state('');
+	let geoFilesLoading = $state(false);
 
 	const rulesJsonLineNumbers = $derived(lineNumbersFor(rulesJson));
 
@@ -148,6 +155,26 @@
 		if (type !== 'inline') inlineTabConvertWarnings = [];
 	});
 
+	$effect(() => {
+		if (type !== 'geosite' && type !== 'geoip') return;
+		void (async () => {
+			geoFilesLoading = true;
+			try {
+				geoFiles = (await api.getGeoFiles()) ?? [];
+			} catch {
+				geoFiles = [];
+			} finally {
+				geoFilesLoading = false;
+			}
+		})();
+	});
+
+	const isDatType = $derived(type === 'geosite' || type === 'geoip');
+	const datKind = $derived(type === 'geoip' ? 'geoip' : 'geosite');
+	const datFiles = $derived(
+		isDatType ? geoFiles.filter((g) => g.type === datKind).map((g) => g.path) : [],
+	);
+
 	const inlineLossyAnalysis = $derived.by(() => {
 		if (!ruleSet || ruleSet.type !== 'inline') return { lossy: false, issues: [] as string[] };
 		return analyzeInlineRuleListLossy(ruleSet.rules);
@@ -164,7 +191,7 @@
 
 	// Snapshot initial state for isDirty detection
 	let initialInlineMode: 'list' | 'json' = $state('list');
-	let initialType: 'remote' | 'local' | 'inline' = $state('remote');
+	let initialType: RuleSetFormType = $state('remote');
 	let initialFormat: 'binary' | 'source' = $state('binary');
 	let initialTag = $state('');
 	let initialUrl = $state('');
@@ -173,13 +200,15 @@
 	let initialPath = $state('');
 	let initialRulesList = $state('');
 	let initialRulesJson = $state('');
+	let initialSelectedGeoTag = $state('');
 
 	const formResetKey = $derived(`${isEditing ? 'edit' : 'create'}:${ruleSet?.tag ?? ''}`);
 
 	$effect(() => {
 		void formResetKey;
 
-		const nextType: 'remote' | 'local' | 'inline' = ruleSet?.type ?? 'remote';
+		const datInfo = ruleSet?.type === 'remote' ? datInfoFromUrl(ruleSet.url) : null;
+		const nextType: RuleSetFormType = datInfo?.kind ?? ruleSet?.type ?? 'remote';
 		const nextFormat: 'binary' | 'source' = ruleSet?.format ?? 'binary';
 		const nextTag = ruleSet?.tag ?? '';
 		const nextUrl = ruleSet?.url ?? '';
@@ -212,6 +241,8 @@
 		rulesJson = nextRulesJson;
 		inlineMode = nextInlineMode;
 		rulesList = nextRulesList;
+		selectedGeoTag = datInfo?.tag ?? '';
+		geoPickerOpen = false;
 
 		initialType = nextType;
 		initialFormat = nextFormat;
@@ -223,6 +254,7 @@
 		initialRulesJson = nextRulesJson;
 		initialInlineMode = nextInlineMode;
 		initialRulesList = nextRulesList;
+		initialSelectedGeoTag = datInfo?.tag ?? '';
 
 		error = '';
 		busy = false;
@@ -240,9 +272,46 @@
 			path !== initialPath ||
 			inlineMode !== initialInlineMode ||
 			rulesList !== initialRulesList ||
-			rulesJson !== initialRulesJson
+			rulesJson !== initialRulesJson ||
+			selectedGeoTag !== initialSelectedGeoTag
 		);
 	});
+
+	function selectGeoToken(token: string): void {
+		const [kind, pickedTag] = token.split(':', 2);
+		if ((kind !== 'geosite' && kind !== 'geoip') || !pickedTag) return;
+		const shouldUpdateRuleSetTag =
+			tag.trim() === '' ||
+			((type === 'geosite' || type === 'geoip') &&
+				selectedGeoTag.trim() !== '' &&
+				tag.trim() === standardDatRuleSetTag(type, selectedGeoTag));
+		type = kind;
+		selectedGeoTag = pickedTag;
+		if (shouldUpdateRuleSetTag) tag = standardDatRuleSetTag(kind, pickedTag);
+		geoPickerOpen = false;
+	}
+
+	function standardDatRuleSetTag(kind: 'geosite' | 'geoip', pickedTag: string): string {
+		return `${kind}-${pickedTag}`.toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
+	}
+
+	function savedRuleSetType(t: RuleSetFormType): SingboxRouterRuleSet['type'] {
+		return t === 'geosite' || t === 'geoip' ? 'remote' : t;
+	}
+
+	function datInfoFromUrl(rawUrl?: string): { kind: 'geosite' | 'geoip'; tag: string } | null {
+		if (!rawUrl) return null;
+		try {
+			const u = new URL(rawUrl);
+			if (u.pathname !== '/api/singbox/router/rulesets/dat-srs') return null;
+			const kind = u.searchParams.get('kind');
+			const tag = u.searchParams.get('tag') ?? '';
+			if ((kind !== 'geosite' && kind !== 'geoip') || !tag) return null;
+			return { kind, tag };
+		} catch {
+			return null;
+		}
+	}
 
 	async function save(): Promise<void> {
 		busy = true;
@@ -252,6 +321,11 @@
 			const tagErr = validateRuleSetTag(cleanTag);
 			if (tagErr) {
 				error = tagErr;
+				busy = false;
+				return;
+			}
+			if (isDatType && !selectedGeoTag.trim()) {
+				error = 'Выберите тег из dat-файла';
 				busy = false;
 				return;
 			}
@@ -312,15 +386,22 @@
 				}
 			}
 
+			let builtUrl = url.trim();
+			if (isDatType) {
+				const res = await api.singboxRouterDatRuleSetURL(datKind, selectedGeoTag.trim());
+				builtUrl = res.url;
+			}
+
+			const savedType = savedRuleSetType(type);
 			const built: SingboxRouterRuleSet = {
 				tag: cleanTag,
-				type,
-				format: type === 'inline' ? undefined : format,
-				url: type === 'remote' ? url.trim() : undefined,
-				update_interval: type === 'remote' ? updateInterval : undefined,
+				type: savedType,
+				format: savedType === 'inline' ? undefined : isDatType ? 'binary' : format,
+				url: savedType === 'remote' ? builtUrl : undefined,
+				update_interval: savedType === 'remote' ? (isDatType ? '24h' : updateInterval) : undefined,
 				download_detour: type === 'remote' && downloadDetour ? downloadDetour : undefined,
-				path: type === 'local' ? path.trim() : undefined,
-				rules: type === 'inline' ? parsedRules : undefined,
+				path: savedType === 'local' ? path.trim() : undefined,
+				rules: savedType === 'inline' ? parsedRules : undefined,
 			};
 			await onSave(built);
 		} catch (e) {
@@ -339,6 +420,8 @@
 				<button class:active={type === 'remote'} onclick={() => (type = 'remote')} type="button">Remote</button>
 				<button class:active={type === 'local'} onclick={() => (type = 'local')} type="button">Local</button>
 				<button class:active={type === 'inline'} onclick={() => (type = 'inline')} type="button">Inline</button>
+				<button class:active={type === 'geosite'} onclick={() => (type = 'geosite')} type="button">Geosite</button>
+				<button class:active={type === 'geoip'} onclick={() => (type = 'geoip')} type="button">GeoIP</button>
 			</div>
 		</div>
 
@@ -352,7 +435,7 @@
 			{/if}
 		</label>
 
-		{#if type !== 'inline'}
+		{#if type !== 'inline' && !isDatType}
 			<label class="field">
 				<div class="lbl">Формат</div>
 				<div class="segment">
@@ -379,6 +462,36 @@
 				<div class="hint">
 					Через какой outbound скачивать этот файл. Полезно если URL заблокирован у провайдера — используйте VPN-туннель.
 				</div>
+			</div>
+		{:else if isDatType}
+			<div class="field dat-picker-field">
+				<div class="dat-picker-head">
+					<div>
+						<div class="lbl">Тег {type}.dat</div>
+						<div class="hint">После сохранения будет создан remote rule-set с локальным URL конвертации в .srs.</div>
+					</div>
+					<Button variant="ghost" size="sm" onclick={() => (geoPickerOpen = !geoPickerOpen)} type="button">
+						{selectedGeoTag ? 'Изменить' : 'Выбрать'}
+					</Button>
+				</div>
+				{#if selectedGeoTag}
+					<div class="selected-geo">
+						<code>{datKind}:{selectedGeoTag}</code>
+						<span>remote · binary .srs · 24h · direct</span>
+					</div>
+				{:else if geoFilesLoading}
+					<div class="hint">Загрузка dat-файлов…</div>
+				{:else if datFiles.length === 0}
+					<div class="hint">Нет известных файлов {type}.dat. Добавьте их на вкладке «Маршрутизация → Гео-данные».</div>
+				{/if}
+				{#if geoPickerOpen}
+					<HrNeoGeoTagPicker
+						kind={datKind}
+						files={datFiles}
+						onpick={selectGeoToken}
+						onclose={() => (geoPickerOpen = false)}
+					/>
+				{/if}
 			</div>
 		{:else if type === 'local'}
 			<label class="field">
@@ -495,6 +608,36 @@
 		background: var(--bg);
 		border-left: 2px solid var(--accent, #3b82f6);
 		border-radius: 4px;
+	}
+	.dat-picker-field {
+		padding: 0.6rem;
+		background: var(--bg);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+	}
+	.dat-picker-head {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 0.75rem;
+	}
+	.selected-geo {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		min-width: 0;
+		padding: 0.5rem 0.6rem;
+		border-radius: 4px;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border);
+		font-size: 0.78rem;
+		color: var(--muted-text);
+	}
+	.selected-geo code {
+		min-width: 0;
+		overflow-wrap: anywhere;
+		color: var(--text);
 	}
 	.lbl {
 		font-size: 0.75rem;
