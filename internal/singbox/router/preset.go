@@ -47,6 +47,9 @@ func presetFromUnified(p presets.Preset) (Preset, bool) {
 }
 
 func listRouterPresets(cat *presets.Catalog) ([]Preset, error) {
+	if cat == nil {
+		return nil, fmt.Errorf("preset catalog not configured")
+	}
 	all, err := cat.List()
 	if err != nil {
 		return nil, err
@@ -61,6 +64,9 @@ func listRouterPresets(cat *presets.Catalog) ([]Preset, error) {
 }
 
 func findRouterPreset(cat *presets.Catalog, id string) (Preset, error) {
+	if cat == nil {
+		return Preset{}, fmt.Errorf("preset catalog not configured")
+	}
 	all, err := cat.List()
 	if err != nil {
 		return Preset{}, err

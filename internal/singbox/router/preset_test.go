@@ -96,3 +96,12 @@ func TestApplyPresetTunnelRequiresOutbound(t *testing.T) {
 		t.Error("tunnel preset without outbound must error")
 	}
 }
+
+func TestNilCatalogReturnsErrorNotPanic(t *testing.T) {
+	if _, err := listRouterPresets(nil); err == nil {
+		t.Error("listRouterPresets(nil) must return an error, not panic")
+	}
+	if _, err := findRouterPreset(nil, "youtube"); err == nil {
+		t.Error("findRouterPreset(nil) must return an error, not panic")
+	}
+}
