@@ -15,8 +15,8 @@ let loaded = false;
 export async function loadPresetCatalog(force = false): Promise<void> {
 	if (loaded && !force) return;
 	try {
-		const { presets } = await api.listPresets();
-		presetCatalog.set(presets);
+		const payload = await api.listPresets();
+		presetCatalog.set(Array.isArray(payload?.presets) ? payload.presets : []);
 		loaded = true;
 	} catch (e) {
 		console.error('failed to load preset catalog', e);

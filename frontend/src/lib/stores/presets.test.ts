@@ -42,4 +42,11 @@ describe('loadPresetCatalog', () => {
 		expect(get(presetCatalog)).toEqual([]);
 		expect(get(presetCatalogLoaded)).toBe(true);
 	});
+
+	it('treats an undefined payload as an empty catalog', async () => {
+		vi.mocked(api.listPresets).mockResolvedValueOnce(undefined as unknown as { presets: CatalogPreset[] });
+		await loadPresetCatalog(true);
+		expect(get(presetCatalog)).toEqual([]);
+		expect(get(presetCatalogLoaded)).toBe(true);
+	});
 });

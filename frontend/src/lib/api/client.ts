@@ -1870,7 +1870,10 @@ class ApiClient {
 	}
 
 	async listPresets(): Promise<{ presets: CatalogPreset[] }> {
-		return this.request('/presets');
+		const payload = await this.request<{ presets?: CatalogPreset[] } | undefined>('/presets');
+		return {
+			presets: Array.isArray(payload?.presets) ? payload.presets : [],
+		};
 	}
 
 	async singboxRouterApplyPreset(id: string, outbound: string): Promise<void> {
