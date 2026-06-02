@@ -1456,7 +1456,22 @@ func NormalizeSingboxRouterSettings(sr storage.SingboxRouterSettings) (storage.S
 	if _, _, err := parseExtraPorts(sr.BypassExtraPorts); err != nil {
 		return sr, fmt.Errorf("bypassExtraPorts: %w", err)
 	}
+	if err := validateIngressRefs(sr.IngressInterfaces); err != nil {
+		return sr, err
+	}
 	return sr, nil
+}
+
+func validateIngressRefs(refs []string) error {
+	for _, ref := range refs {
+		if !strings.HasPrefix(ref, "managed:") && !strings.HasPrefix(ref, "iface:") {
+			return fmt.Errorf("ingress interface ref %q must be prefixed managed: or iface:", ref)
+		}
+		if strings.TrimSpace(strings.SplitN(ref, ":", 2)[1]) == "" {
+			return fmt.Errorf("ingress interface ref %q has empty target", ref)
+		}
+	}
+	return nil
 }
 
 func ValidateSingboxRouterSettings(sr storage.SingboxRouterSettings) error {

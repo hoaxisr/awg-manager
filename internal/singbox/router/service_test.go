@@ -1342,3 +1342,19 @@ func TestReconcile_BypassPresetsSame_NoOp(t *testing.T) {
 		t.Errorf("expected no Install (no-op when bypass same), got %d calls", restoreCalls)
 	}
 }
+
+func TestNormalizeSingboxRouterSettings_IngressRefs(t *testing.T) {
+	base := storage.SingboxRouterSettings{PolicyName: "awgm-router", WANAutoDetect: true}
+
+	ok := base
+	ok.IngressInterfaces = []string{"managed:Wireguard3", "iface:nwg5"}
+	if _, err := NormalizeSingboxRouterSettings(ok); err != nil {
+		t.Fatalf("valid refs rejected: %v", err)
+	}
+
+	bad := base
+	bad.IngressInterfaces = []string{"nwg3"} // нет префикса
+	if _, err := NormalizeSingboxRouterSettings(bad); err == nil {
+		t.Fatalf("expected error for unprefixed ref")
+	}
+}
