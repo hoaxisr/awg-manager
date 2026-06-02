@@ -42,7 +42,7 @@ func build(router []ip.Preset, svc []servicePreset, adds []addition, dc decompil
 
 	for _, r := range router {
 		p := ensure(r.ID)
-		p.Name, p.Category, p.IconSlug, p.Notice, p.Sensitive = r.Name, r.Category, r.IconSlug, r.Notice, r.Sensitive
+		p.Name, p.Category, p.IconSlug, p.Notice, p.Sensitive, p.Featured = r.Name, r.Category, r.IconSlug, r.Notice, r.Sensitive, r.Featured
 		if len(r.RuleSets) > 0 {
 			action := "tunnel"
 			if len(r.Rules) > 0 && r.Rules[0].ActionTarget != "" {
@@ -102,13 +102,20 @@ func build(router []ip.Preset, svc []servicePreset, adds []addition, dc decompil
 // only when the total is within the cap.
 func applyDecompiledDNS(p *presets.Preset, sets []ip.RuleRef, dc decompiler) {
 	var domains, subnets []string
+	seenD, seenS := map[string]bool{}, map[string]bool{}
 	for _, rs := range sets {
 		d, s, err := dc(rs.URL)
 		if err != nil {
 			panic("decompile " + rs.URL + ": " + err.Error())
 		}
-		domains = append(domains, d...)
-		subnets = append(subnets, s...)
+		// Dedup across rule-sets so a shared domain isn't double-counted
+		// (which could push the total over dnsInlineCap) or duplicated inline.
+		for _, x := range d {
+			addUnique(&domains, seenD, x)
+		}
+		for _, x := range s {
+			addUnique(&subnets, seenS, x)
+		}
 	}
 	if len(domains)+len(subnets) == 0 || len(domains)+len(subnets) > dnsInlineCap {
 		return

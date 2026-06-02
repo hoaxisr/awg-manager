@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/presets"
@@ -12,7 +13,7 @@ func fakeDecompiler(big map[string]bool) decompiler {
 		if big[url] {
 			d := make([]string, 600)
 			for i := range d {
-				d[i] = "x"
+				d[i] = "x" + strconv.Itoa(i) + ".com" // unique → survives dedup, exceeds cap
 			}
 			return d, nil, nil
 		}
@@ -89,4 +90,36 @@ func indexByID(ps []presets.Preset) map[string]presets.Preset {
 		m[p.ID] = p
 	}
 	return m
+}
+
+func TestBuildPropagatesFeatured(t *testing.T) {
+	router := []ip.Preset{{ID: "x", Name: "X", Category: "social", IconSlug: "x", Featured: true}}
+	out := build(router, nil, nil, fakeDecompiler(nil))
+	if !indexByID(out)["x"].Featured {
+		t.Fatalf("Featured must propagate from router preset")
+	}
+}
+
+func TestBuildDedupsDNSAcrossRuleSets(t *testing.T) {
+	router := []ip.Preset{{
+		ID: "multi", Name: "Multi", Category: "media", IconSlug: "lucide-film",
+		RuleSets: []ip.RuleRef{
+			{Tag: "geosite-a", URL: "u/a.srs"},
+			{Tag: "geosite-b", URL: "u/b.srs"},
+		},
+		Rules: []ip.RuleLink{{RuleSetRef: "geosite-a", ActionTarget: "tunnel"}},
+	}}
+	dc := func(url string) ([]string, []string, error) {
+		switch url {
+		case "u/a.srs":
+			return []string{"shared.com", "a.com"}, nil, nil
+		case "u/b.srs":
+			return []string{"shared.com", "b.com"}, nil, nil
+		}
+		return nil, nil, nil
+	}
+	dns := indexByID(build(router, nil, nil, dc))["multi"].Engines.DNS
+	if dns == nil || len(dns.Domains) != 3 {
+		t.Fatalf("cross-ruleset dedup expected 3 unique domains, got %+v", dns)
+	}
 }
