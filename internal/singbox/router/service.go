@@ -37,6 +37,10 @@ type Service interface {
 	// outbound to (all interfaces minus auto-managed AWG/WG ones).
 	ListBindableInterfaces(ctx context.Context) ([]WANInterfaceInfo, error)
 
+	// ListIngressEligibleInterfaces returns interfaces eligible for
+	// sing-box ingress-scope (bindable minus WAN minus LAN bridges).
+	ListIngressEligibleInterfaces(ctx context.Context) ([]WANInterfaceInfo, error)
+
 	SetRouteFinal(ctx context.Context, tag string) error
 
 	ListRules(ctx context.Context) ([]Rule, error)

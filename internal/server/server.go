@@ -1132,6 +1132,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/singbox/router/policies", guarded(rh.PoliciesCollection))
 		mux.HandleFunc("/api/singbox/router/wan-interfaces", guarded(rh.ListWANInterfaces))
 		mux.HandleFunc("/api/singbox/router/bindable-interfaces", guarded(rh.ListBindableInterfaces))
+		mux.HandleFunc("/api/singbox/router/ingress-eligible-interfaces", guarded(rh.ListIngressEligibleInterfaces))
 		mux.HandleFunc("/api/singbox/router/policy-devices", guarded(rh.ListPolicyDevices))
 		mux.HandleFunc("/api/singbox/router/policy-devices/bind", guarded(rh.BindDevice))
 		mux.HandleFunc("/api/singbox/router/policy-devices/unbind", guarded(rh.UnbindDevice))

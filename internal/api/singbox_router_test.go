@@ -48,6 +48,9 @@ func (m *mockRouterSvc) ListWANInterfaces(ctx context.Context) ([]router.WANInte
 func (m *mockRouterSvc) ListBindableInterfaces(ctx context.Context) ([]router.WANInterfaceInfo, error) {
 	return []router.WANInterfaceInfo{{Name: "ipsec0", Label: "IPSec", Up: true}}, nil
 }
+func (m *mockRouterSvc) ListIngressEligibleInterfaces(ctx context.Context) ([]router.WANInterfaceInfo, error) {
+	return nil, nil
+}
 func (m *mockRouterSvc) ListRules(ctx context.Context) ([]router.Rule, error) { return nil, nil }
 func (m *mockRouterSvc) AddRule(ctx context.Context, rule router.Rule) error  { return nil }
 func (m *mockRouterSvc) UpdateRule(ctx context.Context, index int, rule router.Rule) error {
