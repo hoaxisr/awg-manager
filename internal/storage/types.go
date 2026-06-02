@@ -83,6 +83,10 @@ type SingboxRouterSettings struct {
 	// exclusions in "PORT UDP|TCP" format (e.g. "51820 UDP, 1194 TCP").
 	// Parsed at iptables generation time. Empty = no extras.
 	BypassExtraPorts string `json:"bypassExtraPorts,omitempty"`
+	// IngressInterfaces — ref'ы интерфейсов, чей ingress-трафик заворачивается
+	// в sing-box. Формат: "managed:Wireguard3" (резолвится в kernel-имя на
+	// сборке спека) или "iface:nwg5" (kernel-имя как есть). Пусто = выключено.
+	IngressInterfaces []string `json:"ingressInterfaces,omitempty"`
 }
 
 // ManagedServer represents the user-created WireGuard server interface.
