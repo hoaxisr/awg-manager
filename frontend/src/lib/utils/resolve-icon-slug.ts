@@ -1,5 +1,4 @@
 import { brandIcons } from '$lib/generated/brandIcons';
-import { SERVICE_PRESETS } from '$lib/data/presets';
 import { isPresetInlineSlug } from '$lib/utils/service-icons';
 
 const LUCIDE_SLUGS = new Set([
@@ -66,12 +65,6 @@ export function resolveIconSlug(name: string, iconSlug?: string): string | undef
 
 	if (NAME_ALIASES[key] && isPresetIconResolvable(NAME_ALIASES[key])) {
 		return NAME_ALIASES[key];
-	}
-
-	for (const preset of SERVICE_PRESETS) {
-		if (normalizeKey(preset.id) === key || normalizeKey(preset.name) === key) {
-			if (isPresetIconResolvable(preset.id)) return preset.id;
-		}
 	}
 
 	const compact = key.replace(/[^a-z0-9]+/g, '');
