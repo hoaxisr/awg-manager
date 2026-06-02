@@ -531,19 +531,19 @@ if [ "$mangle_ok" -eq 0 ] || [ "$nat_ok" -eq 0 ]; then
   # not chain jumps). Same drop-and-restore approach as above, just
   # matched via the iptables-save comment serialisation.
   /opt/sbin/iptables -w -t nat -S PREROUTING 2>/dev/null \
-    | grep -F -- '--comment "%[7]s"' \
+    | grep -E -- '--comment "?%[7]s' \
     | sed 's/-A PREROUTING/-D PREROUTING/' \
     | while IFS= read -r line; do /opt/sbin/iptables -w -t nat $line 2>/dev/null; done
   # Legacy DNS-NOPOLICY MARK rules in mangle (dead code from earlier
   # AWGM builds). Always scrub so upgrades don't leave dangling rules
   # accumulating across NDMS reloads.
   /opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null \
-    | grep -F -- '--comment "%[8]s"' \
+    | grep -E -- '--comment "?%[8]s' \
     | sed 's/-A PREROUTING/-D PREROUTING/' \
     | while IFS= read -r line; do /opt/sbin/iptables -w -t mangle $line 2>/dev/null; done
   # Ingress-scope MARK/CONNMARK rules in mangle (comment-tagged).
   /opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null \
-    | grep -F -- '--comment "%[9]s"' \
+    | grep -E -- '--comment "?%[9]s' \
     | sed 's/-A PREROUTING/-D PREROUTING/' \
     | while IFS= read -r line; do /opt/sbin/iptables -w -t mangle $line 2>/dev/null; done
   /opt/sbin/iptables-restore --noflush < %[1]q

@@ -1099,7 +1099,16 @@ func TestWriteNetfilterHook_IngressScrub(t *testing.T) {
 		t.Fatalf("writeNetfilterHook: %v", err)
 	}
 	data, _ := os.ReadFile(netfilterHookPath)
-	if !strings.Contains(string(data), `--comment "AWGM-INGRESS"`) {
-		t.Fatalf("hook script missing AWGM-INGRESS scrub block:\n%s", data)
+	// Scrub must match BOTH quoted and unquoted `iptables -S` comment
+	// output (`--comment "AWGM-INGRESS"` and `--comment AWGM-INGRESS`):
+	// some iptables builds emit comments unquoted, and a quoted-only
+	// `grep -F` misses them, so the netfilter.d reload re-appends a
+	// duplicate of the rule it failed to scrub. The robust form is an
+	// ERE with an optional quote.
+	if !strings.Contains(string(data), `--comment "?AWGM-INGRESS`) {
+		t.Fatalf("hook script missing robust (quote-optional) AWGM-INGRESS scrub:\n%s", data)
+	}
+	if strings.Contains(string(data), `grep -F -- '--comment "AWGM-INGRESS"'`) {
+		t.Fatalf("hook still uses fragile quoted-only -F scrub for AWGM-INGRESS:\n%s", data)
 	}
 }
