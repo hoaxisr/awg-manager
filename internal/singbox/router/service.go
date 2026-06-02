@@ -343,7 +343,11 @@ func (s *ServiceImpl) resolveIngressInterfaces(ctx context.Context, refs []strin
 				name = s.deps.IngressResolver.Resolve(ctx, ref)
 			}
 		}
-		if name == "" || seen[name] {
+		if name == "" {
+			s.appLog.Warn("resolve-ingress", "", fmt.Sprintf("ingress ref %q не резолвится (сервер не поднят / кэш не готов), пропущен", ref))
+			continue
+		}
+		if seen[name] {
 			continue
 		}
 		seen[name] = true

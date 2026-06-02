@@ -43,8 +43,9 @@
 		try {
 			const s = await api.singboxRouterGetSettings();
 			ingressRefs = s.ingressInterfaces ?? [];
-		} catch {
+		} catch (e) {
 			ingressRefs = [];
+			notifications.error(e instanceof Error ? e.message : 'Не удалось загрузить настройки egress');
 		}
 	}
 
