@@ -1,6 +1,7 @@
 package server
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -1238,8 +1239,40 @@ func spaHandler(staticFS fs.FS) http.Handler {
 			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		}
 
+		// Compress text assets on the fly. The router serves the UI directly
+		// over a slow link, so gzip cuts the transferred bundle ~3-4x.
+		if r.Method == http.MethodGet && acceptsGzip(r) && compressibleType(contentType) {
+			if data, err := fs.ReadFile(staticFS, name); err == nil {
+				w.Header().Set("Content-Encoding", "gzip")
+				w.Header().Set("Vary", "Accept-Encoding")
+				gz := gzip.NewWriter(w)
+				_, _ = gz.Write(data)
+				_ = gz.Close()
+				return
+			}
+		}
+
 		http.ServeFileFS(w, r, staticFS, name)
 	})
+}
+
+// acceptsGzip reports whether the client advertised gzip support.
+func acceptsGzip(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
+}
+
+// compressibleType reports whether a content type benefits from gzip.
+// Already-compressed binaries (images, fonts, wasm) are skipped.
+func compressibleType(contentType string) bool {
+	switch {
+	case strings.HasPrefix(contentType, "text/"),
+		strings.HasPrefix(contentType, "application/javascript"),
+		strings.HasPrefix(contentType, "application/json"),
+		strings.HasPrefix(contentType, "application/manifest+json"),
+		strings.HasPrefix(contentType, "image/svg+xml"):
+		return true
+	}
+	return false
 }
 
 // diagLogAdapter adapts logging.Service to diagnostics.LogServiceForDiag.
