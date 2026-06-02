@@ -100,7 +100,7 @@ import type {
 } from '$lib/types';
 import { isMockDevMode } from '$lib/env';
 
-export type TrafficPeriod = '5m' | '10m' | '30m' | '1h' | '3h' | '6h' | '12h' | '24h' | '48h';
+export type TrafficPeriod = '5m' | '10m' | '30m' | '1h' | '3h' | '6h' | '12h' | '24h';
 
 const DIAGNOSTICS_SANITIZE_STORAGE_KEY = 'awgm.diagnostics.sanitizeLogs';
 

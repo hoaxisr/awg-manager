@@ -12217,7 +12217,7 @@ paths:
         name: id
         required: true
         type: string
-      - description: 5m, 10m, 30m, 1h, 3h, 6h, 12h, 24h, or 48h
+      - description: 5m, 10m, 30m, 1h, 3h, 6h, 12h, or 24h
         in: query
         name: period
         required: true

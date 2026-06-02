@@ -33,12 +33,13 @@ type History struct {
 	stopOnce sync.Once
 }
 
-// New creates a History that retains points for 48 hours.
+// New creates a History that retains points for 24 hours — the widest
+// window the UI traffic chart offers.
 // Starts a background goroutine that prunes old points every 5 minutes.
 func New() *History {
 	h := &History{
 		tunnels: make(map[string]*tunnelHistory),
-		maxAge:  48 * time.Hour,
+		maxAge:  24 * time.Hour,
 		stopCh:  make(chan struct{}),
 	}
 	go h.cleanupLoop()
