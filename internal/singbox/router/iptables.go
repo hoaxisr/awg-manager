@@ -541,12 +541,17 @@ if [ "$mangle_ok" -eq 0 ] || [ "$nat_ok" -eq 0 ]; then
     | grep -F -- '--comment "%[8]s"' \
     | sed 's/-A PREROUTING/-D PREROUTING/' \
     | while IFS= read -r line; do /opt/sbin/iptables -w -t mangle $line 2>/dev/null; done
+  # Ingress-scope MARK/CONNMARK rules in mangle (comment-tagged).
+  /opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null \
+    | grep -F -- '--comment "%[9]s"' \
+    | sed 's/-A PREROUTING/-D PREROUTING/' \
+    | while IFS= read -r line; do /opt/sbin/iptables -w -t mangle $line 2>/dev/null; done
   /opt/sbin/iptables-restore --noflush < %[1]q
   /opt/sbin/ip rule add fwmark 0x%[3]x table %[4]d priority %[5]d 2>/dev/null || true
   /opt/sbin/ip route add local 0.0.0.0/0 dev lo table %[4]d 2>/dev/null || true
   logger -t awgm-tproxy "netfilter.d: restored AWGM chains after NDMS reload"
 fi
-`, netfilterRulesPath, ChainName, Fwmark, RoutingTable, IPRulePriority, RedirectChain, DNSRescueTag, DNSNoPolicyTag)
+`, netfilterRulesPath, ChainName, Fwmark, RoutingTable, IPRulePriority, RedirectChain, DNSRescueTag, DNSNoPolicyTag, IngressTag)
 	return os.WriteFile(netfilterHookPath, []byte(script), 0755)
 }
 
@@ -603,6 +608,10 @@ func (it *IPTables) removeSourceHooks(ctx context.Context) {
 	// rules are dead code now, but if left in place they'd accumulate
 	// across upgrades.
 	it.removeCommentTaggedRulesFromTable(ctx, "mangle", "PREROUTING", DNSNoPolicyTag)
+	// Ingress-scope: direct MARK/CONNMARK rules in mangle PREROUTING,
+	// tagged AWGM-INGRESS. Scrub before re-install so the list stays
+	// idempotent and removed interfaces don't leave dangling marks.
+	it.removeCommentTaggedRulesFromTable(ctx, "mangle", "PREROUTING", IngressTag)
 }
 
 // removeCommentTaggedRulesFromTable scrubs every rule in `chain` whose

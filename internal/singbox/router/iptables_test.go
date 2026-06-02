@@ -1088,3 +1088,18 @@ func TestBuildRestoreInput_IngressScope_EmptyMarkSkips(t *testing.T) {
 		t.Fatalf("ingress rules must be skipped when PolicyMark empty")
 	}
 }
+
+func TestWriteNetfilterHook_IngressScrub(t *testing.T) {
+	dir := t.TempDir()
+	old := netfilterHookPath
+	netfilterHookPath = filepath.Join(dir, "hook.sh")
+	defer func() { netfilterHookPath = old }()
+
+	if err := writeNetfilterHook(); err != nil {
+		t.Fatalf("writeNetfilterHook: %v", err)
+	}
+	data, _ := os.ReadFile(netfilterHookPath)
+	if !strings.Contains(string(data), `--comment "AWGM-INGRESS"`) {
+		t.Fatalf("hook script missing AWGM-INGRESS scrub block:\n%s", data)
+	}
+}
