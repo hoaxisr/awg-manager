@@ -686,4 +686,25 @@
 		}
 
 	}
+
+	@media (max-width: 640px) {
+		.managed-card {
+			overflow: hidden;
+		}
+
+		.peers-controls {
+			display: grid;
+			grid-template-columns: 1fr;
+			width: 100%;
+			gap: 0.4rem;
+		}
+
+		.peers-controls :global(.peer-sort-controls) {
+			width: 100%;
+		}
+
+		.peers-controls :global(.btn) {
+			width: 100%;
+		}
+	}
 </style>

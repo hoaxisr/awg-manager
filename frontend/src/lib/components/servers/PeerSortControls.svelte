@@ -80,4 +80,30 @@
 		background: var(--bg-hover);
 		color: var(--text-primary);
 	}
+
+	@media (max-width: 640px) {
+		.peer-sort-controls {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) auto;
+			gap: 0.375rem;
+			width: 100%;
+		}
+
+		.peer-search {
+			grid-column: 1 / -1;
+			width: 100%;
+			min-width: 0;
+		}
+
+		.peer-sort-select {
+			min-width: 0;
+			width: 100%;
+		}
+
+		.peer-sort-dir {
+			width: 34px;
+			min-width: 34px;
+			height: 34px;
+		}
+	}
 </style>

@@ -388,4 +388,38 @@
 		color: var(--text-secondary);
 	}
 
+	@media (max-width: 640px) {
+		.server-header {
+			flex-direction: column;
+		}
+
+		.server-header-right {
+			width: 100%;
+			justify-content: space-between;
+		}
+
+		.server-stats {
+			display: grid;
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+			gap: 0.5rem;
+		}
+
+		.stat {
+			min-width: 0;
+			padding: 0.5rem;
+			border: 1px solid var(--border);
+			border-radius: var(--radius-sm);
+			background: var(--bg-primary);
+		}
+
+		.peers-header {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.peers-header :global(.peer-sort-controls) {
+			width: 100%;
+		}
+	}
+
 </style>
