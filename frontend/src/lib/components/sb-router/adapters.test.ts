@@ -1,9 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { singboxRuleToCard, resolveOutboundDisplay, extractMatcherChips, isSystemRule } from './adapters';
-import type { SingboxRouterRule, SingboxRouterOutbound } from '$lib/types';
+import type { SingboxRouterRule, SingboxRouterOutbound, CatalogPreset } from '$lib/types';
 
 const noOutbounds: SingboxRouterOutbound[] = [];
 const noRulesets: Record<string, string> = {};
+
+const catalog: CatalogPreset[] = [
+	{ id: 'netflix', name: 'Netflix', iconSlug: 'netflix', category: 'media', origin: 'builtin',
+	  engines: { dns: { domains: ['netflix.com', 'nflxext.com'] } } },
+];
 
 describe('isSystemRule', () => {
   it('ip_is_private with direct outbound is system', () => {
@@ -152,6 +157,8 @@ describe('singboxRuleToCard', () => {
       0,
       [{ tag: 'warp', type: 'wireguard' } as unknown as SingboxRouterOutbound],
       {},
+      [],
+      catalog,
     );
     expect(card.serviceKey).toBe('netflix');
     expect(card.title).toMatch(/netflix/i);
