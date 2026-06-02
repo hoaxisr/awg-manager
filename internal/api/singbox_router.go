@@ -77,6 +77,9 @@ type SingboxRouterSettingsData struct {
 	// BypassExtraPorts is a user-defined comma-separated list of extra
 	// port exclusions in "PORT UDP|TCP" format (e.g. "51820 UDP, 1194 TCP").
 	BypassExtraPorts string `json:"bypassExtraPorts,omitempty" example:"51820 UDP"`
+	// IngressInterfaces lists interface refs whose ingress traffic is
+	// redirected through the sing-box router (e.g. "managed:Wireguard3").
+	IngressInterfaces []string `json:"ingressInterfaces,omitempty" example:"managed:Wireguard3"`
 }
 
 // SingboxRouterSettingsResponse is the envelope for GET /singbox/router/settings.
