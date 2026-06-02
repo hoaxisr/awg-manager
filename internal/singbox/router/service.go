@@ -125,6 +125,7 @@ type WANInterfaceInfo struct {
 	Label    string `json:"label"`    // human-friendly: description or type-derived
 	Up       bool   `json:"up"`       // current up/down — info-only, never gates selection
 	Priority int    `json:"priority"` // NDMS priority (higher = preferred by user)
+	Type     string `json:"type"`     // NDMS-тип интерфейса: "Wireguard", "Bridge", "PPP", ...
 }
 
 // WANInterfaceLister is the narrow contract the service needs from the
@@ -1544,6 +1545,29 @@ func (s *ServiceImpl) ListBindableInterfaces(ctx context.Context) ([]WANInterfac
 		return []WANInterfaceInfo{}, nil
 	}
 	return s.deps.BindableInterfaces.ListBindable(ctx)
+}
+
+// ListIngressEligibleInterfaces возвращает интерфейсы, пригодные для
+// ingress-scope: bindable минус WAN минус LAN-бриджи (по Type). Для UI
+// router-страницы (мультиселект).
+func (s *ServiceImpl) ListIngressEligibleInterfaces(ctx context.Context) ([]WANInterfaceInfo, error) {
+	bindable, err := s.ListBindableInterfaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+	wan, _ := s.ListWANInterfaces(ctx)
+	wanNames := map[string]bool{}
+	for _, w := range wan {
+		wanNames[w.Name] = true
+	}
+	out := make([]WANInterfaceInfo, 0, len(bindable))
+	for _, i := range bindable {
+		if wanNames[i.Name] || strings.EqualFold(i.Type, "Bridge") {
+			continue
+		}
+		out = append(out, i)
+	}
+	return out, nil
 }
 
 // validateBindInterface ensures name refers to a bindable interface. With

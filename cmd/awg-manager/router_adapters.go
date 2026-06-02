@@ -181,6 +181,7 @@ func (a *routerWANInterfaceAdapter) ListBindable(ctx context.Context) ([]router.
 			Name:  iface.Name,
 			Label: iface.Label,
 			Up:    iface.Up,
+			Type:  iface.Type,
 		})
 	}
 	return out, nil

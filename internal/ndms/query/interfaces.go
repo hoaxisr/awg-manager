@@ -564,6 +564,7 @@ func (s *InterfaceStore) ListAll(ctx context.Context) ([]ndms.AllInterface, erro
 			Name:  kernelName,
 			Label: allInterfaceLabel(iface.Type, kernelName, iface.Description),
 			Up:    iface.State == "up" && iface.IPv4 == "running",
+			Type:  iface.Type,
 		}
 		existing, dup := seen[kernelName]
 		if !dup {

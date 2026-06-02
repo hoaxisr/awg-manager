@@ -28,6 +28,7 @@ type AllInterface struct {
 	Name  string `json:"name"`  // Kernel name (e.g., "br0", "eth3")
 	Label string `json:"label"` // Human-readable label
 	Up    bool   `json:"up"`    // IPv4 layer running
+	Type  string `json:"type"`  // NDMS interface type: "Wireguard", "Bridge", "PPP", ...
 }
 
 // ProxyInfo is the view of an NDMS Proxy interface for sing-box wiring.
