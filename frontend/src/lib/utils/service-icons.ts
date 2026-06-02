@@ -82,15 +82,6 @@ const ICONS: { keywords: string[]; config: ServiceIconConfig }[] = [
 		},
 	},
 	{
-		keywords: ['torrent'],
-		config: {
-			svg: '<path d="M4 14a6 6 0 0 1 6-6h0a6 6 0 0 1 6 6" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="4" y1="14" x2="4" y2="20" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="16" y1="14" x2="16" y2="20" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="10" y1="4" x2="10" y2="10" stroke="white" stroke-width="2.5" stroke-linecap="round"/>',
-			background: '#292e42',
-			viewBox: '0 0 20 24',
-			scale: 0.64,
-		},
-	},
-	{
 		keywords: ['tmdb', 'themoviedb'],
 		config: {
 			svg: '<rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="white" stroke-width="1.8"/><rect x="5.5" y="7.5" width="5" height="4" rx="0.5" fill="white" opacity="0.9"/><rect x="13.5" y="7.5" width="5" height="4" rx="0.5" fill="white" opacity="0.9"/><rect x="5.5" y="13.5" width="5" height="3.5" rx="0.5" fill="white" opacity="0.5"/><rect x="13.5" y="13.5" width="5" height="3.5" rx="0.5" fill="white" opacity="0.5"/>',
@@ -105,7 +96,7 @@ const DEFAULT_ICON: ServiceIconConfig = {
 };
 
 /** Preset ids with custom inline art in ICONS (not brandIcons). */
-export const PRESET_INLINE_SLUGS = new Set(['rkn', 'torrent', 'torrents', 'yandex', 'disney']);
+const PRESET_INLINE_SLUGS = new Set(['rkn', 'torrent', 'torrents', 'yandex', 'disney']);
 
 export function isPresetInlineSlug(slug: string): boolean {
 	return PRESET_INLINE_SLUGS.has(slug);

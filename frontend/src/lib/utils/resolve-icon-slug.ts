@@ -15,7 +15,6 @@ const LUCIDE_SLUGS = new Set([
 	'lucide-briefcase-business',
 	'lucide-shield-off',
 	'lucide-globe-lock',
-	'lucide-list',
 ]);
 
 /** Name aliases → sing-box preset iconSlug (brandIcons / lucide). */
