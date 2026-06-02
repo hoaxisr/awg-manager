@@ -5,7 +5,8 @@
 		PolicyGlobalInterface,
 		RoutingTunnel,
 	} from '$lib/types';
-	import { SERVICE_PRESETS, type ServicePreset } from '$lib/data/presets';
+	import { presetCatalog } from '$lib/stores/presets';
+	import type { CatalogPreset } from '$lib/types';
 	import { Modal, Button, IconButton, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { CatalogPresetRow, IconPickerModal, ServiceIcon } from '$lib/components/dnsroutes';
 	import { InterfaceList } from '$lib/components/accesspolicy';
@@ -50,7 +51,7 @@
 	}: Props = $props();
 
 	// Only presets with inline domains can be used — HR has no subscriptions.
-	let usablePresets = $derived(SERVICE_PRESETS.filter((p) => (p.domains?.length ?? 0) > 0));
+	let usablePresets = $derived($presetCatalog.filter((p) => (p.engines.dns?.domains?.length ?? 0) > 0));
 
 	let name = $state('');
 	let iconUrl = $state<string | undefined>(undefined);
@@ -65,7 +66,7 @@
 	let newPolicyIfaces = $state<AccessPolicyInterface[]>([]);
 
 	let presetPickerOpen = $state(false);
-	let selectedPreset = $state<ServicePreset | null>(null);
+	let selectedPreset = $state<CatalogPreset | null>(null);
 	let geositePickerOpen = $state(false);
 	let geoipPickerOpen = $state(false);
 
@@ -198,9 +199,9 @@
 		}
 	});
 
-	function applyPreset(p: ServicePreset) {
+	function applyPreset(p: CatalogPreset) {
 		selectedPreset = p;
-		const entries = p.domains ?? [];
+		const entries = p.engines.dns?.domains ?? [];
 		const domainLines: string[] = [];
 		const cidrLines: string[] = [];
 		for (const e of entries) {
@@ -373,10 +374,10 @@
 	<div class="preset-bar">
 		<div class="preset-bar-left">
 			{#if selectedPreset}
-				<ServiceIcon name={selectedPreset.name} iconSlug={selectedPreset.id} size={24} />
+				<ServiceIcon name={selectedPreset.name} iconSlug={selectedPreset.iconSlug} size={24} />
 				<div class="preset-bar-info">
 					<div class="preset-bar-name">{selectedPreset.name}</div>
-					<div class="preset-bar-meta">{selectedPreset.domains?.length ?? 0} записей</div>
+					<div class="preset-bar-meta">{selectedPreset.engines.dns?.domains?.length ?? 0} записей</div>
 				</div>
 				<IconButton ariaLabel="Очистить пресет" onclick={clearPreset}>×</IconButton>
 			{:else}
@@ -393,8 +394,8 @@
 			{#each usablePresets as p (p.id)}
 				<CatalogPresetRow
 					name={p.name}
-					iconSlug={p.id}
-					meta={`${p.domains?.length ?? 0} записей`}
+					iconSlug={p.iconSlug}
+					meta={`${p.engines.dns?.domains?.length ?? 0} записей`}
 					onclick={() => applyPreset(p)}
 				/>
 			{/each}
@@ -408,7 +409,7 @@
 			<ServiceIcon
 				{iconUrl}
 				name={name || selectedPreset?.name || 'rule'}
-				iconSlug={selectedPreset?.id}
+				iconSlug={selectedPreset?.iconSlug}
 				size={36}
 			/>
 			<div class="icon-meta">
