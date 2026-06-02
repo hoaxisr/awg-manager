@@ -5,7 +5,8 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { peerSort } from '$lib/stores/peerSort';
-	import type { PeerSortKey } from '$lib/utils/peerSort';
+	import { peerAriaSort } from '$lib/utils/peerSort';
+	import PeerTableSortHeader from './PeerTableSortHeader.svelte';
 
 	interface Props {
 		peers: ManagedPeer[];
@@ -74,102 +75,28 @@
 		}
 	}
 
-	function ariaSort(key: PeerSortKey): 'ascending' | 'descending' | 'none' {
-		if ($peerSort.sortBy !== key) return 'none';
-		return $peerSort.sortAsc ? 'ascending' : 'descending';
-	}
-
-	function toggleHeaderSort(key: PeerSortKey) {
-		if ($peerSort.sortBy === key) {
-			peerSort.toggleDir();
-		} else {
-			peerSort.setSortBy(key);
-		}
-	}
-
-	function cycleNameHeaderSort() {
-		const { sortBy, sortAsc } = $peerSort;
-
-		if (sortBy !== 'name' && sortBy !== 'online') {
-			peerSort.setSort('name', true);
-			return;
-		}
-
-		if (sortBy === 'name' && sortAsc) {
-			peerSort.setSort('name', false);
-			return;
-		}
-
-		if (sortBy === 'name' && !sortAsc) {
-			peerSort.setSort('online', false);
-			return;
-		}
-
-		if (sortBy === 'online' && !sortAsc) {
-			peerSort.setSort('online', true);
-			return;
-		}
-
-		peerSort.setSort('name', true);
-	}
-
-	function isNameHeaderActive(): boolean {
-		return $peerSort.sortBy === 'name' || $peerSort.sortBy === 'online';
-	}
-
-	function nameHeaderIndicator(): string {
-		if ($peerSort.sortBy === 'name') return $peerSort.sortAsc ? 'A↑' : 'A↓';
-		if ($peerSort.sortBy === 'online') return $peerSort.sortAsc ? '○↑' : '●↓';
-		return '↕';
-	}
-
-	function nameAriaSort(): 'ascending' | 'descending' | 'none' {
-		if ($peerSort.sortBy !== 'name' && $peerSort.sortBy !== 'online') return 'none';
-		return $peerSort.sortAsc ? 'ascending' : 'descending';
-	}
 </script>
-
-{#snippet SortHeader(label: string, key: PeerSortKey)}
-	<button
-		type="button"
-		class="sort-header-btn"
-		class:active={$peerSort.sortBy === key}
-		onclick={() => toggleHeaderSort(key)}
-		title={`Сортировать по колонке «${label}»`}
-	>
-		<span>{label}</span>
-		<span class="sort-indicator" aria-hidden="true">
-			{#if $peerSort.sortBy === key}
-				{$peerSort.sortAsc ? '↑' : '↓'}
-			{:else}
-				↕
-			{/if}
-		</span>
-	</button>
-{/snippet}
 
 <div class="desktop-peer-table">
 	<div class="table-wrap">
 		<table class="managed-peer-table">
 			<thead>
 				<tr>
-					<th class="col-name" aria-sort={nameAriaSort()}>
-						<button
-							type="button"
-							class="sort-header-btn name-sort-header"
-							class:active={isNameHeaderActive()}
-							onclick={cycleNameHeaderSort}
-							title="Сортировка: имя A→Z, имя Z→A, онлайн сверху, офлайн сверху"
-						>
-							<span>Имя</span>
-							<span class="sort-subhint" aria-hidden="true">/ онлайн</span>
-							<span class="sort-indicator" aria-hidden="true">{nameHeaderIndicator()}</span>
-						</button>
+					<th class="col-name" aria-sort={peerAriaSort($peerSort, 'name')}>
+						<PeerTableSortHeader label="Имя" sortKey="name" />
 					</th>
-					<th class="col-ip" aria-sort={ariaSort('ip')}>{@render SortHeader('IP', 'ip')}</th>
-					<th class="col-endpoint" aria-sort={ariaSort('endpoint')}>{@render SortHeader('Endpoint', 'endpoint')}</th>
-					<th class="col-traffic" aria-sort={ariaSort('traffic')}>{@render SortHeader('Трафик', 'traffic')}</th>
-					<th class="col-handshake" aria-sort={ariaSort('handshake')}>{@render SortHeader('Handshake', 'handshake')}</th>
+					<th class="col-ip" aria-sort={peerAriaSort($peerSort, 'ip')}>
+						<PeerTableSortHeader label="IP" sortKey="ip" />
+					</th>
+					<th class="col-endpoint" aria-sort={peerAriaSort($peerSort, 'endpoint')}>
+						<PeerTableSortHeader label="Endpoint" sortKey="endpoint" />
+					</th>
+					<th class="col-traffic" aria-sort={peerAriaSort($peerSort, 'traffic')}>
+						<PeerTableSortHeader label="Трафик" sortKey="traffic" />
+					</th>
+					<th class="col-handshake" aria-sort={peerAriaSort($peerSort, 'handshake')}>
+						<PeerTableSortHeader label="Handshake" sortKey="handshake" />
+					</th>
 					<th class="col-actions">Действия</th>
 				</tr>
 			</thead>
@@ -199,6 +126,9 @@
 							}}
 						>
 							<div class="peer-name-row">
+								<span class="peer-inline-toggle">
+									<Toggle checked={peer.enabled} onchange={() => onTogglePeer(peer)} size="sm" />
+								</span>
 								<span
 									class="status-dot"
 									class:dot-online={status === 'online'}
@@ -208,9 +138,6 @@
 								<span class="peer-name">{peerName(peer)}</span>
 							</div>
 							<div class="peer-status-sub">
-								<div class="peer-inline-toggle">
-									<Toggle checked={peer.enabled} onchange={() => onTogglePeer(peer)} size="sm" />
-								</div>
 								<span>{status}</span>
 							</div>
 						</td>
@@ -295,11 +222,13 @@
 		{@const peerStats = getPeerStats(peer.publicKey)}
 		{@const status = peerStatus(peer, peerStats)}
 		{@const endpointValue = peerStats?.endpoint || '-'}
-		{@const ep = splitEndpoint(endpointValue)}
 		{@const hs = peerStats?.lastHandshake ? splitHandshakeLabel(formatRelativeTime(peerStats.lastHandshake)) : null}
 		<article class="mobile-peer-card" class:peer-disabled={!peer.enabled} class:has-actions={true}>
-			<div class="mobile-peer-main">
+			<div class="mobile-peer-card-top">
 				<div class="mobile-peer-title-row">
+					<span class="peer-inline-toggle">
+						<Toggle checked={peer.enabled} onchange={() => onTogglePeer(peer)} size="sm" />
+					</span>
 					<span
 						class="status-dot"
 						class:dot-online={status === 'online'}
@@ -309,11 +238,39 @@
 					<span class="mobile-peer-name">{peerName(peer)}</span>
 				</div>
 
+				<div class="mobile-peer-actions">
+					<button class="peer-action-btn" onclick={() => onOpenConf(peer)} title={`Скачать .conf для «${peerName(peer)}»`}>
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+							<polyline points="7 10 12 15 17 10" />
+							<line x1="12" y1="15" x2="12" y2="3" />
+						</svg>
+					</button>
+					<button class="peer-action-btn" onclick={() => onOpenEditPeer(peer)} title={`Редактировать «${peerName(peer)}»`}>
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+							<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+						</svg>
+					</button>
+					<button
+						class="peer-action-btn peer-action-btn-danger"
+						class:peer-action-btn-confirm={confirmDeletePeerKey === peer.publicKey}
+						onclick={() => onDeletePeerClick(peer)}
+						title={confirmDeletePeerKey === peer.publicKey
+							? `Нажмите ещё раз, чтобы удалить «${peerName(peer)}»`
+							: `Удалить «${peerName(peer)}»`}
+					>
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<line x1="18" y1="6" x2="6" y2="18" />
+							<line x1="6" y1="6" x2="18" y2="18" />
+						</svg>
+					</button>
+				</div>
+			</div>
+
+			<div class="mobile-peer-card-middle">
 				<div class="mobile-peer-status-row">
 					<span class="mobile-peer-status-left">
-						<span class="peer-inline-toggle">
-							<Toggle checked={peer.enabled} onchange={() => onTogglePeer(peer)} size="sm" />
-						</span>
 						<span>{status}</span>
 					</span>
 
@@ -346,40 +303,13 @@
 						<span class="mobile-endpoint-value">{endpointValue}</span>
 					</button>
 				</div>
+			</div>
 
+			<div class="mobile-peer-card-bottom">
 				<div class="mobile-peer-traffic-row mono tech-value">
 					<span>RX: {formatBytes(peerStats?.rxBytes ?? 0)}</span>
 					<span>TX: {formatBytes(peerStats?.txBytes ?? 0)}</span>
 				</div>
-			</div>
-
-			<div class="mobile-peer-actions">
-				<button class="peer-action-btn" onclick={() => onOpenConf(peer)} title={`Скачать .conf для «${peerName(peer)}»`}>
-					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-						<polyline points="7 10 12 15 17 10" />
-						<line x1="12" y1="15" x2="12" y2="3" />
-					</svg>
-				</button>
-				<button class="peer-action-btn" onclick={() => onOpenEditPeer(peer)} title={`Редактировать «${peerName(peer)}»`}>
-					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-						<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-					</svg>
-				</button>
-				<button
-					class="peer-action-btn peer-action-btn-danger"
-					class:peer-action-btn-confirm={confirmDeletePeerKey === peer.publicKey}
-					onclick={() => onDeletePeerClick(peer)}
-					title={confirmDeletePeerKey === peer.publicKey
-						? `Нажмите ещё раз, чтобы удалить «${peerName(peer)}»`
-						: `Удалить «${peerName(peer)}»`}
-				>
-					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<line x1="18" y1="6" x2="6" y2="18" />
-						<line x1="6" y1="6" x2="18" y2="18" />
-					</svg>
-				</button>
 			</div>
 		</article>
 	{/each}
@@ -420,17 +350,15 @@
 		padding: 0.55rem 0.5rem;
 		border-bottom: 1px solid var(--border);
 		vertical-align: middle;
-		transition: background-color 0.15s ease, box-shadow 0.15s ease;
+		transition: background-color 0.15s ease;
 	}
 
 	.managed-peer-table tbody tr:hover td {
 		background: color-mix(in srgb, var(--bg-hover) 70%, transparent);
-		box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 35%, transparent);
 	}
 
 	.managed-peer-table tbody tr.peer-disabled:hover td {
 		background: color-mix(in srgb, var(--bg-hover) 45%, transparent);
-		box-shadow: inset 2px 0 0 color-mix(in srgb, var(--text-muted) 35%, transparent);
 	}
 
 	.peer-disabled {
@@ -473,7 +401,7 @@
 		align-items: center;
 		justify-content: flex-start;
 		width: 100%;
-		gap: 0.25rem;
+		gap: 0.35rem;
 		font-size: 10px;
 		color: var(--text-muted);
 		line-height: 1;
@@ -493,19 +421,19 @@
 	}
 
 	.peer-inline-toggle :global(.toggle-container.sm .toggle-slider) {
-		width: 24px;
-		height: 14px;
+		width: 30px;
+		height: 18px;
 	}
 
 	.peer-inline-toggle :global(.toggle-container.sm .toggle-slider::before) {
-		width: 10px;
-		height: 10px;
+		width: 14px;
+		height: 14px;
 		left: 2px;
 		bottom: 2px;
 	}
 
 	.peer-inline-toggle :global(.toggle-container.sm input:checked ~ .toggle-slider::before) {
-		transform: translateX(10px);
+		transform: translateX(12px);
 	}
 
 	.peer-inline-toggle :global(.toggle-spinner-slot) {
@@ -564,6 +492,24 @@
 	.col-endpoint {
 		width: auto;
 		max-width: 180px;
+	}
+
+	.managed-peer-table th.col-endpoint {
+		text-align: center;
+	}
+
+	.managed-peer-table td.col-endpoint {
+		text-align: left;
+		vertical-align: middle;
+	}
+
+	.managed-peer-table td.col-endpoint .endpoint-copy {
+		display: inline-flex;
+		flex-direction: column;
+		align-items: flex-start;
+		justify-content: center;
+		max-width: 100%;
+		text-align: left;
 	}
 
 	.endpoint-text {
@@ -665,59 +611,6 @@
 		color: var(--text-primary);
 	}
 
-	.sort-header-btn {
-		width: 100%;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.3rem;
-		padding: 0;
-		border: 0;
-		background: transparent;
-		color: inherit;
-		font: inherit;
-		font-weight: inherit;
-		text-transform: inherit;
-		letter-spacing: inherit;
-		cursor: pointer;
-	}
-
-	.sort-header-btn:hover {
-		color: var(--text-primary);
-	}
-
-	.sort-header-btn.active {
-		color: var(--accent);
-	}
-
-	.name-sort-header {
-		justify-content: center;
-	}
-
-	.sort-subhint {
-		opacity: 0.65;
-		font-size: 0.85em;
-		font-weight: inherit;
-		text-transform: none;
-		letter-spacing: normal;
-	}
-
-	.sort-header-btn.active .sort-subhint {
-		opacity: 0.85;
-	}
-
-	.sort-indicator {
-		min-width: 1.8em;
-		text-align: left;
-		flex: 0 0 auto;
-		opacity: 0.65;
-		font-size: 0.8em;
-	}
-
-	.sort-header-btn.active .sort-indicator {
-		opacity: 1;
-	}
-
 	@media (max-width: 640px) {
 		.desktop-peer-table {
 			display: none;
@@ -726,31 +619,36 @@
 		.mobile-peer-list {
 			display: flex;
 			flex-direction: column;
-			gap: 0.4rem;
+			gap: 0.6rem;
 		}
 
 		.mobile-peer-card {
-			display: grid;
-			grid-template-columns: minmax(0, 1fr) auto;
-			gap: 0.5rem;
-			padding: 0.55rem 0.65rem;
+			display: flex;
+			flex-direction: column;
+			gap: 0.65rem;
+			padding: 0.7rem 0.75rem;
 			border: 1px solid var(--border);
 			border-radius: var(--radius);
 			background: var(--bg-primary);
 		}
 
-		.mobile-peer-card:not(.has-actions) {
-			grid-template-columns: minmax(0, 1fr);
+		.mobile-peer-card-top {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) auto;
+			align-items: start;
+			gap: 0.5rem;
 		}
 
-		.mobile-peer-main {
+		.mobile-peer-card-middle,
+		.mobile-peer-card-bottom,
+		.mobile-peer-title-row {
 			min-width: 0;
 		}
 
 		.mobile-peer-title-row {
 			display: flex;
 			align-items: center;
-			gap: 0.3rem;
+			gap: 0.45rem;
 			min-width: 0;
 		}
 
@@ -769,7 +667,7 @@
 			justify-content: flex-start;
 			align-items: center;
 			gap: 0.35rem;
-			margin-top: 0.1rem;
+			margin-top: 0.2rem;
 			font-size: 10px;
 			line-height: 1;
 			color: var(--text-muted);
@@ -793,7 +691,7 @@
 			display: grid;
 			grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr);
 			gap: 0.5rem;
-			margin-top: 0.35rem;
+			margin-top: 0.45rem;
 			line-height: 1.1;
 		}
 
@@ -837,7 +735,7 @@
 			display: grid;
 			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 			gap: 0.5rem;
-			margin-top: 0.25rem;
+			margin-top: 0.35rem;
 			line-height: 1.1;
 		}
 
@@ -853,16 +751,16 @@
 		.mobile-peer-actions {
 			display: flex;
 			flex-direction: row;
-			align-items: flex-end;
+			align-items: flex-start;
 			justify-content: flex-end;
 			gap: 0.25rem;
 			align-self: start;
-			flex-wrap: nowrap;
 		}
 
 		.mobile-peer-actions .peer-action-btn {
 			width: 32px;
 			height: 32px;
+			flex: 0 0 32px;
 			padding: 0;
 			border: 1px solid var(--border);
 			border-radius: var(--radius-sm);
@@ -870,27 +768,19 @@
 		}
 
 		@media (max-width: 360px) {
+			.mobile-peer-card-top {
+				grid-template-columns: minmax(0, 1fr) auto;
+			}
+
 			.mobile-peer-actions {
-				display: grid;
-				grid-template-columns: repeat(2, 32px);
-				grid-auto-rows: 32px;
-				gap: 0.25rem;
-				justify-content: end;
+				flex-wrap: nowrap;
+				gap: 0.2rem;
 			}
 
-			.mobile-peer-actions .peer-action-btn:nth-child(1) {
-				grid-column: 2;
-				grid-row: 1;
-			}
-
-			.mobile-peer-actions .peer-action-btn:nth-child(2) {
-				grid-column: 1;
-				grid-row: 2;
-			}
-
-			.mobile-peer-actions .peer-action-btn:nth-child(3) {
-				grid-column: 2;
-				grid-row: 2;
+			.mobile-peer-actions .peer-action-btn {
+				width: 30px;
+				height: 30px;
+				flex-basis: 30px;
 			}
 		}
 

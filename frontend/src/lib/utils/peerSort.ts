@@ -1,4 +1,5 @@
 export type PeerSortKey = 'name' | 'traffic' | 'ip' | 'endpoint' | 'online' | 'handshake';
+export type PeerAriaSort = 'ascending' | 'descending' | 'none';
 
 export const PEER_SORT_DEFAULTS: Record<PeerSortKey, boolean> = {
 	name: true,       // A→Z
@@ -17,6 +18,16 @@ export interface PeerSortFields {
 	txBytes: number | null;
 	online: boolean | null;
 	lastHandshake: string | null;
+}
+
+export interface PeerSortStateLike {
+	sortBy: PeerSortKey;
+	sortAsc: boolean;
+}
+
+export function peerAriaSort(state: PeerSortStateLike, key: PeerSortKey): PeerAriaSort {
+	if (state.sortBy !== key) return 'none';
+	return state.sortAsc ? 'ascending' : 'descending';
 }
 
 function parseHandshakeOrNull(v: string | null): number | null {
