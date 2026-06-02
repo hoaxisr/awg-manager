@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -146,6 +147,24 @@ func (a *routerWANInterfaceAdapter) ListWAN(ctx context.Context) ([]router.WANIn
 		})
 	}
 	return out, nil
+}
+
+var _ router.IngressResolver = (*routerIngressResolverAdapter)(nil)
+
+// routerIngressResolverAdapter резолвит "managed:WireguardN" → kernel-имя
+// ("nwgN") через InterfaceStore.ResolveSystemName. iface:-ref'ы router
+// резолвит сам без адаптера. Живёт в main — router не может импортить
+// internal/ndms (цикл через internal/tunnel/wan), как и WAN-адаптер.
+type routerIngressResolverAdapter struct {
+	store *ndmsquery.InterfaceStore
+}
+
+func (a *routerIngressResolverAdapter) Resolve(ctx context.Context, ref string) string {
+	const prefix = "managed:"
+	if !strings.HasPrefix(ref, prefix) {
+		return ""
+	}
+	return a.store.ResolveSystemName(ctx, strings.TrimPrefix(ref, prefix))
 }
 
 func (a *routerWANInterfaceAdapter) ListBindable(ctx context.Context) ([]router.WANInterfaceInfo, error) {

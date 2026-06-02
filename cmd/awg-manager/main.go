@@ -1084,6 +1084,7 @@ func main() {
 		Orch:                   sbOrch,
 		WANInterfaces:          &routerWANInterfaceAdapter{store: ndmsQueries.Interfaces},
 		BindableInterfaces:     &routerWANInterfaceAdapter{store: ndmsQueries.Interfaces},
+		IngressResolver:        &routerIngressResolverAdapter{store: ndmsQueries.Interfaces},
 	})
 	singboxOp.SetOutboundReferenceRenamer(routerSvc)
 	tunnelService.SetAWGSyncer(awgoutboundsSvc)
