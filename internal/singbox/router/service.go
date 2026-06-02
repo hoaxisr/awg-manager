@@ -288,6 +288,7 @@ type ServiceImpl struct {
 	currentLANBridges       []LANBridgeDNSRedir // last-discovered LAN-bridge (name, ndnproxy port) pairs; reconcile triggers re-install when this changes (e.g. NDMS hotspot reconfigured, bridge added/removed, port reassigned)
 	currentBypassPresets    []string
 	currentBypassExtraPorts string
+	currentIngress          []string // last-installed резолвленные ingress kernel-имена
 
 	// netfilterStateKnown tracks whether we know for certain that the
 	// installed iptables rules match the current desired state. It starts
@@ -729,14 +730,20 @@ func (s *ServiceImpl) Enable(ctx context.Context) error {
 		}
 	}
 
+	var ingress []string
+	if policyMode {
+		ingress = s.resolveIngressInterfaces(ctx, sr.IngressInterfaces)
+	}
+
 	bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
 	if err := s.deps.IPTables.Install(ctx, RestoreInputSpec{
-		PolicyMark:     mark,
-		MatchAll:       !policyMode,
-		WANIPs:         wanIPs,
-		LANBridges:     lanBridges,
-		BypassUDPPorts: bypassUDP,
-		BypassTCPPorts: bypassTCP,
+		PolicyMark:        mark,
+		MatchAll:          !policyMode,
+		WANIPs:            wanIPs,
+		LANBridges:        lanBridges,
+		BypassUDPPorts:    bypassUDP,
+		BypassTCPPorts:    bypassTCP,
+		IngressInterfaces: ingress,
 	}); err != nil {
 		// Stop sing-box from listening on the now-orphan TPROXY port,
 		// but DO NOT corrupt the persisted user config. With orchestrator
@@ -757,6 +764,7 @@ func (s *ServiceImpl) Enable(ctx context.Context) error {
 	s.currentLANBridges = lanBridges
 	s.currentBypassPresets = sr.BypassPresets
 	s.currentBypassExtraPorts = sr.BypassExtraPorts
+	s.currentIngress = ingress
 	s.netfilterStateKnown = true
 
 	settings.SingboxRouter = sr
@@ -967,6 +975,7 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 	s.currentLANBridges = nil
 	s.currentBypassPresets = nil
 	s.currentBypassExtraPorts = ""
+	s.currentIngress = nil
 	s.netfilterStateKnown = false
 
 	if s.deps.Orch != nil {
@@ -1058,6 +1067,11 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		lanBridges, _ = DiscoverLANBridges(ctx, mark)
 	}
 	lanBridgesChanged := !equalLANBridges(s.currentLANBridges, lanBridges)
+	var ingress []string
+	if policyMode {
+		ingress = s.resolveIngressInterfaces(ctx, sr.IngressInterfaces)
+	}
+	ingressChanged := !slices.Equal(s.currentIngress, ingress)
 	bypassPresetsChanged := !slices.Equal(s.currentBypassPresets, sr.BypassPresets)
 	bypassExtraChanged := s.currentBypassExtraPorts != sr.BypassExtraPorts
 
@@ -1068,7 +1082,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	// reconcileInstalled after startup always forces a full re-install
 	// regardless of what IsInstalled reports.
 	forceInitialSync := !s.netfilterStateKnown
-	needsInstall := forceInitialSync || markChanged || wanIPsChanged || lanBridgesChanged || bypassPresetsChanged || bypassExtraChanged
+	needsInstall := forceInitialSync || markChanged || wanIPsChanged || lanBridgesChanged || ingressChanged || bypassPresetsChanged || bypassExtraChanged
 
 	if needsInstall {
 		if forceInitialSync {
@@ -1082,12 +1096,13 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
 		s.mu.Lock()
 		if err := s.deps.IPTables.Install(ctx, RestoreInputSpec{
-			PolicyMark:     mark,
-			MatchAll:       !policyMode,
-			WANIPs:         wanIPs,
-			LANBridges:     lanBridges,
-			BypassUDPPorts: bypassUDP,
-			BypassTCPPorts: bypassTCP,
+			PolicyMark:        mark,
+			MatchAll:          !policyMode,
+			WANIPs:            wanIPs,
+			LANBridges:        lanBridges,
+			BypassUDPPorts:    bypassUDP,
+			BypassTCPPorts:    bypassTCP,
+			IngressInterfaces: ingress,
 		}); err != nil {
 			s.mu.Unlock()
 			return err
@@ -1097,6 +1112,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		s.currentLANBridges = lanBridges
 		s.currentBypassPresets = sr.BypassPresets
 		s.currentBypassExtraPorts = sr.BypassExtraPorts
+		s.currentIngress = ingress
 		s.netfilterStateKnown = true
 		s.mu.Unlock()
 	}

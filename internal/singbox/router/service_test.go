@@ -1376,3 +1376,66 @@ func TestNormalizeSingboxRouterSettings_IngressRefs(t *testing.T) {
 		t.Fatalf("expected error for unprefixed ref")
 	}
 }
+
+func TestReconcile_IngressChangeTriggersInstall(t *testing.T) {
+	restoreCalls := 0
+	var lastRestoreInput string
+	ipt := newStubIPTables(func(_ context.Context, input string) error {
+		restoreCalls++
+		lastRestoreInput = input
+		return nil
+	})
+	collector := &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}}
+	resolver := fakeIngressResolver{m: map[string]string{
+		"managed:WG": "nwgX",
+	}}
+
+	baseSettings := storage.SingboxRouterSettings{
+		Enabled:       true,
+		PolicyName:    "Policy0",
+		WANAutoDetect: true,
+		// No IngressInterfaces initially.
+	}
+
+	svc := &ServiceImpl{
+		deps: Deps{
+			Policies:           &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+			IPTables:           ipt,
+			WANIPCollector:     collector,
+			Singbox:            newTestSingbox(t),
+			NetfilterPreflight: func(context.Context) error { return nil },
+			IngressResolver:    resolver,
+		},
+		currentMark:   "0xffffaaa",
+		currentWANIPs: []string{"203.0.113.207/32"},
+		// netfilterStateKnown=false → first reconcile forces install
+	}
+
+	// Initial reconcile: sets netfilterStateKnown=true and currentIngress=[].
+	if err := svc.reconcileInstalled(context.Background(), baseSettings); err != nil {
+		t.Fatalf("first reconcileInstalled: %v", err)
+	}
+	if restoreCalls != 1 {
+		t.Fatalf("expected 1 install on first reconcile (forceInitialSync), got %d", restoreCalls)
+	}
+
+	// Second reconcile: only IngressInterfaces changed; everything else identical.
+	changedSettings := baseSettings
+	changedSettings.IngressInterfaces = []string{"managed:WG"}
+
+	if err := svc.reconcileInstalled(context.Background(), changedSettings); err != nil {
+		t.Fatalf("second reconcileInstalled: %v", err)
+	}
+	if restoreCalls != 2 {
+		t.Errorf("expected 2 total installs (ingress change), got %d", restoreCalls)
+	}
+	// The rendered iptables input must contain the resolved kernel name.
+	ingressRule := "-A PREROUTING -i nwgX -m comment --comment " + IngressTag
+	if !strings.Contains(lastRestoreInput, ingressRule) {
+		t.Errorf("expected ingress rule for nwgX in restore input, got:\n%s", lastRestoreInput)
+	}
+	// currentIngress must be updated.
+	if !slices.Equal(svc.currentIngress, []string{"nwgX"}) {
+		t.Errorf("currentIngress not updated: %v", svc.currentIngress)
+	}
+}
