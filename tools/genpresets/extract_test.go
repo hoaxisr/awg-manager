@@ -33,6 +33,22 @@ func TestExtractDomainsAndSubnets(t *testing.T) {
 	}
 }
 
+// Real geosite-facebook decompiles with scalar (non-array) fields.
+const sampleScalarSource = `{"version":2,"rules":[{"domain":"facebook.com","ip_cidr":"31.13.0.0/16"}]}`
+
+func TestExtractHandlesScalarFields(t *testing.T) {
+	dom, sub, _, err := extractRuleSet([]byte(sampleScalarSource))
+	if err != nil {
+		t.Fatalf("extract scalar: %v", err)
+	}
+	if !equalStrings(dom, []string{"facebook.com"}) {
+		t.Fatalf("domains=%v want [facebook.com]", dom)
+	}
+	if !equalStrings(sub, []string{"31.13.0.0/16"}) {
+		t.Fatalf("subnets=%v want [31.13.0.0/16]", sub)
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
