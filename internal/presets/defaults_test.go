@@ -43,13 +43,15 @@ func TestDefaultsCatalogInvariants(t *testing.T) {
 			}
 		}
 	}
-	// Alias ids collapsed to canonical.
-	for _, bad := range []string{"twitter", "chatgpt", "cloudflare-ips", "social"} {
+	// Alias ids collapsed to canonical. (cloudflare-ips is intentionally NOT
+	// here: U1c re-added it as a distinct DNS-only CIDR preset alongside
+	// cloudflare — see M2.)
+	for _, bad := range []string{"twitter", "chatgpt", "social"} {
 		if seen[bad] {
 			t.Errorf("alias id %q must be collapsed", bad)
 		}
 	}
-	for _, need := range []string{"x", "openai", "cloudflare", "meta", "oculus", "russian-services"} {
+	for _, need := range []string{"x", "openai", "cloudflare", "meta", "oculus", "russian-services", "cloudflare-ips"} {
 		if !seen[need] {
 			t.Errorf("expected id %q present", need)
 		}
