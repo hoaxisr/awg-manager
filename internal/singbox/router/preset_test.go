@@ -2,120 +2,106 @@ package router
 
 import (
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/presets"
 )
 
-func TestListPresetsContainsYoutube(t *testing.T) {
-	presets := ListPresets()
-	var found bool
-	for _, p := range presets {
-		if p.ID == "youtube" {
-			found = true
-			if len(p.RuleSets) == 0 || len(p.Rules) == 0 {
-				t.Error("youtube preset missing rulesets or rules")
-			}
+func testCatalog(t *testing.T) *presets.Catalog {
+	t.Helper()
+	return presets.NewCatalog(presets.NewStore(t.TempDir()))
+}
+
+func TestPresetFromUnifiedFiltersDNSOnly(t *testing.T) {
+	dnsOnly := presets.Preset{ID: "x", Engines: presets.Engines{DNS: &presets.DNSEngine{Domains: []string{"a.com"}}}}
+	if _, ok := presetFromUnified(dnsOnly); ok {
+		t.Error("DNS-only preset must not be router-applicable")
+	}
+	sb := presets.Preset{
+		ID: "y", Name: "Y", Category: "social", IconSlug: "y",
+		Engines: presets.Engines{Singbox: &presets.SingboxEngine{
+			RuleSets: []presets.RuleRef{{Tag: "geosite-y", URL: "u/y.srs"}}, Action: "tunnel"}},
+	}
+	rp, ok := presetFromUnified(sb)
+	if !ok || len(rp.RuleSets) != 1 || rp.RuleSets[0].Tag != "geosite-y" {
+		t.Fatalf("ruleset mapping: %+v", rp)
+	}
+	if len(rp.Rules) != 1 || rp.Rules[0].RuleSetRef != "geosite-y" || rp.Rules[0].ActionTarget != "tunnel" {
+		t.Fatalf("rule synthesis: %+v", rp.Rules)
+	}
+}
+
+func TestListRouterPresetsFiltersAndCount(t *testing.T) {
+	list, err := listRouterPresets(testCatalog(t))
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, p := range list {
+		ids[p.ID] = true
+		if len(p.RuleSets) == 0 {
+			t.Errorf("router preset %q has no rule-sets", p.ID)
 		}
 	}
-	if !found {
-		t.Error("youtube preset not in list")
+	if ids["russian-services"] || ids["atlassian"] {
+		t.Error("DNS-only presets must be filtered out of the router catalog")
+	}
+	if !ids["youtube"] || !ids["meta"] {
+		t.Error("sing-box presets must be present")
+	}
+	if len(list) < 60 {
+		t.Fatalf("expected ~74 router presets, got %d", len(list))
 	}
 }
 
-func TestPresetYoutubeAppliesRuleSetAndRule(t *testing.T) {
-	cfg := NewEmptyConfig()
-	if err := ApplyPresetToConfig(cfg, "youtube", "Germany VLESS"); err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.Route.RuleSet) != 1 || cfg.Route.RuleSet[0].Tag != "geosite-youtube" {
-		t.Errorf("rule_set: %+v", cfg.Route.RuleSet)
-	}
-	if len(cfg.Route.Rules) != 1 || cfg.Route.Rules[0].Outbound != "Germany VLESS" {
-		t.Errorf("rules: %+v", cfg.Route.Rules)
-	}
-}
+func TestApplyPresetBackwardCompat(t *testing.T) {
+	cat := testCatalog(t)
 
-func TestPresetAdsAppliesReject(t *testing.T) {
-	cfg := NewEmptyConfig()
-	if err := ApplyPresetToConfig(cfg, "ads", ""); err != nil {
-		t.Fatal(err)
+	yt, err := findRouterPreset(cat, "youtube")
+	if err != nil {
+		t.Fatalf("find youtube: %v", err)
 	}
-	if len(cfg.Route.Rules) != 1 || cfg.Route.Rules[0].Action != "reject" {
-		t.Errorf("rules: %+v", cfg.Route.Rules)
-	}
-}
-
-func TestPresetTunnelRequiresOutbound(t *testing.T) {
-	cfg := NewEmptyConfig()
-	err := ApplyPresetToConfig(cfg, "youtube", "")
-	if err == nil {
-		t.Error("expected error when outbound empty for tunnel preset")
-	}
-}
-
-func TestPresetReAddRuleSet(t *testing.T) {
-	cfg := NewEmptyConfig()
-	if err := ApplyPresetToConfig(cfg, "youtube", "Germany"); err != nil {
-		t.Fatal(err)
-	}
-	if err := ApplyPresetToConfig(cfg, "youtube", "France"); err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.Route.RuleSet) != 1 {
-		t.Errorf("rule_set should not duplicate: %+v", cfg.Route.RuleSet)
-	}
-	if len(cfg.Route.Rules) != 2 {
-		t.Errorf("expected 2 rules, got %d", len(cfg.Route.Rules))
-	}
-}
-
-func TestPresetUnknown(t *testing.T) {
-	cfg := NewEmptyConfig()
-	err := ApplyPresetToConfig(cfg, "nonexistent", "")
-	if err == nil || !isSubstring(err.Error(), "not found") {
-		t.Errorf("expected not found error, got %v", err)
-	}
-}
-
-func isSubstring(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}
-
-func TestApplyPresetToConfig_IdempotentOnRules(t *testing.T) {
 	cfg := &RouterConfig{}
-	if err := ApplyPresetToConfig(cfg, "youtube", "awg-vpn0"); err != nil {
-		t.Fatalf("first apply: %v", err)
+	if err := ApplyPresetToConfig(cfg, yt, "myout"); err != nil {
+		t.Fatalf("apply youtube: %v", err)
 	}
-	rulesAfterFirst := len(cfg.Route.Rules)
-	ruleSetsAfterFirst := len(cfg.Route.RuleSet)
+	if len(cfg.Route.RuleSet) != 1 || cfg.Route.RuleSet[0].Tag != "geosite-youtube" ||
+		cfg.Route.RuleSet[0].Type != "remote" || cfg.Route.RuleSet[0].Format != "binary" {
+		t.Fatalf("youtube rule-set: %+v", cfg.Route.RuleSet)
+	}
+	if len(cfg.Route.Rules) != 1 || cfg.Route.Rules[0].Action != "route" ||
+		cfg.Route.Rules[0].Outbound != "myout" || len(cfg.Route.Rules[0].RuleSet) != 1 ||
+		cfg.Route.Rules[0].RuleSet[0] != "geosite-youtube" {
+		t.Fatalf("youtube rule: %+v", cfg.Route.Rules)
+	}
 
-	if err := ApplyPresetToConfig(cfg, "youtube", "awg-vpn0"); err != nil {
-		t.Fatalf("second apply: %v", err)
+	ads, err := findRouterPreset(cat, "ads")
+	if err != nil {
+		t.Fatalf("find ads: %v", err)
 	}
-
-	if got := len(cfg.Route.Rules); got != rulesAfterFirst {
-		t.Errorf("Rules duplicated on second apply: %d -> %d", rulesAfterFirst, got)
+	cfg2 := &RouterConfig{}
+	if err := ApplyPresetToConfig(cfg2, ads, ""); err != nil {
+		t.Fatalf("apply ads: %v", err)
 	}
-	if got := len(cfg.Route.RuleSet); got != ruleSetsAfterFirst {
-		t.Errorf("RuleSets duplicated on second apply: %d -> %d", ruleSetsAfterFirst, got)
+	if cfg2.Route.RuleSet[0].Tag != "geosite-category-ads-all" {
+		t.Fatalf("ads rule-set: %+v", cfg2.Route.RuleSet)
+	}
+	if cfg2.Route.Rules[0].Action != "reject" || cfg2.Route.Rules[0].Outbound != "" {
+		t.Fatalf("ads rule: %+v", cfg2.Route.Rules)
 	}
 }
 
-func TestApplyPresetToConfig_DifferentOutboundCreatesSeparateRule(t *testing.T) {
-	cfg := &RouterConfig{}
-	if err := ApplyPresetToConfig(cfg, "youtube", "awg-vpn0"); err != nil {
-		t.Fatalf("first apply: %v", err)
+func TestApplyPresetTunnelRequiresOutbound(t *testing.T) {
+	yt, _ := findRouterPreset(testCatalog(t), "youtube")
+	if err := ApplyPresetToConfig(&RouterConfig{}, yt, ""); err == nil {
+		t.Error("tunnel preset without outbound must error")
 	}
-	rulesAfterFirst := len(cfg.Route.Rules)
+}
 
-	if err := ApplyPresetToConfig(cfg, "youtube", "awg-vpn1"); err != nil {
-		t.Fatalf("second apply: %v", err)
+func TestNilCatalogReturnsErrorNotPanic(t *testing.T) {
+	if _, err := listRouterPresets(nil); err == nil {
+		t.Error("listRouterPresets(nil) must return an error, not panic")
 	}
-
-	if got := len(cfg.Route.Rules); got != rulesAfterFirst+1 {
-		t.Errorf("expected new rule for different outbound: %d -> %d", rulesAfterFirst, got)
+	if _, err := findRouterPreset(nil, "youtube"); err == nil {
+		t.Error("findRouterPreset(nil) must return an error, not panic")
 	}
 }

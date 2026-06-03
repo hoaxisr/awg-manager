@@ -1,9 +1,8 @@
 /**
  * Heuristic: singbox rule → preset.id (slug for PresetIcon).
  *
- * Использует SERVICE_PRESETS из $lib/data/presets — единый источник
- * domain matchers, поддерживается командой и обновляется. Дублировать
- * паттерны тут — антипаттерн (см. F2 review).
+ * Принимает catalog: CatalogPreset[] параметром (pure/sync) — источник
+ * domain matchers. catalog приходит из store $presetCatalog.
  *
  * Для rule_set с тегами geosite-* / geoip-* (и без префикса) дополнительно
  * смотрим SingboxRouterPreset (ruleSets.tag, rules.ruleSetRef → iconSlug).
@@ -12,9 +11,8 @@
  * «перебиваться» широкими доменами Google (googleapis.com, *.google.com).
  */
 
-import { SERVICE_PRESETS } from '$lib/data/presets';
 import { isPresetIconResolvable } from '$lib/utils/resolve-icon-slug';
-import type { SingboxRouterPreset, SingboxRouterRule } from '$lib/types';
+import type { CatalogPreset, SingboxRouterPreset, SingboxRouterRule } from '$lib/types';
 
 function suffixMatches(domain: string, suffix: string): boolean {
   const d = domain.toLowerCase();
@@ -75,6 +73,7 @@ function lookupRouterPreset(
 
 function detectFromRuleSets(
   sets: string[],
+  catalog: CatalogPreset[],
   routerPresets?: SingboxRouterPreset[],
 ): DetectedService | null {
   const index = routerPresets?.length ? buildRuleSetIndex(routerPresets) : undefined;
@@ -87,14 +86,14 @@ function detectFromRuleSets(
 
     const normalized = normalizeRuleSetName(rs);
     // Direct id match: rule_set 'telegram' or 'geosite-telegram' → 'telegram'
-    const preset = SERVICE_PRESETS.find((p) => p.id.toLowerCase() === normalized);
+    const preset = catalog.find((p) => p.id.toLowerCase() === normalized);
     if (preset) {
-      return { iconSlug: preset.id, displayName: preset.name };
+      return { iconSlug: preset.iconSlug, displayName: preset.name };
     }
     // Special case: 'ru' / 'russia' → russian-services
     if (normalized === 'ru' || normalized === 'russia') {
-      const ru = SERVICE_PRESETS.find((p) => p.id === 'russian-services');
-      if (ru) return { iconSlug: ru.id, displayName: ru.name };
+      const ru = catalog.find((p) => p.id === 'russian-services');
+      if (ru) return { iconSlug: ru.iconSlug, displayName: ru.name };
     }
   }
 
@@ -102,11 +101,11 @@ function detectFromRuleSets(
 }
 
 /** Longest suffix wins — ytimg.l.google.com → YouTube, not Google. */
-function detectFromDomains(domains: string[]): DetectedService | null {
+function detectFromDomains(domains: string[], catalog: CatalogPreset[]): DetectedService | null {
   let best: { iconSlug: string; displayName: string; matchLen: number } | null = null;
 
-  for (const preset of SERVICE_PRESETS) {
-    const presetDomains = preset.domains ?? [];
+  for (const preset of catalog) {
+    const presetDomains = preset.engines.dns?.domains ?? [];
     const onlyCIDR = presetDomains.every((d) => /^\d|^[\da-f]+:/i.test(d));
     if (presetDomains.length === 0 || onlyCIDR) continue;
 
@@ -116,7 +115,7 @@ function detectFromDomains(domains: string[]): DetectedService | null {
         if (!suffixMatches(ruleDomain, presetDomain)) continue;
         if (!best || presetDomain.length > best.matchLen) {
           best = {
-            iconSlug: preset.id,
+            iconSlug: preset.iconSlug,
             displayName: preset.name,
             matchLen: presetDomain.length,
           };
@@ -129,29 +128,31 @@ function detectFromDomains(domains: string[]): DetectedService | null {
 }
 
 /**
- * Returns preset.id (e.g. 'netflix', 'telegram', 'youtube') for known services,
- * or 'custom' otherwise. The id is fed to PresetIcon for brand-correct rendering.
+ * Returns preset.iconSlug (e.g. 'netflix', 'telegram', 'youtube') for known services,
+ * or 'custom' otherwise. The slug is fed to PresetIcon for brand-correct rendering.
  */
 export function detectServiceKey(
   rule: SingboxRouterRule,
   routerPresets?: SingboxRouterPreset[],
+  catalog: CatalogPreset[] = [],
 ): string {
-  return detectService(rule, routerPresets).iconSlug;
+  return detectService(rule, routerPresets, catalog).iconSlug;
 }
 
 export function detectService(
   rule: SingboxRouterRule,
   routerPresets?: SingboxRouterPreset[],
+  catalog: CatalogPreset[] = [],
 ): DetectedService {
   const sets = rule.rule_set ?? [];
   if (sets.length > 0) {
-    const fromRuleSet = detectFromRuleSets(sets, routerPresets);
+    const fromRuleSet = detectFromRuleSets(sets, catalog, routerPresets);
     if (fromRuleSet) return fromRuleSet;
   }
 
   const domains = rule.domain_suffix ?? [];
   if (domains.length > 0) {
-    const fromDomains = detectFromDomains(domains);
+    const fromDomains = detectFromDomains(domains, catalog);
     if (fromDomains) return fromDomains;
   }
 

@@ -64,6 +64,9 @@ export const APPEARANCE_SETTINGS_MIN_LEVEL: UsageLevel = 'advanced';
 /** Переключатель stable/develop — только на «Продвинутом». */
 export const UPDATE_CHANNEL_MIN_LEVEL: UsageLevel = 'expert';
 
+/** Подробности маршрута служебных загрузок: "через Direct (WAN)", route labels и transport hints. */
+export const DOWNLOAD_ROUTE_DETAILS_MIN_LEVEL: UsageLevel = 'expert';
+
 export function isUsageLevelAtLeast(level: UsageLevel, minimum: UsageLevel): boolean {
 	return LEVEL_RANK[level] >= LEVEL_RANK[minimum];
 }
@@ -74,6 +77,10 @@ export function isAppearanceSettingsVisible(level: UsageLevel): boolean {
 
 export function isUpdateChannelSwitchVisible(level: UsageLevel): boolean {
 	return isUsageLevelAtLeast(level, UPDATE_CHANNEL_MIN_LEVEL);
+}
+
+export function areDownloadRouteDetailsVisible(level: UsageLevel): boolean {
+	return isUsageLevelAtLeast(level, DOWNLOAD_ROUTE_DETAILS_MIN_LEVEL);
 }
 
 export function isSectionVisible(level: UsageLevel, section: Section): boolean {

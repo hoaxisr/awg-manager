@@ -83,3 +83,6 @@ scripts/publish-github-release.sh
 # Local diagnostic / test scripts — run live against a router to gather
 # evidence; not part of the production package. Kept local-only.
 scripts/diag/
+
+# stray binary from `go build ./...` (tools/genpresets main)
+/genpresets

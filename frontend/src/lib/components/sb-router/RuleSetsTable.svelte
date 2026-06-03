@@ -32,15 +32,15 @@
     return 'accent';
   }
 
-  function datInfo(rs: SingboxRouterRuleSet): { kind: string; tag: string } | null {
+  function datInfo(rs: SingboxRouterRuleSet): { kind: string; tags: string[] } | null {
     if (rs.type !== 'remote' || !rs.url) return null;
     try {
       const u = new URL(rs.url);
       if (u.pathname !== '/api/singbox/router/rulesets/dat-srs') return null;
       const kind = u.searchParams.get('kind') ?? '';
-      const tag = u.searchParams.get('tag') ?? '';
-      if ((kind !== 'geosite' && kind !== 'geoip') || !tag) return null;
-      return { kind, tag };
+      const tags = u.searchParams.getAll('tag').filter((t) => t.trim() !== '');
+      if ((kind !== 'geosite' && kind !== 'geoip') || tags.length === 0) return null;
+      return { kind, tags };
     } catch {
       return null;
     }
@@ -52,7 +52,7 @@
 
   function sourceFor(rs: SingboxRouterRuleSet): string {
     const dat = datInfo(rs);
-    if (dat) return `${dat.kind}:${dat.tag}`;
+    if (dat) return `${dat.kind}: ${dat.tags.join(', ')}`;
     if (rs.type === 'remote') return rs.url ?? '—';
     if (rs.type === 'local') return rs.path ?? '—';
     if (rs.type === 'inline') return `${rs.rules?.length ?? 0} rules`;

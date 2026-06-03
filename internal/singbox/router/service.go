@@ -14,6 +14,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
@@ -53,8 +54,8 @@ type Service interface {
 	AddRuleSet(ctx context.Context, rs RuleSet) error
 	UpdateRuleSet(ctx context.Context, tag string, rs RuleSet) error
 	DeleteRuleSet(ctx context.Context, tag string, force bool) error
-	DatRuleSetURL(ctx context.Context, kind, tag string) (string, error)
-	DatRuleSetFile(ctx context.Context, kind, tag, token string) (string, error)
+	DatRuleSetURL(ctx context.Context, kind string, tags []string) (string, error)
+	DatRuleSetFile(ctx context.Context, kind string, tags []string, token string) (string, error)
 
 	ListCompositeOutbounds(ctx context.Context) ([]CompositeOutboundView, error)
 	AddCompositeOutbound(ctx context.Context, o Outbound) error
@@ -62,6 +63,7 @@ type Service interface {
 	DeleteCompositeOutbound(ctx context.Context, tag string, force bool) error
 
 	ApplyPreset(ctx context.Context, presetID, outboundTag string) error
+	ListPresets() ([]Preset, error)
 
 	ListPolicies(ctx context.Context) ([]PolicyInfo, error)
 	CreatePolicy(ctx context.Context, description string) (PolicyInfo, error)
@@ -221,6 +223,8 @@ type StagingEventBus interface {
 type Deps struct {
 	AppLog         logging.AppLogger
 	Settings       *storage.SettingsStore
+	// PresetCatalog is the unified preset catalog. Required for ListPresets and ApplyPreset.
+	PresetCatalog *presets.Catalog
 	Singbox        SingboxController
 	Policies       AccessPolicyProvider
 	Events         *events.Bus
@@ -1464,9 +1468,17 @@ func (s *ServiceImpl) DeleteCompositeOutbound(ctx context.Context, tag string, f
 	return s.withConfig(ctx, "outbounds", func(c *RouterConfig) error { return c.DeleteCompositeOutbound(tag, force) })
 }
 
+func (s *ServiceImpl) ListPresets() ([]Preset, error) {
+	return listRouterPresets(s.deps.PresetCatalog)
+}
+
 func (s *ServiceImpl) ApplyPreset(ctx context.Context, presetID, outboundTag string) error {
+	p, err := findRouterPreset(s.deps.PresetCatalog, presetID)
+	if err != nil {
+		return err
+	}
 	return s.withConfig(ctx, "status", func(c *RouterConfig) error {
-		return ApplyPresetToConfig(c, presetID, outboundTag)
+		return ApplyPresetToConfig(c, p, outboundTag)
 	})
 }
 

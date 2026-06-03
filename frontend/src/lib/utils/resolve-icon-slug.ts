@@ -1,5 +1,4 @@
 import { brandIcons } from '$lib/generated/brandIcons';
-import { SERVICE_PRESETS } from '$lib/data/presets';
 import { isPresetInlineSlug } from '$lib/utils/service-icons';
 
 const LUCIDE_SLUGS = new Set([
@@ -16,13 +15,14 @@ const LUCIDE_SLUGS = new Set([
 	'lucide-briefcase-business',
 	'lucide-shield-off',
 	'lucide-globe-lock',
-	'lucide-list',
 ]);
 
 /** Name aliases → sing-box preset iconSlug (brandIcons / lucide). */
 const NAME_ALIASES: Record<string, string> = {
 	'twitter/x': 'x',
 	twitter: 'x',
+	chatgpt: 'openai',
+	'x.com': 'x',
 	'google gemini': 'googlegemini',
 	'google-gemini': 'googlegemini',
 	gemini: 'googlegemini',
@@ -48,7 +48,7 @@ function normalizeKey(s: string): string {
 /** True when PresetIcon can render this slug (not the "?" fallback). */
 export function isPresetIconResolvable(slug: string): boolean {
 	if (!slug) return false;
-	if (isPresetInlineSlug(slug) || slug === 'instagram' || LUCIDE_SLUGS.has(slug)) return true;
+	if (isPresetInlineSlug(slug) || LUCIDE_SLUGS.has(slug)) return true;
 	return slug in brandIcons;
 }
 
@@ -64,12 +64,6 @@ export function resolveIconSlug(name: string, iconSlug?: string): string | undef
 
 	if (NAME_ALIASES[key] && isPresetIconResolvable(NAME_ALIASES[key])) {
 		return NAME_ALIASES[key];
-	}
-
-	for (const preset of SERVICE_PRESETS) {
-		if (normalizeKey(preset.id) === key || normalizeKey(preset.name) === key) {
-			if (isPresetIconResolvable(preset.id)) return preset.id;
-		}
 	}
 
 	const compact = key.replace(/[^a-z0-9]+/g, '');

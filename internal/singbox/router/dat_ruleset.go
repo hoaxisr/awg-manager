@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 )
 
@@ -18,15 +19,20 @@ const (
 )
 
 type datRuleSetMeta struct {
-	Kind        string `json:"kind"`
+	Kind    string                 `json:"kind"`
+	Tags    []string               `json:"tags"`
+	Sources []datRuleSetSourceMeta `json:"sources"`
+}
+
+type datRuleSetSourceMeta struct {
 	Tag         string `json:"tag"`
 	SourcePath  string `json:"sourcePath"`
 	SourceSize  int64  `json:"sourceSize"`
 	SourceMtime int64  `json:"sourceMtime"`
 }
 
-func (s *ServiceImpl) DatRuleSetURL(_ context.Context, kind, tag string) (string, error) {
-	kind, tag, err := normalizeDatRuleSetInput(kind, tag)
+func (s *ServiceImpl) DatRuleSetURL(_ context.Context, kind string, tags []string) (string, error) {
+	kind, tags, err := normalizeDatRuleSetInput(kind, tags)
 	if err != nil {
 		return "", err
 	}
@@ -47,13 +53,15 @@ func (s *ServiceImpl) DatRuleSetURL(_ context.Context, kind, tag string) (string
 	}
 	q := url.Values{}
 	q.Set("kind", kind)
-	q.Set("tag", tag)
+	for _, tag := range tags {
+		q.Add("tag", tag)
+	}
 	q.Set("token", token)
 	return fmt.Sprintf("http://127.0.0.1:%d/api/singbox/router/rulesets/dat-srs?%s", port, q.Encode()), nil
 }
 
-func (s *ServiceImpl) DatRuleSetFile(_ context.Context, kind, tag, token string) (string, error) {
-	kind, tag, err := normalizeDatRuleSetInput(kind, tag)
+func (s *ServiceImpl) DatRuleSetFile(_ context.Context, kind string, tags []string, token string) (string, error) {
+	kind, tags, err := normalizeDatRuleSetInput(kind, tags)
 	if err != nil {
 		return "", err
 	}
@@ -71,19 +79,34 @@ func (s *ServiceImpl) DatRuleSetFile(_ context.Context, kind, tag, token string)
 	s.datRuleSetMu.Lock()
 	defer s.datRuleSetMu.Unlock()
 
-	lines, sourcePath, err := s.deps.GeoData.ExpandGeoTag(kind, tag)
-	if err != nil {
-		return "", err
+	allLines := make([]string, 0)
+	sources := make([]datRuleSetSourceMeta, 0, len(tags))
+	for _, tag := range tags {
+		lines, sourcePath, err := s.deps.GeoData.ExpandGeoTag(kind, tag)
+		if err != nil {
+			return "", err
+		}
+		if len(lines) == 0 {
+			return "", fmt.Errorf("%s tag %q is empty", kind, tag)
+		}
+		st, err := os.Stat(sourcePath)
+		if err != nil {
+			return "", fmt.Errorf("stat source dat file: %w", err)
+		}
+		allLines = append(allLines, lines...)
+		sources = append(sources, datRuleSetSourceMeta{
+			Tag:         tag,
+			SourcePath:  sourcePath,
+			SourceSize:  st.Size(),
+			SourceMtime: st.ModTime().UnixNano(),
+		})
 	}
-	if len(lines) == 0 {
-		return "", fmt.Errorf("%s tag %q is empty", kind, tag)
-	}
-	st, err := os.Stat(sourcePath)
-	if err != nil {
-		return "", fmt.Errorf("stat source dat file: %w", err)
+	allLines = dedupeStrings(allLines)
+	if len(allLines) == 0 {
+		return "", fmt.Errorf("%s tags %q are empty", kind, strings.Join(tags, ", "))
 	}
 
-	base := safeRuleSetFilename(kind + "-" + tag)
+	base := safeRuleSetFilename(kind + "-" + strings.Join(tags, "-"))
 	dir, err := s.datRuleSetDir()
 	if err != nil {
 		return "", err
@@ -95,17 +118,15 @@ func (s *ServiceImpl) DatRuleSetFile(_ context.Context, kind, tag, token string)
 	srsPath := filepath.Join(dir, base+".srs")
 	metaPath := filepath.Join(dir, base+datRuleSetMetaExt)
 	meta := datRuleSetMeta{
-		Kind:        kind,
-		Tag:         tag,
-		SourcePath:  sourcePath,
-		SourceSize:  st.Size(),
-		SourceMtime: st.ModTime().UnixNano(),
+		Kind:    kind,
+		Tags:    tags,
+		Sources: sources,
 	}
 	if datRuleSetCacheValid(srsPath, metaPath, meta) {
 		return srsPath, nil
 	}
 
-	rules, err := datLinesToRuleSetRules(kind, lines)
+	rules, err := datLinesToRuleSetRules(kind, allLines)
 	if err != nil {
 		return "", err
 	}
@@ -123,16 +144,16 @@ func (s *ServiceImpl) DatRuleSetFile(_ context.Context, kind, tag, token string)
 	return srsPath, nil
 }
 
-func normalizeDatRuleSetInput(kind, tag string) (string, string, error) {
+func normalizeDatRuleSetInput(kind string, tags []string) (string, []string, error) {
 	kind = strings.ToLower(strings.TrimSpace(kind))
-	tag = strings.TrimSpace(tag)
 	if kind != "geosite" && kind != "geoip" {
-		return "", "", fmt.Errorf("unknown dat rule-set kind %q", kind)
+		return "", nil, fmt.Errorf("unknown dat rule-set kind %q", kind)
 	}
-	if tag == "" {
-		return "", "", fmt.Errorf("dat rule-set tag is required")
+	clean := dedupeStrings(tags)
+	if len(clean) == 0 {
+		return "", nil, fmt.Errorf("dat rule-set tag is required")
 	}
-	return kind, tag, nil
+	return kind, clean, nil
 }
 
 func (s *ServiceImpl) datRuleSetDir() (string, error) {
@@ -186,7 +207,7 @@ func datRuleSetCacheValid(srsPath, metaPath string, want datRuleSetMeta) bool {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		return false
 	}
-	return got == want
+	return reflect.DeepEqual(got, want)
 }
 
 func datLinesToRuleSetRules(kind string, lines []string) ([]map[string]any, error) {

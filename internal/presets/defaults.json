@@ -1,0 +1,4639 @@
+[
+  {
+    "id": "anthropic",
+    "name": "Anthropic / Claude",
+    "iconSlug": "anthropic",
+    "category": "ai",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "anthropic.com",
+          "claude.ai",
+          "claude.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-anthropic",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/claude.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "category-ai",
+    "name": "Все AI сервисы",
+    "iconSlug": "lucide-sparkles",
+    "category": "ai",
+    "notice": "ChatGPT, Claude, Gemini, Perplexity и другие (кроме китайских)",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "ai.google.dev",
+          "alkalicore-pa.clients6.google.com",
+          "alkalimakersuite-pa.clients6.google.com",
+          "antigravity-pa.googleapis.com",
+          "antigravity.googleapis.com",
+          "browser-intake-datadoghq.com",
+          "cloudaicompanion.googleapis.com",
+          "cloudcode-pa.googleapis.com",
+          "copilot-proxy.githubusercontent.com",
+          "copilot-telemetry-service.githubusercontent.com",
+          "copilot-telemetry.githubusercontent.com",
+          "copilot-workspace.githubnext.com",
+          "copilotprodattachments.blob.core.windows.net",
+          "daily-cloudcode-pa.googleapis.com",
+          "notebooklm-pa.googleapis.com",
+          "notebooklm.googleapis.com",
+          "o33249.ingest.sentry.io",
+          "openaiapi-site.azureedge.net",
+          "openaicom-api-bdcpf8c6d2e9atf6.z01.azurefd.net",
+          "openaicom.imgix.net",
+          "openaicomproductionae4b.blob.core.windows.net",
+          "ppl-ai-file-upload.s3.amazonaws.com",
+          "pplx-res.cloudinary.com",
+          "production-openaicom-storage.azureedge.net",
+          "servd-anthropic-website.b-cdn.net",
+          "webchannel-alkalimakersuite-pa.clients6.google.com",
+          "agentclientprotocol.com",
+          "ai.studio",
+          "aicode.googleapis.com",
+          "aida.googleapis.com",
+          "aisandbox-pa.googleapis.com",
+          "aistudio.google.com",
+          "anthropic.com",
+          "antigravity-unleash.goog",
+          "antigravity.google",
+          "anythingllm.com",
+          "arena.ai",
+          "bard.google.com",
+          "cerebras.ai",
+          "chat.com",
+          "chatgpt.com",
+          "chatgpt.livekit.cloud",
+          "chutes.ai",
+          "cici.com",
+          "ciciai.com",
+          "ciciaicdn.com",
+          "clau.de",
+          "claude.ai",
+          "claude.com",
+          "claudemcpclient.com",
+          "claudeusercontent.com",
+          "clawhub.ai",
+          "clipdrop.co",
+          "codeium.com",
+          "codeiumdata.com",
+          "coderabbit.ai",
+          "coderabbit.gallery.vsassets.io",
+          "cohere.ai",
+          "cohere.com",
+          "comfy.org",
+          "comfyci.org",
+          "comfyregistry.org",
+          "copilot.microsoft.com",
+          "coze.com",
+          "crewai.com",
+          "crixet.com",
+          "cursor-cdn.com",
+          "cursor.com",
+          "cursor.sh",
+          "cursorapi.com",
+          "deepmind.com",
+          "deepmind.google",
+          "devin.ai",
+          "diabrowser.com",
+          "diabrowser.engineering",
+          "dify.ai",
+          "dola.com",
+          "duck.ai",
+          "elevenlabs.com",
+          "elevenlabs.io",
+          "envato-static.com",
+          "envato.com",
+          "envatousercontent.com",
+          "gateway.ai.cloudflare.com",
+          "geller-pa.googleapis.com",
+          "gemini.google",
+          "gemini.google.com",
+          "gemini.gstatic.com",
+          "generativeai.google",
+          "generativelanguage.googleapis.com",
+          "githubcopilot.com",
+          "grok.com",
+          "grok.x.com",
+          "groq.com",
+          "h2o.ai",
+          "hf.co",
+          "hf.space",
+          "host.livekit.cloud",
+          "huggingface.co",
+          "jasper.ai",
+          "jules.google",
+          "jules.google.com",
+          "kiro.dev",
+          "labs.google",
+          "labs.google.com",
+          "langchain.com",
+          "liveperson.net",
+          "lmstudio.ai",
+          "lovart.ai",
+          "lpsnmedia.net",
+          "makersuite.google.com",
+          "manus.im",
+          "manuscdn.com",
+          "marscode.com",
+          "meta.ai",
+          "midjourney.com",
+          "minimax.io",
+          "mistral.ai",
+          "mozilla.ai",
+          "notebooklm.google",
+          "notebooklm.google.com",
+          "oaistatic.com",
+          "oaiusercontent.com",
+          "ollama.com",
+          "opal.google",
+          "opal.google.com",
+          "openai.com",
+          "openai.com.cdn.cloudflare.net",
+          "openart.ai",
+          "openclaw.ai",
+          "openrouter.ai",
+          "openspec.dev",
+          "oystermercury.top",
+          "perplexity.ai",
+          "perplexity.com",
+          "plannotator.ai",
+          "poe.com",
+          "poecdn.net",
+          "pplx.ai",
+          "proactivebackend-pa.googleapis.com",
+          "robinfrontend-pa.googleapis.com",
+          "sora.com",
+          "spicywriter.com",
+          "stitch.withgoogle.com",
+          "tapnow.ai",
+          "themeforest.net",
+          "trae.ai",
+          "turn.livekit.cloud",
+          "windsurf.build",
+          "windsurf.com",
+          "x.ai",
+          "youmind.ai",
+          "youmind.com",
+          "youmind.site"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-category-ai-!cn",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ai-!cn.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "copilot",
+    "name": "GitHub Copilot",
+    "iconSlug": "githubcopilot",
+    "category": "ai",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "api.github.com",
+          "api.individual.githubcopilot.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-copilot",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/copilot.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "gemini",
+    "name": "Gemini",
+    "iconSlug": "googlegemini",
+    "category": "ai",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "aistudio.google.com",
+          "alkalimakersuite-pa.clients6.google.com",
+          "gemini.google.com",
+          "generativelanguage.googleapis.com",
+          "proactivebackend-pa.googleapis.com",
+          "robinfrontend-pa.googleapis.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-google-gemini",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/gemini.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "grok",
+    "name": "Grok (xAI)",
+    "iconSlug": "x",
+    "category": "ai",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "api.x.com",
+          "grok.x.com",
+          "grok.com",
+          "x.ai"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-grok",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/grok.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "openai",
+    "name": "OpenAI",
+    "iconSlug": "openai",
+    "category": "ai",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "chatgpt.com",
+          "oaistatic.com",
+          "oaiusercontent.com",
+          "openai.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-openai",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/openai.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "perplexity",
+    "name": "Perplexity",
+    "iconSlug": "perplexity",
+    "category": "ai",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "ppl-ai-file-upload.s3.amazonaws.com",
+          "pplx-res.cloudinary.com",
+          "perplexity.ai",
+          "perplexity.com",
+          "pplx.ai"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-perplexity",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-perplexity.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "ads",
+    "name": "Реклама и трекеры",
+    "iconSlug": "lucide-circle-slash",
+    "category": "block",
+    "notice": "Блокирует рекламу и трекеры через action:reject — выбор outbound не требуется",
+    "origin": "",
+    "engines": {
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-category-ads-all",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs"
+          }
+        ],
+        "action": "reject"
+      }
+    }
+  },
+  {
+    "id": "all-blocked",
+    "name": "Всё заблокированное",
+    "iconSlug": "lucide-globe-lock",
+    "category": "block",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "subscriptionUrl": "https://raw.githubusercontent.com/itdoginfo/allow-domains/master/Russia/inside-raw.lst"
+      }
+    }
+  },
+  {
+    "id": "porn",
+    "name": "Adult content (18+)",
+    "iconSlug": "lucide-lock",
+    "category": "block",
+    "notice": "Контент 18+ через VPN",
+    "sensitive": true,
+    "origin": "",
+    "engines": {
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-category-porn",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-porn.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "rkn",
+    "name": "Заблокировано в РФ",
+    "iconSlug": "rkn",
+    "category": "block",
+    "origin": "",
+    "engines": {
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-rkn",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/rkn.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "russian-services",
+    "name": "Российские сервисы",
+    "iconSlug": "rkn",
+    "category": "block",
+    "notice": "Основной источник — itdoginfo/allow-domains (Russia outside-raw). Дополнительно включены домены банков, госуслуг, Yandex/VK, WB/Ozon другие",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "gosuslugi.ru",
+          "esia.gosuslugi.ru",
+          "nalog.ru",
+          "nalog.gov.ru",
+          "cbr.ru",
+          "pfr.gov.ru",
+          "sfr.gov.ru",
+          "mos.ru",
+          "data.gov.ru",
+          "pravo.gov.ru",
+          "sberbank.ru",
+          "sber.ru",
+          "sberbank.com",
+          "sbrf.ru",
+          "online.sberbank.ru",
+          "sberprime.ru",
+          "sberbankinsurance.ru",
+          "sberdevices.ru",
+          "sbermegamarket.ru",
+          "vtb.ru",
+          "vtbbank.com",
+          "vtbbroker.ru",
+          "tinkoff.ru",
+          "tcsbank.ru",
+          "tinkoffacademy.ru",
+          "alfabank.ru",
+          "alfa-bank.ru",
+          "alfaforex.ru",
+          "raiffeisen.ru",
+          "raiffeisenbank.ru",
+          "psbank.ru",
+          "rshb.ru",
+          "rosbank.ru",
+          "otpbank.ru",
+          "gazprombank.ru",
+          "gpb.ru",
+          "mtsbank.ru",
+          "mts-bank.ru",
+          "sovcombank.ru",
+          "otkritie.ru",
+          "open.ru",
+          "mts.ru",
+          "beeline.ru",
+          "megafon.ru",
+          "tele2.ru",
+          "rt.ru",
+          "rostelecom.ru",
+          "yota.ru",
+          "ozon.ru",
+          "ozby.com",
+          "wildberries.ru",
+          "wbstatic.net",
+          "wb.ru",
+          "aliexpress.ru",
+          "market.yandex.ru",
+          "megamarket.ru",
+          "yandex.ru",
+          "yandex.net",
+          "yandex.com",
+          "ya.ru",
+          "yastatic.net",
+          "yandex-team.ru",
+          "kinopoisk.ru",
+          "kinopoisk.tv",
+          "plus.yandex.ru",
+          "music.yandex.ru",
+          "disk.yandex.ru",
+          "mail.yandex.ru",
+          "cloud.yandex.ru",
+          "taxi.yandex.ru",
+          "go.yandex",
+          "eda.yandex",
+          "delivery.yandex.ru",
+          "travel.yandex.ru",
+          "realty.yandex.ru",
+          "services.yandex.ru",
+          "dzen.ru",
+          "zen.yandex.ru",
+          "vk.com",
+          "vk.ru",
+          "vk.me",
+          "vkontakte.ru",
+          "vkontakte.com",
+          "userapi.com",
+          "vkuseraudio.net",
+          "vkuservideo.net",
+          "vkplay.ru",
+          "mail.ru",
+          "my.mail.ru",
+          "ok.ru",
+          "odnoklassniki.ru",
+          "my.games",
+          "avito.ru",
+          "cian.ru",
+          "hh.ru",
+          "drom.ru",
+          "auto.ru",
+          "dostavista.ru",
+          "delivery-club.ru",
+          "rutube.ru",
+          "ivi.ru",
+          "okko.tv",
+          "premier.one",
+          "start.ru",
+          "kion.ru",
+          "wink.ru",
+          "more.tv",
+          "gismeteo.ru",
+          "2gis.ru",
+          "2gis.com",
+          "ru",
+          "su",
+          "ru.com",
+          "xn--p1ai",
+          "xn--p1acf",
+          "xn--80adxhks",
+          "tatar",
+          "xn--d1acj3b",
+          "xn--80asehdb",
+          "xn--80aswg",
+          "xn--c1avg"
+        ],
+        "subscriptionUrl": "https://raw.githubusercontent.com/itdoginfo/allow-domains/master/Russia/outside-raw.lst"
+      }
+    }
+  },
+  {
+    "id": "unavailable-in-russia",
+    "name": "Недоступно из РФ",
+    "iconSlug": "lucide-globe-lock",
+    "category": "block",
+    "origin": "",
+    "engines": {
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-unavailable-in-russia",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/unavailable-in-russia.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "akamai",
+    "name": "Akamai",
+    "iconSlug": "akamai",
+    "category": "cloud",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "accdn.com.cn",
+          "ak1.net",
+          "aka-ai.com",
+          "aka-ai.net",
+          "akacrypto.net",
+          "akadeem.net",
+          "akadns.com",
+          "akadns.net",
+          "akadns6.net",
+          "akadns88.net",
+          "akadns99.net",
+          "akaeai.com",
+          "akafms.net",
+          "akagtm.org",
+          "akahost.net",
+          "akaint.net",
+          "akam.net",
+          "akamaa.com",
+          "akamah.com",
+          "akamai-access.com",
+          "akamai-access.net",
+          "akamai-cdn.com",
+          "akamai-platform-internal.net",
+          "akamai-platform-staging.com",
+          "akamai-platform.net",
+          "akamai-regression.net",
+          "akamai-staging.net",
+          "akamai-sucks.net",
+          "akamai-thailand.com",
+          "akamai-thailand.net",
+          "akamai-trials.com",
+          "akamai.co.kr",
+          "akamai.com",
+          "akamai.net",
+          "akamaiedge.net",
+          "akamaientrypoint.net",
+          "akamaietpcnctest.com",
+          "akamaietpcompromisedcnctest.com",
+          "akamaietpcompromisedmalwaretest.com",
+          "akamaietpmalwaretest.com",
+          "akamaietpphishingtest.com",
+          "akamaihd-staging.net",
+          "akamaihd.com",
+          "akamaihd.net",
+          "akamaimagicmath.net",
+          "akamainewzealand.com",
+          "akamaiphillipines.com",
+          "akamaiphillipines.net",
+          "akamaisingapore.net",
+          "akamaistream.net",
+          "akamaitech.com",
+          "akamaitech.net",
+          "akamaitechnologies.com",
+          "akamaitechnologies.net",
+          "akamaized-staging.net",
+          "akamaized.net",
+          "akamaizercentral.com",
+          "akamak.com",
+          "akamam.com",
+          "akamci.com",
+          "akami.com",
+          "akami.net",
+          "akamii.com",
+          "akamqi.com",
+          "akastream.com",
+          "akastream.net",
+          "akatns.net",
+          "akcdn.com.cn",
+          "akstat.io",
+          "aptdn.net",
+          "edgekey.net",
+          "edgekey88.net",
+          "edgesuite.net",
+          "iamakamai.com",
+          "iamakamai.net",
+          "janrain.biz",
+          "janrainservices.com",
+          "skycdn.com.cn",
+          "soasta-dswb.com",
+          "srtcdn.net",
+          "tl88.net"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-akamai",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-akamai.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "apple",
+    "name": "Apple",
+    "iconSlug": "apple",
+    "category": "cloud",
+    "origin": "",
+    "engines": {
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-apple",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-apple.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "aws",
+    "name": "Amazon AWS",
+    "iconSlug": "amazonwebservices",
+    "category": "cloud",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "aws",
+          "a2z.org.cn",
+          "acmvalidations.com",
+          "acmvalidationsaws.com",
+          "aesworkshops.com",
+          "amazonaws-china.com",
+          "amazonaws.biz",
+          "amazonaws.cn",
+          "amazonaws.co.uk",
+          "amazonaws.com",
+          "amazonaws.com.cn",
+          "amazonaws.info",
+          "amazonaws.net",
+          "amazonaws.org",
+          "amazonaws.tv",
+          "amazoncognito.com",
+          "amazonses.com",
+          "amazonwebservices.cn",
+          "amazonwebservices.com.cn",
+          "amazonworkdocs.cn",
+          "amazonworkdocs.com",
+          "amazonworkdocs.com.cn",
+          "amplifyapp.com",
+          "amplifyframework.com",
+          "amzndns-cn.biz",
+          "amzndns-cn.cn",
+          "amzndns-cn.com",
+          "amzndns-cn.net",
+          "amzndns.co.uk",
+          "amzndns.com",
+          "amzndns.net",
+          "amzndns.org",
+          "asfiovnxocqpcry.com.cn",
+          "aws-border.cn",
+          "aws-icp-domain-manager.cn",
+          "aws-iot-hackathon.com",
+          "aws.com",
+          "aws.dev",
+          "awsapprunner.com",
+          "awsapps.cn",
+          "awsapps.com",
+          "awsapps.com.cn",
+          "awsautopilot.com",
+          "awsautoscaling.com",
+          "awsbraket.com",
+          "awscommandlineinterface.com",
+          "awsedstart.com",
+          "awseducate.com",
+          "awseducate.net",
+          "awseducate.org",
+          "awsglobalaccelerator.com",
+          "awsloft-johannesburg.com",
+          "awsloft-stockholm.com",
+          "awssecworkshops.com",
+          "awsstatic.cn",
+          "awsstatic.com",
+          "awsthinkbox.com",
+          "awstrack.me",
+          "awswaf.com",
+          "cdkworkshop.com",
+          "cloudfront-cn.net",
+          "cloudfront-test.cn",
+          "cloudfront.cn",
+          "cloudfront.com",
+          "cloudfront.net",
+          "containersonaws.com",
+          "elasticbeanstalk.com",
+          "nwcdcloud.cn",
+          "nwcdcloud.com.cn",
+          "nwcddns.cn",
+          "nwcdinfosec.cn",
+          "route53.cn",
+          "sagemaker.com.cn",
+          "thinkboxsoftware.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-aws",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-aws.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "binance",
+    "name": "Binance",
+    "iconSlug": "binance",
+    "category": "cloud",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "appsflayer.com",
+          "binance.cc",
+          "binance.charity",
+          "binance.cloud",
+          "binance.co",
+          "binance.com",
+          "binance.info",
+          "binance.me",
+          "binance.net",
+          "binance.org",
+          "binance.us",
+          "binance.vision",
+          "binanceapi.com",
+          "binancecnt.com",
+          "binanceru.net",
+          "binancezh.be",
+          "binancezh.biz",
+          "binancezh.cc",
+          "binancezh.co",
+          "binancezh.com",
+          "binancezh.info",
+          "binancezh.ink",
+          "binancezh.kim",
+          "binancezh.link",
+          "binancezh.live",
+          "binancezh.mobi",
+          "binancezh.net",
+          "binancezh.pro",
+          "binancezh.sh",
+          "binancezh.top",
+          "bnbstatic.com",
+          "bntrace.com",
+          "bsappapi.com",
+          "nftstatic.com",
+          "saasexch.cc",
+          "saasexch.co",
+          "saasexch.com",
+          "saasexch.io"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-binance",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-binance.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "cloudflare",
+    "name": "Cloudflare",
+    "iconSlug": "cloudflare",
+    "category": "cloud",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "argotunnel.com",
+          "browser.run",
+          "cf-china.info",
+          "cf-ipfs.com",
+          "cf-ns.com",
+          "cf-ns.net",
+          "cf-ns.site",
+          "cf-ns.tech",
+          "cfargotunnel.com",
+          "cfdata.org",
+          "cfl.re",
+          "cftest5.cn",
+          "cftest6.cn",
+          "cftest7.com",
+          "cftest8.com",
+          "cloudflare-cn.com",
+          "cloudflare-dns.com",
+          "cloudflare-ech.com",
+          "cloudflare-esni.com",
+          "cloudflare-gateway.com",
+          "cloudflare-ipfs.com",
+          "cloudflare-quic.com",
+          "cloudflare-terms-of-service-abuse.com",
+          "cloudflare.com",
+          "cloudflare.dev",
+          "cloudflare.net",
+          "cloudflare.tv",
+          "cloudflareaccess.com",
+          "cloudflareanycast.net",
+          "cloudflareapps.com",
+          "cloudflarebolt.com",
+          "cloudflarebrowser.com",
+          "cloudflarechallenge.com",
+          "cloudflarechina.cn",
+          "cloudflareclient.com",
+          "cloudflarecn.net",
+          "cloudflarecp.com",
+          "cloudflareglobal.net",
+          "cloudflareinsights-cn.com",
+          "cloudflareinsights.com",
+          "cloudflareok.com",
+          "cloudflarepartners.com",
+          "cloudflareperf.com",
+          "cloudflareportal.com",
+          "cloudflarepreview.com",
+          "cloudflareprod.com",
+          "cloudflareregistrar.com",
+          "cloudflareresearch.com",
+          "cloudflareresolve.com",
+          "cloudflaressl.com",
+          "cloudflarestaging.com",
+          "cloudflarestatus.com",
+          "cloudflarestorage.com",
+          "cloudflarestoragegw.com",
+          "cloudflarestream.com",
+          "cloudflaresupport.com",
+          "cloudflaretest.com",
+          "cloudflarewarp.com",
+          "cloudflareworkers.com",
+          "encryptedsni.com",
+          "every1dns.net",
+          "foundationdns.com",
+          "foundationdns.net",
+          "foundationdns.org",
+          "imagedelivery.net",
+          "isbgpsafeyet.com",
+          "one.one.one",
+          "pacloudflare.com",
+          "pages.dev",
+          "r2.dev",
+          "trycloudflare.com",
+          "videodelivery.net",
+          "warp.plus",
+          "workers.dev"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-cloudflare",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cloudflare.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "cloudflare-ips",
+    "name": "Cloudflare IPs",
+    "iconSlug": "cloudflare",
+    "category": "cloud",
+    "origin": "builtin",
+    "engines": {
+      "dns": {
+        "subnets": [
+          "173.245.48.0/20",
+          "103.21.244.0/22",
+          "103.22.200.0/22",
+          "103.31.4.0/22",
+          "141.101.64.0/18",
+          "108.162.192.0/18",
+          "190.93.240.0/20",
+          "188.114.96.0/20",
+          "197.234.240.0/22",
+          "198.41.128.0/17",
+          "162.158.0.0/15",
+          "104.16.0.0/13",
+          "104.24.0.0/14",
+          "172.64.0.0/13",
+          "131.0.72.0/22",
+          "2400:cb00::/32",
+          "2606:4700::/32",
+          "2803:f800::/32",
+          "2405:b500::/32",
+          "2405:8100::/32",
+          "2a06:98c0::/29",
+          "2c0f:f248::/32"
+        ]
+      }
+    }
+  },
+  {
+    "id": "microsoft",
+    "name": "Microsoft",
+    "iconSlug": "microsoft",
+    "category": "cloud",
+    "origin": "",
+    "engines": {
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-microsoft",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-microsoft.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "nvidia",
+    "name": "NVIDIA",
+    "iconSlug": "nvidia",
+    "category": "cloud",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "cn.download.nvidia.com",
+          "nvidia.custhelp.com",
+          "nvidia.tt.omtrdc.net",
+          "geforce.cn",
+          "geforce.co.kr",
+          "geforce.co.uk",
+          "geforce.com",
+          "geforce.com.tw",
+          "gputechconf.cn",
+          "gputechconf.co.kr",
+          "gputechconf.com",
+          "gputechconf.com.au",
+          "gputechconf.com.tw",
+          "gputechconf.eu",
+          "gputechconf.in",
+          "gputechconf.jp",
+          "nvidia.asia",
+          "nvidia.at",
+          "nvidia.be",
+          "nvidia.ch",
+          "nvidia.cn",
+          "nvidia.co.at",
+          "nvidia.co.in",
+          "nvidia.co.jp",
+          "nvidia.co.kr",
+          "nvidia.co.uk",
+          "nvidia.com",
+          "nvidia.com.au",
+          "nvidia.com.br",
+          "nvidia.com.mx",
+          "nvidia.com.pe",
+          "nvidia.com.pl",
+          "nvidia.com.tr",
+          "nvidia.com.tw",
+          "nvidia.com.ua",
+          "nvidia.com.ve",
+          "nvidia.cz",
+          "nvidia.de",
+          "nvidia.dk",
+          "nvidia.es",
+          "nvidia.eu",
+          "nvidia.fi",
+          "nvidia.fr",
+          "nvidia.in",
+          "nvidia.it",
+          "nvidia.jp",
+          "nvidia.lu",
+          "nvidia.mx",
+          "nvidia.nl",
+          "nvidia.no",
+          "nvidia.pl",
+          "nvidia.ro",
+          "nvidia.ru",
+          "nvidia.se",
+          "nvidia.tw",
+          "nvidiaforhp.com",
+          "nvidiagrid.net",
+          "shotwithgeforce.com",
+          "tegrazone.co",
+          "tegrazone.co.kr",
+          "tegrazone.com",
+          "tegrazone.jp",
+          "tegrazone.kr"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-nvidia",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-nvidia.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "paypal",
+    "name": "PayPal",
+    "iconSlug": "paypal",
+    "category": "cloud",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "venmo.s3.amazonaws.com",
+          "account-paypal.info",
+          "account-paypal.net",
+          "account-paypal.org",
+          "accountpaypal.com",
+          "accountpaypal.net",
+          "accountpaypal.org",
+          "anfutong.cn",
+          "anfutong.com",
+          "anfutong.com.cn",
+          "beibao.cn",
+          "beibao.com",
+          "beibao.com.cn",
+          "bill-safe.com",
+          "billmelater.com",
+          "billmelater.info",
+          "billmelater.net",
+          "bml.info",
+          "braintreegateway.com",
+          "braintreegateway.tv",
+          "braintreepayments.com",
+          "braintreepayments.info",
+          "braintreepayments.org",
+          "braintreepayments.tv",
+          "braintreepaymentsolutions.com",
+          "braintreeps.com",
+          "briantreepayments.net",
+          "briantreepayments.tv",
+          "buyfast-paysmart.net",
+          "card.io",
+          "cash2.com",
+          "cashify.com",
+          "cashify.net",
+          "devtools-paypal.com",
+          "experiencebillmelater.com",
+          "filipino-music.net",
+          "fundpaypal.com",
+          "getbraintree.com",
+          "gmoney.org",
+          "i-o-u.info",
+          "krakenjs.com",
+          "loanbuilder.com",
+          "login-paypal.com",
+          "login-paypal.info",
+          "mywaytopay.info",
+          "mywaytopay.net",
+          "pa9pal.com",
+          "paaypal.com",
+          "paily.net",
+          "paily.org",
+          "paipal.com",
+          "pavpal.com",
+          "paydiant.com",
+          "paylike.com",
+          "paypa1.com",
+          "paypa1.org",
+          "paypaal.com",
+          "paypal-activate.com",
+          "paypal-activate.info",
+          "paypal-activate.org",
+          "paypal-apac.com",
+          "paypal-apps.com",
+          "paypal-biz.com",
+          "paypal-brandcentral.com",
+          "paypal-business.com",
+          "paypal-business.net",
+          "paypal-business.org",
+          "paypal-cardcash.com",
+          "paypal-cash.com",
+          "paypal-center.com",
+          "paypal-center.info",
+          "paypal-center.net",
+          "paypal-center.org",
+          "paypal-communication.com",
+          "paypal-communications.com",
+          "paypal-communications.net",
+          "paypal-community.com",
+          "paypal-community.net",
+          "paypal-comunidad.com",
+          "paypal-corp.com",
+          "paypal-database.com",
+          "paypal-database.us",
+          "paypal-donations.com",
+          "paypal-dynamic.com",
+          "paypal-engineering.com",
+          "paypal-europe.com",
+          "paypal-excelinvoicing.com",
+          "paypal-exchanges.com",
+          "paypal-forward.com",
+          "paypal-galactic.com",
+          "paypal-gift.com",
+          "paypal-gifts.com",
+          "paypal-gpplus.com",
+          "paypal-here.com",
+          "paypal-hrsystem.com",
+          "paypal-innovationlab.com",
+          "paypal-integration.com",
+          "paypal-japan.com",
+          "paypal-knowledge.com",
+          "paypal-labs.com",
+          "paypal-latam.com",
+          "paypal-learning.com",
+          "paypal-login.com",
+          "paypal-login.info",
+          "paypal-login.org",
+          "paypal-login.us",
+          "paypal-luxury.com",
+          "paypal-mainstreet.net",
+          "paypal-marketing.com",
+          "paypal-media.com",
+          "paypal-merchantloyalty.com",
+          "paypal-mobilemoney.com",
+          "paypal-network.org",
+          "paypal-notice.com",
+          "paypal-notify.com",
+          "paypal-online.info",
+          "paypal-online.net",
+          "paypal-online.org",
+          "paypal-optimizer.com",
+          "paypal-pages.com",
+          "paypal-photocard.com",
+          "paypal-plaza.com",
+          "paypal-portal.com",
+          "paypal-prepagata.com",
+          "paypal-prepagata.net",
+          "paypal-prepaid.com",
+          "paypal-profile.com",
+          "paypal-proserv.com",
+          "paypal-qrshopping.org",
+          "paypal-recargacelular.com",
+          "paypal-redeem.com",
+          "paypal-referral.com",
+          "paypal-retail.com",
+          "paypal-scoop.com",
+          "paypal-search.com",
+          "paypal-secure.net",
+          "paypal-secure.org",
+          "paypal-security.net",
+          "paypal-security.org",
+          "paypal-service.org",
+          "paypal-signin.com",
+          "paypal-signin.us",
+          "paypal-special.com",
+          "paypal-specialoffers.com",
+          "paypal-sptam.com",
+          "paypal-status.com",
+          "paypal-support.com",
+          "paypal-survey.com",
+          "paypal-survey.org",
+          "paypal-team.com",
+          "paypal-viewpoints.net",
+          "paypal.ca",
+          "paypal.com",
+          "paypal.com.cn",
+          "paypal.com.hk",
+          "paypal.com.sg",
+          "paypal.hk",
+          "paypal.info",
+          "paypal.jp",
+          "paypal.me",
+          "paypal.net.cn",
+          "paypal.org.cn",
+          "paypal.so",
+          "paypal.us",
+          "paypalbeacon.com",
+          "paypalbenefits.com",
+          "paypalbrasil.com",
+          "paypalcommunity.cn",
+          "paypalcommunity.com",
+          "paypalcommunity.net",
+          "paypalcommunity.org",
+          "paypalcorp.com",
+          "paypalcredit.com",
+          "paypalcreditcard.com",
+          "paypalgivingfund.org",
+          "paypalhere.cn",
+          "paypalhere.com",
+          "paypalhere.com.cn",
+          "paypalhere.info",
+          "paypalhere.net",
+          "paypalhere.org",
+          "paypalhere.tv",
+          "paypali.net",
+          "paypalinc.com",
+          "paypalindia.com",
+          "paypalinsuranceservices.org",
+          "paypall.com",
+          "paypallabs.com",
+          "paypalme.com",
+          "paypalnet.net",
+          "paypalnet.org",
+          "paypalnetwork.info",
+          "paypalnetwork.net",
+          "paypalnetwork.org",
+          "paypalobjects.com",
+          "paypalonline.net",
+          "paypalonline.org",
+          "paypalprepagata.com",
+          "paypalprepagata.net",
+          "paypalservice.com",
+          "paypalshopping.com",
+          "paypalshopping.net",
+          "paypalsurvey.com",
+          "paypalx.com",
+          "paypaly.com",
+          "payppal.com",
+          "payypal.com",
+          "pdncommunity.com",
+          "pp-soc.com",
+          "ppaypal.com",
+          "pppds.com",
+          "pypl.com",
+          "pypl.info",
+          "pypl.net",
+          "pypl.tv",
+          "s-xoom.com",
+          "secure-paypal.info",
+          "securepaypal.info",
+          "simility.com",
+          "sslpaypal.org",
+          "swiftbank.info",
+          "swiftbank.us",
+          "swiftcapital.com",
+          "swiftfinancial.com",
+          "swiftfinancial.info",
+          "swiftfinancial.net",
+          "thepaypalshop.com",
+          "theshoppingexpresslane.net",
+          "venmo-touch.com",
+          "venmo.com",
+          "venmo.info",
+          "venmo.net",
+          "venmo.org",
+          "webmoneyinfo.com",
+          "wiremoneytoirelandwithxoomeasierandcheaper.com",
+          "www-paypal.info",
+          "www-paypal.us",
+          "wwwxoom.com",
+          "xn--bnq297cix3a.cn",
+          "xoom-experience.com",
+          "xoom.com",
+          "xoom.io",
+          "xoom.net.cn",
+          "xoom.us",
+          "xoomcom.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-paypal",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-paypal.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "samsung",
+    "name": "Samsung",
+    "iconSlug": "samsung",
+    "category": "cloud",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "samsung",
+          "samsung.com",
+          "galaxyappstore.com",
+          "galaxymobile.jp",
+          "game-platform.net",
+          "knoxemm.com",
+          "ospserver.net",
+          "samsungads.com",
+          "samsungapps.com",
+          "samsungcloud.com",
+          "samsungconsent.com",
+          "samsungdm.com",
+          "samsungeshop.com.cn",
+          "samsunggalaxyfriends.com",
+          "samsunghealth.com",
+          "samsungiotcloud.com",
+          "samsungiots.com",
+          "samsungknox.com",
+          "samsungosp.com",
+          "samsungqbe.com",
+          "samsungrs.com",
+          "smartthings.com"
+        ]
+      }
+    }
+  },
+  {
+    "id": "adobe",
+    "name": "Adobe",
+    "iconSlug": "adobe",
+    "category": "developer",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "adobeereg.com",
+          "crl.versign.net",
+          "ood.opsource.net",
+          "practivate.adobe",
+          "practivate.adobe.ipp",
+          "practivate.adobe.newoa",
+          "practivate.adobe.ntp",
+          "10xfotolia.com",
+          "2o7.net",
+          "acrobat.com",
+          "adbecrsl.com",
+          "adobe-aemassets-value.com",
+          "adobe-audience-finder.com",
+          "adobe-video-partner-finder.com",
+          "adobe.com",
+          "adobe.io",
+          "adobe.ly",
+          "adobeaemcloud.com",
+          "adobeaemcloud.net",
+          "adobeawards.com",
+          "adobecc.com",
+          "adobecce.com",
+          "adobeccstatic.com",
+          "adobecontent.io",
+          "adobecreativityawards.com",
+          "adobedc.cn",
+          "adobedc.net",
+          "adobedemo.com",
+          "adobedtm.com",
+          "adobeexchange.com",
+          "adobeexperienceawards.com",
+          "adobegov.com",
+          "adobehiddentreasures.com",
+          "adobejanus.com",
+          "adobeku.com",
+          "adobelanding.com",
+          "adobelogin.com",
+          "adobeoobe.com",
+          "adobeplatinumclub.com",
+          "adobeprojectm.com",
+          "adobesc.com",
+          "adobesign.com",
+          "adobesigncdn.com",
+          "adobespark.com",
+          "adobess.com",
+          "adobestats.io",
+          "adobestock.com",
+          "adobetag.com",
+          "adobetarget.com",
+          "adobetcstrialdvd.com",
+          "adobetechcomm.com",
+          "adobetechcommcallback.com",
+          "adobetechcommdemo.com",
+          "adobexdplatform.com",
+          "advertising.adobe.com",
+          "assetsadobe.com",
+          "authorxml.com",
+          "behance.net",
+          "bluefootcms.com",
+          "businesscatalyst.com",
+          "ccnsite.com",
+          "ccpsx.com",
+          "compresspdf.new",
+          "cotolia.com",
+          "creativecloud.com",
+          "creativesdk.com",
+          "demdex.net",
+          "developria.com",
+          "dollarfotoclub.com",
+          "dollarphotoclub.com",
+          "dollarphotosclub.com",
+          "douwriteright.com",
+          "echocdn.com",
+          "echosign.com",
+          "edgefonts.net",
+          "enablementadobe.com",
+          "ffotolia.com",
+          "fiotolia.com",
+          "foftolia.com",
+          "fonolia.com",
+          "fotiolia.com",
+          "fotoiia.com",
+          "fotolia-noticias.com",
+          "fotolia.cc",
+          "fotolia.com",
+          "fotolia.tv",
+          "fotolja.com",
+          "fptolia.com",
+          "ftcdn.net",
+          "gfotolia.com",
+          "gostorego.com",
+          "imagineecommerce.com",
+          "macromedia.com",
+          "mageconf.com",
+          "mageconf.com.ua",
+          "magento.com",
+          "magento.net",
+          "magentocommerce.com",
+          "magentoliveconference.com",
+          "magentomobile.com",
+          "marketing-cloud.com",
+          "marketing-nirvana.com",
+          "marketo.co.uk",
+          "marketo.com",
+          "marketo.net",
+          "marketo.tv",
+          "marketodesigner.com",
+          "marketolive.com",
+          "mktdns.com",
+          "mkto-c0100.com",
+          "mktorest.com",
+          "mktroute.com",
+          "mobilemarketo.com",
+          "motolia.com",
+          "omniture.com",
+          "omtrdc.net",
+          "pdf.new",
+          "photolia.net",
+          "photoshop.com",
+          "placesdocs.com",
+          "revenue-performance-management.com",
+          "s2stagehance.com",
+          "scene7.com",
+          "sign.new",
+          "sundanceignite2016.com",
+          "tenbyfotolia.com",
+          "toutapp.com",
+          "tubemogul.com",
+          "typekit.com",
+          "typekit.net",
+          "votolia.com",
+          "worldsecureemail.com",
+          "worldsecuresystems.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-adobe",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-adobe.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "atlassian",
+    "name": "Atlassian",
+    "iconSlug": "atlassian",
+    "category": "developer",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "atl-paas.net",
+          "atlassian.com",
+          "ss-inf.net",
+          "atlassian.net",
+          "jira.com",
+          "bitbucket.org",
+          "atlassian-dev.net",
+          "confluence.com"
+        ]
+      }
+    }
+  },
+  {
+    "id": "canva",
+    "name": "Canva",
+    "iconSlug": "canva",
+    "category": "developer",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "affinity-beta.s3.amazonaws.com",
+          "affinity-lessons.s3.amazonaws.com",
+          "affinity.api.serifservices.com",
+          "affinity.studio",
+          "canva.com",
+          "canvastatus.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-canva",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-canva.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "dev-tools",
+    "name": "Dev tools",
+    "iconSlug": "lucide-cpu",
+    "category": "developer",
+    "notice": "Включает dev-сервисы, package registries и служебные хосты. Здесь есть shared-платформы вроде jsDelivr и Statuspage",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "applicationinsights.io",
+          "context7.com",
+          "cursor-cdn.com",
+          "cursor.com",
+          "cursor.sh",
+          "cursorapi.com",
+          "exp-tas.com",
+          "github.com",
+          "githubcopilot.com",
+          "githubusercontent.com",
+          "wakatime.com",
+          "awg.go",
+          "bootstrap.pypa.io",
+          "bun.sh",
+          "crates.io",
+          "deno.land",
+          "golang.org",
+          "gradle.org",
+          "maven.org",
+          "npm.community",
+          "npmjs.com",
+          "npmjs.org",
+          "nuget.org",
+          "packagist.org",
+          "pkg.go.dev",
+          "pypi.org",
+          "pythonhosted.org",
+          "react.com",
+          "rubygems.global.ssl.fastly.net",
+          "rubygems.org",
+          "yarnpkg.com",
+          "compose-spec.io",
+          "docker.com",
+          "docker.io",
+          "dockerstatic.com",
+          "gcr.io",
+          "ghcr.io",
+          "hashicorp.com",
+          "helm.sh",
+          "k8s.io",
+          "kubernetes.io",
+          "mcr.microsoft.com",
+          "quay.io",
+          "registry.terraform.io",
+          "storage.googleapis.com",
+          "cdn.jsdelivr.net",
+          "coolors.co",
+          "mui.com",
+          "suno.com"
+        ]
+      }
+    }
+  },
+  {
+    "id": "docker",
+    "name": "Docker",
+    "iconSlug": "docker",
+    "category": "developer",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com",
+          "docker-pinata-support.s3.amazonaws.com",
+          "compose-spec.io",
+          "docker.com",
+          "docker.io",
+          "dockerstatic.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-docker",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-docker.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "figma",
+    "name": "Figma",
+    "iconSlug": "figma",
+    "category": "developer",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "figma.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-figma",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-figma.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "github",
+    "name": "GitHub",
+    "iconSlug": "github",
+    "category": "developer",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "copilot-telemetry-service.githubusercontent.com",
+          "copilot-telemetry.githubusercontent.com",
+          "copilotprodattachments.blob.core.windows.net",
+          "github-api.arkoselabs.com",
+          "github-cloud.s3.amazonaws.com",
+          "github-production-release-asset-2e65be.s3.amazonaws.com",
+          "github-production-repository-file-5c1aeb.s3.amazonaws.com",
+          "github-production-repository-image-32fea6.s3.amazonaws.com",
+          "github-production-upload-manifest-file-7fdce7.s3.amazonaws.com",
+          "github-production-user-asset-6210df.s3.amazonaws.com",
+          "productionresultssa0.blob.core.windows.net",
+          "productionresultssa1.blob.core.windows.net",
+          "productionresultssa10.blob.core.windows.net",
+          "productionresultssa11.blob.core.windows.net",
+          "productionresultssa12.blob.core.windows.net",
+          "productionresultssa13.blob.core.windows.net",
+          "productionresultssa14.blob.core.windows.net",
+          "productionresultssa15.blob.core.windows.net",
+          "productionresultssa16.blob.core.windows.net",
+          "productionresultssa17.blob.core.windows.net",
+          "productionresultssa18.blob.core.windows.net",
+          "productionresultssa19.blob.core.windows.net",
+          "productionresultssa2.blob.core.windows.net",
+          "productionresultssa3.blob.core.windows.net",
+          "productionresultssa4.blob.core.windows.net",
+          "productionresultssa5.blob.core.windows.net",
+          "productionresultssa6.blob.core.windows.net",
+          "productionresultssa7.blob.core.windows.net",
+          "productionresultssa8.blob.core.windows.net",
+          "productionresultssa9.blob.core.windows.net",
+          "atom.io",
+          "collector.github.com",
+          "dependabot.com",
+          "gh.io",
+          "ghcr.io",
+          "git.io",
+          "github.ai",
+          "github.blog",
+          "github.com",
+          "github.community",
+          "github.dev",
+          "github.io",
+          "githubapp.com",
+          "githubassets.com",
+          "githubcopilot.com",
+          "githubhackathon.com",
+          "githubnext.com",
+          "githubpreview.dev",
+          "githubstatus.com",
+          "githubuniverse.com",
+          "githubusercontent.com",
+          "myoctocat.com",
+          "npm.community",
+          "npmjs.com",
+          "npmjs.org",
+          "octocaptcha.com",
+          "opensource.guide",
+          "repo.new",
+          "thegithubshop.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-github",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-github.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "gitlab",
+    "name": "GitLab",
+    "iconSlug": "gitlab",
+    "category": "developer",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "gitlab-assets.oss-cn-hongkong.aliyuncs.com",
+          "gitlab-static.net",
+          "gitlab.com",
+          "gitlab.io",
+          "gitlab.net"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-gitlab",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-gitlab.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "ip-checkers",
+    "name": "IP checkers",
+    "iconSlug": "lucide-globe",
+    "category": "developer",
+    "notice": "Каталог сервисов определения IP/DNS/WebRTC утечек — удобно направить одним правилом, чтобы выборочно маршрутизировать некоторые сайти проверок IP в прокси",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "ipleak.net",
+          "dnsleaktest.com",
+          "dnsleak.com",
+          "browserleaks.com",
+          "whoer.net",
+          "whoerip.com",
+          "2ip.ru",
+          "2ip.io",
+          "ipinfo.io",
+          "ipapi.is",
+          "ipapi.co",
+          "ipapi.com",
+          "whatismyipaddress.com",
+          "whatismyip.com",
+          "whatismyip.net",
+          "whatismyip.org",
+          "myip.com",
+          "myip.ms",
+          "showmyip.com",
+          "myexternalip.com",
+          "ip.me",
+          "ipcheck.ing",
+          "ip-api.com",
+          "ipify.org",
+          "api.ipify.org",
+          "ident.me",
+          "v4.ident.me",
+          "v6.ident.me",
+          "ifconfig.me",
+          "ifconfig.co",
+          "icanhazip.com",
+          "ipv4.icanhazip.com",
+          "ipv6.icanhazip.com",
+          "ipecho.net",
+          "wtfismyip.com",
+          "iplocation.net",
+          "iplocation.io",
+          "geojs.io",
+          "ipwhois.io",
+          "ipgeolocation.io",
+          "ipstack.com",
+          "ipdata.co",
+          "abstractapi.com",
+          "ipregistry.co",
+          "ipinfoip.com",
+          "ipinfoip.net",
+          "ipinfoip.org",
+          "ip-tracker.org",
+          "ip-tracing.com",
+          "ip-tracer.org",
+          "ip-checker.info",
+          "ipcheck.org",
+          "ipfingerprints.com",
+          "ip-adress.com",
+          "ip-adress.eu",
+          "ip-adress.my",
+          "ipaddress.com",
+          "ipaddress.my",
+          "check-host.net",
+          "examineip.com",
+          "bot.whatismyipaddress.com",
+          "mullvad.net",
+          "surfshark.com",
+          "nordvpn.com",
+          "expressvpn.com",
+          "vpnmentor.com",
+          "torguard.net",
+          "vpntester.org",
+          "secureblitz.com",
+          "todetect.net",
+          "pixelscan.net",
+          "ipx.ac",
+          "webbrowsertools.com",
+          "xvpn.io",
+          "scrapfly.io",
+          "iproyal.com",
+          "enable-security.com",
+          "iplocator.net",
+          "iptrackeronline.com",
+          "ip2location.com",
+          "ip2location.io",
+          "ip2whois.com",
+          "ipqualityscore.com",
+          "ip-lookup.net",
+          "ip-lookup.io",
+          "ip-lookup.org",
+          "ip-whois.org",
+          "ip-whois.net",
+          "ip-whois.io",
+          "ip-geolocation.org",
+          "ip-geolocation.io",
+          "ip-geolocation-api.com",
+          "ip-geolocation-api.io",
+          "ip-geolocation-api.org",
+          "stun.l.google.com",
+          "stun1.l.google.com",
+          "stun2.l.google.com",
+          "stun3.l.google.com",
+          "stun4.l.google.com",
+          "stun.ekiga.net",
+          "stun.ideasip.com",
+          "stun.stunprotocol.org",
+          "stun.voiparound.com",
+          "stun.voipbuster.com",
+          "stun.voipstunt.com",
+          "stun.voxgratia.org",
+          "stun.schlund.de",
+          "stun.rixtelecom.se",
+          "stun.services.mozilla.com",
+          "stun.qq.com",
+          "stun.miwifi.com",
+          "turn.anyfirewall.com",
+          "turn.bistri.com",
+          "turn.num.viagenie.ca",
+          "freeturn.net",
+          "openrelayproject.org",
+          "turnix.io",
+          "fastturn.net"
+        ]
+      }
+    }
+  },
+  {
+    "id": "jetbrains",
+    "name": "JetBrains",
+    "iconSlug": "jetbrains",
+    "category": "developer",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "cdn.jetbrains.com",
+          "datalore.io",
+          "download-cdn.jetbrains.com.cn",
+          "intellij.com",
+          "intellij.net",
+          "intellij.org",
+          "jb.gg",
+          "jetbrains.cloud",
+          "jetbrains.com",
+          "jetbrains.net",
+          "jetbrains.space",
+          "jetbrains.team",
+          "kotlinlang.org",
+          "youtrack.cloud"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-jetbrains",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-jetbrains.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "linkedin",
+    "name": "LinkedIn",
+    "iconSlug": "lucide-briefcase-business",
+    "category": "developer",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "licdn.com",
+          "linkedin.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-linkedin",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/linkedin.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "notion",
+    "name": "Notion",
+    "iconSlug": "notion",
+    "category": "developer",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "notion-static.com",
+          "notion.com",
+          "notion.new",
+          "notion.site",
+          "notion.so",
+          "notionusercontent.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-notion",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-notion.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "npm",
+    "name": "npm",
+    "iconSlug": "npm",
+    "category": "developer",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "npm.community",
+          "npmjs.com",
+          "npmjs.org"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-npm",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-npmjs.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "slack",
+    "name": "Slack",
+    "iconSlug": "slack",
+    "category": "developer",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "slack-core.com",
+          "slack-edge.com",
+          "slack-files.com",
+          "slack-imgs.com",
+          "slack-msgs.com",
+          "slack-redir.net",
+          "slack.com",
+          "slackb.com",
+          "slackcertified.com",
+          "slackdemo.com",
+          "slackhq.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-slack",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-slack.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "vercel",
+    "name": "Vercel",
+    "iconSlug": "vercel",
+    "category": "developer",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "ai-sdk.dev",
+          "err.sh",
+          "hyper.is",
+          "nextjs.org",
+          "now.sh",
+          "skills.sh",
+          "static.fun",
+          "title.sh",
+          "turborepo.org",
+          "vercel-dns.com",
+          "vercel-status.com",
+          "vercel.app",
+          "vercel.blog",
+          "vercel.com",
+          "vercel.dev",
+          "vercel.events",
+          "vercel.live",
+          "vercel.pub",
+          "vercel.sh",
+          "vercel.store",
+          "zeit-world.co.uk",
+          "zeit-world.com",
+          "zeit-world.net",
+          "zeit-world.org",
+          "zeit.co",
+          "zeit.sh",
+          "zeitworld.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-vercel",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-vercel.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "zoom",
+    "name": "Zoom",
+    "iconSlug": "zoom",
+    "category": "developer",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "zoom.com",
+          "zoom.com.cn",
+          "zoom.us"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-zoom",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-zoom.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "blizzard",
+    "name": "Blizzard",
+    "iconSlug": "lucide-gamepad-2",
+    "category": "gaming",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "blizzard.nefficient.co.kr",
+          "blizzcon-a.akamaihd.net",
+          "blzddist1-a.akamaihd.net",
+          "blzddistkr1-a.akamaihd.net",
+          "blzmedia-a.akamaihd.net",
+          "blznav.akamaized.net",
+          "bnetcmsus-a.akamaihd.net",
+          "bnetproduct-a.akamaihd.net",
+          "bnetshopus.akamaized.net",
+          "battle.net",
+          "blizzard.com",
+          "blizzardgearstore.com",
+          "blz-contentstack.com",
+          "diablo3.com",
+          "diabloimmortal.com",
+          "firesidegatherings.com",
+          "heroesofthestorm.com",
+          "playhearthstone.com",
+          "playoverwatch.com",
+          "playwarcraft3.com",
+          "starcraft.com",
+          "starcraft2.com",
+          "worldofwarcraft.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-blizzard",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-blizzard.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "category-games",
+    "name": "Все игры",
+    "iconSlug": "lucide-gamepad-2",
+    "category": "gaming",
+    "notice": "Steam, Epic, PlayStation, Xbox, Nintendo, Blizzard и другие",
+    "origin": "",
+    "engines": {
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-category-games",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-games.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "ea",
+    "name": "EA",
+    "iconSlug": "ea",
+    "category": "gaming",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "cloudsync-prod.s3.amazonaws.com",
+          "ea.tt.omtrdc.net",
+          "eaassets-a.akamaihd.net",
+          "origin-a.akamaihd.net",
+          "anthemgame.com",
+          "anthemthegame.com",
+          "apexlegends.com",
+          "awayoutgame.com",
+          "battlefield.com",
+          "battlefield1943.com",
+          "battlefield3.com",
+          "battlefield4.com",
+          "battlefield5.com",
+          "battlefieldbadcompany2.com",
+          "battlefieldheroes.com",
+          "battlefieldv.com",
+          "battlefront2.com",
+          "battlefrontii.com",
+          "battlelog.com",
+          "bejeweledstars.com",
+          "bejewled-stars.com",
+          "bioware.com",
+          "biowarestore.com",
+          "blackboxgames.com",
+          "camelot-europe.com",
+          "camelotherald.com",
+          "camelotherald.net",
+          "capitalgames.com",
+          "chillingo.com",
+          "cncrivals.com",
+          "commandandconquer.com",
+          "conquerwithcharacter.com",
+          "crysis.jp",
+          "daoc.net",
+          "darkageofcamelot.com",
+          "darkness-risen.com",
+          "dawngate.com",
+          "dawngatechronicles.com",
+          "deadspacegame.com",
+          "dice.se",
+          "dicela.com",
+          "dicela.net",
+          "dragonage.com",
+          "dragonagekeep.com",
+          "dragonagemovie.com",
+          "dungeonkeeper.cn",
+          "dungeonkeeper.com",
+          "dungeonkeeper.com.cn",
+          "ea-anz-press.com",
+          "ea.com",
+          "eaaccess.com",
+          "eablackbox.com",
+          "eacashcard.com",
+          "eacodigos.com",
+          "eafootballworld.com",
+          "eakorea.co.kr",
+          "eamirrorsedge.com",
+          "eamobile.com",
+          "eamythic.com",
+          "eamythic.net",
+          "eanordic.com",
+          "eaplay.com",
+          "easports.com",
+          "easports.jp",
+          "easportsactive.com",
+          "easportsactiveonline.com",
+          "easportsfootball.com",
+          "easportsfootballclub.com",
+          "easportsmma.com",
+          "easportsworld.com",
+          "eastore.com",
+          "electronicarts.com",
+          "electronicarts.fr",
+          "fifastreet.com",
+          "fifastreet3.com",
+          "frostbite.com",
+          "futpromos.com",
+          "futunited.com",
+          "ghostgames.com",
+          "heroesofdragonage.com",
+          "hutpromos.com",
+          "industrialtoys.com",
+          "lordofultima.com",
+          "maddenchampionship.com",
+          "maddenrewards.com",
+          "maddenseason.info",
+          "maddenseason.net",
+          "maddenseason.org",
+          "masseffect.com",
+          "masseffectarchives.com",
+          "maxis.com",
+          "mirrorsedge.com",
+          "mirrorsedge.jp",
+          "mirrorsedge.net",
+          "mirrorsedge2.com",
+          "mirrorsedge2d.com",
+          "mysims.com",
+          "mysimsracing.com",
+          "mythicentertainment.com",
+          "mythicentertainment.net",
+          "mythicgames.com",
+          "needforspeed.com",
+          "needforspeedboost.com",
+          "needforspeeddriftkings.com",
+          "needforspeedeliminator.com",
+          "needforspeedlightning.com",
+          "needforspeedoverdrive.com",
+          "needforspeedproven.com",
+          "needforspeedredline.com",
+          "needforspeedshowdown.com",
+          "needforspeedstreetkings.com",
+          "needforspeedtakedown.com",
+          "needforspeedtherun.com",
+          "needforspeedtimeattack.com",
+          "needforspeedundergroundeast.com",
+          "nfsworld.com",
+          "origin.com",
+          "origin.tv",
+          "plantsvszombies2.com",
+          "play4free.com",
+          "playapex.com",
+          "pogo.com",
+          "pogobeta.com",
+          "popcap.com",
+          "projectapex.com",
+          "pvzgw2.com",
+          "pvzheroes.com",
+          "seaofsolitude.com",
+          "simcity-buildit.com",
+          "simcity.com",
+          "skate2.com",
+          "spearhead.kr",
+          "speedhunters.com",
+          "spore.com",
+          "ssx3.com",
+          "starwarsbattlefront.com",
+          "starwarsbattlefront2.com",
+          "starwarsfallenorder.com",
+          "starwarsjedifallenorder.com",
+          "starwarstheoldrepublic.com",
+          "swjedifallenorder.com",
+          "swjfo.com",
+          "swtor.com",
+          "swtor.net",
+          "teamneedforspeed.com",
+          "thedreadwolfrises.com",
+          "thesims.com",
+          "thesims3.com",
+          "thesims4.com",
+          "thesimssocial.com",
+          "tiberiumalliances.com",
+          "tiburon.com",
+          "titanfall.com",
+          "tnt-ea.com",
+          "ultimaforever.com",
+          "ultimaonline.com",
+          "unravel2.com",
+          "unraveltwo.com",
+          "uo.com",
+          "uoherald.com",
+          "visceralgames.com",
+          "xdsummit.com",
+          "yogify.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-ea",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-ea.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "epicgames",
+    "name": "Epic Games",
+    "iconSlug": "epicgames",
+    "category": "gaming",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "3lateral.com",
+          "artstation.com",
+          "battlebreakers.com",
+          "capturingreality.com",
+          "cubicmotion.com",
+          "eac-cdn.com",
+          "easy.ac",
+          "easyanticheat.net",
+          "egdownload.fastly-edge.com",
+          "epicgames.com",
+          "epicgames.dev",
+          "epicgamescdn.com",
+          "fab.com",
+          "fortnite-vod.akamaized.net",
+          "fortnite.com",
+          "hyprsense.com",
+          "paragon.com",
+          "playparagon.com",
+          "quixel.com",
+          "quixel.se",
+          "radgametools.com",
+          "realityscan.com",
+          "roborecall.com",
+          "shadowcomplex.com",
+          "sketchfab.com",
+          "spyjinx.com",
+          "twinmotion.com",
+          "unrealengine.com",
+          "unrealtournament.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-epicgames",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-epicgames.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "nintendo",
+    "name": "Nintendo",
+    "iconSlug": "lucide-gamepad-2",
+    "category": "gaming",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "d4c.nintendo.net",
+          "dragons.nintendo.net",
+          "eshop.nintendo.net",
+          "srv.nintendo.net"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-nintendo",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/nintendo.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "oculus",
+    "name": "Oculus / Quest",
+    "iconSlug": "oculus",
+    "category": "gaming",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "binoculus.com",
+          "buyoculus.com",
+          "ocul.us",
+          "oculus-china.com",
+          "oculus.com",
+          "oculus2014.com",
+          "oculus3d.com",
+          "oculusblog.com",
+          "oculusbrand.com",
+          "oculuscasino.net",
+          "oculuscdn.com",
+          "oculusconnect.com",
+          "oculusdiving.com",
+          "oculusforbusiness.com",
+          "oculusrift.com",
+          "oculusvr.com",
+          "powersunitedvr.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-oculus",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-oculus.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "playstation",
+    "name": "PlayStation",
+    "iconSlug": "playstation",
+    "category": "gaming",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "playstation",
+          "playstation.com",
+          "playstation.net",
+          "sonyentertainmentnetwork.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-playstation",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-playstation.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "roblox",
+    "name": "Roblox",
+    "iconSlug": "roblox",
+    "category": "gaming",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "rbxcdn.com",
+          "roblox.com"
+        ],
+        "subnets": [
+          "2.16.16.0/22",
+          "2.16.102.0/23",
+          "2.16.154.0/24",
+          "2.16.168.0/23",
+          "2.16.172.0/23",
+          "2.16.188.0/23",
+          "2.16.220.0/22",
+          "2.17.96.0/20",
+          "2.17.240.0/22",
+          "2.17.251.0/24",
+          "2.18.64.0/20",
+          "2.19.48.0/20",
+          "2.19.112.0/20",
+          "2.19.196.0/22",
+          "2.19.204.0/22",
+          "2.20.60.0/22",
+          "2.20.144.0/20",
+          "2.21.64.0/20",
+          "2.21.188.0/22",
+          "2.22.4.0/22",
+          "2.22.40.0/21",
+          "2.22.80.0/20",
+          "2.22.112.0/20",
+          "2.22.244.0/23",
+          "2.23.144.0/20",
+          "2.23.160.0/20",
+          "2.23.224.0/19",
+          "3.0.0.0/8",
+          "5.178.43.0/25",
+          "8.32.0.0/11",
+          "13.32.0.0/12",
+          "13.52.0.0/14",
+          "13.56.0.0/15",
+          "13.224.0.0/12",
+          "15.158.0.0/16",
+          "15.196.0.0/14",
+          "16.12.0.0/16",
+          "16.15.0.0/16",
+          "16.182.0.0/16",
+          "18.64.0.0/10",
+          "18.128.0.0/9",
+          "23.32.0.0/11",
+          "23.64.0.0/14",
+          "23.72.0.0/13",
+          "23.173.192.0/24",
+          "23.192.0.0/11",
+          "34.64.0.0/10",
+          "34.192.0.0/10",
+          "35.160.0.0/12",
+          "44.192.0.0/10",
+          "50.16.0.0/14",
+          "50.128.0.0/9",
+          "52.0.0.0/10",
+          "52.84.0.0/15",
+          "52.88.0.0/13",
+          "52.144.0.0/16",
+          "52.216.0.0/14",
+          "52.222.0.0/16",
+          "54.64.0.0/11",
+          "54.144.0.0/12",
+          "54.192.0.0/12",
+          "54.216.0.0/14",
+          "54.224.0.0/11",
+          "64.124.0.0/17",
+          "64.125.0.0/16",
+          "65.8.0.0/14",
+          "72.246.0.0/15",
+          "80.239.150.0/25",
+          "88.221.128.0/21",
+          "88.221.168.0/21",
+          "92.122.16.0/22",
+          "92.123.96.0/20",
+          "92.123.184.0/21",
+          "93.186.137.128/25",
+          "95.100.104.0/21",
+          "95.100.176.0/20",
+          "95.101.20.0/22",
+          "95.101.60.0/22",
+          "95.101.72.0/22",
+          "95.101.116.0/22",
+          "95.101.132.0/22",
+          "95.101.148.0/22",
+          "98.80.0.0/12",
+          "99.84.0.0/16",
+          "99.86.0.0/16",
+          "100.24.0.0/13",
+          "103.140.28.0/23",
+          "103.142.0.0/16",
+          "104.16.0.0/12",
+          "104.64.0.0/10",
+          "108.136.0.0/14",
+          "108.156.0.0/14",
+          "128.116.0.0/16",
+          "141.101.64.0/18",
+          "141.193.3.0/24",
+          "143.204.0.0/16",
+          "146.75.0.0/16",
+          "149.72.0.0/16",
+          "151.101.0.0/16",
+          "162.158.0.0/15",
+          "168.245.0.0/17",
+          "172.64.0.0/13",
+          "173.222.0.0/15",
+          "184.24.0.0/13",
+          "184.50.0.0/15",
+          "185.199.108.0/22",
+          "198.41.128.0/17",
+          "204.9.184.0/24",
+          "204.13.168.0/22",
+          "204.13.172.0/23",
+          "205.201.62.0/24",
+          "208.184.0.0/15",
+          "209.206.40.0/21",
+          "212.95.165.0/26",
+          "216.198.0.0/18",
+          "216.200.192.0/18"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-roblox",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/roblox.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "steam",
+    "name": "Steam",
+    "iconSlug": "steam",
+    "category": "gaming",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "a4e8s8k3.map2.ssl.hwcdn.net",
+          "alibaba.cdn.steampipe.steamcontent.com",
+          "f3b7q2p3.ssl.hwcdn.net",
+          "lv.queniujq.cn",
+          "steambroadcast.akamaized.net",
+          "steamcdn-a.akamaihd.net",
+          "steamcloudsweden.blob.core.windows.net",
+          "steamcommunity-a.akamaihd.net",
+          "steamcommunity-a.akamaihd.net.edgesuite.net",
+          "steammobile.akamaized.net",
+          "steampipe-kr.akamaized.net",
+          "steampipe-partner.akamaized.net",
+          "steampipe.akamaized.net",
+          "steamstore-a.akamaihd.net",
+          "steamusercontent-a.akamaihd.net",
+          "steamuserimages-a.akamaihd.net",
+          "steamvideo-a.akamaihd.net",
+          "xz.pphimalayanrt.com",
+          "client-update.queniuqe.com",
+          "csgo.wmsj.cn",
+          "dl.steam.clngaa.com",
+          "dota2.wmsj.cn",
+          "edge.steam-dns.top.comcast.net",
+          "gstore.val.manlaxy.com",
+          "playartifact.com",
+          "s.team",
+          "st.dl.bscstorage.net",
+          "st.dl.eccdnx.com",
+          "st.dl.pinyuncloud.com",
+          "steam-api.com",
+          "steam-chat.com",
+          "steam.apac.qtlglb.com",
+          "steam.cdn.on.net",
+          "steam.cdn.orcon.net.nz",
+          "steam.cdn.slingshot.co.nz",
+          "steam.cdn.webra.ru",
+          "steam.eca.qtlglb.com",
+          "steam.naeu.qtlglb.com",
+          "steam.ru.qtlglb.com",
+          "steam.tv",
+          "steamchina.com",
+          "steamcommunity.com",
+          "steamcontent.com",
+          "steamdeck.com",
+          "steamgames.com",
+          "steampowered.com",
+          "steampowered.com.8686c.com",
+          "steamserver.net",
+          "steamstatic.com",
+          "steamstatic.com.8686c.com",
+          "steamusercontent.com",
+          "underlords.com",
+          "valvesoftware.com",
+          "wmsjsteam.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-steam",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-steam.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "ubisoft",
+    "name": "Ubisoft",
+    "iconSlug": "ubisoft",
+    "category": "gaming",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "ubi.com",
+          "ubisoft.com",
+          "ubisoftconnect.com",
+          "uplay.com",
+          "ubisoft-uplay-savegames.s3.amazonaws.com",
+          "ubisoft-orbit-savegames.s3.amazonaws.com",
+          "ubistatic1-a.akamaihd.net",
+          "ubisoft.siteintercept.qualtrics.com",
+          "uplaypc-s-ubisoft.cdn.ubi.com"
+        ],
+        "subnets": [
+          "52.202.184.0/24",
+          "203.132.26.0/24",
+          "92.122.79.0/24",
+          "52.223.17.0/24",
+          "52.21.118.0/24",
+          "3.218.57.0/24",
+          "2.19.213.0/24"
+        ]
+      }
+    }
+  },
+  {
+    "id": "xbox",
+    "name": "Xbox",
+    "iconSlug": "xbox",
+    "category": "gaming",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "flightsimulator.azureedge.net",
+          "prodforza.blob.core.windows.net",
+          "xbox",
+          "asobostudio.com",
+          "beth.games",
+          "bethesda.net",
+          "bethesdagamestudios.com",
+          "bethsoft.com",
+          "callersbane.com",
+          "doom.com",
+          "elderscrolls.com",
+          "flightsimulator.com",
+          "forza.net",
+          "forzamotorsport.net",
+          "forzaracingchampionship.com",
+          "forzarc.com",
+          "gamepass.com",
+          "minecraft-services.net",
+          "minecraft.net",
+          "minecraftservices.com",
+          "minecraftshop.com",
+          "mojang.com",
+          "orithegame.com",
+          "renovacionxboxlive.com",
+          "tellmewhygame.com",
+          "xbox.co",
+          "xbox.com",
+          "xbox.eu",
+          "xbox.org",
+          "xbox360.co",
+          "xbox360.com",
+          "xbox360.eu",
+          "xbox360.org",
+          "xboxab.com",
+          "xboxgamepass.com",
+          "xboxgamestudios.com",
+          "xboxlive.cn",
+          "xboxlive.com",
+          "xboxone.co",
+          "xboxone.com",
+          "xboxone.eu",
+          "xboxplayanywhere.com",
+          "xboxservices.com",
+          "xboxstudios.com",
+          "xbx.lv"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-xbox",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-xbox.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "bbc",
+    "name": "BBC",
+    "iconSlug": "bbc",
+    "category": "media",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "aod-pod-uk-live.akamaized.net",
+          "as-dash-uk-live.akamaized.net",
+          "as-hls-uk-live.akamaized.net",
+          "ve-dash-uk-live.akamaized.net",
+          "ve-uhd-push-uk-live.akamaized.net",
+          "vod-dash-uk-live.akamaized.net",
+          "vod-dash-ww-live.akamaized.net",
+          "vod-hls-uk-live.akamaized.net",
+          "vod-sub-uk-live.akamaized.net",
+          "vod-thumb-uk-live.akamaized.net",
+          "vod-thumb-ww-live.akamaized.net",
+          "vs-cmaf-push-uk-live.akamaized.net",
+          "vs-cmaf-pushb-ww-live.akamaized.net",
+          "vs-hls-push-uk-live.akamaized.net",
+          "vs-hls-pushb-uk-live.akamaized.net",
+          "bbc",
+          "bbc-reporting-api.app",
+          "bbc.co.uk",
+          "bbc.com",
+          "bbc.in",
+          "bbc.mp-pxcdn.com",
+          "bbc.net.uk",
+          "bbcfmt.s.llnwi.net",
+          "bbci.co.uk",
+          "bbcmedia.co.uk",
+          "bbcpersian.com",
+          "bbcverticals.com",
+          "bidi.net.uk"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-bbc",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-bbc.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "category-media",
+    "name": "Всё медиа",
+    "iconSlug": "lucide-film",
+    "category": "media",
+    "notice": "Композитный список стриминговых сервисов",
+    "origin": "",
+    "engines": {
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-category-media",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-media.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "deezer",
+    "name": "Deezer",
+    "iconSlug": "deezer",
+    "category": "media",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "deezer.com",
+          "dzcdn.net"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-deezer",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-deezer.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "disney",
+    "name": "Disney+",
+    "iconSlug": "disney",
+    "category": "media",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "disney.my.sentry.io",
+          "espn.hb.omtrdc.net",
+          "espndotcom.tt.omtrdc.net",
+          "20thcenturystudios.com.au",
+          "20thcenturystudios.com.br",
+          "20thcenturystudios.jp",
+          "abc-studios.com",
+          "abc.com",
+          "adventuresbydisney.com",
+          "babble.com",
+          "babyzone.com",
+          "bamgrid.com",
+          "beautyandthebeastmusical.co.uk",
+          "dilcdn.com",
+          "disney-asia.com",
+          "disney-discount.com",
+          "disney-plus.net",
+          "disney-portal.my.onetrust.com",
+          "disney-studio.com",
+          "disney-studio.net",
+          "disney.asia",
+          "disney.be",
+          "disney.bg",
+          "disney.ca",
+          "disney.ch",
+          "disney.co.il",
+          "disney.co.jp",
+          "disney.co.kr",
+          "disney.co.th",
+          "disney.co.uk",
+          "disney.co.za",
+          "disney.com",
+          "disney.com.au",
+          "disney.com.br",
+          "disney.com.hk",
+          "disney.com.tw",
+          "disney.cz",
+          "disney.de",
+          "disney.dk",
+          "disney.es",
+          "disney.fi",
+          "disney.fr",
+          "disney.gr",
+          "disney.hu",
+          "disney.id",
+          "disney.in",
+          "disney.io",
+          "disney.it",
+          "disney.my",
+          "disney.nl",
+          "disney.no",
+          "disney.ph",
+          "disney.pl",
+          "disney.pt",
+          "disney.ro",
+          "disney.ru",
+          "disney.se",
+          "disney.sg",
+          "disneyadsales.com",
+          "disneyarena.com",
+          "disneyaulani.com",
+          "disneybaby.com",
+          "disneycareers.com",
+          "disneychannelonstage.com",
+          "disneychannelroadtrip.com",
+          "disneycruisebrasil.com",
+          "disneyenconcert.com",
+          "disneyiejobs.com",
+          "disneyinflight.com",
+          "disneyinternational.com",
+          "disneyinternationalhd.com",
+          "disneyjunior.com",
+          "disneyjuniortreataday.com",
+          "disneylatino.com",
+          "disneymagicmoments.co.il",
+          "disneymagicmoments.co.uk",
+          "disneymagicmoments.co.za",
+          "disneymagicmoments.de",
+          "disneymagicmoments.es",
+          "disneymagicmoments.fr",
+          "disneymagicmoments.gen.tr",
+          "disneymagicmoments.gr",
+          "disneymagicmoments.it",
+          "disneymagicmoments.pl",
+          "disneymagicmomentsme.com",
+          "disneyme.com",
+          "disneymeetingsandevents.com",
+          "disneymovieinsiders.com",
+          "disneymusicpromotion.com",
+          "disneynewseries.com",
+          "disneynow.com",
+          "disneypeoplesurveys.com",
+          "disneyplus.bn5x.net",
+          "disneyplus.com",
+          "disneyplus.com.ssl.sc.omtrdc.net",
+          "disneyredirects.com",
+          "disneysrivieraresort.com",
+          "disneystore.com",
+          "disneystreaming.com",
+          "disneysubscription.com",
+          "disneytickets.co.uk",
+          "disneyturkiye.com.tr",
+          "disneytvajobs.com",
+          "disneyworld-go.com",
+          "dmed.technology",
+          "dssott.com",
+          "dtci.co",
+          "dtci.technology",
+          "edgedatg.com",
+          "espn.co.uk",
+          "espn.com",
+          "espn.net",
+          "espncdn.com",
+          "espnqa.com",
+          "go-disneyworldgo.com",
+          "go.com",
+          "hotstar-cdn.net",
+          "hotstar-labs.com",
+          "hotstar.com",
+          "hotstarext.com",
+          "hsprepack.akamaized.net",
+          "marvel.com",
+          "marvel10thanniversary.com",
+          "marveldimensionofheroes.com",
+          "marvelparty.net",
+          "marvelpinball.com",
+          "marvelsdoubleagent.com",
+          "marvelspotlightplays.com",
+          "marvelsuperheroseptember.com",
+          "marvelsuperwar.com",
+          "mickey.tv",
+          "moviesanywhere.com",
+          "natgeomaps.com",
+          "nationalgeographic.com",
+          "nationalgeographicpartners.com",
+          "ngeo.com",
+          "nomadlandmovie.ch",
+          "playmation.com",
+          "shopdisney.com",
+          "shops-disney.com",
+          "sorcerersarena.com",
+          "spaindisney.com",
+          "star-brasil.com",
+          "star-latam.com",
+          "starott.com",
+          "starplus.com",
+          "starwars.com",
+          "starwarsgalacticstarcruiser.com",
+          "starwarskids.com",
+          "streamingdisney.net",
+          "themarvelexperiencetour.com",
+          "thestationbymaker.com",
+          "thisispolaris.com",
+          "watchdisneyfe.com",
+          "watchespn.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-disney",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-disney.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "hbo",
+    "name": "HBO",
+    "iconSlug": "hbo",
+    "category": "media",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "hbo",
+          "beforeigners.com",
+          "brightline.tv",
+          "cinemax.com",
+          "discomax.com",
+          "elpionero.es",
+          "forthethrone.com",
+          "hbo-europe.com",
+          "hbo.ba",
+          "hbo.bg",
+          "hbo.com",
+          "hbo.com.c.footprint.net",
+          "hbo.com.edgesuite.net",
+          "hbo.cz",
+          "hbo.eu",
+          "hbo.hr",
+          "hbo.hu",
+          "hbo.map.fastly.net",
+          "hbo.me",
+          "hbo.mk",
+          "hbo.pl",
+          "hbo.ro",
+          "hbo.rs",
+          "hbo.sk",
+          "hboaccess.com",
+          "hboarchives.com",
+          "hboasia.com",
+          "hboenterprises.com",
+          "hboespana.com",
+          "hbogo.co.th",
+          "hbogo.com",
+          "hbogo.cz",
+          "hbogo.eu",
+          "hbogo.hu",
+          "hbogo.sk",
+          "hbogoasia.com",
+          "hbogoasia.hk",
+          "hbogoasia.id",
+          "hbogoasia.my",
+          "hbogoasia.ph",
+          "hbogoasia.sg",
+          "hbogoasia.tw",
+          "hboinflight.com",
+          "hbolacontent.net",
+          "hbolaunchpad.com",
+          "hbomailman.com",
+          "hbomax-images.warnermediacdn.com",
+          "hbomax.com",
+          "hbomax.eu",
+          "hbomaxcdn.com",
+          "hbomaxdash.s.llnwi.net",
+          "hbomediarelations.com",
+          "hbonordic.com",
+          "hbonordic.tv",
+          "hbonow.com",
+          "hboportugal.com",
+          "hboprod.com",
+          "hbospain.com",
+          "hbotvsales.com",
+          "homebox.com",
+          "homeboxoffice.com",
+          "max.com",
+          "maxgo.com",
+          "redbyhbo.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-hbo",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-hbo.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "hulu",
+    "name": "Hulu",
+    "iconSlug": "hulu",
+    "category": "media",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "hulu.playback.edge.bamgrid.com",
+          "112263.com",
+          "callhulu.com",
+          "findyourlimits.com",
+          "freehulu.com",
+          "hooloo.tv",
+          "hoolu.com",
+          "hoolu.tv",
+          "hu1u.com",
+          "huloo.cc",
+          "huloo.tv",
+          "hulu.com",
+          "hulu.jp",
+          "hulu.tv",
+          "hulu.us",
+          "huluaction.com",
+          "huluad.com",
+          "huluapp.com",
+          "huluasks.com",
+          "hulucall.com",
+          "hulufree.com",
+          "hulugans.com",
+          "hulugermany.com",
+          "hulugo.com",
+          "huluim.com",
+          "huluinstantmessenger.com",
+          "huluitaly.com",
+          "hulunet.com",
+          "hulunetwork.com",
+          "huluplus.com",
+          "hulupremium.com",
+          "hulupurchase.com",
+          "huluqa.com",
+          "hulurussia.com",
+          "huluspain.com",
+          "hulusports.com",
+          "hulustream.com",
+          "huluteam.com",
+          "hulutv.com",
+          "huluusa.com",
+          "joinmaidez.com",
+          "mushymush.tv",
+          "myhulu.com",
+          "originalhulu.com",
+          "payhulu.com",
+          "registerhulu.com",
+          "thehulubraintrust.com",
+          "wwwhuluplus.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-hulu",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-hulu.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "netflix",
+    "name": "Netflix",
+    "iconSlug": "netflix",
+    "category": "media",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "fast.com",
+          "netflix.com",
+          "nflxext.com",
+          "nflximg.net",
+          "nflxvideo.net"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-netflix",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/netflix.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "primevideo",
+    "name": "Prime Video",
+    "iconSlug": "primevideo",
+    "category": "media",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "d1v5ir2lpwr8os.cloudfront.net",
+          "d22qjgkvxw22r6.cloudfront.net",
+          "d25xi40x97liuc.cloudfront.net",
+          "d27xxe7juh1us6.cloudfront.net",
+          "dmqdd6hw24ucf.cloudfront.net",
+          "images-eu.ssl-images-amazon.com",
+          "images-fe.ssl-images-amazon.com",
+          "images-na.ssl-images-amazon.com",
+          "msh.amazon.co.uk",
+          "static.siege-amazon.com",
+          "aiv-cdn.net",
+          "amazonprimevideo.cn",
+          "amazonprimevideo.com.cn",
+          "amazonprimevideos.com",
+          "amazonvideo.cc",
+          "amazonvideo.com",
+          "prime-video.com",
+          "primevideo.cc",
+          "primevideo.com",
+          "primevideo.info",
+          "primevideo.org",
+          "primevideo.tv",
+          "prod.service.minerva.devices.a2z.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-primevideo",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-primevideo.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "soundcloud",
+    "name": "SoundCloud",
+    "iconSlug": "soundcloud",
+    "category": "media",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "sndcdn.com",
+          "soundcloud.cloud",
+          "soundcloud.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-soundcloud",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-soundcloud.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "spotify",
+    "name": "Spotify",
+    "iconSlug": "spotify",
+    "category": "media",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "adeventtracker.spotify.com",
+          "adstudio-assets.scdn.co",
+          "audio-ak-spotify-com.akamaized.net",
+          "audio4-ak-spotify-com.akamaized.net",
+          "bloodhound.spotify.com",
+          "cdn-spotify-experiments.conductrics.com",
+          "heads-ak-spotify-com.akamaized.net",
+          "heads4-ak-spotify-com.akamaized.net",
+          "spotify.com.edgesuite.net",
+          "spotify.map.fastly.net",
+          "spotify.map.fastlylb.net",
+          "byspotify.com",
+          "pscdn.co",
+          "scdn.co",
+          "spoti.fi",
+          "spotify-everywhere.com",
+          "spotify.com",
+          "spotify.design",
+          "spotify.link",
+          "spotifycdn.com",
+          "spotifycdn.net",
+          "spotifycharts.com",
+          "spotifycodes.com",
+          "spotifyforbrands.com",
+          "spotifyjobs.com",
+          "tospotify.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-spotify",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-spotify.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "tidal",
+    "name": "Tidal",
+    "iconSlug": "tidal",
+    "category": "media",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "tidal.com",
+          "tidalhifi.com",
+          "wimpmusic.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-tidal",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-tidal.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "tmdb",
+    "name": "TMDB",
+    "iconSlug": "lucide-film",
+    "category": "media",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "themoviedb.org",
+          "tmdb.org",
+          "tmdb-image-prod.b-cdn.net"
+        ]
+      }
+    }
+  },
+  {
+    "id": "torrents",
+    "name": "Torrents",
+    "iconSlug": "bittorrent",
+    "category": "media",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "1337x.to",
+          "booktracker.org",
+          "booktracker.work",
+          "eu.org",
+          "filmitorrent.net",
+          "freetp.org",
+          "kinozal.me",
+          "newstudio.tv",
+          "nnmclub.to",
+          "nnmstatic.win",
+          "rustorka.com",
+          "rutrc.org",
+          "rutor.info",
+          "rutor.is",
+          "rutor.org",
+          "rutracker.cc",
+          "rutracker.net",
+          "rutracker.org",
+          "rutracker.ru",
+          "rutracker.wiki",
+          "rutrk.org",
+          "stealth.si",
+          "t-ru.org",
+          "thepiratebay.org",
+          "torrent.by",
+          "torrindex.net",
+          "wstracker.online",
+          "ysagin.top"
+        ]
+      }
+    }
+  },
+  {
+    "id": "twitch",
+    "name": "Twitch",
+    "iconSlug": "twitch",
+    "category": "media",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "d1g1f25tn8m2e6.cloudfront.net",
+          "d1m7jfoe9zdc1j.cloudfront.net",
+          "d1mhjrowxxagfy.cloudfront.net",
+          "d1ndex63qxojbr.cloudfront.net",
+          "d1oca24q5dwo6d.cloudfront.net",
+          "d1w2poirtb3as9.cloudfront.net",
+          "d1xhnb4ptk05mw.cloudfront.net",
+          "d1ymi26ma8va5x.cloudfront.net",
+          "d2aba1wr3818hz.cloudfront.net",
+          "d2dylwb3shzel1.cloudfront.net",
+          "d2e2de1etea730.cloudfront.net",
+          "d2nvs31859zcd8.cloudfront.net",
+          "d2um2qdswy1tb0.cloudfront.net",
+          "d2vjef5jvl6bfs.cloudfront.net",
+          "d2xmjdvx03ij56.cloudfront.net",
+          "d36nr0u3xmc4mm.cloudfront.net",
+          "d3aqoihi2n8ty8.cloudfront.net",
+          "d3c27h4odz752x.cloudfront.net",
+          "d3vd9lfkzbru3h.cloudfront.net",
+          "d6d4ismr40iw.cloudfront.net",
+          "d6tizftlrpuof.cloudfront.net",
+          "ddacn6pr5v0tl.cloudfront.net",
+          "dgeft87wbj63p.cloudfront.net",
+          "dqrpb9wgowsf5.cloudfront.net",
+          "ds0h3roq6wcgc.cloudfront.net",
+          "dykkng5hnh52u.cloudfront.net",
+          "ext-twitch.tv",
+          "jtvnw.net",
+          "live-video.net",
+          "ttvnw.net",
+          "twitch.tv",
+          "twitchcdn.net",
+          "twitchcon.com",
+          "twitchsvc.net"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-twitch",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-twitch.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "vimeo",
+    "name": "Vimeo",
+    "iconSlug": "vimeo",
+    "category": "media",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "livestream.com",
+          "vhx.tv",
+          "vhxqa1.com",
+          "vhxqa2.com",
+          "vhxqa3.com",
+          "vhxqa4.com",
+          "vhxqa6.com",
+          "vimeo-staging.com",
+          "vimeo-staging2.com",
+          "vimeo.com",
+          "vimeo.fr",
+          "vimeobusiness.com",
+          "vimeocdn.com",
+          "vimeogoods.com",
+          "vimeoondemand.com",
+          "vimeostatus.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-vimeo",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-vimeo.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "wikimedia",
+    "name": "Wikipedia",
+    "iconSlug": "wikipedia",
+    "category": "media",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "mediawiki.org",
+          "toolforge.org",
+          "w.wiki",
+          "wikibooks.org",
+          "wikidata.org",
+          "wikimedia.org",
+          "wikimediacloud.org",
+          "wikimediafoundation.org",
+          "wikinews.org",
+          "wikipedia.org",
+          "wikiquote.org",
+          "wikisource.org",
+          "wikiversity.org",
+          "wikivoyage.org",
+          "wiktionary.org",
+          "wmcloud.org",
+          "wmflabs.org",
+          "wmfusercontent.org"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-wikimedia",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-wikimedia.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "bluesky",
+    "name": "Bluesky",
+    "iconSlug": "bluesky",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "bsky.app",
+          "bsky.network",
+          "bsky.social"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-bluesky",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-bluesky.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "discord",
+    "name": "Discord",
+    "iconSlug": "discord",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "discord-attachments-uploads-prd.storage.googleapis.com",
+          "discord.com",
+          "discord.gg",
+          "discord.media",
+          "discordapp.com",
+          "discordapp.net"
+        ],
+        "subnets": [
+          "5.200.14.128/25",
+          "34.0.0.0/15",
+          "34.2.0.0/16",
+          "34.3.0.0/23",
+          "34.3.2.0/24",
+          "35.192.0.0/11",
+          "35.224.0.0/12",
+          "35.240.0.0/13",
+          "66.22.192.0/18",
+          "138.128.136.0/21",
+          "162.158.0.0/15",
+          "172.64.0.0/13"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-discord",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/discord-full.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "duckduckgo",
+    "name": "DuckDuckGo",
+    "iconSlug": "duckduckgo",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "cispaletter.com",
+          "cispaletter.org",
+          "cometotheduckside.com",
+          "ddg.co",
+          "ddg.gg",
+          "ddh.gg",
+          "dgg.gg",
+          "dontbubble.us",
+          "donttrack.us",
+          "duck.ai",
+          "duck.co",
+          "duck.com",
+          "duckduckco.com",
+          "duckduckco.de",
+          "duckduckgo.ca",
+          "duckduckgo.co",
+          "duckduckgo.co.uk",
+          "duckduckgo.com",
+          "duckduckgo.com.mx",
+          "duckduckgo.com.tw",
+          "duckduckgo.de",
+          "duckduckgo.dk",
+          "duckduckgo.in",
+          "duckduckgo.jp",
+          "duckduckgo.ke",
+          "duckduckgo.mx",
+          "duckduckgo.nl",
+          "duckduckgo.org",
+          "duckduckgo.pl",
+          "duckduckgo.sg",
+          "duckduckgo.uk",
+          "duckduckhack.com",
+          "duckgo.com",
+          "ducksear.ch",
+          "duckside.com",
+          "dukgo.com",
+          "enteentegeh.de",
+          "fixtracking.com",
+          "goduckgo.com",
+          "hacksear.ch",
+          "justduckit.com",
+          "privacysimplified.com",
+          "privatebrowsingmyths.com",
+          "spreadprivacy.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-duckduckgo",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-duckduckgo.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "facebook",
+    "name": "Facebook",
+    "iconSlug": "facebook",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "fbcdn-a.akamaihd.net",
+          "aboutfacebook.com",
+          "accessfacebookfromschool.com",
+          "acebooik.com",
+          "acebook.com",
+          "advancediddetection.com",
+          "analytics.facebook.com",
+          "askfacebook.net",
+          "askfacebook.org",
+          "atdmt2.com",
+          "atlasdmt.com",
+          "atlasonepoint.com",
+          "buyingfacebooklikes.com",
+          "careersatfb.com",
+          "celebgramme.com",
+          "china-facebook.com",
+          "click-url.com",
+          "como-hackearfacebook.com",
+          "crowdtangle.com",
+          "dacebook.com",
+          "dlfacebook.com",
+          "dotfacebook.com",
+          "dotfacebook.net",
+          "expresswifi.com",
+          "faacebok.com",
+          "faacebook.com",
+          "faasbook.com",
+          "facbebook.com",
+          "facbeok.com",
+          "facboo.com",
+          "facbook.com",
+          "facbool.com",
+          "facboox.com",
+          "faccebook.com",
+          "faccebookk.com",
+          "facdbook.com",
+          "facdebook.com",
+          "face-book.com",
+          "faceabook.com",
+          "facebboc.com",
+          "facebbook.com",
+          "facebboook.com",
+          "facebcook.com",
+          "facebdok.com",
+          "facebgook.com",
+          "facebhook.com",
+          "facebkkk.com",
+          "facebo-ok.com",
+          "faceboak.com",
+          "facebock.com",
+          "facebocke.com",
+          "facebof.com",
+          "faceboik.com",
+          "facebok.com",
+          "facebokbook.com",
+          "facebokc.com",
+          "facebokk.com",
+          "facebokok.com",
+          "faceboks.com",
+          "facebol.com",
+          "facebolk.com",
+          "facebomok.com",
+          "faceboo.com",
+          "facebooa.com",
+          "faceboob.com",
+          "faceboobok.com",
+          "facebooc.com",
+          "faceboock.com",
+          "facebood.com",
+          "facebooe.com",
+          "faceboof.com",
+          "facebooi.com",
+          "facebooik.com",
+          "facebooik.org",
+          "facebooj.com",
+          "facebook-corp.com",
+          "facebook-covid-19.com",
+          "facebook-ebook.com",
+          "facebook-forum.com",
+          "facebook-hardware.com",
+          "facebook-inc.com",
+          "facebook-login.com",
+          "facebook-newsroom.com",
+          "facebook-newsroom.org",
+          "facebook-pmdcenter.com",
+          "facebook-pmdcenter.net",
+          "facebook-pmdcenter.org",
+          "facebook-privacy.com",
+          "facebook-program.com",
+          "facebook-studio.com",
+          "facebook-support.org",
+          "facebook-texas-holdem.com",
+          "facebook-texas-holdem.net",
+          "facebook.br",
+          "facebook.ca",
+          "facebook.cc",
+          "facebook.com",
+          "facebook.design",
+          "facebook.hu",
+          "facebook.in",
+          "facebook.net",
+          "facebook.nl",
+          "facebook.org",
+          "facebook.se",
+          "facebook.shop",
+          "facebook.tv",
+          "facebook.us",
+          "facebook.wang",
+          "facebook123.org",
+          "facebook30.com",
+          "facebook30.net",
+          "facebook30.org",
+          "facebook4business.com",
+          "facebookads.com",
+          "facebookadvertisingsecrets.com",
+          "facebookatschool.com",
+          "facebookawards.com",
+          "facebookblueprint.net",
+          "facebookbrand.com",
+          "facebookbrand.net",
+          "facebookcanadianelectionintegrityinitiative.com",
+          "facebookcareer.com",
+          "facebookcheats.com",
+          "facebookck.com",
+          "facebookclub.com",
+          "facebookcom.com",
+          "facebookconsultant.org",
+          "facebookcoronavirus.com",
+          "facebookcovers.org",
+          "facebookcredits.info",
+          "facebookdating.net",
+          "facebookdusexe.org",
+          "facebookemail.com",
+          "facebookenespanol.com",
+          "facebookexchange.com",
+          "facebookexchange.net",
+          "facebookfacebook.com",
+          "facebookflow.com",
+          "facebookgames.com",
+          "facebookgraphsearch.com",
+          "facebookgraphsearch.info",
+          "facebookgroups.com",
+          "facebookhome.cc",
+          "facebookhome.com",
+          "facebookhome.info",
+          "facebookhub.com",
+          "facebooki.com",
+          "facebookinc.com",
+          "facebookland.com",
+          "facebooklikeexchange.com",
+          "facebooklive.com",
+          "facebooklivestaging.net",
+          "facebooklivestaging.org",
+          "facebooklogin.com",
+          "facebooklogin.info",
+          "facebookloginhelp.net",
+          "facebooklogs.com",
+          "facebookmail.com",
+          "facebookmail.tv",
+          "facebookmanager.info",
+          "facebookmarketing.info",
+          "facebookmarketingpartner.com",
+          "facebookmarketingpartners.com",
+          "facebookmobile.com",
+          "facebookmsn.com",
+          "facebooknews.com",
+          "facebooknfl.com",
+          "facebooknude.com",
+          "facebookofsex.com",
+          "facebookook.com",
+          "facebookpaper.com",
+          "facebookpay.com",
+          "facebookphonenumber.net",
+          "facebookphoto.com",
+          "facebookphotos.com",
+          "facebookpmdcenter.com",
+          "facebookpoke.net",
+          "facebookpoke.org",
+          "facebookpoker.info",
+          "facebookpokerchips.info",
+          "facebookporn.net",
+          "facebookporn.org",
+          "facebookporno.net",
+          "facebookportal.com",
+          "facebooks.com",
+          "facebooksafety.com",
+          "facebooksecurity.net",
+          "facebookshop.com",
+          "facebooksignup.net",
+          "facebooksite.net",
+          "facebookstories.com",
+          "facebookstudios.net",
+          "facebookstudios.org",
+          "facebooksupplier.com",
+          "facebooksuppliers.com",
+          "facebookswagemea.com",
+          "facebookswagstore.com",
+          "facebooksz.com",
+          "facebookthreads.net",
+          "facebooktv.net",
+          "facebooktv.org",
+          "facebookvacation.com",
+          "facebookw.com",
+          "facebookwork.com",
+          "facebookworld.com",
+          "facebool.com",
+          "facebool.info",
+          "facebooll.com",
+          "faceboom.com",
+          "faceboon.com",
+          "faceboonk.com",
+          "faceboooik.com",
+          "faceboook.com",
+          "faceboop.com",
+          "faceboot.com",
+          "faceboox.com",
+          "facebopk.com",
+          "facebpook.com",
+          "facebuk.com",
+          "facebuok.com",
+          "facebvook.com",
+          "facebyook.com",
+          "facebzook.com",
+          "facecbgook.com",
+          "facecbook.com",
+          "facecbook.org",
+          "facecook.com",
+          "facecook.org",
+          "facedbook.com",
+          "faceebok.com",
+          "faceebook.com",
+          "faceebot.com",
+          "facegbok.com",
+          "facegbook.com",
+          "faceobk.com",
+          "faceobok.com",
+          "faceobook.com",
+          "faceook.com",
+          "facerbooik.com",
+          "facerbook.com",
+          "facesbooc.com",
+          "facesounds.com",
+          "facetook.com",
+          "facevbook.com",
+          "facewbook.co",
+          "facewook.com",
+          "facfacebook.com",
+          "facfebook.com",
+          "fackebook.com",
+          "facnbook.com",
+          "facrbook.com",
+          "facvebook.com",
+          "facwebook.com",
+          "facxebook.com",
+          "fadebook.com",
+          "faebok.com",
+          "faebook.com",
+          "faebookc.com",
+          "faeboook.com",
+          "faecebok.com",
+          "faesebook.com",
+          "fafacebook.com",
+          "faicbooc.com",
+          "fasebokk.com",
+          "fasebook.com",
+          "faseboox.com",
+          "favebook.com",
+          "faycbok.com",
+          "fb.careers",
+          "fb.com",
+          "fb.gg",
+          "fb.me",
+          "fb.watch",
+          "fbacebook.com",
+          "fbbmarket.com",
+          "fbboostyourbusiness.com",
+          "fbcdn.com",
+          "fbcdn.net",
+          "fbfeedback.com",
+          "fbhome.com",
+          "fbidb.io",
+          "fbinc.com",
+          "fbinnovation.com",
+          "fbmarketing.com",
+          "fbreg.com",
+          "fbrpms.com",
+          "fbsbx.com",
+          "fbsbx.net",
+          "fbsupport-covid.net",
+          "fbthirdpartypixel.com",
+          "fbthirdpartypixel.net",
+          "fbthirdpartypixel.org",
+          "fburl.com",
+          "fbwat.ch",
+          "fbworkmail.com",
+          "fcacebook.com",
+          "fcaebook.com",
+          "fcebook.com",
+          "fcebookk.com",
+          "fcfacebook.com",
+          "fdacebook.info",
+          "feacboo.com",
+          "feacbook.com",
+          "feacbooke.com",
+          "feacebook.com",
+          "fecbbok.com",
+          "fecbooc.com",
+          "fecbook.com",
+          "feceboock.com",
+          "fecebook.net",
+          "feceboox.com",
+          "fececbook.com",
+          "feook.com",
+          "ferabook.com",
+          "fescebook.com",
+          "fesebook.com",
+          "ffacebook.com",
+          "fgacebook.com",
+          "ficeboock.com",
+          "fmcebook.com",
+          "fnacebook.com",
+          "fosebook.com",
+          "fpacebook.com",
+          "fqcebook.com",
+          "fracebook.com",
+          "freeb.com",
+          "freebasics.com",
+          "freebasics.net",
+          "freebs.com",
+          "freefacebook.com",
+          "freefacebook.net",
+          "freefacebookads.net",
+          "freefblikes.com",
+          "freindfeed.com",
+          "friendbook.info",
+          "friendfed.com",
+          "friendfeed-api.com",
+          "friendfeed-media.com",
+          "friendfeed.com",
+          "friendfeedmedia.com",
+          "fsacebok.com",
+          "fscebook.com",
+          "fundraisingwithfacebook.com",
+          "funnyfacebook.org",
+          "futureofbusinesssurvey.org",
+          "gacebook.com",
+          "gameroom.com",
+          "gfacecbook.com",
+          "groups.com",
+          "hackerfacebook.com",
+          "hackfacebook.com",
+          "hackfacebookid.com",
+          "hifacebook.info",
+          "howtohackfacebook-account.com",
+          "hsfacebook.com",
+          "httpfacebook.com",
+          "httpsfacebook.com",
+          "httpwwwfacebook.com",
+          "i.org",
+          "internet.org",
+          "klik.me",
+          "liverail.com",
+          "liverail.tv",
+          "login-account.net",
+          "markzuckerberg.com",
+          "midentsolutions.com",
+          "mobilefacebook.com",
+          "moneywithfacebook.com",
+          "myfbfans.com",
+          "newsfeed.com",
+          "nextstop.com",
+          "online-deals.net",
+          "opencreate.org",
+          "pixel.facebook.com",
+          "reachtheworldonfacebook.com",
+          "redkix.com",
+          "rocksdb.org",
+          "shopfacebook.com",
+          "sportsfacebook.com",
+          "sportstream.com",
+          "supportfacebook.com",
+          "terragraph.com",
+          "thefacebook.com",
+          "thefacebook.net",
+          "thefind.com",
+          "toplayerserver.com",
+          "viewpointsfromfacebook.com",
+          "whyfacebook.com",
+          "workplace.com",
+          "workplaceusecases.com",
+          "worldhack.com",
+          "www-facebook.com",
+          "wwwfacebok.com",
+          "wwwfacebook.com",
+          "wwwmfacebook.com",
+          "zuckerberg.com",
+          "zuckerberg.net"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-facebook",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-facebook.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "google",
+    "name": "Google",
+    "iconSlug": "google",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-google",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-google.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "instagram",
+    "name": "Instagram",
+    "iconSlug": "instagram",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "cdninstagram.com",
+          "fbcdn.net",
+          "instagram.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-instagram",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/instagram.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "medium",
+    "name": "Medium",
+    "iconSlug": "medium",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "medium.com",
+          "medium.systems"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-medium",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-medium.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "meta",
+    "name": "Meta (все сервисы)",
+    "iconSlug": "meta",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-meta",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-meta.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "patreon",
+    "name": "Patreon",
+    "iconSlug": "patreon",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "live-patreon-marketing.pantheonsite.io",
+          "patreon.com",
+          "patreoncommunity.com",
+          "patreonusercontent.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-patreon",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-patreon.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "pinterest",
+    "name": "Pinterest",
+    "iconSlug": "pinterest",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "pin.it",
+          "pinimg.com",
+          "pinimg.com.cdn.cloudflare.net",
+          "pinterest.at",
+          "pinterest.be",
+          "pinterest.ca",
+          "pinterest.ch",
+          "pinterest.cl",
+          "pinterest.co",
+          "pinterest.co.at",
+          "pinterest.co.in",
+          "pinterest.co.kr",
+          "pinterest.co.nz",
+          "pinterest.co.uk",
+          "pinterest.com",
+          "pinterest.com.au",
+          "pinterest.com.bo",
+          "pinterest.com.ec",
+          "pinterest.com.mx",
+          "pinterest.com.pe",
+          "pinterest.com.py",
+          "pinterest.com.uy",
+          "pinterest.com.vn",
+          "pinterest.de",
+          "pinterest.dk",
+          "pinterest.ec",
+          "pinterest.engineering",
+          "pinterest.es",
+          "pinterest.fr",
+          "pinterest.hu",
+          "pinterest.id",
+          "pinterest.ie",
+          "pinterest.in",
+          "pinterest.info",
+          "pinterest.it",
+          "pinterest.jp",
+          "pinterest.kr",
+          "pinterest.map.fastly.net",
+          "pinterest.mx",
+          "pinterest.net",
+          "pinterest.nl",
+          "pinterest.nz",
+          "pinterest.pe",
+          "pinterest.ph",
+          "pinterest.pt",
+          "pinterest.ru",
+          "pinterest.se",
+          "pinterest.th",
+          "pinterest.tw",
+          "pinterest.uk",
+          "pinterest.vn",
+          "pinterestmail.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-pinterest",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-pinterest.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "reddit",
+    "name": "Reddit",
+    "iconSlug": "reddit",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "redd.it",
+          "reddit.app.link",
+          "reddit.com",
+          "reddit.map.fastly.net",
+          "redditblog.com",
+          "reddithelp.com",
+          "redditinc.com",
+          "redditmail.com",
+          "redditmedia.com",
+          "redditspace.com",
+          "redditstatic.com",
+          "redditstatus.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-reddit",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-reddit.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "signal",
+    "name": "Signal",
+    "iconSlug": "signal",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "signal.art",
+          "signal.group",
+          "signal.link",
+          "signal.me",
+          "signal.org",
+          "signal.tube",
+          "signalusers.org",
+          "whispersystems.org"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-signal",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-signal.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "telegram",
+    "name": "Telegram",
+    "iconSlug": "telegram",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "t.me",
+          "telegram.org"
+        ],
+        "subnets": [
+          "91.105.192.0/23",
+          "91.108.4.0/22",
+          "91.108.8.0/21",
+          "91.108.16.0/21",
+          "91.108.56.0/22",
+          "149.154.160.0/20",
+          "185.76.151.0/24"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-telegram",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/telegram.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "threads",
+    "name": "Threads",
+    "iconSlug": "threads",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "threads.com",
+          "threads.net"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-threads",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-threads.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "tiktok",
+    "name": "TikTok",
+    "iconSlug": "tiktok",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "akamaized.net",
+          "byteoversea.com",
+          "ibytedtos.com",
+          "ibyteimg.com",
+          "muscdn.com",
+          "musical.ly",
+          "tik-tokapi.com",
+          "tiktok.com",
+          "tiktokcdn-eu.com",
+          "tiktokcdn-us.com",
+          "tiktokcdn.com",
+          "tiktokv.com",
+          "ttwstatic.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-tiktok",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/tiktok.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "whatsapp",
+    "name": "WhatsApp",
+    "iconSlug": "whatsapp",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "whatsapp.com",
+          "whatsapp.net"
+        ],
+        "subnets": [
+          "31.13.24.0/21",
+          "31.13.64.0/18",
+          "45.64.40.0/22",
+          "57.141.0.0/21",
+          "57.144.0.0/14",
+          "66.220.144.0/20",
+          "69.63.176.0/20",
+          "69.171.224.0/19",
+          "74.119.76.0/22",
+          "102.132.96.0/20",
+          "103.4.96.0/22",
+          "129.134.0.0/16",
+          "147.75.208.0/20",
+          "157.240.0.0/16",
+          "163.70.128.0/17",
+          "163.77.128.0/17",
+          "173.252.64.0/18",
+          "179.60.192.0/22",
+          "185.60.216.0/22",
+          "185.89.216.0/22",
+          "189.247.71.0/24",
+          "204.15.20.0/22"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-whatsapp",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/whatsapp.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "x",
+    "name": "X (Twitter)",
+    "iconSlug": "x",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "t.co",
+          "twimg.com",
+          "twitter.com",
+          "x.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-x",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/x.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
+    "id": "youtube",
+    "name": "YouTube",
+    "iconSlug": "youtube",
+    "category": "social",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "ggpht.com",
+          "googlevideo.com",
+          "youtu.be",
+          "youtube.com",
+          "youtubei.googleapis.com",
+          "youtubekids.com",
+          "ytimg.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-youtube",
+            "url": "https://github.com/vernette/rulesets/raw/master/srs/youtube.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  }
+]

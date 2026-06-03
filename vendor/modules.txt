@@ -5,7 +5,7 @@ github.com/coder/websocket/internal/bpool
 github.com/coder/websocket/internal/errd
 github.com/coder/websocket/internal/util
 github.com/coder/websocket/internal/wsjs
-# github.com/enfein/mieru/v3 v3.32.0
+# github.com/enfein/mieru/v3 v3.33.0
 ## explicit; go 1.20
 github.com/enfein/mieru/v3/pkg/appctl/appctlpb
 github.com/enfein/mieru/v3/pkg/metrics/metricspb

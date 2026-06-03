@@ -6,23 +6,26 @@
 	interface Props {
 		searchQuery: string;
 		showSearch?: boolean;
+		hideSortOnDesktop?: boolean;
 	}
 
 	let {
 		searchQuery = $bindable(),
 		showSearch = false,
+		hideSortOnDesktop = false,
 	}: Props = $props();
 
 	const sortOptions: DropdownOption<PeerSortKey>[] = [
 		{ value: 'name', label: 'По имени' },
 		{ value: 'traffic', label: 'По трафику' },
 		{ value: 'ip', label: 'По IP' },
+		{ value: 'endpoint', label: 'Endpoint' },
 		{ value: 'online', label: 'Онлайн' },
 		{ value: 'handshake', label: 'Handshake' },
 	];
 </script>
 
-<div class="peer-sort-controls">
+<div class="peer-sort-controls" class:hide-sort-on-desktop={hideSortOnDesktop}>
 	{#if showSearch}
 		<input
 			class="peer-search"
@@ -31,12 +34,14 @@
 			bind:value={searchQuery}
 		/>
 	{/if}
-	<div class="peer-sort-select">
-		<Dropdown value={$peerSort.sortBy} options={sortOptions} onchange={(k) => peerSort.setSortBy(k)} fullWidth />
+	<div class="peer-sort-ui">
+		<div class="peer-sort-select">
+			<Dropdown value={$peerSort.sortBy} options={sortOptions} onchange={(k) => peerSort.setSortBy(k)} fullWidth />
+		</div>
+		<button class="peer-sort-dir" onclick={() => peerSort.toggleDir()} title="Направление сортировки">
+			{$peerSort.sortAsc ? '↑' : '↓'}
+		</button>
 	</div>
-	<button class="peer-sort-dir" onclick={() => peerSort.toggleDir()} title="Направление сортировки">
-		{$peerSort.sortAsc ? '↑' : '↓'}
-	</button>
 </div>
 
 <style>
@@ -44,6 +49,16 @@
 		display: flex;
 		align-items: center;
 		gap: 0.375rem;
+	}
+
+	.peer-sort-ui {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+	}
+
+	.peer-sort-controls.hide-sort-on-desktop .peer-sort-ui {
+		display: none;
 	}
 
 	.peer-search {
@@ -79,5 +94,37 @@
 	.peer-sort-dir:hover {
 		background: var(--bg-hover);
 		color: var(--text-primary);
+	}
+
+	@media (max-width: 640px) {
+		.peer-sort-controls {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) auto;
+			gap: 0.375rem;
+			width: 100%;
+		}
+
+		.peer-search {
+			grid-column: 1 / -1;
+			width: 100%;
+			min-width: 0;
+		}
+
+		.peer-sort-select {
+			min-width: 0;
+			width: 100%;
+		}
+
+		.peer-sort-dir {
+			width: 34px;
+			min-width: 34px;
+			height: 34px;
+		}
+
+		.peer-sort-controls.hide-sort-on-desktop .peer-sort-ui {
+			display: inline-flex;
+			grid-column: 1 / -1;
+			width: 100%;
+		}
 	}
 </style>

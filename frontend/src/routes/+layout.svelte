@@ -26,6 +26,7 @@
 	import { invalidateResource, invalidateAll } from '$lib/stores/storeRegistry';
 	import { setDeviceProxyMissingTarget, clearDeviceProxyMissingTarget } from '$lib/stores/deviceproxy';
 	import { settings as settingsStore, reloadSettings, usageLevel } from '$lib/stores/settings';
+	import { loadPresetCatalog } from '$lib/stores/presets';
 	import { donateModalOpen, openDonateModal, closeDonateModal } from '$lib/stores/donateModal';
 	import {
 		isSectionVisible,
@@ -327,6 +328,7 @@
 		compactLayout.init();
 		serviceLetterIcons.init();
 		await auth.checkStatus();
+		loadPresetCatalog();
 	});
 
 	onDestroy(() => {

@@ -1,12 +1,23 @@
 import { describe, it, expect } from 'vitest';
 import { singboxRuleToCard, resolveOutboundDisplay, extractMatcherChips, isSystemRule } from './adapters';
-import type { SingboxRouterRule, SingboxRouterOutbound } from '$lib/types';
+import type { SingboxRouterRule, SingboxRouterOutbound, CatalogPreset } from '$lib/types';
 import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
 
 const noOutbounds: SingboxRouterOutbound[] = [];
 const noRulesets: Record<string, string> = {};
 const awgOptions: OutboundGroup[] = [
   { group: 'AWG туннели', items: [{ value: 'awg-awg10', label: 'Office VPN (t2s10)' }] },
+];
+
+const catalog: CatalogPreset[] = [
+  {
+    id: 'netflix',
+    name: 'Netflix',
+    iconSlug: 'netflix',
+    category: 'media',
+    origin: 'builtin',
+    engines: { dns: { domains: ['netflix.com', 'nflxext.com'] } },
+  },
 ];
 
 describe('isSystemRule', () => {
@@ -161,6 +172,9 @@ describe('singboxRuleToCard', () => {
       0,
       [{ tag: 'warp', type: 'wireguard' } as unknown as SingboxRouterOutbound],
       {},
+      [],
+      [],
+      catalog,
     );
     expect(card.serviceKey).toBe('netflix');
     expect(card.title).toMatch(/netflix/i);

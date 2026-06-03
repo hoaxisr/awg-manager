@@ -97,10 +97,11 @@ import type {
 	ManagedServerRestoreResponse,
 	RestoreOptions,
 	DnsProxyInfo,
+	CatalogPreset,
 } from '$lib/types';
 import { isMockDevMode } from '$lib/env';
 
-export type TrafficPeriod = '5m' | '10m' | '30m' | '1h' | '3h' | '6h' | '12h' | '24h' | '48h';
+export type TrafficPeriod = '5m' | '10m' | '30m' | '1h' | '3h' | '6h' | '12h' | '24h';
 
 const DIAGNOSTICS_SANITIZE_STORAGE_KEY = 'awgm.diagnostics.sanitizeLogs';
 
@@ -1800,8 +1801,11 @@ class ApiClient {
 		return this.request('/singbox/router/rulesets/list');
 	}
 
-	async singboxRouterDatRuleSetURL(kind: 'geosite' | 'geoip', tag: string): Promise<{ url: string }> {
-		const q = new URLSearchParams({ kind, tag });
+	async singboxRouterDatRuleSetURL(kind: 'geosite' | 'geoip', tags: string[]): Promise<{ url: string }> {
+		const q = new URLSearchParams({ kind });
+		for (const t of tags) {
+			q.append('tag', t);
+		}
 		return this.request(`/singbox/router/rulesets/dat-url?${q.toString()}`);
 	}
 
@@ -1871,6 +1875,13 @@ class ApiClient {
 
 	async singboxRouterListPresets(): Promise<SingboxRouterPreset[]> {
 		return this.request('/singbox/router/presets/list');
+	}
+
+	async listPresets(): Promise<{ presets: CatalogPreset[] }> {
+		const payload = await this.request<{ presets?: CatalogPreset[] } | undefined>('/presets');
+		return {
+			presets: Array.isArray(payload?.presets) ? payload.presets : [],
+		};
 	}
 
 	async singboxRouterApplyPreset(id: string, outbound: string): Promise<void> {

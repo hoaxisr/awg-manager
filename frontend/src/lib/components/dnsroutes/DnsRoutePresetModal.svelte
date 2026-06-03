@@ -1,9 +1,9 @@
 <script lang="ts">
     import { Modal, Button, Dropdown } from '$lib/components/ui';
     import { ServiceIcon } from '$lib/components/dnsroutes';
-    import { SERVICE_PRESETS, type ServicePreset } from '$lib/data/presets';
+    import { dnsPresets, presetCatalogLoaded } from '$lib/stores/presets';
     import { buildRoutingTunnelDropdownOptions } from '$lib/utils/routingTunnelOptions';
-    import type { RoutingTunnel } from '$lib/types';
+    import type { RoutingTunnel, CatalogPreset } from '$lib/types';
     import DownloadRouteNote from '$lib/components/downloads/DownloadRouteNote.svelte';
 
     interface Props {
@@ -13,7 +13,7 @@
         isOS5?: boolean;
         hydrarouteInstalled?: boolean;
         onclose: () => void;
-        oncreate: (presets: ServicePreset[], tunnelId: string, backend: 'ndms' | 'hydraroute') => void;
+        oncreate: (presets: CatalogPreset[], tunnelId: string, backend: 'ndms' | 'hydraroute') => void;
     }
 
     let {
@@ -51,24 +51,8 @@
         wasOpen = open;
     });
 
-    // IDs covered by a selected "covers" preset (e.g. "all-blocked" covers youtube, discord, etc.)
-    let coveredIds = $derived.by(() => {
-        const ids = new Set<string>();
-        for (const id of selected) {
-            const preset = SERVICE_PRESETS.find(p => p.id === id);
-            if (preset?.covers) {
-                for (const c of preset.covers) ids.add(c);
-            }
-        }
-        return ids;
-    });
-
-    function isAdded(preset: ServicePreset): boolean {
+    function isAdded(preset: CatalogPreset): boolean {
         return existingLower.includes(preset.name.toLowerCase());
-    }
-
-    function isCovered(preset: ServicePreset): boolean {
-        return coveredIds.has(preset.id);
     }
 
     function toggle(presetId: string) {
@@ -77,11 +61,6 @@
             next.delete(presetId);
         } else {
             next.add(presetId);
-            // If this preset covers others, deselect them
-            const preset = SERVICE_PRESETS.find(p => p.id === presetId);
-            if (preset?.covers) {
-                for (const c of preset.covers) next.delete(c);
-            }
         }
         selected = next;
     }
@@ -89,23 +68,26 @@
     function handleCreate() {
         if (selected.size === 0 || !defaultTunnelId) return;
         creating = true;
-        const presets = SERVICE_PRESETS.filter(p => selected.has(p.id));
+        const presets = $dnsPresets.filter(p => selected.has(p.id));
         oncreate(presets, defaultTunnelId, backend);
     }
 </script>
 
 <Modal {open} title="Каталог сервисов" size="lg" {onclose}>
+    {#if !$presetCatalogLoaded}
+        <p class="catalog-loading">Загрузка каталога…</p>
+    {:else if $dnsPresets.length === 0}
+        <p class="catalog-loading">Каталог пуст</p>
+    {:else}
     <div class="preset-grid">
-        {#each SERVICE_PRESETS as preset (preset.id)}
+        {#each $dnsPresets as preset (preset.id)}
             {@const added = isAdded(preset)}
-            {@const covered = isCovered(preset)}
             {@const isSelected = selected.has(preset.id)}
             <button
                 type="button"
                 class="preset-card"
                 class:selected={isSelected}
                 class:added
-                class:covered={covered && !isSelected}
                 title={preset.notice || undefined}
                 onclick={() => { if (!added) toggle(preset.id); }}
                 disabled={added || creating}
@@ -114,19 +96,18 @@
                     <span class="preset-check">&#10003;</span>
                 {:else if added}
                     <span class="preset-badge">добавлено</span>
-                {:else if covered}
-                    <span class="preset-badge">входит в сборник</span>
                 {/if}
                 {#if preset.notice}
                     <span class="preset-notice-mark" aria-label="warning">⚠</span>
                 {/if}
-                <ServiceIcon name={preset.name} iconSlug={preset.id} size={40} />
+                <ServiceIcon name={preset.name} iconSlug={preset.iconSlug} size={40} />
                 <span class="preset-name">{preset.name}</span>
             </button>
         {/each}
     </div>
+    {/if}
 
-    {@const selectedWithNotices = SERVICE_PRESETS.filter(p => selected.has(p.id) && p.notice)}
+    {@const selectedWithNotices = $dnsPresets.filter(p => selected.has(p.id) && p.notice)}
     {#if selectedWithNotices.length > 0}
         <div class="notices-panel">
             {#each selectedWithNotices as p (p.id)}
@@ -233,9 +214,11 @@
         cursor: not-allowed;
     }
 
-    .preset-card.covered {
-        opacity: 0.35;
-        filter: grayscale(0.5);
+    .catalog-loading {
+        color: var(--color-text-muted);
+        font-size: 0.8125rem;
+        text-align: center;
+        padding: 1.5rem 0;
     }
 
     .preset-check {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -30,6 +31,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/openapi"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -120,6 +122,7 @@ type Server struct {
 	clashProxy             *api.ClashProxy
 	singboxOp              *singbox.Operator
 	singboxOrch            *singboxorch.Orchestrator
+	presetCatalog          *presets.Catalog
 	deviceProxySvc         *deviceproxy.Service
 	downloadSvc            *downloader.Service
 	monitoringService      *monitoring.Service
@@ -290,6 +293,11 @@ func (s *Server) SetDnsCheckService(svc *dnscheck.Service) {
 // SetSingboxOperator sets the sing-box operator so system info can report install status.
 func (s *Server) SetSingboxOperator(op *singbox.Operator) {
 	s.singboxOp = op
+}
+
+// SetPresetCatalog wires the unified preset catalog into the server.
+func (s *Server) SetPresetCatalog(c *presets.Catalog) {
+	s.presetCatalog = c
 }
 
 // SetDeviceProxyService wires the device-proxy service into the server
@@ -1197,6 +1205,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/singbox/router/dns/rewrites/move", guarded(rw.Move))
 	}
 
+	// Unified preset catalog (protected, read-only in U0)
+	if s.presetCatalog != nil {
+		presetsHandler := api.NewPresetsHandler(s.presetCatalog)
+		mux.HandleFunc("/api/presets", guarded(presetsHandler.List))
+	}
+
 	// Static files (SPA) - must be last.
 	if s.config.FrontendFS != nil {
 		mux.Handle("/", spaHandler(s.config.FrontendFS))
@@ -1239,8 +1253,40 @@ func spaHandler(staticFS fs.FS) http.Handler {
 			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		}
 
+		// Compress text assets on the fly. The router serves the UI directly
+		// over a slow link, so gzip cuts the transferred bundle ~3-4x.
+		if r.Method == http.MethodGet && acceptsGzip(r) && compressibleType(contentType) {
+			if data, err := fs.ReadFile(staticFS, name); err == nil {
+				w.Header().Set("Content-Encoding", "gzip")
+				w.Header().Set("Vary", "Accept-Encoding")
+				gz := gzip.NewWriter(w)
+				_, _ = gz.Write(data)
+				_ = gz.Close()
+				return
+			}
+		}
+
 		http.ServeFileFS(w, r, staticFS, name)
 	})
+}
+
+// acceptsGzip reports whether the client advertised gzip support.
+func acceptsGzip(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
+}
+
+// compressibleType reports whether a content type benefits from gzip.
+// Already-compressed binaries (images, fonts, wasm) are skipped.
+func compressibleType(contentType string) bool {
+	switch {
+	case strings.HasPrefix(contentType, "text/"),
+		strings.HasPrefix(contentType, "application/javascript"),
+		strings.HasPrefix(contentType, "application/json"),
+		strings.HasPrefix(contentType, "application/manifest+json"),
+		strings.HasPrefix(contentType, "image/svg+xml"):
+		return true
+	}
+	return false
 }
 
 // diagLogAdapter adapts logging.Service to diagnostics.LogServiceForDiag.

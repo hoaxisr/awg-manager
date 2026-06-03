@@ -55,6 +55,9 @@ jobs:
         working-directory: frontend
         run: |
           npm ci
+          node scripts/generate-brand-icons.mjs
+          git diff --exit-code src/lib/generated/brandIcons.ts \
+            || { echo "::error::brandIcons.ts is stale — run 'node scripts/generate-brand-icons.mjs' and commit"; exit 1; }
           npm run build
 
       - name: Build .ipk
@@ -94,10 +97,37 @@ jobs:
           npm ci
           npx vitest run
 
+  catalog-drift:
+    name: Preset catalog drift-check
+    runs-on: ubuntu-latest
+    needs: [version]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Setup go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-version: 1.25.10
+      - name: Host sing-box (pinned RequiredVersion)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="$(sed -n 's/^const RequiredVersion = "\(.*\)"/\1/p' internal/singbox/installer/embedded.go)"
+          curl -fsSL -o /tmp/sb.tgz "https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box-${ver}-linux-amd64.tar.gz"
+          tar -xzf /tmp/sb.tgz -C /tmp
+          echo "SB=$(find /tmp -type f -name sing-box -path "*${ver}-linux-amd64*" | head -1)" >> "$GITHUB_ENV"
+      - name: Regenerate + assert no drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./tools/genpresets -singbox "$SB"
+          git diff --exit-code internal/presets/defaults.json \
+            || { echo "::error::defaults.json is stale vs the pinned .srs — run 'go run ./tools/genpresets -singbox <sb>' and commit"; exit 1; }
+
   publish:
     name: Publish stable release
     runs-on: ubuntu-latest
-    needs: [version, build, test]
+    needs: [version, build, test, catalog-drift]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:

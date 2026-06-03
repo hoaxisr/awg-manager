@@ -14,7 +14,7 @@ func TestTrafficHandler_RejectsUnsupportedPeriods(t *testing.T) {
 	h := &TunnelsHandler{}
 	h.SetTrafficHistory(traffic.New())
 
-	cases := []string{"15m", "2h", "7d", "30d", "bogus"}
+	cases := []string{"15m", "2h", "48h", "7d", "30d", "bogus"}
 	for _, p := range cases {
 		req := httptest.NewRequest(http.MethodGet, "/api/tunnels/traffic?id=awg0&period="+p, nil)
 		rr := httptest.NewRecorder()
@@ -29,7 +29,7 @@ func TestTrafficHandler_AcceptsValidPeriods(t *testing.T) {
 	h := &TunnelsHandler{}
 	h.SetTrafficHistory(traffic.New())
 
-	for _, p := range []string{"5m", "10m", "30m", "1h", "3h", "6h", "12h", "24h", "48h"} {
+	for _, p := range []string{"5m", "10m", "30m", "1h", "3h", "6h", "12h", "24h"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/tunnels/traffic?id=awg0&period="+p, nil)
 		rr := httptest.NewRecorder()
 		h.Traffic(rr, req)

@@ -747,15 +747,13 @@ func parseTrafficPeriod(raw string) (time.Duration, bool) {
 		return 12 * time.Hour, true
 	case "24h":
 		return 24 * time.Hour, true
-	case "48h":
-		return 48 * time.Hour, true
 	default:
 		return 0, false
 	}
 }
 
 // Traffic returns rate history + aggregates for a single tunnel.
-// GET /api/tunnels/traffic?id=<tunnelID>&period=5m|10m|30m|1h|3h|6h|12h|24h|48h
+// GET /api/tunnels/traffic?id=<tunnelID>&period=5m|10m|30m|1h|3h|6h|12h|24h
 //
 // Only a fixed set of short/long-range presets is accepted — anything
 // else returns 400. 1h is what the card chart fetches on mount to
@@ -770,7 +768,7 @@ func parseTrafficPeriod(raw string) (time.Duration, bool) {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id		query	string	true	"Tunnel id"
-//	@Param			period	query	string	true	"5m, 10m, 30m, 1h, 3h, 6h, 12h, 24h, or 48h"
+//	@Param			period	query	string	true	"5m, 10m, 30m, 1h, 3h, 6h, 12h, or 24h"
 //	@Success		200	{object}	TunnelTrafficResponse
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
@@ -796,7 +794,7 @@ func (h *TunnelsHandler) Traffic(w http.ResponseWriter, r *http.Request) {
 
 	since, ok := parseTrafficPeriod(r.URL.Query().Get("period"))
 	if !ok {
-		response.Error(w, "period must be one of: 5m, 10m, 30m, 1h, 3h, 6h, 12h, 24h, 48h", "INVALID_PERIOD")
+		response.Error(w, "period must be one of: 5m, 10m, 30m, 1h, 3h, 6h, 12h, 24h", "INVALID_PERIOD")
 		return
 	}
 

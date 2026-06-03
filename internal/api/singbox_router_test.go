@@ -68,10 +68,14 @@ func (m *mockRouterSvc) UpdateRuleSet(ctx context.Context, tag string, rs router
 func (m *mockRouterSvc) DeleteRuleSet(ctx context.Context, tag string, force bool) error {
 	return nil
 }
-func (m *mockRouterSvc) DatRuleSetURL(ctx context.Context, kind, tag string) (string, error) {
-	return "http://127.0.0.1:2222/api/singbox/router/rulesets/dat-srs?kind=" + kind + "&tag=" + tag + "&token=test", nil
+func (m *mockRouterSvc) DatRuleSetURL(ctx context.Context, kind string, tags []string) (string, error) {
+	q := "kind=" + kind
+	for _, tag := range tags {
+		q += "&tag=" + tag
+	}
+	return "http://127.0.0.1:2222/api/singbox/router/rulesets/dat-srs?" + q + "&token=test", nil
 }
-func (m *mockRouterSvc) DatRuleSetFile(ctx context.Context, kind, tag, token string) (string, error) {
+func (m *mockRouterSvc) DatRuleSetFile(ctx context.Context, kind string, tags []string, token string) (string, error) {
 	if m.datFileErr != nil {
 		return "", m.datFileErr
 	}
@@ -92,6 +96,7 @@ func (m *mockRouterSvc) DeleteCompositeOutbound(ctx context.Context, tag string,
 func (m *mockRouterSvc) ApplyPreset(ctx context.Context, presetID, outboundTag string) error {
 	return nil
 }
+func (m *mockRouterSvc) ListPresets() ([]router.Preset, error) { return nil, nil }
 func (m *mockRouterSvc) ListPolicies(ctx context.Context) ([]router.PolicyInfo, error) {
 	return []router.PolicyInfo{}, nil
 }
@@ -538,6 +543,19 @@ func TestDatRuleSetURL_InvalidQuery_Returns400(t *testing.T) {
 	h.DatRuleSetURL(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestDatRuleSetURL_MultipleTags_ReturnsURLWithRepeatedTagParams(t *testing.T) {
+	h := newMockRouterHandler(&mockRouterSvc{})
+	req := httptest.NewRequest(http.MethodGet, "/api/singbox/router/rulesets/dat-url?kind=geosite&tag=GOOGLE&tag=YOUTUBE", nil)
+	rr := httptest.NewRecorder()
+	h.DatRuleSetURL(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "tag=GOOGLE") || !strings.Contains(rr.Body.String(), "tag=YOUTUBE") {
+		t.Fatalf("response missing repeated tag params: %s", rr.Body.String())
 	}
 }
 

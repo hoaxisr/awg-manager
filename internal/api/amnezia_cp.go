@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,11 +12,28 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/amneziacp"
+	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
 const amneziaCPOrigin = "https://cp.amnezia.org"
+
+func configureAmneziaCPTransport(tr *http.Transport) {
+	if tr == nil {
+		return
+	}
+	tr.DialContext = (&net.Dialer{
+		Timeout:   12 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	tr.TLSHandshakeTimeout = 15 * time.Second
+	tr.ResponseHeaderTimeout = 25 * time.Second
+	tr.ExpectContinueTimeout = 1 * time.Second
+	tr.IdleConnTimeout = 45 * time.Second
+	tr.MaxIdleConnsPerHost = 8
+	tr.DisableKeepAlives = true
+}
 
 // Dedicated HTTP client for cp.amnezia.org: disable connection reuse — idle TLS sessions
 // behind CDN occasionally stall until DefaultTransport idle timeout / Client.Timeout (~45s),
@@ -23,17 +41,8 @@ const amneziaCPOrigin = "https://cp.amnezia.org"
 func newAmneziaCPHTTPClient() *http.Client {
 	tr := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:   12 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		TLSHandshakeTimeout:   15 * time.Second,
-		ResponseHeaderTimeout: 25 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		IdleConnTimeout:       45 * time.Second,
-		MaxIdleConnsPerHost:   8,
-		DisableKeepAlives:     true,
 	}
+	configureAmneziaCPTransport(tr)
 	return &http.Client{
 		Transport: tr,
 		Timeout:   45 * time.Second,
@@ -43,8 +52,10 @@ func newAmneziaCPHTTPClient() *http.Client {
 // AmneziaCPHandler proxies Amnezia Premium customer portal API so the SPA can load country lists
 // and configs without browser CORS issues.
 type AmneziaCPHandler struct {
-	client *http.Client
-	log    *logging.ScopedLogger
+	client                 *http.Client
+	downloadSvc            *downloader.Service
+	log                    *logging.ScopedLogger
+	downloadClientOverride func(context.Context) (*downloader.Lease, *http.Client, downloader.RouteInfo, error)
 }
 
 func NewAmneziaCPHandler(appLogger logging.AppLogger) *AmneziaCPHandler {
@@ -52,6 +63,52 @@ func NewAmneziaCPHandler(appLogger logging.AppLogger) *AmneziaCPHandler {
 		client: newAmneziaCPHTTPClient(),
 		log:    logging.NewScopedLogger(appLogger, logging.GroupSystem, logging.SubDiagnostics),
 	}
+}
+
+func (h *AmneziaCPHandler) SetDownloader(svc *downloader.Service) {
+	h.downloadSvc = svc
+}
+
+func (h *AmneziaCPHandler) downloadClient(ctx context.Context) (*downloader.Lease, *http.Client, downloader.RouteInfo, error) {
+	if h.downloadClientOverride != nil {
+		return h.downloadClientOverride(ctx)
+	}
+	if h.downloadSvc == nil {
+		return nil, h.client, downloader.RouteInfo{
+			Tag:    "direct",
+			Kind:   "direct",
+			Label:  "Direct (WAN)",
+			Detail: "без туннеля",
+		}, nil
+	}
+
+	lease, err := h.downloadSvc.ResolveClient(ctx, nil)
+	if err != nil {
+		return nil, nil, downloader.RouteInfo{}, err
+	}
+
+	client := lease.Client
+	if client == nil {
+		lease.Close()
+		return nil, nil, downloader.RouteInfo{}, fmt.Errorf("download route returned nil HTTP client")
+	}
+	client.Timeout = 45 * time.Second
+	if tr, ok := client.Transport.(*http.Transport); ok {
+		configureAmneziaCPTransport(tr)
+	} else if client.Transport == nil {
+		tr := &http.Transport{Proxy: http.ProxyFromEnvironment}
+		configureAmneziaCPTransport(tr)
+		client.Transport = tr
+	}
+
+	return lease, client, lease.Route, nil
+}
+
+func routeDisplayName(route downloader.RouteInfo) string {
+	if strings.TrimSpace(route.Label) != "" {
+		return route.Label
+	}
+	return route.DisplayName()
 }
 
 func extractVSID(resp *http.Response) string {
@@ -134,12 +191,28 @@ func (h *AmneziaCPHandler) Login(w http.ResponseWriter, r *http.Request) {
 	httpReq.Header.Set("Origin", amneziaCPOrigin)
 	setAmneziaCPBrowserHeaders(httpReq, "/ru/login")
 
-	h.log.Info("amnezia-premium-cp", "login", fmt.Sprintf("phase=start POST /api/login vpn_key_len=%d remember=%v", len(key), remember))
-
-	resp, err := h.client.Do(httpReq)
+	lease, client, route, err := h.downloadClient(r.Context())
 	if err != nil {
-		h.log.Warn("amnezia-premium-cp", "login", "network: "+err.Error())
-		response.Error(w, "Не удалось связаться с cp.amnezia.org: "+err.Error(), "AMNEZIA_CP_NETWORK")
+		h.log.Warn("amnezia-premium-cp", "route", "login: "+err.Error())
+		response.Error(w, "Маршрут загрузки Amnezia Premium недоступен: "+err.Error(), "AMNEZIA_CP_ROUTE_ERROR")
+		return
+	}
+	if lease != nil {
+		defer lease.Close()
+	}
+
+	h.log.Info("amnezia-premium-cp", "login", fmt.Sprintf(
+		"phase=start POST /api/login vpn_key_len=%d remember=%v route=%s kind=%s",
+		len(key),
+		remember,
+		routeDisplayName(route),
+		route.Kind,
+	))
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		h.log.Warn("amnezia-premium-cp", "login", fmt.Sprintf("network route=%s kind=%s: %v", routeDisplayName(route), route.Kind, err))
+		response.Error(w, fmt.Sprintf("Не удалось связаться с cp.amnezia.org через %s: %v", routeDisplayName(route), err), "AMNEZIA_CP_NETWORK")
 		return
 	}
 	defer resp.Body.Close()
@@ -147,7 +220,14 @@ func (h *AmneziaCPHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	sid := extractVSID(resp)
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && sid != "" {
-		h.log.Info("amnezia-premium-cp", "login", fmt.Sprintf("cp_http=%d remember=%v vpn_key_len=%d v_sid_ok=true", resp.StatusCode, remember, len(key)))
+		h.log.Info("amnezia-premium-cp", "login", fmt.Sprintf(
+			"cp_http=%d remember=%v vpn_key_len=%d route=%s kind=%s v_sid_ok=true",
+			resp.StatusCode,
+			remember,
+			len(key),
+			routeDisplayName(route),
+			route.Kind,
+		))
 		response.Success(w, map[string]string{"sid": sid})
 		return
 	}
@@ -163,7 +243,15 @@ func (h *AmneziaCPHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if resp.StatusCode == http.StatusUnprocessableEntity {
 		code = "AMNEZIA_CP_REJECTED"
 	}
-	h.log.Warn("amnezia-premium-cp", "login", fmt.Sprintf("cp_http=%d remember=%v vpn_key_len=%d v_sid_ok=false msg=%s", resp.StatusCode, remember, len(key), truncateCPLogMsg(msg, 200)))
+	h.log.Warn("amnezia-premium-cp", "login", fmt.Sprintf(
+		"cp_http=%d remember=%v vpn_key_len=%d route=%s kind=%s v_sid_ok=false msg=%s",
+		resp.StatusCode,
+		remember,
+		len(key),
+		routeDisplayName(route),
+		route.Kind,
+		truncateCPLogMsg(msg, 200),
+	))
 	response.ErrorWithStatus(w, resp.StatusCode, msg, code)
 }
 
@@ -201,12 +289,27 @@ func (h *AmneziaCPHandler) AccountInfo(w http.ResponseWriter, r *http.Request) {
 	httpReq.Header.Set("Accept", "*/*")
 	setAmneziaCPBrowserHeaders(httpReq, "/ru")
 
-	h.log.Info("amnezia-premium-cp", "account-info", fmt.Sprintf("phase=start GET /api/account-info sid_len=%d", len(sid)))
-
-	resp, err := h.client.Do(httpReq)
+	lease, client, route, err := h.downloadClient(r.Context())
 	if err != nil {
-		h.log.Warn("amnezia-premium-cp", "account-info", "network: "+err.Error())
-		response.Error(w, "Не удалось связаться с cp.amnezia.org: "+err.Error(), "AMNEZIA_CP_NETWORK")
+		h.log.Warn("amnezia-premium-cp", "route", "account-info: "+err.Error())
+		response.Error(w, "Маршрут загрузки Amnezia Premium недоступен: "+err.Error(), "AMNEZIA_CP_ROUTE_ERROR")
+		return
+	}
+	if lease != nil {
+		defer lease.Close()
+	}
+
+	h.log.Info("amnezia-premium-cp", "account-info", fmt.Sprintf(
+		"phase=start GET /api/account-info sid_len=%d route=%s kind=%s",
+		len(sid),
+		routeDisplayName(route),
+		route.Kind,
+	))
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		h.log.Warn("amnezia-premium-cp", "account-info", fmt.Sprintf("network route=%s kind=%s: %v", routeDisplayName(route), route.Kind, err))
+		response.Error(w, fmt.Sprintf("Не удалось связаться с cp.amnezia.org через %s: %v", routeDisplayName(route), err), "AMNEZIA_CP_NETWORK")
 		return
 	}
 	defer resp.Body.Close()
@@ -217,7 +320,14 @@ func (h *AmneziaCPHandler) AccountInfo(w http.ResponseWriter, r *http.Request) {
 		if msg == "" {
 			msg = strings.TrimSpace(string(body))
 		}
-		h.log.Warn("amnezia-premium-cp", "account-info", fmt.Sprintf("cp_http=%d sid_len=%d msg=%s", resp.StatusCode, len(sid), truncateCPLogMsg(msg, 200)))
+		h.log.Warn("amnezia-premium-cp", "account-info", fmt.Sprintf(
+			"cp_http=%d sid_len=%d route=%s kind=%s msg=%s",
+			resp.StatusCode,
+			len(sid),
+			routeDisplayName(route),
+			route.Kind,
+			truncateCPLogMsg(msg, 200),
+		))
 		response.ErrorWithStatus(w, resp.StatusCode, msg, "AMNEZIA_CP_ERROR")
 		return
 	}
@@ -230,11 +340,23 @@ func (h *AmneziaCPHandler) AccountInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	inner, ok := envelope["data"]
 	if !ok {
-		h.log.Info("amnezia-premium-cp", "account-info", fmt.Sprintf("cp_http=%d sid_len=%d envelope=no_data_field", resp.StatusCode, len(sid)))
+		h.log.Info("amnezia-premium-cp", "account-info", fmt.Sprintf(
+			"cp_http=%d sid_len=%d route=%s kind=%s envelope=no_data_field",
+			resp.StatusCode,
+			len(sid),
+			routeDisplayName(route),
+			route.Kind,
+		))
 		response.Success(w, json.RawMessage(body))
 		return
 	}
-	h.log.Info("amnezia-premium-cp", "account-info", fmt.Sprintf("cp_http=%d sid_len=%d envelope=data", resp.StatusCode, len(sid)))
+	h.log.Info("amnezia-premium-cp", "account-info", fmt.Sprintf(
+		"cp_http=%d sid_len=%d route=%s kind=%s envelope=data",
+		resp.StatusCode,
+		len(sid),
+		routeDisplayName(route),
+		route.Kind,
+	))
 	response.Success(w, inner)
 }
 
@@ -282,12 +404,28 @@ func (h *AmneziaCPHandler) DownloadConfig(w http.ResponseWriter, r *http.Request
 	httpReq.Header.Set("Cookie", "v_sid="+sid)
 	setAmneziaCPBrowserHeaders(httpReq, "/ru")
 
-	h.log.Info("amnezia-premium-cp", "download-config", fmt.Sprintf("phase=start POST /api/download-config country=%s sid_len=%d", cc, len(sid)))
-
-	resp, err := h.client.Do(httpReq)
+	lease, client, route, err := h.downloadClient(r.Context())
 	if err != nil {
-		h.log.Warn("amnezia-premium-cp", "download-config", "network: "+err.Error())
-		response.Error(w, "Не удалось связаться с cp.amnezia.org: "+err.Error(), "AMNEZIA_CP_NETWORK")
+		h.log.Warn("amnezia-premium-cp", "route", "download-config: "+err.Error())
+		response.Error(w, "Маршрут загрузки Amnezia Premium недоступен: "+err.Error(), "AMNEZIA_CP_ROUTE_ERROR")
+		return
+	}
+	if lease != nil {
+		defer lease.Close()
+	}
+
+	h.log.Info("amnezia-premium-cp", "download-config", fmt.Sprintf(
+		"phase=start POST /api/download-config country=%s sid_len=%d route=%s kind=%s",
+		cc,
+		len(sid),
+		routeDisplayName(route),
+		route.Kind,
+	))
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		h.log.Warn("amnezia-premium-cp", "download-config", fmt.Sprintf("network route=%s kind=%s: %v", routeDisplayName(route), route.Kind, err))
+		response.Error(w, fmt.Sprintf("Не удалось связаться с cp.amnezia.org через %s: %v", routeDisplayName(route), err), "AMNEZIA_CP_NETWORK")
 		return
 	}
 	defer resp.Body.Close()
@@ -298,18 +436,41 @@ func (h *AmneziaCPHandler) DownloadConfig(w http.ResponseWriter, r *http.Request
 		if msg == "" {
 			msg = strings.TrimSpace(string(body))
 		}
-		h.log.Warn("amnezia-premium-cp", "download-config", fmt.Sprintf("cp_http=%d country=%s sid_len=%d msg=%s", resp.StatusCode, cc, len(sid), truncateCPLogMsg(msg, 200)))
+		h.log.Warn("amnezia-premium-cp", "download-config", fmt.Sprintf(
+			"cp_http=%d country=%s sid_len=%d route=%s kind=%s msg=%s",
+			resp.StatusCode,
+			cc,
+			len(sid),
+			routeDisplayName(route),
+			route.Kind,
+			truncateCPLogMsg(msg, 200),
+		))
 		response.ErrorWithStatus(w, resp.StatusCode, msg, "AMNEZIA_CP_ERROR")
 		return
 	}
 
 	conf, err := extractDownloadedWireGuardConf(body)
 	if err != nil {
-		h.log.Warn("amnezia-premium-cp", "download-config", fmt.Sprintf("country=%s sid_len=%d parse_err=%s", cc, len(sid), truncateCPLogMsg(err.Error(), 160)))
+		h.log.Warn("amnezia-premium-cp", "download-config", fmt.Sprintf(
+			"country=%s sid_len=%d route=%s kind=%s parse_err=%s",
+			cc,
+			len(sid),
+			routeDisplayName(route),
+			route.Kind,
+			truncateCPLogMsg(err.Error(), 160),
+		))
 		response.Error(w, err.Error(), "AMNEZIA_CP_BAD_CONFIG")
 		return
 	}
-	h.log.Info("amnezia-premium-cp", "download-config", fmt.Sprintf("cp_http=%d country=%s sid_len=%d conf_len=%d", resp.StatusCode, cc, len(sid), len(conf)))
+	h.log.Info("amnezia-premium-cp", "download-config", fmt.Sprintf(
+		"cp_http=%d country=%s sid_len=%d route=%s kind=%s conf_len=%d",
+		resp.StatusCode,
+		cc,
+		len(sid),
+		routeDisplayName(route),
+		route.Kind,
+		len(conf),
+	))
 	response.Success(w, map[string]string{"config": conf})
 }
 

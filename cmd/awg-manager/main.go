@@ -45,6 +45,7 @@ import (
 	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
+	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/server"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
@@ -434,6 +435,10 @@ func main() {
 	// Static route service for IP-based routing through tunnels
 	// (constructed later, after ndmsCommands is available).
 	staticRouteStore := storage.NewStaticRouteStore(*dataDir)
+
+	// Unified preset catalog (U0: read-only, no CRUD yet)
+	presetStore := presets.NewStore(*dataDir)
+	presetCatalog := presets.NewCatalog(presetStore)
 
 	// Create external tunnel service
 	externalService := external.NewService(awgStore, settingsStore, tunnelService, loggingService)
@@ -1055,6 +1060,7 @@ func main() {
 		}()
 	}
 
+	srv.SetPresetCatalog(presetCatalog)
 	srv.SetDeviceProxyService(deviceProxySvc)
 	srv.SetDownloadService(sharedDownloadSvc)
 	// Note: legacy awg-* outbound cleanup happens lazily on first
@@ -1085,6 +1091,7 @@ func main() {
 		WANInterfaces:          &routerWANInterfaceAdapter{store: ndmsQueries.Interfaces},
 		BindableInterfaces:     &routerWANInterfaceAdapter{store: ndmsQueries.Interfaces},
 		IngressResolver:        &routerIngressResolverAdapter{store: ndmsQueries.Interfaces},
+		PresetCatalog:          presetCatalog,
 		GeoData:                geoDataStore,
 	})
 	singboxOp.SetOutboundReferenceRenamer(routerSvc)
