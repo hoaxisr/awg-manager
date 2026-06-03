@@ -1,6 +1,4 @@
 export { default as NetfilterMissingBanner } from './NetfilterMissingBanner.svelte';
-export { default as EngineStatusCard } from './EngineStatusCard.svelte';
-export { default as RefreshSettingsModal } from './RefreshSettingsModal.svelte';
 export { default as RuleEditModal } from './RuleEditModal.svelte';
 export { default as RuleSetAddModal } from './RuleSetAddModal.svelte';
 export { default as InlineRuleListEditor } from './InlineRuleListEditor.svelte';
@@ -11,10 +9,7 @@ export { default as PresetsPreflightBanner, type PreflightStatus } from './Prese
 export { default as PresetApplyModal } from './PresetApplyModal.svelte';
 export { default as PresetsBulkBar } from './PresetsBulkBar.svelte';
 export { default as PresetIcon } from './PresetIcon.svelte';
-export { default as DNSTab } from './DNSTab.svelte';
-export { default as DNSServersList } from './DNSServersList.svelte';
 export { default as DNSServerEditModal } from './DNSServerEditModal.svelte';
-export { default as DNSRulesList } from './DNSRulesList.svelte';
 export { default as DNSRuleEditModal } from './DNSRuleEditModal.svelte';
 export { default as DNSRewritesList } from './DNSRewritesList.svelte';
 export { default as DNSRewriteEditModal } from './DNSRewriteEditModal.svelte';
