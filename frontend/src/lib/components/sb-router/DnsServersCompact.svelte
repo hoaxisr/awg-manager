@@ -6,8 +6,9 @@
   import type { SingboxRouterDNSServer, SingboxRouterDNSRule } from '$lib/types';
   import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
   import { Badge, Button } from '$lib/components/ui';
-  import { ArrowRight } from 'lucide-svelte';
+  import { ArrowRight, Trash2 } from 'lucide-svelte';
   import { resolveMemberLabel } from '$lib/utils/memberLabel';
+  import { dnsRuleTarget } from './dnsRuleLabel';
 
   const AWG_OPTION_GROUPS = new Set(['AWG туннели', 'Системные WireGuard']);
 
@@ -16,6 +17,7 @@
     rules: SingboxRouterDNSRule[];
     onEditServer: (tag: string) => void;
     onEditRule: (idx: number) => void;
+    onDeleteRule?: (idx: number) => void;
     onAddRule?: () => void;
     addRuleDisabled?: boolean;
     addRuleTitle?: string;
@@ -23,7 +25,7 @@
   }
 
   let {
-    servers, rules, onEditServer, onEditRule, onAddRule, addRuleDisabled = false, addRuleTitle,
+    servers, rules, onEditServer, onEditRule, onDeleteRule, onAddRule, addRuleDisabled = false, addRuleTitle,
     outboundOptions = [],
   }: Props = $props();
 
@@ -87,11 +89,19 @@
   {#if rules.length > 0}
     <div class="rules">
       {#each rules as r, i (i)}
-        <button type="button" class="rule-row" onclick={() => onEditRule(i)}>
-          <span class="rule-matchers">{matcherSummary(r)}</span>
-          <ArrowRight size={11} color="var(--text-muted)" />
-          <span class="rule-server">{r.server ?? '—'}</span>
-        </button>
+        {@const tgt = dnsRuleTarget(r)}
+        <div class="rule-row">
+          <button type="button" class="rule-main" onclick={() => onEditRule(i)}>
+            <span class="rule-matchers">{matcherSummary(r)}</span>
+            <ArrowRight size={11} color="var(--text-muted)" />
+            <span class="rule-target" class:block={tgt.kind === 'block'} class:none={tgt.kind === 'none'}>{tgt.label}</span>
+          </button>
+          {#if onDeleteRule}
+            <button type="button" class="rule-del" onclick={() => onDeleteRule(i)} aria-label="Удалить правило" title="Удалить правило">
+              <Trash2 size={14} />
+            </button>
+          {/if}
+        </div>
       {/each}
     </div>
   {:else}
@@ -108,7 +118,7 @@
     display: flex;
     flex-direction: column;
   }
-  .row, .rule-row {
+  .row {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -122,7 +132,7 @@
     width: 100%;
     text-align: left;
   }
-  .row:hover, .rule-row:hover {
+  .row:hover {
     background: var(--bg-tertiary);
   }
   .dot {
@@ -166,9 +176,43 @@
     font-style: italic;
   }
   .rule-row {
+    display: flex;
+    align-items: stretch;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .rule-row:hover {
+    background: var(--bg-tertiary);
+  }
+  .rule-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 14px;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
     font-family: var(--font-mono);
     font-size: 11.5px;
-    align-items: flex-start;
+    color: inherit;
+    text-align: left;
+  }
+  .rule-del {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+  }
+  .rule-del:hover {
+    color: var(--color-error, #dc2626);
+    background: color-mix(in srgb, var(--color-error, #dc2626) 10%, transparent);
   }
   .rule-matchers {
     flex: 1;
@@ -185,7 +229,7 @@
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
   }
-  .rule-server {
+  .rule-target {
     flex-shrink: 0;
     color: var(--accent);
     min-width: 0;
@@ -193,6 +237,16 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* Block actions (DROP / REFUSED / NXDOMAIN) are not a server detour — render
+     distinct from the accent-coloured route target so they're not mistaken
+     for a DNS server tag. */
+  .rule-target.block {
+    color: var(--text-secondary);
+    font-weight: 600;
+  }
+  .rule-target.none {
+    color: var(--text-muted);
   }
   .empty {
     padding: 14px;

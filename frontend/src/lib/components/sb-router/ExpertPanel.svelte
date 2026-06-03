@@ -276,6 +276,22 @@
     };
   }
 
+  function handleDeleteDNSRule(idx: number) {
+    pendingConfirm = {
+      title: 'Удалить DNS-правило',
+      message: `Удалить DNS-правило #${idx + 1}?`,
+      run: async () => {
+        try {
+          await api.singboxRouterDeleteDNSRule(idx);
+          await singboxRouterStore.loadAll();
+          notifications.success('DNS-правило удалено');
+        } catch (e) {
+          notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      },
+    };
+  }
+
   async function handleMoveRule(idx: number, dir: 'up' | 'down') {
     const to = dir === 'up' ? idx - 1 : idx + 1;
     if (to < 0 || to >= $storeRules.length) return;
@@ -476,6 +492,7 @@
           outboundOptions={$storeOptions}
           onEditServer={(tag) => (dnsServerEditTag = tag)}
           onEditRule={(idx) => (dnsRuleEditIdx = idx)}
+          onDeleteRule={handleDeleteDNSRule}
           onAddRule={() => (dnsRuleAddOpen = true)}
         />
       </SidePanel>
