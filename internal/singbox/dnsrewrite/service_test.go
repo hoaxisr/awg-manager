@@ -44,11 +44,21 @@ func TestServiceAddFlushesCompiledRules(t *testing.T) {
 	if err := json.Unmarshal(data, &slot); err != nil {
 		t.Fatal(err)
 	}
-	if len(slot.DNS.Rules) != 1 {
-		t.Fatalf("want 1 rule, got %d", len(slot.DNS.Rules))
+	// IPv4-only rewrite → A answer + AAAA NODATA suppression = 2 rules.
+	if len(slot.DNS.Rules) != 2 {
+		t.Fatalf("want 2 rules (answer + opposite-family NODATA), got %d", len(slot.DNS.Rules))
 	}
-	if slot.DNS.Rules[0]["action"] != "predefined" {
-		t.Errorf("rule: %#v", slot.DNS.Rules[0])
+	withAnswer := 0
+	for _, r := range slot.DNS.Rules {
+		if r["action"] != "predefined" {
+			t.Errorf("rule not predefined: %#v", r)
+		}
+		if _, ok := r["answer"]; ok {
+			withAnswer++
+		}
+	}
+	if withAnswer != 1 {
+		t.Errorf("want exactly 1 rule with an answer (the A family), got %d", withAnswer)
 	}
 	if !orch.enabled[SlotName] {
 		t.Error("slot must be enabled after add")

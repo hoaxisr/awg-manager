@@ -28,14 +28,21 @@ func compileRewrite(r DNSRewrite) ([]map[string]any, error) {
 		return nil, fmt.Errorf("перезапись %q: нужен хотя бы один IP", r.Pattern)
 	}
 
+	// Each rule is scoped to one query_type. The family that has IPs answers
+	// directly; the opposite family gets a predefined rule WITHOUT an answer,
+	// which sing-box returns as NODATA. This stops a single-stack rewrite from
+	// being silently bypassed: an IPv4-only rewrite must suppress AAAA (else an
+	// IPv6-capable client resolves the real address over IPv6 and never uses
+	// the override), and an IPv6-only rewrite must suppress A. Dual-stack just
+	// answers both families.
 	mk := func(answers []string, qtype string) map[string]any {
 		rule := map[string]any{
-			matcherKey: []string{matcher},
-			"action":   "predefined",
-			"answer":   answers,
+			matcherKey:   []string{matcher},
+			"action":     "predefined",
+			"query_type": []string{qtype},
 		}
-		if qtype != "" {
-			rule["query_type"] = []string{qtype}
+		if len(answers) > 0 {
+			rule["answer"] = answers
 		}
 		return rule
 	}
@@ -48,23 +55,10 @@ func compileRewrite(r DNSRewrite) ([]map[string]any, error) {
 		return out
 	}
 
-	dual := len(v4) > 0 && len(v6) > 0
-	var rules []map[string]any
-	if len(v4) > 0 {
-		qt := ""
-		if dual {
-			qt = "A"
-		}
-		rules = append(rules, mk(answersFor(v4, "A"), qt))
-	}
-	if len(v6) > 0 {
-		qt := ""
-		if dual {
-			qt = "AAAA"
-		}
-		rules = append(rules, mk(answersFor(v6, "AAAA"), qt))
-	}
-	return rules, nil
+	return []map[string]any{
+		mk(answersFor(v4, "A"), "A"),
+		mk(answersFor(v6, "AAAA"), "AAAA"),
+	}, nil
 }
 
 // parsePattern разбирает glob-паттерн в (ключ-матчера, значение, абсолютное answer-имя).

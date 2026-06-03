@@ -10,11 +10,20 @@ func TestCompileRewriteExact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []map[string]any{{
-		"domain": []string{"nas.lan"},
-		"action": "predefined",
-		"answer": []string{"nas.lan. IN A 192.168.1.10"},
-	}}
+	// IPv4-only → A answers + AAAA suppressed (predefined, no answer = NODATA).
+	want := []map[string]any{
+		{
+			"domain":     []string{"nas.lan"},
+			"action":     "predefined",
+			"query_type": []string{"A"},
+			"answer":     []string{"nas.lan. IN A 192.168.1.10"},
+		},
+		{
+			"domain":     []string{"nas.lan"},
+			"action":     "predefined",
+			"query_type": []string{"AAAA"},
+		},
+	}
 	if !reflect.DeepEqual(rules, want) {
 		t.Errorf("got %#v", rules)
 	}
@@ -25,11 +34,19 @@ func TestCompileRewriteSuffix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []map[string]any{{
-		"domain_suffix": []string{"discord.media"},
-		"action":        "predefined",
-		"answer":        []string{"*.discord.media. IN A 104.25.158.178"},
-	}}
+	want := []map[string]any{
+		{
+			"domain_suffix": []string{"discord.media"},
+			"action":        "predefined",
+			"query_type":    []string{"A"},
+			"answer":        []string{"*.discord.media. IN A 104.25.158.178"},
+		},
+		{
+			"domain_suffix": []string{"discord.media"},
+			"action":        "predefined",
+			"query_type":    []string{"AAAA"},
+		},
+	}
 	if !reflect.DeepEqual(rules, want) {
 		t.Errorf("got %#v", rules)
 	}
@@ -40,11 +57,43 @@ func TestCompileRewriteInLabelRegex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []map[string]any{{
-		"domain_regex": []string{`^finland10[^.]*\.discord\.media$`},
-		"action":       "predefined",
-		"answer":       []string{"*.discord.media. IN A 104.25.158.178"},
-	}}
+	want := []map[string]any{
+		{
+			"domain_regex": []string{`^finland10[^.]*\.discord\.media$`},
+			"action":       "predefined",
+			"query_type":   []string{"A"},
+			"answer":       []string{"*.discord.media. IN A 104.25.158.178"},
+		},
+		{
+			"domain_regex": []string{`^finland10[^.]*\.discord\.media$`},
+			"action":       "predefined",
+			"query_type":   []string{"AAAA"},
+		},
+	}
+	if !reflect.DeepEqual(rules, want) {
+		t.Errorf("got %#v", rules)
+	}
+}
+
+func TestCompileRewriteIPv6OnlySuppressesA(t *testing.T) {
+	rules, err := compileRewrite(DNSRewrite{Pattern: "v6.lan", IPs: []string{"fd00::9"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// IPv6-only → A suppressed (NODATA) + AAAA answers.
+	want := []map[string]any{
+		{
+			"domain":     []string{"v6.lan"},
+			"action":     "predefined",
+			"query_type": []string{"A"},
+		},
+		{
+			"domain":     []string{"v6.lan"},
+			"action":     "predefined",
+			"query_type": []string{"AAAA"},
+			"answer":     []string{"v6.lan. IN AAAA fd00::9"},
+		},
+	}
 	if !reflect.DeepEqual(rules, want) {
 		t.Errorf("got %#v", rules)
 	}
