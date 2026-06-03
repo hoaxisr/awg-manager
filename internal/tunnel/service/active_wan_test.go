@@ -188,6 +188,61 @@ func TestGetState_NeedsStop_RouterToggle(t *testing.T) {
 	}
 }
 
+// === Get NeedsStop correction tests ===
+
+// TestGet_NeedsStop_DisabledByUs verifies that Get applies the same
+// NeedsStop→Disabled correction as GetState: a tunnel stopped by our code
+// (Enabled=false) whose kernel interface still lingers must report Disabled,
+// not NeedsStop. Regression for issue #262 (edit page showed "Ожидает остановки").
+func TestGet_NeedsStop_DisabledByUs(t *testing.T) {
+	svc, store, _, stateMgr := testService(t)
+	ctx := context.Background()
+
+	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
+		tun.Enabled = false
+	})
+	stateMgr.SetState("awg10", tunnel.StateInfo{
+		State:          tunnel.StateNeedsStop,
+		OpkgTunExists:  true,
+		ProcessRunning: true,
+		InterfaceUp:    false,
+	})
+
+	tun, err := svc.Get(ctx, "awg10")
+	if err != nil {
+		t.Fatalf("Get() error: %v", err)
+	}
+	if tun.State != tunnel.StateDisabled {
+		t.Errorf("Get().State = %s, want Disabled (Enabled=false corrects NeedsStop)", tun.State)
+	}
+}
+
+// TestGet_NeedsStop_RouterToggle verifies Get preserves NeedsStop when the
+// router UI toggled the tunnel off (Enabled still true) — the correction must
+// not over-fire.
+func TestGet_NeedsStop_RouterToggle(t *testing.T) {
+	svc, store, _, stateMgr := testService(t)
+	ctx := context.Background()
+
+	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) {
+		tun.Enabled = true
+	})
+	stateMgr.SetState("awg10", tunnel.StateInfo{
+		State:          tunnel.StateNeedsStop,
+		OpkgTunExists:  true,
+		ProcessRunning: true,
+		InterfaceUp:    false,
+	})
+
+	tun, err := svc.Get(ctx, "awg10")
+	if err != nil {
+		t.Fatalf("Get() error: %v", err)
+	}
+	if tun.State != tunnel.StateNeedsStop {
+		t.Errorf("Get().State = %s, want NeedsStop (Enabled=true, router toggled off)", tun.State)
+	}
+}
+
 // === GetResolvedISP Tests ===
 
 // TestActiveWAN_GetResolvedISP_ReadsStorage verifies GetResolvedISP reads from storage.

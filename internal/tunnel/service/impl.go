@@ -262,12 +262,10 @@ func (s *ServiceImpl) Get(ctx context.Context, tunnelID string) (*TunnelWithStat
 		return nil, tunnel.ErrNotFound
 	}
 
-	var stateInfo tunnel.StateInfo
-	if stored.Backend == "nativewg" && s.nwgOperator != nil {
-		stateInfo = s.nwgOperator.GetState(ctx, stored)
-	} else {
-		stateInfo = s.state.GetState(ctx, tunnelID)
-	}
+	// Delegate to GetState so the NeedsStop→Disabled correction (impl.go
+	// GetState) applies here too — otherwise the detail/edit response shows
+	// "needs_stop" for a disabled tunnel whose kernel interface lingers (#262).
+	stateInfo := s.GetState(ctx, tunnelID)
 
 	var ifaceName, ndmsName string
 	if stored.Backend == "nativewg" {
