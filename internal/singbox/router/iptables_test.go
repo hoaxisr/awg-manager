@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -67,17 +68,42 @@ func newFakeIPTables(fe *fakeExec) *IPTables {
 	}
 }
 
-// jumpsPresentDump mimics `iptables -S PREROUTING` output with both AWGM
-// jumps present, so JumpsInstalled defaults to true in tests that don't
-// model a jump loss.
+// jumpsPresentDump mimics `iptables -S <table>` output for a fully-installed
+// engine: both chain declarations AND their PREROUTING jumps. Used as the
+// default runIPTablesOut in tests that don't model a jump loss, so Probe
+// reports installed+jumps. The same dump serves the mangle and nat probes
+// (each scans for its own chain).
 func jumpsPresentDump() string {
 	return "-P PREROUTING ACCEPT\n" +
+		"-N " + ChainName + "\n" +
+		"-N " + RedirectChain + "\n" +
 		"-A PREROUTING -m conntrack ! --ctstate INVALID -j " + ChainName + "\n" +
 		"-A PREROUTING -m conntrack ! --ctstate INVALID -j " + RedirectChain + "\n"
 }
 
 func newFakeExec() *fakeExec {
 	return &fakeExec{}
+}
+
+// The netfilter.d hook runs on the live router on every NDMS reload — a
+// syntax error would break on each reload. Validate the generated shell.
+func TestNetfilterHookScript_ValidShell(t *testing.T) {
+	script := netfilterHookScript()
+
+	cmd := exec.Command("sh", "-n")
+	cmd.Stdin = strings.NewReader(script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("generated netfilter.d hook is not valid sh: %v\n%s", err, out)
+	}
+
+	// The fix: the install gate must check the PREROUTING jump, not just the
+	// chain. Both per-table gates must carry the anchored jump grep.
+	if !strings.Contains(script, "grep -qE -- '-[jg] "+ChainName+"($| )'") {
+		t.Error("hook missing mangle jump-presence gate")
+	}
+	if !strings.Contains(script, "grep -qE -- '-[jg] "+RedirectChain+"($| )'") {
+		t.Error("hook missing nat jump-presence gate")
+	}
 }
 
 func TestBuildTProxyModulePath(t *testing.T) {
@@ -984,10 +1010,10 @@ func TestHasAnyInstalled_None_ReturnsFalse(t *testing.T) {
 	}
 }
 
-func TestJumpsInstalled(t *testing.T) {
-	// Builds an IPTables whose `-S PREROUTING` output carries (or omits) the
-	// jump into each chain, per table. err short-circuits to the error path.
-	mk := func(mangleJump, natJump bool, err error) *IPTables {
+func TestProbe(t *testing.T) {
+	// Builds an IPTables whose `-S <table>` output declares the chain and/or
+	// emits its PREROUTING jump, per table. err short-circuits to the error path.
+	mk := func(mangleChain, mangleJump, natChain, natJump bool, err error) *IPTables {
 		return &IPTables{
 			runIPTablesOut: func(_ context.Context, args ...string) (string, error) {
 				if err != nil {
@@ -998,29 +1024,71 @@ func TestJumpsInstalled(t *testing.T) {
 					table = args[1]
 				}
 				out := "-P PREROUTING ACCEPT\n"
-				if table == "mangle" && mangleJump {
-					out += "-A PREROUTING -m conntrack ! --ctstate INVALID -j " + ChainName + "\n"
+				if table == "mangle" {
+					if mangleChain {
+						out += "-N " + ChainName + "\n"
+					}
+					if mangleJump {
+						out += "-A PREROUTING -m conntrack ! --ctstate INVALID -j " + ChainName + "\n"
+					}
 				}
-				if table == "nat" && natJump {
-					out += "-A PREROUTING -m conntrack ! --ctstate INVALID -j " + RedirectChain + "\n"
+				if table == "nat" {
+					if natChain {
+						out += "-N " + RedirectChain + "\n"
+					}
+					if natJump {
+						out += "-A PREROUTING -m conntrack ! --ctstate INVALID -j " + RedirectChain + "\n"
+					}
 				}
 				return out, nil
 			},
 		}
 	}
 
-	if !mk(true, true, nil).JumpsInstalled(context.Background()) {
-		t.Error("both jumps present → want true")
+	cases := []struct {
+		name                         string
+		mChain, mJump, nChain, nJump bool
+		wantInstalled, wantJumps     bool
+	}{
+		{"all present", true, true, true, true, true, true},
+		{"chains exist, mangle jump wiped", true, false, true, true, true, false},
+		{"chains exist, nat jump wiped", true, true, true, false, true, false},
+		{"mangle chain missing", false, false, true, true, false, false},
 	}
-	if mk(false, true, nil).JumpsInstalled(context.Background()) {
-		t.Error("mangle jump missing → want false")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			installed, jumps, err := mk(c.mChain, c.mJump, c.nChain, c.nJump, nil).Probe(context.Background())
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if installed != c.wantInstalled || jumps != c.wantJumps {
+				t.Errorf("installed=%v jumps=%v, want installed=%v jumps=%v", installed, jumps, c.wantInstalled, c.wantJumps)
+			}
+		})
 	}
-	if mk(true, false, nil).JumpsInstalled(context.Background()) {
-		t.Error("nat jump missing → want false")
-	}
-	if mk(true, true, errors.New("iptables query failed")).JumpsInstalled(context.Background()) {
-		t.Error("query error → want false")
-	}
+
+	t.Run("query error surfaces", func(t *testing.T) {
+		_, _, err := mk(true, true, true, true, errors.New("iptables query failed")).Probe(context.Background())
+		if err == nil {
+			t.Error("want error from Probe when the -S query fails")
+		}
+	})
+
+	// AWGM-TPROXY must not match a longer chain name sharing its prefix.
+	t.Run("anchored jump match", func(t *testing.T) {
+		it := &IPTables{
+			runIPTablesOut: func(_ context.Context, args ...string) (string, error) {
+				out := "-P PREROUTING ACCEPT\n-N " + ChainName + "\n-N " + RedirectChain + "\n"
+				out += "-A PREROUTING -j " + ChainName + "-V2\n" // decoy: longer name
+				out += "-A PREROUTING -j " + RedirectChain + "\n"
+				return out, nil
+			},
+		}
+		_, jumps, _ := it.Probe(context.Background())
+		if jumps {
+			t.Error("`-j AWGM-TPROXY-V2` must not satisfy the AWGM-TPROXY jump check")
+		}
+	})
 }
 
 func TestBuildRestoreInput_BypassUDPPorts_AddsReturnRules(t *testing.T) {

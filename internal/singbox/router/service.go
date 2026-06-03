@@ -966,11 +966,18 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		}
 	}
 
-	installed := s.deps.IPTables.IsInstalled(ctx)
+	// One -S probe per table yields both chain existence and jump presence.
+	// A probe error is treated as "unknown" — installed/jumps stay false but
+	// the badge self-corrects on the next status read (no side effect here,
+	// unlike the reconcile path which must not reinstall on a transient error).
+	installed, jumps, _ := s.deps.IPTables.Probe(ctx)
+	// Active = interception path truly live: chains + PREROUTING jumps + sing-box
+	// actually listening on both inbound sockets.
+	active := jumps && singboxListeningProbe()
 	return Status{
 		Enabled:                sr.Enabled,
 		Installed:              installed,
-		Active:                 installed && s.deps.IPTables.JumpsInstalled(ctx),
+		Active:                 active,
 		NetfilterAvailable:     IsNetfilterAvailable(),
 		NetfilterComponentName: "Модули ядра подсистемы сетевой фильтрации",
 		TProxyTargetAvailable:  IsTProxyTargetAvailable(ctx),
@@ -1110,9 +1117,12 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	forceInitialSync := !s.netfilterStateKnown
 	// Self-heal: chains can survive while PREROUTING jumps get wiped (NDMS
 	// rebuilds PREROUTING on reconfig), leaving the engine "installed" but
-	// intercepting nothing. IsInstalled can't see this, so check the jumps
-	// explicitly and force a reinstall to restore interception.
-	jumpsMissing := !s.deps.IPTables.JumpsInstalled(ctx)
+	// intercepting nothing. The netfilter.d hook restores them immediately on
+	// the NDMS reload; this is the slower secondary net. On a probe error treat
+	// the state as unknown and DO NOT reinstall — a transient `-S` failure
+	// during an NDMS reload must not trigger a needless rebuild.
+	_, jumps, probeErr := s.deps.IPTables.Probe(ctx)
+	jumpsMissing := probeErr == nil && !jumps
 	needsInstall := forceInitialSync || jumpsMissing || markChanged || wanIPsChanged || lanBridgesChanged || ingressChanged || bypassPresetsChanged || bypassExtraChanged
 
 	if needsInstall {

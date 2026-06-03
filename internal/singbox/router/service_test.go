@@ -446,9 +446,9 @@ func TestReconcile_JumpsMissing_Reinstalls(t *testing.T) {
 	ipt := &IPTables{
 		restoreNoflush: func(_ context.Context, _ string) error { restoreCalls++; return nil },
 		runIPTables:    func(_ context.Context, _ ...string) error { return nil },
-		// PREROUTING listing without any `-j AWGM-*` → jumps missing.
+		// Chains declared but PREROUTING has no `-j AWGM-*` jump → jumps wiped.
 		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) {
-			return "-P PREROUTING ACCEPT\n", nil
+			return "-P PREROUTING ACCEPT\n-N " + ChainName + "\n-N " + RedirectChain + "\n", nil
 		},
 		runIP:        func(_ context.Context, _ ...string) error { return nil },
 		persistRules: func(_ string) error { return nil },
@@ -480,6 +480,45 @@ func TestReconcile_JumpsMissing_Reinstalls(t *testing.T) {
 	}
 	if restoreCalls != 1 {
 		t.Errorf("expected 1 restore (self-heal) when PREROUTING jumps missing, got %d", restoreCalls)
+	}
+}
+
+// Transient probe error must NOT be treated as "jumps missing": a flaky `-S`
+// read during an NDMS reload must not trigger a needless reinstall.
+func TestReconcile_ProbeError_NoReinstall(t *testing.T) {
+	restoreCalls := 0
+	ipt := &IPTables{
+		restoreNoflush: func(_ context.Context, _ string) error { restoreCalls++; return nil },
+		runIPTables:    func(_ context.Context, _ ...string) error { return nil },
+		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) {
+			return "", errors.New("iptables: resource temporarily unavailable")
+		},
+		runIP:        func(_ context.Context, _ ...string) error { return nil },
+		persistRules: func(_ string) error { return nil },
+		persistHook:  func() error { return nil },
+		cleanupHook:  func() {},
+	}
+	svc := &ServiceImpl{
+		deps: Deps{
+			Policies:           &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+			IPTables:           ipt,
+			WANIPCollector:     &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}},
+			Singbox:            newTestSingbox(t),
+			NetfilterPreflight: func(context.Context) error { return nil },
+		},
+		currentMark:         "0xffffaaa",
+		currentWANIPs:       []string{"203.0.113.207/32"},
+		netfilterStateKnown: true,
+	}
+	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
+		Enabled:       true,
+		PolicyName:    "Policy0",
+		WANAutoDetect: true,
+	}); err != nil {
+		t.Fatalf("reconcileInstalled err: %v", err)
+	}
+	if restoreCalls != 0 {
+		t.Errorf("expected no reinstall on probe error, got %d", restoreCalls)
 	}
 }
 

@@ -500,12 +500,19 @@ func writeNetfilterHook() error {
 	if err := os.MkdirAll(filepath.Dir(netfilterHookPath), 0755); err != nil {
 		return err
 	}
-	// Scrub block before restore: when NDMS reloads only one table (e.g.
-	// nat) but leaves mangle intact, restoring --noflush would append a
-	// SECOND PREROUTING jump to AWGM-TPROXY on top of the surviving one.
-	// `-[jg]` regex covers both legacy `-j` and current `-g` syntax so
-	// the upgrade path doesn't leave duplicates around.
-	script := fmt.Sprintf(`#!/bin/sh
+	return os.WriteFile(netfilterHookPath, []byte(netfilterHookScript()), 0755)
+}
+
+// netfilterHookScript renders the netfilter.d hook with all placeholders
+// substituted. Pure (no I/O) so a test can validate the generated shell with
+// `sh -n`.
+//
+// Scrub block before restore: when NDMS reloads only one table (e.g. nat) but
+// leaves mangle intact, restoring --noflush would append a SECOND PREROUTING
+// jump on top of the surviving one. The `-[jg]` regex covers both legacy `-j`
+// and current `-g` syntax so the upgrade path doesn't leave duplicates around.
+func netfilterHookScript() string {
+	return fmt.Sprintf(`#!/bin/sh
 [ "$type" = "ip6tables" ] && exit 0
 case "$table" in mangle|nat) ;; *) exit 0 ;; esac
 [ -f %[1]q ] || exit 0
@@ -517,9 +524,17 @@ for mod in xt_TPROXY xt_comment xt_mark xt_connmark xt_conntrack xt_pkttype; do
   grep -q "^${mod} " /proc/modules 2>/dev/null && continue
   [ -f "/lib/modules/${KREL}/${mod}.ko" ] && insmod "/lib/modules/${KREL}/${mod}.ko" 2>/dev/null || true
 done
+# A chain is "ok" only if it EXISTS and PREROUTING actually jumps into it.
+# NDMS rebuilds PREROUTING and wipes our AWGM PREROUTING jumps while leaving
+# the custom chains intact; gating on chain existence alone would skip the
+# restore in exactly that case, leaving interception silently dead.
 mangle_ok=0; nat_ok=0
-/opt/sbin/iptables -w -t mangle -nL %[2]s >/dev/null 2>&1 && mangle_ok=1
-/opt/sbin/iptables -w -t nat    -nL %[6]s >/dev/null 2>&1 && nat_ok=1
+/opt/sbin/iptables -w -t mangle -nL %[2]s >/dev/null 2>&1 \
+  && /opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null | grep -qE -- '-[jg] %[2]s($| )' \
+  && mangle_ok=1
+/opt/sbin/iptables -w -t nat -nL %[6]s >/dev/null 2>&1 \
+  && /opt/sbin/iptables -w -t nat -S PREROUTING 2>/dev/null | grep -qE -- '-[jg] %[6]s($| )' \
+  && nat_ok=1
 if [ "$mangle_ok" -eq 0 ] || [ "$nat_ok" -eq 0 ]; then
   /opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null \
     | grep -E -- '-[jg] %[2]s($| )' \
@@ -555,7 +570,6 @@ if [ "$mangle_ok" -eq 0 ] || [ "$nat_ok" -eq 0 ]; then
   logger -t awgm-tproxy "netfilter.d: restored AWGM chains after NDMS reload"
 fi
 `, netfilterRulesPath, ChainName, Fwmark, RoutingTable, IPRulePriority, RedirectChain, DNSRescueTag, DNSNoPolicyTag, IngressTag)
-	return os.WriteFile(netfilterHookPath, []byte(script), 0755)
 }
 
 // removeNetfilterRulesFile deletes the persisted rules file so the
@@ -713,21 +727,65 @@ func (it *IPTables) IsInstalled(ctx context.Context) bool {
 	return true
 }
 
-// JumpsInstalled reports whether PREROUTING actually jumps into our chains.
-// Chain existence (IsInstalled) is necessary but NOT sufficient: NDMS rebuilds
-// PREROUTING on reconfig and can wipe our `-A PREROUTING ... -j AWGM-*` jumps
-// while the custom chains survive — silently disabling interception. We check
-// the live PREROUTING listing for a jump into each chain (mark-agnostic, so it
-// holds for both match-all and policy modes).
-func (it *IPTables) JumpsInstalled(ctx context.Context) bool {
-	return it.chainJumpPresent(ctx, "mangle", ChainName) &&
-		it.chainJumpPresent(ctx, "nat", RedirectChain)
+// Probe reports the live interception state in two booleans, from a single
+// `iptables -S <table>` per table (one exec each instead of separate -nL +
+// -S PREROUTING calls):
+//
+//   - installed: both AWGM chains exist (the `-N AWGM-*` declarations).
+//   - jumps: both chains are actually entered from PREROUTING.
+//
+// Chain existence is necessary but NOT sufficient: NDMS rebuilds PREROUTING on
+// reconfig and can wipe our `-A PREROUTING ... -j AWGM-*` jumps while the
+// custom chains survive, silently disabling interception. The jump match is
+// anchored (`-j`/`-g` + chain + boundary), mirroring the netfilter.d hook, so
+// it is mark-agnostic and not fooled by a substring.
+//
+// On a query error Probe returns (false, false, err); callers must treat that
+// as "unknown" (do NOT reinstall) rather than "broken".
+func (it *IPTables) Probe(ctx context.Context) (installed, jumps bool, err error) {
+	mChain, mJump, err := it.probeTable(ctx, "mangle", ChainName)
+	if err != nil {
+		return false, false, err
+	}
+	nChain, nJump, err := it.probeTable(ctx, "nat", RedirectChain)
+	if err != nil {
+		return false, false, err
+	}
+	installed = mChain && nChain
+	jumps = installed && mJump && nJump
+	return installed, jumps, nil
 }
 
-func (it *IPTables) chainJumpPresent(ctx context.Context, table, chain string) bool {
-	out, err := it.runIPTablesOut(ctx, "-t", table, "-S", "PREROUTING")
+func (it *IPTables) probeTable(ctx context.Context, table, chain string) (chainExists, jumpExists bool, err error) {
+	out, err := it.runIPTablesOut(ctx, "-t", table, "-S")
 	if err != nil {
-		return false
+		return false, false, err
 	}
-	return strings.Contains(out, "-j "+chain)
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "-N "+chain {
+			chainExists = true
+		}
+		if strings.HasPrefix(line, "-A PREROUTING ") && jumpToken(line, chain) {
+			jumpExists = true
+		}
+	}
+	return chainExists, jumpExists, nil
+}
+
+// jumpToken reports whether line jumps to chain via `-j chain` or `-g chain`
+// as a whole token (followed by a space or end-of-line) — the Go equivalent of
+// the hook's `-[jg] CHAIN($| )` regex, so `AWGM-TPROXY` never matches a longer
+// `AWGM-TPROXY-X`.
+func jumpToken(line, chain string) bool {
+	for _, tok := range []string{"-j " + chain, "-g " + chain} {
+		i := strings.Index(line, tok)
+		if i < 0 {
+			continue
+		}
+		if end := i + len(tok); end == len(line) || line[end] == ' ' {
+			return true
+		}
+	}
+	return false
 }
