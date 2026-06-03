@@ -3,15 +3,18 @@
 -->
 
 <script lang="ts">
-  import type { SingboxRouterOutbound } from '$lib/types';
+  import type { SingboxRouterOutbound, Subscription } from '$lib/types';
   import { Badge } from '$lib/components/ui';
+  import { outboundDisplay } from './outboundLabel';
 
   interface Props {
     outbounds: SingboxRouterOutbound[];
     onEdit: (tag: string) => void;
+    /** Subscriptions, to resolve sub-<hash> composite tags to their names. */
+    subscriptions?: Subscription[];
   }
 
-  let { outbounds, onEdit }: Props = $props();
+  let { outbounds, onEdit, subscriptions = [] }: Props = $props();
 
   function toneFor(type: string): 'success' | 'accent' | 'info' | 'muted' | 'error' {
     if (type === 'direct') return 'muted';
@@ -23,23 +26,16 @@
     if (type === 'selector' || type === 'urltest' || type === 'loadbalance') return 'composite';
     return type;
   }
-
-  function subFor(o: SingboxRouterOutbound): string {
-    if (o.type === 'selector') return 'selector';
-    if (o.type === 'urltest') return 'urltest';
-    if (o.type === 'loadbalance') return 'loadbalance';
-    if (o.type === 'direct') return o.bind_interface ? `direct · → ${o.bind_interface}` : 'direct';
-    return o.type;
-  }
 </script>
 
 <div class="list">
   {#each outbounds as o (o.tag)}
+    {@const d = outboundDisplay(o, subscriptions)}
     <button type="button" class="row" onclick={() => onEdit(o.tag)}>
       <span class="dot" data-tone={toneFor(o.type)}></span>
       <div class="meta">
-        <div class="tag">{o.tag}</div>
-        <div class="sub">{subFor(o)}</div>
+        <div class="tag">{d.title}</div>
+        <div class="sub">{d.subtitle}</div>
       </div>
       <Badge variant="default" size="sm">{kindLabel(o.type)}</Badge>
     </button>

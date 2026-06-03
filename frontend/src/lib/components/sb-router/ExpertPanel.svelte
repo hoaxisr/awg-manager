@@ -16,6 +16,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
+  import { subscriptionsStore } from '$lib/stores/subscriptions';
   import { notifications } from '$lib/stores/notifications';
   import { api } from '$lib/api/client';
   import { computeRuleSetUsage } from '$lib/components/routing/singboxRouter';
@@ -436,6 +437,7 @@
       >
         <OutboundsCompact
           outbounds={$storeOutbounds}
+          subscriptions={$subscriptionsStore.data ?? []}
           onEdit={(tag) => (outboundEditTag = tag)}
         />
       </SidePanel>
