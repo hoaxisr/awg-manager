@@ -2934,6 +2934,20 @@ definitions:
         example: My VPN policy
         type: string
     type: object
+  api.SingboxRouterDatRuleSetURLData:
+    properties:
+      url:
+        example: http://127.0.0.1:2222/api/singbox/router/rulesets/dat-srs?kind=geosite&tag=GOOGLE&token=...
+        type: string
+    type: object
+  api.SingboxRouterDatRuleSetURLResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SingboxRouterDatRuleSetURLData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.SingboxRouterInspectData:
     properties:
       destination:
@@ -3420,6 +3434,15 @@ definitions:
       enabled:
         example: true
         type: boolean
+      ingressInterfaces:
+        description: |-
+          IngressInterfaces lists interface refs whose ingress traffic is
+          redirected through the sing-box router (e.g. "managed:Wireguard3").
+        example:
+        - managed:Wireguard3
+        items:
+          type: string
+        type: array
       policyName:
         example: awgm-router
         type: string
@@ -9513,6 +9536,27 @@ paths:
       summary: Enable singbox-router
       tags:
       - singbox-router
+  /singbox/router/ingress-eligible-interfaces:
+    get:
+      description: Returns router interfaces eligible for sing-box ingress-scope (bindable
+        minus WAN minus LAN bridges). Used by the ingress multiselect in singbox-router
+        settings.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxRouterWANInterfacesListResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List ingress-eligible interfaces
+      tags:
+      - singbox-router
   /singbox/router/inspect:
     post:
       consumes:
@@ -10248,6 +10292,42 @@ paths:
       security:
       - CookieAuth: []
       summary: Add singbox-router ruleset
+      tags:
+      - singbox-router
+  /singbox/router/rulesets/dat-url:
+    get:
+      parameters:
+      - description: geosite or geoip
+        in: query
+        name: kind
+        required: true
+        type: string
+      - collectionFormat: csv
+        description: Geo tag(s)
+        in: query
+        items:
+          type: string
+        name: tag
+        required: true
+        type: array
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxRouterDatRuleSetURLResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Build dat→SRS rule-set URL
       tags:
       - singbox-router
   /singbox/router/rulesets/delete:
@@ -11430,56 +11510,6 @@ paths:
       summary: Update static route
       tags:
       - static-routes
-  /status/all:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.APIEnvelope'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: All tunnel statuses
-      tags:
-      - status
-  /status/get:
-    get:
-      parameters:
-      - description: Tunnel id
-        in: query
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.APIEnvelope'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Tunnel status
-      tags:
-      - status
   /system-tunnels:
     get:
       description: Returns all WireGuard tunnels managed by the router OS itself (non-hidden).

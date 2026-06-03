@@ -571,7 +571,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	importHandler.SetSettingsStore(s.settings)
 	importHandler.SetPingCheckService(s.pingCheckService)
 	importHandler.SetTunnelsHandler(tunnelsHandler)
-	statusHandler := api.NewStatusHandler(s.tunnelService)
 	wanHandler := api.NewWANHandler(s.tunnelService, appLog)
 	pingCheckHandler := api.NewPingCheckHandler(s.pingCheckService, s.tunnels, s.nwgOp, appLog)
 	pingCheckHandler.SetEventBus(s.bus)
@@ -689,10 +688,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/control/restart-all", guarded(controlHandler.RestartAll))
 	mux.HandleFunc("/api/control/toggle-enabled", guarded(controlHandler.ToggleEnabled))
 	mux.HandleFunc("/api/control/toggle-default-route", guarded(controlHandler.ToggleDefaultRoute))
-
-	// Status queries (protected + boot guarded)
-	mux.HandleFunc("/api/status/get", guarded(statusHandler.Get))
-	mux.HandleFunc("/api/status/all", guarded(statusHandler.All))
 
 	// Testing (protected + boot guarded)
 	mux.HandleFunc("/api/test/ip", guarded(testingHandler.CheckIP))
