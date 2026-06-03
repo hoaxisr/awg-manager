@@ -350,18 +350,24 @@
 
 <div class="geo-pane">
 	<header class="pane-header">
-		<h2>Гео-данные</h2>
-		<span class="pane-meta">{files.length} файла</span>
-		<Button
-			variant="ghost"
-			size="sm"
-			disabled={routeActionsDisabled}
-			loading={busy === 'sync'}
-			onclick={syncFromHR}
-			title="Подтянуть пути из hrneo.conf (External) и перекачать файлы AWGM (External не трогаем — обновляйте в HR Neo)"
-		>
-			Синхронизировать
-		</Button>
+		<div class="pane-title">
+			<h2>Гео-данные</h2>
+			<span class="pane-meta">{files.length} файла</span>
+		</div>
+
+		<div class="pane-actions">
+			<Button
+				variant="secondary"
+				size="sm"
+				fullWidth
+				disabled={routeActionsDisabled}
+				loading={busy === 'sync'}
+				onclick={syncFromHR}
+				title="Подтянуть пути из hrneo.conf (External) и перекачать файлы AWGM (External не трогаем — обновляйте в HR Neo)"
+			>
+				Синхронизировать
+			</Button>
+		</div>
 	</header>
 
 	{#if err}<div class="error-banner">{err}</div>{/if}
@@ -452,7 +458,7 @@
 						{/if}
 						{#if canUpdate(f)}
 							<Button
-								variant="ghost"
+								variant="secondary"
 								size="sm"
 								disabled={routeActionsDisabled}
 								loading={busy === f.path}
@@ -461,9 +467,8 @@
 								Обновить
 							</Button>
 						{/if}
-						<!-- TODO Phase 1: ghost variant with red danger hover (was .row-danger) -->
 						<Button
-							variant="ghost"
+							variant="secondary"
 							size="sm"
 							disabled={busy !== null}
 							onclick={() => requestRemove(f)}
@@ -601,15 +606,29 @@
 	}
 
 	.pane-header {
-		display: flex;
-		align-items: baseline;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: center;
 		gap: 10px;
-		flex-wrap: wrap;
 		padding-bottom: 10px;
 		border-bottom: 1px solid var(--border);
 	}
-	.pane-header :global(button) {
-		margin-left: auto;
+
+	.pane-title {
+		display: flex;
+		align-items: baseline;
+		gap: 10px;
+		min-width: 0;
+	}
+
+	.pane-actions {
+		display: flex;
+		justify-content: flex-end;
+		min-width: 0;
+	}
+
+	.pane-actions :global(.btn) {
+		min-width: 150px;
 	}
 	.pane-header h2 {
 		margin: 0;
@@ -728,8 +747,15 @@
 
 	.file-actions {
 		display: flex;
-		gap: 4px;
+		gap: 6px;
 		flex-shrink: 0;
+		align-items: center;
+		justify-content: flex-end;
+	}
+
+	.file-actions :global(.btn) {
+		width: auto;
+		min-width: auto;
 	}
 
 	.add-form {
@@ -874,6 +900,24 @@
 	}
 
 	@media (max-width: 640px) {
+		.pane-header {
+			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+			align-items: center;
+		}
+
+		.pane-title {
+			min-width: 0;
+		}
+
+		.pane-actions {
+			width: 100%;
+		}
+
+		.pane-actions :global(.btn) {
+			width: 100%;
+			min-width: 0;
+		}
+
 		.file-row {
 			flex-direction: column;
 			align-items: stretch;
@@ -884,8 +928,48 @@
 			row-gap: 4px;
 		}
 		.file-actions {
-			justify-content: flex-end;
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: 6px;
+			width: 100%;
+			justify-content: stretch;
 		}
+
+		.file-actions :global(.btn) {
+			width: 100%;
+			min-width: 0;
+			height: 28px;
+			min-height: 28px;
+			max-height: 28px;
+		}
+
+		.file-actions :global(.btn):only-child {
+			grid-column: 1 / -1;
+		}
+
+		.file-actions :global(.btn:first-child:nth-last-child(3)) {
+			grid-column: 1 / -1;
+		}
+
+		.preset-row {
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: 6px;
+			align-items: stretch;
+		}
+
+		.preset-row :global(.btn) {
+			width: 100%;
+			min-width: 0;
+			height: 28px;
+			min-height: 28px;
+			max-height: 28px;
+		}
+
+		.preset-hint {
+			grid-column: 1 / -1;
+		}
+
 		.add-row {
 			grid-template-columns: 1fr;
 		}
