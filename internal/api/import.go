@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
@@ -98,11 +99,13 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("import", tunnel.Name, "Tunnel imported")
+	var quiescent time.Time
 	if h.tunnelsHandler != nil {
 		h.tunnelsHandler.publishTunnelList(r.Context())
+		quiescent = h.tunnelsHandler.quiescentFor(tunnel.ID)
 	}
 
-	resp, err := BuildTunnelResponse(r, h.svc, h.store, tunnel.ID)
+	resp, err := BuildTunnelResponse(r, h.svc, h.store, tunnel.ID, quiescent)
 	if err != nil {
 		response.Error(w, err.Error(), "IMPORT_FAILED")
 		return

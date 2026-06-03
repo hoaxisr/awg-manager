@@ -263,16 +263,27 @@ func overlayPendingStatus(rawState tunnel.State, backend string, quiescentUntil,
 	return base // attempted, window elapsed, still broken (#183)
 }
 
-// statusForDisplay returns the UI status string for a tunnel, applying the
-// boot-pending overlay (see overlayPendingStatus). The per-tunnel quiescence
-// window comes from the orchestrator; if the orchestrator is not wired
-// (tests/edge) it falls back to the raw status via a zero window.
-func (h *TunnelsHandler) statusForDisplay(id, backend string, st tunnel.State) string {
-	var q time.Time
+// displayStatus is the single point that turns a tunnel's canonical state into
+// the UI status string: it applies the boot-pending overlay (see
+// overlayPendingStatus), deriving backend from StateInfo so list and detail
+// stay consistent. quiescentUntil is the orchestrator bring-up window (zero
+// when unknown).
+func displayStatus(info tunnel.StateInfo, quiescentUntil, now time.Time) string {
+	return overlayPendingStatus(info.State, info.BackendType, quiescentUntil, now)
+}
+
+// quiescentFor returns the orchestrator bring-up window for a tunnel, or zero
+// when the orchestrator is not wired (tests/edge).
+func (h *TunnelsHandler) quiescentFor(id string) time.Time {
 	if h.orch != nil {
-		q = h.orch.QuiescentUntil(id)
+		return h.orch.QuiescentUntil(id)
 	}
-	return overlayPendingStatus(st, backend, q, time.Now())
+	return time.Time{}
+}
+
+// statusForDisplay returns the UI status string for a tunnel via displayStatus.
+func (h *TunnelsHandler) statusForDisplay(id string, info tunnel.StateInfo) string {
+	return displayStatus(info, h.quiescentFor(id), time.Now())
 }
 
 // formatHandshake converts time to human-readable format.
@@ -444,7 +455,9 @@ func (h *TunnelsHandler) SetPingCheckSnapshot(fn func()) { h.pingCheckSnapshot =
 
 // BuildTunnelResponse builds a consistent tunnel response with stored data.
 // Exported so Import and External handlers can reuse the same response format.
-func BuildTunnelResponse(r *http.Request, svc TunnelService, store *storage.AWGTunnelStore, id string) (map[string]interface{}, error) {
+// quiescentUntil is the orchestrator bring-up window (zero when unknown) so the
+// "state" string carries the same boot-pending overlay the list shows.
+func BuildTunnelResponse(r *http.Request, svc TunnelService, store *storage.AWGTunnelStore, id string, quiescentUntil time.Time) (map[string]interface{}, error) {
 	t, err := svc.Get(r.Context(), id)
 	if err != nil {
 		return nil, err
@@ -470,7 +483,7 @@ func BuildTunnelResponse(r *http.Request, svc TunnelService, store *storage.AWGT
 		"interfaceName": t.InterfaceName,
 		"ndmsName":      t.NDMSName,
 		"configPreview": t.ConfigPreview,
-		"state":         t.State.String(),
+		"state":         displayStatus(t.StateInfo, quiescentUntil, time.Now()),
 		"stateInfo":     t.StateInfo,
 	}
 
@@ -626,7 +639,7 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			ID:                        t.ID,
 			Name:                      t.Name,
 			Type:                      "awg",
-			Status:                    h.statusForDisplay(t.ID, backend, t.State),
+			Status:                    h.statusForDisplay(t.ID, t.StateInfo),
 			Enabled:                   t.Enabled,
 			DefaultRoute:              t.DefaultRoute,
 			ISPInterface:              ispInterface,
@@ -842,7 +855,7 @@ func (h *TunnelsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := BuildTunnelResponse(r, h.svc, h.store, id)
+	resp, err := BuildTunnelResponse(r, h.svc, h.store, id, h.quiescentFor(id))
 	if err != nil {
 		response.Error(w, err.Error(), "NOT_FOUND")
 		return
@@ -958,7 +971,7 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	h.publishTunnelList(r.Context())
 
 	// Return the created tunnel
-	resp, err := BuildTunnelResponse(r, h.svc, h.store, tunnelID)
+	resp, err := BuildTunnelResponse(r, h.svc, h.store, tunnelID, h.quiescentFor(tunnelID))
 	if err != nil {
 		response.Error(w, err.Error(), "CREATE_FAILED")
 		return
@@ -1146,7 +1159,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("update", req.Name, "Tunnel updated")
 	h.publishTunnelList(r.Context())
 
-	resp, err := BuildTunnelResponse(r, h.svc, h.store, id)
+	resp, err := BuildTunnelResponse(r, h.svc, h.store, id, h.quiescentFor(id))
 	if err != nil {
 		response.Error(w, err.Error(), "UPDATE_FAILED")
 		return
@@ -1403,7 +1416,7 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 
 	h.publishTunnelList(r.Context())
 
-	resp, err := BuildTunnelResponse(r, h.svc, h.store, id)
+	resp, err := BuildTunnelResponse(r, h.svc, h.store, id, h.quiescentFor(id))
 	if err != nil {
 		response.InternalError(w, err.Error())
 		return
