@@ -262,10 +262,7 @@ func (s *ServiceImpl) Get(ctx context.Context, tunnelID string) (*TunnelWithStat
 		return nil, tunnel.ErrNotFound
 	}
 
-	// Delegate to GetState so the NeedsStop→Disabled correction (impl.go
-	// GetState) applies here too — otherwise the detail/edit response shows
-	// "needs_stop" for a disabled tunnel whose kernel interface lingers (#262).
-	stateInfo := s.GetState(ctx, tunnelID)
+	stateInfo := s.stateForStored(ctx, stored)
 
 	var ifaceName, ndmsName string
 	if stored.Backend == "nativewg" {
@@ -313,14 +310,7 @@ func (s *ServiceImpl) List(ctx context.Context) ([]TunnelWithStatus, error) {
 		go func(i int) {
 			defer wg.Done()
 			t := stored[i]
-			var stateInfo tunnel.StateInfo
-			if !t.Enabled {
-				stateInfo = tunnel.StateInfo{State: tunnel.StateDisabled}
-			} else if t.Backend == "nativewg" && s.nwgOperator != nil {
-				stateInfo = s.nwgOperator.GetState(ctx, &t)
-			} else {
-				stateInfo = s.state.GetState(ctx, t.ID)
-			}
+			stateInfo := s.stateForStored(ctx, &t)
 
 			var ifaceName, ndmsName string
 			if t.Backend == "nativewg" {
@@ -925,22 +915,32 @@ func (s *ServiceImpl) CheckAddressConflicts(_ context.Context, tunnelID string) 
 
 // GetState returns the current state of a tunnel.
 func (s *ServiceImpl) GetState(ctx context.Context, tunnelID string) tunnel.StateInfo {
-	// NativeWG: use nwgOperator.GetState directly
 	stored, err := s.store.Get(tunnelID)
 	if err != nil {
 		return tunnel.StateInfo{State: tunnel.StateUnknown}
 	}
+	return s.stateForStored(ctx, stored)
+}
+
+// stateForStored is the single source of truth for a tunnel's canonical state.
+// It reads the raw state (nativewg RCI or kernel matrix), then applies the
+// Enabled-correction: a tunnel we disabled (Enabled=false) reads as Disabled
+// regardless of backend or a lingering interface — this also normalizes the
+// nativewg path (classifyNWGState reports Stopped for conf=disabled) to the
+// same "disabled" the kernel matrix reports. An out-of-band bring-up
+// (Intent=UP while Enabled=false) still surfaces its real state, so the user
+// sees the divergence. Get, List and GetState all route through here.
+func (s *ServiceImpl) stateForStored(ctx context.Context, stored *storage.AWGTunnel) tunnel.StateInfo {
+	var info tunnel.StateInfo
 	if s.nwgOperator != nil && s.isNativeWG(stored) {
-		return s.nwgOperator.GetState(ctx, stored)
+		info = s.nwgOperator.GetState(ctx, stored)
+	} else {
+		info = s.state.GetState(ctx, stored.ID)
 	}
 
-	// === Kernel path ===
-	info := s.state.GetState(ctx, tunnelID)
-
-	// After our Stop: state matrix sees Intent=DOWN + Process=true → NeedsStop.
-	// But if we disabled the tunnel (Enabled=false), it's Disabled, not NeedsStop.
-	if info.State == tunnel.StateNeedsStop {
-		if !stored.Enabled {
+	if !stored.Enabled {
+		switch info.State {
+		case tunnel.StateNeedsStop, tunnel.StateStopped, tunnel.StateDisabled:
 			info.State = tunnel.StateDisabled
 		}
 	}

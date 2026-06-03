@@ -243,6 +243,93 @@ func TestGet_NeedsStop_RouterToggle(t *testing.T) {
 	}
 }
 
+// === Canonical Enabled-correction tests (SSOT consolidation) ===
+
+// findState returns the State for id in a List() result, or StateUnknown.
+func findState(list []TunnelWithStatus, id string) tunnel.State {
+	for i := range list {
+		if list[i].ID == id {
+			return list[i].State
+		}
+	}
+	return tunnel.StateUnknown
+}
+
+// TestGetState_Stopped_DisabledByUs verifies the canonical correction maps a
+// raw Stopped to Disabled when we disabled the tunnel (Enabled=false). This
+// normalizes the nativewg path (classifyNWGState returns Stopped for
+// conf=disabled) to the same "disabled" string kernel already reports.
+func TestGetState_Stopped_DisabledByUs(t *testing.T) {
+	svc, store, _, stateMgr := testService(t)
+	ctx := context.Background()
+
+	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) { tun.Enabled = false })
+	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped})
+
+	info := svc.GetState(ctx, "awg10")
+	if info.State != tunnel.StateDisabled {
+		t.Errorf("GetState() = %s, want Disabled (Stopped+!Enabled normalized)", info.State)
+	}
+}
+
+// TestList_Disabled_OutOfBand_ShowsReal verifies List no longer blindly maps
+// !Enabled to Disabled: an out-of-band bring-up (Enabled=false but really
+// Running) must surface the real state, not be hidden.
+func TestList_Disabled_OutOfBand_ShowsReal(t *testing.T) {
+	svc, store, _, stateMgr := testService(t)
+	ctx := context.Background()
+
+	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) { tun.Enabled = false })
+	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateRunning})
+
+	list, err := svc.List(ctx)
+	if err != nil {
+		t.Fatalf("List() error: %v", err)
+	}
+	if got := findState(list, "awg10"); got != tunnel.StateRunning {
+		t.Errorf("List state = %s, want Running (out-of-band bring-up surfaced)", got)
+	}
+}
+
+// TestList_Disabled_Stopped_Normalized verifies List applies the same
+// canonical correction as GetState: a genuinely-down disabled tunnel reports
+// Disabled (guard that consolidation keeps the common case correct).
+func TestList_Disabled_Stopped_Normalized(t *testing.T) {
+	svc, store, _, stateMgr := testService(t)
+	ctx := context.Background()
+
+	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) { tun.Enabled = false })
+	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped})
+
+	list, err := svc.List(ctx)
+	if err != nil {
+		t.Fatalf("List() error: %v", err)
+	}
+	if got := findState(list, "awg10"); got != tunnel.StateDisabled {
+		t.Errorf("List state = %s, want Disabled (Stopped+!Enabled normalized)", got)
+	}
+}
+
+// TestList_GetState_Agree verifies List and GetState return the same State for
+// the same tunnel — the core SSOT invariant after consolidation.
+func TestList_GetState_Agree(t *testing.T) {
+	svc, store, _, stateMgr := testService(t)
+	ctx := context.Background()
+
+	saveTunnel(t, store, "awg10", func(tun *storage.AWGTunnel) { tun.Enabled = false })
+	stateMgr.SetState("awg10", tunnel.StateInfo{State: tunnel.StateNeedsStop})
+
+	list, err := svc.List(ctx)
+	if err != nil {
+		t.Fatalf("List() error: %v", err)
+	}
+	listState := findState(list, "awg10")
+	getState := svc.GetState(ctx, "awg10").State
+	if listState != getState {
+		t.Errorf("List=%s != GetState=%s (SSOT violated)", listState, getState)
+	}
+}
+
 // === GetResolvedISP Tests ===
 
 // TestActiveWAN_GetResolvedISP_ReadsStorage verifies GetResolvedISP reads from storage.
