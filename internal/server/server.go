@@ -1,12 +1,14 @@
 package server
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"mime"
 	"net"
@@ -1227,8 +1229,10 @@ func spaHandler(staticFS fs.FS) http.Handler {
 			name = "index.html"
 		}
 
-		info, err := fs.Stat(staticFS, name)
-		if err != nil || info.IsDir() {
+		// A path resolves if either the raw file or its precompressed .gz
+		// twin exists. Build-time gzip (frontend postbuild) drops the raw
+		// original for compressed assets, so the .gz is often the only copy.
+		if !resolves(staticFS, name) {
 			name = "index.html"
 		}
 
@@ -1255,16 +1259,24 @@ func spaHandler(staticFS fs.FS) http.Handler {
 			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		}
 
-		// Compress text assets on the fly. The router serves the UI directly
-		// over a slow link, so gzip cuts the transferred bundle ~3-4x.
-		if r.Method == http.MethodGet && acceptsGzip(r) && compressibleType(contentType) {
-			if data, err := fs.ReadFile(staticFS, name); err == nil {
+		// Prefer the precompressed twin when present. Compression happens at
+		// build time, so the hot path is a plain copy — no per-request gzip.
+		// The rare non-gzip client (curl/wget without --compressed, probes)
+		// gets the asset gunzipped on the fly.
+		if gzData, err := fs.ReadFile(staticFS, name+".gz"); err == nil {
+			w.Header().Set("Vary", "Accept-Encoding")
+			if acceptsGzip(r) {
 				w.Header().Set("Content-Encoding", "gzip")
-				w.Header().Set("Vary", "Accept-Encoding")
-				gz := gzip.NewWriter(w)
-				_, _ = gz.Write(data)
-				_ = gz.Close()
+				http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(gzData))
 				return
+			}
+			if zr, err := gzip.NewReader(bytes.NewReader(gzData)); err == nil {
+				raw, rerr := io.ReadAll(zr)
+				_ = zr.Close()
+				if rerr == nil {
+					http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(raw))
+					return
+				}
 			}
 		}
 
@@ -1272,23 +1284,21 @@ func spaHandler(staticFS fs.FS) http.Handler {
 	})
 }
 
-// acceptsGzip reports whether the client advertised gzip support.
-func acceptsGzip(r *http.Request) bool {
-	return strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
-}
-
-// compressibleType reports whether a content type benefits from gzip.
-// Already-compressed binaries (images, fonts, wasm) are skipped.
-func compressibleType(contentType string) bool {
-	switch {
-	case strings.HasPrefix(contentType, "text/"),
-		strings.HasPrefix(contentType, "application/javascript"),
-		strings.HasPrefix(contentType, "application/json"),
-		strings.HasPrefix(contentType, "application/manifest+json"),
-		strings.HasPrefix(contentType, "image/svg+xml"):
+// resolves reports whether name maps to a servable asset — either the raw
+// file or its precompressed .gz twin.
+func resolves(staticFS fs.FS, name string) bool {
+	if info, err := fs.Stat(staticFS, name); err == nil && !info.IsDir() {
+		return true
+	}
+	if _, err := fs.Stat(staticFS, name+".gz"); err == nil {
 		return true
 	}
 	return false
+}
+
+// acceptsGzip reports whether the client advertised gzip support.
+func acceptsGzip(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
 }
 
 // diagLogAdapter adapts logging.Service to diagnostics.LogServiceForDiag.

@@ -10,6 +10,7 @@
     "mock": "node scripts/mock-api.mjs",
     "mock:dynamic": "node scripts/mock-api.mjs --dynamic",
     "build": "svelte-kit sync && vite build",
+    "postbuild": "node scripts/precompress.mjs",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "gen:icons": "node scripts/generate-tabler-icons.mjs",
