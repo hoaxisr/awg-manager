@@ -19,7 +19,7 @@
 		type TargetSummary,
 	} from '$lib/types';
 	import type { GroupLed } from '$lib/components/diagnostics/ChecksGroup.svelte';
-	import { buildGitHubIssueUrl } from '$lib/utils/githubFeedback';
+	import { GITHUB_BUG_REPORT_URL } from '$lib/utils/githubFeedback';
 
 	interface Props {
 		tunnels: DiagnosticsTargetSeed[];
@@ -287,7 +287,7 @@
 			} else {
 				notifications.warning('Отчёт скачан. Текст issue не удалось скопировать автоматически.');
 			}
-			const url = buildGitHubIssueUrl('Инцидент AWG Manager', body);
+			const url = GITHUB_BUG_REPORT_URL;
 			if (issueWindow) {
 				issueWindow.location.href = url;
 			} else if (typeof window !== 'undefined') {

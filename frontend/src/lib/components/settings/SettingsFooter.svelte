@@ -1,18 +1,10 @@
 <script lang="ts">
 	import { usageLevel } from '$lib/stores/settings';
+	import { GITHUB_BUG_REPORT_URL } from '$lib/utils/githubFeedback';
 
 	const isExpert = $derived($usageLevel === 'expert');
 
-	const genericIssueBody = [
-		'## Что хотите сообщить',
-		'',
-		'<!-- Опишите баг, идею или предложение -->',
-		'',
-		'## Важно',
-		'',
-		'AWG Manager — open-source проект без службы поддержки и SLA. Ответ и исправление не гарантируются.',
-	].join('\n');
-	const genericIssueUrl = `https://github.com/hoaxisr/awg-manager/issues/new?title=${encodeURIComponent('Обратная связь AWG Manager')}&body=${encodeURIComponent(genericIssueBody)}`;
+	const genericIssueUrl = GITHUB_BUG_REPORT_URL;
 
 	const credits = [
 		'@amatol',
