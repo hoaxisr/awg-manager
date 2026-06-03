@@ -167,7 +167,7 @@
   .node-title { margin-top: 4px; font-weight: 600; }
   .node-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
   .node-sub.light { color: var(--text-secondary); font-size: 12px; }
-  .traffic { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted); }
+  .traffic { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
   .arrow { color: var(--text-muted); font-size: 18px; text-align: center; }
   .branch { display: flex; flex-direction: column; gap: 7px; }
   .out { padding: 9px 12px; border-radius: 8px; background: var(--bg-primary); border: 1px solid var(--border); }

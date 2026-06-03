@@ -7,7 +7,21 @@ import { singboxRouter } from '$lib/stores/singboxRouter';
 import type { ClashConnectionsRaw, ConnectionsSnapshot } from '$lib/types/singboxConnections';
 import { parseSnapshot } from '$lib/utils/singboxConnections';
 import { createClashWS, type WSStatus } from '$lib/utils/clashWebSocket';
-import { formatBytes } from '$lib/utils/format';
+
+/**
+ * Formats a byte count with a FIXED single decimal place, e.g. "1.5 MB",
+ * "12.0 MB". Unlike formatBytes (which strips trailing zeros via parseFloat —
+ * "1.50"→"1.5", "12.0"→"12"), the decimal count never changes, so the live
+ * traffic readout in the header/FlowGraph keeps a stable width instead of
+ * jittering between 1 and 2 fractional digits as the rate changes.
+ */
+export function formatTrafficStable(bytes: number): string {
+	if (bytes <= 0) return '0.0 B';
+	const k = 1024;
+	const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+	const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
+	return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+}
 
 const EMPTY: ConnectionsSnapshot = {
 	connections: [],
@@ -83,6 +97,6 @@ export const liveConnectionsTraffic = derived(
 		if (snap.connectionsTotal === 0) return null;
 		const up = snap.connections.reduce((n, c) => n + c.upload, 0);
 		const down = snap.connections.reduce((n, c) => n + c.download, 0);
-		return `↑ ${formatBytes(up)} ↓ ${formatBytes(down)}`;
+		return `↑ ${formatTrafficStable(up)} ↓ ${formatTrafficStable(down)}`;
 	},
 );
