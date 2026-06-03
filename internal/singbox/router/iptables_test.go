@@ -62,8 +62,18 @@ func newFakeIPTables(fe *fakeExec) *IPTables {
 	return &IPTables{
 		restoreNoflush: fe.restoreNoflush,
 		runIPTables:    fe.runIPTables,
+		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) { return jumpsPresentDump(), nil },
 		runIP:          fe.runIP,
 	}
+}
+
+// jumpsPresentDump mimics `iptables -S PREROUTING` output with both AWGM
+// jumps present, so JumpsInstalled defaults to true in tests that don't
+// model a jump loss.
+func jumpsPresentDump() string {
+	return "-P PREROUTING ACCEPT\n" +
+		"-A PREROUTING -m conntrack ! --ctstate INVALID -j " + ChainName + "\n" +
+		"-A PREROUTING -m conntrack ! --ctstate INVALID -j " + RedirectChain + "\n"
 }
 
 func newFakeExec() *fakeExec {
@@ -971,6 +981,45 @@ func TestHasAnyInstalled_None_ReturnsFalse(t *testing.T) {
 	it := newFakeIPTables(fe)
 	if it.HasAnyInstalled(context.Background()) {
 		t.Error("expected false when no chains exist")
+	}
+}
+
+func TestJumpsInstalled(t *testing.T) {
+	// Builds an IPTables whose `-S PREROUTING` output carries (or omits) the
+	// jump into each chain, per table. err short-circuits to the error path.
+	mk := func(mangleJump, natJump bool, err error) *IPTables {
+		return &IPTables{
+			runIPTablesOut: func(_ context.Context, args ...string) (string, error) {
+				if err != nil {
+					return "", err
+				}
+				table := ""
+				if len(args) >= 2 && args[0] == "-t" {
+					table = args[1]
+				}
+				out := "-P PREROUTING ACCEPT\n"
+				if table == "mangle" && mangleJump {
+					out += "-A PREROUTING -m conntrack ! --ctstate INVALID -j " + ChainName + "\n"
+				}
+				if table == "nat" && natJump {
+					out += "-A PREROUTING -m conntrack ! --ctstate INVALID -j " + RedirectChain + "\n"
+				}
+				return out, nil
+			},
+		}
+	}
+
+	if !mk(true, true, nil).JumpsInstalled(context.Background()) {
+		t.Error("both jumps present → want true")
+	}
+	if mk(false, true, nil).JumpsInstalled(context.Background()) {
+		t.Error("mangle jump missing → want false")
+	}
+	if mk(true, false, nil).JumpsInstalled(context.Background()) {
+		t.Error("nat jump missing → want false")
+	}
+	if mk(true, true, errors.New("iptables query failed")).JumpsInstalled(context.Background()) {
+		t.Error("query error → want false")
 	}
 }
 

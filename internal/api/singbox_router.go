@@ -31,6 +31,7 @@ type SingboxRouterIssueDTO struct {
 type SingboxRouterStatusData struct {
 	Enabled                bool                    `json:"enabled" example:"true"`
 	Installed              bool                    `json:"installed" example:"true"`
+	Active                 bool                    `json:"active" example:"true"`
 	NetfilterAvailable     bool                    `json:"netfilterAvailable" example:"true"`
 	NetfilterComponentName string                  `json:"netfilterComponentName,omitempty" example:"iptables-mod-tproxy"`
 	TProxyTargetAvailable  bool                    `json:"tproxyTargetAvailable" example:"true"`

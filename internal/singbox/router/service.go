@@ -221,10 +221,10 @@ type StagingEventBus interface {
 }
 
 type Deps struct {
-	AppLog         logging.AppLogger
-	Settings       *storage.SettingsStore
+	AppLog   logging.AppLogger
+	Settings *storage.SettingsStore
 	// PresetCatalog is the unified preset catalog. Required for ListPresets and ApplyPreset.
-	PresetCatalog *presets.Catalog
+	PresetCatalog  *presets.Catalog
 	Singbox        SingboxController
 	Policies       AccessPolicyProvider
 	Events         *events.Bus
@@ -966,9 +966,11 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		}
 	}
 
+	installed := s.deps.IPTables.IsInstalled(ctx)
 	return Status{
 		Enabled:                sr.Enabled,
-		Installed:              s.deps.IPTables.IsInstalled(ctx),
+		Installed:              installed,
+		Active:                 installed && s.deps.IPTables.JumpsInstalled(ctx),
 		NetfilterAvailable:     IsNetfilterAvailable(),
 		NetfilterComponentName: "Модули ядра подсистемы сетевой фильтрации",
 		TProxyTargetAvailable:  IsTProxyTargetAvailable(ctx),
@@ -1106,11 +1108,18 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	// reconcileInstalled after startup always forces a full re-install
 	// regardless of what IsInstalled reports.
 	forceInitialSync := !s.netfilterStateKnown
-	needsInstall := forceInitialSync || markChanged || wanIPsChanged || lanBridgesChanged || ingressChanged || bypassPresetsChanged || bypassExtraChanged
+	// Self-heal: chains can survive while PREROUTING jumps get wiped (NDMS
+	// rebuilds PREROUTING on reconfig), leaving the engine "installed" but
+	// intercepting nothing. IsInstalled can't see this, so check the jumps
+	// explicitly and force a reinstall to restore interception.
+	jumpsMissing := !s.deps.IPTables.JumpsInstalled(ctx)
+	needsInstall := forceInitialSync || jumpsMissing || markChanged || wanIPsChanged || lanBridgesChanged || ingressChanged || bypassPresetsChanged || bypassExtraChanged
 
 	if needsInstall {
 		if forceInitialSync {
 			s.appLog.Info("reconcile", "", "first after daemon start — reinstalling netfilter rules")
+		} else if jumpsMissing {
+			s.appLog.Warn("reconcile", "", "PREROUTING jumps missing while chains present — reinstalling to restore interception")
 		}
 
 		if err := s.prepareNetfilter(ctx); err != nil {

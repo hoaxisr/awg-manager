@@ -6,8 +6,15 @@ import (
 )
 
 type Status struct {
-	Enabled                bool    `json:"enabled"`
-	Installed              bool    `json:"installed"`
+	Enabled   bool `json:"enabled"`
+	Installed bool `json:"installed"`
+	// Active reports whether the interception path is actually live: both
+	// AWGM chains exist AND PREROUTING jumps into them. Installed alone only
+	// proves the chains exist — the jumps can be wiped (NDMS PREROUTING
+	// rebuild) while chains survive, so the engine looks "installed" but
+	// routes nothing. The UI keys its "working" badge on Active, not Enabled
+	// (intent) or Installed (chains only).
+	Active                 bool    `json:"active"`
 	NetfilterAvailable     bool    `json:"netfilterAvailable"`
 	NetfilterComponentName string  `json:"netfilterComponentName,omitempty"`
 	TProxyTargetAvailable  bool    `json:"tproxyTargetAvailable"`

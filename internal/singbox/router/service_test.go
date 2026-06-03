@@ -67,6 +67,7 @@ func newStubIPTables(restoreRecorder func(context.Context, string) error) *IPTab
 	return &IPTables{
 		restoreNoflush: restoreRecorder,
 		runIPTables:    func(_ context.Context, _ ...string) error { return nil },
+		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) { return jumpsPresentDump(), nil },
 		runIP:          func(_ context.Context, _ ...string) error { return nil },
 		persistRules:   func(_ string) error { return nil },
 		persistHook:    func() error { return nil },
@@ -434,6 +435,51 @@ func TestReconcile_WANIPsSame_NoOp(t *testing.T) {
 	}
 	if restoreCalls != 0 {
 		t.Errorf("expected no restore (no-op), got %d Install calls", restoreCalls)
+	}
+}
+
+// Self-heal: chains exist (IsInstalled would be true) and nothing else
+// changed, but PREROUTING has no jump into our chains — reconcileInstalled
+// must force a reinstall to restore interception.
+func TestReconcile_JumpsMissing_Reinstalls(t *testing.T) {
+	restoreCalls := 0
+	ipt := &IPTables{
+		restoreNoflush: func(_ context.Context, _ string) error { restoreCalls++; return nil },
+		runIPTables:    func(_ context.Context, _ ...string) error { return nil },
+		// PREROUTING listing without any `-j AWGM-*` → jumps missing.
+		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) {
+			return "-P PREROUTING ACCEPT\n", nil
+		},
+		runIP:        func(_ context.Context, _ ...string) error { return nil },
+		persistRules: func(_ string) error { return nil },
+		persistHook:  func() error { return nil },
+		cleanupHook:  func() {},
+	}
+	collector := &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}}
+
+	svc := &ServiceImpl{
+		deps: Deps{
+			Policies:           &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+			IPTables:           ipt,
+			WANIPCollector:     collector,
+			Singbox:            newTestSingbox(t),
+			NetfilterPreflight: func(context.Context) error { return nil },
+		},
+		// Same mark + WAN IPs as stored, initial sync already done — so the
+		// missing jumps are the only thing that can trigger a reinstall.
+		currentMark:         "0xffffaaa",
+		currentWANIPs:       []string{"203.0.113.207/32"},
+		netfilterStateKnown: true,
+	}
+	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
+		Enabled:       true,
+		PolicyName:    "Policy0",
+		WANAutoDetect: true,
+	}); err != nil {
+		t.Fatalf("reconcileInstalled err: %v", err)
+	}
+	if restoreCalls != 1 {
+		t.Errorf("expected 1 restore (self-heal) when PREROUTING jumps missing, got %d", restoreCalls)
 	}
 }
 

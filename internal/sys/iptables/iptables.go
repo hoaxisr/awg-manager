@@ -22,6 +22,18 @@ func Run(ctx context.Context, args ...string) error {
 	return err
 }
 
+// RunOutput runs iptables and returns its stdout. Used by read-only queries
+// (e.g. `-S PREROUTING`) where the caller needs to inspect the rule listing,
+// not just the exit code.
+func RunOutput(ctx context.Context, args ...string) (string, error) {
+	full := append([]string{"-w"}, args...)
+	res, err := exec.Run(ctx, Binary, full...)
+	if res == nil {
+		return "", err
+	}
+	return res.Stdout, err
+}
+
 func RestoreNoflush(ctx context.Context, input string) error {
 	var lastErr error
 	var lastResult *exec.Result

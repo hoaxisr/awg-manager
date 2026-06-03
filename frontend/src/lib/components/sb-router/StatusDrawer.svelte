@@ -35,6 +35,9 @@
   let issues = $derived(deriveIssues(s));
   let issueCount = $derived(issues.length);
   let engineEnabled = $derived(s?.enabled ?? false);
+  // Реальная работа перехвата (цепочки + PREROUTING-jump'ы), не просто
+  // persisted-тумблер. Заголовок различает «включён, но не работает».
+  let engineActive = $derived(engineEnabled && (s?.active ?? false));
 
   let wanInterfaces = $state<SingboxRouterWANInterface[]>([]);
   let saving = $state(false);
@@ -49,9 +52,13 @@
     singboxInstallStatus?.version ?? singboxInstallStatus?.currentVersion ?? sysInfo?.singbox?.version,
   ));
 
-  let bigTitle = $derived(engineEnabled ? 'Движок работает' : 'Движок выключен');
+  let bigTitle = $derived.by(() => {
+    if (!engineEnabled) return 'Движок выключен';
+    return engineActive ? 'Движок работает' : 'Движок не работает';
+  });
   let bigSubtitle = $derived.by(() => {
     if (!engineEnabled) return 'Не активен';
+    if (!engineActive) return 'Перехват не активен — правила не применены';
     const n = s?.ruleCount ?? 0;
     return `Трафик идёт через ${pluralize(n, RULE_WORDS)}`;
   });

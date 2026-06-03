@@ -245,11 +245,21 @@
       : computeRuleSetUsage($storeDnsRules, dnsRuleEditIdx)
   );
 
+  // Engine badge keys on the live interception state, not the persisted
+  // toggle: enabled+active → работает (ON); enabled but jumps gone → СБОЙ;
+  // disabled → OFF.
+  const engineStat = $derived.by<{ value: string; tone: StatCellData['tone'] }>(() => {
+    if (!$storeStatus?.enabled) return { value: 'OFF', tone: 'muted' };
+    return $storeStatus.active
+      ? { value: 'ON', tone: 'success' }
+      : { value: 'СБОЙ', tone: 'error' };
+  });
+
   const statCells: StatCellData[] = $derived([
     {
       label: 'Движок',
-      value: $storeStatus?.enabled ? 'ON' : 'OFF',
-      tone: $storeStatus?.enabled ? 'success' : 'error',
+      value: engineStat.value,
+      tone: engineStat.tone,
     },
     { label: pluralForm($storeRules.length, RULE_WORDS), value: String($storeRules.length) },
     { label: 'Rule-sets', value: String($storeRuleSets.length) },

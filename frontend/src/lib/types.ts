@@ -1314,6 +1314,13 @@ export interface SingboxRouterIssue {
 export interface SingboxRouterStatus {
 	enabled: boolean;
 	installed: boolean;
+	/**
+	 * Interception path is actually live: chains exist AND PREROUTING jumps
+	 * into them. `installed` alone only proves the chains exist — the jumps
+	 * can be wiped while chains survive, so the engine looks installed but
+	 * routes nothing. Drive the "working" badge on `active`, not `enabled`.
+	 */
+	active: boolean;
 	netfilterAvailable: boolean;
 	netfilterComponentName?: string;
 	tproxyTargetAvailable: boolean;

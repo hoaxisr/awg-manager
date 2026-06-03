@@ -404,12 +404,14 @@ func buildRestoreInput(spec RestoreInputSpec) string {
 
 type restoreNoflushFn func(ctx context.Context, input string) error
 type runFn func(ctx context.Context, args ...string) error
+type runOutFn func(ctx context.Context, args ...string) (string, error)
 
 type persistFn func(input string) error
 
 type IPTables struct {
 	restoreNoflush restoreNoflushFn
 	runIPTables    runFn
+	runIPTablesOut runOutFn
 	runIP          runFn
 	persistRules   persistFn
 	persistHook    func() error
@@ -420,6 +422,7 @@ func NewIPTables() *IPTables {
 	return &IPTables{
 		restoreNoflush: sysiptables.RestoreNoflush,
 		runIPTables:    sysiptables.Run,
+		runIPTablesOut: sysiptables.RunOutput,
 		runIP: func(ctx context.Context, args ...string) error {
 			result, err := sysexec.Run(ctx, "ip", args...)
 			return sysexec.FormatError(result, err)
@@ -708,4 +711,23 @@ func (it *IPTables) IsInstalled(ctx context.Context) bool {
 		return false
 	}
 	return true
+}
+
+// JumpsInstalled reports whether PREROUTING actually jumps into our chains.
+// Chain existence (IsInstalled) is necessary but NOT sufficient: NDMS rebuilds
+// PREROUTING on reconfig and can wipe our `-A PREROUTING ... -j AWGM-*` jumps
+// while the custom chains survive — silently disabling interception. We check
+// the live PREROUTING listing for a jump into each chain (mark-agnostic, so it
+// holds for both match-all and policy modes).
+func (it *IPTables) JumpsInstalled(ctx context.Context) bool {
+	return it.chainJumpPresent(ctx, "mangle", ChainName) &&
+		it.chainJumpPresent(ctx, "nat", RedirectChain)
+}
+
+func (it *IPTables) chainJumpPresent(ctx context.Context, table, chain string) bool {
+	out, err := it.runIPTablesOut(ctx, "-t", table, "-S", "PREROUTING")
+	if err != nil {
+		return false
+	}
+	return strings.Contains(out, "-j "+chain)
 }

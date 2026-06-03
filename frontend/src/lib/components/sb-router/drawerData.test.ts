@@ -6,6 +6,7 @@ function status(partial: Partial<SingboxRouterStatus>): SingboxRouterStatus {
   return {
     enabled: false,
     installed: true,
+    active: false,
     netfilterAvailable: true,
     tproxyTargetAvailable: true,
     policyName: '',

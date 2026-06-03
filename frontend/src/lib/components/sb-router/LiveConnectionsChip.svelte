@@ -10,7 +10,9 @@
   import { liveConnectionsSnapshot, liveConnectionsWsStatus } from './liveConnectionsStore';
 
   const status = singboxRouterStore.status;
-  let engineOn = $derived($status?.enabled ?? false);
+  // Жив перехват, а не просто persisted-тумблер: без активных jump'ов живых
+  // соединений через движок нет, чип скрываем.
+  let engineOn = $derived(($status?.enabled ?? false) && ($status?.active ?? false));
   let isActive = $derived($page.url.searchParams.get('sub') === 'connections');
 
   let snapshot = $derived($liveConnectionsSnapshot);

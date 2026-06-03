@@ -33,6 +33,9 @@
 
   let s = $derived($status);
   let engineOn = $derived(s?.enabled ?? false);
+  // engineActive = интерцепция реально жива (цепочки + PREROUTING-jump'ы),
+  // а не просто «включён в настройках». Узел светится только когда работает.
+  let engineActive = $derived(engineOn && (s?.active ?? false));
   let rulesCount = $derived(s?.ruleCount ?? 0);
   let deviceMode = $derived(s?.deviceMode);
   let routeFinal = $derived(s?.final ?? 'direct');
@@ -64,6 +67,7 @@
 
   let engineSub = $derived.by(() => {
     if (!engineOn) return 'выключен';
+    if (!engineActive) return 'не работает';
     const parts = ['first-match'];
     if (singboxVersion) parts.push(`v${singboxVersion}`);
     return parts.join(' · ');
@@ -93,7 +97,7 @@
 
     <div class="arrow">›</div>
 
-    <button type="button" class="node engine" class:glow={engineOn} class:offline={!engineOn} onclick={openDrawer} aria-label="Настройки движка sing-box">
+    <button type="button" class="node engine" class:glow={engineActive} class:offline={!engineActive} onclick={openDrawer} aria-label="Настройки движка sing-box">
       <div class="cap acc">Движок sing-box</div>
       <div class="node-sub light">{engineSub}</div>
       <div class="node-sub">
