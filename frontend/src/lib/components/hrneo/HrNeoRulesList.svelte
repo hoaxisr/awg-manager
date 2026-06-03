@@ -130,6 +130,18 @@
 		border-radius: 8px;
 	}
 
+	.route-grid {
+		display: grid;
+		grid-template-columns: 1fr;
+		gap: 12px;
+	}
+
+	@media (min-width: 760px) {
+		.route-grid {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+
 	@media (max-width: 640px) {
 		.list-header {
 			flex-wrap: wrap;

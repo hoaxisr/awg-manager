@@ -70,14 +70,16 @@
 
 <style>
 	.hr-card {
-		display: flex;
-		justify-content: space-between;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: center;
 		gap: 12px;
 		border-radius: 8px;
 		padding: 12px 14px;
 		background: var(--bg-secondary);
 		border: 1px solid var(--border);
 		transition: border-color 0.2s;
+		min-width: 0;
 	}
 	.hr-card:hover {
 		border-color: var(--border-hover);
@@ -91,7 +93,6 @@
 		gap: 12px;
 		align-items: center;
 		min-width: 0;
-		flex: 1;
 	}
 
 	.card-info {
@@ -99,6 +100,7 @@
 		flex-direction: column;
 		gap: 2px;
 		min-width: 0;
+		max-width: 100%;
 	}
 
 	.card-title {
@@ -106,6 +108,7 @@
 		align-items: center;
 		gap: 6px;
 		min-width: 0;
+		max-width: 100%;
 	}
 
 	.card-title h3 {
@@ -113,12 +116,12 @@
 		font-size: 0.9375rem;
 		color: var(--text-primary);
 		font-weight: 600;
-		/* min-width: 0 нужен, чтобы flex-item с nowrap-текстом
-		   сжимался ниже min-content и срабатывал ellipsis. */
 		min-width: 0;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
+		max-width: 100%;
+		white-space: normal;
+		overflow-wrap: anywhere;
+		word-break: break-word;
+		line-height: 1.2;
 	}
 
 	.led {
@@ -151,11 +154,15 @@
 		gap: 6px;
 		flex-wrap: wrap;
 		margin-top: 2px;
+		min-width: 0;
 	}
 
 	.card-stat {
 		font-size: 0.75rem;
 		color: var(--text-muted);
+		white-space: normal;
+		overflow-wrap: anywhere;
+		word-break: break-word;
 	}
 	.card-stat.geo {
 		color: var(--info);
@@ -165,7 +172,16 @@
 		display: flex;
 		gap: 4px;
 		align-items: center;
+		justify-content: flex-end;
 		flex-shrink: 0;
+	}
+
+	@media (max-width: 640px) {
+		.hr-card {
+			grid-template-columns: minmax(0, 1fr) auto;
+			padding: 10px 12px;
+			align-items: start;
+		}
 	}
 
 	.icon-btn {
