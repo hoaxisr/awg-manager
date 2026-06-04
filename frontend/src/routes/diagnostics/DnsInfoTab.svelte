@@ -139,6 +139,10 @@
 			min-width: 0;
 		}
 
+		.toolbar :global(.btn:first-child .icon-before) {
+			display: none;
+		}
+
 		.toolbar :global(.btn:last-child:nth-child(odd)) {
 			grid-column: 1 / -1;
 		}

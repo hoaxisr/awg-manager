@@ -1248,6 +1248,28 @@ $effect(() => {
 			text-overflow: clip;
 		}
 
+		.ping-target-controls {
+			grid-template-rows: auto 32px;
+			align-items: stretch;
+		}
+
+		.ping-target-field {
+			display: contents;
+		}
+
+		.ping-target-field > span {
+			grid-row: 1;
+		}
+
+		.ping-target-field > input {
+			grid-row: 2;
+		}
+
+		.ping-target-action {
+			grid-row: 2;
+			align-self: stretch;
+		}
+
 		.api-key-setting {
 			grid-template-columns: minmax(0, 1fr) minmax(0, min(50%, 34rem));
 			align-items: start;
