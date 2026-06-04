@@ -22,8 +22,7 @@ type PeerStore struct {
 	getter Getter
 	log    Logger
 
-	cache    *cache.TTL[string, []ndms.Peer]
-	inFlight *cache.SingleFlight[string, []ndms.Peer]
+	store *cache.KeyedStore[string, []ndms.Peer]
 }
 
 func NewPeerStore(g Getter, log Logger) *PeerStore {
@@ -34,38 +33,21 @@ func NewPeerStoreWithTTL(g Getter, log Logger, ttl time.Duration) *PeerStore {
 	if log == nil {
 		log = NopLogger()
 	}
-	return &PeerStore{
-		getter:   g,
-		log:      log,
-		cache:    cache.NewTTL[string, []ndms.Peer](ttl),
-		inFlight: cache.NewSingleFlight[string, []ndms.Peer](),
-	}
+	s := &PeerStore{getter: g, log: log}
+	s.store = cache.NewKeyedStore(ttl, log, "peers", s.fetch)
+	return s
 }
 
 // GetPeers returns the peer list for a wireguard interface.
 func (s *PeerStore) GetPeers(ctx context.Context, name string) ([]ndms.Peer, error) {
-	if v, ok := s.cache.Get(name); ok {
-		return v, nil
-	}
-	return s.inFlight.Do(name, func() ([]ndms.Peer, error) {
-		v, err := s.fetch(ctx, name)
-		if err != nil {
-			if stale, ok := s.cache.Peek(name); ok {
-				s.log.Warnf("peers %s fetch failed, serving stale cache: %v", name, err)
-				return stale, nil
-			}
-			return nil, err
-		}
-		s.cache.Set(name, v)
-		return v, nil
-	})
+	return s.store.Get(ctx, name)
 }
 
 // Invalidate drops cache for a single interface. Called by events.Dispatcher.
-func (s *PeerStore) Invalidate(name string) { s.cache.Invalidate(name) }
+func (s *PeerStore) Invalidate(name string) { s.store.Invalidate(name) }
 
 // InvalidateAll drops every cached entry (daemon reconfigure).
-func (s *PeerStore) InvalidateAll() { s.cache.InvalidateAll() }
+func (s *PeerStore) InvalidateAll() { s.store.InvalidateAll() }
 
 // peerWire mirrors the JSON shape of one element of the
 // .wireguard.peer array inside /show/interface/{name}.
