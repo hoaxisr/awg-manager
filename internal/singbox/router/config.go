@@ -677,23 +677,12 @@ func removeOutboundRefsInNestedRules(r *Rule, tag string) {
 }
 
 func rewriteTagSlice(tags []string, from, to string) []string {
-	if len(tags) == 0 || from == "" || to == "" || from == to {
+	if from == "" || to == "" || from == to {
 		return tags
 	}
-	out := make([]string, len(tags))
-	changed := false
-	for i, tag := range tags {
-		if tag == from {
-			out[i] = to
-			changed = true
-		} else {
-			out[i] = tag
-		}
-	}
-	if !changed {
-		return tags
-	}
-	return out
+	return mapTagSlice(tags, func(tag string) (string, bool) {
+		return to, tag == from
+	})
 }
 
 func removeTagRefs(tags []string, tag string) []string {

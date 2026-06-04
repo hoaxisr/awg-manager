@@ -302,3 +302,29 @@ func TestDeleteRuleSet_RemovesCompanionTag(t *testing.T) {
 		t.Fatalf("expected empty rule sets, got %+v", cfg.Route.RuleSet)
 	}
 }
+
+// TestMapTagSlice locks the shared rewriter skeleton: unchanged input returns
+// the SAME backing slice (no churn), changed input returns a new slice.
+func TestMapTagSlice(t *testing.T) {
+	in := []string{"a", "b", "c"}
+	same := mapTagSlice(in, func(s string) (string, bool) { return "", false })
+	if &same[0] != &in[0] {
+		t.Error("unchanged input must return the original slice (same backing array)")
+	}
+	got := mapTagSlice(in, func(s string) (string, bool) {
+		if s == "b" {
+			return "B", true
+		}
+		return "", false
+	})
+	if got[1] != "B" || got[0] != "a" || got[2] != "c" {
+		t.Errorf("got %v, want [a B c]", got)
+	}
+	if &got[0] == &in[0] {
+		t.Error("changed input must return a new slice")
+	}
+	// rewriteTagSlice keeps its from==to / empty guards.
+	if r := rewriteTagSlice(in, "a", "a"); &r[0] != &in[0] {
+		t.Error("rewriteTagSlice from==to must be a no-op returning original")
+	}
+}

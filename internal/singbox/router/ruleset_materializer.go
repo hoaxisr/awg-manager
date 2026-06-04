@@ -178,15 +178,19 @@ func (m ruleSetMaterializer) rewriteSRSSuffixRuleSetRefs(cfg *RouterConfig) {
 	}
 }
 
-func rewriteRuleSetTagsStripSRSSuffix(tags []string) []string {
+// mapTagSlice returns tags with each element transformed by fn (which reports
+// the replacement and whether it changed). When nothing matched it returns the
+// ORIGINAL slice (same backing array), so callers avoid needless allocations
+// and reconcile-churn. Single skeleton behind the tag/rule-set rewriters.
+func mapTagSlice(tags []string, fn func(string) (string, bool)) []string {
 	if len(tags) == 0 {
 		return tags
 	}
 	out := make([]string, len(tags))
 	changed := false
 	for i, tag := range tags {
-		if base, ok := inlineTagFromSRSTag(tag); ok {
-			out[i] = base
+		if v, ok := fn(tag); ok {
+			out[i] = v
 			changed = true
 		} else {
 			out[i] = tag
@@ -196,6 +200,10 @@ func rewriteRuleSetTagsStripSRSSuffix(tags []string) []string {
 		return tags
 	}
 	return out
+}
+
+func rewriteRuleSetTagsStripSRSSuffix(tags []string) []string {
+	return mapTagSlice(tags, inlineTagFromSRSTag)
 }
 
 func (m ruleSetMaterializer) rewriteRuleSetRefs(cfg *RouterConfig, from, to string) {
@@ -211,23 +219,9 @@ func (m ruleSetMaterializer) rewriteRuleSetRefs(cfg *RouterConfig, from, to stri
 }
 
 func rewriteRuleSetSlice(tags []string, from, to string) []string {
-	if len(tags) == 0 {
-		return tags
-	}
-	out := make([]string, len(tags))
-	changed := false
-	for i, tag := range tags {
-		if tag == from {
-			out[i] = to
-			changed = true
-		} else {
-			out[i] = tag
-		}
-	}
-	if !changed {
-		return tags
-	}
-	return out
+	return mapTagSlice(tags, func(tag string) (string, bool) {
+		return to, tag == from
+	})
 }
 
 func (m ruleSetMaterializer) hasManagedSRSCompanion(cfg *RouterConfig, inlineTag string) bool {
