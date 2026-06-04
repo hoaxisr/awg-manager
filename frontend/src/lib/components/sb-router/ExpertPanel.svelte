@@ -90,7 +90,7 @@
   let routeFinalBusy = $state(false);
   let dnsGlobalsBusy = $state(false);
 
-  // draft синхронизируется со стором (как в исходных DNSGlobals/RouteGlobals)
+  // draft синхронизируется со стором
   $effect(() => {
     draftRouteFinal = $storeStatus?.final || 'direct';
   });

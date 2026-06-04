@@ -1,15 +1,12 @@
 export { default as RuleEditModal } from './RuleEditModal.svelte';
 export { default as RuleSetAddModal } from './RuleSetAddModal.svelte';
 export { default as InlineRuleListEditor } from './InlineRuleListEditor.svelte';
-export { default as CompositeOutboundsList } from './CompositeOutboundsList.svelte';
 export { default as CompositeOutboundEditModal } from './CompositeOutboundEditModal.svelte';
 export { default as PresetIcon } from './PresetIcon.svelte';
 export { default as DNSServerEditModal } from './DNSServerEditModal.svelte';
 export { default as DNSRuleEditModal } from './DNSRuleEditModal.svelte';
 export { default as DNSRewritesList } from './DNSRewritesList.svelte';
 export { default as DNSRewriteEditModal } from './DNSRewriteEditModal.svelte';
-export { default as DNSGlobals } from './DNSGlobals.svelte';
-export { default as RouteGlobals } from './RouteGlobals.svelte';
 export { default as ConnectionsSubTab } from './ConnectionsSubTab.svelte';
 export { default as ConnectionsBreakdown } from './ConnectionsBreakdown.svelte';
 export { default as ConnectionsBreakdownPanel } from './ConnectionsBreakdownPanel.svelte';

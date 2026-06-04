@@ -8,12 +8,11 @@
 	import { api } from '$lib/api/client';
 
 	// Only urltest and selector are offered for new groups — `loadbalance`
-	// was removed in sing-box 1.13+ and FATALs on startup if present. The
-	// list view still tolerates legacy loadbalance entries that may exist
-	// in older 20-router.json files (CompositeOutboundsList renders them
-	// read-only). When the user edits such an entry through this modal,
-	// the type narrows to urltest on open — that's a deliberate one-way
-	// migration, not an accidental data loss.
+	// was removed in sing-box 1.13+ and FATALs on startup if present. Legacy
+	// loadbalance entries that may exist in older 20-router.json files are
+	// still tolerated at read time. When the user edits such an entry through
+	// this modal, the type narrows to urltest on open — that's a deliberate
+	// one-way migration, not an accidental data loss.
 
 	interface Props {
 		outbound?: SingboxRouterOutbound;

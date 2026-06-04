@@ -4,7 +4,6 @@ import type { BadgeVariant } from '$lib/components/ui';
  * Map a latency value (ms) to a Badge variant for consistent colour
  * tiers across the app — used by:
  *  - LatencySparkline stroke colour
- *  - CompositeOutboundsList member chips
  *  - MatrixGrid sing-box row clash badge
  *
  * Returns:
