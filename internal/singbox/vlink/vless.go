@@ -33,28 +33,34 @@ func parseVless(input string) (*ParsedOutbound, error) {
 		return nil, err
 	}
 
-	flow := normalizeFlow(q.Get("flow"))
-
 	stream, err := BuildStreamFromQuery(q, host)
 	if err != nil {
 		return nil, fmt.Errorf("vless: %w", err)
 	}
 
+	return buildVlessOutbound(host, uint16(port), uuid, q.Get("flow"), q.Get("encryption"), stream, u.Fragment, u.Fragment)
+}
+
+// buildVlessOutbound assembles the vless outbound shared by the share-link
+// parser (parseVless) and the Clash mapper (mapClashVless), so flow
+// normalization and encryption handling stay identical across both entry
+// formats — previously the Clash path took flow raw and ignored encryption.
+// tag falls back to vless-<host>-<port> when empty.
+func buildVlessOutbound(host string, port uint16, uuid, flow, encryption string, stream *StreamBuilder, tag, label string) (*ParsedOutbound, error) {
 	out := map[string]any{
 		"type":        "vless",
 		"server":      host,
 		"server_port": port,
 		"uuid":        uuid,
 	}
-	if flow != "" {
-		out["flow"] = flow
+	if f := normalizeFlow(flow); f != "" {
+		out["flow"] = f
 	}
-	if enc := q.Get("encryption"); enc != "" && enc != "none" {
-		out["encryption"] = enc
+	if encryption != "" && encryption != "none" {
+		out["encryption"] = encryption
 	}
 	stream.MergeIntoOutbound(out)
 
-	tag := u.Fragment
 	if tag == "" {
 		tag = fmt.Sprintf("vless-%s-%d", host, port)
 	}
@@ -64,14 +70,13 @@ func parseVless(input string) (*ParsedOutbound, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	return &ParsedOutbound{
 		Tag:      tag,
 		Protocol: "vless",
 		Server:   host,
-		Port:     uint16(port),
+		Port:     port,
 		Outbound: raw,
-		Label:    u.Fragment,
+		Label:    label,
 	}, nil
 }
 

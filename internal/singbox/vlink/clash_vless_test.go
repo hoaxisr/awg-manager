@@ -88,3 +88,34 @@ func TestMapClashVless_PortAsString(t *testing.T) {
 		t.Errorf("Port=%d want 443", got.Port)
 	}
 }
+
+// TestMapClashVless_FlowNormalizedAndEncryption verifies the Clash mapper goes
+// through the shared buildVlessOutbound: flow loses the -udp443 suffix and
+// encryption is carried — both previously diverged from the share-link path.
+func TestMapClashVless_FlowNormalizedAndEncryption(t *testing.T) {
+	in := map[string]any{
+		"name":       "n",
+		"type":       "vless",
+		"server":     "ex.com",
+		"port":       443,
+		"uuid":       "3a3b1c2e-9999-4321-aaaa-1234567890ab",
+		"flow":       "xtls-rprx-vision-udp443",
+		"encryption": "xtls-rprx",
+		"tls":        true,
+		"servername": "h",
+	}
+	got, err := mapClashVless(in)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	var ob map[string]any
+	if err := json.Unmarshal(got.Outbound, &ob); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if ob["flow"] != "xtls-rprx-vision" {
+		t.Errorf("flow not normalized: got %v, want xtls-rprx-vision (stripped -udp443)", ob["flow"])
+	}
+	if ob["encryption"] != "xtls-rprx" {
+		t.Errorf("encryption dropped: got %v, want xtls-rprx", ob["encryption"])
+	}
+}

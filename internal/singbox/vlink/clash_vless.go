@@ -1,7 +1,6 @@
 package vlink
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -31,30 +30,5 @@ func mapClashVless(p map[string]any) (*ParsedOutbound, error) {
 		return nil, fmt.Errorf("clash vless: %w", err)
 	}
 
-	out := map[string]any{
-		"type":        "vless",
-		"server":      host,
-		"server_port": portN,
-		"uuid":        uuid,
-	}
-	if flow := asString(p["flow"]); flow != "" {
-		out["flow"] = flow
-	}
-	stream.MergeIntoOutbound(out)
-
-	tag := fmt.Sprintf("vless-%s-%d", host, portN)
-	out["tag"] = tag
-
-	raw, err := json.Marshal(out)
-	if err != nil {
-		return nil, err
-	}
-	return &ParsedOutbound{
-		Tag:      tag,
-		Protocol: "vless",
-		Server:   host,
-		Port:     uint16(portN),
-		Outbound: raw,
-		Label:    asString(p["name"]),
-	}, nil
+	return buildVlessOutbound(host, uint16(portN), uuid, asString(p["flow"]), asString(p["encryption"]), stream, "", asString(p["name"]))
 }
