@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { parsePortsString, serializePorts, parsePortEntry, type PortEntry } from '$lib/utils/ports';
+  import { parsePortsString, serializePorts, parseDraftEntries, portKey, type PortEntry } from '$lib/utils/ports';
 
   interface Props {
     value: string;
@@ -8,47 +8,61 @@
   }
   let { value, onChange, inputId }: Props = $props();
 
-  let chips = $derived<PortEntry[]>(parsePortsString(value));
+  // Optimistic local state, not a pure $derived of `value`: onChange persists
+  // asynchronously (PUT + store reload), so `value` lags. Mutating chips
+  // synchronously on each add/remove lets back-to-back actions see prior
+  // changes — without this, two rapid adds both read a stale list and the
+  // second overwrites the first. The $effect re-syncs from `value` on external
+  // change (initial load, other editors, server reconcile).
+  let chips = $state<PortEntry[]>([]);
+  $effect(() => {
+    chips = parsePortsString(value);
+  });
+
   let draft = $state('');
   let error = $state('');
 
-  function keyOf(c: PortEntry): string {
-    return `${c.port}/${c.proto}`;
-  }
-
-  function addDraft() {
+  function commitDraft() {
     const raw = draft.trim();
     if (!raw) return;
-    const r = parsePortEntry(raw);
+    const r = parseDraftEntries(raw);
     if (!r.ok) {
       error = r.error;
       return;
     }
-    if (chips.some((c) => keyOf(c) === keyOf(r.entry))) {
-      draft = '';
-      error = '';
-      return; // duplicate: silently ignore
+    // Accept the whole draft or none; drop entries already present (existing
+    // chips or duplicates within the same paste).
+    const seen = new Set(chips.map(portKey));
+    const additions: PortEntry[] = [];
+    for (const e of r.entries) {
+      const k = portKey(e);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      additions.push(e);
     }
-    onChange(serializePorts([...chips, r.entry]));
     draft = '';
     error = '';
+    if (additions.length === 0) return;
+    chips = [...chips, ...additions];
+    onChange(serializePorts(chips));
   }
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault();
-      addDraft();
+      commitDraft();
     }
   }
 
   function remove(c: PortEntry) {
-    onChange(serializePorts(chips.filter((x) => keyOf(x) !== keyOf(c))));
+    chips = chips.filter((x) => portKey(x) !== portKey(c));
+    onChange(serializePorts(chips));
   }
 </script>
 
 <div class="port-chips">
   <div class="chips-box">
-    {#each chips as c (keyOf(c))}
+    {#each chips as c (portKey(c))}
       <span class="port-chip">
         {c.port}/{c.proto}
         <button type="button" class="chip-x" onclick={() => remove(c)} aria-label="удалить порт">✕</button>

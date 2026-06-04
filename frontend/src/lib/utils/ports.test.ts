@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePortEntry, parsePortsString, serializePorts } from './ports';
+import { parsePortEntry, parsePortsString, serializePorts, parseDraftEntries, portKey } from './ports';
 
 describe('parsePortEntry', () => {
   it('accepts "993 tcp"', () => {
@@ -57,5 +57,38 @@ describe('parsePortsString / serializePorts', () => {
   });
   it('serialize output matches backend grammar PORT UDP|TCP', () => {
     expect(serializePorts([{ port: 1194, proto: 'UDP' }])).toMatch(/^\d+ (TCP|UDP)(, \d+ (TCP|UDP))*$/);
+  });
+});
+
+describe('portKey', () => {
+  it('is the same formula parsePortsString dedups on', () => {
+    expect(portKey({ port: 443, proto: 'TCP' })).toBe('443/TCP');
+    expect(parsePortsString('443 TCP, 443 tcp')).toHaveLength(1);
+  });
+});
+
+describe('parseDraftEntries', () => {
+  it('parses a single entry', () => {
+    expect(parseDraftEntries('443 tcp')).toEqual({ ok: true, entries: [{ port: 443, proto: 'TCP' }] });
+  });
+  it('parses pasted multi-entry "443 tcp, 53 udp"', () => {
+    expect(parseDraftEntries('443 tcp, 53 udp')).toEqual({
+      ok: true,
+      entries: [{ port: 443, proto: 'TCP' }, { port: 53, proto: 'UDP' }],
+    });
+  });
+  it('all-or-nothing: any invalid part aborts with first error, no partial accept', () => {
+    const r = parseDraftEntries('443 tcp, 99999 tcp');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('1–65535');
+  });
+  it('ignores blank parts / trailing comma', () => {
+    expect(parseDraftEntries('443 tcp, , 53 udp,')).toEqual({
+      ok: true,
+      entries: [{ port: 443, proto: 'TCP' }, { port: 53, proto: 'UDP' }],
+    });
+  });
+  it('empty draft → ok with no entries', () => {
+    expect(parseDraftEntries('   ')).toEqual({ ok: true, entries: [] });
   });
 });

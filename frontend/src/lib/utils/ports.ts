@@ -21,6 +21,12 @@ export function parsePortEntry(raw: string): ParseEntryResult {
   return { ok: true, entry: { port, proto: protoMatch[0].toUpperCase() as 'TCP' | 'UDP' } };
 }
 
+// Canonical dedup/identity key for a port entry. Single source so the parser
+// and any UI keying stay in sync.
+export function portKey(e: PortEntry): string {
+  return `${e.port}/${e.proto}`;
+}
+
 // "443 TCP, 53 UDP" -> entries; invalid entries skipped, duplicates removed.
 export function parsePortsString(s: string): PortEntry[] {
   const out: PortEntry[] = [];
@@ -29,12 +35,28 @@ export function parsePortsString(s: string): PortEntry[] {
     if (!part.trim()) continue;
     const r = parsePortEntry(part);
     if (!r.ok) continue;
-    const key = `${r.entry.port}/${r.entry.proto}`;
+    const key = portKey(r.entry);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(r.entry);
   }
   return out;
+}
+
+// Parse a user draft that may contain several comma-separated entries (e.g.
+// pasted "443 tcp, 53 udp"). All-or-nothing: if any part is invalid, returns
+// the first error and no entries — never a silent partial accept.
+export function parseDraftEntries(raw: string):
+  | { ok: true; entries: PortEntry[] }
+  | { ok: false; error: string } {
+  const parts = raw.split(',').map((p) => p.trim()).filter(Boolean);
+  const entries: PortEntry[] = [];
+  for (const part of parts) {
+    const r = parsePortEntry(part);
+    if (!r.ok) return { ok: false, error: r.error };
+    entries.push(r.entry);
+  }
+  return { ok: true, entries };
 }
 
 // entries -> "443 TCP, 53 UDP" (backend parseExtraPorts grammar).
