@@ -393,8 +393,8 @@
 	<!-- Egress в sing-box -->
 	<div class="nat-row">
 		<div class="nat-info">
-			<span class="nat-label">Egress через sing-box</span>
-			<span class="nat-hint">Заворачивать интернет-трафик клиентов сервера в sing-box (туннель)</span>
+			<span class="nat-label">Маршрутизация через sing-box</span>
+			<span class="nat-hint">Заворачивать интернет-трафик клиентов данного сервера в sing-box</span>
 		</div>
 		<Toggle checked={ingressEnabled} onchange={handleToggleIngress} disabled={togglingIngress} size="sm" />
 	</div>
