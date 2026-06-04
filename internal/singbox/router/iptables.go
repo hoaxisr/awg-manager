@@ -253,6 +253,32 @@ var bypassCIDRs = []string{
 	"192.168.0.0/16",
 }
 
+// emitBypassReturns appends "-A <chain> -d <dst> -j RETURN" for every bypass
+// CIDR and router-owned WAN IP. mangle (UDP/TPROXY) and nat (TCP/REDIRECT) must
+// carry an IDENTICAL bypass set — both tables call this so the set can't drift,
+// which would let traffic enter sing-box on one protocol and bypass on the
+// other (asymmetric loop/leak).
+func emitBypassReturns(b *strings.Builder, chain string, wanIPs []string) {
+	for _, cidr := range bypassCIDRs {
+		fmt.Fprintf(b, "-A %s -d %s -j RETURN\n", chain, cidr)
+	}
+	for _, ip := range wanIPs {
+		fmt.Fprintf(b, "-A %s -d %s -j RETURN\n", chain, ip)
+	}
+}
+
+// emitPreroutingJump appends the PREROUTING jump into chain, gated by the same
+// policy-mark condition for mangle (UDP) and nat (TCP) so a device is proxied
+// by identical criteria on both protocols (drift = "half-broken tunnel").
+func emitPreroutingJump(b *strings.Builder, chain string, spec RestoreInputSpec) {
+	if spec.MatchAll {
+		fmt.Fprintf(b, "-A PREROUTING -m conntrack ! --ctstate INVALID -j %s\n", chain)
+	} else if spec.PolicyMark != "" {
+		fmt.Fprintf(b, "-A PREROUTING -m connmark --mark %s -m conntrack ! --ctstate INVALID -j %s\n",
+			spec.PolicyMark, chain)
+	}
+}
+
 func buildRestoreInput(spec RestoreInputSpec) string {
 	var b strings.Builder
 
@@ -297,12 +323,7 @@ func buildRestoreInput(spec RestoreInputSpec) string {
 
 	// set_chain_rules: bypass set. SKeen uses one ipset rule; we render
 	// the same destinations as discrete CIDR rules (semantically equal).
-	for _, cidr := range bypassCIDRs {
-		fmt.Fprintf(&b, "-A %s -d %s -j RETURN\n", ChainName, cidr)
-	}
-	for _, ip := range spec.WANIPs {
-		fmt.Fprintf(&b, "-A %s -d %s -j RETURN\n", ChainName, ip)
-	}
+	emitBypassReturns(&b, ChainName, spec.WANIPs)
 
 	// add_tproxy_rules: catch-all TPROXY for UDP.
 	fmt.Fprintf(&b, "-A %s -p udp -j TPROXY --on-port %d --on-ip 127.0.0.1 --tproxy-mark 0x%x\n",
@@ -324,12 +345,7 @@ func buildRestoreInput(spec RestoreInputSpec) string {
 	// set_prerouting_rules: policy connmark filter ON THE JUMP, no `-p`
 	// matcher (SKeen jumps unconditionally; per-proto matching happens
 	// inside the chain).
-	if spec.MatchAll {
-		fmt.Fprintf(&b, "-A PREROUTING -m conntrack ! --ctstate INVALID -j %s\n", ChainName)
-	} else if spec.PolicyMark != "" {
-		fmt.Fprintf(&b, "-A PREROUTING -m connmark --mark %s -m conntrack ! --ctstate INVALID -j %s\n",
-			spec.PolicyMark, ChainName)
-	}
+	emitPreroutingJump(&b, ChainName, spec)
 
 	b.WriteString("COMMIT\n")
 
@@ -341,12 +357,7 @@ func buildRestoreInput(spec RestoreInputSpec) string {
 	b.WriteString("*nat\n")
 	fmt.Fprintf(&b, ":%s - [0:0]\n", RedirectChain)
 
-	for _, cidr := range bypassCIDRs {
-		fmt.Fprintf(&b, "-A %s -d %s -j RETURN\n", RedirectChain, cidr)
-	}
-	for _, ip := range spec.WANIPs {
-		fmt.Fprintf(&b, "-A %s -d %s -j RETURN\n", RedirectChain, ip)
-	}
+	emitBypassReturns(&b, RedirectChain, spec.WANIPs)
 	// Bypass router admin port so we don't redirect our own UI traffic.
 	// (SKeen has equivalent dynamic admin-port discovery — same intent.)
 	fmt.Fprintf(&b, "-A %s -p tcp --dport 79 -j RETURN\n", RedirectChain)
@@ -359,12 +370,7 @@ func buildRestoreInput(spec RestoreInputSpec) string {
 	// add_redirect_rules: catch-all REDIRECT for TCP.
 	fmt.Fprintf(&b, "-A %s -p tcp -j REDIRECT --to-ports %d\n", RedirectChain, RedirectPort)
 
-	if spec.MatchAll {
-		fmt.Fprintf(&b, "-A PREROUTING -m conntrack ! --ctstate INVALID -j %s\n", RedirectChain)
-	} else if spec.PolicyMark != "" {
-		fmt.Fprintf(&b, "-A PREROUTING -m connmark --mark %s -m conntrack ! --ctstate INVALID -j %s\n",
-			spec.PolicyMark, RedirectChain)
-	}
+	emitPreroutingJump(&b, RedirectChain, spec)
 
 	// ---- DNS-RESCUE: per-bridge short-circuit REDIRECT to ndnproxy ----
 	// For each (bridge, ndnproxy-port) discovered from

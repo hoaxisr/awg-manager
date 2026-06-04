@@ -1229,3 +1229,29 @@ func TestWriteNetfilterHook_IngressScrub(t *testing.T) {
 		t.Fatalf("hook still uses fragile quoted-only -F scrub for AWGM-INGRESS:\n%s", data)
 	}
 }
+
+// TestEmitHelpers_TableSymmetry locks the invariant that mangle (UDP/TPROXY) and
+// nat (TCP/REDIRECT) carry an identical bypass set and an identically-gated
+// PREROUTING jump — differing only by chain name. Drift here would proxy a
+// device on one protocol and bypass it on the other.
+func TestEmitHelpers_TableSymmetry(t *testing.T) {
+	wan := []string{"203.0.113.5/32"}
+	spec := RestoreInputSpec{PolicyMark: "0xabc", WANIPs: wan}
+
+	var mB, nB strings.Builder
+	emitBypassReturns(&mB, ChainName, wan)
+	emitBypassReturns(&nB, RedirectChain, wan)
+	if m, n := strings.ReplaceAll(mB.String(), ChainName, "C"), strings.ReplaceAll(nB.String(), RedirectChain, "C"); m != n {
+		t.Errorf("bypass set diverges:\nmangle:\n%s\nnat:\n%s", mB.String(), nB.String())
+	}
+	if !strings.Contains(mB.String(), "203.0.113.5/32") {
+		t.Error("WAN IP not rendered in bypass set")
+	}
+
+	var mJ, nJ strings.Builder
+	emitPreroutingJump(&mJ, ChainName, spec)
+	emitPreroutingJump(&nJ, RedirectChain, spec)
+	if m, n := strings.ReplaceAll(mJ.String(), ChainName, "C"), strings.ReplaceAll(nJ.String(), RedirectChain, "C"); m != n {
+		t.Errorf("prerouting jump diverges:\nmangle: %q\nnat: %q", mJ.String(), nJ.String())
+	}
+}
