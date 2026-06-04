@@ -457,6 +457,7 @@
 	});
 
 	let categories = $derived([...new Set(checks.map((c) => c.cat))]);
+	let hasResults = $derived(version !== null && awgScores !== null && verdict !== null && parsed !== null);
 
 	const icons: Record<string, string> = {
 		pass: '✓',
@@ -490,7 +491,7 @@
 		гарантируют обход DPI.
 	</p>
 
-	<div class="layout">
+	<div class="layout" class:has-results={hasResults}>
 		<div class="col-input">
 			{#if !embedded || !lockTunnelSelection}
 				<div class="existing-tunnel-box">
@@ -598,7 +599,7 @@
 			{/if}
 		</div>
 
-		<div class="col-results">
+		<div class="col-results" class:hidden={!hasResults}>
 			{#if version && awgScores && verdict && parsed}
 		<section class="card ver">
 			<span class="ver-badge">{version.ver}</span>
@@ -835,8 +836,11 @@
 
 	@media (min-width: 1024px) {
 		.layout {
-			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 			gap: 24px 28px;
+		}
+
+		.layout.has-results {
+			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 		}
 
 		.ta {
@@ -855,6 +859,10 @@
 	.col-input,
 	.col-results {
 		min-width: 0;
+	}
+
+	.col-results.hidden {
+		display: none;
 	}
 
 	.results-empty {

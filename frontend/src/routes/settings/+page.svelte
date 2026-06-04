@@ -1137,22 +1137,22 @@ $effect(() => {
 
 	.ping-target-setting {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(0, min(50%, 34rem));
-		gap: 1rem;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.65rem;
 		align-items: start;
 	}
 
 	.ping-target-controls {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr);
-		gap: 0.5rem;
+		grid-template-columns: minmax(8rem, 0.78fr) minmax(16rem, 1.22fr) 7.5rem;
+		gap: 0.5rem 0.625rem;
 		width: 100%;
 		min-width: 0;
+		align-items: end;
 	}
 
 	.ping-target-field {
-		display: flex;
-		flex-direction: column;
+		display: grid;
 		gap: 0.25rem;
 		min-width: 0;
 		color: var(--color-text-secondary);
@@ -1160,9 +1160,17 @@ $effect(() => {
 		font-weight: 600;
 	}
 
+	.ping-target-field input {
+		min-width: 0;
+	}
+
 	.settings-text-input {
 		width: 100%;
 		max-width: none;
+		height: 32px;
+		min-height: 32px;
+		max-height: 32px;
+		box-sizing: border-box;
 		padding: 0.375rem 0.5rem;
 		font-family: var(--font-mono, ui-monospace, monospace);
 		font-size: 0.8rem;
@@ -1179,7 +1187,20 @@ $effect(() => {
 
 	.ping-target-action {
 		display: flex;
-		justify-content: flex-end;
+		align-items: stretch;
+		justify-content: stretch;
+		align-self: end;
+		min-width: 0;
+	}
+
+	.ping-target-action :global(.btn) {
+		width: 100%;
+		min-width: 7.5rem;
+		height: 32px;
+		min-height: 32px;
+		max-height: 32px;
+		box-sizing: border-box;
+		padding-block: 0;
 	}
 
 	.api-key-input {
@@ -1227,10 +1248,6 @@ $effect(() => {
 			text-overflow: clip;
 		}
 
-		.ping-target-action :global(.btn) {
-			min-width: 7.5rem;
-		}
-
 		.api-key-setting {
 			grid-template-columns: minmax(0, 1fr) minmax(0, min(50%, 34rem));
 			align-items: start;
@@ -1268,6 +1285,11 @@ $effect(() => {
 	@media (max-width: 640px) {
 		.ping-target-setting {
 			grid-template-columns: 1fr;
+			align-items: stretch;
+		}
+
+		.ping-target-controls {
+			grid-template-columns: minmax(0, 1fr);
 		}
 
 		.ping-target-action {
