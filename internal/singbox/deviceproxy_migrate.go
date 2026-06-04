@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // MigrateDeviceProxyOutOfTunnels checks if 10-tunnels.json contains
@@ -70,16 +72,9 @@ func MigrateDeviceProxyOutOfTunnels(configDir string) error {
 	return nil
 }
 
-// writeJSONAtomic writes data to path via .tmp + rename so a crash
-// mid-write never leaves a torn file behind.
+// writeJSONAtomic writes data to path atomically (unique temp + rename) via
+// storage.AtomicWrite, so a crash or concurrent writer never leaves a torn or
+// collided file behind.
 func writeJSONAtomic(path string, data []byte) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return storage.AtomicWrite(path, data)
 }

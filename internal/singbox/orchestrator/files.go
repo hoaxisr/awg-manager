@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // activePath returns the path where the slot's file lives when enabled.
@@ -44,18 +46,11 @@ func (o *Orchestrator) ensureDirs() error {
 	return nil
 }
 
-// writeAtomic writes data to path via a sibling .tmp file + rename.
-// Truncates and replaces any existing file.
+// writeAtomic writes data to path atomically (unique temp + rename) via
+// storage.AtomicWrite, so a crash or concurrent writer can't leave a partial
+// or collided file.
 func writeAtomic(path string, data []byte) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return storage.AtomicWrite(path, data)
 }
 
 // fileExists returns true iff path exists and is a regular file.

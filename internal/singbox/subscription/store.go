@@ -7,10 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // Store persists subscriptions to disk as JSON, atomic-writes on every mutation.
@@ -79,14 +80,7 @@ func (s *Store) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(tmp, b, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.path)
+	return storage.AtomicWrite(s.path, b)
 }
 
 func newID() string {
@@ -124,24 +118,24 @@ func (s *Store) Create(in CreateInput) (*Subscription, error) {
 		urlTest = &cfg
 	}
 	sub := &Subscription{
-		ID:           id,
-		Label:        in.Label,
-		URL:          in.URL,
-		Inline:       in.Inline,
-		Headers:      in.Headers,
-		RefreshHours: in.RefreshHours,
-		Enabled:      in.Enabled,
-		SelectorTag:  "sub-" + short,
-		InboundTag:   "sub-" + short + "-in",
-		ProxyIndex:   -1,
-		MemberTags:   []string{},
-		Members:      []MemberInfo{},
-		OrphanTags:        []string{},
-		RejectedMembers:   []RejectedMember{},
-		InfoItems:         []SubscriptionInfoItem{},
-		DismissedInfoIDs:  []string{},
-		Mode:              mode,
-		URLTest:      urlTest,
+		ID:               id,
+		Label:            in.Label,
+		URL:              in.URL,
+		Inline:           in.Inline,
+		Headers:          in.Headers,
+		RefreshHours:     in.RefreshHours,
+		Enabled:          in.Enabled,
+		SelectorTag:      "sub-" + short,
+		InboundTag:       "sub-" + short + "-in",
+		ProxyIndex:       -1,
+		MemberTags:       []string{},
+		Members:          []MemberInfo{},
+		OrphanTags:       []string{},
+		RejectedMembers:  []RejectedMember{},
+		InfoItems:        []SubscriptionInfoItem{},
+		DismissedInfoIDs: []string{},
+		Mode:             mode,
+		URLTest:          urlTest,
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

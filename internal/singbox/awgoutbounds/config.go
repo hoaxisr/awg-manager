@@ -4,8 +4,8 @@ package awgoutbounds
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // fileShape is what 15-awg.json contains. Only the outbounds key is
@@ -37,18 +37,7 @@ func saveFile(path string, entries []AWGEntry) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("mkdir parent: %w", err)
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0644); err != nil {
-		return fmt.Errorf("write tmp: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("rename: %w", err)
-	}
-	return nil
+	return storage.AtomicWrite(path, raw)
 }
 
 // marshalEntries renders entries as the indented JSON payload that
