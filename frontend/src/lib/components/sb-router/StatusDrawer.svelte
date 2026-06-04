@@ -14,6 +14,7 @@
   import { mode } from './modeStore';
   import DepRow from './DepRow.svelte';
   import IssueRow from './IssueRow.svelte';
+  import PortChipsInput from './PortChipsInput.svelte';
   import TrafficSourceSettings from './TrafficSourceSettings.svelte';
   import { deriveDeps, deriveIssues } from './drawerData';
   import { mergeAndSaveSettings, BYPASS_PRESETS } from './settingsActions';
@@ -42,8 +43,6 @@
   let wanInterfaces = $state<SingboxRouterWANInterface[]>([]);
   let saving = $state(false);
   let lastError = $state<string | null>(null);
-  let portTimer: ReturnType<typeof setTimeout> | null = null;
-
   function versionLabel(value?: string | null): string {
     const v = (value ?? '').trim();
     return v ? `v${v}` : '—';
@@ -121,11 +120,6 @@
     const current = cfg?.bypassPresets ?? [];
     const next = current.includes(id) ? current.filter((x) => x !== id) : [...current, id];
     void applyPatch({ bypassPresets: next });
-  }
-  function onExtraPortsInput(e: Event) {
-    const v = (e.currentTarget as HTMLInputElement).value;
-    if (portTimer) clearTimeout(portTimer);
-    portTimer = setTimeout(() => void applyPatch({ bypassExtraPorts: v }), 500);
   }
 </script>
 
@@ -215,8 +209,8 @@
           {/each}
         </div>
         <div class="field">
-          <label class="lbl" for="ed-ports">Доп. порты (формат: udp:53, tcp:443)</label>
-          <input id="ed-ports" class="inp" type="text" value={cfg.bypassExtraPorts ?? ''} placeholder="udp:53, tcp:443" oninput={onExtraPortsInput} />
+          <label class="lbl" for="ed-ports-input">Доп. порты</label>
+          <PortChipsInput inputId="ed-ports-input" value={cfg.bypassExtraPorts ?? ''} onChange={(v) => void applyPatch({ bypassExtraPorts: v })} />
         </div>
         <p class="hint">Эти порты пойдут мимо sing-box (прямо в WAN). Полезно для L2TP/NTP/SMB не ломая LAN-сервисы.</p>
       </section>
