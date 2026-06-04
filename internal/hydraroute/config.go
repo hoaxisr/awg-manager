@@ -124,6 +124,22 @@ func ReadConfig() (*Config, error) {
 // behind a daemon-cased line AND a PascalCase appended duplicate).
 // Multi-value fields (GeoIPFile, GeoSiteFile) are written in full on
 // the first occurrence; subsequent occurrences are dropped.
+// confLineKey extracts the config key from a raw hrneo.conf line, stripping any
+// inline #-comment and surrounding space; returns "" for blank/comment/no-'='
+// lines. Shared by the hrneo.conf rewriters so the comment-strip + key-extract
+// rule lives in one place (the caller preserves origKey casing on write-back).
+func confLineKey(rawLine string) string {
+	stripped := rawLine
+	if idx := strings.Index(stripped, "#"); idx >= 0 {
+		stripped = stripped[:idx]
+	}
+	stripped = strings.TrimSpace(stripped)
+	if k, _, ok := strings.Cut(stripped, "="); ok {
+		return strings.TrimSpace(k)
+	}
+	return ""
+}
+
 func WriteConfig(cfg *Config) error {
 	if err := os.MkdirAll(hrDir, 0o755); err != nil {
 		return fmt.Errorf("hydraroute: create hrneo dir: %w", err)
@@ -154,16 +170,7 @@ func WriteConfig(cfg *Config) error {
 			// Detect the key — strip comment for matching, but the
 			// in-place replacement preserves the original raw form
 			// when we write back.
-			stripped := rawLine
-			if idx := strings.Index(stripped, "#"); idx >= 0 {
-				stripped = stripped[:idx]
-			}
-			stripped = strings.TrimSpace(stripped)
-
-			origKey := ""
-			if k, _, ok := strings.Cut(stripped, "="); ok {
-				origKey = strings.TrimSpace(k)
-			}
+			origKey := confLineKey(rawLine)
 
 			lowerKey := strings.ToLower(origKey)
 			state, isKnown := known[lowerKey]
@@ -288,16 +295,7 @@ func patchSingleScalarKey(lowerKey string, value string) error {
 		scanner := bufio.NewScanner(strings.NewReader(string(existing)))
 		for scanner.Scan() {
 			rawLine := scanner.Text()
-			stripped := rawLine
-			if idx := strings.Index(stripped, "#"); idx >= 0 {
-				stripped = stripped[:idx]
-			}
-			stripped = strings.TrimSpace(stripped)
-
-			origKey := ""
-			if k, _, ok := strings.Cut(stripped, "="); ok {
-				origKey = strings.TrimSpace(k)
-			}
+			origKey := confLineKey(rawLine)
 			if strings.EqualFold(origKey, targetKey) {
 				if !written {
 					fmt.Fprintf(&out, "%s=%s\n", origKey, value)
@@ -372,16 +370,7 @@ func patchMultiValueKeys(order []string, updates map[string][]string) error {
 		scanner := bufio.NewScanner(strings.NewReader(string(existing)))
 		for scanner.Scan() {
 			rawLine := scanner.Text()
-			stripped := rawLine
-			if idx := strings.Index(stripped, "#"); idx >= 0 {
-				stripped = stripped[:idx]
-			}
-			stripped = strings.TrimSpace(stripped)
-
-			origKey := ""
-			if k, _, ok := strings.Cut(stripped, "="); ok {
-				origKey = strings.TrimSpace(k)
-			}
+			origKey := confLineKey(rawLine)
 			for _, lowerKey := range order {
 				targetKey := targetKeys[lowerKey]
 				if strings.EqualFold(origKey, targetKey) {
