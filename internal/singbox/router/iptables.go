@@ -439,6 +439,19 @@ func NewIPTables() *IPTables {
 	}
 }
 
+// drainFwmarkRules deletes every `ip rule` for our fwmark/table, looping until
+// ENOENT (capped by maxIPRuleDrainPasses). Install historically accumulated
+// duplicate rules at auto-assigned priorities, so a single del would leave the
+// rest — both Install (pre-add cleanup) and Uninstall drain via this.
+func (it *IPTables) drainFwmarkRules(ctx context.Context) {
+	for i := 0; i < maxIPRuleDrainPasses; i++ {
+		if err := it.runIP(ctx, "rule", "del", "fwmark", fmt.Sprintf("0x%x", Fwmark),
+			"table", fmt.Sprintf("%d", RoutingTable)); err != nil {
+			break
+		}
+	}
+}
+
 func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 	// Scrub any existing PREROUTING jumps to AWGM-TPROXY before inserting
 	// the new one. iptables-restore --noflush + -I PREROUTING 1 would
@@ -470,12 +483,7 @@ func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 	// rules at priorities 0-N displaces the kernel's `from all lookup
 	// local` rule (normally at prio 0), breaking router-local routing
 	// (sing-box outbounds to direct silently fail).
-	for i := 0; i < maxIPRuleDrainPasses; i++ {
-		if err := it.runIP(ctx, "rule", "del", "fwmark", fmt.Sprintf("0x%x", Fwmark),
-			"table", fmt.Sprintf("%d", RoutingTable)); err != nil {
-			break
-		}
-	}
+	it.drainFwmarkRules(ctx)
 	// Use an explicit priority well above NDMS policy rules (100-200)
 	// and well below the system main/default tables (32766/32767), so
 	// our rule is identifiable and idempotent.
@@ -608,12 +616,7 @@ func (it *IPTables) Uninstall(ctx context.Context) error {
 	// Drain ALL fwmark rules — historically Install accumulated
 	// duplicates at priorities 0-N (auto-assigned), so a single `del`
 	// would leave the rest. Loop until ENOENT, capped defensively.
-	for i := 0; i < maxIPRuleDrainPasses; i++ {
-		if err := it.runIP(ctx, "rule", "del", "fwmark", fmt.Sprintf("0x%x", Fwmark),
-			"table", fmt.Sprintf("%d", RoutingTable)); err != nil {
-			break
-		}
-	}
+	it.drainFwmarkRules(ctx)
 	_ = it.runIP(ctx, "route", "flush", "table", fmt.Sprintf("%d", RoutingTable))
 	return nil
 }
