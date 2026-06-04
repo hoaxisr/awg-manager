@@ -82,50 +82,61 @@
 </div>
 
 <style>
+  /* Box mirrors StatusDrawer .inp (radius/bg/border) so the chip field reads
+     as a normal input within the drawer. */
   .chips-box {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
     align-items: center;
-    padding: 6px 8px;
-    border: 1px solid var(--border, #3a4150);
-    border-radius: 8px;
-    background: var(--bg-input, #1e2430);
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
   }
+  /* Removable chip — same shape/vars as sb-router SelectedTemplatesRow. */
   .port-chip {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    background: var(--bg-tertiary, #2d4a63);
-    border-radius: 6px;
-    padding: 3px 8px;
-    font-size: 13px;
+    gap: 6px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 3px 4px 3px 8px;
+    font-size: 12.5px;
+    font-family: var(--font-mono);
+    color: var(--text-primary);
   }
   .chip-x {
-    background: none;
-    border: none;
-    color: inherit;
-    opacity: 0.6;
+    background: transparent;
+    border: 0;
+    color: var(--text-muted);
     cursor: pointer;
-    padding: 0;
-    font-size: 12px;
+    padding: 2px;
+    display: inline-flex;
+    align-items: center;
+    transition: color var(--t-fast);
   }
   .chip-x:hover {
-    opacity: 1;
+    color: var(--text-primary);
   }
   .chip-input {
     flex: 1;
     min-width: 110px;
     border: none;
     background: transparent;
-    color: inherit;
+    color: var(--text-primary);
     padding: 2px;
     outline: none;
-    font-size: 13px;
+    font-size: 12.5px;
+    font-family: inherit;
+  }
+  .chip-input::placeholder {
+    color: var(--text-muted);
   }
   .port-error {
-    color: var(--error, #e06c5c);
-    font-size: 12px;
+    color: var(--error);
+    font-size: 11.5px;
     margin-top: 6px;
   }
 </style>
