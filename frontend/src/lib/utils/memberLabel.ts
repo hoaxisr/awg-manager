@@ -3,12 +3,14 @@
 // cards / dropdowns (issue #214).
 //
 // Resolution order:
-//   1. Subscription member: sub.members[i].label (or server) когда tag
+//   1. Subscription selector: sub.label когда tag совпадает с sub.selectorTag —
+//      покрывает чистое имя подписки для тэга-селектора (sub-XXXX).
+//   2. Subscription member: sub.members[i].label (or server) когда tag
 //      совпадает с одним из sub.members[i].tag — это покрывает
 //      sub-XXX-YYY формат.
-//   2. outboundOptions flat lookup (покрывает awg-awgN тэги — там label
+//   3. outboundOptions flat lookup (покрывает awg-awgN тэги — там label
 //      уже сделан билдером как "${t.label} (${t.iface})").
-//   3. Fallback: исходный тэг (не теряем информацию когда мапа неполная).
+//   4. Fallback: исходный тэг (не теряем информацию когда мапа неполная).
 
 import type { Subscription } from '$lib/types';
 import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
@@ -21,6 +23,10 @@ export function resolveMemberLabel(
 	if (!tag) return tag;
 
 	if (subscriptions && subscriptions.length > 0) {
+		const selector = subscriptions.find((s) => s.selectorTag === tag);
+		if (selector) {
+			return selector.label || tag;
+		}
 		for (const sub of subscriptions) {
 			const m = sub.members?.find((x) => x.tag === tag);
 			if (m) {

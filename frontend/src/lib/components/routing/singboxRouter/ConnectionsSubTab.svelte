@@ -12,6 +12,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
 	import { formatBytes } from '$lib/utils/format';
+	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { resolveMemberLabel } from '$lib/utils/memberLabel';
 	import ConnectionsBreakdown from './ConnectionsBreakdown.svelte';
 	import ConnectionsFilters from './ConnectionsFilters.svelte';
@@ -37,7 +38,7 @@
 	let staleTimer: ReturnType<typeof setInterval> | null = null;
 
 	function displayOutbound(tag: string): string {
-		return resolveMemberLabel(tag, null, $routerOutboundOptions);
+		return resolveMemberLabel(tag, $subscriptionsStore.data, $routerOutboundOptions);
 	}
 
 	const displayConns = $derived(
