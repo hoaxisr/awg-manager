@@ -2,11 +2,9 @@ package hydraroute
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"strings"
 )
 
@@ -33,57 +31,26 @@ func ExtractGeoIPTagLines(path, tag string) ([]string, error) {
 type itemParser func(payload []byte) (string, bool, error)
 
 func extractTagLines(path, wantTag, kind string, parseItem itemParser) ([]string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
-	}
-	defer f.Close()
-
-	br := bufio.NewReaderSize(f, 64*1024)
 	var lines []string
 	found := false
 
-	for {
-		fieldNum, wireType, err := readProtoTag(br)
-		if errors.Is(err, io.EOF) {
-			break
-		}
+	err := walkGeoDatEntries(path, func(br *bufio.Reader, entryLen int) error {
+		entryLines, name, err := parseEntryItems(br, entryLen, wantTag, parseItem)
 		if err != nil {
-			return nil, fmt.Errorf("%s: top-level tag: %w", path, err)
+			return fmt.Errorf("%s: parse entry: %w", path, err)
 		}
-		if wireType != 2 {
-			if err := skipProtoField(br, wireType); err != nil {
-				return nil, fmt.Errorf("%s: skip top-level field %d: %w", path, fieldNum, err)
-			}
-			continue
-		}
-
-		length, err := readProtoVarint(br)
-		if err != nil {
-			return nil, fmt.Errorf("%s: submessage length: %w", path, err)
-		}
-		if fieldNum != 1 {
-			if _, err := br.Discard(int(length)); err != nil {
-				return nil, fmt.Errorf("%s: discard top-level field %d: %w", path, fieldNum, err)
-			}
-			continue
-		}
-
-		entryLines, name, err := parseEntryItems(br, int(length), wantTag, parseItem)
-		if err != nil {
-			return nil, fmt.Errorf("%s: parse entry: %w", path, err)
-		}
-		if name == "" {
-			continue
-		}
-		if !strings.EqualFold(name, wantTag) {
-			continue
+		if name == "" || !strings.EqualFold(name, wantTag) {
+			return nil
 		}
 		found = true
 		lines = append(lines, entryLines...)
 		if len(lines) > maxGeoExpandLines {
-			return nil, fmt.Errorf("%s tag %q: exceeds %d items", kind, wantTag, maxGeoExpandLines)
+			return fmt.Errorf("%s tag %q: exceeds %d items", kind, wantTag, maxGeoExpandLines)
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	if !found {

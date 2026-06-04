@@ -61,53 +61,73 @@ func ReadFileInfo(path string, fileType string) (size int64, tagCount int, err e
 // ccField is the field number inside the entry submessage holding the tag name
 // (country_code), countField is the field number of the repeated items
 // (domains for GeoSite, CIDRs for GeoIP).
-func extractTags(path string, ccField, countField int) ([]GeoTag, error) {
+// walkGeoDatEntries opens a v2fly geo .dat file and invokes onEntry for each
+// top-level GeoSiteList/GeoIPList entry (field 1, length-delimited). It owns the
+// file handle and the top-level proto framing (skip non-LD fields, discard
+// non-field-1 submessages); onEntry must consume exactly entryLen bytes from br
+// and owns its own error wrapping. The two extractors (tag counts vs item
+// expansion) share this framing but keep their own entry parsers — the
+// entry-level wire walk is perf-sensitive (Discards multi-MB payloads instead
+// of allocating) and is deliberately not abstracted here.
+func walkGeoDatEntries(path string, onEntry func(br *bufio.Reader, entryLen int) error) error {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
+		return fmt.Errorf("open %s: %w", path, err)
 	}
 	defer f.Close()
 
 	br := bufio.NewReaderSize(f, 64*1024)
-	var tags []GeoTag
-
 	for {
 		fieldNum, wireType, err := readProtoTag(br)
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("%s: top-level tag: %w", path, err)
+			return fmt.Errorf("%s: top-level tag: %w", path, err)
 		}
 
 		if wireType != 2 {
 			// Top-level non-length-delimited fields: skip.
 			if err := skipProtoField(br, wireType); err != nil {
-				return nil, fmt.Errorf("%s: skip top-level field %d: %w", path, fieldNum, err)
+				return fmt.Errorf("%s: skip top-level field %d: %w", path, fieldNum, err)
 			}
 			continue
 		}
 
 		length, err := readProtoVarint(br)
 		if err != nil {
-			return nil, fmt.Errorf("%s: submessage length: %w", path, err)
+			return fmt.Errorf("%s: submessage length: %w", path, err)
 		}
 
 		if fieldNum != 1 {
 			// Unknown top-level submessage — discard without parsing.
 			if _, err := br.Discard(int(length)); err != nil {
-				return nil, fmt.Errorf("%s: discard top-level field %d: %w", path, fieldNum, err)
+				return fmt.Errorf("%s: discard top-level field %d: %w", path, fieldNum, err)
 			}
 			continue
 		}
 
-		tag, err := parseEntryStream(br, int(length), ccField, countField)
+		if err := onEntry(br, int(length)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func extractTags(path string, ccField, countField int) ([]GeoTag, error) {
+	var tags []GeoTag
+	err := walkGeoDatEntries(path, func(br *bufio.Reader, entryLen int) error {
+		tag, err := parseEntryStream(br, entryLen, ccField, countField)
 		if err != nil {
-			return nil, fmt.Errorf("%s: parse entry: %w", path, err)
+			return fmt.Errorf("%s: parse entry: %w", path, err)
 		}
 		if tag.Name != "" {
 			tags = append(tags, tag)
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	sort.Slice(tags, func(i, j int) bool {
