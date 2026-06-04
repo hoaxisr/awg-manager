@@ -5,7 +5,7 @@
   import { ArrowLeft } from 'lucide-svelte';
   import { LoadingSpinner } from '$lib/components/layout';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
-  import { DeviceProxySubTab, StagingBanner, EngineSubTab, PresetsSubTab, RouteInspector, JsonConfigDrawer } from '$lib/components/singbox-routing';
+  import { DeviceProxySubTab, StagingBanner, RouteInspector, JsonConfigDrawer } from '$lib/components/singbox-routing';
   import { ConnectionsSubTab } from '$lib/components/routing/singboxRouter';
   import {
     PageShell,
@@ -34,8 +34,7 @@
   // Активен ли отдельный sub-вид (рендерится на всю страницу) — для кнопки «Назад».
   let inSubView = $derived(
     activeSingboxSub === 'deviceproxy' ||
-    activeSingboxSub === 'connections' ||
-    ((activeSingboxSub === 'engine' || activeSingboxSub === 'presets') && $sbMode === 'expert'),
+    activeSingboxSub === 'connections',
   );
 
   function clearSub() {
@@ -44,13 +43,7 @@
     void goto(`${url.pathname}${url.search}`, { keepFocus: true, noScroll: true });
   }
 
-  $effect(() => {
-    if ($sbMode === 'beginner' && (activeSingboxSub === 'engine' || activeSingboxSub === 'presets')) {
-      const url = new URL(window.location.href);
-      url.searchParams.delete('sub');
-      void goto(`${url.pathname}${url.search}`, { replaceState: true, keepFocus: true, noScroll: true });
-    }
-  });
+
 </script>
 
 <PageShell onOpenInspector={() => (inspectorOpen = true)} onOpenJson={() => (jsonOpen = true)}>
@@ -60,11 +53,7 @@
       <ArrowLeft size={14} /> Назад
     </button>
   {/if}
-  {#if activeSingboxSub === 'engine' && $sbMode === 'expert'}
-    <EngineSubTab />
-  {:else if activeSingboxSub === 'presets' && $sbMode === 'expert'}
-    <PresetsSubTab />
-  {:else if activeSingboxSub === 'deviceproxy'}
+  {#if activeSingboxSub === 'deviceproxy'}
     <DeviceProxySubTab />
   {:else if activeSingboxSub === 'connections'}
     <ConnectionsSubTab />
