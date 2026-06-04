@@ -51,6 +51,35 @@ func parseManagedSubnet(address, mask string) (*net.IPNet, error) {
 	return cidr, nil
 }
 
+// validatePeerTunnelIP enforces the rules a managed-server peer tunnel IP must
+// satisfy: inside the server subnet, not the server's own address, and (for
+// subnets larger than /31) not the network or broadcast address. subnet.IP must
+// be the masked network address (parseManagedSubnet returns it so). Single
+// source of truth — AddPeer, restore preflight and merge preflight all use it,
+// so the network/broadcast carve-out can't drift out of one path.
+func validatePeerTunnelIP(subnet *net.IPNet, serverIP, ip net.IP) error {
+	if !subnet.Contains(ip) {
+		return fmt.Errorf("tunnel IP %s is not in server subnet %s", ip, subnet)
+	}
+	if serverIP != nil && ip.Equal(serverIP) {
+		return fmt.Errorf("tunnel IP %s is the server's own address", ip)
+	}
+	ones, bits := subnet.Mask.Size()
+	if ones < bits-1 { // /31 and /32 have no network/broadcast
+		if ip.Equal(subnet.IP) {
+			return fmt.Errorf("tunnel IP %s is the network address", ip)
+		}
+		broadcast := make(net.IP, len(subnet.IP))
+		for i := range subnet.IP {
+			broadcast[i] = subnet.IP[i] | ^subnet.Mask[i]
+		}
+		if ip.Equal(broadcast) {
+			return fmt.Errorf("tunnel IP %s is the broadcast address", ip)
+		}
+	}
+	return nil
+}
+
 // maskToPrefix accepts "24" or "255.255.255.0" and returns 24.
 func maskToPrefix(mask string) (int, error) {
 	if n, err := strconv.Atoi(mask); err == nil {

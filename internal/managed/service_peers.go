@@ -252,31 +252,5 @@ func (s *Service) validateTunnelIP(server *storage.ManagedServer, tunnelIP strin
 	}
 	serverNet := &net.IPNet{IP: serverIP.Mask(serverMask), Mask: serverMask}
 
-	if !serverNet.Contains(ip) {
-		return fmt.Errorf("tunnel IP %s is not in server subnet %s", ip, serverNet)
-	}
-
-	// Must not be the server's own address
-	if ip.Equal(serverIP) {
-		return fmt.Errorf("tunnel IP cannot be the server's own address")
-	}
-
-	// Must not be network or broadcast address (for subnets larger than /31)
-	ones, bits := serverNet.Mask.Size()
-	if ones < bits-1 { // /31 and /32 have no network/broadcast
-		networkAddr := serverNet.IP
-		if ip.Equal(networkAddr) {
-			return fmt.Errorf("tunnel IP %s is the network address", ip)
-		}
-		// Calculate broadcast: network OR (NOT mask)
-		broadcast := make(net.IP, len(networkAddr))
-		for i := range networkAddr {
-			broadcast[i] = networkAddr[i] | ^serverNet.Mask[i]
-		}
-		if ip.Equal(broadcast) {
-			return fmt.Errorf("tunnel IP %s is the broadcast address", ip)
-		}
-	}
-
-	return nil
+	return validatePeerTunnelIP(serverNet, serverIP, ip)
 }

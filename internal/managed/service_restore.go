@@ -264,11 +264,8 @@ func (s *Service) preflight(ctx context.Context, sv ManagedServerExport, exclude
 			reasons = append(reasons, fmt.Sprintf("peer %s tunnel IP %q: %v", pub, peer.TunnelIP, err))
 			continue
 		}
-		if !subnet.Contains(ip) {
-			reasons = append(reasons, fmt.Sprintf("peer %s tunnel IP %s is outside server subnet %s", pub, ip.String(), subnet.String()))
-		}
-		if serverIP != nil && ip.Equal(serverIP) {
-			reasons = append(reasons, fmt.Sprintf("peer %s tunnel IP %s equals server address", pub, ip.String()))
+		if err := validatePeerTunnelIP(subnet, serverIP, ip); err != nil {
+			reasons = append(reasons, fmt.Sprintf("peer %s %v", pub, err))
 		}
 		ipKey := ip.String()
 		if _, ok := seenIP[ipKey]; ok {
@@ -469,11 +466,8 @@ func (s *Service) preflightMergePeers(existing storage.ManagedServer, sv Managed
 			conflicts = append(conflicts, fmt.Sprintf("duplicate peer tunnel IP in import: %s", ipStr))
 		}
 		incomingIP[ipStr] = struct{}{}
-		if !serverSubnet.Contains(ip) {
-			conflicts = append(conflicts, fmt.Sprintf("peer %s tunnel IP %s is outside server subnet %s", pub, ipStr, serverSubnet.String()))
-		}
-		if serverIP != nil && ip.Equal(serverIP) {
-			conflicts = append(conflicts, fmt.Sprintf("peer %s tunnel IP %s equals server address", pub, ipStr))
+		if err := validatePeerTunnelIP(serverSubnet, serverIP, ip); err != nil {
+			conflicts = append(conflicts, fmt.Sprintf("peer %s %v", pub, err))
 		}
 		if _, exists := have[pub]; exists {
 			continue
