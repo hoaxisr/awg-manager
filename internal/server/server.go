@@ -1072,6 +1072,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// Sing-box integration (protected + boot guarded)
 	if s.singboxHandler != nil {
+		s.singboxHandler.SetSettingsStore(s.settings)
 		mux.HandleFunc("/api/singbox/status", guarded(s.singboxHandler.Status))
 		mux.HandleFunc("/api/singbox/install", guarded(s.singboxHandler.Install))
 		mux.HandleFunc("/api/singbox/update", guarded(s.singboxHandler.Update))

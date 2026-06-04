@@ -50,15 +50,16 @@ type tunnelMonitor struct {
 	restartCount  int
 	failThreshold int
 	lastCheck     time.Time
-	lastResult   *CheckResult
-	stopCh       chan struct{}
-	wg           sync.WaitGroup
+	lastResult    *CheckResult
+	stopCh        chan struct{}
+	wg            sync.WaitGroup
 }
 
 // checkConfig holds resolved check configuration for a tunnel.
 type checkConfig struct {
 	Method        string
 	Target        string
+	CheckURL      string
 	Interval      int
 	FailThreshold int
 }
@@ -71,12 +72,12 @@ func NewService(
 	appLogger logging.AppLogger,
 ) *Service {
 	return &Service{
-		settings:  settings,
-		tunnels:   tunnels,
-		wg:        wgClient,
-		appLog:    logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubPingcheck),
-		monitors:  make(map[string]*tunnelMonitor),
-		logBuffer: NewLogBuffer(),
+		settings:         settings,
+		tunnels:          tunnels,
+		wg:               wgClient,
+		appLog:           logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubPingcheck),
+		monitors:         make(map[string]*tunnelMonitor),
+		logBuffer:        NewLogBuffer(),
 		handshakeTimeout: handshakeTimeout,
 	}
 }
@@ -238,17 +239,17 @@ func (s *Service) GetStatus() []TunnelStatus {
 		}
 
 		result = append(result, TunnelStatus{
-			TunnelID:        tunnelID,
-			TunnelName:      m.tunnelName,
-			Enabled:         config != nil,
-			Backend:         "kernel",
-			Status:          status,
-			Method:          method,
-			LastCheck:       lastCheck,
-			LastLatency:     lastLatency,
-			FailCount:       m.failCount,
-			FailThreshold:   failThreshold,
-			RestartCount:    m.restartCount,
+			TunnelID:      tunnelID,
+			TunnelName:    m.tunnelName,
+			Enabled:       config != nil,
+			Backend:       "kernel",
+			Status:        status,
+			Method:        method,
+			LastCheck:     lastCheck,
+			LastLatency:   lastLatency,
+			FailCount:     m.failCount,
+			FailThreshold: failThreshold,
+			RestartCount:  m.restartCount,
 		})
 	}
 
@@ -422,9 +423,21 @@ func (s *Service) getCheckConfig(tunnelID string) *checkConfig {
 	return &checkConfig{
 		Method:        pc.Method,
 		Target:        pc.Target,
+		CheckURL:      s.connectivityCheckURL(),
 		Interval:      interval,
 		FailThreshold: failThreshold,
 	}
+}
+
+func (s *Service) connectivityCheckURL() string {
+	if s == nil || s.settings == nil {
+		return storage.DefaultConnectivityCheckURL
+	}
+	settings, err := s.settings.Get()
+	if err != nil || settings == nil || settings.ConnectivityCheckURL == "" {
+		return storage.DefaultConnectivityCheckURL
+	}
+	return settings.ConnectivityCheckURL
 }
 
 // performCheckAndUpdate performs a single check and updates monitor state.

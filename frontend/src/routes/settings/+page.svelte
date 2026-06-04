@@ -51,6 +51,8 @@
 
 	const expandUsageLevel = $derived($page.url.searchParams.has('mode'));
 	const highlightFeedbackFab = $derived($page.url.searchParams.has('feedbackFab'));
+	const defaultPingTarget = "8.8.8.8";
+	const defaultConnectivityCheckUrl = "http://connectivitycheck.gstatic.com/generate_204";
 
 	let systemInfo: SystemInfo | null = $state(null);
 	let settings = $state<Settings | null>(null);
@@ -460,6 +462,29 @@ $effect(() => {
 		}
 	}
 
+	async function savePingTargetsSettings() {
+		if (!settings) return;
+		saving = true;
+		try {
+			settings = await api.updateSettings({
+				pingCheck: {
+					...settings.pingCheck,
+					defaults: {
+						...settings.pingCheck.defaults,
+						target: settings.pingCheck.defaults.target,
+					},
+				},
+				connectivityCheckUrl: settings.connectivityCheckUrl,
+			});
+			setGlobalSettings(settings);
+			notifications.success("Цели проверки пинга сохранены");
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : "Ошибка сохранения целей проверки");
+		} finally {
+			saving = false;
+		}
+	}
+
 	async function toggleUpdateCheck(enabled: boolean) {
 		if (!settings) return;
 		saving = true;
@@ -780,6 +805,45 @@ $effect(() => {
 				</div>
 
 				{#if $usageLevel === "expert"}
+				<div class="card">
+					<div class="section-label">Проверка пинга</div>
+					<div class="setting-row ping-target-setting">
+						<div class="flex flex-col gap-1">
+							<span class="font-medium">Цели проверки</span>
+							<span class="setting-description">
+								ICMP target используется как глобальный адрес для ping-check. HTTP URL вызывается через туннель для проверки доступности и задержки.
+							</span>
+						</div>
+						<div class="ping-target-controls">
+							<label class="ping-target-field">
+								<span>ICMP target</span>
+								<input
+									type="text"
+									class="settings-text-input"
+									bind:value={settings.pingCheck.defaults.target}
+									placeholder={defaultPingTarget}
+									disabled={saving}
+								/>
+							</label>
+							<label class="ping-target-field">
+								<span>HTTP URL проверки</span>
+								<input
+									type="url"
+									class="settings-text-input"
+									bind:value={settings.connectivityCheckUrl}
+									placeholder={defaultConnectivityCheckUrl}
+									disabled={saving}
+								/>
+							</label>
+							<div class="ping-target-action">
+								<Button variant="secondary" size="md" onclick={savePingTargetsSettings} disabled={saving}>
+									Сохранить
+								</Button>
+							</div>
+						</div>
+					</div>
+				</div>
+
 				<div
 					id="feedback-fab"
 					class="card settings-highlight-target"
@@ -1068,6 +1132,53 @@ $effect(() => {
 		min-width: 0;
 	}
 
+	.ping-target-setting {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, min(50%, 34rem));
+		gap: 1rem;
+		align-items: start;
+	}
+
+	.ping-target-controls {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.5rem;
+		width: 100%;
+		min-width: 0;
+	}
+
+	.ping-target-field {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		min-width: 0;
+		color: var(--color-text-secondary);
+		font-size: 0.75rem;
+		font-weight: 600;
+	}
+
+	.settings-text-input {
+		width: 100%;
+		max-width: none;
+		padding: 0.375rem 0.5rem;
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 0.8rem;
+		background: var(--bg, var(--color-bg));
+		border: 1px solid var(--border, var(--color-border));
+		border-radius: 4px;
+		color: var(--text, var(--color-text));
+	}
+
+	.settings-text-input:focus {
+		outline: 2px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
+		border-color: var(--color-primary);
+	}
+
+	.ping-target-action {
+		display: flex;
+		justify-content: flex-end;
+	}
+
 	.api-key-input {
 		width: 100%;
 		max-width: none;
@@ -1100,6 +1211,23 @@ $effect(() => {
 	}
 
 	@media (min-width: 641px) {
+		.ping-target-setting > *:first-child {
+			display: flex;
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.25rem;
+		}
+
+		.ping-target-setting .setting-description {
+			white-space: normal;
+			overflow: visible;
+			text-overflow: clip;
+		}
+
+		.ping-target-action :global(.btn) {
+			min-width: 7.5rem;
+		}
+
 		.api-key-setting {
 			grid-template-columns: minmax(0, 1fr) minmax(0, min(50%, 34rem));
 			align-items: start;
@@ -1135,6 +1263,18 @@ $effect(() => {
 	}
 
 	@media (max-width: 640px) {
+		.ping-target-setting {
+			grid-template-columns: 1fr;
+		}
+
+		.ping-target-action {
+			justify-content: stretch;
+		}
+
+		.ping-target-action :global(.btn) {
+			width: 100%;
+		}
+
 		.api-key-controls {
 			grid-template-columns: minmax(0, 1fr) auto;
 		}

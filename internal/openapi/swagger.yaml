@@ -1847,7 +1847,7 @@ definitions:
   api.MonitoringTargetDTO:
     properties:
       host:
-        example: https://www.google.com
+        example: 8.8.8.8
         type: string
       id:
         example: target_google
@@ -2542,6 +2542,9 @@ definitions:
       authEnabled:
         example: false
         type: boolean
+      connectivityCheckUrl:
+        example: http://connectivitycheck.gstatic.com/generate_204
+        type: string
       disableMemorySaving:
         example: false
         type: boolean

@@ -36,8 +36,14 @@ func TestSettingsStore_LoadDefault(t *testing.T) {
 	if settings.PingCheck.Defaults.Method != "http" {
 		t.Errorf("PingCheck.Defaults.Method = %s, want http", settings.PingCheck.Defaults.Method)
 	}
+	if settings.PingCheck.Defaults.Target != DefaultPingCheckTarget {
+		t.Errorf("PingCheck.Defaults.Target = %s, want %s", settings.PingCheck.Defaults.Target, DefaultPingCheckTarget)
+	}
 	if settings.PingCheck.Defaults.FailThreshold != 3 {
 		t.Errorf("PingCheck.Defaults.FailThreshold = %d, want 3", settings.PingCheck.Defaults.FailThreshold)
+	}
+	if settings.ConnectivityCheckURL != DefaultConnectivityCheckURL {
+		t.Errorf("ConnectivityCheckURL = %q, want %q", settings.ConnectivityCheckURL, DefaultConnectivityCheckURL)
 	}
 	if settings.SingboxRouter.DeviceMode != "policy" {
 		t.Errorf("SingboxRouter.DeviceMode = %q, want policy", settings.SingboxRouter.DeviceMode)
@@ -315,6 +321,28 @@ func TestSettings_MigrateV23toV24_KeepsLegacyNonDirectRouteKindEmpty(t *testing.
 	}
 	if s.Download.RouteKind != "" {
 		t.Fatalf("download.routeKind = %q, want empty", s.Download.RouteKind)
+	}
+}
+
+func TestSettings_MigrateV24toV25_SetsPingTargets(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacy := `{"schemaVersion":24,"authEnabled":false,"usageLevel":"basic","pingCheck":{"defaults":{"target":"  "}}}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	store := NewSettingsStore(tmpDir)
+	s, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.SchemaVersion != CurrentSchemaVersion {
+		t.Fatalf("schema = %d, want %d", s.SchemaVersion, CurrentSchemaVersion)
+	}
+	if s.PingCheck.Defaults.Target != DefaultPingCheckTarget {
+		t.Fatalf("ping target = %q, want %q", s.PingCheck.Defaults.Target, DefaultPingCheckTarget)
+	}
+	if s.ConnectivityCheckURL != DefaultConnectivityCheckURL {
+		t.Fatalf("connectivity URL = %q, want %q", s.ConnectivityCheckURL, DefaultConnectivityCheckURL)
 	}
 }
 

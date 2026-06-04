@@ -433,3 +433,84 @@ func TestUpdate_DownloadRoute_NormalizesEmptyToDirect(t *testing.T) {
 		t.Fatalf("routeKind = %q, want direct", got.Download.RouteKind)
 	}
 }
+
+func TestUpdate_PingCheckTargetValidAndEmpty(t *testing.T) {
+	h, store := newSettingsHandlerForTest(t)
+
+	body := []byte(`{"pingCheck":{"enabled":false,"defaults":{"method":"http","target":"  1.1.1.1  ","interval":45,"deadInterval":120,"failThreshold":3}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/settings/update", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	got, _ := store.Get()
+	if got.PingCheck.Defaults.Target != "1.1.1.1" {
+		t.Fatalf("target = %q, want 1.1.1.1", got.PingCheck.Defaults.Target)
+	}
+
+	body = []byte(`{"pingCheck":{"enabled":false,"defaults":{"method":"http","target":"  ","interval":45,"deadInterval":120,"failThreshold":3}}}`)
+	req = httptest.NewRequest(http.MethodPost, "/settings/update", bytes.NewReader(body))
+	rec = httptest.NewRecorder()
+	h.Update(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	got, _ = store.Get()
+	if got.PingCheck.Defaults.Target != storage.DefaultPingCheckTarget {
+		t.Fatalf("target = %q, want %q", got.PingCheck.Defaults.Target, storage.DefaultPingCheckTarget)
+	}
+}
+
+func TestUpdate_PingCheckTargetInvalidRejected(t *testing.T) {
+	h, _ := newSettingsHandlerForTest(t)
+	body := []byte(`{"pingCheck":{"enabled":false,"defaults":{"method":"http","target":"https://example.com","interval":45,"deadInterval":120,"failThreshold":3}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/settings/update", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "INVALID_PING_CHECK_TARGET") {
+		t.Fatalf("missing INVALID_PING_CHECK_TARGET, body=%s", rec.Body.String())
+	}
+}
+
+func TestUpdate_ConnectivityCheckURLValidEmptyInvalid(t *testing.T) {
+	h, store := newSettingsHandlerForTest(t)
+
+	body := []byte(`{"connectivityCheckUrl":" https://probe.example.net/generate_204 "}`)
+	req := httptest.NewRequest(http.MethodPost, "/settings/update", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	got, _ := store.Get()
+	if got.ConnectivityCheckURL != "https://probe.example.net/generate_204" {
+		t.Fatalf("connectivityCheckUrl = %q", got.ConnectivityCheckURL)
+	}
+
+	body = []byte(`{"connectivityCheckUrl":"  "}`)
+	req = httptest.NewRequest(http.MethodPost, "/settings/update", bytes.NewReader(body))
+	rec = httptest.NewRecorder()
+	h.Update(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	got, _ = store.Get()
+	if got.ConnectivityCheckURL != storage.DefaultConnectivityCheckURL {
+		t.Fatalf("connectivityCheckUrl = %q, want %q", got.ConnectivityCheckURL, storage.DefaultConnectivityCheckURL)
+	}
+
+	body = []byte(`{"connectivityCheckUrl":"ftp://example.net/check"}`)
+	req = httptest.NewRequest(http.MethodPost, "/settings/update", bytes.NewReader(body))
+	rec = httptest.NewRecorder()
+	h.Update(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "INVALID_CONNECTIVITY_CHECK_URL") {
+		t.Fatalf("missing INVALID_CONNECTIVITY_CHECK_URL, body=%s", rec.Body.String())
+	}
+}

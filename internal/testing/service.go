@@ -25,6 +25,7 @@ func IsAWGID(id string) bool {
 // Service provides tunnel testing operations.
 type Service struct {
 	awgStore *storage.AWGTunnelStore
+	settings *storage.SettingsStore
 	appLog   *logging.ScopedLogger
 }
 
@@ -34,6 +35,11 @@ func NewService(awgStore *storage.AWGTunnelStore, appLogger logging.AppLogger) *
 		awgStore: awgStore,
 		appLog:   logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubTest),
 	}
+}
+
+// SetSettingsStore wires global settings for runtime test defaults.
+func (s *Service) SetSettingsStore(settings *storage.SettingsStore) {
+	s.settings = settings
 }
 
 // GetAWG returns an AWG tunnel by ID, or nil if not found.

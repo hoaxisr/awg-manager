@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndms "github.com/hoaxisr/awg-manager/internal/ndms"
@@ -253,13 +254,24 @@ func (h *SystemTunnelsHandler) CheckConnectivity(w http.ResponseWriter, r *http.
 		return
 	}
 	h.appLog.Debug("connectivity-check", name, fmt.Sprintf("Starting connectivity check for system tunnel %s", name))
-	result := testing.CheckConnectivityByInterface(r.Context(), tunnel.InterfaceName)
+	result := testing.CheckConnectivityByInterfaceURL(r.Context(), tunnel.InterfaceName, h.connectivityCheckURL())
 	if result.Connected {
 		h.appLog.Debug("connectivity-check", name, fmt.Sprintf("Connectivity check passed: latency=%dms", *result.Latency))
 	} else {
 		h.appLog.Warn("connectivity-check", name, fmt.Sprintf("Connectivity check failed: reason=%s", result.Reason))
 	}
 	response.Success(w, result)
+}
+
+func (h *SystemTunnelsHandler) connectivityCheckURL() string {
+	if h == nil || h.settings == nil {
+		return storage.DefaultConnectivityCheckURL
+	}
+	settings, err := h.settings.Get()
+	if err != nil || settings == nil || strings.TrimSpace(settings.ConnectivityCheckURL) == "" {
+		return storage.DefaultConnectivityCheckURL
+	}
+	return strings.TrimSpace(settings.ConnectivityCheckURL)
 }
 
 // CheckIP tests IP through system tunnel.

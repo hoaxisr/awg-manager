@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 )
 
@@ -33,9 +35,9 @@ type SingboxStatusData struct {
 	CurrentSHA256    string   `json:"currentSha256,omitempty" example:"76e67bb07b5c2bf4cef108c2f21a5ffaa684d124c21ffe220fc89b39cf1de934"`
 	RequiredSHA256   string   `json:"requiredSha256,omitempty" example:"76e67bb07b5c2bf4cef108c2f21a5ffaa684d124c21ffe220fc89b39cf1de934"`
 	UpdateAvailable  bool     `json:"updateAvailable" example:"false"`
-	InstallState  string `json:"installState" example:"outdated_no_space"`
-	RequiredBytes int64  `json:"requiredBytes" example:"32145678"`
-	FreeBytes     int64  `json:"freeBytes" example:"8221456"`
+	InstallState     string   `json:"installState" example:"outdated_no_space"`
+	RequiredBytes    int64    `json:"requiredBytes" example:"32145678"`
+	FreeBytes        int64    `json:"freeBytes" example:"8221456"`
 }
 
 func singboxStatusData(s singbox.Status) SingboxStatusData {
@@ -101,13 +103,14 @@ type SingboxControlRequest struct {
 
 // SingboxHandler serves /api/singbox/* routes.
 type SingboxHandler struct {
-	op           *singbox.Operator
-	bus          *events.Bus
-	delayChecker *singbox.DelayChecker
-	testingSvc   *testing.Service
-	log          *logging.ScopedLogger
-	migrator     *singbox.Migrator
-	settings     ndmsProxyToggler
+	op            *singbox.Operator
+	bus           *events.Bus
+	delayChecker  *singbox.DelayChecker
+	testingSvc    *testing.Service
+	log           *logging.ScopedLogger
+	migrator      *singbox.Migrator
+	settings      ndmsProxyToggler
+	settingsStore *storage.SettingsStore
 }
 
 // ndmsProxyToggler — узкий интерфейс для чтения текущего значения
@@ -140,6 +143,11 @@ func NewSingboxHandler(op *singbox.Operator, bus *events.Bus, dc *singbox.DelayC
 func (h *SingboxHandler) SetNDMSProxyMigrator(m *singbox.Migrator, settings ndmsProxyToggler) {
 	h.migrator = m
 	h.settings = settings
+}
+
+// SetSettingsStore wires global settings for connectivity checks.
+func (h *SingboxHandler) SetSettingsStore(settings *storage.SettingsStore) {
+	h.settingsStore = settings
 }
 
 // ToggleNDMSProxyRequest is the body for POST /singbox/ndms-proxy.
@@ -633,8 +641,19 @@ func (h *SingboxHandler) CheckConnectivity(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	result := testing.CheckConnectivityByInterface(r.Context(), iface)
+	result := testing.CheckConnectivityByInterfaceURL(r.Context(), iface, h.connectivityCheckURL())
 	response.Success(w, result)
+}
+
+func (h *SingboxHandler) connectivityCheckURL() string {
+	if h == nil || h.settingsStore == nil {
+		return storage.DefaultConnectivityCheckURL
+	}
+	settings, err := h.settingsStore.Get()
+	if err != nil || settings == nil || strings.TrimSpace(settings.ConnectivityCheckURL) == "" {
+		return storage.DefaultConnectivityCheckURL
+	}
+	return strings.TrimSpace(settings.ConnectivityCheckURL)
 }
 
 // CheckIP tests IP through a sing-box tunnel.

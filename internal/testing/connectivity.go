@@ -7,14 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/httpprobe"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
-	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
-)
-
-const (
-	connectivityURL         = "http://connectivitycheck.gstatic.com/generate_204"
-	connectivityTestTimeout = 7 * time.Second
 )
 
 // CheckConnectivity performs quick connectivity test through tunnel.
@@ -53,46 +48,26 @@ func (s *Service) checkHTTP(ctx context.Context, tunnelID string) (*Connectivity
 		return &ConnectivityResult{Connected: false, Reason: ReasonTunnelNotRunning}, nil
 	}
 
-	testCtx, cancel := context.WithTimeout(ctx, connectivityTestTimeout)
-	defer cancel()
+	checkURL := s.connectivityCheckURL()
+	s.appLog.Full("http-check", tunnelID, fmt.Sprintf("Executing HTTP check: %s", checkURL))
 
-	s.appLog.Full("http-check", tunnelID, fmt.Sprintf("Executing HTTP check: %s", connectivityURL))
-
-	res, err := httpclient.DefaultClient.Do(testCtx, httpclient.CallConfig{
-		URL:            connectivityURL,
-		Interface:      iface,
-		ConnectTimeout: 3 * time.Second,
-		MaxTime:        5 * time.Second,
-		DiscardBody:    true,
-	})
+	res, err := httpprobe.ByInterface(ctx, iface, checkURL)
 	if err != nil {
 		errDetail := err.Error()
 		s.appLog.Warn("http-check", tunnelID, fmt.Sprintf("HTTP check failed: %s", errDetail))
 		return &ConnectivityResult{Connected: false, Reason: ReasonConnectionFailed + ": " + errDetail}, nil
 	}
 
-	s.appLog.Debug("http-check", tunnelID, fmt.Sprintf("HTTP check result: code=%d, connect=%.3fs, total=%.3fs", res.Metrics.HTTPCode, res.Metrics.TimeConnect, res.Metrics.TimeTotal))
+	s.appLog.Debug("http-check", tunnelID, fmt.Sprintf("HTTP check result: code=%d, latency=%dms", res.HTTPCode, res.LatencyMs))
 
-	var latencyMs int
-	// Compute pure TCP RTT (excluding DNS and HTTP response overhead).
-	if res.Metrics.TimeConnect > 0 && res.Metrics.TimeConnect >= res.Metrics.TimeNameLookup {
-		latencyMs = int((res.Metrics.TimeConnect - res.Metrics.TimeNameLookup) * 1000)
-	} else {
-		latencyMs = int(res.Metrics.TimeTotal * 1000)
-	}
-
-	// Minimum 1 ms display.
-	if res.Metrics.HTTPCode == 204 && latencyMs <= 0 {
-		latencyMs = 1
-	}
-
-	if res.Metrics.HTTPCode == 204 {
-		s.appLog.Debug("http-check", tunnelID, fmt.Sprintf("HTTP check successful: code=204, latency=%dms", latencyMs))
+	latencyMs := res.LatencyMs
+	if httpprobe.SuccessCode(res.HTTPCode) {
+		s.appLog.Debug("http-check", tunnelID, fmt.Sprintf("HTTP check successful: code=%d, latency=%dms", res.HTTPCode, latencyMs))
 		return &ConnectivityResult{Connected: true, Latency: &latencyMs}, nil
 	}
 
-	s.appLog.Warn("http-check", tunnelID, fmt.Sprintf("HTTP check returned unexpected code: %d", res.Metrics.HTTPCode))
-	return &ConnectivityResult{Connected: false, Reason: ReasonUnexpectedResponse, HTTPCode: &res.Metrics.HTTPCode}, nil
+	s.appLog.Warn("http-check", tunnelID, fmt.Sprintf("HTTP check returned unexpected code: %d", res.HTTPCode))
+	return &ConnectivityResult{Connected: false, Reason: ReasonUnexpectedResponse, HTTPCode: &res.HTTPCode}, nil
 }
 
 // checkPing performs connectivity check using ICMP ping through the tunnel interface.
@@ -150,6 +125,17 @@ func (s *Service) checkPing(ctx context.Context, tunnelID string, stored *storag
 // intPtr returns a pointer to an int.
 func intPtr(i int) *int {
 	return &i
+}
+
+func (s *Service) connectivityCheckURL() string {
+	if s == nil || s.settings == nil {
+		return storage.DefaultConnectivityCheckURL
+	}
+	settings, err := s.settings.Get()
+	if err != nil || settings == nil || strings.TrimSpace(settings.ConnectivityCheckURL) == "" {
+		return storage.DefaultConnectivityCheckURL
+	}
+	return strings.TrimSpace(settings.ConnectivityCheckURL)
 }
 
 // autoDetectGateway derives a likely gateway IP from the tunnel address (e.g. 10.0.0.2/32 → 10.0.0.1).
@@ -240,16 +226,13 @@ func (s *Service) checkHandshake(tunnelID string) (*ConnectivityResult, error) {
 // CheckConnectivityByInterface performs connectivity test using a kernel interface name directly.
 // Used for system tunnels where we don't have a managed tunnel ID.
 func CheckConnectivityByInterface(ctx context.Context, ifaceName string) *ConnectivityResult {
-	testCtx, cancel := context.WithTimeout(ctx, connectivityTestTimeout)
-	defer cancel()
+	return CheckConnectivityByInterfaceURL(ctx, ifaceName, storage.DefaultConnectivityCheckURL)
+}
 
-	res, err := httpclient.DefaultClient.Do(testCtx, httpclient.CallConfig{
-		URL:            connectivityURL,
-		Interface:      ifaceName,
-		ConnectTimeout: 3 * time.Second,
-		MaxTime:        5 * time.Second,
-		DiscardBody:    true,
-	})
+// CheckConnectivityByInterfaceURL performs connectivity test using a kernel
+// interface name directly and the supplied HTTP check URL.
+func CheckConnectivityByInterfaceURL(ctx context.Context, ifaceName string, checkURL string) *ConnectivityResult {
+	res, err := httpprobe.ByInterface(ctx, ifaceName, checkURL)
 	if err != nil {
 		return &ConnectivityResult{
 			Connected: false,
@@ -257,18 +240,8 @@ func CheckConnectivityByInterface(ctx context.Context, ifaceName string) *Connec
 		}
 	}
 
-	var latencyMs int
-	if res.Metrics.TimeConnect > 0 && res.Metrics.TimeConnect >= res.Metrics.TimeNameLookup {
-		latencyMs = int((res.Metrics.TimeConnect - res.Metrics.TimeNameLookup) * 1000)
-	} else {
-		latencyMs = int(res.Metrics.TimeTotal * 1000)
-	}
-
-	if res.Metrics.HTTPCode == 204 && latencyMs <= 0 {
-		latencyMs = 1
-	}
-
-	if res.Metrics.HTTPCode == 204 {
+	latencyMs := res.LatencyMs
+	if httpprobe.SuccessCode(res.HTTPCode) {
 		return &ConnectivityResult{
 			Connected: true,
 			Latency:   &latencyMs,
@@ -278,6 +251,6 @@ func CheckConnectivityByInterface(ctx context.Context, ifaceName string) *Connec
 	return &ConnectivityResult{
 		Connected: false,
 		Reason:    ReasonUnexpectedResponse,
-		HTTPCode:  &res.Metrics.HTTPCode,
+		HTTPCode:  &res.HTTPCode,
 	}
 }

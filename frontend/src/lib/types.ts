@@ -708,6 +708,7 @@ export interface Settings {
 	updates: UpdateSettings;
 	download: DownloadSettings;
 	dnsRoute: DNSRouteSettings;
+	connectivityCheckUrl: string;
 	usageLevel: UsageLevel;
 	hiddenSystemTunnels?: string[];
 	monitoringExcludedTunnels?: string[];

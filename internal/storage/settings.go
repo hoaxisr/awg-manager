@@ -12,9 +12,11 @@ import (
 )
 
 const (
-	CurrentSchemaVersion = 24
-	DefaultPort          = 2222
-	DefaultInterface     = "br0"
+	CurrentSchemaVersion        = 25
+	DefaultPort                 = 2222
+	DefaultInterface            = "br0"
+	DefaultPingCheckTarget      = "8.8.8.8"
+	DefaultConnectivityCheckURL = "http://connectivitycheck.gstatic.com/generate_204"
 )
 
 // SettingsStore manages application settings.
@@ -132,6 +134,9 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		if settings.SchemaVersion < 24 {
 			s.migrateToV24(&settings)
 		}
+		if settings.SchemaVersion < 25 {
+			s.migrateToV25(&settings)
+		}
 	}
 
 	// Self-heal duplicated managed servers — see dedupManagedServers comment.
@@ -164,7 +169,7 @@ func (s *SettingsStore) defaultSettings() *Settings {
 			Enabled: false,
 			Defaults: PingCheckDefaults{
 				Method:        "http",
-				Target:        "8.8.8.8",
+				Target:        DefaultPingCheckTarget,
 				Interval:      45,
 				DeadInterval:  120,
 				FailThreshold: 3,
@@ -186,6 +191,7 @@ func (s *SettingsStore) defaultSettings() *Settings {
 			RouteTag:  "direct",
 			RouteKind: "direct",
 		},
+		ConnectivityCheckURL: DefaultConnectivityCheckURL,
 		SingboxRouter: SingboxRouterSettings{
 			Enabled:         false,
 			DeviceMode:      "policy",
@@ -216,7 +222,7 @@ func (s *SettingsStore) migrateToV2(settings *Settings) error {
 		settings.PingCheck.Defaults.Method = "http"
 	}
 	if settings.PingCheck.Defaults.Target == "" {
-		settings.PingCheck.Defaults.Target = "8.8.8.8"
+		settings.PingCheck.Defaults.Target = DefaultPingCheckTarget
 	}
 	if settings.PingCheck.Defaults.Interval == 0 {
 		settings.PingCheck.Defaults.Interval = 45
@@ -417,6 +423,19 @@ func (s *SettingsStore) migrateToV24(settings *Settings) {
 		settings.Download.RouteKind = "direct"
 	}
 	settings.SchemaVersion = 24
+}
+
+// migrateToV25 introduces ConnectivityCheckURL and self-heals empty ping targets.
+func (s *SettingsStore) migrateToV25(settings *Settings) {
+	settings.PingCheck.Defaults.Target = strings.TrimSpace(settings.PingCheck.Defaults.Target)
+	if settings.PingCheck.Defaults.Target == "" {
+		settings.PingCheck.Defaults.Target = DefaultPingCheckTarget
+	}
+	settings.ConnectivityCheckURL = strings.TrimSpace(settings.ConnectivityCheckURL)
+	if settings.ConnectivityCheckURL == "" {
+		settings.ConnectivityCheckURL = DefaultConnectivityCheckURL
+	}
+	settings.SchemaVersion = 25
 }
 
 // dedupManagedServers returns servers with duplicate InterfaceName entries

@@ -448,6 +448,7 @@ func main() {
 	var systemTunnelSvc *systemtunnel.ServiceImpl
 
 	testService := testing.NewService(awgStore, loggingService)
+	testService.SetSettingsStore(settingsStore)
 
 	// Ping check service
 	pingCheckService := pingcheck.NewService(settingsStore, awgStore, wgClient, loggingService)

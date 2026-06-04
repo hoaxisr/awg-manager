@@ -55,7 +55,7 @@ func (s *Service) runMonitorLoop(m *tunnelMonitor) {
 // sensorTick performs one check cycle.
 func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 	ifaceName := s.resolveIfaceName(m.tunnelID)
-	result := performCheck(s.ctx, ifaceName, config.Method, config.Target)
+	result := performCheck(s.ctx, ifaceName, config.Method, config.Target, config.CheckURL)
 	if s.ctx.Err() != nil {
 		return
 	}

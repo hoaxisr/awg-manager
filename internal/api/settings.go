@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -27,7 +29,7 @@ type ServerSettingsDTO struct {
 // PingCheckDefaultsDTO mirrors frontend PingCheckDefaults.
 type PingCheckDefaultsDTO struct {
 	Method        string `json:"method" example:"http"`
-	Target        string `json:"target" example:"https://www.google.com"`
+	Target        string `json:"target" example:"8.8.8.8"`
 	Interval      int    `json:"interval" example:"30"`
 	DeadInterval  int    `json:"deadInterval" example:"120"`
 	FailThreshold int    `json:"failThreshold" example:"3"`
@@ -80,6 +82,7 @@ type SettingsData struct {
 	Updates                   UpdateSettingsDTO    `json:"updates"`
 	Download                  DownloadSettingsDTO  `json:"download"`
 	DnsRoute                  DNSRouteSettingsDTO  `json:"dnsRoute"`
+	ConnectivityCheckURL      string               `json:"connectivityCheckUrl" example:"http://connectivitycheck.gstatic.com/generate_204"`
 	// UsageLevel controls which UI sections are visible to the user.
 	// Filtering is frontend-only — the API does not enforce it.
 	// enums: expert,advanced,basic
@@ -240,6 +243,16 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	merged := *oldSettings
 	storage.ApplyPatch(&merged, &patch)
+	merged.PingCheck.Defaults.Target = normalizePingCheckTarget(merged.PingCheck.Defaults.Target)
+	if err := validatePingCheckTarget(merged.PingCheck.Defaults.Target); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_PING_CHECK_TARGET")
+		return
+	}
+	merged.ConnectivityCheckURL = normalizeConnectivityCheckURL(merged.ConnectivityCheckURL)
+	if err := validateConnectivityCheckURL(merged.ConnectivityCheckURL); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_CONNECTIVITY_CHECK_URL")
+		return
+	}
 	merged.Download.RouteTag = strings.TrimSpace(merged.Download.RouteTag)
 	if merged.Download.RouteTag == "" {
 		merged.Download.RouteTag = "direct"
@@ -449,6 +462,81 @@ func generateUUIDv4() (string, error) {
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // variant RFC 4122
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+}
+
+func normalizePingCheckTarget(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return storage.DefaultPingCheckTarget
+	}
+	return target
+}
+
+func validatePingCheckTarget(target string) error {
+	if target == "" {
+		return fmt.Errorf("pingCheck.defaults.target is required")
+	}
+	if strings.Contains(target, "://") {
+		return fmt.Errorf("pingCheck.defaults.target must be a host or IP address, not a URL")
+	}
+	if strings.ContainsAny(target, " \t\r\n/@?#") {
+		return fmt.Errorf("pingCheck.defaults.target must be a host or IP address")
+	}
+	unbracketed := strings.TrimPrefix(strings.TrimSuffix(target, "]"), "[")
+	if ip := net.ParseIP(unbracketed); ip != nil {
+		return nil
+	}
+	if isValidDomainName(target) {
+		return nil
+	}
+	return fmt.Errorf("pingCheck.defaults.target must be a valid host or IP address")
+}
+
+func isValidDomainName(host string) bool {
+	if host == "" || len(host) > 253 {
+		return false
+	}
+	host = strings.TrimSuffix(host, ".")
+	if host == "" {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || len(label) > 63 {
+			return false
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeConnectivityCheckURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return storage.DefaultConnectivityCheckURL
+	}
+	return raw
+}
+
+func validateConnectivityCheckURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("connectivityCheckUrl is invalid: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("connectivityCheckUrl must use http or https")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("connectivityCheckUrl must include a host")
+	}
+	return nil
 }
 
 // enablePingCheckOnAllTunnels adds pingCheck config with defaults to all tunnels.
