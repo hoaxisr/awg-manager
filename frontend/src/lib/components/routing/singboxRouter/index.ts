@@ -1,13 +1,8 @@
-export { default as NetfilterMissingBanner } from './NetfilterMissingBanner.svelte';
 export { default as RuleEditModal } from './RuleEditModal.svelte';
 export { default as RuleSetAddModal } from './RuleSetAddModal.svelte';
 export { default as InlineRuleListEditor } from './InlineRuleListEditor.svelte';
 export { default as CompositeOutboundsList } from './CompositeOutboundsList.svelte';
 export { default as CompositeOutboundEditModal } from './CompositeOutboundEditModal.svelte';
-export { default as PresetsGallery } from './PresetsGallery.svelte';
-export { default as PresetsPreflightBanner, type PreflightStatus } from './PresetsPreflightBanner.svelte';
-export { default as PresetApplyModal } from './PresetApplyModal.svelte';
-export { default as PresetsBulkBar } from './PresetsBulkBar.svelte';
 export { default as PresetIcon } from './PresetIcon.svelte';
 export { default as DNSServerEditModal } from './DNSServerEditModal.svelte';
 export { default as DNSRuleEditModal } from './DNSRuleEditModal.svelte';
