@@ -90,7 +90,7 @@ func (s *PolicyStore) fetch(ctx context.Context) ([]ndms.Policy, error) {
 		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		pi, pj := policyIndex(out[i].Name), policyIndex(out[j].Name)
+		pi, pj := PolicyIndex(out[i].Name), PolicyIndex(out[j].Name)
 		if pi != pj {
 			return pi < pj
 		}
@@ -99,9 +99,10 @@ func (s *PolicyStore) fetch(ctx context.Context) ([]ndms.Policy, error) {
 	return out, nil
 }
 
-// policyIndex extracts a sort key: PolicyN sorts by number, custom names
-// sort after all PolicyN entries.
-func policyIndex(name string) int {
+// PolicyIndex extracts a sort key: PolicyN sorts by number, custom names
+// sort after all PolicyN entries. Single source of truth for policy ordering —
+// accesspolicy reuses this (it previously had a divergent copy).
+func PolicyIndex(name string) int {
 	if strings.HasPrefix(name, "Policy") {
 		if n, err := strconv.Atoi(strings.TrimPrefix(name, "Policy")); err == nil {
 			return n

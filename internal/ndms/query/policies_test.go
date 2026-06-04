@@ -150,3 +150,22 @@ func TestPolicyStore_InvalidateAllForcesRefetch(t *testing.T) {
 		t.Errorf("calls: want 2, got %d", got)
 	}
 }
+
+// TestPolicyIndex locks the canonical sort key: PolicyN by number, custom
+// names after all PolicyN. Single source of truth — accesspolicy reuses this
+// (previously had a divergent copy with sentinel 1000 vs 1<<16).
+func TestPolicyIndex(t *testing.T) {
+	if got := PolicyIndex("Policy5"); got != 5 {
+		t.Errorf("PolicyIndex(Policy5) = %d, want 5", got)
+	}
+	if got := PolicyIndex("Policy63"); got != 63 {
+		t.Errorf("PolicyIndex(Policy63) = %d, want 63", got)
+	}
+	if PolicyIndex("MyCustom") <= PolicyIndex("Policy63") {
+		t.Errorf("custom policy must sort after PolicyN (got custom=%d, Policy63=%d)",
+			PolicyIndex("MyCustom"), PolicyIndex("Policy63"))
+	}
+	if PolicyIndex("Custom A") != PolicyIndex("Custom B") {
+		t.Error("all custom names share the same sentinel index")
+	}
+}
