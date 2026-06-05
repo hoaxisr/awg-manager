@@ -1416,6 +1416,28 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.LANSegmentEntryDTO:
+    properties:
+      label:
+        example: Home
+        type: string
+      name:
+        example: Home
+        type: string
+      subnet:
+        example: 192.168.1.0/24
+        type: string
+    type: object
+  api.LANSegmentsListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.LANSegmentEntryDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
   api.LogEntryDTO:
     properties:
       action:
@@ -1660,6 +1682,12 @@ definitions:
       interfaceName:
         example: Wireguard1
         type: string
+      lanSegments:
+        example:
+        - Home
+        items:
+          type: string
+        type: array
       listenPort:
         example: 51821
         type: integer
@@ -2515,6 +2543,13 @@ definitions:
       up:
         example: true
         type: boolean
+    type: object
+  api.SetLANSegmentsRequest:
+    properties:
+      segments:
+        items:
+          type: string
+        type: array
     type: object
   api.SetNATModeRequest:
     properties:
@@ -7211,6 +7246,44 @@ paths:
       summary: Toggle managed-server enabled
       tags:
       - managed-servers
+  /managed-servers/{id}/lan-segments:
+    post:
+      consumes:
+      - application/json
+      description: Configures which LAN bridge segments (by NDMS interface name) peers
+        of the managed server are allowed to reach via ACL-based forwarding.
+      parameters:
+      - description: Server id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: LAN segment names
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SetLANSegmentsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ServersAllResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Set managed-server LAN segments
+      tags:
+      - managed-servers
   /managed-servers/{id}/nat:
     post:
       consumes:
@@ -7547,6 +7620,30 @@ paths:
       security:
       - CookieAuth: []
       summary: Get managed-server peer stats
+      tags:
+      - managed-servers
+  /managed-servers/lan-segments:
+    get:
+      description: Returns the router's LAN bridge catalog (name, label, subnet) for
+        use by the per-server LAN segment picker. Always a JSON array, never null.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.LANSegmentsListResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List router LAN segments
       tags:
       - managed-servers
   /managed-servers/policies:

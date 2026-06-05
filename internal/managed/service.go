@@ -38,6 +38,7 @@ type ManagedServerService interface {
 
 	// LAN segments
 	SetLANSegments(ctx context.Context, id string, segments []string) error
+	ListLANSegments(ctx context.Context) ([]LANSegmentDTO, error)
 
 	// Policy
 	SetPolicy(ctx context.Context, id, policy string) error

@@ -38,6 +38,7 @@ type ManagedServerDTO struct {
 	MTU           int              `json:"mtu,omitempty" example:"1420"`
 	NatEnabled    bool             `json:"natEnabled,omitempty" example:"true"`
 	NATMode       string           `json:"natMode,omitempty" example:"internet-only"`
+	LANSegments   []string         `json:"lanSegments,omitempty" example:"Home"`
 	Policy        string           `json:"policy" example:"default"`
 	Peers         []ManagedPeerDTO `json:"peers"`
 }
@@ -124,6 +125,24 @@ type SetNATModeRequest struct {
 	Enabled *bool  `json:"enabled,omitempty" example:"true"` // backward-compat: если mode пуст
 }
 
+// SetLANSegmentsRequest is the body for POST /managed-servers/{id}/lan-segments.
+type SetLANSegmentsRequest struct {
+	Segments []string `json:"segments"`
+}
+
+// LANSegmentEntryDTO is a single LAN bridge entry returned by the listing endpoint.
+type LANSegmentEntryDTO struct {
+	Name   string `json:"name" example:"Home"`
+	Label  string `json:"label" example:"Home"`
+	Subnet string `json:"subnet" example:"192.168.1.0/24"`
+}
+
+// LANSegmentsListResponse is the envelope for GET /managed-servers/lan-segments.
+type LANSegmentsListResponse struct {
+	Success bool                 `json:"success" example:"true"`
+	Data    []LANSegmentEntryDTO `json:"data"`
+}
+
 // SetServerPolicyRequest is the body for POST /managed-servers/{id}/policy.
 type SetServerPolicyRequest struct {
 	Policy string `json:"policy" example:"Policy0"`
@@ -173,6 +192,7 @@ type managedServerResponse struct {
 	MTU           int                 `json:"mtu,omitempty"`
 	NATEnabled    bool                `json:"natEnabled"`
 	NATMode       string              `json:"natMode,omitempty"`
+	LANSegments   []string            `json:"lanSegments,omitempty"`
 	Policy        string              `json:"policy"`
 	Peers         []managedPeerPublic `json:"peers"`
 }
@@ -207,10 +227,11 @@ func toManagedServerResponse(s *storage.ManagedServer) *managedServerResponse {
 		Endpoint:      s.Endpoint,
 		DNS:           s.DNS,
 		MTU:           s.MTU,
-		NATEnabled:    s.NATEnabled,
-		NATMode:       s.NATMode,
-		Policy:        s.Policy,
-		Peers:         peers,
+		NATEnabled:  s.NATEnabled,
+		NATMode:     s.NATMode,
+		LANSegments: s.LANSegments,
+		Policy:      s.Policy,
+		Peers:       peers,
 	}
 }
 
@@ -388,6 +409,13 @@ func (h *ManagedServerHandler) Subtree(w http.ResponseWriter, r *http.Request) {
 		}
 		h.GetPolicies(w, r)
 		return
+	case "lan-segments":
+		if len(parts) != 1 {
+			response.Error(w, "unknown path", "UNKNOWN_PATH")
+			return
+		}
+		h.ListLANSegments(w, r)
+		return
 	}
 
 	// Everything past this point is an id-scoped path: parts[0] is the id.
@@ -420,6 +448,8 @@ func (h *ManagedServerHandler) Subtree(w http.ResponseWriter, r *http.Request) {
 			h.SetPolicy(w, r, id)
 		case "nat":
 			h.NAT(w, r, id)
+		case "lan-segments":
+			h.LANSegments(w, r, id)
 		case "enabled":
 			h.SetEnabled(w, r, id)
 		case "restart":
@@ -875,4 +905,62 @@ func (h *ManagedServerHandler) ASC(w http.ResponseWriter, r *http.Request, id st
 	default:
 		response.MethodNotAllowed(w)
 	}
+}
+
+// LANSegments sets the LAN bridge segments accessible to peers of one managed server.
+// POST /api/managed-servers/{id}/lan-segments
+//
+//	@Summary		Set managed-server LAN segments
+//	@Description	Configures which LAN bridge segments (by NDMS interface name) peers of the managed server are allowed to reach via ACL-based forwarding.
+//	@Tags			managed-servers
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		path		string					true	"Server id"
+//	@Param			body	body		SetLANSegmentsRequest	true	"LAN segment names"
+//	@Success		200		{object}	ServersAllResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/managed-servers/{id}/lan-segments [post]
+func (h *ManagedServerHandler) LANSegments(w http.ResponseWriter, r *http.Request, id string) {
+	req, ok := parseJSON[SetLANSegmentsRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	if err := h.svc.SetLANSegments(r.Context(), id, req.Segments); err != nil {
+		response.Error(w, err.Error(), "LAN_SEGMENTS_FAILED")
+		return
+	}
+	h.svc.InvalidateCache(id)
+	h.publishServerUpdated()
+	h.writeServersSnapshot(w, r)
+}
+
+// ListLANSegments returns the router LAN bridge catalog for the UI picker.
+// GET /api/managed-servers/lan-segments
+//
+//	@Summary		List router LAN segments
+//	@Description	Returns the router's LAN bridge catalog (name, label, subnet) for use by the per-server LAN segment picker. Always a JSON array, never null.
+//	@Tags			managed-servers
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	LANSegmentsListResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/managed-servers/lan-segments [get]
+func (h *ManagedServerHandler) ListLANSegments(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	segs, err := h.svc.ListLANSegments(r.Context())
+	if err != nil {
+		response.Error(w, err.Error(), "LAN_SEGMENTS_FAILED")
+		return
+	}
+	out := make([]LANSegmentEntryDTO, 0, len(segs))
+	for _, s := range segs {
+		out = append(out, LANSegmentEntryDTO{Name: s.Name, Label: s.Label, Subnet: s.Subnet})
+	}
+	response.Success(w, out)
 }

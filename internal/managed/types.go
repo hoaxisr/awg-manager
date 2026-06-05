@@ -83,3 +83,10 @@ type PolicyOption struct {
 	ID          string `json:"id"`
 	Description string `json:"description"`
 }
+
+// LANSegmentDTO is the catalog entry for a router LAN bridge segment.
+type LANSegmentDTO struct {
+	Name   string `json:"name"`
+	Label  string `json:"label"`
+	Subnet string `json:"subnet"`
+}

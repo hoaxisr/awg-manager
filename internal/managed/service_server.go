@@ -572,6 +572,23 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 	return s.rciAccessGroup(ctx, iface, acl, true)
 }
 
+// ListLANSegments returns the router's LAN bridge catalog for the UI picker.
+func (s *Service) ListLANSegments(ctx context.Context) ([]LANSegmentDTO, error) {
+	bridges, err := s.queries.Interfaces.ListLANBridges(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]LANSegmentDTO, 0, len(bridges))
+	for _, b := range bridges {
+		subnet := b.Address
+		if ones, _ := net.IPMask(net.ParseIP(b.Mask).To4()).Size(); ones > 0 {
+			subnet = fmt.Sprintf("%s/%d", b.Address, ones)
+		}
+		out = append(out, LANSegmentDTO{Name: b.Name, Label: b.Name, Subnet: subnet})
+	}
+	return out, nil
+}
+
 // SetLANSegments sets the LAN segments (by NDMS bridge name) that peers of
 // the managed server are allowed to reach via ACL-based forwarding.
 func (s *Service) SetLANSegments(ctx context.Context, id string, segments []string) error {
