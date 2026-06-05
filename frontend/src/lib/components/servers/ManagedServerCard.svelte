@@ -5,7 +5,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { servers } from '$lib/stores/servers';
 	import { formatBytes } from '$lib/utils/format';
-	import { Toggle, Button, IconButton, Dropdown, type DropdownOption } from '$lib/components/ui';
+	import { Toggle, Button, IconButton, Dropdown, ChipMultiSelect, type DropdownOption, type ChipOption } from '$lib/components/ui';
 	import {
 		EditManagedServerModal,
 		AddManagedPeerModal,
@@ -27,9 +27,10 @@
 		onOpenASC: () => void;
 		ingressEnabled?: boolean;
 		onToggleIngress?: (interfaceName: string, enabled: boolean) => Promise<void>;
+		lanSegmentOptions?: { value: string; label: string }[];
 	}
 
-	let { server, stats, routerIP = '', onDeleted = () => {}, onUpdated = () => {}, onOpenASC, ingressEnabled = false, onToggleIngress = async () => {} }: Props = $props();
+	let { server, stats, routerIP = '', onDeleted = () => {}, onUpdated = () => {}, onOpenASC, ingressEnabled = false, onToggleIngress = async () => {}, lanSegmentOptions = [] }: Props = $props();
 
 	let serverId = $derived(server.interfaceName);
 
@@ -239,6 +240,18 @@
 		}
 	}
 
+	let settingLAN = $state(false);
+	async function handleSetLANSegments(next: string[]) {
+		settingLAN = true;
+		try {
+			const fresh = await api.setManagedServerLANSegments(serverId, next);
+			servers.applyMutationResponse(fresh);
+			onUpdated();
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Ошибка изменения доступа в LAN');
+		} finally { settingLAN = false; }
+	}
+
 	function openConf(peer: ManagedPeer) {
 		confPubkey = peer.publicKey;
 		confPeerName = peer.description || 'peer';
@@ -410,6 +423,15 @@
 				fullWidth
 			/>
 		</div>
+	</div>
+
+	<!-- LAN segments -->
+	<div class="nat-row nat-row--select">
+		<div class="nat-info">
+			<span class="nat-label">Доступ в LAN</span>
+			<span class="nat-hint">Сегменты LAN, доступные клиентам этого сервера</span>
+		</div>
+		<ChipMultiSelect values={server.lanSegments ?? []} options={lanSegmentOptions} onchange={handleSetLANSegments} />
 	</div>
 
 	<!-- Egress в sing-box -->

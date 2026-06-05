@@ -1114,6 +1114,17 @@ class ApiClient {
 		});
 	}
 
+	async setManagedServerLANSegments(serverId: string, segments: string[]): Promise<import('$lib/stores/servers').ServersSnapshot> {
+		return this.request(`/managed-servers/${encodeURIComponent(serverId)}/lan-segments`, {
+			method: 'POST',
+			body: JSON.stringify({ segments }),
+		});
+	}
+
+	async listManagedLANSegments(): Promise<{ name: string; label: string; subnet: string }[]> {
+		return this.request('/managed-servers/lan-segments');
+	}
+
 	async deleteManagedServer(serverId: string): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request(`/managed-servers/${encodeURIComponent(serverId)}`, {
 			method: 'DELETE'

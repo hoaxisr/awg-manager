@@ -25,6 +25,7 @@
 	onMount(() => {
 		unsub = servers.subscribe(() => {});
 		loadIngressRefs();
+		loadLANSegmentOptions();
 	});
 	onDestroy(() => unsub?.());
 
@@ -38,6 +39,14 @@
 	let createManagedOpen = $state(false);
 
 	let ingressRefs = $state<string[]>([]);
+	let lanSegmentOptions = $state<{ value: string; label: string }[]>([]);
+
+	async function loadLANSegmentOptions() {
+		try {
+			const segs = await api.listManagedLANSegments();
+			lanSegmentOptions = segs.map((s) => ({ value: s.name, label: s.label || s.name }));
+		} catch { lanSegmentOptions = []; }
+	}
 
 	async function loadIngressRefs() {
 		try {
@@ -264,6 +273,7 @@
 						onOpenASC={() => openManagedASC(activeManaged!.interfaceName)}
 						ingressEnabled={ingressRefs.includes(`managed:${activeManaged.interfaceName}`)}
 						onToggleIngress={handleToggleIngress}
+						{lanSegmentOptions}
 					/>
 				{:else if activeItem?.kind === 'system' && activeServer}
 				<ServerCard
