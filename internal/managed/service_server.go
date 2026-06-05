@@ -591,7 +591,13 @@ func (s *Service) ListLANSegments(ctx context.Context) ([]LANSegmentDTO, error) 
 		if ones, _ := net.IPMask(net.ParseIP(b.Mask).To4()).Size(); ones > 0 {
 			subnet = fmt.Sprintf("%s/%d", b.Address, ones)
 		}
-		out = append(out, LANSegmentDTO{Name: b.Name, Label: b.Name, Subnet: subnet})
+		// Human-readable name = NDMS description (e.g. "LAN"); fall back to
+		// the NDMS id (e.g. "Bridge0") when the bridge has no description.
+		label := b.Description
+		if label == "" {
+			label = b.Name
+		}
+		out = append(out, LANSegmentDTO{Name: b.Name, Label: label, Subnet: subnet})
 	}
 	return out, nil
 }

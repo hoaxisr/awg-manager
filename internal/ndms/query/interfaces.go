@@ -501,7 +501,8 @@ func (s *InterfaceStore) List(ctx context.Context) ([]ndms.Interface, error) {
 }
 
 // LANBridge — LAN-сегмент (бридж) с подсетью, для выбора в LAN-forward.
-type LANBridge struct{ Name, Address, Mask string }
+// Description — человекочитаемое имя сегмента (NDMS description, напр. "LAN").
+type LANBridge struct{ Name, Description, Address, Mask string }
 
 // ListLANBridges возвращает LAN-бриджи (type=Bridge) с адресом/маской.
 func (s *InterfaceStore) ListLANBridges(ctx context.Context) ([]LANBridge, error) {
@@ -514,7 +515,7 @@ func (s *InterfaceStore) ListLANBridges(ctx context.Context) ([]LANBridge, error
 		if !strings.EqualFold(i.Type, "Bridge") || i.Address == "" {
 			continue
 		}
-		out = append(out, LANBridge{Name: i.ID, Address: i.Address, Mask: i.Mask})
+		out = append(out, LANBridge{Name: i.ID, Description: i.Description, Address: i.Address, Mask: i.Mask})
 	}
 	return out, nil
 }
