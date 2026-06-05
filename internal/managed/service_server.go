@@ -202,28 +202,6 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateServerRequest
 	return nil
 }
 
-// SetNAT enables or disables NAT on the managed server interface.
-func (s *Service) SetNAT(ctx context.Context, id string, enabled bool) error {
-	server, ok := s.settings.GetManagedServerByID(id)
-	if !ok {
-		return fmt.Errorf("managed server not found: %s", id)
-	}
-
-	if err := s.rciSetNAT(ctx, server.InterfaceName, enabled); err != nil {
-		return fmt.Errorf("set NAT: %w", err)
-	}
-
-	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
-		sv.NATEnabled = enabled
-		return nil
-	}); err != nil {
-		return fmt.Errorf("save to storage: %w", err)
-	}
-
-	s.log.Info("managed server NAT changed", "interface", server.InterfaceName, "enabled", enabled)
-	return nil
-}
-
 // applyNATModeRaw применяет режим NAT к интерфейсу по RCI (без storage-записи).
 // Переиспользуется restore (Task 4).
 func (s *Service) applyNATModeRaw(ctx context.Context, ifaceName, mode string) error {

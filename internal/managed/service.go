@@ -34,7 +34,6 @@ type ManagedServerService interface {
 	RestartOrStart(ctx context.Context, id string) error
 
 	// NAT
-	SetNAT(ctx context.Context, id string, enabled bool) error
 	SetNATMode(ctx context.Context, id, mode string) error
 
 	// Policy

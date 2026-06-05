@@ -1672,6 +1672,9 @@ definitions:
       natEnabled:
         example: true
         type: boolean
+      natMode:
+        example: internet-only
+        type: string
       peers:
         items:
           $ref: '#/definitions/api.ManagedPeerDTO'
@@ -2512,6 +2515,20 @@ definitions:
       up:
         example: true
         type: boolean
+    type: object
+  api.SetNATModeRequest:
+    properties:
+      enabled:
+        description: 'backward-compat: если mode пуст'
+        example: true
+        type: boolean
+      mode:
+        enum:
+        - full
+        - internet-only
+        - none
+        example: internet-only
+        type: string
     type: object
   api.SetPolicyOrderRequest:
     properties:
@@ -7206,12 +7223,12 @@ paths:
         name: id
         required: true
         type: string
-      - description: Enabled flag
+      - description: NAT mode
         in: body
         name: body
         required: true
         schema:
-          $ref: '#/definitions/api.EnabledToggleRequest'
+          $ref: '#/definitions/api.SetNATModeRequest'
       produces:
       - application/json
       responses:

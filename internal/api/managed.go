@@ -37,6 +37,7 @@ type ManagedServerDTO struct {
 	DNS           string           `json:"dns,omitempty" example:"8.8.8.8"`
 	MTU           int              `json:"mtu,omitempty" example:"1420"`
 	NatEnabled    bool             `json:"natEnabled,omitempty" example:"true"`
+	NATMode       string           `json:"natMode,omitempty" example:"internet-only"`
 	Policy        string           `json:"policy" example:"default"`
 	Peers         []ManagedPeerDTO `json:"peers"`
 }
@@ -112,9 +113,15 @@ type PeerConfResponse struct {
 }
 
 // EnabledToggleRequest is the body for endpoints that flip an enabled
-// flag (NAT, SetEnabled, TogglePeer).
+// flag (SetEnabled, TogglePeer).
 type EnabledToggleRequest struct {
 	Enabled bool `json:"enabled" example:"true"`
+}
+
+// SetNATModeRequest is the body for POST /managed-servers/{id}/nat.
+type SetNATModeRequest struct {
+	Mode    string `json:"mode,omitempty" example:"internet-only" enums:"full,internet-only,none"`
+	Enabled *bool  `json:"enabled,omitempty" example:"true"` // backward-compat: если mode пуст
 }
 
 // SetServerPolicyRequest is the body for POST /managed-servers/{id}/policy.
@@ -165,6 +172,7 @@ type managedServerResponse struct {
 	DNS           string              `json:"dns,omitempty"`
 	MTU           int                 `json:"mtu,omitempty"`
 	NATEnabled    bool                `json:"natEnabled"`
+	NATMode       string              `json:"natMode,omitempty"`
 	Policy        string              `json:"policy"`
 	Peers         []managedPeerPublic `json:"peers"`
 }
@@ -200,6 +208,7 @@ func toManagedServerResponse(s *storage.ManagedServer) *managedServerResponse {
 		DNS:           s.DNS,
 		MTU:           s.MTU,
 		NATEnabled:    s.NATEnabled,
+		NATMode:       s.NATMode,
 		Policy:        s.Policy,
 		Peers:         peers,
 	}
@@ -718,17 +727,25 @@ func (h *ManagedServerHandler) GetPolicies(w http.ResponseWriter, r *http.Reques
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id		path		string					true	"Server id"
-//	@Param			body	body		EnabledToggleRequest	true	"Enabled flag"
+//	@Param			body	body		SetNATModeRequest	true	"NAT mode"
 //	@Success		200		{object}	ServersAllResponse
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/managed-servers/{id}/nat [post]
 func (h *ManagedServerHandler) NAT(w http.ResponseWriter, r *http.Request, id string) {
-	req, ok := parseJSON[EnabledToggleRequest](w, r, http.MethodPost)
+	req, ok := parseJSON[SetNATModeRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}
-	if err := h.svc.SetNAT(r.Context(), id, req.Enabled); err != nil {
+	mode := req.Mode
+	if mode == "" && req.Enabled != nil { // backward-compat
+		if *req.Enabled {
+			mode = "full"
+		} else {
+			mode = "none"
+		}
+	}
+	if err := h.svc.SetNATMode(r.Context(), id, mode); err != nil {
 		response.Error(w, err.Error(), "NAT_FAILED")
 		return
 	}
