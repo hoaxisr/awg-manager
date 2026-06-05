@@ -37,6 +37,8 @@
     let panelEl = $state<HTMLDivElement | null>(null);
     let searchInputEl = $state<HTMLInputElement | null>(null);
     let panelTop = $state(0);
+    let panelBottom = $state(0);
+    let flipUp = $state(false);
     let panelLeft = $state(0);
     let panelWidth = $state(0);
     let panelMaxHeight = $state(0);
@@ -104,10 +106,16 @@
         const wantedHeight = 400;
         // Flip up only when below is genuinely too cramped AND above offers
         // meaningfully more room. Avoids flicker when both sides are ~equal.
+        // When flipping up, anchor by `bottom` (just above the trigger) so the
+        // panel grows upward to its *content* height — anchoring by `top` at
+        // (trigger - panelMaxHeight) detaches a short panel to the viewport
+        // top, leaving a large gap below it.
         if (spaceBelow < wantedHeight && spaceAbove > spaceBelow) {
+            flipUp = true;
             panelMaxHeight = Math.max(180, spaceAbove);
-            panelTop = Math.max(margin, r.top - 4 - panelMaxHeight);
+            panelBottom = window.innerHeight - r.top + 4;
         } else {
+            flipUp = false;
             panelMaxHeight = Math.max(180, spaceBelow);
             panelTop = r.bottom + 4;
         }
@@ -223,7 +231,7 @@
         use:portal
         class="panel"
         bind:this={panelEl}
-        style="top: {panelTop}px; left: {panelLeft}px; min-width: {panelWidth}px; max-height: {panelMaxHeight}px;"
+        style="{flipUp ? `bottom: ${panelBottom}px` : `top: ${panelTop}px`}; left: {panelLeft}px; min-width: {panelWidth}px; max-height: {panelMaxHeight}px;"
         role="listbox"
     >
         <div class="search-row">
