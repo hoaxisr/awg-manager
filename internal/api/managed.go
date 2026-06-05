@@ -775,6 +775,10 @@ func (h *ManagedServerHandler) NAT(w http.ResponseWriter, r *http.Request, id st
 			mode = "none"
 		}
 	}
+	if mode == "" {
+		response.BadRequest(w, "NAT mode required")
+		return
+	}
 	if err := h.svc.SetNATMode(r.Context(), id, mode); err != nil {
 		response.Error(w, err.Error(), "NAT_FAILED")
 		return

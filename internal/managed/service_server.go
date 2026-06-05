@@ -94,6 +94,7 @@ func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage
 		DNS:           req.DNS,
 		MTU:           req.MTU,
 		NATEnabled:    true,
+		NATMode:       "full",
 		PrivateKey:    privateKey,
 		Peers:         []storage.ManagedPeer{},
 	}
@@ -342,7 +343,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	// Disable NAT if enabled — best-effort. NAT cleanup is opportunistic;
 	// rciDeleteInterface below removes the interface (and thus its NAT rule)
 	// regardless.
-	if server.NATEnabled {
+	if server.NATMode == "full" {
 		if err := s.rciSetNAT(ctx, server.InterfaceName, false); err != nil {
 			s.log.Warn("failed to disable NAT during delete", "error", err, "interface", server.InterfaceName)
 			s.appLog.Warn("delete", server.InterfaceName, fmt.Sprintf("Failed to disable NAT before delete: %v (continuing)", err))
@@ -548,6 +549,9 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 		return fmt.Errorf("peer subnet: %w", err)
 	}
 	peerSub, peerMask := cidr.IP.String(), net.IP(cidr.Mask).String()
+	if s.queries == nil || s.queries.Interfaces == nil {
+		return fmt.Errorf("interface store not wired")
+	}
 	bridges, err := s.queries.Interfaces.ListLANBridges(ctx)
 	if err != nil {
 		return fmt.Errorf("list LAN bridges: %w", err)
@@ -574,6 +578,9 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 
 // ListLANSegments returns the router's LAN bridge catalog for the UI picker.
 func (s *Service) ListLANSegments(ctx context.Context) ([]LANSegmentDTO, error) {
+	if s.queries == nil || s.queries.Interfaces == nil {
+		return nil, fmt.Errorf("interface store not wired")
+	}
 	bridges, err := s.queries.Interfaces.ListLANBridges(ctx)
 	if err != nil {
 		return nil, err
