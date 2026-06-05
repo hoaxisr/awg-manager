@@ -212,7 +212,7 @@ func (s *Service) applyNATModeRaw(ctx context.Context, ifaceName, mode string) e
 		}
 		s.removeStaticNAT(ctx, ifaceName)
 	case "internet-only":
-		if s.queries.Routes == nil {
+		if s.queries == nil || s.queries.Routes == nil {
 			return fmt.Errorf("internet-only требует Routes-провайдер")
 		}
 		wan, err := s.queries.Routes.GetDefaultGatewayInterface(ctx)
