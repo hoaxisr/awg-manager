@@ -964,6 +964,69 @@ func TestInterfaceStore_ListAll_DeduplicatesByKernelName_UpWins(t *testing.T) {
 	}
 }
 
+// === ListLANBridges ===
+
+func TestListLANBridges(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON(ifaceListPath, `{
+		"Home": {
+			"id": "Home",
+			"interface-name": "br0",
+			"type": "Bridge",
+			"state": "up",
+			"address": "10.10.10.1",
+			"mask": "255.255.255.0"
+		},
+		"Wireguard0": {
+			"id": "Wireguard0",
+			"interface-name": "nwg0",
+			"type": "Wireguard",
+			"state": "up",
+			"address": "10.0.0.2",
+			"mask": "255.255.255.255"
+		}
+	}`)
+	s := NewInterfaceStore(fg, NopLogger())
+
+	got, err := s.ListLANBridges(context.Background())
+	if err != nil {
+		t.Fatalf("ListLANBridges: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ListLANBridges len: want 1, got %d: %+v", len(got), got)
+	}
+	b := got[0]
+	if b.Name != "Home" {
+		t.Errorf("Name: want %q, got %q", "Home", b.Name)
+	}
+	if b.Address != "10.10.10.1" {
+		t.Errorf("Address: want %q, got %q", "10.10.10.1", b.Address)
+	}
+	if b.Mask != "255.255.255.0" {
+		t.Errorf("Mask: want %q, got %q", "255.255.255.0", b.Mask)
+	}
+}
+
+func TestListLANBridges_SkipsNoAddress(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON(ifaceListPath, `{
+		"Guest": {
+			"id": "Guest",
+			"type": "Bridge",
+			"state": "up"
+		}
+	}`)
+	s := NewInterfaceStore(fg, NopLogger())
+
+	got, err := s.ListLANBridges(context.Background())
+	if err != nil {
+		t.Fatalf("ListLANBridges: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("want 0 (bridge without address skipped), got %d: %+v", len(got), got)
+	}
+}
+
 // Both candidates are fully Up; tie-break keeps the first-seen entry,
 // but List() iterates a map so insertion order is undefined. Assert
 // only that dedup collapses to one entry and that the collision is
