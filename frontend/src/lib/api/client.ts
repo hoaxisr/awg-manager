@@ -1107,10 +1107,10 @@ class ApiClient {
 		});
 	}
 
-	async setManagedServerNAT(serverId: string, enabled: boolean): Promise<import('$lib/stores/servers').ServersSnapshot> {
+	async setManagedServerNATMode(serverId: string, mode: 'full' | 'internet-only' | 'none'): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request(`/managed-servers/${encodeURIComponent(serverId)}/nat`, {
 			method: 'POST',
-			body: JSON.stringify({ enabled })
+			body: JSON.stringify({ mode })
 		});
 	}
 

@@ -355,6 +355,7 @@ export interface ManagedServer {
 	dns?: string;
 	mtu?: number;
 	natEnabled?: boolean;
+	natMode?: 'full' | 'internet-only' | 'none';
 	policy: string;
 	peers: ManagedPeer[];
 }

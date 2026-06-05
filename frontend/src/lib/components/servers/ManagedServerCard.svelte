@@ -203,6 +203,16 @@
 	let togglingNAT = $state(false);
 	let togglingIngress = $state(false);
 
+	let natMode = $derived<'full' | 'internet-only' | 'none'>(
+		server.natMode ?? (server.natEnabled ? 'full' : 'none')
+	);
+
+	const natModeOptions: DropdownOption[] = [
+		{ value: 'full', label: 'Полный NAT' },
+		{ value: 'internet-only', label: 'NAT только для интернета' },
+		{ value: 'none', label: 'Без NAT' },
+	];
+
 	async function handleToggleIngress() {
 		togglingIngress = true;
 		try {
@@ -214,14 +224,16 @@
 		}
 	}
 
-	async function handleToggleNAT() {
+	async function handleSetNATMode(mode: string) {
+		const m = mode as 'full' | 'internet-only' | 'none';
+		if (m === natMode) return;
 		togglingNAT = true;
 		try {
-			const fresh = await api.setManagedServerNAT(serverId, !server.natEnabled);
+			const fresh = await api.setManagedServerNATMode(serverId, m);
 			servers.applyMutationResponse(fresh);
 			onUpdated();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка переключения NAT');
+			notifications.error(e instanceof Error ? e.message : 'Ошибка изменения режима NAT');
 		} finally {
 			togglingNAT = false;
 		}
@@ -377,17 +389,27 @@
 	</div>
 
 	<!-- NAT -->
-	<div class="nat-row">
+	<div class="nat-row nat-row--select">
 		<div class="nat-info">
 			<span class="nat-label">NAT</span>
-			<span class="nat-hint">Трансляция адресов для выхода клиентов в интернет</span>
+			{#if natMode === 'internet-only'}
+				<span class="nat-hint">реальный IP клиента в LAN, NAT только в интернет</span>
+			{:else}
+				<span class="nat-hint">Трансляция адресов для выхода клиентов в интернет</span>
+			{/if}
+			{#if ingressEnabled && natMode === 'full'}
+				<span class="nat-hint nat-warning">NAT для интернета не действует — интернет-трафик идёт через sing-box (туннель); режим NAT влияет только на видимость в LAN</span>
+			{/if}
 		</div>
-		<Toggle
-			checked={server.natEnabled ?? false}
-			onchange={handleToggleNAT}
-			disabled={togglingNAT}
-			size="sm"
-		/>
+		<div class="nat-select">
+			<Dropdown
+				value={natMode}
+				options={natModeOptions}
+				disabled={togglingNAT}
+				onchange={handleSetNATMode}
+				fullWidth
+			/>
+		</div>
 	</div>
 
 	<!-- Egress в sing-box -->
@@ -576,6 +598,27 @@
 	.nat-hint {
 		font-size: 0.6875rem;
 		color: var(--text-muted);
+	}
+
+	.nat-warning {
+		color: var(--warning, #f59e0b);
+	}
+
+	.nat-row--select {
+		align-items: flex-start;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+
+	.nat-row--select .nat-info {
+		flex: 1 1 200px;
+		min-width: 0;
+	}
+
+	.nat-select {
+		flex: 0 0 auto;
+		min-width: 200px;
+		max-width: 280px;
 	}
 
 	.policy-row {
