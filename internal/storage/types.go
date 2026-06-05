@@ -41,6 +41,12 @@ type Settings struct {
 	// Default true (back-compat). See docs/superpowers/specs/
 	// 2026-05-22-singbox-ndms-proxy-toggle-design.md.
 	CreateNDMSProxyForSingbox bool `json:"createNDMSProxyForSingbox"`
+	// ManagedPeerAllowIPsMigrated marks the one-time NDMS sweep that strips
+	// the legacy default 0.0.0.0/0 from managed-server peers' allow-ips
+	// (per-peer /32 only). New firmware rejects multiple peers sharing
+	// 0.0.0.0/0 with "subnet overlaps with the other peer". Set after a
+	// successful sweep; the sweep runs at startup while false.
+	ManagedPeerAllowIPsMigrated bool `json:"managedPeerAllowIPsMigrated,omitempty"`
 }
 
 type DownloadSettings struct {

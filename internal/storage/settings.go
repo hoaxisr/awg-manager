@@ -204,6 +204,10 @@ func (s *SettingsStore) defaultSettings() *Settings {
 			WANAutoDetect:   true, // sing-box auto_detect_interface by default
 		},
 		CreateNDMSProxyForSingbox: true,
+		// Fresh installs have no legacy peers — nothing to sweep. Only
+		// pre-existing configs (field absent → false) run the one-time
+		// peer allow-ips migration.
+		ManagedPeerAllowIPsMigrated: true,
 	}
 }
 
@@ -644,6 +648,29 @@ func (s *SettingsStore) IsSingboxNDMSProxyEnabled() bool {
 		return true
 	}
 	return settings.CreateNDMSProxyForSingbox
+}
+
+// IsManagedPeerAllowIPsMigrated reports whether the one-time peer allow-ips
+// sweep has completed. Returns true on read error (fail-safe: skip the sweep
+// rather than risk re-running RCI mutations on every boot).
+func (s *SettingsStore) IsManagedPeerAllowIPsMigrated() bool {
+	settings, err := s.Get()
+	if err != nil {
+		return true
+	}
+	return settings.ManagedPeerAllowIPsMigrated
+}
+
+// SetManagedPeerAllowIPsMigrated atomically sets the migration flag under the
+// store lock. Mirrors SetSingboxCreateNDMSProxy.
+func (s *SettingsStore) SetManagedPeerAllowIPsMigrated(v bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	s.settings.ManagedPeerAllowIPsMigrated = v
+	return s.saveUnlocked(s.settings)
 }
 
 // MarkServerInterface adds an interface ID to the server interfaces list.

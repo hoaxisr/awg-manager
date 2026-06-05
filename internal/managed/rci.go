@@ -383,7 +383,6 @@ func (s *Service) rciAddPeer(ctx context.Context, ifaceName, pubKey, psk, commen
 		"connect":       enabled,
 		"allow-ips": []map[string]interface{}{
 			{"address": peerIP, "mask": "255.255.255.255"},
-			{"address": "0.0.0.0", "mask": "0.0.0.0"},
 		},
 	}
 	if comment != "" {
@@ -445,6 +444,28 @@ func (s *Service) rciSetPeerComment(ctx context.Context, ifaceName, pubKey, comm
 	})
 }
 
+// rciRemovePeerDefaultRoute strips the legacy 0.0.0.0/0 entry from a peer's
+// allow-ips, leaving its /32 intact. Used by the one-time MigratePeerAllowIPs
+// sweep over peers created by older builds.
+func (s *Service) rciRemovePeerDefaultRoute(ctx context.Context, ifaceName, pubKey string) error {
+	return s.rciPost(ctx, map[string]interface{}{
+		"interface": map[string]interface{}{
+			ifaceName: map[string]interface{}{
+				"wireguard": map[string]interface{}{
+					"peer": []map[string]interface{}{
+						{
+							"key": pubKey,
+							"allow-ips": []map[string]interface{}{
+								{"no": true, "address": "0.0.0.0", "mask": "0.0.0.0"},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+}
+
 // rciUpdatePeerAllowIPs removes old allow-ips and sets new ones.
 func (s *Service) rciUpdatePeerAllowIPs(ctx context.Context, ifaceName, pubKey, oldIP, newIP string) error {
 	// Remove old
@@ -458,7 +479,6 @@ func (s *Service) rciUpdatePeerAllowIPs(ctx context.Context, ifaceName, pubKey, 
 								"key": pubKey,
 								"allow-ips": []map[string]interface{}{
 									{"no": true, "address": oldIP, "mask": "255.255.255.255"},
-									{"no": true, "address": "0.0.0.0", "mask": "0.0.0.0"},
 								},
 							},
 						},
@@ -480,7 +500,6 @@ func (s *Service) rciUpdatePeerAllowIPs(ctx context.Context, ifaceName, pubKey, 
 							"key": pubKey,
 							"allow-ips": []map[string]interface{}{
 								{"address": newIP, "mask": "255.255.255.255"},
-								{"address": "0.0.0.0", "mask": "0.0.0.0"},
 							},
 						},
 					},

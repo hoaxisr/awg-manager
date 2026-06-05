@@ -1282,6 +1282,12 @@ func main() {
 			// cache is ready so kernel-name resolution works.
 			managedService.MigratePrivateKeys(shutdownCtx)
 
+			// One-time sweep: strip the legacy default 0.0.0.0/0 from
+			// managed-server peers' allow-ips (per-peer /32 only). New
+			// firmware rejects multiple peers sharing 0.0.0.0/0. Gated by a
+			// persisted flag; best-effort, retries next boot if NDMS is down.
+			managedService.MigratePeerAllowIPs(shutdownCtx)
+
 			// Migrate legacy NDMS ID values to kernel names (one-time after model is populated).
 			tunnelService.MigrateISPInterfaceToKernel()
 			// Clear stored.ActiveWAN entries that don't name a real kernel iface
@@ -1313,6 +1319,12 @@ func main() {
 		// Clear stored.ActiveWAN entries that don't name a real kernel iface
 		// (legacy garbage from the pre-hardened resolver, e.g. "ISP").
 		tunnelService.HealStaleActiveWAN()
+
+		// One-time sweep on daemon restart/upgrade too (NDMS already up):
+		// strip the legacy default 0.0.0.0/0 from managed-server peers'
+		// allow-ips. Flag-gated, best-effort. Without this the migration
+		// would only fire on a cold router boot (isBoot branch above).
+		managedService.MigratePeerAllowIPs(context.Background())
 
 		bootLog.Info("startup", "",
 			"Daemon restart detected — reconnecting to running tunnels")

@@ -49,7 +49,7 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 	iface := server.InterfaceName
 
 	// Add peer with all parameters in a single RCI call:
-	// key, preshared-key, comment, allow-ips (/32 + 0.0.0.0/0), connect
+	// key, preshared-key, comment, allow-ips (peer /32 only), connect
 	if err := s.rciAddPeer(ctx, iface, pubKey, psk, strings.TrimSpace(req.Description), ip.String(), true); err != nil {
 		return nil, fmt.Errorf("add peer: %w", err)
 	}
