@@ -15,14 +15,22 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
+// fakeBridge holds a static bridge entry emitted by stateAwareGetter.
+type fakeBridge struct {
+	id      string // NDMS interface ID (= LANBridge.Name)
+	address string
+	mask    string
+}
+
 // stateAwareGetter answers /show/interface/ from the live SettingsStore so
 // FindFreeIndex and listUsedSubnets see the latest set of managed servers
 // across multiple Create calls. Other paths are unsupported (this fake
 // covers exactly the surface Service.Create touches).
 type stateAwareGetter struct {
-	store *storage.SettingsStore
-	mu    sync.Mutex
-	asc   map[string]map[string]string
+	store   *storage.SettingsStore
+	mu      sync.Mutex
+	asc     map[string]map[string]string
+	bridges []fakeBridge // static bridge entries injected by tests
 }
 
 func (g *stateAwareGetter) Get(ctx context.Context, path string, out any) error {
@@ -62,6 +70,22 @@ func (g *stateAwareGetter) Get(ctx context.Context, path string, out any) error 
 			return err
 		}
 		m[sv.InterfaceName] = raw
+	}
+	g.mu.Lock()
+	brs := g.bridges
+	g.mu.Unlock()
+	for _, br := range brs {
+		entry := map[string]any{
+			"id":      br.id,
+			"type":    "Bridge",
+			"address": br.address,
+			"mask":    br.mask,
+		}
+		raw, err := json.Marshal(entry)
+		if err != nil {
+			return err
+		}
+		m[br.id] = raw
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -593,4 +617,166 @@ func TestService_Create_SkipsASCWhenDisabled(t *testing.T) {
 			t.Fatalf("ASC payload must not be sent when GenerateASC=false")
 		}
 	}
+}
+
+// newLANSegmentsTestService builds a Service wired with a fake bridge "Home"
+// (10.10.10.1/24) available in the InterfaceStore. Returns svc, store, and
+// the recording poster for RCI inspection.
+func newLANSegmentsTestService(t *testing.T) (*Service, *storage.SettingsStore, *recordingPoster) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	store := storage.NewSettingsStore(tmpDir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("load store: %v", err)
+	}
+	getter := &stateAwareGetter{
+		store: store,
+		asc:   map[string]map[string]string{},
+		bridges: []fakeBridge{
+			{id: "Home", address: "10.10.10.1", mask: "255.255.255.0"},
+		},
+	}
+	ifaces := query.NewInterfaceStoreWithTTL(getter, query.NopLogger(), 0, 0)
+	queries := &query.Queries{
+		Interfaces: ifaces,
+		Policies:   query.NewPolicyStore(getter, query.NopLogger()),
+		WGServers:  query.NewWGServerStore(getter, query.NopLogger(), ifaces),
+	}
+	poster := &recordingPoster{onPost: getter.applyPost}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := New(poster, nil, queries, nil, store, log, nil)
+	svc.wgRun = func(_ context.Context, _ string, _ ...string) (string, error) {
+		return "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n", nil
+	}
+	return svc, store, poster
+}
+
+// TestSetLANSegments_RebuildOrder verifies that SetLANSegments posts the four
+// parse commands in the required order and persists LANSegments in storage.
+// Empty-list variant verifies only unbind+remove are sent (no permit/bind).
+func TestSetLANSegments_RebuildOrder(t *testing.T) {
+	const ifaceName = "Wireguard0"
+
+	t.Run("non-empty segments", func(t *testing.T) {
+		svc, store, poster := newLANSegmentsTestService(t)
+		ctx := context.Background()
+
+		if err := store.AddManagedServer(storage.ManagedServer{
+			InterfaceName: ifaceName,
+			Address:       "10.66.66.1",
+			Mask:          "255.255.255.0",
+			ListenPort:    51820,
+		}); err != nil {
+			t.Fatalf("seed server: %v", err)
+		}
+
+		poster.mu.Lock()
+		poster.posts = nil
+		poster.mu.Unlock()
+
+		if err := svc.SetLANSegments(ctx, ifaceName, []string{"Home"}); err != nil {
+			t.Fatalf("SetLANSegments: %v", err)
+		}
+
+		// Collect parse strings in order.
+		poster.mu.Lock()
+		posts := make([]map[string]interface{}, len(poster.posts))
+		copy(posts, poster.posts)
+		poster.mu.Unlock()
+
+		var parseStrings []string
+		for _, p := range posts {
+			if s, ok := p["parse"].(string); ok {
+				parseStrings = append(parseStrings, s)
+			}
+		}
+
+		acl := "AWGM_" + ifaceName
+		// Expected order:
+		// 1. no interface <iface> ip access-group <acl> in
+		// 2. no access-list <acl>
+		// 3. access-list <acl> permit ip <peerSub> <peerMask> <segSub> <segMask>
+		// 4. interface <iface> ip access-group <acl> in
+		wantParses := []string{
+			fmt.Sprintf("no interface %s ip access-group %s in", ifaceName, acl),
+			"no access-list " + acl,
+			fmt.Sprintf("access-list %s permit ip 10.66.66.0 255.255.255.0 10.10.10.0 255.255.255.0", acl),
+			fmt.Sprintf("interface %s ip access-group %s in", ifaceName, acl),
+		}
+
+		if len(parseStrings) != len(wantParses) {
+			t.Fatalf("expected %d parse commands, got %d: %v", len(wantParses), len(parseStrings), parseStrings)
+		}
+		for i, want := range wantParses {
+			if parseStrings[i] != want {
+				t.Errorf("parse[%d]: got %q, want %q", i, parseStrings[i], want)
+			}
+		}
+
+		// Storage must be updated.
+		saved, ok := store.GetManagedServerByID(ifaceName)
+		if !ok {
+			t.Fatalf("server not found in storage")
+		}
+		if len(saved.LANSegments) != 1 || saved.LANSegments[0] != "Home" {
+			t.Errorf("storage LANSegments: got %v, want [Home]", saved.LANSegments)
+		}
+	})
+
+	t.Run("empty segments unbinds and removes only", func(t *testing.T) {
+		svc, store, poster := newLANSegmentsTestService(t)
+		ctx := context.Background()
+
+		if err := store.AddManagedServer(storage.ManagedServer{
+			InterfaceName: ifaceName,
+			Address:       "10.66.66.1",
+			Mask:          "255.255.255.0",
+			ListenPort:    51820,
+		}); err != nil {
+			t.Fatalf("seed server: %v", err)
+		}
+
+		poster.mu.Lock()
+		poster.posts = nil
+		poster.mu.Unlock()
+
+		if err := svc.SetLANSegments(ctx, ifaceName, []string{}); err != nil {
+			t.Fatalf("SetLANSegments(empty): %v", err)
+		}
+
+		poster.mu.Lock()
+		posts := make([]map[string]interface{}, len(poster.posts))
+		copy(posts, poster.posts)
+		poster.mu.Unlock()
+
+		var parseStrings []string
+		for _, p := range posts {
+			if s, ok := p["parse"].(string); ok {
+				parseStrings = append(parseStrings, s)
+			}
+		}
+
+		acl := "AWGM_" + ifaceName
+		wantParses := []string{
+			fmt.Sprintf("no interface %s ip access-group %s in", ifaceName, acl),
+			"no access-list " + acl,
+		}
+
+		if len(parseStrings) != len(wantParses) {
+			t.Fatalf("expected %d parse commands, got %d: %v", len(wantParses), len(parseStrings), parseStrings)
+		}
+		for i, want := range wantParses {
+			if parseStrings[i] != want {
+				t.Errorf("parse[%d]: got %q, want %q", i, parseStrings[i], want)
+			}
+		}
+
+		saved, ok := store.GetManagedServerByID(ifaceName)
+		if !ok {
+			t.Fatalf("server not found in storage")
+		}
+		if len(saved.LANSegments) != 0 {
+			t.Errorf("storage LANSegments: got %v, want empty", saved.LANSegments)
+		}
+	})
 }

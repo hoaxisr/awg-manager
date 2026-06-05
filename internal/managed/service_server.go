@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -525,4 +526,63 @@ func (s *Service) readCreatedServerPrivateKey(ctx context.Context, ifaceName str
 		}
 	}
 	return "", fmt.Errorf("cannot read private key after %d attempts: %w", createPrivateKeyReadAttempts, lastErr)
+}
+
+// applyLANSegmentsRaw applies LAN-forward ACL rules to an interface without
+// touching storage. Always unbinds and removes the ACL first (rebuild order),
+// then re-adds permit rules and re-binds when segments is non-empty.
+func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask string, segments []string) error {
+	acl := "AWGM_" + iface
+	_ = s.rciAccessGroup(ctx, iface, acl, false) // unbind (best-effort: ACL may not exist yet)
+	_ = s.rciAclRemove(ctx, acl)                 // remove (best-effort: same reason)
+	if len(segments) == 0 {
+		return nil
+	}
+	cidr, err := parseManagedSubnet(addr, mask)
+	if err != nil {
+		return fmt.Errorf("peer subnet: %w", err)
+	}
+	peerSub, peerMask := cidr.IP.String(), net.IP(cidr.Mask).String()
+	bridges, err := s.queries.Interfaces.ListLANBridges(ctx)
+	if err != nil {
+		return fmt.Errorf("list LAN bridges: %w", err)
+	}
+	byName := make(map[string]query.LANBridge, len(bridges))
+	for _, b := range bridges {
+		byName[b.Name] = b
+	}
+	for _, seg := range segments {
+		b, ok := byName[seg]
+		if !ok {
+			return fmt.Errorf("LAN-сегмент %q не найден", seg)
+		}
+		segCidr, err := parseManagedSubnet(b.Address, b.Mask)
+		if err != nil {
+			return fmt.Errorf("segment %q subnet: %w", seg, err)
+		}
+		if err := s.rciAclPermit(ctx, acl, peerSub, peerMask, segCidr.IP.String(), net.IP(segCidr.Mask).String()); err != nil {
+			return fmt.Errorf("permit %s: %w", seg, err)
+		}
+	}
+	return s.rciAccessGroup(ctx, iface, acl, true)
+}
+
+// SetLANSegments sets the LAN segments (by NDMS bridge name) that peers of
+// the managed server are allowed to reach via ACL-based forwarding.
+func (s *Service) SetLANSegments(ctx context.Context, id string, segments []string) error {
+	server, ok := s.settings.GetManagedServerByID(id)
+	if !ok {
+		return fmt.Errorf("managed server not found: %s", id)
+	}
+	if err := s.applyLANSegmentsRaw(ctx, server.InterfaceName, server.Address, server.Mask, segments); err != nil {
+		return err
+	}
+	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
+		sv.LANSegments = segments
+		return nil
+	}); err != nil {
+		return fmt.Errorf("save to storage: %w", err)
+	}
+	s.log.Info("managed server LAN segments changed", "interface", server.InterfaceName, "segments", segments)
+	return nil
 }
