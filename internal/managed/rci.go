@@ -222,6 +222,28 @@ func (s *Service) rciSetNAT(ctx context.Context, ifaceName string, enabled bool)
 	})
 }
 
+// rciSetStaticNAT добавляет/снимает Static NAT (`ip static <iface> <wan>`)
+// для интерфейса. wanIface — NDMS-имя WAN (to-interface, трекает динамический адрес).
+func (s *Service) rciSetStaticNAT(ctx context.Context, ifaceName, wanIface string, enabled bool) error {
+	if enabled {
+		return s.rciPost(ctx, map[string]interface{}{
+			"ip": map[string]interface{}{
+				"static": map[string]interface{}{
+					"interface":    ifaceName,
+					"to-interface": wanIface,
+				},
+			},
+		})
+	}
+	return s.rciPost(ctx, map[string]interface{}{
+		"ip": map[string]interface{}{
+			"static": []map[string]interface{}{
+				{"no": true, "interface": ifaceName, "to-interface": wanIface},
+			},
+		},
+	})
+}
+
 // rciSetPrivateKey installs an explicit WireGuard private key on the
 // interface via RCI. Verified against NDMS 4.x: POST returns "set private
 // key." status and the next /show/interface/<name>.wireguard.public-key
