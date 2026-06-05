@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion        = 25
+	CurrentSchemaVersion        = 26
 	DefaultPort                 = 2222
 	DefaultInterface            = "br0"
 	DefaultPingCheckTarget      = "8.8.8.8"
@@ -136,6 +136,9 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		}
 		if settings.SchemaVersion < 25 {
 			s.migrateToV25(&settings)
+		}
+		if settings.SchemaVersion < 26 {
+			s.migrateToV26(&settings)
 		}
 	}
 
@@ -436,6 +439,24 @@ func (s *SettingsStore) migrateToV25(settings *Settings) {
 		settings.ConnectivityCheckURL = DefaultConnectivityCheckURL
 	}
 	settings.SchemaVersion = 25
+}
+
+// migrateNATModes sets NATMode from NATEnabled for servers that have no NATMode yet.
+func migrateNATModes(s *Settings) {
+	for i := range s.ManagedServers {
+		if s.ManagedServers[i].NATMode == "" {
+			if s.ManagedServers[i].NATEnabled {
+				s.ManagedServers[i].NATMode = "full"
+			} else {
+				s.ManagedServers[i].NATMode = "none"
+			}
+		}
+	}
+}
+
+func (s *SettingsStore) migrateToV26(settings *Settings) {
+	migrateNATModes(settings)
+	settings.SchemaVersion = 26
 }
 
 // dedupManagedServers returns servers with duplicate InterfaceName entries

@@ -629,3 +629,17 @@ func TestSettingsStore_SetSingboxCreateNDMSProxy_PersistsAtomic(t *testing.T) {
 		t.Errorf("getter sees = false after set true")
 	}
 }
+
+func TestMigrateToV26_NATEnabledToMode(t *testing.T) {
+	st := &Settings{SchemaVersion: 25, ManagedServers: []ManagedServer{
+		{InterfaceName: "Wireguard3", NATEnabled: true},
+		{InterfaceName: "Wireguard4", NATEnabled: false},
+	}}
+	migrateNATModes(st)
+	if st.ManagedServers[0].NATMode != "full" {
+		t.Fatalf("NATEnabled=true → full, got %q", st.ManagedServers[0].NATMode)
+	}
+	if st.ManagedServers[1].NATMode != "none" {
+		t.Fatalf("NATEnabled=false → none, got %q", st.ManagedServers[1].NATMode)
+	}
+}

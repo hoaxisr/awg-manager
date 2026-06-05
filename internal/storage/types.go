@@ -101,6 +101,7 @@ type ManagedServer struct {
 	DNS           string `json:"dns,omitempty"`      // custom DNS for client configs; empty = "1.1.1.1, 8.8.8.8"
 	MTU           int    `json:"mtu,omitempty"`      // custom MTU for client configs; 0 = 1376
 	NATEnabled    bool   `json:"natEnabled,omitempty"`
+	NATMode       string `json:"natMode,omitempty"` // "full" | "internet-only" | "none"; source of truth, NATEnabled — производное
 	// PrivateKey is the server's WireGuard private key. Populated by
 	// Service.Create immediately after NDMS auto-generates the keypair,
 	// or by Service.MigratePrivateKeys on first boot after upgrade for
