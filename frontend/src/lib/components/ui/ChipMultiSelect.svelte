@@ -119,8 +119,14 @@
             panelMaxHeight = Math.max(180, spaceBelow);
             panelTop = r.bottom + 4;
         }
-        panelLeft = r.left;
         panelWidth = r.width;
+        // Clamp horizontally so the panel never overflows the right edge.
+        // The trigger's chip container can sit near the viewport's right side
+        // while the panel (min-width = container width, but often wider from
+        // content) grows rightward. Shift left to keep it on-screen, using the
+        // panel's real rendered width when it already exists.
+        const finalWidth = Math.max(panelWidth, panelEl?.offsetWidth ?? 0);
+        panelLeft = Math.max(margin, Math.min(r.left, window.innerWidth - finalWidth - margin));
     }
 
     async function toggleOpen() {
@@ -363,6 +369,7 @@
     }
     .panel {
         position: fixed;
+        max-width: calc(100vw - 32px);
         z-index: var(--z-floating);
         background: var(--bg-tertiary, var(--surface-bg));
         border: 1px solid var(--border-bright, var(--border));
