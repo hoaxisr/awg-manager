@@ -244,6 +244,27 @@ func (s *Service) rciSetStaticNAT(ctx context.Context, ifaceName, wanIface strin
 	})
 }
 
+// rciAclPermit adds a permit rule to an access-list via RCI parse command.
+func (s *Service) rciAclPermit(ctx context.Context, acl, srcSub, srcMask, dstSub, dstMask string) error {
+	return s.rciPost(ctx, map[string]interface{}{
+		"parse": fmt.Sprintf("access-list %s permit ip %s %s %s %s", acl, srcSub, srcMask, dstSub, dstMask),
+	})
+}
+
+// rciAclRemove removes an access-list via RCI parse command.
+func (s *Service) rciAclRemove(ctx context.Context, acl string) error {
+	return s.rciPost(ctx, map[string]interface{}{"parse": "no access-list " + acl})
+}
+
+// rciAccessGroup binds or unbinds an access-group to an interface via RCI parse command.
+func (s *Service) rciAccessGroup(ctx context.Context, iface, acl string, bind bool) error {
+	cmd := fmt.Sprintf("interface %s ip access-group %s in", iface, acl)
+	if !bind {
+		cmd = "no " + cmd
+	}
+	return s.rciPost(ctx, map[string]interface{}{"parse": cmd})
+}
+
 // rciSetPrivateKey installs an explicit WireGuard private key on the
 // interface via RCI. Verified against NDMS 4.x: POST returns "set private
 // key." status and the next /show/interface/<name>.wireguard.public-key
