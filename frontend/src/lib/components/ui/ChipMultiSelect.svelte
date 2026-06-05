@@ -39,7 +39,7 @@
     let panelTop = $state(0);
     let panelBottom = $state(0);
     let flipUp = $state(false);
-    let panelLeft = $state(0);
+    let panelRight = $state(0);
     let panelWidth = $state(0);
     let panelMaxHeight = $state(0);
     let searchQuery = $state('');
@@ -120,13 +120,12 @@
             panelTop = r.bottom + 4;
         }
         panelWidth = r.width;
-        // Clamp horizontally so the panel never overflows the right edge.
-        // The trigger's chip container can sit near the viewport's right side
-        // while the panel (min-width = container width, but often wider from
-        // content) grows rightward. Shift left to keep it on-screen, using the
-        // panel's real rendered width when it already exists.
-        const finalWidth = Math.max(panelWidth, panelEl?.offsetWidth ?? 0);
-        panelLeft = Math.max(margin, Math.min(r.left, window.innerWidth - finalWidth - margin));
+        // Right-align the panel to the trigger's right edge so it grows
+        // leftward and its right edge stays flush with the chip container
+        // (never spilling past the parent card). `right` is the distance from
+        // the viewport's right edge; max-width (CSS) caps leftward growth so a
+        // very wide panel can't run off the left side.
+        panelRight = Math.max(margin, window.innerWidth - r.right);
     }
 
     async function toggleOpen() {
@@ -237,7 +236,7 @@
         use:portal
         class="panel"
         bind:this={panelEl}
-        style="{flipUp ? `bottom: ${panelBottom}px` : `top: ${panelTop}px`}; left: {panelLeft}px; min-width: {panelWidth}px; max-height: {panelMaxHeight}px;"
+        style="{flipUp ? `bottom: ${panelBottom}px` : `top: ${panelTop}px`}; right: {panelRight}px; min-width: {panelWidth}px; max-height: {panelMaxHeight}px;"
         role="listbox"
     >
         <div class="search-row">
