@@ -462,6 +462,98 @@ func TestService_Create_FailsWhenPrivateKeyUnavailable(t *testing.T) {
 	}
 }
 
+// newNATModeTestService wires a Service like newCreateTestService but with an
+// injected Routes store that reports PPPoE0 as the default-gateway interface.
+// This is required for TestSetNATMode_InternetOnly_SetsStaticToWAN.
+func newNATModeTestService(t *testing.T) (*Service, *storage.SettingsStore, *recordingPoster) {
+	t.Helper()
+	svc, store := newCreateTestService(t)
+
+	// Build a fake Getter that answers /show/ip/route with a default via PPPoE0.
+	routeGetter := query.NewFakeGetter()
+	routeGetter.SetJSON("/show/ip/route", `[{"destination":"0.0.0.0/0","gateway":"1.2.3.4","interface":"PPPoE0"}]`)
+	svc.queries.Routes = query.NewRouteStore(routeGetter, query.NopLogger())
+
+	poster, ok := svc.transport.(*recordingPoster)
+	if !ok {
+		t.Fatalf("unexpected transport type %T", svc.transport)
+	}
+	return svc, store, poster
+}
+
+func TestSetNATMode_InternetOnly_SetsStaticToWAN(t *testing.T) {
+	svc, store, poster := newNATModeTestService(t)
+	ctx := context.Background()
+
+	// Seed a server in storage so SetNATMode can look it up.
+	const ifaceName = "Wireguard0"
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: ifaceName,
+		Address:       "10.66.66.1",
+		Mask:          "255.255.255.0",
+		ListenPort:    51820,
+		NATEnabled:    true,
+		NATMode:       "full",
+	}); err != nil {
+		t.Fatalf("seed server: %v", err)
+	}
+
+	poster.mu.Lock()
+	poster.posts = nil // reset posts from any prior calls
+	poster.mu.Unlock()
+
+	if err := svc.SetNATMode(ctx, ifaceName, "internet-only"); err != nil {
+		t.Fatalf("SetNATMode: %v", err)
+	}
+
+	// Verify storage was updated.
+	saved, ok := store.GetManagedServerByID(ifaceName)
+	if !ok {
+		t.Fatalf("server not found in storage after SetNATMode")
+	}
+	if saved.NATMode != "internet-only" {
+		t.Errorf("storage NATMode: got %q, want %q", saved.NATMode, "internet-only")
+	}
+	if saved.NATEnabled {
+		t.Errorf("storage NATEnabled: got true, want false for internet-only")
+	}
+
+	// Inspect the RCI POSTs.
+	poster.mu.Lock()
+	posts := make([]map[string]interface{}, len(poster.posts))
+	copy(posts, poster.posts)
+	poster.mu.Unlock()
+
+	foundNoIPNat := false
+	foundStaticNAT := false
+	for _, p := range posts {
+		ip, ok := p["ip"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		// no-ip-nat: {"ip":{"nat":[{"no":true,"interface":"Wireguard0"}]}}
+		if natSlice, ok := ip["nat"].([]map[string]interface{}); ok {
+			for _, entry := range natSlice {
+				if entry["no"] == true && entry["interface"] == ifaceName {
+					foundNoIPNat = true
+				}
+			}
+		}
+		// ip-static: {"ip":{"static":{"interface":"Wireguard0","to-interface":"PPPoE0"}}}
+		if static, ok := ip["static"].(map[string]interface{}); ok {
+			if static["interface"] == ifaceName && static["to-interface"] == "PPPoE0" {
+				foundStaticNAT = true
+			}
+		}
+	}
+	if !foundNoIPNat {
+		t.Errorf("expected no-ip-nat POST for %s; posts = %v", ifaceName, posts)
+	}
+	if !foundStaticNAT {
+		t.Errorf("expected ip-static POST for %s to PPPoE0; posts = %v", ifaceName, posts)
+	}
+}
+
 func TestService_Create_SkipsASCWhenDisabled(t *testing.T) {
 	svc, store := newCreateTestService(t)
 

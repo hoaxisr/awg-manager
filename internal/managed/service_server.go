@@ -224,6 +224,75 @@ func (s *Service) SetNAT(ctx context.Context, id string, enabled bool) error {
 	return nil
 }
 
+// applyNATModeRaw применяет режим NAT к интерфейсу по RCI (без storage-записи).
+// Переиспользуется restore (Task 4).
+func (s *Service) applyNATModeRaw(ctx context.Context, ifaceName, mode string) error {
+	switch mode {
+	case "full":
+		if err := s.rciSetNAT(ctx, ifaceName, true); err != nil {
+			return fmt.Errorf("set NAT: %w", err)
+		}
+		s.removeStaticNAT(ctx, ifaceName)
+	case "internet-only":
+		if s.queries.Routes == nil {
+			return fmt.Errorf("internet-only требует Routes-провайдер")
+		}
+		wan, err := s.queries.Routes.GetDefaultGatewayInterface(ctx)
+		if err != nil {
+			return fmt.Errorf("internet-only требует WAN (нет дефолт-маршрута): %w", err)
+		}
+		if err := s.rciSetNAT(ctx, ifaceName, false); err != nil {
+			return fmt.Errorf("disable NAT: %w", err)
+		}
+		if err := s.rciSetStaticNAT(ctx, ifaceName, wan, true); err != nil {
+			return fmt.Errorf("set static NAT: %w", err)
+		}
+	case "none":
+		if err := s.rciSetNAT(ctx, ifaceName, false); err != nil {
+			return fmt.Errorf("disable NAT: %w", err)
+		}
+		s.removeStaticNAT(ctx, ifaceName)
+	default:
+		return fmt.Errorf("неизвестный NAT-режим: %q", mode)
+	}
+	return nil
+}
+
+// SetNATMode sets the NAT mode (full/internet-only/none) on the managed server.
+func (s *Service) SetNATMode(ctx context.Context, id, mode string) error {
+	server, ok := s.settings.GetManagedServerByID(id)
+	if !ok {
+		return fmt.Errorf("managed server not found: %s", id)
+	}
+	if err := s.applyNATModeRaw(ctx, server.InterfaceName, mode); err != nil {
+		return err
+	}
+	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
+		sv.NATMode = mode
+		sv.NATEnabled = mode == "full"
+		return nil
+	}); err != nil {
+		return fmt.Errorf("save to storage: %w", err)
+	}
+	s.log.Info("managed server NAT mode changed", "interface", server.InterfaceName, "mode", mode)
+	return nil
+}
+
+// removeStaticNAT снимает ip static для интерфейса. WAN re-detect'ится
+// (to-interface=имя стабильно при redial). Best-effort + nil-guard Routes.
+func (s *Service) removeStaticNAT(ctx context.Context, ifaceName string) {
+	if s.queries == nil || s.queries.Routes == nil {
+		return
+	}
+	wan, err := s.queries.Routes.GetDefaultGatewayInterface(ctx)
+	if err != nil || wan == "" {
+		return
+	}
+	if err := s.rciSetStaticNAT(ctx, ifaceName, wan, false); err != nil {
+		s.log.Warn("remove static NAT failed", "error", err, "interface", ifaceName)
+	}
+}
+
 // SetEnabled brings the managed server interface up or down.
 func (s *Service) SetEnabled(ctx context.Context, id string, enabled bool) error {
 	server, ok := s.settings.GetManagedServerByID(id)
