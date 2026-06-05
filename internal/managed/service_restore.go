@@ -352,8 +352,18 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 	if err := s.rciSetPrivateKey(ctx, target, sv.PrivateKey); err != nil {
 		return true, fmt.Errorf("set private key: %w", err)
 	}
-	if err := s.rciSetNAT(ctx, target, sv.NATEnabled); err != nil {
-		return true, fmt.Errorf("set NAT: %w", err)
+	mode := sv.NATMode
+	if mode == "" { // старый бэкап без natMode
+		if sv.NATEnabled {
+			mode = "full"
+		} else {
+			mode = "none"
+		}
+	}
+	sv.NATMode = mode              // персист (saved := sv ниже; иначе на диске natMode="" при NATEnabled=true)
+	sv.NATEnabled = mode == "full"
+	if err := s.applyNATModeRaw(ctx, target, mode); err != nil {
+		return true, fmt.Errorf("set NAT mode: %w", err)
 	}
 	if err := s.applyPolicy(ctx, target, sv.Policy); err != nil {
 		return true, fmt.Errorf("set policy: %w", err)

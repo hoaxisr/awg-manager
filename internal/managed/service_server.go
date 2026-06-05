@@ -369,6 +369,9 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 			s.appLog.Warn("delete", server.InterfaceName, fmt.Sprintf("Failed to disable NAT before delete: %v (continuing)", err))
 		}
 	}
+	if server.NATMode == "internet-only" {
+		s.removeStaticNAT(ctx, server.InterfaceName)
+	}
 
 	// Bring down — best-effort. rciDeleteInterface implies down.
 	if err := s.rciInterfaceDown(ctx, server.InterfaceName); err != nil {
