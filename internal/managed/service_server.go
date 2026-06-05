@@ -351,6 +351,11 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if server.NATMode == "internet-only" {
 		s.removeStaticNAT(ctx, server.InterfaceName)
 	}
+	if len(server.LANSegments) > 0 {
+		acl := "AWGM_" + server.InterfaceName
+		_ = s.rciAccessGroup(ctx, server.InterfaceName, acl, false)
+		_ = s.rciAclRemove(ctx, acl)
+	}
 
 	// Bring down — best-effort. rciDeleteInterface implies down.
 	if err := s.rciInterfaceDown(ctx, server.InterfaceName); err != nil {

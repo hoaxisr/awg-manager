@@ -365,6 +365,9 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 	if err := s.applyNATModeRaw(ctx, target, mode); err != nil {
 		return true, fmt.Errorf("set NAT mode: %w", err)
 	}
+	if err := s.applyLANSegmentsRaw(ctx, target, sv.Address, sv.Mask, sv.LANSegments); err != nil {
+		return true, fmt.Errorf("set LAN segments: %w", err)
+	}
 	if err := s.applyPolicy(ctx, target, sv.Policy); err != nil {
 		return true, fmt.Errorf("set policy: %w", err)
 	}
