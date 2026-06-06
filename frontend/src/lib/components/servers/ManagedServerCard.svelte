@@ -5,7 +5,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { servers } from '$lib/stores/servers';
 	import { formatBytes } from '$lib/utils/format';
-	import { Toggle, Button, IconButton, Dropdown, ChipMultiSelect, type DropdownOption, type ChipOption } from '$lib/components/ui';
+	import { Toggle, Button, IconButton, Dropdown, ChipMultiSelect, type DropdownOption } from '$lib/components/ui';
 	import {
 		EditManagedServerModal,
 		AddManagedPeerModal,
@@ -242,6 +242,7 @@
 
 	let settingLAN = $state(false);
 	async function handleSetLANSegments(next: string[]) {
+		if (settingLAN) return;
 		settingLAN = true;
 		try {
 			const fresh = await api.setManagedServerLANSegments(serverId, next);
@@ -431,7 +432,7 @@
 			<span class="nat-label">Доступ в LAN</span>
 			<span class="nat-hint">Сегменты LAN, доступные клиентам этого сервера</span>
 		</div>
-		<ChipMultiSelect values={server.lanSegments ?? []} options={lanSegmentOptions} onchange={handleSetLANSegments} />
+		<ChipMultiSelect values={server.lanSegments ?? []} options={lanSegmentOptions} onchange={handleSetLANSegments} disabled={settingLAN} />
 	</div>
 
 	<!-- Egress в sing-box -->
