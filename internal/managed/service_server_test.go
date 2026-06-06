@@ -829,6 +829,47 @@ func TestResolveLANSegmentsPlan(t *testing.T) {
 	})
 }
 
+func TestUpdate_SubnetChange_RebuildsLANACL(t *testing.T) {
+	svc, store, poster := newLANSegmentsTestService(t) // bridge Home @ 10.10.10.0/24
+	ctx := context.Background()
+	const ifaceName = "Wireguard0"
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: ifaceName, Address: "10.66.66.1", Mask: "255.255.255.0",
+		ListenPort: 51820, LANSegments: []string{"Home"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	poster.mu.Lock()
+	poster.posts = nil
+	poster.mu.Unlock()
+
+	if err := svc.Update(ctx, ifaceName, UpdateServerRequest{
+		Address: "10.77.77.1", Mask: "255.255.255.0", ListenPort: 51820,
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	poster.mu.Lock()
+	posts := append([]map[string]interface{}{}, poster.posts...)
+	poster.mu.Unlock()
+	foundNew := false
+	for _, p := range posts {
+		cmd, ok := p["parse"].(string)
+		if !ok {
+			continue
+		}
+		if strings.Contains(cmd, "permit ip 10.77.77.0") {
+			foundNew = true
+		}
+		if strings.Contains(cmd, "permit ip 10.66.66.0") {
+			t.Errorf("permit still references OLD subnet: %q", cmd)
+		}
+	}
+	if !foundNew {
+		t.Errorf("expected permit with new source subnet 10.77.77.0; posts=%v", posts)
+	}
+}
+
 func TestSetLANSegments_InvalidSegment_DoesNotDestroyACL(t *testing.T) {
 	svc, store, poster := newLANSegmentsTestService(t) // bridge Home @ 10.10.10.0/24
 	ctx := context.Background()

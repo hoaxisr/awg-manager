@@ -169,6 +169,16 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateServerRequest
 		return fmt.Errorf("update server: %w", err)
 	}
 
+	// Сменилась подсеть → пересобрать LAN ACL под новую peer-подсеть, иначе
+	// AWGM_<iface> продолжит permit'ить старый src-диапазон. Preflight в
+	// applyLANSegmentsRaw гарантирует, что невалидный запрос (неизвестный
+	// сегмент, недоступный каталог) не начнёт разрушать рабочий ACL.
+	if changes.addressChanged && len(server.LANSegments) > 0 {
+		if err := s.applyLANSegmentsRaw(ctx, server.InterfaceName, req.Address, mask, server.LANSegments); err != nil {
+			return fmt.Errorf("rebuild LAN ACL after subnet change: %w", err)
+		}
+	}
+
 	// Update storage. Required fields (Address, Mask, ListenPort) were
 	// validated above. Optional fields (Description, Endpoint, DNS, MTU)
 	// use pointer semantics: nil = preserve existing, non-nil = set
