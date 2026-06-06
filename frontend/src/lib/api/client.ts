@@ -487,7 +487,7 @@ class ApiClient {
 		await this.request(`/hydraroute/geo-files/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
 	}
 
-	async updateGeoFile(path?: string, route?: DownloadRoute): Promise<{ updated: number; partial?: boolean; error?: string }> {
+	async updateGeoFile(path?: string, route?: DownloadRoute): Promise<{ updated: number; partial?: boolean; error?: string; errorCode?: string }> {
 		return this.request('/hydraroute/geo-files/update', {
 			method: 'POST',
 			body: JSON.stringify({ path: path || '', route }),

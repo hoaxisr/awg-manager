@@ -213,6 +213,7 @@ export interface DnsRouteSubscription {
 	lastFetched?: string;
 	lastCount?: number;
 	lastError?: string;
+	lastErrorCode?: string;
 }
 
 export interface DnsRouteTarget {
@@ -748,6 +749,7 @@ export interface UpdateInfo {
 	checkedAt: string;
 	checking: boolean;
 	error?: string;
+	errorCode?: string;
 	warning?: string;
 }
 

@@ -5,14 +5,14 @@
  * download route (Direct / AWG-bind / sing-box / subscription), so they
  * share the same failure modes.
  *
- * The backend emits a heterogeneous mix of RU/EN strings and an envelope
- * `code`. Instead of every call site re-implementing regexes, this module
- * classifies the error once and returns a friendly user-facing message plus
- * the raw text (kept for logs / "details"). See humanizeDownloadError().
+ * The backend emits stable `DOWNLOAD_*` codes via RouteError. This module
+ * maps codes to friendly UI text and keeps string fallbacks only for legacy
+ * cached errors without a code.
  */
 
 export type DownloadErrorKind =
 	| 'singbox-off'
+	| 'singbox-route'
 	| 'awg-down'
 	| 'timeout'
 	| 'network'
@@ -29,16 +29,34 @@ export interface HumanizedDownloadError {
 	needsDownloadSettings: boolean;
 	/** Original backend message — keep for logs / collapsible details. */
 	raw: string;
-	/** Backend envelope code, when present (e.g. GEO_DOWNLOAD_ROUTE_ERROR). */
+	/** Backend envelope code, when present (e.g. DOWNLOAD_SINGBOX_EGRESS_FAILED). */
 	code?: string;
 }
 
 /** Deep-link that scrolls to and glows the "Загрузки и обновления" card. */
 export const DOWNLOAD_SETTINGS_HREF = '/settings?highlight=downloads#downloads';
 
+/** Stable download error codes emitted by internal/downloader. */
+export const DOWNLOAD_ERROR_CODES = {
+	SINGBOX_NOT_RUNNING: 'DOWNLOAD_SINGBOX_NOT_RUNNING',
+	SINGBOX_NOT_READY: 'DOWNLOAD_SINGBOX_NOT_READY',
+	SINGBOX_EGRESS_FAILED: 'DOWNLOAD_SINGBOX_EGRESS_FAILED',
+	AWG_DOWN: 'DOWNLOAD_AWG_DOWN',
+	TIMEOUT: 'DOWNLOAD_TIMEOUT',
+	NETWORK: 'DOWNLOAD_NETWORK',
+	ROUTE: 'DOWNLOAD_ROUTE',
+} as const;
+
 interface ExtractedError {
 	raw: string;
 	code: string;
+}
+
+/** Build input for humanizeDownloadError from message + optional backend code. */
+export function downloadRouteError(message?: string, code?: string): unknown {
+	if (!message) return null;
+	if (code) return { message, code };
+	return message;
 }
 
 /**
@@ -53,29 +71,55 @@ function extractError(err: unknown): ExtractedError {
 		const e = err as {
 			message?: string;
 			code?: string;
+			error?: string;
+			errorCode?: string;
 			body?: { code?: string; message?: string };
 		};
-		const code = e.body?.code || e.code || '';
-		const raw = e.body?.message || e.message || String(err);
+		const code = e.body?.code || e.code || e.errorCode || '';
+		const raw = e.body?.message || e.message || e.error || String(err);
 		return { raw, code };
 	}
 	return { raw: String(err), code: '' };
 }
 
+function kindFromCode(code: string): DownloadErrorKind | null {
+	switch (code) {
+		case DOWNLOAD_ERROR_CODES.SINGBOX_NOT_RUNNING:
+		case DOWNLOAD_ERROR_CODES.SINGBOX_NOT_READY:
+			return 'singbox-off';
+		case DOWNLOAD_ERROR_CODES.SINGBOX_EGRESS_FAILED:
+			return 'singbox-route';
+		case DOWNLOAD_ERROR_CODES.AWG_DOWN:
+			return 'awg-down';
+		case DOWNLOAD_ERROR_CODES.TIMEOUT:
+			return 'timeout';
+		case DOWNLOAD_ERROR_CODES.NETWORK:
+			return 'network';
+		case DOWNLOAD_ERROR_CODES.ROUTE:
+			return 'route';
+		default:
+			return null;
+	}
+}
+
 function classify(raw: string, code: string): DownloadErrorKind {
+	const fromCode = kindFromCode(code);
+	if (fromCode) return fromCode;
+
+	// Legacy fallback for cached/plain-string errors without a backend code.
 	const text = `${raw} ${code}`.toLowerCase();
 
-	// sing-box-backed route (sing-box tunnel or subscription) but the daemon
-	// is down / its local proxy port is not yet listening.
 	if (
 		text.includes('sing-box is not running') ||
+		text.includes('sing-box is not ready') ||
 		text.includes('sing-box proxy port') ||
-		text.includes('proxy port not found')
+		text.includes('subscription proxy port') ||
+		text.includes('proxy port not found') ||
+		text.includes('proxy port not listening')
 	) {
 		return 'singbox-off';
 	}
 
-	// AWG bind route but the kernel interface is missing / link is down.
 	if (
 		text.includes('is not present') ||
 		text.includes('no such device') ||
@@ -94,6 +138,29 @@ function classify(raw: string, code: string): DownloadErrorKind {
 	}
 
 	if (
+		text.includes('download via') &&
+		(text.includes('(singbox)') || text.includes('(subscription)'))
+	) {
+		if (
+			text.includes('connection refused') ||
+			text.includes('proxy port not listening') ||
+			text.includes('sing-box is not ready')
+		) {
+			return 'singbox-off';
+		}
+		if (
+			text.includes('eof') ||
+			text.includes('connection reset') ||
+			text.includes('connection broken') ||
+			text.includes('broken pipe') ||
+			text.includes('malformed http response') ||
+			text.includes('ошибка сети')
+		) {
+			return 'singbox-route';
+		}
+	}
+
+	if (
 		text.includes('eof') ||
 		text.includes('connection reset') ||
 		text.includes('connection broken') ||
@@ -105,7 +172,6 @@ function classify(raw: string, code: string): DownloadErrorKind {
 		return 'network';
 	}
 
-	// Generic "route is unavailable / ambiguous" without a more specific cause.
 	if (
 		text.includes('is unavailable') ||
 		text.includes('unavailable for download transport') ||
@@ -120,26 +186,43 @@ function classify(raw: string, code: string): DownloadErrorKind {
 
 /**
  * Classify a caught download error into a friendly, actionable message.
- *
- * Usage:
- *   const h = humanizeDownloadError(e);
- *   notifications.error(downloadErrorToText(h));   // toast (no link)
- *   <DownloadErrorNotice error={e} />              // inline (with link)
  */
 export function humanizeDownloadError(err: unknown): HumanizedDownloadError {
 	const { raw, code } = extractError(err);
 	const kind = classify(raw, code);
 
 	switch (kind) {
-		case 'singbox-off':
+		case 'singbox-off': {
+			const starting =
+				code === DOWNLOAD_ERROR_CODES.SINGBOX_NOT_READY ||
+				raw.toLowerCase().includes('not ready') ||
+				raw.toLowerCase().includes('proxy port not listening') ||
+				(raw.toLowerCase().includes('connection refused') &&
+					raw.toLowerCase().includes('download via') &&
+					(raw.toLowerCase().includes('(singbox)') ||
+						raw.toLowerCase().includes('(subscription)')));
 			return {
 				kind,
 				code,
 				raw,
 				needsDownloadSettings: true,
-				title: 'Маршрут загрузки требует запущенный sing-box.',
+				title: starting
+					? 'Sing-box ещё запускается.'
+					: 'Маршрут загрузки требует запущенный sing-box.',
+				detail: starting
+					? 'Локальный прокси sing-box пока недоступен. Подождите несколько секунд и повторите либо выберите другой маршрут.'
+					: 'Включите sing-box или выберите другой маршрут (Direct или AWG-туннель).',
+			};
+		}
+		case 'singbox-route':
+			return {
+				kind,
+				code,
+				raw,
+				needsDownloadSettings: true,
+				title: 'Не удалось загрузить через sing-box-маршрут.',
 				detail:
-					'Включите sing-box или выберите другой маршрут (Direct или AWG-туннель).',
+					'Туннель маршрута не смог установить соединение с сервером. Проверьте его состояние, перезапустите sing-box или выберите другой маршрут загрузок.',
 			};
 		case 'awg-down':
 			return {

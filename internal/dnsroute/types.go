@@ -46,7 +46,8 @@ type Subscription struct {
 	Name        string `json:"name"`
 	LastFetched string `json:"lastFetched,omitempty"`
 	LastCount   int    `json:"lastCount,omitempty"`
-	LastError   string `json:"lastError,omitempty"`
+	LastError     string `json:"lastError,omitempty"`
+	LastErrorCode string `json:"lastErrorCode,omitempty"`
 }
 
 // RouteTarget specifies which tunnel interface to route matched domains through.

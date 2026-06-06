@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
@@ -791,12 +792,14 @@ func (s *ServiceImpl) refreshSubscriptions(ctx context.Context, id string) error
 		sub.LastFetched = now
 		if err != nil {
 			sub.LastError = err.Error()
+			sub.LastErrorCode = string(downloader.RouteErrorCode(err))
 			sub.LastCount = 0
 			s.appLog.Warn("subscription-fetch", id, fmt.Sprintf("url=%s err=%s", sub.URL, err.Error()))
 			// Keep going — one failed subscription shouldn't block others
 			continue
 		}
 		sub.LastError = ""
+		sub.LastErrorCode = ""
 		sub.LastCount = len(domains)
 		allSubDomains = append(allSubDomains, domains)
 	}

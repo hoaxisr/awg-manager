@@ -22,7 +22,7 @@
 	const showSettingsLink = $derived(info.needsDownloadSettings && !hideSettingsLink);
 </script>
 
-<div class="dl-error" class:dl-error-singbox={info.kind === 'singbox-off'}>
+<div class="dl-error" class:dl-error-singbox={info.kind === 'singbox-off' || info.kind === 'singbox-route'}>
 	<span class="dl-error-title">{info.title}</span>
 	{#if info.detail}
 		<span class="dl-error-detail">{info.detail}</span>

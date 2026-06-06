@@ -70,7 +70,8 @@ func checkWithDownloader(ctx context.Context, currentVersion, channel string, dl
 
 	pkg, err := fetchLatestPackageWithDownloader(ctx, dl, pkgsURL, pkgName, cmp)
 	if err != nil {
-		info.Error = fmt.Sprintf("entware repo: %s", err)
+		info.Error = err.Error()
+		info.ErrorCode = string(downloader.RouteErrorCode(err))
 		return info
 	}
 

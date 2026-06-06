@@ -28,9 +28,11 @@ func (f *fakeSubPorts) ListenPortBySelectorTag(_ context.Context, tag string) (i
 
 type fakeSingboxRuntime struct {
 	running bool
+	ready   bool
 }
 
 func (f *fakeSingboxRuntime) IsRunning() bool { return f.running }
+func (f *fakeSingboxRuntime) IsReady() bool  { return f.running && f.ready }
 
 type fakeAWGEgress struct {
 	dns map[string][]string
@@ -42,6 +44,10 @@ func (f *fakeAWGEgress) DNSForTag(_ context.Context, tag string) []string {
 	}
 	return f.dns[tag]
 }
+
+func proxyPortAlwaysOpen(_ string, _ int) bool { return true }
+
+func proxyPortAlwaysClosed(_ string, _ int) bool { return false }
 
 func TestTransportResolver_AWG_Bind(t *testing.T) {
 	sysNet := t.TempDir()
@@ -75,12 +81,16 @@ func TestTransportResolver_AWG_MissingIface(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not present") {
 		t.Fatalf("expected missing iface error, got %v", err)
 	}
+	if RouteErrorCode(err) != ErrCodeAWGDown {
+		t.Fatalf("RouteErrorCode = %q, want %q", RouteErrorCode(err), ErrCodeAWGDown)
+	}
 }
 
 func TestTransportResolver_Singbox_ProxyPort(t *testing.T) {
 	r := NewTransportResolver(TransportResolverDeps{
-		Tunnels: &fakeTunnelPorts{ports: map[string]int{"DE": 1080}},
-		Singbox: &fakeSingboxRuntime{running: true},
+		Tunnels:       &fakeTunnelPorts{ports: map[string]int{"DE": 1080}},
+		Singbox:       &fakeSingboxRuntime{running: true, ready: true},
+		ProxyPortOpen: proxyPortAlwaysOpen,
 	})
 	spec, err := r.Resolve(context.Background(), Outbound{Tag: "DE", Kind: "singbox"})
 	if err != nil {
@@ -88,6 +98,33 @@ func TestTransportResolver_Singbox_ProxyPort(t *testing.T) {
 	}
 	if spec.Mode != TransportModeProxy || spec.ProxyPort != 1080 {
 		t.Fatalf("spec = %+v, want proxy :1080", spec)
+	}
+}
+
+func TestTransportResolver_Singbox_ProxyPortNotListening(t *testing.T) {
+	r := NewTransportResolver(TransportResolverDeps{
+		Tunnels:       &fakeTunnelPorts{ports: map[string]int{"DE": 1080}},
+		Singbox:       &fakeSingboxRuntime{running: true, ready: true},
+		ProxyPortOpen: proxyPortAlwaysClosed,
+	})
+	_, err := r.Resolve(context.Background(), Outbound{Tag: "DE", Kind: "singbox"})
+	if err == nil || !strings.Contains(err.Error(), "proxy port not listening") {
+		t.Fatalf("expected proxy port not listening error, got %v", err)
+	}
+	if RouteErrorCode(err) != ErrCodeSingboxNotReady {
+		t.Fatalf("RouteErrorCode = %q, want %q", RouteErrorCode(err), ErrCodeSingboxNotReady)
+	}
+}
+
+func TestTransportResolver_Singbox_NotReady(t *testing.T) {
+	r := NewTransportResolver(TransportResolverDeps{
+		Tunnels:       &fakeTunnelPorts{ports: map[string]int{"DE": 1080}},
+		Singbox:       &fakeSingboxRuntime{running: true, ready: false},
+		ProxyPortOpen: proxyPortAlwaysOpen,
+	})
+	_, err := r.Resolve(context.Background(), Outbound{Tag: "DE", Kind: "singbox"})
+	if err == nil || RouteErrorCode(err) != ErrCodeSingboxNotReady {
+		t.Fatalf("expected not ready error, got %v", err)
 	}
 }
 
@@ -100,12 +137,16 @@ func TestTransportResolver_Singbox_NotRunning(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not running") {
 		t.Fatalf("expected not running error, got %v", err)
 	}
+	if RouteErrorCode(err) != ErrCodeSingboxNotRunning {
+		t.Fatalf("RouteErrorCode = %q, want %q", RouteErrorCode(err), ErrCodeSingboxNotRunning)
+	}
 }
 
 func TestTransportResolver_Subscription_ProxyPort(t *testing.T) {
 	r := NewTransportResolver(TransportResolverDeps{
-		Subs:    &fakeSubPorts{ports: map[string]int{"sub-abc": 11001}},
-		Singbox: &fakeSingboxRuntime{running: true},
+		Subs:          &fakeSubPorts{ports: map[string]int{"sub-abc": 11001}},
+		Singbox:       &fakeSingboxRuntime{running: true, ready: true},
+		ProxyPortOpen: proxyPortAlwaysOpen,
 	})
 	spec, err := r.Resolve(context.Background(), Outbound{Tag: "sub-abc", Kind: "subscription"})
 	if err != nil {

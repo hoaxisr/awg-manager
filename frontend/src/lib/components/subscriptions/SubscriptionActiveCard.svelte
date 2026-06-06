@@ -23,6 +23,7 @@
     import { notifications } from '$lib/stores/notifications';
     import type { Subscription, SubscriptionMember } from '$lib/types';
     import { formatBitRate, formatBytes, formatRelativeTime } from '$lib/utils/format';
+    import { humanizeDownloadError } from '$lib/utils/downloadError';
     import SubscriptionMemberPicker from './SubscriptionMemberPicker.svelte';
     import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
     import TunnelDiagnosticsModal from '$lib/components/testing/TunnelDiagnosticsModal.svelte';
@@ -123,6 +124,9 @@
     const lastFetchedHuman = $derived(
         subscription.lastFetched ? formatRelativeTime(subscription.lastFetched) : '—',
     );
+    const lastErrorInfo = $derived(
+        subscription.lastError ? humanizeDownloadError(subscription.lastError) : null,
+    );
 
     const cardState = $derived(delayPresentation.state);
     const latText = $derived(delayPresentation.label);
@@ -215,8 +219,8 @@
     >
             <td class="tunnel-list-cell tunnel-list-cell--delay lc lc-delay" data-label="Delay">
                 {#if subscription.lastError}
-                    <span class="delay-inline-err mono" title={subscription.lastError}>
-                        {subscription.lastError}
+                    <span class="delay-inline-err mono" title={lastErrorInfo?.raw}>
+                        {lastErrorInfo?.title ?? subscription.lastError}
                     </span>
                 {:else}
                     <TunnelSingboxPingButton
@@ -379,7 +383,7 @@
     {#if renderMode !== 'list-card'}
     <div class="details">
     {#if subscription.lastError}
-        <div class="sub-error mono">{subscription.lastError}</div>
+        <div class="sub-error mono" title={lastErrorInfo?.raw}>{lastErrorInfo?.title ?? subscription.lastError}</div>
     {/if}
 
     <div class="details-dense-cols">
@@ -541,7 +545,7 @@
     </div>
 
     {#if subscription.lastError}
-        <div class="sub-error mono">{subscription.lastError}</div>
+        <div class="sub-error mono" title={lastErrorInfo?.raw}>{lastErrorInfo?.title ?? subscription.lastError}</div>
     {/if}
 
     <div class="server-section">

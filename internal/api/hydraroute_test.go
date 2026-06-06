@@ -2,11 +2,26 @@ package api
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+func TestWrapGeoDownloadError_SingboxEOF(t *testing.T) {
+	msg, code := wrapGeoDownloadError(
+		downloader.RouteInfo{Tag: "RelayCH", Kind: "singbox"},
+		errors.New(`Get "https://example.com": EOF`),
+		"GEO_DOWNLOAD_ERROR",
+	)
+	if code != string(downloader.ErrCodeSingboxEgressFailed) {
+		t.Fatalf("code = %q, want %q", code, downloader.ErrCodeSingboxEgressFailed)
+	}
+	if msg == "" {
+		t.Fatal("expected non-empty message")
+	}
+}
 
 func TestToDownloaderRoute(t *testing.T) {
 	if got := toDownloaderRoute(nil); got != nil {

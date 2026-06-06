@@ -17,6 +17,7 @@
 	import { singboxDelayFromHistory } from '$lib/utils/singboxDelay';
 	import { singboxDelayStatusDot } from '$lib/utils/statusDot';
 	import { resolveSubscriptionMemberTag } from '$lib/utils/subscriptionMember';
+	import { humanizeDownloadError } from '$lib/utils/downloadError';
 	import TunnelDiagnosticsModal from '$lib/components/testing/TunnelDiagnosticsModal.svelte';
 
 	interface Props {
@@ -37,6 +38,9 @@
 	}: Props = $props();
 
 	const resolvedMemberTag = $derived(resolveSubscriptionMemberTag(subscription, liveActiveMember));
+	const lastErrorInfo = $derived(
+		subscription.lastError ? humanizeDownloadError(subscription.lastError) : null,
+	);
 
 	const history = $derived(
 		resolvedMemberTag ? ($singboxDelayHistory.get(resolvedMemberTag) ?? []) : [],
@@ -180,8 +184,8 @@
 	>
 			<td class="tunnel-list-cell tunnel-list-cell--delay lc lc-delay" data-label="Delay">
 				{#if subscription.lastError}
-					<span class="delay-inline-err mono" title={subscription.lastError}>
-						{subscription.lastError}
+					<span class="delay-inline-err mono" title={lastErrorInfo?.raw}>
+						{lastErrorInfo?.title ?? subscription.lastError}
 					</span>
 				{:else if !subscription.enabled}
 					<span class="delay-dash">—</span>
@@ -366,7 +370,7 @@
 		{/if}
 	</div>
 	{#if subscription.lastError}
-		<div class="inactive-err mono" title={subscription.lastError}>{subscription.lastError}</div>
+		<div class="inactive-err mono" title={lastErrorInfo?.raw}>{lastErrorInfo?.title ?? subscription.lastError}</div>
 	{/if}
 	{/if}
 	{#if renderMode === 'list-card'}
@@ -443,7 +447,7 @@
 		{#if subscription.lastError}
 			<div class="detail-row detail-row-err">
 				<span class="detail-label">Ошибка</span>
-				<span class="detail-value mono" title={subscription.lastError}>{subscription.lastError}</span>
+				<span class="detail-value mono" title={lastErrorInfo?.raw}>{lastErrorInfo?.title ?? subscription.lastError}</span>
 			</div>
 		{/if}
 	</div>

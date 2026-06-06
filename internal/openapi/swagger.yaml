@@ -1198,6 +1198,8 @@ definitions:
     properties:
       error:
         type: string
+      errorCode:
+        type: string
       partial:
         example: true
         type: boolean

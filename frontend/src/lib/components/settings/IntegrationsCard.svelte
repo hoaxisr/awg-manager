@@ -5,6 +5,8 @@
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { singboxInstallProgress } from '$lib/stores/singboxInstall';
 	import { formatBytes } from '$lib/utils/format';
+	import DownloadErrorNotice from '$lib/components/downloads/DownloadErrorNotice.svelte';
+	import { humanizeDownloadError } from '$lib/utils/downloadError';
 	import { stripAnsi } from '$lib/utils/ansi';
 	import { Blocks } from 'lucide-svelte';
 
@@ -16,8 +18,8 @@
 		hydraStatusError?: string | null;
 		singboxInstalling: boolean;
 		singboxUpdating?: boolean;
-		singboxInstallError: string | null;
-		singboxUpdateError?: string | null;
+		singboxInstallError: unknown;
+		singboxUpdateError?: unknown;
 		oninstallSingbox: () => void;
 		onupdateSingbox?: () => void;
 		showSingbox?: boolean;
@@ -83,7 +85,7 @@
 			case 'done':
 				return 'Готово';
 			case 'error':
-				return p.error ? `Ошибка: ${p.error}` : 'Ошибка';
+				return p.error ? humanizeDownloadError(p.error).title : 'Ошибка';
 			default:
 				return '';
 		}
@@ -103,14 +105,14 @@
 
 	async function copyError() {
 		const err = singboxInstallError ?? singboxUpdateError;
-		if (err) {
-			await copyToClipboard(err);
+		if (err != null) {
+			await copyToClipboard(humanizeDownloadError(err).raw);
 		}
 	}
 
 	// Auto-close modal when the upstream error is cleared (e.g. successful retry).
 	$effect(() => {
-		if (singboxInstallError === null && singboxUpdateError === null) {
+		if (singboxInstallError == null && singboxUpdateError == null) {
 			errorModalOpen = false;
 		}
 	});
@@ -269,7 +271,10 @@
 	size="lg"
 	onclose={() => (errorModalOpen = false)}
 >
-	<pre class="error-pre">{singboxInstallError ?? singboxUpdateError ?? ''}</pre>
+	<DownloadErrorNotice
+		error={singboxInstallError ?? singboxUpdateError}
+		hideSettingsLink
+	/>
 	{#snippet actions()}
 		<Button variant="ghost" size="sm" onclick={copyError}>Скопировать</Button>
 		<Button variant="primary" size="sm" onclick={() => (errorModalOpen = false)}>
@@ -329,18 +334,6 @@
 	.install-error-label {
 		color: var(--color-error);
 		font-size: 0.8125rem;
-	}
-	.error-pre {
-		margin: 0;
-		padding: 0.75rem;
-		background: var(--color-settings-control-bg);
-		border-radius: var(--radius-sm);
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		white-space: pre-wrap;
-		word-break: break-word;
-		max-height: 50vh;
-		overflow: auto;
 	}
 
 	.progress-widget {

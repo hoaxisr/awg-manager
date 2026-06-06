@@ -3,15 +3,24 @@ package downloader
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
 )
 
-const localProxyHost = "127.0.0.1"
+const (
+	localProxyHost         = "127.0.0.1"
+	proxyPortProbeTimeout  = 2 * time.Second
+)
+
+// ProxyPortOpen probes whether a local sing-box mixed inbound accepts TCP.
+// Nil in TransportResolverDeps uses a real dial to 127.0.0.1:<port>.
+type ProxyPortOpen func(host string, port int) bool
 
 // TransportMode selects how an HTTP client reaches the destination.
 type TransportMode string
@@ -54,10 +63,11 @@ type SubscriptionListenPortLookup interface {
 	ListenPortBySelectorTag(ctx context.Context, selectorTag string) (int, bool)
 }
 
-// SingboxRuntimeChecker reports whether sing-box is running. Proxy-based
-// routes require a live process listening on localhost.
+// SingboxRuntimeChecker reports sing-box daemon state for proxy-based routes.
 type SingboxRuntimeChecker interface {
 	IsRunning() bool
+	// IsReady reports whether the Clash API is healthy (sing-box finished boot).
+	IsReady() bool
 }
 
 // TransportResolverDeps wires lookup helpers for compositeTransportResolver.
@@ -68,6 +78,8 @@ type TransportResolverDeps struct {
 	AWGEgress AWGEgressLookup
 	// SysClassNet overrides /sys/class/net for tests.
 	SysClassNet string
+	// ProxyPortOpen overrides the local mixed-inbound TCP probe (tests).
+	ProxyPortOpen ProxyPortOpen
 }
 
 // TransportResolver maps a catalog outbound to a concrete transport.
@@ -82,6 +94,7 @@ type compositeTransportResolver struct {
 	singbox   SingboxRuntimeChecker
 	awgEgress AWGEgressLookup
 	sysNet    string
+	proxyOpen ProxyPortOpen
 }
 
 func NewTransportResolver(d TransportResolverDeps) TransportResolver {
@@ -95,11 +108,16 @@ func NewTransportResolver(d TransportResolverDeps) TransportResolver {
 		singbox:   d.Singbox,
 		awgEgress: d.AWGEgress,
 		sysNet:    sysNet,
+		proxyOpen: d.ProxyPortOpen,
 	}
 }
 
 func (r *compositeTransportResolver) singboxRunning() bool {
 	return r.singbox != nil && r.singbox.IsRunning()
+}
+
+func (r *compositeTransportResolver) singboxReady() bool {
+	return r.singbox != nil && r.singbox.IsReady()
 }
 
 func (r *compositeTransportResolver) Resolve(ctx context.Context, ob Outbound) (TransportSpec, error) {
@@ -116,7 +134,11 @@ func (r *compositeTransportResolver) Resolve(ctx context.Context, ob Outbound) (
 			return TransportSpec{}, fmt.Errorf("outbound %q has no kernel interface", ob.Tag)
 		}
 		if !r.ifaceExists(iface) {
-			return TransportSpec{}, fmt.Errorf("outbound %q interface %q is not present", ob.Tag, iface)
+			return TransportSpec{}, newRouteError(
+				ErrCodeAWGDown,
+				fmt.Sprintf("outbound %q interface %q is not present", ob.Tag, iface),
+				nil,
+			)
 		}
 		spec := TransportSpec{Mode: TransportModeBind, Interface: iface}
 		if r.awgEgress != nil {
@@ -126,27 +148,79 @@ func (r *compositeTransportResolver) Resolve(ctx context.Context, ob Outbound) (
 
 	case "singbox":
 		if !r.singboxRunning() {
-			return TransportSpec{}, fmt.Errorf("outbound %q is unavailable: sing-box is not running", ob.Tag)
+			return TransportSpec{}, newRouteError(
+				ErrCodeSingboxNotRunning,
+				fmt.Sprintf("outbound %q is unavailable: sing-box is not running", ob.Tag),
+				nil,
+			)
+		}
+		if !r.singboxReady() {
+			return TransportSpec{}, newRouteError(
+				ErrCodeSingboxNotReady,
+				fmt.Sprintf("outbound %q is unavailable: sing-box is not ready", ob.Tag),
+				nil,
+			)
 		}
 		if r.tunnels == nil {
-			return TransportSpec{}, fmt.Errorf("outbound %q is unavailable: sing-box tunnel lookup is not configured", ob.Tag)
+			return TransportSpec{}, newRouteError(
+				ErrCodeRoute,
+				fmt.Sprintf("outbound %q is unavailable: sing-box tunnel lookup is not configured", ob.Tag),
+				nil,
+			)
 		}
 		port, ok := r.tunnels.ListenPortByTag(ctx, ob.Tag)
 		if !ok || port <= 0 {
-			return TransportSpec{}, fmt.Errorf("outbound %q is unavailable: local sing-box proxy port not found", ob.Tag)
+			return TransportSpec{}, newRouteError(
+				ErrCodeRoute,
+				fmt.Sprintf("outbound %q is unavailable: local sing-box proxy port not found", ob.Tag),
+				nil,
+			)
+		}
+		if !r.proxyPortListening(port) {
+			return TransportSpec{}, newRouteError(
+				ErrCodeSingboxNotReady,
+				fmt.Sprintf("outbound %q is unavailable: sing-box proxy port not listening", ob.Tag),
+				nil,
+			)
 		}
 		return TransportSpec{Mode: TransportModeProxy, ProxyPort: port}, nil
 
 	case "subscription":
 		if !r.singboxRunning() {
-			return TransportSpec{}, fmt.Errorf("outbound %q is unavailable: sing-box is not running", ob.Tag)
+			return TransportSpec{}, newRouteError(
+				ErrCodeSingboxNotRunning,
+				fmt.Sprintf("outbound %q is unavailable: sing-box is not running", ob.Tag),
+				nil,
+			)
+		}
+		if !r.singboxReady() {
+			return TransportSpec{}, newRouteError(
+				ErrCodeSingboxNotReady,
+				fmt.Sprintf("outbound %q is unavailable: sing-box is not ready", ob.Tag),
+				nil,
+			)
 		}
 		if r.subs == nil {
-			return TransportSpec{}, fmt.Errorf("outbound %q is unavailable: subscription lookup is not configured", ob.Tag)
+			return TransportSpec{}, newRouteError(
+				ErrCodeRoute,
+				fmt.Sprintf("outbound %q is unavailable: subscription lookup is not configured", ob.Tag),
+				nil,
+			)
 		}
 		port, ok := r.subs.ListenPortBySelectorTag(ctx, ob.Tag)
 		if !ok || port <= 0 {
-			return TransportSpec{}, fmt.Errorf("outbound %q is unavailable: local subscription proxy port not found", ob.Tag)
+			return TransportSpec{}, newRouteError(
+				ErrCodeRoute,
+				fmt.Sprintf("outbound %q is unavailable: local subscription proxy port not found", ob.Tag),
+				nil,
+			)
+		}
+		if !r.proxyPortListening(port) {
+			return TransportSpec{}, newRouteError(
+				ErrCodeSingboxNotReady,
+				fmt.Sprintf("outbound %q is unavailable: subscription proxy port not listening", ob.Tag),
+				nil,
+			)
 		}
 		return TransportSpec{Mode: TransportModeProxy, ProxyPort: port}, nil
 
@@ -170,6 +244,26 @@ func (r *compositeTransportResolver) ifaceExists(name string) bool {
 	}
 	_, err := os.Stat(filepath.Join(r.sysNet, name))
 	return err == nil
+}
+
+func (r *compositeTransportResolver) proxyPortListening(port int) bool {
+	if port <= 0 {
+		return false
+	}
+	check := r.proxyOpen
+	if check == nil {
+		check = defaultProxyPortOpen
+	}
+	return check(localProxyHost, port)
+}
+
+func defaultProxyPortOpen(host string, port int) bool {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), proxyPortProbeTimeout)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 func newHTTPClientFromSpec(spec TransportSpec) (*http.Client, error) {

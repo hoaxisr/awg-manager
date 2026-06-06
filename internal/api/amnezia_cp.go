@@ -209,7 +209,7 @@ func (h *AmneziaCPHandler) Login(w http.ResponseWriter, r *http.Request) {
 	lease, client, route, err := h.downloadClient(r.Context())
 	if err != nil {
 		h.log.Warn("amnezia-premium-cp", "route", "login: "+err.Error())
-		response.Error(w, "Маршрут загрузки Amnezia Premium недоступен: "+err.Error(), "AMNEZIA_CP_ROUTE_ERROR")
+		response.Error(w, "Маршрут загрузки Amnezia Premium недоступен: "+err.Error(), downloader.APIErrorCode(err, "AMNEZIA_CP_ROUTE_ERROR"))
 		return
 	}
 	if lease != nil {
@@ -226,8 +226,9 @@ func (h *AmneziaCPHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		reqErr := downloader.WrapRequestError(route, err)
 		h.log.Warn("amnezia-premium-cp", "login", fmt.Sprintf("network route=%s kind=%s: %v", routeDisplayName(route), route.Kind, err))
-		response.Error(w, fmt.Sprintf("Не удалось связаться с cp.amnezia.org через %s: %v", routeDisplayName(route), err), "AMNEZIA_CP_NETWORK")
+		response.Error(w, reqErr.Error(), downloader.APIErrorCode(reqErr, "AMNEZIA_CP_NETWORK"))
 		return
 	}
 	defer resp.Body.Close()
@@ -307,7 +308,7 @@ func (h *AmneziaCPHandler) AccountInfo(w http.ResponseWriter, r *http.Request) {
 	lease, client, route, err := h.downloadClient(r.Context())
 	if err != nil {
 		h.log.Warn("amnezia-premium-cp", "route", "account-info: "+err.Error())
-		response.Error(w, "Маршрут загрузки Amnezia Premium недоступен: "+err.Error(), "AMNEZIA_CP_ROUTE_ERROR")
+		response.Error(w, "Маршрут загрузки Amnezia Premium недоступен: "+err.Error(), downloader.APIErrorCode(err, "AMNEZIA_CP_ROUTE_ERROR"))
 		return
 	}
 	if lease != nil {
@@ -323,8 +324,9 @@ func (h *AmneziaCPHandler) AccountInfo(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		reqErr := downloader.WrapRequestError(route, err)
 		h.log.Warn("amnezia-premium-cp", "account-info", fmt.Sprintf("network route=%s kind=%s: %v", routeDisplayName(route), route.Kind, err))
-		response.Error(w, fmt.Sprintf("Не удалось связаться с cp.amnezia.org через %s: %v", routeDisplayName(route), err), "AMNEZIA_CP_NETWORK")
+		response.Error(w, reqErr.Error(), downloader.APIErrorCode(reqErr, "AMNEZIA_CP_NETWORK"))
 		return
 	}
 	defer resp.Body.Close()
@@ -422,7 +424,7 @@ func (h *AmneziaCPHandler) DownloadConfig(w http.ResponseWriter, r *http.Request
 	lease, client, route, err := h.downloadClient(r.Context())
 	if err != nil {
 		h.log.Warn("amnezia-premium-cp", "route", "download-config: "+err.Error())
-		response.Error(w, "Маршрут загрузки Amnezia Premium недоступен: "+err.Error(), "AMNEZIA_CP_ROUTE_ERROR")
+		response.Error(w, "Маршрут загрузки Amnezia Premium недоступен: "+err.Error(), downloader.APIErrorCode(err, "AMNEZIA_CP_ROUTE_ERROR"))
 		return
 	}
 	if lease != nil {
@@ -439,8 +441,9 @@ func (h *AmneziaCPHandler) DownloadConfig(w http.ResponseWriter, r *http.Request
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		reqErr := downloader.WrapRequestError(route, err)
 		h.log.Warn("amnezia-premium-cp", "download-config", fmt.Sprintf("network route=%s kind=%s: %v", routeDisplayName(route), route.Kind, err))
-		response.Error(w, fmt.Sprintf("Не удалось связаться с cp.amnezia.org через %s: %v", routeDisplayName(route), err), "AMNEZIA_CP_NETWORK")
+		response.Error(w, reqErr.Error(), downloader.APIErrorCode(reqErr, "AMNEZIA_CP_NETWORK"))
 		return
 	}
 	defer resp.Body.Close()

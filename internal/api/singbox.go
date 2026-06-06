@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
@@ -289,7 +290,7 @@ func (h *SingboxHandler) Install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.op.Install(r.Context()); err != nil {
-		response.InternalError(w, err.Error())
+		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), downloader.APIErrorCode(err, "SINGBOX_INSTALL_ERROR"))
 		return
 	}
 	s := h.op.GetStatus(r.Context())
@@ -322,7 +323,7 @@ func (h *SingboxHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.op.Update(r.Context()); err != nil {
-		response.InternalError(w, err.Error())
+		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), downloader.APIErrorCode(err, "SINGBOX_UPDATE_ERROR"))
 		return
 	}
 	s := h.op.GetStatus(r.Context())

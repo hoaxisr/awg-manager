@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
+	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
@@ -493,13 +494,13 @@ func (h *DNSRouteHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 	if id != "" {
 		if err := h.svc.RefreshSubscriptions(r.Context(), id); err != nil {
-			response.Error(w, err.Error(), "DNS_ROUTE_REFRESH_ERROR")
+			response.Error(w, err.Error(), downloader.APIErrorCode(err, "DNS_ROUTE_REFRESH_ERROR"))
 			return
 		}
 		h.log.Info("dns-route-refresh", id, "DNS route subscriptions refreshed")
 	} else {
 		if err := h.svc.RefreshAllSubscriptions(r.Context()); err != nil {
-			response.Error(w, err.Error(), "DNS_ROUTE_REFRESH_ALL_ERROR")
+			response.Error(w, err.Error(), downloader.APIErrorCode(err, "DNS_ROUTE_REFRESH_ALL_ERROR"))
 			return
 		}
 		h.log.Info("dns-route-refresh-all", "", "All DNS route subscriptions refreshed")

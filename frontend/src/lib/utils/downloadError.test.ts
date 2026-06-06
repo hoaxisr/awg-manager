@@ -1,58 +1,111 @@
 import { describe, expect, it } from 'vitest';
-import { downloadErrorToText, humanizeDownloadError } from './downloadError';
+import {
+	DOWNLOAD_ERROR_CODES,
+	downloadErrorToText,
+	downloadRouteError,
+	humanizeDownloadError,
+} from './downloadError';
 
 describe('humanizeDownloadError', () => {
-	it('classifies sing-box-off from outbound-unavailable message', () => {
+	it('classifies singbox-off from backend code', () => {
+		const h = humanizeDownloadError({
+			message: 'outbound "DE" is unavailable: sing-box is not running',
+			code: DOWNLOAD_ERROR_CODES.SINGBOX_NOT_RUNNING,
+		});
+		expect(h.kind).toBe('singbox-off');
+		expect(h.title).toMatch(/sing-box/i);
+	});
+
+	it('classifies singbox-off when local proxy is not ready', () => {
+		const h = humanizeDownloadError({
+			message: 'outbound "DE" is unavailable: sing-box proxy port not listening',
+			code: DOWNLOAD_ERROR_CODES.SINGBOX_NOT_READY,
+		});
+		expect(h.kind).toBe('singbox-off');
+		expect(h.title).toMatch(/запускается/i);
+	});
+
+	it('classifies singbox-route from egress failure code', () => {
+		const h = humanizeDownloadError({
+			message:
+				'download via RelayCH (singbox): request failed: Get "https://github.com/foo/VERSION": EOF',
+			code: DOWNLOAD_ERROR_CODES.SINGBOX_EGRESS_FAILED,
+		});
+		expect(h.kind).toBe('singbox-route');
+		expect(h.detail).toMatch(/туннель/i);
+		expect(h.detail).not.toMatch(/запускается/i);
+	});
+
+	it('classifies awg-down from backend code', () => {
+		const h = humanizeDownloadError({
+			message: 'outbound "awg-de" interface "awg0" is not present',
+			code: DOWNLOAD_ERROR_CODES.AWG_DOWN,
+		});
+		expect(h.kind).toBe('awg-down');
+	});
+
+	it('classifies timeout from backend code', () => {
+		const h = humanizeDownloadError({
+			message: 'download timed out',
+			code: DOWNLOAD_ERROR_CODES.TIMEOUT,
+		});
+		expect(h.kind).toBe('timeout');
+	});
+
+	it('classifies network from backend code', () => {
+		const h = humanizeDownloadError({
+			message: 'connection reset by peer',
+			code: DOWNLOAD_ERROR_CODES.NETWORK,
+		});
+		expect(h.kind).toBe('network');
+	});
+
+	it('falls back to string patterns when code is missing (legacy)', () => {
 		const h = humanizeDownloadError(
 			new Error('outbound "sub-14ddb10d" is unavailable: sing-box is not running'),
 		);
 		expect(h.kind).toBe('singbox-off');
-		expect(h.needsDownloadSettings).toBe(true);
-		expect(h.title).toMatch(/sing-box/i);
 	});
 
-	it('classifies awg-down from missing interface', () => {
-		const h = humanizeDownloadError('outbound "awg-de" interface "awg0" is not present');
-		expect(h.kind).toBe('awg-down');
-		expect(h.needsDownloadSettings).toBe(true);
+	it('legacy EOF on singbox route without code maps to singbox-route', () => {
+		const h = humanizeDownloadError(
+			'download via RelayCH (singbox): request failed: Get "https://github.com/foo/VERSION": EOF',
+		);
+		expect(h.kind).toBe('singbox-route');
+		expect(h.detail).toMatch(/перезапустите sing-box/i);
 	});
 
-	it('classifies timeout', () => {
-		const h = humanizeDownloadError('download timed out after 15m0s');
-		expect(h.kind).toBe('timeout');
+	it('legacy connection refused on singbox route maps to singbox-off (starting)', () => {
+		const h = humanizeDownloadError(
+			'download via RelayCH (singbox): request failed: dial tcp 127.0.0.1:1080: connect: connection refused',
+		);
+		expect(h.kind).toBe('singbox-off');
+		expect(h.title).toMatch(/запускается/i);
 	});
 
-	it('classifies network drops (EOF / malformed HTTP / reset)', () => {
+	it('legacy EOF without code stays network (not singbox-route)', () => {
 		expect(humanizeDownloadError('http get: EOF').kind).toBe('network');
-		expect(
-			humanizeDownloadError('malformed HTTP response "\\x00\\x00"').kind,
-		).toBe('network');
-		expect(humanizeDownloadError('connection reset by peer').kind).toBe('network');
-	});
-
-	it('classifies generic route errors via envelope code', () => {
-		const err = Object.assign(new Error('selected outbound is unavailable for download transport'), {
-			body: { code: 'GEO_DOWNLOAD_ROUTE_ERROR' },
-		});
-		const h = humanizeDownloadError(err);
-		expect(h.kind).toBe('route');
-		expect(h.code).toBe('GEO_DOWNLOAD_ROUTE_ERROR');
 	});
 
 	it('reads message + code from API client error body', () => {
 		const err = Object.assign(new Error('top'), {
-			body: { code: 'X', message: 'sing-box is not running' },
+			body: { code: DOWNLOAD_ERROR_CODES.SINGBOX_NOT_RUNNING, message: 'sing-box is not running' },
 		});
 		const h = humanizeDownloadError(err);
 		expect(h.kind).toBe('singbox-off');
-		expect(h.raw).toBe('sing-box is not running');
-		expect(h.code).toBe('X');
+		expect(h.code).toBe(DOWNLOAD_ERROR_CODES.SINGBOX_NOT_RUNNING);
+	});
+
+	it('reads errorCode from UpdateInfo-shaped objects', () => {
+		const h = humanizeDownloadError(
+			downloadRouteError('download via RelayCH (singbox): EOF', DOWNLOAD_ERROR_CODES.SINGBOX_EGRESS_FAILED),
+		);
+		expect(h.kind).toBe('singbox-route');
 	});
 
 	it('falls back to raw message for unknown errors', () => {
 		const h = humanizeDownloadError('repository quota exceeded');
 		expect(h.kind).toBe('generic');
-		expect(h.needsDownloadSettings).toBe(false);
 		expect(h.title).toBe('repository quota exceeded');
 	});
 
@@ -65,18 +118,18 @@ describe('humanizeDownloadError', () => {
 
 describe('downloadErrorToText', () => {
 	it('joins title + detail for toast contexts', () => {
-		const text = downloadErrorToText('sing-box is not running');
+		const text = downloadErrorToText(
+			downloadRouteError('sing-box is not running', DOWNLOAD_ERROR_CODES.SINGBOX_NOT_RUNNING),
+		);
 		expect(text).toMatch(/sing-box/i);
 		expect(text).toMatch(/Direct|AWG/);
 	});
 
-	it('appends settings cue when no detail but route-related', () => {
-		// generic has no settings cue
-		expect(downloadErrorToText('weird error')).toBe('weird error');
-	});
-
 	it('accepts an already-humanized error', () => {
-		const h = humanizeDownloadError('download timed out');
-		expect(downloadErrorToText(h)).toBe(downloadErrorToText('download timed out'));
+		const h = humanizeDownloadError({
+			message: 'download timed out',
+			code: DOWNLOAD_ERROR_CODES.TIMEOUT,
+		});
+		expect(downloadErrorToText(h)).toBe(downloadErrorToText(h));
 	});
 });

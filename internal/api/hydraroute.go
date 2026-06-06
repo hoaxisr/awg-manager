@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/downloader"
@@ -84,9 +83,10 @@ type GeoFileResponse struct {
 // POST /hydraroute/geo-files/update. The shape is the same whether the
 // caller targeted one path or all paths.
 type GeoFileUpdatedData struct {
-	Updated int    `json:"updated" example:"1"`
-	Partial bool   `json:"partial,omitempty" example:"true"`
-	Error   string `json:"error,omitempty"`
+	Updated       int    `json:"updated" example:"1"`
+	Partial       bool   `json:"partial,omitempty" example:"true"`
+	Error         string `json:"error,omitempty"`
+	ErrorCode     string `json:"errorCode,omitempty"`
 }
 
 // GeoFileUpdatedResponse is the envelope for POST /hydraroute/geo-files/update.
@@ -326,7 +326,7 @@ func (h *HydraRouteHandler) AddGeoFile(w http.ResponseWriter, r *http.Request) {
 	}
 	lease, err := h.downloadSvc.ResolveClient(r.Context(), toDownloaderRoute(req.Route))
 	if err != nil {
-		response.Error(w, err.Error(), "GEO_DOWNLOAD_ROUTE_ERROR")
+		response.Error(w, err.Error(), downloader.APIErrorCode(err, "GEO_DOWNLOAD_ROUTE_ERROR"))
 		return
 	}
 	defer lease.Close()
@@ -335,7 +335,8 @@ func (h *HydraRouteHandler) AddGeoFile(w http.ResponseWriter, r *http.Request) {
 
 	entry, err := gds.DownloadWithClientVia(r.Context(), req.Type, req.URL, lease.Client, routeLabel)
 	if err != nil {
-		response.Error(w, fmt.Sprintf("download via %s: %v", routeLabel, err), "GEO_DOWNLOAD_ERROR")
+		msg, code := wrapGeoDownloadError(lease.Route, err, "GEO_DOWNLOAD_ERROR")
+		response.Error(w, msg, code)
 		return
 	}
 
@@ -494,7 +495,7 @@ func (h *HydraRouteHandler) UpdateGeoFile(w http.ResponseWriter, r *http.Request
 	}
 	lease, err := h.downloadSvc.ResolveClient(r.Context(), toDownloaderRoute(req.Route))
 	if err != nil {
-		response.Error(w, err.Error(), "GEO_DOWNLOAD_ROUTE_ERROR")
+		response.Error(w, err.Error(), downloader.APIErrorCode(err, "GEO_DOWNLOAD_ROUTE_ERROR"))
 		return
 	}
 	defer lease.Close()
@@ -507,15 +508,18 @@ func (h *HydraRouteHandler) UpdateGeoFile(w http.ResponseWriter, r *http.Request
 		out.Updated = count
 		if err != nil {
 			out.Partial = count > 0
-			out.Error = fmt.Sprintf("update via %s: %v", routeLabel, err)
+			msg, code := wrapGeoDownloadError(lease.Route, err, "GEO_UPDATE_ERROR")
+			out.Error = msg
+			out.ErrorCode = code
 			if count == 0 {
-				response.Error(w, fmt.Sprintf("update via %s: %v", routeLabel, err), "GEO_UPDATE_ERROR")
+				response.Error(w, msg, code)
 				return
 			}
 		}
 	} else {
 		if _, err := gds.UpdateWithClientVia(r.Context(), req.Path, lease.Client, routeLabel); err != nil {
-			response.Error(w, fmt.Sprintf("update via %s: %v", routeLabel, err), "GEO_UPDATE_ERROR")
+			msg, code := wrapGeoDownloadError(lease.Route, err, "GEO_UPDATE_ERROR")
+			response.Error(w, msg, code)
 			return
 		}
 		out.Updated = 1
@@ -719,4 +723,12 @@ func (h *HydraRouteHandler) GetOversizedTags(w http.ResponseWriter, r *http.Requ
 		"maxelem":   cfg.EffectiveMaxElem(),
 		"tags":      response.MustNotNil(tags),
 	})
+}
+
+func wrapGeoDownloadError(route downloader.RouteInfo, err error, fallback string) (string, string) {
+	if err == nil {
+		return "", fallback
+	}
+	reqErr := downloader.WrapRequestError(route, err)
+	return reqErr.Error(), downloader.APIErrorCode(reqErr, fallback)
 }

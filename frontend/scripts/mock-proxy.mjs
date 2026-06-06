@@ -2660,14 +2660,37 @@ const DOWNLOAD_FAULT_ROUTES = [
 	{ method: 'GET', path: '/system/update/check', style: 'updateInfo' },
 ];
 
-// One realistic message per humanized failure kind (see downloadError.ts):
-// sing-box off, AWG interface down, timeout, network drop, generic.
-const DOWNLOAD_FAULT_MESSAGES = [
-	'outbound "sb-subscription-1" is unavailable: sing-box is not running',
-	'outbound "awg-de-frankfurt" interface "awg0" is not present',
-	'download via DE Frankfurt: request failed: context deadline exceeded (timed out)',
-	'download via Direct (WAN): request failed: http get: EOF',
-	'remote returned HTTP 500: internal server error',
+// One realistic message + code per humanized failure kind (see downloadError.ts).
+const DOWNLOAD_FAULTS = [
+	{
+		message: 'outbound "sb-subscription-1" is unavailable: sing-box is not running',
+		code: 'DOWNLOAD_SINGBOX_NOT_RUNNING',
+	},
+	{
+		message: 'outbound "DE" is unavailable: sing-box proxy port not listening',
+		code: 'DOWNLOAD_SINGBOX_NOT_READY',
+	},
+	{
+		message: 'outbound "awg-de-frankfurt" interface "awg0" is not present',
+		code: 'DOWNLOAD_AWG_DOWN',
+	},
+	{
+		message: 'download via RelayCH (singbox): request failed: context deadline exceeded',
+		code: 'DOWNLOAD_TIMEOUT',
+	},
+	{
+		message:
+			'download via RelayCH (singbox): request failed: Get "https://github.com/foo/VERSION": EOF',
+		code: 'DOWNLOAD_SINGBOX_EGRESS_FAILED',
+	},
+	{
+		message: 'download via Direct (WAN): request failed: connection reset by peer',
+		code: 'DOWNLOAD_NETWORK',
+	},
+	{
+		message: 'remote returned HTTP 500: internal server error',
+		code: 'GEO_DOWNLOAD_ERROR',
+	},
 ];
 
 // Randomly short-circuit a service-download endpoint with a failure so the UI
@@ -2682,7 +2705,9 @@ function maybeInjectDownloadFault(req, res, path) {
 	// Drain any request body so keep-alive sockets don't stall.
 	if (req.method !== 'GET' && req.method !== 'HEAD') req.resume();
 
-	const message = DOWNLOAD_FAULT_MESSAGES[Math.floor(Math.random() * DOWNLOAD_FAULT_MESSAGES.length)];
+	const fault = DOWNLOAD_FAULTS[Math.floor(Math.random() * DOWNLOAD_FAULTS.length)];
+	const message = fault.message;
+	const faultCode = fault.code;
 	if (route.style === 'updateInfo') {
 		send(res, 200, {
 			success: true,
@@ -2692,12 +2717,13 @@ function maybeInjectDownloadFault(req, res, path) {
 				available: false,
 				channel: updateChannel,
 				error: message,
+				errorCode: faultCode,
 			},
 		});
 	} else {
-		send(res, 400, { error: true, message, code: route.code });
+		send(res, 400, { error: true, message, code: faultCode || route.code });
 	}
-	console.log(`[mock-proxy] injected download fault on ${req.method} ${path}: ${message}`);
+	console.log(`[mock-proxy] injected download fault on ${req.method} ${path}: ${message} (${faultCode})`);
 	return true;
 }
 

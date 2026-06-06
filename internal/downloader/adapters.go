@@ -179,6 +179,21 @@ func (a *singboxRuntimeAdapter) IsRunning() bool {
 	return running
 }
 
+func (a *singboxRuntimeAdapter) IsReady() bool {
+	if a == nil || a.op == nil {
+		return false
+	}
+	running, _ := a.op.IsRunningPublic()
+	if !running {
+		return false
+	}
+	clash := a.op.Clash()
+	if clash == nil {
+		return false
+	}
+	return clash.IsHealthy()
+}
+
 func (p *settingsRouteProvider) GetDownloadRoute(ctx context.Context) (*Route, error) {
 	if p == nil || p.store == nil {
 		return &Route{Tag: "direct"}, nil

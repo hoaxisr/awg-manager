@@ -82,9 +82,9 @@
 	let restartConfirmOpen = $state(false);
 	let hydraBusy = $state(false);
 	let singboxInstalling = $state(false);
-	let singboxInstallError = $state<string | null>(null);
+	let singboxInstallError = $state<unknown>(null);
 	let singboxUpdating = $state(false);
-	let singboxUpdateError = $state<string | null>(null);
+	let singboxUpdateError = $state<unknown>(null);
 	let singboxBusy = $state(false);
 	let ndmsProxyBusy = $state(false);
 	let ndmsProxyConfirmOpen = $state(false);
@@ -185,7 +185,7 @@
 			singboxStatus.applyMutationResponse(fresh);
 			notifications.success("Sing-box установлен");
 		} catch (e) {
-			singboxInstallError = e instanceof Error ? e.message : String(e);
+			singboxInstallError = e;
 		} finally {
 			singboxInstalling = false;
 		}
@@ -199,7 +199,7 @@
 			singboxStatus.applyMutationResponse(fresh);
 			notifications.success("Sing-box обновлён");
 		} catch (e) {
-			singboxUpdateError = e instanceof Error ? e.message : String(e);
+			singboxUpdateError = e;
 		} finally {
 			singboxUpdating = false;
 		}

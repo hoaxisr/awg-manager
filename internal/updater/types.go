@@ -14,6 +14,7 @@ type UpdateInfo struct {
 	CheckedAt      time.Time `json:"checkedAt"`
 	Checking       bool      `json:"checking"`
 	Error          string    `json:"error,omitempty"`
+	ErrorCode      string    `json:"errorCode,omitempty"`
 	Warning        string    `json:"warning,omitempty"`
 }
 

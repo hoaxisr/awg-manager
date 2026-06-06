@@ -107,7 +107,7 @@ func (s *Service) ReadAll(ctx context.Context, req Request) ([]byte, ResponseMet
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return nil, meta, fmt.Errorf("download via %s: request failed: %w", lease.Route.DisplayName(), err)
+		return nil, meta, wrapRequestError(lease.Route, err)
 	}
 	defer resp.Body.Close()
 	meta.StatusCode = resp.StatusCode
@@ -189,7 +189,7 @@ func (s *Service) DownloadFile(ctx context.Context, req FileRequest) (FileResult
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return result, fmt.Errorf("download via %s: request failed: %w", lease.Route.DisplayName(), err)
+		return result, wrapRequestError(lease.Route, err)
 	}
 	defer resp.Body.Close()
 

@@ -4,6 +4,7 @@
 	import { api } from '$lib/api/client';
 	import { Button, IconButton } from '$lib/components/ui';
 	import { formatBytes } from '$lib/utils/format';
+	import { humanizeDownloadError } from '$lib/utils/downloadError';
 
 	let installing = $state(false);
 	let updating = $state(false);
@@ -30,7 +31,7 @@
 			case 'done':
 				return 'Готово';
 			case 'error':
-				return p.error ? `Ошибка: ${p.error}` : 'Ошибка';
+				return p.error ? humanizeDownloadError(p.error).title : 'Ошибка';
 			default:
 				return '';
 		}

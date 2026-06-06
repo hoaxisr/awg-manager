@@ -4,7 +4,7 @@
 	import { Modal, Button } from '$lib/components/ui';
 	import ChangelogModal from './ChangelogModal.svelte';
 	import DownloadErrorNotice from '$lib/components/downloads/DownloadErrorNotice.svelte';
-	import { downloadErrorToText } from '$lib/utils/downloadError';
+	import { downloadErrorToText, downloadRouteError } from '$lib/utils/downloadError';
 	import type { UpdateInfo } from '$lib/types';
 
 	interface Props {
@@ -31,7 +31,9 @@
 		try {
 			updateInfo = await api.checkUpdate(true);
 			if (updateInfo.error) {
-				notifications.error(`Проверка обновлений: ${downloadErrorToText(updateInfo.error)}`);
+				notifications.error(
+					`Проверка обновлений: ${downloadErrorToText(downloadRouteError(updateInfo.error, updateInfo.errorCode))}`,
+				);
 			} else if (updateInfo.available) {
 				notifications.success(`Доступна версия ${updateInfo.latestVersion}`);
 			} else {
@@ -106,7 +108,10 @@
 			</span>
 		{:else if updateInfo?.error}
 			<div class="update-error-notice">
-				<DownloadErrorNotice error={updateInfo.error} hideSettingsLink />
+				<DownloadErrorNotice
+					error={downloadRouteError(updateInfo.error, updateInfo.errorCode)}
+					hideSettingsLink
+				/>
 			</div>
 		{:else}
 			<span class="setting-description">

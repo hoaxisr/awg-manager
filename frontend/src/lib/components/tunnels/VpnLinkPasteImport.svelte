@@ -66,7 +66,7 @@
 	let premiumBusy = $state(false);
 	let premiumBusyDepth = 0;
 	let premiumPickBusy = $state('');
-	let premiumError = $state('');
+	let premiumError = $state<unknown>(null);
 	let premiumReissueConfirm = $state<{ code: string; label: string } | null>(null);
 	let premiumConfirmBusy = $state(false);
 	let hasStoredPremiumKey = $state(false);
@@ -139,7 +139,7 @@
 		linkError = '';
 		linkPreview = '';
 		configContent = '';
-		premiumError = '';
+		premiumError = null;
 		premiumBusyDepth = 0;
 		premiumBusy = false;
 		resetPremiumCatalogState();
@@ -166,7 +166,7 @@
 		if (classifyVpnLink(key) === 'regular') return;
 
 		beginPremiumBusy();
-		premiumError = '';
+		premiumError = null;
 		try {
 			const { sid } = await api.amneziaPremiumLogin(key);
 			if (gen !== vpnAnalysisGen) return;
@@ -182,8 +182,7 @@
 			if (gen !== vpnAnalysisGen) return;
 			if (e instanceof DOMException && e.name === 'AbortError') return;
 			resetPremiumCatalogState();
-			const msg = e instanceof Error ? e.message : 'Ошибка запроса к cp.amnezia.org';
-			premiumError = msg;
+			premiumError = e;
 			notifications.error(downloadErrorToText(e));
 		} finally {
 			endPremiumBusy();
@@ -210,7 +209,7 @@
 		if (!raw) {
 			resetPremiumCatalogState();
 			configContent = '';
-			premiumError = '';
+			premiumError = null;
 			premiumBusyDepth = 0;
 			premiumBusy = false;
 			return;

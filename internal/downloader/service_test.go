@@ -169,8 +169,9 @@ func TestResolveClient_AWGBind(t *testing.T) {
 
 func TestResolveClient_SingboxProxy(t *testing.T) {
 	resolver := NewTransportResolver(TransportResolverDeps{
-		Tunnels: &fakeTunnelPorts{ports: map[string]int{"DE": 1081}},
-		Singbox: &fakeSingboxRuntime{running: true},
+		Tunnels:       &fakeTunnelPorts{ports: map[string]int{"DE": 1081}},
+		Singbox:       &fakeSingboxRuntime{running: true, ready: true},
+		ProxyPortOpen: proxyPortAlwaysOpen,
 	})
 	svc := NewService(Deps{
 		Outbounds: &fakeOutboundsProvider{
@@ -241,8 +242,9 @@ func TestListOutbounds_SingboxUnavailableWhenDown(t *testing.T) {
 			},
 		},
 		TransportResolver: NewTransportResolver(TransportResolverDeps{
-			Tunnels: &fakeTunnelPorts{ports: map[string]int{"DE": 1080}},
-			Singbox: &fakeSingboxRuntime{running: false},
+			Tunnels:       &fakeTunnelPorts{ports: map[string]int{"DE": 1080}},
+			Singbox:       &fakeSingboxRuntime{running: false},
+			ProxyPortOpen: proxyPortAlwaysOpen,
 		}),
 	})
 	got := svc.ListOutbounds(context.Background())
@@ -559,8 +561,9 @@ func TestDescribeRoute_RespectsKind(t *testing.T) {
 
 func TestResolveClient_RespectsKind(t *testing.T) {
 	resolver := NewTransportResolver(TransportResolverDeps{
-		Subs:    &fakeSubPorts{ports: map[string]int{"same-tag": 11002}},
-		Singbox: &fakeSingboxRuntime{running: true},
+		Subs:          &fakeSubPorts{ports: map[string]int{"same-tag": 11002}},
+		Singbox:       &fakeSingboxRuntime{running: true, ready: true},
+		ProxyPortOpen: proxyPortAlwaysOpen,
 	})
 	svc := NewService(Deps{
 		Outbounds: &fakeOutboundsProvider{

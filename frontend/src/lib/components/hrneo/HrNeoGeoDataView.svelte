@@ -16,6 +16,7 @@
 	import { geoDownloadProgress } from '$lib/stores/geoDownload';
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
 	import DownloadErrorNotice from '$lib/components/downloads/DownloadErrorNotice.svelte';
+	import { downloadRouteError } from '$lib/utils/downloadError';
 
 	interface Props {
 		files: GeoFileEntry[];
@@ -231,6 +232,7 @@
 		lastDownload = null;
 		activeDownload = op;
 		const notes: string[] = [];
+		let syncErrorCode = '';
 		try {
 			try {
 				await api.rescanGeoFiles();
@@ -250,10 +252,15 @@
 							? `Обновлено ${upd.updated}, ошибки: ${upd.error}`
 							: upd.error,
 					);
+					if (upd.errorCode) syncErrorCode = upd.errorCode;
 				}
 			} catch (e: unknown) {
 				await onrefresh();
 				notes.push(e instanceof Error ? e.message : String(e));
+				if (typeof e === 'object' && e !== null && 'body' in e) {
+					const code = (e as { body?: { code?: string } }).body?.code;
+					if (code) syncErrorCode = code;
+				}
 			}
 
 			if (notes.length > 0) {
@@ -261,7 +268,7 @@
 					ok: false,
 					action: 'Синхронизация geo-файлов',
 					routeLabel: op.routeLabel,
-					error: notes.join('; '),
+					error: downloadRouteError(notes.join('; '), syncErrorCode || undefined),
 				};
 			} else {
 				lastDownload = {
