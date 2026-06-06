@@ -659,8 +659,8 @@ func (s *Service) ListLANSegments(ctx context.Context) ([]LANSegmentDTO, error) 
 	out := make([]LANSegmentDTO, 0, len(bridges))
 	for _, b := range bridges {
 		subnet := b.Address
-		if ones, _ := net.IPMask(net.ParseIP(b.Mask).To4()).Size(); ones > 0 {
-			subnet = fmt.Sprintf("%s/%d", b.Address, ones)
+		if cidr, err := parseManagedSubnet(b.Address, b.Mask); err == nil {
+			subnet = cidr.String() // network CIDR, e.g. 10.10.10.0/24
 		}
 		// Human-readable name = NDMS description (e.g. "LAN"); fall back to
 		// the NDMS id (e.g. "Bridge0") when the bridge has no description.

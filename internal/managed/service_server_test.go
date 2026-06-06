@@ -1021,6 +1021,20 @@ func TestSetNATMode_RemovesStaticOnStoredWAN(t *testing.T) {
 	}
 }
 
+func TestListLANSegments_ReturnsNetworkCIDR(t *testing.T) {
+	svc, _, _ := newLANSegmentsTestService(t) // bridge Home @ 10.10.10.1/24 (host address)
+	segs, err := svc.ListLANSegments(context.Background())
+	if err != nil {
+		t.Fatalf("ListLANSegments: %v", err)
+	}
+	if len(segs) != 1 {
+		t.Fatalf("want 1 segment, got %d", len(segs))
+	}
+	if segs[0].Subnet != "10.10.10.0/24" {
+		t.Errorf("subnet: got %q, want 10.10.10.0/24 (network, not host)", segs[0].Subnet)
+	}
+}
+
 func TestSetLANSegments_InvalidSegment_DoesNotDestroyACL(t *testing.T) {
 	svc, store, poster := newLANSegmentsTestService(t) // bridge Home @ 10.10.10.0/24
 	ctx := context.Background()
