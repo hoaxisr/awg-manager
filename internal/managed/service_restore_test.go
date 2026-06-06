@@ -1154,3 +1154,49 @@ func TestRestore_PreflightDetectsInvalidAddress(t *testing.T) {
 		t.Errorf("conflicts: %v (expected invalid-IP reason)", outcomes[0].Conflicts)
 	}
 }
+
+func TestRestore_InternetOnly_PersistsNATStaticWAN(t *testing.T) {
+	dir := t.TempDir()
+	store := storage.NewSettingsStore(dir)
+	_, _ = store.Load()
+
+	getter := &restoreLiveGetter{live: map[string]restoreLiveEntry{"Wireguard0": {Present: false}}}
+	ifaces := query.NewInterfaceStoreWithTTL(getter, query.NopLogger(), 0, 0)
+	queries := &query.Queries{
+		Interfaces: ifaces,
+		WGServers:  query.NewWGServerStore(getter, query.NopLogger(), ifaces),
+	}
+
+	// Wire a Routes store that reports PPPoE0 as the default gateway.
+	routeGetter := query.NewFakeGetter()
+	routeGetter.SetJSON("/show/ip/route", `[{"destination":"0.0.0.0/0","gateway":"1.2.3.4","interface":"PPPoE0"}]`)
+	queries.Routes = query.NewRouteStore(routeGetter, query.NopLogger())
+
+	poster := &fakePoster{onPost: getter.applyPost}
+	s := &Service{settings: store, transport: poster, queries: queries}
+
+	out := s.Restore(context.Background(), []ManagedServerExport{{
+		InterfaceName: "Wireguard0",
+		Address:       "10.180.0.1",
+		Mask:          "255.255.255.0",
+		ListenPort:    52020,
+		PrivateKey:    validPrivateKey(51),
+		NATMode:       "internet-only",
+		NATStaticWAN:  "", // empty — must be filled in from live WAN
+	}}, RestoreOptions{})
+
+	if len(out) != 1 || out[0].Action != "created" {
+		t.Fatalf("outcomes: %+v", out)
+	}
+
+	got, ok := store.GetManagedServerByID("Wireguard0")
+	if !ok {
+		t.Fatalf("server not persisted to storage")
+	}
+	if got.NATMode != "internet-only" {
+		t.Errorf("storage NATMode: got %q, want internet-only", got.NATMode)
+	}
+	if got.NATStaticWAN != "PPPoE0" {
+		t.Errorf("storage NATStaticWAN: got %q, want PPPoE0", got.NATStaticWAN)
+	}
+}

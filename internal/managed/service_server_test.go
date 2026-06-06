@@ -549,6 +549,9 @@ func TestSetNATMode_InternetOnly_SetsStaticToWAN(t *testing.T) {
 	if saved.NATEnabled {
 		t.Errorf("storage NATEnabled: got true, want false for internet-only")
 	}
+	if saved.NATStaticWAN != "PPPoE0" {
+		t.Errorf("storage NATStaticWAN: got %q, want PPPoE0", saved.NATStaticWAN)
+	}
 
 	// Inspect the RCI POSTs.
 	poster.mu.Lock()
