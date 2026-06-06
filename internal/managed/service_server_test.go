@@ -788,3 +788,77 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveLANSegmentsPlan(t *testing.T) {
+	bridges := []query.LANBridge{
+		{Name: "Home", Address: "10.10.10.1", Mask: "255.255.255.0"},
+		{Name: "Guest", Address: "10.10.20.1", Mask: "255.255.255.0"},
+	}
+	t.Run("valid segments → network-subnet permit rules", func(t *testing.T) {
+		rules, err := resolveLANSegmentsPlan("10.66.66.1", "255.255.255.0", []string{"Home", "Guest"}, bridges)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := []permitRule{
+			{srcSub: "10.66.66.0", srcMask: "255.255.255.0", dstSub: "10.10.10.0", dstMask: "255.255.255.0"},
+			{srcSub: "10.66.66.0", srcMask: "255.255.255.0", dstSub: "10.10.20.0", dstMask: "255.255.255.0"},
+		}
+		if len(rules) != len(want) {
+			t.Fatalf("got %d rules, want %d: %+v", len(rules), len(want), rules)
+		}
+		for i := range want {
+			if rules[i] != want[i] {
+				t.Errorf("rule[%d] = %+v, want %+v", i, rules[i], want[i])
+			}
+		}
+	})
+	t.Run("unknown segment errors", func(t *testing.T) {
+		if _, err := resolveLANSegmentsPlan("10.66.66.1", "255.255.255.0", []string{"Ghost"}, bridges); err == nil {
+			t.Fatal("expected error for unknown segment")
+		}
+	})
+	t.Run("bad peer subnet errors", func(t *testing.T) {
+		if _, err := resolveLANSegmentsPlan("not-an-ip", "255.255.255.0", []string{"Home"}, bridges); err == nil {
+			t.Fatal("expected error for bad peer subnet")
+		}
+	})
+	t.Run("empty catalog with requested segments errors", func(t *testing.T) {
+		if _, err := resolveLANSegmentsPlan("10.66.66.1", "255.255.255.0", []string{"Home"}, nil); err == nil {
+			t.Fatal("expected error when catalog empty")
+		}
+	})
+}
+
+func TestSetLANSegments_InvalidSegment_DoesNotDestroyACL(t *testing.T) {
+	svc, store, poster := newLANSegmentsTestService(t) // bridge Home @ 10.10.10.0/24
+	ctx := context.Background()
+	const ifaceName = "Wireguard0"
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: ifaceName, Address: "10.66.66.1", Mask: "255.255.255.0",
+		ListenPort: 51820, LANSegments: []string{"Home"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	poster.mu.Lock()
+	poster.posts = nil
+	poster.mu.Unlock()
+
+	if err := svc.SetLANSegments(ctx, ifaceName, []string{"Ghost"}); err == nil {
+		t.Fatalf("expected error for unknown segment")
+	}
+
+	poster.mu.Lock()
+	posts := append([]map[string]interface{}{}, poster.posts...)
+	poster.mu.Unlock()
+	for _, p := range posts {
+		if cmd, ok := p["parse"].(string); ok {
+			if strings.Contains(cmd, "no access-list") || strings.Contains(cmd, "no interface") {
+				t.Errorf("destructive ACL command sent on invalid input: %q", cmd)
+			}
+		}
+	}
+	saved, _ := store.GetManagedServerByID(ifaceName)
+	if len(saved.LANSegments) != 1 || saved.LANSegments[0] != "Home" {
+		t.Errorf("storage LANSegments changed: %v", saved.LANSegments)
+	}
+}

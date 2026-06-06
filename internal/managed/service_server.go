@@ -534,21 +534,63 @@ func (s *Service) readCreatedServerPrivateKey(ctx context.Context, ifaceName str
 	return "", fmt.Errorf("cannot read private key after %d attempts: %w", createPrivateKeyReadAttempts, lastErr)
 }
 
-// applyLANSegmentsRaw applies LAN-forward ACL rules to an interface without
-// touching storage. Always unbinds and removes the ACL first (rebuild order),
-// then re-adds permit rules and re-binds when segments is non-empty.
-func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask string, segments []string) error {
-	acl := "AWGM_" + iface
-	_ = s.rciAccessGroup(ctx, iface, acl, false) // unbind (best-effort: ACL may not exist yet)
-	_ = s.rciAclRemove(ctx, acl)                 // remove (best-effort: same reason)
-	if len(segments) == 0 {
-		return nil
-	}
+// permitRule — одно правило permit (src→dst) для ACL.
+type permitRule struct {
+	srcSub, srcMask, dstSub, dstMask string
+}
+
+// resolveLANSegmentsPlan валидирует peer-подсеть и каждый запрошенный сегмент
+// против каталога бриджей БЕЗ обращения к роутеру. Возвращает правила permit
+// или ошибку, если сегмент неизвестен/подсеть не парсится. Вызывать ДО
+// удаления существующего ACL — тогда плохой запрос не ломает рабочий доступ.
+func resolveLANSegmentsPlan(addr, mask string, segments []string, bridges []query.LANBridge) ([]permitRule, error) {
 	cidr, err := parseManagedSubnet(addr, mask)
 	if err != nil {
-		return fmt.Errorf("peer subnet: %w", err)
+		return nil, fmt.Errorf("peer subnet: %w", err)
 	}
 	peerSub, peerMask := cidr.IP.String(), net.IP(cidr.Mask).String()
+	byName := make(map[string]query.LANBridge, len(bridges))
+	for _, b := range bridges {
+		byName[b.Name] = b
+	}
+	rules := make([]permitRule, 0, len(segments))
+	for _, seg := range segments {
+		b, ok := byName[seg]
+		if !ok {
+			return nil, fmt.Errorf("LAN-сегмент %q не найден", seg)
+		}
+		segCidr, err := parseManagedSubnet(b.Address, b.Mask)
+		if err != nil {
+			return nil, fmt.Errorf("segment %q subnet: %w", seg, err)
+		}
+		rules = append(rules, permitRule{
+			srcSub:  peerSub,
+			srcMask: peerMask,
+			dstSub:  segCidr.IP.String(),
+			dstMask: net.IP(segCidr.Mask).String(),
+		})
+	}
+	return rules, nil
+}
+
+// applyLANSegmentsRaw applies LAN-forward ACL rules to an interface without
+// touching storage. Builds the full plan FIRST (no RCI); only after a valid
+// plan does it destroy and rebuild, so a bad request never tears down working
+// access. Empty segments = teardown (unbind+remove best-effort, errors logged only).
+func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask string, segments []string) error {
+	acl := "AWGM_" + iface
+
+	if len(segments) == 0 {
+		if err := s.rciAccessGroup(ctx, iface, acl, false); err != nil {
+			s.log.Debug("unbind ACL (teardown)", "error", err, "iface", iface)
+		}
+		if err := s.rciAclRemove(ctx, acl); err != nil {
+			s.log.Debug("remove ACL (teardown)", "error", err, "iface", iface)
+		}
+		return nil
+	}
+
+	// Preflight — собрать план до единой мутации на роутере.
 	if s.queries == nil || s.queries.Interfaces == nil {
 		return fmt.Errorf("interface store not wired")
 	}
@@ -556,21 +598,22 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 	if err != nil {
 		return fmt.Errorf("list LAN bridges: %w", err)
 	}
-	byName := make(map[string]query.LANBridge, len(bridges))
-	for _, b := range bridges {
-		byName[b.Name] = b
+	plan, err := resolveLANSegmentsPlan(addr, mask, segments, bridges)
+	if err != nil {
+		return err // старый ACL не тронут
 	}
-	for _, seg := range segments {
-		b, ok := byName[seg]
-		if !ok {
-			return fmt.Errorf("LAN-сегмент %q не найден", seg)
-		}
-		segCidr, err := parseManagedSubnet(b.Address, b.Mask)
-		if err != nil {
-			return fmt.Errorf("segment %q subnet: %w", seg, err)
-		}
-		if err := s.rciAclPermit(ctx, acl, peerSub, peerMask, segCidr.IP.String(), net.IP(segCidr.Mask).String()); err != nil {
-			return fmt.Errorf("permit %s: %w", seg, err)
+
+	// Apply — destroy → rebuild. unbind/remove best-effort (ACL может ещё не
+	// существовать), но больше не глушим молча.
+	if err := s.rciAccessGroup(ctx, iface, acl, false); err != nil {
+		s.log.Debug("unbind ACL before rebuild", "error", err, "iface", iface)
+	}
+	if err := s.rciAclRemove(ctx, acl); err != nil {
+		s.log.Debug("remove ACL before rebuild", "error", err, "iface", iface)
+	}
+	for i, r := range plan {
+		if err := s.rciAclPermit(ctx, acl, r.srcSub, r.srcMask, r.dstSub, r.dstMask); err != nil {
+			return fmt.Errorf("permit %s: %w", segments[i], err)
 		}
 	}
 	return s.rciAccessGroup(ctx, iface, acl, true)
