@@ -227,11 +227,11 @@ func toManagedServerResponse(s *storage.ManagedServer) *managedServerResponse {
 		Endpoint:      s.Endpoint,
 		DNS:           s.DNS,
 		MTU:           s.MTU,
-		NATEnabled:  s.NATEnabled,
-		NATMode:     s.NATMode,
-		LANSegments: s.LANSegments,
-		Policy:      s.Policy,
-		Peers:       peers,
+		NATEnabled:    s.NATEnabled,
+		NATMode:       s.NATMode,
+		LANSegments:   s.LANSegments,
+		Policy:        s.Policy,
+		Peers:         peers,
 	}
 }
 
@@ -777,6 +777,12 @@ func (h *ManagedServerHandler) NAT(w http.ResponseWriter, r *http.Request, id st
 	}
 	if mode == "" {
 		response.BadRequest(w, "NAT mode required")
+		return
+	}
+	switch mode {
+	case "full", "internet-only", "none":
+	default:
+		response.BadRequest(w, "invalid NAT mode: "+mode)
 		return
 	}
 	if err := h.svc.SetNATMode(r.Context(), id, mode); err != nil {
