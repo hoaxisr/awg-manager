@@ -643,3 +643,21 @@ func TestMigrateToV26_NATEnabledToMode(t *testing.T) {
 		t.Fatalf("NATEnabled=false → none, got %q", st.ManagedServers[1].NATMode)
 	}
 }
+
+// TestMigrateToV26_PreservesExistingMode: the NATEnabled→mode backfill must
+// skip servers that already carry an explicit NATMode (e.g. internet-only,
+// which has no NATEnabled equivalent), so re-running it is a no-op for them.
+// Exercises the `if NATMode == ""` guard in migrateNATModes directly.
+func TestMigrateToV26_PreservesExistingMode(t *testing.T) {
+	st := &Settings{SchemaVersion: 25, ManagedServers: []ManagedServer{
+		{InterfaceName: "Wireguard3", NATEnabled: false, NATMode: "internet-only"},
+		{InterfaceName: "Wireguard4", NATEnabled: true, NATMode: "none"},
+	}}
+	migrateNATModes(st)
+	if st.ManagedServers[0].NATMode != "internet-only" {
+		t.Errorf("existing internet-only must be preserved, got %q", st.ManagedServers[0].NATMode)
+	}
+	if st.ManagedServers[1].NATMode != "none" {
+		t.Errorf("existing mode must not be re-derived from NATEnabled, got %q", st.ManagedServers[1].NATMode)
+	}
+}

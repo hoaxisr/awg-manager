@@ -1071,3 +1071,127 @@ func TestSetLANSegments_InvalidSegment_DoesNotDestroyACL(t *testing.T) {
 		t.Errorf("storage LANSegments changed: %v", saved.LANSegments)
 	}
 }
+
+// hasStaticNATPost reports whether any RCI POST touches ip.static (set or remove).
+func hasStaticNATPost(posts []map[string]interface{}) bool {
+	for _, p := range posts {
+		ip, ok := p["ip"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if _, ok := ip["static"]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// TestSetNATMode_Full_NoSpeculativeStaticRemove: a server that was never in
+// internet-only (empty NATStaticWAN) must NOT emit a speculative `no ip static`
+// when switching to full — there is no static rule to remove, so the live-WAN
+// lookup + remove is pure RCI noise.
+func TestSetNATMode_Full_NoSpeculativeStaticRemove(t *testing.T) {
+	svc, store, poster := newNATModeTestService(t)
+	ctx := context.Background()
+	const ifaceName = "Wireguard0"
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: ifaceName, Address: "10.66.66.1", Mask: "255.255.255.0",
+		ListenPort: 51820, NATMode: "none", NATEnabled: false, NATStaticWAN: "",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	poster.mu.Lock()
+	poster.posts = nil
+	poster.mu.Unlock()
+
+	if err := svc.SetNATMode(ctx, ifaceName, "full"); err != nil {
+		t.Fatalf("SetNATMode full: %v", err)
+	}
+	poster.mu.Lock()
+	posts := append([]map[string]interface{}{}, poster.posts...)
+	poster.mu.Unlock()
+	if hasStaticNATPost(posts) {
+		t.Errorf("full mode with empty NATStaticWAN must not touch ip.static; posts=%v", posts)
+	}
+}
+
+// TestSetNATMode_None_NoSpeculativeStaticRemove: same guard for the none mode.
+func TestSetNATMode_None_NoSpeculativeStaticRemove(t *testing.T) {
+	svc, store, poster := newNATModeTestService(t)
+	ctx := context.Background()
+	const ifaceName = "Wireguard0"
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: ifaceName, Address: "10.66.66.1", Mask: "255.255.255.0",
+		ListenPort: 51820, NATMode: "full", NATEnabled: true, NATStaticWAN: "",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	poster.mu.Lock()
+	poster.posts = nil
+	poster.mu.Unlock()
+
+	if err := svc.SetNATMode(ctx, ifaceName, "none"); err != nil {
+		t.Fatalf("SetNATMode none: %v", err)
+	}
+	poster.mu.Lock()
+	posts := append([]map[string]interface{}{}, poster.posts...)
+	poster.mu.Unlock()
+	if hasStaticNATPost(posts) {
+		t.Errorf("none mode with empty NATStaticWAN must not touch ip.static; posts=%v", posts)
+	}
+}
+
+// TestSetNATMode_InternetOnlyToFull_EnablesNATBeforeStaticRemove pins the
+// teardown order for the reverse transition: full NAT must be re-enabled
+// BEFORE the static rule is removed, so there is never a window without egress.
+func TestSetNATMode_InternetOnlyToFull_EnablesNATBeforeStaticRemove(t *testing.T) {
+	svc, store, poster := newNATModeTestService(t)
+	ctx := context.Background()
+	const ifaceName = "Wireguard0"
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: ifaceName, Address: "10.66.66.1", Mask: "255.255.255.0",
+		ListenPort: 51820, NATMode: "internet-only", NATEnabled: false,
+		NATStaticWAN: "PPPoE0",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	poster.mu.Lock()
+	poster.posts = nil
+	poster.mu.Unlock()
+
+	if err := svc.SetNATMode(ctx, ifaceName, "full"); err != nil {
+		t.Fatalf("SetNATMode full: %v", err)
+	}
+	poster.mu.Lock()
+	posts := append([]map[string]interface{}{}, poster.posts...)
+	poster.mu.Unlock()
+
+	natEnableIdx, staticRemoveIdx := -1, -1
+	for i, p := range posts {
+		ip, ok := p["ip"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if nat, ok := ip["nat"].(map[string]interface{}); ok {
+			if nat["interface"] == ifaceName { // enable form is a map (no "no")
+				natEnableIdx = i
+			}
+		}
+		if arr, ok := ip["static"].([]map[string]interface{}); ok {
+			for _, e := range arr {
+				if e["no"] == true && e["interface"] == ifaceName {
+					staticRemoveIdx = i
+				}
+			}
+		}
+	}
+	if natEnableIdx == -1 {
+		t.Fatalf("expected ip-nat enable POST; posts=%v", posts)
+	}
+	if staticRemoveIdx == -1 {
+		t.Fatalf("expected static-NAT remove POST on stored WAN; posts=%v", posts)
+	}
+	if natEnableIdx > staticRemoveIdx {
+		t.Errorf("NAT must be enabled (idx %d) BEFORE static removed (idx %d) — egress gap", natEnableIdx, staticRemoveIdx)
+	}
+}

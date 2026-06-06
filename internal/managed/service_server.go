@@ -175,6 +175,12 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateServerRequest
 	// сегмент, недоступный каталог) не начнёт разрушать рабочий ACL.
 	if changes.addressChanged && len(server.LANSegments) > 0 {
 		if err := s.applyLANSegmentsRaw(ctx, server.InterfaceName, req.Address, mask, server.LANSegments); err != nil {
+			// Роутер уже сменил подсеть (rciUpdateServer выше), но storage ещё
+			// хранит старую — рассинхрон до следующего успешного Update. Это
+			// fail-closed по доступу (ACL не пересобран → сегмент недоступен),
+			// восстановимо повтором Update; явно логируем, чтобы не было тихо.
+			s.log.Warn("LAN ACL rebuild failed after subnet change; router/storage out of sync until next Update",
+				"error", err, "interface", server.InterfaceName, "newAddress", req.Address)
 			return fmt.Errorf("rebuild LAN ACL after subnet change: %w", err)
 		}
 	}
@@ -217,16 +223,19 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateServerRequest
 // applyNATModeRaw applies a NAT mode via RCI (no storage write). Returns the
 // WAN interface a static-NAT rule was created on (empty for full/none) so the
 // caller can persist it for deterministic teardown. prevWAN — previously
-// persisted static WAN to remove in full/none (empty → live default-WAN
-// detect); ignored in internet-only, which always re-queries the live WAN.
-// Reused by restore.
+// persisted static WAN to remove in full/none; empty means the server was
+// never in internet-only, so there is no static rule to remove and we skip
+// it (no speculative live-WAN lookup). Ignored in internet-only, which always
+// re-queries the live WAN. Reused by restore.
 func (s *Service) applyNATModeRaw(ctx context.Context, ifaceName, mode, prevWAN string) (string, error) {
 	switch mode {
 	case "full":
 		if err := s.rciSetNAT(ctx, ifaceName, true); err != nil {
 			return "", fmt.Errorf("set NAT: %w", err)
 		}
-		s.removeStaticNAT(ctx, ifaceName, prevWAN)
+		if prevWAN != "" { // только если ранее реально ставили static (internet-only)
+			s.removeStaticNAT(ctx, ifaceName, prevWAN)
+		}
 		return "", nil
 	case "internet-only":
 		if s.queries == nil || s.queries.Routes == nil {
@@ -252,7 +261,9 @@ func (s *Service) applyNATModeRaw(ctx context.Context, ifaceName, mode, prevWAN 
 		if err := s.rciSetNAT(ctx, ifaceName, false); err != nil {
 			return "", fmt.Errorf("disable NAT: %w", err)
 		}
-		s.removeStaticNAT(ctx, ifaceName, prevWAN)
+		if prevWAN != "" { // только если ранее реально ставили static (internet-only)
+			s.removeStaticNAT(ctx, ifaceName, prevWAN)
+		}
 		return "", nil
 	default:
 		return "", fmt.Errorf("неизвестный NAT-режим: %q", mode)
@@ -381,9 +392,8 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		s.removeStaticNAT(ctx, server.InterfaceName, server.NATStaticWAN)
 	}
 	if len(server.LANSegments) > 0 {
-		acl := "AWGM_" + server.InterfaceName
-		_ = s.rciAccessGroup(ctx, server.InterfaceName, acl, false)
-		_ = s.rciAclRemove(ctx, acl)
+		// Teardown-only ветка applyLANSegmentsRaw: unbind + remove ACL (best-effort).
+		_ = s.applyLANSegmentsRaw(ctx, server.InterfaceName, "", "", nil)
 	}
 
 	// Bring down — best-effort. rciDeleteInterface implies down.

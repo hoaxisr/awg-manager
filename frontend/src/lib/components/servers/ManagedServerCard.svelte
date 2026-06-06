@@ -208,7 +208,7 @@
 		server.natMode ?? (server.natEnabled ? 'full' : 'none')
 	);
 
-	const natModeOptions: DropdownOption[] = [
+	const natModeOptions: DropdownOption<'full' | 'internet-only' | 'none'>[] = [
 		{ value: 'full', label: 'Полный NAT' },
 		{ value: 'internet-only', label: 'NAT только для интернета' },
 		{ value: 'none', label: 'Без NAT' },
@@ -225,12 +225,11 @@
 		}
 	}
 
-	async function handleSetNATMode(mode: string) {
-		const m = mode as 'full' | 'internet-only' | 'none';
-		if (m === natMode) return;
+	async function handleSetNATMode(mode: 'full' | 'internet-only' | 'none') {
+		if (mode === natMode) return;
 		togglingNAT = true;
 		try {
-			const fresh = await api.setManagedServerNATMode(serverId, m);
+			const fresh = await api.setManagedServerNATMode(serverId, mode);
 			servers.applyMutationResponse(fresh);
 			onUpdated();
 		} catch (e) {
