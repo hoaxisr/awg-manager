@@ -98,17 +98,18 @@ type SingboxRouterSettings struct {
 
 // ManagedServer represents the user-created WireGuard server interface.
 type ManagedServer struct {
-	InterfaceName string `json:"interfaceName"`         // e.g. "Wireguard3"
-	Description   string `json:"description,omitempty"` // user-facing display name, synced to NDMS interface description
-	Address       string `json:"address"`               // e.g. "10.0.0.1"
-	Mask          string `json:"mask"`                  // e.g. "255.255.255.0"
-	ListenPort    int    `json:"listenPort"`
-	Endpoint      string `json:"endpoint,omitempty"` // custom endpoint (IP or domain); empty = WAN IP
-	DNS           string `json:"dns,omitempty"`      // custom DNS for client configs; empty = "1.1.1.1, 8.8.8.8"
-	MTU           int    `json:"mtu,omitempty"`      // custom MTU for client configs; 0 = 1376
-	NATEnabled    bool   `json:"natEnabled,omitempty"`
-	NATMode       string `json:"natMode,omitempty"` // "full" | "internet-only" | "none"; source of truth, NATEnabled — производное
-	LANSegments   []string `json:"lanSegments,omitempty"` // NDMS interface-name LAN-бриджей ("Home","Guest"), доступных peers
+	InterfaceName string   `json:"interfaceName"`         // e.g. "Wireguard3"
+	Description   string   `json:"description,omitempty"` // user-facing display name, synced to NDMS interface description
+	Address       string   `json:"address"`               // e.g. "10.0.0.1"
+	Mask          string   `json:"mask"`                  // e.g. "255.255.255.0"
+	ListenPort    int      `json:"listenPort"`
+	Endpoint      string   `json:"endpoint,omitempty"` // custom endpoint (IP or domain); empty = WAN IP
+	DNS           string   `json:"dns,omitempty"`      // custom DNS for client configs; empty = "1.1.1.1, 8.8.8.8"
+	MTU           int      `json:"mtu,omitempty"`      // custom MTU for client configs; 0 = 1376
+	NATEnabled    bool     `json:"natEnabled,omitempty"`
+	NATMode       string   `json:"natMode,omitempty"`      // "full" | "internet-only" | "none"; source of truth, NATEnabled — производное
+	NATStaticWAN  string   `json:"natStaticWan,omitempty"` // WAN-iface (to-interface), на котором создан static NAT для internet-only; для детерминированного снятия
+	LANSegments   []string `json:"lanSegments,omitempty"`  // NDMS interface-name LAN-бриджей ("Home","Guest"), доступных peers
 	// PrivateKey is the server's WireGuard private key. Populated by
 	// Service.Create immediately after NDMS auto-generates the keypair,
 	// or by Service.MigratePrivateKeys on first boot after upgrade for

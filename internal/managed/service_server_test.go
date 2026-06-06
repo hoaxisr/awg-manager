@@ -870,6 +870,157 @@ func TestUpdate_SubnetChange_RebuildsLANACL(t *testing.T) {
 	}
 }
 
+func TestSetNATMode_InternetOnly_StaticFails_KeepsNAT(t *testing.T) {
+	svc, store, poster := newNATModeTestService(t)
+	ctx := context.Background()
+	const ifaceName = "Wireguard0"
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: ifaceName, Address: "10.66.66.1", Mask: "255.255.255.0",
+		ListenPort: 51820, NATEnabled: true, NATMode: "full",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	poster.mu.Lock()
+	poster.posts = nil
+	poster.failOn = func(m map[string]interface{}) error {
+		ip, ok := m["ip"].(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		if _, ok := ip["static"].(map[string]interface{}); ok { // SET static (map-форма)
+			return errors.New("static NAT boom")
+		}
+		return nil
+	}
+	poster.mu.Unlock()
+
+	if err := svc.SetNATMode(ctx, ifaceName, "internet-only"); err == nil {
+		t.Fatalf("expected error when static NAT fails")
+	}
+	poster.mu.Lock()
+	posts := append([]map[string]interface{}{}, poster.posts...)
+	poster.mu.Unlock()
+	for _, p := range posts {
+		ip, ok := p["ip"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if _, ok := ip["nat"].([]map[string]interface{}); ok {
+			t.Errorf("normal NAT was disabled despite static NAT failure: %v", p)
+		}
+	}
+	saved, _ := store.GetManagedServerByID(ifaceName)
+	if saved.NATMode != "full" {
+		t.Errorf("storage NATMode changed despite failure: %q", saved.NATMode)
+	}
+}
+
+func TestSetNATMode_InternetOnly_DisableFails_RollsBackStatic(t *testing.T) {
+	svc, store, poster := newNATModeTestService(t)
+	ctx := context.Background()
+	const ifaceName = "Wireguard0"
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: ifaceName, Address: "10.66.66.1", Mask: "255.255.255.0",
+		ListenPort: 51820, NATEnabled: true, NATMode: "full",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	poster.mu.Lock()
+	poster.posts = nil
+	poster.failOn = func(m map[string]interface{}) error {
+		ip, ok := m["ip"].(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		if _, ok := ip["nat"].([]map[string]interface{}); ok { // disable NAT (slice no:true)
+			return errors.New("disable NAT boom")
+		}
+		return nil
+	}
+	poster.mu.Unlock()
+
+	if err := svc.SetNATMode(ctx, ifaceName, "internet-only"); err == nil {
+		t.Fatalf("expected error when disable NAT fails")
+	}
+	poster.mu.Lock()
+	posts := append([]map[string]interface{}{}, poster.posts...)
+	poster.mu.Unlock()
+
+	staticAdd, natDisable, staticRemove := -1, -1, -1
+	for i, p := range posts {
+		ip, ok := p["ip"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if st, ok := ip["static"].(map[string]interface{}); ok && st["interface"] == ifaceName {
+			staticAdd = i
+		}
+		if _, ok := ip["nat"].([]map[string]interface{}); ok {
+			natDisable = i
+		}
+		if arr, ok := ip["static"].([]map[string]interface{}); ok {
+			for _, e := range arr {
+				if e["no"] == true && e["interface"] == ifaceName {
+					staticRemove = i
+				}
+			}
+		}
+	}
+	if staticAdd == -1 || natDisable == -1 || staticAdd > natDisable {
+		t.Fatalf("expected static-NAT add BEFORE nat-disable; staticAdd=%d natDisable=%d", staticAdd, natDisable)
+	}
+	if staticRemove == -1 || staticRemove <= natDisable {
+		t.Fatalf("expected static-NAT rollback AFTER failed disable; staticRemove=%d natDisable=%d", staticRemove, natDisable)
+	}
+}
+
+func TestSetNATMode_RemovesStaticOnStoredWAN(t *testing.T) {
+	svc, store, poster := newNATModeTestService(t) // routes report PPPoE0 как текущий default
+	ctx := context.Background()
+	const ifaceName = "Wireguard0"
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: ifaceName, Address: "10.66.66.1", Mask: "255.255.255.0",
+		ListenPort: 51820, NATMode: "internet-only", NATEnabled: false,
+		NATStaticWAN: "ISP", // создан на ДРУГОМ WAN, не на текущем default PPPoE0
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	poster.mu.Lock()
+	poster.posts = nil
+	poster.mu.Unlock()
+
+	if err := svc.SetNATMode(ctx, ifaceName, "none"); err != nil {
+		t.Fatalf("SetNATMode none: %v", err)
+	}
+	poster.mu.Lock()
+	posts := append([]map[string]interface{}{}, poster.posts...)
+	poster.mu.Unlock()
+	foundISPremove := false
+	for _, p := range posts {
+		ip, ok := p["ip"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if arr, ok := ip["static"].([]map[string]interface{}); ok {
+			for _, e := range arr {
+				if e["no"] == true && e["to-interface"] == "ISP" {
+					foundISPremove = true
+				}
+				if e["to-interface"] == "PPPoE0" {
+					t.Errorf("removed static NAT on CURRENT default WAN, not stored: %v", e)
+				}
+			}
+		}
+	}
+	if !foundISPremove {
+		t.Errorf("expected static-NAT remove on stored WAN ISP; posts=%v", posts)
+	}
+	saved, _ := store.GetManagedServerByID(ifaceName)
+	if saved.NATStaticWAN != "" {
+		t.Errorf("NATStaticWAN must be cleared after leaving internet-only; got %q", saved.NATStaticWAN)
+	}
+}
+
 func TestSetLANSegments_InvalidSegment_DoesNotDestroyACL(t *testing.T) {
 	svc, store, poster := newLANSegmentsTestService(t) // bridge Home @ 10.10.10.0/24
 	ctx := context.Background()

@@ -214,38 +214,49 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateServerRequest
 	return nil
 }
 
-// applyNATModeRaw применяет режим NAT к интерфейсу по RCI (без storage-записи).
-// Переиспользуется restore (Task 4).
-func (s *Service) applyNATModeRaw(ctx context.Context, ifaceName, mode string) error {
+// applyNATModeRaw applies a NAT mode via RCI (no storage write). Returns the
+// WAN interface a static-NAT rule was created on (empty for full/none) so the
+// caller can persist it for deterministic teardown. prevWAN — previously
+// persisted static WAN to remove in full/none (empty → live default-WAN
+// detect); ignored in internet-only, which always re-queries the live WAN.
+// Reused by restore.
+func (s *Service) applyNATModeRaw(ctx context.Context, ifaceName, mode, prevWAN string) (string, error) {
 	switch mode {
 	case "full":
 		if err := s.rciSetNAT(ctx, ifaceName, true); err != nil {
-			return fmt.Errorf("set NAT: %w", err)
+			return "", fmt.Errorf("set NAT: %w", err)
 		}
-		s.removeStaticNAT(ctx, ifaceName)
+		s.removeStaticNAT(ctx, ifaceName, prevWAN)
+		return "", nil
 	case "internet-only":
 		if s.queries == nil || s.queries.Routes == nil {
-			return fmt.Errorf("internet-only требует Routes-провайдер")
+			return "", fmt.Errorf("internet-only требует Routes-провайдер")
 		}
 		wan, err := s.queries.Routes.GetDefaultGatewayInterface(ctx)
 		if err != nil {
-			return fmt.Errorf("internet-only требует WAN (нет дефолт-маршрута): %w", err)
+			return "", fmt.Errorf("internet-only требует WAN (нет дефолт-маршрута): %w", err)
+		}
+		// Static NAT ПЕРВЫМ: обычный NAT держится включённым до подтверждения
+		// static, поэтому сбой static никогда не оставляет iface вовсе без NAT.
+		if err := s.rciSetStaticNAT(ctx, ifaceName, wan, true); err != nil {
+			return "", fmt.Errorf("set static NAT: %w", err)
 		}
 		if err := s.rciSetNAT(ctx, ifaceName, false); err != nil {
-			return fmt.Errorf("disable NAT: %w", err)
+			if rbErr := s.rciSetStaticNAT(ctx, ifaceName, wan, false); rbErr != nil { // откат только что добавленного static
+				s.log.Warn("internet-only rollback: remove static NAT failed", "error", rbErr, "interface", ifaceName)
+			}
+			return "", fmt.Errorf("disable NAT: %w", err)
 		}
-		if err := s.rciSetStaticNAT(ctx, ifaceName, wan, true); err != nil {
-			return fmt.Errorf("set static NAT: %w", err)
-		}
+		return wan, nil
 	case "none":
 		if err := s.rciSetNAT(ctx, ifaceName, false); err != nil {
-			return fmt.Errorf("disable NAT: %w", err)
+			return "", fmt.Errorf("disable NAT: %w", err)
 		}
-		s.removeStaticNAT(ctx, ifaceName)
+		s.removeStaticNAT(ctx, ifaceName, prevWAN)
+		return "", nil
 	default:
-		return fmt.Errorf("неизвестный NAT-режим: %q", mode)
+		return "", fmt.Errorf("неизвестный NAT-режим: %q", mode)
 	}
-	return nil
 }
 
 // SetNATMode sets the NAT mode (full/internet-only/none) on the managed server.
@@ -254,12 +265,14 @@ func (s *Service) SetNATMode(ctx context.Context, id, mode string) error {
 	if !ok {
 		return fmt.Errorf("managed server not found: %s", id)
 	}
-	if err := s.applyNATModeRaw(ctx, server.InterfaceName, mode); err != nil {
+	wan, err := s.applyNATModeRaw(ctx, server.InterfaceName, mode, server.NATStaticWAN)
+	if err != nil {
 		return err
 	}
 	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
 		sv.NATMode = mode
 		sv.NATEnabled = mode == "full"
+		sv.NATStaticWAN = wan
 		return nil
 	}); err != nil {
 		return fmt.Errorf("save to storage: %w", err)
@@ -268,15 +281,20 @@ func (s *Service) SetNATMode(ctx context.Context, id, mode string) error {
 	return nil
 }
 
-// removeStaticNAT снимает ip static для интерфейса. WAN re-detect'ится
-// (to-interface=имя стабильно при redial). Best-effort + nil-guard Routes.
-func (s *Service) removeStaticNAT(ctx context.Context, ifaceName string) {
-	if s.queries == nil || s.queries.Routes == nil {
-		return
-	}
-	wan, err := s.queries.Routes.GetDefaultGatewayInterface(ctx)
-	if err != nil || wan == "" {
-		return
+// removeStaticNAT снимает ip static для интерфейса. Использует storedWAN
+// (созданный при включении internet-only); если пуст — fallback на текущий
+// дефолт-WAN (back-compat для серверов без сохранённого WAN). Best-effort.
+func (s *Service) removeStaticNAT(ctx context.Context, ifaceName, storedWAN string) {
+	wan := storedWAN
+	if wan == "" {
+		if s.queries == nil || s.queries.Routes == nil {
+			return
+		}
+		var err error
+		wan, err = s.queries.Routes.GetDefaultGatewayInterface(ctx)
+		if err != nil || wan == "" {
+			return
+		}
 	}
 	if err := s.rciSetStaticNAT(ctx, ifaceName, wan, false); err != nil {
 		s.log.Warn("remove static NAT failed", "error", err, "interface", ifaceName)
@@ -360,7 +378,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		}
 	}
 	if server.NATMode == "internet-only" {
-		s.removeStaticNAT(ctx, server.InterfaceName)
+		s.removeStaticNAT(ctx, server.InterfaceName, server.NATStaticWAN)
 	}
 	if len(server.LANSegments) > 0 {
 		acl := "AWGM_" + server.InterfaceName

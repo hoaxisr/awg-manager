@@ -360,11 +360,13 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 			mode = "none"
 		}
 	}
-	sv.NATMode = mode              // персист (saved := sv ниже; иначе на диске natMode="" при NATEnabled=true)
+	sv.NATMode = mode // персист (saved := sv ниже)
 	sv.NATEnabled = mode == "full"
-	if err := s.applyNATModeRaw(ctx, target, mode); err != nil {
+	wan, err := s.applyNATModeRaw(ctx, target, mode, sv.NATStaticWAN)
+	if err != nil {
 		return true, fmt.Errorf("set NAT mode: %w", err)
 	}
+	sv.NATStaticWAN = wan
 	if err := s.applyLANSegmentsRaw(ctx, target, sv.Address, sv.Mask, sv.LANSegments); err != nil {
 		return true, fmt.Errorf("set LAN segments: %w", err)
 	}
