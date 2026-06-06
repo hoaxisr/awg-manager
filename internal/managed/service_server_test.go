@@ -205,18 +205,26 @@ type recordingPoster struct {
 	posts  []map[string]interface{}
 	err    error
 	onPost func(map[string]interface{})
+	failOn func(map[string]interface{}) error // per-command инъекция ошибки
 }
 
 func (p *recordingPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
 	p.mu.Lock()
+	var injected error
 	if m, ok := payload.(map[string]interface{}); ok {
-		p.posts = append(p.posts, m)
+		p.posts = append(p.posts, m) // запись ДО проверки failOn: тест видит, что было попытано
 		if p.onPost != nil {
 			p.onPost(m)
+		}
+		if p.failOn != nil {
+			injected = p.failOn(m)
 		}
 	}
 	err := p.err
 	p.mu.Unlock()
+	if injected != nil {
+		return nil, injected
+	}
 	if err != nil {
 		return nil, err
 	}
