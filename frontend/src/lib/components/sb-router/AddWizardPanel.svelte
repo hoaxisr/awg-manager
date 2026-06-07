@@ -36,6 +36,8 @@
   import { pluralize, RULE_WORDS, SERVICE_WORDS, SET_WORDS } from '$lib/utils/pluralize';
 
   const outbounds = singboxRouterStore.outbounds;
+  const options = singboxRouterStore.options;
+  const optionsReady = singboxRouterStore.optionsReady;
   const presets = singboxRouterStore.presets;
   const ruleSets = singboxRouterStore.ruleSets;
 
@@ -56,7 +58,7 @@
   }
 
   const tunnelOutbounds = $derived(
-    $outbounds.filter((o) => o.type !== 'direct'),
+    $options.filter((g) => g.group !== 'Специальные').flatMap((g) => g.items),
   );
   const directTag = $derived(
     $outbounds.find((o) => o.type === 'direct')?.tag ?? 'direct',
@@ -220,19 +222,18 @@
       {#if $wizardOutboundCategory === 'tunnel'}
         <div class="tunnel-row">
           <div class="tunnel-cap">Выбрать туннель</div>
-          {#if tunnelOutbounds.length === 0}
-            <div class="empty-tunnels">Нет туннелей в outbounds.</div>
-          {:else}
+          {#if tunnelOutbounds.length > 0}
             <div class="tunnel-chips">
-              {#each tunnelOutbounds as ob (ob.tag)}
-                {@const selected = $wizardTunnelTag === ob.tag}
-                <button type="button" class="t-chip" class:selected onclick={() => setTunnelTag(ob.tag)}>
+              {#each tunnelOutbounds as ob (ob.value)}
+                {@const selected = $wizardTunnelTag === ob.value}
+                <button type="button" class="t-chip" class:selected onclick={() => setTunnelTag(ob.value)}>
                   <Zap size={12} />
-                  <span class="tag">{ob.tag}</span>
-                  <span class="ttype">· {ob.type}</span>
+                  <span class="tag">{ob.label}</span>
                 </button>
               {/each}
             </div>
+          {:else if $optionsReady}
+            <div class="empty-tunnels">Нет доступных туннелей.</div>
           {/if}
         </div>
       {/if}
@@ -394,10 +395,6 @@
     font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 500;
-  }
-  .t-chip .ttype {
-    font-size: 11px;
-    color: var(--text-muted);
   }
   .empty-tunnels {
     font-size: 12px;
