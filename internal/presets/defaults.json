@@ -30,25 +30,51 @@
     "iconSlug": "lucide-sparkles",
     "category": "ai",
     "notice": "ChatGPT, Claude, Gemini, Perplexity и другие (кроме китайских)",
+    "covers": [
+      "anthropic",
+      "copilot",
+      "gemini",
+      "grok",
+      "openai",
+      "perplexity"
+    ],
     "origin": "",
     "engines": {
       "dns": {
         "domains": [
-          "agentclientprotocol.com",
           "ai.google.dev",
+          "alkalicore-pa.clients6.google.com",
+          "antigravity-pa.googleapis.com",
+          "antigravity.googleapis.com",
+          "browser-intake-datadoghq.com",
+          "cloudaicompanion.googleapis.com",
+          "cloudcode-pa.googleapis.com",
+          "copilot-proxy.githubusercontent.com",
+          "copilot-telemetry-service.githubusercontent.com",
+          "copilot-telemetry.githubusercontent.com",
+          "copilot-workspace.githubnext.com",
+          "copilotprodattachments.blob.core.windows.net",
+          "daily-cloudcode-pa.googleapis.com",
+          "notebooklm-pa.googleapis.com",
+          "notebooklm.googleapis.com",
+          "o33249.ingest.sentry.io",
+          "openaiapi-site.azureedge.net",
+          "openaicom-api-bdcpf8c6d2e9atf6.z01.azurefd.net",
+          "openaicom.imgix.net",
+          "openaicomproductionae4b.blob.core.windows.net",
+          "production-openaicom-storage.azureedge.net",
+          "servd-anthropic-website.b-cdn.net",
+          "webchannel-alkalimakersuite-pa.clients6.google.com",
+          "agentclientprotocol.com",
           "ai.studio",
           "aicode.googleapis.com",
           "aida.googleapis.com",
           "aisandbox-pa.googleapis.com",
-          "alkalicore-pa.clients6.google.com",
-          "antigravity-pa.googleapis.com",
           "antigravity-unleash.goog",
           "antigravity.google",
-          "antigravity.googleapis.com",
           "anythingllm.com",
           "arena.ai",
           "bard.google.com",
-          "browser-intake-datadoghq.com",
           "cerebras.ai",
           "chat.com",
           "chatgpt.livekit.cloud",
@@ -61,8 +87,6 @@
           "claudeusercontent.com",
           "clawhub.ai",
           "clipdrop.co",
-          "cloudaicompanion.googleapis.com",
-          "cloudcode-pa.googleapis.com",
           "codeium.com",
           "codeiumdata.com",
           "coderabbit.ai",
@@ -72,12 +96,7 @@
           "comfy.org",
           "comfyci.org",
           "comfyregistry.org",
-          "copilot-proxy.githubusercontent.com",
-          "copilot-telemetry-service.githubusercontent.com",
-          "copilot-telemetry.githubusercontent.com",
-          "copilot-workspace.githubnext.com",
           "copilot.microsoft.com",
-          "copilotprodattachments.blob.core.windows.net",
           "coze.com",
           "crewai.com",
           "crixet.com",
@@ -85,7 +104,6 @@
           "cursor.com",
           "cursor.sh",
           "cursorapi.com",
-          "daily-cloudcode-pa.googleapis.com",
           "deepmind.com",
           "deepmind.google",
           "devin.ai",
@@ -131,19 +149,12 @@
           "minimax.io",
           "mistral.ai",
           "mozilla.ai",
-          "notebooklm-pa.googleapis.com",
           "notebooklm.google",
           "notebooklm.google.com",
-          "notebooklm.googleapis.com",
-          "o33249.ingest.sentry.io",
           "ollama.com",
           "opal.google",
           "opal.google.com",
           "openai.com.cdn.cloudflare.net",
-          "openaiapi-site.azureedge.net",
-          "openaicom-api-bdcpf8c6d2e9atf6.z01.azurefd.net",
-          "openaicom.imgix.net",
-          "openaicomproductionae4b.blob.core.windows.net",
           "openart.ai",
           "openclaw.ai",
           "openrouter.ai",
@@ -152,8 +163,6 @@
           "plannotator.ai",
           "poe.com",
           "poecdn.net",
-          "production-openaicom-storage.azureedge.net",
-          "servd-anthropic-website.b-cdn.net",
           "sora.com",
           "spicywriter.com",
           "stitch.withgoogle.com",
@@ -161,7 +170,6 @@
           "themeforest.net",
           "trae.ai",
           "turn.livekit.cloud",
-          "webchannel-alkalimakersuite-pa.clients6.google.com",
           "windsurf.build",
           "windsurf.com",
           "youmind.ai",
@@ -178,15 +186,7 @@
         ],
         "action": "tunnel"
       }
-    },
-    "covers": [
-      "anthropic",
-      "copilot",
-      "gemini",
-      "grok",
-      "openai",
-      "perplexity"
-    ]
+    }
   },
   {
     "id": "copilot",
@@ -375,8 +375,8 @@
     "id": "rkn",
     "name": "Заблокировано в РФ",
     "iconSlug": "rkn",
-    "notice": "Содержит более 90 000 доменов, заблокированных в РФ",
     "category": "block",
+    "notice": "Содержит более 90 000 доменов, заблокированных в РФ",
     "origin": "",
     "engines": {
       "singbox": {
@@ -942,6 +942,36 @@
     }
   },
   {
+    "id": "google-play",
+    "name": "Google Play",
+    "iconSlug": "googleplay",
+    "category": "cloud",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "redirector.c.play.google.com",
+          "googleplay.com",
+          "play-fe.googleapis.com",
+          "play-games.googleusercontent.com",
+          "play-lh.googleusercontent.com",
+          "play.google.com",
+          "play.googleapis.com",
+          "xn--ngstr-lra8j.com"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-google-play",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-google-play.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
     "id": "microsoft",
     "name": "Microsoft",
     "iconSlug": "microsoft",
@@ -968,6 +998,7 @@
     "engines": {
       "dns": {
         "domains": [
+          "cn.download.nvidia.com",
           "nvidia.custhelp.com",
           "nvidia.tt.omtrdc.net",
           "geforce.cn",
@@ -1408,6 +1439,7 @@
           "adobetechcommcallback.com",
           "adobetechcommdemo.com",
           "adobexdplatform.com",
+          "advertising.adobe.com",
           "assetsadobe.com",
           "authorxml.com",
           "behance.net",
@@ -1554,6 +1586,11 @@
     "iconSlug": "lucide-cpu",
     "category": "developer",
     "notice": "Включает dev-сервисы, package registries и служебные хосты. Здесь есть shared-платформы вроде jsDelivr и Statuspage",
+    "covers": [
+      "docker",
+      "github",
+      "npm"
+    ],
     "origin": "",
     "engines": {
       "dns": {
@@ -1598,12 +1635,7 @@
           "yarnpkg.com"
         ]
       }
-    },
-    "covers": [
-      "docker",
-      "github",
-      "npm"
-    ]
+    }
   },
   {
     "id": "docker",
@@ -1665,6 +1697,8 @@
     "engines": {
       "dns": {
         "domains": [
+          "copilot-telemetry-service.githubusercontent.com",
+          "copilot-telemetry.githubusercontent.com",
           "copilotprodattachments.blob.core.windows.net",
           "github-api.arkoselabs.com",
           "github-cloud.s3.amazonaws.com",
@@ -1694,6 +1728,7 @@
           "productionresultssa8.blob.core.windows.net",
           "productionresultssa9.blob.core.windows.net",
           "atom.io",
+          "collector.github.com",
           "dependabot.com",
           "gh.io",
           "ghcr.io",
@@ -1896,6 +1931,7 @@
     "engines": {
       "dns": {
         "domains": [
+          "cdn.jetbrains.com",
           "datalore.io",
           "download-cdn.jetbrains.com.cn",
           "intellij.com",
@@ -2157,18 +2193,6 @@
     "iconSlug": "lucide-gamepad-2",
     "category": "gaming",
     "notice": "Steam, Epic, PlayStation, Xbox, Nintendo, Blizzard и другие",
-    "origin": "",
-    "engines": {
-      "singbox": {
-        "ruleSets": [
-          {
-            "tag": "geosite-category-games",
-            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-games.srs"
-          }
-        ],
-        "action": "tunnel"
-      }
-    },
     "covers": [
       "blizzard",
       "ea",
@@ -2180,7 +2204,19 @@
       "steam",
       "ubisoft",
       "xbox"
-    ]
+    ],
+    "origin": "",
+    "engines": {
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-category-games",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-games.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
   },
   {
     "id": "ea",
@@ -2661,6 +2697,7 @@
       "dns": {
         "domains": [
           "a4e8s8k3.map2.ssl.hwcdn.net",
+          "alibaba.cdn.steampipe.steamcontent.com",
           "f3b7q2p3.ssl.hwcdn.net",
           "lv.queniujq.cn",
           "steambroadcast.akamaized.net",
@@ -2879,18 +2916,6 @@
     "iconSlug": "lucide-film",
     "category": "media",
     "notice": "Композитный список стриминговых сервисов",
-    "origin": "",
-    "engines": {
-      "singbox": {
-        "ruleSets": [
-          {
-            "tag": "geosite-category-media",
-            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-media.srs"
-          }
-        ],
-        "action": "tunnel"
-      }
-    },
     "covers": [
       "bbc",
       "deezer",
@@ -2904,7 +2929,19 @@
       "tidal",
       "twitch",
       "vimeo"
-    ]
+    ],
+    "origin": "",
+    "engines": {
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-category-media",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-media.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
   },
   {
     "id": "deezer",
@@ -3369,9 +3406,11 @@
     "engines": {
       "dns": {
         "domains": [
-          "spotify.com",
+          "adeventtracker.spotify.com",
+          "adstudio-assets.scdn.co",
           "audio-ak-spotify-com.akamaized.net",
           "audio4-ak-spotify-com.akamaized.net",
+          "bloodhound.spotify.com",
           "cdn-spotify-experiments.conductrics.com",
           "heads-ak-spotify-com.akamaized.net",
           "heads4-ak-spotify-com.akamaized.net",
@@ -3770,6 +3809,7 @@
           "acebooik.com",
           "acebook.com",
           "advancediddetection.com",
+          "analytics.facebook.com",
           "askfacebook.net",
           "askfacebook.org",
           "atdmt2.com",
@@ -4136,6 +4176,7 @@
           "nextstop.com",
           "online-deals.net",
           "opencreate.org",
+          "pixel.facebook.com",
           "reachtheworldonfacebook.com",
           "redkix.com",
           "rocksdb.org",
@@ -4177,6 +4218,10 @@
     "name": "Google",
     "iconSlug": "google",
     "category": "social",
+    "covers": [
+      "google-play",
+      "youtube"
+    ],
     "origin": "",
     "engines": {
       "singbox": {
@@ -4184,39 +4229,6 @@
           {
             "tag": "geosite-google",
             "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-google.srs"
-          }
-        ],
-        "action": "tunnel"
-      }
-    },
-    "covers": [
-      "google-play",
-      "youtube"
-    ]
-  },
-  {
-    "id": "google-play",
-    "name": "Google Play",
-    "iconSlug": "googleplay",
-    "category": "cloud",
-    "origin": "",
-    "engines": {
-      "dns": {
-        "domains": [
-          "googleplay.com",
-          "play-fe.googleapis.com",
-          "play-games.googleusercontent.com",
-          "play-lh.googleusercontent.com",
-          "play.google.com",
-          "play.googleapis.com",
-          "xn--ngstr-lra8j.com"
-        ]
-      },
-      "singbox": {
-        "ruleSets": [
-          {
-            "tag": "geosite-google-play",
-            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-google-play.srs"
           }
         ],
         "action": "tunnel"
@@ -4278,6 +4290,12 @@
     "iconSlug": "meta",
     "category": "social",
     "notice": "Facebook, Instagram, Threads, WhatsApp — sing-box: geosite-meta.",
+    "covers": [
+      "facebook",
+      "instagram",
+      "threads",
+      "whatsapp"
+    ],
     "origin": "",
     "engines": {
       "singbox": {
@@ -4289,13 +4307,7 @@
         ],
         "action": "tunnel"
       }
-    },
-    "covers": [
-      "facebook",
-      "instagram",
-      "threads",
-      "whatsapp"
-    ]
+    }
   },
   {
     "id": "patreon",
