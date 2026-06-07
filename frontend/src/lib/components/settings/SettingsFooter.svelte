@@ -32,6 +32,8 @@
 		'@d****8@y***u', '@PolarPriest', '@augin', '@me***-***r@y***u', '@Byrnane',
 		'@a******r@g*******m', '@k*******7@g*******m', '@Лохматая Чупакабра', '@Proxy', '@DELETED',
 		'@2*****6@g*******m', '@S A', '@Ig**M**v***v', '@A Tu', '@metalnalks',
+		'@LazIv', '@AverTV', '@xxxaaach', '@defylives', '@AndreyPristup',
+		'@Lethal F',
 	];
 
 	let open = $state(false);
@@ -92,7 +94,7 @@
 		<div class="card credits-card">
 			<div class="credits-content">
 				{#each credits as nick}
-					<span class="credits-nick" class:gold={nick === '@amatol'} class:bronze={nick === '@tiffolk'}>{nick}</span>
+					<span class="credits-nick" class:gold={nick === '@amatol'} class:bronze={nick === '@tiffolk' || nick === '@defylives'}>{nick}</span>
 				{/each}
 			</div>
 		</div>
