@@ -7,7 +7,7 @@ export interface BrandIcon {
 	viewBox?: string;
 	pathFill?: string;
 	innerScale?: number;
-	fillRule?: 'evenodd' | 'nonzero';
+	fillRule?: "evenodd" | "nonzero";
 }
 
 export const brandIcons: Record<string, BrandIcon> = {
