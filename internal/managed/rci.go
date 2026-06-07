@@ -318,21 +318,22 @@ func (s *Service) rciClearASCParams(ctx context.Context, ifaceName string) error
 }
 
 // rciSetHotspotPolicy applies an ip hotspot policy to the interface.
-// policy is "permit", "deny", or an IP Policy profile name. For "none"
-// use rciClearHotspotPolicy.
+// policy is an IP Policy profile name. For "none" use
+// rciClearHotspotPolicy.
 //
-// JSON shape verified against /show/rc/ip/hotspot on a live router:
+// Write form verified on a live router. NB: the /show/rc/ip/hotspot read
+// form is an array keyed by "access"; the write command is a single
+// object keyed by "policy" (router replies "policy ... applied to
+// interface ..."):
 //
-//	"policy": [{"interface":"Bridge0","access":"permit"}, ...]
-//
-// access carries the literal value, including a profile name when the
-// chosen policy is a named IP Policy profile.
+//	{"ip":{"hotspot":{"policy":{"interface":"Wireguard0","policy":"Policy0"}}}}
 func (s *Service) rciSetHotspotPolicy(ctx context.Context, ifaceName, policy string) error {
 	return s.rciPost(ctx, map[string]interface{}{
 		"ip": map[string]interface{}{
 			"hotspot": map[string]interface{}{
-				"policy": []map[string]interface{}{
-					{"interface": ifaceName, "access": policy},
+				"policy": map[string]interface{}{
+					"interface": ifaceName,
+					"policy":    policy,
 				},
 			},
 		},
@@ -341,12 +342,18 @@ func (s *Service) rciSetHotspotPolicy(ctx context.Context, ifaceName, policy str
 
 // rciClearHotspotPolicy removes the ip hotspot policy from the interface
 // (default-permit). Mirrors `no policy <iface>` in (config-hotspot) mode.
+//
+// Write form verified on a live router (router replies "interface ...
+// policy cleared."):
+//
+//	{"ip":{"hotspot":{"policy":{"interface":"Wireguard0","no":true}}}}
 func (s *Service) rciClearHotspotPolicy(ctx context.Context, ifaceName string) error {
 	return s.rciPost(ctx, map[string]interface{}{
 		"ip": map[string]interface{}{
 			"hotspot": map[string]interface{}{
-				"policy": []map[string]interface{}{
-					{"no": true, "interface": ifaceName},
+				"policy": map[string]interface{}{
+					"interface": ifaceName,
+					"no":        true,
 				},
 			},
 		},

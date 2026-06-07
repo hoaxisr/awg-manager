@@ -88,7 +88,7 @@ func TestSetPolicy_RejectsEmpty(t *testing.T) {
 
 func TestSetPolicy_RejectsMissingServer(t *testing.T) {
 	svc, _, _ := newTestService(t, nil, nil, `{}`)
-	if err := svc.SetPolicy(context.Background(), "Wireguard0", "permit"); err == nil {
+	if err := svc.SetPolicy(context.Background(), "Wireguard0", "Policy0"); err == nil {
 		t.Fatal("expected error when no managed server exists")
 	}
 }
@@ -100,30 +100,17 @@ func TestSetPolicy_RejectsUnknownPolicy(t *testing.T) {
 	}
 }
 
-func TestSetPolicy_AcceptsLiterals(t *testing.T) {
-	for _, lit := range []string{"permit", "deny", "none"} {
-		t.Run(lit, func(t *testing.T) {
-			svc, poster, store := newTestService(t, &storage.ManagedServer{InterfaceName: "Wireguard0", Policy: "none"}, nil, `{}`)
-			if lit == "none" {
-				if err := svc.SetPolicy(context.Background(), "Wireguard0", lit); err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-				if len(poster.posts) != 0 {
-					t.Fatalf("expected 0 RCI calls for no-op, got %d", len(poster.posts))
-				}
-				return
-			}
-			if err := svc.SetPolicy(context.Background(), "Wireguard0", lit); err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if len(poster.posts) != 1 {
-				t.Fatalf("expected 1 RCI call, got %d", len(poster.posts))
-			}
-			persisted, ok := store.GetManagedServerByID("Wireguard0")
-			if !ok || persisted.Policy != lit {
-				t.Fatalf("policy not persisted: got %+v", persisted)
-			}
-		})
+func TestSetPolicy_NoneClearsExisting(t *testing.T) {
+	svc, poster, store := newTestService(t, &storage.ManagedServer{InterfaceName: "Wireguard0", Policy: "Policy0"}, nil, `{"Policy0":{"description":"NL"}}`)
+	if err := svc.SetPolicy(context.Background(), "Wireguard0", "none"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(poster.posts) != 1 {
+		t.Fatalf("expected 1 RCI clear call, got %d", len(poster.posts))
+	}
+	persisted, ok := store.GetManagedServerByID("Wireguard0")
+	if !ok || persisted.Policy != "none" {
+		t.Fatalf("policy not persisted: got %+v", persisted)
 	}
 }
 
@@ -142,8 +129,8 @@ func TestSetPolicy_AcceptsKnownProfile(t *testing.T) {
 }
 
 func TestSetPolicy_NoopWhenSame(t *testing.T) {
-	svc, poster, _ := newTestService(t, &storage.ManagedServer{InterfaceName: "Wireguard0", Policy: "permit"}, nil, `{}`)
-	if err := svc.SetPolicy(context.Background(), "Wireguard0", "permit"); err != nil {
+	svc, poster, _ := newTestService(t, &storage.ManagedServer{InterfaceName: "Wireguard0", Policy: "Policy0"}, nil, `{}`)
+	if err := svc.SetPolicy(context.Background(), "Wireguard0", "Policy0"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(poster.posts) != 0 {

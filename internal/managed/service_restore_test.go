@@ -574,14 +574,12 @@ func TestRestore_PolicyNoneDoesNotEmitClearOnCreate(t *testing.T) {
 		if !ok {
 			continue
 		}
-		pol, ok := hotspot["policy"].([]map[string]interface{})
+		pol, ok := hotspot["policy"].(map[string]interface{})
 		if !ok {
 			continue
 		}
-		for _, p := range pol {
-			if no, ok := p["no"].(bool); ok && no {
-				t.Fatalf("unexpected clear policy payload on create: %+v", post)
-			}
+		if no, ok := pol["no"].(bool); ok && no {
+			t.Fatalf("unexpected clear policy payload on create: %+v", post)
 		}
 	}
 }
@@ -604,7 +602,7 @@ func TestRestore_PolicyProfileEmitsSetOnCreate(t *testing.T) {
 		Mask:          "255.255.255.0",
 		ListenPort:    51871,
 		PrivateKey:    validPrivateKey(7),
-		Policy:        "deny",
+		Policy:        "Policy0",
 	}}, RestoreOptions{})
 	if len(out) != 1 || out[0].Action != "created" {
 		t.Fatalf("outcomes: %+v", out)
@@ -619,11 +617,11 @@ func TestRestore_PolicyProfileEmitsSetOnCreate(t *testing.T) {
 		if !ok {
 			continue
 		}
-		pol, ok := hotspot["policy"].([]map[string]interface{})
-		if !ok || len(pol) == 0 {
+		pol, ok := hotspot["policy"].(map[string]interface{})
+		if !ok {
 			continue
 		}
-		if access, ok := pol[0]["access"].(string); ok && access == "deny" {
+		if access, ok := pol["policy"].(string); ok && access == "Policy0" {
 			foundSetPolicy = true
 			break
 		}
