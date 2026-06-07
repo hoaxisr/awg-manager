@@ -1587,8 +1587,9 @@ export interface AWGTagInfo {
 export interface TunnelReferencedError {
 	tunnelId: string;
 	deviceProxy: boolean;
-	routerRules: number[];
-	routerOther: string[];
+	// Go marshals empty (nil) slices as null, so these arrive null when empty.
+	routerRules: number[] | null;
+	routerOther: string[] | null;
 }
 
 // #endregion

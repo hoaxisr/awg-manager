@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Modal, Button } from '$lib/components/ui';
 	import type { TunnelReferencedError } from '$lib/types';
+	import { describeRouterReference } from '$lib/utils/tunnelRefs';
 
 	interface Props {
 		open: boolean;
@@ -21,7 +22,7 @@
 			{#if details.deviceProxy}
 				<li>Активен в селекторе device-proxy (выбран как маршрут по умолчанию)</li>
 			{/if}
-			{#if details.routerRules.length > 0}
+			{#if details.routerRules && details.routerRules.length > 0}
 				<li>
 					Используется в правилах sing-box router:
 					<span class="rule-indices">
@@ -29,15 +30,11 @@
 					</span>
 				</li>
 			{/if}
-			{#if details.routerOther && details.routerOther.length > 0}
-				<li>
-					Используется в конфигурации sing-box router:
-					<ul class="ref-locations">
-						{#each details.routerOther as loc}
-							<li><code>{loc}</code></li>
-						{/each}
-					</ul>
-				</li>
+			{#if details.routerOther}
+				{#each details.routerOther as loc}
+					{@const ref = describeRouterReference(loc)}
+					<li>{#if ref.known}{ref.text}{:else}<code>{ref.text}</code>{/if}</li>
+				{/each}
 			{/if}
 		</ul>
 		<p class="hint">Удалите ссылки и попробуйте снова.</p>
@@ -54,6 +51,7 @@
 	.ref-list {
 		margin: 0.5rem 0 0.75rem;
 		padding-left: 1.25rem;
+		list-style: disc;
 	}
 	.ref-list li {
 		margin: 0.25rem 0;
@@ -62,18 +60,14 @@
 		font-family: var(--font-mono);
 		color: var(--color-text-muted);
 	}
+	.ref-list code {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		color: var(--color-text-muted);
+	}
 	.hint {
 		color: var(--color-text-muted);
 		font-size: 0.875rem;
 		margin: 0;
-	}
-	.ref-locations {
-		margin: 0.25rem 0 0;
-		padding-left: 1rem;
-	}
-	.ref-locations code {
-		font-family: var(--font-mono);
-		font-size: 0.8125rem;
-		color: var(--color-text-muted);
 	}
 </style>
