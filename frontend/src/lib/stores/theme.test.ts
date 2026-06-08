@@ -201,15 +201,15 @@ describe('theme store system mode', () => {
 		const themeMeta = document.querySelector('meta[name="theme-color"]');
 		const appleMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
 
-		expect(themeMeta?.getAttribute('content')).toBe('#1a1b26');
+		expect(themeMeta?.getAttribute('content')).toBe('#16161e');
 		expect(appleMeta?.getAttribute('content')).toBe('black');
 
 		theme.setPreset('mint');
-		expect(themeMeta?.getAttribute('content')).toBe('#2e3440');
+		expect(themeMeta?.getAttribute('content')).toBe('#3b4252');
 		expect(appleMeta?.getAttribute('content')).toBe('black');
 
 		theme.setMode('light');
-		expect(themeMeta?.getAttribute('content')).toBe('#e9e9ed');
+		expect(themeMeta?.getAttribute('content')).toBe('#f0f0f3');
 		expect(appleMeta?.getAttribute('content')).toBe('default');
 
 		unsub();
