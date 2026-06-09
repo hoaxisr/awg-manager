@@ -4,7 +4,7 @@ package installer
 const RequiredVersion = "1.14.0-alpha.29"
 
 var EmbeddedBinaries = map[string]BinarySpec{
-	"mipsel-3.4":   {Version: RequiredVersion, URL: "http://repo.hoaxisr.ru/develop/singbox/1.14.0-alpha.28/sing-box-1.14.0-alpha.28-mipsel-3.4", SHA256: "d8e17de06a63d69beb86094de7bf508f7a870235e46446bfb31cacd6e5b16c86", Size: 86331248},
-	"mips-3.4":     {Version: RequiredVersion, URL: "http://repo.hoaxisr.ru/develop/singbox/1.14.0-alpha.28/sing-box-1.14.0-alpha.28-mips-3.4", SHA256: "35cfd24ec86668e123f0d3a1d81076ba28936b9c6ac98c1dd9296a862c7280dd", Size: 69075123},
-	"aarch64-3.10": {Version: RequiredVersion, URL: "http://repo.hoaxisr.ru/develop/singbox/1.14.0-alpha.28/sing-box-1.14.0-alpha.28-aarch64-3.10", SHA256: "5d0693c15909ca6ebddcd492bcb306a7a15ad6da0cc685028012d83bf513e152", Size: 72318552},
+	"mipsel-3.4":   {Version: RequiredVersion, URL: "http://repo.hoaxisr.ru/develop/singbox/1.14.0-alpha.29/sing-box-1.14.0-alpha.29-mipsel-3.4", SHA256: "195b2a80c0418f2049e7cc6d0ea8c1499a62efbe2b5bbb93b5b2161071a1c25d", Size: 86342340},
+	"mips-3.4":     {Version: RequiredVersion, URL: "http://repo.hoaxisr.ru/develop/singbox/1.14.0-alpha.29/sing-box-1.14.0-alpha.29-mips-3.4", SHA256: "11f6ab56801f8cf83fc322811ef66e81b73dbdd42d75651558c8be699d3a5b53", Size: 69075123},
+	"aarch64-3.10": {Version: RequiredVersion, URL: "http://repo.hoaxisr.ru/develop/singbox/1.14.0-alpha.29/sing-box-1.14.0-alpha.29-aarch64-3.10", SHA256: "355078fcfac94b7e03b5cb72649b4f5ba006256c873d114e6a9806d54751aa20", Size: 72329176},
 }
