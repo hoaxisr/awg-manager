@@ -40,6 +40,7 @@ function createSection<T>(url: string, resourceKey: ResourceKey): PollingStore<T
 		{
 			staleTime: 30_000,
 			pollInterval: 30_000,
+			persistKey: `awgm:${resourceKey}`,
 		}
 	);
 	registerStore(resourceKey, store);
@@ -77,9 +78,9 @@ export const routingTunnelsStore = createSection<RoutingTunnel[]>(
 
 export { hydrarouteStatusStore };
 
-/** First successful fetch or terminal error — section can render cached/empty body. */
+/** Hydrated cache, first successful fetch, or terminal error — section can render cached/empty body. */
 function sectionFetched(s: PollingState<unknown>): boolean {
-	return s.lastFetchedAt > 0 || s.status === 'error';
+	return s.data !== null || s.lastFetchedAt > 0 || s.status === 'error';
 }
 
 /** NDMS DNS tab: dns lists + tunnels + HR install flag (for hasDnsEngine on OS4). */
@@ -141,7 +142,7 @@ export const routing: Readable<RoutingComposite> = derived(
 			tunnels: rt.data ?? [],
 			hydrarouteStatus: hr.data ?? null,
 			loaded: [d, s, a, pd, pi, cr, rt, hr].every(
-				(x) => x.lastFetchedAt > 0 || x.status === 'error'
+				(x) => x.data !== null || x.lastFetchedAt > 0 || x.status === 'error'
 			),
 			missing,
 		};

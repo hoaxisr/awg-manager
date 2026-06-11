@@ -16,8 +16,10 @@ async function fetchServers(): Promise<ServersSnapshot> {
 }
 
 export const servers = createPollingStore<ServersSnapshot>(fetchServers, {
-	staleTime: 5_000,
+	staleTime: 30_000,
 	pollInterval: 5_000,
+	persistKey: 'awgm:servers',
+	phaseMs: 3_400,
 });
 
 registerStore('servers', servers);

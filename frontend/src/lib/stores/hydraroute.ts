@@ -9,7 +9,7 @@ async function fetchStatus(): Promise<HydraRouteStatus> {
 
 export const hydrarouteStatus: PollingStore<HydraRouteStatus> = createPollingStore<HydraRouteStatus>(
 	fetchStatus,
-	{ staleTime: 30_000, pollInterval: 30_000 },
+	{ staleTime: 30_000, pollInterval: 30_000, persistKey: 'awgm:routing.hydrarouteStatus' },
 );
 
 registerStore('routing.hydrarouteStatus', hydrarouteStatus);

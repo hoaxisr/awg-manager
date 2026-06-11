@@ -4,5 +4,5 @@ import type { Subscription } from '$lib/types';
 
 export const subscriptionsStore = createPollingStore<Subscription[]>(
 	() => api.listSubscriptions(),
-	{ staleTime: 5_000, pollInterval: 30_000 },
+	{ staleTime: 30_000, pollInterval: 30_000, persistKey: 'awgm:subscriptions' },
 );

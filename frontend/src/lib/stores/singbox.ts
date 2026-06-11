@@ -28,7 +28,7 @@ async function fetchStatus(): Promise<SingboxStatus> {
 
 export const singboxStatus: PollingStore<SingboxStatus> = createPollingStore<SingboxStatus>(
 	fetchStatus,
-	{ staleTime: 30_000, pollInterval: 30_000 }
+	{ staleTime: 30_000, pollInterval: 30_000, persistKey: 'awgm:singbox.status' }
 );
 
 registerStore('singbox.status', singboxStatus);
@@ -42,7 +42,7 @@ async function fetchTunnels(): Promise<SingboxTunnel[]> {
 
 export const singboxTunnels: PollingStore<SingboxTunnel[]> = createPollingStore<SingboxTunnel[]>(
 	fetchTunnels,
-	{ staleTime: 5_000, pollInterval: 5_000 }
+	{ staleTime: 30_000, pollInterval: 5_000, persistKey: 'awgm:singbox.tunnels', phaseMs: 1_700 }
 );
 
 registerStore('singbox.tunnels', singboxTunnels);

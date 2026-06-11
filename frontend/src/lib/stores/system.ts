@@ -22,6 +22,7 @@ async function fetchSysInfo(): Promise<SystemInfo> {
 export const systemInfo: PollingStore<SystemInfo> = createPollingStore<SystemInfo>(fetchSysInfo, {
 	staleTime: 30_000,
 	pollInterval: 30_000,
+	persistKey: 'awgm:sysInfo',
 });
 
 registerStore('sysInfo', systemInfo);
