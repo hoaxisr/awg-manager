@@ -27,6 +27,8 @@
     onSaved,
   }: Props = $props();
 
+  // Снапшот при открытии — обновления стора не должны затирать правки.
+  // svelte-ignore state_referenced_locally
   const initialRulesList = ruleSet.type === 'inline'
     ? stringifyInlineRuleListForWizard(ruleSet.rules)
     : '';

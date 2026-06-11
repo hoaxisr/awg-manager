@@ -34,8 +34,6 @@ export function toneForKind(kind: OutboundKind): OutboundTileTone {
 			return 'direct';
 		case 'via-route':
 			return 'via-route';
-		case 'invalid':
-			return 'invalid';
 		case 'sniff':
 		case 'hijack-dns':
 			return 'system';

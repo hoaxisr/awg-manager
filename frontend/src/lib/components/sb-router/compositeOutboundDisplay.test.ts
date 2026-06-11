@@ -21,7 +21,13 @@ const demoSub: Subscription = {
 	],
 	activeMember: 'sub-demo0001-a',
 	url: '',
-	updatedAt: '',
+	isInline: false,
+	headers: [],
+	refreshHours: 0,
+	lastFetched: '',
+	listenPort: 0,
+	proxyIndex: 0,
+	orphanTags: [],
 };
 
 describe('resolveCompositeActiveMemberTag', () => {

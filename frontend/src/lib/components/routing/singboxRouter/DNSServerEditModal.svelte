@@ -55,8 +55,6 @@
 		{ value: '', label: 'Напрямую' },
 	]);
 
-	const isManagedDnsDirect = $derived(tag.trim() === DNS_DIRECT_SERVER_TAG);
-
 	const legacyDnsDirectDetour = $derived(server ? getDnsDirectLegacyDetour(server) : null);
 
 	const legacyDnsDirectDisplay = $derived.by(() => {
@@ -72,6 +70,7 @@
 
 	// svelte-ignore state_referenced_locally
 	let tag = $state(server?.tag ?? '');
+	const isManagedDnsDirect = $derived(tag.trim() === DNS_DIRECT_SERVER_TAG);
 	// svelte-ignore state_referenced_locally
 	let type = $state<SingboxRouterDNSType>(server?.type ?? 'udp');
 	// svelte-ignore state_referenced_locally
