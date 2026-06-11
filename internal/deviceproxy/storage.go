@@ -141,9 +141,15 @@ func (s *Store) load() {
 		return
 	}
 
-	var snap Snapshot
-	if err := json.Unmarshal(raw, &snap); err == nil && len(snap.Instances) > 0 {
-		s.snapshot = snap
+	// Новый формат распознаётся по наличию ключа "instances" (указатель),
+	// а не по len>0: файл с пустым списком — результат удаления всех
+	// инстансов, а не legacy-конфиг, иначе load() воскрешал бы удалённый
+	// default из нулевого Config.
+	var snap struct {
+		Instances *[]Instance `json:"instances"`
+	}
+	if err := json.Unmarshal(raw, &snap); err == nil && snap.Instances != nil {
+		s.snapshot = Snapshot{Instances: *snap.Instances}
 		return
 	}
 

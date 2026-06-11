@@ -52,3 +52,18 @@ func TestStore_DeleteInstance_RemovesDefault(t *testing.T) {
 		t.Fatalf("expected empty snapshot after deleting default, got %#v", snap.Instances)
 	}
 }
+
+func TestStore_DeleteInstance_SurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deviceproxy.json")
+
+	s1 := NewStore(path)
+	if err := s1.DeleteInstance("default"); err != nil {
+		t.Fatalf("delete default: %v", err)
+	}
+
+	s2 := NewStore(path)
+	snap := s2.Snapshot()
+	if len(snap.Instances) != 0 {
+		t.Fatalf("deleted default resurrected after reload: %#v", snap.Instances)
+	}
+}
