@@ -3,6 +3,7 @@
 	import { Modal, Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
+	import { isValidEndpointHost } from '$lib/utils/endpoint';
 	import { servers } from '$lib/stores/servers';
 
 	interface Props {
@@ -64,17 +65,9 @@
 		return String(bits);
 	}
 
-	function isValidEndpoint(val: string): boolean {
-		if (!val) return true; // empty = use WAN IP
-		// IP address
-		if (/^(\d{1,3}\.){3}\d{1,3}$/.test(val)) return true;
-		// Domain name
-		if (/^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/.test(val)) return true;
-		return false;
-	}
 
 	async function handleSave() {
-		if (!isValidEndpoint(endpoint)) {
+		if (!isValidEndpointHost(endpoint)) {
 			notifications.error('Endpoint должен быть IP-адресом или доменным именем');
 			return;
 		}

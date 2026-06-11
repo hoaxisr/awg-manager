@@ -1,6 +1,6 @@
 import type { SingboxRouterPreset, SingboxRouterRule, SingboxRouterRuleSet } from '$lib/types';
 
-function isSystemRule(rule: SingboxRouterRule): boolean {
+export function isSystemRule(rule: SingboxRouterRule): boolean {
   if (rule.action === 'sniff' || rule.action === 'hijack-dns') return true;
   if (rule.ip_is_private && rule.outbound === 'direct') return true;
   return false;

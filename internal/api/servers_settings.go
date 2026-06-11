@@ -29,6 +29,16 @@ func isValidServerEndpointHost(val string) bool {
 	return serverEndpointHostPattern.MatchString(val)
 }
 
+// formatWireguardEndpointHost brackets IPv6 literals so the host:port line
+// in generated client configs stays parseable (isValidServerEndpointHost
+// accepts IPv6 via net.ParseIP).
+func formatWireguardEndpointHost(host string) string {
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		return "[" + host + "]"
+	}
+	return host
+}
+
 // resolveWireguardClientEndpointHost picks the connect host for generated
 // client configs before WAN IP fallback: stored override → KeenDNS → empty.
 func resolveWireguardClientEndpointHost(storedEndpoint, keenDNSDomain string) string {

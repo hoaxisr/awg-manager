@@ -34,16 +34,13 @@ import { COMPOSITE_OUTBOUND_TYPES, resolveCompositeOutboundView } from './compos
 import {
   classifyRuleSimplicity,
   isCustomInlineRuleSetTag,
+  isSystemRule,
   type RuleSimplicity,
 } from './simpleRule';
 
 /* ─── System rule detection ─────────────────────────────────────────── */
 
-export function isSystemRule(rule: SingboxRouterRule): boolean {
-  if (rule.action === 'sniff' || rule.action === 'hijack-dns') return true;
-  if (rule.ip_is_private && rule.outbound === 'direct') return true;
-  return false;
-}
+export { isSystemRule };
 
 /** Пояснение для системных правил — тултип в простом и экспертном режиме. */
 export function systemRuleTooltip(rule: SingboxRouterRule): string | undefined {

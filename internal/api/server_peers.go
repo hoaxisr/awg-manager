@@ -446,7 +446,7 @@ func (h *ServersHandler) generateServerPeerConf(ctx context.Context, server *ndm
 	if sec.PresharedKey != "" {
 		b.WriteString(fmt.Sprintf("PresharedKey = %s\n", sec.PresharedKey))
 	}
-	b.WriteString(fmt.Sprintf("Endpoint = %s:%d\n", endpoint, server.ListenPort))
+	b.WriteString(fmt.Sprintf("Endpoint = %s:%d\n", formatWireguardEndpointHost(endpoint), server.ListenPort))
 	b.WriteString("AllowedIPs = 0.0.0.0/0, ::/0\n")
 	b.WriteString("PersistentKeepalive = 25\n")
 	return b.String(), nil

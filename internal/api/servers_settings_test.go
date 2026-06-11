@@ -39,6 +39,20 @@ func TestIsValidServerEndpointHost(t *testing.T) {
 	}
 }
 
+func TestFormatWireguardEndpointHost(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"203.0.113.42", "203.0.113.42"},
+		{"vpn.example.com", "vpn.example.com"},
+		{"2001:db8::1", "[2001:db8::1]"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := formatWireguardEndpointHost(c.in); got != c.want {
+			t.Fatalf("formatWireguardEndpointHost(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestResolveWireguardClientEndpointHost(t *testing.T) {
 	cases := []struct {
 		stored, keenDNS, want string

@@ -20,6 +20,7 @@
 		validateRuleSetTag,
 	} from '$lib/utils/singboxInlineRules';
 	import { expandGeoLinesInInput } from '$lib/utils/singboxInlineGeoExpand';
+	import { datInfo } from '$lib/utils/ruleSetType';
 	import InlineRuleListEditor from './InlineRuleListEditor.svelte';
 	import GeoTagPicker from './GeoTagPicker.svelte';
 
@@ -231,8 +232,8 @@
 	$effect(() => {
 		void formResetKey;
 
-		const datInfo = ruleSet?.type === 'remote' ? datInfoFromUrl(ruleSet.url) : null;
-		const nextType: RuleSetFormType = datInfo?.kind ?? ruleSet?.type ?? 'remote';
+		const dat = ruleSet ? datInfo(ruleSet) : null;
+		const nextType: RuleSetFormType = dat?.kind ?? ruleSet?.type ?? 'remote';
 		const nextFormat: 'binary' | 'source' = ruleSet?.format ?? 'binary';
 		const nextTag = ruleSet?.tag ?? '';
 		const nextUrl = ruleSet?.url ?? '';
@@ -265,7 +266,7 @@
 		rulesJson = nextRulesJson;
 		inlineMode = nextInlineMode;
 		rulesList = nextRulesList;
-		selectedGeoTags = datInfo?.tags ?? [];
+		selectedGeoTags = dat?.tags ?? [];
 
 		initialType = nextType;
 		initialFormat = nextFormat;
@@ -277,7 +278,7 @@
 		initialRulesJson = nextRulesJson;
 		initialInlineMode = nextInlineMode;
 		initialRulesList = nextRulesList;
-		initialSelectedGeoTags = datInfo?.tags ?? [];
+		initialSelectedGeoTags = dat?.tags ?? [];
 
 		error = '';
 		busy = false;
@@ -328,20 +329,6 @@
 
 	function savedRuleSetType(t: RuleSetFormType): SingboxRouterRuleSet['type'] {
 		return t === 'geosite' || t === 'geoip' ? 'remote' : t;
-	}
-
-	function datInfoFromUrl(rawUrl?: string): { kind: 'geosite' | 'geoip'; tags: string[] } | null {
-		if (!rawUrl) return null;
-		try {
-			const u = new URL(rawUrl);
-			if (u.pathname !== '/api/singbox/router/rulesets/dat-srs') return null;
-			const kind = u.searchParams.get('kind');
-			const tags = u.searchParams.getAll('tag').filter((t) => t.trim() !== '');
-			if ((kind !== 'geosite' && kind !== 'geoip') || tags.length === 0) return null;
-			return { kind, tags };
-		} catch {
-			return null;
-		}
 	}
 
 	async function save(): Promise<void> {

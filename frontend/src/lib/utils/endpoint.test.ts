@@ -36,4 +36,9 @@ describe('isValidEndpointHost', () => {
 		expect(isValidEndpointHost('vpn.example.com')).toBe(true);
 		expect(isValidEndpointHost('bad host')).toBe(false);
 	});
+
+	it('rejects out-of-range IPv4 octets', () => {
+		expect(isValidEndpointHost('999.999.999.999')).toBe(false);
+		expect(isValidEndpointHost('256.0.0.1')).toBe(false);
+	});
 });
