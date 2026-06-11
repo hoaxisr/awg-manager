@@ -18,6 +18,7 @@ async function fetchServers(): Promise<ServersSnapshot> {
 export const servers = createPollingStore<ServersSnapshot>(fetchServers, {
 	staleTime: 30_000,
 	pollInterval: 5_000,
+	// /servers/all отдаёт редактированные DTO (без приватных ключей) — персистить безопасно.
 	persistKey: 'awgm:servers',
 	phaseMs: 3_400,
 });

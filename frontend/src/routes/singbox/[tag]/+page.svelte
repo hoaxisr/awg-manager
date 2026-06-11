@@ -85,6 +85,13 @@
 			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
+			const status = (e as Error & { status?: number }).status;
+			if (status === 404) {
+				// Туннель удалён — кэш устарел, показываем страницу «не найден» вместо stale-формы.
+				singboxOutboundCache.delete(tag);
+				outbound = null;
+				error = error || 'Туннель не найден';
+			}
 		} finally {
 			loading = false;
 		}

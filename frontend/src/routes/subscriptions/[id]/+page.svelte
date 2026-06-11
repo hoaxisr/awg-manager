@@ -17,6 +17,7 @@
 	} from '$lib/constants/singboxLayout';
 	import { isMockDevMode } from '$lib/env';
 	import { subscriptionDetailCache } from '$lib/stores/detailCache';
+	import { subscriptionsStore } from '$lib/stores/subscriptions';
 
 	// Poll Clash for the live "now" pointer this often when on members tab in urltest
 	// mode. 5s balances responsiveness with Clash API load.
@@ -69,6 +70,8 @@
 			subscription = { ...subscription, enabled: nextEnabled };
 			mutatedDuringLoad = true;
 			subscriptionDetailCache.set(id, $state.snapshot(subscription) as Subscription);
+			// Список на главной поллится раз в 30с — подтягиваем изменение сразу.
+			subscriptionsStore.invalidate();
 		}
 	}
 
@@ -334,7 +337,10 @@
 				<SubscriptionMembersTab
 					{subscription}
 					{liveActiveMember}
-					onUpdated={loadStream}
+					onUpdated={() => {
+						loadStream();
+						subscriptionsStore.invalidate();
+					}}
 					autoDelayCheckNonce={membersAutoDelayCheckNonce}
 					layout={singboxEffectiveLayout}
 				/>
@@ -342,7 +348,10 @@
 				<div class="edit-wrapper">
 					<SubscriptionSettingsTab
 						{subscription}
-						onUpdated={loadStream}
+						onUpdated={() => {
+							loadStream();
+							subscriptionsStore.invalidate();
+						}}
 						onEnabledChanged={patchSubscriptionEnabled}
 					/>
 				</div>

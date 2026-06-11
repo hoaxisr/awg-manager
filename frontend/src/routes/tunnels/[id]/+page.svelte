@@ -136,9 +136,15 @@
 			const formTouched = renderedFromCache && isTainted();
 			if (!formTouched) populateForm();
 		} catch (e) {
+			const status = (e as Error & { status?: number }).status;
 			// Поверх кэша уже показана рабочая форма — не уводим пользователя
 			// (и его правки) со страницы из-за временной ошибки рефетча.
-			if (renderedFromCache) {
+			// Исключение — 404: туннель удалён, оставаться на странице бессмысленно.
+			if (renderedFromCache && status === 404) {
+				tunnelDetailCache.delete(tunnelId);
+				notifications.error(`Ошибка загрузки: ${(e as Error).message}`);
+				goto('/');
+			} else if (renderedFromCache) {
 				notifications.error(`Не удалось обновить данные туннеля: ${(e as Error).message}`);
 			} else {
 				notifications.error(`Ошибка загрузки: ${(e as Error).message}`);
@@ -272,6 +278,8 @@
 		try {
 			const data = await api.toggleDefaultRoute(tunnelId);
 			tunnel.defaultRoute = data.defaultRoute;
+			// $state-прокси не пишет в сырой объект из кэша — синкаем снапшотом.
+			if (tunnel) tunnelDetailCache.set(tunnelId, $state.snapshot(tunnel) as AWGTunnel);
 			// Tunnels list view shows the default-route chip — keep its
 			// polling snapshot in sync with the single-tunnel view.
 			tunnels.invalidate();
@@ -300,6 +308,8 @@
 			});
 			tunnel.ispInterface = value === 'auto' ? '' : value;
 			tunnel.ispInterfaceLabel = ispLabel;
+			// $state-прокси не пишет в сырой объект из кэша — синкаем снапшотом.
+			if (tunnel) tunnelDetailCache.set(tunnelId, $state.snapshot(tunnel) as AWGTunnel);
 			tunnels.invalidate();
 		} catch (e) {
 			notifications.error(`Ошибка: ${(e as Error).message}`);
