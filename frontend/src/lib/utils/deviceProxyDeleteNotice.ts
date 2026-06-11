@@ -3,7 +3,7 @@ import { notifications } from '$lib/stores/notifications';
 
 const DEFAULT_SUCCESS = 'Прокси удалён';
 const DEFAULT_PENDING_APPLY =
-	'Прокси удалён из конфига, но sing-box ещё не обновлён. Нажмите «Применить сейчас», когда сервис будет доступен.';
+	'Прокси удалён из конфига, но sing-box ещё не обновлён — изменение применится, когда сервис снова будет доступен.';
 
 export type DeviceProxyDeleteNoticeOptions = {
 	successMessage?: string;

@@ -215,7 +215,7 @@
           await deleteDeviceProxyInstanceWithNotice(in_.id, {
             successMessage: 'Inbound удалён',
             pendingApplyMessage:
-              'Inbound удалён из конфига, но sing-box ещё не обновлён. Нажмите «Применить сейчас», когда сервис будет доступен.',
+              'Inbound удалён из конфига, но sing-box ещё не обновлён — изменение применится, когда сервис снова будет доступен.',
           });
           dpReloadKey += 1;
           await loadActiveProxyCount();
