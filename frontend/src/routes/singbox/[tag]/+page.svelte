@@ -4,6 +4,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { singboxTunnels } from '$lib/stores/singbox';
+	import { singboxOutboundCache } from '$lib/stores/detailCache';
 	import { PageContainer } from '$lib/components/layout';
 	import { SettingsSectionLabel } from '$lib/components/settings';
 	import {
@@ -56,12 +57,27 @@
 	);
 
 	onMount(async () => {
+		const cached = singboxOutboundCache.get(tag);
+		if (cached) {
+			outbound = structuredClone(cached.outbound) as Record<string, any>;
+			protocol = outbound?.type ?? '';
+			editableTag = cached.tag;
+			initialOutboundFingerprint = outboundFingerprint(outbound);
+			loading = false;
+		}
 		try {
 			const r = await api.singboxGetTunnel(tag);
-			outbound = r.outbound as Record<string, any>;
-			protocol = outbound?.type ?? '';
-			editableTag = r.tag;
-			initialOutboundFingerprint = outboundFingerprint(outbound);
+			singboxOutboundCache.set(tag, {
+				tag: r.tag,
+				outbound: structuredClone(r.outbound) as Record<string, unknown>,
+			});
+			// Не перетираем форму, если пользователь уже начал править поверх кэша.
+			if (!hasUnsavedChanges) {
+				outbound = r.outbound as Record<string, any>;
+				protocol = outbound?.type ?? '';
+				editableTag = r.tag;
+				initialOutboundFingerprint = outboundFingerprint(outbound);
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
