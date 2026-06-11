@@ -239,7 +239,7 @@ describe('createPollingStore', () => {
 				staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
 			});
 			expect(get(s).data).toBeNull();
-			expect(get(s).status).toBe('idle');
+			expect(get(s).status).toBe('loading'); // corrupt cache skipped → cold fetch path
 		});
 	});
 });

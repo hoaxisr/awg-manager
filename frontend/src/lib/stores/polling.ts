@@ -185,16 +185,16 @@ export function createPollingStore<T>(
     return {
         subscribe(run, invalidate) {
             subCount++;
-            const unsub = state.subscribe(run, invalidate);
             if (subCount === 1) {
                 const s = get(state);
                 const age = Date.now() - s.lastFetchedAt;
                 if (s.lastFetchedAt === 0 || age > opts.staleTime) {
-                    void Promise.resolve().then(() => doFetch());
+                    void doFetch();
                 }
                 startPoll();
                 attachVisibilityHandler();
             }
+            const unsub = state.subscribe(run, invalidate);
             return () => {
                 unsub();
                 subCount--;
