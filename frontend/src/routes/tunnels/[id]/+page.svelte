@@ -180,6 +180,9 @@
 		$form.endpoint = tunnel.peer.endpoint;
 		$form.allowedIPs = tunnel.peer.allowedIPs.join(', ');
 		$form.persistentKeepalive = tunnel.peer.persistentKeepalive || 25;
+		// Программное заполнение — не «правка пользователя»: сбрасываем taint,
+		// чтобы guard в loadTunnel реагировал только на реальные правки.
+		tainted.set(undefined);
 	}
 
 	function buildUpdatePayload() {
