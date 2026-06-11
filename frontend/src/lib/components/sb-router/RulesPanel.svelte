@@ -30,6 +30,7 @@
   import { syncTunnelDnsRule } from './emptyStateActions';
   import { pluralize, RULE_WORDS } from '$lib/utils/pluralize';
   import { displayRuleSetTag } from '$lib/utils/singboxInlineRules';
+  import { findScrollContainer } from '$lib/utils/findScrollContainer';
   import type { RuleCardData } from './types';
 
   const rules = singboxRouterStore.rules;
@@ -276,21 +277,6 @@
         }
       },
     };
-  }
-
-  function findScrollContainer(start: HTMLElement | null): HTMLElement | null {
-    let el = start?.parentElement ?? null;
-    while (el) {
-      const { overflowY } = getComputedStyle(el);
-      if (
-        (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay')
-        && el.scrollHeight > el.clientHeight + 1
-      ) {
-        return el;
-      }
-      el = el.parentElement;
-    }
-    return null;
   }
 
   function canScrollWindow(): boolean {

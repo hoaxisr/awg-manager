@@ -41,6 +41,7 @@
   import { mode } from './modeStore';
   import { ensureTunnelDnsInfra, syncTunnelDnsRule } from './emptyStateActions';
   import { pluralize, RULE_WORDS, SERVICE_WORDS, SET_WORDS } from '$lib/utils/pluralize';
+  import { findScrollContainer } from '$lib/utils/findScrollContainer';
   import { previewTunnelOutboundResolution, formatWizardOutboundPreview } from './wizardCompositeOutbound';
 
   const outbounds = singboxRouterStore.outbounds;
@@ -105,21 +106,6 @@
   // визард не уничтожается, поэтому локальный value формы надо сбросить вместе со стором.
   let customResetKey = $state(0);
   let wizardEl = $state<HTMLElement | null>(null);
-
-  function findScrollContainer(start: HTMLElement | null): HTMLElement | null {
-    let el = start?.parentElement ?? null;
-    while (el) {
-      const { overflowY } = getComputedStyle(el);
-      if (
-        (overflowY === 'auto' || overflowY === 'scroll')
-        && el.scrollHeight > el.clientHeight + 1
-      ) {
-        return el;
-      }
-      el = el.parentElement;
-    }
-    return null;
-  }
 
   const STICKY_HEADER_OFFSET = 72;
 
