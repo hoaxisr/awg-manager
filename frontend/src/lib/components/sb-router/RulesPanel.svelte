@@ -197,12 +197,15 @@
 
   function requestRulesetEdit(tag: string) {
     cancelDrag();
-    const rs = $ruleSets.find((r) => r.tag === tag);
+    // Чип несёт display-тег (без -srs); если inline-база удалена, а компаньон
+    // ещё не вычищен, в $ruleSets остался только тег с суффиксом — ищем по нему.
+    const rs = $ruleSets.find((r) => r.tag === tag)
+      ?? $ruleSets.find((r) => !!r.tag && displayRuleSetTag(r.tag) === tag);
     if (!rs) {
       notifications.error(`Набор «${tag}» не найден в конфигурации`);
       return;
     }
-    rsEditTag = tag;
+    rsEditTag = rs.tag;
   }
 
   async function handleRsEditSave(rs: SingboxRouterRuleSet) {
