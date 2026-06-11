@@ -7,7 +7,7 @@
   import { Badge } from '$lib/components/ui';
   import { Edit3, Trash2 } from 'lucide-svelte';
   import { isSubscriptionOutbound, outboundDisplay } from './outboundLabel';
-  import { outboundDeleteBlockReason, type OutboundUsageInput } from './outboundUsage';
+  import { outboundDeleteBlockReasons, type OutboundUsageInput } from './outboundUsage';
 
   interface Props {
     outbounds: SingboxRouterOutbound[];
@@ -32,16 +32,14 @@
     return o.type;
   }
 
-  function deleteBlockReason(o: SingboxRouterOutbound): string | null {
-    if (!usage) return null;
-    return outboundDeleteBlockReason(o, usage);
-  }
+  // Один проход по конфигу на список вместо O(outbounds × конфиг) на строку.
+  const deleteReasons = $derived(usage ? outboundDeleteBlockReasons(outbounds, usage) : null);
 </script>
 
 <div class="list">
   {#each outbounds as o (o.tag)}
     {@const d = outboundDisplay(o, subscriptions)}
-    {@const deleteReason = deleteBlockReason(o)}
+    {@const deleteReason = deleteReasons?.get(o.tag) ?? null}
     <div class="row">
       <span class="dot" data-tone={toneFor(o.type)}></span>
       <button type="button" class="meta-btn" onclick={() => onEdit(o.tag)}>

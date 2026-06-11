@@ -18,7 +18,7 @@
   import OutboundTile from './OutboundTile.svelte';
   import { dnsRuleTarget } from './dnsRuleLabel';
   import { dnsMatcherParts, dnsMatcherSummary } from './dnsMatcherParts';
-  import { dnsServerDeleteBlockReason, type DnsServerUsageInput } from './dnsServerUsage';
+  import { dnsServerDeleteBlockReasons, type DnsServerUsageInput } from './dnsServerUsage';
 
   interface Props {
     servers: SingboxRouterDNSServer[];
@@ -60,16 +60,16 @@
     return `${s.type ?? 'dns'} · ${s.server}`;
   }
 
-  function serverDeleteReason(s: SingboxRouterDNSServer): string | null {
-    if (!dnsUsage) return null;
-    return dnsServerDeleteBlockReason(s, dnsUsage);
-  }
+  // Один проход по DNS-конфигу на список вместо O(servers × конфиг) на строку.
+  const serverDeleteReasons = $derived(
+    dnsUsage ? dnsServerDeleteBlockReasons(servers, dnsUsage) : null,
+  );
 </script>
 
 <div class="wrap">
   <div class="servers">
     {#each servers as s (s.tag)}
-      {@const deleteReason = serverDeleteReason(s)}
+      {@const deleteReason = serverDeleteReasons?.get(s.tag) ?? null}
       <div class="server-row">
         <span class="dot"></span>
         <button type="button" class="meta-btn" onclick={() => onEditServer(s.tag)}>

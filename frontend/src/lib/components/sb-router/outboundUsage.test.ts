@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectOutboundReferences, outboundDeleteBlockReason } from './outboundUsage';
+import { collectOutboundReferences, outboundDeleteBlockReason, outboundDeleteBlockReasons } from './outboundUsage';
 import type { SingboxRouterOutbound } from '$lib/types';
 
 const emptyCtx = {
@@ -61,5 +61,25 @@ describe('outboundDeleteBlockReason', () => {
 	it('allows unused router outbound', () => {
 		const ob: SingboxRouterOutbound = { type: 'selector', tag: 'fast', source: 'router' };
 		expect(outboundDeleteBlockReason(ob, emptyCtx)).toBeNull();
+	});
+});
+
+describe('outboundDeleteBlockReasons (batch)', () => {
+	it('один проход: причины для всех тегов сразу', () => {
+		const list: SingboxRouterOutbound[] = [
+			{ type: 'selector', tag: 'group', outbounds: ['warp', 'awg1'], source: 'router' },
+			{ type: 'selector', tag: 'warp', source: 'router' },
+			{ type: 'selector', tag: 'sub-abc', source: 'subscription' },
+			{ type: 'selector', tag: 'free', source: 'router' },
+		];
+		const reasons = outboundDeleteBlockReasons(list, {
+			...emptyCtx,
+			rules: [{ outbound: 'group' }],
+			outbounds: list,
+		});
+		expect(reasons.get('group')).toMatch(/route\.rules\[0\]/);
+		expect(reasons.get('warp')).toMatch(/outbounds\[group\]\.members\[0\]/);
+		expect(reasons.get('sub-abc')).toMatch(/Подписк/i);
+		expect(reasons.get('free')).toBeNull();
 	});
 });

@@ -1,4 +1,5 @@
 import type { SingboxRouterDNSServer, SingboxRouterDNSRule } from '$lib/types';
+import { formatUsageBlockReason } from './outboundUsage';
 
 export type DnsServerUsageInput = {
 	tag: string;
@@ -7,36 +8,50 @@ export type DnsServerUsageInput = {
 	dnsFinal: string;
 };
 
-/** Mirrors backend dnsServerReferences for UI delete guards. */
-export function collectDnsServerReferences(input: DnsServerUsageInput): string[] {
-	const { tag, rules, servers, dnsFinal } = input;
-	const refs: string[] = [];
+/** Один проход по DNS-конфигу: ссылки для всех интересующих тегов сразу. */
+function collectAllDnsServerReferences(
+	tags: readonly string[],
+	input: Omit<DnsServerUsageInput, 'tag'>,
+): Map<string, string[]> {
+	const refs = new Map<string, string[]>(tags.map((t) => [t, []]));
+	const push = (tag: string | undefined, ref: string) => {
+		if (tag) refs.get(tag)?.push(ref);
+	};
 
-	rules.forEach((r, i) => {
-		if (r.server === tag) refs.push(`rule[${i}]`);
+	input.rules.forEach((r, i) => {
+		push(r.server, `rule[${i}]`);
 	});
-
-	for (const s of servers) {
-		if (s.tag === tag) continue;
-		if (s.domain_resolver?.server === tag) {
-			refs.push(`server[${s.tag}].domain_resolver`);
+	for (const s of input.servers) {
+		if (s.domain_resolver?.server && s.domain_resolver.server !== s.tag) {
+			push(s.domain_resolver.server, `server[${s.tag}].domain_resolver`);
 		}
 	}
-
-	if (dnsFinal === tag) refs.push('final');
+	push(input.dnsFinal, 'final');
 
 	return refs;
+}
+
+/** Mirrors backend dnsServerReferences for UI delete guards. */
+export function collectDnsServerReferences(input: DnsServerUsageInput): string[] {
+	return collectAllDnsServerReferences([input.tag], input).get(input.tag) ?? [];
 }
 
 export function dnsServerDeleteBlockReason(
 	server: SingboxRouterDNSServer,
 	input: Omit<DnsServerUsageInput, 'tag'>,
 ): string | null {
-	const refs = collectDnsServerReferences({ ...input, tag: server.tag });
-	if (refs.length === 0) return null;
+	return dnsServerDeleteBlockReasons([server], input).get(server.tag) ?? null;
+}
 
-	const preview = refs.slice(0, 3).join(', ');
-	return refs.length > 3
-		? `DNS-сервер используется (${preview}…)`
-		: `DNS-сервер используется (${preview})`;
+/** Причины блокировки удаления для всего списка за один проход. */
+export function dnsServerDeleteBlockReasons(
+	servers: readonly SingboxRouterDNSServer[],
+	input: Omit<DnsServerUsageInput, 'tag'>,
+): Map<string, string | null> {
+	const refs = collectAllDnsServerReferences(servers.map((s) => s.tag), input);
+	const reasons = new Map<string, string | null>();
+	for (const s of servers) {
+		reasons.set(s.tag, formatUsageBlockReason('DNS-сервер', refs.get(s.tag) ?? []));
+	}
+	return reasons;
 }

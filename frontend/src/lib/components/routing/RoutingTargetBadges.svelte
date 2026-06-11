@@ -67,12 +67,16 @@
 		});
 	}
 
+	// Коалесценция: один recalc на кадр на любое число триггеров (effect,
+	// ResizeObserver). Поздние сдвиги layout доводит сам RO следующим событием.
+	let recalcScheduled = false;
 	async function scheduleRecalc() {
+		if (recalcScheduled) return;
+		recalcScheduled = true;
 		await tick();
-		recalc();
 		requestAnimationFrame(() => {
+			recalcScheduled = false;
 			recalc();
-			requestAnimationFrame(recalc);
 		});
 	}
 
@@ -91,19 +95,16 @@
 			void scheduleRecalc();
 		});
 		ro.observe(containerEl);
+		// Предки до бюджетной границы ресайзятся при изменении окна —
+		// отдельный window.resize listener не нужен.
 		let el: HTMLElement | null = containerEl.parentElement;
 		while (el) {
 			ro.observe(el);
 			if (el.classList.contains('action') || el.classList.contains('card-route') || el.classList.contains('trail')) break;
 			el = el.parentElement;
 		}
-		const onWindowResize = () => {
-			void scheduleRecalc();
-		};
-		window.addEventListener('resize', onWindowResize);
 		return () => {
 			ro.disconnect();
-			window.removeEventListener('resize', onWindowResize);
 		};
 	});
 </script>
