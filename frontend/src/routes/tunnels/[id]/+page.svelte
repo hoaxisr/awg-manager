@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { onMount, onDestroy } from 'svelte';
 	import { tunnels } from '$lib/stores/tunnels';
+	import { tunnelDetailCache } from '$lib/stores/detailCache';
 	import { usageLevel } from '$lib/stores/settings';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
@@ -23,7 +24,7 @@
 
 	// superForm is initialized once with initial data - capturing initial value is intentional
 	// svelte-ignore state_referenced_locally
-	const { form, errors } = superForm(data.form, {
+	const { form, errors, tainted } = superForm(data.form, {
 		validators: zod4Client(editTunnelSchema),
 		SPA: true,
 	});
@@ -105,7 +106,13 @@
 	onMount(async () => {
 		window.addEventListener('keydown', handleKeydown);
 		api.getSystemInfo().then(info => systemInfo = info).catch(() => null);
-		await loadTunnel();
+		const cached = tunnelDetailCache.get(tunnelId);
+		if (cached) {
+			tunnel = cached;
+			populateForm();
+			loading = false;
+		}
+		await loadTunnel(cached !== undefined);
 		loadWanData().catch(() => {});
 	});
 
@@ -113,17 +120,22 @@
 		window.removeEventListener('keydown', handleKeydown);
 	});
 
-	async function loadTunnel() {
+	async function loadTunnel(renderedFromCache = false) {
 		if (!tunnelId) {
 			notifications.error('ID туннеля не указан');
 			goto('/');
 			return;
 		}
 
-		loading = true;
+		if (!renderedFromCache) loading = true;
 		try {
-			tunnel = await api.getTunnel(tunnelId);
-			populateForm();
+			const fresh = await api.getTunnel(tunnelId);
+			tunnelDetailCache.set(tunnelId, fresh);
+			tunnel = fresh;
+			// Поверх кэша пользователь мог начать править — форму не перетираем.
+			const formTouched =
+				renderedFromCache && $tainted != null && Object.keys($tainted).length > 0;
+			if (!formTouched) populateForm();
 		} catch (e) {
 			notifications.error(`Ошибка загрузки: ${(e as Error).message}`);
 			goto('/');
