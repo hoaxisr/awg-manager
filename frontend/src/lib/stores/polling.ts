@@ -27,6 +27,12 @@ export interface PollingOptions {
      * secrets — sessionStorage is plaintext.
      */
     persistKey?: string;
+    /**
+     * Delay (ms) before the poll interval starts ticking. Staggers tick
+     * phases across stores that share the same pollInterval so they don't
+     * fire simultaneous request bursts at the backend.
+     */
+    phaseMs?: number;
 }
 
 /**
@@ -81,6 +87,7 @@ export function createPollingStore<T>(
 
     let subCount = 0;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
+    let phaseTimer: ReturnType<typeof setTimeout> | null = null;
     let inflight: Promise<void> | null = null;
 
     async function doFetch(): Promise<void> {
@@ -125,7 +132,7 @@ export function createPollingStore<T>(
         return inflight;
     }
 
-    function startPoll() {
+    function startInterval() {
         if (pollTimer !== null) return;
         pollTimer = setInterval(() => {
             if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
@@ -133,7 +140,24 @@ export function createPollingStore<T>(
         }, opts.pollInterval);
     }
 
+    function startPoll() {
+        if (pollTimer !== null || phaseTimer !== null) return;
+        const phase = opts.phaseMs ?? 0;
+        if (phase > 0) {
+            phaseTimer = setTimeout(() => {
+                phaseTimer = null;
+                startInterval();
+            }, phase);
+        } else {
+            startInterval();
+        }
+    }
+
     function stopPoll() {
+        if (phaseTimer !== null) {
+            clearTimeout(phaseTimer);
+            phaseTimer = null;
+        }
         if (pollTimer !== null) {
             clearInterval(pollTimer);
             pollTimer = null;

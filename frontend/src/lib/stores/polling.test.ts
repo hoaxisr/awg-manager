@@ -150,6 +150,40 @@ describe('createPollingStore', () => {
         u();
     });
 
+	describe('phaseMs', () => {
+		it('delays the first poll tick by phaseMs', async () => {
+			const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+			const s = createPollingStore(fetcher, {
+				staleTime: 0, pollInterval: 1000, phaseMs: 300,
+			});
+			const u = s.subscribe(() => {});
+			await vi.advanceTimersByTimeAsync(0);
+			expect(fetcher).toHaveBeenCalledTimes(1); // initial fetch — сразу
+
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(fetcher).toHaveBeenCalledTimes(1); // тик ещё не пришёл (придёт на 1300)
+
+			await vi.advanceTimersByTimeAsync(300);
+			expect(fetcher).toHaveBeenCalledTimes(2); // 1300ms — первый тик
+
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(fetcher).toHaveBeenCalledTimes(3); // 2300ms — интервал держится
+			u();
+		});
+
+		it('clears pending phase timer on unsubscribe', async () => {
+			const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+			const s = createPollingStore(fetcher, {
+				staleTime: 0, pollInterval: 1000, phaseMs: 500,
+			});
+			const u = s.subscribe(() => {});
+			await vi.advanceTimersByTimeAsync(0);
+			u();
+			await vi.advanceTimersByTimeAsync(5000);
+			expect(fetcher).toHaveBeenCalledTimes(1); // после отписки тиков нет
+		});
+	});
+
 	describe('persistKey', () => {
 		beforeEach(() => sessionStorage.clear());
 
