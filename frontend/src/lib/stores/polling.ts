@@ -25,6 +25,9 @@ export interface PollingOptions {
      * Hydrated data renders instantly with status 'stale'; first subscribe
      * still refetches (lastFetchedAt stays 0). Don't use for payloads with
      * secrets — sessionStorage is plaintext.
+     * Tradeoff: with hydrated data a failing backend shows status 'stale'
+     * (data retained) until errorThreshold consecutive failures, instead of
+     * 'error' on first failure as on a cold start.
      */
     persistKey?: string;
     /**
@@ -72,7 +75,7 @@ export function createPollingStore<T>(
         try {
             sessionStorage.setItem(opts.persistKey, JSON.stringify(data));
         } catch {
-            // quota / private mode — кэш необязателен
+            // quota / private mode — cache is optional
         }
     }
 

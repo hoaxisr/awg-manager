@@ -150,96 +150,109 @@ describe('createPollingStore', () => {
         u();
     });
 
-	describe('phaseMs', () => {
-		it('delays the first poll tick by phaseMs', async () => {
-			const fetcher = vi.fn().mockResolvedValue({ v: 1 });
-			const s = createPollingStore(fetcher, {
-				staleTime: 0, pollInterval: 1000, phaseMs: 300,
-			});
-			const u = s.subscribe(() => {});
-			await vi.advanceTimersByTimeAsync(0);
-			expect(fetcher).toHaveBeenCalledTimes(1); // initial fetch — сразу
+    describe('phaseMs', () => {
+        it('delays the first poll tick by phaseMs', async () => {
+            const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+            const s = createPollingStore(fetcher, {
+                staleTime: 0, pollInterval: 1000, phaseMs: 300,
+            });
+            const u = s.subscribe(() => {});
+            await vi.advanceTimersByTimeAsync(0);
+            expect(fetcher).toHaveBeenCalledTimes(1); // initial fetch fires immediately
 
-			await vi.advanceTimersByTimeAsync(1000);
-			expect(fetcher).toHaveBeenCalledTimes(1); // тик ещё не пришёл (придёт на 1300)
+            await vi.advanceTimersByTimeAsync(1000);
+            expect(fetcher).toHaveBeenCalledTimes(1); // tick not yet fired (due at 1300)
 
-			await vi.advanceTimersByTimeAsync(300);
-			expect(fetcher).toHaveBeenCalledTimes(2); // 1300ms — первый тик
+            await vi.advanceTimersByTimeAsync(300);
+            expect(fetcher).toHaveBeenCalledTimes(2); // 1300ms — first tick
 
-			await vi.advanceTimersByTimeAsync(1000);
-			expect(fetcher).toHaveBeenCalledTimes(3); // 2300ms — интервал держится
-			u();
-		});
+            await vi.advanceTimersByTimeAsync(1000);
+            expect(fetcher).toHaveBeenCalledTimes(3); // 2300ms — interval holds
+            u();
+        });
 
-		it('clears pending phase timer on unsubscribe', async () => {
-			const fetcher = vi.fn().mockResolvedValue({ v: 1 });
-			const s = createPollingStore(fetcher, {
-				staleTime: 0, pollInterval: 1000, phaseMs: 500,
-			});
-			const u = s.subscribe(() => {});
-			await vi.advanceTimersByTimeAsync(0);
-			u();
-			await vi.advanceTimersByTimeAsync(5000);
-			expect(fetcher).toHaveBeenCalledTimes(1); // после отписки тиков нет
-		});
-	});
+        it('clears pending phase timer on unsubscribe', async () => {
+            const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+            const s = createPollingStore(fetcher, {
+                staleTime: 0, pollInterval: 1000, phaseMs: 500,
+            });
+            const u = s.subscribe(() => {});
+            await vi.advanceTimersByTimeAsync(0);
+            u();
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(fetcher).toHaveBeenCalledTimes(1); // no ticks after unsubscribe
+        });
+    });
 
-	describe('persistKey', () => {
-		beforeEach(() => sessionStorage.clear());
+    describe('persistKey', () => {
+        beforeEach(() => sessionStorage.clear());
 
-		it('hydrates data from sessionStorage with stale status', () => {
-			sessionStorage.setItem('awgm:test', JSON.stringify({ v: 42 }));
-			const fetcher = vi.fn().mockResolvedValue({ v: 1 });
-			const s = createPollingStore(fetcher, {
-				staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
-			});
-			const snap = get(s);
-			expect(snap.data).toEqual({ v: 42 });
-			expect(snap.status).toBe('stale');
-			expect(snap.lastFetchedAt).toBe(0);
-		});
+        it('hydrates data from sessionStorage with stale status', () => {
+            sessionStorage.setItem('awgm:test', JSON.stringify({ v: 42 }));
+            const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+            const s = createPollingStore(fetcher, {
+                staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
+            });
+            const snap = get(s);
+            expect(snap.data).toEqual({ v: 42 });
+            expect(snap.status).toBe('stale');
+            expect(snap.lastFetchedAt).toBe(0);
+        });
 
-		it('refetches on first subscribe despite hydrated data', async () => {
-			sessionStorage.setItem('awgm:test', JSON.stringify({ v: 42 }));
-			const fetcher = vi.fn().mockResolvedValue({ v: 1 });
-			const s = createPollingStore(fetcher, {
-				staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
-			});
-			const u = s.subscribe(() => {});
-			await vi.advanceTimersByTimeAsync(0);
-			expect(fetcher).toHaveBeenCalledTimes(1);
-			expect(get(s).data).toEqual({ v: 1 });
-			u();
-		});
+        it('refetches on first subscribe despite hydrated data', async () => {
+            sessionStorage.setItem('awgm:test', JSON.stringify({ v: 42 }));
+            const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+            const s = createPollingStore(fetcher, {
+                staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
+            });
+            const u = s.subscribe(() => {});
+            await vi.advanceTimersByTimeAsync(0);
+            expect(fetcher).toHaveBeenCalledTimes(1);
+            expect(get(s).data).toEqual({ v: 1 });
+            u();
+        });
 
-		it('writes snapshot to sessionStorage after successful fetch', async () => {
-			const fetcher = vi.fn().mockResolvedValue({ v: 7 });
-			const s = createPollingStore(fetcher, {
-				staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
-			});
-			const u = s.subscribe(() => {});
-			await vi.advanceTimersByTimeAsync(0);
-			expect(sessionStorage.getItem('awgm:test')).toBe(JSON.stringify({ v: 7 }));
-			u();
-		});
+        it('writes snapshot to sessionStorage after successful fetch', async () => {
+            const fetcher = vi.fn().mockResolvedValue({ v: 7 });
+            const s = createPollingStore(fetcher, {
+                staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
+            });
+            const u = s.subscribe(() => {});
+            await vi.advanceTimersByTimeAsync(0);
+            expect(sessionStorage.getItem('awgm:test')).toBe(JSON.stringify({ v: 7 }));
+            u();
+        });
 
-		it('writes snapshot on applyMutationResponse', () => {
-			const fetcher = vi.fn().mockResolvedValue({ v: 1 });
-			const s = createPollingStore(fetcher, {
-				staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
-			});
-			s.applyMutationResponse({ v: 9 });
-			expect(sessionStorage.getItem('awgm:test')).toBe(JSON.stringify({ v: 9 }));
-		});
+        it('writes snapshot on applyMutationResponse', () => {
+            const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+            const s = createPollingStore(fetcher, {
+                staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
+            });
+            s.applyMutationResponse({ v: 9 });
+            expect(sessionStorage.getItem('awgm:test')).toBe(JSON.stringify({ v: 9 }));
+        });
 
-		it('ignores corrupt persisted JSON', () => {
-			sessionStorage.setItem('awgm:test', '{broken');
-			const fetcher = vi.fn().mockResolvedValue({ v: 1 });
-			const s = createPollingStore(fetcher, {
-				staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
-			});
-			expect(get(s).data).toBeNull();
-			expect(get(s).status).toBe('loading'); // corrupt cache skipped → cold fetch path
-		});
-	});
+        it('ignores corrupt persisted JSON', () => {
+            sessionStorage.setItem('awgm:test', '{broken');
+            const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+            const s = createPollingStore(fetcher, {
+                staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
+            });
+            expect(get(s).data).toBeNull();
+            expect(get(s).status).toBe('loading'); // corrupt cache skipped → cold fetch path
+        });
+
+        it('keeps hydrated data with stale status on fetch failure', async () => {
+            sessionStorage.setItem('awgm:test', JSON.stringify({ v: 42 }));
+            const fetcher = vi.fn().mockRejectedValue(new Error('down'));
+            const s = createPollingStore(fetcher, {
+                staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
+            });
+            const u = s.subscribe(() => {});
+            await vi.advanceTimersByTimeAsync(0);
+            expect(get(s).data).toEqual({ v: 42 });
+            expect(get(s).status).toBe('stale'); // error badge only after errorThreshold
+            u();
+        });
+    });
 });
