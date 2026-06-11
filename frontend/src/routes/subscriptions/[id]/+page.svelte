@@ -16,6 +16,7 @@
 		type SingboxLayoutMode,
 	} from '$lib/constants/singboxLayout';
 	import { isMockDevMode } from '$lib/env';
+	import { subscriptionDetailCache } from '$lib/stores/detailCache';
 
 	// Poll Clash for the live "now" pointer this often when on members tab in urltest
 	// mode. 5s balances responsiveness with Clash API load.
@@ -56,6 +57,9 @@
 	const showSingboxGridListToggle = $derived(showSingboxListOption && showSingboxLayoutPicker);
 
 	let evtSrc: EventSource | null = null;
+	// Выставляется в onMount при гидрации из кэша; loadStream() потребляет один раз:
+	// первый рефетч идёт фоном и не сбрасывает уже отрендеренный контент.
+	let hydratedFromCache = false;
 
 	function patchSubscriptionEnabled(nextEnabled: boolean): void {
 		if (subscription) {
@@ -66,17 +70,24 @@
 	function loadStream(): void {
 		if (!id) return;
 		const isMockDev = isMockDevMode();
+		// Фоновый рефетч поверх кэша: контент не сбрасываем, стримим в теневой
+		// объект и подменяем целиком на done.
+		const background = hydratedFromCache;
+		hydratedFromCache = false;
 		progressLoaded = 0;
 		progressTotal = 0;
-		loading = true;
 		error = '';
-		subscription = null;
+		if (!background) {
+			loading = true;
+			subscription = null;
+		}
 		evtSrc?.close();
 		if (isMockDev) {
 			void (async () => {
 				try {
 					const sub = await api.getSubscription(id);
 					subscription = sub;
+					subscriptionDetailCache.set(id, $state.snapshot(subscription) as Subscription);
 					progressTotal = sub.memberTags?.length ?? sub.members?.length ?? 0;
 					progressLoaded = progressTotal;
 				} catch {
@@ -94,10 +105,13 @@
 		// onerror on the closed connection, but we treat that as success.
 		let streamDone = false;
 		let fallbackTried = false;
+		// Теневой объект для фонового рефетча (background): собираем сюда, чтобы
+		// не перетирать отображаемый из кэша subscription до завершения стрима.
+		let target: Subscription | null = null;
 
 		evtSrc.addEventListener('meta', (e) => {
 			const meta = JSON.parse((e as MessageEvent).data);
-			subscription = {
+			const next = {
 				...meta,
 				members: [],
 				memberTags: [],
@@ -106,24 +120,32 @@
 				infoItems: meta.infoItems ?? [],
 				activeMember: '',
 			} as Subscription;
+			if (background) target = next;
+			else subscription = next;
 			progressTotal = meta.total ?? 0;
 		});
 
 		evtSrc.addEventListener('member', (e) => {
-			if (!subscription) return;
+			const t = background ? target : subscription;
+			if (!t) return;
 			const { member } = JSON.parse((e as MessageEvent).data);
-			subscription.members = [...(subscription.members ?? []), member];
-			subscription.memberTags = [...subscription.memberTags, member.tag];
+			t.members = [...(t.members ?? []), member];
+			t.memberTags = [...t.memberTags, member.tag];
 			progressLoaded += 1;
 		});
 
 		evtSrc.addEventListener('done', (e) => {
-			if (subscription) {
+			const t = background ? target : subscription;
+			if (t) {
 				const data = JSON.parse((e as MessageEvent).data);
-				subscription.orphanTags = data.orphanTags ?? [];
-				subscription.activeMember = data.activeMember ?? '';
-				subscription.rejectedMembers = data.rejectedMembers ?? subscription.rejectedMembers ?? [];
-				subscription.infoItems = data.infoItems ?? subscription.infoItems ?? [];
+				t.orphanTags = data.orphanTags ?? [];
+				t.activeMember = data.activeMember ?? '';
+				t.rejectedMembers = data.rejectedMembers ?? t.rejectedMembers ?? [];
+				t.infoItems = data.infoItems ?? t.infoItems ?? [];
+			}
+			if (background && t) subscription = t;
+			if (subscription) {
+				subscriptionDetailCache.set(id, $state.snapshot(subscription) as Subscription);
 			}
 			streamDone = true;
 			loading = false;
@@ -140,6 +162,7 @@
 				try {
 					const sub = await api.getSubscription(id);
 					subscription = sub;
+					subscriptionDetailCache.set(id, $state.snapshot(subscription) as Subscription);
 					progressTotal = sub.memberTags?.length ?? sub.members?.length ?? 0;
 					progressLoaded = progressTotal;
 					loading = false;
@@ -169,6 +192,12 @@
 		const parsed = parseSingboxLayoutMode(sb);
 		if (parsed) singboxLayoutMode = parsed;
 		singboxLayoutReady = true;
+		const cached = subscriptionDetailCache.get(id);
+		if (cached) {
+			subscription = cached;
+			loading = false;
+			hydratedFromCache = true;
+		}
 		loadStream();
 	});
 
