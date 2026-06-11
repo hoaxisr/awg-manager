@@ -158,6 +158,7 @@
 
 		$form.name = tunnel.name;
 		parseAddress(tunnel.interface.address);
+		$form.address = joinAddress();
 		$form.mtu = tunnel.interface.mtu || 1280;
 		$form.dns = tunnel.interface.dns || '';
 		$form.jc = tunnel.interface.jc ?? 4;

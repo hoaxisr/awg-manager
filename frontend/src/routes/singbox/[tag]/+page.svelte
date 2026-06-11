@@ -102,6 +102,7 @@
 			if (tagChanged) {
 				fresh = await api.singboxRenameTunnel(tag, nextTag);
 				singboxTunnels.applyMutationResponse(fresh);
+				singboxOutboundCache.delete(tag);
 			}
 			if (outboundChanged) {
 				fresh = await api.singboxUpdateTunnel(nextTag, outbound);
