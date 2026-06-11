@@ -31,13 +31,15 @@ export function isCustomInlineRuleSetTag(tag: string): boolean {
   return /^custom-\d+$/i.test(tag);
 }
 
-const RULE_TEXT_KEYS = ['domain', 'domain_suffix', 'ip_cidr'] as const;
+const RULE_TEXT_KEYS = ['domain_suffix', 'ip_cidr'] as const;
 
-const RULE_COMPLEX_ONLY_KEYS = [
-  'domain_keyword',
-  'domain_regex',
-  'protocol',
-] as const;
+/**
+ * Поля, которые простой режим умеет показать и пересобрать. Редактирование
+ * в простом режиме строит правило заново, поэтому любое другое непустое
+ * поле (ip_is_private, type/mode/rules, source_ip_cidr, port, protocol, …)
+ * было бы молча потеряно — такие правила уходят в expert.
+ */
+const RULE_SIMPLE_KEYS = new Set<string>([...RULE_TEXT_KEYS, 'rule_set', 'action', 'outbound']);
 
 function hasRuleTextMatchers(rule: SingboxRouterRule): boolean {
   for (const key of RULE_TEXT_KEYS) {
@@ -48,12 +50,11 @@ function hasRuleTextMatchers(rule: SingboxRouterRule): boolean {
 }
 
 function hasRuleLevelComplexFields(rule: SingboxRouterRule): boolean {
-  if ((rule.source_ip_cidr?.length ?? 0) > 0) return true;
-  if ((rule.port?.length ?? 0) > 0) return true;
-  for (const key of RULE_COMPLEX_ONLY_KEYS) {
-    const v = rule[key as keyof SingboxRouterRule];
-    if (typeof v === 'string' && v) return true;
-    if (Array.isArray(v) && v.length > 0) return true;
+  for (const [key, v] of Object.entries(rule)) {
+    if (RULE_SIMPLE_KEYS.has(key)) continue;
+    if (v === undefined || v === null || v === '') continue;
+    if (Array.isArray(v) && v.length === 0) continue;
+    return true;
   }
   return false;
 }

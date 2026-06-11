@@ -39,13 +39,6 @@ describe('classifyRuleSimplicity — простые', () => {
     });
   });
 
-  it('inline-text: domain (exact)', () => {
-    expect(classifyRuleSimplicity({ domain: ['exact.host'] }, ruleSets)).toEqual({
-      simple: true,
-      kind: 'inline-text',
-    });
-  });
-
   it('inline-set: custom-N', () => {
     expect(classifyRuleSimplicity({ rule_set: ['custom-1'], outbound: 'warp' }, ruleSets)).toEqual({
       simple: true,
@@ -104,16 +97,42 @@ describe('classifyRuleSimplicity — сложные', () => {
     ).toBe(false);
   });
 
-  it('domain_keyword на rule', () => {
-    expect(classifyRuleSimplicity({ domain_keyword: ['ads'] }, ruleSets).simple).toBe(false);
+  it('domain_keyword на rule (неизвестное поле)', () => {
+    expect(
+      classifyRuleSimplicity({ domain_keyword: ['ads'] } as SingboxRouterRule, ruleSets).simple,
+    ).toBe(false);
   });
 
-  it('domain_regex на rule', () => {
-    expect(classifyRuleSimplicity({ domain_regex: ['.*\\.ads\\.'] }, ruleSets).simple).toBe(false);
+  it('domain_regex на rule (неизвестное поле)', () => {
+    expect(
+      classifyRuleSimplicity({ domain_regex: ['.*\\.ads\\.'] } as SingboxRouterRule, ruleSets).simple,
+    ).toBe(false);
+  });
+
+  it('domain (exact) на rule (неизвестное поле)', () => {
+    expect(
+      classifyRuleSimplicity({ domain: ['exact.host'] } as SingboxRouterRule, ruleSets).simple,
+    ).toBe(false);
   });
 
   it('protocol на rule', () => {
     expect(classifyRuleSimplicity({ protocol: 'quic', outbound: 'direct' }, ruleSets).simple).toBe(false);
+  });
+
+  it('ip_is_private с не-direct outbound', () => {
+    expect(
+      classifyRuleSimplicity({ ip_is_private: true, domain_suffix: ['x.com'], outbound: 'warp' }, ruleSets)
+        .simple,
+    ).toBe(false);
+  });
+
+  it('logical rule (type/mode/rules)', () => {
+    expect(
+      classifyRuleSimplicity(
+        { type: 'logical', mode: 'or', rules: [{ domain_suffix: ['x.com'] }], outbound: 'warp' } as SingboxRouterRule,
+        ruleSets,
+      ).simple,
+    ).toBe(false);
   });
 
   it('текст + rule_set', () => {
