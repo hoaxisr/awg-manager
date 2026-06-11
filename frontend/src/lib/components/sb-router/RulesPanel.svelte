@@ -353,10 +353,16 @@
   }
 
   function scheduleDropSkeleton() {
-    dropExpanded = false;
-    clearDropSkeletonTimer();
     const target = targetDropAt(insertionIndex);
-    if (!dragState?.started || target === null || target !== dropAt) return;
+    if (!dragState?.started || target === null || target !== dropAt) {
+      dropExpanded = false;
+      clearDropSkeletonTimer();
+      return;
+    }
+    // Цель не менялась: раскрытый скелетон не схлопываем (раскрытие сдвигает
+    // геометрию → insertionIndex меняется → безусловный сброс рушил только что
+    // показанный скелетон), идущий таймер не перезапускаем.
+    if (dropExpanded || dropSkeletonTimer !== null) return;
     dropSkeletonTimer = setTimeout(() => {
       if (dragState?.started && targetDropAt(insertionIndex) === dropAt && dropAt !== null) {
         dropExpanded = true;
