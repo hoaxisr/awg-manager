@@ -38,12 +38,13 @@
 		<BackLink href="/" />
 		<div class="flex items-center gap-2.5">
 			<h1 class="page-title text-lg font-semibold">{tunnelName}</h1>
-			<span class="badge" class:badge-success={tunnelState === 'running'} class:badge-warning={tunnelState === 'starting' || tunnelState === 'broken' || tunnelState === 'needs_start' || tunnelState === 'needs_stop'} class:badge-muted={tunnelState === 'disabled'} class:badge-error={tunnelState === 'stopped' || tunnelState === 'not_created'}>
+			<span class="badge" class:badge-success={tunnelState === 'running'} class:badge-warning={tunnelState === 'starting' || tunnelState === 'broken' || tunnelState === 'needs_start' || tunnelState === 'needs_stop' || tunnelState === 'stopping'} class:badge-muted={tunnelState === 'disabled'} class:badge-error={tunnelState === 'stopped' || tunnelState === 'not_created'}>
 				<span class="w-1.5 h-1.5 rounded-full bg-current"></span>
 				{tunnelState === 'running' ? 'Работает'
 				 : tunnelState === 'starting' ? 'Запускается'
 				 : tunnelState === 'needs_start' ? 'Ожидает запуска'
 				 : tunnelState === 'needs_stop' ? 'Ожидает остановки'
+				 : tunnelState === 'stopping' ? 'Останавливается'
 				 : tunnelState === 'disabled' ? 'Отключён'
 				 : tunnelState === 'broken' ? 'Сломан'
 				 : 'Остановлен'}

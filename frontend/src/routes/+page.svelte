@@ -943,9 +943,11 @@
 				return 'broken';
 			case 'starting':
 			case 'needs_stop':
+			case 'stopping':
 				return 'starting';
 			case 'needs_start':
 			case 'stopped':
+			case 'not_created':
 				return 'stopped';
 			case 'disabled':
 				return 'disabled';

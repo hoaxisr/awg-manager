@@ -33,6 +33,10 @@ export function awgManagedStatusDot(
 			return { variant: 'warning', pulse: true, label: 'Останавливается' };
 		case 'needs_start':
 			return { variant: 'muted', pulse: false, label: 'Остановлен' };
+		case 'stopping':
+			return { variant: 'warning', pulse: true, label: 'Останавливается' };
+		case 'not_created':
+			return { variant: 'muted', pulse: false, label: 'Не создан' };
 		case 'disabled':
 			return { variant: 'muted', pulse: false, label: 'Выключен' };
 		default:
