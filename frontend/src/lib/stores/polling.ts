@@ -1,4 +1,5 @@
 import { writable, get, type Readable } from 'svelte/store';
+import { version } from '$app/environment';
 
 export type PollingState<T> = {
     data: T | null;
@@ -25,6 +26,8 @@ export interface PollingOptions {
      * Hydrated data renders instantly with status 'stale'; first subscribe
      * still refetches (lastFetchedAt stays 0). Don't use for payloads with
      * secrets — sessionStorage is plaintext.
+     * Snapshots are stamped with the SvelteKit build version and discarded on
+     * mismatch, so a self-update reload never hydrates an old-shape snapshot.
      * Tradeoff: with hydrated data a failing backend shows status 'stale'
      * (data retained) until errorThreshold consecutive failures, instead of
      * 'error' on first failure as on a cold start.
@@ -64,7 +67,11 @@ export function createPollingStore<T>(
         if (!opts.persistKey || typeof sessionStorage === 'undefined') return null;
         try {
             const raw = sessionStorage.getItem(opts.persistKey);
-            return raw ? (JSON.parse(raw) as T) : null;
+            if (!raw) return null;
+            const envelope = JSON.parse(raw) as { v?: string; data?: T };
+            // Discard snapshots written by a different build — shape may have changed.
+            if (envelope.v !== version) return null;
+            return envelope.data ?? null;
         } catch {
             return null;
         }
@@ -73,7 +80,7 @@ export function createPollingStore<T>(
     function writePersisted(data: T): void {
         if (!opts.persistKey || typeof sessionStorage === 'undefined') return;
         try {
-            sessionStorage.setItem(opts.persistKey, JSON.stringify(data));
+            sessionStorage.setItem(opts.persistKey, JSON.stringify({ v: version, data }));
         } catch {
             // quota / private mode — cache is optional
         }

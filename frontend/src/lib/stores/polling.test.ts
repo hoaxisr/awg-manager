@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { get } from 'svelte/store';
 import { createPollingStore } from './polling';
 
+vi.mock('$app/environment', () => ({ version: 'test-build' }));
+const version = 'test-build';
+
 describe('createPollingStore', () => {
     beforeEach(() => vi.useFakeTimers());
     afterEach(() => vi.useRealTimers());
@@ -188,53 +191,53 @@ describe('createPollingStore', () => {
         beforeEach(() => sessionStorage.clear());
 
         it('hydrates data from sessionStorage with stale status', () => {
-            sessionStorage.setItem('awgm:test', JSON.stringify({ v: 42 }));
-            const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+            sessionStorage.setItem('awgm:test', JSON.stringify({ v: version, data: { val: 42 } }));
+            const fetcher = vi.fn().mockResolvedValue({ val: 1 });
             const s = createPollingStore(fetcher, {
                 staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
             });
             const snap = get(s);
-            expect(snap.data).toEqual({ v: 42 });
+            expect(snap.data).toEqual({ val: 42 });
             expect(snap.status).toBe('stale');
             expect(snap.lastFetchedAt).toBe(0);
         });
 
         it('refetches on first subscribe despite hydrated data', async () => {
-            sessionStorage.setItem('awgm:test', JSON.stringify({ v: 42 }));
-            const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+            sessionStorage.setItem('awgm:test', JSON.stringify({ v: version, data: { val: 42 } }));
+            const fetcher = vi.fn().mockResolvedValue({ val: 1 });
             const s = createPollingStore(fetcher, {
                 staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
             });
             const u = s.subscribe(() => {});
             await vi.advanceTimersByTimeAsync(0);
             expect(fetcher).toHaveBeenCalledTimes(1);
-            expect(get(s).data).toEqual({ v: 1 });
+            expect(get(s).data).toEqual({ val: 1 });
             u();
         });
 
         it('writes snapshot to sessionStorage after successful fetch', async () => {
-            const fetcher = vi.fn().mockResolvedValue({ v: 7 });
+            const fetcher = vi.fn().mockResolvedValue({ val: 7 });
             const s = createPollingStore(fetcher, {
                 staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
             });
             const u = s.subscribe(() => {});
             await vi.advanceTimersByTimeAsync(0);
-            expect(sessionStorage.getItem('awgm:test')).toBe(JSON.stringify({ v: 7 }));
+            expect(sessionStorage.getItem('awgm:test')).toBe(JSON.stringify({ v: version, data: { val: 7 } }));
             u();
         });
 
         it('writes snapshot on applyMutationResponse', () => {
-            const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+            const fetcher = vi.fn().mockResolvedValue({ val: 1 });
             const s = createPollingStore(fetcher, {
                 staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
             });
-            s.applyMutationResponse({ v: 9 });
-            expect(sessionStorage.getItem('awgm:test')).toBe(JSON.stringify({ v: 9 }));
+            s.applyMutationResponse({ val: 9 });
+            expect(sessionStorage.getItem('awgm:test')).toBe(JSON.stringify({ v: version, data: { val: 9 } }));
         });
 
         it('ignores corrupt persisted JSON', () => {
             sessionStorage.setItem('awgm:test', '{broken');
-            const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+            const fetcher = vi.fn().mockResolvedValue({ val: 1 });
             const s = createPollingStore(fetcher, {
                 staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
             });
@@ -243,16 +246,25 @@ describe('createPollingStore', () => {
         });
 
         it('keeps hydrated data with stale status on fetch failure', async () => {
-            sessionStorage.setItem('awgm:test', JSON.stringify({ v: 42 }));
+            sessionStorage.setItem('awgm:test', JSON.stringify({ v: version, data: { val: 42 } }));
             const fetcher = vi.fn().mockRejectedValue(new Error('down'));
             const s = createPollingStore(fetcher, {
                 staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
             });
             const u = s.subscribe(() => {});
             await vi.advanceTimersByTimeAsync(0);
-            expect(get(s).data).toEqual({ v: 42 });
+            expect(get(s).data).toEqual({ val: 42 });
             expect(get(s).status).toBe('stale'); // error badge only after errorThreshold
             u();
+        });
+
+        it('discards snapshot from a different build version', () => {
+            sessionStorage.setItem('awgm:test', JSON.stringify({ v: 'other-build', data: { val: 42 } }));
+            const fetcher = vi.fn().mockResolvedValue({ val: 1 });
+            const s = createPollingStore(fetcher, {
+                staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
+            });
+            expect(get(s).data).toBeNull();
         });
     });
 });

@@ -73,8 +73,8 @@
 	});
 
 	let hrNeoDataReady = $derived(
-		($dnsRoutesStore.lastFetchedAt > 0 || $dnsRoutesStore.status === 'error') &&
-			($routingTunnelsStore.lastFetchedAt > 0 || $routingTunnelsStore.status === 'error'),
+		($dnsRoutesStore.data !== null || $dnsRoutesStore.lastFetchedAt > 0 || $dnsRoutesStore.status === 'error') &&
+			($routingTunnelsStore.data !== null || $routingTunnelsStore.lastFetchedAt > 0 || $routingTunnelsStore.status === 'error'),
 	);
 
 	let editOpen = $state(false);
