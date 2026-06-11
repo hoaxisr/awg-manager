@@ -227,7 +227,8 @@
 
 		saving = true;
 		try {
-			await tunnels.update(tunnelId, buildUpdatePayload());
+			const updated = await tunnels.update(tunnelId, buildUpdatePayload());
+			tunnelDetailCache.set(tunnelId, updated);
 			notifications.success('Туннель сохранён');
 			goto('/');
 		} catch (e) {
@@ -244,7 +245,8 @@
 		actionStatus = 'loading';
 		saving = true;
 		try {
-			await tunnels.update(tunnelId, buildUpdatePayload());
+			const updated = await tunnels.update(tunnelId, buildUpdatePayload());
+			tunnelDetailCache.set(tunnelId, updated);
 			if (isRunning) {
 				await tunnels.restart(tunnelId);
 			} else {

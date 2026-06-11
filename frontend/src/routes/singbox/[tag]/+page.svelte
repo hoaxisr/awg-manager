@@ -108,6 +108,10 @@
 				fresh = await api.singboxUpdateTunnel(nextTag, outbound);
 				singboxTunnels.applyMutationResponse(fresh);
 			}
+			singboxOutboundCache.set(nextTag, {
+				tag: nextTag,
+				outbound: structuredClone($state.snapshot(outbound)) as Record<string, unknown>,
+			});
 			goto('/?tab=singbox');
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
