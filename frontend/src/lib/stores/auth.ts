@@ -1,6 +1,7 @@
 import { writable, derived } from 'svelte/store';
 import { browser } from '$app/environment';
 import { api } from '$lib/api/client';
+import { clearClientCaches } from './detailCache';
 
 interface AuthState {
 	authenticated: boolean;
@@ -26,6 +27,7 @@ function createAuthStore() {
 				// Only show "session expired" if user was previously authenticated.
 				// If not authenticated yet (e.g. on login page), just ignore the 401.
 				if (!s.authenticated) return s;
+				clearClientCaches();
 				return {
 					authenticated: false,
 					authDisabled: false,
@@ -107,6 +109,7 @@ function createAuthStore() {
 			} catch {
 				// Ignore logout errors
 			}
+			clearClientCaches();
 			set({
 				authenticated: false,
 				authDisabled: false,

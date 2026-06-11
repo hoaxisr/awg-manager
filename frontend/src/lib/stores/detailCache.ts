@@ -12,3 +12,18 @@ export const singboxOutboundCache = new Map<
 	{ tag: string; outbound: Record<string, unknown> }
 >();
 export const subscriptionDetailCache = new Map<string, Subscription>();
+
+/** Очистить все клиентские кэши при выходе/401 — данные не должны переживать сессию. */
+export function clearClientCaches(): void {
+	tunnelDetailCache.clear();
+	singboxOutboundCache.clear();
+	subscriptionDetailCache.clear();
+	if (typeof sessionStorage === 'undefined') return;
+	try {
+		for (const key of Object.keys(sessionStorage)) {
+			if (key.startsWith('awgm:')) sessionStorage.removeItem(key);
+		}
+	} catch {
+		// private mode — нечего чистить
+	}
+}

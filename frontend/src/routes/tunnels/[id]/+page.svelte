@@ -24,7 +24,7 @@
 
 	// superForm is initialized once with initial data - capturing initial value is intentional
 	// svelte-ignore state_referenced_locally
-	const { form, errors, tainted } = superForm(data.form, {
+	const { form, errors, tainted, isTainted } = superForm(data.form, {
 		validators: zod4Client(editTunnelSchema),
 		SPA: true,
 	});
@@ -133,12 +133,17 @@
 			tunnelDetailCache.set(tunnelId, fresh);
 			tunnel = fresh;
 			// Поверх кэша пользователь мог начать править — форму не перетираем.
-			const formTouched =
-				renderedFromCache && $tainted != null && Object.keys($tainted).length > 0;
+			const formTouched = renderedFromCache && isTainted();
 			if (!formTouched) populateForm();
 		} catch (e) {
-			notifications.error(`Ошибка загрузки: ${(e as Error).message}`);
-			goto('/');
+			// Поверх кэша уже показана рабочая форма — не уводим пользователя
+			// (и его правки) со страницы из-за временной ошибки рефетча.
+			if (renderedFromCache) {
+				notifications.error(`Не удалось обновить данные туннеля: ${(e as Error).message}`);
+			} else {
+				notifications.error(`Ошибка загрузки: ${(e as Error).message}`);
+				goto('/');
+			}
 		} finally {
 			loading = false;
 		}

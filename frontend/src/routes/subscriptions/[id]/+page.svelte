@@ -60,10 +60,15 @@
 	// Выставляется в onMount при гидрации из кэша; loadStream() потребляет один раз:
 	// первый рефетч идёт фоном и не сбрасывает уже отрендеренный контент.
 	let hydratedFromCache = false;
+	// Пользователь мутировал subscription (PATCH enabled) во время загрузки —
+	// фоновому стриму нельзя перетирать локальный стейт на done.
+	let mutatedDuringLoad = false;
 
 	function patchSubscriptionEnabled(nextEnabled: boolean): void {
 		if (subscription) {
 			subscription = { ...subscription, enabled: nextEnabled };
+			mutatedDuringLoad = true;
+			subscriptionDetailCache.set(id, $state.snapshot(subscription) as Subscription);
 		}
 	}
 
@@ -74,6 +79,7 @@
 		// объект и подменяем целиком на done.
 		const background = hydratedFromCache;
 		hydratedFromCache = false;
+		mutatedDuringLoad = false;
 		progressLoaded = 0;
 		progressTotal = 0;
 		error = '';
@@ -143,9 +149,14 @@
 				t.rejectedMembers = data.rejectedMembers ?? t.rejectedMembers ?? [];
 				t.infoItems = data.infoItems ?? t.infoItems ?? [];
 			}
-			if (background && t) subscription = t;
-			if (subscription) {
-				subscriptionDetailCache.set(id, $state.snapshot(subscription) as Subscription);
+			// Пользователь успел изменить состояние во время фонового стрима —
+			// локальный patched-стейт новее, не перетираем и не кэшируем устаревшее.
+			const skipSwap = background && mutatedDuringLoad;
+			if (!skipSwap) {
+				if (background && t) subscription = t;
+				if (subscription) {
+					subscriptionDetailCache.set(id, $state.snapshot(subscription) as Subscription);
+				}
 			}
 			streamDone = true;
 			loading = false;
@@ -175,8 +186,11 @@
 				}
 			}
 			// Browser fires onerror on connection drop. Surface partial state
-			// if we got members, generic error otherwise.
-			if (progressLoaded > 0 && progressTotal > 0) {
+			// if we got members, generic error otherwise. В фоновом режиме контент
+			// из кэша уже отрендерен полностью — баннер ошибки не показываем.
+			if (background) {
+				console.warn('Фоновый рефетч подписки прервался — показываем кэшированные данные');
+			} else if (progressLoaded > 0 && progressTotal > 0) {
 				error = `Загружено ${progressLoaded} из ${progressTotal} серверов. Соединение прервалось.`;
 			} else {
 				error = 'Не удалось загрузить подписку';

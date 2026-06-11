@@ -65,6 +65,7 @@
 			initialOutboundFingerprint = outboundFingerprint(outbound);
 			loading = false;
 		}
+		const tagAtFetchStart = editableTag;
 		try {
 			const r = await api.singboxGetTunnel(tag);
 			singboxOutboundCache.set(tag, {
@@ -75,8 +76,12 @@
 			if (!hasUnsavedChanges) {
 				outbound = r.outbound as Record<string, any>;
 				protocol = outbound?.type ?? '';
-				editableTag = r.tag;
 				initialOutboundFingerprint = outboundFingerprint(outbound);
+			}
+			// Tag правится отдельно от outbound — применяем серверное значение,
+			// только если пользователь не успел его изменить за время фетча.
+			if (editableTag === tagAtFetchStart) {
+				editableTag = r.tag;
 			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
