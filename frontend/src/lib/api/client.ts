@@ -60,7 +60,6 @@ import type {
 	DeviceProxyInstance,
 	DeviceProxyOutbound,
 	DeviceProxyRuntime,
-	DeviceProxyInstanceIPCheckResult,
 	AWGTagInfo,
 	TunnelReferencedError,
 	MonitoringSnapshot,
@@ -1781,17 +1780,6 @@ class ApiClient {
 		return this.request('/proxy/runtime');
 	}
 
-	async selectDeviceProxyRuntime(tag: string): Promise<{ active: string }> {
-		return this.request('/proxy/runtime/select', {
-			method: 'POST',
-			body: JSON.stringify({ tag }),
-		});
-	}
-
-	async applyDeviceProxy(): Promise<{ applied: boolean }> {
-		return this.request('/proxy/apply', { method: 'POST' });
-	}
-
 	async listDeviceProxyOutbounds(): Promise<DeviceProxyOutbound[]> {
 		return this.request('/proxy/outbounds');
 	}
@@ -1829,30 +1817,8 @@ class ApiClient {
 		});
 	}
 
-	async applyDeviceProxyInstances(): Promise<{ applied: boolean }> {
-		return this.request<{ applied: boolean }>('/proxy/instances/apply', {
-			method: 'POST'
-		});
-	}
-
 	async getDeviceProxyInstanceRuntime(id: string): Promise<DeviceProxyRuntime> {
 		return this.request<DeviceProxyRuntime>(`/proxy/instance/runtime?id=${encodeURIComponent(id)}`);
-	}
-
-	async selectDeviceProxyInstanceRuntime(id: string, tag: string): Promise<{ active: string }> {
-		return this.request<{ active: string }>(`/proxy/instance/runtime/select?id=${encodeURIComponent(id)}`, {
-			method: 'POST',
-			body: JSON.stringify({ tag })
-		});
-	}
-
-	async checkDeviceProxyInstanceExternalIP(
-		id: string,
-		serviceURL?: string
-	): Promise<DeviceProxyInstanceIPCheckResult> {
-		let endpoint = `/proxy/instance/check-ip?id=${encodeURIComponent(id)}`;
-		if (serviceURL) endpoint += `&service=${encodeURIComponent(serviceURL)}`;
-		return this.request<DeviceProxyInstanceIPCheckResult>(endpoint);
 	}
 
 	// #endregion

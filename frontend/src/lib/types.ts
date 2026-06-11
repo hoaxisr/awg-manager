@@ -889,13 +889,6 @@ export interface DeviceProxyRuntime {
 	defaultTag: string;
 }
 
-export interface DeviceProxyInstanceIPCheckResult {
-	directIp: string;
-	proxyIp: string;
-	ipChanged: boolean;
-	service: string;
-}
-
 // #endregion
 
 // ─────────────────────────────────────────────
