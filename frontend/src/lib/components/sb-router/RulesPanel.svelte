@@ -677,6 +677,7 @@
       dropCommitPending = true;
       detachDragInteraction();
       requestAnimationFrame(() => {
+        if (!dropCommitPending) return;
         dropExpanded = true;
         dropCommitTimer = setTimeout(async () => {
           dropCommitTimer = null;
