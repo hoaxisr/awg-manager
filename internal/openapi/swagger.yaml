@@ -82,7 +82,7 @@ definitions:
   api.AWGOutboundTagDTO:
     properties:
       iface:
-        example: t2s0
+        example: nwg0
         type: string
       kind:
         example: managed
@@ -2592,6 +2592,12 @@ definitions:
           type: string
         type: array
     type: object
+  api.SetServerEndpointRequest:
+    properties:
+      endpoint:
+        example: 203.0.113.42
+        type: string
+    type: object
   api.SetServerPolicyRequest:
     properties:
       policy:
@@ -4812,6 +4818,21 @@ definitions:
         type: boolean
       description:
         example: Wireguard VPN Server
+        type: string
+      enabled:
+        description: |-
+          Enabled reflects NDMS admin intent (summary.layer.conf == "running").
+          Status/connected alone are unreliable for the on/off toggle.
+        example: true
+        type: boolean
+      enabledKnown:
+        example: true
+        type: boolean
+      endpoint:
+        description: |-
+          Endpoint is the user-configured connect host for client .conf files.
+          Empty = WAN IP at generation time.
+        example: 203.0.113.42
         type: string
       id:
         example: Wireguard0
@@ -8628,6 +8649,44 @@ paths:
       summary: Routing tunnel catalog
       tags:
       - routing
+  /servers/{name}/endpoint:
+    post:
+      consumes:
+      - application/json
+      description: Stores the IP or domain embedded in generated client configs. Empty
+        clears the override and falls back to WAN IP. Returns the fresh servers snapshot.
+      parameters:
+      - description: Interface name (e.g. Wireguard0)
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Endpoint host
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SetServerEndpointRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ServersAllResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Set server client endpoint host
+      tags:
+      - servers
   /servers/{name}/nat:
     post:
       consumes:
