@@ -293,6 +293,7 @@ onMount(() => {
 	// the fetch below still runs and revalidates in the background.
 	const cachedSettings = get(settingsGlobal);
 	const cachedSysInfo = get(systemInfoStore).data;
+	const hydratedSnapshot = cachedSettings ? JSON.stringify(cachedSettings) : null;
 	if (cachedSettings) settings = cachedSettings;
 	if (cachedSysInfo) systemInfo = cachedSysInfo;
 	if (cachedSettings && cachedSysInfo) loading = false;
@@ -307,7 +308,11 @@ onMount(() => {
 				fetchSystemInfo(true),
 				api.getSettings(),
 			]);
-			if (!saving) {
+			// Применяем рефетч, только если локальное состояние не менялось с
+			// момента гидрации: правки пользователя и результаты сохранений
+			// важнее снапшота. Холодный путь (без гидрации) применяет всегда.
+			const untouched = hydratedSnapshot === null || JSON.stringify(settings) === hydratedSnapshot;
+			if (!saving && untouched) {
 				settings = appSettings;
 				setGlobalSettings(appSettings);
 			}
