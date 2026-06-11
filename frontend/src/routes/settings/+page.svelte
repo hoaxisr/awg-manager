@@ -24,7 +24,8 @@
 		PukhososPatrol,
 		SettingsSectionLabel,
 	} from "$lib/components/settings";
-	import { setSettings as setGlobalSettings } from "$lib/stores/settings";
+	import { setSettings as setGlobalSettings, settings as settingsGlobal } from "$lib/stores/settings";
+	import { systemInfo as systemInfoStore } from "$lib/stores/system";
 	import {
 		downloadOutbounds,
 		downloadOutboundsLoading,
@@ -288,6 +289,14 @@
 	}
 
 onMount(() => {
+	// SWR: render immediately from global stores (layout already loaded them);
+	// the fetch below still runs and revalidates in the background.
+	const cachedSettings = get(settingsGlobal);
+	const cachedSysInfo = get(systemInfoStore).data;
+	if (cachedSettings) settings = cachedSettings;
+	if (cachedSysInfo) systemInfo = cachedSysInfo;
+	if (cachedSettings && cachedSysInfo) loading = false;
+
 	const timer = setInterval(() => {
 		void fetchSystemInfo(true);
 	}, 30000);
@@ -298,8 +307,10 @@ onMount(() => {
 				fetchSystemInfo(true),
 				api.getSettings(),
 			]);
-			settings = appSettings;
-			setGlobalSettings(appSettings);
+			if (!saving) {
+				settings = appSettings;
+				setGlobalSettings(appSettings);
+			}
 			scrollToSettingsHashTarget();
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : "Не удалось загрузить настройки");
