@@ -1,5 +1,6 @@
 import { writable, type Readable, type Writable } from 'svelte/store';
 import { closeTrace } from './traceStore';
+import { clearSelection } from './templatesStore';
 import type { WizardEditMode } from './ruleWizardPrefill';
 
 export type OutboundCategory = 'tunnel' | 'direct' | 'block';
@@ -89,6 +90,8 @@ export function closeAddWizard(): void {
   tunnelW.set([]);
   customW.set(emptyCustom());
   clearEditState();
+  // Иначе selection из edit-prefill утекает в следующий «+ Правило».
+  clearSelection();
   setUrl(false);
 }
 

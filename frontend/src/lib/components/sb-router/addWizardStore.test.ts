@@ -161,4 +161,18 @@ describe('addWizardStore', () => {
     expect(get(m.wizardEditRuleIndex)).toBe(null);
     expect(get(m.wizardEditMode)).toBe(null);
   });
+
+  it('closeAddWizard clears templates selection (утечка edit-prefill)', async () => {
+    const m = await import('./addWizardStore');
+    const t = await import('./templatesStore');
+    t.setTemplateSelection(['svc:discord']);
+    m.openEditWizard(2, {
+      editMode: 'external',
+      rulesList: '',
+      outboundCategory: 'tunnel',
+      tunnelTags: ['warp'],
+    });
+    m.closeAddWizard();
+    expect(get(t.templatesSelection).size).toBe(0);
+  });
 });
