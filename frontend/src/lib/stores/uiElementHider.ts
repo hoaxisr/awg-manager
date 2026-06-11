@@ -48,6 +48,14 @@ function isHiddenElementRule(v: unknown): v is HiddenElementRule {
 	);
 }
 
+// crypto.randomUUID недоступен вне secure context (роутер по plain HTTP).
+function newRuleId(): string {
+	if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+		return crypto.randomUUID();
+	}
+	return `rule-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function persistRules(rules: HiddenElementRule[]): void {
 	if (typeof localStorage === 'undefined') return;
 	try {
@@ -90,7 +98,7 @@ export const uiElementHiderRules = {
 				...prev,
 				{
 					...rule,
-					id: crypto.randomUUID(),
+					id: newRuleId(),
 					createdAt: Date.now(),
 				},
 			];
