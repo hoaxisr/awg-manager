@@ -149,4 +149,63 @@ describe('createPollingStore', () => {
 
         u();
     });
+
+	describe('persistKey', () => {
+		beforeEach(() => sessionStorage.clear());
+
+		it('hydrates data from sessionStorage with stale status', () => {
+			sessionStorage.setItem('awgm:test', JSON.stringify({ v: 42 }));
+			const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+			const s = createPollingStore(fetcher, {
+				staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
+			});
+			const snap = get(s);
+			expect(snap.data).toEqual({ v: 42 });
+			expect(snap.status).toBe('stale');
+			expect(snap.lastFetchedAt).toBe(0);
+		});
+
+		it('refetches on first subscribe despite hydrated data', async () => {
+			sessionStorage.setItem('awgm:test', JSON.stringify({ v: 42 }));
+			const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+			const s = createPollingStore(fetcher, {
+				staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
+			});
+			const u = s.subscribe(() => {});
+			await vi.advanceTimersByTimeAsync(0);
+			expect(fetcher).toHaveBeenCalledTimes(1);
+			expect(get(s).data).toEqual({ v: 1 });
+			u();
+		});
+
+		it('writes snapshot to sessionStorage after successful fetch', async () => {
+			const fetcher = vi.fn().mockResolvedValue({ v: 7 });
+			const s = createPollingStore(fetcher, {
+				staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
+			});
+			const u = s.subscribe(() => {});
+			await vi.advanceTimersByTimeAsync(0);
+			expect(sessionStorage.getItem('awgm:test')).toBe(JSON.stringify({ v: 7 }));
+			u();
+		});
+
+		it('writes snapshot on applyMutationResponse', () => {
+			const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+			const s = createPollingStore(fetcher, {
+				staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
+			});
+			s.applyMutationResponse({ v: 9 });
+			expect(sessionStorage.getItem('awgm:test')).toBe(JSON.stringify({ v: 9 }));
+		});
+
+		it('ignores corrupt persisted JSON', () => {
+			sessionStorage.setItem('awgm:test', '{broken');
+			const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+			const s = createPollingStore(fetcher, {
+				staleTime: 1000, pollInterval: 10_000, persistKey: 'awgm:test',
+			});
+			expect(get(s).data).toBeNull();
+			expect(get(s).status).toBe('idle');
+		});
+	});
 });

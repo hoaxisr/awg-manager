@@ -20,6 +20,13 @@ export interface PollingOptions {
     pollInterval: number;
     // Error threshold before badge shows (default 3).
     errorThreshold?: number;
+    /**
+     * sessionStorage key for SWR snapshot persistence across page reloads.
+     * Hydrated data renders instantly with status 'stale'; first subscribe
+     * still refetches (lastFetchedAt stays 0). Don't use for payloads with
+     * secrets — sessionStorage is plaintext.
+     */
+    persistKey?: string;
 }
 
 /**
@@ -35,15 +42,38 @@ export interface PollingOptions {
  *  - applyMutationResponse(data): update cache, reset error counter.
  *  - Failed fetches: increment consecutiveFailures; stay in 'error' status
  *    once threshold is crossed. Cached data is NOT discarded.
+ *  - persistKey: if set, hydrates initial state from sessionStorage (status
+ *    'stale') and writes back on every successful fetch / applyMutationResponse.
  */
 export function createPollingStore<T>(
     fetcher: () => Promise<T>,
     opts: PollingOptions
 ): PollingStore<T> {
     const threshold = opts.errorThreshold ?? 3;
+
+    function readPersisted(): T | null {
+        if (!opts.persistKey || typeof sessionStorage === 'undefined') return null;
+        try {
+            const raw = sessionStorage.getItem(opts.persistKey);
+            return raw ? (JSON.parse(raw) as T) : null;
+        } catch {
+            return null;
+        }
+    }
+
+    function writePersisted(data: T): void {
+        if (!opts.persistKey || typeof sessionStorage === 'undefined') return;
+        try {
+            sessionStorage.setItem(opts.persistKey, JSON.stringify(data));
+        } catch {
+            // quota / private mode — кэш необязателен
+        }
+    }
+
+    const persisted = readPersisted();
     const state = writable<PollingState<T>>({
-        data: null,
-        status: 'idle',
+        data: persisted,
+        status: persisted !== null ? 'stale' : 'idle',
         error: null,
         lastFetchedAt: 0,
         consecutiveFailures: 0,
@@ -72,6 +102,7 @@ export function createPollingStore<T>(
                     lastFetchedAt: Date.now(),
                     consecutiveFailures: 0,
                 });
+                writePersisted(data);
             } catch (e) {
                 state.update(s => {
                     const fails = s.consecutiveFailures + 1;
@@ -130,16 +161,16 @@ export function createPollingStore<T>(
     return {
         subscribe(run, invalidate) {
             subCount++;
+            const unsub = state.subscribe(run, invalidate);
             if (subCount === 1) {
                 const s = get(state);
                 const age = Date.now() - s.lastFetchedAt;
                 if (s.lastFetchedAt === 0 || age > opts.staleTime) {
-                    void doFetch();
+                    void Promise.resolve().then(() => doFetch());
                 }
                 startPoll();
                 attachVisibilityHandler();
             }
-            const unsub = state.subscribe(run, invalidate);
             return () => {
                 unsub();
                 subCount--;
@@ -170,6 +201,7 @@ export function createPollingStore<T>(
                 lastFetchedAt: Date.now(),
                 consecutiveFailures: 0,
             });
+            writePersisted(data);
         },
     };
 }
