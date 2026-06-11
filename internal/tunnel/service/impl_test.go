@@ -255,7 +255,7 @@ func TestUpdate_KernelAddressChangeBeforeFirstStart(t *testing.T) {
 
 func TestUpdate_KernelAddressChangeRejectedWhenOpkgTunExists(t *testing.T) {
 	sm := NewMockStateManager()
-	sm.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped, OpkgTunExists: true})
+	sm.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped, OpkgTunExists: true, BackendType: "kernel"})
 	s := &ServiceImpl{state: sm}
 
 	old := &storage.AWGTunnel{ID: "awg10", Backend: "kernel", Interface: storage.AWGInterface{Address: "10.0.0.1/32", MTU: 1420}}
@@ -267,13 +267,30 @@ func TestUpdate_KernelAddressChangeRejectedWhenOpkgTunExists(t *testing.T) {
 
 func TestUpdate_KernelAddressChangeRejectedWhenProcessRunning(t *testing.T) {
 	sm := NewMockStateManager()
-	sm.SetState("awgm0", tunnel.StateInfo{State: tunnel.StateRunning, ProcessRunning: true})
+	sm.SetState("awgm0", tunnel.StateInfo{State: tunnel.StateRunning, ProcessRunning: true, BackendType: "kernel"})
 	s := &ServiceImpl{state: sm}
 
 	old := &storage.AWGTunnel{ID: "awgm0", Backend: "kernel", Interface: storage.AWGInterface{Address: "10.0.0.1/32", MTU: 1420}}
 	new_ := &storage.AWGTunnel{ID: "awgm0", Backend: "kernel", Interface: storage.AWGInterface{Address: "10.0.0.2/32", MTU: 1420}}
 	if err := s.Update(context.Background(), old, new_); err == nil {
 		t.Fatal("expected error when backend process is running")
+	}
+}
+
+func TestUpdate_UserspaceAddressChangeAllowedWhenCreated(t *testing.T) {
+	dir := t.TempDir()
+	oldConfDir := confDir
+	confDir = dir
+	t.Cleanup(func() { confDir = oldConfDir })
+
+	sm := NewMockStateManager()
+	sm.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped, OpkgTunExists: true, BackendType: "userspace"})
+	s := &ServiceImpl{state: sm}
+
+	old := &storage.AWGTunnel{ID: "awg10", Interface: storage.AWGInterface{Address: "10.0.0.1/32", MTU: 1420}}
+	new_ := &storage.AWGTunnel{ID: "awg10", Interface: storage.AWGInterface{Address: "10.0.0.2/32", MTU: 1420}}
+	if err := s.Update(context.Background(), old, new_); err != nil {
+		t.Fatalf("userspace address change must stay allowed (pre-PR behavior), got: %v", err)
 	}
 }
 

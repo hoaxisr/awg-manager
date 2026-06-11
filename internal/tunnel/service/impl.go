@@ -379,7 +379,7 @@ func (s *ServiceImpl) Update(ctx context.Context, oldStored, newStored *storage.
 	// start (not_created / no iface) only the .conf is updated.
 	if !s.isNativeWG(newStored) && newStored.Interface.Address != oldStored.Interface.Address {
 		stateInfo := s.state.GetState(ctx, tunnelID)
-		if stateInfo.OpkgTunExists || stateInfo.ProcessRunning {
+		if stateInfo.BackendType == "kernel" && (stateInfo.OpkgTunExists || stateInfo.ProcessRunning) {
 			return fmt.Errorf("address change is not supported in kernel mode")
 		}
 	}
