@@ -34,9 +34,9 @@ func allocateFakeIPIndex(live map[int]bool) (int, error) {
 
 // OpkgTunIndexLister перечисляет занятые индексы OpkgTun из источника NDMS.
 //
-// Узкий интерфейс намеренно объявлен в router, а не использует internal/ndms
-// напрямую: router НЕ может импортировать internal/ndms — это даёт import-cycle
-// через internal/tunnel/wan (см. service.go). Реальный union (kernel /sys +
+// Узкий интерфейс намеренно объявлен в router, а не тянет конкретные типы
+// internal/ndms: router декаплится от ndms через consumer-owned контракты (DIP),
+// как и WANInterfaceLister/IngressResolver. Реальный union (kernel /sys +
 // NDMS-имена) строит адаптер в cmd/awg-manager поверх UnionOpkgTunIndices
 // (Task 1C.2); здесь — только контракт.
 type OpkgTunIndexLister interface {

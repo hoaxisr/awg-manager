@@ -127,9 +127,9 @@ var _ router.BindableInterfaceLister = (*routerWANInterfaceAdapter)(nil)
 
 // routerWANInterfaceAdapter bridges ndmsquery.InterfaceStore's ListWAN
 // (returns []wan.Interface) into router.WANInterfaceLister (returns
-// []router.WANInterfaceInfo). router can't import internal/ndms
-// directly — would cycle through internal/tunnel/wan — so the
-// projection lives in main alongside the other router adapters.
+// []router.WANInterfaceInfo). router is decoupled from concrete ndms types
+// via consumer-owned interfaces (DIP), so the projection lives in main
+// alongside the other router adapters.
 type routerWANInterfaceAdapter struct {
 	store *ndmsquery.InterfaceStore
 }
@@ -156,8 +156,8 @@ var _ router.IngressResolver = (*routerIngressResolverAdapter)(nil)
 
 // routerIngressResolverAdapter резолвит "managed:WireguardN" → kernel-имя
 // ("nwgN") через InterfaceStore.ResolveSystemName. iface:-ref'ы router
-// резолвит сам без адаптера. Живёт в main — router не может импортить
-// internal/ndms (цикл через internal/tunnel/wan), как и WAN-адаптер.
+// резолвит сам без адаптера. Живёт в main — router декаплен от конкретных
+// типов internal/ndms через consumer-owned контракты (DIP), как и WAN-адаптер.
 type routerIngressResolverAdapter struct {
 	store *ndmsquery.InterfaceStore
 }
@@ -180,9 +180,9 @@ var _ router.DHCPProvider = (*ndmscommand.DHCPCommands)(nil)
 var _ router.StaticRouteProvider = (*routerStaticRouteAdapter)(nil)
 
 // routerStaticRouteAdapter translates router.StaticRouteSpec (router-local
-// mirror) into ndmscommand.StaticRouteSpec field-for-field. router can't
-// import internal/ndms (cycle via internal/tunnel/wan), so the spec is
-// duplicated and bridged here.
+// mirror) into ndmscommand.StaticRouteSpec field-for-field. The router keeps
+// its own spec to stay decoupled from concrete ndms command types (DIP), so
+// it's duplicated and bridged here.
 type routerStaticRouteAdapter struct{ routes *ndmscommand.RouteCommands }
 
 func (a *routerStaticRouteAdapter) AddStaticRoute(ctx context.Context, r router.StaticRouteSpec) error {

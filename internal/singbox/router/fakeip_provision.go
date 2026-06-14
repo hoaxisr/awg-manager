@@ -2,8 +2,10 @@ package router
 
 import "context"
 
-// StaticRouteSpec mirrors internal/ndms/command.StaticRouteSpec — router cannot
-// import internal/ndms (cycle). The cmd/awg-manager adapter translates field-for-field.
+// StaticRouteSpec mirrors internal/ndms/command.StaticRouteSpec so the router
+// stays decoupled from concrete ndms command types (DIP), consistent with the
+// other consumer-owned router interfaces. The cmd/awg-manager adapter translates
+// field-for-field.
 type StaticRouteSpec struct {
 	Interface string
 	Host      string

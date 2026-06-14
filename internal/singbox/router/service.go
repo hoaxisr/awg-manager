@@ -145,8 +145,8 @@ type WANInterfaceInfo struct {
 
 // WANInterfaceLister is the narrow contract the service needs from the
 // NDMS interface store. *ndmsquery.InterfaceStore satisfies it. The
-// router package can't import internal/ndms (would cycle through
-// internal/tunnel/wan); the adapter in cmd/awg-manager bridges the gap.
+// router stays decoupled from concrete internal/ndms types via this
+// consumer-owned interface (DIP); the adapter in cmd/awg-manager bridges the gap.
 type WANInterfaceLister interface {
 	ListWAN(ctx context.Context) ([]WANInterfaceInfo, error)
 }
@@ -161,8 +161,8 @@ type BindableInterfaceLister interface {
 // IngressResolver резолвит ref интерфейса ("managed:Wireguard3") в
 // kernel-имя ("nwg3"). Возвращает "" если не резолвится (сервер удалён /
 // интерфейс ещё не поднят). Реализуется адаптером в cmd/awg-manager
-// поверх InterfaceStore.ResolveSystemName (router не может импортить
-// internal/ndms — цикл через internal/tunnel/wan).
+// поверх InterfaceStore.ResolveSystemName (router декаплен от конкретных
+// типов internal/ndms через consumer-owned контракт — DIP).
 type IngressResolver interface {
 	Resolve(ctx context.Context, ref string) string
 }
