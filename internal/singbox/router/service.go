@@ -800,6 +800,15 @@ func (s *ServiceImpl) Enable(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("router settings: %w", err)
 	}
+
+	// fakeip-tun has an entirely separate provisioning path (OpkgTun + tun +
+	// fakeip DNS + auto-routes + DHCP) with its own rollback. The tproxy body
+	// below stays byte-for-byte unchanged for RoutingMode=="tproxy".
+	if sr.RoutingMode == "fakeip-tun" {
+		sr.Enabled = true
+		return s.enableFakeIPTun(ctx, settings, sr)
+	}
+
 	policyMode := sr.DeviceMode == "" || sr.DeviceMode == "policy"
 	mark := ""
 	if policyMode {
