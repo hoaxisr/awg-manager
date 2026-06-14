@@ -368,3 +368,16 @@ func TestValidateDNSServer_FakeIPRequiresRange(t *testing.T) {
 		t.Error("expected error: fakeip requires inet4_range")
 	}
 }
+
+func TestAddDNSRule_SourceIPCIDRToFakeip(t *testing.T) {
+	c := NewEmptyConfig()
+	_ = c.AddDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10"})
+	err := c.AddDNSRule(DNSRule{SourceIPCIDR: []string{"192.168.1.0/24"}, QueryType: []string{"A", "AAAA"}, Action: "route", Server: "fakeip"})
+	if err != nil {
+		t.Fatalf("add rule: %v", err)
+	}
+	b, _ := json.Marshal(c.DNS.Rules[0])
+	if !strings.Contains(string(b), `"source_ip_cidr":["192.168.1.0/24"]`) {
+		t.Errorf("missing source_ip_cidr: %s", b)
+	}
+}

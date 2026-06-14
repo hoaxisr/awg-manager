@@ -129,6 +129,12 @@ type Outbound struct {
 	Tolerance     int      `json:"tolerance,omitempty"`
 	Default       string   `json:"default,omitempty"`
 	Strategy      string   `json:"strategy,omitempty"`
+	// Server and DomainResolver support fakeip-tun's domain_resolver guard:
+	// a hostname-bearing proxy outbound resolves its Server via the named
+	// resolver instead of the fakeip server. Both omitempty so v1 IP-bound
+	// direct outbounds stay clean.
+	Server         string          `json:"server,omitempty"`
+	DomainResolver *DomainResolver `json:"domain_resolver,omitempty"`
 }
 
 // CompositeOutboundView is the API/list projection of a composite
@@ -179,6 +185,10 @@ type Route struct {
 	// other so the emitted config never carries both. NEVER stores
 	// NDMS interface ID — kernel name is the stable identifier.
 	DefaultInterface string `json:"default_interface,omitempty"`
+	// DefaultDomainResolver names the DNS server used to resolve outbound
+	// hostnames that no rule pins elsewhere (fakeip-tun: a "real" resolver
+	// so proxy server hostnames don't get fakeip addresses).
+	DefaultDomainResolver *DomainResolver `json:"default_domain_resolver,omitempty"`
 }
 
 type DomainResolver struct {
@@ -205,6 +215,7 @@ type DNSServer struct {
 
 type DNSRule struct {
 	RuleSet       []string `json:"rule_set,omitempty"`
+	SourceIPCIDR  []string `json:"source_ip_cidr,omitempty"`
 	DomainSuffix  []string `json:"domain_suffix,omitempty"`
 	Domain        []string `json:"domain,omitempty"`
 	DomainKeyword []string `json:"domain_keyword,omitempty"`

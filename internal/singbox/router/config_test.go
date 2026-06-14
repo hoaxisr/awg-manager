@@ -444,3 +444,38 @@ func TestInbound_TunFieldsMarshal(t *testing.T) {
 		t.Errorf("tun inbound must omit listen: %s", s)
 	}
 }
+
+func TestRoute_DefaultDomainResolverMarshal(t *testing.T) {
+	r := Route{DefaultDomainResolver: &DomainResolver{Server: "real"}}
+	b, _ := json.Marshal(r)
+	if !strings.Contains(string(b), `"default_domain_resolver":{"server":"real"}`) {
+		t.Errorf("got %s", b)
+	}
+}
+
+func TestOutbound_DomainResolverAndServerMarshal(t *testing.T) {
+	o := Outbound{Type: "vless", Tag: "p", Server: "example.com", DomainResolver: &DomainResolver{Server: "real"}}
+	b := string(mustMarshal(t, o))
+	if !strings.Contains(b, `"server":"example.com"`) {
+		t.Errorf("missing server: %s", b)
+	}
+	if !strings.Contains(b, `"domain_resolver":{"server":"real"}`) {
+		t.Errorf("missing domain_resolver: %s", b)
+	}
+	plain := string(mustMarshal(t, Outbound{Type: "direct", Tag: "d"}))
+	if strings.Contains(plain, `"server"`) {
+		t.Errorf("plain outbound must omit server: %s", plain)
+	}
+	if strings.Contains(plain, `"domain_resolver"`) {
+		t.Errorf("plain outbound must omit domain_resolver: %s", plain)
+	}
+}
+
+func mustMarshal(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
+}

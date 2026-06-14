@@ -149,6 +149,7 @@ func validateDNSRule(r DNSRule, serverTags map[string]bool) error {
 
 func dnsRuleHasMatcher(r DNSRule) bool {
 	return len(r.RuleSet) > 0 ||
+		len(r.SourceIPCIDR) > 0 ||
 		len(r.DomainSuffix) > 0 ||
 		len(r.Domain) > 0 ||
 		len(r.DomainKeyword) > 0 ||
