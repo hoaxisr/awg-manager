@@ -115,3 +115,25 @@ func TestRouteCommands_RemoveStaticRoute(t *testing.T) {
 		t.Errorf("remove static: %#v", r)
 	}
 }
+
+func TestRouteCommands_AddStaticRoute6(t *testing.T) {
+	cmds, poster := newTestRouteCommands(t)
+	if err := cmds.AddStaticRoute6(context.Background(), "3f80::/10", "OpkgTun10"); err != nil {
+		t.Fatalf("add6: %v", err)
+	}
+	r := poster.Payloads()[0].(map[string]any)["ipv6"].(map[string]any)["route"].(map[string]any)
+	if r["network"] != "3f80::/10" || r["interface"] != "OpkgTun10" || r["auto"] != true {
+		t.Errorf("ipv6 route: %#v", r)
+	}
+}
+
+func TestRouteCommands_RemoveStaticRoute6(t *testing.T) {
+	cmds, poster := newTestRouteCommands(t)
+	if err := cmds.RemoveStaticRoute6(context.Background(), "3f80::/10", "OpkgTun10"); err != nil {
+		t.Fatalf("rm6: %v", err)
+	}
+	r := poster.Payloads()[0].(map[string]any)["ipv6"].(map[string]any)["route"].(map[string]any)
+	if r["network"] != "3f80::/10" || r["no"] != true {
+		t.Errorf("ipv6 route remove: %#v", r)
+	}
+}

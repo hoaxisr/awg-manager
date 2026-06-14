@@ -115,6 +115,34 @@ func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRoute
 	return c.mutate(ctx, payload, "remove static route")
 }
 
+// AddStaticRoute6 adds an IPv6 network route (auto = NDMS reasserts on iface up).
+func (c *RouteCommands) AddStaticRoute6(ctx context.Context, network, iface string) error {
+	payload := map[string]any{
+		"ipv6": map[string]any{
+			"route": map[string]any{
+				"network":   network,
+				"interface": iface,
+				"auto":      true,
+			},
+		},
+	}
+	return c.mutate(ctx, payload, "add ipv6 static route")
+}
+
+// RemoveStaticRoute6 removes an IPv6 network route.
+func (c *RouteCommands) RemoveStaticRoute6(ctx context.Context, network, iface string) error {
+	payload := map[string]any{
+		"ipv6": map[string]any{
+			"route": map[string]any{
+				"network":   network,
+				"interface": iface,
+				"no":        true,
+			},
+		},
+	}
+	return c.mutate(ctx, payload, "remove ipv6 static route")
+}
+
 // mutate is a thin wrapper over postMutation with RouteCommands' fixed
 // invalidation set (Routes + RunningConfig). Every route mutation touches
 // both caches identically, so we pin them in one place.
