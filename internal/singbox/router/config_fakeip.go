@@ -52,6 +52,19 @@ func boolPtr(v bool) *bool { return &v }
 //   - experimental.cache_file persists the fakeip name↔address map across
 //     restarts so existing connections keep their address.
 func BuildFakeIPTunConfig(s FakeIPTunSpec) (*RouterConfig, error) {
+	if p, err := netip.ParsePrefix(s.TunAddr4); err != nil {
+		return nil, fmt.Errorf("fakeip-tun: invalid TunAddr4 %q: %w", s.TunAddr4, err)
+	} else if !p.Addr().Is4() {
+		return nil, fmt.Errorf("fakeip-tun: TunAddr4 %q is not IPv4", s.TunAddr4)
+	}
+	if s.TunAddr6 != "" {
+		if p, err := netip.ParsePrefix(s.TunAddr6); err != nil {
+			return nil, fmt.Errorf("fakeip-tun: invalid TunAddr6 %q: %w", s.TunAddr6, err)
+		} else if p.Addr().Is4() {
+			return nil, fmt.Errorf("fakeip-tun: TunAddr6 %q is not IPv6", s.TunAddr6)
+		}
+	}
+
 	cfg := NewEmptyConfig()
 
 	addrs := []string{s.TunAddr4}

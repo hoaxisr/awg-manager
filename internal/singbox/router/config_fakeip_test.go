@@ -105,6 +105,42 @@ func TestBuildFakeIPTunConfig_SourceIPCIDR(t *testing.T) {
 	}
 }
 
+// TestBuildFakeIPTunConfig_InvalidTunAddr4 verifies the builder fails fast on a
+// missing or malformed v4 tun address rather than deferring to a sing-box FATAL.
+func TestBuildFakeIPTunConfig_InvalidTunAddr4(t *testing.T) {
+	base := FakeIPTunSpec{
+		Iface: "opkgtun10", MTU: 1500,
+		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
+		Outbounds: []Outbound{{Type: "direct", Tag: "proxy", BindInterface: "nwg2"}},
+		ProxyTag:  "proxy",
+	}
+	for _, bad := range []string{"", "garbage", "3f80::1/126"} {
+		spec := base
+		spec.TunAddr4 = bad
+		if _, err := BuildFakeIPTunConfig(spec); err == nil {
+			t.Errorf("TunAddr4 %q should error", bad)
+		}
+	}
+}
+
+// TestBuildFakeIPTunConfig_InvalidTunAddr6 verifies a non-empty but malformed or
+// non-v6 TunAddr6 is rejected.
+func TestBuildFakeIPTunConfig_InvalidTunAddr6(t *testing.T) {
+	base := FakeIPTunSpec{
+		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", MTU: 1500,
+		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
+		Outbounds: []Outbound{{Type: "direct", Tag: "proxy", BindInterface: "nwg2"}},
+		ProxyTag:  "proxy",
+	}
+	for _, bad := range []string{"garbage", "172.18.0.1/30"} {
+		spec := base
+		spec.TunAddr6 = bad
+		if _, err := BuildFakeIPTunConfig(spec); err == nil {
+			t.Errorf("TunAddr6 %q should error", bad)
+		}
+	}
+}
+
 // --- C(a): outbound.domain_resolver guard ---
 
 func TestApplyOutboundDomainResolver_HostnameGetsResolver(t *testing.T) {
