@@ -479,3 +479,14 @@ func mustMarshal(t *testing.T, v any) []byte {
 	}
 	return b
 }
+
+func TestRouterConfig_CacheFileFakeIPMarshal(t *testing.T) {
+	c := NewEmptyConfig()
+	c.Experimental = &Experimental{CacheFile: &CacheFile{Enabled: true, StoreFakeIP: true, Path: "/opt/etc/awg-manager/singbox/cache.db"}}
+	b, _ := json.Marshal(c)
+	for _, want := range []string{`"experimental"`, `"cache_file"`, `"store_fakeip":true`, `"path":"/opt/etc/awg-manager/singbox/cache.db"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("missing %s: %s", want, b)
+		}
+	}
+}

@@ -234,9 +234,20 @@ type DNS struct {
 	Strategy string      `json:"strategy,omitempty"`
 }
 
+type CacheFile struct {
+	Enabled     bool   `json:"enabled,omitempty"`
+	StoreFakeIP bool   `json:"store_fakeip,omitempty"`
+	Path        string `json:"path,omitempty"`
+}
+
+type Experimental struct {
+	CacheFile *CacheFile `json:"cache_file,omitempty"`
+}
+
 type RouterConfig struct {
-	Inbounds  []Inbound  `json:"inbounds"`
-	Outbounds []Outbound `json:"outbounds"`
-	DNS       DNS        `json:"dns,omitempty"`
-	Route     Route      `json:"route"`
+	Inbounds     []Inbound     `json:"inbounds"`
+	Outbounds    []Outbound    `json:"outbounds"`
+	DNS          DNS           `json:"dns,omitempty"`
+	Route        Route         `json:"route"`
+	Experimental *Experimental `json:"experimental,omitempty"`
 }
