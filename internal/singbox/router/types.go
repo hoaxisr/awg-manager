@@ -145,13 +145,22 @@ type CompositeOutboundView struct {
 type Inbound struct {
 	Type        string `json:"type"`
 	Tag         string `json:"tag"`
-	Listen      string `json:"listen"`
-	ListenPort  int    `json:"listen_port"`
+	Listen      string `json:"listen,omitempty"`
+	ListenPort  int    `json:"listen_port,omitempty"`
 	Network     string `json:"network,omitempty"`
 	UDPTimeout  string `json:"udp_timeout,omitempty"`
 	UDPFragment bool   `json:"udp_fragment,omitempty"`
 	TCPFastOpen bool   `json:"tcp_fast_open,omitempty"`
 	RoutingMark int    `json:"routing_mark,omitempty"`
+	// tun inbound (fakeip-tun mode)
+	InterfaceName          string   `json:"interface_name,omitempty"`
+	Address                []string `json:"address,omitempty"`
+	MTU                    int      `json:"mtu,omitempty"`
+	AutoRoute              *bool    `json:"auto_route,omitempty"`
+	AutoRedirect           *bool    `json:"auto_redirect,omitempty"`
+	StrictRoute            *bool    `json:"strict_route,omitempty"`
+	Stack                  string   `json:"stack,omitempty"`
+	EndpointIndependentNAT *bool    `json:"endpoint_independent_nat,omitempty"`
 }
 
 type Route struct {

@@ -426,3 +426,21 @@ func TestUpdateCompositeOutbound_RejectsCycle(t *testing.T) {
 		t.Fatal("update closing a cycle must be rejected")
 	}
 }
+
+func TestInbound_TunFieldsMarshal(t *testing.T) {
+	in := Inbound{
+		Type: "tun", Tag: "tun-in", InterfaceName: "opkgtun10",
+		Address: []string{"172.18.0.1/30", "fdfe:dcba:9876::1/126"},
+		MTU: 1500, Stack: "gvisor",
+	}
+	b, _ := json.Marshal(in)
+	s := string(b)
+	for _, want := range []string{`"interface_name":"opkgtun10"`, `"address":["172.18.0.1/30"`, `"mtu":1500`, `"stack":"gvisor"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %s in %s", want, s)
+		}
+	}
+	if strings.Contains(s, `"listen"`) {
+		t.Errorf("tun inbound must omit listen: %s", s)
+	}
+}
