@@ -40,6 +40,13 @@ var fakeIPAddrFlush = func(ctx context.Context, iface string) error {
 func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Settings, sr storage.SingboxRouterSettings) (err error) {
 	p := s.deps.FakeIPTun
 
+	// Fail-fast nil-guard: production wires every fakeip dep, but a degraded /
+	// mis-wired build would otherwise nil-panic mid-provision. Refuse loudly
+	// before touching any state.
+	if s.deps.OpkgTun == nil || s.deps.StaticRoutes == nil || s.deps.DHCP == nil || s.deps.OpkgTunIndices == nil {
+		return fmt.Errorf("fakeip-tun: provisioning deps not wired")
+	}
+
 	// Resolve egress from the persisted router config: the proxy tag is its
 	// route.final, and the outbounds carry the proxy + direct definitions that
 	// the fakeip config reuses verbatim. Refuse to provision a fakeip-tun with
@@ -49,6 +56,9 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	if err != nil {
 		return fmt.Errorf("enable fakeip-tun: load router config: %w", err)
 	}
+	// Coupling note: the fakeip egress follows the user's configured default
+	// outbound (route.final). Changing route.final changes where every faked
+	// domain is routed — there is no separate fakeip-egress knob in v1.
 	proxyTag := cfg.Route.Final
 	if proxyTag == "" || !outboundExists(cfg.Outbounds, proxyTag) {
 		return fmt.Errorf("enable fakeip-tun: no usable egress: route.final %q is not a configured outbound", proxyTag)
@@ -60,7 +70,14 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("enable fakeip-tun: tun addr: %w", err)
 	}
 	// Derive the v4 fakeip pool network + dotted mask for the auto static route.
-	poolNet4, poolMask4, err := splitCIDRToAddrMask(p.Inet4Range)
+	// Mask the prefix first so a user-supplied non-masked pool (e.g.
+	// "10.130.0.0/10") yields the network address ("10.128.0.0"), not a host —
+	// a non-masked Network would make NDMS reject or mis-install the route.
+	poolPrefix4, err := netip.ParsePrefix(p.Inet4Range)
+	if err != nil {
+		return fmt.Errorf("enable fakeip-tun: pool range: %w", err)
+	}
+	poolNet4, poolMask4, err := splitCIDRToAddrMask(poolPrefix4.Masked().String())
 	if err != nil {
 		return fmt.Errorf("enable fakeip-tun: pool range: %w", err)
 	}
@@ -73,6 +90,23 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	if err != nil {
 		return fmt.Errorf("enable fakeip-tun: list opkgtun indices: %w", err)
 	}
+
+	// Idempotency guard (CRITICAL): fakeip-tun installs no iptables, so Reconcile's
+	// installed-check is always false and routes every scheduler tick + startup here.
+	// If we are already provisioned with a LIVE iface, this is a no-op reconcile —
+	// re-provisioning would allocate a new index, clobber persist, orphan the prior
+	// iface, and exhaust the 0..9 range. Full drift-reconcile (re-advertise health-
+	// gated DNS, re-add routes, restart a dead sing-box) is Task 15 (1D.3); here we
+	// only prevent the leak. Sits BEFORE allocate/SetFakeIPState/Create — the
+	// no-op return runs before any rollback is pushed.
+	if prev := settings.FakeIP; prev != nil && prev.Provisioned {
+		if live[prev.Index] {
+			return nil // already provisioned + iface live → no-op (Enabled already persisted)
+		}
+		// provisioned but iface NOT live (crash/manual removal) → fall through and
+		// re-provision (allocateFakeIPIndex reuses the now-free index; old iface gone, no leak).
+	}
+
 	idx, err := allocateFakeIPIndex(live)
 	if err != nil {
 		return fmt.Errorf("enable fakeip-tun: allocate index: %w", err)
@@ -210,6 +244,11 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// then wait for it to be truly ready (process + tun carrier + live fakeip
 	// DNS). HARD fail: an unready sing-box with the DHCP DNS advertised would
 	// black-hole client DNS, so we roll the whole thing back.
+	//
+	// RISK (1F.1): the flush-vs-sing-box-attach ordering is PoC-derived and MUST
+	// be asserted on the live stand — the orchestrator reload that makes sing-box
+	// attach to the tun is debounced (~250ms), so the flush here may race the
+	// attach. Verify the tun keeps the sing-box-assigned address on the stand.
 	if err = fakeIPAddrFlush(ctx, iface); err != nil {
 		return fmt.Errorf("enable fakeip-tun: addr flush: %w", err)
 	}
@@ -294,6 +333,10 @@ func (s *ServiceImpl) fakeIPEgressUp(cfg *RouterConfig) bool {
 		if o.BindInterface != "" {
 			return tunReadyProbe(o.BindInterface)
 		}
+		// RISK (blind true): a bind-less proxy / composite outbound has no carrier
+		// signal, so we return up unconditionally. A real proxy-egress health gate
+		// would need a Clash-API delay probe against the outbound (roadmap) — until
+		// then a dead proxy still advertises DNS and clients black-hole silently.
 		return true
 	}
 	return false

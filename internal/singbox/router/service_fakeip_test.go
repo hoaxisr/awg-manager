@@ -263,6 +263,12 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 	// no global-ish call leaked — Create is the only creation op).
 	mustOrder(createCall, "SetAddress:"+iface+":172.18.0.1:255.255.255.252")
 	mustOrder("SetAddress:"+iface+":172.18.0.1:255.255.255.252", "SetMTU:"+iface)
+	// v6: SetIPv6Address is driven (defaults carry TunAddr6) and lands after the
+	// v4 SetAddress, before SetMTU.
+	mustOrder("SetAddress:"+iface+":172.18.0.1:255.255.255.252", "SetIPv6Address:"+iface+":fdfe:dcba:9876::1")
+	mustOrder("SetIPv6Address:"+iface+":fdfe:dcba:9876::1", "SetMTU:"+iface)
+	// v6 pool route is added (defaults carry Inet6Range) after the v4 pool route.
+	mustOrder("AddRoute:10.128.0.0:255.192.0.0:"+iface, "AddRoute6:3f80::/10:"+iface)
 	mustOrder("SetMTU:"+iface, "InterfaceUp:"+iface)
 	mustOrder("InterfaceUp:"+iface, "Flush:"+iface)
 	// Flush precedes the pool route (waitForSingbox sits between, no recorded call).
@@ -287,7 +293,7 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
-	steps := []string{"Create", "SetAddress", "SetMTU", "InterfaceUp", "Flush", "AddRoute", "SetPoolDNS"}
+	steps := []string{"Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "Flush", "AddRoute", "AddRoute6", "SetPoolDNS"}
 	for _, step := range steps {
 		t.Run(step, func(t *testing.T) {
 			h := newFakeIPEnableHarness(t, step)
@@ -326,7 +332,7 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 			}
 			// A failure before the route step must not leave a route applied.
 			switch step {
-			case "Create", "SetAddress", "SetMTU", "InterfaceUp", "Flush":
+			case "Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "Flush":
 				if h.log.has("AddRoute:10.128.0.0:255.192.0.0:" + iface) {
 					t.Errorf("%s: route should not have been added", step)
 				}
@@ -338,10 +344,24 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 				if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
 					t.Errorf("AddRoute: DHCP DNS should not have been set")
 				}
+			case "AddRoute6":
+				// v6-route-add failure: the v4 route was already added and must be
+				// removed in rollback; the v6 route itself never landed (so nothing
+				// to remove for it). DHCP must not be set. (iface teardown + persist
+				// clear are asserted by the common checks above.)
+				if !h.log.has("RemoveRoute:10.128.0.0:" + iface) {
+					t.Errorf("AddRoute6: rollback missing RemoveRoute (v4): %v", h.log.calls)
+				}
+				if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
+					t.Errorf("AddRoute6: DHCP DNS should not have been set")
+				}
 			case "SetPoolDNS":
-				// Route was added then must be removed in rollback.
+				// Routes were added then must be removed in rollback (v4 + v6).
 				if !h.log.has("RemoveRoute:10.128.0.0:" + iface) {
 					t.Errorf("SetPoolDNS: rollback missing RemoveRoute: %v", h.log.calls)
+				}
+				if !h.log.has("RemoveRoute6:3f80::/10:" + iface) {
+					t.Errorf("SetPoolDNS: rollback missing RemoveRoute6: %v", h.log.calls)
 				}
 			}
 		})
@@ -519,5 +539,163 @@ func TestEnableFakeIPTun_AllocatesLowestFreeIndex(t *testing.T) {
 	}
 	if !h.log.has("Create:opkgtun2:private") {
 		t.Errorf("expected Create opkgtun2, got %v", h.log.calls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Idempotency guard: a second Enable while already provisioned + iface LIVE
+// must be a no-op (CRITICAL: Reconcile routes here every 30s tick because
+// fakeip-tun installs no iptables → installed-check always false).
+// ---------------------------------------------------------------------------
+
+func TestEnableFakeIPTun_IdempotentWhenProvisioned(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+
+	// First Enable provisions opkgtun0.
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("first Enable: %v", err)
+	}
+	st1 := h.loadFakeIP(t)
+	if st1 == nil || !st1.Provisioned || st1.Index != 0 {
+		t.Fatalf("after first Enable FakeIP = %+v, want provisioned index 0", st1)
+	}
+	createCount1 := countCalls(h.log, "Create:opkgtun0:private")
+	if createCount1 != 1 {
+		t.Fatalf("first Enable Create count = %d, want 1", createCount1)
+	}
+
+	// Make the allocator report the provisioned index (0) as LIVE so the
+	// idempotency guard sees a live iface, and arrange that a (bogus) re-provision
+	// would pick a DIFFERENT index (1) — proving the guard, not a coincidence.
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+
+	// Second Enable with the same settings → no-op.
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("second Enable (idempotent): %v", err)
+	}
+
+	// No second Create at all (neither opkgtun0 nor any other index).
+	if c := countCalls(h.log, "Create:opkgtun0:private"); c != 1 {
+		t.Errorf("Create:opkgtun0 count = %d after second Enable, want 1 (no re-provision)", c)
+	}
+	if h.log.has("Create:opkgtun1:private") {
+		t.Errorf("second Enable allocated a NEW index: %v", h.log.calls)
+	}
+
+	// Persist index unchanged.
+	st2 := h.loadFakeIP(t)
+	if st2 == nil || st2.Index != st1.Index {
+		t.Errorf("FakeIP index changed: %+v → %+v (guard must not re-allocate)", st1, st2)
+	}
+}
+
+// Fall-through: provisioned in persist but the iface is NOT live (crash / manual
+// removal) → the guard must NOT short-circuit; Enable re-provisions (Create
+// runs). allocateFakeIPIndex reuses the now-free index, so no leak.
+func TestEnableFakeIPTun_ReprovisionsWhenIfaceGone(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("first Enable: %v", err)
+	}
+	if c := countCalls(h.log, "Create:opkgtun0:private"); c != 1 {
+		t.Fatalf("first Enable Create count = %d, want 1", c)
+	}
+
+	// Persist says provisioned (index 0) but the allocator reports NOTHING live —
+	// the iface vanished. Guard must fall through and re-provision into index 0.
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{}}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("second Enable (reprovision): %v", err)
+	}
+	if c := countCalls(h.log, "Create:opkgtun0:private"); c != 2 {
+		t.Errorf("Create:opkgtun0 count = %d, want 2 (re-provisioned after iface gone): %v", c, h.log.calls)
+	}
+}
+
+// countCalls returns how many times the exact label appears in the log.
+func countCalls(l *callLog, want string) int {
+	n := 0
+	for _, c := range l.calls {
+		if c == want {
+			n++
+		}
+	}
+	return n
+}
+
+// ---------------------------------------------------------------------------
+// nil-guard: a mis-wired build (a required fakeip dep nil) must fail loudly,
+// not nil-panic mid-provision.
+// ---------------------------------------------------------------------------
+
+func TestEnableFakeIPTun_NilDepsFailFast(t *testing.T) {
+	cases := []struct {
+		name string
+		nilf func(*ServiceImpl)
+	}{
+		{"OpkgTun", func(s *ServiceImpl) { s.deps.OpkgTun = nil }},
+		{"StaticRoutes", func(s *ServiceImpl) { s.deps.StaticRoutes = nil }},
+		{"DHCP", func(s *ServiceImpl) { s.deps.DHCP = nil }},
+		{"OpkgTunIndices", func(s *ServiceImpl) { s.deps.OpkgTunIndices = nil }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newFakeIPEnableHarness(t, "")
+			tc.nilf(h.svc)
+			err := h.svc.Enable(context.Background())
+			if err == nil {
+				t.Fatalf("expected error when %s is nil", tc.name)
+			}
+			// Nothing provisioned, nothing persisted.
+			if st := h.loadFakeIP(t); st != nil {
+				t.Errorf("FakeIP persist = %+v, want nil (refused before any work)", st)
+			}
+			if len(h.log.calls) != 0 {
+				t.Errorf("no provisioning calls expected, got %v", h.log.calls)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Reconcile regression: the real-world trigger. fakeip-tun installs no iptables,
+// so Reconcile's installed-check is always false and it routes to Enable on
+// EVERY tick. A second Reconcile while enabled+provisioned must NOT re-provision.
+// ---------------------------------------------------------------------------
+
+func TestReconcileFakeIPTun_NoReprovision(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	// Wire an IPTables whose probes always error → IsInstalled/HasAnyInstalled
+	// both false, exactly like the real fakeip-tun path (no chains installed).
+	h.svc.deps.IPTables = &IPTables{
+		runIPTables:    func(context.Context, ...string) error { return errors.New("no chain") },
+		runIPTablesOut: func(context.Context, ...string) (string, error) { return "", errors.New("no chain") },
+	}
+
+	// First Reconcile: Enabled=false initially → nothing. We must first Enable so
+	// settings.Enabled flips true and the index is provisioned.
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	createCount1 := countCalls(h.log, "Create:opkgtun0:private")
+	if createCount1 != 1 {
+		t.Fatalf("after Enable Create count = %d, want 1", createCount1)
+	}
+
+	// The scheduler's allocator reflects the live iface (index 0 occupied).
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+
+	// Reconcile sees Enabled=true && !installedComplete → routes to Enable → must
+	// hit the idempotency guard and no-op.
+	if err := h.svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if c := countCalls(h.log, "Create:opkgtun0:private"); c != 1 {
+		t.Errorf("Create count = %d after Reconcile, want 1 (no re-provision): %v", c, h.log.calls)
+	}
+	if h.log.has("Create:opkgtun1:private") {
+		t.Errorf("Reconcile leaked a new index: %v", h.log.calls)
 	}
 }
