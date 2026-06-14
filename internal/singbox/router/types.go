@@ -235,7 +235,7 @@ type DNS struct {
 }
 
 type CacheFile struct {
-	Enabled     bool   `json:"enabled,omitempty"`
+	Enabled     bool   `json:"enabled"`
 	StoreFakeIP bool   `json:"store_fakeip,omitempty"`
 	Path        string `json:"path,omitempty"`
 }

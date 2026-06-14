@@ -2,6 +2,7 @@ package router
 
 import (
 	"fmt"
+	"net/netip"
 	"regexp"
 	"strings"
 )
@@ -91,6 +92,24 @@ func validateDNSServer(s DNSServer) error {
 		if strings.TrimSpace(s.Inet4Range) == "" && strings.TrimSpace(s.Inet6Range) == "" {
 			return fmt.Errorf("dns server %q: fakeip requires inet4_range or inet6_range", s.Tag)
 		}
+		if r := strings.TrimSpace(s.Inet4Range); r != "" {
+			p, err := netip.ParsePrefix(r)
+			if err != nil {
+				return fmt.Errorf("dns server %q: invalid inet4_range %q: %w", s.Tag, r, err)
+			}
+			if !p.Addr().Is4() {
+				return fmt.Errorf("dns server %q: inet4_range %q is not IPv4", s.Tag, r)
+			}
+		}
+		if r := strings.TrimSpace(s.Inet6Range); r != "" {
+			p, err := netip.ParsePrefix(r)
+			if err != nil {
+				return fmt.Errorf("dns server %q: invalid inet6_range %q: %w", s.Tag, r, err)
+			}
+			if p.Addr().Is4() {
+				return fmt.Errorf("dns server %q: inet6_range %q is not IPv6", s.Tag, r)
+			}
+		}
 		return nil
 	}
 	if s.Type != "local" && strings.TrimSpace(s.Server) == "" {
@@ -116,6 +135,13 @@ func validateDNSServer(s DNSServer) error {
 func validateDNSRule(r DNSRule, serverTags map[string]bool) error {
 	if !dnsRuleHasMatcher(r) {
 		return ErrInvalidMatchers
+	}
+	for _, c := range r.SourceIPCIDR {
+		if _, err := netip.ParsePrefix(c); err != nil {
+			if _, err := netip.ParseAddr(c); err != nil {
+				return fmt.Errorf("dns rule: invalid source_ip_cidr %q: %w", c, err)
+			}
+		}
 	}
 	for _, rx := range r.DomainRegex {
 		if _, err := regexp.Compile(rx); err != nil {

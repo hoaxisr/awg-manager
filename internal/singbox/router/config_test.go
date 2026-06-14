@@ -490,3 +490,15 @@ func TestRouterConfig_CacheFileFakeIPMarshal(t *testing.T) {
 		}
 	}
 }
+
+// TestRouterConfig_CacheFileEnabledAlwaysEmitted verifies enabled is always
+// marshaled, even when false — otherwise a disabled cache with store_fakeip set
+// would silently emit a cache-OFF config (footgun).
+func TestRouterConfig_CacheFileEnabledAlwaysEmitted(t *testing.T) {
+	c := NewEmptyConfig()
+	c.Experimental = &Experimental{CacheFile: &CacheFile{Enabled: false, StoreFakeIP: true}}
+	b, _ := json.Marshal(c)
+	if !strings.Contains(string(b), `"enabled":false`) {
+		t.Errorf("expected enabled:false to be emitted: %s", b)
+	}
+}

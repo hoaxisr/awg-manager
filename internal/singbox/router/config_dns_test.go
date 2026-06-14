@@ -236,6 +236,40 @@ func TestAddDNSRuleValidates(t *testing.T) {
 	}
 }
 
+func TestAddDNSRuleValidatesSourceIPCIDR(t *testing.T) {
+	c := NewEmptyConfig()
+	if err := c.AddDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.AddDNSRule(DNSRule{SourceIPCIDR: []string{"not-a-cidr"}, QueryType: []string{"A"}, Action: "route", Server: "fakeip"}); err == nil {
+		t.Error("expected error for malformed source_ip_cidr")
+	}
+	if err := c.AddDNSRule(DNSRule{SourceIPCIDR: []string{"192.168.1.0/24"}, QueryType: []string{"A"}, Action: "route", Server: "fakeip"}); err != nil {
+		t.Errorf("valid CIDR should be accepted: %v", err)
+	}
+	if err := c.AddDNSRule(DNSRule{SourceIPCIDR: []string{"10.0.0.5"}, QueryType: []string{"A"}, Action: "route", Server: "fakeip"}); err != nil {
+		t.Errorf("bare IP should be accepted: %v", err)
+	}
+}
+
+func TestAddDNSServerValidatesFakeIPRanges(t *testing.T) {
+	c := NewEmptyConfig()
+
+	if err := c.AddDNSServer(DNSServer{Tag: "f1", Type: "fakeip", Inet4Range: "garbage"}); err == nil {
+		t.Error("expected error for malformed inet4_range")
+	}
+	if err := c.AddDNSServer(DNSServer{Tag: "f2", Type: "fakeip", Inet4Range: "3f80::/10"}); err == nil {
+		t.Error("expected error for v6 prefix in inet4_range")
+	}
+	if err := c.AddDNSServer(DNSServer{Tag: "f3", Type: "fakeip", Inet4Range: "10.128.0.0/10", Inet6Range: "10.0.0.0/24"}); err == nil {
+		t.Error("expected error for v4 prefix in inet6_range")
+	}
+	if err := c.AddDNSServer(DNSServer{Tag: "f4", Type: "fakeip", Inet4Range: "10.128.0.0/10", Inet6Range: "3f80::/10"}); err != nil {
+		t.Errorf("valid v4+v6 ranges should be accepted: %v", err)
+	}
+}
+
 func TestMoveDNSRule(t *testing.T) {
 	c := NewEmptyConfig()
 	_ = c.AddDNSServer(makeDNSServer("s", "udp", "1.1.1.1", ""))
