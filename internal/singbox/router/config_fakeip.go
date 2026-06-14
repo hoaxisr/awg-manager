@@ -1,8 +1,11 @@
 package router
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
+	"os"
+	"strings"
 )
 
 // FakeIPTunSpec is the input to BuildFakeIPTunConfig — every value the
@@ -267,4 +270,66 @@ func DeriveTunDNS(ifaceCIDR string) (string, error) {
 		return "", fmt.Errorf("derive tun dns: derived DNS equals iface address %q", own)
 	}
 	return dns.String(), nil
+}
+
+// FakeIPCacheNeedsReset reports whether the persisted fakeip cache must be
+// discarded because the configured pool ranges no longer match the ranges the
+// cache was last built with.
+//
+// fakeip persists a name↔synthetic-address map in sing-box's cache_file
+// (store_fakeip). If the pool RANGE changes, the persisted map becomes stale:
+// it would hand clients addresses drawn from the OLD pool and resolve them to
+// the wrong domains (spec §3.6). Detecting a mismatch lets the caller wipe the
+// cache before starting sing-box so the map is rebuilt against the new pool.
+//
+// Both families are compared (v4 stored-vs-configured AND v6 stored-vs-
+// configured); a difference in EITHER returns true. Each non-empty range is
+// normalized via netip.ParsePrefix(...).Masked().String() before comparison so
+// cosmetically-different-but-equal CIDRs (e.g. "10.128.0.5/10" vs
+// "10.128.0.0/10") compare equal. If a value fails to parse, that pair falls
+// back to a trimmed exact-string compare (no panic). A family that is empty on
+// both sides counts as unchanged; an empty stored side against a non-empty
+// configured side (first provision) counts as changed, forcing a clean cache.
+func FakeIPCacheNeedsReset(storedInet4, storedInet6, configuredInet4, configuredInet6 string) bool {
+	return rangeChanged(storedInet4, configuredInet4) ||
+		rangeChanged(storedInet6, configuredInet6)
+}
+
+// rangeChanged reports whether stored and configured describe a different pool
+// range for one family. See FakeIPCacheNeedsReset for the normalization and
+// empty-side semantics.
+func rangeChanged(stored, configured string) bool {
+	s := strings.TrimSpace(stored)
+	c := strings.TrimSpace(configured)
+	if s == "" && c == "" {
+		return false // family absent on both sides
+	}
+	if s == "" || c == "" {
+		return true // first provision (or removal) — force a clean cache
+	}
+	return normalizeRange(s) != normalizeRange(c)
+}
+
+// normalizeRange canonicalizes a CIDR to its masked network form so equal pools
+// written differently compare equal. Unparseable input falls back to the
+// trimmed original string (compared verbatim against the other side).
+func normalizeRange(cidr string) string {
+	p, err := netip.ParsePrefix(strings.TrimSpace(cidr))
+	if err != nil {
+		return strings.TrimSpace(cidr)
+	}
+	return p.Masked().String()
+}
+
+// ResetFakeIPCache removes the sing-box cache file at path so the next start
+// rebuilds fakeip mappings from scratch. Idempotent: a missing file is not an
+// error. The caller passes the configured cache path (e.g. the operator's
+// defaultCacheDBPath); this helper stays path-agnostic and side-effect-pure
+// beyond the single file removal.
+func ResetFakeIPCache(path string) error {
+	err := os.Remove(path)
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return fmt.Errorf("reset fakeip cache %q: %w", path, err)
 }

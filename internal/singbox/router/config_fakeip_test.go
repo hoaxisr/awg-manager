@@ -1,6 +1,10 @@
 package router
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestBuildFakeIPTunConfig_Shape(t *testing.T) {
 	spec := FakeIPTunSpec{
@@ -271,5 +275,95 @@ func TestDeriveTunDNS_RejectsMalformed(t *testing.T) {
 		if _, err := DeriveTunDNS(in); err == nil {
 			t.Errorf("%q: expected error for malformed input", in)
 		}
+	}
+}
+
+// --- 1B.3: fakeip cache_file invalidation on pool change ---
+
+func TestFakeIPCacheNeedsReset_IdenticalRanges(t *testing.T) {
+	// Exact equal, both families.
+	if FakeIPCacheNeedsReset("10.128.0.0/10", "3f80::/10", "10.128.0.0/10", "3f80::/10") {
+		t.Error("identical ranges must not need reset")
+	}
+	// Cosmetically different but equal after masking → still no reset.
+	if FakeIPCacheNeedsReset("10.128.0.5/10", "", "10.128.0.0/10", "") {
+		t.Error("non-normalized-but-equal v4 ranges must not need reset")
+	}
+}
+
+func TestFakeIPCacheNeedsReset_ChangedV4(t *testing.T) {
+	if !FakeIPCacheNeedsReset("10.128.0.0/10", "3f80::/10", "10.64.0.0/10", "3f80::/10") {
+		t.Error("changed v4 range must need reset")
+	}
+}
+
+func TestFakeIPCacheNeedsReset_ChangedV6(t *testing.T) {
+	if !FakeIPCacheNeedsReset("10.128.0.0/10", "3f80::/10", "10.128.0.0/10", "fc00::/10") {
+		t.Error("changed v6 range must need reset")
+	}
+}
+
+func TestFakeIPCacheNeedsReset_BothEmpty(t *testing.T) {
+	if FakeIPCacheNeedsReset("", "", "", "") {
+		t.Error("both-empty must not need reset")
+	}
+}
+
+func TestFakeIPCacheNeedsReset_FirstProvision(t *testing.T) {
+	// Empty stored, configured set → force a clean cache.
+	if !FakeIPCacheNeedsReset("", "", "10.128.0.0/10", "") {
+		t.Error("first-provision (stored empty, configured set) must need reset")
+	}
+	if !FakeIPCacheNeedsReset("", "", "", "3f80::/10") {
+		t.Error("first-provision v6 must need reset")
+	}
+}
+
+func TestFakeIPCacheNeedsReset_MalformedFallsBackToStringCompare(t *testing.T) {
+	// Both unparseable but byte-equal → string compare says equal → no reset.
+	if FakeIPCacheNeedsReset("garbage", "", "garbage", "") {
+		t.Error("equal malformed v4 should compare equal (no reset)")
+	}
+	// Unparseable and different → string compare says differ → reset; no panic.
+	if !FakeIPCacheNeedsReset("garbage", "", "other", "") {
+		t.Error("differing malformed v4 should need reset")
+	}
+	// One side malformed, one parseable, trimmed-unequal → reset; no panic.
+	if !FakeIPCacheNeedsReset("not-a-cidr", "", "10.128.0.0/10", "") {
+		t.Error("malformed-vs-valid should need reset without panic")
+	}
+}
+
+func TestFakeIPCacheNeedsReset_WhitespaceTrimmed(t *testing.T) {
+	// Whitespace-padded but equal → no reset (parse path trims via netip; fallback trims too).
+	if FakeIPCacheNeedsReset("  10.128.0.0/10  ", "", "10.128.0.0/10", "") {
+		t.Error("whitespace-padded equal range must not need reset")
+	}
+}
+
+func TestResetFakeIPCache_RemovesExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache.db")
+	if err := os.WriteFile(path, []byte("stale"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := ResetFakeIPCache(path); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("file must be gone after reset, stat err=%v", err)
+	}
+}
+
+func TestResetFakeIPCache_MissingFileIsNoError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist.db")
+	if err := ResetFakeIPCache(path); err != nil {
+		t.Errorf("removing a missing file must be a no-op, got %v", err)
+	}
+}
+
+func TestResetFakeIPCache_EmptyPathIsNoError(t *testing.T) {
+	// Empty path resolves to a non-existent file → treated as already-absent.
+	if err := ResetFakeIPCache(""); err != nil {
+		t.Errorf("empty path must be a no-op, got %v", err)
 	}
 }
