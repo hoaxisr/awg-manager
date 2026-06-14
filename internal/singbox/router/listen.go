@@ -83,9 +83,17 @@ func singboxIntercepting() bool {
 // All three are fail-closed: any read/parse/timeout error reports "not ready".
 // ---------------------------------------------------------------------------
 
-// fakeIPDNSProbeDomain is the domain queried by liveFakeIPDNSProbe. Any name
-// the sing-box DNS server resolves into the fakeip pool works; a stable,
-// always-routable public name keeps the probe deterministic.
+// fakeIPDNSProbeDomain is the domain queried by liveFakeIPDNSProbe. It only
+// reports ready if this name resolves INTO the fakeip pool, which holds for the
+// v1 default config (empty DomainRuleSets ⇒ every A/AAAA is faked).
+//
+// CONSTRAINT (roadmap landmine): once domain-scoping (DomainRuleSets) becomes
+// user-configurable, a ruleset that excludes this domain would make the live
+// answer a real public IP — never in-pool — so waitForSingbox would never see
+// readiness and Enable would hang to timeout. When that feature ships, the
+// readiness probe MUST query a domain known to be in fakeip scope (e.g. one
+// representative of the active ruleset, or a synthetic always-faked probe name)
+// instead of this fixed public name.
 const fakeIPDNSProbeDomain = "example.com"
 
 // fakeIPDNSProbeTimeout bounds the live DNS readiness query so waitForSingbox's
@@ -159,7 +167,13 @@ var fakeIPPoolRoutePresent = liveFakeIPPoolRoutePresent
 // structural check for steady-state Active (the fakeip equivalent of "TPROXY
 // jumps present"). /proc/net/route stores Destination and Mask as little-endian
 // hex; a row matches when its iface equals iface and its (destination, mask)
-// equals the pool's network address and prefix mask. v4 only for v1.
+// equals the pool's network address and prefix mask.
+//
+// v1 SCOPE: v4 pool route only. The v6 pool auto-route (3f80::/10 → opkgtun) is
+// NOT checked here, so GetStatus.Active can report true while the v6 path is
+// structurally absent. Accepted for v1 because the v4 resolver answers both A
+// and AAAA (spec §3.8 — v6-only clients are out of v1 scope); when v6 delivery
+// becomes first-class, mirror this check against /proc/net/ipv6_route.
 func liveFakeIPPoolRoutePresent(iface string, pool netip.Prefix) bool {
 	if iface == "" || !pool.IsValid() || !pool.Addr().Is4() {
 		return false
