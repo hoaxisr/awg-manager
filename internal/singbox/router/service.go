@@ -1561,6 +1561,12 @@ func NormalizeSingboxRouterSettings(sr storage.SingboxRouterSettings) (storage.S
 	default:
 		return sr, fmt.Errorf("deviceMode must be %q or %q, got %q", "policy", "all", sr.DeviceMode)
 	}
+	if sr.RoutingMode == "" {
+		sr.RoutingMode = "tproxy"
+	}
+	if sr.RoutingMode != "tproxy" && sr.RoutingMode != "fakeip-tun" {
+		return sr, fmt.Errorf("invalid routingMode %q (want tproxy|fakeip-tun)", sr.RoutingMode)
+	}
 	if sr.WANAutoDetect && sr.WANInterface != "" {
 		return sr, fmt.Errorf("wanAutoDetect=true requires wanInterface to be empty (got %q)", sr.WANInterface)
 	}

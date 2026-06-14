@@ -3541,6 +3541,12 @@ definitions:
       refreshMode:
         example: interval
         type: string
+      routingMode:
+        enum:
+        - tproxy
+        - fakeip-tun
+        example: tproxy
+        type: string
       snifferEnabled:
         example: true
         type: boolean

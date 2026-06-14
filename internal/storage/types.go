@@ -68,7 +68,11 @@ type SingboxRouterSettings struct {
 	// "policy" (default) keeps the historical NDMS access-policy mark
 	// filter. "all" installs unmarked PREROUTING jumps so every LAN
 	// device that reaches the router netfilter path is filtered.
-	DeviceMode      string `json:"deviceMode,omitempty"`
+	DeviceMode string `json:"deviceMode,omitempty"`
+	// RoutingMode selects the sing-box routing path:
+	// "tproxy" (default) keeps the historical TPROXY/REDIRECT behavior;
+	// "fakeip-tun" routes via a fake-IP DNS pool + tun device.
+	RoutingMode     string `json:"routingMode,omitempty"`
 	SnifferEnabled  bool   `json:"snifferEnabled"`
 	RefreshMode     string `json:"refreshMode,omitempty"`
 	RefreshInterval int    `json:"refreshIntervalHours,omitempty"`

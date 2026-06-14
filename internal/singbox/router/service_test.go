@@ -1593,3 +1593,24 @@ func TestReconcile_IngressChangeTriggersInstall(t *testing.T) {
 		t.Errorf("currentIngress not updated: %v", svc.currentIngress)
 	}
 }
+
+func TestNormalize_RoutingModeDefaultAndValidate(t *testing.T) {
+	base := storage.SingboxRouterSettings{DeviceMode: "policy", WANAutoDetect: true}
+	got, err := NormalizeSingboxRouterSettings(base)
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if got.RoutingMode != "tproxy" {
+		t.Errorf("default mode = %q, want tproxy", got.RoutingMode)
+	}
+	bogus := base
+	bogus.RoutingMode = "bogus"
+	if _, err := NormalizeSingboxRouterSettings(bogus); err == nil {
+		t.Error("expected error for invalid routing mode")
+	}
+	ftun := base
+	ftun.RoutingMode = "fakeip-tun"
+	if _, err := NormalizeSingboxRouterSettings(ftun); err != nil {
+		t.Errorf("fakeip-tun should be valid: %v", err)
+	}
+}
