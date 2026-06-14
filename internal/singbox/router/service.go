@@ -1555,6 +1555,15 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 	if err != nil {
 		return err
 	}
+	// fakeip-tun operational state is backend-managed (written by the
+	// Enable/Disable/reap lifecycle, never by the settings API). Carry it
+	// over from the stored settings so a client PUT — which omits these
+	// fields — can never clobber the allocated OpkgTun index, the
+	// provisioned flag, or the last-applied pool ranges.
+	normalized.FakeIPProvisioned = settings.SingboxRouter.FakeIPProvisioned
+	normalized.FakeIPIndex = settings.SingboxRouter.FakeIPIndex
+	normalized.FakeIPInet4Range = settings.SingboxRouter.FakeIPInet4Range
+	normalized.FakeIPInet6Range = settings.SingboxRouter.FakeIPInet6Range
 	settings.SingboxRouter = normalized
 	if err := s.deps.Settings.Save(settings); err != nil {
 		return err

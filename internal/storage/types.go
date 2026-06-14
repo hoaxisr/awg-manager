@@ -105,6 +105,17 @@ type SingboxRouterSettings struct {
 	// в sing-box. Формат: "managed:Wireguard3" (резолвится в kernel-имя на
 	// сборке спека) или "iface:nwg5" (kernel-имя как есть). Пусто = выключено.
 	IngressInterfaces []string `json:"ingressInterfaces,omitempty"`
+
+	// --- fakeip-tun backend-managed operational state (NOT user-settable) ---
+	// These are written by the fakeip-tun lifecycle (Enable/Disable/reap), never
+	// by the settings API. UpdateSettings preserves them across a client PUT.
+	// FakeIPIndex is the allocated OpkgTun index (iface = "opkgtun<N>"); valid
+	// only when FakeIPProvisioned. FakeIPInet4Range/FakeIPInet6Range record the
+	// fakeip pool ranges last applied, so a pool change can invalidate the cache.
+	FakeIPProvisioned bool   `json:"fakeipProvisioned,omitempty"`
+	FakeIPIndex       int    `json:"fakeipIndex,omitempty"`
+	FakeIPInet4Range  string `json:"fakeipInet4Range,omitempty"`
+	FakeIPInet6Range  string `json:"fakeipInet6Range,omitempty"`
 }
 
 // ManagedServer represents the user-created WireGuard server interface.

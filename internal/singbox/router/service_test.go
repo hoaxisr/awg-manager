@@ -1614,3 +1614,69 @@ func TestNormalize_RoutingModeDefaultAndValidate(t *testing.T) {
 		t.Errorf("fakeip-tun should be valid: %v", err)
 	}
 }
+
+// newDisabledIPTables returns an *IPTables whose probe commands always fail,
+// so IsInstalled/HasAnyInstalled both report false. With Enabled=false this
+// makes Reconcile a benign no-op (no Enable, no Disable).
+func newDisabledIPTables() *IPTables {
+	return &IPTables{
+		runIPTables: func(_ context.Context, _ ...string) error {
+			return errors.New("not installed")
+		},
+	}
+}
+
+// TestUpdateSettings_PreservesFakeIPState verifies that backend-managed
+// fakeip-tun operational state (provisioned flag, OpkgTun index, applied pool
+// ranges) survives a client PUT that omits those fields, while user-settable
+// fields (RoutingMode here) still apply.
+func TestUpdateSettings_PreservesFakeIPState(t *testing.T) {
+	store := newTestSettingsStore(t, storage.SingboxRouterSettings{
+		Enabled:           false,
+		RoutingMode:       "tproxy",
+		DeviceMode:        "policy",
+		WANAutoDetect:     true,
+		FakeIPProvisioned: true,
+		FakeIPIndex:       5,
+		FakeIPInet4Range:  "10.128.0.0/10",
+		FakeIPInet6Range:  "3f80::/10",
+	})
+	svc := newTestService(t, Deps{
+		Settings: store,
+		IPTables: newDisabledIPTables(),
+	})
+
+	// Client PUT body: changes a user-settable field (RoutingMode) and omits
+	// every FakeIP* field, mimicking the public settings contract.
+	err := svc.UpdateSettings(context.Background(), storage.SingboxRouterSettings{
+		DeviceMode:    "policy",
+		WANAutoDetect: true,
+		RoutingMode:   "fakeip-tun",
+	})
+	if err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+
+	all, err := store.Load()
+	if err != nil {
+		t.Fatalf("store.Load: %v", err)
+	}
+	got := all.SingboxRouter
+
+	if !got.FakeIPProvisioned {
+		t.Errorf("FakeIPProvisioned = false, want true (preserved)")
+	}
+	if got.FakeIPIndex != 5 {
+		t.Errorf("FakeIPIndex = %d, want 5 (preserved)", got.FakeIPIndex)
+	}
+	if got.FakeIPInet4Range != "10.128.0.0/10" {
+		t.Errorf("FakeIPInet4Range = %q, want 10.128.0.0/10 (preserved)", got.FakeIPInet4Range)
+	}
+	if got.FakeIPInet6Range != "3f80::/10" {
+		t.Errorf("FakeIPInet6Range = %q, want 3f80::/10 (preserved)", got.FakeIPInet6Range)
+	}
+	// The user-settable change must still take effect.
+	if got.RoutingMode != "fakeip-tun" {
+		t.Errorf("RoutingMode = %q, want fakeip-tun (applied)", got.RoutingMode)
+	}
+}
