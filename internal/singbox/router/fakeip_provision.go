@@ -51,6 +51,14 @@ type FakeIPTunParams struct {
 	TunAddr6   string // tun gw /126 CIDR (default "fdfe:dcba:9876::1/126"; empty disables v6)
 	MTU        int    // tun MTU (default 1500)
 	DHCPPool   string // default DHCP pool for DNS delivery (default "_WEBADMIN")
+	// RealServer is the true upstream resolver the fakeip config's "real" DNS
+	// server forwards to (proxy-endpoint hostnames + non-fakeip queries).
+	// Default "1.1.1.1" — v1 fixed upstream; made configurable in a later slice.
+	RealServer string
+	// CachePath is the sing-box experimental.cache_file path (store_fakeip).
+	// Not a spec-default — wired by cmd/awg-manager from singbox.DefaultCacheDBPath
+	// so the router stays decoupled from the operator's path layout.
+	CachePath string
 }
 
 // DefaultFakeIPTunParams returns the spec-default fakeip-tun provisioning knobs
@@ -64,5 +72,7 @@ func DefaultFakeIPTunParams() FakeIPTunParams {
 		TunAddr6:   "fdfe:dcba:9876::1/126",
 		MTU:        1500,
 		DHCPPool:   "_WEBADMIN",
+		RealServer: "1.1.1.1", // v1 default upstream; configurable later
+		// CachePath left empty — wired by main.go from singbox.DefaultCacheDBPath.
 	}
 }

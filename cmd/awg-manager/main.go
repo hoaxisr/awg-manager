@@ -1115,7 +1115,11 @@ func main() {
 			store: ndmsQueries.Interfaces,
 			log:   logging.NewScopedLogger(loggingService, logging.GroupRouting, logging.SubSingboxRouter),
 		},
-		FakeIPTun: router.DefaultFakeIPTunParams(),
+		FakeIPTun: func() router.FakeIPTunParams {
+			p := router.DefaultFakeIPTunParams()
+			p.CachePath = singbox.DefaultCacheDBPath()
+			return p
+		}(),
 	})
 	singboxOp.SetOutboundReferenceRenamer(routerSvc)
 	tunnelService.SetAWGSyncer(awgoutboundsSvc)

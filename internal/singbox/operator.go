@@ -107,6 +107,12 @@ var defaultDir = filepath.Dir(installer.DefaultBinaryPath)
 // override defaultDir to redirect this too.
 var defaultCacheDBPath = filepath.Join(defaultDir, "cache.db")
 
+// DefaultCacheDBPath exports the sing-box experimental.cache_file path so the
+// fakeip-tun router wiring (cmd/awg-manager) can pin its store_fakeip cache to
+// the same writable file without importing the unexported var. Keeps the router
+// package decoupled from the operator's path layout (it just receives a string).
+func DefaultCacheDBPath() string { return defaultCacheDBPath }
+
 var singboxAllowedLogLevels = map[string]struct{}{
 	"trace": {},
 	"debug": {},
