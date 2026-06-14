@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -543,14 +545,54 @@ func (s *ServiceImpl) prepareNetfilter(ctx context.Context) error {
 // Returns ctx.Err on cancellation, or a timeout error after the deadline;
 // callers can treat the timeout as soft (proceed with iptables and accept
 // the brief race) or hard at their discretion.
+// fakeIPReadyInputs derives the inputs the fakeip-tun readiness probes need
+// from loaded settings + the static FakeIPTun params: the tun iface name (from
+// the allocated OpkgTun index), the tun-side DNS address (the other /30 host,
+// where sing-box's DNS server listens), and the fakeip v4 pool prefix. ok is
+// false when fakeip is not provisioned or any field is unparseable, so callers
+// can fail-closed without a fakeip branch firing on tproxy state.
+func (s *ServiceImpl) fakeIPReadyInputs() (iface, dnsAddr string, fakeipNet netip.Prefix, ok bool) {
+	if s.deps.Settings == nil {
+		return "", "", netip.Prefix{}, false
+	}
+	settings, err := s.deps.Settings.Load()
+	if err != nil || settings == nil || settings.FakeIP == nil || !settings.FakeIP.Provisioned {
+		return "", "", netip.Prefix{}, false
+	}
+	iface = "opkgtun" + strconv.Itoa(settings.FakeIP.Index)
+	dnsAddr, err = DeriveTunDNS(s.deps.FakeIPTun.TunAddr4)
+	if err != nil {
+		return "", "", netip.Prefix{}, false
+	}
+	fakeipNet, err = netip.ParsePrefix(s.deps.FakeIPTun.Inet4Range)
+	if err != nil || !fakeipNet.Addr().Is4() {
+		return "", "", netip.Prefix{}, false
+	}
+	return iface, dnsAddr, fakeipNet, true
+}
+
 func (s *ServiceImpl) waitForSingbox(ctx context.Context, timeout time.Duration) error {
 	if s.deps.Singbox == nil {
 		return nil
 	}
+
+	// Mode-aware readiness: read the mode INTERNALLY (the signature has test
+	// callers and must not change). fakeip-tun has no inbound sockets, so the
+	// tproxy socket probe never turns true for it — gate instead on process +
+	// tun carrier + a live .2→fakeip DNS answer. The tun /30 connected route
+	// makes the DNS host reachable even before Enable adds the pool auto-route,
+	// so this is the right gate for the pre-route Enable window.
+	fakeIP := false
+	if s.deps.Settings != nil {
+		if settings, err := s.deps.Settings.Load(); err == nil && settings != nil {
+			fakeIP = settings.SingboxRouter.RoutingMode == "fakeip-tun"
+		}
+	}
+
 	deadline := time.Now().Add(timeout)
 	const pollInterval = 100 * time.Millisecond
 	for {
-		if running, _ := s.deps.Singbox.IsRunning(); running && singboxListeningProbe() {
+		if s.singboxReady(ctx, fakeIP) {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -562,6 +604,25 @@ func (s *ServiceImpl) waitForSingbox(ctx context.Context, timeout time.Duration)
 		case <-time.After(pollInterval):
 		}
 	}
+}
+
+// singboxReady reports whether sing-box is up for the active mode. tproxy:
+// process + both inbound sockets bound. fakeip-tun: process + tun carrier +
+// live DNS answering with a fakeip address (inputs unresolved → not ready, so
+// the loop keeps polling until the deadline).
+func (s *ServiceImpl) singboxReady(ctx context.Context, fakeIP bool) bool {
+	running, _ := s.deps.Singbox.IsRunning()
+	if !running {
+		return false
+	}
+	if !fakeIP {
+		return singboxListeningProbe()
+	}
+	iface, dnsAddr, fakeipNet, ok := s.fakeIPReadyInputs()
+	if !ok {
+		return false
+	}
+	return tunReadyProbe(iface) && fakeIPDNSProbe(ctx, dnsAddr, fakeipNet)
 }
 
 func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) error {
@@ -1008,9 +1069,23 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	// the badge self-corrects on the next status read (no side effect here,
 	// unlike the reconcile path which must not reinstall on a transient error).
 	installed, jumps, _ := s.deps.IPTables.Probe(ctx)
-	// Active = interception path truly live: chains + PREROUTING jumps + sing-box
-	// actually listening on both inbound sockets.
-	active := jumps && singboxListeningProbe()
+	// Active = interception path truly live, computed per routing mode.
+	var active bool
+	if sr.RoutingMode == "fakeip-tun" {
+		// fakeip-tun has no iptables jumps and no inbound sockets. Steady-state
+		// liveness = process up + tun carrier + the fakeip pool auto-route
+		// present (the honest structural check — the fakeip equivalent of
+		// "TPROXY jumps present"). No live DNS query here: that would add
+		// per-poll latency, and the route-presence check is enough once Enable
+		// has finished wiring routes (waitForSingbox already gated on live DNS).
+		running, _ := s.deps.Singbox.IsRunning()
+		if iface, _, fakeipNet, ok := s.fakeIPReadyInputs(); ok {
+			active = running && tunReadyProbe(iface) && fakeIPPoolRoutePresent(iface, fakeipNet)
+		}
+	} else {
+		// tproxy: chains + PREROUTING jumps + sing-box listening on both inbound sockets.
+		active = jumps && singboxListeningProbe()
+	}
 	return Status{
 		Enabled:                sr.Enabled,
 		Installed:              installed,

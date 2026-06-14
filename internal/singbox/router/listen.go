@@ -1,9 +1,15 @@
 package router
 
 import (
+	"context"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
+	"net"
+	"net/netip"
 	"os"
 	"strings"
+	"time"
 )
 
 // Socket states in /proc/net/{tcp,udp} (hex). TCP LISTEN = 0x0A; a bound,
@@ -64,4 +70,145 @@ func singboxIntercepting() bool {
 		return false
 	}
 	return localPortInState(string(udp), TPROXYPort, udpStateBound)
+}
+
+// ---------------------------------------------------------------------------
+// fakeip-tun readiness probes
+//
+// These three seams replace the tproxy socket/jump checks for fakeip-tun mode:
+// the tun path has no inbound sockets and no iptables jumps. The real
+// implementations read live kernel state (sysfs carrier, a live DNS query,
+// /proc/net/route) and are stand-verified later (Task 1F.1); the package-var
+// seam shape keeps the GetStatus/waitForSingbox branching unit-testable now.
+// All three are fail-closed: any read/parse/timeout error reports "not ready".
+// ---------------------------------------------------------------------------
+
+// fakeIPDNSProbeDomain is the domain queried by liveFakeIPDNSProbe. Any name
+// the sing-box DNS server resolves into the fakeip pool works; a stable,
+// always-routable public name keeps the probe deterministic.
+const fakeIPDNSProbeDomain = "example.com"
+
+// fakeIPDNSProbeTimeout bounds the live DNS readiness query so waitForSingbox's
+// poll loop is not stalled by a hung server.
+const fakeIPDNSProbeTimeout = 1500 * time.Millisecond
+
+// tunReadyProbe is the seam GetStatus/waitForSingbox use for tun liveness.
+// Overridable in tests.
+var tunReadyProbe = tunInterfaceReady
+
+// tunInterfaceReady reports whether the tun iface has carrier (sing-box
+// attached). Reads /sys/class/net/<iface>/carrier; a read error or "0" → not
+// ready. A bare tun device with no attached endpoint reports carrier 0 (or the
+// read fails with EINVAL), so this distinguishes "iface exists" from "sing-box
+// is actually driving it".
+func tunInterfaceReady(iface string) bool {
+	if iface == "" {
+		return false
+	}
+	data, err := os.ReadFile("/sys/class/net/" + iface + "/carrier")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(data)) == "1"
+}
+
+// fakeIPDNSProbe is the seam for the live "is sing-box answering with a fakeip
+// address" check. Overridable in tests. Returns true iff a DNS query to
+// dnsAddr:53 returns an A answer inside fakeipNet. Fail-closed (timeout/error →
+// false).
+var fakeIPDNSProbe = liveFakeIPDNSProbe
+
+// liveFakeIPDNSProbe queries dnsAddr:53 (the tun-side /30 host where sing-box
+// listens) for a probe domain and reports whether any returned A address falls
+// inside the fakeip pool. A positive result proves the whole path is live: the
+// tun /30 connected route makes dnsAddr reachable, sing-box's DNS server is up,
+// and it is minting fakeip addresses. Uses the Go resolver with a custom Dial
+// pinned to dnsAddr:53 so it never consults the host resolver.
+func liveFakeIPDNSProbe(ctx context.Context, dnsAddr string, fakeipNet netip.Prefix) bool {
+	if dnsAddr == "" || !fakeipNet.IsValid() {
+		return false
+	}
+	target := net.JoinHostPort(dnsAddr, "53")
+	r := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, "udp", target)
+		},
+	}
+	qctx, cancel := context.WithTimeout(ctx, fakeIPDNSProbeTimeout)
+	defer cancel()
+	addrs, err := r.LookupNetIP(qctx, "ip4", fakeIPDNSProbeDomain)
+	if err != nil {
+		return false
+	}
+	for _, a := range addrs {
+		if fakeipNet.Contains(a.Unmap()) {
+			return true
+		}
+	}
+	return false
+}
+
+// fakeIPPoolRoutePresent is the seam for "the fakeip pool auto-route to the tun
+// iface exists". Overridable in tests. Reads /proc/net/route (v4). Fail-closed.
+var fakeIPPoolRoutePresent = liveFakeIPPoolRoutePresent
+
+// liveFakeIPPoolRoutePresent parses /proc/net/route and reports whether a v4
+// route for the fakeip pool out the tun iface is installed — the honest
+// structural check for steady-state Active (the fakeip equivalent of "TPROXY
+// jumps present"). /proc/net/route stores Destination and Mask as little-endian
+// hex; a row matches when its iface equals iface and its (destination, mask)
+// equals the pool's network address and prefix mask. v4 only for v1.
+func liveFakeIPPoolRoutePresent(iface string, pool netip.Prefix) bool {
+	if iface == "" || !pool.IsValid() || !pool.Addr().Is4() {
+		return false
+	}
+	data, err := os.ReadFile("/proc/net/route")
+	if err != nil {
+		return false
+	}
+	wantDest := pool.Masked().Addr().As4()
+	wantMask := net.CIDRMask(pool.Bits(), 32) // big-endian 4 bytes
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		if i == 0 { // header
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) < 8 {
+			continue
+		}
+		if f[0] != iface {
+			continue
+		}
+		dest, ok := parseProcRouteHex(f[1])
+		if !ok || dest != wantDest {
+			continue
+		}
+		mask, ok := parseProcRouteHex(f[7])
+		if !ok {
+			continue
+		}
+		if mask == [4]byte(wantMask) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseProcRouteHex decodes a /proc/net/route Destination/Mask field (8 hex
+// chars, little-endian u32) into a big-endian 4-byte address for comparison.
+func parseProcRouteHex(s string) ([4]byte, bool) {
+	var out [4]byte
+	if len(s) != 8 {
+		return out, false
+	}
+	raw, err := hex.DecodeString(s)
+	if err != nil {
+		return out, false
+	}
+	v := binary.LittleEndian.Uint32(raw)
+	binary.BigEndian.PutUint32(out[:], v)
+	return out, true
 }
