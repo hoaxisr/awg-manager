@@ -1108,6 +1108,15 @@ func main() {
 		IngressResolver:        &routerIngressResolverAdapter{store: ndmsQueries.Interfaces},
 		PresetCatalog:          presetCatalog,
 		GeoData:                geoDataStore,
+		OpkgTun:                ndmsCommands.Interfaces, // *InterfaceCommands satisfies OpkgTunProvisioner directly
+		StaticRoutes:           &routerStaticRouteAdapter{routes: ndmsCommands.Routes},
+		DHCP:                   ndmsCommands.DHCP, // *DHCPCommands satisfies DHCPProvider directly
+		OpkgTunIndices:         &routerOpkgTunIndexAdapter{store: ndmsQueries.Interfaces},
+		FakeIPTun: router.FakeIPTunParams{
+			Inet4Range: "10.128.0.0/10", Inet6Range: "3f80::/10",
+			TunAddr4: "172.18.0.1/30", TunAddr6: "fdfe:dcba:9876::1/126",
+			MTU: 1500, DHCPPool: "_WEBADMIN",
+		},
 	})
 	singboxOp.SetOutboundReferenceRenamer(routerSvc)
 	tunnelService.SetAWGSyncer(awgoutboundsSvc)

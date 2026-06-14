@@ -6,8 +6,10 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
+	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
@@ -165,6 +167,56 @@ func (a *routerIngressResolverAdapter) Resolve(ctx context.Context, ref string) 
 		return ""
 	}
 	return a.store.ResolveSystemName(ctx, strings.TrimPrefix(ref, prefix))
+}
+
+// Compile-time satisfaction for the directly-wired fakeip provisioners:
+// *InterfaceCommands and *DHCPCommands implement the router interfaces
+// structurally, so they're injected without an adapter. These assertions
+// surface any ndms method-signature drift at this declaration line.
+var _ router.OpkgTunProvisioner = (*ndmscommand.InterfaceCommands)(nil)
+var _ router.DHCPProvider = (*ndmscommand.DHCPCommands)(nil)
+
+var _ router.StaticRouteProvider = (*routerStaticRouteAdapter)(nil)
+
+// routerStaticRouteAdapter translates router.StaticRouteSpec (router-local
+// mirror) into ndmscommand.StaticRouteSpec field-for-field. router can't
+// import internal/ndms (cycle via internal/tunnel/wan), so the spec is
+// duplicated and bridged here.
+type routerStaticRouteAdapter struct{ routes *ndmscommand.RouteCommands }
+
+func (a *routerStaticRouteAdapter) AddStaticRoute(ctx context.Context, r router.StaticRouteSpec) error {
+	return a.routes.AddStaticRoute(ctx, ndmscommand.StaticRouteSpec{Interface: r.Interface, Host: r.Host, Network: r.Network, Mask: r.Mask, Reject: r.Reject, Comment: r.Comment})
+}
+
+func (a *routerStaticRouteAdapter) RemoveStaticRoute(ctx context.Context, r router.StaticRouteSpec) error {
+	return a.routes.RemoveStaticRoute(ctx, ndmscommand.StaticRouteSpec{Interface: r.Interface, Host: r.Host, Network: r.Network, Mask: r.Mask, Reject: r.Reject, Comment: r.Comment})
+}
+
+func (a *routerStaticRouteAdapter) AddStaticRoute6(ctx context.Context, network, iface string) error {
+	return a.routes.AddStaticRoute6(ctx, network, iface)
+}
+
+func (a *routerStaticRouteAdapter) RemoveStaticRoute6(ctx context.Context, network, iface string) error {
+	return a.routes.RemoveStaticRoute6(ctx, network, iface)
+}
+
+var _ router.OpkgTunIndexLister = (*routerOpkgTunIndexAdapter)(nil)
+
+// routerOpkgTunIndexAdapter unions kernel /sys opkgtun indices with NDMS-known
+// interface names so the fakeip index allocator sees every occupied slot.
+type routerOpkgTunIndexAdapter struct{ store *ndmsquery.InterfaceStore }
+
+func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(ctx context.Context) (map[int]bool, error) {
+	sysNums, _ := sysinfo.ListSystemInterfaces() // best-effort: on error treat as no /sys nums
+	all, err := a.store.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(all))
+	for _, i := range all {
+		names = append(names, i.Name)
+	}
+	return router.UnionOpkgTunIndices(sysNums, names), nil
 }
 
 func (a *routerWANInterfaceAdapter) ListBindable(ctx context.Context) ([]router.WANInterfaceInfo, error) {
