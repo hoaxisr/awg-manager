@@ -7,12 +7,13 @@ import (
 )
 
 var validDNSTypes = map[string]bool{
-	"udp":   true,
-	"tls":   true,
-	"https": true,
-	"quic":  true,
-	"h3":    true,
-	"local": true,
+	"udp":    true,
+	"tls":    true,
+	"https":  true,
+	"quic":   true,
+	"h3":     true,
+	"local":  true,
+	"fakeip": true,
 }
 
 var validDNSStrategies = map[string]bool{
@@ -85,6 +86,12 @@ func validateDNSServer(s DNSServer) error {
 	}
 	if !validDNSTypes[s.Type] {
 		return fmt.Errorf("dns server %q: unknown type %q", s.Tag, s.Type)
+	}
+	if s.Type == "fakeip" {
+		if strings.TrimSpace(s.Inet4Range) == "" && strings.TrimSpace(s.Inet6Range) == "" {
+			return fmt.Errorf("dns server %q: fakeip requires inet4_range or inet6_range", s.Tag)
+		}
+		return nil
 	}
 	if s.Type != "local" && strings.TrimSpace(s.Server) == "" {
 		return fmt.Errorf("dns server %q: server is required", s.Tag)

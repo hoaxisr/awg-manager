@@ -199,6 +199,8 @@ type DNSServer struct {
 	Detour         string          `json:"detour,omitempty"`
 	Strategy       string          `json:"domain_strategy,omitempty"`
 	DomainResolver *DomainResolver `json:"domain_resolver,omitempty"`
+	Inet4Range     string          `json:"inet4_range,omitempty"`
+	Inet6Range     string          `json:"inet6_range,omitempty"`
 }
 
 type DNSRule struct {

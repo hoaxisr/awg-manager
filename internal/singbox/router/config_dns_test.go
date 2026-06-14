@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -344,5 +345,26 @@ func TestDNSRuleRegexAndBlock(t *testing.T) {
 	// невалидный domain_regex — ошибка
 	if err := c.AddDNSRule(DNSRule{DomainRegex: []string{"("}, Server: "up", Action: "route"}); err == nil {
 		t.Error("invalid regex must fail")
+	}
+}
+
+func TestAddDNSServer_FakeIP(t *testing.T) {
+	c := NewEmptyConfig()
+	err := c.AddDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10", Inet6Range: "3f80::/10"})
+	if err != nil {
+		t.Fatalf("add fakeip: %v", err)
+	}
+	b, _ := json.Marshal(c.DNS.Servers[0])
+	for _, want := range []string{`"type":"fakeip"`, `"inet4_range":"10.128.0.0/10"`, `"inet6_range":"3f80::/10"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("missing %s: %s", want, b)
+		}
+	}
+}
+
+func TestValidateDNSServer_FakeIPRequiresRange(t *testing.T) {
+	c := NewEmptyConfig()
+	if err := c.AddDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip"}); err == nil {
+		t.Error("expected error: fakeip requires inet4_range")
 	}
 }
