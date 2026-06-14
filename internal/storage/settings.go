@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion        = 26
+	CurrentSchemaVersion        = 27
 	DefaultPort                 = 2222
 	DefaultInterface            = "br0"
 	DefaultPingCheckTarget      = "8.8.8.8"
@@ -140,6 +140,9 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		if settings.SchemaVersion < 26 {
 			s.migrateToV26(&settings)
 		}
+		if settings.SchemaVersion < 27 {
+			s.migrateToV27(&settings)
+		}
 	}
 
 	// Self-heal duplicated managed servers — see dedupManagedServers comment.
@@ -198,6 +201,7 @@ func (s *SettingsStore) defaultSettings() *Settings {
 		SingboxRouter: SingboxRouterSettings{
 			Enabled:         false,
 			DeviceMode:      "policy",
+			RoutingMode:     "tproxy",
 			SnifferEnabled:  true,
 			RefreshMode:     "interval",
 			RefreshInterval: 24,
@@ -461,6 +465,14 @@ func migrateNATModes(s *Settings) {
 func (s *SettingsStore) migrateToV26(settings *Settings) {
 	migrateNATModes(settings)
 	settings.SchemaVersion = 26
+}
+
+// migrateToV27 defaults the new sing-box RoutingMode to "tproxy" (existing behavior).
+func (s *SettingsStore) migrateToV27(settings *Settings) {
+	if settings.SingboxRouter.RoutingMode == "" {
+		settings.SingboxRouter.RoutingMode = "tproxy"
+	}
+	settings.SchemaVersion = 27
 }
 
 // dedupManagedServers returns servers with duplicate InterfaceName entries

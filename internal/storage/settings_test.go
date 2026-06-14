@@ -661,3 +661,22 @@ func TestMigrateToV26_PreservesExistingMode(t *testing.T) {
 		t.Errorf("existing mode must not be re-derived from NATEnabled, got %q", st.ManagedServers[1].NATMode)
 	}
 }
+
+func TestMigrateToV27_SetsRoutingModeTproxy(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacy := `{"schemaVersion":26,"authEnabled":false,"usageLevel":"basic","singboxRouter":{"enabled":true,"deviceMode":"policy"}}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	store := NewSettingsStore(tmpDir)
+	s, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.SchemaVersion != 27 {
+		t.Fatalf("schema = %d, want 27", s.SchemaVersion)
+	}
+	if s.SingboxRouter.RoutingMode != "tproxy" {
+		t.Fatalf("routingMode = %q, want tproxy", s.SingboxRouter.RoutingMode)
+	}
+}
