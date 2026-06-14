@@ -685,6 +685,19 @@ func (s *SettingsStore) SetManagedPeerAllowIPsMigrated(v bool) error {
 	return s.saveUnlocked(s.settings)
 }
 
+// SetFakeIPState atomically persists the fakeip-tun operational state under the
+// store lock (single-writer pattern; the lifecycle is the only writer). Pass
+// nil to clear (mode left/teardown). Mirrors SetSingboxManuallyStopped.
+func (s *SettingsStore) SetFakeIPState(st *FakeIPState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	s.settings.FakeIP = st
+	return s.saveUnlocked(s.settings)
+}
+
 // MarkServerInterface adds an interface ID to the server interfaces list.
 func (s *SettingsStore) MarkServerInterface(id string) error {
 	s.mu.Lock()

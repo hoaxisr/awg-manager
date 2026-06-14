@@ -630,6 +630,53 @@ func TestSettingsStore_SetSingboxCreateNDMSProxy_PersistsAtomic(t *testing.T) {
 	}
 }
 
+// TestSetFakeIPState_PersistsAndClears verifies the single-writer setter
+// persists the fakeip-tun state across a reload from disk, that nil clears it,
+// and that it errors when settings are not loaded.
+func TestSetFakeIPState_PersistsAndClears(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSettingsStore(tmpDir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	want := &FakeIPState{Provisioned: true, Index: 5, Inet4Range: "10.128.0.0/10", Inet6Range: "3f80::/10"}
+	if err := store.SetFakeIPState(want); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	// Re-open from disk to confirm persistence.
+	fresh := NewSettingsStore(tmpDir)
+	s, err := fresh.Load()
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if s.FakeIP == nil {
+		t.Fatalf("FakeIP = nil after set, want %+v", want)
+	}
+	if *s.FakeIP != *want {
+		t.Errorf("persisted = %+v, want %+v", *s.FakeIP, *want)
+	}
+
+	// nil clears it, and the cleared state survives a reload.
+	if err := fresh.SetFakeIPState(nil); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	cleared := NewSettingsStore(tmpDir)
+	c, err := cleared.Load()
+	if err != nil {
+		t.Fatalf("reload after clear: %v", err)
+	}
+	if c.FakeIP != nil {
+		t.Errorf("FakeIP = %+v after clear, want nil", *c.FakeIP)
+	}
+
+	// Errors when settings are not loaded.
+	if err := (&SettingsStore{}).SetFakeIPState(want); err == nil {
+		t.Error("SetFakeIPState on unloaded store: want error, got nil")
+	}
+}
+
 func TestMigrateToV26_NATEnabledToMode(t *testing.T) {
 	st := &Settings{SchemaVersion: 25, ManagedServers: []ManagedServer{
 		{InterfaceName: "Wireguard3", NATEnabled: true},
