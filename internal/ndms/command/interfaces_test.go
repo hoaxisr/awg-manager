@@ -59,6 +59,21 @@ func TestInterfaceCommands_CreateOpkgTun(t *testing.T) {
 	}
 }
 
+func TestCreateOpkgTunWithSecurityLevel_Private(t *testing.T) {
+	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
+	if err := cmds.CreateOpkgTunWithSecurityLevel(context.Background(), "OpkgTun10", "fakeip-tun", "private"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	iface := poster.Payloads()[0].(map[string]any)["interface"].(map[string]any)["OpkgTun10"].(map[string]any)
+	sl := iface["security-level"].(map[string]any)
+	if sl["private"] != true {
+		t.Errorf("want security-level.private=true, got %#v", sl)
+	}
+	if _, hasPublic := sl["public"]; hasPublic {
+		t.Errorf("public must not be set in private mode: %#v", sl)
+	}
+}
+
 func TestInterfaceCommands_DeleteOpkgTun(t *testing.T) {
 	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
 	if err := cmds.DeleteOpkgTun(context.Background(), "OpkgTun0"); err != nil {

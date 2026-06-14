@@ -25,14 +25,18 @@ func NewInterfaceCommands(p Poster, s *SaveCoordinator, q *query.Queries, hn Hoo
 // which is then the HookNotifier for Commands).
 func (c *InterfaceCommands) SetHookNotifier(hn HookNotifier) { c.hookNotifier = hn }
 
-// CreateOpkgTun creates an OpkgTun interface in NDMS.
-func (c *InterfaceCommands) CreateOpkgTun(ctx context.Context, name, description string) error {
+// CreateOpkgTunWithSecurityLevel creates an OpkgTun with an explicit security
+// level ("public" or "private"). fakeip-tun mode requires "private" so
+// segment→tun forwarding is permitted by default; non-global keeps traffic
+// un-masqueraded only when the segment is in a no-masquerade NAT mode (see
+// fakeip-tun spec §2 fact 3 — source-preservation depends on segment NAT mode).
+func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, name, description, securityLevel string) error {
 	payload := map[string]any{
 		"interface": map[string]any{
 			name: map[string]any{
 				"description": description,
 				"security-level": map[string]any{
-					"public": true,
+					securityLevel: true,
 				},
 			},
 		},
@@ -40,6 +44,12 @@ func (c *InterfaceCommands) CreateOpkgTun(ctx context.Context, name, description
 	return postMutation(ctx, c.poster, c.save, payload, "create opkgtun "+name,
 		c.queries.Interfaces.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
+}
+
+// CreateOpkgTun creates an OpkgTun interface in NDMS (public by default,
+// preserving existing callers).
+func (c *InterfaceCommands) CreateOpkgTun(ctx context.Context, name, description string) error {
+	return c.CreateOpkgTunWithSecurityLevel(ctx, name, description, "public")
 }
 
 // DeleteOpkgTun removes an interface (any type — NDMS accepts "no": true for any).
