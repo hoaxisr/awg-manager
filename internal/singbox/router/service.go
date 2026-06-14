@@ -545,6 +545,49 @@ func (s *ServiceImpl) prepareNetfilter(ctx context.Context) error {
 // Returns ctx.Err on cancellation, or a timeout error after the deadline;
 // callers can treat the timeout as soft (proceed with iptables and accept
 // the brief race) or hard at their discretion.
+// fakeIPIfaceName builds the kernel interface name for a fakeip-tun OpkgTun
+// from its allocated index (e.g. index 3 → "opkgtun3"). Single source of truth
+// shared by the readiness inputs and the startup reap.
+func fakeIPIfaceName(index int) string {
+	return "opkgtun" + strconv.Itoa(index)
+}
+
+// ReapOrphanedFakeIPTun removes a fakeip-tun OpkgTun left provisioned by a crash
+// or incomplete teardown when the router is no longer in fakeip-tun mode. It is
+// STARTUP-ONLY (wired once in cmd/awg-manager) — it must NOT run on every
+// Reconcile, or a live mode-switch (fakeip→tproxy) would tear the iface down
+// bluntly, bypassing the safe drain in Disable(fakeip-tun). Idempotent and
+// best-effort: reaps strictly by persisted state (Index). A description-based
+// scan to catch OpkgTuns whose persist was lost is a deferred fallback (v1
+// reaps by persist only).
+func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
+	settings, err := s.deps.Settings.Load()
+	if err != nil {
+		return err
+	}
+	sr, _ := NormalizeSingboxRouterSettings(settings.SingboxRouter)
+	if sr.RoutingMode == "fakeip-tun" {
+		return nil // active mode owns the iface; Enable/Reconcile manage it
+	}
+	st := settings.FakeIP
+	if st == nil || !st.Provisioned {
+		return nil // nothing persisted to reap
+	}
+	iface := fakeIPIfaceName(st.Index)
+	if s.deps.OpkgTun != nil {
+		if err := s.deps.OpkgTun.DeleteOpkgTun(ctx, iface); err != nil {
+			// Keep the persist on failure: returning without clearing it lets the
+			// next boot retry the reap rather than leaking the orphan forever.
+			return fmt.Errorf("reap opkgtun %s: %w", iface, err)
+		}
+		s.appLog.Info("fakeip-reap", iface, "removed orphaned fakeip OpkgTun (mode != fakeip-tun)")
+	}
+	// nil OpkgTun (degraded/test): no provisioner to reap with, but still clear
+	// the persist so the index frees for reuse — a stale persist would block
+	// allocation. A successful delete falls through here to clear too.
+	return s.deps.Settings.SetFakeIPState(nil)
+}
+
 // fakeIPReadyInputs derives the inputs the fakeip-tun readiness probes need
 // from loaded settings + the static FakeIPTun params: the tun iface name (from
 // the allocated OpkgTun index), the tun-side DNS address (the other /30 host,
@@ -559,7 +602,7 @@ func (s *ServiceImpl) fakeIPReadyInputs() (iface, dnsAddr string, fakeipNet neti
 	if err != nil || settings == nil || settings.FakeIP == nil || !settings.FakeIP.Provisioned {
 		return "", "", netip.Prefix{}, false
 	}
-	iface = "opkgtun" + strconv.Itoa(settings.FakeIP.Index)
+	iface = fakeIPIfaceName(settings.FakeIP.Index)
 	dnsAddr, err = DeriveTunDNS(s.deps.FakeIPTun.TunAddr4)
 	if err != nil {
 		return "", "", netip.Prefix{}, false

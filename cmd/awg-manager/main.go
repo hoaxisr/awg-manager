@@ -1124,6 +1124,12 @@ func main() {
 	singboxHandler.SetOutboundRefCheckers(deviceProxySvc, routerSvc)
 	routerStartupLog := logging.NewScopedLogger(loggingService, logging.GroupRouting, logging.SubSingboxRouter)
 	go func() {
+		// Startup-only: reap a fakeip OpkgTun orphaned by a crash/incomplete
+		// teardown before Reconcile runs (NOT on every Reconcile — that would
+		// blunt-delete the iface on a live fakeip→tproxy switch).
+		if err := routerSvc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
+			routerStartupLog.Warn("fakeip-reap", "startup", err.Error())
+		}
 		if err := routerSvc.Reconcile(context.Background()); err != nil {
 			routerStartupLog.Error("reconcile", "startup", err.Error())
 		}
