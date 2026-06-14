@@ -1,0 +1,270 @@
+package router
+
+import (
+	"fmt"
+	"net/netip"
+)
+
+// FakeIPTunSpec is the input to BuildFakeIPTunConfig — every value the
+// fakeip-tun mode needs that the builder cannot derive on its own. It carries
+// the kernel tun device, the fakeip pools, the real upstream resolver and the
+// already-built outbound list (proxy + direct).
+type FakeIPTunSpec struct {
+	Iface          string     // kernel iface name, e.g. "opkgtun10"
+	TunAddr4       string     // e.g. "172.18.0.1/30"
+	TunAddr6       string     // e.g. "fdfe:dcba:9876::1/126" (empty to omit v6)
+	MTU            int        //
+	Inet4Range     string     // fakeip v4 pool
+	Inet6Range     string     // fakeip v6 pool (empty to omit v6)
+	CachePath      string     //
+	RealServer     string     // real upstream resolver, e.g. "1.1.1.1"
+	Outbounds      []Outbound // proxy + direct
+	ProxyTag       string     // outbound tag that tun-in routes to
+	DomainRuleSets []string   // .srs tags for domains to fakeip (empty = fake all A/AAAA)
+	SourceIPCIDR   []string   // optional per-device targeting (empty = all sources)
+}
+
+// boolPtr returns a pointer to v. The tun inbound's auto_route / auto_redirect /
+// strict_route / endpoint_independent_nat fields are *bool so that an explicit
+// false survives JSON marshaling (omitempty on a plain bool would drop it, and
+// sing-box would then apply its own non-false defaults — e.g. auto_route true,
+// which is exactly what fakeip-tun must NOT enable because NDMS owns routing).
+func boolPtr(v bool) *bool { return &v }
+
+// BuildFakeIPTunConfig assembles a complete RouterConfig for sing-box's
+// fakeip-tun mode from spec.
+//
+// Shape:
+//   - tun inbound "tun-in" on s.Iface, gvisor stack, every auto-* flag forced
+//     false (NDMS owns routing/redirect; fakeip-tun must not let sing-box touch
+//     the kernel routing table).
+//   - outbounds: s.Outbounds verbatim, after applying the domain_resolver guard
+//     (see applyOutboundDomainResolver) on a defensive copy.
+//   - DNS: a "fakeip" server (the pool) plus a "real" server (true upstream),
+//     final → "real". A single route rule sends A/AAAA queries to "fakeip",
+//     optionally narrowed by rule_set (domains) and/or source_ip_cidr (devices).
+//   - route: hijack-dns first, then everything to the proxy tag; outbound
+//     hostnames resolve via "real" (default_domain_resolver) so the proxy
+//     endpoint never gets a fake address.
+//   - experimental.cache_file persists the fakeip name↔address map across
+//     restarts so existing connections keep their address.
+func BuildFakeIPTunConfig(s FakeIPTunSpec) (*RouterConfig, error) {
+	cfg := NewEmptyConfig()
+
+	addrs := []string{s.TunAddr4}
+	if s.TunAddr6 != "" {
+		addrs = append(addrs, s.TunAddr6)
+	}
+	cfg.Inbounds = []Inbound{{
+		Type:                   "tun",
+		Tag:                    "tun-in",
+		InterfaceName:          s.Iface,
+		Address:                addrs,
+		MTU:                    s.MTU,
+		AutoRoute:              boolPtr(false),
+		AutoRedirect:           boolPtr(false),
+		StrictRoute:            boolPtr(false),
+		Stack:                  "gvisor",
+		EndpointIndependentNAT: boolPtr(false),
+	}}
+
+	cfg.Outbounds = applyOutboundDomainResolver(s.Outbounds, "real")
+
+	fakeip := DNSServer{
+		Tag:        "fakeip",
+		Type:       "fakeip",
+		Inet4Range: s.Inet4Range,
+	}
+	if s.Inet6Range != "" {
+		fakeip.Inet6Range = s.Inet6Range
+	}
+	if err := cfg.AddDNSServer(fakeip); err != nil {
+		return nil, err
+	}
+	if err := cfg.AddDNSServer(DNSServer{Tag: "real", Type: "udp", Server: s.RealServer}); err != nil {
+		return nil, err
+	}
+	cfg.DNS.Final = "real"
+
+	rule := DNSRule{
+		Action:    "route",
+		Server:    "fakeip",
+		QueryType: []string{"A", "AAAA"},
+	}
+	if len(s.DomainRuleSets) > 0 {
+		rule.RuleSet = s.DomainRuleSets
+	}
+	if len(s.SourceIPCIDR) > 0 {
+		rule.SourceIPCIDR = s.SourceIPCIDR
+	}
+	if err := cfg.AddDNSRule(rule); err != nil {
+		return nil, err
+	}
+
+	cfg.Route.Rules = []Rule{
+		{Action: "hijack-dns", Protocol: "dns"},
+		{Action: "route", Outbound: s.ProxyTag},
+	}
+	cfg.Route.Final = s.ProxyTag
+	cfg.Route.DefaultDomainResolver = &DomainResolver{Server: "real"}
+
+	cfg.Experimental = &Experimental{CacheFile: &CacheFile{
+		Enabled:     true,
+		StoreFakeIP: true,
+		Path:        s.CachePath,
+	}}
+
+	return cfg, nil
+}
+
+// applyOutboundDomainResolver returns a copy of outbounds in which every
+// outbound carrying a HOSTNAME Server (non-empty, not a parseable IP literal)
+// is given DomainResolver{Server: resolver} — unless the caller already set a
+// resolver, which is preserved. The input slice and its elements are not
+// mutated (a fresh slice is returned; Outbound is a value type so element
+// copies are independent).
+//
+// Why: in fakeip-tun mode the system DNS path returns fake addresses for
+// hostnames. A proxy endpoint specified by hostname (e.g. server: "vpn.foo.io")
+// would otherwise resolve to a fake address and the tunnel could never connect
+// — a self-deadlock. Pinning such outbounds to the "real" resolver makes the
+// proxy endpoint resolve to its true address.
+//
+// No-op cases (left untouched): empty Server (the v1 default for IP-bound
+// `direct` + `bind_interface` outbounds — they carry no hostname to poison),
+// and Server holding a v4 or v6 IP literal (no DNS resolution happens, so no
+// fakeip risk).
+func applyOutboundDomainResolver(outbounds []Outbound, resolver string) []Outbound {
+	out := make([]Outbound, len(outbounds))
+	copy(out, outbounds)
+	for i := range out {
+		if out[i].DomainResolver != nil {
+			continue // respect caller's choice
+		}
+		if isHostname(out[i].Server) {
+			out[i].DomainResolver = &DomainResolver{Server: resolver}
+		}
+	}
+	return out
+}
+
+// isHostname reports whether s is a non-empty string that is NOT a bare IP
+// literal — i.e. something that must go through DNS resolution. An empty string
+// (no server) and any parseable v4/v6 address return false.
+func isHostname(s string) bool {
+	if s == "" {
+		return false
+	}
+	if _, err := netip.ParseAddr(s); err == nil {
+		return false // it's an IP literal, not a hostname
+	}
+	return true
+}
+
+// FakeIPPoolCollisions checks every fakeip pool CIDR against every configured
+// LAN/tunnel subnet CIDR and returns one human-readable warning per TRUE
+// overlap (netip.Prefix.Overlaps — containment in either direction or partial
+// overlap, NOT string equality). Both address families are handled; a v4 pool
+// never collides with a v6 subnet and vice versa (Overlaps is false across
+// families). Empty and malformed entries are skipped silently. Returns nil when
+// no overlap is found.
+//
+// Purpose: the fakeip pool MUST be a synthetic range that does not coincide
+// with any real subnet the router serves, otherwise a fake address would shadow
+// (or be shadowed by) a real destination and routing would break. The caller
+// surfaces these warnings at config time.
+func FakeIPPoolCollisions(pools []string, subnets []string) []string {
+	parsedPools := parsePrefixes(pools)
+	parsedSubnets := parsePrefixes(subnets)
+
+	var warnings []string
+	for _, p := range parsedPools {
+		for _, sub := range parsedSubnets {
+			if p.prefix.Overlaps(sub.prefix) {
+				warnings = append(warnings, fmt.Sprintf(
+					"fakeip pool %s overlaps configured subnet %s", p.raw, sub.raw))
+			}
+		}
+	}
+	return warnings
+}
+
+// namedPrefix pairs a parsed prefix with its original (canonicalized) text so
+// collision warnings can echo what the caller passed in.
+type namedPrefix struct {
+	prefix netip.Prefix
+	raw    string
+}
+
+// parsePrefixes parses each CIDR, skipping empty/malformed entries. Masked()
+// canonicalizes (e.g. "10.0.0.5/24" → "10.0.0.0/24") so Overlaps is exact and
+// the echoed text is the network form.
+func parsePrefixes(cidrs []string) []namedPrefix {
+	out := make([]namedPrefix, 0, len(cidrs))
+	for _, c := range cidrs {
+		if c == "" {
+			continue
+		}
+		p, err := netip.ParsePrefix(c)
+		if err != nil {
+			continue // skip malformed gracefully
+		}
+		masked := p.Masked()
+		out = append(out, namedPrefix{prefix: masked, raw: masked.String()})
+	}
+	return out
+}
+
+// DeriveTunDNS computes the DHCP-advertised DNS address for a fakeip-tun /30,
+// given the tun interface's own address in CIDR form (e.g. "172.18.0.1/30",
+// where .1 is the router's host on the link). It returns the OTHER usable host
+// of the /30 (the sing-box tun side), e.g. "172.18.0.2".
+//
+// A /30 has exactly four addresses: network, two usable hosts, broadcast. The
+// router owns one usable host; the DNS address is the other usable host so the
+// DHCP server can hand clients a DNS that lands inside the tun where sing-box
+// listens — NOT the router's own .1 (which would loop DNS back to the router,
+// bypassing fakeip).
+//
+// Errors on: non-/30 prefixes, IPv6 (fakeip-tun DNS delivery is v4 DHCP), the
+// network or broadcast address given as the iface host, a result that equals
+// the iface's own host (defensive — should be impossible for a valid /30 host),
+// and malformed input.
+func DeriveTunDNS(ifaceCIDR string) (string, error) {
+	p, err := netip.ParsePrefix(ifaceCIDR)
+	if err != nil {
+		return "", fmt.Errorf("derive tun dns: parse %q: %w", ifaceCIDR, err)
+	}
+	if !p.Addr().Is4() {
+		return "", fmt.Errorf("derive tun dns: %q is not IPv4", ifaceCIDR)
+	}
+	if p.Bits() != 30 {
+		return "", fmt.Errorf("derive tun dns: %q is not a /30", ifaceCIDR)
+	}
+
+	own := p.Addr()
+	network := p.Masked().Addr() // .0
+	host1 := network.Next()      // .1 (first usable)
+	host2 := host1.Next()        // .2 (second usable)
+	broadcast := host2.Next()    // .3
+
+	if own == network || own == broadcast {
+		return "", fmt.Errorf("derive tun dns: %q is the network or broadcast address", ifaceCIDR)
+	}
+
+	var dns netip.Addr
+	switch own {
+	case host1:
+		dns = host2
+	case host2:
+		dns = host1
+	default:
+		// Unreachable for a valid /30 host, but guard anyway.
+		return "", fmt.Errorf("derive tun dns: %q is not a usable host of its /30", ifaceCIDR)
+	}
+
+	if dns == own {
+		return "", fmt.Errorf("derive tun dns: derived DNS equals iface address %q", own)
+	}
+	return dns.String(), nil
+}
