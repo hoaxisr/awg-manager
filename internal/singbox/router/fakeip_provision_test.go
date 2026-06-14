@@ -47,14 +47,7 @@ func TestNewServiceWiresFakeIPProvisioningSeam(t *testing.T) {
 	routes := fakeStaticRouteProvider{}
 	dhcp := fakeDHCPProvider{}
 	indices := fakeOpkgTunIndexLister{}
-	params := FakeIPTunParams{
-		Inet4Range: "10.128.0.0/10",
-		Inet6Range: "3f80::/10",
-		TunAddr4:   "172.18.0.1/30",
-		TunAddr6:   "fdfe:dcba:9876::1/126",
-		MTU:        1500,
-		DHCPPool:   "_WEBADMIN",
-	}
+	params := DefaultFakeIPTunParams()
 
 	svc := NewService(Deps{
 		OpkgTun:        opkg,

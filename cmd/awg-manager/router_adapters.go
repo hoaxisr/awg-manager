@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
@@ -204,10 +205,22 @@ var _ router.OpkgTunIndexLister = (*routerOpkgTunIndexAdapter)(nil)
 
 // routerOpkgTunIndexAdapter unions kernel /sys opkgtun indices with NDMS-known
 // interface names so the fakeip index allocator sees every occupied slot.
-type routerOpkgTunIndexAdapter struct{ store *ndmsquery.InterfaceStore }
+type routerOpkgTunIndexAdapter struct {
+	store *ndmsquery.InterfaceStore
+	log   *logging.ScopedLogger
+}
 
 func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(ctx context.Context) (map[int]bool, error) {
-	sysNums, _ := sysinfo.ListSystemInterfaces() // best-effort: on error treat as no /sys nums
+	sysNums, err := sysinfo.ListSystemInterfaces()
+	if err != nil {
+		// A /sys read failure under-counts occupied opkgtun indices — the
+		// one direction that can cause an index collision — so log it,
+		// then degrade to NDMS-only names.
+		if a.log != nil {
+			a.log.Warn("opkgtun-index", "", "list system interfaces failed: "+err.Error())
+		}
+		sysNums = nil
+	}
 	all, err := a.store.ListAll(ctx)
 	if err != nil {
 		return nil, err

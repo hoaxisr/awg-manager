@@ -50,3 +50,17 @@ type FakeIPTunParams struct {
 	MTU        int    // tun MTU (default 1500)
 	DHCPPool   string // default DHCP pool for DNS delivery (default "_WEBADMIN")
 }
+
+// DefaultFakeIPTunParams returns the spec-default fakeip-tun provisioning knobs
+// (spec §3.3 fakeip pools, §3.4 tun gw addresses + MTU, §3.6 DHCP DNS delivery).
+// Single source of truth for the wiring site in cmd/awg-manager and tests.
+func DefaultFakeIPTunParams() FakeIPTunParams {
+	return FakeIPTunParams{
+		Inet4Range: "10.128.0.0/10",
+		Inet6Range: "3f80::/10",
+		TunAddr4:   "172.18.0.1/30",
+		TunAddr6:   "fdfe:dcba:9876::1/126",
+		MTU:        1500,
+		DHCPPool:   "_WEBADMIN",
+	}
+}
