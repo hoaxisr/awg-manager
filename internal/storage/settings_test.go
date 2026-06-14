@@ -680,3 +680,25 @@ func TestMigrateToV27_SetsRoutingModeTproxy(t *testing.T) {
 		t.Fatalf("routingMode = %q, want tproxy", s.SingboxRouter.RoutingMode)
 	}
 }
+
+// TestMigrateToV27_PreservesExistingMode: the RoutingMode default backfill must
+// skip a config that already carries an explicit mode (e.g. fakeip-tun), so
+// re-running it is a no-op. Exercises the `if RoutingMode == ""` guard.
+func TestMigrateToV27_PreservesExistingMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacy := `{"schemaVersion":26,"authEnabled":false,"usageLevel":"basic","singboxRouter":{"enabled":true,"deviceMode":"policy","routingMode":"fakeip-tun"}}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	store := NewSettingsStore(tmpDir)
+	s, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.SchemaVersion != 27 {
+		t.Fatalf("schema = %d, want 27", s.SchemaVersion)
+	}
+	if s.SingboxRouter.RoutingMode != "fakeip-tun" {
+		t.Fatalf("existing routingMode must be preserved, got %q", s.SingboxRouter.RoutingMode)
+	}
+}
