@@ -55,7 +55,7 @@ func TestUnionOpkgTunIndices(t *testing.T) {
 		"Wireguard0", // не матчится -> игнор
 		"opkgtun",    // нет цифры -> не матчится
 	}
-	got := unionOpkgTunIndices(sysNums, ndmsNames)
+	got := UnionOpkgTunIndices(sysNums, ndmsNames)
 	want := map[int]bool{0: true, 2: true, 1: true, 100: true, 3: true, 4: true}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)

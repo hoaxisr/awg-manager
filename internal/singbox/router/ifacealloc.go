@@ -37,13 +37,13 @@ func allocateFakeIPIndex(live map[int]bool) (int, error) {
 // Узкий интерфейс намеренно объявлен в router, а не использует internal/ndms
 // напрямую: router НЕ может импортировать internal/ndms — это даёт import-cycle
 // через internal/tunnel/wan (см. service.go). Реальный union (kernel /sys +
-// NDMS-имена) строит адаптер в cmd/awg-manager поверх unionOpkgTunIndices
+// NDMS-имена) строит адаптер в cmd/awg-manager поверх UnionOpkgTunIndices
 // (Task 1C.2); здесь — только контракт.
 type OpkgTunIndexLister interface {
 	LiveOpkgTunIndices(ctx context.Context) (map[int]bool, error)
 }
 
-// unionOpkgTunIndices — pure-ядро union занятых индексов OpkgTun: объединяет
+// UnionOpkgTunIndices — pure-ядро union занятых индексов OpkgTun: объединяет
 // kernel-числа из /sys/class/net (sysinfo.ListSystemInterfaces) с индексами,
 // извлечёнными из NDMS system-имён интерфейсов. Вынесено отдельно от адаптера,
 // чтобы покрыть тестом без /sys и без NDMS.
@@ -53,7 +53,7 @@ type OpkgTunIndexLister interface {
 // и в union не попадут. opkgtun — это именно наш диапазон; awg/awgm семантически
 // не OpkgTun, но их попадание лишь over-count'ит (займём слот зря, не баг) —
 // ложного освобождения занятого индекса не происходит.
-func unionOpkgTunIndices(sysNums []int, ndmsNames []string) map[int]bool {
+func UnionOpkgTunIndices(sysNums []int, ndmsNames []string) map[int]bool {
 	live := make(map[int]bool)
 	for _, n := range sysNums {
 		live[n] = true

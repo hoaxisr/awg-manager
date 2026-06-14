@@ -275,6 +275,26 @@ type Deps struct {
 	// EnsureRouterNetfilterModules). Tests set this to avoid real syscalls.
 	NetfilterPreflight func(context.Context) error
 	GeoData            GeoTagExpander
+	// OpkgTun provisions the fakeip-tun kernel interface via NDMS.
+	// Optional — nil in tests; wired in cmd/awg-manager to
+	// *ndmscommand.InterfaceCommands. Consumed by Slice 1D Enable.
+	OpkgTun OpkgTunProvisioner
+	// StaticRoutes adds/removes the NDMS auto static routes for the
+	// fakeip pool + reject route. Optional — nil in tests; wired in
+	// cmd/awg-manager via the route adapter. Consumed by Slice 1D Enable.
+	StaticRoutes StaticRouteProvider
+	// DHCP delivers the tun DNS to LAN segments via DHCP pool dns-server.
+	// Optional — nil in tests; wired in cmd/awg-manager to
+	// *ndmscommand.DHCPCommands. Consumed by Slice 1D Enable.
+	DHCP DHCPProvider
+	// OpkgTunIndices lists occupied OpkgTun indices (kernel /sys ∪ NDMS)
+	// for the fakeip index allocator. Optional — nil in tests; wired in
+	// cmd/awg-manager via the union adapter. Consumed by Slice 1D Enable.
+	OpkgTunIndices OpkgTunIndexLister
+	// FakeIPTun holds the static fakeip-tun provisioning knobs (pool
+	// ranges, tun addrs, MTU, DHCP pool). Zero-value in tests; defaults
+	// wired in cmd/awg-manager. Consumed by Slice 1D Enable.
+	FakeIPTun FakeIPTunParams
 }
 
 // routerLoggerAdapter narrows *logging.ScopedLogger to the wanLogger
