@@ -560,6 +560,12 @@ func fakeIPIfaceName(index int) string {
 // best-effort: reaps strictly by persisted state (Index). A description-based
 // scan to catch OpkgTuns whose persist was lost is a deferred fallback (v1
 // reaps by persist only).
+//
+// INVARIANT (relied on by this reap): Enable(fakeip-tun) MUST persist the index
+// via SetFakeIPState BEFORE CreateOpkgTun (and roll back its own partial work on
+// failure), so persisted state is a reliable superset of live ifaces — otherwise
+// a crash mid-Enable leaves a persist-less orphan this reap cannot see (the
+// description-scan fallback is deferred).
 func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 	settings, err := s.deps.Settings.Load()
 	if err != nil {
@@ -574,17 +580,22 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 		return nil // nothing persisted to reap
 	}
 	iface := fakeIPIfaceName(st.Index)
-	if s.deps.OpkgTun != nil {
-		if err := s.deps.OpkgTun.DeleteOpkgTun(ctx, iface); err != nil {
-			// Keep the persist on failure: returning without clearing it lets the
-			// next boot retry the reap rather than leaking the orphan forever.
-			return fmt.Errorf("reap opkgtun %s: %w", iface, err)
-		}
-		s.appLog.Info("fakeip-reap", iface, "removed orphaned fakeip OpkgTun (mode != fakeip-tun)")
+	if s.deps.OpkgTun == nil {
+		// No provisioner (degraded/test): we can't confirm the iface is gone, so
+		// KEEP the persist — clearing it would convert a tracked orphan into an
+		// un-reapable persist-less one. The index isn't leaked: the allocator is
+		// live-sourced (reads /sys + NDMS), so a still-live iface stays occupied.
+		// A future boot with a real provisioner reaps it.
+		return nil
 	}
-	// nil OpkgTun (degraded/test): no provisioner to reap with, but still clear
-	// the persist so the index frees for reuse — a stale persist would block
-	// allocation. A successful delete falls through here to clear too.
+	if err := s.deps.OpkgTun.DeleteOpkgTun(ctx, iface); err != nil {
+		// Keep the persist on failure: returning without clearing it lets the
+		// next boot retry the reap rather than leaking the orphan forever.
+		return fmt.Errorf("reap opkgtun %s: %w", iface, err)
+	}
+	s.appLog.Info("fakeip-reap", iface, "removed orphaned fakeip OpkgTun (mode != fakeip-tun)")
+	// Clear persist ONLY after a confirmed delete success (NDMS returns nil even
+	// when the iface was already gone, i.e. idempotent), so the index frees.
 	return s.deps.Settings.SetFakeIPState(nil)
 }
 

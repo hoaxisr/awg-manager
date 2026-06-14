@@ -132,16 +132,18 @@ func TestReapOrphaned_DeleteFailureKeepsPersist(t *testing.T) {
 	}
 }
 
-func TestReapOrphaned_NilOpkgClearsPersist(t *testing.T) {
-	// Degraded/test path: no provisioner to reap with. We still clear persist so
-	// the index frees for reuse — leaving stale persist would block allocation.
+func TestReapOrphaned_NilOpkgKeepsPersist(t *testing.T) {
+	// Degraded/test path: no provisioner to reap with. We KEEP the persist —
+	// clearing it would convert a tracked orphan into an un-reapable persist-less
+	// one. The index isn't leaked (the allocator is live-sourced). A future boot
+	// with a real provisioner reaps it.
 	store := newReapSettingsStore(t, "tproxy", 5, true)
 	svc := newTestService(t, Deps{Settings: store, OpkgTun: nil})
 
 	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
 		t.Fatalf("ReapOrphanedFakeIPTun (nil OpkgTun): %v", err)
 	}
-	if got := loadFakeIP(t, store); got != nil {
-		t.Errorf("persist must be cleared even with nil OpkgTun, got %+v", got)
+	if got := loadFakeIP(t, store); got == nil {
+		t.Error("persist must be retained with nil OpkgTun, got nil")
 	}
 }
