@@ -60,8 +60,9 @@ func TestReapOrphaned_RemovesAndClears(t *testing.T) {
 	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
 		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
 	}
-	if len(opkg.deleted) != 1 || opkg.deleted[0] != "opkgtun3" {
-		t.Errorf("DeleteOpkgTun calls = %v, want [opkgtun3]", opkg.deleted)
+	// Bug 1: DeleteOpkgTun takes the CamelCase NDMS name (NDMS rejects lowercase).
+	if len(opkg.deleted) != 1 || opkg.deleted[0] != "OpkgTun3" {
+		t.Errorf("DeleteOpkgTun calls = %v, want [OpkgTun3]", opkg.deleted)
 	}
 	if got := loadFakeIP(t, store); got != nil {
 		t.Errorf("FakeIP persist = %+v, want nil after reap", got)
@@ -150,9 +151,11 @@ func TestReapOrphaned_SweepsStaleRejectRoute(t *testing.T) {
 	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
 		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
 	}
-	// The sweep must attempt RemoveStaticRoute{Reject:true} for the masked pool.
-	if !log.has("RemoveRejectRoute:10.128.0.0:255.192.0.0") {
-		t.Errorf("stale reject-route sweep missing, got %v", log.calls)
+	// Bug 2 model: the kill-switch reject route is interface-bound, so the sweep
+	// targets it by the persisted index's NDMS name (OpkgTun3) via the stand-
+	// verified remove form ({…,no:true}, no reject flag → fake records RemoveRoute).
+	if !log.has("RemoveRoute:10.128.0.0:OpkgTun3") {
+		t.Errorf("stale kill-switch route sweep missing, got %v", log.calls)
 	}
 }
 
@@ -173,7 +176,7 @@ func TestReapOrphaned_NoSweepInFakeIPMode(t *testing.T) {
 	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
 		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
 	}
-	if log.has("RemoveRejectRoute:10.128.0.0:255.192.0.0") {
+	if log.has("RemoveRoute:10.128.0.0:OpkgTun2") {
 		t.Errorf("fakeip-tun mode must NOT sweep the reject route (early return), got %v", log.calls)
 	}
 }

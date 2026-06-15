@@ -89,7 +89,9 @@ type recStaticRoutes struct {
 
 func (r *recStaticRoutes) AddStaticRoute(_ context.Context, route StaticRouteSpec) error {
 	if route.Reject {
-		r.log.add("AddRejectRoute:" + route.Network + ":" + route.Mask)
+		// The reject route is a kill-switch FLAG renewed onto the pool→OpkgTun
+		// route — it carries the NDMS Interface (stand-verified), so record it.
+		r.log.add("AddRejectRoute:" + route.Network + ":" + route.Mask + ":" + route.Interface)
 		if r.failAt == "AddRejectRoute" {
 			return errors.New("injected: AddRejectRoute")
 		}
@@ -103,7 +105,7 @@ func (r *recStaticRoutes) AddStaticRoute(_ context.Context, route StaticRouteSpe
 }
 func (r *recStaticRoutes) RemoveStaticRoute(_ context.Context, route StaticRouteSpec) error {
 	if route.Reject {
-		r.log.add("RemoveRejectRoute:" + route.Network + ":" + route.Mask)
+		r.log.add("RemoveRejectRoute:" + route.Network + ":" + route.Mask + ":" + route.Interface)
 		if r.failAt == "RemoveRejectRoute" {
 			return errors.New("injected: RemoveRejectRoute")
 		}
@@ -246,7 +248,10 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 		t.Fatalf("Enable(fakeip-tun): %v", err)
 	}
 
-	// Index 0 is the lowest free → opkgtun0.
+	// Index 0 is the lowest free. NDMS RCI ops take the CamelCase OpkgTun0
+	// (stand-verified — NDMS rejects the lowercase kernel name); sing-box / kernel
+	// sites (flush) take the lowercase opkgtun0.
+	const ndmsName = "OpkgTun0"
 	const iface = "opkgtun0"
 
 	// Persist FakeIP state must land BEFORE the iface is created.
@@ -272,25 +277,38 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 		}
 	}
 
-	createCall := "Create:" + iface + ":private"
+	// Bug 1 guard: the NDMS interface name MUST be CamelCase OpkgTun0, NOT the
+	// lowercase kernel name (which NDMS rejects with "unsupported interface type").
+	createCall := "Create:" + ndmsName + ":private"
 	if !h.log.has(createCall) {
-		t.Fatalf("Create with private security-level missing: %v", h.log.calls)
+		t.Fatalf("Create with NDMS CamelCase name + private security-level missing: %v", h.log.calls)
+	}
+	if h.log.has("Create:" + iface + ":private") {
+		t.Fatalf("Create used the lowercase kernel name (NDMS would reject it): %v", h.log.calls)
+	}
+	// sing-box / kernel sites use the lowercase kernel name (flush).
+	if !h.log.has("Flush:" + iface) {
+		t.Fatalf("Flush must use the lowercase kernel name %q: %v", iface, h.log.calls)
+	}
+	// The pool route Interface is the NDMS name.
+	if !h.log.has("AddRoute:10.128.0.0:255.192.0.0:" + ndmsName) {
+		t.Fatalf("pool route Interface must be the NDMS name %q: %v", ndmsName, h.log.calls)
 	}
 	// SetIPGlobal must NOT be called (no such recorded label could exist; assert
 	// no global-ish call leaked — Create is the only creation op).
-	mustOrder(createCall, "SetAddress:"+iface+":172.18.0.1:255.255.255.252")
-	mustOrder("SetAddress:"+iface+":172.18.0.1:255.255.255.252", "SetMTU:"+iface)
+	mustOrder(createCall, "SetAddress:"+ndmsName+":172.18.0.1:255.255.255.252")
+	mustOrder("SetAddress:"+ndmsName+":172.18.0.1:255.255.255.252", "SetMTU:"+ndmsName)
 	// v6: SetIPv6Address is driven (defaults carry TunAddr6) and lands after the
 	// v4 SetAddress, before SetMTU.
-	mustOrder("SetAddress:"+iface+":172.18.0.1:255.255.255.252", "SetIPv6Address:"+iface+":fdfe:dcba:9876::1")
-	mustOrder("SetIPv6Address:"+iface+":fdfe:dcba:9876::1", "SetMTU:"+iface)
+	mustOrder("SetAddress:"+ndmsName+":172.18.0.1:255.255.255.252", "SetIPv6Address:"+ndmsName+":fdfe:dcba:9876::1")
+	mustOrder("SetIPv6Address:"+ndmsName+":fdfe:dcba:9876::1", "SetMTU:"+ndmsName)
 	// v6 pool route is added (defaults carry Inet6Range) after the v4 pool route.
-	mustOrder("AddRoute:10.128.0.0:255.192.0.0:"+iface, "AddRoute6:3f80::/10:"+iface)
-	mustOrder("SetMTU:"+iface, "InterfaceUp:"+iface)
-	mustOrder("InterfaceUp:"+iface, "Flush:"+iface)
+	mustOrder("AddRoute:10.128.0.0:255.192.0.0:"+ndmsName, "AddRoute6:3f80::/10:"+ndmsName)
+	mustOrder("SetMTU:"+ndmsName, "InterfaceUp:"+ndmsName)
+	mustOrder("InterfaceUp:"+ndmsName, "Flush:"+iface)
 	// Flush precedes the pool route (waitForSingbox sits between, no recorded call).
-	mustOrder("Flush:"+iface, "AddRoute:10.128.0.0:255.192.0.0:"+iface)
-	mustOrder("AddRoute:10.128.0.0:255.192.0.0:"+iface, "SetPoolDNS:_WEBADMIN:172.18.0.2")
+	mustOrder("Flush:"+iface, "AddRoute:10.128.0.0:255.192.0.0:"+ndmsName)
+	mustOrder("AddRoute:10.128.0.0:255.192.0.0:"+ndmsName, "SetPoolDNS:_WEBADMIN:172.18.0.2")
 
 	// DHCP SetPoolDNS must be the LAST provisioning call.
 	last := h.log.calls[len(h.log.calls)-1]
@@ -330,27 +348,28 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 				t.Error("SingboxRouter.Enabled must stay false after rollback")
 			}
 
-			const iface = "opkgtun0"
+			const ndmsName = "OpkgTun0" // NDMS iface ops + route Interface
 			// If Create SUCCEEDED (failure injected at a later step), rollback must
-			// tear the iface down (InterfaceDown + Delete). When Create itself fails,
-			// its undo is never pushed (nothing was created), so no teardown is due.
+			// tear the iface down (InterfaceDown + Delete) via the NDMS name. When
+			// Create itself fails, its undo is never pushed (nothing was created), so
+			// no teardown is due.
 			if step != "Create" {
-				if !h.log.has("InterfaceDown:" + iface) {
+				if !h.log.has("InterfaceDown:" + ndmsName) {
 					t.Errorf("%s: rollback missing InterfaceDown: %v", step, h.log.calls)
 				}
-				if !h.log.has("Delete:" + iface) {
+				if !h.log.has("Delete:" + ndmsName) {
 					t.Errorf("%s: rollback missing Delete: %v", step, h.log.calls)
 				}
 			} else {
 				// Create failed → nothing created → no teardown.
-				if h.log.has("Delete:" + iface) {
+				if h.log.has("Delete:" + ndmsName) {
 					t.Errorf("Create-fail must not run iface teardown: %v", h.log.calls)
 				}
 			}
 			// A failure before the route step must not leave a route applied.
 			switch step {
 			case "Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "Flush":
-				if h.log.has("AddRoute:10.128.0.0:255.192.0.0:" + iface) {
+				if h.log.has("AddRoute:10.128.0.0:255.192.0.0:" + ndmsName) {
 					t.Errorf("%s: route should not have been added", step)
 				}
 				if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
@@ -366,7 +385,7 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 				// removed in rollback; the v6 route itself never landed (so nothing
 				// to remove for it). DHCP must not be set. (iface teardown + persist
 				// clear are asserted by the common checks above.)
-				if !h.log.has("RemoveRoute:10.128.0.0:" + iface) {
+				if !h.log.has("RemoveRoute:10.128.0.0:" + ndmsName) {
 					t.Errorf("AddRoute6: rollback missing RemoveRoute (v4): %v", h.log.calls)
 				}
 				if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
@@ -374,10 +393,10 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 				}
 			case "SetPoolDNS":
 				// Routes were added then must be removed in rollback (v4 + v6).
-				if !h.log.has("RemoveRoute:10.128.0.0:" + iface) {
+				if !h.log.has("RemoveRoute:10.128.0.0:" + ndmsName) {
 					t.Errorf("SetPoolDNS: rollback missing RemoveRoute: %v", h.log.calls)
 				}
-				if !h.log.has("RemoveRoute6:3f80::/10:" + iface) {
+				if !h.log.has("RemoveRoute6:3f80::/10:" + ndmsName) {
 					t.Errorf("SetPoolDNS: rollback missing RemoveRoute6: %v", h.log.calls)
 				}
 			}
@@ -403,11 +422,11 @@ func TestEnableFakeIPTun_RollbackOnReadinessTimeout(t *testing.T) {
 	if st := h.loadFakeIP(t); st != nil {
 		t.Errorf("FakeIP persist = %+v, want nil after readiness-timeout rollback", st)
 	}
-	const iface = "opkgtun0"
-	if !h.log.has("InterfaceDown:"+iface) || !h.log.has("Delete:"+iface) {
+	const ndmsName = "OpkgTun0"
+	if !h.log.has("InterfaceDown:"+ndmsName) || !h.log.has("Delete:"+ndmsName) {
 		t.Errorf("readiness-timeout rollback must tear down iface: %v", h.log.calls)
 	}
-	if h.log.has("AddRoute:10.128.0.0:255.192.0.0:" + iface) {
+	if h.log.has("AddRoute:10.128.0.0:255.192.0.0:" + ndmsName) {
 		t.Errorf("routes must not be added when readiness fails: %v", h.log.calls)
 	}
 }
@@ -554,8 +573,9 @@ func TestEnableFakeIPTun_AllocatesLowestFreeIndex(t *testing.T) {
 	if st == nil || st.Index != 2 {
 		t.Fatalf("FakeIP index = %v, want 2 (0,1 occupied)", st)
 	}
-	if !h.log.has("Create:opkgtun2:private") {
-		t.Errorf("expected Create opkgtun2, got %v", h.log.calls)
+	// NDMS Create uses the CamelCase name for the allocated index.
+	if !h.log.has("Create:OpkgTun2:private") {
+		t.Errorf("expected Create OpkgTun2, got %v", h.log.calls)
 	}
 }
 
@@ -576,7 +596,7 @@ func TestEnableFakeIPTun_IdempotentWhenProvisioned(t *testing.T) {
 	if st1 == nil || !st1.Provisioned || st1.Index != 0 {
 		t.Fatalf("after first Enable FakeIP = %+v, want provisioned index 0", st1)
 	}
-	createCount1 := countCalls(h.log, "Create:opkgtun0:private")
+	createCount1 := countCalls(h.log, "Create:OpkgTun0:private")
 	if createCount1 != 1 {
 		t.Fatalf("first Enable Create count = %d, want 1", createCount1)
 	}
@@ -592,10 +612,10 @@ func TestEnableFakeIPTun_IdempotentWhenProvisioned(t *testing.T) {
 	}
 
 	// No second Create at all (neither opkgtun0 nor any other index).
-	if c := countCalls(h.log, "Create:opkgtun0:private"); c != 1 {
+	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 1 {
 		t.Errorf("Create:opkgtun0 count = %d after second Enable, want 1 (no re-provision)", c)
 	}
-	if h.log.has("Create:opkgtun1:private") {
+	if h.log.has("Create:OpkgTun1:private") {
 		t.Errorf("second Enable allocated a NEW index: %v", h.log.calls)
 	}
 
@@ -615,7 +635,7 @@ func TestEnableFakeIPTun_ReprovisionsWhenIfaceGone(t *testing.T) {
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("first Enable: %v", err)
 	}
-	if c := countCalls(h.log, "Create:opkgtun0:private"); c != 1 {
+	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 1 {
 		t.Fatalf("first Enable Create count = %d, want 1", c)
 	}
 
@@ -626,7 +646,7 @@ func TestEnableFakeIPTun_ReprovisionsWhenIfaceGone(t *testing.T) {
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("second Enable (reprovision): %v", err)
 	}
-	if c := countCalls(h.log, "Create:opkgtun0:private"); c != 2 {
+	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 2 {
 		t.Errorf("Create:opkgtun0 count = %d, want 2 (re-provisioned after iface gone): %v", c, h.log.calls)
 	}
 }
@@ -665,7 +685,9 @@ func TestDisableFakeIPTun_Ordering(t *testing.T) {
 	getDrain := captureDrain(t)
 	provisionForDisable(t, h)
 
-	const iface = "opkgtun0"
+	// NDMS RCI ops + the route Interface take the CamelCase OpkgTun0; the kernel
+	// name is unused on the teardown path (no flush on disable).
+	const ndmsName = "OpkgTun0"
 	if err := h.svc.Disable(context.Background()); err != nil {
 		t.Fatalf("Disable(fakeip-tun): %v", err)
 	}
@@ -684,24 +706,31 @@ func TestDisableFakeIPTun_Ordering(t *testing.T) {
 	}
 
 	clearDNS := "ClearPoolDNS:_WEBADMIN"
-	addReject := "AddRejectRoute:10.128.0.0:255.192.0.0"
-	rmAuto := "RemoveRoute:10.128.0.0:" + iface
-	rmAuto6 := "RemoveRoute6:3f80::/10:" + iface
+	// Bug 2: the reject route is the pool→OpkgTun route RENEWED with reject:true ON
+	// the OpkgTun interface (kill-switch flag), NOT an interface-less blackhole.
+	renewReject := "AddRejectRoute:10.128.0.0:255.192.0.0:" + ndmsName
+	rmAuto6 := "RemoveRoute6:3f80::/10:" + ndmsName
 
 	// ClearPoolDNS is FIRST.
 	if first := h.log.calls[0]; first != clearDNS {
 		t.Errorf("first call = %q, want %q first", first, clearDNS)
 	}
-	// reject route ADDED before the auto-route is removed (fail-closed).
-	mustOrder(clearDNS, addReject)
-	mustOrder(addReject, rmAuto)
-	// v6 auto-route removed.
+	// The pool route is renewed to a reject kill-switch (interface-bound) after DNS
+	// is cleared.
+	mustOrder(clearDNS, renewReject)
+	// Bug 2: there must be NO separate auto-route removal before the iface delete —
+	// the single pool route is the kill-switch and is only removed by the async
+	// drain LAST.
+	if h.log.has("RemoveRoute:10.128.0.0:" + ndmsName) {
+		t.Errorf("v4 auto-route removed inline; the kill-switch route must survive until the async drain: %v", h.log.calls)
+	}
+	// v6 pool route removed (no v6 reject equivalent — fail-open, see disable doc).
 	if !h.log.has(rmAuto6) {
 		t.Errorf("v6 auto-route not removed: %v", h.log.calls)
 	}
-	// slot disabled, then iface torn down.
-	mustOrder(rmAuto, "InterfaceDown:"+iface)
-	mustOrder("InterfaceDown:"+iface, "Delete:"+iface)
+	// reject-renew before iface torn down, then iface down→delete (NDMS name).
+	mustOrder(renewReject, "InterfaceDown:"+ndmsName)
+	mustOrder("InterfaceDown:"+ndmsName, "Delete:"+ndmsName)
 
 	// persist: FakeIP cleared, Enabled=false.
 	if st := h.loadFakeIP(t); st != nil {
@@ -712,23 +741,25 @@ func TestDisableFakeIPTun_Ordering(t *testing.T) {
 		t.Error("SingboxRouter.Enabled must be false after Disable")
 	}
 
-	// The reject route must NOT yet be removed (drain scheduled, not run inline).
-	if h.log.has("RemoveRejectRoute:10.128.0.0:255.192.0.0") {
-		t.Errorf("reject route removed before drain window: %v", h.log.calls)
+	// The kill-switch route must NOT yet be removed (drain scheduled, not run
+	// inline). The stand-verified REMOVE form is {network,mask,interface,no:true}
+	// WITHOUT a reject flag (the fake records that as RemoveRoute on the iface).
+	rmKillSwitch := "RemoveRoute:10.128.0.0:" + ndmsName
+	if h.log.has(rmKillSwitch) {
+		t.Errorf("kill-switch route removed before drain window: %v", h.log.calls)
 	}
 
-	// Invoke the captured drain closure → reject route removed LAST.
+	// Invoke the captured drain closure → kill-switch route removed LAST, on the NDMS iface.
 	drain := getDrain()
 	if drain == nil {
 		t.Fatal("drain closure was not scheduled")
 	}
 	drain()
-	rmReject := "RemoveRejectRoute:10.128.0.0:255.192.0.0"
-	if !h.log.has(rmReject) {
-		t.Fatalf("reject route not removed after drain: %v", h.log.calls)
+	if !h.log.has(rmKillSwitch) {
+		t.Fatalf("kill-switch route not removed after drain: %v", h.log.calls)
 	}
-	if last := h.log.calls[len(h.log.calls)-1]; last != rmReject {
-		t.Errorf("last call = %q, want reject removal LAST", last)
+	if last := h.log.calls[len(h.log.calls)-1]; last != rmKillSwitch {
+		t.Errorf("last call = %q, want kill-switch removal LAST", last)
 	}
 }
 
@@ -743,23 +774,32 @@ func TestDisableFakeIPTun_DrainOffLock(t *testing.T) {
 		t.Fatalf("Disable: %v", err)
 	}
 
-	// Reject add happened; reject removal has NOT (still scheduled).
-	if !h.log.has("AddRejectRoute:10.128.0.0:255.192.0.0") {
-		t.Fatalf("reject route was not added: %v", h.log.calls)
+	// Reject renew happened (on the OpkgTun0 iface); kill-switch removal has NOT
+	// (still scheduled off-lock via the seam). The remove form is a plain
+	// RemoveRoute on the iface (stand-verified {…,no:true}, no reject flag).
+	if !h.log.has("AddRejectRoute:10.128.0.0:255.192.0.0:OpkgTun0") {
+		t.Fatalf("reject route was not renewed: %v", h.log.calls)
 	}
-	if h.log.has("RemoveRejectRoute:10.128.0.0:255.192.0.0") {
-		t.Errorf("reject removal ran inline (must be off-lock via seam): %v", h.log.calls)
+	if h.log.has("RemoveRoute:10.128.0.0:OpkgTun0") {
+		t.Errorf("kill-switch removal ran inline (must be off-lock via seam): %v", h.log.calls)
 	}
 	if getDrain() == nil {
 		t.Error("drain closure was not scheduled via the seam")
 	}
 }
 
-// Best-effort push-through: a mid-step failure (e.g. RemoveRoute, SetEnabled)
+// Best-effort push-through: a mid-step failure (reject-renew, or a v6 route op)
 // must NOT abort teardown — persist clear + Enabled=false + drain schedule still
 // run (asymmetric vs Enable's rollback-on-first-error).
+//
+// Bug 2 model: there is no longer a separate v4 auto-route REMOVAL during disable
+// (the single pool route is renewed in place to a reject kill-switch and only the
+// async drain removes it). So the meaningful injectable failure is AddRejectRoute
+// (the reject-renew) — when it fails, no drain is scheduled (no kill-switch route
+// was established to remove). RemoveRejectRoute exercises a drain-time failure but
+// teardown is already done, so it is covered via the drain closure elsewhere.
 func TestDisableFakeIPTun_BestEffort(t *testing.T) {
-	for _, failAt := range []string{"RemoveRoute", "AddRejectRoute"} {
+	for _, failAt := range []string{"AddRejectRoute"} {
 		t.Run(failAt, func(t *testing.T) {
 			h := newFakeIPEnableHarness(t, "")
 			getDrain := captureDrain(t)
@@ -779,19 +819,11 @@ func TestDisableFakeIPTun_BestEffort(t *testing.T) {
 			if all.SingboxRouter.Enabled {
 				t.Error("Enabled must be false (push-through must persist disabled)")
 			}
-			// Drain is scheduled only when the reject route was actually added
-			// (Fix 2): a RemoveRoute failure still has a live reject route to drain,
-			// but an AddRejectRoute failure leaves nothing to remove (and the v4
-			// auto-route is kept, asserted in TestDisableFakeIPTun_RejectAddFailKeepsAutoRoute).
-			switch failAt {
-			case "RemoveRoute":
-				if getDrain() == nil {
-					t.Error("drain must still be scheduled after a best-effort RemoveRoute error")
-				}
-			case "AddRejectRoute":
-				if getDrain() != nil {
-					t.Error("no drain must be scheduled when reject-add failed (no reject route to remove)")
-				}
+			// An AddRejectRoute failure leaves no kill-switch route to remove, so no
+			// drain must be scheduled (the plain pool route is kept; the startup sweep
+			// is the safety net).
+			if failAt == "AddRejectRoute" && getDrain() != nil {
+				t.Error("no drain must be scheduled when reject-renew failed (no kill-switch route to remove)")
 			}
 		})
 	}
@@ -808,18 +840,20 @@ func TestDisableFakeIPTun_RejectAddFailKeepsAutoRoute(t *testing.T) {
 	provisionForDisable(t, h)
 	h.routes.failAt = "AddRejectRoute"
 
-	const iface = "opkgtun0"
+	const ndmsName = "OpkgTun0"
 	if err := h.svc.Disable(context.Background()); err != nil {
 		t.Fatalf("Disable must push through, got: %v", err)
 	}
 
-	// Reject add was attempted but failed.
-	if !h.log.has("AddRejectRoute:10.128.0.0:255.192.0.0") {
-		t.Fatalf("reject add was not attempted: %v", h.log.calls)
+	// Reject renew was attempted but failed (on the OpkgTun0 iface).
+	if !h.log.has("AddRejectRoute:10.128.0.0:255.192.0.0:" + ndmsName) {
+		t.Fatalf("reject renew was not attempted: %v", h.log.calls)
 	}
-	// The v4 auto-route must NOT have been removed (no leak window).
-	if h.log.has("RemoveRoute:10.128.0.0:" + iface) {
-		t.Errorf("v4 auto-route removed despite failed reject-add (WAN-leak window): %v", h.log.calls)
+	// The plain v4 pool route must NOT have been removed (Bug 2 model: disable never
+	// removes the pool route inline; a failed reject-renew leaves it plain + present,
+	// so there is no WAN-leak window — traffic dead-ends at the deleted tun).
+	if h.log.has("RemoveRoute:10.128.0.0:" + ndmsName) {
+		t.Errorf("v4 pool route removed despite failed reject-renew (WAN-leak window): %v", h.log.calls)
 	}
 	// Teardown still reached the mandatory persist steps.
 	if st := h.loadFakeIP(t); st != nil {
@@ -1007,7 +1041,7 @@ func TestReconcileFakeIPTun_NoReprovision(t *testing.T) {
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
-	createCount1 := countCalls(h.log, "Create:opkgtun0:private")
+	createCount1 := countCalls(h.log, "Create:OpkgTun0:private")
 	if createCount1 != 1 {
 		t.Fatalf("after Enable Create count = %d, want 1", createCount1)
 	}
@@ -1020,10 +1054,10 @@ func TestReconcileFakeIPTun_NoReprovision(t *testing.T) {
 	if err := h.svc.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if c := countCalls(h.log, "Create:opkgtun0:private"); c != 1 {
+	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 1 {
 		t.Errorf("Create count = %d after Reconcile, want 1 (no re-provision): %v", c, h.log.calls)
 	}
-	if h.log.has("Create:opkgtun1:private") {
+	if h.log.has("Create:OpkgTun1:private") {
 		t.Errorf("Reconcile leaked a new index: %v", h.log.calls)
 	}
 }

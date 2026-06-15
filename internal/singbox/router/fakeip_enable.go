@@ -111,6 +111,11 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	if err != nil {
 		return fmt.Errorf("enable fakeip-tun: allocate index: %w", err)
 	}
+	// Two names per index (stand-verified): NDMS RCI rejects the lowercase kernel
+	// name, so every NDMS op (create/delete, address/mtu, up/down, static routes)
+	// takes the CamelCase ndmsName; the kernel sees iface (sing-box config, ip
+	// flush, /sys, /proc) under the lowercase name.
+	ndmsName := fakeIPNDMSName(idx)
 	iface := fakeIPIfaceName(idx)
 
 	// Capture the FakeIP state as it was BEFORE this Enable so we can detect a
@@ -153,19 +158,19 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 
 	// Create the OpkgTun with security-level private (no SetIPGlobal: the tun
 	// is an internal transport, not a global-routable iface).
-	if err = s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, iface, fakeIPTunDescription, "private"); err != nil {
+	if err = s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, fakeIPTunDescription, "private"); err != nil {
 		return fmt.Errorf("enable fakeip-tun: create opkgtun: %w", err)
 	}
 	push(func() {
-		if e := s.deps.OpkgTun.InterfaceDown(ctx, iface); e != nil {
+		if e := s.deps.OpkgTun.InterfaceDown(ctx, ndmsName); e != nil {
 			s.appLog.Warn("fakeip-rollback", iface, "iface down: "+e.Error())
 		}
-		if e := s.deps.OpkgTun.DeleteOpkgTun(ctx, iface); e != nil {
+		if e := s.deps.OpkgTun.DeleteOpkgTun(ctx, ndmsName); e != nil {
 			s.appLog.Warn("fakeip-rollback", iface, "delete opkgtun: "+e.Error())
 		}
 	})
 
-	if err = s.deps.OpkgTun.SetAddress(ctx, iface, addr4, mask4); err != nil {
+	if err = s.deps.OpkgTun.SetAddress(ctx, ndmsName, addr4, mask4); err != nil {
 		return fmt.Errorf("enable fakeip-tun: set address: %w", err)
 	}
 	if p.TunAddr6 != "" {
@@ -176,15 +181,15 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 			err = fmt.Errorf("enable fakeip-tun: tun addr6: %w", e)
 			return err
 		}
-		if err = s.deps.OpkgTun.SetIPv6Address(ctx, iface, addr6); err != nil {
+		if err = s.deps.OpkgTun.SetIPv6Address(ctx, ndmsName, addr6); err != nil {
 			return fmt.Errorf("enable fakeip-tun: set ipv6 address: %w", err)
 		}
 	}
-	if err = s.deps.OpkgTun.SetMTU(ctx, iface, p.MTU); err != nil {
+	if err = s.deps.OpkgTun.SetMTU(ctx, ndmsName, p.MTU); err != nil {
 		return fmt.Errorf("enable fakeip-tun: set mtu: %w", err)
 	}
 
-	if err = s.deps.OpkgTun.InterfaceUp(ctx, iface); err != nil {
+	if err = s.deps.OpkgTun.InterfaceUp(ctx, ndmsName); err != nil {
 		return fmt.Errorf("enable fakeip-tun: iface up: %w", err)
 	}
 
@@ -264,24 +269,24 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	if err = s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
 		Network:   poolNet4,
 		Mask:      poolMask4,
-		Interface: iface,
+		Interface: ndmsName,
 		Comment:   fakeIPPoolRouteComment,
 	}); err != nil {
 		return fmt.Errorf("enable fakeip-tun: add pool route: %w", err)
 	}
 	push(func() {
 		if e := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
-			Network: poolNet4, Mask: poolMask4, Interface: iface, Comment: fakeIPPoolRouteComment,
+			Network: poolNet4, Mask: poolMask4, Interface: ndmsName, Comment: fakeIPPoolRouteComment,
 		}); e != nil {
 			s.appLog.Warn("fakeip-rollback", iface, "remove pool route: "+e.Error())
 		}
 	})
 	if p.Inet6Range != "" {
-		if err = s.deps.StaticRoutes.AddStaticRoute6(ctx, p.Inet6Range, iface); err != nil {
+		if err = s.deps.StaticRoutes.AddStaticRoute6(ctx, p.Inet6Range, ndmsName); err != nil {
 			return fmt.Errorf("enable fakeip-tun: add pool route v6: %w", err)
 		}
 		push(func() {
-			if e := s.deps.StaticRoutes.RemoveStaticRoute6(ctx, p.Inet6Range, iface); e != nil {
+			if e := s.deps.StaticRoutes.RemoveStaticRoute6(ctx, p.Inet6Range, ndmsName); e != nil {
 				s.appLog.Warn("fakeip-rollback", iface, "remove pool route v6: "+e.Error())
 			}
 		})

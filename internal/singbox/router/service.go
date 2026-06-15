@@ -324,13 +324,13 @@ func (a *routerLoggerAdapter) Info(msg string) {
 }
 
 type ServiceImpl struct {
-	deps                    Deps
-	appLog                  *logging.ScopedLogger
-	mu                      sync.Mutex
+	deps   Deps
+	appLog *logging.ScopedLogger
+	mu     sync.Mutex
 	// transitionMu serializes SwitchRoutingMode calls. It is DISTINCT from mu:
 	// Enable/Disable (which SwitchRoutingMode composes) take mu themselves, so
 	// holding mu across the whole switch would self-deadlock.
-	transitionMu sync.Mutex
+	transitionMu            sync.Mutex
 	currentMark             string              // last-installed iptables mark; used by Reconcile to detect change
 	currentWANIPs           []string            // last-collected WAN IPs; used by Reconcile to detect change
 	currentLANBridges       []LANBridgeDNSRedir // last-discovered LAN-bridge (name, ndnproxy port) pairs; reconcile triggers re-install when this changes (e.g. NDMS hotspot reconfigured, bridge added/removed, port reassigned)
@@ -572,11 +572,26 @@ func (s *ServiceImpl) prepareNetfilter(ctx context.Context) error {
 // Returns ctx.Err on cancellation, or a timeout error after the deadline;
 // callers can treat the timeout as soft (proceed with iptables and accept
 // the brief race) or hard at their discretion.
-// fakeIPIfaceName builds the kernel interface name for a fakeip-tun OpkgTun
-// from its allocated index (e.g. index 3 → "opkgtun3"). Single source of truth
-// shared by the readiness inputs and the startup reap.
+// fakeIPIfaceName builds the KERNEL interface name for a fakeip-tun OpkgTun from
+// its allocated index (e.g. index 3 → "opkgtun3"). Use this ONLY where the
+// kernel sees the iface: the sing-box tun inbound interface_name, the
+// "ip addr flush dev <iface>" exec, /sys/class/net/<iface>/carrier, the
+// /proc/net/route iface match, and the /sys index scan. For NDMS RCI calls use
+// fakeIPNDMSName instead — NDMS rejects the lowercase kernel name.
 func fakeIPIfaceName(index int) string {
 	return "opkgtun" + strconv.Itoa(index)
+}
+
+// fakeIPNDMSName builds the NDMS RCI interface name for a fakeip-tun OpkgTun from
+// its allocated index (e.g. index 3 → "OpkgTun3"). This mirrors
+// tunnel.Names.NDMSName (CamelCase "OpkgTun%s"); the kernel name is its lowercase
+// (strings.ToLower → fakeIPIfaceName). NDMS REQUIRES this CamelCase form for every
+// RCI interface op (create/delete, address/mtu, up/down) and StaticRouteSpec
+// Interface — passing the lowercase kernel name yields
+// "unsupported interface type: \"opkgtun\"" (stand-verified). Use fakeIPIfaceName
+// only for the kernel-facing sites (sing-box config, ip exec, /sys, /proc).
+func fakeIPNDMSName(index int) string {
+	return "OpkgTun" + strconv.Itoa(index)
 }
 
 // ReapOrphanedFakeIPTun removes a fakeip-tun OpkgTun left provisioned by a crash
@@ -610,22 +625,33 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 
 	// Startup safety net for the disable drain (Fix 1): the async drain goroutine
 	// that removes the v4 reject route does NOT survive a daemon restart (no
-	// persisted pending-drain), and there is RCI uncertainty whether
-	// RemoveStaticRoute's no:true form even matches the reject:true route. So in
-	// NON-fakeip mode (we are not currently the active owner) best-effort remove a
-	// stale drain reject route for the CONFIGURED pool. This covers a drain that
-	// was interrupted by a restart OR an async-remove that didn't match the route.
-	// Derive net/mask exactly as disableFakeIPTun does (Masked → splitCIDR). NDMS
-	// no:true on a non-existent route is idempotent, so this is safe on a clean
-	// boot. Done independently of the persist-based iface reap below (the reject
-	// route can outlive the FakeIP persist that disableFakeIPTun clears).
+	// persisted pending-drain). So in NON-fakeip mode (we are not currently the
+	// active owner) best-effort remove a stale drain reject route for the
+	// CONFIGURED pool. This covers a drain that was interrupted by a restart OR an
+	// async-remove that didn't match the route. Derive net/mask exactly as
+	// disableFakeIPTun does (Masked → splitCIDR). NDMS no:true on a non-existent
+	// route is idempotent, so this is safe on a clean boot. Done independently of
+	// the persist-based iface reap below (the reject route can outlive the FakeIP
+	// persist that disableFakeIPTun clears).
+	//
+	// The reject route is a kill-switch FLAG on the pool→OpkgTun route (stand-
+	// verified), so its NDMS form is interface-bound. We can only target it when the
+	// persisted index tells us the OpkgTun NDMS name; with no persisted index the
+	// route cannot be addressed here (it is tied to the OpkgTun being reaped below,
+	// so DeleteOpkgTun may cascade-remove it — verify cascade semantics on stand).
 	if s.deps.StaticRoutes != nil {
 		if prefix, perr := netip.ParsePrefix(s.deps.FakeIPTun.Inet4Range); perr == nil {
 			if poolNet, poolMask, derr := splitCIDRToAddrMask(prefix.Masked().String()); derr == nil {
-				if err := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
-					Network: poolNet, Mask: poolMask, Reject: true, Comment: fakeIPDrainComment,
-				}); err != nil {
-					s.appLog.Warn("fakeip-reap", "", "sweep stale drain reject route: "+err.Error())
+				sweepIface := ""
+				if st := settings.FakeIP; st != nil && st.Provisioned {
+					sweepIface = fakeIPNDMSName(st.Index)
+				}
+				if sweepIface != "" {
+					if err := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
+						Network: poolNet, Mask: poolMask, Interface: sweepIface, Comment: fakeIPDrainComment,
+					}); err != nil {
+						s.appLog.Warn("fakeip-reap", sweepIface, "sweep stale drain reject route: "+err.Error())
+					}
 				}
 			}
 		}
@@ -635,7 +661,7 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 	if st == nil || !st.Provisioned {
 		return nil // nothing persisted to reap
 	}
-	iface := fakeIPIfaceName(st.Index)
+	ndmsName := fakeIPNDMSName(st.Index)
 	if s.deps.OpkgTun == nil {
 		// No provisioner (degraded/test): we can't confirm the iface is gone, so
 		// KEEP the persist — clearing it would convert a tracked orphan into an
@@ -644,12 +670,12 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 		// A future boot with a real provisioner reaps it.
 		return nil
 	}
-	if err := s.deps.OpkgTun.DeleteOpkgTun(ctx, iface); err != nil {
+	if err := s.deps.OpkgTun.DeleteOpkgTun(ctx, ndmsName); err != nil {
 		// Keep the persist on failure: returning without clearing it lets the
 		// next boot retry the reap rather than leaking the orphan forever.
-		return fmt.Errorf("reap opkgtun %s: %w", iface, err)
+		return fmt.Errorf("reap opkgtun %s: %w", ndmsName, err)
 	}
-	s.appLog.Info("fakeip-reap", iface, "removed orphaned fakeip OpkgTun (mode != fakeip-tun)")
+	s.appLog.Info("fakeip-reap", ndmsName, "removed orphaned fakeip OpkgTun (mode != fakeip-tun)")
 	// Clear persist ONLY after a confirmed delete success (NDMS returns nil even
 	// when the iface was already gone, i.e. idempotent), so the index frees.
 	return s.deps.Settings.SetFakeIPState(nil)

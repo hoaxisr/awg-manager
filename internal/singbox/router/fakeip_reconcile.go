@@ -69,7 +69,8 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// Best-effort: each step logs + continues so one drifted resource cannot
 	// abort the heal of the others. NEVER re-allocate an index or re-create the
 	// iface here — that is Enable's job, gated on the liveness check above.
-	iface := fakeIPIfaceName(st.Index)
+	iface := fakeIPIfaceName(st.Index)   // kernel name: /proc route probe, log labels
+	ndmsName := fakeIPNDMSName(st.Index) // NDMS RCI name: static-route Interface
 
 	// Restart a dead sing-box. The idempotency guard skips this; the drift-heal
 	// MUST do it or a crashed process stays down until the next Enable. Bounded
@@ -99,7 +100,7 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 				// Probe v4 presence (same seam GetStatus uses); only re-add when absent.
 				if !fakeIPPoolRoutePresent(iface, prefix.Masked()) {
 					if e := s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
-						Network: poolNet4, Mask: poolMask4, Interface: iface, Comment: fakeIPPoolRouteComment,
+						Network: poolNet4, Mask: poolMask4, Interface: ndmsName, Comment: fakeIPPoolRouteComment,
 					}); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "re-add pool route v4: "+e.Error())
 					}
@@ -108,7 +109,7 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 					// heuristic (a dedicated v6 presence probe against /proc/net/ipv6_route
 					// is a follow-up). When v4 was present we skip v6 too → zero POSTs.
 					if st.Inet6Range != "" {
-						if e := s.deps.StaticRoutes.AddStaticRoute6(ctx, st.Inet6Range, iface); e != nil {
+						if e := s.deps.StaticRoutes.AddStaticRoute6(ctx, st.Inet6Range, ndmsName); e != nil {
 							s.appLog.Warn("fakeip-reconcile", iface, "re-add pool route v6: "+e.Error())
 						}
 					}
