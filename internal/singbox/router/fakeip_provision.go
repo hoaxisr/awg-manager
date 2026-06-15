@@ -13,6 +13,9 @@ type StaticRouteSpec struct {
 	Mask      string
 	Reject    bool
 	Comment   string
+	// V6 selects the IPv6 route form (bare network+interface, no mask/host/
+	// reject/comment). Mirrors ndmscommand.StaticRouteSpec.V6.
+	V6 bool
 }
 
 // OpkgTunProvisioner manages the fakeip-tun kernel interface lifecycle via NDMS.
@@ -31,8 +34,6 @@ type OpkgTunProvisioner interface {
 type StaticRouteProvider interface {
 	AddStaticRoute(ctx context.Context, route StaticRouteSpec) error
 	RemoveStaticRoute(ctx context.Context, route StaticRouteSpec) error
-	AddStaticRoute6(ctx context.Context, network, iface string) error
-	RemoveStaticRoute6(ctx context.Context, network, iface string) error
 }
 
 // DHCPProvider delivers the tun DNS to LAN segments via DHCP pool dns-server.

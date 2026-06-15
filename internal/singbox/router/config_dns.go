@@ -137,10 +137,8 @@ func validateDNSRule(r DNSRule, serverTags map[string]bool) error {
 		return ErrInvalidMatchers
 	}
 	for _, c := range r.SourceIPCIDR {
-		if _, err := netip.ParsePrefix(c); err != nil {
-			if _, err := netip.ParseAddr(c); err != nil {
-				return fmt.Errorf("dns rule: invalid source_ip_cidr %q: %w", c, err)
-			}
+		if err := validateCIDROrAddr("dns rule: invalid source_ip_cidr", c); err != nil {
+			return err
 		}
 	}
 	for _, rx := range r.DomainRegex {

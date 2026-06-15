@@ -185,20 +185,26 @@ var _ router.StaticRouteProvider = (*routerStaticRouteAdapter)(nil)
 // it's duplicated and bridged here.
 type routerStaticRouteAdapter struct{ routes *ndmscommand.RouteCommands }
 
+// toNDMSRoute translates the router-local StaticRouteSpec mirror into the
+// concrete ndmscommand.StaticRouteSpec field-for-field (including V6).
+func toNDMSRoute(r router.StaticRouteSpec) ndmscommand.StaticRouteSpec {
+	return ndmscommand.StaticRouteSpec{
+		Interface: r.Interface,
+		Host:      r.Host,
+		Network:   r.Network,
+		Mask:      r.Mask,
+		Reject:    r.Reject,
+		Comment:   r.Comment,
+		V6:        r.V6,
+	}
+}
+
 func (a *routerStaticRouteAdapter) AddStaticRoute(ctx context.Context, r router.StaticRouteSpec) error {
-	return a.routes.AddStaticRoute(ctx, ndmscommand.StaticRouteSpec{Interface: r.Interface, Host: r.Host, Network: r.Network, Mask: r.Mask, Reject: r.Reject, Comment: r.Comment})
+	return a.routes.AddStaticRoute(ctx, toNDMSRoute(r))
 }
 
 func (a *routerStaticRouteAdapter) RemoveStaticRoute(ctx context.Context, r router.StaticRouteSpec) error {
-	return a.routes.RemoveStaticRoute(ctx, ndmscommand.StaticRouteSpec{Interface: r.Interface, Host: r.Host, Network: r.Network, Mask: r.Mask, Reject: r.Reject, Comment: r.Comment})
-}
-
-func (a *routerStaticRouteAdapter) AddStaticRoute6(ctx context.Context, network, iface string) error {
-	return a.routes.AddStaticRoute6(ctx, network, iface)
-}
-
-func (a *routerStaticRouteAdapter) RemoveStaticRoute6(ctx context.Context, network, iface string) error {
-	return a.routes.RemoveStaticRoute6(ctx, network, iface)
+	return a.routes.RemoveStaticRoute(ctx, toNDMSRoute(r))
 }
 
 var _ router.OpkgTunIndexLister = (*routerOpkgTunIndexAdapter)(nil)

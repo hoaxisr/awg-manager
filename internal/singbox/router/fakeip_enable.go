@@ -76,14 +76,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("enable fakeip-tun: tun addr: %w", err)
 	}
 	// Derive the v4 fakeip pool network + dotted mask for the auto static route.
-	// Mask the prefix first so a user-supplied non-masked pool (e.g.
-	// "10.130.0.0/10") yields the network address ("10.128.0.0"), not a host —
-	// a non-masked Network would make NDMS reject or mis-install the route.
-	poolPrefix4, err := netip.ParsePrefix(p.Inet4Range)
-	if err != nil {
-		return fmt.Errorf("enable fakeip-tun: pool range: %w", err)
-	}
-	poolNet4, poolMask4, err := splitCIDRToAddrMask(poolPrefix4.Masked().String())
+	poolNet4, poolMask4, err := poolV4NetMask(p.Inet4Range)
 	if err != nil {
 		return fmt.Errorf("enable fakeip-tun: pool range: %w", err)
 	}
@@ -217,13 +210,11 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		Inet6Range: p.Inet6Range,
 		CachePath:  p.CachePath,
 		RealServer: p.RealServer,
-		// Strip auto-managed direct outbounds (awg/nwg/wireguard bind_interface)
-		// — they live in 15-awg.json and are merged by sing-box across config.d.
-		// Re-emitting them here would FATAL the merged config with
-		// "duplicate outbound tag" (stand-verified 2026-06-15). ProxyTag still
-		// references one of them by tag; sing-box resolves it from 15-awg.json.
-		// Mirrors the tproxy path (service.go: stripAutoManagedDirect).
-		Outbounds: stripAutoManagedDirect(cfg.Outbounds),
+		// Raw outbounds — BuildFakeIPTunConfig owns the full pipeline (strip
+		// auto-managed direct, then apply the domain_resolver guard). ProxyTag
+		// may reference a stripped auto-managed direct; sing-box resolves it
+		// from 15-awg.json where those live.
+		Outbounds: cfg.Outbounds,
 		ProxyTag:  proxyTag,
 		// v1: DomainRuleSets / SourceIPCIDR empty = fake all A/AAAA, all sources.
 	}
@@ -269,10 +260,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	if err = fakeIPAddrFlush(ctx, iface); err != nil {
 		return fmt.Errorf("enable fakeip-tun: addr flush: %w", err)
 	}
-	bootWait := env.DurationDefault("AWG_SINGBOX_BOOT_WAIT", 60*time.Second)
-	if bootWait < 60*time.Second {
-		bootWait = 60 * time.Second
-	}
+	bootWait := bootWaitWithFloor()
 	if err = s.waitForSingbox(ctx, bootWait); err != nil {
 		return fmt.Errorf("enable fakeip-tun: %w: waited %s (%v)", ErrSingboxNotReady, bootWait, err)
 	}
@@ -294,11 +282,15 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		}
 	})
 	if p.Inet6Range != "" {
-		if err = s.deps.StaticRoutes.AddStaticRoute6(ctx, p.Inet6Range, ndmsName); err != nil {
+		if err = s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
+			V6: true, Network: p.Inet6Range, Interface: ndmsName,
+		}); err != nil {
 			return fmt.Errorf("enable fakeip-tun: add pool route v6: %w", err)
 		}
 		push(func() {
-			if e := s.deps.StaticRoutes.RemoveStaticRoute6(ctx, p.Inet6Range, ndmsName); e != nil {
+			if e := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
+				V6: true, Network: p.Inet6Range, Interface: ndmsName,
+			}); e != nil {
 				s.appLog.Warn("fakeip-rollback", iface, "remove pool route v6: "+e.Error())
 			}
 		})
@@ -312,6 +304,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// and continue, never failing Enable. This preserves the functional signal
 	// the live DNS probe gave without making it a flaky readiness gate (the
 	// Go resolver honors resolv.conf attempts:1, stand-verified 2026-06-15).
+	poolPrefix4, _ := netip.ParsePrefix(p.Inet4Range) // already validated by poolV4NetMask above
 	fakeipNet4 := poolPrefix4.Masked()
 	dnsConfirmCtx, dnsConfirmCancel := context.WithTimeout(ctx, fakeIPDNSConfirmTimeout)
 	if !fakeIPDNSProbe(dnsConfirmCtx, tunDNS, fakeipNet4) {
@@ -417,8 +410,34 @@ func splitCIDRToAddrMask(cidr string) (addr, mask string, err error) {
 		return "", "", fmt.Errorf("%q is not IPv4", cidr)
 	}
 	m := net.CIDRMask(p.Bits(), 32)
-	dotted := fmt.Sprintf("%d.%d.%d.%d", m[0], m[1], m[2], m[3])
-	return p.Addr().String(), dotted, nil
+	return p.Addr().String(), net.IP(m).String(), nil
+}
+
+// poolV4NetMask derives the v4 fakeip pool network address + dotted mask from a
+// pool CIDR, masking the prefix first so a user-supplied non-masked pool (e.g.
+// "10.130.0.0/10") yields the network address ("10.128.0.0"), not a host — a
+// non-masked Network would make NDMS reject or mis-install the route. Single
+// source of truth for the four sites (enable/disable/reconcile/reap) that need
+// the pool route's network+mask; each caller keeps its own Warn/error handling.
+func poolV4NetMask(inet4Range string) (network, mask string, err error) {
+	prefix, err := netip.ParsePrefix(inet4Range)
+	if err != nil {
+		return "", "", err
+	}
+	return splitCIDRToAddrMask(prefix.Masked().String())
+}
+
+// bootWaitWithFloor returns the sing-box boot-wait timeout from
+// AWG_SINGBOX_BOOT_WAIT (default 60s), clamped to a 60s floor. Router-package-
+// local so the three wait sites (fakeip enable, fakeip reconcile, tproxy
+// switch) share one definition — sidestepping the import cycle that blocks
+// reusing the parent singbox.maxSingboxBootWait helper directly.
+func bootWaitWithFloor() time.Duration {
+	bootWait := env.DurationDefault("AWG_SINGBOX_BOOT_WAIT", 60*time.Second)
+	if bootWait < 60*time.Second {
+		bootWait = 60 * time.Second
+	}
+	return bootWait
 }
 
 // bareAddrFromCIDR returns just the address portion of a CIDR (drops the

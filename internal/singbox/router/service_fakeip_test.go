@@ -89,6 +89,13 @@ type recStaticRoutes struct {
 }
 
 func (r *recStaticRoutes) AddStaticRoute(_ context.Context, route StaticRouteSpec) error {
+	if route.V6 {
+		r.log.add("AddRoute6:" + route.Network + ":" + route.Interface)
+		if r.failAt == "AddRoute6" {
+			return errors.New("injected: AddRoute6")
+		}
+		return nil
+	}
 	if route.Reject {
 		// The reject route is a kill-switch FLAG renewed onto the pool→OpkgTun
 		// route — it carries the NDMS Interface (stand-verified), so record it.
@@ -105,6 +112,10 @@ func (r *recStaticRoutes) AddStaticRoute(_ context.Context, route StaticRouteSpe
 	return nil
 }
 func (r *recStaticRoutes) RemoveStaticRoute(_ context.Context, route StaticRouteSpec) error {
+	if route.V6 {
+		r.log.add("RemoveRoute6:" + route.Network + ":" + route.Interface)
+		return nil
+	}
 	if route.Reject {
 		r.log.add("RemoveRejectRoute:" + route.Network + ":" + route.Mask + ":" + route.Interface)
 		if r.failAt == "RemoveRejectRoute" {
@@ -116,17 +127,6 @@ func (r *recStaticRoutes) RemoveStaticRoute(_ context.Context, route StaticRoute
 	if r.failAt == "RemoveRoute" {
 		return errors.New("injected: RemoveRoute")
 	}
-	return nil
-}
-func (r *recStaticRoutes) AddStaticRoute6(_ context.Context, network, iface string) error {
-	r.log.add("AddRoute6:" + network + ":" + iface)
-	if r.failAt == "AddRoute6" {
-		return errors.New("injected: AddRoute6")
-	}
-	return nil
-}
-func (r *recStaticRoutes) RemoveStaticRoute6(_ context.Context, network, iface string) error {
-	r.log.add("RemoveRoute6:" + network + ":" + iface)
 	return nil
 }
 

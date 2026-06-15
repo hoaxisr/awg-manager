@@ -6,11 +6,9 @@ import (
 	"net/netip"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
-	"github.com/hoaxisr/awg-manager/internal/sys/env"
 )
 
 // reconcileFakeIPTun is the fakeip-tun arm of Reconcile (called from the
@@ -85,7 +83,7 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		} else if e := s.deps.Singbox.Start(); e != nil {
 			s.appLog.Warn("fakeip-reconcile", iface, "restart sing-box (legacy): "+e.Error())
 		}
-		bootWait := env.DurationDefault("AWG_SINGBOX_BOOT_WAIT", 60*time.Second)
+		bootWait := bootWaitWithFloor()
 		if e := s.waitForSingbox(ctx, bootWait); e != nil {
 			s.appLog.Warn("fakeip-reconcile", iface, "sing-box not ready after restart: "+e.Error())
 		}
@@ -98,7 +96,7 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// ranges exactly as Enable does (Masked first).
 	if s.deps.StaticRoutes != nil {
 		if prefix, perr := netip.ParsePrefix(st.Inet4Range); perr == nil {
-			if poolNet4, poolMask4, derr := splitCIDRToAddrMask(prefix.Masked().String()); derr == nil {
+			if poolNet4, poolMask4, derr := poolV4NetMask(st.Inet4Range); derr == nil {
 				// Probe v4 presence (same seam GetStatus uses); only re-add when absent.
 				if !fakeIPPoolRoutePresent(iface, prefix.Masked()) {
 					if e := s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
@@ -111,7 +109,9 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 					// heuristic (a dedicated v6 presence probe against /proc/net/ipv6_route
 					// is a follow-up). When v4 was present we skip v6 too → zero POSTs.
 					if st.Inet6Range != "" {
-						if e := s.deps.StaticRoutes.AddStaticRoute6(ctx, st.Inet6Range, ndmsName); e != nil {
+						if e := s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
+							V6: true, Network: st.Inet6Range, Interface: ndmsName,
+						}); e != nil {
 							s.appLog.Warn("fakeip-reconcile", iface, "re-add pool route v6: "+e.Error())
 						}
 					}

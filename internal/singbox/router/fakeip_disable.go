@@ -2,7 +2,6 @@ package router
 
 import (
 	"context"
-	"net/netip"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -70,14 +69,15 @@ var fakeIPScheduleDrain = func(removeReject func()) {
 // worse than a fully-attempted teardown, so the teardown steps never abort; only
 // the persist and the drain schedule are mandatory.
 //
-// v6 asymmetry (FAIL-OPEN, honest): AddStaticRoute6 has no Reject param, so v6
-// gets NO explicit reject route — its drain is the pool-route removal alone. On a
-// dual-stack router that has a v6 WAN default route (::/0), removing the pool's
-// more-specific v6 route does NOT drop fakeip-v6 packets — they fall through to
-// ::/0 via WAN and LEAK. The v6 drain is therefore currently fail-open. Closing
-// it needs a v6 reject/blackhole route, which requires extending the NDMS
-// AddStaticRoute6 to support reject — see the TODO(fakeip-v6-drain) marker below.
-// Only v4 gets a real fail-closed reject route today.
+// v6 asymmetry (FAIL-OPEN, honest): the v6 route form (StaticRouteSpec.V6)
+// carries no reject flag, so v6 gets NO explicit reject route — its drain is the
+// pool-route removal alone. On a dual-stack router that has a v6 WAN default
+// route (::/0), removing the pool's more-specific v6 route does NOT drop
+// fakeip-v6 packets — they fall through to ::/0 via WAN and LEAK. The v6 drain is
+// therefore currently fail-open. Closing it needs a v6 reject/blackhole route,
+// which requires extending the v6 route form to support reject — see the
+// TODO(fakeip-v6-drain) marker below. Only v4 gets a real fail-closed reject
+// route today.
 func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Settings) error {
 	st := settings.FakeIP
 
@@ -107,14 +107,12 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 	// malformed we cannot build the v4 routes; log and skip them (the rest of the
 	// teardown — stop sing-box, delete iface, clear persist — still runs).
 	var poolNet4, poolMask4 string
-	if prefix, perr := netip.ParsePrefix(st.Inet4Range); perr == nil {
-		if n, m, derr := splitCIDRToAddrMask(prefix.Masked().String()); derr == nil {
+	if st.Inet4Range != "" {
+		if n, m, derr := poolV4NetMask(st.Inet4Range); derr == nil {
 			poolNet4, poolMask4 = n, m
 		} else {
-			s.appLog.Warn("fakeip-disable", iface, "derive pool v4 mask: "+derr.Error())
+			s.appLog.Warn("fakeip-disable", iface, "derive pool v4 net/mask: "+derr.Error())
 		}
-	} else if st.Inet4Range != "" {
-		s.appLog.Warn("fakeip-disable", iface, "parse pool v4 range: "+perr.Error())
 	}
 	haveV4 := poolNet4 != "" && poolMask4 != ""
 	haveV6 := st.Inet6Range != ""
@@ -159,10 +157,12 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 	// v4 needs NO auto-route removal here — step 3 renewed the single pool route in
 	// place; the async drain (step 8) removes it after the window.
 	// TODO(fakeip-v6-drain): v6 is fail-open on dual-stack routers with a v6 default
-	// route (no reject equivalent). Closing it needs AddStaticRoute6 to support a
+	// route (no reject equivalent). Closing it needs the v6 route form to support a
 	// reject/blackhole route (ndms work + stand verification) — not done in v1.
 	if haveV6 {
-		if err := s.deps.StaticRoutes.RemoveStaticRoute6(ctx, st.Inet6Range, ndmsName); err != nil {
+		if err := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
+			V6: true, Network: st.Inet6Range, Interface: ndmsName,
+		}); err != nil {
 			s.appLog.Warn("fakeip-disable", iface, "remove pool route v6: "+err.Error())
 		}
 	}

@@ -42,6 +42,48 @@ func TestBuildFakeIPTunConfig_Shape(t *testing.T) {
 	}
 }
 
+// TestBuildFakeIPTunConfig_StripsAutoManagedDirect verifies BuildFakeIPTunConfig
+// owns the full outbound pipeline: it receives RAW outbounds and strips
+// auto-managed direct outbounds (awg/nwg/wireguard bind_interface) before
+// applying the domain_resolver guard. An auto-managed direct (BindInterface
+// "nwg2") must NOT appear in the output (it lives in 15-awg.json and would FATAL
+// the merged config with a duplicate-tag error); a user direct bound to a
+// non-auto-managed iface and a hostname proxy must survive.
+func TestBuildFakeIPTunConfig_StripsAutoManagedDirect(t *testing.T) {
+	spec := FakeIPTunSpec{
+		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", MTU: 1500,
+		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
+		Outbounds: []Outbound{
+			{Type: "direct", Tag: "awg-direct", BindInterface: "nwg2"},   // auto-managed → stripped
+			{Type: "direct", Tag: "ipsec-direct", BindInterface: "IKE0"}, // user VPN → kept
+			{Type: "shadowsocks", Tag: "proxy", Server: "vpn.example.io"}, // hostname → kept + resolver
+		},
+		ProxyTag: "proxy",
+	}
+	cfg, err := BuildFakeIPTunConfig(spec)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	for _, o := range cfg.Outbounds {
+		if o.Tag == "awg-direct" {
+			t.Errorf("auto-managed direct must be stripped, got: %#v", cfg.Outbounds)
+		}
+	}
+	if len(cfg.Outbounds) != 2 {
+		t.Fatalf("want 2 surviving outbounds, got %d: %#v", len(cfg.Outbounds), cfg.Outbounds)
+	}
+	// The hostname proxy must additionally get the "real" domain_resolver.
+	var proxy *Outbound
+	for i := range cfg.Outbounds {
+		if cfg.Outbounds[i].Tag == "proxy" {
+			proxy = &cfg.Outbounds[i]
+		}
+	}
+	if proxy == nil || proxy.DomainResolver == nil || proxy.DomainResolver.Server != "real" {
+		t.Errorf("hostname proxy must get real domain_resolver: %#v", cfg.Outbounds)
+	}
+}
+
 // TestBuildFakeIPTunConfig_OmitV6 verifies the v6 fields are omitted when the
 // spec leaves them empty: a single tun address and no inet6_range on the pool.
 func TestBuildFakeIPTunConfig_OmitV6(t *testing.T) {

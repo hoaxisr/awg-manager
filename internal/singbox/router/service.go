@@ -19,7 +19,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
-	"github.com/hoaxisr/awg-manager/internal/sys/env"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
 type Service interface {
@@ -583,7 +583,7 @@ func (s *ServiceImpl) prepareNetfilter(ctx context.Context) error {
 // /proc/net/route iface match, and the /sys index scan. For NDMS RCI calls use
 // fakeIPNDMSName instead — NDMS rejects the lowercase kernel name.
 func fakeIPIfaceName(index int) string {
-	return "opkgtun" + strconv.Itoa(index)
+	return tunnel.NewNames("awg" + strconv.Itoa(index)).IfaceName
 }
 
 // fakeIPNDMSName builds the NDMS RCI interface name for a fakeip-tun OpkgTun from
@@ -595,7 +595,7 @@ func fakeIPIfaceName(index int) string {
 // "unsupported interface type: \"opkgtun\"" (stand-verified). Use fakeIPIfaceName
 // only for the kernel-facing sites (sing-box config, ip exec, /sys, /proc).
 func fakeIPNDMSName(index int) string {
-	return "OpkgTun" + strconv.Itoa(index)
+	return tunnel.NewNames("awg" + strconv.Itoa(index)).NDMSName
 }
 
 // ReapOrphanedFakeIPTun removes a fakeip-tun OpkgTun left provisioned by a crash
@@ -644,18 +644,16 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 	// route cannot be addressed here (it is tied to the OpkgTun being reaped below,
 	// so DeleteOpkgTun may cascade-remove it — verify cascade semantics on stand).
 	if s.deps.StaticRoutes != nil {
-		if prefix, perr := netip.ParsePrefix(s.deps.FakeIPTun.Inet4Range); perr == nil {
-			if poolNet, poolMask, derr := splitCIDRToAddrMask(prefix.Masked().String()); derr == nil {
-				sweepIface := ""
-				if st := settings.FakeIP; st != nil && st.Provisioned {
-					sweepIface = fakeIPNDMSName(st.Index)
-				}
-				if sweepIface != "" {
-					if err := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
-						Network: poolNet, Mask: poolMask, Interface: sweepIface, Comment: fakeIPDrainComment,
-					}); err != nil {
-						s.appLog.Warn("fakeip-reap", sweepIface, "sweep stale drain reject route: "+err.Error())
-					}
+		if poolNet, poolMask, derr := poolV4NetMask(s.deps.FakeIPTun.Inet4Range); derr == nil {
+			sweepIface := ""
+			if st := settings.FakeIP; st != nil && st.Provisioned {
+				sweepIface = fakeIPNDMSName(st.Index)
+			}
+			if sweepIface != "" {
+				if err := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
+					Network: poolNet, Mask: poolMask, Interface: sweepIface, Comment: fakeIPDrainComment,
+				}); err != nil {
+					s.appLog.Warn("fakeip-reap", sweepIface, "sweep stale drain reject route: "+err.Error())
 				}
 			}
 		}
@@ -1009,12 +1007,9 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// permanent outage.
 	//
 	// Same env-var contract as singbox.maxSingboxBootWait — clamped to a
-	// 60s floor here too. Import-cycle (integration_test in parent already
-	// pulls router) blocks reusing the parent helper directly.
-	bootWait := env.DurationDefault("AWG_SINGBOX_BOOT_WAIT", 60*time.Second)
-	if bootWait < 60*time.Second {
-		bootWait = 60 * time.Second
-	}
+	// 60s floor (bootWaitWithFloor). Import-cycle (integration_test in parent
+	// already pulls router) blocks reusing the parent helper directly.
+	bootWait := bootWaitWithFloor()
 	if err := s.waitForSingbox(ctx, bootWait); err != nil {
 		return fmt.Errorf("%w: waited %s (%v)", ErrSingboxNotReady, bootWait, err)
 	}

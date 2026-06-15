@@ -28,8 +28,6 @@ type fakeStaticRouteProvider struct{}
 
 func (fakeStaticRouteProvider) AddStaticRoute(context.Context, StaticRouteSpec) error    { return nil }
 func (fakeStaticRouteProvider) RemoveStaticRoute(context.Context, StaticRouteSpec) error { return nil }
-func (fakeStaticRouteProvider) AddStaticRoute6(context.Context, string, string) error    { return nil }
-func (fakeStaticRouteProvider) RemoveStaticRoute6(context.Context, string, string) error { return nil }
 
 type fakeDHCPProvider struct{}
 

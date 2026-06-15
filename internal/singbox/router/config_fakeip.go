@@ -84,7 +84,14 @@ func BuildFakeIPTunConfig(s FakeIPTunSpec) (*RouterConfig, error) {
 		EndpointIndependentNAT: boolPtr(false),
 	}}
 
-	cfg.Outbounds = applyOutboundDomainResolver(s.Outbounds, "real")
+	// Full outbound pipeline: strip auto-managed direct outbounds (awg/nwg/
+	// wireguard bind_interface) — they live in 15-awg.json and are merged by
+	// sing-box across config.d, so re-emitting them here would FATAL the merged
+	// config with "duplicate outbound tag" (stand-verified 2026-06-15). ProxyTag
+	// may reference one of them by tag; sing-box resolves it from 15-awg.json.
+	// Then apply the domain_resolver guard on the survivors. Mirrors the tproxy
+	// path (service.go: stripAutoManagedDirect).
+	cfg.Outbounds = applyOutboundDomainResolver(stripAutoManagedDirect(s.Outbounds), "real")
 
 	fakeip := DNSServer{
 		Tag:        "fakeip",
