@@ -14,6 +14,16 @@ export { default as ReadinessPanel } from './overview/ReadinessPanel.svelte';
 export { default as EngineSettingsCard } from './overview/EngineSettingsCard.svelte';
 export { default as SegmentsDelivery } from './overview/SegmentsDelivery.svelte';
 export { default as OverviewTab } from './overview/OverviewTab.svelte';
+export { default as OutboundsTab } from './outbounds/OutboundsTab.svelte';
+export {
+	partitionOutbounds,
+	type PartitionedOutbounds,
+} from './outbounds/partitionOutbounds';
+export {
+	delayHealth,
+	formatDelay,
+	type DelayHealth,
+} from './outbounds/formatDelay';
 export { default as OverviewSummary } from './overview/OverviewSummary.svelte';
 export { default as OperationalCards } from './overview/OperationalCards.svelte';
 export { default as LiveTraffic } from './overview/LiveTraffic.svelte';

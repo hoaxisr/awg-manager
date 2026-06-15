@@ -10,6 +10,7 @@
 		ConfirmSwitch,
 		SwitchProgress,
 		OverviewTab,
+		OutboundsTab,
 		deriveFakeIPEngineState,
 	} from '$lib/components/fakeip';
 	import { fakeipTransition } from '$lib/stores/fakeipTransition';
@@ -201,6 +202,14 @@
 				onToggleEngine={handleToggleEngine}
 				onRestart={handleRestart}
 			/>
+		{:else if activeTab === 'outbounds'}
+			<!--
+				Outbounds (Slice 3.2): atomic-карточки + composite-группы
+				(активный участник / тест группы / select), переиспользование
+				каталога outbounds и компонентов sb-router. Конфиг виден всегда;
+				живые сигналы деградируют по engineState (FE-spec §12.1).
+			-->
+			<OutboundsTab {engineState} />
 		{:else}
 			<section class="chip-stub">
 				<h2 class="chip-stub-title">{activeChip.label}</h2>
