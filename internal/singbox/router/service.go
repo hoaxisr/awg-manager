@@ -1175,6 +1175,18 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// fakeip-tun teardown is an entirely separate path (no iptables; opkgtun +
+	// pool routes + DHCP DNS + a fail-closed drain). Dispatch by mode before the
+	// tproxy body so the tproxy path below stays byte-for-byte unchanged for
+	// RoutingMode=="tproxy".
+	dispatchSettings, err := s.deps.Settings.Load()
+	if err != nil {
+		return err
+	}
+	if sr, _ := NormalizeSingboxRouterSettings(dispatchSettings.SingboxRouter); sr.RoutingMode == "fakeip-tun" {
+		return s.disableFakeIPTun(ctx, dispatchSettings)
+	}
+
 	if err := s.deps.IPTables.Uninstall(ctx); err != nil {
 		s.appLog.Warn("uninstall", "", err.Error())
 	}

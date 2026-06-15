@@ -88,6 +88,13 @@ type recStaticRoutes struct {
 }
 
 func (r *recStaticRoutes) AddStaticRoute(_ context.Context, route StaticRouteSpec) error {
+	if route.Reject {
+		r.log.add("AddRejectRoute:" + route.Network + ":" + route.Mask)
+		if r.failAt == "AddRejectRoute" {
+			return errors.New("injected: AddRejectRoute")
+		}
+		return nil
+	}
 	r.log.add("AddRoute:" + route.Network + ":" + route.Mask + ":" + route.Interface)
 	if r.failAt == "AddRoute" {
 		return errors.New("injected: AddRoute")
@@ -95,7 +102,17 @@ func (r *recStaticRoutes) AddStaticRoute(_ context.Context, route StaticRouteSpe
 	return nil
 }
 func (r *recStaticRoutes) RemoveStaticRoute(_ context.Context, route StaticRouteSpec) error {
+	if route.Reject {
+		r.log.add("RemoveRejectRoute:" + route.Network + ":" + route.Mask)
+		if r.failAt == "RemoveRejectRoute" {
+			return errors.New("injected: RemoveRejectRoute")
+		}
+		return nil
+	}
 	r.log.add("RemoveRoute:" + route.Network + ":" + route.Interface)
+	if r.failAt == "RemoveRoute" {
+		return errors.New("injected: RemoveRoute")
+	}
 	return nil
 }
 func (r *recStaticRoutes) AddStaticRoute6(_ context.Context, network, iface string) error {
@@ -611,6 +628,235 @@ func TestEnableFakeIPTun_ReprovisionsWhenIfaceGone(t *testing.T) {
 	}
 	if c := countCalls(h.log, "Create:opkgtun0:private"); c != 2 {
 		t.Errorf("Create:opkgtun0 count = %d, want 2 (re-provisioned after iface gone): %v", c, h.log.calls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Disable(fakeip-tun): safe-ordering teardown + fail-closed drain (Task 1D.3a)
+// ---------------------------------------------------------------------------
+
+// captureDrain overrides the fakeIPScheduleDrain seam so the removeReject
+// closure is captured (not run via a real sleep) and can be invoked
+// synchronously by the test. Returns a getter for the captured closure (nil
+// until scheduled). Restores the seam via t.Cleanup.
+func captureDrain(t *testing.T) func() func() {
+	t.Helper()
+	old := fakeIPScheduleDrain
+	var captured func()
+	fakeIPScheduleDrain = func(removeReject func()) { captured = removeReject }
+	t.Cleanup(func() { fakeIPScheduleDrain = old })
+	return func() func() { return captured }
+}
+
+// provisionForDisable runs Enable so the service is fully provisioned, then
+// clears the call log so subsequent Disable assertions see only teardown calls.
+func provisionForDisable(t *testing.T, h *fakeIPEnableHarness) {
+	t.Helper()
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable (provision for disable): %v", err)
+	}
+	// Allocator reflects the now-live iface so a stray Reconcile would no-op.
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+	h.log.calls = nil
+}
+
+func TestDisableFakeIPTun_Ordering(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	getDrain := captureDrain(t)
+	provisionForDisable(t, h)
+
+	const iface = "opkgtun0"
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable(fakeip-tun): %v", err)
+	}
+
+	mustOrder := func(a, b string) {
+		ia, ib := h.log.idxOf(a), h.log.idxOf(b)
+		if ia < 0 {
+			t.Fatalf("missing call %q in %v", a, h.log.calls)
+		}
+		if ib < 0 {
+			t.Fatalf("missing call %q in %v", b, h.log.calls)
+		}
+		if ia >= ib {
+			t.Errorf("expected %q (#%d) before %q (#%d): %v", a, ia, b, ib, h.log.calls)
+		}
+	}
+
+	clearDNS := "ClearPoolDNS:_WEBADMIN"
+	addReject := "AddRejectRoute:10.128.0.0:255.192.0.0"
+	rmAuto := "RemoveRoute:10.128.0.0:" + iface
+	rmAuto6 := "RemoveRoute6:3f80::/10:" + iface
+
+	// ClearPoolDNS is FIRST.
+	if first := h.log.calls[0]; first != clearDNS {
+		t.Errorf("first call = %q, want %q first", first, clearDNS)
+	}
+	// reject route ADDED before the auto-route is removed (fail-closed).
+	mustOrder(clearDNS, addReject)
+	mustOrder(addReject, rmAuto)
+	// v6 auto-route removed.
+	if !h.log.has(rmAuto6) {
+		t.Errorf("v6 auto-route not removed: %v", h.log.calls)
+	}
+	// slot disabled, then iface torn down.
+	mustOrder(rmAuto, "InterfaceDown:"+iface)
+	mustOrder("InterfaceDown:"+iface, "Delete:"+iface)
+
+	// persist: FakeIP cleared, Enabled=false.
+	if st := h.loadFakeIP(t); st != nil {
+		t.Errorf("FakeIP persist = %+v, want nil after Disable", st)
+	}
+	all, _ := h.store.Load()
+	if all.SingboxRouter.Enabled {
+		t.Error("SingboxRouter.Enabled must be false after Disable")
+	}
+
+	// The reject route must NOT yet be removed (drain scheduled, not run inline).
+	if h.log.has("RemoveRejectRoute:10.128.0.0:255.192.0.0") {
+		t.Errorf("reject route removed before drain window: %v", h.log.calls)
+	}
+
+	// Invoke the captured drain closure → reject route removed LAST.
+	drain := getDrain()
+	if drain == nil {
+		t.Fatal("drain closure was not scheduled")
+	}
+	drain()
+	rmReject := "RemoveRejectRoute:10.128.0.0:255.192.0.0"
+	if !h.log.has(rmReject) {
+		t.Fatalf("reject route not removed after drain: %v", h.log.calls)
+	}
+	if last := h.log.calls[len(h.log.calls)-1]; last != rmReject {
+		t.Errorf("last call = %q, want reject removal LAST", last)
+	}
+}
+
+// The reject removal must be scheduled via the seam, not run inline: before the
+// captured closure is invoked, the reject route is still "present".
+func TestDisableFakeIPTun_DrainOffLock(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	getDrain := captureDrain(t)
+	provisionForDisable(t, h)
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+
+	// Reject add happened; reject removal has NOT (still scheduled).
+	if !h.log.has("AddRejectRoute:10.128.0.0:255.192.0.0") {
+		t.Fatalf("reject route was not added: %v", h.log.calls)
+	}
+	if h.log.has("RemoveRejectRoute:10.128.0.0:255.192.0.0") {
+		t.Errorf("reject removal ran inline (must be off-lock via seam): %v", h.log.calls)
+	}
+	if getDrain() == nil {
+		t.Error("drain closure was not scheduled via the seam")
+	}
+}
+
+// Best-effort push-through: a mid-step failure (e.g. RemoveRoute, SetEnabled)
+// must NOT abort teardown — persist clear + Enabled=false + drain schedule still
+// run (asymmetric vs Enable's rollback-on-first-error).
+func TestDisableFakeIPTun_BestEffort(t *testing.T) {
+	for _, failAt := range []string{"RemoveRoute", "AddRejectRoute"} {
+		t.Run(failAt, func(t *testing.T) {
+			h := newFakeIPEnableHarness(t, "")
+			getDrain := captureDrain(t)
+			provisionForDisable(t, h)
+			// Inject the failure into the routes fake for the Disable phase.
+			h.routes.failAt = failAt
+
+			if err := h.svc.Disable(context.Background()); err != nil {
+				t.Fatalf("Disable must push through best-effort errors, got: %v", err)
+			}
+
+			// Mandatory steps still ran.
+			if st := h.loadFakeIP(t); st != nil {
+				t.Errorf("FakeIP persist = %+v, want nil (push-through must clear)", st)
+			}
+			all, _ := h.store.Load()
+			if all.SingboxRouter.Enabled {
+				t.Error("Enabled must be false (push-through must persist disabled)")
+			}
+			if getDrain() == nil {
+				t.Error("drain must still be scheduled after a best-effort step error")
+			}
+		})
+	}
+}
+
+// FakeIP nil (not provisioned) → idempotent: persist Enabled=false, no NDMS
+// teardown, no drain, no panic.
+func TestDisableFakeIPTun_NotProvisioned(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	getDrain := captureDrain(t)
+	// Do NOT provision: FakeIP persist is nil. Seed Enabled=true to prove Disable
+	// flips it.
+	all, _ := h.store.Load()
+	all.SingboxRouter.Enabled = true
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	h.log.calls = nil
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable (not provisioned): %v", err)
+	}
+
+	if len(h.log.calls) != 0 {
+		t.Errorf("no NDMS teardown expected when not provisioned, got %v", h.log.calls)
+	}
+	if getDrain() != nil {
+		t.Error("no drain should be scheduled when not provisioned")
+	}
+	after, _ := h.store.Load()
+	if after.SingboxRouter.Enabled {
+		t.Error("Enabled must be false after Disable")
+	}
+	if after.FakeIP != nil {
+		t.Errorf("FakeIP must stay nil, got %+v", after.FakeIP)
+	}
+}
+
+// TestDisable_TproxyUnchanged: tproxy-mode Disable must run the tproxy teardown
+// path and never touch the fakeip teardown (no opkgtun/route/dhcp calls).
+func TestDisable_TproxyUnchanged(t *testing.T) {
+	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
+		RoutingMode:   "tproxy",
+		DeviceMode:    "all",
+		WANAutoDetect: true,
+		Enabled:       true,
+	})
+	singbox := newTestSingbox(t)
+	singbox.isRunningFn = func() (bool, int) { return true, 1234 }
+
+	log := &callLog{}
+	uninstalled := false
+	svc := newTestService(t, Deps{
+		Settings:       settingsStore,
+		Policies:       &fakeAccessPolicyProvider{},
+		IPTables:       newStubIPTables(func(context.Context, string) error { return nil }),
+		Singbox:        singbox,
+		WANIPCollector: &fakeWANIPCollector{},
+		// Fakeip deps wired but must NEVER be exercised in tproxy mode.
+		OpkgTun:        &recOpkgTun{log: log},
+		StaticRoutes:   &recStaticRoutes{log: log},
+		DHCP:           &recDHCP{log: log},
+		OpkgTunIndices: &recIndices{live: map[int]bool{}},
+		FakeIPTun:      DefaultFakeIPTunParams(),
+	})
+	_ = uninstalled
+
+	if err := svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable (tproxy): %v", err)
+	}
+	if len(log.calls) != 0 {
+		t.Errorf("tproxy Disable must not call any fakeip teardown, got %v", log.calls)
+	}
+	all, _ := settingsStore.Load()
+	if all.SingboxRouter.Enabled {
+		t.Error("tproxy Disable must persist Enabled=false")
 	}
 }
 
