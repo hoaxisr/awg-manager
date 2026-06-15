@@ -126,13 +126,13 @@
 	.otile .l,
 	.ocomp .l {
 		color: var(--text-secondary);
-		font-size: 0.6875rem;
+		font-size: 0.875rem;
 		margin-top: 0.3125rem;
 	}
 
 	.otile .s {
 		color: var(--text-muted);
-		font-size: 0.625rem;
+		font-size: 0.8125rem;
 		margin-top: 0.25rem;
 	}
 
@@ -151,7 +151,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.625rem;
-		font-size: 0.75rem;
+		font-size: 0.875rem;
 		padding: 0.25rem 0;
 	}
 
@@ -164,7 +164,7 @@
 	}
 
 	.grp .ty {
-		font-size: 0.5625rem;
+		font-size: 0.75rem;
 		border-radius: 4px;
 		padding: 1px 5px;
 		border: 1px solid var(--color-border);
@@ -186,7 +186,7 @@
 
 	.grp .meta {
 		color: var(--text-muted);
-		font-size: 0.625rem;
+		font-size: 0.8125rem;
 	}
 
 	.grp .d {

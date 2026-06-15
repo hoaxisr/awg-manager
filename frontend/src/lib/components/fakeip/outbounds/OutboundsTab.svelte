@@ -282,7 +282,7 @@
 	}
 
 	.section-count {
-		font-size: 0.75rem;
+		font-size: 0.8125rem;
 		font-family: var(--font-mono);
 		color: var(--text-muted);
 	}

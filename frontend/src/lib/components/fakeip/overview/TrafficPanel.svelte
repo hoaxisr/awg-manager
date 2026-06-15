@@ -94,13 +94,13 @@
 
 	.ph .nm {
 		color: var(--text-primary);
-		font-size: 0.8125rem;
+		font-size: 1.0625rem;
 		font-weight: 700;
 	}
 
 	.ph .meta {
 		color: var(--text-muted);
-		font-size: 0.625rem;
+		font-size: 0.8125rem;
 		font-family: var(--font-mono);
 	}
 
@@ -108,7 +108,7 @@
 		display: flex;
 		gap: 1.75rem;
 		flex-wrap: wrap;
-		font-size: 0.75rem;
+		font-size: 0.875rem;
 		color: var(--text-secondary);
 	}
 

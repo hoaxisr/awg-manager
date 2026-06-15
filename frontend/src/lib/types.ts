@@ -1310,6 +1310,15 @@ export interface SingboxRouterSettings {
 	bypassPresets?: string[];
 	bypassExtraPorts?: string;
 	ingressInterfaces?: string[];
+	// fakeip-tun engine settings (user-editable; round-trip via GET/PUT
+	// /singbox/router/settings). Defaults mirror DefaultFakeIPTunParams:
+	//   fakeipStack: gvisor (system → lower throughput, backend forces gso:false)
+	//   fakeipPool4: "10.128.0.0/10", fakeipPool6: "3f80::/10" ("" disables v6)
+	//   fakeipMtu: 1500. All omitempty on the wire → absent on legacy payloads.
+	fakeipStack?: 'gvisor' | 'system';
+	fakeipPool4?: string;
+	fakeipPool6?: string;
+	fakeipMtu?: number;
 }
 
 // WAN interface for the sing-box router WAN-binding picker. `name` is
@@ -1361,6 +1370,12 @@ export interface SingboxRouterStatus {
 	 * (backend Status.SourcePreserved is *bool, omitempty).
 	 */
 	sourcePreserved?: boolean;
+	/**
+	 * Active fakeip tun iface (kernel name, e.g. "opkgtun0"). Present only in
+	 * fakeip-tun mode once the tun is provisioned (backend Status.FakeIPIface
+	 * omitempty); absent otherwise.
+	 */
+	fakeipIface?: string;
 	issues?: SingboxRouterIssue[];
 }
 

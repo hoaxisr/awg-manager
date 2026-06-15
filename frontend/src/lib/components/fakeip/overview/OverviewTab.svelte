@@ -28,6 +28,11 @@
 		wanAutoDetect: boolean;
 		wanInterface?: string;
 		snifferEnabled: boolean;
+		fakeipStack?: 'gvisor' | 'system';
+		fakeipPool4?: string;
+		fakeipPool6?: string;
+		fakeipMtu?: number;
+		fakeipIface?: string;
 		toggleBusy: boolean;
 		onToggleEngine: (turnOn: boolean) => void;
 		onRestart: () => void;
@@ -39,6 +44,11 @@
 		wanAutoDetect,
 		wanInterface,
 		snifferEnabled,
+		fakeipStack,
+		fakeipPool4,
+		fakeipPool6,
+		fakeipMtu,
+		fakeipIface,
 		toggleBusy,
 		onToggleEngine,
 		onRestart,
@@ -88,6 +98,11 @@
 		{wanAutoDetect}
 		{wanInterface}
 		{snifferEnabled}
+		{fakeipStack}
+		{fakeipPool4}
+		{fakeipPool6}
+		{fakeipMtu}
+		{fakeipIface}
 		{toggleBusy}
 		{onToggleEngine}
 		{onRestart}

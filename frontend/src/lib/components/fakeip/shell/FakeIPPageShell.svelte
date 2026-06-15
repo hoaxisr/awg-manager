@@ -57,6 +57,10 @@
 		engineState: FakeIPEngineState;
 		wanAutoDetect?: boolean;
 		wanInterface?: string;
+		/** TCP/IP-стек fakeip-tun (gvisor/system) — hero-факт. */
+		fakeipStack?: 'gvisor' | 'system';
+		/** Активный fakeip tun-интерфейс из статуса (e.g. «opkgtun0»). */
+		fakeipIface?: string;
 		onRestart: () => void | Promise<void>;
 		/** Контекстная create-кнопка под активный чип (в hero). */
 		createButton?: Snippet;
@@ -74,6 +78,8 @@
 		engineState,
 		wanAutoDetect = true,
 		wanInterface,
+		fakeipStack = 'gvisor',
+		fakeipIface,
 		onRestart,
 		createButton,
 		statRow,
@@ -126,6 +132,8 @@
 		{engineState}
 		{wanAutoDetect}
 		{wanInterface}
+		{fakeipStack}
+		{fakeipIface}
 		{onRestart}
 		{restartEnabled}
 		{createButton}

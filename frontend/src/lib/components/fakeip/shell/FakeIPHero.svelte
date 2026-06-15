@@ -34,6 +34,10 @@
 		wanAutoDetect?: boolean;
 		/** WAN: явный системный интерфейс (когда не авто). */
 		wanInterface?: string;
+		/** TCP/IP-стек fakeip-tun (gvisor/system) — первый факт субтайтла. */
+		fakeipStack?: 'gvisor' | 'system';
+		/** Активный fakeip tun-интерфейс из статуса (e.g. «opkgtun0»); опционально. */
+		fakeipIface?: string;
 		/** Перезапуск sing-box (страница зовёт api.singboxControl('restart')). */
 		onRestart: () => void | Promise<void>;
 		/** Доступна ли кнопка «Перезагрузить» (движок должен быть запущен). */
@@ -47,6 +51,8 @@
 		engineState,
 		wanAutoDetect = true,
 		wanInterface,
+		fakeipStack = 'gvisor',
+		fakeipIface,
 		onRestart,
 		restartEnabled = true,
 		createButton,
@@ -64,11 +70,12 @@
 					: 'движок работает', // 'live'
 	);
 
-	// Честный субтайтл: gvisor (фиксирован для fakeip-tun) · WAN · состояние.
+	// Честный субтайтл: стек (· iface, если провижен) · WAN · состояние.
+	const stackFact = $derived(fakeipIface ? `${fakeipStack} · ${fakeipIface}` : fakeipStack);
 	const wanFact = $derived(
 		wanAutoDetect ? 'WAN авто' : wanInterface ? `WAN ${wanInterface}` : '',
 	);
-	const facts = $derived(['gvisor', wanFact, engineFact].filter(Boolean).join(' · '));
+	const facts = $derived([stackFact, wanFact, engineFact].filter(Boolean).join(' · '));
 
 	async function handleRestart(): Promise<void> {
 		if (restarting) return;
@@ -137,7 +144,7 @@
 
 	.kick {
 		color: var(--color-accent);
-		font-size: 10px;
+		font-size: 0.75rem;
 		letter-spacing: 0.12em;
 		text-transform: uppercase;
 	}
@@ -153,7 +160,7 @@
 
 	.hsub {
 		color: var(--text-muted);
-		font-size: 0.75rem;
+		font-size: 0.8125rem;
 	}
 
 	.btns {

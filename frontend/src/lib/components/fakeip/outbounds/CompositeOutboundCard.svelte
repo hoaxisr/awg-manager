@@ -309,7 +309,7 @@
 
 	.m-delay {
 		font-family: var(--font-mono);
-		font-size: 0.75rem;
+		font-size: 0.8125rem;
 		color: var(--text-muted);
 		flex-shrink: 0;
 	}
@@ -344,7 +344,7 @@
 	.empty,
 	.hint {
 		margin: 0;
-		font-size: 0.75rem;
+		font-size: 0.8125rem;
 		color: var(--text-muted);
 	}
 </style>

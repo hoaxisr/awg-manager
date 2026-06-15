@@ -59,6 +59,7 @@
 	// SETTINGS, not status (verified against backend). Absent on legacy payloads
 	// → 'tproxy' default, handled inside the pure helper.
 	const settings = singboxRouter.settings;
+	const status = singboxRouter.status;
 	const routingMode = $derived($settings?.routingMode);
 	const running = $derived($singboxStatus.data?.running ?? false);
 
@@ -185,6 +186,8 @@
 			{engineState}
 			wanAutoDetect={$settings?.wanAutoDetect ?? true}
 			wanInterface={$settings?.wanInterface}
+			fakeipStack={$settings?.fakeipStack ?? 'gvisor'}
+			fakeipIface={$status?.fakeipIface}
 			onRestart={handleRestart}
 		>
 			{#snippet createButton()}
@@ -210,6 +213,11 @@
 				wanAutoDetect={$settings?.wanAutoDetect ?? true}
 				wanInterface={$settings?.wanInterface}
 				snifferEnabled={$settings?.snifferEnabled ?? false}
+				fakeipStack={$settings?.fakeipStack ?? 'gvisor'}
+				fakeipPool4={$settings?.fakeipPool4}
+				fakeipPool6={$settings?.fakeipPool6}
+				fakeipMtu={$settings?.fakeipMtu}
+				fakeipIface={$status?.fakeipIface}
 				toggleBusy={switchBusy}
 				onToggleEngine={handleToggleEngine}
 				onRestart={handleRestart}

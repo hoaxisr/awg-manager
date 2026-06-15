@@ -143,7 +143,7 @@
 		align-items: center;
 		gap: 0.5rem;
 		padding-left: calc(8px + 0.5rem);
-		font-size: 0.75rem;
+		font-size: 0.8125rem;
 		color: var(--text-secondary);
 	}
 

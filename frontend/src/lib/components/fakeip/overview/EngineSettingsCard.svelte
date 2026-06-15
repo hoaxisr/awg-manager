@@ -1,21 +1,36 @@
 <!--
   «Настройки движка» по мокапу dash3 (`.eform` — 2-колоночный грид строк
-  ключ/значение). Честный набор:
+  ключ/значение), но с РЕДАКТИРУЕМЫМИ контролами на РЕАЛЬНЫХ данных. Все поля
+  round-trip через GET/PUT /singbox/router/settings; сохранение — общий
+  sb-router паттерн mergeAndSaveSettings (patch → PUT → loadAll).
+
     - Движок: «Перезапустить» (onRestart → api.singboxControl) + тумблер ON при
       routingMode==='fakeip-tun' && enabled. Сам API НЕ дёргает — onToggleEngine
       открывает ConfirmSwitch на странице.
-    - TCP/IP-стек: read-only «gvisor» (фиксирован для fakeip-tun).
-    - WAN-интерфейс: read-only (wanAutoDetect ? 'Авто' : wanInterface).
-    - Sniffing (SNI/host): read-only из settings.snifferEnabled (редактор отложен).
-    - fakeip-пул: backend DefaultFakeIPTunParams, не в settings DTO — не
-      выдумываем, показываем «по умолчанию».
-    - MTU tun: то же — «по умолчанию».
+    - TCP/IP-стек: Dropdown gvisor / system (settings.fakeipStack). system —
+      ниже throughput-потолок, backend форсит gso:false.
+    - WAN-интерфейс: «Авто» + список api.singboxRouterListWANInterfaces()
+      (kernel-имя + label). Тот же discriminator, что sb-router StatusDrawer:
+      Авто → {wanAutoDetect:true, wanInterface:''}; иначе {wanAutoDetect:false,
+      wanInterface:name}.
+    - Sniffing (SNI/host): Toggle settings.snifferEnabled.
+    - fakeip-пул: Input'ы v4 (fakeipPool4) и v6 (fakeipPool6, пусто = v6 off).
+      Лёгкая клиентская проверка CIDR; backend валидирует авторитетно и вернёт
+      ошибку → notifications.
+    - MTU tun: числовой Input (fakeipMtu, 576–9000).
+    - Active iface: status.fakeipIface (e.g. «opkgtun0»), если провижен.
 
-  Презентационный: значения/хендлеры приходят пропами.
+  Сохранение применяется с перезапуском sing-box (бэкенд провижнит пул/MTU при
+  enable). Значения и хендлеры приходят пропами; список WAN грузим сами.
 -->
 <script lang="ts">
-	import { Toggle } from '$lib/components/ui';
+	import { onMount } from 'svelte';
+	import { Toggle, Dropdown, Input, type DropdownOption } from '$lib/components/ui';
 	import { RotateCw } from 'lucide-svelte';
+	import { api } from '$lib/api/client';
+	import { notifications } from '$lib/stores/notifications';
+	import { mergeAndSaveSettings } from '$lib/components/sb-router/settingsActions';
+	import type { SingboxRouterSettings, SingboxRouterWANInterface } from '$lib/types';
 
 	interface Props {
 		/** Движок включён в режиме fakeip-tun (routingMode==='fakeip-tun' && enabled). */
@@ -24,8 +39,18 @@
 		wanAutoDetect: boolean;
 		/** WAN: явный системный интерфейс (когда не авто). */
 		wanInterface?: string;
-		/** Sniffing включён (read-only в этом MVP). */
+		/** Sniffing включён. */
 		snifferEnabled: boolean;
+		/** TCP/IP-стек fakeip-tun. */
+		fakeipStack?: 'gvisor' | 'system';
+		/** fakeip-пул v4 (CIDR). */
+		fakeipPool4?: string;
+		/** fakeip-пул v6 (CIDR; пусто = v6 выключен). */
+		fakeipPool6?: string;
+		/** MTU tun-интерфейса. */
+		fakeipMtu?: number;
+		/** Активный fakeip tun-интерфейс из статуса (e.g. «opkgtun0»); опционально. */
+		fakeipIface?: string;
 		/** Запрос смены движка — открывает ConfirmSwitch на стороне страницы. */
 		onToggleEngine: (turnOn: boolean) => void;
 		/** Перезапуск sing-box — страница зовёт api.singboxControl('restart'). */
@@ -39,14 +64,130 @@
 		wanAutoDetect,
 		wanInterface,
 		snifferEnabled,
+		fakeipStack,
+		fakeipPool4,
+		fakeipPool6,
+		fakeipMtu,
+		fakeipIface,
 		onToggleEngine,
 		onRestart,
 		toggleBusy = false,
 	}: Props = $props();
 
 	let restarting = $state(false);
+	let saving = $state(false);
 
-	const wanLabel = $derived(wanAutoDetect ? 'Авто' : (wanInterface || '—'));
+	// WAN-интерфейсы для пикера (kernel-имя + label). Грузим лениво при монтаже.
+	let wanInterfaces = $state<SingboxRouterWANInterface[]>([]);
+	onMount(async () => {
+		try {
+			wanInterfaces = await api.singboxRouterListWANInterfaces();
+		} catch {
+			wanInterfaces = [];
+		}
+	});
+
+	// Драфты текстовых полей (CIDR/MTU) — правим локально, коммитим на change/blur.
+	const pool4Draft = $state({ v: '' });
+	const pool6Draft = $state({ v: '' });
+	const mtuDraft = $state({ v: '' });
+	// Синхронизируем драфты с пропами, когда сами не сохраняем.
+	$effect(() => {
+		if (!saving) pool4Draft.v = fakeipPool4 ?? '';
+	});
+	$effect(() => {
+		if (!saving) pool6Draft.v = fakeipPool6 ?? '';
+	});
+	$effect(() => {
+		if (!saving) mtuDraft.v = fakeipMtu != null ? String(fakeipMtu) : '';
+	});
+
+	const stackOptions: DropdownOption<'gvisor' | 'system'>[] = [
+		{ value: 'gvisor', label: 'gvisor' },
+		{ value: 'system', label: 'system' },
+	];
+
+	// WAN-пикер: «Авто» + kernel-интерфейсы. value '' = авто.
+	const wanOptions = $derived<DropdownOption[]>([
+		{ value: '', label: 'Авто' },
+		...wanInterfaces.map((i) => ({
+			value: i.name,
+			label: i.label ? `${i.name} — ${i.label}` : i.name,
+		})),
+	]);
+	const wanValue = $derived(wanAutoDetect ? '' : (wanInterface ?? ''));
+
+	const stackHint = $derived(
+		fakeipStack === 'system'
+			? 'ниже throughput-потолок, требует gso:false'
+			: undefined,
+	);
+
+	// Лёгкая клиентская проверка CIDR (backend валидирует авторитетно).
+	const CIDR4 = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
+	const CIDR6 = /^[0-9a-fA-F:]+\/\d{1,3}$/;
+
+	async function save(patch: Partial<SingboxRouterSettings>): Promise<void> {
+		if (saving) return;
+		saving = true;
+		try {
+			await mergeAndSaveSettings(patch);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : 'Не удалось сохранить настройки';
+			notifications.error(msg);
+		} finally {
+			saving = false;
+		}
+	}
+
+	function handleStack(v: 'gvisor' | 'system'): void {
+		if (v === (fakeipStack ?? 'gvisor')) return;
+		void save({ fakeipStack: v });
+	}
+
+	function handleWan(v: string): void {
+		if (v === '') void save({ wanAutoDetect: true, wanInterface: '' });
+		else void save({ wanAutoDetect: false, wanInterface: v });
+	}
+
+	function handleSniffer(next: boolean): void {
+		void save({ snifferEnabled: next });
+	}
+
+	function commitPool4(): void {
+		const v = pool4Draft.v.trim();
+		if (v === (fakeipPool4 ?? '')) return;
+		if (v !== '' && !CIDR4.test(v)) {
+			notifications.error('Некорректный IPv4-CIDR пула (пример: 10.128.0.0/10)');
+			pool4Draft.v = fakeipPool4 ?? '';
+			return;
+		}
+		void save({ fakeipPool4: v });
+	}
+
+	function commitPool6(): void {
+		const v = pool6Draft.v.trim();
+		if (v === (fakeipPool6 ?? '')) return;
+		// Пусто — допустимо (v6 выключен). Иначе лёгкая проверка CIDR6.
+		if (v !== '' && !CIDR6.test(v)) {
+			notifications.error('Некорректный IPv6-CIDR пула (пусто = выкл; пример: 3f80::/10)');
+			pool6Draft.v = fakeipPool6 ?? '';
+			return;
+		}
+		void save({ fakeipPool6: v });
+	}
+
+	function commitMtu(): void {
+		const raw = mtuDraft.v.trim();
+		const n = Number(raw);
+		if (raw === '' || !Number.isInteger(n) || n < 576 || n > 9000) {
+			notifications.error('MTU должен быть целым числом в диапазоне 576–9000');
+			mtuDraft.v = fakeipMtu != null ? String(fakeipMtu) : '';
+			return;
+		}
+		if (n === fakeipMtu) return;
+		void save({ fakeipMtu: n });
+	}
 
 	async function handleRestart(): Promise<void> {
 		if (restarting || !engineOn) return;
@@ -77,7 +218,7 @@
 					disabled={restarting || !engineOn}
 				>
 					{#if restarting}
-						<RotateCw size={12} class="spin" />
+						<RotateCw size={14} class="spin" />
 					{/if}
 					Перезапустить
 				</button>
@@ -91,28 +232,103 @@
 			</span>
 		</div>
 
-		<!-- Read-only поля. -->
+		<!-- TCP/IP-стек: gvisor / system. -->
 		<div class="erow">
 			<span class="k">TCP/IP-стек</span>
-			<span class="val"><span class="selbox">gvisor</span></span>
+			<span class="val ctl">
+				<Dropdown
+					value={fakeipStack ?? 'gvisor'}
+					options={stackOptions}
+					disabled={saving}
+					fullWidth
+					onchange={handleStack}
+				/>
+				{#if stackHint}
+					<span class="ctl-hint">{stackHint}</span>
+				{/if}
+			</span>
 		</div>
+
+		<!-- WAN-интерфейс: Авто + kernel-список. -->
 		<div class="erow">
 			<span class="k">WAN-интерфейс</span>
-			<span class="val"><span class="selbox">{wanLabel}</span></span>
+			<span class="val ctl">
+				<Dropdown
+					value={wanValue}
+					options={wanOptions}
+					disabled={saving}
+					fullWidth
+					onchange={handleWan}
+				/>
+			</span>
 		</div>
+
+		<!-- Sniffing (SNI/host). -->
 		<div class="erow">
 			<span class="k">Sniffing (SNI/host)</span>
-			<!-- TODO(slice3): editable PUT snifferEnabled. -->
-			<span class="val"><span class="selbox dim">{snifferEnabled ? 'включён' : 'выключен'}</span></span>
+			<span class="val">
+				<Toggle
+					checked={snifferEnabled}
+					size="sm"
+					loading={saving}
+					onchange={handleSniffer}
+				/>
+			</span>
 		</div>
+
+		<!-- fakeip-пул v4. -->
 		<div class="erow">
-			<span class="k">fakeip-пул</span>
-			<span class="val"><span class="selbox dim">по умолчанию</span></span>
+			<span class="k">fakeip-пул v4</span>
+			<span class="val ctl">
+				<Input
+					value={pool4Draft.v}
+					placeholder="10.128.0.0/10"
+					disabled={saving}
+					fullWidth
+					oninput={(v) => (pool4Draft.v = v)}
+					onchange={commitPool4}
+				/>
+			</span>
 		</div>
+
+		<!-- fakeip-пул v6 (пусто = выключен). -->
+		<div class="erow">
+			<span class="k">fakeip-пул v6</span>
+			<span class="val ctl">
+				<Input
+					value={pool6Draft.v}
+					placeholder="3f80::/10 (пусто — выкл)"
+					disabled={saving}
+					fullWidth
+					oninput={(v) => (pool6Draft.v = v)}
+					onchange={commitPool6}
+				/>
+			</span>
+		</div>
+
+		<!-- MTU tun. -->
 		<div class="erow">
 			<span class="k">MTU tun</span>
-			<span class="val"><span class="selbox dim">по умолчанию</span></span>
+			<span class="val ctl">
+				<Input
+					type="number"
+					value={mtuDraft.v}
+					placeholder="1500"
+					disabled={saving}
+					fullWidth
+					oninput={(v) => (mtuDraft.v = v)}
+					onchange={commitMtu}
+				/>
+			</span>
 		</div>
+
+		<!-- Активный tun-интерфейс (только когда провижен). -->
+		{#if fakeipIface}
+			<div class="erow">
+				<span class="k">tun-интерфейс</span>
+				<span class="val"><span class="iface">{fakeipIface}</span></span>
+			</div>
+		{/if}
 	</div>
 </div>
 
@@ -133,13 +349,13 @@
 
 	.ph .nm {
 		color: var(--text-primary);
-		font-size: 0.8125rem;
+		font-size: 1.0625rem;
 		font-weight: 700;
 	}
 
 	.ph .meta {
 		color: var(--text-muted);
-		font-size: 0.625rem;
+		font-size: 0.8125rem;
 	}
 
 	/* 2-колоночный грид строк с тонкими разделителями (dash3 `.eform`). */
@@ -157,14 +373,15 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 0.5rem;
-		padding: 0.6875rem 0.875rem;
+		gap: 0.75rem;
+		padding: 0.75rem 0.875rem;
 		background: var(--color-bg-secondary);
-		font-size: 0.75rem;
+		font-size: 0.875rem;
 	}
 
 	.erow .k {
 		color: var(--text-secondary);
+		flex-shrink: 0;
 	}
 
 	.erow .val {
@@ -173,17 +390,28 @@
 		align-items: center;
 	}
 
-	.selbox {
+	/* Контрол-ячейка (Dropdown/Input) тянется на доступную ширину. */
+	.erow .val.ctl {
+		flex: 1;
+		min-width: 0;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 0.25rem;
+	}
+
+	.ctl-hint {
+		color: var(--text-muted);
+		font-size: 0.8125rem;
+	}
+
+	.iface {
 		background: var(--color-bg-tertiary);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-sm, 6px);
 		padding: 0.3125rem 0.625rem;
 		color: var(--color-accent);
-		font-size: 0.75rem;
-	}
-
-	.selbox.dim {
-		color: var(--text-muted);
+		font-size: 0.875rem;
+		font-family: var(--font-mono, monospace);
 	}
 
 	.restart {
@@ -191,8 +419,8 @@
 		background: none;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-sm, 6px);
-		padding: 0.25rem 0.5625rem;
-		font-size: 0.6875rem;
+		padding: 0.3125rem 0.6875rem;
+		font-size: 0.8125rem;
 		cursor: pointer;
 		display: inline-flex;
 		align-items: center;
