@@ -17,6 +17,7 @@
 	import OverviewCards from './OverviewCards.svelte';
 	import TrafficPanel from './TrafficPanel.svelte';
 	import EngineSettingsCard from './EngineSettingsCard.svelte';
+	import SegmentsDelivery from './SegmentsDelivery.svelte';
 	import { activeCompositeRows } from './activeComposites';
 
 	interface Props {
@@ -91,6 +92,9 @@
 		{onToggleEngine}
 		{onRestart}
 	/>
+
+	<!-- «Доставка DNS · сегменты» — внизу Обзора (мокап dash3). -->
+	<SegmentsDelivery />
 </section>
 
 <style>

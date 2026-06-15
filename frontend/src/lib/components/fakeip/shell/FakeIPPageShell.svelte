@@ -42,7 +42,6 @@
 	} from '$lib/components/sb-router/liveConnectionsStore';
 	import { formatCompactCount } from './formatCount';
 	import FakeIPHero from './FakeIPHero.svelte';
-	import SegmentsDelivery from '../overview/SegmentsDelivery.svelte';
 	import type { FakeIPEngineState } from '../engineState';
 
 	interface Props {
@@ -144,10 +143,6 @@
 		defaultTab={chips[0]?.id}
 	/>
 
-	<div class="segments-bar">
-		<SegmentsDelivery />
-	</div>
-
 	<div class="shell-body">
 		{@render children()}
 	</div>
@@ -169,10 +164,6 @@
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius, 10px);
 		overflow: hidden;
-	}
-
-	.segments-bar {
-		margin-top: var(--sp-1, 0.25rem);
 	}
 
 	.shell-body {

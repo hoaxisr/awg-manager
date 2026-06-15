@@ -50,19 +50,22 @@
 
 	// Нормализация высот к % от максимума окна. Пустой/нулевой максимум → плоско.
 	const peak = $derived(samples.reduce((m, v) => Math.max(m, v), 0));
-	const bars = $derived(
-		samples.map((v) => (peak > 0 ? Math.max(4, Math.round((v / peak) * 100)) : 4)),
-	);
+	// Всегда WINDOW слотов (гистограмма как dash3): пустые слева — бледный baseline
+	// (отсчёта ещё нет, честно ≠ ноль трафика), реальные отсчёты справа.
+	const slots = $derived<(number | null)[]>([
+		...Array(Math.max(0, WINDOW - samples.length)).fill(null),
+		...samples.map((v) => (peak > 0 ? Math.max(6, Math.round((v / peak) * 100)) : 6)),
+	]);
 </script>
 
 <div class="spark" aria-hidden="true">
-	{#if !engineLive || bars.length === 0}
-		<!-- Честно: до накопления отсчётов столбцов нет. -->
-	{:else}
-		{#each bars as h, i (i)}
+	{#each slots as h, i (i)}
+		{#if !engineLive || h === null}
+			<b class="empty" style="height: 3%"></b>
+		{:else}
 			<b style="height: {h}%"></b>
-		{/each}
-	{/if}
+		{/if}
+	{/each}
 </div>
 
 <style>
@@ -83,5 +86,11 @@
 		);
 		border-radius: 2px 2px 0 0;
 		display: block;
+	}
+
+	/* Пустой слот окна — бледная базовая линия (отсчёта ещё нет). */
+	.spark b.empty {
+		background: var(--color-border, color-mix(in srgb, var(--text-muted) 30%, transparent));
+		border-radius: 2px;
 	}
 </style>
