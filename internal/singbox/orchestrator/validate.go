@@ -39,6 +39,13 @@ func (e ValidationError) Error() string {
 // ValidationResult aggregates all problems found in a single pass.
 type ValidationResult struct {
 	Errors []ValidationError
+
+	// HasTun reports whether ANY enabled slot declares an inbound of
+	// type "tun" in the merged config. The orchestrator uses this to
+	// decide reload strategy: sing-box cannot add or remove a tun
+	// inbound via SIGHUP (the tun device never gets carrier), so a
+	// change in tun presence forces a full restart instead.
+	HasTun bool
 }
 
 func (r ValidationResult) Ok() bool { return len(r.Errors) == 0 }
@@ -89,6 +96,7 @@ func (o *Orchestrator) validateWith(bytesFor func(Slot) ([]byte, error)) Validat
 	dnsServers := map[string]tagOrigin{}
 	ruleSetsBySlot := map[Slot]map[string]bool{}
 	var errs []ValidationError
+	var hasTun bool
 
 	var pending []validationSectionRefs
 
@@ -145,6 +153,9 @@ func (o *Orchestrator) validateWith(bytesFor func(Slot) ([]byte, error)) Validat
 			}
 		}
 		for _, ib := range c.Inbounds {
+			if ib.Type == "tun" {
+				hasTun = true
+			}
 			if ib.Tag == "" {
 				continue
 			}
@@ -304,7 +315,7 @@ func (o *Orchestrator) validateWith(bytesFor func(Slot) ([]byte, error)) Validat
 		}
 		return errs[i].Tag < errs[j].Tag
 	})
-	return ValidationResult{Errors: errs}
+	return ValidationResult{Errors: errs, HasTun: hasTun}
 }
 
 // validateDraftLocked validates the merged config with one slot's bytes
@@ -337,7 +348,8 @@ type slotConfig struct {
 }
 
 type inboundJSON struct {
-	Tag string `json:"tag"`
+	Tag  string `json:"tag"`
+	Type string `json:"type"`
 }
 
 type outboundJSON struct {

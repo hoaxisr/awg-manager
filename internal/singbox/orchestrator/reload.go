@@ -49,6 +49,8 @@ func (o *Orchestrator) Reload() error {
 	needRunning := o.hasActiveWorkLocked()
 	proc := o.proc
 	shouldRun := o.shouldRun
+	prevHasTun := o.prevHasTun
+	newHasTun := res.HasTun
 	o.mu.Unlock()
 
 	var err error
@@ -69,8 +71,19 @@ func (o *Orchestrator) Reload() error {
 			o.log("info", "orchestrator: starting sing-box (active slots present)")
 			err = proc.Start()
 		case needRunning && running:
-			o.log("info", "orchestrator: SIGHUP sing-box (config changed)")
-			err = proc.Reload()
+			if newHasTun != prevHasTun {
+				// sing-box cannot add/remove a tun inbound via SIGHUP — the
+				// tun device never gets carrier and readiness times out. A
+				// presence toggle therefore requires a full restart.
+				o.log("info", "orchestrator: restarting sing-box (tun inbound toggled)")
+				if e := proc.Stop(); e != nil {
+					o.log("warn", "orchestrator: stop before tun-restart: "+e.Error())
+				}
+				err = proc.Start()
+			} else {
+				o.log("info", "orchestrator: SIGHUP sing-box (config changed)")
+				err = proc.Reload()
+			}
 		case !needRunning && running:
 			o.log("info", "orchestrator: stopping sing-box (no active slots)")
 			err = proc.Stop()
@@ -81,6 +94,11 @@ func (o *Orchestrator) Reload() error {
 
 	o.mu.Lock()
 	o.reloading = false
+	// Record the tun presence of the config we just applied so the next
+	// Reload compares against reality. Updated for every apply branch
+	// (start / SIGHUP / restart / stop): after a stop newHasTun is false
+	// anyway, after a fresh start prevHasTun == newHasTun.
+	o.prevHasTun = newHasTun
 	o.mu.Unlock()
 	return err
 }
