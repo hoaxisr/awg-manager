@@ -54,7 +54,7 @@ type dhcpPoolWire struct {
 // List returns every DHCP pool, sorted by name for stable output. A
 // missing/empty pool map yields an empty slice (not an error).
 func (s *DHCPPoolStore) List(ctx context.Context) ([]DHCPPool, error) {
-	raw, err := s.getter.GetRaw(ctx, "show/ip/dhcp/pool")
+	raw, err := s.getter.GetRaw(ctx, "/show/ip/dhcp/pool")
 	if err != nil {
 		return nil, fmt.Errorf("fetch dhcp pools: %w", err)
 	}
