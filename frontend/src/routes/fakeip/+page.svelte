@@ -9,9 +9,7 @@
 		NotEnabledScreen,
 		ConfirmSwitch,
 		SwitchProgress,
-		ReadinessPanel,
-		EngineSettingsCard,
-		SegmentsDelivery,
+		OverviewTab,
 		deriveFakeIPEngineState,
 	} from '$lib/components/fakeip';
 	import { fakeipTransition } from '$lib/stores/fakeipTransition';
@@ -185,23 +183,24 @@
 
 		{#if activeTab === 'overview'}
 			<!--
-				Обзор (1E.7 MVP): составной readiness (3 живых сигнала + 2 deferred)
-				+ карта движка. Полный дашборд (hero/live-traffic/active-selects)
-				отложен в Slice 3+/2.2.
+				Обзор (Slice 3.1): hero-сводка (config-счётчики) + operational-карточки
+					(движок / устройства / активные composite-выборы) + широкая полоса
+					live-трафика, над составным readiness/движком (1E.7) и сегментами.
+					Живые блоки (composite, live-трафик) гейтятся engineLive (1E.3).
 			-->
-			<section class="overview">
-				<ReadinessPanel running={running} active={routerActive} {sourcePreserved} />
-				<EngineSettingsCard
-					{engineOn}
-					wanAutoDetect={$settings?.wanAutoDetect ?? true}
-					wanInterface={$settings?.wanInterface}
-					snifferEnabled={$settings?.snifferEnabled ?? false}
-					toggleBusy={switchBusy}
-					onToggleEngine={handleToggleEngine}
-					onRestart={handleRestart}
-				/>
-				<SegmentsDelivery />
-			</section>
+			<OverviewTab
+				running={running}
+				active={routerActive}
+				{sourcePreserved}
+				{engineState}
+				{engineOn}
+				wanAutoDetect={$settings?.wanAutoDetect ?? true}
+				wanInterface={$settings?.wanInterface}
+				snifferEnabled={$settings?.snifferEnabled ?? false}
+				toggleBusy={switchBusy}
+				onToggleEngine={handleToggleEngine}
+				onRestart={handleRestart}
+			/>
 		{:else}
 			<section class="chip-stub">
 				<h2 class="chip-stub-title">{activeChip.label}</h2>
@@ -235,19 +234,6 @@
 <SwitchProgress open={progressOpen} state={$transition} onClose={handleProgressClose} />
 
 <style>
-	.overview {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-		gap: 1rem;
-		align-items: start;
-	}
-
-	@media (max-width: 720px) {
-		.overview {
-			grid-template-columns: 1fr;
-		}
-	}
-
 	.chip-stub {
 		padding: 2rem;
 		border: 1px dashed var(--border);
