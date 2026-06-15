@@ -44,14 +44,21 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	st := settings.FakeIP
 
 	// LiveOpkgTunIndices probes which opkgtun ifaces actually exist on the box.
-	// A probe error is treated as "nothing live" → re-provision via Enable,
-	// whose guard re-checks liveness; never silently skip a heal on an error.
+	// Capture the error (Fix B4): a TRANSIENT probe failure (NDMS glitch mid-reload)
+	// must NOT be read as "the iface is gone" — that would trigger a full Enable
+	// re-provision on every flaky tick. Mirror tproxy's "probe error → unknown →
+	// don't do the heavy thing": only treat the iface as gone when the probe
+	// SUCCEEDED and the index is absent. On a probe error we fall through to the
+	// idempotent, best-effort drift-heal, which no-ops harmlessly if the iface
+	// really is gone (AddStaticRoute/restart just log on failure).
 	var live map[int]bool
+	var probeErr error
 	if s.deps.OpkgTunIndices != nil {
-		live, _ = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx)
+		live, probeErr = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx)
 	}
 
-	if st == nil || !st.Provisioned || !live[st.Index] {
+	reprovision := st == nil || !st.Provisioned || (probeErr == nil && !live[st.Index])
+	if reprovision {
 		// Not provisioned, or the iface vanished (crash / manual removal) →
 		// (re-)provision. Enable's idempotency guard short-circuits the
 		// already-provisioned+live case, so this is safe to call unconditionally.
@@ -81,26 +88,36 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		}
 	}
 
-	// Re-add the pool routes idempotently (NDMS auto:true is idempotent). Derive
-	// net/mask from the persisted ranges exactly as Enable does (Masked first).
+	// Re-add the pool routes ONLY on real drift (Fix B1): probe the v4 pool route
+	// with the same fakeIPPoolRoutePresent seam GetStatus uses; an AddStaticRoute
+	// fires only when the route is ABSENT. In steady state the route is present, so
+	// this produces ZERO route POSTs per tick. Derive net/mask from the persisted
+	// ranges exactly as Enable does (Masked first).
 	if s.deps.StaticRoutes != nil {
 		if prefix, perr := netip.ParsePrefix(st.Inet4Range); perr == nil {
 			if poolNet4, poolMask4, derr := splitCIDRToAddrMask(prefix.Masked().String()); derr == nil {
-				if e := s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
-					Network: poolNet4, Mask: poolMask4, Interface: iface, Comment: fakeIPPoolRouteComment,
-				}); e != nil {
-					s.appLog.Warn("fakeip-reconcile", iface, "re-add pool route v4: "+e.Error())
+				// Probe v4 presence (same seam GetStatus uses); only re-add when absent.
+				if !fakeIPPoolRoutePresent(iface, prefix.Masked()) {
+					if e := s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
+						Network: poolNet4, Mask: poolMask4, Interface: iface, Comment: fakeIPPoolRouteComment,
+					}); e != nil {
+						s.appLog.Warn("fakeip-reconcile", iface, "re-add pool route v4: "+e.Error())
+					}
+					// v6 re-add is gated on the SAME v4-absence signal: routes are added
+					// together at Enable, so v4-present ⇒ v6-present is a sound v1
+					// heuristic (a dedicated v6 presence probe against /proc/net/ipv6_route
+					// is a follow-up). When v4 was present we skip v6 too → zero POSTs.
+					if st.Inet6Range != "" {
+						if e := s.deps.StaticRoutes.AddStaticRoute6(ctx, st.Inet6Range, iface); e != nil {
+							s.appLog.Warn("fakeip-reconcile", iface, "re-add pool route v6: "+e.Error())
+						}
+					}
 				}
 			} else {
 				s.appLog.Warn("fakeip-reconcile", iface, "derive pool v4 mask: "+derr.Error())
 			}
 		} else if st.Inet4Range != "" {
 			s.appLog.Warn("fakeip-reconcile", iface, "parse pool v4 range: "+perr.Error())
-		}
-		if st.Inet6Range != "" {
-			if e := s.deps.StaticRoutes.AddStaticRoute6(ctx, st.Inet6Range, iface); e != nil {
-				s.appLog.Warn("fakeip-reconcile", iface, "re-add pool route v6: "+e.Error())
-			}
 		}
 	}
 
@@ -240,4 +257,13 @@ func (s *ServiceImpl) loadSourcePreserved() *bool {
 	s.fakeIPSrcMu.Lock()
 	defer s.fakeIPSrcMu.Unlock()
 	return s.fakeIPSourcePreserved
+}
+
+// resetFakeIPDNSAdvertised clears the cached DHCP-DNS state so the next
+// advertiseDNSIfHealthy always re-applies. Called on Disable, where the pool
+// DNS is being cleared and the previous cache no longer describes reality.
+func (s *ServiceImpl) resetFakeIPDNSAdvertised() {
+	s.fakeIPDNSMu.Lock()
+	s.fakeIPDNSAdvertised = nil
+	s.fakeIPDNSMu.Unlock()
 }

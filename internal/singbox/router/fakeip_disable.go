@@ -64,6 +64,13 @@ var fakeIPScheduleDrain = func(removeReject func()) {
 func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Settings) error {
 	st := settings.FakeIP
 
+	// Clear the source-preservation verdict (Fix B3): it describes a now-defunct
+	// fakeip path and must not survive teardown into GetStatus as a phantom
+	// warning. Reset the DHCP-DNS cache too — the pool DNS is being cleared below,
+	// so the next Enable's advertiseDNSIfHealthy must re-apply from scratch.
+	s.storeSourcePreserved(nil)
+	s.resetFakeIPDNSAdvertised()
+
 	// Nothing provisioned (or persist already cleared) → idempotent: just persist
 	// the disabled flag and emit. No NDMS teardown to do.
 	if st == nil || !st.Provisioned {

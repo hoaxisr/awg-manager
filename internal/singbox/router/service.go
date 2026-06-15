@@ -354,6 +354,17 @@ type ServiceImpl struct {
 	// Reconcile (writer) and GetStatus (reader) run on different goroutines.
 	fakeIPSrcMu           sync.Mutex
 	fakeIPSourcePreserved *bool
+
+	// fakeIPDNSAdvertised caches the last DHCP-DNS state advertiseDNSIfHealthy
+	// applied so the drift-reconcile only writes DHCP when the DESIRED state
+	// actually flips: nil = unknown / not yet applied, true = tun DNS advertised,
+	// false = pool DNS cleared. Guarded by a DEDICATED mutex (NOT s.mu):
+	// advertiseDNSIfHealthy is called both from enableFakeIPTun (holds s.mu) and
+	// from reconcileFakeIPTun (does NOT hold s.mu), so reusing s.mu would either
+	// deadlock or leave the cache unprotected. On the first call the cache is nil
+	// so it always applies, which is correct on Enable.
+	fakeIPDNSMu         sync.Mutex
+	fakeIPDNSAdvertised *bool
 }
 
 func NewService(d Deps) *ServiceImpl {
@@ -1193,7 +1204,10 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	// JSON and raises NO issue (no false alarms); an explicit false adds an
 	// advisory warning. tproxy mode never touches either field.
 	var sourcePreserved *bool
-	if sr.RoutingMode == "fakeip-tun" {
+	// Gate on sr.Enabled as well as mode (Fix B3): a disabled-but-still-fakeip-mode
+	// router has torn the path down (and Disable cleared the verdict), so it must
+	// surface neither the flag nor the source-preservation warning.
+	if sr.RoutingMode == "fakeip-tun" && sr.Enabled {
 		sourcePreserved = s.loadSourcePreserved()
 		if sourcePreserved != nil && !*sourcePreserved {
 			issues = append(issues, Issue{

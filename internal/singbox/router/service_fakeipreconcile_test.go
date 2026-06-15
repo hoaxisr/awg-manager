@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -201,16 +202,24 @@ func TestReconcileFakeIPTun_DriftHealRestartsDeadSingbox(t *testing.T) {
 	if calls < 1 {
 		t.Fatalf("IsRunning was never probed (restart path not taken)")
 	}
-	// Routes re-added idempotently.
+	// Routes re-added because the live route probe is unstubbed here → reads
+	// /proc/net/route → opkgtun0 route absent → drift detected → re-add fires.
 	if !h.log.has("AddRoute:10.128.0.0:255.192.0.0:opkgtun0") {
-		t.Errorf("drift-heal must re-add v4 pool route, got %v", h.log.calls)
+		t.Errorf("drift-heal must re-add v4 pool route when absent, got %v", h.log.calls)
 	}
 	if !h.log.has("AddRoute6:3f80::/10:opkgtun0") {
-		t.Errorf("drift-heal must re-add v6 pool route, got %v", h.log.calls)
+		t.Errorf("drift-heal must re-add v6 pool route when v4 absent, got %v", h.log.calls)
 	}
-	// DNS re-advertised (sing-box up + proxy egress → SetPoolDNS).
-	if !h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
-		t.Errorf("drift-heal must re-advertise DNS, got %v", h.log.calls)
+	// DNS is NOT rewritten: Enable already advertised (cache=true) and sing-box
+	// recovers, so the DESIRED state stays "advertise" → change-detection skips the
+	// DHCP write. The restart itself still happened (IsRunning-gated). This is the
+	// B2 fix — an egress/process flap that returns to the same desired state makes
+	// no DHCP write.
+	if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
+		t.Errorf("drift-heal must NOT rewrite DNS when desired state unchanged, got %v", h.log.calls)
+	}
+	if h.log.has("ClearPoolDNS:_WEBADMIN") {
+		t.Errorf("drift-heal must NOT clear DNS when desired state unchanged, got %v", h.log.calls)
 	}
 	// No re-provision.
 	if h.log.has("Create:opkgtun0:private") || h.log.has("Create:opkgtun1:private") {
@@ -325,6 +334,164 @@ func TestAssertSourcePreserved_Preserved(t *testing.T) {
 	for _, is := range st.Issues {
 		if is.Kind == "source-preservation" {
 			t.Errorf("preserved verdict must raise NO source-preservation issue, got %+v", st.Issues)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix B1/B2: drift DETECTION — steady state makes ZERO NDMS mutations per tick.
+// ---------------------------------------------------------------------------
+
+// Provisioned + live + running, route PRESENT (stubbed), DNS already advertised
+// (Enable set the cache) → the drift-reconcile must make NO AddStaticRoute and NO
+// SetPoolDNS/ClearPoolDNS. This is the core of the fix: zero RCI writes in steady
+// state.
+func TestReconcileFakeIPTun_NoMutationWhenNoDrift(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	neutralSourceProbe(t)
+
+	// Provision: Enable adds the v4+v6 routes and advertises DNS (cache → true).
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+
+	// Steady state: the pool route is PRESENT. Stub the seam → true so the
+	// drift-reconcile sees no route drift.
+	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return true })
+
+	h.log.calls = nil // observe only the reconcile tick from here.
+
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+
+	// ZERO NDMS mutations: no route add (v4 or v6), no DHCP write.
+	if h.log.has("AddRoute:10.128.0.0:255.192.0.0:opkgtun0") {
+		t.Errorf("steady-state reconcile must NOT add the v4 route, got %v", h.log.calls)
+	}
+	if h.log.has("AddRoute6:3f80::/10:opkgtun0") {
+		t.Errorf("steady-state reconcile must NOT add the v6 route, got %v", h.log.calls)
+	}
+	if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
+		t.Errorf("steady-state reconcile must NOT set pool DNS, got %v", h.log.calls)
+	}
+	if h.log.has("ClearPoolDNS:_WEBADMIN") {
+		t.Errorf("steady-state reconcile must NOT clear pool DNS, got %v", h.log.calls)
+	}
+	// Proof: the WHOLE tick produced no recorded NDMS call at all.
+	if len(h.log.calls) != 0 {
+		t.Errorf("steady-state reconcile must make ZERO NDMS mutations, got %v", h.log.calls)
+	}
+}
+
+// Route ABSENT (stubbed → false) → the drift-reconcile re-adds it.
+func TestReconcileFakeIPTun_ReaddsRouteWhenMissing(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	neutralSourceProbe(t)
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+
+	// Route drifted away.
+	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return false })
+
+	h.log.calls = nil
+
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+
+	if !h.log.has("AddRoute:10.128.0.0:255.192.0.0:opkgtun0") {
+		t.Errorf("absent v4 route must be re-added, got %v", h.log.calls)
+	}
+	// v6 re-add is gated on the same v4-absence signal.
+	if !h.log.has("AddRoute6:3f80::/10:opkgtun0") {
+		t.Errorf("v6 route must be re-added when v4 absent, got %v", h.log.calls)
+	}
+	// DNS unchanged (Enable already advertised, sing-box still up) → no DHCP write.
+	if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") || h.log.has("ClearPoolDNS:_WEBADMIN") {
+		t.Errorf("DNS desired state unchanged → no DHCP write, got %v", h.log.calls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix B4: a transient LiveOpkgTunIndices error must NOT trigger re-provision.
+// ---------------------------------------------------------------------------
+
+// errIndices reports a probe error from LiveOpkgTunIndices.
+type errIndices struct{}
+
+func (errIndices) LiveOpkgTunIndices(context.Context) (map[int]bool, error) {
+	return nil, errors.New("transient NDMS probe glitch")
+}
+
+func TestReconcileFakeIPTun_ProbeErrorNoReprovision(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	neutralSourceProbe(t)
+
+	// Provision so persist is provisioned (index 0).
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	if c := countCalls(h.log, "Create:opkgtun0:private"); c != 1 {
+		t.Fatalf("after Enable Create count = %d, want 1", c)
+	}
+	h.log.calls = nil
+
+	// The liveness probe now ERRORS. A transient glitch must NOT be read as
+	// "iface gone" → no Enable re-provision (no new Create / no new index).
+	h.svc.deps.OpkgTunIndices = errIndices{}
+
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+
+	if h.log.has("Create:opkgtun0:private") || h.log.has("Create:opkgtun1:private") {
+		t.Errorf("probe error must NOT re-provision, got %v", h.log.calls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix B3: source-preservation surface must not survive Disable / a disabled
+// fakeip-mode router.
+// ---------------------------------------------------------------------------
+
+// Verdict stored false, RoutingMode=fakeip-tun but Enabled=false → GetStatus
+// surfaces neither Status.SourcePreserved nor a source-preservation Issue.
+func TestGetStatus_SourcePreservation_HiddenWhenDisabled(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	h.svc.deps.IPTables = errProbeIPTables()
+
+	// Persist fakeip-tun mode but DISABLED.
+	all, _ := h.store.Load()
+	all.SingboxRouter = storage.SingboxRouterSettings{RoutingMode: "fakeip-tun", Enabled: false, WANAutoDetect: true}
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// A stale verdict lingers in memory.
+	f := false
+	h.svc.storeSourcePreserved(&f)
+
+	st, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st.SourcePreserved != nil {
+		t.Errorf("Status.SourcePreserved = %v, want nil when disabled", st.SourcePreserved)
+	}
+	for _, is := range st.Issues {
+		if is.Kind == "source-preservation" {
+			t.Errorf("disabled fakeip-mode router must raise NO source-preservation issue, got %+v", st.Issues)
 		}
 	}
 }

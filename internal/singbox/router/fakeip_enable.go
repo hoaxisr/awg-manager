@@ -312,12 +312,41 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 // advertiseDNSIfHealthy sets the DHCP pool DNS to the tun DNS only when sing-box
 // is running AND the egress is up; otherwise clears it so clients fall back to
 // the router's default DNS (no outage while the proxy path is down).
+//
+// Change-detection (Fix B1/B2): the DHCP write only fires when the DESIRED state
+// (advertise vs clear) differs from the last-applied state cached on the service
+// (fakeIPDNSAdvertised). In steady state the desired state is stable, so the
+// per-tick drift-reconcile makes ZERO DHCP writes. A genuine flip (sing-box
+// dies, egress carrier drops, or recovers) still applies exactly once — the
+// correct intent. The cache is guarded by the dedicated fakeIPDNSMu, never s.mu,
+// because this is reached from both the s.mu-holding Enable path and the
+// lock-free Reconcile path.
 func (s *ServiceImpl) advertiseDNSIfHealthy(ctx context.Context, pool, tunDNS, iface string, cfg *RouterConfig) error {
 	running, _ := s.deps.Singbox.IsRunning()
-	if running && s.fakeIPEgressUp(cfg) {
-		return s.deps.DHCP.SetPoolDNS(ctx, pool, []string{tunDNS})
+	desired := running && s.fakeIPEgressUp(cfg)
+
+	s.fakeIPDNSMu.Lock()
+	unchanged := s.fakeIPDNSAdvertised != nil && *s.fakeIPDNSAdvertised == desired
+	s.fakeIPDNSMu.Unlock()
+	if unchanged {
+		return nil // desired DHCP-DNS state already applied → no write
 	}
-	return s.deps.DHCP.ClearPoolDNS(ctx, pool)
+
+	var err error
+	if desired {
+		err = s.deps.DHCP.SetPoolDNS(ctx, pool, []string{tunDNS})
+	} else {
+		err = s.deps.DHCP.ClearPoolDNS(ctx, pool)
+	}
+	if err != nil {
+		return err // leave the cache untouched so the next tick retries
+	}
+
+	s.fakeIPDNSMu.Lock()
+	d := desired
+	s.fakeIPDNSAdvertised = &d
+	s.fakeIPDNSMu.Unlock()
+	return nil
 }
 
 // fakeIPEgressUp reports whether the proxy egress is usable. If the route.final
