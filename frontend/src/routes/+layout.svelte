@@ -25,6 +25,7 @@
 	import { feedTraffic } from '$lib/stores/traffic';
 	import { applyTraffic as singboxApplyTraffic, applyDelay as singboxApplyDelay } from '$lib/stores/singbox';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { fakeipTransition } from '$lib/stores/fakeipTransition';
 	import { invalidateResource, invalidateAll } from '$lib/stores/storeRegistry';
 	import { setDeviceProxyMissingTarget, clearDeviceProxyMissingTarget } from '$lib/stores/deviceproxy';
 	import { settings as settingsStore, reloadSettings, usageLevel } from '$lib/stores/settings';
@@ -223,6 +224,7 @@
 			// Sing-box Router state streams (rules, rule-sets, outbounds, status).
 			// Staging updates arrive via resource:invalidated → onResourceInvalidated above.
 			onSingboxRouterStatus: singboxRouter.applyStatus,
+			onSingboxRouterTransition: fakeipTransition.applyTransition,
 			onSingboxRouterRules: singboxRouter.applyRules,
 			onSingboxRouterRuleSets: singboxRouter.applyRuleSets,
 			onSingboxRouterOutbounds: singboxRouter.applyOutbounds,

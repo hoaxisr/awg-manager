@@ -8,8 +8,10 @@
 	import {
 		NotEnabledScreen,
 		ConfirmSwitch,
+		SwitchProgress,
 		deriveFakeIPEngineState,
 	} from '$lib/components/fakeip';
+	import { fakeipTransition } from '$lib/stores/fakeipTransition';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
 
@@ -64,9 +66,15 @@
 	// payloads without routingMode default to 'tproxy', mirroring engineState).
 	let confirmOpen = $state(false);
 	let switchBusy = $state(false);
+	let progressOpen = $state(false);
 	const fromMode = $derived<'off' | 'tproxy' | 'fakeip-tun'>(
 		$settings?.enabled ? ($settings?.routingMode ?? 'tproxy') : 'off',
 	);
+
+	// Live progress stream (1E.6). The store is fed by the SSE handler wired in
+	// +layout.svelte (`onSingboxRouterTransition`); the page only opens the modal,
+	// kicks the POST and renders the accumulated steps.
+	const transition = fakeipTransition;
 
 	function handleEnableRequested(): void {
 		confirmOpen = true;
@@ -77,29 +85,50 @@
 	}
 
 	async function handleConfirmSwitch(): Promise<void> {
-		// TODO(1E.6): replace await+notify with SwitchProgress SSE stream.
+		// Open the live progress screen immediately (before the first SSE event)
+		// and hand off to the SSE stream. The POST drives the backend; events fold
+		// into the store and render step-by-step during the await.
 		switchBusy = true;
+		fakeipTransition.begin(fromMode, 'fakeip-tun');
+		confirmOpen = false;
+		progressOpen = true;
 		try {
 			await api.singboxRouterSwitchMode('fakeip-tun');
-			confirmOpen = false;
-			// Refresh stores so the engine-state derivation re-renders the page off
-			// NotEnabledScreen once routingMode/status reflect the new mode.
-			await singboxRouter.loadAll();
-			notifications.success('Режим FakeIP включён');
+			// On resolve the store is already (or imminently) `done` via SSE; the
+			// modal renders the success/rollback summary. No notify on success —
+			// the modal is the primary signal.
 		} catch (e) {
-			notifications.error(
-				e instanceof Error ? e.message : 'Не удалось переключить режим',
-			);
+			// Network/POST failure: surface it into the progress view so the modal
+			// never spins forever, plus a secondary toast.
+			const msg = e instanceof Error ? e.message : 'Не удалось переключить режим';
+			fakeipTransition.fail(msg);
+			notifications.error(msg);
 		} finally {
 			switchBusy = false;
 		}
+	}
+
+	async function handleProgressClose(): Promise<void> {
+		progressOpen = false;
+		fakeipTransition.reset();
+		// Re-derive engine state off the new mode (leaves NotEnabledScreen on
+		// success; on rollback the page stays where it was).
+		await singboxRouter.loadAll();
 	}
 </script>
 
 <PageContainer>
 	<PageHeader title="FakeIP" description="Режим маршрутизации fakeip-tun" />
 
-	{#if engineState === 'not-fakeip'}
+	<!--
+		B3 flicker guard (1D.4 handoff): while a switch is in flight, intermediate
+		`singbox-router:status` SSE events re-derive `engineState` and would thrash
+		the underlying NotEnabledScreen/chip content beneath the modal. Freeze the
+		main content render until the progress modal is closed.
+	-->
+	{#if progressOpen}
+		<!-- main content frozen behind SwitchProgress -->
+	{:else if engineState === 'not-fakeip'}
 		<NotEnabledScreen onEnableRequested={handleEnableRequested} />
 	{:else}
 		<!--
@@ -143,6 +172,8 @@
 	onConfirm={handleConfirmSwitch}
 	onCancel={handleCancelSwitch}
 />
+
+<SwitchProgress open={progressOpen} state={$transition} onClose={handleProgressClose} />
 
 <style>
 	.chip-stub {
