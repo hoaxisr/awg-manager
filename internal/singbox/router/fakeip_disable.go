@@ -40,13 +40,19 @@ var fakeIPScheduleDrain = func(removeReject func()) {
 //
 // Drain model (stand-verified, Fix 2): the reject route is NOT a separate
 // interface-less blackhole — that form is rejected by NDMS ("no input"). It is a
-// kill-switch FLAG renewed ONTO the existing pool→OpkgTun route (same
-// network+mask+interface, reject:true), which NDMS UPDATES in place. Semantics:
-// iface up → routes to it; iface down/deleted → REJECT. So we do NOT remove the
-// auto-route during teardown — there is only ONE route for that prefix+iface, and
-// removing it would drop the kill-switch. We renew it to reject (fail-closed),
-// delete the iface (now the reject route fail-closes the pool), and only the
-// async drain removes the route LAST, after the window.
+// reject FLAG renewed ONTO the existing pool→OpkgTun route (same
+// network+mask+interface, reject:true), which NDMS UPDATES in place. Semantics
+// (stand-verified): reject is UNCONDITIONAL once set — the route shows
+// rejecting:true / flags:'!' and drops pool traffic regardless of iface up/down
+// (NOT a "reject-only-when-down" kill-switch). That's exactly why we add it ONLY
+// at teardown (the live pool route is plain auto, no reject): from the renew
+// onward, any client still holding a cached fakeip address is REJECTED, not
+// leaked to WAN. There is only ONE route for that prefix+iface, so we do NOT
+// remove an auto-route separately — we renew it to reject (fail-closed), delete
+// the iface, and the async drain removes the (lingering, still-rejecting) route
+// LAST, after the window. Stand-verified: DeleteOpkgTun does NOT cascade-remove
+// the reject route — it survives the iface deletion still rejecting, which keeps
+// the pool fail-closed for the whole drain window.
 //
 // Safe ordering (each step is leak-conscious):
 //  1. nothing provisioned → just persist Enabled=false (idempotent).
