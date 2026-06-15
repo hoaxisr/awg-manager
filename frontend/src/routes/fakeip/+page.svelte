@@ -9,6 +9,8 @@
 		NotEnabledScreen,
 		ConfirmSwitch,
 		SwitchProgress,
+		ReadinessPanel,
+		EngineSettingsCard,
 		deriveFakeIPEngineState,
 	} from '$lib/components/fakeip';
 	import { fakeipTransition } from '$lib/stores/fakeipTransition';
@@ -49,8 +51,21 @@
 	// SETTINGS, not status (verified against backend). Absent on legacy payloads
 	// → 'tproxy' default, handled inside the pure helper.
 	const settings = singboxRouter.settings;
+	const status = singboxRouter.status;
 	const routingMode = $derived($settings?.routingMode);
 	const running = $derived($singboxStatus.data?.running ?? false);
+
+	// Composite-readiness live signals (1E.7 / FE-spec §12.2). `active` == pool
+	// auto-route present for fakeip-tun; `sourcePreserved` is the tri-state SNAT
+	// verdict (undefined → не определено). Both honest, from the Status DTO.
+	const routerActive = $derived($status?.active ?? false);
+	const sourcePreserved = $derived($status?.sourcePreserved);
+
+	// Engine toggle ON-state: persisted fakeip-tun AND enabled. Drives the card
+	// toggle; flipping it routes through the existing ConfirmSwitch flow.
+	const engineOn = $derived(
+		$settings?.enabled === true && $settings?.routingMode === 'fakeip-tun',
+	);
 
 	// TODO(1E.7/slice3): derive from live-block fetch errors. Live blocks are
 	// still stubs, so there is no robust Clash-reachability signal yet — assume
@@ -67,6 +82,10 @@
 	let confirmOpen = $state(false);
 	let switchBusy = $state(false);
 	let progressOpen = $state(false);
+	// Target mode of the pending switch. The NotEnabledScreen CTA and the engine
+	// toggle both feed this: CTA → 'fakeip-tun', toggle-off → 'off'. Defaults to
+	// 'fakeip-tun' (the enable direction).
+	let toMode = $state<'off' | 'tproxy' | 'fakeip-tun'>('fakeip-tun');
 	const fromMode = $derived<'off' | 'tproxy' | 'fakeip-tun'>(
 		$settings?.enabled ? ($settings?.routingMode ?? 'tproxy') : 'off',
 	);
@@ -77,6 +96,14 @@
 	const transition = fakeipTransition;
 
 	function handleEnableRequested(): void {
+		toMode = 'fakeip-tun';
+		confirmOpen = true;
+	}
+
+	// Engine-card toggle: ON→OFF requests a switch to 'off'; OFF→ON re-enables
+	// fakeip-tun. Both open ConfirmSwitch (direction-aware copy already in 1E.5).
+	function handleToggleEngine(turnOn: boolean): void {
+		toMode = turnOn ? 'fakeip-tun' : 'off';
 		confirmOpen = true;
 	}
 
@@ -84,16 +111,26 @@
 		confirmOpen = false;
 	}
 
+	async function handleRestart(): Promise<void> {
+		try {
+			await api.singboxControl('restart');
+			notifications.success('Перезапуск sing-box запущен');
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : 'Не удалось перезапустить sing-box';
+			notifications.error(msg);
+		}
+	}
+
 	async function handleConfirmSwitch(): Promise<void> {
 		// Open the live progress screen immediately (before the first SSE event)
 		// and hand off to the SSE stream. The POST drives the backend; events fold
 		// into the store and render step-by-step during the await.
 		switchBusy = true;
-		fakeipTransition.begin(fromMode, 'fakeip-tun');
+		fakeipTransition.begin(fromMode, toMode);
 		confirmOpen = false;
 		progressOpen = true;
 		try {
-			await api.singboxRouterSwitchMode('fakeip-tun');
+			await api.singboxRouterSwitchMode(toMode);
 			// On resolve the store is already (or imminently) `done` via SSE; the
 			// modal renders the success/rollback summary. No notify on success —
 			// the modal is the primary signal.
@@ -145,29 +182,49 @@
 			defaultTab="overview"
 		/>
 
-		<section class="chip-stub">
-			<h2 class="chip-stub-title">{activeChip.label}</h2>
+		{#if activeTab === 'overview'}
+			<!--
+				Обзор (1E.7 MVP): составной readiness (3 живых сигнала + 2 deferred)
+				+ карта движка. Полный дашборд (hero/live-traffic/active-selects)
+				отложен в Slice 3+/2.2.
+			-->
+			<section class="overview">
+				<ReadinessPanel running={running} active={routerActive} {sourcePreserved} />
+				<EngineSettingsCard
+					{engineOn}
+					wanAutoDetect={$settings?.wanAutoDetect ?? true}
+					wanInterface={$settings?.wanInterface}
+					snifferEnabled={$settings?.snifferEnabled ?? false}
+					toggleBusy={switchBusy}
+					onToggleEngine={handleToggleEngine}
+					onRestart={handleRestart}
+				/>
+			</section>
+		{:else}
+			<section class="chip-stub">
+				<h2 class="chip-stub-title">{activeChip.label}</h2>
 
-			{#if activeChip.live && engineState === 'stopped'}
-				<p class="chip-stub-note chip-stub-empty">
-					Движок остановлен — живые данные недоступны.
-				</p>
-			{:else if activeChip.live && engineState === 'clash-down'}
-				<p class="chip-stub-note chip-stub-error">
-					Clash-runtime недоступен — живые блоки временно не работают.
-					Конфигурация по-прежнему доступна.
-				</p>
-			{:else}
-				<p class="chip-stub-note">Раздел в разработке (Slice 1E+)</p>
-			{/if}
-		</section>
+				{#if activeChip.live && engineState === 'stopped'}
+					<p class="chip-stub-note chip-stub-empty">
+						Движок остановлен — живые данные недоступны.
+					</p>
+				{:else if activeChip.live && engineState === 'clash-down'}
+					<p class="chip-stub-note chip-stub-error">
+						Clash-runtime недоступен — живые блоки временно не работают.
+						Конфигурация по-прежнему доступна.
+					</p>
+				{:else}
+					<p class="chip-stub-note">Раздел в разработке (Slice 1E+)</p>
+				{/if}
+			</section>
+		{/if}
 	{/if}
 </PageContainer>
 
 <ConfirmSwitch
 	open={confirmOpen}
 	from={fromMode}
-	to="fakeip-tun"
+	to={toMode}
 	busy={switchBusy}
 	onConfirm={handleConfirmSwitch}
 	onCancel={handleCancelSwitch}
@@ -176,6 +233,19 @@
 <SwitchProgress open={progressOpen} state={$transition} onClose={handleProgressClose} />
 
 <style>
+	.overview {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+		gap: 1rem;
+		align-items: start;
+	}
+
+	@media (max-width: 720px) {
+		.overview {
+			grid-template-columns: 1fr;
+		}
+	}
+
 	.chip-stub {
 		padding: 2rem;
 		border: 1px dashed var(--border);
