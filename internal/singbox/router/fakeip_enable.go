@@ -211,8 +211,14 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		Inet6Range: p.Inet6Range,
 		CachePath:  p.CachePath,
 		RealServer: p.RealServer,
-		Outbounds:  cfg.Outbounds,
-		ProxyTag:   proxyTag,
+		// Strip auto-managed direct outbounds (awg/nwg/wireguard bind_interface)
+		// — they live in 15-awg.json and are merged by sing-box across config.d.
+		// Re-emitting them here would FATAL the merged config with
+		// "duplicate outbound tag" (stand-verified 2026-06-15). ProxyTag still
+		// references one of them by tag; sing-box resolves it from 15-awg.json.
+		// Mirrors the tproxy path (service.go: stripAutoManagedDirect).
+		Outbounds: stripAutoManagedDirect(cfg.Outbounds),
+		ProxyTag:  proxyTag,
 		// v1: DomainRuleSets / SourceIPCIDR empty = fake all A/AAAA, all sources.
 	}
 	fcfg, err := BuildFakeIPTunConfig(spec)
