@@ -36,6 +36,12 @@
 			matches: (p) => p.startsWith('/routing'),
 		},
 		{
+			section: 'fakeip',
+			href: '/fakeip',
+			label: 'FAKEIP',
+			matches: (p) => p.startsWith('/fakeip'),
+		},
+		{
 			section: 'monitoring',
 			href: '/monitoring',
 			label: 'МОНИТОРИНГ',

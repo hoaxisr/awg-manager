@@ -19,6 +19,7 @@ export type Section =
 	| 'servers'
 	| 'subscriptions'
 	| 'routing'
+	| 'fakeip'
 	| 'monitoring'
 	| 'diagnostics'
 	| 'settings'
@@ -39,6 +40,7 @@ const SECTION_MIN_LEVEL: Record<Section, UsageLevel> = {
 	diagnostics: 'basic',
 	settings: 'basic',
 	routing: 'basic',
+	fakeip: 'advanced',
 	singboxTunnels: 'advanced',
 	servers: 'advanced',
 	subscriptions: 'advanced',
@@ -119,6 +121,7 @@ export const SECTION_LABELS: Record<Section, string> = {
 	servers: 'Серверы',
 	subscriptions: 'Подписки',
 	routing: 'Маршрутизация',
+	fakeip: 'FakeIP',
 	monitoring: 'Мониторинг',
 	diagnostics: 'Диагностика',
 	settings: 'Настройки',
