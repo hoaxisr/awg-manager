@@ -3581,6 +3581,28 @@ definitions:
       enabled:
         example: true
         type: boolean
+      fakeipMtu:
+        description: FakeIPMTU is the tun MTU (default 1500; valid range 576-9000).
+        example: 1500
+        type: integer
+      fakeipPool4:
+        description: FakeIPPool4 is the fakeip v4 pool CIDR (default "10.128.0.0/10").
+        example: 10.128.0.0/10
+        type: string
+      fakeipPool6:
+        description: FakeIPPool6 is the fakeip v6 pool CIDR (default "3f80::/10");
+          "" disables v6.
+        example: 3f80::/10
+        type: string
+      fakeipStack:
+        description: |-
+          --- fakeip-tun engine settings (user-editable) ---
+          FakeIPStack selects the sing-tun stack: "gvisor" (default) or "system".
+        enum:
+        - gvisor
+        - system
+        example: gvisor
+        type: string
       ingressInterfaces:
         description: |-
           IngressInterfaces lists interface refs whose ingress traffic is
@@ -3651,6 +3673,9 @@ definitions:
       enabled:
         example: true
         type: boolean
+      fakeipIface:
+        example: opkgtun0
+        type: string
       final:
         example: direct
         type: string

@@ -40,6 +40,26 @@ var fakeIPAddrFlush = func(ctx context.Context, iface string) error {
 func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Settings, sr storage.SingboxRouterSettings) (err error) {
 	p := s.deps.FakeIPTun
 
+	// Override the static engine defaults with the user-editable persisted
+	// settings (defaulted + validated by NormalizeSingboxRouterSettings, so they
+	// are always set when we reach here via Enable). The pool/MTU live in p (which
+	// drives NDMS addressing + the fakeip DNS config); the stack flows separately
+	// into the config build via FakeIPTunSpec.Stack below. TunAddr4/6, DHCPPool,
+	// RealServer and CachePath stay on their wired defaults (not user-editable yet).
+	if sr.FakeIPPool4 != "" {
+		p.Inet4Range = sr.FakeIPPool4
+	}
+	// FakeIPPool6 "" means v6 disabled; carry it verbatim (empty Inet6Range omits
+	// the v6 fakeip range + v6 pool route). Clear the v6 tun address too so we
+	// never assign a v6 iface address with no matching v6 pool route.
+	p.Inet6Range = sr.FakeIPPool6
+	if sr.FakeIPPool6 == "" {
+		p.TunAddr6 = ""
+	}
+	if sr.FakeIPMTU != 0 {
+		p.MTU = sr.FakeIPMTU
+	}
+
 	// Fail-fast nil-guard: production wires every fakeip dep, but a degraded /
 	// mis-wired build would otherwise nil-panic mid-provision. Refuse loudly
 	// before touching any state.
@@ -216,6 +236,9 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		// from 15-awg.json where those live.
 		Outbounds: cfg.Outbounds,
 		ProxyTag:  proxyTag,
+		// Stack from the user setting (gvisor default; system → gso:false handled
+		// by BuildFakeIPTunConfig). Empty is tolerated (builder defaults gvisor).
+		Stack: sr.FakeIPStack,
 		// v1: DomainRuleSets / SourceIPCIDR empty = fake all A/AAAA, all sources.
 	}
 	fcfg, err := BuildFakeIPTunConfig(spec)

@@ -378,6 +378,35 @@ func TestAssertSourcePreserved_SNATDetected(t *testing.T) {
 	}
 }
 
+// TestGetStatus_FakeIPIface asserts the active fakeip iface name is surfaced in
+// Status once provisioned in fakeip-tun mode, and is empty when not provisioned.
+func TestGetStatus_FakeIPIface(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	h.svc.deps.IPTables = errProbeIPTables()
+
+	// Before provisioning: no fakeip iface in status.
+	st0, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st0.FakeIPIface != "" {
+		t.Errorf("FakeIPIface = %q, want empty before provisioning", st0.FakeIPIface)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.IPTables = errProbeIPTables()
+
+	st, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st.FakeIPIface != "opkgtun0" {
+		t.Errorf("FakeIPIface = %q, want opkgtun0", st.FakeIPIface)
+	}
+}
+
 func TestAssertSourcePreserved_Preserved(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 	stubSourcePreservedProbe(t, func(string, string) (bool, bool) { return true, true })

@@ -25,6 +25,11 @@ type FakeIPTunSpec struct {
 	ProxyTag       string     // outbound tag that tun-in routes to
 	DomainRuleSets []string   // .srs tags for domains to fakeip (empty = fake all A/AAAA)
 	SourceIPCIDR   []string   // optional per-device targeting (empty = all sources)
+	// Stack selects the sing-tun stack: "gvisor" (default; empty → gvisor) or
+	// "system". When "system" the builder forces gso:false on the tun inbound —
+	// the only stable system-stack combo on this router's kernel (4.9), where the
+	// system stack with GSO panics sing-tun under load (PoC-proven 2026-06-13).
+	Stack string
 }
 
 // boolPtr returns a pointer to v. The tun inbound's auto_route / auto_redirect /
@@ -71,7 +76,15 @@ func BuildFakeIPTunConfig(s FakeIPTunSpec) (*RouterConfig, error) {
 	if s.TunAddr6 != "" {
 		addrs = append(addrs, s.TunAddr6)
 	}
-	cfg.Inbounds = []Inbound{{
+	// Stack: empty defaults to gvisor (robust, no gso flag). system REQUIRES
+	// gso:false on this router's kernel (4.9) — the system stack with GSO panics
+	// sing-tun under load (PoC-proven 2026-06-13). gvisor needs no gso flag, so
+	// GSO stays nil (omitted) and only system emits the explicit false.
+	stack := s.Stack
+	if stack == "" {
+		stack = "gvisor"
+	}
+	in := Inbound{
 		Type:                   "tun",
 		Tag:                    "tun-in",
 		InterfaceName:          s.Iface,
@@ -80,9 +93,13 @@ func BuildFakeIPTunConfig(s FakeIPTunSpec) (*RouterConfig, error) {
 		AutoRoute:              boolPtr(false),
 		AutoRedirect:           boolPtr(false),
 		StrictRoute:            boolPtr(false),
-		Stack:                  "gvisor",
+		Stack:                  stack,
 		EndpointIndependentNAT: boolPtr(false),
-	}}
+	}
+	if stack == "system" {
+		in.GSO = boolPtr(false)
+	}
+	cfg.Inbounds = []Inbound{in}
 
 	// Full outbound pipeline: strip auto-managed direct outbounds (awg/nwg/
 	// wireguard bind_interface) — they live in 15-awg.json and are merged by

@@ -2,10 +2,12 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -71,7 +73,7 @@ func (r *recOpkgTun) ClearIPv6Address(_ context.Context, name string) error {
 	return nil
 }
 func (r *recOpkgTun) SetMTU(_ context.Context, name string, mtu int) error {
-	r.log.add("SetMTU:" + name)
+	r.log.add("SetMTU:" + name + ":" + strconv.Itoa(mtu))
 	return r.maybeFail("SetMTU")
 }
 func (r *recOpkgTun) InterfaceUp(_ context.Context, name string) error {
@@ -298,14 +300,14 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 	// SetIPGlobal must NOT be called (no such recorded label could exist; assert
 	// no global-ish call leaked — Create is the only creation op).
 	mustOrder(createCall, "SetAddress:"+ndmsName+":172.18.0.1:255.255.255.252")
-	mustOrder("SetAddress:"+ndmsName+":172.18.0.1:255.255.255.252", "SetMTU:"+ndmsName)
+	mustOrder("SetAddress:"+ndmsName+":172.18.0.1:255.255.255.252", "SetMTU:"+ndmsName+":1500")
 	// v6: SetIPv6Address is driven (defaults carry TunAddr6) and lands after the
 	// v4 SetAddress, before SetMTU.
 	mustOrder("SetAddress:"+ndmsName+":172.18.0.1:255.255.255.252", "SetIPv6Address:"+ndmsName+":fdfe:dcba:9876::1")
-	mustOrder("SetIPv6Address:"+ndmsName+":fdfe:dcba:9876::1", "SetMTU:"+ndmsName)
+	mustOrder("SetIPv6Address:"+ndmsName+":fdfe:dcba:9876::1", "SetMTU:"+ndmsName+":1500")
 	// v6 pool route is added (defaults carry Inet6Range) after the v4 pool route.
 	mustOrder("AddRoute:10.128.0.0:255.192.0.0:"+ndmsName, "AddRoute6:3f80::/10:"+ndmsName)
-	mustOrder("SetMTU:"+ndmsName, "InterfaceUp:"+ndmsName)
+	mustOrder("SetMTU:"+ndmsName+":1500", "InterfaceUp:"+ndmsName)
 	mustOrder("InterfaceUp:"+ndmsName, "Flush:"+iface)
 	// Flush precedes the pool route (waitForSingbox sits between, no recorded call).
 	mustOrder("Flush:"+iface, "AddRoute:10.128.0.0:255.192.0.0:"+ndmsName)
@@ -321,6 +323,85 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 	all, _ := h.store.Load()
 	if !all.SingboxRouter.Enabled {
 		t.Error("SingboxRouter.Enabled must be true after Enable")
+	}
+}
+
+// TestEnableFakeIPTun_UsesPersistedEngineSettings asserts the user-editable
+// fakeip engine settings (stack/pool4/pool6/MTU) override the wired defaults and
+// flow into the NDMS calls + the persisted sing-box config.
+func TestEnableFakeIPTun_UsesPersistedEngineSettings(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+
+	// Persist custom fakeip engine settings (normalized through the real pipeline).
+	store := h.svc.deps.Settings
+	all, _ := store.Load()
+	all.SingboxRouter = storage.SingboxRouterSettings{
+		RoutingMode:   "fakeip-tun",
+		WANAutoDetect: true,
+		FakeIPStack:   "system",
+		FakeIPPool4:   "10.64.0.0/12",
+		FakeIPPool6:   "fc00::/7",
+		FakeIPMTU:     1280,
+	}
+	normalized, err := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	all.SingboxRouter = normalized
+	if err := store.Save(all); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+
+	const ndmsName = "OpkgTun0"
+	// MTU override flows into the NDMS SetMTU call.
+	if !h.log.has("SetMTU:" + ndmsName + ":1280") {
+		t.Errorf("SetMTU did not use overridden MTU 1280: %v", h.log.calls)
+	}
+	// The v4 pool override flows into the pool auto-route (10.64.0.0/12 → mask /12).
+	if !h.log.has("AddRoute:10.64.0.0:255.240.0.0:" + ndmsName) {
+		t.Errorf("pool route did not use overridden pool4: %v", h.log.calls)
+	}
+	// The v6 pool override flows into the v6 pool route.
+	if !h.log.has("AddRoute6:fc00::/7:" + ndmsName) {
+		t.Errorf("v6 pool route did not use overridden pool6: %v", h.log.calls)
+	}
+	// Persisted FakeIP state records the overridden ranges.
+	st := h.loadFakeIP(t)
+	if st == nil || st.Inet4Range != "10.64.0.0/12" || st.Inet6Range != "fc00::/7" {
+		t.Errorf("FakeIP state ranges = %+v, want overridden", st)
+	}
+
+	// The persisted sing-box config reflects stack=system + gso:false + the pools.
+	data, err := os.ReadFile(filepath.Join(h.dir, "20-router.json"))
+	if err != nil {
+		t.Fatalf("read persisted config: %v", err)
+	}
+	var cfg RouterConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	if len(cfg.Inbounds) == 0 {
+		t.Fatalf("no inbounds in persisted config: %s", data)
+	}
+	in := cfg.Inbounds[0]
+	if in.Stack != "system" {
+		t.Errorf("persisted Stack = %q, want system", in.Stack)
+	}
+	if in.GSO == nil || *in.GSO != false {
+		t.Errorf("persisted GSO = %v, want false for system stack", in.GSO)
+	}
+	if in.MTU != 1280 {
+		t.Errorf("persisted MTU = %d, want 1280", in.MTU)
+	}
+	if !strings.Contains(string(data), `"gso": false`) {
+		t.Errorf("persisted config must carry \"gso\": false: %s", data)
+	}
+	if cfg.DNS.Servers[0].Inet4Range != "10.64.0.0/12" || cfg.DNS.Servers[0].Inet6Range != "fc00::/7" {
+		t.Errorf("fakeip DNS server ranges = %q/%q, want overridden", cfg.DNS.Servers[0].Inet4Range, cfg.DNS.Servers[0].Inet6Range)
 	}
 }
 

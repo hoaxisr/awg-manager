@@ -1839,6 +1839,12 @@ let mockSBSettings = {
 	refreshIntervalHours: 24,
 	wanAutoDetect: true,
 	wanInterface: '',
+	// fakeip-tun engine settings (user-editable). Defaults mirror
+	// DefaultFakeIPTunParams / NormalizeSingboxRouterSettings.
+	fakeipStack: 'gvisor',
+	fakeipPool4: '10.128.0.0/10',
+	fakeipPool6: '3f80::/10',
+	fakeipMtu: 1500,
 };
 
 // DHCP pools projected as fakeip "segments" (Task 2.1/2.2). Persistent
@@ -5149,9 +5155,9 @@ const server = http.createServer(async (req, res) => {
 				deviceMode: mockSBSettings.deviceMode || 'policy',
 				ruleCount: mockSingboxRules.length,
 				ruleSetCount: mockSingboxRuleSets.length,
-				// fakeip-tun status fields (backend serializes both omitempty).
+				// fakeip-tun status fields (backend serializes all omitempty).
 				routingMode,
-				...(routingMode === 'fakeip-tun' ? { sourcePreserved: true } : {}),
+				...(routingMode === 'fakeip-tun' ? { sourcePreserved: true, fakeipIface: 'opkgtun0' } : {}),
 			},
 		});
 		return;

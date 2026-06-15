@@ -1284,6 +1284,15 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	// Gate on sr.Enabled as well as mode (Fix B3): a disabled-but-still-fakeip-mode
 	// router has torn the path down (and Disable cleared the verdict), so it must
 	// surface neither the flag nor the source-preservation warning.
+	// fakeip-tun active iface: surface the provisioned kernel iface name
+	// ("opkgtun<idx>") so the UI can show it in the engine-settings panel. Only
+	// when in fakeip-tun mode AND actually provisioned (persisted FakeIPState);
+	// empty otherwise (mirrors the conditional sourcePreserved population).
+	var fakeIPIface string
+	if sr.RoutingMode == "fakeip-tun" && settings != nil &&
+		settings.FakeIP != nil && settings.FakeIP.Provisioned {
+		fakeIPIface = fakeIPIfaceName(settings.FakeIP.Index)
+	}
 	if sr.RoutingMode == "fakeip-tun" && sr.Enabled {
 		sourcePreserved = s.loadSourcePreserved()
 		if sourcePreserved != nil && !*sourcePreserved {
@@ -1313,6 +1322,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		OutboundCompositeCount: compCount,
 		Final:                  cfg.Route.Final,
 		SourcePreserved:        sourcePreserved,
+		FakeIPIface:            fakeIPIface,
 		Issues:                 issues,
 	}, nil
 }
@@ -1923,7 +1933,61 @@ func NormalizeSingboxRouterSettings(sr storage.SingboxRouterSettings) (storage.S
 	if err := validateIngressRefs(sr.IngressInterfaces); err != nil {
 		return sr, err
 	}
+	if err := normalizeFakeIPSettings(&sr); err != nil {
+		return sr, err
+	}
 	return sr, nil
+}
+
+// fakeIPMTUMin / fakeIPMTUMax bound the user-editable tun MTU. 576 is the IPv4
+// minimum-reassembly floor; 9000 is jumbo-frame ceiling. Outside this range
+// sing-tun behaves unpredictably, so reject early.
+const (
+	fakeIPMTUMin = 576
+	fakeIPMTUMax = 9000
+)
+
+// normalizeFakeIPSettings defaults the user-editable fakeip engine fields from
+// DefaultFakeIPTunParams (single source of truth) when empty/zero, then
+// validates them. Per spec, an empty FakeIPPool6 is defaulted to the v6 pool
+// (so a fresh install gets dual-stack); v6 is disabled at a higher layer, not
+// by persisting "" here. Idempotent: re-running on a normalized struct is a
+// fixed point.
+func normalizeFakeIPSettings(sr *storage.SingboxRouterSettings) error {
+	def := DefaultFakeIPTunParams()
+	if sr.FakeIPStack == "" {
+		sr.FakeIPStack = "gvisor"
+	}
+	if sr.FakeIPStack != "gvisor" && sr.FakeIPStack != "system" {
+		return fmt.Errorf("fakeipStack must be %q or %q, got %q", "gvisor", "system", sr.FakeIPStack)
+	}
+	if sr.FakeIPPool4 == "" {
+		sr.FakeIPPool4 = def.Inet4Range
+	}
+	if sr.FakeIPPool6 == "" {
+		sr.FakeIPPool6 = def.Inet6Range
+	}
+	if sr.FakeIPMTU == 0 {
+		sr.FakeIPMTU = def.MTU
+	}
+	// v4 pool must parse as an IPv4 prefix.
+	if p, err := netip.ParsePrefix(sr.FakeIPPool4); err != nil {
+		return fmt.Errorf("fakeipPool4: invalid CIDR %q: %w", sr.FakeIPPool4, err)
+	} else if !p.Addr().Is4() {
+		return fmt.Errorf("fakeipPool4: %q is not IPv4", sr.FakeIPPool4)
+	}
+	// v6 pool: empty disables v6; otherwise it must parse as an IPv6 prefix.
+	if sr.FakeIPPool6 != "" {
+		if p, err := netip.ParsePrefix(sr.FakeIPPool6); err != nil {
+			return fmt.Errorf("fakeipPool6: invalid CIDR %q: %w", sr.FakeIPPool6, err)
+		} else if p.Addr().Is4() {
+			return fmt.Errorf("fakeipPool6: %q is not IPv6", sr.FakeIPPool6)
+		}
+	}
+	if sr.FakeIPMTU < fakeIPMTUMin || sr.FakeIPMTU > fakeIPMTUMax {
+		return fmt.Errorf("fakeipMtu %d out of range [%d, %d]", sr.FakeIPMTU, fakeIPMTUMin, fakeIPMTUMax)
+	}
+	return nil
 }
 
 func validateIngressRefs(refs []string) error {

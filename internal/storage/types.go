@@ -122,6 +122,22 @@ type SingboxRouterSettings struct {
 	// в sing-box. Формат: "managed:Wireguard3" (резолвится в kernel-имя на
 	// сборке спека) или "iface:nwg5" (kernel-имя как есть). Пусто = выключено.
 	IngressInterfaces []string `json:"ingressInterfaces,omitempty"`
+	// --- fakeip-tun engine settings (USER-editable) ---
+	// These mirror the static fakeip-tun engine knobs (default
+	// DefaultFakeIPTunParams) but persisted + validated so the UI can edit them.
+	// Unlike FakeIPState (backend-managed operational state) these are user
+	// intent, defaulted by NormalizeSingboxRouterSettings.
+	//
+	// FakeIPStack selects the sing-tun stack: "gvisor" (default, robust) or
+	// "system" (lower CPU/RAM; on this kernel REQUIRES gso:false — set
+	// automatically by the config builder).
+	FakeIPStack string `json:"fakeipStack,omitempty"`
+	// FakeIPPool4 is the fakeip v4 pool CIDR (default "10.128.0.0/10").
+	FakeIPPool4 string `json:"fakeipPool4,omitempty"`
+	// FakeIPPool6 is the fakeip v6 pool CIDR (default "3f80::/10"); "" disables v6.
+	FakeIPPool6 string `json:"fakeipPool6,omitempty"`
+	// FakeIPMTU is the tun MTU (default 1500).
+	FakeIPMTU int `json:"fakeipMtu,omitempty"`
 }
 
 // ManagedServer represents the user-created WireGuard server interface.

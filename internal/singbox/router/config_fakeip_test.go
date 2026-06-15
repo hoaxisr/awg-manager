@@ -1,8 +1,10 @@
 package router
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -39,6 +41,87 @@ func TestBuildFakeIPTunConfig_Shape(t *testing.T) {
 	}
 	if cfg.Experimental == nil || cfg.Experimental.CacheFile == nil || !cfg.Experimental.CacheFile.StoreFakeIP {
 		t.Error("cache_file/store_fakeip")
+	}
+}
+
+// TestBuildFakeIPTunConfig_Stack covers the stack + GSO safety matrix:
+//   - empty Stack defaults to "gvisor", and gvisor emits NO gso flag (nil).
+//   - "gvisor" explicit → no gso flag.
+//   - "system" → MUST emit gso:false (kernel 4.9 panics sing-tun otherwise).
+//
+// It also checks that the spec's pool/MTU flow into the inbound + DNS server.
+func TestBuildFakeIPTunConfig_Stack(t *testing.T) {
+	base := FakeIPTunSpec{
+		Iface: "opkgtun3", TunAddr4: "172.18.0.1/30", MTU: 1280,
+		Inet4Range: "10.64.0.0/12", Inet6Range: "fc00::/7",
+		CachePath: "/c.db", RealServer: "1.1.1.1",
+		Outbounds: []Outbound{{Type: "direct", Tag: "direct"}}, ProxyTag: "direct",
+	}
+
+	cases := []struct {
+		name    string
+		stack   string
+		wantStk string
+		wantGSO *bool // nil = field omitted
+	}{
+		{"empty defaults to gvisor", "", "gvisor", nil},
+		{"explicit gvisor", "gvisor", "gvisor", nil},
+		{"system forces gso false", "system", "system", boolPtr(false)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := base
+			spec.Stack = tc.stack
+			cfg, err := BuildFakeIPTunConfig(spec)
+			if err != nil {
+				t.Fatalf("build: %v", err)
+			}
+			in := cfg.Inbounds[0]
+			if in.Stack != tc.wantStk {
+				t.Errorf("Stack = %q, want %q", in.Stack, tc.wantStk)
+			}
+			switch {
+			case tc.wantGSO == nil && in.GSO != nil:
+				t.Errorf("GSO = %v, want nil (omitted)", *in.GSO)
+			case tc.wantGSO != nil && in.GSO == nil:
+				t.Errorf("GSO = nil, want %v", *tc.wantGSO)
+			case tc.wantGSO != nil && *in.GSO != *tc.wantGSO:
+				t.Errorf("GSO = %v, want %v", *in.GSO, *tc.wantGSO)
+			}
+			// pool + MTU flow from spec into the config.
+			if in.MTU != 1280 {
+				t.Errorf("MTU = %d, want 1280 from spec", in.MTU)
+			}
+			if cfg.DNS.Servers[0].Inet4Range != "10.64.0.0/12" {
+				t.Errorf("fakeip inet4_range = %q, want spec pool", cfg.DNS.Servers[0].Inet4Range)
+			}
+			if cfg.DNS.Servers[0].Inet6Range != "fc00::/7" {
+				t.Errorf("fakeip inet6_range = %q, want spec pool", cfg.DNS.Servers[0].Inet6Range)
+			}
+		})
+	}
+}
+
+// TestBuildFakeIPTunConfig_SystemGSOMarshalsFalse asserts the system-stack tun
+// inbound serializes `"gso": false` (not omitted) — the only stable system-stack
+// combo on this router's kernel.
+func TestBuildFakeIPTunConfig_SystemGSOMarshalsFalse(t *testing.T) {
+	spec := FakeIPTunSpec{
+		Iface: "opkgtun0", TunAddr4: "172.18.0.1/30", MTU: 1500,
+		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
+		Outbounds: []Outbound{{Type: "direct", Tag: "direct"}}, ProxyTag: "direct",
+		Stack: "system",
+	}
+	cfg, err := BuildFakeIPTunConfig(spec)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	b, err := json.Marshal(cfg.Inbounds[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"gso":false`) {
+		t.Errorf("system stack inbound must marshal \"gso\":false, got: %s", b)
 	}
 }
 

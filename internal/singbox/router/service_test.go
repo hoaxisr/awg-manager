@@ -1101,6 +1101,95 @@ func TestValidateSingboxRouterSettings_ValidExtraPorts(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// fakeip engine settings — Normalize defaults + Validate
+// ---------------------------------------------------------------------------
+
+func TestNormalizeSingboxRouterSettings_DefaultsFakeIPFields(t *testing.T) {
+	// Empty/zero fakeip fields are defaulted from DefaultFakeIPTunParams — a
+	// single source of truth.
+	def := DefaultFakeIPTunParams()
+	sr := storage.SingboxRouterSettings{WANAutoDetect: true}
+	out, err := NormalizeSingboxRouterSettings(sr)
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if out.FakeIPStack != "gvisor" {
+		t.Errorf("FakeIPStack = %q, want gvisor", out.FakeIPStack)
+	}
+	if out.FakeIPPool4 != def.Inet4Range {
+		t.Errorf("FakeIPPool4 = %q, want %q", out.FakeIPPool4, def.Inet4Range)
+	}
+	if out.FakeIPPool6 != def.Inet6Range {
+		t.Errorf("FakeIPPool6 = %q, want %q", out.FakeIPPool6, def.Inet6Range)
+	}
+	if out.FakeIPMTU != def.MTU {
+		t.Errorf("FakeIPMTU = %d, want %d", out.FakeIPMTU, def.MTU)
+	}
+}
+
+func TestNormalizeSingboxRouterSettings_PreservesFakeIPFields(t *testing.T) {
+	// Idempotent: non-empty user values survive normalization unchanged.
+	sr := storage.SingboxRouterSettings{
+		WANAutoDetect: true,
+		FakeIPStack:   "system",
+		FakeIPPool4:   "10.64.0.0/12",
+		FakeIPPool6:   "fc00::/7",
+		FakeIPMTU:     9000,
+	}
+	out, err := NormalizeSingboxRouterSettings(sr)
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if out.FakeIPStack != "system" || out.FakeIPPool4 != "10.64.0.0/12" ||
+		out.FakeIPPool6 != "fc00::/7" || out.FakeIPMTU != 9000 {
+		t.Errorf("user values not preserved: %+v", out)
+	}
+	// Re-running normalize must be a fixed point (idempotent).
+	out2, _ := NormalizeSingboxRouterSettings(out)
+	if out2.FakeIPStack != out.FakeIPStack || out2.FakeIPPool4 != out.FakeIPPool4 ||
+		out2.FakeIPPool6 != out.FakeIPPool6 || out2.FakeIPMTU != out.FakeIPMTU {
+		t.Errorf("normalize not idempotent: %+v vs %+v", out, out2)
+	}
+}
+
+func TestValidateSingboxRouterSettings_FakeIPFields(t *testing.T) {
+	base := storage.SingboxRouterSettings{WANAutoDetect: true}
+	cases := []struct {
+		name    string
+		mut     func(s *storage.SingboxRouterSettings)
+		wantErr bool
+	}{
+		{"defaults ok", func(s *storage.SingboxRouterSettings) {}, false},
+		{"stack gvisor", func(s *storage.SingboxRouterSettings) { s.FakeIPStack = "gvisor" }, false},
+		{"stack system", func(s *storage.SingboxRouterSettings) { s.FakeIPStack = "system" }, false},
+		{"stack bad", func(s *storage.SingboxRouterSettings) { s.FakeIPStack = "mixed" }, true},
+		{"pool4 bad", func(s *storage.SingboxRouterSettings) { s.FakeIPPool4 = "not-a-cidr" }, true},
+		{"pool4 is v6", func(s *storage.SingboxRouterSettings) { s.FakeIPPool4 = "fd00::/8" }, true},
+		{"pool6 empty ok", func(s *storage.SingboxRouterSettings) { s.FakeIPPool6 = "" }, false},
+		{"pool6 valid v6", func(s *storage.SingboxRouterSettings) { s.FakeIPPool6 = "fc00::/7" }, false},
+		{"pool6 is v4", func(s *storage.SingboxRouterSettings) { s.FakeIPPool6 = "10.0.0.0/8" }, true},
+		{"pool6 bad", func(s *storage.SingboxRouterSettings) { s.FakeIPPool6 = "garbage" }, true},
+		{"mtu too small", func(s *storage.SingboxRouterSettings) { s.FakeIPMTU = 100 }, true},
+		{"mtu too big", func(s *storage.SingboxRouterSettings) { s.FakeIPMTU = 99999 }, true},
+		{"mtu min ok", func(s *storage.SingboxRouterSettings) { s.FakeIPMTU = 576 }, false},
+		{"mtu max ok", func(s *storage.SingboxRouterSettings) { s.FakeIPMTU = 9000 }, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sr := base
+			tc.mut(&sr)
+			err := ValidateSingboxRouterSettings(sr)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestListRules_RewritesSRSCompanionRefToInlineTag(t *testing.T) {
 	svc, _ := newOrchedTestService(t)
 	svc.deps.Singbox.(*fakeSingbox).binary = "/opt/bin/sing-box"

@@ -35,8 +35,13 @@ type Status struct {
 	// tun, false = traffic is being SNAT'd to the tun address (per-device
 	// targeting / source rules will misbehave). Pointer so the unknown state
 	// stays out of JSON. fakeip-tun only.
-	SourcePreserved *bool   `json:"sourcePreserved,omitempty"`
-	Issues          []Issue `json:"issues,omitempty"`
+	SourcePreserved *bool `json:"sourcePreserved,omitempty"`
+	// FakeIPIface is the active fakeip-tun kernel interface name ("opkgtun<idx>")
+	// when the router is provisioned in fakeip-tun mode; empty otherwise. The UI
+	// surfaces it in the «Настройки движка» panel. Populated from the persisted
+	// FakeIPState.Index (mirrors how SourcePreserved is conditionally populated).
+	FakeIPIface string  `json:"fakeipIface,omitempty"`
+	Issues      []Issue `json:"issues,omitempty"`
 }
 
 type Issue struct {
@@ -174,6 +179,13 @@ type Inbound struct {
 	StrictRoute            *bool    `json:"strict_route,omitempty"`
 	Stack                  string   `json:"stack,omitempty"`
 	EndpointIndependentNAT *bool    `json:"endpoint_independent_nat,omitempty"`
+	// GSO controls sing-tun's generic-segmentation-offload on the tun device.
+	// Pointer + omitempty so it's emitted ONLY when explicitly set: the gvisor
+	// stack leaves it nil (omitted), while the system stack MUST set it false —
+	// on this router's kernel (4.9) system+GSO panics sing-tun under load, and
+	// system+gso:false is the only stable system-stack combo (PoC-proven
+	// 2026-06-13; the project's sing-box alpha accepts "gso": false on tun).
+	GSO *bool `json:"gso,omitempty"`
 }
 
 type Route struct {

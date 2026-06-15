@@ -47,6 +47,7 @@ type SingboxRouterStatusData struct {
 	OutboundCompositeCount int                     `json:"outboundCompositeCount" example:"1"`
 	Final                  string                  `json:"final" example:"direct"`
 	SourcePreserved        *bool                   `json:"sourcePreserved,omitempty" example:"true"`
+	FakeIPIface            string                  `json:"fakeipIface,omitempty" example:"opkgtun0"`
 	Issues                 []SingboxRouterIssueDTO `json:"issues,omitempty"`
 }
 
@@ -84,6 +85,15 @@ type SingboxRouterSettingsData struct {
 	// IngressInterfaces lists interface refs whose ingress traffic is
 	// redirected through the sing-box router (e.g. "managed:Wireguard3").
 	IngressInterfaces []string `json:"ingressInterfaces,omitempty" example:"managed:Wireguard3"`
+	// --- fakeip-tun engine settings (user-editable) ---
+	// FakeIPStack selects the sing-tun stack: "gvisor" (default) or "system".
+	FakeIPStack string `json:"fakeipStack,omitempty" example:"gvisor" enums:"gvisor,system"`
+	// FakeIPPool4 is the fakeip v4 pool CIDR (default "10.128.0.0/10").
+	FakeIPPool4 string `json:"fakeipPool4,omitempty" example:"10.128.0.0/10"`
+	// FakeIPPool6 is the fakeip v6 pool CIDR (default "3f80::/10"); "" disables v6.
+	FakeIPPool6 string `json:"fakeipPool6,omitempty" example:"3f80::/10"`
+	// FakeIPMTU is the tun MTU (default 1500; valid range 576-9000).
+	FakeIPMTU int `json:"fakeipMtu,omitempty" example:"1500"`
 }
 
 // SingboxRouterSettingsResponse is the envelope for GET /singbox/router/settings.
