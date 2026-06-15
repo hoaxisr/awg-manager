@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
-	import { PageContainer, PageHeader } from '$lib/components/layout';
-	import { Tabs } from '$lib/components/ui';
+	import { PageContainer } from '$lib/components/layout';
+	import { Button } from '$lib/components/ui';
+	import { Plus } from 'lucide-svelte';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { singboxStatus } from '$lib/stores/singbox';
 	import {
@@ -11,7 +12,11 @@
 		SwitchProgress,
 		OverviewTab,
 		OutboundsTab,
+		FakeIPPageShell,
+		StatTile,
+		SourceBadge,
 		deriveFakeIPEngineState,
+		type ShellChip,
 	} from '$lib/components/fakeip';
 	import { fakeipTransition } from '$lib/stores/fakeipTransition';
 	import { notifications } from '$lib/stores/notifications';
@@ -25,12 +30,13 @@
 		if (!get(singboxRouter.initialized)) void singboxRouter.loadAll();
 	});
 
-	// FE-spec §3: fixed order + labels of the 9 FakeIP sub-pages. Badges are
-	// intentionally omitted here — real chip counters arrive in task 11.2.
-	// `live` marks chips whose content depends on the running engine / Clash
-	// runtime (FE-spec §12.1): they show the "движок остановлен" empty-state or
-	// a clash-down banner. Config-oriented chips render regardless of state.
-	const CHIPS: { id: string; label: string; live: boolean }[] = [
+	// FE-spec §3: fixed order + labels of the 9 FakeIP sub-pages. Real chip
+	// counters (badge) are wired inside FakeIPPageShell from the live Status DTO
+	// + DNS sub-stores + Clash connections WS. `live` marks chips whose content
+	// depends on the running engine / Clash runtime (FE-spec §12.1): they show
+	// the "движок остановлен" empty-state or a clash-down banner. Config-oriented
+	// chips render regardless of state.
+	const CHIPS: ShellChip[] = [
 		{ id: 'overview', label: 'Обзор', live: false },
 		{ id: 'inbounds', label: 'Inbounds', live: false },
 		{ id: 'outbounds', label: 'Outbounds', live: false },
@@ -46,12 +52,17 @@
 
 	let activeChip = $derived(CHIPS.find((c) => c.id === activeTab) ?? CHIPS[0]);
 
+	// Hero-title по активному чипу (мокап: «FakeIP Router» на Обзоре, имя раздела
+	// на остальных — ср. page-outbounds-v3 title «Outbounds»).
+	const pageTitle = $derived(activeTab === 'overview' ? 'FakeIP Router' : activeChip.label);
+
 	// singboxRouter is a composite store: `settings` and `status` are exposed as
 	// separate sub-stores, not a single subscribe value. routingMode lives in
 	// SETTINGS, not status (verified against backend). Absent on legacy payloads
 	// → 'tproxy' default, handled inside the pure helper.
 	const settings = singboxRouter.settings;
 	const status = singboxRouter.status;
+	const dnsRules = singboxRouter.dnsRules;
 	const routingMode = $derived($settings?.routingMode);
 	const running = $derived($singboxStatus.data?.running ?? false);
 
@@ -74,6 +85,22 @@
 
 	const engineState = $derived(
 		deriveFakeIPEngineState({ routingMode, running, clashReachable }),
+	);
+
+	// Стат-тайлы шапки «Обзора» (мокап `.stats`): движок (live) · outbounds (cfg)
+	// · DNS-правил (cfg) · route-правил (cfg) · устройств (live). Config-счётчики
+	// честны вне зависимости от движка (Status DTO) + dnsRules sub-store.
+	const statAtomic = $derived($status?.outboundAwgCount ?? 0);
+	const statComposite = $derived($status?.outboundCompositeCount ?? 0);
+	const statDnsRules = $derived($dnsRules.length);
+	const statRoutes = $derived($status?.ruleCount ?? 0);
+	const statDevices = $derived($status?.deviceCount ?? 0);
+	const engineLabel = $derived(
+		engineState === 'live'
+			? 'работает'
+			: engineState === 'clash-down'
+				? 'clash ↯'
+				: 'остановлен',
 	);
 
 	// ConfirmSwitch state. `fromMode` is the honest current mode: when the engine
@@ -155,7 +182,10 @@
 </script>
 
 <PageContainer>
-	<PageHeader title="FakeIP" description="Режим маршрутизации fakeip-tun" />
+	<!--
+		Шапка (PageHeader) заменена на FakeIPHero внутри FakeIPPageShell — мокап
+		fakeip-page-layout-v2: kick + title + hsub + панель действий.
+	-->
 
 	<!--
 		B3 flicker guard (1D.4 handoff): while a switch is in flight, intermediate
@@ -169,20 +199,61 @@
 		<NotEnabledScreen onEnableRequested={handleEnableRequested} />
 	{:else}
 		<!--
-			Hero slot (FE-spec): каждая под-страница показывает hero из config.json
-			+ «Инспектор маршрутов». Это реальные компоненты из более поздних задач
-			Slice 1E+ — здесь оставляем пустой слот, не строим фейковый просмотрщик.
+			Каркас под мокап fakeip-page-layout-v2: hero (title + панель действий) +
+			чипы-счётчики + полоса «Доставка DNS · сегменты». Контент под-страницы
+			остаётся прежним (переработка по странице — следующие задачи).
 		-->
+		<FakeIPPageShell
+			title={pageTitle}
+			chips={CHIPS}
+			activeChip={activeTab}
+			onChipChange={(id) => (activeTab = id)}
+			{engineState}
+			wanAutoDetect={$settings?.wanAutoDetect ?? true}
+			wanInterface={$settings?.wanInterface}
+			onRestart={handleRestart}
+		>
+			{#snippet createButton()}
+				{#if activeTab === 'outbounds'}
+					<!-- TODO(Slice 3.2): открыть мастер создания outbound. -->
+					<Button variant="primary" size="sm" disabled title="Скоро">
+						{#snippet iconBefore()}<Plus size={14} />{/snippet}
+						Outbound
+					</Button>
+				{/if}
+			{/snippet}
 
-		<Tabs
-			tabs={CHIPS}
-			active={activeTab}
-			onchange={(id) => (activeTab = id)}
-			urlParam="chip"
-			defaultTab="overview"
-		/>
+			{#snippet statRow()}
+				{#if activeTab === 'overview'}
+					<!-- Стат-тайлы (мокап `.stats`) с бейджами источника. -->
+					<StatTile value={engineLabel} label="движок" tone="success" sub="gvisor · status-проба">
+						{#snippet badge()}<SourceBadge variant="live" symbolOnly />{/snippet}
+					</StatTile>
+					<StatTile
+						value={statComposite > 0 ? `${statAtomic} + ${statComposite}` : statAtomic}
+						label="outbounds"
+						sub={statComposite > 0 ? `${statComposite} composite` : 'atomic'}
+					>
+						{#snippet badge()}<SourceBadge variant="cfg" />{/snippet}
+					</StatTile>
+					<StatTile value={statDnsRules} label="DNS-правил">
+						{#snippet badge()}<SourceBadge variant="cfg" />{/snippet}
+					</StatTile>
+					<StatTile value={statRoutes} label="route-правил" sub="first-match">
+						{#snippet badge()}<SourceBadge variant="cfg" />{/snippet}
+					</StatTile>
+					<!--
+						deviceCount = политики-устройства из Status DTO (config), НЕ live
+						/connections — поэтому бейдж cfg, а не live (честно). Live-счётчик
+						активных устройств появится в переработке «Устройства».
+					-->
+					<StatTile value={statDevices} label="устройств" sub="в политике">
+						{#snippet badge()}<SourceBadge variant="cfg" />{/snippet}
+					</StatTile>
+				{/if}
+			{/snippet}
 
-		{#if activeTab === 'overview'}
+			{#if activeTab === 'overview'}
 			<!--
 				Обзор (Slice 3.1): hero-сводка (config-счётчики) + operational-карточки
 					(движок / устройства / активные composite-выборы) + широкая полоса
@@ -228,6 +299,7 @@
 				{/if}
 			</section>
 		{/if}
+		</FakeIPPageShell>
 	{/if}
 </PageContainer>
 

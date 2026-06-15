@@ -16,7 +16,7 @@
 	import type { FakeIPEngineState } from '../engineState';
 	import ReadinessPanel from './ReadinessPanel.svelte';
 	import EngineSettingsCard from './EngineSettingsCard.svelte';
-	import SegmentsDelivery from './SegmentsDelivery.svelte';
+	import DropNote from '../shell/DropNote.svelte';
 	import OverviewSummary from './OverviewSummary.svelte';
 	import OperationalCards from './OperationalCards.svelte';
 	import LiveTraffic from './LiveTraffic.svelte';
@@ -109,7 +109,11 @@
 		/>
 	</div>
 
-	<SegmentsDelivery />
+	<!--
+		Честная заметка «что мы не показываем» (мокап `.drop`). Сегменты-доставка
+		переехала в каркас (FakeIPPageShell) как полоса над контентом.
+	-->
+	<DropNote />
 </section>
 
 <style>

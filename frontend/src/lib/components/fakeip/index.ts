@@ -24,6 +24,17 @@ export {
 	formatDelay,
 	type DelayHealth,
 } from './outbounds/formatDelay';
+export {
+	FakeIPPageShell,
+	FakeIPHero,
+	SourceBadge,
+	StatTile,
+	DropNote,
+	formatCompactCount,
+	type ShellChip,
+	type SourceVariant,
+	type StatTone,
+} from './shell';
 export { default as OverviewSummary } from './overview/OverviewSummary.svelte';
 export { default as OperationalCards } from './overview/OperationalCards.svelte';
 export { default as LiveTraffic } from './overview/LiveTraffic.svelte';
