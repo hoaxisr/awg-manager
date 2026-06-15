@@ -85,7 +85,11 @@ func TestRunningConfigStore_GetPoolDNSServer_NoLeakAcrossPools(t *testing.T) {
 	}
 }
 
-const dhcpPoolShowPath = "show/ip/dhcp/pool"
+// Leading slash is REQUIRED: the Getter resolves the path against the /rci/
+// base; without it the request escapes /rci/ and NDMS returns the SPA HTML stub
+// (stand-found). This const must match DHCPPoolStore.List's GetRaw path exactly,
+// so it doubles as a regression guard for that slash.
+const dhcpPoolShowPath = "/show/ip/dhcp/pool"
 
 func TestDHCPPoolStore_List(t *testing.T) {
 	fg := newFakeGetter()
