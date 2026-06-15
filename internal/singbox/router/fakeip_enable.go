@@ -59,9 +59,15 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// Coupling note: the fakeip egress follows the user's configured default
 	// outbound (route.final). Changing route.final changes where every faked
 	// domain is routed — there is no separate fakeip-egress knob in v1.
+	// Validate the egress against ALL known outbound catalogs (router composites,
+	// subscription composites, AWG-direct, sing-box tunnels, built-ins) — NOT just
+	// cfg.Outbounds, because the egress (e.g. an AWG outbound "awg-awg10") lives in
+	// 15-awg.json / another slot that sing-box merges, and is absent from the router
+	// slot's own outbounds. Stand-verified 2026-06-15: the old cfg-only check
+	// rejected a valid AWG egress. Mirrors SetRouteFinal's isKnownOutboundTag.
 	proxyTag := cfg.Route.Final
-	if proxyTag == "" || !outboundExists(cfg.Outbounds, proxyTag) {
-		return fmt.Errorf("enable fakeip-tun: no usable egress: route.final %q is not a configured outbound", proxyTag)
+	if proxyTag == "" || !s.isKnownOutboundTag(ctx, proxyTag, cfg) {
+		return fmt.Errorf("enable fakeip-tun: no usable egress: route.final %q is not a known outbound", proxyTag)
 	}
 
 	// Derive the tun /30 dotted address + netmask for NDMS SetAddress.
@@ -382,15 +388,6 @@ func (s *ServiceImpl) fakeIPEgressUp(cfg *RouterConfig) bool {
 	return false
 }
 
-// outboundExists reports whether tag names an outbound in the list.
-func outboundExists(outbounds []Outbound, tag string) bool {
-	for _, o := range outbounds {
-		if o.Tag == tag {
-			return true
-		}
-	}
-	return false
-}
 
 // splitCIDRToAddrMask splits a CIDR into its bare address string and dotted-quad
 // (v4) netmask, e.g. "172.18.0.1/30" → ("172.18.0.1", "255.255.255.252") and
