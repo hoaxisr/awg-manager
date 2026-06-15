@@ -4698,6 +4698,31 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	if (req.method === 'GET' && path === '/singbox/fakeip/segments') {
+		// DHCP pools projected as fakeip "segments" (Task 2.1). In fakeip-tun
+		// mode the configured pool (_WEBADMIN) advertises the tun DNS (.2 of
+		// the 172.18.0.1/30 link) → inFakeip true; otherwise its normal LAN DNS.
+		const fakeipTun = (mockSBSettings.routingMode || 'tproxy') === 'fakeip-tun';
+		send(res, 200, {
+			success: true,
+			data: [
+				{
+					pool: '_WEBADMIN',
+					subnet: '192.168.0.1/24',
+					dnsServer: fakeipTun ? '172.18.0.2' : '192.168.0.1',
+					inFakeip: fakeipTun,
+				},
+				{
+					pool: '_WEBADMIN_GUEST_AP',
+					subnet: '172.16.1.1/24',
+					dnsServer: '172.16.1.1',
+					inFakeip: false,
+				},
+			],
+		});
+		return;
+	}
+
 	if (req.method === 'GET' && path === '/singbox/router/settings') {
 		send(res, 200, { success: true, data: mockSBSettings });
 		return;

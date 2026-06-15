@@ -1151,6 +1151,31 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.FakeIPSegmentDTO:
+    properties:
+      dnsServer:
+        example: 172.18.0.2
+        type: string
+      inFakeip:
+        example: false
+        type: boolean
+      pool:
+        example: _WEBADMIN
+        type: string
+      subnet:
+        example: 192.168.0.1/24
+        type: string
+    type: object
+  api.FakeIPSegmentsListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.FakeIPSegmentDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
   api.GeoExpandData:
     properties:
       count:
@@ -9466,6 +9491,32 @@ paths:
       summary: Control sing-box process
       tags:
       - singbox
+  /singbox/fakeip/segments:
+    get:
+      description: Returns the router's DHCP pools projected as fakeip "segments"
+        for the per-segment DNS-delivery toggles. Each segment reports its pool name,
+        subnet CIDR, the DHCP-advertised DNS server, and whether that DNS is already
+        the fakeip-tun DNS (inFakeip). Always a JSON array, never null.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.FakeIPSegmentsListResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List fakeip segments
+      tags:
+      - singbox-router
   /singbox/install:
     post:
       produces:

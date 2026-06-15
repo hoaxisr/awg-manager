@@ -1151,6 +1151,7 @@ func main() {
 	monitoringService.SetSingboxDelay(singboxOp.Clash())
 
 	srv.SetSingboxRouterHandler(api.NewSingboxRouterHandler(routerSvc, loggingService))
+	srv.SetFakeIPSegmentsHandler(api.NewFakeIPSegmentsHandler(ndmsQueries.DHCPPool))
 	srv.SetAWGOutboundsHandler(api.NewAWGOutboundsHandler(awgoutboundsSvc))
 	srv.SetSingboxConfigHandler(api.NewSingboxConfigHandler(sbOrch.ConfigDir))
 
