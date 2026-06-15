@@ -109,6 +109,10 @@ type SingboxController interface {
 	Reload() error
 	IsRunning() (bool, int)
 	Start() error
+	// ClearManualStop clears the sticky master-Stop intent so the
+	// orchestrator cold-start is no longer suppressed. Called by an explicit
+	// router Enable (see Enable's call site); no-op when already clear.
+	ClearManualStop() error
 	ValidateConfigDir(ctx context.Context) error
 	ConfigDir() string
 	// Binary returns the absolute path (or PATH-resolvable name) of the
@@ -899,6 +903,18 @@ func (s *ServiceImpl) Enable(ctx context.Context) error {
 	sr, err := NormalizeSingboxRouterSettings(settings.SingboxRouter)
 	if err != nil {
 		return fmt.Errorf("router settings: %w", err)
+	}
+
+	// Explicit enable = explicit intent to run sing-box. Clear any sticky
+	// manual-stop so the orchestrator cold-start (triggered by SetEnabled below)
+	// isn't suppressed by shouldRun()=!IsManuallyStopped — otherwise Enable waits
+	// the full boot window and fails with a misleading readiness timeout
+	// (stand-found 2026-06-15, applies to BOTH tproxy and fakeip-tun). The nil
+	// guard keeps test wirings that omit Singbox working.
+	if s.deps.Singbox != nil {
+		if err := s.deps.Singbox.ClearManualStop(); err != nil {
+			return fmt.Errorf("clear manual-stop intent: %w", err)
+		}
 	}
 
 	// fakeip-tun has an entirely separate provisioning path (OpkgTun + tun +

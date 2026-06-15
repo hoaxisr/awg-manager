@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -565,6 +566,106 @@ func TestEnable_TproxyUnchanged(t *testing.T) {
 	}
 	if all.FakeIP != nil {
 		t.Errorf("tproxy Enable must not write FakeIP persist, got %+v", all.FakeIP)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Explicit Enable clears the sticky master-Stop intent (both modes)
+// ---------------------------------------------------------------------------
+
+// enableTproxyClearStopSvc builds an orch-backed tproxy-mode service so the
+// real SetEnabled path runs and we can assert ClearManualStop fired before it.
+func enableTproxyClearStopSvc(t *testing.T) (*ServiceImpl, *fakeSingbox, *storage.SettingsStore) {
+	t.Helper()
+	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
+		RoutingMode:   "tproxy",
+		DeviceMode:    "all",
+		WANAutoDetect: true,
+	})
+	singbox := newTestSingbox(t)
+	singbox.isRunningFn = func() (bool, int) { return true, 1234 }
+	stubListeningProbe(t, func() bool { return true })
+	svc := newTestService(t, Deps{
+		Settings:           settingsStore,
+		Policies:           &fakeAccessPolicyProvider{},
+		IPTables:           newStubIPTables(func(context.Context, string) error { return nil }),
+		Singbox:            singbox,
+		WANIPCollector:     &fakeWANIPCollector{},
+		NetfilterPreflight: func(context.Context) error { return nil },
+	})
+	return svc, singbox, settingsStore
+}
+
+func TestEnable_Tproxy_ClearsManualStop(t *testing.T) {
+	svc, singbox, settingsStore := enableTproxyClearStopSvc(t)
+
+	if err := svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable (tproxy): %v", err)
+	}
+	if singbox.clearManualStopCalls != 1 {
+		t.Errorf("ClearManualStop calls = %d, want 1", singbox.clearManualStopCalls)
+	}
+	all, _ := settingsStore.Load()
+	if !all.SingboxRouter.Enabled {
+		t.Error("Enable must still persist Enabled=true")
+	}
+}
+
+func TestEnable_Tproxy_ClearManualStopError_FailsFast(t *testing.T) {
+	svc, singbox, settingsStore := enableTproxyClearStopSvc(t)
+	singbox.clearManualStopErr = errors.New("disk full")
+
+	err := svc.Enable(context.Background())
+	if err == nil {
+		t.Fatalf("Enable: want error when ClearManualStop fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "clear manual-stop intent") {
+		t.Errorf("error = %q, want wrapped 'clear manual-stop intent'", err)
+	}
+	if singbox.clearManualStopCalls != 1 {
+		t.Errorf("ClearManualStop calls = %d, want 1", singbox.clearManualStopCalls)
+	}
+	// Fast-fail: no enable persisted (SetEnabled/Start never reached).
+	all, _ := settingsStore.Load()
+	if all.SingboxRouter.Enabled {
+		t.Error("Enable must NOT persist Enabled=true when ClearManualStop fails")
+	}
+}
+
+func TestEnable_FakeIP_ClearsManualStopBeforeProvisioning(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable (fakeip-tun): %v", err)
+	}
+	fs := h.svc.deps.Singbox.(*fakeSingbox)
+	if fs.clearManualStopCalls != 1 {
+		t.Errorf("ClearManualStop calls = %d, want 1", fs.clearManualStopCalls)
+	}
+	// Provisioning ran (proof the clear didn't abort the path).
+	if len(h.log.calls) == 0 {
+		t.Error("expected provisioning calls after a successful clear")
+	}
+}
+
+func TestEnable_FakeIP_ClearManualStopError_NoProvisioning(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	fs := h.svc.deps.Singbox.(*fakeSingbox)
+	fs.clearManualStopErr = errors.New("disk full")
+
+	err := h.svc.Enable(context.Background())
+	if err == nil {
+		t.Fatalf("Enable: want error when ClearManualStop fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "clear manual-stop intent") {
+		t.Errorf("error = %q, want wrapped 'clear manual-stop intent'", err)
+	}
+	// Fail before any fakeip provisioning op and before persisting state.
+	if len(h.log.calls) != 0 {
+		t.Errorf("no provisioning must happen when ClearManualStop fails, got %v", h.log.calls)
+	}
+	if st := h.loadFakeIP(t); st != nil {
+		t.Errorf("FakeIP persist = %+v, want nil", st)
 	}
 }
 

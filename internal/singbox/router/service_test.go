@@ -113,6 +113,11 @@ type fakeSingbox struct {
 	dir         string
 	binary      string
 	isRunningFn func() (bool, int)
+
+	// clearManualStopCalls counts ClearManualStop invocations;
+	// clearManualStopErr lets a test make it fail.
+	clearManualStopCalls int
+	clearManualStopErr   error
 }
 
 func (f *fakeSingbox) Reload() error { return nil }
@@ -122,7 +127,11 @@ func (f *fakeSingbox) IsRunning() (bool, int) {
 	}
 	return false, 0
 }
-func (f *fakeSingbox) Start() error                              { return nil }
+func (f *fakeSingbox) Start() error { return nil }
+func (f *fakeSingbox) ClearManualStop() error {
+	f.clearManualStopCalls++
+	return f.clearManualStopErr
+}
 func (f *fakeSingbox) Stop() error                               { return nil }
 func (f *fakeSingbox) ValidateConfigDir(_ context.Context) error { return nil }
 func (f *fakeSingbox) ConfigDir() string                         { return f.dir }
