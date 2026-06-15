@@ -5084,6 +5084,7 @@ const server = http.createServer(async (req, res) => {
 	}
 
 	if (req.method === 'GET' && path === '/singbox/router/status') {
+		const routingMode = mockSBSettings.routingMode || 'tproxy';
 		send(res, 200, {
 			success: true,
 			data: {
@@ -5097,6 +5098,9 @@ const server = http.createServer(async (req, res) => {
 				deviceMode: mockSBSettings.deviceMode || 'policy',
 				ruleCount: mockSingboxRules.length,
 				ruleSetCount: mockSingboxRuleSets.length,
+				// fakeip-tun status fields (backend serializes both omitempty).
+				routingMode,
+				...(routingMode === 'fakeip-tun' ? { sourcePreserved: true } : {}),
 			},
 		});
 		return;

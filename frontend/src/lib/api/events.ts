@@ -7,6 +7,7 @@ import type {
 	SingboxRouterRule,
 	SingboxRouterRuleSet,
 	SingboxRouterOutbound,
+	SingboxRouterTransitionData,
 } from '$lib/types';
 
 export interface LogEntryEvent {
@@ -107,6 +108,7 @@ export interface SSEEventHandlers {
 
 	// Sing-box Router push events (status + rules/rule-sets/outbounds snapshots)
 	onSingboxRouterStatus?: (data: SingboxRouterStatus) => void;
+	onSingboxRouterTransition?: (data: SingboxRouterTransitionData) => void;
 	onSingboxRouterRules?: (data: SingboxRouterRule[]) => void;
 	onSingboxRouterRuleSets?: (data: SingboxRouterRuleSet[]) => void;
 	onSingboxRouterOutbounds?: (data: SingboxRouterOutbound[]) => void;
@@ -171,6 +173,7 @@ export function connectSSE(handlers: SSEEventHandlers): () => void {
 
 	// Sing-box Router events
 	handle('singbox-router:status', handlers.onSingboxRouterStatus);
+	handle('singbox-router:transition', handlers.onSingboxRouterTransition);
 	handle('singbox-router:rules', handlers.onSingboxRouterRules);
 	handle('singbox-router:rulesets', handlers.onSingboxRouterRuleSets);
 	handle('singbox-router:outbounds', handlers.onSingboxRouterOutbounds);

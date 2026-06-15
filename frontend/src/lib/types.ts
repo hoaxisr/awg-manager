@@ -1350,7 +1350,33 @@ export interface SingboxRouterStatus {
 	outboundAwgCount: number;
 	outboundCompositeCount: number;
 	final: string;
+	/**
+	 * Which routing mode the engine runs. Absent on legacy/older payloads
+	 * (backend serializes it omitempty). Mirrors backend Status.RoutingMode.
+	 */
+	routingMode?: 'tproxy' | 'fakeip-tun';
+	/**
+	 * fakeip-tun source-preservation verdict. Absent outside fakeip-tun mode
+	 * (backend Status.SourcePreserved is *bool, omitempty).
+	 */
+	sourcePreserved?: boolean;
 	issues?: SingboxRouterIssue[];
+}
+
+export interface SingboxRouterTransitionStep {
+	step: 'start' | 'teardown' | 'provision' | 'readiness' | 'ready' | 'rollback' | 'error';
+	status: 'current' | 'done' | 'error';
+	message?: string;
+}
+
+export interface SingboxRouterTransitionData {
+	transitionId: string;
+	from: 'off' | 'tproxy' | 'fakeip-tun';
+	to: 'off' | 'tproxy' | 'fakeip-tun';
+	step: SingboxRouterTransitionStep;
+	done?: boolean;
+	finalState?: 'off' | 'tproxy' | 'fakeip-tun';
+	error?: string;
 }
 
 /**

@@ -1853,6 +1853,9 @@ class ApiClient {
 	// #region Sing-box Router (TProxy routing engine)
 	// ─────────────────────────────────────────────
 
+	// singboxRouterStatus() already returns the full status, including
+	// routingMode/sourcePreserved (see SingboxRouterStatus) — no separate
+	// getFakeipStatus is needed.
 	async singboxRouterStatus(): Promise<SingboxRouterStatus> {
 		return this.request('/singbox/router/status');
 	}
@@ -1863,6 +1866,10 @@ class ApiClient {
 
 	async singboxRouterDisable(): Promise<void> {
 		await this.request('/singbox/router/disable', { method: 'POST' });
+	}
+
+	async singboxRouterSwitchMode(mode: 'off' | 'tproxy' | 'fakeip-tun'): Promise<void> {
+		await this.request('/singbox/router/mode', { method: 'POST', body: JSON.stringify({ mode }) });
 	}
 
 	async singboxRouterGetSettings(): Promise<SingboxRouterSettings> {
