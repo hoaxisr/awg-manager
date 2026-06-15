@@ -407,8 +407,10 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 // waitForSingbox failure (readiness times out) must roll back everything created so far.
 func TestEnableFakeIPTun_RollbackOnReadinessTimeout(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	// Force DNS probe to never answer → waitForSingbox never becomes ready.
-	stubFakeIPDNSProbe(t, func(context.Context, string, netip.Prefix) bool { return false })
+	// Force the tun carrier to never come up → waitForSingbox never becomes ready
+	// (carrier is now the sole readiness signal; the DNS probe was demoted out of
+	// the gate, so stubbing it false would no longer cause a timeout).
+	stubTunReadyProbe(t, func(string) bool { return false })
 
 	// bootWait is clamped to a 60s floor, so bound the wait via a short ctx;
 	// waitForSingbox returns ctx.Err() on cancellation, which Enable propagates.
@@ -453,6 +455,72 @@ func TestEnableFakeIPTun_RefusesWithoutEgress(t *testing.T) {
 	}
 	if len(h.log.calls) != 0 {
 		t.Errorf("no provisioning calls expected, got %v", h.log.calls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Best-effort post-readiness DNS confirm (NOT a gate)
+//
+// After waitForSingbox (now gated on process+carrier) succeeds AND the pool
+// routes are added, enableFakeIPTun runs the live .2→fakeip DNS probe ONCE as a
+// best-effort, logged confirmation. A false result must WARN but NOT fail Enable
+// — sing-box is up by carrier; DNS delivery may just be briefly degraded.
+// ---------------------------------------------------------------------------
+
+func TestEnableFakeIPTun_DNSConfirmFalse_StillSucceeds(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+
+	// Carrier is up (harness stubs tunReadyProbe→true) so readiness passes; the
+	// best-effort DNS confirm returns false (the round-trip didn't answer in time).
+	var dnsCalls int
+	stubFakeIPDNSProbe(t, func(context.Context, string, netip.Prefix) bool {
+		dnsCalls++
+		return false
+	})
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable must succeed despite an unconfirmed DNS round-trip: %v", err)
+	}
+
+	// Provisioning completed: persist + DHCP DNS advertised (the last step runs).
+	st := h.loadFakeIP(t)
+	if st == nil || !st.Provisioned || st.Index != 0 {
+		t.Fatalf("FakeIP persist = %+v, want provisioned index 0", st)
+	}
+	all, _ := h.store.Load()
+	if !all.SingboxRouter.Enabled {
+		t.Error("SingboxRouter.Enabled must be true (Enable not failed by best-effort confirm)")
+	}
+	if !h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
+		t.Errorf("DHCP DNS must still be advertised after the (false) DNS confirm: %v", h.log.calls)
+	}
+	// The confirm runs exactly once (post-readiness, NOT in the poll loop).
+	if dnsCalls != 1 {
+		t.Errorf("DNS confirm call count = %d, want exactly 1 (once, post-readiness)", dnsCalls)
+	}
+}
+
+func TestEnableFakeIPTun_DNSConfirmTrue_Succeeds(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+
+	var dnsCalls int
+	stubFakeIPDNSProbe(t, func(_ context.Context, dnsAddr string, n netip.Prefix) bool {
+		dnsCalls++
+		if dnsAddr != "172.18.0.2" {
+			t.Errorf("DNS confirm addr = %q, want 172.18.0.2", dnsAddr)
+		}
+		return n.Contains(netip.MustParseAddr("10.128.0.5")) // in-pool ⇒ confirmed
+	})
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	st := h.loadFakeIP(t)
+	if st == nil || !st.Provisioned {
+		t.Fatalf("FakeIP persist = %+v, want provisioned", st)
+	}
+	if dnsCalls != 1 {
+		t.Errorf("DNS confirm call count = %d, want exactly 1", dnsCalls)
 	}
 }
 

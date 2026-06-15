@@ -715,9 +715,11 @@ func (s *ServiceImpl) waitForSingbox(ctx context.Context, timeout time.Duration)
 	// Mode-aware readiness: read the mode INTERNALLY (the signature has test
 	// callers and must not change). fakeip-tun has no inbound sockets, so the
 	// tproxy socket probe never turns true for it — gate instead on process +
-	// tun carrier + a live .2→fakeip DNS answer. The tun /30 connected route
-	// makes the DNS host reachable even before Enable adds the pool auto-route,
-	// so this is the right gate for the pre-route Enable window.
+	// tun carrier (carrier=1 = sing-box attached the gvisor tun stack, the
+	// structural "config is live" signal). The live .2→fakeip DNS answer is NO
+	// longer in this gate (it tripped on resolv.conf attempts:1, stand-verified
+	// 2026-06-15) — it is now a best-effort confirm after readiness in
+	// enableFakeIPTun. See singboxReady for the full rationale.
 	fakeIP := false
 	if s.deps.Settings != nil {
 		if settings, err := s.deps.Settings.Load(); err == nil && settings != nil {
@@ -743,10 +745,23 @@ func (s *ServiceImpl) waitForSingbox(ctx context.Context, timeout time.Duration)
 }
 
 // singboxReady reports whether sing-box is up for the active mode. tproxy:
-// process + both inbound sockets bound. fakeip-tun: process + tun carrier +
-// live DNS answering with a fakeip address (inputs unresolved → not ready, so
-// the loop keeps polling until the deadline).
-func (s *ServiceImpl) singboxReady(ctx context.Context, fakeIP bool) bool {
+// process + both inbound sockets bound. fakeip-tun: process + tun carrier.
+//
+// For fakeip-tun, carrier=1 IS the structural readiness signal: it means
+// sing-box created and attached the gvisor tun stack from the fakeip config —
+// the analog of "inbound socket bound" for tproxy, and it is fast and reliable.
+//
+// The live .2→fakeip DNS probe was DEMOTED out of this hard gate (stand-verified
+// 2026-06-15): the Go resolver (net.Resolver{PreferGo:true}) HONORS the router's
+// /etc/resolv.conf `options timeout:1 attempts:1`, so it does a single ~1s-bounded
+// attempt with no retry. In the first seconds after sing-box starts the fakeip
+// round-trip to .2 is occasionally slower than that, so the probe returned false
+// on every poll and waitForSingbox timed out at 60s — falsely failing Enable even
+// though sing-box was fully up (carrier=1) and fakeip worked. The DNS check now
+// runs ONCE as a best-effort, logged confirmation AFTER readiness (see
+// enableFakeIPTun), never as a flaky gate. ctx is unused now that the live DNS
+// probe is out of the gate; kept on the signature for the tproxy/test callers.
+func (s *ServiceImpl) singboxReady(_ context.Context, fakeIP bool) bool {
 	running, _ := s.deps.Singbox.IsRunning()
 	if !running {
 		return false
@@ -754,11 +769,14 @@ func (s *ServiceImpl) singboxReady(ctx context.Context, fakeIP bool) bool {
 	if !fakeIP {
 		return singboxListeningProbe()
 	}
-	iface, dnsAddr, fakeipNet, ok := s.fakeIPReadyInputs()
+	// Only iface is needed for the carrier gate; dnsAddr/fakeipNet (which the
+	// demoted DNS probe used) are derived later in enableFakeIPTun for the
+	// best-effort confirm.
+	iface, _, _, ok := s.fakeIPReadyInputs()
 	if !ok {
 		return false
 	}
-	return tunReadyProbe(iface) && fakeIPDNSProbe(ctx, dnsAddr, fakeipNet)
+	return tunReadyProbe(iface)
 }
 
 func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) error {

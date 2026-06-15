@@ -96,9 +96,16 @@ func singboxIntercepting() bool {
 // instead of this fixed public name.
 const fakeIPDNSProbeDomain = "example.com"
 
-// fakeIPDNSProbeTimeout bounds the live DNS readiness query so waitForSingbox's
-// poll loop is not stalled by a hung server.
+// fakeIPDNSProbeTimeout bounds a SINGLE live DNS query attempt inside
+// liveFakeIPDNSProbe so one hung lookup cannot stall the whole probe.
 const fakeIPDNSProbeTimeout = 1500 * time.Millisecond
+
+// fakeIPDNSConfirmTimeout is the generous overall budget the best-effort
+// post-readiness DNS confirm (enableFakeIPTun) gives the probe. It is longer
+// than a single attempt so the probe's internal retry loop can ride out the
+// brief first-seconds slowness that resolv.conf's attempts:1 would otherwise
+// turn into a hard failure (stand-verified 2026-06-15).
+const fakeIPDNSConfirmTimeout = 3 * time.Second
 
 // tunReadyProbe is the seam GetStatus/waitForSingbox use for tun liveness.
 // Overridable in tests.
@@ -132,6 +139,14 @@ var fakeIPDNSProbe = liveFakeIPDNSProbe
 // tun /30 connected route makes dnsAddr reachable, sing-box's DNS server is up,
 // and it is minting fakeip addresses. Uses the Go resolver with a custom Dial
 // pinned to dnsAddr:53 so it never consults the host resolver.
+//
+// The Go resolver still inherits resolv.conf's `options attempts:1` (it controls
+// retries, not the per-query timeout we set below), so a single LookupNetIP makes
+// exactly ONE attempt. To not let that one-shot fragility decide the verdict, we
+// loop a few attempts INSIDE the caller's context budget: each attempt is bounded
+// by fakeIPDNSProbeTimeout, and we stop as soon as one succeeds or the caller's
+// ctx is done. This stays dependency-free (no raw DNS client) — the main fix for
+// the false Enable-timeout is that this probe is no longer a readiness gate.
 func liveFakeIPDNSProbe(ctx context.Context, dnsAddr string, fakeipNet netip.Prefix) bool {
 	if dnsAddr == "" || !fakeipNet.IsValid() {
 		return false
@@ -144,18 +159,24 @@ func liveFakeIPDNSProbe(ctx context.Context, dnsAddr string, fakeipNet netip.Pre
 			return d.DialContext(ctx, "udp", target)
 		},
 	}
-	qctx, cancel := context.WithTimeout(ctx, fakeIPDNSProbeTimeout)
-	defer cancel()
-	addrs, err := r.LookupNetIP(qctx, "ip4", fakeIPDNSProbeDomain)
-	if err != nil {
-		return false
-	}
-	for _, a := range addrs {
-		if fakeipNet.Contains(a.Unmap()) {
-			return true
+	for {
+		if ctx.Err() != nil {
+			return false
 		}
+		qctx, cancel := context.WithTimeout(ctx, fakeIPDNSProbeTimeout)
+		addrs, err := r.LookupNetIP(qctx, "ip4", fakeIPDNSProbeDomain)
+		cancel()
+		if err == nil {
+			for _, a := range addrs {
+				if fakeipNet.Contains(a.Unmap()) {
+					return true
+				}
+			}
+			return false // answered, but not in pool — a real verdict, don't retry
+		}
+		// err != nil: timeout/refused/no-route — retry until the caller's ctx is
+		// exhausted (the per-attempt qctx may have expired; the outer ctx gates us).
 	}
-	return false
 }
 
 // fakeIPPoolRoutePresent is the seam for "the fakeip pool auto-route to the tun

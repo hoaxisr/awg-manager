@@ -304,6 +304,21 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		})
 	}
 
+	// Best-effort live-DNS confirmation (NOT a gate). sing-box is already up by
+	// carrier and the pool route to the tun now exists, so a single .2→fakeip
+	// query should answer. We run it ONCE (here, not in the poll loop, so no log
+	// spam) purely as a diagnostic: if it does not answer within the probe
+	// window the path is up but DNS delivery may be briefly degraded — we WARN
+	// and continue, never failing Enable. This preserves the functional signal
+	// the live DNS probe gave without making it a flaky readiness gate (the
+	// Go resolver honors resolv.conf attempts:1, stand-verified 2026-06-15).
+	fakeipNet4 := poolPrefix4.Masked()
+	dnsConfirmCtx, dnsConfirmCancel := context.WithTimeout(ctx, fakeIPDNSConfirmTimeout)
+	if !fakeIPDNSProbe(dnsConfirmCtx, tunDNS, fakeipNet4) {
+		s.appLog.Warn("fakeip-dns-confirm", iface, "fakeip DNS delivery could not be confirmed within the probe window — sing-box is up (carrier), but the .2→fakeip round-trip did not answer in time; DNS delivery may be briefly degraded (not fatal)")
+	}
+	dnsConfirmCancel()
+
 	// Health-gated DHCP DNS delivery: advertise the tun DNS to LAN clients only
 	// when sing-box is running AND the egress is up; otherwise clear it so
 	// clients fall back to the router's default DNS (no outage).

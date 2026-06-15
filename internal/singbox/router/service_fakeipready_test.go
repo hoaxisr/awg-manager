@@ -58,7 +58,12 @@ func stubFakeIPPoolRoutePresent(t *testing.T, fn func(string, netip.Prefix) bool
 // waitForSingbox — fakeip-tun branch
 // ---------------------------------------------------------------------------
 
-func TestWaitForSingbox_FakeIP_ReadyWhenCarrierAndDNS(t *testing.T) {
+// The readiness gate for fakeip-tun is process + tun carrier ONLY — the live
+// .2→fakeip DNS probe was demoted to a best-effort post-readiness confirm (it
+// tripped on resolv.conf attempts:1, falsely timing Enable out). So readiness
+// must turn true on carrier alone, and the DNS probe seam must NEVER be consulted
+// by the gate (the stub fails the test if it is).
+func TestWaitForSingbox_FakeIP_ReadyWhenCarrier(t *testing.T) {
 	singbox := newTestSingbox(t)
 	singbox.isRunningFn = func() (bool, int) { return true, 1234 }
 	svc := newTestService(t, Deps{
@@ -67,11 +72,12 @@ func TestWaitForSingbox_FakeIP_ReadyWhenCarrierAndDNS(t *testing.T) {
 		FakeIPTun: DefaultFakeIPTunParams(),
 	})
 
-	var gotIface, gotDNS string
+	var gotIface string
 	stubTunReadyProbe(t, func(iface string) bool { gotIface = iface; return true })
-	stubFakeIPDNSProbe(t, func(_ context.Context, dnsAddr string, n netip.Prefix) bool {
-		gotDNS = dnsAddr
-		return n.Contains(netip.MustParseAddr("10.128.0.5"))
+	// The DNS probe is no longer in the readiness gate — it must not be called.
+	stubFakeIPDNSProbe(t, func(context.Context, string, netip.Prefix) bool {
+		t.Fatal("fakeip DNS probe must not be consulted by the readiness gate (it is best-effort post-readiness)")
+		return false
 	})
 	// The tproxy socket probe must NEVER be consulted in fakeip-tun mode.
 	stubListeningProbe(t, func() bool {
@@ -80,30 +86,10 @@ func TestWaitForSingbox_FakeIP_ReadyWhenCarrierAndDNS(t *testing.T) {
 	})
 
 	if err := svc.waitForSingbox(context.Background(), 2*time.Second); err != nil {
-		t.Fatalf("waitForSingbox (fakeip ready): %v", err)
+		t.Fatalf("waitForSingbox (fakeip ready on carrier): %v", err)
 	}
 	if gotIface != "opkgtun3" {
 		t.Errorf("tun probe iface = %q, want opkgtun3", gotIface)
-	}
-	if gotDNS != "172.18.0.2" {
-		t.Errorf("dns probe addr = %q, want 172.18.0.2", gotDNS)
-	}
-}
-
-func TestWaitForSingbox_FakeIP_TimesOutWhenDNSNeverAnswers(t *testing.T) {
-	singbox := newTestSingbox(t)
-	singbox.isRunningFn = func() (bool, int) { return true, 1234 }
-	svc := newTestService(t, Deps{
-		Singbox:   singbox,
-		Settings:  newFakeIPSettingsStore(t, 0, true),
-		FakeIPTun: DefaultFakeIPTunParams(),
-	})
-
-	stubTunReadyProbe(t, func(string) bool { return true })
-	stubFakeIPDNSProbe(t, func(context.Context, string, netip.Prefix) bool { return false })
-
-	if err := svc.waitForSingbox(context.Background(), 250*time.Millisecond); err == nil {
-		t.Fatal("expected timeout when fakeip DNS never answers")
 	}
 }
 
@@ -118,7 +104,7 @@ func TestWaitForSingbox_FakeIP_TimesOutWhenCarrierDown(t *testing.T) {
 
 	stubTunReadyProbe(t, func(string) bool { return false })
 	stubFakeIPDNSProbe(t, func(context.Context, string, netip.Prefix) bool {
-		t.Fatal("DNS probe must not run while tun carrier is down")
+		t.Fatal("DNS probe must not run in the gate at all")
 		return true
 	})
 
@@ -137,7 +123,6 @@ func TestWaitForSingbox_FakeIP_TimesOutWhenNotProvisioned(t *testing.T) {
 	})
 
 	stubTunReadyProbe(t, func(string) bool { return true })
-	stubFakeIPDNSProbe(t, func(context.Context, string, netip.Prefix) bool { return true })
 
 	if err := svc.waitForSingbox(context.Background(), 250*time.Millisecond); err == nil {
 		t.Fatal("expected timeout when fakeip inputs are unresolvable (not provisioned)")
