@@ -1,33 +1,25 @@
 <!--
-  Контейнер вкладки «Обзор» (Slice 3.1). Держит обзор-специфичные деривации
-  (hero-сводка, deviceCount, активные composite-выборы, engineLive-гейт) и
-  компонует дашборд: hero-сводка + operational-карточки + live-трафик над
-  составным readiness/движком (1E.7) и сегментами. Страница остаётся тонким
-  оркестратором — обзорная логика живёт здесь.
+  Контейнер вкладки «Обзор» по мокапу dash3. Держит обзор-специфичные деривации
+  (deviceCount, активные composite-выборы, engineLive-гейт, ярлык статуса) и
+  компонует дашборд: 3 карточки (движок · устройства · composite) → панель
+  «Трафик · live» с бар-графиком → грид «Настройки движка». Сегменты-доставка
+  живёт в каркасе (FakeIPPageShell), здесь не дублируется.
 
-  ИСТОЧНИКИ/ЧЕСТНОСТЬ — см. под-компоненты: hero — config-счётчики (Status +
-  DNS sub-stores), composite — proxies/list через sb-router helper, live-трафик
-  — агрегат singboxTraffic. RAM (/memory) опущен (нет реального store).
+  ИСТОЧНИКИ/ЧЕСТНОСТЬ — см. под-компоненты: composite — proxies/list через
+  sb-router helper; трафик — агрегат singboxTraffic (скорость = дельта байт).
+  RAM (/memory), opkgtun-индекс и fakeip-пул в DTO отсутствуют — опущены.
 -->
 <script lang="ts">
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { singboxProxies } from '$lib/stores/singboxProxies';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import type { FakeIPEngineState } from '../engineState';
-	import ReadinessPanel from './ReadinessPanel.svelte';
+	import OverviewCards from './OverviewCards.svelte';
+	import TrafficPanel from './TrafficPanel.svelte';
 	import EngineSettingsCard from './EngineSettingsCard.svelte';
-	import DropNote from '../shell/DropNote.svelte';
-	import OverviewSummary from './OverviewSummary.svelte';
-	import OperationalCards from './OperationalCards.svelte';
-	import LiveTraffic from './LiveTraffic.svelte';
-	import { overviewSummary } from './overviewSummary';
 	import { activeCompositeRows } from './activeComposites';
 
 	interface Props {
-		/** Живые сигналы движка (из Status DTO / singboxStatus). */
-		running: boolean;
-		active: boolean;
-		sourcePreserved?: boolean;
 		/** Дериватив состояния движка — гейтит живые блоки (1E.3). */
 		engineState: FakeIPEngineState;
 		/** EngineSettingsCard props (settings-производные). */
@@ -41,9 +33,6 @@
 	}
 
 	let {
-		running,
-		active,
-		sourcePreserved,
 		engineState,
 		engineOn,
 		wanAutoDetect,
@@ -60,19 +49,18 @@
 		engineState === 'clash-down' ? 'clash-down' : engineState === 'stopped' ? 'stopped' : undefined,
 	);
 
+	// Ярлык статуса движка для карточки (честно из engineState).
+	const engineLabel = $derived(
+		engineState === 'live'
+			? 'работает'
+			: engineState === 'clash-down'
+				? 'clash ↯'
+				: 'остановлен',
+	);
+
 	const status = singboxRouter.status;
-	const dnsServers = singboxRouter.dnsServers;
-	const dnsRules = singboxRouter.dnsRules;
 	const outbounds = singboxRouter.outbounds;
 	const options = singboxRouter.options;
-
-	const summary = $derived(
-		overviewSummary({
-			status: $status,
-			dnsServerCount: $dnsServers.length,
-			dnsRuleCount: $dnsRules.length,
-		}),
-	);
 
 	const deviceCount = $derived($status?.deviceCount ?? 0);
 
@@ -90,30 +78,19 @@
 </script>
 
 <section class="overview">
-	<div class="overview-wide">
-		<OverviewSummary {summary} />
-		<OperationalCards {running} {active} {deviceCount} {engineLive} {notLiveReason} {composites} />
-		<LiveTraffic {engineLive} {notLiveReason} />
-	</div>
+	<OverviewCards {engineLive} {engineLabel} {deviceCount} {notLiveReason} {composites} />
 
-	<div class="overview-cols">
-		<ReadinessPanel {running} {active} {sourcePreserved} />
-		<EngineSettingsCard
-			{engineOn}
-			{wanAutoDetect}
-			{wanInterface}
-			{snifferEnabled}
-			{toggleBusy}
-			{onToggleEngine}
-			{onRestart}
-		/>
-	</div>
+	<TrafficPanel {engineLive} {notLiveReason} />
 
-	<!--
-		Честная заметка «что мы не показываем» (мокап `.drop`). Сегменты-доставка
-		переехала в каркас (FakeIPPageShell) как полоса над контентом.
-	-->
-	<DropNote />
+	<EngineSettingsCard
+		{engineOn}
+		{wanAutoDetect}
+		{wanInterface}
+		{snifferEnabled}
+		{toggleBusy}
+		{onToggleEngine}
+		{onRestart}
+	/>
 </section>
 
 <style>
@@ -121,26 +98,5 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
-	}
-
-	/* Широкие блоки на всю ширину: hero-сводка, operational-карточки, live-трафик. */
-	.overview-wide {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-	}
-
-	/* Составной readiness + карта движка — две колонки (как в 1E.7 MVP). */
-	.overview-cols {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-		gap: 1rem;
-		align-items: start;
-	}
-
-	@media (max-width: 720px) {
-		.overview-cols {
-			grid-template-columns: 1fr;
-		}
 	}
 </style>

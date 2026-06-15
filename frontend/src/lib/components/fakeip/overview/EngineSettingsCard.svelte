@@ -1,18 +1,20 @@
 <!--
-  Минимальная карта настроек движка FakeIP (MVP, 1E.7). Честный набор:
-    - Движок: тумблер ON при routingMode==='fakeip-tun' && enabled. Сам API НЕ
-      дёргает — вызывает onToggleEngine(turnOn), страница открывает ConfirmSwitch.
-    - Перезапустить: кнопка → onRestart (страница зовёт api.singboxControl).
+  «Настройки движка» по мокапу dash3 (`.eform` — 2-колоночный грид строк
+  ключ/значение). Честный набор:
+    - Движок: «Перезапустить» (onRestart → api.singboxControl) + тумблер ON при
+      routingMode==='fakeip-tun' && enabled. Сам API НЕ дёргает — onToggleEngine
+      открывает ConfirmSwitch на странице.
     - TCP/IP-стек: read-only «gvisor» (фиксирован для fakeip-tun).
     - WAN-интерфейс: read-only (wanAutoDetect ? 'Авто' : wanInterface).
-    - Sniffing: read-only из settings.snifferEnabled (редактор отложен).
-    - fakeip-пул / MTU: backend DefaultFakeIPTunParams, не в settings DTO —
-      не выдумываем, показываем «по умолчанию».
+    - Sniffing (SNI/host): read-only из settings.snifferEnabled (редактор отложен).
+    - fakeip-пул: backend DefaultFakeIPTunParams, не в settings DTO — не
+      выдумываем, показываем «по умолчанию».
+    - MTU tun: то же — «по умолчанию».
 
-  Полный дашборд (hero/live-traffic/active-selects) отложен (Slice 3+/2.2).
+  Презентационный: значения/хендлеры приходят пропами.
 -->
 <script lang="ts">
-	import { Card, Toggle, Button } from '$lib/components/ui';
+	import { Toggle } from '$lib/components/ui';
 	import { RotateCw } from 'lucide-svelte';
 
 	interface Props {
@@ -47,7 +49,7 @@
 	const wanLabel = $derived(wanAutoDetect ? 'Авто' : (wanInterface || '—'));
 
 	async function handleRestart(): Promise<void> {
-		if (restarting) return;
+		if (restarting || !engineOn) return;
 		restarting = true;
 		try {
 			await onRestart();
@@ -57,103 +59,168 @@
 	}
 </script>
 
-<Card padding="md">
-	{#snippet header()}
-		<h3 class="card-title">Движок</h3>
-		<Button
-			variant="secondary"
-			size="sm"
-			loading={restarting}
-			disabled={restarting || !engineOn}
-			onclick={handleRestart}
-		>
-			{#snippet iconBefore()}<RotateCw size={14} />{/snippet}
-			Перезапустить
-		</Button>
-	{/snippet}
+<div class="panel">
+	<div class="ph">
+		<span class="nm">Настройки движка</span>
+		<span class="meta">применяются с перезапуском sing-box</span>
+	</div>
 
-	<div class="settings">
-		<!-- Движок toggle (controlled: страница решает, принять ли смену). -->
-		<div class="row toggle-row">
-			<Toggle
-				checked={engineOn}
-				controlled
-				loading={toggleBusy}
-				label="FakeIP-движок"
-				hint="Включение/выключение проходит через подтверждение перехода."
-				onchange={(next) => onToggleEngine(next)}
-			/>
+	<div class="eform">
+		<!-- Движок: перезапуск + тумблер (controlled — страница решает смену). -->
+		<div class="erow">
+			<span class="k">Движок</span>
+			<span class="val">
+				<button
+					class="restart"
+					type="button"
+					onclick={handleRestart}
+					disabled={restarting || !engineOn}
+				>
+					{#if restarting}
+						<RotateCw size={12} class="spin" />
+					{/if}
+					Перезапустить
+				</button>
+				<Toggle
+					checked={engineOn}
+					controlled
+					loading={toggleBusy}
+					size="sm"
+					onchange={(next) => onToggleEngine(next)}
+				/>
+			</span>
 		</div>
 
 		<!-- Read-only поля. -->
-		<dl class="ro">
-			<div class="ro-row">
-				<dt>TCP/IP-стек</dt>
-				<dd>gvisor</dd>
-			</div>
-			<div class="ro-row">
-				<dt>WAN-интерфейс</dt>
-				<dd>{wanLabel}</dd>
-			</div>
-			<div class="ro-row">
-				<dt>Sniffing</dt>
-				<!-- TODO(slice3): editable -->
-				<dd>{snifferEnabled ? 'включён' : 'выключен'}</dd>
-			</div>
-			<div class="ro-row">
-				<dt>fakeip-пул / MTU</dt>
-				<dd class="muted">по умолчанию</dd>
-			</div>
-		</dl>
+		<div class="erow">
+			<span class="k">TCP/IP-стек</span>
+			<span class="val"><span class="selbox">gvisor</span></span>
+		</div>
+		<div class="erow">
+			<span class="k">WAN-интерфейс</span>
+			<span class="val"><span class="selbox">{wanLabel}</span></span>
+		</div>
+		<div class="erow">
+			<span class="k">Sniffing (SNI/host)</span>
+			<!-- TODO(slice3): editable PUT snifferEnabled. -->
+			<span class="val"><span class="selbox dim">{snifferEnabled ? 'включён' : 'выключен'}</span></span>
+		</div>
+		<div class="erow">
+			<span class="k">fakeip-пул</span>
+			<span class="val"><span class="selbox dim">по умолчанию</span></span>
+		</div>
+		<div class="erow">
+			<span class="k">MTU tun</span>
+			<span class="val"><span class="selbox dim">по умолчанию</span></span>
+		</div>
 	</div>
-</Card>
+</div>
 
 <style>
-	.card-title {
-		margin: 0;
-		font-size: 0.9375rem;
-		font-weight: 600;
+	.panel {
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius, 12px);
+		padding: 1rem;
+	}
+
+	.ph {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 0.625rem;
+	}
+
+	.ph .nm {
 		color: var(--text-primary);
+		font-size: 0.8125rem;
+		font-weight: 700;
 	}
 
-	.settings {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
+	.ph .meta {
+		color: var(--text-muted);
+		font-size: 0.625rem;
 	}
 
-	.toggle-row {
-		padding-bottom: 0.75rem;
-		border-bottom: 1px solid var(--color-border);
-	}
-
-	.ro {
-		margin: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.ro-row {
+	/* 2-колоночный грид строк с тонкими разделителями (dash3 `.eform`). */
+	.eform {
 		display: grid;
-		grid-template-columns: minmax(8rem, max-content) 1fr;
-		gap: 0.75rem;
-		font-size: 0.875rem;
+		grid-template-columns: 1fr 1fr;
+		gap: 1px;
+		background: var(--color-border);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm, 8px);
+		overflow: hidden;
 	}
 
-	.ro-row dt {
+	.erow {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		padding: 0.6875rem 0.875rem;
+		background: var(--color-bg-secondary);
+		font-size: 0.75rem;
+	}
+
+	.erow .k {
 		color: var(--text-secondary);
 	}
 
-	.ro-row dd {
-		margin: 0;
-		color: var(--text-primary);
-		font-weight: 500;
+	.erow .val {
+		display: flex;
+		gap: 0.5rem;
+		align-items: center;
 	}
 
-	.ro-row dd.muted {
+	.selbox {
+		background: var(--color-bg-tertiary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm, 6px);
+		padding: 0.3125rem 0.625rem;
+		color: var(--color-accent);
+		font-size: 0.75rem;
+	}
+
+	.selbox.dim {
 		color: var(--text-muted);
-		font-weight: 400;
-		font-style: italic;
+	}
+
+	.restart {
+		color: var(--text-primary);
+		background: none;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm, 6px);
+		padding: 0.25rem 0.5625rem;
+		font-size: 0.6875rem;
+		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+	}
+
+	.restart:hover:not(:disabled) {
+		border-color: var(--color-border-hover);
+	}
+
+	.restart:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.restart :global(.spin) {
+		animation: spin 0.8s linear infinite;
+	}
+
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	@media (max-width: 760px) {
+		.eform {
+			grid-template-columns: 1fr;
+		}
 	}
 </style>

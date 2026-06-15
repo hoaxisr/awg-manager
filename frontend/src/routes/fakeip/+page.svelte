@@ -13,8 +13,6 @@
 		OverviewTab,
 		OutboundsTab,
 		FakeIPPageShell,
-		StatTile,
-		SourceBadge,
 		deriveFakeIPEngineState,
 		type ShellChip,
 	} from '$lib/components/fakeip';
@@ -61,16 +59,8 @@
 	// SETTINGS, not status (verified against backend). Absent on legacy payloads
 	// → 'tproxy' default, handled inside the pure helper.
 	const settings = singboxRouter.settings;
-	const status = singboxRouter.status;
-	const dnsRules = singboxRouter.dnsRules;
 	const routingMode = $derived($settings?.routingMode);
 	const running = $derived($singboxStatus.data?.running ?? false);
-
-	// Composite-readiness live signals (1E.7 / FE-spec §12.2). `active` == pool
-	// auto-route present for fakeip-tun; `sourcePreserved` is the tri-state SNAT
-	// verdict (undefined → не определено). Both honest, from the Status DTO.
-	const routerActive = $derived($status?.active ?? false);
-	const sourcePreserved = $derived($status?.sourcePreserved);
 
 	// Engine toggle ON-state: persisted fakeip-tun AND enabled. Drives the card
 	// toggle; flipping it routes through the existing ConfirmSwitch flow.
@@ -85,22 +75,6 @@
 
 	const engineState = $derived(
 		deriveFakeIPEngineState({ routingMode, running, clashReachable }),
-	);
-
-	// Стат-тайлы шапки «Обзора» (мокап `.stats`): движок (live) · outbounds (cfg)
-	// · DNS-правил (cfg) · route-правил (cfg) · устройств (live). Config-счётчики
-	// честны вне зависимости от движка (Status DTO) + dnsRules sub-store.
-	const statAtomic = $derived($status?.outboundAwgCount ?? 0);
-	const statComposite = $derived($status?.outboundCompositeCount ?? 0);
-	const statDnsRules = $derived($dnsRules.length);
-	const statRoutes = $derived($status?.ruleCount ?? 0);
-	const statDevices = $derived($status?.deviceCount ?? 0);
-	const engineLabel = $derived(
-		engineState === 'live'
-			? 'работает'
-			: engineState === 'clash-down'
-				? 'clash ↯'
-				: 'остановлен',
 	);
 
 	// ConfirmSwitch state. `fromMode` is the honest current mode: when the engine
@@ -223,47 +197,14 @@
 				{/if}
 			{/snippet}
 
-			{#snippet statRow()}
-				{#if activeTab === 'overview'}
-					<!-- Стат-тайлы (мокап `.stats`) с бейджами источника. -->
-					<StatTile value={engineLabel} label="движок" tone="success" sub="gvisor · status-проба">
-						{#snippet badge()}<SourceBadge variant="live" symbolOnly />{/snippet}
-					</StatTile>
-					<StatTile
-						value={statComposite > 0 ? `${statAtomic} + ${statComposite}` : statAtomic}
-						label="outbounds"
-						sub={statComposite > 0 ? `${statComposite} composite` : 'atomic'}
-					>
-						{#snippet badge()}<SourceBadge variant="cfg" />{/snippet}
-					</StatTile>
-					<StatTile value={statDnsRules} label="DNS-правил">
-						{#snippet badge()}<SourceBadge variant="cfg" />{/snippet}
-					</StatTile>
-					<StatTile value={statRoutes} label="route-правил" sub="first-match">
-						{#snippet badge()}<SourceBadge variant="cfg" />{/snippet}
-					</StatTile>
-					<!--
-						deviceCount = политики-устройства из Status DTO (config), НЕ live
-						/connections — поэтому бейдж cfg, а не live (честно). Live-счётчик
-						активных устройств появится в переработке «Устройства».
-					-->
-					<StatTile value={statDevices} label="устройств" sub="в политике">
-						{#snippet badge()}<SourceBadge variant="cfg" />{/snippet}
-					</StatTile>
-				{/if}
-			{/snippet}
-
 			{#if activeTab === 'overview'}
 			<!--
-				Обзор (Slice 3.1): hero-сводка (config-счётчики) + operational-карточки
-					(движок / устройства / активные composite-выборы) + широкая полоса
-					live-трафика, над составным readiness/движком (1E.7) и сегментами.
-					Живые блоки (composite, live-трафик) гейтятся engineLive (1E.3).
+				Обзор по мокапу dash3: 3 карточки (движок / устройства / composite) +
+				панель «Трафик · live» с бар-графиком + грид «Настройки движка».
+				Счётчики живут в чипах, сегменты-доставка — в каркасе. Живые блоки
+				(composite, трафик) гейтятся engineLive (1E.3).
 			-->
 			<OverviewTab
-				running={running}
-				active={routerActive}
-				{sourcePreserved}
 				{engineState}
 				{engineOn}
 				wanAutoDetect={$settings?.wanAutoDetect ?? true}

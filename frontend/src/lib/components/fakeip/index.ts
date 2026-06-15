@@ -27,17 +27,9 @@ export {
 export {
 	FakeIPPageShell,
 	FakeIPHero,
-	SourceBadge,
-	StatTile,
-	DropNote,
 	formatCompactCount,
 	type ShellChip,
-	type SourceVariant,
-	type StatTone,
 } from './shell';
-export { default as OverviewSummary } from './overview/OverviewSummary.svelte';
-export { default as OperationalCards } from './overview/OperationalCards.svelte';
-export { default as LiveTraffic } from './overview/LiveTraffic.svelte';
 export {
 	readinessRows,
 	type ReadinessRow,
@@ -45,11 +37,6 @@ export {
 	type ReadinessInput,
 } from './overview/readinessRows';
 export { segmentRows, type SegmentRow } from './overview/segmentRows';
-export {
-	overviewSummary,
-	type OverviewSummary as OverviewSummaryModel,
-	type OverviewSummaryInput,
-} from './overview/overviewSummary';
 export {
 	activeCompositeRows,
 	type ActiveCompositeRow,
