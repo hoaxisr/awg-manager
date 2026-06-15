@@ -1291,6 +1291,12 @@ export interface SingboxRouterSettings {
 	enabled: boolean;
 	policyName: string;
 	deviceMode?: 'policy' | 'all';
+	/**
+	 * Active routing mode. Source of truth for the FakeIP page's engine-state
+	 * derivation. Served by GET /singbox/router/settings (omitempty; absent on
+	 * legacy payloads → treat as 'tproxy'). NOT on the status endpoint.
+	 */
+	routingMode?: 'tproxy' | 'fakeip-tun';
 	snifferEnabled: boolean;
 	refreshMode?: 'interval' | 'daily';
 	refreshIntervalHours?: number;
@@ -1350,11 +1356,6 @@ export interface SingboxRouterStatus {
 	outboundAwgCount: number;
 	outboundCompositeCount: number;
 	final: string;
-	/**
-	 * Which routing mode the engine runs. Absent on legacy/older payloads
-	 * (backend serializes it omitempty). Mirrors backend Status.RoutingMode.
-	 */
-	routingMode?: 'tproxy' | 'fakeip-tun';
 	/**
 	 * fakeip-tun source-preservation verdict. Absent outside fakeip-tun mode
 	 * (backend Status.SourcePreserved is *bool, omitempty).
