@@ -1317,6 +1317,16 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 }
 
 func (s *ServiceImpl) Reconcile(ctx context.Context) error {
+	// A routing-mode switch (SwitchRoutingMode) holds transitionMu across its
+	// Disable→persist→Enable sequence, during which the persisted state is
+	// transiently half-flipped. Reconcile is a periodic heal — if a switch is in
+	// flight, skip this tick rather than act on the in-between state and race the
+	// switch's own (possibly rolling-back) Enable/Disable. TryLock: never block the
+	// scheduler; just defer the heal one tick.
+	if !s.transitionMu.TryLock() {
+		return nil
+	}
+	defer s.transitionMu.Unlock()
 	settings, err := s.deps.Settings.Load()
 	if err != nil {
 		return err

@@ -415,6 +415,67 @@ func TestReconcile_PolicyDeleted_Disables(t *testing.T) {
 	}
 }
 
+// TestReconcile_SkipsWhileTransitionInFlight verifies that Reconcile yields to
+// an in-flight SwitchRoutingMode (which holds transitionMu across its
+// Disable→persist→Enable sequence): when the lock is held, Reconcile returns nil
+// and performs NO work — no iptables side effects and no settings mutation — so a
+// periodic heal tick cannot race the switch's own (possibly rolling-back)
+// Enable/Disable on the transiently half-flipped persisted state (bug B1). Once
+// the lock is released, Reconcile proceeds normally.
+func TestReconcile_SkipsWhileTransitionInFlight(t *testing.T) {
+	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
+		Enabled:    true,
+		PolicyName: "Policy0",
+	})
+	// Policy missing → if Reconcile ran, it would fail-safe Disable (iptables
+	// Uninstall calls + Enabled flipped to false). Holding transitionMu must
+	// suppress all of that.
+	policies := &fakeAccessPolicyProvider{markErr: query.ErrPolicyMarkNotFound}
+	fe := &fakeExec{}
+	it := newTestIPTables(fe)
+
+	svc := newTestService(t, Deps{
+		Settings: settingsStore,
+		Policies: policies,
+		IPTables: it,
+		Singbox:  newTestSingbox(t),
+	})
+	svc.currentMark = "0xffffaaa"
+
+	// Simulate a switch in flight by holding transitionMu (as SwitchRoutingMode
+	// does across its whole sequence).
+	svc.transitionMu.Lock()
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile while transition in flight: %v", err)
+	}
+	if len(fe.calls) != 0 {
+		t.Errorf("expected NO iptables calls while transition in flight, got %d", len(fe.calls))
+	}
+	all, err := settingsStore.Load()
+	if err != nil {
+		t.Fatalf("Load after skipped Reconcile: %v", err)
+	}
+	if !all.SingboxRouter.Enabled {
+		t.Error("expected Enabled to stay true (Reconcile did no work) while transition in flight")
+	}
+
+	// Release the lock — Reconcile now proceeds and fail-safe disables.
+	svc.transitionMu.Unlock()
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile after lock release: %v", err)
+	}
+	if len(fe.calls) == 0 {
+		t.Error("expected iptables calls from Uninstall after lock release, got none")
+	}
+	all, err = settingsStore.Load()
+	if err != nil {
+		t.Fatalf("Load after proceeding Reconcile: %v", err)
+	}
+	if all.SingboxRouter.Enabled {
+		t.Error("expected Enabled=false after Reconcile proceeded and disabled")
+	}
+}
+
 func TestReconcile_WANIPsChanged_Reinstalls(t *testing.T) {
 	restoreCalls := 0
 	ipt := newStubIPTables(func(_ context.Context, _ string) error {
