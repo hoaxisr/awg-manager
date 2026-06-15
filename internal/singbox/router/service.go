@@ -345,6 +345,15 @@ type ServiceImpl struct {
 	inspectCacheOnce sync.Once
 	inspectCache     *ruleSetCache
 	datRuleSetMu     sync.Mutex
+
+	// fakeIPSourcePreserved holds the last fakeip-tun source-preservation
+	// verdict computed by assertSourcePreserved during a drift-reconcile:
+	// nil = unknown / not yet checked, true = source preserved, false =
+	// SNAT detected. Read by GetStatus to surface Status.SourcePreserved
+	// and a source-preservation Issue. Guarded by fakeIPSrcMu because
+	// Reconcile (writer) and GetStatus (reader) run on different goroutines.
+	fakeIPSrcMu           sync.Mutex
+	fakeIPSourcePreserved *bool
 }
 
 func NewService(d Deps) *ServiceImpl {
@@ -1178,6 +1187,22 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		// tproxy: chains + PREROUTING jumps + sing-box listening on both inbound sockets.
 		active = jumps && singboxListeningProbe()
 	}
+	issues := s.computeIssues(cfg)
+	// fakeip-tun source-preservation (Task 15): surface the last verdict stored
+	// by the drift-reconcile's assertSourcePreserved. nil (unknown) stays out of
+	// JSON and raises NO issue (no false alarms); an explicit false adds an
+	// advisory warning. tproxy mode never touches either field.
+	var sourcePreserved *bool
+	if sr.RoutingMode == "fakeip-tun" {
+		sourcePreserved = s.loadSourcePreserved()
+		if sourcePreserved != nil && !*sourcePreserved {
+			issues = append(issues, Issue{
+				Severity: "warning",
+				Kind:     "source-preservation",
+				Message:  "forward-client source IP is being SNAT'd to the tun address; per-device targeting and source rules will misbehave — set the client segment to a no-masquerade / static-NAT mode (spec §2/§6)",
+			})
+		}
+	}
 	return Status{
 		Enabled:                sr.Enabled,
 		Installed:              installed,
@@ -1196,7 +1221,8 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		OutboundAWGCount:       awgCount,
 		OutboundCompositeCount: compCount,
 		Final:                  cfg.Route.Final,
-		Issues:                 s.computeIssues(cfg),
+		SourcePreserved:        sourcePreserved,
+		Issues:                 issues,
 	}, nil
 }
 
@@ -1277,6 +1303,13 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	sr, err := NormalizeSingboxRouterSettings(settings.SingboxRouter)
 	if err != nil {
 		return err
+	}
+	// fakeip-tun installs NO iptables, so the tproxy switch below (keyed on
+	// IPTables.IsInstalled/HasAnyInstalled) would always read "not installed"
+	// and route every tick to Enable. Dispatch by mode FIRST so the tproxy
+	// switch stays byte-for-byte unchanged for RoutingMode=="tproxy".
+	if sr.RoutingMode == "fakeip-tun" {
+		return s.reconcileFakeIPTun(ctx, sr)
 	}
 	installedComplete := s.deps.IPTables.IsInstalled(ctx)
 	installedAny := s.deps.IPTables.HasAnyInstalled(ctx)

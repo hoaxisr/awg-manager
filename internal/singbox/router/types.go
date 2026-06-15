@@ -14,22 +14,29 @@ type Status struct {
 	// rebuild) while chains survive, so the engine looks "installed" but
 	// routes nothing. The UI keys its "working" badge on Active, not Enabled
 	// (intent) or Installed (chains only).
-	Active                 bool    `json:"active"`
-	NetfilterAvailable     bool    `json:"netfilterAvailable"`
-	NetfilterComponentName string  `json:"netfilterComponentName,omitempty"`
-	TProxyTargetAvailable  bool    `json:"tproxyTargetAvailable"`
-	PolicyName             string  `json:"policyName"`
-	PolicyMark             string  `json:"policyMark,omitempty"`
-	PolicyExists           bool    `json:"policyExists"`
-	DeviceMode             string  `json:"deviceMode"`
-	SnifferEnabled         bool    `json:"snifferEnabled"`
-	DeviceCount            int     `json:"deviceCount"`
-	RuleCount              int     `json:"ruleCount"`
-	RuleSetCount           int     `json:"ruleSetCount"`
-	OutboundAWGCount       int     `json:"outboundAwgCount"`
-	OutboundCompositeCount int     `json:"outboundCompositeCount"`
-	Final                  string  `json:"final"`
-	Issues                 []Issue `json:"issues,omitempty"`
+	Active                 bool   `json:"active"`
+	NetfilterAvailable     bool   `json:"netfilterAvailable"`
+	NetfilterComponentName string `json:"netfilterComponentName,omitempty"`
+	TProxyTargetAvailable  bool   `json:"tproxyTargetAvailable"`
+	PolicyName             string `json:"policyName"`
+	PolicyMark             string `json:"policyMark,omitempty"`
+	PolicyExists           bool   `json:"policyExists"`
+	DeviceMode             string `json:"deviceMode"`
+	SnifferEnabled         bool   `json:"snifferEnabled"`
+	DeviceCount            int    `json:"deviceCount"`
+	RuleCount              int    `json:"ruleCount"`
+	RuleSetCount           int    `json:"ruleSetCount"`
+	OutboundAWGCount       int    `json:"outboundAwgCount"`
+	OutboundCompositeCount int    `json:"outboundCompositeCount"`
+	Final                  string `json:"final"`
+	// SourcePreserved reports the fakeip-tun source-preservation verdict
+	// (Task 15): nil = unknown / not-checked (no conntrack data or not in
+	// fakeip-tun mode), true = forward-client source IP is preserved into the
+	// tun, false = traffic is being SNAT'd to the tun address (per-device
+	// targeting / source rules will misbehave). Pointer so the unknown state
+	// stays out of JSON. fakeip-tun only.
+	SourcePreserved *bool   `json:"sourcePreserved,omitempty"`
+	Issues          []Issue `json:"issues,omitempty"`
 }
 
 type Issue struct {

@@ -46,6 +46,7 @@ type SingboxRouterStatusData struct {
 	OutboundAWGCount       int                     `json:"outboundAwgCount" example:"2"`
 	OutboundCompositeCount int                     `json:"outboundCompositeCount" example:"1"`
 	Final                  string                  `json:"final" example:"direct"`
+	SourcePreserved        *bool                   `json:"sourcePreserved,omitempty" example:"true"`
 	Issues                 []SingboxRouterIssueDTO `json:"issues,omitempty"`
 }
 

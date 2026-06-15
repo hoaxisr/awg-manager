@@ -3630,6 +3630,9 @@ definitions:
       snifferEnabled:
         example: true
         type: boolean
+      sourcePreserved:
+        example: true
+        type: boolean
       tproxyTargetAvailable:
         example: true
         type: boolean
