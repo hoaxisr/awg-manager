@@ -725,6 +725,40 @@ func TestAdvertiseDNS_HealthGated(t *testing.T) {
 			t.Errorf("want ClearPoolDNS when bind-iface carrier down, got %v", log.calls)
 		}
 	})
+
+	t.Run("final in another slot (empty slot outbounds) still advertises", func(t *testing.T) {
+		// Regression for the stand-found bug (#27): the egress (e.g. AWG outbound
+		// "awg-awg10") lives in 15-awg.json, so the router slot's cfg.Outbounds is
+		// empty while route.final names the tag. The old fakeIPEgressUp returned
+		// false here and held DHCP DNS forever — LAN clients never got the .2.
+		log := &callLog{}
+		singbox := newTestSingbox(t)
+		singbox.isRunningFn = func() (bool, int) { return true, 1 }
+		svc := newTestService(t, Deps{Singbox: singbox, DHCP: &recDHCP{log: log}})
+
+		cfgElsewhere := &RouterConfig{Outbounds: nil, Route: Route{Final: "awg-awg10"}}
+		if err := svc.advertiseDNSIfHealthy(context.Background(), "_WEBADMIN", "172.18.0.2", "opkgtun0", cfgElsewhere); err != nil {
+			t.Fatalf("advertiseDNSIfHealthy: %v", err)
+		}
+		if !log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
+			t.Errorf("want SetPoolDNS when egress is resolved from another slot, got %v", log.calls)
+		}
+	})
+
+	t.Run("empty final clears DNS (no egress configured)", func(t *testing.T) {
+		log := &callLog{}
+		singbox := newTestSingbox(t)
+		singbox.isRunningFn = func() (bool, int) { return true, 1 }
+		svc := newTestService(t, Deps{Singbox: singbox, DHCP: &recDHCP{log: log}})
+
+		cfgNoEgress := &RouterConfig{Outbounds: nil, Route: Route{Final: ""}}
+		if err := svc.advertiseDNSIfHealthy(context.Background(), "_WEBADMIN", "172.18.0.2", "opkgtun0", cfgNoEgress); err != nil {
+			t.Fatalf("advertiseDNSIfHealthy: %v", err)
+		}
+		if !log.has("ClearPoolDNS:_WEBADMIN") {
+			t.Errorf("want ClearPoolDNS when no egress is configured, got %v", log.calls)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------

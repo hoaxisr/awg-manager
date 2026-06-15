@@ -393,7 +393,17 @@ func (s *ServiceImpl) fakeIPEgressUp(cfg *RouterConfig) bool {
 		// then a dead proxy still advertises DNS and clients black-hole silently.
 		return true
 	}
-	return false
+	// final is NOT among the router slot's own outbounds — the common case: the
+	// egress (e.g. an AWG outbound "awg-awg10") lives in 15-awg.json / another
+	// config slot that sing-box merges, so the router slot's cfg.Outbounds is
+	// empty or lacks it (stand-confirmed 2026-06-15: slot outbounds=[] while
+	// route.final="awg-awg10" → the old `return false` here held DHCP DNS forever
+	// and LAN clients never got the fakeip .2). The tag was already validated as a
+	// known outbound by isKnownOutboundTag at enable; there is no local carrier
+	// signal to probe, so treat it as up (same blind-true as a bind-less proxy).
+	// An empty final (no egress configured) stays down. Mirrors the egress-
+	// validation fix (isKnownOutboundTag scans ALL catalogs, not just this slot).
+	return cfg.Route.Final != ""
 }
 
 
