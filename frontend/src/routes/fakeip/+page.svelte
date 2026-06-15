@@ -7,8 +7,11 @@
 	import { singboxStatus } from '$lib/stores/singbox';
 	import {
 		NotEnabledScreen,
+		ConfirmSwitch,
 		deriveFakeIPEngineState,
 	} from '$lib/components/fakeip';
+	import { notifications } from '$lib/stores/notifications';
+	import { api } from '$lib/api/client';
 
 	onMount(() => {
 		// routingMode comes from the router SETTINGS, which are only fetched by
@@ -56,10 +59,40 @@
 		deriveFakeIPEngineState({ routingMode, running, clashReachable }),
 	);
 
+	// ConfirmSwitch state. `fromMode` is the honest current mode: when the engine
+	// is disabled the source is 'off', otherwise the persisted routingMode (legacy
+	// payloads without routingMode default to 'tproxy', mirroring engineState).
+	let confirmOpen = $state(false);
+	let switchBusy = $state(false);
+	const fromMode = $derived<'off' | 'tproxy' | 'fakeip-tun'>(
+		$settings?.enabled ? ($settings?.routingMode ?? 'tproxy') : 'off',
+	);
+
 	function handleEnableRequested(): void {
-		// TODO(1E.5): open ConfirmSwitch modal to drive the off/tproxy → fakeip-tun
-		// transition. Intentionally a no-op stub — the switch flow is a separate
-		// task and must go through the confirm dialog, not a direct API call.
+		confirmOpen = true;
+	}
+
+	function handleCancelSwitch(): void {
+		confirmOpen = false;
+	}
+
+	async function handleConfirmSwitch(): Promise<void> {
+		// TODO(1E.6): replace await+notify with SwitchProgress SSE stream.
+		switchBusy = true;
+		try {
+			await api.singboxRouterSwitchMode('fakeip-tun');
+			confirmOpen = false;
+			// Refresh stores so the engine-state derivation re-renders the page off
+			// NotEnabledScreen once routingMode/status reflect the new mode.
+			await singboxRouter.loadAll();
+			notifications.success('Режим FakeIP включён');
+		} catch (e) {
+			notifications.error(
+				e instanceof Error ? e.message : 'Не удалось переключить режим',
+			);
+		} finally {
+			switchBusy = false;
+		}
 	}
 </script>
 
@@ -101,6 +134,15 @@
 		</section>
 	{/if}
 </PageContainer>
+
+<ConfirmSwitch
+	open={confirmOpen}
+	from={fromMode}
+	to="fakeip-tun"
+	busy={switchBusy}
+	onConfirm={handleConfirmSwitch}
+	onCancel={handleCancelSwitch}
+/>
 
 <style>
 	.chip-stub {
