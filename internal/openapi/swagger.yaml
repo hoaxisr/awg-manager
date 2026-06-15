@@ -3154,6 +3154,16 @@ definitions:
         example: selector
         type: string
     type: object
+  api.SingboxRouterModeRequest:
+    properties:
+      mode:
+        enum:
+        - "off"
+        - tproxy
+        - fakeip-tun
+        example: fakeip-tun
+        type: string
+    type: object
   api.SingboxRouterOutboundDTO:
     properties:
       bind_interface:
@@ -3644,6 +3654,65 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.SingboxRouterTransitionData:
+    properties:
+      done:
+        example: true
+        type: boolean
+      error:
+        example: ""
+        type: string
+      finalState:
+        enum:
+        - "off"
+        - tproxy
+        - fakeip-tun
+        example: fakeip-tun
+        type: string
+      from:
+        enum:
+        - "off"
+        - tproxy
+        - fakeip-tun
+        example: tproxy
+        type: string
+      step:
+        $ref: '#/definitions/api.SingboxRouterTransitionStepDTO'
+      to:
+        enum:
+        - "off"
+        - tproxy
+        - fakeip-tun
+        example: fakeip-tun
+        type: string
+      transitionId:
+        example: switch-7
+        type: string
+    type: object
+  api.SingboxRouterTransitionStepDTO:
+    properties:
+      message:
+        example: restored tproxy
+        type: string
+      status:
+        enum:
+        - current
+        - done
+        - error
+        example: current
+        type: string
+      step:
+        enum:
+        - start
+        - teardown
+        - provision
+        - readiness
+        - ready
+        - rollback
+        - error
+        example: provision
+        type: string
     type: object
   api.SingboxRouterUnbindDeviceRequest:
     properties:
@@ -6465,6 +6534,11 @@ paths:
           description: Server-Sent Events
           schema:
             type: string
+        "299":
+          description: Schema of a singbox-router:transition push event carried on
+            this stream (documentation only — never an HTTP status)
+          schema:
+            $ref: '#/definitions/api.SingboxRouterTransitionData'
         "400":
           description: Bad Request
           schema:
@@ -10152,6 +10226,46 @@ paths:
       security:
       - CookieAuth: []
       summary: Inspect router routing decision (SSE stream)
+      tags:
+      - singbox-router
+  /singbox/router/mode:
+    post:
+      consumes:
+      - application/json
+      description: 'Orchestrates a routing-mode transition (off↔tproxy↔fakeip-tun):
+        tears down the old mode then brings up the new one, with directional fail-closed
+        rollback. Per-step progress is published as "singbox-router:transition" events
+        on the existing GET /events SSE stream (see SingboxRouterTransitionData).
+        Returns 400 INVALID_MODE for an unknown mode.'
+      parameters:
+      - description: Target routing mode
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterModeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Switch singbox-router routing mode
       tags:
       - singbox-router
   /singbox/router/outbounds/add:

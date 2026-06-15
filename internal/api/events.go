@@ -27,6 +27,7 @@ func NewEventsHandler(bus *events.Bus, instanceID string) *EventsHandler {
 //	@Produce		text/event-stream
 //	@Security		CookieAuth
 //	@Success		200	{string}	string	"Server-Sent Events"
+//	@Success		299	{object}	SingboxRouterTransitionData	"Schema of a singbox-router:transition push event carried on this stream (documentation only — never an HTTP status)"
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/events [get]

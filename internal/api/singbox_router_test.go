@@ -29,11 +29,17 @@ type mockRouterSvc struct {
 	applyRes      orchestrator.ValidationResult
 	discardErr    error
 	datFileErr    error
+	switchTarget  string
+	switchErr     error
 }
 
 func (m *mockRouterSvc) Enable(ctx context.Context) error    { return m.enableErr }
 func (m *mockRouterSvc) Disable(ctx context.Context) error   { return nil }
 func (m *mockRouterSvc) Reconcile(ctx context.Context) error { return nil }
+func (m *mockRouterSvc) SwitchRoutingMode(ctx context.Context, target string) error {
+	m.switchTarget = target
+	return m.switchErr
+}
 func (m *mockRouterSvc) GetStatus(ctx context.Context) (router.Status, error) {
 	return router.Status{}, nil
 }
@@ -185,6 +191,46 @@ func TestRouterEnable_PolicyMissing_Returns400(t *testing.T) {
 	h.Enable(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("want 400, got %d", rr.Code)
+	}
+}
+
+func TestRouterSwitchMode_CallsService(t *testing.T) {
+	svc := &mockRouterSvc{}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/mode",
+		strings.NewReader(`{"mode":"fakeip-tun"}`))
+	rr := httptest.NewRecorder()
+	h.SwitchMode(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if svc.switchTarget != "fakeip-tun" {
+		t.Errorf("svc.SwitchRoutingMode target = %q want fakeip-tun", svc.switchTarget)
+	}
+}
+
+func TestRouterSwitchMode_BadMode_Returns400(t *testing.T) {
+	svc := &mockRouterSvc{}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/mode",
+		strings.NewReader(`{"mode":"bogus"}`))
+	rr := httptest.NewRecorder()
+	h.SwitchMode(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if svc.switchTarget != "" {
+		t.Errorf("service should not be called for bad mode, got target=%q", svc.switchTarget)
+	}
+}
+
+func TestRouterSwitchMode_MethodNotAllowed(t *testing.T) {
+	h := newMockRouterHandler(&mockRouterSvc{})
+	req := httptest.NewRequest(http.MethodGet, "/api/singbox/router/mode", nil)
+	rr := httptest.NewRecorder()
+	h.SwitchMode(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("want 405, got %d", rr.Code)
 	}
 }
 

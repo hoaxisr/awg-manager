@@ -1121,6 +1121,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/singbox/router/status", guarded(rh.GetStatus))
 		mux.HandleFunc("/api/singbox/router/enable", guarded(rh.Enable))
 		mux.HandleFunc("/api/singbox/router/disable", guarded(rh.Disable))
+		mux.HandleFunc("/api/singbox/router/mode", guarded(rh.SwitchMode))
 		mux.HandleFunc("/api/singbox/router/settings", guarded(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet {
 				rh.GetSettings(w, r)

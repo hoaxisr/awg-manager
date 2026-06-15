@@ -1889,6 +1889,34 @@ const mockWANInterfaces = [
 	{ name: 'usb0', id: 'UsbModem0', label: 'Резервный 4G', up: true, priority: 500000 },
 ];
 let mockBoundDevices = new Set();
+
+// Registry of live /events SSE senders so POST /singbox/router/mode can replay a
+// representative singbox-router:transition progress sequence to the FE.
+const sseSenders = new Set();
+let mockTransitionSeq = 0;
+
+// buildTransitionSequence returns a representative ordered list of
+// singbox-router:transition events for a from→to switch (the same shape the Go
+// backend's router.TransitionEvent emits). Used as the FE mock fixture.
+function buildTransitionSequence(from, to) {
+	const id = `switch-${++mockTransitionSeq}`;
+	const ev = (step, status, extra = {}) => ({
+		transitionId: id, from, to, step: { step, status }, ...extra,
+	});
+	if (from === to) {
+		return [ev('ready', 'done', { done: true, finalState: to, step: { step: 'ready', status: 'done', message: 'already in target state' } })];
+	}
+	const seq = [ev('start', 'current')];
+	if (from !== 'off') {
+		seq.push(ev('teardown', 'current'), ev('teardown', 'done'));
+	}
+	if (to === 'off') {
+		seq.push(ev('ready', 'done', { done: true, finalState: 'off' }));
+		return seq;
+	}
+	seq.push(ev('provision', 'current'), ev('readiness', 'done'), ev('ready', 'done', { done: true, finalState: to }));
+	return seq;
+}
 function scrubMockDnsServerStored(server) {
 	const next = { ...server };
 	const detour = typeof next.detour === 'string' ? next.detour.trim() : '';
@@ -3928,6 +3956,9 @@ const server = http.createServer(async (req, res) => {
 		};
 
 		sendEvent('connected', { ok: true });
+		// Register this connection so POST /singbox/router/mode can push the
+		// representative singbox-router:transition progress sequence.
+		sseSenders.add(sendEvent);
 		for (const event of tickAwgTraffic()) {
 			sendEvent('tunnel:traffic', event);
 		}
@@ -3954,7 +3985,10 @@ const server = http.createServer(async (req, res) => {
 			}
 		}, 1500);
 
-		const cleanup = () => clearInterval(interval);
+		const cleanup = () => {
+			clearInterval(interval);
+			sseSenders.delete(sendEvent);
+		};
 		req.on('close', cleanup);
 		req.on('error', cleanup);
 		res.on('close', cleanup);
@@ -5022,6 +5056,30 @@ const server = http.createServer(async (req, res) => {
 	if (req.method === 'POST' && path === '/singbox/router/enable') {
 		mockEngineRunning = true;
 		send(res, 200, { success: true, data: {} });
+		return;
+	}
+
+	// POST /singbox/router/mode — orchestrated routing-mode switch. Replays a
+	// representative singbox-router:transition progress sequence to all live SSE
+	// subscribers (the UI progress screen), then updates the mock router state.
+	if (req.method === 'POST' && path === '/singbox/router/mode') {
+		const payload = await readJsonBody(req);
+		const to = payload && payload.mode;
+		if (to !== 'off' && to !== 'tproxy' && to !== 'fakeip-tun') {
+			send(res, 400, { success: false, error: 'invalid routing mode (want off|tproxy|fakeip-tun)', code: 'INVALID_MODE' });
+			return;
+		}
+		const from = mockEngineRunning ? (mockSBSettings.routingMode || 'tproxy') : 'off';
+		const seq = buildTransitionSequence(from, to);
+		// Stagger the push so the FE progress screen animates step-by-step.
+		seq.forEach((evt, i) => {
+			setTimeout(() => {
+				for (const sendEvent of sseSenders) sendEvent('singbox-router:transition', evt);
+			}, i * 400);
+		});
+		mockEngineRunning = to !== 'off';
+		mockSBSettings = { ...mockSBSettings, routingMode: to === 'off' ? mockSBSettings.routingMode : to, enabled: to !== 'off' };
+		send(res, 200, { success: true, data: { ok: true } });
 		return;
 	}
 

@@ -26,6 +26,9 @@ type Service interface {
 	Enable(ctx context.Context) error
 	Disable(ctx context.Context) error
 	Reconcile(ctx context.Context) error
+	// SwitchRoutingMode orchestrates a routing-mode transition (off↔tproxy↔
+	// fakeip-tun) with directional fail-closed rollback and progress events.
+	SwitchRoutingMode(ctx context.Context, target string) error
 	GetStatus(ctx context.Context) (Status, error)
 	GetSettings(ctx context.Context) (storage.SingboxRouterSettings, error)
 	UpdateSettings(ctx context.Context, s storage.SingboxRouterSettings) error
@@ -324,6 +327,10 @@ type ServiceImpl struct {
 	deps                    Deps
 	appLog                  *logging.ScopedLogger
 	mu                      sync.Mutex
+	// transitionMu serializes SwitchRoutingMode calls. It is DISTINCT from mu:
+	// Enable/Disable (which SwitchRoutingMode composes) take mu themselves, so
+	// holding mu across the whole switch would self-deadlock.
+	transitionMu sync.Mutex
 	currentMark             string              // last-installed iptables mark; used by Reconcile to detect change
 	currentWANIPs           []string            // last-collected WAN IPs; used by Reconcile to detect change
 	currentLANBridges       []LANBridgeDNSRedir // last-discovered LAN-bridge (name, ndnproxy port) pairs; reconcile triggers re-install when this changes (e.g. NDMS hotspot reconfigured, bridge added/removed, port reassigned)
