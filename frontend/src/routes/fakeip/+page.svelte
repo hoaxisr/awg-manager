@@ -1,47 +1,105 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import { get } from 'svelte/store';
 	import { PageContainer, PageHeader } from '$lib/components/layout';
 	import { Tabs } from '$lib/components/ui';
+	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { singboxStatus } from '$lib/stores/singbox';
+	import {
+		NotEnabledScreen,
+		deriveFakeIPEngineState,
+	} from '$lib/components/fakeip';
+
+	onMount(() => {
+		// routingMode comes from the router SETTINGS, which are only fetched by
+		// loadAll(). On direct navigation to /fakeip the store may still be cold
+		// (settings === null → routingMode undefined → 'not-fakeip'), so prime it
+		// once. Idempotent; refreshes status too.
+		if (!get(singboxRouter.initialized)) void singboxRouter.loadAll();
+	});
 
 	// FE-spec §3: fixed order + labels of the 9 FakeIP sub-pages. Badges are
 	// intentionally omitted here — real chip counters arrive in task 11.2.
-	const CHIPS: { id: string; label: string }[] = [
-		{ id: 'overview', label: 'Обзор' },
-		{ id: 'inbounds', label: 'Inbounds' },
-		{ id: 'outbounds', label: 'Outbounds' },
-		{ id: 'rulesets', label: 'Rule sets' },
-		{ id: 'dns', label: 'DNS' },
-		{ id: 'routes', label: 'Маршруты' },
-		{ id: 'devices', label: 'Устройства' },
-		{ id: 'connections', label: 'Соединения' },
-		{ id: 'logs', label: 'Журнал' }
+	// `live` marks chips whose content depends on the running engine / Clash
+	// runtime (FE-spec §12.1): they show the "движок остановлен" empty-state or
+	// a clash-down banner. Config-oriented chips render regardless of state.
+	const CHIPS: { id: string; label: string; live: boolean }[] = [
+		{ id: 'overview', label: 'Обзор', live: false },
+		{ id: 'inbounds', label: 'Inbounds', live: false },
+		{ id: 'outbounds', label: 'Outbounds', live: false },
+		{ id: 'rulesets', label: 'Rule sets', live: false },
+		{ id: 'dns', label: 'DNS', live: false },
+		{ id: 'routes', label: 'Маршруты', live: false },
+		{ id: 'devices', label: 'Устройства', live: false },
+		{ id: 'connections', label: 'Соединения', live: true },
+		{ id: 'logs', label: 'Журнал', live: true }
 	];
 
 	let activeTab = $state('overview');
 
 	let activeChip = $derived(CHIPS.find((c) => c.id === activeTab) ?? CHIPS[0]);
+
+	// singboxRouter is a composite store: `settings` and `status` are exposed as
+	// separate sub-stores, not a single subscribe value. routingMode lives in
+	// SETTINGS, not status (verified against backend). Absent on legacy payloads
+	// → 'tproxy' default, handled inside the pure helper.
+	const settings = singboxRouter.settings;
+	const routingMode = $derived($settings?.routingMode);
+	const running = $derived($singboxStatus.data?.running ?? false);
+
+	// TODO(1E.7/slice3): derive from live-block fetch errors. Live blocks are
+	// still stubs, so there is no robust Clash-reachability signal yet — assume
+	// reachable rather than fabricate a probe.
+	const clashReachable = true;
+
+	const engineState = $derived(
+		deriveFakeIPEngineState({ routingMode, running, clashReachable }),
+	);
+
+	function handleEnableRequested(): void {
+		// TODO(1E.5): open ConfirmSwitch modal to drive the off/tproxy → fakeip-tun
+		// transition. Intentionally a no-op stub — the switch flow is a separate
+		// task and must go through the confirm dialog, not a direct API call.
+	}
 </script>
 
 <PageContainer>
 	<PageHeader title="FakeIP" description="Режим маршрутизации fakeip-tun" />
 
-	<!--
-		Hero slot (FE-spec): каждая под-страница показывает hero из config.json
-		+ «Инспектор маршрутов». Это реальные компоненты из более поздних задач
-		Slice 1E+ — здесь оставляем пустой слот, не строим фейковый просмотрщик.
-	-->
+	{#if engineState === 'not-fakeip'}
+		<NotEnabledScreen onEnableRequested={handleEnableRequested} />
+	{:else}
+		<!--
+			Hero slot (FE-spec): каждая под-страница показывает hero из config.json
+			+ «Инспектор маршрутов». Это реальные компоненты из более поздних задач
+			Slice 1E+ — здесь оставляем пустой слот, не строим фейковый просмотрщик.
+		-->
 
-	<Tabs
-		tabs={CHIPS}
-		active={activeTab}
-		onchange={(id) => (activeTab = id)}
-		urlParam="chip"
-		defaultTab="overview"
-	/>
+		<Tabs
+			tabs={CHIPS}
+			active={activeTab}
+			onchange={(id) => (activeTab = id)}
+			urlParam="chip"
+			defaultTab="overview"
+		/>
 
-	<section class="chip-stub">
-		<h2 class="chip-stub-title">{activeChip.label}</h2>
-		<p class="chip-stub-note">Раздел в разработке (Slice 1E+)</p>
-	</section>
+		<section class="chip-stub">
+			<h2 class="chip-stub-title">{activeChip.label}</h2>
+
+			{#if activeChip.live && engineState === 'stopped'}
+				<p class="chip-stub-note chip-stub-empty">
+					Движок остановлен — живые данные недоступны.
+				</p>
+			{:else if activeChip.live && engineState === 'clash-down'}
+				<p class="chip-stub-note chip-stub-error">
+					Clash-runtime недоступен — живые блоки временно не работают.
+					Конфигурация по-прежнему доступна.
+				</p>
+			{:else}
+				<p class="chip-stub-note">Раздел в разработке (Slice 1E+)</p>
+			{/if}
+		</section>
+	{/if}
 </PageContainer>
 
 <style>
@@ -63,5 +121,9 @@
 		margin: 0;
 		font-size: 0.875rem;
 		color: var(--text-muted);
+	}
+
+	.chip-stub-error {
+		color: var(--color-error, var(--text-primary));
 	}
 </style>
