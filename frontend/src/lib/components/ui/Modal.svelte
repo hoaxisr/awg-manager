@@ -26,6 +26,13 @@
          * the click as the user's deliberate discard gesture.
          */
         hasUnsavedChanges?: () => boolean;
+        /**
+         * Explicit body min-height (CSS length). The default body is
+         * `flex:1; min-height:0`, which lets it collapse to ~padding height when
+         * its content streams in AFTER open (e.g. the switch-progress step list).
+         * Set this to pin a minimum so such content can't be clipped to a strip.
+         */
+        bodyMinHeight?: string;
     }
 
     let {
@@ -38,6 +45,7 @@
         actions,
         closeOnBackdrop = true,
         hasUnsavedChanges,
+        bodyMinHeight,
     }: Props = $props();
 
     const sizeClasses = {
@@ -154,7 +162,11 @@
                 </button>
             </header>
 
-            <section class="modal-body" class:modal-body-fill={bodyLayout === 'fill'}>
+            <section
+                class="modal-body"
+                class:modal-body-fill={bodyLayout === 'fill'}
+                style={bodyMinHeight ? `min-height: ${bodyMinHeight}` : undefined}
+            >
                 {@render children()}
             </section>
 

@@ -60,6 +60,7 @@
 	size="md"
 	onclose={onClose}
 	closeOnBackdrop={false}
+	bodyMinHeight="min(24rem, 70vh)"
 >
 	<div class="progress">
 		<ol class="steps" aria-label="Ход переключения">
@@ -123,28 +124,21 @@
 </Modal>
 
 <style>
-	/* GUARANTEE the card has real height. The modal body is `flex:1; min-height:0`,
-	   and this modal's content (the step list) streams in AFTER open, so the body
-	   flex-sized to ~padding height and clipped the steps into a thin bar. Force a
-	   min-height on the card that holds `.progress` (only this modal) so the
-	   flex:1 body always has room for the steps. Scoped to SwitchProgress via :has. */
-	:global(.modal-card:has(.progress)) {
-		min-height: min(30rem, 90dvh);
+	/* The modal gets an explicit `bodyMinHeight` (Modal prop) so its body can't
+	   collapse to a thin strip when the step list streams in after open. */
+	.progress {
+		display: block;
 	}
 
-	.progress {
-		display: flex;
-		flex-direction: column;
-		gap: 0.875rem;
-		min-height: 0;
+	.progress > :global(* + *) {
+		margin-top: 0.875rem;
 	}
 
 	.steps {
 		list-style: none;
 		margin: 0;
 		padding: 0;
-		display: flex;
-		flex-direction: column;
+		display: block;
 	}
 
 	.step {
@@ -153,6 +147,7 @@
 		gap: 0.6875rem;
 		padding: 0.5625rem 0.25rem;
 		border-bottom: 1px solid var(--border);
+		flex-shrink: 0;
 	}
 
 	.step:last-child {
