@@ -1166,6 +1166,32 @@ definitions:
         example: 192.168.0.1/24
         type: string
     type: object
+  api.FakeIPSegmentToggleRequest:
+    properties:
+      inFakeip:
+        example: true
+        type: boolean
+      pool:
+        example: _WEBADMIN
+        type: string
+    type: object
+  api.FakeIPSegmentToggleResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.FakeIPSegmentToggleResult'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.FakeIPSegmentToggleResult:
+    properties:
+      inFakeip:
+        example: true
+        type: boolean
+      pool:
+        example: _WEBADMIN
+        type: string
+    type: object
   api.FakeIPSegmentsListResponse:
     properties:
       data:
@@ -9515,6 +9541,46 @@ paths:
       security:
       - CookieAuth: []
       summary: List fakeip segments
+      tags:
+      - singbox-router
+    post:
+      consumes:
+      - application/json
+      description: Sets (inFakeip=true) or clears (false) the DHCP-advertised DNS
+        for one pool. true hands that pool's clients the fakeip-tun DNS (the .2 of
+        the tun /30, the same address the enable path derives); false drops the custom
+        dns-server so the pool falls back to default. Exactly one pool is toggled
+        per call (atomic per pool). On an NDMS failure returns 500 with the pool name
+        in the message; no partial multi-pool state.
+      parameters:
+      - description: Pool + target delivery state
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.FakeIPSegmentToggleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.FakeIPSegmentToggleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Toggle fakeip DNS delivery for one segment
       tags:
       - singbox-router
   /singbox/install:

@@ -11,6 +11,7 @@
 		SwitchProgress,
 		ReadinessPanel,
 		EngineSettingsCard,
+		SegmentsDelivery,
 		deriveFakeIPEngineState,
 	} from '$lib/components/fakeip';
 	import { fakeipTransition } from '$lib/stores/fakeipTransition';
@@ -199,6 +200,7 @@
 					onToggleEngine={handleToggleEngine}
 					onRestart={handleRestart}
 				/>
+				<SegmentsDelivery />
 			</section>
 		{:else}
 			<section class="chip-stub">

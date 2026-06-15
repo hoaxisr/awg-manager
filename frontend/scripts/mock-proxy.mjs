@@ -1841,6 +1841,16 @@ let mockSBSettings = {
 	wanInterface: '',
 };
 
+// DHCP pools projected as fakeip "segments" (Task 2.1/2.2). Persistent
+// in-memory state so the POST toggle mutates what the GET reads. dnsServer is
+// the fakeip-tun DNS (.2 of the 172.18.0.1/30 link) when a pool is in fakeip.
+const FAKEIP_TUN_DNS = '172.18.0.2';
+// lanDNS is the pool's non-fakeip DNS, kept so a clear can restore it.
+let mockFakeIPSegments = [
+	{ pool: '_WEBADMIN', subnet: '192.168.0.1/24', dnsServer: '192.168.0.1', inFakeip: false, lanDNS: '192.168.0.1' },
+	{ pool: '_WEBADMIN_GUEST_AP', subnet: '172.16.1.1/24', dnsServer: '172.16.1.1', inFakeip: false, lanDNS: '172.16.1.1' },
+];
+
 // Interfaces a user can bind a direct outbound to (issue #245). Mirrors
 // backend ListBindable: all router interfaces minus our own and AWG/WG
 // auto-covered. Includes a couple of non-AWG VPNs to exercise the picker.
@@ -4699,26 +4709,42 @@ const server = http.createServer(async (req, res) => {
 	}
 
 	if (req.method === 'GET' && path === '/singbox/fakeip/segments') {
-		// DHCP pools projected as fakeip "segments" (Task 2.1). In fakeip-tun
-		// mode the configured pool (_WEBADMIN) advertises the tun DNS (.2 of
-		// the 172.18.0.1/30 link) → inFakeip true; otherwise its normal LAN DNS.
-		const fakeipTun = (mockSBSettings.routingMode || 'tproxy') === 'fakeip-tun';
+		// Ground-truth segment state — mutated by the POST toggle below.
+		// Strip the internal lanDNS bookkeeping field from the DTO.
 		send(res, 200, {
 			success: true,
-			data: [
-				{
-					pool: '_WEBADMIN',
-					subnet: '192.168.0.1/24',
-					dnsServer: fakeipTun ? '172.18.0.2' : '192.168.0.1',
-					inFakeip: fakeipTun,
-				},
-				{
-					pool: '_WEBADMIN_GUEST_AP',
-					subnet: '172.16.1.1/24',
-					dnsServer: '172.16.1.1',
-					inFakeip: false,
-				},
-			],
+			data: mockFakeIPSegments.map(({ lanDNS, ...seg }) => seg),
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/segments') {
+		// Toggle one pool's DNS delivery (Task 2.2). Mutate the same in-memory
+		// state the GET reads so a refetch reflects the change. Set → advertise
+		// the fakeip-tun DNS (.2); clear → fall back to the pool's LAN DNS.
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			let payload;
+			try {
+				payload = JSON.parse(raw || '{}');
+			} catch {
+				send(res, 400, { success: false, error: 'invalid request body' });
+				return;
+			}
+			const pool = payload.pool;
+			if (!pool) {
+				send(res, 400, { success: false, error: 'pool is required' });
+				return;
+			}
+			const seg = mockFakeIPSegments.find((s) => s.pool === pool);
+			if (!seg) {
+				send(res, 500, { success: false, error: `set DNS delivery for pool ${pool}: not found` });
+				return;
+			}
+			seg.inFakeip = !!payload.inFakeip;
+			seg.dnsServer = seg.inFakeip ? FAKEIP_TUN_DNS : seg.lanDNS;
+			send(res, 200, { success: true, data: { pool, inFakeip: seg.inFakeip } });
 		});
 		return;
 	}

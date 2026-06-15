@@ -1185,7 +1185,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	}
 
 	if s.fakeIPSegmentsHandler != nil {
-		mux.HandleFunc("/api/singbox/fakeip/segments", guarded(s.fakeIPSegmentsHandler.ListSegments))
+		// GET lists segments, POST toggles one segment's DNS delivery — both on
+		// the same path via the handler's method dispatch.
+		mux.HandleFunc("/api/singbox/fakeip/segments", guarded(s.fakeIPSegmentsHandler.Serve))
 	}
 
 	if s.singboxProxiesHandler != nil {

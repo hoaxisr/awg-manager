@@ -1412,6 +1412,18 @@ export interface SingboxRouterRule {
 	rules?: SingboxRouterRule[];
 }
 
+// FakeIPSegment is one DHCP pool projected as a fakeip "segment" for the
+// per-segment DNS-delivery toggles. Mirrors api.FakeIPSegmentDTO exactly.
+// inFakeip is true when the pool already advertises the fakeip-tun DNS
+// (the .2 of the tun /30); dnsServer is the DHCP-advertised primary DNS
+// (omitted when the pool has no explicit dns-server line).
+export interface FakeIPSegment {
+	pool: string;
+	subnet: string;
+	dnsServer?: string;
+	inFakeip: boolean;
+}
+
 /**
  * One per-rule decision from the route inspector. matchedRule == -1 in
  * SingboxRouterInspectResult means no rule produced a final destination
