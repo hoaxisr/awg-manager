@@ -890,7 +890,20 @@ func cleanValidateError(err error) string {
 	return strings.TrimSpace(msg)
 }
 
+// Enable is the USER-INITIATED router enable (HTTP handler + SwitchRoutingMode).
+// It clears the sticky master-stop intent — an explicit enable is an explicit
+// intent to run sing-box, which must override a prior master-Stop — then runs
+// the idempotent provisioning. Drift-heal (Reconcile / reconcileFakeIPTun) must
+// NOT clear the intent (the watchdog must respect a user's manual stop and not
+// resurrect the daemon on drift), so it calls enableLocked(ctx, false) instead.
 func (s *ServiceImpl) Enable(ctx context.Context) error {
+	return s.enableLocked(ctx, true)
+}
+
+// enableLocked provisions the router under s.mu. clearManualStop gates the
+// sticky-intent clear: true for user-initiated Enable, false for drift-heal
+// reuse (Reconcile / reconcileFakeIPTun) which must honour a prior master-Stop.
+func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -909,9 +922,11 @@ func (s *ServiceImpl) Enable(ctx context.Context) error {
 	// manual-stop so the orchestrator cold-start (triggered by SetEnabled below)
 	// isn't suppressed by shouldRun()=!IsManuallyStopped — otherwise Enable waits
 	// the full boot window and fails with a misleading readiness timeout
-	// (stand-found 2026-06-15, applies to BOTH tproxy and fakeip-tun). The nil
-	// guard keeps test wirings that omit Singbox working.
-	if s.deps.Singbox != nil {
+	// (stand-found 2026-06-15, applies to BOTH tproxy and fakeip-tun). Gated to
+	// user-initiated Enable: a drift-heal reconcile (clearManualStop=false) must
+	// NOT wipe a user's master-Stop. The nil guard keeps test wirings that omit
+	// Singbox working.
+	if clearManualStop && s.deps.Singbox != nil {
 		if err := s.deps.Singbox.ClearManualStop(); err != nil {
 			return fmt.Errorf("clear manual-stop intent: %w", err)
 		}
@@ -1406,7 +1421,9 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	installedAny := s.deps.IPTables.HasAnyInstalled(ctx)
 	switch {
 	case sr.Enabled && !installedComplete:
-		return s.Enable(ctx)
+		// Drift-heal, NOT user-initiated: must honour a prior master-Stop, so
+		// do not clear the sticky intent (clearManualStop=false).
+		return s.enableLocked(ctx, false)
 	case !sr.Enabled && installedAny:
 		return s.Disable(ctx)
 	case sr.Enabled && installedComplete:

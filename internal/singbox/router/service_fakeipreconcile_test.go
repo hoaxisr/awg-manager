@@ -131,6 +131,78 @@ func TestReconcileFakeIPTun_DisabledDisables(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Drift-heal must NOT clear the sticky master-Stop intent. The reprovision
+// branch dispatches through enableLocked(ctx, false): a periodic reconcile (or
+// the first post-reboot reconcile) that re-provisions a vanished iface must
+// honour a user's prior master-Stop, never silently wipe it. Regression for
+// the adversarial finding on the unconditional Enable→ClearManualStop.
+// ---------------------------------------------------------------------------
+
+func TestReconcileFakeIPTun_Reprovision_DoesNotClearManualStop(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	neutralSourceProbe(t)
+
+	// Provision once via the USER path (this one is allowed to clear).
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	sb := h.svc.deps.Singbox.(*fakeSingbox)
+	sb.clearManualStopCalls = 0 // reset: count only what the drift-heal does.
+
+	// Iface vanished → reconcile takes the reprovision (Enable) arm.
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{}}
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+
+	if sb.clearManualStopCalls != 0 {
+		t.Errorf("drift-heal reprovision must NOT clear master-Stop intent, ClearManualStop calls = %d", sb.clearManualStopCalls)
+	}
+	// Sanity: the reprovision actually happened (proves the arm was taken).
+	if !h.log.has("Create:OpkgTun0:private") {
+		t.Errorf("expected re-provision Create, got %v", h.log.calls)
+	}
+}
+
+// enableLocked(ctx, false) is the drift-heal entry; it must skip the clear in
+// tproxy mode too. Direct unit assertion on the seam, independent of the
+// Reconcile dispatch wiring.
+func TestEnableLocked_DriftHeal_TproxySkipsClearManualStop(t *testing.T) {
+	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
+		RoutingMode:   "tproxy",
+		DeviceMode:    "all",
+		WANAutoDetect: true,
+	})
+	singbox := newTestSingbox(t)
+	singbox.isRunningFn = func() (bool, int) { return true, 1234 }
+	stubListeningProbe(t, func() bool { return true })
+	svc := newTestService(t, Deps{
+		Settings:           settingsStore,
+		Policies:           &fakeAccessPolicyProvider{},
+		IPTables:           newStubIPTables(func(context.Context, string) error { return nil }),
+		Singbox:            singbox,
+		WANIPCollector:     &fakeWANIPCollector{},
+		NetfilterPreflight: func(context.Context) error { return nil },
+	})
+
+	if err := svc.enableLocked(context.Background(), false); err != nil {
+		t.Fatalf("enableLocked(false): %v", err)
+	}
+	if singbox.clearManualStopCalls != 0 {
+		t.Errorf("drift-heal enableLocked(false) must NOT clear, calls = %d", singbox.clearManualStopCalls)
+	}
+	// Public Enable (user path) DOES clear — guards the gate both ways.
+	if err := svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable (user): %v", err)
+	}
+	if singbox.clearManualStopCalls != 1 {
+		t.Errorf("user Enable must clear exactly once, calls = %d", singbox.clearManualStopCalls)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Enabled + not-provisioned / iface-gone → Enable (re-provision).
 // ---------------------------------------------------------------------------
 

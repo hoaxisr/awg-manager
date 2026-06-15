@@ -62,7 +62,9 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		// Not provisioned, or the iface vanished (crash / manual removal) →
 		// (re-)provision. Enable's idempotency guard short-circuits the
 		// already-provisioned+live case, so this is safe to call unconditionally.
-		return s.Enable(ctx)
+		// Drift-heal, NOT user-initiated: must honour a prior master-Stop, so do
+		// not clear the sticky intent (clearManualStop=false).
+		return s.enableLocked(ctx, false)
 	}
 
 	// ---- DRIFT-HEAL (provisioned + live) ---------------------------------
