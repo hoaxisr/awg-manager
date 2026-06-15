@@ -123,10 +123,20 @@
 </Modal>
 
 <style>
+	/* GUARANTEE the card has real height. The modal body is `flex:1; min-height:0`,
+	   and this modal's content (the step list) streams in AFTER open, so the body
+	   flex-sized to ~padding height and clipped the steps into a thin bar. Force a
+	   min-height on the card that holds `.progress` (only this modal) so the
+	   flex:1 body always has room for the steps. Scoped to SwitchProgress via :has. */
+	:global(.modal-card:has(.progress)) {
+		min-height: min(30rem, 90dvh);
+	}
+
 	.progress {
 		display: flex;
 		flex-direction: column;
 		gap: 0.875rem;
+		min-height: 0;
 	}
 
 	.steps {
