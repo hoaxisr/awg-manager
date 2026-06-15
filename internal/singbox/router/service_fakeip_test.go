@@ -779,10 +779,59 @@ func TestDisableFakeIPTun_BestEffort(t *testing.T) {
 			if all.SingboxRouter.Enabled {
 				t.Error("Enabled must be false (push-through must persist disabled)")
 			}
-			if getDrain() == nil {
-				t.Error("drain must still be scheduled after a best-effort step error")
+			// Drain is scheduled only when the reject route was actually added
+			// (Fix 2): a RemoveRoute failure still has a live reject route to drain,
+			// but an AddRejectRoute failure leaves nothing to remove (and the v4
+			// auto-route is kept, asserted in TestDisableFakeIPTun_RejectAddFailKeepsAutoRoute).
+			switch failAt {
+			case "RemoveRoute":
+				if getDrain() == nil {
+					t.Error("drain must still be scheduled after a best-effort RemoveRoute error")
+				}
+			case "AddRejectRoute":
+				if getDrain() != nil {
+					t.Error("no drain must be scheduled when reject-add failed (no reject route to remove)")
+				}
 			}
 		})
+	}
+}
+
+// Fix 2: a failed reject-add must NOT open a WAN-leak window. The v4 auto-route
+// removal is GATED on reject-add success — when the reject add fails, the v4 pool
+// auto-route is KEPT (traffic dead-ends at the about-to-be-deleted tun = dropped,
+// not leaked). The rest of teardown still pushes through (persist clear + Enabled
+// false), and no drain is scheduled (no reject route to remove).
+func TestDisableFakeIPTun_RejectAddFailKeepsAutoRoute(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	getDrain := captureDrain(t)
+	provisionForDisable(t, h)
+	h.routes.failAt = "AddRejectRoute"
+
+	const iface = "opkgtun0"
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable must push through, got: %v", err)
+	}
+
+	// Reject add was attempted but failed.
+	if !h.log.has("AddRejectRoute:10.128.0.0:255.192.0.0") {
+		t.Fatalf("reject add was not attempted: %v", h.log.calls)
+	}
+	// The v4 auto-route must NOT have been removed (no leak window).
+	if h.log.has("RemoveRoute:10.128.0.0:" + iface) {
+		t.Errorf("v4 auto-route removed despite failed reject-add (WAN-leak window): %v", h.log.calls)
+	}
+	// Teardown still reached the mandatory persist steps.
+	if st := h.loadFakeIP(t); st != nil {
+		t.Errorf("FakeIP persist = %+v, want nil (teardown must reach SetFakeIPState(nil))", st)
+	}
+	all, _ := h.store.Load()
+	if all.SingboxRouter.Enabled {
+		t.Error("Enabled must be false after teardown")
+	}
+	// No drain scheduled: there is no reject route to remove later.
+	if getDrain() != nil {
+		t.Error("no drain must be scheduled when the reject route was never added")
 	}
 }
 
@@ -816,6 +865,39 @@ func TestDisableFakeIPTun_NotProvisioned(t *testing.T) {
 	}
 	if after.FakeIP != nil {
 		t.Errorf("FakeIP must stay nil, got %+v", after.FakeIP)
+	}
+}
+
+// Fix 5: Disable dispatches on the RAW persisted RoutingMode, not the normalized
+// value. A settings blob that fails Normalize (corrupt DeviceMode) but carries
+// RoutingMode=="fakeip-tun" must still route to the fakeip teardown — not fall
+// through to the tproxy body (which would orphan the opkgtun/routes/DHCP).
+func TestDisableFakeIPTun_DispatchOnRawModeDespiteNormalizeError(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	captureDrain(t)
+	provisionForDisable(t, h)
+
+	// Corrupt DeviceMode so NormalizeSingboxRouterSettings returns an error, while
+	// keeping RoutingMode=="fakeip-tun" raw.
+	all, _ := h.store.Load()
+	all.SingboxRouter.DeviceMode = "bogus-mode"
+	if _, err := NormalizeSingboxRouterSettings(all.SingboxRouter); err == nil {
+		t.Fatal("test precondition: DeviceMode bogus must make Normalize error")
+	}
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+
+	// Fakeip teardown ran (ClearPoolDNS + reject add are fakeip-only calls).
+	if !h.log.has("ClearPoolDNS:_WEBADMIN") {
+		t.Errorf("raw-mode dispatch failed: fakeip teardown not run, got %v", h.log.calls)
+	}
+	if st := h.loadFakeIP(t); st != nil {
+		t.Errorf("FakeIP persist = %+v, want nil (fakeip teardown must clear it)", st)
 	}
 }
 

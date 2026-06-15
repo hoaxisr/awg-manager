@@ -116,6 +116,39 @@ func TestRouteCommands_RemoveStaticRoute(t *testing.T) {
 	}
 }
 
+// TestRouteCommands_RemoveStaticRoute_RejectPayload documents the CURRENT
+// behavior of RemoveStaticRoute when given a Reject:true spec (the fakeip drain
+// removal): RemoveStaticRoute drops the `reject` key entirely and emits only
+// {network, mask, no:true}. This is the payload the fakeip drain sends to take
+// down the temporary reject route.
+//
+// STAND-GATE (Task 1F.1): whether this no:true / reject-key-less form actually
+// MATCHES a reject:true route on live Keenetic RCI is UNVERIFIED and MUST be
+// checked at the stand. If it does NOT match, the startup sweep in
+// ReapOrphanedFakeIPTun (router Fix 1) is the safety net that removes the stale
+// reject route on the next boot. This test pins current behavior only — do NOT
+// change RemoveStaticRoute's payload speculatively; that is a stand decision.
+func TestRouteCommands_RemoveStaticRoute_RejectPayload(t *testing.T) {
+	cmds, poster := newTestRouteCommands(t)
+	_ = cmds.RemoveStaticRoute(context.Background(), StaticRouteSpec{
+		Network: "10.128.0.0",
+		Mask:    "255.192.0.0",
+		Reject:  true,
+	})
+	r := poster.Payloads()[0].(map[string]any)["ip"].(map[string]any)["route"].(map[string]any)
+	if r["network"] != "10.128.0.0" || r["mask"] != "255.192.0.0" {
+		t.Errorf("network/mask: %#v", r)
+	}
+	if r["no"] != true {
+		t.Errorf("no must be true on remove: %#v", r)
+	}
+	// Current behavior: the reject key is DROPPED on remove (UNVERIFIED match —
+	// see the stand-gate note above).
+	if _, ok := r["reject"]; ok {
+		t.Errorf("reject key is currently expected to be ABSENT on remove (documents current behavior): %#v", r)
+	}
+}
+
 func TestRouteCommands_AddStaticRoute6(t *testing.T) {
 	cmds, poster := newTestRouteCommands(t)
 	if err := cmds.AddStaticRoute6(context.Background(), "3f80::/10", "OpkgTun10"); err != nil {

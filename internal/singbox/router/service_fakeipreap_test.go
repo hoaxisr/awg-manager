@@ -132,6 +132,52 @@ func TestReapOrphaned_DeleteFailureKeepsPersist(t *testing.T) {
 	}
 }
 
+// Fix 1: in NON-fakeip mode the reap also best-effort sweeps a stale v4 drain
+// reject route for the CONFIGURED pool (startup safety net for a drain
+// interrupted by restart / an async-remove that didn't match).
+func TestReapOrphaned_SweepsStaleRejectRoute(t *testing.T) {
+	store := newReapSettingsStore(t, "tproxy", 3, true)
+	opkg := &recordingOpkgTunProvisioner{}
+	log := &callLog{}
+	routes := &recStaticRoutes{log: log}
+	svc := newTestService(t, Deps{
+		Settings:     store,
+		OpkgTun:      opkg,
+		StaticRoutes: routes,
+		FakeIPTun:    DefaultFakeIPTunParams(), // Inet4Range default 10.128.0.0/10
+	})
+
+	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
+		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
+	}
+	// The sweep must attempt RemoveStaticRoute{Reject:true} for the masked pool.
+	if !log.has("RemoveRejectRoute:10.128.0.0:255.192.0.0") {
+		t.Errorf("stale reject-route sweep missing, got %v", log.calls)
+	}
+}
+
+// Fix 1: in fakeip-tun mode the reap early-returns BEFORE the sweep — the active
+// owner manages its own drain; the startup sweep must NOT touch it.
+func TestReapOrphaned_NoSweepInFakeIPMode(t *testing.T) {
+	store := newReapSettingsStore(t, "fakeip-tun", 2, true)
+	opkg := &recordingOpkgTunProvisioner{}
+	log := &callLog{}
+	routes := &recStaticRoutes{log: log}
+	svc := newTestService(t, Deps{
+		Settings:     store,
+		OpkgTun:      opkg,
+		StaticRoutes: routes,
+		FakeIPTun:    DefaultFakeIPTunParams(),
+	})
+
+	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
+		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
+	}
+	if log.has("RemoveRejectRoute:10.128.0.0:255.192.0.0") {
+		t.Errorf("fakeip-tun mode must NOT sweep the reject route (early return), got %v", log.calls)
+	}
+}
+
 func TestReapOrphaned_NilOpkgKeepsPersist(t *testing.T) {
 	// Degraded/test path: no provisioner to reap with. We KEEP the persist —
 	// clearing it would convert a tracked orphan into an un-reapable persist-less

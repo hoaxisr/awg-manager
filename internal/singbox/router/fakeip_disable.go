@@ -15,12 +15,16 @@ import (
 const fakeIPDrainComment = "awgm fakeip drain"
 
 // fakeIPDrainWindow is how long the v4 reject route stays up after the auto-route
-// is removed. Sized ~a DHCP lease so clients renew (ClearPoolDNS reverts them to
-// the router's default DNS) and stop minting fakeip addresses before the
-// fail-closed route disappears. During this window any client still holding a
-// fakeip address is DROPPED, not routed to WAN (spec §5 leak). Removed off the
-// lock (Disable holds s.mu; a blocking sleep there would stall everything).
-var fakeIPDrainWindow = 30 * time.Second
+// is removed. During this window any client still holding a fakeip address is
+// DROPPED, not routed to WAN (spec §5 leak). Removed off the lock (Disable holds
+// s.mu; a blocking sleep there would stall everything).
+//
+// This is a COARSE drain window (NOT lease-sized): a client still caching a
+// fakeip address (minted off tunDNS) after the window would leak once the reject
+// route is removed. The proper fix is to force a DHCP renew on disable so clients
+// re-resolve off the router's default DNS — roadmap. Until then 120s is a
+// conservative best-effort. Kept a package var so tests stay override-able.
+var fakeIPDrainWindow = 120 * time.Second
 
 // fakeIPScheduleDrain runs removeReject after the drain window, OFF the s.mu lock.
 // Seam var so tests can capture/run the closure synchronously without sleeping.
@@ -49,9 +53,14 @@ var fakeIPScheduleDrain = func(removeReject func()) {
 // worse than a fully-attempted teardown, so steps 2–7 never abort; only the
 // persist (step 7+8) and the drain schedule (step 9) are mandatory.
 //
-// v6 asymmetry: AddStaticRoute6 has no Reject, so v6 gets NO explicit reject
-// route — its drain is the route removal alone (no-route → the kernel drops the
-// packets). Only v4 gets a fail-closed reject route.
+// v6 asymmetry (FAIL-OPEN, honest): AddStaticRoute6 has no Reject param, so v6
+// gets NO explicit reject route — its drain is the pool-route removal alone. On a
+// dual-stack router that has a v6 WAN default route (::/0), removing the pool's
+// more-specific v6 route does NOT drop fakeip-v6 packets — they fall through to
+// ::/0 via WAN and LEAK. The v6 drain is therefore currently fail-open. Closing
+// it needs a v6 reject/blackhole route, which requires extending the NDMS
+// AddStaticRoute6 to support reject — see the TODO(fakeip-v6-drain) marker below.
+// Only v4 gets a real fail-closed reject route today.
 func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Settings) error {
 	st := settings.FakeIP
 
@@ -95,6 +104,14 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 	// the pool so any client still on a fakeip address is DROPPED, not leaked to
 	// WAN (spec §5). Best-effort but log LOUDLY: a failed reject-add means the
 	// drain window is not actually fail-closed.
+	//
+	// rejectAdded gates the v4 auto-route removal below: removing the auto-route
+	// while NO reject route is in place would leave fakeip packets with no pool
+	// route AND no reject → they fall to the WAN default and LEAK (the exact spec
+	// §5 condition) between here and iface delete. So on a failed reject-add we
+	// SKIP removing the v4 auto-route — traffic dead-ends at the about-to-be-
+	// deleted tun (dropped), never leaked.
+	rejectAdded := false
 	if haveV4 {
 		if err := s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
 			Network: poolNet4,
@@ -102,20 +119,28 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 			Reject:  true,
 			Comment: fakeIPDrainComment,
 		}); err != nil {
-			s.appLog.Warn("fakeip-disable", iface, "add drain reject route (pool NOT fail-closed): "+err.Error())
+			s.appLog.Warn("fakeip-disable", iface, "add drain reject route FAILED — pool NOT fail-closed, KEEPING v4 auto-route to avoid a WAN leak: "+err.Error())
+		} else {
+			rejectAdded = true
 		}
 	}
 
 	// (4) Remove the pool auto-route(s). The reject route remains up for the drain
-	// window. v6 has no reject route — removing its auto-route is the whole drain
-	// (no route → kernel drop). Best-effort.
-	if haveV4 {
+	// window. v6 removal is the whole v6 drain (see the FAIL-OPEN note above — on a
+	// dual-stack router with a v6 default it does NOT drop, it leaks). Best-effort.
+	//
+	// v4 gated on rejectAdded (Fix 2): only remove the v4 auto-route once the reject
+	// route is actually up, so there is never a window with neither route present.
+	if haveV4 && rejectAdded {
 		if err := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
 			Network: poolNet4, Mask: poolMask4, Interface: iface, Comment: fakeIPPoolRouteComment,
 		}); err != nil {
 			s.appLog.Warn("fakeip-disable", iface, "remove pool route: "+err.Error())
 		}
 	}
+	// TODO(fakeip-v6-drain): v6 is fail-open on dual-stack routers with a v6 default
+	// route (no reject equivalent). Closing it needs AddStaticRoute6 to support a
+	// reject/blackhole route (ndms work + stand verification) — not done in v1.
 	if haveV6 {
 		if err := s.deps.StaticRoutes.RemoveStaticRoute6(ctx, st.Inet6Range, iface); err != nil {
 			s.appLog.Warn("fakeip-disable", iface, "remove pool route v6: "+err.Error())
@@ -154,8 +179,11 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 	// (Disable holds s.mu; a blocking sleep here would stall everything). Use a
 	// background context — the request ctx may be cancelled when Disable returns.
 	// The closure touches NO s.mu-protected state: it only calls NDMS, so it
-	// cannot deadlock on the lock the parent still holds.
-	if haveV4 {
+	// cannot deadlock on the lock the parent still holds. Only scheduled when the
+	// reject route was actually added (rejectAdded) — a failed reject-add left no
+	// route to remove, and the startup sweep (ReapOrphanedFakeIPTun) is the safety
+	// net for any stale reject route that does linger.
+	if haveV4 && rejectAdded {
 		net4, mask4 := poolNet4, poolMask4
 		s.scheduleFakeIPDrain(net4, mask4, iface)
 	}

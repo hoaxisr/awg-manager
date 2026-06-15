@@ -561,6 +561,11 @@ func fakeIPIfaceName(index int) string {
 // scan to catch OpkgTuns whose persist was lost is a deferred fallback (v1
 // reaps by persist only).
 //
+// It ALSO sweeps a stale v4 drain reject route for the configured pool in
+// non-fakeip mode — the startup safety net for a disable drain interrupted by a
+// restart (the async drain goroutine does not survive one) or an async-remove
+// that didn't match the route (Fix 1). That sweep is persist-independent.
+//
 // INVARIANT (relied on by this reap): Enable(fakeip-tun) MUST persist the index
 // via SetFakeIPState BEFORE CreateOpkgTun (and roll back its own partial work on
 // failure), so persisted state is a reliable superset of live ifaces — otherwise
@@ -575,6 +580,30 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 	if sr.RoutingMode == "fakeip-tun" {
 		return nil // active mode owns the iface; Enable/Reconcile manage it
 	}
+
+	// Startup safety net for the disable drain (Fix 1): the async drain goroutine
+	// that removes the v4 reject route does NOT survive a daemon restart (no
+	// persisted pending-drain), and there is RCI uncertainty whether
+	// RemoveStaticRoute's no:true form even matches the reject:true route. So in
+	// NON-fakeip mode (we are not currently the active owner) best-effort remove a
+	// stale drain reject route for the CONFIGURED pool. This covers a drain that
+	// was interrupted by a restart OR an async-remove that didn't match the route.
+	// Derive net/mask exactly as disableFakeIPTun does (Masked → splitCIDR). NDMS
+	// no:true on a non-existent route is idempotent, so this is safe on a clean
+	// boot. Done independently of the persist-based iface reap below (the reject
+	// route can outlive the FakeIP persist that disableFakeIPTun clears).
+	if s.deps.StaticRoutes != nil {
+		if prefix, perr := netip.ParsePrefix(s.deps.FakeIPTun.Inet4Range); perr == nil {
+			if poolNet, poolMask, derr := splitCIDRToAddrMask(prefix.Masked().String()); derr == nil {
+				if err := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
+					Network: poolNet, Mask: poolMask, Reject: true, Comment: fakeIPDrainComment,
+				}); err != nil {
+					s.appLog.Warn("fakeip-reap", "", "sweep stale drain reject route: "+err.Error())
+				}
+			}
+		}
+	}
+
 	st := settings.FakeIP
 	if st == nil || !st.Provisioned {
 		return nil // nothing persisted to reap
@@ -1183,7 +1212,11 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if sr, _ := NormalizeSingboxRouterSettings(dispatchSettings.SingboxRouter); sr.RoutingMode == "fakeip-tun" {
+	// Dispatch on the RAW persisted RoutingMode, NOT the normalized value: a
+	// Normalize error (corrupt/hand-edited settings) would otherwise mis-route a
+	// fakeip-tun teardown into the tproxy body, orphaning the opkgtun/routes/DHCP.
+	// A raw string compare keeps the fakeip branch independent of normalize.
+	if dispatchSettings.SingboxRouter.RoutingMode == "fakeip-tun" {
 		return s.disableFakeIPTun(ctx, dispatchSettings)
 	}
 
