@@ -175,8 +175,9 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		}
 	})
 
-	// Create the OpkgTun with security-level private (no SetIPGlobal: the tun
-	// is an internal transport, not a global-routable iface).
+	// Create the OpkgTun with security-level private (segment→tun forwarding
+	// permitted by default; non-global keeps traffic un-masqueraded in
+	// no-masquerade NAT modes → source-preservation).
 	if err = s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, fakeIPTunDescription, "private"); err != nil {
 		return fmt.Errorf("enable fakeip-tun: create opkgtun: %w", err)
 	}
@@ -188,6 +189,15 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 			s.appLog.Warn("fakeip-rollback", iface, "delete opkgtun: "+e.Error())
 		}
 	})
+
+	// ip global (auto): make the tun a global interface so NDMS exposes it as an
+	// assignable "exit" in access policies / connection priorities — under test:
+	// the hypothesis is policy-assignment makes NDMS route LAN traffic into the
+	// tun. No separate rollback: DeleteOpkgTun (above) removes the iface and its
+	// global flag together.
+	if err = s.deps.OpkgTun.SetIPGlobal(ctx, ndmsName); err != nil {
+		return fmt.Errorf("enable fakeip-tun: set ip global: %w", err)
+	}
 
 	if err = s.deps.OpkgTun.SetAddress(ctx, ndmsName, addr4, mask4); err != nil {
 		return fmt.Errorf("enable fakeip-tun: set address: %w", err)

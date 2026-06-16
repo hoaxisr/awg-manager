@@ -14,6 +14,7 @@ type fakeOpkgTunProvisioner struct{}
 func (fakeOpkgTunProvisioner) CreateOpkgTunWithSecurityLevel(context.Context, string, string, string) error {
 	return nil
 }
+func (fakeOpkgTunProvisioner) SetIPGlobal(context.Context, string) error      { return nil }
 func (fakeOpkgTunProvisioner) DeleteOpkgTun(context.Context, string) error { return nil }
 func (fakeOpkgTunProvisioner) SetAddress(context.Context, string, string, string) error {
 	return nil

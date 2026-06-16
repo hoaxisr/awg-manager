@@ -21,6 +21,7 @@ type StaticRouteSpec struct {
 // OpkgTunProvisioner manages the fakeip-tun kernel interface lifecycle via NDMS.
 type OpkgTunProvisioner interface {
 	CreateOpkgTunWithSecurityLevel(ctx context.Context, name, description, securityLevel string) error
+	SetIPGlobal(ctx context.Context, name string) error
 	DeleteOpkgTun(ctx context.Context, name string) error
 	SetAddress(ctx context.Context, name, address, mask string) error
 	SetIPv6Address(ctx context.Context, name, address string) error

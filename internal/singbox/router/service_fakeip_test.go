@@ -56,6 +56,10 @@ func (r *recOpkgTun) CreateOpkgTunWithSecurityLevel(_ context.Context, name, _, 
 	r.log.add("Create:" + name + ":" + level)
 	return r.maybeFail("Create")
 }
+func (r *recOpkgTun) SetIPGlobal(_ context.Context, name string) error {
+	r.log.add("SetIPGlobal:" + name)
+	return r.maybeFail("SetIPGlobal")
+}
 func (r *recOpkgTun) DeleteOpkgTun(_ context.Context, name string) error {
 	r.log.add("Delete:" + name)
 	return nil
