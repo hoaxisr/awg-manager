@@ -20,6 +20,11 @@
   import TracePathStation, { type TracePathTone } from './TracePathStation.svelte';
   import TraceRuleRow from './TraceRuleRow.svelte';
 
+  // embedded: панель встроена в модал/контейнер с собственным заголовком
+  // (FakeIP-hero «Инспектор маршрутов») — прячем свою крошку «← Назад» и h1,
+  // чтобы не дублировать. По умолчанию (страница sb-router) — со своей шапкой.
+  let { embedded = false }: { embedded?: boolean } = $props();
+
   // Auto-run при mount если URL содержал ?q=X (traceStore уже заполнил traceInput.domain).
   onMount(() => {
     let cur = { domain: '' };
@@ -75,20 +80,22 @@
 </script>
 
 <section class="trace">
-  <header class="trace-header">
-    <button type="button" class="back-btn" onclick={closeTrace} aria-label="Назад">
-      ← Назад
-    </button>
-    <span class="bread-sep">/</span>
-    <span class="bread-current">Куда поедет запрос</span>
-  </header>
+  {#if !embedded}
+    <header class="trace-header">
+      <button type="button" class="back-btn" onclick={closeTrace} aria-label="Назад">
+        ← Назад
+      </button>
+      <span class="bread-sep">/</span>
+      <span class="bread-current">Куда поедет запрос</span>
+    </header>
 
-  <div class="title-row">
-    <div class="title-group">
-      <h1 class="title">Куда поедет запрос</h1>
-      <p class="title-sub">Подставьте домен или IP — увидите, какое правило сработает и через какой туннель.</p>
+    <div class="title-row">
+      <div class="title-group">
+        <h1 class="title">Куда поедет запрос</h1>
+        <p class="title-sub">Подставьте домен или IP — увидите, какое правило сработает и через какой туннель.</p>
+      </div>
     </div>
-  </div>
+  {/if}
 
   <!-- Input row -->
   <div class="input-card">

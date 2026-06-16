@@ -150,7 +150,7 @@
 	bodyLayout="fill"
 	onclose={closeTrace}
 >
-	<TracePanel />
+	<TracePanel embedded />
 </Modal>
 
 <style>
