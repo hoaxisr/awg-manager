@@ -21,14 +21,16 @@
   Движок-гейт: DNS — это конфиг, доступен при любом состоянии движка (никаких
   live-рантайм блоков), поэтому рендерится всегда.
 
-  Drag-reorder: все три блока (серверы / правила / перезаписи) перетаскиваются
-  через общее pointer-ядро reorderDrag (тот же подход, что и route.rules):
-  порог → захват → midpoint-вставка → drop-линия → оптимистика + Move + откат.
-  Перезаписи тащит сам общий DNSRewritesList. Read-only «final»-строка правил не
-  движется (canMove-гард). MoveDNSServer добавлен в бэкенд (порядок серверов
-  косметичен — sing-box ссылается по tag, — но drag единообразен для всех блоков).
+  Drag-reorder: серверы и правила перетаскиваются ВЕРБАТИМ-движком route.rules
+  (общий reorderDrag): floating ghost-card + раскрывающийся/схлопывающийся
+  скелетон-слот в точке вставки + auto-scroll у краёв + порог + pointer-capture +
+  оптимистика-Move + откат. Каждая строка рендерится через сниппет, который тот же
+  сниппет рисует в плавающем ghost'е — карточка под курсором пиксель-в-пиксель.
+  Read-only «final»-строка правил не движется (isFixed-гард). Перезаписи drag НЕ
+  поддерживают (общий DNSRewritesList без грипа). MoveDNSServer — в бэкенде.
 -->
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { get } from 'svelte/store';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { createReorderDrag } from '$lib/components/sb-router/reorderDrag.svelte';
@@ -96,9 +98,11 @@
 		return `${s.server}${port}${path}`;
 	}
 
-	// ── Drag-reorder (общее pointer-ядро reorderDrag, как route.rules) ────
+	// ── Drag-reorder (ВЕРБАТИМ-движок route.rules: ghost + skeleton + autoscroll) ──
 	let serverRowEls = $state<Array<HTMLElement | null>>([]);
 	let ruleRowEls = $state<Array<HTMLElement | null>>([]);
+	let serverPanelEl = $state<HTMLElement | null>(null);
+	let rulePanelEl = $state<HTMLElement | null>(null);
 
 	function reorder<T>(list: T[], from: number, to: number): T[] {
 		const next = list.slice();
@@ -110,6 +114,7 @@
 	const serverDrag = createReorderDrag({
 		getRowElement: (i) => serverRowEls[i] ?? null,
 		count: () => $storeDnsServers.length,
+		getPanelEl: () => serverPanelEl,
 		onCommit: async (from, to) => {
 			const snapshot = get(singboxRouter.dnsServers);
 			singboxRouter.applyDNSServers(reorder(snapshot, from, to));
@@ -127,8 +132,9 @@
 		getRowElement: (i) => ruleRowEls[i] ?? null,
 		// +1 виртуальная read-only «final»-строка в самом конце.
 		count: () => $storeDnsRules.length + 1,
-		// «final» нельзя ни схватить, ни уронить ниже последнего реального правила.
-		canMove: (_from, to) => to < $storeDnsRules.length,
+		getPanelEl: () => rulePanelEl,
+		// «final»-строка (последний индекс) фиксирована: ни схватить, ни уронить под неё.
+		isFixed: (i) => i >= $storeDnsRules.length,
 		onCommit: async (from, to) => {
 			const snapshot = get(singboxRouter.dnsRules);
 			singboxRouter.applyDNSRules(reorder(snapshot, from, to));
@@ -140,6 +146,11 @@
 				notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
 			}
 		},
+	});
+
+	onDestroy(() => {
+		serverDrag.destroy();
+		ruleDrag.destroy();
 	});
 
 	// ── Modal state ───────────────────────────────────────────────────────
@@ -247,9 +258,138 @@
 	}
 </script>
 
+<!-- ── Сниппет строки DNS-сервера (рисуется и в списке, и в ghost'е) ─── -->
+{#snippet serverRow(s: SingboxRouterDNSServer, i: number, ghost: boolean)}
+	{@const core = isCoreServer(s)}
+	<div class="srow" class:dragging={!ghost && serverDrag.draggingIndex === i}>
+		<button
+			type="button"
+			class="grip"
+			class:is-busy={serverDrag.busy}
+			aria-label={`Перетащить DNS-сервер ${s.tag}`}
+			title="Перетащить для изменения порядка"
+			onpointerdown={serverDrag.busy ? undefined : (e) => serverDrag.handlePointerDown(i, e)}
+		>
+			<GripVertical size={16} strokeWidth={2} />
+		</button>
+		<div class="tag-cell">
+			<span class="stag">{s.tag}</span>
+			{#if s.type === ('fakeip' as typeof s.type)}<span class="core">ядро</span>{/if}
+		</div>
+		<span class="type-cell">
+			<Badge variant={serverTypeVariant(s.type)} size="sm" mono>{s.type}</Badge>
+		</span>
+		<span class="addr" title={serverAddr(s)}>{serverAddr(s)}</span>
+		<span class="detour">
+			<OutboundTile
+				outbound={dnsServerDetourDisplay(
+					s,
+					$storeOutbounds,
+					$storeOptions,
+					$subscriptionsStore.data,
+					$singboxProxies.data ?? [],
+					$singboxTunnels.data ?? [],
+				)}
+				size="compact"
+			/>
+		</span>
+		<div class="acts">
+			<button
+				type="button"
+				class="ib"
+				onclick={() => (dnsServerEditTag = s.tag)}
+				aria-label={`Редактировать DNS-сервер ${s.tag}`}
+				title={`Редактировать DNS-сервер «${s.tag}»`}
+			>
+				<Pencil size={15} strokeWidth={2} />
+			</button>
+			{#if core}
+				<span class="ib lock" title={serverLockTitle(s)} aria-label={serverLockTitle(s)}>
+					<Lock size={15} strokeWidth={2} />
+				</span>
+			{:else}
+				<button
+					type="button"
+					class="ib danger"
+					onclick={() => handleDeleteDnsServer(s.tag)}
+					aria-label={`Удалить DNS-сервер ${s.tag}`}
+					title={`Удалить DNS-сервер «${s.tag}»`}
+				>
+					<Trash2 size={15} strokeWidth={2} />
+				</button>
+			{/if}
+		</div>
+	</div>
+{/snippet}
+
+<!-- ── Сниппет строки DNS-правила ────────────────────────────────────── -->
+{#snippet ruleRow(r: SingboxRouterDNSRule, i: number, ghost: boolean)}
+	{@const tgt = dnsRuleTarget(r)}
+	{@const matchers = dnsMatcherParts(r)}
+	<div class="rrow" class:dragging={!ghost && ruleDrag.draggingIndex === i}>
+		<button
+			type="button"
+			class="grip"
+			class:is-busy={ruleDrag.busy}
+			aria-label={`Перетащить DNS-правило #${i + 1}`}
+			title="Перетащить для изменения порядка"
+			onpointerdown={ruleDrag.busy ? undefined : (e) => ruleDrag.handlePointerDown(i, e)}
+		>
+			<GripVertical size={16} strokeWidth={2} />
+		</button>
+		<span class="num">{i + 1}</span>
+		<button
+			type="button"
+			class="match-btn"
+			onclick={() => (dnsRuleEditIdx = i)}
+			title={`${dnsMatcherSummary(r)} → ${tgt.label}`}
+		>
+			{#if matchers.length === 0}
+				<span class="m-none">—</span>
+			{:else}
+				{#each matchers as part, pi (part.key + pi)}
+					<span class="m-part">
+						{#if pi > 0}<span class="m-sep">·</span>{/if}
+						<span class="mtag">{part.key}</span>
+						<span class="m-val">{part.value}</span>
+					</span>
+				{/each}
+			{/if}
+			<span class="r-arrow" aria-hidden="true">→</span>
+			{#if tgt.kind === 'block'}
+				<Badge variant="error" size="sm" mono>{tgt.label}</Badge>
+			{:else if tgt.kind === 'none'}
+				<span class="r-target none">{tgt.label}</span>
+			{:else}
+				<Badge variant="accent" size="sm" mono>{tgt.label}</Badge>
+			{/if}
+		</button>
+		<div class="acts">
+			<button
+				type="button"
+				class="ib"
+				onclick={() => (dnsRuleEditIdx = i)}
+				aria-label={`Редактировать DNS-правило #${i + 1}`}
+				title={`Редактировать DNS-правило #${i + 1}`}
+			>
+				<Pencil size={15} strokeWidth={2} />
+			</button>
+			<button
+				type="button"
+				class="ib danger"
+				onclick={() => handleDeleteDNSRule(i)}
+				aria-label={`Удалить DNS-правило #${i + 1}`}
+				title={`Удалить DNS-правило #${i + 1}`}
+			>
+				<Trash2 size={15} strokeWidth={2} />
+			</button>
+		</div>
+	</div>
+{/snippet}
+
 <div class="dns-grid">
 	<!-- ── Блок 1: DNS-серверы ─────────────────────────────────────────── -->
-	<section class="panel">
+	<section class="panel" bind:this={serverPanelEl}>
 		<header class="ph">
 			<span class="nm">DNS-серверы · {$storeDnsServers.length}</span>
 			<button type="button" class="add" onclick={() => (dnsServerAddOpen = true)}>
@@ -264,72 +404,34 @@
 		{#if $storeDnsServers.length === 0}
 			<div class="empty">Нет DNS-серверов.</div>
 		{:else}
-			<div class="rows" class:is-dragging={serverDrag.draggingIndex !== null}>
+			<div class="rows" class:is-dragging={serverDrag.active} style={serverDrag.cardsMotionStyle()}>
 				{#each $storeDnsServers as s, i (s.tag)}
-					{@const core = isCoreServer(s)}
-					<div class="row-shell" class:drop-before={serverDrag.dropBefore(i)}>
-					<div class="srow" class:dragging={serverDrag.draggingIndex === i} bind:this={serverRowEls[i]}>
-						<button
-							type="button"
-							class="grip"
-							class:is-busy={serverDrag.busy}
-							aria-label={`Перетащить DNS-сервер ${s.tag}`}
-							title="Перетащить для изменения порядка"
-							onpointerdown={serverDrag.busy ? undefined : (e) => serverDrag.handlePointerDown(i, e)}
-						>
-							<GripVertical size={16} strokeWidth={2} />
-						</button>
-						<div class="tag-cell">
-							<span class="stag">{s.tag}</span>
-							{#if s.type === ('fakeip' as typeof s.type)}<span class="core">ядро</span>{/if}
-						</div>
-						<span class="type-cell">
-							<Badge variant={serverTypeVariant(s.type)} size="sm" mono>{s.type}</Badge>
-						</span>
-						<span class="addr" title={serverAddr(s)}>{serverAddr(s)}</span>
-						<span class="detour">
-							<OutboundTile
-								outbound={dnsServerDetourDisplay(
-									s,
-									$storeOutbounds,
-									$storeOptions,
-									$subscriptionsStore.data,
-									$singboxProxies.data ?? [],
-									$singboxTunnels.data ?? [],
-								)}
-								size="compact"
-							/>
-						</span>
-						<div class="acts">
-							<button
-								type="button"
-								class="ib"
-								onclick={() => (dnsServerEditTag = s.tag)}
-								aria-label={`Редактировать DNS-сервер ${s.tag}`}
-								title={`Редактировать DNS-сервер «${s.tag}»`}
-							>
-								<Pencil size={15} strokeWidth={2} />
-							</button>
-							{#if core}
-								<span class="ib lock" title={serverLockTitle(s)} aria-label={serverLockTitle(s)}>
-									<Lock size={15} strokeWidth={2} />
-								</span>
-							{:else}
-								<button
-									type="button"
-									class="ib danger"
-									onclick={() => handleDeleteDnsServer(s.tag)}
-									aria-label={`Удалить DNS-сервер ${s.tag}`}
-									title={`Удалить DNS-сервер «${s.tag}»`}
-								>
-									<Trash2 size={15} strokeWidth={2} />
-								</button>
-							{/if}
-						</div>
-					</div>
+					<div
+						class="row-shell"
+						class:drag-source-exiting={serverDrag.isDragSource(i)}
+						class:drag-source-collapsed={serverDrag.sourceCollapsed(i)}
+						style={serverDrag.isDragSource(i) ? serverDrag.dropIndicatorStyle() : undefined}
+						bind:this={serverRowEls[i]}
+					>
+						{#if serverDrag.showsDropBefore(i)}
+							<div
+								class="drop-indicator"
+								class:expanded={serverDrag.dropBeforeExpanded(i)}
+								class:collapsing={serverDrag.dropBeforeCollapsing(i)}
+								style={serverDrag.dropIndicatorStyle()}
+							></div>
+						{/if}
+						{@render serverRow(s, i, false)}
 					</div>
 				{/each}
-				<div class="end-drop" class:drop-before={serverDrag.dropAtEnd()}></div>
+				{#if serverDrag.showsDropAtEnd()}
+					<div
+						class="drop-indicator drop-indicator-end"
+						class:expanded={serverDrag.dropEndExpanded()}
+						class:collapsing={serverDrag.dropEndCollapsing()}
+						style={serverDrag.dropIndicatorStyle()}
+					></div>
+				{/if}
 			</div>
 		{/if}
 
@@ -346,7 +448,7 @@
 	</section>
 
 	<!-- ── Блок 2: DNS-правила ─────────────────────────────────────────── -->
-	<section class="panel">
+	<section class="panel" bind:this={rulePanelEl}>
 		<header class="ph">
 			<span class="nm">DNS-правила · {$storeDnsRules.length}</span>
 			<button type="button" class="add" onclick={() => (dnsRuleAddOpen = true)}>
@@ -358,85 +460,47 @@
 			источник.
 		</p>
 
-		<div class="rows" class:is-dragging={ruleDrag.draggingIndex !== null}>
+		<div class="rows" class:is-dragging={ruleDrag.active} style={ruleDrag.cardsMotionStyle()}>
 			{#each $storeDnsRules as r, i (i)}
-				{@const tgt = dnsRuleTarget(r)}
-				{@const matchers = dnsMatcherParts(r)}
-				<div class="row-shell" class:drop-before={ruleDrag.dropBefore(i)}>
-				<div class="rrow" class:dragging={ruleDrag.draggingIndex === i} bind:this={ruleRowEls[i]}>
-					<button
-						type="button"
-						class="grip"
-						class:is-busy={ruleDrag.busy}
-						aria-label={`Перетащить DNS-правило #${i + 1}`}
-						title="Перетащить для изменения порядка"
-						onpointerdown={ruleDrag.busy ? undefined : (e) => ruleDrag.handlePointerDown(i, e)}
-					>
-						<GripVertical size={16} strokeWidth={2} />
-					</button>
-					<span class="num">{i + 1}</span>
-					<button
-						type="button"
-						class="match-btn"
-						onclick={() => (dnsRuleEditIdx = i)}
-						title={`${dnsMatcherSummary(r)} → ${tgt.label}`}
-					>
-						{#if matchers.length === 0}
-							<span class="m-none">—</span>
-						{:else}
-							{#each matchers as part, pi (part.key + pi)}
-								<span class="m-part">
-									{#if pi > 0}<span class="m-sep">·</span>{/if}
-									<span class="mtag">{part.key}</span>
-									<span class="m-val">{part.value}</span>
-								</span>
-							{/each}
-						{/if}
-						<span class="r-arrow" aria-hidden="true">→</span>
-						{#if tgt.kind === 'block'}
-							<Badge variant="error" size="sm" mono>{tgt.label}</Badge>
-						{:else if tgt.kind === 'none'}
-							<span class="r-target none">{tgt.label}</span>
-						{:else}
-							<Badge variant="accent" size="sm" mono>{tgt.label}</Badge>
-						{/if}
-					</button>
-					<div class="acts">
-						<button
-							type="button"
-							class="ib"
-							onclick={() => (dnsRuleEditIdx = i)}
-							aria-label={`Редактировать DNS-правило #${i + 1}`}
-							title={`Редактировать DNS-правило #${i + 1}`}
-						>
-							<Pencil size={15} strokeWidth={2} />
-						</button>
-						<button
-							type="button"
-							class="ib danger"
-							onclick={() => handleDeleteDNSRule(i)}
-							aria-label={`Удалить DNS-правило #${i + 1}`}
-							title={`Удалить DNS-правило #${i + 1}`}
-						>
-							<Trash2 size={15} strokeWidth={2} />
-						</button>
-					</div>
-				</div>
+				<div
+					class="row-shell"
+					class:drag-source-exiting={ruleDrag.isDragSource(i)}
+					class:drag-source-collapsed={ruleDrag.sourceCollapsed(i)}
+					style={ruleDrag.isDragSource(i) ? ruleDrag.dropIndicatorStyle() : undefined}
+					bind:this={ruleRowEls[i]}
+				>
+					{#if ruleDrag.showsDropBefore(i)}
+						<div
+							class="drop-indicator"
+							class:expanded={ruleDrag.dropBeforeExpanded(i)}
+							class:collapsing={ruleDrag.dropBeforeCollapsing(i)}
+							style={ruleDrag.dropIndicatorStyle()}
+						></div>
+					{/if}
+					{@render ruleRow(r, i, false)}
 				</div>
 			{/each}
 
 			<!-- Итоговая read-only строка: final → globals.final (не перетаскивается) -->
-			<div class="row-shell" class:drop-before={ruleDrag.dropBefore($storeDnsRules.length)}>
-			<div class="rrow final-row" bind:this={ruleRowEls[$storeDnsRules.length]}>
-				<span class="grip" aria-hidden="true"></span>
-				<span class="num">{$storeDnsRules.length + 1}</span>
-				<span class="match-final">
-					<span class="match-final-label">final</span>
-					<span class="r-arrow" aria-hidden="true">→</span>
-					<span class="final-target">{$storeDnsGlobals.final || '—'}</span>
-				</span>
-				<div class="acts"></div>
-			</div>
+			<div class="row-shell" bind:this={ruleRowEls[$storeDnsRules.length]}>
+				{#if ruleDrag.showsDropBefore($storeDnsRules.length)}
+					<div
+						class="drop-indicator"
+						class:expanded={ruleDrag.dropBeforeExpanded($storeDnsRules.length)}
+						class:collapsing={ruleDrag.dropBeforeCollapsing($storeDnsRules.length)}
+						style={ruleDrag.dropIndicatorStyle()}
+					></div>
+				{/if}
+				<div class="rrow final-row">
+					<span class="grip" aria-hidden="true"></span>
+					<span class="num">{$storeDnsRules.length + 1}</span>
+					<span class="match-final">
+						<span class="match-final-label">final</span>
+						<span class="r-arrow" aria-hidden="true">→</span>
+						<span class="final-target">{$storeDnsGlobals.final || '—'}</span>
+					</span>
+					<div class="acts"></div>
+				</div>
 			</div>
 		</div>
 	</section>
@@ -461,6 +525,25 @@
 		/>
 	</section>
 </div>
+
+<!-- ── Плавающие ghost-карточки (тот же сниппет строки → пиксель-в-пиксель) ── -->
+{#if serverDrag.ghostVisible && serverDrag.ghostFromIndex !== null && $storeDnsServers[serverDrag.ghostFromIndex]}
+	<div
+		class="drag-ghost"
+		style={`top:${serverDrag.ghostTop}px;left:${serverDrag.ghostLeft}px;width:${serverDrag.ghostWidth}px;`}
+	>
+		{@render serverRow($storeDnsServers[serverDrag.ghostFromIndex], serverDrag.ghostFromIndex, true)}
+	</div>
+{/if}
+
+{#if ruleDrag.ghostVisible && ruleDrag.ghostFromIndex !== null && $storeDnsRules[ruleDrag.ghostFromIndex]}
+	<div
+		class="drag-ghost"
+		style={`top:${ruleDrag.ghostTop}px;left:${ruleDrag.ghostLeft}px;width:${ruleDrag.ghostWidth}px;`}
+	>
+		{@render ruleRow($storeDnsRules[ruleDrag.ghostFromIndex], ruleDrag.ghostFromIndex, true)}
+	</div>
+{/if}
 
 <!-- ── Модалы (переиспользуем вербатим) ──────────────────────────────── -->
 {#if dnsServerAddOpen}
@@ -597,7 +680,18 @@
 		flex-direction: column;
 	}
 
-	/* ── Drag-reorder (общее pointer-ядро) ── */
+	/* ── Drag-reorder: ВЕРБАТИМ-движок route.rules (ghost + раскрывающийся
+	   скелетон-слот + схлопывание источника). Тайминги/easing/переменные
+	   идентичны RulesPanel.svelte — карточка под курсором и анимация слота
+	   ощущаются один-в-один. ── */
+	/* Строки разделены border-bottom, без flex-gap → обнуляем gap-математику
+	   скелетона (cardsMotionStyle()/dropIndicatorStyle() инлайнят 6px из route.rules,
+	   где между карточками есть зазор; перебиваем !important). */
+	.rows,
+	.rows .row-shell,
+	.rows .drop-indicator {
+		--card-gap: 0px !important;
+	}
 	.rows.is-dragging {
 		user-select: none;
 	}
@@ -605,23 +699,119 @@
 		position: relative;
 		min-width: 0;
 	}
-	.row-shell.drop-before::before,
-	.end-drop.drop-before::before {
-		content: '';
-		position: absolute;
-		left: 0;
-		right: 0;
-		top: -1px;
-		height: 2px;
+	.row-shell.drag-source-exiting {
+		overflow: hidden;
+		height: var(--drop-height);
+		opacity: 1;
+		transition:
+			height var(--drop-slot-motion-ms, 360ms) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			opacity var(--drop-slot-motion-ms, 360ms) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			margin var(--drop-slot-motion-ms, 360ms) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95));
+	}
+	.row-shell.drag-source-exiting.drag-source-collapsed {
+		height: 0;
+		max-height: 0;
+		opacity: 0;
+		margin-bottom: calc(-1 * var(--card-gap, 6px));
+	}
+	.drop-indicator {
+		box-sizing: border-box;
+		overflow: hidden;
+		border: 1px solid transparent;
 		border-radius: 999px;
 		background: var(--color-accent, var(--accent));
 		box-shadow: 0 0 10px color-mix(in srgb, var(--color-accent, var(--accent)) 45%, transparent);
-		z-index: 2;
+		opacity: 1;
 		pointer-events: none;
+		transition:
+			height var(--drop-slot-motion-ms, 360ms) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			margin var(--drop-slot-motion-ms, 360ms) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			border-radius calc(var(--drop-slot-motion-ms, 360ms) * 0.85) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			background calc(var(--drop-slot-motion-ms, 360ms) * 0.85) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			box-shadow calc(var(--drop-slot-motion-ms, 360ms) * 0.85) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			border-color calc(var(--drop-slot-motion-ms, 360ms) * 0.85) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			opacity calc(var(--drop-slot-motion-ms, 360ms) * 0.85) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95));
 	}
-	.end-drop {
+	.drop-indicator:not(.expanded):not(.collapsing) {
+		position: absolute;
+		top: -1px;
+		left: 0;
+		right: 0;
+		height: 2px;
+		margin: 0;
+		z-index: 2;
+	}
+	.drop-indicator.expanded:not(.collapsing) {
+		position: static;
+		top: auto;
+		height: var(--drop-height);
+		margin: 0 0 var(--card-gap, 6px);
+		border-radius: var(--radius-sm, 6px);
+		background: color-mix(in srgb, var(--color-accent, var(--accent)) 6%, transparent);
+		border-color: color-mix(in srgb, var(--color-accent, var(--accent)) 55%, transparent);
+		border-style: dashed;
+		box-shadow: none;
+	}
+	.drop-indicator.collapsing {
+		margin: 0 !important;
+		opacity: 0;
+		border-color: transparent;
+		background: transparent;
+		box-shadow: none;
+	}
+	.drop-indicator.collapsing.expanded {
+		position: static;
+		height: 0 !important;
+		transition:
+			height var(--drop-slot-motion-ms, 360ms) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			margin var(--drop-slot-motion-ms, 360ms) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			border-radius calc(var(--drop-slot-motion-ms, 360ms) * 0.85) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			background calc(var(--drop-slot-motion-ms, 360ms) * 0.85) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			box-shadow calc(var(--drop-slot-motion-ms, 360ms) * 0.85) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			border-color calc(var(--drop-slot-motion-ms, 360ms) * 0.85) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			opacity var(--drop-slot-motion-ms, 360ms) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95));
+	}
+	.drop-indicator.collapsing:not(.expanded) {
+		position: absolute;
+		top: -1px;
+		left: 0;
+		right: 0;
+		height: 2px !important;
+		z-index: 2;
+		transition:
+			opacity var(--drop-line-collapse-ms, 240ms) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			box-shadow calc(var(--drop-line-collapse-ms, 240ms) * 0.85) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			background calc(var(--drop-line-collapse-ms, 240ms) * 0.85) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+			border-color calc(var(--drop-line-collapse-ms, 240ms) * 0.85) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95));
+	}
+	.drop-indicator-end.collapsing:not(.expanded) {
 		position: relative;
-		height: 0;
+		top: auto;
+		left: auto;
+		right: auto;
+		height: 2px !important;
+		margin: -1px 0 0 !important;
+	}
+	.drop-indicator-end:not(.expanded):not(.collapsing) {
+		position: relative;
+		top: auto;
+		height: 2px;
+		margin: -1px 0 0;
+	}
+	.drag-ghost {
+		position: fixed;
+		z-index: 10000;
+		pointer-events: none;
+		transform: none;
+		opacity: 0.96;
+		filter: drop-shadow(0 14px 24px rgba(0, 0, 0, 0.35));
+		background: var(--color-bg-secondary, var(--bg-secondary));
+		border: 1px solid color-mix(in srgb, var(--color-accent, var(--accent)) 55%, var(--border));
+		border-radius: var(--radius-sm, 6px);
+	}
+	.drag-ghost .srow,
+	.drag-ghost .rrow {
+		border-bottom: none;
 	}
 
 	/* ── DNS-серверы строки ── */
