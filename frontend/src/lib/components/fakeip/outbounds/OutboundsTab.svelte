@@ -1,12 +1,24 @@
 <!--
   Вкладка «Outbounds» страницы FakeIP (Slice 3.2, FE-spec §5.3).
 
+  Две секции:
+  - ATOMIC — пул прокси-выходов (AWG/NWG-туннели + прокси подписок), те же
+    сущности, что появляются участниками composite-групп. Спайн — singboxRouter
+    .options, обогащённый join'ом с singboxTunnels + subscription-members
+    (buildAtomicEgresses), минус специальные (direct/block) и composite-группы.
+    Read-only здесь: правка на страницах Туннели / Подписки (ссылка-выход у
+    карточки). Тест задержки — per-egress, по запросу (singbox/tunnels/delay-
+    check). Кнопки «+ outbound» нет — выходы создаются не тут.
+  - COMPOSITE — selector / urltest группы (роутер-каталог); правятся здесь.
+
   Тот же каталог outbounds роутера, что и у sb-router Expert-вида, поэтому
   максимально ПЕРЕИСПОЛЬЗУЕМ существующее:
   - singboxRouter.outbounds / .options — конфиг каталога (sub-stores).
+  - singboxTunnels — AWG/NWG-туннели: протокол/endpoint/sni/transport для
+    обогащения атомарных выходов.
   - singboxProxies — reference-counted polling: живой снимок proxy-групп
     (активный участник `now`, lastDelay). Подписка стартует/останавливает опрос.
-  - subscriptionsStore — имена подписочных композитов.
+  - subscriptionsStore — имена подписочных композитов + члены-выходы.
   - resolveCompositeOutboundView (sb-router helper) — активный участник.
   - CompositeOutboundEditModal (routing/singboxRouter) — add / edit / rename
     (поле tag редактируемо → переименование). Тот же модал, что в ExpertPanel.
@@ -26,6 +38,7 @@
 <script lang="ts">
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { singboxProxies } from '$lib/stores/singboxProxies';
+	import { singboxTunnels } from '$lib/stores/singbox';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
@@ -35,6 +48,7 @@
 	import type { SingboxRouterOutbound } from '$lib/types';
 	import type { FakeIPEngineState } from '../engineState';
 	import { partitionOutbounds } from './partitionOutbounds';
+	import { buildAtomicEgresses } from './atomicEgress';
 	import AtomicOutboundCard from './AtomicOutboundCard.svelte';
 	import CompositeOutboundCard from './CompositeOutboundCard.svelte';
 
@@ -55,6 +69,15 @@
 	const partitioned = $derived(partitionOutbounds($storeOutbounds));
 	const subscriptions = $derived($subscriptionsStore.data ?? []);
 	const proxyGroups = $derived($singboxProxies.data ?? []);
+
+	// ATOMIC section = the proxy egress pool (AWG/NWG tunnels + subscription
+	// proxies) — the same entities that appear as composite members. Built from
+	// the options spine joined with tunnels + subscription members, excluding
+	// specials (direct/block) and composite groups. Config-visible regardless
+	// of engine state; live signals (delay/dot) gate on `live`.
+	const atomicEgresses = $derived(
+		buildAtomicEgresses($storeOptions, $singboxTunnels.data, subscriptions),
+	);
 
 	// ── CRUD-модалы (переиспользуем CompositeOutboundEditModal) ──────────
 	let addOpen = $state(false);
@@ -130,6 +153,26 @@
 		}
 	}
 
+	// ── Runtime: per-egress тест задержки (singbox/tunnels/delay-check) ───
+	// Атомарные выходы тестируются по одному (tunnel-tag → реальный замер;
+	// для подписочных прокси API может не разрешить tag → ловим ошибку).
+	let egressDelays = $state<Record<string, number>>({});
+	let egressTesting = $state<string | null>(null);
+
+	async function handleEgressTest(tag: string): Promise<void> {
+		if (egressTesting) return;
+		egressTesting = tag;
+		try {
+			const res = await api.singboxDelayCheck(tag);
+			egressDelays = { ...egressDelays, [tag]: res.delay };
+			lastTestAtAny = nowHHMM();
+		} catch (e) {
+			notifications.error(`Тест не удался: ${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			egressTesting = null;
+		}
+	}
+
 	// ── Runtime: выбор активного участника (proxies/select) ──────────────
 	let selectingTag = $state<string | null>(null);
 
@@ -151,25 +194,25 @@
 	<div class="section">
 		<div class="sectlbl">
 			<span class="sect-name"
-				>Outbounds · atomic <span class="sect-count">· {partitioned.atomic.length}</span></span
+				>Outbounds · atomic <span class="sect-count">· {atomicEgresses.length}</span></span
 			>
 			<span class="sect-right">
 				<span class="hc">health-check по запросу{#if lastTestAtAny} · last {lastTestAtAny}{/if}</span>
-				<button type="button" class="add" onclick={() => (addOpen = true)}>
-					<Plus size={13} aria-hidden="true" /> outbound
-				</button>
 			</span>
 		</div>
-		{#if partitioned.atomic.length === 0}
-			<p class="section-empty">Нет атомарных outbounds.</p>
+		{#if atomicEgresses.length === 0}
+			<p class="section-empty">
+				Пул прокси-выходов пуст. Добавьте туннели или подписку.
+			</p>
 		{:else}
 			<div class="ocards">
-				{#each partitioned.atomic as o (o.tag)}
+				{#each atomicEgresses as e (e.tag)}
 					<AtomicOutboundCard
-						outbound={o}
-						{subscriptions}
-						onEdit={(tag) => (editTag = tag)}
-						onDelete={requestDelete}
+						egress={e}
+						{live}
+						delay={egressDelays[e.tag]}
+						testing={egressTesting === e.tag}
+						onTest={handleEgressTest}
 					/>
 				{/each}
 			</div>
@@ -213,9 +256,10 @@
 	</div>
 
 	<p class="note">
-		Иконки Lucide: pencil (изменить), gauge (тест), plus (добавить). Точка —
-		последний тест (по запросу). «active» — реальный выбор группы. Скорость
-		per-outbound не показываем. Типы групп: urltest / selector.
+		Atomic — пул прокси-выходов (туннели + подписки); правка на их страницах
+		(стрелка-выход у карточки). gauge — тест задержки по запросу, точка —
+		его результат. «active» — реальный выбор группы. Скорость per-outbound не
+		показываем. Типы групп: urltest / selector.
 	</p>
 </section>
 

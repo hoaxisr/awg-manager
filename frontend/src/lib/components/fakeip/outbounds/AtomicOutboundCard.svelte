@@ -1,87 +1,96 @@
 <!--
-  Атомарный outbound (тип `direct`) — единственный неконтейнерный тип в
-  SingboxRouterOutbound. Карточка по мокапу page-outbounds-v3 (секция ATOMIC):
-    - top-left: тип-бейдж (протокол) из конфига outbound;
-    - top-right: pencil (edit) + статус-точка;
-    - body: имя (bold), «server:port» / bind-интерфейс, деталь-строка;
-    - footer: «задержка <…>» + (для типов с реальным замером) кнопка «тест».
+  Атомарный egress — карточка одного прокси-выхода из пула (AWG/NWG-туннель
+  или прокси подписки) в секции ATOMIC чипа «Outbounds» (мокап
+  page-outbounds-v3). Это те же сущности, что появляются участниками composite-
+  групп («DE Frankfurt (awg0)», «de01.demo.example»…).
 
-  ЧЕСТНОСТЬ (FE-spec §4): SingboxRouterOutbound.type для атомарного outbound —
-  всегда `direct` (это локальный выход мимо VPN). У него НЕТ сервера, sni, flow
-  и осмысленной per-outbound задержки, поэтому кнопку «тест задержки» и число
-  задержки для direct НЕ показываем и ничего про throughput не выдумываем.
-  Статус-точка direct = всегда доступный локальный маршрут (нейтральная).
+    - top-left: тип-бейдж (протокол: vless / hysteria2 / awg…);
+    - top-right: статус-точка (по последней задержке) + ссылка-выход к месту
+      управления этим выходом (read-only здесь);
+    - body: имя (bold, с флагом — как у участников групп), «server:port»,
+      строка sni (если есть), строка transport/flow (если есть);
+    - footer: «задержка <N ms|таймаут|—>» + кнопка «тест» (gauge).
 
-  Тип-бейдж и тон протокола берём из общих sb-router-хелперов
-  (outboundDisplay / typeSubtitle), чтобы не хардкодить маппинг.
+  READ-ONLY (решение пользователя): выходы создаются/правятся на страницах
+  Туннели / Подписки, не здесь. Поэтому НЕТ pencil/delete — вместо них
+  ненавязчивая ссылка-выход к их странице.
 
-  Имя outbound может содержать emoji-флаги из подписки — это данные, рендерим
-  как есть; запрет emoji касается только UI-хрома.
+  ЧЕСТНОСТЬ (FE-spec §4): показываем только поля, что РЕАЛЬНО есть у выхода —
+  sni/transport рендерим лишь когда они присутствуют. Задержка — единственное
+  per-egress число, только по запросу; никакого throughput.
+
+  ЖИВЫЕ ДАННЫЕ vs КОНФИГ (§12.1): карточка (пул) видна всегда. Статус-точка и
+  задержка — runtime: когда движок не live, тест недоступен, точка нейтральна.
 -->
 <script lang="ts">
-	import type { SingboxRouterOutbound, Subscription } from '$lib/types';
-	import { Edit3, Gauge, ArrowRight } from 'lucide-svelte';
-	import { outboundDisplay } from '$lib/components/sb-router/outboundLabel';
+	import { Gauge, ArrowUpRight } from 'lucide-svelte';
+	import type { AtomicEgress } from './atomicEgress';
 	import { delayHealth, formatDelay } from './formatDelay';
 
 	interface Props {
-		outbound: SingboxRouterOutbound;
-		subscriptions: Subscription[];
-		onEdit: (tag: string) => void;
-		onDelete: (tag: string) => void;
+		egress: AtomicEgress;
+		/** Runtime live? Gates the status dot + delay test (FE-spec §12.1). */
+		live: boolean;
+		/** Last measured delay (ms); 0 = timeout, undefined = untested. */
+		delay: number | undefined;
+		/** Delay test in flight for this egress (button spinner / disabled). */
+		testing: boolean;
+		/** Run an on-demand delay test for this egress tag. */
+		onTest: (tag: string) => void;
 	}
 
-	let { outbound, subscriptions, onEdit, onDelete }: Props = $props();
+	let { egress, live, delay, testing, onTest }: Props = $props();
 
-	const display = $derived(outboundDisplay(outbound, subscriptions));
+	const hasDelay = $derived(live && delay !== undefined);
+	const health = $derived(live ? delayHealth(delay) : 'unknown');
 
-	// Тип-бейдж протокола. Для router-каталога это всегда `direct` — честная
-	// метка; bind_interface уходит в деталь-строку, а не в бейдж.
-	const protoLabel = $derived(outbound.type);
-
-	// direct — локальный выход без замера задержки и без теста (см. шапку).
-	const hasDelay = $derived(false);
-	const delay = $derived<number | undefined>(undefined);
-	const health = $derived(delayHealth(delay));
+	// Read-only link-out to where this egress is managed.
+	const manageHref = $derived(
+		egress.source === 'subscription' && egress.subscriptionId
+			? `/subscriptions/${egress.subscriptionId}`
+			: egress.source === 'tunnel'
+				? `/singbox/${encodeURIComponent(egress.tag)}`
+				: '/',
+	);
+	const manageLabel = $derived(
+		egress.source === 'subscription'
+			? 'Открыть подписку'
+			: egress.source === 'tunnel'
+				? 'Открыть туннель'
+				: 'Открыть Туннели',
+	);
 </script>
 
 <div class="oc">
 	<div class="otop">
-		<span class="proto">{protoLabel}</span>
-		<button
-			type="button"
-			class="ib"
-			onclick={() => onEdit(outbound.tag)}
-			aria-label={`Редактировать outbound ${outbound.tag}`}
-			title={`Редактировать «${display.title}»`}
+		<span class="proto">{egress.proto}</span>
+		<a
+			class="ib link"
+			href={manageHref}
+			aria-label={`${manageLabel}: ${egress.name}`}
+			title={manageLabel}
 		>
-			<Edit3 size={14} aria-hidden="true" />
-		</button>
-		<button
-			type="button"
-			class="ib danger"
-			onclick={() => onDelete(outbound.tag)}
-			aria-label={`Удалить outbound ${outbound.tag}`}
-			title={`Удалить «${display.title}»`}
-		>
-			<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-				<path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-			</svg>
-		</button>
+			<ArrowUpRight size={14} aria-hidden="true" />
+		</a>
 		<span class="d" data-health={health} aria-hidden="true"></span>
 	</div>
 
-	<div class="nm">{display.title}</div>
+	<div class="nm" title={egress.name}>{egress.name}</div>
 
 	<div class="srv">
-		{#if outbound.bind_interface}
-			<span class="iface-line"
-				><ArrowRight size={11} aria-hidden="true" />{outbound.bind_interface}</span
-			>
+		{#if egress.endpoint}
+			{egress.endpoint}
 		{:else}
-			прямой выход (без VPN)
+			—
 		{/if}
 	</div>
+
+	{#if egress.sni || egress.transport}
+		<div class="meta">
+			{#if egress.sni}<div class="meta-line">sni: {egress.sni}</div>{/if}
+			{#if egress.transport}<div class="meta-line">{egress.transport}</div>{/if}
+		</div>
+	{/if}
 
 	<div class="lat">
 		<span class="lat-label"
@@ -92,11 +101,15 @@
 				<span class="ms" data-health="muted">—</span>
 			{/if}
 		</span>
-		{#if hasDelay}
-			<button type="button" class="test">
-				<Gauge size={13} aria-hidden="true" /> тест
-			</button>
-		{/if}
+		<button
+			type="button"
+			class="test"
+			disabled={!live || testing}
+			onclick={() => onTest(egress.tag)}
+		>
+			<Gauge size={13} aria-hidden="true" />
+			{testing ? 'тест…' : 'тест'}
+		</button>
 	</div>
 </div>
 
@@ -127,6 +140,10 @@
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
 		font-family: var(--font-mono);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 60%;
 	}
 
 	.ib {
@@ -140,15 +157,13 @@
 		background: transparent;
 		cursor: pointer;
 	}
-	.ib:first-of-type {
+	.ib.link {
 		margin-left: auto;
+		text-decoration: none;
 	}
 	.ib:hover {
 		color: var(--text-primary);
 		background: var(--bg-hover);
-	}
-	.ib.danger:hover {
-		color: var(--color-error, #dc2626);
 	}
 
 	.d {
@@ -177,20 +192,30 @@
 	.srv {
 		color: var(--text-muted);
 		font-size: 0.8125rem;
-		margin: 0.125rem 0 0.5625rem;
+		margin: 0.125rem 0 0.375rem;
 		font-family: var(--font-mono);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
-	.iface-line {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.25rem;
+	.meta {
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		margin-bottom: 0.5rem;
+	}
+	.meta-line {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.lat {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		gap: 0.5rem;
 		margin-top: auto;
 		border-top: 1px solid var(--border);
 		padding-top: 0.5625rem;
@@ -224,8 +249,13 @@
 		background: transparent;
 		cursor: pointer;
 		font-size: 0.8125rem;
+		flex-shrink: 0;
 	}
-	.test:hover {
+	.test:hover:not(:disabled) {
 		background: var(--accent-soft);
+	}
+	.test:disabled {
+		opacity: 0.5;
+		cursor: default;
 	}
 </style>
