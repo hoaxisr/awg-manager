@@ -5,18 +5,27 @@
   затем перечитываем сегменты с бэкенда (ground-truth, не оптимистично).
 
   ЧЕСТНОСТЬ (§2): inFakeip берём из реального состояния (DHCP dns-server пула ==
-  fakeip .2). Индикатор «придержано до здорового egress» НЕ выдумываем — поле
-  egress-health бэкенда (задача #25) ещё отсутствует. Поэтому секция несёт общую
-  заметку: доставка клиентам зависит от работающего и здорового движка.
+  fakeip .2). Глобальный сигнал здоровья egress — status.fakeipEgressUp (задача
+  #25): роутер выдаёт .2 пулам ТОЛЬКО при здоровом egress, иначе чистит DNS и ВСЕ
+  fakeip-сегменты падают в прямой режим (без чёрной дыры). Когда egress нездоров
+  (fakeipEgressUp === false), показываем секционный баннер «доставка придержана»;
+  per-pool «придержано» невозможен — бэкенд не хранит per-pool intent.
 
-  Сам запрос делается лениво — при первом разворачивании секции.
+  Сам запрос сегментов делается лениво — при первом разворачивании секции.
 -->
 <script lang="ts">
 	import { Card, Toggle } from '$lib/components/ui';
-	import { ChevronDown, ChevronRight } from 'lucide-svelte';
+	import { ChevronDown, ChevronRight, TriangleAlert } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
+	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { segmentRows, type SegmentRow } from './segmentRows';
+
+	const status = singboxRouter.status;
+	// Глобальный «доставка DNS придержана»: явный false (не undefined) = egress
+	// нездоров и .2 не выдаётся ни одному пулу. undefined = не fakeip-tun / не
+	// провижен — баннер не выдумываем.
+	const deliveryHeld = $derived($status?.fakeipEgressUp === false);
 
 	let open = $state(false);
 	let loaded = $state(false);
@@ -76,6 +85,16 @@
 	{/snippet}
 
 	{#if open}
+		{#if deliveryHeld}
+			<div class="banner" role="status">
+				<TriangleAlert size={16} class="banner-icon" />
+				<span>
+					Egress нездоров — доставка DNS придержана: fakeip-сегменты временно работают
+					как прямые. Восстановится автоматически, когда egress поднимется.
+				</span>
+			</div>
+		{/if}
+
 		<p class="note">
 			Доставка клиентам работает только при запущенном и здоровом движке fakeip-tun.
 			Состояние ниже — фактический DHCP dns-server пула.
@@ -128,6 +147,27 @@
 	.section-title {
 		font-size: 0.9375rem;
 		font-weight: 600;
+	}
+
+	.banner {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.5rem;
+		margin: 0 0 0.75rem;
+		padding: 0.625rem 0.75rem;
+		border: 1px solid var(--color-warning-border);
+		border-radius: 8px;
+		background: var(--color-warning-tint);
+		color: var(--text-primary);
+		font-size: 0.8125rem;
+		line-height: 1.45;
+		text-wrap: pretty;
+	}
+
+	.banner :global(.banner-icon) {
+		flex-shrink: 0;
+		margin-top: 0.0625rem;
+		color: var(--color-warning);
 	}
 
 	.note {

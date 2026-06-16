@@ -5278,7 +5278,9 @@ const server = http.createServer(async (req, res) => {
 				ruleSetCount: mockSingboxRuleSets.length,
 				// fakeip-tun status fields (backend serializes all omitempty).
 				routingMode,
-				...(routingMode === 'fakeip-tun' ? { sourcePreserved: true, fakeipIface: 'opkgtun0' } : {}),
+				// fakeipEgressUp: global egress-health (Task 25). Default true. Flip to
+				// false here to demo the SegmentsDelivery «доставка DNS придержана» banner.
+				...(routingMode === 'fakeip-tun' ? { sourcePreserved: true, fakeipIface: 'opkgtun0', fakeipEgressUp: true } : {}),
 			},
 		});
 		return;

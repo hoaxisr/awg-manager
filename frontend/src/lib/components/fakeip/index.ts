@@ -10,7 +10,6 @@ export {
 	switchConsequences,
 	type RoutingMode,
 } from './switchConsequences';
-export { default as ReadinessPanel } from './overview/ReadinessPanel.svelte';
 export { default as EngineSettingsCard } from './overview/EngineSettingsCard.svelte';
 export { default as SegmentsDelivery } from './overview/SegmentsDelivery.svelte';
 export { default as OverviewTab } from './overview/OverviewTab.svelte';
@@ -46,12 +45,6 @@ export {
 	formatCompactCount,
 	type ShellChip,
 } from './shell';
-export {
-	readinessRows,
-	type ReadinessRow,
-	type ReadinessState,
-	type ReadinessInput,
-} from './overview/readinessRows';
 export { segmentRows, type SegmentRow } from './overview/segmentRows';
 export {
 	activeCompositeRows,

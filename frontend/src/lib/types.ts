@@ -1376,6 +1376,15 @@ export interface SingboxRouterStatus {
 	 * omitempty); absent otherwise.
 	 */
 	fakeipIface?: string;
+	/**
+	 * Global fakeip egress-health signal (Task 25): the proxy egress backing the
+	 * tun DNS is usable. The router advertises the tun DNS (.2) to the DHCP pools
+	 * only when egress is up; when it drops, ALL fakeip segments fall back to
+	 * direct (no black-hole). `false` lets the UI show an honest "DNS-delivery
+	 * held" banner. Present only in fakeip-tun mode once provisioned (backend
+	 * Status.FakeIPEgressUp is *bool, omitempty); absent otherwise.
+	 */
+	fakeipEgressUp?: boolean;
 	issues?: SingboxRouterIssue[];
 }
 
