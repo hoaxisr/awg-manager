@@ -21,6 +21,7 @@
 		deriveFakeIPEngineState,
 		type ShellChip,
 	} from '$lib/components/fakeip';
+	import { ConnectionsSubTab } from '$lib/components/routing/singboxRouter';
 	import { fakeipTransition } from '$lib/stores/fakeipTransition';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
@@ -278,6 +279,31 @@
 				по engineState.
 			-->
 			<DevicesTab {engineState} />
+		{:else if activeTab === 'connections'}
+			<!--
+				«Соединения»-чип по мокапу page-connections = ВЕРБАТИМ текущий
+				sb-router connections-вью (футер мокапа: «как в текущем sb-router-вью»).
+				Переиспользуем ConnectionsSubTab — свой Clash WS, totals, разбивка по
+				outbound/host/client, фильтры/поиск, таблица с kill. Живой блок:
+				при остановленном движке / clash-down — стандартная заглушка.
+			-->
+			{#if engineState === 'live'}
+				<ConnectionsSubTab />
+			{:else if engineState === 'clash-down'}
+				<section class="chip-stub">
+					<h2 class="chip-stub-title">{activeChip.label}</h2>
+					<p class="chip-stub-note chip-stub-error">
+						Clash-runtime недоступен — живые соединения временно не работают.
+					</p>
+				</section>
+			{:else}
+				<section class="chip-stub">
+					<h2 class="chip-stub-title">{activeChip.label}</h2>
+					<p class="chip-stub-note chip-stub-empty">
+						Движок остановлен — живые соединения недоступны.
+					</p>
+				</section>
+			{/if}
 		{:else}
 			<section class="chip-stub">
 				<h2 class="chip-stub-title">{activeChip.label}</h2>
