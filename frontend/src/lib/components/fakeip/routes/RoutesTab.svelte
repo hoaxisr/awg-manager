@@ -46,8 +46,9 @@
 		RuleEditModal,
 		computeRuleSetUsage,
 	} from '$lib/components/routing/singboxRouter';
-	import { ConfirmModal } from '$lib/components/ui';
-	import { GripVertical, Pencil, Trash2, Plus } from 'lucide-svelte';
+	import { ConfirmModal, Dropdown } from '$lib/components/ui';
+	import type { DropdownOption } from '$lib/components/ui';
+	import { GripVertical, Pencil, Trash2, Plus, Check, X } from 'lucide-svelte';
 	import type { SingboxRouterRule } from '$lib/types';
 	import type { RuleCardData } from '$lib/components/sb-router/types';
 
@@ -107,6 +108,43 @@
 			$singboxTunnels.data ?? [],
 		),
 	);
+
+	// ── Final-outbound правка (route.final) — как в ExpertPanel ─────────────
+	// Опции: direct + все outbounds, кроме группы «Специальные».
+	const routeFinalOptions = $derived<DropdownOption[]>([
+		{ value: 'direct', label: 'direct (мимо VPN)' },
+		...$storeOptions
+			.filter((g) => g.group !== 'Специальные')
+			.flatMap((g) => g.items.map((it) => ({ value: it.value, label: it.label, group: g.group }))),
+	]);
+
+	let finalEditing = $state(false);
+	let draftFinal = $state('direct');
+	let finalBusy = $state(false);
+
+	function startEditFinal(): void {
+		draftFinal = $storeStatus?.final || 'direct';
+		finalEditing = true;
+	}
+
+	async function saveFinal(): Promise<void> {
+		if (finalBusy) return;
+		if (draftFinal === ($storeStatus?.final || 'direct')) {
+			finalEditing = false;
+			return;
+		}
+		finalBusy = true;
+		try {
+			await api.singboxRouterPutRouteFinal(draftFinal);
+			await singboxRouter.loadAll();
+			notifications.success('Final-outbound обновлён');
+			finalEditing = false;
+		} catch (e) {
+			notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			finalBusy = false;
+		}
+	}
 
 	// ── Drag-reorder (ВЕРБАТИМ-движок route.rules) ─────────────────────────
 	let ruleRowEls = $state<Array<HTMLElement | null>>([]);
@@ -323,13 +361,52 @@
 					></div>
 				{/if}
 				<div class="rrow final-row">
-					<span class="grip" aria-hidden="true"></span>
+					<span class="grip grip-fixed" aria-hidden="true"></span>
 					<span class="num">{$storeRules.length + 1}</span>
 					<span class="match-final">final</span>
 					<div class="outbound">
-						<RuleOutboundAction outbound={finalOutbound} />
+						{#if finalEditing}
+							<div class="final-edit">
+								<Dropdown bind:value={draftFinal} options={routeFinalOptions} fullWidth />
+							</div>
+						{:else}
+							<RuleOutboundAction outbound={finalOutbound} />
+						{/if}
 					</div>
-					<div class="acts"></div>
+					<div class="acts">
+						{#if finalEditing}
+							<button
+								type="button"
+								class="ib ok"
+								onclick={saveFinal}
+								disabled={finalBusy}
+								aria-label="Сохранить final-outbound"
+								title="Сохранить"
+							>
+								<Check size={15} strokeWidth={2} />
+							</button>
+							<button
+								type="button"
+								class="ib"
+								onclick={() => (finalEditing = false)}
+								disabled={finalBusy}
+								aria-label="Отменить"
+								title="Отменить"
+							>
+								<X size={15} strokeWidth={2} />
+							</button>
+						{:else}
+							<button
+								type="button"
+								class="ib"
+								onclick={startEditFinal}
+								aria-label="Редактировать final-outbound"
+								title="Изменить outbound по умолчанию (final)"
+							>
+								<Pencil size={15} strokeWidth={2} />
+							</button>
+						{/if}
+					</div>
 				</div>
 			</div>
 
@@ -728,5 +805,17 @@
 	.ib.danger:hover {
 		color: var(--color-error, #e06a5a);
 		border-color: var(--color-error, #e06a5a);
+	}
+	.ib.ok {
+		color: var(--color-accent, var(--accent));
+		border-color: color-mix(in srgb, var(--color-accent, var(--accent)) 45%, transparent);
+	}
+	.ib:disabled {
+		opacity: 0.5;
+		cursor: default;
+	}
+	.final-edit {
+		min-width: 12rem;
+		max-width: 100%;
 	}
 </style>
