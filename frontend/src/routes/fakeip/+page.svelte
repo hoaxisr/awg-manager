@@ -14,6 +14,7 @@
 		OutboundsTab,
 		DnsTab,
 		RuleSetsTab,
+		RoutesTab,
 		FakeIPPageShell,
 		deriveFakeIPEngineState,
 		type ShellChip,
@@ -247,6 +248,16 @@
 				RuleSetAddModal + dat-каталог + CRUD sb-router.
 			-->
 			<RuleSetsTab />
+		{:else if activeTab === 'routes'}
+			<!--
+				«Маршруты»-чип по мокапу page-routes: одна карточка на всю ширину —
+				плотная таблица route-правил (grip | # | match | → outbound | действия)
+				+ read-only «final»-строка. first-match, порядок drag'ом. Конфиг (нет
+				live-рантайма) → доступно при любом состоянии движка; переиспользует
+				reorderDrag + MatcherChip/RuleOutboundAction + RuleEditModal + каталог
+				наборов sb-router.
+			-->
+			<RoutesTab />
 		{:else}
 			<section class="chip-stub">
 				<h2 class="chip-stub-title">{activeChip.label}</h2>

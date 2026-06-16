@@ -17,6 +17,7 @@ export { default as OverviewTab } from './overview/OverviewTab.svelte';
 export { default as OutboundsTab } from './outbounds/OutboundsTab.svelte';
 export { default as DnsTab } from './dns/DnsTab.svelte';
 export { default as RuleSetsTab } from './rulesets/RuleSetsTab.svelte';
+export { default as RoutesTab } from './routes/RoutesTab.svelte';
 export {
 	computeRuleSetUsageRefs,
 	type RuleSetUsageRef,
