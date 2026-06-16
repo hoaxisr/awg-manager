@@ -124,8 +124,10 @@
 		// +1 виртуальная read-only «final»-строка в самом конце.
 		count: () => $storeRules.length + 1,
 		getPanelEl: () => panelEl,
-		// «final»-строка (последний индекс) фиксирована: ни схватить, ни уронить под неё.
-		isFixed: (i) => i >= $storeRules.length,
+		// Фиксированы: «final»-строка (последний индекс) и системные правила
+		// (sniff / hijack-dns / локальная сеть) — их нельзя ни схватить, ни
+		// сделать целью переноса; firstMovableIndex держит юзер-правила ниже них.
+		isFixed: (i) => i >= $storeRules.length || !!cards[i]?.isSystem,
 		onCommit: async (from, to) => {
 			const snapshot = get(singboxRouter.rules);
 			singboxRouter.applyRules(reorder(snapshot, from, to));
@@ -202,16 +204,22 @@
 	{@const visibleChips = card.matchers.slice(0, MAX_CHIPS)}
 	{@const hiddenCount = Math.max(0, card.matchers.length - MAX_CHIPS)}
 	<div class="rrow" class:dragging={!ghost && drag.draggingIndex === i}>
-		<button
-			type="button"
-			class="grip"
-			class:is-busy={drag.busy}
-			aria-label={`Перетащить правило #${i + 1}`}
-			title="Перетащить для изменения порядка"
-			onpointerdown={drag.busy ? undefined : (e) => drag.handlePointerDown(i, e)}
-		>
-			<GripVertical size={16} strokeWidth={2} />
-		</button>
+		{#if card.isSystem}
+			<!-- Системные правила (sniff / hijack-dns / локальная сеть) — фиксированы:
+			     ни перетащить, ни редактировать, ни удалить. -->
+			<span class="grip grip-fixed" aria-hidden="true"></span>
+		{:else}
+			<button
+				type="button"
+				class="grip"
+				class:is-busy={drag.busy}
+				aria-label={`Перетащить правило #${i + 1}`}
+				title="Перетащить для изменения порядка"
+				onpointerdown={drag.busy ? undefined : (e) => drag.handlePointerDown(i, e)}
+			>
+				<GripVertical size={16} strokeWidth={2} />
+			</button>
+		{/if}
 		<span class="num">{i + 1}</span>
 		<div class="match">
 			{#if visibleChips.length === 0}
@@ -234,24 +242,26 @@
 			<RuleOutboundAction outbound={card.outbound} />
 		</div>
 		<div class="acts">
-			<button
-				type="button"
-				class="ib"
-				onclick={() => (ruleEditIdx = i)}
-				aria-label={`Редактировать правило #${i + 1}`}
-				title={`Редактировать правило #${i + 1}`}
-			>
-				<Pencil size={15} strokeWidth={2} />
-			</button>
-			<button
-				type="button"
-				class="ib danger"
-				onclick={() => (deleteIdx = i)}
-				aria-label={`Удалить правило #${i + 1}`}
-				title={`Удалить правило #${i + 1}`}
-			>
-				<Trash2 size={15} strokeWidth={2} />
-			</button>
+			{#if !card.isSystem}
+				<button
+					type="button"
+					class="ib"
+					onclick={() => (ruleEditIdx = i)}
+					aria-label={`Редактировать правило #${i + 1}`}
+					title={`Редактировать правило #${i + 1}`}
+				>
+					<Pencil size={15} strokeWidth={2} />
+				</button>
+				<button
+					type="button"
+					class="ib danger"
+					onclick={() => (deleteIdx = i)}
+					aria-label={`Удалить правило #${i + 1}`}
+					title={`Удалить правило #${i + 1}`}
+				>
+					<Trash2 size={15} strokeWidth={2} />
+				</button>
+			{/if}
 		</div>
 	</div>
 {/snippet}
@@ -619,6 +629,9 @@
 		cursor: grab;
 		touch-action: none;
 		border-radius: 4px;
+	}
+	.grip-fixed {
+		cursor: default;
 	}
 	button.grip:hover {
 		color: var(--text-primary);
