@@ -1853,7 +1853,9 @@ let mockSBSettings = {
 const FAKEIP_TUN_DNS = '172.18.0.2';
 // lanDNS is the pool's non-fakeip DNS, kept so a clear can restore it.
 let mockFakeIPSegments = [
-	{ pool: '_WEBADMIN', subnet: '192.168.0.1/24', dnsServer: '192.168.0.1', inFakeip: false, lanDNS: '192.168.0.1' },
+	// _WEBADMIN covers the policy-device LAN (192.168.1.x) and is IN fakeip so the
+	// Устройства-чип renders «fakeip» назначение for devices inside it.
+	{ pool: '_WEBADMIN', subnet: '192.168.1.1/24', dnsServer: FAKEIP_TUN_DNS, inFakeip: true, lanDNS: '192.168.1.1' },
 	{ pool: '_WEBADMIN_GUEST_AP', subnet: '172.16.1.1/24', dnsServer: '172.16.1.1', inFakeip: false, lanDNS: '172.16.1.1' },
 ];
 
@@ -2018,6 +2020,9 @@ const mockPolicyDevices = [
 	{ mac: 'aa:aa:aa:aa:aa:04', ip: '192.168.1.45', name: 'Family-TV',     hostname: 'tv',     active: true, link: 'LAN',  policy: 'Policy0' },
 	{ mac: 'aa:aa:aa:aa:aa:05', ip: '192.168.1.46', name: 'PS5',           hostname: 'ps5',    active: true, link: 'LAN',  policy: '' },
 	{ mac: 'aa:aa:aa:aa:aa:06', ip: '192.168.1.47', name: 'Work-Mac',      hostname: 'work',   active: true, link: 'WiFi', policy: 'HydraRoute' },
+	// Вне fakeip-сегмента (другая подсеть) → «прямой» в Устройства-чипе. Offline,
+	// чтобы показать офлайн-статус + «—» в соединениях.
+	{ mac: 'aa:aa:aa:aa:aa:07', ip: '10.0.5.20',    name: 'NAS-Backup',    hostname: 'nas',    active: false, link: 'LAN',  policy: '' },
 ];
 const mockAccessPolicies = [
 	{
@@ -2554,6 +2559,9 @@ const mockSingboxRules = [
 	{ action: 'route', rule_set: ['geosite-discord'], outbound: 'manual-eu' },
 	{ action: 'route', domain_suffix: ['netflix.com'], outbound: 'Kto-VLESS-kto-po-drova' },
 	{ action: 'route', domain_suffix: ['spotify.com'], outbound: 'awg-vpn0' },
+	// Персональная привязка устройства (Устройства-чип): source_ip_cidr →
+	// outbound. Work-Mac (192.168.1.47) → manual-eu, рендерит «персональный».
+	{ action: 'route', source_ip_cidr: ['192.168.1.47/32'], outbound: 'manual-eu' },
 	{ action: 'route', rule_set: ['geosite-github'], outbound: 'sub-bigprov' },
 	{ action: 'route', rule_set: ['local-ads-block'], outbound: 'direct' },
 	{ action: 'route', domain_suffix: ['github.com'], outbound: 'direct' },
@@ -5941,7 +5949,9 @@ function encodeWSFrame(payload) {
 
 function makeMockSnapshot() {
 	const hosts = ['youtube.com', 'discord.com', 'github.com', 'cloudflare.com', 'mozilla.org'];
-	const sources = ['192.168.1.5', '192.168.1.7', '192.168.1.9', '192.168.1.42'];
+	// Включаем IP реальных policy-devices, чтобы Устройства-чип показал живой
+	// per-device счётчик соединений (по metadata.sourceIP).
+	const sources = ['192.168.1.42', '192.168.1.43', '192.168.1.47', '192.168.1.5'];
 	const outbounds = ['vless-1', 'urltest:auto', 'DIRECT'];
 	const rules = ['DOMAIN-SUFFIX', 'RULE-SET', 'GEOIP'];
 	const networks = ['tcp', 'tcp', 'tcp', 'udp'];

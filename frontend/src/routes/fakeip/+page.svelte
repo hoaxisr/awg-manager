@@ -16,6 +16,7 @@
 		DnsTab,
 		RuleSetsTab,
 		RoutesTab,
+		DevicesTab,
 		FakeIPPageShell,
 		deriveFakeIPEngineState,
 		type ShellChip,
@@ -268,6 +269,15 @@
 				наборов sb-router.
 			-->
 			<RoutesTab />
+		{:else if activeTab === 'devices'}
+			<!--
+				«Устройства»-чип по мокапу page-devices: ОДНА карточка — таблица
+				NDMS-устройств (hotspot) + персональная привязка (route по
+				source_ip_cidr → outbound). Список информационный (NDMS) → виден при
+				любом состоянии движка; счётчик соединений — живой сигнал, деградирует
+				по engineState.
+			-->
+			<DevicesTab {engineState} />
 		{:else}
 			<section class="chip-stub">
 				<h2 class="chip-stub-title">{activeChip.label}</h2>
