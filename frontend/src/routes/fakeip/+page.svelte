@@ -22,6 +22,7 @@
 		type ShellChip,
 	} from '$lib/components/fakeip';
 	import { ConnectionsSubTab } from '$lib/components/routing/singboxRouter';
+	import { LogsTerminal } from '$lib/components/diagnostics';
 	import { fakeipTransition } from '$lib/stores/fakeipTransition';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
@@ -301,6 +302,31 @@
 					<h2 class="chip-stub-title">{activeChip.label}</h2>
 					<p class="chip-stub-note chip-stub-empty">
 						Движок остановлен — живые соединения недоступны.
+					</p>
+				</section>
+			{/if}
+		{:else if activeTab === 'logs'}
+			<!--
+				«Журнал»-чип по мокапу page-log = sing-box-bucket общего лог-вью
+				приложения. Переиспользуем diagnostics LogsTerminal с lockBucket="singbox"
+				(level-фильтр / subgroup-чипы inbound/outbound/dns/router/runtime / поиск /
+				пауза / очистить — всё внутри; переключатель app/singbox скрыт). Живой
+				блок: при остановленном движке / clash-down — заглушка.
+			-->
+			{#if engineState === 'live'}
+				<LogsTerminal lockBucket="singbox" />
+			{:else if engineState === 'clash-down'}
+				<section class="chip-stub">
+					<h2 class="chip-stub-title">{activeChip.label}</h2>
+					<p class="chip-stub-note chip-stub-error">
+						Clash-runtime недоступен — живой журнал sing-box временно не работает.
+					</p>
+				</section>
+			{:else}
+				<section class="chip-stub">
+					<h2 class="chip-stub-title">{activeChip.label}</h2>
+					<p class="chip-stub-note chip-stub-empty">
+						Движок остановлен — живой журнал sing-box недоступен.
 					</p>
 				</section>
 			{/if}

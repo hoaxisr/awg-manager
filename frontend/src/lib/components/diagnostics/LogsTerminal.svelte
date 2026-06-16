@@ -18,6 +18,11 @@
   import type { LogsFilter } from './LogsToolbar.svelte';
   import type { LogEntry } from '$lib/types';
 
+  // lockBucket: фиксирует журнал на один bucket (напр. FakeIP-чип «Журнал» —
+  // только 'singbox') и прячет переключатель app/singbox в тулбаре. Не задан —
+  // прежнее поведение (переключаемый, как на странице Диагностики).
+  let { lockBucket }: { lockBucket?: LogBucket } = $props();
+
   const STORAGE_KEY = 'awgm.diagnostics.logsFilter';
   const BUCKET_KEY = 'awgm.diagnostics.logsBucket';
   const FULL_TIMESTAMP_KEY = 'awgm.diagnostics.logsFullTimestamp';
@@ -102,7 +107,10 @@
   }
 
   let filter = $state<LogsFilter>(loadFilter());
-  let bucket = $state<LogBucket>(loadBucket());
+  // lockBucket — фиксированный проп (не меняется в рантайме): захват начального
+  // значения — намеренный.
+  // svelte-ignore state_referenced_locally
+  let bucket = $state<LogBucket>(lockBucket ?? loadBucket());
   let showFullTimestamp = $state(loadFullTimestamp());
   let paused = $state(false);
   /** User clicked Pause — do not auto-resume when scrolled back to the top. */
@@ -365,6 +373,7 @@
   }
 
   async function setBucket(b: LogBucket) {
+    if (lockBucket) return; // bucket зафиксирован — переключение запрещено
     if (b === bucket) return;
     manualPause = false;
     paused = false;
@@ -650,6 +659,7 @@
       bind:filter
       onFilterChange={applyFilter}
       {bucket}
+      bucketLocked={!!lockBucket}
       onBucketChange={setBucket}
       {paused}
       {bufferCount}
