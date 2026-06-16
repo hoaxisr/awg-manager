@@ -32,7 +32,7 @@
 	import { Edit3, Gauge } from 'lucide-svelte';
 	import { resolveCompositeOutboundView } from '$lib/components/sb-router/compositeOutboundDisplay';
 	import { resolveMemberLabel } from '$lib/utils/memberLabel';
-	import { delayHealth } from './formatDelay';
+	import { delayHealth, formatDelay } from './formatDelay';
 
 	interface Props {
 		outbound: SingboxRouterOutbound;
@@ -179,6 +179,9 @@
 					>
 						<span class="dot" data-health={health} aria-hidden="true"></span>
 						<span class="mem-label">{memberLabel(tag)}</span>
+						{#if delay !== undefined}
+							<span class="mem-delay" data-health={health}>{formatDelay(delay)}</span>
+						{/if}
 					</button>
 				{:else}
 					<div class="mem" class:act={isActive}>
@@ -186,6 +189,9 @@
 						<span class="mem-label">{memberLabel(tag)}</span>
 						{#if isActive}
 							<span class="badge">active</span>
+						{/if}
+						{#if delay !== undefined}
+							<span class="mem-delay" data-health={health}>{formatDelay(delay)}</span>
 						{/if}
 					</div>
 				{/if}
@@ -340,6 +346,20 @@
 	}
 	.dot[data-health='down'] {
 		background: var(--color-error, #dc2626);
+	}
+
+	.mem-delay {
+		margin-left: auto;
+		flex-shrink: 0;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--text-muted);
+	}
+	.mem-delay[data-health='ok'] {
+		color: var(--color-success, #22c55e);
+	}
+	.mem-delay[data-health='down'] {
+		color: var(--color-error, #dc2626);
 	}
 
 	.mem-label {

@@ -20,9 +20,9 @@ describe('formatDelay', () => {
 		expect(formatDelay(undefined)).toBe('—');
 		expect(formatDelay(null)).toBe('—');
 	});
-	it('zero / negative → timeout', () => {
-		expect(formatDelay(0)).toBe('timeout');
-		expect(formatDelay(-5)).toBe('timeout');
+	it('zero / negative → таймаут', () => {
+		expect(formatDelay(0)).toBe('таймаут');
+		expect(formatDelay(-5)).toBe('таймаут');
 	});
 	it('positive → rounded ms', () => {
 		expect(formatDelay(123)).toBe('123 ms');

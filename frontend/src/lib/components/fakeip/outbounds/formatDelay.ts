@@ -17,6 +17,6 @@ export function delayHealth(delay: number | undefined | null): DelayHealth {
 /** Human label for a delay value: «—» untested, «timeout» unreachable, «<n> ms». */
 export function formatDelay(delay: number | undefined | null): string {
 	if (delay === undefined || delay === null) return '—';
-	if (delay <= 0) return 'timeout';
+	if (delay <= 0) return 'таймаут';
 	return `${Math.round(delay)} ms`;
 }
