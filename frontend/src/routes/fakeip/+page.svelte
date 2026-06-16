@@ -13,6 +13,7 @@
 		OverviewTab,
 		OutboundsTab,
 		DnsTab,
+		RuleSetsTab,
 		FakeIPPageShell,
 		deriveFakeIPEngineState,
 		type ShellChip,
@@ -238,6 +239,14 @@
 				состоянии движка; переиспользует эдит-модалы + CRUD sb-router.
 			-->
 			<DnsTab />
+		{:else if activeTab === 'rulesets'}
+			<!--
+				Rule sets-чип по мокапу page-rulesets-v3: одна карточка на всю ширину
+				(заголовок + описание + тип-фильтр-чипы + таблица). Конфиг (нет
+				live-рантайма) → доступно при любом состоянии движка; переиспользует
+				RuleSetAddModal + dat-каталог + CRUD sb-router.
+			-->
+			<RuleSetsTab />
 		{:else}
 			<section class="chip-stub">
 				<h2 class="chip-stub-title">{activeChip.label}</h2>

@@ -16,6 +16,11 @@ export { default as SegmentsDelivery } from './overview/SegmentsDelivery.svelte'
 export { default as OverviewTab } from './overview/OverviewTab.svelte';
 export { default as OutboundsTab } from './outbounds/OutboundsTab.svelte';
 export { default as DnsTab } from './dns/DnsTab.svelte';
+export { default as RuleSetsTab } from './rulesets/RuleSetsTab.svelte';
+export {
+	computeRuleSetUsageRefs,
+	type RuleSetUsageRef,
+} from './rulesets/ruleSetUsageRefs';
 export {
 	partitionOutbounds,
 	type PartitionedOutbounds,
