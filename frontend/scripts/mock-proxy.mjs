@@ -4986,6 +4986,72 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// Step-1 DNS-branch inspector (fakeip). Returns a representative fakeip
+	// classification with a pool so the inspector modal renders Step 1 on
+	// dev:mock. domain==="8.8.8.8" (or any IP) → "real" so the alternate
+	// verdict path is also reachable; *.lan → "local".
+	if (req.method === 'POST' && path === '/singbox/router/inspect-dns') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			let domain = 'discord.com';
+			let queryType = '';
+			try {
+				const p = JSON.parse(raw || '{}');
+				if (p.domain) domain = String(p.domain);
+				queryType = p.queryType || '';
+			} catch {}
+			const isIP = /^[0-9]{1,3}(\.[0-9]{1,3}){3}$/.test(domain);
+			const isLan = /\.lan$/i.test(domain);
+			let classification = 'fakeip';
+			let server = 'fakeip';
+			let pool = '198.18.0.0/15, fc00::/18';
+			let matchedRule = 1;
+			if (isIP) {
+				classification = 'real';
+				server = 'dns-real';
+				pool = '';
+				matchedRule = -1;
+			} else if (isLan) {
+				classification = 'local';
+				server = 'dns-local';
+				pool = '';
+				matchedRule = 0;
+			}
+			const matches = [
+				{
+					index: 0,
+					matched: isLan,
+					server: isLan ? 'dns-local' : 'fakeip',
+					conditions: [`domain: [${isLan ? domain : 'router.lan'}]`],
+					reason: isLan ? 'совпало по: домен' : 'нет совпадения',
+				},
+				{
+					index: 1,
+					matched: !isIP && !isLan,
+					server: 'fakeip',
+					conditions: ['query_type: [A, AAAA]', `domain_suffix: [${domain}]`],
+					reason: !isIP && !isLan ? 'совпало по: домен, query_type' : 'нет совпадения',
+				},
+			];
+			send(res, 200, {
+				success: true,
+				data: {
+					input: domain,
+					inputType: isIP ? 'ip' : 'domain',
+					matches,
+					matchedRule,
+					server,
+					classification,
+					pool,
+					final: isIP ? 'dns-real' : 'fakeip',
+					note: queryType === 'HTTPS' ? 'демо: query_type HTTPS не сматчил fakeip-правило' : '',
+				},
+			});
+		});
+		return;
+	}
+
 	if (req.method === 'GET' && path === '/singbox/router/dns/rules/list') {
 		send(res, 200, { success: true, data: mockDNSRules });
 		return;

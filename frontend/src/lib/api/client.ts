@@ -80,6 +80,8 @@ import type {
 	SingboxRouterInspectRequest,
 	SingboxRouterInspectResult,
 	SingboxRouterInspectProgress,
+	SingboxRouterInspectDNSRequest,
+	SingboxRouterInspectDNSResult,
 	SingboxProxiesListResponse,
 	SingboxProxiesSelectRequest,
 	SingboxProxiesTestRequest,
@@ -2165,6 +2167,15 @@ class ApiClient {
 		req: SingboxRouterInspectRequest,
 	): Promise<SingboxRouterInspectResult> {
 		return this.request('/singbox/router/inspect', {
+			method: 'POST',
+			body: JSON.stringify(req),
+		});
+	}
+
+	async singboxRouterInspectDNS(
+		req: SingboxRouterInspectDNSRequest,
+	): Promise<SingboxRouterInspectDNSResult> {
+		return this.request('/singbox/router/inspect-dns', {
 			method: 'POST',
 			body: JSON.stringify(req),
 		});

@@ -10,12 +10,19 @@
  */
 import { writable, type Readable, type Writable } from 'svelte/store';
 import { api } from '$lib/api/client';
-import type { SingboxRouterInspectResult } from '$lib/types';
+import type {
+  SingboxRouterInspectResult,
+  SingboxRouterInspectDNSResult,
+} from '$lib/types';
 
 export interface TraceInput {
   domain: string;
   port?: number;
   protocol?: string;
+  /** DNS query type for the Step-1 DNS branch (e.g. "A"/"AAAA"); empty = any. */
+  queryType?: string;
+  /** Optional source/client IP feeding source_ip_cidr matching (both branches). */
+  sourceIP?: string;
 }
 
 function readURL(): { open: boolean; domain: string } {
@@ -57,6 +64,11 @@ export const traceResult: Writable<SingboxRouterInspectResult | null> = writable
 export const traceLoading: Writable<boolean> = writable<boolean>(false);
 export const traceError: Writable<string | null> = writable<string | null>(null);
 
+// Step 1 — DNS-branch result (which dns.rule matches → which server → fakeip/real/local).
+export const dnsResult: Writable<SingboxRouterInspectDNSResult | null> = writable<SingboxRouterInspectDNSResult | null>(null);
+export const dnsLoading: Writable<boolean> = writable<boolean>(false);
+export const dnsError: Writable<string | null> = writable<string | null>(null);
+
 export function openTrace(domain?: string): void {
   if (domain !== undefined) {
     traceInput.update((cur) => ({ ...cur, domain }));
@@ -72,27 +84,48 @@ export function closeTrace(): void {
   traceInput.set({ domain: '' });
   traceResult.set(null);
   traceError.set(null);
+  dnsResult.set(null);
+  dnsError.set(null);
   updateURL(false, '');
 }
 
+/**
+ * Runs BOTH inspector branches for one domain: Step 1 (DNS-решение) via
+ * inspectDNS and Step 2 (route) via inspectRoute. The mockup shows both
+ * steps stacked for a single «Проверить», so they fire together and each
+ * tracks its own loading/error state independently.
+ */
 export async function runTrace(): Promise<void> {
   let req: TraceInput = { domain: '' };
   traceInput.subscribe((v) => { req = v; })();
-  if (!req.domain.trim()) return;
+  const domain = req.domain.trim();
+  if (!domain) return;
 
   traceLoading.set(true);
   traceError.set(null);
-  try {
-    const result = await api.singboxRouterInspectRoute({
-      domain: req.domain.trim(),
+  dnsLoading.set(true);
+  dnsError.set(null);
+
+  const routeP = api
+    .singboxRouterInspectRoute({
+      domain,
       ...(req.port != null ? { port: req.port } : {}),
       ...(req.protocol ? { protocol: req.protocol } : {}),
-    });
-    traceResult.set(result);
-    updateURL(true, req.domain.trim());
-  } catch (e) {
-    traceError.set(e instanceof Error ? e.message : String(e));
-  } finally {
-    traceLoading.set(false);
-  }
+    })
+    .then((result) => { traceResult.set(result); })
+    .catch((e) => { traceError.set(e instanceof Error ? e.message : String(e)); })
+    .finally(() => { traceLoading.set(false); });
+
+  const dnsP = api
+    .singboxRouterInspectDNS({
+      domain,
+      ...(req.queryType ? { queryType: req.queryType } : {}),
+      ...(req.sourceIP ? { sourceIP: req.sourceIP } : {}),
+    })
+    .then((result) => { dnsResult.set(result); })
+    .catch((e) => { dnsError.set(e instanceof Error ? e.message : String(e)); })
+    .finally(() => { dnsLoading.set(false); });
+
+  await Promise.all([routeP, dnsP]);
+  updateURL(true, domain);
 }

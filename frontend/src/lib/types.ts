@@ -1484,6 +1484,40 @@ export interface SingboxRouterInspectRequest {
 	protocol?: string;
 }
 
+/**
+ * One per-rule decision from the DNS-branch inspector. Mirrors
+ * SingboxRouterInspectMatch but targets a DNS server tag instead of a
+ * route outbound.
+ */
+export interface SingboxRouterInspectDNSMatch {
+	index: number;
+	matched: boolean;
+	server?: string;
+	conditions?: string[];
+	reason?: string;
+}
+
+export interface SingboxRouterInspectDNSResult {
+	input: string;
+	inputType: 'domain' | 'ip';
+	matches: SingboxRouterInspectDNSMatch[];
+	matchedRule: number;
+	/** Resolved DNS-server tag (matched rule's server, or the final server). */
+	server: string;
+	/** How the resolved server answers the query. */
+	classification: 'fakeip' | 'real' | 'local';
+	/** fakeip pool (inet4_range [+ inet6_range]); empty unless fakeip. */
+	pool?: string;
+	final: string;
+	note?: string;
+}
+
+export interface SingboxRouterInspectDNSRequest {
+	domain: string;
+	queryType?: string;
+	sourceIP?: string;
+}
+
 export interface SingboxRouterInspectProgress {
 	phase: string;
 	message: string;
