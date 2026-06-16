@@ -3109,6 +3109,75 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.SingboxRouterInspectDNSData:
+    properties:
+      classification:
+        example: fakeip
+        type: string
+      final:
+        example: fakeip
+        type: string
+      input:
+        example: discord.com
+        type: string
+      inputType:
+        example: domain
+        type: string
+      matchedRule:
+        example: 5
+        type: integer
+      matches:
+        items:
+          $ref: '#/definitions/api.SingboxRouterInspectDNSMatchDTO'
+        type: array
+      note:
+        type: string
+      pool:
+        example: 198.18.0.0/15
+        type: string
+      server:
+        example: fakeip
+        type: string
+    type: object
+  api.SingboxRouterInspectDNSMatchDTO:
+    properties:
+      conditions:
+        items:
+          type: string
+        type: array
+      index:
+        example: 0
+        type: integer
+      matched:
+        example: true
+        type: boolean
+      reason:
+        example: 'совпало по: query_type'
+        type: string
+      server:
+        example: fakeip
+        type: string
+    type: object
+  api.SingboxRouterInspectDNSRequest:
+    properties:
+      domain:
+        example: discord.com
+        type: string
+      queryType:
+        example: A
+        type: string
+      sourceIP:
+        example: 192.168.1.70
+        type: string
+    type: object
+  api.SingboxRouterInspectDNSResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SingboxRouterInspectDNSData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.SingboxRouterInspectData:
     properties:
       destination:
@@ -10394,6 +10463,42 @@ paths:
       security:
       - CookieAuth: []
       summary: Inspect router routing decision
+      tags:
+      - singbox-router
+  /singbox/router/inspect-dns:
+    post:
+      consumes:
+      - application/json
+      description: 'Simulates the DNS-resolution branch of the inspector: which dns.rule
+        matches the domain, which DNS server answers, and whether the domain gets
+        a fake-ip from a pool (→ tunnel), a real upstream IP, or a local (router)
+        resolution. Mirrors the route inspector but over dns.rules. rule_set matchers
+        are checked via sing-box rule-set match when available.'
+      parameters:
+      - description: Domain to test, plus optional query type and source IP
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterInspectDNSRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxRouterInspectDNSResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Inspect DNS-resolution decision
       tags:
       - singbox-router
   /singbox/router/inspect/stream:

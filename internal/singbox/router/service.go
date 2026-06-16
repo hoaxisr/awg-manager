@@ -93,6 +93,7 @@ type Service interface {
 
 	Inspect(ctx context.Context, input InspectInput) (InspectResult, error)
 	InspectStream(ctx context.Context, input InspectInput) (<-chan InspectStreamEvent, error)
+	InspectDNS(ctx context.Context, input InspectDNSInput) (InspectDNSResult, error)
 
 	StagingStatus(ctx context.Context) StagingStatus
 	ApplyStaging(ctx context.Context) (orchestrator.ValidationResult, error)
@@ -2321,6 +2322,31 @@ func (s *ServiceImpl) Inspect(ctx context.Context, input InspectInput) (InspectR
 		s.inspectCache = newRuleSetCache("")
 	})
 	return Inspect(input, cfg.Route.Rules, cfg.Route.RuleSet, final, binary, s.inspectCache), nil
+}
+
+// InspectDNS simulates which DNS rule would match the given domain and how
+// the resolved DNS server classifies the resolution (fakeip → tunnel /
+// real → upstream / local → router). It is the DNS-resolution branch that
+// precedes the route inspector: a domain that gets a fakeip is then routed
+// by Inspect. The matcher walk is purely Go; only rule_set matchers shell
+// out to `sing-box rule-set match`. Reads the current persisted config.
+func (s *ServiceImpl) InspectDNS(ctx context.Context, input InspectDNSInput) (InspectDNSResult, error) {
+	cfg, err := s.loadRouterConfig()
+	if err != nil {
+		return InspectDNSResult{}, err
+	}
+	if cfg == nil {
+		cfg = NewEmptyConfig()
+	}
+	dnsRules := s.ruleSetMaterializer().restoreConfig(cfg).DNS.Rules
+	binary := ""
+	if s.deps.Singbox != nil {
+		binary = s.deps.Singbox.Binary()
+	}
+	s.inspectCacheOnce.Do(func() {
+		s.inspectCache = newRuleSetCache("")
+	})
+	return InspectDNS(input, dnsRules, cfg.DNS.Servers, cfg.Route.RuleSet, cfg.DNS.Final, binary, s.inspectCache), nil
 }
 
 func (s *ServiceImpl) InspectStream(ctx context.Context, input InspectInput) (<-chan InspectStreamEvent, error) {

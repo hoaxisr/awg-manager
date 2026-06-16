@@ -145,6 +145,13 @@ func (m *mockRouterSvc) SetDNSGlobals(ctx context.Context, final, strategy strin
 func (m *mockRouterSvc) Inspect(ctx context.Context, input router.InspectInput) (router.InspectResult, error) {
 	return router.InspectResult{Input: input.Domain, InputType: "domain", Destination: "direct", MatchedRule: -1, Matches: []router.RuleMatchResult{}, Final: "direct"}, nil
 }
+func (m *mockRouterSvc) InspectDNS(ctx context.Context, input router.InspectDNSInput) (router.InspectDNSResult, error) {
+	return router.InspectDNSResult{
+		Input: input.Domain, InputType: "domain", MatchedRule: -1,
+		Server: "fakeip", Classification: "fakeip", Pool: "198.18.0.0/15",
+		Matches: []router.DNSRuleMatchResult{}, Final: "fakeip",
+	}, nil
+}
 func (m *mockRouterSvc) InspectStream(ctx context.Context, input router.InspectInput) (<-chan router.InspectStreamEvent, error) {
 	ch := make(chan router.InspectStreamEvent, 1)
 	ch <- router.InspectStreamEvent{
