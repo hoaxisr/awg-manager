@@ -22,6 +22,10 @@ func (s *ServiceImpl) DeleteDNSServer(ctx context.Context, tag string, force boo
 	return s.withConfig(ctx, "dns-servers", func(c *RouterConfig) error { return c.DeleteDNSServer(tag, force) })
 }
 
+func (s *ServiceImpl) MoveDNSServer(ctx context.Context, from, to int) error {
+	return s.withConfig(ctx, "dns-servers", func(c *RouterConfig) error { return c.MoveDNSServer(from, to) })
+}
+
 func (s *ServiceImpl) ListDNSRules(ctx context.Context) ([]DNSRule, error) {
 	cfg, err := s.loadRouterConfig()
 	if err != nil {

@@ -80,6 +80,7 @@ type Service interface {
 	AddDNSServer(ctx context.Context, s DNSServer) error
 	UpdateDNSServer(ctx context.Context, tag string, s DNSServer) error
 	DeleteDNSServer(ctx context.Context, tag string, force bool) error
+	MoveDNSServer(ctx context.Context, from, to int) error
 
 	ListDNSRules(ctx context.Context) ([]DNSRule, error)
 	AddDNSRule(ctx context.Context, r DNSRule) error

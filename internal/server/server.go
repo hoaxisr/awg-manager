@@ -1164,6 +1164,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/singbox/router/dns/servers/add", guarded(rh.AddDNSServer))
 		mux.HandleFunc("/api/singbox/router/dns/servers/update", guarded(rh.UpdateDNSServer))
 		mux.HandleFunc("/api/singbox/router/dns/servers/delete", guarded(rh.DeleteDNSServer))
+		mux.HandleFunc("/api/singbox/router/dns/servers/move", guarded(rh.MoveDNSServer))
 		mux.HandleFunc("/api/singbox/router/dns/rules/list", guarded(rh.ListDNSRules))
 		mux.HandleFunc("/api/singbox/router/dns/rules/add", guarded(rh.AddDNSRule))
 		mux.HandleFunc("/api/singbox/router/dns/rules/update", guarded(rh.UpdateDNSRule))

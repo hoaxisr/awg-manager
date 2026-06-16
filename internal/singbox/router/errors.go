@@ -18,6 +18,7 @@ var (
 	ErrDNSServerReferenced       = errors.New("dns server is referenced by one or more dns rules or used as final/default")
 	ErrDNSServerNotFound         = errors.New("dns server not found")
 	ErrDNSRuleIndexOutOfRange    = errors.New("dns rule index out of range")
+	ErrDNSServerIndexOutOfRange  = errors.New("dns server index out of range")
 	ErrDNSInvalidServer          = errors.New("dns rule references unknown server tag")
 
 	ErrPolicyNotConfigured = errors.New("router policy not configured (settings.policyName is empty)")

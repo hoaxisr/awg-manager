@@ -285,6 +285,24 @@ func TestMoveDNSRule(t *testing.T) {
 	}
 }
 
+func TestMoveDNSServer(t *testing.T) {
+	c := NewEmptyConfig()
+	_ = c.AddDNSServer(makeDNSServer("a", "udp", "1.1.1.1", ""))
+	_ = c.AddDNSServer(makeDNSServer("b", "udp", "8.8.8.8", ""))
+	_ = c.AddDNSServer(makeDNSServer("c", "udp", "9.9.9.9", ""))
+
+	if err := c.MoveDNSServer(2, 0); err != nil {
+		t.Fatal(err)
+	}
+	if c.DNS.Servers[0].Tag != "c" {
+		t.Errorf("order: %+v", c.DNS.Servers)
+	}
+
+	if err := c.MoveDNSServer(0, 5); !errors.Is(err, ErrDNSServerIndexOutOfRange) {
+		t.Errorf("expected out-of-range error, got %v", err)
+	}
+}
+
 func TestDNSRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "20-router.json")
 	c := NewEmptyConfig()

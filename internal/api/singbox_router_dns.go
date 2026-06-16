@@ -84,6 +84,13 @@ type SingboxDNSServerDeleteRequest struct {
 	Force bool   `json:"force" example:"false"`
 }
 
+// SingboxDNSServerMoveRequest is the body for
+// POST /singbox/router/dns/servers/move.
+type SingboxDNSServerMoveRequest struct {
+	From int `json:"from" example:"3"`
+	To   int `json:"to" example:"0"`
+}
+
 // SingboxDNSRuleUpdateRequest is the body for
 // POST /singbox/router/dns/rules/update.
 type SingboxDNSRuleUpdateRequest struct {
@@ -219,6 +226,36 @@ func (h *SingboxRouterHandler) DeleteDNSServer(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err := h.svc.DeleteDNSServer(r.Context(), body.Tag, body.Force); err != nil {
+		h.handleErr(w, "request", err)
+		return
+	}
+	response.Success(w, map[string]bool{"ok": true})
+}
+
+// MoveDNSServer reorders a DNS server from one slot to another.
+//
+//	@Summary		Move singbox-router DNS server
+//	@Description	Moves the DNS server from index `from` to index `to` (both 0-based). Server order is cosmetic — sing-box references servers by tag; this exists only for UX-consistent reordering.
+//	@Tags			singbox-router
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		SingboxDNSServerMoveRequest	true	"From-index and to-index"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/singbox/router/dns/servers/move [post]
+func (h *SingboxRouterHandler) MoveDNSServer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	var body SingboxDNSServerMoveRequest
+	if err := decodeBody(r, &body); err != nil {
+		response.BadRequest(w, err.Error())
+		return
+	}
+	if err := h.svc.MoveDNSServer(r.Context(), body.From, body.To); err != nil {
 		h.handleErr(w, "request", err)
 		return
 	}

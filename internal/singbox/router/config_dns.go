@@ -354,6 +354,27 @@ func (c *RouterConfig) MoveDNSRule(from, to int) error {
 	return nil
 }
 
+// MoveDNSServer reorders the DNS server at index `from` to index `to`.
+// ponytail: server order is cosmetic — sing-box references servers by tag;
+// endpoint exists only for UX-consistent reordering.
+func (c *RouterConfig) MoveDNSServer(from, to int) error {
+	n := len(c.DNS.Servers)
+	if from < 0 || from >= n || to < 0 || to >= n {
+		return ErrDNSServerIndexOutOfRange
+	}
+	if from == to {
+		return nil
+	}
+	s := c.DNS.Servers[from]
+	without := append(c.DNS.Servers[:from:from], c.DNS.Servers[from+1:]...)
+	servers := make([]DNSServer, 0, n)
+	servers = append(servers, without[:to]...)
+	servers = append(servers, s)
+	servers = append(servers, without[to:]...)
+	c.DNS.Servers = servers
+	return nil
+}
+
 func (c *RouterConfig) SetDNSGlobals(final, strategy string) error {
 	if final != "" && !c.dnsServerTags()[final] {
 		return fmt.Errorf("%w: final %q", ErrDNSServerNotFound, final)

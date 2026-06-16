@@ -2959,6 +2959,15 @@ definitions:
         example: cloudflare
         type: string
     type: object
+  api.SingboxDNSServerMoveRequest:
+    properties:
+      from:
+        example: 3
+        type: integer
+      to:
+        example: 0
+        type: integer
+    type: object
   api.SingboxDNSServerUpdateRequest:
     properties:
       server:
@@ -10205,6 +10214,40 @@ paths:
       security:
       - CookieAuth: []
       summary: List singbox-router DNS servers
+      tags:
+      - singbox-router
+  /singbox/router/dns/servers/move:
+    post:
+      consumes:
+      - application/json
+      description: Moves the DNS server from index `from` to index `to` (both 0-based).
+        Server order is cosmetic — sing-box references servers by tag; this exists
+        only for UX-consistent reordering.
+      parameters:
+      - description: From-index and to-index
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxDNSServerMoveRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Move singbox-router DNS server
       tags:
       - singbox-router
   /singbox/router/dns/servers/update:

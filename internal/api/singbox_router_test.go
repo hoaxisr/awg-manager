@@ -128,6 +128,7 @@ func (m *mockRouterSvc) UpdateDNSServer(ctx context.Context, tag string, s route
 func (m *mockRouterSvc) DeleteDNSServer(ctx context.Context, tag string, force bool) error {
 	return nil
 }
+func (m *mockRouterSvc) MoveDNSServer(ctx context.Context, from, to int) error { return nil }
 func (m *mockRouterSvc) ListDNSRules(ctx context.Context) ([]router.DNSRule, error) { return nil, nil }
 func (m *mockRouterSvc) AddDNSRule(ctx context.Context, r router.DNSRule) error     { return nil }
 func (m *mockRouterSvc) UpdateDNSRule(ctx context.Context, index int, r router.DNSRule) error {
