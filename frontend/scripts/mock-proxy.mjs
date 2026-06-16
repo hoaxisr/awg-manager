@@ -4944,6 +4944,26 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	if (req.method === 'POST' && path === '/singbox/router/dns/servers/move') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const { from, to } = JSON.parse(raw || '{}');
+				if (from < 0 || from >= mockDNSServers.length || to < 0 || to >= mockDNSServers.length) {
+					send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'dns server not found' } });
+					return;
+				}
+				const [moved] = mockDNSServers.splice(from, 1);
+				mockDNSServers.splice(to, 0, moved);
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
 	if (req.method === 'POST' && path === '/singbox/router/presets/apply') {
 		// simulate latency for visible "Применяем" log
 		await wait(200);
@@ -5001,6 +5021,26 @@ const server = http.createServer(async (req, res) => {
 					return;
 				}
 				mockDNSRules.splice(index, 1);
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/dns/rules/move') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const { from, to } = JSON.parse(raw || '{}');
+				if (from < 0 || from >= mockDNSRules.length || to < 0 || to >= mockDNSRules.length) {
+					send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'dns rule not found' } });
+					return;
+				}
+				const [moved] = mockDNSRules.splice(from, 1);
+				mockDNSRules.splice(to, 0, moved);
 				send(res, 200, { success: true, data: { ok: true } });
 			} catch (e) {
 				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });

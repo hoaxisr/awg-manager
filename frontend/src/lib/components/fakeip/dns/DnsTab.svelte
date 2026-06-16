@@ -21,17 +21,17 @@
   Движок-гейт: DNS — это конфиг, доступен при любом состоянии движка (никаких
   live-рантайм блоков), поэтому рендерится всегда.
 
-  Drag-reorder: для DNS-серверов backend-метода переупорядочивания НЕТ
-  (есть только singboxRouterMoveDNSRule / *MoveDNSRewrite). Чтобы не выдумывать
-  частичный UX, грип-ручки рендерятся для визуального паритета с мокапом, но
-  функциональный drag отложен для ВСЕХ трёх блоков.
-  // ponytail: drag-reorder deferred — единый визуальный грип без переноса; для
-  // DNS-серверов reorder-API отсутствует, для правил/перезаписей есть Move, но
-  // вводить drag только для двух из трёх блоков — рассинхрон UX. Включим разом,
-  // когда появится reorder DNS-серверов.
+  Drag-reorder: все три блока (серверы / правила / перезаписи) перетаскиваются
+  через общее pointer-ядро reorderDrag (тот же подход, что и route.rules):
+  порог → захват → midpoint-вставка → drop-линия → оптимистика + Move + откат.
+  Перезаписи тащит сам общий DNSRewritesList. Read-only «final»-строка правил не
+  движется (canMove-гард). MoveDNSServer добавлен в бэкенд (порядок серверов
+  косметичен — sing-box ссылается по tag, — но drag единообразен для всех блоков).
 -->
 <script lang="ts">
+	import { get } from 'svelte/store';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { createReorderDrag } from '$lib/components/sb-router/reorderDrag.svelte';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { singboxProxies } from '$lib/stores/singboxProxies';
 	import { singboxTunnels } from '$lib/stores/singbox';
@@ -95,6 +95,52 @@
 		const path = s.path ?? '';
 		return `${s.server}${port}${path}`;
 	}
+
+	// ── Drag-reorder (общее pointer-ядро reorderDrag, как route.rules) ────
+	let serverRowEls = $state<Array<HTMLElement | null>>([]);
+	let ruleRowEls = $state<Array<HTMLElement | null>>([]);
+
+	function reorder<T>(list: T[], from: number, to: number): T[] {
+		const next = list.slice();
+		const [moved] = next.splice(from, 1);
+		next.splice(to, 0, moved);
+		return next;
+	}
+
+	const serverDrag = createReorderDrag({
+		getRowElement: (i) => serverRowEls[i] ?? null,
+		count: () => $storeDnsServers.length,
+		onCommit: async (from, to) => {
+			const snapshot = get(singboxRouter.dnsServers);
+			singboxRouter.applyDNSServers(reorder(snapshot, from, to));
+			try {
+				await api.singboxRouterMoveDNSServer(from, to);
+				await singboxRouter.loadAll();
+			} catch (e) {
+				singboxRouter.applyDNSServers(snapshot);
+				notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
+			}
+		},
+	});
+
+	const ruleDrag = createReorderDrag({
+		getRowElement: (i) => ruleRowEls[i] ?? null,
+		// +1 виртуальная read-only «final»-строка в самом конце.
+		count: () => $storeDnsRules.length + 1,
+		// «final» нельзя ни схватить, ни уронить ниже последнего реального правила.
+		canMove: (_from, to) => to < $storeDnsRules.length,
+		onCommit: async (from, to) => {
+			const snapshot = get(singboxRouter.dnsRules);
+			singboxRouter.applyDNSRules(reorder(snapshot, from, to));
+			try {
+				await api.singboxRouterMoveDNSRule(from, to);
+				await singboxRouter.loadAll();
+			} catch (e) {
+				singboxRouter.applyDNSRules(snapshot);
+				notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
+			}
+		},
+	});
 
 	// ── Modal state ───────────────────────────────────────────────────────
 	let dnsServerEditTag = $state<string | null>(null);
@@ -218,11 +264,21 @@
 		{#if $storeDnsServers.length === 0}
 			<div class="empty">Нет DNS-серверов.</div>
 		{:else}
-			<div class="rows">
-				{#each $storeDnsServers as s (s.tag)}
+			<div class="rows" class:is-dragging={serverDrag.draggingIndex !== null}>
+				{#each $storeDnsServers as s, i (s.tag)}
 					{@const core = isCoreServer(s)}
-					<div class="srow">
-						<span class="grip" aria-hidden="true"><GripVertical size={16} strokeWidth={2} /></span>
+					<div class="row-shell" class:drop-before={serverDrag.dropBefore(i)}>
+					<div class="srow" class:dragging={serverDrag.draggingIndex === i} bind:this={serverRowEls[i]}>
+						<button
+							type="button"
+							class="grip"
+							class:is-busy={serverDrag.busy}
+							aria-label={`Перетащить DNS-сервер ${s.tag}`}
+							title="Перетащить для изменения порядка"
+							onpointerdown={serverDrag.busy ? undefined : (e) => serverDrag.handlePointerDown(i, e)}
+						>
+							<GripVertical size={16} strokeWidth={2} />
+						</button>
 						<div class="tag-cell">
 							<span class="stag">{s.tag}</span>
 							{#if s.type === ('fakeip' as typeof s.type)}<span class="core">ядро</span>{/if}
@@ -271,7 +327,9 @@
 							{/if}
 						</div>
 					</div>
+					</div>
 				{/each}
+				<div class="end-drop" class:drop-before={serverDrag.dropAtEnd()}></div>
 			</div>
 		{/if}
 
@@ -300,12 +358,22 @@
 			источник.
 		</p>
 
-		<div class="rows">
+		<div class="rows" class:is-dragging={ruleDrag.draggingIndex !== null}>
 			{#each $storeDnsRules as r, i (i)}
 				{@const tgt = dnsRuleTarget(r)}
 				{@const matchers = dnsMatcherParts(r)}
-				<div class="rrow">
-					<span class="grip" aria-hidden="true"><GripVertical size={16} strokeWidth={2} /></span>
+				<div class="row-shell" class:drop-before={ruleDrag.dropBefore(i)}>
+				<div class="rrow" class:dragging={ruleDrag.draggingIndex === i} bind:this={ruleRowEls[i]}>
+					<button
+						type="button"
+						class="grip"
+						class:is-busy={ruleDrag.busy}
+						aria-label={`Перетащить DNS-правило #${i + 1}`}
+						title="Перетащить для изменения порядка"
+						onpointerdown={ruleDrag.busy ? undefined : (e) => ruleDrag.handlePointerDown(i, e)}
+					>
+						<GripVertical size={16} strokeWidth={2} />
+					</button>
 					<span class="num">{i + 1}</span>
 					<button
 						type="button"
@@ -354,10 +422,12 @@
 						</button>
 					</div>
 				</div>
+				</div>
 			{/each}
 
-			<!-- Итоговая read-only строка: final → globals.final -->
-			<div class="rrow final-row">
+			<!-- Итоговая read-only строка: final → globals.final (не перетаскивается) -->
+			<div class="row-shell" class:drop-before={ruleDrag.dropBefore($storeDnsRules.length)}>
+			<div class="rrow final-row" bind:this={ruleRowEls[$storeDnsRules.length]}>
 				<span class="grip" aria-hidden="true"></span>
 				<span class="num">{$storeDnsRules.length + 1}</span>
 				<span class="match-final">
@@ -366,6 +436,7 @@
 					<span class="final-target">{$storeDnsGlobals.final || '—'}</span>
 				</span>
 				<div class="acts"></div>
+			</div>
 			</div>
 		</div>
 	</section>
@@ -526,6 +597,33 @@
 		flex-direction: column;
 	}
 
+	/* ── Drag-reorder (общее pointer-ядро) ── */
+	.rows.is-dragging {
+		user-select: none;
+	}
+	.row-shell {
+		position: relative;
+		min-width: 0;
+	}
+	.row-shell.drop-before::before,
+	.end-drop.drop-before::before {
+		content: '';
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: -1px;
+		height: 2px;
+		border-radius: 999px;
+		background: var(--color-accent, var(--accent));
+		box-shadow: 0 0 10px color-mix(in srgb, var(--color-accent, var(--accent)) 45%, transparent);
+		z-index: 2;
+		pointer-events: none;
+	}
+	.end-drop {
+		position: relative;
+		height: 0;
+	}
+
 	/* ── DNS-серверы строки ── */
 	.srow {
 		display: grid;
@@ -535,15 +633,46 @@
 		padding: 0.55rem 0.25rem;
 		border-bottom: 1px solid var(--color-border, var(--border));
 	}
-	.srow:last-of-type {
+	.row-shell:last-of-type .srow {
 		border-bottom: none;
+	}
+	.srow.dragging,
+	.rrow.dragging {
+		opacity: 0.7;
+		border-radius: var(--radius-sm, 6px);
+		outline: 1px solid color-mix(in srgb, var(--color-accent, var(--accent)) 55%, var(--border));
+		outline-offset: -1px;
 	}
 
 	.grip {
 		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		background: transparent;
+		border: none;
+		padding: 0;
 		color: var(--text-muted);
 		opacity: 0.55;
 		cursor: grab;
+		touch-action: none;
+		border-radius: 4px;
+	}
+	button.grip:hover {
+		color: var(--text-primary);
+		opacity: 1;
+	}
+	button.grip:active {
+		cursor: grabbing;
+	}
+	.grip.is-busy {
+		cursor: wait;
+		opacity: 0.3;
+		pointer-events: none;
+	}
+
+	:global(body.reorder-dragging) {
+		user-select: none;
+		cursor: grabbing;
 	}
 
 	.tag-cell {
@@ -601,7 +730,7 @@
 		padding: 0.55rem 0.25rem;
 		border-bottom: 1px solid var(--color-border, var(--border));
 	}
-	.rrow:last-of-type {
+	.row-shell:last-of-type .rrow {
 		border-bottom: none;
 	}
 	.num {

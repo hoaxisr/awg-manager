@@ -2102,6 +2102,13 @@ class ApiClient {
 		});
 	}
 
+	async singboxRouterMoveDNSServer(from: number, to: number): Promise<void> {
+		await this.request('/singbox/router/dns/servers/move', {
+			method: 'POST',
+			body: JSON.stringify({ from, to }),
+		});
+	}
+
 	async singboxRouterListDNSRewrites(): Promise<SingboxRouterDNSRewrite[]> {
 		return this.request('/singbox/router/dns/rewrites/list');
 	}

@@ -1,11 +1,14 @@
 <script lang="ts">
+	import { get } from 'svelte/store';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
+	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { Button, ConfirmModal } from '$lib/components/ui';
-	import { Trash2, Edit3 } from 'lucide-svelte';
+	import { Trash2, Edit3, GripVertical } from 'lucide-svelte';
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
 	import type { SingboxRouterDNSRewrite } from '$lib/types';
 	import DNSRewriteEditModal from './DNSRewriteEditModal.svelte';
+	import { createReorderDrag } from '$lib/components/sb-router/reorderDrag.svelte';
 
 	interface Props {
 		rewrites: SingboxRouterDNSRewrite[];
@@ -21,6 +24,32 @@
 	let editIndex = $state<number | null>(null);
 	let deleteIndex = $state<number | null>(null);
 	let deleteBusy = $state(false);
+
+	// ── Drag-reorder (то же pointer-ядро, что и route.rules) ──────────────
+	let rowEls = $state<Array<HTMLElement | null>>([]);
+
+	function reorder(list: SingboxRouterDNSRewrite[], from: number, to: number): SingboxRouterDNSRewrite[] {
+		const next = list.slice();
+		const [moved] = next.splice(from, 1);
+		next.splice(to, 0, moved);
+		return next;
+	}
+
+	const drag = createReorderDrag({
+		getRowElement: (i) => rowEls[i] ?? null,
+		count: () => rewrites.length,
+		onCommit: async (from, to) => {
+			const snapshot = get(singboxRouter.dnsRewrites);
+			singboxRouter.applyDNSRewrites(reorder(snapshot, from, to));
+			try {
+				await api.singboxRouterMoveDNSRewrite(from, to);
+				await onChange();
+			} catch (e) {
+				singboxRouter.applyDNSRewrites(snapshot);
+				notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
+			}
+		},
+	});
 
 	function requestEdit(i: number): void {
 		editIndex = i;
@@ -65,16 +94,20 @@
 {:else}
 	{#if !hideColumnHeader}
 		<div class="col-header">
+			<div></div>
 			<div>Шаблон</div>
 			<div></div>
 			<div>IP-адреса</div>
 			<div class="actions-head">Действия</div>
 		</div>
 	{/if}
-	<div class="rows">
+	<div class="rows" class:is-dragging={drag.draggingIndex !== null}>
 		{#each rewrites as rw, i (i)}
+			<div class="row-shell" class:drop-before={drag.dropBefore(i)}>
 			<div
 				class="row"
+				class:dragging={drag.draggingIndex === i}
+				bind:this={rowEls[i]}
 				role="button"
 				tabindex="0"
 				onclick={() => requestEdit(i)}
@@ -89,6 +122,17 @@
 				aria-label={`Редактировать DNS-перезапись ${rw.pattern}`}
 				title={`Редактировать DNS-перезапись «${rw.pattern}»`}
 			>
+				<button
+					type="button"
+					class="grip"
+					class:is-busy={drag.busy}
+					aria-label={`Перетащить DNS-перезапись ${rw.pattern}`}
+					title="Перетащить для изменения порядка"
+					onpointerdown={drag.busy ? undefined : (e) => drag.handlePointerDown(i, e)}
+					onclick={(e) => e.stopPropagation()}
+				>
+					<GripVertical size={15} />
+				</button>
 				<code class="pat mono" title={rw.pattern}>{rw.pattern}</code>
 				<span class="arrow">→</span>
 				<span class="ips-line">
@@ -122,7 +166,9 @@
 					</button>
 				</div>
 			</div>
+			</div>
 		{/each}
+		<div class="end-drop" class:drop-before={drag.dropAtEnd()}></div>
 	</div>
 {/if}
 
@@ -178,7 +224,7 @@
 	}
 	.col-header {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr) auto;
+		grid-template-columns: auto minmax(0, 1fr) 16px minmax(0, 1fr) auto;
 		gap: 0.4rem;
 		padding: 0.25rem 0.75rem;
 		font-size: 0.65rem;
@@ -195,10 +241,35 @@
 		gap: 0.2rem;
 		min-width: 0;
 	}
+	.rows.is-dragging {
+		user-select: none;
+	}
+	.row-shell {
+		position: relative;
+		min-width: 0;
+	}
+	.row-shell.drop-before::before,
+	.end-drop.drop-before::before {
+		content: '';
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: -1px;
+		height: 2px;
+		border-radius: 999px;
+		background: var(--color-accent, var(--accent));
+		box-shadow: 0 0 10px color-mix(in srgb, var(--color-accent, var(--accent)) 45%, transparent);
+		z-index: 2;
+		pointer-events: none;
+	}
+	.end-drop {
+		position: relative;
+		height: 0;
+	}
 	.row {
 		transition: background-color 0.15s ease;
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr) auto;
+		grid-template-columns: auto minmax(0, 1fr) 16px minmax(0, 1fr) auto;
 		gap: 0.4rem;
 		align-items: center;
 		min-width: 0;
@@ -207,10 +278,41 @@
 		border-radius: 4px;
 		cursor: pointer;
 	}
+	.row.dragging {
+		border: 1px solid color-mix(in srgb, var(--color-accent, var(--accent)) 55%, var(--border));
+		opacity: 0.7;
+	}
 
 	.row:focus-visible {
 		outline: 2px solid var(--color-accent, var(--accent));
 		outline-offset: 2px;
+	}
+
+	.grip {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		background: transparent;
+		border: none;
+		padding: 2px;
+		color: var(--text-muted);
+		cursor: grab;
+		touch-action: none;
+		border-radius: 4px;
+		opacity: 0.6;
+		flex-shrink: 0;
+	}
+	.grip:hover {
+		color: var(--text-primary);
+		opacity: 1;
+	}
+	.grip:active {
+		cursor: grabbing;
+	}
+	.grip.is-busy {
+		cursor: wait;
+		opacity: 0.35;
+		pointer-events: none;
 	}
 
 	.row-actions {
@@ -269,10 +371,10 @@
 		}
 
 		.row {
-			grid-template-columns: minmax(0, 1fr) auto;
+			grid-template-columns: auto minmax(0, 1fr) auto;
 			grid-template-areas:
-				'pattern actions'
-				'ips actions';
+				'grip pattern actions'
+				'grip ips actions';
 			gap: 0.5rem 0.625rem;
 			padding: 0.75rem 0.875rem;
 			border: 0;
@@ -285,6 +387,7 @@
 			border-bottom: 0;
 		}
 
+		.grip { grid-area: grip; align-self: center; }
 		.pat { grid-area: pattern; }
 		.ips-line {
 			grid-area: ips;
@@ -317,5 +420,10 @@
 			grid-area: actions;
 			align-self: center;
 		}
+	}
+
+	:global(body.reorder-dragging) {
+		user-select: none;
+		cursor: grabbing;
 	}
 </style>
