@@ -29,7 +29,7 @@
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
-	import { Button, ConfirmModal } from '$lib/components/ui';
+	import { ConfirmModal } from '$lib/components/ui';
 	import { Plus } from 'lucide-svelte';
 	import CompositeOutboundEditModal from '$lib/components/routing/singboxRouter/CompositeOutboundEditModal.svelte';
 	import type { SingboxRouterOutbound } from '$lib/types';
@@ -103,6 +103,14 @@
 	// per-group: результаты последнего теста (memberTag → delay) + флаг busy.
 	let testResults = $state<Record<string, Record<string, number>>>({});
 	let testingTag = $state<string | null>(null);
+	// Время последнего теста по группе (hh:mm) — для «members · last hh:mm»;
+	// `lastTestAtAny` — общий «health-check … · last hh:mm» в шапке ATOMIC.
+	let lastTestAt = $state<Record<string, string>>({});
+	let lastTestAtAny = $state<string | null>(null);
+
+	function nowHHMM(): string {
+		return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	}
 
 	async function handleTest(tag: string): Promise<void> {
 		if (testingTag) return;
@@ -110,6 +118,9 @@
 		try {
 			const res = await api.singboxRouterTestProxy({ group: tag });
 			testResults = { ...testResults, [tag]: res.delays };
+			const stamp = nowHHMM();
+			lastTestAt = { ...lastTestAt, [tag]: stamp };
+			lastTestAtAny = stamp;
 			// Refresh the live snapshot so `now` / lastDelay reflect the probe.
 			await singboxProxies.refetch();
 		} catch (e) {
@@ -137,31 +148,22 @@
 </script>
 
 <section class="outbounds-tab">
-	<header class="tab-head">
-		<div class="head-text">
-			<h2 class="head-title">Outbounds</h2>
-			<p class="head-sub">
-				Направления трафика: прямой выход и composite-группы
-				(selector / urltest / loadbalance).
-			</p>
-		</div>
-		<Button variant="primary" size="sm" onclick={() => (addOpen = true)}>
-			{#snippet iconBefore()}
-				<Plus size={14} aria-hidden="true" />
-			{/snippet}
-			Outbound
-		</Button>
-	</header>
-
 	<div class="section">
-		<div class="section-head">
-			<h3 class="section-title">Атомарные</h3>
-			<span class="section-count">{partitioned.atomic.length}</span>
+		<div class="sectlbl">
+			<span class="sect-name"
+				>Outbounds · atomic <span class="sect-count">· {partitioned.atomic.length}</span></span
+			>
+			<span class="sect-right">
+				<span class="hc">health-check по запросу{#if lastTestAtAny} · last {lastTestAtAny}{/if}</span>
+				<button type="button" class="add" onclick={() => (addOpen = true)}>
+					<Plus size={13} aria-hidden="true" /> outbound
+				</button>
+			</span>
 		</div>
 		{#if partitioned.atomic.length === 0}
 			<p class="section-empty">Нет атомарных outbounds.</p>
 		{:else}
-			<div class="cards">
+			<div class="ocards">
 				{#each partitioned.atomic as o (o.tag)}
 					<AtomicOutboundCard
 						outbound={o}
@@ -175,14 +177,19 @@
 	</div>
 
 	<div class="section">
-		<div class="section-head">
-			<h3 class="section-title">Composite-группы</h3>
-			<span class="section-count">{partitioned.composite.length}</span>
+		<div class="sectlbl">
+			<span class="sect-name"
+				>Outbounds · composite <span class="sect-count">· {partitioned.composite.length}</span
+				></span
+			>
+			<button type="button" class="add" onclick={() => (addOpen = true)}>
+				<Plus size={13} aria-hidden="true" /> Новая группа
+			</button>
 		</div>
 		{#if partitioned.composite.length === 0}
 			<p class="section-empty">Composite-группы не настроены.</p>
 		{:else}
-			<div class="cards">
+			<div class="ocards">
 				{#each partitioned.composite as o (o.tag)}
 					<CompositeOutboundCard
 						outbound={o}
@@ -194,6 +201,7 @@
 						testDelays={testResults[o.tag]}
 						testing={testingTag === o.tag}
 						selecting={selectingTag === o.tag}
+						lastTestAt={lastTestAt[o.tag]}
 						onEdit={(tag) => (editTag = tag)}
 						onDelete={requestDelete}
 						onTest={handleTest}
@@ -203,6 +211,12 @@
 			</div>
 		{/if}
 	</div>
+
+	<p class="note">
+		Иконки Lucide: pencil (изменить), gauge (тест), plus (добавить). Точка —
+		последний тест (по запросу). «active» — реальный выбор группы. Скорость
+		per-outbound не показываем. Типы групп: urltest / selector.
+	</p>
 </section>
 
 {#if addOpen}
@@ -237,54 +251,61 @@
 	.outbounds-tab {
 		display: flex;
 		flex-direction: column;
-		gap: 1.25rem;
-	}
-
-	.tab-head {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 1rem;
-	}
-
-	.head-title {
-		margin: 0;
-		font-size: 1.0625rem;
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.head-sub {
-		margin: 0.25rem 0 0;
-		font-size: 0.8125rem;
-		color: var(--text-muted);
+		gap: 1.125rem;
 	}
 
 	.section {
 		display: flex;
 		flex-direction: column;
-		gap: 0.625rem;
+		gap: 0.75rem;
 	}
 
-	.section-head {
+	.sectlbl {
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
+		justify-content: space-between;
+		gap: 0.75rem;
+		flex-wrap: wrap;
 	}
 
-	.section-title {
-		margin: 0;
+	.sect-name {
 		font-size: 0.8125rem;
 		font-weight: 600;
 		text-transform: uppercase;
-		letter-spacing: 0.05em;
+		letter-spacing: 0.08em;
 		color: var(--text-secondary);
 	}
 
-	.section-count {
-		font-size: 0.8125rem;
-		font-family: var(--font-mono);
+	.sect-count {
 		color: var(--text-muted);
+		font-family: var(--font-mono);
+	}
+
+	.sect-right {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.625rem;
+	}
+
+	.hc {
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+	}
+
+	.add {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3125rem;
+		color: var(--color-accent);
+		border: 1px solid var(--color-accent-border, var(--color-accent));
+		border-radius: var(--radius-sm);
+		padding: 0.25rem 0.5625rem;
+		background: transparent;
+		cursor: pointer;
+		font-size: 0.8125rem;
+	}
+	.add:hover {
+		background: var(--accent-soft);
 	}
 
 	.section-empty {
@@ -293,10 +314,16 @@
 		color: var(--text-muted);
 	}
 
-	.cards {
+	.ocards {
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
 		gap: 0.75rem;
-		align-items: start;
+		align-items: stretch;
+	}
+
+	.note {
+		margin: 0;
+		font-size: 0.8125rem;
+		color: var(--text-muted);
 	}
 </style>
