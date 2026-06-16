@@ -4716,10 +4716,17 @@ const server = http.createServer(async (req, res) => {
 
 	if (req.method === 'GET' && path === '/singbox/fakeip/segments') {
 		// Ground-truth segment state — mutated by the POST toggle below.
-		// Strip the internal lanDNS bookkeeping field from the DTO.
+		// Strip the internal lanDNS bookkeeping field from the DTO. The
+		// envelope also carries the read-only fakeip-tun gateway addresses
+		// (Inbounds tun-in card) — same DefaultFakeIPTunParams as the backend.
 		send(res, 200, {
 			success: true,
-			data: mockFakeIPSegments.map(({ lanDNS, ...seg }) => seg),
+			data: {
+				tunAddr4: '172.18.0.1/30',
+				tunAddr6: 'fdfe:dcba:9876::1/126',
+				tunDns: FAKEIP_TUN_DNS,
+				segments: mockFakeIPSegments.map(({ lanDNS, ...seg }) => seg),
+			},
 		});
 		return;
 	}

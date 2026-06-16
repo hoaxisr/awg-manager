@@ -30,8 +30,8 @@
 		loading = true;
 		loadError = '';
 		try {
-			const segments = await api.singboxRouterListSegments();
-			rows = segmentRows(segments);
+			const data = await api.singboxRouterListSegments();
+			rows = segmentRows(data.segments);
 			loaded = true;
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : 'Не удалось загрузить сегменты';

@@ -1439,6 +1439,21 @@ export interface FakeIPSegment {
 	inFakeip: boolean;
 }
 
+// FakeIPSegmentsData is the payload of GET /singbox/fakeip/segments. Mirrors
+// api.FakeIPSegmentsData: the read-only, engine-managed fakeip-tun gateway
+// addresses (surfaced for the Inbounds "tun-in" card so the FE does not
+// hardcode magic IPs) plus the DHCP-pool→segment projection.
+export interface FakeIPSegmentsData {
+	/** Tun gateway IPv4 CIDR, e.g. "172.18.0.1/30". */
+	tunAddr4: string;
+	/** Tun gateway IPv6 CIDR, e.g. "fdfe:dcba:9876::1/126" (omitted if v6 off). */
+	tunAddr6?: string;
+	/** Fakeip-tun DNS handed to clients (.2 of the tun /30). */
+	tunDns?: string;
+	/** DHCP-pool→fakeip-segment projection (always present). */
+	segments: FakeIPSegment[];
+}
+
 /**
  * One per-rule decision from the route inspector. matchedRule == -1 in
  * SingboxRouterInspectResult means no rule produced a final destination

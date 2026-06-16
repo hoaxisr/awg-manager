@@ -37,10 +37,28 @@ type FakeIPSegmentDTO struct {
 	InFakeip  bool   `json:"inFakeip" example:"false"`
 }
 
+// FakeIPSegmentsData is the payload of GET /singbox/fakeip/segments: the
+// fakeip-tun gateway addresses (read-only, engine-managed — surfaced for the
+// Inbounds "tun-in" card so the FE does not hardcode magic IPs) plus the
+// DHCP-pool→segment projection. The tun addresses come from the same
+// DefaultFakeIPTunParams the enable path uses (single source of truth).
+type FakeIPSegmentsData struct {
+	// TunAddr4 is the tun gateway IPv4 CIDR, e.g. "172.18.0.1/30".
+	TunAddr4 string `json:"tunAddr4" example:"172.18.0.1/30"`
+	// TunAddr6 is the tun gateway IPv6 CIDR, e.g. "fdfe:dcba:9876::1/126"
+	// (empty when v6 is disabled).
+	TunAddr6 string `json:"tunAddr6,omitempty" example:"fdfe:dcba:9876::1/126"`
+	// TunDNS is the fakeip-tun DNS handed to clients (the .2 of the tun /30),
+	// the same address provisioning advertises via DHCP.
+	TunDNS string `json:"tunDns,omitempty" example:"172.18.0.2"`
+	// Segments is the DHCP-pool→fakeip-segment projection (always non-null).
+	Segments []FakeIPSegmentDTO `json:"segments"`
+}
+
 // FakeIPSegmentsListResponse is the envelope for GET /singbox/fakeip/segments.
 type FakeIPSegmentsListResponse struct {
 	Success bool               `json:"success" example:"true"`
-	Data    []FakeIPSegmentDTO `json:"data"`
+	Data    FakeIPSegmentsData `json:"data"`
 }
 
 // FakeIPSegmentToggleRequest is the body of POST /singbox/fakeip/segments: set
@@ -111,10 +129,14 @@ func (h *FakeIPSegmentsHandler) ListSegments(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Tun gateway params come from the same default params the enable path
+	// uses (single source of truth) — the FE's read-only "tun-in" Inbounds
+	// card surfaces these instead of hardcoding magic IPs.
+	params := router.DefaultFakeIPTunParams()
 	// expected = the fakeip-tun DNS address handed to clients (.2 of the tun
-	// /30). Derived from the same default params the enable path uses, so the
-	// inFakeip flag stays consistent with what provisioning would set.
-	expected, _ := router.DeriveTunDNS(router.DefaultFakeIPTunParams().TunAddr4)
+	// /30). Same derivation as provisioning, so the inFakeip flag stays
+	// consistent with what provisioning would set.
+	expected, _ := router.DeriveTunDNS(params.TunAddr4)
 
 	segments := make([]FakeIPSegmentDTO, 0, len(pools))
 	for _, p := range pools {
@@ -126,7 +148,12 @@ func (h *FakeIPSegmentsHandler) ListSegments(w http.ResponseWriter, r *http.Requ
 		})
 	}
 	sort.Slice(segments, func(i, j int) bool { return segments[i].Pool < segments[j].Pool })
-	response.Success(w, segments)
+	response.Success(w, FakeIPSegmentsData{
+		TunAddr4: params.TunAddr4,
+		TunAddr6: params.TunAddr6,
+		TunDNS:   expected,
+		Segments: segments,
+	})
 }
 
 // ToggleSegment sets (inFakeip=true) or clears (false) the DHCP-advertised DNS

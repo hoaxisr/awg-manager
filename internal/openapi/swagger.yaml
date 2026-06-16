@@ -1192,12 +1192,34 @@ definitions:
         example: _WEBADMIN
         type: string
     type: object
-  api.FakeIPSegmentsListResponse:
+  api.FakeIPSegmentsData:
     properties:
-      data:
+      segments:
+        description: Segments is the DHCP-pool→fakeip-segment projection (always non-null).
         items:
           $ref: '#/definitions/api.FakeIPSegmentDTO'
         type: array
+      tunAddr4:
+        description: TunAddr4 is the tun gateway IPv4 CIDR, e.g. "172.18.0.1/30".
+        example: 172.18.0.1/30
+        type: string
+      tunAddr6:
+        description: |-
+          TunAddr6 is the tun gateway IPv6 CIDR, e.g. "fdfe:dcba:9876::1/126"
+          (empty when v6 is disabled).
+        example: fdfe:dcba:9876::1/126
+        type: string
+      tunDns:
+        description: |-
+          TunDNS is the fakeip-tun DNS handed to clients (the .2 of the tun /30),
+          the same address provisioning advertises via DHCP.
+        example: 172.18.0.2
+        type: string
+    type: object
+  api.FakeIPSegmentsListResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.FakeIPSegmentsData'
       success:
         example: true
         type: boolean

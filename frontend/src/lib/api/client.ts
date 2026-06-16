@@ -67,7 +67,7 @@ import type {
 	SingboxRouterStatus,
 	SingboxRouterSettings,
 	SingboxRouterRule,
-	FakeIPSegment,
+	FakeIPSegmentsData,
 	SingboxRouterRuleSet,
 	SingboxRouterOutbound,
 	SingboxRouterPreset,
@@ -1873,10 +1873,12 @@ class ApiClient {
 		await this.request('/singbox/router/mode', { method: 'POST', body: JSON.stringify({ mode }) });
 	}
 
-	// FakeIP per-segment DNS delivery (Task 2.1/2.2). List projects the
-	// router's DHCP pools as segments; toggle sets/clears one pool's
-	// advertised DNS to the fakeip-tun DNS (atomic per pool, backend-side).
-	async singboxRouterListSegments(): Promise<FakeIPSegment[]> {
+	// FakeIP per-segment DNS delivery (Task 2.1/2.2) + read-only fakeip-tun
+	// gateway addresses (Inbounds tun-in card). The list response carries the
+	// tun gw addresses (tunAddr4/tunAddr6/tunDns) alongside the DHCP-pool→
+	// segment projection. Toggle sets/clears one pool's advertised DNS to the
+	// fakeip-tun DNS (atomic per pool, backend-side).
+	async singboxRouterListSegments(): Promise<FakeIPSegmentsData> {
 		return this.request('/singbox/fakeip/segments');
 	}
 

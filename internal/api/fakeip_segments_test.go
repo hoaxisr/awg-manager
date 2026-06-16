@@ -61,24 +61,34 @@ func TestFakeIPSegments_List(t *testing.T) {
 	}
 	var resp struct {
 		Success bool               `json:"success"`
-		Data    []FakeIPSegmentDTO `json:"data"`
+		Data    FakeIPSegmentsData `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if !resp.Success || len(resp.Data) != 2 {
+	if !resp.Success || len(resp.Data.Segments) != 2 {
 		t.Fatalf("resp = %#v", resp)
 	}
-	// Sorted by pool.
-	if resp.Data[0].Pool != "_WEBADMIN" || resp.Data[0].Subnet != "192.168.0.1/24" {
-		t.Fatalf("seg0 = %#v", resp.Data[0])
+	// Tun gateway params surfaced for the read-only "tun-in" Inbounds card.
+	if resp.Data.TunAddr4 != "172.18.0.1/30" {
+		t.Fatalf("tunAddr4 = %q, want 172.18.0.1/30", resp.Data.TunAddr4)
 	}
-	if resp.Data[0].InFakeip {
+	if resp.Data.TunAddr6 != "fdfe:dcba:9876::1/126" {
+		t.Fatalf("tunAddr6 = %q", resp.Data.TunAddr6)
+	}
+	if resp.Data.TunDNS != "172.18.0.2" {
+		t.Fatalf("tunDns = %q, want 172.18.0.2", resp.Data.TunDNS)
+	}
+	// Sorted by pool.
+	if resp.Data.Segments[0].Pool != "_WEBADMIN" || resp.Data.Segments[0].Subnet != "192.168.0.1/24" {
+		t.Fatalf("seg0 = %#v", resp.Data.Segments[0])
+	}
+	if resp.Data.Segments[0].InFakeip {
 		t.Fatalf("seg0 should NOT be inFakeip (dns 192.168.0.1)")
 	}
 	// Guest pool advertises the fakeip-tun DNS (172.18.0.2) → inFakeip true.
-	if resp.Data[1].DNSServer != "172.18.0.2" || !resp.Data[1].InFakeip {
-		t.Fatalf("seg1 should be inFakeip: %#v", resp.Data[1])
+	if resp.Data.Segments[1].DNSServer != "172.18.0.2" || !resp.Data.Segments[1].InFakeip {
+		t.Fatalf("seg1 should be inFakeip: %#v", resp.Data.Segments[1])
 	}
 }
 
@@ -91,11 +101,11 @@ func TestFakeIPSegments_EmptyDNSNotInFakeip(t *testing.T) {
 	h.ListSegments(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
 	var resp struct {
-		Data []FakeIPSegmentDTO `json:"data"`
+		Data FakeIPSegmentsData `json:"data"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
-	if len(resp.Data) != 1 || resp.Data[0].InFakeip {
-		t.Fatalf("empty dns must not be inFakeip: %#v", resp.Data)
+	if len(resp.Data.Segments) != 1 || resp.Data.Segments[0].InFakeip {
+		t.Fatalf("empty dns must not be inFakeip: %#v", resp.Data.Segments)
 	}
 }
 
