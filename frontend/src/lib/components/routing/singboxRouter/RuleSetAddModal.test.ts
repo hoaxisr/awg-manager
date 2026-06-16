@@ -90,11 +90,10 @@ describe('RuleSetAddModal', () => {
 			},
 		});
 
-		const geositeButton = screen.getByRole('button', { name: 'Geosite' });
-		const remoteButton = screen.getByRole('button', { name: 'Remote' });
-
-		expect(geositeButton.className).toContain('active');
-		expect(remoteButton.className).not.toContain('active');
+		// На правке тип не меняется: вместо сегмент-выбора — read-only бейдж.
+		expect(screen.queryByRole('button', { name: 'Geosite' })).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Remote' })).toBeNull();
+		expect(screen.getByLabelText('Тип rule set (нельзя изменить)').textContent).toBe('Geosite');
 		expect(screen.getByText('geosite:GOOGLE')).toBeTruthy();
 		expect(screen.queryByText('URL к файлу')).toBeNull();
 	});
