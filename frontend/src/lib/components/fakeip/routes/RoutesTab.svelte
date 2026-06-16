@@ -14,9 +14,9 @@
     - Add/Edit — RuleEditModal (routing/singboxRouter) ВЕРБАТИМ как в ExpertPanel:
       add при rule===undefined, полный edit при переданном rule; CRUD через
       api.singboxRouter{Add,Update,Delete}Rule + singboxRouter.loadAll().
-    - Импорт — SbRouterRuleSetCatalogModal (как в ExpertPanel): добавляет наборы
-      из каталога, на которые route-правила потом ссылаются (rule_set —
-      доминирующий матч); это единственный существующий «импорт» для домена.
+    - Импорта route-правил нет (ни FE-компонента, ни backend-эндпоинта) —
+      кнопку «Импорт» из мокапа не показываем (по решению: добавить, когда
+      появится backend bulk-import). Наборы тянутся в Rule sets → «Каталог».
     - Drag — общий reorderDrag.svelte (ВЕРБАТИМ-движок route.rules: floating
       ghost + раскрывающийся/схлопывающийся скелетон-слот + autoscroll + порог +
       pointer-capture). Оптимистика applyRules + api.singboxRouterMoveRule + откат.
@@ -46,12 +46,9 @@
 		RuleEditModal,
 		computeRuleSetUsage,
 	} from '$lib/components/routing/singboxRouter';
-	import SbRouterRuleSetCatalogModal from '$lib/components/sb-router/SbRouterRuleSetCatalogModal.svelte';
-	import { applyCatalogPresetsAsRuleSets } from '$lib/components/sb-router/rulesetCatalogActions';
 	import { ConfirmModal } from '$lib/components/ui';
-	import { GripVertical, Pencil, Trash2, Plus, Upload } from 'lucide-svelte';
-	import { pluralize, SET_WORDS } from '$lib/utils/pluralize';
-	import type { SingboxRouterRule, CatalogPreset } from '$lib/types';
+	import { GripVertical, Pencil, Trash2, Plus } from 'lucide-svelte';
+	import type { SingboxRouterRule } from '$lib/types';
 	import type { RuleCardData } from '$lib/components/sb-router/types';
 
 	// ── Store sub-stores (как в RulesPanel/ExpertPanel) ────────────────────
@@ -147,8 +144,6 @@
 	// ── Modal state ────────────────────────────────────────────────────────
 	let ruleAddOpen = $state(false);
 	let ruleEditIdx = $state<number | null>(null);
-	let catalogOpen = $state(false);
-	let catalogBusy = $state(false);
 
 	const ruleEditTarget = $derived<SingboxRouterRule | undefined>(
 		ruleEditIdx !== null ? $storeRules[ruleEditIdx] : undefined,
@@ -196,34 +191,6 @@
 			notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
 		} finally {
 			deleteBusy = false;
-		}
-	}
-
-	// Импорт: добавляем наборы из каталога (как в ExpertPanel) — route-правила
-	// потом на них ссылаются через rule_set-матч.
-	async function handleCatalogConfirm(presets: CatalogPreset[]): Promise<void> {
-		if (catalogBusy || presets.length === 0) return;
-		catalogBusy = true;
-		try {
-			const result = await applyCatalogPresetsAsRuleSets(presets, $storeRuleSets);
-			await singboxRouter.loadAll();
-			if (result.added.length > 0) {
-				notifications.success(`Добавлено ${pluralize(result.added.length, SET_WORDS)} из каталога`);
-			} else if (result.failures.length === 0 && result.emptyPresets.length > 0) {
-				notifications.error('У выбранных сервисов нет sing-box наборов');
-			} else if (result.failures.length === 0) {
-				notifications.info('Выбранные наборы уже есть в конфиге');
-			}
-			if (result.failures.length > 0) {
-				const msg = result.failures.map((f) => `${f.tag}: ${f.error}`).join('; ');
-				notifications.error(`Не удалось добавить: ${msg}`);
-			} else if (result.added.length > 0 || result.emptyPresets.length === 0) {
-				catalogOpen = false;
-			}
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : String(e));
-		} finally {
-			catalogBusy = false;
 		}
 	}
 
@@ -292,14 +259,9 @@
 <section class="panel" bind:this={panelEl}>
 	<header class="ph">
 		<span class="nm">Route rules · {$storeRules.length}</span>
-		<span class="ph-acts">
-			<button type="button" class="imp" onclick={() => (catalogOpen = true)}>
-				<Upload size={14} strokeWidth={2} aria-hidden="true" /> Импорт
-			</button>
-			<button type="button" class="add" onclick={() => (ruleAddOpen = true)}>
-				<Plus size={14} strokeWidth={2} aria-hidden="true" /> Правило
-			</button>
-		</span>
+		<button type="button" class="add" onclick={() => (ruleAddOpen = true)}>
+			<Plus size={14} strokeWidth={2} aria-hidden="true" /> Правило
+		</button>
 	</header>
 	<p class="pd">
 		Куда направить трафик. Порядок важен — first-match. Матч: rule_set / domain /
@@ -405,16 +367,6 @@
 	/>
 {/if}
 
-<SbRouterRuleSetCatalogModal
-	open={catalogOpen}
-	existingRuleSetTags={$storeRuleSets.map((rs) => rs.tag)}
-	submitting={catalogBusy}
-	onclose={() => {
-		if (!catalogBusy) catalogOpen = false;
-	}}
-	onconfirm={handleCatalogConfirm}
-/>
-
 <ConfirmModal
 	open={deleteIdx !== null}
 	title="Удалить правило"
@@ -447,13 +399,7 @@
 		font-size: 0.875rem;
 		font-weight: 700;
 	}
-	.ph-acts {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-	.add,
-	.imp {
+	.add {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.3rem;
@@ -462,23 +408,12 @@
 		border-radius: var(--radius-sm, 6px);
 		padding: 0.3rem 0.6rem;
 		cursor: pointer;
-	}
-	.add {
 		color: var(--color-accent, var(--accent));
 		background: transparent;
 		border: 1px solid color-mix(in srgb, var(--color-accent, var(--accent)) 35%, transparent);
 	}
 	.add:hover {
 		background: color-mix(in srgb, var(--color-accent, var(--accent)) 12%, transparent);
-	}
-	.imp {
-		color: var(--text-secondary);
-		background: transparent;
-		border: 1px solid var(--color-border, var(--border));
-	}
-	.imp:hover {
-		color: var(--text-primary);
-		border-color: var(--color-border-hover, var(--border));
 	}
 
 	.pd {
