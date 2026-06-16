@@ -1291,9 +1291,19 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	// when in fakeip-tun mode AND actually provisioned (persisted FakeIPState);
 	// empty otherwise (mirrors the conditional sourcePreserved population).
 	var fakeIPIface string
+	// FakeIPEgressUp (Task 25): the GLOBAL egress-health signal that gates tun-DNS
+	// advertisement. Computed from the same cfg the Status builder already loaded
+	// (line 1234) via the existing fakeIPEgressUp method — the very predicate
+	// advertiseDNSIfHealthy uses to decide whether the .2 DNS is handed out. Only
+	// in fakeip-tun mode AND provisioned; nil otherwise (stays out of JSON). We
+	// expose egress-health (not the cached fakeIPDNSAdvertised) because cfg is
+	// already in hand here so it's clean to wire, and it reflects the live cause
+	// ("is egress usable → is DNS delivery active") without a lock dance.
+	var fakeIPEgressUp *bool
 	if sr.RoutingMode == "fakeip-tun" && settings != nil &&
 		settings.FakeIP != nil && settings.FakeIP.Provisioned {
 		fakeIPIface = fakeIPIfaceName(settings.FakeIP.Index)
+		fakeIPEgressUp = boolPtr(s.fakeIPEgressUp(cfg))
 	}
 	if sr.RoutingMode == "fakeip-tun" && sr.Enabled {
 		sourcePreserved = s.loadSourcePreserved()
@@ -1325,6 +1335,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		Final:                  cfg.Route.Final,
 		SourcePreserved:        sourcePreserved,
 		FakeIPIface:            fakeIPIface,
+		FakeIPEgressUp:         fakeIPEgressUp,
 		Issues:                 issues,
 	}, nil
 }

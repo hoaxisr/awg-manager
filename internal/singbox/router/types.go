@@ -40,8 +40,17 @@ type Status struct {
 	// when the router is provisioned in fakeip-tun mode; empty otherwise. The UI
 	// surfaces it in the «Настройки движка» panel. Populated from the persisted
 	// FakeIPState.Index (mirrors how SourcePreserved is conditionally populated).
-	FakeIPIface string  `json:"fakeipIface,omitempty"`
-	Issues      []Issue `json:"issues,omitempty"`
+	FakeIPIface string `json:"fakeipIface,omitempty"`
+	// FakeIPEgressUp is the GLOBAL fakeip egress-health signal (Task 25): the
+	// proxy egress backing the tun DNS is usable. The router advertises the tun
+	// DNS (.2) to the DHCP pools ONLY when egress is up; when it drops, the pool
+	// DNS is cleared and ALL fakeip segments fall back to direct (no black-hole)
+	// — indistinguishable, per-pool, from "user chose direct". This flag lets the
+	// UI show an honest section-level "DNS-delivery held" banner. nil outside
+	// fakeip-tun mode (or when not provisioned) so it stays out of JSON. There is
+	// no per-pool intent persistence, so this is deliberately global, not per-pool.
+	FakeIPEgressUp *bool   `json:"fakeipEgressUp,omitempty"`
+	Issues         []Issue `json:"issues,omitempty"`
 }
 
 type Issue struct {

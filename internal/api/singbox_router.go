@@ -48,6 +48,7 @@ type SingboxRouterStatusData struct {
 	Final                  string                  `json:"final" example:"direct"`
 	SourcePreserved        *bool                   `json:"sourcePreserved,omitempty" example:"true"`
 	FakeIPIface            string                  `json:"fakeipIface,omitempty" example:"opkgtun0"`
+	FakeIPEgressUp         *bool                   `json:"fakeipEgressUp,omitempty" example:"true"`
 	Issues                 []SingboxRouterIssueDTO `json:"issues,omitempty"`
 }
 

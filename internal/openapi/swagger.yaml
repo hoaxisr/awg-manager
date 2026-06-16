@@ -3773,6 +3773,9 @@ definitions:
       enabled:
         example: true
         type: boolean
+      fakeipEgressUp:
+        example: true
+        type: boolean
       fakeipIface:
         example: opkgtun0
         type: string

@@ -407,6 +407,38 @@ func TestGetStatus_FakeIPIface(t *testing.T) {
 	}
 }
 
+// TestGetStatus_FakeIPEgressUp asserts the global egress-health signal (Task 25)
+// is nil before provisioning and populated (true, for the harness's bindless
+// proxy final) once provisioned in fakeip-tun mode.
+func TestGetStatus_FakeIPEgressUp(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	h.svc.deps.IPTables = errProbeIPTables()
+
+	// Before provisioning: no egress-health signal (nil → omitted from JSON).
+	st0, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st0.FakeIPEgressUp != nil {
+		t.Errorf("FakeIPEgressUp = %v, want nil before provisioning", *st0.FakeIPEgressUp)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.IPTables = errProbeIPTables()
+
+	st, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	// The harness route.final="proxy-out" is a bindless proxy outbound, so
+	// fakeIPEgressUp returns true (no carrier signal to gate on).
+	if st.FakeIPEgressUp == nil || *st.FakeIPEgressUp != true {
+		t.Errorf("FakeIPEgressUp = %v, want true (bindless proxy egress)", st.FakeIPEgressUp)
+	}
+}
+
 func TestAssertSourcePreserved_Preserved(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 	stubSourcePreservedProbe(t, func(string, string) (bool, bool) { return true, true })
