@@ -12,6 +12,7 @@
 		SwitchProgress,
 		OverviewTab,
 		OutboundsTab,
+		DnsTab,
 		FakeIPPageShell,
 		deriveFakeIPEngineState,
 		type ShellChip,
@@ -230,6 +231,13 @@
 				живые сигналы деградируют по engineState (FE-spec §12.1).
 			-->
 			<OutboundsTab {engineState} />
+		{:else if activeTab === 'dns'}
+			<!--
+				DNS-чип по мокапу page-dns-v3: серверы / правила / перезаписи в
+				3-блочной сетке. Всё конфиг (нет live-рантайма) → доступно при любом
+				состоянии движка; переиспользует эдит-модалы + CRUD sb-router.
+			-->
+			<DnsTab />
 		{:else}
 			<section class="chip-stub">
 				<h2 class="chip-stub-title">{activeChip.label}</h2>

@@ -15,6 +15,7 @@ export { default as EngineSettingsCard } from './overview/EngineSettingsCard.sve
 export { default as SegmentsDelivery } from './overview/SegmentsDelivery.svelte';
 export { default as OverviewTab } from './overview/OverviewTab.svelte';
 export { default as OutboundsTab } from './outbounds/OutboundsTab.svelte';
+export { default as DnsTab } from './dns/DnsTab.svelte';
 export {
 	partitionOutbounds,
 	type PartitionedOutbounds,
