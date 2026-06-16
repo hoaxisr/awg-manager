@@ -41,6 +41,8 @@
 		liveConnectionsSnapshot,
 	} from '$lib/components/sb-router/liveConnectionsStore';
 	import { formatCompactCount } from './formatCount';
+	import { buildAtomicEgresses } from '../outbounds/atomicEgress';
+	import { partitionOutbounds } from '../outbounds/partitionOutbounds';
 	import FakeIPHero from './FakeIPHero.svelte';
 	import type { FakeIPEngineState } from '../engineState';
 
@@ -93,6 +95,8 @@
 
 	const status = singboxRouter.status;
 	const dnsRules = singboxRouter.dnsRules;
+	const options = singboxRouter.options;
+	const outbounds = singboxRouter.outbounds;
 	const connSnapshot = liveConnectionsSnapshot;
 
 	// Доступность restart — движок запущен (live) или Clash недоступен, но демон
@@ -102,8 +106,11 @@
 	// Реальные счётчики чипов из Status DTO + sub-stores + Clash WS.
 	const counts = $derived.by<Record<string, number | string | undefined>>(() => {
 		const st = $status;
-		const atomic = st?.outboundAwgCount ?? 0;
-		const composite = st?.outboundCompositeCount ?? 0;
+		// Outbounds: тот же счёт, что на странице — atomic-пул (прокси-эгрессы:
+		// туннели+подписки) + composite-группы. Членство atomic не зависит от
+		// enrichment, поэтому tunnels/subscriptions тут не нужны (null).
+		const atomic = buildAtomicEgresses($options, null, null).length;
+		const composite = partitionOutbounds($outbounds).composite.length;
 		return {
 			// Inbounds: нет источника в Status DTO → undefined (Tabs скрывает badge).
 			inbounds: undefined,
