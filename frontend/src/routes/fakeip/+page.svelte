@@ -11,6 +11,7 @@
 		ConfirmSwitch,
 		SwitchProgress,
 		OverviewTab,
+		InboundsTab,
 		OutboundsTab,
 		DnsTab,
 		RuleSetsTab,
@@ -225,6 +226,15 @@
 				onToggleEngine={handleToggleEngine}
 				onRestart={handleRestart}
 			/>
+		{:else if activeTab === 'inbounds'}
+			<!--
+				Inbounds-чип по мокапу page-inbounds-v2: tun-in (read-only,
+				управляется движком — interface/address/стек·MTU/DNS из бэкенда)
+				+ SOCKS/HTTP-входы (переиспользуют фичу device-proxy: list/runtime/
+				listen-choices + InboundSettingsDrawer для правки, тумблер enabled).
+				Конфиг-инстансы видны всегда; статус-точки деградируют по engineState.
+			-->
+			<InboundsTab {engineState} />
 		{:else if activeTab === 'outbounds'}
 			<!--
 				Outbounds (Slice 3.2): atomic-карточки + composite-группы

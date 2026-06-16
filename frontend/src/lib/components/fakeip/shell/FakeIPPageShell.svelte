@@ -9,7 +9,7 @@
       → контент под-страницы (Snippet-слот).
 
   СЧЁТЧИКИ ЧИПОВ — реальные источники (честно):
-    - Inbounds      — пока нет счётчика в Status DTO → без badge (не выдумываем).
+    - Inbounds      — tun-in (1, движок-управляемый) + длина deviceProxyInstances.
     - Outbounds     — Status.outboundAwgCount + outboundCompositeCount → «5 + 3».
     - Rule sets     — Status.ruleSetCount.
     - DNS           — длина singboxRouter.dnsRules.
@@ -36,6 +36,7 @@
 	import { onMount } from 'svelte';
 	import { Tabs } from '$lib/components/ui';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { deviceProxyInstances } from '$lib/stores/deviceproxy';
 	import {
 		bindLiveConnectionsStore,
 		liveConnectionsSnapshot,
@@ -98,6 +99,9 @@
 	const options = singboxRouter.options;
 	const outbounds = singboxRouter.outbounds;
 	const connSnapshot = liveConnectionsSnapshot;
+	// Inbounds badge: tun-in (always 1 in fakeip mode) + device-proxy instances.
+	// Polling store auto-fetches on first subscribe ($-access below).
+	const dpInstances = deviceProxyInstances;
 
 	// Доступность restart — движок запущен (live) или Clash недоступен, но демон
 	// жив (clash-down). При 'stopped'/'not-fakeip' перезапускать нечего.
@@ -111,9 +115,10 @@
 		// enrichment, поэтому tunnels/subscriptions тут не нужны (null).
 		const atomic = buildAtomicEgresses($options, null, null).length;
 		const composite = partitionOutbounds($outbounds).composite.length;
+		// Inbounds = tun-in (1, движок-управляемый) + device-proxy-инстансы.
+		const dpCount = $dpInstances.data?.length ?? 0;
 		return {
-			// Inbounds: нет источника в Status DTO → undefined (Tabs скрывает badge).
-			inbounds: undefined,
+			inbounds: 1 + dpCount,
 			outbounds: composite > 0 ? `${atomic} + ${composite}` : atomic,
 			rulesets: st?.ruleSetCount,
 			dns: $dnsRules.length,
