@@ -21,7 +21,9 @@
 </script>
 
 <script lang="ts">
-	import { Button } from '$lib/components/ui';
+	import { Button, Modal } from '$lib/components/ui';
+	import { JsonConfigDrawer } from '$lib/components/singbox-routing';
+	import { TracePanel, traceOpen, openTrace, closeTrace } from '$lib/components/sb-router';
 	import { FileJson, Search, RotateCw } from 'lucide-svelte';
 	import type { FakeIPEngineState } from '../engineState';
 
@@ -60,6 +62,12 @@
 
 	let restarting = $state(false);
 
+	// config.json — самодостаточный JsonConfigDrawer (грузит /singbox/config-preview).
+	// Инспектор — существующий route-инспектор TracePanel (openTrace/closeTrace,
+	// api.singboxRouterInspectRoute). DNS-ветку из page-inspector-v2 НЕ строим —
+	// в мокапе она помечена «(проектируется)»; здесь только реальный route-трейс.
+	let configOpen = $state(false);
+
 	const engineFact = $derived(
 		engineState === 'not-fakeip'
 			? 'движок выключен'
@@ -96,19 +104,22 @@
 	</div>
 
 	<div class="btns">
-		<!--
-			TODO(10.x): просмотрщик config.json. Доставляется отдельной задачей —
-			до неё кнопка disabled с подсказкой, НЕ открываем фейковый JSON.
-		-->
-		<Button variant="secondary" size="sm" disabled title="Скоро — просмотрщик конфигурации">
+		<Button
+			variant="secondary"
+			size="sm"
+			title="Сгенерированный конфиг sing-box"
+			onclick={() => (configOpen = true)}
+		>
 			{#snippet iconBefore()}<FileJson size={14} />{/snippet}
 			config.json
 		</Button>
 
-		<!--
-			TODO(10.2): инспектор маршрутов. До задачи — disabled c подсказкой.
-		-->
-		<Button variant="secondary" size="sm" disabled title="Скоро — инспектор маршрутов">
+		<Button
+			variant="secondary"
+			size="sm"
+			title="Инспектор маршрутов — куда поедет домен/IP"
+			onclick={() => openTrace()}
+		>
 			{#snippet iconBefore()}<Search size={14} />{/snippet}
 			Инспектор маршрутов
 		</Button>
@@ -127,6 +138,20 @@
 		{#if createButton}{@render createButton()}{/if}
 	</div>
 </div>
+
+<!-- config.json — drawer с конфигом sing-box (copy/download внутри). -->
+<JsonConfigDrawer open={configOpen} onClose={() => (configOpen = false)} />
+
+<!-- Инспектор маршрутов — route-трейс в модале (✕ и «← Назад» внутри закрывают). -->
+<Modal
+	open={$traceOpen}
+	title="Инспектор маршрутов"
+	size="wide"
+	bodyLayout="fill"
+	onclose={closeTrace}
+>
+	<TracePanel />
+</Modal>
 
 <style>
 	.hero {
