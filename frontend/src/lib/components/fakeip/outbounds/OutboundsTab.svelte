@@ -38,6 +38,8 @@
 <script lang="ts">
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { singboxProxies } from '$lib/stores/singboxProxies';
+	import { singboxDelayHistory, triggerDelayCheck } from '$lib/stores/singbox';
+	import { singboxDelayFromHistory } from '$lib/utils/singboxDelay';
 	import { singboxTunnels } from '$lib/stores/singbox';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { notifications } from '$lib/stores/notifications';
@@ -153,21 +155,28 @@
 		}
 	}
 
-	// ── Runtime: per-egress тест задержки (singbox/tunnels/delay-check) ───
-	// Атомарные выходы тестируются по одному (tunnel-tag → реальный замер;
-	// для подписочных прокси API может не разрешить tag → ловим ошибку).
-	let egressDelays = $state<Record<string, number>>({});
+	// ── Runtime: per-egress тест задержки ────────────────────────────────
+	// Тот же механизм, что у страниц туннелей/подписок: triggerDelayCheck(tag)
+	// запускает Clash-замер по тегу — работает И для туннелей, И для подписочных
+	// прокси (backend тестирует любой Clash-тег). Результат прилетает в общий
+	// стор singboxDelayHistory через глобальный SSE (+layout), отсюда и читаем.
 	let egressTesting = $state<string | null>(null);
+
+	const egressDelays = $derived.by<Record<string, number>>(() => {
+		const out: Record<string, number> = {};
+		for (const [tag, hist] of $singboxDelayHistory) {
+			const latest = singboxDelayFromHistory(hist).latest;
+			if (latest !== undefined) out[tag] = latest;
+		}
+		return out;
+	});
 
 	async function handleEgressTest(tag: string): Promise<void> {
 		if (egressTesting) return;
 		egressTesting = tag;
 		try {
-			const res = await api.singboxDelayCheck(tag);
-			egressDelays = { ...egressDelays, [tag]: res.delay };
+			await triggerDelayCheck(tag);
 			lastTestAtAny = nowHHMM();
-		} catch (e) {
-			notifications.error(`Тест не удался: ${e instanceof Error ? e.message : String(e)}`);
 		} finally {
 			egressTesting = null;
 		}
