@@ -254,13 +254,6 @@
 			</div>
 		{/if}
 	</div>
-
-	<p class="note">
-		Atomic — пул прокси-выходов (туннели + подписки); правка на их страницах
-		(стрелка-выход у карточки). gauge — тест задержки по запросу, точка —
-		его результат. «active» — реальный выбор группы. Скорость per-outbound не
-		показываем. Типы групп: urltest / selector.
-	</p>
 </section>
 
 {#if addOpen}
@@ -365,9 +358,4 @@
 		align-items: stretch;
 	}
 
-	.note {
-		margin: 0;
-		font-size: 0.8125rem;
-		color: var(--text-muted);
-	}
 </style>
