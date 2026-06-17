@@ -306,6 +306,14 @@ type Deps struct {
 	// ranges, tun addrs, MTU, DHCP pool). Zero-value in tests; defaults
 	// wired in cmd/awg-manager. Consumed by Slice 1D Enable.
 	FakeIPTun FakeIPTunParams
+	// DefaultRoute installs/removes the default route via the fakeip tun so a
+	// policy with the OpkgTun as exit actually routes. Optional — nil in tests;
+	// wired in cmd/awg-manager to *ndmscommand.RouteCommands. Consumed by PE-C Enable.
+	DefaultRoute DefaultRouteProvider
+	// SegmentNAT toggles segment NAT modes (masquerade / static-NAT) for source
+	// preservation. Optional — nil in tests; wired in cmd/awg-manager to
+	// *ndmscommand.NATCommands. Consumed by PE-D.
+	SegmentNAT SegmentNATProvider
 }
 
 // routerLoggerAdapter narrows *logging.ScopedLogger to the wanLogger

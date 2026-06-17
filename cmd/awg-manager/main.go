@@ -1109,6 +1109,8 @@ func main() {
 		PresetCatalog:          presetCatalog,
 		GeoData:                geoDataStore,
 		OpkgTun:                ndmsCommands.Interfaces, // *InterfaceCommands satisfies OpkgTunProvisioner directly
+		DefaultRoute:           ndmsCommands.Routes,     // *RouteCommands satisfies DefaultRouteProvider directly
+		SegmentNAT:             ndmsCommands.NAT,        // *NATCommands satisfies SegmentNATProvider directly
 		StaticRoutes:           &routerStaticRouteAdapter{routes: ndmsCommands.Routes},
 		DHCP:                   ndmsCommands.DHCP, // *DHCPCommands satisfies DHCPProvider directly
 		OpkgTunIndices: &routerOpkgTunIndexAdapter{

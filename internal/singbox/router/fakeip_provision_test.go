@@ -14,7 +14,7 @@ type fakeOpkgTunProvisioner struct{}
 func (fakeOpkgTunProvisioner) CreateOpkgTunWithSecurityLevel(context.Context, string, string, string) error {
 	return nil
 }
-func (fakeOpkgTunProvisioner) SetIPGlobal(context.Context, string) error      { return nil }
+func (fakeOpkgTunProvisioner) SetIPGlobal(context.Context, string) error   { return nil }
 func (fakeOpkgTunProvisioner) DeleteOpkgTun(context.Context, string) error { return nil }
 func (fakeOpkgTunProvisioner) SetAddress(context.Context, string, string, string) error {
 	return nil
@@ -41,11 +41,27 @@ func (fakeOpkgTunIndexLister) LiveOpkgTunIndices(context.Context) (map[int]bool,
 	return nil, nil
 }
 
+type fakeDefaultRouteProvider struct{}
+
+func (fakeDefaultRouteProvider) SetDefaultRoute(context.Context, string) error        { return nil }
+func (fakeDefaultRouteProvider) RemoveDefaultRoute(context.Context, string) error     { return nil }
+func (fakeDefaultRouteProvider) SetIPv6DefaultRoute(context.Context, string) error    { return nil }
+func (fakeDefaultRouteProvider) RemoveIPv6DefaultRoute(context.Context, string) error { return nil }
+
+type fakeSegmentNATProvider struct{}
+
+func (fakeSegmentNATProvider) SetSegmentNAT(context.Context, string) error           { return nil }
+func (fakeSegmentNATProvider) RemoveSegmentNAT(context.Context, string) error        { return nil }
+func (fakeSegmentNATProvider) SetStaticNAT(context.Context, string, string) error    { return nil }
+func (fakeSegmentNATProvider) RemoveStaticNAT(context.Context, string, string) error { return nil }
+
 func TestNewServiceWiresFakeIPProvisioningSeam(t *testing.T) {
 	opkg := fakeOpkgTunProvisioner{}
 	routes := fakeStaticRouteProvider{}
 	dhcp := fakeDHCPProvider{}
 	indices := fakeOpkgTunIndexLister{}
+	defRoute := fakeDefaultRouteProvider{}
+	segNAT := fakeSegmentNATProvider{}
 	params := DefaultFakeIPTunParams()
 
 	svc := NewService(Deps{
@@ -53,6 +69,8 @@ func TestNewServiceWiresFakeIPProvisioningSeam(t *testing.T) {
 		StaticRoutes:   routes,
 		DHCP:           dhcp,
 		OpkgTunIndices: indices,
+		DefaultRoute:   defRoute,
+		SegmentNAT:     segNAT,
 		FakeIPTun:      params,
 	})
 	if svc == nil {
@@ -69,6 +87,12 @@ func TestNewServiceWiresFakeIPProvisioningSeam(t *testing.T) {
 	}
 	if svc.deps.OpkgTunIndices != OpkgTunIndexLister(indices) {
 		t.Error("OpkgTunIndices not wired through to deps")
+	}
+	if svc.deps.DefaultRoute != DefaultRouteProvider(defRoute) {
+		t.Error("DefaultRoute not wired through to deps")
+	}
+	if svc.deps.SegmentNAT != SegmentNATProvider(segNAT) {
+		t.Error("SegmentNAT not wired through to deps")
 	}
 	if svc.deps.FakeIPTun != params {
 		t.Errorf("FakeIPTun mismatch: got %+v, want %+v", svc.deps.FakeIPTun, params)

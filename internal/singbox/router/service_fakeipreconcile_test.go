@@ -63,7 +63,7 @@ func TestReconcile_DispatchesFakeIPTun(t *testing.T) {
 	if !h.log.has("AddRoute:10.128.0.0:255.192.0.0:OpkgTun0") {
 		t.Errorf("expected drift-heal to re-add the pool route, got %v", h.log.calls)
 	}
-	if h.log.has("Create:OpkgTun0:private") || h.log.has("Create:OpkgTun1:private") {
+	if h.log.has("Create:OpkgTun0:public") || h.log.has("Create:OpkgTun1:public") {
 		t.Errorf("drift-heal must not re-provision, got %v", h.log.calls)
 	}
 }
@@ -161,7 +161,7 @@ func TestReconcileFakeIPTun_Reprovision_DoesNotClearManualStop(t *testing.T) {
 		t.Errorf("drift-heal reprovision must NOT clear master-Stop intent, ClearManualStop calls = %d", sb.clearManualStopCalls)
 	}
 	// Sanity: the reprovision actually happened (proves the arm was taken).
-	if !h.log.has("Create:OpkgTun0:private") {
+	if !h.log.has("Create:OpkgTun0:public") {
 		t.Errorf("expected re-provision Create, got %v", h.log.calls)
 	}
 }
@@ -214,7 +214,7 @@ func TestReconcileFakeIPTun_ReprovisionsWhenGone(t *testing.T) {
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
-	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 1 {
+	if c := countCalls(h.log, "Create:OpkgTun0:public"); c != 1 {
 		t.Fatalf("after Enable Create count = %d, want 1", c)
 	}
 	h.log.calls = nil
@@ -228,7 +228,7 @@ func TestReconcileFakeIPTun_ReprovisionsWhenGone(t *testing.T) {
 	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
 		t.Fatalf("reconcileFakeIPTun: %v", err)
 	}
-	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 1 {
+	if c := countCalls(h.log, "Create:OpkgTun0:public"); c != 1 {
 		t.Errorf("Create count = %d, want 1 (re-provisioned after iface gone): %v", c, h.log.calls)
 	}
 }
@@ -294,7 +294,7 @@ func TestReconcileFakeIPTun_DriftHealRestartsDeadSingbox(t *testing.T) {
 		t.Errorf("drift-heal must NOT clear DNS when desired state unchanged, got %v", h.log.calls)
 	}
 	// No re-provision.
-	if h.log.has("Create:OpkgTun0:private") || h.log.has("Create:OpkgTun1:private") {
+	if h.log.has("Create:OpkgTun0:public") || h.log.has("Create:OpkgTun1:public") {
 		t.Errorf("drift-heal must not re-provision the iface, got %v", h.log.calls)
 	}
 }
@@ -320,7 +320,7 @@ func TestReconcileFakeIPTun_NoReprovisionWhenHealthy(t *testing.T) {
 		t.Fatalf("reconcileFakeIPTun: %v", err)
 	}
 
-	if h.log.has("Create:OpkgTun0:private") || h.log.has("Create:OpkgTun1:private") {
+	if h.log.has("Create:OpkgTun0:public") || h.log.has("Create:OpkgTun1:public") {
 		t.Errorf("healthy drift-heal must NOT Create any iface, got %v", h.log.calls)
 	}
 	// Persist index unchanged.
@@ -573,7 +573,7 @@ func TestReconcileFakeIPTun_ProbeErrorNoReprovision(t *testing.T) {
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
-	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 1 {
+	if c := countCalls(h.log, "Create:OpkgTun0:public"); c != 1 {
 		t.Fatalf("after Enable Create count = %d, want 1", c)
 	}
 	h.log.calls = nil
@@ -588,7 +588,7 @@ func TestReconcileFakeIPTun_ProbeErrorNoReprovision(t *testing.T) {
 		t.Fatalf("reconcileFakeIPTun: %v", err)
 	}
 
-	if h.log.has("Create:OpkgTun0:private") || h.log.has("Create:OpkgTun1:private") {
+	if h.log.has("Create:OpkgTun0:public") || h.log.has("Create:OpkgTun1:public") {
 		t.Errorf("probe error must NOT re-provision, got %v", h.log.calls)
 	}
 }

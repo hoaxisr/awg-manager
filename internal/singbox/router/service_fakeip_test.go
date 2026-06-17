@@ -153,6 +153,36 @@ func (r *recDHCP) ClearPoolDNS(_ context.Context, pool string) error {
 	return nil
 }
 
+// recDefaultRoute records the v4/v6 default-route set/remove calls and can inject
+// a failure at SetDefaultRoute / SetIPv6DefaultRoute to exercise rollback.
+type recDefaultRoute struct {
+	log    *callLog
+	failAt string
+}
+
+func (r *recDefaultRoute) SetDefaultRoute(_ context.Context, name string) error {
+	r.log.add("SetDefaultRoute:" + name)
+	if r.failAt == "SetDefaultRoute" {
+		return errors.New("injected: SetDefaultRoute")
+	}
+	return nil
+}
+func (r *recDefaultRoute) RemoveDefaultRoute(_ context.Context, name string) error {
+	r.log.add("RemoveDefaultRoute:" + name)
+	return nil
+}
+func (r *recDefaultRoute) SetIPv6DefaultRoute(_ context.Context, name string) error {
+	r.log.add("SetIPv6DefaultRoute:" + name)
+	if r.failAt == "SetIPv6DefaultRoute" {
+		return errors.New("injected: SetIPv6DefaultRoute")
+	}
+	return nil
+}
+func (r *recDefaultRoute) RemoveIPv6DefaultRoute(_ context.Context, name string) error {
+	r.log.add("RemoveIPv6DefaultRoute:" + name)
+	return nil
+}
+
 type recIndices struct {
 	live map[int]bool
 }
@@ -169,13 +199,14 @@ func (r *recIndices) LiveOpkgTunIndices(context.Context) (map[int]bool, error) {
 // and the shared call log. It seeds RoutingMode=fakeip-tun and a router config
 // carrying a proxy outbound + route.final so the egress check passes.
 type fakeIPEnableHarness struct {
-	svc    *ServiceImpl
-	log    *callLog
-	opkg   *recOpkgTun
-	routes *recStaticRoutes
-	dhcp   *recDHCP
-	store  *storage.SettingsStore
-	dir    string
+	svc      *ServiceImpl
+	log      *callLog
+	opkg     *recOpkgTun
+	routes   *recStaticRoutes
+	dhcp     *recDHCP
+	defRoute *recDefaultRoute
+	store    *storage.SettingsStore
+	dir      string
 }
 
 func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
@@ -204,6 +235,7 @@ func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
 	opkg := &recOpkgTun{log: log, failAt: failAt}
 	routes := &recStaticRoutes{log: log, failAt: failAt}
 	dhcp := &recDHCP{log: log, failAt: failAt}
+	defRoute := &recDefaultRoute{log: log, failAt: failAt}
 
 	singbox := newTestSingbox(t)
 	singbox.dir = dir
@@ -213,6 +245,7 @@ func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
 	svc.deps.OpkgTun = opkg
 	svc.deps.StaticRoutes = routes
 	svc.deps.DHCP = dhcp
+	svc.deps.DefaultRoute = defRoute
 	svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{}}
 	svc.deps.FakeIPTun = DefaultFakeIPTunParams()
 	svc.deps.FakeIPTun.CachePath = filepath.Join(dir, "cache.db")
@@ -231,7 +264,7 @@ func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
 	t.Cleanup(func() { fakeIPAddrFlush = old })
 
 	return &fakeIPEnableHarness{
-		svc: svc, log: log, opkg: opkg, routes: routes, dhcp: dhcp, store: store, dir: dir,
+		svc: svc, log: log, opkg: opkg, routes: routes, dhcp: dhcp, defRoute: defRoute, store: store, dir: dir,
 	}
 }
 
@@ -286,11 +319,11 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 
 	// Bug 1 guard: the NDMS interface name MUST be CamelCase OpkgTun0, NOT the
 	// lowercase kernel name (which NDMS rejects with "unsupported interface type").
-	createCall := "Create:" + ndmsName + ":private"
+	createCall := "Create:" + ndmsName + ":public"
 	if !h.log.has(createCall) {
-		t.Fatalf("Create with NDMS CamelCase name + private security-level missing: %v", h.log.calls)
+		t.Fatalf("Create with NDMS CamelCase name + public security-level missing: %v", h.log.calls)
 	}
-	if h.log.has("Create:" + iface + ":private") {
+	if h.log.has("Create:" + iface + ":public") {
 		t.Fatalf("Create used the lowercase kernel name (NDMS would reject it): %v", h.log.calls)
 	}
 	// sing-box / kernel sites use the lowercase kernel name (flush).
@@ -312,6 +345,11 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 	// v6 pool route is added (defaults carry Inet6Range) after the v4 pool route.
 	mustOrder("AddRoute:10.128.0.0:255.192.0.0:"+ndmsName, "AddRoute6:3f80::/10:"+ndmsName)
 	mustOrder("SetMTU:"+ndmsName+":1500", "InterfaceUp:"+ndmsName)
+	// Default route via the tun (v4 + v6) is installed after the iface is up and
+	// before the flush/readiness wait — NDMS does NOT auto-add it (PE-C).
+	mustOrder("InterfaceUp:"+ndmsName, "SetDefaultRoute:"+ndmsName)
+	mustOrder("SetDefaultRoute:"+ndmsName, "SetIPv6DefaultRoute:"+ndmsName)
+	mustOrder("SetIPv6DefaultRoute:"+ndmsName, "Flush:"+iface)
 	mustOrder("InterfaceUp:"+ndmsName, "Flush:"+iface)
 	// Flush precedes the pool route (waitForSingbox sits between, no recorded call).
 	mustOrder("Flush:"+iface, "AddRoute:10.128.0.0:255.192.0.0:"+ndmsName)
@@ -414,7 +452,7 @@ func TestEnableFakeIPTun_UsesPersistedEngineSettings(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
-	steps := []string{"Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "Flush", "AddRoute", "AddRoute6", "SetPoolDNS"}
+	steps := []string{"Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "SetDefaultRoute", "SetIPv6DefaultRoute", "Flush", "AddRoute", "AddRoute6", "SetPoolDNS"}
 	for _, step := range steps {
 		t.Run(step, func(t *testing.T) {
 			h := newFakeIPEnableHarness(t, step)
@@ -454,12 +492,25 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 			}
 			// A failure before the route step must not leave a route applied.
 			switch step {
-			case "Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "Flush":
+			case "Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "SetDefaultRoute", "SetIPv6DefaultRoute", "Flush":
 				if h.log.has("AddRoute:10.128.0.0:255.192.0.0:" + ndmsName) {
 					t.Errorf("%s: route should not have been added", step)
 				}
 				if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
 					t.Errorf("%s: DHCP DNS should not have been set", step)
+				}
+				// SetIPv6DefaultRoute fails AFTER the v4 default route landed → its undo
+				// (RemoveDefaultRoute) must run in rollback. Flush fails after both
+				// default routes landed → both must be removed.
+				if step == "SetIPv6DefaultRoute" || step == "Flush" {
+					if !h.log.has("RemoveDefaultRoute:" + ndmsName) {
+						t.Errorf("%s: rollback missing RemoveDefaultRoute (v4): %v", step, h.log.calls)
+					}
+				}
+				if step == "Flush" {
+					if !h.log.has("RemoveIPv6DefaultRoute:" + ndmsName) {
+						t.Errorf("Flush: rollback missing RemoveIPv6DefaultRoute: %v", h.log.calls)
+					}
 				}
 			case "AddRoute":
 				// DHCP must not be set; route add failed so nothing to remove.
@@ -862,7 +913,7 @@ func TestEnableFakeIPTun_AllocatesLowestFreeIndex(t *testing.T) {
 		t.Fatalf("FakeIP index = %v, want 2 (0,1 occupied)", st)
 	}
 	// NDMS Create uses the CamelCase name for the allocated index.
-	if !h.log.has("Create:OpkgTun2:private") {
+	if !h.log.has("Create:OpkgTun2:public") {
 		t.Errorf("expected Create OpkgTun2, got %v", h.log.calls)
 	}
 }
@@ -884,7 +935,7 @@ func TestEnableFakeIPTun_IdempotentWhenProvisioned(t *testing.T) {
 	if st1 == nil || !st1.Provisioned || st1.Index != 0 {
 		t.Fatalf("after first Enable FakeIP = %+v, want provisioned index 0", st1)
 	}
-	createCount1 := countCalls(h.log, "Create:OpkgTun0:private")
+	createCount1 := countCalls(h.log, "Create:OpkgTun0:public")
 	if createCount1 != 1 {
 		t.Fatalf("first Enable Create count = %d, want 1", createCount1)
 	}
@@ -900,10 +951,10 @@ func TestEnableFakeIPTun_IdempotentWhenProvisioned(t *testing.T) {
 	}
 
 	// No second Create at all (neither opkgtun0 nor any other index).
-	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 1 {
+	if c := countCalls(h.log, "Create:OpkgTun0:public"); c != 1 {
 		t.Errorf("Create:opkgtun0 count = %d after second Enable, want 1 (no re-provision)", c)
 	}
-	if h.log.has("Create:OpkgTun1:private") {
+	if h.log.has("Create:OpkgTun1:public") {
 		t.Errorf("second Enable allocated a NEW index: %v", h.log.calls)
 	}
 
@@ -923,7 +974,7 @@ func TestEnableFakeIPTun_ReprovisionsWhenIfaceGone(t *testing.T) {
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("first Enable: %v", err)
 	}
-	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 1 {
+	if c := countCalls(h.log, "Create:OpkgTun0:public"); c != 1 {
 		t.Fatalf("first Enable Create count = %d, want 1", c)
 	}
 
@@ -934,7 +985,7 @@ func TestEnableFakeIPTun_ReprovisionsWhenIfaceGone(t *testing.T) {
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("second Enable (reprovision): %v", err)
 	}
-	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 2 {
+	if c := countCalls(h.log, "Create:OpkgTun0:public"); c != 2 {
 		t.Errorf("Create:opkgtun0 count = %d, want 2 (re-provisioned after iface gone): %v", c, h.log.calls)
 	}
 }
@@ -1289,6 +1340,7 @@ func TestEnableFakeIPTun_NilDepsFailFast(t *testing.T) {
 		{"StaticRoutes", func(s *ServiceImpl) { s.deps.StaticRoutes = nil }},
 		{"DHCP", func(s *ServiceImpl) { s.deps.DHCP = nil }},
 		{"OpkgTunIndices", func(s *ServiceImpl) { s.deps.OpkgTunIndices = nil }},
+		{"DefaultRoute", func(s *ServiceImpl) { s.deps.DefaultRoute = nil }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1329,7 +1381,7 @@ func TestReconcileFakeIPTun_NoReprovision(t *testing.T) {
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
-	createCount1 := countCalls(h.log, "Create:OpkgTun0:private")
+	createCount1 := countCalls(h.log, "Create:OpkgTun0:public")
 	if createCount1 != 1 {
 		t.Fatalf("after Enable Create count = %d, want 1", createCount1)
 	}
@@ -1342,10 +1394,10 @@ func TestReconcileFakeIPTun_NoReprovision(t *testing.T) {
 	if err := h.svc.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 1 {
+	if c := countCalls(h.log, "Create:OpkgTun0:public"); c != 1 {
 		t.Errorf("Create count = %d after Reconcile, want 1 (no re-provision): %v", c, h.log.calls)
 	}
-	if h.log.has("Create:OpkgTun1:private") {
+	if h.log.has("Create:OpkgTun1:public") {
 		t.Errorf("Reconcile leaked a new index: %v", h.log.calls)
 	}
 }

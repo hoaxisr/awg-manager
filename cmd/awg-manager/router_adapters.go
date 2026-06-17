@@ -176,6 +176,8 @@ func (a *routerIngressResolverAdapter) Resolve(ctx context.Context, ref string) 
 // surface any ndms method-signature drift at this declaration line.
 var _ router.OpkgTunProvisioner = (*ndmscommand.InterfaceCommands)(nil)
 var _ router.DHCPProvider = (*ndmscommand.DHCPCommands)(nil)
+var _ router.DefaultRouteProvider = (*ndmscommand.RouteCommands)(nil)
+var _ router.SegmentNATProvider = (*ndmscommand.NATCommands)(nil)
 
 var _ router.StaticRouteProvider = (*routerStaticRouteAdapter)(nil)
 

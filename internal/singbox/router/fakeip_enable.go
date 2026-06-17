@@ -63,7 +63,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// Fail-fast nil-guard: production wires every fakeip dep, but a degraded /
 	// mis-wired build would otherwise nil-panic mid-provision. Refuse loudly
 	// before touching any state.
-	if s.deps.OpkgTun == nil || s.deps.StaticRoutes == nil || s.deps.DHCP == nil || s.deps.OpkgTunIndices == nil {
+	if s.deps.OpkgTun == nil || s.deps.StaticRoutes == nil || s.deps.DHCP == nil || s.deps.OpkgTunIndices == nil || s.deps.DefaultRoute == nil {
 		return fmt.Errorf("fakeip-tun: provisioning deps not wired")
 	}
 
@@ -175,10 +175,11 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		}
 	})
 
-	// Create the OpkgTun with security-level private (segment→tun forwarding
-	// permitted by default; non-global keeps traffic un-masqueraded in
-	// no-masquerade NAT modes → source-preservation).
-	if err = s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, fakeIPTunDescription, "private"); err != nil {
+	// Create the OpkgTun with security-level PUBLIC so it appears in the access-
+	// policy interface list (ListGlobalInterfaces filters out private) → users can
+	// assign it as a policy exit. Source-preservation is handled separately by the
+	// segment NAT mode (PE-D static-NAT), NOT by SL/global (spec §3.2, base §2 fact 3).
+	if err = s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, fakeIPTunDescription, "public"); err != nil {
 		return fmt.Errorf("enable fakeip-tun: create opkgtun: %w", err)
 	}
 	push(func() {
@@ -190,10 +191,8 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		}
 	})
 
-	// ip global (auto): make the tun a global interface so NDMS exposes it as an
-	// assignable "exit" in access policies / connection priorities — under test:
-	// the hypothesis is policy-assignment makes NDMS route LAN traffic into the
-	// tun. No separate rollback: DeleteOpkgTun (above) removes the iface and its
+	// ip global: делает tun видимым/назначаемым в access-policy; default-route ниже делает выход рабочим.
+	// No separate rollback: DeleteOpkgTun (above) removes the iface and its
 	// global flag together.
 	if err = s.deps.OpkgTun.SetIPGlobal(ctx, ndmsName); err != nil {
 		return fmt.Errorf("enable fakeip-tun: set ip global: %w", err)
@@ -220,6 +219,27 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 
 	if err = s.deps.OpkgTun.InterfaceUp(ctx, ndmsName); err != nil {
 		return fmt.Errorf("enable fakeip-tun: iface up: %w", err)
+	}
+
+	// Install a default route via the tun (v4 + v6) so a policy with the OpkgTun
+	// as exit actually routes — NDMS does NOT auto-add it. LIFO push-rollback.
+	if err = s.deps.DefaultRoute.SetDefaultRoute(ctx, ndmsName); err != nil {
+		return fmt.Errorf("enable fakeip-tun: set default route: %w", err)
+	}
+	push(func() {
+		if e := s.deps.DefaultRoute.RemoveDefaultRoute(ctx, ndmsName); e != nil {
+			s.appLog.Warn("fakeip-rollback", iface, "remove default route: "+e.Error())
+		}
+	})
+	if p.TunAddr6 != "" {
+		if err = s.deps.DefaultRoute.SetIPv6DefaultRoute(ctx, ndmsName); err != nil {
+			return fmt.Errorf("enable fakeip-tun: set v6 default route: %w", err)
+		}
+		push(func() {
+			if e := s.deps.DefaultRoute.RemoveIPv6DefaultRoute(ctx, ndmsName); e != nil {
+				s.appLog.Warn("fakeip-rollback", iface, "remove v6 default route: "+e.Error())
+			}
+		})
 	}
 
 	// Wipe the fakeip cache when the configured pool ranges differ from what the
@@ -438,7 +458,6 @@ func (s *ServiceImpl) fakeIPEgressUp(cfg *RouterConfig) bool {
 	// validation fix (isKnownOutboundTag scans ALL catalogs, not just this slot).
 	return cfg.Route.Final != ""
 }
-
 
 // splitCIDRToAddrMask splits a CIDR into its bare address string and dotted-quad
 // (v4) netmask, e.g. "172.18.0.1/30" → ("172.18.0.1", "255.255.255.252") and

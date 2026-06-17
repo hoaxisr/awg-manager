@@ -43,6 +43,24 @@ type DHCPProvider interface {
 	ClearPoolDNS(ctx context.Context, pool string) error
 }
 
+// DefaultRouteProvider installs/removes a default route via the fakeip tun so a
+// policy with the OpkgTun as exit actually routes (NDMS does NOT auto-add it).
+type DefaultRouteProvider interface {
+	SetDefaultRoute(ctx context.Context, name string) error
+	RemoveDefaultRoute(ctx context.Context, name string) error
+	SetIPv6DefaultRoute(ctx context.Context, name string) error
+	RemoveIPv6DefaultRoute(ctx context.Context, name string) error
+}
+
+// SegmentNATProvider toggles segment NAT modes (masquerade / static-NAT) for
+// source preservation. Consumed by PE-D; wired here so the dep exists.
+type SegmentNATProvider interface {
+	SetSegmentNAT(ctx context.Context, seg string) error
+	RemoveSegmentNAT(ctx context.Context, seg string) error
+	SetStaticNAT(ctx context.Context, seg, wan string) error
+	RemoveStaticNAT(ctx context.Context, seg, wan string) error
+}
+
 // FakeIPTunParams holds the static fakeip-tun provisioning knobs not derivable
 // at runtime. Defaults are spec §3.3/3.4/3.6 values; wired in cmd/awg-manager.
 // (RealServer + cache path are sourced by the lifecycle layer in Slice 1D.)
