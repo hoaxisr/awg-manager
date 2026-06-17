@@ -345,14 +345,17 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 	// v6 pool route is added (defaults carry Inet6Range) after the v4 pool route.
 	mustOrder("AddRoute:10.128.0.0:255.192.0.0:"+ndmsName, "AddRoute6:3f80::/10:"+ndmsName)
 	mustOrder("SetMTU:"+ndmsName+":1500", "InterfaceUp:"+ndmsName)
-	// Default route via the tun (v4 + v6) is installed after the iface is up and
-	// before the flush/readiness wait — NDMS does NOT auto-add it (PE-C).
-	mustOrder("InterfaceUp:"+ndmsName, "SetDefaultRoute:"+ndmsName)
-	mustOrder("SetDefaultRoute:"+ndmsName, "SetIPv6DefaultRoute:"+ndmsName)
-	mustOrder("SetIPv6DefaultRoute:"+ndmsName, "Flush:"+iface)
+	// Flush runs PRE-start (right after iface up + config build), clearing stale
+	// addrs before sing-box attaches the gvisor tun.
 	mustOrder("InterfaceUp:"+ndmsName, "Flush:"+iface)
-	// Flush precedes the pool route (waitForSingbox sits between, no recorded call).
-	mustOrder("Flush:"+iface, "AddRoute:10.128.0.0:255.192.0.0:"+ndmsName)
+	// Default route via the tun (v4 + v6) is installed POST-readiness (after the
+	// flush and the stubbed waitForSingbox) — applying it pre-start churned NDMS
+	// during the tun attach and the process died (PE-I lifecycle fix). NDMS does
+	// NOT auto-add it.
+	mustOrder("Flush:"+iface, "SetDefaultRoute:"+ndmsName)
+	mustOrder("SetDefaultRoute:"+ndmsName, "SetIPv6DefaultRoute:"+ndmsName)
+	// Default routes precede the pool routes (both post-readiness).
+	mustOrder("SetIPv6DefaultRoute:"+ndmsName, "AddRoute:10.128.0.0:255.192.0.0:"+ndmsName)
 	mustOrder("AddRoute:10.128.0.0:255.192.0.0:"+ndmsName, "SetPoolDNS:_WEBADMIN:172.18.0.2")
 
 	// DHCP SetPoolDNS must be the LAST provisioning call.
@@ -452,7 +455,9 @@ func TestEnableFakeIPTun_UsesPersistedEngineSettings(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
-	steps := []string{"Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "SetDefaultRoute", "SetIPv6DefaultRoute", "Flush", "AddRoute", "AddRoute6", "SetPoolDNS"}
+	// Execution order (PE-I): provision → Flush (pre-start) → [waitForSingbox] →
+	// SetDefaultRoute → SetIPv6DefaultRoute → AddRoute → AddRoute6 → SetPoolDNS.
+	steps := []string{"Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "Flush", "SetDefaultRoute", "SetIPv6DefaultRoute", "AddRoute", "AddRoute6", "SetPoolDNS"}
 	for _, step := range steps {
 		t.Run(step, func(t *testing.T) {
 			h := newFakeIPEnableHarness(t, step)
@@ -490,51 +495,65 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 					t.Errorf("Create-fail must not run iface teardown: %v", h.log.calls)
 				}
 			}
-			// A failure before the route step must not leave a route applied.
+			// PE-I order: Flush (pre-start) → [waitForSingbox] → SetDefaultRoute →
+			// SetIPv6DefaultRoute → AddRoute → AddRoute6 → SetPoolDNS. A failure rolls
+			// back exactly what landed before it (LIFO).
 			switch step {
-			case "Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "SetDefaultRoute", "SetIPv6DefaultRoute", "Flush":
+			case "Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "Flush", "SetDefaultRoute":
+				// Failure at/before the v4 default route: no default route landed (the
+				// failing SetDefaultRoute never pushes its undo), no pool route, no DHCP.
+				if h.log.has("RemoveDefaultRoute:" + ndmsName) {
+					t.Errorf("%s: default route not applied yet — nothing to remove: %v", step, h.log.calls)
+				}
 				if h.log.has("AddRoute:10.128.0.0:255.192.0.0:" + ndmsName) {
-					t.Errorf("%s: route should not have been added", step)
+					t.Errorf("%s: pool route should not have been added", step)
 				}
 				if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
 					t.Errorf("%s: DHCP DNS should not have been set", step)
 				}
-				// SetIPv6DefaultRoute fails AFTER the v4 default route landed → its undo
-				// (RemoveDefaultRoute) must run in rollback. Flush fails after both
-				// default routes landed → both must be removed.
-				if step == "SetIPv6DefaultRoute" || step == "Flush" {
-					if !h.log.has("RemoveDefaultRoute:" + ndmsName) {
-						t.Errorf("%s: rollback missing RemoveDefaultRoute (v4): %v", step, h.log.calls)
-					}
+			case "SetIPv6DefaultRoute":
+				// v4 default route landed, v6 failed → v4 undo runs; no pool route / DHCP.
+				if !h.log.has("RemoveDefaultRoute:" + ndmsName) {
+					t.Errorf("SetIPv6DefaultRoute: rollback missing RemoveDefaultRoute (v4): %v", h.log.calls)
 				}
-				if step == "Flush" {
-					if !h.log.has("RemoveIPv6DefaultRoute:" + ndmsName) {
-						t.Errorf("Flush: rollback missing RemoveIPv6DefaultRoute: %v", h.log.calls)
-					}
+				if h.log.has("AddRoute:10.128.0.0:255.192.0.0:" + ndmsName) {
+					t.Errorf("SetIPv6DefaultRoute: pool route should not have been added")
+				}
+				if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
+					t.Errorf("SetIPv6DefaultRoute: DHCP DNS should not have been set")
 				}
 			case "AddRoute":
-				// DHCP must not be set; route add failed so nothing to remove.
+				// Both default routes landed → both undone; pool-route add failed so
+				// nothing to remove for it; no DHCP.
+				if !h.log.has("RemoveDefaultRoute:"+ndmsName) || !h.log.has("RemoveIPv6DefaultRoute:"+ndmsName) {
+					t.Errorf("AddRoute: rollback missing default-route removal: %v", h.log.calls)
+				}
 				if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
 					t.Errorf("AddRoute: DHCP DNS should not have been set")
 				}
 			case "AddRoute6":
-				// v6-route-add failure: the v4 route was already added and must be
-				// removed in rollback; the v6 route itself never landed (so nothing
-				// to remove for it). DHCP must not be set. (iface teardown + persist
-				// clear are asserted by the common checks above.)
+				// v6-route-add failure: v4 pool route + both default routes landed and
+				// must be removed; the v6 route never landed. DHCP must not be set.
 				if !h.log.has("RemoveRoute:10.128.0.0:" + ndmsName) {
 					t.Errorf("AddRoute6: rollback missing RemoveRoute (v4): %v", h.log.calls)
+				}
+				if !h.log.has("RemoveDefaultRoute:"+ndmsName) || !h.log.has("RemoveIPv6DefaultRoute:"+ndmsName) {
+					t.Errorf("AddRoute6: rollback missing default-route removal: %v", h.log.calls)
 				}
 				if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
 					t.Errorf("AddRoute6: DHCP DNS should not have been set")
 				}
 			case "SetPoolDNS":
-				// Routes were added then must be removed in rollback (v4 + v6).
+				// Everything landed then must be removed in rollback (pool v4+v6 +
+				// both default routes).
 				if !h.log.has("RemoveRoute:10.128.0.0:" + ndmsName) {
 					t.Errorf("SetPoolDNS: rollback missing RemoveRoute: %v", h.log.calls)
 				}
 				if !h.log.has("RemoveRoute6:3f80::/10:" + ndmsName) {
 					t.Errorf("SetPoolDNS: rollback missing RemoveRoute6: %v", h.log.calls)
+				}
+				if !h.log.has("RemoveDefaultRoute:"+ndmsName) || !h.log.has("RemoveIPv6DefaultRoute:"+ndmsName) {
+					t.Errorf("SetPoolDNS: rollback missing default-route removal: %v", h.log.calls)
 				}
 			}
 		})

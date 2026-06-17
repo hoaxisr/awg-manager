@@ -221,49 +221,13 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("enable fakeip-tun: iface up: %w", err)
 	}
 
-	// Install a default route via the tun (v4 + v6) so a policy with the OpkgTun
-	// as exit actually routes — NDMS does NOT auto-add it. LIFO push-rollback.
-	if err = s.deps.DefaultRoute.SetDefaultRoute(ctx, ndmsName); err != nil {
-		return fmt.Errorf("enable fakeip-tun: set default route: %w", err)
-	}
-	push(func() {
-		if e := s.deps.DefaultRoute.RemoveDefaultRoute(ctx, ndmsName); e != nil {
-			s.appLog.Warn("fakeip-rollback", iface, "remove default route: "+e.Error())
-		}
-	})
-	if p.TunAddr6 != "" {
-		if err = s.deps.DefaultRoute.SetIPv6DefaultRoute(ctx, ndmsName); err != nil {
-			return fmt.Errorf("enable fakeip-tun: set v6 default route: %w", err)
-		}
-		push(func() {
-			if e := s.deps.DefaultRoute.RemoveIPv6DefaultRoute(ctx, ndmsName); e != nil {
-				s.appLog.Warn("fakeip-rollback", iface, "remove v6 default route: "+e.Error())
-			}
-		})
-	}
-
-	// Static-NAT delivery-segment source preservation (PE-D, spec §3.2/§3.3).
-	// Placed AFTER the default route so routing already exists before NAT flips.
-	// Guarded by FakeIPSourcePreserveOrDefault (default on). DESIGN CHOICE: on a
-	// resolve failure we WARN + continue rather than failing the whole Enable —
-	// the tun still works, source may just be masqueraded; the source-preservation
-	// reconcile/Status (PE-G) surfaces the degraded state. Only a real apply error
-	// (NAT command failed) is fatal, with a push-rollback that restores dynamic NAT.
-	if sr.FakeIPSourcePreserveOrDefault() {
-		seg, wan, rerr := s.resolveDeliverySegmentAndWAN(ctx)
-		if rerr != nil {
-			s.appLog.Warn("fakeip-nat", iface, "resolve segment/WAN for static-NAT: "+rerr.Error())
-		} else if seg != "" && wan != "" {
-			if err = s.applyStaticNAT(ctx, seg, wan); err != nil {
-				return fmt.Errorf("enable fakeip-tun: static-NAT: %w", err)
-			}
-			push(func() {
-				if e := s.teardownStaticNAT(ctx, seg, wan); e != nil {
-					s.appLog.Warn("fakeip-rollback", iface, "restore dynamic NAT: "+e.Error())
-				}
-			})
-		}
-	}
+	// NB: the default-route (v4+v6) and static-NAT NDMS mutations were moved to
+	// AFTER sing-box is confirmed up (see below, post-waitForSingbox). Applying
+	// them HERE (pre-start) raced sing-box's tun attach — the NDMS route/NAT-table
+	// rebuild (slow RCI) churned the kernel right as sing-box opened the gvisor tun,
+	// so carrier never settled and the process died ~80s in (stand-verified
+	// 2026-06-17). The tun device/address provisioning above is all sing-box needs
+	// to attach; routing/NAT steering follows once it's live.
 
 	// Wipe the fakeip cache when the configured pool ranges differ from what the
 	// persisted cache was built with — a stale map would hand out addresses from
@@ -343,6 +307,55 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	bootWait := bootWaitWithFloor()
 	if err = s.waitForSingbox(ctx, bootWait); err != nil {
 		return fmt.Errorf("enable fakeip-tun: %w: waited %s (%v)", ErrSingboxNotReady, bootWait, err)
+	}
+
+	// Routing + source-preservation NDMS mutations run AFTER sing-box is confirmed
+	// up (carrier) — applying them pre-start raced the gvisor tun attach (see the
+	// note after InterfaceUp). Post-readiness sing-box is attached against a quiet
+	// NDMS, so these steer routing/NAT without disturbing the live tun.
+
+	// Default route via the tun (v4 + v6) so a policy with the OpkgTun as exit
+	// actually routes — NDMS does NOT auto-add it. LIFO push-rollback.
+	if err = s.deps.DefaultRoute.SetDefaultRoute(ctx, ndmsName); err != nil {
+		return fmt.Errorf("enable fakeip-tun: set default route: %w", err)
+	}
+	push(func() {
+		if e := s.deps.DefaultRoute.RemoveDefaultRoute(ctx, ndmsName); e != nil {
+			s.appLog.Warn("fakeip-rollback", iface, "remove default route: "+e.Error())
+		}
+	})
+	if p.TunAddr6 != "" {
+		if err = s.deps.DefaultRoute.SetIPv6DefaultRoute(ctx, ndmsName); err != nil {
+			return fmt.Errorf("enable fakeip-tun: set v6 default route: %w", err)
+		}
+		push(func() {
+			if e := s.deps.DefaultRoute.RemoveIPv6DefaultRoute(ctx, ndmsName); e != nil {
+				s.appLog.Warn("fakeip-rollback", iface, "remove v6 default route: "+e.Error())
+			}
+		})
+	}
+
+	// Static-NAT delivery-segment source preservation (PE-D, spec §3.2/§3.3).
+	// Placed AFTER the default route so routing already exists before NAT flips.
+	// Guarded by FakeIPSourcePreserveOrDefault (default on). DESIGN CHOICE: on a
+	// resolve failure we WARN + continue rather than failing the whole Enable —
+	// the tun still works, source may just be masqueraded; the source-preservation
+	// reconcile/Status (PE-G) surfaces the degraded state. Only a real apply error
+	// (NAT command failed) is fatal, with a push-rollback that restores dynamic NAT.
+	if sr.FakeIPSourcePreserveOrDefault() {
+		seg, wan, rerr := s.resolveDeliverySegmentAndWAN(ctx)
+		if rerr != nil {
+			s.appLog.Warn("fakeip-nat", iface, "resolve segment/WAN for static-NAT: "+rerr.Error())
+		} else if seg != "" && wan != "" {
+			if err = s.applyStaticNAT(ctx, seg, wan); err != nil {
+				return fmt.Errorf("enable fakeip-tun: static-NAT: %w", err)
+			}
+			push(func() {
+				if e := s.teardownStaticNAT(ctx, seg, wan); e != nil {
+					s.appLog.Warn("fakeip-rollback", iface, "restore dynamic NAT: "+e.Error())
+				}
+			})
+		}
 	}
 
 	// NDMS auto static routes steer the fakeip pool(s) into the tun.
