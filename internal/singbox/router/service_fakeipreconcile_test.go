@@ -274,6 +274,12 @@ func TestReconcileFakeIPTun_DriftHealRestartsDeadSingbox(t *testing.T) {
 	if calls < 1 {
 		t.Fatalf("IsRunning was never probed (restart path not taken)")
 	}
+	// The drift-heal MUST directly (re)spawn the dead process: SetEnabled is a
+	// no-op for an already-enabled slot (Orch != nil here), so only an explicit
+	// Singbox.Start() actually revives it. Assert the spawn happened exactly once.
+	if sb.startCalls != 1 {
+		t.Errorf("Singbox.Start calls = %d, want 1 (drift-heal must respawn the dead process)", sb.startCalls)
+	}
 	// Routes re-added because the live route probe is unstubbed here → reads
 	// /proc/net/route → opkgtun0 route absent → drift detected → re-add fires.
 	if !h.log.has("AddRoute:10.128.0.0:255.192.0.0:OpkgTun0") {
@@ -439,24 +445,25 @@ func TestGetStatus_FakeIPEgressUp(t *testing.T) {
 	}
 }
 
-// TestGetStatus_PolicyExitFields asserts the PE-E Status fields populate for an
-// active fakeip-tun (sourcePreserve default-true mirror + policyExitReady true once
-// provisioned) and stay nil for a tproxy router.
+// TestGetStatus_PolicyExitFields asserts the PE-E Status fields are GATED on the
+// engine being active: nil while inactive (even in fakeip-tun mode), and populated
+// (sourcePreserve default-true mirror + policyExitReady true) only once the engine
+// is active. Nil for a tproxy router is covered separately.
 func TestGetStatus_PolicyExitFields(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 	h.svc.deps.IPTables = errProbeIPTables()
 
-	// Before provisioning (fakeip-tun mode but no iface): sourcePreserve mirrors the
-	// default (true), policyExitReady false (not provisioned yet).
+	// Before provisioning (fakeip-tun mode but no iface → not active): both fields
+	// stay nil (the active gate, not just mode).
 	st0, err := h.svc.GetStatus(context.Background())
 	if err != nil {
 		t.Fatalf("GetStatus: %v", err)
 	}
-	if st0.FakeIPSourcePreserve == nil || *st0.FakeIPSourcePreserve != true {
-		t.Errorf("FakeIPSourcePreserve = %v, want true (default) in fakeip-tun mode", st0.FakeIPSourcePreserve)
+	if st0.FakeIPSourcePreserve != nil {
+		t.Errorf("FakeIPSourcePreserve = %v, want nil while inactive", *st0.FakeIPSourcePreserve)
 	}
-	if st0.FakeIPPolicyExitReady == nil || *st0.FakeIPPolicyExitReady != false {
-		t.Errorf("FakeIPPolicyExitReady = %v, want false before provisioning", st0.FakeIPPolicyExitReady)
+	if st0.FakeIPPolicyExitReady != nil {
+		t.Errorf("FakeIPPolicyExitReady = %v, want nil while inactive", *st0.FakeIPPolicyExitReady)
 	}
 
 	if err := h.svc.Enable(context.Background()); err != nil {
@@ -464,15 +471,39 @@ func TestGetStatus_PolicyExitFields(t *testing.T) {
 	}
 	h.svc.deps.IPTables = errProbeIPTables()
 
+	// Engine active requires process up (isRunningFn=true in harness) + tun carrier
+	// (tunReadyProbe=true in harness) + pool route present — stub the last true.
+	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return true })
+
 	st, err := h.svc.GetStatus(context.Background())
 	if err != nil {
 		t.Fatalf("GetStatus: %v", err)
 	}
+	if !st.Active {
+		t.Fatalf("precondition: engine must be active for the PE-E fields to populate")
+	}
 	if st.FakeIPSourcePreserve == nil || *st.FakeIPSourcePreserve != true {
-		t.Errorf("FakeIPSourcePreserve = %v, want true after Enable", st.FakeIPSourcePreserve)
+		t.Errorf("FakeIPSourcePreserve = %v, want true once active", st.FakeIPSourcePreserve)
 	}
 	if st.FakeIPPolicyExitReady == nil || *st.FakeIPPolicyExitReady != true {
-		t.Errorf("FakeIPPolicyExitReady = %v, want true once provisioned in fakeip-tun mode", st.FakeIPPolicyExitReady)
+		t.Errorf("FakeIPPolicyExitReady = %v, want true once active in fakeip-tun mode", st.FakeIPPolicyExitReady)
+	}
+
+	// Engine goes inactive (e.g. after `POST /mode off` the process is down but
+	// RoutingMode stays "fakeip-tun") → both fields revert to nil.
+	h.svc.deps.Singbox.(*fakeSingbox).isRunningFn = func() (bool, int) { return false, 0 }
+	stInactive, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus (inactive): %v", err)
+	}
+	if stInactive.Active {
+		t.Fatalf("precondition: engine must be inactive after process down")
+	}
+	if stInactive.FakeIPSourcePreserve != nil {
+		t.Errorf("FakeIPSourcePreserve = %v, want nil when inactive (mode still fakeip-tun)", *stInactive.FakeIPSourcePreserve)
+	}
+	if stInactive.FakeIPPolicyExitReady != nil {
+		t.Errorf("FakeIPPolicyExitReady = %v, want nil when inactive (mode still fakeip-tun)", *stInactive.FakeIPPolicyExitReady)
 	}
 }
 

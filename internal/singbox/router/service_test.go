@@ -118,6 +118,10 @@ type fakeSingbox struct {
 	// clearManualStopErr lets a test make it fail.
 	clearManualStopCalls int
 	clearManualStopErr   error
+
+	// startCalls counts Start() invocations so a test can assert the
+	// drift-heal actually (re)spawns a dead process.
+	startCalls int
 }
 
 func (f *fakeSingbox) Reload() error { return nil }
@@ -127,7 +131,7 @@ func (f *fakeSingbox) IsRunning() (bool, int) {
 	}
 	return false, 0
 }
-func (f *fakeSingbox) Start() error { return nil }
+func (f *fakeSingbox) Start() error { f.startCalls++; return nil }
 func (f *fakeSingbox) ClearManualStop() error {
 	f.clearManualStopCalls++
 	return f.clearManualStopErr

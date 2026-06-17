@@ -299,6 +299,17 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("enable fakeip-tun: build config: %w", err)
 	}
 
+	// Flush stale kernel addresses on the tun BEFORE sing-box starts, while the
+	// tun is still bare (NDMS assigned its address above via SetAddress; we drop
+	// it here so sing-box's gvisor attach re-adds its own configured inet4_address
+	// cleanly). Doing the flush PRE-start closes the 1F.1 race: the old post-start
+	// placement could flush right as the debounced (~250ms) orchestrator reload
+	// made sing-box attach to the tun, killing the just-attached address and the
+	// process. HARD fail: a flush error rolls the whole thing back.
+	if err = fakeIPAddrFlush(ctx, iface); err != nil {
+		return fmt.Errorf("enable fakeip-tun: addr flush: %w", err)
+	}
+
 	// Promote SlotRouter to active FIRST (like the tproxy path) so
 	// persistConfigDirect targets the active file and the orchestrator cold-
 	// start reads it. Legacy fallback (no orch) uses an explicit Start.
@@ -324,18 +335,11 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("enable fakeip-tun: persist config: %w", err)
 	}
 
-	// Flush stale kernel addresses on the tun right before sing-box drives it,
-	// then wait for it to be truly ready (process + tun carrier + live fakeip
-	// DNS). HARD fail: an unready sing-box with the DHCP DNS advertised would
-	// black-hole client DNS, so we roll the whole thing back.
-	//
-	// RISK (1F.1): the flush-vs-sing-box-attach ordering is PoC-derived and MUST
-	// be asserted on the live stand — the orchestrator reload that makes sing-box
-	// attach to the tun is debounced (~250ms), so the flush here may race the
-	// attach. Verify the tun keeps the sing-box-assigned address on the stand.
-	if err = fakeIPAddrFlush(ctx, iface); err != nil {
-		return fmt.Errorf("enable fakeip-tun: addr flush: %w", err)
-	}
+	// Wait for sing-box to be truly ready (process + tun carrier + live fakeip
+	// DNS). The address flush already ran PRE-start (above), so the tun keeps the
+	// address sing-box assigns on attach. HARD fail: an unready sing-box with the
+	// DHCP DNS advertised would black-hole client DNS, so we roll the whole thing
+	// back.
 	bootWait := bootWaitWithFloor()
 	if err = s.waitForSingbox(ctx, bootWait); err != nil {
 		return fmt.Errorf("enable fakeip-tun: %w: waited %s (%v)", ErrSingboxNotReady, bootWait, err)

@@ -76,15 +76,21 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// MUST do it or a crashed process stays down until the next Enable. Bounded
 	// wait: log on timeout, don't hard-fail a reconcile.
 	if running, _ := s.deps.Singbox.IsRunning(); !running {
+		// Ensure the slot file is enabled (idempotent). NB: SetEnabled is a
+		// no-op when the slot is already enabled (orchestrator.go), so it can
+		// NOT revive a process that died with the slot on — we must start the
+		// process directly below.
 		if s.deps.Orch != nil {
 			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, true); e != nil {
-				s.appLog.Warn("fakeip-reconcile", iface, "restart sing-box (orch): "+e.Error())
+				s.appLog.Warn("fakeip-reconcile", iface, "enable slot: "+e.Error())
 			}
-		} else if e := s.deps.Singbox.Start(); e != nil {
-			s.appLog.Warn("fakeip-reconcile", iface, "restart sing-box (legacy): "+e.Error())
 		}
-		bootWait := bootWaitWithFloor()
-		if e := s.waitForSingbox(ctx, bootWait); e != nil {
+		// Start the dead process directly (real spawn). This is the actual
+		// recovery — gated on !running above, so it never double-starts.
+		if e := s.deps.Singbox.Start(); e != nil {
+			s.appLog.Warn("fakeip-reconcile", iface, "restart sing-box: "+e.Error())
+		}
+		if e := s.waitForSingbox(ctx, bootWaitWithFloor()); e != nil {
 			s.appLog.Warn("fakeip-reconcile", iface, "sing-box not ready after restart: "+e.Error())
 		}
 	}

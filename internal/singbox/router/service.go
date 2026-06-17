@@ -1325,11 +1325,12 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	// already in hand here so it's clean to wire, and it reflects the live cause
 	// ("is egress usable → is DNS delivery active") without a lock dance.
 	var fakeIPEgressUp *bool
-	// PE-E policy-exit Status fields. FakeIPSourcePreserve mirrors the setting (only
-	// meaningful in fakeip-tun mode). FakeIPPolicyExitReady is true when the tun is
-	// provisioned as a source-preserving policy exit — read the mode from sr
-	// (settings) and provisioned-ness from st.FakeIPIface (Status has no
-	// RoutingMode/Provisioned field). Both nil outside fakeip-tun mode.
+	// PE-E policy-exit Status fields. FakeIPSourcePreserve mirrors the setting and
+	// FakeIPPolicyExitReady reports the tun is a usable source-preserving policy
+	// exit. Both are gated on the engine being ACTIVE (process + carrier + route),
+	// not just RoutingMode: RoutingMode stays "fakeip-tun" after `POST /mode off`,
+	// so a mode-only gate kept reporting policyExitReady:true while active:false.
+	// Both nil outside an active fakeip-tun engine.
 	var fakeIPSourcePreserve *bool
 	var fakeIPPolicyExitReady *bool
 	if sr.RoutingMode == "fakeip-tun" && settings != nil &&
@@ -1337,9 +1338,9 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		fakeIPIface = fakeIPIfaceName(settings.FakeIP.Index)
 		fakeIPEgressUp = boolPtr(s.fakeIPEgressUp(cfg))
 	}
-	if sr.RoutingMode == "fakeip-tun" {
+	if sr.RoutingMode == "fakeip-tun" && active {
 		fakeIPSourcePreserve = boolPtr(sr.FakeIPSourcePreserveOrDefault())
-		fakeIPPolicyExitReady = boolPtr(sr.RoutingMode == "fakeip-tun" && fakeIPIface != "")
+		fakeIPPolicyExitReady = boolPtr(fakeIPIface != "")
 	}
 	if sr.RoutingMode == "fakeip-tun" && sr.Enabled {
 		sourcePreserved = s.loadSourcePreserved()
