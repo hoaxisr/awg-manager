@@ -26,7 +26,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Toggle, Dropdown, Input, type DropdownOption } from '$lib/components/ui';
-	import { RotateCw } from 'lucide-svelte';
+	import { RotateCw, TriangleAlert } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { mergeAndSaveSettings } from '$lib/components/sb-router/settingsActions';
@@ -41,6 +41,8 @@
 		wanInterface?: string;
 		/** Sniffing включён. */
 		snifferEnabled: boolean;
+		/** Сохранять source-IP устройств через static-NAT (default true). */
+		fakeipSourcePreserve?: boolean;
 		/** TCP/IP-стек fakeip-tun. */
 		fakeipStack?: 'gvisor' | 'system';
 		/** fakeip-пул v4 (CIDR). */
@@ -64,6 +66,7 @@
 		wanAutoDetect,
 		wanInterface,
 		snifferEnabled,
+		fakeipSourcePreserve,
 		fakeipStack,
 		fakeipPool4,
 		fakeipPool6,
@@ -152,6 +155,10 @@
 
 	function handleSniffer(next: boolean): void {
 		void save({ snifferEnabled: next });
+	}
+
+	function handleSourcePreserve(next: boolean): void {
+		void save({ fakeipSourcePreserve: next });
 	}
 
 	function commitPool4(): void {
@@ -273,6 +280,32 @@
 					loading={saving}
 					onchange={handleSniffer}
 				/>
+			</span>
+		</div>
+
+		<!-- Сохранять source-IP устройств (static-NAT). -->
+		<div class="erow">
+			<span class="k">Сохранять source устройств</span>
+			<span class="val ctl">
+				<Toggle
+					checked={fakeipSourcePreserve ?? true}
+					size="sm"
+					loading={saving}
+					onchange={handleSourcePreserve}
+				/>
+				<span class="warn">
+					<TriangleAlert size={13} />
+					Меняет NAT-режим сегмента на static-NAT — проверьте проброс портов и входящие соединения.
+				</span>
+			</span>
+		</div>
+
+		<!-- Подсказка: policy-exit через opkgtun. -->
+		<div class="erow erow-hint">
+			<span class="policy-hint">
+				Чтобы завернуть весь трафик устройства через fakeip — назначьте его в
+				<a href="/routing?tab=policy" class="policy-link">Политике доступа</a>
+				на выход opkgtun.
 			</span>
 		</div>
 
@@ -402,6 +435,40 @@
 	.ctl-hint {
 		color: var(--text-muted);
 		font-size: 0.8125rem;
+	}
+
+	.warn {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.3125rem;
+		color: var(--text-muted);
+		font-size: 0.8125rem;
+		line-height: 1.4;
+	}
+
+	.warn :global(svg) {
+		flex-shrink: 0;
+		margin-top: 0.125rem;
+	}
+
+	.erow-hint {
+		grid-column: 1 / -1;
+		align-items: flex-start;
+	}
+
+	.policy-hint {
+		color: var(--text-muted);
+		font-size: 0.8125rem;
+		line-height: 1.4;
+	}
+
+	.policy-link {
+		color: var(--color-accent);
+		text-decoration: none;
+	}
+
+	.policy-link:hover {
+		text-decoration: underline;
 	}
 
 	.iface {

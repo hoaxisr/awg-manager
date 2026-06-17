@@ -1319,6 +1319,8 @@ export interface SingboxRouterSettings {
 	fakeipPool4?: string;
 	fakeipPool6?: string;
 	fakeipMtu?: number;
+	/** Default true server-side; preserves device source IP via segment static-NAT. */
+	fakeipSourcePreserve?: boolean;
 }
 
 // WAN interface for the sing-box router WAN-binding picker. `name` is
@@ -1370,6 +1372,8 @@ export interface SingboxRouterStatus {
 	 * (backend Status.SourcePreserved is *bool, omitempty).
 	 */
 	sourcePreserved?: boolean;
+	/** Mirrors the fakeipSourcePreserve setting; present only in fakeip-tun mode. */
+	fakeipSourcePreserve?: boolean;
 	/**
 	 * Active fakeip tun iface (kernel name, e.g. "opkgtun0"). Present only in
 	 * fakeip-tun mode once the tun is provisioned (backend Status.FakeIPIface

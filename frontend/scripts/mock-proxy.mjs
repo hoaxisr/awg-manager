@@ -1845,6 +1845,7 @@ let mockSBSettings = {
 	fakeipPool4: '10.128.0.0/10',
 	fakeipPool6: '3f80::/10',
 	fakeipMtu: 1500,
+	fakeipSourcePreserve: true,
 };
 
 // DHCP pools projected as fakeip "segments" (Task 2.1/2.2). Persistent
@@ -5280,7 +5281,7 @@ const server = http.createServer(async (req, res) => {
 				routingMode,
 				// fakeipEgressUp: global egress-health (Task 25). Default true. Flip to
 				// false here to demo the SegmentsDelivery «доставка DNS придержана» banner.
-				...(routingMode === 'fakeip-tun' ? { sourcePreserved: true, fakeipIface: 'opkgtun0', fakeipEgressUp: true } : {}),
+				...(routingMode === 'fakeip-tun' ? { sourcePreserved: true, fakeipSourcePreserve: true, fakeipIface: 'opkgtun0', fakeipEgressUp: true } : {}),
 			},
 		});
 		return;

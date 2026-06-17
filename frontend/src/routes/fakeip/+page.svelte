@@ -220,6 +220,7 @@
 				wanAutoDetect={$settings?.wanAutoDetect ?? true}
 				wanInterface={$settings?.wanInterface}
 				snifferEnabled={$settings?.snifferEnabled ?? false}
+				fakeipSourcePreserve={$settings?.fakeipSourcePreserve ?? true}
 				fakeipStack={$settings?.fakeipStack ?? 'gvisor'}
 				fakeipPool4={$settings?.fakeipPool4}
 				fakeipPool6={$settings?.fakeipPool6}

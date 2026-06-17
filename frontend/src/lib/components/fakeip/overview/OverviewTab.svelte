@@ -28,6 +28,8 @@
 		wanAutoDetect: boolean;
 		wanInterface?: string;
 		snifferEnabled: boolean;
+		/** Сохранять source-IP устройств через static-NAT (default true). */
+		fakeipSourcePreserve?: boolean;
 		fakeipStack?: 'gvisor' | 'system';
 		fakeipPool4?: string;
 		fakeipPool6?: string;
@@ -44,6 +46,7 @@
 		wanAutoDetect,
 		wanInterface,
 		snifferEnabled,
+		fakeipSourcePreserve,
 		fakeipStack,
 		fakeipPool4,
 		fakeipPool6,
@@ -98,6 +101,7 @@
 		{wanAutoDetect}
 		{wanInterface}
 		{snifferEnabled}
+		{fakeipSourcePreserve}
 		{fakeipStack}
 		{fakeipPool4}
 		{fakeipPool6}
