@@ -218,3 +218,81 @@ func TestProcess_StartIsConcurrencySafe(t *testing.T) {
 	// Cleanup: stop the long-running sleep process.
 	_ = p.Stop()
 }
+
+// When ReloadNeedsRestart reports a tun inbound, Reload must do a full
+// Stop+Start (SIGTERM + respawn) instead of SIGHUP — sing-box cannot
+// hot-reload a tun inbound (TUNSETIFF busy → FATAL, stand-verified
+// 2026-06-17). Asserts: no SIGHUP, and a fresh spawn happened.
+func TestProcess_ReloadRestartsWhenTunPresent(t *testing.T) {
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "sing-box.pid")
+	// Seed a dead pid so stopLocked's isAlive poll returns immediately.
+	if err := os.WriteFile(pidPath, []byte("999999"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var sawSIGHUP, sawSIGTERM bool
+	var spawnCount atomic.Int32
+	p := NewProcess("/bin/sleep", "/dev/null", pidPath)
+	p.signalFn = func(pid int, sig syscall.Signal) error {
+		switch sig {
+		case syscall.SIGHUP:
+			sawSIGHUP = true
+		case syscall.SIGTERM:
+			sawSIGTERM = true
+		}
+		return nil
+	}
+	p.startCmd = func(bin string, args ...string) (*exec.Cmd, error) {
+		spawnCount.Add(1)
+		return exec.Command("/bin/sleep", "2"), nil
+	}
+	p.ReloadNeedsRestart = func() bool { return true }
+
+	if err := p.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if sawSIGHUP {
+		t.Error("Reload sent SIGHUP with a tun present — must restart instead")
+	}
+	if !sawSIGTERM {
+		t.Error("Reload did not SIGTERM (stop phase of restart) with a tun present")
+	}
+	if got := spawnCount.Load(); got != 1 {
+		t.Errorf("Reload spawned %d times, want exactly 1 (restart)", got)
+	}
+	_ = p.Stop()
+}
+
+// Without ReloadNeedsRestart (no tun), Reload takes the SIGHUP path.
+func TestProcess_ReloadSIGHUPsWhenNoTun(t *testing.T) {
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "sing-box.pid")
+	self := os.Getpid() // a live pid so Reload keeps the SIGHUP path (no respawn)
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(self)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var sawSIGHUP bool
+	var spawnCount atomic.Int32
+	p := NewProcess("/bin/sleep", "/dev/null", pidPath)
+	p.signalFn = func(pid int, sig syscall.Signal) error {
+		if sig == syscall.SIGHUP {
+			sawSIGHUP = true
+		}
+		return nil
+	}
+	p.startCmd = func(bin string, args ...string) (*exec.Cmd, error) {
+		spawnCount.Add(1)
+		return exec.Command("/bin/sleep", "2"), nil
+	}
+	// ReloadNeedsRestart nil → SIGHUP path.
+	if err := p.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if !sawSIGHUP {
+		t.Error("Reload did not SIGHUP without a tun")
+	}
+	if got := spawnCount.Load(); got != 0 {
+		t.Errorf("Reload spawned %d times, want 0 (SIGHUP, process still alive)", got)
+	}
+}

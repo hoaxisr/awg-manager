@@ -87,6 +87,15 @@ func (o *Orchestrator) SetShouldRun(fn func() bool) {
 	o.shouldRun = fn
 }
 
+// CurrentHasTun reports whether the LAST applied config had a tun inbound.
+// Consumers (the Process reload path) use it to choose restart-over-SIGHUP:
+// sing-box cannot hot-reload a tun inbound. Safe for concurrent callers.
+func (o *Orchestrator) CurrentHasTun() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.prevHasTun
+}
+
 // log emits via logf if set. Caller may or may not hold the lock.
 func (o *Orchestrator) log(level, msg string) {
 	o.mu.Lock()
