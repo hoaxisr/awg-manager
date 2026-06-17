@@ -123,6 +123,23 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 		s.appLog.Warn("fakeip-disable", iface, "clear pool dns: "+err.Error())
 	}
 
+	// (2b) Restore dynamic masquerade NAT on the delivery segment if static-NAT
+	// source preservation was applied at Enable (PE-D, spec §3.2/§3.3). Best-effort
+	// + logged: a NAT-restore failure must NOT abort the teardown (a half-removed
+	// fakeip is worse than a fully-attempted one). Guarded by the same
+	// FakeIPSourcePreserveOrDefault setting so we only undo what Enable did. The
+	// resolver is idempotent on NDMS (RemoveStaticNAT + SetSegmentNAT tolerate an
+	// already-dynamic segment), so re-running it on an already-restored segment is safe.
+	if settings.SingboxRouter.FakeIPSourcePreserveOrDefault() {
+		if seg, wan, rerr := s.resolveDeliverySegmentAndWAN(ctx); rerr != nil {
+			s.appLog.Warn("fakeip-disable", iface, "resolve segment/WAN for NAT restore: "+rerr.Error())
+		} else if seg != "" && wan != "" {
+			if err := s.teardownStaticNAT(ctx, seg, wan); err != nil {
+				s.appLog.Warn("fakeip-disable", iface, "restore dynamic NAT: "+err.Error())
+			}
+		}
+	}
+
 	// (3) RENEW the v4 pool route with reject:true ON the OpkgTun interface (Fix 2,
 	// stand-verified). NDMS renews the existing pool→OpkgTun route in place, adding
 	// the reject flag — this turns the pool route into a fail-closed kill-switch:

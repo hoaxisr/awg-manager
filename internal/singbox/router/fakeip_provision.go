@@ -61,6 +61,22 @@ type SegmentNATProvider interface {
 	RemoveStaticNAT(ctx context.Context, seg, wan string) error
 }
 
+// DHCPPoolSegmentResolver resolves a DHCP pool name to the NDMS segment
+// (e.g. "Home") the pool is bound to — the `interface` field static-NAT needs
+// for `ip static <Seg> ...`. Implemented in cmd/awg-manager over the DHCPPool
+// query store (its DHCPPool.Interface field carries the bound segment).
+type DHCPPoolSegmentResolver interface {
+	SegmentForPool(ctx context.Context, pool string) (string, error)
+}
+
+// DefaultGatewayResolver returns the NDMS interface id (e.g. "PPPoE0") carrying
+// the active IPv4 default route — the to-interface for `ip static <Seg> <WAN>`
+// in WAN-autodetect mode. NDMS-id, not kernel name (precedent: internal/managed
+// internet-only NAT feeds GetDefaultGatewayInterface straight into `ip static`).
+type DefaultGatewayResolver interface {
+	DefaultGatewayInterface(ctx context.Context) (string, error)
+}
+
 // FakeIPTunParams holds the static fakeip-tun provisioning knobs not derivable
 // at runtime. Defaults are spec §3.3/3.4/3.6 values; wired in cmd/awg-manager.
 // (RealServer + cache path are sourced by the lifecycle layer in Slice 1D.)

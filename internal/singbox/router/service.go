@@ -314,6 +314,18 @@ type Deps struct {
 	// preservation. Optional — nil in tests; wired in cmd/awg-manager to
 	// *ndmscommand.NATCommands. Consumed by PE-D.
 	SegmentNAT SegmentNATProvider
+	// DHCPPoolSegments resolves the delivery DHCP pool to the NDMS segment
+	// (e.g. "Home") it is bound to, so static-NAT can target `ip static <Seg>`.
+	// Optional — nil in tests; wired in cmd/awg-manager over ndmsQueries.DHCPPool.
+	// Consumed by PE-D (resolveDeliverySegmentAndWAN).
+	DHCPPoolSegments DHCPPoolSegmentResolver
+	// DefaultGateway resolves the active WAN to its NDMS interface id (e.g.
+	// "PPPoE0") for the static-NAT to-interface in autodetect mode. Optional —
+	// nil in tests; wired in cmd/awg-manager over ndmsQueries.Routes. Returns the
+	// NDMS id directly (NOT a kernel name) — precedent: internal/managed
+	// internet-only NAT feeds this same value straight into `ip static`'s
+	// to-interface. Consumed by PE-D (resolveDeliverySegmentAndWAN).
+	DefaultGateway DefaultGatewayResolver
 }
 
 // routerLoggerAdapter narrows *logging.ScopedLogger to the wanLogger

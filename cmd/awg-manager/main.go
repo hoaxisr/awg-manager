@@ -1111,6 +1111,8 @@ func main() {
 		OpkgTun:                ndmsCommands.Interfaces, // *InterfaceCommands satisfies OpkgTunProvisioner directly
 		DefaultRoute:           ndmsCommands.Routes,     // *RouteCommands satisfies DefaultRouteProvider directly
 		SegmentNAT:             ndmsCommands.NAT,        // *NATCommands satisfies SegmentNATProvider directly
+		DHCPPoolSegments:       &routerDHCPPoolSegmentAdapter{store: ndmsQueries.DHCPPool}, // pool→bound NDMS segment (PE-D static-NAT)
+		DefaultGateway:         &routerDefaultGatewayAdapter{store: ndmsQueries.Routes},    // active WAN → NDMS id (PE-D static-NAT autodetect)
 		StaticRoutes:           &routerStaticRouteAdapter{routes: ndmsCommands.Routes},
 		DHCP:                   ndmsCommands.DHCP, // *DHCPCommands satisfies DHCPProvider directly
 		OpkgTunIndices: &routerOpkgTunIndexAdapter{

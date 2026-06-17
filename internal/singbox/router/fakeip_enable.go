@@ -242,6 +242,29 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		})
 	}
 
+	// Static-NAT delivery-segment source preservation (PE-D, spec §3.2/§3.3).
+	// Placed AFTER the default route so routing already exists before NAT flips.
+	// Guarded by FakeIPSourcePreserveOrDefault (default on). DESIGN CHOICE: on a
+	// resolve failure we WARN + continue rather than failing the whole Enable —
+	// the tun still works, source may just be masqueraded; the source-preservation
+	// reconcile/Status (PE-G) surfaces the degraded state. Only a real apply error
+	// (NAT command failed) is fatal, with a push-rollback that restores dynamic NAT.
+	if sr.FakeIPSourcePreserveOrDefault() {
+		seg, wan, rerr := s.resolveDeliverySegmentAndWAN(ctx)
+		if rerr != nil {
+			s.appLog.Warn("fakeip-nat", iface, "resolve segment/WAN for static-NAT: "+rerr.Error())
+		} else if seg != "" && wan != "" {
+			if err = s.applyStaticNAT(ctx, seg, wan); err != nil {
+				return fmt.Errorf("enable fakeip-tun: static-NAT: %w", err)
+			}
+			push(func() {
+				if e := s.teardownStaticNAT(ctx, seg, wan); e != nil {
+					s.appLog.Warn("fakeip-rollback", iface, "restore dynamic NAT: "+e.Error())
+				}
+			})
+		}
+	}
+
 	// Wipe the fakeip cache when the configured pool ranges differ from what the
 	// persisted cache was built with — a stale map would hand out addresses from
 	// the OLD pool. Best-effort BEFORE start; a removal error is non-fatal.
