@@ -3694,6 +3694,13 @@ definitions:
           "" disables v6.
         example: 3f80::/10
         type: string
+      fakeipSourcePreserve:
+        description: |-
+          FakeIPSourcePreserve: при true (default) fakeip-tun провизионит сегменты
+          доставки в static-NAT (source LAN-устройств сохраняется); false = legacy
+          dynamic-NAT. nil/absent = default true.
+        example: true
+        type: boolean
       fakeipStack:
         description: |-
           --- fakeip-tun engine settings (user-editable) ---

@@ -31,6 +31,7 @@ type mockRouterSvc struct {
 	datFileErr    error
 	switchTarget  string
 	switchErr     error
+	settings      storage.SingboxRouterSettings
 }
 
 func (m *mockRouterSvc) Enable(ctx context.Context) error    { return m.enableErr }
@@ -44,9 +45,10 @@ func (m *mockRouterSvc) GetStatus(ctx context.Context) (router.Status, error) {
 	return router.Status{}, nil
 }
 func (m *mockRouterSvc) GetSettings(ctx context.Context) (storage.SingboxRouterSettings, error) {
-	return storage.SingboxRouterSettings{}, nil
+	return m.settings, nil
 }
 func (m *mockRouterSvc) UpdateSettings(ctx context.Context, s storage.SingboxRouterSettings) error {
+	m.settings = s
 	return nil
 }
 func (m *mockRouterSvc) ListWANInterfaces(ctx context.Context) ([]router.WANInterfaceInfo, error) {
@@ -620,5 +622,51 @@ func TestDatRuleSetSRS_BadToken_Returns403(t *testing.T) {
 	h.DatRuleSetSRS(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("want 403, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestSettings_FakeIPSourcePreserve_RoundTrip verifies the persisted boolean
+// setting survives a PUT→GET cycle as explicit false, and that the storage
+// default helper treats an absent value as true.
+func TestSettings_FakeIPSourcePreserve_RoundTrip(t *testing.T) {
+	svc := &mockRouterSvc{}
+	h := newMockRouterHandler(svc)
+
+	// PUT with explicit false.
+	putReq := httptest.NewRequest(http.MethodPut, "/api/singbox/router/settings",
+		strings.NewReader(`{"fakeipSourcePreserve": false}`))
+	putRR := httptest.NewRecorder()
+	h.PutSettings(putRR, putReq)
+	if putRR.Code != http.StatusOK {
+		t.Fatalf("PUT: want 200, got %d body=%s", putRR.Code, putRR.Body.String())
+	}
+
+	// GET returns it false.
+	getReq := httptest.NewRequest(http.MethodGet, "/api/singbox/router/settings", nil)
+	getRR := httptest.NewRecorder()
+	h.GetSettings(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("GET: want 200, got %d body=%s", getRR.Code, getRR.Body.String())
+	}
+	var env struct {
+		Data storage.SingboxRouterSettings `json:"data"`
+	}
+	if err := json.Unmarshal(getRR.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal settings: %v (body: %s)", err, getRR.Body.String())
+	}
+	if env.Data.FakeIPSourcePreserve == nil {
+		t.Fatalf("FakeIPSourcePreserve: got nil, want explicit false")
+	}
+	if *env.Data.FakeIPSourcePreserve {
+		t.Errorf("FakeIPSourcePreserve: got true, want false")
+	}
+	if got := env.Data.FakeIPSourcePreserveOrDefault(); got {
+		t.Errorf("FakeIPSourcePreserveOrDefault with false: got %v, want false", got)
+	}
+
+	// Absent field → helper defaults to true.
+	var absent storage.SingboxRouterSettings
+	if got := absent.FakeIPSourcePreserveOrDefault(); !got {
+		t.Errorf("FakeIPSourcePreserveOrDefault with absent: got %v, want true", got)
 	}
 }

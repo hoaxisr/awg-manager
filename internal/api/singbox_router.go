@@ -95,6 +95,10 @@ type SingboxRouterSettingsData struct {
 	FakeIPPool6 string `json:"fakeipPool6,omitempty" example:"3f80::/10"`
 	// FakeIPMTU is the tun MTU (default 1500; valid range 576-9000).
 	FakeIPMTU int `json:"fakeipMtu,omitempty" example:"1500"`
+	// FakeIPSourcePreserve: при true (default) fakeip-tun провизионит сегменты
+	// доставки в static-NAT (source LAN-устройств сохраняется); false = legacy
+	// dynamic-NAT. nil/absent = default true.
+	FakeIPSourcePreserve *bool `json:"fakeipSourcePreserve,omitempty" example:"true"`
 }
 
 // SingboxRouterSettingsResponse is the envelope for GET /singbox/router/settings.

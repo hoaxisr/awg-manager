@@ -138,6 +138,17 @@ type SingboxRouterSettings struct {
 	FakeIPPool6 string `json:"fakeipPool6,omitempty"`
 	// FakeIPMTU is the tun MTU (default 1500).
 	FakeIPMTU int `json:"fakeipMtu,omitempty"`
+	// FakeIPSourcePreserve: при true (default) fakeip-tun провизионит сегменты
+	// доставки в static-NAT (no ip nat + ip static) → source LAN-устройств
+	// сохраняется в sing-box (per-device targeting / policy-выход OpkgTun). При
+	// false — сегментный NAT не трогается (legacy dynamic-NAT). Pointer —
+	// чтобы отличить «не задано» (=true) от явного false.
+	FakeIPSourcePreserve *bool `json:"fakeipSourcePreserve,omitempty"`
+}
+
+// FakeIPSourcePreserveOrDefault: nil → true (default on).
+func (s SingboxRouterSettings) FakeIPSourcePreserveOrDefault() bool {
+	return s.FakeIPSourcePreserve == nil || *s.FakeIPSourcePreserve
 }
 
 // ManagedServer represents the user-created WireGuard server interface.
