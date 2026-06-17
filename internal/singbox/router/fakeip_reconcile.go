@@ -124,6 +124,48 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		}
 	}
 
+	// Re-add the tun default route(s) ONLY on real drift (PE-E). NDMS does NOT
+	// auto-add a default route via the OpkgTun — Enable installs it so a policy
+	// with the tun as exit actually routes; a PREROUTING/route rebuild can wipe it
+	// while the iface survives. Probe with the fakeIPDefaultRoutePresent seam; only
+	// SetDefaultRoute when ABSENT → zero route POSTs per tick in steady state.
+	// Best-effort + logged, never aborts the tick. v6 re-add is gated on the
+	// configured v6 tun address (mirrors Enable: v6 default route only when v6 tun).
+	if s.deps.DefaultRoute != nil {
+		if !fakeIPDefaultRoutePresent(iface) {
+			if e := s.deps.DefaultRoute.SetDefaultRoute(ctx, ndmsName); e != nil {
+				s.appLog.Warn("fakeip-reconcile", iface, "re-add default route v4: "+e.Error())
+			}
+			if s.deps.FakeIPTun.TunAddr6 != "" {
+				if e := s.deps.DefaultRoute.SetIPv6DefaultRoute(ctx, ndmsName); e != nil {
+					s.appLog.Warn("fakeip-reconcile", iface, "re-add default route v6: "+e.Error())
+				}
+			}
+		}
+	}
+
+	// Re-apply static-NAT source preservation ONLY on real drift (PE-E). When
+	// FakeIPSourcePreserve is on, Enable flips the delivery segment to static-NAT
+	// (`ip static <Seg> <WAN>`); a NAT-config rebuild can revert it to dynamic
+	// masquerade, which silently SNATs forward-client traffic to the tun address
+	// (the very failure assertSourcePreserved warns about). Probe the segment's
+	// static-NAT state via the StaticNAT reader; re-apply only when the segment is
+	// NOT present in static-NAT → zero NAT POSTs per tick in steady state.
+	// Best-effort + logged. Unwired reader (test/degraded) → skip silently.
+	if sr.FakeIPSourcePreserveOrDefault() && s.deps.StaticNAT != nil {
+		if seg, wan, rerr := s.resolveDeliverySegmentAndWAN(ctx); rerr != nil {
+			s.appLog.Warn("fakeip-reconcile", iface, "resolve segment/WAN for static-NAT drift: "+rerr.Error())
+		} else if seg != "" && wan != "" {
+			if present, _, perr := s.deps.StaticNAT.ForInterface(ctx, seg); perr != nil {
+				s.appLog.Warn("fakeip-reconcile", iface, "probe static-NAT state: "+perr.Error())
+			} else if !present {
+				if e := s.applyStaticNAT(ctx, seg, wan); e != nil {
+					s.appLog.Warn("fakeip-reconcile", iface, "re-apply static-NAT: "+e.Error())
+				}
+			}
+		}
+	}
+
 	// Re-advertise the health-gated DNS. advertiseDNSIfHealthy clears the pool
 	// DNS when sing-box is down / egress dead, so a still-broken path correctly
 	// reverts clients to the router's default DNS (no black-hole).

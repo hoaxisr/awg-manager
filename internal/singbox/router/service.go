@@ -326,6 +326,11 @@ type Deps struct {
 	// internet-only NAT feeds this same value straight into `ip static`'s
 	// to-interface. Consumed by PE-D (resolveDeliverySegmentAndWAN).
 	DefaultGateway DefaultGatewayResolver
+	// StaticNAT reads the current static-NAT state of a segment (`ip static`) so
+	// the reconcile drift-heal can detect that source-preservation NAT drifted away
+	// and re-apply it. Optional — nil in tests / when source-preserve is off; wired
+	// in cmd/awg-manager over ndmsQueries.StaticNAT. Consumed by PE-E reconcile.
+	StaticNAT StaticNATReader
 }
 
 // routerLoggerAdapter narrows *logging.ScopedLogger to the wanLogger
@@ -1320,10 +1325,21 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	// already in hand here so it's clean to wire, and it reflects the live cause
 	// ("is egress usable → is DNS delivery active") without a lock dance.
 	var fakeIPEgressUp *bool
+	// PE-E policy-exit Status fields. FakeIPSourcePreserve mirrors the setting (only
+	// meaningful in fakeip-tun mode). FakeIPPolicyExitReady is true when the tun is
+	// provisioned as a source-preserving policy exit — read the mode from sr
+	// (settings) and provisioned-ness from st.FakeIPIface (Status has no
+	// RoutingMode/Provisioned field). Both nil outside fakeip-tun mode.
+	var fakeIPSourcePreserve *bool
+	var fakeIPPolicyExitReady *bool
 	if sr.RoutingMode == "fakeip-tun" && settings != nil &&
 		settings.FakeIP != nil && settings.FakeIP.Provisioned {
 		fakeIPIface = fakeIPIfaceName(settings.FakeIP.Index)
 		fakeIPEgressUp = boolPtr(s.fakeIPEgressUp(cfg))
+	}
+	if sr.RoutingMode == "fakeip-tun" {
+		fakeIPSourcePreserve = boolPtr(sr.FakeIPSourcePreserveOrDefault())
+		fakeIPPolicyExitReady = boolPtr(sr.RoutingMode == "fakeip-tun" && fakeIPIface != "")
 	}
 	if sr.RoutingMode == "fakeip-tun" && sr.Enabled {
 		sourcePreserved = s.loadSourcePreserved()
@@ -1356,6 +1372,8 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		SourcePreserved:        sourcePreserved,
 		FakeIPIface:            fakeIPIface,
 		FakeIPEgressUp:         fakeIPEgressUp,
+		FakeIPSourcePreserve:   fakeIPSourcePreserve,
+		FakeIPPolicyExitReady:  fakeIPPolicyExitReady,
 		Issues:                 issues,
 	}, nil
 }

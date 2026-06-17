@@ -179,6 +179,11 @@ var _ router.DHCPProvider = (*ndmscommand.DHCPCommands)(nil)
 var _ router.DefaultRouteProvider = (*ndmscommand.RouteCommands)(nil)
 var _ router.SegmentNATProvider = (*ndmscommand.NATCommands)(nil)
 
+// *StaticNATStore.ForInterface matches router.StaticNATReader structurally, so the
+// reconcile drift-heal's static-NAT reader is wired directly (no adapter). This
+// assertion surfaces any ndms query-store signature drift at the declaration line.
+var _ router.StaticNATReader = (*ndmsquery.StaticNATStore)(nil)
+
 var _ router.StaticRouteProvider = (*routerStaticRouteAdapter)(nil)
 
 // routerStaticRouteAdapter translates router.StaticRouteSpec (router-local

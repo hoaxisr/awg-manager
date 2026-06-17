@@ -1019,6 +1019,52 @@ func provisionForDisable(t *testing.T, h *fakeIPEnableHarness) {
 	h.log.calls = nil
 }
 
+// stubOrphanNetdev overrides the orphan-netdev seams (PE-E). present controls
+// whether the kernel netdev is reported as lingering after DeleteOpkgTun; the
+// returned getter reports how many times fakeIPLinkDelete was called.
+func stubOrphanNetdev(t *testing.T, present bool) func() int {
+	t.Helper()
+	oldPresent := fakeIPLinkPresent
+	oldDelete := fakeIPLinkDelete
+	deletes := 0
+	fakeIPLinkPresent = func(context.Context, string) bool { return present }
+	fakeIPLinkDelete = func(_ context.Context, _ string) error { deletes++; return nil }
+	t.Cleanup(func() { fakeIPLinkPresent = oldPresent; fakeIPLinkDelete = oldDelete })
+	return func() int { return deletes }
+}
+
+// TestDisableFakeIPTun_OrphanNetdevDeleted asserts that when a DOWN orphan netdev
+// lingers after DeleteOpkgTun, the teardown reaps it via `ip link delete`.
+func TestDisableFakeIPTun_OrphanNetdevDeleted(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	captureDrain(t)
+	provisionForDisable(t, h)
+	deletes := stubOrphanNetdev(t, true) // orphan present
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+	if got := deletes(); got != 1 {
+		t.Errorf("orphan netdev present → fakeIPLinkDelete calls = %d, want 1", got)
+	}
+}
+
+// TestDisableFakeIPTun_NoOrphanNoDelete asserts that when the kernel netdev is
+// already gone (NDMS cleaned it up), no `ip link delete` is attempted.
+func TestDisableFakeIPTun_NoOrphanNoDelete(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	captureDrain(t)
+	provisionForDisable(t, h)
+	deletes := stubOrphanNetdev(t, false) // netdev absent
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+	if got := deletes(); got != 0 {
+		t.Errorf("no orphan → fakeIPLinkDelete calls = %d, want 0", got)
+	}
+}
+
 func TestDisableFakeIPTun_Ordering(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 	getDrain := captureDrain(t)

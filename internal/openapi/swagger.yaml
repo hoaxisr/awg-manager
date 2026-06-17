@@ -3786,6 +3786,12 @@ definitions:
       fakeipIface:
         example: opkgtun0
         type: string
+      fakeipPolicyExitReady:
+        example: true
+        type: boolean
+      fakeipSourcePreserve:
+        example: true
+        type: boolean
       final:
         example: direct
         type: string

@@ -49,8 +49,18 @@ type Status struct {
 	// UI show an honest section-level "DNS-delivery held" banner. nil outside
 	// fakeip-tun mode (or when not provisioned) so it stays out of JSON. There is
 	// no per-pool intent persistence, so this is deliberately global, not per-pool.
-	FakeIPEgressUp *bool   `json:"fakeipEgressUp,omitempty"`
-	Issues         []Issue `json:"issues,omitempty"`
+	FakeIPEgressUp *bool `json:"fakeipEgressUp,omitempty"`
+	// FakeIPSourcePreserve mirrors the user's FakeIPSourcePreserve setting (default
+	// true): whether fakeip-tun provisions the delivery segment into static-NAT to
+	// preserve LAN-device source IPs (policy-exit). The UI shows the toggle state.
+	// Populated only in fakeip-tun mode; nil otherwise (stays out of JSON).
+	FakeIPSourcePreserve *bool `json:"fakeipSourcePreserve,omitempty"`
+	// FakeIPPolicyExitReady reports whether the fakeip-tun is fully provisioned as a
+	// source-preserving policy exit (mode == "fakeip-tun" AND the iface is
+	// provisioned). The UI keys its "assignable as policy exit" hint on this.
+	// Populated only in fakeip-tun mode; nil otherwise.
+	FakeIPPolicyExitReady *bool   `json:"fakeipPolicyExitReady,omitempty"`
+	Issues                []Issue `json:"issues,omitempty"`
 }
 
 type Issue struct {

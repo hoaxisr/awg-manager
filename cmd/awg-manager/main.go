@@ -1113,6 +1113,7 @@ func main() {
 		SegmentNAT:             ndmsCommands.NAT,        // *NATCommands satisfies SegmentNATProvider directly
 		DHCPPoolSegments:       &routerDHCPPoolSegmentAdapter{store: ndmsQueries.DHCPPool}, // pool→bound NDMS segment (PE-D static-NAT)
 		DefaultGateway:         &routerDefaultGatewayAdapter{store: ndmsQueries.Routes},    // active WAN → NDMS id (PE-D static-NAT autodetect)
+		StaticNAT:              ndmsQueries.StaticNAT,                                      // *StaticNATStore.ForInterface satisfies StaticNATReader (PE-E reconcile drift)
 		StaticRoutes:           &routerStaticRouteAdapter{routes: ndmsCommands.Routes},
 		DHCP:                   ndmsCommands.DHCP, // *DHCPCommands satisfies DHCPProvider directly
 		OpkgTunIndices: &routerOpkgTunIndexAdapter{

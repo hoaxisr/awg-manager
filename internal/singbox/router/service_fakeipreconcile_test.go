@@ -439,6 +439,70 @@ func TestGetStatus_FakeIPEgressUp(t *testing.T) {
 	}
 }
 
+// TestGetStatus_PolicyExitFields asserts the PE-E Status fields populate for an
+// active fakeip-tun (sourcePreserve default-true mirror + policyExitReady true once
+// provisioned) and stay nil for a tproxy router.
+func TestGetStatus_PolicyExitFields(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	h.svc.deps.IPTables = errProbeIPTables()
+
+	// Before provisioning (fakeip-tun mode but no iface): sourcePreserve mirrors the
+	// default (true), policyExitReady false (not provisioned yet).
+	st0, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st0.FakeIPSourcePreserve == nil || *st0.FakeIPSourcePreserve != true {
+		t.Errorf("FakeIPSourcePreserve = %v, want true (default) in fakeip-tun mode", st0.FakeIPSourcePreserve)
+	}
+	if st0.FakeIPPolicyExitReady == nil || *st0.FakeIPPolicyExitReady != false {
+		t.Errorf("FakeIPPolicyExitReady = %v, want false before provisioning", st0.FakeIPPolicyExitReady)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.IPTables = errProbeIPTables()
+
+	st, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st.FakeIPSourcePreserve == nil || *st.FakeIPSourcePreserve != true {
+		t.Errorf("FakeIPSourcePreserve = %v, want true after Enable", st.FakeIPSourcePreserve)
+	}
+	if st.FakeIPPolicyExitReady == nil || *st.FakeIPPolicyExitReady != true {
+		t.Errorf("FakeIPPolicyExitReady = %v, want true once provisioned in fakeip-tun mode", st.FakeIPPolicyExitReady)
+	}
+}
+
+// TestGetStatus_PolicyExitFields_NilForTproxy asserts the PE-E fields stay nil
+// (omitted from JSON) for a tproxy router.
+func TestGetStatus_PolicyExitFields_NilForTproxy(t *testing.T) {
+	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
+		RoutingMode:   "tproxy",
+		DeviceMode:    "all",
+		WANAutoDetect: true,
+	})
+	svc := newTestService(t, Deps{
+		Settings: settingsStore,
+		Policies: &fakeAccessPolicyProvider{},
+		IPTables: errProbeIPTables(),
+		Singbox:  newTestSingbox(t),
+	})
+
+	st, err := svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st.FakeIPSourcePreserve != nil {
+		t.Errorf("FakeIPSourcePreserve = %v, want nil for tproxy", *st.FakeIPSourcePreserve)
+	}
+	if st.FakeIPPolicyExitReady != nil {
+		t.Errorf("FakeIPPolicyExitReady = %v, want nil for tproxy", *st.FakeIPPolicyExitReady)
+	}
+}
+
 func TestAssertSourcePreserved_Preserved(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 	stubSourcePreservedProbe(t, func(string, string) (bool, bool) { return true, true })
@@ -489,9 +553,11 @@ func TestReconcileFakeIPTun_NoMutationWhenNoDrift(t *testing.T) {
 	}
 	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
 
-	// Steady state: the pool route is PRESENT. Stub the seam → true so the
-	// drift-reconcile sees no route drift.
+	// Steady state: the pool route AND the tun default route are PRESENT. Stub both
+	// seams → true so the drift-reconcile sees no route drift. (StaticNAT reader is
+	// unwired here → static-NAT drift is skipped.)
 	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return true })
+	stubFakeIPDefaultRoutePresent(t, func(string) bool { return true })
 
 	h.log.calls = nil // observe only the reconcile tick from here.
 
@@ -551,6 +617,120 @@ func TestReconcileFakeIPTun_ReaddsRouteWhenMissing(t *testing.T) {
 	// DNS unchanged (Enable already advertised, sing-box still up) → no DHCP write.
 	if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") || h.log.has("ClearPoolDNS:_WEBADMIN") {
 		t.Errorf("DNS desired state unchanged → no DHCP write, got %v", h.log.calls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// PE-E: default-route + static-NAT drift re-apply.
+// ---------------------------------------------------------------------------
+
+// stubFakeIPDefaultRoutePresent overrides the default-route presence seam.
+func stubFakeIPDefaultRoutePresent(t *testing.T, fn func(iface string) bool) {
+	t.Helper()
+	old := fakeIPDefaultRoutePresent
+	fakeIPDefaultRoutePresent = fn
+	t.Cleanup(func() { fakeIPDefaultRoutePresent = old })
+}
+
+// stubStaticNATReader reports a fixed static-NAT presence for the segment.
+type stubStaticNATReader struct {
+	present bool
+	wan     string
+	err     error
+}
+
+func (s stubStaticNATReader) ForInterface(context.Context, string) (bool, string, error) {
+	return s.present, s.wan, s.err
+}
+
+// TestReconcileFakeIPTun_ReappliesDefaultRouteAndStaticNATWhenMissing asserts the
+// drift-heal re-installs the tun default route(s) when absent and re-applies
+// static-NAT when the delivery segment has reverted to dynamic NAT.
+func TestReconcileFakeIPTun_ReappliesDefaultRouteAndStaticNATWhenMissing(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	neutralSourceProbe(t)
+
+	// Wire the source-preserve deps so Enable applies static-NAT and the drift
+	// probe has something to read.
+	segNAT := &recordingSegmentNAT{}
+	h.svc.deps.SegmentNAT = segNAT
+	h.svc.deps.DHCPPoolSegments = fakePoolSegments{seg: "Home"}
+	h.svc.deps.DefaultGateway = fakeDefaultGateway{id: "PPPoE0"}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+
+	// Pool route present (don't conflate with default-route drift), default route
+	// ABSENT, static-NAT ABSENT (segment drifted back to dynamic masquerade).
+	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return true })
+	stubFakeIPDefaultRoutePresent(t, func(string) bool { return false })
+	h.svc.deps.StaticNAT = stubStaticNATReader{present: false}
+
+	h.log.calls = nil
+	segNAT.calls = nil
+
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+
+	// Default route v4 + v6 re-installed (defaults carry a v6 tun addr).
+	if !h.log.has("SetDefaultRoute:OpkgTun0") {
+		t.Errorf("absent v4 default route must be re-added, got %v", h.log.calls)
+	}
+	if !h.log.has("SetIPv6DefaultRoute:OpkgTun0") {
+		t.Errorf("absent v6 default route must be re-added, got %v", h.log.calls)
+	}
+	// static-NAT re-applied: RemoveSegmentNAT then SetStaticNAT for the segment.
+	wantNAT := []string{"RemoveSegmentNAT Home", "SetStaticNAT Home PPPoE0"}
+	if len(segNAT.calls) != len(wantNAT) {
+		t.Fatalf("segment NAT calls = %v, want %v", segNAT.calls, wantNAT)
+	}
+	for i := range wantNAT {
+		if segNAT.calls[i] != wantNAT[i] {
+			t.Errorf("NAT call[%d] = %q, want %q", i, segNAT.calls[i], wantNAT[i])
+		}
+	}
+}
+
+// TestReconcileFakeIPTun_NoDefaultRouteOrNATReapplyWhenPresent asserts steady
+// state makes ZERO default-route / static-NAT mutations.
+func TestReconcileFakeIPTun_NoDefaultRouteOrNATReapplyWhenPresent(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	neutralSourceProbe(t)
+
+	segNAT := &recordingSegmentNAT{}
+	h.svc.deps.SegmentNAT = segNAT
+	h.svc.deps.DHCPPoolSegments = fakePoolSegments{seg: "Home"}
+	h.svc.deps.DefaultGateway = fakeDefaultGateway{id: "PPPoE0"}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+
+	// Everything present: no drift.
+	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return true })
+	stubFakeIPDefaultRoutePresent(t, func(string) bool { return true })
+	h.svc.deps.StaticNAT = stubStaticNATReader{present: true, wan: "PPPoE0"}
+
+	h.log.calls = nil
+	segNAT.calls = nil
+
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+
+	if h.log.has("SetDefaultRoute:OpkgTun0") || h.log.has("SetIPv6DefaultRoute:OpkgTun0") {
+		t.Errorf("present default route must NOT be re-added, got %v", h.log.calls)
+	}
+	if len(segNAT.calls) != 0 {
+		t.Errorf("present static-NAT must make ZERO NAT calls, got %v", segNAT.calls)
 	}
 }
 

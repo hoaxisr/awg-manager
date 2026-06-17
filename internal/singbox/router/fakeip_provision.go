@@ -77,6 +77,17 @@ type DefaultGatewayResolver interface {
 	DefaultGatewayInterface(ctx context.Context) (string, error)
 }
 
+// StaticNATReader reports whether a delivery segment is currently configured for
+// static-NAT (`ip static <Seg> <WAN>`) and, if so, its WAN to-interface. The
+// reconcile drift-heal uses it to detect that source-preservation NAT has drifted
+// away (segment reverted to dynamic masquerade) and re-apply it. NDMS-side reader
+// over `/show/rc/ip/static`; implemented in cmd/awg-manager over the ndms
+// StaticNAT query store, which router cannot reach directly (consumer-owned
+// interfaces, not query.Queries).
+type StaticNATReader interface {
+	ForInterface(ctx context.Context, iface string) (present bool, toInterface string, err error)
+}
+
 // FakeIPTunParams holds the static fakeip-tun provisioning knobs not derivable
 // at runtime. Defaults are spec §3.3/3.4/3.6 values; wired in cmd/awg-manager.
 // (RealServer + cache path are sourced by the lifecycle layer in Slice 1D.)
