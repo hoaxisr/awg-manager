@@ -517,6 +517,16 @@ func (s *ServiceImpl) loadRouterConfig() (*RouterConfig, error) {
 	return LoadConfig(activePath) // returns NewEmptyConfig per contract
 }
 
+// loadRouterConfigForMode returns the routing config for the active mode:
+// SlotFakeIP in fakeip-tun mode, SlotRouter (tproxy) otherwise. Lets
+// mode-agnostic readers (GetStatus) reflect whichever slot is live.
+func (s *ServiceImpl) loadRouterConfigForMode(mode string) (*RouterConfig, error) {
+	if mode == "fakeip-tun" {
+		return s.loadFakeIPConfig()
+	}
+	return s.loadRouterConfig()
+}
+
 // persistConfigDirect writes the router config straight to active/ —
 // skipping the staging pipeline that persistConfig uses for user-driven
 // edits. Intended for system-initiated paths (Enable, Disable cleanup,
@@ -1256,7 +1266,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	if settings != nil {
 		sr, _ = NormalizeSingboxRouterSettings(settings.SingboxRouter)
 	}
-	cfg, _ := s.loadRouterConfig()
+	cfg, _ := s.loadRouterConfigForMode(sr.RoutingMode)
 	if cfg == nil {
 		cfg = NewEmptyConfig()
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -821,5 +822,50 @@ func TestFakeipGuard_AllowsAppendingUserDNSRule(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("appending a user DNS rule must not be rejected: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GetStatus slot-fork: fakeip-tun mode must read SlotFakeIP, not SlotRouter
+// ---------------------------------------------------------------------------
+
+// TestGetStatus_FakeIPMode_ReadsFakeIPSlot seeds SlotRouter with 0 rule_sets
+// and final="router-final", and SlotFakeIP with 2 rule_sets and
+// final="fakeip-final", then asserts that GetStatus in fakeip-tun mode
+// returns the SlotFakeIP counts (RuleSetCount==2, Final=="fakeip-final").
+func TestGetStatus_FakeIPMode_ReadsFakeIPSlot(t *testing.T) {
+	svc, dir := newFakeIPTestService(t)
+
+	// Wire IPTables stub so Probe() doesn't panic (errProbeIPTables pattern).
+	svc.deps.IPTables = &IPTables{
+		runIPTables:    func(context.Context, ...string) error { return errors.New("no chain") },
+		runIPTablesOut: func(context.Context, ...string) (string, error) { return "", errors.New("no chain") },
+	}
+
+	// Stub fakeip-tun seams so GetStatus.Active path doesn't panic.
+	stubTunReadyProbe(t, func(string) bool { return false })
+	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return false })
+
+	// SlotRouter: 0 rule_sets, final="router-final".
+	routerJSON := `{"route":{"rules":[],"rule_set":[],"final":"router-final"}}`
+	if err := os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(routerJSON), 0644); err != nil {
+		t.Fatalf("write SlotRouter: %v", err)
+	}
+
+	// SlotFakeIP: 2 rule_sets, final="fakeip-final".
+	fakeipJSON := `{"route":{"rules":[],"rule_set":[{"tag":"rs1","type":"remote","format":"binary","url":"https://example.com/1.srs"},{"tag":"rs2","type":"remote","format":"binary","url":"https://example.com/2.srs"}],"final":"fakeip-final"}}`
+	if err := os.WriteFile(filepath.Join(dir, "21-fakeip.json"), []byte(fakeipJSON), 0644); err != nil {
+		t.Fatalf("write SlotFakeIP: %v", err)
+	}
+
+	st, err := svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st.RuleSetCount != 2 {
+		t.Errorf("RuleSetCount = %d, want 2 (must read SlotFakeIP, not SlotRouter)", st.RuleSetCount)
+	}
+	if st.Final != "fakeip-final" {
+		t.Errorf("Final = %q, want %q (must read SlotFakeIP, not SlotRouter)", st.Final, "fakeip-final")
 	}
 }
