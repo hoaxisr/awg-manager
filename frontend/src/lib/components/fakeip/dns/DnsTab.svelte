@@ -32,7 +32,7 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { get } from 'svelte/store';
-	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { createReorderDrag } from '$lib/components/sb-router/reorderDrag.svelte';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { singboxProxies } from '$lib/stores/singboxProxies';
@@ -43,7 +43,6 @@
 		computeRuleSetUsage,
 		DNSServerEditModal,
 		DNSRuleEditModal,
-		DNSRewritesList,
 		DNSGlobalsEditModal,
 	} from '$lib/components/routing/singboxRouter';
 	import { ConfirmModal, Badge } from '$lib/components/ui';
@@ -55,14 +54,13 @@
 	import OutboundTile from '$lib/components/sb-router/OutboundTile.svelte';
 	import type { SingboxRouterDNSServer, SingboxRouterDNSRule, SingboxRouterDNSStrategy } from '$lib/types';
 
-	// ── Store sub-stores (как в ExpertPanel) ──────────────────────────────
-	const storeDnsServers = singboxRouter.dnsServers;
-	const storeDnsRules = singboxRouter.dnsRules;
-	const storeDnsRewrites = singboxRouter.dnsRewrites;
-	const storeDnsGlobals = singboxRouter.dnsGlobals;
-	const storeRuleSets = singboxRouter.ruleSets;
-	const storeOutbounds = singboxRouter.outbounds;
-	const storeOptions = singboxRouter.options;
+	// ── Store sub-stores ───────────────────────────────────────────────────
+	const storeDnsServers = fakeipConfig.dnsServers;
+	const storeDnsRules = fakeipConfig.dnsRules;
+	const storeDnsGlobals = fakeipConfig.dnsGlobals;
+	const storeRuleSets = fakeipConfig.ruleSets;
+	const storeOutbounds = fakeipConfig.outbounds;
+	const storeOptions = fakeipConfig.options;
 
 	// Контекст блокировки удаления серверов (один проход на список).
 	const dnsServerUsageContext = $derived({
@@ -116,13 +114,13 @@
 		count: () => $storeDnsServers.length,
 		getPanelEl: () => serverPanelEl,
 		onCommit: async (from, to) => {
-			const snapshot = get(singboxRouter.dnsServers);
-			singboxRouter.applyDNSServers(reorder(snapshot, from, to));
+			const snapshot = get(fakeipConfig.dnsServers);
+			fakeipConfig.applyDNSServers(reorder(snapshot, from, to));
 			try {
-				await api.singboxRouterMoveDNSServer(from, to);
-				await singboxRouter.loadAll();
+				await api.singboxFakeIPMoveDNSServer(from, to);
+				await fakeipConfig.loadAll();
 			} catch (e) {
-				singboxRouter.applyDNSServers(snapshot);
+				fakeipConfig.applyDNSServers(snapshot);
 				notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
 			}
 		},
@@ -136,13 +134,13 @@
 		// «final»-строка (последний индекс) фиксирована: ни схватить, ни уронить под неё.
 		isFixed: (i) => i >= $storeDnsRules.length,
 		onCommit: async (from, to) => {
-			const snapshot = get(singboxRouter.dnsRules);
-			singboxRouter.applyDNSRules(reorder(snapshot, from, to));
+			const snapshot = get(fakeipConfig.dnsRules);
+			fakeipConfig.applyDNSRules(reorder(snapshot, from, to));
 			try {
-				await api.singboxRouterMoveDNSRule(from, to);
-				await singboxRouter.loadAll();
+				await api.singboxFakeIPMoveDNSRule(from, to);
+				await fakeipConfig.loadAll();
 			} catch (e) {
-				singboxRouter.applyDNSRules(snapshot);
+				fakeipConfig.applyDNSRules(snapshot);
 				notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
 			}
 		},
@@ -159,7 +157,6 @@
 	let dnsRuleEditIdx = $state<number | null>(null);
 	let dnsRuleAddOpen = $state(false);
 	let dnsGlobalsModalOpen = $state(false);
-	let rewriteAddMode = $state(false);
 
 	const dnsServerEditTarget = $derived<SingboxRouterDNSServer | undefined>(
 		dnsServerEditTag !== null ? $storeDnsServers.find((s) => s.tag === dnsServerEditTag) : undefined,
@@ -191,18 +188,18 @@
 		}
 	}
 
-	// ── Handlers (зеркалят ExpertPanel) ──────────────────────────────────
+	// ── Handlers ─────────────────────────────────────────────────────────────
 	async function handleDnsServerAddSave(server: SingboxRouterDNSServer): Promise<void> {
-		await api.singboxRouterAddDNSServer(server);
+		await api.singboxFakeIPAddDNSServer(server);
 		dnsServerAddOpen = false;
-		await singboxRouter.loadAll();
+		await fakeipConfig.loadAll();
 	}
 	async function handleDnsServerEditSave(server: SingboxRouterDNSServer): Promise<void> {
 		if (dnsServerEditTag !== null) {
-			await api.singboxRouterUpdateDNSServer(dnsServerEditTag, server);
+			await api.singboxFakeIPUpdateDNSServer(dnsServerEditTag, server);
 		}
 		dnsServerEditTag = null;
-		await singboxRouter.loadAll();
+		await fakeipConfig.loadAll();
 	}
 	function handleDeleteDnsServer(tag: string): void {
 		pendingConfirm = {
@@ -210,8 +207,8 @@
 			message: `Удалить DNS-сервер «${tag}»?`,
 			run: async () => {
 				try {
-					await api.singboxRouterDeleteDNSServer(tag);
-					await singboxRouter.loadAll();
+					await api.singboxFakeIPDeleteDNSServer(tag);
+					await fakeipConfig.loadAll();
 					notifications.success('DNS-сервер удалён');
 				} catch (e) {
 					notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
@@ -221,16 +218,16 @@
 	}
 
 	async function handleDnsRuleAddSave(rule: SingboxRouterDNSRule): Promise<void> {
-		await api.singboxRouterAddDNSRule(rule);
+		await api.singboxFakeIPAddDNSRule(rule);
 		dnsRuleAddOpen = false;
-		await singboxRouter.loadAll();
+		await fakeipConfig.loadAll();
 	}
 	async function handleDnsRuleEditSave(rule: SingboxRouterDNSRule): Promise<void> {
 		if (dnsRuleEditIdx !== null) {
-			await api.singboxRouterUpdateDNSRule(dnsRuleEditIdx, rule);
+			await api.singboxFakeIPUpdateDNSRule(dnsRuleEditIdx, rule);
 		}
 		dnsRuleEditIdx = null;
-		await singboxRouter.loadAll();
+		await fakeipConfig.loadAll();
 	}
 	function handleDeleteDNSRule(idx: number): void {
 		pendingConfirm = {
@@ -238,8 +235,8 @@
 			message: `Удалить DNS-правило #${idx + 1}?`,
 			run: async () => {
 				try {
-					await api.singboxRouterDeleteDNSRule(idx);
-					await singboxRouter.loadAll();
+					await api.singboxFakeIPDeleteDNSRule(idx);
+					await fakeipConfig.loadAll();
 					notifications.success('DNS-правило удалено');
 				} catch (e) {
 					notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
@@ -252,9 +249,9 @@
 		final: string;
 		strategy: SingboxRouterDNSStrategy;
 	}): Promise<void> {
-		await api.singboxRouterPutDNSGlobals(globals);
+		await api.singboxFakeIPSetDNSGlobals(globals);
 		dnsGlobalsModalOpen = false;
-		await singboxRouter.loadAll();
+		await fakeipConfig.loadAll();
 	}
 </script>
 
@@ -505,25 +502,6 @@
 		</div>
 	</section>
 
-	<!-- ── Блок 3: DNS-перезаписи (на всю ширину) ──────────────────────── -->
-	<section class="panel panel-full">
-		<header class="ph">
-			<span class="nm">DNS-перезаписи · {$storeDnsRewrites.length}</span>
-			<button type="button" class="add" onclick={() => (rewriteAddMode = true)}>
-				<Plus size={14} strokeWidth={2} aria-hidden="true" /> Перезапись
-			</button>
-		</header>
-		<p class="pd">
-			Статические ответы: домен → фиксированный IP (A/AAAA), мимо резолва (как static_a).
-		</p>
-		<DNSRewritesList
-			rewrites={$storeDnsRewrites}
-			onChange={() => singboxRouter.loadAll()}
-			showHeader={false}
-			hideColumnHeader={true}
-			bind:addMode={rewriteAddMode}
-		/>
-	</section>
 </div>
 
 <!-- ── Плавающие ghost-карточки (тот же сниппет строки → пиксель-в-пиксель) ── -->
@@ -608,15 +586,11 @@
 />
 
 <style>
-	/* Сетка мокапа: два верхних блока в ряд (серверы уже, правила шире) +
-	   перезаписи на всю ширину снизу. */
+	/* Сетка мокапа: два блока в ряд (серверы уже, правила шире). */
 	.dns-grid {
 		display: grid;
 		grid-template-columns: 1fr 1.25fr;
 		gap: 1rem;
-	}
-	.panel-full {
-		grid-column: 1 / -1;
 	}
 	@media (max-width: 900px) {
 		.dns-grid {

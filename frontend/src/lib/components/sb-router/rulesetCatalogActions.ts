@@ -23,11 +23,20 @@ export function fullyAddedPresetNames(
     .map((p) => p.name);
 }
 
-/** Materialise catalog presets as remote rule-sets only (no routing rules). */
+export type AddRuleSetFn = (rs: SingboxRouterRuleSet) => Promise<void>;
+
+/** Materialise catalog presets as remote rule-sets only (no routing rules).
+ *
+ * @param addRuleSetFn  Optional override for the add-rule-set API call. Defaults
+ *   to `api.singboxRouterAddRuleSet` (tproxy slot). Pass
+ *   `(rs) => api.singboxFakeIPAddRuleSet(rs)` when operating on the fakeip slot.
+ */
 export async function applyCatalogPresetsAsRuleSets(
   presets: CatalogPreset[],
   existingRuleSets: SingboxRouterRuleSet[],
+  addRuleSetFn?: AddRuleSetFn,
 ): Promise<ApplyRuleSetsFromCatalogResult> {
+  const addFn: AddRuleSetFn = addRuleSetFn ?? ((rs) => api.singboxRouterAddRuleSet(rs));
   const existingTags = new Set(existingRuleSets.map((rs) => rs.tag));
   const added: string[] = [];
   const skipped: string[] = [];
@@ -46,7 +55,7 @@ export async function applyCatalogPresetsAsRuleSets(
         continue;
       }
       try {
-        await api.singboxRouterAddRuleSet({
+        await addFn({
           tag: ref.tag,
           type: 'remote',
           format: 'binary',

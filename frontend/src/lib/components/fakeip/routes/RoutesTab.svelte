@@ -30,7 +30,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
-	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { singboxProxies } from '$lib/stores/singboxProxies';
 	import { singboxTunnels } from '$lib/stores/singbox';
@@ -52,17 +52,18 @@
 	import type { SingboxRouterRule } from '$lib/types';
 	import type { RuleCardData } from '$lib/components/sb-router/types';
 
-	// ── Store sub-stores (как в RulesPanel/ExpertPanel) ────────────────────
-	const storeRules = singboxRouter.rules;
-	const storeRuleUiKeys = singboxRouter.ruleUiKeys;
-	const storeRuleSets = singboxRouter.ruleSets;
-	const storeOutbounds = singboxRouter.outbounds;
-	const storePresets = singboxRouter.presets;
-	const storeOptions = singboxRouter.options;
-	const storeStatus = singboxRouter.status;
+	// ── Store sub-stores ────────────────────────────────────────────────────
+	const storeRules = fakeipConfig.rules;
+	const storeRuleUiKeys = fakeipConfig.ruleUiKeys;
+	const storeRuleSets = fakeipConfig.ruleSets;
+	const storeOutbounds = fakeipConfig.outbounds;
+	const storeOptions = fakeipConfig.options;
+
+	// fakeip has no server-side status carrying route.final; track locally.
+	let currentFinal = $state('direct');
 
 	onMount(() => {
-		void singboxRouter.loadAll();
+		void fakeipConfig.loadAll();
 	});
 
 	// rulesetLabels: tag → отображаемое имя (у набора нет label, только tag).
@@ -76,6 +77,8 @@
 
 	// Каждое правило → RuleCardData (матчеры + outbound) тем же адаптером, что
 	// RulesPanel — рендер бейджей/аутбаунда идентичен карточному виду.
+	// fakeip has no presets; pass [] so service-icon detection still works via
+	// the global presetCatalog but no router-preset icons appear.
 	const cards: RuleCardData[] = $derived.by(() =>
 		$storeRules.map((r, i) =>
 			singboxRuleToCard(
@@ -83,7 +86,7 @@
 				i,
 				$storeOutbounds,
 				rulesetLabels,
-				$storePresets,
+				[],
 				$storeOptions,
 				$presetCatalog,
 				$storeRuleSets,
@@ -95,11 +98,12 @@
 		),
 	);
 
-	// Final-outbound (route.final) — из status; рендерим тем же RuleOutboundAction,
-	// чтобы composite/reject подсветка совпала с правилами.
+	// Final-outbound — rendered via RuleOutboundAction (same as tproxy).
+	// fakeip has no status endpoint returning route.final; we track it locally
+	// (starts at 'direct', updated on successful save).
 	const finalOutbound = $derived(
 		resolveOutboundDisplay(
-			$storeStatus?.final || 'direct',
+			currentFinal,
 			'route',
 			$storeOutbounds,
 			$storeOptions,
@@ -109,7 +113,7 @@
 		),
 	);
 
-	// ── Final-outbound правка (route.final) — как в ExpertPanel ─────────────
+	// ── Final-outbound правка (route.final) ─────────────────────────────────
 	// Опции: direct + все outbounds, кроме группы «Специальные».
 	const routeFinalOptions = $derived<DropdownOption[]>([
 		{ value: 'direct', label: 'direct (мимо VPN)' },
@@ -123,20 +127,21 @@
 	let finalBusy = $state(false);
 
 	function startEditFinal(): void {
-		draftFinal = $storeStatus?.final || 'direct';
+		draftFinal = currentFinal;
 		finalEditing = true;
 	}
 
 	async function saveFinal(): Promise<void> {
 		if (finalBusy) return;
-		if (draftFinal === ($storeStatus?.final || 'direct')) {
+		if (draftFinal === currentFinal) {
 			finalEditing = false;
 			return;
 		}
 		finalBusy = true;
 		try {
-			await api.singboxRouterPutRouteFinal(draftFinal);
-			await singboxRouter.loadAll();
+			await api.singboxFakeIPSetRouteFinal(draftFinal);
+			currentFinal = draftFinal;
+			await fakeipConfig.loadAll();
 			notifications.success('Final-outbound обновлён');
 			finalEditing = false;
 		} catch (e) {
@@ -167,13 +172,13 @@
 		// сделать целью переноса; firstMovableIndex держит юзер-правила ниже них.
 		isFixed: (i) => i >= $storeRules.length || !!cards[i]?.isSystem,
 		onCommit: async (from, to) => {
-			const snapshot = get(singboxRouter.rules);
-			singboxRouter.applyRules(reorder(snapshot, from, to));
+			const snapshot = get(fakeipConfig.rules);
+			fakeipConfig.applyRules(reorder(snapshot, from, to));
 			try {
-				await api.singboxRouterMoveRule(from, to);
-				await singboxRouter.loadAll();
+				await api.singboxFakeIPMoveRule(from, to);
+				await fakeipConfig.loadAll();
 			} catch (e) {
-				singboxRouter.applyRules(snapshot);
+				fakeipConfig.applyRules(snapshot);
 				notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
 			}
 		},
@@ -206,16 +211,16 @@
 		return `правило #${idx + 1}: ${card.title}`;
 	}
 
-	// ── Handlers (зеркалят ExpertPanel) ────────────────────────────────────
+	// ── Handlers ─────────────────────────────────────────────────────────────
 	async function handleRuleSave(rule: SingboxRouterRule): Promise<void> {
 		if (ruleEditIdx !== null) {
-			await api.singboxRouterUpdateRule(ruleEditIdx, rule);
+			await api.singboxFakeIPUpdateRule(ruleEditIdx, rule);
 		} else {
-			await api.singboxRouterAddRule(rule);
+			await api.singboxFakeIPAddRule(rule);
 		}
 		ruleEditIdx = null;
 		ruleAddOpen = false;
-		await singboxRouter.loadAll();
+		await fakeipConfig.loadAll();
 	}
 
 	async function confirmDelete(): Promise<void> {
@@ -223,8 +228,8 @@
 		const idx = deleteIdx;
 		deleteBusy = true;
 		try {
-			await api.singboxRouterDeleteRule(idx);
-			await singboxRouter.loadAll();
+			await api.singboxFakeIPDeleteRule(idx);
+			await fakeipConfig.loadAll();
 			notifications.success('Правило удалено');
 			deleteIdx = null;
 		} catch (e) {

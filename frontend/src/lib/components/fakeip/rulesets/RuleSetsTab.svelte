@@ -29,7 +29,7 @@
   ручного «обновить»); статуса/ошибки загрузки у rule-set нет — не показываем.
 -->
 <script lang="ts">
-	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { pluralize, SET_WORDS } from '$lib/utils/pluralize';
@@ -44,11 +44,11 @@
 	import { computeRuleSetUsageRefs } from './ruleSetUsageRefs';
 	import type { SingboxRouterRuleSet, CatalogPreset } from '$lib/types';
 
-	// ── Store sub-stores (как в ExpertPanel / DnsTab) ─────────────────────
-	const storeRuleSets = singboxRouter.ruleSets;
-	const storeDnsRules = singboxRouter.dnsRules;
-	const storeRules = singboxRouter.rules;
-	const storeOptions = singboxRouter.options;
+	// ── Store sub-stores ───────────────────────────────────────────────────
+	const storeRuleSets = fakeipConfig.ruleSets;
+	const storeDnsRules = fakeipConfig.dnsRules;
+	const storeRules = fakeipConfig.rules;
+	const storeOptions = fakeipConfig.options;
 
 	// ── Тип-фильтр (мокап: Все / dat / remote / local / inline) ───────────
 	type RsFilter = 'all' | 'dat' | 'remote' | 'local' | 'inline';
@@ -144,19 +144,19 @@
 		}
 	}
 
-	// ── Handlers (зеркалят ExpertPanel) ──────────────────────────────────
+	// ── Handlers ─────────────────────────────────────────────────────────────
 	async function handleRsAddSave(rs: SingboxRouterRuleSet): Promise<void> {
-		await api.singboxRouterAddRuleSet(rs);
+		await api.singboxFakeIPAddRuleSet(rs);
 		rsAddOpen = false;
-		await singboxRouter.loadAll();
+		await fakeipConfig.loadAll();
 	}
 
 	async function handleRsEditSave(rs: SingboxRouterRuleSet): Promise<void> {
 		if (rsEditTag !== null) {
-			await api.singboxRouterUpdateRuleSet(rsEditTag, rs);
+			await api.singboxFakeIPUpdateRuleSet(rsEditTag, rs);
 		}
 		rsEditTag = null;
-		await singboxRouter.loadAll();
+		await fakeipConfig.loadAll();
 	}
 
 	function handleDeleteRs(tag: string): void {
@@ -165,8 +165,8 @@
 			message: `Удалить набор «${displayRuleSetTag(tag)}»?`,
 			run: async () => {
 				try {
-					await api.singboxRouterDeleteRuleSet(tag);
-					await singboxRouter.loadAll();
+					await api.singboxFakeIPDeleteRuleSet(tag);
+					await fakeipConfig.loadAll();
 					notifications.success('Набор удалён');
 				} catch (e) {
 					notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
@@ -179,8 +179,12 @@
 		if (rsCatalogBusy || presets.length === 0) return;
 		rsCatalogBusy = true;
 		try {
-			const result = await applyCatalogPresetsAsRuleSets(presets, $storeRuleSets);
-			await singboxRouter.loadAll();
+			const result = await applyCatalogPresetsAsRuleSets(
+				presets,
+				$storeRuleSets,
+				(rs) => api.singboxFakeIPAddRuleSet(rs),
+			);
+			await fakeipConfig.loadAll();
 
 			if (result.added.length > 0) {
 				notifications.success(`Добавлено ${pluralize(result.added.length, SET_WORDS)} из каталога`);
