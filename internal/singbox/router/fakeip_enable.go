@@ -38,27 +38,10 @@ var fakeIPAddrFlush = func(ctx context.Context, iface string) error {
 // on any failure so no orphaned iface / half-applied DHCP / stale persist is
 // left behind.
 func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Settings, sr storage.SingboxRouterSettings) (err error) {
-	p := s.deps.FakeIPTun
-
-	// Override the static engine defaults with the user-editable persisted
-	// settings (defaulted + validated by NormalizeSingboxRouterSettings, so they
-	// are always set when we reach here via Enable). The pool/MTU live in p (which
-	// drives NDMS addressing + the fakeip DNS config); the stack flows separately
-	// into the config build via FakeIPTunSpec.Stack below. TunAddr4/6, DHCPPool,
-	// RealServer and CachePath stay on their wired defaults (not user-editable yet).
-	if sr.FakeIPPool4 != "" {
-		p.Inet4Range = sr.FakeIPPool4
-	}
-	// FakeIPPool6 "" means v6 disabled; carry it verbatim (empty Inet6Range omits
-	// the v6 fakeip range + v6 pool route). Clear the v6 tun address too so we
-	// never assign a v6 iface address with no matching v6 pool route.
-	p.Inet6Range = sr.FakeIPPool6
-	if sr.FakeIPPool6 == "" {
-		p.TunAddr6 = ""
-	}
-	if sr.FakeIPMTU != 0 {
-		p.MTU = sr.FakeIPMTU
-	}
+	// resolveFakeIPParams overlays user-editable settings (pool4/6, MTU) from sr
+	// onto the wired static defaults. Single source of truth — shared with the
+	// fakeip config overlay (ensureFakeIPOverlayFromState).
+	p := resolveFakeIPParams(s.deps.FakeIPTun, sr)
 
 	// Fail-fast nil-guard: production wires every fakeip dep, but a degraded /
 	// mis-wired build would otherwise nil-panic mid-provision. Refuse loudly
@@ -308,7 +291,6 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	if err = s.waitForSingbox(ctx, bootWait); err != nil {
 		return fmt.Errorf("enable fakeip-tun: %w: waited %s (%v)", ErrSingboxNotReady, bootWait, err)
 	}
-
 
 	// Routing + source-preservation NDMS mutations run AFTER sing-box is confirmed
 	// up (carrier) — applying them pre-start raced the gvisor tun attach (see the

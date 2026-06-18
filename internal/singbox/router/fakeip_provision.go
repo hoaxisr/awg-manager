@@ -1,6 +1,10 @@
 package router
 
-import "context"
+import (
+	"context"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
+)
 
 // StaticRouteSpec mirrors internal/ndms/command.StaticRouteSpec so the router
 // stays decoupled from concrete ndms command types (DIP), consistent with the
@@ -122,4 +126,24 @@ func DefaultFakeIPTunParams() FakeIPTunParams {
 		RealServer: "1.1.1.1", // v1 default upstream; configurable later
 		// CachePath left empty — wired by main.go from singbox.DefaultCacheDBPath.
 	}
+}
+
+// resolveFakeIPParams overlays the user-editable engine settings (pool4/6, MTU)
+// from sr onto the wired static params base, returning the effective
+// FakeIPTunParams. Single source of truth shared by enableFakeIPTun and the
+// fakeip config overlay so the live tun/cache/pool can never diverge from what
+// the user is editing. Mirrors the merge formerly inlined in enableFakeIPTun.
+func resolveFakeIPParams(base FakeIPTunParams, sr storage.SingboxRouterSettings) FakeIPTunParams {
+	p := base
+	if sr.FakeIPPool4 != "" {
+		p.Inet4Range = sr.FakeIPPool4
+	}
+	p.Inet6Range = sr.FakeIPPool6
+	if sr.FakeIPPool6 == "" {
+		p.TunAddr6 = ""
+	}
+	if sr.FakeIPMTU != 0 {
+		p.MTU = sr.FakeIPMTU
+	}
+	return p
 }
