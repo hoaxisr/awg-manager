@@ -2009,6 +2009,37 @@ let mockDNSRewrites = [
 	{ pattern: 'finland10*.discord.media', ips: ['104.25.158.178'] },
 	{ pattern: '*.steamcontent.com', ips: ['23.55.171.10'] },
 ];
+
+// ── fakeip config state ────────────────────────────────────────────────────
+// Mirrors the router state above but scoped to /singbox/fakeip/config/*.
+// Deliberately minimal: enough for loadAll() to resolve in dev:mock:proxy.
+
+let mockFakeipDNSGlobals = { final: 'fakeip-dns-direct', strategy: 'prefer_ipv4' };
+
+let mockFakeipDNSServers = [
+	{ tag: 'fakeip-dns-fakeip', type: 'local' },
+	{ tag: 'fakeip-dns-direct', type: 'udp', server: '77.88.8.8', server_port: 53 },
+];
+
+let mockFakeipDNSRules = [
+	{ action: 'route', query_type: ['A', 'AAAA'], server: 'fakeip-dns-fakeip' },
+];
+
+let mockFakeipRules = [
+	{ action: 'sniff' },
+	{ action: 'hijack-dns', protocol: 'dns' },
+	{ ip_is_private: true, outbound: 'direct' },
+	{ action: 'route', rule_set: ['fakeip-geosite-youtube'], outbound: 'proxy-eu' },
+];
+
+const mockFakeipRuleSets = [
+	{ tag: 'fakeip-geosite-youtube', type: 'remote', format: 'binary', url: 'https://cdn.example.com/geosite-youtube.srs', update_interval: '24h', download_detour: 'direct' },
+];
+
+let mockFakeipOutbounds = [
+	{ type: 'selector', tag: 'proxy-eu', outbounds: ['awg-vpn0', 'awg-sys-Wireguard0'], default: 'awg-vpn0', source: 'router' },
+];
+
 /** Built-in NDMS policy names (Policy0..PolicyN), same rule as backend accesspolicy. */
 function isStandardPolicyName(name) {
 	return /^Policy\d+$/.test(name);
@@ -5960,6 +5991,407 @@ const server = http.createServer(async (req, res) => {
 		req.on('error', cleanup);
 		return;
 	}
+
+	// ── fakeip config CRUD ────────────────────────────────────────────────────
+
+	if (req.method === 'GET' && path === '/singbox/fakeip/config/dns/servers/list') {
+		send(res, 200, { success: true, data: mockFakeipDNSServers.map(scrubMockDnsServerStored) });
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/dns/servers/add') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const payload = sanitizeMockDnsServerForWrite(JSON.parse(raw || '{}'));
+				mockFakeipDNSServers.push(payload);
+				send(res, 200, { success: true, data: payload });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/dns/servers/update') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const { tag, server } = JSON.parse(raw || '{}');
+				const idx = mockFakeipDNSServers.findIndex((s) => s.tag === tag);
+				if (idx === -1) {
+					send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'dns server not found' } });
+					return;
+				}
+				mockFakeipDNSServers[idx] = sanitizeMockDnsServerForWrite(server);
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/dns/servers/delete') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const { tag } = JSON.parse(raw || '{}');
+				const idx = mockFakeipDNSServers.findIndex((s) => s.tag === tag);
+				if (idx === -1) {
+					send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'dns server not found' } });
+					return;
+				}
+				mockFakeipDNSServers.splice(idx, 1);
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/dns/servers/move') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const { from, to } = JSON.parse(raw || '{}');
+				if (from < 0 || from >= mockFakeipDNSServers.length || to < 0 || to >= mockFakeipDNSServers.length) {
+					send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'dns server not found' } });
+					return;
+				}
+				const [moved] = mockFakeipDNSServers.splice(from, 1);
+				mockFakeipDNSServers.splice(to, 0, moved);
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/singbox/fakeip/config/dns/rules/list') {
+		send(res, 200, { success: true, data: mockFakeipDNSRules });
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/dns/rules/add') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const payload = JSON.parse(raw || '{}');
+				mockFakeipDNSRules.push(payload);
+				send(res, 200, { success: true, data: payload });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/dns/rules/update') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const { index, rule } = JSON.parse(raw || '{}');
+				if (index < 0 || index >= mockFakeipDNSRules.length) {
+					send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'dns rule not found' } });
+					return;
+				}
+				mockFakeipDNSRules[index] = rule;
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/dns/rules/delete') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const { index } = JSON.parse(raw || '{}');
+				if (index < 0 || index >= mockFakeipDNSRules.length) {
+					send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'dns rule not found' } });
+					return;
+				}
+				mockFakeipDNSRules.splice(index, 1);
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/dns/rules/move') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const { from, to } = JSON.parse(raw || '{}');
+				if (from < 0 || from >= mockFakeipDNSRules.length || to < 0 || to >= mockFakeipDNSRules.length) {
+					send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'dns rule not found' } });
+					return;
+				}
+				const [moved] = mockFakeipDNSRules.splice(from, 1);
+				mockFakeipDNSRules.splice(to, 0, moved);
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/singbox/fakeip/config/dns/globals') {
+		send(res, 200, { success: true, data: mockFakeipDNSGlobals });
+		return;
+	}
+
+	if (req.method === 'PUT' && path === '/singbox/fakeip/config/dns/globals') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const payload = JSON.parse(raw || '{}');
+				mockFakeipDNSGlobals = {
+					final: payload.final ?? mockFakeipDNSGlobals.final,
+					strategy: payload.strategy ?? mockFakeipDNSGlobals.strategy,
+				};
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/singbox/fakeip/config/rules/list') {
+		send(res, 200, { success: true, data: mockFakeipRules });
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/rules/add') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const payload = JSON.parse(raw || '{}');
+				mockFakeipRules.push(payload);
+				send(res, 200, { success: true, data: payload });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/rules/update') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const { index, rule } = JSON.parse(raw || '{}');
+				if (index < 0 || index >= mockFakeipRules.length) {
+					send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'rule not found' } });
+					return;
+				}
+				mockFakeipRules[index] = rule;
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/rules/delete') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const { index } = JSON.parse(raw || '{}');
+				if (index < 0 || index >= mockFakeipRules.length) {
+					send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'rule not found' } });
+					return;
+				}
+				mockFakeipRules.splice(index, 1);
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/rules/move') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const { from, to } = JSON.parse(raw || '{}');
+				if (from < 0 || from >= mockFakeipRules.length || to < 0 || to >= mockFakeipRules.length) {
+					send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'rule not found' } });
+					return;
+				}
+				const [moved] = mockFakeipRules.splice(from, 1);
+				mockFakeipRules.splice(to, 0, moved);
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/route/final') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				// route final is a separate config key on the backend; acknowledge only.
+				JSON.parse(raw || '{}');
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/singbox/fakeip/config/rulesets/list') {
+		send(res, 200, { success: true, data: mockFakeipRuleSets });
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/rulesets/add') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const rs = JSON.parse(raw || '{}');
+				if (mockFakeipRuleSets.some((x) => x.tag === rs.tag)) {
+					send(res, 400, { success: false, error: { code: 'CONFLICT', message: `tag ${rs.tag} exists` } });
+					return;
+				}
+				mockFakeipRuleSets.push(rs);
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/rulesets/update') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const { tag, ruleSet } = JSON.parse(raw || '{}');
+				const idx = mockFakeipRuleSets.findIndex((x) => x.tag === tag);
+				if (idx < 0) {
+					send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: `tag ${tag} not found` } });
+					return;
+				}
+				mockFakeipRuleSets[idx] = ruleSet;
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/rulesets/delete') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const { tag } = JSON.parse(raw || '{}');
+				const idx = mockFakeipRuleSets.findIndex((x) => x.tag === tag);
+				if (idx < 0) {
+					send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: `tag ${tag} not found` } });
+					return;
+				}
+				mockFakeipRuleSets.splice(idx, 1);
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/singbox/fakeip/config/outbounds/list') {
+		send(res, 200, { success: true, data: mockFakeipOutbounds });
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/outbounds/add') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const o = JSON.parse(raw || '{}');
+				if (mockFakeipOutbounds.some((x) => x.tag === o.tag)) {
+					send(res, 400, { success: false, error: { code: 'CONFLICT', message: `tag ${o.tag} exists` } });
+					return;
+				}
+				mockFakeipOutbounds.push({ ...o, source: 'router' });
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/outbounds/update') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const { tag, outbound } = JSON.parse(raw || '{}');
+				const idx = mockFakeipOutbounds.findIndex((x) => x.tag === tag);
+				if (idx < 0) {
+					send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: `tag ${tag} not found` } });
+					return;
+				}
+				mockFakeipOutbounds[idx] = { ...outbound, source: 'router' };
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/fakeip/config/outbounds/delete') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const { tag } = JSON.parse(raw || '{}');
+				mockFakeipOutbounds = mockFakeipOutbounds.filter((x) => x.tag !== tag);
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	// ── end fakeip config CRUD ─────────────────────────────────────────────────
 
 	// Pass-through for everything else (including /events SSE).
 	const upstream = new URL(UPSTREAM);
