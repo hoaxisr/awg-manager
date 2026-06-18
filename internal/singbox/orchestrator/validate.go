@@ -390,6 +390,26 @@ type domainResolverJSON struct {
 	Server string `json:"server,omitempty"`
 }
 
+// UnmarshalJSON accepts both forms sing-box allows for default_domain_resolver:
+// a bare string (the server tag, e.g. "dns-bootstrap" in 00-base.json) or an
+// object ({"server":"real",...}). Without this, a string value fails to
+// unmarshal into the struct, which fails parsing of the WHOLE slot config and
+// silently skips every orchestrator reload (stand-caught 2026-06-18).
+func (d *domainResolverJSON) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		d.Server = s
+		return nil
+	}
+	type alias domainResolverJSON
+	var a alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	*d = domainResolverJSON(a)
+	return nil
+}
+
 type ruleJSON struct {
 	Outbound string     `json:"outbound"`
 	RuleSet  []string   `json:"rule_set,omitempty"`

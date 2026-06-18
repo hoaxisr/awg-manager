@@ -356,3 +356,41 @@ func TestValidateDraftLocked_DetectsDuplicateAcrossSlots(t *testing.T) {
 		t.Errorf("expected duplicate-outbound 'direct', got: %s", res.Error())
 	}
 }
+
+// 00-base.json carries default_domain_resolver as a BARE STRING (the server
+// tag), not an object. The validator must accept both forms — a string failing
+// to unmarshal previously failed parsing of the whole slot and silently skipped
+// every reload (stand-caught 2026-06-18).
+func TestValidateDefaultDomainResolverStringForm(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotBase, Filename: "00-base.json", AlwaysOn: true})
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	// base: resolver as bare string referencing its own declared server.
+	writeSlot(t, dir, "00-base.json", `{"dns":{"servers":[{"tag":"dns-bootstrap"}]},"route":{"default_domain_resolver":"dns-bootstrap"}}`)
+	writeSlot(t, dir, "20-router.json", `{"route":{"final":"direct"}}`)
+	o.enabled[SlotBase] = true
+	o.enabled[SlotRouter] = true
+	res := o.Validate()
+	if !res.Ok() {
+		t.Fatalf("string-form default_domain_resolver must validate, got: %v", res.Error())
+	}
+}
+
+// The string form is still checked as a DNS-tag reference: a bare-string
+// resolver naming an undeclared server must fail.
+func TestValidateDefaultDomainResolverStringForm_Unknown(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "20-router.json", `{"dns":{"servers":[{"tag":"real"}]},"route":{"default_domain_resolver":"ghost-dns"}}`)
+	o.enabled[SlotRouter] = true
+	res := o.Validate()
+	if res.Ok() || !strings.Contains(res.Error(), "unknown-dns-server") {
+		t.Fatalf("bare-string resolver to unknown server must fail unknown-dns-server, got: %v", res.Error())
+	}
+}
