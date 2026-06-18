@@ -1460,6 +1460,59 @@ func TestEnable_PersistsStaticNATFact(t *testing.T) {
 	}
 }
 
+// TestDisableFakeIPTun_RestoresNATByPersistedFact asserts that Disable restores
+// dynamic masquerade NAT using the PERSISTED StaticNATSeg/WAN fact (bug #3),
+// even when the LIVE FakeIPSourcePreserve setting is false. The live setting must
+// NOT gate the restore — only the persisted fact matters.
+func TestDisableFakeIPTun_RestoresNATByPersistedFact(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	captureDrain(t)
+	stubOrphanNetdev(t, false)
+
+	// Wire SegmentNAT recording stub.
+	recNAT := &recordingSegmentNAT{}
+	h.svc.deps.SegmentNAT = recNAT
+
+	// Seed FakeIPState directly: provisioned + static-NAT fact recorded.
+	// This is the persisted fact that Disable must honour.
+	if err := h.store.SetFakeIPState(&storage.FakeIPState{
+		Provisioned:  true,
+		Index:        0,
+		Inet4Range:   "10.128.0.0/10",
+		Inet6Range:   "3f80::/10",
+		StaticNATSeg: "Home",
+		StaticNATWAN: "PPPoE0",
+	}); err != nil {
+		t.Fatalf("SetFakeIPState: %v", err)
+	}
+
+	// Set FakeIPSourcePreserve = false (LIVE setting OFF) — the bug: old code
+	// skipped teardown here; new code must restore by the persisted fact regardless.
+	falseVal := false
+	all, _ := h.store.Load()
+	all.SingboxRouter.FakeIPSourcePreserve = &falseVal
+	all.SingboxRouter.Enabled = true
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	h.log.calls = nil
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+
+	// teardownStaticNAT must have run: RemoveStaticNAT then SetSegmentNAT.
+	want := []string{"RemoveStaticNAT Home PPPoE0", "SetSegmentNAT Home"}
+	if len(recNAT.calls) != len(want) {
+		t.Fatalf("SegmentNAT calls = %v, want %v", recNAT.calls, want)
+	}
+	for i, w := range want {
+		if recNAT.calls[i] != w {
+			t.Errorf("SegmentNAT call[%d] = %q, want %q", i, recNAT.calls[i], w)
+		}
+	}
+}
+
 func TestReconcileFakeIPTun_NoReprovision(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 	// Wire an IPTables whose probes always error → IsInstalled/HasAnyInstalled

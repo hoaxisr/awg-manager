@@ -142,20 +142,15 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 		s.appLog.Warn("fakeip-disable", iface, "clear pool dns: "+err.Error())
 	}
 
-	// (2b) Restore dynamic masquerade NAT on the delivery segment if static-NAT
-	// source preservation was applied at Enable (PE-D, spec §3.2/§3.3). Best-effort
-	// + logged: a NAT-restore failure must NOT abort the teardown (a half-removed
-	// fakeip is worse than a fully-attempted one). Guarded by the same
-	// FakeIPSourcePreserveOrDefault setting so we only undo what Enable did. The
-	// resolver is idempotent on NDMS (RemoveStaticNAT + SetSegmentNAT tolerate an
-	// already-dynamic segment), so re-running it on an already-restored segment is safe.
-	if settings.SingboxRouter.FakeIPSourcePreserveOrDefault() {
-		if seg, wan, rerr := s.resolveDeliverySegmentAndWAN(ctx); rerr != nil {
-			s.appLog.Warn("fakeip-disable", iface, "resolve segment/WAN for NAT restore: "+rerr.Error())
-		} else if seg != "" && wan != "" {
-			if err := s.teardownStaticNAT(ctx, seg, wan); err != nil {
-				s.appLog.Warn("fakeip-disable", iface, "restore dynamic NAT: "+err.Error())
-			}
+	// (2b) Restore dynamic masquerade NAT if Enable applied static-NAT — keyed on
+	// the PERSISTED fact, not the live FakeIPSourcePreserve setting (bug #3: flipping
+	// the setting off then disabling must still restore ip nat) and not a live
+	// re-resolve (a WAN/pool change between enable and disable would target the wrong
+	// segment). Best-effort + logged: a NAT-restore failure must NOT abort the
+	// teardown (a half-removed fakeip is worse than a fully-attempted one).
+	if st.StaticNATSeg != "" && st.StaticNATWAN != "" {
+		if err := s.teardownStaticNAT(ctx, st.StaticNATSeg, st.StaticNATWAN); err != nil {
+			s.appLog.Warn("fakeip-disable", iface, "restore dynamic NAT: "+err.Error())
 		}
 	}
 
