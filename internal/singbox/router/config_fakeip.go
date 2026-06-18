@@ -445,8 +445,8 @@ func DeriveTunDNS(ifaceCIDR string) (string, error) {
 // Both families are compared (v4 stored-vs-configured AND v6 stored-vs-
 // configured); a difference in EITHER returns true. Each non-empty range is
 // normalized via netip.ParsePrefix(...).Masked().String() before comparison so
-// cosmetically-different-but-equal CIDRs (e.g. "10.128.0.5/10" vs
-// "10.128.0.0/10") compare equal. If a value fails to parse, that pair falls
+// cosmetically-different-but-equal CIDRs (e.g. "198.18.0.5/15" vs
+// "198.18.0.0/15") compare equal. If a value fails to parse, that pair falls
 // back to a trimmed exact-string compare (no panic). A family that is empty on
 // both sides counts as unchanged; an empty stored side against a non-empty
 // configured side (first provision) counts as changed, forcing a clean cache.

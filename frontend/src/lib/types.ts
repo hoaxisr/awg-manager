@@ -1313,7 +1313,7 @@ export interface SingboxRouterSettings {
 	// fakeip-tun engine settings (user-editable; round-trip via GET/PUT
 	// /singbox/router/settings). Defaults mirror DefaultFakeIPTunParams:
 	//   fakeipStack: gvisor (system → lower throughput, backend forces gso:false)
-	//   fakeipPool4: "10.128.0.0/10", fakeipPool6: "3f80::/10" ("" disables v6)
+	//   fakeipPool4: "198.18.0.0/15", fakeipPool6: "fc00::/18" ("" disables v6)
 	//   fakeipMtu: 1500. All omitempty on the wire → absent on legacy payloads.
 	fakeipStack?: 'gvisor' | 'system';
 	fakeipPool4?: string;

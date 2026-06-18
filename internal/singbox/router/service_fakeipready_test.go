@@ -22,8 +22,8 @@ func newFakeIPSettingsStore(t *testing.T, index int, provisioned bool) *storage.
 		if err := store.SetFakeIPState(&storage.FakeIPState{
 			Provisioned: true,
 			Index:       index,
-			Inet4Range:  "10.128.0.0/10",
-			Inet6Range:  "3f80::/10",
+			Inet4Range:  "198.18.0.0/15",
+			Inet6Range:  "fc00::/18",
 		}); err != nil {
 			t.Fatalf("SetFakeIPState: %v", err)
 		}
@@ -151,7 +151,7 @@ func TestGetStatus_FakeIP_ActiveWhenCarrierAndRoute(t *testing.T) {
 	var gotIface string
 	stubFakeIPPoolRoutePresent(t, func(iface string, n netip.Prefix) bool {
 		gotIface = iface
-		return n.Contains(netip.MustParseAddr("10.128.0.5"))
+		return n.Contains(netip.MustParseAddr("198.18.0.5"))
 	})
 	stubListeningProbe(t, func() bool {
 		t.Fatal("tproxy listening probe must not be called for fakeip-tun status")

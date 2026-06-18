@@ -91,10 +91,10 @@ type SingboxRouterSettingsData struct {
 	// --- fakeip-tun engine settings (user-editable) ---
 	// FakeIPStack selects the sing-tun stack: "gvisor" (default) or "system".
 	FakeIPStack string `json:"fakeipStack,omitempty" example:"gvisor" enums:"gvisor,system"`
-	// FakeIPPool4 is the fakeip v4 pool CIDR (default "10.128.0.0/10").
-	FakeIPPool4 string `json:"fakeipPool4,omitempty" example:"10.128.0.0/10"`
-	// FakeIPPool6 is the fakeip v6 pool CIDR (default "3f80::/10"); "" disables v6.
-	FakeIPPool6 string `json:"fakeipPool6,omitempty" example:"3f80::/10"`
+	// FakeIPPool4 is the fakeip v4 pool CIDR (default "198.18.0.0/15").
+	FakeIPPool4 string `json:"fakeipPool4,omitempty" example:"198.18.0.0/15"`
+	// FakeIPPool6 is the fakeip v6 pool CIDR (default "fc00::/18"); "" disables v6.
+	FakeIPPool6 string `json:"fakeipPool6,omitempty" example:"fc00::/18"`
 	// FakeIPMTU is the tun MTU (default 1500; valid range 576-9000).
 	FakeIPMTU int `json:"fakeipMtu,omitempty" example:"1500"`
 	// FakeIPSourcePreserve: при true (default) fakeip-tun провизионит сегменты

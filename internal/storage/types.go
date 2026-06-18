@@ -138,9 +138,9 @@ type SingboxRouterSettings struct {
 	// "system" (lower CPU/RAM; on this kernel REQUIRES gso:false — set
 	// automatically by the config builder).
 	FakeIPStack string `json:"fakeipStack,omitempty"`
-	// FakeIPPool4 is the fakeip v4 pool CIDR (default "10.128.0.0/10").
+	// FakeIPPool4 is the fakeip v4 pool CIDR (default "198.18.0.0/15").
 	FakeIPPool4 string `json:"fakeipPool4,omitempty"`
-	// FakeIPPool6 is the fakeip v6 pool CIDR (default "3f80::/10"); "" disables v6.
+	// FakeIPPool6 is the fakeip v6 pool CIDR (default "fc00::/18"); "" disables v6.
 	FakeIPPool6 string `json:"fakeipPool6,omitempty"`
 	// FakeIPMTU is the tun MTU (default 1500).
 	FakeIPMTU int `json:"fakeipMtu,omitempty"`

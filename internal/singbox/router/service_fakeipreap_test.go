@@ -34,8 +34,8 @@ func newReapSettingsStore(t *testing.T, mode string, index int, provisioned bool
 		if err := store.SetFakeIPState(&storage.FakeIPState{
 			Provisioned: true,
 			Index:       index,
-			Inet4Range:  "10.128.0.0/10",
-			Inet6Range:  "3f80::/10",
+			Inet4Range:  "198.18.0.0/15",
+			Inet6Range:  "fc00::/18",
 		}); err != nil {
 			t.Fatalf("SetFakeIPState: %v", err)
 		}
@@ -145,7 +145,7 @@ func TestReapOrphaned_SweepsStaleRejectRoute(t *testing.T) {
 		Settings:     store,
 		OpkgTun:      opkg,
 		StaticRoutes: routes,
-		FakeIPTun:    DefaultFakeIPTunParams(), // Inet4Range default 10.128.0.0/10
+		FakeIPTun:    DefaultFakeIPTunParams(), // Inet4Range default 198.18.0.0/15
 	})
 
 	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
@@ -154,7 +154,7 @@ func TestReapOrphaned_SweepsStaleRejectRoute(t *testing.T) {
 	// Bug 2 model: the kill-switch reject route is interface-bound, so the sweep
 	// targets it by the persisted index's NDMS name (OpkgTun3) via the stand-
 	// verified remove form ({…,no:true}, no reject flag → fake records RemoveRoute).
-	if !log.has("RemoveRoute:10.128.0.0:OpkgTun3") {
+	if !log.has("RemoveRoute:198.18.0.0:OpkgTun3") {
 		t.Errorf("stale kill-switch route sweep missing, got %v", log.calls)
 	}
 }
@@ -176,7 +176,7 @@ func TestReapOrphaned_NoSweepInFakeIPMode(t *testing.T) {
 	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
 		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
 	}
-	if log.has("RemoveRoute:10.128.0.0:OpkgTun2") {
+	if log.has("RemoveRoute:198.18.0.0:OpkgTun2") {
 		t.Errorf("fakeip-tun mode must NOT sweep the reject route (early return), got %v", log.calls)
 	}
 }

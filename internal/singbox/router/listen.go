@@ -190,7 +190,7 @@ var fakeIPPoolRoutePresent = liveFakeIPPoolRoutePresent
 // hex; a row matches when its iface equals iface and its (destination, mask)
 // equals the pool's network address and prefix mask.
 //
-// v1 SCOPE: v4 pool route only. The v6 pool auto-route (3f80::/10 → opkgtun) is
+// v1 SCOPE: v4 pool route only. The v6 pool auto-route (fc00::/18 → opkgtun) is
 // NOT checked here, so GetStatus.Active can report true while the v6 path is
 // structurally absent. Accepted for v1 because the v4 resolver answers both A
 // and AAAA (spec §3.8 — v6-only clients are out of v1 scope); when v6 delivery

@@ -165,7 +165,7 @@
 		const v = pool4Draft.v.trim();
 		if (v === (fakeipPool4 ?? '')) return;
 		if (v !== '' && !CIDR4.test(v)) {
-			notifications.error('Некорректный IPv4-CIDR пула (пример: 10.128.0.0/10)');
+			notifications.error('Некорректный IPv4-CIDR пула (пример: 198.18.0.0/15)');
 			pool4Draft.v = fakeipPool4 ?? '';
 			return;
 		}
@@ -177,7 +177,7 @@
 		if (v === (fakeipPool6 ?? '')) return;
 		// Пусто — допустимо (v6 выключен). Иначе лёгкая проверка CIDR6.
 		if (v !== '' && !CIDR6.test(v)) {
-			notifications.error('Некорректный IPv6-CIDR пула (пусто = выкл; пример: 3f80::/10)');
+			notifications.error('Некорректный IPv6-CIDR пула (пусто = выкл; пример: fc00::/18)');
 			pool6Draft.v = fakeipPool6 ?? '';
 			return;
 		}
@@ -315,7 +315,7 @@
 			<span class="val ctl">
 				<Input
 					value={pool4Draft.v}
-					placeholder="10.128.0.0/10"
+					placeholder="198.18.0.0/15"
 					disabled={saving}
 					fullWidth
 					oninput={(v) => (pool4Draft.v = v)}
@@ -330,7 +330,7 @@
 			<span class="val ctl">
 				<Input
 					value={pool6Draft.v}
-					placeholder="3f80::/10 (пусто — выкл)"
+					placeholder="fc00::/18 (пусто — выкл)"
 					disabled={saving}
 					fullWidth
 					oninput={(v) => (pool6Draft.v = v)}

@@ -61,7 +61,7 @@ func TestReconcile_DispatchesFakeIPTun(t *testing.T) {
 	}
 	// Drift-heal re-adds the pool route idempotently — a fakeip-only call that the
 	// tproxy switch would never make. No new Create (no re-provision).
-	if !h.log.has("AddRoute:10.128.0.0:255.192.0.0:OpkgTun0") {
+	if !h.log.has("AddRoute:198.18.0.0:255.254.0.0:OpkgTun0") {
 		t.Errorf("expected drift-heal to re-add the pool route, got %v", h.log.calls)
 	}
 	if h.log.has("Create:OpkgTun0:public") || h.log.has("Create:OpkgTun1:public") {
@@ -283,10 +283,10 @@ func TestReconcileFakeIPTun_DriftHealRestartsDeadSingbox(t *testing.T) {
 	}
 	// Routes re-added because the live route probe is unstubbed here → reads
 	// /proc/net/route → opkgtun0 route absent → drift detected → re-add fires.
-	if !h.log.has("AddRoute:10.128.0.0:255.192.0.0:OpkgTun0") {
+	if !h.log.has("AddRoute:198.18.0.0:255.254.0.0:OpkgTun0") {
 		t.Errorf("drift-heal must re-add v4 pool route when absent, got %v", h.log.calls)
 	}
-	if !h.log.has("AddRoute6:3f80::/10:OpkgTun0") {
+	if !h.log.has("AddRoute6:fc00::/18:OpkgTun0") {
 		t.Errorf("drift-heal must re-add v6 pool route when v4 absent, got %v", h.log.calls)
 	}
 	// DNS is NOT rewritten: Enable already advertised (cache=true) and sing-box
@@ -335,7 +335,7 @@ func TestReconcileFakeIPTun_NoReprovisionWhenHealthy(t *testing.T) {
 		t.Errorf("FakeIP index changed in healthy drift-heal: %+v", st)
 	}
 	// But it IS a heal: routes re-added idempotently.
-	if !h.log.has("AddRoute:10.128.0.0:255.192.0.0:OpkgTun0") {
+	if !h.log.has("AddRoute:198.18.0.0:255.254.0.0:OpkgTun0") {
 		t.Errorf("healthy drift-heal still re-adds routes idempotently, got %v", h.log.calls)
 	}
 }
@@ -600,10 +600,10 @@ func TestReconcileFakeIPTun_NoMutationWhenNoDrift(t *testing.T) {
 	}
 
 	// ZERO NDMS mutations: no route add (v4 or v6), no DHCP write.
-	if h.log.has("AddRoute:10.128.0.0:255.192.0.0:OpkgTun0") {
+	if h.log.has("AddRoute:198.18.0.0:255.254.0.0:OpkgTun0") {
 		t.Errorf("steady-state reconcile must NOT add the v4 route, got %v", h.log.calls)
 	}
-	if h.log.has("AddRoute6:3f80::/10:OpkgTun0") {
+	if h.log.has("AddRoute6:fc00::/18:OpkgTun0") {
 		t.Errorf("steady-state reconcile must NOT add the v6 route, got %v", h.log.calls)
 	}
 	if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
@@ -639,11 +639,11 @@ func TestReconcileFakeIPTun_ReaddsRouteWhenMissing(t *testing.T) {
 		t.Fatalf("reconcileFakeIPTun: %v", err)
 	}
 
-	if !h.log.has("AddRoute:10.128.0.0:255.192.0.0:OpkgTun0") {
+	if !h.log.has("AddRoute:198.18.0.0:255.254.0.0:OpkgTun0") {
 		t.Errorf("absent v4 route must be re-added, got %v", h.log.calls)
 	}
 	// v6 re-add is gated on the same v4-absence signal.
-	if !h.log.has("AddRoute6:3f80::/10:OpkgTun0") {
+	if !h.log.has("AddRoute6:fc00::/18:OpkgTun0") {
 		t.Errorf("v6 route must be re-added when v4 absent, got %v", h.log.calls)
 	}
 	// DNS unchanged (Enable already advertised, sing-box still up) → no DHCP write.

@@ -96,8 +96,8 @@ type StaticNATReader interface {
 // at runtime. Defaults are spec §3.3/3.4/3.6 values; wired in cmd/awg-manager.
 // (RealServer + cache path are sourced by the lifecycle layer in Slice 1D.)
 type FakeIPTunParams struct {
-	Inet4Range string // fakeip v4 pool (default "10.128.0.0/10")
-	Inet6Range string // fakeip v6 pool (default "3f80::/10"; empty disables v6)
+	Inet4Range string // fakeip v4 pool (default "198.18.0.0/15", per sing-box docs)
+	Inet6Range string // fakeip v6 pool (default "fc00::/18", per sing-box docs; empty disables v6)
 	TunAddr4   string // tun gw /30 CIDR (default "172.18.0.1/30"); DHCP DNS = other /30 host
 	TunAddr6   string // tun gw /126 CIDR (default "fdfe:dcba:9876::1/126"; empty disables v6)
 	MTU        int    // tun MTU (default 1500)
@@ -117,8 +117,8 @@ type FakeIPTunParams struct {
 // Single source of truth for the wiring site in cmd/awg-manager and tests.
 func DefaultFakeIPTunParams() FakeIPTunParams {
 	return FakeIPTunParams{
-		Inet4Range: "10.128.0.0/10",
-		Inet6Range: "3f80::/10",
+		Inet4Range: "198.18.0.0/15",
+		Inet6Range: "fc00::/18",
 		TunAddr4:   "172.18.0.1/30",
 		TunAddr6:   "fdfe:dcba:9876::1/126",
 		MTU:        1500,

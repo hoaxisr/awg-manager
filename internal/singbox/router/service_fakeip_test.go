@@ -300,7 +300,7 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 	if st == nil || !st.Provisioned || st.Index != 0 {
 		t.Fatalf("FakeIP persist = %+v, want provisioned index 0", st)
 	}
-	if st.Inet4Range != "10.128.0.0/10" || st.Inet6Range != "3f80::/10" {
+	if st.Inet4Range != "198.18.0.0/15" || st.Inet6Range != "fc00::/18" {
 		t.Errorf("FakeIP ranges = %q/%q, want pool defaults", st.Inet4Range, st.Inet6Range)
 	}
 
@@ -332,7 +332,7 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 		t.Fatalf("Flush must use the lowercase kernel name %q: %v", iface, h.log.calls)
 	}
 	// The pool route Interface is the NDMS name.
-	if !h.log.has("AddRoute:10.128.0.0:255.192.0.0:" + ndmsName) {
+	if !h.log.has("AddRoute:198.18.0.0:255.254.0.0:" + ndmsName) {
 		t.Fatalf("pool route Interface must be the NDMS name %q: %v", ndmsName, h.log.calls)
 	}
 	// SetIPGlobal must NOT be called (no such recorded label could exist; assert
@@ -344,7 +344,7 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 	mustOrder("SetAddress:"+ndmsName+":172.18.0.1:255.255.255.252", "SetIPv6Address:"+ndmsName+":fdfe:dcba:9876::1")
 	mustOrder("SetIPv6Address:"+ndmsName+":fdfe:dcba:9876::1", "SetMTU:"+ndmsName+":1500")
 	// v6 pool route is added (defaults carry Inet6Range) after the v4 pool route.
-	mustOrder("AddRoute:10.128.0.0:255.192.0.0:"+ndmsName, "AddRoute6:3f80::/10:"+ndmsName)
+	mustOrder("AddRoute:198.18.0.0:255.254.0.0:"+ndmsName, "AddRoute6:fc00::/18:"+ndmsName)
 	mustOrder("SetMTU:"+ndmsName+":1500", "InterfaceUp:"+ndmsName)
 	// Flush runs PRE-start (right after iface up + config build), clearing stale
 	// addrs before sing-box attaches the gvisor tun.
@@ -356,8 +356,8 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 	mustOrder("Flush:"+iface, "SetDefaultRoute:"+ndmsName)
 	mustOrder("SetDefaultRoute:"+ndmsName, "SetIPv6DefaultRoute:"+ndmsName)
 	// Default routes precede the pool routes (both post-readiness).
-	mustOrder("SetIPv6DefaultRoute:"+ndmsName, "AddRoute:10.128.0.0:255.192.0.0:"+ndmsName)
-	mustOrder("AddRoute:10.128.0.0:255.192.0.0:"+ndmsName, "SetPoolDNS:_WEBADMIN:172.18.0.2")
+	mustOrder("SetIPv6DefaultRoute:"+ndmsName, "AddRoute:198.18.0.0:255.254.0.0:"+ndmsName)
+	mustOrder("AddRoute:198.18.0.0:255.254.0.0:"+ndmsName, "SetPoolDNS:_WEBADMIN:172.18.0.2")
 
 	// DHCP SetPoolDNS must be the LAST provisioning call.
 	last := h.log.calls[len(h.log.calls)-1]
@@ -631,7 +631,7 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 				if h.log.has("RemoveDefaultRoute:" + ndmsName) {
 					t.Errorf("%s: default route not applied yet — nothing to remove: %v", step, h.log.calls)
 				}
-				if h.log.has("AddRoute:10.128.0.0:255.192.0.0:" + ndmsName) {
+				if h.log.has("AddRoute:198.18.0.0:255.254.0.0:" + ndmsName) {
 					t.Errorf("%s: pool route should not have been added", step)
 				}
 				if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
@@ -642,7 +642,7 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 				if !h.log.has("RemoveDefaultRoute:" + ndmsName) {
 					t.Errorf("SetIPv6DefaultRoute: rollback missing RemoveDefaultRoute (v4): %v", h.log.calls)
 				}
-				if h.log.has("AddRoute:10.128.0.0:255.192.0.0:" + ndmsName) {
+				if h.log.has("AddRoute:198.18.0.0:255.254.0.0:" + ndmsName) {
 					t.Errorf("SetIPv6DefaultRoute: pool route should not have been added")
 				}
 				if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
@@ -660,7 +660,7 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 			case "AddRoute6":
 				// v6-route-add failure: v4 pool route + both default routes landed and
 				// must be removed; the v6 route never landed. DHCP must not be set.
-				if !h.log.has("RemoveRoute:10.128.0.0:" + ndmsName) {
+				if !h.log.has("RemoveRoute:198.18.0.0:" + ndmsName) {
 					t.Errorf("AddRoute6: rollback missing RemoveRoute (v4): %v", h.log.calls)
 				}
 				if !h.log.has("RemoveDefaultRoute:"+ndmsName) || !h.log.has("RemoveIPv6DefaultRoute:"+ndmsName) {
@@ -672,10 +672,10 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 			case "SetPoolDNS":
 				// Everything landed then must be removed in rollback (pool v4+v6 +
 				// both default routes).
-				if !h.log.has("RemoveRoute:10.128.0.0:" + ndmsName) {
+				if !h.log.has("RemoveRoute:198.18.0.0:" + ndmsName) {
 					t.Errorf("SetPoolDNS: rollback missing RemoveRoute: %v", h.log.calls)
 				}
-				if !h.log.has("RemoveRoute6:3f80::/10:" + ndmsName) {
+				if !h.log.has("RemoveRoute6:fc00::/18:" + ndmsName) {
 					t.Errorf("SetPoolDNS: rollback missing RemoveRoute6: %v", h.log.calls)
 				}
 				if !h.log.has("RemoveDefaultRoute:"+ndmsName) || !h.log.has("RemoveIPv6DefaultRoute:"+ndmsName) {
@@ -746,7 +746,7 @@ func TestEnableFakeIPTun_RollbackOnReadinessTimeout(t *testing.T) {
 	if !h.log.has("InterfaceDown:"+ndmsName) || !h.log.has("Delete:"+ndmsName) {
 		t.Errorf("readiness-timeout rollback must tear down iface: %v", h.log.calls)
 	}
-	if h.log.has("AddRoute:10.128.0.0:255.192.0.0:" + ndmsName) {
+	if h.log.has("AddRoute:198.18.0.0:255.254.0.0:" + ndmsName) {
 		t.Errorf("routes must not be added when readiness fails: %v", h.log.calls)
 	}
 }
@@ -1278,8 +1278,8 @@ func TestDisableFakeIPTun_Ordering(t *testing.T) {
 	clearDNS := "ClearPoolDNS:_WEBADMIN"
 	// Bug 2: the reject route is the pool→OpkgTun route RENEWED with reject:true ON
 	// the OpkgTun interface (kill-switch flag), NOT an interface-less blackhole.
-	renewReject := "AddRejectRoute:10.128.0.0:255.192.0.0:" + ndmsName
-	rmAuto6 := "RemoveRoute6:3f80::/10:" + ndmsName
+	renewReject := "AddRejectRoute:198.18.0.0:255.254.0.0:" + ndmsName
+	rmAuto6 := "RemoveRoute6:fc00::/18:" + ndmsName
 
 	// ClearPoolDNS is FIRST.
 	if first := h.log.calls[0]; first != clearDNS {
@@ -1291,7 +1291,7 @@ func TestDisableFakeIPTun_Ordering(t *testing.T) {
 	// Bug 2: there must be NO separate auto-route removal before the iface delete —
 	// the single pool route is the kill-switch and is only removed by the async
 	// drain LAST.
-	if h.log.has("RemoveRoute:10.128.0.0:" + ndmsName) {
+	if h.log.has("RemoveRoute:198.18.0.0:" + ndmsName) {
 		t.Errorf("v4 auto-route removed inline; the kill-switch route must survive until the async drain: %v", h.log.calls)
 	}
 	// v6 pool route removed (no v6 reject equivalent — fail-open, see disable doc).
@@ -1314,7 +1314,7 @@ func TestDisableFakeIPTun_Ordering(t *testing.T) {
 	// The kill-switch route must NOT yet be removed (drain scheduled, not run
 	// inline). The stand-verified REMOVE form is {network,mask,interface,no:true}
 	// WITHOUT a reject flag (the fake records that as RemoveRoute on the iface).
-	rmKillSwitch := "RemoveRoute:10.128.0.0:" + ndmsName
+	rmKillSwitch := "RemoveRoute:198.18.0.0:" + ndmsName
 	if h.log.has(rmKillSwitch) {
 		t.Errorf("kill-switch route removed before drain window: %v", h.log.calls)
 	}
@@ -1347,10 +1347,10 @@ func TestDisableFakeIPTun_DrainOffLock(t *testing.T) {
 	// Reject renew happened (on the OpkgTun0 iface); kill-switch removal has NOT
 	// (still scheduled off-lock via the seam). The remove form is a plain
 	// RemoveRoute on the iface (stand-verified {…,no:true}, no reject flag).
-	if !h.log.has("AddRejectRoute:10.128.0.0:255.192.0.0:OpkgTun0") {
+	if !h.log.has("AddRejectRoute:198.18.0.0:255.254.0.0:OpkgTun0") {
 		t.Fatalf("reject route was not renewed: %v", h.log.calls)
 	}
-	if h.log.has("RemoveRoute:10.128.0.0:OpkgTun0") {
+	if h.log.has("RemoveRoute:198.18.0.0:OpkgTun0") {
 		t.Errorf("kill-switch removal ran inline (must be off-lock via seam): %v", h.log.calls)
 	}
 	if getDrain() == nil {
@@ -1416,13 +1416,13 @@ func TestDisableFakeIPTun_RejectAddFailKeepsAutoRoute(t *testing.T) {
 	}
 
 	// Reject renew was attempted but failed (on the OpkgTun0 iface).
-	if !h.log.has("AddRejectRoute:10.128.0.0:255.192.0.0:" + ndmsName) {
+	if !h.log.has("AddRejectRoute:198.18.0.0:255.254.0.0:" + ndmsName) {
 		t.Fatalf("reject renew was not attempted: %v", h.log.calls)
 	}
 	// The plain v4 pool route must NOT have been removed (Bug 2 model: disable never
 	// removes the pool route inline; a failed reject-renew leaves it plain + present,
 	// so there is no WAN-leak window — traffic dead-ends at the deleted tun).
-	if h.log.has("RemoveRoute:10.128.0.0:" + ndmsName) {
+	if h.log.has("RemoveRoute:198.18.0.0:" + ndmsName) {
 		t.Errorf("v4 pool route removed despite failed reject-renew (WAN-leak window): %v", h.log.calls)
 	}
 	// Teardown still reached the mandatory persist steps.
@@ -1677,8 +1677,8 @@ func TestDisableFakeIPTun_RestoresNATByPersistedFact(t *testing.T) {
 	if err := h.store.SetFakeIPState(&storage.FakeIPState{
 		Provisioned:  true,
 		Index:        0,
-		Inet4Range:   "10.128.0.0/10",
-		Inet6Range:   "3f80::/10",
+		Inet4Range:   "198.18.0.0/15",
+		Inet6Range:   "fc00::/18",
 		StaticNATSeg: "Home",
 		StaticNATWAN: "PPPoE0",
 	}); err != nil {

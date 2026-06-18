@@ -503,7 +503,7 @@ func (s *ServiceImpl) fakeIPEgressUp(cfg *RouterConfig) bool {
 
 // splitCIDRToAddrMask splits a CIDR into its bare address string and dotted-quad
 // (v4) netmask, e.g. "172.18.0.1/30" → ("172.18.0.1", "255.255.255.252") and
-// "10.128.0.0/10" → ("10.128.0.0", "255.192.0.0"). v4-only (NDMS SetAddress /
+// "198.18.0.0/15" → ("198.18.0.0", "255.254.0.0"). v4-only (NDMS SetAddress /
 // the pool auto-route are v4); errors on non-v4 or malformed input.
 func splitCIDRToAddrMask(cidr string) (addr, mask string, err error) {
 	p, err := netip.ParsePrefix(cidr)
@@ -519,7 +519,7 @@ func splitCIDRToAddrMask(cidr string) (addr, mask string, err error) {
 
 // poolV4NetMask derives the v4 fakeip pool network address + dotted mask from a
 // pool CIDR, masking the prefix first so a user-supplied non-masked pool (e.g.
-// "10.130.0.0/10") yields the network address ("10.128.0.0"), not a host — a
+// "198.19.0.0/15") yields the network address ("198.18.0.0"), not a host — a
 // non-masked Network would make NDMS reject or mis-install the route. Single
 // source of truth for the four sites (enable/disable/reconcile/reap) that need
 // the pool route's network+mask; each caller keeps its own Warn/error handling.
