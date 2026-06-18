@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -746,5 +747,79 @@ func TestFakeipWithConfig_OverlayAndPersist(t *testing.T) {
 	pendingPath := filepath.Join(dir, "pending", "21-fakeip.json")
 	if _, err := os.Stat(pendingPath); !os.IsNotExist(err) {
 		t.Errorf("21-fakeip.json must NOT be in pending/; stat err=%v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// guardFakeIPLocked / ErrFakeIPLockedField tests
+// ---------------------------------------------------------------------------
+
+// seedFakeIPLocked runs a no-op fakeipWithConfig to establish the locked bits
+// in the slot (first provision writes fakeip/real servers, DNS.Final, etc.).
+func seedFakeIPLocked(t *testing.T, svc *ServiceImpl) {
+	t.Helper()
+	if err := svc.fakeipWithConfig(context.Background(), "seed", func(*RouterConfig) error { return nil }); err != nil {
+		t.Fatalf("seed fakeipWithConfig: %v", err)
+	}
+}
+
+// TestFakeipGuard_RejectsDeletingRealServer verifies that an edit removing the
+// "real" DNS server from an already-provisioned fakeip config is rejected with
+// ErrFakeIPLockedField.
+func TestFakeipGuard_RejectsDeletingRealServer(t *testing.T) {
+	svc, _ := newFakeIPTestService(t)
+	seedFakeIPLocked(t, svc)
+
+	err := svc.fakeipWithConfig(context.Background(), "all", func(c *RouterConfig) error {
+		out := c.DNS.Servers[:0]
+		for _, sv := range c.DNS.Servers {
+			if sv.Tag != "real" {
+				out = append(out, sv)
+			}
+		}
+		c.DNS.Servers = out
+		return nil
+	})
+	if !errors.Is(err, ErrFakeIPLockedField) {
+		t.Fatalf("expected ErrFakeIPLockedField, got %v", err)
+	}
+	if err != nil && !strings.Contains(err.Error(), "real") {
+		t.Errorf("error message should mention \"real\", got: %v", err)
+	}
+}
+
+// TestFakeipGuard_RejectsChangingDNSFinal verifies that an edit changing
+// DNS.Final away from "real" on an established fakeip config is rejected with
+// ErrFakeIPLockedField.
+func TestFakeipGuard_RejectsChangingDNSFinal(t *testing.T) {
+	svc, _ := newFakeIPTestService(t)
+	seedFakeIPLocked(t, svc)
+
+	err := svc.fakeipWithConfig(context.Background(), "all", func(c *RouterConfig) error {
+		c.DNS.Final = "fakeip"
+		return nil
+	})
+	if !errors.Is(err, ErrFakeIPLockedField) {
+		t.Fatalf("expected ErrFakeIPLockedField, got %v", err)
+	}
+}
+
+// TestFakeipGuard_AllowsAppendingUserDNSRule verifies that a legitimate edit
+// (appending a user DNS rule that touches no locked bit) is NOT rejected.
+// This guards against over-rejection by guardFakeIPLocked.
+func TestFakeipGuard_AllowsAppendingUserDNSRule(t *testing.T) {
+	svc, _ := newFakeIPTestService(t)
+	seedFakeIPLocked(t, svc)
+
+	err := svc.fakeipWithConfig(context.Background(), "all", func(c *RouterConfig) error {
+		c.DNS.Rules = append(c.DNS.Rules, DNSRule{
+			Action: "route",
+			Server: "real",
+			Domain: []string{"internal.corp"},
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("appending a user DNS rule must not be rejected: %v", err)
 	}
 }

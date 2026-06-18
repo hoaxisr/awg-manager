@@ -30,4 +30,9 @@ var (
 	// deliberately skipped to avoid orphaning DNS:53 redirects at a
 	// torn-down sing-box port (issue #221).
 	ErrSingboxNotReady = errors.New("sing-box did not become ready within boot-wait window — iptables install skipped")
+
+	// ErrFakeIPLockedField is returned when a fakeip-tun config edit collides with
+	// an engine-locked field (the fakeip/real DNS servers, dns.final,
+	// default_domain_resolver, or the hijack-dns rule). Surfaced as 4xx.
+	ErrFakeIPLockedField = errors.New("fakeip-tun config field is engine-locked")
 )
