@@ -27,8 +27,8 @@ type Settings struct {
 	// ServerPeerSecrets stores private keys for peers created via AWG Manager
 	// on built-in/marked NDMS servers (NDMS itself does not retain client keys).
 	// map[serverID]map[publicKey]ServerPeerSecret
-	ServerPeerSecrets  map[string]map[string]ServerPeerSecret `json:"serverPeerSecrets,omitempty"`
-	ManagedServers       []ManagedServer   `json:"managedServers,omitempty"`
+	ServerPeerSecrets map[string]map[string]ServerPeerSecret `json:"serverPeerSecrets,omitempty"`
+	ManagedServers    []ManagedServer                        `json:"managedServers,omitempty"`
 	// ManagedServer is retained for one release as the migration source.
 	// migrateManagedServers() moves it into ManagedServers[0] on first read
 	// and clears it on the next save.

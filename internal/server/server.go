@@ -83,59 +83,59 @@ type Config struct {
 
 // Server is the HTTP server for awg-manager.
 type Server struct {
-	config                 Config
-	appLog                 *logging.ScopedLogger
-	tunnelService          api.TunnelService
-	externalService        api.ExternalTunnelService
-	testingService         *testing.Service
-	keenetic               *auth.KeeneticClient
-	sessions               *auth.SessionStore
-	settings               *storage.SettingsStore
-	tunnels                *storage.AWGTunnelStore
-	pingCheckService       api.PingCheckService
-	loggingService         *logging.Service
-	activeBackend          backend.Backend
-	kmodLoader             *kmod.Loader
-	updaterService         *updater.Service
-	ndmsQueries            *ndmsquery.Queries
-	ndmsCommands           *ndmscommand.Commands
-	trafficHistory         *traffic.History
-	dnsRouteService        api.DNSRouteService
-	staticRouteService     api.StaticRouteService
-	systemTunnelService    systemtunnel.Service
-	managedService         managed.ManagedServerService
-	managedServiceImpl     *managed.Service
-	nwgOp                  *nwg.OperatorNativeWG
-	terminalManager        terminal.Manager
-	accessPolicyService    accesspolicy.Service
-	clientRouteService     clientroute.Service
-	catalog                routing.Catalog
-	hydraService           *hydraroute.Service
-	orch                   *orchestrator.Orchestrator
-	bus                    *events.Bus
-	singboxHandler         *api.SingboxHandler
-	singboxConnsHandler    *api.SingboxConnectionsHandler
+	config                     Config
+	appLog                     *logging.ScopedLogger
+	tunnelService              api.TunnelService
+	externalService            api.ExternalTunnelService
+	testingService             *testing.Service
+	keenetic                   *auth.KeeneticClient
+	sessions                   *auth.SessionStore
+	settings                   *storage.SettingsStore
+	tunnels                    *storage.AWGTunnelStore
+	pingCheckService           api.PingCheckService
+	loggingService             *logging.Service
+	activeBackend              backend.Backend
+	kmodLoader                 *kmod.Loader
+	updaterService             *updater.Service
+	ndmsQueries                *ndmsquery.Queries
+	ndmsCommands               *ndmscommand.Commands
+	trafficHistory             *traffic.History
+	dnsRouteService            api.DNSRouteService
+	staticRouteService         api.StaticRouteService
+	systemTunnelService        systemtunnel.Service
+	managedService             managed.ManagedServerService
+	managedServiceImpl         *managed.Service
+	nwgOp                      *nwg.OperatorNativeWG
+	terminalManager            terminal.Manager
+	accessPolicyService        accesspolicy.Service
+	clientRouteService         clientroute.Service
+	catalog                    routing.Catalog
+	hydraService               *hydraroute.Service
+	orch                       *orchestrator.Orchestrator
+	bus                        *events.Bus
+	singboxHandler             *api.SingboxHandler
+	singboxConnsHandler        *api.SingboxConnectionsHandler
 	singboxRouterHandler       *api.SingboxRouterHandler
 	singboxFakeIPConfigHandler *api.SingboxFakeIPConfigHandler
 	fakeIPSegmentsHandler      *api.FakeIPSegmentsHandler
-	singboxConfigHandler   *api.SingboxConfigHandler
-	singboxProxiesHandler  *api.SingboxProxiesHandler
-	awgOutboundsHandler    *api.AWGOutboundsHandler
-	subscriptionHandler    *api.SubscriptionHandler
-	dnsRewritesHandler     *api.DNSRewritesHandler
-	clashProxy             *api.ClashProxy
-	singboxOp              *singbox.Operator
-	singboxOrch            *singboxorch.Orchestrator
-	presetCatalog          *presets.Catalog
-	deviceProxySvc         *deviceproxy.Service
-	downloadSvc            *downloader.Service
-	monitoringService      *monitoring.Service
-	singboxSubMembersFn    func() []diagnostics.SingboxSubMember
-	singboxConfigPreviewFn func() (string, error)
-	dnsCheckService        *dnscheck.Service
-	authMiddleware         *auth.Middleware
-	httpServer             *http.Server
-	loopbackListener       net.Listener // optional loopback listener for reverse proxy
+	singboxConfigHandler       *api.SingboxConfigHandler
+	singboxProxiesHandler      *api.SingboxProxiesHandler
+	awgOutboundsHandler        *api.AWGOutboundsHandler
+	subscriptionHandler        *api.SubscriptionHandler
+	dnsRewritesHandler         *api.DNSRewritesHandler
+	clashProxy                 *api.ClashProxy
+	singboxOp                  *singbox.Operator
+	singboxOrch                *singboxorch.Orchestrator
+	presetCatalog              *presets.Catalog
+	deviceProxySvc             *deviceproxy.Service
+	downloadSvc                *downloader.Service
+	monitoringService          *monitoring.Service
+	singboxSubMembersFn        func() []diagnostics.SingboxSubMember
+	singboxConfigPreviewFn     func() (string, error)
+	dnsCheckService            *dnscheck.Service
+	authMiddleware             *auth.Middleware
+	httpServer                 *http.Server
+	loopbackListener           net.Listener // optional loopback listener for reverse proxy
 
 	ndmsDispatcher api.HookDispatcher
 	ndmsTransport  *ndmstransport.Client
