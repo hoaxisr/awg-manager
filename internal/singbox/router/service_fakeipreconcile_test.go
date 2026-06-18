@@ -840,6 +840,76 @@ func TestGetStatus_SourcePreservation_HiddenWhenDisabled(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Bug #3 live-flip: reconcile tears down static-NAT when preserve flipped off.
+// ---------------------------------------------------------------------------
+
+// TestReconcileFakeIPTun_TearsDownStaticNATOnPreserveFlipOff asserts that if
+// FakeIPSourcePreserve is turned off while fakeip-tun is RUNNING (persisted
+// StaticNATSeg/WAN fact is set), a reconcile tick calls teardownStaticNAT and
+// clears the fact — restoring dynamic masquerade without a full disable cycle.
+func TestReconcileFakeIPTun_TearsDownStaticNATOnPreserveFlipOff(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	neutralSourceProbe(t)
+
+	// Seed a running state: provisioned + static-NAT fact applied.
+	if err := h.store.SetFakeIPState(&storage.FakeIPState{
+		Provisioned:   true,
+		Index:         0,
+		StaticNATSeg:  "Home",
+		StaticNATWAN:  "PPPoE0",
+	}); err != nil {
+		t.Fatalf("SetFakeIPState: %v", err)
+	}
+
+	// Live setting: fakeip-tun ENABLED + preserve FLIPPED OFF.
+	all, err := h.store.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	f := false
+	all.SingboxRouter.Enabled = true
+	all.SingboxRouter.FakeIPSourcePreserve = &f
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Wire SegmentNAT so teardown calls are recorded.
+	segNAT := &recordingSegmentNAT{}
+	h.svc.deps.SegmentNAT = segNAT
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+
+	// Pool route + default route present so those drift blocks are no-ops.
+	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return true })
+	stubFakeIPDefaultRoutePresent(t, func(string) bool { return true })
+
+	all, _ = h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+
+	// Teardown must have run: RemoveStaticNAT then SetSegmentNAT (dynamic masquerade).
+	wantNAT := []string{"RemoveStaticNAT Home PPPoE0", "SetSegmentNAT Home"}
+	if len(segNAT.calls) != len(wantNAT) {
+		t.Fatalf("segment NAT calls = %v, want %v", segNAT.calls, wantNAT)
+	}
+	for i := range wantNAT {
+		if segNAT.calls[i] != wantNAT[i] {
+			t.Errorf("NAT call[%d] = %q, want %q", i, segNAT.calls[i], wantNAT[i])
+		}
+	}
+
+	// Persisted fact must be cleared.
+	st := h.loadFakeIP(t)
+	if st == nil {
+		t.Fatal("FakeIPState was nil after flip-off teardown (want non-nil with cleared NAT fields)")
+	}
+	if st.StaticNATSeg != "" || st.StaticNATWAN != "" {
+		t.Errorf("static-NAT fact not cleared: StaticNATSeg=%q StaticNATWAN=%q, want both empty", st.StaticNATSeg, st.StaticNATWAN)
+	}
+}
+
 func TestAssertSourcePreserved_UnknownNoWarn(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 	// Seed a prior verdict to prove "unknown" overwrites it to nil.

@@ -150,7 +150,14 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		}
 	}
 
-	// Re-apply static-NAT source preservation ONLY on real drift (PE-E). When
+	// Static-NAT source preservation: branch on the live preserve setting.
+	//
+	// Flip-off (bug #3, live-flip): preserve turned off while fakeip-tun is
+	// RUNNING. If Enable persisted a StaticNATSeg fact, restore dynamic
+	// masquerade now and clear the fact so the next reconcile is a no-op.
+	// Best-effort + logged. Unwired SegmentNAT (test/degraded) → skip silently.
+	//
+	// Flip-on / steady-state: re-apply static-NAT on real drift (PE-E). When
 	// FakeIPSourcePreserve is on, Enable flips the delivery segment to static-NAT
 	// (`ip static <Seg> <WAN>`); a NAT-config rebuild can revert it to dynamic
 	// masquerade, which silently SNATs forward-client traffic to the tun address
@@ -158,15 +165,31 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// static-NAT state via the StaticNAT reader; re-apply only when the segment is
 	// NOT present in static-NAT → zero NAT POSTs per tick in steady state.
 	// Best-effort + logged. Unwired reader (test/degraded) → skip silently.
-	if sr.FakeIPSourcePreserveOrDefault() && s.deps.StaticNAT != nil {
-		if seg, wan, rerr := s.resolveDeliverySegmentAndWAN(ctx); rerr != nil {
-			s.appLog.Warn("fakeip-reconcile", iface, "resolve segment/WAN for static-NAT drift: "+rerr.Error())
-		} else if seg != "" && wan != "" {
-			if present, _, perr := s.deps.StaticNAT.ForInterface(ctx, seg); perr != nil {
-				s.appLog.Warn("fakeip-reconcile", iface, "probe static-NAT state: "+perr.Error())
-			} else if !present {
-				if e := s.applyStaticNAT(ctx, seg, wan); e != nil {
-					s.appLog.Warn("fakeip-reconcile", iface, "re-apply static-NAT: "+e.Error())
+	{
+		natSt, _ := s.deps.Settings.Load()
+		applied := natSt != nil && natSt.FakeIP != nil && natSt.FakeIP.StaticNATSeg != ""
+		if !sr.FakeIPSourcePreserveOrDefault() {
+			if applied && s.deps.SegmentNAT != nil {
+				if e := s.teardownStaticNAT(ctx, natSt.FakeIP.StaticNATSeg, natSt.FakeIP.StaticNATWAN); e != nil {
+					s.appLog.Warn("fakeip-reconcile", iface, "flip-off teardown static-NAT: "+e.Error())
+				} else {
+					fp := *natSt.FakeIP
+					fp.StaticNATSeg, fp.StaticNATWAN = "", ""
+					if perr := s.deps.Settings.SetFakeIPState(&fp); perr != nil {
+						s.appLog.Warn("fakeip-reconcile", iface, "clear static-NAT fact: "+perr.Error())
+					}
+				}
+			}
+		} else if s.deps.StaticNAT != nil {
+			if seg, wan, rerr := s.resolveDeliverySegmentAndWAN(ctx); rerr != nil {
+				s.appLog.Warn("fakeip-reconcile", iface, "resolve segment/WAN for static-NAT drift: "+rerr.Error())
+			} else if seg != "" && wan != "" {
+				if present, _, perr := s.deps.StaticNAT.ForInterface(ctx, seg); perr != nil {
+					s.appLog.Warn("fakeip-reconcile", iface, "probe static-NAT state: "+perr.Error())
+				} else if !present {
+					if e := s.applyStaticNAT(ctx, seg, wan); e != nil {
+						s.appLog.Warn("fakeip-reconcile", iface, "re-apply static-NAT: "+e.Error())
+					}
 				}
 			}
 		}
