@@ -1432,6 +1432,34 @@ func TestEnableFakeIPTun_NilDepsFailFast(t *testing.T) {
 // EVERY tick. A second Reconcile while enabled+provisioned must NOT re-provision.
 // ---------------------------------------------------------------------------
 
+// TestEnable_PersistsStaticNATFact asserts that after a successful Enable with
+// source-preservation on, the static-NAT segment and WAN are persisted in
+// FakeIPState so that Disable/rollback can restore by fact (bug #3, task 0.2).
+func TestEnable_PersistsStaticNATFact(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+
+	// Wire the static-NAT resolver deps (not wired by default in the harness).
+	recNAT := &recordingSegmentNAT{}
+	h.svc.deps.SegmentNAT = recNAT
+	h.svc.deps.DHCPPoolSegments = fakePoolSegments{seg: "Home"}
+	h.svc.deps.DefaultGateway = fakeDefaultGateway{id: "PPPoE0"}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+
+	st := h.loadFakeIP(t)
+	if st == nil {
+		t.Fatal("FakeIPState is nil after Enable")
+	}
+	if st.StaticNATSeg != "Home" {
+		t.Errorf("StaticNATSeg = %q, want %q", st.StaticNATSeg, "Home")
+	}
+	if st.StaticNATWAN != "PPPoE0" {
+		t.Errorf("StaticNATWAN = %q, want %q", st.StaticNATWAN, "PPPoE0")
+	}
+}
+
 func TestReconcileFakeIPTun_NoReprovision(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 	// Wire an IPTables whose probes always error → IsInstalled/HasAnyInstalled

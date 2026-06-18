@@ -309,6 +309,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("enable fakeip-tun: %w: waited %s (%v)", ErrSingboxNotReady, bootWait, err)
 	}
 
+
 	// Routing + source-preservation NDMS mutations run AFTER sing-box is confirmed
 	// up (carrier) — applying them pre-start raced the gvisor tun attach (see the
 	// note after InterfaceUp). Post-readiness sing-box is attached against a quiet
@@ -355,6 +356,16 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 					s.appLog.Warn("fakeip-rollback", iface, "restore dynamic NAT: "+e.Error())
 				}
 			})
+			// Persist the applied static-NAT fact so Disable/rollback restore by
+			// fact, not by the live setting (bug #3). Persist-first earlier ran
+			// before static-NAT, so this is a second, narrowing write.
+			// Write directly into the in-flight settings.FakeIP (same pointer set
+			// by the persist-first SetFakeIPState above) so the final Save(settings)
+			// at the end of enableFakeIPTun carries these fields.
+			if settings.FakeIP != nil {
+				settings.FakeIP.StaticNATSeg = seg
+				settings.FakeIP.StaticNATWAN = wan
+			}
 		}
 	}
 
