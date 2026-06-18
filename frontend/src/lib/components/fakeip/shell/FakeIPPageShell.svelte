@@ -12,7 +12,7 @@
     - Inbounds      — tun-in (1, движок-управляемый) + длина deviceProxyInstances.
     - Outbounds     — Status.outboundAwgCount + outboundCompositeCount → «5 + 3».
     - Rule sets     — Status.ruleSetCount.
-    - DNS           — длина singboxRouter.dnsRules.
+    - DNS           — длина fakeipConfig.dnsRules.
     - Маршруты      — Status.ruleCount.
     - Устройства    — Status.deviceCount.
     - Соединения    — liveConnectionsSnapshot.connectionsTotal (Clash WS),
@@ -36,6 +36,7 @@
 	import { onMount } from 'svelte';
 	import { Tabs } from '$lib/components/ui';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { deviceProxyInstances } from '$lib/stores/deviceproxy';
 	import {
 		bindLiveConnectionsStore,
@@ -95,9 +96,9 @@
 	});
 
 	const status = singboxRouter.status;
-	const dnsRules = singboxRouter.dnsRules;
-	const options = singboxRouter.options;
-	const outbounds = singboxRouter.outbounds;
+	const dnsRules = fakeipConfig.dnsRules;
+	const options = fakeipConfig.options;
+	const outbounds = fakeipConfig.outbounds;
 	const connSnapshot = liveConnectionsSnapshot;
 	// Inbounds badge: tun-in (always 1 in fakeip mode) + device-proxy instances.
 	// Polling store auto-fetches on first subscribe ($-access below).

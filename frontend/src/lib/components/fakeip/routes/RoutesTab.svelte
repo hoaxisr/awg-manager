@@ -31,6 +31,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
+	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { singboxProxies } from '$lib/stores/singboxProxies';
 	import { singboxTunnels } from '$lib/stores/singbox';
@@ -59,7 +60,10 @@
 	const storeOutbounds = fakeipConfig.outbounds;
 	const storeOptions = fakeipConfig.options;
 
-	// fakeip has no server-side status carrying route.final; track locally.
+	// singboxRouter.status is mode-aware: in fakeip-tun mode the backend populates
+	// status.final from the fakeip slot.
+	const routerStatus = singboxRouter.status;
+
 	let currentFinal = $state('direct');
 
 	onMount(() => {
@@ -99,8 +103,8 @@
 	);
 
 	// Final-outbound — rendered via RuleOutboundAction (same as tproxy).
-	// fakeip has no status endpoint returning route.final; we track it locally
-	// (starts at 'direct', updated on successful save).
+	// currentFinal is seeded from singboxRouter.status.final (mode-aware) and
+	// updated on successful save.
 	const finalOutbound = $derived(
 		resolveOutboundDisplay(
 			currentFinal,
@@ -125,6 +129,14 @@
 	let finalEditing = $state(false);
 	let draftFinal = $state('direct');
 	let finalBusy = $state(false);
+
+	// Sync currentFinal from the mode-aware status when it arrives. Stop syncing
+	// while the user has the inline editor open to avoid clobbering an in-progress
+	// edit.
+	$effect(() => {
+		const f = $routerStatus?.final;
+		if (f && !finalEditing) currentFinal = f;
+	});
 
 	function startEditFinal(): void {
 		draftFinal = currentFinal;
@@ -355,7 +367,7 @@
 				</div>
 			{/each}
 
-			<!-- Итоговая read-only строка: final → route.final (не перетаскивается) -->
+			<!-- Итоговая read-only строка: final (не перетаскивается) -->
 			<div class="row-shell" bind:this={ruleRowEls[$storeRules.length]}>
 				{#if drag.showsDropBefore($storeRules.length)}
 					<div

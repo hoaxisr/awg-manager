@@ -11,6 +11,7 @@
 -->
 <script lang="ts">
 	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { singboxProxies } from '$lib/stores/singboxProxies';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import type { FakeIPEngineState } from '../engineState';
@@ -73,8 +74,8 @@
 	);
 
 	const status = singboxRouter.status;
-	const outbounds = singboxRouter.outbounds;
-	const options = singboxRouter.options;
+	const outbounds = fakeipConfig.outbounds;
+	const options = fakeipConfig.options;
 
 	const deviceCount = $derived($status?.deviceCount ?? 0);
 

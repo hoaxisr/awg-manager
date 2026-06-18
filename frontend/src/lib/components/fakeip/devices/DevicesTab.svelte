@@ -7,10 +7,10 @@
     - устройства: общий polling-store routing.policyDevicesStore
       (api.listPolicyDevices, NDMS hotspot). Подписка сама стартует опрос (30с).
     - назначение (персональный/fakeip/прямой): чистый resolveDeviceTargeting
-      (deviceTargeting.ts), на вход — route-правила (singboxRouter.rules) +
+      (deviceTargeting.ts), на вход — route-правила (fakeipConfig.rules) +
       сегменты доставки DNS (api.singboxRouterListSegments). ipInCIDR из
       utils/cidr.
-    - имя привязанного outbound: лейбл из singboxRouter.options (тот же каталог,
+    - имя привязанного outbound: лейбл из fakeipConfig.options (тот же каталог,
       что route-final/RuleEditModal).
     - live-соединения per-IP: liveConnectionsSnapshot (sb-router) — счётчик по
       metadata.sourceIP. Это ЖИВОЙ сигнал → показываем число только при движке
@@ -24,7 +24,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
-	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { policyDevicesStore } from '$lib/stores/routing';
 	import { liveConnectionsSnapshot } from '$lib/components/sb-router/liveConnectionsStore';
 	import { notifications } from '$lib/stores/notifications';
@@ -45,8 +45,8 @@
 
 	// ── Источники ──────────────────────────────────────────────────────────
 	const devicesState = policyDevicesStore; // подписка стартует опрос (30с)
-	const storeRules = singboxRouter.rules;
-	const storeOptions = singboxRouter.options;
+	const storeRules = fakeipConfig.rules;
+	const storeOptions = fakeipConfig.options;
 
 	// Сегменты доставки DNS — отдельный GET (не в loadAll). Тянем в onMount;
 	// движок-гейт не нужен — это проекция DHCP-пулов, доступна всегда.
@@ -64,9 +64,9 @@
 	}
 
 	onMount(() => {
-		// rules/options живут в singboxRouter; страница уже приминает loadAll,
-		// но прямой заход на чип может застать store холодным — идемпотентно.
-		void singboxRouter.loadAll();
+		// rules/options живут в fakeipConfig; прямой заход на чип может застать
+		// store холодным — идемпотентно.
+		void fakeipConfig.loadAll();
 		void loadSegments();
 	});
 
@@ -160,11 +160,11 @@
 		};
 		try {
 			if (bindRuleIndex !== null) {
-				await api.singboxRouterUpdateRule(bindRuleIndex, rule);
+				await api.singboxFakeIPUpdateRule(bindRuleIndex, rule);
 			} else {
-				await api.singboxRouterAddRule(rule);
+				await api.singboxFakeIPAddRule(rule);
 			}
-			await singboxRouter.loadAll();
+			await fakeipConfig.loadAll();
 			notifications.success(`Привязка устройства ${bindDevice.name || ip} сохранена`);
 			bindOpen = false;
 			bindDevice = null;
@@ -184,8 +184,8 @@
 		if (!unbindRow || unbindRow.targeting.ruleIndex === null) return;
 		unbindBusy = true;
 		try {
-			await api.singboxRouterDeleteRule(unbindRow.targeting.ruleIndex);
-			await singboxRouter.loadAll();
+			await api.singboxFakeIPDeleteRule(unbindRow.targeting.ruleIndex);
+			await fakeipConfig.loadAll();
 			notifications.success('Персональная привязка снята');
 			unbindRow = null;
 		} catch (e) {
