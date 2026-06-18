@@ -804,3 +804,16 @@ func TestReload_SighupWhenNoTunEither(t *testing.T) {
 		t.Errorf("expected SIGHUP [reload], got %v", got)
 	}
 }
+
+func TestKnownSlots_FakeIP(t *testing.T) {
+	var fi *SlotMeta
+	slots := KnownSlots()
+	for i := range slots {
+		if slots[i].Slot == SlotFakeIP {
+			fi = &slots[i]
+		}
+	}
+	if fi == nil || fi.Filename != "21-fakeip.json" || fi.AlwaysOn {
+		t.Fatalf("SlotFakeIP missing/wrong: %+v", fi)
+	}
+}
