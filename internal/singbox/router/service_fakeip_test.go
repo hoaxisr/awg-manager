@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -682,6 +683,42 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// slotEnabled reports whether the orchestrator currently has the slot enabled.
+func slotEnabled(t *testing.T, svc *ServiceImpl, slot orchestrator.Slot) bool {
+	t.Helper()
+	for _, st := range svc.deps.Orch.Snapshot() {
+		if st.Slot == slot {
+			return st.Enabled
+		}
+	}
+	return false
+}
+
+// Rollback must restore SlotRouter to its PRIOR state, not a hardcoded true.
+// When fakeip is enabled from a state where SlotRouter was already OFF (boot
+// into fakeip / first enable), a post-flip failure must leave SlotRouter OFF —
+// re-enabling tproxy would be wrong (and break XOR intent).
+func TestEnableFakeIPTun_RollbackRestoresPriorRouterSlotState(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "SetDefaultRoute") // post-flip failure
+	// Force the prior state: SlotRouter DISABLED (the harness writes 20-router.json
+	// to active, which counts as enabled — flip it off to model boot-into-fakeip).
+	if err := h.svc.deps.Orch.SetEnabled(orchestrator.SlotRouter, false); err != nil {
+		t.Fatalf("pre-disable SlotRouter: %v", err)
+	}
+
+	err := h.svc.Enable(context.Background())
+	if err == nil {
+		t.Fatal("expected error when SetDefaultRoute fails")
+	}
+
+	if slotEnabled(t, h.svc, orchestrator.SlotRouter) {
+		t.Error("rollback wrongly re-enabled SlotRouter: prior state was disabled")
+	}
+	if slotEnabled(t, h.svc, orchestrator.SlotFakeIP) {
+		t.Error("rollback must leave SlotFakeIP disabled")
 	}
 }
 
