@@ -1472,6 +1472,39 @@ func TestDisableFakeIPTun_NotProvisioned(t *testing.T) {
 	}
 }
 
+// TestDisableFakeIPTun_DisablesSlotFakeIPNotSlotRouter asserts that disabling a
+// provisioned fakeip-tun disables the FAKEIP slot (21-fakeip.json) and does NOT
+// touch the tproxy router slot (20-router.json). The XOR contract: after disable,
+// SlotFakeIP is DISABLED and SlotRouter is unchanged (it was already disabled by
+// the prior Enable's XOR flip).
+func TestDisableFakeIPTun_DisablesSlotFakeIPNotSlotRouter(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	captureDrain(t)
+	provisionForDisable(t, h) // provisions fakeip: SlotFakeIP ON, SlotRouter OFF
+
+	// Sanity pre-condition: Enable flipped the slots correctly.
+	if !slotEnabled(t, h.svc, orchestrator.SlotFakeIP) {
+		t.Fatal("precondition: SlotFakeIP must be enabled after Enable")
+	}
+	if slotEnabled(t, h.svc, orchestrator.SlotRouter) {
+		t.Fatal("precondition: SlotRouter must be disabled after Enable (XOR)")
+	}
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+
+	// SlotFakeIP must now be DISABLED (the fakeip lifecycle slot was toggled).
+	if slotEnabled(t, h.svc, orchestrator.SlotFakeIP) {
+		t.Error("SlotFakeIP must be DISABLED after fakeip Disable")
+	}
+	// SlotRouter must remain DISABLED (untouched — disabling fakeip must not
+	// re-enable the tproxy slot, which would be wrong and violate XOR).
+	if slotEnabled(t, h.svc, orchestrator.SlotRouter) {
+		t.Error("SlotRouter must remain DISABLED (untouched) after fakeip Disable — must NOT toggle the tproxy slot")
+	}
+}
+
 // Fix 5: Disable dispatches on the RAW persisted RoutingMode, not the normalized
 // value. A settings blob that fails Normalize (corrupt DeviceMode) but carries
 // RoutingMode=="fakeip-tun" must still route to the fakeip teardown — not fall

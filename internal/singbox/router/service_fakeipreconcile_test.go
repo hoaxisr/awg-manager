@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -262,7 +263,7 @@ func TestReconcileFakeIPTun_DriftHealRestartsDeadSingbox(t *testing.T) {
 		return true, 1234
 	}
 
-	// Track the orchestrator restart: SetEnabled(SlotRouter,true) is the restart.
+	// Track the orchestrator restart: SetEnabled(SlotFakeIP,true) is the restart.
 	// The real orch records it via the slot's enabled file; assert via behaviour —
 	// after the heal, routes were re-added and DNS re-advertised.
 	all, _ := h.store.Load()
@@ -854,10 +855,10 @@ func TestReconcileFakeIPTun_TearsDownStaticNATOnPreserveFlipOff(t *testing.T) {
 
 	// Seed a running state: provisioned + static-NAT fact applied.
 	if err := h.store.SetFakeIPState(&storage.FakeIPState{
-		Provisioned:   true,
-		Index:         0,
-		StaticNATSeg:  "Home",
-		StaticNATWAN:  "PPPoE0",
+		Provisioned:  true,
+		Index:        0,
+		StaticNATSeg: "Home",
+		StaticNATWAN: "PPPoE0",
 	}); err != nil {
 		t.Fatalf("SetFakeIPState: %v", err)
 	}
@@ -907,6 +908,58 @@ func TestReconcileFakeIPTun_TearsDownStaticNATOnPreserveFlipOff(t *testing.T) {
 	}
 	if st.StaticNATSeg != "" || st.StaticNATWAN != "" {
 		t.Errorf("static-NAT fact not cleared: StaticNATSeg=%q StaticNATWAN=%q, want both empty", st.StaticNATSeg, st.StaticNATWAN)
+	}
+}
+
+// TestReconcileFakeIPTun_RevivalEnablesSlotFakeIPNotSlotRouter asserts that
+// when a dead sing-box is restarted by the drift-heal, the reconcile re-enables
+// the FAKEIP slot (21-fakeip.json) and NOT the tproxy router slot (20-router.json).
+func TestReconcileFakeIPTun_RevivalEnablesSlotFakeIPNotSlotRouter(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	neutralSourceProbe(t)
+
+	// Provision with sing-box running.
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+	h.log.calls = nil
+
+	// Manually flip SlotFakeIP OFF to simulate it having been disabled (e.g.
+	// after a prior disable or crash) — the reconcile must re-enable it.
+	if err := h.svc.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, false); err != nil {
+		t.Fatalf("pre-flip SlotFakeIP off: %v", err)
+	}
+	// SlotRouter stays OFF (XOR invariant set by Enable).
+	if slotEnabled(t, h.svc, orchestrator.SlotRouter) {
+		t.Fatal("precondition: SlotRouter must be off (XOR)")
+	}
+
+	// Model a dead sing-box: IsRunning returns false on the first probe (the
+	// drift-heal liveness check), then true (waitForSingbox + DNS).
+	sb := h.svc.deps.Singbox.(*fakeSingbox)
+	calls := 0
+	sb.isRunningFn = func() (bool, int) {
+		calls++
+		if calls == 1 {
+			return false, 0
+		}
+		return true, 1234
+	}
+
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+
+	// After revival, SlotFakeIP must be ENABLED (reconcile re-enabled the fakeip slot).
+	if !slotEnabled(t, h.svc, orchestrator.SlotFakeIP) {
+		t.Error("SlotFakeIP must be ENABLED after fakeip-reconcile revival")
+	}
+	// SlotRouter must remain DISABLED — revival must NOT toggle the tproxy slot.
+	if slotEnabled(t, h.svc, orchestrator.SlotRouter) {
+		t.Error("SlotRouter must remain DISABLED after fakeip-reconcile revival — tproxy slot must not be touched")
 	}
 }
 

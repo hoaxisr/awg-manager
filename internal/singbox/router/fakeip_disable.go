@@ -198,10 +198,10 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 		}
 	}
 
-	// (5) Stop sing-box (move 20-router.json under disabled/). Legacy (no orch):
+	// (5) Stop sing-box (move 21-fakeip.json under disabled/). Legacy (no orch):
 	// skip — there is no in-place inbound to strip for fakeip-tun. Best-effort.
 	if s.deps.Orch != nil {
-		if err := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, false); err != nil {
+		if err := s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, false); err != nil {
 			s.appLog.Warn("fakeip-disable", iface, "disable slot: "+err.Error())
 		}
 	}

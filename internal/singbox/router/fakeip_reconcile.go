@@ -81,7 +81,7 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		// NOT revive a process that died with the slot on — we must start the
 		// process directly below.
 		if s.deps.Orch != nil {
-			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, true); e != nil {
+			if e := s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, true); e != nil {
 				s.appLog.Warn("fakeip-reconcile", iface, "enable slot: "+e.Error())
 			}
 		}
@@ -198,8 +198,8 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// Re-advertise the health-gated DNS. advertiseDNSIfHealthy clears the pool
 	// DNS when sing-box is down / egress dead, so a still-broken path correctly
 	// reverts clients to the router's default DNS (no black-hole).
-	if cfg, e := s.loadRouterConfig(); e != nil {
-		s.appLog.Warn("fakeip-reconcile", iface, "load router config: "+e.Error())
+	if cfg, e := s.loadFakeIPConfig(); e != nil {
+		s.appLog.Warn("fakeip-reconcile", iface, "load fakeip config: "+e.Error())
 	} else if tunDNS, de := DeriveTunDNS(s.deps.FakeIPTun.TunAddr4); de != nil {
 		s.appLog.Warn("fakeip-reconcile", iface, "derive tun dns: "+de.Error())
 	} else if ae := s.advertiseDNSIfHealthy(ctx, s.deps.FakeIPTun.DHCPPool, tunDNS, iface, cfg); ae != nil {
