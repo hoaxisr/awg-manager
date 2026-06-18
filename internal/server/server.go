@@ -115,8 +115,9 @@ type Server struct {
 	bus                    *events.Bus
 	singboxHandler         *api.SingboxHandler
 	singboxConnsHandler    *api.SingboxConnectionsHandler
-	singboxRouterHandler   *api.SingboxRouterHandler
-	fakeIPSegmentsHandler  *api.FakeIPSegmentsHandler
+	singboxRouterHandler       *api.SingboxRouterHandler
+	singboxFakeIPConfigHandler *api.SingboxFakeIPConfigHandler
+	fakeIPSegmentsHandler      *api.FakeIPSegmentsHandler
 	singboxConfigHandler   *api.SingboxConfigHandler
 	singboxProxiesHandler  *api.SingboxProxiesHandler
 	awgOutboundsHandler    *api.AWGOutboundsHandler
@@ -318,6 +319,12 @@ func (s *Server) SetDownloadService(svc *downloader.Service) {
 // /api/singbox/router/* routes can be registered.
 func (s *Server) SetSingboxRouterHandler(h *api.SingboxRouterHandler) {
 	s.singboxRouterHandler = h
+}
+
+// SetSingboxFakeIPConfigHandler wires the fakeip-tun config CRUD handler so
+// the /api/singbox/fakeip/config/* routes can be registered.
+func (s *Server) SetSingboxFakeIPConfigHandler(h *api.SingboxFakeIPConfigHandler) {
+	s.singboxFakeIPConfigHandler = h
 }
 
 // SetFakeIPSegmentsHandler wires the fakeip-segments handler so the
@@ -1190,6 +1197,41 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		// GET lists segments, POST toggles one segment's DNS delivery — both on
 		// the same path via the handler's method dispatch.
 		mux.HandleFunc("/api/singbox/fakeip/segments", guarded(s.fakeIPSegmentsHandler.Serve))
+	}
+
+	if s.singboxFakeIPConfigHandler != nil {
+		fh := s.singboxFakeIPConfigHandler
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/servers/list", guarded(fh.ListDNSServers))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/servers/add", guarded(fh.AddDNSServer))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/servers/update", guarded(fh.UpdateDNSServer))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/servers/delete", guarded(fh.DeleteDNSServer))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/servers/move", guarded(fh.MoveDNSServer))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/rules/list", guarded(fh.ListDNSRules))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/rules/add", guarded(fh.AddDNSRule))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/rules/update", guarded(fh.UpdateDNSRule))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/rules/delete", guarded(fh.DeleteDNSRule))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/rules/move", guarded(fh.MoveDNSRule))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/globals", guarded(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				fh.GetDNSGlobals(w, r)
+			} else {
+				fh.PutDNSGlobals(w, r)
+			}
+		}))
+		mux.HandleFunc("/api/singbox/fakeip/config/rules/list", guarded(fh.ListRules))
+		mux.HandleFunc("/api/singbox/fakeip/config/rules/add", guarded(fh.AddRule))
+		mux.HandleFunc("/api/singbox/fakeip/config/rules/update", guarded(fh.UpdateRule))
+		mux.HandleFunc("/api/singbox/fakeip/config/rules/delete", guarded(fh.DeleteRule))
+		mux.HandleFunc("/api/singbox/fakeip/config/rules/move", guarded(fh.MoveRule))
+		mux.HandleFunc("/api/singbox/fakeip/config/route/final", guarded(fh.SetRouteFinal))
+		mux.HandleFunc("/api/singbox/fakeip/config/rulesets/list", guarded(fh.ListRuleSets))
+		mux.HandleFunc("/api/singbox/fakeip/config/rulesets/add", guarded(fh.AddRuleSet))
+		mux.HandleFunc("/api/singbox/fakeip/config/rulesets/update", guarded(fh.UpdateRuleSet))
+		mux.HandleFunc("/api/singbox/fakeip/config/rulesets/delete", guarded(fh.DeleteRuleSet))
+		mux.HandleFunc("/api/singbox/fakeip/config/outbounds/list", guarded(fh.ListOutbounds))
+		mux.HandleFunc("/api/singbox/fakeip/config/outbounds/add", guarded(fh.AddOutbound))
+		mux.HandleFunc("/api/singbox/fakeip/config/outbounds/update", guarded(fh.UpdateOutbound))
+		mux.HandleFunc("/api/singbox/fakeip/config/outbounds/delete", guarded(fh.DeleteOutbound))
 	}
 
 	if s.singboxProxiesHandler != nil {
