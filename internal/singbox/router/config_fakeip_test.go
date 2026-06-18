@@ -1,11 +1,15 @@
 package router
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 func TestBuildFakeIPTunConfig_Shape(t *testing.T) {
@@ -609,5 +613,138 @@ func TestEnsureFakeIPOverlay_ScalarLockedBits(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("pre-existing DNS rule was lost after overlay; rules: %+v", cfg.DNS.Rules)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// fakeipWithConfig / loadFakeIPConfig / persistFakeIPConfig CRUD tests
+// ---------------------------------------------------------------------------
+
+// newFakeIPTestService builds an orch-wired ServiceImpl with SlotFakeIP
+// registered and enabled, FakeIPTun wired with a non-empty CachePath, and
+// settings seeded with FakeIPState{Provisioned:true,Index:0}.
+func newFakeIPTestService(t *testing.T) (*ServiceImpl, string) {
+	t.Helper()
+	dir := t.TempDir()
+
+	orch := orchestrator.New(dir, nil)
+	if err := orch.Register(orchestrator.SlotMeta{
+		Slot:     orchestrator.SlotRouter,
+		Filename: "20-router.json",
+	}); err != nil {
+		t.Fatalf("orch.Register SlotRouter: %v", err)
+	}
+	if err := orch.Register(orchestrator.SlotMeta{
+		Slot:     orchestrator.SlotFakeIP,
+		Filename: "21-fakeip.json",
+	}); err != nil {
+		t.Fatalf("orch.Register SlotFakeIP: %v", err)
+	}
+	if err := orch.Bootstrap(); err != nil {
+		t.Fatalf("orch.Bootstrap: %v", err)
+	}
+	// Enable SlotFakeIP so Save targets active path, not disabled/.
+	if err := orch.SetEnabled(orchestrator.SlotFakeIP, true); err != nil {
+		t.Fatalf("orch.SetEnabled SlotFakeIP: %v", err)
+	}
+
+	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
+		RoutingMode: "fakeip-tun",
+	})
+	// Seed FakeIPState so ensureFakeIPOverlayFromState can resolve the iface.
+	all, err := settingsStore.Load()
+	if err != nil {
+		t.Fatalf("settingsStore.Load: %v", err)
+	}
+	all.FakeIP = &storage.FakeIPState{Provisioned: true, Index: 0}
+	if err := settingsStore.Save(all); err != nil {
+		t.Fatalf("settingsStore.Save: %v", err)
+	}
+
+	params := DefaultFakeIPTunParams()
+	params.CachePath = "/tmp/fakeip-test.db"
+
+	svc := &ServiceImpl{
+		deps: Deps{
+			Settings:  settingsStore,
+			Singbox:   &fakeSingbox{dir: dir},
+			Orch:      orch,
+			FakeIPTun: params,
+		},
+	}
+	return svc, dir
+}
+
+// TestFakeipWithConfig_OverlayAndPersist is the TDD target for fakeipWithConfig.
+// It:
+//   - Calls fakeipWithConfig with a user mutation (add a DNS rule).
+//   - Re-loads via loadFakeIPConfig and asserts the user rule survived.
+//   - Asserts the engine-locked overlay bits are present (hijack-dns first rule,
+//     fakeip DNS server, DNS.Final=="real").
+//   - Asserts the file landed at the active path (21-fakeip.json), not pending/.
+func TestFakeipWithConfig_OverlayAndPersist(t *testing.T) {
+	svc, dir := newFakeIPTestService(t)
+	ctx := context.Background()
+
+	err := svc.fakeipWithConfig(ctx, "all", func(cfg *RouterConfig) error {
+		cfg.DNS.Rules = append(cfg.DNS.Rules, DNSRule{
+			Action:    "route",
+			Server:    "fakeip",
+			QueryType: []string{"A"},
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("fakeipWithConfig: %v", err)
+	}
+
+	// Re-load to confirm persistence.
+	loaded, err := svc.loadFakeIPConfig()
+	if err != nil {
+		t.Fatalf("loadFakeIPConfig: %v", err)
+	}
+
+	// User DNS rule survived.
+	foundUserRule := false
+	for _, r := range loaded.DNS.Rules {
+		if r.Action == "route" && r.Server == "fakeip" && len(r.QueryType) == 1 && r.QueryType[0] == "A" {
+			foundUserRule = true
+			break
+		}
+	}
+	if !foundUserRule {
+		t.Errorf("user DNS rule not found after reload; dns.rules: %+v", loaded.DNS.Rules)
+	}
+
+	// Overlay locked bits: hijack-dns at route.rules[0].
+	if len(loaded.Route.Rules) == 0 || loaded.Route.Rules[0].Action != "hijack-dns" {
+		t.Errorf("route.rules[0] must be hijack-dns; got: %+v", loaded.Route.Rules)
+	}
+
+	// Overlay: fakeip DNS server present.
+	foundFakeIPServer := false
+	for _, sv := range loaded.DNS.Servers {
+		if sv.Type == "fakeip" {
+			foundFakeIPServer = true
+			break
+		}
+	}
+	if !foundFakeIPServer {
+		t.Errorf("fakeip DNS server not found after overlay; servers: %+v", loaded.DNS.Servers)
+	}
+
+	// Overlay: DNS.Final == "real".
+	if loaded.DNS.Final != "real" {
+		t.Errorf(`DNS.Final must be "real", got %q`, loaded.DNS.Final)
+	}
+
+	// File landed at active path, not pending/.
+	activePath := filepath.Join(dir, "21-fakeip.json")
+	if _, err := os.Stat(activePath); err != nil {
+		t.Errorf("21-fakeip.json must exist at active path %s: %v", activePath, err)
+	}
+	pendingPath := filepath.Join(dir, "pending", "21-fakeip.json")
+	if _, err := os.Stat(pendingPath); !os.IsNotExist(err) {
+		t.Errorf("21-fakeip.json must NOT be in pending/; stat err=%v", err)
 	}
 }
