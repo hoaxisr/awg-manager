@@ -677,6 +677,21 @@ func TestSetFakeIPState_PersistsAndClears(t *testing.T) {
 	}
 }
 
+func TestSetFakeIPState_PersistsStaticNAT(t *testing.T) {
+	tmpDir := t.TempDir()
+	s := NewSettingsStore(tmpDir)
+	if _, err := s.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := s.SetFakeIPState(&FakeIPState{Provisioned: true, Index: 0, StaticNATSeg: "Home", StaticNATWAN: "PPPoE0"}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Load()
+	if got.FakeIP == nil || got.FakeIP.StaticNATSeg != "Home" || got.FakeIP.StaticNATWAN != "PPPoE0" {
+		t.Fatalf("static-NAT fact not persisted: %+v", got.FakeIP)
+	}
+}
+
 func TestMigrateToV26_NATEnabledToMode(t *testing.T) {
 	st := &Settings{SchemaVersion: 25, ManagedServers: []ManagedServer{
 		{InterfaceName: "Wireguard3", NATEnabled: true},

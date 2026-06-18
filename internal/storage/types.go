@@ -71,6 +71,12 @@ type FakeIPState struct {
 	Index       int    `json:"index,omitempty"`
 	Inet4Range  string `json:"inet4Range,omitempty"`
 	Inet6Range  string `json:"inet6Range,omitempty"`
+	// StaticNATSeg/StaticNATWAN record the delivery segment + WAN that Enable
+	// actually flipped to static-NAT (empty = none applied). Disable/rollback
+	// restore dynamic NAT by THIS fact, not the live FakeIPSourcePreserve setting
+	// (bug #3: flipping the setting off then disabling must still restore ip nat).
+	StaticNATSeg string `json:"staticNatSeg,omitempty"`
+	StaticNATWAN string `json:"staticNatWan,omitempty"`
 }
 
 type DownloadSettings struct {
