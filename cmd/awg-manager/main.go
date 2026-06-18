@@ -764,7 +764,9 @@ func main() {
 	// here — Register already marked them enabled. deviceproxy is
 	// reflected after deviceProxySvc is constructed below.
 	if curSettings, err := settingsStore.Load(); err == nil && curSettings != nil {
-		_ = sbOrch.SetEnabled(singboxorch.SlotRouter, curSettings.SingboxRouter.Enabled)
+		mode := curSettings.SingboxRouter.RoutingMode
+		_ = sbOrch.SetEnabled(router.RouterSlotForMode(mode), curSettings.SingboxRouter.Enabled)
+		_ = sbOrch.SetEnabled(router.OtherRouterSlot(mode), false)
 	}
 
 	// Subscription service — owns 40-subscriptions.json in config.d.
