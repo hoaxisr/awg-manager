@@ -137,8 +137,8 @@ func TestBuildFakeIPTunConfig_StripsAutoManagedDirect(t *testing.T) {
 		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", MTU: 1500,
 		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
 		Outbounds: []Outbound{
-			{Type: "direct", Tag: "awg-direct", BindInterface: "nwg2"},   // auto-managed → stripped
-			{Type: "direct", Tag: "ipsec-direct", BindInterface: "IKE0"}, // user VPN → kept
+			{Type: "direct", Tag: "awg-direct", BindInterface: "nwg2"},    // auto-managed → stripped
+			{Type: "direct", Tag: "ipsec-direct", BindInterface: "IKE0"},  // user VPN → kept
 			{Type: "shadowsocks", Tag: "proxy", Server: "vpn.example.io"}, // hostname → kept + resolver
 		},
 		ProxyTag: "proxy",
@@ -526,5 +526,88 @@ func TestResetFakeIPCache_EmptyPathIsNoError(t *testing.T) {
 	// Empty path resolves to a non-existent file → treated as already-absent.
 	if err := ResetFakeIPCache(""); err != nil {
 		t.Errorf("empty path must be a no-op, got %v", err)
+	}
+}
+
+// --- ensureFakeIPOverlay ---
+
+func TestEnsureFakeIPOverlay_HijackDNSForcedFirst(t *testing.T) {
+	cfg := NewEmptyConfig()
+	cfg.Route.Rules = []Rule{{Action: "route", Outbound: "awg-awg10"}}
+	ensureFakeIPOverlay(cfg, FakeIPTunSpec{Iface: "opkgtun0", Inet4Range: "10.128.0.0/10", TunAddr4: "172.18.0.1/30", RealServer: "1.1.1.1", CachePath: "/x"})
+	if cfg.Route.Rules[0].Action != "hijack-dns" {
+		t.Fatalf("hijack-dns must be route.rules[0], got %+v", cfg.Route.Rules)
+	}
+}
+
+func TestEnsureFakeIPOverlay_Idempotent(t *testing.T) {
+	cfg := NewEmptyConfig()
+	spec := FakeIPTunSpec{Iface: "opkgtun0", Inet4Range: "10.128.0.0/10", TunAddr4: "172.18.0.1/30", RealServer: "1.1.1.1", CachePath: "/x"}
+	ensureFakeIPOverlay(cfg, spec)
+	ensureFakeIPOverlay(cfg, spec)
+	tunCount, fakeipCount, hijackCount := 0, 0, 0
+	for _, ib := range cfg.Inbounds {
+		if ib.Tag == "tun-in" {
+			tunCount++
+		}
+	}
+	for _, sv := range cfg.DNS.Servers {
+		if sv.Type == "fakeip" {
+			fakeipCount++
+		}
+	}
+	for _, r := range cfg.Route.Rules {
+		if r.Action == "hijack-dns" {
+			hijackCount++
+		}
+	}
+	if tunCount != 1 || fakeipCount != 1 || hijackCount != 1 {
+		t.Fatalf("overlay not idempotent: tun=%d fakeip=%d hijack=%d", tunCount, fakeipCount, hijackCount)
+	}
+}
+
+func TestEnsureFakeIPOverlay_RefreshesTunName(t *testing.T) {
+	cfg := NewEmptyConfig()
+	ensureFakeIPOverlay(cfg, FakeIPTunSpec{Iface: "opkgtun0", Inet4Range: "10.128.0.0/10", TunAddr4: "172.18.0.1/30", RealServer: "1.1.1.1", CachePath: "/x"})
+	ensureFakeIPOverlay(cfg, FakeIPTunSpec{Iface: "opkgtun3", Inet4Range: "10.128.0.0/10", TunAddr4: "172.18.0.1/30", RealServer: "1.1.1.1", CachePath: "/x"})
+	for _, ib := range cfg.Inbounds {
+		if ib.Tag == "tun-in" && ib.InterfaceName != "opkgtun3" {
+			t.Fatalf("tun name not refreshed: %s", ib.InterfaceName)
+		}
+	}
+}
+
+func TestEnsureFakeIPOverlay_ScalarLockedBits(t *testing.T) {
+	cfg := NewEmptyConfig()
+	// Seed a user DNS rule that must survive the overlay.
+	cfg.DNS.Rules = append(cfg.DNS.Rules, DNSRule{Action: "route", Server: "fakeip", QueryType: []string{"A", "AAAA"}})
+	spec := FakeIPTunSpec{Iface: "opkgtun0", Inet4Range: "10.128.0.0/10", TunAddr4: "172.18.0.1/30", RealServer: "1.1.1.1", CachePath: "/x"}
+	ensureFakeIPOverlay(cfg, spec)
+
+	if cfg.DNS.Final != "real" {
+		t.Errorf("DNS.Final must be \"real\", got %q", cfg.DNS.Final)
+	}
+	if cfg.Route.DefaultDomainResolver == nil || cfg.Route.DefaultDomainResolver.Server != "real" {
+		t.Errorf("DefaultDomainResolver must be {server:real}, got %+v", cfg.Route.DefaultDomainResolver)
+	}
+	if cfg.Experimental == nil || cfg.Experimental.CacheFile == nil {
+		t.Fatal("Experimental.CacheFile must be set")
+	}
+	if cfg.Experimental.CacheFile.Path != "/x" {
+		t.Errorf("CacheFile.Path must be /x, got %q", cfg.Experimental.CacheFile.Path)
+	}
+	if !cfg.Experimental.CacheFile.Enabled || !cfg.Experimental.CacheFile.StoreFakeIP {
+		t.Errorf("CacheFile must have Enabled+StoreFakeIP true: %+v", cfg.Experimental.CacheFile)
+	}
+	// The pre-existing user DNS rule must still be present.
+	found := false
+	for _, r := range cfg.DNS.Rules {
+		if r.Action == "route" && r.Server == "fakeip" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("pre-existing DNS rule was lost after overlay; rules: %+v", cfg.DNS.Rules)
 	}
 }

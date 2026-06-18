@@ -157,6 +157,129 @@ func BuildFakeIPTunConfig(s FakeIPTunSpec) (*RouterConfig, error) {
 	return cfg, nil
 }
 
+// ensureFakeIPOverlay injects/normalizes the ENGINE-LOCKED bits of fakeip-tun
+// mode into a user-edited *RouterConfig. It is idempotent: calling it multiple
+// times with the same spec produces exactly one of each locked element.
+//
+// Locked bits (keyed as noted):
+//   - tun-in Inbound (upserted by Tag=="tun-in") — all boolPtr flags, stack,
+//     address list from spec, InterfaceName ALWAYS refreshed to spec.Iface.
+//   - fakeip DNSServer (upserted by Type=="fakeip") — pool ranges from spec.
+//   - real DNSServer (upserted by Tag=="real") — upstream from spec.RealServer.
+//   - cfg.DNS.Final = "real".
+//   - cfg.Route.DefaultDomainResolver = &DomainResolver{Server:"real"}.
+//   - cfg.Experimental = &Experimental{CacheFile:{Enabled,StoreFakeIP,Path}}.
+//   - hijack-dns Rule forced at route.rules[0] (all existing hijack-dns rules
+//     removed, then one prepended), preserving all other user rules in order.
+//
+// The caller is responsible for validating spec fields (TunAddr4 etc.) before
+// calling. ensureFakeIPOverlay is a pure in-place mutator; it does not validate.
+func ensureFakeIPOverlay(cfg *RouterConfig, spec FakeIPTunSpec) {
+	// --- tun-in inbound ---
+	addrs := []string{spec.TunAddr4}
+	if spec.TunAddr6 != "" {
+		addrs = append(addrs, spec.TunAddr6)
+	}
+	stack := spec.Stack
+	if stack == "" {
+		stack = "gvisor"
+	}
+	in := Inbound{
+		Type:                   "tun",
+		Tag:                    "tun-in",
+		InterfaceName:          spec.Iface,
+		Address:                addrs,
+		MTU:                    spec.MTU,
+		AutoRoute:              boolPtr(false),
+		AutoRedirect:           boolPtr(false),
+		StrictRoute:            boolPtr(false),
+		Stack:                  stack,
+		EndpointIndependentNAT: boolPtr(false),
+	}
+	if stack == "system" {
+		in.GSO = boolPtr(false)
+	}
+	upsertInbound(cfg, in)
+
+	// --- fakeip DNS server ---
+	fakeip := DNSServer{
+		Tag:        "fakeip",
+		Type:       "fakeip",
+		Inet4Range: spec.Inet4Range,
+	}
+	if spec.Inet6Range != "" {
+		fakeip.Inet6Range = spec.Inet6Range
+	}
+	upsertDNSServerByType(cfg, fakeip)
+
+	// --- real DNS server ---
+	upsertDNSServerByTag(cfg, DNSServer{Tag: "real", Type: "udp", Server: spec.RealServer})
+
+	// --- scalar locked bits ---
+	cfg.DNS.Final = "real"
+	cfg.Route.DefaultDomainResolver = &DomainResolver{Server: "real"}
+	cfg.Experimental = &Experimental{CacheFile: &CacheFile{
+		Enabled:     true,
+		StoreFakeIP: true,
+		Path:        spec.CachePath,
+	}}
+
+	// --- hijack-dns forced at index 0 ---
+	forceHijackFirst(cfg)
+}
+
+// upsertInbound replaces the first Inbound with the same Tag in-place, or
+// appends if none exists. Inbound is a value type; the slice element is
+// replaced by index to avoid aliasing.
+func upsertInbound(cfg *RouterConfig, in Inbound) {
+	for i, existing := range cfg.Inbounds {
+		if existing.Tag == in.Tag {
+			cfg.Inbounds[i] = in
+			return
+		}
+	}
+	cfg.Inbounds = append(cfg.Inbounds, in)
+}
+
+// upsertDNSServerByTag replaces the first DNSServer with the same Tag
+// in-place, or appends if none exists.
+func upsertDNSServerByTag(cfg *RouterConfig, sv DNSServer) {
+	for i, existing := range cfg.DNS.Servers {
+		if existing.Tag == sv.Tag {
+			cfg.DNS.Servers[i] = sv
+			return
+		}
+	}
+	cfg.DNS.Servers = append(cfg.DNS.Servers, sv)
+}
+
+// upsertDNSServerByType replaces the first DNSServer with the same Type
+// in-place, or appends if none exists. Used for "fakeip" (there is only
+// ever one fakeip server).
+func upsertDNSServerByType(cfg *RouterConfig, sv DNSServer) {
+	for i, existing := range cfg.DNS.Servers {
+		if existing.Type == sv.Type {
+			cfg.DNS.Servers[i] = sv
+			return
+		}
+	}
+	cfg.DNS.Servers = append(cfg.DNS.Servers, sv)
+}
+
+// forceHijackFirst removes every Rule with Action=="hijack-dns" from
+// cfg.Route.Rules and prepends exactly one {Action:"hijack-dns",
+// Protocol:"dns"} at index 0. All other rules are preserved in order.
+func forceHijackFirst(cfg *RouterConfig) {
+	filtered := cfg.Route.Rules[:0]
+	for _, r := range cfg.Route.Rules {
+		if r.Action != "hijack-dns" {
+			filtered = append(filtered, r)
+		}
+	}
+	hijack := Rule{Action: "hijack-dns", Protocol: "dns"}
+	cfg.Route.Rules = append([]Rule{hijack}, filtered...)
+}
+
 // applyOutboundDomainResolver returns a copy of outbounds in which every
 // outbound carrying a HOSTNAME Server (non-empty, not a parseable IP literal)
 // is given DomainResolver{Server: resolver} — unless the caller already set a
