@@ -198,6 +198,15 @@ func (s *ServiceImpl) ensureFakeIPOverlayFromState(cfg *RouterConfig) error {
 	return nil
 }
 
+// fakeIPConfigEmpty reports whether cfg carries no user routing intent —
+// i.e. neither DNS nor route rules have been authored and route.final is
+// still the system default ("direct" or unset). Used by enableFakeIPTun to
+// decide whether to seed a starter DNS rule on first enable.
+func fakeIPConfigEmpty(cfg *RouterConfig) bool {
+	return len(cfg.Route.Rules) == 0 && len(cfg.DNS.Rules) == 0 &&
+		(cfg.Route.Final == "" || cfg.Route.Final == "direct")
+}
+
 // fakeipWithConfig is the isolated load→restore→clone→mutate→guard→overlay→persist→emit
 // skeleton for the fakeip-tun config slot. It mirrors withConfig but:
 //   - loads/persists SlotFakeIP (not SlotRouter),

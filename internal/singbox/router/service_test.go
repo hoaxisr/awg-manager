@@ -888,7 +888,13 @@ func newOrchedTestService(t *testing.T) (*ServiceImpl, string) {
 		Slot:     orchestrator.SlotRouter,
 		Filename: "20-router.json",
 	}); err != nil {
-		t.Fatalf("orch.Register: %v", err)
+		t.Fatalf("orch.Register SlotRouter: %v", err)
+	}
+	if err := orch.Register(orchestrator.SlotMeta{
+		Slot:     orchestrator.SlotFakeIP,
+		Filename: "21-fakeip.json",
+	}); err != nil {
+		t.Fatalf("orch.Register SlotFakeIP: %v", err)
 	}
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatalf("orch.Bootstrap: %v", err)
@@ -1777,4 +1783,3 @@ func TestNormalize_RoutingModeDefaultAndValidate(t *testing.T) {
 		t.Errorf("fakeip-tun should be valid: %v", err)
 	}
 }
-

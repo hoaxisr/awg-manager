@@ -50,26 +50,25 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("fakeip-tun: provisioning deps not wired")
 	}
 
-	// Resolve egress from the persisted router config: the proxy tag is its
-	// route.final, and the outbounds carry the proxy + direct definitions that
-	// the fakeip config reuses verbatim. Refuse to provision a fakeip-tun with
-	// no usable egress — a direct-only tun would fake-resolve every domain and
-	// route it nowhere useful, a worse outage than staying off.
-	cfg, err := s.loadRouterConfig()
+	// A. Load the fakeip config from SlotFakeIP (user-editable, 21-fakeip.json).
+	// When the slot is empty (first enable) seed a starter A/AAAA→fakeip DNS rule
+	// so the chip shows useful defaults, and set route.final to the built-in
+	// "direct" outbound (always known, no dangling reference). The user picks a
+	// real proxy egress afterward via the fakeip page (WYSIWYG).
+	fcfg, err := s.loadFakeIPConfig()
 	if err != nil {
-		return fmt.Errorf("enable fakeip-tun: load router config: %w", err)
+		return fmt.Errorf("enable fakeip-tun: load fakeip config: %w", err)
 	}
-	// Coupling note: the fakeip egress follows the user's configured default
-	// outbound (route.final). Changing route.final changes where every faked
-	// domain is routed — there is no separate fakeip-egress knob in v1.
-	// Validate the egress against ALL known outbound catalogs (router composites,
-	// subscription composites, AWG-direct, sing-box tunnels, built-ins) — NOT just
-	// cfg.Outbounds, because the egress (e.g. an AWG outbound "awg-awg10") lives in
-	// 15-awg.json / another slot that sing-box merges, and is absent from the router
-	// slot's own outbounds. Stand-verified 2026-06-15: the old cfg-only check
-	// rejected a valid AWG egress. Mirrors SetRouteFinal's isKnownOutboundTag.
-	proxyTag := cfg.Route.Final
-	if proxyTag == "" || !s.isKnownOutboundTag(ctx, proxyTag, cfg) {
+	if fakeIPConfigEmpty(fcfg) {
+		fcfg.DNS.Rules = append(fcfg.DNS.Rules, DNSRule{Action: "route", Server: "fakeip", QueryType: []string{"A", "AAAA"}})
+		fcfg.Route.Final = "direct"
+	}
+
+	// C. Egress validation from the fakeip config.
+	// "direct" is a built-in known outbound — passes. Refuse to provision with
+	// no usable egress (empty or unknown tag).
+	proxyTag := fcfg.Route.Final
+	if proxyTag == "" || !s.isKnownOutboundTag(ctx, proxyTag, fcfg) {
 		return fmt.Errorf("enable fakeip-tun: no usable egress: route.final %q is not a known outbound", proxyTag)
 	}
 
@@ -221,6 +220,10 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		}
 	}
 
+	// B. Inject engine-locked bits via explicit-spec overlay (replaces
+	// BuildFakeIPTunConfig). Using the local iface/p/sr vars directly avoids
+	// ordering coupling with ensureFakeIPOverlayFromState (which reads
+	// settings.FakeIP.Index — not yet persisted at this point in the flow).
 	spec := FakeIPTunSpec{
 		Iface:      iface,
 		TunAddr4:   p.TunAddr4,
@@ -230,21 +233,9 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		Inet6Range: p.Inet6Range,
 		CachePath:  p.CachePath,
 		RealServer: p.RealServer,
-		// Raw outbounds — BuildFakeIPTunConfig owns the full pipeline (strip
-		// auto-managed direct, then apply the domain_resolver guard). ProxyTag
-		// may reference a stripped auto-managed direct; sing-box resolves it
-		// from 15-awg.json where those live.
-		Outbounds: cfg.Outbounds,
-		ProxyTag:  proxyTag,
-		// Stack from the user setting (gvisor default; system → gso:false handled
-		// by BuildFakeIPTunConfig). Empty is tolerated (builder defaults gvisor).
-		Stack: sr.FakeIPStack,
-		// v1: DomainRuleSets / SourceIPCIDR empty = fake all A/AAAA, all sources.
+		Stack:      sr.FakeIPStack,
 	}
-	fcfg, err := BuildFakeIPTunConfig(spec)
-	if err != nil {
-		return fmt.Errorf("enable fakeip-tun: build config: %w", err)
-	}
+	ensureFakeIPOverlay(fcfg, spec)
 
 	// Flush stale kernel addresses on the tun BEFORE sing-box starts, while the
 	// tun is still bare (NDMS assigned its address above via SetAddress; we drop
@@ -257,12 +248,15 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("enable fakeip-tun: addr flush: %w", err)
 	}
 
-	// Promote SlotRouter to active FIRST (like the tproxy path) so
-	// persistConfigDirect targets the active file and the orchestrator cold-
-	// start reads it. Legacy fallback (no orch) uses an explicit Start.
+	// D. Slot XOR: enable SlotFakeIP, disable SlotRouter (fakeip and tproxy router
+	// slots are mutually exclusive — sing-box must load exactly one routing config).
+	// Legacy fallback (no orch) uses an explicit Start.
 	if s.deps.Orch != nil {
-		if err = s.deps.Orch.SetEnabled(orchestrator.SlotRouter, true); err != nil {
-			return fmt.Errorf("enable fakeip-tun: orchestrator enable router: %w", err)
+		if err = s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, true); err != nil {
+			return fmt.Errorf("enable fakeip-tun: orchestrator enable fakeip slot: %w", err)
+		}
+		if err = s.deps.Orch.SetEnabled(orchestrator.SlotRouter, false); err != nil {
+			return fmt.Errorf("enable fakeip-tun: orchestrator disable router slot: %w", err)
 		}
 	} else {
 		if running, _ := s.deps.Singbox.IsRunning(); !running {
@@ -273,13 +267,16 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	}
 	push(func() {
 		if s.deps.Orch != nil {
-			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, false); e != nil {
-				s.appLog.Warn("fakeip-rollback", iface, "disable slot: "+e.Error())
+			if e := s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, false); e != nil {
+				s.appLog.Warn("fakeip-rollback", iface, "disable fakeip slot: "+e.Error())
+			}
+			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, true); e != nil {
+				s.appLog.Warn("fakeip-rollback", iface, "re-enable router slot: "+e.Error())
 			}
 		}
 	})
-	if err = s.persistConfigDirect(ctx, fcfg); err != nil {
-		return fmt.Errorf("enable fakeip-tun: persist config: %w", err)
+	if err = s.persistFakeIPConfig(ctx, fcfg); err != nil {
+		return fmt.Errorf("enable fakeip-tun: persist fakeip config: %w", err)
 	}
 
 	// Wait for sing-box to be truly ready (process + tun carrier + live fakeip
@@ -401,7 +398,9 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// Health-gated DHCP DNS delivery: advertise the tun DNS to LAN clients only
 	// when sing-box is running AND the egress is up; otherwise clear it so
 	// clients fall back to the router's default DNS (no outage).
-	if err = s.advertiseDNSIfHealthy(ctx, p.DHCPPool, tunDNS, iface, cfg); err != nil {
+	// E. advertiseDNS uses the fakeip config (fcfg) so fakeIPEgressUp checks
+	// the fakeip egress (route.final), not the tproxy router slot egress.
+	if err = s.advertiseDNSIfHealthy(ctx, p.DHCPPool, tunDNS, iface, fcfg); err != nil {
 		return fmt.Errorf("enable fakeip-tun: advertise dns: %w", err)
 	}
 	push(func() {

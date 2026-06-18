@@ -371,6 +371,119 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 	}
 }
 
+// TestEnableFakeIPTun_SlotFakeIPWritten asserts the new enable contract:
+//   - SlotFakeIP is ENABLED and SlotRouter is DISABLED (XOR) after a successful enable.
+//   - The persisted active file is 21-fakeip.json, not 20-router.json.
+//   - 21-fakeip.json contains the engine-locked overlay bits (tun-in, fakeip DNS
+//     server, hijack-dns at route.rules[0]) and the seeded A/AAAA→fakeip DNS rule.
+//   - route.final is set (seed provides "direct").
+//   - SlotRouter was NOT promoted by enable (20-router.json is unchanged).
+func TestEnableFakeIPTun_SlotFakeIPWritten(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable(fakeip-tun): %v", err)
+	}
+
+	// --- Slot XOR: SlotFakeIP on, SlotRouter off ---
+	orch := h.svc.deps.Orch
+	snap := orch.Snapshot()
+	var fakeIPEnabled, routerEnabled bool
+	for _, s := range snap {
+		switch s.Slot {
+		case "fakeip":
+			fakeIPEnabled = s.Enabled
+		case "router":
+			routerEnabled = s.Enabled
+		}
+	}
+	if !fakeIPEnabled {
+		t.Error("SlotFakeIP must be ENABLED after enable")
+	}
+	if routerEnabled {
+		t.Error("SlotRouter must be DISABLED (XOR) after fakeip enable")
+	}
+
+	// --- 21-fakeip.json exists and has the locked bits + seed ---
+	fakeIPPath := filepath.Join(h.dir, "21-fakeip.json")
+	data, err := os.ReadFile(fakeIPPath)
+	if err != nil {
+		t.Fatalf("21-fakeip.json missing: %v", err)
+	}
+	var cfg RouterConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal 21-fakeip.json: %v", err)
+	}
+
+	// tun-in inbound present (overlay).
+	found := false
+	for _, in := range cfg.Inbounds {
+		if in.Tag == "tun-in" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("21-fakeip.json: tun-in inbound missing: %s", data)
+	}
+
+	// fakeip DNS server present (overlay).
+	hasFakeipServer := false
+	for _, sv := range cfg.DNS.Servers {
+		if sv.Type == "fakeip" {
+			hasFakeipServer = true
+			break
+		}
+	}
+	if !hasFakeipServer {
+		t.Errorf("21-fakeip.json: fakeip DNS server missing: %s", data)
+	}
+
+	// hijack-dns rule at rules[0] (overlay).
+	if len(cfg.Route.Rules) == 0 || cfg.Route.Rules[0].Action != "hijack-dns" {
+		t.Errorf("21-fakeip.json: route.rules[0] must be hijack-dns, got %+v", cfg.Route.Rules)
+	}
+
+	// route.final set (seed provides "direct" or user-set).
+	if cfg.Route.Final == "" {
+		t.Errorf("21-fakeip.json: route.final must not be empty after enable")
+	}
+
+	// seeded A/AAAA→fakeip DNS rule present.
+	hasAAAAARule := false
+	for _, r := range cfg.DNS.Rules {
+		if r.Action == "route" && r.Server == "fakeip" {
+			for _, qt := range r.QueryType {
+				if qt == "A" || qt == "AAAA" {
+					hasAAAAARule = true
+					break
+				}
+			}
+		}
+	}
+	if !hasAAAAARule {
+		t.Errorf("21-fakeip.json: seeded A/AAAA→fakeip DNS rule missing: %s", data)
+	}
+
+	// 20-router.json was NOT promoted (still the file we seeded the harness with,
+	// not overwritten by fakeip enable).
+	routerData, err := os.ReadFile(filepath.Join(h.dir, "20-router.json"))
+	if err != nil {
+		t.Fatalf("20-router.json missing: %v", err)
+	}
+	var routerCfg RouterConfig
+	if err := json.Unmarshal(routerData, &routerCfg); err != nil {
+		t.Fatalf("unmarshal 20-router.json: %v", err)
+	}
+	// The harness seeds the router config with a proxy outbound and no fakeip overlay.
+	// After enable, 20-router.json must NOT contain tun-in (fakeip enable must not touch it).
+	for _, in := range routerCfg.Inbounds {
+		if in.Tag == "tun-in" {
+			t.Errorf("20-router.json must not be modified by fakeip enable (found tun-in): %s", routerData)
+		}
+	}
+}
+
 // TestEnableFakeIPTun_UsesPersistedEngineSettings asserts the user-editable
 // fakeip engine settings (stack/pool4/pool6/MTU) override the wired defaults and
 // flow into the NDMS calls + the persisted sing-box config.
@@ -420,17 +533,18 @@ func TestEnableFakeIPTun_UsesPersistedEngineSettings(t *testing.T) {
 		t.Errorf("FakeIP state ranges = %+v, want overridden", st)
 	}
 
-	// The persisted sing-box config reflects stack=system + gso:false + the pools.
-	data, err := os.ReadFile(filepath.Join(h.dir, "20-router.json"))
+	// The persisted fakeip sing-box config (21-fakeip.json) reflects
+	// stack=system + gso:false + the overridden pools.
+	data, err := os.ReadFile(filepath.Join(h.dir, "21-fakeip.json"))
 	if err != nil {
-		t.Fatalf("read persisted config: %v", err)
+		t.Fatalf("read persisted fakeip config: %v", err)
 	}
 	var cfg RouterConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("unmarshal config: %v", err)
+		t.Fatalf("unmarshal 21-fakeip.json: %v", err)
 	}
 	if len(cfg.Inbounds) == 0 {
-		t.Fatalf("no inbounds in persisted config: %s", data)
+		t.Fatalf("no inbounds in persisted fakeip config: %s", data)
 	}
 	in := cfg.Inbounds[0]
 	if in.Stack != "system" {
@@ -443,10 +557,21 @@ func TestEnableFakeIPTun_UsesPersistedEngineSettings(t *testing.T) {
 		t.Errorf("persisted MTU = %d, want 1280", in.MTU)
 	}
 	if !strings.Contains(string(data), `"gso": false`) {
-		t.Errorf("persisted config must carry \"gso\": false: %s", data)
+		t.Errorf("persisted fakeip config must carry \"gso\": false: %s", data)
 	}
-	if cfg.DNS.Servers[0].Inet4Range != "10.64.0.0/12" || cfg.DNS.Servers[0].Inet6Range != "fc00::/7" {
-		t.Errorf("fakeip DNS server ranges = %q/%q, want overridden", cfg.DNS.Servers[0].Inet4Range, cfg.DNS.Servers[0].Inet6Range)
+	// Find the fakeip DNS server (by type) for pool range assertions.
+	var fakeipSrv *DNSServer
+	for i := range cfg.DNS.Servers {
+		if cfg.DNS.Servers[i].Type == "fakeip" {
+			fakeipSrv = &cfg.DNS.Servers[i]
+			break
+		}
+	}
+	if fakeipSrv == nil {
+		t.Fatalf("fakeip DNS server missing in 21-fakeip.json: %s", data)
+	}
+	if fakeipSrv.Inet4Range != "10.64.0.0/12" || fakeipSrv.Inet6Range != "fc00::/7" {
+		t.Errorf("fakeip DNS server ranges = %q/%q, want overridden", fakeipSrv.Inet4Range, fakeipSrv.Inet6Range)
 	}
 }
 
@@ -595,15 +720,19 @@ func TestEnableFakeIPTun_RollbackOnReadinessTimeout(t *testing.T) {
 
 func TestEnableFakeIPTun_RefusesWithoutEgress(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	// Overwrite the router config so route.final references no outbound.
-	bad := `{"outbounds":[{"tag":"direct","type":"direct"}],"route":{"final":"missing-tag","rules":[]}}`
-	if err := os.WriteFile(filepath.Join(h.dir, "20-router.json"), []byte(bad), 0644); err != nil {
-		t.Fatalf("write: %v", err)
+	// Seed the fakeip config (21-fakeip.json) with a route.final that references a
+	// non-existent outbound. The egress is now sourced from SlotFakeIP, not SlotRouter.
+	// A pre-seeded bad egress prevents the "empty config" seed from applying "direct"
+	// (which would pass). We include at least one DNS rule so fakeIPConfigEmpty returns
+	// false and the seed is skipped.
+	bad := `{"dns":{"rules":[{"action":"route","server":"fakeip","query_type":["A","AAAA"]}]},"route":{"final":"missing-tag","rules":[]}}`
+	if err := os.WriteFile(filepath.Join(h.dir, "21-fakeip.json"), []byte(bad), 0644); err != nil {
+		t.Fatalf("write 21-fakeip.json: %v", err)
 	}
 
 	err := h.svc.Enable(context.Background())
 	if err == nil {
-		t.Fatal("expected error when route.final is not a configured outbound")
+		t.Fatal("expected error when fakeip route.final is not a known outbound")
 	}
 	// Nothing provisioned, nothing persisted.
 	if st := h.loadFakeIP(t); st != nil {
