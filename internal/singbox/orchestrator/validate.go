@@ -12,7 +12,7 @@ import (
 // References (when set) names what was referenced.
 type ValidationError struct {
 	Slot    Slot
-	Kind    string // "duplicate-outbound" / "duplicate-inbound" / "duplicate-dns" / "unknown-outbound" / "unknown-rule-set"
+	Kind    string // "duplicate-outbound" / "duplicate-inbound" / "duplicate-dns" / "unknown-outbound" / "unknown-rule-set" / "unknown-dns-server"
 	Tag     string // the offending tag value
 	InRule  string // optional: human-readable location (e.g. "rules[3]" or "selector default")
 	Message string
@@ -201,6 +201,12 @@ func (o *Orchestrator) validateWith(bytesFor func(Slot) ([]byte, error)) Validat
 		if c.Route.Final != "" {
 			rs.finals = append(rs.finals, finalSection{outbound: c.Route.Final})
 		}
+		if c.DNS.Final != "" {
+			rs.dnsTagRefs = append(rs.dnsTagRefs, dnsTagRefSection{refTag: c.DNS.Final, where: "dns.final"})
+		}
+		if c.Route.DefaultDomainResolver != nil && c.Route.DefaultDomainResolver.Server != "" {
+			rs.dnsTagRefs = append(rs.dnsTagRefs, dnsTagRefSection{refTag: c.Route.DefaultDomainResolver.Server, where: "route.default_domain_resolver.server"})
+		}
 		for i, ruleSet := range c.Route.RuleSet {
 			if ruleSet.DownloadDetour != "" {
 				rs.sels = append(rs.sels, selSection{
@@ -248,6 +254,10 @@ func (o *Orchestrator) validateWith(bytesFor func(Slot) ([]byte, error)) Validat
 			return true
 		}
 		_, ok := outbounds[tag]
+		return ok
+	}
+	knownDNSServer := func(tag string) bool {
+		_, ok := dnsServers[tag]
 		return ok
 	}
 	for _, rs := range pending {
@@ -301,6 +311,17 @@ func (o *Orchestrator) validateWith(bytesFor func(Slot) ([]byte, error)) Validat
 					Tag:     r.refTag,
 					InRule:  r.inRule,
 					Message: "slot does not declare this rule_set tag",
+				})
+			}
+		}
+		for _, d := range rs.dnsTagRefs {
+			if !knownDNSServer(d.refTag) {
+				errs = append(errs, ValidationError{
+					Slot:    rs.slot,
+					Kind:    "unknown-dns-server",
+					Tag:     d.refTag,
+					InRule:  d.where,
+					Message: "no slot declares this dns server tag",
 				})
 			}
 		}
@@ -359,9 +380,14 @@ type outboundJSON struct {
 }
 
 type routeJSON struct {
-	Final   string        `json:"final,omitempty"`
-	Rules   []ruleJSON    `json:"rules,omitempty"`
-	RuleSet []ruleSetJSON `json:"rule_set,omitempty"`
+	Final                 string              `json:"final,omitempty"`
+	Rules                 []ruleJSON          `json:"rules,omitempty"`
+	RuleSet               []ruleSetJSON       `json:"rule_set,omitempty"`
+	DefaultDomainResolver *domainResolverJSON `json:"default_domain_resolver,omitempty"`
+}
+
+type domainResolverJSON struct {
+	Server string `json:"server,omitempty"`
 }
 
 type ruleJSON struct {
@@ -378,6 +404,7 @@ type ruleSetJSON struct {
 type dnsJSON struct {
 	Servers []dnsServerJSON `json:"servers,omitempty"`
 	Rules   []dnsRuleJSON   `json:"rules,omitempty"`
+	Final   string          `json:"final,omitempty"`
 }
 
 type dnsServerJSON struct {
@@ -390,11 +417,17 @@ type dnsRuleJSON struct {
 }
 
 type validationSectionRefs struct {
-	slot     Slot
-	rules    []ruleSection
-	finals   []finalSection
-	sels     []selSection
-	ruleSets []ruleSetSection
+	slot       Slot
+	rules      []ruleSection
+	finals     []finalSection
+	sels       []selSection
+	ruleSets   []ruleSetSection
+	dnsTagRefs []dnsTagRefSection
+}
+
+type dnsTagRefSection struct {
+	refTag string
+	where  string
 }
 
 type ruleSection struct {
