@@ -618,6 +618,106 @@ func TestEnsureFakeIPOverlay_ScalarLockedBits(t *testing.T) {
 	}
 }
 
+// TestEnsureFakeIPOverlay_PrivateBypassAfterHijack verifies that the overlay
+// inserts an ip_is_private→direct rule at route.rules[1] (right after hijack-dns).
+func TestEnsureFakeIPOverlay_PrivateBypassAfterHijack(t *testing.T) {
+	spec := FakeIPTunSpec{Iface: "opkgtun0", Inet4Range: "10.128.0.0/10", TunAddr4: "172.18.0.1/30", RealServer: "1.1.1.1", CachePath: "/x"}
+
+	t.Run("added at index 1", func(t *testing.T) {
+		cfg := NewEmptyConfig()
+		cfg.Route.Rules = []Rule{{Action: "route", Outbound: "proxy"}}
+		ensureFakeIPOverlay(cfg, spec)
+		if len(cfg.Route.Rules) < 2 {
+			t.Fatalf("expected at least 2 route rules, got %d", len(cfg.Route.Rules))
+		}
+		if cfg.Route.Rules[0].Action != "hijack-dns" {
+			t.Errorf("route.rules[0] must be hijack-dns, got %+v", cfg.Route.Rules[0])
+		}
+		r1 := cfg.Route.Rules[1]
+		if r1.IPIsPrivate == nil || !*r1.IPIsPrivate || r1.Outbound != "direct" {
+			t.Errorf("route.rules[1] must be {ip_is_private:true, outbound:direct}, got %+v", r1)
+		}
+	})
+
+	t.Run("idempotent: double overlay = exactly one private rule", func(t *testing.T) {
+		cfg := NewEmptyConfig()
+		ensureFakeIPOverlay(cfg, spec)
+		ensureFakeIPOverlay(cfg, spec)
+		count := 0
+		for _, r := range cfg.Route.Rules {
+			if r.IPIsPrivate != nil && *r.IPIsPrivate {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Errorf("expected exactly 1 ip_is_private rule after double overlay, got %d; rules: %+v", count, cfg.Route.Rules)
+		}
+	})
+
+	t.Run("user already has ip_is_private rule: no duplicate", func(t *testing.T) {
+		cfg := NewEmptyConfig()
+		trueVal := true
+		cfg.Route.Rules = []Rule{
+			{IPIsPrivate: &trueVal, Outbound: "custom-direct"},
+		}
+		ensureFakeIPOverlay(cfg, spec)
+		count := 0
+		for _, r := range cfg.Route.Rules {
+			if r.IPIsPrivate != nil && *r.IPIsPrivate {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Errorf("expected exactly 1 ip_is_private rule when user already has one, got %d; rules: %+v", count, cfg.Route.Rules)
+		}
+	})
+}
+
+// TestEnsureFakeIPOverlay_FakeIPRuleRestrictedToAAAA verifies that the overlay
+// normalizes DNS rules pointing to "fakeip" to query_type=["A","AAAA"].
+func TestEnsureFakeIPOverlay_FakeIPRuleRestrictedToAAAA(t *testing.T) {
+	spec := FakeIPTunSpec{Iface: "opkgtun0", Inet4Range: "10.128.0.0/10", TunAddr4: "172.18.0.1/30", RealServer: "1.1.1.1", CachePath: "/x"}
+
+	t.Run("no query_type → set to [A,AAAA]", func(t *testing.T) {
+		cfg := NewEmptyConfig()
+		cfg.DNS.Rules = []DNSRule{{Action: "route", Server: "fakeip", Domain: []string{"x.com"}}}
+		ensureFakeIPOverlay(cfg, spec)
+		var found *DNSRule
+		for i := range cfg.DNS.Rules {
+			if cfg.DNS.Rules[i].Server == "fakeip" && len(cfg.DNS.Rules[i].Domain) > 0 {
+				found = &cfg.DNS.Rules[i]
+				break
+			}
+		}
+		if found == nil {
+			t.Fatal("fakeip DNS rule not found after overlay")
+		}
+		if len(found.QueryType) != 2 || found.QueryType[0] != "A" || found.QueryType[1] != "AAAA" {
+			t.Errorf("QueryType must be [A,AAAA], got %v", found.QueryType)
+		}
+	})
+
+	t.Run("query_type with HTTPS → narrowed to [A,AAAA]", func(t *testing.T) {
+		cfg := NewEmptyConfig()
+		cfg.DNS.Rules = []DNSRule{{Action: "route", Server: "fakeip", QueryType: []string{"A", "AAAA", "HTTPS"}}}
+		ensureFakeIPOverlay(cfg, spec)
+		r := cfg.DNS.Rules[0]
+		if len(r.QueryType) != 2 || r.QueryType[0] != "A" || r.QueryType[1] != "AAAA" {
+			t.Errorf("QueryType must be narrowed to [A,AAAA], got %v", r.QueryType)
+		}
+	})
+
+	t.Run("non-fakeip rule: query_type untouched", func(t *testing.T) {
+		cfg := NewEmptyConfig()
+		cfg.DNS.Rules = []DNSRule{{Action: "route", Server: "real", QueryType: []string{"HTTPS"}}}
+		ensureFakeIPOverlay(cfg, spec)
+		r := cfg.DNS.Rules[0]
+		if len(r.QueryType) != 1 || r.QueryType[0] != "HTTPS" {
+			t.Errorf("non-fakeip rule query_type must be untouched, got %v", r.QueryType)
+		}
+	})
+}
+
 // ---------------------------------------------------------------------------
 // fakeipWithConfig / loadFakeIPConfig / persistFakeIPConfig CRUD tests
 // ---------------------------------------------------------------------------

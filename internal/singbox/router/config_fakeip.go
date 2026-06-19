@@ -226,6 +226,12 @@ func ensureFakeIPOverlay(cfg *RouterConfig, spec FakeIPTunSpec) {
 
 	// --- hijack-dns forced at index 0 ---
 	forceHijackFirst(cfg)
+
+	// --- ip_is_private→direct at index 1 (mirrors tproxy EnsureSystemRules) ---
+	forcePrivateBypassAfterHijack(cfg)
+
+	// --- fakeip DNS rules: restrict query_type to A/AAAA ---
+	normalizeFakeIPDNSRules(cfg)
 }
 
 // upsertInbound replaces the first Inbound with the same Tag in-place, or
@@ -278,6 +284,65 @@ func forceHijackFirst(cfg *RouterConfig) {
 	}
 	hijack := Rule{Action: "hijack-dns", Protocol: "dns"}
 	cfg.Route.Rules = append([]Rule{hijack}, filtered...)
+}
+
+// forcePrivateBypassAfterHijack ensures exactly one {ip_is_private:true,
+// outbound:"direct"} rule exists in cfg.Route.Rules right after the
+// hijack-dns rule (at index 1). Idempotent: if any ip_is_private rule
+// already exists anywhere in route.rules, nothing is added. Mirrors the
+// private-bypass insertion in EnsureSystemRules (config.go).
+func forcePrivateBypassAfterHijack(cfg *RouterConfig) {
+	for _, r := range cfg.Route.Rules {
+		if r.IPIsPrivate != nil && *r.IPIsPrivate {
+			return // already present — don't duplicate
+		}
+	}
+	// Find the hijack-dns rule position (forceHijackFirst already ran, so it
+	// is at index 0 in the normal case, but we scan defensively).
+	insertPos := 1
+	for i, r := range cfg.Route.Rules {
+		if r.Action == "hijack-dns" {
+			insertPos = i + 1
+			break
+		}
+	}
+	truePtr := true
+	privateRule := Rule{IPIsPrivate: &truePtr, Outbound: "direct"}
+	newRules := make([]Rule, 0, len(cfg.Route.Rules)+1)
+	newRules = append(newRules, cfg.Route.Rules[:insertPos]...)
+	newRules = append(newRules, privateRule)
+	newRules = append(newRules, cfg.Route.Rules[insertPos:]...)
+	cfg.Route.Rules = newRules
+}
+
+// normalizeFakeIPDNSRules sets QueryType to ["A","AAAA"] on every DNS rule
+// whose Server is "fakeip". When QueryType is empty it is set; when it
+// contains entries outside {A,AAAA} those are filtered out. This enforces
+// the engine invariant that fakeip only handles IP-type queries — HTTPS and
+// other record types cause sing-box to log "only IP queries are supported by
+// fakeip" and must fall through to dns.final="real" instead.
+func normalizeFakeIPDNSRules(cfg *RouterConfig) {
+	for i, r := range cfg.DNS.Rules {
+		if r.Server != "fakeip" {
+			continue
+		}
+		if len(r.QueryType) == 0 {
+			cfg.DNS.Rules[i].QueryType = []string{"A", "AAAA"}
+			continue
+		}
+		// Intersect: keep only A and AAAA.
+		filtered := cfg.DNS.Rules[i].QueryType[:0]
+		for _, qt := range r.QueryType {
+			if qt == "A" || qt == "AAAA" {
+				filtered = append(filtered, qt)
+			}
+		}
+		if len(filtered) == 0 {
+			cfg.DNS.Rules[i].QueryType = []string{"A", "AAAA"}
+		} else {
+			cfg.DNS.Rules[i].QueryType = filtered
+		}
+	}
 }
 
 // applyOutboundDomainResolver returns a copy of outbounds in which every
