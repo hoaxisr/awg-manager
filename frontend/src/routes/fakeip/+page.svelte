@@ -82,7 +82,12 @@
 	const clashReachable = true;
 
 	const engineState = $derived(
-		deriveFakeIPEngineState({ routingMode, running, clashReachable }),
+		deriveFakeIPEngineState({
+			routingMode,
+			enabled: $settings?.enabled === true,
+			running,
+			clashReachable,
+		}),
 	);
 
 	// ConfirmSwitch state. `fromMode` is the honest current mode: when the engine

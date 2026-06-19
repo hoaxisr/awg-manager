@@ -16,10 +16,17 @@ export type FakeIPEngineState = 'not-fakeip' | 'stopped' | 'clash-down' | 'live'
 
 export function deriveFakeIPEngineState(input: {
 	routingMode: 'tproxy' | 'fakeip-tun' | undefined;
+	enabled: boolean;
 	running: boolean;
 	clashReachable: boolean;
 }): FakeIPEngineState {
 	if (input.routingMode !== 'fakeip-tun') return 'not-fakeip';
+	// Engine toggled OFF while still in fakeip-tun mode: the daemon may keep
+	// running for other slots (base/awg), so `running` alone cannot detect
+	// "off". Without this the page stays on the live tabs after the user
+	// disables the engine. !enabled → empty NotEnabledScreen («включите
+	// fakeip»); its copy already covers "маршрутизация выключена".
+	if (!input.enabled) return 'not-fakeip';
 	if (!input.running) return 'stopped';
 	if (!input.clashReachable) return 'clash-down';
 	return 'live';
