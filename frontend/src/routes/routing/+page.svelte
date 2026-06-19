@@ -2,6 +2,7 @@
     import { onMount, onDestroy } from 'svelte';
     import { get } from 'svelte/store';
     import { goto } from '$app/navigation';
+    import { browser } from '$app/environment';
     import { page } from '$app/stores';
     import {
         routing,
@@ -104,6 +105,20 @@
 
         if (!isOS5 && activeTab === 'dns') {
             activeTab = hydrarouteInstalled ? 'hrneo' : 'ip';
+        }
+    });
+
+    // Redirect to /fakeip when sing-box is in fakeip-tun mode — the tproxy
+    // page would show the engine as "running" while the tproxy slot is
+    // disabled, which is misleading. Only fires after settings are loaded
+    // (initialized) and only in a browser context (no SSR loops).
+    const singboxInitializedStore = singboxRouterStore.initialized;
+    const singboxSettings = singboxRouterStore.settings;
+    $effect(() => {
+        if (!browser) return;
+        if (!$singboxInitializedStore) return;
+        if ($singboxSettings?.routingMode === 'fakeip-tun') {
+            void goto('/fakeip', { replaceState: true });
         }
     });
 
