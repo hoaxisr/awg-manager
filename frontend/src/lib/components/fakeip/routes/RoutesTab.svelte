@@ -153,6 +153,10 @@
 		try {
 			await api.singboxFakeIPSetRouteFinal(draftFinal);
 			currentFinal = draftFinal;
+			// Refresh the mode-aware status (the source the seed-effect reads) BEFORE
+			// clearing finalEditing, so the effect doesn't briefly revert currentFinal
+			// to the pre-save final while waiting for the status SSE event.
+			await singboxRouter.reloadStatus();
 			await fakeipConfig.loadAll();
 			notifications.success('Final-outbound обновлён');
 			finalEditing = false;
