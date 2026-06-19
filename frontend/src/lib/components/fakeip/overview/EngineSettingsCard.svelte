@@ -59,6 +59,8 @@
 		onRestart: () => void | Promise<void>;
 		/** Блокирует тумблер, пока переключение в полёте (управляется страницей). */
 		toggleBusy?: boolean;
+		/** Открывает ConfirmSwitch в сторону 'tproxy' — выход из fakeip-tun без выключения. */
+		onSwitchToTproxy?: () => void;
 	}
 
 	let {
@@ -75,6 +77,7 @@
 		onToggleEngine,
 		onRestart,
 		toggleBusy = false,
+		onSwitchToTproxy,
 	}: Props = $props();
 
 	let restarting = $state(false);
@@ -214,7 +217,7 @@
 	</div>
 
 	<div class="eform">
-		<!-- Движок: перезапуск + тумблер (controlled — страница решает смену). -->
+		<!-- Движок: перезапуск + переключиться на TPROXY + тумблер (controlled — страница решает смену). -->
 		<div class="erow">
 			<span class="k">Движок</span>
 			<span class="val">
@@ -229,6 +232,11 @@
 					{/if}
 					Перезапустить
 				</button>
+				{#if onSwitchToTproxy}
+					<button class="restart" type="button" onclick={onSwitchToTproxy}>
+						Переключиться на TPROXY
+					</button>
+				{/if}
 				<Toggle
 					checked={engineOn}
 					controlled

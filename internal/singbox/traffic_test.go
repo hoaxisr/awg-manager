@@ -154,15 +154,6 @@ func TestTrafficAggregator_IngestDedupsWithinSingleConnection(t *testing.T) {
 	}
 }
 
-func TestTrafficAggregator_IngestCapturesMemory(t *testing.T) {
-	agg := NewTrafficAggregator("unused", nil, nil)
-	msg := []byte(`{"memory":12345678,"connections":[]}`)
-	agg.ingest(msg)
-	if got := agg.Memory(); got != 12345678 {
-		t.Errorf("Memory(): got %d, want 12345678", got)
-	}
-}
-
 func TestTrafficAggregator_PublishEmitsMemoryEvent(t *testing.T) {
 	pub := &fakePublisher{}
 	agg := NewTrafficAggregator("unused", pub, nil)

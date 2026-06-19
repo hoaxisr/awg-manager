@@ -114,6 +114,11 @@
 		confirmOpen = true;
 	}
 
+	function handleSwitchToTproxy(): void {
+		toMode = 'tproxy';
+		confirmOpen = true;
+	}
+
 	// Engine-card toggle: ON→OFF requests a switch to 'off'; OFF→ON re-enables
 	// fakeip-tun. Both open ConfirmSwitch (direction-aware copy already in 1E.5).
 	function handleToggleEngine(turnOn: boolean): void {
@@ -183,7 +188,11 @@
 	{#if progressOpen}
 		<!-- main content frozen behind SwitchProgress -->
 	{:else if engineState === 'not-fakeip'}
-		<NotEnabledScreen onEnableRequested={handleEnableRequested} />
+		<NotEnabledScreen
+		onEnableRequested={handleEnableRequested}
+		showSwitchToTproxy={routingMode === 'fakeip-tun'}
+		onSwitchToTproxy={handleSwitchToTproxy}
+	/>
 	{:else}
 		<!--
 			Каркас под мокап fakeip-page-layout-v2: hero (title + панель действий) +
@@ -234,6 +243,7 @@
 				toggleBusy={switchBusy}
 				onToggleEngine={handleToggleEngine}
 				onRestart={handleRestart}
+				onSwitchToTproxy={handleSwitchToTproxy}
 			/>
 		{:else if activeTab === 'inbounds'}
 			<!--

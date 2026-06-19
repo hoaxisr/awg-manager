@@ -39,6 +39,8 @@
 		toggleBusy: boolean;
 		onToggleEngine: (turnOn: boolean) => void;
 		onRestart: () => void;
+		/** Opens ConfirmSwitch toward 'tproxy' — passed down to EngineSettingsCard. */
+		onSwitchToTproxy: () => void;
 	}
 
 	let {
@@ -56,6 +58,7 @@
 		toggleBusy,
 		onToggleEngine,
 		onRestart,
+		onSwitchToTproxy,
 	}: Props = $props();
 
 	// engineLive — gate для живых блоков (composite-выборы, live-трафик).
@@ -111,6 +114,7 @@
 		{toggleBusy}
 		{onToggleEngine}
 		{onRestart}
+		{onSwitchToTproxy}
 	/>
 
 	<!-- «Доставка DNS · сегменты» — внизу Обзора (мокап dash3). -->

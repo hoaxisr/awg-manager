@@ -176,14 +176,6 @@ func (t *TrafficAggregator) ingest(msg []byte) {
 	t.mu.Unlock()
 }
 
-// Memory returns the last reported sing-box process memory (bytes) from the
-// Clash /connections WebSocket message. Returns 0 before the first message.
-func (t *TrafficAggregator) Memory() int64 {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.memory
-}
-
 // MemoryEvent is the payload of the "singbox:memory" SSE event.
 type MemoryEvent struct {
 	Memory int64 `json:"memory"`
