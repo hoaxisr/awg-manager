@@ -368,6 +368,13 @@ func (o *Operator) handleStderrLine(line string) {
 	default:
 		o.log.Info("singbox stderr", "line", safeLine)
 	}
+
+	// A successful (re)start clears any prior fatal reason. SIGHUP reload
+	// never goes through the cold-start clear (startAndWait), so without this
+	// a reload-recovered engine would keep reporting a stale СБОЙ cause.
+	if strings.Contains(line, "sing-box started") {
+		o.setLastError("")
+	}
 }
 
 // handleStdoutLine forwards each sing-box stdout line into the app log

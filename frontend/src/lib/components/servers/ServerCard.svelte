@@ -25,6 +25,7 @@
 		ConfGeneratorModal,
 		ServerAccessPolicyDropdown,
 		ServerEndpointSetting,
+		ServerSettingsPanel,
 	} from '$lib/components/servers';
 	import { Toggle, Button, Stat, StatStrip } from '$lib/components/ui';
 	import { Plus, RefreshCw, ExternalLink } from 'lucide-svelte';
@@ -359,9 +360,6 @@
 				{#if server.mtu}
 					<span class="meta mono">MTU {server.mtu}</span>
 				{/if}
-				{#if isBuiltIn && (totalRx > 0 || totalTx > 0)}
-					<span class="meta mono">↓{formatBytes(totalRx)} ↑{formatBytes(totalTx)}</span>
-				{/if}
 			</div>
 			{#if server.keenDnsDomain}
 				<div class="keendns-row">
@@ -374,37 +372,22 @@
 		</div>
 		<div class="header-right">
 			<div class="header-actions">
-				<Button
-					variant="secondary"
-					size="sm"
-					onclick={handleRestartOrStart}
-					disabled={restartingServer || togglingEnabled}
-					loading={restartingServer}
-					iconBefore={restartIcon}
-				>
-					{isUp ? 'Рестарт' : 'Запуск'}
-				</Button>
-			</div>
+					<Button variant="secondary" size="sm" onclick={handleRestartOrStart} disabled={restartingServer || togglingEnabled} loading={restartingServer} iconBefore={restartIcon}>
+						{isUp ? 'Рестарт' : 'Запуск'}
+					</Button>
+				</div>
 		</div>
 	</div>
 
-	{#if isMarked}
-		<div class="kpi-rows">
-			<StatStrip>
-				<Stat value={formatBytes(totalRx)} label="принято" sub="суммарно по клиентам" />
-				<Stat value={formatBytes(totalTx)} label="отправлено" sub="суммарно по клиентам" />
-				<Stat
-					value={`${onlineCount}/${totalPeers}`}
-					label="Клиенты"
-					sub={onlineCount > 0 ? `${onlineCount} онлайн` : 'нет активных'}
-				/>
-				
-			</StatStrip>
-		</div>
-	{/if}
+	<StatStrip>
+		<Stat value={formatBytes(totalRx)} label="RX" />
+		<Stat value={formatBytes(totalTx)} label="TX" />
+		<Stat value={`${onlineCount} / ${totalPeers}`} label="Клиенты" sub={onlineCount > 0 ? `${onlineCount} онлайн` : 'нет активных'} />
+		<Stat value={`UDP :${server.listenPort}`} label="Listen" />
+	</StatStrip>
 
 	{#if isBuiltIn}
-		<div class="server-settings">
+		<ServerSettingsPanel persistKey="awgm:servers:settingsCollapsed">
 			<div class="setting-row setting-row-toggle">
 				<div class="setting-copy">
 					<span class="setting-title">NAT</span>
@@ -466,7 +449,7 @@
 				keenDnsDomain={server.keenDnsDomain}
 				loadingWanIP={loadingBuiltinWanIP}
 			/>
-		</div>
+		</ServerSettingsPanel>
 	{/if}
 
 	<div class="peers-section">
@@ -562,12 +545,12 @@
 	</svg>
 {/snippet}
 
-{#snippet addPeerIcon()}
-	<Plus size={14} strokeWidth={2} aria-hidden="true" />
-{/snippet}
-
 {#snippet restartIcon()}
 	<RefreshCw size={14} strokeWidth={2} aria-hidden="true" />
+{/snippet}
+
+{#snippet addPeerIcon()}
+	<Plus size={14} strokeWidth={2} aria-hidden="true" />
 {/snippet}
 
 <style>
@@ -607,30 +590,10 @@
 		text-decoration: underline;
 	}
 
-	.kpi-rows {
-		display: flex;
-		flex-direction: column;
-		gap: 0.625rem;
-	}
 
 	.server-actions {
 		display: flex;
 		gap: 0.5rem;
 	}
 
-	@media (max-width: 640px) {
-		.header-actions {
-			align-self: stretch;
-			display: grid;
-			grid-template-columns: 1fr;
-			gap: 0.5rem;
-			width: 100%;
-		}
-
-		.header-actions :global(.btn) {
-			width: 100%;
-			min-width: 0;
-			justify-content: center;
-		}
-	}
 </style>

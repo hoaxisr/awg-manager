@@ -178,15 +178,19 @@ func (c *WireguardCommands) RemovePeer(ctx context.Context, ifaceName, pubKey st
 		func() { c.invalidateServer(ifaceName) })
 }
 
-// SetPeerConnect enables or disables a peer.
-func (c *WireguardCommands) SetPeerConnect(ctx context.Context, ifaceName, pubKey string, connect bool) error {
+// SetPeerConnect enables or disables a peer. comment must carry the peer's
+// current name: a partial peer update without it makes NDMS wipe the stored
+// comment (psk/allow-ips survive, comment does not).
+func (c *WireguardCommands) SetPeerConnect(ctx context.Context, ifaceName, pubKey string, connect bool, comment string) error {
+	peer := map[string]any{"key": pubKey, "connect": connect}
+	if comment != "" {
+		peer["comment"] = comment
+	}
 	payload := map[string]any{
 		"interface": map[string]any{
 			ifaceName: map[string]any{
 				"wireguard": map[string]any{
-					"peer": []map[string]any{
-						{"key": pubKey, "connect": connect},
-					},
+					"peer": []map[string]any{peer},
 				},
 			},
 		},

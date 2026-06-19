@@ -122,6 +122,10 @@ type SingboxController interface {
 	// evaluation. May return empty string when the binary is unknown —
 	// callers must tolerate that and degrade gracefully.
 	Binary() string
+	// LastError returns the last captured sing-box fatal/exit reason
+	// (stderr FATAL line or exit tail). Empty after a clean start.
+	// Surfaced via Status.LastError so the UI explains «СБОЙ».
+	LastError() string
 }
 
 // GeoTagExpander is the narrow contract used by dat→SRS rule-set export.
@@ -1312,6 +1316,13 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		// tproxy: chains + PREROUTING jumps + sing-box listening on both inbound sockets.
 		active = jumps && singboxListeningProbe()
 	}
+	// Surface the captured sing-box fatal reason only when the engine is
+	// meant to be up but isn't (СБОЙ). lastError is cleared by the operator
+	// on a successful (re)start, so a healthy engine reports empty.
+	lastError := ""
+	if sr.Enabled && !active && s.deps.Singbox != nil {
+		lastError = s.deps.Singbox.LastError()
+	}
 	issues := s.computeIssues(cfg)
 	// fakeip-tun source-preservation (Task 15): surface the last verdict stored
 	// by the drift-reconcile's assertSourcePreserved. nil (unknown) stays out of
@@ -1386,6 +1397,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		FakeIPSourcePreserve:   fakeIPSourcePreserve,
 		FakeIPPolicyExitReady:  fakeIPPolicyExitReady,
 		Issues:                 issues,
+		LastError:              lastError,
 	}, nil
 }
 

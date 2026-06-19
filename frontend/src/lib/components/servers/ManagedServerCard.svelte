@@ -6,7 +6,8 @@
 	import { servers } from '$lib/stores/servers';
 	import { formatBytes } from '$lib/utils/format';
 	import { EarthLock, Plus, RefreshCw, Settings, Trash2 } from 'lucide-svelte';
-	import { Toggle, Button, Dropdown, ChipMultiSelect, VersionBadge, type DropdownOption } from '$lib/components/ui';
+	import { Toggle, Button, SegmentedControl, ChipMultiSelect, VersionBadge, Stat, StatStrip } from '$lib/components/ui';
+	import type { SegmentedOption } from '$lib/components/ui/segmentedControl';
 	import {
 		EditManagedServerModal,
 		AddManagedPeerModal,
@@ -15,6 +16,7 @@
 		PeerSortControls,
 		ManagedPeerTable,
 		ServerAccessPolicyDropdown,
+		ServerSettingsPanel,
 	} from '$lib/components/servers';
 	import { comparePeerFieldsDirected } from '$lib/utils/peerSort';
 	import { peerSort } from '$lib/stores/peerSort';
@@ -207,9 +209,9 @@
 
 	let natMode = $derived<NatMode>(resolveNatMode(server.natMode, server.natEnabled));
 
-	const natModeOptions: DropdownOption<'full' | 'internet-only' | 'none'>[] = [
-		{ value: 'full', label: 'Полный NAT' },
-		{ value: 'internet-only', label: 'NAT только для интернета' },
+	const natModeOptions: SegmentedOption<'full' | 'internet-only' | 'none'>[] = [
+		{ value: 'full', label: 'Полный' },
+		{ value: 'internet-only', label: 'Интернет' },
 		{ value: 'none', label: 'Без NAT' },
 	];
 
@@ -342,74 +344,41 @@
 				{#if server.mtu}
 					<span class="meta mono">MTU {server.mtu}</span>
 				{/if}
-				{#if stats && (totalRx > 0 || totalTx > 0)}
-					<span class="meta mono">↓{formatBytes(totalRx)} ↑{formatBytes(totalTx)}</span>
-				{/if}
 			</div>
 		</div>
 		<div class="header-right">
 			<div class="header-actions">
-			<Button
-				variant="secondary"
-				size="sm"
-				onclick={handleRestartOrStart}
-				disabled={restartingServer || togglingEnabled || deleting}
-				loading={restartingServer}
-				iconBefore={restartIcon}
-				title={statusUnknown
-					? `Статус сервера «${serverDisplayName}» загружается`
-					: isUp
-						? `Перезапустить сервер «${serverDisplayName}»`
-						: `Запустить сервер «${serverDisplayName}»`}
-			>
-				{statusUnknown ? 'Рестарт' : isUp ? 'Рестарт' : 'Запуск'}
-			</Button>
-			<Button
-				variant="secondary"
-				size="sm"
-				onclick={onOpenASC}
-				iconBefore={ascIcon}
-				title={`Параметры обфускации сервера «${serverDisplayName}»`}
-			>
-				Обфускация
-			</Button>
-			<Button
-				variant="secondary"
-				size="sm"
-				onclick={() => editServerOpen = true}
-				iconBefore={settingsIcon}
-				title={`Настройки сервера «${serverDisplayName}»`}
-			>
-				Настройки
-			</Button>
-			{#if confirmDelete}
-				<Button
-					variant="danger"
-					size="sm"
-					onclick={handleDeleteServer}
-					loading={deleting}
-					title={`Подтвердить удаление сервера «${serverDisplayName}»`}
-				>
-					Подтвердить?
+				<Button variant="secondary" size="sm" onclick={handleRestartOrStart} disabled={restartingServer || togglingEnabled || deleting} loading={restartingServer} iconBefore={restartIcon} title={statusUnknown ? `Статус сервера «${serverDisplayName}» загружается` : isUp ? `Перезапустить сервер «${serverDisplayName}»` : `Запустить сервер «${serverDisplayName}»`}>
+					{statusUnknown ? 'Рестарт' : isUp ? 'Рестарт' : 'Запуск'}
 				</Button>
-			{:else}
-				<Button
-					variant="outline-danger"
-					size="sm"
-					onclick={handleDeleteServer}
-					disabled={deleting}
-					iconBefore={deleteIcon}
-					title={`Удалить сервер «${serverDisplayName}»`}
-				>
-					Удалить
+				<Button variant="secondary" size="sm" onclick={onOpenASC} iconBefore={ascIcon} title={`Параметры обфускации сервера «${serverDisplayName}»`}>
+					Обфускация
 				</Button>
-			{/if}
+				<Button variant="secondary" size="sm" onclick={() => editServerOpen = true} iconBefore={settingsIcon} title={`Настройки сервера «${serverDisplayName}»`}>
+					Настройки
+				</Button>
+				{#if confirmDelete}
+					<Button variant="danger" size="sm" onclick={handleDeleteServer} loading={deleting} title={`Подтвердить удаление сервера «${serverDisplayName}»`}>
+						Подтвердить?
+					</Button>
+				{:else}
+					<Button variant="outline-danger" size="sm" onclick={handleDeleteServer} disabled={deleting} iconBefore={deleteIcon} title={`Удалить сервер «${serverDisplayName}»`}>
+						Удалить
+					</Button>
+				{/if}
 			</div>
 		</div>
 	</div>
 
+	<StatStrip>
+		<Stat value={stats ? formatBytes(totalRx) : '—'} label="RX" />
+		<Stat value={stats ? formatBytes(totalTx) : '—'} label="TX" />
+		<Stat value={`${onlineCount} / ${(server.peers ?? []).length}`} label="Клиенты" sub={onlineCount > 0 ? `${onlineCount} онлайн` : 'нет активных'} />
+		<Stat value={`UDP :${server.listenPort}`} label="Listen" />
+	</StatStrip>
+
 	<!-- Settings -->
-	<div class="server-settings">
+	<ServerSettingsPanel persistKey="awgm:servers:settingsCollapsed">
 		<div class="setting-row">
 			<div class="setting-copy">
 				<span class="setting-title">NAT</span>
@@ -429,12 +398,12 @@
 				{/if}
 			</div>
 			<div class="setting-control">
-				<Dropdown
+				<SegmentedControl
 					value={natMode}
 					options={natModeOptions}
+					ariaLabel="Режим NAT"
 					disabled={togglingNAT}
 					onchange={handleSetNATMode}
-					fullWidth
 				/>
 			</div>
 		</div>
@@ -464,7 +433,7 @@
 			disabled={policyChanging}
 			onchange={handlePolicyChange}
 		/>
-	</div>
+	</ServerSettingsPanel>
 
 	<!-- Peers -->
 	<div class="peers-section">
@@ -548,10 +517,6 @@
 	onclose={() => confModalOpen = false}
 />
 
-{#snippet addPeerIcon()}
-	<Plus size={14} strokeWidth={2} aria-hidden="true" />
-{/snippet}
-
 {#snippet restartIcon()}
 	<RefreshCw size={14} strokeWidth={2} aria-hidden="true" />
 {/snippet}
@@ -566,6 +531,10 @@
 
 {#snippet deleteIcon()}
 	<Trash2 size={14} strokeWidth={2} aria-hidden="true" />
+{/snippet}
+
+{#snippet addPeerIcon()}
+	<Plus size={14} strokeWidth={2} aria-hidden="true" />
 {/snippet}
 
 
@@ -612,7 +581,8 @@
 		border-radius: 2px;
 	}
 
-	.server-settings :global(.picker .chips) {
+
+	:global(.settings-panel-body .picker .chips) {
 		background: var(--color-settings-surface-bg);
 		border-color: var(--color-border);
 		border-radius: var(--radius-sm);

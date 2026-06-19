@@ -47,6 +47,7 @@
   import DnsServersCompact from './DnsServersCompact.svelte';
   import DeviceProxyCompact from './DeviceProxyCompact.svelte';
   import InboundSettingsDrawer from './InboundSettingsDrawer.svelte';
+  import EngineFatalModal from './EngineFatalModal.svelte';
 
   import RuleEditModal from '$lib/components/routing/singboxRouter/RuleEditModal.svelte';
   import RuleSetAddModal from '$lib/components/routing/singboxRouter/RuleSetAddModal.svelte';
@@ -167,6 +168,7 @@
   let dnsRuleEditIdx = $state<number | null>(null);
   let dnsRuleAddOpen = $state(false);
   let dnsGlobalsModalOpen = $state(false);
+  let engineFatalOpen = $state(false);
 
   let inboundDrawerInstance = $state<DeviceProxyInstance | null>(null);
   let inboundDrawerOpen = $state(false);
@@ -278,6 +280,11 @@
       label: 'Движок',
       value: engineStat.value,
       tone: engineStat.tone,
+      onClick:
+        engineStat.value === 'СБОЙ' && $storeStatus?.lastError
+          ? () => (engineFatalOpen = true)
+          : undefined,
+      actionLabel: 'подробнее',
     },
     {
       label: 'Правил',
@@ -840,6 +847,12 @@
   busy={confirmBusy}
   onConfirm={runConfirm}
   onClose={() => { if (!confirmBusy) pendingConfirm = null; }}
+/>
+
+<EngineFatalModal
+  open={engineFatalOpen}
+  lastError={$storeStatus?.lastError ?? ''}
+  onclose={() => (engineFatalOpen = false)}
 />
 
 <style>

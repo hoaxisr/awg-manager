@@ -645,6 +645,18 @@ func TestOperator_HandleStderrLine_RedactsAndSetsLastError(t *testing.T) {
 	}
 }
 
+func TestHandleStderrLine_StartedClearsLastError(t *testing.T) {
+	op := &Operator{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	op.handleStderrLine("+0000 2026-06-14 12:00:00 FATAL[0000] start service: boom")
+	if op.LastError() == "" {
+		t.Fatalf("precondition: expected lastError set after FATAL")
+	}
+	op.handleStderrLine("+0000 2026-06-14 12:00:01 INFO sing-box started (0.01s)")
+	if got := op.LastError(); got != "" {
+		t.Errorf("LastError = %q, want empty after successful start", got)
+	}
+}
+
 func TestOperator_HandleExit_RedactsLastError(t *testing.T) {
 	op := &Operator{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 

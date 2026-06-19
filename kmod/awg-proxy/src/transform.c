@@ -21,6 +21,9 @@ void config_compute(awg_config_t *cfg)
 	cfg->has_server_pub = memcmp(cfg->server_pub, z, 32) != 0;
 	cfg->has_client_pub = memcmp(cfg->client_pub, z, 32) != 0;
 
+	cfg->has_cps = cfg->cps[0] || cfg->cps[1] || cfg->cps[2] ||
+		       cfg->cps[3] || cfg->cps[4];
+
 	compute_mac1_key(cfg->server_pub, cfg->mac1key_server);
 	compute_mac1_key(cfg->client_pub, cfg->mac1key_client);
 
@@ -55,11 +58,13 @@ static inline void write32_le(u8 *p, u32 v)
 
 u8 *transform_outbound(u8 *buf, int dataoff, int n,
 		       const awg_config_t *cfg, u64 rand_val,
-		       int *out_len, int *sendJunk, u32 *out_msgType)
+		       int *out_len, int *sendCps, int *sendJunk,
+		       u32 *out_msgType)
 {
 	u8 *data = buf + dataoff;
 	u32 msgType;
 
+	*sendCps = 0;
 	*sendJunk = 0;
 	*out_msgType = 0;
 	if (n < 4) {
@@ -74,6 +79,9 @@ u8 *transform_outbound(u8 *buf, int dataoff, int n,
 		write32_le(data, hrange_pick(&cfg->h1, rand_val));
 		if (cfg->has_server_pub)
 			recompute_mac1(data, cfg->mac1key_server);
+		/* CPS (I1-I5) and Jc junk are independently gated, matching the
+		 * reference: ispecs fire whenever configured, junk only on jc>0. */
+		*sendCps = cfg->has_cps;
 		*sendJunk = (cfg->jc > 0);
 		if (cfg->s1 > 0) {
 			if (WARN_ON_ONCE(dataoff < cfg->s1)) {

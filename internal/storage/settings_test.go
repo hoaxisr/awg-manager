@@ -421,7 +421,7 @@ func TestLoadUpgradeFromV15SetsAdvanced(t *testing.T) {
 		"disableMemorySaving": false,
 		"updates": {"checkEnabled": true},
 		"dnsRoute": {"autoRefreshEnabled": false, "refreshIntervalHours": 0},
-		"singboxRouter": {"enabled": false, "policyName": "", "refreshMode": "interval", "refreshIntervalHours": 24}
+		"singboxRouter": {"enabled": false, "policyName": ""}
 	}`
 	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(v15), 0644); err != nil {
 		t.Fatalf("seed: %v", err)

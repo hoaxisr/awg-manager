@@ -98,6 +98,7 @@ typedef struct {
 	int cookie_total;   /* S3 + 64 */
 	int has_server_pub;
 	int has_client_pub;
+	int has_cps;        /* any of cps[0..4] != NULL */
 	int transport_size_ambiguous;
 
 	/* Proxy-specific (not in reference) */
@@ -112,14 +113,19 @@ void config_compute(awg_config_t *cfg);
 /*
  * Transform outbound WG->AWG.
  * buf has dataoff bytes of headroom before the packet data.
- * sendJunk is set to 1 if junk+CPS should be sent before this packet.
+ * sendCps is set to 1 if I1-I5 CPS packets should be sent before this packet
+ * (handshake init only, gated on any cps[] configured — independent of Jc, as
+ * in amneziawg-linux-kernel-module src/send.c where the ispec loop is
+ * unconditional and only the Jc junk loop is gated by jc && jmax).
+ * sendJunk is set to 1 if Jc junk packets should be sent before this packet.
  * out_msgType receives the original WG msgType (pre-substitution); the caller
  * uses it to apply HANDSHAKE_DSCP to init/response sends.
  * Returns pointer to output data.
  */
 u8 *transform_outbound(u8 *buf, int dataoff, int n,
 		       const awg_config_t *cfg, u64 rand_val,
-		       int *out_len, int *sendJunk, u32 *out_msgType);
+		       int *out_len, int *sendCps, int *sendJunk,
+		       u32 *out_msgType);
 
 /*
  * Transform inbound AWG->WG.

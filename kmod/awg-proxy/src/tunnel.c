@@ -93,6 +93,7 @@ int awg_config_parse(const char *config_line, awg_config_t *cfg)
 		char key[32];
 		char *val;
 		int ki = 0, vi = 0;
+		int bad = 0;
 
 		val = kmalloc(4096, GFP_KERNEL);
 		if (!val)
@@ -128,37 +129,53 @@ int awg_config_parse(const char *config_line, awg_config_t *cfg)
 		}
 		val[vi] = '\0';
 
-		/* Parse known keys */
+		/* Parse known keys. A malformed value (kstrtoint error, or an
+		 * H range that is neither "N" nor "N-M") is fail-closed: set
+		 * bad and reject the whole config below, rather than silently
+		 * leaving the field at its zero/default and disabling the
+		 * obfuscation parameter the user asked for. */
 		if (strcmp(key, "H1") == 0) {
-			if (sscanf(val, "%u-%u",
-				   &cfg->h1.min, &cfg->h1.max) == 1)
+			int r = sscanf(val, "%u-%u", &cfg->h1.min, &cfg->h1.max);
+
+			if (r == 1)
 				cfg->h1.max = cfg->h1.min;
+			else if (r != 2)
+				bad = 1;
 		} else if (strcmp(key, "H2") == 0) {
-			if (sscanf(val, "%u-%u",
-				   &cfg->h2.min, &cfg->h2.max) == 1)
+			int r = sscanf(val, "%u-%u", &cfg->h2.min, &cfg->h2.max);
+
+			if (r == 1)
 				cfg->h2.max = cfg->h2.min;
+			else if (r != 2)
+				bad = 1;
 		} else if (strcmp(key, "H3") == 0) {
-			if (sscanf(val, "%u-%u",
-				   &cfg->h3.min, &cfg->h3.max) == 1)
+			int r = sscanf(val, "%u-%u", &cfg->h3.min, &cfg->h3.max);
+
+			if (r == 1)
 				cfg->h3.max = cfg->h3.min;
+			else if (r != 2)
+				bad = 1;
 		} else if (strcmp(key, "H4") == 0) {
-			if (sscanf(val, "%u-%u",
-				   &cfg->h4.min, &cfg->h4.max) == 1)
+			int r = sscanf(val, "%u-%u", &cfg->h4.min, &cfg->h4.max);
+
+			if (r == 1)
 				cfg->h4.max = cfg->h4.min;
+			else if (r != 2)
+				bad = 1;
 		} else if (strcmp(key, "S1") == 0) {
-			kstrtoint(val, 10, &cfg->s1);
+			bad = kstrtoint(val, 10, &cfg->s1) != 0;
 		} else if (strcmp(key, "S2") == 0) {
-			kstrtoint(val, 10, &cfg->s2);
+			bad = kstrtoint(val, 10, &cfg->s2) != 0;
 		} else if (strcmp(key, "S3") == 0) {
-			kstrtoint(val, 10, &cfg->s3);
+			bad = kstrtoint(val, 10, &cfg->s3) != 0;
 		} else if (strcmp(key, "S4") == 0) {
-			kstrtoint(val, 10, &cfg->s4);
+			bad = kstrtoint(val, 10, &cfg->s4) != 0;
 		} else if (strcmp(key, "Jc") == 0) {
-			kstrtoint(val, 10, &cfg->jc);
+			bad = kstrtoint(val, 10, &cfg->jc) != 0;
 		} else if (strcmp(key, "Jmin") == 0) {
-			kstrtoint(val, 10, &cfg->jmin);
+			bad = kstrtoint(val, 10, &cfg->jmin) != 0;
 		} else if (strcmp(key, "Jmax") == 0) {
-			kstrtoint(val, 10, &cfg->jmax);
+			bad = kstrtoint(val, 10, &cfg->jmax) != 0;
 		} else if (strcmp(key, "PUB_SERVER") == 0) {
 			if (parse_hex_exact(val, cfg->server_pub, 32)) {
 				pr_warn("awg_proxy: invalid PUB_SERVER\n");
@@ -190,6 +207,11 @@ int awg_config_parse(const char *config_line, awg_config_t *cfg)
 			}
 		}
 		kfree(val);
+
+		if (bad) {
+			pr_warn("awg_proxy: invalid value for %s\n", key);
+			goto out_invalid;
+		}
 	}
 
 	/* Validate config ranges */

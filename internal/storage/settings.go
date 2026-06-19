@@ -199,13 +199,11 @@ func (s *SettingsStore) defaultSettings() *Settings {
 		},
 		ConnectivityCheckURL: DefaultConnectivityCheckURL,
 		SingboxRouter: SingboxRouterSettings{
-			Enabled:         false,
-			DeviceMode:      "policy",
-			RoutingMode:     "tproxy",
-			SnifferEnabled:  true,
-			RefreshMode:     "interval",
-			RefreshInterval: 24,
-			WANAutoDetect:   true, // sing-box auto_detect_interface by default
+			Enabled:        false,
+			DeviceMode:     "policy",
+			RoutingMode:    "tproxy",
+			SnifferEnabled: true,
+			WANAutoDetect:  true, // sing-box auto_detect_interface by default
 		},
 		CreateNDMSProxyForSingbox: true,
 		// Fresh installs have no legacy peers — nothing to sweep. Only
@@ -319,16 +317,11 @@ func (s *SettingsStore) migrateToV13(settings *Settings) {
 	settings.SchemaVersion = 13
 }
 
-// migrateToV14 sets SingboxRouter defaults for the new TProxy routing
-// engine. Idempotent — fields that are non-zero stay as-is.
-// Note: Mode field was removed in V15; only RefreshMode/RefreshInterval are set here.
+// migrateToV14 historically set SingboxRouter refresh defaults for the new
+// TProxy routing engine. Those fields were removed (rule-set refresh is now
+// native to sing-box via update_interval); the migration only bumps the
+// schema version to keep the chain intact.
 func (s *SettingsStore) migrateToV14(settings *Settings) {
-	if settings.SingboxRouter.RefreshMode == "" {
-		settings.SingboxRouter.RefreshMode = "interval"
-	}
-	if settings.SingboxRouter.RefreshInterval == 0 {
-		settings.SingboxRouter.RefreshInterval = 24
-	}
 	settings.SchemaVersion = 14
 }
 

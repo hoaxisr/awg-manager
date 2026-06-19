@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
@@ -57,8 +58,8 @@ type WireguardServerDTO struct {
 	KeenDNSDomain string                   `json:"keenDnsDomain,omitempty" example:"home.keenetic.pro"`
 	// Endpoint is the user-configured connect host for client .conf files.
 	// Empty = WAN IP at generation time.
-	Endpoint      string                   `json:"endpoint,omitempty" example:"203.0.113.42"`
-	BuiltIn       bool                     `json:"builtIn,omitempty" example:"true"`
+	Endpoint string `json:"endpoint,omitempty" example:"203.0.113.42"`
+	BuiltIn  bool   `json:"builtIn,omitempty" example:"true"`
 	// NATModeKnown/PolicyKnown are false when the corresponding NDMS read
 	// failed (e.g. transient router error). The frontend must render an
 	// "unknown" state instead of trusting the zero-valued NATMode/Policy,
@@ -146,13 +147,14 @@ func isValidWireguardName(name string) bool {
 // resource:invalidated hints on mark/unmark and poller metrics ticks so
 // subscribers refetch immediately instead of waiting for the next poll.
 type ServersHandler struct {
-	queries     *query.Queries
-	commands    *ndmscommand.Commands
-	settings    *storage.SettingsStore
-	awgStore    *storage.AWGTunnelStore
-	bus         *events.Bus
-	managed     *ManagedServerHandler
-	managedSvc  *managed.Service
+	queries    *query.Queries
+	commands   *ndmscommand.Commands
+	settings   *storage.SettingsStore
+	awgStore   *storage.AWGTunnelStore
+	bus        *events.Bus
+	managed    *ManagedServerHandler
+	managedSvc *managed.Service
+	log        *logging.ScopedLogger
 }
 
 // SetEventBus sets the event bus used for SSE publishing.
@@ -186,8 +188,13 @@ func (h *ServersHandler) publishServerInvalidated(reason string) {
 }
 
 // NewServersHandler creates a new servers handler.
-func NewServersHandler(queries *query.Queries, settings *storage.SettingsStore, awgStore *storage.AWGTunnelStore) *ServersHandler {
-	return &ServersHandler{queries: queries, settings: settings, awgStore: awgStore}
+func NewServersHandler(queries *query.Queries, settings *storage.SettingsStore, awgStore *storage.AWGTunnelStore, appLogger logging.AppLogger) *ServersHandler {
+	return &ServersHandler{
+		queries:  queries,
+		settings: settings,
+		awgStore: awgStore,
+		log:      logging.NewScopedLogger(appLogger, logging.GroupServer, logging.SubWan),
+	}
 }
 
 type serverEnabledRequest struct {

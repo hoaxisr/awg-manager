@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { LegacyTabs, LegacyTab, IconButton } from '$lib/components/ui';
 	import BrandLogoMark from './BrandLogoMark.svelte';
+	import NotificationCenter from './NotificationCenter.svelte';
 	import { usageLevel } from '$lib/stores/settings';
 	import type { ThemeState } from '$lib/stores/theme';
 	import { isAppearanceSettingsVisible, isSectionVisible, type Section } from '$lib/types/usageLevel';
@@ -238,6 +239,8 @@
 			{#if authenticated && !authDisabled && username}
 				<span class="user-chip">{username}</span>
 			{/if}
+
+			<NotificationCenter {authenticated} />
 
 			{#if authenticated && isSectionVisible($usageLevel, 'terminal')}
 				<IconButton ariaLabel="Терминал" href="/terminal">

@@ -126,6 +126,69 @@ static void test_rejects_invalid_public_key_hex(void)
 		    "non-hex public key data must be rejected");
 }
 
+/*
+ * Fail-closed parsing (M3): a non-numeric S/Jc value must reject the whole
+ * config, not silently leave the field at 0 and disable obfuscation.
+ */
+static void test_rejects_non_numeric_s_value(void)
+{
+	awg_config_t cfg;
+	int ret;
+
+	tests_run++;
+	ret = awg_config_parse("203.0.113.1:51820 S1=abc", &cfg);
+	ASSERT_TRUE("rejects_non_numeric_s_value", ret != 0,
+		    "non-numeric S1 must be rejected, not coerced to 0");
+}
+
+static void test_rejects_non_numeric_jc_value(void)
+{
+	awg_config_t cfg;
+	int ret;
+
+	tests_run++;
+	ret = awg_config_parse("203.0.113.1:51820 Jc=xyz", &cfg);
+	ASSERT_TRUE("rejects_non_numeric_jc_value", ret != 0,
+		    "non-numeric Jc must be rejected, not coerced to 0");
+}
+
+/*
+ * Fail-closed parsing (M4): a malformed H value (neither "N" nor "N-M") must
+ * reject the config, not silently keep the default header range.
+ */
+static void test_rejects_malformed_h_value(void)
+{
+	awg_config_t cfg;
+	int ret;
+
+	tests_run++;
+	ret = awg_config_parse("203.0.113.1:51820 H1=garbage", &cfg);
+	ASSERT_TRUE("rejects_malformed_h_value", ret != 0,
+		    "malformed H1 must be rejected, not left at default");
+}
+
+/*
+ * Guard: valid S/Jc and a single-value H ("N", sscanf returns 1) still parse.
+ */
+static void test_accepts_valid_numeric_values(void)
+{
+	awg_config_t cfg;
+	int ret;
+
+	tests_run++;
+	ret = awg_config_parse("203.0.113.1:51820 H1=100 S1=16 Jc=2 Jmin=40 Jmax=60",
+			       &cfg);
+	ASSERT_TRUE("accepts_valid_numeric_values", ret == 0,
+		    "valid numeric S/Jc and single-value H must parse");
+	if (!ret) {
+		ASSERT_TRUE("accepts_valid_numeric_values",
+			    cfg.s1 == 16 && cfg.jc == 2 &&
+			    cfg.h1.min == 100 && cfg.h1.max == 100,
+			    "parsed values must match input");
+		awg_config_free(&cfg);
+	}
+}
+
 int main(void)
 {
 	test_accepts_non_overlapping_h_ranges();
@@ -135,6 +198,10 @@ int main(void)
 	test_rejects_short_public_key();
 	test_rejects_long_public_key();
 	test_rejects_invalid_public_key_hex();
+	test_rejects_non_numeric_s_value();
+	test_rejects_non_numeric_jc_value();
+	test_rejects_malformed_h_value();
+	test_accepts_valid_numeric_values();
 
 	printf("\n=== %d run, %d failed ===\n", tests_run, tests_failed);
 	return tests_failed == 0 ? 0 : 1;

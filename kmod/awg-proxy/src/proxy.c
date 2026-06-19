@@ -221,14 +221,16 @@ static void send_cps_packets(struct awg_proxy *proxy)
 				     &dst);
 		if (sret >= 0)
 			proxy->cps_counter++;
-		/* Inter-packet jitter to match reference's natural workqueue
-		 * scheduling cadence. Without this, our kthread blasts all
-		 * handshake-cycle packets back-to-back in <1ms — a server-side
-		 * fingerprint (sub-millisecond burst of 4+ UDP packets from one
-		 * source). It also gives Linux's IP-ID hash bucket a chance to
-		 * advance with `delta = prandom_u32_max(now - old)`, avoiding
-		 * a perfect +1 ID sequence that screams "bot/proxy" to any WAF. */
-		usleep_range(1500, 2500);
+		/*
+		 * No inter-packet delay: the reference (amneziawg src/send.c)
+		 * emits the whole handshake-init cycle (I1-I5, Jc junk, init)
+		 * back-to-back with no sleep, so a sub-ms burst is exactly what
+		 * native AWG traffic looks like — spacing it out by ~2ms made us
+		 * the outlier on the wire, not the crowd. The cold-neighbour
+		 * arp_queue (unres_qlen_bytes=64KB, ~30+ small packets) dwarfs
+		 * any sane burst, and a rare first-cycle drop is self-healed by
+		 * the WG handshake retry.
+		 */
 	}
 	kfree(bufs);
 }
@@ -275,8 +277,8 @@ static void send_junk_packets(struct awg_proxy *proxy)
 					(char *)&tos, sizeof(tos));
 
 		proxy_sendmsg(proxy->remote_sock, junk, sizes[i], &dst);
-		/* Inter-packet jitter — see send_cps_packets() for rationale. */
-		usleep_range(1500, 2500);
+		/* No inter-packet delay — burst like the reference; see
+		 * send_cps_packets() for rationale. */
 	}
 
 	/* Restore default TOS=0 so the subsequent handshake init / steady-state
@@ -323,7 +325,7 @@ static int c2s_thread_fn(void *data)
 		struct kvec iov;
 		struct sockaddr_in from;
 		u8 *payload, *out;
-		int n, out_len, sendJunk;
+		int n, out_len, sendCps, sendJunk;
 		u32 msgType;
 		u64 rand_val;
 		u8 captured_mac1_old[16];
@@ -387,7 +389,7 @@ static int c2s_thread_fn(void *data)
 		/* Transform WG -> AWG (handles all message types) */
 		out = transform_outbound(raw_buf, headroom, n,
 					 &proxy->cfg, rand_val,
-					 &out_len, &sendJunk, &msgType);
+					 &out_len, &sendCps, &sendJunk, &msgType);
 
 		if (mac1_capture_pending && proxy->has_cookie_key) {
 			int s_prefix = -1;
@@ -443,24 +445,24 @@ static int c2s_thread_fn(void *data)
 			memzero_explicit(cookie_copy, sizeof(cookie_copy));
 		}
 
-		/* Send CPS + junk before handshake init if needed */
-		if (sendJunk) {
-			/*
-			 * Re-seed CPS counter to a fresh random value at the
-			 * start of each handshake-init cycle — matches the
-			 * reference's `atomic_set(&peer->jp_packet_counter,
-			 * get_random_u32())` (src/send.c:43).
-			 *
-			 * Without this, our counter would start at 0 and grow
-			 * monotonically across the tunnel lifetime, producing
-			 * a trivially-predictable byte sequence in <c>-tokens
-			 * of every handshake's CPS packets (DPI fingerprint).
-			 */
+		/*
+		 * Send I1-I5 CPS packets before the handshake init whenever any
+		 * template is configured — independent of Jc, matching the
+		 * reference (src/send.c: the ispec loop is unconditional; only
+		 * the Jc junk loop is gated by jc && jmax). Re-seed the CPS
+		 * counter to a fresh random value at the start of each cycle —
+		 * matches `atomic_set(&peer->jp_packet_counter, get_random_u32())`
+		 * (src/send.c:45). Without it the counter would grow
+		 * monotonically across the tunnel lifetime, a DPI fingerprint in
+		 * the <c>-tokens.
+		 */
+		if (sendCps) {
 			get_random_bytes(&proxy->cps_counter,
 					 sizeof(proxy->cps_counter));
 			send_cps_packets(proxy);
-			send_junk_packets(proxy);
 		}
+		if (sendJunk)
+			send_junk_packets(proxy);
 
 		/* Send transformed packet to remote AWG server.
 		 *
@@ -744,10 +746,12 @@ int awg_proxy_add(const char *config_line)
 	 * as the very first packet from a source as malformed/scanner
 	 * traffic, then accumulates that flag toward eventual blacklist.
 	 *
-	 * Removed in v1.1.6. To mitigate the ARP-queue race the inter-packet
-	 * jitter in send_cps_packets()/send_junk_packets() now spaces
-	 * handshake-cycle packets by ~2ms each, which is enough for the
-	 * gateway resolution to complete on a normal first-cycle.
+	 * Removed in v1.1.6. The handshake-cycle packets now go out as a
+	 * back-to-back burst (matching the reference, which never spaces
+	 * them). The shared WAN-gateway neighbour is virtually always warm;
+	 * even cold, its arp_queue (unres_qlen_bytes=64KB, ~30+ small
+	 * packets) dwarfs any sane burst, and a rare first-cycle drop is
+	 * self-healed by the WG handshake retry.
 	 */
 
 	p->active = true;

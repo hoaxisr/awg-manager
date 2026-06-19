@@ -95,11 +95,8 @@ type SingboxRouterSettings struct {
 	// RoutingMode selects the sing-box routing path:
 	// "tproxy" (default) keeps the historical TPROXY/REDIRECT behavior;
 	// "fakeip-tun" routes via a fake-IP DNS pool + tun device.
-	RoutingMode     string `json:"routingMode,omitempty"`
-	SnifferEnabled  bool   `json:"snifferEnabled"`
-	RefreshMode     string `json:"refreshMode,omitempty"`
-	RefreshInterval int    `json:"refreshIntervalHours,omitempty"`
-	RefreshDaily    string `json:"refreshDailyTime,omitempty"`
+	RoutingMode    string `json:"routingMode,omitempty"`
+	SnifferEnabled bool   `json:"snifferEnabled"`
 	// WANAutoDetect is the discriminator for the WAN-binding mode.
 	// true (default) → sing-box uses route.auto_detect_interface; the
 	// WANInterface field is ignored and must be empty (enforced by

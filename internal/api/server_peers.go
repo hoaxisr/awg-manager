@@ -354,11 +354,12 @@ func (h *ServersHandler) ToggleServerPeer(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if findServerPeer(server, pubkey) == nil {
+	peer := findServerPeer(server, pubkey)
+	if peer == nil {
 		response.Error(w, "peer not found", "NOT_FOUND")
 		return
 	}
-	if err := h.commands.Wireguard.SetPeerConnect(r.Context(), name, pubkey, req.Enabled); err != nil {
+	if err := h.commands.Wireguard.SetPeerConnect(r.Context(), name, pubkey, req.Enabled, peer.Description); err != nil {
 		response.Error(w, err.Error(), "TOGGLE_FAILED")
 		return
 	}
@@ -465,6 +466,7 @@ func (h *ServersHandler) resolveServerEndpoint(ctx context.Context, serverID str
 	if host := resolveWireguardClientEndpointHost(storedEndpoint, keenDNSDomain); host != "" {
 		return host, nil
 	}
+	h.log.Info("endpoint", serverID, "KeenDNS/CrazeDNS не настроен — endpoint WireGuard-сервера будет указан как WAN IP")
 	return testing.GetWANIPWithFallback(ctx, h.queries.WANInterfaceAddress)
 }
 

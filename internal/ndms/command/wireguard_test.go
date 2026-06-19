@@ -146,6 +146,47 @@ func TestWireguardCommands_SetASCParams(t *testing.T) {
 	}
 }
 
+// Disabling a peer must carry its comment, else NDMS wipes the stored name.
+func TestWireguardCommands_SetPeerConnect_PreservesComment(t *testing.T) {
+	poster := &fakePoster{}
+	pub := &fakePublisher{}
+	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
+	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger()})
+	cmds := NewWireguardCommands(poster, sc, q)
+
+	if err := cmds.SetPeerConnect(context.Background(), "Wireguard0", "KEY=", false, "dacha"); err != nil {
+		t.Fatalf("SetPeerConnect: %v", err)
+	}
+
+	p := poster.Payloads()[0].(map[string]any)
+	peer := p["interface"].(map[string]any)["Wireguard0"].(map[string]any)["wireguard"].(map[string]any)["peer"].([]map[string]any)[0]
+	if peer["connect"] != false {
+		t.Errorf("connect: %#v", peer["connect"])
+	}
+	if peer["comment"] != "dacha" {
+		t.Errorf("comment not carried: %#v", peer["comment"])
+	}
+}
+
+// An empty name must NOT emit a comment key (nothing to preserve).
+func TestWireguardCommands_SetPeerConnect_OmitsEmptyComment(t *testing.T) {
+	poster := &fakePoster{}
+	pub := &fakePublisher{}
+	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
+	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger()})
+	cmds := NewWireguardCommands(poster, sc, q)
+
+	if err := cmds.SetPeerConnect(context.Background(), "Wireguard0", "KEY=", true, ""); err != nil {
+		t.Fatalf("SetPeerConnect: %v", err)
+	}
+
+	p := poster.Payloads()[0].(map[string]any)
+	peer := p["interface"].(map[string]any)["Wireguard0"].(map[string]any)["wireguard"].(map[string]any)["peer"].([]map[string]any)[0]
+	if _, ok := peer["comment"]; ok {
+		t.Errorf("comment key must be absent for empty name: %#v", peer)
+	}
+}
+
 func TestWireguardCommands_SetASCParams_InvalidJSON(t *testing.T) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}

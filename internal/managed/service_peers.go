@@ -202,11 +202,11 @@ func (s *Service) TogglePeer(ctx context.Context, id, pubkey string, enabled boo
 
 	iface := server.InterfaceName
 
-	if err := s.rciSetPeerConnect(ctx, iface, pubkey, enabled); err != nil {
+	peerName := server.Peers[idx].Description
+	if err := s.rciSetPeerConnect(ctx, iface, pubkey, enabled, peerName); err != nil {
 		return fmt.Errorf("toggle peer: %w", err)
 	}
 
-	peerName := server.Peers[idx].Description
 	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
 		// Re-resolve under the storage lock — the index from the pre-lock copy
 		// may be stale if another goroutine added/removed peers in between.

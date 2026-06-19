@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { notificationCenter } from './notificationCenter';
 
 export type NotificationType = 'success' | 'error' | 'info' | 'warning';
 
@@ -40,6 +41,10 @@ function createNotificationStore() {
 		const dur = opts.duration ?? 5000;
 		if (dur > 0) {
 			setTimeout(() => remove(id), dur);
+		}
+
+		if (type === 'error' || type === 'warning') {
+			notificationCenter.record({ type, message, action: opts.action, ts: Date.now() });
 		}
 
 		return id;

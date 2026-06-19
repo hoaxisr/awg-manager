@@ -195,7 +195,7 @@ func TestUpdateUsageLevelInvalidRejected(t *testing.T) {
 		"updates": {"checkEnabled": true},
 		"dnsRoute": {"autoRefreshEnabled": false},
 		"usageLevel": "garbage",
-		"singboxRouter": {"enabled": false, "policyName": "", "refreshMode": "interval", "refreshIntervalHours": 24}
+		"singboxRouter": {"enabled": false, "policyName": ""}
 	}`)
 
 	req := httptest.NewRequest(http.MethodPost, "/settings/update", bytes.NewReader(body))
@@ -239,7 +239,7 @@ func TestUpdateUsageLevelEmptyPreserves(t *testing.T) {
 		"disableMemorySaving": false,
 		"updates": {"checkEnabled": true},
 		"dnsRoute": {"autoRefreshEnabled": false},
-		"singboxRouter": {"enabled": false, "policyName": "", "refreshMode": "interval", "refreshIntervalHours": 24}
+		"singboxRouter": {"enabled": false, "policyName": ""}
 	}`)
 
 	req := httptest.NewRequest(http.MethodPost, "/settings/update", bytes.NewReader(body))

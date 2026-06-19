@@ -15,6 +15,7 @@
 
 #include "shim.h"
 #include "../src/transform.h"
+#include "../src/cps.h"
 #include "../src/blake2s.h"
 #include "../src/cookie.h"
 
@@ -92,7 +93,7 @@ static void test_s4_random_fill(void)
 	awg_config_t cfg;
 	u8 buf[512];
 	int dataoff = 256;
-	int out_len, sendJunk;
+	int out_len, sendCps, sendJunk;
 	u32 msgType;
 	u8 *out;
 
@@ -110,7 +111,7 @@ static void test_s4_random_fill(void)
 	shim_set_random_seed(0xCAFE);
 	out = transform_outbound(buf, dataoff, WG_TRANSPORT_MIN,
 				 &cfg, 0x42ULL,
-				 &out_len, &sendJunk, &msgType);
+				 &out_len, &sendCps, &sendJunk, &msgType);
 
 	ASSERT_PTR_EQ("s4_random_fill", out, buf + dataoff - 64, "returned pointer");
 	ASSERT_EQ("s4_random_fill", out_len, 64 + WG_TRANSPORT_MIN, "out_len");
@@ -130,7 +131,7 @@ static void test_s4_deterministic(void)
 	awg_config_t cfg;
 	u8 buf1[512], buf2[512];
 	int dataoff = 256;
-	int out_len, sendJunk;
+	int out_len, sendCps, sendJunk;
 	u32 msgType;
 
 	tests_run++;
@@ -145,7 +146,7 @@ static void test_s4_deterministic(void)
 	memset(buf1 + dataoff + 4, 0xBB, WG_TRANSPORT_MIN - 4);
 	shim_set_random_seed(0x12345);
 	transform_outbound(buf1, dataoff, WG_TRANSPORT_MIN,
-			   &cfg, 0x42ULL, &out_len, &sendJunk, &msgType);
+			   &cfg, 0x42ULL, &out_len, &sendCps, &sendJunk, &msgType);
 
 	/* Second call, same seed */
 	memset(buf2, 0, sizeof(buf2));
@@ -153,7 +154,7 @@ static void test_s4_deterministic(void)
 	memset(buf2 + dataoff + 4, 0xBB, WG_TRANSPORT_MIN - 4);
 	shim_set_random_seed(0x12345);
 	transform_outbound(buf2, dataoff, WG_TRANSPORT_MIN,
-			   &cfg, 0x42ULL, &out_len, &sendJunk, &msgType);
+			   &cfg, 0x42ULL, &out_len, &sendCps, &sendJunk, &msgType);
 
 	ASSERT_TRUE("s4_deterministic",
 		    memcmp(buf1 + dataoff - 64, buf2 + dataoff - 64, 64) == 0,
@@ -168,7 +169,7 @@ static void test_s1_random_fill(void)
 	awg_config_t cfg;
 	u8 buf[512];
 	int dataoff = 256;
-	int out_len, sendJunk;
+	int out_len, sendCps, sendJunk;
 	u32 msgType;
 	u8 *out;
 
@@ -186,7 +187,7 @@ static void test_s1_random_fill(void)
 	shim_set_random_seed(0xBEEF);
 	out = transform_outbound(buf, dataoff, WG_INIT_SIZE,
 				 &cfg, 0x99ULL,
-				 &out_len, &sendJunk, &msgType);
+				 &out_len, &sendCps, &sendJunk, &msgType);
 
 	ASSERT_PTR_EQ("s1_random_fill", out, buf + dataoff - 32, "returned pointer");
 	ASSERT_EQ("s1_random_fill", out_len, 32 + WG_INIT_SIZE, "out_len");
@@ -205,7 +206,7 @@ static void test_s4_noop_passthrough(void)
 	awg_config_t cfg;
 	u8 buf[256];
 	int dataoff = 64;
-	int out_len, sendJunk;
+	int out_len, sendCps, sendJunk;
 	u32 msgType;
 	u8 *out;
 
@@ -222,10 +223,84 @@ static void test_s4_noop_passthrough(void)
 
 	out = transform_outbound(buf, dataoff, WG_TRANSPORT_MIN,
 				 &cfg, 0ULL,
-				 &out_len, &sendJunk, &msgType);
+				 &out_len, &sendCps, &sendJunk, &msgType);
 
 	ASSERT_PTR_EQ("s4_noop_passthrough", out, buf + dataoff, "pointer unchanged");
 	ASSERT_EQ("s4_noop_passthrough", out_len, WG_TRANSPORT_MIN, "length unchanged");
+}
+
+/*
+ * Test 4b: I1-I5 CPS sending is gated independently of Jc (issue: D1).
+ *
+ * Regression sentinel. The reference (amneziawg src/send.c) sends its
+ * ispec/I1-I5 packets unconditionally on every handshake init; only the Jc
+ * junk loop is gated by jc && jmax. A config with a CPS template but Jc=0 is
+ * valid and reachable. Before the fix, transform_outbound only emitted a
+ * single sendJunk=(jc>0) flag, so with Jc=0 the proxy sent NO I-packets while
+ * a native AWG client would. After the fix, sendCps reflects has_cps and is
+ * independent of jc.
+ */
+static void test_sendcps_independent_of_jc(void)
+{
+	awg_config_t cfg;
+	cps_template_t tmpl;
+	u8 buf[512];
+	int dataoff = 256;
+	int out_len, sendCps, sendJunk;
+	u32 msgType;
+
+	tests_run++;
+	cfg_init(&cfg);
+	ASSERT_EQ("sendcps_indep_jc", cps_parse("<c><r 8>", &tmpl), 0,
+		  "CPS template should parse");
+	cfg.cps[0] = &tmpl;
+	cfg.jc = 0;                 /* no Jc junk */
+	config_compute(&cfg);
+
+	ASSERT_TRUE("sendcps_indep_jc", cfg.has_cps,
+		    "has_cps must be set when a cps[] template is present");
+
+	write32_le_host(buf + dataoff, WG_HANDSHAKE_INIT);
+	memset(buf + dataoff + 4, 0xCC, WG_INIT_SIZE - 4);
+
+	transform_outbound(buf, dataoff, WG_INIT_SIZE,
+			   &cfg, 0x1ULL,
+			   &out_len, &sendCps, &sendJunk, &msgType);
+
+	ASSERT_EQ("sendcps_indep_jc", sendCps, 1,
+		  "CPS must fire on handshake init even with Jc=0");
+	ASSERT_EQ("sendcps_indep_jc", sendJunk, 0,
+		  "junk must not fire when Jc=0");
+}
+
+/*
+ * Test 4c: no CPS templates → sendCps stays 0 on handshake init.
+ */
+static void test_sendcps_zero_without_templates(void)
+{
+	awg_config_t cfg;
+	u8 buf[512];
+	int dataoff = 256;
+	int out_len, sendCps, sendJunk;
+	u32 msgType;
+
+	tests_run++;
+	cfg_init(&cfg);
+	cfg.jc = 2; cfg.jmin = 40; cfg.jmax = 60;   /* junk on, no CPS */
+	config_compute(&cfg);
+
+	ASSERT_TRUE("sendcps_zero", !cfg.has_cps,
+		    "has_cps must be 0 when no cps[] templates configured");
+
+	write32_le_host(buf + dataoff, WG_HANDSHAKE_INIT);
+	memset(buf + dataoff + 4, 0xCC, WG_INIT_SIZE - 4);
+
+	transform_outbound(buf, dataoff, WG_INIT_SIZE,
+			   &cfg, 0x1ULL,
+			   &out_len, &sendCps, &sendJunk, &msgType);
+
+	ASSERT_EQ("sendcps_zero", sendCps, 0, "no CPS templates → sendCps=0");
+	ASSERT_EQ("sendcps_zero", sendJunk, 1, "Jc>0 → sendJunk=1");
 }
 
 /*
@@ -237,7 +312,7 @@ static void test_mac1_recompute_outbound_init(void)
 	awg_config_t cfg;
 	u8 buf[512];
 	int dataoff = 256;
-	int out_len, sendJunk;
+	int out_len, sendCps, sendJunk;
 	u32 msgType;
 	u8 mac1_before[16];
 
@@ -260,7 +335,7 @@ static void test_mac1_recompute_outbound_init(void)
 
 	transform_outbound(buf, dataoff, WG_INIT_SIZE,
 			   &cfg, 0x55ULL,
-			   &out_len, &sendJunk, &msgType);
+			   &out_len, &sendCps, &sendJunk, &msgType);
 
 	ASSERT_TRUE("mac1_outbound_init",
 		    memcmp(mac1_before, buf + dataoff + 116, 16) != 0,
@@ -510,6 +585,8 @@ int main(void)
 	test_s4_deterministic();
 	test_s1_random_fill();
 	test_s4_noop_passthrough();
+	test_sendcps_independent_of_jc();
+	test_sendcps_zero_without_templates();
 	test_mac1_recompute_outbound_init();
 	test_mac1_recompute_inbound_init();
 	test_mac2_recompute_outbound_init();

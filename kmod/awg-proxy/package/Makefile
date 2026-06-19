@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=awg-proxy
-PKG_VERSION:=1.1.11
+PKG_VERSION:=1.1.12
 
 PKG_LICENSE:=GPL-2.0
 PKG_LICENSE_FILES:=COPYING

@@ -140,6 +140,9 @@ export {
 // F7 — Mobile
 export { default as MobileBottomBar } from './MobileBottomBar.svelte';
 
+// Engine FATAL indication
+export { default as EngineFatalModal } from './EngineFatalModal.svelte';
+
 // Settings Drawer
 export { default as SingboxRouterRedesignPage } from './SingboxRouterRedesignPage.svelte';
 export {

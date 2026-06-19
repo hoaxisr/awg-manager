@@ -7,6 +7,7 @@
 	const genericIssueUrl = GITHUB_BUG_REPORT_URL;
 
 	const credits = [
+		'@dna_pvt',
 		'@amatol',
 		'@paris19891', '@The_Immortal', '@LionEvil', '@dio1122', '@Nidre',
 		'@rexsniper', '@tiffolk', '@Shidla', '@palik_lelyakin', '@user_shurik',
@@ -34,6 +35,7 @@
 		'@2*****6@g*******m', '@S A', '@Ig**M**v***v', '@A Tu', '@metalnalks',
 		'@LazIv', '@AverTV', '@xxxaaach', '@defylives', '@AndreyPristup',
 		'@Lethal F',
+		'@Stein_123', '@Tanovitsky',
 	];
 
 	let open = $state(false);
@@ -94,7 +96,7 @@
 		<div class="card credits-card">
 			<div class="credits-content">
 				{#each credits as nick}
-					<span class="credits-nick" class:gold={nick === '@amatol'} class:bronze={nick === '@tiffolk' || nick === '@defylives'}>{nick}</span>
+					<span class="credits-nick" class:gold={nick === '@dna_pvt' || nick === '@amatol'} class:bronze={nick === '@tiffolk' || nick === '@defylives'}>{nick}</span>
 				{/each}
 			</div>
 		</div>

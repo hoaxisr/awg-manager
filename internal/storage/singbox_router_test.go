@@ -18,12 +18,6 @@ func TestSettingsDefaultsContainSingboxRouter(t *testing.T) {
 	if s.SingboxRouter.PolicyName != "" {
 		t.Errorf("default PolicyName should be empty, got %q", s.SingboxRouter.PolicyName)
 	}
-	if s.SingboxRouter.RefreshMode != "interval" {
-		t.Errorf("default RefreshMode: %q", s.SingboxRouter.RefreshMode)
-	}
-	if s.SingboxRouter.RefreshInterval != 24 {
-		t.Errorf("default RefreshInterval: %d", s.SingboxRouter.RefreshInterval)
-	}
 }
 
 func TestMigrateToV15_ClearsDeprecated(t *testing.T) {

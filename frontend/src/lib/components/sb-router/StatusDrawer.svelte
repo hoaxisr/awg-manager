@@ -18,6 +18,7 @@
   import TrafficSourceSettings from './TrafficSourceSettings.svelte';
   import { deriveDeps, deriveIssues } from './drawerData';
   import { mergeAndSaveSettings, BYPASS_PRESETS } from './settingsActions';
+  import { resolveWanAuto, planToggleAutoDetect, planSelectWanInterface, type WanAutoOverride } from './wanMode';
   import { pluralize, RULE_WORDS } from '$lib/utils/pluralize';
   import type { SingboxRouterSettings, SingboxRouterWANInterface } from '$lib/types';
 
@@ -43,6 +44,8 @@
   let wanInterfaces = $state<SingboxRouterWANInterface[]>([]);
   let saving = $state(false);
   let lastError = $state<string | null>(null);
+  let wanAutoOverride = $state<WanAutoOverride>(null);
+  let wanAuto = $derived(resolveWanAuto(wanAutoOverride, cfg?.wanAutoDetect));
   function versionLabel(value?: string | null): string {
     const v = (value ?? '').trim();
     return v ? `v${v}` : '—';
@@ -120,12 +123,15 @@
     }
   }
   function toggleAutoDetect(checked: boolean) {
-    if (checked) void applyPatch({ wanAutoDetect: true, wanInterface: '' });
-    else void applyPatch({ wanAutoDetect: false });
+    const { override, patch } = planToggleAutoDetect(checked);
+    wanAutoOverride = override;
+    if (patch) void applyPatch(patch);
   }
   function onWanInterfaceChange(e: Event) {
-    const v = (e.currentTarget as HTMLSelectElement).value;
-    void applyPatch({ wanAutoDetect: false, wanInterface: v });
+    const action = planSelectWanInterface((e.currentTarget as HTMLSelectElement).value);
+    if (!action) return;
+    wanAutoOverride = action.override;
+    if (action.patch) void applyPatch(action.patch);
   }
   function toggleSniffer(checked: boolean) { void applyPatch({ snifferEnabled: checked }); }
   function togglePreset(id: string) {
@@ -190,9 +196,9 @@
         <div class="sec-cap">WAN-интерфейс</div>
         <div class="field-row">
           <span>Авто-определение</span>
-          <Toggle checked={cfg.wanAutoDetect} onchange={(checked) => toggleAutoDetect(checked)} />
+          <Toggle checked={wanAuto} onchange={(checked) => toggleAutoDetect(checked)} />
         </div>
-        {#if !cfg.wanAutoDetect}
+        {#if !wanAuto}
           <div class="field">
             <label class="lbl" for="ed-wan">Интерфейс</label>
             <select id="ed-wan" class="inp" value={cfg.wanInterface ?? ''} onchange={onWanInterfaceChange}>

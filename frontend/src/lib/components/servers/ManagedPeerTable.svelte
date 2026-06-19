@@ -1,13 +1,14 @@
 <script lang="ts">
 	import type { ManagedPeer, ManagedPeerStats } from '$lib/types';
-	import { Trash2 } from 'lucide-svelte';
-	import { ConfirmModal, Toggle } from '$lib/components/ui';
-	import { formatBytes, formatRelativeTime } from '$lib/utils/format';
+	import { ConfirmModal } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { peerSort } from '$lib/stores/peerSort';
 	import { peerAriaSort } from '$lib/utils/peerSort';
+	import { buildPeerRowVM } from '$lib/utils/peerRowVM';
 	import PeerTableSortHeader from './PeerTableSortHeader.svelte';
+	import ManagedPeerRow from './ManagedPeerRow.svelte';
+	import ManagedPeerCard from './ManagedPeerCard.svelte';
 
 	interface Props {
 		peers: ManagedPeer[];
@@ -38,6 +39,8 @@
 	let deletePeerTarget = $state<ManagedPeer | null>(null);
 	let deletingPeer = $state(false);
 
+	let rows = $derived(peers.map((peer) => ({ peer, vm: buildPeerRowVM(peer, getPeerStats(peer.publicKey)) })));
+
 	function requestDeletePeer(peer: ManagedPeer) {
 		deletePeerTarget = peer;
 	}
@@ -49,49 +52,14 @@
 			await onDeletePeer(deletePeerTarget);
 			deletePeerTarget = null;
 		} catch {
-			// keep modal open on error
+			// оставить модалку открытой при ошибке
 		} finally {
 			deletingPeer = false;
 		}
 	}
 
-	function peerName(peer: ManagedPeer): string {
-		return peer.description || `${peer.publicKey.slice(0, 8)}...`;
-	}
-
-	function peerStatus(peer: ManagedPeer, peerStats: ManagedPeerStats | undefined): 'disabled' | 'online' | 'offline' {
-		if (!peer.enabled) return 'disabled';
-		return peerStats?.online ? 'online' : 'offline';
-	}
-
-	function splitHandshakeLabel(value: string): { main: string; suffix?: string } {
-		const trimmed = value.trim();
-		if (trimmed.endsWith(' назад')) {
-			return { main: trimmed.slice(0, -' назад'.length), suffix: 'назад' };
-		}
-		return { main: trimmed };
-	}
-
-	function splitEndpoint(endpoint: string): { host: string; port?: string } {
-		const trimmed = endpoint.trim();
-		if (!trimmed || trimmed === '-') return { host: '-' };
-		const bracketMatch = /^(\[[^\]]+\]):(\d+)$/.exec(trimmed);
-		if (bracketMatch) return { host: bracketMatch[1], port: `:${bracketMatch[2]}` };
-		const lastColon = trimmed.lastIndexOf(':');
-		if (lastColon <= 0) return { host: trimmed };
-		const host = trimmed.slice(0, lastColon);
-		const port = trimmed.slice(lastColon + 1);
-		if (!/^\d+$/.test(port)) return { host: trimmed };
-		if (host.includes(':')) return { host: trimmed };
-		return { host, port: `:${port}` };
-	}
-
-	function isInsideInlineToggle(event: Event): boolean {
-		return event.target instanceof HTMLElement && !!event.target.closest('.peer-inline-toggle');
-	}
-
 	async function copyCellValue(value: string, label: string): Promise<void> {
-		if (!value || value === '-') {
+		if (!value || value === '—' || value === '-') {
 			notifications.warning(`${label} отсутствует`, { duration: 2000 });
 			return;
 		}
@@ -102,8 +70,10 @@
 		}
 	}
 
+	let showActionsCol = $derived(showPeerDownload || showPeerActions);
 </script>
 
+<div class="peer-views">
 <div class="desktop-peer-table">
 	<div class="table-wrap">
 		<table class="managed-peer-table">
@@ -112,153 +82,40 @@
 					<th class="col-name" aria-sort={peerAriaSort($peerSort, 'name')}>
 						<PeerTableSortHeader label="Имя" sortKey="name" />
 					</th>
+					<th class="col-status">Статус</th>
 					<th class="col-ip" aria-sort={peerAriaSort($peerSort, 'ip')}>
 						<PeerTableSortHeader label="IP" sortKey="ip" />
 					</th>
 					<th class="col-endpoint" aria-sort={peerAriaSort($peerSort, 'endpoint')}>
 						<PeerTableSortHeader label="Endpoint" sortKey="endpoint" />
 					</th>
-					<th class="col-traffic" aria-sort={peerAriaSort($peerSort, 'traffic')}>
-						<PeerTableSortHeader label="Трафик" sortKey="traffic" />
+					<th class="col-rx" aria-sort={peerAriaSort($peerSort, 'traffic')}>
+						<PeerTableSortHeader label="RX" sortKey="traffic" />
 					</th>
+					<th class="col-tx">TX</th>
 					<th class="col-handshake" aria-sort={peerAriaSort($peerSort, 'handshake')}>
 						<PeerTableSortHeader label="Handshake" sortKey="handshake" />
 					</th>
-					{#if showPeerDownload || showPeerActions}
+					{#if showActionsCol}
 						<th class="col-actions">Действия</th>
 					{/if}
 				</tr>
 			</thead>
 			<tbody>
-				{#each peers as peer (peer.publicKey)}
-					{@const peerStats = getPeerStats(peer.publicKey)}
-					{@const status = peerStatus(peer, peerStats)}
-					{@const endpointValue = peerStats?.endpoint || '-'}
-					{@const ep = splitEndpoint(endpointValue)}
-					{@const hs = peerStats?.lastHandshake ? splitHandshakeLabel(formatRelativeTime(peerStats.lastHandshake)) : null}
-					<tr class:peer-disabled={!peer.enabled}>
-						<td
-							class="peer-name-cell"
-							class:peer-name-cell-readonly={!showPeerToggle}
-							role={showPeerToggle ? 'button' : undefined}
-							tabindex={showPeerToggle ? 0 : undefined}
-							title={showPeerToggle
-								? peer.enabled
-									? `Отключить «${peerName(peer)}»`
-									: `Включить «${peerName(peer)}»`
-								: undefined}
-							onclick={showPeerToggle
-								? (e) => {
-										if (isInsideInlineToggle(e) || isPeerToggling(peer.publicKey)) return;
-										onTogglePeer(peer);
-									}
-								: undefined}
-							onkeydown={showPeerToggle
-								? (e) => {
-										if (isInsideInlineToggle(e) || isPeerToggling(peer.publicKey)) return;
-										if (e.key === 'Enter' || e.key === ' ') {
-											e.preventDefault();
-											onTogglePeer(peer);
-										}
-									}
-								: undefined}
-						>
-							<div class="peer-name-row">
-								{#if showPeerToggle}
-									<span class="peer-inline-toggle">
-										<Toggle
-											checked={peer.enabled}
-											onchange={() => onTogglePeer(peer)}
-											disabled={isPeerToggling(peer.publicKey)}
-											size="sm"
-											spinner="none"
-										/>
-									</span>
-								{/if}
-								<div class="peer-name-block">
-									<span class="peer-name">{peerName(peer)}</span>
-									<div class="peer-status-sub">
-										<span
-											class="status-dot"
-											class:dot-online={status === 'online'}
-											class:dot-offline={status === 'offline'}
-											class:dot-disabled={status === 'disabled'}
-										></span>
-										<span>{status}</span>
-									</div>
-								</div>
-							</div>
-						</td>
-						<td class="col-ip">
-							<button
-								type="button"
-								class="cell-copy mono tech-value"
-								onclick={() => void copyCellValue(peer.tunnelIP, 'IP')}
-								title={`Скопировать IP ${peer.tunnelIP}`}
-							>
-								{peer.tunnelIP}
-							</button>
-						</td>
-						<td class="col-endpoint">
-							<button
-								type="button"
-								class="cell-copy endpoint-copy mono tech-value"
-								onclick={() => void copyCellValue(endpointValue, 'Endpoint')}
-								title={endpointValue !== '-' ? `Скопировать Endpoint ${endpointValue}` : 'Endpoint отсутствует'}
-							>
-								<span class="endpoint-text">{ep.host}</span>
-								{#if ep.port}
-									<span class="endpoint-port">{ep.port}</span>
-								{/if}
-							</button>
-						</td>
-						<td class="col-traffic">
-							<div class="traffic-cell mono tech-value">
-								<span class="traffic-rx">RX: {formatBytes(peerStats?.rxBytes ?? 0)}</span>
-								<span class="traffic-tx">TX: {formatBytes(peerStats?.txBytes ?? 0)}</span>
-							</div>
-						</td>
-						<td class="col-handshake tech-value">
-							{#if hs}
-								<span class="handshake-text">{hs.main}</span>
-								{#if hs.suffix}
-									<span class="handshake-suffix">{" "}{hs.suffix}</span>
-								{/if}
-							{:else}
-								-
-							{/if}
-						</td>
-						{#if showPeerDownload || showPeerActions}
-							<td class="col-actions">
-								<div class="peer-actions">
-									{#if showPeerDownload}
-										<button class="peer-action-btn" onclick={() => onOpenConf(peer)} title={`Скачать .conf для «${peerName(peer)}»`}>
-											<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-												<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-												<polyline points="7 10 12 15 17 10" />
-												<line x1="12" y1="15" x2="12" y2="3" />
-											</svg>
-										</button>
-									{/if}
-									{#if showPeerActions}
-									<button class="peer-action-btn" onclick={() => onOpenEditPeer(peer)} title={`Редактировать «${peerName(peer)}»`}>
-										<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-											<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-											<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-										</svg>
-									</button>
-									<button
-										class="peer-action-btn peer-action-btn-danger"
-										onclick={() => requestDeletePeer(peer)}
-										title={`Удалить «${peerName(peer)}»`}
-									>
-										<Trash2 size={18} strokeWidth={2} aria-hidden="true" />
-									</button>
-									{/if}
-								</div>
-							</td>
-						{/if}
-					</tr>
+				{#each rows as { peer, vm } (peer.publicKey)}
+					<ManagedPeerRow
+						{peer}
+						{vm}
+						showToggle={showPeerToggle}
+						showDownload={showPeerDownload}
+						showActions={showPeerActions}
+						toggling={isPeerToggling(peer.publicKey)}
+						onToggle={onTogglePeer}
+						onConf={onOpenConf}
+						onEdit={onOpenEditPeer}
+						onDelete={requestDeletePeer}
+						onCopy={copyCellValue}
+					/>
 				{/each}
 			</tbody>
 		</table>
@@ -266,586 +123,65 @@
 </div>
 
 <div class="mobile-peer-list">
-	{#each peers as peer (peer.publicKey)}
-		{@const peerStats = getPeerStats(peer.publicKey)}
-		{@const status = peerStatus(peer, peerStats)}
-		{@const endpointValue = peerStats?.endpoint || '-'}
-		{@const hs = peerStats?.lastHandshake ? splitHandshakeLabel(formatRelativeTime(peerStats.lastHandshake)) : null}
-		<article class="mobile-peer-card" class:peer-disabled={!peer.enabled} class:has-actions={showPeerDownload || showPeerActions}>
-			<div class="mobile-peer-card-top">
-				<div class="mobile-peer-title-row">
-					{#if showPeerToggle}
-						<span class="peer-inline-toggle">
-							<Toggle
-								checked={peer.enabled}
-								onchange={() => onTogglePeer(peer)}
-								disabled={isPeerToggling(peer.publicKey)}
-								size="sm"
-								spinner="none"
-							/>
-						</span>
-					{/if}
-					<div class="peer-name-block">
-						<span class="mobile-peer-name">{peerName(peer)}</span>
-						<div class="peer-status-sub">
-							<span
-								class="status-dot"
-								class:dot-online={status === 'online'}
-								class:dot-offline={status === 'offline'}
-								class:dot-disabled={status === 'disabled'}
-							></span>
-							<span>{status}</span>
-						</div>
-					</div>
-				</div>
-
-				{#if showPeerDownload || showPeerActions}
-					<div class="mobile-peer-actions">
-						{#if showPeerDownload}
-							<button class="peer-action-btn" onclick={() => onOpenConf(peer)} title={`Скачать .conf для «${peerName(peer)}»`}>
-								<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-									<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-									<polyline points="7 10 12 15 17 10" />
-									<line x1="12" y1="15" x2="12" y2="3" />
-								</svg>
-							</button>
-						{/if}
-						{#if showPeerActions}
-						<button class="peer-action-btn" onclick={() => onOpenEditPeer(peer)} title={`Редактировать «${peerName(peer)}»`}>
-							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-								<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-								<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-							</svg>
-						</button>
-						<button
-							class="peer-action-btn peer-action-btn-danger"
-							onclick={() => requestDeletePeer(peer)}
-							title={`Удалить «${peerName(peer)}»`}
-						>
-							<Trash2 size={18} strokeWidth={2} aria-hidden="true" />
-						</button>
-						{/if}
-					</div>
-				{/if}
-			</div>
-
-			<div class="mobile-peer-card-middle">
-				<div class="mobile-peer-status-row">
-					<span class="mobile-peer-handshake">
-						{#if hs}
-							{hs.main}{#if hs.suffix}{" "}{hs.suffix}{/if}
-						{:else}
-							-
-						{/if}
-					</span>
-				</div>
-
-				<div class="mobile-peer-net-row mono tech-value">
-					<button
-						type="button"
-						class="cell-copy mobile-peer-ip"
-						onclick={() => void copyCellValue(peer.tunnelIP, 'IP')}
-						title={`Скопировать IP ${peer.tunnelIP}`}
-					>
-						<span class="mobile-label">IP</span> {peer.tunnelIP}
-					</button>
-
-					<button
-						type="button"
-						class="cell-copy mobile-peer-endpoint"
-						onclick={() => void copyCellValue(endpointValue, 'Endpoint')}
-						title={endpointValue !== '-' ? `Скопировать Endpoint ${endpointValue}` : 'Endpoint отсутствует'}
-					>
-						<span class="mobile-label">EP</span>
-						<span class="mobile-endpoint-value">{endpointValue}</span>
-					</button>
-				</div>
-			</div>
-
-			<div class="mobile-peer-card-bottom">
-				<div class="mobile-peer-traffic-row mono tech-value">
-					<span>RX: {formatBytes(peerStats?.rxBytes ?? 0)}</span>
-					<span>TX: {formatBytes(peerStats?.txBytes ?? 0)}</span>
-				</div>
-			</div>
-		</article>
+	{#each rows as { peer, vm } (peer.publicKey)}
+		<ManagedPeerCard
+			{peer}
+			{vm}
+			showToggle={showPeerToggle}
+			showDownload={showPeerDownload}
+			showActions={showPeerActions}
+			toggling={isPeerToggling(peer.publicKey)}
+			onToggle={onTogglePeer}
+			onConf={onOpenConf}
+			onEdit={onOpenEditPeer}
+			onDelete={requestDeletePeer}
+			onCopy={copyCellValue}
+		/>
 	{/each}
+</div>
 </div>
 
 {#if deletePeerTarget}
 	<ConfirmModal
 		open={true}
 		title="Удаление клиента"
-		message={`Удалить клиента «${peerName(deletePeerTarget)}»?`}
+		message={`Удалить клиента «${deletePeerTarget.description || deletePeerTarget.publicKey.slice(0, 8) + '...'}»?`}
 		secondary={`Туннельный IP: ${deletePeerTarget.tunnelIP}. Конфигурация и ключи будут удалены без возможности восстановления.`}
 		confirmLabel="Удалить"
 		busy={deletingPeer}
 		onConfirm={confirmDeletePeer}
-		onClose={() => {
-			if (!deletingPeer) deletePeerTarget = null;
-		}}
+		onClose={() => { if (!deletingPeer) deletePeerTarget = null; }}
 	/>
 {/if}
 
 <style>
-	.table-wrap {
-		overflow-x: auto;
-	}
-
-	.desktop-peer-table {
-		display: block;
-	}
-
-	.mobile-peer-list {
-		display: none;
-	}
-
-	.managed-peer-table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 12px;
-		table-layout: auto;
-	}
-
+	.table-wrap { overflow-x: auto; }
+	.managed-peer-table { width: 100%; border-collapse: collapse; }
 	.managed-peer-table th {
-		text-align: center;
-		background: var(--bg-tertiary, var(--color-bg-tertiary));
-		color: var(--text-muted, var(--color-text-muted));
-		font-weight: 600;
-		padding: 0.65rem 0.75rem;
-		line-height: 1.2;
-		border-bottom: 1px solid var(--border, var(--color-border));
-		white-space: nowrap;
-	}
-
-	.managed-peer-table td {
-		padding: 0.55rem 0.5rem;
-		border-bottom: 1px solid var(--border);
-		vertical-align: middle;
-		transition: background-color 0.15s ease;
-	}
-
-	.managed-peer-table tbody tr:hover td {
-		background: color-mix(in srgb, var(--bg-hover) 70%, transparent);
-	}
-
-	.managed-peer-table tbody tr.peer-disabled:hover td {
-		background: color-mix(in srgb, var(--bg-hover) 45%, transparent);
-	}
-
-	.peer-disabled {
-		opacity: 0.5;
-	}
-
-	td.peer-name-cell {
-		min-width: 140px;
 		text-align: left;
-		cursor: pointer;
+		font: 600 0.6875rem/1.2 var(--font-sans);
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--color-text-muted);
+		padding: 0.5rem 0.625rem;
+		border-bottom: 1px solid var(--color-border);
+		white-space: nowrap;
 	}
-
-	td.peer-name-cell-readonly {
-		cursor: default;
-	}
-
-	.peer-name {
-		font-weight: 500;
-		font-size: 13px;
-		line-height: 1.15;
-		color: var(--text-primary);
-		white-space: normal;
-		overflow-wrap: anywhere;
-		word-break: break-word;
-	}
-
-	.peer-name-row {
-		display: flex;
-		align-items: center;
-		gap: 0.3rem;
-		min-width: 0;
-	}
-
-	.peer-name-block {
-		display: flex;
-		flex-direction: column;
-		gap: 0.1rem;
-		min-width: 0;
-		flex: 1 1 auto;
-	}
-
-	.peer-name-row .peer-name {
-		min-width: 0;
-	}
-
-	.peer-status-sub {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.25rem;
-		font-size: 10px;
-		color: var(--text-muted);
-		line-height: 1;
-	}
-
-	.peer-inline-toggle {
-		display: inline-flex;
-		align-items: center;
-		line-height: 1;
-		margin-right: 0.35rem;
-	}
-
-	.peer-inline-toggle :global(.toggle-container) {
-		gap: 0;
-		padding: 0;
-		min-height: 0;
-	}
-
-	.peer-inline-toggle :global(.toggle-container.sm .toggle-slider) {
-		width: 30px;
-		height: 18px;
-	}
-
-	.peer-inline-toggle :global(.toggle-container.sm .toggle-slider::before) {
-		width: 14px;
-		height: 14px;
-		left: 2px;
-		bottom: 2px;
-	}
-
-	.peer-inline-toggle :global(.toggle-container.sm input:checked ~ .toggle-slider::before) {
-		transform: translateX(12px);
-	}
-
-	.peer-inline-toggle :global(.toggle-spinner-slot) {
-		width: 0;
-		margin: 0;
-	}
-
-	.mono {
-		font-family: var(--font-mono, monospace);
-	}
-
-	.tech-value {
-		font-size: 10px;
-		line-height: 1.15;
-	}
-
-	.status-dot {
-		display: inline-block;
-		width: 6px;
-		height: 6px;
-		border-radius: 999px;
-		flex-shrink: 0;
+	.col-rx, .col-tx { text-align: right; }
+	.managed-peer-table :global(td) {
+		padding: 0.625rem;
+		border-bottom: 1px solid var(--color-border-subtle, var(--color-border));
 		vertical-align: middle;
 	}
+	/* Переключение таблица/карточки по ШИРИНЕ КОНТЕЙНЕРА (а не вьюпорта):
+	   при наличии rail доступная ширина < вьюпорта, поэтому viewport-медиазапрос
+	   ошибается. Десктоп-таблицу показываем только когда она реально влезает. */
+	.peer-views { container-type: inline-size; }
+	.desktop-peer-table { display: none; }
+	.mobile-peer-list { display: flex; flex-direction: column; gap: 0.5rem; }
 
-	.dot-online {
-		background: var(--success, #22c55e);
-		box-shadow: 0 0 3px var(--success, #22c55e);
-	}
-
-	.dot-offline {
-		background: var(--text-muted);
-	}
-
-	.dot-disabled {
-		background: var(--text-muted);
-	}
-
-	.traffic-cell {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0;
-		line-height: 1.05;
-		white-space: nowrap;
-	}
-
-	.col-name {
-		width: 24%;
-	}
-
-	.col-ip {
-		width: 12%;
-		white-space: nowrap;
-	}
-
-	.col-endpoint {
-		width: auto;
-		max-width: 180px;
-	}
-
-	.managed-peer-table th.col-endpoint {
-		text-align: center;
-	}
-
-	.managed-peer-table td.col-endpoint {
-		text-align: center;
-		vertical-align: middle;
-	}
-
-	.managed-peer-table td.col-endpoint .endpoint-copy {
-		display: inline-flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		max-width: 100%;
-		text-align: center;
-	}
-
-	.endpoint-text {
-		display: block;
-		white-space: normal;
-		overflow-wrap: anywhere;
-		word-break: break-word;
-		line-height: 1.15;
-	}
-
-	.endpoint-port {
-		display: block;
-		white-space: nowrap;
-		line-height: 1.15;
-	}
-
-	.col-traffic {
-		width: 14%;
-	}
-
-	.col-handshake {
-		width: 12%;
-		white-space: nowrap;
-	}
-
-	.handshake-text,
-	.handshake-suffix {
-		display: block;
-	}
-
-	.col-actions {
-		width: 11%;
-		white-space: nowrap;
-	}
-
-	td.col-ip,
-	td.col-endpoint,
-	td.col-traffic,
-	td.col-handshake {
-		text-align: center;
-	}
-
-	td.col-actions {
-		text-align: center;
-		vertical-align: middle;
-	}
-
-	.peer-actions {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 100%;
-		gap: 0.375rem;
-	}
-
-	.peer-action-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0.375rem;
-		background: transparent;
-		border: none;
-		color: var(--text-secondary);
-		cursor: pointer;
-		border-radius: var(--radius-sm);
-		transition: color 0.15s ease, background 0.15s ease;
-	}
-
-	.peer-action-btn:hover {
-		background: var(--bg-hover);
-		color: var(--text-primary);
-	}
-
-	.peer-action-btn-danger:hover {
-		color: var(--error, #ef4444);
-	}
-
-	.cell-copy {
-		padding: 0;
-		border: 0;
-		background: none;
-		color: inherit;
-		cursor: pointer;
-		text-align: inherit;
-	}
-
-	.cell-copy:hover {
-		text-decoration: underline;
-		color: var(--text-primary);
-	}
-
-	@media (max-width: 640px) {
-		.desktop-peer-table {
-			display: none;
-		}
-
-		.mobile-peer-list {
-			display: flex;
-			flex-direction: column;
-			gap: 0.6rem;
-		}
-
-		.mobile-peer-card {
-			display: flex;
-			flex-direction: column;
-			gap: 0.65rem;
-			padding: 0.7rem 0.75rem;
-			border: 1px solid var(--border);
-			border-radius: var(--radius);
-			background: var(--bg-primary);
-		}
-
-		.mobile-peer-card-top {
-			display: grid;
-			grid-template-columns: minmax(0, 1fr) auto;
-			align-items: start;
-			gap: 0.5rem;
-		}
-
-		.mobile-peer-card-middle,
-		.mobile-peer-card-bottom,
-		.mobile-peer-title-row {
-			min-width: 0;
-		}
-
-		.mobile-peer-title-row {
-			display: flex;
-			align-items: center;
-			gap: 0.45rem;
-			min-width: 0;
-		}
-
-		.mobile-peer-name {
-			min-width: 0;
-			max-width: 100%;
-			font-size: 13px;
-			font-weight: 600;
-			line-height: 1.15;
-			color: var(--text-primary);
-			overflow-wrap: anywhere;
-		}
-
-		.mobile-peer-status-row {
-			display: flex;
-			justify-content: flex-start;
-			align-items: center;
-			font-size: 10px;
-			line-height: 1;
-			color: var(--text-muted);
-		}
-
-		.mobile-peer-handshake {
-			text-align: left;
-			white-space: nowrap;
-			color: var(--text-muted);
-			margin-left: 0.1rem;
-		}
-
-		.mobile-peer-net-row {
-			display: grid;
-			grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr);
-			gap: 0.5rem;
-			margin-top: 0.45rem;
-			line-height: 1.1;
-		}
-
-		.mobile-peer-ip {
-			min-width: 0;
-			text-align: left;
-			white-space: nowrap;
-		}
-
-		.mobile-peer-endpoint {
-			display: inline-flex;
-			flex-direction: row;
-			align-items: flex-end;
-			justify-content: flex-end;
-			gap: 0.25rem;
-			min-width: 0;
-			justify-self: end;
-			max-width: 100%;
-			text-align: right;
-			white-space: nowrap;
-		}
-
-		.mobile-endpoint-value {
-			display: block;
-			min-width: 0;
-			max-width: 100%;
-			overflow: hidden;
-			text-overflow: ellipsis;
-			white-space: nowrap;
-		}
-
-		.mobile-label {
-			flex: 0 0 auto;
-			color: var(--text-muted);
-			font-size: 9px;
-			line-height: 1;
-			letter-spacing: 0.04em;
-		}
-
-		.mobile-peer-traffic-row {
-			display: grid;
-			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-			gap: 0.5rem;
-			margin-top: 0.35rem;
-			line-height: 1.1;
-		}
-
-		.mobile-peer-traffic-row > span:first-child {
-			justify-self: start;
-		}
-
-		.mobile-peer-traffic-row > span:last-child {
-			justify-self: end;
-			text-align: right;
-		}
-
-		.mobile-peer-actions {
-			display: flex;
-			flex-direction: row;
-			align-items: flex-start;
-			justify-content: flex-end;
-			gap: 0.25rem;
-			align-self: start;
-		}
-
-		.mobile-peer-actions .peer-action-btn {
-			width: 32px;
-			height: 32px;
-			flex: 0 0 32px;
-			padding: 0;
-			border: 1px solid var(--border);
-			border-radius: var(--radius-sm);
-			background: var(--bg-secondary);
-		}
-
-		@media (max-width: 360px) {
-			.mobile-peer-card-top {
-				grid-template-columns: minmax(0, 1fr) auto;
-			}
-
-			.mobile-peer-actions {
-				flex-wrap: nowrap;
-				gap: 0.2rem;
-			}
-
-			.mobile-peer-actions .peer-action-btn {
-				width: 30px;
-				height: 30px;
-				flex-basis: 30px;
-			}
-		}
-
-		.peer-disabled {
-			opacity: 0.6;
-		}
+	@container (min-width: 820px) {
+		.desktop-peer-table { display: block; }
+		.mobile-peer-list { display: none; }
 	}
 </style>

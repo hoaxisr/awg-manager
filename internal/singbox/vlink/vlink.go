@@ -88,6 +88,10 @@ func ParseLinkMany(input string) ([]ParsedOutbound, error) {
 		return parseMieruStandard(input)
 	case strings.HasPrefix(lower, "mierus://"):
 		return parseMieruSimple(input)
+	case strings.HasPrefix(lower, "socks5://"):
+		return singleOutbound(parseSocks(input))
+	case strings.HasPrefix(lower, "socks://"):
+		return singleOutbound(parseSocks(input))
 	case strings.HasPrefix(lower, "vmess://"):
 		return nil, ErrSchemeDropped
 	}

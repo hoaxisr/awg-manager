@@ -214,6 +214,12 @@
 				if (data.resource === 'singbox.router.rules') {
 					void singboxRouter.loadRulesSnapshot();
 				}
+				// Engine died/restarted: operator publishes singbox.status on exit
+				// (operator.go). singboxRouter is not a PollingStore, so refetch the
+				// router status directly — this is what surfaces lastError / clears СБОЙ.
+				if (data.resource === 'singbox.status') {
+					void singboxRouter.reloadStatus();
+				}
 			},
 
 			// Device-proxy: selected outbound was deleted — show a banner in the tab.

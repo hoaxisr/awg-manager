@@ -883,7 +883,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// runningInterfacesAdapter (wired in main.go).
 
 	// VPN Servers (protected + boot guarded)
-	serverHandler := api.NewServersHandler(s.ndmsQueries, s.settings, s.tunnels)
+	serverHandler := api.NewServersHandler(s.ndmsQueries, s.settings, s.tunnels, appLog)
 	serverHandler.SetCommands(s.ndmsCommands)
 	serverHandler.SetEventBus(s.bus)
 	mux.HandleFunc("/api/servers", guarded(serverHandler.List))

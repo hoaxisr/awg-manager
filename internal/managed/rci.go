@@ -430,15 +430,19 @@ func (s *Service) rciRemovePeer(ctx context.Context, ifaceName, pubKey string) e
 	})
 }
 
-// rciSetPeerConnect enables or disables a peer.
-func (s *Service) rciSetPeerConnect(ctx context.Context, ifaceName, pubKey string, connect bool) error {
+// rciSetPeerConnect enables or disables a peer. comment must carry the peer's
+// current name: a partial peer update without it makes NDMS wipe the stored
+// comment (psk/allow-ips survive, comment does not).
+func (s *Service) rciSetPeerConnect(ctx context.Context, ifaceName, pubKey string, connect bool, comment string) error {
+	peer := map[string]interface{}{"key": pubKey, "connect": connect}
+	if comment != "" {
+		peer["comment"] = comment
+	}
 	return s.rciPost(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			ifaceName: map[string]interface{}{
 				"wireguard": map[string]interface{}{
-					"peer": []map[string]interface{}{
-						{"key": pubKey, "connect": connect},
-					},
+					"peer": []map[string]interface{}{peer},
 				},
 			},
 		},

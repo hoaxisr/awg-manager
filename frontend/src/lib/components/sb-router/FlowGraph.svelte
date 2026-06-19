@@ -9,6 +9,7 @@
   import { singboxStatus } from '$lib/stores/singbox';
   import { systemInfo } from '$lib/stores/system';
   import { openDrawer } from './drawerStore';
+  import EngineFatalModal from './EngineFatalModal.svelte';
   import { openSourceDrawer } from './sourceDrawerStore';
   import { deriveRoutingSummary, resolveDefaultWanLabel } from './flowData';
   import { liveConnectionsTraffic } from './liveConnectionsStore';
@@ -46,6 +47,10 @@
   // engineActive = интерцепция реально жива (цепочки + PREROUTING-jump'ы),
   // а не просто «включён в настройках». Узел светится только когда работает.
   let engineActive = $derived(engineOn && (s?.active ?? false));
+  let engineFatalOpen = $state(false);
+  // СБОЙ с захваченной причиной → клик по узлу открывает модалку с ошибкой,
+  // иначе — обычные настройки движка (StatusDrawer).
+  const engineFatal = $derived(engineOn && !engineActive && !!s?.lastError);
   let rulesCount = $derived(s?.ruleCount ?? 0);
   let deviceMode = $derived(s?.deviceMode);
   let routeFinal = $derived(s?.final ?? 'direct');
@@ -112,7 +117,7 @@
 
     <div class="arrow">›</div>
 
-    <button type="button" class="node engine" class:glow={engineActive} class:offline={!engineActive} onclick={openDrawer} aria-label="Настройки движка sing-box">
+    <button type="button" class="node engine" class:glow={engineActive} class:offline={!engineActive} onclick={() => (engineFatal ? (engineFatalOpen = true) : openDrawer())} aria-label="Настройки движка sing-box">
       <div class="cap acc">Движок sing-box</div>
       <div class="node-title">{engineSub}</div>
       <div class="node-sub">
@@ -168,6 +173,12 @@
     </div>
   </div>
 </div>
+
+<EngineFatalModal
+  open={engineFatalOpen}
+  lastError={s?.lastError ?? ''}
+  onclose={() => (engineFatalOpen = false)}
+/>
 
 <style>
   .flow {

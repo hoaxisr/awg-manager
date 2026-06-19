@@ -1298,9 +1298,6 @@ export interface SingboxRouterSettings {
 	 */
 	routingMode?: 'tproxy' | 'fakeip-tun';
 	snifferEnabled: boolean;
-	refreshMode?: 'interval' | 'daily';
-	refreshIntervalHours?: number;
-	refreshDailyTime?: string;
 	// WAN-binding discriminator (mirrors backend storage):
 	//   wanAutoDetect=true  + wanInterface=""    → sing-box auto_detect_interface
 	//   wanAutoDetect=false + wanInterface="X"   → sing-box default_interface=X
@@ -1390,6 +1387,8 @@ export interface SingboxRouterStatus {
 	 */
 	fakeipEgressUp?: boolean;
 	issues?: SingboxRouterIssue[];
+	/** Последняя fatal-причина sing-box; непусто только при «СБОЙ» (enabled && !active). */
+	lastError?: string;
 }
 
 export interface SingboxRouterTransitionStep {

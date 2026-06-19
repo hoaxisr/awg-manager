@@ -51,6 +51,7 @@ type SingboxRouterStatusData struct {
 	FakeIPEgressUp         *bool                   `json:"fakeipEgressUp,omitempty" example:"true"`
 	FakeIPSourcePreserve   *bool                   `json:"fakeipSourcePreserve,omitempty" example:"true"`
 	FakeIPPolicyExitReady  *bool                   `json:"fakeipPolicyExitReady,omitempty" example:"true"`
+	LastError              string                  `json:"lastError,omitempty" example:"engine start failed"`
 	Issues                 []SingboxRouterIssueDTO `json:"issues,omitempty"`
 }
 
@@ -62,14 +63,11 @@ type SingboxRouterStatusResponse struct {
 
 // SingboxRouterSettingsData mirrors storage.SingboxRouterSettings.
 type SingboxRouterSettingsData struct {
-	Enabled         bool   `json:"enabled" example:"true"`
-	PolicyName      string `json:"policyName" example:"awgm-router"`
-	DeviceMode      string `json:"deviceMode,omitempty" example:"policy" enums:"policy,all"`
-	RoutingMode     string `json:"routingMode,omitempty" example:"tproxy" enums:"tproxy,fakeip-tun"`
-	SnifferEnabled  bool   `json:"snifferEnabled" example:"true"`
-	RefreshMode     string `json:"refreshMode,omitempty" example:"interval"`
-	RefreshInterval int    `json:"refreshIntervalHours,omitempty" example:"24"`
-	RefreshDaily    string `json:"refreshDailyTime,omitempty" example:"03:00"`
+	Enabled        bool   `json:"enabled" example:"true"`
+	PolicyName     string `json:"policyName" example:"awgm-router"`
+	DeviceMode     string `json:"deviceMode,omitempty" example:"policy" enums:"policy,all"`
+	RoutingMode    string `json:"routingMode,omitempty" example:"tproxy" enums:"tproxy,fakeip-tun"`
+	SnifferEnabled bool   `json:"snifferEnabled" example:"true"`
 	// WANAutoDetect / WANInterface form a two-field discriminator:
 	//   true  + ""    → sing-box auto_detect_interface
 	//   false + "ppp0"→ sing-box default_interface=ppp0

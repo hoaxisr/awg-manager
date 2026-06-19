@@ -327,3 +327,81 @@
 		grid-column: 1 / -1;
 	}
 }
+
+/* Таблица клиентов: общие классы строки/карточки. Row/Card рендерятся внутри
+   .server-detail-card; перенесено сюда при выносе ManagedPeerRow/ManagedPeerCard
+   из монолита ManagedPeerTable (иначе кнопки/копирование/мелкий toggle без стилей). */
+.server-detail-card .peer-inline-toggle {
+	display: inline-flex;
+	align-items: center;
+	line-height: 1;
+	margin-right: 0.35rem;
+}
+
+.server-detail-card .peer-inline-toggle .toggle-container {
+	gap: 0;
+	padding: 0;
+	min-height: 0;
+}
+
+.server-detail-card .peer-inline-toggle .toggle-container.sm .toggle-slider {
+	width: 30px;
+	height: 18px;
+}
+
+.server-detail-card .peer-inline-toggle .toggle-container.sm .toggle-slider::before {
+	width: 14px;
+	height: 14px;
+	left: 2px;
+	bottom: 2px;
+}
+
+.server-detail-card .peer-inline-toggle .toggle-container.sm input:checked ~ .toggle-slider::before {
+	transform: translateX(12px);
+}
+
+.server-detail-card .peer-inline-toggle .toggle-spinner-slot {
+	width: 0;
+	margin: 0;
+}
+
+.server-detail-card .tech-value {
+	font-size: 10px;
+	line-height: 1.15;
+}
+
+.server-detail-card .peer-action-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0.375rem;
+	background: transparent;
+	border: none;
+	color: var(--text-secondary);
+	cursor: pointer;
+	border-radius: var(--radius-sm);
+	transition: color 0.15s ease, background 0.15s ease;
+}
+
+.server-detail-card .peer-action-btn:hover {
+	background: var(--bg-hover);
+	color: var(--text-primary);
+}
+
+.server-detail-card .peer-action-btn-danger:hover {
+	color: var(--error, #ef4444);
+}
+
+.server-detail-card .cell-copy {
+	padding: 0;
+	border: 0;
+	background: none;
+	color: inherit;
+	cursor: pointer;
+	text-align: inherit;
+}
+
+.server-detail-card .cell-copy:hover {
+	text-decoration: underline;
+	color: var(--text-primary);
+}

@@ -1,11 +1,12 @@
 export { default as ServerCard } from './ServerCard.svelte';
-export { default as PeerTable } from './PeerTable.svelte';
 export { default as PeerTableSortHeader } from './PeerTableSortHeader.svelte';
 export { default as PeerSortControls } from './PeerSortControls.svelte';
 export { default as ConfGeneratorModal } from './ConfGeneratorModal.svelte';
 export { default as AddServerModal } from './AddServerModal.svelte';
 export { default as ManagedServerCard } from './ManagedServerCard.svelte';
 export { default as ManagedPeerTable } from './ManagedPeerTable.svelte';
+export { default as ManagedPeerRow } from './ManagedPeerRow.svelte';
+export { default as ManagedPeerCard } from './ManagedPeerCard.svelte';
 export { default as CreateManagedServerModal } from './CreateManagedServerModal.svelte';
 export { default as EditManagedServerModal } from './EditManagedServerModal.svelte';
 export { default as AddManagedPeerModal } from './AddManagedPeerModal.svelte';
@@ -20,3 +21,4 @@ export { default as ManagedServerImportModal } from './ManagedServerImportModal.
 export { default as ManagedServerDriftBanner } from './ManagedServerDriftBanner.svelte';
 export { default as ServerAccessPolicyDropdown } from './ServerAccessPolicyDropdown.svelte';
 export { default as ServerEndpointSetting } from './ServerEndpointSetting.svelte';
+export { default as ServerSettingsPanel } from './ServerSettingsPanel.svelte';

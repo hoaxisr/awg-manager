@@ -112,6 +112,7 @@ func newTestIPTables(fe *fakeExec) *IPTables {
 type fakeSingbox struct {
 	dir         string
 	binary      string
+	lastErr     string
 	isRunningFn func() (bool, int)
 
 	// clearManualStopCalls counts ClearManualStop invocations;
@@ -140,6 +141,7 @@ func (f *fakeSingbox) Stop() error                               { return nil }
 func (f *fakeSingbox) ValidateConfigDir(_ context.Context) error { return nil }
 func (f *fakeSingbox) ConfigDir() string                         { return f.dir }
 func (f *fakeSingbox) Binary() string                            { return f.binary }
+func (f *fakeSingbox) LastError() string                         { return f.lastErr }
 
 // newTestSingbox creates a fakeSingbox backed by a temp directory.
 func newTestSingbox(t *testing.T) *fakeSingbox {
@@ -160,6 +162,49 @@ func stubListeningProbe(t *testing.T, fn func() bool) {
 	old := singboxListeningProbe
 	singboxListeningProbe = fn
 	t.Cleanup(func() { singboxListeningProbe = old })
+}
+
+func TestGetStatus_PopulatesLastErrorWhenInactive(t *testing.T) {
+	stubListeningProbe(t, func() bool { return false }) // active=false → СБОЙ
+	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
+		Enabled:    true,
+		PolicyName: "Policy0",
+	})
+	fe := &fakeExec{}
+	svc := newTestService(t, Deps{
+		Settings: settingsStore,
+		Policies: &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+		IPTables: newTestIPTables(fe),
+		Singbox:  &fakeSingbox{dir: t.TempDir(), lastErr: "FATAL[0000] start service: boom"},
+	})
+	st, err := svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st.Active {
+		t.Fatalf("precondition: expected Active=false")
+	}
+	if st.LastError != "FATAL[0000] start service: boom" {
+		t.Errorf("LastError = %q, want the fatal line", st.LastError)
+	}
+}
+
+func TestGetStatus_NoLastErrorWhenDisabled(t *testing.T) {
+	stubListeningProbe(t, func() bool { return false })
+	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{Enabled: false})
+	fe := &fakeExec{}
+	svc := newTestService(t, Deps{
+		Settings: settingsStore,
+		IPTables: newTestIPTables(fe),
+		Singbox:  &fakeSingbox{dir: t.TempDir(), lastErr: "FATAL stale"},
+	})
+	st, err := svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st.LastError != "" {
+		t.Errorf("LastError = %q, want empty when disabled", st.LastError)
+	}
 }
 
 // ---------------------------------------------------------------------------

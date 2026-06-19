@@ -19,7 +19,7 @@ import (
 
 // scanLimit is how many bytes IsClashYAML inspects. A real Clash subscription
 // has "proxies:" within the first few hundred bytes; 4 KB is a forgiving cap.
-const scanLimit = 4 * 1024
+const scanLimit = 64 * 1024
 
 // matches a top-level "proxies:" key — accepts block (proxies: + newline),
 // inline ("proxies: []"), null marker ("proxies: null"), and any other
