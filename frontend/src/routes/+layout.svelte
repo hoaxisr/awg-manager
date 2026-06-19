@@ -24,6 +24,7 @@
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { feedTraffic } from '$lib/stores/traffic';
 	import { applyTraffic as singboxApplyTraffic, applyDelay as singboxApplyDelay } from '$lib/stores/singbox';
+	import { applySingboxMemory } from '$lib/stores/singboxMemory';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { fakeipTransition } from '$lib/stores/fakeipTransition';
 	import { invalidateResource, invalidateAll } from '$lib/stores/storeRegistry';
@@ -175,6 +176,7 @@
 				}
 			},
 			onSingboxDelay: (data) => singboxApplyDelay(data.tag, data.delay),
+			onSingboxMemory: applySingboxMemory,
 
 			// HydraRoute geo download progress
 			onHydraRouteGeoProgress: (data) => geoDownloadProgress.ingest(data),

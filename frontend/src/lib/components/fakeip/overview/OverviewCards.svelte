@@ -1,14 +1,14 @@
 <!--
   Верхний ряд «Обзора» по мокапу dash3 (`.oprow`): три карточки в одной панели
-  с тонкими разделителями — движок · активных устройств · активные выборы
+  с тонкими разделителями — движок · память sing-box · активные выборы
   (composite). Без cfg-бейджей: зелёная точка на карточке движка — обычный
   status-индикатор.
 
     1. Движок — «● <статус>» из engineState + sub «gvisor» (стек честно; индекс
        opkgtun в DTO отсутствует, не выдумываем).
-    2. Активных устройств — Status.deviceCount (config-счётчик политики). Live-
-       счётчик /connections появится в переработке «Устройства» — честно
-       подписываем «под управлением политики».
+    2. Память sing-box — процессная RSS в байтах из поля `memory` Clash
+       /connections WebSocket (singbox:memory SSE); 0 пока движок не запущен
+       или первый снимок ещё не пришёл.
     3. Активные выборы (composite) — для каждого selector/urltest/loadbalance
        активный участник (resolveCompositeOutboundView через activeComposites).
        Живой блок: вне live — честный empty-state.
@@ -16,6 +16,7 @@
   Презентационный: значения приходят пропами, своих подписок нет.
 -->
 <script lang="ts">
+	import { formatBytes } from '$lib/utils/format';
 	import type { ActiveCompositeRow } from './activeComposites';
 
 	interface Props {
@@ -23,15 +24,15 @@
 		engineLive: boolean;
 		/** Текст статуса движка (работает / остановлен / clash ↯). */
 		engineLabel: string;
-		/** Управляемых устройств (Status.deviceCount). */
-		deviceCount: number;
+		/** Память процесса sing-box в байтах (Clash /connections `memory`). */
+		memoryBytes: number;
 		/** Причина не-live состояния для текста empty-state composite-блока. */
 		notLiveReason?: 'stopped' | 'clash-down';
 		/** Строки активных composite-выборов (из proxies/list, уже разрешены). */
 		composites: ActiveCompositeRow[];
 	}
 
-	let { engineLive, engineLabel, deviceCount, notLiveReason, composites }: Props = $props();
+	let { engineLive, engineLabel, memoryBytes, notLiveReason, composites }: Props = $props();
 
 	const notLiveText = $derived(
 		notLiveReason === 'clash-down'
@@ -51,11 +52,11 @@
 		<div class="s">gvisor</div>
 	</div>
 
-	<!-- Активных устройств -->
+	<!-- Память sing-box -->
 	<div class="otile">
-		<div class="v">{deviceCount}</div>
-		<div class="l">активных устройств</div>
-		<div class="s">под управлением политики</div>
+		<div class="v">{memoryBytes > 0 ? formatBytes(memoryBytes) : '—'}</div>
+		<div class="l">память sing-box</div>
+		<div class="s">Clash /connections</div>
 	</div>
 
 	<!-- Активные выборы (composite) -->

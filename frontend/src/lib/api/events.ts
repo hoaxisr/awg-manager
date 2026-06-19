@@ -105,6 +105,7 @@ export interface SSEEventHandlers {
 	// Sing-box streams (traffic + delay remain push-only)
 	onSingboxTraffic?: (data: SingboxTraffic[]) => void;
 	onSingboxDelay?: (data: SingboxDelayEvent) => void;
+	onSingboxMemory?: (data: { memory: number }) => void;
 
 	// Sing-box Router push events (status + rules/rule-sets/outbounds snapshots)
 	onSingboxRouterStatus?: (data: SingboxRouterStatus) => void;
@@ -170,6 +171,7 @@ export function connectSSE(handlers: SSEEventHandlers): () => void {
 	// Sing-box streams
 	handle('singbox:traffic', handlers.onSingboxTraffic);
 	handle('singbox:delay', handlers.onSingboxDelay);
+	handle('singbox:memory', handlers.onSingboxMemory);
 
 	// Sing-box Router events
 	handle('singbox-router:status', handlers.onSingboxRouterStatus);

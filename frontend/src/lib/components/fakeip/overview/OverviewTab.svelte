@@ -1,18 +1,18 @@
 <!--
   Контейнер вкладки «Обзор» по мокапу dash3. Держит обзор-специфичные деривации
-  (deviceCount, активные composite-выборы, engineLive-гейт, ярлык статуса) и
-  компонует дашборд: 3 карточки (движок · устройства · composite) → панель
+  (память sing-box, активные composite-выборы, engineLive-гейт, ярлык статуса) и
+  компонует дашборд: 3 карточки (движок · память · composite) → панель
   «Трафик · live» с бар-графиком → грид «Настройки движка». Сегменты-доставка
   живёт в каркасе (FakeIPPageShell), здесь не дублируется.
 
   ИСТОЧНИКИ/ЧЕСТНОСТЬ — см. под-компоненты: composite — proxies/list через
-  sb-router helper; трафик — агрегат singboxTraffic (скорость = дельта байт).
-  RAM (/memory), opkgtun-индекс и fakeip-пул в DTO отсутствуют — опущены.
+  sb-router helper; трафик — агрегат singboxTraffic (скорость = дельта байт);
+  память — Clash /connections WebSocket поле `memory` (singbox:memory SSE).
 -->
 <script lang="ts">
-	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { singboxProxies } from '$lib/stores/singboxProxies';
+	import { singboxMemory } from '$lib/stores/singboxMemory';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import type { FakeIPEngineState } from '../engineState';
 	import OverviewCards from './OverviewCards.svelte';
@@ -73,11 +73,11 @@
 				: 'остановлен',
 	);
 
-	const status = singboxRouter.status;
 	const outbounds = fakeipConfig.outbounds;
 	const options = fakeipConfig.options;
 
-	const deviceCount = $derived($status?.deviceCount ?? 0);
+	// Память процесса sing-box из Clash /connections WebSocket `memory` поля.
+	const memoryBytes = $derived($singboxMemory);
 
 	// Активные composite-выборы: config outbounds + live proxies/list + подписки,
 	// через общий sb-router helper. singboxProxies — reference-counted polling
@@ -93,7 +93,7 @@
 </script>
 
 <section class="overview">
-	<OverviewCards {engineLive} {engineLabel} {deviceCount} {notLiveReason} {composites} />
+	<OverviewCards {engineLive} {engineLabel} {memoryBytes} {notLiveReason} {composites} />
 
 	<TrafficPanel {engineLive} {notLiveReason} />
 
