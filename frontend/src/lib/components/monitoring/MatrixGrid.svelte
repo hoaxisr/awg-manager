@@ -6,6 +6,7 @@
 	import DefaultRouteBadge from '$lib/components/tunnels/DefaultRouteBadge.svelte';
 	import { latencyTier } from '$lib/utils/latencyTier';
 	import { latencyHistory } from '$lib/stores/singboxProxies';
+	import { Settings } from 'lucide-svelte';
 
 	interface Props {
 		snapshot: MonitoringSnapshot;
@@ -158,10 +159,7 @@
 									{:else}
 										<a href={tunnelHref(t)} class="tunnel-link tunnel-name" title="Открыть настройки pingcheck">
 											{t.name}
-											<svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-												<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.72l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-												<circle cx="12" cy="12" r="3" />
-											</svg>
+											<Settings size={14} style="opacity:0.7;flex-shrink:0" aria-hidden="true" />
 										</a>
 									{/if}
 								</div>
@@ -295,10 +293,7 @@
 								{:else}
 									<a href={tunnelHref(tunnel)} class="tunnel-link tunnel-name" title="Открыть настройки pingcheck">
 										{tunnel.name}
-										<svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-											<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.72l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-											<circle cx="12" cy="12" r="3" />
-										</svg>
+										<Settings size={14} style="opacity:0.7;flex-shrink:0" aria-hidden="true" />
 									</a>
 								{/if}
 							</div>
@@ -664,13 +659,6 @@
 	.tunnel-link:hover {
 		color: var(--color-accent);
 		background: var(--color-bg-hover);
-	}
-	.settings-icon {
-		display: inline-block;
-		width: 14px;
-		height: 14px;
-		flex-shrink: 0;
-		opacity: 0.7;
 	}
 
 	.exclude-btn {
