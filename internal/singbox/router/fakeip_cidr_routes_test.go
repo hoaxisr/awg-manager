@@ -116,3 +116,27 @@ func TestAddRemoveCIDRRoute(t *testing.T) {
 		t.Errorf("calls = %v, want %v", got, want)
 	}
 }
+
+func TestSyncTunCIDRRoutes_Diff(t *testing.T) {
+	log := &callLog{}
+	rec := &recStaticRoutes{log: log}
+	s := &ServiceImpl{deps: Deps{StaticRoutes: rec}} // appLog nil-safe
+
+	before := &RouterConfig{Route: Route{Rules: []Rule{
+		{Action: "route", Outbound: "proxy", IPCIDR: []string{"8.8.8.0/24", "9.9.9.0/24"}},
+	}}}
+	after := &RouterConfig{Route: Route{Rules: []Rule{
+		{Action: "route", Outbound: "proxy", IPCIDR: []string{"8.8.8.0/24", "1.1.1.0/24"}},
+	}}}
+
+	s.syncTunCIDRRoutes(t.Context(), "OpkgTun3", before, after)
+
+	got := log.calls
+	want := []string{
+		"AddRoute:1.1.1.0:255.255.255.0:OpkgTun3", // added (after, not before)
+		"RemoveRoute:9.9.9.0:OpkgTun3",            // stale (before, not after)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("calls = %v, want %v", got, want)
+	}
+}

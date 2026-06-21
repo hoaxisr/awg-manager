@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"fmt"
 	"net/netip"
 )
 
@@ -152,4 +153,56 @@ func (s *ServiceImpl) removeCIDRRoute(ctx context.Context, ndmsName, cidr string
 	return s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
 		Network: net4, Mask: mask4, Interface: ndmsName,
 	})
+}
+
+// syncTunCIDRRoutes converges the tun's specific CIDR routes from the previous
+// config to the new one: adds CIDRs newly proxy-routed, removes ones no longer
+// proxy-routed. Best-effort — a failed NDMS call logs and continues (reconcile
+// re-asserts); a route POST failure must not roll back an otherwise-valid config
+// persist. Logs the synced/desired counts (observability for route-scale).
+func (s *ServiceImpl) syncTunCIDRRoutes(ctx context.Context, ndmsName string, before, after *RouterConfig) {
+	if s.deps.StaticRoutes == nil {
+		return
+	}
+	prevV4, prevV6 := desiredTunCIDRs(before)
+	nextV4, nextV6 := desiredTunCIDRs(after)
+	s.applyCIDRRouteDiff(ctx, ndmsName, prevV4, nextV4, false)
+	s.applyCIDRRouteDiff(ctx, ndmsName, prevV6, nextV6, true)
+}
+
+func (s *ServiceImpl) applyCIDRRouteDiff(ctx context.Context, ndmsName string, prev, next []string, v6 bool) {
+	prevSet := make(map[string]bool, len(prev))
+	for _, c := range prev {
+		prevSet[c] = true
+	}
+	nextSet := make(map[string]bool, len(next))
+	for _, c := range next {
+		nextSet[c] = true
+	}
+
+	adds, removes := 0, 0
+	for _, c := range next {
+		if prevSet[c] {
+			continue
+		}
+		if err := s.addCIDRRoute(ctx, ndmsName, c, v6); err != nil {
+			s.appLog.Warn("fakeip-cidr", ndmsName, "add cidr route "+c+": "+err.Error())
+			continue
+		}
+		adds++
+	}
+	for _, c := range prev {
+		if nextSet[c] {
+			continue
+		}
+		if err := s.removeCIDRRoute(ctx, ndmsName, c, v6); err != nil {
+			s.appLog.Warn("fakeip-cidr", ndmsName, "remove cidr route "+c+": "+err.Error())
+			continue
+		}
+		removes++
+	}
+	if adds > 0 || removes > 0 {
+		s.appLog.Info("fakeip-cidr", ndmsName,
+			fmt.Sprintf("cidr routes synced: +%d -%d (v6=%v, desired=%d)", adds, removes, v6, len(next)))
+	}
 }
