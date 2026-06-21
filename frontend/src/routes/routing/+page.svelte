@@ -27,6 +27,7 @@
     import ClientRoutesTab from './ClientRoutesTab.svelte';
     import { HrNeoTab } from '$lib/components/hrneo';
     import { SingboxRouterRedesignPage } from '$lib/components/sb-router';
+    import FakeIPTab from '$lib/components/fakeip/FakeIPTab.svelte';
     import GeoDataTab from './GeoDataTab.svelte';
     import { isRoutingSubTabVisible, type RoutingSubTab, type UsageLevel } from '$lib/types/usageLevel';
     import { usageLevel } from '$lib/stores/settings';
@@ -54,7 +55,7 @@
         unsubRouting?.();
     });
 
-    let activeTab = $state<'hrneo' | 'geodata' | 'dns' | 'ip' | 'policy' | 'clientvpn' | 'singbox'>('dns');
+    let activeTab = $state<'hrneo' | 'geodata' | 'dns' | 'ip' | 'policy' | 'clientvpn' | 'singbox' | 'fakeip'>('dns');
 
     let isOS5 = $derived($systemInfo.data?.isOS5 ?? false);
     let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
@@ -223,6 +224,7 @@
             (hydrarouteInstalled || singboxInstalled)
                 ? { id: 'geodata', label: 'Гео-данные', badge: geoFileCount, separatorBefore: true }
                 : null,
+            singboxInstalled ? { id: 'fakeip', label: 'FakeIP', badge: undefined, separatorBefore: true } : null,
         ] as (TabItem | null)[])
             .filter((t): t is TabItem => t !== null)
             .filter((t) => tabVisible(t.id))
@@ -355,6 +357,8 @@
         <GeoDataTab />
     {:else if activeTab === 'singbox'}
         <SingboxRouterRedesignPage />
+    {:else if activeTab === 'fakeip'}
+        <FakeIPTab />
     {/if}
     </div>
 </PageContainer>
