@@ -1,6 +1,9 @@
 package router
 
-import "net/netip"
+import (
+	"context"
+	"net/netip"
+)
 
 // fakeIPCIDRRouteComment labels specific dst-CIDR routes installed for proxy-
 // routed rules. Distinct from fakeIPPoolRouteComment so the two route families
@@ -115,4 +118,38 @@ func desiredTunCIDRs(cfg *RouterConfig) (v4 []string, v6 []string) {
 		}
 	}
 	return v4, v6
+}
+
+// addCIDRRoute installs one specific dst route to the tun. v4 routes carry the
+// CIDR comment (recognizable in NDMS config); the v6 form emits only
+// network+interface (see StaticRouteSpec.V6).
+func (s *ServiceImpl) addCIDRRoute(ctx context.Context, ndmsName, cidr string, v6 bool) error {
+	if v6 {
+		return s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
+			V6: true, Network: cidr, Interface: ndmsName,
+		})
+	}
+	net4, mask4, err := poolV4NetMask(cidr)
+	if err != nil {
+		return err
+	}
+	return s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
+		Network: net4, Mask: mask4, Interface: ndmsName, Comment: fakeIPCIDRRouteComment,
+	})
+}
+
+// removeCIDRRoute deletes one specific dst route from the tun.
+func (s *ServiceImpl) removeCIDRRoute(ctx context.Context, ndmsName, cidr string, v6 bool) error {
+	if v6 {
+		return s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
+			V6: true, Network: cidr, Interface: ndmsName,
+		})
+	}
+	net4, mask4, err := poolV4NetMask(cidr)
+	if err != nil {
+		return err
+	}
+	return s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
+		Network: net4, Mask: mask4, Interface: ndmsName,
+	})
 }

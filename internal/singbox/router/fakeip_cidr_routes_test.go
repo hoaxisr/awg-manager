@@ -90,3 +90,29 @@ func TestDesiredTunCIDRs(t *testing.T) {
 		})
 	}
 }
+
+func TestAddRemoveCIDRRoute(t *testing.T) {
+	log := &callLog{}
+	rec := &recStaticRoutes{log: log}
+	s := &ServiceImpl{deps: Deps{StaticRoutes: rec}}
+
+	if err := s.addCIDRRoute(t.Context(), "OpkgTun3", "149.154.160.0/20", false); err != nil {
+		t.Fatalf("addCIDRRoute v4: %v", err)
+	}
+	if err := s.addCIDRRoute(t.Context(), "OpkgTun3", "2001:b28::/32", true); err != nil {
+		t.Fatalf("addCIDRRoute v6: %v", err)
+	}
+	if err := s.removeCIDRRoute(t.Context(), "OpkgTun3", "149.154.160.0/20", false); err != nil {
+		t.Fatalf("removeCIDRRoute v4: %v", err)
+	}
+
+	got := log.calls
+	want := []string{
+		"AddRoute:149.154.160.0:255.255.240.0:OpkgTun3",
+		"AddRoute6:2001:b28::/32:OpkgTun3",
+		"RemoveRoute:149.154.160.0:OpkgTun3",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("calls = %v, want %v", got, want)
+	}
+}
