@@ -389,6 +389,35 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		})
 	}
 
+	// Specific CIDR routes for proxy-routed dst CIDRs (loop-safe pure-dst rules
+	// only — see desiredTunCIDRs): full apply on enable. Best-effort per CIDR — one
+	// bad entry must not fail the whole enable; rollback removes the ones that succeeded.
+	enableCIDRV4, enableCIDRV6 := desiredTunCIDRs(fcfg)
+	for _, c := range enableCIDRV4 {
+		if e := s.addCIDRRoute(ctx, ndmsName, c, false); e != nil {
+			s.appLog.Warn("fakeip", iface, "add cidr route "+c+": "+e.Error())
+			continue
+		}
+		cc := c
+		push(func() {
+			if e := s.removeCIDRRoute(ctx, ndmsName, cc, false); e != nil {
+				s.appLog.Warn("fakeip-rollback", iface, "remove cidr route "+cc+": "+e.Error())
+			}
+		})
+	}
+	for _, c := range enableCIDRV6 {
+		if e := s.addCIDRRoute(ctx, ndmsName, c, true); e != nil {
+			s.appLog.Warn("fakeip", iface, "add cidr route v6 "+c+": "+e.Error())
+			continue
+		}
+		cc := c
+		push(func() {
+			if e := s.removeCIDRRoute(ctx, ndmsName, cc, true); e != nil {
+				s.appLog.Warn("fakeip-rollback", iface, "remove cidr route v6 "+cc+": "+e.Error())
+			}
+		})
+	}
+
 	// Best-effort live-DNS confirmation (NOT a gate). sing-box is already up by
 	// carrier and the pool route to the tun now exists, so a single .2→fakeip
 	// query should answer. We run it ONCE (here, not in the poll loop, so no log

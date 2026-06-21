@@ -1,6 +1,9 @@
 package router
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -218,5 +221,34 @@ func TestFakeipWithConfig_SyncsCIDRRoutes(t *testing.T) {
 	}
 	if !rec.log.has("AddRoute:149.154.160.0:255.255.240.0:OpkgTun3") {
 		t.Errorf("expected CIDR route added for new proxy rule; calls=%v", rec.log.calls)
+	}
+}
+
+// TestEnable_AppliesCIDRRoutes proves Task 5: the fakeip ENABLE path applies the
+// full set of specific tun CIDR routes for proxy-routed (loop-safe) rules, right
+// after the pool routes, under the same LIFO push-rollback. The harness is the
+// real provisioned enable harness (newFakeIPEnableHarness, index 0 → OpkgTun0).
+// We seed 21-fakeip.json with a pure-dst proxy ip_cidr rule (loop-safe: only the
+// ip_cidr matcher) plus a DNS rule so fakeIPConfigEmpty is false (no seed clobber)
+// and route.final="direct" (a known built-in egress). A successful Enable must
+// POST the matching specific tun route.
+func TestEnable_AppliesCIDRRoutes(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+
+	// Seed the fakeip config (21-fakeip.json) with a loop-safe proxy ip_cidr rule.
+	// route.final="direct" is a known built-in outbound so the egress check passes;
+	// a DNS rule keeps fakeIPConfigEmpty false so the seed path leaves our rules be.
+	fcfg := `{"dns":{"rules":[{"action":"route","server":"fakeip","query_type":["A","AAAA"]}]},` +
+		`"route":{"final":"direct","rules":[{"action":"route","outbound":"proxy","ip_cidr":["149.154.160.0/20"]}]}}`
+	if err := os.WriteFile(filepath.Join(h.dir, "21-fakeip.json"), []byte(fcfg), 0644); err != nil {
+		t.Fatalf("write 21-fakeip.json: %v", err)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	// Index 0 → NDMS name OpkgTun0; the loop-safe proxy CIDR gets a specific route.
+	if !h.log.has("AddRoute:149.154.160.0:255.255.240.0:OpkgTun0") {
+		t.Errorf("expected CIDR route on enable; calls=%v", h.log.calls)
 	}
 }
