@@ -661,3 +661,20 @@ func TestMigrateToV26_PreservesExistingMode(t *testing.T) {
 		t.Errorf("existing mode must not be re-derived from NATEnabled, got %q", st.ManagedServers[1].NATMode)
 	}
 }
+
+func TestDefaultSettings_MonitoringEnabledTrue(t *testing.T) {
+	s := &SettingsStore{}
+	got := s.defaultSettings()
+	if !got.Monitoring.Enabled {
+		t.Fatalf("Monitoring.Enabled = false, want true (no-regression default)")
+	}
+}
+
+func TestMigrateToV28_SetsMonitoringEnabled(t *testing.T) {
+	s := &SettingsStore{}
+	old := Settings{SchemaVersion: 27} // Monitoring.Enabled zero-value false
+	s.migrateToV28(&old)
+	if !old.Monitoring.Enabled {
+		t.Fatalf("after migrateToV28 Monitoring.Enabled = false, want true")
+	}
+}

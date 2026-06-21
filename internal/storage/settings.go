@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion        = 27
+	CurrentSchemaVersion        = 28
 	DefaultPort                 = 2222
 	DefaultInterface            = "br0"
 	DefaultPingCheckTarget      = "8.8.8.8"
@@ -143,6 +143,9 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		if settings.SchemaVersion < 27 {
 			s.migrateToV27(&settings)
 		}
+		if settings.SchemaVersion < 28 {
+			s.migrateToV28(&settings)
+		}
 	}
 
 	// Self-heal duplicated managed servers — see dedupManagedServers comment.
@@ -197,6 +200,7 @@ func (s *SettingsStore) defaultSettings() *Settings {
 			RouteTag:  "direct",
 			RouteKind: "direct",
 		},
+		Monitoring:           MonitoringSettings{Enabled: true},
 		ConnectivityCheckURL: DefaultConnectivityCheckURL,
 		SingboxRouter: SingboxRouterSettings{
 			Enabled:        false,
@@ -463,6 +467,13 @@ func (s *SettingsStore) migrateToV26(settings *Settings) {
 // disabled) is the intended default, so this only stamps the version.
 func (s *SettingsStore) migrateToV27(settings *Settings) {
 	settings.SchemaVersion = 27
+}
+
+// migrateToV28 introduces the global monitoring switch. It defaults ON to
+// preserve current behavior (target-monitoring previously always ran).
+func (s *SettingsStore) migrateToV28(settings *Settings) {
+	settings.Monitoring.Enabled = true
+	settings.SchemaVersion = 28
 }
 
 // dedupManagedServers returns servers with duplicate InterfaceName entries

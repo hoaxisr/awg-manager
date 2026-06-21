@@ -10,26 +10,27 @@ type Settings struct {
 	// `Authorization: Bearer <key>` header. Empty disables key-based access
 	// (session is still required when AuthEnabled). Generated client-side
 	// via crypto.randomUUID(); the server treats it as opaque.
-	ApiKey               string            `json:"apiKey,omitempty"`
-	Server               ServerSettings    `json:"server"`
-	PingCheck            PingCheckSettings `json:"pingCheck"`
-	Logging              LoggingSettings   `json:"logging"`
-	DisableMemorySaving  bool              `json:"disableMemorySaving"` // false = auto, true = soft mode
-	Updates              UpdateSettings    `json:"updates"`
-	Download             DownloadSettings  `json:"download"`
-	DNSRoute             DNSRouteSettings  `json:"dnsRoute"`
-	GeoFile              GeoFileSettings   `json:"geoFile"`
-	ConnectivityCheckURL string            `json:"connectivityCheckUrl"`
-	UsageLevel           string            `json:"usageLevel"`
-	ServerInterfaces     []string          `json:"serverInterfaces,omitempty"`
+	ApiKey               string             `json:"apiKey,omitempty"`
+	Server               ServerSettings     `json:"server"`
+	PingCheck            PingCheckSettings  `json:"pingCheck"`
+	Logging              LoggingSettings    `json:"logging"`
+	DisableMemorySaving  bool               `json:"disableMemorySaving"` // false = auto, true = soft mode
+	Updates              UpdateSettings     `json:"updates"`
+	Download             DownloadSettings   `json:"download"`
+	DNSRoute             DNSRouteSettings   `json:"dnsRoute"`
+	GeoFile              GeoFileSettings    `json:"geoFile"`
+	Monitoring           MonitoringSettings `json:"monitoring"`
+	ConnectivityCheckURL string             `json:"connectivityCheckUrl"`
+	UsageLevel           string             `json:"usageLevel"`
+	ServerInterfaces     []string           `json:"serverInterfaces,omitempty"`
 	// ServerInterfaceMeta stores AWG Manager bookkeeping for built-in/marked
 	// servers (NAT static-WAN for internet-only teardown). map[serverID].
 	ServerInterfaceMeta map[string]ServerInterfaceMeta `json:"serverInterfaceMeta,omitempty"`
 	// ServerPeerSecrets stores private keys for peers created via AWG Manager
 	// on built-in/marked NDMS servers (NDMS itself does not retain client keys).
 	// map[serverID]map[publicKey]ServerPeerSecret
-	ServerPeerSecrets  map[string]map[string]ServerPeerSecret `json:"serverPeerSecrets,omitempty"`
-	ManagedServers       []ManagedServer   `json:"managedServers,omitempty"`
+	ServerPeerSecrets map[string]map[string]ServerPeerSecret `json:"serverPeerSecrets,omitempty"`
+	ManagedServers    []ManagedServer                        `json:"managedServers,omitempty"`
 	// ManagedServer is retained for one release as the migration source.
 	// migrateManagedServers() moves it into ManagedServers[0] on first read
 	// and clears it on the next save.
@@ -55,6 +56,12 @@ type Settings struct {
 	// 0.0.0.0/0 with "subnet overlaps with the other peer". Set after a
 	// successful sweep; the sweep runs at startup while false.
 	ManagedPeerAllowIPsMigrated bool `json:"managedPeerAllowIPsMigrated,omitempty"`
+}
+
+// MonitoringSettings is the global on/off for target-monitoring (the matrix).
+// Disabled => Scheduler.RunOnce probes nothing. Mirrors the *Settings pattern.
+type MonitoringSettings struct {
+	Enabled bool `json:"enabled"`
 }
 
 type DownloadSettings struct {
