@@ -3,6 +3,8 @@ package router
 import (
 	"reflect"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 func TestDesiredTunCIDRs(t *testing.T) {
@@ -138,5 +140,45 @@ func TestSyncTunCIDRRoutes_Diff(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("calls = %v, want %v", got, want)
+	}
+}
+
+// TestFakeipWithConfig_SyncsCIDRRoutes proves Task 4's wiring: every fakeip
+// config CRUD mutation re-syncs the tun's specific CIDR routes. The harness is
+// the real provisioned fakeip service (newFakeIPTestService) with FakeIPState
+// Index=3 and a recStaticRoutes fake wired as deps.StaticRoutes so we can assert
+// the recorded NDMS route call. We add a proxy-routed rule (Outbound != direct)
+// carrying a routable dst CIDR; fakeipWithConfig must add the matching tun route.
+func TestFakeipWithConfig_SyncsCIDRRoutes(t *testing.T) {
+	svc, _ := newFakeIPTestService(t)
+
+	// Re-provision FakeIPState at Index=3 so fakeIPNDMSName yields OpkgTun3.
+	all, err := svc.deps.Settings.Load()
+	if err != nil {
+		t.Fatalf("Settings.Load: %v", err)
+	}
+	all.FakeIP = &storage.FakeIPState{Provisioned: true, Index: 3, Inet4Range: "198.18.0.0/15"}
+	if err := svc.deps.Settings.Save(all); err != nil {
+		t.Fatalf("Settings.Save: %v", err)
+	}
+
+	// Wire the recording StaticRoutes fake so syncTunCIDRRoutes' calls are observable.
+	log := &callLog{}
+	rec := &recStaticRoutes{log: log}
+	svc.deps.StaticRoutes = rec
+
+	err = svc.fakeipWithConfig(t.Context(), "test", func(cfg *RouterConfig) error {
+		// Outbound "proxy" (non-direct) ⇒ isProxyRoute true; the dst CIDR becomes a
+		// specific tun route. The overlay does not strip user route rules.
+		cfg.Route.Rules = append(cfg.Route.Rules, Rule{
+			Action: "route", Outbound: "proxy", IPCIDR: []string{"149.154.160.0/20"},
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("fakeipWithConfig: %v", err)
+	}
+	if !rec.log.has("AddRoute:149.154.160.0:255.255.240.0:OpkgTun3") {
+		t.Errorf("expected CIDR route added for new proxy rule; calls=%v", rec.log.calls)
 	}
 }

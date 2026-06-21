@@ -237,6 +237,12 @@ func (s *ServiceImpl) fakeipWithConfig(ctx context.Context, event string, fn fun
 	if err := s.persistFakeIPConfig(ctx, cfg); err != nil {
 		return err
 	}
+	// Sync specific CIDR routes to the tun for proxy-routed dst CIDRs.
+	// Best-effort; never fails the CRUD. fakeipWithConfig runs only when
+	// provisioned (ensureFakeIPOverlayFromState above errors on nil FakeIP).
+	if settings, serr := s.deps.Settings.Load(); serr == nil && settings != nil && settings.FakeIP != nil {
+		s.syncTunCIDRRoutes(ctx, fakeIPNDMSName(settings.FakeIP.Index), before, cfg)
+	}
 	s.emitCfgEvent(event, cfg)
 	return nil
 }
