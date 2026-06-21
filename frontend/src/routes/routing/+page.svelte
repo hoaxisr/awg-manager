@@ -109,17 +109,34 @@
         }
     });
 
-    // Redirect to /fakeip when sing-box is in fakeip-tun mode — the tproxy
-    // page would show the engine as "running" while the tproxy slot is
-    // disabled, which is misleading. Only fires after settings are loaded
-    // (initialized) and only in a browser context (no SSR loops).
+    // In fakeip-tun mode, land on the FakeIP tab instead of the tproxy-
+    // oriented default — the tproxy view would show the engine as "running"
+    // while the tproxy slot is disabled, which is misleading. The FakeIP UI
+    // now lives as a tab on THIS page, so we just select it (activeTab is
+    // the page's tab source-of-truth; the Tabs component syncs ?tab=fakeip
+    // outbound). We deliberately do NOT goto('/fakeip') — that route now
+    // bounces back to /routing?tab=fakeip and would create an infinite loop.
+    //
+    // One-shot (fakeipAutoSelected) so a manual switch to another tab sticks,
+    // and skipped when the URL already carries an explicit ?tab= (deep-link)
+    // so we never override a user's chosen tab. Guarded on singboxInstalled
+    // (the same condition that renders the tab) so we never select a tab that
+    // isn't there — fakeip-tun implies sing-box installed, but this keeps the
+    // selection from racing ahead of systemInfo arriving.
     const singboxInitializedStore = singboxRouterStore.initialized;
     const singboxSettings = singboxRouterStore.settings;
+    let fakeipAutoSelected = false;
     $effect(() => {
         if (!browser) return;
         if (!$singboxInitializedStore) return;
+        if (!singboxInstalled) return;
+        if (fakeipAutoSelected) return;
         if ($singboxSettings?.routingMode === 'fakeip-tun') {
-            void goto('/fakeip', { replaceState: true });
+            fakeipAutoSelected = true;
+            const explicitTab = new URL(window.location.href).searchParams.get('tab');
+            if (!explicitTab) {
+                activeTab = 'fakeip';
+            }
         }
     });
 
