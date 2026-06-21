@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -36,6 +37,78 @@ func newSettingsHandlerForTest(t *testing.T) (*SettingsHandler, *storage.Setting
 	}
 	h := NewSettingsHandler(store, nil)
 	return h, store
+}
+
+// getMonitoringEnabled exercises the real GET handler and decodes the
+// monitoring.enabled field out of the response envelope.
+func getMonitoringEnabled(t *testing.T, h *SettingsHandler) bool {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/settings/get", nil)
+	rec := httptest.NewRecorder()
+	h.Get(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Monitoring struct {
+				Enabled bool `json:"enabled"`
+			} `json:"monitoring"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode GET body: %v, body=%s", err, rec.Body.String())
+	}
+	return resp.Data.Monitoring.Enabled
+}
+
+func TestSettings_MonitoringEnabled_RoundTrip(t *testing.T) {
+	h, _ := newSettingsHandlerForTest(t)
+
+	// Default GET => monitoring.enabled true.
+	if !getMonitoringEnabled(t, h) {
+		t.Fatalf("default monitoring.enabled = false, want true")
+	}
+
+	// PATCH false persists.
+	body := []byte(`{"monitoring":{"enabled":false}}`)
+	req := httptest.NewRequest(http.MethodPost, "/settings/update", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	if getMonitoringEnabled(t, h) {
+		t.Fatalf("after update monitoring.enabled = true, want false")
+	}
+}
+
+// chanMonitoringRefresh records RefreshNow calls on a buffered channel so
+// tests can assert whether the async (goroutine) refresh fired.
+type chanMonitoringRefresh struct{ called chan struct{} }
+
+func (m chanMonitoringRefresh) RefreshNow(_ context.Context) { m.called <- struct{}{} }
+
+func TestUpdate_MonitoringEnabledChanged_TriggersRefresh(t *testing.T) {
+	h, _ := newSettingsHandlerForTest(t)
+	mon := chanMonitoringRefresh{called: make(chan struct{}, 1)}
+	h.SetMonitoringService(mon)
+
+	// Default is enabled=true; toggle to false must trigger refresh.
+	body := []byte(`{"monitoring":{"enabled":false}}`)
+	req := httptest.NewRequest(http.MethodPost, "/settings/update", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	select {
+	case <-mon.called:
+	case <-time.After(time.Second):
+		t.Fatalf("RefreshNow was not called after monitoring.enabled change")
+	}
 }
 
 func TestUpdate_SingboxLogLevelInvalidRejected(t *testing.T) {

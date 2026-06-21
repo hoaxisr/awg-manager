@@ -70,6 +70,11 @@ type DNSRouteSettingsDTO struct {
 	RefreshDailyTime     string `json:"refreshDailyTime" example:"03:00"`
 }
 
+// MonitoringSettingsDTO mirrors frontend Settings.monitoring.
+type MonitoringSettingsDTO struct {
+	Enabled bool `json:"enabled" example:"true"`
+}
+
 // GeoFileSettingsDTO mirrors frontend GeoFileSettings.
 type GeoFileSettingsDTO struct {
 	AutoRefreshEnabled   bool   `json:"autoRefreshEnabled" example:"false"`
@@ -80,18 +85,19 @@ type GeoFileSettingsDTO struct {
 
 // SettingsData is the payload for GET /settings/get.
 type SettingsData struct {
-	SchemaVersion             int                  `json:"schemaVersion" example:"16"`
-	AuthEnabled               bool                 `json:"authEnabled" example:"false"`
-	Server                    ServerSettingsDTO    `json:"server"`
-	PingCheck                 PingCheckSettingsDTO `json:"pingCheck"`
-	Logging                   LoggingSettingsDTO   `json:"logging"`
-	MonitoringExcludedTunnels []string             `json:"monitoringExcludedTunnels,omitempty" example:"tn-1,sys-2"`
-	DisableMemorySaving       bool                 `json:"disableMemorySaving" example:"false"`
-	Updates                   UpdateSettingsDTO    `json:"updates"`
-	Download                  DownloadSettingsDTO  `json:"download"`
-	DnsRoute                  DNSRouteSettingsDTO  `json:"dnsRoute"`
-	GeoFile                   GeoFileSettingsDTO   `json:"geoFile"`
-	ConnectivityCheckURL      string               `json:"connectivityCheckUrl" example:"http://connectivitycheck.gstatic.com/generate_204"`
+	SchemaVersion             int                   `json:"schemaVersion" example:"16"`
+	AuthEnabled               bool                  `json:"authEnabled" example:"false"`
+	Server                    ServerSettingsDTO     `json:"server"`
+	PingCheck                 PingCheckSettingsDTO  `json:"pingCheck"`
+	Logging                   LoggingSettingsDTO    `json:"logging"`
+	MonitoringExcludedTunnels []string              `json:"monitoringExcludedTunnels,omitempty" example:"tn-1,sys-2"`
+	DisableMemorySaving       bool                  `json:"disableMemorySaving" example:"false"`
+	Updates                   UpdateSettingsDTO     `json:"updates"`
+	Download                  DownloadSettingsDTO   `json:"download"`
+	DnsRoute                  DNSRouteSettingsDTO   `json:"dnsRoute"`
+	GeoFile                   GeoFileSettingsDTO    `json:"geoFile"`
+	Monitoring                MonitoringSettingsDTO `json:"monitoring"`
+	ConnectivityCheckURL      string                `json:"connectivityCheckUrl" example:"http://connectivitycheck.gstatic.com/generate_204"`
 	// UsageLevel controls which UI sections are visible to the user.
 	// Filtering is frontend-only — the API does not enforce it.
 	// enums: expert,advanced,basic
@@ -322,6 +328,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		oldSettings.MonitoringExcludedTunnels,
 		merged.MonitoringExcludedTunnels,
 	)
+	monitoringEnabledChanged := oldSettings.Monitoring.Enabled != merged.Monitoring.Enabled
 
 	// Update tunnel configs if enabling
 	if h.tunnels != nil && toggleEnabled {
@@ -372,7 +379,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if monitoringExcludedChanged && h.monitoring != nil {
+	if (monitoringExcludedChanged || monitoringEnabledChanged) && h.monitoring != nil {
 		h.triggerMonitoringRefresh()
 	}
 

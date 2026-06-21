@@ -1864,6 +1864,12 @@ definitions:
         example: "2024-01-15T10:30:00Z"
         type: string
     type: object
+  api.MonitoringSettingsDTO:
+    properties:
+      enabled:
+        example: true
+        type: boolean
+    type: object
   api.MonitoringSnapshotData:
     properties:
       cells:
@@ -2647,6 +2653,8 @@ definitions:
         $ref: '#/definitions/api.GeoFileSettingsDTO'
       logging:
         $ref: '#/definitions/api.LoggingSettingsDTO'
+      monitoring:
+        $ref: '#/definitions/api.MonitoringSettingsDTO'
       monitoringExcludedTunnels:
         example:
         - tn-1
