@@ -136,6 +136,43 @@ func TestDesiredTunCIDRs_LoopSafetyGate(t *testing.T) {
 	}
 }
 
+// TestRuleSetCIDRs_InlineLoopSafety proves the loop-safety invariant extends to
+// the per-inline-rule level: a rule-set matches by OR of its rules, so an inline
+// rule that ANDs ip_cidr with another matcher (port, domain_suffix, …) only
+// matches a narrowed subset — a raw-IP packet to that CIDR may not match the
+// rule-set at all, fall through to route.final=direct, and get re-routed to the
+// tun via our own CIDR route → loop. So only a PURE ip_cidr inline rule (len==1)
+// is safe to extract; mixed inline rules contribute nothing.
+func TestRuleSetCIDRs_InlineLoopSafety(t *testing.T) {
+	tests := []struct {
+		name   string
+		inline []map[string]any
+		wantV4 []string
+	}{
+		{name: "pure ip_cidr inline → extracted",
+			inline: []map[string]any{{"ip_cidr": []any{"8.8.8.0/24"}}},
+			wantV4: []string{"8.8.8.0/24"}},
+		{name: "ip_cidr + port → NOT extracted (loop hazard)",
+			inline: []map[string]any{{"ip_cidr": []any{"8.8.8.0/24"}, "port": []any{float64(443)}}},
+			wantV4: nil},
+		{name: "ip_cidr + domain_suffix → NOT extracted",
+			inline: []map[string]any{{"ip_cidr": []any{"8.8.8.0/24"}, "domain_suffix": []any{"x.com"}}},
+			wantV4: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &RouterConfig{Route: Route{
+				Rules:   []Rule{{Action: "route", Outbound: "proxy", RuleSet: []string{"s"}}},
+				RuleSet: []RuleSet{{Tag: "s", Type: "inline", Rules: tt.inline}},
+			}}
+			gotV4, _ := desiredTunCIDRs(cfg)
+			if !reflect.DeepEqual(gotV4, tt.wantV4) {
+				t.Errorf("v4 = %v, want %v", gotV4, tt.wantV4)
+			}
+		})
+	}
+}
+
 func TestAddRemoveCIDRRoute(t *testing.T) {
 	log := &callLog{}
 	rec := &recStaticRoutes{log: log}

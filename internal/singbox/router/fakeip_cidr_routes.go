@@ -77,6 +77,17 @@ func normalizeCIDR(c string) (norm string, is4 bool, ok bool) {
 func ruleSetCIDRs(rs RuleSet) []string {
 	var out []string
 	for _, m := range rs.Rules {
+		// Loop-safety at the inline-rule level: a rule-set matches by OR of its
+		// rules, so an inline rule is only safe to route to the tun if it is PURE
+		// — its sole key is ip_cidr. If it ANDs ip_cidr with any other matcher
+		// (port, network, domain*, source_ip_cidr, invert, ip_version, …), a
+		// raw-IP packet to the CIDR may not match the rule-set → it falls through
+		// to route.final=direct → the kernel re-routes it to the tun via our own
+		// CIDR route → loop. So skip mixed inline rules (their by-IP simply isn't
+		// caught; the domain matcher still routes those flows via fakeip DNS).
+		if len(m) != 1 {
+			continue
+		}
 		switch arr := m["ip_cidr"].(type) {
 		case []any:
 			for _, e := range arr {
