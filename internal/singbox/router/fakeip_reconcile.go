@@ -137,16 +137,24 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		if cfg, cerr := s.loadFakeIPConfig(); cerr == nil {
 			cfg = s.ruleSetMaterializer().restoreConfig(cfg)
 			dV4, dV6 := desiredTunCIDRs(cfg)
+			v4Drift := false
 			for _, c := range dV4 {
 				if pfx, perr := netip.ParsePrefix(c); perr == nil && !fakeIPPoolRoutePresent(iface, pfx.Masked()) {
+					v4Drift = true
 					if e := s.addCIDRRoute(ctx, ndmsName, c, false); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "re-add cidr route "+c+": "+e.Error())
 					}
 				}
 			}
-			for _, c := range dV6 {
-				if e := s.addCIDRRoute(ctx, ndmsName, c, true); e != nil {
-					s.appLog.Warn("fakeip-reconcile", iface, "re-add cidr route v6 "+c+": "+e.Error())
+			// v6 CIDR routes have no presence probe yet (follow-up). Gate the whole
+			// v6 re-add on v4 drift: all CIDR routes are installed together at Enable,
+			// so an absent v4 implies the set was wiped. Steady state (v4 present) →
+			// zero v6 POSTs, avoiding per-tick NDMS churn for v6-heavy configs.
+			if v4Drift {
+				for _, c := range dV6 {
+					if e := s.addCIDRRoute(ctx, ndmsName, c, true); e != nil {
+						s.appLog.Warn("fakeip-reconcile", iface, "re-add cidr route v6 "+c+": "+e.Error())
+					}
 				}
 			}
 		}

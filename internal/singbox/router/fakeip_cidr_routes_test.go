@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -325,5 +326,47 @@ func TestReconcileFakeIPTun_ReaddsCIDRRouteWhenMissing(t *testing.T) {
 	// Index 0 → OpkgTun0; the absent loop-safe CIDR route is re-added.
 	if !h.log.has("AddRoute:149.154.160.0:255.255.240.0:OpkgTun0") {
 		t.Errorf("absent CIDR route must be re-added on reconcile; calls=%v", h.log.calls)
+	}
+}
+
+// TestReconcileFakeIPTun_V6CIDRGatedOnV4Drift proves the v6 CIDR re-add is gated
+// on v4 drift: in steady state (v4/pool route PRESENT) a drift-heal reconcile must
+// emit ZERO v6 route POSTs, even when the config carries a v6 CIDR rule. All CIDR
+// routes are installed together at Enable, so a present v4 implies the set is
+// intact — re-POSTing the v6 routes every 30s tick would be pure NDMS churn.
+func TestReconcileFakeIPTun_V6CIDRGatedOnV4Drift(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	neutralSourceProbe(t)
+
+	// Seed a loop-safe proxy rule carrying BOTH a v4 and a v6 ip_cidr so a v6 CIDR
+	// route exists in the desired set.
+	fcfg := `{"dns":{"rules":[{"action":"route","server":"fakeip","query_type":["A","AAAA"]}]},` +
+		`"route":{"final":"direct","rules":[{"action":"route","outbound":"proxy","ip_cidr":["149.154.160.0/20","2001:b28::/32"]}]}}`
+	if err := os.WriteFile(filepath.Join(h.dir, "21-fakeip.json"), []byte(fcfg), 0644); err != nil {
+		t.Fatalf("write 21-fakeip.json: %v", err)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+
+	// Steady state: pool/v4 routes PRESENT → no v4 drift → v6 re-add must be skipped.
+	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return true })
+
+	h.log.calls = nil
+
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+
+	// No v6 route POST may be recorded in steady state.
+	for _, c := range h.log.calls {
+		if strings.HasPrefix(c, "AddRoute6:") {
+			t.Errorf("v6 CIDR route must NOT be re-added when v4 present (no drift); calls=%v", h.log.calls)
+			break
+		}
 	}
 }
