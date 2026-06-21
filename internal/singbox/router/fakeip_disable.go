@@ -228,6 +228,26 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 		}
 	}
 
+	// Remove specific CIDR routes on disable. After fakeip is off these
+	// destinations correctly fall back to the normal WAN exit (direct); unlike
+	// the synthetic pool they need no reject. Explicit per-CIDR removal — the
+	// async pool-drain removes only the pool prefix by net/mask, never these.
+	// Best-effort, logged. Must run while the config is still loadable.
+	if cfg, cerr := s.loadFakeIPConfig(); cerr == nil {
+		cfg = s.ruleSetMaterializer().restoreConfig(cfg)
+		dV4, dV6 := desiredTunCIDRs(cfg)
+		for _, c := range dV4 {
+			if e := s.removeCIDRRoute(ctx, ndmsName, c, false); e != nil {
+				s.appLog.Warn("fakeip-disable", iface, "remove cidr route "+c+": "+e.Error())
+			}
+		}
+		for _, c := range dV6 {
+			if e := s.removeCIDRRoute(ctx, ndmsName, c, true); e != nil {
+				s.appLog.Warn("fakeip-disable", iface, "remove cidr route v6 "+c+": "+e.Error())
+			}
+		}
+	}
+
 	// (6) Clear the fakeip persist — MANDATORY (push through even if a step above
 	// errored). A stale persist would make the startup reap chase a gone iface.
 	if err := s.deps.Settings.SetFakeIPState(nil); err != nil {

@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -250,5 +251,79 @@ func TestEnable_AppliesCIDRRoutes(t *testing.T) {
 	// Index 0 → NDMS name OpkgTun0; the loop-safe proxy CIDR gets a specific route.
 	if !h.log.has("AddRoute:149.154.160.0:255.255.240.0:OpkgTun0") {
 		t.Errorf("expected CIDR route on enable; calls=%v", h.log.calls)
+	}
+}
+
+// TestDisable_RemovesCIDRRoutes proves Task 6 part A: on DISABLE the specific tun
+// CIDR routes are EXPLICITLY removed (not reject-renewed like the synthetic pool).
+// After fakeip is off these real service destinations correctly fall back to the
+// normal WAN exit (direct); only the pool needs a reject. The async pool-drain
+// removes only the pool prefix by net/mask, so the CIDR routes must be removed
+// here or they orphan forever (disable also CLEARS the persisted FakeIP state).
+//
+// Harness: the real provisioned enable harness (index 0 → OpkgTun0). We seed
+// 21-fakeip.json with a loop-safe proxy ip_cidr rule (only the ip_cidr matcher)
+// plus a DNS rule so fakeIPConfigEmpty is false, provision via Enable, then drive
+// Disable. The removal runs BEFORE the persisted-state clear, while the config is
+// still loadable (21-fakeip.json is not deleted on disable).
+func TestDisable_RemovesCIDRRoutes(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	captureDrain(t) // capture the async pool-drain so it never runs inline
+
+	// Seed the fakeip config with a loop-safe proxy ip_cidr rule before provisioning.
+	fcfg := `{"dns":{"rules":[{"action":"route","server":"fakeip","query_type":["A","AAAA"]}]},` +
+		`"route":{"final":"direct","rules":[{"action":"route","outbound":"proxy","ip_cidr":["149.154.160.0/20"]}]}}`
+	if err := os.WriteFile(filepath.Join(h.dir, "21-fakeip.json"), []byte(fcfg), 0644); err != nil {
+		t.Fatalf("write 21-fakeip.json: %v", err)
+	}
+
+	provisionForDisable(t, h) // Enable + clear the call log
+
+	if err := h.svc.Disable(t.Context()); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+
+	// RemoveRoute format is "RemoveRoute:<net>:<iface>" (no mask) per recStaticRoutes.
+	// Index 0 → OpkgTun0; the loop-safe proxy CIDR route is removed on disable.
+	if !h.log.has("RemoveRoute:149.154.160.0:OpkgTun0") {
+		t.Errorf("expected CIDR route removed on disable; calls=%v", h.log.calls)
+	}
+}
+
+// TestReconcileFakeIPTun_ReaddsCIDRRouteWhenMissing proves Task 6 part B: a
+// drift-heal reconcile (provisioned + live) re-asserts absent specific CIDR
+// routes, probing presence via the same fakeIPPoolRoutePresent seam the pool uses
+// (stubbed → false). Mirrors TestReconcileFakeIPTun_ReaddsRouteWhenMissing.
+func TestReconcileFakeIPTun_ReaddsCIDRRouteWhenMissing(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	neutralSourceProbe(t)
+
+	// Seed a loop-safe proxy ip_cidr rule before provisioning so loadFakeIPConfig
+	// returns it on reconcile.
+	fcfg := `{"dns":{"rules":[{"action":"route","server":"fakeip","query_type":["A","AAAA"]}]},` +
+		`"route":{"final":"direct","rules":[{"action":"route","outbound":"proxy","ip_cidr":["149.154.160.0/20"]}]}}`
+	if err := os.WriteFile(filepath.Join(h.dir, "21-fakeip.json"), []byte(fcfg), 0644); err != nil {
+		t.Fatalf("write 21-fakeip.json: %v", err)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+
+	// All routes drifted away (the CIDR probe shares this seam) → re-add fires.
+	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return false })
+
+	h.log.calls = nil
+
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+
+	// Index 0 → OpkgTun0; the absent loop-safe CIDR route is re-added.
+	if !h.log.has("AddRoute:149.154.160.0:255.255.240.0:OpkgTun0") {
+		t.Errorf("absent CIDR route must be re-added on reconcile; calls=%v", h.log.calls)
 	}
 }

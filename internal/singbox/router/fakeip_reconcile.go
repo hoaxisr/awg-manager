@@ -130,6 +130,28 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		}
 	}
 
+	// Re-assert specific CIDR routes (drift-heal, defense-in-depth). Routes are
+	// NDMS-native and durable across reload; this backstops manual removal / crash.
+	// Probe presence with the same seam the pool uses → zero POSTs in steady state.
+	if s.deps.StaticRoutes != nil {
+		if cfg, cerr := s.loadFakeIPConfig(); cerr == nil {
+			cfg = s.ruleSetMaterializer().restoreConfig(cfg)
+			dV4, dV6 := desiredTunCIDRs(cfg)
+			for _, c := range dV4 {
+				if pfx, perr := netip.ParsePrefix(c); perr == nil && !fakeIPPoolRoutePresent(iface, pfx.Masked()) {
+					if e := s.addCIDRRoute(ctx, ndmsName, c, false); e != nil {
+						s.appLog.Warn("fakeip-reconcile", iface, "re-add cidr route "+c+": "+e.Error())
+					}
+				}
+			}
+			for _, c := range dV6 {
+				if e := s.addCIDRRoute(ctx, ndmsName, c, true); e != nil {
+					s.appLog.Warn("fakeip-reconcile", iface, "re-add cidr route v6 "+c+": "+e.Error())
+				}
+			}
+		}
+	}
+
 	// Re-add the tun default route(s) ONLY on real drift (PE-E). NDMS does NOT
 	// auto-add a default route via the OpkgTun — Enable installs it so a policy
 	// with the tun as exit actually routes; a PREROUTING/route rebuild can wipe it
