@@ -1796,6 +1796,9 @@ label {
 	background: var(--color-warning, var(--color-accent));
 	animation: pulse 1s ease-in-out infinite;
 }
+.restart-dot.off {
+	background: var(--color-text-muted);
+}
 .restart-name {
 	font-size: 0.875rem;
 	font-weight: 500;

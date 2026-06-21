@@ -83,11 +83,11 @@
 				await api.removeNativePingCheck(t.id);
 			} else {
 				const full = await api.getTunnel(t.id);
-				if (next && !full.pingCheck) {
+				if (!full.pingCheck) {
 					void openPingCheck(t.id);
 					return;
 				}
-				full.pingCheck = { ...(full.pingCheck ?? {}), enabled: next } as typeof full.pingCheck;
+				full.pingCheck = { ...full.pingCheck, enabled: next };
 				await api.updateTunnel(t.id, full);
 			}
 			await reloadRestartTunnels();
