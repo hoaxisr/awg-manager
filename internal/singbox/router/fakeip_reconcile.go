@@ -3,6 +3,7 @@ package router
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"net/netip"
 	"os"
 	"strings"
@@ -154,6 +155,41 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 				for _, c := range dV6 {
 					if e := s.addCIDRRoute(ctx, ndmsName, c, true); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "re-add cidr route v6 "+c+": "+e.Error())
+					}
+				}
+			}
+		}
+	}
+
+	// Tier 2: remote rule-set CIDRs (network + decompile) — only reachable in the
+	// periodic reconcile (the .srs may not be downloaded at edit time, so the
+	// edit-time Tier-1 diff cannot see them). Best-effort: add any remote CIDR not
+	// yet present. No removal here — Tier-1 diff-on-mutation owns removals; a remote
+	// set merely contributes additional desired routes.
+	if s.deps.StaticRoutes != nil {
+		if cfg, cerr := s.loadFakeIPConfig(); cerr == nil {
+			cfg = s.ruleSetMaterializer().restoreConfig(cfg)
+			rV4, rV6 := s.remoteTunCIDRs(ctx, cfg)
+			if len(rV4) > 0 || len(rV6) > 0 {
+				s.appLog.Info("fakeip-cidr-remote", ndmsName, fmt.Sprintf("remote cidrs: v4=%d v6=%d", len(rV4), len(rV6)))
+			}
+			rV4Drift := false
+			for _, c := range rV4 {
+				if pfx, perr := netip.ParsePrefix(c); perr == nil && !fakeIPPoolRoutePresent(iface, pfx.Masked()) {
+					rV4Drift = true
+					if e := s.addCIDRRoute(ctx, ndmsName, c, false); e != nil {
+						s.appLog.Warn("fakeip-reconcile", iface, "add remote cidr "+c+": "+e.Error())
+					}
+				}
+			}
+			// Remote v6 has no presence probe yet (same limitation as Tier-1 v6).
+			// Gate the whole remote-v6 re-add on remote-v4 drift to avoid per-tick
+			// NDMS churn for v6-heavy remote sets. Documented limitation: a config
+			// with remote v6 CIDRs but NO remote v4 CIDRs won't self-heal v6.
+			if rV4Drift {
+				for _, c := range rV6 {
+					if e := s.addCIDRRoute(ctx, ndmsName, c, true); e != nil {
+						s.appLog.Warn("fakeip-reconcile", iface, "add remote cidr v6 "+c+": "+e.Error())
 					}
 				}
 			}
