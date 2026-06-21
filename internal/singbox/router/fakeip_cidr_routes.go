@@ -19,6 +19,20 @@ func isProxyRoute(r Rule) bool {
 	return r.Action == "route" && r.Outbound != "" && r.Outbound != "direct"
 }
 
+// loopSafeProxyRule reports whether a proxy route-rule's dst CIDRs are safe to
+// route to the tun. Safe iff the ONLY matchers are ip_cidr and/or rule_set: then
+// any raw-IP packet to a routed CIDR is guaranteed to match this rule and be
+// proxied, so it never falls through to route.final (seeded "direct") and loops
+// back to the tun. Any narrowing matcher (port, source_ip_cidr, domain_suffix,
+// protocol, nested logical, ip_is_private) makes a by-IP packet potentially
+// fall through → loop; such rules contribute no routes.
+func loopSafeProxyRule(r Rule) bool {
+	return isProxyRoute(r) &&
+		r.Type == "" && r.Mode == "" && len(r.Rules) == 0 &&
+		len(r.DomainSuffix) == 0 && len(r.SourceIPCIDR) == 0 &&
+		len(r.Port) == 0 && r.Protocol == "" && r.IPIsPrivate == nil
+}
+
 // cgnat is RFC 6598 shared address space (100.64.0.0/10) — never a valid proxy
 // target and NOT classified private by net/netip, so excluded explicitly.
 var cgnat = netip.MustParsePrefix("100.64.0.0/10")
@@ -104,7 +118,7 @@ func desiredTunCIDRs(cfg *RouterConfig) (v4 []string, v6 []string) {
 		}
 	}
 	for _, r := range cfg.Route.Rules {
-		if !isProxyRoute(r) {
+		if !loopSafeProxyRule(r) {
 			continue
 		}
 		for _, c := range r.IPCIDR {

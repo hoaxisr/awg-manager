@@ -93,6 +93,44 @@ func TestDesiredTunCIDRs(t *testing.T) {
 	}
 }
 
+func TestDesiredTunCIDRs_LoopSafetyGate(t *testing.T) {
+	tests := []struct {
+		name   string
+		rule   Rule
+		wantV4 []string
+	}{
+		{
+			name:   "pure ip_cidr proxy rule → extracted",
+			rule:   Rule{Action: "route", Outbound: "proxy", IPCIDR: []string{"8.8.8.0/24"}},
+			wantV4: []string{"8.8.8.0/24"},
+		},
+		{
+			name:   "ip_cidr + port → NOT extracted (loop hazard)",
+			rule:   Rule{Action: "route", Outbound: "proxy", IPCIDR: []string{"8.8.8.0/24"}, Port: []int{443}},
+			wantV4: nil,
+		},
+		{
+			name:   "ip_cidr + source_ip_cidr → NOT extracted",
+			rule:   Rule{Action: "route", Outbound: "proxy", IPCIDR: []string{"8.8.8.0/24"}, SourceIPCIDR: []string{"192.168.1.5/32"}},
+			wantV4: nil,
+		},
+		{
+			name:   "ip_cidr + domain_suffix → NOT extracted",
+			rule:   Rule{Action: "route", Outbound: "proxy", IPCIDR: []string{"8.8.8.0/24"}, DomainSuffix: []string{"x.com"}},
+			wantV4: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &RouterConfig{Route: Route{Rules: []Rule{tt.rule}}}
+			gotV4, _ := desiredTunCIDRs(cfg)
+			if !reflect.DeepEqual(gotV4, tt.wantV4) {
+				t.Errorf("v4 = %v, want %v", gotV4, tt.wantV4)
+			}
+		})
+	}
+}
+
 func TestAddRemoveCIDRRoute(t *testing.T) {
 	log := &callLog{}
 	rec := &recStaticRoutes{log: log}
