@@ -5,3 +5,4 @@ export { default as MatrixSkeletonScreen } from './MatrixSkeletonScreen.svelte';
 export { default as Sparkline } from './Sparkline.svelte';
 export { default as MatrixDrillDown } from './MatrixDrillDown.svelte';
 export { default as ObservationTab } from './ObservationTab.svelte';
+export { default as RestartsTab } from './RestartsTab.svelte';

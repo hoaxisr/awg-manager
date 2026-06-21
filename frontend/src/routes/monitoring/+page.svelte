@@ -3,14 +3,20 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api/client';
-	import { PageContainer, PageHeader, EmptyState } from '$lib/components/layout';
+	import { PageContainer, PageHeader } from '$lib/components/layout';
 	import { Tabs } from '$lib/components/ui';
-	import { ObservationTab } from '$lib/components/monitoring';
+	import { ObservationTab, RestartsTab } from '$lib/components/monitoring';
 	import { KernelPingCheckModal, NativeWGPingCheckModal } from '$lib/components/pingcheck';
 	import { notifications } from '$lib/stores/notifications';
-	import type { AWGTunnel, NativePingCheckStatus, TunnelListItem } from '$lib/types';
+	import type { AWGTunnel, NativePingCheckStatus, Settings, TunnelListItem } from '$lib/types';
 
 	let activeTab = $state<'observe' | 'restarts'>('observe');
+
+	// Full settings — C-master (pingCheck.enabled). SettingsPatch.PingCheck is a
+	// whole-struct replace (not a merge), so toggling must spread the FULL current
+	// pingCheck (incl. defaults) or defaults get zeroed → hold the loaded object.
+	let pageSettings = $state<Settings | null>(null);
+	let restartEnabled = $state(false);
 
 	// Tunnel list — источник строк вкладки «Рестарты» (Task 5) + бейджа recovering.
 	// MonitoringSnapshot.tunnels НЕ годится: не содержит failThreshold/status.
@@ -38,6 +44,58 @@
 		}
 	}
 
+	async function loadPageSettings() {
+		try {
+			pageSettings = await api.getSettings();
+			restartEnabled = pageSettings.pingCheck?.enabled ?? false;
+		} catch {
+			// Restarts master is best-effort; per-tunnel rows still render.
+		}
+	}
+
+	// C-master: toggle pingCheck.enabled. The backend cascades this enable/disable
+	// to ALL tunnels (settings.go) — that is the intended "restarts for all" master.
+	async function setRestartEnabled(next: boolean) {
+		if (!pageSettings) return;
+		restartEnabled = next; // optimistic
+		try {
+			pageSettings = await api.updateSettings({
+				pingCheck: { ...pageSettings.pingCheck, enabled: next }, // full object: preserve defaults
+			});
+			restartEnabled = pageSettings.pingCheck?.enabled ?? next;
+			await reloadRestartTunnels(); // cascade may have flipped per-tunnel statuses
+		} catch {
+			restartEnabled = !next; // rollback
+			notifications.error('Не удалось переключить переподнятие');
+		}
+	}
+
+	// Per-tunnel toggle. Native has no `enabled` field — enabling needs full
+	// host/mode config, so enabling native (or kernel without existing config)
+	// opens the «Настроить…» modal instead of a blind write.
+	async function toggleTunnelRestart(t: TunnelListItem, next: boolean) {
+		try {
+			if (t.backend === 'nativewg') {
+				if (next) {
+					void openPingCheck(t.id);
+					return;
+				}
+				await api.removeNativePingCheck(t.id);
+			} else {
+				const full = await api.getTunnel(t.id);
+				if (next && !full.pingCheck) {
+					void openPingCheck(t.id);
+					return;
+				}
+				full.pingCheck = { ...(full.pingCheck ?? {}), enabled: next } as typeof full.pingCheck;
+				await api.updateTunnel(t.id, full);
+			}
+			await reloadRestartTunnels();
+		} catch {
+			notifications.error('Не удалось переключить переподнятие туннеля');
+		}
+	}
+
 	// Pingcheck drawer state — backend determines which form is shown.
 	let pingTunnelId = $state('');
 	let pingTunnelName = $state('');
@@ -48,6 +106,7 @@
 
 	onMount(() => {
 		void reloadRestartTunnels();
+		void loadPageSettings();
 	});
 
 	// React to ?pingcheck=<id> — fetch tunnel, decide which drawer to open.
@@ -124,9 +183,12 @@
 	{#if activeTab === 'observe'}
 		<ObservationTab />
 	{:else}
-		<EmptyState
-			title="Рестарты"
-			description="Журнал автоматических рестартов появится здесь."
+		<RestartsTab
+			tunnels={restartTunnels}
+			restartEnabled={restartEnabled}
+			onToggleMaster={setRestartEnabled}
+			onToggleTunnel={toggleTunnelRestart}
+			onConfigure={openPingCheck}
 		/>
 	{/if}
 

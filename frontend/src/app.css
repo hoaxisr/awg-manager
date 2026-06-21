@@ -1760,3 +1760,59 @@ label {
 	font-weight: 500;
 	color: var(--color-text-primary, var(--text-primary));
 }
+
+/* Restarts tab (ping-check) */
+.restart-banner {
+	margin-bottom: 1rem;
+	padding: 0.625rem 0.75rem;
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-md);
+	background: color-mix(in srgb, var(--color-bg-secondary) 70%, transparent);
+	font-size: 0.8125rem;
+	color: var(--color-text-muted);
+}
+.restart-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+.restart-row {
+	display: flex;
+	align-items: center;
+	gap: 0.625rem;
+	padding: 0.5rem 0.75rem;
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-md);
+	background: var(--color-bg-secondary);
+}
+.restart-dot {
+	flex: 0 0 auto;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--color-success);
+}
+.restart-dot.rec {
+	background: var(--color-warning, var(--color-accent));
+	animation: pulse 1s ease-in-out infinite;
+}
+.restart-name {
+	font-size: 0.875rem;
+	font-weight: 500;
+	color: var(--color-text-primary, var(--text-primary));
+}
+.restart-rec {
+	font-size: 0.75rem;
+	color: var(--color-warning, var(--color-accent));
+}
+.restart-threshold {
+	font-size: 0.75rem;
+	color: var(--color-text-muted);
+}
+.restart-spacer {
+	flex: 1 1 auto;
+}
+@keyframes pulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.4; }
+}
