@@ -1746,3 +1746,17 @@ label {
 .traffic-rate.tx {
 	color: var(--success, #4ade80);
 }
+
+/* Monitoring master toggle row (Наблюдение / Рестарты tabs) */
+.master-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.75rem;
+	margin-bottom: 1rem;
+}
+.master-label {
+	font-size: 0.875rem;
+	font-weight: 500;
+	color: var(--color-text-primary, var(--text-primary));
+}

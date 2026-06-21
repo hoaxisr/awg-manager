@@ -737,6 +737,7 @@ export interface Settings {
 	download: DownloadSettings;
 	dnsRoute: DNSRouteSettings;
 	geoFile: GeoFileSettings;
+	monitoring?: { enabled: boolean };
 	connectivityCheckUrl: string;
 	usageLevel: UsageLevel;
 	hiddenSystemTunnels?: string[];
