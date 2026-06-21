@@ -181,6 +181,39 @@ func TestScheduler_RunOnce_ExcludesConfiguredTunnels(t *testing.T) {
 	}
 }
 
+func TestScheduler_RunOnce_DisabledByMonitoringSwitch(t *testing.T) {
+	prober := &fakeProber{ok: true, latency: 10}
+	hist := NewHistory()
+	settingsStore := storage.NewSettingsStore(t.TempDir())
+	settings, err := settingsStore.Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	settings.MonitoringExcludedTunnels = nil
+	settings.Monitoring.Enabled = false
+	if err := settingsStore.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	sched := NewScheduler(SchedulerDeps{
+		TunnelLister: &fakeLister{tunnels: []traffic.RunningTunnel{
+			{ID: "tn-A", IfaceName: "wg0"},
+		}},
+		SettingsStore: settingsStore,
+		Prober:        prober,
+	}, hist)
+
+	sched.RunOnce(context.Background())
+
+	if got := prober.calls.Load(); got != 0 {
+		t.Fatalf("prober called %d times with monitoring disabled, want 0", got)
+	}
+	snap := sched.LatestSnapshot()
+	if len(snap.Tunnels) != 0 || len(snap.Cells) != 0 {
+		t.Fatalf("snapshot not empty: tunnels=%d cells=%d", len(snap.Tunnels), len(snap.Cells))
+	}
+}
+
 type fakeSingboxTunnels struct {
 	items []SingboxTunnelInfo
 	err   error

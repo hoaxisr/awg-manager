@@ -395,6 +395,12 @@ func (s *Scheduler) runProbeCell(ctx context.Context, t Target, tn Tunnel, isSel
 // name) are filtered out — otherwise a freshly-imported NWG tunnel would
 // appear twice in the matrix (once as managed, once as system).
 func (s *Scheduler) collectTunnels(ctx context.Context) []Tunnel {
+	if st := s.deps.SettingsStore; st != nil {
+		if settings, err := st.Get(); err == nil && settings != nil && !settings.Monitoring.Enabled {
+			return nil
+		}
+	}
+
 	out := make([]Tunnel, 0)
 	managedClaimed := make(map[string]bool)
 
