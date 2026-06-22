@@ -131,12 +131,18 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		}
 	}
 
-	// Re-assert specific CIDR routes (drift-heal, defense-in-depth). Routes are
-	// NDMS-native and durable across reload; this backstops manual removal / crash.
-	// Probe presence with the same seam the pool uses → zero POSTs in steady state.
+	// CIDR drift-heal (Tier-1 + Tier-2) shares a SINGLE config load+restore per tick.
+	// Both tiers consume the same materialized config; loading it once avoids 2 disk
+	// reads + 2 materializer passes per 30s tick (design §6 reconcile-cost). On a
+	// load error BOTH tiers skip (best-effort, as before).
 	if s.deps.StaticRoutes != nil {
 		if cfg, cerr := s.loadFakeIPConfig(); cerr == nil {
 			cfg = s.ruleSetMaterializer().restoreConfig(cfg)
+
+			// Tier 1: re-assert specific CIDR routes (drift-heal, defense-in-depth).
+			// Routes are NDMS-native and durable across reload; this backstops manual
+			// removal / crash. Probe presence with the same seam the pool uses → zero
+			// POSTs in steady state.
 			dV4, dV6 := desiredTunCIDRs(cfg)
 			v4Drift := false
 			for _, c := range dV4 {
@@ -158,17 +164,12 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 					}
 				}
 			}
-		}
-	}
 
-	// Tier 2: remote rule-set CIDRs (network + decompile) — only reachable in the
-	// periodic reconcile (the .srs may not be downloaded at edit time, so the
-	// edit-time Tier-1 diff cannot see them). Best-effort: add any remote CIDR not
-	// yet present. No removal here — Tier-1 diff-on-mutation owns removals; a remote
-	// set merely contributes additional desired routes.
-	if s.deps.StaticRoutes != nil {
-		if cfg, cerr := s.loadFakeIPConfig(); cerr == nil {
-			cfg = s.ruleSetMaterializer().restoreConfig(cfg)
+			// Tier 2: remote rule-set CIDRs (network + decompile) — only reachable in the
+			// periodic reconcile (the .srs may not be downloaded at edit time, so the
+			// edit-time Tier-1 diff cannot see them). Best-effort: add any remote CIDR not
+			// yet present. No removal here — Tier-1 diff-on-mutation owns removals; a remote
+			// set merely contributes additional desired routes.
 			rV4, rV6 := s.remoteTunCIDRs(ctx, cfg)
 			if len(rV4) > 0 || len(rV6) > 0 {
 				s.appLog.Info("fakeip-cidr-remote", ndmsName, fmt.Sprintf("remote cidrs: v4=%d v6=%d", len(rV4), len(rV6)))
