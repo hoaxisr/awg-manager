@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -1046,8 +1047,19 @@ func main() {
 		settingsStore,
 		awgStore,
 	)
+	geoRefreshScheduler := hydraroute.NewGeoRefreshScheduler(
+		hydraService, settingsStore, loggingService,
+		func(ctx context.Context) (*http.Client, string, func(), error) {
+			lease, err := sharedDownloadSvc.ResolveClient(ctx, nil)
+			if err != nil {
+				return nil, "", nil, err
+			}
+			return lease.Client, lease.Route.DisplayName(), lease.Close, nil
+		},
+	)
 	dnsRouteService.SetDownloader(&dnsRouteDownloaderAdapter{svc: sharedDownloadSvc})
 	dnsRefreshScheduler.Start()
+	geoRefreshScheduler.Start()
 	updaterService.SetDownloader(sharedDownloadSvc)
 	if singboxInstaller != nil {
 		singboxInstaller.SetDownloader(&installerDownloaderAdapter{svc: sharedDownloadSvc})
@@ -1274,6 +1286,7 @@ func main() {
 	srv.AddShutdownHook(pingCheckService.Stop)
 	srv.AddShutdownHook(monitoringService.Stop)
 	srv.AddShutdownHook(dnsRefreshScheduler.Stop)
+	srv.AddShutdownHook(geoRefreshScheduler.Stop)
 	srv.AddShutdownHook(routerScheduler.Stop)
 	srv.AddShutdownHook(sessionStore.Stop)
 	srv.AddShutdownHook(func() {

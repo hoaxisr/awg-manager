@@ -18,6 +18,7 @@ type Settings struct {
 	Updates              UpdateSettings    `json:"updates"`
 	Download             DownloadSettings  `json:"download"`
 	DNSRoute             DNSRouteSettings  `json:"dnsRoute"`
+	GeoFile              GeoFileSettings   `json:"geoFile"`
 	ConnectivityCheckURL string            `json:"connectivityCheckUrl"`
 	UsageLevel           string            `json:"usageLevel"`
 	ServerInterfaces     []string          `json:"serverInterfaces,omitempty"`
@@ -147,6 +148,11 @@ type SingboxRouterSettings struct {
 	// false — сегментный NAT не трогается (legacy dynamic-NAT). Pointer —
 	// чтобы отличить «не задано» (=true) от явного false.
 	FakeIPSourcePreserve *bool `json:"fakeipSourcePreserve,omitempty"`
+	// UDPTimeout задаёт таймаут UDP-сессий в tproxy-in inbound (формат Go duration,
+	// например "3m0s", "10m0s"). Пустая строка = использовать значение по умолчанию
+	// (DefaultUDPTimeout). Увеличение помогает при работе игр и других UDP-приложений,
+	// которые могут молчать дольше стандартных 3 минут.
+	UDPTimeout string `json:"udpTimeout,omitempty"`
 }
 
 // FakeIPSourcePreserveOrDefault: nil → true (default on).
@@ -264,6 +270,16 @@ type DNSRouteSettings struct {
 	RefreshIntervalHours int    `json:"refreshIntervalHours"`       // default: 0 (user must choose)
 	RefreshMode          string `json:"refreshMode,omitempty"`      // "interval" (default/empty) or "daily"
 	RefreshDailyTime     string `json:"refreshDailyTime,omitempty"` // "HH:MM" 24h format, e.g. "03:00"
+}
+
+// GeoFileSettings contains geo-file (geoip/geosite) auto-refresh configuration.
+// Mirrors DNSRouteSettings. The download route is NOT stored here — background
+// refresh reuses the global Download route via downloader.ResolveClient(ctx, nil).
+type GeoFileSettings struct {
+	AutoRefreshEnabled   bool   `json:"autoRefreshEnabled"`         // default: false
+	RefreshIntervalHours int    `json:"refreshIntervalHours"`       // default: 0 (user chooses)
+	RefreshMode          string `json:"refreshMode,omitempty"`      // "interval" (default) or "daily"
+	RefreshDailyTime     string `json:"refreshDailyTime,omitempty"` // "HH:MM" 24h, e.g. "03:00"
 }
 
 // ConnectivityCheckConfig holds per-tunnel connectivity check settings.

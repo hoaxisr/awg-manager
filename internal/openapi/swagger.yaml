@@ -1267,6 +1267,21 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.GeoFileSettingsDTO:
+    properties:
+      autoRefreshEnabled:
+        example: false
+        type: boolean
+      refreshDailyTime:
+        example: "03:00"
+        type: string
+      refreshIntervalHours:
+        example: 24
+        type: integer
+      refreshMode:
+        example: interval
+        type: string
+    type: object
   api.GeoFileUpdatedData:
     properties:
       error:
@@ -2701,6 +2716,8 @@ definitions:
         $ref: '#/definitions/api.DNSRouteSettingsDTO'
       download:
         $ref: '#/definitions/api.DownloadSettingsDTO'
+      geoFile:
+        $ref: '#/definitions/api.GeoFileSettingsDTO'
       logging:
         $ref: '#/definitions/api.LoggingSettingsDTO'
       monitoringExcludedTunnels:
@@ -3731,6 +3748,14 @@ definitions:
       snifferEnabled:
         example: true
         type: boolean
+      udpTimeout:
+        description: |-
+          UDPTimeout sets the UDP session timeout for the tproxy-in inbound
+          (Go duration string, e.g. "3m0s", "10m0s"). Empty = use default (3m0s).
+          Increase to prevent long-quiet UDP applications (games, etc.) from
+          having their sessions silently dropped mid-game.
+        example: 10m0s
+        type: string
       wanAutoDetect:
         description: |-
           WANAutoDetect / WANInterface form a two-field discriminator:

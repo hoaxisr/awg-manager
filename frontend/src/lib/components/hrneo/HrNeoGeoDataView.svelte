@@ -12,7 +12,9 @@
 		ensureDownloadOutboundsLoaded,
 		resolveDownloadRouteLabel,
 	} from '$lib/stores/downloadRoute';
-	import { ConfirmModal, Button, Dropdown } from '$lib/components/ui';
+	import { ConfirmModal, Button, Dropdown, IconButton, Modal } from '$lib/components/ui';
+	import { formatRelativeTime } from '$lib/utils/format';
+	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { geoDownloadProgress } from '$lib/stores/geoDownload';
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
 	import DownloadErrorNotice from '$lib/components/downloads/DownloadErrorNotice.svelte';
@@ -217,6 +219,13 @@
 
 	let pendingDelete = $state<GeoFileEntry | null>(null);
 	let pendingTakeControl = $state<GeoFileEntry | null>(null);
+	let sourceModalFile = $state<GeoFileEntry | null>(null);
+	let copiedSource = $state(false);
+
+	async function copySource() {
+		if (!sourceModalFile) return;
+		copiedSource = await copyToClipboard(sourceModalFile.url);
+	}
 	let expandedPaths = $state<Set<string>>(new Set());
 
 	function requestRemove(f: GeoFileEntry) {
@@ -294,8 +303,10 @@
 	}
 
 	function canUpdate(f: GeoFileEntry): boolean {
+		// external — управляется HR Neo; «локальный» (без url) обновлять неоткуда
+		// (нет источника), иначе «Обновить» затёр бы файл дефолтным Ground-Zerro.
 		if (f.external) return false;
-		return !!(f.url || f.type === 'geoip' || f.type === 'geosite');
+		return !!f.url;
 	}
 
 	async function confirmRemove() {
@@ -430,7 +441,21 @@
 								title="Данный файл управляется HydraRoute Neo"
 							>External</span>
 						{/if}
-						<span class="file-meta">{humanSize(f.size)} · {f.tagCount} тегов</span>
+						<span class="file-meta">{humanSize(f.size)} · {f.tagCount} тегов · {formatRelativeTime(f.updated)}</span>
+						{#if f.external}
+							<!-- External (HR Neo) — источник нам неизвестен (бэкенд лишь
+							     подставляет догадочный default-URL), показываем только бейдж External -->
+						{:else if f.url}
+							<IconButton
+								ariaLabel="Источник"
+								title="Показать источник"
+								onclick={() => { sourceModalFile = f; copiedSource = false; }}
+							>
+								<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+							</IconButton>
+						{:else}
+							<span class="file-local" title="Загружен вручную">локальный</span>
+						{/if}
 						{#if busy === f.path && fp}
 							<span class="row-progress">
 								{#if fp.phase === 'download'}
@@ -593,6 +618,17 @@
 	/>
 {/if}
 
+{#if sourceModalFile}
+	<Modal open title="Источник гео-файла" size="md" onclose={() => (sourceModalFile = null)}>
+		<div class="source-modal">
+			<code class="source-url">{sourceModalFile.url}</code>
+			<Button variant="secondary" size="sm" onclick={copySource}>
+				{copiedSource ? 'Скопировано' : 'Копировать'}
+			</Button>
+		</div>
+	</Modal>
+{/if}
+
 <style>
 	.geo-pane {
 		--geo-block-gap: 0.875rem;
@@ -728,6 +764,10 @@
 		color: var(--text-muted);
 		font-size: 0.75rem;
 	}
+
+	.file-local { font-size: 0.75rem; color: var(--text-secondary); }
+	.source-modal { display: flex; flex-direction: column; gap: 0.75rem; }
+	.source-url { word-break: break-all; font-size: 0.8125rem; padding: 0.5rem; background: var(--color-bg-secondary); border-radius: var(--radius-sm); }
 
 	.file-external {
 		font-size: 0.6875rem;

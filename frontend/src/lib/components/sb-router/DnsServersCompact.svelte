@@ -265,19 +265,21 @@
     font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 600;
-    white-space: normal;
-    overflow-wrap: anywhere;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .sub {
     font-size: 11px;
     color: var(--text-muted);
-    white-space: normal;
-    overflow-wrap: anywhere;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .detour-chip {
-    flex-shrink: 1;
     min-width: 0;
-    max-width: 100%;
+    max-width: 120px;
+    overflow: hidden;
   }
   .detour-chip :global(.tone-chip) {
     max-width: 100%;

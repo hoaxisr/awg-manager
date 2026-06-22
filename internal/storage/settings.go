@@ -460,7 +460,13 @@ func (s *SettingsStore) migrateToV26(settings *Settings) {
 	settings.SchemaVersion = 26
 }
 
-// migrateToV27 defaults the new sing-box RoutingMode to "tproxy" (existing behavior).
+// migrateToV27 defaults the new sing-box RoutingMode to "tproxy" (existing
+// behavior) and introduces GeoFileSettings — its zero value (auto-refresh
+// disabled) is the intended default, so no action is needed for it beyond the
+// version stamp. (Both effects landed independently as v27 on parallel branches;
+// merged here. Idempotent: RoutingMode is also defaulted at runtime by
+// NormalizeSingboxRouterSettings, so a config that took only the GeoFileSettings
+// v27 path stays correct.)
 func (s *SettingsStore) migrateToV27(settings *Settings) {
 	if settings.SingboxRouter.RoutingMode == "" {
 		settings.SingboxRouter.RoutingMode = "tproxy"

@@ -70,6 +70,14 @@ type DNSRouteSettingsDTO struct {
 	RefreshDailyTime     string `json:"refreshDailyTime" example:"03:00"`
 }
 
+// GeoFileSettingsDTO mirrors frontend GeoFileSettings.
+type GeoFileSettingsDTO struct {
+	AutoRefreshEnabled   bool   `json:"autoRefreshEnabled" example:"false"`
+	RefreshIntervalHours int    `json:"refreshIntervalHours" example:"24"`
+	RefreshMode          string `json:"refreshMode" example:"interval"`
+	RefreshDailyTime     string `json:"refreshDailyTime" example:"03:00"`
+}
+
 // SettingsData is the payload for GET /settings/get.
 type SettingsData struct {
 	SchemaVersion             int                  `json:"schemaVersion" example:"16"`
@@ -82,6 +90,7 @@ type SettingsData struct {
 	Updates                   UpdateSettingsDTO    `json:"updates"`
 	Download                  DownloadSettingsDTO  `json:"download"`
 	DnsRoute                  DNSRouteSettingsDTO  `json:"dnsRoute"`
+	GeoFile                   GeoFileSettingsDTO   `json:"geoFile"`
 	ConnectivityCheckURL      string               `json:"connectivityCheckUrl" example:"http://connectivitycheck.gstatic.com/generate_204"`
 	// UsageLevel controls which UI sections are visible to the user.
 	// Filtering is frontend-only — the API does not enforce it.

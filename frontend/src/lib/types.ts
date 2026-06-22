@@ -718,6 +718,13 @@ export interface DNSRouteSettings {
 	refreshDailyTime?: string;  // "HH:MM" 24h format
 }
 
+export interface GeoFileSettings {
+	autoRefreshEnabled: boolean;
+	refreshIntervalHours: number;
+	refreshMode?: 'interval' | 'daily';
+	refreshDailyTime?: string;
+}
+
 export interface Settings {
 	schemaVersion?: number;
 	authEnabled: boolean;
@@ -729,6 +736,7 @@ export interface Settings {
 	updates: UpdateSettings;
 	download: DownloadSettings;
 	dnsRoute: DNSRouteSettings;
+	geoFile: GeoFileSettings;
 	connectivityCheckUrl: string;
 	usageLevel: UsageLevel;
 	hiddenSystemTunnels?: string[];
@@ -1318,6 +1326,9 @@ export interface SingboxRouterSettings {
 	fakeipMtu?: number;
 	/** Default true server-side; preserves device source IP via segment static-NAT. */
 	fakeipSourcePreserve?: boolean;
+	// UDP session timeout for tproxy-in. Go duration string (e.g. "3m0s", "10m0s").
+	// Empty = backend default (3m0s). Increase to fix dropped sessions in games.
+	udpTimeout?: string;
 }
 
 // WAN interface for the sing-box router WAN-binding picker. `name` is

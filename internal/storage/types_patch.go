@@ -24,6 +24,7 @@ type SettingsPatch struct {
 	Updates                     *UpdateSettings        `json:"updates,omitempty"`
 	Download                    *DownloadSettingsPatch `json:"download,omitempty"`
 	DNSRoute                    *DNSRouteSettings      `json:"dnsRoute,omitempty"`
+	GeoFile                     *GeoFileSettings       `json:"geoFile,omitempty"`
 	ConnectivityCheckURL        *string                `json:"connectivityCheckUrl,omitempty"`
 	UsageLevel                  *string                `json:"usageLevel,omitempty"`
 	ServerInterfaces            *[]string              `json:"serverInterfaces,omitempty"`

@@ -358,7 +358,10 @@ func (s *Service) SetPolicyOrder(order []string) error {
 // При !Installed — no-op: если HR Neo удалили, мы не обновляем его
 // конфиг "на будущее" (решено session 2026-05-23).
 func (s *Service) SyncGeoFilesToConfig() error {
-	if !s.status.Installed {
+	s.mu.Lock()
+	installed := s.status.Installed
+	s.mu.Unlock()
+	if !installed {
 		s.appLog.Debug("sync-geo", "", "skipped: HR Neo не установлен")
 		return nil
 	}

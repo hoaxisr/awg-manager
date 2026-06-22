@@ -139,6 +139,16 @@
     const next = current.includes(id) ? current.filter((x) => x !== id) : [...current, id];
     void applyPatch({ bypassPresets: next });
   }
+
+  const UDP_TIMEOUT_OPTIONS = [
+    { value: '', label: 'По умолчанию (3 мин)' },
+    { value: '5m0s', label: '5 минут' },
+    { value: '10m0s', label: '10 минут' },
+    { value: '15m0s', label: '15 минут' },
+    { value: '30m0s', label: '30 минут' },
+    { value: '1h0m0s', label: '1 час' },
+    { value: '3h0m0s', label: '3 часа' },
+  ];
 </script>
 
 <SideDrawer {open} onClose={closeDrawer} title="Движок sing-box" width={420}>
@@ -220,6 +230,22 @@
           <Toggle checked={cfg.snifferEnabled} onchange={(checked) => toggleSniffer(checked)} />
         </div>
         <p class="hint">Анализ HTTP/TLS/QUIC по содержимому. Улучшает срабатывание domain-based правил при IP-only matchers.</p>
+        <div class="field">
+          <label class="lbl" for="ed-udp-timeout">UDP таймаут сессии</label>
+          <div class="udp-timeout-row">
+            <select
+              id="ed-udp-timeout"
+              class="inp"
+              value={cfg.udpTimeout ?? ''}
+              onchange={(e) => void applyPatch({ udpTimeout: (e.currentTarget as HTMLSelectElement).value || undefined })}
+            >
+              {#each UDP_TIMEOUT_OPTIONS as opt (opt.value)}
+                <option value={opt.value}>{opt.label}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+        <p class="hint">Как долго sing-box держит UDP-сессии активными. Увеличьте если игры или другие UDP-приложения обрываются каждые несколько минут.</p>
       </section>
 
       <!-- Исключения портов -->
@@ -356,6 +382,8 @@
     padding: 6px 10px; border-radius: var(--radius-sm); background: var(--bg-primary);
     border: 1px solid var(--border); color: var(--text-primary); font-size: 12.5px; font-family: inherit;
   }
+  .udp-timeout-row { display: flex; gap: 6px; }
+  .udp-timeout-row .inp { flex: 1; }
   .hint { margin: 0; font-size: 11.5px; color: var(--text-muted); line-height: 1.4; }
   .chips { display: flex; flex-direction: column; gap: 6px; }
   .chip {
