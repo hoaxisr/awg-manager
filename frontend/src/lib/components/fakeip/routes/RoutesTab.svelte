@@ -256,6 +256,42 @@
 	}
 
 	const MAX_CHIPS = 4;
+
+	// ── Маркер «ставит NDMS-маршрут» ────────────────────────────────────────
+	// Бэкенд (router/fakeip_cidr_routes.go: loopSafeProxyRule + desiredTunCIDRs)
+	// ставит статический NDMS-маршрут на tun для дст-CIDR правила ТОЛЬКО когда оно
+	// «loop-safe proxy»: action=route на прокси-outbound (не direct/reject) И его
+	// ЕДИНСТВЕННЫЕ матчеры — ip_cidr и/или rule_set (никаких port / source_ip_cidr /
+	// domain* / protocol / вложенной логики / ip_is_private), И есть хотя бы один
+	// ip_cidr или ссылка на rule_set. Любой сужающий матчер → правило пропускается
+	// (by-IP-пакет может не совпасть → петля), и маршрут НЕ ставится. Маркер
+	// показываем строго по тем же правилам, иначе UI вводил бы в заблуждение.
+	function ruleInstallsTunRoute(rule: SingboxRouterRule): boolean {
+		// loop-safe proxy: route на не-direct/reject outbound.
+		if (rule.action !== 'route' || !rule.outbound || rule.outbound === 'direct') {
+			return false;
+		}
+		// Никаких сужающих матчеров (включая возможные domain/domain_keyword/
+		// domain_regex, которых нет в типе, но могут прийти в JSON).
+		const r = rule as SingboxRouterRule & Record<string, unknown>;
+		if (
+			(rule.domain_suffix?.length ?? 0) > 0 ||
+			(rule.source_ip_cidr?.length ?? 0) > 0 ||
+			(rule.port?.length ?? 0) > 0 ||
+			rule.protocol ||
+			rule.ip_is_private != null ||
+			rule.rules !== undefined ||
+			r.type !== undefined ||
+			r.mode !== undefined ||
+			(Array.isArray(r.domain) && r.domain.length > 0) ||
+			(Array.isArray(r.domain_keyword) && r.domain_keyword.length > 0) ||
+			(Array.isArray(r.domain_regex) && r.domain_regex.length > 0)
+		) {
+			return false;
+		}
+		// Должен быть хотя бы один ip_cidr ИЛИ ссылка на rule_set.
+		return (rule.ip_cidr?.length ?? 0) > 0 || (rule.rule_set?.length ?? 0) > 0;
+	}
 </script>
 
 <!-- ── Сниппет строки правила (рисуется и в таблице, и в ghost'е) ──────── -->
@@ -299,6 +335,14 @@
 		</div>
 		<div class="outbound">
 			<RuleOutboundAction outbound={card.outbound} />
+			{#if $storeRules[i] && ruleInstallsTunRoute($storeRules[i])}
+				<span
+					class="tun-route-mark"
+					title="Ставит статический NDMS-маршрут на tun (ловит by-IP)"
+				>
+					NDMS-маршрут
+				</span>
+			{/if}
 		</div>
 		<div class="acts">
 			{#if !card.isSystem}
@@ -779,6 +823,10 @@
 	}
 
 	.outbound {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.3rem;
 		min-width: 0;
 		max-width: 100%;
 		overflow: hidden;
@@ -788,6 +836,23 @@
 		min-width: 0;
 		max-width: 100%;
 		overflow: hidden;
+	}
+
+	/* Информационный маркер: правило дополнительно ставит NDMS-маршрут на tun.
+	   Display-only, нейтральный — тот же приглушённый dashed-стиль, что у «+N ещё». */
+	.tun-route-mark {
+		display: inline-flex;
+		align-items: center;
+		flex-shrink: 0;
+		padding: 2px 7px;
+		border-radius: 4px;
+		background: transparent;
+		border: 1px dashed var(--color-border, var(--border));
+		color: var(--text-muted);
+		font-size: 10px;
+		line-height: 1.4;
+		white-space: nowrap;
+		cursor: default;
 	}
 
 	/* Final-строка (read-only). */
