@@ -11,6 +11,77 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
+// TestLoopSafeProxyRule_AllMatchersCovered is a fail-loud guard against a silent
+// loop-safety regression. loopSafeProxyRule is a CLOSED enumeration coupled to the
+// shape of the Rule struct: it returns true only when the ONLY matchers are
+// ip_cidr/rule_set and NONE of the narrowing matchers are set. If someone later
+// adds a NEW matcher field to Rule and forgets to exclude it in loopSafeProxyRule,
+// a rule carrying that matcher + ip_cidr would silently get a tun route while not
+// matching by-IP → routing loop. This test enumerates Rule's fields via reflection
+// and asserts that setting ANY field other than the allowed (non-matcher) ones
+// flips loop-safety to false; an unguarded new matcher makes it fail by name.
+func TestLoopSafeProxyRule_AllMatchersCovered(t *testing.T) {
+	// allowed = fields that are NOT narrowing matchers: the proxy-action fields
+	// (Action, Outbound) and the two permitted matchers (IPCIDR, RuleSet). Setting
+	// any of these must NOT flip loop-safety.
+	allowed := map[string]bool{
+		"Action":   true,
+		"Outbound": true,
+		"IPCIDR":   true,
+		"RuleSet":  true,
+	}
+
+	// Base rule = a pure loop-safe proxy rule. Assert the baseline first.
+	base := Rule{Action: "route", Outbound: "proxy", IPCIDR: []string{"1.2.3.0/24"}}
+	if !loopSafeProxyRule(base) {
+		t.Fatalf("base pure proxy ip_cidr rule must be loop-safe, got false")
+	}
+
+	rt := reflect.TypeOf(Rule{})
+	for i := 0; i < rt.NumField(); i++ {
+		field := rt.Field(i)
+		if field.PkgPath != "" {
+			continue // unexported (none expected, but guard anyway)
+		}
+		if allowed[field.Name] {
+			continue
+		}
+
+		// Copy the base rule and set this one field to a representative non-zero value.
+		cp := base
+		fv := reflect.ValueOf(&cp).Elem().Field(i)
+		switch field.Type.Kind() {
+		case reflect.String:
+			fv.SetString("x")
+		case reflect.Ptr:
+			// Only *bool is present; point it at true.
+			if field.Type.Elem().Kind() == reflect.Bool {
+				b := true
+				fv.Set(reflect.ValueOf(&b))
+			} else {
+				t.Fatalf("field %q: unhandled pointer elem kind %s", field.Name, field.Type.Elem().Kind())
+			}
+		case reflect.Slice:
+			switch field.Type.Elem().Kind() {
+			case reflect.String:
+				fv.Set(reflect.ValueOf([]string{"x"}))
+			case reflect.Int:
+				fv.Set(reflect.ValueOf([]int{1}))
+			case reflect.Struct: // []Rule
+				fv.Set(reflect.ValueOf([]Rule{{}}))
+			default:
+				t.Fatalf("field %q: unhandled slice elem kind %s", field.Name, field.Type.Elem().Kind())
+			}
+		default:
+			t.Fatalf("field %q: unhandled kind %s", field.Name, field.Type.Kind())
+		}
+
+		if loopSafeProxyRule(cp) {
+			t.Errorf("loopSafeProxyRule did not reject a rule with matcher field %q set — a new matcher was added to Rule without updating loopSafeProxyRule; the loop-safety hole may have reopened", field.Name)
+		}
+	}
+}
+
 func TestDesiredTunCIDRs(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -77,10 +148,10 @@ func TestDesiredTunCIDRs(t *testing.T) {
 			wantV4: nil, wantV6: nil,
 		},
 		{
-			name:  "remote rule-set has empty Rules → Tier 1 yields nothing",
-			rules: []Rule{{Action: "route", Outbound: "proxy", RuleSet: []string{"r"}}},
+			name:     "remote rule-set has empty Rules → Tier 1 yields nothing",
+			rules:    []Rule{{Action: "route", Outbound: "proxy", RuleSet: []string{"r"}}},
 			ruleSets: []RuleSet{{Tag: "r", Type: "remote", URL: "https://example/r.srs"}},
-			wantV4: nil, wantV6: nil,
+			wantV4:   nil, wantV6: nil,
 		},
 	}
 	for _, tt := range tests {

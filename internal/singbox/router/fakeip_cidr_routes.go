@@ -26,6 +26,7 @@ func isProxyRoute(r Rule) bool {
 // back to the tun. Any narrowing matcher (port, source_ip_cidr, domain_suffix,
 // protocol, nested logical, ip_is_private) makes a by-IP packet potentially
 // fall through → loop; such rules contribute no routes.
+// INVARIANT (guarded by TestLoopSafeProxyRule_AllMatchersCovered): if you add a new matcher field to Rule, add it to the exclusion below or the loop-safety hole reopens.
 func loopSafeProxyRule(r Rule) bool {
 	return isProxyRoute(r) &&
 		r.Type == "" && r.Mode == "" && len(r.Rules) == 0 &&
