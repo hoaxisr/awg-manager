@@ -241,7 +241,13 @@
             (hydrarouteInstalled || singboxInstalled)
                 ? { id: 'geodata', label: 'Гео-данные', badge: geoFileCount, separatorBefore: true }
                 : null,
-            singboxInstalled ? { id: 'fakeip', label: 'FakeIP', badge: undefined, separatorBefore: true } : null,
+            // FakeIP is expert-gated (mirrors the 'singbox' tab's 'expert'
+            // level) BUT stays visible whenever the engine is actually in
+            // fakeip-tun mode — that's the in-use case the auto-select effect
+            // lands on, and hiding the chip there would strand activeTab on a
+            // tab with no chip to navigate back from.
+            (singboxInstalled && (tabVisible('singbox') || $singboxSettings?.routingMode === 'fakeip-tun'))
+                ? { id: 'fakeip', label: 'FakeIP', badge: undefined, separatorBefore: true } : null,
         ] as (TabItem | null)[])
             .filter((t): t is TabItem => t !== null)
             .filter((t) => tabVisible(t.id))
