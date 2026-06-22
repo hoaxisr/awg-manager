@@ -144,21 +144,20 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 			// removal / crash. Probe presence with the same seam the pool uses → zero
 			// POSTs in steady state.
 			dV4, dV6 := desiredTunCIDRs(cfg)
-			v4Drift := false
 			for _, c := range dV4 {
 				if pfx, perr := netip.ParsePrefix(c); perr == nil && !fakeIPPoolRoutePresent(iface, pfx.Masked()) {
-					v4Drift = true
 					if e := s.addCIDRRoute(ctx, ndmsName, c, false); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "re-add cidr route "+c+": "+e.Error())
 					}
 				}
 			}
-			// v6 CIDR routes have no presence probe yet (follow-up). Gate the whole
-			// v6 re-add on v4 drift: all CIDR routes are installed together at Enable,
-			// so an absent v4 implies the set was wiped. Steady state (v4 present) →
-			// zero v6 POSTs, avoiding per-tick NDMS churn for v6-heavy configs.
-			if v4Drift {
-				for _, c := range dV6 {
+			// v6 CIDR routes are gated on a real v6 route-present probe (against
+			// /proc/net/ipv6_route), exactly like the v4 loop. This re-adds only when
+			// the route is ABSENT (zero steady-state POSTs) AND self-heals a v6-only
+			// config (one with v6 CIDRs but no v4) — the old v4-drift heuristic never
+			// gave such a config a heal signal.
+			for _, c := range dV6 {
+				if pfx, perr := netip.ParsePrefix(c); perr == nil && !fakeIPPoolRoute6Present(iface, pfx.Masked()) {
 					if e := s.addCIDRRoute(ctx, ndmsName, c, true); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "re-add cidr route v6 "+c+": "+e.Error())
 					}
@@ -174,21 +173,18 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 			if len(rV4) > 0 || len(rV6) > 0 {
 				s.appLog.Info("fakeip-cidr-remote", ndmsName, fmt.Sprintf("remote cidrs: v4=%d v6=%d", len(rV4), len(rV6)))
 			}
-			rV4Drift := false
 			for _, c := range rV4 {
 				if pfx, perr := netip.ParsePrefix(c); perr == nil && !fakeIPPoolRoutePresent(iface, pfx.Masked()) {
-					rV4Drift = true
 					if e := s.addCIDRRoute(ctx, ndmsName, c, false); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "add remote cidr "+c+": "+e.Error())
 					}
 				}
 			}
-			// Remote v6 has no presence probe yet (same limitation as Tier-1 v6).
-			// Gate the whole remote-v6 re-add on remote-v4 drift to avoid per-tick
-			// NDMS churn for v6-heavy remote sets. Documented limitation: a config
-			// with remote v6 CIDRs but NO remote v4 CIDRs won't self-heal v6.
-			if rV4Drift {
-				for _, c := range rV6 {
+			// Remote v6 is gated on the same v6 route-present probe as Tier-1 v6 —
+			// per-CIDR, re-add only when absent. This closes the prior limitation that
+			// a remote set with v6 CIDRs but no v4 never self-healed its v6 routes.
+			for _, c := range rV6 {
+				if pfx, perr := netip.ParsePrefix(c); perr == nil && !fakeIPPoolRoute6Present(iface, pfx.Masked()) {
 					if e := s.addCIDRRoute(ctx, ndmsName, c, true); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "add remote cidr v6 "+c+": "+e.Error())
 					}

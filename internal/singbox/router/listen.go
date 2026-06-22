@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -226,6 +227,50 @@ func liveFakeIPPoolRoutePresent(iface string, pool netip.Prefix) bool {
 			continue
 		}
 		if mask == [4]byte(wantMask) {
+			return true
+		}
+	}
+	return false
+}
+
+// fakeIPPoolRoute6Present is the seam for "a v6 CIDR route to the tun iface
+// exists". Overridable in tests. Reads /proc/net/ipv6_route. Fail-closed (read
+// error / parse error → false → the drift-heal re-adds, which NDMS treats
+// idempotently). The reconcile drift-heal uses it to gate the per-CIDR v6
+// re-add, exactly as fakeIPPoolRoutePresent gates the v4 re-add — this closes
+// the v6-only self-heal gap (a config with v6 CIDRs but no v4 had no drift
+// signal) and keeps steady-state POSTs at zero.
+var fakeIPPoolRoute6Present = liveFakeIPPoolRoute6Present
+
+// liveFakeIPPoolRoute6Present parses /proc/net/ipv6_route and reports whether a
+// v6 route for the given prefix out the given iface is installed. Columns:
+// destination(32 hex) dest_prefix_len(2 hex) source(32) src_prefix_len(2)
+// next_hop(32) metric flags refcnt use iface. The IPv6 address is 128-bit / 32
+// hex chars in NATIVE order (no little-endian swap, unlike /proc/net/route v4).
+// The caller passes pool already .Masked(); a row matches when its iface equals
+// iface and its (destination, prefix_len) equals the pool.
+func liveFakeIPPoolRoute6Present(iface string, pool netip.Prefix) bool {
+	if iface == "" || !pool.IsValid() || !pool.Addr().Is6() {
+		return false
+	}
+	data, err := os.ReadFile("/proc/net/ipv6_route")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 10 || f[len(f)-1] != iface {
+			continue
+		}
+		raw, derr := hex.DecodeString(f[0])
+		if derr != nil || len(raw) != 16 {
+			continue
+		}
+		plen, perr := strconv.ParseUint(f[1], 16, 8)
+		if perr != nil {
+			continue
+		}
+		if netip.PrefixFrom(netip.AddrFrom16([16]byte(raw)), int(plen)) == pool {
 			return true
 		}
 	}
