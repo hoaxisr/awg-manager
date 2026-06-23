@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
 )
 
 func withLegacySetupNoop(svc *Service) {
@@ -1787,5 +1789,29 @@ func TestPreviewURL_NoStoreWrite(t *testing.T) {
 	}
 	if after := len(svc.store.List()); after != before {
 		t.Fatal("preview must not create subscriptions")
+	}
+}
+
+func TestCreate_ExcludedKeys(t *testing.T) {
+	svc, mut := newTestService(t)
+	// inline-фид из 2 серверов; вычислить key одного из них (subID-независимый).
+	linkA := "vless://3a3b1c2e-9999-4321-aaaa-1234567890a1@a.example:443?security=tls&sni=a#A"
+	linkB := "vless://3a3b1c2e-9999-4321-aaaa-1234567890a2@b.example:443?security=tls&sni=b#B"
+	links := linkA + "\n" + linkB
+	parsed := vlink.ParseBatch([]string{linkB})
+	if len(parsed.Outbounds) != 1 {
+		t.Fatalf("want 1 parsed outbound, got %d (errors=%v)", len(parsed.Outbounds), parsed.Errors)
+	}
+	keyB := IdentityHash(parsed.Outbounds[0])
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "x", Inline: links, ExcludedKeys: []string{keyB}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTag := "sub-" + sub.ID[:8] + "-" + keyB
+	if !containsTag(sub.ExcludedTags, wantTag) {
+		t.Fatalf("want %s in ExcludedTags %v", wantTag, sub.ExcludedTags)
+	}
+	if mut.addedOutbound(wantTag) {
+		t.Fatal("excluded-by-key must not materialize on create")
 	}
 }

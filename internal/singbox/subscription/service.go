@@ -245,6 +245,25 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, er
 		return nil, err
 	}
 
+	// Исключение по ключу из превью импорта: ключи — identity-суффиксы, не
+	// зависящие от subID. Здесь subID уже выделен → достраиваем полный
+	// стабильный тег и пишем в ExcludedTags ДО первичного refreshLocked,
+	// чтобы исключённые серверы вообще не материализовались при создании.
+	if len(in.ExcludedKeys) > 0 {
+		subShort := sub.ID
+		if len(subShort) > 8 {
+			subShort = subShort[:8]
+		}
+		tags := make([]string, 0, len(in.ExcludedKeys))
+		for _, k := range in.ExcludedKeys {
+			tags = append(tags, "sub-"+subShort+"-"+k)
+		}
+		if err := s.store.SetExcludedTags(sub.ID, tags, nil); err != nil {
+			s.store.Delete(sub.ID)
+			return nil, err
+		}
+	}
+
 	// NDMS Proxy is only created when the global toggle is on. When off, the
 	// subscription stays proxy-less (ProxyIndex=-1) and routes via its mixed
 	// inbound + selector through the internal sing-box router; SyncProxies
