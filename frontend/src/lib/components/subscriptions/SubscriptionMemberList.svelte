@@ -283,15 +283,15 @@
 		transition: background var(--t-fast) ease, color var(--t-fast) ease;
 	}
 	.ex-btn:hover:not(:disabled) {
-		color: var(--color-accent);
-		background: var(--color-accent-tint);
+		color: var(--color-error);
+		background: var(--color-error-tint);
 	}
 	.ex-btn:disabled {
 		cursor: not-allowed;
 		opacity: 0.5;
 	}
 	.ex-btn:focus-visible {
-		outline: 2px solid var(--color-accent);
+		outline: 2px solid var(--color-error);
 		outline-offset: 2px;
 	}
 	.member-list-line.with-exclude .ex-btn {
@@ -315,7 +315,8 @@
 	.sel-cell--grid {
 		position: absolute;
 		left: 8px;
-		top: 8px;
+		top: 50%;
+		transform: translateY(-50%);
 		z-index: 2;
 		padding-right: 0;
 	}
@@ -327,7 +328,7 @@
 		margin: 0;
 	}
 	.member-slot--select {
-		padding-left: 0.25rem;
+		padding-left: 2rem;
 	}
 
 	@media (max-width: 640px) {

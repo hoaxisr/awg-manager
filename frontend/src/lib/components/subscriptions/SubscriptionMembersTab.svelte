@@ -367,7 +367,7 @@
 			</Button>
 			{#if confirmExcludeSelected}
 				<Button
-					variant="primary"
+					variant="danger"
 					size="sm"
 					disabled={excluding || selected.size === 0}
 					loading={excluding}
@@ -381,7 +381,7 @@
 				</Button>
 			{:else}
 				<Button
-					variant="ghost"
+					variant="danger"
 					size="sm"
 					disabled={excluding || selected.size === 0}
 					iconBefore={banIcon}
