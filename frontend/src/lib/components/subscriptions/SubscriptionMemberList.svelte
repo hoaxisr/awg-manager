@@ -152,6 +152,7 @@
 		<div
 			class="member-slot"
 			class:member-slot--inline={isInline}
+			class:member-slot--exclude={isUrlSub && !selectMode}
 			class:member-slot--select={selectMode}
 			class:member-slot--active={member.tag === effectiveActiveMember}
 		>
@@ -332,7 +333,8 @@
 	}
 
 	@media (max-width: 640px) {
-		.member-slot--inline {
+		.member-slot--inline,
+		.member-slot--exclude {
 			display: flex;
 			flex-direction: column;
 			border: 1px solid var(--color-border);
@@ -341,24 +343,30 @@
 			background: var(--color-bg-secondary);
 		}
 
-		.member-slot--inline.member-slot--active {
+		.member-slot--inline.member-slot--active,
+		.member-slot--exclude.member-slot--active {
 			border-color: #3fb950;
 			background: rgba(63, 185, 80, 0.06);
 		}
 
-		.member-slot--inline :global(.card) {
+		.member-slot--inline :global(.card),
+		.member-slot--exclude :global(.card) {
 			border: none;
 			border-radius: 0;
 			background: transparent;
 			min-height: 0;
 		}
 
-		.member-slot--inline :global(.card.active) {
+		.member-slot--inline :global(.card.active),
+		.member-slot--exclude :global(.card.active) {
 			border: none;
 			background: transparent;
 		}
 
-		.member-slot--inline .member-remove-btn {
+		/* On narrow screens the absolute bottom-right exclude button overlaps
+		   the footer tag; turn it into a full-width static row like inline-remove. */
+		.member-slot--inline .member-remove-btn,
+		.member-slot--exclude .ex-btn {
 			position: static;
 			width: 100%;
 			border-top: 1px solid var(--color-border);
