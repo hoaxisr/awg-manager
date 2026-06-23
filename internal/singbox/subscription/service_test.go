@@ -91,7 +91,7 @@ func createURLSubWithMembers(t *testing.T, svc *Service, n int) *Subscription {
 	t.Helper()
 	var b strings.Builder
 	for i := 0; i < n; i++ {
-		fmt.Fprintf(&b, "vless://u%d@h%d.example:443#%d\n", i, i, i)
+		fmt.Fprintf(&b, "vless://3a3b1c2e-9999-4321-aaaa-1234567890a%d@h%d.example:443?security=tls&sni=h#%d\n", i, i, i)
 	}
 	body := b.String()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -1620,5 +1620,60 @@ func TestService_Refresh_PrunesUndeclaredMember_RecordsRejected(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("RejectedMembers=%+v want pruned tag %q", updated2.RejectedMembers, prunedTag)
+	}
+}
+
+// tagsOf collects the tags of a MemberInfo slice.
+func tagsOf(ms []MemberInfo) []string {
+	out := make([]string, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, m.Tag)
+	}
+	return out
+}
+
+// filterByTag returns the members whose tag is in tags.
+func filterByTag(ms []MemberInfo, tags ...string) []MemberInfo {
+	want := make(map[string]bool, len(tags))
+	for _, t := range tags {
+		want[t] = true
+	}
+	out := make([]MemberInfo, 0, len(tags))
+	for _, m := range ms {
+		if want[m.Tag] {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func TestRefresh_ExcludedNotMaterialized(t *testing.T) {
+	svc, mut := newTestService(t)
+	sub := createURLSubWithMembers(t, svc, 2) // URL-подписка: refresh ре-материализует
+	tagA := tagOf(sub, 0)
+	tagB := tagOf(sub, 1)
+	// Пометить tagB исключённым напрямую через стор (endpoint появится в Task 3).
+	if err := svc.store.MoveToExcluded(sub.ID, filterByTag(sub.Members, tagA), []string{tagB}, filterByTag(sub.Members, tagB)); err != nil {
+		t.Fatal(err)
+	}
+	mut.reset()
+	if _, err := svc.Refresh(context.Background(), sub.ID); err != nil {
+		t.Fatal(err)
+	}
+	if mut.addedOutbound(tagB) {
+		t.Fatal("excluded tagB must NOT be materialized")
+	}
+	if containsTag(selectorMembers(t, mut, sub.SelectorTag), tagB) {
+		t.Fatal("excluded tagB must NOT be in selector")
+	}
+	got, _ := svc.store.Get(sub.ID)
+	if containsTag(tagsOf(got.Members), tagB) {
+		t.Fatal("excluded must not be in active Members")
+	}
+	if !containsTag(tagsOf(got.ExcludedMembers), tagB) {
+		t.Fatal("excluded must be in ExcludedMembers")
+	}
+	if !containsTag(got.ExcludedTags, tagB) {
+		t.Fatal("refresh must preserve ExcludedTags")
 	}
 }

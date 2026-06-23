@@ -417,12 +417,27 @@ func (s *Service) refreshLocked(ctx context.Context, id string) (*RefreshResult,
 		return nil, err
 	}
 
+	excluded := make(map[string]bool, len(sub.ExcludedTags))
+	for _, t := range sub.ExcludedTags {
+		excluded[t] = true
+	}
 	newMembers := make([]MemberInfo, 0, len(diff.New)+len(diff.Existing))
+	excludedMembers := make([]MemberInfo, 0, len(sub.ExcludedTags))
 	for _, n := range diff.New {
-		newMembers = append(newMembers, toMemberInfo(n.Tag, n.Out))
+		mi := toMemberInfo(n.Tag, n.Out)
+		if excluded[n.Tag] {
+			excludedMembers = append(excludedMembers, mi)
+		} else {
+			newMembers = append(newMembers, mi)
+		}
 	}
 	for _, e := range diff.Existing {
-		newMembers = append(newMembers, toMemberInfo(e.Tag, e.Out))
+		mi := toMemberInfo(e.Tag, e.Out)
+		if excluded[e.Tag] {
+			excludedMembers = append(excludedMembers, mi)
+		} else {
+			newMembers = append(newMembers, mi)
+		}
 	}
 	// Reconcile against what actually materialized: flush() may have dropped
 	// servers sing-box rejected. Keeping them in MemberTags would re-create
@@ -437,7 +452,7 @@ func (s *Service) refreshLocked(ctx context.Context, id string) (*RefreshResult,
 	if len(prunedTags) > 0 {
 		s.logWarn("subscription-refresh", id, fmt.Sprintf("pruned %d member(s) not materialized (dropped by validation): %s", len(prunedTags), strings.Join(prunedTags, ", ")))
 	}
-	if err := s.store.SetMembersExtras(id, newMembers, diff.Orphan, rejected, info, nil); err != nil {
+	if err := s.store.SetMembersExtras(id, newMembers, diff.Orphan, rejected, info, excludedMembers); err != nil {
 		return nil, err
 	}
 
@@ -488,13 +503,24 @@ func filterDeclaredMembers(members []MemberInfo, declared map[string]bool) (kept
 // run). Per-member outbounds are added/updated/left alone — orphans are NOT
 // removed (the UI offers explicit deletion).
 func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffResult) error {
+	excluded := make(map[string]bool, len(sub.ExcludedTags))
+	for _, t := range sub.ExcludedTags {
+		excluded[t] = true
+	}
 	for _, n := range diff.New {
+		if excluded[n.Tag] {
+			continue // исключённый сервер не материализуем
+		}
 		jsonWithTag := replaceTag(n.Out.Outbound, n.Tag)
 		if err := s.mutator.AddOutbound(n.Tag, jsonWithTag); err != nil {
 			return err
 		}
 	}
 	for _, e := range diff.Existing {
+		if excluded[e.Tag] {
+			s.mutator.RemoveOutbound(e.Tag) // на случай, если ранее был активен
+			continue
+		}
 		jsonWithTag := replaceTag(e.Out.Outbound, e.Tag)
 		if err := s.mutator.UpdateOutbound(e.Tag, jsonWithTag); err != nil {
 			return err
@@ -503,10 +529,14 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 
 	memberTags := make([]string, 0, len(diff.New)+len(diff.Existing))
 	for _, n := range diff.New {
-		memberTags = append(memberTags, n.Tag)
+		if !excluded[n.Tag] {
+			memberTags = append(memberTags, n.Tag)
+		}
 	}
 	for _, e := range diff.Existing {
-		memberTags = append(memberTags, e.Tag)
+		if !excluded[e.Tag] {
+			memberTags = append(memberTags, e.Tag)
+		}
 	}
 
 	// Selector / urltest — remove old (idempotent) then add fresh.
