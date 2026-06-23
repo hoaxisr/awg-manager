@@ -1764,3 +1764,28 @@ func TestRestoreMembers_ReMaterializes(t *testing.T) {
 		t.Fatal("t1 must be re-materialized on restore")
 	}
 }
+
+func TestPreviewURL_NoStoreWrite(t *testing.T) {
+	svc, _ := newTestService(t)
+	before := len(svc.store.List())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("vless://8f4a2c1e-0000-4000-8000-000000000001@a.example:443?security=tls&sni=a#A\nvless://8f4a2c1e-0000-4000-8000-000000000002@b.example:443#B"))
+	}))
+	defer srv.Close()
+	members, err := svc.PreviewURL(context.Background(), srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members) != 2 {
+		t.Fatalf("want 2, got %d", len(members))
+	}
+	if members[0].Key == "" || len(members[0].Key) != 8 {
+		t.Fatalf("bad key %q", members[0].Key)
+	}
+	if members[0].Label != "A" {
+		t.Fatalf("label=%q", members[0].Label)
+	}
+	if after := len(svc.store.List()); after != before {
+		t.Fatal("preview must not create subscriptions")
+	}
+}

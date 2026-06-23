@@ -1113,6 +1113,53 @@ func (s *Service) RestoreMembers(ctx context.Context, id string, tags []string) 
 	return s.store.Get(id)
 }
 
+// PreviewMember — display-метаданные одного сервера из read-only превью URL-подписки.
+// Key = IdentityHash (subID-независимый суффикс) — по нему исключают при создании.
+type PreviewMember struct {
+	Key       string `json:"key"`
+	Label     string `json:"label,omitempty"`
+	Protocol  string `json:"protocol"`
+	Server    string `json:"server"`
+	Port      uint16 `json:"port"`
+	SNI       string `json:"sni,omitempty"`
+	Transport string `json:"transport,omitempty"`
+	Security  string `json:"security,omitempty"`
+}
+
+// PreviewURL качает и парсит URL-подписку БЕЗ создания/записи — для шага превью
+// при импорте. Key = IdentityHash (subID-независимый суффикс) для исключения.
+// ponytail: small read-only dup of fetch+detect — safer than refactoring tested refreshLocked.
+func (s *Service) PreviewURL(ctx context.Context, url string, headers []Header) ([]PreviewMember, error) {
+	if url == "" {
+		return nil, errors.New("subscription: preview requires a URL")
+	}
+	fetchURL, _ := RewriteForRaw(url)
+	body, ct, err := FetchWithContext(ctx, fetchURL, headers, s.fetchOpts)
+	if err != nil {
+		return nil, fmt.Errorf("%s", MaskURL(err.Error(), url))
+	}
+	var parseRes vlink.BatchResult
+	switch {
+	case vlink.IsClashYAML(body):
+		parseRes = vlink.ParseClashBody(body)
+	case vlink.IsSingboxJSON(body):
+		parseRes = vlink.ParseSingboxBody(body)
+	default:
+		parseRes = vlink.ParseBatch(NormalizeBody(body, ct))
+	}
+	parts := partitionParsedOutbounds("preview", parseRes.Outbounds)
+	out := make([]PreviewMember, 0, len(parts.Valid))
+	for _, p := range parts.Valid {
+		mi := toMemberInfo(StableTag("preview00", p), p) // tag игнорируется, берём поля
+		out = append(out, PreviewMember{
+			Key: IdentityHash(p), Label: mi.Label, Protocol: mi.Protocol,
+			Server: mi.Server, Port: mi.Port, SNI: mi.SNI,
+			Transport: mi.Transport, Security: mi.Security,
+		})
+	}
+	return out, nil
+}
+
 // GetActiveNow returns the currently-active member tag as reported by the
 // running sing-box Clash API. For urltest-mode subscriptions this reflects
 // the auto-selected fastest member, which can drift from the persisted
