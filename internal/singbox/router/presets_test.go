@@ -2,6 +2,7 @@ package router
 
 import (
 	"reflect"
+	"slices"
 	"sort"
 	"testing"
 )
@@ -110,5 +111,35 @@ func TestParseExtraPorts_InvalidFormat(t *testing.T) {
 		if err == nil {
 			t.Errorf("expected error for %q", c)
 		}
+	}
+}
+
+func TestResolveBypassSubnets(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    []string
+		wantErr bool
+	}{
+		{"empty", "", nil, false},
+		{"cidr", "203.0.113.0/24", []string{"203.0.113.0/24"}, false},
+		{"bare ip to /32", "10.8.0.5", []string{"10.8.0.5/32"}, false},
+		{"mixed comma+space", "203.0.113.0/24, 10.8.0.5", []string{"203.0.113.0/24", "10.8.0.5/32"}, false},
+		{"hostname rejected", "vpn.example.com", nil, true},
+		{"garbage rejected", "not-an-ip", nil, true},
+		{"ipv6 cidr rejected", "::1/128", nil, true},
+		{"ipv6 bare rejected", "fe80::1", nil, true},
+		{"bad prefix rejected", "10.0.0.0/99", nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveBypassSubnets(tt.in)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && !slices.Equal(got, tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

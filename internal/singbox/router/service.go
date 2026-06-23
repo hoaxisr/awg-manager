@@ -1602,6 +1602,9 @@ func NormalizeSingboxRouterSettings(sr storage.SingboxRouterSettings) (storage.S
 	if _, _, err := parseExtraPorts(sr.BypassExtraPorts); err != nil {
 		return sr, fmt.Errorf("bypassExtraPorts: %w", err)
 	}
+	if _, err := resolveBypassSubnets(sr.BypassExtraSubnets); err != nil {
+		return sr, fmt.Errorf("bypassExtraSubnets: %w", err)
+	}
 	if err := validateIngressRefs(sr.IngressInterfaces); err != nil {
 		return sr, err
 	}

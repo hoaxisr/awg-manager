@@ -2,6 +2,7 @@ package router
 
 import (
 	"fmt"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,6 +50,37 @@ func resolveBypassPorts(presets []string, extra string) (udp, tcp []int, err err
 	udp = append(udp, eu...)
 	tcp = append(tcp, et...)
 	return udp, tcp, nil
+}
+
+// resolveBypassSubnets парсит список IPv4 IP/CIDR (через запятую/пробел) в
+// канонизированные CIDR. Голый IP → "/32". Hostname, IPv6 и мусор отвергаются —
+// иначе невалидный "-d" уронит весь iptables-restore COMMIT. Пустая строка →
+// (nil, nil).
+func resolveBypassSubnets(extra string) ([]string, error) {
+	extra = strings.TrimSpace(extra)
+	if extra == "" {
+		return nil, nil
+	}
+	var out []string
+	for _, field := range strings.FieldsFunc(extra, func(r rune) bool { return r == ',' || r == ' ' }) {
+		s := strings.TrimSpace(field)
+		if s == "" {
+			continue
+		}
+		if _, ipnet, err := net.ParseCIDR(s); err == nil {
+			if ipnet.IP.To4() == nil {
+				return nil, fmt.Errorf("IPv6 не поддерживается: %q", s)
+			}
+			out = append(out, ipnet.String())
+			continue
+		}
+		if ip := net.ParseIP(s); ip != nil && ip.To4() != nil {
+			out = append(out, ip.String()+"/32")
+			continue
+		}
+		return nil, fmt.Errorf("неверный IP/CIDR: %q", s)
+	}
+	return out, nil
 }
 
 // parseExtraPorts parses a comma-separated list of "<port> <UDP|TCP>" entries.

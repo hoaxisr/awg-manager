@@ -95,6 +95,11 @@ type SingboxRouterSettings struct {
 	// exclusions in "PORT UDP|TCP" format (e.g. "51820 UDP, 1194 TCP").
 	// Parsed at iptables generation time. Empty = no extras.
 	BypassExtraPorts string `json:"bypassExtraPorts,omitempty"`
+	// BypassExtraSubnets — пользовательский список IPv4 IP/CIDR через
+	// запятую/пробел (напр. "203.0.113.0/24, 10.8.0.5"). Трафик к ним идёт
+	// целиком мимо sing-box (включая DNS/53). Голый IP трактуется как /32.
+	// Парсится в момент генерации правил. Пусто = нет исключений.
+	BypassExtraSubnets string `json:"bypassExtraSubnets,omitempty"`
 	// IngressInterfaces — ref'ы интерфейсов, чей ingress-трафик заворачивается
 	// в sing-box. Формат: "managed:Wireguard3" (резолвится в kernel-имя на
 	// сборке спека) или "iface:nwg5" (kernel-имя как есть). Пусто = выключено.

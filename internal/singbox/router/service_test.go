@@ -1077,6 +1077,22 @@ func TestValidateSingboxRouterSettings_ValidExtraPorts(t *testing.T) {
 	}
 }
 
+func TestNormalize_BypassExtraSubnets(t *testing.T) {
+	base := storage.SingboxRouterSettings{WANAutoDetect: true}
+
+	ok := base
+	ok.BypassExtraSubnets = "203.0.113.0/24, 10.8.0.5"
+	if _, err := NormalizeSingboxRouterSettings(ok); err != nil {
+		t.Fatalf("valid subnets rejected: %v", err)
+	}
+
+	bad := base
+	bad.BypassExtraSubnets = "vpn.example.com"
+	if _, err := NormalizeSingboxRouterSettings(bad); err == nil {
+		t.Fatal("hostname should be rejected")
+	}
+}
+
 func TestListRules_RewritesSRSCompanionRefToInlineTag(t *testing.T) {
 	svc, _ := newOrchedTestService(t)
 	svc.deps.Singbox.(*fakeSingbox).binary = "/opt/bin/sing-box"
