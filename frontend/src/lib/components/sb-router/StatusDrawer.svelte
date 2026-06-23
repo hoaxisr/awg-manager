@@ -15,6 +15,7 @@
   import DepRow from './DepRow.svelte';
   import IssueRow from './IssueRow.svelte';
   import PortChipsInput from './PortChipsInput.svelte';
+  import SubnetChipsInput from './SubnetChipsInput.svelte';
   import TrafficSourceSettings from './TrafficSourceSettings.svelte';
   import { deriveDeps, deriveIssues } from './drawerData';
   import { mergeAndSaveSettings, BYPASS_PRESETS } from './settingsActions';
@@ -265,6 +266,11 @@
           <PortChipsInput inputId="ed-ports-input" value={cfg.bypassExtraPorts ?? ''} onChange={(v) => void applyPatch({ bypassExtraPorts: v })} />
         </div>
         <p class="hint">Эти порты пойдут мимо sing-box (прямо в WAN). Полезно для L2TP/NTP/SMB не ломая LAN-сервисы.</p>
+        <div class="field">
+          <label class="lbl" for="ed-subnets-input">Доп. подсети</label>
+          <SubnetChipsInput inputId="ed-subnets-input" value={cfg.bypassExtraSubnets ?? ''} onChange={(v) => void applyPatch({ bypassExtraSubnets: v })} />
+        </div>
+        <p class="hint">IP или подсети, чей трафик целиком пойдёт мимо sing-box (прямо в WAN). Нужно для корпоративных VPN (Cisco AnyConnect и т.п.), чтобы их трафик не перехватывался.</p>
       </section>
     {/if}
   </div>

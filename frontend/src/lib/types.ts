@@ -1302,6 +1302,7 @@ export interface SingboxRouterSettings {
 	wanInterface?: string; // kernel system-name (e.g. "ppp0"); empty when wanAutoDetect=true
 	bypassPresets?: string[];
 	bypassExtraPorts?: string;
+	bypassExtraSubnets?: string;
 	ingressInterfaces?: string[];
 	// UDP session timeout for tproxy-in. Go duration string (e.g. "3m0s", "10m0s").
 	// Empty = backend default (3m0s). Increase to fix dropped sessions in games.
