@@ -766,6 +766,12 @@
 			width: 100%;
 		}
 
+		/* Select-mode bar: stack buttons in one column so the long
+		   "Исключить выбранные (N)" label never overflows on narrow screens. */
+		.select-bar .actions {
+			grid-template-columns: minmax(0, 1fr);
+		}
+
 		.actions :global(.btn) {
 			width: 100%;
 			min-width: 0;
