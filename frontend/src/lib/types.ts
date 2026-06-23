@@ -1665,6 +1665,17 @@ export interface SubscriptionMember {
 	security?: string;
 }
 
+export interface SubscriptionPreviewMember {
+	key: string; // identity-суффикс (subID-независимый) для исключения при создании
+	label?: string;
+	protocol: string;
+	server: string;
+	port: number;
+	sni?: string;
+	transport?: string;
+	security?: string;
+}
+
 export type SubscriptionMode = 'selector' | 'urltest';
 
 export interface SubscriptionURLTest {
@@ -1717,6 +1728,8 @@ export interface Subscription {
 	enabled: boolean;
 	mode: SubscriptionMode;
 	urlTest?: SubscriptionURLTest;
+	excludedTags?: string[];
+	excludedMembers?: SubscriptionMember[];
 }
 
 export interface SubscriptionRefreshResult {
@@ -1743,6 +1756,7 @@ export interface CreateSubscriptionInput {
 	enabled: boolean;
 	mode?: SubscriptionMode;
 	urlTest?: SubscriptionURLTest;
+	excludedKeys?: string[];
 }
 
 export interface UpdateSubscriptionInput {
