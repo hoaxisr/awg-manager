@@ -424,6 +424,82 @@ func TestReconcile_PolicyMarkChanged_Reinstalls(t *testing.T) {
 	}
 }
 
+// TestUpdateSettings_MalformedSubnet_RejectedBeforeSaveAndInstall guards the
+// COMMIT-safety invariant for the API path. A malformed BypassExtraSubnets must
+// be rejected by the Normalize gate in UpdateSettings BEFORE it is persisted or
+// any iptables Install runs. The resolver error is intentionally discarded with
+// `_` at the two Install sites, so this gate is the only thing stopping a broken
+// `-d` rule from reaching iptables-restore — which would fail the whole COMMIT
+// and drop all interception. Remove the Normalize call from UpdateSettings and
+// this test fails (bad value would persist and reconcile could install it).
+func TestUpdateSettings_MalformedSubnet_RejectedBeforeSaveAndInstall(t *testing.T) {
+	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{PolicyName: "Policy0"})
+	restoreCalls := 0
+	ipt := newStubIPTables(func(_ context.Context, _ string) error {
+		restoreCalls++
+		return nil
+	})
+	svc := newTestService(t, Deps{Settings: settingsStore, IPTables: ipt})
+
+	err := svc.UpdateSettings(context.Background(), storage.SingboxRouterSettings{
+		PolicyName:         "Policy0",
+		WANAutoDetect:      true,
+		BypassExtraSubnets: "vpn.example.com", // hostname — rejected by the resolver
+	})
+	if err == nil {
+		t.Fatal("expected UpdateSettings to reject a hostname in bypassExtraSubnets")
+	}
+	if !strings.Contains(err.Error(), "bypassExtraSubnets") {
+		t.Errorf("error should name the field, got %q", err.Error())
+	}
+	if restoreCalls != 0 {
+		t.Errorf("Install must NOT run on rejected input, got %d restore call(s)", restoreCalls)
+	}
+	// Fail-closed: the rejected value must not have been persisted.
+	all, err := settingsStore.Load()
+	if err != nil {
+		t.Fatalf("settingsStore.Load: %v", err)
+	}
+	if all.SingboxRouter.BypassExtraSubnets != "" {
+		t.Errorf("malformed value was persisted: %q", all.SingboxRouter.BypassExtraSubnets)
+	}
+}
+
+// TestReconcileInstalled_MalformedSubnet_RejectedBeforeInstall guards the second
+// Install entry point. reconcileInstalled re-Normalizes the settings it is
+// handed (e.g. a hand-edited settings.json read from disk), so a malformed
+// BypassExtraSubnets is rejected before the `_`-discarded resolver call and the
+// Install that would emit a broken `-d`. With the gate present no restore runs;
+// remove it and reconcile would reach Install (restoreCalls != 0) and fail.
+func TestReconcileInstalled_MalformedSubnet_RejectedBeforeInstall(t *testing.T) {
+	restoreCalls := 0
+	ipt := newStubIPTables(func(_ context.Context, _ string) error {
+		restoreCalls++
+		return nil
+	})
+	svc := &ServiceImpl{
+		deps: Deps{
+			Policies:           &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+			IPTables:           ipt,
+			WANIPCollector:     &fakeWANIPCollector{},
+			Singbox:            newTestSingbox(t),
+			NetfilterPreflight: func(context.Context) error { return nil },
+		},
+	}
+	err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
+		Enabled:            true,
+		PolicyName:         "Policy0",
+		WANAutoDetect:      true,
+		BypassExtraSubnets: "999.999.999.999/24", // invalid octets — rejected by the resolver
+	})
+	if err == nil {
+		t.Fatal("expected reconcileInstalled to reject malformed bypassExtraSubnets")
+	}
+	if restoreCalls != 0 {
+		t.Errorf("Install must NOT run on rejected input, got %d restore call(s)", restoreCalls)
+	}
+}
+
 func TestReconcile_PolicyDeleted_Disables(t *testing.T) {
 	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
 		Enabled:    true,
