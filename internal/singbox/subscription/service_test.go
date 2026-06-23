@@ -1741,3 +1741,26 @@ func TestExcludeMembers_NoOrphanIntersection(t *testing.T) {
 		t.Fatal("excluded tag must survive refresh+DeleteOrphans")
 	}
 }
+
+func TestRestoreMembers_ReMaterializes(t *testing.T) {
+	svc, mut := newTestService(t)
+	sub := createURLSubWithMembers(t, svc, 3)
+	t1 := tagOf(sub, 1)
+	if _, err := svc.ExcludeMembers(context.Background(), sub.ID, []string{t1}); err != nil {
+		t.Fatal(err)
+	}
+	mut.reset()
+	got, err := svc.RestoreMembers(context.Background(), sub.ID, []string{t1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsTag(got.ExcludedTags, t1) {
+		t.Fatal("t1 still excluded")
+	}
+	if !containsTag(tagsOf(got.Members), t1) {
+		t.Fatal("t1 not restored to active members")
+	}
+	if !mut.addedOutbound(t1) {
+		t.Fatal("t1 must be re-materialized on restore")
+	}
+}

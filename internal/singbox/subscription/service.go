@@ -1077,6 +1077,42 @@ func (s *Service) ExcludeMembers(ctx context.Context, id string, tags []string) 
 	return updated, nil
 }
 
+// RestoreMembers убирает теги из ExcludedTags и запускает refresh — вернувшиеся
+// серверы материализуются. Стоимость = один обычный refresh (редкая операция).
+func (s *Service) RestoreMembers(ctx context.Context, id string, tags []string) (*Subscription, error) {
+	mu := s.lockSub(id)
+	mu.Lock()
+	defer mu.Unlock()
+
+	sub, err := s.store.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	rm := make(map[string]bool, len(tags))
+	for _, t := range tags {
+		rm[t] = true
+	}
+	newExcludedTags := make([]string, 0, len(sub.ExcludedTags))
+	for _, t := range sub.ExcludedTags {
+		if !rm[t] {
+			newExcludedTags = append(newExcludedTags, t)
+		}
+	}
+	newExcludedMembers := make([]MemberInfo, 0, len(sub.ExcludedMembers))
+	for _, m := range sub.ExcludedMembers {
+		if !rm[m.Tag] {
+			newExcludedMembers = append(newExcludedMembers, m)
+		}
+	}
+	if err := s.store.SetExcludedTags(id, newExcludedTags, newExcludedMembers); err != nil {
+		return nil, err
+	}
+	if _, err := s.refreshLocked(ctx, id); err != nil {
+		return nil, err
+	}
+	return s.store.Get(id)
+}
+
 // GetActiveNow returns the currently-active member tag as reported by the
 // running sing-box Clash API. For urltest-mode subscriptions this reflects
 // the auto-selected fastest member, which can drift from the persisted
