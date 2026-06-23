@@ -3531,6 +3531,13 @@ definitions:
           port exclusions in "PORT UDP|TCP" format (e.g. "51820 UDP, 1194 TCP").
         example: 51820 UDP
         type: string
+      bypassExtraSubnets:
+        description: |-
+          BypassExtraSubnets is a user-defined comma/space-separated list of IPv4
+          IP/CIDR destinations whose traffic bypasses sing-box entirely (incl.
+          DNS/53). Bare IP is treated as /32. E.g. "203.0.113.0/24, 10.8.0.5".
+        example: 203.0.113.0/24
+        type: string
       bypassPresets:
         description: |-
           BypassPresets lists active named port-bypass presets.
