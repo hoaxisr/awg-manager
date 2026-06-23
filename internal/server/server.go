@@ -1202,6 +1202,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/singbox/subscriptions/info/remove", guarded(sh.InfoRemove))
 		mux.HandleFunc("/api/singbox/subscriptions/members/add", guarded(sh.AddMember))
 		mux.HandleFunc("/api/singbox/subscriptions/members/remove", guarded(sh.RemoveMember))
+		mux.HandleFunc("/api/singbox/subscriptions/members/exclude", guarded(sh.ExcludeMembers))
+		mux.HandleFunc("/api/singbox/subscriptions/members/restore", guarded(sh.RestoreMembers))
+		mux.HandleFunc("/api/singbox/subscriptions/preview", guarded(sh.PreviewURL))
 	}
 
 	if s.dnsRewritesHandler != nil {

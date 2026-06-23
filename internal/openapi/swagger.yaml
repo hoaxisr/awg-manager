@@ -1117,6 +1117,16 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.ExcludeMembersRequest:
+    properties:
+      memberTags:
+        example:
+        - sub-demo-002
+        - sub-demo-003
+        items:
+          type: string
+        type: array
+    type: object
   api.ExternalTunnelDTO:
     properties:
       endpoint:
@@ -2228,6 +2238,16 @@ definitions:
           $ref: '#/definitions/presets.Preset'
         type: array
     type: object
+  api.PreviewURLRequest:
+    properties:
+      headers:
+        items:
+          $ref: '#/definitions/api.SubscriptionHeader'
+        type: array
+      url:
+        example: https://example.com/subscriptions/demo.txt
+        type: string
+    type: object
   api.ProxyConfigResponse:
     properties:
       data:
@@ -2302,6 +2322,15 @@ definitions:
       error:
         type: string
       ips:
+        items:
+          type: string
+        type: array
+    type: object
+  api.RestoreMembersRequest:
+    properties:
+      memberTags:
+        example:
+        - sub-demo-002
         items:
           type: string
         type: array
@@ -3939,6 +3968,14 @@ definitions:
       enabled:
         example: true
         type: boolean
+      excludedMembers:
+        items:
+          $ref: '#/definitions/api.SubscriptionMemberDTO'
+        type: array
+      excludedTags:
+        items:
+          type: string
+        type: array
       headers:
         items:
           $ref: '#/definitions/api.SubscriptionHeader'
@@ -11474,6 +11511,54 @@ paths:
       summary: Add a manual member to an inline subscription
       tags:
       - subscriptions
+  /singbox/subscriptions/members/exclude:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Marks the given member tags as excluded: rebuilds the
+        selector without them, drops their outbounds and survives
+        refresh. Reversible via restore. URL subscriptions only.
+      parameters:
+      - description: Subscription ID
+        in: query
+        name: id
+        required: true
+        type: string
+      - description: Member tags to exclude
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.ExcludeMembersRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SubscriptionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: excluding all members is not allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Exclude members from a URL subscription
+      tags:
+      - subscriptions
   /singbox/subscriptions/members/remove:
     post:
       consumes:
@@ -11522,6 +11607,49 @@ paths:
       summary: Remove a member from an inline subscription
       tags:
       - subscriptions
+  /singbox/subscriptions/members/restore:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Removes the given tags from the exclusion set and runs a
+        refresh, re-materializing the returned servers.
+      parameters:
+      - description: Subscription ID
+        in: query
+        name: id
+        required: true
+        type: string
+      - description: Member tags to restore
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.RestoreMembersRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SubscriptionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Restore previously excluded members
+      tags:
+      - subscriptions
   /singbox/subscriptions/orphans/delete:
     post:
       parameters:
@@ -11542,6 +11670,41 @@ paths:
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       summary: Delete orphan members from subscription
+      tags:
+      - subscriptions
+  /singbox/subscriptions/preview:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Read-only fetch + parse of a subscription URL. Returns the
+        parsed members (with subID-independent keys) so the import
+        wizard can offer per-server exclusion before creation.
+      parameters:
+      - description: URL and optional headers
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.PreviewURLRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: fetch or parse failed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Preview a subscription URL without creating it
       tags:
       - subscriptions
   /singbox/subscriptions/refresh:
