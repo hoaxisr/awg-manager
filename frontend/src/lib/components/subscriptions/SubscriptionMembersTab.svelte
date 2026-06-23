@@ -37,6 +37,7 @@
 	let addError = $state('');
 	let removingTag = $state<string | null>(null);
 	let pendingRemove = $state<SubscriptionMember | null>(null);
+	let pendingExclude = $state<SubscriptionMember | null>(null);
 	let movingToInfo = $state<string | null>(null);
 	let removingInfoId = $state<string | null>(null);
 	let selectMode = $state(false);
@@ -278,12 +279,18 @@
 		selected = new Set(memberList.map((m) => m.tag));
 	}
 
-	async function excludeOne(tag: string): Promise<void> {
-		if (excluding) return;
+	function excludeOne(tag: string): void {
+		const member = memberList.find((m) => m.tag === tag);
+		if (member) pendingExclude = member;
+	}
+
+	async function confirmExcludeOne(): Promise<void> {
+		if (!pendingExclude || excluding) return;
 		excluding = true;
 		lastError = '';
 		try {
-			await api.excludeSubscriptionMembers(subscription.id, [tag]);
+			await api.excludeSubscriptionMembers(subscription.id, [pendingExclude.tag]);
+			pendingExclude = null;
 			onUpdated();
 		} catch (e) {
 			lastError = e instanceof Error ? e.message : 'Не удалось исключить';
@@ -604,6 +611,40 @@
 			onclick={confirmRemove}
 		>
 			{removingTag !== null ? 'Удаляем...' : 'Удалить'}
+		</Button>
+	{/snippet}
+</Modal>
+
+<Modal
+	open={pendingExclude !== null}
+	title="Исключить сервер?"
+	size="md"
+	onclose={() => {
+		if (excluding) return;
+		pendingExclude = null;
+	}}
+>
+	{#if pendingExclude}
+		<p>
+			Сервер
+			<strong>{pendingExclude.label || `${pendingExclude.server}:${pendingExclude.port}`}</strong>
+			будет исключён из подписки и перестанет участвовать в выборе. Сервер
+			останется исключённым при обновлении подписки; вернуть его можно в
+			разделе «Исключённые».
+		</p>
+	{/if}
+	{#snippet actions()}
+		<Button variant="ghost" disabled={excluding} onclick={() => (pendingExclude = null)}>
+			Отмена
+		</Button>
+		<Button
+			variant="danger"
+			disabled={excluding}
+			loading={excluding}
+			iconBefore={banIcon}
+			onclick={confirmExcludeOne}
+		>
+			{excluding ? 'Исключаем...' : 'Исключить'}
 		</Button>
 	{/snippet}
 </Modal>
