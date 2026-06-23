@@ -84,7 +84,7 @@
 				<th class="sortable" onclick={() => onSortChange('source')}>Источник {arrow('source')}</th>
 				<th class="sortable" onclick={() => onSortChange('destination')}>Назначение {arrow('destination')}</th>
 				<th class="sortable" onclick={() => onSortChange('outbound')}>Outbound {arrow('outbound')}</th>
-				<th>Rule</th>
+				<th class="col-rule">Rule</th>
 				<th class="sortable num" onclick={() => onSortChange('upload')}>↑ {arrow('upload')}</th>
 				<th class="sortable num" onclick={() => onSortChange('download')}>↓ {arrow('download')}</th>
 				<th class="sortable" onclick={() => onSortChange('start')}>Время {arrow('start')}</th>
@@ -114,7 +114,7 @@
 						{/if}
 					</td>
 					<td><span class="badge {outboundClass(c)}" title={c.chains[0] ?? c.outboundLabel}>{c.outboundLabel}</span></td>
-					<td title={`${c.rule} ${c.rulePayload}`.trim()}>
+					<td class="col-rule" title={`${c.rule} ${c.rulePayload}`.trim()}>
 						<span class="badge muted">{c.rule || '—'}</span>
 					</td>
 					<td class="mono num">{formatBytes(c.upload)}</td>
@@ -227,4 +227,9 @@
 	}
 	.pager button:hover:not(:disabled) { background: var(--surface-hover, #262a2c); }
 	.pager button:disabled { opacity: 0.3; cursor: not-allowed; }
+	/* RULE column: cap at its colgroup hint so long rule_set=[…] strings
+	   don't push the column wider than intended. The full value is always
+	   available via the title attribute on the cell. */
+	.col-rule { max-width: 110px; }
+	.col-rule .badge { max-width: 100%; overflow: hidden; text-overflow: ellipsis; display: block; }
 </style>

@@ -54,6 +54,12 @@ type Orchestrator struct {
 	reloadTimer *time.Timer
 	reloading   bool
 
+	// prevHasTun records whether the LAST applied config had a tun
+	// inbound. Reload compares it against the new config's tun presence:
+	// a toggle (added or removed) forces a restart because sing-box
+	// cannot add/remove a tun inbound via SIGHUP. Guarded by o.mu.
+	prevHasTun bool
+
 	// shouldRun, when non-nil and returning false, suppresses cold-start
 	// of sing-box during Reload. Used by Operator to enforce the
 	// user-pressed-Stop sticky intent so config-change-triggered reloads
@@ -79,6 +85,15 @@ func (o *Orchestrator) SetShouldRun(fn func() bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.shouldRun = fn
+}
+
+// CurrentHasTun reports whether the LAST applied config had a tun inbound.
+// Consumers (the Process reload path) use it to choose restart-over-SIGHUP:
+// sing-box cannot hot-reload a tun inbound. Safe for concurrent callers.
+func (o *Orchestrator) CurrentHasTun() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.prevHasTun
 }
 
 // log emits via logf if set. Caller may or may not hold the lock.

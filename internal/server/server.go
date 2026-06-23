@@ -83,57 +83,58 @@ type Config struct {
 
 // Server is the HTTP server for awg-manager.
 type Server struct {
-	config                 Config
-	appLog                 *logging.ScopedLogger
-	tunnelService          api.TunnelService
-	externalService        api.ExternalTunnelService
-	testingService         *testing.Service
-	keenetic               *auth.KeeneticClient
-	sessions               *auth.SessionStore
-	settings               *storage.SettingsStore
-	tunnels                *storage.AWGTunnelStore
-	pingCheckService       api.PingCheckService
-	loggingService         *logging.Service
-	activeBackend          backend.Backend
-	kmodLoader             *kmod.Loader
-	updaterService         *updater.Service
-	ndmsQueries            *ndmsquery.Queries
-	ndmsCommands           *ndmscommand.Commands
-	trafficHistory         *traffic.History
-	dnsRouteService        api.DNSRouteService
-	staticRouteService     api.StaticRouteService
-	systemTunnelService    systemtunnel.Service
-	managedService         managed.ManagedServerService
-	managedServiceImpl     *managed.Service
-	nwgOp                  *nwg.OperatorNativeWG
-	terminalManager        terminal.Manager
-	accessPolicyService    accesspolicy.Service
-	clientRouteService     clientroute.Service
-	catalog                routing.Catalog
-	hydraService           *hydraroute.Service
-	orch                   *orchestrator.Orchestrator
-	bus                    *events.Bus
-	singboxHandler         *api.SingboxHandler
-	singboxConnsHandler    *api.SingboxConnectionsHandler
-	singboxRouterHandler   *api.SingboxRouterHandler
-	singboxConfigHandler   *api.SingboxConfigHandler
-	singboxProxiesHandler  *api.SingboxProxiesHandler
-	awgOutboundsHandler    *api.AWGOutboundsHandler
-	subscriptionHandler    *api.SubscriptionHandler
-	dnsRewritesHandler     *api.DNSRewritesHandler
-	clashProxy             *api.ClashProxy
-	singboxOp              *singbox.Operator
-	singboxOrch            *singboxorch.Orchestrator
-	presetCatalog          *presets.Catalog
-	deviceProxySvc         *deviceproxy.Service
-	downloadSvc            *downloader.Service
-	monitoringService      *monitoring.Service
-	singboxSubMembersFn    func() []diagnostics.SingboxSubMember
-	singboxConfigPreviewFn func() (string, error)
-	dnsCheckService        *dnscheck.Service
-	authMiddleware         *auth.Middleware
-	httpServer             *http.Server
-	loopbackListener       net.Listener // optional loopback listener for reverse proxy
+	config                     Config
+	appLog                     *logging.ScopedLogger
+	tunnelService              api.TunnelService
+	externalService            api.ExternalTunnelService
+	testingService             *testing.Service
+	keenetic                   *auth.KeeneticClient
+	sessions                   *auth.SessionStore
+	settings                   *storage.SettingsStore
+	tunnels                    *storage.AWGTunnelStore
+	pingCheckService           api.PingCheckService
+	loggingService             *logging.Service
+	activeBackend              backend.Backend
+	kmodLoader                 *kmod.Loader
+	updaterService             *updater.Service
+	ndmsQueries                *ndmsquery.Queries
+	ndmsCommands               *ndmscommand.Commands
+	trafficHistory             *traffic.History
+	dnsRouteService            api.DNSRouteService
+	staticRouteService         api.StaticRouteService
+	systemTunnelService        systemtunnel.Service
+	managedService             managed.ManagedServerService
+	managedServiceImpl         *managed.Service
+	nwgOp                      *nwg.OperatorNativeWG
+	terminalManager            terminal.Manager
+	accessPolicyService        accesspolicy.Service
+	clientRouteService         clientroute.Service
+	catalog                    routing.Catalog
+	hydraService               *hydraroute.Service
+	orch                       *orchestrator.Orchestrator
+	bus                        *events.Bus
+	singboxHandler             *api.SingboxHandler
+	singboxConnsHandler        *api.SingboxConnectionsHandler
+	singboxRouterHandler       *api.SingboxRouterHandler
+	singboxFakeIPConfigHandler *api.SingboxFakeIPConfigHandler
+	singboxConfigHandler       *api.SingboxConfigHandler
+	singboxProxiesHandler      *api.SingboxProxiesHandler
+	awgOutboundsHandler        *api.AWGOutboundsHandler
+	subscriptionHandler        *api.SubscriptionHandler
+	dnsRewritesHandler         *api.DNSRewritesHandler
+	clashProxy                 *api.ClashProxy
+	singboxOp                  *singbox.Operator
+	singboxOrch                *singboxorch.Orchestrator
+	presetCatalog              *presets.Catalog
+	deviceProxySvc             *deviceproxy.Service
+	downloadSvc                *downloader.Service
+	monitoringService          *monitoring.Service
+	singboxSubMembersFn        func() []diagnostics.SingboxSubMember
+	singboxConfigPreviewFn     func() (string, error)
+	dnsCheckService            *dnscheck.Service
+	authMiddleware             *auth.Middleware
+	httpServer                 *http.Server
+	loopbackListener           net.Listener // optional loopback listener for reverse proxy
 
 	ndmsDispatcher api.HookDispatcher
 	ndmsTransport  *ndmstransport.Client
@@ -317,6 +318,12 @@ func (s *Server) SetDownloadService(svc *downloader.Service) {
 // /api/singbox/router/* routes can be registered.
 func (s *Server) SetSingboxRouterHandler(h *api.SingboxRouterHandler) {
 	s.singboxRouterHandler = h
+}
+
+// SetSingboxFakeIPConfigHandler wires the fakeip-tun config CRUD handler so
+// the /api/singbox/fakeip/config/* routes can be registered.
+func (s *Server) SetSingboxFakeIPConfigHandler(h *api.SingboxFakeIPConfigHandler) {
+	s.singboxFakeIPConfigHandler = h
 }
 
 // SetAWGOutboundsHandler wires the AWG outbounds tag catalog handler
@@ -1120,6 +1127,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/singbox/router/status", guarded(rh.GetStatus))
 		mux.HandleFunc("/api/singbox/router/enable", guarded(rh.Enable))
 		mux.HandleFunc("/api/singbox/router/disable", guarded(rh.Disable))
+		mux.HandleFunc("/api/singbox/router/mode", guarded(rh.SwitchMode))
 		mux.HandleFunc("/api/singbox/router/settings", guarded(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet {
 				rh.GetSettings(w, r)
@@ -1155,6 +1163,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/singbox/router/dns/servers/add", guarded(rh.AddDNSServer))
 		mux.HandleFunc("/api/singbox/router/dns/servers/update", guarded(rh.UpdateDNSServer))
 		mux.HandleFunc("/api/singbox/router/dns/servers/delete", guarded(rh.DeleteDNSServer))
+		mux.HandleFunc("/api/singbox/router/dns/servers/move", guarded(rh.MoveDNSServer))
 		mux.HandleFunc("/api/singbox/router/dns/rules/list", guarded(rh.ListDNSRules))
 		mux.HandleFunc("/api/singbox/router/dns/rules/add", guarded(rh.AddDNSRule))
 		mux.HandleFunc("/api/singbox/router/dns/rules/update", guarded(rh.UpdateDNSRule))
@@ -1169,10 +1178,46 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		}))
 		mux.HandleFunc("/api/singbox/router/route/final", guarded(rh.SetRouteFinal))
 		mux.HandleFunc("/api/singbox/router/inspect", guarded(rh.Inspect))
+		mux.HandleFunc("/api/singbox/router/inspect-dns", guarded(rh.InspectDNS))
 		mux.HandleFunc("/api/singbox/router/inspect/stream", guarded(rh.InspectStream))
 		mux.HandleFunc("/api/singbox/router/staging", guarded(rh.GetStaging))
 		mux.HandleFunc("/api/singbox/router/staging/apply", guarded(rh.PostStagingApply))
 		mux.HandleFunc("/api/singbox/router/staging/discard", guarded(rh.PostStagingDiscard))
+	}
+
+	if s.singboxFakeIPConfigHandler != nil {
+		fh := s.singboxFakeIPConfigHandler
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/servers/list", guarded(fh.ListDNSServers))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/servers/add", guarded(fh.AddDNSServer))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/servers/update", guarded(fh.UpdateDNSServer))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/servers/delete", guarded(fh.DeleteDNSServer))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/servers/move", guarded(fh.MoveDNSServer))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/rules/list", guarded(fh.ListDNSRules))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/rules/add", guarded(fh.AddDNSRule))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/rules/update", guarded(fh.UpdateDNSRule))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/rules/delete", guarded(fh.DeleteDNSRule))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/rules/move", guarded(fh.MoveDNSRule))
+		mux.HandleFunc("/api/singbox/fakeip/config/dns/globals", guarded(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				fh.GetDNSGlobals(w, r)
+			} else {
+				fh.PutDNSGlobals(w, r)
+			}
+		}))
+		mux.HandleFunc("/api/singbox/fakeip/config/rules/list", guarded(fh.ListRules))
+		mux.HandleFunc("/api/singbox/fakeip/config/rules/add", guarded(fh.AddRule))
+		mux.HandleFunc("/api/singbox/fakeip/config/rules/update", guarded(fh.UpdateRule))
+		mux.HandleFunc("/api/singbox/fakeip/config/rules/delete", guarded(fh.DeleteRule))
+		mux.HandleFunc("/api/singbox/fakeip/config/rules/move", guarded(fh.MoveRule))
+		mux.HandleFunc("/api/singbox/fakeip/config/route/final", guarded(fh.SetRouteFinal))
+		mux.HandleFunc("/api/singbox/fakeip/config/rulesets/list", guarded(fh.ListRuleSets))
+		mux.HandleFunc("/api/singbox/fakeip/config/rulesets/add", guarded(fh.AddRuleSet))
+		mux.HandleFunc("/api/singbox/fakeip/config/rulesets/update", guarded(fh.UpdateRuleSet))
+		mux.HandleFunc("/api/singbox/fakeip/config/rulesets/delete", guarded(fh.DeleteRuleSet))
+		mux.HandleFunc("/api/singbox/fakeip/config/outbounds/list", guarded(fh.ListOutbounds))
+		mux.HandleFunc("/api/singbox/fakeip/config/outbounds/add", guarded(fh.AddOutbound))
+		mux.HandleFunc("/api/singbox/fakeip/config/outbounds/update", guarded(fh.UpdateOutbound))
+		mux.HandleFunc("/api/singbox/fakeip/config/outbounds/delete", guarded(fh.DeleteOutbound))
 	}
 
 	if s.singboxProxiesHandler != nil {

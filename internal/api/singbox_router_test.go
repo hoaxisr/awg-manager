@@ -29,18 +29,26 @@ type mockRouterSvc struct {
 	applyRes      orchestrator.ValidationResult
 	discardErr    error
 	datFileErr    error
+	switchTarget  string
+	switchErr     error
+	settings      storage.SingboxRouterSettings
 }
 
 func (m *mockRouterSvc) Enable(ctx context.Context) error    { return m.enableErr }
 func (m *mockRouterSvc) Disable(ctx context.Context) error   { return nil }
 func (m *mockRouterSvc) Reconcile(ctx context.Context) error { return nil }
+func (m *mockRouterSvc) SwitchRoutingMode(ctx context.Context, target string) error {
+	m.switchTarget = target
+	return m.switchErr
+}
 func (m *mockRouterSvc) GetStatus(ctx context.Context) (router.Status, error) {
 	return router.Status{}, nil
 }
 func (m *mockRouterSvc) GetSettings(ctx context.Context) (storage.SingboxRouterSettings, error) {
-	return storage.SingboxRouterSettings{}, nil
+	return m.settings, nil
 }
 func (m *mockRouterSvc) UpdateSettings(ctx context.Context, s storage.SingboxRouterSettings) error {
+	m.settings = s
 	return nil
 }
 func (m *mockRouterSvc) ListWANInterfaces(ctx context.Context) ([]router.WANInterfaceInfo, error) {
@@ -122,6 +130,7 @@ func (m *mockRouterSvc) UpdateDNSServer(ctx context.Context, tag string, s route
 func (m *mockRouterSvc) DeleteDNSServer(ctx context.Context, tag string, force bool) error {
 	return nil
 }
+func (m *mockRouterSvc) MoveDNSServer(ctx context.Context, from, to int) error { return nil }
 func (m *mockRouterSvc) ListDNSRules(ctx context.Context) ([]router.DNSRule, error) { return nil, nil }
 func (m *mockRouterSvc) AddDNSRule(ctx context.Context, r router.DNSRule) error     { return nil }
 func (m *mockRouterSvc) UpdateDNSRule(ctx context.Context, index int, r router.DNSRule) error {
@@ -137,6 +146,13 @@ func (m *mockRouterSvc) SetDNSGlobals(ctx context.Context, final, strategy strin
 }
 func (m *mockRouterSvc) Inspect(ctx context.Context, input router.InspectInput) (router.InspectResult, error) {
 	return router.InspectResult{Input: input.Domain, InputType: "domain", Destination: "direct", MatchedRule: -1, Matches: []router.RuleMatchResult{}, Final: "direct"}, nil
+}
+func (m *mockRouterSvc) InspectDNS(ctx context.Context, input router.InspectDNSInput) (router.InspectDNSResult, error) {
+	return router.InspectDNSResult{
+		Input: input.Domain, InputType: "domain", MatchedRule: -1,
+		Server: "fakeip", Classification: "fakeip", Pool: "198.18.0.0/15",
+		Matches: []router.DNSRuleMatchResult{}, Final: "fakeip",
+	}, nil
 }
 func (m *mockRouterSvc) InspectStream(ctx context.Context, input router.InspectInput) (<-chan router.InspectStreamEvent, error) {
 	ch := make(chan router.InspectStreamEvent, 1)
@@ -204,6 +220,46 @@ func TestRouterEnable_PolicyMissing_Returns400(t *testing.T) {
 	h.Enable(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("want 400, got %d", rr.Code)
+	}
+}
+
+func TestRouterSwitchMode_CallsService(t *testing.T) {
+	svc := &mockRouterSvc{}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/mode",
+		strings.NewReader(`{"mode":"fakeip-tun"}`))
+	rr := httptest.NewRecorder()
+	h.SwitchMode(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if svc.switchTarget != "fakeip-tun" {
+		t.Errorf("svc.SwitchRoutingMode target = %q want fakeip-tun", svc.switchTarget)
+	}
+}
+
+func TestRouterSwitchMode_BadMode_Returns400(t *testing.T) {
+	svc := &mockRouterSvc{}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/mode",
+		strings.NewReader(`{"mode":"bogus"}`))
+	rr := httptest.NewRecorder()
+	h.SwitchMode(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if svc.switchTarget != "" {
+		t.Errorf("service should not be called for bad mode, got target=%q", svc.switchTarget)
+	}
+}
+
+func TestRouterSwitchMode_MethodNotAllowed(t *testing.T) {
+	h := newMockRouterHandler(&mockRouterSvc{})
+	req := httptest.NewRequest(http.MethodGet, "/api/singbox/router/mode", nil)
+	rr := httptest.NewRecorder()
+	h.SwitchMode(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("want 405, got %d", rr.Code)
 	}
 }
 

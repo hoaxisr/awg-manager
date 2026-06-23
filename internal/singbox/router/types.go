@@ -14,22 +14,33 @@ type Status struct {
 	// rebuild) while chains survive, so the engine looks "installed" but
 	// routes nothing. The UI keys its "working" badge on Active, not Enabled
 	// (intent) or Installed (chains only).
-	Active                 bool    `json:"active"`
-	NetfilterAvailable     bool    `json:"netfilterAvailable"`
-	NetfilterComponentName string  `json:"netfilterComponentName,omitempty"`
-	TProxyTargetAvailable  bool    `json:"tproxyTargetAvailable"`
-	PolicyName             string  `json:"policyName"`
-	PolicyMark             string  `json:"policyMark,omitempty"`
-	PolicyExists           bool    `json:"policyExists"`
-	DeviceMode             string  `json:"deviceMode"`
-	SnifferEnabled         bool    `json:"snifferEnabled"`
-	DeviceCount            int     `json:"deviceCount"`
-	RuleCount              int     `json:"ruleCount"`
-	RuleSetCount           int     `json:"ruleSetCount"`
-	OutboundAWGCount       int     `json:"outboundAwgCount"`
-	OutboundCompositeCount int     `json:"outboundCompositeCount"`
-	Final                  string  `json:"final"`
-	Issues                 []Issue `json:"issues,omitempty"`
+	Active                 bool   `json:"active"`
+	NetfilterAvailable     bool   `json:"netfilterAvailable"`
+	NetfilterComponentName string `json:"netfilterComponentName,omitempty"`
+	TProxyTargetAvailable  bool   `json:"tproxyTargetAvailable"`
+	PolicyName             string `json:"policyName"`
+	PolicyMark             string `json:"policyMark,omitempty"`
+	PolicyExists           bool   `json:"policyExists"`
+	DeviceMode             string `json:"deviceMode"`
+	SnifferEnabled         bool   `json:"snifferEnabled"`
+	DeviceCount            int    `json:"deviceCount"`
+	RuleCount              int    `json:"ruleCount"`
+	RuleSetCount           int    `json:"ruleSetCount"`
+	OutboundAWGCount       int    `json:"outboundAwgCount"`
+	OutboundCompositeCount int    `json:"outboundCompositeCount"`
+	Final                  string `json:"final"`
+	// FakeIPIface is the active fakeip-tun kernel interface name ("opkgtun<idx>")
+	// when the router is provisioned in fakeip-tun mode; empty otherwise. The UI
+	// surfaces it in the «Настройки движка» panel. Populated from the persisted
+	// FakeIPState.Index.
+	FakeIPIface string `json:"fakeipIface,omitempty"`
+	// FakeIPDns is the DNS address clients must configure manually in fakeip-tun
+	// mode (DeriveTunDNS of the tun /30 gw, e.g. "172.18.0.2"); "" when not fakeip.
+	FakeIPDns string `json:"fakeipDns,omitempty"`
+	// FakeIPTunAddr is the fakeip-tun gateway address (the tun /30 host, e.g.
+	// "172.18.0.1"); "" when not in fakeip-tun mode. Read-only, for display.
+	FakeIPTunAddr string  `json:"fakeipTunAddr,omitempty"`
+	Issues        []Issue `json:"issues,omitempty"`
 	// LastError is the last sing-box fatal/exit reason, populated only when
 	// the engine is enabled but not active (СБОЙ). Empty otherwise.
 	LastError string `json:"lastError,omitempty"`
@@ -132,6 +143,12 @@ type Outbound struct {
 	Tolerance     int      `json:"tolerance,omitempty"`
 	Default       string   `json:"default,omitempty"`
 	Strategy      string   `json:"strategy,omitempty"`
+	// Server and DomainResolver support fakeip-tun's domain_resolver guard:
+	// a hostname-bearing proxy outbound resolves its Server via the named
+	// resolver instead of the fakeip server. Both omitempty so v1 IP-bound
+	// direct outbounds stay clean.
+	Server         string          `json:"server,omitempty"`
+	DomainResolver *DomainResolver `json:"domain_resolver,omitempty"`
 }
 
 // CompositeOutboundView is the API/list projection of a composite
@@ -148,13 +165,29 @@ type CompositeOutboundView struct {
 type Inbound struct {
 	Type        string `json:"type"`
 	Tag         string `json:"tag"`
-	Listen      string `json:"listen"`
-	ListenPort  int    `json:"listen_port"`
+	Listen      string `json:"listen,omitempty"`
+	ListenPort  int    `json:"listen_port,omitempty"`
 	Network     string `json:"network,omitempty"`
 	UDPTimeout  string `json:"udp_timeout,omitempty"`
 	UDPFragment bool   `json:"udp_fragment,omitempty"`
 	TCPFastOpen bool   `json:"tcp_fast_open,omitempty"`
 	RoutingMark int    `json:"routing_mark,omitempty"`
+	// tun inbound (fakeip-tun mode)
+	InterfaceName          string   `json:"interface_name,omitempty"`
+	Address                []string `json:"address,omitempty"`
+	MTU                    int      `json:"mtu,omitempty"`
+	AutoRoute              *bool    `json:"auto_route,omitempty"`
+	AutoRedirect           *bool    `json:"auto_redirect,omitempty"`
+	StrictRoute            *bool    `json:"strict_route,omitempty"`
+	Stack                  string   `json:"stack,omitempty"`
+	EndpointIndependentNAT *bool    `json:"endpoint_independent_nat,omitempty"`
+	// GSO controls sing-tun's generic-segmentation-offload on the tun device.
+	// Pointer + omitempty so it's emitted ONLY when explicitly set: the gvisor
+	// stack leaves it nil (omitted), while the system stack MUST set it false —
+	// on this router's kernel (4.9) system+GSO panics sing-tun under load, and
+	// system+gso:false is the only stable system-stack combo (PoC-proven
+	// 2026-06-13; the project's sing-box alpha accepts "gso": false on tun).
+	GSO *bool `json:"gso,omitempty"`
 }
 
 type Route struct {
@@ -173,6 +206,10 @@ type Route struct {
 	// other so the emitted config never carries both. NEVER stores
 	// NDMS interface ID — kernel name is the stable identifier.
 	DefaultInterface string `json:"default_interface,omitempty"`
+	// DefaultDomainResolver names the DNS server used to resolve outbound
+	// hostnames that no rule pins elsewhere (fakeip-tun: a "real" resolver
+	// so proxy server hostnames don't get fakeip addresses).
+	DefaultDomainResolver *DomainResolver `json:"default_domain_resolver,omitempty"`
 }
 
 type DomainResolver struct {
@@ -193,10 +230,13 @@ type DNSServer struct {
 	Detour         string          `json:"detour,omitempty"`
 	Strategy       string          `json:"domain_strategy,omitempty"`
 	DomainResolver *DomainResolver `json:"domain_resolver,omitempty"`
+	Inet4Range     string          `json:"inet4_range,omitempty"`
+	Inet6Range     string          `json:"inet6_range,omitempty"`
 }
 
 type DNSRule struct {
 	RuleSet       []string `json:"rule_set,omitempty"`
+	SourceIPCIDR  []string `json:"source_ip_cidr,omitempty"`
 	DomainSuffix  []string `json:"domain_suffix,omitempty"`
 	Domain        []string `json:"domain,omitempty"`
 	DomainKeyword []string `json:"domain_keyword,omitempty"`
@@ -215,9 +255,20 @@ type DNS struct {
 	Strategy string      `json:"strategy,omitempty"`
 }
 
+type CacheFile struct {
+	Enabled     bool   `json:"enabled"`
+	StoreFakeIP bool   `json:"store_fakeip,omitempty"`
+	Path        string `json:"path,omitempty"`
+}
+
+type Experimental struct {
+	CacheFile *CacheFile `json:"cache_file,omitempty"`
+}
+
 type RouterConfig struct {
-	Inbounds  []Inbound  `json:"inbounds"`
-	Outbounds []Outbound `json:"outbounds"`
-	DNS       DNS        `json:"dns,omitempty"`
-	Route     Route      `json:"route"`
+	Inbounds     []Inbound     `json:"inbounds"`
+	Outbounds    []Outbound    `json:"outbounds"`
+	DNS          DNS           `json:"dns,omitempty"`
+	Route        Route         `json:"route"`
+	Experimental *Experimental `json:"experimental,omitempty"`
 }

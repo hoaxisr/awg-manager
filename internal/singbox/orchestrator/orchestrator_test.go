@@ -170,6 +170,14 @@ type fakeProc struct {
 	stops    int
 	reloads  int
 	startErr error
+	order    []string // sequence of "start"/"stop"/"reload" calls
+}
+
+// calls returns a copy of the recorded call sequence.
+func (p *fakeProc) calls() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.order...)
 }
 
 func (p *fakeProc) IsRunning() (bool, int) {
@@ -184,6 +192,7 @@ func (p *fakeProc) Start() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.starts++
+	p.order = append(p.order, "start")
 	if p.startErr != nil {
 		return p.startErr
 	}
@@ -194,6 +203,7 @@ func (p *fakeProc) Stop() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.stops++
+	p.order = append(p.order, "stop")
 	p.running = false
 	return nil
 }
@@ -201,6 +211,7 @@ func (p *fakeProc) Reload() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.reloads++
+	p.order = append(p.order, "reload")
 	return nil
 }
 
@@ -654,5 +665,155 @@ func TestReloadShouldRunOnlyGatesColdStart(t *testing.T) {
 	}
 	if fp.starts != 0 {
 		t.Errorf("must not cold-start when already running; starts=%d", fp.starts)
+	}
+}
+
+// tunInboundConfig is a minimal slot config that declares a tun inbound,
+// mirroring what the fakeip-tun feature writes.
+const tunInboundConfig = `{"inbounds":[{"type":"tun","tag":"tun-in"}]}`
+
+// equalStrs reports slice equality for call-order assertions.
+func equalStrs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestReload_RestartsWhenTunAdded: transitioning INTO fakeip-tun (tun
+// inbound newly present, prevHasTun starting false) while sing-box is
+// already running must trigger a full restart (Stop THEN Start), NOT a
+// SIGHUP — sing-box cannot bring up a freshly-added tun inbound via HUP.
+func TestReload_RestartsWhenTunAdded(t *testing.T) {
+	fp := &fakeProc{running: true}
+	dir := t.TempDir()
+	o := New(dir, fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	// prevHasTun starts false (zero value) — this is the add toggle.
+	if err := o.Reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := fp.calls(); !equalStrs(got, []string{"stop", "start"}) {
+		t.Errorf("expected restart [stop start], got %v", got)
+	}
+	if fp.reloads != 0 {
+		t.Errorf("must not SIGHUP on tun add; reloads=%d", fp.reloads)
+	}
+	if !o.prevHasTun {
+		t.Errorf("prevHasTun must be true after applying a tun config")
+	}
+}
+
+// TestReload_SighupWhenTunStillPresent: tun was already present in the
+// prior reload (prevHasTun true) and the new config still has the tun —
+// only other things changed. No toggle => SIGHUP, not restart.
+func TestReload_SighupWhenTunStillPresent(t *testing.T) {
+	fp := &fakeProc{running: true}
+	dir := t.TempDir()
+	o := New(dir, fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	o.prevHasTun = true // tun was present in the prior applied config
+	if err := o.Reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := fp.calls(); !equalStrs(got, []string{"reload"}) {
+		t.Errorf("expected SIGHUP [reload], got %v", got)
+	}
+	if fp.starts != 0 || fp.stops != 0 {
+		t.Errorf("must not restart when tun unchanged; starts=%d stops=%d", fp.starts, fp.stops)
+	}
+}
+
+// TestReload_RestartsWhenTunRemoved: leaving fakeip-tun. prevHasTun true,
+// the new config has NO tun, but another slot keeps the daemon needed
+// (needRunning stays true). Removing a tun inbound also cannot be done
+// via SIGHUP => restart.
+func TestReload_RestartsWhenTunRemoved(t *testing.T) {
+	fp := &fakeProc{running: true}
+	dir := t.TempDir()
+	o := New(dir, fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	// No tun inbound in the new config, but the slot is enabled so the
+	// daemon is still needed.
+	if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	o.prevHasTun = true // tun WAS present previously
+	if err := o.Reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := fp.calls(); !equalStrs(got, []string{"stop", "start"}) {
+		t.Errorf("expected restart [stop start] on tun removal, got %v", got)
+	}
+	if o.prevHasTun {
+		t.Errorf("prevHasTun must be false after applying a tun-less config")
+	}
+}
+
+// TestReload_SighupWhenNoTunEither: no tun before, no tun now, running —
+// the unchanged classic SIGHUP path. Guards against regressing normal
+// (tproxy/router) reloads into a full restart.
+func TestReload_SighupWhenNoTunEither(t *testing.T) {
+	fp := &fakeProc{running: true}
+	dir := t.TempDir()
+	o := New(dir, fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	// prevHasTun stays false (zero value).
+	if err := o.Reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := fp.calls(); !equalStrs(got, []string{"reload"}) {
+		t.Errorf("expected SIGHUP [reload], got %v", got)
+	}
+}
+
+func TestKnownSlots_FakeIP(t *testing.T) {
+	var fi *SlotMeta
+	slots := KnownSlots()
+	for i := range slots {
+		if slots[i].Slot == SlotFakeIP {
+			fi = &slots[i]
+		}
+	}
+	if fi == nil || fi.Filename != "21-fakeip.json" || fi.AlwaysOn {
+		t.Fatalf("SlotFakeIP missing/wrong: %+v", fi)
 	}
 }

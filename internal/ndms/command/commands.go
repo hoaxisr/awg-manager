@@ -19,6 +19,7 @@ type Commands struct {
 	Wireguard    *WireguardCommands
 	Policies     *PolicyCommands
 	Routes       *RouteCommands
+	NAT          *NATCommands
 	DNSRoutes    *DNSRouteCommands
 	ObjectGroups *ObjectGroupCommands
 	PingCheck    *PingCheckCommands
@@ -53,6 +54,7 @@ func NewCommands(d Deps) *Commands {
 		Wireguard:    NewWireguardCommands(d.Poster, d.Save, d.Queries),
 		Policies:     NewPolicyCommands(d.Poster, d.Save, d.Queries, d.HookNotifier),
 		Routes:       NewRouteCommands(d.Poster, d.Save, d.Queries),
+		NAT:          NewNATCommands(d.Poster, d.Save, d.Queries),
 		DNSRoutes:    NewDNSRouteCommands(d.Poster, d.Save, d.Queries, d.IsOS5),
 		ObjectGroups: NewObjectGroupCommands(d.Poster, d.Save, d.Queries),
 		PingCheck:    NewPingCheckCommands(d.Poster, d.Save, d.Queries),

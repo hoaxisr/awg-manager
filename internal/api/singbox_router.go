@@ -47,6 +47,9 @@ type SingboxRouterStatusData struct {
 	OutboundAWGCount       int                     `json:"outboundAwgCount" example:"2"`
 	OutboundCompositeCount int                     `json:"outboundCompositeCount" example:"1"`
 	Final                  string                  `json:"final" example:"direct"`
+	FakeIPIface            string                  `json:"fakeipIface,omitempty" example:"opkgtun0"`
+	FakeIPDns              string                  `json:"fakeipDns,omitempty" example:"172.18.0.2"`
+	FakeIPTunAddr          string                  `json:"fakeipTunAddr,omitempty" example:"172.18.0.1"`
 	LastError              string                  `json:"lastError,omitempty" example:"engine start failed"`
 	Issues                 []SingboxRouterIssueDTO `json:"issues,omitempty"`
 }
@@ -59,10 +62,11 @@ type SingboxRouterStatusResponse struct {
 
 // SingboxRouterSettingsData mirrors storage.SingboxRouterSettings.
 type SingboxRouterSettingsData struct {
-	Enabled         bool   `json:"enabled" example:"true"`
-	PolicyName      string `json:"policyName" example:"awgm-router"`
-	DeviceMode      string `json:"deviceMode,omitempty" example:"policy" enums:"policy,all"`
-	SnifferEnabled bool `json:"snifferEnabled" example:"true"`
+	Enabled        bool   `json:"enabled" example:"true"`
+	PolicyName     string `json:"policyName" example:"awgm-router"`
+	DeviceMode     string `json:"deviceMode,omitempty" example:"policy" enums:"policy,all"`
+	RoutingMode    string `json:"routingMode,omitempty" example:"tproxy" enums:"tproxy,fakeip-tun"`
+	SnifferEnabled bool   `json:"snifferEnabled" example:"true"`
 	// WANAutoDetect / WANInterface form a two-field discriminator:
 	//   true  + ""    → sing-box auto_detect_interface
 	//   false + "ppp0"→ sing-box default_interface=ppp0
@@ -85,6 +89,15 @@ type SingboxRouterSettingsData struct {
 	// IngressInterfaces lists interface refs whose ingress traffic is
 	// redirected through the sing-box router (e.g. "managed:Wireguard3").
 	IngressInterfaces []string `json:"ingressInterfaces,omitempty" example:"managed:Wireguard3"`
+	// --- fakeip-tun engine settings (user-editable) ---
+	// FakeIPStack selects the sing-tun stack: "gvisor" (default) or "system".
+	FakeIPStack string `json:"fakeipStack,omitempty" example:"gvisor" enums:"gvisor,system"`
+	// FakeIPPool4 is the fakeip v4 pool CIDR (default "198.18.0.0/15").
+	FakeIPPool4 string `json:"fakeipPool4,omitempty" example:"198.18.0.0/15"`
+	// FakeIPPool6 is the fakeip v6 pool CIDR (default "fc00::/18"); "" disables v6.
+	FakeIPPool6 string `json:"fakeipPool6,omitempty" example:"fc00::/18"`
+	// FakeIPMTU is the tun MTU (default 1500; valid range 576-9000).
+	FakeIPMTU int `json:"fakeipMtu,omitempty" example:"1500"`
 	// UDPTimeout sets the UDP session timeout for the tproxy-in inbound
 	// (Go duration string, e.g. "3m0s", "10m0s"). Empty = use default (3m0s).
 	// Increase to prevent long-quiet UDP applications (games, etc.) from
@@ -259,6 +272,32 @@ type SingboxRouterPolicyDevicesListResponse struct {
 
 // ── Request DTOs ─────────────────────────────────────────────────
 
+// SingboxRouterModeRequest is the body for POST /singbox/router/mode.
+type SingboxRouterModeRequest struct {
+	Mode string `json:"mode" example:"fakeip-tun" enums:"off,tproxy,fakeip-tun"`
+}
+
+// SingboxRouterTransitionStepDTO mirrors router.TransitionStep — one milestone
+// of a routing-mode switch.
+type SingboxRouterTransitionStepDTO struct {
+	Step    string `json:"step" example:"provision" enums:"start,teardown,provision,readiness,ready,rollback,error"`
+	Status  string `json:"status" example:"current" enums:"current,done,error"`
+	Message string `json:"message,omitempty" example:"restored tproxy"`
+}
+
+// SingboxRouterTransitionData mirrors router.TransitionEvent. It documents the
+// payload of the "singbox-router:transition" events emitted on the GET /events
+// SSE stream during a POST /singbox/router/mode switch (the UI progress screen).
+type SingboxRouterTransitionData struct {
+	TransitionID string                         `json:"transitionId" example:"switch-7"`
+	From         string                         `json:"from" example:"tproxy" enums:"off,tproxy,fakeip-tun"`
+	To           string                         `json:"to" example:"fakeip-tun" enums:"off,tproxy,fakeip-tun"`
+	Step         SingboxRouterTransitionStepDTO `json:"step"`
+	Done         bool                           `json:"done,omitempty" example:"true"`
+	FinalState   string                         `json:"finalState,omitempty" example:"fakeip-tun" enums:"off,tproxy,fakeip-tun"`
+	Error        string                         `json:"error,omitempty" example:""`
+}
+
 // SingboxRouterRuleUpdateRequest is the body for POST /singbox/router/rules/update.
 type SingboxRouterRuleUpdateRequest struct {
 	Index int                  `json:"index" example:"0"`
@@ -417,6 +456,47 @@ func (h *SingboxRouterHandler) Disable(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.svc.Disable(r.Context()); err != nil {
 		response.InternalError(w, err.Error())
+		return
+	}
+	response.Success(w, map[string]bool{"ok": true})
+}
+
+// SwitchMode orchestrates a routing-mode transition (off↔tproxy↔fakeip-tun)
+// with directional fail-closed rollback. Progress is reported out-of-band as
+// "singbox-router:transition" events on the existing events SSE stream
+// (GET /events) — no new stream endpoint.
+//
+//	@Summary		Switch singbox-router routing mode
+//	@Description	Orchestrates a routing-mode transition (off↔tproxy↔fakeip-tun): tears down the old mode then brings up the new one, with directional fail-closed rollback. Per-step progress is published as "singbox-router:transition" events on the existing GET /events SSE stream (see SingboxRouterTransitionData). Returns 400 INVALID_MODE for an unknown mode.
+//	@Tags			singbox-router
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		SingboxRouterModeRequest	true	"Target routing mode"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		405		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/singbox/router/mode [post]
+func (h *SingboxRouterHandler) SwitchMode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	var body SingboxRouterModeRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		response.BadRequest(w, "invalid request body: "+err.Error())
+		return
+	}
+	switch body.Mode {
+	case "off", "tproxy", "fakeip-tun":
+	default:
+		response.ErrorWithStatus(w, http.StatusBadRequest,
+			"invalid routing mode (want off|tproxy|fakeip-tun)", "INVALID_MODE")
+		return
+	}
+	if err := h.svc.SwitchRoutingMode(r.Context(), body.Mode); err != nil {
+		h.handleErr(w, "request", err)
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})

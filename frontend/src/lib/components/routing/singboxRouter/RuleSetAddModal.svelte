@@ -92,6 +92,12 @@
 
 	let type = $state<RuleSetFormType>('remote');
 	let format: 'binary' | 'source' = $state('binary');
+
+	// На правке тип и формат — природа набора (UpdateRuleSet с тем же tag):
+	// менять нельзя, показываем read-only. Создание нового — сегмент-выбор.
+	const typeLabel = $derived(typeOptions.find((o) => o.value === type)?.label ?? type);
+	const formatLabel = $derived(formatOptions.find((o) => o.value === format)?.label ?? format);
+
 	let tag = $state('');
 	let url = $state('');
 	let updateInterval = $state('24h');
@@ -438,12 +444,16 @@
 	<div class="form">
 		<div class="field">
 			<div class="lbl">Тип</div>
-			<SegmentedControl
-				value={type}
-				options={typeOptions}
-				ariaLabel="Тип rule set"
-				onchange={(next) => setType(next)}
-			/>
+			{#if isEditing}
+				<div class="ro-badge" aria-label="Тип rule set (нельзя изменить)">{typeLabel}</div>
+			{:else}
+				<SegmentedControl
+					value={type}
+					options={typeOptions}
+					ariaLabel="Тип rule set"
+					onchange={(next) => setType(next)}
+				/>
+			{/if}
 		</div>
 
 		<label class="field">
@@ -459,12 +469,16 @@
 		{#if type !== 'inline' && !isDatType}
 			<label class="field">
 				<div class="lbl">Формат</div>
-				<SegmentedControl
-					value={format}
-					options={formatOptions}
-					ariaLabel="Формат rule set"
-					onchange={(next) => (format = next)}
-				/>
+				{#if isEditing}
+					<div class="ro-badge" aria-label="Формат rule set (нельзя изменить)">{formatLabel}</div>
+				{:else}
+					<SegmentedControl
+						value={format}
+						options={formatOptions}
+						ariaLabel="Формат rule set"
+						onchange={(next) => (format = next)}
+					/>
+				{/if}
 			</label>
 		{/if}
 
@@ -609,6 +623,19 @@
 </SingboxSettingsModal>
 
 <style>
+	/* Read-only тип/формат на правке: набор уже создан, природу не меняем. */
+	.ro-badge {
+		display: inline-flex;
+		align-items: center;
+		align-self: flex-start;
+		padding: 0.35rem 0.6rem;
+		border-radius: 6px;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border);
+		color: var(--text);
+		font-size: 0.85rem;
+		font-weight: 600;
+	}
 	.dat-picker-field {
 		padding: 0;
 		background: transparent;

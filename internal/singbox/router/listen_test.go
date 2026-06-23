@@ -1,6 +1,9 @@
 package router
 
-import "testing"
+import (
+	"net/netip"
+	"testing"
+)
 
 // Real /proc/net samples captured from a live router (sing-box running, router
 // engine enabled). The TCP table carries the LISTEN row AND many ESTABLISHED
@@ -44,5 +47,68 @@ func TestLocalPortInState_UDPBound(t *testing.T) {
 func TestLocalPortInState_WrongPort(t *testing.T) {
 	if localPortInState(procUDPBound, RedirectPort, udpStateBound) {
 		t.Error("must not match a different port")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// fakeip-tun readiness probes
+// ---------------------------------------------------------------------------
+
+func TestTunInterfaceReady_NonexistentIface(t *testing.T) {
+	// A name that cannot exist under /sys/class/net → read error → not ready.
+	if tunInterfaceReady("opkgtun-nonexistent-xyz") {
+		t.Error("nonexistent tun iface must report not-ready")
+	}
+}
+
+func TestTunInterfaceReady_EmptyIface(t *testing.T) {
+	if tunInterfaceReady("") {
+		t.Error("empty iface name must report not-ready")
+	}
+}
+
+func TestFakeIPDNSProbe_RejectsEmptyOrInvalid(t *testing.T) {
+	if liveFakeIPDNSProbe(t.Context(), "", netip.MustParsePrefix("10.128.0.0/10")) {
+		t.Error("empty dnsAddr must fail-closed")
+	}
+	if liveFakeIPDNSProbe(t.Context(), "172.18.0.2", netip.Prefix{}) {
+		t.Error("invalid fakeip prefix must fail-closed")
+	}
+}
+
+func TestFakeIPPoolRoutePresent_RejectsInvalidInputs(t *testing.T) {
+	if liveFakeIPPoolRoutePresent("", netip.MustParsePrefix("10.128.0.0/10")) {
+		t.Error("empty iface must fail-closed")
+	}
+	if liveFakeIPPoolRoutePresent("opkgtun0", netip.Prefix{}) {
+		t.Error("invalid pool must fail-closed")
+	}
+	if liveFakeIPPoolRoutePresent("opkgtun0", netip.MustParsePrefix("3f80::/10")) {
+		t.Error("v6 pool must fail-closed (v4-only for v1)")
+	}
+}
+
+func TestParseProcRouteHex(t *testing.T) {
+	// /proc/net/route stores 10.128.0.0 as little-endian "0000800A".
+	got, ok := parseProcRouteHex("0000800A")
+	if !ok {
+		t.Fatal("parse failed for valid 8-char hex")
+	}
+	if want := [4]byte{10, 128, 0, 0}; got != want {
+		t.Fatalf("parseProcRouteHex(0000800A) = %v, want %v", got, want)
+	}
+	// Mask /10 = 255.192.0.0 stored little-endian as "0000C0FF".
+	gotMask, ok := parseProcRouteHex("0000C0FF")
+	if !ok {
+		t.Fatal("parse failed for mask hex")
+	}
+	if want := [4]byte{255, 192, 0, 0}; gotMask != want {
+		t.Fatalf("parseProcRouteHex(0000C0FF) = %v, want %v", gotMask, want)
+	}
+	if _, ok := parseProcRouteHex("short"); ok {
+		t.Error("must reject non-8-char input")
+	}
+	if _, ok := parseProcRouteHex("ZZZZZZZZ"); ok {
+		t.Error("must reject non-hex input")
 	}
 }

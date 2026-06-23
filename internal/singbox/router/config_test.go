@@ -445,3 +445,79 @@ func TestUpdateCompositeOutbound_RejectsCycle(t *testing.T) {
 		t.Fatal("update closing a cycle must be rejected")
 	}
 }
+
+func TestInbound_TunFieldsMarshal(t *testing.T) {
+	in := Inbound{
+		Type: "tun", Tag: "tun-in", InterfaceName: "opkgtun10",
+		Address: []string{"172.18.0.1/30", "fdfe:dcba:9876::1/126"},
+		MTU: 1500, Stack: "gvisor",
+	}
+	b, _ := json.Marshal(in)
+	s := string(b)
+	for _, want := range []string{`"interface_name":"opkgtun10"`, `"address":["172.18.0.1/30"`, `"mtu":1500`, `"stack":"gvisor"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %s in %s", want, s)
+		}
+	}
+	if strings.Contains(s, `"listen"`) {
+		t.Errorf("tun inbound must omit listen: %s", s)
+	}
+}
+
+func TestRoute_DefaultDomainResolverMarshal(t *testing.T) {
+	r := Route{DefaultDomainResolver: &DomainResolver{Server: "real"}}
+	b, _ := json.Marshal(r)
+	if !strings.Contains(string(b), `"default_domain_resolver":{"server":"real"}`) {
+		t.Errorf("got %s", b)
+	}
+}
+
+func TestOutbound_DomainResolverAndServerMarshal(t *testing.T) {
+	o := Outbound{Type: "vless", Tag: "p", Server: "example.com", DomainResolver: &DomainResolver{Server: "real"}}
+	b := string(mustMarshal(t, o))
+	if !strings.Contains(b, `"server":"example.com"`) {
+		t.Errorf("missing server: %s", b)
+	}
+	if !strings.Contains(b, `"domain_resolver":{"server":"real"}`) {
+		t.Errorf("missing domain_resolver: %s", b)
+	}
+	plain := string(mustMarshal(t, Outbound{Type: "direct", Tag: "d"}))
+	if strings.Contains(plain, `"server"`) {
+		t.Errorf("plain outbound must omit server: %s", plain)
+	}
+	if strings.Contains(plain, `"domain_resolver"`) {
+		t.Errorf("plain outbound must omit domain_resolver: %s", plain)
+	}
+}
+
+func mustMarshal(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
+}
+
+func TestRouterConfig_CacheFileFakeIPMarshal(t *testing.T) {
+	c := NewEmptyConfig()
+	c.Experimental = &Experimental{CacheFile: &CacheFile{Enabled: true, StoreFakeIP: true, Path: "/opt/etc/awg-manager/singbox/cache.db"}}
+	b, _ := json.Marshal(c)
+	for _, want := range []string{`"experimental"`, `"cache_file"`, `"store_fakeip":true`, `"path":"/opt/etc/awg-manager/singbox/cache.db"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("missing %s: %s", want, b)
+		}
+	}
+}
+
+// TestRouterConfig_CacheFileEnabledAlwaysEmitted verifies enabled is always
+// marshaled, even when false — otherwise a disabled cache with store_fakeip set
+// would silently emit a cache-OFF config (footgun).
+func TestRouterConfig_CacheFileEnabledAlwaysEmitted(t *testing.T) {
+	c := NewEmptyConfig()
+	c.Experimental = &Experimental{CacheFile: &CacheFile{Enabled: false, StoreFakeIP: true}}
+	b, _ := json.Marshal(c)
+	if !strings.Contains(string(b), `"enabled":false`) {
+		t.Errorf("expected enabled:false to be emitted: %s", b)
+	}
+}

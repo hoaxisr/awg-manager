@@ -16,6 +16,10 @@
         // this tab. Used to visually group tabs into clusters (e.g. legacy
         // NDMS-stack tabs vs sing-box stack on /routing).
         separatorBefore?: boolean;
+        // When true, the tab label is rendered extra-subdued (dormant) to signal
+        // an inactive mutually-exclusive mode (e.g. the TProxy tab while FakeIP is
+        // the active routing mode). Stays clickable; the `active` style overrides.
+        muted?: boolean;
     }
 
     interface Props {
@@ -225,6 +229,7 @@
             <button
                 class="tab"
                 class:active={tab.id === active}
+                class:muted={tab.muted}
                 onclick={() => selectTab(tab.id)}
             >
                 {tab.label}
@@ -333,6 +338,12 @@
     .tab.active {
         color: var(--text-primary);
         border-bottom-color: var(--accent);
+    }
+
+    /* Dormant mutually-exclusive mode (e.g. TProxy while FakeIP is active).
+       Extra-subdued vs a normal inactive tab; opening it (active) restores full. */
+    .tab.muted:not(.active) {
+        opacity: 0.45;
     }
 
     .tab-badge {

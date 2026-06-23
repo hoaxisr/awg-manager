@@ -12,7 +12,7 @@ import (
 // References (when set) names what was referenced.
 type ValidationError struct {
 	Slot    Slot
-	Kind    string // "duplicate-outbound" / "duplicate-inbound" / "duplicate-dns" / "unknown-outbound" / "unknown-rule-set"
+	Kind    string // "duplicate-outbound" / "duplicate-inbound" / "duplicate-dns" / "unknown-outbound" / "unknown-rule-set" / "unknown-dns-server"
 	Tag     string // the offending tag value
 	InRule  string // optional: human-readable location (e.g. "rules[3]" or "selector default")
 	Message string
@@ -39,6 +39,13 @@ func (e ValidationError) Error() string {
 // ValidationResult aggregates all problems found in a single pass.
 type ValidationResult struct {
 	Errors []ValidationError
+
+	// HasTun reports whether ANY enabled slot declares an inbound of
+	// type "tun" in the merged config. The orchestrator uses this to
+	// decide reload strategy: sing-box cannot add or remove a tun
+	// inbound via SIGHUP (the tun device never gets carrier), so a
+	// change in tun presence forces a full restart instead.
+	HasTun bool
 }
 
 func (r ValidationResult) Ok() bool { return len(r.Errors) == 0 }
@@ -89,6 +96,7 @@ func (o *Orchestrator) validateWith(bytesFor func(Slot) ([]byte, error)) Validat
 	dnsServers := map[string]tagOrigin{}
 	ruleSetsBySlot := map[Slot]map[string]bool{}
 	var errs []ValidationError
+	var hasTun bool
 
 	var pending []validationSectionRefs
 
@@ -145,6 +153,9 @@ func (o *Orchestrator) validateWith(bytesFor func(Slot) ([]byte, error)) Validat
 			}
 		}
 		for _, ib := range c.Inbounds {
+			if ib.Type == "tun" {
+				hasTun = true
+			}
 			if ib.Tag == "" {
 				continue
 			}
@@ -189,6 +200,12 @@ func (o *Orchestrator) validateWith(bytesFor func(Slot) ([]byte, error)) Validat
 		}
 		if c.Route.Final != "" {
 			rs.finals = append(rs.finals, finalSection{outbound: c.Route.Final})
+		}
+		if c.DNS.Final != "" {
+			rs.dnsTagRefs = append(rs.dnsTagRefs, dnsTagRefSection{refTag: c.DNS.Final, where: "dns.final"})
+		}
+		if c.Route.DefaultDomainResolver != nil && c.Route.DefaultDomainResolver.Server != "" {
+			rs.dnsTagRefs = append(rs.dnsTagRefs, dnsTagRefSection{refTag: c.Route.DefaultDomainResolver.Server, where: "route.default_domain_resolver.server"})
 		}
 		for i, ruleSet := range c.Route.RuleSet {
 			if ruleSet.DownloadDetour != "" {
@@ -237,6 +254,10 @@ func (o *Orchestrator) validateWith(bytesFor func(Slot) ([]byte, error)) Validat
 			return true
 		}
 		_, ok := outbounds[tag]
+		return ok
+	}
+	knownDNSServer := func(tag string) bool {
+		_, ok := dnsServers[tag]
 		return ok
 	}
 	for _, rs := range pending {
@@ -293,6 +314,17 @@ func (o *Orchestrator) validateWith(bytesFor func(Slot) ([]byte, error)) Validat
 				})
 			}
 		}
+		for _, d := range rs.dnsTagRefs {
+			if !knownDNSServer(d.refTag) {
+				errs = append(errs, ValidationError{
+					Slot:    rs.slot,
+					Kind:    "unknown-dns-server",
+					Tag:     d.refTag,
+					InRule:  d.where,
+					Message: "no slot declares this dns server tag",
+				})
+			}
+		}
 	}
 
 	sort.SliceStable(errs, func(i, j int) bool {
@@ -304,7 +336,7 @@ func (o *Orchestrator) validateWith(bytesFor func(Slot) ([]byte, error)) Validat
 		}
 		return errs[i].Tag < errs[j].Tag
 	})
-	return ValidationResult{Errors: errs}
+	return ValidationResult{Errors: errs, HasTun: hasTun}
 }
 
 // validateDraftLocked validates the merged config with one slot's bytes
@@ -337,7 +369,8 @@ type slotConfig struct {
 }
 
 type inboundJSON struct {
-	Tag string `json:"tag"`
+	Tag  string `json:"tag"`
+	Type string `json:"type"`
 }
 
 type outboundJSON struct {
@@ -347,9 +380,34 @@ type outboundJSON struct {
 }
 
 type routeJSON struct {
-	Final   string        `json:"final,omitempty"`
-	Rules   []ruleJSON    `json:"rules,omitempty"`
-	RuleSet []ruleSetJSON `json:"rule_set,omitempty"`
+	Final                 string              `json:"final,omitempty"`
+	Rules                 []ruleJSON          `json:"rules,omitempty"`
+	RuleSet               []ruleSetJSON       `json:"rule_set,omitempty"`
+	DefaultDomainResolver *domainResolverJSON `json:"default_domain_resolver,omitempty"`
+}
+
+type domainResolverJSON struct {
+	Server string `json:"server,omitempty"`
+}
+
+// UnmarshalJSON accepts both forms sing-box allows for default_domain_resolver:
+// a bare string (the server tag, e.g. "dns-bootstrap" in 00-base.json) or an
+// object ({"server":"real",...}). Without this, a string value fails to
+// unmarshal into the struct, which fails parsing of the WHOLE slot config and
+// silently skips every orchestrator reload (stand-caught 2026-06-18).
+func (d *domainResolverJSON) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		d.Server = s
+		return nil
+	}
+	type alias domainResolverJSON
+	var a alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	*d = domainResolverJSON(a)
+	return nil
 }
 
 type ruleJSON struct {
@@ -366,6 +424,7 @@ type ruleSetJSON struct {
 type dnsJSON struct {
 	Servers []dnsServerJSON `json:"servers,omitempty"`
 	Rules   []dnsRuleJSON   `json:"rules,omitempty"`
+	Final   string          `json:"final,omitempty"`
 }
 
 type dnsServerJSON struct {
@@ -378,11 +437,17 @@ type dnsRuleJSON struct {
 }
 
 type validationSectionRefs struct {
-	slot     Slot
-	rules    []ruleSection
-	finals   []finalSection
-	sels     []selSection
-	ruleSets []ruleSetSection
+	slot       Slot
+	rules      []ruleSection
+	finals     []finalSection
+	sels       []selSection
+	ruleSets   []ruleSetSection
+	dnsTagRefs []dnsTagRefSection
+}
+
+type dnsTagRefSection struct {
+	refTag string
+	where  string
 }
 
 type ruleSection struct {

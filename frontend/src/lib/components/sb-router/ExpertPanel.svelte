@@ -60,6 +60,7 @@
 
   // Store subscriptions
   const storeStatus = singboxRouterStore.status;
+  const storeSettings = singboxRouterStore.settings;
   const storeRules = singboxRouterStore.rules;
   const storeRuleSets = singboxRouterStore.ruleSets;
   const storeOutbounds = singboxRouterStore.outbounds;
@@ -267,9 +268,12 @@
 
   // Engine badge keys on the live interception state, not the persisted
   // toggle: enabled+active → работает (ON); enabled but jumps gone → СБОЙ;
-  // disabled → OFF.
+  // disabled → OFF. XOR-режимы: когда активен режим FakeIP, общий sing-box
+  // крутит fakeip-слот и TPROXY-перехват не установлен — это НЕАКТИВЕН (muted),
+  // НЕ ложный СБОЙ. Оценка active/СБОЙ только когда TProxy и есть активный режим.
   const engineStat = $derived.by<{ value: string; tone: StatCellData['tone'] }>(() => {
     if (!$storeStatus?.enabled) return { value: 'OFF', tone: 'muted' };
+    if ($storeSettings?.routingMode === 'fakeip-tun') return { value: 'НЕАКТИВЕН', tone: 'muted' };
     return $storeStatus.active
       ? { value: 'ON', tone: 'success' }
       : { value: 'СБОЙ', tone: 'error' };
@@ -280,6 +284,11 @@
       label: 'Движок',
       value: engineStat.value,
       tone: engineStat.tone,
+      helpTitle: engineStat.value === 'НЕАКТИВЕН' ? 'Режим неактивен' : undefined,
+      helpText:
+        engineStat.value === 'НЕАКТИВЕН'
+          ? 'Активен режим FakeIP — TProxy-перехват не задействован.'
+          : undefined,
       onClick:
         engineStat.value === 'СБОЙ' && $storeStatus?.lastError
           ? () => (engineFatalOpen = true)

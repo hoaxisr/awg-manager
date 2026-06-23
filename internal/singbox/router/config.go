@@ -850,19 +850,29 @@ func (r Rule) hasAnyMatcher() bool {
 		r.IPIsPrivate != nil
 }
 
+// validateCIDROrAddr accepts a value that is either a CIDR prefix or a bare IP
+// address; it returns an error labeled with the caller-supplied field name when
+// the value is neither. Shared by validateRule and validateDNSRule so the
+// CIDR-or-address parse logic lives in one place; the label carries the
+// per-caller error prefix (e.g. "ip_cidr %q", "dns rule: invalid source_ip_cidr %q").
+func validateCIDROrAddr(label, v string) error {
+	if _, err := netip.ParsePrefix(v); err != nil {
+		if _, err := netip.ParseAddr(v); err != nil {
+			return fmt.Errorf(label+" %q: %w", v, err)
+		}
+	}
+	return nil
+}
+
 func validateRule(r Rule) error {
 	for _, cidr := range r.IPCIDR {
-		if _, err := netip.ParsePrefix(cidr); err != nil {
-			if _, err := netip.ParseAddr(cidr); err != nil {
-				return fmt.Errorf("ip_cidr %q: %w", cidr, err)
-			}
+		if err := validateCIDROrAddr("ip_cidr", cidr); err != nil {
+			return err
 		}
 	}
 	for _, cidr := range r.SourceIPCIDR {
-		if _, err := netip.ParsePrefix(cidr); err != nil {
-			if _, err := netip.ParseAddr(cidr); err != nil {
-				return fmt.Errorf("source_ip_cidr %q: %w", cidr, err)
-			}
+		if err := validateCIDROrAddr("source_ip_cidr", cidr); err != nil {
+			return err
 		}
 	}
 	for _, p := range r.Port {

@@ -45,6 +45,15 @@ type Process struct {
 	// stderr buffer (last ~16KB) is passed as the second argument.
 	OnExit func(err error, stderrTail string)
 
+	// ReloadNeedsRestart reports whether the currently-running config has a
+	// tun inbound. When it returns true, Reload does a full Stop+Start instead
+	// of SIGHUP: sing-box cannot hot-reload a tun inbound — on SIGHUP it tries
+	// to re-open the tun while the old instance still holds the fd, failing
+	// with "TUNSETIFF: device or resource busy" and exiting FATAL (stand-
+	// verified 2026-06-17). Nil = always SIGHUP (legacy / no-tun). Set by
+	// Operator construction to the orchestrator's CurrentHasTun.
+	ReloadNeedsRestart func() bool
+
 	// startMu serialises Start and Stop so concurrent callers (watchdog tick
 	// + manual UI Restart) cannot both pass the IsRunning gate and spawn two
 	// processes. IsRunning is intentionally NOT guarded — it is called by the
@@ -291,6 +300,15 @@ func (p *Process) Reload() error {
 	pid, err := p.readPID()
 	if err != nil {
 		return p.startLocked() // no process, start fresh
+	}
+	// A tun inbound cannot survive SIGHUP (sing-box re-opens the tun while the
+	// old instance still holds it → "TUNSETIFF: device or resource busy" →
+	// FATAL exit, stand-verified 2026-06-17). Full restart instead. Covers every
+	// reload path (scheduler rule-set refresh, tunnel ApplyConfig, orchestrator)
+	// since they all funnel through here.
+	if p.ReloadNeedsRestart != nil && p.ReloadNeedsRestart() {
+		_ = p.stopLocked()
+		return p.startLocked()
 	}
 	if err := p.signalFn(pid, syscall.SIGHUP); err != nil {
 		// SIGHUP failed; full restart

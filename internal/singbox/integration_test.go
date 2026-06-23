@@ -158,6 +158,7 @@ type integrationSingbox struct {
 func (s *integrationSingbox) Reload() error                              { return nil }
 func (s *integrationSingbox) IsRunning() (bool, int)                    { return false, 0 }
 func (s *integrationSingbox) Start() error                              { return nil }
+func (s *integrationSingbox) ClearManualStop() error                    { return nil }
 func (s *integrationSingbox) ValidateConfigDir(_ context.Context) error { return nil }
 func (s *integrationSingbox) ConfigDir() string                         { return s.dir }
 func (s *integrationSingbox) Binary() string                            { return "" }

@@ -39,8 +39,9 @@ type TrafficAggregator struct {
 	feeder    HistoryFeeder
 	interval  time.Duration
 
-	mu   sync.Mutex
-	tags map[string]*TrafficSnapshot
+	mu     sync.Mutex
+	tags   map[string]*TrafficSnapshot
+	memory int64
 }
 
 func NewTrafficAggregator(clashAddr string, pub TrafficPublisher, feeder HistoryFeeder) *TrafficAggregator {
@@ -133,6 +134,7 @@ func (t *TrafficAggregator) runOnce(ctx context.Context) {
 // Multiple connections sharing the same tag accumulate, as before.
 func (t *TrafficAggregator) ingest(msg []byte) {
 	var m struct {
+		Memory      int64 `json:"memory"`
 		Connections []struct {
 			Chains   []string `json:"chains"`
 			Upload   int64    `json:"upload"`
@@ -170,7 +172,13 @@ func (t *TrafficAggregator) ingest(msg []byte) {
 	}
 	t.mu.Lock()
 	t.tags = sums
+	t.memory = m.Memory
 	t.mu.Unlock()
+}
+
+// MemoryEvent is the payload of the "singbox:memory" SSE event.
+type MemoryEvent struct {
+	Memory int64 `json:"memory"`
 }
 
 // publish emits the current snapshot to SSE and (optionally) feeds the
@@ -181,9 +189,11 @@ func (t *TrafficAggregator) publish() {
 	for _, s := range t.tags {
 		snap = append(snap, *s)
 	}
+	mem := t.memory
 	t.mu.Unlock()
 	if t.publisher != nil {
 		t.publisher.Publish("singbox:traffic", snap)
+		t.publisher.Publish("singbox:memory", MemoryEvent{Memory: mem})
 	}
 	if t.feeder != nil {
 		for _, s := range snap {

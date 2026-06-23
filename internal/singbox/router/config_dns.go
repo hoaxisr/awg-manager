@@ -2,17 +2,19 @@ package router
 
 import (
 	"fmt"
+	"net/netip"
 	"regexp"
 	"strings"
 )
 
 var validDNSTypes = map[string]bool{
-	"udp":   true,
-	"tls":   true,
-	"https": true,
-	"quic":  true,
-	"h3":    true,
-	"local": true,
+	"udp":    true,
+	"tls":    true,
+	"https":  true,
+	"quic":   true,
+	"h3":     true,
+	"local":  true,
+	"fakeip": true,
 }
 
 var validDNSStrategies = map[string]bool{
@@ -86,6 +88,30 @@ func validateDNSServer(s DNSServer) error {
 	if !validDNSTypes[s.Type] {
 		return fmt.Errorf("dns server %q: unknown type %q", s.Tag, s.Type)
 	}
+	if s.Type == "fakeip" {
+		if strings.TrimSpace(s.Inet4Range) == "" && strings.TrimSpace(s.Inet6Range) == "" {
+			return fmt.Errorf("dns server %q: fakeip requires inet4_range or inet6_range", s.Tag)
+		}
+		if r := strings.TrimSpace(s.Inet4Range); r != "" {
+			p, err := netip.ParsePrefix(r)
+			if err != nil {
+				return fmt.Errorf("dns server %q: invalid inet4_range %q: %w", s.Tag, r, err)
+			}
+			if !p.Addr().Is4() {
+				return fmt.Errorf("dns server %q: inet4_range %q is not IPv4", s.Tag, r)
+			}
+		}
+		if r := strings.TrimSpace(s.Inet6Range); r != "" {
+			p, err := netip.ParsePrefix(r)
+			if err != nil {
+				return fmt.Errorf("dns server %q: invalid inet6_range %q: %w", s.Tag, r, err)
+			}
+			if p.Addr().Is4() {
+				return fmt.Errorf("dns server %q: inet6_range %q is not IPv6", s.Tag, r)
+			}
+		}
+		return nil
+	}
 	if s.Type != "local" && strings.TrimSpace(s.Server) == "" {
 		return fmt.Errorf("dns server %q: server is required", s.Tag)
 	}
@@ -109,6 +135,11 @@ func validateDNSServer(s DNSServer) error {
 func validateDNSRule(r DNSRule, serverTags map[string]bool) error {
 	if !dnsRuleHasMatcher(r) {
 		return ErrInvalidMatchers
+	}
+	for _, c := range r.SourceIPCIDR {
+		if err := validateCIDROrAddr("dns rule: invalid source_ip_cidr", c); err != nil {
+			return err
+		}
 	}
 	for _, rx := range r.DomainRegex {
 		if _, err := regexp.Compile(rx); err != nil {
@@ -142,6 +173,7 @@ func validateDNSRule(r DNSRule, serverTags map[string]bool) error {
 
 func dnsRuleHasMatcher(r DNSRule) bool {
 	return len(r.RuleSet) > 0 ||
+		len(r.SourceIPCIDR) > 0 ||
 		len(r.DomainSuffix) > 0 ||
 		len(r.Domain) > 0 ||
 		len(r.DomainKeyword) > 0 ||
@@ -319,6 +351,27 @@ func (c *RouterConfig) MoveDNSRule(from, to int) error {
 	rules = append(rules, r)
 	rules = append(rules, without[to:]...)
 	c.DNS.Rules = rules
+	return nil
+}
+
+// MoveDNSServer reorders the DNS server at index `from` to index `to`.
+// ponytail: server order is cosmetic — sing-box references servers by tag;
+// endpoint exists only for UX-consistent reordering.
+func (c *RouterConfig) MoveDNSServer(from, to int) error {
+	n := len(c.DNS.Servers)
+	if from < 0 || from >= n || to < 0 || to >= n {
+		return ErrDNSServerIndexOutOfRange
+	}
+	if from == to {
+		return nil
+	}
+	s := c.DNS.Servers[from]
+	without := append(c.DNS.Servers[:from:from], c.DNS.Servers[from+1:]...)
+	servers := make([]DNSServer, 0, n)
+	servers = append(servers, without[:to]...)
+	servers = append(servers, s)
+	servers = append(servers, without[to:]...)
+	c.DNS.Servers = servers
 	return nil
 }
 

@@ -630,6 +630,68 @@ func TestSettingsStore_SetSingboxCreateNDMSProxy_PersistsAtomic(t *testing.T) {
 	}
 }
 
+// TestSetFakeIPState_PersistsAndClears verifies the single-writer setter
+// persists the fakeip-tun state across a reload from disk, that nil clears it,
+// and that it errors when settings are not loaded.
+func TestSetFakeIPState_PersistsAndClears(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSettingsStore(tmpDir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	want := &FakeIPState{Provisioned: true, Index: 5, Inet4Range: "10.128.0.0/10", Inet6Range: "3f80::/10"}
+	if err := store.SetFakeIPState(want); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	// Re-open from disk to confirm persistence.
+	fresh := NewSettingsStore(tmpDir)
+	s, err := fresh.Load()
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if s.FakeIP == nil {
+		t.Fatalf("FakeIP = nil after set, want %+v", want)
+	}
+	if *s.FakeIP != *want {
+		t.Errorf("persisted = %+v, want %+v", *s.FakeIP, *want)
+	}
+
+	// nil clears it, and the cleared state survives a reload.
+	if err := fresh.SetFakeIPState(nil); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	cleared := NewSettingsStore(tmpDir)
+	c, err := cleared.Load()
+	if err != nil {
+		t.Fatalf("reload after clear: %v", err)
+	}
+	if c.FakeIP != nil {
+		t.Errorf("FakeIP = %+v after clear, want nil", *c.FakeIP)
+	}
+
+	// Errors when settings are not loaded.
+	if err := (&SettingsStore{}).SetFakeIPState(want); err == nil {
+		t.Error("SetFakeIPState on unloaded store: want error, got nil")
+	}
+}
+
+func TestSetFakeIPState_Persists(t *testing.T) {
+	tmpDir := t.TempDir()
+	s := NewSettingsStore(tmpDir)
+	if _, err := s.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := s.SetFakeIPState(&FakeIPState{Provisioned: true, Index: 2}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Load()
+	if got.FakeIP == nil || !got.FakeIP.Provisioned || got.FakeIP.Index != 2 {
+		t.Fatalf("fakeip state not persisted: %+v", got.FakeIP)
+	}
+}
+
 func TestMigrateToV26_NATEnabledToMode(t *testing.T) {
 	st := &Settings{SchemaVersion: 25, ManagedServers: []ManagedServer{
 		{InterfaceName: "Wireguard3", NATEnabled: true},
@@ -659,5 +721,46 @@ func TestMigrateToV26_PreservesExistingMode(t *testing.T) {
 	}
 	if st.ManagedServers[1].NATMode != "none" {
 		t.Errorf("existing mode must not be re-derived from NATEnabled, got %q", st.ManagedServers[1].NATMode)
+	}
+}
+
+func TestMigrateToV27_SetsRoutingModeTproxy(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacy := `{"schemaVersion":26,"authEnabled":false,"usageLevel":"basic","singboxRouter":{"enabled":true,"deviceMode":"policy"}}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	store := NewSettingsStore(tmpDir)
+	s, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.SchemaVersion != 27 {
+		t.Fatalf("schema = %d, want 27", s.SchemaVersion)
+	}
+	if s.SingboxRouter.RoutingMode != "tproxy" {
+		t.Fatalf("routingMode = %q, want tproxy", s.SingboxRouter.RoutingMode)
+	}
+}
+
+// TestMigrateToV27_PreservesExistingMode: the RoutingMode default backfill must
+// skip a config that already carries an explicit mode (e.g. fakeip-tun), so
+// re-running it is a no-op. Exercises the `if RoutingMode == ""` guard.
+func TestMigrateToV27_PreservesExistingMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacy := `{"schemaVersion":26,"authEnabled":false,"usageLevel":"basic","singboxRouter":{"enabled":true,"deviceMode":"policy","routingMode":"fakeip-tun"}}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	store := NewSettingsStore(tmpDir)
+	s, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.SchemaVersion != 27 {
+		t.Fatalf("schema = %d, want 27", s.SchemaVersion)
+	}
+	if s.SingboxRouter.RoutingMode != "fakeip-tun" {
+		t.Fatalf("existing routingMode must be preserved, got %q", s.SingboxRouter.RoutingMode)
 	}
 }

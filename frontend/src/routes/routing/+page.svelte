@@ -2,6 +2,7 @@
     import { onMount, onDestroy } from 'svelte';
     import { get } from 'svelte/store';
     import { goto } from '$app/navigation';
+    import { browser } from '$app/environment';
     import { page } from '$app/stores';
     import {
         routing,
@@ -26,6 +27,9 @@
     import ClientRoutesTab from './ClientRoutesTab.svelte';
     import { HrNeoTab } from '$lib/components/hrneo';
     import { SingboxRouterRedesignPage } from '$lib/components/sb-router';
+    import FakeIPTab from '$lib/components/fakeip/FakeIPTab.svelte';
+    import ModeSwitchHost from '$lib/components/routing/ModeSwitchHost.svelte';
+    import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
     import GeoDataTab from './GeoDataTab.svelte';
     import { isRoutingSubTabVisible, type RoutingSubTab, type UsageLevel } from '$lib/types/usageLevel';
     import { usageLevel } from '$lib/stores/settings';
@@ -53,7 +57,7 @@
         unsubRouting?.();
     });
 
-    let activeTab = $state<'hrneo' | 'geodata' | 'dns' | 'ip' | 'policy' | 'clientvpn' | 'singbox'>('dns');
+    let activeTab = $state<'hrneo' | 'geodata' | 'dns' | 'ip' | 'policy' | 'clientvpn' | 'singbox' | 'fakeip'>('dns');
 
     let isOS5 = $derived($systemInfo.data?.isOS5 ?? false);
     let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
@@ -63,6 +67,7 @@
     let pendingTab = $state<string | null>(null);
 
     function requestTab(id: string): void {
+        if (modeSwitchBusy(get(modeSwitch))) return;
         const hasDraft = get(singboxRouterStore.staging)?.hasDraft ?? false;
         if (activeTab === 'singbox' && id !== 'singbox' && hasDraft) {
             pendingTab = id;
@@ -104,6 +109,37 @@
 
         if (!isOS5 && activeTab === 'dns') {
             activeTab = hydrarouteInstalled ? 'hrneo' : 'ip';
+        }
+    });
+
+    // In fakeip-tun mode, land on the FakeIP tab instead of the tproxy-
+    // oriented default — the tproxy view would show the engine as "running"
+    // while the tproxy slot is disabled, which is misleading. The FakeIP UI
+    // now lives as a tab on THIS page, so we just select it (activeTab is
+    // the page's tab source-of-truth; the Tabs component syncs ?tab=fakeip
+    // outbound). We deliberately do NOT goto('/fakeip') — that route now
+    // bounces back to /routing?tab=fakeip and would create an infinite loop.
+    //
+    // One-shot (fakeipAutoSelected) so a manual switch to another tab sticks,
+    // and skipped when the URL already carries an explicit ?tab= (deep-link)
+    // so we never override a user's chosen tab. Guarded on singboxInstalled
+    // (the same condition that renders the tab) so we never select a tab that
+    // isn't there — fakeip-tun implies sing-box installed, but this keeps the
+    // selection from racing ahead of systemInfo arriving.
+    const singboxInitializedStore = singboxRouterStore.initialized;
+    const singboxSettings = singboxRouterStore.settings;
+    let fakeipAutoSelected = false;
+    $effect(() => {
+        if (!browser) return;
+        if (!$singboxInitializedStore) return;
+        if (!singboxInstalled) return;
+        if (fakeipAutoSelected) return;
+        if ($singboxSettings?.routingMode === 'fakeip-tun') {
+            fakeipAutoSelected = true;
+            const explicitTab = new URL(window.location.href).searchParams.get('tab');
+            if (!explicitTab) {
+                activeTab = 'fakeip';
+            }
         }
     });
 
@@ -171,6 +207,7 @@
         badge?: number | string;
         badgeTone?: 'default' | 'success' | 'warning' | 'muted';
         separatorBefore?: boolean;
+        muted?: boolean;
     };
 
     const TAB_TO_SUBTAB: Record<string, RoutingSubTab> = {
@@ -202,9 +239,25 @@
             { id: 'clientvpn', label: 'VPN для устройств', badge: clientActiveCount },
             isOS5 ? { id: 'policy', label: 'Политики доступа', badge: policyCount } : null,
             // Visual gap separates the NDMS-stack tabs above from the
-            // sing-box / hydraroute stack below.
-            singboxInstalled ? { id: 'singbox', label: 'Sing-box Router', badge: singboxRuleCount, separatorBefore: true } : null,
-            hydrarouteInstalled ? { id: 'hrneo', label: 'HR Neo', badge: hrRuleCount, separatorBefore: !singboxInstalled } : null,
+            // sing-box / hydraroute stack below. TProxy + FakeIP are the two
+            // mutually-exclusive sing-box routing modes — kept adjacent (no
+            // separator between them) and muted when the OTHER mode is the active
+            // one (XOR), so the dormant mode reads as dormant, not broken.
+            singboxInstalled
+                ? { id: 'singbox', label: 'Sing-box: TProxy', badge: singboxRuleCount, separatorBefore: true,
+                    muted: !!$singboxRouterStatus?.enabled && $singboxSettings?.routingMode === 'fakeip-tun' }
+                : null,
+            // FakeIP is expert-gated (mirrors the 'singbox' tab's 'expert'
+            // level) BUT stays visible whenever the engine is actually in
+            // fakeip-tun mode — that's the in-use case the auto-select effect
+            // lands on, and hiding the chip there would strand activeTab on a
+            // tab with no chip to navigate back from.
+            (singboxInstalled && (tabVisible('singbox') || $singboxSettings?.routingMode === 'fakeip-tun'))
+                ? { id: 'fakeip', label: 'Sing-box: FakeIP', badge: undefined, separatorBefore: false,
+                    muted: !!$singboxRouterStatus?.enabled && $singboxSettings?.routingMode === 'tproxy' }
+                : null,
+            // HR Neo is a separate routing engine (not sing-box) — divider before it.
+            hydrarouteInstalled ? { id: 'hrneo', label: 'HR Neo', badge: hrRuleCount, separatorBefore: true } : null,
             (hydrarouteInstalled || singboxInstalled)
                 ? { id: 'geodata', label: 'Гео-данные', badge: geoFileCount, separatorBefore: true }
                 : null,
@@ -340,7 +393,10 @@
         <GeoDataTab />
     {:else if activeTab === 'singbox'}
         <SingboxRouterRedesignPage />
+    {:else if activeTab === 'fakeip'}
+        <FakeIPTab />
     {/if}
+    <ModeSwitchHost />
     </div>
 </PageContainer>
 

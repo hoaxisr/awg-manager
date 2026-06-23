@@ -4,12 +4,17 @@ import (
 	"testing"
 )
 
+type publishedEvent struct {
+	name string
+	data any
+}
+
 type fakePublisher struct {
-	events []any
+	events []publishedEvent
 }
 
 func (f *fakePublisher) Publish(event string, data any) {
-	f.events = append(f.events, data)
+	f.events = append(f.events, publishedEvent{name: event, data: data})
 }
 
 type feedCall struct {
@@ -53,12 +58,16 @@ func TestTrafficAggregator_Publish(t *testing.T) {
 	agg.tags["A"] = &TrafficSnapshot{Tag: "A", Upload: 1, Download: 2}
 	agg.tags["B"] = &TrafficSnapshot{Tag: "B", Upload: 3, Download: 4}
 	agg.publish()
-	if len(pub.events) != 1 {
-		t.Fatalf("events: %d", len(pub.events))
+	// publish emits singbox:traffic + singbox:memory.
+	if len(pub.events) != 2 {
+		t.Fatalf("events: %d, want 2", len(pub.events))
 	}
-	snap, ok := pub.events[0].([]TrafficSnapshot)
+	if pub.events[0].name != "singbox:traffic" {
+		t.Fatalf("first event name: %q", pub.events[0].name)
+	}
+	snap, ok := pub.events[0].data.([]TrafficSnapshot)
 	if !ok {
-		t.Fatalf("type: %T", pub.events[0])
+		t.Fatalf("first event data type: %T", pub.events[0].data)
 	}
 	if len(snap) != 2 {
 		t.Errorf("snap len: %d", len(snap))
@@ -142,6 +151,27 @@ func TestTrafficAggregator_IngestDedupsWithinSingleConnection(t *testing.T) {
 	}
 	if got := agg.tags["B"]; got == nil || got.Upload != 7 || got.Download != 13 {
 		t.Errorf("B: want upload=7 download=13, got %+v", got)
+	}
+}
+
+func TestTrafficAggregator_PublishEmitsMemoryEvent(t *testing.T) {
+	pub := &fakePublisher{}
+	agg := NewTrafficAggregator("unused", pub, nil)
+	agg.ingest([]byte(`{"memory":99999,"connections":[]}`))
+	agg.publish()
+	// publish emits two events: singbox:traffic and singbox:memory.
+	if len(pub.events) != 2 {
+		t.Fatalf("events: got %d, want 2", len(pub.events))
+	}
+	if pub.events[1].name != "singbox:memory" {
+		t.Fatalf("second event name: %q", pub.events[1].name)
+	}
+	ev, ok := pub.events[1].data.(MemoryEvent)
+	if !ok {
+		t.Fatalf("second event data type: %T, want MemoryEvent", pub.events[1].data)
+	}
+	if ev.Memory != 99999 {
+		t.Errorf("MemoryEvent.Memory: got %d, want 99999", ev.Memory)
 	}
 }
 

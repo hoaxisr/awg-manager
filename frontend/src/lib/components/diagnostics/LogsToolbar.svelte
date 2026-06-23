@@ -89,6 +89,8 @@
     onFilterChange: (filter: LogsFilter) => void;
     bucket: LogBucket;
     onBucketChange: (bucket: LogBucket) => void;
+    /** Если true — bucket зафиксирован, переключатель app/singbox скрыт. */
+    bucketLocked?: boolean;
     paused: boolean;
     bufferCount: number;
     onTogglePause: () => void;
@@ -116,6 +118,7 @@
     onFilterChange,
     bucket,
     onBucketChange,
+    bucketLocked = false,
     paused,
     bufferCount,
     onTogglePause,
@@ -241,29 +244,31 @@
 
 <div class="toolbar">
   <div class="row row-bucket">
-    <span class="bucket-label">Источник</span>
-    <span class="chip-row" role="group" aria-label="Источник логов">
-      <button
-        type="button"
-        class="chip"
-        class:chip-active={bucket === 'app'}
-        aria-pressed={bucket === 'app'}
-        onclick={() => onBucketChange('app')}
-      >
-        Приложение
-      </button>
-      <button
-        type="button"
-        class="chip"
-        class:chip-active={bucket === 'singbox'}
-        aria-pressed={bucket === 'singbox'}
-        onclick={() => onBucketChange('singbox')}
-      >
-        Sing-box
-      </button>
-    </span>
+    {#if !bucketLocked}
+      <span class="bucket-label">Источник</span>
+      <span class="chip-row" role="group" aria-label="Источник логов">
+        <button
+          type="button"
+          class="chip"
+          class:chip-active={bucket === 'app'}
+          aria-pressed={bucket === 'app'}
+          onclick={() => onBucketChange('app')}
+        >
+          Приложение
+        </button>
+        <button
+          type="button"
+          class="chip"
+          class:chip-active={bucket === 'singbox'}
+          aria-pressed={bucket === 'singbox'}
+          onclick={() => onBucketChange('singbox')}
+        >
+          Sing-box
+        </button>
+      </span>
 
-    <span class="divider" aria-hidden="true"></span>
+      <span class="divider" aria-hidden="true"></span>
+    {/if}
 
     <span class="live-cell">
       {#if paused}

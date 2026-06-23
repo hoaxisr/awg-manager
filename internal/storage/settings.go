@@ -201,6 +201,7 @@ func (s *SettingsStore) defaultSettings() *Settings {
 		SingboxRouter: SingboxRouterSettings{
 			Enabled:        false,
 			DeviceMode:     "policy",
+			RoutingMode:    "tproxy",
 			SnifferEnabled: true,
 			WANAutoDetect:  true, // sing-box auto_detect_interface by default
 		},
@@ -459,9 +460,17 @@ func (s *SettingsStore) migrateToV26(settings *Settings) {
 	settings.SchemaVersion = 26
 }
 
-// migrateToV27 introduces GeoFileSettings. The zero value (auto-refresh
-// disabled) is the intended default, so this only stamps the version.
+// migrateToV27 defaults the new sing-box RoutingMode to "tproxy" (existing
+// behavior) and introduces GeoFileSettings — its zero value (auto-refresh
+// disabled) is the intended default, so no action is needed for it beyond the
+// version stamp. (Both effects landed independently as v27 on parallel branches;
+// merged here. Idempotent: RoutingMode is also defaulted at runtime by
+// NormalizeSingboxRouterSettings, so a config that took only the GeoFileSettings
+// v27 path stays correct.)
 func (s *SettingsStore) migrateToV27(settings *Settings) {
+	if settings.SingboxRouter.RoutingMode == "" {
+		settings.SingboxRouter.RoutingMode = "tproxy"
+	}
 	settings.SchemaVersion = 27
 }
 
@@ -672,6 +681,19 @@ func (s *SettingsStore) SetManagedPeerAllowIPsMigrated(v bool) error {
 		return fmt.Errorf("settings not loaded")
 	}
 	s.settings.ManagedPeerAllowIPsMigrated = v
+	return s.saveUnlocked(s.settings)
+}
+
+// SetFakeIPState atomically persists the fakeip-tun operational state under the
+// store lock (single-writer pattern; the lifecycle is the only writer). Pass
+// nil to clear (mode left/teardown). Mirrors SetSingboxManuallyStopped.
+func (s *SettingsStore) SetFakeIPState(st *FakeIPState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	s.settings.FakeIP = st
 	return s.saveUnlocked(s.settings)
 }
 

@@ -28,8 +28,8 @@ type Settings struct {
 	// ServerPeerSecrets stores private keys for peers created via AWG Manager
 	// on built-in/marked NDMS servers (NDMS itself does not retain client keys).
 	// map[serverID]map[publicKey]ServerPeerSecret
-	ServerPeerSecrets  map[string]map[string]ServerPeerSecret `json:"serverPeerSecrets,omitempty"`
-	ManagedServers       []ManagedServer   `json:"managedServers,omitempty"`
+	ServerPeerSecrets map[string]map[string]ServerPeerSecret `json:"serverPeerSecrets,omitempty"`
+	ManagedServers    []ManagedServer                        `json:"managedServers,omitempty"`
 	// ManagedServer is retained for one release as the migration source.
 	// migrateManagedServers() moves it into ManagedServers[0] on first read
 	// and clears it on the next save.
@@ -55,6 +55,23 @@ type Settings struct {
 	// 0.0.0.0/0 with "subnet overlaps with the other peer". Set after a
 	// successful sweep; the sweep runs at startup while false.
 	ManagedPeerAllowIPsMigrated bool `json:"managedPeerAllowIPsMigrated,omitempty"`
+	// FakeIP is backend-managed operational state for sing-box fakeip-tun
+	// mode (see FakeIPState). Pointer so it's absent from JSON when never
+	// provisioned; nil = not provisioned. Written ONLY via SetFakeIPState.
+	FakeIP *FakeIPState `json:"fakeip,omitempty"`
+}
+
+// FakeIPState is backend-managed operational state for sing-box fakeip-tun
+// mode. Written ONLY by the fakeip-tun lifecycle (Enable/Disable/reap) via
+// SettingsStore.SetFakeIPState — never by the settings API. Index is the
+// allocated OpkgTun index (iface "opkgtun<N>"), valid only when Provisioned;
+// Inet4Range/Inet6Range record the pool ranges last applied so a pool change
+// can invalidate the sing-box cache.
+type FakeIPState struct {
+	Provisioned bool   `json:"provisioned,omitempty"`
+	Index       int    `json:"index,omitempty"`
+	Inet4Range  string `json:"inet4Range,omitempty"`
+	Inet6Range  string `json:"inet6Range,omitempty"`
 }
 
 type DownloadSettings struct {
@@ -69,7 +86,11 @@ type SingboxRouterSettings struct {
 	// "policy" (default) keeps the historical NDMS access-policy mark
 	// filter. "all" installs unmarked PREROUTING jumps so every LAN
 	// device that reaches the router netfilter path is filtered.
-	DeviceMode     string `json:"deviceMode,omitempty"`
+	DeviceMode string `json:"deviceMode,omitempty"`
+	// RoutingMode selects the sing-box routing path:
+	// "tproxy" (default) keeps the historical TPROXY/REDIRECT behavior;
+	// "fakeip-tun" routes via a fake-IP DNS pool + tun device.
+	RoutingMode    string `json:"routingMode,omitempty"`
 	SnifferEnabled bool   `json:"snifferEnabled"`
 	// WANAutoDetect is the discriminator for the WAN-binding mode.
 	// true (default) → sing-box uses route.auto_detect_interface; the
@@ -104,6 +125,22 @@ type SingboxRouterSettings struct {
 	// в sing-box. Формат: "managed:Wireguard3" (резолвится в kernel-имя на
 	// сборке спека) или "iface:nwg5" (kernel-имя как есть). Пусто = выключено.
 	IngressInterfaces []string `json:"ingressInterfaces,omitempty"`
+	// --- fakeip-tun engine settings (USER-editable) ---
+	// These mirror the static fakeip-tun engine knobs (default
+	// DefaultFakeIPTunParams) but persisted + validated so the UI can edit them.
+	// Unlike FakeIPState (backend-managed operational state) these are user
+	// intent, defaulted by NormalizeSingboxRouterSettings.
+	//
+	// FakeIPStack selects the sing-tun stack: "gvisor" (default, robust) or
+	// "system" (lower CPU/RAM; on this kernel REQUIRES gso:false — set
+	// automatically by the config builder).
+	FakeIPStack string `json:"fakeipStack,omitempty"`
+	// FakeIPPool4 is the fakeip v4 pool CIDR (default "198.18.0.0/15").
+	FakeIPPool4 string `json:"fakeipPool4,omitempty"`
+	// FakeIPPool6 is the fakeip v6 pool CIDR (default "fc00::/18"); "" disables v6.
+	FakeIPPool6 string `json:"fakeipPool6,omitempty"`
+	// FakeIPMTU is the tun MTU (default 1500).
+	FakeIPMTU int `json:"fakeipMtu,omitempty"`
 	// UDPTimeout задаёт таймаут UDP-сессий в tproxy-in inbound (формат Go duration,
 	// например "3m0s", "10m0s"). Пустая строка = использовать значение по умолчанию
 	// (DefaultUDPTimeout). Увеличение помогает при работе игр и других UDP-приложений,

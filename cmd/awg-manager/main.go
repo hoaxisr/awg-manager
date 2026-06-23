@@ -814,7 +814,9 @@ func main() {
 	// here — Register already marked them enabled. deviceproxy is
 	// reflected after deviceProxySvc is constructed below.
 	if curSettings, err := settingsStore.Load(); err == nil && curSettings != nil {
-		_ = sbOrch.SetEnabled(singboxorch.SlotRouter, curSettings.SingboxRouter.Enabled)
+		mode := curSettings.SingboxRouter.RoutingMode
+		_ = sbOrch.SetEnabled(router.RouterSlotForMode(mode), curSettings.SingboxRouter.Enabled)
+		_ = sbOrch.SetEnabled(router.OtherRouterSlot(mode), false)
 	}
 
 	// Subscription service — owns 40-subscriptions.json in config.d.
@@ -1170,6 +1172,17 @@ func main() {
 		IngressResolver:        &routerIngressResolverAdapter{store: ndmsQueries.Interfaces},
 		PresetCatalog:          presetCatalog,
 		GeoData:                geoDataStore,
+		OpkgTun:                ndmsCommands.Interfaces, // *InterfaceCommands satisfies OpkgTunProvisioner directly
+		StaticRoutes:           &routerStaticRouteAdapter{routes: ndmsCommands.Routes},
+		OpkgTunIndices: &routerOpkgTunIndexAdapter{
+			store: ndmsQueries.Interfaces,
+			log:   logging.NewScopedLogger(loggingService, logging.GroupRouting, logging.SubSingboxRouter),
+		},
+		FakeIPTun: func() router.FakeIPTunParams {
+			p := router.DefaultFakeIPTunParams()
+			p.CachePath = singbox.DefaultCacheDBPath()
+			return p
+		}(),
 	})
 	// Exclude interfaces already bound by an existing direct outbound from the
 	// bindable picker (#323). Wired post-construction — needs routerSvc.
@@ -1194,6 +1207,12 @@ func main() {
 	deviceProxySvc.SetRouterOutbounds(&deviceproxyRouterOutboundsAdapter{src: routerSvc})
 	routerStartupLog := logging.NewScopedLogger(loggingService, logging.GroupRouting, logging.SubSingboxRouter)
 	go func() {
+		// Startup-only: reap a fakeip OpkgTun orphaned by a crash/incomplete
+		// teardown before Reconcile runs (NOT on every Reconcile — that would
+		// blunt-delete the iface on a live fakeip→tproxy switch).
+		if err := routerSvc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
+			routerStartupLog.Warn("fakeip-reap", "startup", err.Error())
+		}
 		if err := routerSvc.Reconcile(context.Background()); err != nil {
 			routerStartupLog.Error("reconcile", "startup", err.Error())
 		}
@@ -1213,6 +1232,7 @@ func main() {
 	singboxRouterHandler := api.NewSingboxRouterHandler(routerSvc, loggingService)
 	singboxRouterHandler.SetOutboundRefCheckers(deviceProxySvc, routerSvc)
 	srv.SetSingboxRouterHandler(singboxRouterHandler)
+	srv.SetSingboxFakeIPConfigHandler(api.NewSingboxFakeIPConfigHandler(routerSvc, loggingService))
 	srv.SetAWGOutboundsHandler(api.NewAWGOutboundsHandler(awgoutboundsSvc))
 	srv.SetSingboxConfigHandler(api.NewSingboxConfigHandler(sbOrch.ConfigDir))
 

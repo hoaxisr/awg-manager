@@ -24,7 +24,9 @@
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { feedTraffic } from '$lib/stores/traffic';
 	import { applyTraffic as singboxApplyTraffic, applyDelay as singboxApplyDelay } from '$lib/stores/singbox';
+	import { applySingboxMemory } from '$lib/stores/singboxMemory';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { fakeipTransition } from '$lib/stores/fakeipTransition';
 	import { invalidateResource, invalidateAll } from '$lib/stores/storeRegistry';
 	import { setDeviceProxyMissingTarget, clearDeviceProxyMissingTarget } from '$lib/stores/deviceproxy';
 	import { settings as settingsStore, reloadSettings, usageLevel } from '$lib/stores/settings';
@@ -175,6 +177,7 @@
 				}
 			},
 			onSingboxDelay: (data) => singboxApplyDelay(data.tag, data.delay),
+			onSingboxMemory: applySingboxMemory,
 
 			// HydraRoute geo download progress
 			onHydraRouteGeoProgress: (data) => geoDownloadProgress.ingest(data),
@@ -230,6 +233,7 @@
 			// Sing-box Router state streams (rules, rule-sets, outbounds, status).
 			// Staging updates arrive via resource:invalidated → onResourceInvalidated above.
 			onSingboxRouterStatus: singboxRouter.applyStatus,
+			onSingboxRouterTransition: fakeipTransition.applyTransition,
 			onSingboxRouterRules: singboxRouter.applyRules,
 			onSingboxRouterRuleSets: singboxRouter.applyRuleSets,
 			onSingboxRouterOutbounds: singboxRouter.applyOutbounds,

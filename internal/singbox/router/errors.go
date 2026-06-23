@@ -18,6 +18,7 @@ var (
 	ErrDNSServerReferenced       = errors.New("dns server is referenced by one or more dns rules or used as final/default")
 	ErrDNSServerNotFound         = errors.New("dns server not found")
 	ErrDNSRuleIndexOutOfRange    = errors.New("dns rule index out of range")
+	ErrDNSServerIndexOutOfRange  = errors.New("dns server index out of range")
 	ErrDNSInvalidServer          = errors.New("dns rule references unknown server tag")
 
 	ErrPolicyNotConfigured = errors.New("router policy not configured (settings.policyName is empty)")
@@ -29,4 +30,9 @@ var (
 	// deliberately skipped to avoid orphaning DNS:53 redirects at a
 	// torn-down sing-box port (issue #221).
 	ErrSingboxNotReady = errors.New("sing-box did not become ready within boot-wait window — iptables install skipped")
+
+	// ErrFakeIPLockedField is returned when a fakeip-tun config edit collides with
+	// an engine-locked field (the fakeip/real DNS servers, dns.final,
+	// default_domain_resolver, or the hijack-dns rule). Surfaced as 4xx.
+	ErrFakeIPLockedField = errors.New("fakeip-tun config field is engine-locked")
 )

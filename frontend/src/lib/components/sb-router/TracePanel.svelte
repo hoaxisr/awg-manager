@@ -10,16 +10,26 @@
   import { Globe, Funnel, MonitorSmartphone } from 'lucide-svelte';
   import { Button, SectionLabel } from '$lib/components/ui';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
+  import { ArrowDown } from 'lucide-svelte';
   import {
     traceInput,
     traceResult,
     traceLoading,
     traceError,
+    dnsResult,
+    dnsLoading,
+    dnsError,
     closeTrace,
     runTrace,
   } from './traceStore';
   import TracePathStation, { type TracePathTone } from './TracePathStation.svelte';
   import TraceRuleRow from './TraceRuleRow.svelte';
+  import TraceDNSStep from './TraceDNSStep.svelte';
+
+  // embedded: панель встроена в модал/контейнер с собственным заголовком
+  // (FakeIP-hero «Инспектор маршрутов») — прячем свою крошку «← Назад» и h1,
+  // чтобы не дублировать. По умолчанию (страница sb-router) — со своей шапкой.
+  let { embedded = false }: { embedded?: boolean } = $props();
 
   // Auto-run при mount если URL содержал ?q=X (traceStore уже заполнил traceInput.domain).
   onMount(() => {
@@ -37,6 +47,10 @@
   let loading = $derived($traceLoading);
   let error = $derived($traceError);
   let allRules = $derived($rules);
+
+  let dns = $derived($dnsResult);
+  let dnsBusy = $derived($dnsLoading);
+  let dnsErr = $derived($dnsError);
 
   let canSubmit = $derived(input.domain.trim().length > 0 && !loading);
 
@@ -64,6 +78,16 @@
     traceInput.update((cur) => ({ ...cur, domain: v }));
   }
 
+  function handleQueryTypeChange(e: Event) {
+    const v = (e.target as HTMLSelectElement).value;
+    traceInput.update((cur) => ({ ...cur, queryType: v }));
+  }
+
+  function handleSourceIPChange(e: Event) {
+    const v = (e.target as HTMLInputElement).value;
+    traceInput.update((cur) => ({ ...cur, sourceIP: v }));
+  }
+
   function handleSubmit() {
     void runTrace();
   }
@@ -76,20 +100,22 @@
 </script>
 
 <section class="trace">
-  <header class="trace-header">
-    <button type="button" class="back-btn" onclick={closeTrace} aria-label="Назад">
-      ← Назад
-    </button>
-    <span class="bread-sep">/</span>
-    <span class="bread-current">Куда поедет запрос</span>
-  </header>
+  {#if !embedded}
+    <header class="trace-header">
+      <button type="button" class="back-btn" onclick={closeTrace} aria-label="Назад">
+        ← Назад
+      </button>
+      <span class="bread-sep">/</span>
+      <span class="bread-current">Куда поедет запрос</span>
+    </header>
 
-  <div class="title-row">
-    <div class="title-group">
-      <h1 class="title">Куда поедет запрос</h1>
-      <p class="title-sub">Подставьте домен или IP — увидите, какое правило сработает и через какой туннель.</p>
+    <div class="title-row">
+      <div class="title-group">
+        <h1 class="title">Куда поедет запрос</h1>
+        <p class="title-sub">Подставьте домен или IP — увидите, какое правило сработает и через какой туннель.</p>
+      </div>
     </div>
-  </div>
+  {/if}
 
   <!-- Input row -->
   <div class="input-card">
@@ -111,11 +137,59 @@
     </Button>
   </div>
 
+  <!-- Доп. параметры для DNS-ветки (Step 1): тип запроса + источник (опц.). -->
+  <div class="adv-row">
+    <label class="adv-field">
+      <span class="adv-label">Тип запроса</span>
+      <select class="adv-input" value={input.queryType ?? ''} onchange={handleQueryTypeChange}>
+        <option value="">любой</option>
+        <option value="A">A</option>
+        <option value="AAAA">AAAA</option>
+        <option value="HTTPS">HTTPS</option>
+      </select>
+    </label>
+    <label class="adv-field">
+      <span class="adv-label">Источник (IP клиента) · опц.</span>
+      <input
+        class="adv-input"
+        type="text"
+        placeholder="192.168.1.70"
+        value={input.sourceIP ?? ''}
+        oninput={handleSourceIPChange}
+        autocomplete="off"
+        spellcheck={false}
+      />
+    </label>
+  </div>
+
+  {#if dnsErr}
+    <div class="error-banner">⚠ DNS-инспектор: {dnsErr}</div>
+  {/if}
+
+  <!-- Step 1 — DNS-решение (новая ветка fakeip), над route-секцией. -->
+  {#if dns}
+    <TraceDNSStep result={dns} />
+    {#if dns.classification === 'fakeip'}
+      <div class="conn">
+        <ArrowDown size={14} />
+        домен фейкнут → в туннель
+      </div>
+    {/if}
+  {:else if dnsBusy}
+    <div class="dns-skel">Проверяем DNS-решение…</div>
+  {/if}
+
   {#if error}
     <div class="error-banner">⚠ {error}</div>
   {/if}
 
   {#if result}
+    {#if dns}
+      <div class="step-head">
+        <span class="step-no">2</span>
+        <span class="step-title">Маршрут (route)</span>
+      </div>
+    {/if}
     <div class="result-hero tone-{outcomeTone}">
       <div class="outcome">
         <span class="outcome-dot tone-{outcomeTone}"></span>
@@ -259,6 +333,34 @@
     font-family: var(--font-mono);
   }
 
+  .adv-row {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 8px;
+  }
+  .adv-field {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .adv-label {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .adv-input {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 7px 10px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: var(--font-mono);
+    outline: none;
+  }
+  .adv-input:focus {
+    border-color: var(--accent-line);
+  }
+
   .error-banner {
     padding: 10px 14px;
     background: color-mix(in srgb, var(--error) 12%, var(--bg-tertiary));
@@ -267,6 +369,48 @@
     color: var(--error);
     font-size: 13px;
   }
+
+  .conn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: center;
+    color: var(--success);
+    font-size: 11px;
+    margin: -4px 0;
+  }
+
+  .dns-skel {
+    padding: 14px;
+    background: var(--bg-secondary);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+  }
+
+  .step-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: -8px;
+  }
+  .step-no {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border: 1px solid var(--accent-line);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+  }
+  .step-title { color: var(--text-primary); font-size: 13px; font-weight: 600; }
 
   .result-hero {
     padding: 18px;
@@ -352,6 +496,9 @@
     }
     .input-wrap {
       width: 100%;
+    }
+    .adv-row {
+      grid-template-columns: 1fr;
     }
 
     /* Path stations: collapse 5-col grid to single column */

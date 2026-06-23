@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,13 +19,16 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
-	"github.com/hoaxisr/awg-manager/internal/sys/env"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
 type Service interface {
 	Enable(ctx context.Context) error
 	Disable(ctx context.Context) error
 	Reconcile(ctx context.Context) error
+	// SwitchRoutingMode orchestrates a routing-mode transition (off↔tproxy↔
+	// fakeip-tun) with directional fail-closed rollback and progress events.
+	SwitchRoutingMode(ctx context.Context, target string) error
 	GetStatus(ctx context.Context) (Status, error)
 	GetSettings(ctx context.Context) (storage.SingboxRouterSettings, error)
 	UpdateSettings(ctx context.Context, s storage.SingboxRouterSettings) error
@@ -75,6 +80,7 @@ type Service interface {
 	AddDNSServer(ctx context.Context, s DNSServer) error
 	UpdateDNSServer(ctx context.Context, tag string, s DNSServer) error
 	DeleteDNSServer(ctx context.Context, tag string, force bool) error
+	MoveDNSServer(ctx context.Context, from, to int) error
 
 	ListDNSRules(ctx context.Context) ([]DNSRule, error)
 	AddDNSRule(ctx context.Context, r DNSRule) error
@@ -87,6 +93,7 @@ type Service interface {
 
 	Inspect(ctx context.Context, input InspectInput) (InspectResult, error)
 	InspectStream(ctx context.Context, input InspectInput) (<-chan InspectStreamEvent, error)
+	InspectDNS(ctx context.Context, input InspectDNSInput) (InspectDNSResult, error)
 
 	StagingStatus(ctx context.Context) StagingStatus
 	ApplyStaging(ctx context.Context) (orchestrator.ValidationResult, error)
@@ -104,6 +111,10 @@ type SingboxController interface {
 	Reload() error
 	IsRunning() (bool, int)
 	Start() error
+	// ClearManualStop clears the sticky master-Stop intent so the
+	// orchestrator cold-start is no longer suppressed. Called by an explicit
+	// router Enable (see Enable's call site); no-op when already clear.
+	ClearManualStop() error
 	ValidateConfigDir(ctx context.Context) error
 	ConfigDir() string
 	// Binary returns the absolute path (or PATH-resolvable name) of the
@@ -149,8 +160,8 @@ type WANInterfaceInfo struct {
 
 // WANInterfaceLister is the narrow contract the service needs from the
 // NDMS interface store. *ndmsquery.InterfaceStore satisfies it. The
-// router package can't import internal/ndms (would cycle through
-// internal/tunnel/wan); the adapter in cmd/awg-manager bridges the gap.
+// router stays decoupled from concrete internal/ndms types via this
+// consumer-owned interface (DIP); the adapter in cmd/awg-manager bridges the gap.
 type WANInterfaceLister interface {
 	ListWAN(ctx context.Context) ([]WANInterfaceInfo, error)
 }
@@ -165,8 +176,8 @@ type BindableInterfaceLister interface {
 // IngressResolver резолвит ref интерфейса ("managed:Wireguard3") в
 // kernel-имя ("nwg3"). Возвращает "" если не резолвится (сервер удалён /
 // интерфейс ещё не поднят). Реализуется адаптером в cmd/awg-manager
-// поверх InterfaceStore.ResolveSystemName (router не может импортить
-// internal/ndms — цикл через internal/tunnel/wan).
+// поверх InterfaceStore.ResolveSystemName (router декаплен от конкретных
+// типов internal/ndms через consumer-owned контракт — DIP).
 type IngressResolver interface {
 	Resolve(ctx context.Context, ref string) string
 }
@@ -279,6 +290,22 @@ type Deps struct {
 	// EnsureRouterNetfilterModules). Tests set this to avoid real syscalls.
 	NetfilterPreflight func(context.Context) error
 	GeoData            GeoTagExpander
+	// OpkgTun provisions the fakeip-tun kernel interface via NDMS.
+	// Optional — nil in tests; wired in cmd/awg-manager to
+	// *ndmscommand.InterfaceCommands. Consumed by Slice 1D Enable.
+	OpkgTun OpkgTunProvisioner
+	// StaticRoutes adds/removes the NDMS auto static routes for the
+	// fakeip pool + reject route. Optional — nil in tests; wired in
+	// cmd/awg-manager via the route adapter. Consumed by Slice 1D Enable.
+	StaticRoutes StaticRouteProvider
+	// OpkgTunIndices lists occupied OpkgTun indices (kernel /sys ∪ NDMS)
+	// for the fakeip index allocator. Optional — nil in tests; wired in
+	// cmd/awg-manager via the union adapter. Consumed by Slice 1D Enable.
+	OpkgTunIndices OpkgTunIndexLister
+	// FakeIPTun holds the static fakeip-tun provisioning knobs (pool
+	// ranges, tun addrs, MTU, DHCP pool). Zero-value in tests; defaults
+	// wired in cmd/awg-manager. Consumed by Slice 1D Enable.
+	FakeIPTun FakeIPTunParams
 }
 
 // routerLoggerAdapter narrows *logging.ScopedLogger to the wanLogger
@@ -303,9 +330,13 @@ func (a *routerLoggerAdapter) Info(msg string) {
 }
 
 type ServiceImpl struct {
-	deps                    Deps
-	appLog                  *logging.ScopedLogger
-	mu                      sync.Mutex
+	deps   Deps
+	appLog *logging.ScopedLogger
+	mu     sync.Mutex
+	// transitionMu serializes SwitchRoutingMode calls. It is DISTINCT from mu:
+	// Enable/Disable (which SwitchRoutingMode composes) take mu themselves, so
+	// holding mu across the whole switch would self-deadlock.
+	transitionMu            sync.Mutex
 	currentMark             string              // last-installed iptables mark; used by Reconcile to detect change
 	currentWANIPs           []string            // last-collected WAN IPs; used by Reconcile to detect change
 	currentLANBridges       []LANBridgeDNSRedir // last-discovered LAN-bridge (name, ndnproxy port) pairs; reconcile triggers re-install when this changes (e.g. NDMS hotspot reconfigured, bridge added/removed, port reassigned)
@@ -442,6 +473,16 @@ func (s *ServiceImpl) loadRouterConfig() (*RouterConfig, error) {
 	return LoadConfig(activePath) // returns NewEmptyConfig per contract
 }
 
+// loadRouterConfigForMode returns the routing config for the active mode:
+// SlotFakeIP in fakeip-tun mode, SlotRouter (tproxy) otherwise. Lets
+// mode-agnostic readers (GetStatus) reflect whichever slot is live.
+func (s *ServiceImpl) loadRouterConfigForMode(mode string) (*RouterConfig, error) {
+	if mode == "fakeip-tun" {
+		return s.loadFakeIPConfig()
+	}
+	return s.loadRouterConfig()
+}
+
 // persistConfigDirect writes the router config straight to active/ —
 // skipping the staging pipeline that persistConfig uses for user-driven
 // edits. Intended for system-initiated paths (Enable, Disable cleanup,
@@ -528,14 +569,163 @@ func (s *ServiceImpl) prepareNetfilter(ctx context.Context) error {
 // Returns ctx.Err on cancellation, or a timeout error after the deadline;
 // callers can treat the timeout as soft (proceed with iptables and accept
 // the brief race) or hard at their discretion.
+// fakeIPIfaceName builds the KERNEL interface name for a fakeip-tun OpkgTun from
+// its allocated index (e.g. index 3 → "opkgtun3"). Use this ONLY where the
+// kernel sees the iface: the sing-box tun inbound interface_name, the
+// "ip addr flush dev <iface>" exec, /sys/class/net/<iface>/carrier, the
+// /proc/net/route iface match, and the /sys index scan. For NDMS RCI calls use
+// fakeIPNDMSName instead — NDMS rejects the lowercase kernel name.
+func fakeIPIfaceName(index int) string {
+	return tunnel.NewNames("awg" + strconv.Itoa(index)).IfaceName
+}
+
+// fakeIPNDMSName builds the NDMS RCI interface name for a fakeip-tun OpkgTun from
+// its allocated index (e.g. index 3 → "OpkgTun3"). This mirrors
+// tunnel.Names.NDMSName (CamelCase "OpkgTun%s"); the kernel name is its lowercase
+// (strings.ToLower → fakeIPIfaceName). NDMS REQUIRES this CamelCase form for every
+// RCI interface op (create/delete, address/mtu, up/down) and StaticRouteSpec
+// Interface — passing the lowercase kernel name yields
+// "unsupported interface type: \"opkgtun\"" (stand-verified). Use fakeIPIfaceName
+// only for the kernel-facing sites (sing-box config, ip exec, /sys, /proc).
+func fakeIPNDMSName(index int) string {
+	return tunnel.NewNames("awg" + strconv.Itoa(index)).NDMSName
+}
+
+// ReapOrphanedFakeIPTun removes a fakeip-tun OpkgTun left provisioned by a crash
+// or incomplete teardown when the router is no longer in fakeip-tun mode. It is
+// STARTUP-ONLY (wired once in cmd/awg-manager) — it must NOT run on every
+// Reconcile, or a live mode-switch (fakeip→tproxy) would tear the iface down
+// bluntly, bypassing the safe drain in Disable(fakeip-tun). Idempotent and
+// best-effort: reaps strictly by persisted state (Index). A description-based
+// scan to catch OpkgTuns whose persist was lost is a deferred fallback (v1
+// reaps by persist only).
+//
+// It ALSO sweeps a stale v4 drain reject route for the configured pool in
+// non-fakeip mode — the startup safety net for a disable drain interrupted by a
+// restart (the async drain goroutine does not survive one) or an async-remove
+// that didn't match the route (Fix 1). That sweep is persist-independent.
+//
+// INVARIANT (relied on by this reap): Enable(fakeip-tun) MUST persist the index
+// via SetFakeIPState BEFORE CreateOpkgTun (and roll back its own partial work on
+// failure), so persisted state is a reliable superset of live ifaces — otherwise
+// a crash mid-Enable leaves a persist-less orphan this reap cannot see (the
+// description-scan fallback is deferred).
+func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
+	settings, err := s.deps.Settings.Load()
+	if err != nil {
+		return err
+	}
+	sr, _ := NormalizeSingboxRouterSettings(settings.SingboxRouter)
+	if sr.RoutingMode == "fakeip-tun" {
+		return nil // active mode owns the iface; Enable/Reconcile manage it
+	}
+
+	// Startup safety net for the disable drain (Fix 1): the async drain goroutine
+	// that removes the v4 reject route does NOT survive a daemon restart (no
+	// persisted pending-drain). So in NON-fakeip mode (we are not currently the
+	// active owner) best-effort remove a stale drain reject route for the
+	// CONFIGURED pool. This covers a drain that was interrupted by a restart OR an
+	// async-remove that didn't match the route. Derive net/mask exactly as
+	// disableFakeIPTun does (Masked → splitCIDR). NDMS no:true on a non-existent
+	// route is idempotent, so this is safe on a clean boot. Done independently of
+	// the persist-based iface reap below (the reject route can outlive the FakeIP
+	// persist that disableFakeIPTun clears).
+	//
+	// The reject route is a kill-switch FLAG on the pool→OpkgTun route (stand-
+	// verified), so its NDMS form is interface-bound. We can only target it when the
+	// persisted index tells us the OpkgTun NDMS name; with no persisted index the
+	// route cannot be addressed here (it is tied to the OpkgTun being reaped below,
+	// so DeleteOpkgTun may cascade-remove it — verify cascade semantics on stand).
+	if s.deps.StaticRoutes != nil {
+		if poolNet, poolMask, derr := poolV4NetMask(s.deps.FakeIPTun.Inet4Range); derr == nil {
+			sweepIface := ""
+			if st := settings.FakeIP; st != nil && st.Provisioned {
+				sweepIface = fakeIPNDMSName(st.Index)
+			}
+			if sweepIface != "" {
+				if err := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
+					Network: poolNet, Mask: poolMask, Interface: sweepIface, Comment: fakeIPDrainComment,
+				}); err != nil {
+					s.appLog.Warn("fakeip-reap", sweepIface, "sweep stale drain reject route: "+err.Error())
+				}
+			}
+		}
+	}
+
+	st := settings.FakeIP
+	if st == nil || !st.Provisioned {
+		return nil // nothing persisted to reap
+	}
+	ndmsName := fakeIPNDMSName(st.Index)
+	if s.deps.OpkgTun == nil {
+		// No provisioner (degraded/test): we can't confirm the iface is gone, so
+		// KEEP the persist — clearing it would convert a tracked orphan into an
+		// un-reapable persist-less one. The index isn't leaked: the allocator is
+		// live-sourced (reads /sys + NDMS), so a still-live iface stays occupied.
+		// A future boot with a real provisioner reaps it.
+		return nil
+	}
+	if err := s.deps.OpkgTun.DeleteOpkgTun(ctx, ndmsName); err != nil {
+		// Keep the persist on failure: returning without clearing it lets the
+		// next boot retry the reap rather than leaking the orphan forever.
+		return fmt.Errorf("reap opkgtun %s: %w", ndmsName, err)
+	}
+	s.appLog.Info("fakeip-reap", ndmsName, "removed orphaned fakeip OpkgTun (mode != fakeip-tun)")
+	// Clear persist ONLY after a confirmed delete success (NDMS returns nil even
+	// when the iface was already gone, i.e. idempotent), so the index frees.
+	return s.deps.Settings.SetFakeIPState(nil)
+}
+
+// fakeIPReadyInputs derives the inputs the fakeip-tun readiness probes need
+// from loaded settings + the static FakeIPTun params: the tun iface name (from
+// the allocated OpkgTun index), the tun-side DNS address (the other /30 host,
+// where sing-box's DNS server listens), and the fakeip v4 pool prefix. ok is
+// false when fakeip is not provisioned or any field is unparseable, so callers
+// can fail-closed without a fakeip branch firing on tproxy state.
+func (s *ServiceImpl) fakeIPReadyInputs() (iface, dnsAddr string, fakeipNet netip.Prefix, ok bool) {
+	if s.deps.Settings == nil {
+		return "", "", netip.Prefix{}, false
+	}
+	settings, err := s.deps.Settings.Load()
+	if err != nil || settings == nil || settings.FakeIP == nil || !settings.FakeIP.Provisioned {
+		return "", "", netip.Prefix{}, false
+	}
+	iface = fakeIPIfaceName(settings.FakeIP.Index)
+	dnsAddr, err = DeriveTunDNS(s.deps.FakeIPTun.TunAddr4)
+	if err != nil {
+		return "", "", netip.Prefix{}, false
+	}
+	fakeipNet, err = netip.ParsePrefix(s.deps.FakeIPTun.Inet4Range)
+	if err != nil || !fakeipNet.Addr().Is4() {
+		return "", "", netip.Prefix{}, false
+	}
+	return iface, dnsAddr, fakeipNet, true
+}
+
 func (s *ServiceImpl) waitForSingbox(ctx context.Context, timeout time.Duration) error {
 	if s.deps.Singbox == nil {
 		return nil
 	}
+
+	// Mode-aware readiness: read the mode INTERNALLY (the signature has test
+	// callers and must not change). fakeip-tun has no inbound sockets, so the
+	// tproxy socket probe never turns true for it — gate instead on process +
+	// tun carrier (carrier=1 = sing-box attached the gvisor tun stack, the
+	// structural "config is live" signal). The live .2→fakeip DNS answer is NO
+	// longer in this gate (it tripped on resolv.conf attempts:1, stand-verified
+	// 2026-06-15) — it is now a best-effort confirm after readiness in
+	// enableFakeIPTun. See singboxReady for the full rationale.
+	fakeIP := false
+	if s.deps.Settings != nil {
+		if settings, err := s.deps.Settings.Load(); err == nil && settings != nil {
+			fakeIP = settings.SingboxRouter.RoutingMode == "fakeip-tun"
+		}
+	}
+
 	deadline := time.Now().Add(timeout)
 	const pollInterval = 100 * time.Millisecond
 	for {
-		if running, _ := s.deps.Singbox.IsRunning(); running && singboxListeningProbe() {
+		if s.singboxReady(ctx, fakeIP) {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -547,6 +737,41 @@ func (s *ServiceImpl) waitForSingbox(ctx context.Context, timeout time.Duration)
 		case <-time.After(pollInterval):
 		}
 	}
+}
+
+// singboxReady reports whether sing-box is up for the active mode. tproxy:
+// process + both inbound sockets bound. fakeip-tun: process + tun carrier.
+//
+// For fakeip-tun, carrier=1 IS the structural readiness signal: it means
+// sing-box created and attached the gvisor tun stack from the fakeip config —
+// the analog of "inbound socket bound" for tproxy, and it is fast and reliable.
+//
+// The live .2→fakeip DNS probe was DEMOTED out of this hard gate (stand-verified
+// 2026-06-15): the Go resolver (net.Resolver{PreferGo:true}) HONORS the router's
+// /etc/resolv.conf `options timeout:1 attempts:1`, so it does a single ~1s-bounded
+// attempt with no retry. In the first seconds after sing-box starts the fakeip
+// round-trip to .2 is occasionally slower than that, so the probe returned false
+// on every poll and waitForSingbox timed out at 60s — falsely failing Enable even
+// though sing-box was fully up (carrier=1) and fakeip worked. The DNS check now
+// runs ONCE as a best-effort, logged confirmation AFTER readiness (see
+// enableFakeIPTun), never as a flaky gate. ctx is unused now that the live DNS
+// probe is out of the gate; kept on the signature for the tproxy/test callers.
+func (s *ServiceImpl) singboxReady(_ context.Context, fakeIP bool) bool {
+	running, _ := s.deps.Singbox.IsRunning()
+	if !running {
+		return false
+	}
+	if !fakeIP {
+		return singboxListeningProbe()
+	}
+	// Only iface is needed for the carrier gate; dnsAddr/fakeipNet (which the
+	// demoted DNS probe used) are derived later in enableFakeIPTun for the
+	// best-effort confirm.
+	iface, _, _, ok := s.fakeIPReadyInputs()
+	if !ok {
+		return false
+	}
+	return tunReadyProbe(iface)
 }
 
 func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) error {
@@ -656,7 +881,20 @@ func cleanValidateError(err error) string {
 	return strings.TrimSpace(msg)
 }
 
+// Enable is the USER-INITIATED router enable (HTTP handler + SwitchRoutingMode).
+// It clears the sticky master-stop intent — an explicit enable is an explicit
+// intent to run sing-box, which must override a prior master-Stop — then runs
+// the idempotent provisioning. Drift-heal (Reconcile / reconcileFakeIPTun) must
+// NOT clear the intent (the watchdog must respect a user's manual stop and not
+// resurrect the daemon on drift), so it calls enableLocked(ctx, false) instead.
 func (s *ServiceImpl) Enable(ctx context.Context) error {
+	return s.enableLocked(ctx, true)
+}
+
+// enableLocked provisions the router under s.mu. clearManualStop gates the
+// sticky-intent clear: true for user-initiated Enable, false for drift-heal
+// reuse (Reconcile / reconcileFakeIPTun) which must honour a prior master-Stop.
+func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -670,6 +908,29 @@ func (s *ServiceImpl) Enable(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("router settings: %w", err)
 	}
+
+	// Explicit enable = explicit intent to run sing-box. Clear any sticky
+	// manual-stop so the orchestrator cold-start (triggered by SetEnabled below)
+	// isn't suppressed by shouldRun()=!IsManuallyStopped — otherwise Enable waits
+	// the full boot window and fails with a misleading readiness timeout
+	// (stand-found 2026-06-15, applies to BOTH tproxy and fakeip-tun). Gated to
+	// user-initiated Enable: a drift-heal reconcile (clearManualStop=false) must
+	// NOT wipe a user's master-Stop. The nil guard keeps test wirings that omit
+	// Singbox working.
+	if clearManualStop && s.deps.Singbox != nil {
+		if err := s.deps.Singbox.ClearManualStop(); err != nil {
+			return fmt.Errorf("clear manual-stop intent: %w", err)
+		}
+	}
+
+	// fakeip-tun has an entirely separate provisioning path (OpkgTun + tun +
+	// fakeip DNS + pool/CIDR routes) with its own rollback. The tproxy body
+	// below stays byte-for-byte unchanged for RoutingMode=="tproxy".
+	if sr.RoutingMode == "fakeip-tun" {
+		sr.Enabled = true
+		return s.enableFakeIPTun(ctx, settings, sr)
+	}
+
 	policyMode := sr.DeviceMode == "" || sr.DeviceMode == "policy"
 	mark := ""
 	if policyMode {
@@ -739,12 +1000,9 @@ func (s *ServiceImpl) Enable(ctx context.Context) error {
 	// permanent outage.
 	//
 	// Same env-var contract as singbox.maxSingboxBootWait — clamped to a
-	// 60s floor here too. Import-cycle (integration_test in parent already
-	// pulls router) blocks reusing the parent helper directly.
-	bootWait := env.DurationDefault("AWG_SINGBOX_BOOT_WAIT", 60*time.Second)
-	if bootWait < 60*time.Second {
-		bootWait = 60 * time.Second
-	}
+	// 60s floor (bootWaitWithFloor). Import-cycle (integration_test in parent
+	// already pulls router) blocks reusing the parent helper directly.
+	bootWait := bootWaitWithFloor()
 	if err := s.waitForSingbox(ctx, bootWait); err != nil {
 		return fmt.Errorf("%w: waited %s (%v)", ErrSingboxNotReady, bootWait, err)
 	}
@@ -982,7 +1240,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	if settings != nil {
 		sr, _ = NormalizeSingboxRouterSettings(settings.SingboxRouter)
 	}
-	cfg, _ := s.loadRouterConfig()
+	cfg, _ := s.loadRouterConfigForMode(sr.RoutingMode)
 	if cfg == nil {
 		cfg = NewEmptyConfig()
 	}
@@ -1011,15 +1269,47 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	// the badge self-corrects on the next status read (no side effect here,
 	// unlike the reconcile path which must not reinstall on a transient error).
 	installed, jumps, _ := s.deps.IPTables.Probe(ctx)
-	// Active = interception path truly live: chains + PREROUTING jumps + sing-box
-	// actually listening on both inbound sockets.
-	active := jumps && singboxListeningProbe()
+	// Active = interception path truly live, computed per routing mode.
+	var active bool
+	if sr.RoutingMode == "fakeip-tun" {
+		// fakeip-tun has no iptables jumps and no inbound sockets. Steady-state
+		// liveness = process up + tun carrier + the fakeip pool auto-route
+		// present (the honest structural check — the fakeip equivalent of
+		// "TPROXY jumps present"). No live DNS query here: that would add
+		// per-poll latency, and the route-presence check is enough once Enable
+		// has finished wiring routes (waitForSingbox already gated on live DNS).
+		running, _ := s.deps.Singbox.IsRunning()
+		if iface, _, fakeipNet, ok := s.fakeIPReadyInputs(); ok {
+			active = running && tunReadyProbe(iface) && fakeIPPoolRoutePresent(iface, fakeipNet)
+		}
+	} else {
+		// tproxy: chains + PREROUTING jumps + sing-box listening on both inbound sockets.
+		active = jumps && singboxListeningProbe()
+	}
 	// Surface the captured sing-box fatal reason only when the engine is
 	// meant to be up but isn't (СБОЙ). lastError is cleared by the operator
 	// on a successful (re)start, so a healthy engine reports empty.
 	lastError := ""
 	if sr.Enabled && !active && s.deps.Singbox != nil {
 		lastError = s.deps.Singbox.LastError()
+	}
+	issues := s.computeIssues(cfg)
+	// fakeip-tun active iface: surface the provisioned kernel iface name
+	// ("opkgtun<idx>") so the UI can show it in the engine-settings panel. Only
+	// when in fakeip-tun mode AND actually provisioned (persisted FakeIPState);
+	// empty otherwise.
+	var fakeIPIface string
+	fakeIPDns := ""
+	fakeIPTunAddr := ""
+	if sr.RoutingMode == "fakeip-tun" && settings != nil &&
+		settings.FakeIP != nil && settings.FakeIP.Provisioned {
+		fakeIPIface = fakeIPIfaceName(settings.FakeIP.Index)
+		if d, derr := DeriveTunDNS(s.deps.FakeIPTun.TunAddr4); derr == nil {
+			fakeIPDns = d
+		}
+		if addr, _, aerr := splitCIDRToAddrMask(s.deps.FakeIPTun.TunAddr4); aerr == nil {
+			fakeIPTunAddr = addr
+		}
 	}
 	return Status{
 		Enabled:                sr.Enabled,
@@ -1039,7 +1329,10 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		OutboundAWGCount:       awgCount,
 		OutboundCompositeCount: compCount,
 		Final:                  cfg.Route.Final,
-		Issues:                 s.computeIssues(cfg),
+		FakeIPIface:            fakeIPIface,
+		FakeIPDns:              fakeIPDns,
+		FakeIPTunAddr:          fakeIPTunAddr,
+		Issues:                 issues,
 		LastError:              lastError,
 	}, nil
 }
@@ -1047,6 +1340,22 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 func (s *ServiceImpl) Disable(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// fakeip-tun teardown is an entirely separate path (no iptables; opkgtun +
+	// pool/CIDR routes + a fail-closed drain). Dispatch by mode before the
+	// tproxy body so the tproxy path below stays byte-for-byte unchanged for
+	// RoutingMode=="tproxy".
+	dispatchSettings, err := s.deps.Settings.Load()
+	if err != nil {
+		return err
+	}
+	// Dispatch on the RAW persisted RoutingMode, NOT the normalized value: a
+	// Normalize error (corrupt/hand-edited settings) would otherwise mis-route a
+	// fakeip-tun teardown into the tproxy body, orphaning the opkgtun/routes.
+	// A raw string compare keeps the fakeip branch independent of normalize.
+	if dispatchSettings.SingboxRouter.RoutingMode == "fakeip-tun" {
+		return s.disableFakeIPTun(ctx, dispatchSettings)
+	}
 
 	if err := s.deps.IPTables.Uninstall(ctx); err != nil {
 		s.appLog.Warn("uninstall", "", err.Error())
@@ -1099,6 +1408,16 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 }
 
 func (s *ServiceImpl) Reconcile(ctx context.Context) error {
+	// A routing-mode switch (SwitchRoutingMode) holds transitionMu across its
+	// Disable→persist→Enable sequence, during which the persisted state is
+	// transiently half-flipped. Reconcile is a periodic heal — if a switch is in
+	// flight, skip this tick rather than act on the in-between state and race the
+	// switch's own (possibly rolling-back) Enable/Disable. TryLock: never block the
+	// scheduler; just defer the heal one tick.
+	if !s.transitionMu.TryLock() {
+		return nil
+	}
+	defer s.transitionMu.Unlock()
 	settings, err := s.deps.Settings.Load()
 	if err != nil {
 		return err
@@ -1107,11 +1426,20 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// fakeip-tun installs NO iptables, so the tproxy switch below (keyed on
+	// IPTables.IsInstalled/HasAnyInstalled) would always read "not installed"
+	// and route every tick to Enable. Dispatch by mode FIRST so the tproxy
+	// switch stays byte-for-byte unchanged for RoutingMode=="tproxy".
+	if sr.RoutingMode == "fakeip-tun" {
+		return s.reconcileFakeIPTun(ctx, sr)
+	}
 	installedComplete := s.deps.IPTables.IsInstalled(ctx)
 	installedAny := s.deps.IPTables.HasAnyInstalled(ctx)
 	switch {
 	case sr.Enabled && !installedComplete:
-		return s.Enable(ctx)
+		// Drift-heal, NOT user-initiated: must honour a prior master-Stop, so
+		// do not clear the sticky intent (clearManualStop=false).
+		return s.enableLocked(ctx, false)
 	case !sr.Enabled && installedAny:
 		return s.Disable(ctx)
 	case sr.Enabled && installedComplete:
@@ -1597,6 +1925,12 @@ func NormalizeSingboxRouterSettings(sr storage.SingboxRouterSettings) (storage.S
 	default:
 		return sr, fmt.Errorf("deviceMode must be %q or %q, got %q", "policy", "all", sr.DeviceMode)
 	}
+	if sr.RoutingMode == "" {
+		sr.RoutingMode = "tproxy"
+	}
+	if sr.RoutingMode != "tproxy" && sr.RoutingMode != "fakeip-tun" {
+		return sr, fmt.Errorf("invalid routingMode %q (want tproxy|fakeip-tun)", sr.RoutingMode)
+	}
 	if sr.WANAutoDetect && sr.WANInterface != "" {
 		return sr, fmt.Errorf("wanAutoDetect=true requires wanInterface to be empty (got %q)", sr.WANInterface)
 	}
@@ -1617,12 +1951,66 @@ func NormalizeSingboxRouterSettings(sr storage.SingboxRouterSettings) (storage.S
 	if err := validateIngressRefs(sr.IngressInterfaces); err != nil {
 		return sr, err
 	}
+	if err := normalizeFakeIPSettings(&sr); err != nil {
+		return sr, err
+	}
 	if sr.UDPTimeout != "" {
 		if _, err := time.ParseDuration(sr.UDPTimeout); err != nil {
 			return sr, fmt.Errorf("udpTimeout: invalid duration %q: %w", sr.UDPTimeout, err)
 		}
 	}
 	return sr, nil
+}
+
+// fakeIPMTUMin / fakeIPMTUMax bound the user-editable tun MTU. 576 is the IPv4
+// minimum-reassembly floor; 9000 is jumbo-frame ceiling. Outside this range
+// sing-tun behaves unpredictably, so reject early.
+const (
+	fakeIPMTUMin = 576
+	fakeIPMTUMax = 9000
+)
+
+// normalizeFakeIPSettings defaults the user-editable fakeip engine fields from
+// DefaultFakeIPTunParams (single source of truth) when empty/zero, then
+// validates them. Per spec, an empty FakeIPPool6 is defaulted to the v6 pool
+// (so a fresh install gets dual-stack); v6 is disabled at a higher layer, not
+// by persisting "" here. Idempotent: re-running on a normalized struct is a
+// fixed point.
+func normalizeFakeIPSettings(sr *storage.SingboxRouterSettings) error {
+	def := DefaultFakeIPTunParams()
+	if sr.FakeIPStack == "" {
+		sr.FakeIPStack = "gvisor"
+	}
+	if sr.FakeIPStack != "gvisor" && sr.FakeIPStack != "system" {
+		return fmt.Errorf("fakeipStack must be %q or %q, got %q", "gvisor", "system", sr.FakeIPStack)
+	}
+	if sr.FakeIPPool4 == "" {
+		sr.FakeIPPool4 = def.Inet4Range
+	}
+	if sr.FakeIPPool6 == "" {
+		sr.FakeIPPool6 = def.Inet6Range
+	}
+	if sr.FakeIPMTU == 0 {
+		sr.FakeIPMTU = def.MTU
+	}
+	// v4 pool must parse as an IPv4 prefix.
+	if p, err := netip.ParsePrefix(sr.FakeIPPool4); err != nil {
+		return fmt.Errorf("fakeipPool4: invalid CIDR %q: %w", sr.FakeIPPool4, err)
+	} else if !p.Addr().Is4() {
+		return fmt.Errorf("fakeipPool4: %q is not IPv4", sr.FakeIPPool4)
+	}
+	// v6 pool: empty disables v6; otherwise it must parse as an IPv6 prefix.
+	if sr.FakeIPPool6 != "" {
+		if p, err := netip.ParsePrefix(sr.FakeIPPool6); err != nil {
+			return fmt.Errorf("fakeipPool6: invalid CIDR %q: %w", sr.FakeIPPool6, err)
+		} else if p.Addr().Is4() {
+			return fmt.Errorf("fakeipPool6: %q is not IPv6", sr.FakeIPPool6)
+		}
+	}
+	if sr.FakeIPMTU < fakeIPMTUMin || sr.FakeIPMTU > fakeIPMTUMax {
+		return fmt.Errorf("fakeipMtu %d out of range [%d, %d]", sr.FakeIPMTU, fakeIPMTUMin, fakeIPMTUMax)
+	}
+	return nil
 }
 
 func validateIngressRefs(refs []string) error {
@@ -1955,6 +2343,31 @@ func (s *ServiceImpl) Inspect(ctx context.Context, input InspectInput) (InspectR
 		s.inspectCache = newRuleSetCache("")
 	})
 	return Inspect(input, cfg.Route.Rules, cfg.Route.RuleSet, final, binary, s.inspectCache), nil
+}
+
+// InspectDNS simulates which DNS rule would match the given domain and how
+// the resolved DNS server classifies the resolution (fakeip → tunnel /
+// real → upstream / local → router). It is the DNS-resolution branch that
+// precedes the route inspector: a domain that gets a fakeip is then routed
+// by Inspect. The matcher walk is purely Go; only rule_set matchers shell
+// out to `sing-box rule-set match`. Reads the current persisted config.
+func (s *ServiceImpl) InspectDNS(ctx context.Context, input InspectDNSInput) (InspectDNSResult, error) {
+	cfg, err := s.loadRouterConfig()
+	if err != nil {
+		return InspectDNSResult{}, err
+	}
+	if cfg == nil {
+		cfg = NewEmptyConfig()
+	}
+	dnsRules := s.ruleSetMaterializer().restoreConfig(cfg).DNS.Rules
+	binary := ""
+	if s.deps.Singbox != nil {
+		binary = s.deps.Singbox.Binary()
+	}
+	s.inspectCacheOnce.Do(func() {
+		s.inspectCache = newRuleSetCache("")
+	})
+	return InspectDNS(input, dnsRules, cfg.DNS.Servers, cfg.Route.RuleSet, cfg.DNS.Final, binary, s.inspectCache), nil
 }
 
 func (s *ServiceImpl) InspectStream(ctx context.Context, input InspectInput) (<-chan InspectStreamEvent, error) {

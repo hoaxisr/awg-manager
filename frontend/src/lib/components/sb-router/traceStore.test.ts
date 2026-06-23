@@ -11,13 +11,25 @@ describe('traceStore', () => {
     resetEnv('/');
   });
 
+  const dnsOk = {
+    input: 'netflix.com',
+    inputType: 'domain' as const,
+    matches: [],
+    matchedRule: -1,
+    server: 'fakeip',
+    classification: 'fakeip' as const,
+    pool: '198.18.0.0/15',
+    final: 'fakeip',
+  };
+
   it('default state: closed, empty input, no result', async () => {
-    const { traceOpen, traceInput, traceResult, traceError, traceLoading } = await import('./traceStore');
+    const { traceOpen, traceInput, traceResult, traceError, traceLoading, dnsResult } = await import('./traceStore');
     expect(get(traceOpen)).toBe(false);
     expect(get(traceInput).domain).toBe('');
     expect(get(traceResult)).toBeNull();
     expect(get(traceError)).toBeNull();
     expect(get(traceLoading)).toBe(false);
+    expect(get(dnsResult)).toBeNull();
   });
 
   it('init: URL ?trace=1 → traceOpen=true', async () => {
@@ -71,9 +83,12 @@ describe('traceStore', () => {
       final: 'direct',
     };
     vi.doMock('$lib/api/client', () => ({
-      api: { singboxRouterInspectRoute: vi.fn().mockResolvedValue(mockResult) },
+      api: {
+        singboxRouterInspectRoute: vi.fn().mockResolvedValue(mockResult),
+        singboxRouterInspectDNS: vi.fn().mockResolvedValue(dnsOk),
+      },
     }));
-    const { runTrace, traceInput, traceResult, traceLoading, traceError } = await import('./traceStore');
+    const { runTrace, traceInput, traceResult, traceLoading, traceError, dnsResult, dnsError } = await import('./traceStore');
     traceInput.set({ domain: 'netflix.com' });
 
     const promise = runTrace();
@@ -83,11 +98,54 @@ describe('traceStore', () => {
     expect(get(traceLoading)).toBe(false);
     expect(get(traceResult)).toEqual(mockResult);
     expect(get(traceError)).toBeNull();
+    expect(get(dnsResult)).toEqual(dnsOk);
+    expect(get(dnsError)).toBeNull();
+  });
+
+  it('runTrace() — DNS error is isolated from route success', async () => {
+    const mockResult = {
+      input: 'netflix.com', inputType: 'domain' as const, matches: [],
+      destination: 'warp', matchedRule: -1, final: 'direct',
+    };
+    vi.doMock('$lib/api/client', () => ({
+      api: {
+        singboxRouterInspectRoute: vi.fn().mockResolvedValue(mockResult),
+        singboxRouterInspectDNS: vi.fn().mockRejectedValue(new Error('DNS down')),
+      },
+    }));
+    const { runTrace, traceInput, traceResult, traceError, dnsResult, dnsError } = await import('./traceStore');
+    traceInput.set({ domain: 'netflix.com' });
+
+    await runTrace();
+    expect(get(traceResult)).toEqual(mockResult);
+    expect(get(traceError)).toBeNull();
+    expect(get(dnsResult)).toBeNull();
+    expect(get(dnsError)).toMatch(/DNS down/);
+  });
+
+  it('runTrace() передаёт queryType/sourceIP в DNS API', async () => {
+    const dnsMock = vi.fn().mockResolvedValue(dnsOk);
+    vi.doMock('$lib/api/client', () => ({
+      api: {
+        singboxRouterInspectRoute: vi.fn().mockResolvedValue({
+          input: 'x', inputType: 'domain', matches: [], destination: 'direct', matchedRule: -1, final: 'direct',
+        }),
+        singboxRouterInspectDNS: dnsMock,
+      },
+    }));
+    const { runTrace, traceInput } = await import('./traceStore');
+    traceInput.set({ domain: 'discord.com', queryType: 'AAAA', sourceIP: '192.168.0.70' });
+
+    await runTrace();
+    expect(dnsMock).toHaveBeenCalledWith({ domain: 'discord.com', queryType: 'AAAA', sourceIP: '192.168.0.70' });
   });
 
   it('runTrace() — error path: API throws → traceError set', async () => {
     vi.doMock('$lib/api/client', () => ({
-      api: { singboxRouterInspectRoute: vi.fn().mockRejectedValue(new Error('Network failed')) },
+      api: {
+        singboxRouterInspectRoute: vi.fn().mockRejectedValue(new Error('Network failed')),
+        singboxRouterInspectDNS: vi.fn().mockResolvedValue(dnsOk),
+      },
     }));
     const { runTrace, traceInput, traceError, traceLoading, traceResult } = await import('./traceStore');
     traceInput.set({ domain: 'netflix.com' });
@@ -115,7 +173,12 @@ describe('traceStore', () => {
     const inspectMock = vi.fn().mockResolvedValue({
       input: 'netflix.com', inputType: 'domain', matches: [], destination: 'direct', matchedRule: -1, final: 'direct',
     });
-    vi.doMock('$lib/api/client', () => ({ api: { singboxRouterInspectRoute: inspectMock } }));
+    vi.doMock('$lib/api/client', () => ({
+      api: {
+        singboxRouterInspectRoute: inspectMock,
+        singboxRouterInspectDNS: vi.fn().mockResolvedValue(dnsOk),
+      },
+    }));
     const { runTrace, traceInput } = await import('./traceStore');
     traceInput.set({ domain: 'netflix.com', port: 443, protocol: 'tcp' });
 

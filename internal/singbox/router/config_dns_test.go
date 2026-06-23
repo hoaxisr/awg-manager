@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -235,6 +236,40 @@ func TestAddDNSRuleValidates(t *testing.T) {
 	}
 }
 
+func TestAddDNSRuleValidatesSourceIPCIDR(t *testing.T) {
+	c := NewEmptyConfig()
+	if err := c.AddDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.AddDNSRule(DNSRule{SourceIPCIDR: []string{"not-a-cidr"}, QueryType: []string{"A"}, Action: "route", Server: "fakeip"}); err == nil {
+		t.Error("expected error for malformed source_ip_cidr")
+	}
+	if err := c.AddDNSRule(DNSRule{SourceIPCIDR: []string{"192.168.1.0/24"}, QueryType: []string{"A"}, Action: "route", Server: "fakeip"}); err != nil {
+		t.Errorf("valid CIDR should be accepted: %v", err)
+	}
+	if err := c.AddDNSRule(DNSRule{SourceIPCIDR: []string{"10.0.0.5"}, QueryType: []string{"A"}, Action: "route", Server: "fakeip"}); err != nil {
+		t.Errorf("bare IP should be accepted: %v", err)
+	}
+}
+
+func TestAddDNSServerValidatesFakeIPRanges(t *testing.T) {
+	c := NewEmptyConfig()
+
+	if err := c.AddDNSServer(DNSServer{Tag: "f1", Type: "fakeip", Inet4Range: "garbage"}); err == nil {
+		t.Error("expected error for malformed inet4_range")
+	}
+	if err := c.AddDNSServer(DNSServer{Tag: "f2", Type: "fakeip", Inet4Range: "3f80::/10"}); err == nil {
+		t.Error("expected error for v6 prefix in inet4_range")
+	}
+	if err := c.AddDNSServer(DNSServer{Tag: "f3", Type: "fakeip", Inet4Range: "10.128.0.0/10", Inet6Range: "10.0.0.0/24"}); err == nil {
+		t.Error("expected error for v4 prefix in inet6_range")
+	}
+	if err := c.AddDNSServer(DNSServer{Tag: "f4", Type: "fakeip", Inet4Range: "10.128.0.0/10", Inet6Range: "3f80::/10"}); err != nil {
+		t.Errorf("valid v4+v6 ranges should be accepted: %v", err)
+	}
+}
+
 func TestMoveDNSRule(t *testing.T) {
 	c := NewEmptyConfig()
 	_ = c.AddDNSServer(makeDNSServer("s", "udp", "1.1.1.1", ""))
@@ -247,6 +282,24 @@ func TestMoveDNSRule(t *testing.T) {
 	}
 	if c.DNS.Rules[0].DomainSuffix[0] != ".c" {
 		t.Errorf("order: %+v", c.DNS.Rules)
+	}
+}
+
+func TestMoveDNSServer(t *testing.T) {
+	c := NewEmptyConfig()
+	_ = c.AddDNSServer(makeDNSServer("a", "udp", "1.1.1.1", ""))
+	_ = c.AddDNSServer(makeDNSServer("b", "udp", "8.8.8.8", ""))
+	_ = c.AddDNSServer(makeDNSServer("c", "udp", "9.9.9.9", ""))
+
+	if err := c.MoveDNSServer(2, 0); err != nil {
+		t.Fatal(err)
+	}
+	if c.DNS.Servers[0].Tag != "c" {
+		t.Errorf("order: %+v", c.DNS.Servers)
+	}
+
+	if err := c.MoveDNSServer(0, 5); !errors.Is(err, ErrDNSServerIndexOutOfRange) {
+		t.Errorf("expected out-of-range error, got %v", err)
 	}
 }
 
@@ -344,5 +397,39 @@ func TestDNSRuleRegexAndBlock(t *testing.T) {
 	// невалидный domain_regex — ошибка
 	if err := c.AddDNSRule(DNSRule{DomainRegex: []string{"("}, Server: "up", Action: "route"}); err == nil {
 		t.Error("invalid regex must fail")
+	}
+}
+
+func TestAddDNSServer_FakeIP(t *testing.T) {
+	c := NewEmptyConfig()
+	err := c.AddDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10", Inet6Range: "3f80::/10"})
+	if err != nil {
+		t.Fatalf("add fakeip: %v", err)
+	}
+	b, _ := json.Marshal(c.DNS.Servers[0])
+	for _, want := range []string{`"type":"fakeip"`, `"inet4_range":"10.128.0.0/10"`, `"inet6_range":"3f80::/10"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("missing %s: %s", want, b)
+		}
+	}
+}
+
+func TestValidateDNSServer_FakeIPRequiresRange(t *testing.T) {
+	c := NewEmptyConfig()
+	if err := c.AddDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip"}); err == nil {
+		t.Error("expected error: fakeip requires inet4_range")
+	}
+}
+
+func TestAddDNSRule_SourceIPCIDRToFakeip(t *testing.T) {
+	c := NewEmptyConfig()
+	_ = c.AddDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10"})
+	err := c.AddDNSRule(DNSRule{SourceIPCIDR: []string{"192.168.1.0/24"}, QueryType: []string{"A", "AAAA"}, Action: "route", Server: "fakeip"})
+	if err != nil {
+		t.Fatalf("add rule: %v", err)
+	}
+	b, _ := json.Marshal(c.DNS.Rules[0])
+	if !strings.Contains(string(b), `"source_ip_cidr":["192.168.1.0/24"]`) {
+		t.Errorf("missing source_ip_cidr: %s", b)
 	}
 }

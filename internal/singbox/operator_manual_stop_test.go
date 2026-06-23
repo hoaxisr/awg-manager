@@ -115,6 +115,58 @@ func TestOperator_Reconcile_BailsOnManuallyStopped(t *testing.T) {
 	}
 }
 
+func TestOperator_ClearManualStop_NoopWhenAlreadyClear(t *testing.T) {
+	var calls []bool
+	op := newTestOperator(t, func(v bool) error {
+		calls = append(calls, v)
+		return nil
+	})
+	// Flag already false (zero value). ClearManualStop must be a no-op:
+	// return nil and NOT touch persist (the common write-free path).
+	if err := op.ClearManualStop(); err != nil {
+		t.Fatalf("ClearManualStop: want nil, got %v", err)
+	}
+	if op.manuallyStopped.Load() {
+		t.Errorf("flag must stay false")
+	}
+	if len(calls) != 0 {
+		t.Errorf("persist must NOT be called when intent already clear, got %v", calls)
+	}
+}
+
+func TestOperator_ClearManualStop_ClearsAndPersistsWhenSet(t *testing.T) {
+	var calls []bool
+	op := newTestOperator(t, func(v bool) error {
+		calls = append(calls, v)
+		return nil
+	})
+	op.manuallyStopped.Store(true) // seed: prior Stop is sticky
+
+	if err := op.ClearManualStop(); err != nil {
+		t.Fatalf("ClearManualStop: %v", err)
+	}
+	if op.manuallyStopped.Load() {
+		t.Errorf("in-memory flag: want false after clear, got true")
+	}
+	if len(calls) != 1 || calls[0] != false {
+		t.Errorf("persist calls: want [false], got %v", calls)
+	}
+}
+
+func TestOperator_ClearManualStop_PersistFailure_RollsBackFlag(t *testing.T) {
+	op := newTestOperator(t, func(v bool) error {
+		return errors.New("disk full")
+	})
+	op.manuallyStopped.Store(true)
+
+	if err := op.ClearManualStop(); err == nil {
+		t.Fatalf("ClearManualStop: want error, got nil")
+	}
+	if !op.manuallyStopped.Load() {
+		t.Errorf("in-memory flag must roll back to true on persist failure")
+	}
+}
+
 func TestOperator_SetManualStop_PersistFailure_RollsBackFlag(t *testing.T) {
 	op := newTestOperator(t, func(v bool) error {
 		return errors.New("disk full")

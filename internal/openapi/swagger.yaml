@@ -2937,6 +2937,15 @@ definitions:
         example: cloudflare
         type: string
     type: object
+  api.SingboxDNSServerMoveRequest:
+    properties:
+      from:
+        example: 3
+        type: integer
+      to:
+        example: 0
+        type: integer
+    type: object
   api.SingboxDNSServerUpdateRequest:
     properties:
       server:
@@ -3052,6 +3061,75 @@ definitions:
     properties:
       data:
         $ref: '#/definitions/api.SingboxRouterDatRuleSetURLData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxRouterInspectDNSData:
+    properties:
+      classification:
+        example: fakeip
+        type: string
+      final:
+        example: fakeip
+        type: string
+      input:
+        example: discord.com
+        type: string
+      inputType:
+        example: domain
+        type: string
+      matchedRule:
+        example: 5
+        type: integer
+      matches:
+        items:
+          $ref: '#/definitions/api.SingboxRouterInspectDNSMatchDTO'
+        type: array
+      note:
+        type: string
+      pool:
+        example: 198.18.0.0/15
+        type: string
+      server:
+        example: fakeip
+        type: string
+    type: object
+  api.SingboxRouterInspectDNSMatchDTO:
+    properties:
+      conditions:
+        items:
+          type: string
+        type: array
+      index:
+        example: 0
+        type: integer
+      matched:
+        example: true
+        type: boolean
+      reason:
+        example: 'совпало по: query_type'
+        type: string
+      server:
+        example: fakeip
+        type: string
+    type: object
+  api.SingboxRouterInspectDNSRequest:
+    properties:
+      domain:
+        example: discord.com
+        type: string
+      queryType:
+        example: A
+        type: string
+      sourceIP:
+        example: 192.168.1.70
+        type: string
+    type: object
+  api.SingboxRouterInspectDNSResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SingboxRouterInspectDNSData'
       success:
         example: true
         type: boolean
@@ -3181,6 +3259,16 @@ definitions:
         type: string
       tag:
         example: selector
+        type: string
+    type: object
+  api.SingboxRouterModeRequest:
+    properties:
+      mode:
+        enum:
+        - "off"
+        - tproxy
+        - fakeip-tun
+        example: fakeip-tun
         type: string
     type: object
   api.SingboxRouterOutboundDTO:
@@ -3556,6 +3644,28 @@ definitions:
       enabled:
         example: true
         type: boolean
+      fakeipMtu:
+        description: FakeIPMTU is the tun MTU (default 1500; valid range 576-9000).
+        example: 1500
+        type: integer
+      fakeipPool4:
+        description: FakeIPPool4 is the fakeip v4 pool CIDR (default "198.18.0.0/15").
+        example: 198.18.0.0/15
+        type: string
+      fakeipPool6:
+        description: FakeIPPool6 is the fakeip v6 pool CIDR (default "fc00::/18");
+          "" disables v6.
+        example: fc00::/18
+        type: string
+      fakeipStack:
+        description: |-
+          --- fakeip-tun engine settings (user-editable) ---
+          FakeIPStack selects the sing-tun stack: "gvisor" (default) or "system".
+        enum:
+        - gvisor
+        - system
+        example: gvisor
+        type: string
       ingressInterfaces:
         description: |-
           IngressInterfaces lists interface refs whose ingress traffic is
@@ -3567,6 +3677,12 @@ definitions:
         type: array
       policyName:
         example: awgm-router
+        type: string
+      routingMode:
+        enum:
+        - tproxy
+        - fakeip-tun
+        example: tproxy
         type: string
       snifferEnabled:
         example: true
@@ -3619,6 +3735,15 @@ definitions:
       enabled:
         example: true
         type: boolean
+      fakeipDns:
+        example: 172.18.0.2
+        type: string
+      fakeipIface:
+        example: opkgtun0
+        type: string
+      fakeipTunAddr:
+        example: 172.18.0.1
+        type: string
       final:
         example: direct
         type: string
@@ -3673,6 +3798,65 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.SingboxRouterTransitionData:
+    properties:
+      done:
+        example: true
+        type: boolean
+      error:
+        example: ""
+        type: string
+      finalState:
+        enum:
+        - "off"
+        - tproxy
+        - fakeip-tun
+        example: fakeip-tun
+        type: string
+      from:
+        enum:
+        - "off"
+        - tproxy
+        - fakeip-tun
+        example: tproxy
+        type: string
+      step:
+        $ref: '#/definitions/api.SingboxRouterTransitionStepDTO'
+      to:
+        enum:
+        - "off"
+        - tproxy
+        - fakeip-tun
+        example: fakeip-tun
+        type: string
+      transitionId:
+        example: switch-7
+        type: string
+    type: object
+  api.SingboxRouterTransitionStepDTO:
+    properties:
+      message:
+        example: restored tproxy
+        type: string
+      status:
+        enum:
+        - current
+        - done
+        - error
+        example: current
+        type: string
+      step:
+        enum:
+        - start
+        - teardown
+        - provision
+        - readiness
+        - ready
+        - rollback
+        - error
+        example: provision
+        type: string
     type: object
   api.SingboxRouterUnbindDeviceRequest:
     properties:
@@ -6502,6 +6686,11 @@ paths:
           description: Server-Sent Events
           schema:
             type: string
+        "299":
+          description: Schema of a singbox-router:transition push event carried on
+            this stream (documentation only — never an HTTP status)
+          schema:
+            $ref: '#/definitions/api.SingboxRouterTransitionData'
         "400":
           description: Bad Request
           schema:
@@ -9386,6 +9575,865 @@ paths:
       summary: Control sing-box process
       tags:
       - singbox
+  /singbox/fakeip/config/dns/globals:
+    get:
+      description: Returns the global DNS settings (final, strategy) for the fakeip-tun
+        slot.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxDNSGlobalsResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Get fakeip-config DNS globals
+      tags:
+      - singbox-fakeip
+    post:
+      consumes:
+      - application/json
+      description: Persists the global DNS settings (final, strategy) for the fakeip-tun
+        slot.
+      parameters:
+      - description: final + strategy
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxDNSGlobalsData'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Update fakeip-config DNS globals
+      tags:
+      - singbox-fakeip
+    put:
+      consumes:
+      - application/json
+      description: Persists the global DNS settings (final, strategy) for the fakeip-tun
+        slot.
+      parameters:
+      - description: final + strategy
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxDNSGlobalsData'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Update fakeip-config DNS globals
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/dns/rules/add:
+    post:
+      consumes:
+      - application/json
+      description: Appends a new DNS routing rule. The rule's server tag must already
+        exist (fakeip-tun slot).
+      parameters:
+      - description: DNS routing rule
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxDNSRuleDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Add fakeip-config DNS rule
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/dns/rules/delete:
+    post:
+      consumes:
+      - application/json
+      description: Removes the DNS rule at the given index (0-based priority slot)
+        from the fakeip-tun slot.
+      parameters:
+      - description: Index of the rule to remove
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxDNSRuleDeleteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Delete fakeip-config DNS rule
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/dns/rules/list:
+    get:
+      description: Returns all DNS routing rules in priority (top-first) order for
+        the fakeip-tun slot. Always a JSON array, never null.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxDNSRulesListResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List fakeip-config DNS rules
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/dns/rules/move:
+    post:
+      consumes:
+      - application/json
+      description: Moves the DNS rule from index `from` to index `to` (both 0-based)
+        in the fakeip-tun slot.
+      parameters:
+      - description: From-index and to-index
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxDNSRuleMoveRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Move fakeip-config DNS rule
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/dns/rules/update:
+    post:
+      consumes:
+      - application/json
+      description: Replaces the DNS rule at the given index (0-based priority slot)
+        in the fakeip-tun slot.
+      parameters:
+      - description: Index + replacement rule
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxDNSRuleUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Update fakeip-config DNS rule
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/dns/servers/add:
+    post:
+      consumes:
+      - application/json
+      description: Registers a new DNS upstream (tag must be unique) in the fakeip-tun
+        slot.
+      parameters:
+      - description: DNS server descriptor
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxDNSServerDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Add fakeip-config DNS server
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/dns/servers/delete:
+    post:
+      consumes:
+      - application/json
+      description: Removes the DNS upstream identified by tag. Engine-locked servers
+        ("real", fakeip-type) are rejected with 400. Pass force=true to bypass the
+        reference guard.
+      parameters:
+      - description: Tag + optional force flag
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxDNSServerDeleteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Delete fakeip-config DNS server
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/dns/servers/list:
+    get:
+      description: Returns all configured DNS upstreams for the fakeip-tun slot. Always
+        a JSON array, never null.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxDNSServersListResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List fakeip-config DNS servers
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/dns/servers/move:
+    post:
+      consumes:
+      - application/json
+      description: Moves the DNS server from index `from` to index `to` (both 0-based)
+        in the fakeip-tun slot.
+      parameters:
+      - description: From-index and to-index
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxDNSServerMoveRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Move fakeip-config DNS server
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/dns/servers/update:
+    post:
+      consumes:
+      - application/json
+      description: Replaces the DNS upstream identified by tag with the provided one
+        (fakeip-tun slot).
+      parameters:
+      - description: Tag + replacement server
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxDNSServerUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Update fakeip-config DNS server
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/outbounds/add:
+    post:
+      consumes:
+      - application/json
+      description: Creates a new composite outbound in the fakeip-tun slot.
+      parameters:
+      - description: Composite outbound payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterOutboundDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Add fakeip-config outbound
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/outbounds/delete:
+    post:
+      consumes:
+      - application/json
+      description: Removes the composite outbound identified by tag from the fakeip-tun
+        slot.
+      parameters:
+      - description: Tag + optional force flag
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterOutboundDeleteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Delete fakeip-config outbound
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/outbounds/list:
+    get:
+      description: Returns all composite outbounds (selectors/urltests) in the fakeip-tun
+        slot.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxRouterOutboundsListResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List fakeip-config outbounds
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/outbounds/update:
+    post:
+      consumes:
+      - application/json
+      description: Replaces the composite outbound identified by tag in the fakeip-tun
+        slot.
+      parameters:
+      - description: Tag + replacement outbound
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterOutboundUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Update fakeip-config outbound
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/route/final:
+    post:
+      consumes:
+      - application/json
+      description: Sets route.final on the fakeip-tun slot. The tag must reference
+        a known outbound.
+      parameters:
+      - description: New final outbound tag
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterRouteFinalRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Set fakeip-config route.final
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/rules/add:
+    post:
+      consumes:
+      - application/json
+      description: Appends a new routing rule to the fakeip-tun slot.
+      parameters:
+      - description: Routing rule payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterRuleDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Add fakeip-config route rule
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/rules/delete:
+    post:
+      consumes:
+      - application/json
+      description: Removes the route rule at the given index (0-based) from the fakeip-tun
+        slot.
+      parameters:
+      - description: Index of the rule to remove
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterRuleDeleteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Delete fakeip-config route rule
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/rules/list:
+    get:
+      description: Returns all routing rules in priority (top-first) order for the
+        fakeip-tun slot.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxRouterRulesListResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List fakeip-config route rules
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/rules/move:
+    post:
+      consumes:
+      - application/json
+      description: Moves the route rule from index `from` to index `to` (both 0-based)
+        in the fakeip-tun slot.
+      parameters:
+      - description: From-index and to-index
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterRuleMoveRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Move fakeip-config route rule
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/rules/update:
+    post:
+      consumes:
+      - application/json
+      description: Replaces the route rule at index with the provided one (fakeip-tun
+        slot).
+      parameters:
+      - description: Index + replacement rule
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterRuleUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Update fakeip-config route rule
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/rulesets/add:
+    post:
+      consumes:
+      - application/json
+      description: Registers a new ruleset in the fakeip-tun slot.
+      parameters:
+      - description: RuleSet payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterRuleSetDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Add fakeip-config ruleset
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/rulesets/delete:
+    post:
+      consumes:
+      - application/json
+      description: Removes the ruleset identified by tag from the fakeip-tun slot.
+        Refuses if referenced; pass force=true to override.
+      parameters:
+      - description: Tag + optional force flag
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterRuleSetDeleteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Delete fakeip-config ruleset
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/rulesets/list:
+    get:
+      description: Returns all configured rulesets in the fakeip-tun slot.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxRouterRuleSetsListResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List fakeip-config rulesets
+      tags:
+      - singbox-fakeip
+  /singbox/fakeip/config/rulesets/update:
+    post:
+      consumes:
+      - application/json
+      description: Replaces the ruleset identified by tag in the fakeip-tun slot.
+      parameters:
+      - description: Tag + new RuleSet payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterRuleSetUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Update fakeip-config ruleset
+      tags:
+      - singbox-fakeip
   /singbox/install:
     post:
       produces:
@@ -9985,6 +11033,40 @@ paths:
       summary: List singbox-router DNS servers
       tags:
       - singbox-router
+  /singbox/router/dns/servers/move:
+    post:
+      consumes:
+      - application/json
+      description: Moves the DNS server from index `from` to index `to` (both 0-based).
+        Server order is cosmetic — sing-box references servers by tag; this exists
+        only for UX-consistent reordering.
+      parameters:
+      - description: From-index and to-index
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxDNSServerMoveRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Move singbox-router DNS server
+      tags:
+      - singbox-router
   /singbox/router/dns/servers/update:
     post:
       consumes:
@@ -10109,6 +11191,42 @@ paths:
       summary: Inspect router routing decision
       tags:
       - singbox-router
+  /singbox/router/inspect-dns:
+    post:
+      consumes:
+      - application/json
+      description: 'Simulates the DNS-resolution branch of the inspector: which dns.rule
+        matches the domain, which DNS server answers, and whether the domain gets
+        a fake-ip from a pool (→ tunnel), a real upstream IP, or a local (router)
+        resolution. Mirrors the route inspector but over dns.rules. rule_set matchers
+        are checked via sing-box rule-set match when available.'
+      parameters:
+      - description: Domain to test, plus optional query type and source IP
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterInspectDNSRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxRouterInspectDNSResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Inspect DNS-resolution decision
+      tags:
+      - singbox-router
   /singbox/router/inspect/stream:
     get:
       description: 'Streams route-inspector progress via Server-Sent Events. Event
@@ -10146,6 +11264,46 @@ paths:
       security:
       - CookieAuth: []
       summary: Inspect router routing decision (SSE stream)
+      tags:
+      - singbox-router
+  /singbox/router/mode:
+    post:
+      consumes:
+      - application/json
+      description: 'Orchestrates a routing-mode transition (off↔tproxy↔fakeip-tun):
+        tears down the old mode then brings up the new one, with directional fail-closed
+        rollback. Per-step progress is published as "singbox-router:transition" events
+        on the existing GET /events SSE stream (see SingboxRouterTransitionData).
+        Returns 400 INVALID_MODE for an unknown mode.'
+      parameters:
+      - description: Target routing mode
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterModeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Switch singbox-router routing mode
       tags:
       - singbox-router
   /singbox/router/outbounds/add:

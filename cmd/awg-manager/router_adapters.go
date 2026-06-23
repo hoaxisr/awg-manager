@@ -6,9 +6,12 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
@@ -125,9 +128,9 @@ var _ router.BindableInterfaceLister = (*routerWANInterfaceAdapter)(nil)
 
 // routerWANInterfaceAdapter bridges ndmsquery.InterfaceStore's ListWAN
 // (returns []wan.Interface) into router.WANInterfaceLister (returns
-// []router.WANInterfaceInfo). router can't import internal/ndms
-// directly — would cycle through internal/tunnel/wan — so the
-// projection lives in main alongside the other router adapters.
+// []router.WANInterfaceInfo). router is decoupled from concrete ndms types
+// via consumer-owned interfaces (DIP), so the projection lives in main
+// alongside the other router adapters.
 type routerWANInterfaceAdapter struct {
 	store *ndmsquery.InterfaceStore
 	// nativeProxies returns kernel names of KeenOS-native (non-ours) proxy
@@ -161,8 +164,8 @@ var _ router.IngressResolver = (*routerIngressResolverAdapter)(nil)
 
 // routerIngressResolverAdapter резолвит "managed:WireguardN" → kernel-имя
 // ("nwgN") через InterfaceStore.ResolveSystemName. iface:-ref'ы router
-// резолвит сам без адаптера. Живёт в main — router не может импортить
-// internal/ndms (цикл через internal/tunnel/wan), как и WAN-адаптер.
+// резолвит сам без адаптера. Живёт в main — router декаплен от конкретных
+// типов internal/ndms через consumer-owned контракты (DIP), как и WAN-адаптер.
 type routerIngressResolverAdapter struct {
 	store *ndmsquery.InterfaceStore
 }
@@ -173,6 +176,73 @@ func (a *routerIngressResolverAdapter) Resolve(ctx context.Context, ref string) 
 		return ""
 	}
 	return a.store.ResolveSystemName(ctx, strings.TrimPrefix(ref, prefix))
+}
+
+// Compile-time satisfaction for the directly-wired fakeip provisioner:
+// *InterfaceCommands implements the router interface structurally, so it's
+// injected without an adapter. This assertion surfaces any ndms
+// method-signature drift at this declaration line.
+var _ router.OpkgTunProvisioner = (*ndmscommand.InterfaceCommands)(nil)
+
+var _ router.StaticRouteProvider = (*routerStaticRouteAdapter)(nil)
+
+// routerStaticRouteAdapter translates router.StaticRouteSpec (router-local
+// mirror) into ndmscommand.StaticRouteSpec field-for-field. The router keeps
+// its own spec to stay decoupled from concrete ndms command types (DIP), so
+// it's duplicated and bridged here.
+type routerStaticRouteAdapter struct{ routes *ndmscommand.RouteCommands }
+
+// toNDMSRoute translates the router-local StaticRouteSpec mirror into the
+// concrete ndmscommand.StaticRouteSpec field-for-field (including V6).
+func toNDMSRoute(r router.StaticRouteSpec) ndmscommand.StaticRouteSpec {
+	return ndmscommand.StaticRouteSpec{
+		Interface: r.Interface,
+		Host:      r.Host,
+		Network:   r.Network,
+		Mask:      r.Mask,
+		Reject:    r.Reject,
+		Comment:   r.Comment,
+		V6:        r.V6,
+	}
+}
+
+func (a *routerStaticRouteAdapter) AddStaticRoute(ctx context.Context, r router.StaticRouteSpec) error {
+	return a.routes.AddStaticRoute(ctx, toNDMSRoute(r))
+}
+
+func (a *routerStaticRouteAdapter) RemoveStaticRoute(ctx context.Context, r router.StaticRouteSpec) error {
+	return a.routes.RemoveStaticRoute(ctx, toNDMSRoute(r))
+}
+
+var _ router.OpkgTunIndexLister = (*routerOpkgTunIndexAdapter)(nil)
+
+// routerOpkgTunIndexAdapter unions kernel /sys opkgtun indices with NDMS-known
+// interface names so the fakeip index allocator sees every occupied slot.
+type routerOpkgTunIndexAdapter struct {
+	store *ndmsquery.InterfaceStore
+	log   *logging.ScopedLogger
+}
+
+func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(ctx context.Context) (map[int]bool, error) {
+	sysNums, err := sysinfo.ListSystemInterfaces()
+	if err != nil {
+		// A /sys read failure under-counts occupied opkgtun indices — the
+		// one direction that can cause an index collision — so log it,
+		// then degrade to NDMS-only names.
+		if a.log != nil {
+			a.log.Warn("opkgtun-index", "", "list system interfaces failed: "+err.Error())
+		}
+		sysNums = nil
+	}
+	all, err := a.store.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(all))
+	for _, i := range all {
+		names = append(names, i.Name)
+	}
+	return router.UnionOpkgTunIndices(sysNums, names), nil
 }
 
 // ListBindable returns router interfaces a user can bind a direct outbound to:

@@ -46,6 +46,41 @@ type SingboxRouterInspectResponse struct {
 	Data    SingboxRouterInspectData `json:"data"`
 }
 
+// SingboxRouterInspectDNSRequest is the body for POST /singbox/router/inspect-dns.
+type SingboxRouterInspectDNSRequest struct {
+	Domain    string `json:"domain" example:"discord.com"`
+	QueryType string `json:"queryType,omitempty" example:"A"`
+	SourceIP  string `json:"sourceIP,omitempty" example:"192.168.1.70"`
+}
+
+// SingboxRouterInspectDNSMatchDTO mirrors router.DNSRuleMatchResult.
+type SingboxRouterInspectDNSMatchDTO struct {
+	Index      int      `json:"index" example:"0"`
+	Matched    bool     `json:"matched" example:"true"`
+	Server     string   `json:"server,omitempty" example:"fakeip"`
+	Conditions []string `json:"conditions,omitempty"`
+	Reason     string   `json:"reason,omitempty" example:"совпало по: query_type"`
+}
+
+// SingboxRouterInspectDNSData mirrors router.InspectDNSResult.
+type SingboxRouterInspectDNSData struct {
+	Input          string                            `json:"input" example:"discord.com"`
+	InputType      string                            `json:"inputType" example:"domain"`
+	Matches        []SingboxRouterInspectDNSMatchDTO `json:"matches"`
+	MatchedRule    int                               `json:"matchedRule" example:"5"`
+	Server         string                            `json:"server" example:"fakeip"`
+	Classification string                            `json:"classification" example:"fakeip"`
+	Pool           string                            `json:"pool,omitempty" example:"198.18.0.0/15"`
+	Final          string                            `json:"final" example:"fakeip"`
+	Note           string                            `json:"note,omitempty"`
+}
+
+// SingboxRouterInspectDNSResponse is the envelope for POST /singbox/router/inspect-dns.
+type SingboxRouterInspectDNSResponse struct {
+	Success bool                        `json:"success" example:"true"`
+	Data    SingboxRouterInspectDNSData `json:"data"`
+}
+
 // SingboxRouterInspectProgressDTO mirrors router.InspectProgress.
 type SingboxRouterInspectProgressDTO struct {
 	Phase        string `json:"phase" example:"rule_set_match_start"`
@@ -102,6 +137,46 @@ func (h *SingboxRouterHandler) Inspect(w http.ResponseWriter, r *http.Request) {
 		Domain:   req.Domain,
 		Port:     req.Port,
 		Protocol: req.Protocol,
+	})
+	if err != nil {
+		response.InternalError(w, err.Error())
+		return
+	}
+	response.Success(w, res)
+}
+
+// InspectDNS simulates which DNS rule would match the given domain and how
+// the resolved DNS server classifies the resolution (fakeip/real/local).
+//
+//	@Summary		Inspect DNS-resolution decision
+//	@Description	Simulates the DNS-resolution branch of the inspector: which dns.rule matches the domain, which DNS server answers, and whether the domain gets a fake-ip from a pool (→ tunnel), a real upstream IP, or a local (router) resolution. Mirrors the route inspector but over dns.rules. rule_set matchers are checked via sing-box rule-set match when available.
+//	@Tags			singbox-router
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		SingboxRouterInspectDNSRequest	true	"Domain to test, plus optional query type and source IP"
+//	@Success		200		{object}	SingboxRouterInspectDNSResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/singbox/router/inspect-dns [post]
+func (h *SingboxRouterHandler) InspectDNS(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	var req SingboxRouterInspectDNSRequest
+	if err := decodeBody(r, &req); err != nil {
+		response.BadRequest(w, err.Error())
+		return
+	}
+	if req.Domain == "" {
+		response.Error(w, "domain обязателен", "MISSING_DOMAIN")
+		return
+	}
+	res, err := h.svc.InspectDNS(r.Context(), router.InspectDNSInput{
+		Domain:    req.Domain,
+		QueryType: req.QueryType,
+		SourceIP:  req.SourceIP,
 	})
 	if err != nil {
 		response.InternalError(w, err.Error())
