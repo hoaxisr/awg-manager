@@ -14,6 +14,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	tunnelservice "github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
 
 // ── Response DTOs ────────────────────────────────────────────────
@@ -351,8 +352,10 @@ type SingboxRouterUnbindDeviceRequest struct {
 }
 
 type SingboxRouterHandler struct {
-	svc router.Service
-	log *logging.ScopedLogger
+	svc             router.Service
+	log             *logging.ScopedLogger
+	deviceProxyRefs tunnelservice.DeviceProxyRefChecker
+	routerRefs      tunnelservice.RouterRefChecker
 }
 
 func NewSingboxRouterHandler(svc router.Service, appLogger logging.AppLogger) *SingboxRouterHandler {
@@ -360,6 +363,14 @@ func NewSingboxRouterHandler(svc router.Service, appLogger logging.AppLogger) *S
 		svc: svc,
 		log: logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubSingboxRouter),
 	}
+}
+
+// SetOutboundRefCheckers wires device-proxy and router reference guards for
+// composite-outbound deletion (refuse 409 when the tag is still selected by a
+// device-proxy instance).
+func (h *SingboxRouterHandler) SetOutboundRefCheckers(dp tunnelservice.DeviceProxyRefChecker, r tunnelservice.RouterRefChecker) {
+	h.deviceProxyRefs = dp
+	h.routerRefs = r
 }
 
 // GetStatus returns the current sing-box router engine status.
@@ -1009,6 +1020,13 @@ func (h *SingboxRouterHandler) DeleteOutbound(w http.ResponseWriter, r *http.Req
 	if err := decodeBody(r, &body); err != nil {
 		response.BadRequest(w, err.Error())
 		return
+	}
+	if err := tunnelservice.CheckOutboundTagReferences(body.Tag, body.Tag, h.deviceProxyRefs, h.routerRefs); err != nil {
+		var refErr tunnelservice.ErrTunnelReferenced
+		if errors.As(err, &refErr) {
+			WriteTunnelReferenced(w, refErr)
+			return
+		}
 	}
 	if err := h.svc.DeleteCompositeOutbound(r.Context(), body.Tag, body.Force); err != nil {
 		h.handleErr(w, "request", err)

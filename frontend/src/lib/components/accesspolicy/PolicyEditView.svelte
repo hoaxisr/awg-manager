@@ -3,6 +3,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Toggle, Badge } from '$lib/components/ui';
+	import { ArrowLeft, X } from 'lucide-svelte';
 	import { InterfaceList } from '$lib/components/accesspolicy';
 	import { DeviceList } from '$lib/components/accesspolicy';
 	import { isHydraRouteAccessPolicy } from '$lib/utils/accessPolicy';
@@ -136,10 +137,7 @@
 <div class="edit-layout">
 	<div class="left-panel">
 		<button class="back-btn" onclick={onback}>
-			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-				<line x1="19" y1="12" x2="5" y2="12"/>
-				<polyline points="12 19 5 12 12 5"/>
-			</svg>
+			<ArrowLeft size={15} />
 			Назад к списку
 		</button>
 
@@ -207,10 +205,7 @@
 									title="Убрать из политики"
 									onclick={() => unassignDevice(device.mac)}
 								>
-									<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-										<line x1="18" y1="6" x2="6" y2="18"/>
-										<line x1="6" y1="6" x2="18" y2="18"/>
-									</svg>
+									<X size={15} />
 								</button>
 							</div>
 						{/each}
@@ -251,10 +246,7 @@
 										title="Убрать из политики"
 										onclick={() => unassignDevice(device.mac)}
 									>
-										<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<line x1="18" y1="6" x2="6" y2="18"/>
-											<line x1="6" y1="6" x2="18" y2="18"/>
-										</svg>
+										<X size={15} />
 									</button>
 								</div>
 							{/each}

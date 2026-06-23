@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { Upload } from 'lucide-svelte';
+
 	interface Props {
 		subject: string;
 		parseError?: string;
@@ -49,20 +51,7 @@
 			dragging = false;
 		}}
 	>
-		<svg
-			class="drop-icon"
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke="currentColor"
-			stroke-width="1.5"
-			stroke-linecap="round"
-			stroke-linejoin="round"
-			aria-hidden="true"
-		>
-			<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-			<polyline points="17 8 12 3 7 8" />
-			<line x1="12" y1="3" x2="12" y2="15" />
-		</svg>
+		<Upload size={24} class="drop-icon" strokeWidth={1.5} aria-hidden="true" />
 		<p class="drop-title">
 			Перетащите .json файл сюда<br />
 			<span class="drop-hint">или нажмите для выбора</span>

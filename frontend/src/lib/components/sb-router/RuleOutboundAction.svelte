@@ -4,6 +4,7 @@
 -->
 
 <script lang="ts">
+  import { ArrowRight } from 'lucide-svelte';
   import type { OutboundDisplay } from './types';
   import OutboundTile from './OutboundTile.svelte';
   import OutboundToneIcon from './OutboundToneIcon.svelte';
@@ -50,10 +51,7 @@
 
 <div class="wrap" class:composite={showComposite}>
   {#if showComposite}
-    <svg class="arrow" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <line x1="5" y1="12" x2="19" y2="12" />
-      <polyline points="12 5 19 12 12 19" />
-    </svg>
+    <ArrowRight class="arrow" size={14} aria-hidden={true} />
     <span class={memberChipClass} title={memberChipTitle}>
       <OutboundToneIcon tone={memberTone} kind={outbound.kind} />
       <OutboundChipLabel
@@ -83,10 +81,7 @@
       </span>
     {/if}
   {:else}
-    <svg class="arrow" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <line x1="5" y1="12" x2="19" y2="12" />
-      <polyline points="12 5 19 12 12 19" />
-    </svg>
+    <ArrowRight class="arrow" size={14} aria-hidden={true} />
     <OutboundTile {outbound} />
   {/if}
 </div>
@@ -108,7 +103,7 @@
     gap: 6px;
   }
 
-  .arrow {
+  .wrap :global(.arrow) {
     color: var(--text-muted);
     flex-shrink: 0;
   }

@@ -3,7 +3,7 @@
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import type { UsageLevel } from '$lib/types/usageLevel';
 	import { USAGE_LEVEL_LABELS } from '$lib/types/usageLevel';
-	import { SlidersHorizontal } from 'lucide-svelte';
+	import { SlidersHorizontal, ChevronDown, Info, Check } from 'lucide-svelte';
 
 	interface Props {
 		value: UsageLevel;
@@ -104,17 +104,7 @@
 			onclick={() => (expanded = !expanded)}
 		>
 			<span class="current-level">{USAGE_LEVEL_LABELS[value]}</span>
-			<svg
-				class="chevron"
-				class:open={expanded}
-				viewBox="0 0 24 24"
-				fill="none"
-				stroke="currentColor"
-				stroke-width="2"
-				aria-hidden="true"
-			>
-				<polyline points="6 9 12 15 18 9" />
-			</svg>
+			<span class="chevron" class:open={expanded} aria-hidden="true"><ChevronDown size={14} strokeWidth={2} /></span>
 		</button>
 	</div>
 
@@ -149,18 +139,14 @@
 								}
 							}}
 						>
-							<svg viewBox="0 0 24 24" aria-hidden="true">
-								<circle cx="12" cy="12" r="10" />
-								<line x1="12" y1="11" x2="12" y2="17" />
-								<circle cx="12" cy="7.5" r="0.8" />
-							</svg>
+							<Info size={12} strokeWidth={2} aria-hidden="true" />
 						</span>
 
 						<div class="level-title">{opt.title}</div>
 
 						{#if selected}
 							<span class="level-check" aria-hidden="true">
-								<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
+								<Check size={14} strokeWidth={2} />
 							</span>
 						{/if}
 					</button>
@@ -190,9 +176,7 @@
 					{#each infoOpt.includes as item}
 						<li class="level-info-item">
 							<span class="level-info-bullet" aria-hidden="true">
-								<svg viewBox="0 0 24 24">
-									<path d="M20 6 9 17l-5-5" />
-								</svg>
+								<Check size={14} strokeWidth={2} />
 							</span>
 							<span>{item}</span>
 						</li>
@@ -251,6 +235,7 @@
 	}
 
 	.chevron {
+		display: inline-flex;
 		width: 14px;
 		height: 14px;
 		transition: transform var(--t-fast) ease;
@@ -327,14 +312,6 @@
 		height: 14px;
 		color: var(--color-accent);
 	}
-	.level-check svg {
-		width: 100%;
-		height: 100%;
-		fill: none;
-		stroke: currentColor;
-		stroke-width: 2;
-	}
-
 	.info-btn {
 		position: absolute;
 		top: 0.375rem;
@@ -355,14 +332,6 @@
 		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
-	.info-btn svg {
-		width: 12px;
-		height: 12px;
-		fill: none;
-		stroke: currentColor;
-		stroke-width: 2;
-	}
-
 	.level-info-panel {
 		display: flex;
 		flex-direction: column;
@@ -434,15 +403,7 @@
 		color: var(--color-accent);
 	}
 
-	.level-info-bullet svg {
-		width: 0.875rem;
-		height: 0.875rem;
-		fill: none;
-		stroke: currentColor;
-		stroke-linecap: round;
-		stroke-linejoin: round;
-		stroke-width: 2;
-	}
+
 
 	.card.highlighted {
 		animation: usage-level-glow 2.8s ease-out forwards;

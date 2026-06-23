@@ -32,10 +32,10 @@
 
 <style>
 	.sort-header-btn {
-		width: 100%;
+		/* inline-flex без width:100% → кнопка inline-level и наследует text-align <th>,
+		   чтобы ярлык совпадал с выравниванием данных в колонке (а не центрировался) */
 		display: inline-flex;
 		align-items: center;
-		justify-content: center;
 		gap: 0.3rem;
 		padding: 0;
 		border: 0;

@@ -138,7 +138,7 @@
   });
 
   function safeRuleSummary(card: RuleCardData | undefined, index: number): string {
-    const n = String(index + 1).padStart(2, '0');
+    const n = String(index).padStart(2, '0');
     if (!card) return `правило #${n}`;
     const target = card.action === 'block' || card.outbound.kind === 'block'
       ? 'Заблокировать'

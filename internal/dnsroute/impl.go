@@ -604,6 +604,7 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	var createdIDs []string
+	var hrCreated []*DomainList
 	hasSubs := false
 
 	for _, list := range lists {
@@ -615,6 +616,22 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 		applyExcludesText(&list)
 
 		if len(list.ManualDomains) == 0 && len(list.Subscriptions) == 0 {
+			continue
+		}
+
+		// HydraRoute-backed entries go through the real HR creation path
+		// (HR files = SoT); they must NOT land in data.Lists. HR has no
+		// subscriptions — create from ManualDomains and log-ignore any.
+		if isHydraRoute(list.Backend) {
+			if len(list.Subscriptions) > 0 {
+				s.logInfo("create-batch", list.Name, "HR rule: subscriptions unsupported, ignored")
+			}
+			dl, err := s.createHydraRoute(ctx, list)
+			if err != nil {
+				s.logError("create-batch", list.Name, "HR create failed", err.Error())
+				continue
+			}
+			hrCreated = append(hrCreated, dl)
 			continue
 		}
 
@@ -639,7 +656,9 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 	}
 
 	if len(createdIDs) == 0 {
-		return []*DomainList{}, nil
+		// Никаких NDMS-изменений: Save/reconcile не нужны. Чисто-HR батч
+		// (каталог OS4) возвращает созданные HR-правила напрямую.
+		return hrCreated, nil
 	}
 
 	if err := s.store.Save(data); err != nil {
@@ -676,6 +695,7 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 		}
 	}
 
+	result = append(result, hrCreated...)
 	return result, nil
 }
 

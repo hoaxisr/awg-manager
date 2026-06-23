@@ -2,6 +2,7 @@
 	import type { AccessPolicy } from '$lib/types';
 	import { pluralize, DEVICE_WORDS } from '$lib/utils/pluralize';
 	import { Badge } from '$lib/components/ui';
+	import { SquarePen, Trash2 } from 'lucide-svelte';
 	import RoutingTargetBadges from '$lib/components/routing/RoutingTargetBadges.svelte';
 	import PolicyIcon from './PolicyIcon.svelte';
 	import { isHydraRouteAccessPolicy } from '$lib/utils/accessPolicy';
@@ -73,10 +74,7 @@
 							: `Изменить политику «${policy.description || policy.name}»`}
 						onclick={() => onedit(policy.name)}
 					>
-						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-							<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-						</svg>
+						<SquarePen size={15} />
 					</button>
 					{#if !isHrPolicy}
 						<button
@@ -85,10 +83,7 @@
 							title={`Удалить политику «${policy.description || policy.name}»`}
 							onclick={() => ondelete(policy.name)}
 						>
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<polyline points="3 6 5 6 21 6"/>
-								<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-							</svg>
+							<Trash2 size={15} />
 						</button>
 					{/if}
 				</div>

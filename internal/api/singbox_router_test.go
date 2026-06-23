@@ -182,6 +182,25 @@ func newMockRouterHandler(svc *mockRouterSvc) *SingboxRouterHandler {
 	return &SingboxRouterHandler{svc: svc}
 }
 
+type fakeDPRefs struct{ ref bool }
+
+func (f fakeDPRefs) HasSelectorReference(_ string) bool { return f.ref }
+
+func TestRouterDeleteOutbound_ReferencedByProxy_Returns409(t *testing.T) {
+	svc := &mockRouterSvc{}
+	h := newMockRouterHandler(svc)
+	h.SetOutboundRefCheckers(fakeDPRefs{ref: true}, nil)
+
+	body := strings.NewReader(`{"tag":"grp-eu","force":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/outbounds/delete", body)
+	rr := httptest.NewRecorder()
+	h.DeleteOutbound(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+}
+
 func TestRouterEnable_PolicyNotConfigured_Returns400(t *testing.T) {
 	svc := &mockRouterSvc{enableErr: router.ErrPolicyNotConfigured}
 	h := newMockRouterHandler(svc)

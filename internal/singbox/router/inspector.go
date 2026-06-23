@@ -148,16 +148,16 @@ func InspectWithProgress(input InspectInput, rules []Rule, ruleSets []RuleSet, f
 	}
 	for i, rule := range rules {
 		if emit != nil {
-			emit(InspectProgress{Phase: "rule_start", Message: fmt.Sprintf("Проверяем правило #%d из %d", i+1, len(rules)), RuleIndex: intPtr(i), RuleTotal: intPtr(len(rules))})
+			emit(InspectProgress{Phase: "rule_start", Message: fmt.Sprintf("Проверяем правило #%d из %d", i, len(rules)), RuleIndex: intPtr(i), RuleTotal: intPtr(len(rules))})
 		}
 		match := evaluateRule(input, parsedIP, rule, env, emit, i, len(rules))
 		match.Index = i
 		res.Matches = append(res.Matches, match)
 		if emit != nil {
 			phase := "rule_done"
-			msg := fmt.Sprintf("Правило #%d не совпало", i+1)
+			msg := fmt.Sprintf("Правило #%d не совпало", i)
 			if match.Matched {
-				msg = fmt.Sprintf("Правило #%d совпало", i+1)
+				msg = fmt.Sprintf("Правило #%d совпало", i)
 			}
 			emit(InspectProgress{Phase: phase, Message: msg, RuleIndex: intPtr(i), RuleTotal: intPtr(len(rules))})
 		}
@@ -177,7 +177,7 @@ func InspectWithProgress(input InspectInput, rules []Rule, ruleSets []RuleSet, f
 					res.Destination = "DIRECT"
 				}
 				if emit != nil {
-					emit(InspectProgress{Phase: "terminal_match", Message: fmt.Sprintf("Найдено финальное правило #%d → route", i+1), RuleIndex: intPtr(i), RuleTotal: intPtr(len(rules))})
+					emit(InspectProgress{Phase: "terminal_match", Message: fmt.Sprintf("Найдено финальное правило #%d → route", i), RuleIndex: intPtr(i), RuleTotal: intPtr(len(rules))})
 				}
 			}
 		case "reject":
@@ -185,12 +185,12 @@ func InspectWithProgress(input InspectInput, rules []Rule, ruleSets []RuleSet, f
 				res.MatchedRule = i
 				res.Destination = "REJECT"
 				if emit != nil {
-					emit(InspectProgress{Phase: "terminal_match", Message: fmt.Sprintf("Найдено финальное правило #%d → reject", i+1), RuleIndex: intPtr(i), RuleTotal: intPtr(len(rules))})
+					emit(InspectProgress{Phase: "terminal_match", Message: fmt.Sprintf("Найдено финальное правило #%d → reject", i), RuleIndex: intPtr(i), RuleTotal: intPtr(len(rules))})
 				}
 			}
 		case "sniff", "hijack-dns":
 			if emit != nil {
-				emit(InspectProgress{Phase: "non_terminal_match", Message: fmt.Sprintf("Нефинальное совпадение в правиле #%d", i+1), RuleIndex: intPtr(i), RuleTotal: intPtr(len(rules))})
+				emit(InspectProgress{Phase: "non_terminal_match", Message: fmt.Sprintf("Нефинальное совпадение в правиле #%d", i), RuleIndex: intPtr(i), RuleTotal: intPtr(len(rules))})
 			}
 			// Non-terminal: matched but does not set Destination; walk
 			// continues so a later rule (or final) can claim it.

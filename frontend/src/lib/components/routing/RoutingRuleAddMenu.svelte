@@ -2,6 +2,7 @@
     import { onMount, onDestroy } from 'svelte';
     import { Button } from '$lib/components/ui';
     import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
+    import { LayoutGrid, Plus, Upload } from 'lucide-svelte';
 
     interface Props {
         label?: string;
@@ -66,18 +67,7 @@
                         oncatalog();
                     }}
                 >
-                    <svg
-                        class="dropdown-icon"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                    >
-                        <rect x="3" y="3" width="7" height="7" />
-                        <rect x="14" y="3" width="7" height="7" />
-                        <rect x="3" y="14" width="7" height="7" />
-                        <rect x="14" y="14" width="7" height="7" />
-                    </svg>
+                    <LayoutGrid size={16} style="flex-shrink:0;color:var(--text-muted)" aria-hidden="true" />
                     Из каталога
                 </button>
             {/if}
@@ -89,16 +79,7 @@
                     onmanual();
                 }}
             >
-                <svg
-                    class="dropdown-icon"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                >
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
+                <Plus size={16} style="flex-shrink:0;color:var(--text-muted)" aria-hidden="true" />
                 Создать вручную
             </button>
             {#if importEnabled && onimport}
@@ -111,17 +92,7 @@
                         onimport();
                     }}
                 >
-                    <svg
-                        class="dropdown-icon"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                    >
-                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                        <polyline points="17 8 12 3 7 8" />
-                        <line x1="12" y1="3" x2="12" y2="15" />
-                    </svg>
+                    <Upload size={16} style="flex-shrink:0;color:var(--text-muted)" aria-hidden="true" />
                     {importLabel}
                 </button>
             {/if}
@@ -168,17 +139,6 @@
     .dropdown-item:hover {
         background: var(--bg-hover);
         color: var(--text-primary);
-    }
-
-    :global(.dropdown-icon) {
-        width: 16px;
-        height: 16px;
-        flex-shrink: 0;
-        color: var(--text-muted);
-    }
-
-    .dropdown-item:hover :global(.dropdown-icon) {
-        color: var(--accent);
     }
 
     .dropdown-sep {

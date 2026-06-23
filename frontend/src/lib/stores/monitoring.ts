@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import type { MonitoringSnapshot, MonitoringSample } from '$lib/types';
+import type { MonitoringSnapshot } from '$lib/types';
 
 const CACHE_KEY = 'awgm_monitoring_snapshot_v1';
 
@@ -63,27 +63,3 @@ function createMonitoringStore() {
 }
 
 export const monitoringStore = createMonitoringStore();
-
-// History cache scoped to drawer-open lifetime — avoids refetching when the
-// user re-opens the same cell quickly. Cleared on full page reload.
-const historyCache = new Map<string, MonitoringSample[]>();
-
-function cacheKey(targetId: string, tunnelId: string): string {
-	return `${targetId}|${tunnelId}`;
-}
-
-export function getCachedHistory(targetId: string, tunnelId: string): MonitoringSample[] | null {
-	return historyCache.get(cacheKey(targetId, tunnelId)) ?? null;
-}
-
-export function setCachedHistory(
-	targetId: string,
-	tunnelId: string,
-	samples: MonitoringSample[],
-) {
-	historyCache.set(cacheKey(targetId, tunnelId), samples);
-}
-
-export function clearHistoryCache() {
-	historyCache.clear();
-}

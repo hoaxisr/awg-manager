@@ -3,6 +3,7 @@
 	import { Modal, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { ServiceIcon, IconPickerModal } from '$lib/components/dnsroutes';
 	import { formatIconUrlHint } from '$lib/utils/custom-icon';
+	import { Upload } from 'lucide-svelte';
 
 	interface Props {
 		open: boolean;
@@ -260,11 +261,7 @@
 		<div class="section-header">
 			<div class="section-title">Подсети (по одной на строку, CIDR)</div>
 			<button class="btn-bat-import" onclick={handleBatImport}>
-				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-					<polyline points="17 8 12 3 7 8"/>
-					<line x1="12" y1="3" x2="12" y2="15"/>
-				</svg>
+				<Upload size={12} aria-hidden="true" />
 				Из .bat файла
 			</button>
 			<input

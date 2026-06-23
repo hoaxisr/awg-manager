@@ -55,7 +55,7 @@ func IsClashYAML(body []byte) bool {
 // security, sni, alpn, fp, insecure, pbk, sid.
 //
 // Reality is detected when reality-opts is present; otherwise tls:true →
-// security=tls. Network is read from "network" (ws/grpc/http/h2/tcp).
+// security=tls. Network is read from "network" (ws/grpc/http/h2/xhttp/tcp).
 func clashFieldsToValues(p map[string]any) url.Values {
 	v := url.Values{}
 
@@ -105,6 +105,20 @@ func clashFieldsToValues(p map[string]any) url.Values {
 		// h2-opts.host is []string per Clash spec; take the first non-empty entry.
 		if hosts := asStringSlice(hp["host"]); len(hosts) > 0 {
 			v.Set("host", hosts[0])
+		}
+	case "xhttp", "splithttp":
+		// mihomo carries xhttp under xhttp-opts with top-level string path/host
+		// (not []string) plus a mode. We don't run mihomo — convert to our
+		// sing-box xhttp transport. x_padding_bytes is defaulted downstream.
+		xh := nestedMap(p, "xhttp-opts")
+		if path := asString(xh["path"]); path != "" {
+			v.Set("path", path)
+		}
+		if host := asString(xh["host"]); host != "" {
+			v.Set("host", host)
+		}
+		if mode := asString(xh["mode"]); mode != "" {
+			v.Set("mode", mode)
 		}
 	}
 

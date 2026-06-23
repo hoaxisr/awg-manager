@@ -2,6 +2,7 @@ package subscription
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
 )
 
 func withLegacySetupNoop(svc *Service) {
@@ -38,6 +41,79 @@ type fakeMutator struct {
 	selectedSelector []string          // "selectorTag→memberTag" pairs recorded by SelectClashProxy
 	clashActiveByTag map[string]string // selectorTag → live active member
 	declaredTags     []string          // DeclaredOutboundTags result; nil = no-op (no pruning)
+	bodies           map[string][]byte // tag → последний JSON из AddOutbound/UpdateOutbound
+}
+
+func (m *fakeMutator) reset() {
+	m.addedOutbounds = nil
+	m.removedOutbounds = nil
+	m.bodies = map[string][]byte{}
+}
+func (m *fakeMutator) addedOutbound(tag string) bool   { return containsTag(m.addedOutbounds, tag) }
+func (m *fakeMutator) removedOutbound(tag string) bool { return containsTag(m.removedOutbounds, tag) }
+
+func containsTag(ss []string, t string) bool {
+	for _, s := range ss {
+		if s == t {
+			return true
+		}
+	}
+	return false
+}
+
+// selectorMembers парсит сохранённый body селектора и возвращает его outbounds.
+func selectorMembers(t *testing.T, m *fakeMutator, selectorTag string) []string {
+	t.Helper()
+	var ob struct {
+		Outbounds []string `json:"outbounds"`
+	}
+	if err := json.Unmarshal(m.bodies[selectorTag], &ob); err != nil {
+		t.Fatalf("selector body: %v", err)
+	}
+	return ob.Outbounds
+}
+
+func tagOf(sub *Subscription, i int) string { return sub.Members[i].Tag }
+
+func newTestService(t *testing.T) (*Service, *fakeMutator) {
+	t.Helper()
+	store, err := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mut := &fakeMutator{}
+	svc := NewService(store, mut)
+	withLegacySetupNoop(svc)
+	return svc, mut
+}
+
+// createURLSubWithMembers поднимает httptest-фид из n share-link и создаёт URL-подписку;
+// возвращает sub с реальными MemberTags (active = Members[0].Tag).
+func createURLSubWithMembers(t *testing.T, svc *Service, n int) *Subscription {
+	t.Helper()
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "vless://3a3b1c2e-9999-4321-aaaa-1234567890a%d@h%d.example:443?security=tls&sni=h#%d\n", i, i, i)
+	}
+	body := b.String()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "x", URL: srv.URL, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sub
+}
+
+func createInlineSubWithTwoMembers(t *testing.T, svc *Service) *Subscription {
+	t.Helper()
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "x", Inline: "vless://3a3b1c2e-9999-4321-aaaa-1234567890a1@a.example:443#A\nvless://3a3b1c2e-9999-4321-aaaa-1234567890a2@b.example:443#B"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sub
 }
 
 func (f *fakeMutator) AllocListenPort() (uint16, error) {
@@ -53,10 +129,18 @@ func (f *fakeMutator) AllocProxyIndex(_ context.Context) (int, error) {
 }
 func (f *fakeMutator) AddOutbound(tag string, jsonBody []byte) error {
 	f.addedOutbounds = append(f.addedOutbounds, tag)
+	if f.bodies == nil {
+		f.bodies = map[string][]byte{}
+	}
+	f.bodies[tag] = jsonBody
 	return nil
 }
 func (f *fakeMutator) UpdateOutbound(tag string, jsonBody []byte) error {
 	f.updatedOutbounds = append(f.updatedOutbounds, tag)
+	if f.bodies == nil {
+		f.bodies = map[string][]byte{}
+	}
+	f.bodies[tag] = jsonBody
 	return nil
 }
 func (f *fakeMutator) RemoveOutbound(tag string) error {
@@ -1538,5 +1622,256 @@ func TestService_Refresh_PrunesUndeclaredMember_RecordsRejected(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("RejectedMembers=%+v want pruned tag %q", updated2.RejectedMembers, prunedTag)
+	}
+}
+
+// tagsOf collects the tags of a MemberInfo slice.
+func tagsOf(ms []MemberInfo) []string {
+	out := make([]string, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, m.Tag)
+	}
+	return out
+}
+
+// filterByTag returns the members whose tag is in tags.
+func filterByTag(ms []MemberInfo, tags ...string) []MemberInfo {
+	want := make(map[string]bool, len(tags))
+	for _, t := range tags {
+		want[t] = true
+	}
+	out := make([]MemberInfo, 0, len(tags))
+	for _, m := range ms {
+		if want[m.Tag] {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func TestRefresh_ExcludedNotMaterialized(t *testing.T) {
+	svc, mut := newTestService(t)
+	sub := createURLSubWithMembers(t, svc, 2) // URL-подписка: refresh ре-материализует
+	tagA := tagOf(sub, 0)
+	tagB := tagOf(sub, 1)
+	// Пометить tagB исключённым напрямую через стор (endpoint появится в Task 3).
+	if err := svc.store.MoveToExcluded(sub.ID, filterByTag(sub.Members, tagA), []string{tagB}, filterByTag(sub.Members, tagB)); err != nil {
+		t.Fatal(err)
+	}
+	mut.reset()
+	if _, err := svc.Refresh(context.Background(), sub.ID); err != nil {
+		t.Fatal(err)
+	}
+	if mut.addedOutbound(tagB) {
+		t.Fatal("excluded tagB must NOT be materialized")
+	}
+	if containsTag(selectorMembers(t, mut, sub.SelectorTag), tagB) {
+		t.Fatal("excluded tagB must NOT be in selector")
+	}
+	got, _ := svc.store.Get(sub.ID)
+	if containsTag(tagsOf(got.Members), tagB) {
+		t.Fatal("excluded must not be in active Members")
+	}
+	if !containsTag(tagsOf(got.ExcludedMembers), tagB) {
+		t.Fatal("excluded must be in ExcludedMembers")
+	}
+	if !containsTag(got.ExcludedTags, tagB) {
+		t.Fatal("refresh must preserve ExcludedTags")
+	}
+}
+
+func TestExcludeMembers_Basic(t *testing.T) {
+	svc, mut := newTestService(t)
+	sub := createURLSubWithMembers(t, svc, 3) // 3 члена, URL-подписка; active = Members[0]
+	t0 := tagOf(sub, 0)
+	mut.reset()
+	got, err := svc.ExcludeMembers(context.Background(), sub.ID, []string{t0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsTag(tagsOf(got.Members), t0) {
+		t.Fatal("t0 still active")
+	}
+	if !containsTag(got.ExcludedTags, t0) {
+		t.Fatal("t0 not in ExcludedTags")
+	}
+	if got.ActiveMember == t0 {
+		t.Fatal("active must move off excluded")
+	}
+	if !mut.removedOutbound(t0) {
+		t.Fatal("t0 outbound must be removed")
+	}
+	if containsTag(selectorMembers(t, mut, sub.SelectorTag), t0) {
+		t.Fatal("t0 must leave selector")
+	}
+}
+
+func TestExcludeMembers_RejectInline(t *testing.T) {
+	svc, _ := newTestService(t)
+	sub := createInlineSubWithTwoMembers(t, svc)
+	if _, err := svc.ExcludeMembers(context.Background(), sub.ID, []string{tagOf(sub, 0)}); !errors.Is(err, ErrExcludeOnInline) {
+		t.Fatalf("want ErrExcludeOnInline, got %v", err)
+	}
+}
+
+func TestExcludeMembers_RejectAll(t *testing.T) {
+	svc, _ := newTestService(t)
+	sub := createURLSubWithMembers(t, svc, 2)
+	if _, err := svc.ExcludeMembers(context.Background(), sub.ID, []string{tagOf(sub, 0), tagOf(sub, 1)}); !errors.Is(err, ErrAllMembersExcluded) {
+		t.Fatalf("want ErrAllMembersExcluded, got %v", err)
+	}
+}
+
+// Инвариант спеки: исключённый тег не может одновременно стать сиротой.
+func TestExcludeMembers_NoOrphanIntersection(t *testing.T) {
+	svc, _ := newTestService(t)
+	sub := createURLSubWithMembers(t, svc, 3)
+	t1 := tagOf(sub, 1)
+	if _, err := svc.ExcludeMembers(context.Background(), sub.ID, []string{t1}); err != nil {
+		t.Fatal(err)
+	}
+	// refresh + попытка очистки сирот не должны затрагивать исключённый t1.
+	if _, err := svc.Refresh(context.Background(), sub.ID); err != nil {
+		t.Fatal(err)
+	}
+	_ = svc.DeleteOrphans(context.Background(), sub.ID)
+	got, _ := svc.store.Get(sub.ID)
+	if containsTag(got.OrphanTags, t1) {
+		t.Fatal("excluded tag must never be an orphan")
+	}
+	if !containsTag(got.ExcludedTags, t1) {
+		t.Fatal("excluded tag must survive refresh+DeleteOrphans")
+	}
+}
+
+func TestRestoreMembers_ReMaterializes(t *testing.T) {
+	svc, mut := newTestService(t)
+	sub := createURLSubWithMembers(t, svc, 3)
+	t1 := tagOf(sub, 1)
+	if _, err := svc.ExcludeMembers(context.Background(), sub.ID, []string{t1}); err != nil {
+		t.Fatal(err)
+	}
+	mut.reset()
+	got, err := svc.RestoreMembers(context.Background(), sub.ID, []string{t1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsTag(got.ExcludedTags, t1) {
+		t.Fatal("t1 still excluded")
+	}
+	if !containsTag(tagsOf(got.Members), t1) {
+		t.Fatal("t1 not restored to active members")
+	}
+	if !mut.addedOutbound(t1) {
+		t.Fatal("t1 must be re-materialized on restore")
+	}
+}
+
+func TestPreviewURL_NoStoreWrite(t *testing.T) {
+	svc, _ := newTestService(t)
+	before := len(svc.store.List())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("vless://8f4a2c1e-0000-4000-8000-000000000001@a.example:443?security=tls&sni=a#A\nvless://8f4a2c1e-0000-4000-8000-000000000002@b.example:443#B"))
+	}))
+	defer srv.Close()
+	members, err := svc.PreviewURL(context.Background(), srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members) != 2 {
+		t.Fatalf("want 2, got %d", len(members))
+	}
+	if members[0].Key == "" || len(members[0].Key) != 8 {
+		t.Fatalf("bad key %q", members[0].Key)
+	}
+	if members[0].Label != "A" {
+		t.Fatalf("label=%q", members[0].Label)
+	}
+	if after := len(svc.store.List()); after != before {
+		t.Fatal("preview must not create subscriptions")
+	}
+}
+
+func TestCreate_ExcludedKeys(t *testing.T) {
+	svc, mut := newTestService(t)
+	// inline-фид из 2 серверов; вычислить key одного из них (subID-независимый).
+	linkA := "vless://3a3b1c2e-9999-4321-aaaa-1234567890a1@a.example:443?security=tls&sni=a#A"
+	linkB := "vless://3a3b1c2e-9999-4321-aaaa-1234567890a2@b.example:443?security=tls&sni=b#B"
+	links := linkA + "\n" + linkB
+	parsed := vlink.ParseBatch([]string{linkB})
+	if len(parsed.Outbounds) != 1 {
+		t.Fatalf("want 1 parsed outbound, got %d (errors=%v)", len(parsed.Outbounds), parsed.Errors)
+	}
+	keyB := IdentityHash(parsed.Outbounds[0])
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "x", Inline: links, ExcludedKeys: []string{keyB}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTag := "sub-" + sub.ID[:8] + "-" + keyB
+	if !containsTag(sub.ExcludedTags, wantTag) {
+		t.Fatalf("want %s in ExcludedTags %v", wantTag, sub.ExcludedTags)
+	}
+	if mut.addedOutbound(wantTag) {
+		t.Fatal("excluded-by-key must not materialize on create")
+	}
+}
+
+func TestPreviewURL_CollisionDistinctKeys(t *testing.T) {
+	svc, _ := newTestService(t)
+	body := "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=a.sni#A\n" +
+		"vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=b.sni#B\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+
+	members, err := svc.PreviewURL(context.Background(), srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members) != 2 {
+		t.Fatalf("members=%d want 2", len(members))
+	}
+	if members[0].Key == members[1].Key {
+		t.Errorf("colliding endpoints must get distinct preview Key, both = %s", members[0].Key)
+	}
+}
+
+func TestAddManualMember_DistinctSNIOnSameEndpoint(t *testing.T) {
+	svc, _ := newTestService(t)
+	// inline-подписка с одним членом, наполняем руками
+	sub, err := svc.Create(context.Background(), CreateInput{
+		Label:   "manual",
+		Inline:  "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=a.sni#A",
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// тот же host:port:uuid, другой SNI → должен добавиться
+	updated, err := svc.AddManualMember(context.Background(), sub.ID,
+		"vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=b.sni#B")
+	if err != nil {
+		t.Fatalf("second SNI must add, got %v", err)
+	}
+	if len(updated.MemberTags) != 2 {
+		t.Errorf("MemberTags=%d want 2", len(updated.MemberTags))
+	}
+}
+
+func TestAddManualMember_ExactRepeatRejected(t *testing.T) {
+	svc, _ := newTestService(t)
+	sub, err := svc.Create(context.Background(), CreateInput{
+		Label:   "manual",
+		Inline:  "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=a.sni#A",
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.AddManualMember(context.Background(), sub.ID,
+		"vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=a.sni#dup")
+	if !errors.Is(err, ErrMemberDuplicate) {
+		t.Fatalf("exact repeat must be ErrMemberDuplicate, got %v", err)
 	}
 }

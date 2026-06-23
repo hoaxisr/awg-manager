@@ -136,7 +136,7 @@
 		let label = progress.message || formatProgressFallback(progress);
 		let meta = '';
 		if (typeof ruleIndex === 'number' && ruleTotal) {
-			meta = `Правило #${ruleIndex + 1} из ${ruleTotal}`;
+			meta = `Правило #${ruleIndex} из ${ruleTotal}`;
 		}
 		if (ruleSetTag) {
 			meta = meta ? `${meta} · rule_set: ${ruleSetTag}` : `rule_set: ${ruleSetTag}`;
@@ -328,7 +328,7 @@
 	function formatProgressFallback(progress: SingboxRouterInspectProgress): string {
 		switch (progress.phase) {
 			case 'rule_start':
-				return `Проверяем правило #${(progress.ruleIndex ?? 0) + 1} из ${progress.ruleTotal ?? 0}`;
+				return `Проверяем правило #${progress.ruleIndex ?? 0} из ${progress.ruleTotal ?? 0}`;
 			case 'rule_done':
 				return `Проверка правила #${(progress.ruleIndex ?? 0) + 1} завершена`;
 			case 'rule_set_start':
@@ -601,7 +601,7 @@
 						<span class="progress-pill">Правила: {checkedRules} из {ruleTotal}</span>
 					{/if}
 					{#if typeof currentRuleIndex === 'number' && ruleTotal > 0}
-						<span class="progress-pill">Текущее правило: #{currentRuleIndex + 1}</span>
+						<span class="progress-pill">Текущее правило: #{currentRuleIndex}</span>
 					{/if}
 					{#if currentRuleSet}
 						<span class="progress-pill">Rule-set: <code>{currentRuleSet}</code></span>
@@ -667,7 +667,7 @@
 						<div class="dest-value">{result.destination}</div>
 						<div class="dest-meta">
 							{#if result.matchedRule >= 0}
-								Сработало правило #{result.matchedRule + 1}
+								Сработало правило #{result.matchedRule}
 							{:else}
 								Дефолтный outbound (final: {result.final || 'direct'})
 							{/if}
@@ -678,7 +678,7 @@
 				{#if matchedRuleData}
 					<div class="match-detail">
 						<div class="match-header">
-							<span class="rule-num">Правило #{matchedRuleData.index + 1}</span>
+							<span class="rule-num">Правило #{matchedRuleData.index}</span>
 							<span class="badge badge-{actionVariant(matchedRuleData.action)}">
 								{actionLabel(matchedRuleData.action)}
 							</span>
@@ -731,7 +731,7 @@
 							<span>Сработало</span>
 							<strong>
 								{inspectionReport.matchedRule >= 0
-									? `Правило #${inspectionReport.matchedRule + 1}`
+									? `Правило #${inspectionReport.matchedRule}`
 									: `Final: ${inspectionReport.final}`}
 							</strong>
 						</div>
@@ -783,7 +783,7 @@
 									(m.action === 'sniff' || m.action === 'hijack-dns')}
 							>
 								<div class="row-head">
-									<span class="row-index">#{m.index + 1}</span>
+									<span class="row-index">#{m.index}</span>
 									<span class="badge badge-{actionVariant(m.action)}">
 										{actionLabel(m.action)}
 									</span>

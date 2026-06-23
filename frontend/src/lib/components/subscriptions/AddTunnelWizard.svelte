@@ -8,9 +8,12 @@
 	import {
 		DEFAULT_SUBSCRIPTION_URLTEST,
 		type SubscriptionMode,
+		type SubscriptionPreviewMember,
 	} from '$lib/types';
+	import { Check, LayoutGrid, Link, Globe } from 'lucide-svelte';
 	import HeadersTextarea from './HeadersTextarea.svelte';
 	import ShareLinksTextarea from './ShareLinksTextarea.svelte';
+	import SubscriptionImportPreview from './SubscriptionImportPreview.svelte';
 	import { DEFAULT_PRESET, parseHeadersText } from './headersParser';
 	import {
 		mergePastedShareList,
@@ -52,6 +55,13 @@
 	let utUrl = $state(DEFAULT_SUBSCRIPTION_URLTEST.url);
 	let utIntervalSec = $state(DEFAULT_SUBSCRIPTION_URLTEST.intervalSec);
 	let utToleranceMs = $state(DEFAULT_SUBSCRIPTION_URLTEST.toleranceMs);
+
+	// URL-subscription import has a two-step flow: fill the URL form, then pick
+	// which servers to import. Unchecked members are excluded at create time.
+	let urlStep = $state<'form' | 'preview'>('form');
+	let previewMembers = $state<SubscriptionPreviewMember[]>([]);
+	let excludedKeys = $state<Set<string>>(new Set());
+	let previewing = $state(false);
 
 	$effect(() => {
 		refreshHours = parseInt(refreshHoursStr, 10) || 0;
@@ -110,6 +120,10 @@
 		utUrl = DEFAULT_SUBSCRIPTION_URLTEST.url;
 		utIntervalSec = DEFAULT_SUBSCRIPTION_URLTEST.intervalSec;
 		utToleranceMs = DEFAULT_SUBSCRIPTION_URLTEST.toleranceMs;
+		urlStep = 'form';
+		previewMembers = [];
+		excludedKeys = new Set();
+		previewing = false;
 		error = '';
 	}
 
@@ -181,6 +195,42 @@
 		}
 	}
 
+	async function fetchPreview(): Promise<void> {
+		if (previewing || !url.trim()) {
+			error = 'Укажите URL подписки';
+			return;
+		}
+		previewing = true;
+		error = '';
+		try {
+			previewMembers = await api.previewSubscription({
+				url,
+				headers: parseHeadersText(headersText),
+			});
+			excludedKeys = new Set();
+			urlStep = 'preview';
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Не удалось получить список серверов';
+		} finally {
+			previewing = false;
+		}
+	}
+
+	function toggleExcluded(key: string): void {
+		const next = new Set(excludedKeys);
+		if (next.has(key)) next.delete(key);
+		else next.add(key);
+		excludedKeys = next;
+	}
+
+	function selectAllMembers(): void {
+		excludedKeys = new Set();
+	}
+
+	function selectNoneMembers(): void {
+		excludedKeys = new Set(previewMembers.map((m) => m.key));
+	}
+
 	async function submitSubscription(): Promise<void> {
 		if (submitting) return;
 		const isInline = kind === 'inline';
@@ -210,6 +260,7 @@
 					mode === 'urltest'
 						? { url: utUrl, intervalSec: utIntervalSec, toleranceMs: utToleranceMs }
 						: undefined,
+				excludedKeys: isInline ? undefined : [...excludedKeys],
 			});
 			// Keep tunnels tab + sb-router wizard in sync: list outbounds are not polled.
 			await subscriptionsStore.refetch();
@@ -234,10 +285,7 @@
 		<p class="lead">Что добавить?</p>
 		<div class="kind-grid">
 			<button type="button" class="kind-card" onclick={() => (kind = 'single')}>
-				<svg class="kind-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-					<path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07L11 5" />
-					<path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07L13 19" />
-				</svg>
+				<Link size={28} strokeWidth={1.6} style="color: var(--color-primary, #3b82f6)" aria-hidden="true" />
 				<div class="kind-title">Один сервер</div>
 				<div class="kind-desc">
 					Вставь одну или несколько share-link'ов — каждая станет
@@ -245,12 +293,7 @@
 				</div>
 			</button>
 			<button type="button" class="kind-card" onclick={() => (kind = 'inline')}>
-				<svg class="kind-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-					<rect x="3" y="3" width="7" height="7" rx="1" />
-					<rect x="14" y="3" width="7" height="7" rx="1" />
-					<rect x="3" y="14" width="7" height="7" rx="1" />
-					<rect x="14" y="14" width="7" height="7" rx="1" />
-				</svg>
+				<LayoutGrid size={28} strokeWidth={1.6} style="color: var(--color-primary, #3b82f6)" aria-hidden="true" />
 				<div class="kind-title">Группа серверов</div>
 				<div class="kind-desc">
 					Несколько ссылок становятся одной группой с общим Proxy.
@@ -258,11 +301,7 @@
 				</div>
 			</button>
 			<button type="button" class="kind-card" onclick={() => (kind = 'url')}>
-				<svg class="kind-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-					<circle cx="12" cy="12" r="10" />
-					<line x1="2" y1="12" x2="22" y2="12" />
-					<path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-				</svg>
+				<Globe size={28} strokeWidth={1.6} style="color: var(--color-primary, #3b82f6)" aria-hidden="true" />
 				<div class="kind-title">Подписка по URL</div>
 				<div class="kind-desc">
 					Адрес подписки провайдера. Список серверов обновляется
@@ -308,14 +347,40 @@
 				</div>
 			{/if}
 		</form>
+	{:else if kind === 'url' && urlStep === 'preview'}
+		<div class="steps" aria-hidden="true">
+			<span class="step done">URL и заголовки</span>
+			<span class="step-sep">›</span>
+			<span class="step current">Выбор серверов</span>
+			<span class="step-sep">›</span>
+			<span class="step">Готово</span>
+		</div>
+		<SubscriptionImportPreview
+			members={previewMembers}
+			{excludedKeys}
+			ontoggle={toggleExcluded}
+			onselectAll={selectAllMembers}
+			onselectNone={selectNoneMembers}
+		/>
+		{#if error}<div class="err">{error}</div>{/if}
 	{:else}
 		<form
 			class="form"
 			onsubmit={(e) => {
 				e.preventDefault();
-				void submitSubscription();
+				if (kind === 'url') void fetchPreview();
+				else void submitSubscription();
 			}}
 		>
+			{#if kind === 'url'}
+				<div class="steps" aria-hidden="true">
+					<span class="step current">URL и заголовки</span>
+					<span class="step-sep">›</span>
+					<span class="step">Выбор серверов</span>
+					<span class="step-sep">›</span>
+					<span class="step">Готово</span>
+				</div>
+			{/if}
 			<label class="row">
 				<span class="lbl">Название</span>
 				<input class="inp" type="text" bind:value={label} placeholder="Provider X" required />
@@ -377,7 +442,7 @@
 						</div>
 						{#if mode === 'selector'}
 							<span class="mode-check" aria-hidden="true">
-								<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
+								<Check size={12} strokeWidth={3} aria-hidden="true" />
 							</span>
 						{/if}
 					</button>
@@ -395,7 +460,7 @@
 						</div>
 						{#if mode === 'urltest'}
 							<span class="mode-check" aria-hidden="true">
-								<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
+								<Check size={12} strokeWidth={3} aria-hidden="true" />
 							</span>
 						{/if}
 					</button>
@@ -435,7 +500,9 @@
 	{/if}
 
 	{#snippet actions()}
-		{#if kind !== 'choose'}
+		{#if kind === 'url' && urlStep === 'preview'}
+			<Button variant="ghost" onclick={() => (urlStep = 'form')} disabled={submitting}>← Назад</Button>
+		{:else if kind !== 'choose'}
 			<Button variant="ghost" onclick={backToChoose} disabled={submitting}>← Назад</Button>
 		{/if}
 		<Button variant="ghost" onclick={close} disabled={submitting}>Отмена</Button>
@@ -447,6 +514,26 @@
 				loading={submitting}
 			>
 				{submitting ? 'Импорт...' : 'Импортировать'}
+			</Button>
+		{:else if kind === 'url' && urlStep === 'form'}
+			<Button
+				variant="primary"
+				onclick={fetchPreview}
+				disabled={previewing || !url.trim()}
+				loading={previewing}
+			>
+				{previewing ? 'Загрузка...' : 'Далее'}
+			</Button>
+		{:else if kind === 'url' && urlStep === 'preview'}
+			<Button
+				variant="primary"
+				onclick={submitSubscription}
+				disabled={submitting || previewMembers.length === excludedKeys.size}
+				loading={submitting}
+			>
+				{submitting
+					? 'Создаём...'
+					: `Создать — оставить ${previewMembers.length - excludedKeys.size}`}
 			</Button>
 		{:else if kind !== 'choose'}
 			<Button
@@ -502,9 +589,21 @@
 		outline: 2px solid var(--color-primary, #3b82f6);
 		outline-offset: 2px;
 	}
-	.kind-icon { width: 28px; height: 28px; color: var(--color-primary, #3b82f6); }
+
 	.kind-title { font-weight: 500; font-size: 0.92rem; }
 	.kind-desc { color: var(--color-text-muted); font-size: 0.78rem; line-height: 1.4; }
+
+	.steps {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.74rem;
+		color: var(--color-text-muted);
+		margin-bottom: 0.4rem;
+	}
+	.step.current { color: var(--color-accent); font-weight: 600; }
+	.step.done { color: var(--color-text-primary); }
+	.step-sep { color: var(--color-text-muted); }
 
 	.form { display: flex; flex-direction: column; gap: 1rem; }
 	.row { display: flex; flex-direction: column; gap: 0.3rem; }
@@ -574,7 +673,7 @@
 		justify-content: center;
 		color: var(--color-primary, #3b82f6);
 	}
-	.mode-check svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 3; }
+
 	.urltest-block {
 		display: flex;
 		flex-direction: column;

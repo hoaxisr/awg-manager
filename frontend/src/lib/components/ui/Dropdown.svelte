@@ -13,6 +13,7 @@
 
 <script lang="ts" generics="T extends string = string">
   import { onDestroy, tick } from 'svelte';
+  import { ChevronDown, Check } from 'lucide-svelte';
 
   interface Props {
     value?: T;
@@ -276,7 +277,7 @@
         {/if}
       </span>
       <span class="chevron" class:rotated={open} aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        <ChevronDown size={16} />
       </span>
     </button>
 
@@ -328,7 +329,7 @@
             </span>
             {#if isSelected}
               <span class="option-check" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                <Check size={14} strokeWidth={2.5} />
               </span>
             {/if}
           </button>
@@ -440,7 +441,6 @@
   .chevron.rotated {
     transform: rotate(180deg);
   }
-  .chevron svg { width: 16px; height: 16px; }
 
   /* Panel is portaled to <body> with position: fixed, so it escapes any
      ancestor overflow clipping (modal body, side drawer, etc). The
@@ -540,7 +540,7 @@
     color: var(--color-accent);
     flex-shrink: 0;
   }
-  :global(.dropdown-panel .option-check svg) { width: 14px; height: 14px; }
+
 
   :global(.dropdown-panel .group-label) {
     padding: 0.375rem 0.5rem 0.125rem;

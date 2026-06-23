@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
+	import { CircleAlert, X } from 'lucide-svelte';
 	import { settings, usageLevel } from '$lib/stores/settings';
 
 	const STORAGE_KEY_BASIC = 'awgm.welcomeBannerDismissed';
@@ -30,11 +31,7 @@
 {#if visibleBasic}
 	<div class="welcome-banner" role="status">
 		<div class="banner-icon" aria-hidden="true">
-			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-				<circle cx="12" cy="12" r="10" />
-				<line x1="12" y1="8" x2="12" y2="12" />
-				<circle cx="12" cy="16" r="0.8" fill="currentColor" />
-			</svg>
+			<CircleAlert size={20} />
 		</div>
 		<div class="banner-body">
 			<strong>Вы в Базовом режиме</strong>
@@ -50,10 +47,7 @@
 			aria-label="Скрыть подсказку"
 			onclick={dismissBasic}
 		>
-			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-				<line x1="18" y1="6" x2="6" y2="18" />
-				<line x1="6" y1="6" x2="18" y2="18" />
-			</svg>
+			<X size={16} />
 		</button>
 	</div>
 {/if}
@@ -61,11 +55,7 @@
 {#if visibleAdvanced}
 	<div class="welcome-banner" role="status">
 		<div class="banner-icon" aria-hidden="true">
-			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-				<circle cx="12" cy="12" r="10" />
-				<line x1="12" y1="8" x2="12" y2="12" />
-				<circle cx="12" cy="16" r="0.8" fill="currentColor" />
-			</svg>
+			<CircleAlert size={20} />
 		</div>
 		<div class="banner-body">
 			<strong>Вы в Расширенном режиме</strong>
@@ -81,10 +71,7 @@
 			aria-label="Скрыть подсказку"
 			onclick={dismissAdvanced}
 		>
-			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-				<line x1="18" y1="6" x2="6" y2="18" />
-				<line x1="6" y1="6" x2="18" y2="18" />
-			</svg>
+			<X size={16} />
 		</button>
 	</div>
 {/if}
@@ -104,10 +91,6 @@
 	.banner-icon {
 		flex-shrink: 0;
 		color: var(--color-info, var(--color-accent));
-	}
-	.banner-icon svg {
-		width: 20px;
-		height: 20px;
 	}
 	.banner-body {
 		flex: 1;
@@ -137,9 +120,5 @@
 	.banner-close:hover {
 		color: var(--color-text-primary);
 		background: var(--color-bg-hover);
-	}
-	.banner-close svg {
-		width: 16px;
-		height: 16px;
 	}
 </style>

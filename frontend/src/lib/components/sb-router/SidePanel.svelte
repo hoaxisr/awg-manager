@@ -4,6 +4,7 @@
 
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import { ChevronDown } from 'lucide-svelte';
   import { Button } from '$lib/components/ui';
   import {
     expertPanelCollapse,
@@ -50,17 +51,9 @@
           aria-expanded={!collapsed}
           aria-label={collapsed ? `Развернуть «${title}»` : `Свернуть «${title}»`}
         >
-          <svg
-            class="collapse-chevron"
-            class:open={!collapsed}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            aria-hidden="true"
-          >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
+          <span class="collapse-chevron" class:open={!collapsed}>
+            <ChevronDown size={14} aria-hidden={true} />
+          </span>
         </button>
       {/if}
       <button
@@ -138,8 +131,8 @@
     background: var(--bg-secondary);
   }
   .collapse-chevron {
-    width: 14px;
-    height: 14px;
+    display: inline-flex;
+    align-items: center;
     transition: transform 0.15s ease;
     transform: rotate(-90deg);
   }

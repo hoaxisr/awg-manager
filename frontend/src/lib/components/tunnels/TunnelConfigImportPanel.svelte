@@ -6,6 +6,7 @@
 		getVpnPastePresentation,
 		PREMIUM_VPN_KEY_STORAGE
 	} from '$lib/utils/amneziaPremiumVpnPaste';
+	import { Upload, Clipboard, Crown, Link, Check } from 'lucide-svelte';
 
 	export type TunnelImportTab = 'file' | 'paste' | 'vpn';
 
@@ -106,11 +107,7 @@
 			class:tab-active={activeTab === 'file'}
 			onclick={() => (activeTab = 'file')}
 		>
-			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-				<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-				<polyline points="17 8 12 3 7 8"/>
-				<line x1="12" y1="3" x2="12" y2="15"/>
-			</svg>
+			<Upload size={16} />
 			{variant === 'page' ? 'Загрузить файл' : 'Файл'}
 		</button>
 		<button
@@ -119,22 +116,14 @@
 			class:tab-active={activeTab === 'paste'}
 			onclick={() => (activeTab = 'paste')}
 		>
-			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-				<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
-				<rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
-			</svg>
+			<Clipboard size={16} />
 			Вставить текст
 		</button>
 		<button type="button" class="tab" class:tab-active={activeTab === 'vpn'} onclick={activateVpnTab}>
 			{#if vpnPastePresentation.kind === 'premium'}
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" aria-hidden="true">
-					<path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.078 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z" />
-				</svg>
+				<Crown size={16} aria-hidden="true" />
 			{:else}
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" aria-hidden="true">
-					<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-					<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-				</svg>
+				<Link size={16} aria-hidden="true" />
 			{/if}
 			{vpnPastePresentation.label}
 		</button>
@@ -163,9 +152,7 @@
 				>
 				{#if importContent.trim()}
 					<div class="drop-content">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width={variant === 'page' ? 48 : 36} height={variant === 'page' ? 48 : 36}>
-							<polyline points="20 6 9 17 4 12"/>
-						</svg>
+						<Check size={variant === 'page' ? 48 : 36} strokeWidth={1.5} style="flex-shrink:0; color:var(--import-success)" />
 						<div class="drop-text">
 							<p class="drop-title">Файл загружен</p>
 							<p class="drop-hint">Нажмите чтобы заменить</p>
@@ -173,11 +160,7 @@
 					</div>
 				{:else}
 					<div class="drop-content">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width={variant === 'page' ? 48 : 36} height={variant === 'page' ? 48 : 36}>
-							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-							<polyline points="17 8 12 3 7 8"/>
-							<line x1="12" y1="3" x2="12" y2="15"/>
-						</svg>
+						<Upload size={variant === 'page' ? 48 : 36} strokeWidth={1.5} style="flex-shrink:0; color:var(--import-text-muted)" />
 						<div class="drop-text">
 							<p class="drop-title">Перетащите .conf файл сюда</p>
 							<p class="drop-hint">или нажмите для выбора</p>
@@ -298,10 +281,6 @@
 		border-style: solid;
 	}
 
-	.file-drop-zone.has-content svg {
-		color: var(--import-success);
-	}
-
 	.drop-content {
 		display: flex;
 		align-items: center;
@@ -310,11 +289,6 @@
 
 	.import-panel--modal .drop-content {
 		--import-drop-gap: 12px;
-	}
-
-	.drop-content svg {
-		color: var(--import-text-muted);
-		flex-shrink: 0;
 	}
 
 	.drop-title {

@@ -343,7 +343,7 @@ function fallbackTitle(
   if (rule.domain_suffix?.length) return rule.domain_suffix[0];
   if (rule.ip_cidr?.length) return rule.ip_cidr[0];
   if (rule.rule_set?.length) return displayRuleSetTag(rule.rule_set[0]);
-  return `Правило #${index + 1}`;
+  return `Правило #${index}`;
 }
 
 /* ─── Subtitle (system rules show technical detail per design) ─────── */

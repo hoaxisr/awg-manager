@@ -882,7 +882,7 @@ export interface DeviceProxyInstance extends DeviceProxyConfig {
 	name: string;
 }
 
-export type DeviceProxyOutboundKind = 'direct' | 'singbox' | 'subscription' | 'awg';
+export type DeviceProxyOutboundKind = 'direct' | 'singbox' | 'subscription' | 'awg' | 'router';
 
 export interface DeviceProxyOutbound {
 	tag: string;
@@ -1281,12 +1281,6 @@ export interface MonitoringSnapshot {
 	tunnels: MonitoringTunnel[];
 	cells: MonitoringCell[];
 	updatedAt: string;
-}
-
-export interface MonitoringSample {
-	ts: string;
-	latencyMs: number | null;
-	ok: boolean;
 }
 
 // #endregion
@@ -1740,6 +1734,17 @@ export interface SubscriptionMember {
 	security?: string;
 }
 
+export interface SubscriptionPreviewMember {
+	key: string; // identity-суффикс (subID-независимый) для исключения при создании
+	label?: string;
+	protocol: string;
+	server: string;
+	port: number;
+	sni?: string;
+	transport?: string;
+	security?: string;
+}
+
 export type SubscriptionMode = 'selector' | 'urltest';
 
 export interface SubscriptionURLTest {
@@ -1792,6 +1797,8 @@ export interface Subscription {
 	enabled: boolean;
 	mode: SubscriptionMode;
 	urlTest?: SubscriptionURLTest;
+	excludedTags?: string[];
+	excludedMembers?: SubscriptionMember[];
 }
 
 export interface SubscriptionRefreshResult {
@@ -1818,6 +1825,7 @@ export interface CreateSubscriptionInput {
 	enabled: boolean;
 	mode?: SubscriptionMode;
 	urlTest?: SubscriptionURLTest;
+	excludedKeys?: string[];
 }
 
 export interface UpdateSubscriptionInput {

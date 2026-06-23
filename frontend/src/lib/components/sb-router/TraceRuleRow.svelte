@@ -4,6 +4,7 @@
 -->
 
 <script lang="ts">
+  import { Check } from 'lucide-svelte';
   import type { SingboxRouterInspectMatch } from '$lib/types';
 
   interface Props {
@@ -13,7 +14,7 @@
   }
   let { match, winner = false }: Props = $props();
 
-  let indexStr = $derived(`#${String(match.index + 1).padStart(2, '0')}`);
+  let indexStr = $derived(`#${String(match.index).padStart(2, '0')}`);
   let actionLabel = $derived.by(() => {
     if (match.action === 'route' && match.outbound) return `→ ${match.outbound}`;
     if (match.action === 'reject') return '✕ заблокировать';
@@ -29,9 +30,7 @@
     <div class="head">
       <span class="action">{actionLabel}</span>
       {#if match.matched}
-        <svg class="check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
+        <Check class="check" size={14} strokeWidth={2.5} aria-hidden={true} />
       {/if}
     </div>
     {#if match.conditions && match.conditions.length > 0}
@@ -95,7 +94,7 @@
     color: var(--text-primary);
     font-family: var(--font-mono);
   }
-  .row.is-matched .check { color: var(--success); }
+  .row.is-matched :global(.check) { color: var(--success); }
 
   .conditions {
     display: flex;

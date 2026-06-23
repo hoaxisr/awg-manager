@@ -180,6 +180,55 @@ func (a *deviceproxySubscriptionOutboundsAdapter) ListDeviceProxyOutbounds() []d
 	return out
 }
 
+// deviceproxyRouterOutboundsAdapter adapts *router.ServiceImpl to the
+// deviceproxy.RouterOutboundsCatalog interface, exposing router-defined
+// outbounds (20-router.json) as device-proxy targets. Only Source=="router"
+// entries are returned (subscription composites are surfaced separately via
+// SubscriptionOutboundsCatalog). Directs that stripAutoManagedDirect removes
+// from the effective config are hidden — they are not selectable.
+type deviceproxyRouterOutboundsAdapter struct {
+	src *router.ServiceImpl
+}
+
+func (a *deviceproxyRouterOutboundsAdapter) ListDeviceProxyRouterOutbounds() []deviceproxy.RouterOutboundInfo {
+	if a == nil || a.src == nil {
+		return nil
+	}
+	views, err := a.src.ListCompositeOutbounds(context.Background())
+	if err != nil {
+		return nil
+	}
+	out := make([]deviceproxy.RouterOutboundInfo, 0, len(views))
+	for _, v := range views {
+		if v.Source != "router" {
+			continue
+		}
+		o := v.Outbound
+		if o.Type == "direct" && o.BindInterface != "" && router.IsStrippedDirectBind(o.BindInterface) {
+			continue // не попадёт в эффективный конфиг → невыбираемо
+		}
+		detail := ""
+		if o.Type == "direct" {
+			if o.BindInterface != "" {
+				detail = "direct · " + o.BindInterface
+			} else {
+				detail = "direct"
+			}
+		} else {
+			detail = fmt.Sprintf("%s · %d", o.Type, len(o.Outbounds))
+		}
+		out = append(out, deviceproxy.RouterOutboundInfo{
+			Tag:    o.Tag,
+			Label:  o.Tag,
+			Detail: detail,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Label < out[j].Label
+	})
+	return out
+}
+
 func main() {
 	dataDir := flag.String("data-dir", defaultDataDir, "Data directory path")
 	showVersion := flag.Bool("version", false, "Show version and exit")
@@ -1106,6 +1155,7 @@ func main() {
 	srv.SetNDMSSaveCoordinator(ndmsSaveCoord)
 	srv.SetMetricsPoller(ndmsMetricsPoller)
 
+	bindableAdapter := &routerWANInterfaceAdapter{store: ndmsQueries.Interfaces, nativeProxies: singboxOp.ListNativeProxies}
 	routerSvc := router.NewService(router.Deps{
 		AppLog:                 loggingService,
 		Settings:               settingsStore,
@@ -1118,7 +1168,7 @@ func main() {
 		SubscriptionComposites: router.NewSubscriptionCompositesAdapter(subAdapter),
 		Orch:                   sbOrch,
 		WANInterfaces:          &routerWANInterfaceAdapter{store: ndmsQueries.Interfaces},
-		BindableInterfaces:     &routerWANInterfaceAdapter{store: ndmsQueries.Interfaces},
+		BindableInterfaces:     bindableAdapter,
 		IngressResolver:        &routerIngressResolverAdapter{store: ndmsQueries.Interfaces},
 		PresetCatalog:          presetCatalog,
 		GeoData:                geoDataStore,
@@ -1134,11 +1184,27 @@ func main() {
 			return p
 		}(),
 	})
+	// Exclude interfaces already bound by an existing direct outbound from the
+	// bindable picker (#323). Wired post-construction — needs routerSvc.
+	bindableAdapter.occupiedBinds = func(ctx context.Context) (map[string]bool, error) {
+		obs, err := routerSvc.ListCompositeOutbounds(ctx)
+		if err != nil {
+			return nil, err
+		}
+		set := make(map[string]bool)
+		for _, o := range obs {
+			if o.Type == "direct" && o.BindInterface != "" {
+				set[o.BindInterface] = true
+			}
+		}
+		return set, nil
+	}
 	singboxOp.SetOutboundReferenceRenamer(routerSvc)
 	tunnelService.SetAWGSyncer(awgoutboundsSvc)
 	tunnelService.SetDeviceProxyRefChecker(deviceProxySvc)
 	tunnelService.SetRouterRefChecker(routerSvc)
 	singboxHandler.SetOutboundRefCheckers(deviceProxySvc, routerSvc)
+	deviceProxySvc.SetRouterOutbounds(&deviceproxyRouterOutboundsAdapter{src: routerSvc})
 	routerStartupLog := logging.NewScopedLogger(loggingService, logging.GroupRouting, logging.SubSingboxRouter)
 	go func() {
 		// Startup-only: reap a fakeip OpkgTun orphaned by a crash/incomplete
@@ -1163,7 +1229,9 @@ func main() {
 	monitoringService.SetClashState(monitoring.NewClashState(clashProxy.ClashBaseURL, nil))
 	monitoringService.SetSingboxDelay(singboxOp.Clash())
 
-	srv.SetSingboxRouterHandler(api.NewSingboxRouterHandler(routerSvc, loggingService))
+	singboxRouterHandler := api.NewSingboxRouterHandler(routerSvc, loggingService)
+	singboxRouterHandler.SetOutboundRefCheckers(deviceProxySvc, routerSvc)
+	srv.SetSingboxRouterHandler(singboxRouterHandler)
 	srv.SetSingboxFakeIPConfigHandler(api.NewSingboxFakeIPConfigHandler(routerSvc, loggingService))
 	srv.SetAWGOutboundsHandler(api.NewAWGOutboundsHandler(awgoutboundsSvc))
 	srv.SetSingboxConfigHandler(api.NewSingboxConfigHandler(sbOrch.ConfigDir))

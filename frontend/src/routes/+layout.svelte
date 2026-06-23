@@ -34,6 +34,7 @@
 	import { donateModalOpen, openDonateModal, closeDonateModal } from '$lib/stores/donateModal';
 	import { outboundReferenced } from '$lib/stores/outboundReferenced';
 	import TunnelReferencedModal from '$lib/components/tunnels/TunnelReferencedModal.svelte';
+	import { TriangleAlert } from 'lucide-svelte';
 	import DevelopFeedbackFab from '$lib/components/layout/DevelopFeedbackFab.svelte';
 	import {
 		isSectionVisible,
@@ -373,11 +374,7 @@
 
 {#if backendOffline}
 	<div class="offline-screen">
-		<svg class="offline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-			<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-			<line x1="12" y1="9" x2="12" y2="13"/>
-			<circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/>
-		</svg>
+		<TriangleAlert class="offline-icon" size={48} aria-hidden="true" />
 		<h2 class="offline-title">Сервер недоступен</h2>
 		<p class="offline-status">Не удалось подключиться к AWG Manager</p>
 		<div class="offline-spinner"></div>
@@ -533,9 +530,7 @@
 		gap: 0.75rem;
 	}
 
-	.offline-icon {
-		width: 48px;
-		height: 48px;
+	:global(.offline-icon) {
 		color: var(--warning, #f59e0b);
 	}
 

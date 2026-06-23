@@ -260,6 +260,11 @@ func (s *Scheduler) RunOnce(ctx context.Context) {
 	for _, target := range targets {
 		for _, tun := range tunnels {
 			isSelf := tun.SelfTarget != "" && tun.SelfTarget == target.Host
+			// Cross-target probing was removed with the matrix UI; probe
+			// only each tunnel's own self-cell.
+			if !isSelf {
+				continue
+			}
 			// Skip cells the user explicitly disabled (handshake/disabled
 			// methods don't probe a host) — those tunnels still get base-
 			// target rows for visibility.

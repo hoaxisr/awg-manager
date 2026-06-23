@@ -4,6 +4,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { FormToggle, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import type { SpeedTestInfo, SpeedTestResult } from '$lib/types';
+	import { Zap, CircleAlert, CircleX, Check } from 'lucide-svelte';
 
 	interface Props {
 		tunnelId: string;
@@ -154,9 +155,7 @@
 
 <div class="card test-card">
 	<h3 class="card-title">
-		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-			<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-		</svg>
+		<Zap size={20} />
 		Тест скорости
 	</h3>
 
@@ -166,11 +165,7 @@
 		</div>
 	{:else if !speedTestInfo?.available}
 		<p class="test-desc unavailable">
-			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-				<circle cx="12" cy="12" r="10"/>
-				<line x1="12" y1="8" x2="12" y2="12"/>
-				<circle cx="12" cy="16" r="0.8" fill="currentColor" stroke="none"/>
-			</svg>
+			<CircleAlert size={16} style="flex-shrink:0; margin-top:1px" />
 			iperf3 не найден. Доступно только на NDMS 5.x.
 		</p>
 	{:else}
@@ -236,9 +231,7 @@
 			<div class="test-result">
 				<div class="progress-steps">
 					<div class="step completed">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14">
-							<polyline points="20 6 9 17 4 12"/>
-						</svg>
+						<Check size={14} strokeWidth={2.5} />
 						<span>Загрузка: <strong>{downloadResult ? formatBandwidth(downloadResult.bandwidth) : '–'}</strong> Мбит/с</span>
 					</div>
 					<div class="step active">
@@ -289,11 +282,7 @@
 			</div>
 		{:else if speedPhase === 'error'}
 			<div class="test-result error-panel">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-					<circle cx="12" cy="12" r="10"/>
-					<line x1="15" y1="9" x2="9" y2="15"/>
-					<line x1="9" y1="9" x2="15" y2="15"/>
-				</svg>
+				<CircleX size={18} style="flex-shrink:0; margin-top:1px" />
 				<span>{speedError}</span>
 			</div>
 		{/if}
@@ -355,11 +344,6 @@
 		padding: 0.75rem;
 		background: var(--bg-tertiary);
 		border-radius: var(--radius-sm);
-	}
-
-	.unavailable svg {
-		flex-shrink: 0;
-		margin-top: 1px;
 	}
 
 	/* Server selection section */
@@ -560,11 +544,6 @@
 		color: var(--error);
 		font-size: 0.875rem;
 		line-height: 1.4;
-	}
-
-	.error-panel svg {
-		flex-shrink: 0;
-		margin-top: 1px;
 	}
 
 	.card-spacer {

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { SingboxDelayState } from '$lib/utils/singboxDelay';
+	import { latencyTier } from '$lib/utils/latencyTier';
 
 	interface Props {
 		history: number[];
@@ -8,6 +9,7 @@
 		layout?: 'list' | 'dense' | 'compact';
 		onclick?: () => void;
 		title?: string;
+		colorPerBar?: boolean;
 	}
 
 	let {
@@ -17,6 +19,7 @@
 		layout,
 		onclick,
 		title = 'Клик — обновить delay',
+		colorPerBar = false,
 	}: Props = $props();
 
 	const max = $derived(
@@ -47,7 +50,12 @@
 		{/each}
 	{:else}
 		{#each bars as d, i (i)}
-			<div class="bar" style="height: {Math.max((d <= 0 ? max : d) / max, 0.08) * 100}%;"></div>
+			<div
+				class="bar"
+				class:fail={colorPerBar && (d <= 0 || latencyTier(d) === 'error')}
+				class:slow={colorPerBar && d > 0 && latencyTier(d) === 'warning'}
+				style="height: {Math.max((d <= 0 ? max : d) / max, 0.08) * 100}%;"
+			></div>
 		{/each}
 	{/if}
 </div>

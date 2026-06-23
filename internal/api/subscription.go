@@ -78,11 +78,18 @@ func (h *SubscriptionHandler) ndmsProxyEnabled() bool {
 // frontend can surface a "your subscription has invalid outbound(s)"
 // banner instead of a generic 500. Other errors fall through to 500.
 func (h *SubscriptionHandler) respondServiceError(w http.ResponseWriter, err error) {
-	if errors.Is(err, subscription.ErrValidation) {
+	switch {
+	case errors.Is(err, subscription.ErrValidation):
 		response.ErrorWithStatus(w, http.StatusUnprocessableEntity, err.Error(), "VALIDATION_FAILED")
-		return
+	case errors.Is(err, subscription.ErrExcludeOnInline):
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "EXCLUDE_ON_INLINE")
+	case errors.Is(err, subscription.ErrAllMembersExcluded):
+		response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "ALL_MEMBERS_EXCLUDED")
+	case errors.Is(err, subscription.ErrMemberNotFound):
+		response.ErrorWithStatus(w, http.StatusNotFound, err.Error(), "MEMBER_NOT_FOUND")
+	default:
+		response.InternalError(w, err.Error())
 	}
-	response.InternalError(w, err.Error())
 }
 
 // SubscriptionMemberDTO carries per-member parsed metadata for the UI.
@@ -133,6 +140,8 @@ type SubscriptionDTO struct {
 	RejectedMembers   []SubscriptionRejectedDTO   `json:"rejectedMembers"`
 	InfoItems         []SubscriptionInfoItemDTO   `json:"infoItems"`
 	ActiveMember      string                      `json:"activeMember" example:"sub-demo-001"`
+	ExcludedTags      []string                    `json:"excludedTags"`
+	ExcludedMembers   []SubscriptionMemberDTO     `json:"excludedMembers,omitempty"`
 	Enabled      bool                    `json:"enabled" example:"true"`
 	Mode         string                  `json:"mode" example:"selector"`
 	URLTest      *SubscriptionURLTestDTO `json:"urlTest,omitempty"`
@@ -167,6 +176,7 @@ type CreateSubscriptionRequest struct {
 	Enabled      bool                    `json:"enabled" example:"true"`
 	Mode         string                  `json:"mode,omitempty"` // "selector" (default) | "urltest"
 	URLTest      *SubscriptionURLTestDTO `json:"urlTest,omitempty"`
+	ExcludedKeys []string                `json:"excludedKeys,omitempty"` // identity-суффиксы серверов, снятых в import-preview
 }
 
 // UpdateSubscriptionRequest is the body for PUT /api/singbox/subscriptions/update.
@@ -241,6 +251,25 @@ type RemoveMemberResponseData struct {
 	Subscription *SubscriptionDTO `json:"subscription,omitempty"`
 }
 
+// ExcludeMembersRequest is the body for POST /api/singbox/subscriptions/members/exclude.
+// Excluding members is only allowed on URL-backed subscriptions and is reversible
+// via restore.
+type ExcludeMembersRequest struct {
+	MemberTags []string `json:"memberTags" example:"sub-demo-002,sub-demo-003"`
+}
+
+// RestoreMembersRequest is the body for POST /api/singbox/subscriptions/members/restore.
+type RestoreMembersRequest struct {
+	MemberTags []string `json:"memberTags" example:"sub-demo-002"`
+}
+
+// PreviewURLRequest is the body for POST /api/singbox/subscriptions/preview.
+// Read-only fetch + parse of a subscription URL without creating anything.
+type PreviewURLRequest struct {
+	URL     string               `json:"url" example:"https://example.com/subscriptions/demo.txt"`
+	Headers []SubscriptionHeader `json:"headers"`
+}
+
 // toDTO converts a domain Subscription to its API representation.
 // ndmsProxyEnabled gates ProxyIndex: when false the field is surfaced
 // as -1 to match the rest of the API contract (no NDMS Proxy → no
@@ -269,6 +298,17 @@ func toSubscriptionDTO(s subscription.Subscription, ndmsProxyEnabled bool) Subsc
 	memberDTOs := make([]SubscriptionMemberDTO, len(s.Members))
 	for i, m := range s.Members {
 		memberDTOs[i] = subscriptionMemberToDTO(m)
+	}
+	excludedTags := s.ExcludedTags
+	if excludedTags == nil {
+		excludedTags = []string{}
+	}
+	var excludedMemberDTOs []SubscriptionMemberDTO
+	if len(s.ExcludedMembers) > 0 {
+		excludedMemberDTOs = make([]SubscriptionMemberDTO, len(s.ExcludedMembers))
+		for i, m := range s.ExcludedMembers {
+			excludedMemberDTOs[i] = subscriptionMemberToDTO(m)
+		}
 	}
 	mode := string(s.EffectiveMode())
 	var urltest *SubscriptionURLTestDTO
@@ -303,6 +343,8 @@ func toSubscriptionDTO(s subscription.Subscription, ndmsProxyEnabled bool) Subsc
 		RejectedMembers:   rejected,
 		InfoItems:         info,
 		ActiveMember:      s.ActiveMember,
+		ExcludedTags:      excludedTags,
+		ExcludedMembers:   excludedMemberDTOs,
 		Enabled:      s.Enabled,
 		Mode:         mode,
 		URLTest:      urltest,
@@ -574,6 +616,7 @@ func (h *SubscriptionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Enabled:      req.Enabled,
 		Mode:         mode,
 		URLTest:      urlTestDTOToConfig(req.URLTest),
+		ExcludedKeys: req.ExcludedKeys,
 	}
 	sub, err := h.svc.Create(r.Context(), in)
 	if err != nil {
@@ -1083,4 +1126,119 @@ func (h *SubscriptionHandler) RemoveMember(w http.ResponseWriter, r *http.Reques
 		resp.Subscription = &dto
 	}
 	response.Success(w, resp)
+}
+
+// ExcludeMembers handles POST /api/singbox/subscriptions/members/exclude?id=
+//
+//	@Summary		Exclude members from a URL subscription
+//	@Description	Marks the given member tags as excluded: rebuilds the
+//	@Description	selector without them, drops their outbounds and survives
+//	@Description	refresh. Reversible via restore. URL subscriptions only.
+//	@Tags			subscriptions
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		query		string					true	"Subscription ID"
+//	@Param			body	body		ExcludeMembersRequest	true	"Member tags to exclude"
+//	@Success		200		{object}	SubscriptionResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		404		{object}	APIErrorEnvelope
+//	@Failure		409		{object}	APIErrorEnvelope	"excluding all members is not allowed"
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/singbox/subscriptions/members/exclude [post]
+func (h *SubscriptionHandler) ExcludeMembers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "id required", "MISSING_ID")
+		return
+	}
+	h.log.Info("subscription-member-exclude", id, "requested via API")
+	var req ExcludeMembersRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "bad request body", "INVALID_JSON")
+		return
+	}
+	sub, err := h.svc.ExcludeMembers(r.Context(), id, req.MemberTags)
+	if err != nil {
+		h.respondServiceError(w, err)
+		return
+	}
+	response.Success(w, toSubscriptionDTO(*sub, h.ndmsProxyEnabled()))
+}
+
+// RestoreMembers handles POST /api/singbox/subscriptions/members/restore?id=
+//
+//	@Summary		Restore previously excluded members
+//	@Description	Removes the given tags from the exclusion set and runs a
+//	@Description	refresh, re-materializing the returned servers.
+//	@Tags			subscriptions
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		query		string					true	"Subscription ID"
+//	@Param			body	body		RestoreMembersRequest	true	"Member tags to restore"
+//	@Success		200		{object}	SubscriptionResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		404		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/singbox/subscriptions/members/restore [post]
+func (h *SubscriptionHandler) RestoreMembers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "id required", "MISSING_ID")
+		return
+	}
+	h.log.Info("subscription-member-restore", id, "requested via API")
+	var req RestoreMembersRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "bad request body", "INVALID_JSON")
+		return
+	}
+	sub, err := h.svc.RestoreMembers(r.Context(), id, req.MemberTags)
+	if err != nil {
+		h.respondServiceError(w, err)
+		return
+	}
+	response.Success(w, toSubscriptionDTO(*sub, h.ndmsProxyEnabled()))
+}
+
+// PreviewURL handles POST /api/singbox/subscriptions/preview
+//
+//	@Summary		Preview a subscription URL without creating it
+//	@Description	Read-only fetch + parse of a subscription URL. Returns the
+//	@Description	parsed members (with subID-independent keys) so the import
+//	@Description	wizard can offer per-server exclusion before creation.
+//	@Tags			subscriptions
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		PreviewURLRequest	true	"URL and optional headers"
+//	@Success		200		{object}	APIEnvelope
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		502		{object}	APIErrorEnvelope	"fetch or parse failed"
+//	@Router			/singbox/subscriptions/preview [post]
+func (h *SubscriptionHandler) PreviewURL(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	var req PreviewURLRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "bad request body", "INVALID_JSON")
+		return
+	}
+	members, err := h.svc.PreviewURL(r.Context(), req.URL, fromSubscriptionHeaders(req.Headers))
+	if err != nil {
+		response.ErrorWithStatus(w, http.StatusBadGateway, err.Error(), "PREVIEW_FAILED")
+		return
+	}
+	response.Success(w, members)
 }

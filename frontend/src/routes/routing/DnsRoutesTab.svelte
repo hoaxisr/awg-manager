@@ -1,5 +1,6 @@
 <script lang="ts">
     import { api } from '$lib/api/client';
+    import { Globe, LayoutGrid, Upload } from 'lucide-svelte';
     import type { DnsRoute, RoutingTunnel, CatalogPreset } from '$lib/types';
     import { ConfirmModal, StoreStatusBadge, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
     import {
@@ -408,25 +409,21 @@
 {:else if dnsRoutes.length === 0}
     <div class="empty-state-rich">
         <div class="empty-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="2" y1="12" x2="22" y2="12"/>
-                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-            </svg>
+            <Globe size={24} strokeWidth={1.5} />
         </div>
         <div class="empty-title">DNS-маршрутов пока нет</div>
         <div class="empty-desc">Выберите сервисы из каталога или создайте правило вручную</div>
         <div class="empty-actions">
             <Button variant="primary" disabled={bodyLoading} onclick={() => dnsPresetOpen = true}>
                 {#snippet iconBefore()}
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                    <LayoutGrid size={14} />
                 {/snippet}
                 Из каталога
             </Button>
             <Button variant="secondary" disabled={bodyLoading} onclick={() => { editingDnsRoute = null; dnsModalOpen = true; }}>+ Создать вручную</Button>
             <Button variant="ghost" disabled={bodyLoading} onclick={() => dnsImportOpen = true}>
                 {#snippet iconBefore()}
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    <Upload size={14} />
                 {/snippet}
                 Загрузить конфигурацию
             </Button>

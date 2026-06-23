@@ -2,6 +2,7 @@
     import { untrack } from 'svelte';
     import { goto } from '$app/navigation';
     import { page } from '$app/stores';
+    import { ChevronDown } from 'lucide-svelte';
 
     interface Tab {
         id: string;
@@ -246,9 +247,7 @@
                     onclick={() => dropdownOpen = !dropdownOpen}
                 >
                     +{overflowTabs.length}
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M6 9l6 6 6-6"/>
-                    </svg>
+                    <ChevronDown size={14} strokeWidth={2.5} style="transition: transform 0.15s;" />
                 </button>
 
                 {#if dropdownOpen}
@@ -420,12 +419,6 @@
 
     .more-chip.has-active {
         border-bottom-color: var(--accent);
-    }
-
-    .more-chip svg {
-        width: 14px;
-        height: 14px;
-        transition: transform 0.15s;
     }
 
     /* ─── Dropdown ─── */

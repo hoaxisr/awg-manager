@@ -53,8 +53,18 @@ func (s *Store) Load() (*StoreData, error) {
 	normalizeLists(data.Lists)
 	migrateLegacyExcludes(&data)
 	migrateRawEditorText(&data)
+	dropped := dropLegacyHRRows(&data)
 
 	s.data = &data
+	if dropped > 0 {
+		// Persist the cleanup so the file itself is cleaned, not just the
+		// in-memory cache. Best-effort: on write error the cache is already
+		// clean and the next Save() rewrites disk — failing startup over
+		// inert-row cleanup would be worse. (Store has no logger.)
+		// ponytail: swallow write error here; next real Save() surfaces a
+		// persistent disk problem.
+		_ = s.writeLocked(&data)
+	}
 	return s.data, nil
 }
 
@@ -127,22 +137,46 @@ func migrateRawEditorText(data *StoreData) {
 	}
 }
 
-// Save writes domain list data to disk atomically.
-func (s *Store) Save(data *StoreData) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+// writeLocked marshals and atomically writes data, updating the cache.
+// Caller MUST already hold s.mu.
+func (s *Store) writeLocked(data *StoreData) error {
 	raw, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal dns-routes: %w", err)
 	}
-
 	if err := storage.AtomicWrite(s.path, raw); err != nil {
 		return fmt.Errorf("write dns-routes file: %w", err)
 	}
-
 	s.data = data
 	return nil
+}
+
+// dropLegacyHRRows removes HydraRoute-backed rows from data.Lists. HR rules
+// live in HR config files (source of truth); any hydraroute-backed row left in
+// dns-routes.json is a legacy leftover — hidden from List(), never reconciled,
+// and only pollutes the dedup index. Returns how many rows were removed.
+func dropLegacyHRRows(data *StoreData) int {
+	if data == nil || len(data.Lists) == 0 {
+		return 0
+	}
+	kept := data.Lists[:0]
+	removed := 0
+	for _, l := range data.Lists {
+		if isHydraRoute(l.Backend) {
+			removed++
+			continue
+		}
+		kept = append(kept, l)
+	}
+	data.Lists = kept
+	return removed
+}
+
+// Save writes domain list data to disk atomically.
+func (s *Store) Save(data *StoreData) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.writeLocked(data)
 }
 
 // GetCached returns cached data with read lock. Returns nil if not loaded yet.

@@ -2,6 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import type { Snippet } from 'svelte';
 	import IconButton from './IconButton.svelte';
+	import { X } from 'lucide-svelte';
 
 	interface Props {
 		open: boolean;
@@ -96,9 +97,7 @@
 			<h3>{title}</h3>
 			<span class="drawer-close">
 				<IconButton ariaLabel="Закрыть" onclick={onClose}>
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-						<path d="M18 6L6 18M6 6l12 12" />
-					</svg>
+					<X size={16} aria-hidden="true" />
 				</IconButton>
 			</span>
 		</header>

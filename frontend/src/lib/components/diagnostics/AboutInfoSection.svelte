@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Copy } from 'lucide-svelte';
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { formatAboutSection, type AboutInfoRow } from '$lib/utils/about-device';
@@ -34,10 +35,7 @@
 				aria-label="Скопировать блок «{title}»"
 				title="Скопировать блок"
 			>
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-					<rect x="9" y="9" width="13" height="13" rx="2" />
-					<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-				</svg>
+				<Copy size={13} aria-hidden="true" />
 			</button>
 		</div>
 		{#if loading}
@@ -112,11 +110,7 @@
 		cursor: not-allowed;
 	}
 
-	.about-copy-btn svg {
-		width: 13px;
-		height: 13px;
-		display: block;
-	}
+
 
 	.about-loading {
 		font-size: 0.6875rem;

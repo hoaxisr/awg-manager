@@ -5,6 +5,7 @@
     import { Button } from '$lib/components/ui';
     import RoutingSearchResults from './RoutingSearchResults.svelte';
     import type { MatchedRule, ResolveMatch } from './types';
+    import { X, Search } from 'lucide-svelte';
 
     // Collect all CIDR entries from a DNS route, regardless of which bucket
     // they live in. On the router, `domains` and `subnets` are merged into a
@@ -307,18 +308,12 @@
         />
         {#if query}
             <button class="btn-clear" onclick={handleClear} title="Очистить">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                    <line x1="18" y1="6" x2="6" y2="18"/>
-                    <line x1="6" y1="6" x2="18" y2="18"/>
-                </svg>
+                <X size={16} aria-hidden="true" />
             </button>
         {/if}
         <Button variant="primary" size="sm" onclick={handleSearch} disabled={!query.trim()}>
             {#snippet iconBefore()}
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                    <circle cx="11" cy="11" r="8"/>
-                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                </svg>
+                <Search size={16} aria-hidden="true" />
             {/snippet}
             Поиск
         </Button>

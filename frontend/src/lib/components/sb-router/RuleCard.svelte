@@ -10,7 +10,7 @@
   import MatcherChip from './MatcherChip.svelte';
   import RuleOutboundAction from './RuleOutboundAction.svelte';
   import { Badge } from '$lib/components/ui';
-  import { Edit3, GripVertical, Trash2 } from 'lucide-svelte';
+  import { Edit3, GripVertical, Lock, Trash2 } from 'lucide-svelte';
   import { outboundDisplayTitle } from './outboundLabelFormat';
   import { COMPLEX_RULE_EDIT_MESSAGE } from './simpleRule';
 
@@ -45,7 +45,7 @@
   const MAX_CHIPS = 4;
   let visibleChips = $derived(card.matchers.slice(0, MAX_CHIPS));
   let hiddenCount = $derived(Math.max(0, card.matchers.length - MAX_CHIPS));
-  let orderStr = $derived(String(index + 1).padStart(2, '0'));
+  let orderStr = $derived(String(index).padStart(2, '0'));
   let useServiceTile = $derived(!card.isSystem);
   let editTip = $derived(actionTooltip('edit', card, index));
   let deleteTip = $derived(actionTooltip('delete', card, index));
@@ -148,10 +148,7 @@
       <!-- System rule: Lock icon -->
       <div class="generic-tile">
         <div class="icon-box is-system">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="3" y="11" width="18" height="11" rx="2" />
-            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-          </svg>
+          <Lock size={16} aria-hidden={true} />
         </div>
         <div class="text">
           <div class="title">{card.title}</div>

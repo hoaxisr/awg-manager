@@ -138,6 +138,33 @@ func (pm *ProxyManager) RemoveOrphanSingboxProxies(ctx context.Context, tunnelTa
 	return firstErr
 }
 
+// ListNativeProxies returns kernel names (e.g. "t2s0") of NDMS Proxy
+// interfaces NOT created by us — KeenOS-native SOCKS proxies the user may
+// bind a router direct outbound to (#323). Mirrors RemoveOrphanSingboxProxies'
+// enumeration but inverts the ownership test and resolves kernel names.
+func (pm *ProxyManager) ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, ourPortSlots, subProxyIdx map[int]bool) ([]string, error) {
+	ifaces, err := pm.queries.Interfaces.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list interfaces: %w", err)
+	}
+	var entries []proxyEntry
+	for _, iface := range ifaces {
+		if !strings.HasPrefix(iface.ID, proxyIfacePrefix) {
+			continue
+		}
+		var idx int
+		if n, e := fmt.Sscanf(iface.ID, proxyIfacePrefix+"%d", &idx); e != nil || n != 1 {
+			continue
+		}
+		kernel := pm.queries.Interfaces.ResolveSystemName(ctx, iface.ID)
+		if kernel == "" {
+			continue
+		}
+		entries = append(entries, proxyEntry{idx: idx, desc: iface.Description, kernel: kernel})
+	}
+	return nativeProxyKernelNames(entries, tunnelTags, ourPortSlots, subProxyIdx), nil
+}
+
 // SubscriptionProxy describes an NDMS ProxyN created for a subscription
 // composite (urltest/selector). These live in a separate managed set from
 // tunnel proxies (Tunnels()): their port and proxy index are allocated by the
@@ -167,6 +194,28 @@ func proxyIsOurs(idx int, desc string, tunnelTags map[string]bool, ourPortSlots,
 		return tunnelTags[desc]
 	}
 	return ourPortSlots[idx]
+}
+
+// proxyEntry is an NDMS Proxy interface candidate: NDMS slot index, NDMS
+// description, and resolved kernel name (e.g. "t2s0").
+type proxyEntry struct {
+	idx    int
+	desc   string
+	kernel string
+}
+
+// nativeProxyKernelNames returns kernel names of Proxy interfaces NOT created
+// by us — KeenOS-native SOCKS proxies the user may bind a router direct
+// outbound to (#323). Pure filter over proxyIsOurs; I/O lives in the caller.
+func nativeProxyKernelNames(proxies []proxyEntry, tunnelTags map[string]bool, ourPortSlots, subProxyIdx map[int]bool) []string {
+	var out []string
+	for _, p := range proxies {
+		if proxyIsOurs(p.idx, p.desc, tunnelTags, ourPortSlots, subProxyIdx) {
+			continue
+		}
+		out = append(out, p.kernel)
+	}
+	return out
 }
 
 // SyncProxies reconciles NDMS Proxy interfaces with current config.json tunnels.

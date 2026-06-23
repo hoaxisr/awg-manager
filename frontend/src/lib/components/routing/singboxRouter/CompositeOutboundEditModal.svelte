@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button, Dropdown, SegmentedControl, type DropdownOption } from '$lib/components/ui';
+	import { X } from 'lucide-svelte';
 	import type { SegmentedOption } from '$lib/components/ui/segmentedControl';
 	import SingboxSettingsModal from './SingboxSettingsModal.svelte';
 	import type { SingboxRouterOutbound, SingboxRouterWANInterface } from '$lib/types';
@@ -271,10 +272,7 @@
 										title="Удалить"
 										onclick={() => removeMember(m)}
 									>
-										<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-											<line x1="18" y1="6" x2="6" y2="18" />
-											<line x1="6" y1="6" x2="18" y2="18" />
-										</svg>
+										<X size={14} strokeWidth={2.5} aria-hidden="true" />
 									</button>
 								{/if}
 							</span>

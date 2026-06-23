@@ -8,6 +8,7 @@
 	import type { ThemeState } from '$lib/stores/theme';
 	import { isAppearanceSettingsVisible, isSectionVisible, type Section } from '$lib/types/usageLevel';
 	import { handleVersionBadgeClick } from '$lib/utils/versionBadgeEasterEgg';
+	import { Sun, Moon, Heart, LogOut, X, Menu, Terminal, ChevronRight } from 'lucide-svelte';
 
 	type NavItem = {
 		section: Section;
@@ -37,18 +38,9 @@
 			matches: (p) => p.startsWith('/routing'),
 		},
 		{
-			section: 'monitoring',
-			href: '/monitoring',
-			label: 'МОНИТОРИНГ',
-			matches: (p) =>
-				p.startsWith('/monitoring') ||
-				p.startsWith('/pingcheck') ||
-				p.startsWith('/connections'),
-		},
-		{
 			section: 'diagnostics',
 			href: '/diagnostics',
-			label: 'ДИАГНОСТИКА',
+			label: 'ИНСТРУМЕНТЫ',
 			matches: (p) => p.startsWith('/diagnostics') || p.startsWith('/logs'),
 		},
 		{
@@ -131,8 +123,7 @@
 			ТУННЕЛИ: 'Туннели',
 			СЕРВЕРЫ: 'Серверы',
 			МАРШРУТИЗАЦИЯ: 'Маршрутизация',
-			МОНИТОРИНГ: 'Мониторинг',
-			ДИАГНОСТИКА: 'Диагностика',
+			ИНСТРУМЕНТЫ: 'Инструменты',
 			НАСТРОЙКИ: 'Настройки',
 		};
 		return map[upperLabel] ?? upperLabel;
@@ -238,92 +229,29 @@
 
 			{#if authenticated && isSectionVisible($usageLevel, 'terminal')}
 				<IconButton ariaLabel="Терминал" href="/terminal">
-					<svg
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						aria-hidden="true"
-					>
-						<polyline points="4 17 10 11 4 5" />
-						<line x1="12" y1="19" x2="20" y2="19" />
-					</svg>
+					<Terminal size={16} aria-hidden="true" />
 				</IconButton>
 			{/if}
 
 			{#if isAppearanceSettingsVisible($usageLevel) && theme.preset !== 'custom'}
 				<IconButton ariaLabel={themeButtonLabel} onclick={onToggleThemeMode}>
 					{#if themeDisplayMode === 'dark'}
-						<svg
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							aria-hidden="true"
-						>
-							<circle cx="12" cy="12" r="5" />
-							<line x1="12" y1="1" x2="12" y2="3" />
-							<line x1="12" y1="21" x2="12" y2="23" />
-							<line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-							<line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-							<line x1="1" y1="12" x2="3" y2="12" />
-							<line x1="21" y1="12" x2="23" y2="12" />
-							<line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-							<line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-						</svg>
+						<Sun size={16} aria-hidden="true" />
 					{:else}
-						<svg
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							aria-hidden="true"
-						>
-							<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-						</svg>
+						<Moon size={16} aria-hidden="true" />
 					{/if}
 				</IconButton>
 			{/if}
 
 			{#if authenticated}
 				<IconButton variant="warm" ariaLabel="Поддержать проект" onclick={onOpenDonate}>
-					<svg
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						aria-hidden="true"
-					>
-						<path
-							d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"
-						/>
-					</svg>
+					<Heart size={16} aria-hidden="true" />
 				</IconButton>
 			{/if}
 
 			{#if authenticated && !authDisabled}
 				<IconButton variant="danger" ariaLabel="Выйти" onclick={onLogout}>
-					<svg
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						aria-hidden="true"
-					>
-						<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-						<polyline points="16 17 21 12 16 7" />
-						<line x1="21" y1="12" x2="9" y2="12" />
-					</svg>
+					<LogOut size={16} aria-hidden="true" />
 				</IconButton>
 			{/if}
 
@@ -336,32 +264,9 @@
 					aria-expanded={mobileMenuOpen}
 				>
 					{#if mobileMenuOpen}
-						<svg
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							aria-hidden="true"
-						>
-							<line x1="18" y1="6" x2="6" y2="18" />
-							<line x1="6" y1="6" x2="18" y2="18" />
-						</svg>
+						<X size={16} aria-hidden="true" />
 					{:else}
-						<svg
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							aria-hidden="true"
-						>
-							<line x1="3" y1="6" x2="21" y2="6" />
-							<line x1="3" y1="12" x2="21" y2="12" />
-							<line x1="3" y1="18" x2="21" y2="18" />
-						</svg>
+						<Menu size={16} aria-hidden="true" />
 					{/if}
 				</button>
 			{/if}
@@ -587,11 +492,6 @@
 	.hamburger:focus-visible {
 		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
-	}
-
-	.hamburger > :global(svg) {
-		width: 16px;
-		height: 16px;
 	}
 
 	.mobile-backdrop {

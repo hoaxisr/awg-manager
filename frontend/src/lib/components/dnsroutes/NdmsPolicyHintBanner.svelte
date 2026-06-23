@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { usageLevel } from '$lib/stores/settings';
+	import { TriangleAlert } from 'lucide-svelte';
 
 	interface Props {
 		/** NDMS dns-proxy tab is OS5-only; parent passes router capability. */
@@ -14,11 +15,7 @@
 {#if visible}
 	<div class="ndms-policy-hint" role="note">
 		<div class="hint-icon" aria-hidden="true">
-			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-				<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-				<line x1="12" y1="9" x2="12" y2="13" />
-				<circle cx="12" cy="17" r="1" fill="currentColor" stroke="none" />
-			</svg>
+			<TriangleAlert size={20} />
 		</div>
 		<p>
 			Для работы DNS-маршрутизации клиент должен находиться в политике доступа «Политика по умолчанию» — в веб-интерфейсе
@@ -47,13 +44,7 @@
 		color: var(--color-warning, var(--warning));
 	}
 
-	.hint-icon svg {
-		width: 20px;
-		height: 20px;
-		display: block;
-	}
-
-	.ndms-policy-hint p {
+.ndms-policy-hint p {
 		flex: 1;
 		margin: 0;
 		font-size: 0.8125rem;

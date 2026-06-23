@@ -124,3 +124,73 @@ func TestBuildStreamFromQuery_RealitySidTooLong_Rejected(t *testing.T) {
 		t.Errorf("expected error on sid > 16 hex chars")
 	}
 }
+
+func TestBuildStreamFromQuery_XHTTP(t *testing.T) {
+	q := parseQuery(t, "type=xhttp&security=tls&path=/xh&host=cdn.example.com&sni=foo.com&mode=packet-up")
+	s, err := BuildStreamFromQuery(q, "example.com")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if s.Network != "xhttp" {
+		t.Errorf("network=%q, want xhttp", s.Network)
+	}
+	if s.Path != "/xh" {
+		t.Errorf("path=%q, want /xh", s.Path)
+	}
+	if s.Host != "cdn.example.com" {
+		t.Errorf("host=%q, want cdn.example.com", s.Host)
+	}
+	if s.Mode != "packet-up" {
+		t.Errorf("mode=%q, want packet-up", s.Mode)
+	}
+	if s.TLS == nil || s.TLS.ServerName != "foo.com" {
+		t.Errorf("tls=%+v", s.TLS)
+	}
+}
+
+func TestBuildStreamFromQuery_SplitHTTPAlias(t *testing.T) {
+	q := parseQuery(t, "type=splithttp&security=tls&path=/sh")
+	s, err := BuildStreamFromQuery(q, "example.com")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if s.Network != "xhttp" {
+		t.Errorf("network=%q, want xhttp (splithttp alias)", s.Network)
+	}
+}
+
+func TestMergeIntoOutbound_XHTTP(t *testing.T) {
+	s := &StreamBuilder{Network: "xhttp", Path: "/xh", Host: "cdn.example.com", Mode: "auto"}
+	out := map[string]any{}
+	s.MergeIntoOutbound(out)
+	tr, ok := out["transport"].(map[string]any)
+	if !ok {
+		t.Fatalf("no transport block: %v", out)
+	}
+	if tr["type"] != "xhttp" {
+		t.Errorf("type=%v, want xhttp", tr["type"])
+	}
+	if tr["path"] != "/xh" {
+		t.Errorf("path=%v", tr["path"])
+	}
+	if tr["host"] != "cdn.example.com" {
+		t.Errorf("host=%v", tr["host"])
+	}
+	if tr["mode"] != "auto" {
+		t.Errorf("mode=%v", tr["mode"])
+	}
+	// x_padding_bytes is mandatory and non-zero (sing-box rejects 0/missing).
+	if tr["x_padding_bytes"] != "100-1000" {
+		t.Errorf("x_padding_bytes=%v, want default 100-1000", tr["x_padding_bytes"])
+	}
+}
+
+func TestMergeIntoOutbound_XHTTP_KeepsExplicitPadding(t *testing.T) {
+	s := &StreamBuilder{Network: "xhttp", XPaddingBytes: "200-800"}
+	out := map[string]any{}
+	s.MergeIntoOutbound(out)
+	tr := out["transport"].(map[string]any)
+	if tr["x_padding_bytes"] != "200-800" {
+		t.Errorf("x_padding_bytes=%v, want 200-800", tr["x_padding_bytes"])
+	}
+}

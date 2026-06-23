@@ -63,7 +63,6 @@ import type {
 	AWGTagInfo,
 	TunnelReferencedError,
 	MonitoringSnapshot,
-	MonitoringSample,
 	SingboxRouterStatus,
 	SingboxRouterSettings,
 	SingboxRouterRule,
@@ -87,6 +86,7 @@ import type {
 	SingboxProxiesTestResponse,
 	Subscription,
 	SubscriptionHeader,
+	SubscriptionPreviewMember,
 	SubscriptionRefreshResult,
 	SubscriptionActiveNowResponse,
 	CreateSubscriptionInput,
@@ -1836,19 +1836,6 @@ class ApiClient {
 		return this.request<MonitoringSnapshot>(path);
 	}
 
-	async getMonitoringHistory(params: {
-		target: string;
-		tunnelId: string;
-		limit?: number;
-	}): Promise<MonitoringSample[]> {
-		const qs = new URLSearchParams({
-			target: params.target,
-			tunnelId: params.tunnelId,
-		});
-		if (params.limit && params.limit > 0) qs.set('limit', String(params.limit));
-		return this.request<MonitoringSample[]>(`/monitoring/history?${qs.toString()}`);
-	}
-
 	// #endregion
 
 	// ─────────────────────────────────────────────
@@ -2496,6 +2483,30 @@ class ApiClient {
 			},
 		);
 		return data.deleted ? null : (data.subscription ?? null);
+	}
+
+	async excludeSubscriptionMembers(id: string, memberTags: string[]): Promise<Subscription> {
+		return this.request<Subscription>(
+			`/singbox/subscriptions/members/exclude?id=${encodeURIComponent(id)}`,
+			{ method: 'POST', body: JSON.stringify({ memberTags }) },
+		);
+	}
+
+	async restoreSubscriptionMembers(id: string, memberTags: string[]): Promise<Subscription> {
+		return this.request<Subscription>(
+			`/singbox/subscriptions/members/restore?id=${encodeURIComponent(id)}`,
+			{ method: 'POST', body: JSON.stringify({ memberTags }) },
+		);
+	}
+
+	async previewSubscription(input: {
+		url: string;
+		headers: SubscriptionHeader[];
+	}): Promise<SubscriptionPreviewMember[]> {
+		return this.request<SubscriptionPreviewMember[]>('/singbox/subscriptions/preview', {
+			method: 'POST',
+			body: JSON.stringify(input),
+		});
 	}
 
 	// #endregion

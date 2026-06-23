@@ -777,6 +777,14 @@ button.tunnel-list-traffic-cell:focus-visible {
 	background: var(--latency-bar-fail);
 }
 
+/* Per-bar tone (colorPerBar) — independent of container state class. */
+.tunnel-delay-spark .bar.slow {
+	background: var(--latency-bar-slow);
+}
+.tunnel-delay-spark .bar.fail {
+	background: var(--latency-bar-fail);
+}
+
 .tunnel-delay-spark.unknown .bar,
 .tunnel-delay-spark .bar.empty {
 	background: color-mix(in srgb, var(--color-text-muted) 35%, transparent);

@@ -14,12 +14,14 @@
 	import AwgConfigAnalyzerTab from './AwgConfigAnalyzerTab.svelte';
 	import AboutDeviceTab from './AboutDeviceTab.svelte';
 	import DnsInfoTab from './DnsInfoTab.svelte';
+	import { MonitoringTab } from '$lib/components/pingcheck';
 
-	type ActiveTab = 'logs' | 'connections' | 'checks' | 'about' | 'awgConfig' | 'dns';
+	type ActiveTab = 'logs' | 'monitoring' | 'connections' | 'checks' | 'about' | 'awgConfig' | 'dns';
 
 	function initialDiagnosticsTab(): ActiveTab {
 		const tab = $page.url.searchParams.get('tab');
 
+		if (tab === 'monitoring') return 'monitoring';
 		if (tab === 'connections') return 'connections';
 		if (tab === 'checks') return 'checks';
 		if (tab === 'about') return 'about';
@@ -46,6 +48,7 @@
 	const diagnosticsTabs = $derived.by((): { id: ActiveTab; label: string }[] => {
 		const base: { id: ActiveTab; label: string }[] = [
 			{ id: 'logs', label: 'Журнал' },
+			{ id: 'monitoring', label: 'Мониторинг' },
 			{ id: 'connections', label: 'Соединения' },
 			{ id: 'checks', label: 'Проверки' },
 			{ id: 'about', label: 'Окружение' },
@@ -153,12 +156,13 @@
 	});
 
 	const pageTitle = $derived(
-		activeTab === 'connections' ? 'Соединения · Диагностика' :
-		activeTab === 'checks' ? 'Проверки · Диагностика' :
-		activeTab === 'about' ? 'Окружение · Диагностика' :
-		activeTab === 'awgConfig' ? 'Конфиг AWG · Диагностика' :
-		activeTab === 'dns' ? 'Сведения о DNS · Диагностика' :
-		'Журнал · Диагностика',
+		activeTab === 'connections' ? 'Соединения · Инструменты' :
+		activeTab === 'checks' ? 'Проверки · Инструменты' :
+		activeTab === 'about' ? 'Окружение · Инструменты' :
+		activeTab === 'awgConfig' ? 'Конфиг AWG · Инструменты' :
+		activeTab === 'dns' ? 'Сведения о DNS · Инструменты' :
+		activeTab === 'monitoring' ? 'Мониторинг · Инструменты' :
+		'Журнал · Инструменты',
 	);
 </script>
 
@@ -167,7 +171,7 @@
 </svelte:head>
 
 <PageContainer width="full">
-	<PageHeader title="Диагностика" />
+	<PageHeader title="Инструменты" />
 
 	<Tabs
 		tabs={diagnosticsTabs}
@@ -179,6 +183,8 @@
 
 	{#if activeTab === 'logs'}
 		<LogsTerminal />
+	{:else if activeTab === 'monitoring'}
+		<MonitoringTab />
 	{:else if activeTab === 'connections'}
 		<ConnectionsTab />
 	{:else if activeTab === 'checks'}

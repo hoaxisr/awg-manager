@@ -7,6 +7,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
@@ -132,6 +133,13 @@ var _ router.BindableInterfaceLister = (*routerWANInterfaceAdapter)(nil)
 // alongside the other router adapters.
 type routerWANInterfaceAdapter struct {
 	store *ndmsquery.InterfaceStore
+	// nativeProxies returns kernel names of KeenOS-native (non-ours) proxy
+	// interfaces. Only set on the bindable-interfaces instance; nil on the
+	// WAN instance. Used by ListBindable to surface native SOCKS proxies (#323).
+	nativeProxies func(context.Context) ([]string, error)
+	// occupiedBinds returns kernel names already bound by an existing direct
+	// outbound, excluded from the bindable list. Bindable-instance only (#323).
+	occupiedBinds func(context.Context) (map[string]bool, error)
 }
 
 func (a *routerWANInterfaceAdapter) ListWAN(ctx context.Context) ([]router.WANInterfaceInfo, error) {
@@ -237,14 +245,54 @@ func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(ctx context.Context) (map
 	return router.UnionOpkgTunIndices(sysNums, names), nil
 }
 
+// ListBindable returns router interfaces a user can bind a direct outbound to:
+// egress-capable (security-level "public"), minus our own auto-managed
+// interfaces — except KeenOS-native proxies (kernel t2sN whose NDMS ProxyN is
+// not ours), which are rescued from the auto-managed exclusion (#323).
 func (a *routerWANInterfaceAdapter) ListBindable(ctx context.Context) ([]router.WANInterfaceInfo, error) {
 	ifaces, err := a.store.ListAll(ctx)
 	if err != nil {
 		return nil, err
 	}
+	// On lookup error, leave native empty (fail-safe: don't offer a proxy we
+	// can't prove is non-ours, avoiding a routing loop through our own t2s).
+	native := map[string]bool{}
+	if a.nativeProxies != nil {
+		if names, e := a.nativeProxies(ctx); e == nil {
+			for _, n := range names {
+				native[n] = true
+			}
+		}
+	}
+	// Interfaces already bound by an existing direct outbound — don't offer
+	// them again. On lookup error treat as none (a duplicate bind is harmless,
+	// so fail toward offering rather than hiding).
+	occupied := map[string]bool{}
+	if a.occupiedBinds != nil {
+		if set, e := a.occupiedBinds(ctx); e == nil {
+			occupied = set
+		}
+	}
+	return filterBindable(ifaces, native, occupied), nil
+}
+
+// filterBindable keeps egress interfaces (security-level "public") minus our
+// own auto-managed ones and minus already-bound interfaces, rescuing
+// KeenOS-native proxies in the native set.
+func filterBindable(ifaces []ndms.AllInterface, native, occupied map[string]bool) []router.WANInterfaceInfo {
 	out := make([]router.WANInterfaceInfo, 0, len(ifaces))
 	for _, iface := range ifaces {
-		if router.IsAutoManagedIface(iface.Name) {
+		// Egress only: drops LAN bridges, Wi-Fi APs, switch ports, LAN VLANs.
+		if iface.SecurityLevel != "public" {
+			continue
+		}
+		// Already bound by an existing direct outbound — skip the duplicate.
+		if occupied[iface.Name] {
+			continue
+		}
+		// Our own auto-managed interfaces already have outbounds; exclude them
+		// unless this is a native proxy we explicitly rescue.
+		if router.IsAutoManagedIface(iface.Name) && !native[iface.Name] {
 			continue
 		}
 		out = append(out, router.WANInterfaceInfo{
@@ -254,5 +302,5 @@ func (a *routerWANInterfaceAdapter) ListBindable(ctx context.Context) ([]router.
 			Type:  iface.Type,
 		})
 	}
-	return out, nil
+	return out
 }

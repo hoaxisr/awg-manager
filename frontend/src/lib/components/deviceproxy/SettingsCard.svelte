@@ -99,7 +99,8 @@
 		const sb = outbounds.filter((o) => o.kind === 'singbox');
 		const sub = outbounds.filter((o) => o.kind === 'subscription');
 		const awg = outbounds.filter((o) => o.kind === 'awg');
-		return { direct, sb, sub, awg };
+		const router = outbounds.filter((o) => o.kind === 'router');
+		return { direct, sb, sub, awg, router };
 	});
 
 	let listenOpts = $derived<DropdownOption[]>([
@@ -116,6 +117,11 @@
 			group: 'Подписки',
 		})),
 		...grouped.awg.map((ob) => ({ value: ob.tag, label: `${ob.label} · ${ob.detail}`, group: 'Туннели' })),
+		...grouped.router.map((ob) => ({
+			value: ob.tag,
+			label: ob.detail ? `${ob.label} · ${ob.detail}` : ob.label,
+			group: 'Выходы sb-router',
+		})),
 	]);
 </script>
 

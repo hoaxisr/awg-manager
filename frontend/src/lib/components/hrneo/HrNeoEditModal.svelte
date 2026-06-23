@@ -17,6 +17,7 @@
 	import HrNeoGeoTagPicker from './HrNeoGeoTagPicker.svelte';
 	import { buildRoutingTunnelDropdownOptions } from '$lib/utils/routingTunnelOptions';
 	import { formatIconUrlHint } from '$lib/utils/custom-icon';
+	import { LayoutGrid } from 'lucide-svelte';
 
 	interface AccessPolicy {
 		name: string;
@@ -403,12 +404,7 @@
 			{:else}
 				<button type="button" class="catalog-cta" onclick={onpickcatalog}>
 					<span class="catalog-cta-icon" aria-hidden="true">
-						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
-							<rect x="3" y="3" width="7" height="7" rx="1" />
-							<rect x="14" y="3" width="7" height="7" rx="1" />
-							<rect x="3" y="14" width="7" height="7" rx="1" />
-							<rect x="14" y="14" width="7" height="7" rx="1" />
-						</svg>
+						<LayoutGrid size={20} strokeWidth={1.75} />
 					</span>
 					<span class="catalog-cta-text">
 						<span class="catalog-cta-title">Заполнить из каталога</span>

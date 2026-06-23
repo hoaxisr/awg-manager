@@ -245,6 +245,25 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, er
 		return nil, err
 	}
 
+	// Исключение по ключу из превью импорта: ключи — identity-суффиксы, не
+	// зависящие от subID. Здесь subID уже выделен → достраиваем полный
+	// стабильный тег и пишем в ExcludedTags ДО первичного refreshLocked,
+	// чтобы исключённые серверы вообще не материализовались при создании.
+	if len(in.ExcludedKeys) > 0 {
+		subShort := sub.ID
+		if len(subShort) > 8 {
+			subShort = subShort[:8]
+		}
+		tags := make([]string, 0, len(in.ExcludedKeys))
+		for _, k := range in.ExcludedKeys {
+			tags = append(tags, "sub-"+subShort+"-"+k)
+		}
+		if err := s.store.SetExcludedTags(sub.ID, tags, nil); err != nil {
+			s.store.Delete(sub.ID)
+			return nil, err
+		}
+	}
+
 	// NDMS Proxy is only created when the global toggle is on. When off, the
 	// subscription stays proxy-less (ProxyIndex=-1) and routes via its mixed
 	// inbound + selector through the internal sing-box router; SyncProxies
@@ -417,12 +436,27 @@ func (s *Service) refreshLocked(ctx context.Context, id string) (*RefreshResult,
 		return nil, err
 	}
 
+	excluded := make(map[string]bool, len(sub.ExcludedTags))
+	for _, t := range sub.ExcludedTags {
+		excluded[t] = true
+	}
 	newMembers := make([]MemberInfo, 0, len(diff.New)+len(diff.Existing))
+	excludedMembers := make([]MemberInfo, 0, len(sub.ExcludedTags))
 	for _, n := range diff.New {
-		newMembers = append(newMembers, toMemberInfo(n.Tag, n.Out))
+		mi := toMemberInfo(n.Tag, n.Out)
+		if excluded[n.Tag] {
+			excludedMembers = append(excludedMembers, mi)
+		} else {
+			newMembers = append(newMembers, mi)
+		}
 	}
 	for _, e := range diff.Existing {
-		newMembers = append(newMembers, toMemberInfo(e.Tag, e.Out))
+		mi := toMemberInfo(e.Tag, e.Out)
+		if excluded[e.Tag] {
+			excludedMembers = append(excludedMembers, mi)
+		} else {
+			newMembers = append(newMembers, mi)
+		}
 	}
 	// Reconcile against what actually materialized: flush() may have dropped
 	// servers sing-box rejected. Keeping them in MemberTags would re-create
@@ -437,7 +471,7 @@ func (s *Service) refreshLocked(ctx context.Context, id string) (*RefreshResult,
 	if len(prunedTags) > 0 {
 		s.logWarn("subscription-refresh", id, fmt.Sprintf("pruned %d member(s) not materialized (dropped by validation): %s", len(prunedTags), strings.Join(prunedTags, ", ")))
 	}
-	if err := s.store.SetMembersExtras(id, newMembers, diff.Orphan, rejected, info); err != nil {
+	if err := s.store.SetMembersExtras(id, newMembers, diff.Orphan, rejected, info, excludedMembers); err != nil {
 		return nil, err
 	}
 
@@ -488,13 +522,24 @@ func filterDeclaredMembers(members []MemberInfo, declared map[string]bool) (kept
 // run). Per-member outbounds are added/updated/left alone — orphans are NOT
 // removed (the UI offers explicit deletion).
 func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffResult) error {
+	excluded := make(map[string]bool, len(sub.ExcludedTags))
+	for _, t := range sub.ExcludedTags {
+		excluded[t] = true
+	}
 	for _, n := range diff.New {
+		if excluded[n.Tag] {
+			continue // исключённый сервер не материализуем
+		}
 		jsonWithTag := replaceTag(n.Out.Outbound, n.Tag)
 		if err := s.mutator.AddOutbound(n.Tag, jsonWithTag); err != nil {
 			return err
 		}
 	}
 	for _, e := range diff.Existing {
+		if excluded[e.Tag] {
+			s.mutator.RemoveOutbound(e.Tag) // на случай, если ранее был активен
+			continue
+		}
 		jsonWithTag := replaceTag(e.Out.Outbound, e.Tag)
 		if err := s.mutator.UpdateOutbound(e.Tag, jsonWithTag); err != nil {
 			return err
@@ -503,10 +548,14 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 
 	memberTags := make([]string, 0, len(diff.New)+len(diff.Existing))
 	for _, n := range diff.New {
-		memberTags = append(memberTags, n.Tag)
+		if !excluded[n.Tag] {
+			memberTags = append(memberTags, n.Tag)
+		}
 	}
 	for _, e := range diff.Existing {
-		memberTags = append(memberTags, e.Tag)
+		if !excluded[e.Tag] {
+			memberTags = append(memberTags, e.Tag)
+		}
 	}
 
 	// Selector / urltest — remove old (idempotent) then add fresh.
@@ -745,6 +794,17 @@ func (s *Service) SetActiveMember(ctx context.Context, id, memberTag string) err
 // in would race the next refresh.
 var ErrManualMemberOnURLSub = errors.New("subscription: member CRUD is only allowed on inline subscriptions")
 
+// ErrExcludeOnInline is returned by ExcludeMembers when called on an inline
+// subscription. Exclusion survives refresh by keeping the member in the URL
+// diff truth but skipping materialization — inline subs have no refresh truth,
+// so inline removal uses RemoveMember (destructive) instead.
+var ErrExcludeOnInline = errors.New("subscription: exclude is only allowed on URL subscriptions")
+
+// ErrAllMembersExcluded is returned by ExcludeMembers when excluding the given
+// tags would leave the subscription with no active members. At least one member
+// must remain so the selector has something to route to.
+var ErrAllMembersExcluded = errors.New("subscription: cannot exclude all members; at least one must remain active")
+
 // ErrValidation wraps subscription-save failures produced by the Pass-2
 // `sing-box check` gate when the merged config is rejected. Callers can
 // use errors.Is to surface a 422 instead of 500 — the user's payload is
@@ -816,10 +876,16 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 		return updated, nil
 	}
 	out := parts.Valid[0]
-	tag := StableTag(sub.ID, out)
-
-	for _, existing := range sub.MemberTags {
-		if existing == tag {
+	// Набор для chooseKeys недоступен (credential существующих членов не
+	// хранится), поэтому тег нового члена считаем по расширенному ключу, а
+	// точный повтор ловим по метаданным MemberInfo (server+port+protocol+SNI).
+	// ponytail: short_id/uuid в MemberInfo нет — два сервера на одном
+	// server:port:SNI с разным short_id/uuid дадут ложный отказ; редкий край.
+	tag := stableTagFromKey(sub.ID, extendedKey(out))
+	mi := toMemberInfo(tag, out)
+	for _, existing := range sub.Members {
+		if existing.Server == mi.Server && existing.Port == mi.Port &&
+			existing.Protocol == mi.Protocol && existing.SNI == mi.SNI {
 			return nil, ErrMemberDuplicate
 		}
 	}
@@ -856,7 +922,7 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 	newMembers = append(newMembers, toMemberInfo(tag, out))
 	rejected := appendRejectedUnique(sub.RejectedMembers, parts.Rejected...)
 	info := mergeInfoItems(sub.InfoItems, filterDismissedInfo(parts.Info, sub.DismissedInfoIDs))
-	if err := s.store.SetMembersExtras(id, newMembers, sub.OrphanTags, rejected, info); err != nil {
+	if err := s.store.SetMembersExtras(id, newMembers, sub.OrphanTags, rejected, info, nil); err != nil {
 		return nil, err
 	}
 
@@ -963,6 +1029,161 @@ func (s *Service) RemoveMember(ctx context.Context, id, memberTag string) (*Subs
 	}
 	s.logInfo("subscription-member-remove", id, "member removed: "+memberTag)
 	return updated, nil
+}
+
+// ExcludeMembers помечает теги исключёнными: пересобирает селектор без них,
+// снимает их outbounds, переносит в ExcludedTags/ExcludedMembers. Обратимо
+// через RestoreMembers. Только для URL-подписок.
+func (s *Service) ExcludeMembers(ctx context.Context, id string, tags []string) (*Subscription, error) {
+	mu := s.lockSub(id)
+	mu.Lock()
+	defer mu.Unlock()
+
+	sub, err := s.store.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if sub.IsInline() {
+		return nil, ErrExcludeOnInline
+	}
+	exSet := make(map[string]bool, len(tags))
+	for _, t := range tags {
+		exSet[t] = true
+	}
+
+	keep := make([]MemberInfo, 0, len(sub.Members))
+	moved := make([]MemberInfo, 0, len(tags))
+	keepTags := make([]string, 0, len(sub.Members))
+	for _, m := range sub.Members {
+		if exSet[m.Tag] {
+			moved = append(moved, m)
+		} else {
+			keep = append(keep, m)
+			keepTags = append(keepTags, m.Tag)
+		}
+	}
+	if len(moved) == 0 {
+		return nil, ErrMemberNotFound
+	}
+	if len(keep) == 0 {
+		return nil, ErrAllMembersExcluded
+	}
+
+	newActive := sub.ActiveMember
+	if exSet[newActive] {
+		newActive = keepTags[0]
+	}
+
+	// (1) fail-closed: пересобрать селектор на сокращённый набор ПЕРВЫМ.
+	if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, keepTags, newActive)); err != nil {
+		return nil, fmt.Errorf("rebuild group outbound: %w", err)
+	}
+	// (2) снять outbounds исключённых (идемпотентно).
+	for _, m := range moved {
+		s.mutator.RemoveOutbound(m.Tag)
+	}
+	// (3) union ExcludedTags + ExcludedMembers, atomic store-write.
+	excludedTags := append(append([]string{}, sub.ExcludedTags...), tags...)
+	excludedMembers := append(append([]MemberInfo{}, sub.ExcludedMembers...), moved...)
+	if err := s.store.MoveToExcluded(id, keep, excludedTags, excludedMembers); err != nil {
+		return nil, err
+	}
+	updated, err := s.store.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	// (4) синхр. Clash для selector-режима, если active сдвинулся.
+	if sub.ActiveMember != updated.ActiveMember && updated.EffectiveMode() == ModeSelector && updated.ActiveMember != "" {
+		_ = s.mutator.SelectClashProxy(updated.SelectorTag, updated.ActiveMember)
+	}
+	if err := s.mutator.Reload(ctx); err != nil {
+		return updated, fmt.Errorf("reload: %w", err)
+	}
+	return updated, nil
+}
+
+// RestoreMembers убирает теги из ExcludedTags и запускает refresh — вернувшиеся
+// серверы материализуются. Стоимость = один обычный refresh (редкая операция).
+func (s *Service) RestoreMembers(ctx context.Context, id string, tags []string) (*Subscription, error) {
+	mu := s.lockSub(id)
+	mu.Lock()
+	defer mu.Unlock()
+
+	sub, err := s.store.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	rm := make(map[string]bool, len(tags))
+	for _, t := range tags {
+		rm[t] = true
+	}
+	newExcludedTags := make([]string, 0, len(sub.ExcludedTags))
+	for _, t := range sub.ExcludedTags {
+		if !rm[t] {
+			newExcludedTags = append(newExcludedTags, t)
+		}
+	}
+	newExcludedMembers := make([]MemberInfo, 0, len(sub.ExcludedMembers))
+	for _, m := range sub.ExcludedMembers {
+		if !rm[m.Tag] {
+			newExcludedMembers = append(newExcludedMembers, m)
+		}
+	}
+	if err := s.store.SetExcludedTags(id, newExcludedTags, newExcludedMembers); err != nil {
+		return nil, err
+	}
+	if _, err := s.refreshLocked(ctx, id); err != nil {
+		return nil, err
+	}
+	return s.store.Get(id)
+}
+
+// PreviewMember — display-метаданные одного сервера из read-only превью URL-подписки.
+// Key — subID-независимый суффикс тега (узкий, либо расширенный при коллизии маскировки); по нему исключают при создании.
+type PreviewMember struct {
+	Key       string `json:"key"`
+	Label     string `json:"label,omitempty"`
+	Protocol  string `json:"protocol"`
+	Server    string `json:"server"`
+	Port      uint16 `json:"port"`
+	SNI       string `json:"sni,omitempty"`
+	Transport string `json:"transport,omitempty"`
+	Security  string `json:"security,omitempty"`
+}
+
+// PreviewURL качает и парсит URL-подписку БЕЗ создания/записи — для шага превью
+// при импорте. Key — subID-независимый суффикс тега (узкий, либо расширенный при коллизии маскировки); по нему исключают при создании.
+// ponytail: small read-only dup of fetch+detect — safer than refactoring tested refreshLocked.
+func (s *Service) PreviewURL(ctx context.Context, url string, headers []Header) ([]PreviewMember, error) {
+	if url == "" {
+		return nil, errors.New("subscription: preview requires a URL")
+	}
+	fetchURL, _ := RewriteForRaw(url)
+	body, ct, err := FetchWithContext(ctx, fetchURL, headers, s.fetchOpts)
+	if err != nil {
+		return nil, fmt.Errorf("%s", MaskURL(err.Error(), url))
+	}
+	var parseRes vlink.BatchResult
+	switch {
+	case vlink.IsClashYAML(body):
+		parseRes = vlink.ParseClashBody(body)
+	case vlink.IsSingboxJSON(body):
+		parseRes = vlink.ParseSingboxBody(body)
+	default:
+		parseRes = vlink.ParseBatch(NormalizeBody(body, ct))
+	}
+	parts := partitionParsedOutbounds("preview", parseRes.Outbounds)
+	out := make([]PreviewMember, 0, len(parts.Valid))
+	keys := chooseKeys(parts.Valid)
+	for i, p := range parts.Valid {
+		mi := toMemberInfo(StableTag("preview00", p), p) // tag игнорируется, берём поля
+		out = append(out, PreviewMember{
+			Key: suffixOf(keys[i]), Label: mi.Label, Protocol: mi.Protocol,
+			Server: mi.Server, Port: mi.Port, SNI: mi.SNI,
+			Transport: mi.Transport, Security: mi.Security,
+		})
+	}
+	return out, nil
 }
 
 // GetActiveNow returns the currently-active member tag as reported by the

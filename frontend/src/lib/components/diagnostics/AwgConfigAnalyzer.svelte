@@ -24,6 +24,7 @@
 		type AwgVerdict,
 		type AwgSummaryRow,
 	} from '$lib/utils/awgConfAnalyzer';
+	import { ShieldCheck, TrendingUp, CircleAlert } from 'lucide-svelte';
 	import { onMount } from 'svelte';
 
 	interface Props {
@@ -497,17 +498,7 @@
 <div class="awg-analyzer">
 	<div class="privacy-banner" role="status">
 		<div class="privacy-banner-icon" aria-hidden="true">
-			<svg
-				viewBox="0 0 24 24"
-				fill="none"
-				stroke="currentColor"
-				stroke-width="2"
-				stroke-linecap="round"
-				stroke-linejoin="round"
-			>
-				<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-				<path d="M9 12l2 2 4-4" />
-			</svg>
+			<ShieldCheck size={18} />
 		</div>
 		<div class="privacy-banner-body">
 			<p class="privacy-banner-title">Анализ только в браузере</p>
@@ -625,19 +616,7 @@
 			>
 				<div class="fixes-head">
 					<span class="fixes-head-icon" aria-hidden="true">
-						<svg
-							width="18"
-							height="18"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-						>
-							<polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
-							<polyline points="17 6 23 6 23 12" />
-						</svg>
+						<TrendingUp size={18} />
 					</span>
 					<h3 id="awg-upgrade-h" class="fixes-h">Как усилить</h3>
 					<span class="fixes-count">{upgradeHints.length}</span>
@@ -741,20 +720,7 @@
 			>
 				<div class="fixes-head">
 					<span class="fixes-head-icon" aria-hidden="true">
-						<svg
-							width="18"
-							height="18"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-						>
-							<circle cx="12" cy="12" r="10" />
-							<path d="M12 16v-4" />
-							<path d="M12 8h.01" />
-						</svg>
+						<CircleAlert size={18} />
 					</span>
 					<h3 class="fixes-h">Рекомендации</h3>
 					<span class="fixes-count">{fixes.length}</span>
@@ -857,11 +823,6 @@
 		color: var(--color-success, #22c55e);
 		background: color-mix(in srgb, var(--color-success, #22c55e) 14%, transparent);
 		border: 1px solid color-mix(in srgb, var(--color-success, #22c55e) 24%, transparent);
-	}
-
-	.privacy-banner-icon svg {
-		width: 18px;
-		height: 18px;
 	}
 
 	.privacy-banner-body {
@@ -1050,11 +1011,6 @@
 			width: 32px;
 			height: 32px;
 			border-radius: 9px;
-		}
-
-		.privacy-banner-icon svg {
-			width: 16px;
-			height: 16px;
 		}
 
 		.privacy-banner-title {
@@ -1455,10 +1411,6 @@
 		color: var(--awg-fix-accent);
 		background: var(--awg-fix-tint);
 		border: 1px solid color-mix(in srgb, var(--awg-fix-accent) 35%, transparent);
-	}
-
-	.fixes-head-icon svg {
-		display: block;
 	}
 
 	.fixes-h {

@@ -143,3 +143,48 @@ func TestNetJoinHostPort_IPv6Bracketing(t *testing.T) {
 		t.Errorf("host = %q, want example.com:443", got)
 	}
 }
+
+func TestStreamQueryFromOutbound_XHTTP(t *testing.T) {
+	ob := map[string]any{
+		"transport": map[string]any{
+			"type":            "xhttp",
+			"path":            "/xh",
+			"host":            "cdn.example.com",
+			"mode":            "packet-up",
+			"x_padding_bytes": "100-1000",
+		},
+	}
+	q, err := streamQueryFromOutbound(ob)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if q.Get("type") != "xhttp" {
+		t.Errorf("type=%q, want xhttp", q.Get("type"))
+	}
+	if q.Get("path") != "/xh" {
+		t.Errorf("path=%q", q.Get("path"))
+	}
+	if q.Get("host") != "cdn.example.com" {
+		t.Errorf("host=%q", q.Get("host"))
+	}
+	if q.Get("mode") != "packet-up" {
+		t.Errorf("mode=%q", q.Get("mode"))
+	}
+}
+
+func TestXHTTPRoundTrip(t *testing.T) {
+	q := parseQuery(t, "type=xhttp&security=tls&path=/xh&host=cdn.example.com&sni=foo.com&mode=auto")
+	s, err := BuildStreamFromQuery(q, "example.com")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	out := map[string]any{}
+	s.MergeIntoOutbound(out)
+	q2, err := streamQueryFromOutbound(out)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if q2.Get("type") != "xhttp" || q2.Get("path") != "/xh" || q2.Get("host") != "cdn.example.com" || q2.Get("mode") != "auto" {
+		t.Errorf("round-trip mismatch: %v", q2.Encode())
+	}
+}

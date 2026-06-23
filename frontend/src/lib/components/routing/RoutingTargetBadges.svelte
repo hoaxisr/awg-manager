@@ -2,6 +2,7 @@
 	import { tick } from 'svelte';
 	import { Badge } from '$lib/components/ui';
 	import { countVisibleBadges, readBadgeRowBudgetWidth } from '$lib/utils/fittingBadgeLayout';
+	import { ArrowRight } from 'lucide-svelte';
 
 	export type RoutingTargetBadgeVariant = 'muted' | 'tunnel';
 
@@ -113,10 +114,7 @@
 	<div class="fitting-badges" class:is-tunnel={variant === 'tunnel'} bind:this={containerEl}>
 		<div class="measure-row" bind:this={measureEl} aria-hidden="true">
 			{#if variant === 'tunnel'}
-				<svg class="route-arrow route-arrow-svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-					<line x1="5" y1="12" x2="19" y2="12" />
-					<polyline points="12 5 19 12 12 19" />
-				</svg>
+				<ArrowRight size={14} class="route-arrow" style="flex-shrink:0;color:var(--text-muted)" aria-hidden="true" />
 			{:else}
 				<span class="route-arrow">&rarr;</span>
 			{/if}
@@ -135,10 +133,7 @@
 			class:sole={labels.length === 1 && overflowCount === 0}
 		>
 			{#if variant === 'tunnel'}
-				<svg class="route-arrow route-arrow-svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-					<line x1="5" y1="12" x2="19" y2="12" />
-					<polyline points="12 5 19 12 12 19" />
-				</svg>
+				<ArrowRight size={14} class="route-arrow" style="flex-shrink:0;color:var(--text-muted)" aria-hidden="true" />
 			{:else}
 				<span class="route-arrow">&rarr;</span>
 			{/if}
@@ -222,11 +217,6 @@
 	.visible-row.sole .tunnel-chip {
 		flex-shrink: 1;
 		min-width: 0;
-	}
-
-	.route-arrow-svg {
-		flex-shrink: 0;
-		color: var(--text-muted);
 	}
 
 	.tunnel-chip {

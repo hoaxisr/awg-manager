@@ -31,3 +31,29 @@ func TestProxyIsOurs(t *testing.T) {
 		}
 	}
 }
+
+// nativeProxyKernelNames must return kernel names of ONLY the proxies that are
+// not ours — the KeenOS-native SOCKS proxies a user can bind a router outbound
+// to (#323). Ours (by tunnel tag or by port slot) are excluded.
+func TestNativeProxyKernelNames(t *testing.T) {
+	proxies := []proxyEntry{
+		{idx: 0, desc: "My-Socks5", kernel: "t2s0"},      // native — keep
+		{idx: 1, desc: "vless-1", kernel: "t2s1"},        // ours by tunnel tag — drop
+		{idx: 2, desc: "", kernel: "t2s2"},               // ours by port slot — drop
+		{idx: 3, desc: "another-native", kernel: "t2s3"}, // native — keep
+	}
+	got := nativeProxyKernelNames(proxies,
+		map[string]bool{"vless-1": true}, // tunnelTags
+		map[int]bool{2: true},            // ourPortSlots
+		map[int]bool{},                   // subProxyIdx
+	)
+	if len(got) != 2 {
+		t.Fatalf("want 2 native, got %d: %v", len(got), got)
+	}
+	want := map[string]bool{"t2s0": true, "t2s3": true}
+	for _, k := range got {
+		if !want[k] {
+			t.Errorf("unexpected native proxy %q in %v", k, got)
+		}
+	}
+}

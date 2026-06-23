@@ -61,6 +61,23 @@ type SubscriptionOutboundInfo struct {
 	Detail string
 }
 
+// RouterOutboundsCatalog is the narrow contract Service needs from the
+// sing-box router service. It exposes outbounds defined in 20-router.json
+// (composite groups and user direct-binds) that can be used as device-proxy
+// targets. Wired post-construction via SetRouterOutbounds (router service is
+// built after deviceproxy.Service).
+type RouterOutboundsCatalog interface {
+	ListDeviceProxyRouterOutbounds() []RouterOutboundInfo
+}
+
+// RouterOutboundInfo describes one router-defined outbound selectable by
+// device-proxy.
+type RouterOutboundInfo struct {
+	Tag    string
+	Label  string
+	Detail string
+}
+
 // SingboxOperator is the narrow contract Service needs from
 // singbox.Operator. Adapter in singbox_adapter.go binds it to the
 // real Operator.
@@ -118,6 +135,8 @@ type Service struct {
 
 	mu          sync.Mutex
 	tunnelPorts TunnelInboundPortsFn
+
+	routerOutbounds RouterOutboundsCatalog
 }
 
 // ErrOutboundUnavailable is returned by SelectRuntimeOutbound when the caller
@@ -337,6 +356,15 @@ func (s *Service) restoreSnapshot(ctx context.Context, snap Snapshot) error {
 func (s *Service) SetTunnelInboundPorts(fn TunnelInboundPortsFn) {
 	s.mu.Lock()
 	s.tunnelPorts = fn
+	s.mu.Unlock()
+}
+
+// SetRouterOutbounds wires the router-outbounds catalog after construction.
+// The router service is built after deviceproxy.Service in main.go, so it
+// cannot be passed via Deps — mirrors SetTunnelInboundPorts.
+func (s *Service) SetRouterOutbounds(c RouterOutboundsCatalog) {
+	s.mu.Lock()
+	s.routerOutbounds = c
 	s.mu.Unlock()
 }
 
@@ -577,6 +605,14 @@ func (s *Service) buildSpec(ctx context.Context, cfg Config) (ExternalSpec, erro
 			spec.SBTags = append(spec.SBTags, t.Tag)
 		}
 	}
+
+	// Router-defined outbounds (20-router.json) — composite groups and
+	// user direct-binds, exposed as selectable members.
+	if s.routerOutbounds != nil {
+		for _, ro := range s.routerOutbounds.ListDeviceProxyRouterOutbounds() {
+			spec.SBTags = append(spec.SBTags, ro.Tag)
+		}
+	}
 	return spec, nil
 }
 
@@ -649,7 +685,7 @@ func (s *Service) GetInstanceRuntimeState(ctx context.Context, id string) (Runti
 // Outbound describes one selectable proxy target exposed to the UI.
 type Outbound struct {
 	Tag    string `json:"tag"`
-	Kind   string `json:"kind"` // "direct" | "singbox" | "subscription" | "awg"
+	Kind   string `json:"kind"` // "direct" | "singbox" | "subscription" | "awg" | "router"
 	Label  string `json:"label"`
 	Detail string `json:"detail"` // extra info for UI (kernel iface, protocol, etc)
 }
@@ -733,6 +769,17 @@ func (s *Service) listOutboundsLocked(ctx context.Context) []Outbound {
 					Detail: t.Iface,
 				})
 			}
+		}
+	}
+
+	if s.routerOutbounds != nil {
+		for _, ro := range s.routerOutbounds.ListDeviceProxyRouterOutbounds() {
+			out = append(out, Outbound{
+				Tag:    ro.Tag,
+				Kind:   "router",
+				Label:  ro.Label,
+				Detail: ro.Detail,
+			})
 		}
 	}
 	return out
@@ -960,7 +1007,9 @@ func (s *Service) SubscribeBus(ctx context.Context) func() {
 	_, ch, unsub := s.d.Bus.Subscribe()
 	go func() {
 		for ev := range ch {
-			if ev.Type != "resource:invalidated" && ev.Type != "singbox:tunnels-changed" {
+			if ev.Type != "resource:invalidated" &&
+				ev.Type != "singbox:tunnels-changed" &&
+				ev.Type != "singbox-router:outbounds" {
 				continue
 			}
 			if ev.Type == "resource:invalidated" {

@@ -12,13 +12,15 @@ import (
 // when plugin involves transport). Each scheme maps these into its
 // protocol-specific outbound JSON via MergeIntoOutbound.
 type StreamBuilder struct {
-	Network             string // "tcp" | "ws" | "grpc" | "http" | "httpupgrade"
+	Network             string // "tcp" | "ws" | "grpc" | "http" | "httpupgrade" | "xhttp"
 	TLS                 *outboundTLS
 	Path                string
-	Host                string // ws Host header / http hosts
+	Host                string // ws Host header / http hosts / xhttp host
 	EarlyData           int
 	EarlyDataHeaderName string
 	ServiceName         string
+	Mode                string // xhttp mode: auto | packet-up | stream-up | stream-one
+	XPaddingBytes       string // xhttp x_padding_bytes (mandatory, non-zero); defaulted in MergeIntoOutbound
 }
 
 // outboundTLS is the parsed TLS / Reality block ready to be emitted as
@@ -62,6 +64,8 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 		s.Network = "httpupgrade"
 	case "tcp":
 		s.Network = "tcp"
+	case "xhttp", "splithttp":
+		s.Network = "xhttp"
 	default:
 		return nil, fmt.Errorf("vlink: unsupported transport %q", netRaw)
 	}
@@ -93,6 +97,7 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 		s.Host = defaultHost
 	}
 	s.ServiceName = q.Get("serviceName")
+	s.Mode = q.Get("mode")
 
 	// TLS / Reality
 	sec := strings.ToLower(q.Get("security"))
@@ -229,6 +234,25 @@ func (s *StreamBuilder) MergeIntoOutbound(out map[string]any) {
 			if s.Path != "" {
 				transport["path"] = s.Path
 			}
+		case "xhttp":
+			// host is a separate top-level field (the option layer rejects a
+			// headers key named "host"). x_padding_bytes is mandatory and must
+			// be non-zero, so always emit a default when unset.
+			transport["type"] = "xhttp"
+			if s.Path != "" {
+				transport["path"] = s.Path
+			}
+			if s.Host != "" {
+				transport["host"] = s.Host
+			}
+			if s.Mode != "" {
+				transport["mode"] = s.Mode
+			}
+			pad := s.XPaddingBytes
+			if pad == "" {
+				pad = "100-1000"
+			}
+			transport["x_padding_bytes"] = pad
 		}
 		out["transport"] = transport
 	}

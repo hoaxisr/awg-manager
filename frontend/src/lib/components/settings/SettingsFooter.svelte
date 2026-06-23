@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { usageLevel } from '$lib/stores/settings';
 	import { GITHUB_BUG_REPORT_URL } from '$lib/utils/githubFeedback';
+	import { ChevronRight } from 'lucide-svelte';
 
 	const isExpert = $derived($usageLevel === 'expert');
 
@@ -84,9 +85,7 @@
 			aria-expanded={open}
 			onclick={() => (open = !open)}
 		>
-			<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-				<path d="M9 6l6 6-6 6"/>
-			</svg>
+			<span class="footer-icon" class:open aria-hidden="true"><ChevronRight size={14} strokeWidth={2.5} /></span>
 			<span class="footer-collapse-full">Благодарности ({credits.length})</span>
 			<span class="footer-collapse-short">Благодарности</span>
 		</button>
@@ -236,11 +235,12 @@
 		}
 	}
 
-	.footer-collapse svg {
+	.footer-icon {
+		display: inline-flex;
 		transition: transform 0.15s ease;
 	}
 
-	.footer-collapse.open svg {
+	.footer-icon.open {
 		transform: rotate(90deg);
 	}
 

@@ -18,12 +18,12 @@ func TestService_SnapshotAndHistory(t *testing.T) {
 	svc.scheduler.RunOnce(context.Background())
 
 	snap := svc.Snapshot()
-	// 3 base + 1 self-target (gstatic, http default) × 1 tunnel = 4 cells.
-	if len(snap.Cells) != 4 {
-		t.Errorf("expected 4 cells (3 base + 1 self × 1 tunnel), got %d", len(snap.Cells))
+	// Self-only: 1 self-target (gstatic, http default) × 1 tunnel = 1 cell.
+	if len(snap.Cells) != 1 {
+		t.Errorf("expected 1 self cell (1 self-target × 1 tunnel), got %d", len(snap.Cells))
 	}
 
-	samples := svc.History("cf-1.1.1.1", "tn-A", 0)
+	samples := svc.History("cc-connectivitycheck.gstatic.com", "tn-A", 0)
 	if len(samples) != 1 {
 		t.Errorf("expected 1 history sample, got %d", len(samples))
 	}

@@ -155,6 +155,7 @@ func newTestService(_ *testing.T, deps Deps) *ServiceImpl {
 	return &ServiceImpl{deps: deps}
 }
 
+
 // stubListeningProbe overrides the singboxListeningProbe seam for the test
 // duration so waitForSingbox/GetStatus don't read the real procfs.
 func stubListeningProbe(t *testing.T, fn func() bool) {

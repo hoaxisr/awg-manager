@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { AccessPolicyInterface, PolicyGlobalInterface } from '$lib/types';
 	import { ConfirmModal, Badge, Button } from '$lib/components/ui';
+	import { Power, ChevronUp, ChevronDown, Check, Ban } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import {
@@ -141,10 +142,7 @@
 						disabled={toggling === iface.name}
 						onclick={() => requestToggle(iface.name)}
 					>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>
-							<line x1="12" y1="2" x2="12" y2="12"/>
-						</svg>
+						<Power size={14} />
 					</button>
 					<div class="iface-actions">
 						<button
@@ -153,9 +151,7 @@
 							disabled={index === 0}
 							onclick={() => moveUp(index)}
 						>
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<polyline points="18 15 12 9 6 15"/>
-							</svg>
+							<ChevronUp size={15} />
 						</button>
 						<button
 							class="icon-btn"
@@ -163,9 +159,7 @@
 							disabled={index === sorted.length - 1}
 							onclick={() => moveDown(index)}
 						>
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<polyline points="6 9 12 15 18 9"/>
-							</svg>
+							<ChevronDown size={15} />
 						</button>
 						<button
 							class="icon-btn"
@@ -173,14 +167,9 @@
 							onclick={() => iface.denied ? onpermit(iface.name, interfaces.filter(i => !i.denied).length) : ondeny(iface.name)}
 						>
 							{#if iface.denied}
-								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-									<polyline points="20 6 9 17 4 12"/>
-								</svg>
+								<Check size={15} />
 							{:else}
-								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-									<circle cx="12" cy="12" r="10"/>
-									<line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
-								</svg>
+								<Ban size={15} />
 							{/if}
 						</button>
 					</div>

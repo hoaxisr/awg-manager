@@ -28,7 +28,7 @@
 		ServerSettingsPanel,
 	} from '$lib/components/servers';
 	import { Toggle, Button, Stat, StatStrip } from '$lib/components/ui';
-	import { Plus, RefreshCw, ExternalLink } from 'lucide-svelte';
+	import { Plus, RefreshCw, ExternalLink, Maximize2 } from 'lucide-svelte';
 
 	interface Props {
 		server: WireguardServer;
@@ -537,12 +537,7 @@
 {/if}
 
 {#snippet iconBefore()}
-	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-		<polyline points="15,3 21,3 21,9"/>
-		<polyline points="9,21 3,21 3,15"/>
-		<line x1="21" y1="3" x2="14" y2="10"/>
-		<line x1="3" y1="21" x2="10" y2="14"/>
-	</svg>
+	<Maximize2 size={14} strokeWidth={2} aria-hidden="true" />
 {/snippet}
 
 {#snippet restartIcon()}

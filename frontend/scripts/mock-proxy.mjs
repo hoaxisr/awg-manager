@@ -959,6 +959,113 @@ function buildAwgSnapshot() {
 	};
 }
 
+// ── Watchdog «Мониторинг» fixtures ──────────────────────────────────────────
+// Maps the AWG fixtures (which carry only a coarse pingCheck.status) into the
+// rich TunnelPingStatus / PingLogEntry shapes the Monitoring cards join by id.
+// Fixtures with status:'disabled' or 'starting' are skipped (no watchdog row).
+
+// Per-tunnel watchdog profile keyed by fixture id. Only listed tunnels become
+// watchdog cards. status:'failed' (fixture) → 'recovering' (UI union has none).
+const MOCK_PINGCHECK_PROFILES = {
+	'awg-demo-1': { status: 'alive', method: 'icmp', target: '8.8.8.8', lastLatency: 42, failCount: 0, restartCount: 0 },
+	'awg-demo-2': { status: 'recovering', method: 'http', target: 'https://nl-ams.demo.example', lastLatency: 118, failCount: 2, restartCount: 1 },
+	'awg-demo-3': { status: 'alive', method: 'icmp', target: '1.1.1.1', lastLatency: 38, failCount: 0, restartCount: 0 },
+	'awg-demo-5': { status: 'recovering', method: 'icmp', target: '9.9.9.9', lastLatency: 95, failCount: 2, restartCount: 2 },
+};
+
+function buildPingCheckStatus() {
+	const tunnels = [];
+	for (const t of MOCK_AWG_TUNNELS) {
+		const p = MOCK_PINGCHECK_PROFILES[t.id];
+		if (!p) continue;
+		tunnels.push({
+			tunnelId: t.id,
+			tunnelName: t.name,
+			enabled: true,
+			backend: t.backend === 'nativewg' ? 'nativewg' : 'kernel',
+			status: p.status,
+			method: p.method,
+			lastLatency: p.lastLatency,
+			failCount: p.failCount,
+			failThreshold: 3,
+			restartCount: p.restartCount,
+		});
+	}
+	return { enabled: true, tunnels };
+}
+
+// ~12 newest-first entries per watchdog tunnel. Alive: all success, low latency.
+// Recovering: mostly success at higher latency, but the 2 newest are timeouts
+// with rising failCount + a stateChange marker (the card surfaces the 3 newest).
+function buildPingCheckLogs() {
+	const entries = [];
+	const now = Date.now();
+	for (const t of MOCK_AWG_TUNNELS) {
+		const p = MOCK_PINGCHECK_PROFILES[t.id];
+		if (!p) continue;
+		const recovering = p.status === 'recovering';
+		// index 0 = newest. interval ~30s, jittered a few seconds.
+		for (let i = 0; i < 12; i++) {
+			const ts = new Date(now - i * 30_000 - (i % 3) * 1500).toISOString();
+			let success = true;
+			let latency;
+			let error = '';
+			let stateChange = '';
+			let failCount = 0;
+			if (recovering) {
+				if (i === 0) {
+					success = false; latency = 0; error = 'timeout';
+					stateChange = 'recovering'; failCount = 2;
+				} else if (i === 1) {
+					success = false; latency = 0; error = 'timeout';
+					stateChange = 'link_toggle'; failCount = 1;
+				} else {
+					latency = 110 + ((i * 7) % 16); // 110-125ms
+				}
+			} else {
+				latency = 40 + ((i * 5) % 16); // 40-55ms
+			}
+			entries.push({
+				timestamp: ts,
+				tunnelId: t.id,
+				tunnelName: t.name,
+				success,
+				latency,
+				error,
+				failCount,
+				threshold: 3,
+				stateChange,
+				backend: t.backend === 'nativewg' ? 'nativewg' : 'kernel',
+			});
+		}
+	}
+	// Newest-first overall.
+	entries.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+	return entries;
+}
+
+// Full AWGTunnel for getTunnel(id) — fixture merged with a complete pingCheck
+// config so the card config-line («ICMP → 8.8.8.8 · 30с · порог 3») renders.
+function buildSingleTunnel(id) {
+	const base = MOCK_AWG_TUNNELS.find((t) => t.id === id);
+	if (!base) return null;
+	const p = MOCK_PINGCHECK_PROFILES[id];
+	return {
+		...base,
+		pingCheck: {
+			enabled: true,
+			method: p?.method ?? 'icmp',
+			target: p?.target ?? '8.8.8.8',
+			interval: 30,
+			deadInterval: 120,
+			failThreshold: 3,
+			minSuccess: 1,
+			timeout: 5,
+			restart: true,
+		},
+	};
+}
+
 // Per-tunnel base latencies (ms), randomised once on startup so they stay in
 // different tiers across the session but drift slightly on every SSE tick.
 const AWG_BASE_LATENCY = (() => {
@@ -3972,6 +4079,29 @@ const server = http.createServer(async (req, res) => {
 
 	if (req.method === 'GET' && path === '/tunnels/all') {
 		send(res, 200, { success: true, data: buildAwgSnapshot() });
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/pingcheck/status') {
+		send(res, 200, { success: true, data: buildPingCheckStatus() });
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/pingcheck/logs') {
+		const id = url.searchParams.get('tunnelId') ?? '';
+		const logs = buildPingCheckLogs();
+		send(res, 200, { success: true, data: id ? logs.filter((e) => e.tunnelId === id) : logs });
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/tunnels/get') {
+		const id = url.searchParams.get('id') ?? '';
+		const tunnel = buildSingleTunnel(id);
+		if (!tunnel) {
+			send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: `tunnel ${id} not found` } });
+			return;
+		}
+		send(res, 200, { success: true, data: tunnel });
 		return;
 	}
 

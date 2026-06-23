@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { RefreshCw } from 'lucide-svelte';
 	import type { ConnectionsResponse } from '$lib/types';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -189,9 +190,7 @@
 				title="Обновить"
 				style={`--refresh-progress:${refreshProgress * 360}deg;`}
 			>
-				<svg class="refresh-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-					<path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v6h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-				</svg>
+				<RefreshCw size={15} aria-hidden="true" style="position:relative;z-index:1" />
 			</button>
 		</div>
 	</div>
@@ -276,13 +275,6 @@
 	.refresh-btn:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
-	}
-
-	.refresh-icon {
-		position: relative;
-		z-index: 1;
-		width: 15px;
-		height: 15px;
 	}
 
 	.counter {

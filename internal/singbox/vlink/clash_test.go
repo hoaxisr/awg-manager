@@ -359,3 +359,29 @@ proxies:
 		t.Errorf("Scheme=%q want clash:vless", res.Errors[0].Scheme)
 	}
 }
+
+func TestClashFieldsToValues_XHTTP(t *testing.T) {
+	in := map[string]any{
+		"server":  "h",
+		"port":    443,
+		"network": "xhttp",
+		"xhttp-opts": map[string]any{
+			"path": "/xh",
+			"host": "example.com",
+			"mode": "packet-up",
+		},
+	}
+	got := clashFieldsToValues(in)
+	if got.Get("type") != "xhttp" {
+		t.Errorf("type=%q want xhttp", got.Get("type"))
+	}
+	if got.Get("path") != "/xh" {
+		t.Errorf("path=%q want /xh", got.Get("path"))
+	}
+	if got.Get("host") != "example.com" {
+		t.Errorf("host=%q want example.com", got.Get("host"))
+	}
+	if got.Get("mode") != "packet-up" {
+		t.Errorf("mode=%q want packet-up", got.Get("mode"))
+	}
+}

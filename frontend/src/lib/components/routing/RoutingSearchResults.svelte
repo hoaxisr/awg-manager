@@ -1,6 +1,7 @@
 <script lang="ts">
     import { ServiceIcon } from '$lib/components/dnsroutes';
     import type { MatchedRule, ResolveMatch } from './types';
+    import { X } from 'lucide-svelte';
 
     interface Props {
         dnsResults: MatchedRule[];
@@ -20,10 +21,7 @@
 <div class="search-results">
     {#if onClose}
         <button class="results-close" onclick={onClose} title="Закрыть (Esc)" aria-label="Закрыть результаты">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                <line x1="18" y1="6" x2="6" y2="18"/>
-                <line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
+            <X size={14} aria-hidden="true" />
         </button>
     {/if}
     {#if dnsResults.length > 0}

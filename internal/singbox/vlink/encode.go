@@ -345,6 +345,20 @@ func streamQueryFromOutbound(ob map[string]any) (url.Values, error) {
 			if host, _ := transport["host"].(string); host != "" {
 				q.Set("host", host)
 			}
+		case "xhttp":
+			network = "xhttp"
+			if path, _ := transport["path"].(string); path != "" {
+				q.Set("path", path)
+			}
+			// xhttp host is a top-level string (not headers.Host like ws).
+			if host, _ := transport["host"].(string); host != "" {
+				q.Set("host", host)
+			}
+			if mode, _ := transport["mode"].(string); mode != "" {
+				q.Set("mode", mode)
+			}
+			// x_padding_bytes is an internal/server-negotiated default; not part
+			// of the share-link standard, so it is intentionally not emitted.
 		default:
 			// Unknown transport (e.g. quic) — fail closed rather than silently
 			// emitting a plain-tcp link that misroutes.

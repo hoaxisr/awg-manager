@@ -12,6 +12,8 @@
 </script>
 
 <script lang="ts">
+  import { Plus } from 'lucide-svelte';
+
   interface Props {
     items: RailItem[];
     activeId: string;
@@ -55,7 +57,7 @@
 
   {#if onCreate}
     <button type="button" class="create-btn" onclick={onCreate}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      <Plus size={12} strokeWidth={2} aria-hidden="true" />
       Новый сервер
     </button>
   {/if}
@@ -90,7 +92,7 @@
       {/each}
       {#if onCreate}
         <button type="button" class="create-btn" onclick={() => { onCreate?.(); mobileOpen = false; }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <Plus size={12} strokeWidth={2} aria-hidden="true" />
           Новый сервер
         </button>
       {/if}
@@ -216,7 +218,6 @@
     border-color: var(--color-accent);
     color: var(--color-accent);
   }
-  .create-btn svg { width: 12px; height: 12px; }
 
   /* ── Mobile selector ── */
   .mobile-selector {

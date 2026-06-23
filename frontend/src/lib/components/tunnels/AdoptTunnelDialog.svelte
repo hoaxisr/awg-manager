@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { TriangleAlert, CircleX } from 'lucide-svelte';
 	import { Modal, Button } from '$lib/components/ui';
 
 	interface Props {
@@ -111,11 +112,7 @@
 
 	{:else if step === 'instructions'}
 		<div class="alert alert-warning">
-			<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-				<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-				<line x1="12" y1="9" x2="12" y2="13"/>
-				<circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/>
-			</svg>
+			<TriangleAlert size={24} aria-hidden="true" />
 			<div>
 				<h3>Важно!</h3>
 				<p>Для завершения импорта необходимо:</p>
@@ -129,11 +126,7 @@
 
 	{:else if step === 'error'}
 		<div class="alert alert-error">
-			<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-				<circle cx="12" cy="12" r="10"/>
-				<line x1="15" y1="9" x2="9" y2="15"/>
-				<line x1="9" y1="9" x2="15" y2="15"/>
-			</svg>
+			<CircleX size={24} aria-hidden="true" />
 			<div>
 				<h3>Ошибка</h3>
 				<p>{displayError()}</p>

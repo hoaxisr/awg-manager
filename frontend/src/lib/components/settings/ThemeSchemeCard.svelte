@@ -17,7 +17,7 @@
 		type ThemeModePreference,
 		type ThemePreset,
 	} from '$lib/stores/theme';
-	import { Palette } from 'lucide-svelte';
+	import { Palette, ChevronDown, Check } from 'lucide-svelte';
 
 	const PRESET_ORDER: ThemePreset[] = ['legacy', 'neo', 'mint', 'custom'];
 	const LEGACY_MODE_OPTIONS: Array<{ value: ThemeModePreference; label: string }> = [
@@ -83,17 +83,7 @@
 			</div>
 			<span class="header-meta">
 				<span class="current-theme">{currentThemeLabel}</span>
-				<svg
-					class="chevron"
-					class:open={expanded}
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					aria-hidden="true"
-				>
-					<polyline points="6 9 12 15 18 9" />
-				</svg>
+				<span class="chevron" class:open={expanded} aria-hidden="true"><ChevronDown size={14} strokeWidth={2} /></span>
 			</span>
 		</button>
 	</div>
@@ -119,7 +109,7 @@
 							</div>
 							{#if selected}
 								<span class="theme-check" aria-hidden="true">
-									<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
+									<Check size={14} strokeWidth={3} />
 								</span>
 							{/if}
 						</div>
@@ -329,6 +319,7 @@
 	}
 
 	.chevron {
+		display: inline-flex;
 		width: 14px;
 		height: 14px;
 		transition: transform var(--t-fast) ease;
@@ -425,13 +416,6 @@
 		flex-shrink: 0;
 	}
 
-	.theme-check svg {
-		width: 14px;
-		height: 14px;
-		fill: none;
-		stroke: currentColor;
-		stroke-width: 3;
-	}
 
 	.theme-preview {
 		background: var(--color-bg-primary);

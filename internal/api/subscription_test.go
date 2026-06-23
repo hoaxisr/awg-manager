@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
+	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
 )
 
 // noopMutator implements subscription.ConfigMutator with all-zero responses.
@@ -111,6 +113,255 @@ func TestSubscriptionHandler_GetStream_HappyPath(t *testing.T) {
 	if !strings.Contains(body, `"orphanTags":[]`) {
 		t.Errorf("done event should include empty orphanTags array, body: %s", body)
 	}
+}
+
+// TestSubscriptionHandler_Create_ExcludedKeys guards the handler-boundary wiring
+// of the import-preview server-picker: the JSON body's excludedKeys must reach
+// CreateInput.ExcludedKeys. Before the fix CreateSubscriptionRequest had no
+// ExcludedKeys field, so json.Decode silently dropped it and every member was
+// materialized regardless of the user's unchecks (silent NO-OP).
+func TestSubscriptionHandler_Create_ExcludedKeys(t *testing.T) {
+	store, err := subscription.NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	svc := subscription.NewService(store, noopMutator{})
+	h := NewSubscriptionHandler(svc, &fakePresenceProbe{installed: true})
+
+	linkA := "vless://3a3b1c2e-9999-4321-aaaa-1234567890a1@a.example:443?security=tls&sni=a#A"
+	linkB := "vless://3a3b1c2e-9999-4321-aaaa-1234567890a2@b.example:443?security=tls&sni=b#B"
+	parsed := vlink.ParseBatch([]string{linkB})
+	if len(parsed.Outbounds) != 1 {
+		t.Fatalf("want 1 parsed outbound, got %d (errors=%v)", len(parsed.Outbounds), parsed.Errors)
+	}
+	keyB := subscription.IdentityHash(parsed.Outbounds[0])
+
+	body, _ := json.Marshal(CreateSubscriptionRequest{
+		Label:        "x",
+		Inline:       linkA + "\n" + linkB,
+		Enabled:      true,
+		ExcludedKeys: []string{keyB},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/subscriptions/create", strings.NewReader(string(body)))
+	rr := httptest.NewRecorder()
+	h.Create(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var resp SubscriptionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, rr.Body.String())
+	}
+	wantTag := "sub-" + resp.Data.ID[:8] + "-" + keyB
+	if !containsString(resp.Data.ExcludedTags, wantTag) {
+		t.Fatalf("want %s in ExcludedTags %v", wantTag, resp.Data.ExcludedTags)
+	}
+	// The excluded member must NOT be materialized as an active member.
+	if containsString(resp.Data.MemberTags, wantTag) {
+		t.Fatalf("excluded-by-key member %s must not be materialized, MemberTags=%v", wantTag, resp.Data.MemberTags)
+	}
+}
+
+// TestSubscriptionHandler_ExcludeLifecycle drives the full member-exclusion
+// lifecycle of feature #383 through the REAL HTTP handlers + real
+// subscription.Service, with only the sing-box ConfigMutator mocked (the same
+// seam the C1 test used). It guards the cross-layer wiring end-to-end:
+// preview → create-with-import-exclusion → post-create exclude → restore →
+// last-member guard. Each step asserts on the handler-returned DTO so a
+// regression in any handler→service hop fails the test (non-tautological).
+func TestSubscriptionHandler_ExcludeLifecycle(t *testing.T) {
+	// 3 valid vless share-links: real 8-4-4-4-12 UUIDs, security=tls&sni so
+	// they pass vlink's regex (bare UUIDs / security=reality are rejected).
+	linkA := "vless://3a3b1c2e-9999-4321-aaaa-1234567890a1@a.example:443?security=tls&sni=a#A"
+	linkB := "vless://3a3b1c2e-9999-4321-aaaa-1234567890b2@b.example:443?security=tls&sni=b#B"
+	linkC := "vless://3a3b1c2e-9999-4321-aaaa-1234567890c3@c.example:443?security=tls&sni=c#C"
+	body := strings.Join([]string{linkA, linkB, linkC}, "\n")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+
+	keyA := identityHashOf(t, linkA)
+	keyB := identityHashOf(t, linkB)
+	keyC := identityHashOf(t, linkC)
+
+	store, err := subscription.NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	svc := subscription.NewService(store, noopMutator{})
+	h := NewSubscriptionHandler(svc, &fakePresenceProbe{installed: true})
+
+	// 1+2. Preview: real handler must fetch+parse the URL and return all 3
+	// members keyed by IdentityHash (8 hex chars).
+	previewBody, _ := json.Marshal(PreviewURLRequest{URL: srv.URL})
+	prr := httptest.NewRecorder()
+	h.PreviewURL(prr, httptest.NewRequest(http.MethodPost, "/preview", strings.NewReader(string(previewBody))))
+	if prr.Code != http.StatusOK {
+		t.Fatalf("preview status=%d body=%s", prr.Code, prr.Body.String())
+	}
+	var preview struct {
+		Data []struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(prr.Body.Bytes(), &preview); err != nil {
+		t.Fatalf("decode preview: %v body=%s", err, prr.Body.String())
+	}
+	if len(preview.Data) != 3 {
+		t.Fatalf("preview members=%d want 3 (body=%s)", len(preview.Data), prr.Body.String())
+	}
+	previewKeys := make(map[string]bool, 3)
+	hex8 := regexp.MustCompile(`^[0-9a-f]{8}$`)
+	for _, m := range preview.Data {
+		if !hex8.MatchString(m.Key) {
+			t.Fatalf("preview key %q is not 8 hex chars", m.Key)
+		}
+		previewKeys[m.Key] = true
+	}
+	for _, k := range []string{keyA, keyB, keyC} {
+		if !previewKeys[k] {
+			t.Fatalf("derived key %q missing from preview keys %v", k, previewKeys)
+		}
+	}
+
+	// 3. Create with import-exclusion of member B.
+	createBody, _ := json.Marshal(CreateSubscriptionRequest{
+		Label:        "lifecycle",
+		URL:          srv.URL,
+		Enabled:      true,
+		ExcludedKeys: []string{keyB},
+	})
+	crr := httptest.NewRecorder()
+	h.Create(crr, httptest.NewRequest(http.MethodPost, "/create", strings.NewReader(string(createBody))))
+	if crr.Code != http.StatusOK {
+		t.Fatalf("create status=%d body=%s", crr.Code, crr.Body.String())
+	}
+	var created SubscriptionResponse
+	if err := json.Unmarshal(crr.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create: %v body=%s", err, crr.Body.String())
+	}
+	id := created.Data.ID
+	idShort := id
+	if len(idShort) > 8 {
+		idShort = idShort[:8]
+	}
+	tagA := "sub-" + idShort + "-" + keyA
+	tagB := "sub-" + idShort + "-" + keyB
+	tagC := "sub-" + idShort + "-" + keyC
+
+	if !containsString(created.Data.ExcludedTags, tagB) {
+		t.Fatalf("post-create: %s not in ExcludedTags %v", tagB, created.Data.ExcludedTags)
+	}
+	if !memberDTOHasTag(created.Data.ExcludedMembers, tagB) {
+		t.Fatalf("post-create: B not in ExcludedMembers (tags=%v)", memberDTOTags(created.Data.ExcludedMembers))
+	}
+	if containsString(created.Data.MemberTags, tagB) {
+		t.Fatalf("post-create: excluded B leaked into MemberTags %v", created.Data.MemberTags)
+	}
+	if memberDTOHasTag(created.Data.Members, tagB) {
+		t.Fatalf("post-create: excluded B leaked into Members %v", memberDTOTags(created.Data.Members))
+	}
+	if !containsString(created.Data.MemberTags, tagA) || !containsString(created.Data.MemberTags, tagC) {
+		t.Fatalf("post-create: A and C must be active, MemberTags=%v", created.Data.MemberTags)
+	}
+
+	// 4. Post-create exclude of member C.
+	exBody, _ := json.Marshal(ExcludeMembersRequest{MemberTags: []string{tagC}})
+	err4 := httptest.NewRecorder()
+	h.ExcludeMembers(err4, httptest.NewRequest(http.MethodPost, "/members/exclude?id="+id, strings.NewReader(string(exBody))))
+	if err4.Code != http.StatusOK {
+		t.Fatalf("exclude status=%d body=%s", err4.Code, err4.Body.String())
+	}
+	var afterExclude SubscriptionResponse
+	if err := json.Unmarshal(err4.Body.Bytes(), &afterExclude); err != nil {
+		t.Fatalf("decode exclude: %v body=%s", err, err4.Body.String())
+	}
+	if !containsString(afterExclude.Data.ExcludedTags, tagC) {
+		t.Fatalf("after-exclude: C not in ExcludedTags %v", afterExclude.Data.ExcludedTags)
+	}
+	if !containsString(afterExclude.Data.ExcludedTags, tagB) {
+		t.Fatalf("after-exclude: B must remain excluded, ExcludedTags=%v", afterExclude.Data.ExcludedTags)
+	}
+	if containsString(afterExclude.Data.MemberTags, tagC) {
+		t.Fatalf("after-exclude: C still active, MemberTags=%v", afterExclude.Data.MemberTags)
+	}
+	if !containsString(afterExclude.Data.MemberTags, tagA) {
+		t.Fatalf("after-exclude: A must stay active, MemberTags=%v", afterExclude.Data.MemberTags)
+	}
+
+	// 5. Restore member C.
+	resBody, _ := json.Marshal(RestoreMembersRequest{MemberTags: []string{tagC}})
+	rrr := httptest.NewRecorder()
+	h.RestoreMembers(rrr, httptest.NewRequest(http.MethodPost, "/members/restore?id="+id, strings.NewReader(string(resBody))))
+	if rrr.Code != http.StatusOK {
+		t.Fatalf("restore status=%d body=%s", rrr.Code, rrr.Body.String())
+	}
+	var afterRestore SubscriptionResponse
+	if err := json.Unmarshal(rrr.Body.Bytes(), &afterRestore); err != nil {
+		t.Fatalf("decode restore: %v body=%s", err, rrr.Body.String())
+	}
+	if containsString(afterRestore.Data.ExcludedTags, tagC) {
+		t.Fatalf("after-restore: C still in ExcludedTags %v", afterRestore.Data.ExcludedTags)
+	}
+	if !containsString(afterRestore.Data.MemberTags, tagC) {
+		t.Fatalf("after-restore: C not back in MemberTags %v", afterRestore.Data.MemberTags)
+	}
+	// B was import-excluded (no stored ExcludedMember row → no URL match on
+	// refresh), so it must remain excluded; restore must be surgical.
+	if !containsString(afterRestore.Data.ExcludedTags, tagB) {
+		t.Fatalf("after-restore: B must stay excluded, ExcludedTags=%v", afterRestore.Data.ExcludedTags)
+	}
+
+	// 6. Guard: excluding the last two active members (A + C) trips the
+	// ALL_MEMBERS_EXCLUDED 409 via the handler.
+	guardBody, _ := json.Marshal(ExcludeMembersRequest{MemberTags: []string{tagA, tagC}})
+	grr := httptest.NewRecorder()
+	h.ExcludeMembers(grr, httptest.NewRequest(http.MethodPost, "/members/exclude?id="+id, strings.NewReader(string(guardBody))))
+	if grr.Code != http.StatusConflict {
+		t.Fatalf("guard status=%d want 409 body=%s", grr.Code, grr.Body.String())
+	}
+	if !strings.Contains(grr.Body.String(), "ALL_MEMBERS_EXCLUDED") {
+		t.Fatalf("guard body missing ALL_MEMBERS_EXCLUDED: %s", grr.Body.String())
+	}
+}
+
+func identityHashOf(t *testing.T, link string) string {
+	t.Helper()
+	parsed := vlink.ParseBatch([]string{link})
+	if len(parsed.Outbounds) != 1 {
+		t.Fatalf("link %q: want 1 parsed outbound, got %d (errors=%v)", link, len(parsed.Outbounds), parsed.Errors)
+	}
+	return subscription.IdentityHash(parsed.Outbounds[0])
+}
+
+func memberDTOHasTag(ms []SubscriptionMemberDTO, tag string) bool {
+	for _, m := range ms {
+		if m.Tag == tag {
+			return true
+		}
+	}
+	return false
+}
+
+func memberDTOTags(ms []SubscriptionMemberDTO) []string {
+	out := make([]string, len(ms))
+	for i, m := range ms {
+		out[i] = m.Tag
+	}
+	return out
+}
+
+func containsString(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSubscriptionHandler_GetStream_MissingID_400(t *testing.T) {

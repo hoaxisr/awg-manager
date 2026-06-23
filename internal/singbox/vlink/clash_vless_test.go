@@ -157,3 +157,47 @@ func TestMapClashVless_FlowNormalizedAndEncryption(t *testing.T) {
 		t.Errorf("encryption dropped: got %v, want xtls-rprx", ob["encryption"])
 	}
 }
+
+func TestMapClashVless_XHTTP(t *testing.T) {
+	in := map[string]any{
+		"name":    "xh",
+		"type":    "vless",
+		"server":  "h.example.com",
+		"port":    443,
+		"uuid":    "3a3b1c2e-9999-4321-aaaa-1234567890ab",
+		"network": "xhttp",
+		"xhttp-opts": map[string]any{
+			"path": "/xh",
+			"host": "cdn.example.com",
+			"mode": "auto",
+		},
+	}
+	got, err := mapClashVless(in)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	var ob map[string]any
+	if err := json.Unmarshal(got.Outbound, &ob); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	tr, _ := ob["transport"].(map[string]any)
+	if tr == nil {
+		t.Fatalf("no transport: %v", ob)
+	}
+	if tr["type"] != "xhttp" {
+		t.Errorf("transport.type=%v want xhttp", tr["type"])
+	}
+	if tr["host"] != "cdn.example.com" {
+		t.Errorf("transport.host=%v want cdn.example.com (top-level string)", tr["host"])
+	}
+	if tr["path"] != "/xh" {
+		t.Errorf("transport.path=%v want /xh", tr["path"])
+	}
+	if tr["mode"] != "auto" {
+		t.Errorf("transport.mode=%v want auto", tr["mode"])
+	}
+	// mandatory non-zero default must survive the clash->sing-box conversion
+	if tr["x_padding_bytes"] != "100-1000" {
+		t.Errorf("transport.x_padding_bytes=%v want default 100-1000", tr["x_padding_bytes"])
+	}
+}

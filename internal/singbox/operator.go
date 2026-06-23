@@ -1872,18 +1872,17 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 				existingFps[fp] = p.Tag // защита от повтора внутри одного batch
 			}
 		}
-		var freeIdx int
-		if ndmsProxyEnabled {
-			var idxErr error
-			freeIdx, idxErr = o.proxyMgr.NextFreeIndex(ctx, reserved)
-			if idxErr != nil {
-				parseErrs = append(parseErrs, BatchError{Input: p.Tag, Err: fmt.Errorf("allocate proxy slot: %w", idxErr)})
-				continue
+		alloc := func() (int, error) {
+			if ndmsProxyEnabled {
+				return o.proxyMgr.NextFreeIndex(ctx, reserved)
 			}
-		} else {
-			freeIdx = nextFreeListenPortSlot(cfg, reserved)
+			return nextFreeListenPortSlot(cfg, reserved), nil
 		}
-		listenPort := firstPort + freeIdx
+		freeIdx, listenPort, allocErr := allocBindableSlot(reserved, alloc)
+		if allocErr != nil {
+			parseErrs = append(parseErrs, BatchError{Input: p.Tag, Err: fmt.Errorf("allocate listen port: %w", allocErr)})
+			continue
+		}
 		tag := allocUniqueTunnelTag(tagOccupied, p.Tag)
 		outbound, jerr := outboundJSONWithTag(p.Outbound, tag)
 		if jerr != nil {
@@ -2182,6 +2181,32 @@ func (o *Operator) removeOrphanSingboxProxies(ctx context.Context) error {
 		subProxyIdx[sp.Index] = true
 	}
 	return o.proxyMgr.RemoveOrphanSingboxProxies(ctx, tunnelTags, portSlots, subProxyIdx)
+}
+
+// ListNativeProxies returns kernel names of KeenOS-native (non-ours) NDMS
+// Proxy interfaces — bind targets for router direct outbounds (#323). Assembles
+// the same ownership sets as removeOrphanSingboxProxies and delegates.
+func (o *Operator) ListNativeProxies(ctx context.Context) ([]string, error) {
+	cfg, err := o.loadConfig()
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	tunnelTags := map[string]bool{}
+	portSlots := map[int]bool{}
+	if cfg != nil {
+		for _, t := range cfg.Tunnels() {
+			tunnelTags[t.Tag] = true
+			slot := t.ListenPort - firstPort
+			if slot >= 0 {
+				portSlots[slot] = true
+			}
+		}
+	}
+	subProxyIdx := map[int]bool{}
+	for _, sp := range o.subscriptionProxies() {
+		subProxyIdx[sp.Index] = true
+	}
+	return o.proxyMgr.ListNativeProxies(ctx, tunnelTags, portSlots, subProxyIdx)
 }
 
 // Reconcile: ensure process is running if config has tunnels; ensure Proxies are up.

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { TriangleAlert } from 'lucide-svelte';
     import { Modal, Button } from '$lib/components/ui';
     import TunnelConfigImportPanel from './TunnelConfigImportPanel.svelte';
     import { api } from '$lib/api/client';
@@ -98,11 +99,7 @@
 
     {#if tunnelState === 'running'}
         <div class="replace-warning">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-                <line x1="12" y1="9" x2="12" y2="13"/>
-                <circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/>
-            </svg>
+            <TriangleAlert size={16} aria-hidden="true" style="flex-shrink: 0; margin-top: 1px;" />
             Туннель будет остановлен, переконфигурирован и запущен автоматически. Все правила маршрутизации сохранятся.
         </div>
     {/if}
@@ -165,11 +162,6 @@
         font-size: 0.75rem;
         color: var(--warning, #e0af68);
         margin-bottom: 12px;
-    }
-
-    .replace-warning svg {
-        flex-shrink: 0;
-        margin-top: 1px;
     }
 
     .name-field {

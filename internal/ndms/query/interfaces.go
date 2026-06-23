@@ -616,10 +616,11 @@ func (s *InterfaceStore) ListAll(ctx context.Context) ([]ndms.AllInterface, erro
 			continue
 		}
 		candidate := ndms.AllInterface{
-			Name:  kernelName,
-			Label: allInterfaceLabel(iface.Type, kernelName, iface.Description),
-			Up:    iface.State == "up" && iface.IPv4 == "running",
-			Type:  iface.Type,
+			Name:          kernelName,
+			Label:         allInterfaceLabel(iface.Type, kernelName, iface.Description),
+			Up:            iface.State == "up" && iface.IPv4 == "running",
+			Type:          iface.Type,
+			SecurityLevel: iface.SecurityLevel,
 		}
 		existing, dup := seen[kernelName]
 		if !dup {

@@ -71,7 +71,7 @@
 		type TunnelRenderMode,
 	} from '$lib/constants/singboxLayout';
 	import { isMockDevMode as getIsMockDevMode } from '$lib/env';
-	import { Download } from 'lucide-svelte';
+	import { Download, Eye, EyeOff, Server, Upload, LayoutGrid, Link, Globe, TriangleAlert } from 'lucide-svelte';
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
 	import { formatRunningSub, pluralForm, SUBSCRIPTION_WORDS, TUNNEL_WORDS } from '$lib/utils/pluralize';
 	import {
@@ -1496,11 +1496,7 @@
 		>
 			{#if dragOver}
 				<div class="drop-overlay">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40">
-						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-						<polyline points="17 8 12 3 7 8"/>
-						<line x1="12" y1="3" x2="12" y2="15"/>
-					</svg>
+					<Upload size={40} strokeWidth={1.5} aria-hidden="true" />
 					<span class="drop-text">Отпустите для импорта</span>
 				</div>
 			{:else if importing}
@@ -1518,11 +1514,7 @@
 
 				<div class="term-action-group">
 					<div class="term-drop-hint">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="28" height="28">
-							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-							<polyline points="17 8 12 3 7 8"/>
-							<line x1="12" y1="3" x2="12" y2="15"/>
-						</svg>
+						<Upload size={28} strokeWidth={1.5} aria-hidden="true" />
 						<span>Перетащите .conf сюда</span>
 					</div>
 
@@ -1827,9 +1819,9 @@
 											title={isEndpointShown ? 'Скрыть' : 'Показать'}
 										>
 											{#if isEndpointShown}
-												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+												<Eye size={14} aria-hidden="true" />
 											{:else}
-												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+												<EyeOff size={14} aria-hidden="true" />
 											{/if}
 										</button>
 									{/if}
@@ -1930,9 +1922,9 @@
 											title={isEndpointShown ? 'Скрыть' : 'Показать'}
 										>
 											{#if isEndpointShown}
-												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+												<Eye size={14} aria-hidden="true" />
 											{:else}
-												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+												<EyeOff size={14} aria-hidden="true" />
 											{/if}
 										</button>
 									{/if}
@@ -1967,12 +1959,7 @@
 												aria-label="Перенести туннель «{tunnel.description || tunnel.id}» в серверы"
 												onclick={() => markAsServer(tunnel.id)}
 											>
-												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-													<rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
-													<rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
-													<line x1="6" y1="6" x2="6.01" y2="6"/>
-													<line x1="6" y1="18" x2="6.01" y2="18"/>
-												</svg>
+												<Server size={14} aria-hidden="true" />
 											</button>
 										{/snippet}
 									</TunnelListActions>
@@ -2037,9 +2024,9 @@
 												title={isEndpointShown ? 'Скрыть' : 'Показать'}
 											>
 												{#if isEndpointShown}
-													<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+													<Eye size={14} aria-hidden="true" />
 												{:else}
-													<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+													<EyeOff size={14} aria-hidden="true" />
 												{/if}
 											</button>
 										{/if}
@@ -2413,33 +2400,21 @@
 			{#if singboxTunnelsList.length === 0}
 				<div class="empty-kinds">
 					<button type="button" class="empty-kind-card" onclick={() => openWizard('single')}>
-						<svg class="empty-kind-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-							<path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07L11 5" />
-							<path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07L13 19" />
-						</svg>
+						<Link class="empty-kind-icon" size={28} strokeWidth={1.6} aria-hidden="true" />
 						<div class="empty-kind-title">Один сервер</div>
 						<div class="empty-kind-desc">
 							Вставь share-link — получишь sing-box туннель со своим Proxy NDMS.
 						</div>
 					</button>
 					<button type="button" class="empty-kind-card" onclick={() => openWizard('inline')}>
-						<svg class="empty-kind-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-							<rect x="3" y="3" width="7" height="7" rx="1" />
-							<rect x="14" y="3" width="7" height="7" rx="1" />
-							<rect x="3" y="14" width="7" height="7" rx="1" />
-							<rect x="14" y="14" width="7" height="7" rx="1" />
-						</svg>
+						<LayoutGrid class="empty-kind-icon" size={28} strokeWidth={1.6} aria-hidden="true" />
 						<div class="empty-kind-title">Группа серверов</div>
 						<div class="empty-kind-desc">
 							Несколько ссылок одной группой с общим Proxy: ручной выбор или автовыбор по скорости.
 						</div>
 					</button>
 					<button type="button" class="empty-kind-card" onclick={() => openWizard('url')}>
-						<svg class="empty-kind-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-							<circle cx="12" cy="12" r="10" />
-							<line x1="2" y1="12" x2="22" y2="12" />
-							<path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-						</svg>
+						<Globe class="empty-kind-icon" size={28} strokeWidth={1.6} aria-hidden="true" />
 						<div class="empty-kind-title">Подписка по URL</div>
 						<div class="empty-kind-desc">
 							Адрес подписки провайдера — список обновляется автоматически.
@@ -2726,11 +2701,7 @@
 	<div class="unsupported-overlay">
 		<div class="unsupported-card">
 			<div class="unsupported-icon">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48">
-					<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-					<line x1="12" y1="9" x2="12" y2="13"/>
-					<circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/>
-				</svg>
+				<TriangleAlert size={48} strokeWidth={1.5} aria-hidden="true" />
 			</div>
 			<h2 class="unsupported-title">Модуль ядра недоступен</h2>
 			<p class="unsupported-text">
@@ -2848,7 +2819,7 @@
 		font-weight: 500;
 	}
 
-	.term-drop-hint svg {
+	.term-drop-hint :global(svg) {
 		flex-shrink: 0;
 		opacity: 0.8;
 	}
@@ -2992,7 +2963,7 @@
 		outline: 2px solid var(--color-primary, #3b82f6);
 		outline-offset: 2px;
 	}
-	.empty-kind-icon { width: 28px; height: 28px; color: var(--color-primary, #3b82f6); }
+	:global(.empty-kind-icon) { color: var(--color-primary, #3b82f6); }
 	.empty-kind-title { font-weight: 600; font-size: 0.95rem; }
 	.empty-kind-desc { color: var(--color-text-muted); font-size: 0.8rem; line-height: 1.4; }
 

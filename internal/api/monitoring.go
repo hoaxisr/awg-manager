@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
 	"github.com/hoaxisr/awg-manager/internal/response"
@@ -52,19 +51,6 @@ type MonitoringSnapshotData struct {
 	UpdatedAt string                `json:"updatedAt" example:"2024-01-15T10:30:00Z"`
 }
 
-// MonitoringSampleDTO mirrors frontend MonitoringSample.
-type MonitoringSampleDTO struct {
-	Ts        string `json:"ts" example:"2024-01-15T10:30:00Z"`
-	LatencyMs *int   `json:"latencyMs" swaggertype:"integer" example:"42"`
-	OK        bool   `json:"ok" example:"true"`
-}
-
-// MonitoringHistoryResponse is the envelope for GET /monitoring/history.
-type MonitoringHistoryResponse struct {
-	Success bool                  `json:"success" example:"true"`
-	Data    []MonitoringSampleDTO `json:"data"`
-}
-
 // MonitoringHandler exposes the monitoring matrix endpoints.
 type MonitoringHandler struct {
 	svc *monitoring.Service
@@ -103,49 +89,4 @@ func (h *MonitoringHandler) GetMatrix(w http.ResponseWriter, r *http.Request) {
 	}
 	snap := h.svc.Snapshot()
 	response.Success(w, snap)
-}
-
-// GetHistory returns up to limit (default 60) most-recent samples for
-// (target, tunnelId).
-// GET /api/monitoring/history?target=<id>&tunnelId=<id>&limit=<n>
-//
-//	@Summary		Get monitoring history
-//	@Description	Returns up to `limit` (default 60) most-recent samples for a single (target, tunnelId) pair, oldest-first.
-//	@Tags			monitoring
-//	@Produce		json
-//	@Security		CookieAuth
-//	@Param			target		query		string	true	"Target identifier"
-//	@Param			tunnelId	query		string	true	"Tunnel identifier"
-//	@Param			limit		query		int		false	"Max samples to return (default 60)"
-//	@Success		200			{object}	MonitoringHistoryResponse
-//	@Failure		400			{object}	APIErrorEnvelope
-//	@Failure		405			{object}	APIErrorEnvelope
-//	@Failure		503			{object}	APIErrorEnvelope
-//	@Router			/monitoring/history [get]
-func (h *MonitoringHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
-		return
-	}
-	if h.svc == nil {
-		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "Monitoring service not available", "SERVICE_UNAVAILABLE")
-		return
-	}
-	target := r.URL.Query().Get("target")
-	tunnelID := r.URL.Query().Get("tunnelId")
-	if target == "" || tunnelID == "" {
-		response.Error(w, "target and tunnelId are required", "INVALID_PARAMS")
-		return
-	}
-	limit := 60
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil && v > 0 {
-			limit = v
-		}
-	}
-	samples := h.svc.History(target, tunnelID, limit)
-	if samples == nil {
-		samples = []monitoring.Sample{}
-	}
-	response.Success(w, samples)
 }

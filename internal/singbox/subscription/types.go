@@ -73,6 +73,8 @@ type Subscription struct {
 	InfoItems         []SubscriptionInfoItem `json:"infoItems,omitempty"`         // provider banners (max 4)
 	DismissedInfoIDs  []string               `json:"dismissedInfoIds,omitempty"`  // hidden on refresh (user removed from UI)
 	ActiveMember      string                 `json:"activeMember,omitempty"`      // currently-active selector member tag
+	ExcludedTags    []string     `json:"excludedTags,omitempty"`    // полные стабильные теги, исключённые пользователем (источник правды)
+	ExcludedMembers []MemberInfo `json:"excludedMembers,omitempty"` // display-метаданные исключённых (обновляются при refresh)
 	Enabled      bool             `json:"enabled"`
 	Mode         SubscriptionMode `json:"mode,omitempty"`        // "" treated as ModeSelector for back-compat
 	URLTest      *URLTestConfig   `json:"urlTest,omitempty"`     // populated when Mode == ModeURLTest
@@ -134,6 +136,7 @@ type CreateInput struct {
 	Enabled      bool
 	Mode         SubscriptionMode // "" = ModeSelector
 	URLTest      *URLTestConfig   // ignored when Mode != ModeURLTest; defaults applied otherwise
+	ExcludedKeys []string         // суффиксы тегов из превью (suffixOf, узкий или расширенный) для исключения на первичном refresh
 }
 
 // UpdatePatch is partial update; nil pointers mean "leave as-is".

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { PolicyDevice } from '$lib/types';
 	import { Badge } from '$lib/components/ui';
+	import { ArrowLeft } from 'lucide-svelte';
 
 	interface Props {
 		devices: PolicyDevice[];
@@ -65,10 +66,7 @@
 					disabled={isBusy}
 					onclick={() => { if (!isBusy) onassign(device.mac); }}
 				>
-					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						<line x1="19" y1="12" x2="5" y2="12"/>
-						<polyline points="12 19 5 12 12 5"/>
-					</svg>
+					<ArrowLeft size={15} />
 				</button>
 			</div>
 		{/each}

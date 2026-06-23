@@ -19,6 +19,7 @@
 	import { goto } from '$app/navigation';
 	import { usageLevel } from '$lib/stores/settings';
 	import { isRoutingSubTabVisible } from '$lib/types/usageLevel';
+	import { ChevronUp, ChevronDown } from 'lucide-svelte';
 
 	interface Props {
 		targets: TargetEntry[];
@@ -110,9 +111,7 @@
 						}}
 						aria-label="Move up"
 					>
-						<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-							<polyline points="18 15 12 9 6 15" />
-						</svg>
+						<ChevronUp size={10} strokeWidth={3} />
 					</button>
 					<button
 						type="button"
@@ -124,9 +123,7 @@
 						}}
 						aria-label="Move down"
 					>
-						<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-							<polyline points="6 9 12 15 18 9" />
-						</svg>
+						<ChevronDown size={10} strokeWidth={3} />
 					</button>
 				</div>
 			</div>

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { SingboxDelayState } from '$lib/utils/singboxDelay';
+	import { RefreshCw } from 'lucide-svelte';
 
 	type ConnState = 'idle' | 'connected' | 'disconnected' | 'checking';
 
@@ -97,10 +98,9 @@
 >
 	{label}
 	{#if showRefreshIcon}
-		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-			<path d="M23 4v6h-6M1 20v-6h6" />
-			<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-		</svg>
+		<span class="refresh-icon" aria-hidden="true">
+			<RefreshCw size={size === 'sm' ? 9 : size === 'mid' ? 10 : 11} />
+		</span>
 	{/if}
 </button>
 
@@ -221,29 +221,21 @@
 		border-color: var(--color-muted-border);
 	}
 
-	.ping-btn svg {
+	.refresh-icon {
+		display: inline-flex;
 		flex-shrink: 0;
-		width: 11px;
-		height: 11px;
+	}
+
+	:global(.refresh-icon svg) {
 		opacity: 0.45;
 		transition: opacity 0.15s ease, transform 0.3s;
 	}
 
-	.ping-btn.mid svg {
-		width: 10px;
-		height: 10px;
-	}
-
-	.ping-btn.sm svg {
-		width: 9px;
-		height: 9px;
-	}
-
-	.ping-btn:hover:not(:disabled) svg {
+	.ping-btn:hover:not(:disabled) :global(.refresh-icon svg) {
 		opacity: 1;
 	}
 
-	.ping-btn.spinning svg {
+	.ping-btn.spinning :global(.refresh-icon svg) {
 		opacity: 0.7;
 		animation: ping-spin 0.9s linear infinite;
 	}

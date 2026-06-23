@@ -2,14 +2,15 @@
 	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import type { Subscription, SubscriptionMember } from '$lib/types';
-	import { CheckLine, PanelBottomClose, RefreshCcw } from 'lucide-svelte';
+	import { Ban, CheckLine, PanelBottomClose, RefreshCcw } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { MAX_SUBSCRIPTION_INFO_ITEMS } from '$lib/constants/subscription';
 	import { Button, Modal, Stat, StatStrip } from '$lib/components/ui';
 	import { runWithConcurrency } from '$lib/utils/runWithConcurrency';
 	import { singboxDelayHistory, triggerDelayCheck } from '$lib/stores/singbox';
 	import { notifications } from '$lib/stores/notifications';
-	import SubscriptionMemberCard from './SubscriptionMemberCard.svelte';
+	import SubscriptionMemberList from './SubscriptionMemberList.svelte';
+	import SubscriptionExcludedSection from './SubscriptionExcludedSection.svelte';
 	import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
 
@@ -36,11 +37,18 @@
 	let addError = $state('');
 	let removingTag = $state<string | null>(null);
 	let pendingRemove = $state<SubscriptionMember | null>(null);
+	let pendingExclude = $state<SubscriptionMember | null>(null);
 	let movingToInfo = $state<string | null>(null);
 	let removingInfoId = $state<string | null>(null);
+	let selectMode = $state(false);
+	let selected = $state<Set<string>>(new Set());
+	let excluding = $state(false);
+	let confirmExcludeSelected = $state(false);
+	let restoring = $state(false);
 
 	const infoItems = $derived(subscription.infoItems ?? []);
 	const rejectedMembers = $derived(subscription.rejectedMembers ?? []);
+	const isUrlSub = $derived(!subscription.isInline);
 
 	async function removeInfoItem(itemId: string): Promise<void> {
 		if (!itemId || removingInfoId) return;
@@ -252,6 +260,76 @@
 		}
 	}
 
+	function toggleSelectMode(): void {
+		selectMode = !selectMode;
+		if (!selectMode) {
+			selected = new Set();
+			confirmExcludeSelected = false;
+		}
+	}
+
+	function toggleSel(tag: string): void {
+		const next = new Set(selected);
+		if (next.has(tag)) next.delete(tag);
+		else next.add(tag);
+		selected = next;
+	}
+
+	function selectAll(): void {
+		selected = new Set(memberList.map((m) => m.tag));
+	}
+
+	function excludeOne(tag: string): void {
+		const member = memberList.find((m) => m.tag === tag);
+		if (member) pendingExclude = member;
+	}
+
+	async function confirmExcludeOne(): Promise<void> {
+		if (!pendingExclude || excluding) return;
+		excluding = true;
+		lastError = '';
+		try {
+			await api.excludeSubscriptionMembers(subscription.id, [pendingExclude.tag]);
+			pendingExclude = null;
+			onUpdated();
+		} catch (e) {
+			lastError = e instanceof Error ? e.message : 'Не удалось исключить';
+		} finally {
+			excluding = false;
+		}
+	}
+
+	async function excludeSelected(): Promise<void> {
+		if (excluding || selected.size === 0) return;
+		excluding = true;
+		lastError = '';
+		try {
+			await api.excludeSubscriptionMembers(subscription.id, [...selected]);
+			selected = new Set();
+			selectMode = false;
+			confirmExcludeSelected = false;
+			onUpdated();
+		} catch (e) {
+			lastError = e instanceof Error ? e.message : 'Не удалось исключить';
+		} finally {
+			excluding = false;
+		}
+	}
+
+	async function restore(tags: string[]): Promise<void> {
+		if (restoring || tags.length === 0) return;
+		restoring = true;
+		lastError = '';
+		try {
+			await api.restoreSubscriptionMembers(subscription.id, tags);
+			onUpdated();
+		} catch (e) {
+			lastError = e instanceof Error ? e.message : 'Не удалось вернуть';
+		} finally {
+			restoring = false;
+		}
+	}
+
 	$effect(() => {
 		const nonce = autoDelayCheckNonce;
 		const hasMembers = memberList.length > 0;
@@ -278,44 +356,97 @@
 	<CheckLine size={14} strokeWidth={2} aria-hidden="true" />
 {/snippet}
 
-<header class="head">
-	<div class="head-info">
-		<div class="lbl">{modeLabel}</div>
-		<div class="val mono">{subscription.selectorTag}</div>
-	</div>
-	<div class="actions">
-		{#if subscription.isInline}
-			<Button variant="primary" size="sm" onclick={() => (addOpen = true)} iconBefore={createIcon}>
-				Добавить сервер
-			</Button>
-		{:else}
+{#snippet banIcon()}
+	<Ban size={14} strokeWidth={2} aria-hidden="true" />
+{/snippet}
+
+{#if selectMode}
+	<header class="head select-bar">
+		<div class="select-info">Выбрано {selected.size} из {memberList.length}</div>
+		<div class="actions">
 			<Button
-				variant="primary"
+				variant="ghost"
 				size="sm"
-				disabled={refreshing}
-				loading={refreshing}
-				iconBefore={refreshIcon}
-				onclick={refresh}
+				disabled={excluding || memberList.length === 0}
+				onclick={selectAll}
 			>
-				{refreshing ? 'Обновляем...' : 'Обновить сейчас'}
+				Выбрать все
 			</Button>
-		{/if}
-		<Button
-			variant="ghost"
-			size="sm"
-			disabled={batchTesting || memberList.length === 0}
-			loading={batchTesting}
-			iconBefore={testAllIcon}
-			onclick={testAll}
-		>
-			{#if batchTesting}
-				Тестируем {batchProgress.done}/{batchProgress.total}
+			{#if confirmExcludeSelected}
+				<Button
+					variant="danger"
+					size="sm"
+					disabled={excluding || selected.size === 0}
+					loading={excluding}
+					iconBefore={banIcon}
+					onclick={excludeSelected}
+				>
+					{excluding ? 'Исключаем...' : `Подтвердить (${selected.size})`}
+				</Button>
+				<Button variant="ghost" size="sm" disabled={excluding} onclick={() => (confirmExcludeSelected = false)}>
+					Назад
+				</Button>
 			{:else}
-				Проверить всё
+				<Button
+					variant="danger"
+					size="sm"
+					disabled={excluding || selected.size === 0}
+					iconBefore={banIcon}
+					onclick={() => (confirmExcludeSelected = true)}
+				>
+					Исключить выбранные ({selected.size})
+				</Button>
+				<Button variant="ghost" size="sm" disabled={excluding} onclick={toggleSelectMode}>
+					Отмена
+				</Button>
 			{/if}
-		</Button>
-	</div>
-</header>
+		</div>
+	</header>
+{:else}
+	<header class="head">
+		<div class="head-info">
+			<div class="lbl">{modeLabel}</div>
+			<div class="val mono">{subscription.selectorTag}</div>
+		</div>
+		<div class="actions">
+			{#if subscription.isInline}
+				<Button variant="primary" size="sm" onclick={() => (addOpen = true)} iconBefore={createIcon}>
+					Добавить сервер
+				</Button>
+			{:else}
+				<Button
+					variant="primary"
+					size="sm"
+					disabled={refreshing}
+					loading={refreshing}
+					iconBefore={refreshIcon}
+					onclick={refresh}
+				>
+					{refreshing ? 'Обновляем...' : 'Обновить сейчас'}
+				</Button>
+			{/if}
+			<Button
+				variant="ghost"
+				size="sm"
+				disabled={batchTesting || memberList.length === 0}
+				loading={batchTesting}
+				iconBefore={testAllIcon}
+				onclick={testAll}
+			>
+				{#if batchTesting}
+					Тестируем {batchProgress.done}/{batchProgress.total}
+				{:else}
+					Проверить всё
+				{/if}
+			</Button>
+			{#if isUrlSub && memberList.length > 0}
+				<Button variant="ghost" size="sm" disabled={excluding} onclick={toggleSelectMode}>
+					Выбрать
+				</Button>
+			{/if}
+		</div>
+	</header>
+{/if}
 
 {#if lastError}
 	<div class="err">{lastError}</div>
@@ -373,119 +504,25 @@
 				/>
 			</StatStrip>
 		</div>
-		<div class="awg-list-table member-list-table" class:with-inline-remove={subscription.isInline}>
-			<div class="awg-list-table-track">
-			<div
-				class="sbx-member-list-row sbx-member-list-row--head">
-				<span>Delay</span>
-				<span>Сервер</span>
-				<span>Протокол</span>
-				<span>Ping</span>
-				<span>Тег</span>
-				<span>Статус</span>
-				{#if subscription.isInline}<span class="h-rm" aria-hidden="true"></span>{/if}
-			</div>
-			<div class="member-list-meta-row mono">
-				<span class="meta-lbl">Мин. delay</span>
-				{#if membersListStats.minDelayMs !== null}
-					<span class="meta-val"><strong>{membersListStats.minDelayMs} ms</strong></span>
-					<span class="meta-hint">по последним проверкам среди серверов</span>
-				{:else}
-					<span class="meta-empty">—</span>
-				{/if}
-			</div>
-			{#each memberList as member (member.tag)}
-				<div
-					class="member-list-line"
-					class:with-inline-remove={subscription.isInline}
-					class:active-line={member.tag === effectiveActiveMember}
-					class:switching-line={switching === member.tag}
-					class:is-disabled={switching !== null}
-					role="button"
-					tabindex={switching !== null ? -1 : 0}
-					aria-pressed={member.tag === effectiveActiveMember}
-					onclick={() => {
-						if (switching !== null) return;
-						pickActive(member.tag);
-					}}
-					onkeydown={(e) => {
-						if (switching !== null) return;
-						if (e.key === 'Enter' || e.key === ' ') {
-							e.preventDefault();
-							pickActive(member.tag);
-						}
-					}}
-				>
-					<SubscriptionMemberCard
-						{member}
-						active={member.tag === effectiveActiveMember}
-						switching={switching === member.tag}
-						disabled={switching !== null}
-						onclick={() => pickActive(member.tag)}
-						layout="list"
-					/>
-					{#if subscription.isInline}
-						<button
-							type="button"
-							class="member-remove-btn"
-							title="Удалить сервер"
-							aria-label="Удалить сервер {member.label || member.tag}"
-							disabled={removingTag !== null}
-							onclick={(e) => {
-								e.stopPropagation();
-								requestRemove(member);
-							}}
-						>
-							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-								<polyline points="3,6 5,6 21,6" />
-								<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-							</svg>
-							Удалить
-						</button>
-					{/if}
-				</div>
-			{/each}
-			</div>
-		</div>
-	{:else}
-	<div class="grid">
-		{#each memberList as member (member.tag)}
-			<div
-				class="member-slot"
-				class:member-slot--inline={subscription.isInline}
-				class:member-slot--active={member.tag === effectiveActiveMember}
-			>
-				<SubscriptionMemberCard
-					{member}
-					active={member.tag === effectiveActiveMember}
-					switching={switching === member.tag}
-					disabled={switching !== null}
-					onclick={() => pickActive(member.tag)}
-				/>
-				{#if subscription.isInline}
-					<button
-						type="button"
-						class="member-remove-btn"
-						title="Удалить сервер"
-						aria-label="Удалить сервер {member.label || member.tag}"
-						disabled={removingTag !== null}
-						onclick={(e) => {
-							e.stopPropagation();
-							requestRemove(member);
-						}}
-					>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<polyline points="3,6 5,6 21,6" />
-							<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-						</svg>
-						Удалить
-					</button>
-				{/if}
-			</div>
-		{/each}
-	</div>
+		{/if}
+		<SubscriptionMemberList
+			members={memberList}
+			{effectiveActiveMember}
+			{switching}
+			{layout}
+			isInline={subscription.isInline}
+			{removingTag}
+			minDelayMs={membersListStats.minDelayMs}
+			{isUrlSub}
+			{selectMode}
+			{selected}
+			{excluding}
+			onpick={pickActive}
+			onremove={requestRemove}
+			ontoggle={toggleSel}
+			onexclude={excludeOne}
+		/>
 	{/if}
-{/if}
 
 <Modal
 	open={addOpen}
@@ -574,6 +611,40 @@
 			onclick={confirmRemove}
 		>
 			{removingTag !== null ? 'Удаляем...' : 'Удалить'}
+		</Button>
+	{/snippet}
+</Modal>
+
+<Modal
+	open={pendingExclude !== null}
+	title="Исключить сервер?"
+	size="md"
+	onclose={() => {
+		if (excluding) return;
+		pendingExclude = null;
+	}}
+>
+	{#if pendingExclude}
+		<p>
+			Сервер
+			<strong>{pendingExclude.label || `${pendingExclude.server}:${pendingExclude.port}`}</strong>
+			будет исключён из подписки и перестанет участвовать в выборе. Сервер
+			останется исключённым при обновлении подписки; вернуть его можно в
+			разделе «Исключённые».
+		</p>
+	{/if}
+	{#snippet actions()}
+		<Button variant="ghost" disabled={excluding} onclick={() => (pendingExclude = null)}>
+			Отмена
+		</Button>
+		<Button
+			variant="danger"
+			disabled={excluding}
+			loading={excluding}
+			iconBefore={banIcon}
+			onclick={confirmExcludeOne}
+		>
+			{excluding ? 'Исключаем...' : 'Исключить'}
 		</Button>
 	{/snippet}
 </Modal>
@@ -668,6 +739,12 @@
 	</section>
 {/if}
 
+<SubscriptionExcludedSection
+	members={subscription.excludedMembers ?? []}
+	{restoring}
+	onrestore={restore}
+/>
+
 <style>
 	.head {
 		display: flex;
@@ -678,6 +755,17 @@
 	}
 	.head-info { display: flex; flex-direction: column; gap: 0.2rem; }
 	.actions { display: flex; gap: 0.5rem; align-items: center; }
+	.select-bar {
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--color-accent-border);
+		border-radius: 10px;
+		background: var(--color-accent-tint);
+	}
+	.select-info {
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--color-accent);
+	}
 	@media (max-width: 640px) {
 		.head {
 			display: grid;
@@ -717,6 +805,12 @@
 			align-items: stretch;
 			gap: 0.5rem;
 			width: 100%;
+		}
+
+		/* Select-mode bar: stack buttons in one column so the long
+		   "Исключить выбранные (N)" label never overflows on narrow screens. */
+		.select-bar .actions {
+			grid-template-columns: minmax(0, 1fr);
 		}
 
 		.actions :global(.btn) {
@@ -875,85 +969,6 @@
 		}
 	}
 
-	.member-slot {
-		position: relative;
-		min-width: 0;
-	}
-	.member-remove-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 4px;
-		padding: 0.375rem 0.5rem;
-		border: none;
-		border-radius: var(--radius-sm);
-		background: transparent;
-		color: var(--color-text-muted);
-		font: inherit;
-		font-size: var(--sbx-card-action);
-		font-weight: 500;
-		white-space: nowrap;
-		cursor: pointer;
-		flex-shrink: 0;
-		transition: background var(--t-fast) ease, color var(--t-fast) ease;
-	}
-	.member-remove-btn:hover:not(:disabled) {
-		color: var(--color-error);
-		background: var(--color-error-tint);
-	}
-	.member-remove-btn:disabled {
-		cursor: not-allowed;
-		opacity: 0.5;
-	}
-	.member-remove-btn:focus-visible {
-		outline: 2px solid var(--color-accent);
-		outline-offset: 2px;
-	}
-	.member-slot .member-remove-btn {
-		position: absolute;
-		right: 6px;
-		bottom: 6px;
-		top: auto;
-		z-index: 1;
-	}
-
-	@media (max-width: 640px) {
-		.member-slot--inline {
-			display: flex;
-			flex-direction: column;
-			border: 1px solid var(--color-border);
-			border-radius: 10px;
-			overflow: hidden;
-			background: var(--color-bg-secondary);
-		}
-
-		.member-slot--inline.member-slot--active {
-			border-color: #3fb950;
-			background: rgba(63, 185, 80, 0.06);
-		}
-
-		.member-slot--inline :global(.card) {
-			border: none;
-			border-radius: 0;
-			background: transparent;
-			min-height: 0;
-		}
-
-		.member-slot--inline :global(.card.active) {
-			border: none;
-			background: transparent;
-		}
-
-		.member-slot--inline .member-remove-btn {
-			position: static;
-			width: 100%;
-			border-top: 1px solid var(--color-border);
-			border-radius: 0;
-			padding: 0.5rem 0.75rem;
-			justify-content: center;
-		}
-	}
-
 	.add-form { display: flex; flex-direction: column; gap: 0.5rem; }
 	.add-row { display: flex; flex-direction: column; gap: 0.3rem; }
 	.add-lbl { font-size: 0.85rem; color: var(--color-text-muted); }
@@ -980,149 +995,7 @@
 		}
 	}
 
-	.member-list-table {
-		border: 1px solid var(--color-border);
-		border-radius: 12px;
-		background: var(--color-bg-secondary);
-		overflow-x: auto;
-		overflow-y: hidden;
-		margin-top: 0.25rem;
-	}
 	.awg-summary-row {
 		margin-bottom: 0.75rem;
-	}
-	.member-list-table {
-		--awg-list-min-width: 800px;
-	}
-
-	.member-list-table.with-inline-remove {
-		--awg-list-min-width: 880px;
-	}
-
-	.sbx-member-list-row {
-		display: grid;
-		grid-template-columns:
-			minmax(80px, 1fr)
-			minmax(0, 1.35fr)
-			minmax(0, 1fr)
-			minmax(56px, 0.9fr)
-			minmax(0, 0.95fr)
-			minmax(88px, 1fr);
-		gap: 0 1rem;
-		align-items: center;
-		padding: 0.65rem 1rem;
-		border-bottom: 1px solid var(--color-border);
-		min-width: max(100%, max(var(--awg-list-min-width, 0px), max-content));
-	}
-	.member-list-table.with-inline-remove .sbx-member-list-row {
-		grid-template-columns:
-			minmax(80px, 1fr)
-			minmax(0, 1.35fr)
-			minmax(0, 1fr)
-			minmax(56px, 0.9fr)
-			minmax(0, 0.95fr)
-			minmax(88px, 1fr)
-			minmax(72px, max-content);
-	}
-	.sbx-member-list-row--head {
-		background: var(--color-bg-tertiary);
-		font-size: 0.6875rem;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--color-text-muted);
-		padding-top: 0.75rem;
-		padding-bottom: 0.75rem;
-	}
-	.sbx-member-list-row--head .h-rm {
-		display: block;
-	}
-	.member-list-meta-row {
-		display: flex;
-		align-items: center;
-		flex-wrap: wrap;
-		gap: 0.25rem 0.4rem;
-		padding: 0.45rem 1rem;
-		border-bottom: 1px solid var(--color-border);
-		background: var(--color-bg-primary);
-		font-size: var(--sbx-card-meta);
-		color: var(--color-text-muted);
-	}
-	.member-list-meta-row .meta-lbl {
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		font-size: 0.65rem;
-		font-weight: 700;
-	}
-	.member-list-meta-row .meta-val {
-		color: var(--color-text-primary);
-	}
-	.member-list-meta-row .meta-val strong {
-		color: #3fb950;
-		font-weight: 600;
-	}
-	.member-list-meta-row .meta-empty {
-		color: var(--color-text-muted);
-	}
-	.member-list-meta-row .meta-hint {
-		font-size: 0.7rem;
-		opacity: 0.85;
-		margin-left: 0.25rem;
-	}
-	.member-list-line {
-		padding: 0.65rem 1rem;
-		border-bottom: 1px solid var(--color-border);
-		cursor: pointer;
-		min-width: max(100%, max(var(--awg-list-min-width, 0px), max-content));
-	}
-	.member-list-line:not(.with-inline-remove) {
-		display: flex;
-		align-items: center;
-	}
-	.member-list-line:not(.with-inline-remove) :global(.mbr-flatten) {
-		flex: 1;
-		min-width: 0;
-		display: grid;
-		grid-template-columns:
-			minmax(80px, 1fr)
-			minmax(0, 1.35fr)
-			minmax(0, 1fr)
-			minmax(56px, 0.9fr)
-			minmax(0, 0.95fr)
-			minmax(88px, 1fr);
-		gap: 0 1rem;
-		align-items: center;
-	}
-	.member-list-line.with-inline-remove {
-		display: grid;
-		grid-template-columns:
-			minmax(80px, 1fr)
-			minmax(0, 1.35fr)
-			minmax(0, 1fr)
-			minmax(56px, 0.9fr)
-			minmax(0, 0.95fr)
-			minmax(88px, 1fr)
-			minmax(72px, max-content);
-		gap: 0 1rem;
-		align-items: center;
-	}
-	.member-list-line.with-inline-remove :global(.mbr-flatten) {
-		display: contents;
-	}
-	.member-list-line.with-inline-remove .member-remove-btn {
-		justify-self: end;
-	}
-	.member-list-line:last-child {
-		border-bottom: none;
-	}
-	.member-list-line.active-line {
-		background: rgba(63, 185, 80, 0.06);
-	}
-	.member-list-line.switching-line {
-		opacity: 0.65;
-		cursor: wait;
-	}
-	.member-list-line.is-disabled {
-		cursor: not-allowed;
 	}
 </style>

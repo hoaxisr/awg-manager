@@ -186,3 +186,40 @@ func TestStore_Load_SanitizesLegacyDownloadViaSubscriptionError(t *testing.T) {
 		t.Fatalf("legacy subscription error must be cleared, got %q", list[0].LastError)
 	}
 }
+
+func TestStore_MoveToExcluded_And_Reduce(t *testing.T) {
+	st, err := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub, err := st.Create(CreateInput{Label: "x", Inline: "vless://u@h:443"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keep := []MemberInfo{{Tag: "t-keep", Server: "k", Port: 1}}
+	exMem := []MemberInfo{{Tag: "t-ex", Server: "e", Port: 2}}
+	if err := st.MoveToExcluded(sub.ID, keep, []string{"t-ex"}, exMem); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.Get(sub.ID)
+	if len(got.Members) != 1 || got.Members[0].Tag != "t-keep" {
+		t.Fatalf("members=%v", got.Members)
+	}
+	if len(got.MemberTags) != 1 || got.MemberTags[0] != "t-keep" {
+		t.Fatalf("memberTags=%v", got.MemberTags)
+	}
+	if len(got.ExcludedTags) != 1 || got.ExcludedTags[0] != "t-ex" {
+		t.Fatalf("excludedTags=%v", got.ExcludedTags)
+	}
+	if len(got.ExcludedMembers) != 1 {
+		t.Fatalf("excludedMembers=%v", got.ExcludedMembers)
+	}
+	// Reduce (restore-path): убрать t-ex.
+	if err := st.SetExcludedTags(sub.ID, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	got2, _ := st.Get(sub.ID)
+	if len(got2.ExcludedTags) != 0 {
+		t.Fatalf("want empty after reduce, got %v", got2.ExcludedTags)
+	}
+}

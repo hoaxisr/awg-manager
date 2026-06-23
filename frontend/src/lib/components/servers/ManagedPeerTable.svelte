@@ -168,6 +168,18 @@
 		white-space: nowrap;
 	}
 	.col-rx, .col-tx { text-align: right; }
+	.col-actions { text-align: right; }
+	/* Узкие колонки сжимаем по контенту (width:1% + nowrap), слабину забирают
+	   Имя и Endpoint — иначе авто-раскладка растягивает всё и колонки разъезжаются. */
+	.managed-peer-table th.col-status,
+	.managed-peer-table th.col-ip,
+	.managed-peer-table th.col-rx,
+	.managed-peer-table th.col-tx,
+	.managed-peer-table th.col-handshake,
+	.managed-peer-table th.col-actions { width: 1%; }
+	.managed-peer-table :global(td.col-rx),
+	.managed-peer-table :global(td.col-tx),
+	.managed-peer-table :global(td.col-handshake) { white-space: nowrap; }
 	.managed-peer-table :global(td) {
 		padding: 0.625rem;
 		border-bottom: 1px solid var(--color-border-subtle, var(--color-border));

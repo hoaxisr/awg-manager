@@ -10,6 +10,7 @@
 		SpeedTestResult,
 	} from '$lib/types';
 	import { BackLink, FormToggle, Button, Dropdown, SpeedGauge, type DropdownOption } from '$lib/components/ui';
+	import { CircleCheck, CircleX, Globe, Zap, CircleAlert, Check, ChevronDown } from 'lucide-svelte';
 	import { PageContainer } from '$lib/components/layout';
 	import TunnelTestIcon from '$lib/components/tunnels/TunnelTestIcon.svelte';
 
@@ -467,19 +468,12 @@
 				{#if kind === 'awg'}
 					{#if connectivityResult.connected}
 						<span class="result-success">
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
-								<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-								<polyline points="22 4 12 14.01 9 11.01"/>
-							</svg>
+							<CircleCheck size={24} aria-hidden="true" />
 							Подключено
 						</span>
 					{:else}
 						<span class="result-error">
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
-								<circle cx="12" cy="12" r="10"/>
-								<line x1="15" y1="9" x2="9" y2="15"/>
-								<line x1="9" y1="9" x2="15" y2="15"/>
-							</svg>
+							<CircleX size={24} aria-hidden="true" />
 							Нет соединения
 						</span>
 					{/if}
@@ -515,11 +509,7 @@
 {#snippet ipCard()}
 	<div class="card test-card">
 		<h3>
-			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-				<circle cx="12" cy="12" r="10"/>
-				<line x1="2" y1="12" x2="22" y2="12"/>
-				<path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-			</svg>
+			<Globe size={20} aria-hidden="true" />
 			Проверка IP
 		</h3>
 
@@ -606,9 +596,7 @@
 {#snippet speedCard()}
 	<div class="card test-card">
 		<h3 class="card-title">
-			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-				<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-			</svg>
+			<Zap size={20} aria-hidden="true" />
 			Тест скорости
 		</h3>
 
@@ -618,20 +606,12 @@
 			</div>
 		{:else if !speedTestInfo?.available}
 			<p class="test-desc unavailable">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-					<circle cx="12" cy="12" r="10"/>
-					<line x1="12" y1="8" x2="12" y2="12"/>
-					<circle cx="12" cy="16" r="0.8" fill="currentColor" stroke="none"/>
-				</svg>
+				<CircleAlert size={16} aria-hidden="true" />
 				iperf3 не найден. Доступно только на NDMS 5.x.
 			</p>
 		{:else if kind === 'singbox' && !iface}
 			<p class="test-desc unavailable">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-					<circle cx="12" cy="12" r="10"/>
-					<line x1="12" y1="8" x2="12" y2="12"/>
-					<circle cx="12" cy="16" r="0.8" fill="currentColor" stroke="none"/>
-				</svg>
+				<CircleAlert size={16} aria-hidden="true" />
 				Тест iperf для sing-box туннеля требует включённого NDMS Proxy
 				(нужен kernel-интерфейс t2sX для bind).
 			</p>
@@ -670,9 +650,7 @@
 
 							<div class="speed-step" class:active={st === 'active'} class:done={st === 'done'}>
 								{#if st === 'done'}
-									<svg class="step-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" width="12" height="12">
-										<polyline points="20 6 9 17 4 12" />
-									</svg>
+									<Check class="step-mark" size={12} strokeWidth={3} aria-hidden="true" />
 								{:else if st === 'active'}
 									<span class="speed-step-spinner"></span>
 								{:else}
@@ -813,18 +791,7 @@
 							<span class="aux-tests-desc">Проверка соединения и Проверка IP</span>
 						</span>
 
-						<svg
-							class="aux-tests-chevron"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							width="16"
-							height="16"
-							aria-hidden="true"
-						>
-							<polyline points="6 9 12 15 18 9" />
-						</svg>
+						<ChevronDown class="aux-tests-chevron" size={16} aria-hidden="true" />
 					</summary>
 
 					<div class="aux-tests-content">
@@ -927,7 +894,7 @@
 		border-radius: var(--radius-sm);
 	}
 
-	.unavailable svg {
+	.unavailable :global(svg) {
 		flex-shrink: 0;
 		margin-top: 1px;
 	}
@@ -1099,7 +1066,7 @@
 		opacity: 1;
 	}
 
-	.step-mark {
+	:global(.step-mark) {
 		color: var(--success);
 	}
 
@@ -1283,13 +1250,13 @@
 		color: var(--text-muted);
 	}
 
-	.aux-tests-chevron {
+	:global(.aux-tests-chevron) {
 		flex-shrink: 0;
 		color: var(--text-muted);
 		transition: transform 0.15s ease;
 	}
 
-	.aux-tests[open] .aux-tests-chevron {
+	.aux-tests[open] :global(.aux-tests-chevron) {
 		transform: rotate(180deg);
 	}
 

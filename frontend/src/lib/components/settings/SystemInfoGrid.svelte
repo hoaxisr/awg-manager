@@ -3,7 +3,7 @@
 	import type { SystemInfo } from '$lib/types';
 	import type { UsageLevel } from '$lib/types/usageLevel';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
-	import { Router } from 'lucide-svelte';
+	import { Router, ChevronDown } from 'lucide-svelte';
 
 	interface Props {
 		systemInfo: SystemInfo;
@@ -107,17 +107,7 @@
 				aria-label={collapsed ? 'Развернуть информацию о системе' : 'Свернуть информацию о системе'}
 			>
 				<SettingsSectionLabel label="Система" icon={Router} tone="blue" inline />
-				<svg
-					class="section-chevron system-collapse-marker"
-					class:open={!collapsed}
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					aria-hidden="true"
-				>
-					<polyline points="6 9 12 15 18 9" />
-				</svg>
+				<span class="section-chevron system-collapse-marker" class:open={!collapsed} aria-hidden="true"><ChevronDown size={14} strokeWidth={2} /></span>
 			</button>
 			{#if !isBasic}
 				<div class="head-actions">
@@ -194,17 +184,7 @@
 		<details class="more-box" bind:open={detailsOpen}>
 			<summary class="more-summary">
 				<span>Подробнее</span>
-				<svg
-					class="more-chevron"
-					class:open={detailsOpen}
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					aria-hidden="true"
-				>
-					<polyline points="6 9 12 15 18 9" />
-				</svg>
+				<span class="more-chevron" class:open={detailsOpen} aria-hidden="true"><ChevronDown size={14} strokeWidth={2} /></span>
 			</summary>
 			<div class="more-grid">
 				<div class="setting-row"><span class="info-key">Build Date</span><span class="info-val">{details.firmwareBuildDate || '—'}</span></div>
@@ -266,6 +246,7 @@
 
 	.section-chevron,
 	.more-chevron {
+		display: inline-flex;
 		width: 14px;
 		height: 14px;
 		flex-shrink: 0;

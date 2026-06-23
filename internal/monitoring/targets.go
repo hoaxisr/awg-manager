@@ -61,43 +61,27 @@ type Tunnel struct {
 	UrltestGroup string `json:"urltestGroup,omitempty"`
 }
 
-// BaseTargets is the hardcoded base list. Extend by code change only — there
-// is no CRUD UI for targets.
-var BaseTargets = []Target{
-	{ID: "cf-1.1.1.1", Host: "1.1.1.1", Name: "Cloudflare DNS", URL: "https://1.1.1.1/"},
-	{ID: "g-8.8.8.8", Host: "8.8.8.8", Name: "Google DNS", URL: "https://8.8.8.8/"},
-	{ID: "q-9.9.9.9", Host: "9.9.9.9", Name: "Quad9 DNS", URL: "https://9.9.9.9/"},
-}
+// BaseTargets is empty: cross-target probing (Cloudflare/Google/Quad9 against
+// every tunnel) was removed together with the matrix UI. The scheduler now
+// probes only each tunnel's self-check cell.
+var BaseTargets = []Target{}
 
-// EffectiveTargets returns BaseTargets ∪ unique pingcheck targets ∪ unique
-// self-check targets from tunnels. Synthesised entries get id "pc-<host>"
-// (restart pingcheck target) or "cc-<host>" (connectivity-check self
-// target). Base order is preserved; dynamic entries appended in tunnel-
-// iteration order, deduplicated by Host.
+// EffectiveTargets returns one connectivity-check (self) target per unique
+// SelfTarget host. Cross-target probing was removed with the matrix UI;
+// only the self-check cell feeds the per-tunnel connectivity indicator.
 func EffectiveTargets(tunnels []Tunnel) []Target {
-	seen := make(map[string]bool, len(BaseTargets))
-	for _, t := range BaseTargets {
-		seen[t.Host] = true
-	}
-	out := make([]Target, 0, len(BaseTargets)+len(tunnels)*2)
-	out = append(out, BaseTargets...)
+	seen := make(map[string]bool)
+	out := make([]Target, 0, len(tunnels))
 	for _, tun := range tunnels {
-		if tun.PingcheckTarget != "" && !seen[tun.PingcheckTarget] {
-			seen[tun.PingcheckTarget] = true
-			out = append(out, Target{
-				ID:   "pc-" + tun.PingcheckTarget,
-				Host: tun.PingcheckTarget,
-				Name: tun.PingcheckTarget,
-			})
+		if tun.SelfTarget == "" || seen[tun.SelfTarget] {
+			continue
 		}
-		if tun.SelfTarget != "" && !seen[tun.SelfTarget] {
-			seen[tun.SelfTarget] = true
-			out = append(out, Target{
-				ID:   "cc-" + tun.SelfTarget,
-				Host: tun.SelfTarget,
-				Name: tun.SelfTarget,
-			})
-		}
+		seen[tun.SelfTarget] = true
+		out = append(out, Target{
+			ID:   "cc-" + tun.SelfTarget,
+			Host: tun.SelfTarget,
+			Name: tun.SelfTarget,
+		})
 	}
 	return out
 }

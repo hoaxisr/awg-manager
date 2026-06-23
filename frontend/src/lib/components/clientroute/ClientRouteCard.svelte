@@ -3,6 +3,7 @@
 	import { Toggle } from '$lib/components/ui';
 	import RoutingTargetBadges from '$lib/components/routing/RoutingTargetBadges.svelte';
 	import NdmsIconTile from '$lib/components/ui/NdmsIconTile.svelte';
+	import { SquarePen, Trash2, Bot } from 'lucide-svelte';
 	import { settingsSectionIconMode } from '$lib/stores/settingsSectionIconMode';
 	import { resolveNdmsCardIconStyle } from '$lib/utils/ndms-card-icon-style';
 	import {
@@ -58,24 +59,7 @@
 		{/if}
 		{#key $settingsSectionIconMode}
 			<NdmsIconTile background={tileStyle.background} foreground={tileStyle.foreground} size={NDMS_ICON_TILE_SIZE}>
-				<svg
-					class="device-icon"
-					width={iconSize}
-					height={iconSize}
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="1.75"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					aria-hidden="true"
-				>
-					<rect x="5" y="7" width="14" height="12" rx="2" />
-					<line x1="12" y1="7" x2="12" y2="3" />
-					<circle cx="12" cy="2" r="1" fill="currentColor" stroke="none" />
-					<circle cx="9" cy="13" r="1" fill="currentColor" stroke="none" />
-					<circle cx="15" cy="13" r="1" fill="currentColor" stroke="none" />
-				</svg>
+				<Bot size={iconSize} strokeWidth={1.75} aria-hidden="true" />
 			</NdmsIconTile>
 		{/key}
 		<div class="card-info">
@@ -110,10 +94,7 @@
 				title={`Изменить VPN-маршрут устройства «${clientLabel}»`}
 				onclick={() => onedit()}
 			>
-				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-					<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-				</svg>
+				<SquarePen size={15} />
 			</button>
 			<button
 				type="button"
@@ -121,10 +102,7 @@
 				title={`Удалить VPN-маршрут устройства «${clientLabel}»`}
 				onclick={() => ondelete()}
 			>
-				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<polyline points="3 6 5 6 21 6"/>
-					<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-				</svg>
+				<Trash2 size={15} />
 			</button>
 		</div>
 	</div>
@@ -159,11 +137,7 @@
 		min-width: 0;
 	}
 
-	.device-icon {
-		display: block;
-	}
-
-	.card-info {
+.card-info {
 		display: flex;
 		flex-direction: column;
 		gap: 1px;

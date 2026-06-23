@@ -810,15 +810,38 @@ func IsAutoManagedIface(name string) bool {
 // owned by awgoutbounds). User-created direct outbounds bound to other VPN
 // interfaces (IPSec/IKEv2/etc.) are kept — they live here in 20-router.json.
 // Composite outbounds and bind_interface-less direct are always kept.
+//
+// Proxy kernel ifaces (t2sN / proxyN) are NEVER stripped (#323): awgoutbounds
+// does not generate proxy outbounds, and the bindable picker only ever offers
+// KeenOS-native (non-ours) proxies, so any direct→t2s here is a deliberate
+// user bind. Keeping them unconditionally avoids a runtime NDMS lookup in the
+// Enable path — a transient lookup error must never silently delete a user's
+// persisted outbound.
 func stripAutoManagedDirect(in []Outbound) []Outbound {
 	out := make([]Outbound, 0, len(in))
 	for _, o := range in {
-		if o.Type == "direct" && o.BindInterface != "" && IsAutoManagedIface(o.BindInterface) {
+		if o.Type == "direct" && o.BindInterface != "" &&
+			IsStrippedDirectBind(o.BindInterface) {
 			continue
 		}
 		out = append(out, o)
 	}
 	return out
+}
+
+// IsStrippedDirectBind reports whether a direct outbound bound to iface is
+// removed from the effective config by stripAutoManagedDirect (auto-managed
+// AWG/WG/NWG ifaces, excluding proxy t2sN/proxyN which are kept). Exported so
+// the device-proxy outbound catalog can hide non-selectable router directs.
+func IsStrippedDirectBind(iface string) bool {
+	return IsAutoManagedIface(iface) && !isProxyIface(iface)
+}
+
+// isProxyIface reports a Keenetic proxy kernel interface name (tun2socks
+// "t2sN" or "proxyN"). These front a SOCKS proxy and are valid bind targets.
+func isProxyIface(name string) bool {
+	n := strings.ToLower(name)
+	return strings.HasPrefix(n, "t2s") || strings.HasPrefix(n, "proxy")
 }
 
 func (r Rule) hasAnyMatcher() bool {

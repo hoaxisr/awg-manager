@@ -7,6 +7,7 @@
 
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { Globe, Funnel, MonitorSmartphone } from 'lucide-svelte';
   import { Button, SectionLabel } from '$lib/components/ui';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
   import { ArrowDown } from 'lucide-svelte';
@@ -119,11 +120,7 @@
   <!-- Input row -->
   <div class="input-card">
     <div class="input-wrap">
-      <svg class="globe" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="10" />
-        <line x1="2" y1="12" x2="22" y2="12" />
-        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-      </svg>
+      <span class="globe"><Globe size={16} aria-hidden={true} /></span>
       <input
         class="input"
         type="text"
@@ -207,12 +204,7 @@
           sub={result.inputType === 'ip' ? 'IP' : 'домен'}
         >
           {#snippet icon()}
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="2" y="3" width="14" height="10" rx="2" />
-              <rect x="16" y="8" width="6" height="13" rx="1" />
-              <line x1="9" y1="17" x2="9" y2="21" />
-              <line x1="5" y1="21" x2="13" y2="21" />
-            </svg>
+            <MonitorSmartphone size={16} aria-hidden={true} />
           {/snippet}
         </TracePathStation>
 
@@ -223,13 +215,11 @@
 
         <TracePathStation
           tone={outcomeTone}
-          kicker={result.matchedRule === -1 ? 'По default' : `Правило #${result.matchedRule + 1}`}
+          kicker={result.matchedRule === -1 ? 'По default' : `Правило #${result.matchedRule}`}
           title={result.matchedRule === -1 ? 'нет матча' : `match ${matchedRuleAction}`}
         >
           {#snippet icon()}
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-            </svg>
+            <Funnel size={16} aria-hidden={true} />
           {/snippet}
         </TracePathStation>
 
@@ -245,11 +235,7 @@
           sub={result.matchedRule === -1 ? `final: ${result.final}` : undefined}
         >
           {#snippet icon()}
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="2" y1="12" x2="22" y2="12" />
-              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-            </svg>
+            <Globe size={16} aria-hidden={true} />
           {/snippet}
         </TracePathStation>
       </div>
@@ -336,7 +322,7 @@
     border: 1px solid var(--accent-line);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent);
   }
-  .globe { color: var(--accent); flex-shrink: 0; }
+  .globe { display: inline-flex; align-items: center; flex-shrink: 0; color: var(--accent); }
   .input {
     flex: 1;
     background: transparent;

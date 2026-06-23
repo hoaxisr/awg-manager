@@ -1,0 +1,5886 @@
+diff --git c/common/xray/buf/buffer.go i/common/xray/buf/buffer.go
+new file mode 100644
+index 0000000..38bbc9c
+--- /dev/null
++++ i/common/xray/buf/buffer.go
+@@ -0,0 +1,348 @@
++package buf
++
++import (
++	"io"
++
++	"github.com/sagernet/sing-box/common/xray/bytespool"
++	"github.com/sagernet/sing-box/common/xray/net"
++	E "github.com/sagernet/sing/common/exceptions"
++)
++
++const (
++	// Size of a regular buffer.
++	Size = 8192
++)
++
++var ErrBufferFull = E.New("buffer is full")
++
++var pool = bytespool.GetPool(Size)
++
++// ownership represents the data owner of the buffer.
++type ownership uint8
++
++const (
++	managed ownership = iota
++	unmanaged
++	bytespools
++)
++
++// Buffer is a recyclable allocation of a byte array. Buffer.Release() recycles
++// the buffer into an internal buffer pool, in order to recreate a buffer more
++// quickly.
++type Buffer struct {
++	v         []byte
++	start     int32
++	end       int32
++	ownership ownership
++	UDP       *net.Destination
++}
++
++// New creates a Buffer with 0 length and 8K capacity, managed.
++func New() *Buffer {
++	buf := pool.Get().([]byte)
++	if cap(buf) >= Size {
++		buf = buf[:Size]
++	} else {
++		buf = make([]byte, Size)
++	}
++
++	return &Buffer{
++		v: buf,
++	}
++}
++
++// NewExisted creates a standard size Buffer with an existed bytearray, managed.
++func NewExisted(b []byte) *Buffer {
++	if cap(b) < Size {
++		panic("Invalid buffer")
++	}
++
++	oLen := len(b)
++	if oLen < Size {
++		b = b[:Size]
++	}
++
++	return &Buffer{
++		v:   b,
++		end: int32(oLen),
++	}
++}
++
++// FromBytes creates a Buffer with an existed bytearray, unmanaged.
++func FromBytes(b []byte) *Buffer {
++	return &Buffer{
++		v:         b,
++		end:       int32(len(b)),
++		ownership: unmanaged,
++	}
++}
++
++// StackNew creates a new Buffer object on stack, managed.
++// This method is for buffers that is released in the same function.
++func StackNew() Buffer {
++	buf := pool.Get().([]byte)
++	if cap(buf) >= Size {
++		buf = buf[:Size]
++	} else {
++		buf = make([]byte, Size)
++	}
++
++	return Buffer{
++		v: buf,
++	}
++}
++
++// NewWithSize creates a Buffer with 0 length and capacity with at least the given size, bytespool's.
++func NewWithSize(size int32) *Buffer {
++	return &Buffer{
++		v:         bytespool.Alloc(size),
++		ownership: bytespools,
++	}
++}
++
++// Release recycles the buffer into an internal buffer pool.
++func (b *Buffer) Release() {
++	if b == nil || b.v == nil || b.ownership == unmanaged {
++		return
++	}
++
++	p := b.v
++	b.v = nil
++	b.Clear()
++
++	switch b.ownership {
++	case managed:
++		if cap(p) == Size {
++			pool.Put(p)
++		}
++	case bytespools:
++		bytespool.Free(p)
++	}
++	b.UDP = nil
++}
++
++// Clear clears the content of the buffer, results an empty buffer with
++// Len() = 0.
++func (b *Buffer) Clear() {
++	b.start = 0
++	b.end = 0
++}
++
++// Byte returns the bytes at index.
++func (b *Buffer) Byte(index int32) byte {
++	return b.v[b.start+index]
++}
++
++// SetByte sets the byte value at index.
++func (b *Buffer) SetByte(index int32, value byte) {
++	b.v[b.start+index] = value
++}
++
++// Bytes returns the content bytes of this Buffer.
++func (b *Buffer) Bytes() []byte {
++	return b.v[b.start:b.end]
++}
++
++// Extend increases the buffer size by n bytes, and returns the extended part.
++// It panics if result size is larger than size of this buffer.
++func (b *Buffer) Extend(n int32) []byte {
++	end := b.end + n
++	if end > int32(len(b.v)) {
++		panic("extending out of bound")
++	}
++	ext := b.v[b.end:end]
++	b.end = end
++	clear(ext)
++	return ext
++}
++
++// BytesRange returns a slice of this buffer with given from and to boundary.
++func (b *Buffer) BytesRange(from, to int32) []byte {
++	if from < 0 {
++		from += b.Len()
++	}
++	if to < 0 {
++		to += b.Len()
++	}
++	return b.v[b.start+from : b.start+to]
++}
++
++// BytesFrom returns a slice of this Buffer starting from the given position.
++func (b *Buffer) BytesFrom(from int32) []byte {
++	if from < 0 {
++		from += b.Len()
++	}
++	return b.v[b.start+from : b.end]
++}
++
++// BytesTo returns a slice of this Buffer from start to the given position.
++func (b *Buffer) BytesTo(to int32) []byte {
++	if to < 0 {
++		to += b.Len()
++	}
++	if to < 0 {
++		to = 0
++	}
++	return b.v[b.start : b.start+to]
++}
++
++// Check makes sure that 0 <= b.start <= b.end.
++func (b *Buffer) Check() {
++	if b.start < 0 {
++		b.start = 0
++	}
++	if b.end < 0 {
++		b.end = 0
++	}
++	if b.start > b.end {
++		b.start = b.end
++	}
++}
++
++// Resize cuts the buffer at the given position.
++func (b *Buffer) Resize(from, to int32) {
++	oldEnd := b.end
++	if from < 0 {
++		from += b.Len()
++	}
++	if to < 0 {
++		to += b.Len()
++	}
++	if to < from {
++		panic("Invalid slice")
++	}
++	b.end = b.start + to
++	b.start += from
++	b.Check()
++	if b.end > oldEnd {
++		clear(b.v[oldEnd:b.end])
++	}
++}
++
++// Advance cuts the buffer at the given position.
++func (b *Buffer) Advance(from int32) {
++	if from < 0 {
++		from += b.Len()
++	}
++	b.start += from
++	b.Check()
++}
++
++// Len returns the length of the buffer content.
++func (b *Buffer) Len() int32 {
++	if b == nil {
++		return 0
++	}
++	return b.end - b.start
++}
++
++// Cap returns the capacity of the buffer content.
++func (b *Buffer) Cap() int32 {
++	if b == nil {
++		return 0
++	}
++	return int32(len(b.v))
++}
++
++// Available returns the available capacity of the buffer content.
++func (b *Buffer) Available() int32 {
++	if b == nil {
++		return 0
++	}
++	return int32(len(b.v)) - b.end
++}
++
++// IsEmpty returns true if the buffer is empty.
++func (b *Buffer) IsEmpty() bool {
++	return b.Len() == 0
++}
++
++// IsFull returns true if the buffer has no more room to grow.
++func (b *Buffer) IsFull() bool {
++	return b != nil && b.end == int32(len(b.v))
++}
++
++// Write implements Write method in io.Writer.
++func (b *Buffer) Write(data []byte) (int, error) {
++	nBytes := copy(b.v[b.end:], data)
++	b.end += int32(nBytes)
++	if nBytes < len(data) {
++		return nBytes, ErrBufferFull
++	}
++	return nBytes, nil
++}
++
++// WriteByte writes a single byte into the buffer.
++func (b *Buffer) WriteByte(v byte) error {
++	if b.IsFull() {
++		return ErrBufferFull
++	}
++	b.v[b.end] = v
++	b.end++
++	return nil
++}
++
++// WriteString implements io.StringWriter.
++func (b *Buffer) WriteString(s string) (int, error) {
++	return b.Write([]byte(s))
++}
++
++// ReadByte implements io.ByteReader
++func (b *Buffer) ReadByte() (byte, error) {
++	if b.start == b.end {
++		return 0, io.EOF
++	}
++
++	nb := b.v[b.start]
++	b.start++
++	return nb, nil
++}
++
++// ReadBytes implements bufio.Reader.ReadBytes
++func (b *Buffer) ReadBytes(length int32) ([]byte, error) {
++	if b.end-b.start < length {
++		return nil, io.EOF
++	}
++
++	nb := b.v[b.start : b.start+length]
++	b.start += length
++	return nb, nil
++}
++
++// Read implements io.Reader.Read().
++func (b *Buffer) Read(data []byte) (int, error) {
++	if b.Len() == 0 {
++		return 0, io.EOF
++	}
++	nBytes := copy(data, b.v[b.start:b.end])
++	if int32(nBytes) == b.Len() {
++		b.Clear()
++	} else {
++		b.start += int32(nBytes)
++	}
++	return nBytes, nil
++}
++
++// ReadFrom implements io.ReaderFrom.
++func (b *Buffer) ReadFrom(reader io.Reader) (int64, error) {
++	n, err := reader.Read(b.v[b.end:])
++	b.end += int32(n)
++	return int64(n), err
++}
++
++// ReadFullFrom reads exact size of bytes from given reader, or until error occurs.
++func (b *Buffer) ReadFullFrom(reader io.Reader, size int32) (int64, error) {
++	end := b.end + size
++	if end > int32(len(b.v)) {
++		v := end
++		return 0, E.New("out of bound: ", v)
++	}
++	n, err := io.ReadFull(reader, b.v[b.end:end])
++	b.end += int32(n)
++	return int64(n), err
++}
++
++// String returns the string form of this Buffer.
++func (b *Buffer) String() string {
++	return string(b.Bytes())
++}
+diff --git c/common/xray/buf/copy.go i/common/xray/buf/copy.go
+new file mode 100644
+index 0000000..efab0e1
+--- /dev/null
++++ i/common/xray/buf/copy.go
+@@ -0,0 +1,124 @@
++package buf
++
++import (
++	"io"
++	"time"
++
++	"github.com/sagernet/sing-box/common/xray/errors"
++	"github.com/sagernet/sing-box/common/xray/signal"
++	E "github.com/sagernet/sing/common/exceptions"
++)
++
++type dataHandler func(MultiBuffer)
++
++type copyHandler struct {
++	onData []dataHandler
++}
++
++// SizeCounter is for counting bytes copied by Copy().
++type SizeCounter struct {
++	Size int64
++}
++
++// CopyOption is an option for copying data.
++type CopyOption func(*copyHandler)
++
++// UpdateActivity is a CopyOption to update activity on each data copy operation.
++func UpdateActivity(timer signal.ActivityUpdater) CopyOption {
++	return func(handler *copyHandler) {
++		handler.onData = append(handler.onData, func(MultiBuffer) {
++			timer.Update()
++		})
++	}
++}
++
++// CountSize is a CopyOption that sums the total size of data copied into the given SizeCounter.
++func CountSize(sc *SizeCounter) CopyOption {
++	return func(handler *copyHandler) {
++		handler.onData = append(handler.onData, func(b MultiBuffer) {
++			sc.Size += int64(b.Len())
++		})
++	}
++}
++
++type readError struct {
++	error
++}
++
++func (e readError) Error() string {
++	return e.error.Error()
++}
++
++func (e readError) Unwrap() error {
++	return e.error
++}
++
++// IsReadError returns true if the error in Copy() comes from reading.
++func IsReadError(err error) bool {
++	_, ok := err.(readError)
++	return ok
++}
++
++type writeError struct {
++	error
++}
++
++func (e writeError) Error() string {
++	return e.error.Error()
++}
++
++func (e writeError) Unwrap() error {
++	return e.error
++}
++
++// IsWriteError returns true if the error in Copy() comes from writing.
++func IsWriteError(err error) bool {
++	_, ok := err.(writeError)
++	return ok
++}
++
++func copyInternal(reader Reader, writer Writer, handler *copyHandler) error {
++	for {
++		buffer, err := reader.ReadMultiBuffer()
++		if !buffer.IsEmpty() {
++			for _, handler := range handler.onData {
++				handler(buffer)
++			}
++
++			if werr := writer.WriteMultiBuffer(buffer); werr != nil {
++				return writeError{werr}
++			}
++		}
++
++		if err != nil {
++			return readError{err}
++		}
++	}
++}
++
++// Copy dumps all payload from reader to writer or stops when an error occurs. It returns nil when EOF.
++func Copy(reader Reader, writer Writer, options ...CopyOption) error {
++	var handler copyHandler
++	for _, option := range options {
++		option(&handler)
++	}
++	err := copyInternal(reader, writer, &handler)
++	if err != nil && errors.Cause(err) != io.EOF {
++		return err
++	}
++	return nil
++}
++
++var ErrNotTimeoutReader = E.New("not a TimeoutReader")
++
++func CopyOnceTimeout(reader Reader, writer Writer, timeout time.Duration) error {
++	timeoutReader, ok := reader.(TimeoutReader)
++	if !ok {
++		return ErrNotTimeoutReader
++	}
++	mb, err := timeoutReader.ReadMultiBufferTimeout(timeout)
++	if err != nil {
++		return err
++	}
++	return writer.WriteMultiBuffer(mb)
++}
+diff --git c/common/xray/buf/io.go i/common/xray/buf/io.go
+new file mode 100644
+index 0000000..5b7826e
+--- /dev/null
++++ i/common/xray/buf/io.go
+@@ -0,0 +1,127 @@
++package buf
++
++import (
++	"io"
++	"net"
++	"syscall"
++	"time"
++
++	"github.com/sagernet/sing-box/common/xray/stat"
++	"github.com/sagernet/sing-box/common/xray/stats"
++	E "github.com/sagernet/sing/common/exceptions"
++)
++
++// Reader extends io.Reader with MultiBuffer.
++type Reader interface {
++	// ReadMultiBuffer reads content from underlying reader, and put it into a MultiBuffer.
++	ReadMultiBuffer() (MultiBuffer, error)
++}
++
++// ErrReadTimeout is an error that happens with IO timeout.
++var ErrReadTimeout = E.New("IO timeout")
++
++// TimeoutReader is a reader that returns error if Read() operation takes longer than the given timeout.
++type TimeoutReader interface {
++	Reader
++	ReadMultiBufferTimeout(time.Duration) (MultiBuffer, error)
++}
++
++// Writer extends io.Writer with MultiBuffer.
++type Writer interface {
++	// WriteMultiBuffer writes a MultiBuffer into underlying writer.
++	WriteMultiBuffer(MultiBuffer) error
++}
++
++// WriteAllBytes ensures all bytes are written into the given writer.
++func WriteAllBytes(writer io.Writer, payload []byte, c stats.Counter) error {
++	wc := 0
++	defer func() {
++		if c != nil {
++			c.Add(int64(wc))
++		}
++	}()
++
++	for len(payload) > 0 {
++		n, err := writer.Write(payload)
++		wc += n
++		if err != nil {
++			return err
++		}
++		payload = payload[n:]
++	}
++	return nil
++}
++
++func isPacketReader(reader io.Reader) bool {
++	_, ok := reader.(net.PacketConn)
++	return ok
++}
++
++// NewReader creates a new Reader.
++// The Reader instance doesn't take the ownership of reader.
++func NewReader(reader io.Reader) Reader {
++	if mr, ok := reader.(Reader); ok {
++		return mr
++	}
++
++	if isPacketReader(reader) {
++		return &PacketReader{
++			Reader: reader,
++		}
++	}
++
++	return &SingleReader{
++		Reader: reader,
++	}
++}
++
++// NewPacketReader creates a new PacketReader based on the given reader.
++func NewPacketReader(reader io.Reader) Reader {
++	if mr, ok := reader.(Reader); ok {
++		return mr
++	}
++
++	return &PacketReader{
++		Reader: reader,
++	}
++}
++
++func isPacketWriter(writer io.Writer) bool {
++	if _, ok := writer.(net.PacketConn); ok {
++		return true
++	}
++
++	// If the writer doesn't implement syscall.Conn, it is probably not a TCP connection.
++	if _, ok := writer.(syscall.Conn); !ok {
++		return true
++	}
++	return false
++}
++
++// NewWriter creates a new Writer.
++func NewWriter(writer io.Writer) Writer {
++	if mw, ok := writer.(Writer); ok {
++		return mw
++	}
++
++	iConn := writer
++	if statConn, ok := writer.(*stat.CounterConnection); ok {
++		iConn = statConn.Connection
++	}
++
++	if isPacketWriter(iConn) {
++		return &SequentialWriter{
++			Writer: writer,
++		}
++	}
++
++	var counter stats.Counter
++
++	if statConn, ok := writer.(*stat.CounterConnection); ok {
++		counter = statConn.WriteCounter
++	}
++	return &BufferToBytesWriter{
++		Writer:  iConn,
++		counter: counter,
++	}
++}
+diff --git c/common/xray/buf/multi_buffer.go i/common/xray/buf/multi_buffer.go
+new file mode 100644
+index 0000000..8fe09c8
+--- /dev/null
++++ i/common/xray/buf/multi_buffer.go
+@@ -0,0 +1,310 @@
++package buf
++
++import (
++	"io"
++
++	"github.com/sagernet/sing-box/common/xray"
++	"github.com/sagernet/sing-box/common/xray/errors"
++	"github.com/sagernet/sing-box/common/xray/serial"
++)
++
++// ReadAllToBytes reads all content from the reader into a byte array, until EOF.
++func ReadAllToBytes(reader io.Reader) ([]byte, error) {
++	mb, err := ReadFrom(reader)
++	if err != nil {
++		return nil, err
++	}
++	if mb.Len() == 0 {
++		return nil, nil
++	}
++	b := make([]byte, mb.Len())
++	mb, _ = SplitBytes(mb, b)
++	ReleaseMulti(mb)
++	return b, nil
++}
++
++// MultiBuffer is a list of Buffers. The order of Buffer matters.
++type MultiBuffer []*Buffer
++
++// MergeMulti merges content from src to dest, and returns the new address of dest and src
++func MergeMulti(dest MultiBuffer, src MultiBuffer) (MultiBuffer, MultiBuffer) {
++	dest = append(dest, src...)
++	for idx := range src {
++		src[idx] = nil
++	}
++	return dest, src[:0]
++}
++
++// MergeBytes merges the given bytes into MultiBuffer and return the new address of the merged MultiBuffer.
++func MergeBytes(dest MultiBuffer, src []byte) MultiBuffer {
++	n := len(dest)
++	if n > 0 && !dest[n-1].IsFull() {
++		nBytes, _ := dest[n-1].Write(src)
++		src = src[nBytes:]
++	}
++
++	for len(src) > 0 {
++		b := New()
++		nBytes, _ := b.Write(src)
++		src = src[nBytes:]
++		dest = append(dest, b)
++	}
++
++	return dest
++}
++
++// ReleaseMulti releases all content of the MultiBuffer, and returns an empty MultiBuffer.
++func ReleaseMulti(mb MultiBuffer) MultiBuffer {
++	for i := range mb {
++		mb[i].Release()
++		mb[i] = nil
++	}
++	return mb[:0]
++}
++
++// Copy copied the beginning part of the MultiBuffer into the given byte array.
++func (mb MultiBuffer) Copy(b []byte) int {
++	total := 0
++	for _, bb := range mb {
++		nBytes := copy(b[total:], bb.Bytes())
++		total += nBytes
++		if int32(nBytes) < bb.Len() {
++			break
++		}
++	}
++	return total
++}
++
++// ReadFrom reads all content from reader until EOF.
++func ReadFrom(reader io.Reader) (MultiBuffer, error) {
++	mb := make(MultiBuffer, 0, 16)
++	for {
++		b := New()
++		_, err := b.ReadFullFrom(reader, Size)
++		if b.IsEmpty() {
++			b.Release()
++		} else {
++			mb = append(mb, b)
++		}
++		if err != nil {
++			if errors.Cause(err) == io.EOF || errors.Cause(err) == io.ErrUnexpectedEOF {
++				return mb, nil
++			}
++			return mb, err
++		}
++	}
++}
++
++// SplitBytes splits the given amount of bytes from the beginning of the MultiBuffer.
++// It returns the new address of MultiBuffer leftover, and number of bytes written into the input byte slice.
++func SplitBytes(mb MultiBuffer, b []byte) (MultiBuffer, int) {
++	totalBytes := 0
++	endIndex := -1
++	for i := range mb {
++		pBuffer := mb[i]
++		nBytes, _ := pBuffer.Read(b)
++		totalBytes += nBytes
++		b = b[nBytes:]
++		if !pBuffer.IsEmpty() {
++			endIndex = i
++			break
++		}
++		pBuffer.Release()
++		mb[i] = nil
++	}
++
++	if endIndex == -1 {
++		mb = mb[:0]
++	} else {
++		mb = mb[endIndex:]
++	}
++
++	return mb, totalBytes
++}
++
++// SplitFirstBytes splits the first buffer from MultiBuffer, and then copy its content into the given slice.
++func SplitFirstBytes(mb MultiBuffer, p []byte) (MultiBuffer, int) {
++	mb, b := SplitFirst(mb)
++	if b == nil {
++		return mb, 0
++	}
++	n := copy(p, b.Bytes())
++	b.Release()
++	return mb, n
++}
++
++// Compact returns another MultiBuffer by merging all content of the given one together.
++func Compact(mb MultiBuffer) MultiBuffer {
++	if len(mb) == 0 {
++		return mb
++	}
++
++	mb2 := make(MultiBuffer, 0, len(mb))
++	last := mb[0]
++
++	for i := 1; i < len(mb); i++ {
++		curr := mb[i]
++		if curr.Len() > last.Available() {
++			mb2 = append(mb2, last)
++			last = curr
++		} else {
++			common.Must2(last.ReadFrom(curr))
++			curr.Release()
++		}
++	}
++
++	mb2 = append(mb2, last)
++	return mb2
++}
++
++// SplitFirst splits the first Buffer from the beginning of the MultiBuffer.
++func SplitFirst(mb MultiBuffer) (MultiBuffer, *Buffer) {
++	if len(mb) == 0 {
++		return mb, nil
++	}
++
++	b := mb[0]
++	mb[0] = nil
++	mb = mb[1:]
++	return mb, b
++}
++
++// SplitSize splits the beginning of the MultiBuffer into another one, for at most size bytes.
++func SplitSize(mb MultiBuffer, size int32) (MultiBuffer, MultiBuffer) {
++	if len(mb) == 0 {
++		return mb, nil
++	}
++
++	if mb[0].Len() > size {
++		b := New()
++		copy(b.Extend(size), mb[0].BytesTo(size))
++		mb[0].Advance(size)
++		return mb, MultiBuffer{b}
++	}
++
++	totalBytes := int32(0)
++	var r MultiBuffer
++	endIndex := -1
++	for i := range mb {
++		if totalBytes+mb[i].Len() > size {
++			endIndex = i
++			break
++		}
++		totalBytes += mb[i].Len()
++		r = append(r, mb[i])
++		mb[i] = nil
++	}
++	if endIndex == -1 {
++		// To reuse mb array
++		mb = mb[:0]
++	} else {
++		mb = mb[endIndex:]
++	}
++	return mb, r
++}
++
++// SplitMulti splits the beginning of the MultiBuffer into first one, the index i and after into second one
++func SplitMulti(mb MultiBuffer, i int) (MultiBuffer, MultiBuffer) {
++	mb2 := make(MultiBuffer, 0, len(mb))
++	if i < len(mb) && i >= 0 {
++		mb2 = append(mb2, mb[i:]...)
++		for j := i; j < len(mb); j++ {
++			mb[j] = nil
++		}
++		mb = mb[:i]
++	}
++	return mb, mb2
++}
++
++// WriteMultiBuffer writes all buffers from the MultiBuffer to the Writer one by one, and return error if any, with leftover MultiBuffer.
++func WriteMultiBuffer(writer io.Writer, mb MultiBuffer) (MultiBuffer, error) {
++	for {
++		mb2, b := SplitFirst(mb)
++		mb = mb2
++		if b == nil {
++			break
++		}
++
++		_, err := writer.Write(b.Bytes())
++		b.Release()
++		if err != nil {
++			return mb, err
++		}
++	}
++
++	return nil, nil
++}
++
++// Len returns the total number of bytes in the MultiBuffer.
++func (mb MultiBuffer) Len() int32 {
++	if mb == nil {
++		return 0
++	}
++
++	size := int32(0)
++	for _, b := range mb {
++		size += b.Len()
++	}
++	return size
++}
++
++// IsEmpty returns true if the MultiBuffer has no content.
++func (mb MultiBuffer) IsEmpty() bool {
++	for _, b := range mb {
++		if !b.IsEmpty() {
++			return false
++		}
++	}
++	return true
++}
++
++// String returns the content of the MultiBuffer in string.
++func (mb MultiBuffer) String() string {
++	v := make([]interface{}, len(mb))
++	for i, b := range mb {
++		v[i] = b
++	}
++	return serial.Concat(v...)
++}
++
++// MultiBufferContainer is a ReadWriteCloser wrapper over MultiBuffer.
++type MultiBufferContainer struct {
++	MultiBuffer
++}
++
++// Read implements io.Reader.
++func (c *MultiBufferContainer) Read(b []byte) (int, error) {
++	if c.MultiBuffer.IsEmpty() {
++		return 0, io.EOF
++	}
++
++	mb, nBytes := SplitBytes(c.MultiBuffer, b)
++	c.MultiBuffer = mb
++	return nBytes, nil
++}
++
++// ReadMultiBuffer implements Reader.
++func (c *MultiBufferContainer) ReadMultiBuffer() (MultiBuffer, error) {
++	mb := c.MultiBuffer
++	c.MultiBuffer = nil
++	return mb, nil
++}
++
++// Write implements io.Writer.
++func (c *MultiBufferContainer) Write(b []byte) (int, error) {
++	c.MultiBuffer = MergeBytes(c.MultiBuffer, b)
++	return len(b), nil
++}
++
++// WriteMultiBuffer implements Writer.
++func (c *MultiBufferContainer) WriteMultiBuffer(b MultiBuffer) error {
++	mb, _ := MergeMulti(c.MultiBuffer, b)
++	c.MultiBuffer = mb
++	return nil
++}
++
++// Close implements io.Closer.
++func (c *MultiBufferContainer) Close() error {
++	c.MultiBuffer = ReleaseMulti(c.MultiBuffer)
++	return nil
++}
+diff --git c/common/xray/buf/override.go i/common/xray/buf/override.go
+new file mode 100644
+index 0000000..2032854
+--- /dev/null
++++ i/common/xray/buf/override.go
+@@ -0,0 +1,38 @@
++package buf
++
++import (
++	"github.com/sagernet/sing-box/common/xray/net"
++)
++
++type EndpointOverrideReader struct {
++	Reader
++	Dest         net.Address
++	OriginalDest net.Address
++}
++
++func (r *EndpointOverrideReader) ReadMultiBuffer() (MultiBuffer, error) {
++	mb, err := r.Reader.ReadMultiBuffer()
++	if err == nil {
++		for _, b := range mb {
++			if b.UDP != nil && b.UDP.Address == r.OriginalDest {
++				b.UDP.Address = r.Dest
++			}
++		}
++	}
++	return mb, err
++}
++
++type EndpointOverrideWriter struct {
++	Writer
++	Dest         net.Address
++	OriginalDest net.Address
++}
++
++func (w *EndpointOverrideWriter) WriteMultiBuffer(mb MultiBuffer) error {
++	for _, b := range mb {
++		if b.UDP != nil && b.UDP.Address == w.Dest {
++			b.UDP.Address = w.OriginalDest
++		}
++	}
++	return w.Writer.WriteMultiBuffer(mb)
++}
+diff --git c/common/xray/buf/reader.go i/common/xray/buf/reader.go
+new file mode 100644
+index 0000000..17b2e49
+--- /dev/null
++++ i/common/xray/buf/reader.go
+@@ -0,0 +1,175 @@
++package buf
++
++import (
++	"io"
++
++	"github.com/sagernet/sing-box/common/xray"
++	"github.com/sagernet/sing-box/common/xray/errors"
++	E "github.com/sagernet/sing/common/exceptions"
++)
++
++func readOneUDP(r io.Reader) (*Buffer, error) {
++	b := New()
++	for i := 0; i < 64; i++ {
++		_, err := b.ReadFrom(r)
++		if !b.IsEmpty() {
++			return b, nil
++		}
++		if err != nil {
++			b.Release()
++			return nil, err
++		}
++	}
++
++	b.Release()
++	return nil, E.New("Reader returns too many empty payloads.")
++}
++
++// ReadBuffer reads a Buffer from the given reader.
++func ReadBuffer(r io.Reader) (*Buffer, error) {
++	b := New()
++	n, err := b.ReadFrom(r)
++	if n > 0 {
++		return b, err
++	}
++	b.Release()
++	return nil, err
++}
++
++// BufferedReader is a Reader that keeps its internal buffer.
++type BufferedReader struct {
++	// Reader is the underlying reader to be read from
++	Reader Reader
++	// Buffer is the internal buffer to be read from first
++	Buffer MultiBuffer
++	// Splitter is a function to read bytes from MultiBuffer
++	Splitter func(MultiBuffer, []byte) (MultiBuffer, int)
++}
++
++// BufferedBytes returns the number of bytes that is cached in this reader.
++func (r *BufferedReader) BufferedBytes() int32 {
++	return r.Buffer.Len()
++}
++
++// ReadByte implements io.ByteReader.
++func (r *BufferedReader) ReadByte() (byte, error) {
++	var b [1]byte
++	_, err := r.Read(b[:])
++	return b[0], err
++}
++
++// Read implements io.Reader. It reads from internal buffer first (if available) and then reads from the underlying reader.
++func (r *BufferedReader) Read(b []byte) (int, error) {
++	spliter := r.Splitter
++	if spliter == nil {
++		spliter = SplitBytes
++	}
++
++	if !r.Buffer.IsEmpty() {
++		buffer, nBytes := spliter(r.Buffer, b)
++		r.Buffer = buffer
++		if r.Buffer.IsEmpty() {
++			r.Buffer = nil
++		}
++		return nBytes, nil
++	}
++
++	mb, err := r.Reader.ReadMultiBuffer()
++	if err != nil {
++		return 0, err
++	}
++
++	mb, nBytes := spliter(mb, b)
++	if !mb.IsEmpty() {
++		r.Buffer = mb
++	}
++	return nBytes, nil
++}
++
++// ReadMultiBuffer implements Reader.
++func (r *BufferedReader) ReadMultiBuffer() (MultiBuffer, error) {
++	if !r.Buffer.IsEmpty() {
++		mb := r.Buffer
++		r.Buffer = nil
++		return mb, nil
++	}
++
++	return r.Reader.ReadMultiBuffer()
++}
++
++// ReadAtMost returns a MultiBuffer with at most size.
++func (r *BufferedReader) ReadAtMost(size int32) (MultiBuffer, error) {
++	if r.Buffer.IsEmpty() {
++		mb, err := r.Reader.ReadMultiBuffer()
++		if mb.IsEmpty() && err != nil {
++			return nil, err
++		}
++		r.Buffer = mb
++	}
++
++	rb, mb := SplitSize(r.Buffer, size)
++	r.Buffer = rb
++	if r.Buffer.IsEmpty() {
++		r.Buffer = nil
++	}
++	return mb, nil
++}
++
++func (r *BufferedReader) writeToInternal(writer io.Writer) (int64, error) {
++	mbWriter := NewWriter(writer)
++	var sc SizeCounter
++	if r.Buffer != nil {
++		sc.Size = int64(r.Buffer.Len())
++		if err := mbWriter.WriteMultiBuffer(r.Buffer); err != nil {
++			return 0, err
++		}
++		r.Buffer = nil
++	}
++
++	err := Copy(r.Reader, mbWriter, CountSize(&sc))
++	return sc.Size, err
++}
++
++// WriteTo implements io.WriterTo.
++func (r *BufferedReader) WriteTo(writer io.Writer) (int64, error) {
++	nBytes, err := r.writeToInternal(writer)
++	if errors.Cause(err) == io.EOF {
++		return nBytes, nil
++	}
++	return nBytes, err
++}
++
++// Interrupt implements common.Interruptible.
++func (r *BufferedReader) Interrupt() {
++	common.Interrupt(r.Reader)
++}
++
++// Close implements io.Closer.
++func (r *BufferedReader) Close() error {
++	return common.Close(r.Reader)
++}
++
++// SingleReader is a Reader that read one Buffer every time.
++type SingleReader struct {
++	io.Reader
++}
++
++// ReadMultiBuffer implements Reader.
++func (r *SingleReader) ReadMultiBuffer() (MultiBuffer, error) {
++	b, err := ReadBuffer(r.Reader)
++	return MultiBuffer{b}, err
++}
++
++// PacketReader is a Reader that read one Buffer every time.
++type PacketReader struct {
++	io.Reader
++}
++
++// ReadMultiBuffer implements Reader.
++func (r *PacketReader) ReadMultiBuffer() (MultiBuffer, error) {
++	b, err := readOneUDP(r.Reader)
++	if err != nil {
++		return nil, err
++	}
++	return MultiBuffer{b}, nil
++}
+diff --git c/common/xray/buf/writer.go i/common/xray/buf/writer.go
+new file mode 100644
+index 0000000..c76316c
+--- /dev/null
++++ i/common/xray/buf/writer.go
+@@ -0,0 +1,284 @@
++package buf
++
++import (
++	"io"
++	"net"
++	"sync"
++
++	"github.com/sagernet/sing-box/common/xray"
++	"github.com/sagernet/sing-box/common/xray/errors"
++	"github.com/sagernet/sing-box/common/xray/stats"
++)
++
++// BufferToBytesWriter is a Writer that writes alloc.Buffer into underlying writer.
++type BufferToBytesWriter struct {
++	io.Writer
++
++	counter stats.Counter
++	cache   [][]byte
++}
++
++// WriteMultiBuffer implements Writer. This method takes ownership of the given buffer.
++func (w *BufferToBytesWriter) WriteMultiBuffer(mb MultiBuffer) error {
++	defer ReleaseMulti(mb)
++
++	size := mb.Len()
++	if size == 0 {
++		return nil
++	}
++
++	if len(mb) == 1 {
++		return WriteAllBytes(w.Writer, mb[0].Bytes(), w.counter)
++	}
++
++	if cap(w.cache) < len(mb) {
++		w.cache = make([][]byte, 0, len(mb))
++	}
++
++	bs := w.cache
++	for _, b := range mb {
++		bs = append(bs, b.Bytes())
++	}
++
++	defer func() {
++		for idx := range bs {
++			bs[idx] = nil
++		}
++	}()
++
++	nb := net.Buffers(bs)
++	wc := int64(0)
++	defer func() {
++		if w.counter != nil {
++			w.counter.Add(wc)
++		}
++	}()
++	for size > 0 {
++		n, err := nb.WriteTo(w.Writer)
++		wc += n
++		if err != nil {
++			return err
++		}
++		size -= int32(n)
++	}
++
++	return nil
++}
++
++// ReadFrom implements io.ReaderFrom.
++func (w *BufferToBytesWriter) ReadFrom(reader io.Reader) (int64, error) {
++	var sc SizeCounter
++	err := Copy(NewReader(reader), w, CountSize(&sc))
++	return sc.Size, err
++}
++
++// BufferedWriter is a Writer with internal buffer.
++type BufferedWriter struct {
++	sync.Mutex
++	writer    Writer
++	buffer    *Buffer
++	buffered  bool
++	flushNext bool
++}
++
++// NewBufferedWriter creates a new BufferedWriter.
++func NewBufferedWriter(writer Writer) *BufferedWriter {
++	return &BufferedWriter{
++		writer:   writer,
++		buffer:   New(),
++		buffered: true,
++	}
++}
++
++// WriteByte implements io.ByteWriter.
++func (w *BufferedWriter) WriteByte(c byte) error {
++	return common.Error2(w.Write([]byte{c}))
++}
++
++// Write implements io.Writer.
++func (w *BufferedWriter) Write(b []byte) (int, error) {
++	if len(b) == 0 {
++		return 0, nil
++	}
++
++	w.Lock()
++	defer w.Unlock()
++
++	if !w.buffered {
++		if writer, ok := w.writer.(io.Writer); ok {
++			return writer.Write(b)
++		}
++	}
++
++	totalBytes := 0
++	for len(b) > 0 {
++		if w.buffer == nil {
++			w.buffer = New()
++		}
++
++		nBytes, err := w.buffer.Write(b)
++		totalBytes += nBytes
++		if err != nil {
++			return totalBytes, err
++		}
++		if !w.buffered || w.buffer.IsFull() {
++			if err := w.flushInternal(); err != nil {
++				return totalBytes, err
++			}
++		}
++		b = b[nBytes:]
++	}
++
++	return totalBytes, nil
++}
++
++// WriteMultiBuffer implements Writer. It takes ownership of the given MultiBuffer.
++func (w *BufferedWriter) WriteMultiBuffer(b MultiBuffer) error {
++	if b.IsEmpty() {
++		return nil
++	}
++
++	w.Lock()
++	defer w.Unlock()
++
++	if !w.buffered {
++		return w.writer.WriteMultiBuffer(b)
++	}
++
++	reader := MultiBufferContainer{
++		MultiBuffer: b,
++	}
++	defer reader.Close()
++
++	for !reader.MultiBuffer.IsEmpty() {
++		if w.buffer == nil {
++			w.buffer = New()
++		}
++		common.Must2(w.buffer.ReadFrom(&reader))
++		if w.buffer.IsFull() {
++			if err := w.flushInternal(); err != nil {
++				return err
++			}
++		}
++	}
++
++	if w.flushNext {
++		w.buffered = false
++		w.flushNext = false
++		return w.flushInternal()
++	}
++
++	return nil
++}
++
++// Flush flushes buffered content into underlying writer.
++func (w *BufferedWriter) Flush() error {
++	w.Lock()
++	defer w.Unlock()
++
++	return w.flushInternal()
++}
++
++func (w *BufferedWriter) flushInternal() error {
++	if w.buffer.IsEmpty() {
++		return nil
++	}
++
++	b := w.buffer
++	w.buffer = nil
++
++	if writer, ok := w.writer.(io.Writer); ok {
++		err := WriteAllBytes(writer, b.Bytes(), nil)
++		b.Release()
++		return err
++	}
++
++	return w.writer.WriteMultiBuffer(MultiBuffer{b})
++}
++
++// SetBuffered sets whether the internal buffer is used. If set to false, Flush() will be called to clear the buffer.
++func (w *BufferedWriter) SetBuffered(f bool) error {
++	w.Lock()
++	defer w.Unlock()
++
++	w.buffered = f
++	if !f {
++		return w.flushInternal()
++	}
++	return nil
++}
++
++// SetFlushNext will wait the next WriteMultiBuffer to flush and set buffered = false
++func (w *BufferedWriter) SetFlushNext() {
++	w.Lock()
++	defer w.Unlock()
++	w.flushNext = true
++}
++
++// ReadFrom implements io.ReaderFrom.
++func (w *BufferedWriter) ReadFrom(reader io.Reader) (int64, error) {
++	if err := w.SetBuffered(false); err != nil {
++		return 0, err
++	}
++
++	var sc SizeCounter
++	err := Copy(NewReader(reader), w, CountSize(&sc))
++	return sc.Size, err
++}
++
++// Close implements io.Closable.
++func (w *BufferedWriter) Close() error {
++	if err := w.Flush(); err != nil {
++		return err
++	}
++	return common.Close(w.writer)
++}
++
++// SequentialWriter is a Writer that writes MultiBuffer sequentially into the underlying io.Writer.
++type SequentialWriter struct {
++	io.Writer
++}
++
++// WriteMultiBuffer implements Writer.
++func (w *SequentialWriter) WriteMultiBuffer(mb MultiBuffer) error {
++	mb, err := WriteMultiBuffer(w.Writer, mb)
++	ReleaseMulti(mb)
++	return err
++}
++
++type noOpWriter byte
++
++func (noOpWriter) WriteMultiBuffer(b MultiBuffer) error {
++	ReleaseMulti(b)
++	return nil
++}
++
++func (noOpWriter) Write(b []byte) (int, error) {
++	return len(b), nil
++}
++
++func (noOpWriter) ReadFrom(reader io.Reader) (int64, error) {
++	b := New()
++	defer b.Release()
++
++	totalBytes := int64(0)
++	for {
++		b.Clear()
++		_, err := b.ReadFrom(reader)
++		totalBytes += int64(b.Len())
++		if err != nil {
++			if errors.Cause(err) == io.EOF {
++				return totalBytes, nil
++			}
++			return totalBytes, err
++		}
++	}
++}
++
++var (
++	// Discard is a Writer that swallows all contents written in.
++	Discard Writer = noOpWriter(0)
++
++	// DiscardBytes is an io.Writer that swallows all contents written in.
++	DiscardBytes io.Writer = noOpWriter(0)
++)
+diff --git c/common/xray/bytespool/pool.go i/common/xray/bytespool/pool.go
+new file mode 100644
+index 0000000..6f632d5
+--- /dev/null
++++ i/common/xray/bytespool/pool.go
+@@ -0,0 +1,72 @@
++package bytespool
++
++import "sync"
++
++func createAllocFunc(size int32) func() interface{} {
++	return func() interface{} {
++		return make([]byte, size)
++	}
++}
++
++// The following parameters controls the size of buffer pools.
++// There are numPools pools. Starting from 2k size, the size of each pool is sizeMulti of the previous one.
++// Package buf is guaranteed to not use buffers larger than the largest pool.
++// Other packets may use larger buffers.
++const (
++	numPools  = 4
++	sizeMulti = 4
++)
++
++var (
++	pool     [numPools]sync.Pool
++	poolSize [numPools]int32
++)
++
++func init() {
++	size := int32(2048)
++	for i := 0; i < numPools; i++ {
++		pool[i] = sync.Pool{
++			New: createAllocFunc(size),
++		}
++		poolSize[i] = size
++		size *= sizeMulti
++	}
++}
++
++// GetPool returns a sync.Pool that generates bytes array with at least the given size.
++// It may return nil if no such pool exists.
++//
++// xray:api:stable
++func GetPool(size int32) *sync.Pool {
++	for idx, ps := range poolSize {
++		if size <= ps {
++			return &pool[idx]
++		}
++	}
++	return nil
++}
++
++// Alloc returns a byte slice with at least the given size. Minimum size of returned slice is 2048.
++//
++// xray:api:stable
++func Alloc(size int32) []byte {
++	pool := GetPool(size)
++	if pool != nil {
++		return pool.Get().([]byte)
++	}
++	return make([]byte, size)
++}
++
++// Free puts a byte slice into the internal pool.
++//
++// xray:api:stable
++func Free(b []byte) {
++	size := int32(cap(b))
++	b = b[0:cap(b)]
++	for i := numPools - 1; i >= 0; i-- {
++		if size >= poolSize[i] {
++			pool[i].Put(b)
++			return
++		}
++	}
++}
+diff --git c/common/xray/common.go i/common/xray/common.go
+new file mode 100644
+index 0000000..266f57e
+--- /dev/null
++++ i/common/xray/common.go
+@@ -0,0 +1,32 @@
++package common
++
++import "reflect"
++
++// Must panics if err is not nil.
++func Must(err error) {
++	if err != nil {
++		panic(err)
++	}
++}
++
++// Must2 panics if the second parameter is not nil, otherwise returns the first parameter.
++func Must2(v interface{}, err error) interface{} {
++	Must(err)
++	return v
++}
++
++// Error2 returns the err from the 2nd parameter.
++func Error2(v interface{}, err error) error {
++	return err
++}
++
++// CloseIfExists call obj.Close() if obj is not nil.
++func CloseIfExists(obj any) error {
++	if obj != nil {
++		v := reflect.ValueOf(obj)
++		if !v.IsNil() {
++			return Close(obj)
++		}
++	}
++	return nil
++}
+diff --git c/common/xray/cpuid/cpuid.go i/common/xray/cpuid/cpuid.go
+new file mode 100644
+index 0000000..60938fe
+--- /dev/null
++++ i/common/xray/cpuid/cpuid.go
+@@ -0,0 +1,18 @@
++package cpuid
++
++import (
++	"runtime"
++
++	"golang.org/x/sys/cpu"
++)
++
++var (
++	// Keep in sync with crypto/tls/cipher_suites.go.
++	hasGCMAsmAMD64 = cpu.X86.HasAES && cpu.X86.HasPCLMULQDQ
++	hasGCMAsmARM64 = cpu.ARM64.HasAES && cpu.ARM64.HasPMULL
++	hasGCMAsmS390X = cpu.S390X.HasAES && cpu.S390X.HasAESCBC && cpu.S390X.HasGHASH
++	hasGCMAsmPPC64 = runtime.GOARCH == "ppc64" || runtime.GOARCH == "ppc64le"
++
++	// HasAESGCM indicates whether the CPU has AES-GCM hardware acceleration.
++	HasAESGCM = hasGCMAsmAMD64 || hasGCMAsmARM64 || hasGCMAsmS390X || hasGCMAsmPPC64
++)
+diff --git c/common/xray/crypto/crypto.go i/common/xray/crypto/crypto.go
+new file mode 100644
+index 0000000..4356d41
+--- /dev/null
++++ i/common/xray/crypto/crypto.go
+@@ -0,0 +1,17 @@
++package crypto
++
++import (
++	"crypto/rand"
++	"math/big"
++)
++
++func RandBetween(from int64, to int64) int64 {
++	if from == to {
++		return from
++	}
++	if from > to {
++		from, to = to, from
++	}
++	bigInt, _ := rand.Int(rand.Reader, big.NewInt(to-from))
++	return from + bigInt.Int64()
++}
+diff --git c/common/xray/errors/errors.go i/common/xray/errors/errors.go
+new file mode 100644
+index 0000000..54af7cb
+--- /dev/null
++++ i/common/xray/errors/errors.go
+@@ -0,0 +1,25 @@
++package errors
++
++type hasInnerError interface {
++	// Unwrap returns the underlying error of this one.
++	Unwrap() error
++}
++
++func Cause(err error) error {
++	if err == nil {
++		return nil
++	}
++L:
++	for {
++		switch inner := err.(type) {
++		case hasInnerError:
++			if inner.Unwrap() == nil {
++				break L
++			}
++			err = inner.Unwrap()
++		default:
++			break L
++		}
++	}
++	return err
++}
+diff --git c/common/xray/interfaces.go i/common/xray/interfaces.go
+new file mode 100644
+index 0000000..428c338
+--- /dev/null
++++ i/common/xray/interfaces.go
+@@ -0,0 +1,52 @@
++package common
++
++// Closable is the interface for objects that can release its resources.
++//
++// xray:api:beta
++type Closable interface {
++	// Close release all resources used by this object, including goroutines.
++	Close() error
++}
++
++// Interruptible is an interface for objects that can be stopped before its completion.
++//
++// xray:api:beta
++type Interruptible interface {
++	Interrupt()
++}
++
++// Close closes the obj if it is a Closable.
++//
++// xray:api:beta
++func Close(obj interface{}) error {
++	if c, ok := obj.(Closable); ok {
++		return c.Close()
++	}
++	return nil
++}
++
++// Interrupt calls Interrupt() if object implements Interruptible interface, or Close() if the object implements Closable interface.
++//
++// xray:api:beta
++func Interrupt(obj interface{}) error {
++	if c, ok := obj.(Interruptible); ok {
++		c.Interrupt()
++		return nil
++	}
++	return Close(obj)
++}
++
++// Runnable is the interface for objects that can start to work and stop on demand.
++type Runnable interface {
++	// Start starts the runnable object. Upon the method returning nil, the object begins to function properly.
++	Start() error
++
++	Closable
++}
++
++// HasType is the interface for objects that knows its type.
++type HasType interface {
++	// Type returns the type of the object.
++	// Usually it returns (*Type)(nil) of the object.
++	Type() interface{}
++}
+diff --git c/common/xray/json/badoption/range.go i/common/xray/json/badoption/range.go
+new file mode 100644
+index 0000000..28ed089
+--- /dev/null
++++ i/common/xray/json/badoption/range.go
+@@ -0,0 +1,83 @@
++package badoption
++
++import (
++	"encoding/json"
++	"fmt"
++	"strconv"
++	"strings"
++
++	"github.com/sagernet/sing-box/common/xray/crypto"
++	E "github.com/sagernet/sing/common/exceptions"
++)
++
++type Range struct {
++	From int32 `json:"from"`
++	To   int32 `json:"to"`
++}
++
++func (c *Range) Build() *Range {
++	return (*Range)(c)
++}
++
++func (c *Range) MarshalJSON() ([]byte, error) {
++	if c.From == c.To {
++		return json.Marshal(c.From)
++	}
++	return json.Marshal(fmt.Sprintf("%d-%d", c.From, c.To))
++}
++
++func (c *Range) UnmarshalJSON(content []byte) error {
++	var rangeValue struct {
++		From int32 `json:"from"`
++		To   int32 `json:"to"`
++	}
++	var stringValue string
++	err := json.Unmarshal(content, &stringValue)
++	if err == nil {
++		parts := strings.Split(stringValue, "-")
++		if len(parts) != 2 {
++			from, err := strconv.ParseInt(parts[0], 10, 32)
++			if err != nil {
++				return err
++			}
++			rangeValue.From, rangeValue.To = int32(from), int32(from)
++		} else {
++			from, err := strconv.ParseInt(parts[0], 10, 32)
++			if err != nil {
++				return err
++			}
++			to, err := strconv.ParseInt(parts[1], 10, 32)
++			if err != nil {
++				return err
++			}
++			rangeValue.From, rangeValue.To = int32(from), int32(to)
++		}
++	} else {
++		var int32Value int32
++		err := json.Unmarshal(content, &int32Value)
++		if err == nil {
++			rangeValue.From, rangeValue.To = int32Value, int32Value
++		} else {
++			err := json.Unmarshal(content, &rangeValue)
++			if err != nil {
++				return err
++			}
++		}
++	}
++	if rangeValue.From > rangeValue.To {
++		return E.New("invalid range")
++	}
++	*c = Range{rangeValue.From, rangeValue.To}
++	return nil
++}
++
++func (c *Range) String() string {
++	if c.From == c.To {
++		return strconv.FormatInt(int64(c.From), 10)
++	}
++	return fmt.Sprintf("%d-%d", c.From, c.To)
++}
++
++func (c Range) Rand() int32 {
++	return int32(crypto.RandBetween(int64(c.From), int64(c.To)))
++}
+diff --git c/common/xray/net/address.go i/common/xray/net/address.go
+new file mode 100644
+index 0000000..7a99c8a
+--- /dev/null
++++ i/common/xray/net/address.go
+@@ -0,0 +1,181 @@
++package net
++
++import (
++	"bytes"
++	"net"
++	"strings"
++)
++
++var (
++	// LocalHostIP is a constant value for localhost IP in IPv4.
++	LocalHostIP = IPAddress([]byte{127, 0, 0, 1})
++
++	// AnyIP is a constant value for any IP in IPv4.
++	AnyIP = IPAddress([]byte{0, 0, 0, 0})
++
++	// LocalHostDomain is a constant value for localhost domain.
++	LocalHostDomain = DomainAddress("localhost")
++
++	// LocalHostIPv6 is a constant value for localhost IP in IPv6.
++	LocalHostIPv6 = IPAddress([]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1})
++
++	// AnyIPv6 is a constant value for any IP in IPv6.
++	AnyIPv6 = IPAddress([]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
++)
++
++// AddressFamily is the type of address.
++type AddressFamily byte
++
++const (
++	// AddressFamilyIPv4 represents address as IPv4
++	AddressFamilyIPv4 = AddressFamily(0)
++
++	// AddressFamilyIPv6 represents address as IPv6
++	AddressFamilyIPv6 = AddressFamily(1)
++
++	// AddressFamilyDomain represents address as Domain
++	AddressFamilyDomain = AddressFamily(2)
++)
++
++// IsIPv4 returns true if current AddressFamily is IPv4.
++func (af AddressFamily) IsIPv4() bool {
++	return af == AddressFamilyIPv4
++}
++
++// IsIPv6 returns true if current AddressFamily is IPv6.
++func (af AddressFamily) IsIPv6() bool {
++	return af == AddressFamilyIPv6
++}
++
++// IsIP returns true if current AddressFamily is IPv6 or IPv4.
++func (af AddressFamily) IsIP() bool {
++	return af == AddressFamilyIPv4 || af == AddressFamilyIPv6
++}
++
++// IsDomain returns true if current AddressFamily is Domain.
++func (af AddressFamily) IsDomain() bool {
++	return af == AddressFamilyDomain
++}
++
++// Address represents a network address to be communicated with. It may be an IP address or domain
++// address, not both. This interface doesn't resolve IP address for a given domain.
++type Address interface {
++	IP() net.IP     // IP of this Address
++	Domain() string // Domain of this Address
++	Family() AddressFamily
++
++	String() string // String representation of this Address
++}
++
++func isAlphaNum(c byte) bool {
++	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
++}
++
++// ParseAddress parses a string into an Address. The return value will be an IPAddress when
++// the string is in the form of IPv4 or IPv6 address, or a DomainAddress otherwise.
++func ParseAddress(addr string) Address {
++	// Handle IPv6 address in form as "[2001:4860:0:2001::68]"
++	lenAddr := len(addr)
++	if lenAddr > 0 && addr[0] == '[' && addr[lenAddr-1] == ']' {
++		addr = addr[1 : lenAddr-1]
++		lenAddr -= 2
++	}
++
++	if lenAddr > 0 && (!isAlphaNum(addr[0]) || !isAlphaNum(addr[len(addr)-1])) {
++		addr = strings.TrimSpace(addr)
++	}
++
++	ip := net.ParseIP(addr)
++	if ip != nil {
++		return IPAddress(ip)
++	}
++	return DomainAddress(addr)
++}
++
++var bytes0 = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
++
++// IPAddress creates an Address with given IP.
++func IPAddress(ip []byte) Address {
++	switch len(ip) {
++	case net.IPv4len:
++		var addr ipv4Address = [4]byte{ip[0], ip[1], ip[2], ip[3]}
++		return addr
++	case net.IPv6len:
++		if bytes.Equal(ip[:10], bytes0) && ip[10] == 0xff && ip[11] == 0xff {
++			return IPAddress(ip[12:16])
++		}
++		var addr ipv6Address = [16]byte{
++			ip[0], ip[1], ip[2], ip[3],
++			ip[4], ip[5], ip[6], ip[7],
++			ip[8], ip[9], ip[10], ip[11],
++			ip[12], ip[13], ip[14], ip[15],
++		}
++		return addr
++	default:
++		return nil
++	}
++}
++
++// DomainAddress creates an Address with given domain.
++// This is an internal function that forcibly converts a string to domain.
++// It's mainly used in test files and mux.
++// Unless you have a specific reason, use net.ParseAddress instead,
++// as this function does not check whether the input is an IP address.
++// Otherwise, you will get strange results like domain: 1.1.1.1
++func DomainAddress(domain string) Address {
++	return domainAddress(domain)
++}
++
++type ipv4Address [4]byte
++
++func (a ipv4Address) IP() net.IP {
++	return net.IP(a[:])
++}
++
++func (ipv4Address) Domain() string {
++	panic("Calling Domain() on an IPv4Address.")
++}
++
++func (ipv4Address) Family() AddressFamily {
++	return AddressFamilyIPv4
++}
++
++func (a ipv4Address) String() string {
++	return a.IP().String()
++}
++
++type ipv6Address [16]byte
++
++func (a ipv6Address) IP() net.IP {
++	return net.IP(a[:])
++}
++
++func (ipv6Address) Domain() string {
++	panic("Calling Domain() on an IPv6Address.")
++}
++
++func (ipv6Address) Family() AddressFamily {
++	return AddressFamilyIPv6
++}
++
++func (a ipv6Address) String() string {
++	return "[" + a.IP().String() + "]"
++}
++
++type domainAddress string
++
++func (domainAddress) IP() net.IP {
++	panic("Calling IP() on a DomainAddress.")
++}
++
++func (a domainAddress) Domain() string {
++	return string(a)
++}
++
++func (domainAddress) Family() AddressFamily {
++	return AddressFamilyDomain
++}
++
++func (a domainAddress) String() string {
++	return a.Domain()
++}
+diff --git c/common/xray/net/destination.go i/common/xray/net/destination.go
+new file mode 100644
+index 0000000..561c772
+--- /dev/null
++++ i/common/xray/net/destination.go
+@@ -0,0 +1,146 @@
++package net
++
++import (
++	"net"
++	"strings"
++)
++
++// Destination represents a network destination including address and protocol (tcp / udp).
++type Destination struct {
++	Address Address
++	Port    Port
++	Network Network
++}
++
++// DestinationFromAddr generates a Destination from a net address.
++func DestinationFromAddr(addr net.Addr) Destination {
++	switch addr := addr.(type) {
++	case *net.TCPAddr:
++		return TCPDestination(IPAddress(addr.IP), Port(addr.Port))
++	case *net.UDPAddr:
++		return UDPDestination(IPAddress(addr.IP), Port(addr.Port))
++	case *net.UnixAddr:
++		return UnixDestination(DomainAddress(addr.Name))
++	default:
++		panic("Net: Unknown address type.")
++	}
++}
++
++// ParseDestination converts a destination from its string presentation.
++func ParseDestination(dest string) (Destination, error) {
++	d := Destination{
++		Address: AnyIP,
++		Port:    Port(0),
++	}
++	if strings.HasPrefix(dest, "tcp:") {
++		d.Network = Network_TCP
++		dest = dest[4:]
++	} else if strings.HasPrefix(dest, "udp:") {
++		d.Network = Network_UDP
++		dest = dest[4:]
++	} else if strings.HasPrefix(dest, "unix:") {
++		d = UnixDestination(DomainAddress(dest[5:]))
++		return d, nil
++	}
++
++	hstr, pstr, err := SplitHostPort(dest)
++	if err != nil {
++		return d, err
++	}
++	if len(hstr) > 0 {
++		d.Address = ParseAddress(hstr)
++	}
++	if len(pstr) > 0 {
++		port, err := PortFromString(pstr)
++		if err != nil {
++			return d, err
++		}
++		d.Port = port
++	}
++	return d, nil
++}
++
++// TCPDestination creates a TCP destination with given address
++func TCPDestination(address Address, port Port) Destination {
++	return Destination{
++		Network: Network_TCP,
++		Address: address,
++		Port:    port,
++	}
++}
++
++// UDPDestination creates a UDP destination with given address
++func UDPDestination(address Address, port Port) Destination {
++	return Destination{
++		Network: Network_UDP,
++		Address: address,
++		Port:    port,
++	}
++}
++
++// UnixDestination creates a Unix destination with given address
++func UnixDestination(address Address) Destination {
++	return Destination{
++		Network: Network_UNIX,
++		Address: address,
++	}
++}
++
++// NetAddr returns the network address in this Destination in string form.
++func (d Destination) NetAddr() string {
++	addr := ""
++	if d.Network == Network_TCP || d.Network == Network_UDP {
++		addr = d.Address.String() + ":" + d.Port.String()
++	} else if d.Network == Network_UNIX {
++		addr = d.Address.String()
++	}
++	return addr
++}
++
++// RawNetAddr converts a net.Addr from its Destination presentation.
++func (d Destination) RawNetAddr() net.Addr {
++	var addr net.Addr
++	switch d.Network {
++	case Network_TCP:
++		if d.Address.Family().IsIP() {
++			addr = &net.TCPAddr{
++				IP:   d.Address.IP(),
++				Port: int(d.Port),
++			}
++		}
++	case Network_UDP:
++		if d.Address.Family().IsIP() {
++			addr = &net.UDPAddr{
++				IP:   d.Address.IP(),
++				Port: int(d.Port),
++			}
++		}
++	case Network_UNIX:
++		if d.Address.Family().IsDomain() {
++			addr = &net.UnixAddr{
++				Name: d.Address.String(),
++				Net:  d.Network.SystemString(),
++			}
++		}
++	}
++	return addr
++}
++
++// String returns the strings form of this Destination.
++func (d Destination) String() string {
++	prefix := "unknown:"
++	switch d.Network {
++	case Network_TCP:
++		prefix = "tcp:"
++	case Network_UDP:
++		prefix = "udp:"
++	case Network_UNIX:
++		prefix = "unix:"
++	}
++	return prefix + d.NetAddr()
++}
++
++// IsValid returns true if this Destination is valid.
++func (d Destination) IsValid() bool {
++	return d.Network != Network_Unknown
++}
+diff --git c/common/xray/net/net.go i/common/xray/net/net.go
+new file mode 100644
+index 0000000..9bc049d
+--- /dev/null
++++ i/common/xray/net/net.go
+@@ -0,0 +1,13 @@
++package net
++
++import "time"
++
++// defines the maximum time an idle TCP session can survive in the tunnel, so
++// it should be consistent across HTTP versions and with other transports.
++const ConnIdleTimeout = 300 * time.Second
++
++// consistent with quic-go
++const QuicgoH3KeepAlivePeriod = 10 * time.Second
++
++// consistent with chrome
++const ChromeH2KeepAlivePeriod = 45 * time.Second
+diff --git c/common/xray/net/network.go i/common/xray/net/network.go
+new file mode 100644
+index 0000000..356d7fd
+--- /dev/null
++++ i/common/xray/net/network.go
+@@ -0,0 +1,33 @@
++package net
++
++type Network int32
++
++const (
++	Network_Unknown Network = 0
++	Network_TCP     Network = 2
++	Network_UDP     Network = 3
++	Network_UNIX    Network = 4
++)
++
++func (n Network) SystemString() string {
++	switch n {
++	case Network_TCP:
++		return "tcp"
++	case Network_UDP:
++		return "udp"
++	case Network_UNIX:
++		return "unix"
++	default:
++		return "unknown"
++	}
++}
++
++// HasNetwork returns true if the network list has a certain network.
++func HasNetwork(list []Network, network Network) bool {
++	for _, value := range list {
++		if value == network {
++			return true
++		}
++	}
++	return false
++}
+diff --git c/common/xray/net/port.go i/common/xray/net/port.go
+new file mode 100644
+index 0000000..6d42c40
+--- /dev/null
++++ i/common/xray/net/port.go
+@@ -0,0 +1,55 @@
++package net
++
++import (
++	"encoding/binary"
++	"strconv"
++
++	E "github.com/sagernet/sing/common/exceptions"
++)
++
++// Port represents a network port in TCP and UDP protocol.
++type Port uint16
++
++// PortFromBytes converts a byte array to a Port, assuming bytes are in big endian order.
++// @unsafe Caller must ensure that the byte array has at least 2 elements.
++func PortFromBytes(port []byte) Port {
++	return Port(binary.BigEndian.Uint16(port))
++}
++
++// PortFromInt converts an integer to a Port.
++// @error when the integer is not positive or larger then 65535
++func PortFromInt(val uint32) (Port, error) {
++	if val > 65535 {
++		return Port(0), E.New("invalid port range: ", val)
++	}
++	return Port(val), nil
++}
++
++// PortFromString converts a string to a Port.
++// @error when the string is not an integer or the integral value is a not a valid Port.
++func PortFromString(s string) (Port, error) {
++	val, err := strconv.ParseUint(s, 10, 32)
++	if err != nil {
++		return Port(0), E.New("invalid port range: ", s)
++	}
++	return PortFromInt(uint32(val))
++}
++
++// Value return the corresponding uint16 value of a Port.
++func (p Port) Value() uint16 {
++	return uint16(p)
++}
++
++// String returns the string presentation of a Port.
++func (p Port) String() string {
++	return strconv.Itoa(int(p))
++}
++
++type MemoryPortRange struct {
++	From Port
++	To   Port
++}
++
++func (r MemoryPortRange) Contains(port Port) bool {
++	return r.From <= port && port <= r.To
++}
+diff --git c/common/xray/net/system.go i/common/xray/net/system.go
+new file mode 100644
+index 0000000..7e1c4b0
+--- /dev/null
++++ i/common/xray/net/system.go
+@@ -0,0 +1,84 @@
++package net
++
++import "net"
++
++// DialTCP is an alias of net.DialTCP.
++var (
++	DialTCP  = net.DialTCP
++	DialUDP  = net.DialUDP
++	DialUnix = net.DialUnix
++	Dial     = net.Dial
++)
++
++type ListenConfig = net.ListenConfig
++
++var (
++	Listen     = net.Listen
++	ListenTCP  = net.ListenTCP
++	ListenUDP  = net.ListenUDP
++	ListenUnix = net.ListenUnix
++)
++
++var LookupIP = net.LookupIP
++
++var FileConn = net.FileConn
++
++// ParseIP is an alias of net.ParseIP
++var ParseIP = net.ParseIP
++
++var SplitHostPort = net.SplitHostPort
++
++var CIDRMask = net.CIDRMask
++
++type (
++	Addr       = net.Addr
++	Conn       = net.Conn
++	PacketConn = net.PacketConn
++)
++
++type (
++	TCPAddr = net.TCPAddr
++	TCPConn = net.TCPConn
++)
++
++type (
++	UDPAddr = net.UDPAddr
++	UDPConn = net.UDPConn
++)
++
++type (
++	UnixAddr = net.UnixAddr
++	UnixConn = net.UnixConn
++)
++
++// IP is an alias for net.IP.
++type (
++	IP     = net.IP
++	IPMask = net.IPMask
++	IPNet  = net.IPNet
++)
++
++const (
++	IPv4len = net.IPv4len
++	IPv6len = net.IPv6len
++)
++
++type (
++	Error     = net.Error
++	AddrError = net.AddrError
++)
++
++type (
++	Dialer       = net.Dialer
++	Listener     = net.Listener
++	TCPListener  = net.TCPListener
++	UnixListener = net.UnixListener
++)
++
++var (
++	ResolveTCPAddr  = net.ResolveTCPAddr
++	ResolveUDPAddr  = net.ResolveUDPAddr
++	ResolveUnixAddr = net.ResolveUnixAddr
++)
++
++type Resolver = net.Resolver
+diff --git c/common/xray/pipe/impl.go i/common/xray/pipe/impl.go
+new file mode 100644
+index 0000000..7b2a97a
+--- /dev/null
++++ i/common/xray/pipe/impl.go
+@@ -0,0 +1,209 @@
++package pipe
++
++import (
++	"errors"
++	"io"
++	"sync"
++	"time"
++
++	"github.com/sagernet/sing-box/common/xray"
++	"github.com/sagernet/sing-box/common/xray/buf"
++	"github.com/sagernet/sing-box/common/xray/signal"
++	"github.com/sagernet/sing-box/common/xray/signal/done"
++)
++
++type state byte
++
++const (
++	open state = iota
++	closed
++	errord
++)
++
++type pipeOption struct {
++	limit           int32 // maximum buffer size in bytes
++	discardOverflow bool
++}
++
++func (o *pipeOption) isFull(curSize int32) bool {
++	return o.limit >= 0 && curSize > o.limit
++}
++
++type pipe struct {
++	sync.Mutex
++	data        buf.MultiBuffer
++	readSignal  *signal.Notifier
++	writeSignal *signal.Notifier
++	done        *done.Instance
++	errChan     chan error
++	option      pipeOption
++	state       state
++}
++
++var (
++	errBufferFull = errors.New("buffer full")
++	errSlowDown   = errors.New("slow down")
++)
++
++func (p *pipe) Len() int32 {
++	data := p.data
++	if data == nil {
++		return 0
++	}
++	return data.Len()
++}
++
++func (p *pipe) getState(forRead bool) error {
++	switch p.state {
++	case open:
++		if !forRead && p.option.isFull(p.data.Len()) {
++			return errBufferFull
++		}
++		return nil
++	case closed:
++		if !forRead {
++			return io.ErrClosedPipe
++		}
++		if !p.data.IsEmpty() {
++			return nil
++		}
++		return io.EOF
++	case errord:
++		return io.ErrClosedPipe
++	default:
++		panic("impossible case")
++	}
++}
++
++func (p *pipe) readMultiBufferInternal() (buf.MultiBuffer, error) {
++	p.Lock()
++	defer p.Unlock()
++
++	if err := p.getState(true); err != nil {
++		return nil, err
++	}
++
++	data := p.data
++	p.data = nil
++	return data, nil
++}
++
++func (p *pipe) ReadMultiBuffer() (buf.MultiBuffer, error) {
++	for {
++		data, err := p.readMultiBufferInternal()
++		if data != nil || err != nil {
++			p.writeSignal.Signal()
++			return data, err
++		}
++
++		select {
++		case <-p.readSignal.Wait():
++		case <-p.done.Wait():
++		case err = <-p.errChan:
++			return nil, err
++		}
++	}
++}
++
++func (p *pipe) ReadMultiBufferTimeout(d time.Duration) (buf.MultiBuffer, error) {
++	timer := time.NewTimer(d)
++	defer timer.Stop()
++
++	for {
++		data, err := p.readMultiBufferInternal()
++		if data != nil || err != nil {
++			p.writeSignal.Signal()
++			return data, err
++		}
++
++		select {
++		case <-p.readSignal.Wait():
++		case <-p.done.Wait():
++		case <-timer.C:
++			return nil, buf.ErrReadTimeout
++		}
++	}
++}
++
++func (p *pipe) writeMultiBufferInternal(mb buf.MultiBuffer) error {
++	p.Lock()
++	defer p.Unlock()
++
++	if err := p.getState(false); err != nil {
++		return err
++	}
++
++	if p.data == nil {
++		p.data = mb
++	} else {
++		p.data, _ = buf.MergeMulti(p.data, mb)
++	}
++	return nil
++}
++
++func (p *pipe) WriteMultiBuffer(mb buf.MultiBuffer) error {
++	if mb.IsEmpty() {
++		return nil
++	}
++
++	for {
++		err := p.writeMultiBufferInternal(mb)
++		if err == nil {
++			p.readSignal.Signal()
++			return nil
++		}
++
++		if err == errBufferFull {
++			if p.option.discardOverflow {
++				buf.ReleaseMulti(mb)
++				return nil
++			}
++			select {
++			case <-p.writeSignal.Wait():
++				continue
++			case <-p.done.Wait():
++				buf.ReleaseMulti(mb)
++				return io.ErrClosedPipe
++			}
++		}
++
++		buf.ReleaseMulti(mb)
++		p.readSignal.Signal()
++		return err
++	}
++}
++
++func (p *pipe) Close() error {
++	p.Lock()
++	defer p.Unlock()
++
++	if p.state == closed || p.state == errord {
++		return nil
++	}
++
++	p.state = closed
++	common.Must(p.done.Close())
++	return nil
++}
++
++// Interrupt implements common.Interruptible.
++func (p *pipe) Interrupt() {
++	p.Lock()
++	defer p.Unlock()
++
++	if !p.data.IsEmpty() {
++		buf.ReleaseMulti(p.data)
++		p.data = nil
++		if p.state == closed {
++			p.state = errord
++		}
++	}
++
++	if p.state == closed || p.state == errord {
++		return
++	}
++
++	p.state = errord
++
++	common.Must(p.done.Close())
++}
+diff --git c/common/xray/pipe/pipe.go i/common/xray/pipe/pipe.go
+new file mode 100644
+index 0000000..06f949f
+--- /dev/null
++++ i/common/xray/pipe/pipe.go
+@@ -0,0 +1,53 @@
++package pipe
++
++import (
++	"github.com/sagernet/sing-box/common/xray/signal"
++	"github.com/sagernet/sing-box/common/xray/signal/done"
++)
++
++// Option for creating new Pipes.
++type Option func(*pipeOption)
++
++// WithoutSizeLimit returns an Option for Pipe to have no size limit.
++func WithoutSizeLimit() Option {
++	return func(opt *pipeOption) {
++		opt.limit = -1
++	}
++}
++
++// WithSizeLimit returns an Option for Pipe to have the given size limit.
++func WithSizeLimit(limit int32) Option {
++	return func(opt *pipeOption) {
++		opt.limit = limit
++	}
++}
++
++// DiscardOverflow returns an Option for Pipe to discard writes if full.
++func DiscardOverflow() Option {
++	return func(opt *pipeOption) {
++		opt.discardOverflow = true
++	}
++}
++
++// New creates a new Reader and Writer that connects to each other.
++func New(opts ...Option) (*Reader, *Writer) {
++	p := &pipe{
++		readSignal:  signal.NewNotifier(),
++		writeSignal: signal.NewNotifier(),
++		done:        done.New(),
++		errChan:     make(chan error, 1),
++		option: pipeOption{
++			limit: -1,
++		},
++	}
++
++	for _, opt := range opts {
++		opt(&p.option)
++	}
++
++	return &Reader{
++			pipe: p,
++		}, &Writer{
++			pipe: p,
++		}
++}
+diff --git c/common/xray/pipe/reader.go i/common/xray/pipe/reader.go
+new file mode 100644
+index 0000000..cafe444
+--- /dev/null
++++ i/common/xray/pipe/reader.go
+@@ -0,0 +1,41 @@
++package pipe
++
++import (
++	"time"
++
++	"github.com/sagernet/sing-box/common/xray/buf"
++)
++
++// Reader is a buf.Reader that reads content from a pipe.
++type Reader struct {
++	pipe *pipe
++}
++
++// ReadMultiBuffer implements buf.Reader.
++func (r *Reader) ReadMultiBuffer() (buf.MultiBuffer, error) {
++	return r.pipe.ReadMultiBuffer()
++}
++
++// ReadMultiBufferTimeout reads content from a pipe within the given duration, or returns buf.ErrTimeout otherwise.
++func (r *Reader) ReadMultiBufferTimeout(d time.Duration) (buf.MultiBuffer, error) {
++	return r.pipe.ReadMultiBufferTimeout(d)
++}
++
++// Interrupt implements common.Interruptible.
++func (r *Reader) Interrupt() {
++	r.pipe.Interrupt()
++}
++
++// ReturnAnError makes ReadMultiBuffer return an error, only once.
++func (r *Reader) ReturnAnError(err error) {
++	r.pipe.errChan <- err
++}
++
++// Recover catches an error set by ReturnAnError, if exists.
++func (r *Reader) Recover() (err error) {
++	select {
++	case err = <-r.pipe.errChan:
++	default:
++	}
++	return
++}
+diff --git c/common/xray/pipe/writer.go i/common/xray/pipe/writer.go
+new file mode 100644
+index 0000000..1531263
+--- /dev/null
++++ i/common/xray/pipe/writer.go
+@@ -0,0 +1,29 @@
++package pipe
++
++import (
++	"github.com/sagernet/sing-box/common/xray/buf"
++)
++
++// Writer is a buf.Writer that writes data into a pipe.
++type Writer struct {
++	pipe *pipe
++}
++
++// WriteMultiBuffer implements buf.Writer.
++func (w *Writer) WriteMultiBuffer(mb buf.MultiBuffer) error {
++	return w.pipe.WriteMultiBuffer(mb)
++}
++
++// Close implements io.Closer. After the pipe is closed, writing to the pipe will return io.ErrClosedPipe, while reading will return io.EOF.
++func (w *Writer) Close() error {
++	return w.pipe.Close()
++}
++
++func (w *Writer) Len() int32 {
++	return w.pipe.Len()
++}
++
++// Interrupt implements common.Interruptible.
++func (w *Writer) Interrupt() {
++	w.pipe.Interrupt()
++}
+diff --git c/common/xray/serial/serial.go i/common/xray/serial/serial.go
+new file mode 100644
+index 0000000..9d8cb4c
+--- /dev/null
++++ i/common/xray/serial/serial.go
+@@ -0,0 +1,29 @@
++package serial
++
++import (
++	"encoding/binary"
++	"io"
++)
++
++// ReadUint16 reads first two bytes from the reader, and then converts them to an uint16 value.
++func ReadUint16(reader io.Reader) (uint16, error) {
++	var b [2]byte
++	if _, err := io.ReadFull(reader, b[:]); err != nil {
++		return 0, err
++	}
++	return binary.BigEndian.Uint16(b[:]), nil
++}
++
++// WriteUint16 writes an uint16 value into writer.
++func WriteUint16(writer io.Writer, value uint16) (int, error) {
++	var b [2]byte
++	binary.BigEndian.PutUint16(b[:], value)
++	return writer.Write(b[:])
++}
++
++// WriteUint64 writes an uint64 value into writer.
++func WriteUint64(writer io.Writer, value uint64) (int, error) {
++	var b [8]byte
++	binary.BigEndian.PutUint64(b[:], value)
++	return writer.Write(b[:])
++}
+diff --git c/common/xray/serial/string.go i/common/xray/serial/string.go
+new file mode 100644
+index 0000000..8fdcd7f
+--- /dev/null
++++ i/common/xray/serial/string.go
+@@ -0,0 +1,35 @@
++package serial
++
++import (
++	"fmt"
++	"strings"
++)
++
++// ToString serializes an arbitrary value into string.
++func ToString(v interface{}) string {
++	if v == nil {
++		return ""
++	}
++
++	switch value := v.(type) {
++	case string:
++		return value
++	case *string:
++		return *value
++	case fmt.Stringer:
++		return value.String()
++	case error:
++		return value.Error()
++	default:
++		return fmt.Sprintf("%+v", value)
++	}
++}
++
++// Concat concatenates all input into a single string.
++func Concat(v ...interface{}) string {
++	builder := strings.Builder{}
++	for _, value := range v {
++		builder.WriteString(ToString(value))
++	}
++	return builder.String()
++}
+diff --git c/common/xray/signal/done/done.go i/common/xray/signal/done/done.go
+new file mode 100644
+index 0000000..189a8cf
+--- /dev/null
++++ i/common/xray/signal/done/done.go
+@@ -0,0 +1,49 @@
++package done
++
++import (
++	"sync"
++)
++
++// Instance is a utility for notifications of something being done.
++type Instance struct {
++	access sync.Mutex
++	c      chan struct{}
++	closed bool
++}
++
++// New returns a new Done.
++func New() *Instance {
++	return &Instance{
++		c: make(chan struct{}),
++	}
++}
++
++// Done returns true if Close() is called.
++func (d *Instance) Done() bool {
++	select {
++	case <-d.Wait():
++		return true
++	default:
++		return false
++	}
++}
++
++// Wait returns a channel for waiting for done.
++func (d *Instance) Wait() <-chan struct{} {
++	return d.c
++}
++
++// Close marks this Done 'done'. This method may be called multiple times. All calls after first call will have no effect on its status.
++func (d *Instance) Close() error {
++	d.access.Lock()
++	defer d.access.Unlock()
++
++	if d.closed {
++		return nil
++	}
++
++	d.closed = true
++	close(d.c)
++
++	return nil
++}
+diff --git c/common/xray/signal/notifier.go i/common/xray/signal/notifier.go
+new file mode 100644
+index 0000000..19836e5
+--- /dev/null
++++ i/common/xray/signal/notifier.go
+@@ -0,0 +1,26 @@
++package signal
++
++// Notifier is a utility for notifying changes. The change producer may notify changes multiple time, and the consumer may get notified asynchronously.
++type Notifier struct {
++	c chan struct{}
++}
++
++// NewNotifier creates a new Notifier.
++func NewNotifier() *Notifier {
++	return &Notifier{
++		c: make(chan struct{}, 1),
++	}
++}
++
++// Signal signals a change, usually by producer. This method never blocks.
++func (n *Notifier) Signal() {
++	select {
++	case n.c <- struct{}{}:
++	default:
++	}
++}
++
++// Wait returns a channel for waiting for changes. The returned channel never gets closed.
++func (n *Notifier) Wait() <-chan struct{} {
++	return n.c
++}
+diff --git c/common/xray/signal/pubsub/pubsub.go i/common/xray/signal/pubsub/pubsub.go
+new file mode 100644
+index 0000000..6de453e
+--- /dev/null
++++ i/common/xray/signal/pubsub/pubsub.go
+@@ -0,0 +1,105 @@
++package pubsub
++
++import (
++	"errors"
++	"sync"
++	"time"
++
++	"github.com/sagernet/sing-box/common/xray"
++	"github.com/sagernet/sing-box/common/xray/signal/done"
++	"github.com/sagernet/sing-box/common/xray/task"
++)
++
++type Subscriber struct {
++	buffer chan interface{}
++	done   *done.Instance
++}
++
++func (s *Subscriber) push(msg interface{}) {
++	select {
++	case s.buffer <- msg:
++	default:
++	}
++}
++
++func (s *Subscriber) Wait() <-chan interface{} {
++	return s.buffer
++}
++
++func (s *Subscriber) Close() error {
++	return s.done.Close()
++}
++
++func (s *Subscriber) IsClosed() bool {
++	return s.done.Done()
++}
++
++type Service struct {
++	sync.RWMutex
++	subs  map[string][]*Subscriber
++	ctask *task.Periodic
++}
++
++func NewService() *Service {
++	s := &Service{
++		subs: make(map[string][]*Subscriber),
++	}
++	s.ctask = &task.Periodic{
++		Execute:  s.Cleanup,
++		Interval: time.Second * 30,
++	}
++	return s
++}
++
++// Cleanup cleans up internal caches of subscribers.
++// Visible for testing only.
++func (s *Service) Cleanup() error {
++	s.Lock()
++	defer s.Unlock()
++
++	if len(s.subs) == 0 {
++		return errors.New("nothing to do")
++	}
++
++	for name, subs := range s.subs {
++		newSub := make([]*Subscriber, 0, len(s.subs))
++		for _, sub := range subs {
++			if !sub.IsClosed() {
++				newSub = append(newSub, sub)
++			}
++		}
++		if len(newSub) == 0 {
++			delete(s.subs, name)
++		} else {
++			s.subs[name] = newSub
++		}
++	}
++
++	if len(s.subs) == 0 {
++		s.subs = make(map[string][]*Subscriber)
++	}
++	return nil
++}
++
++func (s *Service) Subscribe(name string) *Subscriber {
++	sub := &Subscriber{
++		buffer: make(chan interface{}, 16),
++		done:   done.New(),
++	}
++	s.Lock()
++	s.subs[name] = append(s.subs[name], sub)
++	s.Unlock()
++	common.Must(s.ctask.Start())
++	return sub
++}
++
++func (s *Service) Publish(name string, message interface{}) {
++	s.RLock()
++	defer s.RUnlock()
++
++	for _, sub := range s.subs[name] {
++		if !sub.IsClosed() {
++			sub.push(message)
++		}
++	}
++}
+diff --git c/common/xray/signal/semaphore/semaphore.go i/common/xray/signal/semaphore/semaphore.go
+new file mode 100644
+index 0000000..8696b14
+--- /dev/null
++++ i/common/xray/signal/semaphore/semaphore.go
+@@ -0,0 +1,27 @@
++package semaphore
++
++// Instance is an implementation of semaphore.
++type Instance struct {
++	token chan struct{}
++}
++
++// New create a new Semaphore with n permits.
++func New(n int) *Instance {
++	s := &Instance{
++		token: make(chan struct{}, n),
++	}
++	for i := 0; i < n; i++ {
++		s.token <- struct{}{}
++	}
++	return s
++}
++
++// Wait returns a channel for acquiring a permit.
++func (s *Instance) Wait() <-chan struct{} {
++	return s.token
++}
++
++// Signal releases a permit into the semaphore.
++func (s *Instance) Signal() {
++	s.token <- struct{}{}
++}
+diff --git c/common/xray/signal/timer.go i/common/xray/signal/timer.go
+new file mode 100644
+index 0000000..52961bf
+--- /dev/null
++++ i/common/xray/signal/timer.go
+@@ -0,0 +1,85 @@
++package signal
++
++import (
++	"context"
++	"sync"
++	"sync/atomic"
++	"time"
++
++	"github.com/sagernet/sing-box/common/xray"
++	"github.com/sagernet/sing-box/common/xray/task"
++)
++
++type ActivityUpdater interface {
++	Update()
++}
++
++type ActivityTimer struct {
++	mu        sync.RWMutex
++	updated   chan struct{}
++	checkTask *task.Periodic
++	onTimeout func()
++	consumed  atomic.Bool
++	once      sync.Once
++}
++
++func (t *ActivityTimer) Update() {
++	select {
++	case t.updated <- struct{}{}:
++	default:
++	}
++}
++
++func (t *ActivityTimer) check() error {
++	select {
++	case <-t.updated:
++	default:
++		t.finish()
++	}
++	return nil
++}
++
++func (t *ActivityTimer) finish() {
++	t.once.Do(func() {
++		t.consumed.Store(true)
++		t.mu.Lock()
++		defer t.mu.Unlock()
++
++		common.CloseIfExists(t.checkTask)
++		t.onTimeout()
++	})
++}
++
++func (t *ActivityTimer) SetTimeout(timeout time.Duration) {
++	if t.consumed.Load() {
++		return
++	}
++	if timeout == 0 {
++		t.finish()
++		return
++	}
++
++	t.mu.Lock()
++	defer t.mu.Unlock()
++	// double check, just in case
++	if t.consumed.Load() {
++		return
++	}
++	newCheckTask := &task.Periodic{
++		Interval: timeout,
++		Execute:  t.check,
++	}
++	common.CloseIfExists(t.checkTask)
++	t.checkTask = newCheckTask
++	t.Update()
++	common.Must(newCheckTask.Start())
++}
++
++func CancelAfterInactivity(ctx context.Context, cancel context.CancelFunc, timeout time.Duration) *ActivityTimer {
++	timer := &ActivityTimer{
++		updated:   make(chan struct{}, 1),
++		onTimeout: cancel,
++	}
++	timer.SetTimeout(timeout)
++	return timer
++}
+diff --git c/common/xray/stat/connection.go i/common/xray/stat/connection.go
+new file mode 100644
+index 0000000..463db62
+--- /dev/null
++++ i/common/xray/stat/connection.go
+@@ -0,0 +1,34 @@
++package stat
++
++import (
++	"net"
++
++	"github.com/sagernet/sing-box/common/xray/stats"
++)
++
++type Connection interface {
++	net.Conn
++}
++
++type CounterConnection struct {
++	Connection
++	ReadCounter  stats.Counter
++	WriteCounter stats.Counter
++}
++
++func (c *CounterConnection) Read(b []byte) (int, error) {
++	nBytes, err := c.Connection.Read(b)
++	if c.ReadCounter != nil {
++		c.ReadCounter.Add(int64(nBytes))
++	}
++
++	return nBytes, err
++}
++
++func (c *CounterConnection) Write(b []byte) (int, error) {
++	nBytes, err := c.Connection.Write(b)
++	if c.WriteCounter != nil {
++		c.WriteCounter.Add(int64(nBytes))
++	}
++	return nBytes, err
++}
+diff --git c/common/xray/stats/stats.go i/common/xray/stats/stats.go
+new file mode 100644
+index 0000000..70bbd02
+--- /dev/null
++++ i/common/xray/stats/stats.go
+@@ -0,0 +1,13 @@
++package stats
++
++// Counter is the interface for stats counters.
++//
++// xray:api:stable
++type Counter interface {
++	// Value is the current value of the counter.
++	Value() int64
++	// Set sets a new value to the counter, and returns the previous one.
++	Set(int64) int64
++	// Add adds a value to the current counter value, and returns the previous value.
++	Add(int64) int64
++}
+diff --git c/common/xray/task/common.go i/common/xray/task/common.go
+new file mode 100644
+index 0000000..11078fb
+--- /dev/null
++++ i/common/xray/task/common.go
+@@ -0,0 +1,10 @@
++package task
++
++import "github.com/sagernet/sing-box/common/xray"
++
++// Close returns a func() that closes v.
++func Close(v interface{}) func() error {
++	return func() error {
++		return common.Close(v)
++	}
++}
+diff --git c/common/xray/task/periodic.go i/common/xray/task/periodic.go
+new file mode 100644
+index 0000000..6abe41a
+--- /dev/null
++++ i/common/xray/task/periodic.go
+@@ -0,0 +1,85 @@
++package task
++
++import (
++	"sync"
++	"time"
++)
++
++// Periodic is a task that runs periodically.
++type Periodic struct {
++	// Interval of the task being run
++	Interval time.Duration
++	// Execute is the task function
++	Execute func() error
++
++	access  sync.Mutex
++	timer   *time.Timer
++	running bool
++}
++
++func (t *Periodic) hasClosed() bool {
++	t.access.Lock()
++	defer t.access.Unlock()
++
++	return !t.running
++}
++
++func (t *Periodic) checkedExecute() error {
++	if t.hasClosed() {
++		return nil
++	}
++
++	if err := t.Execute(); err != nil {
++		t.access.Lock()
++		t.running = false
++		t.access.Unlock()
++		return err
++	}
++
++	t.access.Lock()
++	defer t.access.Unlock()
++
++	if !t.running {
++		return nil
++	}
++
++	t.timer = time.AfterFunc(t.Interval, func() {
++		t.checkedExecute()
++	})
++
++	return nil
++}
++
++// Start implements common.Runnable.
++func (t *Periodic) Start() error {
++	t.access.Lock()
++	if t.running {
++		t.access.Unlock()
++		return nil
++	}
++	t.running = true
++	t.access.Unlock()
++
++	if err := t.checkedExecute(); err != nil {
++		t.access.Lock()
++		t.running = false
++		t.access.Unlock()
++		return err
++	}
++
++	return nil
++}
++
++// Close implements common.Closable.
++func (t *Periodic) Close() error {
++	t.access.Lock()
++	defer t.access.Unlock()
++
++	t.running = false
++	if t.timer != nil {
++		t.timer.Stop()
++		t.timer = nil
++	}
++
++	return nil
++}
+diff --git c/common/xray/task/task.go i/common/xray/task/task.go
+new file mode 100644
+index 0000000..a153839
+--- /dev/null
++++ i/common/xray/task/task.go
+@@ -0,0 +1,64 @@
++package task
++
++import (
++	"context"
++
++	"github.com/sagernet/sing-box/common/xray/signal/semaphore"
++)
++
++// OnSuccess executes g() after f() returns nil.
++func OnSuccess(f func() error, g func() error) func() error {
++	return func() error {
++		if err := f(); err != nil {
++			return err
++		}
++		return g()
++	}
++}
++
++// Run executes a list of tasks in parallel, returns the first error encountered or nil if all tasks pass.
++func Run(ctx context.Context, tasks ...func() error) error {
++	n := len(tasks)
++	s := semaphore.New(n)
++	done := make(chan error, 1)
++
++	for _, task := range tasks {
++		<-s.Wait()
++		go func(f func() error) {
++			err := f()
++			if err == nil {
++				s.Signal()
++				return
++			}
++
++			select {
++			case done <- err:
++			default:
++			}
++		}(task)
++	}
++
++	/*
++		if altctx := ctx.Value("altctx"); altctx != nil {
++			ctx = altctx.(context.Context)
++		}
++	*/
++
++	for i := 0; i < n; i++ {
++		select {
++		case err := <-done:
++			return err
++		case <-ctx.Done():
++			return ctx.Err()
++		case <-s.Wait():
++		}
++	}
++
++	/*
++		if cancel := ctx.Value("cancel"); cancel != nil {
++			cancel.(context.CancelFunc)()
++		}
++	*/
++
++	return nil
++}
+diff --git c/common/xray/utils/browser.go i/common/xray/utils/browser.go
+new file mode 100644
+index 0000000..944c5cd
+--- /dev/null
++++ i/common/xray/utils/browser.go
+@@ -0,0 +1,290 @@
++package utils
++
++import (
++	"hash/fnv"
++	"math"
++	"math/rand"
++	"net/http"
++	"strconv"
++	"strings"
++	"time"
++
++	"github.com/klauspost/cpuid/v2"
++)
++
++func GetRandomizer() *rand.Rand {
++	// Seed the PRNG with the hash of CPU info, increasing the overall probable space.
++	fnvHash := fnv.New64()
++	fnvHash.Write([]byte(strconv.Itoa(cpuid.CPU.Family) + strconv.Itoa(cpuid.CPU.Model) + strconv.Itoa(cpuid.CPU.PhysicalCores) + strconv.Itoa(cpuid.CPU.LogicalCores) + strconv.Itoa(cpuid.CPU.CacheLine) + strconv.Itoa(cpuid.CPU.ThreadsPerCore)))
++	return rand.New(rand.NewSource(int64(fnvHash.Sum64())))
++}
++
++var globalRng *rand.Rand = GetRandomizer()
++
++// The Chrome version generator will suffer from deviation of a normal distribution.
++func ChromeVersion() int {
++	// Start from Chrome 144, released on 2026.1.13.
++	var startVersion int = 144
++	var timeStart int64 = time.Date(2026, 1, 13, 0, 0, 0, 0, time.UTC).Unix() / 86400
++	var timeCurrent int64 = time.Now().Unix() / 86400
++	var timeDiff int = int((timeCurrent - timeStart - 35)) - int(math.Floor(math.Pow(globalRng.Float64(), 2)*105))
++	return startVersion + (timeDiff / 35) // It's 31.15 currently.
++}
++
++var safariMinorMap [25]int = [25]int{
++	0, 0, 0, 1, 1,
++	1, 2, 2, 2, 2, 3, 3, 3, 4, 4,
++	4, 5, 5, 5, 5, 5, 6, 6, 6, 6,
++}
++
++// The following version generators use deterministic generators, but with the distribution scaled by a curve.
++func CurlVersion() string {
++	// curl 8.0.0 was released on 20/03/2023.
++	var timeCurrent int64 = time.Now().Unix() / 86400
++	var timeStart int64 = time.Date(2023, 3, 20, 0, 0, 0, 0, time.UTC).Unix() / 86400
++	var timeDiff int = int((timeCurrent - timeStart - 60)) - int(math.Floor(math.Pow(globalRng.Float64(), 2)*165))
++	var minorValue int = int(timeDiff / 57) // The release cadence is actually 56.67 days.
++	return "8." + strconv.Itoa(minorValue) + ".0"
++}
++
++func FirefoxVersion() int {
++	// Firefox 128 ESR was released on 09/07/2023.
++	var timeCurrent int64 = time.Now().Unix() / 86400
++	var timeStart int64 = time.Date(2024, 7, 29, 0, 0, 0, 0, time.UTC).Unix() / 86400
++	timeDiff := timeCurrent - timeStart - 25 - int64(math.Floor(math.Pow(globalRng.Float64(), 2)*50))
++	return int(timeDiff/30) + 128
++}
++
++func SafariVersion() string {
++	var anchoredTime time.Time = time.Now()
++	var releaseYear int = anchoredTime.Year()
++	var splitPoint time.Time = time.Date(releaseYear, 9, 23, 0, 0, 0, 0, time.UTC)
++	delayedDays := int(math.Floor(math.Pow(globalRng.Float64(), 3) * 75))
++	splitPoint = splitPoint.AddDate(0, 0, delayedDays)
++	if anchoredTime.Compare(splitPoint) < 0 {
++		releaseYear--
++		splitPoint = time.Date(releaseYear, 9, 23, 0, 0, 0, 0, time.UTC)
++		splitPoint = splitPoint.AddDate(0, 0, delayedDays)
++	}
++	minorVersion := safariMinorMap[(anchoredTime.Unix()-splitPoint.Unix())/1296000]
++	return strconv.Itoa(releaseYear-1999) + "." + strconv.Itoa(minorVersion)
++}
++
++// The full Chromium brand GREASE implementation
++var (
++	clientHintGreaseNA  = []string{" ", "(", ":", "-", ".", "/", ")", ";", "=", "?", "_"}
++	clientHintVersionNA = []string{"8", "99", "24"}
++	clientHintShuffle3  = [][3]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}}
++	clientHintShuffle4  = [][4]int{
++		{0, 1, 2, 3},
++		{0, 1, 3, 2},
++		{0, 2, 1, 3},
++		{0, 2, 3, 1},
++		{0, 3, 1, 2},
++		{0, 3, 2, 1},
++		{1, 0, 2, 3},
++		{1, 0, 3, 2},
++		{1, 2, 0, 3},
++		{1, 2, 3, 0},
++		{1, 3, 0, 2},
++		{1, 3, 2, 0},
++		{2, 0, 1, 3},
++		{2, 0, 3, 1},
++		{2, 1, 0, 3},
++		{2, 1, 3, 0},
++		{2, 3, 0, 1},
++		{2, 3, 1, 0},
++		{3, 0, 1, 2},
++		{3, 0, 2, 1},
++		{3, 1, 0, 2},
++		{3, 1, 2, 0},
++		{3, 2, 0, 1},
++		{3, 2, 1, 0},
++	}
++)
++
++func getGreasedChInvalidBrand(seed int) string {
++	return "\"Not" + clientHintGreaseNA[seed%len(clientHintGreaseNA)] + "A" + clientHintGreaseNA[(seed+1)%len(clientHintGreaseNA)] + "Brand\";v=\"" + clientHintVersionNA[seed%len(clientHintVersionNA)] + "\""
++}
++
++func getGreasedChOrder(brandLength int, seed int) []int {
++	switch brandLength {
++	case 1:
++		return []int{0}
++	case 2:
++		return []int{seed % brandLength, (seed + 1) % brandLength}
++	case 3:
++		return clientHintShuffle3[seed%len(clientHintShuffle3)][:]
++	default:
++		return clientHintShuffle4[seed%len(clientHintShuffle4)][:]
++	}
++	//return []int{}
++}
++
++func getUngreasedChUa(majorVersion int, forkName string) []string {
++	// Set the capacity to 4, the maximum allowed brand size, so Go will never allocate memory twice
++	baseChUa := make([]string, 0, 4)
++	baseChUa = append(baseChUa, getGreasedChInvalidBrand(majorVersion),
++		"\"Chromium\";v=\""+strconv.Itoa(majorVersion)+"\"")
++	switch forkName {
++	case "chrome":
++		baseChUa = append(baseChUa, "\"Google Chrome\";v=\""+strconv.Itoa(majorVersion)+"\"")
++	case "edge":
++		baseChUa = append(baseChUa, "\"Microsoft Edge\";v=\""+strconv.Itoa(majorVersion)+"\"")
++	}
++	return baseChUa
++}
++
++func getGreasedChUa(majorVersion int, forkName string) string {
++	ungreasedCh := getUngreasedChUa(majorVersion, forkName)
++	shuffleMap := getGreasedChOrder(len(ungreasedCh), majorVersion)
++	shuffledCh := make([]string, len(ungreasedCh))
++	for i, e := range shuffleMap {
++		shuffledCh[e] = ungreasedCh[i]
++	}
++	return strings.Join(shuffledCh, ", ")
++}
++
++// The code below provides a coherent default browser user agent string based on a CPU-seeded PRNG.
++var (
++	CurlUA                 = "curl/" + CurlVersion()
++	AnchoredFirefoxVersion = strconv.Itoa(FirefoxVersion())
++	FirefoxUA              = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:" + AnchoredFirefoxVersion + ".0) Gecko/20100101 Firefox/" + AnchoredFirefoxVersion + ".0"
++	SafariUA               = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/" + SafariVersion() + " Safari/605.1.15"
++)
++
++// Chromium browsers.
++var (
++	AnchoredChromeVersion = ChromeVersion()
++	ChromeUA              = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + strconv.Itoa(AnchoredChromeVersion) + ".0.0.0 Safari/537.36"
++	ChromeUACH            = getGreasedChUa(AnchoredChromeVersion, "chrome")
++	MSEdgeUA              = ChromeUA + "Edg/" + strconv.Itoa(AnchoredChromeVersion) + ".0.0.0"
++	MSEdgeUACH            = getGreasedChUa(AnchoredChromeVersion, "edge")
++)
++
++func applyMasqueradedHeaders(header http.Header, browser string, variant string) {
++	// Browser-specific.
++	switch browser {
++	case "chrome":
++		header["Sec-CH-UA"] = []string{ChromeUACH}
++		header["Sec-CH-UA-Mobile"] = []string{"?0"}
++		header["Sec-CH-UA-Platform"] = []string{"\"Windows\""}
++		header["DNT"] = []string{"1"}
++		header.Set("User-Agent", ChromeUA)
++		header.Set("Accept-Language", "en-US,en;q=0.9")
++	case "edge":
++		header["Sec-CH-UA"] = []string{MSEdgeUACH}
++		header["Sec-CH-UA-Mobile"] = []string{"?0"}
++		header["Sec-CH-UA-Platform"] = []string{"\"Windows\""}
++		header["DNT"] = []string{"1"}
++		header.Set("User-Agent", MSEdgeUA)
++		header.Set("Accept-Language", "en-US,en;q=0.9")
++	case "firefox":
++		header.Set("User-Agent", FirefoxUA)
++		header["DNT"] = []string{"1"}
++		header.Set("Accept-Language", "en-US,en;q=0.5")
++	case "safari":
++		header.Set("User-Agent", SafariUA)
++		header.Set("Accept-Language", "en-US,en;q=0.9")
++	case "golang":
++		// Expose the default net/http header.
++		header.Del("User-Agent")
++		return
++	case "curl":
++		header.Set("User-Agent", CurlUA)
++		return
++	}
++	// Context-specific.
++	switch variant {
++	case "nav":
++		if header.Get("Cache-Control") == "" {
++			switch browser {
++			case "chrome", "edge":
++				header.Set("Cache-Control", "max-age=0")
++			}
++		}
++		header.Set("Upgrade-Insecure-Requests", "1")
++		if header.Get("Accept") == "" {
++			switch browser {
++			case "chrome", "edge":
++				header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
++			case "firefox", "safari":
++				header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
++			}
++		}
++		header.Set("Sec-Fetch-Site", "none")
++		header.Set("Sec-Fetch-Mode", "navigate")
++		switch browser {
++		case "safari":
++		default:
++			header.Set("Sec-Fetch-User", "?1")
++		}
++		header.Set("Sec-Fetch-Dest", "document")
++		header.Set("Priority", "u=0, i")
++	case "ws":
++		header.Set("Sec-Fetch-Mode", "websocket")
++		switch browser {
++		case "safari":
++			// Safari is NOT web-compliant here!
++			header.Set("Sec-Fetch-Dest", "websocket")
++		default:
++			header.Set("Sec-Fetch-Dest", "empty")
++		}
++		header.Set("Sec-Fetch-Site", "same-origin")
++		if header.Get("Cache-Control") == "" {
++			header.Set("Cache-Control", "no-cache")
++		}
++		if header.Get("Pragma") == "" {
++			header.Set("Pragma", "no-cache")
++		}
++		if header.Get("Accept") == "" {
++			header.Set("Accept", "*/*")
++		}
++	case "fetch":
++		header.Set("Sec-Fetch-Mode", "cors")
++		header.Set("Sec-Fetch-Dest", "empty")
++		header.Set("Sec-Fetch-Site", "same-origin")
++		if header.Get("Priority") == "" {
++			switch browser {
++			case "chrome", "edge":
++				header.Set("Priority", "u=1, i")
++			case "firefox":
++				header.Set("Priority", "u=4")
++			case "safari":
++				header.Set("Priority", "u=3, i")
++			}
++		}
++		if header.Get("Cache-Control") == "" {
++			header.Set("Cache-Control", "no-cache")
++		}
++		if header.Get("Pragma") == "" {
++			header.Set("Pragma", "no-cache")
++		}
++		if header.Get("Accept") == "" {
++			header.Set("Accept", "*/*")
++		}
++	}
++}
++
++func TryDefaultHeadersWith(header http.Header, variant string) {
++	// The global UA special value handler for transports. Used to be called HandleTransportUASettings.
++	// Just a FYI to whoever needing to fix this piece of code after some spontaneous event, I tried to make the two methods separate to let the code be cleaner and more organized.
++	if len(header.Values("User-Agent")) < 1 {
++		applyMasqueradedHeaders(header, "chrome", variant)
++	} else {
++		switch header.Get("User-Agent") {
++		case "chrome":
++			applyMasqueradedHeaders(header, "chrome", variant)
++		case "firefox":
++			applyMasqueradedHeaders(header, "firefox", variant)
++		case "safari":
++			applyMasqueradedHeaders(header, "safari", variant)
++		case "edge":
++			applyMasqueradedHeaders(header, "edge", variant)
++		case "curl":
++			applyMasqueradedHeaders(header, "curl", variant)
++		case "golang":
++			applyMasqueradedHeaders(header, "golang", variant)
++		}
++	}
++}
+diff --git c/common/xray/utils/padding.go i/common/xray/utils/padding.go
+new file mode 100644
+index 0000000..fe95ba9
+--- /dev/null
++++ i/common/xray/utils/padding.go
+@@ -0,0 +1,24 @@
++package utils
++
++import (
++	"math/rand/v2"
++)
++
++var (
++	// 8 ÷ (397/62)
++	h2packCorrectionFactor = 1.2493702770780857
++	base62TotalCharsNum    = 62
++	base62Chars            = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
++)
++
++// H2Base62Pad generates a base62 padding string for HTTP/2 header
++// The total len will be slightly longer than the input to match the length after h2(h3 also) header huffman encoding
++func H2Base62Pad[T int32 | int64 | int](expectedLen T) string {
++	actualLenFloat := float64(expectedLen) * h2packCorrectionFactor
++	actualLen := int(actualLenFloat)
++	result := make([]byte, actualLen)
++	for i := range actualLen {
++		result[i] = base62Chars[rand.N(base62TotalCharsNum)]
++	}
++	return string(result)
++}
+diff --git c/common/xray/uuid/uuid.go i/common/xray/uuid/uuid.go
+new file mode 100644
+index 0000000..31c7b53
+--- /dev/null
++++ i/common/xray/uuid/uuid.go
+@@ -0,0 +1,105 @@
++package uuid
++
++import (
++	"bytes"
++	"crypto/rand"
++	"crypto/sha1"
++	"encoding/hex"
++
++	"github.com/sagernet/sing-box/common/xray"
++	E "github.com/sagernet/sing/common/exceptions"
++)
++
++var byteGroups = []int{8, 4, 4, 4, 12}
++
++type UUID [16]byte
++
++// String returns the string representation of this UUID.
++func (u *UUID) String() string {
++	bytes := u.Bytes()
++	result := hex.EncodeToString(bytes[0 : byteGroups[0]/2])
++	start := byteGroups[0] / 2
++	for i := 1; i < len(byteGroups); i++ {
++		nBytes := byteGroups[i] / 2
++		result += "-"
++		result += hex.EncodeToString(bytes[start : start+nBytes])
++		start += nBytes
++	}
++	return result
++}
++
++// Bytes returns the bytes representation of this UUID.
++func (u *UUID) Bytes() []byte {
++	return u[:]
++}
++
++// Equals returns true if this UUID equals another UUID by value.
++func (u *UUID) Equals(another *UUID) bool {
++	if u == nil && another == nil {
++		return true
++	}
++	if u == nil || another == nil {
++		return false
++	}
++	return bytes.Equal(u.Bytes(), another.Bytes())
++}
++
++// New creates a UUID with random value.
++func New() UUID {
++	var uuid UUID
++	common.Must2(rand.Read(uuid.Bytes()))
++	uuid[6] = (uuid[6] & 0x0f) | (4 << 4)
++	uuid[8] = (uuid[8]&(0xff>>2) | (0x02 << 6))
++	return uuid
++}
++
++// ParseBytes converts a UUID in byte form to object.
++func ParseBytes(b []byte) (UUID, error) {
++	var uuid UUID
++	if len(b) != 16 {
++		return uuid, E.New("invalid UUID: ", b)
++	}
++	copy(uuid[:], b)
++	return uuid, nil
++}
++
++// ParseString converts a UUID in string form to object.
++func ParseString(str string) (UUID, error) {
++	var uuid UUID
++
++	text := []byte(str)
++	if l := len(text); l < 32 || l > 36 {
++		if l == 0 || l > 30 {
++			return uuid, E.New("invalid UUID: ", str)
++		}
++		h := sha1.New()
++		h.Write(uuid[:])
++		h.Write(text)
++		u := h.Sum(nil)[:16]
++		u[6] = (u[6] & 0x0f) | (5 << 4)
++		u[8] = (u[8]&(0xff>>2) | (0x02 << 6))
++		copy(uuid[:], u)
++		return uuid, nil
++	}
++
++	b := uuid.Bytes()
++
++	for _, byteGroup := range byteGroups {
++		if len(text) > 0 && text[0] == '-' {
++			text = text[1:]
++		}
++
++		if len(text) < byteGroup {
++			return uuid, E.New("invalid UUID: ", str)
++		}
++
++		if _, err := hex.Decode(b[:byteGroup/2], text[:byteGroup]); err != nil {
++			return uuid, err
++		}
++
++		text = text[byteGroup:]
++		b = b[byteGroup/2:]
++	}
++
++	return uuid, nil
++}
+diff --git c/constant/v2ray.go i/constant/v2ray.go
+index c3089a6..1811df5 100644
+--- c/constant/v2ray.go
++++ i/constant/v2ray.go
+@@ -6,4 +6,5 @@ const (
+ 	V2RayTransportTypeQUIC        = "quic"
+ 	V2RayTransportTypeGRPC        = "grpc"
+ 	V2RayTransportTypeHTTPUpgrade = "httpupgrade"
++	V2RayTransportTypeXHTTP       = "xhttp"
+ )
+diff --git c/option/v2ray_transport.go i/option/v2ray_transport.go
+index 68c2385..c5e43d7 100644
+--- c/option/v2ray_transport.go
++++ i/option/v2ray_transport.go
+@@ -1,6 +1,11 @@
+ package option
+ 
+ import (
++	"net/http"
++	"strings"
++
++	Xbadoption "github.com/sagernet/sing-box/common/xray/json/badoption"
++	"github.com/sagernet/sing-box/common/xray/utils"
+ 	C "github.com/sagernet/sing-box/constant"
+ 	E "github.com/sagernet/sing/common/exceptions"
+ 	"github.com/sagernet/sing/common/json"
+@@ -15,6 +20,7 @@ type _V2RayTransportOptions struct {
+ 	QUICOptions        V2RayQUICOptions        `json:"-"`
+ 	GRPCOptions        V2RayGRPCOptions        `json:"-"`
+ 	HTTPUpgradeOptions V2RayHTTPUpgradeOptions `json:"-"`
++	XHTTPOptions       V2RayXHTTPOptions       `json:"-"`
+ }
+ 
+ type V2RayTransportOptions _V2RayTransportOptions
+@@ -32,6 +38,8 @@ func (o V2RayTransportOptions) MarshalJSON() ([]byte, error) {
+ 		v = o.GRPCOptions
+ 	case C.V2RayTransportTypeHTTPUpgrade:
+ 		v = o.HTTPUpgradeOptions
++	case C.V2RayTransportTypeXHTTP:
++		v = o.XHTTPOptions
+ 	case "":
+ 		return nil, E.New("missing transport type")
+ 	default:
+@@ -57,6 +65,8 @@ func (o *V2RayTransportOptions) UnmarshalJSON(bytes []byte) error {
+ 		v = &o.GRPCOptions
+ 	case C.V2RayTransportTypeHTTPUpgrade:
+ 		v = &o.HTTPUpgradeOptions
++	case C.V2RayTransportTypeXHTTP:
++		v = &o.XHTTPOptions
+ 	default:
+ 		return E.New("unknown transport type: " + o.Type)
+ 	}
+@@ -98,3 +108,402 @@ type V2RayHTTPUpgradeOptions struct {
+ 	Path    string               `json:"path,omitempty"`
+ 	Headers badoption.HTTPHeader `json:"headers,omitempty"`
+ }
++
++type V2RayXHTTPBaseOptions struct {
++	Host                 string                     `json:"host,omitempty"`
++	Path                 string                     `json:"path,omitempty"`
++	Headers              map[string]string          `json:"headers,omitempty"`
++	DomainStrategy       DomainStrategy             `json:"domain_strategy,omitempty"`
++	XPaddingBytes        Xbadoption.Range           `json:"x_padding_bytes"`
++	NoGRPCHeader         bool                       `json:"no_grpc_header,omitempty"`
++	NoSSEHeader          bool                       `json:"no_sse_header,omitempty"`
++	ScMaxEachPostBytes   *Xbadoption.Range          `json:"sc_max_each_post_bytes"`
++	ScMinPostsIntervalMs *Xbadoption.Range          `json:"sc_min_posts_interval_ms"`
++	ScMaxBufferedPosts   int64                      `json:"sc_max_buffered_posts,omitempty"`
++	ScStreamUpServerSecs *Xbadoption.Range          `json:"sc_stream_up_server_secs"`
++	ServerMaxHeaderBytes int                        `json:"server_max_header_bytes"`
++	TrustedXForwardedFor badoption.Listable[string] `json:"trusted_x_forwarded_for,omitempty"`
++	Xmux                 *V2RayXHTTPXmuxOptions     `json:"xmux"`
++	XPaddingObfsMode     bool                       `json:"x_padding_obfs_mode,omitempty"`
++	XPaddingKey          string                     `json:"x_padding_key,omitempty"`
++	XPaddingHeader       string                     `json:"x_padding_header,omitempty"`
++	XPaddingPlacement    string                     `json:"x_padding_placement,omitempty"`
++	XPaddingMethod       string                     `json:"x_padding_method,omitempty"`
++	UplinkHTTPMethod     string                     `json:"uplink_http_method,omitempty"`
++	SessionPlacement     string                     `json:"session_placement,omitempty"`
++	SessionKey           string                     `json:"session_key,omitempty"`
++	SeqPlacement         string                     `json:"seq_placement,omitempty"`
++	SeqKey               string                     `json:"seq_key,omitempty"`
++	UplinkDataPlacement  string                     `json:"uplink_data_placement,omitempty"`
++	UplinkDataKey        string                     `json:"uplink_data_key,omitempty"`
++	UplinkChunkSize      *Xbadoption.Range          `json:"uplink_chunk_size,omitempty"`
++}
++
++type _V2RayXHTTPOptions struct {
++	Mode string `json:"mode"`
++	V2RayXHTTPBaseOptions
++	Download *V2RayXHTTPDownloadOptions `json:"download"`
++}
++
++type V2RayXHTTPOptions _V2RayXHTTPOptions
++
++type V2RayXHTTPDownloadOptions struct {
++	V2RayXHTTPBaseOptions
++	ServerOptions
++	OutboundTLSOptionsContainer
++	Detour string `json:"detour,omitempty"`
++}
++
++const (
++	PlacementQueryInHeader = "queryInHeader"
++	PlacementCookie        = "cookie"
++	PlacementHeader        = "header"
++	PlacementQuery         = "query"
++	PlacementPath          = "path"
++	PlacementBody          = "body"
++	PlacementAuto          = "auto"
++)
++
++func (c V2RayXHTTPOptions) MarshalJSON() ([]byte, error) {
++	return json.Marshal((*_V2RayXHTTPOptions)(&c))
++}
++
++func (c *V2RayXHTTPOptions) UnmarshalJSON(bytes []byte) error {
++	err := json.Unmarshal(bytes, (*_V2RayXHTTPOptions)(c))
++	if err != nil {
++		return err
++	}
++	switch c.Mode {
++	case "":
++		c.Mode = "auto"
++	case "auto", "packet-up", "stream-up", "stream-one":
++	default:
++		return E.New("unsupported mode: " + c.Mode)
++	}
++	err = checkV2RayXHTTPBaseOptions(c.Mode, &c.V2RayXHTTPBaseOptions)
++	if err != nil {
++		return err
++	}
++	if c.Download != nil {
++		err = checkV2RayXHTTPBaseOptions(c.Mode, &c.Download.V2RayXHTTPBaseOptions)
++		if err != nil {
++			return err
++		}
++	}
++	return nil
++}
++
++func checkV2RayXHTTPBaseOptions(mode string, options *V2RayXHTTPBaseOptions) error {
++	// Priority (client): host > serverName > address
++	for k := range options.Headers {
++		if strings.ToLower(k) == "host" {
++			return E.New(`"headers" can't contain "host"`)
++		}
++	}
++
++	if options.XPaddingBytes.From <= 0 || options.XPaddingBytes.To <= 0 {
++		return E.New("x_padding_bytes cannot be disabled")
++	}
++
++	if options.XPaddingKey == "" {
++		options.XPaddingKey = "x_padding"
++	}
++
++	if options.XPaddingHeader == "" {
++		options.XPaddingHeader = "X-Padding"
++	}
++
++	switch options.XPaddingPlacement {
++	case "":
++		options.XPaddingPlacement = "queryInHeader"
++	case "cookie", "header", "query", "queryInHeader":
++	default:
++		return E.New("unsupported padding placement: " + options.XPaddingPlacement)
++	}
++
++	switch options.XPaddingMethod {
++	case "":
++		options.XPaddingMethod = "repeat-x"
++	case "repeat-x", "tokenish":
++	default:
++		return E.New("unsupported padding method: " + options.XPaddingMethod)
++	}
++
++	switch options.UplinkDataPlacement {
++	case "":
++		options.UplinkDataPlacement = PlacementAuto
++	case PlacementAuto, PlacementBody:
++	case PlacementCookie, PlacementHeader:
++		if mode != "packet-up" {
++			return E.New("UplinkDataPlacement can be " + options.UplinkDataPlacement + " only in packet-up mode")
++		}
++	default:
++		return E.New("unsupported uplink data placement: " + options.UplinkDataPlacement)
++	}
++
++	if options.UplinkHTTPMethod == "" {
++		options.UplinkHTTPMethod = "POST"
++	}
++	options.UplinkHTTPMethod = strings.ToUpper(options.UplinkHTTPMethod)
++
++	if options.UplinkHTTPMethod == "GET" && mode != "packet-up" {
++		return E.New("uplink_http_method can be GET only in packet-up mode")
++	}
++
++	switch options.SessionPlacement {
++	case "":
++		options.SessionPlacement = "path"
++	case "path", "cookie", "header", "query":
++	default:
++		return E.New("unsupported session placement: " + options.SessionPlacement)
++	}
++
++	switch options.SeqPlacement {
++	case "":
++		options.SeqPlacement = "path"
++	case "path", "cookie", "header", "query":
++	default:
++		return E.New("unsupported seq placement: " + options.SeqPlacement)
++	}
++
++	if options.SessionPlacement != "path" && options.SessionKey == "" {
++		switch options.SessionPlacement {
++		case "cookie", "query":
++			options.SessionKey = "x_session"
++		case "header":
++			options.SessionKey = "X-Session"
++		}
++	}
++
++	if options.SeqPlacement != "path" && options.SeqKey == "" {
++		switch options.SeqPlacement {
++		case "cookie", "query":
++			options.SeqKey = "x_seq"
++		case "header":
++			options.SeqKey = "X-Seq"
++		}
++	}
++
++	if options.UplinkDataPlacement != PlacementBody && options.UplinkDataKey == "" {
++		switch options.UplinkDataPlacement {
++		case PlacementCookie:
++			options.UplinkDataKey = "x_data"
++		case PlacementAuto, PlacementHeader:
++			options.UplinkDataKey = "X-Data"
++		}
++	}
++
++	if options.ServerMaxHeaderBytes < 0 {
++		return E.New("invalid negative value of maxHeaderBytes")
++	}
++
++	if options.Xmux == nil {
++		options.Xmux = &V2RayXHTTPXmuxOptions{}
++		options.Xmux.MaxConcurrency.From = 1
++		options.Xmux.MaxConcurrency.To = 1
++		options.Xmux.HMaxRequestTimes.From = 600
++		options.Xmux.HMaxRequestTimes.To = 900
++		options.Xmux.HMaxReusableSecs.From = 1800
++		options.Xmux.HMaxReusableSecs.To = 3000
++	} else if options.Xmux.MaxConnections.To > 0 && options.Xmux.MaxConcurrency.To > 0 {
++		return E.New("max_connections cannot be specified together with max_concurrency")
++	}
++	return nil
++}
++
++func (c *V2RayXHTTPBaseOptions) GetNormalizedPath() string {
++	pathAndQuery := strings.SplitN(c.Path, "?", 2)
++	path := pathAndQuery[0]
++	if path == "" || path[0] != '/' {
++		path = "/" + path
++	}
++	if path[len(path)-1] != '/' {
++		path = path + "/"
++	}
++	return path
++}
++
++func (c *V2RayXHTTPBaseOptions) GetNormalizedQuery() string {
++	pathAndQuery := strings.SplitN(c.Path, "?", 2)
++	query := ""
++	if len(pathAndQuery) > 1 {
++		query = pathAndQuery[1]
++	}
++	return query
++}
++
++func (c *V2RayXHTTPBaseOptions) GetRequestHeader() http.Header {
++	header := http.Header{}
++	for k, v := range c.Headers {
++		header.Add(k, v)
++	}
++	utils.TryDefaultHeadersWith(header, "fetch")
++	return header
++}
++
++func (c *V2RayXHTTPBaseOptions) GetNormalizedXPaddingBytes() Xbadoption.Range {
++	if c.XPaddingBytes.To == 0 {
++		return Xbadoption.Range{
++			From: 100,
++			To:   1000,
++		}
++	}
++	return c.XPaddingBytes
++}
++
++func (c *V2RayXHTTPBaseOptions) GetNormalizedUplinkHTTPMethod() string {
++	if c.UplinkHTTPMethod == "" {
++		return "POST"
++	}
++	return c.UplinkHTTPMethod
++}
++
++func (c *V2RayXHTTPBaseOptions) GetNormalizedScMaxEachPostBytes() Xbadoption.Range {
++	if c.ScMaxEachPostBytes == nil {
++		return Xbadoption.Range{
++			From: 1000000,
++			To:   1000000,
++		}
++	}
++	return *c.ScMaxEachPostBytes
++}
++
++func (c *V2RayXHTTPBaseOptions) GetNormalizedScMinPostsIntervalMs() Xbadoption.Range {
++	if c.ScMinPostsIntervalMs == nil {
++		return Xbadoption.Range{
++			From: 30,
++			To:   30,
++		}
++	}
++	return *c.ScMinPostsIntervalMs
++}
++
++func (c *V2RayXHTTPBaseOptions) GetNormalizedScMaxBufferedPosts() int {
++	if c.ScMaxBufferedPosts == 0 {
++		return 30
++	}
++
++	return int(c.ScMaxBufferedPosts)
++}
++
++func (c *V2RayXHTTPBaseOptions) GetNormalizedScStreamUpServerSecs() Xbadoption.Range {
++	if c.ScStreamUpServerSecs == nil {
++		return Xbadoption.Range{
++			From: 20,
++			To:   80,
++		}
++	}
++	return *c.ScStreamUpServerSecs
++}
++
++func (c *V2RayXHTTPBaseOptions) GetNormalizedUplinkChunkSize() Xbadoption.Range {
++	if c.UplinkChunkSize == nil || c.UplinkChunkSize.To == 0 {
++		switch c.UplinkDataPlacement {
++		case PlacementCookie:
++			return Xbadoption.Range{
++				From: 2 * 1024, // 2 KiB
++				To:   3 * 1024, // 3 KiB
++			}
++		case PlacementHeader:
++			return Xbadoption.Range{
++				From: 3 * 1000, // 3 KB
++				To:   4 * 1000, // 4 KB
++			}
++		default:
++			return c.GetNormalizedScMaxEachPostBytes()
++		}
++	} else if c.UplinkChunkSize.From < 64 {
++		return Xbadoption.Range{
++			From: 64,
++			To:   max(64, c.UplinkChunkSize.To),
++		}
++	}
++
++	return *c.UplinkChunkSize
++}
++
++func (c *V2RayXHTTPBaseOptions) GetNormalizedServerMaxHeaderBytes() int {
++	if c.ServerMaxHeaderBytes <= 0 {
++		return 8192
++	} else {
++		return c.ServerMaxHeaderBytes
++	}
++}
++
++func (c *V2RayXHTTPBaseOptions) GetNormalizedSessionPlacement() string {
++	if c.SessionPlacement == "" {
++		return PlacementPath
++	}
++	return c.SessionPlacement
++}
++
++func (c *V2RayXHTTPBaseOptions) GetNormalizedSeqPlacement() string {
++	if c.SeqPlacement == "" {
++		return PlacementPath
++	}
++	return c.SeqPlacement
++}
++
++func (c *V2RayXHTTPBaseOptions) GetNormalizedUplinkDataPlacement() string {
++	if c.UplinkDataPlacement == "" {
++		return PlacementBody
++	}
++	return c.UplinkDataPlacement
++}
++
++func (c *V2RayXHTTPBaseOptions) GetNormalizedSessionKey() string {
++	if c.SessionKey != "" {
++		return c.SessionKey
++	}
++	switch c.GetNormalizedSessionPlacement() {
++	case PlacementHeader:
++		return "X-Session"
++	case PlacementCookie, PlacementQuery:
++		return "x_session"
++	default:
++		return ""
++	}
++}
++
++func (c *V2RayXHTTPBaseOptions) GetNormalizedSeqKey() string {
++	if c.SeqKey != "" {
++		return c.SeqKey
++	}
++	switch c.GetNormalizedSeqPlacement() {
++	case PlacementHeader:
++		return "X-Seq"
++	case PlacementCookie, PlacementQuery:
++		return "x_seq"
++	default:
++		return ""
++	}
++}
++
++type V2RayXHTTPXmuxOptions struct {
++	MaxConcurrency   Xbadoption.Range `json:"max_concurrency"`
++	MaxConnections   Xbadoption.Range `json:"max_connections"`
++	CMaxReuseTimes   Xbadoption.Range `json:"c_max_reuse_times"`
++	HMaxRequestTimes Xbadoption.Range `json:"h_max_request_times"`
++	HMaxReusableSecs Xbadoption.Range `json:"h_max_reusable_secs"`
++	HKeepAlivePeriod int64            `json:"h_keep_alive_period"`
++}
++
++func (m *V2RayXHTTPXmuxOptions) GetNormalizedMaxConcurrency() Xbadoption.Range {
++	return m.MaxConcurrency
++}
++
++func (m *V2RayXHTTPXmuxOptions) GetNormalizedMaxConnections() Xbadoption.Range {
++	return m.MaxConnections
++}
++
++func (m *V2RayXHTTPXmuxOptions) GetNormalizedCMaxReuseTimes() Xbadoption.Range {
++	return m.CMaxReuseTimes
++}
++
++func (m *V2RayXHTTPXmuxOptions) GetNormalizedHMaxRequestTimes() Xbadoption.Range {
++	return m.HMaxRequestTimes
++}
++
++func (m *V2RayXHTTPXmuxOptions) GetNormalizedHMaxReusableSecs() Xbadoption.Range {
++	return m.HMaxReusableSecs
++}
+diff --git c/transport/v2ray/transport.go i/transport/v2ray/transport.go
+index ab52f55..80797fa 100644
+--- c/transport/v2ray/transport.go
++++ i/transport/v2ray/transport.go
+@@ -10,6 +10,7 @@ import (
+ 	"github.com/sagernet/sing-box/transport/v2rayhttp"
+ 	"github.com/sagernet/sing-box/transport/v2rayhttpupgrade"
+ 	"github.com/sagernet/sing-box/transport/v2raywebsocket"
++	xhttp "github.com/sagernet/sing-box/transport/v2rayxhttp"
+ 	E "github.com/sagernet/sing/common/exceptions"
+ 	"github.com/sagernet/sing/common/logger"
+ 	M "github.com/sagernet/sing/common/metadata"
+@@ -62,6 +63,8 @@ func NewClientTransport(ctx context.Context, dialer N.Dialer, serverAddr M.Socks
+ 		return NewQUICClient(ctx, dialer, serverAddr, options.QUICOptions, tlsConfig)
+ 	case C.V2RayTransportTypeHTTPUpgrade:
+ 		return v2rayhttpupgrade.NewClient(ctx, dialer, serverAddr, options.HTTPUpgradeOptions, tlsConfig)
++	case C.V2RayTransportTypeXHTTP:
++		return xhttp.NewClient(ctx, logger.NOP(), dialer, serverAddr, options.XHTTPOptions, tlsConfig)
+ 	default:
+ 		return nil, E.New("unknown transport type: " + options.Type)
+ 	}
+diff --git c/transport/v2rayxhttp/client.go i/transport/v2rayxhttp/client.go
+new file mode 100644
+index 0000000..e602488
+--- /dev/null
++++ i/transport/v2rayxhttp/client.go
+@@ -0,0 +1,377 @@
++package xhttp
++
++import (
++	"context"
++	gotls "crypto/tls"
++	"io"
++	"net/http"
++	"net/http/httptrace"
++	"net/url"
++	"strconv"
++	"strings"
++	"sync"
++	"sync/atomic"
++	"time"
++
++	"github.com/sagernet/quic-go"
++	"github.com/sagernet/quic-go/http3"
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/common/tls"
++	"github.com/sagernet/sing-box/common/xray/buf"
++	"github.com/sagernet/sing-box/common/xray/net"
++	"github.com/sagernet/sing-box/common/xray/pipe"
++	"github.com/sagernet/sing-box/common/xray/signal/done"
++	"github.com/sagernet/sing-box/common/xray/uuid"
++	"github.com/sagernet/sing-box/log"
++	"github.com/sagernet/sing-box/option"
++	qtls "github.com/sagernet/sing-quic"
++	"github.com/sagernet/sing/common"
++	"github.com/sagernet/sing/common/bufio"
++	E "github.com/sagernet/sing/common/exceptions"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++	sHTTP "github.com/sagernet/sing/protocol/http"
++	"github.com/sagernet/sing/service"
++	"golang.org/x/net/http2"
++)
++
++type Client struct {
++	ctx             context.Context
++	options         *option.V2RayXHTTPOptions
++	baseRequestURL  url.URL
++	baseRequestURL2 url.URL
++	getHTTPClient   func() (DialerClient, *XmuxClient)
++	getHTTPClient2  func() (DialerClient, *XmuxClient)
++}
++
++func NewClient(ctx context.Context, logger log.ContextLogger, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayXHTTPOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
++	if options.Mode == "" {
++		return nil, E.New("mode is not set")
++	}
++	if tlsConfig != nil && len(tlsConfig.NextProtos()) == 0 {
++		tlsConfig.SetNextProtos([]string{"h2"})
++	}
++	dest := serverAddr
++	baseRequestURL, err := getBaseRequestURL(&options.V2RayXHTTPBaseOptions, dest, tlsConfig)
++	if err != nil {
++		return nil, err
++	}
++	var xmuxOptions option.V2RayXHTTPXmuxOptions
++	if options.Xmux != nil {
++		xmuxOptions = *options.Xmux
++	}
++	xmuxManager := NewXmuxManager(xmuxOptions, func() XmuxConn {
++		return createHTTPClient(dest, dialer, &options.V2RayXHTTPBaseOptions, tlsConfig)
++	})
++	getHTTPClient := func() (DialerClient, *XmuxClient) {
++		xmuxClient := xmuxManager.GetXmuxClient(ctx)
++		return xmuxClient.XmuxConn.(DialerClient), xmuxClient
++	}
++	baseRequestURL2 := baseRequestURL
++	getHTTPClient2 := getHTTPClient
++	if options.Download != nil {
++		options2 := options.Download
++		dialer2 := dialer
++		if options2.Detour != "" {
++			var ok bool
++			dialer2, ok = service.FromContext[adapter.OutboundManager](ctx).Outbound(options2.Detour)
++			if !ok {
++				return nil, E.New("outbound detour not found: ", options2.Detour)
++			}
++		}
++		dest2 := options2.ServerOptions.Build()
++		var tlsConfig2 tls.Config
++		if options2.TLS != nil {
++			tlsConfig2, err = tls.NewClient(ctx, logger, options2.Server, common.PtrValueOrDefault(options2.TLS))
++			if err != nil {
++				return nil, err
++			}
++		}
++		if tlsConfig2 != nil && len(tlsConfig2.NextProtos()) == 0 {
++			tlsConfig2.SetNextProtos([]string{"h2"})
++		}
++		baseRequestURL2, err = getBaseRequestURL(&options2.V2RayXHTTPBaseOptions, dest2, tlsConfig2)
++		if err != nil {
++			return nil, err
++		}
++		var xmuxOptions2 option.V2RayXHTTPXmuxOptions
++		if options2.Xmux != nil {
++			xmuxOptions2 = *options2.Xmux
++		}
++		xmuxManager2 := NewXmuxManager(xmuxOptions2, func() XmuxConn {
++			return createHTTPClient(dest2, dialer2, &options2.V2RayXHTTPBaseOptions, tlsConfig2)
++		})
++		getHTTPClient2 = func() (DialerClient, *XmuxClient) {
++			xmuxClient2 := xmuxManager2.GetXmuxClient(ctx)
++			return xmuxClient2.XmuxConn.(DialerClient), xmuxClient2
++		}
++	}
++	return &Client{
++		ctx:             ctx,
++		options:         &options,
++		getHTTPClient:   getHTTPClient,
++		getHTTPClient2:  getHTTPClient2,
++		baseRequestURL:  baseRequestURL,
++		baseRequestURL2: baseRequestURL2,
++	}, nil
++}
++
++func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
++	options := c.options
++	mode := c.options.Mode
++	sessionId := ""
++	if c.options.Mode != "stream-one" {
++		sessionIdUuid := uuid.New()
++		sessionId = sessionIdUuid.String()
++	}
++	requestURL := c.baseRequestURL
++	requestURL2 := c.baseRequestURL2
++	httpClient, xmuxClient := c.getHTTPClient()
++	httpClient2, xmuxClient2 := c.getHTTPClient2()
++	if xmuxClient != nil {
++		xmuxClient.AddOpenUsage(1)
++	}
++	if xmuxClient2 != nil && xmuxClient2 != xmuxClient {
++		xmuxClient2.AddOpenUsage(1)
++	}
++	var closed atomic.Int32
++	reader, writer := io.Pipe()
++	conn := splitConn{
++		writer: writer,
++		onClose: func() {
++			if closed.Add(1) > 1 {
++				return
++			}
++			if xmuxClient != nil {
++				xmuxClient.AddOpenUsage(-1)
++			}
++			if xmuxClient2 != nil && xmuxClient2 != xmuxClient {
++				xmuxClient2.AddOpenUsage(-1)
++			}
++		},
++	}
++	var err error
++	if mode == "stream-one" {
++		requestURL.Path = options.GetNormalizedPath()
++		if xmuxClient != nil {
++			xmuxClient.LeftRequests.Add(-1)
++		}
++		conn.reader, conn.remoteAddr, conn.localAddr, err = httpClient.OpenStream(ctx, requestURL.String(), sessionId, reader, false)
++		if err != nil { // browser dialer only
++			return nil, err
++		}
++		return &conn, nil
++	} else { // stream-down
++		if xmuxClient2 != nil {
++			xmuxClient2.LeftRequests.Add(-1)
++		}
++		conn.reader, conn.remoteAddr, conn.localAddr, err = httpClient2.OpenStream(ctx, requestURL2.String(), sessionId, nil, false)
++		if err != nil { // browser dialer only
++			return nil, err
++		}
++	}
++	if mode == "stream-up" {
++		if xmuxClient != nil {
++			xmuxClient.LeftRequests.Add(-1)
++		}
++		_, _, _, err = httpClient.OpenStream(ctx, requestURL.String(), sessionId, reader, true)
++		if err != nil { // browser dialer only
++			return nil, err
++		}
++		return &conn, nil
++	}
++	scMaxEachPostBytes := options.GetNormalizedScMaxEachPostBytes()
++	scMinPostsIntervalMs := options.GetNormalizedScMinPostsIntervalMs()
++	if scMaxEachPostBytes.From <= 0 {
++		panic("`scMaxEachPostBytes` should be bigger than 0")
++	}
++	maxUploadSize := scMaxEachPostBytes.Rand()
++	// WithSizeLimit(0) will still allow single bytes to pass, and a lot of
++	// code relies on this behavior. Subtract 1 so that together with
++	// uploadWriter wrapper, exact size limits can be enforced
++	// uploadPipeReader, uploadPipeWriter := pipe.New(pipe.WithSizeLimit(maxUploadSize - 1))
++	uploadPipeReader, uploadPipeWriter := pipe.New(pipe.WithSizeLimit(max(0, maxUploadSize-buf.Size)))
++	conn.writer = uploadWriter{
++		uploadPipeWriter,
++		maxUploadSize,
++	}
++	go func() {
++		var seq int64
++		var lastWrite time.Time
++		dynamicHTTPClient := httpClient
++		dynamicXmuxClient := xmuxClient
++		for {
++			// by offloading the uploads into a buffered pipe, multiple conn.Write
++			// calls get automatically batched together into larger POST requests.
++			// without batching, bandwidth is extremely limited.
++			remainder, err := uploadPipeReader.ReadMultiBuffer()
++			if err != nil {
++				break
++			}
++			doSplit := atomic.Bool{}
++			for doSplit.Store(true); doSplit.Load(); {
++				var chunk buf.MultiBuffer
++				remainder, chunk = buf.SplitSize(remainder, maxUploadSize)
++				if chunk.IsEmpty() {
++					break
++				}
++				wroteRequest := done.New()
++				ctx := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
++					WroteRequest: func(httptrace.WroteRequestInfo) {
++						wroteRequest.Close()
++					},
++				})
++				seqStr := strconv.FormatInt(seq, 10)
++				seq += 1
++				if scMinPostsIntervalMs.From > 0 {
++					time.Sleep(time.Duration(scMinPostsIntervalMs.Rand())*time.Millisecond - time.Since(lastWrite))
++				}
++				lastWrite = time.Now()
++				if dynamicXmuxClient != nil && (dynamicXmuxClient.LeftRequests.Add(-1) <= 0 ||
++					(dynamicXmuxClient.UnreusableAt != time.Time{} && lastWrite.After(dynamicXmuxClient.UnreusableAt))) {
++					dynamicHTTPClient, dynamicXmuxClient = c.getHTTPClient()
++				}
++				go func(hClient DialerClient) {
++					err := hClient.PostPacket(
++						ctx,
++						requestURL.String(),
++						sessionId,
++						seqStr,
++						chunk,
++					)
++					wroteRequest.Close()
++					if err != nil {
++						uploadPipeReader.Interrupt()
++						doSplit.Store(false)
++					}
++				}(dynamicHTTPClient)
++				if _, ok := dynamicHTTPClient.(*DefaultDialerClient); ok {
++					<-wroteRequest.Wait()
++				}
++			}
++		}
++	}()
++	return &conn, nil
++}
++
++func (c *Client) Close() error {
++	return nil
++}
++
++func decideHTTPVersion(tlsConfig tls.Config) string {
++	if tlsConfig == nil || len(tlsConfig.NextProtos()) == 0 || tlsConfig.NextProtos()[0] == "http/1.1" {
++		return "1.1"
++	}
++	if tlsConfig.NextProtos()[0] == "h3" {
++		return "3"
++	}
++	return "2"
++}
++
++func getBaseRequestURL(options *option.V2RayXHTTPBaseOptions, dest M.Socksaddr, tlsConfig tls.Config) (url.URL, error) {
++	var requestURL url.URL
++	if tlsConfig == nil {
++		requestURL.Scheme = "http"
++	} else {
++		requestURL.Scheme = "https"
++	}
++	requestURL.Host = options.Host
++	if requestURL.Host == "" && tlsConfig != nil {
++		requestURL.Host = tlsConfig.ServerName()
++	}
++	if requestURL.Host == "" {
++		requestURL.Host = dest.AddrString()
++	}
++	requestURL.Path = options.Path
++	if err := sHTTP.URLSetPath(&requestURL, options.Path); err != nil {
++		return requestURL, E.New(err, "parse path")
++	}
++	if !strings.HasPrefix(requestURL.Path, "/") {
++		requestURL.Path = "/" + requestURL.Path
++	}
++	requestURL.Path = options.GetNormalizedPath()
++	requestURL.RawQuery = options.GetNormalizedQuery()
++	return requestURL, nil
++}
++
++func createHTTPClient(dest M.Socksaddr, dialer N.Dialer, options *option.V2RayXHTTPBaseOptions, tlsConfig tls.Config) DialerClient {
++	httpVersion := decideHTTPVersion(tlsConfig)
++	dialContext := func(ctxInner context.Context) (net.Conn, error) {
++		conn, err := dialer.DialContext(ctxInner, "tcp", dest)
++		if err != nil {
++			return nil, err
++		}
++		if httpVersion == "2" {
++			return tls.ClientHandshake(ctxInner, conn, tlsConfig)
++		}
++		return conn, nil
++	}
++	var keepAlivePeriod time.Duration
++	if options.Xmux != nil {
++		keepAlivePeriod = time.Duration(options.Xmux.HKeepAlivePeriod) * time.Second
++	}
++	var transport http.RoundTripper
++	switch httpVersion {
++	case "3":
++		if keepAlivePeriod == 0 {
++			keepAlivePeriod = net.QuicgoH3KeepAlivePeriod
++		}
++		if keepAlivePeriod < 0 {
++			keepAlivePeriod = 0
++		}
++		quicConfig := &quic.Config{
++			MaxIdleTimeout: net.ConnIdleTimeout,
++			// these two are defaults of quic-go/http3. the default of quic-go (no
++			// http3) is different, so it is hardcoded here for clarity.
++			// https://github.com/quic-go/quic-go/blob/b8ea5c798155950fb5bbfdd06cad1939c9355878/http3/client.go#L36-L39
++			MaxIncomingStreams: -1,
++			KeepAlivePeriod:    keepAlivePeriod,
++		}
++		transport = &http3.Transport{
++			QUICConfig: quicConfig,
++			Dial: func(ctx context.Context, addr string, tlsCfg *gotls.Config, cfg *quic.Config) (*quic.Conn, error) {
++				udpConn, dErr := dialer.DialContext(ctx, N.NetworkUDP, dest)
++				if dErr != nil {
++					return nil, dErr
++				}
++				return qtls.DialEarly(ctx, bufio.NewUnbindPacketConn(udpConn), udpConn.RemoteAddr(), tlsConfig, cfg)
++			},
++		}
++	case "2":
++		if keepAlivePeriod == 0 {
++			keepAlivePeriod = net.ChromeH2KeepAlivePeriod
++		}
++		if keepAlivePeriod < 0 {
++			keepAlivePeriod = 0
++		}
++		transport = &http2.Transport{
++			DialTLSContext: func(ctxInner context.Context, network string, addr string, cfg *gotls.Config) (net.Conn, error) {
++				return dialContext(ctxInner)
++			},
++			IdleConnTimeout: net.ConnIdleTimeout,
++			ReadIdleTimeout: keepAlivePeriod,
++		}
++	default:
++		httpDialContext := func(ctxInner context.Context, network string, addr string) (net.Conn, error) {
++			return dialContext(ctxInner)
++		}
++		transport = &http.Transport{
++			DialTLSContext:  httpDialContext,
++			DialContext:     httpDialContext,
++			IdleConnTimeout: net.ConnIdleTimeout,
++			// chunked transfer download with KeepAlives is buggy with
++			// http.Client and our custom dial context.
++			DisableKeepAlives: true,
++		}
++	}
++	client := &DefaultDialerClient{
++		options: options,
++		client: &http.Client{
++			Transport: transport,
++		},
++		httpVersion:    httpVersion,
++		uploadRawPool:  &sync.Pool{},
++		dialUploadConn: dialContext,
++	}
++	return client
++}
+diff --git c/transport/v2rayxhttp/conn.go i/transport/v2rayxhttp/conn.go
+new file mode 100644
+index 0000000..7da8e91
+--- /dev/null
++++ i/transport/v2rayxhttp/conn.go
+@@ -0,0 +1,108 @@
++package xhttp
++
++import (
++	"bufio"
++	"io"
++	"net"
++	"net/http"
++	"sync"
++	"time"
++
++	"github.com/sagernet/sing-box/common/xray/signal/done"
++)
++
++type splitConn struct {
++	writer     io.WriteCloser
++	reader     io.ReadCloser
++	remoteAddr net.Addr
++	localAddr  net.Addr
++	onClose    func()
++}
++
++func (c *splitConn) Write(b []byte) (int, error) {
++	return c.writer.Write(b)
++}
++
++func (c *splitConn) Read(b []byte) (int, error) {
++	return c.reader.Read(b)
++}
++
++func (c *splitConn) Close() error {
++	if c.onClose != nil {
++		c.onClose()
++	}
++
++	err := c.writer.Close()
++	err2 := c.reader.Close()
++	if err != nil {
++		return err
++	}
++
++	if err2 != nil {
++		return err
++	}
++
++	return nil
++}
++
++func (c *splitConn) LocalAddr() net.Addr {
++	return c.localAddr
++}
++
++func (c *splitConn) RemoteAddr() net.Addr {
++	return c.remoteAddr
++}
++
++func (c *splitConn) SetDeadline(t time.Time) error {
++	// TODO cannot do anything useful
++	return nil
++}
++
++func (c *splitConn) SetReadDeadline(t time.Time) error {
++	// TODO cannot do anything useful
++	return nil
++}
++
++func (c *splitConn) SetWriteDeadline(t time.Time) error {
++	// TODO cannot do anything useful
++	return nil
++}
++
++type H1Conn struct {
++	UnreadedResponsesCount int
++	RespBufReader          *bufio.Reader
++	net.Conn
++}
++
++func NewH1Conn(conn net.Conn) *H1Conn {
++	return &H1Conn{
++		RespBufReader: bufio.NewReader(conn),
++		Conn:          conn,
++	}
++}
++
++type httpServerConn struct {
++	sync.Mutex
++	*done.Instance
++	io.Reader // no need to Close request.Body
++	http.ResponseWriter
++}
++
++func (c *httpServerConn) Write(b []byte) (int, error) {
++	c.Lock()
++	defer c.Unlock()
++	if c.Done() {
++		return 0, io.ErrClosedPipe
++	}
++	n, err := c.ResponseWriter.Write(b)
++	if err == nil {
++		c.ResponseWriter.(http.Flusher).Flush()
++	}
++	return n, err
++}
++
++func (c *httpServerConn) Close() error {
++	c.Lock()
++	defer c.Unlock()
++	return c.Instance.Close()
++}
+diff --git c/transport/v2rayxhttp/dialer.go i/transport/v2rayxhttp/dialer.go
+new file mode 100644
+index 0000000..255042b
+--- /dev/null
++++ i/transport/v2rayxhttp/dialer.go
+@@ -0,0 +1,289 @@
++package xhttp
++
++import (
++	"bytes"
++	"context"
++	"fmt"
++	"io"
++	"net"
++	"net/http"
++	"net/http/httptrace"
++	"reflect"
++	"strings"
++	"sync"
++	"unsafe"
++
++	"github.com/sagernet/quic-go/http3"
++	common "github.com/sagernet/sing-box/common/xray"
++	"github.com/sagernet/sing-box/common/xray/buf"
++	"github.com/sagernet/sing-box/common/xray/signal/done"
++	"github.com/sagernet/sing-box/option"
++	E "github.com/sagernet/sing/common/exceptions"
++	"golang.org/x/net/http2"
++)
++
++// interface to abstract between use of browser dialer, vs net/http
++type DialerClient interface {
++	IsClosed() bool
++	Close()
++
++	// ctx, url, sessionId, body, uploadOnly
++	OpenStream(context.Context, string, string, io.Reader, bool) (io.ReadCloser, net.Addr, net.Addr, error)
++
++	// ctx, url, sessionId, seqStr, payload
++	PostPacket(context.Context, string, string, string, buf.MultiBuffer) error
++}
++
++// implements xhttp.DialerClient in terms of direct network connections
++type DefaultDialerClient struct {
++	options     *option.V2RayXHTTPBaseOptions
++	client      *http.Client
++	closed      bool
++	httpVersion string
++	// pool of net.Conn, created using dialUploadConn
++	uploadRawPool  *sync.Pool
++	dialUploadConn func(ctxInner context.Context) (net.Conn, error)
++
++	mtx sync.RWMutex
++}
++
++type clientConnPool struct {
++	t     *http2.Transport
++	mu    sync.Mutex
++	conns map[string][]*http2.ClientConn // key is host:port
++}
++
++type efaceWords struct {
++	typ  unsafe.Pointer
++	data unsafe.Pointer
++}
++
++//go:linkname transportConnPool golang.org/x/net/http2.(*Transport).connPool
++func transportConnPool(t *http2.Transport) http2.ClientConnPool
++
++func (c *DefaultDialerClient) Close() {
++	c.mtx.Lock()
++	defer c.mtx.Unlock()
++	if c.closed {
++		return
++	}
++	c.closed = true
++	switch transport := c.client.Transport.(type) {
++	case *http.Transport:
++		transport.CloseIdleConnections()
++	case *http2.Transport:
++		connPool := transportConnPool(transport)
++		p := (*clientConnPool)((*efaceWords)(unsafe.Pointer(&connPool)).data)
++		p.mu.Lock()
++		defer p.mu.Unlock()
++		for _, vv := range p.conns {
++			for _, cc := range vv {
++				cc.Close()
++			}
++		}
++	case *http3.Transport:
++		transport.Close()
++	default:
++		panic(E.New("unknown transport type: ", reflect.TypeOf(transport)))
++	}
++}
++
++func (c *DefaultDialerClient) IsClosed() bool {
++	c.mtx.RLock()
++	defer c.mtx.RUnlock()
++	return c.closed
++}
++
++func (c *DefaultDialerClient) OpenStream(ctx context.Context, url string, sessionId string, body io.Reader, uploadOnly bool) (wrc io.ReadCloser, remoteAddr, localAddr net.Addr, err error) {
++	// this is done when the TCP/UDP connection to the server was established,
++	// and we can unblock the Dial function and print correct net addresses in
++	// logs
++	gotConn := done.New()
++	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
++		GotConn: func(connInfo httptrace.GotConnInfo) {
++			remoteAddr = connInfo.Conn.RemoteAddr()
++			localAddr = connInfo.Conn.LocalAddr()
++			gotConn.Close()
++		},
++	})
++	method := "GET" // stream-down
++	if body != nil {
++		method = c.options.GetNormalizedUplinkHTTPMethod() // stream-up/one
++	}
++	req, _ := http.NewRequestWithContext(context.WithoutCancel(ctx), method, url, body)
++	FillStreamRequest(req, sessionId, "", c.options)
++	wrc = &WaitReadCloser{Wait: make(chan struct{})}
++	go func() {
++		resp, err := c.client.Do(req)
++		if err != nil {
++			if !uploadOnly { // stream-down is enough
++				c.Close()
++			}
++			gotConn.Close()
++			common.Close(body)
++			wrc.Close()
++			return
++		}
++		if resp.StatusCode != 200 || uploadOnly { // stream-up
++			io.Copy(io.Discard, resp.Body)
++			resp.Body.Close() // if it is called immediately, the upload will be interrupted also
++			common.Close(body)
++			wrc.Close()
++			return
++		}
++		wrc.(*WaitReadCloser).Set(resp.Body)
++	}()
++	<-gotConn.Wait()
++	return
++}
++
++func (c *DefaultDialerClient) PostPacket(ctx context.Context, url string, sessionId string, seqStr string, payload buf.MultiBuffer) error {
++	method := c.options.GetNormalizedUplinkHTTPMethod()
++	req, err := http.NewRequestWithContext(context.WithoutCancel(ctx), method, url, nil)
++	if err != nil {
++		return err
++	}
++	FillPacketRequest(req, sessionId, seqStr, payload, c.options)
++	if c.httpVersion != "1.1" {
++		resp, err := c.client.Do(req)
++		if err != nil {
++			c.closed = true
++			return err
++		}
++		io.Copy(io.Discard, resp.Body)
++		defer resp.Body.Close()
++		if resp.StatusCode != 200 {
++			return E.New("bad status code: ", resp.Status)
++		}
++	} else {
++		// stringify the entire HTTP/1.1 request so it can be
++		// safely retried. if instead req.Write is called multiple
++		// times, the body is already drained after the first
++		// request
++		requestBuff := new(bytes.Buffer)
++		requestBuff.Grow(512 + int(req.ContentLength))
++		common.Must(req.Write(requestBuff))
++		var uploadConn any
++		var h1UploadConn *H1Conn
++		for {
++			uploadConn = c.uploadRawPool.Get()
++			newConnection := uploadConn == nil
++			if newConnection {
++				newConn, err := c.dialUploadConn(context.WithoutCancel(ctx))
++				if err != nil {
++					return err
++				}
++				h1UploadConn = NewH1Conn(newConn)
++				uploadConn = h1UploadConn
++			} else {
++				h1UploadConn = uploadConn.(*H1Conn)
++
++				// TODO: Replace 0 here with a config value later
++				// Or add some other condition for optimization purposes
++				if h1UploadConn.UnreadedResponsesCount > 0 {
++					resp, err := http.ReadResponse(h1UploadConn.RespBufReader, req)
++					if err != nil {
++						c.Close()
++						return fmt.Errorf("error while reading response: %s", err.Error())
++					}
++					io.Copy(io.Discard, resp.Body)
++					defer resp.Body.Close()
++					if resp.StatusCode != 200 {
++						return fmt.Errorf("got non-200 error response code: %d", resp.StatusCode)
++					}
++				}
++			}
++			_, err := h1UploadConn.Write(requestBuff.Bytes())
++			// if the write failed, we try another connection from
++			// the pool, until the write on a new connection fails.
++			// failed writes to a pooled connection are normal when
++			// the connection has been closed in the meantime.
++			if err == nil {
++				break
++			} else if newConnection {
++				return err
++			}
++		}
++		c.uploadRawPool.Put(uploadConn)
++	}
++	return nil
++}
++
++type WaitReadCloser struct {
++	Wait chan struct{}
++	io.ReadCloser
++}
++
++func (w *WaitReadCloser) Set(rc io.ReadCloser) {
++	w.ReadCloser = rc
++	defer func() {
++		if recover() != nil {
++			rc.Close()
++		}
++	}()
++	close(w.Wait)
++}
++
++func (w *WaitReadCloser) Read(b []byte) (int, error) {
++	if w.ReadCloser == nil {
++		if <-w.Wait; w.ReadCloser == nil {
++			return 0, io.ErrClosedPipe
++		}
++	}
++	return w.ReadCloser.Read(b)
++}
++
++func (w *WaitReadCloser) Close() error {
++	if w.ReadCloser != nil {
++		return w.ReadCloser.Close()
++	}
++	defer func() {
++		if recover() != nil && w.ReadCloser != nil {
++			w.ReadCloser.Close()
++		}
++	}()
++	close(w.Wait)
++	return nil
++}
++
++func ApplyMetaToRequest(options *option.V2RayXHTTPBaseOptions, req *http.Request, sessionId string, seqStr string) {
++	sessionPlacement := options.GetNormalizedSessionPlacement()
++	seqPlacement := options.GetNormalizedSeqPlacement()
++	sessionKey := options.GetNormalizedSessionKey()
++	seqKey := options.GetNormalizedSeqKey()
++	if sessionId != "" {
++		switch sessionPlacement {
++		case option.PlacementPath:
++			req.URL.Path = appendToPath(req.URL.Path, sessionId)
++		case option.PlacementQuery:
++			q := req.URL.Query()
++			q.Set(sessionKey, sessionId)
++			req.URL.RawQuery = q.Encode()
++		case option.PlacementHeader:
++			req.Header.Set(sessionKey, sessionId)
++		case option.PlacementCookie:
++			req.AddCookie(&http.Cookie{Name: sessionKey, Value: sessionId})
++		}
++	}
++	if seqStr != "" {
++		switch seqPlacement {
++		case option.PlacementPath:
++			req.URL.Path = appendToPath(req.URL.Path, seqStr)
++		case option.PlacementQuery:
++			q := req.URL.Query()
++			q.Set(seqKey, seqStr)
++			req.URL.RawQuery = q.Encode()
++		case option.PlacementHeader:
++			req.Header.Set(seqKey, seqStr)
++		case option.PlacementCookie:
++			req.AddCookie(&http.Cookie{Name: seqKey, Value: seqStr})
++		}
++	}
++}
++
++func appendToPath(path, value string) string {
++	if strings.HasSuffix(path, "/") {
++		return path + value
++	}
++	return path + "/" + value
++}
+diff --git c/transport/v2rayxhttp/http.go i/transport/v2rayxhttp/http.go
+new file mode 100644
+index 0000000..03a47da
+--- /dev/null
++++ i/transport/v2rayxhttp/http.go
+@@ -0,0 +1,41 @@
++package xhttp
++
++import (
++	"net/http"
++	"strings"
++
++	"github.com/sagernet/sing-box/common/xray/net"
++	"github.com/sagernet/sing-box/common/xray/signal/done"
++)
++
++type httpSession struct {
++	uploadQueue *uploadQueue
++	// for as long as the GET request is not opened by the client, this will be
++	// open ("undone"), and the session may be expired within a certain TTL.
++	// after the client connects, this becomes "done" and the session lives as
++	// long as the GET request.
++	isFullyConnected *done.Instance
++}
++
++func parseXForwardedFor(header http.Header) []net.Address {
++	xff := header.Get("X-Forwarded-For")
++	if xff == "" {
++		return nil
++	}
++	list := strings.Split(xff, ",")
++	addrs := make([]net.Address, 0, len(list))
++	for _, proxy := range list {
++		addrs = append(addrs, net.ParseAddress(proxy))
++	}
++	return addrs
++}
++
++func isValidHTTPHost(request string, config string) bool {
++	r := strings.ToLower(request)
++	c := strings.ToLower(config)
++	if strings.Contains(r, ":") {
++		h, _, _ := net.SplitHostPort(r)
++		return h == c
++	}
++	return r == c
++}
+diff --git c/transport/v2rayxhttp/mux.go i/transport/v2rayxhttp/mux.go
+new file mode 100644
+index 0000000..e134fde
+--- /dev/null
++++ i/transport/v2rayxhttp/mux.go
+@@ -0,0 +1,137 @@
++package xhttp
++
++import (
++	"context"
++	"crypto/rand"
++	"math"
++	"math/big"
++	"sync"
++	"sync/atomic"
++	"time"
++
++	"github.com/sagernet/sing-box/option"
++)
++
++type XmuxConn interface {
++	Close()
++	IsClosed() bool
++}
++
++type XmuxClient struct {
++	XmuxConn     XmuxConn
++	openUsage    int32
++	leftUsage    int32
++	LeftRequests atomic.Int32
++	UnreusableAt time.Time
++
++	closed bool
++	mtx    sync.Mutex
++}
++
++func (c *XmuxClient) Close() {
++	c.mtx.Lock()
++	defer c.mtx.Unlock()
++	c.closed = true
++	if c.openUsage <= 0 {
++		c.XmuxConn.Close()
++	}
++}
++
++func (c *XmuxClient) AddOpenUsage(delta int32) {
++	c.mtx.Lock()
++	defer c.mtx.Unlock()
++	c.openUsage += delta
++	if c.closed && c.openUsage <= 0 {
++		c.XmuxConn.Close()
++	}
++}
++
++func (c *XmuxClient) GetOpenUsage() int32 {
++	c.mtx.Lock()
++	defer c.mtx.Unlock()
++	return c.openUsage
++}
++
++type XmuxManager struct {
++	options     option.V2RayXHTTPXmuxOptions
++	concurrency int32
++	connections int32
++	newConnFunc func() XmuxConn
++	xmuxClients []*XmuxClient
++	mtx         sync.Mutex
++}
++
++func NewXmuxManager(options option.V2RayXHTTPXmuxOptions, newConnFunc func() XmuxConn) *XmuxManager {
++	return &XmuxManager{
++		options:     options,
++		concurrency: options.GetNormalizedMaxConcurrency().Rand(),
++		connections: options.GetNormalizedMaxConnections().Rand(),
++		newConnFunc: newConnFunc,
++		xmuxClients: make([]*XmuxClient, 0),
++	}
++}
++
++func (m *XmuxManager) newXmuxClient() *XmuxClient {
++	xmuxClient := &XmuxClient{
++		XmuxConn:  m.newConnFunc(),
++		leftUsage: -1,
++	}
++	if x := m.options.GetNormalizedCMaxReuseTimes().Rand(); x > 0 {
++		xmuxClient.leftUsage = x - 1
++	}
++	xmuxClient.LeftRequests.Store(math.MaxInt32)
++	if x := m.options.GetNormalizedHMaxRequestTimes().Rand(); x > 0 {
++		xmuxClient.LeftRequests.Store(x)
++	}
++	if x := m.options.GetNormalizedHMaxReusableSecs().Rand(); x > 0 {
++		xmuxClient.UnreusableAt = time.Now().Add(time.Duration(x) * time.Second)
++	}
++	m.xmuxClients = append(m.xmuxClients, xmuxClient)
++	return xmuxClient
++}
++
++func (m *XmuxManager) GetXmuxClient(ctx context.Context) *XmuxClient {
++	m.mtx.Lock()
++	defer m.mtx.Unlock()
++	var evicted []*XmuxClient
++	for i := 0; i < len(m.xmuxClients); {
++		xmuxClient := m.xmuxClients[i]
++		if xmuxClient.XmuxConn.IsClosed() ||
++			xmuxClient.leftUsage == 0 ||
++			xmuxClient.LeftRequests.Load() <= 0 ||
++			(xmuxClient.UnreusableAt != time.Time{} && time.Now().After(xmuxClient.UnreusableAt)) {
++			m.xmuxClients = append(m.xmuxClients[:i], m.xmuxClients[i+1:]...)
++			evicted = append(evicted, xmuxClient)
++		} else {
++			i++
++		}
++	}
++	for _, c := range evicted {
++		c.Close()
++	}
++	if len(m.xmuxClients) == 0 {
++		return m.newXmuxClient()
++	}
++	if m.connections > 0 && len(m.xmuxClients) < int(m.connections) {
++		return m.newXmuxClient()
++	}
++	xmuxClients := make([]*XmuxClient, 0)
++	if m.concurrency > 0 {
++		for _, xmuxClient := range m.xmuxClients {
++			if xmuxClient.GetOpenUsage() < m.concurrency {
++				xmuxClients = append(xmuxClients, xmuxClient)
++			}
++		}
++	} else {
++		xmuxClients = m.xmuxClients
++	}
++	if len(xmuxClients) == 0 {
++		return m.newXmuxClient()
++	}
++	i, _ := rand.Int(rand.Reader, big.NewInt(int64(len(xmuxClients))))
++	xmuxClient := xmuxClients[i.Int64()]
++	if xmuxClient.leftUsage > 0 {
++		xmuxClient.leftUsage -= 1
++	}
++	return xmuxClient
++}
+diff --git c/transport/v2rayxhttp/upload_queue.go i/transport/v2rayxhttp/upload_queue.go
+new file mode 100644
+index 0000000..32259a7
+--- /dev/null
++++ i/transport/v2rayxhttp/upload_queue.go
+@@ -0,0 +1,157 @@
++package xhttp
++
++// upload_queue is a specialized priorityqueue + channel to reorder generic
++// packets by a sequence number
++
++import (
++	"container/heap"
++	"io"
++	"runtime"
++	"sync"
++
++	E "github.com/sagernet/sing/common/exceptions"
++)
++
++type Packet struct {
++	Reader  io.ReadCloser
++	Payload []byte
++	Seq     uint64
++}
++
++type uploadQueue struct {
++	reader          io.ReadCloser
++	nomore          bool
++	pushedPackets   chan Packet
++	writeCloseMutex sync.Mutex
++	heap            uploadHeap
++	nextSeq         uint64
++	closed          bool
++	maxPackets      int
++}
++
++func NewUploadQueue(maxPackets int) *uploadQueue {
++	return &uploadQueue{
++		pushedPackets: make(chan Packet, maxPackets),
++		heap:          uploadHeap{},
++		nextSeq:       0,
++		closed:        false,
++		maxPackets:    maxPackets,
++	}
++}
++
++func (h *uploadQueue) Push(p Packet) error {
++	h.writeCloseMutex.Lock()
++	defer h.writeCloseMutex.Unlock()
++	if h.closed {
++		return E.New("packet queue closed")
++	}
++	if h.nomore {
++		return E.New("h.reader already exists")
++	}
++	if p.Reader != nil {
++		h.nomore = true
++	}
++	h.pushedPackets <- p
++	return nil
++}
++
++func (h *uploadQueue) Close() error {
++	h.writeCloseMutex.Lock()
++	defer h.writeCloseMutex.Unlock()
++	if !h.closed {
++		h.closed = true
++		runtime.Gosched() // hope Read() gets the packet
++	f:
++		for {
++			select {
++			case p := <-h.pushedPackets:
++				if p.Reader != nil {
++					h.reader = p.Reader
++				}
++			default:
++				break f
++			}
++		}
++		close(h.pushedPackets)
++	}
++	if h.reader != nil {
++		return h.reader.Close()
++	}
++	return nil
++}
++
++func (h *uploadQueue) Read(b []byte) (int, error) {
++	if h.reader != nil {
++		return h.reader.Read(b)
++	}
++	if h.closed {
++		return 0, io.EOF
++	}
++	if len(h.heap) == 0 {
++		packet, more := <-h.pushedPackets
++		if !more {
++			return 0, io.EOF
++		}
++		if packet.Reader != nil {
++			h.reader = packet.Reader
++			return h.reader.Read(b)
++		}
++		heap.Push(&h.heap, packet)
++	}
++	for len(h.heap) > 0 {
++		packet := heap.Pop(&h.heap).(Packet)
++		n := 0
++
++		if packet.Seq == h.nextSeq {
++			copy(b, packet.Payload)
++			n = min(len(b), len(packet.Payload))
++
++			if n < len(packet.Payload) {
++				// partial read
++				packet.Payload = packet.Payload[n:]
++				heap.Push(&h.heap, packet)
++			} else {
++				h.nextSeq = packet.Seq + 1
++			}
++
++			return n, nil
++		}
++		// misordered packet
++		if packet.Seq > h.nextSeq {
++			if len(h.heap) > h.maxPackets {
++				// the "reassembly buffer" is too large, and we want to
++				// constrain memory usage somehow. let's tear down the
++				// connection, and hope the application retries.
++				return 0, E.New("packet queue is too large")
++			}
++			heap.Push(&h.heap, packet)
++			packet2, more := <-h.pushedPackets
++			if !more {
++				return 0, io.EOF
++			}
++			heap.Push(&h.heap, packet2)
++		}
++	}
++	return 0, nil
++}
++
++// heap code directly taken from https://pkg.go.dev/container/heap
++type uploadHeap []Packet
++
++func (h uploadHeap) Len() int           { return len(h) }
++func (h uploadHeap) Less(i, j int) bool { return h[i].Seq < h[j].Seq }
++func (h uploadHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
++
++func (h *uploadHeap) Push(x any) {
++	// Push and Pop use pointer receivers because they modify the slice's length,
++	// not just its contents.
++	*h = append(*h, x.(Packet))
++}
++
++func (h *uploadHeap) Pop() any {
++	old := *h
++	n := len(old)
++	x := old[n-1]
++	*h = old[0 : n-1]
++	return x
++}
+diff --git c/transport/v2rayxhttp/utils.go i/transport/v2rayxhttp/utils.go
+new file mode 100644
+index 0000000..102a64d
+--- /dev/null
++++ i/transport/v2rayxhttp/utils.go
+@@ -0,0 +1,150 @@
++package xhttp
++
++import (
++	"encoding/base64"
++	"fmt"
++	"io"
++	"net/http"
++
++	"github.com/sagernet/sing-box/common/xray/buf"
++	"github.com/sagernet/sing-box/common/xray/utils"
++	"github.com/sagernet/sing-box/option"
++)
++
++func FillStreamRequest(request *http.Request, sessionId string, seqStr string, options *option.V2RayXHTTPBaseOptions) {
++	request.Header = options.GetRequestHeader()
++	length := int(options.GetNormalizedXPaddingBytes().Rand())
++	config := XPaddingConfig{Length: length}
++	if options.XPaddingObfsMode {
++		config.Placement = XPaddingPlacement{
++			Placement: options.XPaddingPlacement,
++			Key:       options.XPaddingKey,
++			Header:    options.XPaddingHeader,
++			RawURL:    request.URL.String(),
++		}
++		config.Method = PaddingMethod(options.XPaddingMethod)
++	} else {
++		config.Placement = XPaddingPlacement{
++			Placement: option.PlacementQueryInHeader,
++			Key:       "x_padding",
++			Header:    "Referer",
++			RawURL:    request.URL.String(),
++		}
++	}
++	ApplyXPaddingToRequest(request, config)
++	ApplyMetaToRequest(options, request, sessionId, "")
++	if request.Body != nil && !options.NoGRPCHeader { // stream-up/one
++		request.Header.Set("Content-Type", "application/grpc")
++	}
++}
++
++func FillPacketRequest(request *http.Request, sessionId string, seqStr string, payload buf.MultiBuffer, options *option.V2RayXHTTPBaseOptions) error {
++	dataPlacement := options.GetNormalizedUplinkDataPlacement()
++	if dataPlacement == option.PlacementBody || dataPlacement == option.PlacementAuto {
++		request.Header = options.GetRequestHeader()
++		request.Body = io.NopCloser(&buf.MultiBufferContainer{MultiBuffer: payload})
++		request.ContentLength = int64(payload.Len())
++	} else {
++		data := make([]byte, payload.Len())
++		payload.Copy(data)
++		buf.ReleaseMulti(payload)
++		switch dataPlacement {
++		case option.PlacementHeader:
++			request.Header = GetRequestHeaderWithPayload(data, options)
++		case option.PlacementCookie:
++			request.Header = options.GetRequestHeader()
++			for _, cookie := range GetRequestCookiesWithPayload(data, options) {
++				request.AddCookie(cookie)
++			}
++		}
++	}
++	length := int(options.GetNormalizedXPaddingBytes().Rand())
++	config := XPaddingConfig{Length: length}
++	if options.XPaddingObfsMode {
++		config.Placement = XPaddingPlacement{
++			Placement: options.XPaddingPlacement,
++			Key:       options.XPaddingKey,
++			Header:    options.XPaddingHeader,
++			RawURL:    request.URL.String(),
++		}
++		config.Method = PaddingMethod(options.XPaddingMethod)
++	} else {
++		config.Placement = XPaddingPlacement{
++			Placement: option.PlacementQueryInHeader,
++			Key:       "x_padding",
++			Header:    "Referer",
++			RawURL:    request.URL.String(),
++		}
++	}
++	ApplyXPaddingToRequest(request, config)
++	ApplyMetaToRequest(options, request, sessionId, seqStr)
++	return nil
++}
++
++func WriteResponseHeader(writer http.ResponseWriter, requestMethod string, requestHeader http.Header, options *option.V2RayXHTTPOptions) {
++	// CORS headers for the browser dialer
++	if origin := requestHeader.Get("Origin"); origin == "" {
++		writer.Header().Set("Access-Control-Allow-Origin", "*")
++	} else {
++		// Chrome says: The value of the 'Access-Control-Allow-Origin' header in the response must not be the wildcard '*' when the request's credentials mode is 'include'.
++		writer.Header().Set("Access-Control-Allow-Origin", origin)
++	}
++	if options.GetNormalizedSessionPlacement() == option.PlacementCookie ||
++		options.GetNormalizedSeqPlacement() == option.PlacementCookie ||
++		options.XPaddingPlacement == option.PlacementCookie ||
++		options.GetNormalizedUplinkDataPlacement() == option.PlacementCookie {
++		writer.Header().Set("Access-Control-Allow-Credentials", "true")
++	}
++	if requestMethod == "OPTIONS" {
++		requestedMethod := requestHeader.Get("Access-Control-Request-Method")
++		if requestedMethod != "" {
++			writer.Header().Set("Access-Control-Allow-Methods", requestedMethod)
++		} else {
++			writer.Header().Set("Access-Control-Allow-Methods", "*")
++		}
++		requestedHeaders := requestHeader.Get("Access-Control-Request-Headers")
++		if requestedHeaders == "" {
++			writer.Header().Set("Access-Control-Allow-Headers", "*")
++		} else {
++			writer.Header().Set("Access-Control-Allow-Headers", requestedHeaders)
++		}
++	}
++}
++
++func GetRequestHeader(options *option.V2RayXHTTPBaseOptions) http.Header {
++	header := http.Header{}
++	for k, v := range options.Headers {
++		header.Add(k, v)
++	}
++	utils.TryDefaultHeadersWith(header, "fetch")
++	return header
++}
++
++func GetRequestHeaderWithPayload(payload []byte, options *option.V2RayXHTTPBaseOptions) http.Header {
++	header := GetRequestHeader(options)
++	key := options.UplinkDataKey
++	encodedData := base64.RawURLEncoding.EncodeToString(payload)
++	for i := 0; len(encodedData) > 0; i++ {
++		chunkSize := min(int(options.GetNormalizedUplinkChunkSize().Rand()), len(encodedData))
++		chunk := encodedData[:chunkSize]
++		encodedData = encodedData[chunkSize:]
++		headerKey := fmt.Sprintf("%s-%d", key, i)
++		header.Set(headerKey, chunk)
++	}
++
++	return header
++}
++
++func GetRequestCookiesWithPayload(payload []byte, options *option.V2RayXHTTPBaseOptions) []*http.Cookie {
++	cookies := []*http.Cookie{}
++	key := options.UplinkDataKey
++	encodedData := base64.RawURLEncoding.EncodeToString(payload)
++	for i := 0; len(encodedData) > 0; i++ {
++		chunkSize := min(int(options.GetNormalizedUplinkChunkSize().Rand()), len(encodedData))
++		chunk := encodedData[:chunkSize]
++		encodedData = encodedData[chunkSize:]
++		cookieName := fmt.Sprintf("%s_%d", key, i)
++		cookies = append(cookies, &http.Cookie{Name: cookieName, Value: chunk})
++	}
++	return cookies
++}
+diff --git c/transport/v2rayxhttp/writer.go i/transport/v2rayxhttp/writer.go
+new file mode 100644
+index 0000000..3c11e3b
+--- /dev/null
++++ i/transport/v2rayxhttp/writer.go
+@@ -0,0 +1,41 @@
++package xhttp
++
++import (
++	common "github.com/sagernet/sing-box/common/xray"
++	"github.com/sagernet/sing-box/common/xray/buf"
++	"github.com/sagernet/sing-box/common/xray/pipe"
++)
++
++// A wrapper around pipe that ensures the size limit is exactly honored.
++//
++// The MultiBuffer pipe accepts any single WriteMultiBuffer call even if that
++// single MultiBuffer exceeds the size limit, and then starts blocking on the
++// next WriteMultiBuffer call. This means that ReadMultiBuffer can return more
++// bytes than the size limit. We work around this by splitting a potentially
++// too large write up into multiple.
++type uploadWriter struct {
++	*pipe.Writer
++	maxLen int32
++}
++
++func (w uploadWriter) Write(b []byte) (int, error) {
++	/*
++		capacity := int(w.maxLen - w.Len())
++		if capacity > 0 && capacity < len(b) {
++			b = b[:capacity]
++		}
++	*/
++
++	buffer := buf.MultiBufferContainer{}
++	common.Must2(buffer.Write(b))
++
++	var writed int
++	for _, buff := range buffer.MultiBuffer {
++		err := w.WriteMultiBuffer(buf.MultiBuffer{buff})
++		if err != nil {
++			return writed, err
++		}
++		writed += int(buff.Len())
++	}
++	return writed, nil
++}
+diff --git c/transport/v2rayxhttp/xpadding.go i/transport/v2rayxhttp/xpadding.go
+new file mode 100644
+index 0000000..fd36c49
+--- /dev/null
++++ i/transport/v2rayxhttp/xpadding.go
+@@ -0,0 +1,292 @@
++package xhttp
++
++import (
++	"crypto/rand"
++	"math"
++	"net/http"
++	"net/url"
++	"strings"
++
++	"github.com/sagernet/sing-box/option"
++	"golang.org/x/net/http2/hpack"
++)
++
++type PaddingMethod string
++
++const (
++	PaddingMethodRepeatX  PaddingMethod = "repeat-x"
++	PaddingMethodTokenish PaddingMethod = "tokenish"
++)
++
++const charsetBase62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
++
++// Huffman encoding gives ~20% size reduction for base62 sequences
++const avgHuffmanBytesPerCharBase62 = 0.8
++
++const validationTolerance = 2
++
++type XPaddingPlacement struct {
++	Placement string
++	Key       string
++	Header    string
++	RawURL    string
++}
++
++type XPaddingConfig struct {
++	Length    int
++	Placement XPaddingPlacement
++	Method    PaddingMethod
++}
++
++func randStringFromCharset(n int, charset string) (string, bool) {
++	if n <= 0 || len(charset) == 0 {
++		return "", false
++	}
++	m := len(charset)
++	limit := byte(256 - (256 % m))
++	result := make([]byte, n)
++	i := 0
++	buf := make([]byte, 256)
++	for i < n {
++		if _, err := rand.Read(buf); err != nil {
++			return "", false
++		}
++		for _, rb := range buf {
++			if rb >= limit {
++				continue
++			}
++			result[i] = charset[int(rb)%m]
++			i++
++			if i == n {
++				break
++			}
++		}
++	}
++	return string(result), true
++}
++
++func absInt(x int) int {
++	if x < 0 {
++		return -x
++	}
++	return x
++}
++
++func GenerateTokenishPaddingBase62(targetHuffmanBytes int) string {
++	n := int(math.Ceil(float64(targetHuffmanBytes) / avgHuffmanBytesPerCharBase62))
++	if n < 1 {
++		n = 1
++	}
++	randBase62Str, ok := randStringFromCharset(n, charsetBase62)
++	if !ok {
++		return ""
++	}
++	const maxIter = 150
++	adjustChar := byte('X')
++	// Adjust until close enough
++	for iter := 0; iter < maxIter; iter++ {
++		currentLength := int(hpack.HuffmanEncodeLength(randBase62Str))
++		diff := currentLength - targetHuffmanBytes
++
++		if absInt(diff) <= validationTolerance {
++			return randBase62Str
++		}
++		if diff < 0 {
++			// Too small -> append padding char(s)
++			randBase62Str += string(adjustChar)
++			// Avoid a long run of identical chars
++			if adjustChar == 'X' {
++				adjustChar = 'Z'
++			} else {
++				adjustChar = 'X'
++			}
++		} else {
++			// Too big -> remove from the end
++			if len(randBase62Str) <= 1 {
++				return randBase62Str
++			}
++			randBase62Str = randBase62Str[:len(randBase62Str)-1]
++		}
++	}
++	return randBase62Str
++}
++
++func GeneratePadding(method PaddingMethod, length int) string {
++	if length <= 0 {
++		return ""
++	}
++	// https://www.rfc-editor.org/rfc/rfc7541.html#appendix-B
++	// h2's HPACK Header Compression feature employs a huffman encoding using a static table.
++	// 'X' and 'Z' are assigned an 8 bit code, so HPACK compression won't change actual padding length on the wire.
++	// https://www.rfc-editor.org/rfc/rfc9204.html#section-4.1.2-2
++	// h3's similar QPACK feature uses the same huffman table.
++	switch method {
++	case PaddingMethodRepeatX:
++		return strings.Repeat("X", length)
++	case PaddingMethodTokenish:
++		paddingValue := GenerateTokenishPaddingBase62(length)
++		if paddingValue == "" {
++			return strings.Repeat("X", length)
++		}
++		return paddingValue
++	default:
++		return strings.Repeat("X", length)
++	}
++}
++
++func ApplyPaddingToCookie(req *http.Request, name, value string) {
++	if req == nil || name == "" || value == "" {
++		return
++	}
++	req.AddCookie(&http.Cookie{
++		Name:  name,
++		Value: value,
++		Path:  "/",
++	})
++}
++
++func ApplyPaddingToResponseCookie(writer http.ResponseWriter, name, value string) {
++	if name == "" || value == "" {
++		return
++	}
++	http.SetCookie(writer, &http.Cookie{
++		Name:  name,
++		Value: value,
++		Path:  "/",
++	})
++}
++
++func ApplyPaddingToQuery(u *url.URL, key, value string) {
++	if u == nil || key == "" || value == "" {
++		return
++	}
++	q := u.Query()
++	q.Set(key, value)
++	u.RawQuery = q.Encode()
++}
++
++func ApplyXPaddingToHeader(h http.Header, config XPaddingConfig) {
++	if h == nil {
++		return
++	}
++	paddingValue := GeneratePadding(config.Method, config.Length)
++	switch p := config.Placement; p.Placement {
++	case option.PlacementHeader:
++		h.Set(p.Header, paddingValue)
++	case option.PlacementQueryInHeader:
++		u, err := url.Parse(p.RawURL)
++		if err != nil || u == nil {
++			return
++		}
++		u.RawQuery = p.Key + "=" + paddingValue
++		h.Set(p.Header, u.String())
++	}
++}
++
++func ApplyXPaddingToRequest(req *http.Request, config XPaddingConfig) {
++	if req == nil {
++		return
++	}
++	if req.Header == nil {
++		req.Header = make(http.Header)
++	}
++	placement := config.Placement.Placement
++	if placement == option.PlacementHeader || placement == option.PlacementQueryInHeader {
++		ApplyXPaddingToHeader(req.Header, config)
++		return
++	}
++	paddingValue := GeneratePadding(config.Method, config.Length)
++	switch placement {
++	case option.PlacementCookie:
++		ApplyPaddingToCookie(req, config.Placement.Key, paddingValue)
++	case option.PlacementQuery:
++		ApplyPaddingToQuery(req.URL, config.Placement.Key, paddingValue)
++	}
++}
++
++func ApplyXPaddingToResponse(writer http.ResponseWriter, config XPaddingConfig) {
++	placement := config.Placement.Placement
++	if placement == option.PlacementHeader || placement == option.PlacementQueryInHeader {
++		ApplyXPaddingToHeader(writer.Header(), config)
++		return
++	}
++	paddingValue := GeneratePadding(config.Method, config.Length)
++	switch placement {
++	case option.PlacementCookie:
++		ApplyPaddingToResponseCookie(writer, config.Placement.Key, paddingValue)
++	}
++}
++
++func ExtractXPaddingFromRequest(options *option.V2RayXHTTPBaseOptions, req *http.Request, obfsMode bool) (string, string) {
++	if req == nil {
++		return "", ""
++	}
++	if !obfsMode {
++		referrer := req.Header.Get("Referer")
++		if referrer != "" {
++			if referrerURL, err := url.Parse(referrer); err == nil {
++				paddingValue := referrerURL.Query().Get("x_padding")
++				paddingPlacement := option.PlacementQueryInHeader + "=Referer, key=x_padding"
++				return paddingValue, paddingPlacement
++			}
++		} else {
++			paddingValue := req.URL.Query().Get("x_padding")
++			return paddingValue, option.PlacementQuery + ", key=x_padding"
++		}
++	}
++	key := options.XPaddingKey
++	header := options.XPaddingHeader
++	if cookie, err := req.Cookie(key); err == nil {
++		if cookie != nil && cookie.Value != "" {
++			paddingValue := cookie.Value
++			paddingPlacement := option.PlacementCookie + ", key=" + key
++			return paddingValue, paddingPlacement
++		}
++	}
++	headerValue := req.Header.Get(header)
++	if headerValue != "" {
++		if options.XPaddingPlacement == option.PlacementHeader {
++			paddingPlacement := option.PlacementHeader + "=" + header
++			return headerValue, paddingPlacement
++		}
++
++		if parsedURL, err := url.Parse(headerValue); err == nil {
++			paddingPlacement := option.PlacementQueryInHeader + "=" + header + ", key=" + key
++
++			return parsedURL.Query().Get(key), paddingPlacement
++		}
++	}
++	queryValue := req.URL.Query().Get(key)
++	if queryValue != "" {
++		paddingPlacement := option.PlacementQuery + ", key=" + key
++		return queryValue, paddingPlacement
++	}
++	return "", ""
++}
++
++func IsPaddingValid(options *option.V2RayXHTTPBaseOptions, paddingValue string, from, to int32, method PaddingMethod) bool {
++	if paddingValue == "" {
++		return false
++	}
++	if to <= 0 {
++		r := options.GetNormalizedXPaddingBytes()
++		from, to = r.From, r.To
++	}
++	switch method {
++	case PaddingMethodRepeatX:
++		n := int32(len(paddingValue))
++		return n >= from && n <= to
++	case PaddingMethodTokenish:
++		const tolerance = int32(validationTolerance)
++		n := int32(hpack.HuffmanEncodeLength(paddingValue))
++		f := from - tolerance
++		t := to + tolerance
++		if f < 0 {
++			f = 0
++		}
++		return n >= f && n <= t
++	default:
++		n := int32(len(paddingValue))
++		return n >= from && n <= to
++	}
++}
