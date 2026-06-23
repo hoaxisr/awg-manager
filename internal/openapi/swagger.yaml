@@ -622,6 +622,11 @@ definitions:
       enabled:
         example: true
         type: boolean
+      excludedKeys:
+        description: identity-суффиксы серверов, снятых в import-preview
+        items:
+          type: string
+        type: array
       headers:
         items:
           $ref: '#/definitions/api.SubscriptionHeader'

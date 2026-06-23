@@ -176,6 +176,7 @@ type CreateSubscriptionRequest struct {
 	Enabled      bool                    `json:"enabled" example:"true"`
 	Mode         string                  `json:"mode,omitempty"` // "selector" (default) | "urltest"
 	URLTest      *SubscriptionURLTestDTO `json:"urlTest,omitempty"`
+	ExcludedKeys []string                `json:"excludedKeys,omitempty"` // identity-суффиксы серверов, снятых в import-preview
 }
 
 // UpdateSubscriptionRequest is the body for PUT /api/singbox/subscriptions/update.
@@ -615,6 +616,7 @@ func (h *SubscriptionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Enabled:      req.Enabled,
 		Mode:         mode,
 		URLTest:      urlTestDTOToConfig(req.URLTest),
+		ExcludedKeys: req.ExcludedKeys,
 	}
 	sub, err := h.svc.Create(r.Context(), in)
 	if err != nil {

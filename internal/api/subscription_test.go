@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
+	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
 )
 
 // noopMutator implements subscription.ConfigMutator with all-zero responses.
@@ -111,6 +112,64 @@ func TestSubscriptionHandler_GetStream_HappyPath(t *testing.T) {
 	if !strings.Contains(body, `"orphanTags":[]`) {
 		t.Errorf("done event should include empty orphanTags array, body: %s", body)
 	}
+}
+
+// TestSubscriptionHandler_Create_ExcludedKeys guards the handler-boundary wiring
+// of the import-preview server-picker: the JSON body's excludedKeys must reach
+// CreateInput.ExcludedKeys. Before the fix CreateSubscriptionRequest had no
+// ExcludedKeys field, so json.Decode silently dropped it and every member was
+// materialized regardless of the user's unchecks (silent NO-OP).
+func TestSubscriptionHandler_Create_ExcludedKeys(t *testing.T) {
+	store, err := subscription.NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	svc := subscription.NewService(store, noopMutator{})
+	h := NewSubscriptionHandler(svc, &fakePresenceProbe{installed: true})
+
+	linkA := "vless://3a3b1c2e-9999-4321-aaaa-1234567890a1@a.example:443?security=tls&sni=a#A"
+	linkB := "vless://3a3b1c2e-9999-4321-aaaa-1234567890a2@b.example:443?security=tls&sni=b#B"
+	parsed := vlink.ParseBatch([]string{linkB})
+	if len(parsed.Outbounds) != 1 {
+		t.Fatalf("want 1 parsed outbound, got %d (errors=%v)", len(parsed.Outbounds), parsed.Errors)
+	}
+	keyB := subscription.IdentityHash(parsed.Outbounds[0])
+
+	body, _ := json.Marshal(CreateSubscriptionRequest{
+		Label:        "x",
+		Inline:       linkA + "\n" + linkB,
+		Enabled:      true,
+		ExcludedKeys: []string{keyB},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/subscriptions/create", strings.NewReader(string(body)))
+	rr := httptest.NewRecorder()
+	h.Create(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var resp SubscriptionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, rr.Body.String())
+	}
+	wantTag := "sub-" + resp.Data.ID[:8] + "-" + keyB
+	if !containsString(resp.Data.ExcludedTags, wantTag) {
+		t.Fatalf("want %s in ExcludedTags %v", wantTag, resp.Data.ExcludedTags)
+	}
+	// The excluded member must NOT be materialized as an active member.
+	if containsString(resp.Data.MemberTags, wantTag) {
+		t.Fatalf("excluded-by-key member %s must not be materialized, MemberTags=%v", wantTag, resp.Data.MemberTags)
+	}
+}
+
+func containsString(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSubscriptionHandler_GetStream_MissingID_400(t *testing.T) {
