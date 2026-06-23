@@ -106,3 +106,17 @@ func TestApplyDiff_DuplicatesAcrossNewAndExisting(t *testing.T) {
 		t.Errorf("SkippedDuplicate=%d want 1", diff.SkippedDuplicate)
 	}
 }
+
+func TestIdentityHash_SubIDIndependent(t *testing.T) {
+	p := vlink.ParsedOutbound{Protocol: "vless", Server: "a.example", Port: 443, Outbound: []byte(`{"uuid":"u1"}`)}
+	h := IdentityHash(p)
+	if len(h) != 8 {
+		t.Fatalf("want 8 hex chars, got %q", h)
+	}
+	// Полный тег для разных subID должен совпадать суффиксом = IdentityHash.
+	t1 := StableTag("aaaaaaaa1111", p)
+	t2 := StableTag("bbbbbbbb2222", p)
+	if t1[len(t1)-8:] != h || t2[len(t2)-8:] != h {
+		t.Fatalf("suffix mismatch: t1=%s t2=%s h=%s", t1, t2, h)
+	}
+}

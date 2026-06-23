@@ -2,6 +2,7 @@ package subscription
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -38,6 +39,79 @@ type fakeMutator struct {
 	selectedSelector []string          // "selectorTag→memberTag" pairs recorded by SelectClashProxy
 	clashActiveByTag map[string]string // selectorTag → live active member
 	declaredTags     []string          // DeclaredOutboundTags result; nil = no-op (no pruning)
+	bodies           map[string][]byte // tag → последний JSON из AddOutbound/UpdateOutbound
+}
+
+func (m *fakeMutator) reset() {
+	m.addedOutbounds = nil
+	m.removedOutbounds = nil
+	m.bodies = map[string][]byte{}
+}
+func (m *fakeMutator) addedOutbound(tag string) bool   { return containsTag(m.addedOutbounds, tag) }
+func (m *fakeMutator) removedOutbound(tag string) bool { return containsTag(m.removedOutbounds, tag) }
+
+func containsTag(ss []string, t string) bool {
+	for _, s := range ss {
+		if s == t {
+			return true
+		}
+	}
+	return false
+}
+
+// selectorMembers парсит сохранённый body селектора и возвращает его outbounds.
+func selectorMembers(t *testing.T, m *fakeMutator, selectorTag string) []string {
+	t.Helper()
+	var ob struct {
+		Outbounds []string `json:"outbounds"`
+	}
+	if err := json.Unmarshal(m.bodies[selectorTag], &ob); err != nil {
+		t.Fatalf("selector body: %v", err)
+	}
+	return ob.Outbounds
+}
+
+func tagOf(sub *Subscription, i int) string { return sub.Members[i].Tag }
+
+func newTestService(t *testing.T) (*Service, *fakeMutator) {
+	t.Helper()
+	store, err := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mut := &fakeMutator{}
+	svc := NewService(store, mut)
+	withLegacySetupNoop(svc)
+	return svc, mut
+}
+
+// createURLSubWithMembers поднимает httptest-фид из n share-link и создаёт URL-подписку;
+// возвращает sub с реальными MemberTags (active = Members[0].Tag).
+func createURLSubWithMembers(t *testing.T, svc *Service, n int) *Subscription {
+	t.Helper()
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "vless://u%d@h%d.example:443#%d\n", i, i, i)
+	}
+	body := b.String()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "x", URL: srv.URL, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sub
+}
+
+func createInlineSubWithTwoMembers(t *testing.T, svc *Service) *Subscription {
+	t.Helper()
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "x", Inline: "vless://u1@a.example:443#A\nvless://u2@b.example:443#B"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sub
 }
 
 func (f *fakeMutator) AllocListenPort() (uint16, error) {
@@ -53,10 +127,18 @@ func (f *fakeMutator) AllocProxyIndex(_ context.Context) (int, error) {
 }
 func (f *fakeMutator) AddOutbound(tag string, jsonBody []byte) error {
 	f.addedOutbounds = append(f.addedOutbounds, tag)
+	if f.bodies == nil {
+		f.bodies = map[string][]byte{}
+	}
+	f.bodies[tag] = jsonBody
 	return nil
 }
 func (f *fakeMutator) UpdateOutbound(tag string, jsonBody []byte) error {
 	f.updatedOutbounds = append(f.updatedOutbounds, tag)
+	if f.bodies == nil {
+		f.bodies = map[string][]byte{}
+	}
+	f.bodies[tag] = jsonBody
 	return nil
 }
 func (f *fakeMutator) RemoveOutbound(tag string) error {

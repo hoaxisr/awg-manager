@@ -255,8 +255,41 @@ func (s *Store) SetMembers(id string, members []MemberInfo, orphans []string) er
 	return s.saveLocked()
 }
 
+// MoveToExcluded атомарно: активные члены = keepMembers, excluded набор обновлён.
+func (s *Store) MoveToExcluded(id string, keepMembers []MemberInfo, excludedTags []string, excludedMembers []MemberInfo) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sub, ok := s.data[id]
+	if !ok {
+		return fmt.Errorf("subscription %q not found", id)
+	}
+	sub.Members = keepMembers
+	tags := make([]string, 0, len(keepMembers)) // inline, как в SetMembers
+	for _, m := range keepMembers {
+		tags = append(tags, m.Tag)
+	}
+	sub.MemberTags = tags
+	sub.ExcludedTags = excludedTags
+	sub.ExcludedMembers = excludedMembers
+	reconcileActiveMember(sub, sub.MemberTags)
+	return s.saveLocked()
+}
+
+// SetExcludedTags перезаписывает только excluded-поля (restore-path: уменьшение набора).
+func (s *Store) SetExcludedTags(id string, excludedTags []string, excludedMembers []MemberInfo) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sub, ok := s.data[id]
+	if !ok {
+		return fmt.Errorf("subscription %q not found", id)
+	}
+	sub.ExcludedTags = excludedTags
+	sub.ExcludedMembers = excludedMembers
+	return s.saveLocked()
+}
+
 // SetMembersExtras updates members, orphans, rejected, and info in one write.
-func (s *Store) SetMembersExtras(id string, members []MemberInfo, orphans []string, rejected []RejectedMember, info []SubscriptionInfoItem) error {
+func (s *Store) SetMembersExtras(id string, members []MemberInfo, orphans []string, rejected []RejectedMember, info []SubscriptionInfoItem, excludedMembers []MemberInfo) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sub, ok := s.data[id]
@@ -278,6 +311,7 @@ func (s *Store) SetMembersExtras(id string, members []MemberInfo, orphans []stri
 	}
 	sub.RejectedMembers = rejected
 	sub.InfoItems = info
+	sub.ExcludedMembers = excludedMembers
 	reconcileActiveMember(sub, tags)
 	return s.saveLocked()
 }

@@ -36,6 +36,14 @@ func StableTag(subID string, p vlink.ParsedOutbound) string {
 	return "sub-" + subShort + "-" + hex.EncodeToString(hash[:4])
 }
 
+// IdentityHash returns the subID-independent suffix of StableTag: the first
+// 4 bytes of sha256(identityKey) as hex. Import-time exclusion keys members by
+// this hash because the full StableTag depends on the not-yet-allocated subID.
+func IdentityHash(p vlink.ParsedOutbound) string {
+	hash := sha256.Sum256([]byte(identityKey(p)))
+	return hex.EncodeToString(hash[:4])
+}
+
 // identityKey builds the input for the stable hash: protocol + server +
 // port + the user-credential field appropriate to the protocol.
 func identityKey(p vlink.ParsedOutbound) string {

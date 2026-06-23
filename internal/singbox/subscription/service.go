@@ -437,7 +437,7 @@ func (s *Service) refreshLocked(ctx context.Context, id string) (*RefreshResult,
 	if len(prunedTags) > 0 {
 		s.logWarn("subscription-refresh", id, fmt.Sprintf("pruned %d member(s) not materialized (dropped by validation): %s", len(prunedTags), strings.Join(prunedTags, ", ")))
 	}
-	if err := s.store.SetMembersExtras(id, newMembers, diff.Orphan, rejected, info); err != nil {
+	if err := s.store.SetMembersExtras(id, newMembers, diff.Orphan, rejected, info, nil); err != nil {
 		return nil, err
 	}
 
@@ -856,7 +856,7 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 	newMembers = append(newMembers, toMemberInfo(tag, out))
 	rejected := appendRejectedUnique(sub.RejectedMembers, parts.Rejected...)
 	info := mergeInfoItems(sub.InfoItems, filterDismissedInfo(parts.Info, sub.DismissedInfoIDs))
-	if err := s.store.SetMembersExtras(id, newMembers, sub.OrphanTags, rejected, info); err != nil {
+	if err := s.store.SetMembersExtras(id, newMembers, sub.OrphanTags, rejected, info, nil); err != nil {
 		return nil, err
 	}
 
