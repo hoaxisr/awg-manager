@@ -234,6 +234,13 @@ type RestoreInputSpec struct {
 	// including 79 here produces a harmless duplicate RETURN rule.
 	BypassTCPPorts []int
 
+	// BypassCIDRs — пользовательские IPv4 IP/CIDR назначения, чей трафик
+	// целиком (включая DNS/53) идёт мимо sing-box: ранний `-j RETURN` в начале
+	// ОБЕИХ цепочек (в mangle — до правила --dport 53). Канонизированы
+	// resolveBypassSubnets. Эмитятся отдельно от bypassCIDRs/WANIPs, у которых
+	// другая семантика (RETURN после перехвата DNS).
+	BypassCIDRs []string
+
 	// IngressInterfaces — уже резолвленные kernel-имена (напр. "nwg3"),
 	// чей ingress-трафик помечается policy-меткой в mangle PREROUTING до
 	// connmark-jump'а. Пусто / MatchAll / пустой PolicyMark = no-op.
@@ -264,6 +271,16 @@ func emitBypassReturns(b *strings.Builder, chain string, wanIPs []string) {
 	}
 	for _, ip := range wanIPs {
 		fmt.Fprintf(b, "-A %s -d %s -j RETURN\n", chain, ip)
+	}
+}
+
+// emitUserBypassReturns эмитит ранний `-A <chain> -d <cidr> -j RETURN` для
+// каждого пользовательского CIDR. Вызывается в НАЧАЛЕ обеих цепочек (mangle до
+// правила --dport 53, nat до catch-all), чтобы исключение было буквальным —
+// весь трафик к подсети идёт мимо sing-box, включая DNS.
+func emitUserBypassReturns(b *strings.Builder, chain string, cidrs []string) {
+	for _, cidr := range cidrs {
+		fmt.Fprintf(b, "-A %s -d %s -j RETURN\n", chain, cidr)
 	}
 }
 
@@ -311,6 +328,9 @@ func buildRestoreInput(spec RestoreInputSpec) string {
 	b.WriteString("*mangle\n")
 	fmt.Fprintf(&b, ":%s - [0:0]\n", ChainName)
 
+	// Пользовательский bypass — целиком мимо sing-box, ДО перехвата DNS.
+	emitUserBypassReturns(&b, ChainName, spec.BypassCIDRs)
+
 	// Bypass ports: RETURN first — before DNS intercept and catch-all so that
 	// any explicitly excluded port skips sing-box entirely (including port 53).
 	for _, port := range spec.BypassUDPPorts {
@@ -357,6 +377,7 @@ func buildRestoreInput(spec RestoreInputSpec) string {
 	b.WriteString("*nat\n")
 	fmt.Fprintf(&b, ":%s - [0:0]\n", RedirectChain)
 
+	emitUserBypassReturns(&b, RedirectChain, spec.BypassCIDRs)
 	emitBypassReturns(&b, RedirectChain, spec.WANIPs)
 	// Bypass router admin port so we don't redirect our own UI traffic.
 	// (SKeen has equivalent dynamic admin-port discovery — same intent.)

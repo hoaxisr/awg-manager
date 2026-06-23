@@ -1255,3 +1255,33 @@ func TestEmitHelpers_TableSymmetry(t *testing.T) {
 		t.Errorf("prerouting jump diverges:\nmangle: %q\nnat: %q", mJ.String(), nJ.String())
 	}
 }
+
+func TestBuildRestoreInput_BypassCIDRs(t *testing.T) {
+	out := buildRestoreInput(RestoreInputSpec{
+		MatchAll:    true,
+		BypassCIDRs: []string{"203.0.113.0/24", "10.8.0.5/32"},
+	})
+
+	// Присутствует в ОБЕИХ цепочках.
+	for _, want := range []string{
+		"-A " + ChainName + " -d 203.0.113.0/24 -j RETURN",
+		"-A " + RedirectChain + " -d 203.0.113.0/24 -j RETURN",
+		"-A " + ChainName + " -d 10.8.0.5/32 -j RETURN",
+		"-A " + RedirectChain + " -d 10.8.0.5/32 -j RETURN",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing rule: %q\n--- output ---\n%s", want, out)
+		}
+	}
+
+	// В mangle bypass обязан стоять ДО перехвата DNS (--dport 53 TPROXY),
+	// иначе DNS к bypass-подсети всё равно перехватится.
+	bypassIdx := strings.Index(out, "-A "+ChainName+" -d 203.0.113.0/24 -j RETURN")
+	dnsIdx := strings.Index(out, "-A "+ChainName+" -p udp --dport 53 -j TPROXY")
+	if bypassIdx == -1 || dnsIdx == -1 {
+		t.Fatalf("missing rule(s): bypassIdx=%d dnsIdx=%d", bypassIdx, dnsIdx)
+	}
+	if bypassIdx > dnsIdx {
+		t.Errorf("user bypass (%d) must precede DNS intercept (%d) in mangle", bypassIdx, dnsIdx)
+	}
+}
