@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import type { Subscription, SubscriptionMember } from '$lib/types';
-	import { CheckLine, PanelBottomClose, RefreshCcw } from 'lucide-svelte';
+	import { Ban, CheckLine, PanelBottomClose, RefreshCcw } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { MAX_SUBSCRIPTION_INFO_ITEMS } from '$lib/constants/subscription';
 	import { Button, Modal, Stat, StatStrip } from '$lib/components/ui';
@@ -38,9 +38,14 @@
 	let pendingRemove = $state<SubscriptionMember | null>(null);
 	let movingToInfo = $state<string | null>(null);
 	let removingInfoId = $state<string | null>(null);
+	let selectMode = $state(false);
+	let selected = $state<Set<string>>(new Set());
+	let excluding = $state(false);
+	let confirmExcludeSelected = $state(false);
 
 	const infoItems = $derived(subscription.infoItems ?? []);
 	const rejectedMembers = $derived(subscription.rejectedMembers ?? []);
+	const isUrlSub = $derived(!subscription.isInline);
 
 	async function removeInfoItem(itemId: string): Promise<void> {
 		if (!itemId || removingInfoId) return;
@@ -252,6 +257,56 @@
 		}
 	}
 
+	function toggleSelectMode(): void {
+		selectMode = !selectMode;
+		if (!selectMode) {
+			selected = new Set();
+			confirmExcludeSelected = false;
+		}
+	}
+
+	function toggleSel(tag: string): void {
+		const next = new Set(selected);
+		if (next.has(tag)) next.delete(tag);
+		else next.add(tag);
+		selected = next;
+	}
+
+	function selectAll(): void {
+		selected = new Set(memberList.map((m) => m.tag));
+	}
+
+	async function excludeOne(tag: string): Promise<void> {
+		if (excluding) return;
+		excluding = true;
+		lastError = '';
+		try {
+			await api.excludeSubscriptionMembers(subscription.id, [tag]);
+			onUpdated();
+		} catch (e) {
+			lastError = e instanceof Error ? e.message : 'Не удалось исключить';
+		} finally {
+			excluding = false;
+		}
+	}
+
+	async function excludeSelected(): Promise<void> {
+		if (excluding || selected.size === 0) return;
+		excluding = true;
+		lastError = '';
+		try {
+			await api.excludeSubscriptionMembers(subscription.id, [...selected]);
+			selected = new Set();
+			selectMode = false;
+			confirmExcludeSelected = false;
+			onUpdated();
+		} catch (e) {
+			lastError = e instanceof Error ? e.message : 'Не удалось исключить';
+		} finally {
+			excluding = false;
+		}
+	}
+
 	$effect(() => {
 		const nonce = autoDelayCheckNonce;
 		const hasMembers = memberList.length > 0;
@@ -278,44 +333,97 @@
 	<CheckLine size={14} strokeWidth={2} aria-hidden="true" />
 {/snippet}
 
-<header class="head">
-	<div class="head-info">
-		<div class="lbl">{modeLabel}</div>
-		<div class="val mono">{subscription.selectorTag}</div>
-	</div>
-	<div class="actions">
-		{#if subscription.isInline}
-			<Button variant="primary" size="sm" onclick={() => (addOpen = true)} iconBefore={createIcon}>
-				Добавить сервер
-			</Button>
-		{:else}
+{#snippet banIcon()}
+	<Ban size={14} strokeWidth={2} aria-hidden="true" />
+{/snippet}
+
+{#if selectMode}
+	<header class="head select-bar">
+		<div class="select-info">Выбрано {selected.size} из {memberList.length}</div>
+		<div class="actions">
 			<Button
-				variant="primary"
+				variant="ghost"
 				size="sm"
-				disabled={refreshing}
-				loading={refreshing}
-				iconBefore={refreshIcon}
-				onclick={refresh}
+				disabled={excluding || memberList.length === 0}
+				onclick={selectAll}
 			>
-				{refreshing ? 'Обновляем...' : 'Обновить сейчас'}
+				Выбрать все
 			</Button>
-		{/if}
-		<Button
-			variant="ghost"
-			size="sm"
-			disabled={batchTesting || memberList.length === 0}
-			loading={batchTesting}
-			iconBefore={testAllIcon}
-			onclick={testAll}
-		>
-			{#if batchTesting}
-				Тестируем {batchProgress.done}/{batchProgress.total}
+			{#if confirmExcludeSelected}
+				<Button
+					variant="primary"
+					size="sm"
+					disabled={excluding || selected.size === 0}
+					loading={excluding}
+					iconBefore={banIcon}
+					onclick={excludeSelected}
+				>
+					{excluding ? 'Исключаем...' : `Подтвердить (${selected.size})`}
+				</Button>
+				<Button variant="ghost" size="sm" disabled={excluding} onclick={() => (confirmExcludeSelected = false)}>
+					Назад
+				</Button>
 			{:else}
-				Проверить всё
+				<Button
+					variant="ghost"
+					size="sm"
+					disabled={excluding || selected.size === 0}
+					iconBefore={banIcon}
+					onclick={() => (confirmExcludeSelected = true)}
+				>
+					Исключить выбранные ({selected.size})
+				</Button>
+				<Button variant="ghost" size="sm" disabled={excluding} onclick={toggleSelectMode}>
+					Отмена
+				</Button>
 			{/if}
-		</Button>
-	</div>
-</header>
+		</div>
+	</header>
+{:else}
+	<header class="head">
+		<div class="head-info">
+			<div class="lbl">{modeLabel}</div>
+			<div class="val mono">{subscription.selectorTag}</div>
+		</div>
+		<div class="actions">
+			{#if subscription.isInline}
+				<Button variant="primary" size="sm" onclick={() => (addOpen = true)} iconBefore={createIcon}>
+					Добавить сервер
+				</Button>
+			{:else}
+				<Button
+					variant="primary"
+					size="sm"
+					disabled={refreshing}
+					loading={refreshing}
+					iconBefore={refreshIcon}
+					onclick={refresh}
+				>
+					{refreshing ? 'Обновляем...' : 'Обновить сейчас'}
+				</Button>
+			{/if}
+			<Button
+				variant="ghost"
+				size="sm"
+				disabled={batchTesting || memberList.length === 0}
+				loading={batchTesting}
+				iconBefore={testAllIcon}
+				onclick={testAll}
+			>
+				{#if batchTesting}
+					Тестируем {batchProgress.done}/{batchProgress.total}
+				{:else}
+					Проверить всё
+				{/if}
+			</Button>
+			{#if isUrlSub && memberList.length > 0}
+				<Button variant="ghost" size="sm" disabled={excluding} onclick={toggleSelectMode}>
+					Выбрать
+				</Button>
+			{/if}
+		</div>
+	</header>
+{/if}
 
 {#if lastError}
 	<div class="err">{lastError}</div>
@@ -382,8 +490,14 @@
 			isInline={subscription.isInline}
 			{removingTag}
 			minDelayMs={membersListStats.minDelayMs}
+			{isUrlSub}
+			{selectMode}
+			{selected}
+			{excluding}
 			onpick={pickActive}
 			onremove={requestRemove}
+			ontoggle={toggleSel}
+			onexclude={excludeOne}
 		/>
 	{/if}
 
@@ -578,6 +692,17 @@
 	}
 	.head-info { display: flex; flex-direction: column; gap: 0.2rem; }
 	.actions { display: flex; gap: 0.5rem; align-items: center; }
+	.select-bar {
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--color-accent-border);
+		border-radius: 10px;
+		background: var(--color-accent-tint);
+	}
+	.select-info {
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--color-accent);
+	}
 	@media (max-width: 640px) {
 		.head {
 			display: grid;

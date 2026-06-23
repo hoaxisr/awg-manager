@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { SubscriptionMember } from '$lib/types';
-	import { Trash2 } from 'lucide-svelte';
+	import { Trash2, Ban } from 'lucide-svelte';
 	import SubscriptionMemberCard from './SubscriptionMemberCard.svelte';
 	import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
 
@@ -12,8 +12,14 @@
 		isInline: boolean;
 		removingTag: string | null;
 		minDelayMs: number | null;
+		isUrlSub: boolean;
+		selectMode: boolean;
+		selected: Set<string>;
+		excluding: boolean;
 		onpick: (tag: string) => void;
 		onremove: (member: SubscriptionMember) => void;
+		ontoggle: (tag: string) => void;
+		onexclude: (tag: string) => void;
 	}
 	let {
 		members,
@@ -23,8 +29,14 @@
 		isInline,
 		removingTag,
 		minDelayMs,
+		isUrlSub,
+		selectMode,
+		selected,
+		excluding,
 		onpick,
 		onremove,
+		ontoggle,
+		onexclude,
 	}: Props = $props();
 </script>
 
@@ -54,24 +66,43 @@
 			<div
 				class="member-list-line"
 				class:with-inline-remove={isInline}
+				class:with-select={selectMode}
+				class:with-exclude={isUrlSub && !selectMode}
 				class:active-line={member.tag === effectiveActiveMember}
 				class:switching-line={switching === member.tag}
 				class:is-disabled={switching !== null}
 				role="button"
 				tabindex={switching !== null ? -1 : 0}
-				aria-pressed={member.tag === effectiveActiveMember}
+				aria-pressed={selectMode ? selected.has(member.tag) : member.tag === effectiveActiveMember}
 				onclick={() => {
 					if (switching !== null) return;
-					onpick(member.tag);
+					if (selectMode) ontoggle(member.tag);
+					else onpick(member.tag);
 				}}
 				onkeydown={(e) => {
 					if (switching !== null) return;
 					if (e.key === 'Enter' || e.key === ' ') {
 						e.preventDefault();
-						onpick(member.tag);
+						if (selectMode) ontoggle(member.tag);
+						else onpick(member.tag);
 					}
 				}}
 			>
+				{#if selectMode}
+					<span class="sel-cell">
+						<input
+							type="checkbox"
+							class="ex-check"
+							checked={selected.has(member.tag)}
+							tabindex="-1"
+							aria-label="Выбрать сервер {member.label || member.tag}"
+							onclick={(e) => {
+								e.stopPropagation();
+								ontoggle(member.tag);
+							}}
+						/>
+					</span>
+				{/if}
 				<SubscriptionMemberCard
 					{member}
 					active={member.tag === effectiveActiveMember}
@@ -95,6 +126,21 @@
 						<Trash2 size={14} aria-hidden="true" />
 						Удалить
 					</button>
+				{:else if isUrlSub && !selectMode}
+					<button
+						type="button"
+						class="ex-btn"
+						title="Исключить сервер"
+						aria-label="Исключить сервер {member.label || member.tag}"
+						disabled={excluding}
+						onclick={(e) => {
+							e.stopPropagation();
+							onexclude(member.tag);
+						}}
+					>
+						<Ban size={14} aria-hidden="true" />
+						Исключить
+					</button>
 				{/if}
 			</div>
 		{/each}
@@ -106,14 +152,29 @@
 		<div
 			class="member-slot"
 			class:member-slot--inline={isInline}
+			class:member-slot--select={selectMode}
 			class:member-slot--active={member.tag === effectiveActiveMember}
 		>
+			{#if selectMode}
+				<span class="sel-cell sel-cell--grid">
+					<input
+						type="checkbox"
+						class="ex-check"
+						checked={selected.has(member.tag)}
+						aria-label="Выбрать сервер {member.label || member.tag}"
+						onclick={(e) => {
+							e.stopPropagation();
+							ontoggle(member.tag);
+						}}
+					/>
+				</span>
+			{/if}
 			<SubscriptionMemberCard
 				{member}
 				active={member.tag === effectiveActiveMember}
 				switching={switching === member.tag}
 				disabled={switching !== null}
-				onclick={() => onpick(member.tag)}
+				onclick={() => (selectMode ? ontoggle(member.tag) : onpick(member.tag))}
 			/>
 			{#if isInline}
 				<button
@@ -129,6 +190,21 @@
 				>
 					<Trash2 size={14} aria-hidden="true" />
 					Удалить
+				</button>
+			{:else if isUrlSub && !selectMode}
+				<button
+					type="button"
+					class="ex-btn"
+					title="Исключить сервер"
+					aria-label="Исключить сервер {member.label || member.tag}"
+					disabled={excluding}
+					onclick={(e) => {
+						e.stopPropagation();
+						onexclude(member.tag);
+					}}
+				>
+					<Ban size={14} aria-hidden="true" />
+					Исключить
 				</button>
 			{/if}
 		</div>
@@ -186,6 +262,72 @@
 		bottom: 6px;
 		top: auto;
 		z-index: 1;
+	}
+
+	.ex-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 4px;
+		padding: 0.375rem 0.5rem;
+		border: none;
+		border-radius: var(--radius-sm);
+		background: transparent;
+		color: var(--color-text-muted);
+		font: inherit;
+		font-size: var(--sbx-card-action);
+		font-weight: 500;
+		white-space: nowrap;
+		cursor: pointer;
+		flex-shrink: 0;
+		transition: background var(--t-fast) ease, color var(--t-fast) ease;
+	}
+	.ex-btn:hover:not(:disabled) {
+		color: var(--color-accent);
+		background: var(--color-accent-tint);
+	}
+	.ex-btn:disabled {
+		cursor: not-allowed;
+		opacity: 0.5;
+	}
+	.ex-btn:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 2px;
+	}
+	.member-list-line.with-exclude .ex-btn {
+		justify-self: end;
+	}
+	.member-slot .ex-btn {
+		position: absolute;
+		right: 6px;
+		bottom: 6px;
+		top: auto;
+		z-index: 1;
+	}
+
+	.sel-cell {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		padding-right: 0.5rem;
+	}
+	.sel-cell--grid {
+		position: absolute;
+		left: 8px;
+		top: 8px;
+		z-index: 2;
+		padding-right: 0;
+	}
+	.ex-check {
+		width: 16px;
+		height: 16px;
+		accent-color: var(--color-accent);
+		cursor: pointer;
+		margin: 0;
+	}
+	.member-slot--select {
+		padding-left: 0.25rem;
 	}
 
 	@media (max-width: 640px) {
