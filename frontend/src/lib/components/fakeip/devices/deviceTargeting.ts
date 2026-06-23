@@ -1,5 +1,5 @@
 // Pure logic for the FakeIP «Устройства» chip: per-device «назначение»
-// (targeting) resolution, segment-membership and find-the-rule-for-a-device.
+// (targeting) resolution and find-the-rule-for-a-device.
 //
 // Kept framework-free + unit-tested (deviceTargeting.test.ts). The Svelte chip
 // (DevicesTab.svelte) feeds it live store snapshots and renders the result.
@@ -7,12 +7,11 @@
 // «назначение» (mockup page-devices):
 //   персональный — route-правило по source_ip_cidr содержит IP устройства
 //                  (badge + имя привязанного outbound).
-//   fakeip       — иначе если IP попадает в сегмент доставки DNS с inFakeip.
-//   прямой       — иначе (вне сегмента, мимо туннеля).
+//   прямой       — иначе (нет персональной привязки).
 import { ipInCIDR } from '$lib/utils/cidr';
-import type { FakeIPSegment, SingboxRouterRule } from '$lib/types';
+import type { SingboxRouterRule } from '$lib/types';
 
-export type DeviceMode = 'fakeip' | 'personal' | 'direct';
+export type DeviceMode = 'personal' | 'direct';
 
 export interface DeviceTargeting {
 	mode: DeviceMode;
@@ -53,20 +52,13 @@ export function findRuleIndexForDevice(rules: SingboxRouterRule[], ip: string): 
 	return null;
 }
 
-/** True if `ip` falls inside a DNS-delivery segment subnet that has fakeip on. */
-export function isDeviceInFakeipSegment(ip: string, segments: FakeIPSegment[]): boolean {
-	if (!ip) return false;
-	return segments.some((s) => s.inFakeip && s.subnet && ipInCIDR(ip, s.subnet));
-}
-
 /**
- * Resolve a device's «назначение». Personal binding wins over segment
- * membership (an explicit per-device route overrides general DNS-delivery).
+ * Resolve a device's «назначение»: personal (an explicit per-device route
+ * binds it to an outbound) or direct (no binding).
  */
 export function resolveDeviceTargeting(
 	ip: string,
 	rules: SingboxRouterRule[],
-	segments: FakeIPSegment[],
 ): DeviceTargeting {
 	const ruleIndex = findRuleIndexForDevice(rules, ip);
 	if (ruleIndex !== null) {
@@ -75,9 +67,6 @@ export function resolveDeviceTargeting(
 			ruleIndex,
 			outbound: rules[ruleIndex].outbound ?? null,
 		};
-	}
-	if (isDeviceInFakeipSegment(ip, segments)) {
-		return { mode: 'fakeip', ruleIndex: null, outbound: null };
 	}
 	return { mode: 'direct', ruleIndex: null, outbound: null };
 }

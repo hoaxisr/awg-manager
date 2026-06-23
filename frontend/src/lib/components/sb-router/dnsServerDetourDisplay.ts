@@ -23,6 +23,19 @@ export function isDnsServerViaRouteDetour(detour?: string): boolean {
 	return normalizeDnsServerDetour(detour) === undefined;
 }
 
+/**
+ * Подпись DNS-сервера для списков/дропдаунов: «<тип> · <адрес>».
+ * У fakeip-типа нет upstream-адреса (он синтезирует адреса в туннель), поэтому
+ * `server` пустой — показываем «fakeip · синтез», а не «fakeip · undefined».
+ * Прочие типы без адреса (теоретически) сводятся к одному типу.
+ */
+export function dnsServerSubtitle(s: SingboxRouterDNSServer): string {
+	const addr = s.server?.trim();
+	if (addr) return `${s.type ?? 'dns'} · ${addr}`;
+	if (s.type === 'fakeip') return 'fakeip · синтез';
+	return s.type ?? 'dns';
+}
+
 const INVALID_DNS_DIRECT_TITLE =
 	'Недопустимый detour на final DNS — будет убран при сохранении. Должно быть «Напрямую».';
 

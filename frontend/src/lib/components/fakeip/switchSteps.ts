@@ -76,7 +76,7 @@ const DISABLE_STEPS: UIStepDef[] = [
 	{
 		milestone: 'teardown',
 		title: 'Снят fakeip-режим',
-		detail: 'reject-маршрут · возврат DHCP DNS · дренаж',
+		detail: 'reject-маршрут · дренаж соединений',
 	},
 	{
 		milestone: 'provision',
@@ -95,9 +95,28 @@ const DISABLE_STEPS: UIStepDef[] = [
 	},
 ];
 
+// TProxy bring-up (off|fakeip-tun → tproxy).
+const TPROXY_ENABLE_STEPS: UIStepDef[] = [
+	{ milestone: 'teardown', title: 'Снят предыдущий режим', detail: 'прежние маршруты/перехват убраны (если были)' },
+	{ milestone: 'provision', title: 'iptables TPROXY установлен', detail: 'jumps + AWGM-цепочки' },
+	{ milestone: 'readiness', title: 'Перезапуск sing-box', detail: 'ожидаем Clash API' },
+	{ milestone: 'ready', title: 'Проверка готовности', detail: 'TPROXY-перехват активен' },
+];
+
+// TProxy switch-out (tproxy → off).
+const TPROXY_DISABLE_STEPS: UIStepDef[] = [
+	{ milestone: 'teardown', title: 'Снят TPROXY-перехват', detail: 'iptables jumps + цепочки убраны' },
+	{ milestone: 'provision', title: 'sing-box перестроен', detail: 'без перехвата' },
+	{ milestone: 'readiness', title: 'Перезапуск sing-box', detail: 'ожидаем Clash API' },
+	{ milestone: 'ready', title: 'Проверка готовности', detail: 'маршрутизация выключена' },
+];
+
 /** The predefined definitions for a transition direction (no derived state). */
 export function stepDefsFor(from: FakeIPMode, to: FakeIPMode): UIStepDef[] {
-	return to === 'fakeip-tun' ? ENABLE_STEPS : DISABLE_STEPS;
+	if (to === 'fakeip-tun') return ENABLE_STEPS;       // rich fakeip bring-up (unchanged)
+	if (to === 'tproxy') return TPROXY_ENABLE_STEPS;    // tproxy bring-up
+	// to === 'off': teardown of the source mode.
+	return from === 'tproxy' ? TPROXY_DISABLE_STEPS : DISABLE_STEPS;
 }
 
 function rank(m: Milestone): number {

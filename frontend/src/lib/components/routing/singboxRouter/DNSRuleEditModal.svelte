@@ -10,6 +10,7 @@
 	} from '$lib/components/ui';
 	import SingboxSettingsModal from './SingboxSettingsModal.svelte';
 	import type { SingboxRouterDNSRule, SingboxRouterDNSServer, SingboxRouterRuleSet } from '$lib/types';
+	import { dnsServerSubtitle } from '$lib/components/sb-router/dnsServerDetourDisplay';
 
 	interface Props {
 		rule?: SingboxRouterDNSRule;
@@ -36,7 +37,7 @@
 		...servers.map((s) => ({
 			value: s.tag,
 			label: s.tag,
-			description: `${s.type} · ${s.server}`,
+			description: dnsServerSubtitle(s),
 		})),
 	]);
 

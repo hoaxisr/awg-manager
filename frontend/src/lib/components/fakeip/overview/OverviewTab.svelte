@@ -18,7 +18,6 @@
 	import OverviewCards from './OverviewCards.svelte';
 	import TrafficPanel from './TrafficPanel.svelte';
 	import EngineSettingsCard from './EngineSettingsCard.svelte';
-	import SegmentsDelivery from './SegmentsDelivery.svelte';
 	import { activeCompositeRows } from './activeComposites';
 
 	interface Props {
@@ -29,18 +28,15 @@
 		wanAutoDetect: boolean;
 		wanInterface?: string;
 		snifferEnabled: boolean;
-		/** Сохранять source-IP устройств через static-NAT (default true). */
-		fakeipSourcePreserve?: boolean;
 		fakeipStack?: 'gvisor' | 'system';
 		fakeipPool4?: string;
 		fakeipPool6?: string;
 		fakeipMtu?: number;
 		fakeipIface?: string;
+		fakeipDns?: string;
 		toggleBusy: boolean;
 		onToggleEngine: (turnOn: boolean) => void;
 		onRestart: () => void;
-		/** Opens ConfirmSwitch toward 'tproxy' — passed down to EngineSettingsCard. */
-		onSwitchToTproxy: () => void;
 	}
 
 	let {
@@ -49,16 +45,15 @@
 		wanAutoDetect,
 		wanInterface,
 		snifferEnabled,
-		fakeipSourcePreserve,
 		fakeipStack,
 		fakeipPool4,
 		fakeipPool6,
 		fakeipMtu,
 		fakeipIface,
+		fakeipDns,
 		toggleBusy,
 		onToggleEngine,
 		onRestart,
-		onSwitchToTproxy,
 	}: Props = $props();
 
 	// engineLive — gate для живых блоков (composite-выборы, live-трафик).
@@ -105,20 +100,16 @@
 		{wanAutoDetect}
 		{wanInterface}
 		{snifferEnabled}
-		{fakeipSourcePreserve}
 		{fakeipStack}
 		{fakeipPool4}
 		{fakeipPool6}
 		{fakeipMtu}
 		{fakeipIface}
+		{fakeipDns}
 		{toggleBusy}
 		{onToggleEngine}
 		{onRestart}
-		{onSwitchToTproxy}
 	/>
-
-	<!-- «Доставка DNS · сегменты» — внизу Обзора (мокап dash3). -->
-	<SegmentsDelivery />
 </section>
 
 <style>

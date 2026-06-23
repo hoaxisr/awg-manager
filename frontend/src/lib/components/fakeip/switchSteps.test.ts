@@ -23,10 +23,29 @@ describe('stepDefsFor', () => {
 		expect(defs.at(-1)?.title).toMatch(/готовности/);
 	});
 
-	it('returns the shorter disable list for switch-out', () => {
+	it('fakeip-tun → tproxy renders tproxy bring-up (not fakeip teardown copy)', () => {
 		const defs = stepDefsFor('fakeip-tun', 'tproxy');
 		expect(defs.length).toBe(4);
-		expect(defs[0].title).toMatch(/fakeip-режим/);
+		expect(defs[0].title).toMatch(/предыдущий режим/);
+	});
+});
+
+describe('stepDefsFor — mode-specific copy', () => {
+	it('off→tproxy uses tproxy vocabulary, not fakeip', () => {
+		const joined = stepDefsFor('off', 'tproxy').map((d) => `${d.title} ${d.detail ?? ''}`).join(' ');
+		expect(joined).toContain('TPROXY');
+		expect(joined).not.toContain('OpkgTun');
+		expect(joined).not.toContain('fakeip');
+	});
+	it('tproxy→off teardown is tproxy-correct, not fakeip', () => {
+		const joined = stepDefsFor('tproxy', 'off').map((d) => `${d.title} ${d.detail ?? ''}`).join(' ');
+		expect(joined).toContain('TPROXY');
+		expect(joined).not.toContain('OpkgTun');
+		expect(joined).not.toContain('fakeip');
+	});
+	it('fakeip-tun directions keep existing rich copy', () => {
+		expect(stepDefsFor('off', 'fakeip-tun').length).toBe(6);
+		expect(stepDefsFor('fakeip-tun', 'off').length).toBe(4);
 	});
 });
 

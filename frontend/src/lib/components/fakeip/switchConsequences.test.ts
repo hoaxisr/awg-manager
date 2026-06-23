@@ -26,19 +26,36 @@ describe('switchConsequences', () => {
 
 	it('switching out to off lists anti-leak teardown without TPROXY bring-up', () => {
 		const items = switchConsequences('fakeip-tun', 'off');
-		expect(items.some((s) => s.includes('Reject-маршрут'))).toBe(true);
-		expect(items.some((s) => s.includes('Дренаж'))).toBe(true);
-		expect(items.some((s) => s.includes('Удаление интерфейса OpkgTun'))).toBe(true);
-		expect(items.some((s) => s.includes('Поднятие TPROXY'))).toBe(false);
+		expect(items.some((s) => s.includes('reject-маршрут'))).toBe(true);
+		expect(items.some((s) => s.includes('дренаж соединений'))).toBe(true);
+		expect(items.some((s) => s.includes('удаление OpkgTun'))).toBe(true);
+		expect(items.join(' ')).not.toContain('TPROXY');
 	});
 
 	it('switching out to tproxy appends the TPROXY bring-up step', () => {
 		const items = switchConsequences('fakeip-tun', 'tproxy');
-		expect(items.some((s) => s.includes('Поднятие TPROXY-перехвата'))).toBe(true);
+		expect(items.some((s) => s.includes('Поднятие iptables TPROXY-перехвата'))).toBe(true);
 	});
 
-	it('returns empty for transitions not involving fakeip-tun', () => {
-		expect(switchConsequences('off', 'tproxy')).toEqual([]);
-		expect(switchConsequences('tproxy', 'off')).toEqual([]);
+	it('off→tproxy lists tproxy bring-up (non-empty, no DHCP DNS)', () => {
+		const items = switchConsequences('off', 'tproxy');
+		expect(items.length).toBeGreaterThan(0);
+		expect(items.join(' ')).toContain('TPROXY');
+		expect(items.join(' ')).not.toContain('DHCP DNS');
+	});
+	it('tproxy→off lists tproxy teardown (non-empty)', () => {
+		const items = switchConsequences('tproxy', 'off');
+		expect(items.length).toBeGreaterThan(0);
+		expect(items.join(' ')).toContain('TPROXY');
+	});
+	it('fakeip→tproxy includes fakeip teardown AND tproxy bring-up', () => {
+		const joined = switchConsequences('fakeip-tun', 'tproxy').join(' ');
+		expect(joined).toContain('OpkgTun');
+		expect(joined).toContain('TPROXY');
+	});
+	it('tproxy→fakeip includes tproxy teardown AND fakeip bring-up', () => {
+		const joined = switchConsequences('tproxy', 'fakeip-tun').join(' ');
+		expect(joined).toContain('TPROXY');
+		expect(joined).toContain('OpkgTun');
 	});
 });

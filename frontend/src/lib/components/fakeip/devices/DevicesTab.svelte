@@ -6,10 +6,9 @@
   Источники (переиспользование, не пересборка):
     - устройства: общий polling-store routing.policyDevicesStore
       (api.listPolicyDevices, NDMS hotspot). Подписка сама стартует опрос (30с).
-    - назначение (персональный/fakeip/прямой): чистый resolveDeviceTargeting
-      (deviceTargeting.ts), на вход — route-правила (fakeipConfig.rules) +
-      сегменты доставки DNS (api.singboxRouterListSegments). ipInCIDR из
-      utils/cidr.
+    - назначение (персональный/прямой): чистый resolveDeviceTargeting
+      (deviceTargeting.ts), на вход — route-правила (fakeipConfig.rules).
+      ipInCIDR из utils/cidr.
     - имя привязанного outbound: лейбл из fakeipConfig.options (тот же каталог,
       что route-final/RuleEditModal).
     - live-соединения per-IP: liveConnectionsSnapshot (sb-router) — счётчик по
@@ -31,7 +30,7 @@
 	import { Modal, ConfirmModal, Dropdown } from '$lib/components/ui';
 	import type { DropdownOption } from '$lib/components/ui';
 	import { Pencil, X } from 'lucide-svelte';
-	import type { FakeIPSegment, PolicyDevice, SingboxRouterRule } from '$lib/types';
+	import type { PolicyDevice, SingboxRouterRule } from '$lib/types';
 	import {
 		resolveDeviceTargeting,
 		type DeviceTargeting,
@@ -48,26 +47,10 @@
 	const storeRules = fakeipConfig.rules;
 	const storeOptions = fakeipConfig.options;
 
-	// Сегменты доставки DNS — отдельный GET (не в loadAll). Тянем в onMount;
-	// движок-гейт не нужен — это проекция DHCP-пулов, доступна всегда.
-	let segments = $state<FakeIPSegment[]>([]);
-
-	async function loadSegments(): Promise<void> {
-		try {
-			const data = await api.singboxRouterListSegments();
-			segments = data.segments;
-		} catch {
-			// best-effort: без сегментов «fakeip» просто не подсветится, таблица
-			// остаётся информативной (имя/IP/статус/соединения).
-			segments = [];
-		}
-	}
-
 	onMount(() => {
 		// rules/options живут в fakeipConfig; прямой заход на чип может застать
 		// store холодным — идемпотентно.
 		void fakeipConfig.loadAll();
-		void loadSegments();
 	});
 
 	const devices = $derived<PolicyDevice[]>($devicesState.data ?? []);
@@ -107,7 +90,7 @@
 	const rows = $derived<DeviceRow[]>(
 		devices.map((device) => ({
 			device,
-			targeting: resolveDeviceTargeting(device.ip, $storeRules, segments),
+			targeting: resolveDeviceTargeting(device.ip, $storeRules),
 			conns: connCountByIP.get(device.ip) ?? 0,
 		})),
 	);
@@ -117,7 +100,7 @@
 	}
 
 	function modeLabel(mode: DeviceTargeting['mode']): string {
-		return mode === 'personal' ? 'персональный' : mode === 'fakeip' ? 'fakeip' : 'прямой';
+		return mode === 'personal' ? 'персональный' : 'прямой';
 	}
 
 	// ── Привязка: фокус-пикер outbound'а ───────────────────────────────────
@@ -202,11 +185,9 @@
 		<span class="src">из NDMS hotspot</span>
 	</header>
 	<p class="pd">
-		<b class="m-fi">fakeip</b> — устройство в сегменте с доставкой DNS, домены идут в туннель по
-		общим правилам (outbound per-connection). <b class="m-pers">персональный</b> — привязка к
-		конкретному outbound (route-правило по source_ip_cidr). <b class="m-dir">прямой</b> — вне
-		сегмента, мимо туннеля. Pencil — задать персональную привязку, крестик — снять (активен только
-		у персональных).
+		<b class="m-pers">персональный</b> — привязка к конкретному outbound (route-правило по
+		source_ip_cidr). <b class="m-dir">прямой</b> — без персональной привязки, по общим правилам.
+		Pencil — задать персональную привязку, крестик — снять (активен только у персональных).
 	</p>
 
 	<div class="table">
@@ -240,7 +221,6 @@
 					<span class="mode-cell">
 						<span
 							class="mode"
-							class:fi={row.targeting.mode === 'fakeip'}
 							class:pers={personal}
 						>{modeLabel(row.targeting.mode)}</span>
 						{#if personal}
@@ -310,7 +290,7 @@
 	open={unbindRow !== null}
 	title="Снять привязку"
 	message={unbindRow
-		? `Снять персональную привязку устройства ${unbindRow.device.name || unbindRow.device.ip}? Оно вернётся к общему режиму сегмента.`
+		? `Снять персональную привязку устройства ${unbindRow.device.name || unbindRow.device.ip}? Оно вернётся к общим правилам.`
 		: ''}
 	busy={unbindBusy}
 	onConfirm={confirmUnbind}
@@ -350,9 +330,6 @@
 		font-size: 0.8125rem;
 		line-height: 1.5;
 		margin: 0 0 0.875rem;
-	}
-	.pd .m-fi {
-		color: var(--color-accent, var(--accent));
 	}
 	.pd .m-pers {
 		color: var(--color-info, #8aa0e0);
@@ -465,10 +442,6 @@
 		border: 1px solid var(--color-border, var(--border));
 		color: var(--text-muted);
 		white-space: nowrap;
-	}
-	.mode.fi {
-		color: var(--color-accent, var(--accent));
-		border-color: color-mix(in srgb, var(--color-accent, var(--accent)) 35%, transparent);
 	}
 	.mode.pers {
 		color: var(--color-info, #8aa0e0);

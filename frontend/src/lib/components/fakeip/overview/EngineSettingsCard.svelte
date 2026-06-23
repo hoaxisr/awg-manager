@@ -6,7 +6,7 @@
 
     - Движок: «Перезапустить» (onRestart → api.singboxControl) + тумблер ON при
       routingMode==='fakeip-tun' && enabled. Сам API НЕ дёргает — onToggleEngine
-      открывает ConfirmSwitch на странице.
+      запрашивает смену режима (диалог подтверждения рендерит страница).
     - TCP/IP-стек: Dropdown gvisor / system (settings.fakeipStack). system —
       ниже throughput-потолок, backend форсит gso:false.
     - WAN-интерфейс: «Авто» + список api.singboxRouterListWANInterfaces()
@@ -19,6 +19,8 @@
       ошибку → notifications.
     - MTU tun: числовой Input (fakeipMtu, 576–9000).
     - Active iface: status.fakeipIface (e.g. «opkgtun0»), если провижен.
+    - DNS для клиентов: status.fakeipDns (read-only) — адрес, который нужно
+      прописать на клиентах вручную; авто-fallback нет.
 
   Сохранение применяется с перезапуском sing-box (бэкенд провижнит пул/MTU при
   enable). Значения и хендлеры приходят пропами; список WAN грузим сами.
@@ -41,8 +43,6 @@
 		wanInterface?: string;
 		/** Sniffing включён. */
 		snifferEnabled: boolean;
-		/** Сохранять source-IP устройств через static-NAT (default true). */
-		fakeipSourcePreserve?: boolean;
 		/** TCP/IP-стек fakeip-tun. */
 		fakeipStack?: 'gvisor' | 'system';
 		/** fakeip-пул v4 (CIDR). */
@@ -53,14 +53,14 @@
 		fakeipMtu?: number;
 		/** Активный fakeip tun-интерфейс из статуса (e.g. «opkgtun0»); опционально. */
 		fakeipIface?: string;
-		/** Запрос смены движка — открывает ConfirmSwitch на стороне страницы. */
+		/** DNS-адрес для ручной настройки клиентов (read-only из статуса). */
+		fakeipDns?: string;
+		/** Запрос смены движка — диалог подтверждения рендерит страница. */
 		onToggleEngine: (turnOn: boolean) => void;
 		/** Перезапуск sing-box — страница зовёт api.singboxControl('restart'). */
 		onRestart: () => void | Promise<void>;
 		/** Блокирует тумблер, пока переключение в полёте (управляется страницей). */
 		toggleBusy?: boolean;
-		/** Открывает ConfirmSwitch в сторону 'tproxy' — выход из fakeip-tun без выключения. */
-		onSwitchToTproxy?: () => void;
 	}
 
 	let {
@@ -68,16 +68,15 @@
 		wanAutoDetect,
 		wanInterface,
 		snifferEnabled,
-		fakeipSourcePreserve,
 		fakeipStack,
 		fakeipPool4,
 		fakeipPool6,
 		fakeipMtu,
 		fakeipIface,
+		fakeipDns,
 		onToggleEngine,
 		onRestart,
 		toggleBusy = false,
-		onSwitchToTproxy,
 	}: Props = $props();
 
 	let restarting = $state(false);
@@ -160,10 +159,6 @@
 		void save({ snifferEnabled: next });
 	}
 
-	function handleSourcePreserve(next: boolean): void {
-		void save({ fakeipSourcePreserve: next });
-	}
-
 	function commitPool4(): void {
 		const v = pool4Draft.v.trim();
 		if (v === (fakeipPool4 ?? '')) return;
@@ -217,7 +212,7 @@
 	</div>
 
 	<div class="eform">
-		<!-- Движок: перезапуск + переключиться на TPROXY + тумблер (controlled — страница решает смену). -->
+		<!-- Движок: перезапуск + тумблер (controlled — страница решает смену). -->
 		<div class="erow">
 			<span class="k">Движок</span>
 			<span class="val">
@@ -232,11 +227,6 @@
 					{/if}
 					Перезапустить
 				</button>
-				{#if onSwitchToTproxy}
-					<button class="restart" type="button" onclick={onSwitchToTproxy}>
-						Переключиться на TPROXY
-					</button>
-				{/if}
 				<Toggle
 					checked={engineOn}
 					controlled
@@ -291,22 +281,19 @@
 			</span>
 		</div>
 
-		<!-- Сохранять source-IP устройств (static-NAT). -->
-		<div class="erow">
-			<span class="k">Сохранять source устройств</span>
-			<span class="val ctl">
-				<Toggle
-					checked={fakeipSourcePreserve ?? true}
-					size="sm"
-					loading={saving}
-					onchange={handleSourcePreserve}
-				/>
-				<span class="warn">
-					<TriangleAlert size={13} />
-					Меняет NAT-режим сегмента на static-NAT — проверьте проброс портов и входящие соединения.
+		<!-- DNS для клиентов (read-only из статуса). -->
+		{#if fakeipDns}
+			<div class="erow">
+				<span class="k">DNS для клиентов</span>
+				<span class="val ctl">
+					<code class="iface">{fakeipDns}</code>
+					<span class="warn">
+						<TriangleAlert size={13} />
+						Пропишите этот DNS на клиентах вручную. Авто-fallback при падении прокси нет.
+					</span>
 				</span>
-			</span>
-		</div>
+			</div>
+		{/if}
 
 		<!-- Подсказка: policy-exit через opkgtun. -->
 		<div class="erow erow-hint">

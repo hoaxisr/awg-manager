@@ -1324,8 +1324,6 @@ export interface SingboxRouterSettings {
 	fakeipPool4?: string;
 	fakeipPool6?: string;
 	fakeipMtu?: number;
-	/** Default true server-side; preserves device source IP via segment static-NAT. */
-	fakeipSourcePreserve?: boolean;
 	// UDP session timeout for tproxy-in. Go duration string (e.g. "3m0s", "10m0s").
 	// Empty = backend default (3m0s). Increase to fix dropped sessions in games.
 	udpTimeout?: string;
@@ -1376,27 +1374,15 @@ export interface SingboxRouterStatus {
 	outboundCompositeCount: number;
 	final: string;
 	/**
-	 * fakeip-tun source-preservation verdict. Absent outside fakeip-tun mode
-	 * (backend Status.SourcePreserved is *bool, omitempty).
-	 */
-	sourcePreserved?: boolean;
-	/** Mirrors the fakeipSourcePreserve setting; present only in fakeip-tun mode. */
-	fakeipSourcePreserve?: boolean;
-	/**
 	 * Active fakeip tun iface (kernel name, e.g. "opkgtun0"). Present only in
 	 * fakeip-tun mode once the tun is provisioned (backend Status.FakeIPIface
 	 * omitempty); absent otherwise.
 	 */
 	fakeipIface?: string;
-	/**
-	 * Global fakeip egress-health signal (Task 25): the proxy egress backing the
-	 * tun DNS is usable. The router advertises the tun DNS (.2) to the DHCP pools
-	 * only when egress is up; when it drops, ALL fakeip segments fall back to
-	 * direct (no black-hole). `false` lets the UI show an honest "DNS-delivery
-	 * held" banner. Present only in fakeip-tun mode once provisioned (backend
-	 * Status.FakeIPEgressUp is *bool, omitempty); absent otherwise.
-	 */
-	fakeipEgressUp?: boolean;
+	/** DNS-адрес для ручной настройки клиентов в режиме fakeip-tun. */
+	fakeipDns?: string;
+	/** Адрес tun-шлюза (хост /30, e.g. «172.18.0.1») в режиме fakeip-tun. */
+	fakeipTunAddr?: string;
 	issues?: SingboxRouterIssue[];
 	/** Последняя fatal-причина sing-box; непусто только при «СБОЙ» (enabled && !active). */
 	lastError?: string;
@@ -1448,33 +1434,6 @@ export interface SingboxRouterRule {
 	action?: 'route' | 'reject' | 'sniff' | 'hijack-dns';
 	outbound?: string;
 	rules?: SingboxRouterRule[];
-}
-
-// FakeIPSegment is one DHCP pool projected as a fakeip "segment" for the
-// per-segment DNS-delivery toggles. Mirrors api.FakeIPSegmentDTO exactly.
-// inFakeip is true when the pool already advertises the fakeip-tun DNS
-// (the .2 of the tun /30); dnsServer is the DHCP-advertised primary DNS
-// (omitted when the pool has no explicit dns-server line).
-export interface FakeIPSegment {
-	pool: string;
-	subnet: string;
-	dnsServer?: string;
-	inFakeip: boolean;
-}
-
-// FakeIPSegmentsData is the payload of GET /singbox/fakeip/segments. Mirrors
-// api.FakeIPSegmentsData: the read-only, engine-managed fakeip-tun gateway
-// addresses (surfaced for the Inbounds "tun-in" card so the FE does not
-// hardcode magic IPs) plus the DHCP-pool→segment projection.
-export interface FakeIPSegmentsData {
-	/** Tun gateway IPv4 CIDR, e.g. "172.18.0.1/30". */
-	tunAddr4: string;
-	/** Tun gateway IPv6 CIDR, e.g. "fdfe:dcba:9876::1/126" (omitted if v6 off). */
-	tunAddr6?: string;
-	/** Fakeip-tun DNS handed to clients (.2 of the tun /30). */
-	tunDns?: string;
-	/** DHCP-pool→fakeip-segment projection (always present). */
-	segments: FakeIPSegment[];
 }
 
 /**
@@ -1657,7 +1616,7 @@ export interface SingboxRouterAvailableClient {
 	active?: boolean;
 }
 
-export type SingboxRouterDNSType = 'udp' | 'tls' | 'https' | 'quic' | 'h3' | 'local';
+export type SingboxRouterDNSType = 'udp' | 'tls' | 'https' | 'quic' | 'h3' | 'local' | 'fakeip';
 
 export type SingboxRouterDNSStrategy =
 	| ''

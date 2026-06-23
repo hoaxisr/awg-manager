@@ -1,8 +1,9 @@
 <!--
   Подтверждение смены режима маршрутизации (FE-spec §7.2 + §12.4). Показывается
-  ПЕРЕД переключением: текущий→новый режим, список «что произойдёт», амбер-блок
-  последствий и действия Отмена/Переключить. Презентационный компонент — сам API
-  не дёргает, действие принадлежит странице.
+  ПЕРЕД сменой режима: action-заголовок «Включить/Выключить <режим>», список «что
+  произойдёт», амбер-блок последствий (вкл. «активный режим будет выключен» при
+  кросс-включении) и действия Отмена/подтверждение. Презентационный компонент —
+  сам API не дёргает, действие принадлежит странице.
 -->
 <script lang="ts">
 	import { Modal, Button } from '$lib/components/ui';
@@ -34,16 +35,16 @@
 		busy = false,
 	}: Props = $props();
 
-	const title = $derived(
-		`Переключение режима: ${humanLabel(from)} → ${humanLabel(to)}`,
-	);
 	const steps = $derived(switchConsequences(from, to));
+	// Action-based framing (per-tab on/off model): «Включить <mode>» / «Выключить <mode>».
+	const actingMode = $derived(to === 'off' ? from : to);
+	const title = $derived(`${to === 'off' ? 'Выключить' : 'Включить'} ${humanLabel(actingMode)}`);
+	const confirmLabel = $derived(to === 'off' ? 'Выключить' : 'Включить');
 	const enabling = $derived(to === 'fakeip-tun');
-
-	// Цифра соединений показывается только когда известна (>= 0).
-	const connSuffix = $derived(
-		typeof activeConnections === 'number' ? ` (${activeConnections})` : '',
-	);
+	// Cross-activation: enabling X while a DIFFERENT mode Y is active displaces Y.
+	// Derivable from from/to alone — no extra prop.
+	const displacedMode = $derived(to !== 'off' && from !== 'off' && from !== to ? from : null);
+	const connSuffix = $derived(typeof activeConnections === 'number' ? ` (${activeConnections})` : '');
 </script>
 
 <Modal {open} {title} size="md" onclose={onCancel} closeOnBackdrop={!busy}>
@@ -59,11 +60,10 @@
 
 		<section class="block amber">
 			<ul class="warnings">
+				{#if displacedMode}
+					<li>Активный режим {humanLabel(displacedMode)} будет выключен.</li>
+				{/if}
 				<li>Активные соединения{connSuffix} будут разорваны и переустановлены.</li>
-				<li>
-					Полная доставка нового режима наступит после обновления DHCP-аренды у
-					клиентов (до нескольких часов) или принудительного renew.
-				</li>
 				{#if enabling}
 					<li>
 						Устройства с собственным DoH/DoT резолвят мимо fakeip — их трафик не
@@ -87,7 +87,7 @@
 			disabled={busy}
 			onclick={onConfirm}
 		>
-			Переключить
+			{confirmLabel}
 		</Button>
 	{/snippet}
 </Modal>

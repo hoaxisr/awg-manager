@@ -14,7 +14,7 @@
   import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
   import { Badge, Button } from '$lib/components/ui';
   import { Trash2, Edit3 } from 'lucide-svelte';
-  import { dnsServerDetourDisplay } from './dnsServerDetourDisplay';
+  import { dnsServerDetourDisplay, dnsServerSubtitle } from './dnsServerDetourDisplay';
   import OutboundTile from './OutboundTile.svelte';
   import { dnsRuleTarget } from './dnsRuleLabel';
   import { dnsMatcherParts, dnsMatcherSummary } from './dnsMatcherParts';
@@ -56,9 +56,7 @@
     dnsUsage,
   }: Props = $props();
 
-  function subFor(s: SingboxRouterDNSServer): string {
-    return `${s.type ?? 'dns'} · ${s.server}`;
-  }
+  const subFor = dnsServerSubtitle;
 
   // Один проход по DNS-конфигу на список вместо O(servers × конфиг) на строку.
   const serverDeleteReasons = $derived(

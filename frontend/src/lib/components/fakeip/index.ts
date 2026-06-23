@@ -11,7 +11,6 @@ export {
 	type RoutingMode,
 } from './switchConsequences';
 export { default as EngineSettingsCard } from './overview/EngineSettingsCard.svelte';
-export { default as SegmentsDelivery } from './overview/SegmentsDelivery.svelte';
 export { default as OverviewTab } from './overview/OverviewTab.svelte';
 export { default as InboundsTab } from './inbounds/InboundsTab.svelte';
 export { default as OutboundsTab } from './outbounds/OutboundsTab.svelte';
@@ -22,7 +21,6 @@ export { default as DevicesTab } from './devices/DevicesTab.svelte';
 export {
 	resolveDeviceTargeting,
 	findRuleIndexForDevice,
-	isDeviceInFakeipSegment,
 	type DeviceMode,
 	type DeviceTargeting,
 } from './devices/deviceTargeting';
@@ -45,7 +43,6 @@ export {
 	formatCompactCount,
 	type ShellChip,
 } from './shell';
-export { segmentRows, type SegmentRow } from './overview/segmentRows';
 export {
 	activeCompositeRows,
 	type ActiveCompositeRow,

@@ -7,10 +7,9 @@
     движком: интерфейс/адрес/стек/MTU/DNS — факты из бэкенда, без правки.
     Источники (ЧЕСТНО, без хардкода magic-IP):
       • interface  — status.fakeipIface (e.g. «opkgtun10»);
-      • address    — tunAddr4 · tunAddr6 из GET /singbox/fakeip/segments
-                     (бэкенд берёт их из router.DefaultFakeIPTunParams());
+      • address    — status.fakeipTunAddr (адрес tun-шлюза, e.g. «172.18.0.1»);
       • стек · MTU — settings.fakeipStack · settings.fakeipMtu;
-      • DNS клиентам — tunDns из того же segments-ответа (.2 /30) + «(hijack)».
+      • DNS клиентам — status.fakeipDns (адрес для ручной настройки клиентов).
     Существует только в fakeip-режиме (страница уже гейтит это целиком).
 
   - SOCKS/HTTP-входы (EDITABLE) = инстансы device-proxy. ПЕРЕИСПОЛЬЗУЕМ фичу
@@ -60,10 +59,8 @@
 		singboxRunning: boolean;
 	}
 
-	// tun-in адрес/DNS — из segments-ответа (бэкенд: DefaultFakeIPTunParams).
-	let tunAddr4 = $state('');
-	let tunAddr6 = $state('');
-	let tunDns = $state('');
+	// DNS клиентам — из status (адрес для ручной настройки в fakeip-режиме).
+	const tunDns = $derived($status?.fakeipDns ?? '');
 
 	let instances = $state<DeviceProxyInstance[]>([]);
 	let runtimes = $state<Record<string, DeviceProxyRuntime>>({});
@@ -97,15 +94,6 @@
 	}
 
 	onMount(async () => {
-		// tun-адреса — best-effort: при провале карта tun-in покажет «—».
-		try {
-			const data = await api.singboxRouterListSegments();
-			tunAddr4 = data.tunAddr4 ?? '';
-			tunAddr6 = data.tunAddr6 ?? '';
-			tunDns = data.tunDns ?? '';
-		} catch {
-			/* tun-in degrades to «—» */
-		}
 		await loadDeviceProxy();
 	});
 
@@ -199,8 +187,7 @@
 	<div class="icards">
 		<TunInboundCard
 			iface={$status?.fakeipIface}
-			{tunAddr4}
-			{tunAddr6}
+			address={$status?.fakeipTunAddr}
 			{tunDns}
 			fakeipStack={$settings?.fakeipStack ?? 'gvisor'}
 			fakeipMtu={$settings?.fakeipMtu}

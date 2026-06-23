@@ -7,6 +7,7 @@
   import { SideDrawer, Toggle, Button, Badge, StatusDot } from '$lib/components/ui';
   import { api } from '$lib/api/client';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
+  import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
   import { singboxStatus } from '$lib/stores/singbox';
   import { systemInfo } from '$lib/stores/system';
   import { notifications } from '$lib/stores/notifications';
@@ -40,6 +41,13 @@
   // Реальная работа перехвата (цепочки + PREROUTING-jump'ы), не просто
   // persisted-тумблер. Заголовок различает «включён, но не работает».
   let engineActive = $derived(engineEnabled && (s?.active ?? false));
+
+  // Тумблер/кнопка управляют режимом через общий modeSwitch (детерминированно
+  // tproxy↔off), а не enable/disable «текущего» режима. checked — mode-aware:
+  // «вкл» только когда routingMode==='tproxy' (а не голый enabled).
+  const settings = singboxRouterStore.settings;
+  let tproxyOn = $derived((s?.enabled ?? false) && ($settings?.routingMode === 'tproxy'));
+  const switchBusy = $derived(modeSwitchBusy($modeSwitch));
 
   let wanInterfaces = $state<SingboxRouterWANInterface[]>([]);
   let saving = $state(false);
@@ -87,17 +95,11 @@
   });
 
   // ── Engine control ──
-  async function toggleEngine(_checked: boolean) {
-    try {
-      if (engineEnabled) await api.singboxRouterDisable();
-      else await api.singboxRouterEnable();
-      await singboxRouterStore.reloadStatus();
-    } catch (e) {
-      console.error('toggleEngine failed', e);
-    }
+  function toggleEngine(turnOn: boolean) {
+    modeSwitch.request(turnOn ? 'tproxy' : 'off');
   }
-  async function handleToggleClick(_e: MouseEvent) {
-    await toggleEngine(!engineEnabled);
+  function handleToggleClick(_e: MouseEvent) {
+    toggleEngine(!tproxyOn);
   }
   async function restartEngine(_e: MouseEvent) {
     try {
@@ -158,7 +160,7 @@
       <div class="sec-cap">Состояние</div>
       <div class="engine-status" class:state-off={engineState === 'off'} class:state-warn={engineState === 'warn'} class:state-on={engineState === 'on'}>
         <div class="engine-main">
-          <Toggle checked={engineEnabled} onchange={toggleEngine} />
+          <Toggle checked={tproxyOn} controlled loading={switchBusy} onchange={toggleEngine} />
           <div class="engine-text">
             <div class="engine-head">
               <StatusDot variant={engineDotVariant} size="sm" />
@@ -272,8 +274,8 @@
   {#snippet footer()}
     <div class="footer-actions">
       <div class="footer-btns">
-        <Button variant={engineEnabled ? 'danger' : 'primary'} size="sm" fullWidth onclick={handleToggleClick}>
-          {engineEnabled ? 'Выключить' : 'Включить'}
+        <Button variant={tproxyOn ? 'danger' : 'primary'} size="sm" fullWidth disabled={switchBusy} onclick={handleToggleClick}>
+          {tproxyOn ? 'Выключить' : 'Включить'}
         </Button>
         <Button variant="ghost" size="sm" fullWidth onclick={restartEngine}>Перезапустить</Button>
       </div>

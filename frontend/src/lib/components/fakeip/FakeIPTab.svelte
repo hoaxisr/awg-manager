@@ -8,8 +8,6 @@
 	import { singboxStatus } from '$lib/stores/singbox';
 	import {
 		NotEnabledScreen,
-		ConfirmSwitch,
-		SwitchProgress,
 		OverviewTab,
 		InboundsTab,
 		OutboundsTab,
@@ -23,7 +21,7 @@
 	} from '$lib/components/fakeip';
 	import { ConnectionsSubTab } from '$lib/components/routing/singboxRouter';
 	import { LogsTerminal } from '$lib/components/diagnostics';
-	import { fakeipTransition } from '$lib/stores/fakeipTransition';
+	import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
 
@@ -71,7 +69,7 @@
 	const running = $derived($singboxStatus.data?.running ?? false);
 
 	// Engine toggle ON-state: persisted fakeip-tun AND enabled. Drives the card
-	// toggle; flipping it routes through the existing ConfirmSwitch flow.
+	// toggle; flipping it requests a mode switch via the shared modeSwitch store.
 	const engineOn = $derived(
 		$settings?.enabled === true && $settings?.routingMode === 'fakeip-tun',
 	);
@@ -90,45 +88,20 @@
 		}),
 	);
 
-	// ConfirmSwitch state. `fromMode` is the honest current mode: when the engine
-	// is disabled the source is 'off', otherwise the persisted routingMode (legacy
-	// payloads without routingMode default to 'tproxy', mirroring engineState).
-	let confirmOpen = $state(false);
-	let switchBusy = $state(false);
-	let progressOpen = $state(false);
-	// Target mode of the pending switch. The NotEnabledScreen CTA and the engine
-	// toggle both feed this: CTA → 'fakeip-tun', toggle-off → 'off'. Defaults to
-	// 'fakeip-tun' (the enable direction).
-	let toMode = $state<'off' | 'tproxy' | 'fakeip-tun'>('fakeip-tun');
-	const fromMode = $derived<'off' | 'tproxy' | 'fakeip-tun'>(
-		$settings?.enabled ? ($settings?.routingMode ?? 'tproxy') : 'off',
-	);
-
-	// Live progress stream (1E.6). The store is fed by the SSE handler wired in
-	// +layout.svelte (`onSingboxRouterTransition`); the page only opens the modal,
-	// kicks the POST and renders the accumulated steps.
-	const transition = fakeipTransition;
-
+	// Routing-mode switch is owned by the shared `modeSwitch` store + the
+	// page-level <ModeSwitchHost> (confirm + progress). The tab only requests a
+	// target mode; `switchBusy` mirrors the in-flight state for the toggle.
 	function handleEnableRequested(): void {
-		toMode = 'fakeip-tun';
-		confirmOpen = true;
-	}
-
-	function handleSwitchToTproxy(): void {
-		toMode = 'tproxy';
-		confirmOpen = true;
+		modeSwitch.request('fakeip-tun');
 	}
 
 	// Engine-card toggle: ON→OFF requests a switch to 'off'; OFF→ON re-enables
-	// fakeip-tun. Both open ConfirmSwitch (direction-aware copy already in 1E.5).
+	// fakeip-tun. The shared host drives confirm + progress.
 	function handleToggleEngine(turnOn: boolean): void {
-		toMode = turnOn ? 'fakeip-tun' : 'off';
-		confirmOpen = true;
+		modeSwitch.request(turnOn ? 'fakeip-tun' : 'off');
 	}
 
-	function handleCancelSwitch(): void {
-		confirmOpen = false;
-	}
+	const switchBusy = $derived(modeSwitchBusy($modeSwitch));
 
 	async function handleRestart(): Promise<void> {
 		try {
@@ -139,38 +112,6 @@
 			notifications.error(msg);
 		}
 	}
-
-	async function handleConfirmSwitch(): Promise<void> {
-		// Open the live progress screen immediately (before the first SSE event)
-		// and hand off to the SSE stream. The POST drives the backend; events fold
-		// into the store and render step-by-step during the await.
-		switchBusy = true;
-		fakeipTransition.begin(fromMode, toMode);
-		confirmOpen = false;
-		progressOpen = true;
-		try {
-			await api.singboxRouterSwitchMode(toMode);
-			// On resolve the store is already (or imminently) `done` via SSE; the
-			// modal renders the success/rollback summary. No notify on success —
-			// the modal is the primary signal.
-		} catch (e) {
-			// Network/POST failure: surface it into the progress view so the modal
-			// never spins forever, plus a secondary toast.
-			const msg = e instanceof Error ? e.message : 'Не удалось переключить режим';
-			fakeipTransition.fail(msg);
-			notifications.error(msg);
-		} finally {
-			switchBusy = false;
-		}
-	}
-
-	async function handleProgressClose(): Promise<void> {
-		progressOpen = false;
-		fakeipTransition.reset();
-		// Re-derive engine state off the new mode (leaves NotEnabledScreen on
-		// success; on rollback the page stays where it was).
-		await singboxRouter.loadAll();
-	}
 </script>
 
 <PageContainer>
@@ -179,20 +120,8 @@
 		fakeip-page-layout-v2: kick + title + hsub + панель действий.
 	-->
 
-	<!--
-		B3 flicker guard (1D.4 handoff): while a switch is in flight, intermediate
-		`singbox-router:status` SSE events re-derive `engineState` and would thrash
-		the underlying NotEnabledScreen/chip content beneath the modal. Freeze the
-		main content render until the progress modal is closed.
-	-->
-	{#if progressOpen}
-		<!-- main content frozen behind SwitchProgress -->
-	{:else if engineState === 'not-fakeip'}
-		<NotEnabledScreen
-		onEnableRequested={handleEnableRequested}
-		showSwitchToTproxy={routingMode === 'fakeip-tun'}
-		onSwitchToTproxy={handleSwitchToTproxy}
-	/>
+	{#if engineState === 'not-fakeip'}
+		<NotEnabledScreen onEnableRequested={handleEnableRequested} />
 	{:else}
 		<!--
 			Каркас под мокап fakeip-page-layout-v2: hero (title + панель действий) +
@@ -234,16 +163,15 @@
 				wanAutoDetect={$settings?.wanAutoDetect ?? true}
 				wanInterface={$settings?.wanInterface}
 				snifferEnabled={$settings?.snifferEnabled ?? false}
-				fakeipSourcePreserve={$settings?.fakeipSourcePreserve ?? true}
 				fakeipStack={$settings?.fakeipStack ?? 'gvisor'}
 				fakeipPool4={$settings?.fakeipPool4}
 				fakeipPool6={$settings?.fakeipPool6}
 				fakeipMtu={$settings?.fakeipMtu}
 				fakeipIface={$status?.fakeipIface}
+				fakeipDns={$status?.fakeipDns}
 				toggleBusy={switchBusy}
 				onToggleEngine={handleToggleEngine}
 				onRestart={handleRestart}
-				onSwitchToTproxy={handleSwitchToTproxy}
 			/>
 		{:else if activeTab === 'inbounds'}
 			<!--
@@ -367,17 +295,6 @@
 		</FakeIPPageShell>
 	{/if}
 </PageContainer>
-
-<ConfirmSwitch
-	open={confirmOpen}
-	from={fromMode}
-	to={toMode}
-	busy={switchBusy}
-	onConfirm={handleConfirmSwitch}
-	onCancel={handleCancelSwitch}
-/>
-
-<SwitchProgress open={progressOpen} state={$transition} onClose={handleProgressClose} />
 
 <style>
 	.chip-stub {

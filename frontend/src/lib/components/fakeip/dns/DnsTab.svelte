@@ -91,6 +91,9 @@
 	}
 	function serverAddr(s: SingboxRouterDNSServer): string {
 		if (s.type === 'local') return 'системный resolver';
+		// fakeip-сервер синтезирует адреса в туннель — у него нет upstream-адреса,
+		// поэтому s.server пустой; показываем «синтез», а не «undefined».
+		if (s.type === 'fakeip') return 'синтез';
 		const port = s.server_port ? `:${s.server_port}` : '';
 		const path = s.path ?? '';
 		return `${s.server}${port}${path}`;

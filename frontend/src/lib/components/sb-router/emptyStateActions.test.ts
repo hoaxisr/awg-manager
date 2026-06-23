@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('$lib/api/client', () => ({
   api: {
-    singboxRouterEnable: vi.fn(),
+    singboxRouterSwitchMode: vi.fn(),
     singboxRouterPutRouteFinal: vi.fn(),
     singboxRouterListDNSServers: vi.fn(async () => []),
     singboxRouterAddDNSServer: vi.fn(),
@@ -46,7 +46,7 @@ describe('emptyStateActions', () => {
     vi.clearAllMocks();
   });
 
-  it('finishSetup: правила(tunnel) → final=direct → bake defaults(all) → enable → loadAll', async () => {
+  it('finishSetup: правила(tunnel) → final=direct → bake defaults(all) → switch(tproxy) → loadAll', async () => {
     const empty = { rulesList: '' };
     const res = await finishSetup({
       tunnelTag: 'wg-nl',
@@ -62,11 +62,11 @@ describe('emptyStateActions', () => {
     expect(api.singboxRouterPutDNSGlobals).toHaveBeenCalledWith(
       expect.objectContaining({ final: 'dns-direct' }),
     );
-    expect(api.singboxRouterEnable).toHaveBeenCalled();
+    expect(api.singboxRouterSwitchMode).toHaveBeenCalledWith('tproxy');
     expect(mergeAndSaveSettings).toHaveBeenCalledWith(
       expect.objectContaining({ deviceMode: 'all', wanAutoDetect: true, wanInterface: '', snifferEnabled: true }),
     );
-    expect(api.singboxRouterEnable).toHaveBeenCalled();
+    expect(api.singboxRouterSwitchMode).toHaveBeenCalledWith('tproxy');
     expect(singboxRouter.loadAll).toHaveBeenCalled();
     expect(res.successes).toContain('svc:netflix');
   });

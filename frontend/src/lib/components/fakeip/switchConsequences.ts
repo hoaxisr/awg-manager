@@ -17,39 +17,38 @@ export function humanLabel(mode: RoutingMode): string {
 }
 
 /**
- * The «что произойдёт» action list for a from→to transition. Direction-aware:
- * enabling fakeip-tun lists the bring-up steps; switching out of fakeip-tun
- * lists the tear-down + anti-leak steps (FE-spec §7.2 / §7.3).
+ * The «что произойдёт» action list for a from→to transition: tears down the
+ * source mode (teardownOf) then lists the destination mode's bring-up steps;
+ * to==='off' is teardown-only (FE-spec §7.2 / §7.3).
  */
 export function switchConsequences(from: RoutingMode, to: RoutingMode): string[] {
+	const teardownOf = (mode: RoutingMode): string[] => {
+		if (mode === 'fakeip-tun') {
+			return ['Снятие fakeip: reject-маршрут на пул, дренаж соединений, снятие NDMS-маршрутов, остановка sing-box, удаление OpkgTun.'];
+		}
+		if (mode === 'tproxy') {
+			return ['Снятие iptables TPROXY-цепочек и jump-правил.'];
+		}
+		return [];
+	};
+
 	if (to === 'fakeip-tun') {
-		const items = [
+		return [
+			...teardownOf(from),
 			'Перезапуск sing-box с tun-inbound.',
 			'Создание/проверка интерфейса OpkgTun.',
+			'DNS-перехват на туннеле (hijack-dns); адрес .2 для клиентов указывается вручную.',
+			'Установка NDMS auto-маршрутов на пул fakeip.',
 		];
-		if (from === 'tproxy') {
-			items.push('Снятие iptables TPROXY-цепочек и jump-правил.');
-		}
-		items.push('Смена доставки DNS: перехват :53 → DHCP-выдача адреса .2 по сегментам.');
-		items.push('Установка NDMS auto-маршрутов на пул fakeip.');
-		return items;
 	}
-
-	if (from === 'fakeip-tun') {
-		const items = [
-			'Reject-маршрут на пул fakeip (анти-утечка трафика).',
-			'Возврат DHCP DNS-сервера на роутер.',
-			'Дренаж активных соединений.',
-			'Снятие NDMS auto-маршрутов.',
-			'Остановка sing-box.',
-			'Удаление интерфейса OpkgTun.',
+	if (to === 'tproxy') {
+		return [
+			...teardownOf(from),
+			'Перезапуск sing-box.',
+			'Поднятие iptables TPROXY-перехвата (jumps + AWGM-цепочки).',
 		];
-		if (to === 'tproxy') {
-			items.push('Поднятие TPROXY-перехвата.');
-		}
-		return items;
 	}
-
-	// Transitions not involving fakeip-tun are out of this screen's scope.
-	return [];
+	// to === 'off'
+	const td = teardownOf(from);
+	return td.length ? td : ['Маршрутизация выключена.'];
 }

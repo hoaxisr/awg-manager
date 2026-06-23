@@ -1,8 +1,8 @@
 <!--
   Карточка tun-in (READ-ONLY) по мокапу page-inbounds-v2 (.ic2.core).
   Единственный вход движка fakeip-tun; управляется движком (правки нет).
-  Все значения — факты из бэкенда (interface/address/стек·MTU/DNS), без
-  хардкода magic-IP: address+DNS приходят из GET /singbox/fakeip/segments.
+  Значения — факты из бэкенда (interface/address/стек·MTU/DNS): iface+address+DNS
+  из status (fakeipIface/fakeipTunAddr/fakeipDns), стек·MTU из settings.
 -->
 <script lang="ts">
 	import { Lock } from 'lucide-svelte';
@@ -10,11 +10,9 @@
 	interface Props {
 		/** Активный fakeip tun-интерфейс (status.fakeipIface), e.g. «opkgtun10». */
 		iface?: string;
-		/** Адрес-шлюз tun v4 CIDR (tunAddr4), e.g. «172.18.0.1/30». */
-		tunAddr4?: string;
-		/** Адрес-шлюз tun v6 CIDR (tunAddr6), пусто если v6 выключен. */
-		tunAddr6?: string;
-		/** DNS клиентам (tunDns, .2 /30), e.g. «172.18.0.2». */
+		/** Адрес tun-шлюза (status.fakeipTunAddr), e.g. «172.18.0.1». */
+		address?: string;
+		/** DNS клиентам для ручной настройки (status.fakeipDns). */
 		tunDns?: string;
 		fakeipStack?: 'gvisor' | 'system';
 		fakeipMtu?: number;
@@ -23,17 +21,13 @@
 	}
 	let {
 		iface,
-		tunAddr4,
-		tunAddr6,
+		address,
 		tunDns,
 		fakeipStack = 'gvisor',
 		fakeipMtu,
 		live = false,
 	}: Props = $props();
 
-	const addressLabel = $derived(
-		[tunAddr4, tunAddr6].filter(Boolean).join(' · ') || '—',
-	);
 	const stackMtuLabel = $derived(
 		fakeipMtu ? `${fakeipStack} · ${fakeipMtu}` : fakeipStack,
 	);
@@ -50,7 +44,7 @@
 
 	<div class="rows">
 		<div class="r"><span class="k">interface</span><span class="v y">{iface || '—'}</span></div>
-		<div class="r"><span class="k">address</span><span class="v mono">{addressLabel}</span></div>
+		<div class="r"><span class="k">address</span><span class="v mono">{address || '—'}</span></div>
 		<div class="r"><span class="k">стек · MTU</span><span class="v">{stackMtuLabel}</span></div>
 		<div class="r"><span class="k">DNS клиентам</span><span class="v">{dnsLabel}</span></div>
 	</div>

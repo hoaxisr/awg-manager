@@ -38,7 +38,10 @@ export async function finishSetup(args: FinishSetupArgs): Promise<SubmitResult> 
     wanInterface: '',
     snifferEnabled: true,
   });
-  await api.singboxRouterEnable();
+  // Завершение визарда поднимает TProxy ДЕТЕРМИНИРОВАННО через SwitchMode (а не
+  // Enable «текущего» режима) — единый путь смены режима с тумблерами. Direct
+  // (без ConfirmSwitch-диалога): это финал настройки, подтверждение уже дано.
+  await api.singboxRouterSwitchMode('tproxy');
   await singboxRouter.loadAll();
   return result;
 }

@@ -28,6 +28,8 @@
     import { HrNeoTab } from '$lib/components/hrneo';
     import { SingboxRouterRedesignPage } from '$lib/components/sb-router';
     import FakeIPTab from '$lib/components/fakeip/FakeIPTab.svelte';
+    import ModeSwitchHost from '$lib/components/routing/ModeSwitchHost.svelte';
+    import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
     import GeoDataTab from './GeoDataTab.svelte';
     import { isRoutingSubTabVisible, type RoutingSubTab, type UsageLevel } from '$lib/types/usageLevel';
     import { usageLevel } from '$lib/stores/settings';
@@ -65,6 +67,7 @@
     let pendingTab = $state<string | null>(null);
 
     function requestTab(id: string): void {
+        if (modeSwitchBusy(get(modeSwitch))) return;
         const hasDraft = get(singboxRouterStore.staging)?.hasDraft ?? false;
         if (activeTab === 'singbox' && id !== 'singbox' && hasDraft) {
             pendingTab = id;
@@ -204,6 +207,7 @@
         badge?: number | string;
         badgeTone?: 'default' | 'success' | 'warning' | 'muted';
         separatorBefore?: boolean;
+        muted?: boolean;
     };
 
     const TAB_TO_SUBTAB: Record<string, RoutingSubTab> = {
@@ -235,13 +239,28 @@
             { id: 'clientvpn', label: 'VPN для устройств', badge: clientActiveCount },
             isOS5 ? { id: 'policy', label: 'Политики доступа', badge: policyCount } : null,
             // Visual gap separates the NDMS-stack tabs above from the
-            // sing-box / hydraroute stack below.
-            singboxInstalled ? { id: 'singbox', label: 'Sing-box Router', badge: singboxRuleCount, separatorBefore: true } : null,
-            hydrarouteInstalled ? { id: 'hrneo', label: 'HR Neo', badge: hrRuleCount, separatorBefore: !singboxInstalled } : null,
+            // sing-box / hydraroute stack below. TProxy + FakeIP are the two
+            // mutually-exclusive sing-box routing modes — kept adjacent (no
+            // separator between them) and muted when the OTHER mode is the active
+            // one (XOR), so the dormant mode reads as dormant, not broken.
+            singboxInstalled
+                ? { id: 'singbox', label: 'Sing-box: TProxy', badge: singboxRuleCount, separatorBefore: true,
+                    muted: !!$singboxRouterStatus?.enabled && $singboxSettings?.routingMode === 'fakeip-tun' }
+                : null,
+            // FakeIP is expert-gated (mirrors the 'singbox' tab's 'expert'
+            // level) BUT stays visible whenever the engine is actually in
+            // fakeip-tun mode — that's the in-use case the auto-select effect
+            // lands on, and hiding the chip there would strand activeTab on a
+            // tab with no chip to navigate back from.
+            (singboxInstalled && (tabVisible('singbox') || $singboxSettings?.routingMode === 'fakeip-tun'))
+                ? { id: 'fakeip', label: 'Sing-box: FakeIP', badge: undefined, separatorBefore: false,
+                    muted: !!$singboxRouterStatus?.enabled && $singboxSettings?.routingMode === 'tproxy' }
+                : null,
+            // HR Neo is a separate routing engine (not sing-box) — divider before it.
+            hydrarouteInstalled ? { id: 'hrneo', label: 'HR Neo', badge: hrRuleCount, separatorBefore: true } : null,
             (hydrarouteInstalled || singboxInstalled)
                 ? { id: 'geodata', label: 'Гео-данные', badge: geoFileCount, separatorBefore: true }
                 : null,
-            singboxInstalled ? { id: 'fakeip', label: 'FakeIP', badge: undefined, separatorBefore: true } : null,
         ] as (TabItem | null)[])
             .filter((t): t is TabItem => t !== null)
             .filter((t) => tabVisible(t.id))
@@ -377,6 +396,7 @@
     {:else if activeTab === 'fakeip'}
         <FakeIPTab />
     {/if}
+    <ModeSwitchHost />
     </div>
 </PageContainer>
 
