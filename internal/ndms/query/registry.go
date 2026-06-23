@@ -25,7 +25,6 @@ type Queries struct {
 	NAT              *NATStore
 	StaticNAT        *StaticNATStore
 	KeenDNS          *KeenDNSStore
-	DHCPPool         *DHCPPoolStore
 }
 
 // Deps groups the non-Store dependencies NewQueries needs.
@@ -87,6 +86,5 @@ func NewQueries(d Deps) *Queries {
 		NAT:              NewNATStore(d.Getter, d.Logger),
 		StaticNAT:        NewStaticNATStore(d.Getter, d.Logger),
 		KeenDNS:          NewKeenDNSStore(d.Getter, d.Logger),
-		DHCPPool:         NewDHCPPoolStore(d.Getter, runningConfig, d.Logger),
 	}
 }

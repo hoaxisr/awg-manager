@@ -32,11 +32,10 @@ var fakeIPAddrFlush = func(ctx context.Context, iface string) error {
 
 // enableFakeIPTun provisions the full fakeip-tun path: persist index → create
 // OpkgTun → addr/mtu/up → write+start sing-box slot → flush+wait readiness →
-// pool routes → health-gated DHCP DNS → persist enabled. Called with s.mu held
-// by Enable. Honors the persist-before-create invariant (the startup reap only
-// sees orphans by persisted index) and rolls back ALL partial work in reverse
-// on any failure so no orphaned iface / half-applied DHCP / stale persist is
-// left behind.
+// pool routes → persist enabled. Called with s.mu held by Enable. Honors the
+// persist-before-create invariant (the startup reap only sees orphans by
+// persisted index) and rolls back ALL partial work in reverse on any failure so
+// no orphaned iface / stale persist is left behind.
 func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Settings, sr storage.SingboxRouterSettings) (err error) {
 	// resolveFakeIPParams overlays user-editable settings (pool4/6, MTU) from sr
 	// onto the wired static defaults. Single source of truth — shared with the
@@ -46,7 +45,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// Fail-fast nil-guard: production wires every fakeip dep, but a degraded /
 	// mis-wired build would otherwise nil-panic mid-provision. Refuse loudly
 	// before touching any state.
-	if s.deps.OpkgTun == nil || s.deps.StaticRoutes == nil || s.deps.DHCP == nil || s.deps.OpkgTunIndices == nil || s.deps.DefaultRoute == nil {
+	if s.deps.OpkgTun == nil || s.deps.StaticRoutes == nil || s.deps.OpkgTunIndices == nil {
 		return fmt.Errorf("fakeip-tun: provisioning deps not wired")
 	}
 
@@ -96,8 +95,8 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// installed-check is always false and routes every scheduler tick + startup here.
 	// If we are already provisioned with a LIVE iface, this is a no-op reconcile —
 	// re-provisioning would allocate a new index, clobber persist, orphan the prior
-	// iface, and exhaust the 0..9 range. Full drift-reconcile (re-advertise health-
-	// gated DNS, re-add routes, restart a dead sing-box) is Task 15 (1D.3); here we
+	// iface, and exhaust the 0..9 range. Full drift-reconcile (re-add routes,
+	// restart a dead sing-box) is handled by reconcileFakeIPTun; here we
 	// only prevent the leak. Sits BEFORE allocate/SetFakeIPState/Create — the
 	// no-op return runs before any rollback is pushed.
 	if prev := settings.FakeIP; prev != nil && prev.Provisioned {
@@ -157,11 +156,11 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		}
 	})
 
-	// Create the OpkgTun with security-level PUBLIC so it appears in the access-
-	// policy interface list (ListGlobalInterfaces filters out private) → users can
-	// assign it as a policy exit. Source-preservation is handled separately by the
-	// segment NAT mode (PE-D static-NAT), NOT by SL/global (spec §3.2, base §2 fact 3).
-	if err = s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, fakeIPTunDescription, "public"); err != nil {
+	// Create the OpkgTun as security-level PRIVATE and WITHOUT `ip global`:
+	// steering is via specific pool/CIDR static routes onto the tun, not via an
+	// access-policy exit (the old policy-exit model is abandoned). A private,
+	// non-global tun routes traffic fine (stand-verified).
+	if err = s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, fakeIPTunDescription, "private"); err != nil {
 		return fmt.Errorf("enable fakeip-tun: create opkgtun: %w", err)
 	}
 	push(func() {
@@ -172,13 +171,6 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 			s.appLog.Warn("fakeip-rollback", iface, "delete opkgtun: "+e.Error())
 		}
 	})
-
-	// ip global: делает tun видимым/назначаемым в access-policy; default-route ниже делает выход рабочим.
-	// No separate rollback: DeleteOpkgTun (above) removes the iface and its
-	// global flag together.
-	if err = s.deps.OpkgTun.SetIPGlobal(ctx, ndmsName); err != nil {
-		return fmt.Errorf("enable fakeip-tun: set ip global: %w", err)
-	}
 
 	if err = s.deps.OpkgTun.SetAddress(ctx, ndmsName, addr4, mask4); err != nil {
 		return fmt.Errorf("enable fakeip-tun: set address: %w", err)
@@ -203,13 +195,12 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("enable fakeip-tun: iface up: %w", err)
 	}
 
-	// NB: the default-route (v4+v6) and static-NAT NDMS mutations were moved to
-	// AFTER sing-box is confirmed up (see below, post-waitForSingbox). Applying
-	// them HERE (pre-start) raced sing-box's tun attach — the NDMS route/NAT-table
-	// rebuild (slow RCI) churned the kernel right as sing-box opened the gvisor tun,
-	// so carrier never settled and the process died ~80s in (stand-verified
-	// 2026-06-17). The tun device/address provisioning above is all sing-box needs
-	// to attach; routing/NAT steering follows once it's live.
+	// NB: the pool/CIDR routes were moved to AFTER sing-box is confirmed up (see
+	// below, post-waitForSingbox). Applying them HERE (pre-start) raced sing-box's
+	// tun attach — the NDMS route-table rebuild (slow RCI) churned the kernel right
+	// as sing-box opened the gvisor tun, so carrier never settled and the process
+	// died ~80s in (stand-verified 2026-06-17). The tun device/address provisioning
+	// above is all sing-box needs to attach; route steering follows once it's live.
 
 	// Wipe the fakeip cache when the configured pool ranges differ from what the
 	// persisted cache was built with — a stale map would hand out addresses from
@@ -291,72 +282,17 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 
 	// Wait for sing-box to be truly ready (process + tun carrier + live fakeip
 	// DNS). The address flush already ran PRE-start (above), so the tun keeps the
-	// address sing-box assigns on attach. HARD fail: an unready sing-box with the
-	// DHCP DNS advertised would black-hole client DNS, so we roll the whole thing
-	// back.
+	// address sing-box assigns on attach. HARD fail: an unready sing-box means the
+	// tun and its hijack-dns path never come up, so we roll the whole thing back.
 	bootWait := bootWaitWithFloor()
 	if err = s.waitForSingbox(ctx, bootWait); err != nil {
 		return fmt.Errorf("enable fakeip-tun: %w: waited %s (%v)", ErrSingboxNotReady, bootWait, err)
 	}
 
-	// Routing + source-preservation NDMS mutations run AFTER sing-box is confirmed
-	// up (carrier) — applying them pre-start raced the gvisor tun attach (see the
-	// note after InterfaceUp). Post-readiness sing-box is attached against a quiet
-	// NDMS, so these steer routing/NAT without disturbing the live tun.
-
-	// Default route via the tun (v4 + v6) so a policy with the OpkgTun as exit
-	// actually routes — NDMS does NOT auto-add it. LIFO push-rollback.
-	if err = s.deps.DefaultRoute.SetDefaultRoute(ctx, ndmsName); err != nil {
-		return fmt.Errorf("enable fakeip-tun: set default route: %w", err)
-	}
-	push(func() {
-		if e := s.deps.DefaultRoute.RemoveDefaultRoute(ctx, ndmsName); e != nil {
-			s.appLog.Warn("fakeip-rollback", iface, "remove default route: "+e.Error())
-		}
-	})
-	if p.TunAddr6 != "" {
-		if err = s.deps.DefaultRoute.SetIPv6DefaultRoute(ctx, ndmsName); err != nil {
-			return fmt.Errorf("enable fakeip-tun: set v6 default route: %w", err)
-		}
-		push(func() {
-			if e := s.deps.DefaultRoute.RemoveIPv6DefaultRoute(ctx, ndmsName); e != nil {
-				s.appLog.Warn("fakeip-rollback", iface, "remove v6 default route: "+e.Error())
-			}
-		})
-	}
-
-	// Static-NAT delivery-segment source preservation (PE-D, spec §3.2/§3.3).
-	// Placed AFTER the default route so routing already exists before NAT flips.
-	// Guarded by FakeIPSourcePreserveOrDefault (default on). DESIGN CHOICE: on a
-	// resolve failure we WARN + continue rather than failing the whole Enable —
-	// the tun still works, source may just be masqueraded; the source-preservation
-	// reconcile/Status (PE-G) surfaces the degraded state. Only a real apply error
-	// (NAT command failed) is fatal, with a push-rollback that restores dynamic NAT.
-	if sr.FakeIPSourcePreserveOrDefault() {
-		seg, wan, rerr := s.resolveDeliverySegmentAndWAN(ctx)
-		if rerr != nil {
-			s.appLog.Warn("fakeip-nat", iface, "resolve segment/WAN for static-NAT: "+rerr.Error())
-		} else if seg != "" && wan != "" {
-			if err = s.applyStaticNAT(ctx, seg, wan); err != nil {
-				return fmt.Errorf("enable fakeip-tun: static-NAT: %w", err)
-			}
-			push(func() {
-				if e := s.teardownStaticNAT(ctx, seg, wan); e != nil {
-					s.appLog.Warn("fakeip-rollback", iface, "restore dynamic NAT: "+e.Error())
-				}
-			})
-			// Persist the applied static-NAT fact so Disable/rollback restore by
-			// fact, not by the live setting (bug #3). Persist-first earlier ran
-			// before static-NAT, so this is a second, narrowing write.
-			// Write directly into the in-flight settings.FakeIP (same pointer set
-			// by the persist-first SetFakeIPState above) so the final Save(settings)
-			// at the end of enableFakeIPTun carries these fields.
-			if settings.FakeIP != nil {
-				settings.FakeIP.StaticNATSeg = seg
-				settings.FakeIP.StaticNATWAN = wan
-			}
-		}
-	}
+	// Routing NDMS mutations run AFTER sing-box is confirmed up (carrier) —
+	// applying them pre-start raced the gvisor tun attach (see the note after
+	// InterfaceUp). Post-readiness sing-box is attached against a quiet NDMS, so
+	// these steer routing without disturbing the live tun.
 
 	// NDMS auto static routes steer the fakeip pool(s) into the tun.
 	if err = s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
@@ -434,19 +370,9 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	}
 	dnsConfirmCancel()
 
-	// Health-gated DHCP DNS delivery: advertise the tun DNS to LAN clients only
-	// when sing-box is running AND the egress is up; otherwise clear it so
-	// clients fall back to the router's default DNS (no outage).
-	// E. advertiseDNS uses the fakeip config (fcfg) so fakeIPEgressUp checks
-	// the fakeip egress (route.final), not the tproxy router slot egress.
-	if err = s.advertiseDNSIfHealthy(ctx, p.DHCPPool, tunDNS, iface, fcfg); err != nil {
-		return fmt.Errorf("enable fakeip-tun: advertise dns: %w", err)
-	}
-	push(func() {
-		if e := s.deps.DHCP.ClearPoolDNS(ctx, p.DHCPPool); e != nil {
-			s.appLog.Warn("fakeip-rollback", iface, "clear pool dns: "+e.Error())
-		}
-	})
+	// awg-manager no longer advertises the tun DNS to LAN clients — the user
+	// configures client DNS manually. The fakeip DNS server still receives queries
+	// via the hijack-dns route rule once a client points at the tun .2.
 
 	// Persist enabled LAST (success). From here we do NOT roll back.
 	settings.SingboxRouter = sr
@@ -456,78 +382,6 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 
 	s.emitStatus(ctx)
 	return nil
-}
-
-// advertiseDNSIfHealthy sets the DHCP pool DNS to the tun DNS only when sing-box
-// is running AND the egress is up; otherwise clears it so clients fall back to
-// the router's default DNS (no outage while the proxy path is down).
-//
-// Change-detection (Fix B1/B2): the DHCP write only fires when the DESIRED state
-// (advertise vs clear) differs from the last-applied state cached on the service
-// (fakeIPDNSAdvertised). In steady state the desired state is stable, so the
-// per-tick drift-reconcile makes ZERO DHCP writes. A genuine flip (sing-box
-// dies, egress carrier drops, or recovers) still applies exactly once — the
-// correct intent. The cache is guarded by the dedicated fakeIPDNSMu, never s.mu,
-// because this is reached from both the s.mu-holding Enable path and the
-// lock-free Reconcile path.
-func (s *ServiceImpl) advertiseDNSIfHealthy(ctx context.Context, pool, tunDNS, iface string, cfg *RouterConfig) error {
-	running, _ := s.deps.Singbox.IsRunning()
-	desired := running && s.fakeIPEgressUp(cfg)
-
-	s.fakeIPDNSMu.Lock()
-	unchanged := s.fakeIPDNSAdvertised != nil && *s.fakeIPDNSAdvertised == desired
-	s.fakeIPDNSMu.Unlock()
-	if unchanged {
-		return nil // desired DHCP-DNS state already applied → no write
-	}
-
-	var err error
-	if desired {
-		err = s.deps.DHCP.SetPoolDNS(ctx, pool, []string{tunDNS})
-	} else {
-		err = s.deps.DHCP.ClearPoolDNS(ctx, pool)
-	}
-	if err != nil {
-		return err // leave the cache untouched so the next tick retries
-	}
-
-	s.fakeIPDNSMu.Lock()
-	d := desired
-	s.fakeIPDNSAdvertised = &d
-	s.fakeIPDNSMu.Unlock()
-	return nil
-}
-
-// fakeIPEgressUp reports whether the proxy egress is usable. If the route.final
-// outbound binds an interface (direct + bind_interface), egress readiness is
-// that interface's carrier; otherwise (a proxy outbound with no bind) there is
-// no carrier signal to gate on, so it is treated as up (sing-box owns the
-// tunnel's health).
-func (s *ServiceImpl) fakeIPEgressUp(cfg *RouterConfig) bool {
-	for _, o := range cfg.Outbounds {
-		if o.Tag != cfg.Route.Final {
-			continue
-		}
-		if o.BindInterface != "" {
-			return tunReadyProbe(o.BindInterface)
-		}
-		// RISK (blind true): a bind-less proxy / composite outbound has no carrier
-		// signal, so we return up unconditionally. A real proxy-egress health gate
-		// would need a Clash-API delay probe against the outbound (roadmap) — until
-		// then a dead proxy still advertises DNS and clients black-hole silently.
-		return true
-	}
-	// final is NOT among the router slot's own outbounds — the common case: the
-	// egress (e.g. an AWG outbound "awg-awg10") lives in 15-awg.json / another
-	// config slot that sing-box merges, so the router slot's cfg.Outbounds is
-	// empty or lacks it (stand-confirmed 2026-06-15: slot outbounds=[] while
-	// route.final="awg-awg10" → the old `return false` here held DHCP DNS forever
-	// and LAN clients never got the fakeip .2). The tag was already validated as a
-	// known outbound by isKnownOutboundTag at enable; there is no local carrier
-	// signal to probe, so treat it as up (same blind-true as a bind-less proxy).
-	// An empty final (no egress configured) stays down. Mirrors the egress-
-	// validation fix (isKnownOutboundTag scans ALL catalogs, not just this slot).
-	return cfg.Route.Final != ""
 }
 
 // splitCIDRToAddrMask splits a CIDR into its bare address string and dotted-quad

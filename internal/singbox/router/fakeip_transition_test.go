@@ -52,8 +52,6 @@ func newTransitionHarness(t *testing.T) *transitionHarness {
 	log := &callLog{}
 	svc.deps.OpkgTun = &recOpkgTun{log: log}
 	svc.deps.StaticRoutes = &recStaticRoutes{log: log}
-	svc.deps.DHCP = &recDHCP{log: log}
-	svc.deps.DefaultRoute = &recDefaultRoute{log: log}
 	svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{}}
 	svc.deps.FakeIPTun = DefaultFakeIPTunParams()
 	svc.deps.FakeIPTun.CachePath = filepath.Join(dir, "cache.db")

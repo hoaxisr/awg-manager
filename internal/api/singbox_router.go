@@ -46,11 +46,9 @@ type SingboxRouterStatusData struct {
 	OutboundAWGCount       int                     `json:"outboundAwgCount" example:"2"`
 	OutboundCompositeCount int                     `json:"outboundCompositeCount" example:"1"`
 	Final                  string                  `json:"final" example:"direct"`
-	SourcePreserved        *bool                   `json:"sourcePreserved,omitempty" example:"true"`
 	FakeIPIface            string                  `json:"fakeipIface,omitempty" example:"opkgtun0"`
-	FakeIPEgressUp         *bool                   `json:"fakeipEgressUp,omitempty" example:"true"`
-	FakeIPSourcePreserve   *bool                   `json:"fakeipSourcePreserve,omitempty" example:"true"`
-	FakeIPPolicyExitReady  *bool                   `json:"fakeipPolicyExitReady,omitempty" example:"true"`
+	FakeIPDns              string                  `json:"fakeipDns,omitempty" example:"172.18.0.2"`
+	FakeIPTunAddr          string                  `json:"fakeipTunAddr,omitempty" example:"172.18.0.1"`
 	LastError              string                  `json:"lastError,omitempty" example:"engine start failed"`
 	Issues                 []SingboxRouterIssueDTO `json:"issues,omitempty"`
 }
@@ -95,10 +93,6 @@ type SingboxRouterSettingsData struct {
 	FakeIPPool6 string `json:"fakeipPool6,omitempty" example:"fc00::/18"`
 	// FakeIPMTU is the tun MTU (default 1500; valid range 576-9000).
 	FakeIPMTU int `json:"fakeipMtu,omitempty" example:"1500"`
-	// FakeIPSourcePreserve: при true (default) fakeip-tun провизионит сегменты
-	// доставки в static-NAT (source LAN-устройств сохраняется); false = legacy
-	// dynamic-NAT. nil/absent = default true.
-	FakeIPSourcePreserve *bool `json:"fakeipSourcePreserve,omitempty" example:"true"`
 	// UDPTimeout sets the UDP session timeout for the tproxy-in inbound
 	// (Go duration string, e.g. "3m0s", "10m0s"). Empty = use default (3m0s).
 	// Increase to prevent long-quiet UDP applications (games, etc.) from

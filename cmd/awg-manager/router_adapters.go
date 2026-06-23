@@ -170,19 +170,11 @@ func (a *routerIngressResolverAdapter) Resolve(ctx context.Context, ref string) 
 	return a.store.ResolveSystemName(ctx, strings.TrimPrefix(ref, prefix))
 }
 
-// Compile-time satisfaction for the directly-wired fakeip provisioners:
-// *InterfaceCommands and *DHCPCommands implement the router interfaces
-// structurally, so they're injected without an adapter. These assertions
-// surface any ndms method-signature drift at this declaration line.
+// Compile-time satisfaction for the directly-wired fakeip provisioner:
+// *InterfaceCommands implements the router interface structurally, so it's
+// injected without an adapter. This assertion surfaces any ndms
+// method-signature drift at this declaration line.
 var _ router.OpkgTunProvisioner = (*ndmscommand.InterfaceCommands)(nil)
-var _ router.DHCPProvider = (*ndmscommand.DHCPCommands)(nil)
-var _ router.DefaultRouteProvider = (*ndmscommand.RouteCommands)(nil)
-var _ router.SegmentNATProvider = (*ndmscommand.NATCommands)(nil)
-
-// *StaticNATStore.ForInterface matches router.StaticNATReader structurally, so the
-// reconcile drift-heal's static-NAT reader is wired directly (no adapter). This
-// assertion surfaces any ndms query-store signature drift at the declaration line.
-var _ router.StaticNATReader = (*ndmsquery.StaticNATStore)(nil)
 
 var _ router.StaticRouteProvider = (*routerStaticRouteAdapter)(nil)
 
@@ -212,44 +204,6 @@ func (a *routerStaticRouteAdapter) AddStaticRoute(ctx context.Context, r router.
 
 func (a *routerStaticRouteAdapter) RemoveStaticRoute(ctx context.Context, r router.StaticRouteSpec) error {
 	return a.routes.RemoveStaticRoute(ctx, toNDMSRoute(r))
-}
-
-var _ router.DHCPPoolSegmentResolver = (*routerDHCPPoolSegmentAdapter)(nil)
-
-// routerDHCPPoolSegmentAdapter resolves a DHCP pool to the NDMS segment it is
-// bound to, by listing pools and matching by name. The DHCPPool query store
-// has only List (no per-pool getter); the list is cheap (cached running-config)
-// so a list-and-find is fine. router stays decoupled from ndmsquery via the
-// consumer-owned DHCPPoolSegmentResolver (DIP), bridged here.
-type routerDHCPPoolSegmentAdapter struct {
-	store *ndmsquery.DHCPPoolStore
-}
-
-func (a *routerDHCPPoolSegmentAdapter) SegmentForPool(ctx context.Context, pool string) (string, error) {
-	pools, err := a.store.List(ctx)
-	if err != nil {
-		return "", err
-	}
-	for _, p := range pools {
-		if p.Name == pool {
-			return p.Interface, nil // Interface = the bound NDMS segment (e.g. "Home")
-		}
-	}
-	return "", fmt.Errorf("dhcp pool %q not found", pool)
-}
-
-var _ router.DefaultGatewayResolver = (*routerDefaultGatewayAdapter)(nil)
-
-// routerDefaultGatewayAdapter resolves the active WAN to its NDMS interface id
-// via the route store. GetDefaultGatewayInterface returns the NDMS id directly
-// (precedent: internal/managed internet-only NAT feeds it straight into
-// `ip static`'s to-interface), which is exactly what router needs for static-NAT.
-type routerDefaultGatewayAdapter struct {
-	store *ndmsquery.RouteStore
-}
-
-func (a *routerDefaultGatewayAdapter) DefaultGatewayInterface(ctx context.Context) (string, error) {
-	return a.store.GetDefaultGatewayInterface(ctx)
 }
 
 var _ router.OpkgTunIndexLister = (*routerOpkgTunIndexAdapter)(nil)

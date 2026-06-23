@@ -29,38 +29,18 @@ type Status struct {
 	OutboundAWGCount       int    `json:"outboundAwgCount"`
 	OutboundCompositeCount int    `json:"outboundCompositeCount"`
 	Final                  string `json:"final"`
-	// SourcePreserved reports the fakeip-tun source-preservation verdict
-	// (Task 15): nil = unknown / not-checked (no conntrack data or not in
-	// fakeip-tun mode), true = forward-client source IP is preserved into the
-	// tun, false = traffic is being SNAT'd to the tun address (per-device
-	// targeting / source rules will misbehave). Pointer so the unknown state
-	// stays out of JSON. fakeip-tun only.
-	SourcePreserved *bool `json:"sourcePreserved,omitempty"`
 	// FakeIPIface is the active fakeip-tun kernel interface name ("opkgtun<idx>")
 	// when the router is provisioned in fakeip-tun mode; empty otherwise. The UI
 	// surfaces it in the «Настройки движка» panel. Populated from the persisted
-	// FakeIPState.Index (mirrors how SourcePreserved is conditionally populated).
+	// FakeIPState.Index.
 	FakeIPIface string `json:"fakeipIface,omitempty"`
-	// FakeIPEgressUp is the GLOBAL fakeip egress-health signal (Task 25): the
-	// proxy egress backing the tun DNS is usable. The router advertises the tun
-	// DNS (.2) to the DHCP pools ONLY when egress is up; when it drops, the pool
-	// DNS is cleared and ALL fakeip segments fall back to direct (no black-hole)
-	// — indistinguishable, per-pool, from "user chose direct". This flag lets the
-	// UI show an honest section-level "DNS-delivery held" banner. nil outside
-	// fakeip-tun mode (or when not provisioned) so it stays out of JSON. There is
-	// no per-pool intent persistence, so this is deliberately global, not per-pool.
-	FakeIPEgressUp *bool `json:"fakeipEgressUp,omitempty"`
-	// FakeIPSourcePreserve mirrors the user's FakeIPSourcePreserve setting (default
-	// true): whether fakeip-tun provisions the delivery segment into static-NAT to
-	// preserve LAN-device source IPs (policy-exit). The UI shows the toggle state.
-	// Populated only in fakeip-tun mode; nil otherwise (stays out of JSON).
-	FakeIPSourcePreserve *bool `json:"fakeipSourcePreserve,omitempty"`
-	// FakeIPPolicyExitReady reports whether the fakeip-tun is fully provisioned as a
-	// source-preserving policy exit (mode == "fakeip-tun" AND the iface is
-	// provisioned). The UI keys its "assignable as policy exit" hint on this.
-	// Populated only in fakeip-tun mode; nil otherwise.
-	FakeIPPolicyExitReady *bool   `json:"fakeipPolicyExitReady,omitempty"`
-	Issues                []Issue `json:"issues,omitempty"`
+	// FakeIPDns is the DNS address clients must configure manually in fakeip-tun
+	// mode (DeriveTunDNS of the tun /30 gw, e.g. "172.18.0.2"); "" when not fakeip.
+	FakeIPDns string `json:"fakeipDns,omitempty"`
+	// FakeIPTunAddr is the fakeip-tun gateway address (the tun /30 host, e.g.
+	// "172.18.0.1"); "" when not in fakeip-tun mode. Read-only, for display.
+	FakeIPTunAddr string  `json:"fakeipTunAddr,omitempty"`
+	Issues        []Issue `json:"issues,omitempty"`
 	// LastError is the last sing-box fatal/exit reason, populated only when
 	// the engine is enabled but not active (СБОЙ). Empty otherwise.
 	LastError string `json:"lastError,omitempty"`

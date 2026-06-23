@@ -404,7 +404,6 @@ func TestDisable_RemovesCIDRRoutes(t *testing.T) {
 // (stubbed → false). Mirrors TestReconcileFakeIPTun_ReaddsRouteWhenMissing.
 func TestReconcileFakeIPTun_ReaddsCIDRRouteWhenMissing(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	neutralSourceProbe(t)
 
 	// Seed a loop-safe proxy ip_cidr rule before provisioning so loadFakeIPConfig
 	// returns it on reconcile.
@@ -450,7 +449,6 @@ func stubFakeIPPoolRoute6Present(t *testing.T, fn func(string, netip.Prefix) boo
 // the v6 route must be re-added; probe TRUE (present) → zero churn.
 func TestReconcileFakeIPTun_V6CIDRSelfHealNoV4(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	neutralSourceProbe(t)
 
 	// Seed a loop-safe proxy rule carrying ONLY a v6 ip_cidr — no v4 CIDR at all.
 	fcfg := `{"dns":{"rules":[{"action":"route","server":"fakeip","query_type":["A","AAAA"]}]},` +
@@ -491,7 +489,6 @@ func TestReconcileFakeIPTun_V6CIDRSelfHealNoV4(t *testing.T) {
 // is driven by its own probe, not by v4 drift.
 func TestReconcileFakeIPTun_V6CIDRGatedOnPresenceProbe(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	neutralSourceProbe(t)
 
 	// Seed a loop-safe proxy rule carrying BOTH a v4 and a v6 ip_cidr so a v6 CIDR
 	// route exists in the desired set.

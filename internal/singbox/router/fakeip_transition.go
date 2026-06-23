@@ -146,7 +146,7 @@ func (s *ServiceImpl) SwitchRoutingMode(ctx context.Context, target string) erro
 
 	// ── Teardown the OLD mode (if any) ──────────────────────────────────────
 	// Disable dispatches by the STILL-persisted source mode, so it tears down
-	// the correct resources (tproxy iptables OR fakeip opkgtun/routes/DHCP) and
+	// the correct resources (tproxy iptables OR fakeip opkgtun/routes) and
 	// persists Enabled=false (+ clears fakeip persist).
 	if source != stateOff {
 		s.emitTransition(id, source, target,
@@ -209,7 +209,7 @@ func (s *ServiceImpl) persistMode(mode string, enabled bool) error {
 //	source=tproxy, target=fakeip-tun → restore tproxy (Enable tproxy); finalState=tproxy
 //	source=off,    target=fakeip-tun → leave disabled;                  finalState=off
 //	source=fakeip, target=tproxy     → DO NOT restore fakeip (its teardown already
-//	                                   freed the index + reverted DHCP); go to OFF;
+//	                                   freed the index); go to OFF;
 //	                                   finalState=off (explicit error)
 //	source=off,    target=tproxy     → leave disabled;                  finalState=off
 //
@@ -240,8 +240,8 @@ func (s *ServiceImpl) rollbackSwitch(ctx context.Context, id, source, target str
 		return fmt.Errorf("switch %s→%s failed (finalState=%s, rolled back): %w", source, target, final, enableErr)
 	}
 
-	// fakeip→tproxy failed AFTER the fakeip teardown already freed the index +
-	// reverted DHCP. Restoring fakeip blindly would re-allocate/re-provision —
+	// fakeip→tproxy failed AFTER the fakeip teardown already freed the index.
+	// Restoring fakeip blindly would re-allocate/re-provision —
 	// NOT a clean rollback. Go to OFF and say so explicitly.
 	if source == stateFakeIPTun && target == stateTProxy {
 		msg := "switch to tproxy failed after fakeip teardown; left disabled"

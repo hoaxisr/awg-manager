@@ -117,7 +117,6 @@ type Server struct {
 	singboxConnsHandler        *api.SingboxConnectionsHandler
 	singboxRouterHandler       *api.SingboxRouterHandler
 	singboxFakeIPConfigHandler *api.SingboxFakeIPConfigHandler
-	fakeIPSegmentsHandler      *api.FakeIPSegmentsHandler
 	singboxConfigHandler       *api.SingboxConfigHandler
 	singboxProxiesHandler      *api.SingboxProxiesHandler
 	awgOutboundsHandler        *api.AWGOutboundsHandler
@@ -325,12 +324,6 @@ func (s *Server) SetSingboxRouterHandler(h *api.SingboxRouterHandler) {
 // the /api/singbox/fakeip/config/* routes can be registered.
 func (s *Server) SetSingboxFakeIPConfigHandler(h *api.SingboxFakeIPConfigHandler) {
 	s.singboxFakeIPConfigHandler = h
-}
-
-// SetFakeIPSegmentsHandler wires the fakeip-segments handler so the
-// /api/singbox/fakeip/segments route can be registered.
-func (s *Server) SetFakeIPSegmentsHandler(h *api.FakeIPSegmentsHandler) {
-	s.fakeIPSegmentsHandler = h
 }
 
 // SetAWGOutboundsHandler wires the AWG outbounds tag catalog handler
@@ -1191,12 +1184,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/singbox/router/staging", guarded(rh.GetStaging))
 		mux.HandleFunc("/api/singbox/router/staging/apply", guarded(rh.PostStagingApply))
 		mux.HandleFunc("/api/singbox/router/staging/discard", guarded(rh.PostStagingDiscard))
-	}
-
-	if s.fakeIPSegmentsHandler != nil {
-		// GET lists segments, POST toggles one segment's DNS delivery — both on
-		// the same path via the handler's method dispatch.
-		mux.HandleFunc("/api/singbox/fakeip/segments", guarded(s.fakeIPSegmentsHandler.Serve))
 	}
 
 	if s.singboxFakeIPConfigHandler != nil {

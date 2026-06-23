@@ -277,50 +277,6 @@ func liveFakeIPPoolRoute6Present(iface string, pool netip.Prefix) bool {
 	return false
 }
 
-// fakeIPDefaultRoutePresent is the seam for "a v4 default route (0.0.0.0/0) out
-// the tun iface exists". Overridable in tests. Reads /proc/net/route (v4).
-// Fail-closed (read error → false → drift-heal re-adds, which NDMS treats
-// idempotently). The reconcile drift-heal uses it to detect that the tun default
-// route (installed by Enable; NDMS does not auto-add it) drifted away.
-var fakeIPDefaultRoutePresent = liveFakeIPDefaultRoutePresent
-
-// liveFakeIPDefaultRoutePresent parses /proc/net/route and reports whether a v4
-// default route (destination 0.0.0.0, mask 0.0.0.0) out the given iface is
-// installed. Mirrors liveFakeIPPoolRoutePresent's parsing.
-func liveFakeIPDefaultRoutePresent(iface string) bool {
-	if iface == "" {
-		return false
-	}
-	data, err := os.ReadFile("/proc/net/route")
-	if err != nil {
-		return false
-	}
-	var zero [4]byte
-	lines := strings.Split(string(data), "\n")
-	for i, line := range lines {
-		if i == 0 { // header
-			continue
-		}
-		f := strings.Fields(line)
-		if len(f) < 8 {
-			continue
-		}
-		if f[0] != iface {
-			continue
-		}
-		dest, ok := parseProcRouteHex(f[1])
-		if !ok || dest != zero {
-			continue
-		}
-		mask, ok := parseProcRouteHex(f[7])
-		if !ok || mask != zero {
-			continue
-		}
-		return true
-	}
-	return false
-}
-
 // parseProcRouteHex decodes a /proc/net/route Destination/Mask field (8 hex
 // chars, little-endian u32) into a big-endian 4-byte address for comparison.
 func parseProcRouteHex(s string) ([4]byte, bool) {

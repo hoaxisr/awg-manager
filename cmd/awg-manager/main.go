@@ -1122,14 +1122,8 @@ func main() {
 		IngressResolver:        &routerIngressResolverAdapter{store: ndmsQueries.Interfaces},
 		PresetCatalog:          presetCatalog,
 		GeoData:                geoDataStore,
-		OpkgTun:                ndmsCommands.Interfaces,                                    // *InterfaceCommands satisfies OpkgTunProvisioner directly
-		DefaultRoute:           ndmsCommands.Routes,                                        // *RouteCommands satisfies DefaultRouteProvider directly
-		SegmentNAT:             ndmsCommands.NAT,                                           // *NATCommands satisfies SegmentNATProvider directly
-		DHCPPoolSegments:       &routerDHCPPoolSegmentAdapter{store: ndmsQueries.DHCPPool}, // pool→bound NDMS segment (PE-D static-NAT)
-		DefaultGateway:         &routerDefaultGatewayAdapter{store: ndmsQueries.Routes},    // active WAN → NDMS id (PE-D static-NAT autodetect)
-		StaticNAT:              ndmsQueries.StaticNAT,                                      // *StaticNATStore.ForInterface satisfies StaticNATReader (PE-E reconcile drift)
+		OpkgTun:                ndmsCommands.Interfaces, // *InterfaceCommands satisfies OpkgTunProvisioner directly
 		StaticRoutes:           &routerStaticRouteAdapter{routes: ndmsCommands.Routes},
-		DHCP:                   ndmsCommands.DHCP, // *DHCPCommands satisfies DHCPProvider directly
 		OpkgTunIndices: &routerOpkgTunIndexAdapter{
 			store: ndmsQueries.Interfaces,
 			log:   logging.NewScopedLogger(loggingService, logging.GroupRouting, logging.SubSingboxRouter),
@@ -1171,7 +1165,6 @@ func main() {
 
 	srv.SetSingboxRouterHandler(api.NewSingboxRouterHandler(routerSvc, loggingService))
 	srv.SetSingboxFakeIPConfigHandler(api.NewSingboxFakeIPConfigHandler(routerSvc, loggingService))
-	srv.SetFakeIPSegmentsHandler(api.NewFakeIPSegmentsHandler(ndmsQueries.DHCPPool, ndmsCommands.DHCP))
 	srv.SetAWGOutboundsHandler(api.NewAWGOutboundsHandler(awgoutboundsSvc))
 	srv.SetSingboxConfigHandler(api.NewSingboxConfigHandler(sbOrch.ConfigDir))
 

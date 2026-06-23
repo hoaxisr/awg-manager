@@ -677,18 +677,18 @@ func TestSetFakeIPState_PersistsAndClears(t *testing.T) {
 	}
 }
 
-func TestSetFakeIPState_PersistsStaticNAT(t *testing.T) {
+func TestSetFakeIPState_Persists(t *testing.T) {
 	tmpDir := t.TempDir()
 	s := NewSettingsStore(tmpDir)
 	if _, err := s.Load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if err := s.SetFakeIPState(&FakeIPState{Provisioned: true, Index: 0, StaticNATSeg: "Home", StaticNATWAN: "PPPoE0"}); err != nil {
+	if err := s.SetFakeIPState(&FakeIPState{Provisioned: true, Index: 2}); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := s.Load()
-	if got.FakeIP == nil || got.FakeIP.StaticNATSeg != "Home" || got.FakeIP.StaticNATWAN != "PPPoE0" {
-		t.Fatalf("static-NAT fact not persisted: %+v", got.FakeIP)
+	if got.FakeIP == nil || !got.FakeIP.Provisioned || got.FakeIP.Index != 2 {
+		t.Fatalf("fakeip state not persisted: %+v", got.FakeIP)
 	}
 }
 

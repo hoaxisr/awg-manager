@@ -137,53 +137,6 @@ func (r *recStaticRoutes) RemoveStaticRoute(_ context.Context, route StaticRoute
 	return nil
 }
 
-type recDHCP struct {
-	log    *callLog
-	failAt string
-}
-
-func (r *recDHCP) SetPoolDNS(_ context.Context, pool string, servers []string) error {
-	r.log.add("SetPoolDNS:" + pool + ":" + servers[0])
-	if r.failAt == "SetPoolDNS" {
-		return errors.New("injected: SetPoolDNS")
-	}
-	return nil
-}
-func (r *recDHCP) ClearPoolDNS(_ context.Context, pool string) error {
-	r.log.add("ClearPoolDNS:" + pool)
-	return nil
-}
-
-// recDefaultRoute records the v4/v6 default-route set/remove calls and can inject
-// a failure at SetDefaultRoute / SetIPv6DefaultRoute to exercise rollback.
-type recDefaultRoute struct {
-	log    *callLog
-	failAt string
-}
-
-func (r *recDefaultRoute) SetDefaultRoute(_ context.Context, name string) error {
-	r.log.add("SetDefaultRoute:" + name)
-	if r.failAt == "SetDefaultRoute" {
-		return errors.New("injected: SetDefaultRoute")
-	}
-	return nil
-}
-func (r *recDefaultRoute) RemoveDefaultRoute(_ context.Context, name string) error {
-	r.log.add("RemoveDefaultRoute:" + name)
-	return nil
-}
-func (r *recDefaultRoute) SetIPv6DefaultRoute(_ context.Context, name string) error {
-	r.log.add("SetIPv6DefaultRoute:" + name)
-	if r.failAt == "SetIPv6DefaultRoute" {
-		return errors.New("injected: SetIPv6DefaultRoute")
-	}
-	return nil
-}
-func (r *recDefaultRoute) RemoveIPv6DefaultRoute(_ context.Context, name string) error {
-	r.log.add("RemoveIPv6DefaultRoute:" + name)
-	return nil
-}
-
 type recIndices struct {
 	live map[int]bool
 }
@@ -200,14 +153,12 @@ func (r *recIndices) LiveOpkgTunIndices(context.Context) (map[int]bool, error) {
 // and the shared call log. It seeds RoutingMode=fakeip-tun and a router config
 // carrying a proxy outbound + route.final so the egress check passes.
 type fakeIPEnableHarness struct {
-	svc      *ServiceImpl
-	log      *callLog
-	opkg     *recOpkgTun
-	routes   *recStaticRoutes
-	dhcp     *recDHCP
-	defRoute *recDefaultRoute
-	store    *storage.SettingsStore
-	dir      string
+	svc    *ServiceImpl
+	log    *callLog
+	opkg   *recOpkgTun
+	routes *recStaticRoutes
+	store  *storage.SettingsStore
+	dir    string
 }
 
 func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
@@ -235,8 +186,6 @@ func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
 	log := &callLog{}
 	opkg := &recOpkgTun{log: log, failAt: failAt}
 	routes := &recStaticRoutes{log: log, failAt: failAt}
-	dhcp := &recDHCP{log: log, failAt: failAt}
-	defRoute := &recDefaultRoute{log: log, failAt: failAt}
 
 	singbox := newTestSingbox(t)
 	singbox.dir = dir
@@ -245,8 +194,6 @@ func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
 
 	svc.deps.OpkgTun = opkg
 	svc.deps.StaticRoutes = routes
-	svc.deps.DHCP = dhcp
-	svc.deps.DefaultRoute = defRoute
 	svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{}}
 	svc.deps.FakeIPTun = DefaultFakeIPTunParams()
 	svc.deps.FakeIPTun.CachePath = filepath.Join(dir, "cache.db")
@@ -265,7 +212,7 @@ func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
 	t.Cleanup(func() { fakeIPAddrFlush = old })
 
 	return &fakeIPEnableHarness{
-		svc: svc, log: log, opkg: opkg, routes: routes, dhcp: dhcp, defRoute: defRoute, store: store, dir: dir,
+		svc: svc, log: log, opkg: opkg, routes: routes, store: store, dir: dir,
 	}
 }
 
@@ -320,11 +267,11 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 
 	// Bug 1 guard: the NDMS interface name MUST be CamelCase OpkgTun0, NOT the
 	// lowercase kernel name (which NDMS rejects with "unsupported interface type").
-	createCall := "Create:" + ndmsName + ":public"
+	createCall := "Create:" + ndmsName + ":private"
 	if !h.log.has(createCall) {
-		t.Fatalf("Create with NDMS CamelCase name + public security-level missing: %v", h.log.calls)
+		t.Fatalf("Create with NDMS CamelCase name + private security-level missing: %v", h.log.calls)
 	}
-	if h.log.has("Create:" + iface + ":public") {
+	if h.log.has("Create:" + iface + ":private") {
 		t.Fatalf("Create used the lowercase kernel name (NDMS would reject it): %v", h.log.calls)
 	}
 	// sing-box / kernel sites use the lowercase kernel name (flush).
@@ -335,8 +282,11 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 	if !h.log.has("AddRoute:198.18.0.0:255.254.0.0:" + ndmsName) {
 		t.Fatalf("pool route Interface must be the NDMS name %q: %v", ndmsName, h.log.calls)
 	}
-	// SetIPGlobal must NOT be called (no such recorded label could exist; assert
-	// no global-ish call leaked — Create is the only creation op).
+	// SetIPGlobal must NOT be called: steering is via specific pool/CIDR routes,
+	// not access-policy exit (policy-exit model abandoned). The tun is private.
+	if h.log.has("SetIPGlobal:" + ndmsName) {
+		t.Errorf("fakeip must NOT set ip global (no policy-exit), got %v", h.log.calls)
+	}
 	mustOrder(createCall, "SetAddress:"+ndmsName+":172.18.0.1:255.255.255.252")
 	mustOrder("SetAddress:"+ndmsName+":172.18.0.1:255.255.255.252", "SetMTU:"+ndmsName+":1500")
 	// v6: SetIPv6Address is driven (defaults carry TunAddr6) and lands after the
@@ -349,20 +299,16 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 	// Flush runs PRE-start (right after iface up + config build), clearing stale
 	// addrs before sing-box attaches the gvisor tun.
 	mustOrder("InterfaceUp:"+ndmsName, "Flush:"+iface)
-	// Default route via the tun (v4 + v6) is installed POST-readiness (after the
-	// flush and the stubbed waitForSingbox) — applying it pre-start churned NDMS
-	// during the tun attach and the process died (PE-I lifecycle fix). NDMS does
-	// NOT auto-add it.
-	mustOrder("Flush:"+iface, "SetDefaultRoute:"+ndmsName)
-	mustOrder("SetDefaultRoute:"+ndmsName, "SetIPv6DefaultRoute:"+ndmsName)
-	// Default routes precede the pool routes (both post-readiness).
-	mustOrder("SetIPv6DefaultRoute:"+ndmsName, "AddRoute:198.18.0.0:255.254.0.0:"+ndmsName)
-	mustOrder("AddRoute:198.18.0.0:255.254.0.0:"+ndmsName, "SetPoolDNS:_WEBADMIN:172.18.0.2")
+	// The pool route is installed POST-readiness (after the flush and the stubbed
+	// waitForSingbox). No tun default route is installed — pool/CIDR traffic reaches
+	// the tun via specific routes; everything else egresses the normal WAN default.
+	mustOrder("Flush:"+iface, "AddRoute:198.18.0.0:255.254.0.0:"+ndmsName)
+	mustOrder("AddRoute:198.18.0.0:255.254.0.0:"+ndmsName, "AddRoute6:fc00::/18:"+ndmsName)
 
-	// DHCP SetPoolDNS must be the LAST provisioning call.
+	// The v6 pool route must be the LAST provisioning call (no DHCP advertise).
 	last := h.log.calls[len(h.log.calls)-1]
-	if last != "SetPoolDNS:_WEBADMIN:172.18.0.2" {
-		t.Errorf("last call = %q, want SetPoolDNS last", last)
+	if last != "AddRoute6:fc00::/18:"+ndmsName {
+		t.Errorf("last call = %q, want AddRoute6 last", last)
 	}
 
 	// SingboxRouter.Enabled persisted true.
@@ -581,9 +527,9 @@ func TestEnableFakeIPTun_UsesPersistedEngineSettings(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
-	// Execution order (PE-I): provision → Flush (pre-start) → [waitForSingbox] →
-	// SetDefaultRoute → SetIPv6DefaultRoute → AddRoute → AddRoute6 → SetPoolDNS.
-	steps := []string{"Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "Flush", "SetDefaultRoute", "SetIPv6DefaultRoute", "AddRoute", "AddRoute6", "SetPoolDNS"}
+	// Execution order: provision → Flush (pre-start) → [waitForSingbox] →
+	// AddRoute → AddRoute6.
+	steps := []string{"Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "Flush", "AddRoute", "AddRoute6"}
 	for _, step := range steps {
 		t.Run(step, func(t *testing.T) {
 			h := newFakeIPEnableHarness(t, step)
@@ -621,65 +567,24 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 					t.Errorf("Create-fail must not run iface teardown: %v", h.log.calls)
 				}
 			}
-			// PE-I order: Flush (pre-start) → [waitForSingbox] → SetDefaultRoute →
-			// SetIPv6DefaultRoute → AddRoute → AddRoute6 → SetPoolDNS. A failure rolls
-			// back exactly what landed before it (LIFO).
+			// Order: Flush (pre-start) → [waitForSingbox] → AddRoute → AddRoute6.
+			// A failure rolls back exactly what landed before it (LIFO).
 			switch step {
-			case "Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "Flush", "SetDefaultRoute":
-				// Failure at/before the v4 default route: no default route landed (the
-				// failing SetDefaultRoute never pushes its undo), no pool route, no DHCP.
-				if h.log.has("RemoveDefaultRoute:" + ndmsName) {
-					t.Errorf("%s: default route not applied yet — nothing to remove: %v", step, h.log.calls)
-				}
+			case "Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "Flush":
+				// Failure at/before the v4 pool route: no pool route added.
 				if h.log.has("AddRoute:198.18.0.0:255.254.0.0:" + ndmsName) {
 					t.Errorf("%s: pool route should not have been added", step)
 				}
-				if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
-					t.Errorf("%s: DHCP DNS should not have been set", step)
-				}
-			case "SetIPv6DefaultRoute":
-				// v4 default route landed, v6 failed → v4 undo runs; no pool route / DHCP.
-				if !h.log.has("RemoveDefaultRoute:" + ndmsName) {
-					t.Errorf("SetIPv6DefaultRoute: rollback missing RemoveDefaultRoute (v4): %v", h.log.calls)
-				}
-				if h.log.has("AddRoute:198.18.0.0:255.254.0.0:" + ndmsName) {
-					t.Errorf("SetIPv6DefaultRoute: pool route should not have been added")
-				}
-				if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
-					t.Errorf("SetIPv6DefaultRoute: DHCP DNS should not have been set")
-				}
 			case "AddRoute":
-				// Both default routes landed → both undone; pool-route add failed so
-				// nothing to remove for it; no DHCP.
-				if !h.log.has("RemoveDefaultRoute:"+ndmsName) || !h.log.has("RemoveIPv6DefaultRoute:"+ndmsName) {
-					t.Errorf("AddRoute: rollback missing default-route removal: %v", h.log.calls)
-				}
-				if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
-					t.Errorf("AddRoute: DHCP DNS should not have been set")
+				// Pool-route v4 add failed → nothing to remove for it.
+				if h.log.has("RemoveRoute:198.18.0.0:" + ndmsName) {
+					t.Errorf("AddRoute: nothing landed → no RemoveRoute expected: %v", h.log.calls)
 				}
 			case "AddRoute6":
-				// v6-route-add failure: v4 pool route + both default routes landed and
-				// must be removed; the v6 route never landed. DHCP must not be set.
+				// v6-route-add failure: v4 pool route landed and must be removed; the
+				// v6 route never landed.
 				if !h.log.has("RemoveRoute:198.18.0.0:" + ndmsName) {
 					t.Errorf("AddRoute6: rollback missing RemoveRoute (v4): %v", h.log.calls)
-				}
-				if !h.log.has("RemoveDefaultRoute:"+ndmsName) || !h.log.has("RemoveIPv6DefaultRoute:"+ndmsName) {
-					t.Errorf("AddRoute6: rollback missing default-route removal: %v", h.log.calls)
-				}
-				if h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
-					t.Errorf("AddRoute6: DHCP DNS should not have been set")
-				}
-			case "SetPoolDNS":
-				// Everything landed then must be removed in rollback (pool v4+v6 +
-				// both default routes).
-				if !h.log.has("RemoveRoute:198.18.0.0:" + ndmsName) {
-					t.Errorf("SetPoolDNS: rollback missing RemoveRoute: %v", h.log.calls)
-				}
-				if !h.log.has("RemoveRoute6:fc00::/18:" + ndmsName) {
-					t.Errorf("SetPoolDNS: rollback missing RemoveRoute6: %v", h.log.calls)
-				}
-				if !h.log.has("RemoveDefaultRoute:"+ndmsName) || !h.log.has("RemoveIPv6DefaultRoute:"+ndmsName) {
-					t.Errorf("SetPoolDNS: rollback missing default-route removal: %v", h.log.calls)
 				}
 			}
 		})
@@ -702,7 +607,7 @@ func slotEnabled(t *testing.T, svc *ServiceImpl, slot orchestrator.Slot) bool {
 // into fakeip / first enable), a post-flip failure must leave SlotRouter OFF —
 // re-enabling tproxy would be wrong (and break XOR intent).
 func TestEnableFakeIPTun_RollbackRestoresPriorRouterSlotState(t *testing.T) {
-	h := newFakeIPEnableHarness(t, "SetDefaultRoute") // post-flip failure
+	h := newFakeIPEnableHarness(t, "AddRoute") // post-flip failure
 	// Force the prior state: SlotRouter DISABLED (the harness writes 20-router.json
 	// to active, which counts as enabled — flip it off to model boot-into-fakeip).
 	if err := h.svc.deps.Orch.SetEnabled(orchestrator.SlotRouter, false); err != nil {
@@ -711,7 +616,7 @@ func TestEnableFakeIPTun_RollbackRestoresPriorRouterSlotState(t *testing.T) {
 
 	err := h.svc.Enable(context.Background())
 	if err == nil {
-		t.Fatal("expected error when SetDefaultRoute fails")
+		t.Fatal("expected error when AddRoute fails")
 	}
 
 	if slotEnabled(t, h.svc, orchestrator.SlotRouter) {
@@ -804,7 +709,7 @@ func TestEnableFakeIPTun_DNSConfirmFalse_StillSucceeds(t *testing.T) {
 		t.Fatalf("Enable must succeed despite an unconfirmed DNS round-trip: %v", err)
 	}
 
-	// Provisioning completed: persist + DHCP DNS advertised (the last step runs).
+	// Provisioning completed: persist written (the last step runs).
 	st := h.loadFakeIP(t)
 	if st == nil || !st.Provisioned || st.Index != 0 {
 		t.Fatalf("FakeIP persist = %+v, want provisioned index 0", st)
@@ -812,9 +717,6 @@ func TestEnableFakeIPTun_DNSConfirmFalse_StillSucceeds(t *testing.T) {
 	all, _ := h.store.Load()
 	if !all.SingboxRouter.Enabled {
 		t.Error("SingboxRouter.Enabled must be true (Enable not failed by best-effort confirm)")
-	}
-	if !h.log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
-		t.Errorf("DHCP DNS must still be advertised after the (false) DNS confirm: %v", h.log.calls)
 	}
 	// The confirm runs exactly once (post-readiness, NOT in the poll loop).
 	if dnsCalls != 1 {
@@ -870,7 +772,6 @@ func TestEnable_TproxyUnchanged(t *testing.T) {
 		// Fakeip deps wired but must NEVER be exercised in tproxy mode.
 		OpkgTun:        &recOpkgTun{log: log},
 		StaticRoutes:   &recStaticRoutes{log: log},
-		DHCP:           &recDHCP{log: log},
 		OpkgTunIndices: &recIndices{live: map[int]bool{}},
 		FakeIPTun:      DefaultFakeIPTunParams(),
 	})
@@ -991,98 +892,6 @@ func TestEnable_FakeIP_ClearManualStopError_NoProvisioning(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// advertiseDNSIfHealthy
-// ---------------------------------------------------------------------------
-
-func TestAdvertiseDNS_HealthGated(t *testing.T) {
-	cfgProxy := &RouterConfig{
-		Outbounds: []Outbound{{Tag: "proxy-out", Type: "socks", Server: "1.2.3.4"}},
-		Route:     Route{Final: "proxy-out"},
-	}
-
-	t.Run("running+egress-up sets DNS", func(t *testing.T) {
-		log := &callLog{}
-		singbox := newTestSingbox(t)
-		singbox.isRunningFn = func() (bool, int) { return true, 1 }
-		svc := newTestService(t, Deps{Singbox: singbox, DHCP: &recDHCP{log: log}})
-
-		if err := svc.advertiseDNSIfHealthy(context.Background(), "_WEBADMIN", "172.18.0.2", "opkgtun0", cfgProxy); err != nil {
-			t.Fatalf("advertiseDNSIfHealthy: %v", err)
-		}
-		if !log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
-			t.Errorf("want SetPoolDNS, got %v", log.calls)
-		}
-	})
-
-	t.Run("not running clears DNS", func(t *testing.T) {
-		log := &callLog{}
-		singbox := newTestSingbox(t)
-		singbox.isRunningFn = func() (bool, int) { return false, 0 }
-		svc := newTestService(t, Deps{Singbox: singbox, DHCP: &recDHCP{log: log}})
-
-		if err := svc.advertiseDNSIfHealthy(context.Background(), "_WEBADMIN", "172.18.0.2", "opkgtun0", cfgProxy); err != nil {
-			t.Fatalf("advertiseDNSIfHealthy: %v", err)
-		}
-		if !log.has("ClearPoolDNS:_WEBADMIN") {
-			t.Errorf("want ClearPoolDNS when not running, got %v", log.calls)
-		}
-	})
-
-	t.Run("egress-down (bind iface no carrier) clears DNS", func(t *testing.T) {
-		log := &callLog{}
-		singbox := newTestSingbox(t)
-		singbox.isRunningFn = func() (bool, int) { return true, 1 }
-		svc := newTestService(t, Deps{Singbox: singbox, DHCP: &recDHCP{log: log}})
-
-		cfgBound := &RouterConfig{
-			Outbounds: []Outbound{{Tag: "direct-bound", Type: "direct", BindInterface: "nwg2"}},
-			Route:     Route{Final: "direct-bound"},
-		}
-		stubTunReadyProbe(t, func(string) bool { return false }) // carrier down
-		if err := svc.advertiseDNSIfHealthy(context.Background(), "_WEBADMIN", "172.18.0.2", "opkgtun0", cfgBound); err != nil {
-			t.Fatalf("advertiseDNSIfHealthy: %v", err)
-		}
-		if !log.has("ClearPoolDNS:_WEBADMIN") {
-			t.Errorf("want ClearPoolDNS when bind-iface carrier down, got %v", log.calls)
-		}
-	})
-
-	t.Run("final in another slot (empty slot outbounds) still advertises", func(t *testing.T) {
-		// Regression for the stand-found bug (#27): the egress (e.g. AWG outbound
-		// "awg-awg10") lives in 15-awg.json, so the router slot's cfg.Outbounds is
-		// empty while route.final names the tag. The old fakeIPEgressUp returned
-		// false here and held DHCP DNS forever — LAN clients never got the .2.
-		log := &callLog{}
-		singbox := newTestSingbox(t)
-		singbox.isRunningFn = func() (bool, int) { return true, 1 }
-		svc := newTestService(t, Deps{Singbox: singbox, DHCP: &recDHCP{log: log}})
-
-		cfgElsewhere := &RouterConfig{Outbounds: nil, Route: Route{Final: "awg-awg10"}}
-		if err := svc.advertiseDNSIfHealthy(context.Background(), "_WEBADMIN", "172.18.0.2", "opkgtun0", cfgElsewhere); err != nil {
-			t.Fatalf("advertiseDNSIfHealthy: %v", err)
-		}
-		if !log.has("SetPoolDNS:_WEBADMIN:172.18.0.2") {
-			t.Errorf("want SetPoolDNS when egress is resolved from another slot, got %v", log.calls)
-		}
-	})
-
-	t.Run("empty final clears DNS (no egress configured)", func(t *testing.T) {
-		log := &callLog{}
-		singbox := newTestSingbox(t)
-		singbox.isRunningFn = func() (bool, int) { return true, 1 }
-		svc := newTestService(t, Deps{Singbox: singbox, DHCP: &recDHCP{log: log}})
-
-		cfgNoEgress := &RouterConfig{Outbounds: nil, Route: Route{Final: ""}}
-		if err := svc.advertiseDNSIfHealthy(context.Background(), "_WEBADMIN", "172.18.0.2", "opkgtun0", cfgNoEgress); err != nil {
-			t.Fatalf("advertiseDNSIfHealthy: %v", err)
-		}
-		if !log.has("ClearPoolDNS:_WEBADMIN") {
-			t.Errorf("want ClearPoolDNS when no egress is configured, got %v", log.calls)
-		}
-	})
-}
-
-// ---------------------------------------------------------------------------
 // Index allocation skips an occupied opkgtun
 // ---------------------------------------------------------------------------
 
@@ -1098,7 +907,7 @@ func TestEnableFakeIPTun_AllocatesLowestFreeIndex(t *testing.T) {
 		t.Fatalf("FakeIP index = %v, want 2 (0,1 occupied)", st)
 	}
 	// NDMS Create uses the CamelCase name for the allocated index.
-	if !h.log.has("Create:OpkgTun2:public") {
+	if !h.log.has("Create:OpkgTun2:private") {
 		t.Errorf("expected Create OpkgTun2, got %v", h.log.calls)
 	}
 }
@@ -1120,7 +929,7 @@ func TestEnableFakeIPTun_IdempotentWhenProvisioned(t *testing.T) {
 	if st1 == nil || !st1.Provisioned || st1.Index != 0 {
 		t.Fatalf("after first Enable FakeIP = %+v, want provisioned index 0", st1)
 	}
-	createCount1 := countCalls(h.log, "Create:OpkgTun0:public")
+	createCount1 := countCalls(h.log, "Create:OpkgTun0:private")
 	if createCount1 != 1 {
 		t.Fatalf("first Enable Create count = %d, want 1", createCount1)
 	}
@@ -1136,10 +945,10 @@ func TestEnableFakeIPTun_IdempotentWhenProvisioned(t *testing.T) {
 	}
 
 	// No second Create at all (neither opkgtun0 nor any other index).
-	if c := countCalls(h.log, "Create:OpkgTun0:public"); c != 1 {
+	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 1 {
 		t.Errorf("Create:opkgtun0 count = %d after second Enable, want 1 (no re-provision)", c)
 	}
-	if h.log.has("Create:OpkgTun1:public") {
+	if h.log.has("Create:OpkgTun1:private") {
 		t.Errorf("second Enable allocated a NEW index: %v", h.log.calls)
 	}
 
@@ -1159,7 +968,7 @@ func TestEnableFakeIPTun_ReprovisionsWhenIfaceGone(t *testing.T) {
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("first Enable: %v", err)
 	}
-	if c := countCalls(h.log, "Create:OpkgTun0:public"); c != 1 {
+	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 1 {
 		t.Fatalf("first Enable Create count = %d, want 1", c)
 	}
 
@@ -1170,7 +979,7 @@ func TestEnableFakeIPTun_ReprovisionsWhenIfaceGone(t *testing.T) {
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("second Enable (reprovision): %v", err)
 	}
-	if c := countCalls(h.log, "Create:OpkgTun0:public"); c != 2 {
+	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 2 {
 		t.Errorf("Create:opkgtun0 count = %d, want 2 (re-provisioned after iface gone): %v", c, h.log.calls)
 	}
 }
@@ -1275,19 +1084,16 @@ func TestDisableFakeIPTun_Ordering(t *testing.T) {
 		}
 	}
 
-	clearDNS := "ClearPoolDNS:_WEBADMIN"
 	// Bug 2: the reject route is the pool→OpkgTun route RENEWED with reject:true ON
 	// the OpkgTun interface (kill-switch flag), NOT an interface-less blackhole.
 	renewReject := "AddRejectRoute:198.18.0.0:255.254.0.0:" + ndmsName
 	rmAuto6 := "RemoveRoute6:fc00::/18:" + ndmsName
 
-	// ClearPoolDNS is FIRST.
-	if first := h.log.calls[0]; first != clearDNS {
-		t.Errorf("first call = %q, want %q first", first, clearDNS)
+	// The pool route is renewed to a reject kill-switch (interface-bound) FIRST —
+	// awg-manager no longer touches client DNS, so teardown opens with the route.
+	if first := h.log.calls[0]; first != renewReject {
+		t.Errorf("first call = %q, want %q first", first, renewReject)
 	}
-	// The pool route is renewed to a reject kill-switch (interface-bound) after DNS
-	// is cleared.
-	mustOrder(clearDNS, renewReject)
 	// Bug 2: there must be NO separate auto-route removal before the iface delete —
 	// the single pool route is the kill-switch and is only removed by the async
 	// drain LAST.
@@ -1529,8 +1335,8 @@ func TestDisableFakeIPTun_DispatchOnRawModeDespiteNormalizeError(t *testing.T) {
 		t.Fatalf("Disable: %v", err)
 	}
 
-	// Fakeip teardown ran (ClearPoolDNS + reject add are fakeip-only calls).
-	if !h.log.has("ClearPoolDNS:_WEBADMIN") {
+	// Fakeip teardown ran (the reject-route renew is a fakeip-only call).
+	if !h.log.has("AddRejectRoute:198.18.0.0:255.254.0.0:OpkgTun0") {
 		t.Errorf("raw-mode dispatch failed: fakeip teardown not run, got %v", h.log.calls)
 	}
 	if st := h.loadFakeIP(t); st != nil {
@@ -1539,7 +1345,7 @@ func TestDisableFakeIPTun_DispatchOnRawModeDespiteNormalizeError(t *testing.T) {
 }
 
 // TestDisable_TproxyUnchanged: tproxy-mode Disable must run the tproxy teardown
-// path and never touch the fakeip teardown (no opkgtun/route/dhcp calls).
+// path and never touch the fakeip teardown (no opkgtun/route calls).
 func TestDisable_TproxyUnchanged(t *testing.T) {
 	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
 		RoutingMode:   "tproxy",
@@ -1561,7 +1367,6 @@ func TestDisable_TproxyUnchanged(t *testing.T) {
 		// Fakeip deps wired but must NEVER be exercised in tproxy mode.
 		OpkgTun:        &recOpkgTun{log: log},
 		StaticRoutes:   &recStaticRoutes{log: log},
-		DHCP:           &recDHCP{log: log},
 		OpkgTunIndices: &recIndices{live: map[int]bool{}},
 		FakeIPTun:      DefaultFakeIPTunParams(),
 	})
@@ -1602,9 +1407,7 @@ func TestEnableFakeIPTun_NilDepsFailFast(t *testing.T) {
 	}{
 		{"OpkgTun", func(s *ServiceImpl) { s.deps.OpkgTun = nil }},
 		{"StaticRoutes", func(s *ServiceImpl) { s.deps.StaticRoutes = nil }},
-		{"DHCP", func(s *ServiceImpl) { s.deps.DHCP = nil }},
 		{"OpkgTunIndices", func(s *ServiceImpl) { s.deps.OpkgTunIndices = nil }},
-		{"DefaultRoute", func(s *ServiceImpl) { s.deps.DefaultRoute = nil }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1631,87 +1434,6 @@ func TestEnableFakeIPTun_NilDepsFailFast(t *testing.T) {
 // EVERY tick. A second Reconcile while enabled+provisioned must NOT re-provision.
 // ---------------------------------------------------------------------------
 
-// TestEnable_PersistsStaticNATFact asserts that after a successful Enable with
-// source-preservation on, the static-NAT segment and WAN are persisted in
-// FakeIPState so that Disable/rollback can restore by fact (bug #3, task 0.2).
-func TestEnable_PersistsStaticNATFact(t *testing.T) {
-	h := newFakeIPEnableHarness(t, "")
-
-	// Wire the static-NAT resolver deps (not wired by default in the harness).
-	recNAT := &recordingSegmentNAT{}
-	h.svc.deps.SegmentNAT = recNAT
-	h.svc.deps.DHCPPoolSegments = fakePoolSegments{seg: "Home"}
-	h.svc.deps.DefaultGateway = fakeDefaultGateway{id: "PPPoE0"}
-
-	if err := h.svc.Enable(context.Background()); err != nil {
-		t.Fatalf("Enable: %v", err)
-	}
-
-	st := h.loadFakeIP(t)
-	if st == nil {
-		t.Fatal("FakeIPState is nil after Enable")
-	}
-	if st.StaticNATSeg != "Home" {
-		t.Errorf("StaticNATSeg = %q, want %q", st.StaticNATSeg, "Home")
-	}
-	if st.StaticNATWAN != "PPPoE0" {
-		t.Errorf("StaticNATWAN = %q, want %q", st.StaticNATWAN, "PPPoE0")
-	}
-}
-
-// TestDisableFakeIPTun_RestoresNATByPersistedFact asserts that Disable restores
-// dynamic masquerade NAT using the PERSISTED StaticNATSeg/WAN fact (bug #3),
-// even when the LIVE FakeIPSourcePreserve setting is false. The live setting must
-// NOT gate the restore — only the persisted fact matters.
-func TestDisableFakeIPTun_RestoresNATByPersistedFact(t *testing.T) {
-	h := newFakeIPEnableHarness(t, "")
-	captureDrain(t)
-	stubOrphanNetdev(t, false)
-
-	// Wire SegmentNAT recording stub.
-	recNAT := &recordingSegmentNAT{}
-	h.svc.deps.SegmentNAT = recNAT
-
-	// Seed FakeIPState directly: provisioned + static-NAT fact recorded.
-	// This is the persisted fact that Disable must honour.
-	if err := h.store.SetFakeIPState(&storage.FakeIPState{
-		Provisioned:  true,
-		Index:        0,
-		Inet4Range:   "198.18.0.0/15",
-		Inet6Range:   "fc00::/18",
-		StaticNATSeg: "Home",
-		StaticNATWAN: "PPPoE0",
-	}); err != nil {
-		t.Fatalf("SetFakeIPState: %v", err)
-	}
-
-	// Set FakeIPSourcePreserve = false (LIVE setting OFF) — the bug: old code
-	// skipped teardown here; new code must restore by the persisted fact regardless.
-	falseVal := false
-	all, _ := h.store.Load()
-	all.SingboxRouter.FakeIPSourcePreserve = &falseVal
-	all.SingboxRouter.Enabled = true
-	if err := h.store.Save(all); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	h.log.calls = nil
-
-	if err := h.svc.Disable(context.Background()); err != nil {
-		t.Fatalf("Disable: %v", err)
-	}
-
-	// teardownStaticNAT must have run: RemoveStaticNAT then SetSegmentNAT.
-	want := []string{"RemoveStaticNAT Home PPPoE0", "SetSegmentNAT Home"}
-	if len(recNAT.calls) != len(want) {
-		t.Fatalf("SegmentNAT calls = %v, want %v", recNAT.calls, want)
-	}
-	for i, w := range want {
-		if recNAT.calls[i] != w {
-			t.Errorf("SegmentNAT call[%d] = %q, want %q", i, recNAT.calls[i], w)
-		}
-	}
-}
-
 func TestReconcileFakeIPTun_NoReprovision(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 	// Wire an IPTables whose probes always error → IsInstalled/HasAnyInstalled
@@ -1726,7 +1448,7 @@ func TestReconcileFakeIPTun_NoReprovision(t *testing.T) {
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
-	createCount1 := countCalls(h.log, "Create:OpkgTun0:public")
+	createCount1 := countCalls(h.log, "Create:OpkgTun0:private")
 	if createCount1 != 1 {
 		t.Fatalf("after Enable Create count = %d, want 1", createCount1)
 	}
@@ -1739,10 +1461,10 @@ func TestReconcileFakeIPTun_NoReprovision(t *testing.T) {
 	if err := h.svc.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if c := countCalls(h.log, "Create:OpkgTun0:public"); c != 1 {
+	if c := countCalls(h.log, "Create:OpkgTun0:private"); c != 1 {
 		t.Errorf("Create count = %d after Reconcile, want 1 (no re-provision): %v", c, h.log.calls)
 	}
-	if h.log.has("Create:OpkgTun1:public") {
+	if h.log.has("Create:OpkgTun1:private") {
 		t.Errorf("Reconcile leaked a new index: %v", h.log.calls)
 	}
 }

@@ -298,10 +298,6 @@ type Deps struct {
 	// fakeip pool + reject route. Optional — nil in tests; wired in
 	// cmd/awg-manager via the route adapter. Consumed by Slice 1D Enable.
 	StaticRoutes StaticRouteProvider
-	// DHCP delivers the tun DNS to LAN segments via DHCP pool dns-server.
-	// Optional — nil in tests; wired in cmd/awg-manager to
-	// *ndmscommand.DHCPCommands. Consumed by Slice 1D Enable.
-	DHCP DHCPProvider
 	// OpkgTunIndices lists occupied OpkgTun indices (kernel /sys ∪ NDMS)
 	// for the fakeip index allocator. Optional — nil in tests; wired in
 	// cmd/awg-manager via the union adapter. Consumed by Slice 1D Enable.
@@ -310,31 +306,6 @@ type Deps struct {
 	// ranges, tun addrs, MTU, DHCP pool). Zero-value in tests; defaults
 	// wired in cmd/awg-manager. Consumed by Slice 1D Enable.
 	FakeIPTun FakeIPTunParams
-	// DefaultRoute installs/removes the default route via the fakeip tun so a
-	// policy with the OpkgTun as exit actually routes. Optional — nil in tests;
-	// wired in cmd/awg-manager to *ndmscommand.RouteCommands. Consumed by PE-C Enable.
-	DefaultRoute DefaultRouteProvider
-	// SegmentNAT toggles segment NAT modes (masquerade / static-NAT) for source
-	// preservation. Optional — nil in tests; wired in cmd/awg-manager to
-	// *ndmscommand.NATCommands. Consumed by PE-D.
-	SegmentNAT SegmentNATProvider
-	// DHCPPoolSegments resolves the delivery DHCP pool to the NDMS segment
-	// (e.g. "Home") it is bound to, so static-NAT can target `ip static <Seg>`.
-	// Optional — nil in tests; wired in cmd/awg-manager over ndmsQueries.DHCPPool.
-	// Consumed by PE-D (resolveDeliverySegmentAndWAN).
-	DHCPPoolSegments DHCPPoolSegmentResolver
-	// DefaultGateway resolves the active WAN to its NDMS interface id (e.g.
-	// "PPPoE0") for the static-NAT to-interface in autodetect mode. Optional —
-	// nil in tests; wired in cmd/awg-manager over ndmsQueries.Routes. Returns the
-	// NDMS id directly (NOT a kernel name) — precedent: internal/managed
-	// internet-only NAT feeds this same value straight into `ip static`'s
-	// to-interface. Consumed by PE-D (resolveDeliverySegmentAndWAN).
-	DefaultGateway DefaultGatewayResolver
-	// StaticNAT reads the current static-NAT state of a segment (`ip static`) so
-	// the reconcile drift-heal can detect that source-preservation NAT drifted away
-	// and re-apply it. Optional — nil in tests / when source-preserve is off; wired
-	// in cmd/awg-manager over ndmsQueries.StaticNAT. Consumed by PE-E reconcile.
-	StaticNAT StaticNATReader
 }
 
 // routerLoggerAdapter narrows *logging.ScopedLogger to the wanLogger
@@ -387,26 +358,6 @@ type ServiceImpl struct {
 	inspectCacheOnce sync.Once
 	inspectCache     *ruleSetCache
 	datRuleSetMu     sync.Mutex
-
-	// fakeIPSourcePreserved holds the last fakeip-tun source-preservation
-	// verdict computed by assertSourcePreserved during a drift-reconcile:
-	// nil = unknown / not yet checked, true = source preserved, false =
-	// SNAT detected. Read by GetStatus to surface Status.SourcePreserved
-	// and a source-preservation Issue. Guarded by fakeIPSrcMu because
-	// Reconcile (writer) and GetStatus (reader) run on different goroutines.
-	fakeIPSrcMu           sync.Mutex
-	fakeIPSourcePreserved *bool
-
-	// fakeIPDNSAdvertised caches the last DHCP-DNS state advertiseDNSIfHealthy
-	// applied so the drift-reconcile only writes DHCP when the DESIRED state
-	// actually flips: nil = unknown / not yet applied, true = tun DNS advertised,
-	// false = pool DNS cleared. Guarded by a DEDICATED mutex (NOT s.mu):
-	// advertiseDNSIfHealthy is called both from enableFakeIPTun (holds s.mu) and
-	// from reconcileFakeIPTun (does NOT hold s.mu), so reusing s.mu would either
-	// deadlock or leave the cache unprotected. On the first call the cache is nil
-	// so it always applies, which is correct on Enable.
-	fakeIPDNSMu         sync.Mutex
-	fakeIPDNSAdvertised *bool
 }
 
 func NewService(d Deps) *ServiceImpl {
@@ -972,7 +923,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	}
 
 	// fakeip-tun has an entirely separate provisioning path (OpkgTun + tun +
-	// fakeip DNS + auto-routes + DHCP) with its own rollback. The tproxy body
+	// fakeip DNS + pool/CIDR routes) with its own rollback. The tproxy body
 	// below stays byte-for-byte unchanged for RoutingMode=="tproxy".
 	if sr.RoutingMode == "fakeip-tun" {
 		sr.Enabled = true
@@ -1339,53 +1290,21 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		lastError = s.deps.Singbox.LastError()
 	}
 	issues := s.computeIssues(cfg)
-	// fakeip-tun source-preservation (Task 15): surface the last verdict stored
-	// by the drift-reconcile's assertSourcePreserved. nil (unknown) stays out of
-	// JSON and raises NO issue (no false alarms); an explicit false adds an
-	// advisory warning. tproxy mode never touches either field.
-	var sourcePreserved *bool
-	// Gate on sr.Enabled as well as mode (Fix B3): a disabled-but-still-fakeip-mode
-	// router has torn the path down (and Disable cleared the verdict), so it must
-	// surface neither the flag nor the source-preservation warning.
 	// fakeip-tun active iface: surface the provisioned kernel iface name
 	// ("opkgtun<idx>") so the UI can show it in the engine-settings panel. Only
 	// when in fakeip-tun mode AND actually provisioned (persisted FakeIPState);
-	// empty otherwise (mirrors the conditional sourcePreserved population).
+	// empty otherwise.
 	var fakeIPIface string
-	// FakeIPEgressUp (Task 25): the GLOBAL egress-health signal that gates tun-DNS
-	// advertisement. Computed from the same cfg the Status builder already loaded
-	// (line 1234) via the existing fakeIPEgressUp method — the very predicate
-	// advertiseDNSIfHealthy uses to decide whether the .2 DNS is handed out. Only
-	// in fakeip-tun mode AND provisioned; nil otherwise (stays out of JSON). We
-	// expose egress-health (not the cached fakeIPDNSAdvertised) because cfg is
-	// already in hand here so it's clean to wire, and it reflects the live cause
-	// ("is egress usable → is DNS delivery active") without a lock dance.
-	var fakeIPEgressUp *bool
-	// PE-E policy-exit Status fields. FakeIPSourcePreserve mirrors the setting and
-	// FakeIPPolicyExitReady reports the tun is a usable source-preserving policy
-	// exit. Both are gated on the engine being ACTIVE (process + carrier + route),
-	// not just RoutingMode: RoutingMode stays "fakeip-tun" after `POST /mode off`,
-	// so a mode-only gate kept reporting policyExitReady:true while active:false.
-	// Both nil outside an active fakeip-tun engine.
-	var fakeIPSourcePreserve *bool
-	var fakeIPPolicyExitReady *bool
+	fakeIPDns := ""
+	fakeIPTunAddr := ""
 	if sr.RoutingMode == "fakeip-tun" && settings != nil &&
 		settings.FakeIP != nil && settings.FakeIP.Provisioned {
 		fakeIPIface = fakeIPIfaceName(settings.FakeIP.Index)
-		fakeIPEgressUp = boolPtr(s.fakeIPEgressUp(cfg))
-	}
-	if sr.RoutingMode == "fakeip-tun" && active {
-		fakeIPSourcePreserve = boolPtr(sr.FakeIPSourcePreserveOrDefault())
-		fakeIPPolicyExitReady = boolPtr(fakeIPIface != "")
-	}
-	if sr.RoutingMode == "fakeip-tun" && sr.Enabled {
-		sourcePreserved = s.loadSourcePreserved()
-		if sourcePreserved != nil && !*sourcePreserved {
-			issues = append(issues, Issue{
-				Severity: "warning",
-				Kind:     "source-preservation",
-				Message:  "forward-client source IP is being SNAT'd to the tun address; per-device targeting and source rules will misbehave — set the client segment to a no-masquerade / static-NAT mode (spec §2/§6)",
-			})
+		if d, derr := DeriveTunDNS(s.deps.FakeIPTun.TunAddr4); derr == nil {
+			fakeIPDns = d
+		}
+		if addr, _, aerr := splitCIDRToAddrMask(s.deps.FakeIPTun.TunAddr4); aerr == nil {
+			fakeIPTunAddr = addr
 		}
 	}
 	return Status{
@@ -1406,11 +1325,9 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		OutboundAWGCount:       awgCount,
 		OutboundCompositeCount: compCount,
 		Final:                  cfg.Route.Final,
-		SourcePreserved:        sourcePreserved,
 		FakeIPIface:            fakeIPIface,
-		FakeIPEgressUp:         fakeIPEgressUp,
-		FakeIPSourcePreserve:   fakeIPSourcePreserve,
-		FakeIPPolicyExitReady:  fakeIPPolicyExitReady,
+		FakeIPDns:              fakeIPDns,
+		FakeIPTunAddr:          fakeIPTunAddr,
 		Issues:                 issues,
 		LastError:              lastError,
 	}, nil
@@ -1421,7 +1338,7 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 	defer s.mu.Unlock()
 
 	// fakeip-tun teardown is an entirely separate path (no iptables; opkgtun +
-	// pool routes + DHCP DNS + a fail-closed drain). Dispatch by mode before the
+	// pool/CIDR routes + a fail-closed drain). Dispatch by mode before the
 	// tproxy body so the tproxy path below stays byte-for-byte unchanged for
 	// RoutingMode=="tproxy".
 	dispatchSettings, err := s.deps.Settings.Load()
@@ -1430,7 +1347,7 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 	}
 	// Dispatch on the RAW persisted RoutingMode, NOT the normalized value: a
 	// Normalize error (corrupt/hand-edited settings) would otherwise mis-route a
-	// fakeip-tun teardown into the tproxy body, orphaning the opkgtun/routes/DHCP.
+	// fakeip-tun teardown into the tproxy body, orphaning the opkgtun/routes.
 	// A raw string compare keeps the fakeip branch independent of normalize.
 	if dispatchSettings.SingboxRouter.RoutingMode == "fakeip-tun" {
 		return s.disableFakeIPTun(ctx, dispatchSettings)

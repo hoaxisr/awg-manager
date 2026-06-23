@@ -443,18 +443,19 @@ func parsePrefixes(cidrs []string) []namedPrefix {
 	return out
 }
 
-// DeriveTunDNS computes the DHCP-advertised DNS address for a fakeip-tun /30,
-// given the tun interface's own address in CIDR form (e.g. "172.18.0.1/30",
-// where .1 is the router's host on the link). It returns the OTHER usable host
-// of the /30 (the sing-box tun side), e.g. "172.18.0.2".
+// DeriveTunDNS computes the fakeip-tun client DNS address for a /30, given the
+// tun interface's own address in CIDR form (e.g. "172.18.0.1/30", where .1 is
+// the router's host on the link). It returns the OTHER usable host of the /30
+// (the sing-box tun side), e.g. "172.18.0.2". This is the address surfaced for
+// manual client DNS configuration (awg-manager does not push it via DHCP).
 //
 // A /30 has exactly four addresses: network, two usable hosts, broadcast. The
-// router owns one usable host; the DNS address is the other usable host so the
-// DHCP server can hand clients a DNS that lands inside the tun where sing-box
-// listens — NOT the router's own .1 (which would loop DNS back to the router,
-// bypassing fakeip).
+// router owns one usable host; the DNS address is the other usable host so a
+// client DNS pointed at it lands inside the tun where sing-box listens — NOT
+// the router's own .1 (which would loop DNS back to the router, bypassing
+// fakeip).
 //
-// Errors on: non-/30 prefixes, IPv6 (fakeip-tun DNS delivery is v4 DHCP), the
+// Errors on: non-/30 prefixes, IPv6 (the client DNS address is v4), the
 // network or broadcast address given as the iface host, a result that equals
 // the iface's own host (defensive — should be impossible for a valid /30 host),
 // and malformed input.

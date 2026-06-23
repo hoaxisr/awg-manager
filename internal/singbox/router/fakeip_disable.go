@@ -72,16 +72,16 @@ var fakeIPScheduleDrain = func(removeReject func()) {
 // the reject route — it survives the iface deletion still rejecting, which keeps
 // the pool fail-closed for the whole drain window.
 //
-// Safe ordering (each step is leak-conscious):
+// Safe ordering (each step is leak-conscious; the inline (N) markers below match
+// these numbers):
 //  1. nothing provisioned → just persist Enabled=false (idempotent).
-//  2. ClearPoolDNS FIRST — revert clients to the router's default DNS before the
-//     path is torn down, so they stop resolving via the fakeip tun.
-//  3. RENEW the v4 pool route with reject:true ON the OpkgTun interface — this
+//  2. RENEW the v4 pool route with reject:true ON the OpkgTun interface — this
 //     upgrades the existing route to a fail-closed kill-switch (no separate
-//     auto-route removal; the route always exists until step 9).
-//  4. stop sing-box, 5. delete the iface (the reject route now fail-closes the
-//     pool), 6. clear persist, 7. persist disabled.
-//  8. schedule the reject-route removal AFTER the drain window, off-lock.
+//     auto-route removal; the route always exists until step 7).
+//  3. v6 drain (remove the pool v6 route), 4. stop sing-box, then delete the
+//     iface (the reject route now fail-closes the pool), 5. clear persist,
+//  6. persist disabled.
+//  7. schedule the reject-route removal AFTER the drain window, off-lock.
 //
 // Asymmetry vs Enable (which rolls back on the first error): Disable PUSHES
 // THROUGH on best-effort step errors (log + continue). A half-removed fakeip is
@@ -99,13 +99,6 @@ var fakeIPScheduleDrain = func(removeReject func()) {
 // route today.
 func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Settings) error {
 	st := settings.FakeIP
-
-	// Clear the source-preservation verdict (Fix B3): it describes a now-defunct
-	// fakeip path and must not survive teardown into GetStatus as a phantom
-	// warning. Reset the DHCP-DNS cache too — the pool DNS is being cleared below,
-	// so the next Enable's advertiseDNSIfHealthy must re-apply from scratch.
-	s.storeSourcePreserved(nil)
-	s.resetFakeIPDNSAdvertised()
 
 	// Nothing provisioned (or persist already cleared) → idempotent: just persist
 	// the disabled flag and emit. No NDMS teardown to do.
@@ -136,34 +129,16 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 	haveV4 := poolNet4 != "" && poolMask4 != ""
 	haveV6 := st.Inet6Range != ""
 
-	// (2) ClearPoolDNS FIRST — revert clients to the router's default DNS before
-	// the path goes down. Best-effort.
-	if err := s.deps.DHCP.ClearPoolDNS(ctx, s.deps.FakeIPTun.DHCPPool); err != nil {
-		s.appLog.Warn("fakeip-disable", iface, "clear pool dns: "+err.Error())
-	}
-
-	// (2b) Restore dynamic masquerade NAT if Enable applied static-NAT — keyed on
-	// the PERSISTED fact, not the live FakeIPSourcePreserve setting (bug #3: flipping
-	// the setting off then disabling must still restore ip nat) and not a live
-	// re-resolve (a WAN/pool change between enable and disable would target the wrong
-	// segment). Best-effort + logged: a NAT-restore failure must NOT abort the
-	// teardown (a half-removed fakeip is worse than a fully-attempted one).
-	if st.StaticNATSeg != "" && st.StaticNATWAN != "" {
-		if err := s.teardownStaticNAT(ctx, st.StaticNATSeg, st.StaticNATWAN); err != nil {
-			s.appLog.Warn("fakeip-disable", iface, "restore dynamic NAT: "+err.Error())
-		}
-	}
-
-	// (3) RENEW the v4 pool route with reject:true ON the OpkgTun interface (Fix 2,
+	// (2) RENEW the v4 pool route with reject:true ON the OpkgTun interface (Fix 2,
 	// stand-verified). NDMS renews the existing pool→OpkgTun route in place, adding
 	// the reject flag — this turns the pool route into a fail-closed kill-switch:
 	// while the iface is up it routes, once we delete the iface below it REJECTS.
 	// Same network+mask+interface as the Enable pool route, so this UPDATES it
 	// rather than adding a second route (NDMS rejects two routes for one
 	// prefix+iface). We do NOT remove the auto-route — there is only ONE route for
-	// this prefix+iface and the async drain (step 8) removes it LAST.
+	// this prefix+iface and the async drain (step 7) removes it LAST.
 	//
-	// rejectRenewed gates the async drain schedule (step 8): if the renew FAILS the
+	// rejectRenewed gates the async drain schedule (step 7): if the renew FAILS the
 	// route stays a plain (non-reject) pool route — still present, so the pool is
 	// not leaked between here and iface delete (packets dead-end at the about-to-be-
 	// deleted tun). We then leave it for the startup sweep / a later reconcile
@@ -183,10 +158,10 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 		}
 	}
 
-	// (4) v6 drain: remove the pool v6 route (see the FAIL-OPEN note above — on a
+	// (3) v6 drain: remove the pool v6 route (see the FAIL-OPEN note above — on a
 	// dual-stack router with a v6 default it does NOT drop, it leaks). Best-effort.
-	// v4 needs NO auto-route removal here — step 3 renewed the single pool route in
-	// place; the async drain (step 8) removes it after the window.
+	// v4 needs NO auto-route removal here — step 2 renewed the single pool route in
+	// place; the async drain (step 7) removes it after the window.
 	// TODO(fakeip-v6-drain): v6 is fail-open on dual-stack routers with a v6 default
 	// route (no reject equivalent). Closing it needs the v6 route form to support a
 	// reject/blackhole route (ndms work + stand verification) — not done in v1.
@@ -198,7 +173,7 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 		}
 	}
 
-	// (5) Stop sing-box (move 21-fakeip.json under disabled/). Legacy (no orch):
+	// (4) Stop sing-box (move 21-fakeip.json under disabled/). Legacy (no orch):
 	// skip — there is no in-place inbound to strip for fakeip-tun. Best-effort.
 	if s.deps.Orch != nil {
 		if err := s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, false); err != nil {
@@ -206,8 +181,8 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 		}
 	}
 
-	// (5b) Delete the iface (down then delete) — NDMS name. With the pool route
-	// renewed to reject (step 3), deleting the iface fail-closes the pool: the
+	// (4b) Delete the iface (down then delete) — NDMS name. With the pool route
+	// renewed to reject (step 2), deleting the iface fail-closes the pool: the
 	// reject flag now drops any client still on a fakeip address. Best-effort.
 	if err := s.deps.OpkgTun.InterfaceDown(ctx, ndmsName); err != nil {
 		s.appLog.Warn("fakeip-disable", iface, "iface down: "+err.Error())
@@ -216,7 +191,7 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 		s.appLog.Warn("fakeip-disable", iface, "delete opkgtun: "+err.Error())
 	}
 
-	// (5c) Orphan-netdev cleanup (PE-E): NDMS DeleteOpkgTun normally tears the
+	// (4c) Orphan-netdev cleanup: NDMS DeleteOpkgTun normally tears the
 	// kernel device down too, but a half-removed teardown can leave a DOWN orphan
 	// opkgtunN behind. Such an orphan collides with the index allocator on the next
 	// Enable (LiveOpkgTunIndices unions kernel /sys names), so reap it directly via
@@ -248,19 +223,19 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 		}
 	}
 
-	// (6) Clear the fakeip persist — MANDATORY (push through even if a step above
+	// (5) Clear the fakeip persist — MANDATORY (push through even if a step above
 	// errored). A stale persist would make the startup reap chase a gone iface.
 	if err := s.deps.Settings.SetFakeIPState(nil); err != nil {
 		s.appLog.Warn("fakeip-disable", iface, "clear fakeip persist: "+err.Error())
 	}
 
-	// (7) Persist disabled — MANDATORY. This is the durable on/off truth.
+	// (6) Persist disabled — MANDATORY. This is the durable on/off truth.
 	settings.SingboxRouter.Enabled = false
 	if err := s.deps.Settings.Save(settings); err != nil {
 		return err
 	}
 
-	// (8) Schedule removal of the (now reject) pool route AFTER the drain window,
+	// (7) Schedule removal of the (now reject) pool route AFTER the drain window,
 	// OFF the lock (Disable holds s.mu; a blocking sleep here would stall
 	// everything). This is the LAST removal — the route fail-closes the pool until
 	// then. Use a background context (the request ctx may be cancelled when Disable

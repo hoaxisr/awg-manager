@@ -1151,79 +1151,6 @@ definitions:
         example: true
         type: boolean
     type: object
-  api.FakeIPSegmentDTO:
-    properties:
-      dnsServer:
-        example: 172.18.0.2
-        type: string
-      inFakeip:
-        example: false
-        type: boolean
-      pool:
-        example: _WEBADMIN
-        type: string
-      subnet:
-        example: 192.168.0.1/24
-        type: string
-    type: object
-  api.FakeIPSegmentToggleRequest:
-    properties:
-      inFakeip:
-        example: true
-        type: boolean
-      pool:
-        example: _WEBADMIN
-        type: string
-    type: object
-  api.FakeIPSegmentToggleResponse:
-    properties:
-      data:
-        $ref: '#/definitions/api.FakeIPSegmentToggleResult'
-      success:
-        example: true
-        type: boolean
-    type: object
-  api.FakeIPSegmentToggleResult:
-    properties:
-      inFakeip:
-        example: true
-        type: boolean
-      pool:
-        example: _WEBADMIN
-        type: string
-    type: object
-  api.FakeIPSegmentsData:
-    properties:
-      segments:
-        description: Segments is the DHCP-pool→fakeip-segment projection (always non-null).
-        items:
-          $ref: '#/definitions/api.FakeIPSegmentDTO'
-        type: array
-      tunAddr4:
-        description: TunAddr4 is the tun gateway IPv4 CIDR, e.g. "172.18.0.1/30".
-        example: 172.18.0.1/30
-        type: string
-      tunAddr6:
-        description: |-
-          TunAddr6 is the tun gateway IPv6 CIDR, e.g. "fdfe:dcba:9876::1/126"
-          (empty when v6 is disabled).
-        example: fdfe:dcba:9876::1/126
-        type: string
-      tunDns:
-        description: |-
-          TunDNS is the fakeip-tun DNS handed to clients (the .2 of the tun /30),
-          the same address provisioning advertises via DHCP.
-        example: 172.18.0.2
-        type: string
-    type: object
-  api.FakeIPSegmentsListResponse:
-    properties:
-      data:
-        $ref: '#/definitions/api.FakeIPSegmentsData'
-      success:
-        example: true
-        type: boolean
-    type: object
   api.GeoExpandData:
     properties:
       count:
@@ -3711,13 +3638,6 @@ definitions:
           "" disables v6.
         example: fc00::/18
         type: string
-      fakeipSourcePreserve:
-        description: |-
-          FakeIPSourcePreserve: при true (default) fakeip-tun провизионит сегменты
-          доставки в static-NAT (source LAN-устройств сохраняется); false = legacy
-          dynamic-NAT. nil/absent = default true.
-        example: true
-        type: boolean
       fakeipStack:
         description: |-
           --- fakeip-tun engine settings (user-editable) ---
@@ -3796,18 +3716,15 @@ definitions:
       enabled:
         example: true
         type: boolean
-      fakeipEgressUp:
-        example: true
-        type: boolean
+      fakeipDns:
+        example: 172.18.0.2
+        type: string
       fakeipIface:
         example: opkgtun0
         type: string
-      fakeipPolicyExitReady:
-        example: true
-        type: boolean
-      fakeipSourcePreserve:
-        example: true
-        type: boolean
+      fakeipTunAddr:
+        example: 172.18.0.1
+        type: string
       final:
         example: direct
         type: string
@@ -3849,9 +3766,6 @@ definitions:
         example: 4
         type: integer
       snifferEnabled:
-        example: true
-        type: boolean
-      sourcePreserved:
         example: true
         type: boolean
       tproxyTargetAvailable:
@@ -10536,72 +10450,6 @@ paths:
       summary: Update fakeip-config ruleset
       tags:
       - singbox-fakeip
-  /singbox/fakeip/segments:
-    get:
-      description: Returns the router's DHCP pools projected as fakeip "segments"
-        for the per-segment DNS-delivery toggles. Each segment reports its pool name,
-        subnet CIDR, the DHCP-advertised DNS server, and whether that DNS is already
-        the fakeip-tun DNS (inFakeip). Always a JSON array, never null.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.FakeIPSegmentsListResponse'
-        "405":
-          description: Method Not Allowed
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: List fakeip segments
-      tags:
-      - singbox-router
-    post:
-      consumes:
-      - application/json
-      description: Sets (inFakeip=true) or clears (false) the DHCP-advertised DNS
-        for one pool. true hands that pool's clients the fakeip-tun DNS (the .2 of
-        the tun /30, the same address the enable path derives); false drops the custom
-        dns-server so the pool falls back to default. Exactly one pool is toggled
-        per call (atomic per pool). On an NDMS failure returns 500 with the pool name
-        in the message; no partial multi-pool state.
-      parameters:
-      - description: Pool + target delivery state
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/api.FakeIPSegmentToggleRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.FakeIPSegmentToggleResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "405":
-          description: Method Not Allowed
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Toggle fakeip DNS delivery for one segment
-      tags:
-      - singbox-router
   /singbox/install:
     post:
       produces:

@@ -72,12 +72,6 @@ type FakeIPState struct {
 	Index       int    `json:"index,omitempty"`
 	Inet4Range  string `json:"inet4Range,omitempty"`
 	Inet6Range  string `json:"inet6Range,omitempty"`
-	// StaticNATSeg/StaticNATWAN record the delivery segment + WAN that Enable
-	// actually flipped to static-NAT (empty = none applied). Disable/rollback
-	// restore dynamic NAT by THIS fact, not the live FakeIPSourcePreserve setting
-	// (bug #3: flipping the setting off then disabling must still restore ip nat).
-	StaticNATSeg string `json:"staticNatSeg,omitempty"`
-	StaticNATWAN string `json:"staticNatWan,omitempty"`
 }
 
 type DownloadSettings struct {
@@ -142,22 +136,11 @@ type SingboxRouterSettings struct {
 	FakeIPPool6 string `json:"fakeipPool6,omitempty"`
 	// FakeIPMTU is the tun MTU (default 1500).
 	FakeIPMTU int `json:"fakeipMtu,omitempty"`
-	// FakeIPSourcePreserve: при true (default) fakeip-tun провизионит сегменты
-	// доставки в static-NAT (no ip nat + ip static) → source LAN-устройств
-	// сохраняется в sing-box (per-device targeting / policy-выход OpkgTun). При
-	// false — сегментный NAT не трогается (legacy dynamic-NAT). Pointer —
-	// чтобы отличить «не задано» (=true) от явного false.
-	FakeIPSourcePreserve *bool `json:"fakeipSourcePreserve,omitempty"`
 	// UDPTimeout задаёт таймаут UDP-сессий в tproxy-in inbound (формат Go duration,
 	// например "3m0s", "10m0s"). Пустая строка = использовать значение по умолчанию
 	// (DefaultUDPTimeout). Увеличение помогает при работе игр и других UDP-приложений,
 	// которые могут молчать дольше стандартных 3 минут.
 	UDPTimeout string `json:"udpTimeout,omitempty"`
-}
-
-// FakeIPSourcePreserveOrDefault: nil → true (default on).
-func (s SingboxRouterSettings) FakeIPSourcePreserveOrDefault() bool {
-	return s.FakeIPSourcePreserve == nil || *s.FakeIPSourcePreserve
 }
 
 // ManagedServer represents the user-created WireGuard server interface.
