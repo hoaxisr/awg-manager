@@ -775,6 +775,17 @@ func (s *Service) SetActiveMember(ctx context.Context, id, memberTag string) err
 // in would race the next refresh.
 var ErrManualMemberOnURLSub = errors.New("subscription: member CRUD is only allowed on inline subscriptions")
 
+// ErrExcludeOnInline is returned by ExcludeMembers when called on an inline
+// subscription. Exclusion survives refresh by keeping the member in the URL
+// diff truth but skipping materialization — inline subs have no refresh truth,
+// so inline removal uses RemoveMember (destructive) instead.
+var ErrExcludeOnInline = errors.New("subscription: exclude is only allowed on URL subscriptions")
+
+// ErrAllMembersExcluded is returned by ExcludeMembers when excluding the given
+// tags would leave the subscription with no active members. At least one member
+// must remain so the selector has something to route to.
+var ErrAllMembersExcluded = errors.New("subscription: cannot exclude all members; at least one must remain active")
+
 // ErrValidation wraps subscription-save failures produced by the Pass-2
 // `sing-box check` gate when the merged config is rejected. Callers can
 // use errors.Is to surface a 422 instead of 500 — the user's payload is
@@ -992,6 +1003,77 @@ func (s *Service) RemoveMember(ctx context.Context, id, memberTag string) (*Subs
 		return updated, fmt.Errorf("reload: %w", err)
 	}
 	s.logInfo("subscription-member-remove", id, "member removed: "+memberTag)
+	return updated, nil
+}
+
+// ExcludeMembers помечает теги исключёнными: пересобирает селектор без них,
+// снимает их outbounds, переносит в ExcludedTags/ExcludedMembers. Обратимо
+// через RestoreMembers. Только для URL-подписок.
+func (s *Service) ExcludeMembers(ctx context.Context, id string, tags []string) (*Subscription, error) {
+	mu := s.lockSub(id)
+	mu.Lock()
+	defer mu.Unlock()
+
+	sub, err := s.store.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if sub.IsInline() {
+		return nil, ErrExcludeOnInline
+	}
+	exSet := make(map[string]bool, len(tags))
+	for _, t := range tags {
+		exSet[t] = true
+	}
+
+	keep := make([]MemberInfo, 0, len(sub.Members))
+	moved := make([]MemberInfo, 0, len(tags))
+	keepTags := make([]string, 0, len(sub.Members))
+	for _, m := range sub.Members {
+		if exSet[m.Tag] {
+			moved = append(moved, m)
+		} else {
+			keep = append(keep, m)
+			keepTags = append(keepTags, m.Tag)
+		}
+	}
+	if len(moved) == 0 {
+		return nil, ErrMemberNotFound
+	}
+	if len(keep) == 0 {
+		return nil, ErrAllMembersExcluded
+	}
+
+	newActive := sub.ActiveMember
+	if exSet[newActive] {
+		newActive = keepTags[0]
+	}
+
+	// (1) fail-closed: пересобрать селектор на сокращённый набор ПЕРВЫМ.
+	if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, keepTags, newActive)); err != nil {
+		return nil, fmt.Errorf("rebuild group outbound: %w", err)
+	}
+	// (2) снять outbounds исключённых (идемпотентно).
+	for _, m := range moved {
+		s.mutator.RemoveOutbound(m.Tag)
+	}
+	// (3) union ExcludedTags + ExcludedMembers, atomic store-write.
+	excludedTags := append(append([]string{}, sub.ExcludedTags...), tags...)
+	excludedMembers := append(append([]MemberInfo{}, sub.ExcludedMembers...), moved...)
+	if err := s.store.MoveToExcluded(id, keep, excludedTags, excludedMembers); err != nil {
+		return nil, err
+	}
+	updated, err := s.store.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	// (4) синхр. Clash для selector-режима, если active сдвинулся.
+	if sub.ActiveMember != updated.ActiveMember && updated.EffectiveMode() == ModeSelector && updated.ActiveMember != "" {
+		_ = s.mutator.SelectClashProxy(updated.SelectorTag, updated.ActiveMember)
+	}
+	if err := s.mutator.Reload(ctx); err != nil {
+		return updated, fmt.Errorf("reload: %w", err)
+	}
 	return updated, nil
 }
 

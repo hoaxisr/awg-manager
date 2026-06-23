@@ -107,7 +107,7 @@ func createURLSubWithMembers(t *testing.T, svc *Service, n int) *Subscription {
 
 func createInlineSubWithTwoMembers(t *testing.T, svc *Service) *Subscription {
 	t.Helper()
-	sub, err := svc.Create(context.Background(), CreateInput{Label: "x", Inline: "vless://u1@a.example:443#A\nvless://u2@b.example:443#B"})
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "x", Inline: "vless://3a3b1c2e-9999-4321-aaaa-1234567890a1@a.example:443#A\nvless://3a3b1c2e-9999-4321-aaaa-1234567890a2@b.example:443#B"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1675,5 +1675,69 @@ func TestRefresh_ExcludedNotMaterialized(t *testing.T) {
 	}
 	if !containsTag(got.ExcludedTags, tagB) {
 		t.Fatal("refresh must preserve ExcludedTags")
+	}
+}
+
+func TestExcludeMembers_Basic(t *testing.T) {
+	svc, mut := newTestService(t)
+	sub := createURLSubWithMembers(t, svc, 3) // 3 члена, URL-подписка; active = Members[0]
+	t0 := tagOf(sub, 0)
+	mut.reset()
+	got, err := svc.ExcludeMembers(context.Background(), sub.ID, []string{t0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsTag(tagsOf(got.Members), t0) {
+		t.Fatal("t0 still active")
+	}
+	if !containsTag(got.ExcludedTags, t0) {
+		t.Fatal("t0 not in ExcludedTags")
+	}
+	if got.ActiveMember == t0 {
+		t.Fatal("active must move off excluded")
+	}
+	if !mut.removedOutbound(t0) {
+		t.Fatal("t0 outbound must be removed")
+	}
+	if containsTag(selectorMembers(t, mut, sub.SelectorTag), t0) {
+		t.Fatal("t0 must leave selector")
+	}
+}
+
+func TestExcludeMembers_RejectInline(t *testing.T) {
+	svc, _ := newTestService(t)
+	sub := createInlineSubWithTwoMembers(t, svc)
+	if _, err := svc.ExcludeMembers(context.Background(), sub.ID, []string{tagOf(sub, 0)}); !errors.Is(err, ErrExcludeOnInline) {
+		t.Fatalf("want ErrExcludeOnInline, got %v", err)
+	}
+}
+
+func TestExcludeMembers_RejectAll(t *testing.T) {
+	svc, _ := newTestService(t)
+	sub := createURLSubWithMembers(t, svc, 2)
+	if _, err := svc.ExcludeMembers(context.Background(), sub.ID, []string{tagOf(sub, 0), tagOf(sub, 1)}); !errors.Is(err, ErrAllMembersExcluded) {
+		t.Fatalf("want ErrAllMembersExcluded, got %v", err)
+	}
+}
+
+// Инвариант спеки: исключённый тег не может одновременно стать сиротой.
+func TestExcludeMembers_NoOrphanIntersection(t *testing.T) {
+	svc, _ := newTestService(t)
+	sub := createURLSubWithMembers(t, svc, 3)
+	t1 := tagOf(sub, 1)
+	if _, err := svc.ExcludeMembers(context.Background(), sub.ID, []string{t1}); err != nil {
+		t.Fatal(err)
+	}
+	// refresh + попытка очистки сирот не должны затрагивать исключённый t1.
+	if _, err := svc.Refresh(context.Background(), sub.ID); err != nil {
+		t.Fatal(err)
+	}
+	_ = svc.DeleteOrphans(context.Background(), sub.ID)
+	got, _ := svc.store.Get(sub.ID)
+	if containsTag(got.OrphanTags, t1) {
+		t.Fatal("excluded tag must never be an orphan")
+	}
+	if !containsTag(got.ExcludedTags, t1) {
+		t.Fatal("excluded tag must survive refresh+DeleteOrphans")
 	}
 }
