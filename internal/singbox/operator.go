@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -355,7 +357,7 @@ func NewOperator(d OperatorDeps) *Operator {
 	// которые вернутся активными при включении режима.
 	for _, slotName := range []string{"20-router.json", "21-fakeip.json"} {
 		for _, sub := range []string{"", "pending", "disabled"} {
-			patchSlotRuleSetsDownloadDetour(filepath.Join(configPath, sub, slotName))
+			patchSlotRuleSetsDownloadDetour(filepath.Join(configPath, sub, slotName), log)
 		}
 	}
 	stripStrayDirectPlaceholder(configPath)
@@ -1587,6 +1589,28 @@ func patchBaseEnsureHTTPClients(basePath string) {
 	_ = writeJSONFile(basePath, m)
 }
 
+// ruleSetURLIsLoopback сообщает, указывает ли URL remote rule-set'а на
+// петлевой хост (127.0.0.0/8, ::1, localhost) — типично наш dat-srs
+// эндпоинт конвертации .dat→.srs, работающий на 127.0.0.1. Такие наборы
+// НИКОГДА не пиннятся на detour: их надо качать клиентом по умолчанию
+// (системный дайлер через lo), а не гнать в туннель — прежде они как раз
+// ошибочно мис-роутились через VPN, миграция это исправляет.
+func ruleSetURLIsLoopback(rawURL string) bool {
+	if rawURL == "" {
+		return false
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // patchSlotRuleSetsDownloadDetour мигрирует сохранённый слот (20-router /
 // 21-fakeip; активный, pending/ или disabled/) с legacy download_detour у
 // remote rule-set'ов на http_client (sing-box ≥1.14; download_detour
@@ -1594,15 +1618,34 @@ func patchBaseEnsureHTTPClients(basePath string) {
 // download_detour:"direct" схлопывается в отсутствие http_client (default
 // HTTP-клиент из 00-base — эквивалент по поведению): detour на пустой
 // direct-outbound sing-box отвергает на dial, legacy-путь работал только
-// потому, что отключал эту проверку. Idempotent: повторный запуск не
-// меняет файл, файл без download_detour не перезаписывается.
-func patchSlotRuleSetsDownloadDetour(slotPath string) {
+// потому, что отключал эту проверку.
+//
+// Сохранение прежнего пути скачивания (FIX-A): до 1.14 remote-набор БЕЗ
+// собственного клиента качался неявным клиентом = default outbound =
+// route.final (в fakeip это proxy, в tproxy обычно direct). После миграции
+// такой авто-набор ушёл бы на явный default-клиент (системный дайлер, голый
+// WAN) — для обхода блокировок это тихая регрессия при апгрейде. Поэтому в
+// ЛЕГАСИ-слоте (признак: есть хоть один download_detour) авто-наборы
+// пиннятся на route.final ЭТОГО ЖЕ слота, если он не direct/пустой и URL не
+// петлевой. Свежие конфиги download_detour не содержат никогда → легаси-
+// маркер не срабатывает → новые авто-наборы остаются на клиенте по
+// умолчанию (как и требуют генераторы).
+//
+// Idempotent: повторный запуск байт-в-байт (после миграции download_detour
+// нет → маркер выключен, запиненные наборы уже несут http_client), файл без
+// download_detour не перезаписывается.
+func patchSlotRuleSetsDownloadDetour(slotPath string, log *slog.Logger) {
 	data, err := os.ReadFile(slotPath)
 	if err != nil {
 		return
 	}
 	var m map[string]any
 	if err := json.Unmarshal(data, &m); err != nil {
+		logConfigPatchWarn(log, "singbox slot rule-set migration skipped",
+			"patch", "download-detour-to-http-client",
+			"path", slotPath,
+			"err", err,
+		)
 		return
 	}
 	route, _ := m["route"].(map[string]any)
@@ -1610,21 +1653,75 @@ func patchSlotRuleSetsDownloadDetour(slotPath string) {
 		return
 	}
 	ruleSets, _ := route["rule_set"].([]any)
+	if len(ruleSets) == 0 {
+		return
+	}
+
+	// Легаси-маркер слота: хотя бы один набор несёт download_detour. Только
+	// тогда авто-наборы пиннятся на route.final (см. doc-comment).
+	slotIsLegacy := false
+	for _, v := range ruleSets {
+		if rs, ok := v.(map[string]any); ok {
+			if _, has := rs["download_detour"]; has {
+				slotIsLegacy = true
+				break
+			}
+		}
+	}
+	// route.final ЭТОГО слота — эффективный неявный клиент старых авто-
+	// наборов (default outbound). В 20-router base владеет final через сам
+	// слот; в 21-fakeip final = proxy-tag и тоже лежит в слоте. Отсутствует
+	// в слоте → авто-наборы остаются на клиенте по умолчанию.
+	slotFinal, _ := route["final"].(string)
+
 	changed := false
 	for _, v := range ruleSets {
 		rs, ok := v.(map[string]any)
 		if !ok {
 			continue
 		}
-		ddRaw, has := rs["download_detour"]
-		if !has {
+		isRemote, _ := rs["type"].(string)
+		loopback := false
+		if u, _ := rs["url"].(string); u != "" {
+			loopback = ruleSetURLIsLoopback(u)
+		}
+
+		if ddRaw, has := rs["download_detour"]; has {
+			delete(rs, "download_detour")
+			changed = true
+			dd, ddIsString := ddRaw.(string)
+			if !ddIsString {
+				// Некорректная (не строковая) форma — логируем перед сбросом.
+				logConfigPatchWarn(log, "singbox slot rule-set download_detour dropped: not a string",
+					"patch", "download-detour-to-http-client",
+					"path", slotPath,
+					"tag", rs["tag"],
+					"value", ddRaw,
+				)
+			}
+			// Петлевой URL: detour просто удаляется → клиент по умолчанию
+			// (эти наборы прежде ошибочно шли через туннель).
+			if !loopback {
+				if _, hasClient := rs["http_client"]; !hasClient && ddIsString && dd != "" && dd != "direct" {
+					rs["http_client"] = map[string]any{"detour": dd}
+				}
+			}
 			continue
 		}
-		delete(rs, "download_detour")
-		changed = true
-		dd, _ := ddRaw.(string)
-		if _, hasClient := rs["http_client"]; !hasClient && dd != "" && dd != "direct" {
-			rs["http_client"] = map[string]any{"detour": dd}
+
+		// Авто-набор (без download_detour). В легаси-слоте пиннем на
+		// route.final, чтобы сохранить прежний путь скачивания. Только для
+		// remote, не для петлевых URL, только при непустом non-direct final
+		// и пока набор не несёт собственный http_client.
+		if !slotIsLegacy || isRemote != "remote" || loopback {
+			continue
+		}
+		if _, hasClient := rs["http_client"]; hasClient {
+			continue
+		}
+		if slotFinal != "" && slotFinal != "direct" {
+			rs["http_client"] = map[string]any{"detour": slotFinal}
+			changed = true
 		}
 	}
 	if changed {

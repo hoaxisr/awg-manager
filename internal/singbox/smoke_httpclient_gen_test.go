@@ -1,15 +1,24 @@
 package singbox
 
-// Временный смоук-генератор для проверки миграции sing-box 1.14
-// (download_detour → http_client, явный default HTTP-клиент). Пишет три
-// config.d-каталога реальными генераторами/патчерами проекта:
+// Opt-in смоук-харнесс миграции sing-box 1.14 (download_detour →
+// http_client, явный default HTTP-клиент). Не юнит-тест: он ничего не
+// ассертит, а материализует три config.d-каталога РЕАЛЬНЫМИ генераторами
+// и boot-патчерами проекта, чтобы их затем прогнать через живой sing-box
+// (`sing-box check` / запуск) и убедиться в отсутствии deprecation-WARN:
 //
 //	after/    — свежие генераторы (freshBaseConfig + router.SaveConfig)
 //	before/   — эмуляция старой установки (download_detour, без http_clients)
 //	migrated/ — копия before/ после boot-патчеров NewOperator
 //
-// Запускается только с SMOKE_OUT=<dir> (обычные прогоны skip).
-// НЕ коммитить вместе с фичей — вспомогательный харнесс.
+// Запуск только по требованию: SMOKE_OUT=<dir> go test -run
+// TestSmokeGenerateHTTPClientConfigs ./internal/singbox/ (опционально
+// SMOKE_RS_BASE=<url> задаёт базовый URL rule-set'ов). Без SMOKE_OUT тест
+// делает t.Skip — обычные прогоны `go test ./...` его не трогают.
+//
+// Внимание к FIX-A: SMOKE_RS_BASE по умолчанию петлевой (127.0.0.1) —
+// такие URL миграция намеренно НЕ пиннит на detour (наборы должны качаться
+// клиентом по умолчанию). Чтобы увидеть запиненный detour в migrated/
+// (download_detour → http_client), задайте НЕпетлевой SMOKE_RS_BASE.
 
 import (
 	"encoding/json"
@@ -141,7 +150,7 @@ func TestSmokeGenerateHTTPClientConfigs(t *testing.T) {
 	ensureBaseConfigWithLogLevel(migratedDir, "info")
 	for _, slotName := range []string{"20-router.json", "21-fakeip.json"} {
 		for _, sub := range []string{"", "pending", "disabled"} {
-			patchSlotRuleSetsDownloadDetour(filepath.Join(migratedDir, sub, slotName))
+			patchSlotRuleSetsDownloadDetour(filepath.Join(migratedDir, sub, slotName), nil)
 		}
 	}
 	t.Logf("smoke config dirs written under %s", out)

@@ -31,7 +31,7 @@ func TestPatchSlotRuleSetsDownloadDetour_MigratesAndIdempotent(t *testing.T) {
 	if err := os.WriteFile(p, []byte(legacy), 0644); err != nil {
 		t.Fatal(err)
 	}
-	patchSlotRuleSetsDownloadDetour(p)
+	patchSlotRuleSetsDownloadDetour(p, nil)
 
 	raw, err := os.ReadFile(p)
 	if err != nil {
@@ -71,7 +71,7 @@ func TestPatchSlotRuleSetsDownloadDetour_MigratesAndIdempotent(t *testing.T) {
 
 	// Второй прогон — файл байт-в-байт тот же (mtime не проверяем,
 	// патчер не пишет без изменений).
-	patchSlotRuleSetsDownloadDetour(p)
+	patchSlotRuleSetsDownloadDetour(p, nil)
 	raw2, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatal(err)
@@ -79,6 +79,119 @@ func TestPatchSlotRuleSetsDownloadDetour_MigratesAndIdempotent(t *testing.T) {
 	if !bytes.Equal(raw, raw2) {
 		t.Fatalf("second run not byte-identical:\n%s\n---\n%s", raw, raw2)
 	}
+}
+
+// FIX-A: в легаси-слоте (есть download_detour-маркер) авто-набор пиннится
+// на route.final, если тот — proxy (не direct). Сохраняет прежний путь
+// скачивания при апгрейде. final=direct и петлевой dat-srs URL НЕ пиннятся;
+// повторный прогон байт-в-байт.
+func TestPatchSlotRuleSetsDownloadDetour_PinsAutoToFinal(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "21-fakeip.json")
+	legacy := `{
+		"route": {
+			"final": "proxy",
+			"rule_set": [
+				{"tag":"geo-detour","type":"remote","url":"https://cdn.example.com/a.srs","download_detour":"proxy"},
+				{"tag":"geo-auto","type":"remote","url":"https://cdn.example.com/b.srs"},
+				{"tag":"dat-loop","type":"remote","url":"http://127.0.0.1:2222/api/singbox/router/rulesets/dat-srs?kind=geosite&tag=X"},
+				{"tag":"inline-set","type":"inline","rules":[{"domain_suffix":[".example.com"]}]}
+			]
+		}
+	}`
+	if err := os.WriteFile(p, []byte(legacy), 0644); err != nil {
+		t.Fatal(err)
+	}
+	patchSlotRuleSetsDownloadDetour(p, nil)
+
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTag := ruleSetsByTag(t, raw)
+	if hc, _ := byTag["geo-detour"]["http_client"].(map[string]any); hc == nil || hc["detour"] != "proxy" {
+		t.Errorf("geo-detour http_client = %v, want detour proxy", byTag["geo-detour"]["http_client"])
+	}
+	if hc, _ := byTag["geo-auto"]["http_client"].(map[string]any); hc == nil || hc["detour"] != "proxy" {
+		t.Errorf("geo-auto: auto set must be pinned to route.final=proxy, got %v", byTag["geo-auto"]["http_client"])
+	}
+	if _, has := byTag["dat-loop"]["http_client"]; has {
+		t.Errorf("dat-loop: loopback URL must never be pinned, got %v", byTag["dat-loop"]["http_client"])
+	}
+	if _, has := byTag["inline-set"]["http_client"]; has {
+		t.Errorf("inline-set: non-remote must not be pinned, got %v", byTag["inline-set"]["http_client"])
+	}
+
+	// Идемпотентность.
+	patchSlotRuleSetsDownloadDetour(p, nil)
+	raw2, _ := os.ReadFile(p)
+	if !bytes.Equal(raw, raw2) {
+		t.Fatalf("second run not byte-identical:\n%s\n---\n%s", raw, raw2)
+	}
+}
+
+// FIX-A: final=direct → авто-наборы НЕ пиннятся (прежний неявный клиент был
+// системным дайлером = direct, поведение сохраняется без detour).
+func TestPatchSlotRuleSetsDownloadDetour_NoPinWhenFinalDirect(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "20-router.json")
+	legacy := `{
+		"route": {
+			"final": "direct",
+			"rule_set": [
+				{"tag":"geo-detour","type":"remote","url":"https://cdn.example.com/a.srs","download_detour":"vpn"},
+				{"tag":"geo-auto","type":"remote","url":"https://cdn.example.com/b.srs"}
+			]
+		}
+	}`
+	if err := os.WriteFile(p, []byte(legacy), 0644); err != nil {
+		t.Fatal(err)
+	}
+	patchSlotRuleSetsDownloadDetour(p, nil)
+	byTag := ruleSetsByTag(t, mustRead(t, p))
+	if _, has := byTag["geo-auto"]["http_client"]; has {
+		t.Errorf("geo-auto: final=direct must not pin, got %v", byTag["geo-auto"]["http_client"])
+	}
+}
+
+// FIX-A: слот БЕЗ download_detour-маркера (свежий конфиг) авто-наборы не
+// пиннит даже при final=proxy — новые наборы на «авто» ходят клиентом по
+// умолчанию.
+func TestPatchSlotRuleSetsDownloadDetour_FreshSlotNotPinned(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "21-fakeip.json")
+	fresh := `{"route":{"final":"proxy","rule_set":[{"tag":"geo-auto","type":"remote","url":"https://cdn.example.com/b.srs"}]}}`
+	if err := os.WriteFile(p, []byte(fresh), 0644); err != nil {
+		t.Fatal(err)
+	}
+	patchSlotRuleSetsDownloadDetour(p, nil)
+	if raw := mustRead(t, p); string(raw) != fresh {
+		t.Fatalf("fresh slot (no legacy marker) rewritten/pinned: %s", raw)
+	}
+}
+
+func ruleSetsByTag(t *testing.T, raw []byte) map[string]map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	route := m["route"].(map[string]any)
+	byTag := map[string]map[string]any{}
+	for _, v := range route["rule_set"].([]any) {
+		rs := v.(map[string]any)
+		byTag[rs["tag"].(string)] = rs
+	}
+	return byTag
+}
+
+func mustRead(t *testing.T, p string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 // Слот без download_detour патчер не переписывает вовсе (байты сохранены,
@@ -90,7 +203,7 @@ func TestPatchSlotRuleSetsDownloadDetour_NoopWithoutLegacyField(t *testing.T) {
 	if err := os.WriteFile(p, []byte(clean), 0644); err != nil {
 		t.Fatal(err)
 	}
-	patchSlotRuleSetsDownloadDetour(p)
+	patchSlotRuleSetsDownloadDetour(p, nil)
 	raw, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +222,7 @@ func TestPatchSlotRuleSetsDownloadDetour_HTTPClientWins(t *testing.T) {
 	if err := os.WriteFile(p, []byte(conflicted), 0644); err != nil {
 		t.Fatal(err)
 	}
-	patchSlotRuleSetsDownloadDetour(p)
+	patchSlotRuleSetsDownloadDetour(p, nil)
 	raw, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatal(err)

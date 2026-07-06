@@ -49,6 +49,48 @@ func TestMerge_TagCollision_Outbounds(t *testing.T) {
 	}
 }
 
+// FIX-B: http_clients concatenate top-level (base + user distinct tags),
+// base's awgm-default first.
+func TestMerge_HTTPClients_Concat(t *testing.T) {
+	dir := t.TempDir()
+	writeJSON(t, dir, "00-base.json", `{"http_clients":[{"tag":"awgm-default"}]}`)
+	writeJSON(t, dir, "90-user.json", `{"http_clients":[{"tag":"user-client","detour":"vpn"}]}`)
+
+	out, err := MergeDir(dir)
+	if err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	if !strings.Contains(out, `"tag": "awgm-default"`) || !strings.Contains(out, `"tag": "user-client"`) {
+		t.Errorf("merged output missing an http_clients tag:\n%s", out)
+	}
+	if strings.Index(out, "awgm-default") > strings.Index(out, "user-client") {
+		t.Errorf("awgm-default must come first (base before user):\n%s", out)
+	}
+}
+
+// FIX-B: duplicate http_clients tag across slots surfaces as CollisionError
+// instead of a silent sing-box fatal.
+func TestMerge_TagCollision_HTTPClients(t *testing.T) {
+	dir := t.TempDir()
+	writeJSON(t, dir, "00-base.json", `{"http_clients":[{"tag":"awgm-default"}]}`)
+	writeJSON(t, dir, "90-user.json", `{"http_clients":[{"tag":"awgm-default","detour":"vpn"}]}`)
+
+	_, err := MergeDir(dir)
+	if err == nil {
+		t.Fatal("expected collision error, got nil")
+	}
+	ce, ok := err.(*CollisionError)
+	if !ok {
+		t.Fatalf("expected *CollisionError, got %T: %v", err, err)
+	}
+	if ce.Tag != "awgm-default" || ce.Kind != "http_clients" {
+		t.Errorf("unexpected collision details: %+v", ce)
+	}
+	if ce.FirstFile != "00-base.json" || ce.SecondFile != "90-user.json" {
+		t.Errorf("unexpected file names: %+v", ce)
+	}
+}
+
 func TestMerge_TagCollision_DnsServers(t *testing.T) {
 	dir := t.TempDir()
 	writeJSON(t, dir, "00-base.json", `{"dns":{"servers":[{"tag":"quad","type":"tls"}]}}`)

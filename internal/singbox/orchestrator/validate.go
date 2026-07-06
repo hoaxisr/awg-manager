@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path"
@@ -15,7 +16,7 @@ import (
 // References (when set) names what was referenced.
 type ValidationError struct {
 	Slot Slot
-	Kind string // "duplicate-outbound" / "duplicate-inbound" / "duplicate-dns" / "unknown-outbound" / "unknown-rule-set" / "unknown-dns-server" / "dns-final-conflict" / "route-final-conflict"
+	Kind string // "duplicate-outbound" / "duplicate-inbound" / "duplicate-dns" / "unknown-outbound" / "unknown-rule-set" / "unknown-dns-server" / "dns-final-conflict" / "route-final-conflict" / "rule-set-auto-download-bypasses-vpn" / "rule-set-legacy-download-detour"
 	// Severity is "" (error, blocks reload) or SeverityWarning (advisory,
 	// does not block). Defaults to error so existing entries keep blocking.
 	Severity string
@@ -270,6 +271,47 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 			if ruleSet.HTTPClient != nil && ruleSet.HTTPClient.Detour != "" {
 				rs.sels = append(rs.sels, selSection{
 					parentTag: ruleSet.Tag, kind: "http_client_detour", idx: i, refTag: ruleSet.HTTPClient.Detour,
+				})
+			}
+
+			// FIX-F: пользователь мог оставить устаревшее download_detour в
+			// вручную-правленом 90-user.json (генерируемые слоты мигрированы
+			// boot-патчером). Поле удаляется в sing-box 1.16 — предупреждаем,
+			// не переписывая слот.
+			if os.slot == SlotUser && ruleSet.DownloadDetour != "" {
+				errs = append(errs, ValidationError{
+					Slot:     os.slot,
+					Kind:     "rule-set-legacy-download-detour",
+					Severity: SeverityWarning,
+					Tag:      ruleSet.Tag,
+					InRule:   fmt.Sprintf("route.rule_set[%d].download_detour", i),
+					Message: fmt.Sprintf(
+						"Набор %q использует устаревшее поле download_detour — замените на http_client (удаляется в sing-box 1.16)",
+						ruleSet.Tag),
+				})
+			}
+
+			// FIX-A advisory: remote-набор на «авто» (без detour, default-
+			// клиент) при route.final ЭТОГО слота ≠ direct скачивается в
+			// обход VPN — системным дайлером. Покрывает новосозданные авто-
+			// наборы и легаси all-auto слоты, которые boot-патчер не запинил.
+			// Петлевые URL (наш dat-srs) исключены — они и должны идти через
+			// клиент по умолчанию.
+			ruleSetIsAuto := ruleSet.DownloadDetour == "" &&
+				(ruleSet.HTTPClient == nil ||
+					(ruleSet.HTTPClient.Tag == "" && ruleSet.HTTPClient.Detour == ""))
+			if ruleSet.Type == "remote" && ruleSetIsAuto &&
+				c.Route.Final != "" && c.Route.Final != "direct" &&
+				!ruleSetURLIsLoopback(ruleSet.URL) {
+				errs = append(errs, ValidationError{
+					Slot:     os.slot,
+					Kind:     "rule-set-auto-download-bypasses-vpn",
+					Severity: SeverityWarning,
+					Tag:      ruleSet.Tag,
+					InRule:   fmt.Sprintf("route.rule_set[%d].http_client", i),
+					Message: fmt.Sprintf(
+						"Набор %q на «авто»: скачивается в обход VPN (через системный интерфейс). Если его URL недоступен без VPN — задайте «Скачивать через».",
+						ruleSet.Tag),
 				})
 			}
 		}
@@ -625,6 +667,27 @@ func ruleSetSourceLooksGeoIP(source string) bool {
 	}
 	base := strings.ToLower(path.Base(source))
 	return strings.HasPrefix(base, "geoip-") || base == "geoip.srs" || base == "geoip.json"
+}
+
+// ruleSetURLIsLoopback reports whether a remote rule-set URL points at a
+// loopback host (127.0.0.0/8, ::1, localhost) — typically our dat-srs
+// conversion endpoint on 127.0.0.1. Such sets must download via the default
+// client (system dialer over lo), so the auto-download advisory skips them.
+// Mirrors singbox.ruleSetURLIsLoopback (kept local to avoid an import cycle).
+func ruleSetURLIsLoopback(rawURL string) bool {
+	if rawURL == "" {
+		return false
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 type dnsJSON struct {

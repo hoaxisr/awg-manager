@@ -22,7 +22,8 @@ describe('RuleSetsTable', () => {
 
     expect(screen.getByText('dat')).toBeTruthy();
     expect(screen.getByText('geosite: GOOGLE')).toBeTruthy();
-    expect(screen.getByText('direct')).toBeTruthy();
+    // dat-набор на «авто» (default-клиент через локальный dat-srs), а не «direct».
+    expect(screen.getByText('—')).toBeTruthy();
   });
 
   it('renders multi-tag dat sources with a single kind prefix', () => {

@@ -21,7 +21,7 @@
 	} from '$lib/utils/singboxInlineRules';
 	import { expandGeoLinesInInput } from '$lib/utils/singboxInlineGeoExpand';
 	import { datInfo } from '$lib/utils/ruleSetType';
-	import { ruleSetDownloadDetour } from '$lib/utils/ruleSetDetour';
+	import { ruleSetDownloadDetour, ruleSetNamedHTTPClient } from '$lib/utils/ruleSetDetour';
 	import InlineRuleListEditor from './InlineRuleListEditor.svelte';
 	import GeoTagPicker from './GeoTagPicker.svelte';
 
@@ -70,6 +70,14 @@
 	]);
 
 	const isEditing = $derived(Boolean(ruleSet));
+
+	// Строковая форма http_client (именованный клиент из top-level
+	// http_clients) заведена вручную в редакторе конфигурации: селект
+	// «Скачивать через» её не покрывает — блокируем его и СОХРАНЯЕМ клиент
+	// как есть, чтобы wholesale-replace на бэкенде не затёр его в «авто».
+	const namedHTTPClient = $derived<string | null>(
+		ruleSet ? ruleSetNamedHTTPClient(ruleSet) : null,
+	);
 
 	// ── line numbers for JSON editor ─────────────────────
 	function lineNumbersFor(text: string): string {
@@ -424,7 +432,16 @@
 				format: savedType === 'inline' ? undefined : isDatType ? 'binary' : format,
 				url: savedType === 'remote' ? builtUrl : undefined,
 				update_interval: savedType === 'remote' ? (isDatType ? '24h' : updateInterval) : undefined,
-				http_client: type === 'remote' && downloadDetour ? { detour: downloadDetour } : undefined,
+				// Именованный клиент (строковая форма) не покрывается селектом:
+				// сохраняем оригинал, иначе wholesale-replace сбросил бы его.
+				http_client:
+					type === 'remote'
+						? namedHTTPClient !== null
+							? namedHTTPClient
+							: downloadDetour
+								? { detour: downloadDetour }
+								: undefined
+						: undefined,
 				path: savedType === 'local' ? path.trim() : undefined,
 				rules: savedType === 'inline' ? parsedRules : undefined,
 			};
@@ -496,10 +513,21 @@
 
 			<div class="field highlight">
 				<div class="lbl">Скачивать через (download detour)</div>
-				<Dropdown bind:value={downloadDetour} options={downloadDetourOptions} fullWidth />
-				<div class="hint">
-					Через какой outbound скачивать этот файл. Полезно если URL заблокирован у провайдера — используйте VPN-туннель.
-				</div>
+				<Dropdown
+					bind:value={downloadDetour}
+					options={downloadDetourOptions}
+					fullWidth
+					disabled={namedHTTPClient !== null}
+				/>
+				{#if namedHTTPClient !== null}
+					<div class="hint">
+						Клиент скачивания задан вручную (имя: {namedHTTPClient}) — правьте в редакторе конфигурации.
+					</div>
+				{:else}
+					<div class="hint">
+						Через какой outbound скачивать этот файл. Полезно если URL заблокирован у провайдера — используйте VPN-туннель.
+					</div>
+				{/if}
 			</div>
 		{:else if isDatType}
 			<div class="field dat-picker-field">

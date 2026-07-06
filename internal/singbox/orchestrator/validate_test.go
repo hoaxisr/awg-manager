@@ -326,6 +326,96 @@ func TestValidateDNSRuleDatGeoIPWarning(t *testing.T) {
 	}
 }
 
+// FIX-F: legacy download_detour в вручную-правленом 90-user.json даёт
+// advisory-warning (не блокирует). Генерируемые слоты уже мигрированы,
+// поэтому для них предупреждение не эмитится.
+func TestValidate_LegacyDownloadDetourInUserSlot_Warns(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotUser, Filename: "90-user.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	// Both slots carry a rule-set with legacy download_detour to a valid
+	// outbound; only the user slot should be warned about.
+	writeSlot(t, dir, "20-router.json", `{"outbounds":[{"tag":"vpn","type":"direct"}],"route":{"rule_set":[{"tag":"geo-r","type":"remote","url":"https://e/a.srs","download_detour":"vpn"}]}}`)
+	writeSlot(t, dir, "90-user.json", `{"route":{"rule_set":[{"tag":"geo-u","type":"remote","url":"https://e/b.srs","download_detour":"vpn"}]}}`)
+	o.enabled[SlotRouter] = true
+	o.enabled[SlotUser] = true
+
+	res := o.Validate()
+	if !res.Ok() {
+		t.Fatalf("legacy download_detour advisory must not block: %v", res.Error())
+	}
+	var warnedTags []string
+	for _, e := range res.Errors {
+		if e.Kind == "rule-set-legacy-download-detour" {
+			if e.Severity != SeverityWarning {
+				t.Errorf("severity = %q, want warning", e.Severity)
+			}
+			warnedTags = append(warnedTags, e.Tag)
+		}
+	}
+	if len(warnedTags) != 1 || warnedTags[0] != "geo-u" {
+		t.Fatalf("want only user-slot set geo-u warned, got %v", warnedTags)
+	}
+}
+
+// FIX-A advisory: remote-набор на «авто» при route.final ≠ direct получает
+// warning (обход VPN). Петлевой dat-srs URL — нет.
+func TestValidate_AutoDownloadBypassesVPN_Warns(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotFakeIP, Filename: "21-fakeip.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "21-fakeip.json", `{
+		"outbounds":[{"tag":"proxy","type":"direct"}],
+		"route":{
+			"final":"proxy",
+			"rule_set":[
+				{"tag":"geo-auto","type":"remote","url":"https://cdn.example.com/a.srs"},
+				{"tag":"geo-pinned","type":"remote","url":"https://cdn.example.com/b.srs","http_client":{"detour":"proxy"}},
+				{"tag":"dat-loop","type":"remote","url":"http://127.0.0.1:2222/api/singbox/router/rulesets/dat-srs?kind=geosite&tag=X"}
+			]
+		}
+	}`)
+	o.enabled[SlotFakeIP] = true
+
+	res := o.Validate()
+	if !res.Ok() {
+		t.Fatalf("auto-download advisory must not block: %v", res.Error())
+	}
+	var warned []string
+	for _, e := range res.Errors {
+		if e.Kind == "rule-set-auto-download-bypasses-vpn" {
+			if e.Severity != SeverityWarning {
+				t.Errorf("severity = %q, want warning", e.Severity)
+			}
+			warned = append(warned, e.Tag)
+		}
+	}
+	if len(warned) != 1 || warned[0] != "geo-auto" {
+		t.Fatalf("want only geo-auto warned (not pinned, not loopback), got %v", warned)
+	}
+}
+
+// FIX-A advisory: final=direct → авто-набор ходит системным дайлером и до, и
+// после (прежний неявный клиент = direct), предупреждать не о чем.
+func TestValidate_AutoDownloadFinalDirect_NoWarn(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "20-router.json", `{"route":{"final":"direct","rule_set":[{"tag":"geo-auto","type":"remote","url":"https://cdn.example.com/a.srs"}]}}`)
+	o.enabled[SlotRouter] = true
+	res := o.Validate()
+	if findValidationWarning(res, "rule-set-auto-download-bypasses-vpn") != nil {
+		t.Errorf("final=direct must not warn: %+v", res.Errors)
+	}
+}
+
 func TestValidateUnknownRuleSetRefs(t *testing.T) {
 	o, dir := newTestOrch(t)
 	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})

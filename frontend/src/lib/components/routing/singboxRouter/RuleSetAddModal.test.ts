@@ -50,6 +50,35 @@ describe('RuleSetAddModal', () => {
 		expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ tag: 'new-set' }));
 	});
 
+	it('preserves a hand-authored string-form http_client on save (FIX-C)', async () => {
+		const onSave = vi.fn().mockResolvedValue(undefined);
+		render(RuleSetAddModal, {
+			props: {
+				ruleSet: {
+					tag: 'geo-named',
+					type: 'remote',
+					format: 'binary',
+					url: 'https://cdn.example.com/a.srs',
+					update_interval: '24h',
+					http_client: 'my-named-client',
+				},
+				outboundOptions: [],
+				onClose: vi.fn(),
+				onSave,
+			},
+		});
+
+		// Селект заблокирован и показывает имя ручного клиента.
+		expect(screen.getByText(/Клиент скачивания задан вручную \(имя: my-named-client\)/)).toBeTruthy();
+
+		await fireEvent.click(screen.getByRole('button', { name: /сохранить/i }));
+
+		// На сохранении строковый клиент передаётся как есть (не сброшен в auto).
+		expect(onSave).toHaveBeenCalledWith(
+			expect.objectContaining({ tag: 'geo-named', http_client: 'my-named-client' }),
+		);
+	});
+
 	it('creates geosite selection as remote binary dat-srs rule_set', async () => {
 		const onSave = vi.fn().mockResolvedValue(undefined);
 		render(RuleSetAddModal, {

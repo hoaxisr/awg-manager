@@ -1,7 +1,7 @@
 // Package configmerge mirrors sing-box's behavior when started with
 // `-C config.d/`: read all *.json files in the directory in
 // lexicographic order, concatenate the well-known top-level arrays
-// (inbounds, outbounds, dns.servers, dns.rules, route.rules,
+// (inbounds, outbounds, http_clients, dns.servers, dns.rules, route.rules,
 // route.rule_set), resolve conflicting scalar sub-keys of `dns` and
 // `route` FIRST-FILE-WINS (matching sing-box), and last-writer-wins
 // everything else. Subdirectories (e.g. `disabled/`) are ignored — the
@@ -34,6 +34,7 @@ var mergedArrayPaths = []struct {
 }{
 	{"", "inbounds"},
 	{"", "outbounds"},
+	{"", "http_clients"},
 	{"dns", "servers"},
 	{"dns", "rules"},
 	{"route", "rules"},
@@ -44,10 +45,11 @@ var mergedArrayPaths = []struct {
 // `tag` field. sing-box rejects duplicate tags at startup; we mirror
 // that and return CollisionError instead of silently dropping rows.
 var taggedArrays = map[string]bool{
-	"inbounds":  true,
-	"outbounds": true,
-	"servers":   true, // dns.servers
-	"rule_set":  true, // route.rule_set
+	"inbounds":     true,
+	"outbounds":    true,
+	"http_clients": true, // top-level http_clients (sing-box ≥1.14)
+	"servers":      true, // dns.servers
+	"rule_set":     true, // route.rule_set
 }
 
 // CollisionError is returned when the same tag appears in two slot
@@ -55,7 +57,7 @@ var taggedArrays = map[string]bool{
 // — the message names the offending tag, kind, and both files.
 type CollisionError struct {
 	Tag        string
-	Kind       string // "inbounds" | "outbounds" | "servers" | "rule_set"
+	Kind       string // "inbounds" | "outbounds" | "http_clients" | "servers" | "rule_set"
 	FirstFile  string
 	SecondFile string
 }

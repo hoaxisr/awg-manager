@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { ruleSetDownloadDetour } from './ruleSetDetour';
+import { ruleSetDownloadDetour, ruleSetNamedHTTPClient } from './ruleSetDetour';
+
+describe('ruleSetNamedHTTPClient', () => {
+	it('returns the client name for string-form http_client', () => {
+		expect(ruleSetNamedHTTPClient({ http_client: 'my-client' })).toBe('my-client');
+	});
+
+	it('returns null for object-form http_client', () => {
+		expect(ruleSetNamedHTTPClient({ http_client: { detour: 'vpn1' } })).toBeNull();
+	});
+
+	it('returns null when http_client is absent', () => {
+		expect(ruleSetNamedHTTPClient({})).toBeNull();
+	});
+});
 
 describe('ruleSetDownloadDetour', () => {
 	it('reads the sing-box ≥1.14 http_client.detour form', () => {

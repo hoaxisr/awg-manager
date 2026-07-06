@@ -44,7 +44,9 @@
   }
 
   function detourFor(rs: SingboxRouterRuleSet): string {
-    if (datInfo(rs)) return 'direct';
+    // dat-наборы качаются через локальный dat-srs эндпоинт (127.0.0.1)
+    // клиентом по умолчанию — как и любой набор на «авто». Показываем «—»
+    // (default), а не хардкод «direct».
     return ruleSetDownloadDetour(rs) || '—';
   }
 </script>

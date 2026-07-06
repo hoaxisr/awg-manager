@@ -235,6 +235,11 @@ func (rs *RuleSet) normalizeHTTPClient() {
 	if rs.HTTPClient == nil {
 		return
 	}
+	// Схлопывание ключит на ЛИТЕРАЛ тега "direct" — наш зарезервированный
+	// пустой direct-outbound из 00-base. Вручную заведённый непустой
+	// outbound с тем же тегом "direct" (напр. с bind_interface) тоже
+	// схлопнулся бы в default-клиент; это допустимо: AWGM владеет direct-
+	// outbound'ом 00-base и не даёт переопределять этот тег из UI.
 	if rs.HTTPClient.Tag == "" && (rs.HTTPClient.Detour == "" || rs.HTTPClient.Detour == "direct") {
 		rs.HTTPClient = nil
 	}
