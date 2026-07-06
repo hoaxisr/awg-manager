@@ -418,7 +418,7 @@ func TestRenameExternalOutboundTag_UpdatesActiveAndPending(t *testing.T) {
 		t.Fatalf("Load pending: %v", err)
 	}
 	if pendingCfg.Route.Rules[0].Rules[0].Outbound != "new" ||
-		pendingCfg.Route.RuleSet[0].DownloadDetour != "new" {
+		pendingCfg.Route.RuleSet[0].DownloadDetourTag() != "new" {
 		t.Fatalf("pending refs not renamed: %+v", pendingCfg)
 	}
 }

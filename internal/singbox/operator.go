@@ -98,6 +98,13 @@ const (
 	// — otherwise our log forwarder / traffic aggregator would latch onto
 	// their process and stream their tunnels into our UI.
 	clashAPIAddr = "127.0.0.1:9099"
+
+	// defaultHTTPClientTag — тег явного default HTTP-клиента в 00-base.json
+	// (top-level `http_clients`, sing-box ≥1.14). Первая запись http_clients
+	// становится default-клиентом для remote rule-set'ов без собственного
+	// http_client — вместо неявного deprecated-клиента через default outbound.
+	// Префикс awgm- защищает от коллизии с пользовательским 90-user.json.
+	defaultHTTPClientTag = "awgm-default"
 )
 
 // defaultDir is the directory of the managed binary. var (not const) so
@@ -342,6 +349,15 @@ func NewOperator(d OperatorDeps) *Operator {
 	ensureLegacyConfigMigrated(dir)
 	patchTunnelsSlotStripBaseOwnedBlocks(filepath.Join(configPath, "10-tunnels.json"))
 	patchTunnelsSlotEnsureNaiveUDPOverTCP(filepath.Join(configPath, "10-tunnels.json"))
+	// Миграция sing-box 1.14: legacy download_detour → http_client в наших
+	// слотах с remote rule-set'ами. Активные файлы читает сам sing-box,
+	// pending/ — редактор черновиков, disabled/ — припаркованные слоты,
+	// которые вернутся активными при включении режима.
+	for _, slotName := range []string{"20-router.json", "21-fakeip.json"} {
+		for _, sub := range []string{"", "pending", "disabled"} {
+			patchSlotRuleSetsDownloadDetour(filepath.Join(configPath, sub, slotName))
+		}
+	}
 	stripStrayDirectPlaceholder(configPath)
 	removeFinalFromBase(filepath.Join(configPath, "00-base.json"), log)
 	removeDNSFinalFromBase(filepath.Join(configPath, "00-base.json"), log)
@@ -810,6 +826,7 @@ func ensureBaseConfigWithLogLevel(configDir, desiredLogLevel string, loggers ...
 		patchBaseDirectOutbound(basePath, log)
 		patchBaseCacheFilePath(basePath)
 		patchBaseDNSStrategy(basePath)
+		patchBaseEnsureHTTPClients(basePath)
 		return
 	}
 	_ = os.MkdirAll(configDir, 0755)
@@ -1548,6 +1565,73 @@ func patchTunnelsSlotStripBaseOwnedBlocks(tunnelsPath string) {
 	}
 }
 
+// patchBaseEnsureHTTPClients self-heals 00-base.json written before the
+// sing-box 1.14 миграции: добавляет явный default HTTP-клиент (top-level
+// `http_clients`), без которого sing-box создаёт неявный deprecated-клиент
+// через default outbound для remote rule-set'ов без http_client (WARN
+// сейчас, отказ в 1.16). Существующий ключ (в т.ч. изменённый вручную) не
+// трогаем. Idempotent.
+func patchBaseEnsureHTTPClients(basePath string) {
+	data, err := os.ReadFile(basePath)
+	if err != nil {
+		return
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return
+	}
+	if _, ok := m["http_clients"]; ok {
+		return
+	}
+	m["http_clients"] = []any{map[string]any{"tag": defaultHTTPClientTag}}
+	_ = writeJSONFile(basePath, m)
+}
+
+// patchSlotRuleSetsDownloadDetour мигрирует сохранённый слот (20-router /
+// 21-fakeip; активный, pending/ или disabled/) с legacy download_detour у
+// remote rule-set'ов на http_client (sing-box ≥1.14; download_detour
+// удаляется в 1.16, а вместе с http_client отвергается уже сейчас).
+// download_detour:"direct" схлопывается в отсутствие http_client (default
+// HTTP-клиент из 00-base — эквивалент по поведению): detour на пустой
+// direct-outbound sing-box отвергает на dial, legacy-путь работал только
+// потому, что отключал эту проверку. Idempotent: повторный запуск не
+// меняет файл, файл без download_detour не перезаписывается.
+func patchSlotRuleSetsDownloadDetour(slotPath string) {
+	data, err := os.ReadFile(slotPath)
+	if err != nil {
+		return
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return
+	}
+	route, _ := m["route"].(map[string]any)
+	if route == nil {
+		return
+	}
+	ruleSets, _ := route["rule_set"].([]any)
+	changed := false
+	for _, v := range ruleSets {
+		rs, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		ddRaw, has := rs["download_detour"]
+		if !has {
+			continue
+		}
+		delete(rs, "download_detour")
+		changed = true
+		dd, _ := ddRaw.(string)
+		if _, hasClient := rs["http_client"]; !hasClient && dd != "" && dd != "direct" {
+			rs["http_client"] = map[string]any{"detour": dd}
+		}
+	}
+	if changed {
+		_ = writeJSONFile(slotPath, m)
+	}
+}
+
 func patchTunnelsSlotEnsureNaiveUDPOverTCP(tunnelsPath string) {
 	data, err := os.ReadFile(tunnelsPath)
 	if err != nil {
@@ -1607,6 +1691,15 @@ func freshBaseConfigWithLogLevel(logLevel string) map[string]any {
 			// user's dns.final win (only one slot then sets it). Mirrors the
 			// route.final omission below. See spec
 			// 2026-05-21-route-final-router-owned-design.md.
+		},
+		// Явный default HTTP-клиент для remote rule-set'ов (sing-box ≥1.14).
+		// Без него sing-box лениво создаёт неявный клиент через default
+		// outbound и пишет deprecation-WARN («implicit default HTTP client…»,
+		// удаляется в 1.16). Клиент без detour ходит системным дайлером —
+		// то же, что пустой direct-outbound; наборы с выбранным «скачивать
+		// через» несут собственный http_client.detour и клиент не используют.
+		"http_clients": []any{
+			map[string]any{"tag": defaultHTTPClientTag},
 		},
 		"outbounds": []any{
 			map[string]any{"type": "direct", "tag": "direct"},

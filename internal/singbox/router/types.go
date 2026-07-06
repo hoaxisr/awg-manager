@@ -1,6 +1,7 @@
 package router
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 )
@@ -143,18 +144,123 @@ func (r *Rule) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// RuleSetHTTPClient — параметры скачивания remote rule-set (поле
+// `http_client`, sing-box ≥1.14; заменяет download_detour, который
+// удаляется в 1.16). Upstream-схема (option/rule_set.go:
+// `HTTPClient *HTTPClientOptions json:"http_client,omitempty"`) принимает
+// либо строку — тег top-level `http_clients`, либо объект с Dial-полями.
+// Нам из объекта нужен только `detour`; прочие upstream-поля
+// (engine/version/headers/tls) наши генераторы не пишут.
+type RuleSetHTTPClient struct {
+	// Tag — строковая форма (`"http_client": "tag"`): ссылка на клиент из
+	// top-level `http_clients`. Заполняется только при разборе слота,
+	// маршалится обратно строкой. Наши генераторы её не создают.
+	Tag string `json:"-"`
+	// Detour — outbound, через который скачивается набор
+	// (наследник download_detour).
+	Detour string `json:"detour,omitempty"`
+}
+
+// MarshalJSON эмитит строковую форму, когда клиент задан тегом.
+func (h RuleSetHTTPClient) MarshalJSON() ([]byte, error) {
+	if h.Tag != "" {
+		return json.Marshal(h.Tag)
+	}
+	type alias RuleSetHTTPClient
+	return json.Marshal(alias(h))
+}
+
+// UnmarshalJSON принимает обе upstream-формы: строку (тег клиента) и объект.
+func (h *RuleSetHTTPClient) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] == '"' {
+		*h = RuleSetHTTPClient{}
+		return json.Unmarshal(trimmed, &h.Tag)
+	}
+	type alias RuleSetHTTPClient
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*h = RuleSetHTTPClient(a)
+	return nil
+}
+
 type RuleSet struct {
-	Tag            string           `json:"tag"`
-	Type           string           `json:"type"`
-	Format         string           `json:"format,omitempty"`
-	URL            string           `json:"url,omitempty"`
-	UpdateInterval string           `json:"update_interval,omitempty"`
-	DownloadDetour string           `json:"download_detour,omitempty"`
-	Path           string           `json:"path,omitempty"`
-	Rules          []map[string]any `json:"rules,omitempty"`
+	Tag            string `json:"tag"`
+	Type           string `json:"type"`
+	Format         string `json:"format,omitempty"`
+	URL            string `json:"url,omitempty"`
+	UpdateInterval string `json:"update_interval,omitempty"`
+	// HTTPClient — способ скачивания remote-набора (sing-box ≥1.14).
+	// nil = явный default HTTP-клиент (top-level `http_clients` в
+	// 00-base.json, системный дайлер ≈ direct). Legacy download_detour
+	// принимается на входе (UnmarshalJSON) и нормализуется сюда; наружу
+	// download_detour больше не эмитится — с 1.16 sing-box его отвергает,
+	// а одновременно с http_client отвергает уже сейчас.
+	HTTPClient *RuleSetHTTPClient `json:"http_client,omitempty"`
+	Path       string             `json:"path,omitempty"`
+	Rules      []map[string]any   `json:"rules,omitempty"`
 	// MaterializedSRS is set by ListRuleSets when a compiled .srs sibling
 	// exists for an inline ruleset. Not persisted in router JSON.
 	MaterializedSRS bool `json:"materialized_srs,omitempty"`
+}
+
+// UnmarshalJSON принимает legacy-поле download_detour (слоты и API-клиенты
+// времён sing-box <1.14) и нормализует его в http_client.detour.
+func (rs *RuleSet) UnmarshalJSON(data []byte) error {
+	type ruleSetAlias RuleSet
+	var raw struct {
+		ruleSetAlias
+		LegacyDownloadDetour string `json:"download_detour,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*rs = RuleSet(raw.ruleSetAlias)
+	if rs.HTTPClient == nil && raw.LegacyDownloadDetour != "" {
+		rs.HTTPClient = &RuleSetHTTPClient{Detour: raw.LegacyDownloadDetour}
+	}
+	rs.normalizeHTTPClient()
+	return nil
+}
+
+// normalizeHTTPClient приводит http_client к канону: пустой объект и
+// detour на встроенный пустой direct-outbound эквивалентны default-клиенту
+// — храним отсутствие поля. detour на пустой direct нельзя эмитить:
+// sing-box ≥1.14 отвергает его на dial («detour to an empty direct
+// outbound makes no sense»); legacy download_detour:"direct" работал лишь
+// потому, что совместимый путь отключал эту проверку.
+func (rs *RuleSet) normalizeHTTPClient() {
+	if rs.HTTPClient == nil {
+		return
+	}
+	if rs.HTTPClient.Tag == "" && (rs.HTTPClient.Detour == "" || rs.HTTPClient.Detour == "direct") {
+		rs.HTTPClient = nil
+	}
+}
+
+// DownloadDetourTag возвращает outbound, через который скачивается набор
+// ("" — default HTTP-клиент). Единая точка чтения для валидации и ссылок.
+func (rs RuleSet) DownloadDetourTag() string {
+	if rs.HTTPClient == nil {
+		return ""
+	}
+	return rs.HTTPClient.Detour
+}
+
+// setDownloadDetourTag заменяет detour свежим значением (без алиасинга
+// указателя) с той же нормализацией, что и при разборе.
+func (rs *RuleSet) setDownloadDetourTag(tag string) {
+	if rs.HTTPClient != nil && rs.HTTPClient.Tag != "" {
+		// Именованный клиент (строковая форма) — не наша ссылка на outbound.
+		return
+	}
+	if tag == "" || tag == "direct" {
+		rs.HTTPClient = nil
+		return
+	}
+	rs.HTTPClient = &RuleSetHTTPClient{Detour: tag}
 }
 
 type Outbound struct {

@@ -16,7 +16,8 @@ const PATTERNS: Array<{ re: RegExp; label: (name: string) => string }> = [
 	{ re: /^outbounds\[\d+="(.*)"\]\.outbounds\[\d+\]$/, label: (n) => `Входит в группу маршрутов «${n}»` },
 	{ re: /^outbounds\[\d+="(.*)"\]\.default$/, label: (n) => `Выбран по умолчанию в группе «${n}»` },
 	{ re: /^dns\.servers\[\d+="(.*)"\]\.detour$/, label: (n) => `Используется DNS-сервером «${n}»` },
-	{ re: /^route\.rule_set\[\d+="(.*)"\]\.download_detour$/, label: (n) => `Через него скачивается список «${n}»` }
+	{ re: /^route\.rule_set\[\d+="(.*)"\]\.download_detour$/, label: (n) => `Через него скачивается список «${n}»` },
+	{ re: /^route\.rule_set\[\d+="(.*)"\]\.http_client\.detour$/, label: (n) => `Через него скачивается список «${n}»` }
 ];
 
 export function describeRouterReference(loc: string): RouterReference {

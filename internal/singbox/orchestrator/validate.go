@@ -3,7 +3,9 @@ package orchestrator
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
+	"path"
 	"sort"
 	"strings"
 )
@@ -126,6 +128,9 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 	inbounds := map[string]tagOrigin{}
 	dnsServers := map[string]tagOrigin{}
 	ruleSetsBySlot := map[Slot]map[string]bool{}
+	// Per-slot tags of rule-sets that (best-effort) contain only ip_cidr
+	// items — DNS rules referencing them get an advisory warning.
+	ipOnlyRuleSetsBySlot := map[Slot]map[string]bool{}
 	var errs []ValidationError
 	var hasTun bool
 
@@ -224,12 +229,18 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 			}
 		}
 		ruleSetTags := make(map[string]bool, len(c.Route.RuleSet))
+		ipOnlyRuleSetTags := map[string]bool{}
 		for _, ruleSet := range c.Route.RuleSet {
-			if ruleSet.Tag != "" {
-				ruleSetTags[ruleSet.Tag] = true
+			if ruleSet.Tag == "" {
+				continue
+			}
+			ruleSetTags[ruleSet.Tag] = true
+			if ruleSetLooksIPCIDROnly(ruleSet) {
+				ipOnlyRuleSetTags[ruleSet.Tag] = true
 			}
 		}
 		ruleSetsBySlot[os.slot] = ruleSetTags
+		ipOnlyRuleSetsBySlot[os.slot] = ipOnlyRuleSetTags
 
 		// Collect refs to check after we have the full outbound set.
 		rs := validationSectionRefs{slot: os.slot}
@@ -248,9 +259,17 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 			rs.dnsTagRefs = append(rs.dnsTagRefs, dnsTagRefSection{refTag: c.Route.DefaultDomainResolver.Server, where: "route.default_domain_resolver.server"})
 		}
 		for i, ruleSet := range c.Route.RuleSet {
+			// Legacy download_detour: наши слоты мигрированы boot-патчером,
+			// но user-слот (90-user.json) может нести его до sing-box 1.16 —
+			// проверяем ссылку так же, как http_client.detour.
 			if ruleSet.DownloadDetour != "" {
 				rs.sels = append(rs.sels, selSection{
 					parentTag: ruleSet.Tag, kind: "download_detour", idx: i, refTag: ruleSet.DownloadDetour,
+				})
+			}
+			if ruleSet.HTTPClient != nil && ruleSet.HTTPClient.Detour != "" {
+				rs.sels = append(rs.sels, selSection{
+					parentTag: ruleSet.Tag, kind: "http_client_detour", idx: i, refTag: ruleSet.HTTPClient.Detour,
 				})
 			}
 		}
@@ -275,7 +294,7 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 		}
 		for i, r := range c.DNS.Rules {
 			for _, tag := range r.RuleSet {
-				rs.ruleSets = append(rs.ruleSets, ruleSetSection{idx: i, refTag: tag, inRule: fmt.Sprintf("dns.rules[%d].rule_set", i)})
+				rs.ruleSets = append(rs.ruleSets, ruleSetSection{idx: i, refTag: tag, inRule: fmt.Sprintf("dns.rules[%d].rule_set", i), dns: true})
 			}
 		}
 		pending = append(pending, rs)
@@ -330,6 +349,8 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 					where = fmt.Sprintf("outbounds[%d=%q].outbounds[%d]", s.idx, s.parentTag, s.memberIdx)
 				} else if s.kind == "download_detour" {
 					where = fmt.Sprintf("route.rule_set[%d=%q].download_detour", s.idx, s.parentTag)
+				} else if s.kind == "http_client_detour" {
+					where = fmt.Sprintf("route.rule_set[%d=%q].http_client.detour", s.idx, s.parentTag)
 				} else if s.kind == "dns_detour" {
 					where = fmt.Sprintf("dns.servers[%d=%q].detour", s.idx, s.parentTag)
 				}
@@ -351,6 +372,20 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 					Tag:     r.refTag,
 					InRule:  r.inRule,
 					Message: "slot does not declare this rule_set tag",
+				})
+				continue
+			}
+			// Advisory: ip_cidr-only набор в DNS-правиле бесполезен уже
+			// сейчас, а sing-box 1.16 отвергает такой конфиг на старте
+			// (при выключенном legacy-DNS-режиме).
+			if r.dns && ipOnlyRuleSetsBySlot[rs.slot][r.refTag] {
+				errs = append(errs, ValidationError{
+					Slot:     rs.slot,
+					Kind:     "dns-rule-ip-cidr-only-rule-set",
+					Severity: SeverityWarning,
+					Tag:      r.refTag,
+					InRule:   r.inRule,
+					Message:  fmt.Sprintf("Набор %q содержит только IP-адреса: в DNS-правиле он не матчит домены, а с sing-box 1.16 будет отвергаться на старте", r.refTag),
 				})
 			}
 		}
@@ -498,8 +533,98 @@ type ruleJSON struct {
 }
 
 type ruleSetJSON struct {
-	Tag            string `json:"tag"`
-	DownloadDetour string `json:"download_detour,omitempty"`
+	Tag            string             `json:"tag"`
+	Type           string             `json:"type,omitempty"`
+	URL            string             `json:"url,omitempty"`
+	Path           string             `json:"path,omitempty"`
+	Rules          []map[string]any   `json:"rules,omitempty"`
+	DownloadDetour string             `json:"download_detour,omitempty"`
+	HTTPClient     *httpClientRefJSON `json:"http_client,omitempty"`
+}
+
+// httpClientRefJSON accepts both sing-box forms of rule-set `http_client`:
+// a bare string (tag of a top-level `http_clients` entry) or an object with
+// dial fields — we only care about `detour` for reference checking.
+type httpClientRefJSON struct {
+	Tag    string
+	Detour string `json:"detour,omitempty"`
+}
+
+func (h *httpClientRefJSON) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		h.Tag = s
+		return nil
+	}
+	type alias httpClientRefJSON
+	var a alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	*h = httpClientRefJSON(a)
+	return nil
+}
+
+// ruleSetLooksIPCIDROnly reports (best-effort) whether a rule-set contains
+// ONLY ip_cidr items. Such sets never match domains in DNS rules, and
+// sing-box 1.16 rejects DNS rules referencing them at startup (when legacy
+// DNS mode is off). Detectable reliably for inline sets; for remote/local
+// sets we recognize the dat-endpoint kind=geoip form and the conventional
+// geoip-*.srs naming of sing-geoip artifacts.
+func ruleSetLooksIPCIDROnly(rs ruleSetJSON) bool {
+	switch rs.Type {
+	case "inline", "":
+		if len(rs.Rules) == 0 {
+			return false
+		}
+		for _, rule := range rs.Rules {
+			if !headlessRuleIPCIDROnly(rule) {
+				return false
+			}
+		}
+		return true
+	case "remote":
+		return ruleSetSourceLooksGeoIP(rs.URL)
+	case "local":
+		return ruleSetSourceLooksGeoIP(rs.Path)
+	default:
+		return false
+	}
+}
+
+// headlessRuleIPCIDROnly: the rule map has ip_cidr and no other matcher
+// keys (invert allowed). Logical rules are conservatively treated as mixed.
+func headlessRuleIPCIDROnly(rule map[string]any) bool {
+	hasIPCIDR := false
+	for k := range rule {
+		switch k {
+		case "ip_cidr":
+			hasIPCIDR = true
+		case "invert":
+		default:
+			return false
+		}
+	}
+	return hasIPCIDR
+}
+
+// ruleSetSourceLooksGeoIP recognizes IP-only sources by convention: our
+// dat-srs endpoint with kind=geoip, and geoip-* rule-set artifacts
+// (sing-geoip publishes geoip-<cc>.srs containing only ip_cidr items).
+func ruleSetSourceLooksGeoIP(source string) bool {
+	if source == "" {
+		return false
+	}
+	if u, err := url.Parse(source); err == nil {
+		if u.Query().Get("kind") == "geoip" {
+			return true
+		}
+		if u.Path != "" {
+			source = u.Path
+		}
+	}
+	base := strings.ToLower(path.Base(source))
+	return strings.HasPrefix(base, "geoip-") || base == "geoip.srs" || base == "geoip.json"
 }
 
 type dnsJSON struct {
@@ -543,7 +668,7 @@ type finalSection struct {
 
 type selSection struct {
 	parentTag string
-	kind      string // "members" / "default" / "download_detour" / "dns_detour"
+	kind      string // "members" / "default" / "download_detour" / "http_client_detour" / "dns_detour"
 	idx       int
 	memberIdx int
 	refTag    string
@@ -553,6 +678,9 @@ type ruleSetSection struct {
 	idx    int
 	refTag string
 	inRule string
+	// dns marks references from dns.rules (route-rule refs stay false) —
+	// only those get the ip_cidr-only advisory.
+	dns bool
 }
 
 func collectRuleRefs(refs *validationSectionRefs, rule ruleJSON, path string, topIndex int) {

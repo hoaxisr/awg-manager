@@ -21,6 +21,7 @@
 	} from '$lib/utils/singboxInlineRules';
 	import { expandGeoLinesInInput } from '$lib/utils/singboxInlineGeoExpand';
 	import { datInfo } from '$lib/utils/ruleSetType';
+	import { ruleSetDownloadDetour } from '$lib/utils/ruleSetDetour';
 	import InlineRuleListEditor from './InlineRuleListEditor.svelte';
 	import GeoTagPicker from './GeoTagPicker.svelte';
 
@@ -244,7 +245,7 @@
 		const nextTag = ruleSet?.tag ?? '';
 		const nextUrl = ruleSet?.url ?? '';
 		const nextUpdateInterval = ruleSet?.update_interval ?? '24h';
-		const nextDownloadDetour = ruleSet?.download_detour ?? '';
+		const nextDownloadDetour = ruleSet ? ruleSetDownloadDetour(ruleSet) : '';
 		const nextPath = ruleSet?.path ?? '';
 		const nextRulesJson = ruleSet?.rules?.length
 			? JSON.stringify(ruleSet.rules, null, 2)
@@ -423,7 +424,7 @@
 				format: savedType === 'inline' ? undefined : isDatType ? 'binary' : format,
 				url: savedType === 'remote' ? builtUrl : undefined,
 				update_interval: savedType === 'remote' ? (isDatType ? '24h' : updateInterval) : undefined,
-				download_detour: type === 'remote' && downloadDetour ? downloadDetour : undefined,
+				http_client: type === 'remote' && downloadDetour ? { detour: downloadDetour } : undefined,
 				path: savedType === 'local' ? path.trim() : undefined,
 				rules: savedType === 'inline' ? parsedRules : undefined,
 			};

@@ -215,7 +215,7 @@ func TestComputeIssues_DetectsOutboundAndRuleSetRefs(t *testing.T) {
 		Outbounds: []Outbound{{Tag: "ok", Type: "selector", Outbounds: []string{"ghost-member"}, Default: "ghost-default"}},
 		Route: Route{
 			Final:   "ghost-final",
-			RuleSet: []RuleSet{{Tag: "known", DownloadDetour: "ghost-download"}},
+			RuleSet: []RuleSet{{Tag: "known", HTTPClient: &RuleSetHTTPClient{Detour: "ghost-download"}}},
 			Rules: []Rule{{
 				Type: "logical", Mode: "or",
 				Rules:  []Rule{{RuleSet: []string{"missing-rs"}, Action: "route", Outbound: "ghost-nested"}},

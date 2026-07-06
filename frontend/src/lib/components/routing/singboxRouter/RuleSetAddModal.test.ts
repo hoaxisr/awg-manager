@@ -69,7 +69,7 @@ describe('RuleSetAddModal', () => {
 			type: 'remote',
 			format: 'binary',
 			update_interval: '24h',
-			download_detour: undefined,
+			http_client: undefined,
 			url: expect.stringContaining('/api/singbox/router/rulesets/dat-srs?'),
 		}));
 	});

@@ -203,6 +203,129 @@ func TestValidateUnknownOutboundInDetours(t *testing.T) {
 	}
 }
 
+// http_client.detour (наследник download_detour, sing-box ≥1.14) проходит
+// ту же unknown-outbound проверку; строковая форма http_client (тег
+// top-level клиента) ссылкой на outbound не считается.
+func TestValidateUnknownOutboundInHTTPClientDetour(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "20-router.json", `{
+		"route":{"rule_set":[
+			{"tag":"geo","type":"remote","url":"https://e/a.srs","http_client":{"detour":"ghost-hc"}},
+			{"tag":"geo2","type":"remote","url":"https://e/b.srs","http_client":"named-client"}
+		]}
+	}`)
+	o.enabled[SlotRouter] = true
+	res := o.Validate()
+	if !strings.Contains(res.Error(), "ghost-hc") || !strings.Contains(res.Error(), "route.rule_set[0=\"geo\"].http_client.detour") {
+		t.Errorf("missing http_client.detour error: %s", res.Error())
+	}
+	if strings.Contains(res.Error(), "named-client") {
+		t.Errorf("string-form http_client wrongly treated as outbound ref: %s", res.Error())
+	}
+}
+
+// Известный http_client.detour ошибок не даёт.
+func TestValidateKnownHTTPClientDetourOk(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "20-router.json", `{
+		"outbounds":[{"tag":"vpn"}],
+		"route":{"rule_set":[{"tag":"geo","type":"remote","url":"https://e/a.srs","http_client":{"detour":"vpn"}}]}
+	}`)
+	o.enabled[SlotRouter] = true
+	if res := o.Validate(); !res.Ok() {
+		t.Errorf("expected ok, got: %v", res.Error())
+	}
+}
+
+// DNS-правило, ссылающееся на ip_cidr-only набор, получает advisory-warning
+// (не блокирует reload): такой набор не матчит домены, а sing-box 1.16
+// отвергает подобный конфиг на старте.
+func TestValidateDNSRuleIPCIDROnlyRuleSetWarning(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "20-router.json", `{
+		"dns":{
+			"servers":[{"tag":"doh"}],
+			"rules":[
+				{"rule_set":["ip-only-inline"],"server":"doh"},
+				{"rule_set":["geoip-remote"],"server":"doh"},
+				{"rule_set":["domains"],"server":"doh"}
+			]
+		},
+		"route":{
+			"rule_set":[
+				{"tag":"ip-only-inline","type":"inline","rules":[{"ip_cidr":["10.0.0.0/8"]},{"ip_cidr":["192.168.0.0/16"],"invert":true}]},
+				{"tag":"geoip-remote","type":"remote","url":"https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs"},
+				{"tag":"domains","type":"inline","rules":[{"domain_suffix":[".example.com"]}]}
+			],
+			"rules":[
+				{"rule_set":["ip-only-inline"],"outbound":"direct"}
+			]
+		}
+	}`)
+	o.enabled[SlotRouter] = true
+	res := o.Validate()
+	if !res.Ok() {
+		t.Fatalf("advisory must not block: %v", res.Error())
+	}
+	var warned []string
+	for _, e := range res.Errors {
+		if e.Kind != "dns-rule-ip-cidr-only-rule-set" {
+			continue
+		}
+		if e.Severity != SeverityWarning {
+			t.Errorf("severity = %q, want warning", e.Severity)
+		}
+		warned = append(warned, e.Tag)
+		if e.Tag == "ip-only-inline" && !strings.Contains(e.Message, "содержит только IP-адреса") {
+			t.Errorf("message: %s", e.Message)
+		}
+	}
+	if len(warned) != 2 {
+		t.Fatalf("warned = %v, want [ip-only-inline geoip-remote] (route-rule ref must not warn)", warned)
+	}
+	for _, tag := range warned {
+		if tag == "domains" {
+			t.Errorf("domain rule-set wrongly flagged")
+		}
+	}
+}
+
+// dat-endpoint kind=geoip распознаётся как ip_cidr-only источник.
+func TestValidateDNSRuleDatGeoIPWarning(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "20-router.json", `{
+		"dns":{"servers":[{"tag":"doh"}],"rules":[{"rule_set":["dat-geoip"],"server":"doh"}]},
+		"route":{"rule_set":[{"tag":"dat-geoip","type":"remote","url":"http://127.0.0.1:2222/api/singbox/router/rulesets/dat-srs?kind=geoip&tag=RU&token=x"}]}
+	}`)
+	o.enabled[SlotRouter] = true
+	res := o.Validate()
+	found := false
+	for _, e := range res.Errors {
+		if e.Kind == "dns-rule-ip-cidr-only-rule-set" && e.Tag == "dat-geoip" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("dat kind=geoip not flagged: %v", res.Errors)
+	}
+}
+
 func TestValidateUnknownRuleSetRefs(t *testing.T) {
 	o, dir := newTestOrch(t)
 	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})

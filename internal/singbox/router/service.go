@@ -2287,6 +2287,7 @@ func (s *ServiceImpl) AddRuleSet(ctx context.Context, rs RuleSet) error {
 	if rs.UpdateInterval == "" && rs.Type == "remote" {
 		rs.UpdateInterval = "24h"
 	}
+	rs.normalizeHTTPClient()
 	return s.withConfig(ctx, "rulesets", func(c *RouterConfig) error { return c.AddRuleSet(rs) })
 }
 
@@ -2300,6 +2301,7 @@ func (s *ServiceImpl) UpdateRuleSet(ctx context.Context, tag string, rs RuleSet)
 	if rs.UpdateInterval == "" && rs.Type == "remote" {
 		rs.UpdateInterval = "24h"
 	}
+	rs.normalizeHTTPClient()
 	return s.withConfig(ctx, "rulesets", func(c *RouterConfig) error { return c.UpdateRuleSet(tag, rs) })
 }
 
@@ -2728,12 +2730,12 @@ func (s *ServiceImpl) computeIssues(cfg *RouterConfig) []Issue {
 		}
 	}
 	for _, rs := range cfg.Route.RuleSet {
-		if rs.DownloadDetour != "" && !isKnownOutboundRef(rs.DownloadDetour, outboundTags) {
+		if detour := rs.DownloadDetourTag(); detour != "" && !isKnownOutboundRef(detour, outboundTags) {
 			issues = append(issues, Issue{
 				Severity: "warning",
 				Kind:     "orphan-outbound",
-				Tag:      rs.DownloadDetour,
-				Message:  fmt.Sprintf("rule_set %q использует несуществующий download_detour %q", rs.Tag, rs.DownloadDetour),
+				Tag:      detour,
+				Message:  fmt.Sprintf("rule_set %q скачивается через несуществующий outbound %q (http_client.detour)", rs.Tag, detour),
 			})
 		}
 	}
@@ -2820,7 +2822,7 @@ func (s *ServiceImpl) RulesReferencing(tag string) []int {
 // router config that reference tag, EXCLUDING route.rules[...] (covered
 // by RulesReferencing). Used by the tunnel-delete guard to refuse
 // deletion of a tunnel still referenced via composite member, route
-// final, dns detour, or rule_set download_detour.
+// final, dns detour, or rule_set http_client.detour.
 func (s *ServiceImpl) OutboundReferenceLocations(tag string) []string {
 	cfg, err := s.loadRouterConfig()
 	if err != nil || cfg == nil {

@@ -146,6 +146,7 @@ func (s *ServiceImpl) FakeIPAddRuleSet(ctx context.Context, rs RuleSet) error {
 	if rs.UpdateInterval == "" && rs.Type == "remote" {
 		rs.UpdateInterval = "24h"
 	}
+	rs.normalizeHTTPClient()
 	return s.fakeipWithConfig(ctx, "rulesets", func(c *RouterConfig) error { return c.AddRuleSet(rs) })
 }
 
@@ -161,6 +162,7 @@ func (s *ServiceImpl) FakeIPUpdateRuleSet(ctx context.Context, tag string, rs Ru
 	if rs.UpdateInterval == "" && rs.Type == "remote" {
 		rs.UpdateInterval = "24h"
 	}
+	rs.normalizeHTTPClient()
 	return s.fakeipWithConfig(ctx, "rulesets", func(c *RouterConfig) error { return c.UpdateRuleSet(tag, rs) })
 }
 

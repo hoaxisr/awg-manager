@@ -629,8 +629,8 @@ func (c *RouterConfig) renameOutboundReferences(oldTag, newTag string) {
 		}
 	}
 	for i := range c.Route.RuleSet {
-		if c.Route.RuleSet[i].DownloadDetour == oldTag {
-			c.Route.RuleSet[i].DownloadDetour = newTag
+		if c.Route.RuleSet[i].DownloadDetourTag() == oldTag {
+			c.Route.RuleSet[i].setDownloadDetourTag(newTag)
 		}
 	}
 }
@@ -660,8 +660,9 @@ func (c *RouterConfig) removeOutboundReferences(tag string) {
 		}
 	}
 	for i := range c.Route.RuleSet {
-		if c.Route.RuleSet[i].DownloadDetour == tag {
-			c.Route.RuleSet[i].DownloadDetour = ""
+		if c.Route.RuleSet[i].DownloadDetourTag() == tag {
+			// Сброс на default HTTP-клиент (00-base http_clients).
+			c.Route.RuleSet[i].setDownloadDetourTag("")
 		}
 	}
 }
@@ -692,8 +693,8 @@ func (c *RouterConfig) outboundReferences(tag string) []string {
 		}
 	}
 	for i, rs := range c.Route.RuleSet {
-		if rs.DownloadDetour == tag {
-			refs = append(refs, fmt.Sprintf("route.rule_set[%d=%q].download_detour", i, rs.Tag))
+		if rs.DownloadDetourTag() == tag {
+			refs = append(refs, fmt.Sprintf("route.rule_set[%d=%q].http_client.detour", i, rs.Tag))
 		}
 	}
 	return refs
@@ -703,7 +704,7 @@ func (c *RouterConfig) outboundReferences(tag string) []string {
 // route.rules[...] entries — those are reported separately as rule
 // indices by rulesReferencingOutbound (for UI deeplinking). Covers
 // route.final, composite members, composite default, dns.servers detour,
-// and rule_set download_detour — all the locations validateLocked flags
+// and rule_set http_client.detour — all the locations validateLocked flags
 // as unknown-outbound but that rulesReferencingOutbound does not see.
 func (c *RouterConfig) outboundReferencesExcludingRules(tag string) []string {
 	all := c.outboundReferences(tag)

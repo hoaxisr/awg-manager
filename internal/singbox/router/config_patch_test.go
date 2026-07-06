@@ -551,7 +551,7 @@ func TestCompositeOutboundRenameCascadesReferences(t *testing.T) {
 		Action: "route", Outbound: "fast",
 	}}
 	cfg.DNS.Servers = []DNSServer{{Tag: "dns", Type: "udp", Server: "1.1.1.1", Detour: "fast"}}
-	cfg.Route.RuleSet = []RuleSet{{Tag: "geo", Type: "remote", Format: "binary", URL: "https://example.com/geo.srs", DownloadDetour: "fast"}}
+	cfg.Route.RuleSet = []RuleSet{{Tag: "geo", Type: "remote", Format: "binary", URL: "https://example.com/geo.srs", HTTPClient: &RuleSetHTTPClient{Detour: "fast"}}}
 
 	if err := cfg.UpdateCompositeOutbound("fast", Outbound{Type: "urltest", Tag: "quick", Outbounds: []string{"awg10", "awg20"}}); err != nil {
 		t.Fatalf("rename outbound: %v", err)
@@ -568,8 +568,8 @@ func TestCompositeOutboundRenameCascadesReferences(t *testing.T) {
 	if cfg.DNS.Servers[0].Detour != "quick" {
 		t.Fatalf("dns detour = %q", cfg.DNS.Servers[0].Detour)
 	}
-	if cfg.Route.RuleSet[0].DownloadDetour != "quick" {
-		t.Fatalf("download_detour = %q", cfg.Route.RuleSet[0].DownloadDetour)
+	if cfg.Route.RuleSet[0].DownloadDetourTag() != "quick" {
+		t.Fatalf("http_client.detour = %q", cfg.Route.RuleSet[0].DownloadDetourTag())
 	}
 }
 
@@ -599,7 +599,7 @@ func TestCompositeOutboundDeleteReferenced(t *testing.T) {
 	cfg.Route.Final = "fast"
 	cfg.Route.Rules = []Rule{{DomainSuffix: []string{"x.com"}, Action: "route", Outbound: "fast"}}
 	cfg.DNS.Servers = []DNSServer{{Tag: "dns", Type: "udp", Server: "1.1.1.1", Detour: "fast"}}
-	cfg.Route.RuleSet = []RuleSet{{Tag: "geo", Type: "remote", Format: "binary", URL: "https://example.com/geo.srs", DownloadDetour: "fast"}}
+	cfg.Route.RuleSet = []RuleSet{{Tag: "geo", Type: "remote", Format: "binary", URL: "https://example.com/geo.srs", HTTPClient: &RuleSetHTTPClient{Detour: "fast"}}}
 
 	err := cfg.DeleteCompositeOutbound("fast", false)
 	if !errors.Is(err, ErrOutboundReferenced) {
@@ -623,8 +623,8 @@ func TestCompositeOutboundDeleteReferenced(t *testing.T) {
 	if cfg.DNS.Servers[0].Detour != "" {
 		t.Fatalf("dns detour not cleared: %+v", cfg.DNS.Servers[0])
 	}
-	if cfg.Route.RuleSet[0].DownloadDetour != "" {
-		t.Fatalf("download_detour not cleared: %+v", cfg.Route.RuleSet[0])
+	if cfg.Route.RuleSet[0].DownloadDetourTag() != "" {
+		t.Fatalf("http_client.detour not cleared: %+v", cfg.Route.RuleSet[0])
 	}
 }
 

@@ -165,14 +165,25 @@ type SingboxRouterRulesListResponse struct {
 	Data    []SingboxRouterRuleDTO `json:"data"`
 }
 
+// SingboxRouterRuleSetHTTPClientDTO mirrors router.RuleSetHTTPClient —
+// способ скачивания remote-набора (sing-box ≥1.14, поле http_client).
+type SingboxRouterRuleSetHTTPClientDTO struct {
+	Detour string `json:"detour,omitempty" example:"awg-vpn0"`
+}
+
 // SingboxRouterRuleSetDTO mirrors router.RuleSet.
 type SingboxRouterRuleSetDTO struct {
-	Tag             string           `json:"tag" example:"geosite-cn"`
-	Type            string           `json:"type" example:"remote"`
-	Format          string           `json:"format,omitempty" example:"binary"`
-	URL             string           `json:"url,omitempty" example:"https://cdn.example.com/geosite-cn.srs"`
-	UpdateInterval  string           `json:"update_interval,omitempty" example:"24h"`
-	DownloadDetour  string           `json:"download_detour,omitempty" example:"direct"`
+	Tag            string `json:"tag" example:"geosite-cn"`
+	Type           string `json:"type" example:"remote"`
+	Format         string `json:"format,omitempty" example:"binary"`
+	URL            string `json:"url,omitempty" example:"https://cdn.example.com/geosite-cn.srs"`
+	UpdateInterval string `json:"update_interval,omitempty" example:"24h"`
+	// HTTPClient — outbound для скачивания remote-набора; пусто = явный
+	// default HTTP-клиент (системный дайлер, эквивалент direct).
+	HTTPClient *SingboxRouterRuleSetHTTPClientDTO `json:"http_client,omitempty"`
+	// DownloadDetour — устаревшая форма (sing-box <1.14): принимается на
+	// входе и нормализуется в http_client.detour; в ответах не заполняется.
+	DownloadDetour  string           `json:"download_detour,omitempty" example:"awg-vpn0"`
 	Path            string           `json:"path,omitempty" example:"/opt/etc/singbox/rulesets/geosite-cn.srs"`
 	Rules           []map[string]any `json:"rules,omitempty"`
 	MaterializedSRS bool             `json:"materialized_srs,omitempty" example:"true"`

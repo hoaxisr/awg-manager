@@ -3849,11 +3849,20 @@ definitions:
   api.SingboxRouterRuleSetDTO:
     properties:
       download_detour:
-        example: direct
+        description: |-
+          DownloadDetour — устаревшая форма (sing-box <1.14): принимается на
+          входе и нормализуется в http_client.detour; в ответах не заполняется.
+        example: awg-vpn0
         type: string
       format:
         example: binary
         type: string
+      http_client:
+        allOf:
+        - $ref: '#/definitions/api.SingboxRouterRuleSetHTTPClientDTO'
+        description: |-
+          HTTPClient — outbound для скачивания remote-набора; пусто = явный
+          default HTTP-клиент (системный дайлер, эквивалент direct).
       materialized_srs:
         example: true
         type: boolean
@@ -3885,6 +3894,12 @@ definitions:
         type: boolean
       tag:
         example: geosite-cn
+        type: string
+    type: object
+  api.SingboxRouterRuleSetHTTPClientDTO:
+    properties:
+      detour:
+        example: awg-vpn0
         type: string
     type: object
   api.SingboxRouterRuleSetUpdateRequest:

@@ -11,6 +11,7 @@
     resolveRuleSetDisplayType,
   } from '$lib/utils/ruleSetType';
   import { displayRuleSetTag } from '$lib/utils/singboxInlineRules';
+  import { ruleSetDownloadDetour } from '$lib/utils/ruleSetDetour';
 
   type RsFilter = 'all' | 'remote' | 'local' | 'inline' | 'dat';
 
@@ -44,7 +45,7 @@
 
   function detourFor(rs: SingboxRouterRuleSet): string {
     if (datInfo(rs)) return 'direct';
-    return rs.download_detour ?? '—';
+    return ruleSetDownloadDetour(rs) || '—';
   }
 </script>
 

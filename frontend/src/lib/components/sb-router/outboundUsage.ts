@@ -4,6 +4,7 @@ import type {
 	SingboxRouterRule,
 	SingboxRouterRuleSet,
 } from '$lib/types';
+import { ruleSetDownloadDetour } from '$lib/utils/ruleSetDetour';
 
 export type OutboundUsageInput = {
 	tag: string;
@@ -43,7 +44,7 @@ function collectAllOutboundReferences(
 		push(s.detour, `dns.servers[${s.tag}].detour`);
 	}
 	for (const rs of input.ruleSets) {
-		push(rs.download_detour, `route.rule_set[${rs.tag}].download_detour`);
+		push(ruleSetDownloadDetour(rs), `route.rule_set[${rs.tag}].http_client.detour`);
 	}
 	for (const tag of new Set(input.deviceProxyOutbounds ?? [])) {
 		push(tag, 'device-proxy');

@@ -1604,12 +1604,24 @@ export interface SingboxRouterInspectProgress {
 	usingDraft?: boolean;
 }
 
+/** Форма http_client у remote rule-set (sing-box ≥1.14). */
+export interface SingboxRouterRuleSetHTTPClient {
+	/** Outbound, через который скачивается набор. */
+	detour?: string;
+}
+
 export interface SingboxRouterRuleSet {
 	tag: string;
 	type: 'remote' | 'local' | 'inline';
 	format?: 'binary' | 'source';
 	url?: string;
 	update_interval?: string;
+	/**
+	 * Способ скачивания remote-набора (sing-box ≥1.14): объект с detour
+	 * либо строка — тег top-level http_clients. Пусто = default-клиент.
+	 */
+	http_client?: SingboxRouterRuleSetHTTPClient | string;
+	/** Устаревшее поле (<1.14): бекенд принимает на входе и нормализует в http_client; в ответах не приходит. */
 	download_detour?: string;
 	path?: string;
 	rules?: Record<string, unknown>[];

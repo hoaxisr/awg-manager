@@ -132,7 +132,7 @@ func TestRenameOutboundReferences_RewritesEveryReference(t *testing.T) {
 		{Tag: "dns", Type: "https", Server: "dns.example", Detour: "old"},
 	}
 	cfg.Route.RuleSet = []RuleSet{
-		{Tag: "geo", Type: "remote", URL: "https://example.com/geo.srs", DownloadDetour: "old"},
+		{Tag: "geo", Type: "remote", URL: "https://example.com/geo.srs", HTTPClient: &RuleSetHTTPClient{Detour: "old"}},
 	}
 
 	cfg.renameOutboundReferences("old", "new")
@@ -149,8 +149,8 @@ func TestRenameOutboundReferences_RewritesEveryReference(t *testing.T) {
 	if cfg.DNS.Servers[0].Detour != "new" {
 		t.Fatalf("dns detour = %q, want new", cfg.DNS.Servers[0].Detour)
 	}
-	if cfg.Route.RuleSet[0].DownloadDetour != "new" {
-		t.Fatalf("download_detour = %q, want new", cfg.Route.RuleSet[0].DownloadDetour)
+	if cfg.Route.RuleSet[0].DownloadDetourTag() != "new" {
+		t.Fatalf("http_client.detour = %q, want new", cfg.Route.RuleSet[0].DownloadDetourTag())
 	}
 }
 
@@ -159,12 +159,12 @@ func TestStripAutoManagedDirect(t *testing.T) {
 		// Proxy kernel ifaces (t2sN) are NEVER stripped: the bindable picker
 		// only ever offers KeenOS-native (non-ours) proxies, so any direct→t2s
 		// here is a user choice to keep (#323). No runtime lookup at strip time.
-		{Type: "direct", Tag: "native-socks", BindInterface: "t2s0"},  // proxy — keep
-		{Type: "direct", Tag: "direct"},                              // no bind_interface — keep
-		{Type: "selector", Tag: "comp", Outbounds: []string{"awg-x"}}, // composite — keep
+		{Type: "direct", Tag: "native-socks", BindInterface: "t2s0"},    // proxy — keep
+		{Type: "direct", Tag: "direct"},                                 // no bind_interface — keep
+		{Type: "selector", Tag: "comp", Outbounds: []string{"awg-x"}},   // composite — keep
 		{Type: "direct", Tag: "managed-awg", BindInterface: "opkgtun0"}, // managed AWG — strip
-		{Type: "direct", Tag: "nwg", BindInterface: "nwg0"},           // NativeWG — strip
-		{Type: "direct", Tag: "ipsec-vpn", BindInterface: "ipsec0"},  // user VPN — keep
+		{Type: "direct", Tag: "nwg", BindInterface: "nwg0"},             // NativeWG — strip
+		{Type: "direct", Tag: "ipsec-vpn", BindInterface: "ipsec0"},     // user VPN — keep
 	}
 	got := stripAutoManagedDirect(in)
 	tags := map[string]bool{}
@@ -285,7 +285,7 @@ func TestOutboundReferencesExcludingRules(t *testing.T) {
 		Route: Route{
 			Rules:   []Rule{{Outbound: "awg-del"}},
 			Final:   "awg-del",
-			RuleSet: []RuleSet{{Tag: "rs1", DownloadDetour: "awg-del"}},
+			RuleSet: []RuleSet{{Tag: "rs1", HTTPClient: &RuleSetHTTPClient{Detour: "awg-del"}}},
 		},
 	}
 
@@ -297,11 +297,11 @@ func TestOutboundReferencesExcludingRules(t *testing.T) {
 		}
 	}
 	want := map[string]bool{
-		"route.final":                             false,
-		`outbounds[0="sel"].outbounds[0]`:         false,
-		`outbounds[0="sel"].default`:              false,
-		`dns.servers[0="dns1"].detour`:            false,
-		`route.rule_set[0="rs1"].download_detour`: false,
+		"route.final":                                false,
+		`outbounds[0="sel"].outbounds[0]`:            false,
+		`outbounds[0="sel"].default`:                 false,
+		`dns.servers[0="dns1"].detour`:               false,
+		`route.rule_set[0="rs1"].http_client.detour`: false,
 	}
 	for _, l := range locs {
 		if _, ok := want[l]; !ok {
@@ -450,7 +450,7 @@ func TestInbound_TunFieldsMarshal(t *testing.T) {
 	in := Inbound{
 		Type: "tun", Tag: "tun-in", InterfaceName: "opkgtun10",
 		Address: []string{"172.18.0.1/30", "fdfe:dcba:9876::1/126"},
-		MTU: 1500, Stack: "gvisor",
+		MTU:     1500, Stack: "gvisor",
 	}
 	b, _ := json.Marshal(in)
 	s := string(b)

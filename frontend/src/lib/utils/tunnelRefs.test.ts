@@ -37,6 +37,13 @@ describe('describeRouterReference', () => {
 		});
 	});
 
+	it('describes a rule_set http_client.detour (sing-box ≥1.14 form)', () => {
+		expect(describeRouterReference('route.rule_set[0="geoip-ru"].http_client.detour')).toEqual({
+			text: 'Через него скачивается список «geoip-ru»',
+			known: true
+		});
+	});
+
 	it('handles names with special characters', () => {
 		expect(describeRouterReference('outbounds[0="vpn [eu] #1"].outbounds[0]')).toEqual({
 			text: 'Входит в группу маршрутов «vpn [eu] #1»',
