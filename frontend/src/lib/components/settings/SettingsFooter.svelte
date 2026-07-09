@@ -33,7 +33,7 @@
 		'@ig*****@g*******m', '@Да**** Т***в', '@vi*****@g*******.m', '@ku*******@g*******m',
 		'@d****8@y***u', '@PolarPriest', '@augin', '@me***-***r@y***u', '@Byrnane',
 		'@a******r@g*******m', '@k*******7@g*******m', '@Лохматая Чупакабра', '@Proxy', '@DELETED',
-		'@2*****6@g*******m', '@S A', '@Ig**M**v***v', '@A Tu', '@metalnalks',
+		'@2*****6@g*******m', '@S A', '@Ig**M**v***v', '@A Tu', '@metalnakls',
 		'@LazIv', '@AverTV', '@xxxaaach', '@defylives', '@AndreyPristup',
 		'@Lethal F',
 		'@Stein_123', '@Tanovitsky',
