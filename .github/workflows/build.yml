@@ -94,14 +94,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
-      - name: Load sing-box version
-        shell: bash
-        run: |
-          set -euo pipefail
-          v="$(sed -n 's/^const RequiredVersion = "\(.*\)"/\1/p' internal/singbox/installer/embedded.go)"
-          echo "SINGBOX_VERSION=$v" >> "$GITHUB_ENV"
-          echo "SINGBOX_REF=v$v" >> "$GITHUB_ENV"
-
       - name: Download frontend build
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -122,60 +114,15 @@ jobs:
             git ca-certificates gnupg curl file xz-utils unzip zip python3 python3-requests procps \
             build-essential pkg-config
 
-      - name: Restore sing-box build artifacts
-        id: singbox-cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
-        with:
-          # Cache holds ONLY the built binary + its sha256 sidecar. embedded.go
-          # is NOT cached and NOT hashed into the key: it is a build output
-          # (per-arch URL/SHA256/Size) regenerated unconditionally from the
-          # binary by the "Refresh sing-box embedded metadata" step below, so it
-          # is always fresh whether the binary was rebuilt or restored.
-          key: sing-box-${{ matrix.arch }}-${{ env.SINGBOX_VERSION }}-${{ env.SINGBOX_REF }}-repo-${{ hashFiles('scripts/build-singbox.sh', 'scripts/patches/**') }}
-          path: |
-            dist/sing-box-${{ env.SINGBOX_VERSION }}-${{ matrix.arch }}
-            dist/sing-box-${{ env.SINGBOX_VERSION }}-${{ matrix.arch }}.sha256
-
-      - name: Build sing-box
-        if: steps.singbox-cache.outputs.cache-hit != 'true'
-        env:
-          RELEASE_BASE_URL: http://repo.hoaxisr.ru/develop/singbox/${{ env.SINGBOX_VERSION }}
-        run: |
-          set -euo pipefail
-
-          ./scripts/build-singbox.sh "${{ matrix.arch }}"
-
-      - name: Save sing-box build artifacts
-        if: steps.singbox-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae
-        with:
-          # Key + path MUST match the restore step above (see its comment).
-          key: sing-box-${{ matrix.arch }}-${{ env.SINGBOX_VERSION }}-${{ env.SINGBOX_REF }}-repo-${{ hashFiles('scripts/build-singbox.sh', 'scripts/patches/**') }}
-          path: |
-            dist/sing-box-${{ env.SINGBOX_VERSION }}-${{ matrix.arch }}
-            dist/sing-box-${{ env.SINGBOX_VERSION }}-${{ matrix.arch }}.sha256
-
-      - name: Refresh sing-box embedded metadata
-        # Unconditional: on a cache hit "Build sing-box" is skipped, but
-        # embedded.go must still carry the correct URL/SHA256/Size for the
-        # restored binary so the router updater downloads the right file.
-        env:
-          RELEASE_BASE_URL: http://repo.hoaxisr.ru/develop/singbox/${{ env.SINGBOX_VERSION }}
-        run: |
-          set -euo pipefail
-
-          ./scripts/update-singbox-embedded.sh "${{ matrix.arch }}" "$SINGBOX_VERSION"
+      # sing-box НЕ собирается здесь: наш sing-box (AWG3+mieru+xhttp) собирает CI
+      # форка hoaxisr/amnezia-box и публикует релизом. embedded.go (закоммичен,
+      # regen-embedded.sh) несёт URL/SHA256/Size его ассетов; роутер скачивает
+      # бинарь в рантайме. IPK sing-box не содержит.
 
       - name: Build
         id: build
         run: |
           set -euo pipefail
-
-          file="dist/sing-box-${SINGBOX_VERSION}-${{ matrix.arch }}"
-          if [[ ! -f "$file" ]]; then
-            echo "Missing sing-box binary: $file" >&2
-            exit 1
-          fi
 
           IPK_VERSION="${{ needs.version.outputs.ipk_version }}"
           printf '%s\n' "$IPK_VERSION" > dist/VERSION
@@ -188,8 +135,6 @@ jobs:
           name: result-${{ matrix.arch }}
           path: |
             dist/awg-manager_*_${{ matrix.arch }}-kn.ipk
-            dist/sing-box-${{ env.SINGBOX_VERSION }}-${{ matrix.arch }}
-            dist/sing-box-${{ env.SINGBOX_VERSION }}-${{ matrix.arch }}.sha256
             dist/VERSION
           if-no-files-found: error
 
@@ -321,7 +266,7 @@ jobs:
           set -euo pipefail
 
           shopt -s nullglob
-          files=(./dist/awg-manager_* ./dist/sing-box-* ./dist/VERSION ./dist/CHANGELOG.md ./dist/RELEASED_SHA)
+          files=(./dist/awg-manager_* ./dist/VERSION ./dist/CHANGELOG.md ./dist/RELEASED_SHA)
 
           if (( ${#files[@]} == 0 )); then
             echo "No release files found in ./dist"
