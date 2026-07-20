@@ -29,8 +29,14 @@ type TerminalStartResponse struct {
 
 // terminalPingInterval — период keepalive-ping'ов клиенту WS-прокси.
 // Без них промежуточные прокси (KeenDNS-облако и т.п.) рвут idle-соединение,
-// и сессия терминала «сама» умирает (#588). var — для подмены в тестах.
-var terminalPingInterval = 30 * time.Second
+// и сессия терминала «сама» умирает (#588). vars — для подмены в тестах.
+// Пропавший pong (terminalPongTimeout) = мёртвый клиент: сессию закрываем,
+// чтобы освободить single-session слот для реконнекта (фронт ретраит дольше,
+// чем худшее удержание слота: interval+timeout).
+var (
+	terminalPingInterval = 30 * time.Second
+	terminalPongTimeout  = 10 * time.Second
+)
 
 // TerminalHandler handles terminal API endpoints.
 type TerminalHandler struct {
@@ -244,10 +250,14 @@ func (h *TerminalHandler) WebSocket(w http.ResponseWriter, r *http.Request) {
 			case <-proxyCtx.Done():
 				return
 			case <-ticker.C:
-				pingCtx, cancel := context.WithTimeout(proxyCtx, 10*time.Second)
+				pingCtx, cancel := context.WithTimeout(proxyCtx, terminalPongTimeout)
 				err := clientConn.Ping(pingCtx)
 				cancel()
 				if err != nil {
+					if h.log != nil {
+						h.log.AppLog(logging.LevelWarn, "terminal", "", "keepalive", "ttyd",
+							"client missed pong — closing session to free the slot: "+err.Error())
+					}
 					proxyCancel()
 					return
 				}

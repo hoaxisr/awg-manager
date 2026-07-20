@@ -114,7 +114,7 @@ func TestTerminalWS_KeepalivePings(t *testing.T) {
 		t.Fatal("нет эха от fake-ttyd через прокси")
 	}
 
-	// Ждём ≥5 интервалов: должно прийти хотя бы 2 ping'а, соединение живо.
+	// Ждём до 2с (интервал 30мс): должно прийти хотя бы 2 ping'а, соединение живо.
 	deadline := time.Now().Add(2 * time.Second)
 	for pings.Load() < 2 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -138,5 +138,58 @@ func TestTerminalWS_KeepalivePings(t *testing.T) {
 
 	if !mgr.HasActiveSession() {
 		t.Fatal("sessionActive должен быть true при живой сессии")
+	}
+}
+
+// TestTerminalWS_MissedPongClosesSession — клиент, не отвечающий pong'ом
+// (спящая вкладка), должен быть отключён: сессия закрывается и освобождает
+// single-session слот, иначе реконнект вечно ловил бы 409.
+func TestTerminalWS_MissedPongClosesSession(t *testing.T) {
+	oldInterval, oldTimeout := terminalPingInterval, terminalPongTimeout
+	terminalPingInterval = 30 * time.Millisecond
+	terminalPongTimeout = 100 * time.Millisecond
+	defer func() { terminalPingInterval, terminalPongTimeout = oldInterval, oldTimeout }()
+
+	mgr := &fakeTerminalManager{port: startFakeTtyd(t)}
+	h := NewTerminalHandler(mgr, nil)
+	srv := httptest.NewServer(http.HandlerFunc(h.WebSocket))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), &websocket.DialOptions{
+		OnPingReceived: func(context.Context, []byte) bool {
+			return false // подавить pong — изображаем замороженную вкладку
+		},
+	})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.CloseNow()
+
+	// Reader вернёт ошибку, когда сервер закроет соединение по missed pong.
+	readDone := make(chan error, 1)
+	go func() {
+		for {
+			if _, _, err := conn.Read(ctx); err != nil {
+				readDone <- err
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-readDone:
+		// ок — сервер разорвал соединение
+	case <-time.After(3 * time.Second):
+		t.Fatal("сервер не закрыл сессию при отсутствии pong")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for mgr.HasActiveSession() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if mgr.HasActiveSession() {
+		t.Fatal("sessionActive не освобождён после разрыва по missed pong")
 	}
 }

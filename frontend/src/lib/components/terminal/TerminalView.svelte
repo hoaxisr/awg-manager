@@ -23,7 +23,14 @@
 	let themeUnsub: (() => void) | null = null;
 	let intentionalDisconnect = false;
 	let reconnecting = $state(false);
-	let lastAutoReconnectAt = 0;
+	// Авто-восстановление (#588): бюджет ретраев покрывает худшее удержание
+	// single-session слота старым прокси-хендлером (ping 30s + pong 10s) —
+	// ранние 409 при реконнекте нормальны, пробуем дальше.
+	const AUTO_RECONNECT_ATTEMPTS = 15;
+	const AUTO_RECONNECT_DELAY_MS = 3000;
+	let autoReconnecting = false;
+	let lastOpenAt = 0; // время последнего успешного open
+	let flapCount = 0; // подряд короткоживущие (<10с) сессии
 
 	// ttyd protocol: message types are ASCII characters, not binary values!
 	const TTYD_OUTPUT = '0'.charCodeAt(0);
@@ -44,6 +51,7 @@
 
 	function attachSocketHandlers(socket: WebSocket, term: Terminal, fitAddon: FitAddon) {
 		socket.onopen = () => {
+			lastOpenAt = Date.now();
 			socket.send(JSON.stringify({ AuthToken: '' }));
 			sendResize(socket, term.cols, term.rows);
 			fitAddon.fit();
@@ -69,26 +77,26 @@
 
 		socket.onclose = () => {
 			ws = null;
-			if (intentionalDisconnect) return;
+			if (intentionalDisconnect || autoReconnecting) return;
 			// Неумышленный обрыв (сон вкладки, обрыв прокси): ttyd жив (без
-			// --once) — переподключаемся сами, не убивая сессию (#588).
-			// Защита от цикла: если и повторный коннект умер в течение 5с —
-			// сдаёмся и завершаем сессию как раньше.
-			if (Date.now() - lastAutoReconnectAt < 5000) {
+			// --once) — переподключаемся сами, НЕ убивая сессию (#588).
+			// Флап-гард: 3 подряд короткоживущие (<10с) сессии → сдаёмся в
+			// error-состояние страницы (кнопка «Повторить»), ttyd не стопаем.
+			if (Date.now() - lastOpenAt < 10_000) flapCount++;
+			else flapCount = 0;
+			if (flapCount >= 3) {
 				term.writeln('\r\n\x1b[33m[Сессия завершена — соединение постоянно рвётся]\x1b[0m');
-				onclose?.();
+				onerror?.('Соединение с терминалом постоянно рвётся');
 				return;
 			}
-			lastAutoReconnectAt = Date.now();
 			term.writeln('\r\n\x1b[33m[Соединение потеряно — переподключение...]\x1b[0m');
-			void reconnectSession();
+			void autoReconnect(term, fitAddon);
 		};
 
-		socket.onerror = () => {
-			if (!intentionalDisconnect) {
-				onerror?.('Не удалось подключиться к терминалу');
-			}
-		};
+		// НЕ вешаем page-level onerror на established-сокет: у «грязного»
+		// обрыва (1006) error прилетает ПЕРЕД close — уход в error-страницу
+		// размонтировал бы компонент и сорвал авто-reconnect (ревью #588).
+		// Ошибка первичного коннекта репортится через reject connectSocket.
 	}
 
 	function connectSocket(term: Terminal, fitAddon: FitAddon): Promise<WebSocket> {
@@ -136,6 +144,40 @@
 		ws?.close();
 		ws = null;
 		onclose?.();
+	}
+
+	// Авто-восстановление после неумышленного обрыва: ретраи с паузой, пока
+	// старый прокси-хендлер не освободит single-session слот (409) и/или ttyd
+	// не поднимется. Scrollback сохраняем (в отличие от ручного reconnect).
+	// Сдаёмся → onerror (error-страница с «Повторить»), ttyd НЕ стопаем.
+	async function autoReconnect(term: Terminal, fitAddon: FitAddon) {
+		if (autoReconnecting || intentionalDisconnect) return;
+		autoReconnecting = true;
+		reconnecting = true;
+		try {
+			for (let attempt = 0; attempt < AUTO_RECONNECT_ATTEMPTS; attempt++) {
+				if (intentionalDisconnect) return;
+				try {
+					await onreconnect?.(); // terminalStart — идемпотентен
+					const socket = await connectSocket(term, fitAddon);
+					if (intentionalDisconnect) {
+						// Страницу покинули, пока коннект был в полёте.
+						socket.close();
+						return;
+					}
+					ws = socket;
+					term.writeln('\x1b[33m[Переподключено — новая shell-сессия]\x1b[0m');
+					return;
+				} catch {
+					// 409 (слот ещё занят старой сессией) или ttyd поднимается
+				}
+				await new Promise((r) => setTimeout(r, AUTO_RECONNECT_DELAY_MS));
+			}
+			onerror?.('Не удалось переподключиться к терминалу');
+		} finally {
+			autoReconnecting = false;
+			reconnecting = false;
+		}
 	}
 
 	async function reconnectSession() {
