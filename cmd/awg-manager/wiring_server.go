@@ -303,7 +303,7 @@ func (a *app) setupRouter() {
 		Policies:               &routerAccessPolicyAdapter{svc: a.accessPolicySvc, wan: a.wanModel},
 		Events:                 a.eventBus,
 		Bus:                    a.eventBus,
-		AWGTags:                &routerAWGTagAdapter{src: a.awgoutboundsSvc},
+		AWGTags:                &routerAWGTagAdapter{src: a.awgoutboundsSvc, awg3: a.awg3Svc},
 		AWGOutboundsRefresh:    a.awgoutboundsSvc.Reconcile,
 		SingboxTunnels:         &routerSingboxTunnelAdapter{src: a.singboxOp},
 		SubscriptionComposites: router.NewSubscriptionCompositesAdapter(a.subAdapter),
@@ -456,7 +456,15 @@ func (a *app) setupRouter() {
 		return st.PolicyMark, true
 	})
 	a.srv.SetSingboxFakeIPConfigHandler(api.NewSingboxFakeIPConfigHandler(routerSvc, a.loggingService))
-	a.srv.SetAWGOutboundsHandler(api.NewAWGOutboundsHandler(a.awgoutboundsSvc))
+	mergedAWGOutbounds := &awg3MergedAWGOutbounds{inner: a.awgoutboundsSvc, awg3: a.awg3Svc}
+	a.srv.SetAWGOutboundsHandler(api.NewAWGOutboundsHandler(mergedAWGOutbounds))
+	// AWG3 endpoint import/CRUD. Wired here (not setupSingbox) because the
+	// rename-conflict check needs routerSvc's ListRules, only built in this phase.
+	awg3Handler := api.NewAwg3Handler(a.awg3Store, a.awg3Svc, routerSvc, a.loggingService)
+	// Same merged catalog the rule-editor dropdown uses — lets import/rename
+	// reject a tag already taken by any outbound early with a clear message.
+	awg3Handler.SetOutboundTagLister(mergedAWGOutbounds)
+	a.srv.SetAwg3Handler(awg3Handler)
 	a.srv.SetSingboxConfigHandler(api.NewSingboxConfigHandler(a.sbOrch.ConfigDir))
 	// Эксперт-редактор конфигурации: обзор слотов config.d + draft-пайплайн
 	// пользовательского слота 90-user.json (единственный слот без продюсера).

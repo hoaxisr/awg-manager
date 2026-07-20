@@ -10,3 +10,4 @@ export * from './types/singbox';
 export * from './types/sbRouter';
 export * from './types/subscriptions';
 export * from './types/freeturn';
+export * from './types/awg3';

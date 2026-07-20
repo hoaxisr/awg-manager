@@ -132,6 +132,18 @@ const api_AuthStatusResponse: v.GenericSchema = v.looseObject({
 	login: v.optional(v.nullable(v.string())),
 });
 
+const api_Awg3ListResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.array(v.lazy(() => api_Awg3TunnelDTO)))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_Awg3TunnelDTO: v.GenericSchema = v.looseObject({
+	headerProtection: v.optional(v.nullable(v.boolean())),
+	host: v.optional(v.nullable(v.string())),
+	id: v.optional(v.nullable(v.string())),
+	tag: v.optional(v.nullable(v.string())),
+});
+
 const api_BackupWarningDTO: v.GenericSchema = v.looseObject({
 	interfaceName: v.optional(v.nullable(v.string())),
 	message: v.optional(v.nullable(v.string())),
@@ -2390,6 +2402,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"DELETE /access-policies/assign": v.lazy(() => api_OkResponse),
 	"DELETE /access-policies/delete": v.lazy(() => api_OkResponse),
 	"DELETE /access-policies/permit": v.lazy(() => api_OkResponse),
+	"DELETE /awg3-endpoints/{id}": v.lazy(() => api_Awg3ListResponse),
 	"DELETE /connections": v.lazy(() => api_ConnectionKillEnvelope),
 	"DELETE /hydraroute/geo-files/delete": v.lazy(() => api_OkResponse),
 	"DELETE /managed-servers/{id}": v.lazy(() => api_ServersAllResponse),
@@ -2403,6 +2416,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /access-policies/devices": v.lazy(() => api_PolicyDevicesListResponse),
 	"GET /access-policies/interfaces": v.lazy(() => api_PolicyInterfacesListResponse),
 	"GET /auth/status": v.lazy(() => api_AuthStatusResponse),
+	"GET /awg3-endpoints": v.lazy(() => api_Awg3ListResponse),
 	"GET /boot-status": v.lazy(() => api_BootStatusResponse),
 	"GET /client-routes": v.lazy(() => api_ClientRoutesListResponse),
 	"GET /connections": v.lazy(() => api_ConnectionsResponseEnvelope),
@@ -2556,6 +2570,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /tunnels/pingcheck": v.lazy(() => api_NativePingCheckStatusResponse),
 	"GET /tunnels/traffic": v.lazy(() => api_TunnelTrafficResponse),
 	"GET /wan/status": v.lazy(() => api_WANStatusEnvelope),
+	"PATCH /awg3-endpoints/{id}": v.lazy(() => api_Awg3ListResponse),
 	"PATCH /singbox/tunnels/rename": v.lazy(() => api_SingboxTunnelsResponse),
 	"POST /access-policies/assign": v.lazy(() => api_OkResponse),
 	"POST /access-policies/create": v.lazy(() => api_AccessPolicyResponse),
@@ -2568,6 +2583,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /amnezia-premium/login": v.lazy(() => api_AmneziaPremiumLoginResponse),
 	"POST /auth/login": v.lazy(() => api_LoginResponseRaw),
 	"POST /auth/logout": v.lazy(() => api_APIEnvelope),
+	"POST /awg3-endpoints": v.lazy(() => api_Awg3ListResponse),
 	"POST /client-routes/create": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_ClientRouteDTO))),
 })]),

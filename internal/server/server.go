@@ -121,6 +121,7 @@ type Server struct {
 	awgOutboundsHandler        *api.AWGOutboundsHandler
 	subscriptionHandler        *api.SubscriptionHandler
 	dnsRewritesHandler         *api.DNSRewritesHandler
+	awg3Handler                *api.Awg3Handler
 	clashProxy                 *api.ClashProxy
 	singboxOp                  *singbox.Operator
 	singboxOrch                *singboxorch.Orchestrator
@@ -392,6 +393,12 @@ func (s *Server) SetDNSRewritesHandler(h *api.DNSRewritesHandler) {
 	s.dnsRewritesHandler = h
 }
 
+// SetAwg3Handler wires the AWG3 endpoint import/CRUD handler so the
+// /api/awg3-endpoints[/{id}] routes can be registered.
+func (s *Server) SetAwg3Handler(h *api.Awg3Handler) {
+	s.awg3Handler = h
+}
+
 // generateInstanceID creates a random 16-byte hex string (32 chars).
 func generateInstanceID() string {
 	b := make([]byte, 16)
@@ -581,7 +588,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	s.registerSingboxRoutes(mux, h)
 	s.registerStaticRoutes(mux, h)
 }
-
 
 // spaHandler serves static files with SPA fallback to index.html.
 func spaHandler(staticFS fs.FS) http.Handler {

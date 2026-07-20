@@ -28,8 +28,9 @@ func (l *operatorLifecycle) Start(ctx context.Context) error {
 // This lets DelayChecker probe subscription active members with the same
 // periodic clash latency test it runs for regular sing-box tunnels.
 type singboxAndSubLister struct {
-	op  *singbox.Operator
-	sub *subscription.Service
+	op   *singbox.Operator
+	sub  *subscription.Service
+	awg3 awg3TagLister
 }
 
 func (l *singboxAndSubLister) ListTunnels(ctx context.Context) ([]singbox.TunnelInfo, error) {
@@ -37,7 +38,16 @@ func (l *singboxAndSubLister) ListTunnels(ctx context.Context) ([]singbox.Tunnel
 }
 
 func (l *singboxAndSubLister) ListSubActiveTags() []string {
-	return l.sub.ListActiveMemberTags()
+	var out []string
+	if l.sub != nil {
+		out = l.sub.ListActiveMemberTags()
+	}
+	if l.awg3 != nil {
+		for _, t := range l.awg3.ListTags() {
+			out = append(out, t.Tag)
+		}
+	}
+	return out
 }
 
 // orchValidatorAdapter bridges singbox.Validator (no context) to the

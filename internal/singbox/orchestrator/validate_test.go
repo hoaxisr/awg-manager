@@ -460,6 +460,70 @@ func TestValidateDefaultDomainResolverStringForm(t *testing.T) {
 	}
 }
 
+// A router rule may route to an AWG3 endpoint tag: 16-awg3.json is the first
+// slot carrying endpoints[], which share the outbound tag namespace. The tag
+// must resolve like any outbound.
+func TestValidateRuleReferencesEndpointTag(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotAwg3, Filename: "16-awg3.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "16-awg3.json", `{"endpoints":[{"tag":"awg3-de","type":"wireguard"}]}`)
+	writeSlot(t, dir, "20-router.json", `{"route":{"rules":[{"outbound":"awg3-de"}]}}`)
+	o.enabled[SlotRouter] = true
+	o.enabled[SlotAwg3] = true
+	res := o.Validate()
+	if !res.Ok() {
+		t.Errorf("rule → endpoint tag should validate, got: %s", res.Error())
+	}
+}
+
+// An endpoint tag colliding with an outbound tag (any slot) restores the global
+// constraint: tags are unique across ALL outbound-tag holders → duplicate-outbound.
+func TestValidateEndpointDuplicatesOutbound(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotTunnels, Filename: "10-tunnels.json"})
+	_ = o.Register(SlotMeta{Slot: SlotAwg3, Filename: "16-awg3.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "10-tunnels.json", `{"outbounds":[{"tag":"vpn1"}]}`)
+	writeSlot(t, dir, "16-awg3.json", `{"endpoints":[{"tag":"vpn1","type":"wireguard"}]}`)
+	o.enabled[SlotTunnels] = true
+	o.enabled[SlotAwg3] = true
+	res := o.Validate()
+	if res.Ok() {
+		t.Fatalf("expected duplicate-outbound, got ok")
+	}
+	if !strings.Contains(res.Error(), "duplicate-outbound") || !strings.Contains(res.Error(), "vpn1") {
+		t.Errorf("missing duplicate-outbound for vpn1: %s", res.Error())
+	}
+}
+
+// Removing the endpoint while a rule still references it must dangle as
+// unknown-outbound (the core delete-guard scenario).
+func TestValidateRuleReferencesRemovedEndpoint(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotAwg3, Filename: "16-awg3.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "16-awg3.json", `{"endpoints":[]}`)
+	writeSlot(t, dir, "20-router.json", `{"route":{"rules":[{"outbound":"awg3-de"}]}}`)
+	o.enabled[SlotRouter] = true
+	o.enabled[SlotAwg3] = true
+	res := o.Validate()
+	if res.Ok() {
+		t.Fatalf("expected unknown-outbound, got ok")
+	}
+	if !strings.Contains(res.Error(), "unknown-outbound") || !strings.Contains(res.Error(), "awg3-de") {
+		t.Errorf("missing unknown-outbound for awg3-de: %s", res.Error())
+	}
+}
+
 // The string form is still checked as a DNS-tag reference: a bare-string
 // resolver naming an undeclared server must fail.
 func TestValidateDefaultDomainResolverStringForm_Unknown(t *testing.T) {

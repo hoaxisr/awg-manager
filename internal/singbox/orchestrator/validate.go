@@ -190,6 +190,24 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 				outbounds[ob.Tag] = tagOrigin{slot: os.slot}
 			}
 		}
+		// Endpoints live in the same tag namespace as outbounds: collect them
+		// into the same map so refs resolve and a tag shared with an outbound
+		// (in any slot) surfaces as duplicate-outbound.
+		for _, ep := range c.Endpoints {
+			if ep.Tag == "" {
+				continue
+			}
+			if existing, dup := outbounds[ep.Tag]; dup {
+				errs = append(errs, ValidationError{
+					Slot:    os.slot,
+					Kind:    "duplicate-outbound",
+					Tag:     ep.Tag,
+					Message: fmt.Sprintf("also declared in [%s]", existing.slot),
+				})
+			} else {
+				outbounds[ep.Tag] = tagOrigin{slot: os.slot}
+			}
+		}
 		for _, ib := range c.Inbounds {
 			if ib.Type == "tun" {
 				hasTun = true
@@ -445,6 +463,11 @@ func (o *Orchestrator) Validate() ValidationResult {
 type slotConfig struct {
 	Inbounds  []inboundJSON  `json:"inbounds,omitempty"`
 	Outbounds []outboundJSON `json:"outbounds,omitempty"`
+	// Endpoints share the outbound tag namespace in sing-box (a router rule
+	// may route to an endpoint tag). 16-awg3.json is the first slot to carry
+	// them; without collecting their tags a rule → awg3 endpoint would fail
+	// with unknown-outbound and a tag colliding with an outbound would slip past.
+	Endpoints []outboundJSON `json:"endpoints,omitempty"`
 	Route     routeJSON      `json:"route"`
 	DNS       dnsJSON        `json:"dns"`
 }

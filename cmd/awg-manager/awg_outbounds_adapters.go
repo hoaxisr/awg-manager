@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/api"
+	"github.com/hoaxisr/awg-manager/internal/awg3endpoint"
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
@@ -145,6 +147,41 @@ func (a *awgoutboundsSingboxAdapter) Reload() error {
 	return a.op.Process().Reload()
 }
 
+// awg3TagLister exposes AWG3 endpoint tags for merging into outbound
+// catalogs. Satisfied by *awg3endpoint.Service.
+type awg3TagLister interface {
+	ListTags() []awg3endpoint.TagInfo
+}
+
+// awg3MergedAWGOutbounds wraps the awgoutbounds catalog and appends AWG3
+// endpoint tags. It feeds api.NewAWGOutboundsHandler — the source of the
+// router rule-editor outbound dropdown — so AWG3 endpoints are selectable
+// there. Injected only at this handler adapter, NOT in
+// awgoutbounds.ServiceImpl, so the deviceproxy adapter (a separate
+// consumer) does not gain AWG3 tags (they lack a kernel iface for
+// bind_interface — out of scope for v1).
+// inner needs only ListTags, so it is typed to the narrow
+// api.AWGOutboundsService rather than the full awgoutbounds.Service.
+type awg3MergedAWGOutbounds struct {
+	inner api.AWGOutboundsService
+	awg3  awg3TagLister
+}
+
+func (a *awg3MergedAWGOutbounds) ListTags(ctx context.Context) ([]awgoutbounds.TagInfo, error) {
+	tags, err := a.inner.ListTags(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if a.awg3 != nil {
+		for _, t := range a.awg3.ListTags() {
+			tags = append(tags, awgoutbounds.TagInfo{
+				Tag: t.Tag, Label: t.Tag, Kind: "awg3", Iface: "",
+			})
+		}
+	}
+	return tags, nil
+}
+
 // deviceproxyAWGOutboundsAdapter projects awgoutbounds.TagInfo into
 // deviceproxy.AWGTagInfo. main.go owns this projection so neither
 // downstream package imports the other's types.
@@ -170,7 +207,8 @@ func (a *deviceproxyAWGOutboundsAdapter) ListTags(ctx context.Context) ([]device
 // router.AWGTag. main.go owns this projection so router doesn't
 // import awgoutbounds types.
 type routerAWGTagAdapter struct {
-	src awgoutbounds.Service
+	src  awgoutbounds.Service
+	awg3 awg3TagLister
 }
 
 func (a *routerAWGTagAdapter) ListTags(ctx context.Context) ([]router.AWGTag, error) {
@@ -181,6 +219,11 @@ func (a *routerAWGTagAdapter) ListTags(ctx context.Context) ([]router.AWGTag, er
 	out := make([]router.AWGTag, 0, len(tags))
 	for _, t := range tags {
 		out = append(out, router.AWGTag{Tag: t.Tag})
+	}
+	if a.awg3 != nil {
+		for _, t := range a.awg3.ListTags() {
+			out = append(out, router.AWGTag{Tag: t.Tag})
+		}
 	}
 	return out, nil
 }

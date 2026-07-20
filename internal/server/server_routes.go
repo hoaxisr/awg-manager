@@ -617,6 +617,9 @@ func (s *Server) wireCrossHandlers(mux *http.ServeMux, h *routeHandlers) {
 	h.accessPolicyHandler.SetEventBus(s.bus)
 	h.crHandler.SetEventBus(s.bus)
 	h.serverHandler.SetEventBus(s.bus)
+	if s.awg3Handler != nil {
+		s.awg3Handler.SetEventBus(s.bus)
+	}
 
 	// Cross-wire servers <-> managed for unified server:updated event
 	h.serverHandler.SetManagedHandler(h.managedHandler)
@@ -908,6 +911,13 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/router/dns/rewrites/update", h.guarded(rw.Update))
 		mux.HandleFunc("/api/singbox/router/dns/rewrites/delete", h.guarded(rw.Delete))
 		mux.HandleFunc("/api/singbox/router/dns/rewrites/move", h.guarded(rw.Move))
+	}
+
+	// AWG3 endpoint import/CRUD. One handler dispatches by method+path over
+	// both the collection route and the item route (trailing slash = subtree).
+	if s.awg3Handler != nil {
+		mux.HandleFunc("/api/awg3-endpoints", h.guarded(s.awg3Handler.Handle))
+		mux.HandleFunc("/api/awg3-endpoints/", h.guarded(s.awg3Handler.Handle))
 	}
 
 }

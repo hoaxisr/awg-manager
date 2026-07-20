@@ -1,0 +1,44 @@
+{
+  "data": {
+    "address": [
+      "10.10.0.2/32"
+    ],
+    "content_padding_addition": "64",
+    "h1": "1",
+    "h2": "2",
+    "h3": "3",
+    "h4": "4",
+    "header_protection_key": "aGVhZGVyUHJvdGVjdGlvbktleUJhc2U2NEV4YW1wbGU9",
+    "i1": "\u003cb 0xde\u003e",
+    "i2": "\u003cr 20\u003e",
+    "i3": "\u003cc\u003e",
+    "i4": "\u003ct\u003e",
+    "i5": "\u003cwt 100\u003e",
+    "jc": 4,
+    "jmax": 70,
+    "jmin": 40,
+    "mtu": 1408,
+    "peers": [
+      {
+        "address": "vpn.example.com",
+        "allowed_ips": [
+          "0.0.0.0/0"
+        ],
+        "persistent_keepalive_interval": 25,
+        "port": 51820,
+        "preshared_key": "cHJlU2hhcmVkS2V5QmFzZTY0RXhhbXBsZTAwMDAwMDA9",
+        "public_key": "c2VydmVyUHVibGljS2V5QmFzZTY0RXhhbXBsZTAwMD0="
+      }
+    ],
+    "private_key": "cGVlclByaXZhdGVLZXlCYXNlNjRFeGFtcGxlMDAwMDAwMD0=",
+    "rekey_after_time": "120-150",
+    "s1": 8,
+    "s2": 8,
+    "s3": 8,
+    "s4": 8,
+    "tag": "awg-amsterdam",
+    "type": "awg",
+    "useIntegratedTun": false
+  },
+  "success": true
+}
