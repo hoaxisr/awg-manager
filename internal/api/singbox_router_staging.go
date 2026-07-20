@@ -49,7 +49,7 @@ func writeJSONStatus(w http.ResponseWriter, code int, v any) {
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	RouterStagingStatusResponse
+//	@Success		200	{object}	APIEnvelope{data=RouterStagingStatusResponse}
 //	@Failure		405	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/staging [get]

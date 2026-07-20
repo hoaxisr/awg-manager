@@ -29,7 +29,7 @@ type ResolveResponse struct {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			domain	query	string	true	"Hostname to resolve"
-//	@Success		200	{object}	ResolveResponse
+//	@Success		200	{object}	APIEnvelope{data=ResolveResponse}
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/routing/resolve [get]

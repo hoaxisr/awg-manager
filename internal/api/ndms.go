@@ -45,7 +45,7 @@ type SaveStatusDTO struct {
 //	@Tags			ndms
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	SaveStatusDTO
+//	@Success		200	{object}	APIEnvelope{data=SaveStatusDTO}
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/ndms/save-status [get]

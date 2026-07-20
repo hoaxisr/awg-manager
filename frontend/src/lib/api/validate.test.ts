@@ -97,6 +97,22 @@ describe('validateApiResponse', () => {
 			ApiValidationError,
 		);
 	});
+
+	// #578: мутации static-routes возвращают одиночный объект, но аннотации
+	// объявляли списочный конверт (data: массив) → «Некорректный ответ
+	// сервера» при каждом create/update/import, хотя бэкенд всё сохранял.
+	it('#578: одиночный объект валиден на мутациях static-routes, list требует массив', () => {
+		const single = {
+			success: true,
+			data: { id: 'sr_1', name: 'Telegram', tunnelID: 't1', subnets: ['1.2.3.0/24'], enabled: true },
+		};
+		for (const ep of ['/static-routes/create', '/static-routes/update', '/static-routes/import']) {
+			expect(() => validateApiResponse('POST', ep, single)).not.toThrow();
+		}
+		expect(() => validateApiResponse('GET', '/static-routes/list', single)).toThrow(
+			ApiValidationError,
+		);
+	});
 });
 
 describe('schemas.gen.ts инварианты', () => {

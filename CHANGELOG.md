@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Исправления
+
+- **«Некорректный ответ сервера» при создании/импорте IP-маршрутов** ([#578](https://github.com/hoaxisr/awg-manager/issues/578)) — swagger-спека мутаций static-routes (create/update/import) и client-routes (create/update/delete/toggle) объявляла списочный конверт, тогда как бэкенд возвращает одиночный объект; runtime-валидация ответов на фронте (появилась в 2.16.0) на этом падала, хотя сами маршруты сохранялись корректно. Аннотации приведены к фактической форме ответов; заодно выправлены спеки ещё 13 endpoint'ов, где объявлялся голый payload вместо конверта `{success,data}` (geo-expand, ndms/save-status, presets, resolve, router/staging, terminal/install, selective, subscriptions refresh/active-member/orphans) — валидацию они не роняли, но документировали неверную форму.
+
 ## [2.16.0] - 2026-07-17
 
 ### Новые возможности

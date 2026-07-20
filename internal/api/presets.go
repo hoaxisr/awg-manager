@@ -26,7 +26,7 @@ type PresetsListResponse struct {
 //	@Summary	List unified presets
 //	@Tags		presets
 //	@Produce	json
-//	@Success	200	{object}	PresetsListResponse
+//	@Success	200	{object}	APIEnvelope{data=PresetsListResponse}
 //	@Router		/presets [get]
 func (h *PresetsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

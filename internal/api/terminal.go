@@ -44,6 +44,11 @@ type TerminalStatusResponse struct {
 	SessionActive bool `json:"sessionActive" example:"false"`
 }
 
+// TerminalInstallData is the payload of POST /terminal/install.
+type TerminalInstallData struct {
+	Installed bool `json:"installed" example:"true"`
+}
+
 // Status returns the current terminal state.
 // GET /api/terminal/status
 //
@@ -74,7 +79,7 @@ func (h *TerminalHandler) Status(w http.ResponseWriter, r *http.Request) {
 //	@Tags			terminal
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	TerminalStatusResponse
+//	@Success		200	{object}	APIEnvelope{data=TerminalInstallData}
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/terminal/install [post]

@@ -336,6 +336,19 @@ func (h *SubscriptionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}{true})
 }
 
+// SubscriptionRefreshData mirrors subscription.RefreshResult for swagger
+// (the subscription package is outside swag's parse dirs).
+type SubscriptionRefreshData struct {
+	When             string   `json:"when" example:"2026-07-20T12:00:00Z"`
+	Added            int      `json:"added" example:"1"`
+	Updated          int      `json:"updated" example:"2"`
+	Orphaned         int      `json:"orphaned" example:"0"`
+	SkippedVmess     int      `json:"skippedVmess" example:"0"`
+	SkippedOther     int      `json:"skippedOther" example:"0"`
+	SkippedDuplicate int      `json:"skippedDuplicate" example:"0"`
+	ParseErrors      []string `json:"parseErrors,omitempty"`
+}
+
 // Refresh handles POST /api/singbox/subscriptions/refresh?id=
 //
 //	@Summary		Refresh sing-box subscription
@@ -343,7 +356,7 @@ func (h *SubscriptionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 //	@Tags			subscriptions
 //	@Produce		json
 //	@Param			id	query		string	false	"subscription id"
-//	@Success		200	{object}	SubscriptionResponse
+//	@Success		200	{object}	APIEnvelope{data=SubscriptionRefreshData}
 //	@Failure		409	{object}	APIErrorEnvelope	"фильтр и исключения скрывают все серверы (ALL_MEMBERS_FILTERED)"
 //	@Failure		422	{object}	APIErrorEnvelope	"sing-box validation rejected the refreshed subscription"
 //	@Failure		500	{object}	APIErrorEnvelope
