@@ -133,7 +133,12 @@ func (a *app) setupSingbox() {
 	// Sync would only spawn a `sing-box check` subprocess (seconds on MIPS,
 	// warns without the binary) to produce an empty slot that is already empty.
 	// If the slot file exists while the store is empty, still Sync to clear it.
-	if _, _, slotExists := a.sbOrch.EffectiveStat(singboxorch.SlotAwg3); a.awg3Store.Len() > 0 || slotExists {
+	slotExists := func() bool {
+		_, _, ok := a.sbOrch.EffectiveStat(singboxorch.SlotAwg3)
+		return ok
+	}
+	// || is lazy: EffectiveStat (a stat syscall) runs only when the store is empty.
+	if a.awg3Store.Len() > 0 || slotExists() {
 		if err := a.awg3Svc.Sync(); err != nil {
 			a.bootLog.Warn("awg3-sync", "boot", err.Error())
 		}
