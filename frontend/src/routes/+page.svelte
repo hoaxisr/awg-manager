@@ -585,6 +585,17 @@
 	// instead of locking the user into a hidden mode.
 	let dashboardOn = $derived($tunnelDashboardMode && isTunnelDashboardAvailable($usageLevel));
 	const showSingboxSections = $derived(isSectionVisible($usageLevel, 'singboxTunnels'));
+	// FreeTurn существует только табом; в dashboard-режиме вход — кнопка
+	// тулбара, раскрывающая панель под дашбордом (#585).
+	const freeturnAvailable = $derived(isSectionVisible($usageLevel, 'freeturn'));
+	let dashboardFreeturnOpen = $state(false);
+	let dashboardFreeturnEl: HTMLElement | null = $state(null);
+	function toggleDashboardFreeturn() {
+		dashboardFreeturnOpen = !dashboardFreeturnOpen;
+		if (dashboardFreeturnOpen) {
+			requestAnimationFrame(() => dashboardFreeturnEl?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+		}
+	}
 	// Sing-box data is admitted into the dashboard only while its sections are
 	// visible at this usage level AND sing-box is installed (or still probing).
 	const dashboardSingboxVisible = $derived(
@@ -1373,9 +1384,12 @@
 			(dashboardTypeSections && dashboardAwg3Tunnels.length > 0),
 	);
 
-	// FreeTurn — настройки/статус, не туннельные карточки: в dashboard-режиме
-	// (плоские карточки, табов нет) вкладка недоступна — как и «подписки».
-	let showFreeturnBlock = $derived(!dashboardOn && activeTab === 'freeturn');
+	// FreeTurn — настройки/статус, не туннельные карточки: в таб-режиме — вкладка,
+	// в dashboard-режиме — панель под дашбордом по кнопке тулбара (#585).
+	let showFreeturnBlock = $derived(
+		(!dashboardOn && activeTab === 'freeturn') ||
+			(dashboardOn && dashboardFreeturnOpen && freeturnAvailable),
+	);
 
 	// Единый класс сетки для сплошного и тегового карточных видов — классы
 	// плотности не могут разъехаться между двумя разметками.
@@ -1524,6 +1538,9 @@
 		get showSingboxListOption() { return showSingboxListOption; },
 		get showSingboxSections() { return showSingboxSections; },
 		get exporting() { return exporting; },
+		get freeturnAvailable() { return freeturnAvailable; },
+		get freeturnOpen() { return dashboardFreeturnOpen; },
+		toggleFreeturn: toggleDashboardFreeturn,
 		get awgAutoConnectivityNonce() { return awgAutoConnectivityNonce; },
 		get singboxAutoDelayCheckNonce() { return singboxAutoDelayCheckNonce; },
 		get deleteLoading() { return deleteLoading; },
@@ -1731,7 +1748,9 @@
 		{/if}
 
 		{#if showFreeturnBlock}
-			<FreeTurnTab />
+			<div bind:this={dashboardFreeturnEl}>
+				<FreeTurnTab />
+			</div>
 		{/if}
 	{/if}
 </PageContainer>
