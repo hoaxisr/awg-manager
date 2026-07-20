@@ -45,6 +45,14 @@ is_our_pid() {
 }
 
 start() {
+    # 0-байтный бинарь проходит -x и молча «стартует» (#571: сбойная запись
+    # на накопитель) — громко в консоль и в syslog роутера.
+    if [ ! -s "$BIN" ]; then
+        echo "ERROR: $BIN is missing or empty (corrupt install) — reinstall the package"
+        logger -t awg-manager -p daemon.err "start failed: $BIN missing or empty (corrupt install)"
+        return 1
+    fi
+
     if [ -f "$PID_FILE" ]; then
         local pid=$(cat "$PID_FILE" 2>/dev/null)
         if is_our_pid "$pid"; then

@@ -93,9 +93,27 @@ func checkWithDownloader(ctx context.Context, currentVersion, channel string, dl
 // diagnostic left if opkg fails and the router ends up without awg-manager.
 const upgradeLogPath = "/opt/tmp/awg-manager-upgrade.log"
 
+// installedBinPath — куда пакет кладёт бинарь; проверяется после opkg install.
+const installedBinPath = "/opt/bin/awg-manager"
+
+// buildUpgradeScript собирает detached-скрипт установки: opkg + верификация
+// бинаря (не пустой + ELF-магия) + исход в syslog роутера через logger —
+// единственный канал, который виден пользователю и без демона, и без нашего
+// веба (#571: сбойная запись на накопитель оставила 0-байтный бинарь, а вся
+// обвязка молча отчиталась об успехе). IPK удаляется только после успешной
+// проверки — иначе остаётся для ручного opkg install.
+func buildUpgradeScript(ipkPath, binPath string) string {
+	return fmt.Sprintf(`sleep 2; opkg install %[1]s; rc=$?
+if [ "$rc" = "0" ] && [ -s %[2]s ] && dd if=%[2]s bs=4 count=1 2>/dev/null | grep -q ELF; then
+	rm -f %[1]s
+	logger -t awg-manager "upgrade: opkg install OK, binary verified"
+else
+	logger -t awg-manager -p daemon.err "upgrade FAILED: opkg rc=$rc or corrupt binary %[2]s; ipk kept: %[1]s"
+fi`, ipkPath, binPath)
+}
+
 var startDetachedUpgrade = func(ipkPath string) error {
-	script := fmt.Sprintf("sleep 2 && opkg install %s && rm -f %s", ipkPath, ipkPath)
-	cmd := osexec.Command("sh", "-c", script)
+	cmd := osexec.Command("sh", "-c", buildUpgradeScript(ipkPath, installedBinPath))
 	if logf, err := os.OpenFile(upgradeLogPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644); err == nil {
 		cmd.Stdout = logf
 		cmd.Stderr = logf
