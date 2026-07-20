@@ -71,7 +71,11 @@ func (g AggregateGroup) EffectiveURLTest() URLTestConfig {
 
 // GroupCreateInput — вход Service.CreateGroup.
 type GroupCreateInput struct {
-	Label              string
+	Label string
+	// Tag — пользовательский outbound-тег (#572); "" = авто "agg-<id8>".
+	// Формат валидирует Service.CreateGroup, store проверяет только
+	// уникальность среди групп.
+	Tag                string
 	Mode               SubscriptionMode // "" = ModeURLTest
 	URLTest            *URLTestConfig
 	UseSubscriptionIDs []string
@@ -178,6 +182,11 @@ func (s *GroupStore) mutate(id string, fn func(*AggregateGroup) error) (*Aggrega
 func (s *GroupStore) Create(in GroupCreateInput) (*AggregateGroup, error) {
 	id := newID()
 	short := id[:8]
+	tag := "agg-" + short
+	if in.Tag != "" {
+		tag = in.Tag
+	}
+	inboundTag := tag + "-in"
 	mode := in.Mode
 	if mode == "" {
 		mode = ModeURLTest
@@ -205,8 +214,8 @@ func (s *GroupStore) Create(in GroupCreateInput) (*AggregateGroup, error) {
 	g := &AggregateGroup{
 		ID:                 id,
 		Label:              in.Label,
-		Tag:                "agg-" + short,
-		InboundTag:         "agg-" + short + "-in",
+		Tag:                tag,
+		InboundTag:         inboundTag,
 		ProxyIndex:         -1,
 		Mode:               mode,
 		URLTest:            urlTest,
@@ -217,6 +226,12 @@ func (s *GroupStore) Create(in GroupCreateInput) (*AggregateGroup, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, other := range s.data {
+		if other.Tag == tag || other.InboundTag == tag ||
+			other.Tag == inboundTag || other.InboundTag == inboundTag {
+			return nil, fmt.Errorf("%w: тег %q уже занят группой %q", ErrValidation, tag, other.Label)
+		}
+	}
 	s.data[id] = g
 	if err := s.saveLocked(); err != nil {
 		delete(s.data, id)

@@ -241,7 +241,10 @@ func (h *SingboxInboundsHandler) attribute(e *SingboxInboundEntry, routed bool) 
 		case strings.HasPrefix(e.Tag, "sub-"):
 			e.Source = "subscription"
 			h.attributeSubscription(e, ndmsOn, routed)
-		case strings.HasPrefix(e.Tag, "agg-"):
+		// #572: кастомный тег группы не обязан начинаться с "agg-" —
+		// сначала честный матч по InboundTag стора, префикс — fallback
+		// на случай недоступного стора.
+		case h.isGroupInbound(e.Tag) || strings.HasPrefix(e.Tag, "agg-"):
 			e.Source = "group"
 			h.attributeGroup(e, ndmsOn, routed)
 		default:
@@ -311,6 +314,20 @@ func (h *SingboxInboundsHandler) attributeSubscription(e *SingboxInboundEntry, n
 	// без метки владельца, idle по route-правилу и глобальному тумблеру
 	// (ProxyIndex неизвестен — ndms_proxy_missing не диагностируем).
 	markIdle(e, routed, ndmsOn, false)
+}
+
+// isGroupInbound reports whether tag is the inbound of a known aggregate
+// group (matched by store, tag prefix agnostic — см. #572).
+func (h *SingboxInboundsHandler) isGroupInbound(tag string) bool {
+	if h.deps.Groups == nil {
+		return false
+	}
+	for _, g := range h.deps.Groups() {
+		if g.InboundTag == tag {
+			return true
+		}
+	}
+	return false
 }
 
 // attributeGroup resolves owner label + idle state for agg-*-in.

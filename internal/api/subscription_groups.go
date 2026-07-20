@@ -49,7 +49,9 @@ type SubscriptionGroupResponse struct {
 
 // CreateSubscriptionGroupRequest is the body for POST /api/singbox/subscriptions/groups/create.
 type CreateSubscriptionGroupRequest struct {
-	Label              string                  `json:"label" example:"Все европейские"`
+	Label string `json:"label" example:"Все европейские"`
+	// Tag — пользовательский outbound-тег (#572); пусто = авто "agg-<id8>".
+	Tag                string                  `json:"tag,omitempty" example:"eu-all"`
 	Mode               string                  `json:"mode,omitempty" example:"urltest"` // "urltest" (default) | "selector"
 	URLTest            *SubscriptionURLTestDTO `json:"urlTest,omitempty"`
 	UseSubscriptionIDs []string                `json:"useSubscriptionIds"`
@@ -220,6 +222,7 @@ func (h *SubscriptionHandler) CreateGroup(w http.ResponseWriter, r *http.Request
 	}
 	g, err := h.svc.CreateGroup(r.Context(), subscription.GroupCreateInput{
 		Label:              req.Label,
+		Tag:                strings.TrimSpace(req.Tag),
 		Mode:               mode,
 		URLTest:            urlTestDTOToConfig(req.URLTest),
 		UseSubscriptionIDs: req.UseSubscriptionIDs,
