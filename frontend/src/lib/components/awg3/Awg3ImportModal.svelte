@@ -15,6 +15,8 @@
 	// Тег авто-подставляется из JSON, пока пользователь сам его не тронул.
 	let tagTouched = $state(false);
 	let error = $state('');
+	// Какое поле подсветить: тег или textarea конфига.
+	let errorField = $state<'tag' | 'config' | ''>('');
 	let importing = $state(false);
 
 	// Достаёт peers[0].address из вставленного конфига для дефолтного тега.
@@ -44,12 +46,14 @@
 	function onJsonInput(value: string): void {
 		jsonText = value;
 		error = '';
+		errorField = '';
 		if (!tagTouched) tag = peekDefaultTag(value);
 	}
 
 	function onTagInput(): void {
 		tagTouched = true;
 		error = '';
+		errorField = '';
 	}
 
 	function reset(): void {
@@ -57,24 +61,32 @@
 		jsonText = '';
 		tagTouched = false;
 		error = '';
+		errorField = '';
 		importing = false;
 	}
 
 	function requestClose(): void {
+		// Пока запрос летит, модалку закрывать нельзя — иначе reset() затрёт
+		// поля, а завершившийся импорт впишет stale-ошибку в уже сброшенную форму.
+		if (importing) return;
 		reset();
 		onclose();
 	}
 
 	async function submit(): Promise<void> {
+		if (importing) return;
 		error = '';
+		errorField = '';
 		const cleanTag = tag.trim();
 		if (cleanTag === '') {
 			error = 'Укажите тег';
+			errorField = 'tag';
 			return;
 		}
 		const raw = jsonText.trim();
 		if (raw === '') {
 			error = 'Вставьте JSON-конфиг';
+			errorField = 'config';
 			return;
 		}
 		let config: unknown;
@@ -82,6 +94,7 @@
 			config = JSON.parse(raw);
 		} catch (e) {
 			error = `Некорректный JSON: ${e instanceof Error ? e.message : 'ошибка разбора'}`;
+			errorField = 'config';
 			return;
 		}
 		importing = true;
@@ -91,6 +104,7 @@
 			requestClose();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Не удалось импортировать конфиг';
+			errorField = 'config';
 		} finally {
 			importing = false;
 		}
@@ -105,6 +119,7 @@
 			oninput={onTagInput}
 			placeholder="имя туннеля"
 			disabled={importing}
+			error={errorField === 'tag' ? error : ''}
 			fullWidth
 		/>
 
@@ -112,7 +127,7 @@
 			<span class="field-lbl">JSON-конфиг</span>
 			<textarea
 				class="field-textarea"
-				class:is-error={!!error}
+				class:is-error={errorField === 'config'}
 				rows="10"
 				spellcheck="false"
 				placeholder={'{ "type": "awg", "private_key": "…", "peers": [ … ] }'}
@@ -122,7 +137,7 @@
 			></textarea>
 		</label>
 
-		{#if error}
+		{#if error && errorField !== 'tag'}
 			<div class="import-error">{error}</div>
 		{/if}
 	</div>

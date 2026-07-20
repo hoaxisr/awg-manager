@@ -17,6 +17,7 @@
 		renderMode?: TunnelRenderMode;
 		layout?: SingboxLayoutMode;
 		autoDelayCheckNonce?: number;
+		autoDelayCheckDelayMs?: number;
 	}
 
 	let {
@@ -24,6 +25,7 @@
 		renderMode = 'compact',
 		layout = 'compact',
 		autoDelayCheckNonce = 0,
+		autoDelayCheckDelayMs = 0,
 	}: Props = $props();
 
 	let checking = $state(false);
@@ -61,9 +63,14 @@
 	let lastAutoDelayCheckNonce = 0;
 	$effect(() => {
 		const nonce = autoDelayCheckNonce;
+		const delay = autoDelayCheckDelayMs;
 		if (nonce <= 0 || nonce === lastAutoDelayCheckNonce) return;
 		lastAutoDelayCheckNonce = nonce;
-		untrack(() => void triggerCheck());
+
+		const timer = setTimeout(() => {
+			untrack(() => void triggerCheck());
+		}, delay);
+		return () => clearTimeout(timer);
 	});
 
 	function startRename(): void {
@@ -76,6 +83,7 @@
 	}
 
 	async function submitRename(): Promise<void> {
+		if (savingRename) return;
 		const next = renameValue.trim();
 		if (next === '' || next === tunnel.tag) {
 			renaming = false;
@@ -107,8 +115,8 @@
 	}
 </script>
 
-{#snippet renameForm(compact: boolean)}
-	<form class="rename-form" class:rename-form--compact={compact} onsubmit={(e) => { e.preventDefault(); void submitRename(); }}>
+{#snippet renameForm()}
+	<form class="rename-form" onsubmit={(e) => { e.preventDefault(); void submitRename(); }}>
 		<Input bind:value={renameValue} placeholder="Имя туннеля" disabled={savingRename} fullWidth />
 		<IconButton ariaLabel="Сохранить имя" title="Сохранить" disabled={savingRename} onclick={() => void submitRename()}>
 			<Check size={16} aria-hidden="true" />
@@ -145,7 +153,7 @@
 	>
 		<td class="cell cell-name" data-label="Туннель">
 			{#if renaming}
-				{@render renameForm(true)}
+				{@render renameForm()}
 			{:else}
 				<span class="tag">{tunnel.tag}</span>
 			{/if}
@@ -189,7 +197,7 @@
 			</div>
 			<div class="head-body">
 				{#if renaming}
-					{@render renameForm(false)}
+					{@render renameForm()}
 				{:else}
 					<div class="title-row">
 						<span class="tag" title={tunnel.tag}>{tunnel.tag}</span>
