@@ -21,6 +21,7 @@ const (
 	ResourceRoutingClientRoutes     = "routing.clientRoutes"
 	ResourceRoutingTunnels          = "routing.tunnels"
 	ResourceRoutingHydrarouteStatus = "routing.hydrarouteStatus"
+	ResourceAwg3                    = "awg3"
 	ResourceDeviceProxy             = "deviceproxy"
 	ResourceDeviceProxyConfig       = "deviceproxy.config"
 	ResourceDeviceProxyRuntime      = "deviceproxy.runtime"

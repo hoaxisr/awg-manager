@@ -457,6 +457,9 @@ func (a *app) setupRouter() {
 	})
 	a.srv.SetSingboxFakeIPConfigHandler(api.NewSingboxFakeIPConfigHandler(routerSvc, a.loggingService))
 	a.srv.SetAWGOutboundsHandler(api.NewAWGOutboundsHandler(a.awgoutboundsSvc))
+	// AWG3 endpoint import/CRUD. Wired here (not setupSingbox) because the
+	// rename-conflict check needs routerSvc's ListRules, only built in this phase.
+	a.srv.SetAwg3Handler(api.NewAwg3Handler(a.awg3Store, a.awg3Svc, routerSvc))
 	a.srv.SetSingboxConfigHandler(api.NewSingboxConfigHandler(a.sbOrch.ConfigDir))
 	// Эксперт-редактор конфигурации: обзор слотов config.d + draft-пайплайн
 	// пользовательского слота 90-user.json (единственный слот без продюсера).
