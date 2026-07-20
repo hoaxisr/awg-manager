@@ -78,6 +78,9 @@
 	}
 
 	const dirtyKeys = $derived(changedKeys(server, saved));
+	// Ссылка собирается бэкендом из СОХРАНЁННОГО конфига — с несохранённым
+	// профилем/ключом обфускации в неё молча попали бы старые значения (#584).
+	const obfDirty = $derived(dirtyKeys.includes('obfProfile') || dirtyKeys.includes('obfKey'));
 	const dirtyCount = $derived(dirtyKeys.length);
 
 	function changed(...keys: (keyof FreeTurnServerConfig)[]): boolean {
@@ -117,15 +120,23 @@
 			variant="primary"
 			size="sm"
 			loading={generating}
+			disabled={obfDirty}
 			onclick={() => onGenerate(genProvider, genMTU, genWG, genClientId, genName)}
 		>
 			Сгенерировать
 		</Button>
 	</div>
-	<p class="ft-hint">
-		Соберёт freeturn:// ссылку из обфускации/ключа сервера ниже и внешнего IP роутера —
-		передавайте её только доверенному получателю
-	</p>
+	{#if obfDirty}
+		<p class="ft-hint">
+			Профиль/ключ обфускации изменены, но не сохранены — сначала сохраните настройки,
+			иначе в ссылку попадут старые значения
+		</p>
+	{:else}
+		<p class="ft-hint">
+			Соберёт freeturn:// ссылку из обфускации/ключа сервера ниже и внешнего IP роутера —
+			передавайте её только доверенному получателю
+		</p>
+	{/if}
 	{#if server.clientsFile}
 		<p class="ft-hint">
 			У сервера включён allowlist (-clients-file): без Client ID в ссылке (раздел ниже)
