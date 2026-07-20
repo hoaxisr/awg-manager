@@ -18,7 +18,7 @@ export type TunnelDashboardFlatItem =
 	| { kind: 'awg-managed'; key: string; name: string; tunnel: TunnelListItem; index: number }
 	| { kind: 'awg-system'; key: string; name: string; tunnel: SystemTunnel }
 	| { kind: 'awg-external'; key: string; name: string; tunnel: ExternalTunnel }
-	| { kind: 'awg3'; key: string; name: string; tunnel: Awg3Tunnel }
+	| { kind: 'awg3'; key: string; name: string; tunnel: Awg3Tunnel; index: number }
 	| { kind: 'singbox'; key: string; name: string; tunnel: SingboxTunnel; index: number }
 	| { kind: 'sub-active'; key: string; name: string; card: SubscriptionActiveCard; index: number }
 	| { kind: 'sub-stopped'; key: string; name: string; subscription: Subscription };
@@ -79,14 +79,15 @@ export function buildFlatDashboardItems(input: {
 		});
 	}
 
-	for (const tunnel of input.awg3) {
+	input.awg3.forEach((tunnel, index) => {
 		items.push({
 			kind: 'awg3',
 			key: `awg3:${tunnel.id}`,
 			name: tunnel.tag,
 			tunnel,
+			index,
 		});
-	}
+	});
 
 	input.singbox.forEach((tunnel, index) => {
 		items.push({

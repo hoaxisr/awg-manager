@@ -1365,10 +1365,13 @@
 				dashboardSingboxVisible &&
 				(subscriptionsInitialLoading || subscriptionsFetchFailed)),
 	);
-	// AWG3 — секция с собственным тулбаром/импортом. В dashboard-режиме карточки
-	// AWG3 приходят через плоский поток (buildFlatDashboardItems), поэтому здесь
-	// только табовый рендер.
-	let showAwg3Block = $derived(!dashboardOn && activeTab === 'awg3');
+	// AWG3 — секция с собственным тулбаром/импортом. В сплошном/теговом дашборде
+	// карточки AWG3 приходят через плоский поток (buildFlatDashboardItems); в
+	// секциях «по типу» рендерится эта секция с подавленным тулбаром, как sing-box.
+	let showAwg3Block = $derived(
+		(!dashboardOn && activeTab === 'awg3') ||
+			(dashboardTypeSections && dashboardAwg3Tunnels.length > 0),
+	);
 
 	// FreeTurn — настройки/статус, не туннельные карточки: в dashboard-режиме
 	// (плоские карточки, табов нет) вкладка недоступна — как и «подписки».
@@ -1406,11 +1409,15 @@
 		if (!dashboardOn) return [];
 		const sb = dashboardSingboxVisible ? singboxTunnelListStats : null;
 		const subs = dashboardSingboxVisible ? singboxSubscriptionsTrafficStats : null;
-		const totalAll = awgSummaryTotal + (sb?.count ?? 0) + (subs?.count ?? 0);
+		// AWG3 — sing-box endpoint'ы без running/traffic-метрик: учитываем только
+		// их количество в общем счётчике туннелей.
+		const awg3Count = dashboardAwg3Tunnels.length;
+		const totalAll = awgSummaryTotal + (sb?.count ?? 0) + (subs?.count ?? 0) + awg3Count;
 		const totalActive = awgSummaryActive + (sb?.running ?? 0) + (subs?.activeCount ?? 0);
 		const kinds = [`AWG ${awgSummaryActive}/${awgSummaryTotal}`];
 		if (sb) kinds.push(`Sing-box ${sb.running}/${sb.count}`);
 		if (subs) kinds.push(`Подписки ${subs.activeCount}/${subs.count}`);
+		if (awg3Count > 0) kinds.push(`AWG3 ${awg3Count}`);
 		const rx = awgSummaryRx + (sb?.down ?? 0) + (subs?.down ?? 0);
 		const tx = awgSummaryTx + (sb?.up ?? 0) + (subs?.up ?? 0);
 		const leaders = [
@@ -1703,12 +1710,20 @@
 			/>
 		{/if}
 
+		{#if dashboardTypeSections && dashboardAwg3Tunnels.length > 0}
+			<TunnelSectionHeader
+				title="AWG3 туннели"
+				count={dashboardAwg3Tunnels.length}
+				countLabel={pluralForm(dashboardAwg3Tunnels.length, TUNNEL_WORDS)}
+			/>
+		{/if}
 		{#if showAwg3Block}
 			<Awg3TunnelsSection
-				tunnels={awg3List}
-				renderMode={awg3TunnelsRenderMode}
-				layout={awg3TunnelsEffectiveLayout}
+				tunnels={dashboardTypeSections ? dashboardAwg3Tunnels : awg3List}
+				renderMode={dashboardTypeSections ? effectiveSingboxTunnelsRenderMode : awg3TunnelsRenderMode}
+				layout={dashboardTypeSections ? effectiveSingboxTunnelsEffectiveLayout : awg3TunnelsEffectiveLayout}
 				showGridListToggle={showSingboxGridListToggle}
+				showToolbar={!dashboardOn}
 				autoDelayCheckNonce={singboxAutoDelayCheckNonce}
 				bind:searchQuery={awg3TunnelsSearchQuery}
 				bind:layoutMode={awg3TunnelsLayoutMode}

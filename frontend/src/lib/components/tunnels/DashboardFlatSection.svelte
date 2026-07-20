@@ -69,6 +69,7 @@
 			renderMode={ctx.effectiveSingboxTunnelsRenderMode}
 			layout={ctx.effectiveSingboxTunnelsRenderMode === 'list-card' ? 'list' : ctx.effectiveSingboxTunnelsEffectiveLayout}
 			autoDelayCheckNonce={suppressAutoCheck ? 0 : ctx.singboxAutoDelayCheckNonce}
+			autoDelayCheckDelayMs={item.index * 180}
 		/>
 	{:else if item.kind === 'singbox'}
 		<SingboxTunnelCard

@@ -21,6 +21,9 @@
 		searchQuery: string;
 		layoutMode: SingboxLayoutMode;
 		autoDelayCheckNonce: number;
+		// Дашборд-режим (секции по типу) прячет тулбар и передаёт уже
+		// отфильтрованный список — как SingboxTunnelsTabSection при dashboardOn.
+		showToolbar?: boolean;
 	}
 
 	let {
@@ -31,11 +34,14 @@
 		searchQuery = $bindable(),
 		layoutMode = $bindable(),
 		autoDelayCheckNonce,
+		showToolbar = true,
 	}: Props = $props();
 
 	let importOpen = $state(false);
 
 	const filtered = $derived.by(() => {
+		// Без тулбара поле поиска скрыто, а список приходит уже отфильтрованным.
+		if (!showToolbar) return tunnels;
 		const q = searchQuery.trim().toLowerCase();
 		if (q === '') return tunnels;
 		return tunnels.filter(
@@ -43,14 +49,12 @@
 		);
 	});
 
-	const searchEmpty = $derived(
-		tunnels.length > 0 && filtered.length === 0 && searchQuery.trim() !== '',
-	);
+	const searchEmpty = $derived(tunnels.length > 0 && filtered.length === 0);
 
 	const cardLayout = $derived<SingboxLayoutMode>(renderMode === 'list-card' ? 'list' : layout);
 </script>
 
-{#if tunnels.length > 0}
+{#if showToolbar && tunnels.length > 0}
 	<div class="tunnels-toolbar">
 		<div class="toolbar-title">
 			<span class="section-title">AWG3 туннели</span>
@@ -121,8 +125,8 @@
 				</tr>
 			</thead>
 			<tbody>
-				{#each filtered as tunnel (tunnel.id)}
-					<Awg3TunnelCard {tunnel} renderMode="table" layout="list" {autoDelayCheckNonce} />
+				{#each filtered as tunnel, i (tunnel.id)}
+					<Awg3TunnelCard {tunnel} renderMode="table" layout="list" {autoDelayCheckNonce} autoDelayCheckDelayMs={i * 180} />
 				{/each}
 				{#if searchEmpty}
 					<tr class="tunnel-empty-row">
@@ -139,8 +143,8 @@
 		class:tunnel-grid--dense={renderMode !== 'list-card' && layout === 'dense'}
 		class:tunnel-grid--compact={renderMode !== 'list-card' && layout === 'compact'}
 	>
-		{#each filtered as tunnel (tunnel.id)}
-			<Awg3TunnelCard {tunnel} renderMode={renderMode} layout={cardLayout} {autoDelayCheckNonce} />
+		{#each filtered as tunnel, i (tunnel.id)}
+			<Awg3TunnelCard {tunnel} renderMode={renderMode} layout={cardLayout} {autoDelayCheckNonce} autoDelayCheckDelayMs={i * 180} />
 		{/each}
 	</div>
 	{#if searchEmpty}
