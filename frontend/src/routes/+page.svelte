@@ -1012,6 +1012,13 @@
 		return getTrafficSparklineSeries(id, 28);
 	}
 
+	// #576: окно истории для «Пиковой скорости» — те же точки, что рисует
+	// график карточки, а не только последний сэмпл.
+	function windowRates(id: string): { rx: number[]; tx: number[] } {
+		void trafficTick;
+		return getTrafficRates(id);
+	}
+
 	let awgSummaryTotal = $derived(awgList.length + visibleSystemList.length + externalList.length);
 	let awgSummaryActive = $derived(
 		awgList.filter((t) => isManagedTunnelOn(t)).length +
@@ -1019,7 +1026,7 @@
 		externalList.filter((t) => !!t.lastHandshake).length,
 	);
 
-	let awgSummaryPeak = $derived(computeAwgSummaryPeak(awgList, visibleSystemList, latestRate));
+	let awgSummaryPeak = $derived(computeAwgSummaryPeak(awgList, visibleSystemList, windowRates));
 
 	let awgSummaryRx = $derived(
 		awgList.reduce((sum, tunnel) => sum + (tunnel.rxBytes ?? 0), 0) +
