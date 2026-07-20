@@ -84,6 +84,7 @@ const (
 	SubSBRouter   = "router"
 	SubSBRuntime  = "runtime"
 	SubSBProcess  = "process"
+	SubAwg3       = "awg3" // imported AWG3 endpoint projection into 16-awg3.json
 )
 
 // Bucket identifies which buffer a log entry belongs to. Sing-box logs are

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
@@ -20,12 +21,17 @@ type Orchestrator interface {
 }
 
 type Service struct {
-	store *Store // тот же пакет awg3endpoint (Task 2)
-	orch  Orchestrator
+	store  *Store // тот же пакет awg3endpoint (Task 2)
+	orch   Orchestrator
+	appLog *logging.ScopedLogger
 }
 
-func NewService(store *Store, orch Orchestrator) *Service {
-	return &Service{store: store, orch: orch}
+func NewService(store *Store, orch Orchestrator, appLogger logging.AppLogger) *Service {
+	return &Service{
+		store:  store,
+		orch:   orch,
+		appLog: logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubAwg3),
+	}
 }
 
 // Sync материализует store → 16-awg3.json как {"endpoints":[...]}, перезаписывая
@@ -39,12 +45,15 @@ func (s *Service) Sync() error {
 	for _, rec := range list {
 		var obj map[string]json.RawMessage
 		if err := json.Unmarshal(rec.Endpoint, &obj); err != nil {
-			continue // битую запись пропускаем (не роняем весь slot)
+			// битую запись пропускаем (не роняем весь slot), но оставляем след
+			s.appLog.Warn("sync-skip", rec.Tag, fmt.Sprintf("id=%s: невалидный endpoint JSON: %v", rec.ID, err))
+			continue
 		}
 		tagJSON, _ := json.Marshal(rec.Tag)
 		obj["tag"] = tagJSON
 		merged, err := json.Marshal(obj)
 		if err != nil {
+			s.appLog.Warn("sync-skip", rec.Tag, fmt.Sprintf("id=%s: не удалось сериализовать endpoint: %v", rec.ID, err))
 			continue
 		}
 		eps = append(eps, merged)

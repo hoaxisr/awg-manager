@@ -103,7 +103,7 @@ func (a *app) setupSingbox() {
 	// the 16-awg3.json slot. Constructed here so the SlotAwg3 HasContent closure
 	// (below) can read the store, mirroring SlotTunnels' HasUserTunnels gate.
 	a.awg3Store = awg3endpoint.NewStore(filepath.Join(a.dataDir, "awg3.json"))
-	a.awg3Svc = awg3endpoint.NewService(a.awg3Store, a.sbOrch)
+	a.awg3Svc = awg3endpoint.NewService(a.awg3Store, a.sbOrch, a.loggingService)
 	for _, meta := range singboxorch.KnownSlots() {
 		// SlotTunnels is AlwaysOn but only counts as "active work" when
 		// the user has defined sing-box tunnels — wire HasContent so

@@ -67,7 +67,7 @@ func TestIntegration_RouteboxToSlotSingboxCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	orch := &fakeOrch{}
-	if err := NewService(store, orch).Sync(); err != nil {
+	if err := NewService(store, orch, nil).Sync(); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
 	slot := orch.saved[obox.SlotAwg3]
