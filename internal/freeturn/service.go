@@ -1,6 +1,7 @@
 package freeturn
 
 import (
+	"encoding/hex"
 	"errors"
 	"strconv"
 	"sync"
@@ -100,6 +101,9 @@ func (s *Service) StartClient() error {
 	if cfg.Client.Provider == "vk" && cfg.Client.Links == "" {
 		return errors.New("укажите ссылку(-и) VK Calls (-links) — обязательны для provider=vk")
 	}
+	if err := validateObfKey(cfg.Client.ObfProfile, cfg.Client.ObfKey); err != nil {
+		return err
+	}
 	return s.clientProc.Start(buildClientArgs(cfg.Client))
 }
 
@@ -115,7 +119,28 @@ func (s *Service) StartServer() error {
 	if cfg.Server.Connect == "" {
 		return errors.New("укажите backend-адрес (-connect)")
 	}
+	if err := validateObfKey(cfg.Server.ObfProfile, cfg.Server.ObfKey); err != nil {
+		return err
+	}
 	return s.serverProc.Start(buildServerArgs(cfg.Server))
+}
+
+// validateObfKey — ключ обфускации обязателен при профиле ≠ none и должен
+// быть 64 hex-символа (32 байта); иначе бинарь падает с опак-ошибкой (#584).
+func validateObfKey(profile, key string) error {
+	if profile == "" || profile == "none" {
+		return nil
+	}
+	if key == "" {
+		return errors.New("сгенерируйте или укажите ключ обфускации (-obf-key) — обязателен при профиле ≠ none")
+	}
+	if len(key) != 64 {
+		return errors.New("ключ обфускации (-obf-key) должен состоять из 64 hex-символов")
+	}
+	if _, err := hex.DecodeString(key); err != nil {
+		return errors.New("ключ обфускации (-obf-key) должен состоять из 64 hex-символов")
+	}
+	return nil
 }
 
 func (s *Service) StopServer() error {

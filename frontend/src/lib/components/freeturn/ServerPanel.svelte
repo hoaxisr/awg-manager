@@ -70,6 +70,13 @@
 		genClientId = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 	}
 
+	// -obf-key: 32 байта → 64 hex-символа (#584 — ключ негде было взять).
+	function randomObfKey() {
+		const bytes = new Uint8Array(32);
+		crypto.getRandomValues(bytes);
+		server.obfKey = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+	}
+
 	const dirtyKeys = $derived(changedKeys(server, saved));
 	const dirtyCount = $derived(dirtyKeys.length);
 
@@ -196,12 +203,17 @@
 			</p>
 		</div>
 		<Dropdown label="Профиль (-obf-profile)" bind:value={server.obfProfile} options={obfOptions} />
-		<Input
-			label="Ключ обфускации (-obf-key)"
-			type="password"
-			bind:value={server.obfKey}
-			placeholder="64 hex-символа"
-		/>
+		<div>
+			<Input
+				label="Ключ обфускации (-obf-key)"
+				type="password"
+				bind:value={server.obfKey}
+				placeholder="64 hex-символа"
+			/>
+			<div class="ft-gen-idrow">
+				<Button variant="ghost" size="sm" onclick={randomObfKey}>Сгенерировать ключ</Button>
+			</div>
+		</div>
 		<div class="ft-span">
 			<Input
 				label="Файл allowlist клиентов (-clients-file)"
