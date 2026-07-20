@@ -160,7 +160,7 @@ func TestVerify_UnsupportedSchemes(t *testing.T) {
 		{"yescrypt", "$y$j9T$F5Jx5fExrKuPp53xLKQ..1$X9CmZ6hlG1yUv0xUOG3ee0FnLPq4Y8HB5rTuLBt0YQ0"},
 		{"bcrypt-2b", "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"},
 		{"bcrypt-2a", "$2a$10$N9qo8uLOickgx2ZMRZoMye"},
-		{"des-13char", "ab8UyKV3H9E1M"},
+		// 13-char DES теперь ПОДДЕРЖИВАЕТСЯ (descrypt.go) и сюда не входит.
 		{"sha1crypt", "$sha1$40000$jtNX3nZ2$hBNaIXkt4wBI2o5rsi8KejSjNqIq"},
 		{"empty", ""},
 	}

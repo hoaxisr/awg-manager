@@ -1,12 +1,13 @@
 // Package shadowcrypt verifies passwords against crypt(3)-style hashes as
-// found in /etc/shadow. It implements MD5-crypt ($1$), SHA-256-crypt ($5$)
-// and SHA-512-crypt ($6$) per Ulrich Drepper's specification
-// (https://www.akkadia.org/drepper/SHA-crypt.txt) using only the standard
-// library — the Entware daemon vendors minimal dependencies and must not
-// pull in x/crypto.
+// found in /etc/shadow. It implements MD5-crypt ($1$), SHA-256-crypt ($5$),
+// SHA-512-crypt ($6$) per Ulrich Drepper's specification
+// (https://www.akkadia.org/drepper/SHA-crypt.txt) and traditional 13-char
+// DES crypt (the historical busybox `passwd` default — see descrypt.go)
+// using only the standard library — the Entware daemon vendors minimal
+// dependencies and must not pull in x/crypto.
 //
-// Unsupported schemes (yescrypt $y$, bcrypt $2a$/$2b$, DES 13-char, …)
-// return ErrUnsupported so callers can log a clear diagnostic while still
+// Unsupported schemes (yescrypt $y$, bcrypt $2a$/$2b$, …) return
+// ErrUnsupported so callers can log a clear diagnostic while still
 // treating the attempt as invalid credentials toward the client.
 package shadowcrypt
 
@@ -76,6 +77,8 @@ func computeFromEncoded(password, encoded string) (string, error) {
 			return "", err
 		}
 		return shaCrypt([]byte(password), salt, rounds, explicit, "$6$", sha512.New, sha512Order[:]), nil
+	case isDESCryptHash(encoded):
+		return desCrypt([]byte(password), encoded[:2]), nil
 	default:
 		return "", ErrUnsupported
 	}

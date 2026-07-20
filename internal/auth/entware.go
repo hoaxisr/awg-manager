@@ -12,6 +12,12 @@ import (
 // defaultShadowPath is the Entware shadow database on Keenetic routers.
 const defaultShadowPath = "/opt/etc/shadow"
 
+// defaultPasswdPath is the Entware passwd database. Accounts created without
+// a shadow entry (hand-made users, old busybox without the shadow feature)
+// carry their crypt hash directly in the second passwd field — libc/dropbear
+// fall back to it, and so do we.
+const defaultPasswdPath = "/opt/etc/passwd"
+
 var (
 	// ErrEntwareUnavailable means /opt/etc/shadow is missing or unreadable —
 	// Entware credential verification cannot be performed at all.
@@ -31,13 +37,15 @@ var (
 // entirely locally — no NDMS /auth call, hence no router-side
 // authentication notifications (issue #441).
 type EntwareVerifier struct {
-	// ShadowPath is variable so tests can point at a fixture file.
+	// ShadowPath/PasswdPath are variable so tests can point at fixtures.
 	ShadowPath string
+	PasswdPath string
 }
 
-// NewEntwareVerifier returns a verifier reading /opt/etc/shadow.
+// NewEntwareVerifier returns a verifier reading /opt/etc/shadow with a
+// /opt/etc/passwd fallback (mirroring the libc getspnam→getpwnam order).
 func NewEntwareVerifier() *EntwareVerifier {
-	return &EntwareVerifier{ShadowPath: defaultShadowPath}
+	return &EntwareVerifier{ShadowPath: defaultShadowPath, PasswdPath: defaultPasswdPath}
 }
 
 // dummyShadowHash is a fixed, well-formed $6$ SHA-512-crypt hash with the
@@ -84,16 +92,58 @@ func (v *EntwareVerifier) Verify(login, password string) error {
 	case errors.Is(err, shadowcrypt.ErrMismatch):
 		return ErrInvalidCredentials
 	case errors.Is(err, shadowcrypt.ErrUnsupported):
-		return fmt.Errorf("%w (login %q)", ErrUnsupportedHash, login)
+		// Name the scheme in the log-visible error — «$y$ (yescrypt)» tells
+		// the user immediately why the login cannot work and that re-running
+		// `passwd` in Entware (writes $5$) fixes it.
+		return fmt.Errorf("%w: схема %s (login %q)", ErrUnsupportedHash, hashSchemeLabel(hash), login)
 	default:
 		// Malformed hash — treat like an unsupported entry.
 		return fmt.Errorf("%w: %v", ErrUnsupportedHash, err)
 	}
 }
 
-// lookupHash finds the crypt hash for login in the shadow file.
+// hashSchemeLabel returns a human-readable label of a crypt hash scheme for
+// diagnostics ("$y$ (yescrypt)", "$2b$ (bcrypt)", "$prefix$", "неизвестный").
+func hashSchemeLabel(hash string) string {
+	if strings.HasPrefix(hash, "$") {
+		if end := strings.Index(hash[1:], "$"); end >= 0 {
+			prefix := hash[:end+2]
+			switch prefix {
+			case "$y$", "$7$":
+				return prefix + " (yescrypt)"
+			case "$2a$", "$2b$", "$2y$":
+				return prefix + " (bcrypt)"
+			}
+			return prefix
+		}
+	}
+	return "неизвестный"
+}
+
+// lookupHash finds the crypt hash for login: the shadow file first, then —
+// when the user has no shadow entry (or the shadow db is missing entirely) —
+// the passwd file, whose second field carries the hash for accounts created
+// without shadow. Mirrors the libc getspnam→getpwnam order that dropbear
+// and login(1) follow, so any account that works over SSH works here too.
 func (v *EntwareVerifier) lookupHash(login string) (string, error) {
-	data, err := os.ReadFile(v.ShadowPath)
+	hash, shadowErr := lookupHashIn(v.ShadowPath, login)
+	if shadowErr == nil {
+		return hash, nil
+	}
+	if v.PasswdPath != "" &&
+		(errors.Is(shadowErr, ErrEntwareUserNotFound) || errors.Is(shadowErr, ErrEntwareUnavailable)) {
+		// "x"/"*"/"!" в passwd — не хэш (учётка shadow-managed или
+		// заблокирована): остаёмся с исходной shadow-ошибкой.
+		if h, err := lookupHashIn(v.PasswdPath, login); err == nil && h != "x" {
+			return h, nil
+		}
+	}
+	return "", shadowErr
+}
+
+// lookupHashIn scans one passwd/shadow-format file for login's hash field.
+func lookupHashIn(path, login string) (string, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrEntwareUnavailable, err)
 	}
