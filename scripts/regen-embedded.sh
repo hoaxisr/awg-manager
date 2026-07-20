@@ -1,26 +1,33 @@
 #!/usr/bin/env bash
-# Regenerates internal/singbox/installer/embedded.go from pinned
-# SINGBOX_VERSION by downloading binaries from the develop "latest"
-# GitHub pre-release. No compilation. Writes unified-mirror URLs
-# (http://repo.hoaxisr.ru/develop/singbox/<ver>/...).
+# Регенерирует internal/singbox/installer/embedded.go из РЕЛИЗА ФОРКА
+# hoaxisr/amnezia-box (наш sing-box = base + AmneziaWG/AWG3 + mieru + xhttp).
+# Сборку owns форк (его CI release-entware.yml); awg-manager только ПОТРЕБЛЯЕТ.
+# Компиляции здесь нет — только скачивание ассетов, sha256/size, запись embedded.go.
 #
 # Usage:
-#   ./scripts/regen-embedded.sh <singbox-version>
-# Requires: gh CLI authenticated, sha256sum, stat, sed, python3.
+#   ./scripts/regen-embedded.sh <release-tag>
+#   (release-tag = VERSION, напр. 1.14.0-alpha.48-awg3-xhttp-mieru)
+# Env:
+#   SINGBOX_FORK_REPO   (default hoaxisr/amnezia-box)
+#   SINGBOX_URL_BASE    базовый URL для embedded.go (default — GitHub-релиз форка).
+#                       Для прод-зеркала: http://repo.hoaxisr.ru/singbox/<tag>
+# Requires: gh CLI authenticated, sha256sum, stat, python3, gofmt.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-VERSION="${1:?usage: regen-embedded.sh <singbox-version>}"
+VERSION="${1:?usage: regen-embedded.sh <release-tag>}"
+FORK_REPO="${SINGBOX_FORK_REPO:-hoaxisr/amnezia-box}"
+URL_BASE="${SINGBOX_URL_BASE:-https://github.com/${FORK_REPO}/releases/download/${VERSION}}"
 EMBEDDED_GO="$PROJECT_ROOT/internal/singbox/installer/embedded.go"
 ARCHES=(mipsel-3.4 mips-3.4 aarch64-3.10)
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-echo "Regenerating embedded.go for sing-box $VERSION"
+echo "Regenerating embedded.go from fork release $FORK_REPO@$VERSION"
 
-# Update RequiredVersion line.
+# RequiredVersion = release-тег.
 python3 - <<PY
 import pathlib, re
 p = pathlib.Path("$EMBEDDED_GO")
@@ -30,24 +37,20 @@ text = re.sub(r'const RequiredVersion = "[^"]*"',
 p.write_text(text)
 PY
 
-# For each arch: download, compute, rewrite map entry.
 for arch in "${ARCHES[@]}"; do
-    asset="sing-box-${VERSION}-${arch}"
+    asset="singbox-${VERSION}-${arch}"
     dest="$TMP/$asset"
 
-    echo "  Downloading $asset from develop 'latest' release..."
-    gh release download latest \
-        --repo hoaxisr/awg-manager \
-        --pattern "$asset" \
-        --dir "$TMP"
+    echo "  Downloading $asset from $FORK_REPO release $VERSION..."
+    gh release download "$VERSION" --repo "$FORK_REPO" --pattern "$asset" --dir "$TMP"
     if [[ ! -f "$dest" ]]; then
-        echo "ERROR: $asset not present in develop 'latest' release. Run develop CI first." >&2
+        echo "ERROR: $asset not present in $FORK_REPO release $VERSION. Run release-entware CI first." >&2
         exit 1
     fi
 
     sha="$(sha256sum "$dest" | awk '{print $1}')"
     size="$(stat -c '%s' "$dest")"
-    url="http://repo.hoaxisr.ru/develop/singbox/${VERSION}/${asset}"
+    url="${URL_BASE}/${asset}"
 
     URL="$url" SHA="$sha" SIZE="$size" ARCH="$arch" EMBEDDED_GO="$EMBEDDED_GO" python3 - <<'PY'
 import os, pathlib, re, sys
