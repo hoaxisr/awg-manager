@@ -194,6 +194,55 @@ func TestAwg3Handler_Delete(t *testing.T) {
 	}
 }
 
+// A referenced tag blocks delete with 409 before any store mutation or Sync.
+func TestAwg3Handler_DeleteConflict(t *testing.T) {
+	h, store, svc, rules := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	// a routing rule references the tag → delete must 409
+	rules.rules = []router.Rule{{Action: "route", Outbound: "amsterdam"}}
+	svc.syncCnt = 0
+	del := httptest.NewRecorder()
+	h.Handle(del, httptest.NewRequest(http.MethodDelete, "/api/awg3-endpoints/"+id, nil))
+	if del.Code != http.StatusConflict {
+		t.Fatalf("DELETE conflict: code=%d body=%s", del.Code, del.Body.String())
+	}
+	if _, ok := store.Get(id); !ok {
+		t.Errorf("record must survive a blocked delete")
+	}
+	if svc.syncCnt != 0 {
+		t.Errorf("Sync must not run on blocked delete, got %d", svc.syncCnt)
+	}
+}
+
+// A ListRules failure during delete surfaces as an honest 500, not a false 409.
+func TestAwg3Handler_DeleteListRulesError(t *testing.T) {
+	h, store, svc, rules := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	rules.err = errors.New("router unreachable")
+	svc.syncCnt = 0
+	del := httptest.NewRecorder()
+	h.Handle(del, httptest.NewRequest(http.MethodDelete, "/api/awg3-endpoints/"+id, nil))
+	if del.Code != http.StatusInternalServerError {
+		t.Fatalf("DELETE ListRules-fail: code=%d body=%s", del.Code, del.Body.String())
+	}
+	if _, ok := store.Get(id); !ok {
+		t.Errorf("record must survive when the reference check fails")
+	}
+	if svc.syncCnt != 0 {
+		t.Errorf("Sync must not run when the reference check fails, got %d", svc.syncCnt)
+	}
+}
+
 func TestAwg3Handler_Rename(t *testing.T) {
 	h, store, _, _ := newAwg3TestHandler(t)
 

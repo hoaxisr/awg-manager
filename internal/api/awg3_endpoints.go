@@ -129,10 +129,23 @@ func (h *Awg3Handler) handleImport(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDelete — DELETE /api/awg3-endpoints/{id}
-func (h *Awg3Handler) handleDelete(w http.ResponseWriter, _ *http.Request, id string) {
+func (h *Awg3Handler) handleDelete(w http.ResponseWriter, r *http.Request, id string) {
 	rec, ok := h.store.Get(id)
 	if !ok {
 		response.BadRequest(w, "awg3 endpoint not found: "+id)
+		return
+	}
+	// Block the delete while an ordinary routing rule still points at the tag —
+	// otherwise Sync would fail its cross-slot check with an unhelpful 500.
+	referenced, err := h.tagReferenced(r.Context(), rec.Tag)
+	if err != nil {
+		response.InternalError(w, "не удалось проверить ссылки на тег: "+err.Error())
+		return
+	}
+	if referenced {
+		response.ErrorWithStatus(w, http.StatusConflict,
+			"тег используется в правилах маршрутизации — сначала удалите правило",
+			"AWG3_TAG_IN_USE")
 		return
 	}
 	if err := h.store.Delete(id); err != nil {
