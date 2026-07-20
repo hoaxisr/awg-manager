@@ -318,6 +318,27 @@ func (s *SettingsStore) migrateToV31(settings *Settings) {
 	settings.SchemaVersion = 31
 }
 
+// migrateToV32 normalizes the hand-written "0.0.0.0" pseudo-interface
+// (#571: users set it pre-2.16 to mean "listen everywhere" and the old
+// single-listener code accidentally honored it via its bind-all fallback).
+// It is not an interface name: the multi-listener resolve skips it, leaving
+// the daemon loopback-only. Dropping it from the list (empty list = 0.0.0.0)
+// and blanking the legacy field ("" = bind all on a downgraded binary)
+// preserves the intended semantics on both sides.
+func (s *SettingsStore) migrateToV32(settings *Settings) {
+	kept := settings.Server.Interfaces[:0]
+	for _, iface := range settings.Server.Interfaces {
+		if iface != "0.0.0.0" {
+			kept = append(kept, iface)
+		}
+	}
+	settings.Server.Interfaces = kept
+	if settings.Server.Interface == "0.0.0.0" {
+		settings.Server.Interface = ""
+	}
+	settings.SchemaVersion = 32
+}
+
 // migrateManagedServers moves a legacy singular managedServer into the
 // new ManagedServers slice. Idempotent. Caller holds s.mu.
 func (s *SettingsStore) migrateManagedServers() {
