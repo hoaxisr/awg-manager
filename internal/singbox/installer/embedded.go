@@ -4,7 +4,7 @@ package installer
 const RequiredVersion = "1.14.0-alpha.48-awg3-xhttp-mieru"
 
 var EmbeddedBinaries = map[string]BinarySpec{
-	"mipsel-3.4":   {Version: RequiredVersion, URL: "https://github.com/hoaxisr/amnezia-box/releases/download/1.14.0-alpha.48-awg3-xhttp-mieru/singbox-1.14.0-alpha.48-awg3-xhttp-mieru-mipsel-3.4", SHA256: "715ccaf3b3503e371b56fbef30d6d85f7102944449653a382a94bacc15e9e976", Size: 100596940},
-	"mips-3.4":     {Version: RequiredVersion, URL: "https://github.com/hoaxisr/amnezia-box/releases/download/1.14.0-alpha.48-awg3-xhttp-mieru/singbox-1.14.0-alpha.48-awg3-xhttp-mieru-mips-3.4", SHA256: "a0913d7da58272c1a23b9e6fe6c1326a205b878be80f0321bddc247b225e4a29", Size: 83361949},
-	"aarch64-3.10": {Version: RequiredVersion, URL: "https://github.com/hoaxisr/amnezia-box/releases/download/1.14.0-alpha.48-awg3-xhttp-mieru/singbox-1.14.0-alpha.48-awg3-xhttp-mieru-aarch64-3.10", SHA256: "31af22c60838afbac426efb7f627d9600d98ccddf666b36cf95e8cd0ed944eab", Size: 84804568},
+	"mipsel-3.4":   {Version: RequiredVersion, URL: "https://github.com/hoaxisr/amnezia-box/releases/download/1.14.0-alpha.48-awg3-xhttp-mieru/singbox-1.14.0-alpha.48-awg3-xhttp-mieru-mipsel-3.4", SHA256: "643105ec606b7ff3429086b55cc82e960961cfbd17cb6e859e53c61e75851a1f", Size: 100596428},
+	"mips-3.4":     {Version: RequiredVersion, URL: "https://github.com/hoaxisr/amnezia-box/releases/download/1.14.0-alpha.48-awg3-xhttp-mieru/singbox-1.14.0-alpha.48-awg3-xhttp-mieru-mips-3.4", SHA256: "8339f425cd874780c18a916ff0e01114ffe59f03dfeb2c5a548bdde102dfb3b8", Size: 83361949},
+	"aarch64-3.10": {Version: RequiredVersion, URL: "https://github.com/hoaxisr/amnezia-box/releases/download/1.14.0-alpha.48-awg3-xhttp-mieru/singbox-1.14.0-alpha.48-awg3-xhttp-mieru-aarch64-3.10", SHA256: "14e0ecbbc5175a0c7298320ed7288ddfd5beab90351b0062ee5ed6c2768152a2", Size: 84804120},
 }
