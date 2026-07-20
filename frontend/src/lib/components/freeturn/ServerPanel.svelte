@@ -70,7 +70,17 @@
 		genClientId = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 	}
 
+	// -obf-key: 32 байта → 64 hex-символа (#584 — ключ негде было взять).
+	function randomObfKey() {
+		const bytes = new Uint8Array(32);
+		crypto.getRandomValues(bytes);
+		server.obfKey = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+	}
+
 	const dirtyKeys = $derived(changedKeys(server, saved));
+	// Ссылка собирается бэкендом из СОХРАНЁННОГО конфига — с несохранённым
+	// профилем/ключом обфускации в неё молча попали бы старые значения (#584).
+	const obfDirty = $derived(dirtyKeys.includes('obfProfile') || dirtyKeys.includes('obfKey'));
 	const dirtyCount = $derived(dirtyKeys.length);
 
 	function changed(...keys: (keyof FreeTurnServerConfig)[]): boolean {
@@ -110,15 +120,23 @@
 			variant="primary"
 			size="sm"
 			loading={generating}
+			disabled={obfDirty}
 			onclick={() => onGenerate(genProvider, genMTU, genWG, genClientId, genName)}
 		>
 			Сгенерировать
 		</Button>
 	</div>
-	<p class="ft-hint">
-		Соберёт freeturn:// ссылку из обфускации/ключа сервера ниже и внешнего IP роутера —
-		передавайте её только доверенному получателю
-	</p>
+	{#if obfDirty}
+		<p class="ft-hint">
+			Профиль/ключ обфускации изменены, но не сохранены — сначала сохраните настройки,
+			иначе в ссылку попадут старые значения
+		</p>
+	{:else}
+		<p class="ft-hint">
+			Соберёт freeturn:// ссылку из обфускации/ключа сервера ниже и внешнего IP роутера —
+			передавайте её только доверенному получателю
+		</p>
+	{/if}
 	{#if server.clientsFile}
 		<p class="ft-hint">
 			У сервера включён allowlist (-clients-file): без Client ID в ссылке (раздел ниже)
@@ -196,12 +214,17 @@
 			</p>
 		</div>
 		<Dropdown label="Профиль (-obf-profile)" bind:value={server.obfProfile} options={obfOptions} />
-		<Input
-			label="Ключ обфускации (-obf-key)"
-			type="password"
-			bind:value={server.obfKey}
-			placeholder="64 hex-символа"
-		/>
+		<div>
+			<Input
+				label="Ключ обфускации (-obf-key)"
+				type="password"
+				bind:value={server.obfKey}
+				placeholder="64 hex-символа"
+			/>
+			<div class="ft-gen-idrow">
+				<Button variant="ghost" size="sm" onclick={randomObfKey}>Сгенерировать ключ</Button>
+			</div>
+		</div>
 		<div class="ft-span">
 			<Input
 				label="Файл allowlist клиентов (-clients-file)"

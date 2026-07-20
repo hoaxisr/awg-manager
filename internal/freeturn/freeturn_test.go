@@ -95,6 +95,32 @@ func TestBuildServerArgs(t *testing.T) {
 	}
 }
 
+func TestValidateObfKey(t *testing.T) {
+	valid := strings.Repeat("ab", 32) // 64 hex-символа
+	cases := []struct {
+		name    string
+		profile string
+		key     string
+		wantErr bool
+	}{
+		{"no-profile", "", "", false},
+		{"none-profile", "none", "", false},
+		{"none-ignores-key", "none", "xx", false},
+		{"empty-key", "rtpopus2", "", true},
+		{"short-key", "rtpopus2", "deadbeef", true},
+		{"non-hex-key", "rtpopus2", strings.Repeat("zz", 32), true},
+		{"valid", "rtpopus2", valid, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := validateObfKey(c.profile, c.key)
+			if (err != nil) != c.wantErr {
+				t.Fatalf("validateObfKey(%q, %q) = %v, wantErr=%v", c.profile, c.key, err, c.wantErr)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // store.go
 // ---------------------------------------------------------------------------
