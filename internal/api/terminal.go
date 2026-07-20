@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -25,6 +26,11 @@ type TerminalStartResponse struct {
 	Success bool              `json:"success" example:"true"`
 	Data    TerminalStartData `json:"data"`
 }
+
+// terminalPingInterval — период keepalive-ping'ов клиенту WS-прокси.
+// Без них промежуточные прокси (KeenDNS-облако и т.п.) рвут idle-соединение,
+// и сессия терминала «сама» умирает (#588). var — для подмены в тестах.
+var terminalPingInterval = 30 * time.Second
 
 // TerminalHandler handles terminal API endpoints.
 type TerminalHandler struct {
@@ -225,6 +231,28 @@ func (h *TerminalHandler) WebSocket(w http.ResponseWriter, r *http.Request) {
 	// ttyd -> client
 	go func() {
 		errc <- wsCopy(proxyCtx, clientConn, ttydConn)
+	}()
+
+	// Keepalive: ping клиенту, чтобы idle-сессию не резали промежуточные
+	// прокси. Ping ждёт pong — ошибка означает мёртвое соединение, гасим
+	// сессию через proxyCancel (не пишем в errc: там ждут только wsCopy).
+	go func() {
+		ticker := time.NewTicker(terminalPingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-proxyCtx.Done():
+				return
+			case <-ticker.C:
+				pingCtx, cancel := context.WithTimeout(proxyCtx, 10*time.Second)
+				err := clientConn.Ping(pingCtx)
+				cancel()
+				if err != nil {
+					proxyCancel()
+					return
+				}
+			}
+		}
 	}()
 
 	// Wait for either direction to finish.

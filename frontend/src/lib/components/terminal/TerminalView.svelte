@@ -23,6 +23,7 @@
 	let themeUnsub: (() => void) | null = null;
 	let intentionalDisconnect = false;
 	let reconnecting = $state(false);
+	let lastAutoReconnectAt = 0;
 
 	// ttyd protocol: message types are ASCII characters, not binary values!
 	const TTYD_OUTPUT = '0'.charCodeAt(0);
@@ -69,8 +70,18 @@
 		socket.onclose = () => {
 			ws = null;
 			if (intentionalDisconnect) return;
-			term.writeln('\r\n\x1b[33m[Сессия завершена]\x1b[0m');
-			onclose?.();
+			// Неумышленный обрыв (сон вкладки, обрыв прокси): ttyd жив (без
+			// --once) — переподключаемся сами, не убивая сессию (#588).
+			// Защита от цикла: если и повторный коннект умер в течение 5с —
+			// сдаёмся и завершаем сессию как раньше.
+			if (Date.now() - lastAutoReconnectAt < 5000) {
+				term.writeln('\r\n\x1b[33m[Сессия завершена — соединение постоянно рвётся]\x1b[0m');
+				onclose?.();
+				return;
+			}
+			lastAutoReconnectAt = Date.now();
+			term.writeln('\r\n\x1b[33m[Соединение потеряно — переподключение...]\x1b[0m');
+			void reconnectSession();
 		};
 
 		socket.onerror = () => {
