@@ -7,6 +7,7 @@ import type { PollingStore } from './polling';
  * BOTH sides in the same commit.
  */
 export type ResourceKey =
+	| 'awg3'                        // ResourceAwg3
 	| 'tunnels'                     // ResourceTunnels
 	| 'servers'                     // ResourceServers
 	| 'singbox.status'              // ResourceSingboxStatus
