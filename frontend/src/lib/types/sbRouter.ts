@@ -441,7 +441,7 @@ export interface SingboxRouterDNSRewrite {
 export interface AWGTagInfo {
 	tag: string;
 	label: string;
-	kind: 'managed' | 'system';
+	kind: 'managed' | 'system' | 'awg3';
 	iface: string;
 }
 

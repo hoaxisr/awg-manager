@@ -16,6 +16,7 @@
 	import DashboardSummary from '$lib/components/tunnels/DashboardSummary.svelte';
 	import TunnelSectionHeader from '$lib/components/tunnels/TunnelSectionHeader.svelte';
 	import { SingboxInstallBanner, SingboxTunnelCard } from '$lib/components/singbox';
+	import { Awg3TunnelCard } from '$lib/components/awg3';
 	import SubscriptionActiveCard from '$lib/components/subscriptions/SubscriptionActiveCard.svelte';
 	import SubscriptionCard from '$lib/components/subscriptions/SubscriptionCard.svelte';
 	import { EmptyState } from '$lib/components/layout';
@@ -61,6 +62,13 @@
 			tunnel={item.tunnel}
 			view={ctx.effectiveAwgRenderMode === 'list-card' ? 'list' : ctx.effectiveAwgCardViewMode}
 			onadopt={(name) => ctx.handleAdoptClick(name)}
+		/>
+	{:else if item.kind === 'awg3'}
+		<Awg3TunnelCard
+			tunnel={item.tunnel}
+			renderMode={ctx.effectiveSingboxTunnelsRenderMode}
+			layout={ctx.effectiveSingboxTunnelsRenderMode === 'list-card' ? 'list' : ctx.effectiveSingboxTunnelsEffectiveLayout}
+			autoDelayCheckNonce={suppressAutoCheck ? 0 : ctx.singboxAutoDelayCheckNonce}
 		/>
 	{:else if item.kind === 'singbox'}
 		<SingboxTunnelCard
