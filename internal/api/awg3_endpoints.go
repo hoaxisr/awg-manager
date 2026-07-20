@@ -179,11 +179,18 @@ func (h *Awg3Handler) handleRename(w http.ResponseWriter, r *http.Request, id st
 
 	// Block the rename while an ordinary routing rule still points at the old
 	// tag — the reference would dangle (see RuleLister NB for the limits).
-	if newTag != oldTag && h.tagReferenced(r.Context(), oldTag) {
-		response.ErrorWithStatus(w, http.StatusConflict,
-			"тег используется в правилах маршрутизации — сначала измените правило",
-			"AWG3_TAG_IN_USE")
-		return
+	if newTag != oldTag {
+		referenced, err := h.tagReferenced(r.Context(), oldTag)
+		if err != nil {
+			response.InternalError(w, "не удалось проверить ссылки на тег: "+err.Error())
+			return
+		}
+		if referenced {
+			response.ErrorWithStatus(w, http.StatusConflict,
+				"тег используется в правилах маршрутизации — сначала измените правило",
+				"AWG3_TAG_IN_USE")
+			return
+		}
 	}
 
 	if err := h.store.Rename(id, newTag); err != nil {
@@ -199,22 +206,23 @@ func (h *Awg3Handler) handleRename(w http.ResponseWriter, r *http.Request, id st
 	response.Success(w, h.listDTO())
 }
 
-// tagReferenced reports whether any ordinary routing rule routes to tag.
-func (h *Awg3Handler) tagReferenced(ctx context.Context, tag string) bool {
+// tagReferenced reports whether any ordinary routing rule routes to tag. A
+// ListRules failure is surfaced as an error (not a false 409) so a transient
+// router fault stays debuggable.
+func (h *Awg3Handler) tagReferenced(ctx context.Context, tag string) (bool, error) {
 	if h.rules == nil {
-		return false
+		return false, nil
 	}
 	rules, err := h.rules.ListRules(ctx)
 	if err != nil {
-		// Fail-closed: if we can't confirm the tag is free, refuse the rename.
-		return true
+		return false, err
 	}
 	for _, ru := range rules {
 		if ru.Outbound == tag {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // listDTO projects the store into the outward, key-free DTO list.

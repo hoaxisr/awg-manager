@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -37,12 +38,14 @@ func (f *fakeAwg3Service) ListTags() []awg3endpoint.TagInfo {
 }
 
 // fakeRuleLister returns a fixed rule set for the rename-conflict check.
+// err, when set, simulates a transient router failure.
 type fakeRuleLister struct {
 	rules []router.Rule
+	err   error
 }
 
 func (f *fakeRuleLister) ListRules(ctx context.Context) ([]router.Rule, error) {
-	return f.rules, nil
+	return f.rules, f.err
 }
 
 // validEndpoint is a RouteBox envelope with S1-S4 ≥ 8 and a header_protection_key.
@@ -230,6 +233,104 @@ func TestAwg3Handler_RenameConflict(t *testing.T) {
 	got, _ := store.Get(id)
 	if got.Tag != "amsterdam" {
 		t.Errorf("tag must be unchanged on conflict, got %q", got.Tag)
+	}
+}
+
+// Sync-failure rollback: a rejected import is undone, store stays empty.
+func TestAwg3Handler_ImportSyncRollback(t *testing.T) {
+	h, store, svc, _ := newAwg3TestHandler(t)
+	svc.syncErr = errors.New("sing-box check failed")
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST sync-fail: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if svc.syncCnt != 1 {
+		t.Errorf("expected Sync called once, got %d", svc.syncCnt)
+	}
+	if n := store.Len(); n != 0 {
+		t.Errorf("store must be rolled back to empty, got %d", n)
+	}
+}
+
+// Sync-failure rollback: a rejected delete restores the record.
+func TestAwg3Handler_DeleteSyncRollback(t *testing.T) {
+	h, store, svc, _ := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	svc.syncErr = errors.New("sing-box check failed")
+	del := httptest.NewRecorder()
+	h.Handle(del, httptest.NewRequest(http.MethodDelete, "/api/awg3-endpoints/"+id, nil))
+
+	if del.Code != http.StatusInternalServerError {
+		t.Fatalf("DELETE sync-fail: code=%d body=%s", del.Code, del.Body.String())
+	}
+	if _, ok := store.Get(id); !ok {
+		t.Errorf("record must be restored after failed delete")
+	}
+	if n := store.Len(); n != 1 {
+		t.Errorf("store must hold the restored record, got %d", n)
+	}
+}
+
+// Sync-failure rollback: a rejected rename reverts the tag to its old value.
+func TestAwg3Handler_RenameSyncRollback(t *testing.T) {
+	h, store, svc, _ := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	svc.syncErr = errors.New("sing-box check failed")
+	patch := httptest.NewRecorder()
+	h.Handle(patch, httptest.NewRequest(http.MethodPatch, "/api/awg3-endpoints/"+id,
+		strings.NewReader(`{"tag":"berlin"}`)))
+
+	if patch.Code != http.StatusInternalServerError {
+		t.Fatalf("PATCH sync-fail: code=%d body=%s", patch.Code, patch.Body.String())
+	}
+	got, _ := store.Get(id)
+	if got.Tag != "amsterdam" {
+		t.Errorf("tag must be rolled back to amsterdam, got %q", got.Tag)
+	}
+}
+
+// A ListRules failure must surface as an honest 500, not a false 409, and
+// leave the tag unchanged.
+func TestAwg3Handler_RenameListRulesError(t *testing.T) {
+	h, store, svc, rules := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	rules.err = errors.New("router unreachable")
+	svc.syncCnt = 0
+	patch := httptest.NewRecorder()
+	h.Handle(patch, httptest.NewRequest(http.MethodPatch, "/api/awg3-endpoints/"+id,
+		strings.NewReader(`{"tag":"berlin"}`)))
+
+	if patch.Code != http.StatusInternalServerError {
+		t.Fatalf("PATCH ListRules-fail: code=%d body=%s", patch.Code, patch.Body.String())
+	}
+	if patch.Code == http.StatusConflict {
+		t.Errorf("ListRules failure must not be reported as 409")
+	}
+	got, _ := store.Get(id)
+	if got.Tag != "amsterdam" {
+		t.Errorf("tag must be unchanged on ListRules error, got %q", got.Tag)
+	}
+	if svc.syncCnt != 0 {
+		t.Errorf("Sync must not run when the reference check fails, got %d", svc.syncCnt)
 	}
 }
 
