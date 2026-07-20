@@ -303,7 +303,7 @@ func (a *app) setupRouter() {
 		Policies:               &routerAccessPolicyAdapter{svc: a.accessPolicySvc, wan: a.wanModel},
 		Events:                 a.eventBus,
 		Bus:                    a.eventBus,
-		AWGTags:                &routerAWGTagAdapter{src: a.awgoutboundsSvc},
+		AWGTags:                &routerAWGTagAdapter{src: a.awgoutboundsSvc, awg3: a.awg3Svc},
 		AWGOutboundsRefresh:    a.awgoutboundsSvc.Reconcile,
 		SingboxTunnels:         &routerSingboxTunnelAdapter{src: a.singboxOp},
 		SubscriptionComposites: router.NewSubscriptionCompositesAdapter(a.subAdapter),
@@ -456,7 +456,7 @@ func (a *app) setupRouter() {
 		return st.PolicyMark, true
 	})
 	a.srv.SetSingboxFakeIPConfigHandler(api.NewSingboxFakeIPConfigHandler(routerSvc, a.loggingService))
-	a.srv.SetAWGOutboundsHandler(api.NewAWGOutboundsHandler(a.awgoutboundsSvc))
+	a.srv.SetAWGOutboundsHandler(api.NewAWGOutboundsHandler(&awg3MergedAWGOutbounds{inner: a.awgoutboundsSvc, awg3: a.awg3Svc}))
 	// AWG3 endpoint import/CRUD. Wired here (not setupSingbox) because the
 	// rename-conflict check needs routerSvc's ListRules, only built in this phase.
 	a.srv.SetAwg3Handler(api.NewAwg3Handler(a.awg3Store, a.awg3Svc, routerSvc))

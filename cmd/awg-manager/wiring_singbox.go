@@ -249,7 +249,7 @@ func (a *app) setupSingbox() {
 
 	delayChecker := singbox.NewDelayChecker(
 		a.singboxOp.Clash(),
-		&singboxAndSubLister{op: a.singboxOp, sub: a.subSvc},
+		&singboxAndSubLister{op: a.singboxOp, sub: a.subSvc, awg3: a.awg3Svc},
 		a.eventBus,
 	)
 	a.singboxHandler = api.NewSingboxHandler(a.singboxOp, a.eventBus, delayChecker, a.testService, a.loggingService)
