@@ -12,13 +12,13 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/awg3endpoint"
+	"github.com/hoaxisr/awg-manager/internal/singbox/awgoutbounds"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 )
 
-// fakeAwg3Service satisfies the handler's Sync/ListTags interface and records
-// how many times Sync ran (rollback assertions rely on the count).
+// fakeAwg3Service satisfies the handler's Sync interface and records how many
+// times Sync ran (rollback assertions rely on the count).
 type fakeAwg3Service struct {
-	store   *awg3endpoint.Store
 	syncErr error
 	syncCnt int
 }
@@ -26,15 +26,6 @@ type fakeAwg3Service struct {
 func (f *fakeAwg3Service) Sync() error {
 	f.syncCnt++
 	return f.syncErr
-}
-
-func (f *fakeAwg3Service) ListTags() []awg3endpoint.TagInfo {
-	list, _ := f.store.List()
-	out := make([]awg3endpoint.TagInfo, 0, len(list))
-	for _, r := range list {
-		out = append(out, awg3endpoint.TagInfo{Tag: r.Tag, Kind: "awg3"})
-	}
-	return out
 }
 
 // fakeRuleLister returns a fixed rule set for the rename-conflict check.
@@ -46,6 +37,21 @@ type fakeRuleLister struct {
 
 func (f *fakeRuleLister) ListRules(ctx context.Context) ([]router.Rule, error) {
 	return f.rules, f.err
+}
+
+// fakeOutboundLister feeds the early tag-collision check with a fixed set of
+// foreign outbound tags (subscription / 15-awg / composite).
+type fakeOutboundLister struct {
+	tags []string
+	err  error
+}
+
+func (f *fakeOutboundLister) ListTags(ctx context.Context) ([]awgoutbounds.TagInfo, error) {
+	out := make([]awgoutbounds.TagInfo, 0, len(f.tags))
+	for _, t := range f.tags {
+		out = append(out, awgoutbounds.TagInfo{Tag: t})
+	}
+	return out, f.err
 }
 
 // validEndpoint is a RouteBox envelope with S1-S4 ≥ 8 and a header_protection_key.
@@ -81,9 +87,9 @@ func newAwg3TestHandler(t *testing.T) (*Awg3Handler, *awg3endpoint.Store, *fakeA
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "awg3.json")
 	store := awg3endpoint.NewStore(path)
-	svc := &fakeAwg3Service{store: store}
+	svc := &fakeAwg3Service{}
 	rules := &fakeRuleLister{}
-	h := NewAwg3Handler(store, svc, rules)
+	h := NewAwg3Handler(store, svc, rules, nil)
 	return h, store, svc, rules
 }
 
@@ -371,9 +377,6 @@ func TestAwg3Handler_RenameListRulesError(t *testing.T) {
 	if patch.Code != http.StatusInternalServerError {
 		t.Fatalf("PATCH ListRules-fail: code=%d body=%s", patch.Code, patch.Body.String())
 	}
-	if patch.Code == http.StatusConflict {
-		t.Errorf("ListRules failure must not be reported as 409")
-	}
 	got, _ := store.Get(id)
 	if got.Tag != "amsterdam" {
 		t.Errorf("tag must be unchanged on ListRules error, got %q", got.Tag)
@@ -383,11 +386,95 @@ func TestAwg3Handler_RenameListRulesError(t *testing.T) {
 	}
 }
 
+// A DELETE / PATCH on an unknown id is a 404, not a 400.
+func TestAwg3Handler_NotFound(t *testing.T) {
+	h, _, svc, _ := newAwg3TestHandler(t)
+
+	del := httptest.NewRecorder()
+	h.Handle(del, httptest.NewRequest(http.MethodDelete, "/api/awg3-endpoints/awg3-nope", nil))
+	if del.Code != http.StatusNotFound {
+		t.Fatalf("DELETE unknown: code=%d body=%s", del.Code, del.Body.String())
+	}
+
+	patch := httptest.NewRecorder()
+	h.Handle(patch, httptest.NewRequest(http.MethodPatch, "/api/awg3-endpoints/awg3-nope",
+		strings.NewReader(`{"tag":"berlin"}`)))
+	if patch.Code != http.StatusNotFound {
+		t.Fatalf("PATCH unknown: code=%d body=%s", patch.Code, patch.Body.String())
+	}
+	if svc.syncCnt != 0 {
+		t.Errorf("Sync must not run for a not-found id, got %d", svc.syncCnt)
+	}
+}
+
+// Import of a tag already owned by a foreign outbound (subscription / 15-awg /
+// composite) is rejected early with a clear 400, before Sync.
+func TestAwg3Handler_ImportOutboundTagCollision(t *testing.T) {
+	h, store, svc, _ := newAwg3TestHandler(t)
+	h.SetOutboundTagLister(&fakeOutboundLister{tags: []string{"amsterdam"}})
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("import outbound-collision: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if svc.syncCnt != 0 {
+		t.Errorf("Sync must not run when the tag collides, got %d", svc.syncCnt)
+	}
+	if n := store.Len(); n != 0 {
+		t.Errorf("store must stay empty on collision, got %d", n)
+	}
+}
+
+// Rename onto a foreign outbound tag is rejected early with a 400.
+func TestAwg3Handler_RenameOutboundTagCollision(t *testing.T) {
+	h, store, _, _ := newAwg3TestHandler(t)
+	h.SetOutboundTagLister(&fakeOutboundLister{tags: []string{"berlin"}})
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	patch := httptest.NewRecorder()
+	h.Handle(patch, httptest.NewRequest(http.MethodPatch, "/api/awg3-endpoints/"+id,
+		strings.NewReader(`{"tag":"berlin"}`)))
+	if patch.Code != http.StatusBadRequest {
+		t.Fatalf("rename outbound-collision: code=%d body=%s", patch.Code, patch.Body.String())
+	}
+	if got, _ := store.Get(id); got.Tag != "amsterdam" {
+		t.Errorf("tag must be unchanged on collision, got %q", got.Tag)
+	}
+}
+
+// Renaming a record to its own tag stays OK even though the outbound catalog
+// reports that tag (the merged catalog includes the awg3 tags themselves).
+func TestAwg3Handler_RenameToOwnTagOK(t *testing.T) {
+	h, _, _, _ := newAwg3TestHandler(t)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	// The catalog reports this record's own tag (merged catalog includes awg3
+	// tags); rename to the same tag must still pass the collision guard.
+	h.SetOutboundTagLister(&fakeOutboundLister{tags: []string{"amsterdam"}})
+	patch := httptest.NewRecorder()
+	h.Handle(patch, httptest.NewRequest(http.MethodPatch, "/api/awg3-endpoints/"+id,
+		strings.NewReader(`{"tag":"amsterdam"}`)))
+	if patch.Code != http.StatusOK {
+		t.Fatalf("rename to own tag: code=%d body=%s", patch.Code, patch.Body.String())
+	}
+}
+
 // sanity: store file is written to disk (real store, not mock).
 func TestAwg3Handler_PersistsToDisk(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "awg3.json")
 	store := awg3endpoint.NewStore(path)
-	h := NewAwg3Handler(store, &fakeAwg3Service{store: store}, &fakeRuleLister{})
+	h := NewAwg3Handler(store, &fakeAwg3Service{}, &fakeRuleLister{}, nil)
 
 	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
 	h.Handle(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))

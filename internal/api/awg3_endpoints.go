@@ -11,7 +11,9 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/awg3endpoint"
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/singbox/awgoutbounds"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 )
 
@@ -35,8 +37,8 @@ type Awg3TunnelDTO struct {
 // Awg3ImportRequest is the POST /awg3-endpoints body: a human-readable tag and
 // the raw endpoint config (RouteBox envelope or a bare sing-box awg endpoint).
 type Awg3ImportRequest struct {
-	Tag    string `json:"tag" example:"amsterdam"`
-	Config any    `json:"config" swaggertype:"object"`
+	Tag    string          `json:"tag" example:"amsterdam"`
+	Config json.RawMessage `json:"config" swaggertype:"object"`
 }
 
 // Awg3RenameRequest is the PATCH /awg3-endpoints/{id} body.
@@ -55,33 +57,53 @@ type Awg3ListResponse struct {
 // Kept as an interface so tests can inject a fake without a real orchestrator.
 type awg3Service interface {
 	Sync() error
-	ListTags() []awg3endpoint.TagInfo
 }
 
 // RuleLister exposes just the router rules the rename-conflict check reads.
 // NB: ListRules covers ordinary route rules only — it does NOT see composite
-// selector members, route.final or DownloadDetour references. Renaming a tag
-// still referenced by one of those is a conscious v1 limitation.
+// selector members, route.final, DownloadDetour references or fakeip rules.
+// Renaming a tag still referenced by one of those is a conscious v1 limitation.
 type RuleLister interface {
 	ListRules(ctx context.Context) ([]router.Rule, error)
 }
 
+// OutboundTagLister exposes every outbound/endpoint tag sing-box already knows
+// (managed AWG, subscriptions, composites, plus the awg3 tags themselves). The
+// handler folds these into the collision set so an import or rename that clashes
+// with a non-awg3 outbound fails early with a clear message, instead of a vague
+// "sing-box отверг конфиг" 400 from SaveAndValidate. Optional (nil = skip the
+// early check; SaveAndValidate remains the backstop).
+type OutboundTagLister interface {
+	ListTags(ctx context.Context) ([]awgoutbounds.TagInfo, error)
+}
+
 // Awg3Handler serves CRUD for imported AWG3 (sing-box awg endpoint) tunnels.
 type Awg3Handler struct {
-	store *awg3endpoint.Store
-	svc   awg3Service
-	rules RuleLister
-	bus   *events.Bus
+	store     *awg3endpoint.Store
+	svc       awg3Service
+	rules     RuleLister
+	outbounds OutboundTagLister // optional; nil = skip the early tag-collision check
+	bus       *events.Bus
+	log       *logging.ScopedLogger
 }
 
 // NewAwg3Handler builds the handler. svc is *awg3endpoint.Service in production
 // (it satisfies awg3Service); rules is the router service (satisfies RuleLister).
-func NewAwg3Handler(store *awg3endpoint.Store, svc awg3Service, rules RuleLister) *Awg3Handler {
-	return &Awg3Handler{store: store, svc: svc, rules: rules}
+func NewAwg3Handler(store *awg3endpoint.Store, svc awg3Service, rules RuleLister, appLogger logging.AppLogger) *Awg3Handler {
+	return &Awg3Handler{
+		store: store,
+		svc:   svc,
+		rules: rules,
+		log:   logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubAwg3),
+	}
 }
 
 // SetEventBus wires the SSE bus for resource:invalidated hints.
 func (h *Awg3Handler) SetEventBus(bus *events.Bus) { h.bus = bus }
+
+// SetOutboundTagLister wires the outbound-tag source for the early
+// collision check (see OutboundTagLister). Optional; nil-safe.
+func (h *Awg3Handler) SetOutboundTagLister(l OutboundTagLister) { h.outbounds = l }
 
 // Handle dispatches by method + path. It is registered on both
 // "/api/awg3-endpoints" (list/import) and "/api/awg3-endpoints/" (item ops).
@@ -137,15 +159,12 @@ func (h *Awg3Handler) handleList(w http.ResponseWriter, _ *http.Request) {
 //	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/awg3-endpoints [post]
 func (h *Awg3Handler) handleImport(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Tag    string          `json:"tag"`
-		Config json.RawMessage `json:"config"`
-	}
+	var req Awg3ImportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.BadRequest(w, "невалидный JSON запроса: "+err.Error())
 		return
 	}
-	rec, err := awg3endpoint.Parse(req.Config, req.Tag, h.store.Tags())
+	rec, err := awg3endpoint.Parse(req.Config, req.Tag, h.takenTags(r.Context()))
 	if err != nil {
 		response.BadRequest(w, err.Error())
 		return
@@ -158,7 +177,9 @@ func (h *Awg3Handler) handleImport(w http.ResponseWriter, r *http.Request) {
 	// Sync projects the store into 16-awg3.json via SaveAndValidate (sing-box
 	// check gate). On rejection roll the just-added record back — fail-closed.
 	if err := h.svc.Sync(); err != nil {
-		_ = h.store.Delete(rec.ID)
+		if delErr := h.store.Delete(rec.ID); delErr != nil {
+			h.log.Error("import-rollback", rec.Tag, delErr.Error())
+		}
 		response.BadRequest(w, "sing-box отверг конфиг: "+err.Error())
 		return
 	}
@@ -181,7 +202,7 @@ func (h *Awg3Handler) handleImport(w http.ResponseWriter, r *http.Request) {
 func (h *Awg3Handler) handleDelete(w http.ResponseWriter, r *http.Request, id string) {
 	rec, ok := h.store.Get(id)
 	if !ok {
-		response.BadRequest(w, "awg3 endpoint not found: "+id)
+		response.ErrorWithStatus(w, http.StatusNotFound, "awg3 endpoint not found: "+id, "AWG3_NOT_FOUND")
 		return
 	}
 	// Block the delete while an ordinary routing rule still points at the tag —
@@ -204,7 +225,9 @@ func (h *Awg3Handler) handleDelete(w http.ResponseWriter, r *http.Request, id st
 	// Deleting an endpoint rarely invalidates the config, but roll back
 	// symmetrically with import if sing-box rejects the result.
 	if err := h.svc.Sync(); err != nil {
-		_ = h.store.Add(rec)
+		if addErr := h.store.Add(rec); addErr != nil {
+			h.log.Error("delete-rollback", rec.Tag, addErr.Error())
+		}
 		response.InternalError(w, "sing-box отверг конфиг после удаления: "+err.Error())
 		return
 	}
@@ -236,7 +259,7 @@ func (h *Awg3Handler) handleRename(w http.ResponseWriter, r *http.Request, id st
 	}
 	rec, ok := h.store.Get(id)
 	if !ok {
-		response.BadRequest(w, "awg3 endpoint not found: "+id)
+		response.ErrorWithStatus(w, http.StatusNotFound, "awg3 endpoint not found: "+id, "AWG3_NOT_FOUND")
 		return
 	}
 	oldTag := rec.Tag
@@ -247,7 +270,10 @@ func (h *Awg3Handler) handleRename(w http.ResponseWriter, r *http.Request, id st
 		response.BadRequest(w, awg3endpoint.ErrTag.Error())
 		return
 	}
-	if newTag != oldTag && h.store.Tags()[newTag] {
+	// Collision against every known tag (store + foreign outbounds), so a rename
+	// onto a subscription / 15-awg / composite tag fails early and clearly. The
+	// record's own tag is excluded by the newTag != oldTag guard.
+	if newTag != oldTag && h.takenTags(r.Context())[newTag] {
 		response.BadRequest(w, awg3endpoint.ErrTag.Error())
 		return
 	}
@@ -273,12 +299,36 @@ func (h *Awg3Handler) handleRename(w http.ResponseWriter, r *http.Request, id st
 		return
 	}
 	if err := h.svc.Sync(); err != nil {
-		_ = h.store.Rename(id, oldTag)
+		if renErr := h.store.Rename(id, oldTag); renErr != nil {
+			h.log.Error("rename-rollback", oldTag, renErr.Error())
+		}
 		response.InternalError(w, "sing-box отверг конфиг после переименования: "+err.Error())
 		return
 	}
 	publishInvalidated(h.bus, ResourceAwg3, "rename")
 	response.Success(w, h.listDTO())
+}
+
+// takenTags is the collision set for import/rename: store tags plus every
+// foreign outbound tag sing-box already knows. The outbound source (when wired)
+// also reports the awg3 tags themselves, but those are already the store tags,
+// so the union naturally excludes the record's own tag — no explicit subtraction
+// needed. Best-effort: a ListTags failure degrades to store-only, with
+// SaveAndValidate still the fail-closed backstop.
+func (h *Awg3Handler) takenTags(ctx context.Context) map[string]bool {
+	taken := h.store.Tags()
+	if h.outbounds == nil {
+		return taken
+	}
+	tags, err := h.outbounds.ListTags(ctx)
+	if err != nil {
+		h.log.Warn("tag-collision", "", "не удалось перечислить outbound-теги: "+err.Error())
+		return taken
+	}
+	for _, t := range tags {
+		taken[t.Tag] = true
+	}
+	return taken
 }
 
 // tagReferenced reports whether any ordinary routing rule routes to tag. A
