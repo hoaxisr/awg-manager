@@ -31,6 +31,9 @@ export interface DashboardFlatContext {
 	readonly showSingboxListOption: boolean;
 	readonly showSingboxSections: boolean;
 	readonly exporting: boolean;
+	// FreeTurn доступен только табом — в dashboard-режиме вход через кнопку тулбара (#585).
+	readonly freeturnAvailable: boolean;
+	readonly freeturnOpen: boolean;
 	readonly awgAutoConnectivityNonce: number;
 	readonly singboxAutoDelayCheckNonce: number;
 	readonly deleteLoading: Record<string, boolean>;
@@ -45,6 +48,7 @@ export interface DashboardFlatContext {
 	// --- обработчики ---
 	handleAdoptClick(interfaceName: string): void;
 	handleExportAll(): Promise<void>;
+	toggleFreeturn(): void;
 	handleGripKeydown(index: number, event: KeyboardEvent): void;
 	handleGripPointerDown(index: number, event: PointerEvent): void;
 	handleToggleOnOff(id: string): Promise<void>;
