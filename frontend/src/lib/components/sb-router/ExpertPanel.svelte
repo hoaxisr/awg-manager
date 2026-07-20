@@ -17,7 +17,7 @@
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
-  import { subscriptionsStore } from '$lib/stores/subscriptions';
+  import { subscriptionGroupsStore, subscriptionsStore } from '$lib/stores/subscriptions';
   import { singboxProxies } from '$lib/stores/singboxProxies';
   import { singboxTunnels } from '$lib/stores/singbox';
   import { singboxMemory } from '$lib/stores/singboxMemory';
@@ -1028,6 +1028,7 @@
         <OutboundsCompact
           outbounds={$storeOutbounds}
           subscriptions={$subscriptionsStore.data ?? []}
+          groups={$subscriptionGroupsStore.data ?? []}
           usage={outboundUsageContext}
           proxyGroups={$singboxProxies.data ?? []}
           outboundOptions={$storeOptions}

@@ -188,6 +188,8 @@ export interface SubscriptionGroupMemberPreview {
 
 export interface CreateSubscriptionGroupInput {
 	label: string;
+	/** Пользовательский outbound-тег (#572); пусто = авто "agg-<id8>". */
+	tag?: string;
 	mode?: SubscriptionMode; // default 'urltest'
 	urlTest?: SubscriptionURLTest;
 	useSubscriptionIds: string[];

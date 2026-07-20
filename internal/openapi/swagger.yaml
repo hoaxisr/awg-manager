@@ -788,6 +788,10 @@ definitions:
         description: '"urltest" (default) | "selector"'
         example: urltest
         type: string
+      tag:
+        description: Tag — пользовательский outbound-тег (#572); пусто = авто "agg-<id8>".
+        example: eu-all
+        type: string
       urlTest:
         $ref: '#/definitions/api.SubscriptionURLTestDTO'
       useSubscriptionIds:

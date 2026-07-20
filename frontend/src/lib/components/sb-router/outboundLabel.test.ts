@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { isSubscriptionOutbound, outboundDisplay } from './outboundLabel';
-import type { Subscription } from '$lib/types';
+import { isGroupOutbound, isSubscriptionOutbound, outboundDisplay } from './outboundLabel';
+import type { Subscription, SubscriptionGroup } from '$lib/types';
 
 const subs = [
 	{ selectorTag: 'sub-1a98d416', label: 'Veesp LV' },
@@ -59,5 +59,24 @@ describe('outboundDisplay', () => {
 			title: 'sub-1a98d416',
 			subtitle: 'urltest',
 		});
+	});
+});
+
+// #572: строка сводной группы показывает её название, а не сырой тег.
+describe('сводные группы', () => {
+	const groups = [{ tag: 'agg-12345678', label: 'Все европейские' }] as SubscriptionGroup[];
+	const agg = { type: 'urltest', tag: 'agg-12345678', source: 'subscription' } as const;
+
+	it('agg-тег резолвится в label группы', () => {
+		expect(isGroupOutbound(agg, groups)).toBe(true);
+		expect(outboundDisplay(agg, [], groups)).toEqual({
+			title: 'Все европейские',
+			subtitle: 'urltest',
+		});
+	});
+
+	it('без данных групп — прежнее поведение (сырой тег)', () => {
+		expect(isGroupOutbound(agg)).toBe(false);
+		expect(outboundDisplay(agg, []).title).toBe('agg-12345678');
 	});
 });
