@@ -438,18 +438,29 @@ export function sortFilterSubscriptionsListRows(
 
 // --- сводные статистики ---
 
+// #576: пик — максимум суммарной скорости по окну истории (тому же, что
+// рисуют графики карточек), а не последняя точка.
+function peakCombinedRate(win: { rx: number[]; tx: number[] }): number {
+	const n = Math.min(win.rx.length, win.tx.length);
+	let peak = 0;
+	for (let i = 0; i < n; i++) {
+		const combined = win.rx[i] + win.tx[i];
+		if (combined > peak) peak = combined;
+	}
+	return peak;
+}
+
 export function computeAwgSummaryPeak(
 	awgList: TunnelListItem[],
 	visibleSystemList: SystemTunnel[],
-	latestRate: (id: string) => { rx: number; tx: number },
+	windowRates: (id: string) => { rx: number[]; tx: number[] },
 ): { rate: number; name: string } {
 	let rate = 0;
 	let name = '—';
 
 	for (const tunnel of awgList) {
 		if (!isManagedTunnelOn(tunnel)) continue;
-		const latest = latestRate(tunnel.id);
-		const combined = latest.rx + latest.tx;
+		const combined = peakCombinedRate(windowRates(tunnel.id));
 		if (combined > rate) {
 			rate = combined;
 			name = tunnel.name;
@@ -458,8 +469,7 @@ export function computeAwgSummaryPeak(
 
 	for (const tunnel of visibleSystemList) {
 		if (tunnel.status !== 'up') continue;
-		const latest = latestRate(tunnel.id);
-		const combined = latest.rx + latest.tx;
+		const combined = peakCombinedRate(windowRates(tunnel.id));
 		if (combined > rate) {
 			rate = combined;
 			name = tunnel.description || tunnel.interfaceName;
