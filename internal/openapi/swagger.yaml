@@ -366,6 +366,45 @@ definitions:
         example: admin
         type: string
     type: object
+  api.Awg3ImportRequest:
+    properties:
+      config:
+        type: object
+      tag:
+        example: amsterdam
+        type: string
+    type: object
+  api.Awg3ListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.Awg3TunnelDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.Awg3RenameRequest:
+    properties:
+      tag:
+        example: berlin
+        type: string
+    type: object
+  api.Awg3TunnelDTO:
+    properties:
+      headerProtection:
+        example: true
+        type: boolean
+      host:
+        example: vpn.example.com:51820
+        type: string
+      id:
+        example: awg3-Ab12Cd34Ef
+        type: string
+      tag:
+        example: amsterdam
+        type: string
+    type: object
   api.BackupWarningDTO:
     properties:
       interfaceName:
@@ -7036,6 +7075,125 @@ paths:
       summary: Auth status
       tags:
       - auth
+  /awg3-endpoints:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Awg3ListResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List AWG3 endpoints
+      tags:
+      - awg3-endpoints
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tag and endpoint config
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.Awg3ImportRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Awg3ListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Import an AWG3 endpoint
+      tags:
+      - awg3-endpoints
+  /awg3-endpoints/{id}:
+    delete:
+      parameters:
+      - description: Endpoint id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Awg3ListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Delete an AWG3 endpoint
+      tags:
+      - awg3-endpoints
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Endpoint id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New tag
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.Awg3RenameRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Awg3ListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Rename an AWG3 endpoint
+      tags:
+      - awg3-endpoints
   /boot-status:
     get:
       description: 'Public snapshot: initializing flag, phase, instance id.'

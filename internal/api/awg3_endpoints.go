@@ -26,10 +26,29 @@ var awg3TagRe = regexp.MustCompile(`^[\p{L}\p{N} ._-]+$`)
 // omits the raw private_key / header_protection_key material — that stays in
 // the store file and the 16-awg3.json slot only, never over the API.
 type Awg3TunnelDTO struct {
-	ID               string `json:"id"`
-	Tag              string `json:"tag"`
-	Host             string `json:"host"`
-	HeaderProtection bool   `json:"headerProtection"`
+	ID               string `json:"id" example:"awg3-Ab12Cd34Ef"`
+	Tag              string `json:"tag" example:"amsterdam"`
+	Host             string `json:"host" example:"vpn.example.com:51820"`
+	HeaderProtection bool   `json:"headerProtection" example:"true"`
+}
+
+// Awg3ImportRequest is the POST /awg3-endpoints body: a human-readable tag and
+// the raw endpoint config (RouteBox envelope or a bare sing-box awg endpoint).
+type Awg3ImportRequest struct {
+	Tag    string `json:"tag" example:"amsterdam"`
+	Config any    `json:"config" swaggertype:"object"`
+}
+
+// Awg3RenameRequest is the PATCH /awg3-endpoints/{id} body.
+type Awg3RenameRequest struct {
+	Tag string `json:"tag" example:"berlin"`
+}
+
+// Awg3ListResponse is the envelope returned by every awg3 endpoint operation
+// (list/import/delete/rename all return the fresh list).
+type Awg3ListResponse struct {
+	Success bool            `json:"success" example:"true"`
+	Data    []Awg3TunnelDTO `json:"data"`
 }
 
 // awg3Service is the narrow slice of *awg3endpoint.Service the handler needs.
@@ -93,11 +112,30 @@ func (h *Awg3Handler) Handle(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleList — GET /api/awg3-endpoints
+//
+//	@Summary		List AWG3 endpoints
+//	@Tags			awg3-endpoints
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	Awg3ListResponse
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/awg3-endpoints [get]
 func (h *Awg3Handler) handleList(w http.ResponseWriter, _ *http.Request) {
 	response.Success(w, h.listDTO())
 }
 
 // handleImport — POST /api/awg3-endpoints  body {tag, config}
+//
+//	@Summary		Import an AWG3 endpoint
+//	@Tags			awg3-endpoints
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			request	body		Awg3ImportRequest	true	"Tag and endpoint config"
+//	@Success		200		{object}	Awg3ListResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/awg3-endpoints [post]
 func (h *Awg3Handler) handleImport(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Tag    string          `json:"tag"`
@@ -129,6 +167,17 @@ func (h *Awg3Handler) handleImport(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDelete — DELETE /api/awg3-endpoints/{id}
+//
+//	@Summary		Delete an AWG3 endpoint
+//	@Tags			awg3-endpoints
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	path		string	true	"Endpoint id"
+//	@Success		200	{object}	Awg3ListResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/awg3-endpoints/{id} [delete]
 func (h *Awg3Handler) handleDelete(w http.ResponseWriter, r *http.Request, id string) {
 	rec, ok := h.store.Get(id)
 	if !ok {
@@ -164,6 +213,19 @@ func (h *Awg3Handler) handleDelete(w http.ResponseWriter, r *http.Request, id st
 }
 
 // handleRename — PATCH /api/awg3-endpoints/{id}  body {tag}
+//
+//	@Summary		Rename an AWG3 endpoint
+//	@Tags			awg3-endpoints
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		path		string				true	"Endpoint id"
+//	@Param			request	body		Awg3RenameRequest	true	"New tag"
+//	@Success		200		{object}	Awg3ListResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		409		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/awg3-endpoints/{id} [patch]
 func (h *Awg3Handler) handleRename(w http.ResponseWriter, r *http.Request, id string) {
 	var req struct {
 		Tag string `json:"tag"`
