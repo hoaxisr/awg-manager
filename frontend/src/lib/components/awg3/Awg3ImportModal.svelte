@@ -100,6 +100,9 @@
 		importing = true;
 		try {
 			await api.awg3Import(cleanTag, config);
+			// Снять флаг до requestClose(): его гард `if (importing) return`
+			// иначе съел бы закрытие (finally оставит false — идемпотентно).
+			importing = false;
 			onimported();
 			requestClose();
 		} catch (e) {

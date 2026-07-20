@@ -310,11 +310,10 @@ func (h *Awg3Handler) handleRename(w http.ResponseWriter, r *http.Request, id st
 }
 
 // takenTags is the collision set for import/rename: store tags plus every
-// foreign outbound tag sing-box already knows. The outbound source (when wired)
-// also reports the awg3 tags themselves, but those are already the store tags,
-// so the union naturally excludes the record's own tag — no explicit subtraction
-// needed. Best-effort: a ListTags failure degrades to store-only, with
-// SaveAndValidate still the fail-closed backstop.
+// outbound tag sing-box already knows. The set INCLUDES the record's own tag
+// (store.Tags() contains it), so rename must guard self with newTag != oldTag
+// at the call-site before consulting this map. Best-effort: a ListTags failure
+// degrades to store-only, with SaveAndValidate still the fail-closed backstop.
 func (h *Awg3Handler) takenTags(ctx context.Context) map[string]bool {
 	taken := h.store.Tags()
 	if h.outbounds == nil {
