@@ -194,7 +194,7 @@ func NewSelectiveHandler(settings *storage.SettingsStore, configDir string, buil
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	SelectiveStatusData
+//	@Success		200	{object}	APIEnvelope{data=SelectiveStatusData}
 //	@Router			/singbox/router/selective/status [get]
 func (h *SelectiveHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, h.statusData(r.Context()))
@@ -249,7 +249,7 @@ func (h *SelectiveHandler) statusData(ctx context.Context) SelectiveStatusData {
 //	@Security		CookieAuth
 //	@Param			offset	query		int	false	"Zero-based record offset"	default(0)
 //	@Param			limit	query		int	false	"Page size (max 1000)"		default(200)
-//	@Success		200		{object}	SelectiveSnapshotMatchersData
+//	@Success		200		{object}	APIEnvelope{data=SelectiveSnapshotMatchersData}
 //	@Failure		405		{object}	APIErrorEnvelope
 //	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/singbox/router/selective/snapshot/matchers [get]
@@ -295,7 +295,7 @@ func queryIntDefault(r *http.Request, key string, def int) int {
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	SelectiveStatusData
+//	@Success		200	{object}	APIEnvelope{data=SelectiveStatusData}
 //	@Failure		409	{object}	APIErrorEnvelope	"already installing"
 //	@Router			/singbox/router/selective/install-deps [post]
 func (h *SelectiveHandler) InstallDeps(w http.ResponseWriter, r *http.Request) {
@@ -345,7 +345,7 @@ func (h *SelectiveHandler) InstallDeps(w http.ResponseWriter, r *http.Request) {
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	SelectiveStatusData
+//	@Success		200	{object}	APIEnvelope{data=SelectiveStatusData}
 //	@Router			/singbox/router/selective/install-conntrack [post]
 func (h *SelectiveHandler) InstallConntrack(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -386,7 +386,7 @@ func (h *SelectiveHandler) InstallConntrack(w http.ResponseWriter, r *http.Reque
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		202	{object}	SelectiveStatusData	"rebuild started (or already running); rebuilding reflects live state"
+//	@Success		202	{object}	APIEnvelope{data=SelectiveStatusData}	"rebuild started (or already running); rebuilding reflects live state"
 //	@Failure		409	{object}	APIErrorEnvelope	"sing-box config apply in progress"
 //	@Failure		503	{object}	APIErrorEnvelope	"builder not configured"
 //	@Router			/singbox/router/selective/rebuild [post]
@@ -488,7 +488,7 @@ func (h *SelectiveHandler) respondRebuildAccepted(w http.ResponseWriter, r *http
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	SelectiveCancelData
+//	@Success		200	{object}	APIEnvelope{data=SelectiveCancelData}
 //	@Failure		405	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/selective/rebuild/cancel [post]
 func (h *SelectiveHandler) CancelRebuild(w http.ResponseWriter, r *http.Request) {

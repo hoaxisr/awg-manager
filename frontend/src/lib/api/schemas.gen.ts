@@ -173,6 +173,11 @@ const api_ClientRouteDTO: v.GenericSchema = v.looseObject({
 	tunnelId: v.optional(v.nullable(v.string())),
 });
 
+const api_ClientRouteToggleData: v.GenericSchema = v.looseObject({
+	enabled: v.optional(v.nullable(v.boolean())),
+	id: v.optional(v.nullable(v.string())),
+});
+
 const api_ClientRoutesListResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.array(v.lazy(() => api_ClientRouteDTO)))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -1841,6 +1846,17 @@ const api_SubscriptionMemberDTO: v.GenericSchema = v.looseObject({
 	transport: v.optional(v.nullable(v.string())),
 });
 
+const api_SubscriptionRefreshData: v.GenericSchema = v.looseObject({
+	added: v.optional(v.nullable(v.number())),
+	orphaned: v.optional(v.nullable(v.number())),
+	parseErrors: v.optional(v.nullable(v.array(v.string()))),
+	skippedDuplicate: v.optional(v.nullable(v.number())),
+	skippedOther: v.optional(v.nullable(v.number())),
+	skippedVmess: v.optional(v.nullable(v.number())),
+	updated: v.optional(v.nullable(v.number())),
+	when: v.optional(v.nullable(v.string())),
+});
+
 const api_SubscriptionRejectedDTO: v.GenericSchema = v.looseObject({
 	label: v.optional(v.nullable(v.string())),
 	port: v.optional(v.nullable(v.number())),
@@ -1941,6 +1957,10 @@ const api_SystemTunnelPeerDTO: v.GenericSchema = v.looseObject({
 const api_SystemTunnelsResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.array(v.lazy(() => api_SystemTunnelDTO)))),
 	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_TerminalInstallData: v.GenericSchema = v.looseObject({
+	installed: v.optional(v.nullable(v.boolean())),
 });
 
 const api_TerminalStartData: v.GenericSchema = v.looseObject({
@@ -2398,7 +2418,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /freeturn/status": v.lazy(() => api_FreeTurnStatusResponse),
 	"GET /health": v.lazy(() => api_HealthResponse),
 	"GET /hydraroute/config": v.lazy(() => api_HydraRouteConfigResponse),
-	"GET /hydraroute/geo-expand": v.lazy(() => api_GeoExpandData),
+	"GET /hydraroute/geo-expand": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_GeoExpandData))),
+})]),
 	"GET /hydraroute/geo-files": v.lazy(() => api_GeoFilesResponse),
 	"GET /hydraroute/geo-tags": v.lazy(() => api_GeoTagsResponse),
 	"GET /hydraroute/ipset-usage": v.lazy(() => api_IpsetUsageResponse),
@@ -2416,10 +2438,14 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /managed/drift": v.lazy(() => api_ManagedServerDriftEnvelope),
 	"GET /managed/export": v.lazy(() => api_ManagedServerExportEnvelope),
 	"GET /monitoring/matrix": v.lazy(() => api_MonitoringSnapshotResponse),
-	"GET /ndms/save-status": v.lazy(() => api_SaveStatusDTO),
+	"GET /ndms/save-status": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SaveStatusDTO))),
+})]),
 	"GET /pingcheck/logs": v.lazy(() => api_PingLogsResponse),
 	"GET /pingcheck/status": v.lazy(() => api_PingCheckStatusResponse),
-	"GET /presets": v.lazy(() => api_PresetsListResponse),
+	"GET /presets": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_PresetsListResponse))),
+})]),
 	"GET /proxy/config": v.lazy(() => api_ProxyConfigResponse),
 	"GET /proxy/instance": v.lazy(() => api_ProxyInstanceResponse),
 	"GET /proxy/instance/check-ip": v.lazy(() => api_DeviceProxyInstanceIPCheckResponse),
@@ -2433,7 +2459,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /routing/dns-routes": v.lazy(() => api_DnsRoutesListResponse),
 	"GET /routing/policy-devices": v.lazy(() => api_PolicyDevicesListResponse),
 	"GET /routing/policy-interfaces": v.lazy(() => api_PolicyInterfacesListResponse),
-	"GET /routing/resolve": v.lazy(() => api_ResolveResponse),
+	"GET /routing/resolve": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_ResolveResponse))),
+})]),
 	"GET /routing/static-routes": v.lazy(() => api_StaticRoutesListResponse),
 	"GET /routing/tunnels": v.lazy(() => api_RoutingTunnelsResponse),
 	"GET /server/listen": v.lazy(() => api_ServerListenStateResponse),
@@ -2482,10 +2510,16 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /singbox/router/rules/list": v.lazy(() => api_SingboxRouterRulesListResponse),
 	"GET /singbox/router/rulesets/dat-url": v.lazy(() => api_SingboxRouterDatRuleSetURLResponse),
 	"GET /singbox/router/rulesets/list": v.lazy(() => api_SingboxRouterRuleSetsListResponse),
-	"GET /singbox/router/selective/snapshot/matchers": v.lazy(() => api_SelectiveSnapshotMatchersData),
-	"GET /singbox/router/selective/status": v.lazy(() => api_SelectiveStatusData),
+	"GET /singbox/router/selective/snapshot/matchers": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SelectiveSnapshotMatchersData))),
+})]),
+	"GET /singbox/router/selective/status": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SelectiveStatusData))),
+})]),
 	"GET /singbox/router/settings": v.lazy(() => api_SingboxRouterSettingsResponse),
-	"GET /singbox/router/staging": v.lazy(() => api_RouterStagingStatusResponse),
+	"GET /singbox/router/staging": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_RouterStagingStatusResponse))),
+})]),
 	"GET /singbox/router/status": v.lazy(() => api_SingboxRouterStatusResponse),
 	"GET /singbox/router/wan-interfaces": v.lazy(() => api_SingboxRouterWANInterfacesListResponse),
 	"GET /singbox/status": v.lazy(() => api_SingboxStatusResponse),
@@ -2534,10 +2568,16 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /amnezia-premium/login": v.lazy(() => api_AmneziaPremiumLoginResponse),
 	"POST /auth/login": v.lazy(() => api_LoginResponseRaw),
 	"POST /auth/logout": v.lazy(() => api_APIEnvelope),
-	"POST /client-routes/create": v.lazy(() => api_ClientRoutesListResponse),
-	"POST /client-routes/delete": v.lazy(() => api_ClientRoutesListResponse),
-	"POST /client-routes/toggle": v.lazy(() => api_ClientRoutesListResponse),
-	"POST /client-routes/update": v.lazy(() => api_ClientRoutesListResponse),
+	"POST /client-routes/create": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_ClientRouteDTO))),
+})]),
+	"POST /client-routes/delete": v.lazy(() => api_OkResponse),
+	"POST /client-routes/toggle": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_ClientRouteToggleData))),
+})]),
+	"POST /client-routes/update": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_ClientRouteDTO))),
+})]),
 	"POST /control/restart": v.lazy(() => api_TunnelControlResponse),
 	"POST /control/restart-all": v.lazy(() => api_APIEnvelope),
 	"POST /control/start": v.lazy(() => api_TunnelControlResponse),
@@ -2668,14 +2708,22 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/router/rulesets/bulk-detour": v.lazy(() => api_SingboxRouterBulkUpdatedResponse),
 	"POST /singbox/router/rulesets/delete": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/rulesets/update": v.lazy(() => api_OkResponse),
-	"POST /singbox/router/selective/install-conntrack": v.lazy(() => api_SelectiveStatusData),
-	"POST /singbox/router/selective/install-deps": v.lazy(() => api_SelectiveStatusData),
-	"POST /singbox/router/selective/rebuild": v.lazy(() => api_SelectiveStatusData),
-	"POST /singbox/router/selective/rebuild/cancel": v.lazy(() => api_SelectiveCancelData),
+	"POST /singbox/router/selective/install-conntrack": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SelectiveStatusData))),
+})]),
+	"POST /singbox/router/selective/install-deps": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SelectiveStatusData))),
+})]),
+	"POST /singbox/router/selective/rebuild": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SelectiveStatusData))),
+})]),
+	"POST /singbox/router/selective/rebuild/cancel": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SelectiveCancelData))),
+})]),
 	"POST /singbox/router/settings": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/staging/apply": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/staging/discard": v.lazy(() => api_OkResponse),
-	"POST /singbox/subscriptions/active-member": v.lazy(() => api_SubscriptionResponse),
+	"POST /singbox/subscriptions/active-member": v.lazy(() => api_OkResponse),
 	"POST /singbox/subscriptions/create": v.lazy(() => api_SubscriptionResponse),
 	"POST /singbox/subscriptions/groups/create": v.lazy(() => api_SubscriptionGroupResponse),
 	"POST /singbox/subscriptions/groups/delete": v.lazy(() => api_APIEnvelope),
@@ -2683,23 +2731,33 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/subscriptions/members/exclude": v.lazy(() => api_SubscriptionResponse),
 	"POST /singbox/subscriptions/members/remove": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/subscriptions/members/restore": v.lazy(() => api_SubscriptionResponse),
-	"POST /singbox/subscriptions/orphans/delete": v.lazy(() => api_SubscriptionResponse),
+	"POST /singbox/subscriptions/orphans/delete": v.lazy(() => api_OkResponse),
 	"POST /singbox/subscriptions/preview": v.lazy(() => api_APIEnvelope),
-	"POST /singbox/subscriptions/refresh": v.lazy(() => api_SubscriptionResponse),
+	"POST /singbox/subscriptions/refresh": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SubscriptionRefreshData))),
+})]),
 	"POST /singbox/tunnels": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/tunnels/delay-check": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/tunnels/share-link": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/update": v.lazy(() => api_SingboxStatusResponse),
-	"POST /static-routes/create": v.lazy(() => api_StaticRoutesListResponse),
+	"POST /static-routes/create": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_StaticRouteDTO))),
+})]),
 	"POST /static-routes/delete": v.lazy(() => api_APIEnvelope),
-	"POST /static-routes/import": v.lazy(() => api_StaticRoutesListResponse),
+	"POST /static-routes/import": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_StaticRouteDTO))),
+})]),
 	"POST /static-routes/set-enabled": v.lazy(() => api_APIEnvelope),
-	"POST /static-routes/update": v.lazy(() => api_StaticRoutesListResponse),
+	"POST /static-routes/update": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_StaticRouteDTO))),
+})]),
 	"POST /system-tunnels/asc": v.lazy(() => api_OkResponse),
 	"POST /system/hydraroute-control": v.lazy(() => api_APIEnvelope),
 	"POST /system/restart": v.lazy(() => api_APIEnvelope),
 	"POST /system/update/apply": v.lazy(() => api_UpdateApplyResponse),
-	"POST /terminal/install": v.lazy(() => api_TerminalStatusResponse),
+	"POST /terminal/install": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_TerminalInstallData))),
+})]),
 	"POST /terminal/start": v.lazy(() => api_TerminalStartResponse),
 	"POST /terminal/stop": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/create": v.lazy(() => api_APIEnvelope),

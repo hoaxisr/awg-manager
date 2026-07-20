@@ -449,6 +449,15 @@ definitions:
         example: tun_abc123
         type: string
     type: object
+  api.ClientRouteToggleData:
+    properties:
+      enabled:
+        example: true
+        type: boolean
+      id:
+        example: cr_001
+        type: string
+    type: object
   api.ClientRoutesListResponse:
     properties:
       data:
@@ -5126,6 +5135,34 @@ definitions:
         example: ws
         type: string
     type: object
+  api.SubscriptionRefreshData:
+    properties:
+      added:
+        example: 1
+        type: integer
+      orphaned:
+        example: 0
+        type: integer
+      parseErrors:
+        items:
+          type: string
+        type: array
+      skippedDuplicate:
+        example: 0
+        type: integer
+      skippedOther:
+        example: 0
+        type: integer
+      skippedVmess:
+        example: 0
+        type: integer
+      updated:
+        example: 2
+        type: integer
+      when:
+        example: "2026-07-20T12:00:00Z"
+        type: string
+    type: object
   api.SubscriptionRejectedDTO:
     properties:
       label:
@@ -5353,6 +5390,12 @@ definitions:
       path:
         example: /opt/etc/HydraRoute/geosite_GA.dat
         type: string
+    type: object
+  api.TerminalInstallData:
+    properties:
+      installed:
+        example: true
+        type: boolean
     type: object
   api.TerminalStartData:
     properties:
@@ -7042,7 +7085,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.ClientRoutesListResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ClientRouteDTO'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -7070,7 +7118,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.ClientRoutesListResponse'
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
@@ -7100,7 +7148,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.ClientRoutesListResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ClientRouteToggleData'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -7130,7 +7183,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.ClientRoutesListResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ClientRouteDTO'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -8130,7 +8188,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.GeoExpandData'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.GeoExpandData'
+              type: object
       security:
       - CookieAuth: []
       summary: HydraRoute geo tag expand
@@ -9396,7 +9459,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SaveStatusDTO'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SaveStatusDTO'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -9511,7 +9579,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.PresetsListResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.PresetsListResponse'
+              type: object
       summary: List unified presets
       tags:
       - presets
@@ -10025,7 +10098,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.ResolveResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ResolveResponse'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -13937,7 +14015,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SelectiveStatusData'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SelectiveStatusData'
+              type: object
       security:
       - CookieAuth: []
       summary: Install conntrack-tools package
@@ -13951,7 +14034,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SelectiveStatusData'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SelectiveStatusData'
+              type: object
         "409":
           description: already installing
           schema:
@@ -13970,7 +14058,12 @@ paths:
           description: rebuild started (or already running); rebuilding reflects live
             state
           schema:
-            $ref: '#/definitions/api.SelectiveStatusData'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SelectiveStatusData'
+              type: object
         "409":
           description: sing-box config apply in progress
           schema:
@@ -13995,7 +14088,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SelectiveCancelData'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SelectiveCancelData'
+              type: object
         "405":
           description: Method Not Allowed
           schema:
@@ -14026,7 +14124,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SelectiveSnapshotMatchersData'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SelectiveSnapshotMatchersData'
+              type: object
         "405":
           description: Method Not Allowed
           schema:
@@ -14048,7 +14151,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SelectiveStatusData'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SelectiveStatusData'
+              type: object
       security:
       - CookieAuth: []
       summary: Selective-bypass status
@@ -14160,7 +14268,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.RouterStagingStatusResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.RouterStagingStatusResponse'
+              type: object
         "405":
           description: Method Not Allowed
           schema:
@@ -14338,7 +14451,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SubscriptionResponse'
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
@@ -14856,7 +14969,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SubscriptionResponse'
+            $ref: '#/definitions/api.OkResponse'
         "500":
           description: Internal Server Error
           schema:
@@ -14915,7 +15028,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SubscriptionResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SubscriptionRefreshData'
+              type: object
         "409":
           description: фильтр и исключения скрывают все серверы (ALL_MEMBERS_FILTERED)
           schema:
@@ -15357,7 +15475,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.StaticRoutesListResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.StaticRouteDTO'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -15409,7 +15532,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.StaticRoutesListResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.StaticRouteDTO'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -15485,7 +15613,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.StaticRoutesListResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.StaticRouteDTO'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -15810,7 +15943,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.TerminalStatusResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.TerminalInstallData'
+              type: object
         "400":
           description: Bad Request
           schema:

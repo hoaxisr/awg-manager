@@ -582,7 +582,7 @@ func (h *HydraRouteHandler) GetGeoTags(w http.ResponseWriter, r *http.Request) {
 //	@Security		CookieAuth
 //	@Param			kind	query	string	true	"geosite or geoip"
 //	@Param			tag	query	string	true	"Tag name"
-//	@Success		200	{object}	GeoExpandData
+//	@Success		200	{object}	APIEnvelope{data=GeoExpandData}
 //	@Router			/hydraroute/geo-expand [get]
 func (h *HydraRouteHandler) ExpandGeoTag(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

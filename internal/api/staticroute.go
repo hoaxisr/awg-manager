@@ -102,7 +102,7 @@ func (h *StaticRouteHandler) List(w http.ResponseWriter, r *http.Request) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	StaticRoutesListResponse
+//	@Success		200	{object}	APIEnvelope{data=StaticRouteDTO}
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/static-routes/create [post]
@@ -131,7 +131,7 @@ func (h *StaticRouteHandler) Create(w http.ResponseWriter, r *http.Request) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	StaticRoutesListResponse
+//	@Success		200	{object}	APIEnvelope{data=StaticRouteDTO}
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/static-routes/update [post]
@@ -238,7 +238,7 @@ type staticRouteImportReq struct {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	StaticRoutesListResponse
+//	@Success		200	{object}	APIEnvelope{data=StaticRouteDTO}
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/static-routes/import [post]

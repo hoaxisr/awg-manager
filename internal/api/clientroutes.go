@@ -26,6 +26,12 @@ type ClientRoutesListResponse struct {
 	Data    []ClientRouteDTO `json:"data"`
 }
 
+// ClientRouteToggleData is the payload of POST /client-routes/toggle.
+type ClientRouteToggleData struct {
+	ID      string `json:"id" example:"cr_001"`
+	Enabled bool   `json:"enabled" example:"true"`
+}
+
 // ClientRouteHandler handles client route CRUD operations.
 type ClientRouteHandler struct {
 	svc clientroute.Service
@@ -80,7 +86,7 @@ func (h *ClientRouteHandler) HandleList(w http.ResponseWriter, r *http.Request) 
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	ClientRoutesListResponse
+//	@Success		200	{object}	APIEnvelope{data=ClientRouteDTO}
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/client-routes/create [post]
@@ -108,7 +114,7 @@ func (h *ClientRouteHandler) HandleCreate(w http.ResponseWriter, r *http.Request
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	query	string	true	"Route id"
-//	@Success		200	{object}	ClientRoutesListResponse
+//	@Success		200	{object}	APIEnvelope{data=ClientRouteDTO}
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/client-routes/update [post]
@@ -139,7 +145,7 @@ func (h *ClientRouteHandler) HandleUpdate(w http.ResponseWriter, r *http.Request
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	query	string	true	"Route id"
-//	@Success		200	{object}	ClientRoutesListResponse
+//	@Success		200	{object}	OkResponse
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/client-routes/delete [post]
@@ -170,7 +176,7 @@ func (h *ClientRouteHandler) HandleDelete(w http.ResponseWriter, r *http.Request
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id	query	string	true	"Route id"
-//	@Success		200	{object}	ClientRoutesListResponse
+//	@Success		200	{object}	APIEnvelope{data=ClientRouteToggleData}
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/client-routes/toggle [post]
