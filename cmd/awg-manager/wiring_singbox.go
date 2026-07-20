@@ -129,8 +129,14 @@ func (a *app) setupSingbox() {
 	}
 	// Project any imported AWG3 endpoints into 16-awg3.json on boot so a
 	// restart re-materializes the slot from awg3.json (the source of truth).
-	if err := a.awg3Svc.Sync(); err != nil {
-		a.bootLog.Warn("awg3-sync", "boot", err.Error())
+	// Skip when there is neither a store record nor a 16-awg3.json file:
+	// Sync would only spawn a `sing-box check` subprocess (seconds on MIPS,
+	// warns without the binary) to produce an empty slot that is already empty.
+	// If the slot file exists while the store is empty, still Sync to clear it.
+	if _, _, slotExists := a.sbOrch.EffectiveStat(singboxorch.SlotAwg3); a.awg3Store.Len() > 0 || slotExists {
+		if err := a.awg3Svc.Sync(); err != nil {
+			a.bootLog.Warn("awg3-sync", "boot", err.Error())
+		}
 	}
 	// Миграция URL rule-set'ов переписала файлы мимо оркестратора: переживший
 	// рестарт awgm sing-box иначе держит старые (заблокированные) URL в памяти
