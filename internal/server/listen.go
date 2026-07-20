@@ -102,6 +102,15 @@ func (s *Server) resolveListenAddrs(spec ListenSpec, strict bool) ([]string, err
 	if strict && len(missing) > 0 {
 		return nil, fmt.Errorf("интерфейс(ы) без IPv4-адреса: %s", strings.Join(missing, ", "))
 	}
+	// Ни один интерфейс из списка не отрезолвился (#571: например, мусорное
+	// легаси server.interface) — fallback на 0.0.0.0, как до 2.16: демон
+	// только на loopback недостижим для пользователя. Heal сузит bind до
+	// желаемого spec, когда интерфейс получит IP.
+	if len(addrs) == 0 {
+		s.appLog.Warn("listen", "", "ни один интерфейс не имеет IPv4 ("+strings.Join(missing, ", ")+") — слушаю 0.0.0.0")
+		add("0.0.0.0")
+		return addrs, nil
+	}
 	if len(missing) > 0 {
 		s.appLog.Warn("listen", "", "интерфейсы без IPv4 пропущены (heal добиндит при появлении IP): "+strings.Join(missing, ", "))
 	}
@@ -109,8 +118,21 @@ func (s *Server) resolveListenAddrs(spec ListenSpec, strict bool) ([]string, err
 	return addrs, nil
 }
 
+// wildcardConflict — true, если два разных "ip:port" не могут слушать
+// одновременно: одинаковый порт и одна из сторон — wildcard 0.0.0.0.
+func wildcardConflict(a, b string) bool {
+	ha, pa, errA := net.SplitHostPort(a)
+	hb, pb, errB := net.SplitHostPort(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return pa == pb && ha != hb && (ha == "0.0.0.0" || hb == "0.0.0.0")
+}
+
 // applyListenLocked приводит активные листенеры к want (make-before-break):
-// СНАЧАЛА биндит недостающие адреса, ПОТОМ закрывает лишние. При
+// СНАЧАЛА биндит недостающие адреса, ПОТОМ закрывает лишние. Исключение —
+// wildcard/specific-конфликт на одном порту: там точечный break-before-make
+// с восстановлением при неудаче (см. closedConflicts ниже). При
 // bestEffort=false ошибка бинда любого нового адреса закрывает уже открытые
 // новые и оставляет старые нетронутыми — сервер никогда не остаётся без
 // листенера. bestEffort=true (boot/heal/revert) — недоступные адреса
@@ -123,6 +145,48 @@ func (s *Server) applyListenLocked(want []string, bestEffort bool) (int, error) 
 	wantSet := make(map[string]struct{}, len(want))
 	for _, a := range want {
 		wantSet[a] = struct{}{}
+	}
+
+	// Точечный break-before-make: wildcard и конкретный IP на одном порту не
+	// сосуществуют в LISTEN (EADDRINUSE), поэтому обречённый (не в want)
+	// листенер, конфликтующий с новым bind'ом, закрываем ДО открытия.
+	// Переходы «0.0.0.0 → конкретный интерфейс» (сужение fallback'а #571 или
+	// живая смена из API) без этого невозможны. Если bind, ради которого
+	// закрывали, не удался — закрытый адрес перебиндивается обратно.
+	closedConflicts := make(map[string]string) // закрытый адрес → want-адрес, ради которого закрыт
+	for addr, ln := range s.listen.listeners {
+		if _, keep := wantSet[addr]; keep {
+			continue
+		}
+		for _, w := range want {
+			if _, exists := s.listen.listeners[w]; exists || !wildcardConflict(addr, w) {
+				continue
+			}
+			ln.Close()
+			delete(s.listen.listeners, addr)
+			closedConflicts[addr] = w
+			s.appLog.Info("listen", addr, "listener closed (конфликт wildcard/интерфейс с "+w+")")
+			break
+		}
+	}
+	// restoreConflicts перебиндивает закрытые конфликтные адреса, чей
+	// want-адрес так и не открылся (all=true — все, путь ошибки).
+	restoreConflicts := func(all bool, opened map[string]net.Listener) {
+		for addr, w := range closedConflicts {
+			if !all {
+				if _, ok := opened[w]; ok {
+					continue
+				}
+			}
+			ln, err := net.Listen("tcp", addr)
+			if err != nil {
+				s.appLog.Warn("listen", addr, "restore bind failed: "+err.Error())
+				continue
+			}
+			s.listen.listeners[addr] = ln
+			go s.serveListener(ln)
+			s.appLog.Info("listen", addr, "listener restored")
+		}
 	}
 
 	opened := make(map[string]net.Listener)
@@ -139,10 +203,12 @@ func (s *Server) applyListenLocked(want []string, bestEffort bool) (int, error) 
 			for _, o := range opened {
 				o.Close()
 			}
+			restoreConflicts(true, nil)
 			return len(s.listen.listeners), fmt.Errorf("bind %s: %w", addr, err)
 		}
 		opened[addr] = ln
 	}
+	restoreConflicts(false, opened)
 
 	// Zero-listener guard (best-effort пути: revert/heal): если ни один
 	// желаемый адрес не выжил (все бинды упали, пересечения с текущими нет —
