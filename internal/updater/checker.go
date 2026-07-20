@@ -91,7 +91,8 @@ func checkWithDownloader(ctx context.Context, currentVersion, channel string, dl
 // upgradeLogPath captures the detached opkg output. The old daemon is
 // stopped by the package prerm mid-install, so this file is the ONLY
 // diagnostic left if opkg fails and the router ends up without awg-manager.
-const upgradeLogPath = "/opt/tmp/awg-manager-upgrade.log"
+// /tmp — системный tmpfs (RAM): не пишем на накопитель, не переживает ребут.
+const upgradeLogPath = "/tmp/awg-manager-upgrade.log"
 
 // installedBinPath — куда пакет кладёт бинарь; проверяется после opkg install.
 const installedBinPath = "/opt/bin/awg-manager"
