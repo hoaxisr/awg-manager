@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/awg3endpoint"
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
@@ -159,8 +160,10 @@ type awg3TagLister interface {
 // awgoutbounds.ServiceImpl, so the deviceproxy adapter (a separate
 // consumer) does not gain AWG3 tags (they lack a kernel iface for
 // bind_interface — out of scope for v1).
+// inner needs only ListTags, so it is typed to the narrow
+// api.AWGOutboundsService rather than the full awgoutbounds.Service.
 type awg3MergedAWGOutbounds struct {
-	inner awgoutbounds.Service
+	inner api.AWGOutboundsService
 	awg3  awg3TagLister
 }
 
