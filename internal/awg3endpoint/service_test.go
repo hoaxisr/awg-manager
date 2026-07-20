@@ -3,6 +3,7 @@ package awg3endpoint
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -16,14 +17,17 @@ func (r *recordingLogger) AppLog(level logging.Level, group, subgroup, action, t
 	r.entries = append(r.entries, action+" "+target+" "+message)
 }
 
-type fakeOrch struct{ saved map[obox.Slot][]byte }
+type fakeOrch struct {
+	saved map[obox.Slot][]byte
+	res   obox.ValidationResult // нулевой = Ok()==true (нет Errors)
+}
 
 func (f *fakeOrch) SaveAndValidate(slot obox.Slot, data []byte) (obox.ValidationResult, error) {
 	if f.saved == nil {
 		f.saved = map[obox.Slot][]byte{}
 	}
 	f.saved[slot] = data
-	return obox.ValidationResult{}, nil // нулевой = Ok()==true (нет Errors)
+	return f.res, nil
 }
 
 // newTestStore возвращает *Store в tempdir с 1 записью tag="AMS", endpoint
@@ -92,6 +96,26 @@ func TestService_Sync_SkipsCorruptRecordWithLog(t *testing.T) {
 	}
 	if len(log.entries) != 1 {
 		t.Fatalf("expected 1 warn for the skipped record, got %v", log.entries)
+	}
+}
+
+// SaveAndValidate возвращает (res, nil) даже когда конфиг отвергнут (res не
+// Ok). Sync обязан превратить это в ошибку с текстом валидации, иначе handler
+// не откатит только что добавленную запись.
+func TestService_Sync_RejectedConfigReturnsError(t *testing.T) {
+	store := newTestStore(t)
+	orch := &fakeOrch{res: obox.ValidationResult{Errors: []obox.ValidationError{{
+		Slot:    obox.SlotAwg3,
+		Kind:    "duplicate-outbound",
+		Tag:     "AMS",
+		Message: "also declared in [15-awg]",
+	}}}}
+	err := NewService(store, orch, nil).Sync()
+	if err == nil {
+		t.Fatal("Sync must return an error when the config is rejected")
+	}
+	if want := orch.res.Error(); !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %q, must contain validation text %q", err, want)
 	}
 }
 

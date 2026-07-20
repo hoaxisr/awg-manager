@@ -74,8 +74,15 @@ func (s *Service) Sync() error {
 	return nil
 }
 
+// ListTags возвращает теги всех записей. Сигнатура без error зафиксирована
+// адаптерами ([]TagInfo без error): при ошибке чтения store отдаём пустой
+// список, но оставляем след в журнале — молчаливое проглатывание скрыло бы
+// битый store.
 func (s *Service) ListTags() []TagInfo {
-	list, _ := s.store.List()
+	list, err := s.store.List()
+	if err != nil {
+		s.appLog.Warn("list-tags", "", fmt.Sprintf("не удалось прочитать store: %v", err))
+	}
 	out := make([]TagInfo, 0, len(list))
 	for _, rec := range list {
 		out = append(out, TagInfo{Tag: rec.Tag, Kind: "awg3"})

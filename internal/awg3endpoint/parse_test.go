@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -48,6 +49,7 @@ func TestParse_Rejects(t *testing.T) {
 	}{
 		{"not-awg", `{"type":"wireguard","private_key":"k","peers":[{"public_key":"p","address":"h"}]}`, ErrNotAwg},
 		{"no-key", `{"type":"awg","peers":[{"public_key":"p","address":"h"}]}`, ErrMissingKey},
+		{"whitespace-key", `{"type":"awg","private_key":"   ","peers":[{"public_key":"p","address":"h"}]}`, ErrMissingKey},
 		{"no-peer", `{"type":"awg","private_key":"k","peers":[]}`, ErrMissingPeer},
 		{"hp-s-low", `{"type":"awg","private_key":"k","header_protection_key":"h","s1":4,"peers":[{"public_key":"p","address":"h"}]}`, ErrHeaderProtectionS},
 	}
@@ -57,6 +59,21 @@ func TestParse_Rejects(t *testing.T) {
 				t.Fatalf("err = %v, want %v", err, c.want)
 			}
 		})
+	}
+}
+
+// An error envelope (success=false, or success present with empty data) is a
+// RouteBox error/empty response, not an endpoint — reject with a clear message
+// instead of a misleading ErrNotAwg from unmarshalling the whole envelope.
+func TestParse_ErrorEnvelope(t *testing.T) {
+	for _, body := range []string{`{"success":false}`, `{"success":true}`} {
+		_, err := Parse([]byte(body), "t", nil)
+		if err == nil || errors.Is(err, ErrNotAwg) {
+			t.Fatalf("body=%s err=%v, want a clear non-ErrNotAwg error", body, err)
+		}
+		if !strings.Contains(err.Error(), "success") {
+			t.Fatalf("body=%s err=%q, want mention of success", body, err)
+		}
 	}
 }
 
@@ -70,5 +87,9 @@ func TestParse_TagValidation(t *testing.T) {
 	}
 	if _, err := Parse([]byte(body), "taken", map[string]bool{"taken": true}); !errors.Is(err, ErrTag) {
 		t.Fatalf("duplicate tag must reject")
+	}
+	// Тег обрезается по краям перед валидацией и сохранением.
+	if rec, err := Parse([]byte(body), "  x  ", nil); err != nil || rec.Tag != "x" {
+		t.Fatalf("trim: rec.Tag=%q err=%v", rec.Tag, err)
 	}
 }

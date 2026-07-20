@@ -2,6 +2,7 @@ package awg3endpoint
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -29,6 +30,22 @@ func TestStore_CRUD(t *testing.T) {
 	}
 	if list, _ := s.List(); len(list) != 0 {
 		t.Fatalf("delete failed: %v", list)
+	}
+}
+
+// awg3.json хранит приватные ключи — файл должен писаться с правами 0600.
+func TestStore_FilePerm0600(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "awg3.json")
+	s := NewStore(p)
+	if err := s.Add(Record{ID: "id1", Tag: "T", Endpoint: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0600 {
+		t.Fatalf("perm = %o, want 600", perm)
 	}
 }
 

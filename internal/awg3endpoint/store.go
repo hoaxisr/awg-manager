@@ -57,7 +57,9 @@ func (s *Store) save() error {
 	if err != nil {
 		return fmt.Errorf("marshal awg3 store: %w", err)
 	}
-	if err := storage.AtomicWrite(s.path, data); err != nil {
+	// 0600: awg3.json содержит приватные ключи endpoint'ов — не отдаём их
+	// в мир (остальные store'ы пишутся 0644, их права не трогаем).
+	if err := storage.AtomicWritePerm(s.path, data, 0600); err != nil {
 		return fmt.Errorf("write awg3 store: %w", err)
 	}
 	return nil
@@ -116,7 +118,7 @@ func (s *Store) Rename(id, newTag string) error {
 			continue
 		}
 		if r.Tag == newTag {
-			return ErrTag
+			return fmt.Errorf("%w: %q", ErrTag, newTag)
 		}
 	}
 	if idx == -1 {
@@ -141,7 +143,10 @@ func (s *Store) Get(id string) (Record, bool) {
 	return Record{}, false
 }
 
-// Tags возвращает множество занятых тегов.
+// Tags возвращает множество занятых тегов. Сигнатура без error намеренная
+// (Parse и HasContent-замыкание зовут её как чистую функцию): битый файл →
+// пустой результат. Fail-closed обеспечивают Add/List — они читают тот же
+// файл и вернут ошибку раньше, чем пустой Tags() приведёт к дублю.
 func (s *Store) Tags() map[string]bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -155,7 +160,9 @@ func (s *Store) Tags() map[string]bool {
 	return tags
 }
 
-// Len возвращает число записей (для HasContent).
+// Len возвращает число записей (для HasContent). Сигнатура без error
+// намеренная (используется в HasContent-замыкании): битый файл → 0.
+// Fail-closed обеспечивают Add/List, читающие тот же файл (см. Tags).
 func (s *Store) Len() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -1,12 +1,14 @@
 package awg3endpoint
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	obox "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
@@ -16,9 +18,9 @@ import (
 // `-tags with_awg` отвергает (стаб возвращает "not included in this build").
 // Служит гейтом awg-capability до основного check.
 const capProbeConfig = `{"endpoints":[{"type":"awg","tag":"cap-probe",` +
-	`"private_key":"cGVlclByaXZhdGVLZXlCYXNlNjRFeGFtcGxlMDAwMDAwMD0=",` +
+	`"private_key":"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",` +
 	`"address":["10.0.0.2/32"],"peers":[{` +
-	`"public_key":"c2VydmVyUHVibGljS2V5QmFzZTY0RXhhbXBsZTAwMD0=",` +
+	`"public_key":"ISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0A=",` +
 	`"address":"192.0.2.1","port":51820,"allowed_ips":["0.0.0.0/0"]}]}]}`
 
 // runSingboxCheck прогоняет `<bin> check -c <config>` и возвращает
@@ -29,7 +31,9 @@ func runSingboxCheck(t *testing.T, bin string, config []byte) (string, bool) {
 	if err := os.WriteFile(path, config, 0644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command(bin, "check", "-c", path).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "check", "-c", path).CombinedOutput()
 	return string(out), err == nil
 }
 
@@ -92,6 +96,9 @@ func TestIntegration_RouteboxToSlotSingboxCheck(t *testing.T) {
 	var peers []map[string]json.RawMessage
 	if err := json.Unmarshal(cfg.Endpoints[0]["peers"], &peers); err != nil {
 		t.Fatalf("unmarshal peers: %v", err)
+	}
+	if len(peers) == 0 {
+		t.Fatal("materialized endpoint has no peers")
 	}
 	peers[0]["address"] = json.RawMessage(`"192.0.2.1"`)
 	peersJSON, _ := json.Marshal(peers)

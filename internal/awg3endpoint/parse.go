@@ -33,7 +33,14 @@ func Parse(raw []byte, tag string, existingTags map[string]bool) (Record, error)
 		Data    json.RawMessage `json:"data"`
 	}
 	body := raw
-	if json.Unmarshal(raw, &env) == nil && env.Success != nil && len(env.Data) > 0 {
+	if json.Unmarshal(raw, &env) == nil && env.Success != nil {
+		// Явный RouteBox-конверт (есть поле success). success=false или пустой
+		// data — это ошибка/пустой ответ RouteBox, а не endpoint: даём понятную
+		// ошибку вместо проваливания в анмаршал конверта как endpoint (иначе
+		// вводящий в заблуждение ErrNotAwg).
+		if !*env.Success || len(env.Data) == 0 {
+			return Record{}, fmt.Errorf("RouteBox-ответ без data (success=%v)", *env.Success)
+		}
 		body = env.Data
 	}
 
