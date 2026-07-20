@@ -129,3 +129,96 @@ func TestEntwareVerify_AbsentAndWrongPasswordTakeComparableTime(t *testing.T) {
 		t.Fatalf("absent-user path too fast: %v vs wrong-password %v (timing channel not closed)", absent, wrong)
 	}
 }
+
+// ── /opt/etc/passwd fallback (учётки без shadow-записи) ──────────
+
+// writeShadowPasswd builds a verifier over both fixture files.
+func writeShadowPasswd(t *testing.T, shadow, passwd string) *EntwareVerifier {
+	t.Helper()
+	dir := t.TempDir()
+	sp := filepath.Join(dir, "shadow")
+	pp := filepath.Join(dir, "passwd")
+	if err := os.WriteFile(sp, []byte(shadow), 0600); err != nil {
+		t.Fatalf("write shadow: %v", err)
+	}
+	if err := os.WriteFile(pp, []byte(passwd), 0644); err != nil {
+		t.Fatalf("write passwd: %v", err)
+	}
+	return &EntwareVerifier{ShadowPath: sp, PasswdPath: pp}
+}
+
+// Хэш "Hello world!" ($5$, официальный вектор) лежит прямо в passwd —
+// так делают busybox без shadow-фичи и рукотворные учётки.
+func TestEntwareVerify_PasswdFallback(t *testing.T) {
+	v := writeShadowPasswd(t,
+		"root:$5$saltstring$5B8vYYiY.CVt1RlTTf8KbXBH3hsxY/GNooZaBBGWEc5:19000:0:99999:7:::\n",
+		"inline:$5$saltstring$5B8vYYiY.CVt1RlTTf8KbXBH3hsxY/GNooZaBBGWEc5:0:0:inline:/opt/root:/opt/bin/sh\n")
+	if err := v.Verify("inline", "Hello world!"); err != nil {
+		t.Fatalf("Verify(inline via passwd) = %v, want nil", err)
+	}
+	if err := v.Verify("inline", "wrong"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("Verify(inline, wrong) = %v, want ErrInvalidCredentials", err)
+	}
+}
+
+// Отсутствующий shadow целиком → фолбэк на passwd (зеркало libc, когда
+// shadow-suite не установлен вовсе).
+func TestEntwareVerify_PasswdFallbackWithoutShadowFile(t *testing.T) {
+	dir := t.TempDir()
+	pp := filepath.Join(dir, "passwd")
+	if err := os.WriteFile(pp, []byte("root:$5$saltstring$5B8vYYiY.CVt1RlTTf8KbXBH3hsxY/GNooZaBBGWEc5:0:0::/:/bin/sh\n"), 0644); err != nil {
+		t.Fatalf("write passwd: %v", err)
+	}
+	v := &EntwareVerifier{ShadowPath: filepath.Join(dir, "no-shadow"), PasswdPath: pp}
+	if err := v.Verify("root", "Hello world!"); err != nil {
+		t.Fatalf("Verify(root via passwd, no shadow) = %v, want nil", err)
+	}
+}
+
+// "x" в passwd означает «хэш в shadow» и НЕ является хэшем: пользователь,
+// которого нет в shadow, остаётся not-found (никакого входа по паролю "x").
+func TestEntwareVerify_PasswdXIsNotAHash(t *testing.T) {
+	v := writeShadowPasswd(t,
+		"root:$5$saltstring$5B8vYYiY.CVt1RlTTf8KbXBH3hsxY/GNooZaBBGWEc5:19000:0:99999:7:::\n",
+		"ghost:x:0:0::/:/bin/sh\n")
+	if err := v.Verify("ghost", "x"); !errors.Is(err, ErrEntwareUserNotFound) {
+		t.Fatalf("Verify(ghost) = %v, want ErrEntwareUserNotFound", err)
+	}
+}
+
+// Запись в shadow имеет приоритет: даже при валидном хэше в passwd
+// заблокированный shadow-аккаунт остаётся заблокированным.
+func TestEntwareVerify_ShadowLockWinsOverPasswd(t *testing.T) {
+	v := writeShadowPasswd(t,
+		"user:!:19000:0:99999:7:::\n",
+		"user:$5$saltstring$5B8vYYiY.CVt1RlTTf8KbXBH3hsxY/GNooZaBBGWEc5:0:0::/:/bin/sh\n")
+	if err := v.Verify("user", "Hello world!"); !errors.Is(err, ErrEntwareAccountLocked) {
+		t.Fatalf("Verify(locked-in-shadow) = %v, want ErrEntwareAccountLocked", err)
+	}
+}
+
+// DES-хэш (13 символов, без $-префикса) в shadow — исторический дефолт
+// busybox passwd; вход должен работать.
+func TestEntwareVerify_DESHash(t *testing.T) {
+	v := writeShadow(t, "root:Nrzc8yOSz4klA:19000:0:99999:7:::\n")
+	if err := v.Verify("root", "keenetic"); err != nil {
+		t.Fatalf("Verify(root, DES hash) = %v, want nil", err)
+	}
+	if err := v.Verify("root", "wrong"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("Verify(root, wrong vs DES) = %v, want ErrInvalidCredentials", err)
+	}
+}
+
+// Метка схемы в ошибке — диагностика для Журнала.
+func TestHashSchemeLabel(t *testing.T) {
+	for in, want := range map[string]string{
+		"$y$j9T$salt$hash": "$y$ (yescrypt)",
+		"$2b$10$whatever":  "$2b$ (bcrypt)",
+		"$sha1$40000$x$y":  "$sha1$",
+		"garbage":          "неизвестный",
+	} {
+		if got := hashSchemeLabel(in); got != want {
+			t.Errorf("hashSchemeLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
