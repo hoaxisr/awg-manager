@@ -125,6 +125,8 @@ jobs:
           set -euo pipefail
 
           IPK_VERSION="${{ needs.version.outputs.ipk_version }}"
+          # dist/ раньше создавали sing-box-шаги (удалены в #589)
+          mkdir -p dist
           printf '%s\n' "$IPK_VERSION" > dist/VERSION
 
           SKIP_FRONTEND_BUILD=1 ./scripts/build-ipk.sh "$IPK_VERSION" "${{ matrix.arch }}"
