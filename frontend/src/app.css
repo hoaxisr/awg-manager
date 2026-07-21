@@ -578,13 +578,6 @@ label {
 	color: var(--text-muted);
 }
 
-.empty-state svg {
-	width: 64px;
-	height: 64px;
-	margin-bottom: 1rem;
-	opacity: 0.5;
-}
-
 /* Toast notifications */
 .toast-container {
 	position: fixed;
