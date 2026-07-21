@@ -2298,9 +2298,24 @@ const freeturn_ClientConfig: v.GenericSchema = v.looseObject({
 	turnPort: v.optional(v.nullable(v.number())),
 });
 
+const freeturn_ClientInstance: v.GenericSchema = v.looseObject({
+	config: v.optional(v.nullable(v.lazy(() => freeturn_ClientConfig))),
+	id: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+});
+
 const freeturn_Config: v.GenericSchema = v.looseObject({
 	client: v.optional(v.nullable(v.lazy(() => freeturn_ClientConfig))),
+	clients: v.optional(v.nullable(v.array(v.lazy(() => freeturn_ClientInstance)))),
 	server: v.optional(v.nullable(v.lazy(() => freeturn_ServerConfig))),
+	servers: v.optional(v.nullable(v.array(v.lazy(() => freeturn_ServerInstance)))),
+	version: v.optional(v.nullable(v.number())),
+});
+
+const freeturn_InstanceStatus: v.GenericSchema = v.looseObject({
+	id: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+	status: v.optional(v.nullable(v.lazy(() => freeturn_ProcessStatus))),
 });
 
 const freeturn_LinkPayload: v.GenericSchema = v.looseObject({
@@ -2345,12 +2360,24 @@ const freeturn_ServerConfig: v.GenericSchema = v.looseObject({
 	obfProfile: v.optional(v.nullable(v.string())),
 });
 
+const freeturn_ServerInstance: v.GenericSchema = v.looseObject({
+	config: v.optional(v.nullable(v.lazy(() => freeturn_ServerConfig))),
+	id: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+});
+
 const freeturn_Status: v.GenericSchema = v.looseObject({
 	client: v.optional(v.nullable(v.lazy(() => freeturn_ProcessStatus))),
+	clients: v.optional(v.nullable(v.array(v.lazy(() => freeturn_InstanceStatus)))),
 	installAvailable: v.optional(v.nullable(v.boolean())),
 	installVersion: v.optional(v.nullable(v.string())),
+	installedVersion: v.optional(v.nullable(v.string())),
 	installing: v.optional(v.nullable(v.boolean())),
+	remoteCheckError: v.optional(v.nullable(v.string())),
+	remoteVersion: v.optional(v.nullable(v.string())),
 	server: v.optional(v.nullable(v.lazy(() => freeturn_ProcessStatus))),
+	servers: v.optional(v.nullable(v.array(v.lazy(() => freeturn_InstanceStatus)))),
+	updateAvailable: v.optional(v.nullable(v.boolean())),
 });
 
 const presets_DNSEngine: v.GenericSchema = v.looseObject({

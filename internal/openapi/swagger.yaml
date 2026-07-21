@@ -6332,12 +6332,43 @@ definitions:
         description: -port, override TURN server port
         type: integer
     type: object
+  freeturn.ClientInstance:
+    properties:
+      config:
+        $ref: '#/definitions/freeturn.ClientConfig'
+      id:
+        type: string
+      name:
+        type: string
+    type: object
   freeturn.Config:
     properties:
       client:
-        $ref: '#/definitions/freeturn.ClientConfig'
+        allOf:
+        - $ref: '#/definitions/freeturn.ClientConfig'
+        description: Legacy v1 fields — read during migration only, never written
+          back.
+      clients:
+        items:
+          $ref: '#/definitions/freeturn.ClientInstance'
+        type: array
       server:
         $ref: '#/definitions/freeturn.ServerConfig'
+      servers:
+        items:
+          $ref: '#/definitions/freeturn.ServerInstance'
+        type: array
+      version:
+        type: integer
+    type: object
+  freeturn.InstanceStatus:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        $ref: '#/definitions/freeturn.ProcessStatus'
     type: object
   freeturn.LinkPayload:
     properties:
@@ -6440,10 +6471,25 @@ definitions:
         description: -obf-profile, none|rtpopus|rtpopus2|rtpopus3
         type: string
     type: object
+  freeturn.ServerInstance:
+    properties:
+      config:
+        $ref: '#/definitions/freeturn.ServerConfig'
+      id:
+        type: string
+      name:
+        type: string
+    type: object
   freeturn.Status:
     properties:
       client:
-        $ref: '#/definitions/freeturn.ProcessStatus'
+        allOf:
+        - $ref: '#/definitions/freeturn.ProcessStatus'
+        description: Client/Server mirror the default instance for legacy API consumers.
+      clients:
+        items:
+          $ref: '#/definitions/freeturn.InstanceStatus'
+        type: array
       installAvailable:
         description: |-
           InstallAvailable: для этой архитектуры есть закреплённая сборка и
@@ -6452,11 +6498,29 @@ definitions:
       installVersion:
         description: InstallVersion — версия freeturn, которую поставит установка.
         type: string
+      installedVersion:
+        description: InstalledVersion — версия, записанная после последней установки.
+        type: string
       installing:
         description: Installing — установка сейчас идёт (кнопка блокируется).
         type: boolean
+      remoteCheckError:
+        description: RemoteCheckError — ошибка последней проверки GitHub (не блокирует
+          pin-fallback).
+        type: string
+      remoteVersion:
+        description: RemoteVersion — последняя версия с GitHub (если проверка удалась).
+        type: string
       server:
         $ref: '#/definitions/freeturn.ProcessStatus'
+      servers:
+        items:
+          $ref: '#/definitions/freeturn.InstanceStatus'
+        type: array
+      updateAvailable:
+        description: UpdateAvailable — бинари отсутствуют или устарели относительно
+          InstallVersion.
+        type: boolean
     type: object
   presets.DNSEngine:
     properties:
