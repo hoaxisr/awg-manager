@@ -1285,6 +1285,13 @@ const api_SingboxConnectionsClientsResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_SingboxDNSCertificateDTO: v.GenericSchema = v.looseObject({
+	certificate_public_key_sha256: v.optional(v.nullable(v.string())),
+	issuer: v.optional(v.nullable(v.string())),
+	not_after: v.optional(v.nullable(v.string())),
+	subject: v.optional(v.nullable(v.string())),
+});
+
 const api_SingboxDNSClientTLSOptionsDTO: v.GenericSchema = v.looseObject({
 	alpn: v.optional(v.nullable(v.array(v.string()))),
 	certificate_public_key_sha256: v.optional(v.nullable(v.array(v.string()))),
@@ -1301,6 +1308,17 @@ const api_SingboxDNSGlobalsData: v.GenericSchema = v.looseObject({
 
 const api_SingboxDNSGlobalsResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_SingboxDNSGlobalsData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SingboxDNSLookupData: v.GenericSchema = v.looseObject({
+	certificate_public_key_sha256: v.optional(v.nullable(v.array(v.string()))),
+	certificates: v.optional(v.nullable(v.array(v.lazy(() => api_SingboxDNSCertificateDTO)))),
+	ips: v.optional(v.nullable(v.array(v.string()))),
+});
+
+const api_SingboxDNSLookupResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SingboxDNSLookupData))),
 	success: v.optional(v.nullable(v.boolean())),
 });
 
@@ -2520,6 +2538,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /singbox/router/dns/rewrites/list": v.lazy(() => api_SingboxDNSRewritesListResponse),
 	"GET /singbox/router/dns/rules/list": v.lazy(() => api_SingboxDNSRulesListResponse),
 	"GET /singbox/router/dns/servers/list": v.lazy(() => api_SingboxDNSServersListResponse),
+	"GET /singbox/router/dns/servers/lookup": v.lazy(() => api_SingboxDNSLookupResponse),
 	"GET /singbox/router/geosites/list": v.intersect([v.lazy(() => api_OkResponse), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_SingboxGeositesData))),
 })]),

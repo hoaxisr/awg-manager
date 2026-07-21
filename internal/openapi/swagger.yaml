@@ -3369,6 +3369,17 @@ definitions:
         example: start
         type: string
     type: object
+  api.SingboxDNSCertificateDTO:
+    properties:
+      certificate_public_key_sha256:
+        type: string
+      issuer:
+        type: string
+      not_after:
+        type: string
+      subject:
+        type: string
+    type: object
   api.SingboxDNSClientTLSOptionsDTO:
     properties:
       alpn:
@@ -3408,6 +3419,28 @@ definitions:
         $ref: '#/definitions/api.SingboxDNSGlobalsData'
       success:
         example: true
+        type: boolean
+    type: object
+  api.SingboxDNSLookupData:
+    properties:
+      certificate_public_key_sha256:
+        items:
+          type: string
+        type: array
+      certificates:
+        items:
+          $ref: '#/definitions/api.SingboxDNSCertificateDTO'
+        type: array
+      ips:
+        items:
+          type: string
+        type: array
+    type: object
+  api.SingboxDNSLookupResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SingboxDNSLookupData'
+      success:
         type: boolean
     type: object
   api.SingboxDNSRewriteDTO:
@@ -13024,6 +13057,42 @@ paths:
       security:
       - CookieAuth: []
       summary: List singbox-router DNS servers
+      tags:
+      - singbox-router
+  /singbox/router/dns/servers/lookup:
+    get:
+      parameters:
+      - description: DNS server hostname or IP
+        in: query
+        name: server
+        required: true
+        type: string
+      - description: TLS port (default 853)
+        in: query
+        name: server_port
+        type: integer
+      - description: TLS SNI (defaults to server)
+        in: query
+        name: server_name
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxDNSLookupResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Resolve DNS server and fetch TLS certificates
       tags:
       - singbox-router
   /singbox/router/dns/servers/move:

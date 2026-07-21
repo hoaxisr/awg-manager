@@ -404,6 +404,19 @@ export interface SingboxRouterDNSClientTLSOptions {
 	certificate_public_key_sha256?: string[];
 }
 
+export interface SingboxRouterDNSCertificate {
+	subject: string;
+	issuer: string;
+	not_after: string;
+	certificate_public_key_sha256: string;
+}
+
+export interface SingboxRouterDNSLookupResult {
+	ips: string[];
+	certificate_public_key_sha256: string[];
+	certificates: SingboxRouterDNSCertificate[];
+}
+
 export interface SingboxRouterDNSServer {
 	tag: string;
 	type: SingboxRouterDNSType;

@@ -801,6 +801,7 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/router/dns/servers/update", h.guarded(rh.UpdateDNSServer))
 		mux.HandleFunc("/api/singbox/router/dns/servers/delete", h.guarded(rh.DeleteDNSServer))
 		mux.HandleFunc("/api/singbox/router/dns/servers/move", h.guarded(rh.MoveDNSServer))
+		mux.HandleFunc("/api/singbox/router/dns/servers/lookup", h.guarded(rh.LookupDNSServer))
 		mux.HandleFunc("/api/singbox/router/dns/rules/list", h.guarded(rh.ListDNSRules))
 		mux.HandleFunc("/api/singbox/router/dns/rules/add", h.guarded(rh.AddDNSRule))
 		mux.HandleFunc("/api/singbox/router/dns/rules/update", h.guarded(rh.UpdateDNSRule))

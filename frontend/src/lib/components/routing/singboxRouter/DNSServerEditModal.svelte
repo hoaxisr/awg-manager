@@ -15,6 +15,7 @@
 		sanitizeDnsServerForApi,
 	} from '$lib/utils/dnsServerDetour';
 	import { dnsServerDetourDisplay } from '$lib/components/sb-router/dnsServerDetourDisplay';
+	import { api } from '$lib/api/client';
 
 	interface Props {
 		server?: SingboxRouterDNSServer;
@@ -112,6 +113,10 @@
 	let tlsMaxVersion = $state(server?.tls?.max_version ?? '');
 	// svelte-ignore state_referenced_locally
 	let tlsCertificatePins = $state(server?.tls?.certificate_public_key_sha256?.join(', ') ?? '');
+	let lookupBusy = $state(false);
+	let lookupError = $state('');
+	let lookupIPs = $state<string[]>([]);
+	let lookupCertificates = $state<Array<{ subject: string; issuer: string; not_after: string }>>([]);
 
 	let busy = $state(false);
 	let error = $state('');
@@ -235,6 +240,29 @@
 			max_version: tlsMaxVersion,
 			certificate_public_key_sha256: splitList(tlsCertificatePins),
 		});
+	}
+
+	async function lookupTLS(): Promise<void> {
+		if (!serverAddr.trim()) {
+			lookupError = 'Укажите домен DNS-сервера';
+			return;
+		}
+		lookupBusy = true;
+		lookupError = '';
+		try {
+			const hostname = serverAddr.trim();
+			const lookupPort = serverPort === '' ? (type === 'https' || type === 'h3' ? 443 : 853) : serverPort;
+			const result = await api.singboxRouterLookupDNSServer(hostname, lookupPort, tlsServerName || hostname);
+			lookupIPs = result.ips;
+			lookupCertificates = result.certificates;
+			if (result.ips[0]) serverAddr = result.ips[0];
+			if (!tlsServerName.trim() && !isIPLiteral(hostname)) tlsServerName = hostname;
+			tlsCertificatePins = result.certificate_public_key_sha256.join(', ');
+		} catch (e) {
+			lookupError = (e as Error).message;
+		} finally {
+			lookupBusy = false;
+		}
 	}
 
 	async function save(): Promise<void> {
@@ -417,6 +445,19 @@
 		{#if supportsTLS}
 			<section class="form-section form-section-divided">
 				<div class="section-label">TLS</div>
+				<div class="hint lookup-action">
+					<Button variant="ghost" size="sm" onclick={lookupTLS} disabled={lookupBusy} loading={lookupBusy} type="button">
+						Получить IP и сертификаты
+					</Button>
+					<span>Подставит первый IP и SHA-256 pins; домен сохранится как SNI.</span>
+				</div>
+				{#if lookupError}<div class="error">{lookupError}</div>{/if}
+				{#if lookupIPs.length}
+					<div class="hint">Найденные IP: {lookupIPs.join(', ')}</div>
+				{/if}
+				{#if lookupCertificates.length}
+					<div class="hint">Сертификаты: {lookupCertificates.map((cert) => `${cert.subject} · до ${cert.not_after}`).join('; ')}</div>
+				{/if}
 				<div class="fields-grid">
 					<label class="field span-full">
 						<div class="lbl">Server name (SNI)</div>
