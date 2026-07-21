@@ -78,12 +78,12 @@ func (s *Service) SetDownloader(dl Downloader) {
 }
 
 // InstallInfo reports whether one-click install is available and which
-// version it would install (remote GitHub release if newer, else pin).
+// version it would install (always the build pin).
 func (s *Service) InstallInfo() (version string, available bool) {
 	if s.installSpecs == nil || s.downloader == nil {
 		return "", false
 	}
-	_, ver, _ := s.resolveInstallSpecs()
+	_, ver := s.resolveInstallSpecs()
 	return ver, true
 }
 
@@ -116,7 +116,7 @@ func (s *Service) InstallBinaries(ctx context.Context) error {
 		s.installMu.Unlock()
 	}()
 
-	specs, installVer, _ := s.resolveInstallSpecs()
+	specs, installVer := s.resolveInstallSpecs()
 
 	if err := s.installOne(ctx, s.clientBin, specs.Client); err != nil {
 		return fmt.Errorf("клиент: %w", err)

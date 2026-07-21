@@ -32,8 +32,8 @@ type Service struct {
 	installMu    sync.Mutex
 	installing   bool
 
-	archKey   string
-	remoteMu  sync.RWMutex
+	archKey     string
+	remoteMu    sync.RWMutex
 	remoteCache *remoteReleaseCache
 
 	appLog *logging.ScopedLogger
@@ -267,8 +267,9 @@ func (s *Service) serverInstance(id string) (ServerInstance, error) {
 	return full.Servers[idx], nil
 }
 
+// Status returns the local install/instance state without any network calls.
+// Проверка апстрим-релиза выполняется только по явному запросу — StatusForceRemote.
 func (s *Service) Status() Status {
-	go s.refreshRemote(context.Background(), false)
 	return s.statusLocked()
 }
 

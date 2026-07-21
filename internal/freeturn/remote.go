@@ -8,8 +8,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/hoaxisr/awg-manager/internal/sys/semver"
 )
 
 const (
@@ -76,26 +74,16 @@ func (s *Service) remoteStatus() (version, errMsg string) {
 	return s.remoteCache.Version, s.remoteCache.Err
 }
 
-// resolveInstallSpecs picks the newest verified specs: remote GitHub release if
-// newer than the build pin and checksums validate, else embedded pin.
-func (s *Service) resolveInstallSpecs() (ArchSpecs, string, bool) {
+// resolveInstallSpecs returns the build-pinned specs. A remote GitHub release,
+// even if newer, is surfaced as information only (Status.RemoteVersion) and is
+// never substituted here: the default install path always installs the pin.
+// Установка апстрим-сборки должна быть отдельным явным действием пользователя.
+func (s *Service) resolveInstallSpecs() (ArchSpecs, string) {
 	if s.installSpecs == nil {
-		return ArchSpecs{}, "", false
+		return ArchSpecs{}, ""
 	}
 	pinned := *s.installSpecs
-	pinnedVer := pinned.Client.Version
-
-	s.remoteMu.RLock()
-	remote := s.remoteCache
-	s.remoteMu.RUnlock()
-
-	if remote == nil || remote.Err != "" || remote.Version == "" {
-		return pinned, pinnedVer, false
-	}
-	if semver.Compare(remote.Version, pinnedVer) <= 0 {
-		return pinned, pinnedVer, false
-	}
-	return ArchSpecs{Client: remote.Client, Server: remote.Server}, remote.Version, true
+	return pinned, pinned.Client.Version
 }
 
 type httpGetFunc func(ctx context.Context, url string, maxBytes int64) ([]byte, error)

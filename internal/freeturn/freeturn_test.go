@@ -154,24 +154,25 @@ func TestSha256FromChecksums(t *testing.T) {
 	}
 }
 
-func TestResolveInstallSpecs_PrefersRemote(t *testing.T) {
+func TestResolveInstallSpecs_AlwaysPin(t *testing.T) {
 	dir := t.TempDir()
 	s := NewService(dir, dir, filepath.Join(dir, "c"), filepath.Join(dir, "s"))
 	s.installSpecs = &ArchSpecs{
 		Client: BinarySpec{Version: "1.0.0", URL: "https://pin/client", SHA256: strings.Repeat("a", 64), Size: 1},
 		Server: BinarySpec{Version: "1.0.0", URL: "https://pin/server", SHA256: strings.Repeat("b", 64), Size: 1},
 	}
+	// Даже когда апстрим-релиз новее — установка по умолчанию ставит только пин.
 	s.remoteMu.Lock()
 	s.remoteCache = &remoteReleaseCache{
-		Version: "2.0.0",
-		Client:  BinarySpec{Version: "2.0.0", URL: "https://remote/client", SHA256: strings.Repeat("c", 64), Size: 1},
-		Server:  BinarySpec{Version: "2.0.0", URL: "https://remote/server", SHA256: strings.Repeat("d", 64), Size: 1},
+		Version:   "2.0.0",
+		Client:    BinarySpec{Version: "2.0.0", URL: "https://remote/client", SHA256: strings.Repeat("c", 64), Size: 1},
+		Server:    BinarySpec{Version: "2.0.0", URL: "https://remote/server", SHA256: strings.Repeat("d", 64), Size: 1},
 		CheckedAt: time.Now(),
 	}
 	s.remoteMu.Unlock()
-	specs, ver, fromRemote := s.resolveInstallSpecs()
-	if !fromRemote || ver != "2.0.0" || specs.Client.URL != "https://remote/client" {
-		t.Fatalf("resolve: ver=%s remote=%v specs=%+v", ver, fromRemote, specs)
+	specs, ver := s.resolveInstallSpecs()
+	if ver != "1.0.0" || specs.Client.URL != "https://pin/client" {
+		t.Fatalf("resolve: ver=%s specs=%+v (ожидался пин 1.0.0)", ver, specs)
 	}
 }
 
