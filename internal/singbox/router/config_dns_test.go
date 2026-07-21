@@ -100,6 +100,19 @@ func TestAddDNSServerNormalizesDirectDetour(t *testing.T) {
 	}
 }
 
+func TestAddDNSServerWithDetourClearsDomainResolver(t *testing.T) {
+	c := NewEmptyConfig()
+	if err := c.AddDNSServer(DNSServer{
+		Tag: "dot", Type: "tls", Server: "dns.example", Detour: "tunnel",
+		DomainResolver: &DomainResolver{Server: "bootstrap"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if c.DNS.Servers[0].DomainResolver != nil {
+		t.Fatalf("domain_resolver retained with detour: %#v", c.DNS.Servers[0])
+	}
+}
+
 func TestUpdateDNSServerStripsDetourOnDNSDirect(t *testing.T) {
 	c := NewEmptyConfig()
 	_ = c.AddDNSServer(makeDNSServer("dns-direct", "udp", "77.88.8.8", ""))
@@ -399,9 +412,8 @@ func TestDNSRoundTrip(t *testing.T) {
 	if loaded.DNS.Final != "vpn" || loaded.DNS.Strategy != "ipv4_only" {
 		t.Errorf("globals: %+v", loaded.DNS)
 	}
-	if loaded.DNS.Servers[1].DomainResolver == nil ||
-		loaded.DNS.Servers[1].DomainResolver.Server != "bootstrap" {
-		t.Errorf("resolver: %+v", loaded.DNS.Servers[1])
+	if loaded.DNS.Servers[1].DomainResolver != nil {
+		t.Errorf("domain_resolver must be cleared when detour is set: %+v", loaded.DNS.Servers[1])
 	}
 	raw, _ := json.MarshalIndent(loaded, "", "  ")
 	if !json.Valid(raw) {

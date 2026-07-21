@@ -217,6 +217,7 @@
 
 	const needsResolver = $derived(type !== 'udp' && type !== 'local' && !isIPLiteral(serverAddr));
 	const supportsTLS = $derived(type === 'tls' || type === 'quic' || type === 'https' || type === 'h3');
+	const hasOutboundDetour = $derived(!isManagedDnsDirect && detour !== '');
 	const availableResolvers = $derived(servers.filter((s) => s.tag !== tag).map((s) => s.tag));
 	const resolverServerOptions = $derived<DropdownOption[]>([
 		{ value: '', label: '— выберите —' },
@@ -284,7 +285,7 @@
 			if (type !== 'local') {
 				if (serverPort !== '' && Number(serverPort) > 0) built.server_port = Number(serverPort);
 				if (path.trim()) built.path = path.trim();
-				if (resolverEnabled && resolverServer) {
+				if (!hasOutboundDetour && resolverEnabled && resolverServer) {
 					built.domain_resolver = { server: resolverServer };
 					if (resolverStrategy) built.domain_resolver.strategy = resolverStrategy;
 				}
@@ -412,7 +413,7 @@
 			</section>
 		{/if}
 
-		{#if type !== 'udp' && type !== 'local'}
+		{#if type !== 'udp' && type !== 'local' && !hasOutboundDetour}
 			<section class="form-section">
 				<div class="section-label">Bootstrap resolver (для домена сервера)</div>
 

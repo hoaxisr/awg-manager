@@ -26,6 +26,19 @@ describe('DNSServerEditModal', () => {
 		expect(screen.getByText('Server name (SNI)')).toBeTruthy();
 	});
 
+	it('hides the bootstrap resolver when an outbound detour is selected', () => {
+		render(DNSServerEditModal, {
+			props: {
+				...baseProps,
+				server: { tag: 'dot', type: 'tls', server: 'dns.example', detour: 'tunnel' },
+				outboundOptions: [{ group: 'Туннели', items: [{ value: 'tunnel', label: 'Tunnel' }] }],
+				onSave: vi.fn(),
+			},
+		});
+
+		expect(screen.queryByText('Bootstrap resolver (для домена сервера)')).toBeNull();
+	});
+
 	it('resets non-tag fields when type changes and serializes TLS lists', async () => {
 		const onSave = vi.fn().mockResolvedValue(undefined);
 		render(DNSServerEditModal, {

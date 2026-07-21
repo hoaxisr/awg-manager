@@ -64,11 +64,16 @@ func scrubDNSServerDetourStored(s *DNSServer) {
 }
 
 // scrubDNSServerDetourForSingbox clears detour values that must not reach
-// sing-box: empty, explicit "direct", and any detour on dns-direct.
+// sing-box: empty, explicit "direct", and any detour on dns-direct. A named
+// detour makes sing-box ignore other dial fields, so it also clears the stale
+// domain resolver instead of retaining a misleading configuration.
 func scrubDNSServerDetourForSingbox(s *DNSServer) {
 	d := strings.TrimSpace(s.Detour)
 	if d == "" || d == "direct" || s.Tag == managedDNSDirectTag {
 		s.Detour = ""
+	} else {
+		s.Detour = d
+		s.DomainResolver = nil
 	}
 }
 
