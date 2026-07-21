@@ -35,6 +35,7 @@
 	let importing = $state(false);
 	let importedWG: string | null = $state(null);
 	let installing = $state(false);
+	let checkingUpdates = $state(false);
 
 	let genProvider = $state('vk');
 	let genMTU = $state(1376);
@@ -175,12 +176,13 @@
 		}
 	}
 
-	let checkingUpdates = $state(false);
-
 	async function checkUpdates() {
 		checkingUpdates = true;
 		try {
 			await loadStatus(true);
+			if (status?.installedVersion && !status.updateAvailable && !status.remoteCheckError) {
+				notifications.info('Установлена актуальная версия');
+			}
 		} finally {
 			checkingUpdates = false;
 		}

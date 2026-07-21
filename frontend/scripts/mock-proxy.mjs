@@ -3091,7 +3091,8 @@ function createInitialMockFreeturn() {
 		],
 		// serverId -> { enabled, clientsFile, clients: [{clientId, comment}] }
 		allowlists: {},
-		seq: 1,
+		clientSeq: 1,
+		serverSeq: 1,
 	};
 }
 
@@ -7199,8 +7200,9 @@ const server = http.createServer(async (req, res) => {
 			readRequestText(req).then((raw) => {
 				try {
 					const body = raw ? JSON.parse(raw) : {};
-					mockFreeturn.seq += 1;
-					const n = mockFreeturn.seq;
+					const seqKey = kind === 'client' ? 'clientSeq' : 'serverSeq';
+					mockFreeturn[seqKey] += 1;
+					const n = mockFreeturn[seqKey];
 					const template = mockFreeturnList(kind)[0]?.config ?? {};
 					const inst = {
 						id: `${kind}-${n}`,
@@ -7289,7 +7291,14 @@ const server = http.createServer(async (req, res) => {
 		const m = req.method === 'POST' && /^\/freeturn\/servers\/([^/]+)\/link$/.exec(path);
 		if (legacy || m) {
 			const id = legacy ? 'default' : decodeURIComponent(m[1]);
-			const inst = mockFreeturnFind('server', id) ?? mockFreeturn.servers[0];
+			const inst = mockFreeturnFind('server', id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `freeturn server ${id} not found` },
+				});
+				return;
+			}
 			readRequestText(req).then((raw) => {
 				try {
 					const body = raw ? JSON.parse(raw) : {};
