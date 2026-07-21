@@ -51,6 +51,11 @@ func (s *Store) Load() (Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, err
 	}
+	if changed := normalizeConfig(&cfg); changed {
+		if err := s.saveLocked(cfg); err != nil {
+			return cfg, err
+		}
+	}
 	s.cfg = &cfg
 	return cfg, nil
 }

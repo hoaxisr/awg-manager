@@ -3,6 +3,8 @@
 	import { pluralize } from '$lib/utils/pluralize';
 	import type { FreeTurnServerConfig, FreeTurnProcessStatus } from '$lib/types';
 	import ProcessAlerts from './ProcessAlerts.svelte';
+	import ServerWgBind from './ServerWgBind.svelte';
+	import ServerAllowlist from './ServerAllowlist.svelte';
 	import SettingRows from './SettingRows.svelte';
 	import SettingRow from './SettingRow.svelte';
 	import { changedKeys } from './dirty';
@@ -16,7 +18,11 @@
 		saving: boolean;
 		installAvailable: boolean;
 		installVersion?: string;
-		installing: boolean;
+	installedVersion?: string;
+	updateAvailable?: boolean;
+	remoteVersion?: string;
+	remoteCheckError?: string;
+	installing: boolean;
 		generating: boolean;
 		generatedLink: string;
 		generatedPeer: string;
@@ -32,6 +38,8 @@
 		onRevert: () => void;
 		onGenerate: (provider: string, mtu: number, wg: string, clientId: string, name: string) => void;
 		onCopy: (text: string) => void;
+		defaultClientListenPort?: number;
+		serverInstanceId?: string;
 	}
 
 	let {
@@ -41,6 +49,10 @@
 		saving,
 		installAvailable,
 		installVersion,
+		installedVersion,
+		updateAvailable,
+		remoteVersion,
+		remoteCheckError,
 		installing,
 		generating,
 		generatedLink,
@@ -56,18 +68,31 @@
 		onSave,
 		onRevert,
 		onGenerate,
-		onCopy
+		onCopy,
+		defaultClientListenPort = 9000,
+		serverInstanceId = 'default'
 	}: Props = $props();
 
-	// Доп. поля генератора (Client ID + WireGuard-конфиг) свёрнуты по умолчанию,
-	// но раскрыты сразу, если в них уже есть данные — они попадают в ссылку,
-	// и пользователь должен их видеть.
-	let genMore = $state(genClientId.trim() !== '' || genWG.trim() !== '');
+	let allowlistPanel: ServerAllowlist | undefined = $state();
+	let savingAllowlist = $state(false);
+
+	// WireGuard-конфиг в ссылке — свёрнут по умолчанию, раскрывается если уже заполнен.
+	let wgMore = $state(genWG.trim() !== '');
 
 	function randomClientId() {
 		const bytes = new Uint8Array(16);
 		crypto.getRandomValues(bytes);
 		genClientId = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+	}
+
+	async function saveClientToAllowlist() {
+		if (!allowlistPanel) return;
+		savingAllowlist = true;
+		try {
+			await allowlistPanel.saveClient(genClientId, genName);
+		} finally {
+			savingAllowlist = false;
+		}
 	}
 
 	// -obf-key: 32 байта → 64 hex-символа (#584 — ключ негде было взять).
@@ -104,27 +129,81 @@
 	}
 </script>
 
-<ProcessAlerts {status} {installAvailable} {installVersion} {installing} {onInstall} />
+<ProcessAlerts
+	{status}
+	{installAvailable}
+	{installVersion}
+	{installedVersion}
+	{updateAvailable}
+	{remoteVersion}
+	{remoteCheckError}
+	{installing}
+	{onInstall}
+/>
+
+<ServerWgBind
+	clientListenPort={defaultClientListenPort}
+	onConnect={(addr) => {
+		server.connect = addr;
+	}}
+	onPeerConf={(conf) => {
+		genWG = conf;
+		wgMore = true;
+	}}
+/>
 
 <div class="ft-panel-accent">
 	<div class="section-label">Ссылка для клиента</div>
 	<div class="ft-gen-row">
-		<Input label="Провайдер" bind:value={genProvider} placeholder="vk" />
-		<Input
-			label="MTU"
-			type="number"
-			value={String(genMTU)}
-			onchange={(v) => (genMTU = Number(v) || 1376)}
-		/>
-		<Button
-			variant="primary"
-			size="sm"
-			loading={generating}
-			disabled={obfDirty}
-			onclick={() => onGenerate(genProvider, genMTU, genWG, genClientId, genName)}
-		>
-			Сгенерировать
-		</Button>
+		<div class="ft-gen-provider">
+			<Input label="Провайдер" bind:value={genProvider} placeholder="vk" />
+		</div>
+		<div class="ft-gen-fields">
+			<div class="ft-gen-cid">
+				<Input
+					label="Client ID"
+					bind:value={genClientId}
+					placeholder={server.clientsFile ? 'hex ID' : 'необязательно'}
+				/>
+				<Button variant="ghost" size="sm" onclick={randomClientId} title="Сгенерировать Client ID">
+					↻
+				</Button>
+			</div>
+			<div class="ft-gen-name">
+				<Input bind:value={genName} label="Комментарий" placeholder="имя получателя" />
+			</div>
+			<div class="ft-gen-save">
+				<Button
+					variant="secondary"
+					size="sm"
+					loading={savingAllowlist}
+					disabled={!genClientId.trim()}
+					onclick={saveClientToAllowlist}
+					title="Добавить Client ID в allowlist сервера"
+				>
+					В список
+				</Button>
+			</div>
+			<div class="ft-gen-mtu">
+				<Input
+					label="MTU"
+					type="number"
+					value={String(genMTU)}
+					onchange={(v) => (genMTU = Number(v) || 1376)}
+				/>
+			</div>
+			<div class="ft-gen-action">
+				<Button
+					variant="primary"
+					size="sm"
+					loading={generating}
+					disabled={obfDirty}
+					onclick={() => onGenerate(genProvider, genMTU, genWG, genClientId, genName)}
+				>
+					Сгенерировать
+				</Button>
+			</div>
+		</div>
 	</div>
 	{#if obfDirty}
 		<p class="ft-hint">
@@ -133,37 +212,29 @@
 		</p>
 	{:else}
 		<p class="ft-hint">
-			Соберёт freeturn:// ссылку из обфускации/ключа сервера ниже и внешнего IP роутера —
-			передавайте её только доверенному получателю
+			Соберёт freeturn:// ссылку из обфускации/ключа сервера ниже и внешнего IP роутера.
+			Провайдер почти всегда <code>vk</code> — менять не нужно.
 		</p>
 	{/if}
 	{#if server.clientsFile}
 		<p class="ft-hint">
-			У сервера включён allowlist (-clients-file): без Client ID в ссылке (раздел ниже)
-			сервер отклонит подключение получателя. Ссылка сама ничего не регистрирует —
-			добавьте ID на сервере отдельно
+			Allowlist включён: перед выдачей ссылки нажмите «В список», чтобы сервер принял этот Client ID.
+			Список клиентов — в разделе «Форвардинг и доступ» ниже.
 		</p>
 	{/if}
 
-	<button type="button" class="ft-gen-more" onclick={() => (genMore = !genMore)}>
-		{genMore ? '−' : '+'} Client ID и WireGuard-конфиг
+	<button type="button" class="ft-gen-more" onclick={() => (wgMore = !wgMore)}>
+		{wgMore ? '−' : '+'} WireGuard-конфиг в ссылке
 	</button>
-	{#if genMore}
-		<div class="ft-gen-grid">
-			<Input bind:value={genClientId} placeholder="Client ID — пусто, если allowlist не используется" />
-			<Input bind:value={genName} placeholder="комментарий (например, имя получателя)" />
-		</div>
-		<div class="ft-gen-idrow">
-			<Button variant="ghost" size="sm" onclick={randomClientId}>Сгенерировать ID</Button>
-		</div>
+	{#if wgMore}
 		<textarea
 			class="field-textarea ft-textarea"
 			bind:value={genWG}
-			placeholder="Вставьте сюда конфиг WireGuard-клиента, если хотите передать его вместе со ссылкой..."
+			placeholder="Вставьте конфиг WireGuard-клиента, если хотите передать его вместе со ссылкой..."
 		></textarea>
 		<p class="ft-hint">
-			Внимание: конфиг (включая приватный ключ WireGuard) вкладывается в ссылку в открытом виде
-			(base64, без шифрования) — передавайте её только доверенному получателю по защищённому каналу
+			Конфиг (включая приватный ключ) вкладывается в ссылку в открытом виде (base64) —
+			передавайте только по защищённому каналу
 		</p>
 	{/if}
 
@@ -176,11 +247,8 @@
 			</Button>
 			{#if generatedClientId && server.clientsFile}
 				<p class="ft-hint" style="margin-top: 0.625rem">
-					У сервера включён allowlist — прежде чем отдавать эту ссылку, зарегистрируйте
-					Client ID <code>{generatedClientId}</code> в <code>{server.clientsFile}</code> по SSH:
-					бинарь сервера умеет <code>clients add {generatedClientId} "{genName || 'client'}"</code>
-					(укажите путь к файлу через переменную окружения <code>CLIENTS_FILE</code>, если бинарь
-					запускается не из той же директории)
+					Убедитесь, что Client ID <code>{generatedClientId}</code> есть в списке ниже — иначе сервер
+					отклонит подключение.
 				</p>
 			{/if}
 		</div>
@@ -226,11 +294,7 @@
 			</div>
 		</div>
 		<div class="ft-span">
-			<Input
-				label="Файл allowlist клиентов (-clients-file)"
-				bind:value={server.clientsFile}
-				placeholder="оставьте пустым — без проверки Client ID"
-			/>
+			<ServerAllowlist bind:this={allowlistPanel} {server} serverInstanceId={serverInstanceId} />
 		</div>
 	</SettingRow>
 	<SettingRow
@@ -268,11 +332,65 @@
 	}
 
 	.ft-gen-row {
-		display: grid;
-		grid-template-columns: 1fr 100px auto;
-		gap: 0.5rem;
-		align-items: end;
+		display: flex;
+		gap: 0.625rem;
+		align-items: flex-end;
 		margin-bottom: 0.5rem;
+	}
+
+	.ft-gen-provider {
+		flex: 0 0 5.5rem;
+		min-width: 0;
+	}
+
+	.ft-gen-fields {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.625rem;
+		align-items: flex-end;
+	}
+
+	.ft-gen-cid {
+		display: flex;
+		gap: 0.375rem;
+		align-items: flex-end;
+		flex: 1 1 11rem;
+		min-width: 10rem;
+		max-width: 16rem;
+	}
+
+	.ft-gen-cid :global(.field) {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.ft-gen-cid :global(.input) {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+	}
+
+	.ft-gen-name {
+		flex: 0 0 8.5rem;
+		min-width: 7rem;
+	}
+
+	.ft-gen-mtu {
+		flex: 0 0 5.5rem;
+		min-width: 5.5rem;
+	}
+
+	.ft-gen-save,
+	.ft-gen-action {
+		flex: 0 0 auto;
+		display: flex;
+		align-items: flex-end;
+		padding-bottom: 0.125rem;
+	}
+
+	.ft-gen-action {
+		margin-left: auto;
 	}
 
 	.ft-gen-more {
@@ -289,14 +407,6 @@
 
 	.ft-gen-more:hover {
 		text-decoration: underline;
-	}
-
-	.ft-gen-grid {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 0.75rem;
-		margin-top: 0.625rem;
-		margin-bottom: 0.5rem;
 	}
 
 	.ft-gen-idrow {
@@ -368,10 +478,36 @@
 		color: var(--color-warning);
 	}
 
+	@media (max-width: 900px) {
+		.ft-gen-row {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.ft-gen-provider {
+			flex: 0 0 auto;
+			max-width: 8rem;
+		}
+
+		.ft-gen-cid {
+			max-width: none;
+		}
+
+		.ft-gen-action {
+			margin-left: 0;
+		}
+	}
+
 	@media (max-width: 640px) {
-		.ft-gen-row,
-		.ft-gen-grid {
-			grid-template-columns: 1fr;
+		.ft-gen-fields {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.ft-gen-name,
+		.ft-gen-mtu {
+			flex: 1 1 auto;
+			max-width: none;
 		}
 	}
 </style>

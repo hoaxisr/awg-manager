@@ -17,9 +17,13 @@
 		routerHost: string;
 		importing: boolean;
 		importedWG: string | null;
-		installAvailable: boolean;
-		installVersion?: string;
-		installing: boolean;
+	installAvailable: boolean;
+	installVersion?: string;
+	installedVersion?: string;
+	updateAvailable?: boolean;
+	remoteVersion?: string;
+	remoteCheckError?: string;
+	installing: boolean;
 		expanded: string | null;
 		onInstall: () => void;
 		onSave: () => void;
@@ -38,6 +42,10 @@
 		importedWG,
 		installAvailable,
 		installVersion,
+		installedVersion,
+		updateAvailable,
+		remoteVersion,
+		remoteCheckError,
 		installing,
 		expanded = $bindable(),
 		onInstall,
@@ -88,7 +96,17 @@
 	}
 </script>
 
-<ProcessAlerts {status} {installAvailable} {installVersion} {installing} {onInstall} />
+<ProcessAlerts
+	{status}
+	{installAvailable}
+	{installVersion}
+	{installedVersion}
+	{updateAvailable}
+	{remoteVersion}
+	{remoteCheckError}
+	{installing}
+	{onInstall}
+/>
 
 <div class="ft-panel-accent">
 	<div class="section-label">Импорт по ссылке freeturn://</div>

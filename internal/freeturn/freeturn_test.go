@@ -132,8 +132,8 @@ func TestStore_Roundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Client.Peer = "h:56000"
-	cfg.Server.Connect = "127.0.0.1:51820"
+	cfg.Clients[0].Config.Peer = "h:56000"
+	cfg.Servers[0].Config.Connect = "127.0.0.1:51820"
 	if err := s.Save(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -141,8 +141,90 @@ func TestStore_Roundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Client.Peer != "h:56000" || got.Server.Connect != "127.0.0.1:51820" {
+	if got.Clients[0].Config.Peer != "h:56000" || got.Servers[0].Config.Connect != "127.0.0.1:51820" {
 		t.Fatalf("roundtrip mismatch: %+v", got)
+	}
+}
+
+func TestSha256FromChecksums(t *testing.T) {
+	body := []byte("abc123  client-linux-arm64\n def456 server-linux-arm64\n")
+	got, err := sha256FromChecksums(body, "client-linux-arm64")
+	if err != nil || got != "abc123" {
+		t.Fatalf("got %q err %v", got, err)
+	}
+}
+
+func TestResolveInstallSpecs_PrefersRemote(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, filepath.Join(dir, "c"), filepath.Join(dir, "s"))
+	s.installSpecs = &ArchSpecs{
+		Client: BinarySpec{Version: "1.0.0", URL: "https://pin/client", SHA256: strings.Repeat("a", 64), Size: 1},
+		Server: BinarySpec{Version: "1.0.0", URL: "https://pin/server", SHA256: strings.Repeat("b", 64), Size: 1},
+	}
+	s.remoteMu.Lock()
+	s.remoteCache = &remoteReleaseCache{
+		Version: "2.0.0",
+		Client:  BinarySpec{Version: "2.0.0", URL: "https://remote/client", SHA256: strings.Repeat("c", 64), Size: 1},
+		Server:  BinarySpec{Version: "2.0.0", URL: "https://remote/server", SHA256: strings.Repeat("d", 64), Size: 1},
+		CheckedAt: time.Now(),
+	}
+	s.remoteMu.Unlock()
+	specs, ver, fromRemote := s.resolveInstallSpecs()
+	if !fromRemote || ver != "2.0.0" || specs.Client.URL != "https://remote/client" {
+		t.Fatalf("resolve: ver=%s remote=%v specs=%+v", ver, fromRemote, specs)
+	}
+}
+
+func TestStore_MigrateV1(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "freeturn.json")
+	v1 := `{"client":{"peer":"h:56000"},"server":{"connect":"127.0.0.1:51820"}}`
+	if err := os.WriteFile(path, []byte(v1), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := NewStore(dir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Version != ConfigVersion || len(got.Clients) != 1 || len(got.Servers) != 1 {
+		t.Fatalf("migrate: %+v", got)
+	}
+	if got.Clients[0].ID != DefaultInstanceID || got.Clients[0].Config.Peer != "h:56000" {
+		t.Fatalf("client migrate: %+v", got.Clients[0])
+	}
+	if got.Servers[0].Config.Connect != "127.0.0.1:51820" {
+		t.Fatalf("server migrate: %+v", got.Servers[0])
+	}
+}
+
+func TestService_CreateMultipleClients(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, filepath.Join(dir, "c"), filepath.Join(dir, "s"))
+
+	first, err := s.CreateClient(CreateClientInput{Name: "A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.CreateClient(CreateClientInput{Name: "B"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Config.Listen == second.Config.Listen {
+		t.Fatalf("listen ports must differ: %s", first.Config.Listen)
+	}
+	cfg, err := s.GetConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Clients) != 3 { // default + 2
+		t.Fatalf("want 3 clients, got %d", len(cfg.Clients))
+	}
+	if err := s.DeleteClient(second.ID); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ = s.GetConfig()
+	if len(cfg.Clients) != 2 {
+		t.Fatalf("after delete want 2 clients, got %d", len(cfg.Clients))
 	}
 }
 
@@ -280,6 +362,9 @@ func TestInstallBinaries_HappyPath(t *testing.T) {
 	}
 	if !st.Client.BinaryPresent || !st.Server.BinaryPresent {
 		t.Errorf("binaryPresent must flip after install: %+v", st)
+	}
+	if st.InstalledVersion != "1.8.0" || st.UpdateAvailable {
+		t.Errorf("want installed version recorded and up-to-date: %+v", st)
 	}
 }
 

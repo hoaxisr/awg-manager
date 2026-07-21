@@ -64,6 +64,23 @@ func InstallAsLocal() bool {
 	return true
 }
 
+// AppendTZFromRouter adds TZ from the router's /etc/TZ or /var/TZ when the
+// environment does not already define it. Child processes do not inherit
+// Go's time.Local — they need TZ in the environment for local timestamps.
+func AppendTZFromRouter(env []string) []string {
+	for _, item := range env {
+		if strings.HasPrefix(item, "TZ=") {
+			return env
+		}
+	}
+	info := Get()
+	if info.RawTZ == "" {
+		return env
+	}
+	out := append([]string(nil), env...)
+	return append(out, "TZ="+info.RawTZ)
+}
+
 func readRouterTZ() (string, string, bool) {
 	for _, p := range tzCandidates {
 		b, err := os.ReadFile(p)
