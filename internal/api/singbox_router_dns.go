@@ -17,16 +17,26 @@ type SingboxDomainResolverDTO struct {
 	Strategy string `json:"strategy,omitempty" example:"ipv4_only"`
 }
 
+type SingboxDNSClientTLSOptionsDTO struct {
+	ServerName                 string   `json:"server_name,omitempty" example:"cloudflare-dns.com"`
+	Insecure                   bool     `json:"insecure,omitempty"`
+	ALPN                       []string `json:"alpn,omitempty" example:"h2"`
+	MinVersion                 string   `json:"min_version,omitempty" example:"1.2"`
+	MaxVersion                 string   `json:"max_version,omitempty" example:"1.3"`
+	CertificatePublicKeySHA256 []string `json:"certificate_public_key_sha256,omitempty"`
+}
+
 // SingboxDNSServerDTO mirrors router.DNSServer.
 type SingboxDNSServerDTO struct {
-	Tag            string                    `json:"tag" example:"cloudflare"`
-	Type           string                    `json:"type" example:"udp"`
-	Server         string                    `json:"server" example:"1.1.1.1"`
-	ServerPort     int                       `json:"server_port,omitempty" example:"53"`
-	Path           string                    `json:"path,omitempty" example:"/dns-query"`
-	Detour         string                    `json:"detour,omitempty" example:"direct"`
-	Strategy       string                    `json:"domain_strategy,omitempty" example:"prefer_ipv4"`
-	DomainResolver *SingboxDomainResolverDTO `json:"domain_resolver,omitempty"`
+	Tag            string                         `json:"tag" example:"cloudflare"`
+	Type           string                         `json:"type" example:"udp"`
+	Server         string                         `json:"server" example:"1.1.1.1"`
+	ServerPort     int                            `json:"server_port,omitempty" example:"53"`
+	Path           string                         `json:"path,omitempty" example:"/dns-query"`
+	Detour         string                         `json:"detour,omitempty" example:"direct"`
+	Strategy       string                         `json:"domain_strategy,omitempty" example:"prefer_ipv4"`
+	DomainResolver *SingboxDomainResolverDTO      `json:"domain_resolver,omitempty"`
+	TLS            *SingboxDNSClientTLSOptionsDTO `json:"tls,omitempty"`
 }
 
 // SingboxDNSServersListResponse is the envelope for

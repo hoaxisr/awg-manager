@@ -34,6 +34,26 @@ describe('shouldOmitDnsServerDetour', () => {
 	it('keeps explicit outbound detour', () => {
 		expect(shouldOmitDnsServerDetour('dns-tunnel', 'wg-nl')).toBe(false);
 	});
+
+	it('keeps populated TLS and omits an empty TLS object', () => {
+		expect(sanitizeDnsServerForApi({
+			tag: 'dot',
+			type: 'tls',
+			server: 'dns.example',
+			tls: {
+				server_name: ' dns.example ', insecure: true, alpn: [' h2 ', ''], min_version: '1.2',
+				certificate_public_key_sha256: [' pin ', ''],
+			},
+		})).toMatchObject({
+			tls: {
+				server_name: 'dns.example', insecure: true, alpn: ['h2'], min_version: '1.2',
+				certificate_public_key_sha256: ['pin'],
+			},
+		});
+		expect(sanitizeDnsServerForApi({
+			tag: 'dot', type: 'tls', server: 'dns.example', tls: { alpn: [' '] },
+		})).not.toHaveProperty('tls');
+	});
 });
 
 describe('sanitizeDnsServerForApi', () => {

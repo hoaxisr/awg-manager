@@ -25,6 +25,17 @@ var validDNSStrategies = map[string]bool{
 	"ipv6_only":   true,
 }
 
+var validTLSVersions = map[string]int{
+	"1.0": 10,
+	"1.1": 11,
+	"1.2": 12,
+	"1.3": 13,
+}
+
+var dnsTLSServerTypes = map[string]bool{
+	"tls": true, "quic": true, "https": true, "h3": true,
+}
+
 var validDNSRuleActions = map[string]bool{
 	"":           true,
 	"route":      true,
@@ -127,6 +138,20 @@ func validateDNSServer(s DNSServer) error {
 		}
 		if !validDNSStrategies[s.DomainResolver.Strategy] {
 			return fmt.Errorf("dns server %q: domain_resolver.strategy %q unknown", s.Tag, s.DomainResolver.Strategy)
+		}
+	}
+	if s.TLS != nil {
+		if !dnsTLSServerTypes[s.Type] {
+			return fmt.Errorf("dns server %q: tls is unsupported for type %q", s.Tag, s.Type)
+		}
+		if s.TLS.MinVersion != "" && validTLSVersions[s.TLS.MinVersion] == 0 {
+			return fmt.Errorf("dns server %q: unknown tls min_version %q", s.Tag, s.TLS.MinVersion)
+		}
+		if s.TLS.MaxVersion != "" && validTLSVersions[s.TLS.MaxVersion] == 0 {
+			return fmt.Errorf("dns server %q: unknown tls max_version %q", s.Tag, s.TLS.MaxVersion)
+		}
+		if s.TLS.MinVersion != "" && s.TLS.MaxVersion != "" && validTLSVersions[s.TLS.MinVersion] > validTLSVersions[s.TLS.MaxVersion] {
+			return fmt.Errorf("dns server %q: tls min_version must not exceed max_version", s.Tag)
 		}
 	}
 	return nil

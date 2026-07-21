@@ -395,6 +395,15 @@ export interface SingboxRouterDNSDomainResolver {
 	strategy?: SingboxRouterDNSStrategy;
 }
 
+export interface SingboxRouterDNSClientTLSOptions {
+	server_name?: string;
+	insecure?: boolean;
+	alpn?: string[];
+	min_version?: '1.0' | '1.1' | '1.2' | '1.3';
+	max_version?: '1.0' | '1.1' | '1.2' | '1.3';
+	certificate_public_key_sha256?: string[];
+}
+
 export interface SingboxRouterDNSServer {
 	tag: string;
 	type: SingboxRouterDNSType;
@@ -404,6 +413,7 @@ export interface SingboxRouterDNSServer {
 	detour?: string;
 	domain_strategy?: SingboxRouterDNSStrategy;
 	domain_resolver?: SingboxRouterDNSDomainResolver;
+	tls?: SingboxRouterDNSClientTLSOptions;
 }
 
 export interface SingboxRouterDNSRule {

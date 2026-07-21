@@ -1285,6 +1285,15 @@ const api_SingboxConnectionsClientsResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_SingboxDNSClientTLSOptionsDTO: v.GenericSchema = v.looseObject({
+	alpn: v.optional(v.nullable(v.array(v.string()))),
+	certificate_public_key_sha256: v.optional(v.nullable(v.array(v.string()))),
+	insecure: v.optional(v.nullable(v.boolean())),
+	max_version: v.optional(v.nullable(v.string())),
+	min_version: v.optional(v.nullable(v.string())),
+	server_name: v.optional(v.nullable(v.string())),
+});
+
 const api_SingboxDNSGlobalsData: v.GenericSchema = v.looseObject({
 	final: v.optional(v.nullable(v.string())),
 	strategy: v.optional(v.nullable(v.string())),
@@ -1328,6 +1337,7 @@ const api_SingboxDNSServerDTO: v.GenericSchema = v.looseObject({
 	server: v.optional(v.nullable(v.string())),
 	server_port: v.optional(v.nullable(v.number())),
 	tag: v.optional(v.nullable(v.string())),
+	tls: v.optional(v.nullable(v.lazy(() => api_SingboxDNSClientTLSOptionsDTO))),
 	type: v.optional(v.nullable(v.string())),
 });
 

@@ -3369,6 +3369,30 @@ definitions:
         example: start
         type: string
     type: object
+  api.SingboxDNSClientTLSOptionsDTO:
+    properties:
+      alpn:
+        example:
+        - h2
+        items:
+          type: string
+        type: array
+      certificate_public_key_sha256:
+        items:
+          type: string
+        type: array
+      insecure:
+        type: boolean
+      max_version:
+        example: "1.3"
+        type: string
+      min_version:
+        example: "1.2"
+        type: string
+      server_name:
+        example: cloudflare-dns.com
+        type: string
+    type: object
   api.SingboxDNSGlobalsData:
     properties:
       final:
@@ -3525,6 +3549,8 @@ definitions:
       tag:
         example: cloudflare
         type: string
+      tls:
+        $ref: '#/definitions/api.SingboxDNSClientTLSOptionsDTO'
       type:
         example: udp
         type: string
