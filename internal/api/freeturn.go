@@ -68,6 +68,24 @@ type FreeTurnStatusResponse struct {
 	Data    freeturn.Status `json:"data"`
 }
 
+// FreeTurnClientInstanceResponse is the envelope for a single client instance.
+type FreeTurnClientInstanceResponse struct {
+	Success bool                    `json:"success" example:"true"`
+	Data    freeturn.ClientInstance `json:"data"`
+}
+
+// FreeTurnServerInstanceResponse is the envelope for a single server instance.
+type FreeTurnServerInstanceResponse struct {
+	Success bool                    `json:"success" example:"true"`
+	Data    freeturn.ServerInstance `json:"data"`
+}
+
+// FreeTurnAllowlistResponse is the envelope for GET /api/freeturn/servers/{id}/allowlist.
+type FreeTurnAllowlistResponse struct {
+	Success bool                     `json:"success" example:"true"`
+	Data    freeturn.AllowlistStatus `json:"data"`
+}
+
 // GetConfig handles GET /api/freeturn/config.
 //
 //	@Summary	Get FreeTurn client+server configuration
@@ -343,6 +361,13 @@ type renameRequest struct {
 }
 
 // CreateClient handles POST /api/freeturn/clients.
+//
+//	@Summary	Create a new FreeTurn client instance
+//	@Tags		freeturn
+//	@Param		body	body		freeturn.CreateClientInput	false	"Optional name and initial config"
+//	@Success	200		{object}	FreeTurnClientInstanceResponse
+//	@Failure	500		{object}	APIErrorEnvelope
+//	@Router		/freeturn/clients [post]
 func (h *FreeTurnHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -361,6 +386,13 @@ func (h *FreeTurnHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateServer handles POST /api/freeturn/servers.
+//
+//	@Summary	Create a new FreeTurn server instance
+//	@Tags		freeturn
+//	@Param		body	body		freeturn.CreateServerInput	false	"Optional name and initial config"
+//	@Success	200		{object}	FreeTurnServerInstanceResponse
+//	@Failure	500		{object}	APIErrorEnvelope
+//	@Router		/freeturn/servers [post]
 func (h *FreeTurnHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -430,6 +462,17 @@ func parseInstancePath(fullPath, prefix string) (id string, subpath []string) {
 	return parts[0], parts[1:]
 }
 
+// serveClientByID handles config-update (PUT), rename (PATCH) and delete
+// (DELETE) for one client instance.
+//
+//	@Summary	Update config, rename or delete a FreeTurn client instance
+//	@Tags		freeturn
+//	@Param		id	path		string	true	"Client instance id"
+//	@Success	200	{object}	APIEnvelope
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/freeturn/clients/{id} [put]
+//	@Router		/freeturn/clients/{id} [patch]
+//	@Router		/freeturn/clients/{id} [delete]
 func (h *FreeTurnHandler) serveClientByID(w http.ResponseWriter, r *http.Request, id string) {
 	switch r.Method {
 	case http.MethodPut, http.MethodPost:
@@ -465,6 +508,17 @@ func (h *FreeTurnHandler) serveClientByID(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// serveServerByID handles config-update (PUT), rename (PATCH) and delete
+// (DELETE) for one server instance.
+//
+//	@Summary	Update config, rename or delete a FreeTurn server instance
+//	@Tags		freeturn
+//	@Param		id	path		string	true	"Server instance id"
+//	@Success	200	{object}	APIEnvelope
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/freeturn/servers/{id} [put]
+//	@Router		/freeturn/servers/{id} [patch]
+//	@Router		/freeturn/servers/{id} [delete]
 func (h *FreeTurnHandler) serveServerByID(w http.ResponseWriter, r *http.Request, id string) {
 	switch r.Method {
 	case http.MethodPut, http.MethodPost:
@@ -500,6 +554,14 @@ func (h *FreeTurnHandler) serveServerByID(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// startClientInstance handles POST /api/freeturn/clients/{id}/start.
+//
+//	@Summary	Start a FreeTurn client instance
+//	@Tags		freeturn
+//	@Param		id	path		string	true	"Client instance id"
+//	@Success	200	{object}	APIEnvelope
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/freeturn/clients/{id}/start [post]
 func (h *FreeTurnHandler) startClientInstance(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -512,6 +574,14 @@ func (h *FreeTurnHandler) startClientInstance(w http.ResponseWriter, r *http.Req
 	response.Success(w, map[string]string{"message": "client started"})
 }
 
+// stopClientInstance handles POST /api/freeturn/clients/{id}/stop.
+//
+//	@Summary	Stop a FreeTurn client instance
+//	@Tags		freeturn
+//	@Param		id	path		string	true	"Client instance id"
+//	@Success	200	{object}	APIEnvelope
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/freeturn/clients/{id}/stop [post]
 func (h *FreeTurnHandler) stopClientInstance(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -524,6 +594,14 @@ func (h *FreeTurnHandler) stopClientInstance(w http.ResponseWriter, r *http.Requ
 	response.Success(w, map[string]string{"message": "client stopped"})
 }
 
+// startServerInstance handles POST /api/freeturn/servers/{id}/start.
+//
+//	@Summary	Start a FreeTurn server instance
+//	@Tags		freeturn
+//	@Param		id	path		string	true	"Server instance id"
+//	@Success	200	{object}	APIEnvelope
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/freeturn/servers/{id}/start [post]
 func (h *FreeTurnHandler) startServerInstance(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -536,6 +614,14 @@ func (h *FreeTurnHandler) startServerInstance(w http.ResponseWriter, r *http.Req
 	response.Success(w, map[string]string{"message": "server started"})
 }
 
+// stopServerInstance handles POST /api/freeturn/servers/{id}/stop.
+//
+//	@Summary	Stop a FreeTurn server instance
+//	@Tags		freeturn
+//	@Param		id	path		string	true	"Server instance id"
+//	@Success	200	{object}	APIEnvelope
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/freeturn/servers/{id}/stop [post]
 func (h *FreeTurnHandler) stopServerInstance(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -548,6 +634,15 @@ func (h *FreeTurnHandler) stopServerInstance(w http.ResponseWriter, r *http.Requ
 	response.Success(w, map[string]string{"message": "server stopped"})
 }
 
+// generateLinkForServer handles POST /api/freeturn/servers/{id}/link.
+//
+//	@Summary	Generate a freeturn:// share link from a specific server instance
+//	@Tags		freeturn
+//	@Param		id		path		string				true	"Server instance id"
+//	@Param		body	body		GenerateLinkRequest	false	"Optional overrides (peer, provider, mtu, wg, clientId, name)"
+//	@Success	200		{object}	GenerateLinkResponse
+//	@Failure	500		{object}	APIErrorEnvelope
+//	@Router		/freeturn/servers/{id}/link [post]
 func (h *FreeTurnHandler) generateLinkForServer(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -621,6 +716,19 @@ type allowlistAddRequest struct {
 	Comment  string `json:"comment"`
 }
 
+// serveServerAllowlist handles the per-server client-ID allowlist: list (GET),
+// add (POST), disable (DELETE on the collection) and remove a single client
+// (DELETE .../allowlist/{clientId}).
+//
+//	@Summary	Manage a FreeTurn server client-ID allowlist
+//	@Tags		freeturn
+//	@Param		id	path		string	true	"Server instance id"
+//	@Success	200	{object}	FreeTurnAllowlistResponse
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/freeturn/servers/{id}/allowlist [get]
+//	@Router		/freeturn/servers/{id}/allowlist [post]
+//	@Router		/freeturn/servers/{id}/allowlist [delete]
+//	@Router		/freeturn/servers/{id}/allowlist/{clientId} [delete]
 func (h *FreeTurnHandler) serveServerAllowlist(w http.ResponseWriter, r *http.Request, serverID string, sub []string) {
 	if len(sub) == 0 {
 		switch r.Method {
