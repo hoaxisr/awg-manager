@@ -144,3 +144,18 @@ func TestAppendTZFromRouter(t *testing.T) {
 		t.Fatalf("existing TZ must win: %#v", unchanged)
 	}
 }
+
+func TestInstallAsLocal_NoRouterTZ_NoOp(t *testing.T) {
+	restore := setTZCandidatesForTest([]string{"/nonexistent/TZ"})
+	defer restore()
+
+	prev := time.Local
+	defer func() { time.Local = prev }()
+
+	if InstallAsLocal() {
+		t.Fatal("InstallAsLocal returned true with no router TZ file")
+	}
+	if time.Local != prev {
+		t.Fatal("time.Local mutated on no-op path")
+	}
+}
