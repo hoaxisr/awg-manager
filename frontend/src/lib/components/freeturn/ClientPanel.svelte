@@ -24,8 +24,10 @@
 	remoteVersion?: string;
 	remoteCheckError?: string;
 	installing: boolean;
+	checkingUpdates?: boolean;
 		expanded: string | null;
 		onInstall: () => void;
+		onCheckUpdates?: () => void;
 		onSave: () => void;
 		onRevert: () => void;
 		onImport: (link: string) => void;
@@ -47,8 +49,10 @@
 		remoteVersion,
 		remoteCheckError,
 		installing,
+		checkingUpdates,
 		expanded = $bindable(),
 		onInstall,
+		onCheckUpdates,
 		onSave,
 		onRevert,
 		onImport,
@@ -105,7 +109,9 @@
 	{remoteVersion}
 	{remoteCheckError}
 	{installing}
+	{checkingUpdates}
 	{onInstall}
+	{onCheckUpdates}
 />
 
 <div class="ft-panel-accent">

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui';
+	import { RefreshCw } from 'lucide-svelte';
 	import type { FreeTurnProcessStatus } from '$lib/types';
 
 	interface Props {
@@ -11,7 +12,9 @@
 	remoteVersion?: string;
 	remoteCheckError?: string;
 	installing: boolean;
+	checkingUpdates?: boolean;
 		onInstall: () => void;
+	onCheckUpdates?: () => void;
 	}
 
 	let {
@@ -23,7 +26,9 @@
 		remoteVersion,
 		remoteCheckError,
 		installing,
-		onInstall
+		checkingUpdates = false,
+		onInstall,
+		onCheckUpdates
 	}: Props = $props();
 
 	const showInstall = $derived(installAvailable && status && !status.binaryPresent);
@@ -66,9 +71,23 @@
 	</div>
 {:else if showInstalled}
 	<div class="ft-binary-ok">
-		freeturn v{installedVersion || installVersion} установлен (клиент + сервер)
-		{#if remoteVersion && remoteVersion !== installVersion}
-			<span class="ft-muted"> · на GitHub: v{remoteVersion}</span>
+		<span>
+			freeturn v{installedVersion || installVersion} установлен (клиент + сервер)
+			{#if remoteVersion && remoteVersion !== installVersion}
+				<span class="ft-muted"> · на GitHub: v{remoteVersion}</span>
+			{/if}
+		</span>
+		{#if onCheckUpdates}
+			<Button
+				variant="ghost"
+				size="sm"
+				loading={checkingUpdates}
+				onclick={onCheckUpdates}
+				title="Проверить обновления на GitHub"
+			>
+				<RefreshCw size={14} />
+				Проверить обновления
+			</Button>
 		{/if}
 	</div>
 {/if}
@@ -112,6 +131,11 @@
 	}
 
 	.ft-binary-ok {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 0.5rem;
 		padding: 0.5rem 0.75rem;
 		border-radius: var(--radius-sm);
 		border: 1px solid var(--color-border);

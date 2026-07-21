@@ -24,6 +24,7 @@
 	remoteVersion?: string;
 	remoteCheckError?: string;
 	installing: boolean;
+	checkingUpdates?: boolean;
 		generating: boolean;
 		generatedLink: string;
 		generatedPeer: string;
@@ -35,6 +36,7 @@
 		genName: string;
 		expanded: string | null;
 		onInstall: () => void;
+		onCheckUpdates?: () => void;
 		onSave: () => void;
 		onRevert: () => void;
 		onGenerate: (provider: string, mtu: number, wg: string, clientId: string, name: string) => void;
@@ -55,6 +57,7 @@
 		remoteVersion,
 		remoteCheckError,
 		installing,
+		checkingUpdates,
 		generating,
 		generatedLink,
 		generatedPeer,
@@ -66,6 +69,7 @@
 		genName = $bindable(),
 		expanded = $bindable(),
 		onInstall,
+		onCheckUpdates,
 		onSave,
 		onRevert,
 		onGenerate,
@@ -139,7 +143,9 @@
 	{remoteVersion}
 	{remoteCheckError}
 	{installing}
+	{checkingUpdates}
 	{onInstall}
+	{onCheckUpdates}
 />
 
 <ServerWgBind

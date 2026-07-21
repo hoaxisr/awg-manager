@@ -107,8 +107,8 @@
 		await Promise.all([loadConfig(), loadStatus(false)]);
 		loading = false;
 		statusPoll = setInterval(() => void loadStatus(), 3000);
-		// Проверка апстрим-релиза — фоном, не блокирует показ вкладки (роутер без GitHub).
-		void loadStatus(true);
+		// Проверку апстрим-релиза (GitHub) не делаем автоматически — только по
+		// кнопке «Проверить обновления» (роутер часто без доступа к GitHub).
 	});
 
 	onDestroy(() => {
@@ -172,6 +172,17 @@
 			status = await api.getFreeTurnStatus(forceRemote);
 		} catch {
 			// Молча — как ping-бейджи списка туннелей.
+		}
+	}
+
+	let checkingUpdates = $state(false);
+
+	async function checkUpdates() {
+		checkingUpdates = true;
+		try {
+			await loadStatus(true);
+		} finally {
+			checkingUpdates = false;
 		}
 	}
 
@@ -504,8 +515,10 @@
 			remoteVersion={status?.remoteVersion}
 			remoteCheckError={status?.remoteCheckError}
 			installing={installing || (status?.installing ?? false)}
+			{checkingUpdates}
 			bind:expanded
 			onInstall={install}
+			onCheckUpdates={checkUpdates}
 			onSave={() => saveClientConfig(selectedClient!.config)}
 			onRevert={revertClient}
 			onImport={applyImportLink}
@@ -538,7 +551,9 @@
 			remoteVersion={status?.remoteVersion}
 			remoteCheckError={status?.remoteCheckError}
 			installing={installing || (status?.installing ?? false)}
+			{checkingUpdates}
 			onInstall={install}
+			onCheckUpdates={checkUpdates}
 			{generating}
 			{generatedLink}
 			{generatedPeer}
