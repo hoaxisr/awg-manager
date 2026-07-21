@@ -129,7 +129,7 @@ type CreateClientInput struct {
 	Config *ClientConfig `json:"config,omitempty"`
 }
 
-// CreateServerInput is the body for POST /api/freeturn/clients.
+// CreateServerInput is the body for POST /api/freeturn/servers.
 type CreateServerInput struct {
 	Name   string        `json:"name,omitempty"`
 	Config *ServerConfig `json:"config,omitempty"`
