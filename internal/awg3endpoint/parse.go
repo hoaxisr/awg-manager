@@ -57,7 +57,7 @@ func Parse(raw []byte, tag string, existingTags map[string]bool) (Record, error)
 	if len(a.Peers) == 0 || a.Peers[0].PublicKey == "" || a.Peers[0].Address == "" {
 		return Record{}, ErrMissingPeer
 	}
-	if a.HPK != "" && (a.S1 < 8 || a.S2 < 8 || a.S3 < 8 || a.S4 < 8) {
+	if a.HPK != "" && (a.S1 < 12 || a.S2 < 12 || a.S3 < 12 || a.S4 < 12) {
 		return Record{}, ErrHeaderProtectionS
 	}
 

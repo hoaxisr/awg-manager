@@ -54,13 +54,13 @@ func (f *fakeOutboundLister) ListTags(ctx context.Context) ([]awgoutbounds.TagIn
 	return out, f.err
 }
 
-// validEndpoint is a RouteBox envelope with S1-S4 ≥ 8 and a header_protection_key.
+// validEndpoint is a RouteBox envelope with S1-S4 ≥ 12 and a header_protection_key.
 const validEndpoint = `{
   "success": true,
   "data": {
     "type": "awg",
     "private_key": "cGVlclByaXZhdGVLZXlCYXNlNjRFeGFtcGxlMDAwMDAwMD0=",
-    "s1": 8, "s2": 8, "s3": 8, "s4": 8,
+    "s1": 12, "s2": 12, "s3": 12, "s4": 12,
     "header_protection_key": "aGVhZGVyUHJvdGVjdGlvbktleUJhc2U2NEV4YW1wbGU9",
     "peers": [
       {
@@ -72,7 +72,7 @@ const validEndpoint = `{
   }
 }`
 
-// badS endpoint: header_protection_key present but S1<8 → Parse rejects.
+// badS endpoint: header_protection_key present but S1<12 → Parse rejects.
 const badSEndpoint = `{
   "type": "awg",
   "private_key": "cGVlclByaXZhdGVLZXlCYXNlNjRFeGFtcGxlMDAwMDAwMD0=",
