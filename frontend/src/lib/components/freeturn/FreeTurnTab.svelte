@@ -104,9 +104,11 @@
 
 	onMount(async () => {
 		routerHost = window.location.hostname;
-		await Promise.all([loadConfig(), loadStatus(true)]);
+		await Promise.all([loadConfig(), loadStatus(false)]);
 		loading = false;
 		statusPoll = setInterval(() => void loadStatus(), 3000);
+		// Проверка апстрим-релиза — фоном, не блокирует показ вкладки (роутер без GitHub).
+		void loadStatus(true);
 	});
 
 	onDestroy(() => {
@@ -310,6 +312,8 @@
 	}
 
 	async function deleteClient(id: string) {
+		const name = config?.clients.find((c) => c.id === id)?.name ?? id;
+		if (!confirm(`Удалить клиент «${name}»? Настройки инстанса будут потеряны.`)) return;
 		try {
 			await api.deleteFreeTurnClient(id);
 			await loadConfig();
@@ -321,6 +325,8 @@
 	}
 
 	async function deleteServer(id: string) {
+		const name = config?.servers.find((s) => s.id === id)?.name ?? id;
+		if (!confirm(`Удалить сервер «${name}»? Настройки инстанса будут потеряны.`)) return;
 		try {
 			await api.deleteFreeTurnServer(id);
 			await loadConfig();
