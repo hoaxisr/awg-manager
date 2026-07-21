@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui';
+	import { Pencil, X } from 'lucide-svelte';
 
 	interface InstanceItem {
 		id: string;
@@ -69,7 +70,7 @@
 							title="Переименовать"
 							onclick={() => startRename(item)}
 						>
-							✎
+							<Pencil size={14} />
 						</button>
 					{/if}
 					{#if canDelete && item.id !== 'default'}
@@ -79,7 +80,7 @@
 							title="Удалить"
 							onclick={() => onDelete(item.id)}
 						>
-							×
+							<X size={14} />
 						</button>
 					{/if}
 				{/if}

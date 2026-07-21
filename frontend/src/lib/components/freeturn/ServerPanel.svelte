@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Input, Button, Dropdown } from '$lib/components/ui';
+	import { RefreshCw } from 'lucide-svelte';
 	import { pluralize } from '$lib/utils/pluralize';
 	import type { FreeTurnServerConfig, FreeTurnProcessStatus } from '$lib/types';
 	import ProcessAlerts from './ProcessAlerts.svelte';
@@ -166,7 +167,7 @@
 					placeholder={server.clientsFile ? 'hex ID' : 'необязательно'}
 				/>
 				<Button variant="ghost" size="sm" onclick={randomClientId} title="Сгенерировать Client ID">
-					↻
+					<RefreshCw size={14} />
 				</Button>
 			</div>
 			<div class="ft-gen-name">
