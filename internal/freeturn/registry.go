@@ -29,7 +29,12 @@ func (r *processRegistry) get(id string) *process {
 	if p, ok := r.procs[id]; ok {
 		return p
 	}
-	pidName := r.role + "-" + id
+	// default-инстанс сохраняет легаси pid-имя без суффикса (v1: freeturn-client.pid),
+	// иначе после kill-9/OOM живой v1-процесс не будет найден и запустится дубль.
+	pidName := r.role
+	if id != DefaultInstanceID {
+		pidName = r.role + "-" + id
+	}
 	p := newProcess(pidName, r.binary, r.runtimeDir)
 	r.procs[id] = p
 	return p
