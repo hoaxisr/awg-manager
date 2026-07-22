@@ -119,7 +119,7 @@ func TestRewriteCaptchaURLWrapsVKOAuth(t *testing.T) {
 func TestRewriteLocalCaptchaURLEncodedLegacy(t *testing.T) {
 	base := "http://router/api/freeturn/clients/a/captcha"
 	in := "href=http%3A%2F%2F127.0.0.1%3A8765%2Fcb"
-	out := rewriteLocalCaptchaURLs(in, base)
+	out := rewriteLocalCaptchaURLsMaybePreserveRedirectURI(in, base, false)
 	if strings.Contains(out, "127.0.0.1") {
 		t.Fatalf("non-redirect_uri localhost should be rewritten: %q", out)
 	}

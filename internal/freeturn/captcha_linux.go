@@ -24,11 +24,6 @@ var captchaPortCache struct {
 	pidsKey string
 }
 
-// socketListenerPID returns the PID of a process listening on host:port, or false.
-func socketListenerPID(host string, port int) (int, bool) {
-	return socketListenerPIDAmong(host, port, nil)
-}
-
 // socketListenerPIDAmong resolves the listener PID by scanning only candidatePIDs
 // when provided. Falls back to a full /proc scan only if the port is open but
 // none of the candidates own it (rare).
@@ -67,10 +62,13 @@ func socketListenerPIDAmong(host string, port int, candidatePIDs []int) (int, bo
 
 func listenerInodes(host string, port int) map[string]struct{} {
 	wantPort := fmt.Sprintf("%04X", port)
-	wantAddr4 := ipv4Hex(host) + ":" + wantPort
+	wantAddrs := make(map[string]struct{})
+	for _, hex := range ipv4HexForms(host) {
+		wantAddrs[hex+":"+wantPort] = struct{}{}
+	}
 	out := make(map[string]struct{})
 	for _, procFile := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
-		collectListenerInodes(procFile, wantAddr4, out)
+		collectListenerInodes(procFile, wantAddrs, out)
 	}
 	return out
 }
@@ -150,7 +148,7 @@ func captchaPortCacheSet(port int, pidsKey string, owner int, open bool) {
 	captchaPortCache.until = time.Now().Add(captchaPortCacheTTL)
 }
 
-func collectListenerInodes(procFile, wantAddr4 string, out map[string]struct{}) {
+func collectListenerInodes(procFile string, wantAddrs map[string]struct{}, out map[string]struct{}) {
 	f, err := os.Open(procFile)
 	if err != nil {
 		return
@@ -170,29 +168,33 @@ func collectListenerInodes(procFile, wantAddr4 string, out map[string]struct{}) 
 		if state != "0A" {
 			continue
 		}
-		if local == wantAddr4 {
+		if _, ok := wantAddrs[local]; ok {
 			out[fields[9]] = struct{}{}
 		}
 	}
 }
 
-func ipv4Hex(host string) string {
-	switch host {
-	case "127.0.0.1", "localhost":
-		return "0100007F"
-	default:
-		parts := strings.Split(host, ".")
-		if len(parts) != 4 {
-			return ""
+// ipv4HexForms returns both /proc/net/tcp representations of an IPv4 address:
+// the kernel prints the raw __be32 with %08X, so little-endian hosts (mipsel,
+// aarch64) show 127.0.0.1 as 0100007F while big-endian mips shows 7F000001.
+func ipv4HexForms(host string) []string {
+	if host == "localhost" {
+		host = "127.0.0.1"
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) != 4 {
+		return nil
+	}
+	var b [4]byte
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 || n > 255 {
+			return nil
 		}
-		var b [4]byte
-		for i, p := range parts {
-			n, err := strconv.Atoi(p)
-			if err != nil || n < 0 || n > 255 {
-				return ""
-			}
-			b[i] = byte(n)
-		}
-		return fmt.Sprintf("%02X%02X%02X%02X", b[3], b[2], b[1], b[0])
+		b[i] = byte(n)
+	}
+	return []string{
+		fmt.Sprintf("%02X%02X%02X%02X", b[3], b[2], b[1], b[0]),
+		fmt.Sprintf("%02X%02X%02X%02X", b[0], b[1], b[2], b[3]),
 	}
 }

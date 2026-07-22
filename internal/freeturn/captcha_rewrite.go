@@ -45,10 +45,6 @@ var captchaExtendedGenericProxyHosts = []string{
 	".apptracer.ru",
 }
 
-func rewriteLocalCaptchaURLs(s, base string) string {
-	return rewriteLocalCaptchaURLsMaybePreserveRedirectURI(s, base, false)
-}
-
 func rewriteLocalCaptchaURLsPreserveRedirectURI(s, base string) string {
 	return rewriteLocalCaptchaURLsMaybePreserveRedirectURI(s, base, true)
 }

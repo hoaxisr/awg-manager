@@ -10,9 +10,9 @@ import (
 
 const captchaDialProbe = 200 * time.Millisecond
 
-// socketListenerPID is only implemented on Linux (production routers).
+// socketListenerPIDAmong is only implemented on Linux (production routers).
 // Dev builds on Windows/macOS fall back to a dial probe without PID attribution.
-func socketListenerPID(host string, port int) (int, bool) {
+func socketListenerPIDAmong(host string, port int, _ []int) (int, bool) {
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), captchaDialProbe)
 	if err != nil {
 		return 0, false

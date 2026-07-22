@@ -152,6 +152,3 @@ func normalizeCaptchaSetCookies(h http.Header) {
 		h.Add("Set-Cookie", c.String())
 	}
 }
-
-// DrainAndClose is used in tests.
-func DrainAndClose(r io.ReadCloser) { _ = r.Close() }

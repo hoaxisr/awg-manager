@@ -23,14 +23,11 @@ func TestNextClientListen_NoReserved(t *testing.T) {
 	}
 }
 
-func TestLocalListenPortMatch(t *testing.T) {
-	if !LocalListenPortMatch("127.0.0.1:9001", "localhost:9001") {
-		t.Fatal("same localhost port must match")
+func TestLocalListenPort(t *testing.T) {
+	if port, ok := LocalListenPort("localhost:9001"); !ok || port != 9001 {
+		t.Fatalf("LocalListenPort(localhost:9001) = %d, %v", port, ok)
 	}
-	if LocalListenPortMatch("127.0.0.1:9001", "127.0.0.1:9000") {
-		t.Fatal("different ports must not match")
-	}
-	if LocalListenPortMatch("127.0.0.1:9001", "1.2.3.4:9001") {
+	if _, ok := LocalListenPort("1.2.3.4:9001"); ok {
 		t.Fatal("non-localhost endpoint must not match")
 	}
 }
