@@ -17,9 +17,9 @@ export const obfOptions = [
 	{ value: 'rtpopus3', label: 'rtpopus3' }
 ];
 
-/** Headless-браузер freeturn на роутере для авто-капчи VK (-browser). */
+/** TLS/UA-персона freeturn для VK Smart Captcha (-browser). */
 export const browserOptions = [
-	{ value: 'firefox', label: 'Firefox' },
 	{ value: 'chrome', label: 'Chrome' },
+	{ value: 'firefox', label: 'Firefox' },
 	{ value: 'safari', label: 'Safari' }
 ];

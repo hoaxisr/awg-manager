@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
 
 // Service is the public facade consumed by the API layer (one instance per
@@ -307,6 +308,7 @@ func (s *Service) statusLocked() Status {
 	version, available := s.InstallInfo()
 	installedVersion, updateAvailable := s.installStatusFields(version)
 	remoteVersion, remoteErr := s.remoteStatus()
+	clock := routerclock.Get()
 	st := Status{
 		InstallAvailable: available,
 		InstallVersion:   version,
@@ -315,6 +317,7 @@ func (s *Service) statusLocked() Status {
 		RemoteVersion:    remoteVersion,
 		RemoteCheckError: remoteErr,
 		Installing:       s.Installing(),
+		RouterClock:      clock.Now.Format("2006-01-02 15:04:05") + " " + clock.ZoneName,
 	}
 	for _, c := range cfg.Clients {
 		st.Clients = append(st.Clients, InstanceStatus{
@@ -478,8 +481,10 @@ func buildClientArgs(c ClientConfig) []string {
 	if c.StreamsPerCred > 0 {
 		args = append(args, "-streams-per-cred", strconv.Itoa(c.StreamsPerCred))
 	}
-	str("-browser", normalizeBrowser(c.Browser))
-	flag("-manual-captcha", c.ManualCaptcha)
+	if b := strings.TrimSpace(c.Browser); b != "" {
+		str("-browser", normalizeBrowser(b))
+	}
+	// awg-manager: только авто-капча; ручной fallback (:8765) не поддерживается в UI.
 	str("-dns-mode", c.DNSMode)
 	str("-dns-servers", c.DNSServers)
 	str("-client-id", c.ClientID)
@@ -495,7 +500,7 @@ func normalizeBrowser(b string) string {
 	case "chromium":
 		return "chrome"
 	default:
-		return "firefox"
+		return "chrome"
 	}
 }
 

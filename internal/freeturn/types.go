@@ -31,8 +31,9 @@ type ClientConfig struct {
 	ObfKey     string `json:"obfKey,omitempty"` // -obf-key, 64 hex chars, required if obfProfile != none
 
 	StreamsPerCred int    `json:"streamsPerCred"` // -streams-per-cred, provider=vk only
-	Browser        string `json:"browser" swaggertype:"string" enums:"chrome,firefox,safari"` // -browser, provider=vk only
-	ManualCaptcha  bool   `json:"manualCaptcha"`  // -manual-captcha, provider=vk only
+	Browser               string `json:"browser" swaggertype:"string" enums:"chrome,firefox,safari"` // -browser, provider=vk only
+	ManualCaptcha         bool   `json:"manualCaptcha"`                                             // -manual-captcha: только ручная капча
+	ManualCaptchaFallback bool   `json:"manualCaptchaFallback"`                                     // -captcha-manual-fallback (не рекомендуется на роутере)
 
 	DNSMode    string `json:"dnsMode"`              // -dns-mode, plain|doh|auto
 	DNSServers string `json:"dnsServers,omitempty"` // -dns-servers, ip[:port][,ip[:port]...]
@@ -53,7 +54,7 @@ func DefaultClientConfig() ClientConfig {
 		Mode:           "udp",
 		ObfProfile:     "none",
 		StreamsPerCred: 10,
-		Browser:        "firefox",
+		Browser:        "chrome",
 		DNSMode:        "auto",
 	}
 }
@@ -189,4 +190,6 @@ type Status struct {
 	RemoteCheckError string `json:"remoteCheckError,omitempty"`
 	// Installing — установка сейчас идёт (кнопка блокируется).
 	Installing bool `json:"installing"`
+	// RouterClock — текущее время роутера для сверки с метками в логе freeturn.
+	RouterClock string `json:"routerClock,omitempty"`
 }

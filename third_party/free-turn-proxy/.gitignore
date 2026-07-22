@@ -1,0 +1,20 @@
+.idea
+.claude
+CLAUDE.md
+*.exe
+*.so
+*.tmp
+*.tmp.*
+/dist/
+/build/
+*.test
+coverage.out
+# Скомпилированные бинари cmd/client и cmd/server
+/client
+/server
+.env
+clients.json
+client_config.json
+node_modules
+dist
+/mobile-dist/

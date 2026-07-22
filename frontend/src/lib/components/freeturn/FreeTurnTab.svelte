@@ -3,11 +3,10 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard as copyText } from '$lib/utils/clipboard';
-	import { Tabs, FormToggle, Button } from '$lib/components/ui';
+	import { Tabs } from '$lib/components/ui';
 	import type {
 		FreeTurnClientConfig,
 		FreeTurnClientInstance,
-		FreeTurnCaptchaOverview,
 		FreeTurnConfig,
 		FreeTurnGenerateLinkResult,
 		FreeTurnServerConfig,
@@ -16,10 +15,8 @@
 	} from '$lib/types';
 	import ProcessAlerts from './ProcessAlerts.svelte';
 	import InstanceBar from './InstanceBar.svelte';
-	import CaptchaModal from './CaptchaModal.svelte';
 	import FreeTurnClientSimple from './FreeTurnClientSimple.svelte';
 	import FreeTurnServerSimple from './FreeTurnServerSimple.svelte';
-	import { readCaptchaAutoOpen, writeCaptchaAutoOpen } from './captchaPrefs';
 	import { parseLocalListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
 
 	type FtTab = 'client' | 'server';
@@ -52,11 +49,6 @@
 	let generatedClientId = $state('');
 
 	let statusPoll: ReturnType<typeof setInterval> | undefined;
-
-	let captchaOverview = $state<FreeTurnCaptchaOverview | null>(null);
-	let captchaModalOpen = $state(false);
-	let captchaModalClientId = $state<string | null>(null);
-	let captchaAutoOpen = $state(readCaptchaAutoOpen());
 
 	const ftTabs = [
 		{ id: 'client', label: 'Клиент' },
@@ -107,45 +99,16 @@
 		return port > 0 ? port : 9000;
 	});
 
-	const captchaModalClient = $derived(
-		captchaOverview?.clients.find((c) => c.clientId === captchaModalClientId) ?? null
-	);
-
-	const selectedCaptchaStatus = $derived(
-		captchaOverview?.clients.find((c) => c.clientId === selectedClientId) ?? null
-	);
-
 	function errText(e: unknown): string {
 		return e instanceof Error ? e.message : String(e ?? '');
 	}
 
-	function anyClientRunning(): boolean {
-		return status?.clients.some((c) => c.status?.running) ?? false;
-	}
-
 	onMount(async () => {
-		await Promise.all([loadConfig(), loadStatus(false), loadCaptchaStatus()]);
+		await Promise.all([loadConfig(), loadStatus(false)]);
 		loading = false;
-		if (typeof window !== 'undefined') {
-			const params = new URLSearchParams(window.location.search);
-			if (params.get('captcha') === '1') {
-				captchaAutoOpen = true;
-				writeCaptchaAutoOpen(true);
-				setTimeout(() => maybeAutoOpenCaptchaModal(), 500);
-			}
-		}
 		statusPoll = setInterval(async () => {
 			await loadStatus(false);
-			if (
-				anyClientRunning() ||
-				captchaModalOpen ||
-				captchaOverview?.clients.some((c) => c.waiting)
-			) {
-				await loadCaptchaStatus();
-			} else {
-				captchaOverview = null;
-			}
-		}, 3000);
+		}, 1000);
 	});
 
 	onDestroy(() => {
@@ -165,11 +128,12 @@
 			browser:
 				(c.browser as string) === 'chromium'
 					? 'chrome'
-					: c.browser === 'safari' || c.browser === 'chrome'
+					: c.browser === 'safari' || c.browser === 'firefox'
 						? c.browser
-						: 'firefox',
+						: 'chrome',
 			streams: c.streams > 0 ? c.streams : 10,
-			streamsPerCred: c.streamsPerCred > 0 ? c.streamsPerCred : 10
+			streamsPerCred: c.streamsPerCred > 0 ? c.streamsPerCred : 10,
+			debug: !!c.debug
 		};
 	}
 
@@ -178,7 +142,8 @@
 			...s,
 			connect: s.connect ?? '',
 			obfKey: s.obfKey ?? '',
-			clientsFile: s.clientsFile ?? ''
+			clientsFile: s.clientsFile ?? '',
+			debug: !!s.debug
 		};
 	}
 
@@ -218,55 +183,6 @@
 		} catch {
 			// Молча — как ping-бейджи списка туннелей.
 		}
-	}
-
-	async function loadCaptchaStatus() {
-		if (!anyClientRunning() && !captchaModalOpen) {
-			captchaOverview = null;
-			return;
-		}
-		try {
-			captchaOverview = await api.getFreeTurnCaptchaStatus();
-			maybeAutoOpenCaptchaModal();
-		} catch {
-			// Молча — капча опциональна.
-		}
-	}
-
-	function maybeAutoOpenCaptchaModal() {
-		if (!captchaOverview || !captchaAutoOpen) return;
-		const openable = captchaOverview.clients.filter((c) => c.canOpen);
-		if (openable.length === 0) return;
-		const target =
-			openable.find((c) => c.clientId === selectedClientId && c.canOpen) ??
-			openable.find((c) => c.active) ??
-			openable[0];
-		if (!target) return;
-		captchaModalClientId = target.clientId;
-		captchaModalOpen = true;
-	}
-
-	function setCaptchaAutoOpen(enabled: boolean) {
-		captchaAutoOpen = enabled;
-		writeCaptchaAutoOpen(enabled);
-		if (!enabled) captchaModalOpen = false;
-	}
-
-	function openCaptchaModal(clientId?: string) {
-		const id = clientId ?? selectedClientId;
-		const entry = captchaOverview?.clients.find((c) => c.clientId === id);
-		if (!entry?.canOpen && !entry?.waiting) return;
-		captchaModalClientId = id;
-		captchaModalOpen = true;
-	}
-
-	function closeCaptchaModal() {
-		captchaModalOpen = false;
-	}
-
-	function selectCaptchaClient(id: string) {
-		captchaModalClientId = id;
-		selectedClientId = id;
 	}
 
 	async function checkUpdates() {
@@ -515,8 +431,6 @@
 			if (payload.transport) c.transport = payload.transport as typeof c.transport;
 			if (payload.mode) c.mode = payload.mode as typeof c.mode;
 			if (typeof payload.bond === 'boolean') c.bond = payload.bond;
-			if (typeof payload.mcap === 'boolean') c.manualCaptcha = payload.mcap;
-
 			const wg = payload.wg?.trim() ? payload.wg : null;
 			importedWG = wg;
 
@@ -657,43 +571,17 @@
 			onRename={renameClient}
 		/>
 		{#if selectedClient}
-			<div class="ft-captcha-prefs">
-				<FormToggle
-					checked={captchaAutoOpen}
-					onchange={setCaptchaAutoOpen}
-					label="Авто-открытие окна капчи"
-					hint="Включено — модалка и окно капчи откроются сами. Выключите, если не хотите pop-up — тогда «Открыть капчу» по кнопке."
-					size="sm"
-				/>
-				{#if !captchaAutoOpen && (selectedCaptchaStatus?.canOpen || selectedCaptchaStatus?.waiting)}
-					<Button variant="secondary" size="sm" onclick={() => openCaptchaModal(selectedClientId)}>
-						Открыть капчу
-					</Button>
-				{/if}
-			</div>
-
 			<FreeTurnClientSimple
 				client={selectedClient.config}
 				running={clientStatus?.running ?? false}
 				status={clientStatus}
+				routerClock={status?.routerClock}
 				{saving}
 				onSave={saveClientConfig}
 				onToggle={(on) => toggleClientInstance(selectedClientId, on)}
 				onImportLink={applyImportLink}
 			/>
 		{/if}
-
-		<CaptchaModal
-			bind:open={captchaModalOpen}
-			clientId={captchaModalClientId}
-			clientName={captchaModalClient?.clientName}
-			captchaUrl={captchaModalClient?.url ?? null}
-			overview={captchaOverview}
-			captchaAutoOpen={captchaAutoOpen}
-			onCaptchaAutoOpenChange={setCaptchaAutoOpen}
-			onclose={closeCaptchaModal}
-			onSelectClient={selectCaptchaClient}
-		/>
 	{:else}
 		<InstanceBar
 			items={serverBarItems}
@@ -738,15 +626,4 @@
 		color: var(--color-text-secondary);
 	}
 
-	.ft-captcha-prefs {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.75rem 1rem;
-		margin: 0.75rem 0 1rem;
-		padding: 0.625rem 0.75rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		background: var(--color-bg-secondary);
-	}
 </style>

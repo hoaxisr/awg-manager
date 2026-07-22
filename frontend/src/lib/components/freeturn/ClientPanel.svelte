@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { Input, Button, Dropdown, FormToggle } from '$lib/components/ui';
 	import { pluralize } from '$lib/utils/pluralize';
-	import type { FreeTurnClientConfig, FreeTurnCaptchaClientStatus, FreeTurnProcessStatus } from '$lib/types';
+	import type { FreeTurnClientConfig, FreeTurnProcessStatus } from '$lib/types';
 	import ProcessAlerts from './ProcessAlerts.svelte';
+	import ProcessLogBox from './ProcessLogBox.svelte';
 	import SettingRows from './SettingRows.svelte';
 	import SettingRow from './SettingRow.svelte';
 	import { changedKeys } from './dirty';
@@ -13,7 +14,6 @@
 		/** Снапшот сохранённого конфига — для dirty-подсветки и счётчика. */
 		saved: FreeTurnClientConfig | null;
 		status?: FreeTurnProcessStatus;
-		captchaStatus?: FreeTurnCaptchaClientStatus | null;
 		saving: boolean;
 		importing: boolean;
 		importedWG: string | null;
@@ -32,15 +32,12 @@
 		onRevert: () => void;
 		onImport: (link: string) => void;
 		onCopy: (text: string) => void;
-		onOpenCaptcha?: () => void;
-		captchaAutoOpen?: boolean;
 	}
 
 	let {
 		client,
 		saved,
 		status,
-		captchaStatus = null,
 		saving,
 		importing,
 		importedWG,
@@ -59,8 +56,6 @@
 		onRevert,
 		onImport,
 		onCopy,
-		onOpenCaptcha,
-		captchaAutoOpen = true
 	}: Props = $props();
 
 	let importLink = $state('');
@@ -118,35 +113,6 @@
 	{onCheckUpdates}
 />
 
-{#if captchaStatus?.waiting && captchaAutoOpen}
-	<div class="ft-captcha-banner">
-		<span>
-			{#if captchaStatus.pendingStreams && captchaStatus.pendingStreams > 1}
-				Нужна капча для {captchaStatus.pendingStreams} потоков — решайте по одному, не закрывайте окно.
-				{#if captchaStatus.portContention}
-					Сейчас порт 8765 занят другим потоком; остальные ждут очереди freeturn.
-				{/if}
-			{:else if captchaStatus.queued}
-				Требуется капча, но сейчас активен другой клиент — дождитесь очереди.
-			{:else if captchaStatus.canOpen}
-				Требуется прохождение VK-капчи для этого клиента.
-			{:else}
-				Клиент ждёт решения капчи.
-			{/if}
-		</span>
-		<div class="ft-captcha-banner-actions">
-			{#if captchaStatus.canOpen && onOpenCaptcha}
-				<Button variant="secondary" size="sm" onclick={onOpenCaptcha}>Открыть капчу</Button>
-			{/if}
-		</div>
-	</div>
-{:else if captchaStatus?.waiting && !captchaAutoOpen && onOpenCaptcha}
-	<p class="ft-captcha-manual">
-		Капча нужна, авто-окно отключено.
-		<Button variant="ghost" size="sm" onclick={onOpenCaptcha}>Открыть вручную</Button>
-	</p>
-{/if}
-
 <div class="ft-panel-accent">
 	<div class="section-label">Импорт по ссылке freeturn://</div>
 	<div class="ft-import-row">
@@ -198,9 +164,9 @@
 			onchange={(v) => (client.streamsPerCred = Number(v) || 0)}
 		/>
 		<p class="ft-hint ft-span">
-			Если авто-капча не проходит, freeturn откроет локальный сервер на порту 8765.
-			awg-manager покажет окно прохождения автоматически (включите «Авто-открытие» в модалке).
-			При нескольких клиентах порт 8765 один — капчи решаются по очереди.
+			Несколько ссылок дают несколько независимых пулов TURN-кредов — больше суммарных
+			потоков и меньше риск бана одного звонка. VK-капча решается автоматически в headless
+			Chrome на роутере.
 		</p>
 		<div class="ft-span">
 			<Input
@@ -266,7 +232,13 @@
 		expanded={expanded === 'log'}
 		ontoggle={toggleSection}
 	>
-		<pre class="ft-log-box ft-span">{status?.log || 'лог пуст'}</pre>
+		<ProcessLogBox
+			log={status?.log}
+			embedded
+			maxHeight="320px"
+			bind:debug={client.debug}
+			showDebugToggle
+		/>
 	</SettingRow>
 </SettingRows>
 
@@ -334,21 +306,6 @@
 		margin: 0.375rem 0;
 	}
 
-	.ft-log-box {
-		max-height: 160px;
-		overflow-y: auto;
-		padding: 0.5rem 0.625rem;
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--color-border);
-		background: var(--color-bg-primary);
-		color: var(--color-text-secondary);
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		white-space: pre-wrap;
-		word-break: break-all;
-		margin: 0;
-	}
-
 	.ft-footer {
 		display: flex;
 		align-items: center;
@@ -360,38 +317,6 @@
 	.ft-dirty-note {
 		font-size: 0.75rem;
 		color: var(--color-warning);
-	}
-
-	.ft-captcha-banner {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		flex-wrap: wrap;
-		gap: 0.625rem;
-		padding: 0.625rem 0.75rem;
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--color-warning);
-		background: var(--color-warning-tint);
-		font-size: 0.8125rem;
-		margin-bottom: 0.875rem;
-		color: var(--color-text-primary);
-	}
-
-	.ft-captcha-banner-actions {
-		display: inline-flex;
-		align-items: center;
-		flex-wrap: wrap;
-		gap: 0.375rem;
-	}
-
-	.ft-captcha-manual {
-		display: flex;
-		align-items: center;
-		flex-wrap: wrap;
-		gap: 0.375rem;
-		font-size: 0.75rem;
-		color: var(--color-text-secondary);
-		margin: 0 0 0.875rem;
 	}
 
 	@media (max-width: 640px) {

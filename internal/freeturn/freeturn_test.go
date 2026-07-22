@@ -74,7 +74,7 @@ func TestBuildClientArgs_FullAndZero(t *testing.T) {
 		"-links", "https://vk.ru/call/join/a", "-n", "4", "-transport", "tcp",
 		"-mode", "udp", "-bond", "-turn", "turn.host", "-port", "3478",
 		"-obf-profile", "rtpopus2", "-obf-key", "deadbeef",
-		"-streams-per-cred", "2", "-browser", "chrome", "-manual-captcha",
+		"-streams-per-cred", "2", "-browser", "chrome",
 		"-dns-mode", "doh", "-dns-servers", "1.1.1.1", "-client-id", "cid",
 		"-sub", "s", "-debug",
 	}
@@ -409,7 +409,7 @@ func TestEmbeddedBinaries_CoverAllArches(t *testing.T) {
 		}
 		for name, sp := range map[string]BinarySpec{"client": specs.Client, "server": specs.Server} {
 			if sp.Version != PinnedVersion || len(sp.SHA256) != 64 || sp.Size <= 0 ||
-				!strings.HasPrefix(sp.URL, "https://github.com/samosvalishe/free-turn-proxy/releases/download/v"+PinnedVersion+"/") {
+				sp.LocalAsset == "" {
 				t.Errorf("%s/%s: bad spec %+v", arch, name, sp)
 			}
 		}

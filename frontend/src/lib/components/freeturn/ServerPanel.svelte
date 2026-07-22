@@ -6,6 +6,7 @@
 	import { pluralize } from '$lib/utils/pluralize';
 	import type { FreeTurnServerConfig, FreeTurnProcessStatus } from '$lib/types';
 	import ProcessAlerts from './ProcessAlerts.svelte';
+	import ProcessLogBox from './ProcessLogBox.svelte';
 	import ServerWgBind from './ServerWgBind.svelte';
 	import ServerAllowlist from './ServerAllowlist.svelte';
 	import SettingRows from './SettingRows.svelte';
@@ -364,7 +365,13 @@
 		expanded={expanded === 'log'}
 		ontoggle={toggleSection}
 	>
-		<pre class="ft-log-box ft-span">{status?.log || 'лог пуст'}</pre>
+		<ProcessLogBox
+			log={status?.log}
+			embedded
+			maxHeight="320px"
+			bind:debug={server.debug}
+			showDebugToggle
+		/>
 	</SettingRow>
 </SettingRows>
 
@@ -517,21 +524,6 @@
 		resize: vertical;
 		white-space: pre;
 		margin: 0.375rem 0;
-	}
-
-	.ft-log-box {
-		max-height: 160px;
-		overflow-y: auto;
-		padding: 0.5rem 0.625rem;
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--color-border);
-		background: var(--color-bg-primary);
-		color: var(--color-text-secondary);
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		white-space: pre-wrap;
-		word-break: break-all;
-		margin: 0;
 	}
 
 	.ft-result {

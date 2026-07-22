@@ -3,6 +3,6 @@
 	import { goto } from '$app/navigation';
 
 	onMount(() => {
-		goto('/?tab=freeturn&captcha=1', { replaceState: true });
+		goto('/?tab=freeturn', { replaceState: true });
 	});
 </script>

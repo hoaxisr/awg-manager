@@ -1,0 +1,23 @@
+services:
+  free-turn-proxy:
+    image: ghcr.io/samosvalishe/free-turn-proxy:latest
+    # build: .
+    network_mode: host
+    restart: unless-stopped
+    # Секретные переменные (OBF_KEY) храните в .env рядом с этим файлом,
+    # а не здесь. Пример: echo "OBF_KEY=<64hex>" >> .env
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Backend address: WireGuard → 127.0.0.1:51820 | Xray/sing-box → 127.0.0.1:443
+      CONNECT_ADDR: "127.0.0.1:51820"
+      # LISTEN_ADDR: "0.0.0.0:56000"
+      # MODE: "tcp"           # tcp = TCP-форвардер для Xray/sing-box; default udp = WireGuard
+      # OBF_PROFILE: "rtpopus"   # none (default) | rtpopus
+      # OBF_TIMING: "20ms"    # межпакетная задержка для RTP-мимикрии; 0=выкл; только с OBF_PROFILE и MODE=udp
+      # OBF_KEY задаётся в .env (не коммитьте ключ в git)
+      # CLIENTS_FILE: "/app/clients.json" # раскомментируйте для авторизации по Client ID
+      # DEBUG: "false"
+    # volumes:
+    #   - ./clients.json:/app/clients.json

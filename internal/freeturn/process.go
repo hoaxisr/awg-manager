@@ -54,7 +54,7 @@ func newProcess(name, binary, runtimeDir string) *process {
 		name:    name,
 		binary:  binary,
 		pidPath: filepath.Join(runtimeDir, "freeturn-"+name+".pid"),
-		logTail: newRingBuffer(80),
+		logTail: newRingBuffer(processLogMaxLines),
 		startCmd: func(bin string, args ...string) *exec.Cmd {
 			return exec.Command(bin, args...)
 		},

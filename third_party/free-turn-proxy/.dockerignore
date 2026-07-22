@@ -1,0 +1,11 @@
+.git
+.github
+.idea
+.claude
+notes
+scripts
+docs
+*.md
+dist
+coverage.out
+*.test

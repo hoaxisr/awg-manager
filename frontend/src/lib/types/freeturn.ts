@@ -20,6 +20,7 @@ export interface FreeTurnClientConfig {
 	streamsPerCred: number;
 	browser: 'chrome' | 'firefox' | 'safari';
 	manualCaptcha: boolean;
+	manualCaptchaFallback?: boolean;
 	dnsMode: 'plain' | 'doh' | 'auto';
 	dnsServers?: string;
 	clientId?: string;
@@ -87,6 +88,8 @@ export interface FreeTurnStatus {
 	remoteCheckError?: string;
 	updateAvailable?: boolean;
 	installing: boolean;
+	/** Текущее время роутера — для сверки с метками в логе freeturn. */
+	routerClock?: string;
 }
 
 export interface FreeTurnLinkPayload {

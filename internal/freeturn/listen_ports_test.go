@@ -41,8 +41,8 @@ func TestNormalizeBrowser(t *testing.T) {
 		"Chrome":   "chrome",
 		"firefox":  "firefox",
 		"safari":   "safari",
-		"":         "firefox",
-		"edge":     "firefox",
+		"":         "chrome",
+		"edge":     "chrome",
 	}
 	for in, want := range cases {
 		if got := normalizeBrowser(in); got != want {

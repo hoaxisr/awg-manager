@@ -6487,7 +6487,10 @@ definitions:
         description: -listen, local addr WG/Xray connects to (default 127.0.0.1:9000)
         type: string
       manualCaptcha:
-        description: -manual-captcha, provider=vk only
+        description: '-manual-captcha: только ручная капча'
+        type: boolean
+      manualCaptchaFallback:
+        description: -captcha-manual-fallback (не рекомендуется на роутере)
         type: boolean
       mode:
         description: -mode, udp|tcp (tunnel mode)
@@ -6724,6 +6727,10 @@ definitions:
         type: string
       remoteVersion:
         description: RemoteVersion — последняя версия с GitHub (если проверка удалась).
+        type: string
+      routerClock:
+        description: RouterClock — текущее время роутера для сверки с метками в логе
+          freeturn.
         type: string
       server:
         $ref: '#/definitions/freeturn.ProcessStatus'

@@ -113,6 +113,34 @@ build_ipk_one() {
     cp "$AWG_CLI_BIN" "$IPK_ROOT/opt/sbin/awg"
     chmod +x "$IPK_ROOT/opt/sbin/awg"
 
+    local FREETURN_SUFFIX=""
+    case "$ENTWARE_ARCH" in
+        aarch64-3.10) FREETURN_SUFFIX="arm64" ;;
+        mipsel-3.4)   FREETURN_SUFFIX="mipsle-softfloat" ;;
+        mips-3.4)     FREETURN_SUFFIX="mips-softfloat" ;;
+    esac
+    if [[ -n "$FREETURN_SUFFIX" ]]; then
+        local FT_CLIENT="$PROJECT_ROOT/prebuilt/freeturn/client-linux-${FREETURN_SUFFIX}"
+        local FT_SERVER="$PROJECT_ROOT/prebuilt/freeturn/server-linux-${FREETURN_SUFFIX}"
+        if [[ -f "$FT_CLIENT" ]]; then
+            cp "$FT_CLIENT" "$IPK_ROOT/opt/bin/freeturn-client"
+            chmod +x "$IPK_ROOT/opt/bin/freeturn-client"
+            echo "Bundled patched freeturn-client (linux-${FREETURN_SUFFIX})"
+        else
+            echo "WARNING: $FT_CLIENT not found — run scripts/build-freeturn-client.sh first"
+        fi
+        if [[ -f "$FT_SERVER" ]]; then
+            cp "$FT_SERVER" "$IPK_ROOT/opt/bin/freeturn-server"
+            chmod +x "$IPK_ROOT/opt/bin/freeturn-server"
+            echo "Bundled patched freeturn-server (linux-${FREETURN_SUFFIX})"
+        fi
+        if [[ -f "$FT_CLIENT" || -f "$FT_SERVER" ]]; then
+            mkdir -p "$IPK_ROOT/opt/etc/awg-manager/freeturn"
+            [[ -f "$FT_CLIENT" ]] && cp "$FT_CLIENT" "$IPK_ROOT/opt/etc/awg-manager/freeturn/client-linux-${FREETURN_SUFFIX}"
+            [[ -f "$FT_SERVER" ]] && cp "$FT_SERVER" "$IPK_ROOT/opt/etc/awg-manager/freeturn/server-linux-${FREETURN_SUFFIX}"
+        fi
+    fi
+
     local KMOD_VERSION
     KMOD_VERSION=$(grep 'ExpectedKmodVersion' internal/sys/kmod/download.go | grep -oP '"[^"]+"' | tr -d '"')
     local BUNDLED_DIR="$IPK_ROOT/opt/etc/awg-manager/modules/bundled"

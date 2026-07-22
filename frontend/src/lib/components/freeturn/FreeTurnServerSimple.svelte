@@ -279,7 +279,7 @@
 		{/if}
 	</WizardStep>
 
-	<ProcessLogBox log={status?.log} />
+	<ProcessLogBox log={status?.log} bind:debug={server.debug} showDebugToggle />
 </div>
 
 <style>
