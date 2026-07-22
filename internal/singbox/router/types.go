@@ -262,6 +262,17 @@ type DomainResolver struct {
 	Strategy string `json:"strategy,omitempty"`
 }
 
+// DNSClientTLSOptions is the client-side TLS subset supported by the DNS
+// server editor. The DNS server type itself enables TLS where applicable.
+type DNSClientTLSOptions struct {
+	ServerName                 string   `json:"server_name,omitempty"`
+	Insecure                   bool     `json:"insecure,omitempty"`
+	ALPN                       []string `json:"alpn,omitempty"`
+	MinVersion                 string   `json:"min_version,omitempty"`
+	MaxVersion                 string   `json:"max_version,omitempty"`
+	CertificatePublicKeySHA256 []string `json:"certificate_public_key_sha256,omitempty"`
+}
+
 type DNSServer struct {
 	Tag  string `json:"tag"`
 	Type string `json:"type"`
@@ -269,14 +280,15 @@ type DNSServer struct {
 	// — sing-box 1.13's `local` server has no `server` field and FATALs the whole
 	// config with `unknown field "server"` if we emit `"server": ""`. Validator
 	// already permits empty Server for type=local (config_dns.go:validateDNSServer).
-	Server         string          `json:"server,omitempty"`
-	ServerPort     int             `json:"server_port,omitempty"`
-	Path           string          `json:"path,omitempty"`
-	Detour         string          `json:"detour,omitempty"`
-	Strategy       string          `json:"domain_strategy,omitempty"`
-	DomainResolver *DomainResolver `json:"domain_resolver,omitempty"`
-	Inet4Range     string          `json:"inet4_range,omitempty"`
-	Inet6Range     string          `json:"inet6_range,omitempty"`
+	Server         string               `json:"server,omitempty"`
+	ServerPort     int                  `json:"server_port,omitempty"`
+	Path           string               `json:"path,omitempty"`
+	Detour         string               `json:"detour,omitempty"`
+	Strategy       string               `json:"domain_strategy,omitempty"`
+	DomainResolver *DomainResolver      `json:"domain_resolver,omitempty"`
+	TLS            *DNSClientTLSOptions `json:"tls,omitempty"`
+	Inet4Range     string               `json:"inet4_range,omitempty"`
+	Inet6Range     string               `json:"inet6_range,omitempty"`
 }
 
 type DNSRule struct {
