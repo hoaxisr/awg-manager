@@ -10,7 +10,7 @@ import (
 func TestPolicyMarkStore_Found(t *testing.T) {
 	// /show/ip/policy returns a top-level map of policy-name → policy-object
 	// (NOT wrapped in {"policy": {...}}). Verified on hardware:
-	//   curl http://localhost:79/rci/show/ip/policy
+	//   curl http://127.0.0.1:79/rci/show/ip/policy
 	//   {"Policy0":{"description":"IoT_VPN","mark":"ffffaaa","table4":4096,...},
 	//    "Policy1":{"description":"Only_Letai","mark":"ffffaab","table4":4098,...}}
 	fg := NewFakeGetter()
