@@ -117,7 +117,9 @@
 	function openCaptchaTab(): boolean {
 		const url = preferredCaptchaUrl;
 		if (!url || typeof window === 'undefined') return false;
-		const w = window.open(url, localTunnelReady ? '_blank' : popupWindowName, 'noopener,noreferrer');
+		// Без noopener: с ним window.open возвращает null (нельзя понять, открылась
+		// ли вкладка), а страница-хелпер не может закрыть popup через window.opener.
+		const w = window.open(url, localTunnelReady ? '_blank' : popupWindowName);
 		captchaTabOpen = w != null;
 		return captchaTabOpen;
 	}
@@ -129,7 +131,7 @@
 
 	function openInNewTab() {
 		if (!captchaLoadUrl) return;
-		window.open(captchaLoadUrl, '_blank', 'noopener,noreferrer');
+		window.open(captchaLoadUrl, '_blank');
 	}
 
 	function openLocalTunnelTab() {
