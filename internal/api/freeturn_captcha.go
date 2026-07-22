@@ -11,6 +11,12 @@ import (
 )
 
 // GetCaptchaStatus handles GET /api/freeturn/captcha/status.
+//
+//	@Summary	Get FreeTurn VK captcha queue and per-client status
+//	@Tags		freeturn
+//	@Produce	json
+//	@Success	200	{object}	FreeTurnCaptchaStatusResponse
+//	@Router		/freeturn/captcha/status [get]
 func (h *FreeTurnHandler) GetCaptchaStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")

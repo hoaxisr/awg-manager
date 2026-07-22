@@ -163,7 +163,11 @@
 			clientId: c.clientId ?? '',
 			sub: c.sub ?? '',
 			browser:
-				c.browser === 'chromium' ? 'chrome' : (c.browser === 'safari' || c.browser === 'chrome' ? c.browser : 'firefox'),
+				(c.browser as string) === 'chromium'
+					? 'chrome'
+					: c.browser === 'safari' || c.browser === 'chrome'
+						? c.browser
+						: 'firefox',
 			streams: c.streams > 0 ? c.streams : 10,
 			streamsPerCred: c.streamsPerCred > 0 ? c.streamsPerCred : 10
 		};

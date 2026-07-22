@@ -114,7 +114,7 @@
 		{#if client.peer.trim()}
 			<p class="ft-readonly">peer: <code>{client.peer}</code></p>
 		{/if}
-		<LinkParamsSummary {linkParams} peer={client.peer} />
+		<LinkParamsSummary payload={linkParams} peer={client.peer} />
 	</WizardStep>
 
 	<WizardStep

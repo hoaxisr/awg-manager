@@ -44,24 +44,28 @@ func (h *ImportHandler) SetTunnelsHandler(th *TunnelsHandler) {
 	h.tunnelsHandler = th
 }
 
+// ImportConfRequest is the body for POST /import/conf.
+type ImportConfRequest struct {
+	Content          string `json:"content"`
+	Name             string `json:"name"`
+	Backend          string `json:"backend"` // "nativewg" | "kernel" (default: "kernel")
+	FreeTurnClientID string `json:"freeTurnClientId,omitempty"`
+}
+
 // ImportConf imports a WireGuard/AmneziaWG config file.
 //
 //	@Summary		Import tunnel config
 //	@Tags			import
 //	@Accept			json
 //	@Produce		json
+//	@Param			body	body		ImportConfRequest	true	"Config content and optional metadata"
 //	@Security		CookieAuth
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/import/conf [post]
 func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
-	req, ok := parseJSON[struct {
-		Content          string `json:"content"`
-		Name             string `json:"name"`
-		Backend          string `json:"backend"` // "nativewg" | "kernel" (default: "kernel")
-		FreeTurnClientID string `json:"freeTurnClientId,omitempty"`
-	}](w, r, http.MethodPost)
+	req, ok := parseJSON[ImportConfRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}

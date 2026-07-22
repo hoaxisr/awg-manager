@@ -82,6 +82,12 @@ type FreeTurnStatusResponse struct {
 	Data    freeturn.Status `json:"data"`
 }
 
+// FreeTurnCaptchaStatusResponse is the envelope for GET /api/freeturn/captcha/status.
+type FreeTurnCaptchaStatusResponse struct {
+	Success bool                     `json:"success" example:"true"`
+	Data    freeturn.CaptchaOverview `json:"data"`
+}
+
 // FreeTurnClientInstanceResponse is the envelope for a single client instance.
 type FreeTurnClientInstanceResponse struct {
 	Success bool                    `json:"success" example:"true"`

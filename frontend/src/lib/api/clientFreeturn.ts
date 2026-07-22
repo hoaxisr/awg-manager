@@ -4,6 +4,7 @@ import type {
 	FreeTurnCaptchaOverview,
 	FreeTurnClientConfig,
 	FreeTurnClientInstance,
+	FreeTurnConfig,
 	FreeTurnDeleteClientResult,
 	FreeTurnGenerateLinkRequest,
 	FreeTurnGenerateLinkResult,

@@ -31,7 +31,7 @@ type ClientConfig struct {
 	ObfKey     string `json:"obfKey,omitempty"` // -obf-key, 64 hex chars, required if obfProfile != none
 
 	StreamsPerCred int    `json:"streamsPerCred"` // -streams-per-cred, provider=vk only
-	Browser        string `json:"browser"`        // -browser, chrome|firefox|safari, provider=vk only
+	Browser        string `json:"browser" swaggertype:"string" enums:"chrome,firefox,safari"` // -browser, provider=vk only
 	ManualCaptcha  bool   `json:"manualCaptcha"`  // -manual-captcha, provider=vk only
 
 	DNSMode    string `json:"dnsMode"`              // -dns-mode, plain|doh|auto

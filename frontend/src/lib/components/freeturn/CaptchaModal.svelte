@@ -458,10 +458,4 @@
 	.ft-captcha-warn {
 		color: var(--color-warning);
 	}
-
-	.ft-captcha-warn-inline {
-		display: block;
-		margin-top: 0.5rem;
-		color: var(--color-warning);
-	}
 </style>
