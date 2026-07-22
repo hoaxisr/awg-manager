@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	defaultBaseURL = "http://localhost:79/rci"
+	defaultBaseURL = "http://127.0.0.1:79/rci"
 	// defaultTimeout is the backstop for a single RCI HTTP exchange.
 	// Per-call context deadlines still win when shorter. 30s allows
 	// slow NDMS operations (interface create, flash commits, running
@@ -60,11 +60,9 @@ func (c *Client) SetAppLogger(appLogger logging.AppLogger) {
 	}
 }
 
-// New constructs a production Client pointing at localhost:79/rci with
+// New constructs a production Client pointing at 127.0.0.1:79/rci with
 // the default 10s timeout. Batcher is enabled by default; set
-// AWG_NDMS_BATCH=0 to disable. После fix формата pathToCommand
-// (null→{} в leaf) и unwrap'инга NDMS batch response (path tree
-// wrapping) — verified на Keenetic 5.x curl'ом 2026-05-23 14:30.
+// AWG_NDMS_BATCH=0 to disable.
 func New(sem *Semaphore) *Client {
 	c := &Client{
 		http:    &http.Client{Timeout: defaultTimeout, Transport: sharedTransport},
@@ -210,23 +208,6 @@ func (c *Client) GetRaw(ctx context.Context, path string) ([]byte, error) {
 // bypassBatch сообщает, что путь нельзя гонять через batch-POST: его
 // NDMS-ответ в batch-форме не совпадает по shape с direct GET, и
 // unwrapKeys не могут это восстановить.
-//
-// `/show/rc/interface/<name>` (и под-пути типа .../wireguard/asc): NDMS на
-// `{"show":{"rc":{"interface":{"<name>":{}}}}}` трактует <name> как
-// под-команду, эхо-оборачивает входное дерево И вкладывает естественный
-// вывод `{interface:{<name>:...}}` → двойная вложенность
-// show.rc.interface.<name>.interface.<name>.{контент}. unwrapKeys
-// (path_command.go) доходят только до первого <name> → отдают
-// {interface:{<name>:...}} вместо контента, и WGServerStore теряет пиров.
-// Direct GET спускается по сегментам пути и отдаёт контент напрямую.
-// Verified на Keenetic 5.0.11 2026-05-24.
-//
-// `/show/interface/<name>/summary`: batch-форма любых вариантов
-// (`{"interface":{"name":"X","summary":{}}}`, `{"interface":{"summary":{"name":"X"}}}`,
-// `{"interface":{"X":{"summary":{}}}}`, `{"interface":{"summary":{"data":"X"}}}`)
-// NDMS отказывается распознавать — возвращает `not found:
-// "show/interface/summary"` или `not found: "show/interface/<name>/summary"`.
-// REST-URL же роутится корректно. Verified на Keenetic 4.03.C.6.3 2026-05-28.
 func bypassBatch(path string) bool {
 	if strings.HasPrefix(path, "/show/rc/interface/") {
 		return true
