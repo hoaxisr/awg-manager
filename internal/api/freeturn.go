@@ -3,14 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/freeturn"
 	"github.com/hoaxisr/awg-manager/internal/response"
-	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
+	"github.com/hoaxisr/awg-manager/internal/testing"
 )
 
 // FreeTurnService is the subset of *freeturn.Service the API layer needs.
@@ -49,11 +49,18 @@ type FreeTurnService interface {
 
 // FreeTurnHandler exposes FreeTurnService over HTTP.
 type FreeTurnHandler struct {
-	svc FreeTurnService
+	svc     FreeTurnService
+	queries *ndmsquery.Queries
 }
 
 func NewFreeTurnHandler(svc FreeTurnService) *FreeTurnHandler {
 	return &FreeTurnHandler{svc: svc}
+}
+
+// SetNDMSQueries wires NDMS reads used for stable WAN IP detection when
+// generating freeturn:// share links.
+func (h *FreeTurnHandler) SetNDMSQueries(q *ndmsquery.Queries) {
+	h.queries = q
 }
 
 // FreeTurnConfigResponse is the envelope for GET /api/freeturn/config.
@@ -251,29 +258,23 @@ type GenerateLinkResponse struct {
 	} `json:"data"`
 }
 
-// ipCheckURLs mirrors the services diagnostics.testTunnelConnectivity uses
-// to learn the router's own WAN-facing IP.
-var ipCheckURLs = []string{"https://ifconfig.me", "https://icanhazip.com", "https://ip.me"}
-
-func detectExternalIP(r *http.Request) (string, error) {
-	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+func (h *FreeTurnHandler) resolveExternalIP(ctx context.Context) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	var lastErr error
-	for _, url := range ipCheckURLs {
-		result, err := httpclient.DefaultClient.Do(ctx, httpclient.CallConfig{URL: url, MaxTime: 5 * time.Second})
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		ip := strings.TrimSpace(result.Body)
-		if ip != "" {
-			return ip, nil
+
+	var fallback testing.WANIPFallback
+	var wanKernel string
+	if h.queries != nil {
+		fallback = h.queries.WANInterfaceAddress
+		if h.queries.Routes != nil && h.queries.Interfaces != nil {
+			if ndmsName, err := h.queries.Routes.GetDefaultGatewayInterface(ctx); err == nil && ndmsName != "" {
+				if kernel, err := h.queries.Interfaces.ResolveSystemName(ctx, ndmsName); err == nil {
+					wanKernel = kernel
+				}
+			}
 		}
 	}
-	if lastErr == nil {
-		lastErr = errors.New("все IP-сервисы вернули пустой ответ")
-	}
-	return "", lastErr
+	return testing.GetWANIPBound(ctx, wanKernel, fallback)
 }
 
 // GenerateLink handles POST /api/freeturn/server/link. It builds a
@@ -668,8 +669,16 @@ func (h *FreeTurnHandler) generateLinkCore(w http.ResponseWriter, r *http.Reques
 	}
 
 	peer := strings.TrimSpace(req.Peer)
-	if peer == "" {
-		ip, ipErr := detectExternalIP(r)
+	if peer != "" {
+		if !strings.Contains(peer, ":") {
+			port := srvCfg.Listen
+			if idx := strings.LastIndex(port, ":"); idx != -1 {
+				port = port[idx+1:]
+			}
+			peer = peer + ":" + port
+		}
+	} else {
+		ip, ipErr := h.resolveExternalIP(r.Context())
 		if ipErr != nil {
 			response.Error(w, "Не удалось определить внешний IP: "+ipErr.Error()+". Укажите peer вручную.", "FREETURN_EXTERNAL_IP_FAILED")
 			return
