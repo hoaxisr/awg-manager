@@ -44,6 +44,9 @@ func (h *FreeTurnHandler) deleteLinkedAwgTunnels(ctx context.Context, clientID s
 			errs = append(errs, fmt.Sprintf("%s (%s): %v", tun.Name, tun.ID, err))
 			continue
 		}
+		if h.tunnelsHandler != nil && h.tunnelsHandler.traffic != nil {
+			h.tunnelsHandler.traffic.Clear(tun.ID)
+		}
 		deleted = append(deleted, tun.ID)
 	}
 	return deleted, errs

@@ -45,14 +45,6 @@ func LocalListenPort(addr string) (int, bool) {
 	return localListenPort(addr)
 }
 
-// LocalListenPortMatch reports whether listen and endpoint refer to the same
-// localhost port (127.0.0.1, localhost, ::1).
-func LocalListenPortMatch(listen, endpoint string) bool {
-	p1, ok1 := localListenPort(listen)
-	p2, ok2 := localListenPort(endpoint)
-	return ok1 && ok2 && p1 == p2
-}
-
 func mergeListenPorts(maps ...map[int]bool) map[int]bool {
 	out := map[int]bool{}
 	for _, m := range maps {

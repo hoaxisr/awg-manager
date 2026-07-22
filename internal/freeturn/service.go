@@ -478,7 +478,9 @@ func buildClientArgs(c ClientConfig) []string {
 	if c.StreamsPerCred > 0 {
 		args = append(args, "-streams-per-cred", strconv.Itoa(c.StreamsPerCred))
 	}
-	str("-browser", normalizeBrowser(c.Browser))
+	if strings.TrimSpace(c.Browser) != "" {
+		str("-browser", normalizeBrowser(c.Browser))
+	}
 	flag("-manual-captcha", c.ManualCaptcha)
 	str("-dns-mode", c.DNSMode)
 	str("-dns-servers", c.DNSServers)

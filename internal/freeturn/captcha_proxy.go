@@ -180,8 +180,11 @@ func injectCaptchaBaseTag(html, baseHref string) string {
 				return html[:pos] + tag + html[pos:]
 			}
 		}
+	case strings.Contains(lower, "<html>"):
+		return strings.Replace(html, "<html>", "<html>"+tag, 1)
 	}
-	return html
+	// Headless fragment: parsers hoist leading <base> into the implied <head>.
+	return tag + html
 }
 
 // injectCaptchaPopupHelper adds a banner on the freeturn success page and tries to

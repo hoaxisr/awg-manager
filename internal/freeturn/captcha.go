@@ -1,7 +1,6 @@
 package freeturn
 
 import (
-	"fmt"
 	"net/url"
 	"strings"
 )
@@ -186,22 +185,4 @@ func CaptchaPortOpen() bool {
 
 func captchaListenerPIDAmong(candidatePIDs []int) (int, bool) {
 	return socketListenerPIDAmong("127.0.0.1", DefaultCaptchaPort, candidatePIDs)
-}
-
-func captchaListenerPID(port int) (int, bool) {
-	if port != DefaultCaptchaPort {
-		return socketListenerPID("127.0.0.1", port)
-	}
-	return captchaListenerPIDAmong(nil)
-}
-
-// OwnerHint builds a short user-facing queue message.
-func (o CaptchaOverview) OwnerHint() string {
-	if o.OwnerName != "" {
-		return fmt.Sprintf("Сначала решите капчу для «%s»", o.OwnerName)
-	}
-	if o.OwnerClientID != "" {
-		return fmt.Sprintf("Сначала решите капчу для клиента %s", o.OwnerClientID)
-	}
-	return ""
 }
