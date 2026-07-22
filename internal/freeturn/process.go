@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
 
 // startupGrace is how long Start waits before declaring success. If the
@@ -77,6 +79,7 @@ func (p *process) Start(args []string) error {
 	}
 
 	cmd := p.startCmd(p.binary, args...)
+	cmd.Env = freeturnRuntimeEnv(os.Environ())
 	setProcessGroup(cmd) // platform-specific (Setsid on Linux, no-op elsewhere)
 
 	stdout, err := cmd.StdoutPipe()
@@ -231,6 +234,10 @@ func binaryPresent(path string) bool {
 		return false
 	}
 	return st.Mode().Perm()&0111 != 0
+}
+
+func freeturnRuntimeEnv(base []string) []string {
+	return routerclock.AppendTZFromRouter(base)
 }
 
 func (p *process) drain(r io.Reader) {

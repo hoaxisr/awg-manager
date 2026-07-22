@@ -3039,57 +3039,88 @@ const MOCK_FREETURN_OBF_KEY = '64c1a9deadbeef77aa5510c3e2b4f6d8a1b2c3d4e5f607182
 function createInitialMockFreeturn() {
 	return {
 		binaryPresent: true,
-		client: {
-			// Клиент «работает 2ч14м» на момент старта мока.
-			running: true,
-			pid: 12844,
-			startedAt: new Date(Date.now() - (2 * 60 + 14) * 60000).toISOString(),
-		},
-		server: { running: false, pid: 13207, startedAt: null },
-		config: {
-			client: {
-				enabled: true,
-				listen: '127.0.0.1:9000',
-				peer: 'vinvanvlad.com:56000',
-				provider: 'vk',
-				links: 'https://vk.ru/call/join/hFa2abc,https://vk.ru/call/join/x91kdef',
-				streams: 8,
-				transport: 'tcp',
-				mode: 'udp',
-				bond: false,
-				obfProfile: 'rtpopus2',
-				obfKey: MOCK_FREETURN_OBF_KEY,
-				streamsPerCred: 4,
-				browser: 'chrome',
-				manualCaptcha: false,
-				dnsMode: 'auto',
-				clientId: '',
-				debug: false,
+		// Мультиинстанс (API v2). Дефолтный инстанс несёт те же данные, что
+		// раздавал v1-мок, чтобы вид совпадал с эталоном develop.
+		clients: [
+			{
+				id: 'default',
+				name: 'Клиент',
+				// Клиент «работает 2ч14м» на момент старта мока.
+				running: true,
+				pid: 12844,
+				startedAt: new Date(Date.now() - (2 * 60 + 14) * 60000).toISOString(),
+				config: {
+					enabled: true,
+					listen: '127.0.0.1:9000',
+					peer: 'vinvanvlad.com:56000',
+					provider: 'vk',
+					links: 'https://vk.ru/call/join/hFa2abc,https://vk.ru/call/join/x91kdef',
+					streams: 8,
+					transport: 'tcp',
+					mode: 'udp',
+					bond: false,
+					obfProfile: 'rtpopus2',
+					obfKey: MOCK_FREETURN_OBF_KEY,
+					streamsPerCred: 4,
+					browser: 'chrome',
+					manualCaptcha: false,
+					dnsMode: 'auto',
+					clientId: '',
+					debug: false,
+				},
 			},
-			server: {
-				enabled: false,
-				listen: '0.0.0.0:56000',
-				connect: '127.0.0.1:51820',
-				mode: 'udp',
-				obfProfile: 'rtpopus2',
-				obfKey: MOCK_FREETURN_OBF_KEY,
-				clientsFile: '',
-				debug: false,
+		],
+		servers: [
+			{
+				id: 'default',
+				name: 'Сервер',
+				running: false,
+				pid: 13207,
+				startedAt: null,
+				config: {
+					enabled: false,
+					listen: '0.0.0.0:56000',
+					connect: '127.0.0.1:51820',
+					mode: 'udp',
+					obfProfile: 'rtpopus2',
+					obfKey: MOCK_FREETURN_OBF_KEY,
+					clientsFile: '',
+					debug: false,
+				},
 			},
-		},
+		],
+		// serverId -> { enabled, clientsFile, clients: [{clientId, comment}] }
+		allowlists: {},
+		clientSeq: 1,
+		serverSeq: 1,
 	};
 }
 
 let mockFreeturn = createInitialMockFreeturn();
 
-function mockFreeturnProcessStatus(kind) {
-	const proc = mockFreeturn[kind];
-	const cfg = mockFreeturn.config[kind];
+function mockFreeturnList(kind) {
+	return kind === 'client' ? mockFreeturn.clients : mockFreeturn.servers;
+}
+
+function mockFreeturnFind(kind, id) {
+	return mockFreeturnList(kind).find((i) => i.id === id) ?? null;
+}
+
+function mockFreeturnProcessStatus(inst, kind) {
+	if (!inst) {
+		return {
+			running: false,
+			log: '',
+			binary: `/opt/bin/freeturn-${kind}`,
+			binaryPresent: mockFreeturn.binaryPresent,
+		};
+	}
+	const cfg = inst.config;
 	const endpoint = kind === 'client' ? cfg.peer : cfg.listen;
 	return {
-		running: proc.running,
-		...(proc.running ? { pid: proc.pid, startedAt: proc.startedAt } : {}),
-		...(proc.running
+		running: inst.running,
+		...(inst.running ? { pid: inst.pid, startedAt: inst.startedAt } : {}),
+		...(inst.running
 			? {
 					log:
 						'12:41:02 [info] turn pool ready: 8 streams\n' +
@@ -3100,6 +3131,13 @@ function mockFreeturnProcessStatus(kind) {
 		binary: `/opt/bin/freeturn-${kind}`,
 		binaryPresent: mockFreeturn.binaryPresent,
 	};
+}
+
+function mockFreeturnAllowlist(serverId) {
+	if (!mockFreeturn.allowlists[serverId]) {
+		mockFreeturn.allowlists[serverId] = { enabled: false, clientsFile: '', clients: [] };
+	}
+	return mockFreeturn.allowlists[serverId];
 }
 
 const MOCK_KEENETIC_PROFILES = {
@@ -7082,74 +7120,255 @@ const server = http.createServer(async (req, res) => {
 	// ── FreeTurn ───────────────────────────────────────────────────────────────
 
 	if (req.method === 'GET' && path === '/freeturn/config') {
-		sendData(res, mockFreeturn.config);
-		return;
-	}
-
-	if (
-		req.method === 'PUT' &&
-		(path === '/freeturn/client/config' || path === '/freeturn/server/config')
-	) {
-		const kind = path === '/freeturn/client/config' ? 'client' : 'server';
-		readRequestText(req).then((raw) => {
-			try {
-				mockFreeturn.config[kind] = { ...mockFreeturn.config[kind], ...JSON.parse(raw || '{}') };
-				sendData(res, mockFreeturn.config[kind]);
-			} catch (e) {
-				sendInvalidRequest(res, e);
-			}
+		sendData(res, {
+			version: 2,
+			clients: mockFreeturn.clients.map((i) => ({ id: i.id, name: i.name, config: i.config })),
+			servers: mockFreeturn.servers.map((i) => ({ id: i.id, name: i.name, config: i.config })),
 		});
 		return;
 	}
 
+	// Легаси PUT дефолтного инстанса (v1 API) + PUT конкретного инстанса (v2).
+	{
+		const legacy =
+			req.method === 'PUT' &&
+			(path === '/freeturn/client/config' || path === '/freeturn/server/config');
+		const m = req.method === 'PUT' && /^\/freeturn\/(clients|servers)\/([^/]+)$/.exec(path);
+		if (legacy || m) {
+			const kind = legacy
+				? path === '/freeturn/client/config'
+					? 'client'
+					: 'server'
+				: m[1] === 'clients'
+					? 'client'
+					: 'server';
+			const id = legacy ? 'default' : decodeURIComponent(m[2]);
+			const inst = mockFreeturnFind(kind, id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `freeturn ${kind} ${id} not found` },
+				});
+				return;
+			}
+			readRequestText(req).then((raw) => {
+				try {
+					inst.config = { ...inst.config, ...JSON.parse(raw || '{}') };
+					sendData(res, inst.config);
+				} catch (e) {
+					sendInvalidRequest(res, e);
+				}
+			});
+			return;
+		}
+	}
+
 	if (req.method === 'GET' && path === '/freeturn/status') {
+		const forceRemote = url.searchParams.get('forceRemote') === '1';
+		const defClient = mockFreeturnFind('client', 'default') ?? mockFreeturn.clients[0];
+		const defServer = mockFreeturnFind('server', 'default') ?? mockFreeturn.servers[0];
 		sendData(res, {
-			client: mockFreeturnProcessStatus('client'),
-			server: mockFreeturnProcessStatus('server'),
+			clients: mockFreeturn.clients.map((i) => ({
+				id: i.id,
+				name: i.name,
+				status: mockFreeturnProcessStatus(i, 'client'),
+			})),
+			servers: mockFreeturn.servers.map((i) => ({
+				id: i.id,
+				name: i.name,
+				status: mockFreeturnProcessStatus(i, 'server'),
+			})),
+			// Легаси-зеркала дефолтного инстанса для старых читателей.
+			client: mockFreeturnProcessStatus(defClient, 'client'),
+			server: mockFreeturnProcessStatus(defServer, 'server'),
 			installAvailable: true,
 			installVersion: '1.8.0',
+			installedVersion: mockFreeturn.binaryPresent ? '1.8.0' : undefined,
+			updateAvailable: false,
+			// Проверка апстрима — только по явному forceRemote (кнопка «Проверить обновления»).
+			...(forceRemote ? { remoteVersion: '1.8.0' } : {}),
 			installing: false,
 		});
 		return;
 	}
 
+	// Создание инстанса (v2): POST /freeturn/clients | /freeturn/servers
 	{
-		const m = req.method === 'POST' && /^\/freeturn\/(client|server)\/(start|stop)$/.exec(path);
+		const m = req.method === 'POST' && /^\/freeturn\/(clients|servers)$/.exec(path);
 		if (m) {
-			const [, kind, action] = m;
-			const proc = mockFreeturn[kind];
-			proc.running = action === 'start';
-			proc.startedAt = proc.running ? new Date().toISOString() : null;
-			sendData(res, { message: `freeturn ${kind}: ${action} (mock)` });
+			const kind = m[1] === 'clients' ? 'client' : 'server';
+			readRequestText(req).then((raw) => {
+				try {
+					const body = raw ? JSON.parse(raw) : {};
+					const seqKey = kind === 'client' ? 'clientSeq' : 'serverSeq';
+					mockFreeturn[seqKey] += 1;
+					const n = mockFreeturn[seqKey];
+					const template = mockFreeturnList(kind)[0]?.config ?? {};
+					const inst = {
+						id: `${kind}-${n}`,
+						name: body.name?.trim() || `${kind === 'client' ? 'Клиент' : 'Сервер'} ${n}`,
+						running: false,
+						pid: 20000 + n,
+						startedAt: null,
+						config: { ...structuredClone(template), enabled: false },
+					};
+					mockFreeturnList(kind).push(inst);
+					sendData(res, { id: inst.id, name: inst.name, config: inst.config });
+				} catch (e) {
+					sendInvalidRequest(res, e);
+				}
+			});
 			return;
 		}
 	}
 
-	if (req.method === 'POST' && path === '/freeturn/server/link') {
-		readRequestText(req).then((raw) => {
-			try {
-				const body = raw ? JSON.parse(raw) : {};
-				const srv = mockFreeturn.config.server;
-				const port = Number(srv.listen.split(':').pop()) || 56000;
-				const peer = `203.0.113.10:${port}`;
-				const payload = {
-					v: 1,
-					provider: body.provider || 'vk',
-					peer,
-					obf: srv.obfProfile,
-					...(srv.obfKey ? { key: srv.obfKey } : {}),
-					mtu: body.mtu || 1376,
-					...(body.clientId ? { cid: body.clientId } : {}),
-					...(body.name ? { name: body.name } : {}),
-					...(body.wg ? { wg: body.wg } : {}),
-				};
-				const link = 'freeturn://' + Buffer.from(JSON.stringify(payload)).toString('base64');
-				sendData(res, { link, peer, ...(body.clientId ? { clientId: body.clientId } : {}) });
-			} catch (e) {
-				sendInvalidRequest(res, e);
+	// Rename (PATCH) / delete (DELETE) инстанса: /freeturn/clients|servers/{id}
+	{
+		const m = /^\/freeturn\/(clients|servers)\/([^/]+)$/.exec(path);
+		if (m && (req.method === 'PATCH' || req.method === 'DELETE')) {
+			const kind = m[1] === 'clients' ? 'client' : 'server';
+			const id = decodeURIComponent(m[2]);
+			const list = mockFreeturnList(kind);
+			const inst = list.find((i) => i.id === id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `freeturn ${kind} ${id} not found` },
+				});
+				return;
 			}
-		});
-		return;
+			if (req.method === 'DELETE') {
+				if (id === 'default') {
+					sendInvalidRequest(res, 'дефолтный инстанс нельзя удалить');
+					return;
+				}
+				list.splice(list.indexOf(inst), 1);
+				if (kind === 'server') delete mockFreeturn.allowlists[id];
+				sendData(res, { message: `freeturn ${kind} ${id} удалён (mock)` });
+				return;
+			}
+			readRequestText(req).then((raw) => {
+				try {
+					const body = raw ? JSON.parse(raw) : {};
+					if (body.name?.trim()) inst.name = body.name.trim();
+					sendData(res, { id: inst.id, name: inst.name, config: inst.config });
+				} catch (e) {
+					sendInvalidRequest(res, e);
+				}
+			});
+			return;
+		}
+	}
+
+	// Start/stop — легаси дефолт (v1) + конкретный инстанс (v2).
+	{
+		const legacy = req.method === 'POST' && /^\/freeturn\/(client|server)\/(start|stop)$/.exec(path);
+		const m =
+			req.method === 'POST' &&
+			/^\/freeturn\/(clients|servers)\/([^/]+)\/(start|stop)$/.exec(path);
+		if (legacy || m) {
+			const kind = legacy ? legacy[1] : m[1] === 'clients' ? 'client' : 'server';
+			const id = legacy ? 'default' : decodeURIComponent(m[2]);
+			const action = legacy ? legacy[2] : m[3];
+			const inst = mockFreeturnFind(kind, id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `freeturn ${kind} ${id} not found` },
+				});
+				return;
+			}
+			inst.running = action === 'start';
+			inst.startedAt = inst.running ? new Date().toISOString() : null;
+			sendData(res, { message: `freeturn ${kind} ${id}: ${action} (mock)` });
+			return;
+		}
+	}
+
+	// Генерация ссылки — легаси дефолт (/server/link) + инстанс (/servers/{id}/link).
+	{
+		const legacy = req.method === 'POST' && path === '/freeturn/server/link';
+		const m = req.method === 'POST' && /^\/freeturn\/servers\/([^/]+)\/link$/.exec(path);
+		if (legacy || m) {
+			const id = legacy ? 'default' : decodeURIComponent(m[1]);
+			const inst = mockFreeturnFind('server', id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `freeturn server ${id} not found` },
+				});
+				return;
+			}
+			readRequestText(req).then((raw) => {
+				try {
+					const body = raw ? JSON.parse(raw) : {};
+					const srv = inst.config;
+					const port = Number(srv.listen.split(':').pop()) || 56000;
+					const peer = `203.0.113.10:${port}`;
+					const payload = {
+						v: 1,
+						provider: body.provider || 'vk',
+						peer,
+						obf: srv.obfProfile,
+						...(srv.obfKey ? { key: srv.obfKey } : {}),
+						mtu: body.mtu || 1376,
+						...(body.clientId ? { cid: body.clientId } : {}),
+						...(body.name ? { name: body.name } : {}),
+						...(body.wg ? { wg: body.wg } : {}),
+					};
+					const link = 'freeturn://' + Buffer.from(JSON.stringify(payload)).toString('base64');
+					sendData(res, { link, peer, ...(body.clientId ? { clientId: body.clientId } : {}) });
+				} catch (e) {
+					sendInvalidRequest(res, e);
+				}
+			});
+			return;
+		}
+	}
+
+	// Allowlist сервера: GET/POST /freeturn/servers/{id}/allowlist,
+	// DELETE .../allowlist (disable), DELETE .../allowlist/{clientId} (remove).
+	{
+		const remove = /^\/freeturn\/servers\/([^/]+)\/allowlist\/([^/]+)$/.exec(path);
+		const base = /^\/freeturn\/servers\/([^/]+)\/allowlist$/.exec(path);
+		if (remove && req.method === 'DELETE') {
+			const serverId = decodeURIComponent(remove[1]);
+			const clientId = decodeURIComponent(remove[2]);
+			const al = mockFreeturnAllowlist(serverId);
+			al.clients = al.clients.filter((c) => c.clientId !== clientId);
+			sendData(res, { message: `client ${clientId} убран из allowlist (mock)` });
+			return;
+		}
+		if (base) {
+			const serverId = decodeURIComponent(base[1]);
+			const al = mockFreeturnAllowlist(serverId);
+			if (req.method === 'GET') {
+				sendData(res, al);
+				return;
+			}
+			if (req.method === 'DELETE') {
+				al.enabled = false;
+				sendData(res, { message: 'allowlist отключён (mock)' });
+				return;
+			}
+			if (req.method === 'POST') {
+				readRequestText(req).then((raw) => {
+					try {
+						const body = raw ? JSON.parse(raw) : {};
+						const clientId = String(body.clientId ?? '').trim();
+						if (!clientId) throw new Error('clientId обязателен');
+						al.enabled = true;
+						if (!al.clients.some((c) => c.clientId === clientId)) {
+							al.clients.push({ clientId, comment: body.comment?.trim() || undefined });
+						}
+						sendData(res, { ...al, needsRestart: true });
+					} catch (e) {
+						sendInvalidRequest(res, e);
+					}
+				});
+				return;
+			}
+		}
 	}
 
 	if (req.method === 'POST' && path === '/freeturn/link/decode') {

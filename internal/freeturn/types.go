@@ -80,18 +80,59 @@ func DefaultServerConfig() ServerConfig {
 	}
 }
 
-// Config is the full persisted FreeTurn configuration (both roles can be
-// configured independently; a given router instance might only ever run
-// one of the two).
-type Config struct {
-	Client ClientConfig `json:"client"`
-	Server ServerConfig `json:"server"`
+// ClientInstance is one freeturn-client profile (separate process + listen port).
+type ClientInstance struct {
+	ID     string       `json:"id"`
+	Name   string       `json:"name"`
+	Config ClientConfig `json:"config"`
 }
 
-// DefaultConfig returns a Config with both roles at upstream defaults and
-// Enabled=false.
+// ServerInstance is one freeturn-server profile (separate process + listen port).
+type ServerInstance struct {
+	ID     string       `json:"id"`
+	Name   string       `json:"name"`
+	Config ServerConfig `json:"config"`
+}
+
+// Config is the full persisted FreeTurn configuration. Multiple client and
+// server instances can run concurrently on different listen ports.
+type Config struct {
+	Version int              `json:"version,omitempty"`
+	Clients []ClientInstance `json:"clients"`
+	Servers []ServerInstance `json:"servers"`
+
+	// Legacy v1 fields — read during migration only, never written back.
+	Client ClientConfig `json:"client,omitempty"`
+	Server ServerConfig `json:"server,omitempty"`
+}
+
+// DefaultConfig returns a v2 config with one default client and server.
 func DefaultConfig() Config {
-	return Config{Client: DefaultClientConfig(), Server: DefaultServerConfig()}
+	return Config{
+		Version: ConfigVersion,
+		Clients: []ClientInstance{{
+			ID:     DefaultInstanceID,
+			Name:   "Клиент",
+			Config: DefaultClientConfig(),
+		}},
+		Servers: []ServerInstance{{
+			ID:     DefaultInstanceID,
+			Name:   "Сервер",
+			Config: DefaultServerConfig(),
+		}},
+	}
+}
+
+// CreateClientInput is the body for POST /api/freeturn/clients.
+type CreateClientInput struct {
+	Name   string        `json:"name,omitempty"`
+	Config *ClientConfig `json:"config,omitempty"`
+}
+
+// CreateServerInput is the body for POST /api/freeturn/servers.
+type CreateServerInput struct {
+	Name   string        `json:"name,omitempty"`
+	Config *ServerConfig `json:"config,omitempty"`
 }
 
 // ProcessStatus describes the live state of one managed child process.
@@ -116,8 +157,18 @@ type ProcessStatus struct {
 	BinaryPresent bool   `json:"binaryPresent"`
 }
 
-// Status is the combined client+server status returned to the API/frontend.
+// InstanceStatus pairs instance metadata with live process state.
+type InstanceStatus struct {
+	ID     string        `json:"id"`
+	Name   string        `json:"name"`
+	Status ProcessStatus `json:"status"`
+}
+
+// Status is the combined status returned to the API/frontend.
 type Status struct {
+	Clients []InstanceStatus `json:"clients"`
+	Servers []InstanceStatus `json:"servers"`
+	// Client/Server mirror the default instance for legacy API consumers.
 	Client ProcessStatus `json:"client"`
 	Server ProcessStatus `json:"server"`
 	// InstallAvailable: для этой архитектуры есть закреплённая сборка и
@@ -125,6 +176,14 @@ type Status struct {
 	InstallAvailable bool `json:"installAvailable"`
 	// InstallVersion — версия freeturn, которую поставит установка.
 	InstallVersion string `json:"installVersion,omitempty"`
+	// InstalledVersion — версия, записанная после последней установки.
+	InstalledVersion string `json:"installedVersion,omitempty"`
+	// UpdateAvailable — бинари отсутствуют или устарели относительно InstallVersion.
+	UpdateAvailable bool `json:"updateAvailable"`
+	// RemoteVersion — последняя версия с GitHub (если проверка удалась).
+	RemoteVersion string `json:"remoteVersion,omitempty"`
+	// RemoteCheckError — ошибка последней проверки GitHub (не блокирует pin-fallback).
+	RemoteCheckError string `json:"remoteCheckError,omitempty"`
 	// Installing — установка сейчас идёт (кнопка блокируется).
 	Installing bool `json:"installing"`
 }

@@ -4,29 +4,38 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard as copyText } from '$lib/utils/clipboard';
 	import { Tabs } from '$lib/components/ui';
-	import type { FreeTurnConfig, FreeTurnClientConfig, FreeTurnServerConfig, FreeTurnStatus } from '$lib/types';
+	import type {
+		FreeTurnClientConfig,
+		FreeTurnClientInstance,
+		FreeTurnConfig,
+		FreeTurnServerConfig,
+		FreeTurnServerInstance,
+		FreeTurnStatus
+	} from '$lib/types';
 	import ClientPanel from './ClientPanel.svelte';
 	import ServerPanel from './ServerPanel.svelte';
 	import StatusStrip from './StatusStrip.svelte';
+	import InstanceBar from './InstanceBar.svelte';
 
-	// Оркестратор вкладки FreeTurn на главной: владеет API-вызовами,
-	// конфигом и поллингом статуса; панели — чистый UI на props/callbacks.
 	type FtTab = 'client' | 'server';
 
 	let ftTab: FtTab = $state('client');
 	let loading = $state(true);
 	let saving = $state(false);
 
-	let config: FreeTurnConfig | null = $state(null);
-	let status: FreeTurnStatus | null = $state(null);
-	// Снапшот сохранённого конфига — источник dirty-подсветки и «Отменить».
-	let savedConfig: FreeTurnConfig | null = $state(null);
+	let config = $state<FreeTurnConfig | null>(null);
+	let status = $state<FreeTurnStatus | null>(null);
+	let savedConfig = $state<FreeTurnConfig | null>(null);
+
+	let selectedClientId = $state('default');
+	let selectedServerId = $state('default');
 
 	let expanded: string | null = $state(null);
 
 	let importing = $state(false);
 	let importedWG: string | null = $state(null);
 	let installing = $state(false);
+	let checkingUpdates = $state(false);
 
 	let genProvider = $state('vk');
 	let genMTU = $state(1376);
@@ -41,40 +50,72 @@
 	let statusPoll: ReturnType<typeof setInterval> | undefined;
 	let routerHost = $state('');
 
-	function errText(e: unknown): string {
-		return e instanceof Error ? e.message : String(e ?? '');
-	}
-
-	// Бейджи «вкл» не нужны: состояние обоих процессов всегда видно в пульте сверху.
 	const ftTabs = [
 		{ id: 'client', label: 'Клиент' },
 		{ id: 'server', label: 'Сервер' }
 	];
 
+	const selectedClient = $derived(
+		config
+			? (config.clients.find((c: FreeTurnClientInstance) => c.id === selectedClientId) ??
+					config.clients[0] ??
+					null)
+			: null
+	);
+	const selectedServer = $derived(
+		config
+			? (config.servers.find((s: FreeTurnServerInstance) => s.id === selectedServerId) ??
+					config.servers[0] ??
+					null)
+			: null
+	);
+	const savedClient = $derived(
+		savedConfig
+			? (savedConfig.clients.find((c: FreeTurnClientInstance) => c.id === selectedClientId) ??
+					savedConfig.clients[0] ??
+					null)
+			: null
+	);
+	const savedServer = $derived(
+		savedConfig
+			? (savedConfig.servers.find((s: FreeTurnServerInstance) => s.id === selectedServerId) ??
+					savedConfig.servers[0] ??
+					null)
+			: null
+	);
+	const clientStatus = $derived(
+		status
+			? (status.clients.find((c) => c.id === selectedClientId)?.status ?? status.client)
+			: undefined
+	);
+	const serverStatus = $derived(
+		status
+			? (status.servers.find((s) => s.id === selectedServerId)?.status ?? status.server)
+			: undefined
+	);
+	const defaultClientListenPort = $derived.by(() => {
+		const listen = config?.clients.find((c) => c.id === selectedClientId)?.config.listen;
+		const port = Number(listen?.split(':').pop());
+		return port > 0 ? port : 9000;
+	});
+
+	function errText(e: unknown): string {
+		return e instanceof Error ? e.message : String(e ?? '');
+	}
+
 	onMount(async () => {
 		routerHost = window.location.hostname;
-		await Promise.all([loadConfig(), loadStatus()]);
+		await Promise.all([loadConfig(), loadStatus(false)]);
 		loading = false;
-		// Поллинг живёт, пока вкладка смонтирована (уход с вкладки = unmount).
-		statusPoll = setInterval(loadStatus, 3000);
+		statusPoll = setInterval(() => void loadStatus(), 3000);
+		// Проверку апстрим-релиза (GitHub) не делаем автоматически — только по
+		// кнопке «Проверить обновления» (роутер часто без доступа к GitHub).
 	});
 
 	onDestroy(() => {
 		if (statusPoll) clearInterval(statusPoll);
 	});
 
-	async function loadConfig() {
-		try {
-			const norm = normalizeConfig(await api.getFreeTurnConfig());
-			savedConfig = structuredClone(norm);
-			config = norm;
-		} catch (e) {
-			notifications.error('Не удалось загрузить конфигурацию FreeTurn: ' + errText(e));
-		}
-	}
-
-	// Backend опускает пустые опциональные поля (Go omitempty) — они приходят
-	// undefined, а <Input bind:value> кидает props_invalid_value; приводим к "".
 	function normalizeClient(c: FreeTurnClientConfig): FreeTurnClientConfig {
 		return {
 			...c,
@@ -98,29 +139,88 @@
 	}
 
 	function normalizeConfig(cfg: FreeTurnConfig): FreeTurnConfig {
-		return { client: normalizeClient(cfg.client), server: normalizeServer(cfg.server) };
+		return {
+			...cfg,
+			clients: (cfg.clients ?? []).map((c) => ({
+				...c,
+				config: normalizeClient(c.config)
+			})),
+			servers: (cfg.servers ?? []).map((s) => ({
+				...s,
+				config: normalizeServer(s.config)
+			}))
+		};
 	}
 
-	async function loadStatus() {
+	async function loadConfig() {
 		try {
-			status = await api.getFreeTurnStatus();
-		} catch {
-			// Молча: страница показывает последнее известное состояние,
-			// как ping-бейджи списка туннелей.
+			const norm = normalizeConfig(await api.getFreeTurnConfig());
+			savedConfig = structuredClone(norm);
+			config = norm;
+			if (!norm.clients.some((c) => c.id === selectedClientId)) {
+				selectedClientId = norm.clients[0]?.id ?? 'default';
+			}
+			if (!norm.servers.some((s) => s.id === selectedServerId)) {
+				selectedServerId = norm.servers[0]?.id ?? 'default';
+			}
+		} catch (e) {
+			notifications.error('Не удалось загрузить конфигурацию FreeTurn: ' + errText(e));
 		}
 	}
 
+	async function loadStatus(forceRemote = false) {
+		try {
+			status = await api.getFreeTurnStatus(forceRemote);
+		} catch {
+			// Молча — как ping-бейджи списка туннелей.
+		}
+	}
+
+	async function checkUpdates() {
+		checkingUpdates = true;
+		try {
+			await loadStatus(true);
+			if (status?.installedVersion && !status.updateAvailable && !status.remoteCheckError) {
+				notifications.info('Установлена актуальная версия');
+			}
+		} finally {
+			checkingUpdates = false;
+		}
+	}
+
+	function patchClientInConfig(id: string, cfg: FreeTurnClientConfig) {
+		if (!config || !savedConfig) return;
+		const idx = config.clients.findIndex((c) => c.id === id);
+		const sidx = savedConfig.clients.findIndex((c) => c.id === id);
+		if (idx >= 0) config.clients[idx].config = structuredClone(cfg);
+		if (sidx >= 0) savedConfig.clients[sidx].config = structuredClone(cfg);
+	}
+
+	function patchServerInConfig(id: string, cfg: FreeTurnServerConfig) {
+		if (!config || !savedConfig) return;
+		const idx = config.servers.findIndex((s) => s.id === id);
+		const sidx = savedConfig.servers.findIndex((s) => s.id === id);
+		if (idx >= 0) config.servers[idx].config = structuredClone(cfg);
+		if (sidx >= 0) savedConfig.servers[sidx].config = structuredClone(cfg);
+	}
+
 	async function saveClientConfig(cfg: FreeTurnClientConfig) {
+		if (!selectedClient) return;
 		saving = true;
 		try {
 			const sent = $state.snapshot(cfg);
-			const norm = normalizeClient(await api.updateFreeTurnClientConfig(cfg));
+			const id = selectedClient.id;
+			const norm = normalizeClient(
+				id === 'default'
+					? await api.updateFreeTurnClientConfig(cfg)
+					: await api.updateFreeTurnClientInstance(id, cfg)
+			);
 			if (config && savedConfig) {
-				savedConfig.client = norm;
-				// Не затирать правки, сделанные пока PUT был в полёте:
-				// форму обновляем эхом сервера, только если она не менялась.
-				if (JSON.stringify($state.snapshot(config.client)) === JSON.stringify(sent)) {
-					config.client = structuredClone(norm);
+				const sidx = savedConfig.clients.findIndex((c) => c.id === id);
+				if (sidx >= 0) savedConfig.clients[sidx].config = structuredClone(norm);
+				const idx = config.clients.findIndex((c) => c.id === id);
+				if (idx >= 0 && JSON.stringify($state.snapshot(config.clients[idx].config)) === JSON.stringify(sent)) {
+					config.clients[idx].config = structuredClone(norm);
 				}
 			}
 			notifications.success('Настройки клиента сохранены');
@@ -132,14 +232,22 @@
 	}
 
 	async function saveServerConfig(cfg: FreeTurnServerConfig) {
+		if (!selectedServer) return;
 		saving = true;
 		try {
 			const sent = $state.snapshot(cfg);
-			const norm = normalizeServer(await api.updateFreeTurnServerConfig(cfg));
+			const id = selectedServer.id;
+			const norm = normalizeServer(
+				id === 'default'
+					? await api.updateFreeTurnServerConfig(cfg)
+					: await api.updateFreeTurnServerInstance(id, cfg)
+			);
 			if (config && savedConfig) {
-				savedConfig.server = norm;
-				if (JSON.stringify($state.snapshot(config.server)) === JSON.stringify(sent)) {
-					config.server = structuredClone(norm);
+				const sidx = savedConfig.servers.findIndex((s) => s.id === id);
+				if (sidx >= 0) savedConfig.servers[sidx].config = structuredClone(norm);
+				const idx = config.servers.findIndex((s) => s.id === id);
+				if (idx >= 0 && JSON.stringify($state.snapshot(config.servers[idx].config)) === JSON.stringify(sent)) {
+					config.servers[idx].config = structuredClone(norm);
 				}
 			}
 			notifications.success('Настройки сервера сохранены');
@@ -151,20 +259,23 @@
 	}
 
 	function revertClient() {
-		if (config && savedConfig) config.client = $state.snapshot(savedConfig.client);
+		if (!config || !savedClient) return;
+		patchClientInConfig(selectedClientId, $state.snapshot(savedClient.config));
 	}
 
 	function revertServer() {
-		if (config && savedConfig) config.server = $state.snapshot(savedConfig.server);
+		if (!config || !savedServer) return;
+		patchServerInConfig(selectedServerId, $state.snapshot(savedServer.config));
 	}
 
 	async function toggleClient(on: boolean) {
+		if (!selectedClient) return;
 		try {
 			if (on) {
-				await api.startFreeTurnClient();
+				await api.startFreeTurnClient(selectedClient.id);
 				notifications.success('FreeTurn клиент запущен');
 			} else {
-				await api.stopFreeTurnClient();
+				await api.stopFreeTurnClient(selectedClient.id);
 				notifications.success('FreeTurn клиент остановлен');
 			}
 		} catch (e) {
@@ -175,18 +286,85 @@
 	}
 
 	async function toggleServer(on: boolean) {
+		if (!selectedServer) return;
 		try {
 			if (on) {
-				await api.startFreeTurnServer();
+				await api.startFreeTurnServer(selectedServer.id);
 				notifications.success('FreeTurn сервер запущен');
 			} else {
-				await api.stopFreeTurnServer();
+				await api.stopFreeTurnServer(selectedServer.id);
 				notifications.success('FreeTurn сервер остановлен');
 			}
 		} catch (e) {
 			notifications.error(errText(e) || 'Не удалось переключить сервер');
 		} finally {
 			await loadStatus();
+		}
+	}
+
+	async function addClient() {
+		try {
+			const inst = await api.createFreeTurnClient();
+			await loadConfig();
+			selectedClientId = inst.id;
+			notifications.success(`Клиент «${inst.name}» создан`);
+		} catch (e) {
+			notifications.error('Не удалось создать клиент: ' + errText(e));
+		}
+	}
+
+	async function addServer() {
+		try {
+			const inst = await api.createFreeTurnServer();
+			await loadConfig();
+			selectedServerId = inst.id;
+			notifications.success(`Сервер «${inst.name}» создан`);
+		} catch (e) {
+			notifications.error('Не удалось создать сервер: ' + errText(e));
+		}
+	}
+
+	async function deleteClient(id: string) {
+		const name = config?.clients.find((c) => c.id === id)?.name ?? id;
+		if (!confirm(`Удалить клиент «${name}»? Настройки инстанса будут потеряны.`)) return;
+		try {
+			await api.deleteFreeTurnClient(id);
+			await loadConfig();
+			await loadStatus();
+			notifications.success('Клиент удалён');
+		} catch (e) {
+			notifications.error('Не удалось удалить: ' + errText(e));
+		}
+	}
+
+	async function deleteServer(id: string) {
+		const name = config?.servers.find((s) => s.id === id)?.name ?? id;
+		if (!confirm(`Удалить сервер «${name}»? Настройки инстанса будут потеряны.`)) return;
+		try {
+			await api.deleteFreeTurnServer(id);
+			await loadConfig();
+			await loadStatus();
+			notifications.success('Сервер удалён');
+		} catch (e) {
+			notifications.error('Не удалось удалить: ' + errText(e));
+		}
+	}
+
+	async function renameClient(id: string, name: string) {
+		try {
+			await api.renameFreeTurnClient(id, name);
+			await loadConfig();
+		} catch (e) {
+			notifications.error('Не удалось переименовать: ' + errText(e));
+		}
+	}
+
+	async function renameServer(id: string, name: string) {
+		try {
+			await api.renameFreeTurnServer(id, name);
+			await loadConfig();
+		} catch (e) {
+			notifications.error('Не удалось переименовать: ' + errText(e));
 		}
 	}
 
@@ -212,25 +390,25 @@
 	}
 
 	async function applyImportLink(link: string) {
-		if (!link.trim()) return;
+		if (!link.trim() || !selectedClient || !config) return;
 		importing = true;
 		try {
 			const payload = await api.decodeFreeTurnLink(link.trim());
-			if (config) {
-				config.client.peer = payload.peer ?? config.client.peer;
-				config.client.provider = payload.provider || config.client.provider;
-				if (payload.obf) {
-					config.client.obfProfile = payload.obf as typeof config.client.obfProfile;
-				}
-				config.client.obfKey = payload.key ?? config.client.obfKey;
-				if (payload.n && payload.n > 0) config.client.streams = payload.n;
-				if (payload.spc && payload.spc > 0) config.client.streamsPerCred = payload.spc;
-				if (payload.cid) config.client.clientId = payload.cid;
-				if (payload.transport) config.client.transport = payload.transport as typeof config.client.transport;
-				if (payload.mode) config.client.mode = payload.mode as typeof config.client.mode;
-				if (typeof payload.bond === 'boolean') config.client.bond = payload.bond;
-				if (typeof payload.mcap === 'boolean') config.client.manualCaptcha = payload.mcap;
+			const c = selectedClient.config;
+			c.peer = payload.peer ?? c.peer;
+			c.provider = payload.provider || c.provider;
+			if (payload.obf) {
+				c.obfProfile = payload.obf as typeof c.obfProfile;
 			}
+			c.obfKey = payload.key ?? c.obfKey;
+			if (payload.n && payload.n > 0) c.streams = payload.n;
+			if (payload.spc && payload.spc > 0) c.streamsPerCred = payload.spc;
+			if (payload.cid) c.clientId = payload.cid;
+			if (payload.transport) c.transport = payload.transport as typeof c.transport;
+			if (payload.mode) c.mode = payload.mode as typeof c.mode;
+			if (typeof payload.bond === 'boolean') c.bond = payload.bond;
+			if (typeof payload.mcap === 'boolean') c.manualCaptcha = payload.mcap;
+
 			const wg = payload.wg?.trim() ? payload.wg : null;
 			importedWG = wg;
 
@@ -255,6 +433,7 @@
 	}
 
 	async function generateLink(provider: string, mtu: number, wg: string, clientId: string, name: string) {
+		if (!selectedServer) return;
 		generating = true;
 		try {
 			const result = await api.generateFreeTurnLink({
@@ -262,7 +441,8 @@
 				mtu,
 				wg: wg.trim() || undefined,
 				clientId: clientId.trim() || undefined,
-				name: name.trim() || undefined
+				name: name.trim() || undefined,
+				serverId: selectedServer.id
 			});
 			generatedLink = result.link;
 			generatedPeer = result.peer;
@@ -273,11 +453,26 @@
 			generating = false;
 		}
 	}
+
+	const clientBarItems = $derived(
+		(config ? config.clients : []).map((c: FreeTurnClientInstance) => ({
+			id: c.id,
+			name: c.name,
+			running: status?.clients.find((s) => s.id === c.id)?.status.running
+		}))
+	);
+	const serverBarItems = $derived(
+		(config ? config.servers : []).map((s: FreeTurnServerInstance) => ({
+			id: s.id,
+			name: s.name,
+			running: status?.servers.find((st) => st.id === s.id)?.status.running
+		}))
+	);
 </script>
 
 <StatusStrip
-	client={status?.client}
-	server={status?.server}
+	client={clientStatus}
+	server={serverStatus}
 	onToggleClient={toggleClient}
 	onToggleServer={toggleServer}
 />
@@ -296,49 +491,87 @@
 {#if loading || !config}
 	<div class="ft-loading">Загрузка…</div>
 {:else if ftTab === 'client'}
-	<ClientPanel
-		client={config.client}
-		saved={savedConfig?.client ?? null}
-		status={status?.client}
-		{saving}
-		{routerHost}
-		{importing}
-		{importedWG}
-		installAvailable={status?.installAvailable ?? false}
-		installVersion={status?.installVersion}
-		installing={installing || (status?.installing ?? false)}
-		bind:expanded
-		onInstall={install}
-		onSave={() => saveClientConfig(config!.client)}
-		onRevert={revertClient}
-		onImport={applyImportLink}
-		onCopy={copy}
+	<InstanceBar
+		items={clientBarItems}
+		selectedId={selectedClientId}
+		onSelect={(id) => {
+			selectedClientId = id;
+		}}
+		onAdd={addClient}
+		onDelete={deleteClient}
+		onRename={renameClient}
 	/>
+	{#if selectedClient}
+		<ClientPanel
+			client={selectedClient.config}
+			saved={savedClient?.config ?? null}
+			status={clientStatus}
+			{saving}
+			{routerHost}
+			{importing}
+			{importedWG}
+			installAvailable={status?.installAvailable ?? false}
+			installVersion={status?.installVersion}
+			installedVersion={status?.installedVersion}
+			updateAvailable={status?.updateAvailable ?? false}
+			remoteVersion={status?.remoteVersion}
+			remoteCheckError={status?.remoteCheckError}
+			installing={installing || (status?.installing ?? false)}
+			{checkingUpdates}
+			bind:expanded
+			onInstall={install}
+			onCheckUpdates={checkUpdates}
+			onSave={() => saveClientConfig(selectedClient!.config)}
+			onRevert={revertClient}
+			onImport={applyImportLink}
+			onCopy={copy}
+		/>
+	{/if}
 {:else}
-	<ServerPanel
-		server={config.server}
-		saved={savedConfig?.server ?? null}
-		status={status?.server}
-		{saving}
-		installAvailable={status?.installAvailable ?? false}
-		installVersion={status?.installVersion}
-		installing={installing || (status?.installing ?? false)}
-		onInstall={install}
-		{generating}
-		{generatedLink}
-		{generatedPeer}
-		{generatedClientId}
-		bind:genProvider
-		bind:genMTU
-		bind:genWG
-		bind:genClientId
-		bind:genName
-		bind:expanded
-		onSave={() => saveServerConfig(config!.server)}
-		onRevert={revertServer}
-		onGenerate={generateLink}
-		onCopy={copy}
+	<InstanceBar
+		items={serverBarItems}
+		selectedId={selectedServerId}
+		onSelect={(id) => {
+			selectedServerId = id;
+		}}
+		onAdd={addServer}
+		onDelete={deleteServer}
+		onRename={renameServer}
 	/>
+	{#if selectedServer}
+		<ServerPanel
+			server={selectedServer.config}
+			serverInstanceId={selectedServer.id}
+			saved={savedServer?.config ?? null}
+			status={serverStatus}
+			{saving}
+			defaultClientListenPort={defaultClientListenPort}
+			installAvailable={status?.installAvailable ?? false}
+			installVersion={status?.installVersion}
+			installedVersion={status?.installedVersion}
+			updateAvailable={status?.updateAvailable ?? false}
+			remoteVersion={status?.remoteVersion}
+			remoteCheckError={status?.remoteCheckError}
+			installing={installing || (status?.installing ?? false)}
+			{checkingUpdates}
+			onInstall={install}
+			onCheckUpdates={checkUpdates}
+			{generating}
+			{generatedLink}
+			{generatedPeer}
+			{generatedClientId}
+			bind:genProvider
+			bind:genMTU
+			bind:genWG
+			bind:genClientId
+			bind:genName
+			bind:expanded
+			onSave={() => saveServerConfig(selectedServer!.config)}
+			onRevert={revertServer}
+			onGenerate={generateLink}
+			onCopy={copy}
+		/>
+	{/if}
 {/if}
 
 <style>

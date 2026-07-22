@@ -78,12 +78,13 @@ func (s *Service) SetDownloader(dl Downloader) {
 }
 
 // InstallInfo reports whether one-click install is available and which
-// version it would install.
+// version it would install (always the build pin).
 func (s *Service) InstallInfo() (version string, available bool) {
 	if s.installSpecs == nil || s.downloader == nil {
 		return "", false
 	}
-	return s.installSpecs.Client.Version, true
+	_, ver := s.resolveInstallSpecs()
+	return ver, true
 }
 
 // Installing reports whether an install is currently in flight (for status).
@@ -115,14 +116,19 @@ func (s *Service) InstallBinaries(ctx context.Context) error {
 		s.installMu.Unlock()
 	}()
 
-	if err := s.installOne(ctx, s.clientBin, s.installSpecs.Client); err != nil {
+	specs, installVer := s.resolveInstallSpecs()
+
+	if err := s.installOne(ctx, s.clientBin, specs.Client); err != nil {
 		return fmt.Errorf("клиент: %w", err)
 	}
-	if err := s.installOne(ctx, s.serverBin, s.installSpecs.Server); err != nil {
+	if err := s.installOne(ctx, s.serverBin, specs.Server); err != nil {
 		return fmt.Errorf("сервер: %w", err)
 	}
-	s.appLog.Info("install", PinnedVersion,
-		fmt.Sprintf("freeturn v%s установлен: %s, %s", PinnedVersion, s.clientBin, s.serverBin))
+	if err := s.writeInstalledVersion(installVer); err != nil {
+		s.appLog.Warn("install", "version-file", err.Error())
+	}
+	s.appLog.Info("install", installVer,
+		fmt.Sprintf("freeturn v%s установлен: %s, %s", installVer, s.clientBin, s.serverBin))
 	return nil
 }
 

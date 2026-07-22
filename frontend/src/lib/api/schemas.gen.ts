@@ -492,8 +492,23 @@ const api_ExternalTunnelsResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_FreeTurnAllowlistResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => freeturn_AllowlistStatus))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_FreeTurnClientInstanceResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => freeturn_ClientInstance))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_FreeTurnConfigResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => freeturn_Config))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_FreeTurnServerInstanceResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => freeturn_ServerInstance))),
 	success: v.optional(v.nullable(v.boolean())),
 });
 
@@ -2274,6 +2289,17 @@ const diagnostics_DNSUpstream: v.GenericSchema = v.looseObject({
 	sni: v.optional(v.nullable(v.string())),
 });
 
+const freeturn_AllowlistEntry: v.GenericSchema = v.looseObject({
+	clientId: v.optional(v.nullable(v.string())),
+	comment: v.optional(v.nullable(v.string())),
+});
+
+const freeturn_AllowlistStatus: v.GenericSchema = v.looseObject({
+	clients: v.optional(v.nullable(v.array(v.lazy(() => freeturn_AllowlistEntry)))),
+	clientsFile: v.optional(v.nullable(v.string())),
+	enabled: v.optional(v.nullable(v.boolean())),
+});
+
 const freeturn_ClientConfig: v.GenericSchema = v.looseObject({
 	bond: v.optional(v.nullable(v.boolean())),
 	browser: v.optional(v.nullable(v.string())),
@@ -2298,9 +2324,24 @@ const freeturn_ClientConfig: v.GenericSchema = v.looseObject({
 	turnPort: v.optional(v.nullable(v.number())),
 });
 
+const freeturn_ClientInstance: v.GenericSchema = v.looseObject({
+	config: v.optional(v.nullable(v.lazy(() => freeturn_ClientConfig))),
+	id: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+});
+
 const freeturn_Config: v.GenericSchema = v.looseObject({
 	client: v.optional(v.nullable(v.lazy(() => freeturn_ClientConfig))),
+	clients: v.optional(v.nullable(v.array(v.lazy(() => freeturn_ClientInstance)))),
 	server: v.optional(v.nullable(v.lazy(() => freeturn_ServerConfig))),
+	servers: v.optional(v.nullable(v.array(v.lazy(() => freeturn_ServerInstance)))),
+	version: v.optional(v.nullable(v.number())),
+});
+
+const freeturn_InstanceStatus: v.GenericSchema = v.looseObject({
+	id: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+	status: v.optional(v.nullable(v.lazy(() => freeturn_ProcessStatus))),
 });
 
 const freeturn_LinkPayload: v.GenericSchema = v.looseObject({
@@ -2345,12 +2386,24 @@ const freeturn_ServerConfig: v.GenericSchema = v.looseObject({
 	obfProfile: v.optional(v.nullable(v.string())),
 });
 
+const freeturn_ServerInstance: v.GenericSchema = v.looseObject({
+	config: v.optional(v.nullable(v.lazy(() => freeturn_ServerConfig))),
+	id: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+});
+
 const freeturn_Status: v.GenericSchema = v.looseObject({
 	client: v.optional(v.nullable(v.lazy(() => freeturn_ProcessStatus))),
+	clients: v.optional(v.nullable(v.array(v.lazy(() => freeturn_InstanceStatus)))),
 	installAvailable: v.optional(v.nullable(v.boolean())),
 	installVersion: v.optional(v.nullable(v.string())),
+	installedVersion: v.optional(v.nullable(v.string())),
 	installing: v.optional(v.nullable(v.boolean())),
+	remoteCheckError: v.optional(v.nullable(v.string())),
+	remoteVersion: v.optional(v.nullable(v.string())),
 	server: v.optional(v.nullable(v.lazy(() => freeturn_ProcessStatus))),
+	servers: v.optional(v.nullable(v.array(v.lazy(() => freeturn_InstanceStatus)))),
+	updateAvailable: v.optional(v.nullable(v.boolean())),
 });
 
 const presets_DNSEngine: v.GenericSchema = v.looseObject({
@@ -2404,6 +2457,10 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"DELETE /access-policies/permit": v.lazy(() => api_OkResponse),
 	"DELETE /awg3-endpoints/{id}": v.lazy(() => api_Awg3ListResponse),
 	"DELETE /connections": v.lazy(() => api_ConnectionKillEnvelope),
+	"DELETE /freeturn/clients/{id}": v.lazy(() => api_APIEnvelope),
+	"DELETE /freeturn/servers/{id}": v.lazy(() => api_APIEnvelope),
+	"DELETE /freeturn/servers/{id}/allowlist": v.lazy(() => api_FreeTurnAllowlistResponse),
+	"DELETE /freeturn/servers/{id}/allowlist/{clientId}": v.lazy(() => api_FreeTurnAllowlistResponse),
 	"DELETE /hydraroute/geo-files/delete": v.lazy(() => api_OkResponse),
 	"DELETE /managed-servers/{id}": v.lazy(() => api_ServersAllResponse),
 	"DELETE /managed-servers/{id}/peers/{pubkey}": v.lazy(() => api_ServersAllResponse),
@@ -2429,6 +2486,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /download/outbounds": v.lazy(() => api_DownloadOutboundsResponse),
 	"GET /external-tunnels": v.lazy(() => api_ExternalTunnelsResponse),
 	"GET /freeturn/config": v.lazy(() => api_FreeTurnConfigResponse),
+	"GET /freeturn/servers/{id}/allowlist": v.lazy(() => api_FreeTurnAllowlistResponse),
 	"GET /freeturn/status": v.lazy(() => api_FreeTurnStatusResponse),
 	"GET /health": v.lazy(() => api_HealthResponse),
 	"GET /hydraroute/config": v.lazy(() => api_HydraRouteConfigResponse),
@@ -2571,6 +2629,8 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /tunnels/traffic": v.lazy(() => api_TunnelTrafficResponse),
 	"GET /wan/status": v.lazy(() => api_WANStatusEnvelope),
 	"PATCH /awg3-endpoints/{id}": v.lazy(() => api_Awg3ListResponse),
+	"PATCH /freeturn/clients/{id}": v.lazy(() => api_APIEnvelope),
+	"PATCH /freeturn/servers/{id}": v.lazy(() => api_APIEnvelope),
 	"PATCH /singbox/tunnels/rename": v.lazy(() => api_SingboxTunnelsResponse),
 	"POST /access-policies/assign": v.lazy(() => api_OkResponse),
 	"POST /access-policies/create": v.lazy(() => api_AccessPolicyResponse),
@@ -2611,9 +2671,17 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /dns-routes/set-enabled": v.lazy(() => api_APIEnvelope),
 	"POST /dns-routes/update": v.lazy(() => api_DnsRouteResponse),
 	"POST /external-tunnels/adopt": v.lazy(() => api_APIEnvelope),
+	"POST /freeturn/clients": v.lazy(() => api_FreeTurnClientInstanceResponse),
+	"POST /freeturn/clients/{id}/start": v.lazy(() => api_APIEnvelope),
+	"POST /freeturn/clients/{id}/stop": v.lazy(() => api_APIEnvelope),
 	"POST /freeturn/install": v.lazy(() => api_APIEnvelope),
 	"POST /freeturn/link/decode": v.lazy(() => api_DecodeLinkResponse),
 	"POST /freeturn/server/link": v.lazy(() => api_GenerateLinkResponse),
+	"POST /freeturn/servers": v.lazy(() => api_FreeTurnServerInstanceResponse),
+	"POST /freeturn/servers/{id}/allowlist": v.lazy(() => api_FreeTurnAllowlistResponse),
+	"POST /freeturn/servers/{id}/link": v.lazy(() => api_GenerateLinkResponse),
+	"POST /freeturn/servers/{id}/start": v.lazy(() => api_APIEnvelope),
+	"POST /freeturn/servers/{id}/stop": v.lazy(() => api_APIEnvelope),
 	"POST /hook/ndms": v.lazy(() => api_APIEnvelope),
 	"POST /hydraroute/geo-files/add": v.lazy(() => api_GeoFileResponse),
 	"POST /hydraroute/geo-files/rescan": v.lazy(() => api_GeoFilesRescannedResponse),
@@ -2783,7 +2851,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /tunnels/replace": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/update": v.lazy(() => api_APIEnvelope),
 	"PUT /freeturn/client/config": v.lazy(() => api_FreeTurnConfigResponse),
+	"PUT /freeturn/clients/{id}": v.lazy(() => api_APIEnvelope),
 	"PUT /freeturn/server/config": v.lazy(() => api_FreeTurnConfigResponse),
+	"PUT /freeturn/servers/{id}": v.lazy(() => api_APIEnvelope),
 	"PUT /hydraroute/config/update": v.lazy(() => api_HydraRouteConfigResponse),
 	"PUT /managed-servers/{id}": v.lazy(() => api_ServersAllResponse),
 	"PUT /managed-servers/{id}/asc": v.lazy(() => api_ASCParamsResponse),

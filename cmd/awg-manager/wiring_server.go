@@ -242,6 +242,7 @@ func (a *app) setupDeviceProxy() {
 	a.freeturnService.SetLogger(a.loggingService)
 	if specs, ok := freeturn.EmbeddedBinaries[detectArch()]; ok {
 		a.freeturnService.SetInstallSpecs(specs)
+		a.freeturnService.SetArchKey(detectArch())
 		a.freeturnService.SetDownloader(&freeturnDownloaderAdapter{svc: sharedDownloadSvc})
 	}
 	if a.singboxInstaller != nil {

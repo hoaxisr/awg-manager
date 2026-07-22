@@ -38,9 +38,22 @@ export interface FreeTurnServerConfig {
 	debug: boolean;
 }
 
+export interface FreeTurnClientInstance {
+	id: string;
+	name: string;
+	config: FreeTurnClientConfig;
+}
+
+export interface FreeTurnServerInstance {
+	id: string;
+	name: string;
+	config: FreeTurnServerConfig;
+}
+
 export interface FreeTurnConfig {
-	client: FreeTurnClientConfig;
-	server: FreeTurnServerConfig;
+	version?: number;
+	clients: FreeTurnClientInstance[];
+	servers: FreeTurnServerInstance[];
 }
 
 export interface FreeTurnProcessStatus {
@@ -49,30 +62,32 @@ export interface FreeTurnProcessStatus {
 	startedAt?: string;
 	lastError?: string;
 	log?: string;
-	/** Путь к бинарю и признак его наличия — awg-manager freeturn не поставляет */
 	binary: string;
 	binaryPresent: boolean;
 }
 
+export interface FreeTurnInstanceStatus {
+	id: string;
+	name: string;
+	status: FreeTurnProcessStatus;
+}
+
 export interface FreeTurnStatus {
+	clients: FreeTurnInstanceStatus[];
+	servers: FreeTurnInstanceStatus[];
+	/** Legacy mirror of default client instance */
 	client: FreeTurnProcessStatus;
+	/** Legacy mirror of default server instance */
 	server: FreeTurnProcessStatus;
-	/** Для этой архитектуры есть закреплённая сборка — доступна установка в один клик */
 	installAvailable: boolean;
-	/** Версия freeturn, которую поставит установка */
 	installVersion?: string;
-	/** Установка сейчас идёт */
+	installedVersion?: string;
+	remoteVersion?: string;
+	remoteCheckError?: string;
+	updateAvailable?: boolean;
 	installing: boolean;
 }
 
-// Share-link payload: freeturn://base64(JSON). Two flavors exist and both
-// decode into this same shape — the upstream free-turn-proxy format (see
-// samosvalishe/free-turn-proxy docs/uri.md: v/provider/peer/transport/mode/
-// bond/obf/key/n/spc/cid/listen/dns/dnss/mcap/name) and the informal
-// freeturn-entware-installer one (v/provider/peer/obf/key/mtu/wg). `cid` is
-// a Client ID the link's creator generated and must separately allowlist in
-// their own server's clients.json (if -clients-file auth is on) — importing
-// a link does NOT do that registration for you.
 export interface FreeTurnLinkPayload {
 	v: number;
 	provider?: string;
@@ -103,12 +118,28 @@ export interface FreeTurnGenerateLinkRequest {
 	name?: string;
 	n?: number;
 	streamsPerCred?: number;
+	serverId?: string;
 }
 
 export interface FreeTurnGenerateLinkResult {
 	link: string;
 	peer: string;
 	clientId?: string;
+}
+
+export interface FreeTurnAllowlistEntry {
+	clientId: string;
+	comment?: string;
+}
+
+export interface FreeTurnAllowlistStatus {
+	enabled: boolean;
+	clientsFile?: string;
+	clients: FreeTurnAllowlistEntry[];
+}
+
+export interface FreeTurnAllowlistAddResult extends FreeTurnAllowlistStatus {
+	needsRestart?: boolean;
 }
 
 // #endregion

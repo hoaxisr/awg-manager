@@ -1415,10 +1415,34 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.FreeTurnAllowlistResponse:
+    properties:
+      data:
+        $ref: '#/definitions/freeturn.AllowlistStatus'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.FreeTurnClientInstanceResponse:
+    properties:
+      data:
+        $ref: '#/definitions/freeturn.ClientInstance'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.FreeTurnConfigResponse:
     properties:
       data:
         $ref: '#/definitions/freeturn.Config'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.FreeTurnServerInstanceResponse:
+    properties:
+      data:
+        $ref: '#/definitions/freeturn.ServerInstance'
       success:
         example: true
         type: boolean
@@ -1430,6 +1454,27 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.GenerateLinkRequest:
+    properties:
+      clientId:
+        type: string
+      mtu:
+        type: integer
+      "n":
+        type: integer
+      name:
+        type: string
+      peer:
+        type: string
+      provider:
+        type: string
+      serverId:
+        type: string
+      streamsPerCred:
+        type: integer
+      wg:
+        type: string
     type: object
   api.GenerateLinkResponse:
     properties:
@@ -6264,6 +6309,24 @@ definitions:
       sni:
         type: string
     type: object
+  freeturn.AllowlistEntry:
+    properties:
+      clientId:
+        type: string
+      comment:
+        type: string
+    type: object
+  freeturn.AllowlistStatus:
+    properties:
+      clients:
+        items:
+          $ref: '#/definitions/freeturn.AllowlistEntry'
+        type: array
+      clientsFile:
+        type: string
+      enabled:
+        type: boolean
+    type: object
   freeturn.ClientConfig:
     properties:
       bond:
@@ -6332,12 +6395,57 @@ definitions:
         description: -port, override TURN server port
         type: integer
     type: object
+  freeturn.ClientInstance:
+    properties:
+      config:
+        $ref: '#/definitions/freeturn.ClientConfig'
+      id:
+        type: string
+      name:
+        type: string
+    type: object
   freeturn.Config:
     properties:
       client:
-        $ref: '#/definitions/freeturn.ClientConfig'
+        allOf:
+        - $ref: '#/definitions/freeturn.ClientConfig'
+        description: Legacy v1 fields — read during migration only, never written
+          back.
+      clients:
+        items:
+          $ref: '#/definitions/freeturn.ClientInstance'
+        type: array
       server:
         $ref: '#/definitions/freeturn.ServerConfig'
+      servers:
+        items:
+          $ref: '#/definitions/freeturn.ServerInstance'
+        type: array
+      version:
+        type: integer
+    type: object
+  freeturn.CreateClientInput:
+    properties:
+      config:
+        $ref: '#/definitions/freeturn.ClientConfig'
+      name:
+        type: string
+    type: object
+  freeturn.CreateServerInput:
+    properties:
+      config:
+        $ref: '#/definitions/freeturn.ServerConfig'
+      name:
+        type: string
+    type: object
+  freeturn.InstanceStatus:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        $ref: '#/definitions/freeturn.ProcessStatus'
     type: object
   freeturn.LinkPayload:
     properties:
@@ -6440,10 +6548,25 @@ definitions:
         description: -obf-profile, none|rtpopus|rtpopus2|rtpopus3
         type: string
     type: object
+  freeturn.ServerInstance:
+    properties:
+      config:
+        $ref: '#/definitions/freeturn.ServerConfig'
+      id:
+        type: string
+      name:
+        type: string
+    type: object
   freeturn.Status:
     properties:
       client:
-        $ref: '#/definitions/freeturn.ProcessStatus'
+        allOf:
+        - $ref: '#/definitions/freeturn.ProcessStatus'
+        description: Client/Server mirror the default instance for legacy API consumers.
+      clients:
+        items:
+          $ref: '#/definitions/freeturn.InstanceStatus'
+        type: array
       installAvailable:
         description: |-
           InstallAvailable: для этой архитектуры есть закреплённая сборка и
@@ -6452,11 +6575,29 @@ definitions:
       installVersion:
         description: InstallVersion — версия freeturn, которую поставит установка.
         type: string
+      installedVersion:
+        description: InstalledVersion — версия, записанная после последней установки.
+        type: string
       installing:
         description: Installing — установка сейчас идёт (кнопка блокируется).
         type: boolean
+      remoteCheckError:
+        description: RemoteCheckError — ошибка последней проверки GitHub (не блокирует
+          pin-fallback).
+        type: string
+      remoteVersion:
+        description: RemoteVersion — последняя версия с GitHub (если проверка удалась).
+        type: string
       server:
         $ref: '#/definitions/freeturn.ProcessStatus'
+      servers:
+        items:
+          $ref: '#/definitions/freeturn.InstanceStatus'
+        type: array
+      updateAvailable:
+        description: UpdateAvailable — бинари отсутствуют или устарели относительно
+          InstallVersion.
+        type: boolean
     type: object
   presets.DNSEngine:
     properties:
@@ -8178,6 +8319,124 @@ paths:
           schema:
             $ref: '#/definitions/api.FreeTurnConfigResponse'
       summary: Update FreeTurn client configuration
+  /freeturn/clients:
+    post:
+      parameters:
+      - description: Optional name and initial config
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/freeturn.CreateClientInput'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.FreeTurnClientInstanceResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Create a new FreeTurn client instance
+      tags:
+      - freeturn
+  /freeturn/clients/{id}:
+    delete:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a FreeTurn client instance
+      tags:
+      - freeturn
+    patch:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a FreeTurn client instance
+      tags:
+      - freeturn
+    put:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a FreeTurn client instance
+      tags:
+      - freeturn
+  /freeturn/clients/{id}/start:
+    post:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Start a FreeTurn client instance
+      tags:
+      - freeturn
+  /freeturn/clients/{id}/stop:
+    post:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Stop a FreeTurn client instance
+      tags:
+      - freeturn
   /freeturn/config:
     get:
       responses:
@@ -8224,6 +8483,227 @@ paths:
           schema:
             $ref: '#/definitions/api.GenerateLinkResponse'
       summary: Generate a freeturn:// share link from the current server config
+  /freeturn/servers:
+    post:
+      parameters:
+      - description: Optional name and initial config
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/freeturn.CreateServerInput'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.FreeTurnServerInstanceResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Create a new FreeTurn server instance
+      tags:
+      - freeturn
+  /freeturn/servers/{id}:
+    delete:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a FreeTurn server instance
+      tags:
+      - freeturn
+    patch:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a FreeTurn server instance
+      tags:
+      - freeturn
+    put:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a FreeTurn server instance
+      tags:
+      - freeturn
+  /freeturn/servers/{id}/allowlist:
+    delete:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.FreeTurnAllowlistResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Manage a FreeTurn server client-ID allowlist
+      tags:
+      - freeturn
+    get:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.FreeTurnAllowlistResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Manage a FreeTurn server client-ID allowlist
+      tags:
+      - freeturn
+    post:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.FreeTurnAllowlistResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Manage a FreeTurn server client-ID allowlist
+      tags:
+      - freeturn
+  /freeturn/servers/{id}/allowlist/{clientId}:
+    delete:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.FreeTurnAllowlistResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Manage a FreeTurn server client-ID allowlist
+      tags:
+      - freeturn
+  /freeturn/servers/{id}/link:
+    post:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Optional overrides (peer, provider, mtu, wg, clientId, name)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/api.GenerateLinkRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.GenerateLinkResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Generate a freeturn:// share link from a specific server instance
+      tags:
+      - freeturn
+  /freeturn/servers/{id}/start:
+    post:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Start a FreeTurn server instance
+      tags:
+      - freeturn
+  /freeturn/servers/{id}/stop:
+    post:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Stop a FreeTurn server instance
+      tags:
+      - freeturn
   /freeturn/status:
     get:
       responses:
