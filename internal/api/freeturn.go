@@ -10,6 +10,7 @@ import (
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/freeturn"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 )
 
@@ -45,12 +46,18 @@ type FreeTurnService interface {
 	AddServerAllowlistClient(serverID, clientID, comment string) (freeturn.AddAllowlistResult, error)
 	RemoveServerAllowlistClient(serverID, clientID string) error
 	DisableServerAllowlist(serverID string) error
+	CaptchaStatus() freeturn.CaptchaOverview
+	CaptchaStatusForClient(id string) (freeturn.CaptchaClientStatus, bool)
 }
 
 // FreeTurnHandler exposes FreeTurnService over HTTP.
 type FreeTurnHandler struct {
 	svc     FreeTurnService
 	queries *ndmsquery.Queries
+
+	awgStore       *storage.AWGTunnelStore
+	tunnelSvc      TunnelService
+	tunnelsHandler *TunnelsHandler
 }
 
 func NewFreeTurnHandler(svc FreeTurnService) *FreeTurnHandler {
@@ -423,6 +430,8 @@ func (h *FreeTurnHandler) ServeClients(w http.ResponseWriter, r *http.Request) {
 		h.startClientInstance(w, r, id)
 	case len(sub) == 1 && sub[0] == "stop":
 		h.stopClientInstance(w, r, id)
+	case len(sub) >= 1 && sub[0] == "captcha":
+		h.serveClientCaptcha(w, r, id, sub[1:])
 	default:
 		response.ErrorWithStatus(w, http.StatusNotFound, "Not found", "NOT_FOUND")
 	}
@@ -501,7 +510,15 @@ func (h *FreeTurnHandler) serveClientByID(w http.ResponseWriter, r *http.Request
 			response.Error(w, err.Error(), "FREETURN_CLIENT_DELETE_FAILED")
 			return
 		}
-		response.Success(w, map[string]string{"message": "deleted"})
+		deletedTunnels, tunnelErrors := h.deleteLinkedAwgTunnels(r.Context(), id)
+		if h.tunnelsHandler != nil && len(deletedTunnels) > 0 {
+			h.tunnelsHandler.publishTunnelList(r.Context())
+		}
+		response.Success(w, map[string]any{
+			"message":        "deleted",
+			"deletedTunnels": deletedTunnels,
+			"tunnelErrors":   tunnelErrors,
+		})
 	default:
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
 	}

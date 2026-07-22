@@ -75,6 +75,14 @@ start() {
 
     echo "Starting $DESC..."
 
+    # Child processes (freeturn-client, sing-box, …) log in UTC unless TZ
+    # matches the router — Keenetic stores POSIX zone in /var/TZ or /etc/TZ.
+    if [ -r /var/TZ ]; then
+        export TZ="$(cat /var/TZ)"
+    elif [ -r /etc/TZ ]; then
+        export TZ="$(cat /etc/TZ)"
+    fi
+
     # Start daemon (port is read from settings.json)
     start-stop-daemon -S -b -m -p "$PID_FILE" -x "$BIN" -- \
         -data-dir "$DATA_DIR"

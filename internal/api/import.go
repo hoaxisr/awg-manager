@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -56,9 +57,10 @@ func (h *ImportHandler) SetTunnelsHandler(th *TunnelsHandler) {
 //	@Router			/import/conf [post]
 func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[struct {
-		Content string `json:"content"`
-		Name    string `json:"name"`
-		Backend string `json:"backend"` // "nativewg" | "kernel" (default: "kernel")
+		Content          string `json:"content"`
+		Name             string `json:"name"`
+		Backend          string `json:"backend"` // "nativewg" | "kernel" (default: "kernel")
+		FreeTurnClientID string `json:"freeTurnClientId,omitempty"`
 	}](w, r, http.MethodPost)
 	if !ok {
 		return
@@ -76,7 +78,7 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Post-import defaults: PingCheck
+	// Post-import defaults: PingCheck + optional freeturn link tag
 	if stored, err := h.store.Get(tunnel.ID); err == nil {
 		changed := false
 		if h.pingCheck != nil && stored.PingCheck == nil {
@@ -91,6 +93,10 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 				Timeout:       5,
 				Restart:       true,
 			}
+			changed = true
+		}
+		if id := strings.TrimSpace(req.FreeTurnClientID); id != "" {
+			stored.FreeTurnClientID = id
 			changed = true
 		}
 		if changed {

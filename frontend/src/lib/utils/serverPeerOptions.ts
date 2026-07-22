@@ -118,6 +118,19 @@ export function wgEndpointHint(localPort: number): string {
 	return `127.0.0.1:${localPort}`;
 }
 
+/** Порт из freeturn -listen (127.0.0.1:9001 → 9001). */
+export function parseLocalListenPort(listen: string | undefined | null): number | null {
+	const raw = listen?.trim();
+	if (!raw) return null;
+	const m = raw.match(/:(\d+)$/);
+	if (m) {
+		const port = Number(m[1]);
+		return port > 0 && port <= 65535 ? port : null;
+	}
+	const port = Number(raw);
+	return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
+}
+
 /** Подставляет локальный Endpoint в [Peer] секцию конфига клиента. */
 export function patchWgConfEndpoint(conf: string, localPort: number): string {
 	const host = '127.0.0.1';

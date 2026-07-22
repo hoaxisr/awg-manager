@@ -1,9 +1,10 @@
 import type {
 	FreeTurnAllowlistAddResult,
 	FreeTurnAllowlistStatus,
+	FreeTurnCaptchaOverview,
 	FreeTurnClientConfig,
 	FreeTurnClientInstance,
-	FreeTurnConfig,
+	FreeTurnDeleteClientResult,
 	FreeTurnGenerateLinkRequest,
 	FreeTurnGenerateLinkResult,
 	FreeTurnLinkPayload,
@@ -70,8 +71,11 @@ export class FreeturnClient extends SubscriptionsClient {
 		});
 	}
 
-	async deleteFreeTurnClient(id: string): Promise<void> {
-		await this.request(`/freeturn/clients/${encodeURIComponent(id)}`, { method: 'DELETE' });
+	async deleteFreeTurnClient(id: string): Promise<FreeTurnDeleteClientResult> {
+		return this.request<FreeTurnDeleteClientResult>(
+			`/freeturn/clients/${encodeURIComponent(id)}`,
+			{ method: 'DELETE' }
+		);
 	}
 
 	async deleteFreeTurnServer(id: string): Promise<void> {
@@ -95,6 +99,10 @@ export class FreeturnClient extends SubscriptionsClient {
 	async getFreeTurnStatus(forceRemote = false): Promise<FreeTurnStatus> {
 		const q = forceRemote ? '?forceRemote=1' : '';
 		return this.request<FreeTurnStatus>(`/freeturn/status${q}`);
+	}
+
+	async getFreeTurnCaptchaStatus(): Promise<FreeTurnCaptchaOverview> {
+		return this.request<FreeTurnCaptchaOverview>('/freeturn/captcha/status');
 	}
 
 	async startFreeTurnClient(id = 'default'): Promise<{ message: string }> {

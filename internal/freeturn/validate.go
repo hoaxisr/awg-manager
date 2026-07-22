@@ -59,13 +59,8 @@ func serverListenAddresses(servers []ServerInstance) []string {
 	return out
 }
 
-func nextClientListen(clients []ClientInstance) string {
-	used := map[int]bool{}
-	for _, c := range clients {
-		if port, err := listenPort(c.Config.Listen); err == nil {
-			used[port] = true
-		}
-	}
+func nextClientListen(clients []ClientInstance, reserved map[int]bool) string {
+	used := mergeListenPorts(clientListenPorts(clients), reserved)
 	for port := 9000; port < 9100; port++ {
 		if !used[port] {
 			return fmt.Sprintf("127.0.0.1:%d", port)

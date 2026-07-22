@@ -159,6 +159,8 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	if s.ndmsQueries != nil {
 		h.freeturnHandler.SetNDMSQueries(s.ndmsQueries)
 	}
+	h.freeturnHandler.SetLinkedTunnelCleanup(s.tunnels, s.tunnelService)
+	h.freeturnHandler.SetTunnelsHandler(h.tunnelsHandler)
 
 	// Auth middleware helper
 	h.guarded = s.authMiddleware.RequireAuthFunc
@@ -375,6 +377,7 @@ func (s *Server) registerSettingsRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/freeturn/client/config", h.guarded(h.freeturnHandler.UpdateClientConfig))
 	mux.HandleFunc("/api/freeturn/server/config", h.guarded(h.freeturnHandler.UpdateServerConfig))
 	mux.HandleFunc("/api/freeturn/status", h.guarded(h.freeturnHandler.GetStatus))
+	mux.HandleFunc("/api/freeturn/captcha/status", h.guarded(h.freeturnHandler.GetCaptchaStatus))
 	mux.HandleFunc("/api/freeturn/client/start", h.guarded(h.freeturnHandler.StartClient))
 	mux.HandleFunc("/api/freeturn/client/stop", h.guarded(h.freeturnHandler.StopClient))
 	mux.HandleFunc("/api/freeturn/server/start", h.guarded(h.freeturnHandler.StartServer))

@@ -3,6 +3,8 @@ import {
   encodeServerPeerValue,
   decodeServerPeerValue,
   buildServerPeerDropdownOptions,
+  parseLocalListenPort,
+  patchWgConfEndpoint,
 } from './serverPeerOptions';
 import type { ServersSnapshot } from '$lib/stores/servers';
 import type { ManagedServer, WireguardServer } from '$lib/types';
@@ -98,5 +100,28 @@ describe('buildServerPeerDropdownOptions', () => {
     });
     const opt = buildServerPeerDropdownOptions(s)[0];
     expect(decodeServerPeerValue(opt.value).serverId).toBe('sys1');
+  });
+});
+
+describe('parseLocalListenPort', () => {
+  it('parses host:port and bare port', () => {
+    expect(parseLocalListenPort('127.0.0.1:9001')).toBe(9001);
+    expect(parseLocalListenPort('9002')).toBe(9002);
+    expect(parseLocalListenPort('')).toBeNull();
+    expect(parseLocalListenPort('bad')).toBeNull();
+  });
+});
+
+describe('patchWgConfEndpoint', () => {
+  it('replaces [Peer] Endpoint with local listen port', () => {
+    const conf = `[Interface]
+PrivateKey = x
+
+[Peer]
+PublicKey = y
+Endpoint = 127.0.0.1:9000
+AllowedIPs = 0.0.0.0/0`;
+    expect(patchWgConfEndpoint(conf, 9001)).toContain('Endpoint = 127.0.0.1:9001');
+    expect(patchWgConfEndpoint(conf, 9001)).not.toContain(':9000');
   });
 });

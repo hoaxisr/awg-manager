@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -37,11 +38,29 @@ type Service struct {
 	remoteCache *remoteReleaseCache
 
 	appLog *logging.ScopedLogger
+
+	listenPortChecker LocalListenPortChecker
 }
 
 // SetLogger wires the UI-visible journal (nil-safe scoped logger).
 func (s *Service) SetLogger(appLogger logging.AppLogger) {
 	s.appLog = logging.NewScopedLogger(appLogger, logging.GroupRouting, "freeturn")
+}
+
+// SetListenPortChecker wires external localhost listen ports (AWG tunnel endpoints, etc.).
+func (s *Service) SetListenPortChecker(c LocalListenPortChecker) {
+	s.listenPortChecker = c
+}
+
+func (s *Service) occupiedLocalListenPorts() map[int]bool {
+	if s.listenPortChecker == nil {
+		return nil
+	}
+	used, err := s.listenPortChecker.OccupiedLocalListenPorts()
+	if err != nil || len(used) == 0 {
+		return nil
+	}
+	return used
 }
 
 // NewService wires up config storage and process managers per instance id.
@@ -82,6 +101,7 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 	if err := validateUniqueListens(listens, idx, cfg.Listen); err != nil {
 		return err
 	}
+	cfg.Browser = normalizeBrowser(cfg.Browser)
 	full.Clients[idx].Config = cfg
 	return s.store.Save(full)
 }
@@ -112,7 +132,8 @@ func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
 	if in.Config != nil {
 		cfg = *in.Config
 	}
-	cfg.Listen = nextClientListen(full.Clients)
+	cfg.Browser = normalizeBrowser(cfg.Browser)
+	cfg.Listen = nextClientListen(full.Clients, s.occupiedLocalListenPorts())
 	name := in.Name
 	if name == "" {
 		name = fmt.Sprintf("Клиент %d", len(full.Clients)+1)
@@ -457,7 +478,7 @@ func buildClientArgs(c ClientConfig) []string {
 	if c.StreamsPerCred > 0 {
 		args = append(args, "-streams-per-cred", strconv.Itoa(c.StreamsPerCred))
 	}
-	str("-browser", c.Browser)
+	str("-browser", normalizeBrowser(c.Browser))
 	flag("-manual-captcha", c.ManualCaptcha)
 	str("-dns-mode", c.DNSMode)
 	str("-dns-servers", c.DNSServers)
@@ -465,6 +486,17 @@ func buildClientArgs(c ClientConfig) []string {
 	str("-sub", c.Sub)
 	flag("-debug", c.Debug)
 	return args
+}
+
+func normalizeBrowser(b string) string {
+	switch strings.ToLower(strings.TrimSpace(b)) {
+	case "chrome", "firefox", "safari":
+		return strings.ToLower(strings.TrimSpace(b))
+	case "chromium":
+		return "chrome"
+	default:
+		return "firefox"
+	}
 }
 
 func buildServerArgs(c ServerConfig) []string {
