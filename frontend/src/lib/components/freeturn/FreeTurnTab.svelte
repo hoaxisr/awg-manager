@@ -38,6 +38,7 @@
 	let checkingUpdates = $state(false);
 
 	let genProvider = $state('vk');
+	let genPeer = $state('');
 	let genMTU = $state(1376);
 	let genWG = $state('');
 	let genClientId = $state('');
@@ -432,12 +433,26 @@
 		}
 	}
 
-	async function generateLink(provider: string, mtu: number, wg: string, clientId: string, name: string) {
+	async function generateLink(
+		provider: string,
+		peer: string,
+		mtu: number,
+		wg: string,
+		clientId: string,
+		name: string
+	) {
 		if (!selectedServer) return;
 		generating = true;
 		try {
+			const listen = selectedServer.config.listen?.trim() ?? '';
+			let peerParam = peer.trim();
+			if (peerParam && !peerParam.includes(':')) {
+				const port = listen.includes(':') ? listen.split(':').pop() : listen;
+				if (port) peerParam = `${peerParam}:${port}`;
+			}
 			const result = await api.generateFreeTurnLink({
 				provider,
+				peer: peerParam || undefined,
 				mtu,
 				wg: wg.trim() || undefined,
 				clientId: clientId.trim() || undefined,
@@ -561,6 +576,7 @@
 			{generatedPeer}
 			{generatedClientId}
 			bind:genProvider
+			bind:genPeer
 			bind:genMTU
 			bind:genWG
 			bind:genClientId

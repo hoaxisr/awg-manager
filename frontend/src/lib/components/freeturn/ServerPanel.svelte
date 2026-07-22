@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { Input, Button, Dropdown } from '$lib/components/ui';
 	import { RefreshCw } from 'lucide-svelte';
+	import { api } from '$lib/api/client';
+	import { notifications } from '$lib/stores/notifications';
 	import { pluralize } from '$lib/utils/pluralize';
 	import type { FreeTurnServerConfig, FreeTurnProcessStatus } from '$lib/types';
 	import ProcessAlerts from './ProcessAlerts.svelte';
@@ -30,6 +32,7 @@
 		generatedPeer: string;
 		generatedClientId: string;
 		genProvider: string;
+		genPeer: string;
 		genMTU: number;
 		genWG: string;
 		genClientId: string;
@@ -39,7 +42,14 @@
 		onCheckUpdates?: () => void;
 		onSave: () => void;
 		onRevert: () => void;
-		onGenerate: (provider: string, mtu: number, wg: string, clientId: string, name: string) => void;
+		onGenerate: (
+			provider: string,
+			peer: string,
+			mtu: number,
+			wg: string,
+			clientId: string,
+			name: string
+		) => void;
 		onCopy: (text: string) => void;
 		defaultClientListenPort?: number;
 		serverInstanceId?: string;
@@ -63,6 +73,7 @@
 		generatedPeer,
 		generatedClientId,
 		genProvider = $bindable(),
+		genPeer = $bindable(),
 		genMTU = $bindable(),
 		genWG = $bindable(),
 		genClientId = $bindable(),
@@ -80,6 +91,28 @@
 
 	let allowlistPanel: ServerAllowlist | undefined = $state();
 	let savingAllowlist = $state(false);
+	let loadingWanPeer = $state(false);
+
+	const listenPort = $derived.by(() => {
+		const listen = server.listen?.trim() ?? '';
+		if (!listen) return '56000';
+		const idx = listen.lastIndexOf(':');
+		return idx >= 0 ? listen.slice(idx + 1) : listen;
+	});
+
+	async function fillWanPeer() {
+		loadingWanPeer = true;
+		try {
+			const ip = await api.getWANIP();
+			genPeer = ip.includes(':') ? ip : `${ip}:${listenPort}`;
+		} catch (e) {
+			notifications.error(
+				e instanceof Error ? e.message : 'Не удалось определить WAN IP'
+			);
+		} finally {
+			loadingWanPeer = false;
+		}
+	}
 
 	// WireGuard-конфиг в ссылке — свёрнут по умолчанию, раскрывается если уже заполнен.
 	let wgMore = $state(genWG.trim() !== '');
@@ -161,6 +194,26 @@
 
 <div class="ft-panel-accent">
 	<div class="section-label">Ссылка для клиента</div>
+	<div class="ft-gen-peer-row">
+		<div class="ft-gen-peer">
+			<Input
+				label="Peer (IP:порт для клиента)"
+				bind:value={genPeer}
+				placeholder={`пусто — авто · порт :${listenPort}`}
+			/>
+		</div>
+		<div class="ft-gen-peer-action">
+			<Button
+				variant="ghost"
+				size="sm"
+				loading={loadingWanPeer}
+				onclick={fillWanPeer}
+				title="Подставить внешний WAN IP роутера"
+			>
+				WAN IP
+			</Button>
+		</div>
+	</div>
 	<div class="ft-gen-row">
 		<div class="ft-gen-provider">
 			<Input label="Провайдер" bind:value={genProvider} placeholder="vk" />
@@ -205,7 +258,7 @@
 					size="sm"
 					loading={generating}
 					disabled={obfDirty}
-					onclick={() => onGenerate(genProvider, genMTU, genWG, genClientId, genName)}
+					onclick={() => onGenerate(genProvider, genPeer, genMTU, genWG, genClientId, genName)}
 				>
 					Сгенерировать
 				</Button>
@@ -219,8 +272,8 @@
 		</p>
 	{:else}
 		<p class="ft-hint">
-			Соберёт freeturn:// ссылку из обфускации/ключа сервера ниже и внешнего IP роутера.
-			Провайдер почти всегда <code>vk</code> — менять не нужно.
+			Соберёт freeturn:// ссылку из обфускации/ключа сервера ниже и адреса peer (вручную или
+			автоопределение WAN IP). Провайдер почти всегда <code>vk</code> — менять не нужно.
 		</p>
 	{/if}
 	{#if server.clientsFile}
@@ -336,6 +389,30 @@
 		border: 1px solid var(--color-accent-border);
 		border-radius: var(--radius);
 		margin-bottom: 0.875rem;
+	}
+
+	.ft-gen-peer-row {
+		display: flex;
+		gap: 0.625rem;
+		align-items: flex-end;
+		margin-bottom: 0.625rem;
+	}
+
+	.ft-gen-peer {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.ft-gen-peer :global(.input) {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+	}
+
+	.ft-gen-peer-action {
+		flex: 0 0 auto;
+		display: flex;
+		align-items: flex-end;
+		padding-bottom: 0.125rem;
 	}
 
 	.ft-gen-row {

@@ -156,6 +156,9 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.eventsHandler = api.NewEventsHandler(s.bus, s.instanceID)
 
 	h.freeturnHandler = api.NewFreeTurnHandler(s.freeturnService)
+	if s.ndmsQueries != nil {
+		h.freeturnHandler.SetNDMSQueries(s.ndmsQueries)
+	}
 
 	// Auth middleware helper
 	h.guarded = s.authMiddleware.RequireAuthFunc
