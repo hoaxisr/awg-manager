@@ -194,6 +194,7 @@ func (a *app) setupServices() {
 		"/opt/bin/freeturn-client",
 		"/opt/bin/freeturn-server",
 	)
+	a.freeturnService.SetListenPortChecker(&awgListenPortChecker{store: a.awgStore})
 	a.deferOnExit(a.freeturnService.Stop)
 
 	// Unified facade: kernel → custom loop, NativeWG → NDMS native

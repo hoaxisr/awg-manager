@@ -16,3 +16,10 @@ export const obfOptions = [
 	{ value: 'rtpopus2', label: 'rtpopus2' },
 	{ value: 'rtpopus3', label: 'rtpopus3' }
 ];
+
+/** Headless-браузер freeturn на роутере для авто-капчи VK (-browser). */
+export const browserOptions = [
+	{ value: 'firefox', label: 'Firefox' },
+	{ value: 'chrome', label: 'Chrome' },
+	{ value: 'safari', label: 'Safari' }
+];

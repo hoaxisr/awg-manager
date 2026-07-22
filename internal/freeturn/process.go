@@ -221,6 +221,7 @@ func (p *process) Status() ProcessStatus {
 	if running {
 		st.PID = pid
 		st.StartedAt = p.startedAt
+		st.DtlsConnections = countActiveDTLSConnections(st.Log)
 	}
 	return st
 }
@@ -237,7 +238,7 @@ func binaryPresent(path string) bool {
 }
 
 func freeturnRuntimeEnv(base []string) []string {
-	return routerclock.AppendTZFromRouter(base)
+	return routerclock.WithTZFromRouter(base)
 }
 
 func (p *process) drain(r io.Reader) {

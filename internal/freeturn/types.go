@@ -31,7 +31,7 @@ type ClientConfig struct {
 	ObfKey     string `json:"obfKey,omitempty"` // -obf-key, 64 hex chars, required if obfProfile != none
 
 	StreamsPerCred int    `json:"streamsPerCred"` // -streams-per-cred, provider=vk only
-	Browser        string `json:"browser"`        // -browser, chrome|firefox, provider=vk only
+	Browser        string `json:"browser" swaggertype:"string" enums:"chrome,firefox,safari"` // -browser, provider=vk only
 	ManualCaptcha  bool   `json:"manualCaptcha"`  // -manual-captcha, provider=vk only
 
 	DNSMode    string `json:"dnsMode"`              // -dns-mode, plain|doh|auto
@@ -149,6 +149,9 @@ type ProcessStatus struct {
 	// confirmations — so the panel can show whether the tunnel actually
 	// connected instead of just "running".
 	Log string `json:"log,omitempty"`
+	// DtlsConnections is the number of freeturn streams with an established
+	// DTLS session in the current log tail (0 when not running).
+	DtlsConnections int `json:"dtlsConnections,omitempty"`
 	// Binary is the configured binary path; BinaryPresent reports whether
 	// an executable actually exists there. awg-manager does NOT ship the
 	// freeturn binaries — the panel uses this to show an honest

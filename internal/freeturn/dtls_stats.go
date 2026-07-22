@@ -1,0 +1,63 @@
+package freeturn
+
+import (
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+var freeturnStreamLineRE = regexp.MustCompile(`\[STREAM (\d+)\]`)
+
+var dtlsEstablishedMarkers = []string{
+	"Established DTLS connection",
+}
+
+var dtlsDownMarkers = []string{
+	"DTLS connection closed",
+	"DTLS handshake failed",
+	"DTLS disconnected",
+	"stream closed",
+	"[FATAL]",
+}
+
+// countActiveDTLSConnections returns how many freeturn streams currently have
+// an established DTLS session according to the process log tail. Per-stream
+// state is derived from the last matching line for each [STREAM N] id.
+func countActiveDTLSConnections(log string) int {
+	if log == "" {
+		return 0
+	}
+	states := make(map[int]bool)
+	for _, line := range strings.Split(log, "\n") {
+		m := freeturnStreamLineRE.FindStringSubmatch(line)
+		if len(m) < 2 {
+			continue
+		}
+		id, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		switch {
+		case lineMatchesAny(line, dtlsEstablishedMarkers):
+			states[id] = true
+		case lineMatchesAny(line, dtlsDownMarkers):
+			states[id] = false
+		}
+	}
+	n := 0
+	for _, up := range states {
+		if up {
+			n++
+		}
+	}
+	return n
+}
+
+func lineMatchesAny(line string, markers []string) bool {
+	for _, m := range markers {
+		if strings.Contains(line, m) {
+			return true
+		}
+	}
+	return false
+}

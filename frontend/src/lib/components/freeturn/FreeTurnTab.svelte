@@ -3,19 +3,24 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard as copyText } from '$lib/utils/clipboard';
-	import { Tabs } from '$lib/components/ui';
+	import { Tabs, FormToggle, Button } from '$lib/components/ui';
 	import type {
 		FreeTurnClientConfig,
 		FreeTurnClientInstance,
+		FreeTurnCaptchaOverview,
 		FreeTurnConfig,
+		FreeTurnGenerateLinkResult,
 		FreeTurnServerConfig,
 		FreeTurnServerInstance,
 		FreeTurnStatus
 	} from '$lib/types';
-	import ClientPanel from './ClientPanel.svelte';
-	import ServerPanel from './ServerPanel.svelte';
-	import StatusStrip from './StatusStrip.svelte';
+	import ProcessAlerts from './ProcessAlerts.svelte';
 	import InstanceBar from './InstanceBar.svelte';
+	import CaptchaModal from './CaptchaModal.svelte';
+	import FreeTurnClientSimple from './FreeTurnClientSimple.svelte';
+	import FreeTurnServerSimple from './FreeTurnServerSimple.svelte';
+	import { readCaptchaAutoOpen, writeCaptchaAutoOpen } from './captchaPrefs';
+	import { parseLocalListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
 
 	type FtTab = 'client' | 'server';
 
@@ -29,8 +34,6 @@
 
 	let selectedClientId = $state('default');
 	let selectedServerId = $state('default');
-
-	let expanded: string | null = $state(null);
 
 	let importing = $state(false);
 	let importedWG: string | null = $state(null);
@@ -49,7 +52,11 @@
 	let generatedClientId = $state('');
 
 	let statusPoll: ReturnType<typeof setInterval> | undefined;
-	let routerHost = $state('');
+
+	let captchaOverview = $state<FreeTurnCaptchaOverview | null>(null);
+	let captchaModalOpen = $state(false);
+	let captchaModalClientId = $state<string | null>(null);
+	let captchaAutoOpen = $state(readCaptchaAutoOpen());
 
 	const ftTabs = [
 		{ id: 'client', label: 'Клиент' },
@@ -100,17 +107,45 @@
 		return port > 0 ? port : 9000;
 	});
 
+	const captchaModalClient = $derived(
+		captchaOverview?.clients.find((c) => c.clientId === captchaModalClientId) ?? null
+	);
+
+	const selectedCaptchaStatus = $derived(
+		captchaOverview?.clients.find((c) => c.clientId === selectedClientId) ?? null
+	);
+
 	function errText(e: unknown): string {
 		return e instanceof Error ? e.message : String(e ?? '');
 	}
 
+	function anyClientRunning(): boolean {
+		return status?.clients.some((c) => c.status?.running) ?? false;
+	}
+
 	onMount(async () => {
-		routerHost = window.location.hostname;
-		await Promise.all([loadConfig(), loadStatus(false)]);
+		await Promise.all([loadConfig(), loadStatus(false), loadCaptchaStatus()]);
 		loading = false;
-		statusPoll = setInterval(() => void loadStatus(), 3000);
-		// Проверку апстрим-релиза (GitHub) не делаем автоматически — только по
-		// кнопке «Проверить обновления» (роутер часто без доступа к GitHub).
+		if (typeof window !== 'undefined') {
+			const params = new URLSearchParams(window.location.search);
+			if (params.get('captcha') === '1') {
+				captchaAutoOpen = true;
+				writeCaptchaAutoOpen(true);
+				setTimeout(() => maybeAutoOpenCaptchaModal(), 500);
+			}
+		}
+		statusPoll = setInterval(async () => {
+			await loadStatus(false);
+			if (
+				anyClientRunning() ||
+				captchaModalOpen ||
+				captchaOverview?.clients.some((c) => c.waiting)
+			) {
+				await loadCaptchaStatus();
+			} else {
+				captchaOverview = null;
+			}
+		}, 3000);
 	});
 
 	onDestroy(() => {
@@ -126,7 +161,15 @@
 			obfKey: c.obfKey ?? '',
 			dnsServers: c.dnsServers ?? '',
 			clientId: c.clientId ?? '',
-			sub: c.sub ?? ''
+			sub: c.sub ?? '',
+			browser:
+				(c.browser as string) === 'chromium'
+					? 'chrome'
+					: c.browser === 'safari' || c.browser === 'chrome'
+						? c.browser
+						: 'firefox',
+			streams: c.streams > 0 ? c.streams : 10,
+			streamsPerCred: c.streamsPerCred > 0 ? c.streamsPerCred : 10
 		};
 	}
 
@@ -175,6 +218,55 @@
 		} catch {
 			// Молча — как ping-бейджи списка туннелей.
 		}
+	}
+
+	async function loadCaptchaStatus() {
+		if (!anyClientRunning() && !captchaModalOpen) {
+			captchaOverview = null;
+			return;
+		}
+		try {
+			captchaOverview = await api.getFreeTurnCaptchaStatus();
+			maybeAutoOpenCaptchaModal();
+		} catch {
+			// Молча — капча опциональна.
+		}
+	}
+
+	function maybeAutoOpenCaptchaModal() {
+		if (!captchaOverview || !captchaAutoOpen) return;
+		const openable = captchaOverview.clients.filter((c) => c.canOpen);
+		if (openable.length === 0) return;
+		const target =
+			openable.find((c) => c.clientId === selectedClientId && c.canOpen) ??
+			openable.find((c) => c.active) ??
+			openable[0];
+		if (!target) return;
+		captchaModalClientId = target.clientId;
+		captchaModalOpen = true;
+	}
+
+	function setCaptchaAutoOpen(enabled: boolean) {
+		captchaAutoOpen = enabled;
+		writeCaptchaAutoOpen(enabled);
+		if (!enabled) captchaModalOpen = false;
+	}
+
+	function openCaptchaModal(clientId?: string) {
+		const id = clientId ?? selectedClientId;
+		const entry = captchaOverview?.clients.find((c) => c.clientId === id);
+		if (!entry?.canOpen && !entry?.waiting) return;
+		captchaModalClientId = id;
+		captchaModalOpen = true;
+	}
+
+	function closeCaptchaModal() {
+		captchaModalOpen = false;
+	}
+
+	function selectCaptchaClient(id: string) {
+		captchaModalClientId = id;
+		selectedClientId = id;
 	}
 
 	async function checkUpdates() {
@@ -269,14 +361,13 @@
 		patchServerInConfig(selectedServerId, $state.snapshot(savedServer.config));
 	}
 
-	async function toggleClient(on: boolean) {
-		if (!selectedClient) return;
+	async function toggleClientInstance(id: string, on: boolean) {
 		try {
 			if (on) {
-				await api.startFreeTurnClient(selectedClient.id);
+				await api.startFreeTurnClient(id);
 				notifications.success('FreeTurn клиент запущен');
 			} else {
-				await api.stopFreeTurnClient(selectedClient.id);
+				await api.stopFreeTurnClient(id);
 				notifications.success('FreeTurn клиент остановлен');
 			}
 		} catch (e) {
@@ -286,14 +377,13 @@
 		}
 	}
 
-	async function toggleServer(on: boolean) {
-		if (!selectedServer) return;
+	async function toggleServerInstance(id: string, on: boolean) {
 		try {
 			if (on) {
-				await api.startFreeTurnServer(selectedServer.id);
+				await api.startFreeTurnServer(id);
 				notifications.success('FreeTurn сервер запущен');
 			} else {
-				await api.stopFreeTurnServer(selectedServer.id);
+				await api.stopFreeTurnServer(id);
 				notifications.success('FreeTurn сервер остановлен');
 			}
 		} catch (e) {
@@ -326,13 +416,30 @@
 	}
 
 	async function deleteClient(id: string) {
-		const name = config?.clients.find((c) => c.id === id)?.name ?? id;
-		if (!confirm(`Удалить клиент «${name}»? Настройки инстанса будут потеряны.`)) return;
+		const inst = config?.clients.find((c) => c.id === id);
+		const name = inst?.name ?? id;
+		const listen = inst?.config.listen?.trim();
+		const confirmMsg = listen
+			? `Удалить клиент «${name}»?\n\nБудут удалены настройки инстанса и AWG-туннели, созданные при импорте freeturn:// для этого клиента. Ручные туннели с тем же портом не затронуты.`
+			: `Удалить клиент «${name}»?\n\nБудут удалены настройки инстанса и AWG-туннели, созданные при импорте freeturn:// для этого клиента.`;
+		if (!confirm(confirmMsg)) return;
 		try {
-			await api.deleteFreeTurnClient(id);
+			const result = await api.deleteFreeTurnClient(id);
 			await loadConfig();
 			await loadStatus();
-			notifications.success('Клиент удалён');
+			let msg = 'Клиент удалён';
+			const n = result.deletedTunnels?.length ?? 0;
+			if (n > 0) {
+				msg += `, AWG-туннелей удалено: ${n}`;
+			}
+			if (result.tunnelErrors?.length) {
+				notifications.error(
+					'Клиент удалён, но часть AWG-туннелей не удалось убрать: ' +
+						result.tunnelErrors.join('; ')
+				);
+			} else {
+				notifications.success(msg);
+			}
 		} catch (e) {
 			notifications.error('Не удалось удалить: ' + errText(e));
 		}
@@ -419,8 +526,18 @@
 			}
 			if (wg) {
 				try {
-					const tunnel = await api.importConfig(wg, `FreeTurn ${payload.peer}`.slice(0, 60));
-					msg += `. Создан туннель «${tunnel.name}»`;
+					const listenPort =
+						parseLocalListenPort(c.listen) ??
+						parseLocalListenPort(payload.listen) ??
+						9000;
+					const wgForImport = patchWgConfEndpoint(wg, listenPort);
+					const tunnel = await api.importConfig(
+						wgForImport,
+						`FreeTurn ${payload.peer}`.slice(0, 60),
+						undefined,
+						selectedClientId
+					);
+					msg += `. Создан туннель «${tunnel.name}» (Endpoint 127.0.0.1:${listenPort})`;
 				} catch (e) {
 					notifications.error('Поля заполнены, но не удалось создать туннель из конфига: ' + errText(e));
 				}
@@ -440,8 +557,8 @@
 		wg: string,
 		clientId: string,
 		name: string
-	) {
-		if (!selectedServer) return;
+	): Promise<FreeTurnGenerateLinkResult | null> {
+		if (!selectedServer) return null;
 		generating = true;
 		try {
 			const listen = selectedServer.config.listen?.trim() ?? '';
@@ -462,42 +579,49 @@
 			generatedLink = result.link;
 			generatedPeer = result.peer;
 			generatedClientId = result.clientId ?? '';
+			return result;
 		} catch (e) {
 			notifications.error('Не удалось сгенерировать ссылку: ' + errText(e));
+			return null;
 		} finally {
 			generating = false;
 		}
 	}
 
 	const clientBarItems = $derived(
-		(config ? config.clients : []).map((c: FreeTurnClientInstance) => ({
-			id: c.id,
-			name: c.name,
-			running: status?.clients.find((s) => s.id === c.id)?.status.running
-		}))
+		(config ? config.clients : []).map((c: FreeTurnClientInstance) => {
+			const st = status?.clients.find((s) => s.id === c.id)?.status ?? status?.client;
+			return {
+				id: c.id,
+				name: c.name,
+				running: st?.running,
+				startedAt: st?.startedAt,
+				pid: st?.pid,
+				dtlsConnections: st?.dtlsConnections,
+				binaryPresent: st?.binaryPresent
+			};
+		})
 	);
 	const serverBarItems = $derived(
-		(config ? config.servers : []).map((s: FreeTurnServerInstance) => ({
-			id: s.id,
-			name: s.name,
-			running: status?.servers.find((st) => st.id === s.id)?.status.running
-		}))
+		(config ? config.servers : []).map((s: FreeTurnServerInstance) => {
+			const st = status?.servers.find((x) => x.id === s.id)?.status ?? status?.server;
+			return {
+				id: s.id,
+				name: s.name,
+				running: st?.running,
+				startedAt: st?.startedAt,
+				pid: st?.pid,
+				binaryPresent: st?.binaryPresent
+			};
+		})
 	);
 </script>
-
-<StatusStrip
-	client={clientStatus}
-	server={serverStatus}
-	onToggleClient={toggleClient}
-	onToggleServer={toggleServer}
-/>
 
 <Tabs
 	tabs={ftTabs}
 	active={ftTab}
 	onchange={(id) => {
 		ftTab = id as FtTab;
-		expanded = null;
 	}}
 	urlParam="ft"
 	defaultTab="client"
@@ -505,88 +629,105 @@
 
 {#if loading || !config}
 	<div class="ft-loading">Загрузка…</div>
-{:else if ftTab === 'client'}
-	<InstanceBar
-		items={clientBarItems}
-		selectedId={selectedClientId}
-		onSelect={(id) => {
-			selectedClientId = id;
-		}}
-		onAdd={addClient}
-		onDelete={deleteClient}
-		onRename={renameClient}
-	/>
-	{#if selectedClient}
-		<ClientPanel
-			client={selectedClient.config}
-			saved={savedClient?.config ?? null}
-			status={clientStatus}
-			{saving}
-			{routerHost}
-			{importing}
-			{importedWG}
-			installAvailable={status?.installAvailable ?? false}
-			installVersion={status?.installVersion}
-			installedVersion={status?.installedVersion}
-			updateAvailable={status?.updateAvailable ?? false}
-			remoteVersion={status?.remoteVersion}
-			remoteCheckError={status?.remoteCheckError}
-			installing={installing || (status?.installing ?? false)}
-			{checkingUpdates}
-			bind:expanded
-			onInstall={install}
-			onCheckUpdates={checkUpdates}
-			onSave={() => saveClientConfig(selectedClient!.config)}
-			onRevert={revertClient}
-			onImport={applyImportLink}
-			onCopy={copy}
-		/>
-	{/if}
 {:else}
-	<InstanceBar
-		items={serverBarItems}
-		selectedId={selectedServerId}
-		onSelect={(id) => {
-			selectedServerId = id;
-		}}
-		onAdd={addServer}
-		onDelete={deleteServer}
-		onRename={renameServer}
+	<ProcessAlerts
+		status={ftTab === 'client' ? clientStatus : serverStatus}
+		installAvailable={status?.installAvailable ?? false}
+		installVersion={status?.installVersion}
+		installedVersion={status?.installedVersion}
+		updateAvailable={status?.updateAvailable ?? false}
+		remoteVersion={status?.remoteVersion}
+		remoteCheckError={status?.remoteCheckError}
+		installing={installing || (status?.installing ?? false)}
+		{checkingUpdates}
+		onInstall={install}
+		onCheckUpdates={checkUpdates}
 	/>
-	{#if selectedServer}
-		<ServerPanel
-			server={selectedServer.config}
-			serverInstanceId={selectedServer.id}
-			saved={savedServer?.config ?? null}
-			status={serverStatus}
-			{saving}
-			defaultClientListenPort={defaultClientListenPort}
-			installAvailable={status?.installAvailable ?? false}
-			installVersion={status?.installVersion}
-			installedVersion={status?.installedVersion}
-			updateAvailable={status?.updateAvailable ?? false}
-			remoteVersion={status?.remoteVersion}
-			remoteCheckError={status?.remoteCheckError}
-			installing={installing || (status?.installing ?? false)}
-			{checkingUpdates}
-			onInstall={install}
-			onCheckUpdates={checkUpdates}
-			{generating}
-			{generatedLink}
-			{generatedPeer}
-			{generatedClientId}
-			bind:genProvider
-			bind:genPeer
-			bind:genMTU
-			bind:genWG
-			bind:genClientId
-			bind:genName
-			bind:expanded
-			onSave={() => saveServerConfig(selectedServer!.config)}
-			onRevert={revertServer}
-			onGenerate={generateLink}
-			onCopy={copy}
+
+	{#if ftTab === 'client'}
+		<InstanceBar
+			items={clientBarItems}
+			selectedId={selectedClientId}
+			onSelect={(id) => {
+				selectedClientId = id;
+			}}
+			onToggle={toggleClientInstance}
+			onAdd={addClient}
+			onDelete={deleteClient}
+			onRename={renameClient}
 		/>
+		{#if selectedClient}
+			<div class="ft-captcha-prefs">
+				<FormToggle
+					checked={captchaAutoOpen}
+					onchange={setCaptchaAutoOpen}
+					label="Авто-открытие окна капчи"
+					hint="Включено — модалка и окно капчи откроются сами. Выключите, если не хотите pop-up — тогда «Открыть капчу» по кнопке."
+					size="sm"
+				/>
+				{#if !captchaAutoOpen && (selectedCaptchaStatus?.canOpen || selectedCaptchaStatus?.waiting)}
+					<Button variant="secondary" size="sm" onclick={() => openCaptchaModal(selectedClientId)}>
+						Открыть капчу
+					</Button>
+				{/if}
+			</div>
+
+			<FreeTurnClientSimple
+				client={selectedClient.config}
+				running={clientStatus?.running ?? false}
+				status={clientStatus}
+				{saving}
+				onSave={saveClientConfig}
+				onToggle={(on) => toggleClientInstance(selectedClientId, on)}
+				onImportLink={applyImportLink}
+			/>
+		{/if}
+
+		<CaptchaModal
+			bind:open={captchaModalOpen}
+			clientId={captchaModalClientId}
+			clientName={captchaModalClient?.clientName}
+			captchaUrl={captchaModalClient?.url ?? null}
+			overview={captchaOverview}
+			captchaAutoOpen={captchaAutoOpen}
+			onCaptchaAutoOpenChange={setCaptchaAutoOpen}
+			onclose={closeCaptchaModal}
+			onSelectClient={selectCaptchaClient}
+		/>
+	{:else}
+		<InstanceBar
+			items={serverBarItems}
+			selectedId={selectedServerId}
+			onSelect={(id) => {
+				selectedServerId = id;
+			}}
+			onToggle={toggleServerInstance}
+			onAdd={addServer}
+			onDelete={deleteServer}
+			onRename={renameServer}
+		/>
+		{#if selectedServer}
+			<FreeTurnServerSimple
+				server={selectedServer.config}
+				running={serverStatus?.running ?? false}
+				status={serverStatus}
+				{saving}
+				{generating}
+				defaultClientListenPort={defaultClientListenPort}
+				{generatedLink}
+				{generatedPeer}
+				bind:genProvider
+				bind:genPeer
+				bind:genMTU
+				bind:genWG
+				bind:genClientId
+				bind:genName
+				onSave={saveServerConfig}
+				onToggle={(on) => toggleServerInstance(selectedServerId, on)}
+				onGenerate={generateLink}
+				onCopy={copy}
+			/>
+		{/if}
 	{/if}
 {/if}
 
@@ -595,5 +736,17 @@
 		padding: 2rem;
 		text-align: center;
 		color: var(--color-text-secondary);
+	}
+
+	.ft-captcha-prefs {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.75rem 1rem;
+		margin: 0.75rem 0 1rem;
+		padding: 0.625rem 0.75rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-secondary);
 	}
 </style>

@@ -84,6 +84,7 @@ export interface AWGTunnel {
 	connectivityCheck?: ConnectivityCheckConfig;
 	warnings?: string[];
 	backend?: 'nativewg' | 'kernel';
+	freeTurnClientId?: string;
 }
 
 export interface TunnelListItem {

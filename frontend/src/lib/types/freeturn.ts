@@ -18,7 +18,7 @@ export interface FreeTurnClientConfig {
 	obfProfile: 'none' | 'rtpopus' | 'rtpopus2' | 'rtpopus3';
 	obfKey?: string;
 	streamsPerCred: number;
-	browser: 'chrome' | 'firefox';
+	browser: 'chrome' | 'firefox' | 'safari';
 	manualCaptcha: boolean;
 	dnsMode: 'plain' | 'doh' | 'auto';
 	dnsServers?: string;
@@ -62,6 +62,7 @@ export interface FreeTurnProcessStatus {
 	startedAt?: string;
 	lastError?: string;
 	log?: string;
+	dtlsConnections?: number;
 	binary: string;
 	binaryPresent: boolean;
 }
@@ -140,6 +141,32 @@ export interface FreeTurnAllowlistStatus {
 
 export interface FreeTurnAllowlistAddResult extends FreeTurnAllowlistStatus {
 	needsRestart?: boolean;
+}
+
+export interface FreeTurnCaptchaClientStatus {
+	clientId: string;
+	clientName: string;
+	waiting: boolean;
+	active: boolean;
+	queued: boolean;
+	canOpen: boolean;
+	url?: string;
+	pendingStreams?: number;
+	portContention?: boolean;
+	captchaSession?: number;
+}
+
+export interface FreeTurnCaptchaOverview {
+	portOpen: boolean;
+	ownerClientId?: string;
+	ownerName?: string;
+	clients: FreeTurnCaptchaClientStatus[];
+}
+
+export interface FreeTurnDeleteClientResult {
+	message?: string;
+	deletedTunnels?: string[];
+	tunnelErrors?: string[];
 }
 
 // #endregion

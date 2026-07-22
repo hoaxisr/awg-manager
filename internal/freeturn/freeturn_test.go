@@ -74,7 +74,7 @@ func TestBuildClientArgs_FullAndZero(t *testing.T) {
 		"-links", "https://vk.ru/call/join/a", "-n", "4", "-transport", "tcp",
 		"-mode", "udp", "-bond", "-turn", "turn.host", "-port", "3478",
 		"-obf-profile", "rtpopus2", "-obf-key", "deadbeef",
-		"-streams-per-cred", "2", "-browser", "chromium", "-manual-captcha",
+		"-streams-per-cred", "2", "-browser", "chrome", "-manual-captcha",
 		"-dns-mode", "doh", "-dns-servers", "1.1.1.1", "-client-id", "cid",
 		"-sub", "s", "-debug",
 	}

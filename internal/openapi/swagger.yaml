@@ -1423,6 +1423,14 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.FreeTurnCaptchaStatusResponse:
+    properties:
+      data:
+        $ref: '#/definitions/freeturn.CaptchaOverview'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.FreeTurnClientInstanceResponse:
     properties:
       data:
@@ -1771,6 +1779,18 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.ImportConfRequest:
+    properties:
+      backend:
+        description: '"nativewg" | "kernel" (default: "kernel")'
+        type: string
+      content:
+        type: string
+      freeTurnClientId:
+        type: string
+      name:
+        type: string
     type: object
   api.IpsetUsageData:
     properties:
@@ -6386,13 +6406,66 @@ definitions:
       enabled:
         type: boolean
     type: object
+  freeturn.CaptchaClientStatus:
+    properties:
+      active:
+        description: 'Active: this client''s process currently owns the local captcha
+          HTTP server (:8765).'
+        type: boolean
+      canOpen:
+        description: 'CanOpen: UI may open the proxied captcha page for this client.'
+        type: boolean
+      captchaSession:
+        description: 'CaptchaSession: manual captcha (re)starts in this process run
+          — bump to reload iframe.'
+        type: integer
+      clientId:
+        type: string
+      clientName:
+        type: string
+      pendingStreams:
+        description: 'PendingStreams: VK-auth streams in this client still waiting
+          on manual captcha.'
+        type: integer
+      portContention:
+        description: 'PortContention: manual captcha port :8765 is busy with another
+          stream''s session.'
+        type: boolean
+      queued:
+        description: 'Queued: waiting but another client holds :8765 — solve the active
+          one first.'
+        type: boolean
+      url:
+        type: string
+      waiting:
+        description: 'Waiting: client log indicates manual captcha is required (auto
+          failed or -manual-captcha).'
+        type: boolean
+    type: object
+  freeturn.CaptchaOverview:
+    properties:
+      clients:
+        items:
+          $ref: '#/definitions/freeturn.CaptchaClientStatus'
+        type: array
+      ownerClientId:
+        type: string
+      ownerName:
+        type: string
+      portOpen:
+        type: boolean
+    type: object
   freeturn.ClientConfig:
     properties:
       bond:
         description: -bond, only meaningful with mode=tcp
         type: boolean
       browser:
-        description: -browser, chrome|firefox, provider=vk only
+        description: -browser, provider=vk only
+        enum:
+        - chrome
+        - firefox
+        - safari
         type: string
       clientId:
         description: -client-id, auto-generated if empty
@@ -6562,6 +6635,11 @@ definitions:
         type: string
       binaryPresent:
         type: boolean
+      dtlsConnections:
+        description: |-
+          DtlsConnections is the number of freeturn streams with an established
+          DTLS session in the current log tail (0 when not running).
+        type: integer
       lastError:
         description: |-
           LastError holds the tail of stderr from the most recent exit, only
@@ -8370,6 +8448,18 @@ paths:
       summary: Adopt external tunnel
       tags:
       - tunnels
+  /freeturn/captcha/status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.FreeTurnCaptchaStatusResponse'
+      summary: Get FreeTurn VK captcha queue and per-client status
+      tags:
+      - freeturn
   /freeturn/client/config:
     put:
       responses:
@@ -9153,6 +9243,13 @@ paths:
     post:
       consumes:
       - application/json
+      parameters:
+      - description: Config content and optional metadata
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.ImportConfRequest'
       produces:
       - application/json
       responses:

@@ -183,10 +183,15 @@ export class TunnelsClient extends CoreClient {
 	// #region Import
 	// ─────────────────────────────────────────────
 
-	async importConfig(content: string, name?: string, backend?: string): Promise<AWGTunnel> {
+	async importConfig(
+		content: string,
+		name?: string,
+		backend?: string,
+		freeTurnClientId?: string
+	): Promise<AWGTunnel> {
 		return this.request('/import/conf', {
 			method: 'POST',
-			body: JSON.stringify({ content, name, backend })
+			body: JSON.stringify({ content, name, backend, freeTurnClientId })
 		});
 	}
 

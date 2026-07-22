@@ -497,6 +497,11 @@ const api_FreeTurnAllowlistResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_FreeTurnCaptchaStatusResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => freeturn_CaptchaOverview))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_FreeTurnClientInstanceResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => freeturn_ClientInstance))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -2328,6 +2333,26 @@ const freeturn_AllowlistStatus: v.GenericSchema = v.looseObject({
 	enabled: v.optional(v.nullable(v.boolean())),
 });
 
+const freeturn_CaptchaClientStatus: v.GenericSchema = v.looseObject({
+	active: v.optional(v.nullable(v.boolean())),
+	canOpen: v.optional(v.nullable(v.boolean())),
+	captchaSession: v.optional(v.nullable(v.number())),
+	clientId: v.optional(v.nullable(v.string())),
+	clientName: v.optional(v.nullable(v.string())),
+	pendingStreams: v.optional(v.nullable(v.number())),
+	portContention: v.optional(v.nullable(v.boolean())),
+	queued: v.optional(v.nullable(v.boolean())),
+	url: v.optional(v.nullable(v.string())),
+	waiting: v.optional(v.nullable(v.boolean())),
+});
+
+const freeturn_CaptchaOverview: v.GenericSchema = v.looseObject({
+	clients: v.optional(v.nullable(v.array(v.lazy(() => freeturn_CaptchaClientStatus)))),
+	ownerClientId: v.optional(v.nullable(v.string())),
+	ownerName: v.optional(v.nullable(v.string())),
+	portOpen: v.optional(v.nullable(v.boolean())),
+});
+
 const freeturn_ClientConfig: v.GenericSchema = v.looseObject({
 	bond: v.optional(v.nullable(v.boolean())),
 	browser: v.optional(v.nullable(v.string())),
@@ -2396,6 +2421,7 @@ const freeturn_LinkPayload: v.GenericSchema = v.looseObject({
 const freeturn_ProcessStatus: v.GenericSchema = v.looseObject({
 	binary: v.optional(v.nullable(v.string())),
 	binaryPresent: v.optional(v.nullable(v.boolean())),
+	dtlsConnections: v.optional(v.nullable(v.number())),
 	lastError: v.optional(v.nullable(v.string())),
 	log: v.optional(v.nullable(v.string())),
 	pid: v.optional(v.nullable(v.number())),
@@ -2513,6 +2539,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /dns-routes/list": v.lazy(() => api_DnsRoutesListResponse),
 	"GET /download/outbounds": v.lazy(() => api_DownloadOutboundsResponse),
 	"GET /external-tunnels": v.lazy(() => api_ExternalTunnelsResponse),
+	"GET /freeturn/captcha/status": v.lazy(() => api_FreeTurnCaptchaStatusResponse),
 	"GET /freeturn/config": v.lazy(() => api_FreeTurnConfigResponse),
 	"GET /freeturn/servers/{id}/allowlist": v.lazy(() => api_FreeTurnAllowlistResponse),
 	"GET /freeturn/status": v.lazy(() => api_FreeTurnStatusResponse),
