@@ -268,9 +268,7 @@ func (h *FreeTurnHandler) resolveExternalIP(ctx context.Context) (string, error)
 		fallback = h.queries.WANInterfaceAddress
 		if h.queries.Routes != nil && h.queries.Interfaces != nil {
 			if ndmsName, err := h.queries.Routes.GetDefaultGatewayInterface(ctx); err == nil && ndmsName != "" {
-				if kernel, err := h.queries.Interfaces.ResolveSystemName(ctx, ndmsName); err == nil {
-					wanKernel = kernel
-				}
+				wanKernel = h.queries.Interfaces.ResolveSystemName(ctx, ndmsName)
 			}
 		}
 	}
