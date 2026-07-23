@@ -160,6 +160,7 @@ func (p *process) Start(args []string) error {
 				// Unexpected exit. Only the last few lines, not the whole
 				// buffer — after a long run that buffer is mostly benign
 				// per-stream connect/disconnect noise, not the actual cause.
+				waitDrainGroup(&drainWG, 500*time.Millisecond)
 				tail := strings.TrimSpace(p.logTail.LastLines(10))
 				if tail == "" && waitErr != nil {
 					tail = waitErr.Error()
