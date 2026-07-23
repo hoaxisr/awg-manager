@@ -70,7 +70,7 @@ func (a *installerDownloaderAdapter) DownloadFile(ctx context.Context, req insta
 	}, nil
 }
 
-// freeturnDownloaderAdapter bridges freeturn.Downloader onto the shared
+// freeturnDownloaderAdapter bridges childproc.Downloader onto the shared
 // downloader.Service (то же, что installerDownloaderAdapter для sing-box:
 // temp == dest, без atomic — активацию делает freeturn.installOne).
 type freeturnDownloaderAdapter struct {

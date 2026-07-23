@@ -6,9 +6,8 @@ import (
 )
 
 // RingBuffer keeps the last `max` lines written to it. Used to retain a
-// short stderr tail so a startup failure (bad flags, missing peer, captcha
-// required, etc) can surface a useful message instead of just
-// "exit status 1".
+// short stderr tail so a startup failure (bad flags, missing peer, etc)
+// can surface a useful message instead of just "exit status 1".
 type RingBuffer struct {
 	mu    sync.Mutex
 	lines []string

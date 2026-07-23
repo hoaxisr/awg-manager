@@ -37,10 +37,11 @@ func (e *ChecksumError) Error() string {
 	return fmt.Sprintf("контрольная сумма не совпала (получено %s, ожидалось %s)", e.Got, e.Want)
 }
 
-// Install downloads url into binPath.tmp, verifies its SHA256 (if sha256hex is
-// non-empty), chmods it 0755 and atomically renames it into place. On any
-// failure the tmp file is removed and binPath is left untouched. A SHA256
-// mismatch is reported as *ChecksumError.
+// Install downloads url into binPath.tmp, verifies its SHA256, chmods it 0755
+// and atomically renames it into place. On any failure the tmp file is removed
+// and binPath is left untouched. An empty expected sha256hex is treated as a
+// spec misconfiguration and rejected (fail-closed) — installing an unverified
+// executable is never allowed. A SHA256 mismatch is reported as *ChecksumError.
 func Install(ctx context.Context, d Downloader, binPath, url, sha256hex string, size int64) error {
 	if err := os.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
 		return err
@@ -51,16 +52,18 @@ func Install(ctx context.Context, d Downloader, binPath, url, sha256hex string, 
 		_ = os.Remove(tmp)
 		return fmt.Errorf("загрузка %s: %w", url, err)
 	}
-	if sha256hex != "" {
-		got, err := sha256File(tmp)
-		if err != nil {
-			_ = os.Remove(tmp)
-			return err
-		}
-		if !strings.EqualFold(got, sha256hex) {
-			_ = os.Remove(tmp)
-			return &ChecksumError{Got: got, Want: sha256hex}
-		}
+	if sha256hex == "" {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("childproc: пустой ожидаемый SHA256 для %s — отказ установки", url)
+	}
+	got, err := sha256File(tmp)
+	if err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if !strings.EqualFold(got, sha256hex) {
+		_ = os.Remove(tmp)
+		return &ChecksumError{Got: got, Want: sha256hex}
 	}
 	if err := os.Chmod(tmp, 0755); err != nil {
 		_ = os.Remove(tmp)
