@@ -180,34 +180,44 @@ func (s *Service) CreateServer(in CreateServerInput) (ServerInstance, error) {
 
 func (s *Service) DeleteClient(id string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
+		s.mu.Unlock()
 		return err
 	}
 	idx := findClientIndex(full.Clients, id)
 	if idx < 0 {
+		s.mu.Unlock()
 		return fmt.Errorf("клиент %q не найден", id)
 	}
-	_ = s.clientProcs.get(id).Stop()
 	full.Clients = append(full.Clients[:idx], full.Clients[idx+1:]...)
-	return s.store.Save(full)
+	saveErr := s.store.Save(full)
+	s.mu.Unlock()
+	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
+	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
+	_ = s.clientProcs.get(id).Stop()
+	return saveErr
 }
 
 func (s *Service) DeleteServer(id string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
+		s.mu.Unlock()
 		return err
 	}
 	idx := findServerIndex(full.Servers, id)
 	if idx < 0 {
+		s.mu.Unlock()
 		return fmt.Errorf("сервер %q не найден", id)
 	}
-	_ = s.serverProcs.get(id).Stop()
 	full.Servers = append(full.Servers[:idx], full.Servers[idx+1:]...)
-	return s.store.Save(full)
+	saveErr := s.store.Save(full)
+	s.mu.Unlock()
+	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
+	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
+	_ = s.serverProcs.get(id).Stop()
+	return saveErr
 }
 
 func (s *Service) RenameClient(id, name string) error {
