@@ -21,7 +21,15 @@ func (s *Store) Load() (Config, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cfg != nil {
-		return *s.cfg, nil
+		cfg := *s.cfg
+		normalizeConfig(&cfg)
+		if len(cfg.Clients) != len(s.cfg.Clients) {
+			if err := s.saveLocked(cfg); err != nil {
+				return cfg, err
+			}
+			return cfg, nil
+		}
+		return cfg, nil
 	}
 	data, err := os.ReadFile(s.path)
 	if err != nil {
@@ -50,6 +58,7 @@ func (s *Store) Save(cfg Config) error {
 }
 
 func (s *Store) saveLocked(cfg Config) error {
+	normalizeConfig(&cfg)
 	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
 		return err
 	}

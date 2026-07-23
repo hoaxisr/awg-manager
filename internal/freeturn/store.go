@@ -32,7 +32,14 @@ func (s *Store) Load() (Config, error) {
 	defer s.mu.Unlock()
 
 	if s.cfg != nil {
-		return *s.cfg, nil
+		cfg := *s.cfg
+		if changed := normalizeConfig(&cfg); changed || len(cfg.Clients) != len(s.cfg.Clients) || len(cfg.Servers) != len(s.cfg.Servers) {
+			if err := s.saveLocked(cfg); err != nil {
+				return cfg, err
+			}
+			return cfg, nil
+		}
+		return cfg, nil
 	}
 
 	data, err := os.ReadFile(s.path)
@@ -69,6 +76,7 @@ func (s *Store) Save(cfg Config) error {
 // saveLocked writes via a temp file + rename so a crash mid-write can't
 // leave freeturn.json truncated/corrupt.
 func (s *Store) saveLocked(cfg Config) error {
+	normalizeConfig(&cfg)
 	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
 		return err
 	}

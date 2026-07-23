@@ -198,6 +198,52 @@ func TestStore_MigrateV1(t *testing.T) {
 	}
 }
 
+func TestStore_DeleteAllClientsRestoresDefault(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Clients = nil
+	if err := s.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Clients) != 1 {
+		t.Fatalf("after save with empty clients want 1, got %d", len(got.Clients))
+	}
+	if got.Clients[0].ID != DefaultInstanceID {
+		t.Fatalf("want default id %q, got %q", DefaultInstanceID, got.Clients[0].ID)
+	}
+}
+
+func TestStore_DeleteAllServersRestoresDefault(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Servers = nil
+	if err := s.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Servers) != 1 {
+		t.Fatalf("after save with empty servers want 1, got %d", len(got.Servers))
+	}
+	if got.Servers[0].ID != DefaultInstanceID {
+		t.Fatalf("want default id %q, got %q", DefaultInstanceID, got.Servers[0].ID)
+	}
+}
+
 func TestService_CreateMultipleClients(t *testing.T) {
 	dir := t.TempDir()
 	s := NewService(dir, dir, filepath.Join(dir, "c"), filepath.Join(dir, "s"))

@@ -15,6 +15,7 @@
 	} from '$lib/types';
 
 	let loading = $state(true);
+	let loadError = $state('');
 	let saving = $state(false);
 	let importing = $state(false);
 	let installing = $state(false);
@@ -103,11 +104,18 @@
 	}
 
 	async function loadConfig() {
-		const norm = normalizeConfig(await api.getWdttConfig());
-		savedConfig = structuredClone(norm);
-		config = norm;
-		if (!norm.clients.some((c) => c.id === selectedClientId)) {
-			selectedClientId = norm.clients[0]?.id ?? 'default';
+		try {
+			const norm = normalizeConfig(await api.getWdttConfig());
+			savedConfig = structuredClone(norm);
+			config = norm;
+			loadError = '';
+			if (!norm.clients.some((c) => c.id === selectedClientId)) {
+				selectedClientId = norm.clients[0]?.id ?? 'default';
+			}
+		} catch (e) {
+			loadError = errText(e);
+			notifications.error('WDTT: ' + loadError);
+			throw e;
 		}
 	}
 
@@ -402,9 +410,14 @@
 	}
 </script>
 
-{#if loading || !config}
+{#if loading}
 	<div class="wdtt-loading">Загрузка…</div>
-{:else}
+{:else if loadError && !config}
+	<div class="wdtt-loading">
+		<p>Не удалось загрузить настройки WDTT.</p>
+		<p class="wdtt-load-error">{loadError}</p>
+	</div>
+{:else if config}
 	<ProcessAlerts
 		status={clientStatus}
 		installAvailable={status?.installAvailable ?? false}
@@ -448,6 +461,8 @@
 				ensuringWg={ensuringWg}
 			/>
 		{/key}
+	{:else}
+		<p class="wdtt-empty-hint">Нет выбранного клиента. Нажмите «+ Добавить», чтобы создать новый.</p>
 	{/if}
 {/if}
 
@@ -455,6 +470,18 @@
 	.wdtt-loading {
 		padding: 2rem;
 		text-align: center;
+		color: var(--color-text-secondary);
+	}
+
+	.wdtt-load-error {
+		font-size: 0.8125rem;
+		color: var(--color-danger);
+		margin-top: 0.5rem;
+	}
+
+	.wdtt-empty-hint {
+		margin: 0.5rem 0 1rem;
+		font-size: 0.875rem;
 		color: var(--color-text-secondary);
 	}
 </style>
