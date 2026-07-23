@@ -35,6 +35,32 @@ func TestStore_DeleteAllClientsRestoresDefault(t *testing.T) {
 	}
 }
 
+func TestStore_LoadReturnsIsolatedCopy(t *testing.T) {
+	store := NewStore(t.TempDir())
+
+	// Прогреваем кэш (как при старте сервиса), далее хендлеры читают из него.
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Clients) == 0 {
+		t.Fatal("want at least one client")
+	}
+	// Мутируем результат Load — не должно затрагивать кэш.
+	cfg.Clients[0].Config.Password = "leaked"
+
+	got, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Clients[0].Config.Password == "leaked" {
+		t.Fatal("мутация результата Load протекла в кэш")
+	}
+}
+
 func TestStore_LoadEmptyFileRestoresDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wdtt.json")

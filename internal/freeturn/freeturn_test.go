@@ -223,6 +223,35 @@ func TestStore_DeleteAllClientsRestoresDefault(t *testing.T) {
 	}
 }
 
+func TestStore_LoadReturnsIsolatedCopy(t *testing.T) {
+	s := NewStore(t.TempDir())
+	// Прогреваем кэш (как при старте сервиса), далее хендлеры читают из него.
+	if _, err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Clients) == 0 || len(cfg.Servers) == 0 {
+		t.Fatal("want at least one client and server")
+	}
+	// Мутируем результат Load — не должно затрагивать кэш.
+	cfg.Clients[0].Config.Peer = "leaked-client"
+	cfg.Servers[0].Config.Connect = "leaked-server"
+
+	got, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Clients[0].Config.Peer == "leaked-client" {
+		t.Fatal("мутация client протекла в кэш")
+	}
+	if got.Servers[0].Config.Connect == "leaked-server" {
+		t.Fatal("мутация server протекла в кэш")
+	}
+}
+
 func TestStore_DeleteAllServersRestoresDefault(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)

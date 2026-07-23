@@ -33,6 +33,14 @@ func (s *Store) Load() (Config, error) {
 
 	if s.cfg != nil {
 		cfg := *s.cfg
+		// Изолируем срезы от кэша: shallow-copy делит backing array,
+		// normalizeConfig и мутации хендлеров иначе меняют кэш до Save.
+		if s.cfg.Clients != nil {
+			cfg.Clients = append([]ClientInstance(nil), s.cfg.Clients...)
+		}
+		if s.cfg.Servers != nil {
+			cfg.Servers = append([]ServerInstance(nil), s.cfg.Servers...)
+		}
 		if changed := normalizeConfig(&cfg); changed || len(cfg.Clients) != len(s.cfg.Clients) || len(cfg.Servers) != len(s.cfg.Servers) {
 			if err := s.saveLocked(cfg); err != nil {
 				return cfg, err

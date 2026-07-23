@@ -22,6 +22,11 @@ func (s *Store) Load() (Config, error) {
 	defer s.mu.Unlock()
 	if s.cfg != nil {
 		cfg := *s.cfg
+		// Изолируем срез от кэша: shallow-copy делит backing array,
+		// normalizeConfig и мутации хендлеров иначе меняют кэш до Save.
+		if s.cfg.Clients != nil {
+			cfg.Clients = append([]ClientInstance(nil), s.cfg.Clients...)
+		}
 		normalizeConfig(&cfg)
 		if len(cfg.Clients) != len(s.cfg.Clients) {
 			if err := s.saveLocked(cfg); err != nil {
