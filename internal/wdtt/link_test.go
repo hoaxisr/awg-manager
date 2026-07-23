@@ -2,6 +2,39 @@ package wdtt
 
 import "testing"
 
+func TestValidateSubURL_RejectsInternal(t *testing.T) {
+	for _, u := range []string{
+		"http://localhost:79/x",
+		"http://127.0.0.1/x",
+		"http://[::1]/x",
+		"http://169.254.1.1/x",
+		"http://0.0.0.0/x",
+	} {
+		if err := validateSubURL(u); err == nil {
+			t.Errorf("expected rejection for %s", u)
+		}
+	}
+}
+
+func TestValidateSubURL_RejectsBadScheme(t *testing.T) {
+	if err := validateSubURL("ftp://example.com/x"); err == nil {
+		t.Error("expected scheme rejection")
+	}
+	if err := validateSubURL("http:///x"); err == nil {
+		t.Error("expected hostless rejection")
+	}
+}
+
+func TestNormalizeSubURL_KeepsQuery(t *testing.T) {
+	in := "https://sub.example.com/wdtt.json?token=abc123"
+	if got := normalizeSubURL(in); got != in {
+		t.Fatalf("query stripped: %q", got)
+	}
+	if got := normalizeSubURL("  ftp://x/y  "); got != "" {
+		t.Fatalf("expected empty for non-http, got %q", got)
+	}
+}
+
 func TestDecodeImport_WdttColon(t *testing.T) {
 	link := "wdtt://1.2.3.4:56000:56001:0:secret:hash1,hash2#MyServer"
 	got, err := DecodeImport(link)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -256,7 +257,15 @@ func fetchSubscriptionLink(rawURL string) (LinkDecodeResult, error) {
 	if err := validateSubURL(rawURL); err != nil {
 		return LinkDecodeResult{}, err
 	}
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return fmt.Errorf("слишком много редиректов при загрузке подписки")
+			}
+			return validateSubURL(req.URL.String())
+		},
+	}
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
 		return LinkDecodeResult{}, err
@@ -275,7 +284,7 @@ func fetchSubscriptionLink(rawURL string) (LinkDecodeResult, error) {
 	if err != nil {
 		return LinkDecodeResult{}, err
 	}
-	subURL := strings.Split(rawURL, "?")[0]
+	subURL := rawURL // keep query — subscription tokens are needed for RefreshSubscription
 	if doc, err := parseSubscriptionDocument(bodyBytes, subURL); err == nil {
 		return linkDecodeFromSubscription(doc), nil
 	}
@@ -328,9 +337,26 @@ func validateSubURL(raw string) error {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("URL подписки должен быть http(s)")
 	}
-	if u.Host == "" {
+	host := u.Hostname()
+	if host == "" {
 		return fmt.Errorf("URL подписки без хоста")
 	}
+	if strings.EqualFold(host, "localhost") {
+		return fmt.Errorf("URL подписки указывает на внутренний адрес")
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("не удалось разрешить хост подписки: %w", err)
+	}
+	for _, ip := range ips {
+		// Приватные диапазоны (LAN) намеренно НЕ блокируем — сервер подписки в LAN легитимен.
+		// Блок только loopback/link-local/unspecified: закрывает RCI localhost:79 и метадату.
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return fmt.Errorf("URL подписки указывает на внутренний адрес")
+		}
+	}
+	// ponytail: остаётся окно DNS-rebinding — резолв здесь ≠ резолв при dial.
+	// Прямой localhost/loopback (флагнутая угроза) закрыт; полный dial-time IP-контроль тяжёл.
 	return nil
 }
 
@@ -359,7 +385,7 @@ func normalizeSubURL(raw string) string {
 	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
 		return ""
 	}
-	return strings.Split(raw, "?")[0]
+	return raw // keep query — subscription tokens are needed for RefreshSubscription
 }
 
 func splitHashes(raw string) []string {
@@ -382,8 +408,8 @@ func splitHashes(raw string) []string {
 	return out
 }
 
-// normalizeVKJoinHash mirrors third_party/wdtt-client ParseHashes: accepts bare
-// hash or full https://vk.com/call/join/… URL from .qwdtt exports.
+// normalizeVKJoinHash accepts a bare VK call hash or a full
+// https://vk.com/call/join/… URL (as found in .qwdtt exports) and returns the hash.
 func normalizeVKJoinHash(input string) string {
 	s := strings.Trim(strings.TrimSpace(input), "<>\"'")
 	if s == "" {
