@@ -2,13 +2,10 @@ package freeturn
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"errors"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"strings"
+
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 )
 
 // BinarySpec is one binary's pinned download metadata. Version+SHA256 are
@@ -57,19 +54,6 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 	},
 }
 
-// downloadSlack tops up MaxFileBytes over the expected size so a legitimate
-// asset a few bytes larger than pinned doesn't fail mid-transfer (it would
-// still fail SHA256 afterwards — the slack only moves WHERE it fails).
-const downloadSlack = 1 << 20
-
-// Downloader is the narrow download contract; the adapter in cmd/awg-manager
-// bridges it to the shared downloader.Service (timeouts, redirects, limits).
-type Downloader interface {
-	// DownloadFile fetches url into destPath (mode 0644, non-atomic —
-	// caller activates via chmod+rename). maxBytes hard-caps the transfer.
-	DownloadFile(ctx context.Context, url, destPath string, maxBytes int64) error
-}
-
 // SetInstallSpecs wires the pinned specs for this router's arch. Not called
 // (nil specs) = install unavailable, UI keeps the manual-install hint.
 func (s *Service) SetInstallSpecs(specs ArchSpecs) {
@@ -77,7 +61,7 @@ func (s *Service) SetInstallSpecs(specs ArchSpecs) {
 }
 
 // SetDownloader wires the shared download service adapter.
-func (s *Service) SetDownloader(dl Downloader) {
+func (s *Service) SetDownloader(dl childproc.Downloader) {
 	s.downloader = dl
 }
 
@@ -140,46 +124,10 @@ func (s *Service) installOne(ctx context.Context, binPath string, spec BinarySpe
 	if binPath == "" {
 		return fmt.Errorf("путь бинаря не сконфигурирован")
 	}
-	if err := os.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
-		return err
+	err := childproc.Install(ctx, s.downloader, binPath, spec.URL, spec.SHA256, spec.Size)
+	var ce *childproc.ChecksumError
+	if errors.As(err, &ce) {
+		s.appLog.Warn("install", spec.URL, fmt.Sprintf("sha256 mismatch: got %s, want %s", ce.Got, ce.Want))
 	}
-	tmp := binPath + ".tmp"
-	_ = os.Remove(tmp)
-	if err := s.downloader.DownloadFile(ctx, spec.URL, tmp, spec.Size+downloadSlack); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("загрузка %s: %w", spec.URL, err)
-	}
-	got, err := sha256File(tmp)
-	if err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if !strings.EqualFold(got, spec.SHA256) {
-		_ = os.Remove(tmp)
-		s.appLog.Warn("install", spec.URL, fmt.Sprintf("sha256 mismatch: got %s, want %s", got, spec.SHA256))
-		return fmt.Errorf("контрольная сумма не совпала (получено %s, ожидалось %s)", got, spec.SHA256)
-	}
-	if err := os.Chmod(tmp, 0755); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	// Atomic activation: same directory → same filesystem, rename не рвётся.
-	if err := os.Rename(tmp, binPath); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
-}
-
-func sha256File(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return err
 }

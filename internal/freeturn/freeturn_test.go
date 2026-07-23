@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 )
 
 // ---------------------------------------------------------------------------
@@ -377,7 +379,7 @@ func sha256Hex(b []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-func newInstallService(t *testing.T, dl Downloader, specs ArchSpecs) *Service {
+func newInstallService(t *testing.T, dl childproc.Downloader, specs ArchSpecs) *Service {
 	t.Helper()
 	dir := t.TempDir()
 	s := NewService(dir, dir, filepath.Join(dir, "freeturn-client"), filepath.Join(dir, "freeturn-server"))

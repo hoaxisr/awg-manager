@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
 
@@ -22,11 +23,13 @@ type process struct {
 	binary  string
 	pidPath string
 
+	startMu sync.Mutex // serializes Start so two concurrent calls can't both spawn
+
 	mu            sync.Mutex
 	startedAt     *time.Time
 	lastErr       string
 	stopRequested bool
-	logTail       *ringBuffer
+	logTail       *childproc.RingBuffer
 	startCmd      func(bin string, args ...string) *exec.Cmd
 }
 
@@ -35,7 +38,7 @@ func newProcess(name, binary, runtimeDir string) *process {
 		name:    name,
 		binary:  binary,
 		pidPath: filepath.Join(runtimeDir, "wdtt-"+name+".pid"),
-		logTail: newRingBuffer(processLogMaxLines),
+		logTail: childproc.NewRingBuffer(processLogMaxLines),
 		startCmd: func(bin string, args ...string) *exec.Cmd {
 			return exec.Command(bin, args...)
 		},
@@ -43,6 +46,8 @@ func newProcess(name, binary, runtimeDir string) *process {
 }
 
 func (p *process) Start(args []string) error {
+	p.startMu.Lock()
+	defer p.startMu.Unlock()
 	if running, _ := p.IsRunning(); running {
 		p.mu.Lock()
 		tracked := p.startedAt != nil
@@ -65,7 +70,7 @@ func (p *process) Start(args []string) error {
 
 	cmd := p.startCmd(p.binary, args...)
 	cmd.Env = wdttRuntimeEnv(os.Environ())
-	setProcessGroup(cmd)
+	childproc.SetProcessGroup(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -89,7 +94,7 @@ func (p *process) Start(args []string) error {
 	go p.drain(stderr)
 
 	if err := p.writePID(cmd.Process.Pid); err != nil {
-		_ = terminate(cmd.Process.Pid)
+		_ = childproc.Terminate(cmd.Process.Pid)
 		_ = cmd.Wait()
 		return fmt.Errorf("wdtt %s: pidfile: %w", p.name, err)
 	}
@@ -145,16 +150,16 @@ func (p *process) Stop() error {
 	p.mu.Lock()
 	p.stopRequested = true
 	p.mu.Unlock()
-	_ = terminate(pid)
+	_ = childproc.Terminate(pid)
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if !isAlive(pid) {
+		if !childproc.IsAlive(pid) {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if isAlive(pid) {
-		_ = kill(pid)
+	if childproc.IsAlive(pid) {
+		_ = childproc.Kill(pid)
 	}
 	_ = os.Remove(p.pidPath)
 	p.mu.Lock()
@@ -168,7 +173,7 @@ func (p *process) IsRunning() (bool, int) {
 	if err != nil {
 		return false, 0
 	}
-	if !isAlive(pid) {
+	if !childproc.IsAlive(pid) {
 		return false, pid
 	}
 	return true, pid

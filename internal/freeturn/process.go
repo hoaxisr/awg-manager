@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
 
@@ -30,20 +31,21 @@ const startupGrace = 1500 * time.Millisecond
 // which is also used to namespace the PID file.
 //
 // Platform-specific bits (process-group setup, SIGTERM/SIGKILL, liveness
-// probe) live in process_linux.go / process_other.go so the package still
-// compiles on a Windows dev box even though it only ever runs on the
-// Linux/ARM router. This mirrors the split in internal/sys/exec.
+// probe) live in internal/childproc so the package still compiles on a
+// non-Linux dev box even though it only ever runs on the Linux/ARM router.
 type process struct {
 	name    string
 	binary  string
 	pidPath string
+
+	startMu sync.Mutex // serializes Start so two concurrent calls can't both spawn
 
 	mu            sync.Mutex
 	startedAt     *time.Time
 	lastErr       string
 	stopRequested bool // set by Stop() so the exit-watcher goroutine knows this death was expected
 
-	logTail *ringBuffer
+	logTail *childproc.RingBuffer
 
 	// Seam for tests.
 	startCmd func(bin string, args ...string) *exec.Cmd
@@ -54,7 +56,7 @@ func newProcess(name, binary, runtimeDir string) *process {
 		name:    name,
 		binary:  binary,
 		pidPath: filepath.Join(runtimeDir, "freeturn-"+name+".pid"),
-		logTail: newRingBuffer(processLogMaxLines),
+		logTail: childproc.NewRingBuffer(processLogMaxLines),
 		startCmd: func(bin string, args ...string) *exec.Cmd {
 			return exec.Command(bin, args...)
 		},
@@ -65,6 +67,8 @@ func newProcess(name, binary, runtimeDir string) *process {
 // process has survived startupGrace; returns an error (with stderr tail)
 // if it exits before that. No-op if already running.
 func (p *process) Start(args []string) error {
+	p.startMu.Lock()
+	defer p.startMu.Unlock()
 	if running, _ := p.IsRunning(); running {
 		return nil
 	}
@@ -80,7 +84,7 @@ func (p *process) Start(args []string) error {
 
 	cmd := p.startCmd(p.binary, args...)
 	cmd.Env = freeturnRuntimeEnv(os.Environ())
-	setProcessGroup(cmd) // platform-specific (Setsid on Linux, no-op elsewhere)
+	childproc.SetProcessGroup(cmd) // platform-specific (Setsid on Linux, no-op elsewhere)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -104,7 +108,7 @@ func (p *process) Start(args []string) error {
 	go p.drain(stderr)
 
 	if err := p.writePID(cmd.Process.Pid); err != nil {
-		_ = terminate(cmd.Process.Pid)
+		_ = childproc.Terminate(cmd.Process.Pid)
 		_ = cmd.Wait()
 		return fmt.Errorf("freeturn %s: write pidfile: %w", p.name, err)
 	}
@@ -175,17 +179,17 @@ func (p *process) Stop() error {
 	p.mu.Lock()
 	p.stopRequested = true
 	p.mu.Unlock()
-	_ = terminate(pid) // SIGTERM on Linux, Process.Kill elsewhere
+	_ = childproc.Terminate(pid) // SIGTERM on Linux, Process.Kill elsewhere
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if !isAlive(pid) {
+		if !childproc.IsAlive(pid) {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if isAlive(pid) {
-		_ = kill(pid) // SIGKILL on Linux, Process.Kill elsewhere
+	if childproc.IsAlive(pid) {
+		_ = childproc.Kill(pid) // SIGKILL on Linux, Process.Kill elsewhere
 	}
 	_ = os.Remove(p.pidPath)
 
@@ -201,7 +205,7 @@ func (p *process) IsRunning() (bool, int) {
 	if err != nil {
 		return false, 0
 	}
-	if !isAlive(pid) {
+	if !childproc.IsAlive(pid) {
 		return false, pid
 	}
 	return true, pid

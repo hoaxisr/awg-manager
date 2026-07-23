@@ -1,32 +1,32 @@
 //go:build linux
 
-package freeturn
+package childproc
 
 import (
 	"os/exec"
 	"syscall"
 )
 
-// setProcessGroup detaches the child into its own session so a SIGKILL to
+// SetProcessGroup detaches the child into its own session so a SIGKILL to
 // the whole group can clean up any helpers it spawns (mirrors the
 // Setsid:true used by internal/singbox.Process).
-func setProcessGroup(cmd *exec.Cmd) {
+func SetProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 }
 
-// terminate sends SIGTERM (graceful stop).
-func terminate(pid int) error {
+// Terminate sends SIGTERM (graceful stop).
+func Terminate(pid int) error {
 	return syscall.Kill(pid, syscall.SIGTERM)
 }
 
-// kill sends SIGKILL (forced stop after the grace period).
-func kill(pid int) error {
+// Kill sends SIGKILL (forced stop after the grace period).
+func Kill(pid int) error {
 	return syscall.Kill(pid, syscall.SIGKILL)
 }
 
-// isAlive probes process existence with signal 0 (sends nothing, just
+// IsAlive probes process existence with signal 0 (sends nothing, just
 // checks the kernel still knows the PID).
-func isAlive(pid int) bool {
+func IsAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}

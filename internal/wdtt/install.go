@@ -2,16 +2,13 @@ package wdtt
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/sys/semver"
 )
 
@@ -48,12 +45,6 @@ var EmbeddedBinaries = map[string]BinarySpec{
 		Version: PinnedVersion, URL: releaseBase + "wt-client-linux-mips-softfloat",
 		SHA256: "f62be339ae86ead7f97439fbe919fd17d0321bfd7265fb8ca2ad484709c5392d", Size: 13172929,
 	},
-}
-
-const downloadSlack = 1 << 20
-
-type Downloader interface {
-	DownloadFile(ctx context.Context, url, destPath string, maxBytes int64) error
 }
 
 type installedVersionRecord struct {
@@ -121,44 +112,5 @@ func (s *Service) installOne(ctx context.Context, binPath string, spec BinarySpe
 	if binPath == "" {
 		return fmt.Errorf("путь бинаря не задан")
 	}
-	if err := os.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
-		return err
-	}
-	tmp := binPath + ".tmp"
-	_ = os.Remove(tmp)
-	if err := s.downloader.DownloadFile(ctx, spec.URL, tmp, spec.Size+downloadSlack); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("загрузка %s: %w", spec.URL, err)
-	}
-	got, err := sha256File(tmp)
-	if err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if !strings.EqualFold(got, spec.SHA256) {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("контрольная сумма не совпала (получено %s, ожидалось %s)", got, spec.SHA256)
-	}
-	if err := os.Chmod(tmp, 0755); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, binPath); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
-}
-
-func sha256File(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return childproc.Install(ctx, s.downloader, binPath, spec.URL, spec.SHA256, spec.Size)
 }

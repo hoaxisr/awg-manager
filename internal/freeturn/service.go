@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
@@ -30,7 +31,7 @@ type Service struct {
 	versionPath string
 
 	installSpecs *ArchSpecs
-	downloader   Downloader
+	downloader   childproc.Downloader
 	installMu    sync.Mutex
 	installing   bool
 
@@ -135,7 +136,7 @@ func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
 	if name == "" {
 		name = fmt.Sprintf("Клиент %d", len(full.Clients)+1)
 	}
-	inst := ClientInstance{ID: newInstanceID(), Name: name, Config: cfg}
+	inst := ClientInstance{ID: childproc.NewInstanceID(), Name: name, Config: cfg}
 	full.Clients = append(full.Clients, inst)
 	if err := s.store.Save(full); err != nil {
 		return ClientInstance{}, err
@@ -157,7 +158,7 @@ func (s *Service) CreateServer(in CreateServerInput) (ServerInstance, error) {
 	if name == "" {
 		name = fmt.Sprintf("Сервер %d", len(full.Servers)+1)
 	}
-	inst := ServerInstance{ID: newInstanceID(), Name: name, Config: cfg}
+	inst := ServerInstance{ID: childproc.NewInstanceID(), Name: name, Config: cfg}
 	full.Servers = append(full.Servers, inst)
 	if err := s.store.Save(full); err != nil {
 		return ServerInstance{}, err

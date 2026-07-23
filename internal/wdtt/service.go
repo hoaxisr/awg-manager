@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
@@ -21,7 +22,7 @@ type Service struct {
 
 	versionPath  string
 	installSpec  *BinarySpec
-	downloader   Downloader
+	downloader   childproc.Downloader
 	installMu    sync.Mutex
 	installing   bool
 	appLog       *logging.ScopedLogger
@@ -50,7 +51,7 @@ func (s *Service) SetInstallSpec(spec BinarySpec) {
 	s.installSpec = &spec
 }
 
-func (s *Service) SetDownloader(dl Downloader) {
+func (s *Service) SetDownloader(dl childproc.Downloader) {
 	s.downloader = dl
 }
 
@@ -104,7 +105,7 @@ func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
 	if name == "" {
 		name = fmt.Sprintf("Клиент %d", len(full.Clients)+1)
 	}
-	inst := ClientInstance{ID: newInstanceID(), Name: name, Config: cfg}
+	inst := ClientInstance{ID: childproc.NewInstanceID(), Name: name, Config: cfg}
 	full.Clients = append(full.Clients, inst)
 	if err := s.store.Save(full); err != nil {
 		return ClientInstance{}, err
