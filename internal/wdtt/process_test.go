@@ -1,9 +1,33 @@
 package wdtt
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
+
+// newTestProcess подменяет реальный бинарь shell-скриптом через seam startCmd;
+// p.binary=/bin/sh проходит binaryPresent, реальная команда — из script.
+func newTestProcess(t *testing.T, script string) *process {
+	t.Helper()
+	p := newProcess("client", "/bin/sh", t.TempDir())
+	p.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("/bin/sh", "-c", script)
+	}
+	return p
+}
+
+// TestProcess_StartupFailure_StderrCaptured_UnderDrainDelay — детерминированный
+// регресс на гонку os/exec: Wait() не должен закрывать пайпы раньше drain.
+func TestProcess_StartupFailure_StderrCaptured_UnderDrainDelay(t *testing.T) {
+	p := newTestProcess(t, "echo boom >&2; exit 1")
+	p.drainStartDelay = 50 * time.Millisecond
+	err := p.Start(nil)
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("stderr должен быть в ошибке даже с задержкой drain, got: %v", err)
+	}
+}
 
 // TestDrainCONFIGSurvivesEviction проверяет, что CONFIG-событие, пойманное в
 // drain, остаётся доступным через Status() даже после того как исходная строка

@@ -32,6 +32,11 @@ type process struct {
 	lastWgConfig  string // last CONFIG event seen in drain; survives log ring-buffer eviction
 	logTail       *childproc.RingBuffer
 	startCmd      func(bin string, args ...string) *exec.Cmd
+
+	// drainStartDelay искусственно задерживает старт чтения пайпа —
+	// тест-seam для форсирования окна гонки «Wait закрыл пайп раньше drain».
+	// В проде zero → без эффекта.
+	drainStartDelay time.Duration
 }
 
 func newProcess(name, binary, runtimeDir string) *process {
@@ -99,20 +104,23 @@ func (p *process) Start(args []string) error {
 
 	if err := p.writePID(cmd.Process.Pid); err != nil {
 		_ = childproc.Terminate(cmd.Process.Pid)
+		drainWG.Wait() // Terminate убил ребёнка → write-концы закрылись → drain EOF
 		_ = cmd.Wait()
 		return fmt.Errorf("wdtt %s: pidfile: %w", p.name, err)
 	}
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- cmd.Wait() }()
+	go func() {
+		drainWG.Wait()      // drain'ы дочитали до EOF — Wait не уничтожит буфер пайпов
+		errCh <- cmd.Wait() // безопасно: читать больше нечего
+	}()
 	myPid := cmd.Process.Pid
 
 	select {
 	case waitErr := <-errCh:
 		p.cleanupPidIfOurs(myPid)
-		// cmd.Wait() закрыл пайпы; дождаться (ограниченно) завершения drain,
-		// чтобы хвост stderr успел попасть в logTail.
-		waitDrainGroup(&drainWG, 500*time.Millisecond)
+		// К моменту получения из errCh drain'ы гарантированно завершены (Wait
+		// вызывается после drainWG.Wait()), хвост stderr уже в logTail.
 		msg := strings.TrimSpace(p.logTail.LastLines(30))
 		if msg == "" && waitErr != nil {
 			msg = waitErr.Error()
@@ -135,7 +143,6 @@ func (p *process) Start(args []string) error {
 			if stopped {
 				p.setLastErr("")
 			} else {
-				waitDrainGroup(&drainWG, 500*time.Millisecond)
 				tail := strings.TrimSpace(p.logTail.LastLines(10))
 				if tail == "" && waitErr != nil {
 					tail = waitErr.Error()
@@ -237,6 +244,9 @@ func wdttRuntimeEnv(base []string) []string {
 }
 
 func (p *process) drain(r io.Reader) {
+	if p.drainStartDelay > 0 {
+		time.Sleep(p.drainStartDelay)
+	}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 4096), 64*1024)
 	for sc.Scan() {
@@ -254,17 +264,6 @@ func (p *process) setLastErr(s string) {
 	p.mu.Lock()
 	p.lastErr = s
 	p.mu.Unlock()
-}
-
-// waitDrainGroup ждёт завершения drain-горутин, но не дольше timeout —
-// гард от вечного зависания, если drain почему-то не закрылся.
-func waitDrainGroup(wg *sync.WaitGroup, timeout time.Duration) {
-	done := make(chan struct{})
-	go func() { wg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(timeout):
-	}
 }
 
 func (p *process) cleanupPidIfOurs(myPid int) {
