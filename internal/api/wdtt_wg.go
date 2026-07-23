@@ -109,7 +109,10 @@ func (h *WdttHandler) ensureWGTunnel(w http.ResponseWriter, r *http.Request, cli
 				changed = true
 			}
 			if changed {
-				_ = h.awgStore.Save(stored)
+				if err := h.awgStore.Save(stored); err != nil {
+					response.InternalError(w, err.Error())
+					return
+				}
 				if h.tunnelsHandler != nil {
 					h.tunnelsHandler.publishTunnelList(r.Context())
 				}
@@ -136,7 +139,10 @@ func (h *WdttHandler) ensureWGTunnel(w http.ResponseWriter, r *http.Request, cli
 	}
 	if stored, err := h.awgStore.Get(tunnel.ID); err == nil {
 		stored.WdttClientID = clientID
-		_ = h.awgStore.Save(stored)
+		if err := h.awgStore.Save(stored); err != nil {
+			response.InternalError(w, err.Error())
+			return
+		}
 	}
 	if h.tunnelsHandler != nil {
 		h.tunnelsHandler.publishTunnelList(r.Context())
