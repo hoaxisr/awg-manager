@@ -44,6 +44,13 @@ func (s *Service) RefreshSubscription(id string) (ClientInstance, ImportPayload,
 	cfg.Listen = oldListen
 	cfg.Sub = subURL
 
+	// Финальный Load-modify-Save под s.mu (как RMW-методы в service.go).
+	// Лок берём ТОЛЬКО здесь: DecodeLink выше — сетевой fetch до 20с,
+	// держать s.mu во время него нельзя. Блок — хвост функции, defer покрывает
+	// все return'ы; Load/Save/findClientIndex s.mu не берут (store.mu отдельный).
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	full, err := s.store.Load()
 	if err != nil {
 		return ClientInstance{}, ImportPayload{}, err
