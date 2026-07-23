@@ -8,6 +8,7 @@
 	import ServerWgBind from './ServerWgBind.svelte';
 	import ProcessLogBox from './ProcessLogBox.svelte';
 	import LinkParamsSummary from './LinkParamsSummary.svelte';
+	import ServerAllowlist from './ServerAllowlist.svelte';
 	import { obfOptions } from './options';
 	import { obfProfileHints, randomObfKeyHex } from './obfHints';
 	import type { FreeTurnLinkPayload, FreeTurnProcessStatus, FreeTurnServerConfig } from '$lib/types';
@@ -19,6 +20,7 @@
 		generating?: boolean;
 		status?: FreeTurnProcessStatus;
 		defaultClientListenPort?: number;
+		serverInstanceId?: string;
 		generatedLink?: string;
 		generatedPeer?: string;
 		genProvider: string;
@@ -47,6 +49,7 @@
 		generating = false,
 		status,
 		defaultClientListenPort = 9000,
+		serverInstanceId = 'default',
 		generatedLink = '',
 		generatedPeer = '',
 		genProvider = $bindable(),
@@ -63,7 +66,9 @@
 
 	let starting = $state(false);
 	let loadingWanPeer = $state(false);
+	let savingAllowlist = $state(false);
 	let linkParams = $state<FreeTurnLinkPayload | null>(null);
+	let allowlistPanel: ServerAllowlist | undefined = $state();
 
 	const listenPort = $derived.by(() => {
 		const listen = server.listen?.trim() ?? '';
@@ -92,6 +97,20 @@
 		const bytes = new Uint8Array(16);
 		crypto.getRandomValues(bytes);
 		genClientId = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+	}
+
+	async function saveClientToAllowlist(silent = false): Promise<boolean> {
+		if (!allowlistPanel) return false;
+		if (!genClientId.trim()) {
+			if (!silent) notifications.error('Укажите Client ID');
+			return false;
+		}
+		savingAllowlist = true;
+		try {
+			return await allowlistPanel.saveClient(genClientId, genName);
+		} finally {
+			savingAllowlist = false;
+		}
 	}
 
 	async function fillWanPeer() {
@@ -130,16 +149,25 @@
 	}
 
 	async function generateLinkNow() {
+		if (!genClientId.trim()) {
+			randomClientId();
+		}
 		let peerParam = genPeer.trim();
 		if (peerParam && !peerParam.includes(':')) {
 			peerParam = `${peerParam}:${listenPort}`;
 		}
 		const result = await onGenerate(genProvider, peerParam, genMTU, genWG, genClientId, genName);
+		if (result?.clientId) {
+			genClientId = result.clientId;
+		}
 		if (result?.link) {
 			try {
 				linkParams = await api.decodeFreeTurnLink(result.link);
 			} catch {
 				linkParams = null;
+			}
+			if (genClientId.trim()) {
+				await saveClientToAllowlist(true);
 			}
 		}
 	}
@@ -238,11 +266,20 @@
 			<Input label="Провайдер" bind:value={genProvider} placeholder="vk" />
 			<Input label="MTU" type="number" value={String(genMTU)} onchange={(v) => (genMTU = Number(v) || 1376)} />
 			<div class="ft-gen-cid">
-				<Input label="Client ID" bind:value={genClientId} placeholder="необязательно" />
+				<Input label="Client ID" bind:value={genClientId} placeholder="hex ID" />
 				<Button variant="ghost" size="sm" onclick={randomClientId} title="Сгенерировать">
 					<RefreshCw size={14} />
 				</Button>
 			</div>
+			<Button
+				variant="secondary"
+				size="sm"
+				loading={savingAllowlist}
+				disabled={!genClientId.trim()}
+				onclick={() => saveClientToAllowlist()}
+			>
+				В список
+			</Button>
 			<Input bind:value={genName} label="Комментарий" placeholder="имя получателя" />
 		</div>
 
@@ -275,8 +312,15 @@
 				<div class="ft-link-box">{generatedLink}</div>
 				<Button variant="ghost" size="sm" onclick={() => onCopy(generatedLink)}>Скопировать</Button>
 				<LinkParamsSummary payload={linkParams} peer={generatedPeer} />
+				{#if genClientId.trim()}
+					<p class="ft-hint">
+						Client ID <code>{genClientId}</code> добавлен в allowlist (или уже был в списке).
+					</p>
+				{/if}
 			</div>
 		{/if}
+
+		<ServerAllowlist bind:this={allowlistPanel} serverInstanceId={serverInstanceId} {server} />
 	</WizardStep>
 
 	<ProcessLogBox log={status?.log} bind:debug={server.debug} showDebugToggle />

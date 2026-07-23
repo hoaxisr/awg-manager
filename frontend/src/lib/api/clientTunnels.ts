@@ -187,11 +187,12 @@ export class TunnelsClient extends CoreClient {
 		content: string,
 		name?: string,
 		backend?: string,
-		freeTurnClientId?: string
+		freeTurnClientId?: string,
+		wdttClientId?: string
 	): Promise<AWGTunnel> {
 		return this.request('/import/conf', {
 			method: 'POST',
-			body: JSON.stringify({ content, name, backend, freeTurnClientId })
+			body: JSON.stringify({ content, name, backend, freeTurnClientId, wdttClientId })
 		});
 	}
 

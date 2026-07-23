@@ -23,6 +23,7 @@
 
 	let ftTab: FtTab = $state('client');
 	let loading = $state(true);
+	let loadError = $state('');
 	let saving = $state(false);
 
 	let config = $state<FreeTurnConfig | null>(null);
@@ -89,8 +90,11 @@
 	}
 
 	onMount(async () => {
-		await Promise.all([loadConfig(), loadStatus(false)]);
-		loading = false;
+		try {
+			await Promise.all([loadConfig(), loadStatus(false)]);
+		} finally {
+			loading = false;
+		}
 		statusPoll = setInterval(async () => {
 			await loadStatus(false);
 		}, 1000);
@@ -151,6 +155,7 @@
 			const norm = normalizeConfig(await api.getFreeTurnConfig());
 			savedConfig = structuredClone(norm);
 			config = norm;
+			loadError = '';
 			if (!norm.clients.some((c) => c.id === selectedClientId)) {
 				selectedClientId = norm.clients[0]?.id ?? 'default';
 			}
@@ -158,7 +163,8 @@
 				selectedServerId = norm.servers[0]?.id ?? 'default';
 			}
 		} catch (e) {
-			notifications.error('Не удалось загрузить конфигурацию FreeTurn: ' + errText(e));
+			loadError = errText(e);
+			notifications.error('Не удалось загрузить конфигурацию FreeTurn: ' + loadError);
 		}
 	}
 
@@ -499,9 +505,14 @@
 	defaultTab="client"
 />
 
-{#if loading || !config}
+{#if loading}
 	<div class="ft-loading">Загрузка…</div>
-{:else}
+{:else if loadError && !config}
+	<div class="ft-loading">
+		<p>Не удалось загрузить настройки FreeTurn.</p>
+		<p class="ft-load-error">{loadError}</p>
+	</div>
+{:else if config}
 	<ProcessAlerts
 		status={ftTab === 'client' ? clientStatus : serverStatus}
 		installAvailable={status?.installAvailable ?? false}
@@ -539,11 +550,14 @@
 				onToggle={(on) => toggleClientInstance(selectedClientId, on)}
 				onImportLink={applyImportLink}
 			/>
+		{:else}
+			<p class="ft-empty-hint">Нет выбранного клиента. Нажмите «+ Добавить», чтобы создать новый.</p>
 		{/if}
 	{:else}
 		<InstanceBar
 			items={serverBarItems}
 			selectedId={selectedServerId}
+			showDtls={false}
 			onSelect={(id) => {
 				selectedServerId = id;
 			}}
@@ -555,6 +569,7 @@
 		{#if selectedServer}
 			<FreeTurnServerSimple
 				server={selectedServer.config}
+				serverInstanceId={selectedServerId}
 				running={serverStatus?.running ?? false}
 				status={serverStatus}
 				{saving}
@@ -573,6 +588,8 @@
 				onGenerate={generateLink}
 				onCopy={copy}
 			/>
+		{:else}
+			<p class="ft-empty-hint">Нет выбранного сервера. Нажмите «+ Добавить», чтобы создать новый.</p>
 		{/if}
 	{/if}
 {/if}
@@ -584,4 +601,15 @@
 		color: var(--color-text-secondary);
 	}
 
+	.ft-load-error {
+		font-size: 0.8125rem;
+		color: var(--color-danger);
+		margin-top: 0.5rem;
+	}
+
+	.ft-empty-hint {
+		margin: 0.5rem 0 1rem;
+		font-size: 0.875rem;
+		color: var(--color-text-secondary);
+	}
 </style>

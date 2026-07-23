@@ -99,9 +99,7 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 		return fmt.Errorf("клиент %q не найден", id)
 	}
 	listens := clientListenAddresses(full.Clients)
-	if err := validateUniqueListens(listens, idx, cfg.Listen); err != nil {
-		return err
-	}
+	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(), 9000, 9200)
 	cfg.Browser = normalizeBrowser(cfg.Browser)
 	full.Clients[idx].Config = cfg
 	return s.store.Save(full)
@@ -117,9 +115,7 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
 		return fmt.Errorf("сервер %q не найден", id)
 	}
 	listens := serverListenAddresses(full.Servers)
-	if err := validateUniqueListens(listens, idx, cfg.Listen); err != nil {
-		return err
-	}
+	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, 56000, 56100)
 	full.Servers[idx].Config = cfg
 	return s.store.Save(full)
 }
@@ -170,9 +166,6 @@ func (s *Service) CreateServer(in CreateServerInput) (ServerInstance, error) {
 }
 
 func (s *Service) DeleteClient(id string) error {
-	if id == DefaultInstanceID {
-		return errors.New("нельзя удалить экземпляр по умолчанию")
-	}
 	full, err := s.store.Load()
 	if err != nil {
 		return err
@@ -187,9 +180,6 @@ func (s *Service) DeleteClient(id string) error {
 }
 
 func (s *Service) DeleteServer(id string) error {
-	if id == DefaultInstanceID {
-		return errors.New("нельзя удалить экземпляр по умолчанию")
-	}
 	full, err := s.store.Load()
 	if err != nil {
 		return err

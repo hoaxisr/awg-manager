@@ -17,6 +17,7 @@
 		items: InstanceItem[];
 		selectedId: string;
 		canDelete?: boolean;
+		showDtls?: boolean;
 		onSelect: (id: string) => void;
 		onToggle: (id: string, on: boolean) => void;
 		onAdd: () => void;
@@ -28,6 +29,7 @@
 		items,
 		selectedId,
 		canDelete = true,
+		showDtls = true,
 		onSelect,
 		onToggle,
 		onAdd,
@@ -82,7 +84,7 @@
 						}}
 						onblur={() => commitRename(item.id)}
 					/>
-				{:else if item.running}
+				{:else if item.running && showDtls}
 					<span
 						class="ft-instance-dtls"
 						class:live={(item.dtlsConnections ?? 0) > 0}
@@ -112,7 +114,7 @@
 							<Pencil size={14} />
 						</button>
 					{/if}
-					{#if canDelete && item.id !== 'default'}
+					{#if canDelete}
 						<button
 							type="button"
 							class="ft-chip-action danger"
