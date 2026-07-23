@@ -409,7 +409,7 @@ func TestEmbeddedBinaries_CoverAllArches(t *testing.T) {
 		}
 		for name, sp := range map[string]BinarySpec{"client": specs.Client, "server": specs.Server} {
 			if sp.Version != PinnedVersion || len(sp.SHA256) != 64 || sp.Size <= 0 ||
-				sp.LocalAsset == "" {
+				sp.URL == "" {
 				t.Errorf("%s/%s: bad spec %+v", arch, name, sp)
 			}
 		}

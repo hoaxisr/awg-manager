@@ -20,9 +20,6 @@ type BinarySpec struct {
 	URL     string
 	SHA256  string
 	Size    int64 // bytes; download hard-cap = Size + slack
-	// LocalAsset — имя файла в prebuilt/freeturn/ (client-linux-arm64 и т.д.).
-	// Если файл есть рядом с awg-manager или в /opt/etc/awg-manager/freeturn/, копируем без download.
-	LocalAsset string
 }
 
 // ArchSpecs pairs the client+server binaries for one router architecture.
@@ -34,27 +31,29 @@ type ArchSpecs struct {
 // PinnedVersion is the free-turn-proxy release this build installs.
 // Bump procedure: update the constant, URLs, SHA256 (from the release's
 // checksums.txt) and sizes below.
-const PinnedVersion = "1.8.0-awg.4"
+const PinnedVersion = "1.8.0-1"
 
-// releaseBase — fallback URL если локальный prebuilt/IPK-бандл недоступен.
-// awg.* сборки не публикуются у samosvalishe — download сработает только после
-// появления awg-релиза; IPK и prebuilt/freeturn/ используют LocalAsset.
-const releaseBase = ""
+// releaseBase — прод-доставка с зеркала (паритет с
+// internal/singbox/installer/embedded.go — GitHub из RU у части пользователей
+// недоступен). Канонический источник сборки:
+// https://github.com/hoaxisr/free-turn-proxy релиз v1.8.0-1.
+const releaseBase = "http://repo.hoaxisr.ru/ft/" + PinnedVersion + "/"
 
 // EmbeddedBinaries maps the awg-manager build arch (detectArch(): e.g.
-// "mipsel-3.4") to pinned freeturn assets. SHA256 for aarch64 — из awg.4 сборки.
+// "mipsel-3.4") to pinned freeturn assets. SHA256/Size — из checksums.txt
+// релиза hoaxisr/free-turn-proxy v1.8.0-1.
 var EmbeddedBinaries = map[string]ArchSpecs{
 	"aarch64-3.10": {
-		Client: BinarySpec{Version: PinnedVersion, LocalAsset: "client-linux-arm64", URL: releaseBase + "client-linux-arm64", SHA256: "39e52d44c536ac332b262b3b133c1277d15a8744111c70775869f790e4a116ba", Size: 14680226},
-		Server: BinarySpec{Version: PinnedVersion, LocalAsset: "server-linux-arm64", URL: releaseBase + "server-linux-arm64", SHA256: "1e8bb64a6edf6dc4c5979647b205a8f85000e8b6cdf4d7ab2191482f7612ce26", Size: 6160546},
+		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-arm64", SHA256: "f0666e574932027882822c5a986808f2029c0de8a9989937b27fcda5dbbf0aeb", Size: 14680226},
+		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-arm64", SHA256: "4831fc971df03b78c21570f4b36a080e9fb2f1fb15bdc1f254aad19a8164747b", Size: 6160546},
 	},
 	"mipsel-3.4": {
-		Client: BinarySpec{Version: PinnedVersion, LocalAsset: "client-linux-mipsle-softfloat", URL: releaseBase + "client-linux-mipsle-softfloat", SHA256: "2b4011b0d40fb7e99025ce509c8048b35a0dbb684c482f654881059998d1d05c", Size: 16580801},
-		Server: BinarySpec{Version: PinnedVersion, LocalAsset: "server-linux-mipsle-softfloat", URL: releaseBase + "server-linux-mipsle-softfloat", SHA256: "b323bff9fe3297de5998f8802f9cc551036cc3d4adabc685d3779f4c0a744014", Size: 7012545},
+		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-mipsle-softfloat", SHA256: "714ba97fbdcdc3567e19a888c54ce1a793de1d741f2b6a65bcfd9640aff48caa", Size: 16646337},
+		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-mipsle-softfloat", SHA256: "8d4ff24449b309a25dc220f206ddfb15ca21fa35eb13f4483c62b2e929d090c3", Size: 7012545},
 	},
 	"mips-3.4": {
-		Client: BinarySpec{Version: PinnedVersion, LocalAsset: "client-linux-mips-softfloat", URL: releaseBase + "client-linux-mips-softfloat", SHA256: "c757d3dcec4bfa4eed3cd0b1ab6d443c2a48746758fb48c069587d7cf41214df", Size: 16580801},
-		Server: BinarySpec{Version: PinnedVersion, LocalAsset: "server-linux-mips-softfloat", URL: releaseBase + "server-linux-mips-softfloat", SHA256: "d1c4cd4ea4477eb7f013cfe9f1017b2718b9e95d0b594a81a4fd1e10b39af195", Size: 7012545},
+		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-mips-softfloat", SHA256: "9c200eabc98e73740257b5ad448394777ba4f03e3c60e9e2f8de59f4d818005d", Size: 16646337},
+		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-mips-softfloat", SHA256: "c0cf856e829da8e9a095b5635d08ea2dd6d9d937acbc82f1e88d30bce8c1d05a", Size: 7012545},
 	},
 }
 
@@ -144,14 +143,6 @@ func (s *Service) installOne(ctx context.Context, binPath string, spec BinarySpe
 	if err := os.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
 		return err
 	}
-	if spec.LocalAsset != "" {
-		if src, ok := findLocalFreeturnAsset(spec.LocalAsset); ok {
-			if err := copyFreeturnBinary(src, binPath, spec); err != nil {
-				return err
-			}
-			return nil
-		}
-	}
 	tmp := binPath + ".tmp"
 	_ = os.Remove(tmp)
 	if err := s.downloader.DownloadFile(ctx, spec.URL, tmp, spec.Size+downloadSlack); err != nil {
@@ -174,54 +165,6 @@ func (s *Service) installOne(ctx context.Context, binPath string, spec BinarySpe
 	}
 	// Atomic activation: same directory → same filesystem, rename не рвётся.
 	if err := os.Rename(tmp, binPath); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
-}
-
-func findLocalFreeturnAsset(name string) (string, bool) {
-	candidates := []string{
-		filepath.Join("prebuilt", "freeturn", name),
-		filepath.Join("/opt/etc/awg-manager/freeturn", name),
-	}
-	if exe, err := os.Executable(); err == nil {
-		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "freeturn", name))
-	}
-	for _, p := range candidates {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p, true
-		}
-	}
-	return "", false
-}
-
-func copyFreeturnBinary(src, dest string, _ BinarySpec) error {
-	tmp := dest + ".tmp"
-	_ = os.Remove(tmp)
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := out.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Chmod(tmp, 0755); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, dest); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
