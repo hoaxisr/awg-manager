@@ -17,6 +17,20 @@ type EnsureWGTunnelResponse struct {
 	Message    string `json:"message,omitempty"`
 }
 
+// WdttEnsureWGTunnelResponse is the envelope for POST /api/wdtt/clients/{id}/ensure-wg-tunnel.
+type WdttEnsureWGTunnelResponse struct {
+	Success bool                   `json:"success" example:"true"`
+	Data    EnsureWGTunnelResponse `json:"data"`
+}
+
+// ensureWGTunnel handles POST /api/wdtt/clients/{id}/ensure-wg-tunnel.
+//
+//	@Summary	Ensure an AWG tunnel exists for the client's WireGuard config
+//	@Tags		wdtt
+//	@Param		id	path		string	true	"Client instance id"
+//	@Success	200	{object}	WdttEnsureWGTunnelResponse
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/wdtt/clients/{id}/ensure-wg-tunnel [post]
 func (h *WdttHandler) ensureWGTunnel(w http.ResponseWriter, r *http.Request, clientID string) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")

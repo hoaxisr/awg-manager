@@ -43,6 +43,36 @@ type WdttImportRequest struct {
 	Link string `json:"link"`
 }
 
+// WdttConfigResponse is the envelope for GET /api/wdtt/config.
+type WdttConfigResponse struct {
+	Success bool        `json:"success" example:"true"`
+	Data    wdtt.Config `json:"data"`
+}
+
+// WdttStatusResponse is the envelope for GET /api/wdtt/status.
+type WdttStatusResponse struct {
+	Success bool        `json:"success" example:"true"`
+	Data    wdtt.Status `json:"data"`
+}
+
+// WdttDecodeLinkResponse is the envelope for POST /api/wdtt/link/decode.
+type WdttDecodeLinkResponse struct {
+	Success bool                  `json:"success" example:"true"`
+	Data    wdtt.LinkDecodeResult `json:"data"`
+}
+
+// WdttClientInstanceResponse is the envelope for a single WDTT client instance.
+type WdttClientInstanceResponse struct {
+	Success bool                `json:"success" example:"true"`
+	Data    wdtt.ClientInstance `json:"data"`
+}
+
+// GetConfig handles GET /api/wdtt/config.
+//
+//	@Summary	Get WDTT client configuration
+//	@Tags		wdtt
+//	@Success	200	{object}	WdttConfigResponse
+//	@Router		/wdtt/config [get]
 func (h *WdttHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -56,6 +86,14 @@ func (h *WdttHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, cfg)
 }
 
+// UpdateClientConfig handles PUT /api/wdtt/client/config. Returns the applied
+// config plus any linked AWG tunnels deleted because the peer changed.
+//
+//	@Summary	Update WDTT client configuration
+//	@Tags		wdtt
+//	@Success	200	{object}	APIEnvelope
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/wdtt/client/config [put]
 func (h *WdttHandler) UpdateClientConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut && r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -95,6 +133,12 @@ func (h *WdttHandler) UpdateClientConfig(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// GetStatus handles GET /api/wdtt/status.
+//
+//	@Summary	Get WDTT live process status
+//	@Tags		wdtt
+//	@Success	200	{object}	WdttStatusResponse
+//	@Router		/wdtt/status [get]
 func (h *WdttHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -103,6 +147,13 @@ func (h *WdttHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, h.svc.Status())
 }
 
+// StartClient handles POST /api/wdtt/client/start.
+//
+//	@Summary	Start the WDTT client and its linked AWG tunnels
+//	@Tags		wdtt
+//	@Success	200	{object}	APIEnvelope
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/wdtt/client/start [post]
 func (h *WdttHandler) StartClient(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -116,6 +167,13 @@ func (h *WdttHandler) StartClient(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, clientStartStopResponse("client started", started, tunnelErrors))
 }
 
+// StopClient handles POST /api/wdtt/client/stop.
+//
+//	@Summary	Stop the WDTT client and its linked AWG tunnels
+//	@Tags		wdtt
+//	@Success	200	{object}	APIEnvelope
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/wdtt/client/stop [post]
 func (h *WdttHandler) StopClient(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -129,6 +187,14 @@ func (h *WdttHandler) StopClient(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, clientStartStopResponse("client stopped", stopped, tunnelErrors))
 }
 
+// DecodeLink handles POST /api/wdtt/link/decode.
+//
+//	@Summary	Decode a wdtt:// / qwdtt:// / subscription link
+//	@Tags		wdtt
+//	@Param		body	body		WdttImportRequest	true	"Link to decode"
+//	@Success	200		{object}	WdttDecodeLinkResponse
+//	@Failure	500		{object}	APIErrorEnvelope
+//	@Router		/wdtt/link/decode [post]
 func (h *WdttHandler) DecodeLink(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -147,6 +213,14 @@ func (h *WdttHandler) DecodeLink(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, result)
 }
 
+// ImportLink handles POST /api/wdtt/link/import into the default client.
+//
+//	@Summary	Import a wdtt:// / qwdtt:// / subscription link into the default client
+//	@Tags		wdtt
+//	@Param		body	body		WdttImportRequest	true	"Link to import"
+//	@Success	200		{object}	APIEnvelope
+//	@Failure	500		{object}	APIErrorEnvelope
+//	@Router		/wdtt/link/import [post]
 func (h *WdttHandler) ImportLink(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -168,6 +242,14 @@ func (h *WdttHandler) ImportLink(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Install handles POST /api/wdtt/install: скачивает и активирует
+// закреплённый для этой архитектуры wdtt-client бинарь.
+//
+//	@Summary	Download and activate the pinned wdtt client binary
+//	@Tags		wdtt
+//	@Success	200	{object}	APIEnvelope
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/wdtt/install [post]
 func (h *WdttHandler) Install(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -180,6 +262,14 @@ func (h *WdttHandler) Install(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, map[string]string{"message": "installed"})
 }
 
+// CreateClient handles POST /api/wdtt/clients.
+//
+//	@Summary	Create a new WDTT client instance
+//	@Tags		wdtt
+//	@Param		body	body		wdtt.CreateClientInput	false	"Optional name and initial config"
+//	@Success	200		{object}	WdttClientInstanceResponse
+//	@Failure	500		{object}	APIErrorEnvelope
+//	@Router		/wdtt/clients [post]
 func (h *WdttHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -224,6 +314,17 @@ func (h *WdttHandler) ServeClients(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// serveClientByID handles config-update (PUT), rename (PATCH) and delete
+// (DELETE) for one WDTT client instance.
+//
+//	@Summary	Update config, rename or delete a WDTT client instance
+//	@Tags		wdtt
+//	@Param		id	path		string	true	"Client instance id"
+//	@Success	200	{object}	APIEnvelope
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/wdtt/clients/{id} [put]
+//	@Router		/wdtt/clients/{id} [patch]
+//	@Router		/wdtt/clients/{id} [delete]
 func (h *WdttHandler) serveClientByID(w http.ResponseWriter, r *http.Request, id string) {
 	switch r.Method {
 	case http.MethodPut, http.MethodPost:
@@ -289,6 +390,14 @@ func (h *WdttHandler) serveClientByID(w http.ResponseWriter, r *http.Request, id
 	}
 }
 
+// startClientInstance handles POST /api/wdtt/clients/{id}/start.
+//
+//	@Summary	Start a WDTT client instance
+//	@Tags		wdtt
+//	@Param		id	path		string	true	"Client instance id"
+//	@Success	200	{object}	APIEnvelope
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/wdtt/clients/{id}/start [post]
 func (h *WdttHandler) startClientInstance(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -302,6 +411,14 @@ func (h *WdttHandler) startClientInstance(w http.ResponseWriter, r *http.Request
 	response.Success(w, clientStartStopResponse("client started", started, tunnelErrors))
 }
 
+// stopClientInstance handles POST /api/wdtt/clients/{id}/stop.
+//
+//	@Summary	Stop a WDTT client instance
+//	@Tags		wdtt
+//	@Param		id	path		string	true	"Client instance id"
+//	@Success	200	{object}	APIEnvelope
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/wdtt/clients/{id}/stop [post]
 func (h *WdttHandler) stopClientInstance(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -315,6 +432,15 @@ func (h *WdttHandler) stopClientInstance(w http.ResponseWriter, r *http.Request,
 	response.Success(w, clientStartStopResponse("client stopped", stopped, tunnelErrors))
 }
 
+// importClientInstance handles POST /api/wdtt/clients/{id}/import.
+//
+//	@Summary	Import a link into a specific WDTT client instance
+//	@Tags		wdtt
+//	@Param		id		path		string				true	"Client instance id"
+//	@Param		body	body		WdttImportRequest	true	"Link to import"
+//	@Success	200		{object}	APIEnvelope
+//	@Failure	500		{object}	APIErrorEnvelope
+//	@Router		/wdtt/clients/{id}/import [post]
 func (h *WdttHandler) importClientInstance(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
