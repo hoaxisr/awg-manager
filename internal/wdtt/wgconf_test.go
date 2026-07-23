@@ -55,28 +55,31 @@ func TestPeersEqual(t *testing.T) {
 	}
 }
 
-func TestExtractInterfaceAddress(t *testing.T) {
-	conf := "[Interface]\nPrivateKey = x\nAddress = 10.8.0.5/32\n\n[Peer]\nPublicKey = abc123=\n"
-	if got := ExtractInterfaceAddress(conf); got != "10.8.0.5/32" {
-		t.Fatalf("got=%q", got)
-	}
-}
-
 func TestMatchingAWGTunnel(t *testing.T) {
 	conf := "[Interface]\nPrivateKey = x\nAddress = 10.8.0.5/32\n\n[Peer]\nPublicKey = abc123=\n"
+
+	// Same interface address but a different peer key must NOT match
+	// (не усыновляем чужой туннель по совпавшему 10.x-адресу).
 	tunnels := []storage.AWGTunnel{{
-		ID:   "t1",
-		Name: "Германия wdtt",
-		Peer: storage.AWGPeer{PublicKey: "other="},
+		ID:        "t1",
+		Name:      "Германия wdtt",
+		Peer:      storage.AWGPeer{PublicKey: "other="},
 		Interface: storage.AWGInterface{Address: "10.8.0.5/32"},
 	}}
-	if got := MatchingAWGTunnel(tunnels, conf); got == nil || got.ID != "t1" {
-		t.Fatalf("expected match by address, got %v", got)
+	if got := MatchingAWGTunnel(tunnels, conf); got != nil {
+		t.Fatalf("expected nil for addr-only overlap, got %v", got)
 	}
+
+	// Matching peer key (different address) → match.
 	tunnels[0].Interface.Address = "10.9.0.1/32"
 	tunnels[0].Peer.PublicKey = "abc123="
 	if got := MatchingAWGTunnel(tunnels, conf); got == nil || got.ID != "t1" {
 		t.Fatalf("expected match by pubkey, got %v", got)
+	}
+
+	// Empty config → no match, no panic.
+	if got := MatchingAWGTunnel(tunnels, ""); got != nil {
+		t.Fatalf("expected nil for empty conf, got %v", got)
 	}
 }
 
