@@ -19,8 +19,6 @@ export interface FreeTurnClientConfig {
 	obfKey?: string;
 	streamsPerCred: number;
 	browser: 'chrome' | 'firefox' | 'safari';
-	manualCaptcha: boolean;
-	manualCaptchaFallback?: boolean;
 	dnsMode: 'plain' | 'doh' | 'auto';
 	dnsServers?: string;
 	clientId?: string;

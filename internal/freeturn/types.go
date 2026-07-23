@@ -12,10 +12,10 @@ import "time"
 type ClientConfig struct {
 	Enabled bool `json:"enabled"`
 
-	Listen    string `json:"listen"`          // -listen, local addr WG/Xray connects to (default 127.0.0.1:9000)
-	Peer      string `json:"peer"`            // -peer, required: VPS server addr host:port
-	Provider  string `json:"provider"`        // -provider, default "vk"
-	Links     string `json:"links,omitempty"` // -links, comma-separated VK Calls URLs; required when provider=vk
+	Listen   string `json:"listen"`          // -listen, local addr WG/Xray connects to (default 127.0.0.1:9000)
+	Peer     string `json:"peer"`            // -peer, required: VPS server addr host:port
+	Provider string `json:"provider"`        // -provider, default "vk"
+	Links    string `json:"links,omitempty"` // -links, comma-separated VK Calls URLs; required when provider=vk
 	// (-link, singular, is upstream's deprecated one-link alias — we always
 	// emit -links so multiple call links, i.e. multiple credential pools,
 	// work: see internal/config/config.go in samosvalishe/free-turn-proxy.)
@@ -30,10 +30,8 @@ type ClientConfig struct {
 	ObfProfile string `json:"obfProfile"`       // -obf-profile, none|rtpopus|rtpopus2|rtpopus3 (internal/config/config.go ObfProfile enum; upstream docs/flags.md lags behind)
 	ObfKey     string `json:"obfKey,omitempty"` // -obf-key, 64 hex chars, required if obfProfile != none
 
-	StreamsPerCred int    `json:"streamsPerCred"` // -streams-per-cred, provider=vk only
-	Browser               string `json:"browser" swaggertype:"string" enums:"chrome,firefox,safari"` // -browser, provider=vk only
-	ManualCaptcha         bool   `json:"manualCaptcha"`                                             // -manual-captcha: только ручная капча
-	ManualCaptchaFallback bool   `json:"manualCaptchaFallback"`                                     // -captcha-manual-fallback (не рекомендуется на роутере)
+	StreamsPerCred int    `json:"streamsPerCred"`                                             // -streams-per-cred, provider=vk only
+	Browser        string `json:"browser" swaggertype:"string" enums:"chrome,firefox,safari"` // -browser, provider=vk only
 
 	DNSMode    string `json:"dnsMode"`              // -dns-mode, plain|doh|auto
 	DNSServers string `json:"dnsServers,omitempty"` // -dns-servers, ip[:port][,ip[:port]...]

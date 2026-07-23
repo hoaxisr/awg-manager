@@ -33,7 +33,6 @@
 	let selectedServerId = $state('default');
 
 	let importing = $state(false);
-	let importedWG: string | null = $state(null);
 	let installing = $state(false);
 	let checkingUpdates = $state(false);
 
@@ -66,20 +65,6 @@
 		config
 			? (config.servers.find((s: FreeTurnServerInstance) => s.id === selectedServerId) ??
 					config.servers[0] ??
-					null)
-			: null
-	);
-	const savedClient = $derived(
-		savedConfig
-			? (savedConfig.clients.find((c: FreeTurnClientInstance) => c.id === selectedClientId) ??
-					savedConfig.clients[0] ??
-					null)
-			: null
-	);
-	const savedServer = $derived(
-		savedConfig
-			? (savedConfig.servers.find((s: FreeTurnServerInstance) => s.id === selectedServerId) ??
-					savedConfig.servers[0] ??
 					null)
 			: null
 	);
@@ -197,22 +182,6 @@
 		}
 	}
 
-	function patchClientInConfig(id: string, cfg: FreeTurnClientConfig) {
-		if (!config || !savedConfig) return;
-		const idx = config.clients.findIndex((c) => c.id === id);
-		const sidx = savedConfig.clients.findIndex((c) => c.id === id);
-		if (idx >= 0) config.clients[idx].config = structuredClone(cfg);
-		if (sidx >= 0) savedConfig.clients[sidx].config = structuredClone(cfg);
-	}
-
-	function patchServerInConfig(id: string, cfg: FreeTurnServerConfig) {
-		if (!config || !savedConfig) return;
-		const idx = config.servers.findIndex((s) => s.id === id);
-		const sidx = savedConfig.servers.findIndex((s) => s.id === id);
-		if (idx >= 0) config.servers[idx].config = structuredClone(cfg);
-		if (sidx >= 0) savedConfig.servers[sidx].config = structuredClone(cfg);
-	}
-
 	async function saveClientConfig(cfg: FreeTurnClientConfig) {
 		if (!selectedClient) return;
 		saving = true;
@@ -265,16 +234,6 @@
 		} finally {
 			saving = false;
 		}
-	}
-
-	function revertClient() {
-		if (!config || !savedClient) return;
-		patchClientInConfig(selectedClientId, $state.snapshot(savedClient.config));
-	}
-
-	function revertServer() {
-		if (!config || !savedServer) return;
-		patchServerInConfig(selectedServerId, $state.snapshot(savedServer.config));
 	}
 
 	async function toggleClientInstance(id: string, on: boolean) {
@@ -432,7 +391,6 @@
 			if (payload.mode) c.mode = payload.mode as typeof c.mode;
 			if (typeof payload.bond === 'boolean') c.bond = payload.bond;
 			const wg = payload.wg?.trim() ? payload.wg : null;
-			importedWG = wg;
 
 			let msg = 'Ссылка распознана, поля заполнены — не забудьте сохранить';
 			if (payload.cid) {

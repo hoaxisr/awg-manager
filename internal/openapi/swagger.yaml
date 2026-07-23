@@ -6486,12 +6486,6 @@ definitions:
       listen:
         description: -listen, local addr WG/Xray connects to (default 127.0.0.1:9000)
         type: string
-      manualCaptcha:
-        description: '-manual-captcha: только ручная капча'
-        type: boolean
-      manualCaptchaFallback:
-        description: -captcha-manual-fallback (не рекомендуется на роутере)
-        type: boolean
       mode:
         description: -mode, udp|tcp (tunnel mode)
         type: string

@@ -66,7 +66,7 @@ func TestBuildClientArgs_FullAndZero(t *testing.T) {
 		Links: "https://vk.ru/call/join/a", Streams: 4, Transport: "tcp",
 		Mode: "udp", Bond: true, TurnHost: "turn.host", TurnPort: 3478,
 		ObfProfile: "rtpopus2", ObfKey: "deadbeef", StreamsPerCred: 2,
-		Browser: "chromium", ManualCaptcha: true, DNSMode: "doh",
+		Browser: "chromium", DNSMode: "doh",
 		DNSServers: "1.1.1.1", ClientID: "cid", Sub: "s", Debug: true,
 	}
 	want := []string{

@@ -2363,8 +2363,6 @@ const freeturn_ClientConfig: v.GenericSchema = v.looseObject({
 	enabled: v.optional(v.nullable(v.boolean())),
 	links: v.optional(v.nullable(v.string())),
 	listen: v.optional(v.nullable(v.string())),
-	manualCaptcha: v.optional(v.nullable(v.boolean())),
-	manualCaptchaFallback: v.optional(v.nullable(v.boolean())),
 	mode: v.optional(v.nullable(v.string())),
 	obfKey: v.optional(v.nullable(v.string())),
 	obfProfile: v.optional(v.nullable(v.string())),
