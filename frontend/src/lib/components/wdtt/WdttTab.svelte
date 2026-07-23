@@ -3,9 +3,10 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import InstanceBar from '../freeturn/InstanceBar.svelte';
-	import ProcessAlerts from './ProcessAlerts.svelte';
+	import { ProcessAlerts } from '$lib/components/ui';
 	import WdttClientSimple from './WdttClientSimple.svelte';
 	import { parseLocalListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
+	import { peersEqual } from '$lib/utils/wdttPeer';
 	import type {
 		WdttClientConfig,
 		WdttClientInstance,
@@ -202,14 +203,6 @@
 		const sidx = savedConfig.clients.findIndex((c) => c.id === id);
 		if (idx >= 0) config.clients[idx].config = structuredClone(cfg);
 		if (sidx >= 0) savedConfig.clients[sidx].config = structuredClone(cfg);
-	}
-
-	function peersEqual(a: string, b: string): boolean {
-		const norm = (p: string) => {
-			const t = p.trim();
-			return t.includes(':') ? t : `${t}:56000`;
-		};
-		return norm(a) === norm(b);
 	}
 
 	async function saveClientConfig(cfg: WdttClientConfig, opts?: { silent?: boolean }) {
@@ -436,7 +429,16 @@
 		updateAvailable={status?.updateAvailable ?? false}
 		installing={installing || (status?.installing ?? false)}
 		onInstall={install}
-	/>
+		productName="wdtt-client"
+		notFoundHint="установите wdtt-client из IPK или prebuilt."
+	>
+		{#snippet manualInstall(binary)}
+			<span>
+				Бинарь <code>{binary}</code> не найден. Соберите
+				<code>scripts/build-wdtt-client.sh</code> для вашей архитектуры.
+			</span>
+		{/snippet}
+	</ProcessAlerts>
 
 	<InstanceBar
 		items={clientBarItems}

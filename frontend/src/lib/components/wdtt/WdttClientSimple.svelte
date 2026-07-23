@@ -5,6 +5,7 @@
 	import ProcessLogBox from '../freeturn/ProcessLogBox.svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
+	import { peersEqual } from '$lib/utils/wdttPeer';
 	import type {
 		WdttClientConfig,
 		WdttImportPayload,
@@ -57,15 +58,6 @@
 	let loadingSubList = $state(false);
 	let subLoadKey = $state('');
 	let fileInput: HTMLInputElement | undefined = $state();
-
-	function peersEqual(a: string, b: string): boolean {
-		const norm = (p: string) => {
-			const t = p.trim();
-			if (!t) return '';
-			return t.includes(':') ? t : `${t}:56000`;
-		};
-		return norm(a) === norm(b);
-	}
 
 	function syncSelectedProfileIdx() {
 		if (!subscriptionPreview || !client.peer?.trim()) return;

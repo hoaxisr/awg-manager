@@ -3,7 +3,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard as copyText } from '$lib/utils/clipboard';
-	import { Tabs } from '$lib/components/ui';
+	import { Tabs, ProcessAlerts } from '$lib/components/ui';
 	import type {
 		FreeTurnClientConfig,
 		FreeTurnClientInstance,
@@ -13,7 +13,6 @@
 		FreeTurnServerInstance,
 		FreeTurnStatus
 	} from '$lib/types';
-	import ProcessAlerts from './ProcessAlerts.svelte';
 	import InstanceBar from './InstanceBar.svelte';
 	import FreeTurnClientSimple from './FreeTurnClientSimple.svelte';
 	import FreeTurnServerSimple from './FreeTurnServerSimple.svelte';
@@ -525,7 +524,19 @@
 		{checkingUpdates}
 		onInstall={install}
 		onCheckUpdates={checkUpdates}
-	/>
+		productName="freeturn"
+		installSuffix=" (клиент + сервер)"
+		notFoundHint="awg-manager не поставляет freeturn в своём пакете."
+	>
+		{#snippet manualInstall(binary)}
+			<span>
+				Бинарь <code>{binary}</code> не найден. Установите вручную из
+				<a href="https://github.com/samosvalishe/free-turn-proxy" target="_blank" rel="noopener"
+					>free-turn-proxy</a
+				>.
+			</span>
+		{/snippet}
+	</ProcessAlerts>
 
 	{#if ftTab === 'client'}
 		<InstanceBar
