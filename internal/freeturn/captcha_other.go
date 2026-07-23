@@ -20,7 +20,3 @@ func socketListenerPIDAmong(host string, port int, _ []int) (int, bool) {
 	_ = conn.Close()
 	return 0, true
 }
-
-func socketListenerPIDAmong(host string, port int, _ []int) (int, bool) {
-	return socketListenerPID(host, port)
-}
