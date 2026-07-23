@@ -26,9 +26,10 @@
 	let savedConfig = $state<WdttConfig | null>(null);
 	let selectedClientId = $state('default');
 
-	let statusPoll: ReturnType<typeof setInterval> | undefined;
-	let wgEnsureSettled = $state(new Set<string>());
-	// Не реактивны — только для дедупа авто-ensure в 1s-поллинге (кулдаун на транзиентные ошибки/no-tunnel).
+	let statusPoll: ReturnType<typeof setTimeout> | undefined;
+	let pollActive = false;
+	// Не реактивны (в шаблоне не читаются) — дедуп/кулдаун авто-ensure в поллинге.
+	let wgEnsureSettled = new Set<string>();
 	const wgEnsureCooldown = new Map<string, number>();
 	let ensuringWg = $state(false);
 	let refreshingSub = $state(false);
@@ -118,7 +119,6 @@
 		} catch (e) {
 			loadError = errText(e);
 			notifications.error('WDTT: ' + loadError);
-			throw e;
 		}
 	}
 
@@ -182,19 +182,27 @@
 		}
 	}
 
+	function scheduleStatusPoll() {
+		// Самоперепланирование вместо setInterval — на медленном роутере запросы не наслаиваются.
+		statusPoll = setTimeout(async () => {
+			await loadStatus();
+			if (pollActive) scheduleStatusPoll();
+		}, 2000);
+	}
+
 	onMount(async () => {
+		pollActive = true;
 		try {
 			await Promise.all([loadConfig(), loadStatus()]);
-		} catch (e) {
-			notifications.error('WDTT: ' + errText(e));
 		} finally {
 			loading = false;
 		}
-		statusPoll = setInterval(loadStatus, 1000);
+		scheduleStatusPoll();
 	});
 
 	onDestroy(() => {
-		if (statusPoll) clearInterval(statusPoll);
+		pollActive = false;
+		if (statusPoll) clearTimeout(statusPoll);
 	});
 
 	function patchClientInConfig(id: string, cfg: WdttClientConfig) {

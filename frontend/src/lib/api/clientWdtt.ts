@@ -70,14 +70,6 @@ export class WdttClient extends FreeturnClient {
 		return this.request<WdttStatus>('/wdtt/status');
 	}
 
-	async startWdttClient(): Promise<void> {
-		await this.request('/wdtt/client/start', { method: 'POST' });
-	}
-
-	async stopWdttClient(): Promise<void> {
-		await this.request('/wdtt/client/stop', { method: 'POST' });
-	}
-
 	async startWdttClientInstance(id: string): Promise<void> {
 		await this.request(`/wdtt/clients/${encodeURIComponent(id)}/start`, { method: 'POST' });
 	}
@@ -88,13 +80,6 @@ export class WdttClient extends FreeturnClient {
 
 	async decodeWdttLink(link: string): Promise<WdttLinkDecodeResult> {
 		return this.request<WdttLinkDecodeResult>('/wdtt/link/decode', {
-			method: 'POST',
-			body: JSON.stringify({ link })
-		});
-	}
-
-	async importWdttLink(link: string): Promise<{ instance: WdttClientInstance; payload: WdttImportPayload }> {
-		return this.request('/wdtt/link/import', {
 			method: 'POST',
 			body: JSON.stringify({ link })
 		});

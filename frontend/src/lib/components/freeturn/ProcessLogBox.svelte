@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { ChevronRight, ChevronDown, ArrowDown } from 'lucide-svelte';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { notifications } from '$lib/stores/notifications';
 
@@ -75,7 +76,9 @@
 	<div class="ft-log-toolbar" class:ft-log-toolbar--header={header}>
 		{#if header}
 			<button type="button" class="ft-log-toggle" onclick={() => (collapsed = !collapsed)} aria-expanded={!collapsed}>
-				<span class="ft-log-chevron" class:open={!collapsed}>▸</span>
+				<span class="ft-log-chevron">
+					{#if collapsed}<ChevronRight size={14} />{:else}<ChevronDown size={14} />{/if}
+				</span>
 				<span class="section-label">{title}</span>
 				{#if lineCount && collapsed}
 					<span class="ft-log-meta">({lineCount} строк)</span>
@@ -85,7 +88,7 @@
 		<div class="ft-log-toolbar-actions">
 			{#if !stickToBottom}
 				<button type="button" class="ft-log-follow" onclick={scrollToBottom}>
-					↓ К последним строкам
+					<ArrowDown size={12} /> К последним строкам
 				</button>
 			{/if}
 			{#if lineCount}
@@ -149,14 +152,9 @@
 	}
 
 	.ft-log-chevron {
-		display: inline-block;
-		font-size: 0.75rem;
-		transition: transform 0.15s ease;
+		display: inline-flex;
+		align-items: center;
 		color: var(--color-text-secondary);
-	}
-
-	.ft-log-chevron.open {
-		transform: rotate(90deg);
 	}
 
 	.ft-log-panel {
@@ -229,6 +227,9 @@
 
 	.ft-log-follow,
 	.ft-log-copy {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
 		padding: 0.125rem 0.5rem;
 		border: 1px solid var(--color-accent-border);
 		border-radius: var(--radius-sm);

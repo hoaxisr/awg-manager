@@ -47,7 +47,8 @@
 	let generatedPeer = $state('');
 	let generatedClientId = $state('');
 
-	let statusPoll: ReturnType<typeof setInterval> | undefined;
+	let statusPoll: ReturnType<typeof setTimeout> | undefined;
+	let pollActive = false;
 
 	const ftTabs = [
 		{ id: 'client', label: 'Клиент' },
@@ -88,19 +89,27 @@
 		return e instanceof Error ? e.message : String(e ?? '');
 	}
 
+	function scheduleStatusPoll() {
+		// Самоперепланирование вместо setInterval — на медленном роутере запросы не наслаиваются.
+		statusPoll = setTimeout(async () => {
+			await loadStatus(false);
+			if (pollActive) scheduleStatusPoll();
+		}, 2000);
+	}
+
 	onMount(async () => {
+		pollActive = true;
 		try {
 			await Promise.all([loadConfig(), loadStatus(false)]);
 		} finally {
 			loading = false;
 		}
-		statusPoll = setInterval(async () => {
-			await loadStatus(false);
-		}, 1000);
+		scheduleStatusPoll();
 	});
 
 	onDestroy(() => {
-		if (statusPoll) clearInterval(statusPoll);
+		pollActive = false;
+		if (statusPoll) clearTimeout(statusPoll);
 	});
 
 	function normalizeClient(c: FreeTurnClientConfig): FreeTurnClientConfig {

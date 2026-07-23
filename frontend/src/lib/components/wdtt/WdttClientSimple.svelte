@@ -139,7 +139,7 @@
 		try {
 			const decoded = await api.decodeWdttLink(link);
 			const isSub = /^https?:\/\//i.test(link);
-			await applyDecoded(decoded, isSub ? link.split('?')[0] : undefined);
+			await applyDecoded(decoded, isSub ? link : undefined);
 			if (!decoded.subscription || decoded.subscription.profiles.length <= 1) {
 				if (!decoded.subscription) importLink = '';
 			}
