@@ -17,6 +17,8 @@
 	import FreeTurnClientSimple from './FreeTurnClientSimple.svelte';
 	import FreeTurnServerSimple from './FreeTurnServerSimple.svelte';
 	import { parseLocalListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
+	import { errText } from '$lib/utils/errorMessage';
+	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
 
 	type FtTab = 'client' | 'server';
 
@@ -47,8 +49,7 @@
 	let generatedPeer = $state('');
 	let generatedClientId = $state('');
 
-	let statusPoll: ReturnType<typeof setTimeout> | undefined;
-	let pollActive = false;
+	const statusPoll = createSelfReschedulingPoll(() => loadStatus(false));
 
 	const ftTabs = [
 		{ id: 'client', label: 'Клиент' },
@@ -85,32 +86,16 @@
 		return port > 0 ? port : 9000;
 	});
 
-	function errText(e: unknown): string {
-		return e instanceof Error ? e.message : String(e ?? '');
-	}
-
-	function scheduleStatusPoll() {
-		// Самоперепланирование вместо setInterval — на медленном роутере запросы не наслаиваются.
-		statusPoll = setTimeout(async () => {
-			await loadStatus(false);
-			if (pollActive) scheduleStatusPoll();
-		}, 2000);
-	}
-
 	onMount(async () => {
-		pollActive = true;
 		try {
 			await Promise.all([loadConfig(), loadStatus(false)]);
 		} finally {
 			loading = false;
 		}
-		scheduleStatusPoll();
+		statusPoll.start();
 	});
 
-	onDestroy(() => {
-		pollActive = false;
-		if (statusPoll) clearTimeout(statusPoll);
-	});
+	onDestroy(() => statusPoll.stop());
 
 	function normalizeClient(c: FreeTurnClientConfig): FreeTurnClientConfig {
 		return {
