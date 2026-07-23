@@ -32,15 +32,9 @@ func (s *Store) Load() (Config, error) {
 	defer s.mu.Unlock()
 
 	if s.cfg != nil {
-		cfg := *s.cfg
 		// Изолируем срезы от кэша: shallow-copy делит backing array,
 		// normalizeConfig и мутации хендлеров иначе меняют кэш до Save.
-		if s.cfg.Clients != nil {
-			cfg.Clients = append([]ClientInstance(nil), s.cfg.Clients...)
-		}
-		if s.cfg.Servers != nil {
-			cfg.Servers = append([]ServerInstance(nil), s.cfg.Servers...)
-		}
+		cfg := copyConfig(*s.cfg)
 		if changed := normalizeConfig(&cfg); changed || len(cfg.Clients) != len(s.cfg.Clients) || len(cfg.Servers) != len(s.cfg.Servers) {
 			if err := s.saveLocked(cfg); err != nil {
 				return cfg, err
@@ -57,7 +51,7 @@ func (s *Store) Load() (Config, error) {
 			if saveErr := s.saveLocked(cfg); saveErr != nil {
 				return cfg, saveErr
 			}
-			return cfg, nil
+			return copyConfig(cfg), nil
 		}
 		return Config{}, err
 	}
@@ -72,7 +66,20 @@ func (s *Store) Load() (Config, error) {
 		}
 	}
 	s.cfg = &cfg
-	return cfg, nil
+	return copyConfig(cfg), nil
+}
+
+// copyConfig возвращает копию cfg, у которой срезы Clients и Servers лежат в
+// свежих backing array — чтобы мутации возвращённого значения не протекали в
+// кэш s.cfg (и наоборот). Применяется во всех точках возврата Load.
+func copyConfig(cfg Config) Config {
+	if cfg.Clients != nil {
+		cfg.Clients = append([]ClientInstance(nil), cfg.Clients...)
+	}
+	if cfg.Servers != nil {
+		cfg.Servers = append([]ServerInstance(nil), cfg.Servers...)
+	}
+	return cfg
 }
 
 func (s *Store) Save(cfg Config) error {

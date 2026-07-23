@@ -36,12 +36,38 @@ func TestStore_DeleteAllClientsRestoresDefault(t *testing.T) {
 }
 
 func TestStore_LoadReturnsIsolatedCopy(t *testing.T) {
-	store := NewStore(t.TempDir())
+	// Кэш-ветка: прогреваем кэш, далее мутируем результат Load.
+	t.Run("cache", func(t *testing.T) {
+		store := NewStore(t.TempDir())
+		if _, err := store.Load(); err != nil {
+			t.Fatal(err)
+		}
+		assertLoadIsolated(t, store)
+	})
 
-	// Прогреваем кэш (как при старте сервиса), далее хендлеры читают из него.
-	if _, err := store.Load(); err != nil {
-		t.Fatal(err)
-	}
+	// Первый Load, disk-ветка file-missing (DefaultConfig): срез результата
+	// не должен алиасить кэш, который выставил saveLocked.
+	t.Run("first-load-missing", func(t *testing.T) {
+		store := NewStore(t.TempDir())
+		assertLoadIsolated(t, store)
+	})
+
+	// Первый Load, disk-ветка file-exists: читаем готовый файл, срез
+	// результата не должен алиасить кэш s.cfg.
+	t.Run("first-load-existing", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "wdtt.json"),
+			[]byte(`{"version":1,"clients":[{"id":"default","name":"n"}]}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		assertLoadIsolated(t, NewStore(dir))
+	})
+}
+
+// assertLoadIsolated: результат первого зафиксированного Load мутируется, и
+// эта мутация не должна быть видна в последующем Load (т.е. не протекла в кэш).
+func assertLoadIsolated(t *testing.T, store *Store) {
+	t.Helper()
 	cfg, err := store.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +75,6 @@ func TestStore_LoadReturnsIsolatedCopy(t *testing.T) {
 	if len(cfg.Clients) == 0 {
 		t.Fatal("want at least one client")
 	}
-	// Мутируем результат Load — не должно затрагивать кэш.
 	cfg.Clients[0].Config.Password = "leaked"
 
 	got, err := store.Load()
