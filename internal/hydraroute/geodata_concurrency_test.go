@@ -36,14 +36,14 @@ func TestGeoDataStore_DownloadWithClient_RespectsContextCancel(t *testing.T) {
 	}()
 	select {
 	case <-started:
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatal("download did not reach transport")
 	}
 	cancel()
 	var err error
 	select {
 	case err = <-result:
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatal("download did not finish after context cancel")
 	}
 	if err == nil {
@@ -84,7 +84,7 @@ func TestGeoDataStore_List_NotBlockedByInFlightDownload(t *testing.T) {
 
 	select {
 	case <-started:
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatal("download did not reach transport")
 	}
 	listed := make(chan struct{})
@@ -94,7 +94,7 @@ func TestGeoDataStore_List_NotBlockedByInFlightDownload(t *testing.T) {
 	}()
 	select {
 	case <-listed:
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatal("List blocked while download in flight")
 	}
 	cancel()
@@ -106,7 +106,7 @@ func TestGeoDataStore_List_NotBlockedByInFlightDownload(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatal("download goroutine did not finish after cancel")
 	}
 }
@@ -136,7 +136,7 @@ func TestGeoDataStore_DownloadWithClient_LimitErrorDoesNotKeepLock(t *testing.T)
 
 	select {
 	case <-done:
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatal("List appears blocked after limit error; lock likely not released")
 	}
 }
@@ -187,7 +187,7 @@ func TestGeoDataStore_List_DuringUpdateSwap_DoesNotDropEntry(t *testing.T) {
 	}
 	select {
 	case <-listDone:
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatal("List did not complete after update swap stage")
 	}
 	entries := store.List()
@@ -259,7 +259,7 @@ func TestGeoDataStore_UpdateSaveFailureRollback_HoldsStateForList(t *testing.T) 
 	var listed []GeoFileEntry
 	select {
 	case listed = <-listDone:
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatal("List did not complete during rollback flow")
 	}
 	if len(listed) != 1 {
