@@ -362,6 +362,18 @@ func TestProcess_StartupFailureCapturesStderr(t *testing.T) {
 	}
 }
 
+// TestProcess_StartupFailure_StderrCaptured_UnderDrainDelay детерминированно
+// воспроизводит гонку os/exec: если Wait() закрывает пайпы раньше, чем drain
+// успел прочитать stderr, «boom» теряется. drainStartDelay форсирует окно.
+func TestProcess_StartupFailure_StderrCaptured_UnderDrainDelay(t *testing.T) {
+	p := newTestProcess(t, "echo boom >&2; exit 1")
+	p.drainStartDelay = 50 * time.Millisecond
+	err := p.Start(nil)
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("stderr должен быть в ошибке даже с задержкой drain, got: %v", err)
+	}
+}
+
 func TestProcess_StartStop(t *testing.T) {
 	p := newTestProcess(t, "sleep 30")
 	if err := p.Start(nil); err != nil {
