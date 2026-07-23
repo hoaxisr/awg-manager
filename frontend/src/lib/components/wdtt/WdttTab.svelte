@@ -27,6 +27,8 @@
 
 	let statusPoll: ReturnType<typeof setInterval> | undefined;
 	let wgEnsureSettled = $state(new Set<string>());
+	// Не реактивны — только для дедупа авто-ensure в 1s-поллинге (кулдаун на транзиентные ошибки/no-tunnel).
+	const wgEnsureCooldown = new Map<string, number>();
 	let ensuringWg = $state(false);
 	let refreshingSub = $state(false);
 	let subscriptionTick = $state(0);
@@ -136,6 +138,11 @@
 		if (!st?.running) return;
 		const wg = st.wgConfig?.trim();
 		if (!wg) return;
+		const now = Date.now();
+		// Не ретраить чаще раза в 20с: на ошибке/no-tunnel id не помечается settled,
+		// иначе 1s-поллинг долбил бы POST (и тост) каждую секунду.
+		if (now - (wgEnsureCooldown.get(id) ?? 0) < 20000) return;
+		wgEnsureCooldown.set(id, now);
 		ensuringWg = true;
 		try {
 			const result = await api.ensureWdttWgTunnel(id);
@@ -154,6 +161,7 @@
 
 	async function ensureWgManual() {
 		if (!selectedClient) return;
+		wgEnsureCooldown.delete(selectedClient.id);
 		ensuringWg = true;
 		try {
 			const result = await api.ensureWdttWgTunnel(selectedClient.id);
@@ -208,6 +216,7 @@
 		if (!selectedClient) return;
 		saving = true;
 		try {
+			const sent = $state.snapshot(cfg);
 			const id = selectedClient.id;
 			const oldPeer = savedClient?.config.peer ?? '';
 			const result =
@@ -222,7 +231,8 @@
 				const sidx = savedConfig.clients.findIndex((c) => c.id === id);
 				if (sidx >= 0) savedConfig.clients[sidx].config = structuredClone(norm);
 				const idx = config.clients.findIndex((c) => c.id === id);
-				if (idx >= 0) {
+				// Перезаписываем рабочий config только если юзер не редактировал во время запроса.
+				if (idx >= 0 && JSON.stringify($state.snapshot(config.clients[idx].config)) === JSON.stringify(sent)) {
 					config.clients[idx].config = structuredClone(norm);
 				}
 			}
