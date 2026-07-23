@@ -104,8 +104,10 @@ func (p *process) Start(args []string) error {
 		return fmt.Errorf("freeturn %s: start: %w", p.name, err)
 	}
 
-	go p.drain(stdout)
-	go p.drain(stderr)
+	var drainWG sync.WaitGroup
+	drainWG.Add(2)
+	go func() { defer drainWG.Done(); p.drain(stdout) }()
+	go func() { defer drainWG.Done(); p.drain(stderr) }()
 
 	if err := p.writePID(cmd.Process.Pid); err != nil {
 		_ = childproc.Terminate(cmd.Process.Pid)
@@ -122,6 +124,9 @@ func (p *process) Start(args []string) error {
 	case waitErr := <-errCh:
 		// Died before grace period — this is a startup failure.
 		p.cleanupPidIfOurs(myPid)
+		// cmd.Wait() закрыл пайпы; дождаться (ограниченно) завершения drain,
+		// чтобы хвост stderr успел попасть в logTail.
+		waitDrainGroup(&drainWG, 500*time.Millisecond)
 		msg := strings.TrimSpace(p.logTail.LastLines(30))
 		if msg == "" && waitErr != nil {
 			msg = waitErr.Error()
@@ -257,6 +262,17 @@ func (p *process) setLastErr(s string) {
 	p.mu.Lock()
 	p.lastErr = s
 	p.mu.Unlock()
+}
+
+// waitDrainGroup ждёт завершения drain-горутин, но не дольше timeout —
+// гард от вечного зависания, если drain почему-то не закрылся.
+func waitDrainGroup(wg *sync.WaitGroup, timeout time.Duration) {
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
 }
 
 // cleanupPidIfOurs removes the pidfile only if it still names myPid —
