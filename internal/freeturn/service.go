@@ -28,6 +28,10 @@ type Service struct {
 	clientProcs *processRegistry
 	serverProcs *processRegistry
 
+	// mu сериализует Load-modify-Save методы: без него два конкурентных
+	// запроса теряют правки друг друга и могут выдать один listen-порт дважды.
+	mu sync.Mutex
+
 	versionPath string
 
 	installSpecs *ArchSpecs
@@ -91,6 +95,8 @@ func (s *Service) UpdateServerConfig(cfg ServerConfig) error {
 }
 
 func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return err
@@ -107,6 +113,8 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 }
 
 func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return err
@@ -122,6 +130,8 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
 }
 
 func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return ClientInstance{}, err
@@ -145,6 +155,8 @@ func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
 }
 
 func (s *Service) CreateServer(in CreateServerInput) (ServerInstance, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return ServerInstance{}, err
@@ -167,6 +179,8 @@ func (s *Service) CreateServer(in CreateServerInput) (ServerInstance, error) {
 }
 
 func (s *Service) DeleteClient(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return err
@@ -181,6 +195,8 @@ func (s *Service) DeleteClient(id string) error {
 }
 
 func (s *Service) DeleteServer(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return err
@@ -199,6 +215,8 @@ func (s *Service) RenameClient(id, name string) error {
 	if name == "" {
 		return errors.New("укажите имя")
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return err
@@ -216,6 +234,8 @@ func (s *Service) RenameServer(id, name string) error {
 	if name == "" {
 		return errors.New("укажите имя")
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return err

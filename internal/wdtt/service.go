@@ -20,6 +20,10 @@ type Service struct {
 	clientBin string
 	procs     *processRegistry
 
+	// mu сериализует Load-modify-Save методы: без него два конкурентных
+	// запроса теряют правки друг друга и могут выдать один listen-порт дважды.
+	mu sync.Mutex
+
 	versionPath  string
 	installSpec  *BinarySpec
 	downloader   childproc.Downloader
@@ -75,6 +79,8 @@ func (s *Service) UpdateClientConfig(cfg ClientConfig) error {
 }
 
 func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return err
@@ -91,6 +97,8 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 }
 
 func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return ClientInstance{}, err
@@ -114,6 +122,8 @@ func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
 }
 
 func (s *Service) DeleteClient(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return err
@@ -128,6 +138,8 @@ func (s *Service) DeleteClient(id string) error {
 }
 
 func (s *Service) RenameClient(id, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return err
@@ -145,6 +157,8 @@ func (s *Service) ImportLink(id, link string) (ClientInstance, ImportPayload, er
 	if err != nil {
 		return ClientInstance{}, ImportPayload{}, err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return ClientInstance{}, payload, err
