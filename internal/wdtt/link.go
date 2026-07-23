@@ -10,8 +10,12 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
+
+// lookupIP — seam для резолвера (подменяется в тестах).
+var lookupIP = net.LookupIP
 
 const (
 	SchemeWdtt  = "wdtt://"
@@ -259,6 +263,9 @@ func fetchSubscriptionLink(rawURL string) (LinkDecodeResult, error) {
 	}
 	client := &http.Client{
 		Timeout: 20 * time.Second,
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{Timeout: 10 * time.Second, Control: blockInternalDial}).DialContext,
+		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 3 {
 				return fmt.Errorf("слишком много редиректов при загрузке подписки")
@@ -344,7 +351,7 @@ func validateSubURL(raw string) error {
 	if strings.EqualFold(host, "localhost") {
 		return fmt.Errorf("URL подписки указывает на внутренний адрес")
 	}
-	ips, err := net.LookupIP(host)
+	ips, err := lookupIP(host)
 	if err != nil {
 		return fmt.Errorf("не удалось разрешить хост подписки: %w", err)
 	}
@@ -355,8 +362,22 @@ func validateSubURL(raw string) error {
 			return fmt.Errorf("URL подписки указывает на внутренний адрес")
 		}
 	}
-	// ponytail: остаётся окно DNS-rebinding — резолв здесь ≠ резолв при dial.
-	// Прямой localhost/loopback (флагнутая угроза) закрыт; полный dial-time IP-контроль тяжёл.
+	// DNS-rebinding закрыт dial-time IP-пином (blockInternalDial в Transport клиента):
+	// фактический IP каждого connect проверяется повторно, резолв здесь — ранний отказ + defense-in-depth.
+	return nil
+}
+
+// blockInternalDial проверяет фактически подключаемый IP в момент dial (после резолва,
+// перед connect), закрывая DNS-rebinding: резолв в validateSubURL мог отличаться от dial-резолва.
+func blockInternalDial(network, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	ip := net.ParseIP(host)
+	if ip != nil && (ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()) {
+		return fmt.Errorf("подписка резолвится во внутренний адрес")
+	}
 	return nil
 }
 
