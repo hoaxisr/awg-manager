@@ -1,6 +1,9 @@
 package wdtt
 
-import "testing"
+import (
+	"net"
+	"testing"
+)
 
 func TestValidateSubURL_RejectsInternal(t *testing.T) {
 	for _, u := range []string{
@@ -22,6 +25,41 @@ func TestValidateSubURL_RejectsBadScheme(t *testing.T) {
 	}
 	if err := validateSubURL("http:///x"); err == nil {
 		t.Error("expected hostless rejection")
+	}
+}
+
+func TestValidateSubURL_AcceptsPublic(t *testing.T) {
+	orig := lookupIP
+	defer func() { lookupIP = orig }()
+	lookupIP = func(string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	}
+	if err := validateSubURL("https://example.com/sub"); err != nil {
+		t.Fatalf("expected public host accepted, got %v", err)
+	}
+}
+
+func TestValidateSubURL_RejectsRebindViaSeam(t *testing.T) {
+	orig := lookupIP
+	defer func() { lookupIP = orig }()
+	lookupIP = func(string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+	if err := validateSubURL("https://evil.example.com/sub"); err == nil {
+		t.Error("expected rejection for host resolving to loopback")
+	}
+}
+
+func TestBlockInternalDial(t *testing.T) {
+	for _, addr := range []string{"127.0.0.1:443", "[::1]:443", "169.254.1.1:80"} {
+		if err := blockInternalDial("tcp", addr, nil); err == nil {
+			t.Errorf("expected rejection for %s", addr)
+		}
+	}
+	for _, addr := range []string{"8.8.8.8:443", "93.184.216.34:443"} {
+		if err := blockInternalDial("tcp", addr, nil); err != nil {
+			t.Errorf("expected accept for %s, got %v", addr, err)
+		}
 	}
 }
 
