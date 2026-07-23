@@ -16,27 +16,37 @@ import (
 )
 
 type BinarySpec struct {
-	Version    string
-	URL        string
-	SHA256     string
-	Size       int64
-	LocalAsset string
+	Version string
+	URL     string
+	SHA256  string
+	Size    int64 // bytes; download hard-cap = Size + slack
 }
 
-const PinnedVersion = "1.0.0-awg.1"
+const PinnedVersion = "1.0.0-1"
 
+// releaseBase — прод-доставка с зеркала (паритет с
+// internal/freeturn/install.go и internal/singbox/installer/embedded.go —
+// GitHub из RU у части пользователей недоступен, репо приватный).
+// Канонический источник сборки: https://github.com/hoaxisr/wdtt-client
+// релиз v1.0.0-1.
+const releaseBase = "http://repo.hoaxisr.ru/wt/" + PinnedVersion + "/"
+
+// EmbeddedBinaries maps the awg-manager build arch (detectArch(): e.g.
+// "mipsel-3.4") to the pinned wdtt client asset. У wdtt только client
+// (server-бинаря нет). SHA256/Size — из checksums.txt релиза
+// hoaxisr/wdtt-client v1.0.0-1.
 var EmbeddedBinaries = map[string]BinarySpec{
 	"aarch64-3.10": {
-		Version: PinnedVersion, LocalAsset: "client-linux-arm64",
-		SHA256: "ea50ef14313f9f28aac40912d0387e2d9baec0cdb6a28581489befc74fd79d8a", Size: 11337890,
+		Version: PinnedVersion, URL: releaseBase + "wt-client-linux-arm64",
+		SHA256: "47e72c6491d61cb0ba30aa522b444ca30e2851f9d77361a2520cb92601e6972b", Size: 11337890,
 	},
 	"mipsel-3.4": {
-		Version: PinnedVersion, LocalAsset: "client-linux-mipsle-softfloat",
-		SHA256: "", Size: 0,
+		Version: PinnedVersion, URL: releaseBase + "wt-client-linux-mipsle-softfloat",
+		SHA256: "7cd2c6b0dfee1bbfb64dba415d8c20318a05dccb8babc59d18d77d843c7163f7", Size: 13172929,
 	},
 	"mips-3.4": {
-		Version: PinnedVersion, LocalAsset: "client-linux-mips-softfloat",
-		SHA256: "", Size: 0,
+		Version: PinnedVersion, URL: releaseBase + "wt-client-linux-mips-softfloat",
+		SHA256: "f62be339ae86ead7f97439fbe919fd17d0321bfd7265fb8ca2ad484709c5392d", Size: 13172929,
 	},
 }
 
@@ -114,88 +124,26 @@ func (s *Service) installOne(ctx context.Context, binPath string, spec BinarySpe
 	if err := os.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
 		return err
 	}
-	if spec.LocalAsset != "" {
-		if src, ok := findLocalWdttAsset(spec.LocalAsset); ok {
-			return copyWdttBinary(src, binPath)
-		}
-	}
-	if spec.URL == "" {
-		return fmt.Errorf("локальный prebuilt не найден и URL загрузки не задан")
-	}
 	tmp := binPath + ".tmp"
 	_ = os.Remove(tmp)
-	maxBytes := spec.Size + downloadSlack
-	if maxBytes <= downloadSlack {
-		maxBytes = 32 << 20
-	}
-	if err := s.downloader.DownloadFile(ctx, spec.URL, tmp, maxBytes); err != nil {
+	if err := s.downloader.DownloadFile(ctx, spec.URL, tmp, spec.Size+downloadSlack); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("загрузка %s: %w", spec.URL, err)
 	}
-	if spec.SHA256 != "" {
-		got, err := sha256File(tmp)
-		if err != nil {
-			_ = os.Remove(tmp)
-			return err
-		}
-		if !strings.EqualFold(got, spec.SHA256) {
-			_ = os.Remove(tmp)
-			return fmt.Errorf("контрольная сумма не совпала")
-		}
+	got, err := sha256File(tmp)
+	if err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if !strings.EqualFold(got, spec.SHA256) {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("контрольная сумма не совпала (получено %s, ожидалось %s)", got, spec.SHA256)
 	}
 	if err := os.Chmod(tmp, 0755); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, binPath); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
-}
-
-func findLocalWdttAsset(name string) (string, bool) {
-	candidates := []string{
-		filepath.Join("prebuilt", "wdtt", name),
-		filepath.Join("/opt/etc/awg-manager/wdtt", name),
-	}
-	if exe, err := os.Executable(); err == nil {
-		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "wdtt", name))
-	}
-	for _, p := range candidates {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p, true
-		}
-	}
-	return "", false
-}
-
-func copyWdttBinary(src, dest string) error {
-	tmp := dest + ".tmp"
-	_ = os.Remove(tmp)
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := out.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Chmod(tmp, 0755); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, dest); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
