@@ -2,13 +2,14 @@ package wdtt
 
 import (
 	"encoding/json"
-	"net"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+const wgConfigEventPrefix = "__WDTT_EVENT__|CONFIG|"
 
 var wgBoxLineRE = regexp.MustCompile(`^║\s*(.*?)\s*║\s*$`)
 
@@ -22,25 +23,29 @@ func ExtractWGConfigFromLog(log string) string {
 }
 
 func extractWGFromEvents(log string) string {
-	const prefix = "__WDTT_EVENT__|CONFIG|"
 	var last string
 	for _, line := range strings.Split(log, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, prefix) {
-			continue
-		}
-		payload := strings.TrimPrefix(line, prefix)
-		var data struct {
-			Config string `json:"config"`
-		}
-		if err := json.Unmarshal([]byte(payload), &data); err != nil {
-			continue
-		}
-		if c := strings.TrimSpace(data.Config); c != "" {
+		if c := parseWGConfigEvent(line); c != "" {
 			last = c
 		}
 	}
 	return last
+}
+
+// parseWGConfigEvent extracts the WG config text from a single
+// __WDTT_EVENT__|CONFIG|{json} line, or "" if the line is not such an event.
+func parseWGConfigEvent(line string) string {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, wgConfigEventPrefix) {
+		return ""
+	}
+	var data struct {
+		Config string `json:"config"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(line, wgConfigEventPrefix)), &data); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(data.Config)
 }
 
 func extractWGFromBox(log string) string {
@@ -122,57 +127,17 @@ func PatchWgConfEndpoint(conf string, localPort int) string {
 	return strings.Join(out, "\n")
 }
 
-// ExtractInterfaceAddress returns [Interface] Address from a WireGuard config snippet.
-func ExtractInterfaceAddress(conf string) string {
-	lines := strings.Split(conf, "\n")
-	inIface := false
-	for _, line := range lines {
-		t := strings.TrimSpace(line)
-		if strings.HasPrefix(t, "[") {
-			inIface = strings.EqualFold(t, "[interface]")
-			continue
-		}
-		if !inIface {
-			continue
-		}
-		if strings.HasPrefix(strings.ToLower(t), "address") {
-			parts := strings.SplitN(t, "=", 2)
-			if len(parts) == 2 {
-				return strings.TrimSpace(parts[1])
-			}
-		}
-	}
-	return ""
-}
-
-// NormalizeWGAddress compares interface addresses case-insensitively (host part).
-func NormalizeWGAddress(addr string) string {
-	addr = strings.TrimSpace(addr)
-	if addr == "" {
-		return ""
-	}
-	host := addr
-	if strings.Contains(addr, "/") {
-		if h, _, err := net.ParseCIDR(addr); err == nil && h != nil {
-			host = h.String()
-		} else if i := strings.Index(addr, "/"); i > 0 {
-			host = addr[:i]
-		}
-	}
-	return strings.ToLower(strings.TrimSpace(host))
-}
-
-// MatchingAWGTunnel finds an existing tunnel with the same WG peer key or interface IP.
+// MatchingAWGTunnel finds an existing tunnel with the same WG peer public key.
+// Matching only by peer key avoids adopting an unrelated user tunnel that
+// happens to share a 10.x interface address.
 func MatchingAWGTunnel(tunnels []storage.AWGTunnel, wgConf string) *storage.AWGTunnel {
 	key := strings.TrimSpace(ExtractPeerPublicKey(wgConf))
-	addr := NormalizeWGAddress(ExtractInterfaceAddress(wgConf))
+	if key == "" {
+		return nil
+	}
 	for i := range tunnels {
-		tun := &tunnels[i]
-		if key != "" && strings.TrimSpace(tun.Peer.PublicKey) == key {
-			return tun
-		}
-		if addr != "" && NormalizeWGAddress(tun.Interface.Address) == addr {
-			return tun
+		if strings.TrimSpace(tunnels[i].Peer.PublicKey) == key {
+			return &tunnels[i]
 		}
 	}
 	return nil

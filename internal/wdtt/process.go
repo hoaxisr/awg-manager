@@ -29,6 +29,7 @@ type process struct {
 	startedAt     *time.Time
 	lastErr       string
 	stopRequested bool
+	lastWgConfig  string // last CONFIG event seen in drain; survives log ring-buffer eviction
 	logTail       *childproc.RingBuffer
 	startCmd      func(bin string, args ...string) *exec.Cmd
 }
@@ -84,6 +85,7 @@ func (p *process) Start(args []string) error {
 	p.logTail.Reset()
 	p.mu.Lock()
 	p.stopRequested = false
+	p.lastWgConfig = ""
 	p.mu.Unlock()
 
 	if err := cmd.Start(); err != nil {
@@ -190,7 +192,9 @@ func (p *process) Status() ProcessStatus {
 		Binary:        p.binary,
 		BinaryPresent: binaryPresent(p.binary),
 	}
-	if wg := ExtractWGConfigFromLog(st.Log); wg != "" {
+	if p.lastWgConfig != "" {
+		st.WgConfig = p.lastWgConfig
+	} else if wg := ExtractWGConfigFromLog(st.Log); wg != "" {
 		st.WgConfig = wg
 	}
 	if running {
@@ -230,7 +234,13 @@ func (p *process) drain(r io.Reader) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 4096), 64*1024)
 	for sc.Scan() {
-		p.logTail.WriteLine(sc.Text())
+		line := sc.Text()
+		p.logTail.WriteLine(line)
+		if conf := parseWGConfigEvent(line); conf != "" {
+			p.mu.Lock()
+			p.lastWgConfig = conf
+			p.mu.Unlock()
+		}
 	}
 }
 
