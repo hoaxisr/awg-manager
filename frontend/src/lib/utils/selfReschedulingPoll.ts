@@ -17,6 +17,7 @@ export function createSelfReschedulingPoll(
 ): SelfReschedulingPoll {
 	let handle: ReturnType<typeof setTimeout> | undefined;
 	let active = false;
+	let disposed = false;
 
 	function schedule() {
 		handle = setTimeout(async () => {
@@ -27,12 +28,16 @@ export function createSelfReschedulingPoll(
 
 	return {
 		start() {
-			if (active) return;
+			// `disposed` guard: stop() may fire before start() when the component is
+			// destroyed mid initial load (onMount awaits before start()). Without it,
+			// a late start() would revive the poll into an orphaned timer loop.
+			if (active || disposed) return;
 			active = true;
 			schedule();
 		},
 		stop() {
 			active = false;
+			disposed = true;
 			if (handle) clearTimeout(handle);
 		}
 	};
