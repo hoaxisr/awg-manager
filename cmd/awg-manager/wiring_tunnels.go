@@ -11,6 +11,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/freeturn"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
@@ -196,6 +197,14 @@ func (a *app) setupServices() {
 	)
 	a.freeturnService.SetListenPortChecker(&awgListenPortChecker{store: a.awgStore})
 	a.deferOnExit(a.freeturnService.Stop)
+
+	a.wdttService = wdtt.NewService(
+		a.dataDir,
+		filepath.Join(a.dataDir, "run"),
+		"/opt/bin/wdtt-client",
+	)
+	a.wdttService.SetListenPortChecker(&awgListenPortChecker{store: a.awgStore})
+	a.deferOnExit(a.wdttService.Stop)
 
 	// Unified facade: kernel → custom loop, NativeWG → NDMS native
 	a.pingCheckFacade = pingcheck.NewFacade(a.pingCheckService, a.awgStore, a.nwgOp)

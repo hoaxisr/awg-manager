@@ -28,6 +28,18 @@ func tunnelLinkedToFreeTurnClient(tun storage.AWGTunnel, clientID string) bool {
 	return strings.TrimSpace(tun.FreeTurnClientID) == clientID
 }
 
+func (h *FreeTurnHandler) startLinkedAwgTunnels(ctx context.Context, clientID string) ([]string, []string) {
+	return startLinkedAwgTunnels(ctx, h.awgStore, h.tunnelSvc, h.tunnelsHandler, func(tun storage.AWGTunnel) bool {
+		return tunnelLinkedToFreeTurnClient(tun, clientID)
+	})
+}
+
+func (h *FreeTurnHandler) stopLinkedAwgTunnels(ctx context.Context, clientID string) ([]string, []string) {
+	return stopLinkedAwgTunnels(ctx, h.awgStore, h.tunnelSvc, h.tunnelsHandler, func(tun storage.AWGTunnel) bool {
+		return tunnelLinkedToFreeTurnClient(tun, clientID)
+	})
+}
+
 func (h *FreeTurnHandler) deleteLinkedAwgTunnels(ctx context.Context, clientID string) (deleted []string, errs []string) {
 	if h.awgStore == nil || h.tunnelSvc == nil || strings.TrimSpace(clientID) == "" {
 		return nil, nil

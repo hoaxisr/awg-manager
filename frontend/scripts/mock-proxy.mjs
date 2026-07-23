@@ -7238,10 +7238,6 @@ const server = http.createServer(async (req, res) => {
 				return;
 			}
 			if (req.method === 'DELETE') {
-				if (id === 'default') {
-					sendInvalidRequest(res, 'дефолтный инстанс нельзя удалить');
-					return;
-				}
 				list.splice(list.indexOf(inst), 1);
 				if (kind === 'server') delete mockFreeturn.allowlists[id];
 				sendData(res, { message: `freeturn ${kind} ${id} удалён (mock)` });

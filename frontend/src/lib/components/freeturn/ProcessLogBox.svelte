@@ -14,6 +14,8 @@
 		/** Показать тихий переключатель -debug рядом с логом. */
 		showDebugToggle?: boolean;
 		debug?: boolean;
+		/** Свёрнут ли лог по умолчанию. */
+		defaultCollapsed?: boolean;
 	}
 
 	let {
@@ -23,8 +25,11 @@
 		routerClock = '',
 		embedded = false,
 		showDebugToggle = false,
-		debug = $bindable(false)
+		debug = $bindable(false),
+		defaultCollapsed = false
 	}: Props = $props();
+
+	let collapsed = $state(defaultCollapsed);
 
 	let logEl: HTMLPreElement | undefined = $state();
 	let stickToBottom = $state(true);
@@ -66,8 +71,17 @@
 	}
 </script>
 
-{#snippet logToolbar()}
-	<div class="ft-log-toolbar">
+{#snippet logToolbar(header = false)}
+	<div class="ft-log-toolbar" class:ft-log-toolbar--header={header}>
+		{#if header}
+			<button type="button" class="ft-log-toggle" onclick={() => (collapsed = !collapsed)} aria-expanded={!collapsed}>
+				<span class="ft-log-chevron" class:open={!collapsed}>▸</span>
+				<span class="section-label">{title}</span>
+				{#if lineCount && collapsed}
+					<span class="ft-log-meta">({lineCount} строк)</span>
+				{/if}
+			</button>
+		{/if}
 		<div class="ft-log-toolbar-actions">
 			{#if !stickToBottom}
 				<button type="button" class="ft-log-follow" onclick={scrollToBottom}>
@@ -97,53 +111,54 @@
 
 {#if embedded}
 	<div class="ft-log-wrap ft-span">
-		{@render logToolbar()}
-		<pre
-			bind:this={logEl}
-			class="ft-log-box"
-			style:max-height={maxHeight}
-			onscroll={onScroll}
-		>{displayLog}</pre>
+		{@render logToolbar(false)}
+		{#if !collapsed}
+			<pre
+				bind:this={logEl}
+				class="ft-log-box"
+				style:max-height={maxHeight}
+				onscroll={onScroll}
+			>{displayLog}</pre>
+		{/if}
 	</div>
 {:else}
 	<section class="ft-log-panel">
-		<div class="ft-log-toolbar ft-log-toolbar--header">
-			<div class="section-label">{title}</div>
-			<div class="ft-log-toolbar-actions">
-				{#if !stickToBottom}
-					<button type="button" class="ft-log-follow" onclick={scrollToBottom}>
-						↓ К последним строкам
-					</button>
-				{/if}
-				{#if lineCount}
-					<span class="ft-log-meta">{lineCount} строк</span>
-					<button type="button" class="ft-log-copy" onclick={copyLog} title="Скопировать лог в буфер">
-						Копировать
-					</button>
-				{/if}
-				{#if routerClock}
-					<span class="ft-log-meta" title="Время роутера — сверяйте с метками в строках лога">
-						{routerClock}
-					</span>
-				{/if}
-				{#if showDebugToggle}
-					<label class="ft-log-debug" title="Подробный лог freeturn (-debug). Нужен перезапуск процесса.">
-						<input type="checkbox" bind:checked={debug} />
-						<span>debug</span>
-					</label>
-				{/if}
-			</div>
-		</div>
-		<pre
-			bind:this={logEl}
-			class="ft-log-box"
-			style:max-height={maxHeight}
-			onscroll={onScroll}
-		>{displayLog}</pre>
+		{@render logToolbar(true)}
+		{#if !collapsed}
+			<pre
+				bind:this={logEl}
+				class="ft-log-box"
+				style:max-height={maxHeight}
+				onscroll={onScroll}
+			>{displayLog}</pre>
+		{/if}
 	</section>
 {/if}
 
 <style>
+	.ft-log-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		padding: 0;
+		border: none;
+		background: none;
+		cursor: pointer;
+		color: inherit;
+		font: inherit;
+	}
+
+	.ft-log-chevron {
+		display: inline-block;
+		font-size: 0.75rem;
+		transition: transform 0.15s ease;
+		color: var(--color-text-secondary);
+	}
+
+	.ft-log-chevron.open {
+		transform: rotate(90deg);
+	}
+
 	.ft-log-panel {
 		margin-top: 0.75rem;
 		padding: 0.75rem;

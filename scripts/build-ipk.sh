@@ -141,6 +141,19 @@ build_ipk_one() {
         fi
     fi
 
+    if [[ -n "$FREETURN_SUFFIX" ]]; then
+        local WDTT_CLIENT="$PROJECT_ROOT/prebuilt/wdtt/client-linux-${FREETURN_SUFFIX}"
+        if [[ -f "$WDTT_CLIENT" ]]; then
+            cp "$WDTT_CLIENT" "$IPK_ROOT/opt/bin/wdtt-client"
+            chmod +x "$IPK_ROOT/opt/bin/wdtt-client"
+            mkdir -p "$IPK_ROOT/opt/etc/awg-manager/wdtt"
+            cp "$WDTT_CLIENT" "$IPK_ROOT/opt/etc/awg-manager/wdtt/client-linux-${FREETURN_SUFFIX}"
+            echo "Bundled wdtt-client (linux-${FREETURN_SUFFIX})"
+        else
+            echo "WARNING: $WDTT_CLIENT not found — run scripts/build-wdtt-client.sh first"
+        fi
+    fi
+
     local KMOD_VERSION
     KMOD_VERSION=$(grep 'ExpectedKmodVersion' internal/sys/kmod/download.go | grep -oP '"[^"]+"' | tr -d '"')
     local BUNDLED_DIR="$IPK_ROOT/opt/etc/awg-manager/modules/bundled"

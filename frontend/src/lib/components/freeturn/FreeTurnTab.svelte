@@ -586,6 +586,7 @@
 		<InstanceBar
 			items={serverBarItems}
 			selectedId={selectedServerId}
+			showDtls={false}
 			onSelect={(id) => {
 				selectedServerId = id;
 			}}
@@ -597,6 +598,7 @@
 		{#if selectedServer}
 			<FreeTurnServerSimple
 				server={selectedServer.config}
+				serverInstanceId={selectedServerId}
 				running={serverStatus?.running ?? false}
 				status={serverStatus}
 				{saving}

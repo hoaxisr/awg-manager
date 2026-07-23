@@ -23,7 +23,8 @@ export type Section =
 	| 'diagnostics'
 	| 'settings'
 	| 'terminal'
-	| 'freeturn';
+	| 'freeturn'
+	| 'wdtt';
 
 export type RoutingSubTab =
 	| 'accessPolicies'
@@ -46,6 +47,7 @@ const SECTION_MIN_LEVEL: Record<Section, UsageLevel> = {
 	monitoring: 'advanced',
 	terminal: 'advanced',
 	freeturn: 'advanced',
+	wdtt: 'advanced',
 };
 
 const ROUTING_SUBTAB_MIN_LEVEL: Record<RoutingSubTab, UsageLevel> = {

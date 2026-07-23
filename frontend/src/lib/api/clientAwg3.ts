@@ -1,7 +1,7 @@
 import type { Awg3Tunnel } from '$lib/types';
-import { FreeturnClient } from './clientFreeturn';
+import { WdttClient } from './clientWdtt';
 
-export class Awg3Client extends FreeturnClient {
+export class Awg3Client extends WdttClient {
 	// ─────────────────────────────────────────────
 	// #region AWG3 imported endpoints
 	// ─────────────────────────────────────────────

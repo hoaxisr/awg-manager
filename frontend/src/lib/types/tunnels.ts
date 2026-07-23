@@ -85,6 +85,7 @@ export interface AWGTunnel {
 	warnings?: string[];
 	backend?: 'nativewg' | 'kernel';
 	freeTurnClientId?: string;
+	wdttClientId?: string;
 }
 
 export interface TunnelListItem {

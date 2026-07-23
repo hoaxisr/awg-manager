@@ -88,6 +88,7 @@ type Server struct {
 	tunnels                    *storage.AWGTunnelStore
 	pingCheckService           api.PingCheckService
 	freeturnService            api.FreeTurnService
+	wdttService                api.WdttService
 	loggingService             *logging.Service
 	activeBackend              backend.Backend
 	kmodLoader                 *kmod.Loader
@@ -174,6 +175,7 @@ type Deps struct {
 	Tunnels              *storage.AWGTunnelStore
 	PingCheckService     api.PingCheckService
 	FreeTurnService      api.FreeTurnService
+	WdttService          api.WdttService
 	LoggingService       *logging.Service
 	ActiveBackend        backend.Backend
 	KmodLoader           *kmod.Loader
@@ -234,6 +236,7 @@ func New(cfg Config, deps Deps) *Server {
 		tunnels:                deps.Tunnels,
 		pingCheckService:       deps.PingCheckService,
 		freeturnService:        deps.FreeTurnService,
+		wdttService:            deps.WdttService,
 		loggingService:         deps.LoggingService,
 		activeBackend:          deps.ActiveBackend,
 		kmodLoader:             deps.KmodLoader,

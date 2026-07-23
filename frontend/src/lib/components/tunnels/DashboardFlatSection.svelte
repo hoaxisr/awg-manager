@@ -183,6 +183,15 @@
 							FreeTurn
 						</Button>
 					{/if}
+					{#if ctx.wdttAvailable}
+						<Button
+							variant={ctx.wdttOpen ? 'primary' : 'secondary'}
+							size="md"
+							onclick={ctx.toggleWdtt}
+						>
+							WDTT
+						</Button>
+					{/if}
 					<Button variant="secondary" size="md" onclick={ctx.handleExportAll} disabled={ctx.exporting} iconBefore={exportIcon}>
 						Экспорт
 					</Button>
