@@ -7,6 +7,8 @@
 	import WdttClientSimple from './WdttClientSimple.svelte';
 	import { parseLocalListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
 	import { peersEqual } from '$lib/utils/wdttPeer';
+	import { errText } from '$lib/utils/errorMessage';
+	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
 	import type {
 		WdttClientConfig,
 		WdttClientInstance,
@@ -26,8 +28,7 @@
 	let savedConfig = $state<WdttConfig | null>(null);
 	let selectedClientId = $state('default');
 
-	let statusPoll: ReturnType<typeof setTimeout> | undefined;
-	let pollActive = false;
+	const statusPoll = createSelfReschedulingPoll(loadStatus);
 	// Не реактивны (в шаблоне не читаются) — дедуп/кулдаун авто-ensure в поллинге.
 	let wgEnsureSettled = new Set<string>();
 	const wgEnsureCooldown = new Map<string, number>();
@@ -69,10 +70,6 @@
 			};
 		})
 	);
-
-	function errText(e: unknown): string {
-		return e instanceof Error ? e.message : String(e ?? '');
-	}
 
 	function wdttTunnelName(profileName?: string): string {
 		const base = profileName?.trim() || 'WDTT';
@@ -182,28 +179,16 @@
 		}
 	}
 
-	function scheduleStatusPoll() {
-		// Самоперепланирование вместо setInterval — на медленном роутере запросы не наслаиваются.
-		statusPoll = setTimeout(async () => {
-			await loadStatus();
-			if (pollActive) scheduleStatusPoll();
-		}, 2000);
-	}
-
 	onMount(async () => {
-		pollActive = true;
 		try {
 			await Promise.all([loadConfig(), loadStatus()]);
 		} finally {
 			loading = false;
 		}
-		scheduleStatusPoll();
+		statusPoll.start();
 	});
 
-	onDestroy(() => {
-		pollActive = false;
-		if (statusPoll) clearTimeout(statusPoll);
-	});
+	onDestroy(() => statusPoll.stop());
 
 	function patchClientInConfig(id: string, cfg: WdttClientConfig) {
 		if (!config || !savedConfig) return;
