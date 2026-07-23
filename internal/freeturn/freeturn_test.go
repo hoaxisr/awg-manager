@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 )
 
 // ---------------------------------------------------------------------------
@@ -66,7 +68,7 @@ func TestBuildClientArgs_FullAndZero(t *testing.T) {
 		Links: "https://vk.ru/call/join/a", Streams: 4, Transport: "tcp",
 		Mode: "udp", Bond: true, TurnHost: "turn.host", TurnPort: 3478,
 		ObfProfile: "rtpopus2", ObfKey: "deadbeef", StreamsPerCred: 2,
-		Browser: "chromium", ManualCaptcha: true, DNSMode: "doh",
+		Browser: "chromium", DNSMode: "doh",
 		DNSServers: "1.1.1.1", ClientID: "cid", Sub: "s", Debug: true,
 	}
 	want := []string{
@@ -74,7 +76,7 @@ func TestBuildClientArgs_FullAndZero(t *testing.T) {
 		"-links", "https://vk.ru/call/join/a", "-n", "4", "-transport", "tcp",
 		"-mode", "udp", "-bond", "-turn", "turn.host", "-port", "3478",
 		"-obf-profile", "rtpopus2", "-obf-key", "deadbeef",
-		"-streams-per-cred", "2", "-browser", "chrome", "-manual-captcha",
+		"-streams-per-cred", "2", "-browser", "chrome",
 		"-dns-mode", "doh", "-dns-servers", "1.1.1.1", "-client-id", "cid",
 		"-sub", "s", "-debug",
 	}
@@ -195,6 +197,106 @@ func TestStore_MigrateV1(t *testing.T) {
 	}
 	if got.Servers[0].Config.Connect != "127.0.0.1:51820" {
 		t.Fatalf("server migrate: %+v", got.Servers[0])
+	}
+}
+
+func TestStore_DeleteAllClientsRestoresDefault(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Clients = nil
+	if err := s.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Clients) != 1 {
+		t.Fatalf("after save with empty clients want 1, got %d", len(got.Clients))
+	}
+	if got.Clients[0].ID != DefaultInstanceID {
+		t.Fatalf("want default id %q, got %q", DefaultInstanceID, got.Clients[0].ID)
+	}
+}
+
+func TestStore_LoadReturnsIsolatedCopy(t *testing.T) {
+	// Кэш-ветка: прогреваем кэш, далее мутируем результат Load.
+	t.Run("cache", func(t *testing.T) {
+		s := NewStore(t.TempDir())
+		if _, err := s.Load(); err != nil {
+			t.Fatal(err)
+		}
+		assertLoadIsolated(t, s)
+	})
+
+	// Первый Load, disk-ветка file-missing (DefaultConfig): срезы результата
+	// не должны алиасить кэш, который выставил saveLocked.
+	t.Run("first-load-missing", func(t *testing.T) {
+		assertLoadIsolated(t, NewStore(t.TempDir()))
+	})
+
+	// Первый Load, disk-ветка file-exists: читаем готовый файл, срезы
+	// результата не должны алиасить кэш s.cfg.
+	t.Run("first-load-existing", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "freeturn.json"),
+			[]byte(`{"version":1,"clients":[{"id":"default"}],"servers":[{"id":"default"}]}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		assertLoadIsolated(t, NewStore(dir))
+	})
+}
+
+// assertLoadIsolated: результат первого зафиксированного Load мутируется, и
+// эта мутация не должна быть видна в последующем Load (т.е. не протекла в кэш).
+func assertLoadIsolated(t *testing.T, s *Store) {
+	t.Helper()
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Clients) == 0 || len(cfg.Servers) == 0 {
+		t.Fatal("want at least one client and server")
+	}
+	cfg.Clients[0].Config.Peer = "leaked-client"
+	cfg.Servers[0].Config.Connect = "leaked-server"
+
+	got, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Clients[0].Config.Peer == "leaked-client" {
+		t.Fatal("мутация client протекла в кэш")
+	}
+	if got.Servers[0].Config.Connect == "leaked-server" {
+		t.Fatal("мутация server протекла в кэш")
+	}
+}
+
+func TestStore_DeleteAllServersRestoresDefault(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Servers = nil
+	if err := s.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Servers) != 1 {
+		t.Fatalf("after save with empty servers want 1, got %d", len(got.Servers))
+	}
+	if got.Servers[0].ID != DefaultInstanceID {
+		t.Fatalf("want default id %q, got %q", DefaultInstanceID, got.Servers[0].ID)
 	}
 }
 
@@ -331,7 +433,7 @@ func sha256Hex(b []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-func newInstallService(t *testing.T, dl Downloader, specs ArchSpecs) *Service {
+func newInstallService(t *testing.T, dl childproc.Downloader, specs ArchSpecs) *Service {
 	t.Helper()
 	dir := t.TempDir()
 	s := NewService(dir, dir, filepath.Join(dir, "freeturn-client"), filepath.Join(dir, "freeturn-server"))
@@ -409,7 +511,7 @@ func TestEmbeddedBinaries_CoverAllArches(t *testing.T) {
 		}
 		for name, sp := range map[string]BinarySpec{"client": specs.Client, "server": specs.Server} {
 			if sp.Version != PinnedVersion || len(sp.SHA256) != 64 || sp.Size <= 0 ||
-				!strings.HasPrefix(sp.URL, "https://github.com/samosvalishe/free-turn-proxy/releases/download/v"+PinnedVersion+"/") {
+				sp.URL == "" {
 				t.Errorf("%s/%s: bad spec %+v", arch, name, sp)
 			}
 		}

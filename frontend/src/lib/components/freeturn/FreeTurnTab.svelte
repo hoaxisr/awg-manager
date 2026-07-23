@@ -3,29 +3,26 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard as copyText } from '$lib/utils/clipboard';
-	import { Tabs, FormToggle, Button } from '$lib/components/ui';
+	import { Tabs, ProcessAlerts } from '$lib/components/ui';
 	import type {
 		FreeTurnClientConfig,
 		FreeTurnClientInstance,
-		FreeTurnCaptchaOverview,
 		FreeTurnConfig,
 		FreeTurnGenerateLinkResult,
 		FreeTurnServerConfig,
 		FreeTurnServerInstance,
 		FreeTurnStatus
 	} from '$lib/types';
-	import ProcessAlerts from './ProcessAlerts.svelte';
 	import InstanceBar from './InstanceBar.svelte';
-	import CaptchaModal from './CaptchaModal.svelte';
 	import FreeTurnClientSimple from './FreeTurnClientSimple.svelte';
 	import FreeTurnServerSimple from './FreeTurnServerSimple.svelte';
-	import { readCaptchaAutoOpen, writeCaptchaAutoOpen } from './captchaPrefs';
 	import { parseLocalListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
 
 	type FtTab = 'client' | 'server';
 
 	let ftTab: FtTab = $state('client');
 	let loading = $state(true);
+	let loadError = $state('');
 	let saving = $state(false);
 
 	let config = $state<FreeTurnConfig | null>(null);
@@ -36,7 +33,6 @@
 	let selectedServerId = $state('default');
 
 	let importing = $state(false);
-	let importedWG: string | null = $state(null);
 	let installing = $state(false);
 	let checkingUpdates = $state(false);
 
@@ -51,12 +47,8 @@
 	let generatedPeer = $state('');
 	let generatedClientId = $state('');
 
-	let statusPoll: ReturnType<typeof setInterval> | undefined;
-
-	let captchaOverview = $state<FreeTurnCaptchaOverview | null>(null);
-	let captchaModalOpen = $state(false);
-	let captchaModalClientId = $state<string | null>(null);
-	let captchaAutoOpen = $state(readCaptchaAutoOpen());
+	let statusPoll: ReturnType<typeof setTimeout> | undefined;
+	let pollActive = false;
 
 	const ftTabs = [
 		{ id: 'client', label: 'Клиент' },
@@ -77,20 +69,6 @@
 					null)
 			: null
 	);
-	const savedClient = $derived(
-		savedConfig
-			? (savedConfig.clients.find((c: FreeTurnClientInstance) => c.id === selectedClientId) ??
-					savedConfig.clients[0] ??
-					null)
-			: null
-	);
-	const savedServer = $derived(
-		savedConfig
-			? (savedConfig.servers.find((s: FreeTurnServerInstance) => s.id === selectedServerId) ??
-					savedConfig.servers[0] ??
-					null)
-			: null
-	);
 	const clientStatus = $derived(
 		status
 			? (status.clients.find((c) => c.id === selectedClientId)?.status ?? status.client)
@@ -107,49 +85,31 @@
 		return port > 0 ? port : 9000;
 	});
 
-	const captchaModalClient = $derived(
-		captchaOverview?.clients.find((c) => c.clientId === captchaModalClientId) ?? null
-	);
-
-	const selectedCaptchaStatus = $derived(
-		captchaOverview?.clients.find((c) => c.clientId === selectedClientId) ?? null
-	);
-
 	function errText(e: unknown): string {
 		return e instanceof Error ? e.message : String(e ?? '');
 	}
 
-	function anyClientRunning(): boolean {
-		return status?.clients.some((c) => c.status?.running) ?? false;
+	function scheduleStatusPoll() {
+		// Самоперепланирование вместо setInterval — на медленном роутере запросы не наслаиваются.
+		statusPoll = setTimeout(async () => {
+			await loadStatus(false);
+			if (pollActive) scheduleStatusPoll();
+		}, 2000);
 	}
 
 	onMount(async () => {
-		await Promise.all([loadConfig(), loadStatus(false), loadCaptchaStatus()]);
-		loading = false;
-		if (typeof window !== 'undefined') {
-			const params = new URLSearchParams(window.location.search);
-			if (params.get('captcha') === '1') {
-				captchaAutoOpen = true;
-				writeCaptchaAutoOpen(true);
-				setTimeout(() => maybeAutoOpenCaptchaModal(), 500);
-			}
+		pollActive = true;
+		try {
+			await Promise.all([loadConfig(), loadStatus(false)]);
+		} finally {
+			loading = false;
 		}
-		statusPoll = setInterval(async () => {
-			await loadStatus(false);
-			if (
-				anyClientRunning() ||
-				captchaModalOpen ||
-				captchaOverview?.clients.some((c) => c.waiting)
-			) {
-				await loadCaptchaStatus();
-			} else {
-				captchaOverview = null;
-			}
-		}, 3000);
+		scheduleStatusPoll();
 	});
 
 	onDestroy(() => {
-		if (statusPoll) clearInterval(statusPoll);
+		pollActive = false;
+		if (statusPoll) clearTimeout(statusPoll);
 	});
 
 	function normalizeClient(c: FreeTurnClientConfig): FreeTurnClientConfig {
@@ -165,11 +125,12 @@
 			browser:
 				(c.browser as string) === 'chromium'
 					? 'chrome'
-					: c.browser === 'safari' || c.browser === 'chrome'
+					: c.browser === 'safari' || c.browser === 'firefox'
 						? c.browser
-						: 'firefox',
+						: 'chrome',
 			streams: c.streams > 0 ? c.streams : 10,
-			streamsPerCred: c.streamsPerCred > 0 ? c.streamsPerCred : 10
+			streamsPerCred: c.streamsPerCred > 0 ? c.streamsPerCred : 10,
+			debug: !!c.debug
 		};
 	}
 
@@ -178,7 +139,8 @@
 			...s,
 			connect: s.connect ?? '',
 			obfKey: s.obfKey ?? '',
-			clientsFile: s.clientsFile ?? ''
+			clientsFile: s.clientsFile ?? '',
+			debug: !!s.debug
 		};
 	}
 
@@ -201,6 +163,7 @@
 			const norm = normalizeConfig(await api.getFreeTurnConfig());
 			savedConfig = structuredClone(norm);
 			config = norm;
+			loadError = '';
 			if (!norm.clients.some((c) => c.id === selectedClientId)) {
 				selectedClientId = norm.clients[0]?.id ?? 'default';
 			}
@@ -208,7 +171,8 @@
 				selectedServerId = norm.servers[0]?.id ?? 'default';
 			}
 		} catch (e) {
-			notifications.error('Не удалось загрузить конфигурацию FreeTurn: ' + errText(e));
+			loadError = errText(e);
+			notifications.error('Не удалось загрузить конфигурацию FreeTurn: ' + loadError);
 		}
 	}
 
@@ -218,55 +182,6 @@
 		} catch {
 			// Молча — как ping-бейджи списка туннелей.
 		}
-	}
-
-	async function loadCaptchaStatus() {
-		if (!anyClientRunning() && !captchaModalOpen) {
-			captchaOverview = null;
-			return;
-		}
-		try {
-			captchaOverview = await api.getFreeTurnCaptchaStatus();
-			maybeAutoOpenCaptchaModal();
-		} catch {
-			// Молча — капча опциональна.
-		}
-	}
-
-	function maybeAutoOpenCaptchaModal() {
-		if (!captchaOverview || !captchaAutoOpen) return;
-		const openable = captchaOverview.clients.filter((c) => c.canOpen);
-		if (openable.length === 0) return;
-		const target =
-			openable.find((c) => c.clientId === selectedClientId && c.canOpen) ??
-			openable.find((c) => c.active) ??
-			openable[0];
-		if (!target) return;
-		captchaModalClientId = target.clientId;
-		captchaModalOpen = true;
-	}
-
-	function setCaptchaAutoOpen(enabled: boolean) {
-		captchaAutoOpen = enabled;
-		writeCaptchaAutoOpen(enabled);
-		if (!enabled) captchaModalOpen = false;
-	}
-
-	function openCaptchaModal(clientId?: string) {
-		const id = clientId ?? selectedClientId;
-		const entry = captchaOverview?.clients.find((c) => c.clientId === id);
-		if (!entry?.canOpen && !entry?.waiting) return;
-		captchaModalClientId = id;
-		captchaModalOpen = true;
-	}
-
-	function closeCaptchaModal() {
-		captchaModalOpen = false;
-	}
-
-	function selectCaptchaClient(id: string) {
-		captchaModalClientId = id;
-		selectedClientId = id;
 	}
 
 	async function checkUpdates() {
@@ -279,22 +194,6 @@
 		} finally {
 			checkingUpdates = false;
 		}
-	}
-
-	function patchClientInConfig(id: string, cfg: FreeTurnClientConfig) {
-		if (!config || !savedConfig) return;
-		const idx = config.clients.findIndex((c) => c.id === id);
-		const sidx = savedConfig.clients.findIndex((c) => c.id === id);
-		if (idx >= 0) config.clients[idx].config = structuredClone(cfg);
-		if (sidx >= 0) savedConfig.clients[sidx].config = structuredClone(cfg);
-	}
-
-	function patchServerInConfig(id: string, cfg: FreeTurnServerConfig) {
-		if (!config || !savedConfig) return;
-		const idx = config.servers.findIndex((s) => s.id === id);
-		const sidx = savedConfig.servers.findIndex((s) => s.id === id);
-		if (idx >= 0) config.servers[idx].config = structuredClone(cfg);
-		if (sidx >= 0) savedConfig.servers[sidx].config = structuredClone(cfg);
 	}
 
 	async function saveClientConfig(cfg: FreeTurnClientConfig) {
@@ -349,16 +248,6 @@
 		} finally {
 			saving = false;
 		}
-	}
-
-	function revertClient() {
-		if (!config || !savedClient) return;
-		patchClientInConfig(selectedClientId, $state.snapshot(savedClient.config));
-	}
-
-	function revertServer() {
-		if (!config || !savedServer) return;
-		patchServerInConfig(selectedServerId, $state.snapshot(savedServer.config));
 	}
 
 	async function toggleClientInstance(id: string, on: boolean) {
@@ -515,10 +404,7 @@
 			if (payload.transport) c.transport = payload.transport as typeof c.transport;
 			if (payload.mode) c.mode = payload.mode as typeof c.mode;
 			if (typeof payload.bond === 'boolean') c.bond = payload.bond;
-			if (typeof payload.mcap === 'boolean') c.manualCaptcha = payload.mcap;
-
 			const wg = payload.wg?.trim() ? payload.wg : null;
-			importedWG = wg;
 
 			let msg = 'Ссылка распознана, поля заполнены — не забудьте сохранить';
 			if (payload.cid) {
@@ -627,9 +513,14 @@
 	defaultTab="client"
 />
 
-{#if loading || !config}
+{#if loading}
 	<div class="ft-loading">Загрузка…</div>
-{:else}
+{:else if loadError && !config}
+	<div class="ft-loading">
+		<p>Не удалось загрузить настройки FreeTurn.</p>
+		<p class="ft-load-error">{loadError}</p>
+	</div>
+{:else if config}
 	<ProcessAlerts
 		status={ftTab === 'client' ? clientStatus : serverStatus}
 		installAvailable={status?.installAvailable ?? false}
@@ -642,7 +533,19 @@
 		{checkingUpdates}
 		onInstall={install}
 		onCheckUpdates={checkUpdates}
-	/>
+		productName="freeturn"
+		installSuffix=" (клиент + сервер)"
+		notFoundHint="awg-manager не поставляет freeturn в своём пакете."
+	>
+		{#snippet manualInstall(binary)}
+			<span>
+				Бинарь <code>{binary}</code> не найден. Установите вручную из
+				<a href="https://github.com/samosvalishe/free-turn-proxy" target="_blank" rel="noopener"
+					>free-turn-proxy</a
+				>.
+			</span>
+		{/snippet}
+	</ProcessAlerts>
 
 	{#if ftTab === 'client'}
 		<InstanceBar
@@ -657,47 +560,24 @@
 			onRename={renameClient}
 		/>
 		{#if selectedClient}
-			<div class="ft-captcha-prefs">
-				<FormToggle
-					checked={captchaAutoOpen}
-					onchange={setCaptchaAutoOpen}
-					label="Авто-открытие окна капчи"
-					hint="Включено — модалка и окно капчи откроются сами. Выключите, если не хотите pop-up — тогда «Открыть капчу» по кнопке."
-					size="sm"
-				/>
-				{#if !captchaAutoOpen && (selectedCaptchaStatus?.canOpen || selectedCaptchaStatus?.waiting)}
-					<Button variant="secondary" size="sm" onclick={() => openCaptchaModal(selectedClientId)}>
-						Открыть капчу
-					</Button>
-				{/if}
-			</div>
-
 			<FreeTurnClientSimple
 				client={selectedClient.config}
 				running={clientStatus?.running ?? false}
 				status={clientStatus}
+				routerClock={status?.routerClock}
 				{saving}
 				onSave={saveClientConfig}
 				onToggle={(on) => toggleClientInstance(selectedClientId, on)}
 				onImportLink={applyImportLink}
 			/>
+		{:else}
+			<p class="ft-empty-hint">Нет выбранного клиента. Нажмите «+ Добавить», чтобы создать новый.</p>
 		{/if}
-
-		<CaptchaModal
-			bind:open={captchaModalOpen}
-			clientId={captchaModalClientId}
-			clientName={captchaModalClient?.clientName}
-			captchaUrl={captchaModalClient?.url ?? null}
-			overview={captchaOverview}
-			captchaAutoOpen={captchaAutoOpen}
-			onCaptchaAutoOpenChange={setCaptchaAutoOpen}
-			onclose={closeCaptchaModal}
-			onSelectClient={selectCaptchaClient}
-		/>
 	{:else}
 		<InstanceBar
 			items={serverBarItems}
 			selectedId={selectedServerId}
+			showDtls={false}
 			onSelect={(id) => {
 				selectedServerId = id;
 			}}
@@ -709,6 +589,7 @@
 		{#if selectedServer}
 			<FreeTurnServerSimple
 				server={selectedServer.config}
+				serverInstanceId={selectedServerId}
 				running={serverStatus?.running ?? false}
 				status={serverStatus}
 				{saving}
@@ -727,6 +608,8 @@
 				onGenerate={generateLink}
 				onCopy={copy}
 			/>
+		{:else}
+			<p class="ft-empty-hint">Нет выбранного сервера. Нажмите «+ Добавить», чтобы создать новый.</p>
 		{/if}
 	{/if}
 {/if}
@@ -738,15 +621,15 @@
 		color: var(--color-text-secondary);
 	}
 
-	.ft-captcha-prefs {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.75rem 1rem;
-		margin: 0.75rem 0 1rem;
-		padding: 0.625rem 0.75rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		background: var(--color-bg-secondary);
+	.ft-load-error {
+		font-size: 0.8125rem;
+		color: var(--color-danger);
+		margin-top: 0.5rem;
+	}
+
+	.ft-empty-hint {
+		margin: 0.5rem 0 1rem;
+		font-size: 0.875rem;
+		color: var(--color-text-secondary);
 	}
 </style>

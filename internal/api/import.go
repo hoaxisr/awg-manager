@@ -50,6 +50,7 @@ type ImportConfRequest struct {
 	Name             string `json:"name"`
 	Backend          string `json:"backend"` // "nativewg" | "kernel" (default: "kernel")
 	FreeTurnClientID string `json:"freeTurnClientId,omitempty"`
+	WdttClientID     string `json:"wdttClientId,omitempty"`
 }
 
 // ImportConf imports a WireGuard/AmneziaWG config file.
@@ -101,6 +102,10 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 		}
 		if id := strings.TrimSpace(req.FreeTurnClientID); id != "" {
 			stored.FreeTurnClientID = id
+			changed = true
+		}
+		if id := strings.TrimSpace(req.WdttClientID); id != "" {
+			stored.WdttClientID = id
 			changed = true
 		}
 		if changed {

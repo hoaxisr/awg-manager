@@ -198,7 +198,8 @@ func (h *FreeTurnHandler) StartClient(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err.Error(), "FREETURN_CLIENT_START_FAILED")
 		return
 	}
-	response.Success(w, map[string]string{"message": "client started"})
+	started, tunnelErrors := h.startLinkedAwgTunnels(r.Context(), freeturn.DefaultInstanceID)
+	response.Success(w, clientStartStopResponse("client started", started, tunnelErrors))
 }
 
 // StopClient handles POST /api/freeturn/client/stop.
@@ -207,11 +208,12 @@ func (h *FreeTurnHandler) StopClient(w http.ResponseWriter, r *http.Request) {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
 		return
 	}
+	stopped, tunnelErrors := h.stopLinkedAwgTunnels(r.Context(), freeturn.DefaultInstanceID)
 	if err := h.svc.StopClient(); err != nil {
 		response.Error(w, err.Error(), "FREETURN_CLIENT_STOP_FAILED")
 		return
 	}
-	response.Success(w, map[string]string{"message": "client stopped"})
+	response.Success(w, clientStartStopResponse("client stopped", stopped, tunnelErrors))
 }
 
 // StartServer handles POST /api/freeturn/server/start.
@@ -593,7 +595,8 @@ func (h *FreeTurnHandler) startClientInstance(w http.ResponseWriter, r *http.Req
 		response.Error(w, err.Error(), "FREETURN_CLIENT_START_FAILED")
 		return
 	}
-	response.Success(w, map[string]string{"message": "client started"})
+	started, tunnelErrors := h.startLinkedAwgTunnels(r.Context(), id)
+	response.Success(w, clientStartStopResponse("client started", started, tunnelErrors))
 }
 
 // stopClientInstance handles POST /api/freeturn/clients/{id}/stop.
@@ -609,11 +612,12 @@ func (h *FreeTurnHandler) stopClientInstance(w http.ResponseWriter, r *http.Requ
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
 		return
 	}
+	stopped, tunnelErrors := h.stopLinkedAwgTunnels(r.Context(), id)
 	if err := h.svc.StopClientInstance(id); err != nil {
 		response.Error(w, err.Error(), "FREETURN_CLIENT_STOP_FAILED")
 		return
 	}
-	response.Success(w, map[string]string{"message": "client stopped"})
+	response.Success(w, clientStartStopResponse("client stopped", stopped, tunnelErrors))
 }
 
 // startServerInstance handles POST /api/freeturn/servers/{id}/start.

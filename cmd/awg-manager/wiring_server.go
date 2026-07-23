@@ -17,6 +17,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/freeturn"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
@@ -90,6 +91,7 @@ func (a *app) setupServer() {
 			Tunnels:             a.awgStore,
 			PingCheckService:    a.pingCheckFacade,
 			FreeTurnService:     a.freeturnService,
+			WdttService:         a.wdttService,
 			LoggingService:      a.loggingService,
 			ActiveBackend:       a.backendImpl,
 			KmodLoader:          a.kmodLoader,
@@ -245,6 +247,16 @@ func (a *app) setupDeviceProxy() {
 		a.freeturnService.SetArchKey(detectArch())
 		a.freeturnService.SetDownloader(&freeturnDownloaderAdapter{svc: sharedDownloadSvc})
 	}
+	a.wdttService.SetLogger(a.loggingService)
+	if spec, ok := wdtt.EmbeddedBinaries[detectArch()]; ok {
+		a.wdttService.SetInstallSpec(spec)
+		a.wdttService.SetDownloader(&wdttDownloaderAdapter{svc: sharedDownloadSvc})
+	}
+	// Автостарт клиентов, которые пользователь запускал (Enabled), — иначе после
+	// рестарта/ребута linked-AWG-туннель шлёт трафик в мёртвый 127.0.0.1:90xx.
+	// В горутине, чтобы не блокировать boot; логгеры уже выставлены выше.
+	go a.freeturnService.ResumeEnabled()
+	go a.wdttService.ResumeEnabled()
 	if a.singboxInstaller != nil {
 		a.singboxInstaller.SetDownloader(&installerDownloaderAdapter{svc: sharedDownloadSvc})
 		// Auto-migration goroutine: when legacy sing-box-naive opkg

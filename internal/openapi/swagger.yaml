@@ -1371,6 +1371,17 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.EnsureWGTunnelResponse:
+    properties:
+      created:
+        type: boolean
+      message:
+        type: string
+      tunnelId:
+        type: string
+      tunnelName:
+        type: string
+    type: object
   api.ExcludeMembersRequest:
     properties:
       memberTags:
@@ -1790,6 +1801,8 @@ definitions:
       freeTurnClientId:
         type: string
       name:
+        type: string
+      wdttClientId:
         type: string
     type: object
   api.IpsetUsageData:
@@ -6181,6 +6194,51 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.WdttClientInstanceResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdtt.ClientInstance'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.WdttConfigResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdtt.Config'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.WdttDecodeLinkResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdtt.LinkDecodeResult'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.WdttEnsureWGTunnelResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.EnsureWGTunnelResponse'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.WdttImportRequest:
+    properties:
+      link:
+        type: string
+    type: object
+  api.WdttStatusResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdtt.Status'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.WireguardServerDTO:
     properties:
       address:
@@ -6486,9 +6544,6 @@ definitions:
       listen:
         description: -listen, local addr WG/Xray connects to (default 127.0.0.1:9000)
         type: string
-      manualCaptcha:
-        description: -manual-captcha, provider=vk only
-        type: boolean
       mode:
         description: -mode, udp|tcp (tunnel mode)
         type: string
@@ -6725,6 +6780,10 @@ definitions:
       remoteVersion:
         description: RemoteVersion — последняя версия с GitHub (если проверка удалась).
         type: string
+      routerClock:
+        description: RouterClock — текущее время роутера для сверки с метками в логе
+          freeturn.
+        type: string
       server:
         $ref: '#/definitions/freeturn.ProcessStatus'
       servers:
@@ -6816,6 +6875,172 @@ definitions:
         items:
           $ref: '#/definitions/presets.RuleRef'
         type: array
+    type: object
+  wdtt.ClientConfig:
+    properties:
+      captchaMode:
+        description: '-captcha-mode: auto|rjs|wv (router default rjs)'
+        type: string
+      debug:
+        type: boolean
+      deviceId:
+        description: -device-id
+        type: string
+      enabled:
+        type: boolean
+      fingerprint:
+        description: -fingerprint
+        type: string
+      listen:
+        description: -listen, local UDP addr (default 127.0.0.1:9000)
+        type: string
+      obfs:
+        description: -obfs, audio|video
+        type: string
+      password:
+        description: -password, WRAP key derivation
+        type: string
+      peer:
+        description: -peer, VPS host:dtls_port
+        type: string
+      sub:
+        description: subscription URL (metadata only)
+        type: string
+      vkAuthMode:
+        description: -vk-auth-mode
+        type: string
+      vkHashes:
+        description: -vk, comma-separated call hashes
+        type: string
+      workers:
+        description: -n, parallel workers (multiple of 12)
+        type: integer
+    type: object
+  wdtt.ClientInstance:
+    properties:
+      config:
+        $ref: '#/definitions/wdtt.ClientConfig'
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  wdtt.Config:
+    properties:
+      clients:
+        items:
+          $ref: '#/definitions/wdtt.ClientInstance'
+        type: array
+      version:
+        type: integer
+    type: object
+  wdtt.CreateClientInput:
+    properties:
+      config:
+        $ref: '#/definitions/wdtt.ClientConfig'
+      name:
+        type: string
+    type: object
+  wdtt.ImportPayload:
+    properties:
+      deviceId:
+        type: string
+      listen:
+        type: string
+      name:
+        type: string
+      password:
+        type: string
+      peer:
+        type: string
+      subUrl:
+        type: string
+      vkHashes:
+        items:
+          type: string
+        type: array
+      wg:
+        description: optional bundled WireGuard client config
+        type: string
+      workers:
+        type: integer
+    type: object
+  wdtt.InstanceStatus:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        $ref: '#/definitions/wdtt.ProcessStatus'
+    type: object
+  wdtt.LinkDecodeResult:
+    properties:
+      profile:
+        $ref: '#/definitions/wdtt.ImportPayload'
+      subscription:
+        $ref: '#/definitions/wdtt.SubscriptionPreview'
+    type: object
+  wdtt.ProcessStatus:
+    properties:
+      binary:
+        type: string
+      binaryPresent:
+        type: boolean
+      dtlsConnections:
+        type: integer
+      lastError:
+        type: string
+      log:
+        type: string
+      pid:
+        type: integer
+      running:
+        type: boolean
+      startedAt:
+        type: string
+      wgConfig:
+        type: string
+    type: object
+  wdtt.Status:
+    properties:
+      client:
+        $ref: '#/definitions/wdtt.ProcessStatus'
+      clients:
+        items:
+          $ref: '#/definitions/wdtt.InstanceStatus'
+        type: array
+      installAvailable:
+        type: boolean
+      installVersion:
+        type: string
+      installedVersion:
+        type: string
+      installing:
+        type: boolean
+      routerClock:
+        type: string
+      updateAvailable:
+        type: boolean
+    type: object
+  wdtt.SubscriptionPreview:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      profiles:
+        items:
+          $ref: '#/definitions/wdtt.ImportPayload'
+        type: array
+      subUrl:
+        type: string
+      trafficLimitMb:
+        type: number
+      trafficUsedMb:
+        type: number
+      updatedAt:
+        type: string
     type: object
 info:
   contact: {}
@@ -17414,6 +17639,328 @@ paths:
       summary: WAN status
       tags:
       - wan
+  /wdtt/client/config:
+    put:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update WDTT client configuration
+      tags:
+      - wdtt
+  /wdtt/client/start:
+    post:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Start the WDTT client and its linked AWG tunnels
+      tags:
+      - wdtt
+  /wdtt/client/stop:
+    post:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Stop the WDTT client and its linked AWG tunnels
+      tags:
+      - wdtt
+  /wdtt/clients:
+    post:
+      parameters:
+      - description: Optional name and initial config
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/wdtt.CreateClientInput'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.WdttClientInstanceResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Create a new WDTT client instance
+      tags:
+      - wdtt
+  /wdtt/clients/{id}:
+    delete:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a WDTT client instance
+      tags:
+      - wdtt
+    patch:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a WDTT client instance
+      tags:
+      - wdtt
+    put:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a WDTT client instance
+      tags:
+      - wdtt
+  /wdtt/clients/{id}/ensure-wg-tunnel:
+    post:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.WdttEnsureWGTunnelResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Ensure an AWG tunnel exists for the client's WireGuard config
+      tags:
+      - wdtt
+  /wdtt/clients/{id}/import:
+    post:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Link to import
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.WdttImportRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Import a link into a specific WDTT client instance
+      tags:
+      - wdtt
+  /wdtt/clients/{id}/linked-tunnels/clear:
+    post:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Delete AWG tunnels linked to a WDTT client
+      tags:
+      - wdtt
+  /wdtt/clients/{id}/start:
+    post:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Start a WDTT client instance
+      tags:
+      - wdtt
+  /wdtt/clients/{id}/stop:
+    post:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Stop a WDTT client instance
+      tags:
+      - wdtt
+  /wdtt/clients/{id}/subscription/refresh:
+    post:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Refresh a WDTT client's subscription
+      tags:
+      - wdtt
+  /wdtt/config:
+    get:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.WdttConfigResponse'
+      summary: Get WDTT client configuration
+      tags:
+      - wdtt
+  /wdtt/install:
+    post:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Download and activate the pinned wdtt client binary
+      tags:
+      - wdtt
+  /wdtt/link/decode:
+    post:
+      parameters:
+      - description: Link to decode
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.WdttImportRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.WdttDecodeLinkResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Decode a wdtt:// / qwdtt:// / subscription link
+      tags:
+      - wdtt
+  /wdtt/link/import:
+    post:
+      parameters:
+      - description: Link to import
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.WdttImportRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Import a wdtt:// / qwdtt:// / subscription link into the default client
+      tags:
+      - wdtt
+  /wdtt/status:
+    get:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.WdttStatusResponse'
+      summary: Get WDTT live process status
+      tags:
+      - wdtt
 securityDefinitions:
   CookieAuth:
     description: Session cookie set by POST /auth/login. Omit for public routes.

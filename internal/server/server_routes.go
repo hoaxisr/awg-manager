@@ -33,6 +33,7 @@ type routeHandlers struct {
 	wanHandler          *api.WANHandler
 	pingCheckHandler    *api.PingCheckHandler
 	freeturnHandler     *api.FreeTurnHandler
+	wdttHandler         *api.WdttHandler
 	loggingHandler      *api.LoggingHandler
 	externalHandler     *api.ExternalTunnelsHandler
 	updateHandler       *api.UpdateHandler
@@ -161,6 +162,10 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	}
 	h.freeturnHandler.SetLinkedTunnelCleanup(s.tunnels, s.tunnelService)
 	h.freeturnHandler.SetTunnelsHandler(h.tunnelsHandler)
+
+	h.wdttHandler = api.NewWdttHandler(s.wdttService)
+	h.wdttHandler.SetLinkedTunnelCleanup(s.tunnels, s.tunnelService)
+	h.wdttHandler.SetTunnelsHandler(h.tunnelsHandler)
 
 	// Auth middleware helper
 	h.guarded = s.authMiddleware.RequireAuthFunc
@@ -389,6 +394,17 @@ func (s *Server) registerSettingsRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/freeturn/servers/", h.guarded(h.freeturnHandler.ServeServers))
 	mux.HandleFunc("/api/freeturn/clients", h.guarded(h.freeturnHandler.CreateClient))
 	mux.HandleFunc("/api/freeturn/servers", h.guarded(h.freeturnHandler.CreateServer))
+
+	mux.HandleFunc("/api/wdtt/config", h.guarded(h.wdttHandler.GetConfig))
+	mux.HandleFunc("/api/wdtt/client/config", h.guarded(h.wdttHandler.UpdateClientConfig))
+	mux.HandleFunc("/api/wdtt/status", h.guarded(h.wdttHandler.GetStatus))
+	mux.HandleFunc("/api/wdtt/client/start", h.guarded(h.wdttHandler.StartClient))
+	mux.HandleFunc("/api/wdtt/client/stop", h.guarded(h.wdttHandler.StopClient))
+	mux.HandleFunc("/api/wdtt/link/decode", h.guarded(h.wdttHandler.DecodeLink))
+	mux.HandleFunc("/api/wdtt/link/import", h.guarded(h.wdttHandler.ImportLink))
+	mux.HandleFunc("/api/wdtt/install", h.guarded(h.wdttHandler.Install))
+	mux.HandleFunc("/api/wdtt/clients/", h.guarded(h.wdttHandler.ServeClients))
+	mux.HandleFunc("/api/wdtt/clients", h.guarded(h.wdttHandler.CreateClient))
 
 }
 

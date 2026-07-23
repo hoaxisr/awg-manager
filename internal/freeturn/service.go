@@ -10,7 +10,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
 
 // Service is the public facade consumed by the API layer (one instance per
@@ -26,10 +28,14 @@ type Service struct {
 	clientProcs *processRegistry
 	serverProcs *processRegistry
 
+	// mu сериализует Load-modify-Save методы: без него два конкурентных
+	// запроса теряют правки друг друга и могут выдать один listen-порт дважды.
+	mu sync.Mutex
+
 	versionPath string
 
 	installSpecs *ArchSpecs
-	downloader   Downloader
+	downloader   childproc.Downloader
 	installMu    sync.Mutex
 	installing   bool
 
@@ -89,6 +95,8 @@ func (s *Service) UpdateServerConfig(cfg ServerConfig) error {
 }
 
 func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return err
@@ -98,15 +106,15 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 		return fmt.Errorf("клиент %q не найден", id)
 	}
 	listens := clientListenAddresses(full.Clients)
-	if err := validateUniqueListens(listens, idx, cfg.Listen); err != nil {
-		return err
-	}
+	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(), 9000, 9200)
 	cfg.Browser = normalizeBrowser(cfg.Browser)
 	full.Clients[idx].Config = cfg
 	return s.store.Save(full)
 }
 
 func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return err
@@ -116,14 +124,14 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
 		return fmt.Errorf("сервер %q не найден", id)
 	}
 	listens := serverListenAddresses(full.Servers)
-	if err := validateUniqueListens(listens, idx, cfg.Listen); err != nil {
-		return err
-	}
+	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, 56000, 56100)
 	full.Servers[idx].Config = cfg
 	return s.store.Save(full)
 }
 
 func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return ClientInstance{}, err
@@ -138,7 +146,7 @@ func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
 	if name == "" {
 		name = fmt.Sprintf("Клиент %d", len(full.Clients)+1)
 	}
-	inst := ClientInstance{ID: newInstanceID(), Name: name, Config: cfg}
+	inst := ClientInstance{ID: childproc.NewInstanceID(), Name: name, Config: cfg}
 	full.Clients = append(full.Clients, inst)
 	if err := s.store.Save(full); err != nil {
 		return ClientInstance{}, err
@@ -147,6 +155,8 @@ func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
 }
 
 func (s *Service) CreateServer(in CreateServerInput) (ServerInstance, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return ServerInstance{}, err
@@ -160,7 +170,7 @@ func (s *Service) CreateServer(in CreateServerInput) (ServerInstance, error) {
 	if name == "" {
 		name = fmt.Sprintf("Сервер %d", len(full.Servers)+1)
 	}
-	inst := ServerInstance{ID: newInstanceID(), Name: name, Config: cfg}
+	inst := ServerInstance{ID: childproc.NewInstanceID(), Name: name, Config: cfg}
 	full.Servers = append(full.Servers, inst)
 	if err := s.store.Save(full); err != nil {
 		return ServerInstance{}, err
@@ -169,9 +179,8 @@ func (s *Service) CreateServer(in CreateServerInput) (ServerInstance, error) {
 }
 
 func (s *Service) DeleteClient(id string) error {
-	if id == DefaultInstanceID {
-		return errors.New("нельзя удалить экземпляр по умолчанию")
-	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return err
@@ -186,9 +195,8 @@ func (s *Service) DeleteClient(id string) error {
 }
 
 func (s *Service) DeleteServer(id string) error {
-	if id == DefaultInstanceID {
-		return errors.New("нельзя удалить экземпляр по умолчанию")
-	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return err
@@ -207,6 +215,8 @@ func (s *Service) RenameClient(id, name string) error {
 	if name == "" {
 		return errors.New("укажите имя")
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return err
@@ -224,6 +234,8 @@ func (s *Service) RenameServer(id, name string) error {
 	if name == "" {
 		return errors.New("укажите имя")
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return err
@@ -307,6 +319,7 @@ func (s *Service) statusLocked() Status {
 	version, available := s.InstallInfo()
 	installedVersion, updateAvailable := s.installStatusFields(version)
 	remoteVersion, remoteErr := s.remoteStatus()
+	clock := routerclock.Get()
 	st := Status{
 		InstallAvailable: available,
 		InstallVersion:   version,
@@ -315,6 +328,7 @@ func (s *Service) statusLocked() Status {
 		RemoteVersion:    remoteVersion,
 		RemoteCheckError: remoteErr,
 		Installing:       s.Installing(),
+		RouterClock:      clock.Now.Format("2006-01-02 15:04:05") + " " + clock.ZoneName,
 	}
 	for _, c := range cfg.Clients {
 		st.Clients = append(st.Clients, InstanceStatus{
@@ -371,7 +385,15 @@ func (s *Service) StartClientInstance(id string) error {
 	if err := validateObfKey(inst.Config.ObfProfile, inst.Config.ObfKey); err != nil {
 		return err
 	}
-	return s.clientProcs.get(id).Start(buildClientArgs(inst.Config))
+	if err := s.clientProcs.get(id).Start(buildClientArgs(inst.Config)); err != nil {
+		return err
+	}
+	// Enabled авторитетно = «пользователь запустил»; выставляем только по факту
+	// успешного старта (fail-closed). Ошибку сохранения логируем — процесс уже жив.
+	if err := s.setClientEnabled(id, true); err != nil && s.appLog != nil {
+		s.appLog.Warn("start", id, "не удалось сохранить enabled: "+err.Error())
+	}
+	return nil
 }
 
 func (s *Service) StopClient() error {
@@ -382,7 +404,13 @@ func (s *Service) StopClientInstance(id string) error {
 	if _, err := s.clientInstance(id); err != nil {
 		return err
 	}
-	return s.clientProcs.get(id).Stop()
+	err := s.clientProcs.get(id).Stop()
+	// Явный пользовательский стоп снимает авторитетный Enabled, чтобы автостарт
+	// на следующем бооте его не поднял. Stop() на выходе демона сюда не заходит.
+	if e := s.setClientEnabled(id, false); e != nil && s.appLog != nil {
+		s.appLog.Warn("stop", id, "не удалось сбросить enabled: "+e.Error())
+	}
+	return err
 }
 
 func (s *Service) StartServer() error {
@@ -426,6 +454,49 @@ func (s *Service) ServerConfigForLink(id string) (ServerConfig, error) {
 func (s *Service) Stop() {
 	s.clientProcs.stopAll()
 	s.serverProcs.stopAll()
+}
+
+// ResumeEnabled стартует всех клиентов с Enabled==true (авторитетный флаг
+// «должен работать»). Вызывается на бооте в горутине. Ошибки логирует и
+// продолжает; идемпотентно (повторный старт живого процесса — no-op).
+// Серверы вне scope: блэкхол linked-туннеля — клиентская проблема.
+func (s *Service) ResumeEnabled() {
+	full, err := s.store.Load()
+	if err != nil {
+		if s.appLog != nil {
+			s.appLog.Warn("resume", "", "не удалось прочитать конфиг: "+err.Error())
+		}
+		return
+	}
+	for _, c := range full.Clients {
+		if !c.Config.Enabled {
+			continue
+		}
+		if err := s.StartClientInstance(c.ID); err != nil && s.appLog != nil {
+			s.appLog.Warn("resume", c.ID, "автостарт не удался: "+err.Error())
+		}
+	}
+}
+
+// setClientEnabled — RMW-хелпер: под s.mu грузит конфиг, выставляет Enabled
+// клиента и сохраняет. НЕ вызывать из уже-лоченного s.mu метода (дедлок);
+// Start/StopClientInstance не лочены, вызов оттуда безопасен.
+func (s *Service) setClientEnabled(id string, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full, err := s.store.Load()
+	if err != nil {
+		return err
+	}
+	idx := findClientIndex(full.Clients, id)
+	if idx < 0 {
+		return fmt.Errorf("клиент %q не найден", id)
+	}
+	if full.Clients[idx].Config.Enabled == enabled {
+		return nil
+	}
+	full.Clients[idx].Config.Enabled = enabled
+	return s.store.Save(full)
 }
 
 // validateObfKey — ключ обфускации обязателен при профиле ≠ none и должен
@@ -478,10 +549,10 @@ func buildClientArgs(c ClientConfig) []string {
 	if c.StreamsPerCred > 0 {
 		args = append(args, "-streams-per-cred", strconv.Itoa(c.StreamsPerCred))
 	}
-	if strings.TrimSpace(c.Browser) != "" {
-		str("-browser", normalizeBrowser(c.Browser))
+	if b := strings.TrimSpace(c.Browser); b != "" {
+		str("-browser", normalizeBrowser(b))
 	}
-	flag("-manual-captcha", c.ManualCaptcha)
+	// awg-manager: только авто-капча; ручной fallback (:8765) не поддерживается в UI.
 	str("-dns-mode", c.DNSMode)
 	str("-dns-servers", c.DNSServers)
 	str("-client-id", c.ClientID)
@@ -497,7 +568,7 @@ func normalizeBrowser(b string) string {
 	case "chromium":
 		return "chrome"
 	default:
-		return "firefox"
+		return "chrome"
 	}
 }
 

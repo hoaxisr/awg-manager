@@ -26,7 +26,8 @@
 				p === '/' ||
 				p.startsWith('/tunnels') ||
 				p.startsWith('/system-tunnels') ||
-				p.startsWith('/freeturn'),
+				p.startsWith('/freeturn') ||
+				p.startsWith('/wdtt'),
 		},
 		{
 			section: 'servers',

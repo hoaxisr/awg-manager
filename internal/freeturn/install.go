@@ -2,13 +2,10 @@ package freeturn
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"errors"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"strings"
+
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 )
 
 // BinarySpec is one binary's pinned download metadata. Version+SHA256 are
@@ -31,39 +28,30 @@ type ArchSpecs struct {
 // PinnedVersion is the free-turn-proxy release this build installs.
 // Bump procedure: update the constant, URLs, SHA256 (from the release's
 // checksums.txt) and sizes below.
-const PinnedVersion = "1.8.0"
+const PinnedVersion = "1.8.0-1"
 
-const releaseBase = "https://github.com/samosvalishe/free-turn-proxy/releases/download/v" + PinnedVersion + "/"
+// releaseBase — прод-доставка с зеркала (паритет с
+// internal/singbox/installer/embedded.go — GitHub из RU у части пользователей
+// недоступен). Канонический источник сборки:
+// https://github.com/hoaxisr/free-turn-proxy релиз v1.8.0-1.
+const releaseBase = "http://repo.hoaxisr.ru/ft/" + PinnedVersion + "/"
 
 // EmbeddedBinaries maps the awg-manager build arch (detectArch(): e.g.
-// "mipsel-3.4") to the upstream release assets. SHA256 from the v1.8.0
-// checksums.txt.
+// "mipsel-3.4") to pinned freeturn assets. SHA256/Size — из checksums.txt
+// релиза hoaxisr/free-turn-proxy v1.8.0-1.
 var EmbeddedBinaries = map[string]ArchSpecs{
 	"aarch64-3.10": {
-		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "client-linux-arm64", SHA256: "69c991b1fd0d8110d47c98bf597956eb6be4dd4330c9c1581490beec94686306", Size: 14680226},
-		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "server-linux-arm64", SHA256: "2c1189b41a3aa1c33048ec5daf823be529a52513a3ae347b84ed2445528d79cf", Size: 6160546},
+		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-arm64", SHA256: "f0666e574932027882822c5a986808f2029c0de8a9989937b27fcda5dbbf0aeb", Size: 14680226},
+		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-arm64", SHA256: "4831fc971df03b78c21570f4b36a080e9fb2f1fb15bdc1f254aad19a8164747b", Size: 6160546},
 	},
 	"mipsel-3.4": {
-		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "client-linux-mipsle-softfloat", SHA256: "2b4011b0d40fb7e99025ce509c8048b35a0dbb684c482f654881059998d1d05c", Size: 16580801},
-		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "server-linux-mipsle-softfloat", SHA256: "b323bff9fe3297de5998f8802f9cc551036cc3d4adabc685d3779f4c0a744014", Size: 7012545},
+		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-mipsle-softfloat", SHA256: "714ba97fbdcdc3567e19a888c54ce1a793de1d741f2b6a65bcfd9640aff48caa", Size: 16646337},
+		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-mipsle-softfloat", SHA256: "8d4ff24449b309a25dc220f206ddfb15ca21fa35eb13f4483c62b2e929d090c3", Size: 7012545},
 	},
 	"mips-3.4": {
-		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "client-linux-mips-softfloat", SHA256: "c757d3dcec4bfa4eed3cd0b1ab6d443c2a48746758fb48c069587d7cf41214df", Size: 16580801},
-		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "server-linux-mips-softfloat", SHA256: "d1c4cd4ea4477eb7f013cfe9f1017b2718b9e95d0b594a81a4fd1e10b39af195", Size: 7012545},
+		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-mips-softfloat", SHA256: "9c200eabc98e73740257b5ad448394777ba4f03e3c60e9e2f8de59f4d818005d", Size: 16646337},
+		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-mips-softfloat", SHA256: "c0cf856e829da8e9a095b5635d08ea2dd6d9d937acbc82f1e88d30bce8c1d05a", Size: 7012545},
 	},
-}
-
-// downloadSlack tops up MaxFileBytes over the expected size so a legitimate
-// asset a few bytes larger than pinned doesn't fail mid-transfer (it would
-// still fail SHA256 afterwards — the slack only moves WHERE it fails).
-const downloadSlack = 1 << 20
-
-// Downloader is the narrow download contract; the adapter in cmd/awg-manager
-// bridges it to the shared downloader.Service (timeouts, redirects, limits).
-type Downloader interface {
-	// DownloadFile fetches url into destPath (mode 0644, non-atomic —
-	// caller activates via chmod+rename). maxBytes hard-caps the transfer.
-	DownloadFile(ctx context.Context, url, destPath string, maxBytes int64) error
 }
 
 // SetInstallSpecs wires the pinned specs for this router's arch. Not called
@@ -73,7 +61,7 @@ func (s *Service) SetInstallSpecs(specs ArchSpecs) {
 }
 
 // SetDownloader wires the shared download service adapter.
-func (s *Service) SetDownloader(dl Downloader) {
+func (s *Service) SetDownloader(dl childproc.Downloader) {
 	s.downloader = dl
 }
 
@@ -136,46 +124,10 @@ func (s *Service) installOne(ctx context.Context, binPath string, spec BinarySpe
 	if binPath == "" {
 		return fmt.Errorf("путь бинаря не сконфигурирован")
 	}
-	if err := os.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
-		return err
+	err := childproc.Install(ctx, s.downloader, binPath, spec.URL, spec.SHA256, spec.Size)
+	var ce *childproc.ChecksumError
+	if errors.As(err, &ce) {
+		s.appLog.Warn("install", spec.URL, fmt.Sprintf("sha256 mismatch: got %s, want %s", ce.Got, ce.Want))
 	}
-	tmp := binPath + ".tmp"
-	_ = os.Remove(tmp)
-	if err := s.downloader.DownloadFile(ctx, spec.URL, tmp, spec.Size+downloadSlack); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("загрузка %s: %w", spec.URL, err)
-	}
-	got, err := sha256File(tmp)
-	if err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if !strings.EqualFold(got, spec.SHA256) {
-		_ = os.Remove(tmp)
-		s.appLog.Warn("install", spec.URL, fmt.Sprintf("sha256 mismatch: got %s, want %s", got, spec.SHA256))
-		return fmt.Errorf("контрольная сумма не совпала (получено %s, ожидалось %s)", got, spec.SHA256)
-	}
-	if err := os.Chmod(tmp, 0755); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	// Atomic activation: same directory → same filesystem, rename не рвётся.
-	if err := os.Rename(tmp, binPath); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
-}
-
-func sha256File(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return err
 }

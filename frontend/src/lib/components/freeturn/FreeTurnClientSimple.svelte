@@ -13,6 +13,7 @@
 		running?: boolean;
 		saving?: boolean;
 		status?: FreeTurnProcessStatus;
+		routerClock?: string;
 		onSave: (cfg: FreeTurnClientConfig) => void | Promise<void>;
 		onToggle: (on: boolean) => void | Promise<void>;
 		onImportLink: (link: string) => void | Promise<void>;
@@ -23,6 +24,7 @@
 		running = false,
 		saving = false,
 		status,
+		routerClock,
 		onSave,
 		onToggle,
 		onImportLink
@@ -91,7 +93,7 @@
 
 <div class="ft-simple-wrap">
 	<p class="ft-simple-lead">
-		Импорт freeturn:// → VK-ссылки → потоки и капча → запуск клиента.
+		Импорт freeturn:// → VK-ссылки → потоки и браузер → запуск клиента.
 	</p>
 
 	<div class="ft-simple-steps">
@@ -139,7 +141,7 @@
 
 	<WizardStep
 		n={3}
-		title="Потоки и капча"
+		title="Потоки и браузер"
 		hint="-n, -streams-per-cred, -browser"
 		active={step2Done}
 	>
@@ -169,8 +171,7 @@
 			options={browserOptions}
 		/>
 		<p class="ft-hint">
-			Headless-браузер на роутере для автоматического решения VK Smart Captcha. Если не
-			справится — freeturn откроет ручную капчу (окно в awg-manager с авто-открытием).
+			TLS/UA-персона для авто-решателя VK Smart Captcha (-browser).
 		</p>
 
 		<p class="ft-readonly">
@@ -197,7 +198,7 @@
 		</div>
 	</WizardStep>
 
-	<ProcessLogBox log={status?.log} />
+	<ProcessLogBox log={status?.log} {routerClock} bind:debug={client.debug} showDebugToggle />
 </div>
 
 <style>
