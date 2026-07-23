@@ -485,6 +485,7 @@ func ApplyImport(cfg ClientConfig, p ImportPayload) ClientConfig {
 	if p.DeviceID != "" {
 		cfg.DeviceID = p.DeviceID
 	}
-	cfg.Enabled = true
+	// Enabled = «пользователь запустил»; импорт сам по себе не запуск, поэтому
+	// флаг здесь не трогаем (иначе автостарт на бооте поднял бы неготовый клиент).
 	return cfg
 }

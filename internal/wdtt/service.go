@@ -243,7 +243,15 @@ func (s *Service) StartClientInstance(id string) error {
 	if strings.TrimSpace(inst.Config.Password) == "" {
 		return errors.New("укажите пароль подключения (-password)")
 	}
-	return s.procs.get(id).Start(buildClientArgs(inst.Config))
+	if err := s.procs.get(id).Start(buildClientArgs(inst.Config)); err != nil {
+		return err
+	}
+	// Enabled авторитетно = «пользователь запустил»; выставляем только по факту
+	// успешного старта (fail-closed). Ошибку сохранения логируем — процесс уже жив.
+	if err := s.setEnabled(id, true); err != nil && s.appLog != nil {
+		s.appLog.Warn("start", id, "не удалось сохранить enabled: "+err.Error())
+	}
+	return nil
 }
 
 func (s *Service) StopClient() error {
@@ -254,11 +262,59 @@ func (s *Service) StopClientInstance(id string) error {
 	if _, err := s.clientInstance(id); err != nil {
 		return err
 	}
-	return s.procs.get(id).Stop()
+	err := s.procs.get(id).Stop()
+	// Явный пользовательский стоп снимает авторитетный Enabled, чтобы автостарт
+	// на следующем бооте его не поднял. Stop() на выходе демона сюда не заходит.
+	if e := s.setEnabled(id, false); e != nil && s.appLog != nil {
+		s.appLog.Warn("stop", id, "не удалось сбросить enabled: "+e.Error())
+	}
+	return err
 }
 
 func (s *Service) Stop() {
 	s.procs.stopAll()
+}
+
+// ResumeEnabled стартует всех клиентов с Enabled==true (авторитетный флаг
+// «должен работать»). Вызывается на бооте в горутине. Ошибки логирует и
+// продолжает; идемпотентно (повторный старт живого процесса — no-op).
+func (s *Service) ResumeEnabled() {
+	full, err := s.store.Load()
+	if err != nil {
+		if s.appLog != nil {
+			s.appLog.Warn("resume", "", "не удалось прочитать конфиг: "+err.Error())
+		}
+		return
+	}
+	for _, c := range full.Clients {
+		if !c.Config.Enabled {
+			continue
+		}
+		if err := s.StartClientInstance(c.ID); err != nil && s.appLog != nil {
+			s.appLog.Warn("resume", c.ID, "автостарт не удался: "+err.Error())
+		}
+	}
+}
+
+// setEnabled — RMW-хелпер: под s.mu грузит конфиг, выставляет Enabled инстанса
+// и сохраняет. НЕ вызывать из уже-лоченного s.mu метода (дедлок); Start/Stop-
+// ClientInstance не лочены, вызов оттуда безопасен.
+func (s *Service) setEnabled(id string, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full, err := s.store.Load()
+	if err != nil {
+		return err
+	}
+	idx := findClientIndex(full.Clients, id)
+	if idx < 0 {
+		return fmt.Errorf("клиент %q не найден", id)
+	}
+	if full.Clients[idx].Config.Enabled == enabled {
+		return nil
+	}
+	full.Clients[idx].Config.Enabled = enabled
+	return s.store.Save(full)
 }
 
 func (s *Service) clientInstance(id string) (ClientInstance, error) {
