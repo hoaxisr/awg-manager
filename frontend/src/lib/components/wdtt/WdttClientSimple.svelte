@@ -339,7 +339,11 @@
 		</label>
 		<label class="wdtt-field">
 			<span>Воркеры (-n, кратно 12)</span>
-			<Input type="number" bind:value={client.workers} min={12} max={108} step={12} />
+			<Input
+				type="number"
+				value={String(client.workers)}
+				onchange={(v) => (client.workers = Math.max(12, Number(v) || 24))}
+			/>
 		</label>
 		<label class="wdtt-field">
 			<span>Капча (на роутере — rjs)</span>

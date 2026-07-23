@@ -122,6 +122,7 @@ export function pathToSection(pathname: string): Section | null {
 	if (pathname.startsWith('/settings')) return 'settings';
 	if (pathname.startsWith('/terminal')) return 'terminal';
 	if (pathname.startsWith('/freeturn')) return 'freeturn';
+	if (pathname.startsWith('/wdtt')) return 'wdtt';
 	return null;
 }
 
@@ -137,4 +138,5 @@ export const SECTION_LABELS: Record<Section, string> = {
 	settings: 'Настройки',
 	terminal: 'Терминал',
 	freeturn: 'FreeTurn',
+	wdtt: 'WDTT',
 };
