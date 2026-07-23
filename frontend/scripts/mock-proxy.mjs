@@ -187,6 +187,7 @@ function resetRuntimeControls() {
 	mockManagedAscByServer = createInitialMockManagedAscByServer();
 	mockSystemAscByTunnel = createInitialMockSystemAscByTunnel();
 	mockFreeturn = createInitialMockFreeturn();
+	mockWdtt = createInitialMockWdtt();
 	applyDefaultMockKeeneticProfile();
 }
 const MOCK_DOWNLOAD_OUTBOUNDS = [
@@ -3138,6 +3139,106 @@ function mockFreeturnAllowlist(serverId) {
 		mockFreeturn.allowlists[serverId] = { enabled: false, clientsFile: '', clients: [] };
 	}
 	return mockFreeturn.allowlists[serverId];
+}
+
+// ── WDTT — клиент-only (нет серверов/allowlist). Prism отдаёт на wdtt-эндпоинты
+// пустые 200 (в swagger нет examples), поэтому мокаем здесь по образцу FreeTurn.
+const MOCK_WDTT_WG_CONFIG =
+	'[Interface]\n' +
+	'PrivateKey = wG8kEXAMPLEprivKEYaaaaaaaaaaaaaaaaaaaaaaaa=\n' +
+	'Address = 10.66.0.2/32\n' +
+	'DNS = 10.66.0.1\n' +
+	'[Peer]\n' +
+	'PublicKey = wG8kEXAMPLEpubKEYbbbbbbbbbbbbbbbbbbbbbbbbb=\n' +
+	'Endpoint = 127.0.0.1:9000\n' +
+	'AllowedIPs = 0.0.0.0/0\n' +
+	'PersistentKeepalive = 25';
+
+function createInitialMockWdtt() {
+	return {
+		binaryPresent: true,
+		clients: [
+			{
+				id: 'default',
+				name: 'Клиент',
+				running: true,
+				pid: 15233,
+				startedAt: new Date(Date.now() - (1 * 60 + 42) * 60000).toISOString(),
+				config: {
+					enabled: true,
+					listen: '127.0.0.1:9000',
+					peer: 'wdtt.vinvanvlad.com:56000',
+					password: 'demo-password',
+					vkHashes: 'a1b2c3d4e5f6,7788990011aa',
+					workers: 24,
+					obfs: 'audio',
+					fingerprint: 'chrome',
+					deviceId: '',
+					captchaMode: 'rjs',
+					vkAuthMode: 'auto',
+					sub: '',
+					debug: false,
+				},
+			},
+			{
+				id: 'wdtt-2',
+				name: 'Резерв',
+				running: false,
+				pid: 15877,
+				startedAt: null,
+				config: {
+					enabled: false,
+					listen: '127.0.0.1:9001',
+					peer: 'backup.wdtt.example:56000',
+					password: 'reserve-password',
+					vkHashes: '',
+					workers: 16,
+					obfs: 'video',
+					fingerprint: 'safari',
+					deviceId: 'dev-abc123',
+					captchaMode: 'manual',
+					vkAuthMode: 'auto',
+					sub: 'https://sub.wdtt.example/s/demo',
+					debug: false,
+				},
+			},
+		],
+		clientSeq: 2,
+	};
+}
+
+let mockWdtt = createInitialMockWdtt();
+
+function mockWdttFind(id) {
+	return mockWdtt.clients.find((i) => i.id === id) ?? null;
+}
+
+function mockWdttProcessStatus(inst) {
+	if (!inst) {
+		return {
+			running: false,
+			log: '',
+			binary: '/opt/bin/wdtt-client',
+			binaryPresent: mockWdtt.binaryPresent,
+		};
+	}
+	return {
+		running: inst.running,
+		...(inst.running ? { pid: inst.pid, startedAt: inst.startedAt } : {}),
+		...(inst.running
+			? {
+					log:
+						'09:14:02 [info] dtls pool ready: 24 workers\n' +
+						`09:14:03 [info] tunnel up ${inst.config.peer}\n` +
+						'09:14:05 [info] wireguard config received\n' +
+						'09:14:09 [info] keepalive ok · rtt 21ms',
+					wgConfig: MOCK_WDTT_WG_CONFIG,
+					dtlsConnections: 3,
+				}
+			: { log: '08:51:30 [info] process stopped' }),
+		binary: '/opt/bin/wdtt-client',
+		binaryPresent: mockWdtt.binaryPresent,
+	};
 }
 
 const MOCK_KEENETIC_PROFILES = {
@@ -7389,6 +7490,255 @@ const server = http.createServer(async (req, res) => {
 	}
 
 	// ── end FreeTurn ───────────────────────────────────────────────────────────
+
+	// ── WDTT — клиент-only мультиинстанс. ────────────────────────────────────────
+
+	if (req.method === 'GET' && path === '/wdtt/config') {
+		sendData(res, {
+			version: 2,
+			clients: mockWdtt.clients.map((i) => ({ id: i.id, name: i.name, config: i.config })),
+		});
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/wdtt/status') {
+		const defClient = mockWdttFind('default') ?? mockWdtt.clients[0];
+		sendData(res, {
+			clients: mockWdtt.clients.map((i) => ({
+				id: i.id,
+				name: i.name,
+				status: mockWdttProcessStatus(i),
+			})),
+			// Легаси-зеркало дефолтного инстанса.
+			client: mockWdttProcessStatus(defClient),
+			installAvailable: true,
+			installVersion: '2.3.1',
+			installedVersion: mockWdtt.binaryPresent ? '2.3.1' : undefined,
+			updateAvailable: false,
+			installing: false,
+			routerClock: new Date().toISOString(),
+		});
+		return;
+	}
+
+	// Обновление конфига: легаси дефолт (PUT /wdtt/client/config) + инстанс (PUT /wdtt/clients/{id}).
+	{
+		const legacy = req.method === 'PUT' && path === '/wdtt/client/config';
+		const m = req.method === 'PUT' && /^\/wdtt\/clients\/([^/]+)$/.exec(path);
+		if (legacy || m) {
+			const id = legacy ? 'default' : decodeURIComponent(m[1]);
+			const inst = mockWdttFind(id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `wdtt client ${id} not found` },
+				});
+				return;
+			}
+			readRequestText(req).then((raw) => {
+				try {
+					inst.config = { ...inst.config, ...JSON.parse(raw || '{}') };
+					sendData(res, { config: inst.config });
+				} catch (e) {
+					sendInvalidRequest(res, e);
+				}
+			});
+			return;
+		}
+	}
+
+	// Создание инстанса: POST /wdtt/clients
+	if (req.method === 'POST' && path === '/wdtt/clients') {
+		readRequestText(req).then((raw) => {
+			try {
+				const body = raw ? JSON.parse(raw) : {};
+				mockWdtt.clientSeq += 1;
+				const n = mockWdtt.clientSeq;
+				const template = mockWdtt.clients[0]?.config ?? {};
+				const inst = {
+					id: `wdtt-${n}`,
+					name: body.name?.trim() || `Клиент ${n}`,
+					running: false,
+					pid: 20000 + n,
+					startedAt: null,
+					config: { ...structuredClone(template), enabled: false },
+				};
+				mockWdtt.clients.push(inst);
+				sendData(res, { id: inst.id, name: inst.name, config: inst.config });
+			} catch (e) {
+				sendInvalidRequest(res, e);
+			}
+		});
+		return;
+	}
+
+	// Rename (PATCH) / delete (DELETE) инстанса: /wdtt/clients/{id}
+	{
+		const m = /^\/wdtt\/clients\/([^/]+)$/.exec(path);
+		if (m && (req.method === 'PATCH' || req.method === 'DELETE')) {
+			const id = decodeURIComponent(m[1]);
+			const inst = mockWdttFind(id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `wdtt client ${id} not found` },
+				});
+				return;
+			}
+			if (req.method === 'DELETE') {
+				mockWdtt.clients.splice(mockWdtt.clients.indexOf(inst), 1);
+				sendData(res, { message: `wdtt client ${id} удалён (mock)` });
+				return;
+			}
+			readRequestText(req).then((raw) => {
+				try {
+					const body = raw ? JSON.parse(raw) : {};
+					if (body.name?.trim()) inst.name = body.name.trim();
+					sendData(res, { id: inst.id, name: inst.name, config: inst.config });
+				} catch (e) {
+					sendInvalidRequest(res, e);
+				}
+			});
+			return;
+		}
+	}
+
+	// Start/stop инстанса: POST /wdtt/clients/{id}/start|stop
+	{
+		const m = req.method === 'POST' && /^\/wdtt\/clients\/([^/]+)\/(start|stop)$/.exec(path);
+		if (m) {
+			const id = decodeURIComponent(m[1]);
+			const action = m[2];
+			const inst = mockWdttFind(id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `wdtt client ${id} not found` },
+				});
+				return;
+			}
+			inst.running = action === 'start';
+			inst.startedAt = inst.running ? new Date().toISOString() : null;
+			sendData(res, { message: `wdtt client ${id}: ${action} (mock)` });
+			return;
+		}
+	}
+
+	// AWG-туннель из лога: POST /wdtt/clients/{id}/ensure-wg-tunnel
+	{
+		const m = req.method === 'POST' && /^\/wdtt\/clients\/([^/]+)\/ensure-wg-tunnel$/.exec(path);
+		if (m) {
+			const id = decodeURIComponent(m[1]);
+			const inst = mockWdttFind(id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `wdtt client ${id} not found` },
+				});
+				return;
+			}
+			// Туннель считаем уже привязанным (created:false + tunnelId) — авто-поллинг
+			// помечает клиент settled и не долбит POST каждую секунду.
+			sendData(res, {
+				created: false,
+				tunnelId: `wdtt-tunnel-${id}`,
+				tunnelName: `${inst.name} wdtt`,
+				message: 'Туннель уже привязан (mock)',
+			});
+			return;
+		}
+	}
+
+	// Обновление подписки: POST /wdtt/clients/{id}/subscription/refresh
+	{
+		const m = req.method === 'POST' && /^\/wdtt\/clients\/([^/]+)\/subscription\/refresh$/.exec(path);
+		if (m) {
+			const id = decodeURIComponent(m[1]);
+			const inst = mockWdttFind(id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `wdtt client ${id} not found` },
+				});
+				return;
+			}
+			const payload = {
+				name: inst.name,
+				peer: inst.config.peer,
+				password: inst.config.password,
+				vkHashes: inst.config.vkHashes ? inst.config.vkHashes.split(',') : [],
+				workers: inst.config.workers,
+				listen: inst.config.listen,
+				subUrl: inst.config.sub || undefined,
+			};
+			sendData(res, {
+				instance: { id: inst.id, name: inst.name, config: inst.config },
+				payload,
+				message: 'Подписка обновлена (mock)',
+			});
+			return;
+		}
+	}
+
+	if (req.method === 'POST' && path === '/wdtt/link/decode') {
+		readRequestText(req).then((raw) => {
+			try {
+				const { link } = JSON.parse(raw || '{}');
+				const text = String(link ?? '').trim();
+				// Подписочная ссылка (http/https) → превью со списком профилей.
+				if (/^https?:\/\//i.test(text)) {
+					sendData(res, {
+						subscription: {
+							name: 'WDTT demo subscription',
+							description: 'Мок-подписка для стенда',
+							trafficUsedMb: 1240,
+							trafficLimitMb: 51200,
+							updatedAt: new Date().toISOString(),
+							subUrl: text,
+							profiles: [
+								{
+									name: 'RU · Москва',
+									peer: 'ru.wdtt.example:56000',
+									password: 'sub-pass-ru',
+									vkHashes: ['aa11bb22'],
+									workers: 24,
+									listen: '127.0.0.1:9000',
+									subUrl: text,
+								},
+								{
+									name: 'DE · Франкфурт',
+									peer: 'de.wdtt.example:56000',
+									password: 'sub-pass-de',
+									vkHashes: ['cc33dd44'],
+									workers: 24,
+									listen: '127.0.0.1:9000',
+									subUrl: text,
+								},
+							],
+						},
+					});
+					return;
+				}
+				// Одиночная ссылка wdtt:// или qwdtt:// → один профиль.
+				const m = /^q?wdtt:\/\/(.+)$/i.exec(text);
+				if (!m) throw new Error('ожидается ссылка вида wdtt://… или подписка https://…');
+				const b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+				const decoded = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+				sendData(res, { profile: decoded });
+			} catch (e) {
+				sendInvalidRequest(res, e);
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/wdtt/install') {
+		mockWdtt.binaryPresent = true;
+		sendData(res, { message: 'wdtt-client установлен (mock)' });
+		return;
+	}
+
+	// ── end WDTT ─────────────────────────────────────────────────────────────────
 
 	// Pass-through for everything else (including /events SSE).
 	const upstream = new URL(UPSTREAM);
