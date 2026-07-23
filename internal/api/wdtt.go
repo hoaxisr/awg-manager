@@ -66,25 +66,27 @@ func (h *WdttHandler) UpdateClientConfig(w http.ResponseWriter, r *http.Request)
 		response.Error(w, "invalid request body", "BAD_REQUEST")
 		return
 	}
-	var deletedTunnels []string
-	var tunnelErrors []string
+	var peerChanged bool
 	if full, err := h.svc.GetConfig(); err == nil {
 		for _, c := range full.Clients {
 			if c.ID != wdtt.DefaultInstanceID {
 				continue
 			}
-			if !wdtt.PeersEqual(c.Config.Peer, cfg.Peer) {
-				deletedTunnels, tunnelErrors = h.deleteLinkedAwgTunnels(r.Context(), wdtt.DefaultInstanceID)
-				if h.tunnelsHandler != nil && len(deletedTunnels) > 0 {
-					h.tunnelsHandler.publishTunnelList(r.Context())
-				}
-			}
+			peerChanged = !wdtt.PeersEqual(c.Config.Peer, cfg.Peer)
 			break
 		}
 	}
 	if err := h.svc.UpdateClientConfig(cfg); err != nil {
 		response.InternalError(w, err.Error())
 		return
+	}
+	var deletedTunnels []string
+	var tunnelErrors []string
+	if peerChanged {
+		deletedTunnels, tunnelErrors = h.deleteLinkedAwgTunnels(r.Context(), wdtt.DefaultInstanceID)
+		if h.tunnelsHandler != nil && len(deletedTunnels) > 0 {
+			h.tunnelsHandler.publishTunnelList(r.Context())
+		}
 	}
 	response.Success(w, map[string]any{
 		"config":         cfg,
@@ -230,25 +232,27 @@ func (h *WdttHandler) serveClientByID(w http.ResponseWriter, r *http.Request, id
 			response.Error(w, "invalid request body", "BAD_REQUEST")
 			return
 		}
-		var deletedTunnels []string
-		var tunnelErrors []string
+		var peerChanged bool
 		if full, err := h.svc.GetConfig(); err == nil {
 			for _, c := range full.Clients {
 				if c.ID != id {
 					continue
 				}
-				if !wdtt.PeersEqual(c.Config.Peer, cfg.Peer) {
-					deletedTunnels, tunnelErrors = h.deleteLinkedAwgTunnels(r.Context(), id)
-					if h.tunnelsHandler != nil && len(deletedTunnels) > 0 {
-						h.tunnelsHandler.publishTunnelList(r.Context())
-					}
-				}
+				peerChanged = !wdtt.PeersEqual(c.Config.Peer, cfg.Peer)
 				break
 			}
 		}
 		if err := h.svc.UpdateClientInstance(id, cfg); err != nil {
 			response.Error(w, err.Error(), "WDTT_CLIENT_UPDATE_FAILED")
 			return
+		}
+		var deletedTunnels []string
+		var tunnelErrors []string
+		if peerChanged {
+			deletedTunnels, tunnelErrors = h.deleteLinkedAwgTunnels(r.Context(), id)
+			if h.tunnelsHandler != nil && len(deletedTunnels) > 0 {
+				h.tunnelsHandler.publishTunnelList(r.Context())
+			}
 		}
 		response.Success(w, map[string]any{
 			"config":         cfg,
