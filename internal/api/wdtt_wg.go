@@ -111,25 +111,28 @@ func (h *WdttHandler) ensureWGTunnel(w http.ResponseWriter, r *http.Request, cli
 	}
 
 	if match := wdtt.MatchingAWGTunnel(tunnels, patched); match != nil {
-		if stored, err := h.awgStore.Get(match.ID); err == nil {
-			changed := false
-			if strings.TrimSpace(stored.WdttClientID) != clientID {
-				stored.WdttClientID = clientID
-				changed = true
+		stored, err := h.awgStore.Get(match.ID)
+		if err != nil {
+			response.InternalError(w, err.Error())
+			return
+		}
+		changed := false
+		if strings.TrimSpace(stored.WdttClientID) != clientID {
+			stored.WdttClientID = clientID
+			changed = true
+		}
+		wantName := wdtt.TunnelNameFromClient(*inst)
+		if wantName != "" && stored.Name != wantName {
+			stored.Name = wantName
+			changed = true
+		}
+		if changed {
+			if err := h.awgStore.Save(stored); err != nil {
+				response.InternalError(w, err.Error())
+				return
 			}
-			wantName := wdtt.TunnelNameFromClient(*inst)
-			if wantName != "" && stored.Name != wantName {
-				stored.Name = wantName
-				changed = true
-			}
-			if changed {
-				if err := h.awgStore.Save(stored); err != nil {
-					response.InternalError(w, err.Error())
-					return
-				}
-				if h.tunnelsHandler != nil {
-					h.tunnelsHandler.publishTunnelList(r.Context())
-				}
+			if h.tunnelsHandler != nil {
+				h.tunnelsHandler.publishTunnelList(r.Context())
 			}
 		}
 		if h.wdttClientRunning(clientID) {
@@ -151,12 +154,15 @@ func (h *WdttHandler) ensureWGTunnel(w http.ResponseWriter, r *http.Request, cli
 		response.Error(w, err.Error(), "WDTT_WG_IMPORT_FAILED")
 		return
 	}
-	if stored, err := h.awgStore.Get(tunnel.ID); err == nil {
-		stored.WdttClientID = clientID
-		if err := h.awgStore.Save(stored); err != nil {
-			response.InternalError(w, err.Error())
-			return
-		}
+	stored, err := h.awgStore.Get(tunnel.ID)
+	if err != nil {
+		response.InternalError(w, err.Error())
+		return
+	}
+	stored.WdttClientID = clientID
+	if err := h.awgStore.Save(stored); err != nil {
+		response.InternalError(w, err.Error())
+		return
 	}
 	if h.tunnelsHandler != nil {
 		h.tunnelsHandler.publishTunnelList(r.Context())
