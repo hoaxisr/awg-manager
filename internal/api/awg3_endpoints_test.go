@@ -180,6 +180,21 @@ func TestAwg3Handler_ImportValid(t *testing.T) {
 	}
 }
 
+func TestHandleImport_Conf(t *testing.T) {
+	h, _, _, _ := newAwg3TestHandler(t)
+	conf := "[Interface]\nPrivateKey = K==\nAddress = 10.10.0.2/32\n[Peer]\nPublicKey = P==\nEndpoint = vpn.example.com:51820\nAllowedIPs = 0.0.0.0/0"
+	body, _ := json.Marshal(map[string]any{"tag": "awg-conf", "config": conf}) // config — строка
+	req := httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(string(body)))
+	rec := httptest.NewRecorder()
+	h.handleImport(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d, тело: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "awg-conf") {
+		t.Fatalf("тег не в ответе: %s", rec.Body.String())
+	}
+}
+
 func TestAwg3Handler_ImportBadSchema(t *testing.T) {
 	h, store, svc, _ := newAwg3TestHandler(t)
 

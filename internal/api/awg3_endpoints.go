@@ -172,7 +172,22 @@ func (h *Awg3Handler) handleImport(w http.ResponseWriter, r *http.Request) {
 		response.BadRequest(w, "невалидный JSON запроса: "+err.Error())
 		return
 	}
-	rec, err := awg3endpoint.Parse(req.Config, req.Tag, h.takenTags(r.Context()))
+	cfg := req.Config
+	if len(cfg) > 0 && cfg[0] == '"' {
+		// config пришёл JSON-строкой → это текст нативного .conf.
+		var text string
+		if err := json.Unmarshal(cfg, &text); err != nil {
+			response.BadRequest(w, "невалидная .conf-строка: "+err.Error())
+			return
+		}
+		converted, err := awg3endpoint.ParseConf(text)
+		if err != nil {
+			response.BadRequest(w, "не удалось разобрать .conf: "+err.Error())
+			return
+		}
+		cfg = converted
+	}
+	rec, err := awg3endpoint.Parse(cfg, req.Tag, h.takenTags(r.Context()))
 	if err != nil {
 		response.BadRequest(w, err.Error())
 		return
