@@ -371,6 +371,12 @@
 		}
 	}
 
+	function freeturnTunnelName(instanceName?: string): string {
+		const base = instanceName?.trim() || 'FreeTurn';
+		if (base.toLowerCase().endsWith(' ft')) return base.slice(0, 60);
+		return `${base} FT`.slice(0, 60);
+	}
+
 	async function applyImportLink(link: string) {
 		if (!link.trim() || !selectedClient || !config) return;
 		importing = true;
@@ -404,7 +410,7 @@
 					const wgForImport = patchWgConfEndpoint(wg, listenPort);
 					const tunnel = await api.importConfig(
 						wgForImport,
-						`FreeTurn ${payload.peer}`.slice(0, 60),
+						freeturnTunnelName(selectedClient.name),
 						undefined,
 						selectedClientId
 					);
