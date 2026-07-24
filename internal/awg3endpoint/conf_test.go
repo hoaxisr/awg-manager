@@ -159,3 +159,92 @@ func TestParseConf_Edge(t *testing.T) {
 		}
 	})
 }
+
+func TestParseConf_FeedsParse(t *testing.T) {
+	// header_protection_key ⇒ s1..s4 ≥ 12 (инвариант Parse)
+	conf := `[Interface]
+PrivateKey = CLIENTPRIV==
+Address = 10.10.0.2/32
+S1 = 12
+S2 = 12
+S3 = 12
+S4 = 12
+HeaderProtectionKey = HPK==
+[Peer]
+PublicKey = SERVERPUB==
+Endpoint = vpn.example.com:51820
+AllowedIPs = 0.0.0.0/0`
+	j, err := ParseConf(conf)
+	if err != nil {
+		t.Fatalf("ParseConf: %v", err)
+	}
+	rec, err := Parse(j, "awg-test", map[string]bool{})
+	if err != nil {
+		t.Fatalf("Parse отверг выхлоп ParseConf: %v", err)
+	}
+	if rec.Tag != "awg-test" {
+		t.Fatalf("tag: got %q", rec.Tag)
+	}
+}
+
+func TestParseConf_HPRequiresS(t *testing.T) {
+	conf := `[Interface]
+PrivateKey = K==
+S1 = 4
+HeaderProtectionKey = HPK==
+[Peer]
+PublicKey = P==
+Endpoint = h:1`
+	j, err := ParseConf(conf)
+	if err != nil {
+		t.Fatalf("ParseConf: %v", err)
+	}
+	if _, err := Parse(j, "t", map[string]bool{}); err == nil {
+		t.Fatal("ожидался ErrHeaderProtectionS")
+	}
+}
+
+// TestParseConf_RouteBoxGolden сверяет ParseConf с реальным golden RouteBox
+// (conf_client_test.go TestBuildClientGolden) и JSON-экспортом export.go
+// BuildClientEndpoint (минус tag). Verified вручную против repo routebox
+// и amnezia-box-awg14/option/awg.go — расхождений не найдено.
+func TestParseConf_RouteBoxGolden(t *testing.T) {
+	// Дословный вывод RouteBox BuildClient (conf_client_test.go TestBuildClientGolden).
+	conf := `[Interface]
+PrivateKey = CLIENTPRIV==
+Address = 10.10.0.2/32
+DNS = 1.1.1.1
+MTU = 1420
+Jc = 4
+Jmin = 40
+Jmax = 70
+S1 = 50
+S2 = 50
+H1 = 1
+H2 = 2
+H3 = 3
+H4 = 4
+
+[Peer]
+PublicKey = SERVERPUB==
+PresharedKey = PSK==
+Endpoint = vpn.example.com:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25`
+	got, err := ParseConf(conf)
+	if err != nil {
+		t.Fatalf("ParseConf: %v", err)
+	}
+	// Эквивалент RouteBox JSON-экспорта (BuildClientEndpoint) минус tag.
+	eqJSON(t, got, `{
+		"type":"awg","useIntegratedTun":false,
+		"private_key":"CLIENTPRIV==","address":["10.10.0.2/32"],"mtu":1420,
+		"jc":4,"jmin":40,"jmax":70,"s1":50,"s2":50,
+		"h1":"1","h2":"2","h3":"3","h4":"4",
+		"peers":[{
+			"public_key":"SERVERPUB==","preshared_key":"PSK==",
+			"address":"vpn.example.com","port":51820,
+			"allowed_ips":["0.0.0.0/0"],"persistent_keepalive_interval":25
+		}]
+	}`)
+}
