@@ -6,7 +6,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
-// Real JSON from user's router: curl -s http://localhost:79/rci/show/interface/Wireguard0
+// Real JSON from user's router: curl -s http://127.0.0.1:79/rci/show/interface/Wireguard0
 const realWireguard0JSON = `{
   "id": "Wireguard0",
   "index": 0,
