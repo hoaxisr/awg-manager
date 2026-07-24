@@ -114,12 +114,12 @@ func TestAwg3RecordToDTO_Timers(t *testing.T) {
 		ID:  "awg3-abc",
 		Tag: "amsterdam",
 		Endpoint: json.RawMessage(`{"type":"awg","header_protection_key":"h",` +
-			`"rekey_timeout":"5","reject_after_time":"180",` +
+			`"rekey_timeout":"5","rekey_after_time":"120-150","reject_after_time":"180",` +
 			`"keepalive_timeout":"25","max_handshake_attempts":"5",` +
 			`"peers":[{"address":"vpn.example.com","port":51820}]}`),
 	}
 	dto := awg3RecordToDTO(withTimers)
-	if dto.RekeyTimeout != "5" || dto.RejectAfterTime != "180" ||
+	if dto.RekeyTimeout != "5" || dto.RekeyAfterTime != "120-150" || dto.RejectAfterTime != "180" ||
 		dto.KeepaliveTimeout != "25" || dto.MaxHandshakeAttempts != "5" {
 		t.Fatalf("timers not surfaced: %+v", dto)
 	}
@@ -133,11 +133,12 @@ func TestAwg3RecordToDTO_Timers(t *testing.T) {
 		Endpoint: json.RawMessage(`{"type":"awg","peers":[{"address":"h","port":1}]}`),
 	}
 	dto2 := awg3RecordToDTO(noTimers)
-	if dto2.RekeyTimeout != "" || dto2.RejectAfterTime != "" ||
+	if dto2.RekeyTimeout != "" || dto2.RekeyAfterTime != "" || dto2.RejectAfterTime != "" ||
 		dto2.KeepaliveTimeout != "" || dto2.MaxHandshakeAttempts != "" {
 		t.Fatalf("absent timers must stay empty: %+v", dto2)
 	}
-	if b, _ := json.Marshal(dto2); strings.Contains(string(b), "rekeyTimeout") {
+	if b, _ := json.Marshal(dto2); strings.Contains(string(b), "rekeyTimeout") ||
+		strings.Contains(string(b), "rekeyAfterTime") {
 		t.Fatalf("omitempty must drop absent timers from JSON: %s", b)
 	}
 }

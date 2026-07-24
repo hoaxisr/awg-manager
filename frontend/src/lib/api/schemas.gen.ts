@@ -144,6 +144,7 @@ const api_Awg3TunnelDTO: v.GenericSchema = v.looseObject({
 	keepaliveTimeout: v.optional(v.nullable(v.string())),
 	maxHandshakeAttempts: v.optional(v.nullable(v.string())),
 	rejectAfterTime: v.optional(v.nullable(v.string())),
+	rekeyAfterTime: v.optional(v.nullable(v.string())),
 	rekeyTimeout: v.optional(v.nullable(v.string())),
 	tag: v.optional(v.nullable(v.string())),
 });

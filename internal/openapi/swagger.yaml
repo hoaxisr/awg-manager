@@ -410,6 +410,9 @@ definitions:
       rejectAfterTime:
         example: "180"
         type: string
+      rekeyAfterTime:
+        example: 120-150
+        type: string
       rekeyTimeout:
         description: |-
           AWG3 device timers — read-only passthrough from the imported config

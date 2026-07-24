@@ -44,6 +44,7 @@
 	const timers = $derived(
 		[
 			{ label: 'rekey', value: tunnel.rekeyTimeout, unit: 's' },
+			{ label: 'rekey-after', value: tunnel.rekeyAfterTime, unit: 's' },
 			{ label: 'reject', value: tunnel.rejectAfterTime, unit: 's' },
 			{ label: 'keepalive', value: tunnel.keepaliveTimeout, unit: 's' },
 			{ label: 'max-hs', value: tunnel.maxHandshakeAttempts, unit: '' },

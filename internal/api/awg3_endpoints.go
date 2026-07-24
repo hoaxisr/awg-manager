@@ -36,6 +36,7 @@ type Awg3TunnelDTO struct {
 	// (edited only in RouteBox). Strings as RouteBox emits them (may be ranges
 	// like "120-150"); omitted when the config carries no such field.
 	RekeyTimeout         string `json:"rekeyTimeout,omitempty" example:"5"`
+	RekeyAfterTime       string `json:"rekeyAfterTime,omitempty" example:"120-150"`
 	RejectAfterTime      string `json:"rejectAfterTime,omitempty" example:"180"`
 	KeepaliveTimeout     string `json:"keepaliveTimeout,omitempty" example:"25"`
 	MaxHandshakeAttempts string `json:"maxHandshakeAttempts,omitempty" example:"5"`
@@ -376,6 +377,7 @@ func awg3RecordToDTO(rec awg3endpoint.Record) Awg3TunnelDTO {
 			Port    int    `json:"port"`
 		} `json:"peers"`
 		RekeyTimeout         string `json:"rekey_timeout"`
+		RekeyAfterTime       string `json:"rekey_after_time"`
 		RejectAfterTime      string `json:"reject_after_time"`
 		KeepaliveTimeout     string `json:"keepalive_timeout"`
 		MaxHandshakeAttempts string `json:"max_handshake_attempts"`
@@ -395,6 +397,7 @@ func awg3RecordToDTO(rec awg3endpoint.Record) Awg3TunnelDTO {
 		Host:                 host,
 		HeaderProtection:     strings.TrimSpace(shape.HeaderProtectionKey) != "",
 		RekeyTimeout:         shape.RekeyTimeout,
+		RekeyAfterTime:       shape.RekeyAfterTime,
 		RejectAfterTime:      shape.RejectAfterTime,
 		KeepaliveTimeout:     shape.KeepaliveTimeout,
 		MaxHandshakeAttempts: shape.MaxHandshakeAttempts,
