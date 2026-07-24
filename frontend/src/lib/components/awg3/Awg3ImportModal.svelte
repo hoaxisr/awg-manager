@@ -25,6 +25,7 @@
 	function peekDefaultTag(text: string): string {
 		const raw = text.trim();
 		if (raw === '') return '';
+		if (!raw.startsWith('{')) return peekConfTag(raw);
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(raw);
@@ -41,6 +42,29 @@
 		if (!first || typeof first !== 'object') return '';
 		const addr = (first as Record<string, unknown>).address;
 		return typeof addr === 'string' ? addr.trim() : '';
+	}
+
+	// Дефолт-тег из строки Endpoint = host:port нативного .conf (host).
+	function peekConfTag(text: string): string {
+		const m = text.match(/^\s*Endpoint\s*=\s*(.+)$/im);
+		if (!m) return '';
+		const host = m[1].trim();
+		if (host.startsWith('[')) {
+			const end = host.indexOf(']');
+			return end > 0 ? host.slice(1, end) : '';
+		}
+		const colon = host.lastIndexOf(':');
+		return colon > 0 ? host.slice(0, colon) : host;
+	}
+
+	let fileInput = $state<HTMLInputElement | null>(null);
+
+	async function onFilePick(e: Event): Promise<void> {
+		const input = e.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = ''; // сброс, чтобы повторный выбор того же файла дал change
+		if (!file) return;
+		onJsonInput(await file.text());
 	}
 
 	function onJsonInput(value: string): void {
@@ -85,17 +109,21 @@
 		}
 		const raw = jsonText.trim();
 		if (raw === '') {
-			error = 'Вставьте JSON-конфиг';
+			error = 'Вставьте конфиг или загрузите .conf';
 			errorField = 'config';
 			return;
 		}
 		let config: unknown;
-		try {
-			config = JSON.parse(raw);
-		} catch (e) {
-			error = `Некорректный JSON: ${e instanceof Error ? e.message : 'ошибка разбора'}`;
-			errorField = 'config';
-			return;
+		if (raw.startsWith('{')) {
+			try {
+				config = JSON.parse(raw);
+			} catch (e) {
+				error = `Некорректный JSON: ${e instanceof Error ? e.message : 'ошибка разбора'}`;
+				errorField = 'config';
+				return;
+			}
+		} else {
+			config = raw; // .conf-текст — уйдёт строкой, backend распарсит
 		}
 		importing = true;
 		try {
@@ -126,19 +154,37 @@
 			fullWidth
 		/>
 
-		<label class="field">
-			<span class="field-lbl">JSON-конфиг</span>
+		<div class="field">
+			<div class="field-head">
+				<label class="field-lbl" for="awg3-conf">Конфиг (JSON или .conf)</label>
+				<input
+					type="file"
+					accept=".conf,.txt"
+					bind:this={fileInput}
+					onchange={onFilePick}
+					hidden
+				/>
+				<Button
+					variant="ghost"
+					size="sm"
+					onclick={() => fileInput?.click()}
+					disabled={importing}
+				>
+					Загрузить .conf
+				</Button>
+			</div>
 			<textarea
+				id="awg3-conf"
 				class="field-textarea"
 				class:is-error={errorField === 'config'}
 				rows="10"
 				spellcheck="false"
-				placeholder={'{ "type": "awg", "private_key": "…", "peers": [ … ] }'}
+				placeholder={'{ "type": "awg", … }  или  [Interface] …'}
 				disabled={importing}
 				value={jsonText}
 				oninput={(e) => onJsonInput(e.currentTarget.value)}
 			></textarea>
-		</label>
+		</div>
 
 		{#if error && errorField !== 'tag'}
 			<div class="import-error">{error}</div>
@@ -170,6 +216,13 @@
 		font-size: 13px;
 		color: var(--color-text-secondary);
 		font-weight: 500;
+	}
+
+	.field-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
 	}
 
 	.import-error {
