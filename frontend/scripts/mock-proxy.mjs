@@ -7293,7 +7293,6 @@ const server = http.createServer(async (req, res) => {
 	}
 
 	if (req.method === 'GET' && path === '/freeturn/status') {
-		const forceRemote = url.searchParams.get('forceRemote') === '1';
 		const defClient = mockFreeturnFind('client', 'default') ?? mockFreeturn.clients[0];
 		const defServer = mockFreeturnFind('server', 'default') ?? mockFreeturn.servers[0];
 		sendData(res, {
@@ -7314,8 +7313,6 @@ const server = http.createServer(async (req, res) => {
 			installVersion: '1.8.0',
 			installedVersion: mockFreeturn.binaryPresent ? '1.8.0' : undefined,
 			updateAvailable: false,
-			// Проверка апстрима — только по явному forceRemote (кнопка «Проверить обновления»).
-			...(forceRemote ? { remoteVersion: '1.8.0' } : {}),
 			installing: false,
 		});
 		return;

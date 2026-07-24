@@ -148,11 +148,21 @@ func TestStore_Roundtrip(t *testing.T) {
 	}
 }
 
-func TestSha256FromChecksums(t *testing.T) {
-	body := []byte("abc123  client-linux-arm64\n def456 server-linux-arm64\n")
-	got, err := sha256FromChecksums(body, "client-linux-arm64")
-	if err != nil || got != "abc123" {
-		t.Fatalf("got %q err %v", got, err)
+func TestCompareFreeturnVersion_Revision(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"1.8.0-2", "1.8.0-3", -1}, // баг, который чинит фикс: semver.Compare даёт 0
+		{"1.8.0-3", "1.8.0-2", 1},
+		{"1.8.0-3", "1.8.0-3", 0},
+		{"1.8.0", "1.8.0-1", -1}, // нет суффикса → ревизия 0
+		{"1.8.1-1", "1.8.0-9", 1}, // разные базы решает semver, ревизия не важна
+	}
+	for _, c := range cases {
+		if got := compareFreeturnVersion(c.a, c.b); got != c.want {
+			t.Errorf("compareFreeturnVersion(%q,%q)=%d, want %d", c.a, c.b, got, c.want)
+		}
 	}
 }
 
@@ -163,15 +173,6 @@ func TestResolveInstallSpecs_AlwaysPin(t *testing.T) {
 		Client: BinarySpec{Version: "1.0.0", URL: "https://pin/client", SHA256: strings.Repeat("a", 64), Size: 1},
 		Server: BinarySpec{Version: "1.0.0", URL: "https://pin/server", SHA256: strings.Repeat("b", 64), Size: 1},
 	}
-	// Даже когда апстрим-релиз новее — установка по умолчанию ставит только пин.
-	s.remoteMu.Lock()
-	s.remoteCache = &remoteReleaseCache{
-		Version:   "2.0.0",
-		Client:    BinarySpec{Version: "2.0.0", URL: "https://remote/client", SHA256: strings.Repeat("c", 64), Size: 1},
-		Server:    BinarySpec{Version: "2.0.0", URL: "https://remote/server", SHA256: strings.Repeat("d", 64), Size: 1},
-		CheckedAt: time.Now(),
-	}
-	s.remoteMu.Unlock()
 	specs, ver := s.resolveInstallSpecs()
 	if ver != "1.0.0" || specs.Client.URL != "https://pin/client" {
 		t.Fatalf("resolve: ver=%s specs=%+v (ожидался пин 1.0.0)", ver, specs)

@@ -2489,8 +2489,6 @@ const freeturn_Status: v.GenericSchema = v.looseObject({
 	installVersion: v.optional(v.nullable(v.string())),
 	installedVersion: v.optional(v.nullable(v.string())),
 	installing: v.optional(v.nullable(v.boolean())),
-	remoteCheckError: v.optional(v.nullable(v.string())),
-	remoteVersion: v.optional(v.nullable(v.string())),
 	routerClock: v.optional(v.nullable(v.string())),
 	server: v.optional(v.nullable(v.lazy(() => freeturn_ProcessStatus))),
 	servers: v.optional(v.nullable(v.array(v.lazy(() => freeturn_InstanceStatus)))),
