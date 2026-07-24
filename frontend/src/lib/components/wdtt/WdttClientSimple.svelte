@@ -3,6 +3,7 @@
 	import StepPill from '$lib/components/sb-router/StepPill.svelte';
 	import WizardStep from '$lib/components/sb-router/WizardStep.svelte';
 	import ProcessLogBox from '../freeturn/ProcessLogBox.svelte';
+	import type { LogInstanceItem } from '../freeturn/LogInstanceSwitcher.svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { peersEqual } from '$lib/utils/wdttPeer';
@@ -30,6 +31,9 @@
 		subscriptionTick?: number;
 		onEnsureWg?: () => void | Promise<void>;
 		ensuringWg?: boolean;
+		instances?: LogInstanceItem[];
+		selectedInstanceId?: string;
+		onSelectInstance?: (id: string) => void;
 	}
 
 	let {
@@ -47,7 +51,10 @@
 		refreshingSub = false,
 		subscriptionTick = 0,
 		onEnsureWg,
-		ensuringWg = false
+		ensuringWg = false,
+		instances = [],
+		selectedInstanceId = '',
+		onSelectInstance
 	}: Props = $props();
 
 	let importLink = $state('');
@@ -379,7 +386,13 @@
 				Процесс помечен как запущенный, но лог пуст — нажмите «Остановить», затем «Сохранить и запустить».
 			</p>
 		{/if}
-		<ProcessLogBox log={status?.log} {routerClock} />
+		<ProcessLogBox
+			log={status?.log}
+			{routerClock}
+			{instances}
+			{selectedInstanceId}
+			{onSelectInstance}
+		/>
 	</WizardStep>
 </div>
 

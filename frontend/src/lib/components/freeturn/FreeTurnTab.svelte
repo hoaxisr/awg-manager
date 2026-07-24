@@ -557,6 +557,11 @@
 				status={clientStatus}
 				routerClock={status?.routerClock}
 				{saving}
+				instances={clientBarItems}
+				selectedInstanceId={selectedClientId}
+				onSelectInstance={(id) => {
+					selectedClientId = id;
+				}}
 				onSave={saveClientConfig}
 				onToggle={(on) => toggleClientInstance(selectedClientId, on)}
 				onImportLink={applyImportLink}
@@ -588,6 +593,11 @@
 				defaultClientListenPort={defaultClientListenPort}
 				{generatedLink}
 				{generatedPeer}
+				instances={serverBarItems}
+				selectedInstanceId={selectedServerId}
+				onSelectInstance={(id) => {
+					selectedServerId = id;
+				}}
 				bind:genProvider
 				bind:genPeer
 				bind:genMTU

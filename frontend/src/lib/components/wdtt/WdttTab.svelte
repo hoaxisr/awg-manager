@@ -455,6 +455,12 @@
 				routerClock={status?.routerClock}
 				{saving}
 				{importing}
+				instances={clientBarItems}
+				selectedInstanceId={selectedClientId}
+				onSelectInstance={(id) => {
+					selectedClientId = id;
+					wgEnsureSettled.delete(id);
+				}}
 				onSave={saveClientConfig}
 				onRevert={revertClient}
 				onToggle={(on) => toggleClientInstance(selectedClientId, on)}
