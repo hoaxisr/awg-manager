@@ -5329,6 +5329,34 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// AWG3 imported endpoints — read-only list is enough for docs screenshots.
+	// One endpoint carries all five device timers so the timer readout renders.
+	if (req.method === 'GET' && path === '/awg3-endpoints') {
+		send(res, 200, {
+			success: true,
+			data: [
+				{
+					id: 'awg3-Amsterdam01',
+					tag: 'amsterdam',
+					host: 'vpn.example.com:51820',
+					headerProtection: true,
+					rekeyTimeout: '5',
+					rekeyAfterTime: '120-150',
+					rejectAfterTime: '180',
+					keepaliveTimeout: '25',
+					maxHandshakeAttempts: '5',
+				},
+				{
+					id: 'awg3-Berlin0002',
+					tag: 'berlin',
+					host: '203.0.113.7:51820',
+					headerProtection: false,
+				},
+			],
+		});
+		return;
+	}
+
 	if (req.method === 'POST' && path === '/__mock/singbox-install-fail') {
 		try {
 			const body = await readJsonBody(req);
