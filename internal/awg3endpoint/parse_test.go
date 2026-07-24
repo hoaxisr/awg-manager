@@ -32,6 +32,25 @@ func TestParse_Envelope(t *testing.T) {
 	}
 }
 
+// AWG3 device-timers are opaque to Parse — they must survive untouched in
+// Record.Endpoint (edited only in RouteBox; awg-manager is passthrough).
+func TestParse_TimerFieldsPassthrough(t *testing.T) {
+	raw := []byte(`{"type":"awg","private_key":"k",` +
+		`"header_protection_key":"h","s1":12,"s2":12,"s3":12,"s4":12,` +
+		`"rekey_timeout":"5","reject_after_time":"180",` +
+		`"keepalive_timeout":"25","max_handshake_attempts":"5",` +
+		`"peers":[{"public_key":"p","address":"1.2.3.4:51820"}]}`)
+	rec, err := Parse(raw, "t1", map[string]bool{})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	for _, k := range []string{"rekey_timeout", "reject_after_time", "keepalive_timeout", "max_handshake_attempts"} {
+		if !strings.Contains(string(rec.Endpoint), k) {
+			t.Fatalf("таймер-поле %q должно пройти passthrough в Endpoint: %s", k, rec.Endpoint)
+		}
+	}
+}
+
 func TestParse_BareObject(t *testing.T) {
 	var env map[string]json.RawMessage
 	_ = json.Unmarshal(routeboxGolden, &env)

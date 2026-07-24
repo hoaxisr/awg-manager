@@ -107,6 +107,42 @@ func decodeAwg3List(t *testing.T, body []byte) []Awg3TunnelDTO {
 	return env.Data
 }
 
+// awg3RecordToDTO must surface AWG3 device-timers when present, and omit them
+// (leave empty → dropped by omitempty) when the config carries none.
+func TestAwg3RecordToDTO_Timers(t *testing.T) {
+	withTimers := awg3endpoint.Record{
+		ID:  "awg3-abc",
+		Tag: "amsterdam",
+		Endpoint: json.RawMessage(`{"type":"awg","header_protection_key":"h",` +
+			`"rekey_timeout":"5","rekey_after_time":"120-150","reject_after_time":"180",` +
+			`"keepalive_timeout":"25","max_handshake_attempts":"5",` +
+			`"peers":[{"address":"vpn.example.com","port":51820}]}`),
+	}
+	dto := awg3RecordToDTO(withTimers)
+	if dto.RekeyTimeout != "5" || dto.RekeyAfterTime != "120-150" || dto.RejectAfterTime != "180" ||
+		dto.KeepaliveTimeout != "25" || dto.MaxHandshakeAttempts != "5" {
+		t.Fatalf("timers not surfaced: %+v", dto)
+	}
+	if b, _ := json.Marshal(dto); !strings.Contains(string(b), "rekeyTimeout") {
+		t.Fatalf("timers must appear in JSON: %s", b)
+	}
+
+	noTimers := awg3endpoint.Record{
+		ID:       "awg3-xyz",
+		Tag:      "berlin",
+		Endpoint: json.RawMessage(`{"type":"awg","peers":[{"address":"h","port":1}]}`),
+	}
+	dto2 := awg3RecordToDTO(noTimers)
+	if dto2.RekeyTimeout != "" || dto2.RekeyAfterTime != "" || dto2.RejectAfterTime != "" ||
+		dto2.KeepaliveTimeout != "" || dto2.MaxHandshakeAttempts != "" {
+		t.Fatalf("absent timers must stay empty: %+v", dto2)
+	}
+	if b, _ := json.Marshal(dto2); strings.Contains(string(b), "rekeyTimeout") ||
+		strings.Contains(string(b), "rekeyAfterTime") {
+		t.Fatalf("omitempty must drop absent timers from JSON: %s", b)
+	}
+}
+
 func TestAwg3Handler_ImportValid(t *testing.T) {
 	h, _, svc, _ := newAwg3TestHandler(t)
 

@@ -40,6 +40,17 @@
 	const cardState = $derived(delayPresentation.state);
 	const latText = $derived(delayPresentation.label);
 
+	// AWG3 device timers — read-only, only the non-empty ones. Edited in RouteBox.
+	const timers = $derived(
+		[
+			{ label: 'rekey', value: tunnel.rekeyTimeout, unit: 's' },
+			{ label: 'rekey-after', value: tunnel.rekeyAfterTime, unit: 's' },
+			{ label: 'reject', value: tunnel.rejectAfterTime, unit: 's' },
+			{ label: 'keepalive', value: tunnel.keepaliveTimeout, unit: 's' },
+			{ label: 'max-hs', value: tunnel.maxHandshakeAttempts, unit: '' },
+		].filter((t): t is { label: string; value: string; unit: string } => !!t.value),
+	);
+
 	const badgeVariant = $derived<BadgeVariant>(
 		cardState === 'ok'
 			? 'success'
@@ -131,6 +142,16 @@
 	<Badge variant={badgeVariant} size="sm" mono title="Delay">{latText}</Badge>
 {/snippet}
 
+{#snippet timersMeta()}
+	{#if timers.length > 0}
+		<span class="timers" title="Таймеры устройства (настраиваются в RouteBox)">
+			{#each timers as t (t.label)}
+				<span class="timer"><span class="timer-label">{t.label}</span> {t.value}{t.unit}</span>
+			{/each}
+		</span>
+	{/if}
+{/snippet}
+
 {#snippet cardActions()}
 	<IconButton ariaLabel="Проверить delay" title="Проверить" disabled={checking} onclick={() => void triggerCheck()}>
 		<Activity size={16} aria-hidden="true" />
@@ -162,6 +183,7 @@
 			<span class="host">{tunnel.host}</span>
 		</td>
 		<td class="cell cell-hp" data-label="Защита">
+			<div class="hp-cell">
 			{#if tunnel.headerProtection}
 				<Badge variant="accent" size="xs">
 					<ShieldCheck size={11} aria-hidden="true" /> HP
@@ -169,6 +191,8 @@
 			{:else}
 				<span class="muted">—</span>
 			{/if}
+			{@render timersMeta()}
+			</div>
 		</td>
 		<td class="cell cell-delay" data-label="Delay">
 			<div class="delay-cell">
@@ -210,6 +234,7 @@
 								<ShieldCheck size={11} aria-hidden="true" /> HP
 							</Badge>
 						{/if}
+						{@render timersMeta()}
 					</div>
 				{/if}
 			</div>
@@ -355,6 +380,28 @@
 		justify-content: flex-end;
 	}
 	.muted { color: var(--color-text-muted); }
+
+	/* Read-only AWG3 device timers (edited only in RouteBox) */
+	.timers {
+		display: inline-flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px 8px;
+		min-width: 0;
+	}
+	.timer {
+		font-family: var(--font-mono, monospace);
+		font-size: 11px;
+		color: var(--color-text-muted);
+		white-space: nowrap;
+	}
+	.timer-label { opacity: 0.7; }
+	.hp-cell {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+	}
 
 	.confirm-text { margin: 0; }
 </style>

@@ -401,6 +401,25 @@ definitions:
       id:
         example: awg3-Ab12Cd34Ef
         type: string
+      keepaliveTimeout:
+        example: "25"
+        type: string
+      maxHandshakeAttempts:
+        example: "5"
+        type: string
+      rejectAfterTime:
+        example: "180"
+        type: string
+      rekeyAfterTime:
+        example: 120-150
+        type: string
+      rekeyTimeout:
+        description: |-
+          AWG3 device timers — read-only passthrough from the imported config
+          (edited only in RouteBox). Strings as RouteBox emits them (may be ranges
+          like "120-150"); omitted when the config carries no such field.
+        example: "5"
+        type: string
       tag:
         example: amsterdam
         type: string

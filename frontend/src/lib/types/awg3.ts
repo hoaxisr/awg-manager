@@ -4,4 +4,11 @@ export interface Awg3Tunnel {
 	tag: string;
 	host: string;
 	headerProtection: boolean;
+	/** AWG3 device timers — read-only passthrough (edited only in RouteBox).
+	 * Strings as emitted (may be ranges like "120-150"); absent when unset. */
+	rekeyTimeout?: string;
+	rekeyAfterTime?: string;
+	rejectAfterTime?: string;
+	keepaliveTimeout?: string;
+	maxHandshakeAttempts?: string;
 }
