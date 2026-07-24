@@ -149,25 +149,16 @@
 	}
 
 	async function generateLinkNow() {
-		if (!genClientId.trim()) {
-			randomClientId();
-		}
 		let peerParam = genPeer.trim();
 		if (peerParam && !peerParam.includes(':')) {
 			peerParam = `${peerParam}:${listenPort}`;
 		}
 		const result = await onGenerate(genProvider, peerParam, genMTU, genWG, genClientId, genName);
-		if (result?.clientId) {
-			genClientId = result.clientId;
-		}
 		if (result?.link) {
 			try {
 				linkParams = await api.decodeFreeTurnLink(result.link);
 			} catch {
 				linkParams = null;
-			}
-			if (genClientId.trim()) {
-				await saveClientToAllowlist(true);
 			}
 		}
 	}
@@ -312,9 +303,9 @@
 				<div class="ft-link-box">{generatedLink}</div>
 				<Button variant="ghost" size="sm" onclick={() => onCopy(generatedLink)}>Скопировать</Button>
 				<LinkParamsSummary payload={linkParams} peer={generatedPeer} />
-				{#if genClientId.trim()}
+				{#if genClientId.trim() && server.clientsFile}
 					<p class="ft-hint">
-						Client ID <code>{genClientId}</code> добавлен в allowlist (или уже был в списке).
+						Если allowlist включён — добавьте Client ID <code>{genClientId}</code> кнопкой «В список».
 					</p>
 				{/if}
 			</div>
