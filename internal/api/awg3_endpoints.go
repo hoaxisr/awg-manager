@@ -32,6 +32,13 @@ type Awg3TunnelDTO struct {
 	Tag              string `json:"tag" example:"amsterdam"`
 	Host             string `json:"host" example:"vpn.example.com:51820"`
 	HeaderProtection bool   `json:"headerProtection" example:"true"`
+	// AWG3 device timers — read-only passthrough from the imported config
+	// (edited only in RouteBox). Strings as RouteBox emits them (may be ranges
+	// like "120-150"); omitted when the config carries no such field.
+	RekeyTimeout         string `json:"rekeyTimeout,omitempty" example:"5"`
+	RejectAfterTime      string `json:"rejectAfterTime,omitempty" example:"180"`
+	KeepaliveTimeout     string `json:"keepaliveTimeout,omitempty" example:"25"`
+	MaxHandshakeAttempts string `json:"maxHandshakeAttempts,omitempty" example:"5"`
 }
 
 // Awg3ImportRequest is the POST /awg3-endpoints body: a human-readable tag and
@@ -368,6 +375,10 @@ func awg3RecordToDTO(rec awg3endpoint.Record) Awg3TunnelDTO {
 			Address string `json:"address"`
 			Port    int    `json:"port"`
 		} `json:"peers"`
+		RekeyTimeout         string `json:"rekey_timeout"`
+		RejectAfterTime      string `json:"reject_after_time"`
+		KeepaliveTimeout     string `json:"keepalive_timeout"`
+		MaxHandshakeAttempts string `json:"max_handshake_attempts"`
 	}
 	_ = json.Unmarshal(rec.Endpoint, &shape)
 
@@ -379,10 +390,14 @@ func awg3RecordToDTO(rec awg3endpoint.Record) Awg3TunnelDTO {
 		}
 	}
 	return Awg3TunnelDTO{
-		ID:               rec.ID,
-		Tag:              rec.Tag,
-		Host:             host,
-		HeaderProtection: strings.TrimSpace(shape.HeaderProtectionKey) != "",
+		ID:                   rec.ID,
+		Tag:                  rec.Tag,
+		Host:                 host,
+		HeaderProtection:     strings.TrimSpace(shape.HeaderProtectionKey) != "",
+		RekeyTimeout:         shape.RekeyTimeout,
+		RejectAfterTime:      shape.RejectAfterTime,
+		KeepaliveTimeout:     shape.KeepaliveTimeout,
+		MaxHandshakeAttempts: shape.MaxHandshakeAttempts,
 	}
 }
 
