@@ -93,7 +93,7 @@
 				{/if}
 			</button>
 		{/if}
-		{#if instances.length > 1 && onSelectInstance}
+		{#if onSelectInstance}
 			<LogInstanceSwitcher items={instances} selectedId={selectedInstanceId} onSelect={onSelectInstance} />
 		{/if}
 		<div class="ft-log-toolbar-actions">

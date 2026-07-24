@@ -15,14 +15,13 @@
 </script>
 
 {#if items.length > 1}
-	<div class="ft-log-instances" role="tablist" aria-label="Переключение инстанса">
+	<div class="ft-log-instances" role="group" aria-label="Переключение инстанса">
 		{#each items as item (item.id)}
 			<button
 				type="button"
-				role="tab"
 				class="ft-log-instance"
 				class:active={item.id === selectedId}
-				aria-selected={item.id === selectedId}
+				aria-pressed={item.id === selectedId}
 				title={item.running ? `${item.name} — запущен` : `${item.name} — остановлен`}
 				onclick={() => onSelect(item.id)}
 			>
