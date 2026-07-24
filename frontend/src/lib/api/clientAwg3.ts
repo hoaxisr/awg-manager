@@ -10,15 +10,11 @@ export class Awg3Client extends WdttClient {
 		return this.request<Awg3Tunnel[]>('/awg3-endpoints');
 	}
 
-	// config — сырой JSON конфига AWG3 (json.RawMessage на бэке). Строку
-	// парсим в объект, чтобы поле config уходило как настоящий JSON, а не
-	// JSON-строка в кавычках. JSON.parse на некорректной строке бросит
-	// SyntaxError — это ок: модалка pre-валидирует и передаёт объект.
+	// config — либо JSON-объект endpoint'а, либо строка с текстом .conf.
+	// Объект уходит как настоящий JSON; строка — как JSON-строка в кавычках,
+	// backend детектит её по первому байту и парсит как .conf.
 	async awg3Import(tag: string, config: unknown): Promise<Awg3Tunnel[]> {
-		const body = JSON.stringify({
-			tag,
-			config: typeof config === 'string' ? JSON.parse(config) : config,
-		});
+		const body = JSON.stringify({ tag, config });
 		return this.request<Awg3Tunnel[]>('/awg3-endpoints', { method: 'POST', body });
 	}
 
