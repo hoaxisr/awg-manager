@@ -141,6 +141,10 @@ const api_Awg3TunnelDTO: v.GenericSchema = v.looseObject({
 	headerProtection: v.optional(v.nullable(v.boolean())),
 	host: v.optional(v.nullable(v.string())),
 	id: v.optional(v.nullable(v.string())),
+	keepaliveTimeout: v.optional(v.nullable(v.string())),
+	maxHandshakeAttempts: v.optional(v.nullable(v.string())),
+	rejectAfterTime: v.optional(v.nullable(v.string())),
+	rekeyTimeout: v.optional(v.nullable(v.string())),
 	tag: v.optional(v.nullable(v.string())),
 });
 
