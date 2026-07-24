@@ -32,7 +32,6 @@ type FreeTurnService interface {
 	RenameServer(id, name string) error
 	ServerConfigForLink(id string) (freeturn.ServerConfig, error)
 	Status() freeturn.Status
-	StatusForceRemote(ctx context.Context) freeturn.Status
 	StartClient() error
 	StopClient() error
 	StartServer() error
@@ -178,14 +177,7 @@ func (h *FreeTurnHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
 		return
 	}
-	force := r.URL.Query().Get("forceRemote") == "1" || r.URL.Query().Get("forceRemote") == "true"
-	var st freeturn.Status
-	if force {
-		st = h.svc.StatusForceRemote(r.Context())
-	} else {
-		st = h.svc.Status()
-	}
-	response.Success(w, st)
+	response.Success(w, h.svc.Status())
 }
 
 // StartClient handles POST /api/freeturn/client/start.

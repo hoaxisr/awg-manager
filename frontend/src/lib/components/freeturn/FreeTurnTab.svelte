@@ -36,7 +36,6 @@
 
 	let importing = $state(false);
 	let installing = $state(false);
-	let checkingUpdates = $state(false);
 
 	let genProvider = $state('vk');
 	let genPeer = $state('');
@@ -49,7 +48,7 @@
 	let generatedPeer = $state('');
 	let generatedClientId = $state('');
 
-	const statusPoll = createSelfReschedulingPoll(() => loadStatus(false));
+	const statusPoll = createSelfReschedulingPoll(() => loadStatus());
 
 	const ftTabs = [
 		{ id: 'client', label: 'Клиент' },
@@ -88,7 +87,7 @@
 
 	onMount(async () => {
 		try {
-			await Promise.all([loadConfig(), loadStatus(false)]);
+			await Promise.all([loadConfig(), loadStatus()]);
 		} finally {
 			loading = false;
 		}
@@ -161,23 +160,11 @@
 		}
 	}
 
-	async function loadStatus(forceRemote = false) {
+	async function loadStatus() {
 		try {
-			status = await api.getFreeTurnStatus(forceRemote);
+			status = await api.getFreeTurnStatus();
 		} catch {
 			// Молча — как ping-бейджи списка туннелей.
-		}
-	}
-
-	async function checkUpdates() {
-		checkingUpdates = true;
-		try {
-			await loadStatus(true);
-			if (status?.installedVersion && !status.updateAvailable && !status.remoteCheckError) {
-				notifications.info('Установлена актуальная версия');
-			}
-		} finally {
-			checkingUpdates = false;
 		}
 	}
 
@@ -518,12 +505,8 @@
 		installVersion={status?.installVersion}
 		installedVersion={status?.installedVersion}
 		updateAvailable={status?.updateAvailable ?? false}
-		remoteVersion={status?.remoteVersion}
-		remoteCheckError={status?.remoteCheckError}
 		installing={installing || (status?.installing ?? false)}
-		{checkingUpdates}
 		onInstall={install}
-		onCheckUpdates={checkUpdates}
 		productName="freeturn"
 		installSuffix=" (клиент + сервер)"
 		notFoundHint="awg-manager не поставляет freeturn в своём пакете."
@@ -531,7 +514,7 @@
 		{#snippet manualInstall(binary)}
 			<span>
 				Бинарь <code>{binary}</code> не найден. Установите вручную из
-				<a href="https://github.com/samosvalishe/free-turn-proxy" target="_blank" rel="noopener"
+				<a href="https://github.com/hoaxisr/free-turn-proxy" target="_blank" rel="noopener"
 					>free-turn-proxy</a
 				>.
 			</span>

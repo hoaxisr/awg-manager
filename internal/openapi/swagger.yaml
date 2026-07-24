@@ -6792,13 +6792,6 @@ definitions:
       installing:
         description: Installing — установка сейчас идёт (кнопка блокируется).
         type: boolean
-      remoteCheckError:
-        description: RemoteCheckError — ошибка последней проверки GitHub (не блокирует
-          pin-fallback).
-        type: string
-      remoteVersion:
-        description: RemoteVersion — последняя версия с GitHub (если проверка удалась).
-        type: string
       routerClock:
         description: RouterClock — текущее время роутера для сверки с метками в логе
           freeturn.

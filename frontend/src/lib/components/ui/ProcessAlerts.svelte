@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import Button from './Button.svelte';
-	import { RefreshCw } from 'lucide-svelte';
 
 	interface ProcessAlertStatus {
 		running: boolean;
@@ -26,11 +25,6 @@
 		notFoundHint: string;
 		/** Содержимое warn-блока, когда установка недоступна (разная разметка: ссылка/код). */
 		manualInstall?: Snippet<[string]>;
-		/** freeturn-only: проверка обновлений на GitHub. */
-		remoteVersion?: string;
-		remoteCheckError?: string;
-		checkingUpdates?: boolean;
-		onCheckUpdates?: () => void;
 	}
 
 	let {
@@ -44,11 +38,7 @@
 		productName,
 		installSuffix = '',
 		notFoundHint,
-		manualInstall,
-		remoteVersion,
-		remoteCheckError,
-		checkingUpdates = false,
-		onCheckUpdates
+		manualInstall
 	}: Props = $props();
 
 	const showInstall = $derived(installAvailable && status && !status.binaryPresent);
@@ -92,30 +82,8 @@
 	<div class="proc-alert proc-alert--ok">
 		<span>
 			{productName} v{installedVersion || installVersion} установлен{installSuffix}
-			{#if remoteVersion && remoteVersion !== installVersion}
-				<span class="proc-alert-muted"> · на GitHub: v{remoteVersion}</span>
-			{/if}
 		</span>
-		{#if onCheckUpdates}
-			<Button
-				variant="ghost"
-				size="sm"
-				loading={checkingUpdates}
-				onclick={onCheckUpdates}
-				title="Проверить обновления на GitHub"
-			>
-				<RefreshCw size={14} />
-				Проверить обновления
-			</Button>
-		{/if}
 	</div>
-{/if}
-
-{#if remoteCheckError && installAvailable}
-	<p class="proc-alert-remote-warn">
-		Не удалось проверить GitHub: {remoteCheckError}. Используется версия из сборки awg-manager
-		(v{installVersion}).
-	</p>
 {/if}
 
 {#if !status?.running && status?.lastError}
@@ -154,16 +122,6 @@
 		border: 1px solid var(--color-border);
 		background: var(--color-bg-secondary);
 		color: var(--color-text-secondary);
-	}
-
-	.proc-alert-muted {
-		opacity: 0.85;
-	}
-
-	.proc-alert-remote-warn {
-		font-size: 0.75rem;
-		color: var(--color-text-secondary);
-		margin: -0.5rem 0 0.875rem;
 	}
 
 	.proc-alert--warn :global(a) {

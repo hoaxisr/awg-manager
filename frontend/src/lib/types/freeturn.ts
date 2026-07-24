@@ -82,8 +82,6 @@ export interface FreeTurnStatus {
 	installAvailable: boolean;
 	installVersion?: string;
 	installedVersion?: string;
-	remoteVersion?: string;
-	remoteCheckError?: string;
 	updateAvailable?: boolean;
 	installing: boolean;
 	/** Текущее время роутера — для сверки с метками в логе freeturn. */

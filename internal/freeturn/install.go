@@ -65,6 +65,18 @@ func (s *Service) SetDownloader(dl childproc.Downloader) {
 	s.downloader = dl
 }
 
+// resolveInstallSpecs returns the build-pinned specs and their version.
+// Установка всегда ставит закреплённую в сборку версию; отдельного
+// удалённого канала обновлений нет — новый freeturn приходит с новой
+// сборкой awg-manager (см. EmbeddedBinaries / PinnedVersion).
+func (s *Service) resolveInstallSpecs() (ArchSpecs, string) {
+	if s.installSpecs == nil {
+		return ArchSpecs{}, ""
+	}
+	pinned := *s.installSpecs
+	return pinned, pinned.Client.Version
+}
+
 // InstallInfo reports whether one-click install is available and which
 // version it would install (always the build pin).
 func (s *Service) InstallInfo() (version string, available bool) {

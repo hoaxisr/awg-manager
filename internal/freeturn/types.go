@@ -182,10 +182,6 @@ type Status struct {
 	InstalledVersion string `json:"installedVersion,omitempty"`
 	// UpdateAvailable — бинари отсутствуют или устарели относительно InstallVersion.
 	UpdateAvailable bool `json:"updateAvailable"`
-	// RemoteVersion — последняя версия с GitHub (если проверка удалась).
-	RemoteVersion string `json:"remoteVersion,omitempty"`
-	// RemoteCheckError — ошибка последней проверки GitHub (не блокирует pin-fallback).
-	RemoteCheckError string `json:"remoteCheckError,omitempty"`
 	// Installing — установка сейчас идёт (кнопка блокируется).
 	Installing bool `json:"installing"`
 	// RouterClock — текущее время роутера для сверки с метками в логе freeturn.

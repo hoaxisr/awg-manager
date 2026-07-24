@@ -38,6 +38,7 @@
 		onSelectInstance
 	}: Props = $props();
 
+	// svelte-ignore state_referenced_locally -- defaultCollapsed лишь seed стартового значения; дальше collapsed тоглится независимо
 	let collapsed = $state(defaultCollapsed);
 
 	let logEl: HTMLPreElement | undefined = $state();

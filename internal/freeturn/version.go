@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/semver"
@@ -69,8 +71,41 @@ func (s *Service) installStatusFields(installVersion string) (installedVersion s
 	if installedVersion == "" {
 		return installedVersion, true
 	}
-	if semver.Compare(installedVersion, installVersion) < 0 {
+	if compareFreeturnVersion(installedVersion, installVersion) < 0 {
 		return installedVersion, true
 	}
 	return installedVersion, false
+}
+
+// compareFreeturnVersion сравнивает версии вида "1.8.0-N", где N — номер
+// пересборки awg-manager. semver трактует "-N" как pre-release-суффикс и
+// отбрасывает его (Compare("1.8.0-2","1.8.0-3")==0), поэтому при равных
+// semver-базах решает целое после последнего "-". Возвращает -1/0/1.
+func compareFreeturnVersion(a, b string) int {
+	if c := semver.Compare(a, b); c != 0 {
+		return c
+	}
+	ra, rb := revisionSuffix(a), revisionSuffix(b)
+	switch {
+	case ra < rb:
+		return -1
+	case ra > rb:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// revisionSuffix возвращает целое после последнего "-" ("1.8.0-3" → 3),
+// или 0 если суффикса нет либо он не числовой.
+func revisionSuffix(v string) int {
+	i := strings.LastIndexByte(v, '-')
+	if i < 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v[i+1:]))
+	if err != nil {
+		return 0
+	}
+	return n
 }

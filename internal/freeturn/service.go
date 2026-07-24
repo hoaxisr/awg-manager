@@ -1,7 +1,6 @@
 package freeturn
 
 import (
-	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -38,10 +37,6 @@ type Service struct {
 	downloader   childproc.Downloader
 	installMu    sync.Mutex
 	installing   bool
-
-	archKey     string
-	remoteMu    sync.RWMutex
-	remoteCache *remoteReleaseCache
 
 	appLog *logging.ScopedLogger
 
@@ -311,13 +306,7 @@ func (s *Service) serverInstance(id string) (ServerInstance, error) {
 }
 
 // Status returns the local install/instance state without any network calls.
-// Проверка апстрим-релиза выполняется только по явному запросу — StatusForceRemote.
 func (s *Service) Status() Status {
-	return s.statusLocked()
-}
-
-func (s *Service) StatusForceRemote(ctx context.Context) Status {
-	s.refreshRemote(ctx, true)
 	return s.statusLocked()
 }
 
@@ -328,15 +317,12 @@ func (s *Service) statusLocked() Status {
 	}
 	version, available := s.InstallInfo()
 	installedVersion, updateAvailable := s.installStatusFields(version)
-	remoteVersion, remoteErr := s.remoteStatus()
 	clock := routerclock.Get()
 	st := Status{
 		InstallAvailable: available,
 		InstallVersion:   version,
 		InstalledVersion: installedVersion,
 		UpdateAvailable:  updateAvailable,
-		RemoteVersion:    remoteVersion,
-		RemoteCheckError: remoteErr,
 		Installing:       s.Installing(),
 		RouterClock:      clock.Now.Format("2006-01-02 15:04:05") + " " + clock.ZoneName,
 	}

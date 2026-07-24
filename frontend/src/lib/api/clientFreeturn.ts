@@ -97,9 +97,8 @@ export class FreeturnClient extends SubscriptionsClient {
 		});
 	}
 
-	async getFreeTurnStatus(forceRemote = false): Promise<FreeTurnStatus> {
-		const q = forceRemote ? '?forceRemote=1' : '';
-		return this.request<FreeTurnStatus>(`/freeturn/status${q}`);
+	async getFreeTurnStatus(): Promise<FreeTurnStatus> {
+		return this.request<FreeTurnStatus>('/freeturn/status');
 	}
 
 	async getFreeTurnCaptchaStatus(): Promise<FreeTurnCaptchaOverview> {
