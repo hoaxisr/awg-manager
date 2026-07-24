@@ -197,3 +197,25 @@ func TestEnabledOutboundTags_VisibilityMatchesPrune(t *testing.T) {
 		t.Error("vpn must be visible once the router slot is enabled")
 	}
 }
+
+// EnabledOutboundTags must include ENDPOINT tags, not just outbound tags:
+// validate.go collects c.Endpoints into the same tag namespace (an awg3
+// endpoint is addressed by tag exactly like an outbound), so the oracle
+// that guards selector/device-proxy refs against dangling-prune has to
+// agree — otherwise an awg3 endpoint tag looks dangling and gets stripped.
+func TestEnabledOutboundTags_IncludesEndpointTags(t *testing.T) {
+	o, dir := setupDegradedOrch(t)
+	awgJSON := []byte(`{
+  "endpoints": [
+    {"type": "wireguard", "tag": "awg-x"}
+  ]
+}`)
+	if err := os.WriteFile(filepath.Join(dir, "15-awg.json"), awgJSON, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tags := o.EnabledOutboundTags(SlotDeviceProxy)
+	if !tags["awg-x"] {
+		t.Error("awg-x endpoint tag (AlwaysOn slot 15) must be visible")
+	}
+}
