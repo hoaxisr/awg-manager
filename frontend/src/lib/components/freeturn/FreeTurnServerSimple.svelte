@@ -8,6 +8,7 @@
 	import ServerWgBind from './ServerWgBind.svelte';
 	import ProcessLogBox from './ProcessLogBox.svelte';
 	import LinkParamsSummary from './LinkParamsSummary.svelte';
+	import type { LogInstanceItem } from './LogInstanceSwitcher.svelte';
 	import ServerAllowlist from './ServerAllowlist.svelte';
 	import { obfOptions } from './options';
 	import { obfProfileHints, randomObfKeyHex } from './obfHints';
@@ -40,6 +41,9 @@
 			name: string
 		) => Promise<import('$lib/types').FreeTurnGenerateLinkResult | null>;
 		onCopy: (text: string) => void;
+		instances?: LogInstanceItem[];
+		selectedInstanceId?: string;
+		onSelectInstance?: (id: string) => void;
 	}
 
 	let {
@@ -61,7 +65,10 @@
 		onSave,
 		onToggle,
 		onGenerate,
-		onCopy
+		onCopy,
+		instances = [],
+		selectedInstanceId = '',
+		onSelectInstance
 	}: Props = $props();
 
 	let starting = $state(false);
@@ -314,7 +321,14 @@
 		<ServerAllowlist bind:this={allowlistPanel} serverInstanceId={serverInstanceId} {server} />
 	</WizardStep>
 
-	<ProcessLogBox log={status?.log} bind:debug={server.debug} showDebugToggle />
+	<ProcessLogBox
+		log={status?.log}
+		bind:debug={server.debug}
+		showDebugToggle
+		{instances}
+		{selectedInstanceId}
+		{onSelectInstance}
+	/>
 </div>
 
 <style>

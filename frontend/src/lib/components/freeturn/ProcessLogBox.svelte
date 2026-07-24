@@ -3,6 +3,7 @@
 	import { ChevronRight, ChevronDown, ArrowDown } from 'lucide-svelte';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { notifications } from '$lib/stores/notifications';
+	import LogInstanceSwitcher, { type LogInstanceItem } from './LogInstanceSwitcher.svelte';
 
 	interface Props {
 		log?: string;
@@ -17,6 +18,10 @@
 		debug?: boolean;
 		/** Свёрнут ли лог по умолчанию. */
 		defaultCollapsed?: boolean;
+		/** Компактный переключатель клиентов/серверов в шапке лога. */
+		instances?: LogInstanceItem[];
+		selectedInstanceId?: string;
+		onSelectInstance?: (id: string) => void;
 	}
 
 	let {
@@ -27,7 +32,10 @@
 		embedded = false,
 		showDebugToggle = false,
 		debug = $bindable(false),
-		defaultCollapsed = false
+		defaultCollapsed = false,
+		instances = [],
+		selectedInstanceId = '',
+		onSelectInstance
 	}: Props = $props();
 
 	let collapsed = $state(defaultCollapsed);
@@ -84,6 +92,9 @@
 					<span class="ft-log-meta">({lineCount} строк)</span>
 				{/if}
 			</button>
+		{/if}
+		{#if instances.length > 1 && onSelectInstance}
+			<LogInstanceSwitcher items={instances} selectedId={selectedInstanceId} onSelect={onSelectInstance} />
 		{/if}
 		<div class="ft-log-toolbar-actions">
 			{#if !stickToBottom}
@@ -188,12 +199,18 @@
 	}
 
 	.ft-log-toolbar--header {
-		justify-content: space-between;
+		justify-content: flex-start;
+		flex-wrap: nowrap;
 		margin-bottom: 0.5rem;
+	}
+
+	.ft-log-toolbar--header .ft-log-toggle {
+		flex-shrink: 0;
 	}
 
 	.ft-log-toolbar--header .ft-log-toolbar-actions {
 		width: auto;
+		margin-left: auto;
 	}
 
 	.ft-log-debug {

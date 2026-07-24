@@ -4,7 +4,8 @@
 	import WizardStep from '$lib/components/sb-router/WizardStep.svelte';
 	import ProcessLogBox from './ProcessLogBox.svelte';
 	import LinkParamsSummary from './LinkParamsSummary.svelte';
-	import { browserOptions } from './options';
+	import type { LogInstanceItem } from './LogInstanceSwitcher.svelte';
+	import { browserOptions, modeOptions, transportOptions } from './options';
 	import { api } from '$lib/api/client';
 	import type { FreeTurnClientConfig, FreeTurnLinkPayload, FreeTurnProcessStatus } from '$lib/types';
 
@@ -17,6 +18,9 @@
 		onSave: (cfg: FreeTurnClientConfig) => void | Promise<void>;
 		onToggle: (on: boolean) => void | Promise<void>;
 		onImportLink: (link: string) => void | Promise<void>;
+		instances?: LogInstanceItem[];
+		selectedInstanceId?: string;
+		onSelectInstance?: (id: string) => void;
 	}
 
 	let {
@@ -27,7 +31,10 @@
 		routerClock,
 		onSave,
 		onToggle,
-		onImportLink
+		onImportLink,
+		instances = [],
+		selectedInstanceId = '',
+		onSelectInstance
 	}: Props = $props();
 
 	let importLink = $state('');
@@ -142,7 +149,7 @@
 	<WizardStep
 		n={3}
 		title="Потоки и браузер"
-		hint="-n, -streams-per-cred, -browser"
+		hint="-n, -streams-per-cred, -mode, -transport, -browser"
 		active={step2Done}
 	>
 		<div class="ft-simple-grid">
@@ -163,6 +170,18 @@
 			Суммарно до {linksCount * client.streamsPerCred || client.streamsPerCred} потоков на все
 			ссылки (×{linksCount || 1} кред{linksCount === 1 ? '' : 'а'}). Каждый поток может
 			потребовать отдельную VK-капчу.
+		</p>
+
+		<div class="ft-simple-grid">
+			<Dropdown label="Режим (-mode)" bind:value={client.mode} options={modeOptions} />
+			<Dropdown
+				label="Транспорт до TURN (-transport)"
+				bind:value={client.transport}
+				options={transportOptions}
+			/>
+		</div>
+		<p class="ft-hint">
+			<code>-mode</code> — режим туннеля (udp/tcp). <code>-transport</code> — протокол до TURN-relay.
 		</p>
 
 		<Dropdown
@@ -198,7 +217,15 @@
 		</div>
 	</WizardStep>
 
-	<ProcessLogBox log={status?.log} {routerClock} bind:debug={client.debug} showDebugToggle />
+	<ProcessLogBox
+		log={status?.log}
+		{routerClock}
+		bind:debug={client.debug}
+		showDebugToggle
+		{instances}
+		{selectedInstanceId}
+		{onSelectInstance}
+	/>
 </div>
 
 <style>
