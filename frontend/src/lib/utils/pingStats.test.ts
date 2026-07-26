@@ -66,7 +66,7 @@ describe('unknown latency (-1)', () => {
 		tunnelId: 't', tunnelName: 't', enabled: true, backend: 'nativewg',
 		status: 'alive', method: 'handshake', lastLatency: -1,
 		failCount: 0, failThreshold: 3, restartCount: 0,
-	} as TunnelPingStatus;
+	};
 
 	it('не учитывает неизмеренные проверки в avg/min/max', () => {
 		const s = computeCardStats([log('t', true, -1), log('t', true, -1)], status);
