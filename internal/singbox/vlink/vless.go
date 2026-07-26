@@ -41,12 +41,44 @@ func parseVless(input string) (*ParsedOutbound, error) {
 	return buildVlessOutbound(host, uint16(port), uuid, q.Get("flow"), q.Get("encryption"), stream, u.Fragment, u.Fragment)
 }
 
+// meaninglessEncryption lists encryption values that carry no meaning for
+// VLESS: "none" from the spec itself, plus VMess ciphers that keep travelling
+// through public subscriptions by copy-paste. They are dropped silently.
+var meaninglessEncryption = map[string]bool{
+	"":                  true,
+	"none":              true,
+	"auto":              true,
+	"zero":              true,
+	"aes-128-gcm":       true,
+	"aes-256-gcm":       true,
+	"aes-128-cfb":       true,
+	"chacha20-poly1305": true,
+}
+
+// checkVlessEncryption rejects links that need real VLESS Encryption (issue
+// #603). sing-box has no encryption field on a VLESS outbound at all
+// (option.VLESSOutboundOptions) and decodes strictly, so passing the value
+// through poisons the whole config with `json: unknown field "encryption"`.
+// Dropping it silently would instead hand the user a server that cannot
+// connect, so anything outside the meaningless set fails here — the list is a
+// whitelist of junk on purpose: an unknown value is more likely a new
+// encryption spec than new junk, and a visible refusal beats a silent break.
+func checkVlessEncryption(encryption string) error {
+	if meaninglessEncryption[strings.ToLower(strings.TrimSpace(encryption))] {
+		return nil
+	}
+	return fmt.Errorf("vless: encryption=%q не поддерживается sing-box (VLESS Encryption) — сервер пропущен", encryption)
+}
+
 // buildVlessOutbound assembles the vless outbound shared by the share-link
 // parser (parseVless) and the Clash mapper (mapClashVless), so flow
 // normalization and encryption handling stay identical across both entry
 // formats — previously the Clash path took flow raw and ignored encryption.
 // tag falls back to vless-<host>-<port> when empty.
 func buildVlessOutbound(host string, port uint16, uuid, flow, encryption string, stream *StreamBuilder, tag, label string) (*ParsedOutbound, error) {
+	if err := checkVlessEncryption(encryption); err != nil {
+		return nil, err
+	}
 	out := map[string]any{
 		"type":        "vless",
 		"server":      host,
@@ -55,9 +87,6 @@ func buildVlessOutbound(host string, port uint16, uuid, flow, encryption string,
 	}
 	if f := normalizeFlow(flow); f != "" {
 		out["flow"] = f
-	}
-	if encryption != "" && encryption != "none" {
-		out["encryption"] = encryption
 	}
 	stream.MergeIntoOutbound(out)
 
