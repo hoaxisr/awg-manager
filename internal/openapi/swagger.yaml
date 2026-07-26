@@ -5813,6 +5813,9 @@ definitions:
       lastLatency:
         example: 35
         type: integer
+      latencyNote:
+        example: метод проверки не измеряет время отклика
+        type: string
       method:
         example: http
         type: string

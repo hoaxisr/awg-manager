@@ -9,8 +9,12 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 )
 
-// LatencyNotAvailable is used for NativeWG log entries where NDMS
-// does not provide per-check latency data. Frontend hides the value.
+// LatencyNotAvailable marks a NativeWG log entry whose latency could not be
+// measured: NDMS gives no per-check timing, and the fallback probe either
+// failed or ran a method that does not measure time at all. It is a sentinel,
+// NOT a value — the UI must render it as "unknown" and keep it out of
+// avg/min/max (issue #629). The reason travels separately, in
+// TunnelStatus.LatencyNote.
 const LatencyNotAvailable = -1
 
 // nwgPollSource abstracts NDMS polling for testability.
@@ -27,7 +31,7 @@ type nwgMonitor struct {
 	threshold    int
 	logBuffer    *LogBuffer
 	source       nwgPollSource
-	latencyProbe func(context.Context, string) int
+	latencyProbe func(context.Context, string) (int, string)
 	bus          *events.Bus
 
 	stopCh    chan struct{}
@@ -41,7 +45,9 @@ type nwgMonitor struct {
 	prevStatus   string
 	prevBound    bool
 	lastLatency  int
-	startupPhase bool
+	// lastLatencyNote explains an absent measurement; empty when measured.
+	lastLatencyNote string
+	startupPhase    bool
 
 	// restartDetected is set when nwgMonitor detects that NDMS restarted
 	// the tunnel interface (counters reset after failure). Cleared on first
@@ -278,9 +284,10 @@ func (m *nwgMonitor) pollOnce(ctx context.Context) {
 		return // skip this poll, retry next interval
 	}
 	if m.latencyProbe != nil {
-		m.lastLatency = m.latencyProbe(ctx, m.tunnelID)
+		m.lastLatency, m.lastLatencyNote = m.latencyProbe(ctx, m.tunnelID)
 	} else {
 		m.lastLatency = LatencyNotAvailable
+		m.lastLatencyNote = "проба времени отклика не настроена"
 	}
 
 	// Sync poll interval with actual NDMS check interval on first poll.

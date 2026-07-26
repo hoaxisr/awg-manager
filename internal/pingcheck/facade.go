@@ -38,7 +38,7 @@ type Facade struct {
 	nwgSource       nwgPollSource // nil when nwgOp is nil; overridable for tests
 	nwgMonMu        sync.RWMutex
 	nwgMonitors     map[string]*nwgMonitor
-	nwgLatencyProbe func(context.Context, string) int // returns latency in ms, <=0 when unavailable
+	nwgLatencyProbe func(context.Context, string) (int, string) // latency in ms, plus a note when unavailable
 	ctx             context.Context
 	cancel          context.CancelFunc
 }
@@ -63,8 +63,10 @@ func NewFacade(custom *Service, tunnels *storage.AWGTunnelStore, nwgOp *nwg.Oper
 
 // SetNativeWGLatencyProbe sets an optional probe used by NativeWG monitors
 // to obtain real latency values (for example, via testing connectivity checks).
-// Probe should return latency in milliseconds, or <=0 when unavailable.
-func (f *Facade) SetNativeWGLatencyProbe(fn func(context.Context, string) int) {
+// The probe returns latency in milliseconds, or LatencyNotAvailable plus a
+// user-facing note explaining why nothing was measured — see
+// LatencyFromConnectivity.
+func (f *Facade) SetNativeWGLatencyProbe(fn func(context.Context, string) (int, string)) {
 	f.nwgLatencyProbe = fn
 }
 
@@ -195,6 +197,7 @@ func (f *Facade) getNativeWGStatuses() []TunnelStatus {
 			if ts.Status == "recovering" {
 				ts.RestartCount = 1
 			}
+			ts.LatencyNote = f.nwgLatencyNote(t.ID)
 		}
 
 		result = append(result, ts)
@@ -248,6 +251,18 @@ func (f *Facade) isNwgRestartDetected(tunnelID string) bool {
 		return false
 	}
 	return mon.restartDetected
+}
+
+// nwgLatencyNote returns the monitor's explanation for an absent latency
+// measurement, or "" when the last check produced a real number.
+func (f *Facade) nwgLatencyNote(tunnelID string) string {
+	f.nwgMonMu.RLock()
+	mon, ok := f.nwgMonitors[tunnelID]
+	f.nwgMonMu.RUnlock()
+	if !ok {
+		return ""
+	}
+	return mon.lastLatencyNote
 }
 
 // startNwgMonitor creates and starts a poll-based nwgMonitor for the given tunnel.

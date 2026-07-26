@@ -786,7 +786,8 @@ button.tunnel-list-traffic-cell:focus-visible {
 }
 
 .tunnel-delay-spark.unknown .bar,
-.tunnel-delay-spark .bar.empty {
+.tunnel-delay-spark .bar.empty,
+.tunnel-delay-spark .bar.unmeasured {
 	background: color-mix(in srgb, var(--color-text-muted) 35%, transparent);
 }
 
