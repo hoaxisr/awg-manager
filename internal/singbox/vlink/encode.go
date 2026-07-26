@@ -69,9 +69,6 @@ func encodeVless(ob map[string]any, label string) (string, error) {
 	if flow, _ := ob["flow"].(string); flow != "" {
 		q.Set("flow", flow)
 	}
-	if enc, _ := ob["encryption"].(string); enc != "" && !strings.EqualFold(enc, "none") {
-		q.Set("encryption", enc)
-	}
 	u.RawQuery = q.Encode()
 	if label != "" {
 		u.Fragment = label
