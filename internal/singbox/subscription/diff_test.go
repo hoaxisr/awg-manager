@@ -211,3 +211,88 @@ func TestPreviewSuffixMatchesRefreshTag(t *testing.T) {
 		}
 	}
 }
+
+// mkParsedWS строит vless-сервер с ws-транспортом: те же server/port/uuid,
+// но своя пара path+Host — ровно случай issue #625.
+func mkParsedWS(server string, port uint16, sni, path, host string) vlink.ParsedOutbound {
+	ob := map[string]any{
+		"type": "vless", "server": server, "server_port": port,
+		"uuid": "00000000-0000-0000-0000-000000000000",
+		"tls":  map[string]any{"enabled": true, "server_name": sni},
+		"transport": map[string]any{
+			"type": "ws", "path": path,
+			"headers": map[string]any{"Host": host},
+		},
+	}
+	raw, _ := json.Marshal(ob)
+	return vlink.ParsedOutbound{
+		Tag: "tmp", Protocol: "vless", Server: server, Port: port, Outbound: raw,
+	}
+}
+
+// mkParsedReality — различие только в маскировке (issue #373): тег обязан
+// остаться тем же, что и до правки, иначе у существующих подписок разъедутся
+// все теги, а не только сломанные.
+func mkParsedReality(server string, port uint16, sni, shortID string) vlink.ParsedOutbound {
+	ob := map[string]any{
+		"type": "vless", "server": server, "server_port": port,
+		"uuid": "00000000-0000-0000-0000-000000000000",
+		"tls": map[string]any{
+			"enabled": true, "server_name": sni,
+			"reality": map[string]any{"enabled": true, "short_id": shortID},
+		},
+	}
+	raw, _ := json.Marshal(ob)
+	return vlink.ParsedOutbound{
+		Tag: "tmp", Protocol: "vless", Server: server, Port: port, Outbound: raw,
+	}
+}
+
+// Issue #625: серверы на одном server:port:uuid:SNI, различающиеся только
+// ws-путём и Host-заголовком, — разные эндпоинты, а не дубликаты.
+func TestApplyDiff_TransportDistinguishesMembers(t *testing.T) {
+	parsed := []vlink.ParsedOutbound{
+		mkParsedWS("1.2.3.4", 443, "cdn.example.com", "/path1", "host1"),
+		mkParsedWS("1.2.3.4", 443, "cdn.example.com", "/path2", "host2"),
+	}
+	got := ApplyDiff("sub", nil, parsed)
+	if got.SkippedDuplicate != 0 {
+		t.Errorf("SkippedDuplicate = %d, want 0", got.SkippedDuplicate)
+	}
+	if len(got.New) != 2 {
+		t.Fatalf("len(New) = %d, want 2", len(got.New))
+	}
+	if got.New[0].Tag == got.New[1].Tag {
+		t.Errorf("both endpoints got the same tag %q", got.New[0].Tag)
+	}
+}
+
+// Байт-идентичные записи остаются дубликатами и держат УЗКИЙ ключ —
+// иначе теги существующих подписок поедут без причины.
+func TestApplyDiff_TrueDuplicatesKeepNarrowTag(t *testing.T) {
+	p := mkParsedWS("1.2.3.4", 443, "cdn.example.com", "/p", "h")
+	got := ApplyDiff("sub", nil, []vlink.ParsedOutbound{p, p})
+	if got.SkippedDuplicate != 1 {
+		t.Errorf("SkippedDuplicate = %d, want 1", got.SkippedDuplicate)
+	}
+	if len(got.New) != 1 {
+		t.Fatalf("len(New) = %d, want 1", len(got.New))
+	}
+	if want := stableTagFromKey("sub", identityKey(p)); got.New[0].Tag != want {
+		t.Errorf("tag = %q, want narrow-key tag %q", got.New[0].Tag, want)
+	}
+}
+
+// Регрессия на радиус поражения: когда серверы различает ОДНА маскировка,
+// ключ обязан остаться расширенным (как до правки), а не поехать на полный.
+func TestApplyDiff_RealityOnlyKeepsExtendedTag(t *testing.T) {
+	a := mkParsedReality("1.2.3.4", 443, "a.example.com", "aa")
+	b := mkParsedReality("1.2.3.4", 443, "b.example.com", "bb")
+	got := ApplyDiff("sub", nil, []vlink.ParsedOutbound{a, b})
+	if len(got.New) != 2 {
+		t.Fatalf("len(New) = %d, want 2", len(got.New))
+	}
+	if want := stableTagFromKey("sub", extendedKey(a)); got.New[0].Tag != want {
+		t.Errorf("tag = %q, want extended-key tag %q (masking alone must not widen further)", got.New[0].Tag, want)
+	}
+}

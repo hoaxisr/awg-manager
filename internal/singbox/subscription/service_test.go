@@ -1946,3 +1946,26 @@ func TestCreate_InlineUnrecognizedJSON(t *testing.T) {
 		t.Fatalf("error must mention both supported JSON formats, got: %v", err)
 	}
 }
+
+// Issue #625: тот же host:port:uuid и тот же SNI, но другой ws-путь и Host —
+// это другой эндпоинт, а не повтор. Раньше проверка сравнивала только
+// server+port+protocol+SNI и отвергала такое добавление.
+func TestAddManualMember_TransportDiffersIsNotDuplicate(t *testing.T) {
+	svc, _ := newTestService(t)
+	sub, err := svc.Create(context.Background(), CreateInput{
+		Label:   "manual",
+		Inline:  "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=a.sni&type=ws&path=/p1&host=h1#A",
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := svc.AddManualMember(context.Background(), sub.ID,
+		"vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=a.sni&type=ws&path=/p2&host=h2#B")
+	if err != nil {
+		t.Fatalf("different ws path/host must add, got %v", err)
+	}
+	if len(updated.MemberTags) != 2 {
+		t.Errorf("MemberTags=%d want 2", len(updated.MemberTags))
+	}
+}
