@@ -11,3 +11,4 @@ export { default as NotificationCenter } from './NotificationCenter.svelte';
 export { default as SideNavItem } from './SideNavItem.svelte';
 export { default as SideNavGroup } from './SideNavGroup.svelte';
 export { default as SideNav } from './SideNav.svelte';
+export { default as TopBar } from './TopBar.svelte';
