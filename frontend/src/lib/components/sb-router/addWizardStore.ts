@@ -34,9 +34,10 @@ export const wizardExistingInlineRuleSetTag: Readable<string | null> = {
 };
 export const wizardWasInlineText: Readable<boolean> = { subscribe: wasInlineTextW.subscribe };
 
+// Параметры визарда относительны текущего адреса: sb-router живёт на своей
+// странице (/sb/routing), путь и её собственные параметры не трогаем.
 function wizardUrl(open: boolean): string {
   const url = new URL(window.location.href);
-  url.searchParams.set('tab', 'singbox');
   if (open) {
     url.searchParams.set('add', '1');
     url.searchParams.delete('trace');

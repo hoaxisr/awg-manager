@@ -1,5 +1,9 @@
 <script lang="ts">
+	// Страница «Sing-box · Гео-данные» — вынесена из вкладки /routing?tab=geodata
+	// (навигация v3). Содержимое перенесено как есть; счётчик гео-файлов,
+	// питавший бейдж вкладки, умер вместе с ней.
 	import { api } from '$lib/api/client';
+	import { PageContainer, PageHeader } from '$lib/components/layout';
 	import type { GeoFileEntry, GeoFileSettings, Settings } from '$lib/types';
 	import { HrNeoGeoDataView, HrNeoGeoRefreshSettings } from '$lib/components/hrneo';
 	import { Button } from '$lib/components/ui';
@@ -73,19 +77,27 @@
 	}
 </script>
 
-<HrNeoGeoDataView files={geoFiles} onrefresh={loadGeoFiles} />
+<svelte:head>
+	<title>Гео-данные - AWG Manager</title>
+</svelte:head>
 
-{#if settings}
-	<div class="geo-settings">
-		<HrNeoGeoRefreshSettings value={settings.geoFile} saving={saving} onToggle={toggleAutoRefresh} onSave={saveGeo} />
+<PageContainer width="full">
+	<PageHeader title="Гео-данные" />
+
+	<HrNeoGeoDataView files={geoFiles} onrefresh={loadGeoFiles} />
+
+	{#if settings}
+		<div class="geo-settings">
+			<HrNeoGeoRefreshSettings value={settings.geoFile} saving={saving} onToggle={toggleAutoRefresh} onSave={saveGeo} />
+		</div>
+	{/if}
+
+	<div class="geo-actions">
+		<Button variant="secondary" size="sm" onclick={updateAllNow} loading={updatingAll}>
+			Запустить обновление сейчас
+		</Button>
 	</div>
-{/if}
-
-<div class="geo-actions">
-	<Button variant="secondary" size="sm" onclick={updateAllNow} loading={updatingAll}>
-		Запустить обновление сейчас
-	</Button>
-</div>
+</PageContainer>
 
 <style>
 	.geo-settings { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 1rem; }

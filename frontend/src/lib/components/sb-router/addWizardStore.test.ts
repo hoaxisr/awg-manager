@@ -31,19 +31,23 @@ describe('addWizardStore', () => {
     expect(c.rulesList).toBe('');
   });
 
-  it('openAddWizard sets URL ?add=1&tab=singbox + open=true (push)', async () => {
-    resetEnv('/routing?tab=ip');
+  it('openAddWizard sets URL ?add=1 on the current path + open=true (push)', async () => {
+    // Визард живёт на /sb/routing и НЕ переписывает путь: параметры визарда
+    // относительны текущего адреса (раньше он дописывал ?tab=singbox контейнера).
+    resetEnv('/sb/routing?view=fakeip');
     const m = await import('./addWizardStore');
     m.openAddWizard();
     expect(get(m.addWizardOpen)).toBe(true);
-    const sp = new URL(window.location.href).searchParams;
-    expect(sp.get('add')).toBe('1');
-    expect(sp.get('tab')).toBe('singbox');
+    const url = new URL(window.location.href);
+    expect(url.pathname).toBe('/sb/routing');
+    expect(url.searchParams.get('add')).toBe('1');
+    expect(url.searchParams.get('view')).toBe('fakeip');
+    expect(url.searchParams.get('tab')).toBeNull();
     expect(window.history.length).toBeGreaterThan(1);
   });
 
   it('closeAddWizard removes add from URL + clears all state', async () => {
-    resetEnv('/routing?tab=singbox');
+    resetEnv('/sb/routing');
     const m = await import('./addWizardStore');
     m.openAddWizard();
     m.setOutboundCategory('tunnel');
@@ -55,19 +59,19 @@ describe('addWizardStore', () => {
     expect(get(m.wizardTunnelTags)).toEqual([]);
     expect(get(m.wizardCustom).rulesList).toBe('');
     expect(new URL(window.location.href).searchParams.get('add')).toBeNull();
-    expect(new URL(window.location.href).searchParams.get('tab')).toBe('singbox');
+    expect(new URL(window.location.href).pathname).toBe('/sb/routing');
   });
 
   it('popstate without ?add= closes wizard overlay', async () => {
-    resetEnv('/routing?tab=singbox&add=1');
+    resetEnv('/sb/routing?add=1');
     const m = await import('./addWizardStore');
     m.openAddWizard();
     expect(get(m.addWizardOpen)).toBe(true);
     // jsdom не меняет location на history.back() — эмулируем URL после «назад».
-    window.history.replaceState({}, '', '/routing?tab=singbox');
+    window.history.replaceState({}, '', '/sb/routing');
     window.dispatchEvent(new PopStateEvent('popstate'));
     expect(get(m.addWizardOpen)).toBe(false);
-    expect(new URL(window.location.href).searchParams.get('tab')).toBe('singbox');
+    expect(new URL(window.location.href).pathname).toBe('/sb/routing');
     expect(new URL(window.location.href).searchParams.get('add')).toBeNull();
   });
 

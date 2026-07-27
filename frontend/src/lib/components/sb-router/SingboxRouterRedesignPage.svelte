@@ -135,14 +135,13 @@
   }
 
   // Toggle, как у чипа соединений: повторный клик закрывает вид, а не наслаивает
-  // одинаковые записи в истории. tab=singbox фиксируем явно — window.location мог
-  // ещё не получить его от асинхронного goto тулбара вкладок.
+  // одинаковые записи в истории. Путь и чужие параметры не трогаем — страница
+  // sb-router своя (/sb/routing).
   function toggleLogsSub() {
     const url = new URL(window.location.href);
     if (activeSingboxSub === 'logs') {
       url.searchParams.delete('sub');
     } else {
-      url.searchParams.set('tab', 'singbox');
       url.searchParams.set('sub', 'logs');
     }
     void goto(`${url.pathname}${url.search}`, { keepFocus: true, noScroll: true });

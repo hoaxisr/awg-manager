@@ -99,14 +99,16 @@ export const NAV_TREE: NavEntry[] = [
 			{
 				id: 'sb-routing',
 				label: 'Маршрутизация',
-				href: '/routing?tab=singbox',
-				match: (url) => isPath(url, '/routing') && (tab(url) === 'singbox' || tab(url) === 'fakeip'),
+				href: '/sb/routing',
+				// Поверхность (TProxy/FakeIP) выбирается локальным ?view=,
+				// на подсветку раздела он не влияет — matcher по пути.
+				match: (url) => isPath(url, '/sb/routing'),
 			},
 			{
 				id: 'sb-geodata',
 				label: 'Гео-данные',
-				href: '/routing?tab=geodata',
-				match: (url) => isPath(url, '/routing') && tab(url) === 'geodata',
+				href: '/sb/geodata',
+				match: (url) => isPath(url, '/sb/geodata'),
 			},
 		],
 	},

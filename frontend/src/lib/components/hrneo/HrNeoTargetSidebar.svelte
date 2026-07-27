@@ -58,7 +58,7 @@
 	}
 
 	function openGeodataTab() {
-		void goto('/routing?tab=geodata');
+		void goto('/sb/geodata');
 	}
 </script>
 

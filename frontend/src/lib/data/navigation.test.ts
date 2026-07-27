@@ -73,12 +73,23 @@ describe('activeItem', () => {
 		expect(activeItem(u('/routing?tab=ip'))?.item.id).toBe('router-ip');
 		expect(activeItem(u('/routing?tab=clientvpn'))?.item.id).toBe('router-device-vpn');
 		expect(activeItem(u('/routing?tab=policy'))?.item.id).toBe('router-policies');
-		expect(activeItem(u('/routing?tab=singbox'))?.item.id).toBe('sb-routing');
-		expect(activeItem(u('/routing?tab=fakeip'))?.item.id).toBe('sb-routing');
-		expect(activeItem(u('/routing?tab=geodata'))?.item.id).toBe('sb-geodata');
 		expect(activeItem(u('/routing?tab=hrneo'))?.item.id).toBe('svc-hrneo');
 		// Голый /routing = вкладка по умолчанию (NDMS): Tabs вычищает ?tab=dns.
 		expect(activeItem(u('/routing'))?.item.id).toBe('router-ndms');
+	});
+	it('маршрутизация sing-box на своём маршруте', () => {
+		expect(activeItem(u('/sb/routing'))?.item.id).toBe('sb-routing');
+		// Локальный переключатель поверхности (?view=) на подсветку не влияет.
+		expect(activeItem(u('/sb/routing?view=fakeip'))?.item.id).toBe('sb-routing');
+		expect(activeItem(u('/sb/routing?add=1&mode=expert'))?.item.id).toBe('sb-routing');
+	});
+	it('гео-данные на своём маршруте', () => {
+		expect(activeItem(u('/sb/geodata'))?.item.id).toBe('sb-geodata');
+	});
+	it('старые вкладки /routing больше не подсвечивают sing-box', () => {
+		expect(activeItem(u('/routing?tab=singbox'))).toBeNull();
+		expect(activeItem(u('/routing?tab=fakeip'))).toBeNull();
+		expect(activeItem(u('/routing?tab=geodata'))).toBeNull();
 	});
 	it('серверы и инструменты', () => {
 		expect(activeItem(u('/awg/servers'))?.item.id).toBe('awg-servers');
@@ -94,6 +105,11 @@ describe('activeItem', () => {
 describe('breadcrumbFor', () => {
 	it('пункт группы → группа + раздел', () => {
 		expect(breadcrumbFor(u('/routing?tab=dns'))).toEqual({ group: 'Роутер', label: 'NDMS' });
+		expect(breadcrumbFor(u('/sb/routing?view=fakeip'))).toEqual({
+			group: 'Sing-box',
+			label: 'Маршрутизация',
+		});
+		expect(breadcrumbFor(u('/sb/geodata'))).toEqual({ group: 'Sing-box', label: 'Гео-данные' });
 	});
 	it('сервис на своём маршруте → Сервисы + раздел', () => {
 		expect(breadcrumbFor(u('/services/freeturn'))).toEqual({ group: 'Сервисы', label: 'FreeTurn' });

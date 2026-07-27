@@ -1,8 +1,6 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
-    import { get } from 'svelte/store';
     import { goto } from '$app/navigation';
-    import { browser } from '$app/environment';
     import { page } from '$app/stores';
     import {
         routing,
@@ -13,7 +11,6 @@
         routingClientVpnTabReady,
         hydrarouteStatusStore,
     } from '$lib/stores/routing';
-    import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
     import { systemInfo } from '$lib/stores/system';
     import { api } from '$lib/api/client';
     import { notifications } from '$lib/stores/notifications';
@@ -26,62 +23,47 @@
     import AccessPoliciesTab from './AccessPoliciesTab.svelte';
     import ClientRoutesTab from './ClientRoutesTab.svelte';
     import { HrNeoTab } from '$lib/components/hrneo';
-    import { SingboxRouterRedesignPage } from '$lib/components/sb-router';
-    import FakeIPTab from '$lib/components/fakeip/FakeIPTab.svelte';
-    import ModeSwitchHost from '$lib/components/routing/ModeSwitchHost.svelte';
-    import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
-    import GeoDataTab from './GeoDataTab.svelte';
 
     // Per-section polling stores — subscribe here so all 8 fetch while
     // the routing page is open. Unsubscribed on destroy to stop polling.
     let unsubRouting: (() => void) | null = null;
 
+    // Вкладки sing-box уехали на свои маршруты (навигация v3) — старые
+    // deep-links держим редиректом. `deviceproxy` — ещё более старый адрес
+    // отдельной страницы «Прокси для устройств» (Expert Inbounds).
+    const LEGACY_TAB_ROUTES: Record<string, string> = {
+        singbox: '/sb/routing',
+        fakeip: '/sb/routing?view=fakeip',
+        geodata: '/sb/geodata',
+        deviceproxy: '/sb/routing?mode=expert',
+    };
+
     onMount(() => {
-        // Legacy URL: standalone «Прокси для устройств» → Expert Inbounds в Sing-box Router.
-        const sp = new URLSearchParams($page.url.search);
-        if (sp.get('tab') === 'deviceproxy') {
-            sp.set('tab', 'singbox');
-            sp.set('mode', 'expert');
-            sp.delete('sub');
-            goto(`?${sp.toString()}`, { replaceState: true });
+        const legacyTab = $page.url.searchParams.get('tab') ?? '';
+        const legacy = LEGACY_TAB_ROUTES[legacyTab];
+        if (legacy) {
+            const target = new URL(legacy, window.location.origin);
+            // Параметры самой поверхности (mode/sub/add/edit/trace/q) переносим:
+            // deep-link вида ?tab=singbox&mode=expert должен доехать целиком.
+            // Умер только `tab` — и `sub` старой страницы «Прокси для устройств».
+            for (const [k, v] of $page.url.searchParams) {
+                if (k === 'tab' || (k === 'sub' && legacyTab === 'deviceproxy')) continue;
+                if (!target.searchParams.has(k)) target.searchParams.set(k, v);
+            }
+            void goto(`${target.pathname}${target.search}`, { replaceState: true });
+            return;
         }
         unsubRouting = subscribeRouting();
-        // Prime sing-box router status so the tab badge count is correct
-        // immediately on page load instead of waiting for the next polling
-        // tick after the user actually clicks into the sing-box sub-tab.
-        void singboxRouterStore.reloadStatus();
-        // Settings must be primed too (issue #420): the TProxy/FakeIP chip
-        // mute-XOR reads `enabled && routingMode`, and routingMode lives in
-        // settings. Without this the dormant mode's chip rendered as active
-        // until the user first visited a sing-box tab (which runs loadAll).
-        void singboxRouterStore.reloadSettings();
     });
     onDestroy(() => {
         unsubRouting?.();
     });
 
-    let activeTab = $state<'hrneo' | 'geodata' | 'dns' | 'ip' | 'policy' | 'clientvpn' | 'singbox' | 'fakeip'>('dns');
+    let activeTab = $state<'hrneo' | 'dns' | 'ip' | 'policy' | 'clientvpn'>('dns');
 
     let isOS5 = $derived($systemInfo.data?.isOS5 ?? false);
     let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
     let hasDnsEngine = $derived(isOS5 || hydrarouteInstalled);
-    let singboxInstalled = $derived($systemInfo.data?.singbox?.installed ?? false);
-
-    let pendingTab = $state<string | null>(null);
-
-    function requestTab(id: string): void {
-        if (modeSwitchBusy(get(modeSwitch))) return;
-        const hasDraft = get(singboxRouterStore.staging)?.hasDraft ?? false;
-        if (activeTab === 'singbox' && id !== 'singbox' && hasDraft) {
-            pendingTab = id;
-            return;
-        }
-        activeTab = id as typeof activeTab;
-    }
-    function confirmLeave(): void {
-        if (pendingTab) activeTab = pendingTab as typeof activeTab;
-        pendingTab = null;
-    }
 
     // Search → edit rule integration
     let editRuleId = $state('');
@@ -112,37 +94,6 @@
 
         if (!isOS5 && activeTab === 'dns') {
             activeTab = hydrarouteInstalled ? 'hrneo' : 'ip';
-        }
-    });
-
-    // In fakeip-tun mode, land on the FakeIP tab instead of the tproxy-
-    // oriented default — the tproxy view would show the engine as "running"
-    // while the tproxy slot is disabled, which is misleading. The FakeIP UI
-    // now lives as a tab on THIS page, so we just select it (activeTab is
-    // the page's tab source-of-truth; the Tabs component syncs ?tab=fakeip
-    // outbound). We deliberately do NOT goto('/fakeip') — that route now
-    // bounces back to /routing?tab=fakeip and would create an infinite loop.
-    //
-    // One-shot (fakeipAutoSelected) so a manual switch to another tab sticks,
-    // and skipped when the URL already carries an explicit ?tab= (deep-link)
-    // so we never override a user's chosen tab. Guarded on singboxInstalled
-    // (the same condition that renders the tab) so we never select a tab that
-    // isn't there — fakeip-tun implies sing-box installed, but this keeps the
-    // selection from racing ahead of systemInfo arriving.
-    const singboxInitializedStore = singboxRouterStore.initialized;
-    const singboxSettings = singboxRouterStore.settings;
-    let fakeipAutoSelected = false;
-    $effect(() => {
-        if (!browser) return;
-        if (!$singboxInitializedStore) return;
-        if (!singboxInstalled) return;
-        if (fakeipAutoSelected) return;
-        if ($singboxSettings?.routingMode === 'fakeip-tun') {
-            fakeipAutoSelected = true;
-            const explicitTab = new URL(window.location.href).searchParams.get('tab');
-            if (!explicitTab) {
-                activeTab = 'fakeip';
-            }
         }
     });
 
@@ -180,25 +131,6 @@
 
     // Derived: tab badges
     let hrRuleCount = $derived(dnsRoutes.filter(r => r.backend === 'hydraroute').length);
-    let geoFileCount = $state(0);
-
-    async function loadGeoFileCount() {
-        if (!hydrarouteInstalled && !singboxInstalled) {
-            geoFileCount = 0;
-            return;
-        }
-        try {
-            const files = await api.getGeoFiles();
-            geoFileCount = files?.length ?? 0;
-        } catch {
-            geoFileCount = 0;
-        }
-    }
-
-    $effect(() => {
-        if (hydrarouteInstalled || singboxInstalled) void loadGeoFileCount();
-        else geoFileCount = 0;
-    });
     let dnsActiveCount = $derived(dnsRoutes.filter(r => r.enabled && r.backend !== 'hydraroute').length);
     let ipActiveCount = $derived(ipRoutes.filter(r => r.enabled).length);
     let clientActiveCount = $derived(clientRoutes.filter(r => r.enabled).length);
@@ -213,9 +145,6 @@
         muted?: boolean;
     };
 
-    const singboxRouterStatus = singboxRouterStore.status;
-    let singboxRuleCount = $derived($singboxRouterStatus?.ruleCount ?? 0);
-
     let tabItems = $derived(
         ([
             // NDMS dns-proxy with object-group fqdn is OS5-only — gate the
@@ -225,40 +154,15 @@
             { id: 'ip', label: 'IP-адреса', badge: ipActiveCount },
             { id: 'clientvpn', label: 'VPN для устройств', badge: clientActiveCount },
             isOS5 ? { id: 'policy', label: 'Политики доступа', badge: policyCount } : null,
-            // Visual gap separates the NDMS-stack tabs above from the
-            // sing-box / hydraroute stack below. TProxy + FakeIP are the two
-            // mutually-exclusive sing-box routing modes — kept adjacent (no
-            // separator between them) and muted when the OTHER mode is the active
-            // one (XOR), so the dormant mode reads as dormant, not broken.
-            singboxInstalled
-                ? { id: 'singbox', label: 'Sing-box: TProxy', badge: singboxRuleCount, separatorBefore: true,
-                    muted: !!$singboxRouterStatus?.enabled && $singboxSettings?.routingMode === 'fakeip-tun' }
-                : null,
-            singboxInstalled
-                ? { id: 'fakeip', label: 'Sing-box: FakeIP', badge: undefined, separatorBefore: false,
-                    muted: !!$singboxRouterStatus?.enabled && $singboxSettings?.routingMode === 'tproxy' }
-                : null,
             // HR Neo is a separate routing engine (not sing-box) — divider before it.
             hydrarouteInstalled ? { id: 'hrneo', label: 'HR Neo', badge: hrRuleCount, separatorBefore: true } : null,
-            (hydrarouteInstalled || singboxInstalled)
-                ? { id: 'geodata', label: 'Гео-данные', badge: geoFileCount, separatorBefore: true }
-                : null,
         ] as (TabItem | null)[])
             .filter((t): t is TabItem => t !== null)
     );
 
-    // If the user deep-linked / had the tab active and sing-box disappeared
-    // (uninstall while the page is open), bounce them off.
-    $effect(() => {
-        if (!$systemInfo.data) return;
-        if (!singboxInstalled && activeTab === 'singbox') {
-            activeTab = 'dns';
-        }
-    });
-
     // Пока список вкладок меняется (systemInfo, HR, уровень), не держим
     // active на id, которого ещё нет в tabItems — иначе пустой контент.
-    // Не сбрасываем NDMS/политики/sing-box до прихода systemInfo: до fetch
+    // Не сбрасываем NDMS/политики до прихода systemInfo: до fetch
     // isOS5=false и вкладки dns|policy ещё нет в списке — иначе F5 с NDMS
     // уводил на IP. Аналогично HR Neo — ждём hydraroute-status.
     $effect(() => {
@@ -272,12 +176,12 @@
 
         if (
             !systemKnown &&
-            (activeTab === 'dns' || activeTab === 'policy' || activeTab === 'singbox') &&
+            (activeTab === 'dns' || activeTab === 'policy') &&
             !items.some((it) => it.id === activeTab)
         ) {
             return;
         }
-        if (!hrKnown && (activeTab === 'hrneo' || activeTab === 'geodata') && !items.some((it) => it.id === activeTab)) {
+        if (!hrKnown && activeTab === 'hrneo' && !items.some((it) => it.id === activeTab)) {
             return;
         }
 
@@ -324,7 +228,7 @@
     <Tabs
         tabs={tabItems}
         active={activeTab}
-        onchange={(id) => requestTab(id)}
+        onchange={(id) => (activeTab = id as typeof activeTab)}
         urlParam="tab"
         defaultTab="dns"
     />
@@ -370,29 +274,9 @@
             {routingTunnels}
             bodyLoading={!$routingClientVpnTabReady}
         />
-    {:else if activeTab === 'geodata'}
-        <GeoDataTab />
-    {:else if activeTab === 'singbox'}
-        <SingboxRouterRedesignPage />
-    {:else if activeTab === 'fakeip'}
-        <FakeIPTab />
     {/if}
-    <ModeSwitchHost />
     </div>
 </PageContainer>
-
-<Modal
-    open={pendingTab !== null}
-    title="Несохранённые правки маршрутизации"
-    size="sm"
-    onclose={() => (pendingTab = null)}
->
-    <p>Правки sing-box сохранены как черновик, но <strong>ещё не применены</strong>. Если уйти с вкладки — маршрутизация не изменится, пока вы не нажмёте «Применить».</p>
-    {#snippet actions()}
-        <Button variant="ghost" size="md" onclick={() => (pendingTab = null)}>Остаться</Button>
-        <Button variant="primary" size="md" onclick={confirmLeave}>Уйти всё равно</Button>
-    {/snippet}
-</Modal>
 
 <Modal
     open={searchOpen}

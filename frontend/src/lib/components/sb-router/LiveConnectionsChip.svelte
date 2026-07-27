@@ -44,7 +44,6 @@
     if (isActive) {
       url.searchParams.delete('sub');
     } else {
-      url.searchParams.set('tab', 'singbox');
       url.searchParams.set('sub', 'connections');
     }
     void goto(`${url.pathname}${url.search}`, { keepFocus: true, noScroll: true });
