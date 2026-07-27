@@ -59,7 +59,7 @@
 	// (сайдбар, крошки, back/forward) — последнее ловится beforeNavigate.
 	let pending = $state<{ kind: 'view'; view: View } | { kind: 'nav'; href: string } | null>(null);
 	// Повторный goto после подтверждения не должен снова упереться в гард.
-	let leaving = false;
+	let leaving = $state(false);
 
 	function hasDraft(): boolean {
 		return get(singboxRouterStore.staging)?.hasDraft ?? false;

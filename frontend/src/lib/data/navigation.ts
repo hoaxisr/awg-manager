@@ -30,13 +30,12 @@ export interface NavLink extends NavItem {
 
 export type NavEntry = NavGroup | NavLink;
 
-const tab = (url: URL) => url.searchParams.get('tab');
 const isPath = (url: URL, ...prefixes: string[]) =>
 	prefixes.some((p) => url.pathname === p || url.pathname.startsWith(p + '/'));
 
-// Фаза 1: hrefs указывают на СУЩЕСТВУЮЩИЕ адреса (вкладки главной и /routing).
-// В фазе 2, при расщеплении контейнеров, hrefs и match меняются на финальные
-// (/awg/tunnels, /sb/*, /router/*, /services/*) — см. спеку, раздел 3.
+// Фаза 2 завершена: контейнеры с вкладками расщеплены, каждый пункт ведёт
+// на свой маршрут (/awg/*, /sb/*, /router/*, /services/*) и подсвечивается
+// по пути — параметры поверхности (?edit=, ?view=, ?mode=) на это не влияют.
 export const NAV_TREE: NavEntry[] = [
 	{
 		// Сводная страница всех видов туннелей. Стоит первой — в фазе 3 сюда
@@ -121,29 +120,27 @@ export const NAV_TREE: NavEntry[] = [
 			{
 				id: 'router-ndms',
 				label: 'NDMS',
-				href: '/routing?tab=dns',
-				// `dns` — вкладка по умолчанию на /routing, и Tabs вычищает
-				// её из URL (?tab=dns → /routing). Поэтому голый /routing
-				// подсвечиваем как NDMS: это то, что страница и открывает.
-				match: (url) => isPath(url, '/routing') && (tab(url) === 'dns' || tab(url) === null),
+				href: '/router/ndms',
+				// ?edit= из поиска — параметр поверхности, matcher по пути.
+				match: (url) => isPath(url, '/router/ndms'),
 			},
 			{
 				id: 'router-ip',
 				label: 'IP-адреса',
-				href: '/routing?tab=ip',
-				match: (url) => isPath(url, '/routing') && tab(url) === 'ip',
+				href: '/router/ip',
+				match: (url) => isPath(url, '/router/ip'),
 			},
 			{
 				id: 'router-device-vpn',
 				label: 'VPN для устройств',
-				href: '/routing?tab=clientvpn',
-				match: (url) => isPath(url, '/routing') && tab(url) === 'clientvpn',
+				href: '/router/device-vpn',
+				match: (url) => isPath(url, '/router/device-vpn'),
 			},
 			{
 				id: 'router-policies',
 				label: 'Политики доступа',
-				href: '/routing?tab=policy',
-				match: (url) => isPath(url, '/routing') && tab(url) === 'policy',
+				href: '/router/policies',
+				match: (url) => isPath(url, '/router/policies'),
 			},
 		],
 	},
@@ -168,8 +165,8 @@ export const NAV_TREE: NavEntry[] = [
 			{
 				id: 'svc-hrneo',
 				label: 'HR Neo',
-				href: '/routing?tab=hrneo',
-				match: (url) => isPath(url, '/routing') && tab(url) === 'hrneo',
+				href: '/services/hrneo',
+				match: (url) => isPath(url, '/services/hrneo'),
 			},
 		],
 	},

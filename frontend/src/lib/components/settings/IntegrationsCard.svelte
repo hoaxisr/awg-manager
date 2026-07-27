@@ -235,7 +235,7 @@
 				</div>
 			</div>
 			{#if hydraInstalled}
-				<Button variant="secondary" size="sm" href="/routing?tab=hrneo">Открыть</Button>
+				<Button variant="secondary" size="sm" href="/services/hrneo">Открыть</Button>
 			{:else if hydraStatusLoading}
 				<Button variant="secondary" size="sm" disabled>Ожидание…</Button>
 			{:else}

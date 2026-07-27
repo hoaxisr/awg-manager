@@ -25,8 +25,8 @@ def main() -> int:
         page = browser.new_page(viewport={"width": 1600, "height": 900})
 
         try:
-            print("[smoke-wizard] navigate /routing?tab=singbox")
-            page.goto(f"{BASE}/routing?tab=singbox")
+            print("[smoke-wizard] navigate /sb/routing")
+            page.goto(f"{BASE}/sb/routing")
             page.wait_for_load_state("networkidle")
 
             print("[smoke-wizard] click Мастер in header")

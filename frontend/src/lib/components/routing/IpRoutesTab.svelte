@@ -3,7 +3,10 @@
     import { errorMessage } from '$lib/utils/errorMessage';
     import type { StaticRouteList, RoutingTunnel } from '$lib/types';
     import { ConfirmModal, StoreStatusBadge, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
-    import { IpRouteCard, IpRouteEditModal, IpRouteImportModal } from '$lib/components/routing';
+    // Прямые пути, а не бочка: с переездом сюда бочка стала бы циклом.
+    import IpRouteCard from './IpRouteCard.svelte';
+    import IpRouteEditModal from './IpRouteEditModal.svelte';
+    import IpRouteImportModal from './IpRouteImportModal.svelte';
     import { IconPickerModal } from '$lib/components/dnsroutes';
     import { exportStaticRoutes, type PortableStaticRoute } from '$lib/utils/staticroute-export';
     import { downloadJson } from '$lib/utils/dns-export';

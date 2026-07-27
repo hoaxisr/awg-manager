@@ -67,8 +67,8 @@
   }
 
   onMount(() => {
-    // Не восстанавливаем визард (?add=1) и sub=connections после ухода на другие
-    // вкладки routing. sub=logs — намеренное исключение: лог-вью должен переживать
+    // Не восстанавливаем визард (?add=1) и sub=connections после ухода со
+    // страницы. sub=logs — намеренное исключение: лог-вью должен переживать
     // F5 и открываться по прямой ссылке.
     resetSingboxOverlayState();
     const sub = $page.url.searchParams.get('sub');

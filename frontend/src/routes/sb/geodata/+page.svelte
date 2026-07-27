@@ -3,11 +3,24 @@
 	// (навигация v3). Содержимое перенесено как есть; счётчик гео-файлов,
 	// питавший бейдж вкладки, умер вместе с ней.
 	import { api } from '$lib/api/client';
-	import { PageContainer, PageHeader } from '$lib/components/layout';
+	import { PageContainer, PageHeader, EmptyState } from '$lib/components/layout';
 	import type { GeoFileEntry, GeoFileSettings, Settings } from '$lib/types';
 	import { HrNeoGeoDataView, HrNeoGeoRefreshSettings } from '$lib/components/hrneo';
 	import { Button } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
+	import { hydrarouteStatusStore } from '$lib/stores/routing';
+	import { systemInfo } from '$lib/stores/system';
+
+	// Гео-файлы нужны обоим движкам: sing-box и HydraRoute Neo. Если не
+	// установлен ни один — страница пустая по существу, показываем заглушку
+	// (по образцу «Sing-box не установлен» на /sb/routing).
+	let hydrarouteInstalled = $derived($hydrarouteStatusStore.data?.installed ?? false);
+	let singboxInstalled = $derived($systemInfo.data?.singbox?.installed ?? false);
+	let enginesKnown = $derived(
+		($hydrarouteStatusStore.lastFetchedAt > 0 || $hydrarouteStatusStore.status === 'error') &&
+			($systemInfo.lastFetchedAt > 0 || $systemInfo.status === 'error'),
+	);
+	let noEngine = $derived(enginesKnown && !hydrarouteInstalled && !singboxInstalled);
 
 	let geoFiles = $state<GeoFileEntry[]>([]);
 	let settings = $state<Settings | null>(null);
@@ -84,19 +97,26 @@
 <PageContainer width="full">
 	<PageHeader title="Гео-данные" />
 
-	<HrNeoGeoDataView files={geoFiles} onrefresh={loadGeoFiles} />
+	{#if noEngine}
+		<EmptyState
+			title="Гео-данные не используются"
+			description="Гео-файлы нужны sing-box и HydraRoute Neo — ни один из них не установлен."
+		/>
+	{:else}
+		<HrNeoGeoDataView files={geoFiles} onrefresh={loadGeoFiles} />
 
-	{#if settings}
-		<div class="geo-settings">
-			<HrNeoGeoRefreshSettings value={settings.geoFile} saving={saving} onToggle={toggleAutoRefresh} onSave={saveGeo} />
+		{#if settings}
+			<div class="geo-settings">
+				<HrNeoGeoRefreshSettings value={settings.geoFile} saving={saving} onToggle={toggleAutoRefresh} onSave={saveGeo} />
+			</div>
+		{/if}
+
+		<div class="geo-actions">
+			<Button variant="secondary" size="sm" onclick={updateAllNow} loading={updatingAll}>
+				Запустить обновление сейчас
+			</Button>
 		</div>
 	{/if}
-
-	<div class="geo-actions">
-		<Button variant="secondary" size="sm" onclick={updateAllNow} loading={updatingAll}>
-			Запустить обновление сейчас
-		</Button>
-	</div>
 </PageContainer>
 
 <style>

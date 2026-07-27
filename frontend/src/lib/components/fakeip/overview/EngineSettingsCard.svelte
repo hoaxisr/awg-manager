@@ -299,7 +299,7 @@
 		<div class="erow erow-hint">
 			<span class="policy-hint">
 				Чтобы завернуть весь трафик устройства через fakeip — назначьте его в
-				<a href="/routing?tab=policy" class="policy-link">Политике доступа</a>
+				<a href="/router/policies" class="policy-link">Политике доступа</a>
 				на выход opkgtun.
 			</span>
 		</div>

@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	/** Survives tab unmount on /routing so sidebar target/service selection is restored. */
+	/** Survives unmount of /services/hrneo so sidebar target/service selection is restored. */
 	let persistedSelection: import('./HrNeoTargetSidebar.svelte').SidebarSelection = null;
 </script>
 

@@ -85,41 +85,41 @@ def _open_dns_create_manual(p: Page):
 SCENARIOS.extend([
     Scenario(
         name="DnsRouteEditModal_create",
-        navigate=lambda p: (goto(p, "/routing"), click_tab(p, "NDMS")),
+        navigate=lambda p: goto(p, "/router/ndms"),
         trigger=_open_dns_create_manual,
         input_selector='.modal-card input[type="text"]',
     ),
     Scenario(
         name="IpRouteEditModal_create",
-        navigate=lambda p: (goto(p, "/routing"), click_tab(p, "IP-адреса")),
+        navigate=lambda p: goto(p, "/router/ip"),
         trigger=lambda p: p.locator('button:has-text("+ Новое правило")').first.click(timeout=4000),
         input_selector='.modal-card input[type="text"]',
     ),
     Scenario(
         name="ClientRouteCreateModal",
-        navigate=lambda p: (goto(p, "/routing"), click_tab(p, "VPN для устройств")),
+        navigate=lambda p: goto(p, "/router/device-vpn"),
         trigger=lambda p: p.locator('button:has-text("+ Создать")').first.click(timeout=4000),
         input_selector='.device-row',  # Click first device to make form dirty
         typed_value='',  # Not used for button click
     ),
     Scenario(
         name="PolicyCreateModal",
-        navigate=lambda p: (goto(p, "/routing"), click_tab(p, "Политики")),
+        navigate=lambda p: goto(p, "/router/policies"),
         trigger=lambda p: p.locator('button:has-text("+ Создать")').first.click(timeout=4000),
         input_selector='.modal-card input[type="text"]',
     ),
     Scenario(
         name="HrNeoEditModal_create",
-        navigate=lambda p: (goto(p, "/routing"), click_tab(p, "HR Neo")),
+        navigate=lambda p: goto(p, "/services/hrneo"),
         trigger=lambda p: p.locator('button:has-text("+ Новое правило")').first.click(timeout=4000),
         input_selector='.modal-card input[type="text"]',
     ),
 ])
 
 
-# Sing-box Router modals — Expert panel on /routing?tab=singbox&mode=expert.
+# Sing-box Router modals — Expert panel on /sb/routing?mode=expert.
 def _nav_singbox_expert(p: Page):
-    goto(p, "/routing?tab=singbox&mode=expert")
+    goto(p, "/sb/routing?mode=expert")
 
 
 def _open_singbox_ruleset(p: Page):
@@ -145,7 +145,7 @@ def _make_wizard_dirty(p: Page):
 SCENARIOS.extend([
     Scenario(
         name="AddTunnelWizard_choose",
-        navigate=lambda p: (goto(p, "/"), click_tab(p, "Sing-box")),
+        navigate=lambda p: goto(p, "/sb/tunnels"),
         trigger=_open_wizard_choose_step0,
         input_selector='',  # Not used since we have a custom make_dirty
         make_dirty=_make_wizard_dirty,
@@ -181,13 +181,6 @@ def goto(page: Page, path: str):
     page.goto(f"{BASE}{path}")
     page.wait_for_load_state("domcontentloaded")
     page.wait_for_timeout(1500)
-
-
-def click_tab(page: Page, label: str):
-    page.locator(f'.overflow-tabs .tab:has-text("{label}")').first.click(
-        force=True, timeout=4000
-    )
-    page.wait_for_timeout(500)
 
 
 def assert_modal_open(page: Page):

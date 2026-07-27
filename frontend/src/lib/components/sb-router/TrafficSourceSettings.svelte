@@ -78,7 +78,7 @@
         {/if}
       </p>
       {#if variant === 'beginner'}
-        <Button variant="ghost" size="sm" href="/routing?tab=policy">
+        <Button variant="ghost" size="sm" href="/router/policies">
           Управление устройствами →
         </Button>
       {/if}

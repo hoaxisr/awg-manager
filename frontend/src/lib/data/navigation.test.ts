@@ -4,16 +4,13 @@ import { NAV_TREE, activeItem, breadcrumbFor } from './navigation';
 const u = (path: string) => new URL(`http://router${path}`);
 
 describe('NAV_TREE hrefs', () => {
-	// Вкладка по умолчанию вычищается из URL, поэтому переход на голый путь
-	// с ЧУЖОЙ вкладки не переключает Tabs (пункт становится мёртвым).
-	// Такие пункты обязаны указывать вкладку явно.
-	it.each([
-		['router-ndms', '/routing?tab=dns'],
-	])('%s указывает вкладку явно', (id, href) => {
+	// Контейнеров-с-вкладками в дереве больше нет: каждый пункт — свой путь.
+	// `?tab=` в href означал бы, что раздел снова живёт вкладкой чужой страницы.
+	it('ни один пункт не ссылается на вкладку', () => {
 		const all = NAV_TREE.flatMap((e) => (e.kind === 'group' ? e.items : [e]));
-		const item = all.find((i) => i.id === id);
-		expect(item?.href).toBe(href);
-		expect(item?.href).toContain('?tab=');
+		for (const item of all) {
+			expect(item.href).not.toContain('?tab=');
+		}
 	});
 });
 
@@ -68,14 +65,26 @@ describe('activeItem', () => {
 	it('детальные sb-страницы → свои пункты', () => {
 		expect(activeItem(u('/sb/subscriptions/5'))?.item.id).toBe('sb-subs');
 	});
-	it('вкладки /routing → пункты Роутер/Sing-box', () => {
-		expect(activeItem(u('/routing?tab=dns'))?.item.id).toBe('router-ndms');
-		expect(activeItem(u('/routing?tab=ip'))?.item.id).toBe('router-ip');
-		expect(activeItem(u('/routing?tab=clientvpn'))?.item.id).toBe('router-device-vpn');
-		expect(activeItem(u('/routing?tab=policy'))?.item.id).toBe('router-policies');
-		expect(activeItem(u('/routing?tab=hrneo'))?.item.id).toBe('svc-hrneo');
-		// Голый /routing = вкладка по умолчанию (NDMS): Tabs вычищает ?tab=dns.
-		expect(activeItem(u('/routing'))?.item.id).toBe('router-ndms');
+	it('разделы роутера на своих маршрутах', () => {
+		expect(activeItem(u('/router/ndms'))?.item.id).toBe('router-ndms');
+		expect(activeItem(u('/router/ip'))?.item.id).toBe('router-ip');
+		expect(activeItem(u('/router/device-vpn'))?.item.id).toBe('router-device-vpn');
+		expect(activeItem(u('/router/policies'))?.item.id).toBe('router-policies');
+		// ?edit= из поиска — параметр поверхности, на подсветку не влияет.
+		expect(activeItem(u('/router/ndms?edit=r1'))?.item.id).toBe('router-ndms');
+		expect(activeItem(u('/router/ip?edit=r2'))?.item.id).toBe('router-ip');
+	});
+	it('HR Neo на своём маршруте', () => {
+		expect(activeItem(u('/services/hrneo'))?.item.id).toBe('svc-hrneo');
+		expect(activeItem(u('/services/hrneo?edit=r3'))?.item.id).toBe('svc-hrneo');
+	});
+	it('контейнер /routing мёртв — ничего не подсвечивает', () => {
+		expect(activeItem(u('/routing'))).toBeNull();
+		expect(activeItem(u('/routing?tab=dns'))).toBeNull();
+		expect(activeItem(u('/routing?tab=ip'))).toBeNull();
+		expect(activeItem(u('/routing?tab=clientvpn'))).toBeNull();
+		expect(activeItem(u('/routing?tab=policy'))).toBeNull();
+		expect(activeItem(u('/routing?tab=hrneo'))).toBeNull();
 	});
 	it('маршрутизация sing-box на своём маршруте', () => {
 		expect(activeItem(u('/sb/routing'))?.item.id).toBe('sb-routing');
@@ -85,11 +94,6 @@ describe('activeItem', () => {
 	});
 	it('гео-данные на своём маршруте', () => {
 		expect(activeItem(u('/sb/geodata'))?.item.id).toBe('sb-geodata');
-	});
-	it('старые вкладки /routing больше не подсвечивают sing-box', () => {
-		expect(activeItem(u('/routing?tab=singbox'))).toBeNull();
-		expect(activeItem(u('/routing?tab=fakeip'))).toBeNull();
-		expect(activeItem(u('/routing?tab=geodata'))).toBeNull();
 	});
 	it('серверы и инструменты', () => {
 		expect(activeItem(u('/awg/servers'))?.item.id).toBe('awg-servers');
@@ -104,7 +108,8 @@ describe('activeItem', () => {
 
 describe('breadcrumbFor', () => {
 	it('пункт группы → группа + раздел', () => {
-		expect(breadcrumbFor(u('/routing?tab=dns'))).toEqual({ group: 'Роутер', label: 'NDMS' });
+		expect(breadcrumbFor(u('/router/ndms'))).toEqual({ group: 'Роутер', label: 'NDMS' });
+		expect(breadcrumbFor(u('/services/hrneo'))).toEqual({ group: 'Сервисы', label: 'HR Neo' });
 		expect(breadcrumbFor(u('/sb/routing?view=fakeip'))).toEqual({
 			group: 'Sing-box',
 			label: 'Маршрутизация',
