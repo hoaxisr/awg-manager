@@ -169,20 +169,6 @@
 			>
 				{#snippet actions()}
 					<StoreStatusBadge store={tunnels} />
-					<Button
-						variant={ctx.freeturnOpen ? 'primary' : 'secondary'}
-						size="md"
-						onclick={ctx.toggleFreeturn}
-					>
-						FreeTurn
-					</Button>
-					<Button
-						variant={ctx.wdttOpen ? 'primary' : 'secondary'}
-						size="md"
-						onclick={ctx.toggleWdtt}
-					>
-						WDTT
-					</Button>
 					<Button variant="secondary" size="md" onclick={ctx.handleExportAll} disabled={ctx.exporting} iconBefore={exportIcon}>
 						Экспорт
 					</Button>

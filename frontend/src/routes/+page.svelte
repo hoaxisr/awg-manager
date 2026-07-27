@@ -36,8 +36,6 @@
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import SubscriptionsTabSection from '$lib/components/subscriptions/SubscriptionsTabSection.svelte';
 	import SingboxTunnelsTabSection from '$lib/components/singbox/SingboxTunnelsTabSection.svelte';
-	import { FreeTurnTab } from '$lib/components/freeturn';
-	import { WdttTab } from '$lib/components/wdtt';
 	import AwgTunnelsTabSection from '$lib/components/tunnels/AwgTunnelsTabSection.svelte';
 	import DashboardFlatSection from '$lib/components/tunnels/DashboardFlatSection.svelte';
 	import TunnelPageModals from '$lib/components/tunnels/TunnelPageModals.svelte';
@@ -113,7 +111,7 @@
 		type SubscriptionSortKey,
 	} from '$lib/stores/tunnelTableSort';
 
-	type TunnelTab = 'awg' | 'singbox' | 'subscriptions' | 'awg3' | 'freeturn' | 'wdtt';
+	type TunnelTab = 'awg' | 'singbox' | 'subscriptions' | 'awg3';
 	type AwgTunnelViewMode = 'cards' | 'compact' | 'list';
 	type TunnelSurfaceLayout = SingboxLayoutMode | 'cards';
 
@@ -572,24 +570,6 @@
 	);
 
 	let dashboardOn = $derived($tunnelDashboardMode);
-	let dashboardFreeturnOpen = $state(false);
-	let dashboardFreeturnEl: HTMLElement | null = $state(null);
-	function toggleDashboardFreeturn() {
-		dashboardFreeturnOpen = !dashboardFreeturnOpen;
-		if (dashboardFreeturnOpen) {
-			dashboardWdttOpen = false;
-			requestAnimationFrame(() => dashboardFreeturnEl?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-		}
-	}
-	let dashboardWdttOpen = $state(false);
-	let dashboardWdttEl: HTMLElement | null = $state(null);
-	function toggleDashboardWdtt() {
-		dashboardWdttOpen = !dashboardWdttOpen;
-		if (dashboardWdttOpen) {
-			dashboardFreeturnOpen = false;
-			requestAnimationFrame(() => dashboardWdttEl?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-		}
-	}
 	// Sing-box data is admitted into the dashboard only while sing-box is
 	// installed (or still probing).
 	const dashboardSingboxVisible = $derived(singboxStatusLoading || singboxInstalled);
@@ -671,8 +651,6 @@
 			{ id: 'singbox', label: 'Sing-box туннели', badge: singboxTunnelsList.length },
 			{ id: 'subscriptions', label: 'Sing-box подписки', badge: subscriptionsList.length },
 			{ id: 'awg3', label: 'AWG3 туннели', badge: awg3List.length },
-			{ id: 'freeturn', label: 'FreeTurn' },
-			{ id: 'wdtt', label: 'WDTT' },
 		] satisfies Array<{ id: string; label: string; badge?: number }>,
 	);
 
@@ -1371,18 +1349,6 @@
 			(dashboardTypeSections && dashboardAwg3Tunnels.length > 0),
 	);
 
-	// FreeTurn — настройки/статус, не туннельные карточки: в таб-режиме — вкладка,
-	// в dashboard-режиме — панель под дашбордом по кнопке тулбара (#585).
-	let showFreeturnBlock = $derived(
-		(!dashboardOn && activeTab === 'freeturn') ||
-			(dashboardOn && dashboardFreeturnOpen),
-	);
-
-	let showWdttBlock = $derived(
-		(!dashboardOn && activeTab === 'wdtt') ||
-			(dashboardOn && dashboardWdttOpen),
-	);
-
 	// Единый класс сетки для сплошного и тегового карточных видов — классы
 	// плотности не могут разъехаться между двумя разметками.
 	let dashboardGridClass = $derived(
@@ -1527,10 +1493,6 @@
 		get effectiveSingboxSubscriptionsEffectiveLayout() { return effectiveSingboxSubscriptionsEffectiveLayout; },
 		get effectiveSingboxSubscriptionsRenderMode() { return effectiveSingboxSubscriptionsRenderMode; },
 		get exporting() { return exporting; },
-		get freeturnOpen() { return dashboardFreeturnOpen; },
-		toggleFreeturn: toggleDashboardFreeturn,
-		get wdttOpen() { return dashboardWdttOpen; },
-		toggleWdtt: toggleDashboardWdtt,
 		get awgAutoConnectivityNonce() { return awgAutoConnectivityNonce; },
 		get singboxAutoDelayCheckNonce() { return singboxAutoDelayCheckNonce; },
 		get deleteLoading() { return deleteLoading; },
@@ -1734,18 +1696,6 @@
 				bind:searchQuery={awg3TunnelsSearchQuery}
 				bind:layoutMode={awg3TunnelsLayoutMode}
 			/>
-		{/if}
-
-		{#if showFreeturnBlock}
-			<div bind:this={dashboardFreeturnEl}>
-				<FreeTurnTab />
-			</div>
-		{/if}
-
-		{#if showWdttBlock}
-			<div bind:this={dashboardWdttEl}>
-				<WdttTab />
-			</div>
 		{/if}
 	{/if}
 </PageContainer>

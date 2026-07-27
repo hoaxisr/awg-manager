@@ -27,12 +27,18 @@ describe('activeItem', () => {
 		expect(activeItem(u('/tunnels/abc'))?.item.id).toBe('awg-tunnels');
 		expect(activeItem(u('/system-tunnels/nwg0'))?.item.id).toBe('awg-tunnels');
 	});
-	it('вкладки главной → пункты Sing-box/Сервисы', () => {
+	it('вкладки главной → пункты Sing-box', () => {
 		expect(activeItem(u('/?tab=singbox'))?.item.id).toBe('sb-tunnels');
 		expect(activeItem(u('/?tab=awg3'))?.item.id).toBe('sb-awg3');
 		expect(activeItem(u('/?tab=subscriptions'))?.item.id).toBe('sb-subs');
-		expect(activeItem(u('/?tab=freeturn'))?.item.id).toBe('svc-freeturn');
-		expect(activeItem(u('/?tab=wdtt'))?.item.id).toBe('svc-wdtt');
+	});
+	it('сервисы на своих маршрутах', () => {
+		expect(activeItem(u('/services/freeturn'))?.item.id).toBe('svc-freeturn');
+		expect(activeItem(u('/services/wdtt'))?.item.id).toBe('svc-wdtt');
+	});
+	it('главная больше не подсвечивает FreeTurn/WDTT', () => {
+		expect(activeItem(u('/?tab=freeturn'))?.item.id).not.toBe('svc-freeturn');
+		expect(activeItem(u('/?tab=wdtt'))?.item.id).not.toBe('svc-wdtt');
 	});
 	it('детальные sb-страницы → свои пункты', () => {
 		expect(activeItem(u('/singbox/tag-1'))?.item.id).toBe('sb-tunnels');
@@ -64,6 +70,10 @@ describe('activeItem', () => {
 describe('breadcrumbFor', () => {
 	it('пункт группы → группа + раздел', () => {
 		expect(breadcrumbFor(u('/routing?tab=dns'))).toEqual({ group: 'Роутер', label: 'NDMS' });
+	});
+	it('сервис на своём маршруте → Сервисы + раздел', () => {
+		expect(breadcrumbFor(u('/services/freeturn'))).toEqual({ group: 'Сервисы', label: 'FreeTurn' });
+		expect(breadcrumbFor(u('/services/wdtt'))).toEqual({ group: 'Сервисы', label: 'WDTT' });
 	});
 	it('плоский пункт → без группы', () => {
 		expect(breadcrumbFor(u('/settings'))).toEqual({ group: null, label: 'Настройки' });

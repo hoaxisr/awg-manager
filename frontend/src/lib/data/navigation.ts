@@ -148,15 +148,14 @@ export const NAV_TREE: NavEntry[] = [
 			{
 				id: 'svc-freeturn',
 				label: 'FreeTurn',
-				href: '/?tab=freeturn',
-				match: (url) =>
-					(url.pathname === '/' && tab(url) === 'freeturn') || isPath(url, '/freeturn'),
+				href: '/services/freeturn',
+				match: (url) => isPath(url, '/services/freeturn'),
 			},
 			{
 				id: 'svc-wdtt',
 				label: 'WDTT',
-				href: '/?tab=wdtt',
-				match: (url) => (url.pathname === '/' && tab(url) === 'wdtt') || isPath(url, '/wdtt'),
+				href: '/services/wdtt',
+				match: (url) => isPath(url, '/services/wdtt'),
 			},
 			{
 				id: 'svc-hrneo',
