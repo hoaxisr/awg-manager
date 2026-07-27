@@ -292,17 +292,6 @@ export const DEVELOP_CHANNEL_QUIZ_QUESTIONS: DevelopQuizQuestion[] = [
 		correctIndex: 0,
 	},
 	{
-		id: 'awgm-usage-level-advanced',
-		text: 'С какого уровня использования в AWGM доступны Sing-box, подписки, серверы и мониторинг?',
-		options: [
-			'С «Расширенного» (advanced)',
-			'С «Базового»',
-			'Только с «Продвинутого» (expert)',
-			'Только после переключения на канал develop',
-		],
-		correctIndex: 0,
-	},
-	{
 		id: 'awgm-download-route',
 		text: 'Зачем в настройках AWGM задаётся маршрут «служебных загрузок»?',
 		options: [

@@ -165,6 +165,7 @@
 		<div class="toolbar-actions">
 			<TunnelToolbarViewRow
 				sourceRowCount={ctx.awgSourceRowCount}
+				showViewToggle={ctx.awgSourceRowCount > 0}
 				searchQuery={ctx.awgListSearchQuery}
 				onSearchChange={(value) => (ctx.awgListSearchQuery = value)}
 			>
