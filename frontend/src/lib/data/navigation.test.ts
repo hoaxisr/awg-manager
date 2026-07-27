@@ -28,7 +28,6 @@ describe('activeItem', () => {
 		expect(activeItem(u('/system-tunnels/nwg0'))?.item.id).toBe('awg-tunnels');
 	});
 	it('вкладки главной → пункты Sing-box', () => {
-		expect(activeItem(u('/?tab=awg3'))?.item.id).toBe('sb-awg3');
 		expect(activeItem(u('/?tab=subscriptions'))?.item.id).toBe('sb-subs');
 	});
 	it('sing-box туннели на своём маршруте', () => {
@@ -36,8 +35,12 @@ describe('activeItem', () => {
 		expect(activeItem(u('/sb/tunnels/tag-1'))?.item.id).toBe('sb-tunnels');
 		expect(activeItem(u('/sb/tunnels/new'))?.item.id).toBe('sb-tunnels');
 	});
-	it('главная больше не подсвечивает sing-box туннели', () => {
+	it('AWG3 на своём маршруте', () => {
+		expect(activeItem(u('/sb/awg3'))?.item.id).toBe('sb-awg3');
+	});
+	it('главная больше не подсвечивает sing-box туннели и AWG3', () => {
 		expect(activeItem(u('/?tab=singbox'))?.item.id).not.toBe('sb-tunnels');
+		expect(activeItem(u('/?tab=awg3'))?.item.id).not.toBe('sb-awg3');
 	});
 	it('сервисы на своих маршрутах', () => {
 		expect(activeItem(u('/services/freeturn'))?.item.id).toBe('svc-freeturn');

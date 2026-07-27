@@ -80,8 +80,8 @@ export const NAV_TREE: NavEntry[] = [
 				// группы Sing-box. AWG3 — endpoint sing-box, поэтому здесь.
 				id: 'sb-awg3',
 				label: 'AWG3',
-				href: '/?tab=awg3',
-				match: (url) => url.pathname === '/' && tab(url) === 'awg3',
+				href: '/sb/awg3',
+				match: (url) => isPath(url, '/sb/awg3'),
 			},
 			{
 				id: 'sb-subs',

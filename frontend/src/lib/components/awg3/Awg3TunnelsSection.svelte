@@ -18,8 +18,9 @@
 		renderMode: TunnelRenderMode;
 		layout: SingboxLayoutMode;
 		showGridListToggle: boolean;
-		searchQuery: string;
-		layoutMode: SingboxLayoutMode;
+		/** Тулбар (и его поиск/переключатель вида) рендерится только вне дашборда. */
+		searchQuery?: string;
+		layoutMode?: SingboxLayoutMode;
 		autoDelayCheckNonce: number;
 		// Дашборд-режим (секции по типу) прячет тулбар и передаёт уже
 		// отфильтрованный список — как SingboxTunnelsTabSection при dashboardOn.
@@ -31,8 +32,8 @@
 		renderMode,
 		layout,
 		showGridListToggle,
-		searchQuery = $bindable(),
-		layoutMode = $bindable(),
+		searchQuery = $bindable(''),
+		layoutMode = $bindable('compact'),
 		autoDelayCheckNonce,
 		showToolbar = true,
 	}: Props = $props();
@@ -56,13 +57,10 @@
 
 {#if showToolbar && tunnels.length > 0}
 	<div class="tunnels-toolbar">
-		<div class="toolbar-title">
-			<span class="section-title">AWG3 туннели</span>
-			<span class="tunnel-count">
-				{tunnels.length}
-				{pluralForm(tunnels.length, TUNNEL_WORDS)}
-			</span>
-		</div>
+		<span class="tunnel-count">
+			{tunnels.length}
+			{pluralForm(tunnels.length, TUNNEL_WORDS)}
+		</span>
 		<div class="toolbar-actions">
 			<TunnelToolbarViewRow
 				sourceRowCount={tunnels.length}
@@ -165,19 +163,6 @@
 		justify-content: space-between;
 		gap: 0.75rem;
 		margin-bottom: 1rem;
-	}
-
-	.toolbar-title {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-		min-width: 0;
-	}
-
-	.section-title {
-		font-size: 0.9375rem;
-		font-weight: 600;
-		color: var(--color-text-primary);
 	}
 
 	.tunnel-count {
