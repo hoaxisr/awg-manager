@@ -166,7 +166,6 @@
      tokens cover the global layering only. */
   --z-sticky-secondary: 50; /* TunnelEditHeader sub-sticky under the sticky header */
   --z-page-overlay: 60;     /* tab dropdowns, popovers, member-pickers */
-  --z-sticky-header: 80;    /* sticky header bar */
   --z-fab: 95;              /* floating action buttons (below drawers) */
   --z-drawer-backdrop: 90;  /* hamburger / drawer dimming layer */
   --z-drawer: 100;          /* hamburger panel, SideDrawer panel */
@@ -271,12 +270,11 @@ html.light, [data-theme="light"] {
   --sbx-status-dot: 8px;
   --sbx-status-dot-dense: 6px;
 
-  /* Page / header gutters (по умолчанию; компакт — data-layout-compact). */
+  /* Page gutters (по умолчанию; компакт — data-layout-compact). */
   --layout-gutter-x: 1.5rem;
   --layout-gutter-y: 1.5rem;
   --layout-gutter-y-top: var(--layout-gutter-y);
   --layout-gutter-y-bottom: var(--layout-gutter-y);
-  --header-gutter-x: 1.25rem;
 
   /* ─── sb-router redesign aliases (design tokens.css mapping) ─── */
   /* (--bg-*, --text-*, --border*, --accent, --accent-hover, --success/error/warning/info
@@ -315,7 +313,6 @@ html[data-layout-compact='true'] {
   --layout-gutter-x: 0;
   --layout-gutter-y-top: 2.5rem;
   --layout-gutter-y-bottom: 1.5rem;
-  --header-gutter-x: 1rem;
 }
 
 html[data-layout-compact='true'] .page-container {

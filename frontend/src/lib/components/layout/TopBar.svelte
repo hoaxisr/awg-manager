@@ -31,6 +31,15 @@
 	const crumb = $derived(breadcrumbFor($page.url));
 	/** Для Neo вторая ветка визуально тёмная, но mode остаётся dark ради color-scheme. */
 	const themeDisplayMode = $derived(theme.preset === 'neo' ? theme.legacyMode : theme.mode);
+
+	const themeButtonLabel = $derived.by(() => {
+		const currentModeLabel = themeDisplayMode === 'light' ? 'светлая' : 'тёмная';
+		const nextModeLabel = themeDisplayMode === 'light' ? 'тёмную' : 'светлую';
+		if (theme.modePreference === 'system') {
+			return `Переключить ${theme.label} с системной на ${nextModeLabel} тему. Сейчас ${currentModeLabel} (по системе).`;
+		}
+		return `Переключить ${theme.label} на ${nextModeLabel} тему. Сейчас ${currentModeLabel}.`;
+	});
 </script>
 
 <header class="topbar">
@@ -68,7 +77,7 @@
 	</IconButton>
 
 	{#if theme.preset !== 'custom'}
-		<IconButton ariaLabel="Переключить тему" onclick={onToggleThemeMode}>
+		<IconButton ariaLabel={themeButtonLabel} onclick={onToggleThemeMode}>
 			{#if themeDisplayMode === 'dark'}
 				<Sun size={16} aria-hidden="true" />
 			{:else}

@@ -155,7 +155,7 @@
   /** `profiling` has a dedicated chip — never duplicate it in subgroup chips. */
   const visibleSubgroups = $derived(availableSubgroups.filter((s) => s !== 'profiling'));
   const slowRequestProfilingMs = $derived($systemInfo.data?.slowRequestThresholdMs ?? 0);
-  const showExpertProfilingChip = $derived(bucket === 'app' && slowRequestProfilingMs > 0);
+  const showProfilingChip = $derived(bucket === 'app' && slowRequestProfilingMs > 0);
 
   function toggleLevel(lvl: string) {
     const set = new Set(filter.levels);
@@ -281,7 +281,7 @@
           {levelLabel[lvl]}
         </button>
       {/each}
-      {#if showExpertProfilingChip}
+      {#if showProfilingChip}
         <button
           type="button"
           class="chip chip-profiling-stack"

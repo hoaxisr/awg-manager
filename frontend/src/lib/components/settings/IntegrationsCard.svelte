@@ -20,8 +20,6 @@
 		singboxUpdateError?: string | null;
 		oninstallSingbox: () => void;
 		onupdateSingbox?: () => void;
-		showSingbox?: boolean;
-		showHydra?: boolean;
 	}
 
 	let {
@@ -36,8 +34,6 @@
 		singboxUpdateError = null,
 		oninstallSingbox,
 		onupdateSingbox,
-		showSingbox = true,
-		showHydra = true,
 	}: Props = $props();
 
 	const singboxInstalled = $derived(singboxStatus?.installed ?? false);
@@ -116,152 +112,146 @@
 	});
 </script>
 
-{#if showSingbox || showHydra}
-	<div class="settings-block">
-		<div class="card">
+<div class="settings-block">
+	<div class="card">
 		<SettingsSectionLabel label="Интеграции" icon={Blocks} tone="purple" header />
-		{#if showSingbox}
-			<div class="setting-row">
-				<div class="integration-item">
-					<StatusDot
-						variant={singboxStatusLoading ? 'muted' : (singboxInstalled && singboxRunning ? 'success' : 'muted')}
-						size="md"
-						ariaLabel={
-							singboxStatusLoading
-								? 'Sing-box: получение данных'
-								: singboxInstalled && singboxRunning
-									? 'Sing-box работает'
-									: 'Sing-box остановлен'
-						}
-					/>
-					<div class="integration-meta">
-						<span class="font-medium">Sing-box</span>
-						{#if singboxStatusLoading}
-							<span class="integration-sub">получаю данные…</span>
-						{:else if singboxInstalled && singboxStatus}
-							<span class="integration-sub">
-								v{singboxStatus.version ?? singboxStatus.currentVersion ?? '?'}
-								{#if singboxRunning && singboxStatus.pid}· pid {singboxStatus.pid}{:else if !singboxRunning}· остановлен{/if}
+		<div class="setting-row">
+			<div class="integration-item">
+				<StatusDot
+					variant={singboxStatusLoading ? 'muted' : (singboxInstalled && singboxRunning ? 'success' : 'muted')}
+					size="md"
+					ariaLabel={
+						singboxStatusLoading
+							? 'Sing-box: получение данных'
+							: singboxInstalled && singboxRunning
+								? 'Sing-box работает'
+								: 'Sing-box остановлен'
+					}
+				/>
+				<div class="integration-meta">
+					<span class="font-medium">Sing-box</span>
+					{#if singboxStatusLoading}
+						<span class="integration-sub">получаю данные…</span>
+					{:else if singboxInstalled && singboxStatus}
+						<span class="integration-sub">
+							v{singboxStatus.version ?? singboxStatus.currentVersion ?? '?'}
+							{#if singboxRunning && singboxStatus.pid}· pid {singboxStatus.pid}{:else if !singboxRunning}· остановлен{/if}
+						</span>
+						{#if singboxNeedsUpdate}
+							<span class="setting-description warning">
+								Требуется обновление: {singboxStatus.currentVersion ?? '—'} → {singboxStatus.requiredVersion}
 							</span>
-							{#if singboxNeedsUpdate}
-								<span class="setting-description warning">
-									Требуется обновление: {singboxStatus.currentVersion ?? '—'} → {singboxStatus.requiredVersion}
-								</span>
-							{/if}
-							{#if singboxFatalLines}
-								<span class="setting-description warning" title={singboxFatalLines}>{singboxFatalLines}</span>
-							{/if}
-							{#if singboxUpdateError}
-								<span class="install-error-row">
-									<span class="install-error-label">Не удалось обновить</span>
-									<Button variant="ghost" size="sm" onclick={showErrorDetails}>
-										Подробнее
-									</Button>
-								</span>
-							{/if}
-						{:else}
-							<span class="setting-description">
-								Поддержка VLESS/Reality, Hysteria2, NaiveProxy. Требует Entware на внешнем носителе.
-							</span>
-							{#if singboxInstallError}
-								<span class="install-error-row">
-									<span class="install-error-label">Не удалось установить</span>
-									<Button variant="ghost" size="sm" onclick={showErrorDetails}>
-										Подробнее
-									</Button>
-								</span>
-							{/if}
 						{/if}
+						{#if singboxFatalLines}
+							<span class="setting-description warning" title={singboxFatalLines}>{singboxFatalLines}</span>
+						{/if}
+						{#if singboxUpdateError}
+							<span class="install-error-row">
+								<span class="install-error-label">Не удалось обновить</span>
+								<Button variant="ghost" size="sm" onclick={showErrorDetails}>
+									Подробнее
+								</Button>
+							</span>
+						{/if}
+					{:else}
+						<span class="setting-description">
+							Поддержка VLESS/Reality, Hysteria2, NaiveProxy. Требует Entware на внешнем носителе.
+						</span>
+						{#if singboxInstallError}
+							<span class="install-error-row">
+								<span class="install-error-label">Не удалось установить</span>
+								<Button variant="ghost" size="sm" onclick={showErrorDetails}>
+									Подробнее
+								</Button>
+							</span>
+						{/if}
+					{/if}
+				</div>
+			</div>
+			{#if installProgress}
+				<div class="progress-widget" class:progress-error={installProgress.phase === 'error'} class:progress-done={installProgress.phase === 'done'}>
+					<div class="progress-label">{installPhaseLabel}</div>
+					<div class="progress-bar" class:indeterminate={installProgressPct === null && installProgress.phase !== 'done' && installProgress.phase !== 'error'}>
+						<div
+							class="progress-fill"
+							style:width={installProgressPct !== null ? `${installProgressPct}%` : '100%'}
+						></div>
 					</div>
 				</div>
-				{#if installProgress}
-					<div class="progress-widget" class:progress-error={installProgress.phase === 'error'} class:progress-done={installProgress.phase === 'done'}>
-						<div class="progress-label">{installPhaseLabel}</div>
-						<div class="progress-bar" class:indeterminate={installProgressPct === null && installProgress.phase !== 'done' && installProgress.phase !== 'error'}>
-							<div
-								class="progress-fill"
-								style:width={installProgressPct !== null ? `${installProgressPct}%` : '100%'}
-							></div>
-						</div>
-					</div>
-				{:else if singboxInstalled && singboxNeedsUpdate && onupdateSingbox}
-					<Button variant="primary" size="sm" onclick={onupdateSingbox} loading={singboxUpdating}>
-						{singboxUpdating ? 'Обновление...' : 'Обновить'}
-					</Button>
-				{:else if singboxInstalled}
-					<Button variant="secondary" size="sm" href="/?tab=singbox">Открыть</Button>
-				{:else if singboxStatusLoading}
-					<Button variant="secondary" size="sm" disabled>Ожидание…</Button>
-				{:else}
-					<Button variant="primary" size="sm" onclick={oninstallSingbox} loading={singboxInstalling}>
-						{singboxInstalling ? 'Установка...' : 'Установить'}
-					</Button>
-				{/if}
-			</div>
-		{/if}
+			{:else if singboxInstalled && singboxNeedsUpdate && onupdateSingbox}
+				<Button variant="primary" size="sm" onclick={onupdateSingbox} loading={singboxUpdating}>
+					{singboxUpdating ? 'Обновление...' : 'Обновить'}
+				</Button>
+			{:else if singboxInstalled}
+				<Button variant="secondary" size="sm" href="/?tab=singbox">Открыть</Button>
+			{:else if singboxStatusLoading}
+				<Button variant="secondary" size="sm" disabled>Ожидание…</Button>
+			{:else}
+				<Button variant="primary" size="sm" onclick={oninstallSingbox} loading={singboxInstalling}>
+					{singboxInstalling ? 'Установка...' : 'Установить'}
+				</Button>
+			{/if}
+		</div>
 
-		{#if showHydra}
-			<div class="setting-row">
-				<div class="integration-item">
-					<StatusDot
-						variant={hydraStatusLoading ? 'muted' : (hydraInstalled && hydraRunning ? 'success' : 'muted')}
-						size="md"
-						ariaLabel={
-							hydraStatusLoading
-								? 'HydraRoute: получение данных'
-								: hydraProcessState === 'dead'
-									? 'HydraRoute: stale pid'
-									: hydraInstalled && hydraRunning
-									? 'HydraRoute работает'
-									: 'HydraRoute остановлен'
-						}
-					/>
-					<div class="integration-meta">
-						<span class="font-medium">HydraRoute Neo</span>
-						{#if hydraStatusLoading}
-							<span class="integration-sub">получаю данные…</span>
-						{:else if hydraInstalled}
-							<span class="integration-sub">
-								v{hydraStatus?.version ?? '?'}
-								{#if hydraRunning && hydraStatus?.pid}
-									· pid {hydraStatus.pid}
-								{:else if hydraProcessState === 'dead' && hydraStatus?.stalePid}
-									· dead pid {hydraStatus.stalePid}
-								{:else}
-									· остановлен
-								{/if}
-							</span>
-						{:else}
-							<span class="integration-sub">не установлен</span>
-						{/if}
-						{#if !hydraRunning && hydraStatus?.lastError}
-							<span class="setting-description warning" title={hydraStatus.lastError}>{hydraStatus.lastError}</span>
-						{/if}
-						{#if !hydraStatusLoading && !hydraStatus && hydraStatusError}
-							<span class="setting-description warning">нет ответа: {hydraStatusError}</span>
-						{/if}
-					</div>
+		<div class="setting-row">
+			<div class="integration-item">
+				<StatusDot
+					variant={hydraStatusLoading ? 'muted' : (hydraInstalled && hydraRunning ? 'success' : 'muted')}
+					size="md"
+					ariaLabel={
+						hydraStatusLoading
+							? 'HydraRoute: получение данных'
+							: hydraProcessState === 'dead'
+								? 'HydraRoute: stale pid'
+								: hydraInstalled && hydraRunning
+								? 'HydraRoute работает'
+								: 'HydraRoute остановлен'
+					}
+				/>
+				<div class="integration-meta">
+					<span class="font-medium">HydraRoute Neo</span>
+					{#if hydraStatusLoading}
+						<span class="integration-sub">получаю данные…</span>
+					{:else if hydraInstalled}
+						<span class="integration-sub">
+							v{hydraStatus?.version ?? '?'}
+							{#if hydraRunning && hydraStatus?.pid}
+								· pid {hydraStatus.pid}
+							{:else if hydraProcessState === 'dead' && hydraStatus?.stalePid}
+								· dead pid {hydraStatus.stalePid}
+							{:else}
+								· остановлен
+							{/if}
+						</span>
+					{:else}
+						<span class="integration-sub">не установлен</span>
+					{/if}
+					{#if !hydraRunning && hydraStatus?.lastError}
+						<span class="setting-description warning" title={hydraStatus.lastError}>{hydraStatus.lastError}</span>
+					{/if}
+					{#if !hydraStatusLoading && !hydraStatus && hydraStatusError}
+						<span class="setting-description warning">нет ответа: {hydraStatusError}</span>
+					{/if}
 				</div>
-				{#if hydraInstalled}
-					<Button variant="secondary" size="sm" href="/routing?tab=hrneo">Открыть</Button>
-				{:else if hydraStatusLoading}
-					<Button variant="secondary" size="sm" disabled>Ожидание…</Button>
-				{:else}
-					<Button
-						variant="outline-primary"
-						size="sm"
-						href="https://github.com/Ground-Zerro/HydraRoute"
-						target="_blank"
-						rel="noopener noreferrer"
-					>
-						Установить
-					</Button>
-				{/if}
 			</div>
-		{/if}
+			{#if hydraInstalled}
+				<Button variant="secondary" size="sm" href="/routing?tab=hrneo">Открыть</Button>
+			{:else if hydraStatusLoading}
+				<Button variant="secondary" size="sm" disabled>Ожидание…</Button>
+			{:else}
+				<Button
+					variant="outline-primary"
+					size="sm"
+					href="https://github.com/Ground-Zerro/HydraRoute"
+					target="_blank"
+					rel="noopener noreferrer"
+				>
+					Установить
+				</Button>
+			{/if}
 		</div>
 	</div>
-{/if}
+</div>
 
 <Modal
 	open={errorModalOpen}

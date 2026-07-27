@@ -92,7 +92,7 @@ func stderrLineIndicatesSingBoxFatal(line string) bool {
 // handleStderrLine is invoked by Process for every line sing-box writes
 // to stderr while running. slog (o.log) идёт в stderr самого демона (в UI
 // НЕ попадает — slog.Default() не бриджится в app-log); чтобы стартап-краш
-// был виден в /diagnostics?tab=logs (Clash API ещё не поднят, LogForwarder
+// был виден в /tools?tab=logs (Clash API ещё не поднят, LogForwarder
 // его не застаёт), FATAL-строки дублируются в processLogger (app-журнал,
 // singbox/process). ERROR/INFO туда намеренно не идут: при живом движке их
 // несёт LogForwarder в singbox-бакет (error/fatal включительно), дубль

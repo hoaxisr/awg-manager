@@ -86,7 +86,7 @@ type Operator struct {
 
 	// processLogger forwards sing-box stdout/stderr lines into the app
 	// log under singbox/process so users can see daemon output at
-	// /diagnostics?tab=logs without ssh'ing in. nil-safe (ScopedLogger
+	// /tools?tab=logs without ssh'ing in. nil-safe (ScopedLogger
 	// methods no-op on nil), so zero-value Operator structs in tests
 	// stay usable.
 	processLogger *logging.ScopedLogger
@@ -216,7 +216,7 @@ type OperatorDeps struct {
 	Queries  *query.Queries
 	Commands *command.Commands
 	// AppLogger surfaces sing-box stdout/stderr in the in-memory app
-	// log buffer (visible at /diagnostics?tab=logs). Optional — when
+	// log buffer (visible at /tools?tab=logs). Optional — when
 	// nil, process output is only mirrored to slog.
 	AppLogger logging.AppLogger
 	Dir       string // optional; defaults to /opt/etc/awg-manager/singbox
