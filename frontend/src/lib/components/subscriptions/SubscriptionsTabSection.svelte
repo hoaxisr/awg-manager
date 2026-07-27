@@ -23,7 +23,6 @@
 
 
 	interface Props {
-		loading: boolean;
 		dashboardOn: boolean;
 		dashboardSectionsLayout: boolean;
 		subscriptionsInitialLoading: boolean;
@@ -54,7 +53,6 @@
 	}
 
 	let {
-		loading,
 		dashboardOn,
 		dashboardSectionsLayout,
 		subscriptionsInitialLoading,

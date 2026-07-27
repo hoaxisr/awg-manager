@@ -257,7 +257,6 @@
 <PageContainer width="full">
 	<PageHeader title="Sing-box подписки" />
 	<SubscriptionsTabSection
-		loading={subscriptionsInitialLoading}
 		dashboardOn={false}
 		dashboardSectionsLayout={false}
 		{subscriptionsInitialLoading}

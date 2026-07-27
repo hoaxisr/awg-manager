@@ -39,7 +39,7 @@
 <Modal
     {open}
     onclose={() => (open = false)}
-    title="Поиск по правилам маршрутизации NDMS"
+    title="Поиск по правилам маршрутизации"
     size="xl"
 >
     <RoutingSearch {dnsRoutes} {staticRoutes} {tunnels} onRuleClick={handleRuleClick} />

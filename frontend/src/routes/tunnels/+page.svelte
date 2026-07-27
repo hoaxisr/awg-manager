@@ -155,6 +155,7 @@
 	let detailId = $state<string | null>(null);
 	let singboxDetailTag = $state<string | null>(null);
 	let awgDiagnosticsTarget = $state<{ id: string; name: string; kind: 'awg' | 'system' } | null>(null);
+	// держатели под тип TunnelPageModalsContext; открывалки на этой странице нет — модалка не рендерится
 	let connectivitySettingsOpen = $state(false);
 	let connectivitySettingsTunnel = $state<TunnelListItem | null>(null);
 	let createModalOpen = $state(false);
