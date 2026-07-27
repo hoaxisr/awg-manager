@@ -903,6 +903,21 @@ label {
 	border-top: 1px solid var(--border);
 }
 
+/* Подсветка deep-link цели (страница настроек и её карточки) */
+.settings-highlight-target.highlighted {
+	animation: settings-target-glow 2.8s ease-out forwards;
+}
+
+@keyframes settings-target-glow {
+	0%   { box-shadow: none; }
+	12%  { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 55%, transparent), 0 0 18px 2px color-mix(in srgb, var(--color-accent) 22%, transparent); }
+	30%  { box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 20%, transparent); }
+	48%  { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 40%, transparent), 0 0 14px 2px color-mix(in srgb, var(--color-accent) 15%, transparent); }
+	65%  { box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 15%, transparent); }
+	82%  { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 22%, transparent), 0 0 8px 1px color-mix(in srgb, var(--color-accent) 10%, transparent); }
+	100% { box-shadow: none; }
+}
+
 .setting-description {
 	overflow-wrap: break-word;
 	font-size: 0.8125rem;

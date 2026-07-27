@@ -10,3 +10,8 @@ export { default as SettingsFooter } from './SettingsFooter.svelte';
 export { default as DevelopChannelGateModal } from './DevelopChannelGateModal.svelte';
 export { default as PukhososPatrol } from './PukhososPatrol.svelte';
 export { default as HttpServerCard } from './HttpServerCard.svelte';
+export { default as AccessCard } from './AccessCard.svelte';
+export { default as DownloadsUpdatesCard } from './DownloadsUpdatesCard.svelte';
+export { default as PingCheckCard } from './PingCheckCard.svelte';
+export { default as AdvancedCard } from './AdvancedCard.svelte';
+export { default as ActionsCard } from './ActionsCard.svelte';
