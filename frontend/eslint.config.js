@@ -35,6 +35,7 @@ export default tseslint.config(
 		rules: {
 			'@typescript-eslint/no-explicit-any': 'error',
 			'@typescript-eslint/no-unnecessary-type-assertion': 'error',
+			'max-lines': ['warn', { max: 400, skipBlankLines: true, skipComments: true }],
 		},
 	},
 	{
@@ -53,6 +54,7 @@ export default tseslint.config(
 		},
 		rules: {
 			'@typescript-eslint/no-explicit-any': 'error',
+			'max-lines': ['warn', { max: 400, skipBlankLines: true, skipComments: true }],
 		},
 	},
 );
