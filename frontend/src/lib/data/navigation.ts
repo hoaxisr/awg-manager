@@ -86,9 +86,8 @@ export const NAV_TREE: NavEntry[] = [
 			{
 				id: 'sb-subs',
 				label: 'Подписки',
-				href: '/?tab=subscriptions',
-				match: (url) =>
-					(url.pathname === '/' && tab(url) === 'subscriptions') || isPath(url, '/subscriptions'),
+				href: '/sb/subscriptions',
+				match: (url) => isPath(url, '/sb/subscriptions'),
 			},
 			{
 				id: 'sb-routing',

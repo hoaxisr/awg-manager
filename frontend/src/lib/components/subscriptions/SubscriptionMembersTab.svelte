@@ -110,7 +110,7 @@
 			const updated = await api.removeSubscriptionMember(subscription.id, tag);
 			pendingRemove = null;
 			if (updated === null) {
-				goto('/?tab=subscriptions');
+				goto('/sb/subscriptions');
 				return;
 			}
 			onUpdated();

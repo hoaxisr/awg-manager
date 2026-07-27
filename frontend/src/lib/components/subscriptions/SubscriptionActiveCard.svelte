@@ -181,11 +181,11 @@
 
     function openDetail(e?: MouseEvent | KeyboardEvent): void {
         if (e && isCardNestedInteraction(e)) return;
-        goto(`/subscriptions/${subscription.id}`);
+        goto(`/sb/subscriptions/${subscription.id}`);
     }
 
     function openSettings(): void {
-        goto(`/subscriptions/${subscription.id}?tab=settings`);
+        goto(`/sb/subscriptions/${subscription.id}?tab=settings`);
     }
 
     async function removeSubscription(): Promise<void> {

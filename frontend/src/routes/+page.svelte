@@ -34,6 +34,7 @@
 	import { Awg3TunnelsSection } from '$lib/components/awg3';
 	import { feedTraffic, getTrafficRates, getTrafficSparklineSeries, subscribeTraffic } from '$lib/stores/traffic';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
+	import { subscriptionLiveActives } from '$lib/stores/subscriptionLiveActives';
 	import SubscriptionsTabSection from '$lib/components/subscriptions/SubscriptionsTabSection.svelte';
 	import SingboxTunnelsTabSection from '$lib/components/singbox/SingboxTunnelsTabSection.svelte';
 	import AwgTunnelsTabSection from '$lib/components/tunnels/AwgTunnelsTabSection.svelte';
@@ -76,8 +77,6 @@
 	import { resolveSubscriptionMemberTag } from '$lib/utils/subscriptionMember';
 	import { nativewgUnavailableHint } from '$lib/utils/backendAvailability';
 	import {
-		SINGBOX_LAYOUT_STORAGE_KEY,
-		parseSingboxLayoutMode,
 		readTunnelMobileLayout,
 		resolveTunnelRenderMode,
 		subscribeTunnelMobileLayout,
@@ -112,12 +111,11 @@
 		type SubscriptionSortKey,
 	} from '$lib/stores/tunnelTableSort';
 
-	type TunnelTab = 'awg' | 'subscriptions';
+	type TunnelTab = 'awg';
 	type AwgTunnelViewMode = 'cards' | 'compact' | 'list';
 	type EndpointScope = 'managed' | 'system' | 'external';
 
 	const AWG_TUNNEL_VIEW_STORAGE_KEY = 'awg_tunnel_view_mode';
-	const SINGBOX_SUBSCRIPTIONS_LAYOUT_STORAGE_KEY = 'singbox_subscriptions_layout_mode';
 	const isMockDevMode = getIsMockDevMode();
 
 	// Polling-store subscription: first subscriber triggers the fetch,
@@ -200,7 +198,6 @@
 	let awgDiagnosticsTarget = $state<{ id: string; name: string; kind: 'awg' | 'system' } | null>(null);
 	let endpointVisibility = $state<Record<string, boolean>>({});
 	let awgListSearchQuery = $state('');
-	let singboxSubscriptionsSearchQuery = $state('');
 	let dashboardSearchQuery = $state('');
 
 	function endpointVisibilityKey(scope: EndpointScope, id: string): string {
@@ -445,47 +442,9 @@
 		return s ? s.label || s.url : id;
 	});
 
-	// Same as detail page — poll Clash for live "now" pointer this often.
-	const URLTEST_POLL_MS = 5000;
-
-	let liveActives = $state<Record<string, string>>({});
-
-	$effect(() => {
-		const urltestSubs = ($subscriptionsStore.data ?? []).filter(
-			(s) => s.enabled && s.mode === 'urltest',
-		);
-		if (urltestSubs.length === 0) {
-			liveActives = {};
-			return;
-		}
-		let cancelled = false;
-		const tick = async (): Promise<void> => {
-			try {
-				const results = await Promise.all(
-					urltestSubs.map((s) =>
-						api
-							.getSubscriptionActiveNow(s.id)
-							.then((r) => [s.id, r.now] as const)
-							.catch(() => [s.id, ''] as const),
-					),
-				);
-				if (cancelled) return;
-				const next: Record<string, string> = {};
-				for (const [id, now] of results) {
-					if (now) next[id] = now;
-				}
-				liveActives = next;
-			} catch {
-				/* ignore — keep last known */
-			}
-		};
-		void tick();
-		const handle = setInterval(() => void tick(), URLTEST_POLL_MS);
-		return () => {
-			cancelled = true;
-			clearInterval(handle);
-		};
-	});
+	// Живой активный член urltest-подписок — общий стор со страницей
+	// /sb/subscriptions (поллинг один на обе поверхности).
+	let liveActives = $derived($subscriptionLiveActives);
 
 	const subscriptionsActiveCards = $derived(
 		($subscriptionsStore.data ?? [])
@@ -530,17 +489,9 @@
 	let awgViewMode = $state<AwgTunnelViewMode>('compact');
 	let awgViewModeReady = false;
 	let isAwgMobile = $state(readTunnelMobileLayout());
-	let singboxSubscriptionsLayoutMode = $state<SingboxLayoutMode>('compact');
-	let singboxSubscriptionsLayoutReady = false;
-	let singboxSubscriptionsEffectiveLayout = $derived<SingboxLayoutMode>(
-		singboxSubscriptionsLayoutMode,
-	);
 	const showSingboxGridListToggle = true;
 	let awgEffectiveViewMode = $derived(awgViewMode);
 	let awgRenderMode = $derived(resolveTunnelRenderMode(isAwgMobile, awgEffectiveViewMode));
-	let singboxSubscriptionsRenderMode = $derived(
-		resolveTunnelRenderMode(isAwgMobile, singboxSubscriptionsEffectiveLayout),
-	);
 	let awgCardViewMode = $derived<'cards' | 'compact'>(
 		awgEffectiveViewMode === 'cards' ? 'cards' : 'compact',
 	);
@@ -601,16 +552,11 @@
 	// переехала на /sb/tunnels) — вид всегда дашбордный.
 	let effectiveSingboxTunnelsRenderMode = $derived(dashboardSingboxRenderMode);
 	let effectiveSingboxTunnelsEffectiveLayout = $derived(dashboardSingboxLayoutMode);
-	let effectiveSingboxSubscriptionsRenderMode = $derived(
-		dashboardOn ? dashboardSingboxRenderMode : singboxSubscriptionsRenderMode,
-	);
-	let effectiveSingboxSubscriptionsEffectiveLayout = $derived(
-		dashboardOn ? dashboardSingboxLayoutMode : singboxSubscriptionsEffectiveLayout,
-	);
+	// Подписки остались на главной только внутри дашборда (своя вкладка
+	// переехала на /sb/subscriptions) — вид и поиск всегда дашбордные.
+	let effectiveSingboxSubscriptionsRenderMode = $derived(dashboardSingboxRenderMode);
+	let effectiveSingboxSubscriptionsEffectiveLayout = $derived(dashboardSingboxLayoutMode);
 	let effectiveAwgSearchQuery = $derived(dashboardOn ? dashboardSearchQuery : awgListSearchQuery);
-	let effectiveSubscriptionsSearchQuery = $derived(
-		dashboardOn ? dashboardSearchQuery : singboxSubscriptionsSearchQuery,
-	);
 
 	function isAwgTunnelViewMode(value: string | null): value is AwgTunnelViewMode {
 		return value === 'cards' || value === 'compact' || value === 'list';
@@ -619,7 +565,6 @@
 	const tunnelTabs = $derived(
 		[
 			{ id: 'awg', label: 'AWG', badge: awgList.length + systemList.length },
-			{ id: 'subscriptions', label: 'Sing-box подписки', badge: subscriptionsList.length },
 		] satisfies Array<{ id: string; label: string; badge?: number }>,
 	);
 
@@ -636,16 +581,6 @@
 			awgViewMode = stored;
 		}
 		awgViewModeReady = true;
-
-		// Backward compatible migration:
-		// if per-tab keys are missing, fall back to the old shared sing-box layout key.
-		const legacyShared = localStorage.getItem(SINGBOX_LAYOUT_STORAGE_KEY);
-
-		const sbSubscriptions =
-			localStorage.getItem(SINGBOX_SUBSCRIPTIONS_LAYOUT_STORAGE_KEY) ?? legacyShared;
-		const parsedSubscriptions = parseSingboxLayoutMode(sbSubscriptions);
-		if (parsedSubscriptions) singboxSubscriptionsLayoutMode = parsedSubscriptions;
-		singboxSubscriptionsLayoutReady = true;
 	});
 
 	onMount(() => subscribeTunnelMobileLayout((mobile) => {
@@ -662,14 +597,6 @@
 		if (awgList.length > 0) {
 			tunnelsSkeletonCount.set(clampSkeletonCount(awgList.length, 3));
 		}
-	});
-
-	$effect(() => {
-		if (!singboxSubscriptionsLayoutReady) return;
-		localStorage.setItem(
-			SINGBOX_SUBSCRIPTIONS_LAYOUT_STORAGE_KEY,
-			singboxSubscriptionsLayoutMode,
-		);
 	});
 
 	let awgAutoConnectivityNonce = $state(0);
@@ -690,14 +617,6 @@
 				(t.connectivityCheck?.method ?? 'http') !== 'disabled'
 			)
 			.map((t) => t.id)
-			.sort()
-			.join(',');
-	}
-
-	function activeSubscriptionDelayTags(): string {
-		return subscriptionsActiveCards
-			.map((card) => card.activeMember.tag)
-			.filter(Boolean)
 			.sort()
 			.join(',');
 	}
@@ -764,44 +683,30 @@
 		};
 	});
 
+	// Sing-box туннели, подписки и AWG3 живут на главной только внутри
+	// дашборда — авто-проверка delay осталась одной дашбордной ветвью.
 	$effect(() => {
 		const path = $page.url.pathname;
-		const tab = activeTab;
 		const entry = tunnelSurfaceEntryNonce;
-		if (path !== '/') return;
+		if (path !== '/' || !dashboardOn) return;
 
-		// Dashboard shows sing-box tunnels and subscriptions at once — run the
-		// auto delay checks for both regardless of the (hidden) active tab.
-		if (dashboardOn) {
-			const sbTags = dashboardSingboxTunnels
-				.filter((t) => t.running === true)
-				.map((t) => t.tag)
-				.sort()
-				.join(',');
-			const subTags = dashboardSubscriptionsActive
-				.map((card) => card.activeMember.tag)
-				.filter(Boolean)
-				.sort()
-				.join(',');
-			if (!sbTags && !subTags) return;
+		const sbTags = dashboardSingboxTunnels
+			.filter((t) => t.running === true)
+			.map((t) => t.tag)
+			.sort()
+			.join(',');
+		const subTags = dashboardSubscriptionsActive
+			.map((card) => card.activeMember.tag)
+			.filter(Boolean)
+			.sort()
+			.join(',');
+		if (!sbTags && !subTags) return;
 
-			// Отдельные префиксы групп: набор тегов туннелей и подписок не
-			// должен схлопываться в один ключ при перестановке между группами.
-			const key = `dashboard:${entry}:sb:${sbTags}|sub:${subTags}`;
-			if (key === lastDashboardDelayKey) return;
-			lastDashboardDelayKey = key;
-			singboxAutoDelayCheckNonce += 1;
-			return;
-		}
-
-		if (tab !== 'subscriptions') return;
-
-		const tags = activeSubscriptionDelayTags();
-		if (!tags) return;
-
-		const key = `${tab}:${entry}:${tags}`;
-		if (key === lastAutoCheckKey) return;
-		lastAutoCheckKey = key;
+		// Отдельные префиксы групп: набор тегов туннелей и подписок не
+		// должен схлопываться в один ключ при перестановке между группами.
+		const key = `dashboard:${entry}:sb:${sbTags}|sub:${subTags}`;
+		if (key === lastDashboardDelayKey) return;
+		lastDashboardDelayKey = key;
 		singboxAutoDelayCheckNonce += 1;
 	});
 
@@ -1024,7 +929,7 @@
 	let sortedFilteredSubscriptionsActiveCards = $derived(
 		sortFilterSubscriptionsActiveCards(
 			subscriptionsActiveCards,
-			effectiveSubscriptionsSearchQuery,
+			dashboardSearchQuery,
 			$singboxSubscriptionTableSort.sortBy,
 			$singboxSubscriptionTableSort.sortAsc,
 			() => $singboxTraffic,
@@ -1035,7 +940,7 @@
 	let sortedFilteredSubscriptionsListRows = $derived(
 		sortFilterSubscriptionsListRows(
 			subscriptionsListRows,
-			effectiveSubscriptionsSearchQuery,
+			dashboardSearchQuery,
 			$singboxSubscriptionTableSort.sortBy,
 			$singboxSubscriptionTableSort.sortAsc,
 			liveActives,
@@ -1065,7 +970,7 @@
 			singboxTunnelsFilteredRowsCount === 0,
 	);
 	let singboxSubscriptionsSearchEmpty = $derived(
-		effectiveSubscriptionsSearchQuery.trim() !== '' &&
+		dashboardSearchQuery.trim() !== '' &&
 			singboxSubscriptionsFilteredRowsCount === 0,
 	);
 
@@ -1260,9 +1165,10 @@
 			(dashboardOn && dashboardNothingAtAll),
 	);
 	let showSingboxBlock = $derived(dashboardTypeSections && dashboardSingboxTunnels.length > 0);
+	// Подписки — своя вкладка переехала на /sb/subscriptions; на главной остались
+	// только дашбордные поверхности (плюс их loading/error-состояние).
 	let showSubscriptionsBlock = $derived(
-		(!dashboardOn && activeTab === 'subscriptions') ||
-			(dashboardTypeSections && dashboardSubscriptionsCount > 0) ||
+		(dashboardTypeSections && dashboardSubscriptionsCount > 0) ||
 			(dashboardOn &&
 				dashboardSingboxVisible &&
 				(subscriptionsInitialLoading || subscriptionsFetchFailed)),
@@ -1590,8 +1496,6 @@
 				{effectiveSingboxSubscriptionsEffectiveLayout}
 				{effectiveSingboxSubscriptionsRenderMode}
 				{liveActives}
-				bind:singboxSubscriptionsSearchQuery
-				bind:singboxSubscriptionsLayoutMode
 				{handleSubscriptionSortChange}
 				{openSingboxDetail}
 				{openWizard}

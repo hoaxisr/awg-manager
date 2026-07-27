@@ -47,7 +47,7 @@
 	// Read-only link-out to where this egress is managed.
 	const manageHref = $derived(
 		egress.source === 'subscription' && egress.subscriptionId
-			? `/subscriptions/${egress.subscriptionId}`
+			? `/sb/subscriptions/${egress.subscriptionId}`
 			: egress.source === 'tunnel'
 				? `/sb/tunnels/${encodeURIComponent(egress.tag)}`
 				: '/',

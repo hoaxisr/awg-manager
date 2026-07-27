@@ -22,6 +22,7 @@
 		sortFilterSingboxTunnels,
 	} from '$lib/components/tunnels/tunnelPageSelectors';
 	import { singboxTunnelTableSort, type SingboxTunnelSortKey } from '$lib/stores/tunnelTableSort';
+	import { resolveSubscriptionMemberTag } from '$lib/utils/subscriptionMember';
 	import {
 		SINGBOX_LAYOUT_STORAGE_KEY,
 		parseSingboxLayoutMode,
@@ -57,9 +58,19 @@
 
 	let singboxTunnelsList = $derived($singboxTunnels.data ?? []);
 	// Тулбар показывался и при пустом списке туннелей, когда есть активные
-	// подписки (их карточки тоже sing-box) — условие сохранено.
+	// подписки (их карточки тоже sing-box) — условие сохранено. Критерий тот
+	// же, что у карточек подписок: enabled + резолвится реальный активный член.
+	// Живой указатель (subscriptionLiveActives) здесь не нужен — он меняет
+	// ТОЛЬКО выбор члена, а не факт его наличия, и стоил бы 5s-опроса Clash на
+	// странице, где подписки не показываются. Поллинг списка подписок (30s)
+	// оставлен: дешевле источника для этого флага нет, стор общий и
+	// reference-counted.
 	let hasActiveSubscriptions = $derived(
-		($subscriptionsStore.data ?? []).some((s) => s.enabled && (s.members?.length ?? 0) > 0),
+		($subscriptionsStore.data ?? []).some(
+			(s) =>
+				s.enabled &&
+				(s.members ?? []).some((m) => m.tag === resolveSubscriptionMemberTag(s, null)),
+		),
 	);
 
 	let isMobile = $state(readTunnelMobileLayout());

@@ -142,7 +142,7 @@
 		deleting = true;
 		try {
 			await api.deleteSubscription(subscription.id);
-			goto('/?tab=subscriptions');
+			goto('/sb/subscriptions');
 		} catch (e) {
 			const name = subscription.label || subscription.selectorTag || subscription.id;
 			if (!showOutboundReferencedError(e, name, 'Подписка')) {

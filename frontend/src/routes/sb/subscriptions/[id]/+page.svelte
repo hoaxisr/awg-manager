@@ -295,7 +295,7 @@
 	{:else if !subscription && error}
 		<div class="err">{error}</div>
 	{:else if subscription}
-		<PageHeader title={subscription.label || subscription.url} backTo="/?tab=subscriptions" />
+		<PageHeader title={subscription.label || subscription.url} backTo="/sb/subscriptions" />
 		{@const excludedCount = subscription.excludedMembers?.length ?? 0}
 		<Tabs
 			tabs={[

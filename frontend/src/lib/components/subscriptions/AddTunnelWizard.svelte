@@ -318,7 +318,7 @@
 			}
 			open = false;
 			reset();
-			goto(`/subscriptions/${sub.id}`);
+			goto(`/sb/subscriptions/${sub.id}`);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Не удалось создать';
 		} finally {

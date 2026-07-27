@@ -46,7 +46,7 @@
 	kind="subscription"
 	targetId={selectorTag}
 	{displayName}
-	backHref="/?tab=subscriptions"
+	backHref="/sb/subscriptions"
 	backLabel="К списку подписок"
 	subjectLabel="подписку"
 	iface={kernelIface}

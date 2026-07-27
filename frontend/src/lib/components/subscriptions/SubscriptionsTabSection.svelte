@@ -43,8 +43,10 @@
 		effectiveSingboxSubscriptionsEffectiveLayout: SingboxLayoutMode;
 		effectiveSingboxSubscriptionsRenderMode: TunnelRenderMode;
 		liveActives: Record<string, string>;
-		singboxSubscriptionsSearchQuery: string;
-		singboxSubscriptionsLayoutMode: SingboxLayoutMode;
+		// Тулбар (поиск и переключатель вида) рендерится только вне дашборда —
+		// на главной секция дашбордная и эти пропсы не передаются.
+		singboxSubscriptionsSearchQuery?: string;
+		singboxSubscriptionsLayoutMode?: SingboxLayoutMode;
 		handleSubscriptionSortChange: (key: SubscriptionSortKey) => void;
 		openSingboxDetail: (tag: string) => void;
 		openWizard: (mode: 'url') => void;
@@ -72,8 +74,8 @@
 		effectiveSingboxSubscriptionsEffectiveLayout,
 		effectiveSingboxSubscriptionsRenderMode,
 		liveActives,
-		singboxSubscriptionsSearchQuery = $bindable(),
-		singboxSubscriptionsLayoutMode = $bindable(),
+		singboxSubscriptionsSearchQuery = $bindable(''),
+		singboxSubscriptionsLayoutMode = $bindable('compact'),
 		handleSubscriptionSortChange,
 		openSingboxDetail,
 		openWizard,
