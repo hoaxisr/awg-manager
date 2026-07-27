@@ -57,3 +57,39 @@ describe('computeCardStats', () => {
 		expect(s.history).toEqual([0, 0]);
 	});
 });
+
+// Issue #629: латентность -1 означает «не измерено», а не «0 мс».
+// Раньше она попадала в avg/min/max и в полоску, из-за чего успешные
+// проверки рисовались красными, а средняя показывала -1.
+describe('unknown latency (-1)', () => {
+	const status: TunnelPingStatus = {
+		tunnelId: 't', tunnelName: 't', enabled: true, backend: 'nativewg',
+		status: 'alive', method: 'handshake', lastLatency: -1,
+		failCount: 0, failThreshold: 3, restartCount: 0,
+	};
+
+	it('не учитывает неизмеренные проверки в avg/min/max', () => {
+		const s = computeCardStats([log('t', true, -1), log('t', true, -1)], status);
+		expect(s.avgMs).toBeNull();
+		expect(s.minMs).toBeNull();
+		expect(s.maxMs).toBeNull();
+	});
+
+	it('считает статистику по измеренным, игнорируя неизмеренные', () => {
+		const s = computeCardStats([log('t', true, 10), log('t', true, -1), log('t', true, 30)], status);
+		expect(s.avgMs).toBe(20);
+		expect(s.minMs).toBe(10);
+		expect(s.maxMs).toBe(30);
+	});
+
+	it('не считает неизмеренную проверку потерей', () => {
+		const s = computeCardStats([log('t', true, -1), log('t', false, 0)], status);
+		expect(s.lossPct).toBe(50);
+	});
+
+	it('различает в history неизмеренную проверку (-1) и провал (0)', () => {
+		const s = computeCardStats([log('t', false, 0), log('t', true, -1)], status);
+		// history — хронологический, oldest→newest
+		expect(s.history).toEqual([-1, 0]);
+	});
+});

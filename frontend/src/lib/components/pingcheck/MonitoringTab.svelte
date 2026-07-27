@@ -87,6 +87,7 @@
 				configured: isWatchdog || !!cfg,
 				configLine: configLine(cfg, s.method, s.failThreshold),
 				stats: computeCardStats(logsByTunnel.get(s.tunnelId) ?? [], s),
+				latencyNote: s.latencyNote,
 			};
 		});
 		const noPc = tunnelMeta
@@ -201,6 +202,7 @@
 					isWatchdog={c.isWatchdog}
 					configLine={c.configLine}
 					stats={c.stats}
+					latencyNote={c.latencyNote}
 					onConfigure={() => openConfig(c.id, c.name, c.backend)}
 					onCheckNow={checkNow}
 					onDisable={() => disablePingcheck(c.id, c.name, c.backend)}

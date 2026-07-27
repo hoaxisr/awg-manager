@@ -15,13 +15,15 @@
 		isWatchdog: boolean;
 		configLine: string;
 		stats: CardStats | null;
+		/** Почему время отклика не измерено; пусто — измеряется нормально. */
+		latencyNote?: string;
 		onConfigure: () => void;
 		onCheckNow: () => void;
 		onDisable: () => void;
 		onEnable: () => void;
 	}
 
-	let { name, backend, awgVersion, statusKind, hasPingcheck, isWatchdog, configLine, stats, onConfigure, onCheckNow, onDisable, onEnable }: Props =
+	let { name, backend, awgVersion, statusKind, hasPingcheck, isWatchdog, configLine, stats, latencyNote, onConfigure, onCheckNow, onDisable, onEnable }: Props =
 		$props();
 
 	const STATUS: Record<Props['statusKind'], { dot: StatusDotVariant; pulse: boolean; label: string; badge: BadgeVariant }> = {
@@ -33,6 +35,9 @@
 	};
 	const st = $derived(STATUS[statusKind]);
 	const fmt = (v: number | null) => (v === null ? '—' : `${v}ms`);
+	// latency <= 0 у успешной проверки означает «не измерено» (issue #629):
+	// печатать «-1ms» нельзя, причина показана отдельной строкой ниже.
+	const fmtLat = (v: number) => (v > 0 ? `${v}ms` : '—');
 </script>
 
 <div class="wd-card" class:recovering={statusKind === 'recovering'}>
@@ -62,6 +67,12 @@
 			<div class="wd-stat"><span class="v" class:loss={stats.lossPct > 0}>{stats.lossPct}%</span><span class="k">loss</span></div>
 		</div>
 
+		<!-- Почему нет цифр: причина одна на туннель, поэтому показывается
+		     один раз, а не в каждой строке проверки (issue #629). -->
+		{#if latencyNote}
+			<div class="wd-latency-note"><Info size={13} />{latencyNote}</div>
+		{/if}
+
 		<!-- Last checks -->
 		<div class="wd-checks">
 			<div class="wd-checks-head">
@@ -80,7 +91,7 @@
 						<span class="ico" class:ok={e.success} class:bad={!e.success}>
 							{#if e.success}<Check size={13} />{:else}<X size={13} />{/if}
 						</span>
-						<span class="lat">{e.success ? `${e.latency}ms` : '—'}</span>
+						<span class="lat">{e.success ? fmtLat(e.latency) : '—'}</span>
 						<span class="note">{e.error}</span>
 					</div>
 				{/each}
@@ -196,6 +207,22 @@
 		line-height: 1.6;
 		color: var(--color-text-muted);
 		border-bottom: 1px solid var(--color-border);
+	}
+
+	.wd-latency-note {
+		display: flex;
+		align-items: flex-start;
+		gap: 6px;
+		padding: 8px 14px;
+		font-size: 11px;
+		line-height: 1.5;
+		color: var(--color-text-muted);
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.wd-latency-note :global(svg) {
+		flex-shrink: 0;
+		margin-top: 1px;
 	}
 
 	/* Stats grid */

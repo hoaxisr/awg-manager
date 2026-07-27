@@ -25,6 +25,7 @@ type TunnelPingStatusDTO struct {
 	Status        string `json:"status" example:"alive"`
 	Method        string `json:"method" example:"http"`
 	LastLatency   int    `json:"lastLatency" example:"35"`
+	LatencyNote   string `json:"latencyNote,omitempty" example:"метод проверки не измеряет время отклика"`
 	FailCount     int    `json:"failCount" example:"0"`
 	FailThreshold int    `json:"failThreshold" example:"3"`
 	RestartCount  int    `json:"restartCount" example:"0"`

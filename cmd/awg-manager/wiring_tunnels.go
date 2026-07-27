@@ -208,12 +208,9 @@ func (a *app) setupServices() {
 
 	// Unified facade: kernel → custom loop, NativeWG → NDMS native
 	a.pingCheckFacade = pingcheck.NewFacade(a.pingCheckService, a.awgStore, a.nwgOp)
-	a.pingCheckFacade.SetNativeWGLatencyProbe(func(ctx context.Context, tunnelID string) int {
+	a.pingCheckFacade.SetNativeWGLatencyProbe(func(ctx context.Context, tunnelID string) (int, string) {
 		res, err := a.testService.CheckConnectivity(ctx, tunnelID)
-		if err != nil || res == nil || !res.Connected || res.Latency == nil {
-			return pingcheck.LatencyNotAvailable
-		}
-		return *res.Latency
+		return pingcheck.LatencyFromConnectivity(res, err)
 	})
 
 	// monitoringService is constructed below after systemTunnelSvc is wired,
