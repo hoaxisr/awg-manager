@@ -8,7 +8,7 @@
 	import { appLogEntries, singboxLogEntries } from '$lib/stores/logs';
 	import { formatRelativeTime } from '$lib/utils/format';
 	import type { LogEntry } from '$lib/types';
-	import { mergeWarnEntries, effectiveTime, WARN_LOG_FETCH_LIMIT } from './warnLog';
+	import { mergeWarnEntries, effectiveTime, keyOf, WARN_LOG_FETCH_LIMIT } from './warnLog';
 
 	let fetched = $state<LogEntry[]>([]);
 	let loading = $state(true);
@@ -45,7 +45,7 @@
 	{:else if entries.length === 0}
 		<p class="empty">Журнал пуст — предупреждений нет.</p>
 	{:else}
-		{#each entries as entry (entry.timestamp + entry.message)}
+		{#each entries as entry (keyOf(entry))}
 			<div class="row">
 				<span class="level" class:err={entry.level === 'error'}>{entry.level.toUpperCase()}</span>
 				<span class="body">

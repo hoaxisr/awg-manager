@@ -19,7 +19,14 @@ export function isWarnLevel(level: string): boolean {
 	return level === 'warn' || level === 'error';
 }
 
-function keyOf(e: LogEntry): string {
+/**
+ * Составной ключ записи — тот же, что использует backend при схлопывании
+ * повторов (level/group/subgroup/action/target/message + timestamp). Служит
+ * и ключом дедупа, и `each`-ключом в карточке: `timestamp + message` слабее
+ * и даёт `each_key_duplicate` на записях, которые дедуп законно пропустил
+ * (например, singbox-FATAL, зеркалированный в app-журнал с другим group).
+ */
+export function keyOf(e: LogEntry): string {
 	return `${e.timestamp}|${e.level}|${e.group}|${e.subgroup}|${e.action}|${e.target}|${e.message}`;
 }
 
