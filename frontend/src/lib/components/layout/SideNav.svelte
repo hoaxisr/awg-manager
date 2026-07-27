@@ -42,11 +42,12 @@
 					{onNavigate}
 				/>
 			{:else}
-				{@const Icon = entry.icon}
-				<div class="flat-item">
-					<Icon size={16} aria-hidden="true" class="flat-icon" />
-					<SideNavItem item={entry} active={entry.id === activeId} {onNavigate} />
-				</div>
+				<SideNavItem
+					item={entry}
+					icon={entry.icon}
+					active={entry.id === activeId}
+					{onNavigate}
+				/>
 			{/if}
 		{/each}
 	</nav>
@@ -102,18 +103,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1px;
-	}
-
-	.flat-item {
-		display: grid;
-		grid-template-columns: auto 1fr;
-		align-items: center;
-		gap: 0;
-	}
-
-	.flat-item :global(.flat-icon) {
-		margin-left: 0.5rem;
-		color: var(--color-text-muted);
 	}
 
 	.footer {

@@ -1,9 +1,11 @@
 <script lang="ts">
-	import type { NavItem } from '$lib/data/navigation';
+	import type { NavIcon, NavItem } from '$lib/data/navigation';
 
 	interface Props {
 		item: NavItem;
 		active: boolean;
+		/** Иконка плоского пункта верхнего уровня (у пунктов групп её нет). */
+		icon?: NavIcon;
 		/** Пункт внутри группы — с отступом под иконку группы. */
 		indent?: boolean;
 		/** Счётчик справа (подключение к stores — фаза 3). */
@@ -13,7 +15,17 @@
 		onNavigate?: () => void;
 	}
 
-	let { item, active, indent = false, count = null, dot = false, onNavigate }: Props = $props();
+	let {
+		item,
+		active,
+		icon,
+		indent = false,
+		count = null,
+		dot = false,
+		onNavigate,
+	}: Props = $props();
+
+	const Icon = $derived(icon);
 </script>
 
 <a
@@ -24,6 +36,7 @@
 	aria-current={active ? 'page' : undefined}
 	onclick={onNavigate}
 >
+	{#if Icon}<Icon size={16} aria-hidden="true" />{/if}
 	<span class="nav-item-label">{item.label}</span>
 	{#if dot}<span class="nav-item-dot" aria-hidden="true"></span>{/if}
 	{#if count !== null}<span class="nav-item-count">{count}</span>{/if}
