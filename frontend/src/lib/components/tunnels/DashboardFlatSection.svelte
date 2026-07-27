@@ -292,11 +292,11 @@
 
 <style>
 	/* Комбинированная сводка дашборда (issue #353): липкий блок «тулбар +
-	   сводка» под AppHeader — тот же паттерн, что sticky-header в
+	   сводка» вверху скролл-контейнера — тот же паттерн, что sticky-header в
 	   TunnelEditHeader.svelte. */
 	.dashboard-sticky {
 		position: sticky;
-		top: 56px;
+		top: 0;
 		z-index: var(--z-sticky-secondary);
 		background: var(--color-bg-primary);
 		padding-bottom: 0.75rem;

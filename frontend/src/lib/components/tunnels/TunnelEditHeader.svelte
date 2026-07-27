@@ -111,7 +111,7 @@
 	/* Sticky header */
 	.sticky-header {
 		position: sticky;
-		top: 56px;
+		top: 0;
 		z-index: var(--z-sticky-secondary);
 		display: flex;
 		justify-content: space-between;

@@ -83,13 +83,18 @@
 			return;
 		}
 
+		// Скролл живёт в .shell-content (<main>), а не в окне — считаем уход
+		// баннера относительно верха этого контейнера.
+		const root = el.closest('main');
+
 		const observer = new IntersectionObserver(
 			([entry]) => {
-				const passed = !entry.isIntersecting && entry.boundingClientRect.bottom <= 56;
+				const rootTop = entry.rootBounds?.top ?? 0;
+				const passed = !entry.isIntersecting && entry.boundingClientRect.bottom <= rootTop;
 				if (passed) syncFloatInset();
 				showFloating = passed;
 			},
-			{ threshold: 0 },
+			{ root, threshold: 0 },
 		);
 
 		observer.observe(el);
@@ -101,10 +106,11 @@
 		syncFloatInset();
 		const onLayout = () => syncFloatInset();
 		window.addEventListener('resize', onLayout);
-		window.addEventListener('scroll', onLayout, { passive: true });
+		// capture: скролл контейнера не всплывает до window.
+		window.addEventListener('scroll', onLayout, { passive: true, capture: true });
 		return () => {
 			window.removeEventListener('resize', onLayout);
-			window.removeEventListener('scroll', onLayout);
+			window.removeEventListener('scroll', onLayout, { capture: true });
 		};
 	});
 </script>
@@ -200,7 +206,7 @@
 
 	.staging-inline.sticky-errors {
 		position: sticky;
-		top: 56px;
+		top: 0;
 		z-index: var(--z-sticky-secondary);
 	}
 
@@ -223,7 +229,8 @@
 
 	.staging-float {
 		position: fixed;
-		top: 56px;
+		/* под TopBar (53px, border-box) — верх скролл-контейнера */
+		top: 53px;
 		z-index: var(--z-sticky-secondary);
 		box-sizing: border-box;
 		padding-top: 0.375rem;
