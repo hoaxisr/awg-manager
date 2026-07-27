@@ -12,3 +12,4 @@ export { default as SideNavItem } from './SideNavItem.svelte';
 export { default as SideNavGroup } from './SideNavGroup.svelte';
 export { default as SideNav } from './SideNav.svelte';
 export { default as TopBar } from './TopBar.svelte';
+export { default as AppShell } from './AppShell.svelte';

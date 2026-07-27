@@ -10,6 +10,7 @@
 		authDisabled?: boolean;
 		username?: string | null;
 		theme: ThemeState;
+		mobileNavOpen?: boolean;
 		onToggleThemeMode: () => void;
 		onLogout: () => void;
 		onOpenDonate: () => void;
@@ -20,6 +21,7 @@
 		authDisabled = false,
 		username = null,
 		theme,
+		mobileNavOpen = false,
 		onToggleThemeMode,
 		onLogout,
 		onOpenDonate,
@@ -32,7 +34,14 @@
 </script>
 
 <header class="topbar">
-	<button type="button" class="burger" onclick={onToggleMobileNav} aria-label="Меню">
+	<button
+		type="button"
+		class="burger"
+		onclick={onToggleMobileNav}
+		aria-label="Меню"
+		aria-expanded={mobileNavOpen}
+		aria-controls="app-sidenav"
+	>
 		<Menu size={16} aria-hidden="true" />
 	</button>
 
