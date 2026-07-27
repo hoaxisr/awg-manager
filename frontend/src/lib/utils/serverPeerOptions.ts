@@ -61,5 +61,97 @@ export function buildServerPeerDropdownOptions(
     }
   }
 
-  return opts;
+	return opts;
+}
+
+/** WG-серверы со status=up (managedStats или servers). */
+export function buildRunningServerPeerDropdownOptions(
+	snap: ServersSnapshot | null,
+): DropdownOption[] {
+	if (!snap) return [];
+	const opts: DropdownOption[] = [];
+
+	for (const s of snap.managed ?? []) {
+		const st = snap.managedStats?.[s.interfaceName]?.status;
+		if (st !== 'up') continue;
+		const group = `Managed · ${s.description || s.interfaceName}`;
+		for (const p of s.peers ?? []) {
+			opts.push({
+				value: encodeServerPeerValue('managed', s.interfaceName, p.publicKey),
+				label: peerLabel(p.publicKey, p.description),
+				group,
+			});
+		}
+	}
+
+	for (const s of snap.servers ?? []) {
+		if (s.status !== 'up') continue;
+		const group = `Системный WG · ${s.description || s.interfaceName}`;
+		for (const p of s.peers ?? []) {
+			if (p.confAvailable !== true) continue;
+			opts.push({
+				value: encodeServerPeerValue('system', s.id, p.publicKey),
+				label: peerLabel(p.publicKey, p.description),
+				group,
+			});
+		}
+	}
+
+	return opts;
+}
+
+export function resolveServerListenPort(
+	snap: ServersSnapshot | null,
+	kind: ServerPeerKind,
+	serverId: string,
+): number | null {
+	if (!snap) return null;
+	if (kind === 'managed') {
+		const s = snap.managed?.find((m) => m.interfaceName === serverId);
+		return s?.listenPort ?? null;
+	}
+	const s = snap.servers?.find((srv) => srv.id === serverId);
+	return s?.listenPort ?? null;
+}
+
+export function wgEndpointHint(localPort: number): string {
+	return `127.0.0.1:${localPort}`;
+}
+
+/** Порт из freeturn -listen (127.0.0.1:9001 → 9001). */
+export function parseLocalListenPort(listen: string | undefined | null): number | null {
+	const raw = listen?.trim();
+	if (!raw) return null;
+	const m = raw.match(/:(\d+)$/);
+	if (m) {
+		const port = Number(m[1]);
+		return port > 0 && port <= 65535 ? port : null;
+	}
+	const port = Number(raw);
+	return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
+}
+
+/** Подставляет локальный Endpoint в [Peer] секцию конфига клиента. */
+export function patchWgConfEndpoint(conf: string, localPort: number): string {
+	const host = '127.0.0.1';
+	const port = String(localPort);
+	const lines = conf.split('\n');
+	let inPeer = false;
+	let replaced = false;
+	const out = lines.map((line) => {
+		const t = line.trim();
+		if (t.startsWith('[')) {
+			inPeer = t.toLowerCase() === '[peer]';
+			return line;
+		}
+		if (inPeer && /^endpoint\s*=/i.test(t)) {
+			replaced = true;
+			return `Endpoint = ${host}:${port}`;
+		}
+		return line;
+	});
+	if (!replaced && conf.trim()) {
+		out.push('', '[Peer]', `Endpoint = ${host}:${port}`);
+	}
+	return out.join('\n');
 }

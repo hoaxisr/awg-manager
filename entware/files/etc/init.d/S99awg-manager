@@ -45,6 +45,14 @@ is_our_pid() {
 }
 
 start() {
+    # 0-байтный бинарь проходит -x и молча «стартует» (#571: сбойная запись
+    # на накопитель) — громко в консоль и в syslog роутера.
+    if [ ! -s "$BIN" ]; then
+        echo "ERROR: $BIN is missing or empty (corrupt install) — reinstall the package"
+        logger -t awg-manager -p daemon.err "start failed: $BIN missing or empty (corrupt install)"
+        return 1
+    fi
+
     if [ -f "$PID_FILE" ]; then
         local pid=$(cat "$PID_FILE" 2>/dev/null)
         if is_our_pid "$pid"; then
@@ -66,6 +74,14 @@ start() {
     fi
 
     echo "Starting $DESC..."
+
+    # Child processes (freeturn-client, sing-box, …) log in UTC unless TZ
+    # matches the router — Keenetic stores POSIX zone in /var/TZ or /etc/TZ.
+    if [ -r /var/TZ ]; then
+        export TZ="$(cat /var/TZ)"
+    elif [ -r /etc/TZ ]; then
+        export TZ="$(cat /etc/TZ)"
+    fi
 
     # Start daemon (port is read from settings.json)
     start-stop-daemon -S -b -m -p "$PID_FILE" -x "$BIN" -- \

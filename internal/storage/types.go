@@ -370,6 +370,8 @@ type AWGTunnel struct {
 	ActiveWAN          string                   `json:"activeWAN,omitempty"`          // Persisted resolved WAN for WAN event matching
 	StartedAt          string                   `json:"startedAt,omitempty"`          // RFC3339 timestamp of last successful start
 	Backend            string                   `json:"backend,omitempty"`            // "nativewg" | "kernel" | "" (legacy=kernel)
+	FreeTurnClientID   string                   `json:"freeTurnClientId,omitempty"`   // set when AWG tunnel is auto-created from freeturn:// import
+	WdttClientID       string                   `json:"wdttClientId,omitempty"`       // set when AWG tunnel is auto-created from wdtt/qwdtt import
 	NWGIndex           int                      `json:"nwgIndex"`                     // Wireguard{N} index, nativewg only (0 is valid!)
 	CreatedAt          string                   `json:"createdAt"`
 	Interface          AWGInterface             `json:"interface"`

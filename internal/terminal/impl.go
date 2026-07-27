@@ -118,12 +118,16 @@ func (m *ManagerImpl) Start(ctx context.Context) (int, error) {
 		// before any emit function, so suppressing NOTICE silences syslog,
 		// stderr, and any other emit channel at once. ERR+WARN still surface
 		// real failures into stderr (collected in syncBuffer for diagnostics).
+		// БЕЗ --once: ttyd переживает обрыв WS-клиента (сон вкладки, обрыв
+		// прокси) — фронт может переподключиться без ручного Start (#588).
+		// Безопасность не ослаблена: ttyd слушает только lo, доступ — через
+		// наш авторизованный single-session прокси; явный Stop (крестик,
+		// уход со страницы) и Shutdown-хук по-прежнему гасят процесс.
 		cmd := exec.Command(ttydBinary,
 			"--writable",
 			"-d", "3",
 			"--port", fmt.Sprintf("%d", port),
 			"--interface", "lo",
-			"--once",
 			loginPath,
 		)
 		cmd.Stdout = output
@@ -139,7 +143,7 @@ func (m *ManagerImpl) Start(ctx context.Context) (int, error) {
 		m.port = port
 		m.log.AppLog(logging.LevelInfo, logGroup, logSubgroup, "start", "ttyd", fmt.Sprintf("ttyd started on port %d (pid %d)", port, cmd.Process.Pid))
 
-		// Background goroutine to reap process on exit (e.g. --once self-termination).
+		// Background goroutine to reap process on exit (crash/kill).
 		go m.waitForExit(cmd)
 
 		// Wait for ttyd to be ready and fail fast if process exits immediately.

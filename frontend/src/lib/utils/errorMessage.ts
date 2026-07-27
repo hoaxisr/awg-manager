@@ -15,3 +15,13 @@ export function errorMessage(e: unknown, fallback = 'Ошибка'): string {
 	}
 	return fallback;
 }
+
+/**
+ * Like {@link errorMessage} but keeps the raw stringified value instead of a
+ * fallback: an `Error` yields its `message`, anything else yields `String(e)`
+ * (with `null`/`undefined` collapsed to `''`). Used where the caller supplies
+ * its own prefix/fallback (e.g. `'WDTT: ' + errText(e)`, `errText(e) || '…'`).
+ */
+export function errText(e: unknown): string {
+	return e instanceof Error ? e.message : String(e ?? '');
+}

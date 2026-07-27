@@ -180,6 +180,78 @@ func TestService_CreateGroup_Validation(t *testing.T) {
 	}
 }
 
+// #572: кастомный tag при создании группы.
+func TestGroupStore_Create_CustomTag(t *testing.T) {
+	gs, err := NewGroupStore(filepath.Join(t.TempDir(), "groups.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := gs.Create(GroupCreateInput{Label: "Европа", Tag: "eu-all", Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if g.Tag != "eu-all" || g.InboundTag != "eu-all-in" {
+		t.Errorf("tags: Tag=%q InboundTag=%q", g.Tag, g.InboundTag)
+	}
+	if _, err := gs.Create(GroupCreateInput{Label: "Копия", Tag: "eu-all"}); err == nil {
+		t.Error("duplicate tag must be rejected")
+	}
+	if _, err := gs.Create(GroupCreateInput{Label: "X", Tag: "eu-all-in"}); err == nil {
+		t.Error("tag colliding with existing inbound tag must be rejected")
+	}
+}
+
+func TestService_CreateGroup_CustomTagValidation(t *testing.T) {
+	svc, _, _ := newTestServiceWithGroups(t)
+	bad := []string{
+		"с пробелом", "кириллица", "tag!", "-lead", ".lead",
+		"sub-x", "direct", "block", "dns-out",
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", // 33 символа
+	}
+	for _, tag := range bad {
+		if _, err := svc.CreateGroup(context.Background(), GroupCreateInput{Label: "G", Tag: tag}); !errors.Is(err, ErrValidation) {
+			t.Errorf("tag %q: want ErrValidation, got %v", tag, err)
+		}
+	}
+	if len(svc.ListGroups()) != 0 {
+		t.Error("no group rows must persist after tag validation failures")
+	}
+}
+
+func TestService_CreateGroup_CustomTagMaterializes(t *testing.T) {
+	svc, mut, _ := newTestServiceWithGroups(t)
+	body := namedLinks("DE-1")
+	srv := serveLinks(t, &body)
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "a", URL: srv.URL, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Коллизия с selector-тегом существующей подписки — отклоняется.
+	if _, err := svc.CreateGroup(context.Background(), GroupCreateInput{Label: "X", Tag: sub.SelectorTag}); !errors.Is(err, ErrValidation) {
+		t.Errorf("tag colliding with subscription selector: want ErrValidation, got %v", err)
+	}
+
+	g, err := svc.CreateGroup(context.Background(), GroupCreateInput{
+		Label:              "Европа",
+		Tag:                "eu.all_1",
+		UseSubscriptionIDs: []string{sub.ID},
+		Enabled:            true,
+	})
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if g.Tag != "eu.all_1" || g.InboundTag != "eu.all_1-in" {
+		t.Fatalf("tags: Tag=%q InboundTag=%q", g.Tag, g.InboundTag)
+	}
+	if ob := groupOutboundBody(t, mut, "eu.all_1"); ob["type"] != "urltest" {
+		t.Errorf("outbound под кастомным тегом не материализован: %v", ob)
+	}
+	if !containsTag(mut.addedInbounds, "eu.all_1-in") {
+		t.Errorf("inbound под кастомным тегом не поднят")
+	}
+}
+
 func TestService_CreateGroup_EmptyResolutionEmitsNoOutbound(t *testing.T) {
 	svc, mut, _ := newTestServiceWithGroups(t)
 	body := namedLinks("RU-1", "RU-2")

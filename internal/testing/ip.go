@@ -149,18 +149,32 @@ type WANIPFallback func(ctx context.Context) (string, error)
 // returns whatever it produces. Errors from the fallback are surfaced;
 // the original external-probe error is only returned if fallback is nil.
 func GetWANIPWithFallback(ctx context.Context, fallback WANIPFallback) (string, error) {
-	ip, err := fetchIPAuto(ctx, "", "")
-	if err == nil {
+	return GetWANIPBound(ctx, "", fallback)
+}
+
+// GetWANIPBound probes external IP check services, optionally binding outbound
+// traffic to a kernel WAN interface (SO_BINDTODEVICE). When iface is empty,
+// the default route is used. On probe failure, fallback (typically the NDMS
+// address on the default-gateway interface) is tried.
+func GetWANIPBound(ctx context.Context, iface string, fallback WANIPFallback) (string, error) {
+	ip, err := fetchIPAuto(ctx, "", iface)
+	if err == nil && ip != "" {
 		return ip, nil
 	}
 	if fallback == nil {
-		return "", err
+		if err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("empty WAN IP")
 	}
 	fip, ferr := fallback(ctx)
 	if ferr == nil && fip != "" {
 		return fip, nil
 	}
-	return "", err
+	if err != nil {
+		return "", err
+	}
+	return "", ferr
 }
 
 // fetchIPAuto fetches IP using a specific service or falls back through the default list.

@@ -50,9 +50,13 @@
 		{/each}
 	{:else}
 		{#each bars as d, i (i)}
+			<!-- d > 0 — измерено, 0 — проверка провалилась, < 0 — проверка прошла,
+			     но время не измерено (issue #629): такой столбец приглушённый,
+			     а не красный, иначе успешная проверка читается как сбой. -->
 			<div
 				class="bar"
-				class:fail={colorPerBar && (d <= 0 || latencyTier(d) === 'error')}
+				class:fail={colorPerBar && (d === 0 || (d > 0 && latencyTier(d) === 'error'))}
+				class:unmeasured={colorPerBar && d < 0}
 				class:slow={colorPerBar && d > 0 && latencyTier(d) === 'warning'}
 				style="height: {Math.max((d <= 0 ? max : d) / max, 0.08) * 100}%;"
 			></div>

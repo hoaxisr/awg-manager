@@ -125,6 +125,41 @@ func TestInstallAsLocal_RouterTZ(t *testing.T) {
 	}
 }
 
+func TestAppendTZFromRouter(t *testing.T) {
+	dir := t.TempDir()
+	tzFile := filepath.Join(dir, "TZ")
+	if err := os.WriteFile(tzFile, []byte("MSK-3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restore := setTZCandidatesForTest([]string{tzFile})
+	defer restore()
+
+	got := AppendTZFromRouter([]string{"PATH=/bin", "HOME=/root"})
+	if len(got) != 3 || got[2] != "TZ=MSK-3" {
+		t.Fatalf("AppendTZFromRouter() = %#v, want TZ=MSK-3 appended", got)
+	}
+
+	unchanged := AppendTZFromRouter([]string{"TZ=UTC0", "PATH=/bin"})
+	if len(unchanged) != 2 {
+		t.Fatalf("existing TZ must win: %#v", unchanged)
+	}
+}
+
+func TestWithTZFromRouter_ReplacesExisting(t *testing.T) {
+	dir := t.TempDir()
+	tzFile := filepath.Join(dir, "TZ")
+	if err := os.WriteFile(tzFile, []byte("MSK-3\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	restore := setTZCandidatesForTest([]string{tzFile})
+	defer restore()
+
+	got := WithTZFromRouter([]string{"TZ=UTC0", "PATH=/bin"})
+	if len(got) != 2 || got[0] != "PATH=/bin" || got[1] != "TZ=MSK-3" {
+		t.Fatalf("WithTZFromRouter() = %#v, want router TZ replacing UTC", got)
+	}
+}
+
 func TestInstallAsLocal_NoRouterTZ_NoOp(t *testing.T) {
 	restore := setTZCandidatesForTest([]string{"/nonexistent/TZ"})
 	defer restore()

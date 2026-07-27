@@ -187,6 +187,7 @@ function resetRuntimeControls() {
 	mockManagedAscByServer = createInitialMockManagedAscByServer();
 	mockSystemAscByTunnel = createInitialMockSystemAscByTunnel();
 	mockFreeturn = createInitialMockFreeturn();
+	mockWdtt = createInitialMockWdtt();
 	applyDefaultMockKeeneticProfile();
 }
 const MOCK_DOWNLOAD_OUTBOUNDS = [
@@ -3039,57 +3040,88 @@ const MOCK_FREETURN_OBF_KEY = '64c1a9deadbeef77aa5510c3e2b4f6d8a1b2c3d4e5f607182
 function createInitialMockFreeturn() {
 	return {
 		binaryPresent: true,
-		client: {
-			// Клиент «работает 2ч14м» на момент старта мока.
-			running: true,
-			pid: 12844,
-			startedAt: new Date(Date.now() - (2 * 60 + 14) * 60000).toISOString(),
-		},
-		server: { running: false, pid: 13207, startedAt: null },
-		config: {
-			client: {
-				enabled: true,
-				listen: '127.0.0.1:9000',
-				peer: 'vinvanvlad.com:56000',
-				provider: 'vk',
-				links: 'https://vk.ru/call/join/hFa2abc,https://vk.ru/call/join/x91kdef',
-				streams: 8,
-				transport: 'tcp',
-				mode: 'udp',
-				bond: false,
-				obfProfile: 'rtpopus2',
-				obfKey: MOCK_FREETURN_OBF_KEY,
-				streamsPerCred: 4,
-				browser: 'chrome',
-				manualCaptcha: false,
-				dnsMode: 'auto',
-				clientId: '',
-				debug: false,
+		// Мультиинстанс (API v2). Дефолтный инстанс несёт те же данные, что
+		// раздавал v1-мок, чтобы вид совпадал с эталоном develop.
+		clients: [
+			{
+				id: 'default',
+				name: 'Клиент',
+				// Клиент «работает 2ч14м» на момент старта мока.
+				running: true,
+				pid: 12844,
+				startedAt: new Date(Date.now() - (2 * 60 + 14) * 60000).toISOString(),
+				config: {
+					enabled: true,
+					listen: '127.0.0.1:9000',
+					peer: 'vinvanvlad.com:56000',
+					provider: 'vk',
+					links: 'https://vk.ru/call/join/hFa2abc,https://vk.ru/call/join/x91kdef',
+					streams: 8,
+					transport: 'tcp',
+					mode: 'udp',
+					bond: false,
+					obfProfile: 'rtpopus2',
+					obfKey: MOCK_FREETURN_OBF_KEY,
+					streamsPerCred: 4,
+					browser: 'chrome',
+					manualCaptcha: false,
+					dnsMode: 'auto',
+					clientId: '',
+					debug: false,
+				},
 			},
-			server: {
-				enabled: false,
-				listen: '0.0.0.0:56000',
-				connect: '127.0.0.1:51820',
-				mode: 'udp',
-				obfProfile: 'rtpopus2',
-				obfKey: MOCK_FREETURN_OBF_KEY,
-				clientsFile: '',
-				debug: false,
+		],
+		servers: [
+			{
+				id: 'default',
+				name: 'Сервер',
+				running: false,
+				pid: 13207,
+				startedAt: null,
+				config: {
+					enabled: false,
+					listen: '0.0.0.0:56000',
+					connect: '127.0.0.1:51820',
+					mode: 'udp',
+					obfProfile: 'rtpopus2',
+					obfKey: MOCK_FREETURN_OBF_KEY,
+					clientsFile: '',
+					debug: false,
+				},
 			},
-		},
+		],
+		// serverId -> { enabled, clientsFile, clients: [{clientId, comment}] }
+		allowlists: {},
+		clientSeq: 1,
+		serverSeq: 1,
 	};
 }
 
 let mockFreeturn = createInitialMockFreeturn();
 
-function mockFreeturnProcessStatus(kind) {
-	const proc = mockFreeturn[kind];
-	const cfg = mockFreeturn.config[kind];
+function mockFreeturnList(kind) {
+	return kind === 'client' ? mockFreeturn.clients : mockFreeturn.servers;
+}
+
+function mockFreeturnFind(kind, id) {
+	return mockFreeturnList(kind).find((i) => i.id === id) ?? null;
+}
+
+function mockFreeturnProcessStatus(inst, kind) {
+	if (!inst) {
+		return {
+			running: false,
+			log: '',
+			binary: `/opt/bin/freeturn-${kind}`,
+			binaryPresent: mockFreeturn.binaryPresent,
+		};
+	}
+	const cfg = inst.config;
 	const endpoint = kind === 'client' ? cfg.peer : cfg.listen;
 	return {
-		running: proc.running,
-		...(proc.running ? { pid: proc.pid, startedAt: proc.startedAt } : {}),
-		...(proc.running
+		running: inst.running,
+		...(inst.running ? { pid: inst.pid, startedAt: inst.startedAt } : {}),
+		...(inst.running
 			? {
 					log:
 						'12:41:02 [info] turn pool ready: 8 streams\n' +
@@ -3099,6 +3131,113 @@ function mockFreeturnProcessStatus(kind) {
 			: { log: '12:12:44 [info] process stopped' }),
 		binary: `/opt/bin/freeturn-${kind}`,
 		binaryPresent: mockFreeturn.binaryPresent,
+	};
+}
+
+function mockFreeturnAllowlist(serverId) {
+	if (!mockFreeturn.allowlists[serverId]) {
+		mockFreeturn.allowlists[serverId] = { enabled: false, clientsFile: '', clients: [] };
+	}
+	return mockFreeturn.allowlists[serverId];
+}
+
+// ── WDTT — клиент-only (нет серверов/allowlist). Prism отдаёт на wdtt-эндпоинты
+// пустые 200 (в swagger нет examples), поэтому мокаем здесь по образцу FreeTurn.
+const MOCK_WDTT_WG_CONFIG =
+	'[Interface]\n' +
+	'PrivateKey = wG8kEXAMPLEprivKEYaaaaaaaaaaaaaaaaaaaaaaaa=\n' +
+	'Address = 10.66.0.2/32\n' +
+	'DNS = 10.66.0.1\n' +
+	'[Peer]\n' +
+	'PublicKey = wG8kEXAMPLEpubKEYbbbbbbbbbbbbbbbbbbbbbbbbb=\n' +
+	'Endpoint = 127.0.0.1:9000\n' +
+	'AllowedIPs = 0.0.0.0/0\n' +
+	'PersistentKeepalive = 25';
+
+function createInitialMockWdtt() {
+	return {
+		binaryPresent: true,
+		clients: [
+			{
+				id: 'default',
+				name: 'Клиент',
+				running: true,
+				pid: 15233,
+				startedAt: new Date(Date.now() - (1 * 60 + 42) * 60000).toISOString(),
+				config: {
+					enabled: true,
+					listen: '127.0.0.1:9000',
+					peer: 'wdtt.vinvanvlad.com:56000',
+					password: 'demo-password',
+					vkHashes: 'a1b2c3d4e5f6,7788990011aa',
+					workers: 24,
+					obfs: 'audio',
+					fingerprint: 'chrome',
+					deviceId: '',
+					captchaMode: 'rjs',
+					vkAuthMode: 'auto',
+					sub: '',
+					debug: false,
+				},
+			},
+			{
+				id: 'wdtt-2',
+				name: 'Резерв',
+				running: false,
+				pid: 15877,
+				startedAt: null,
+				config: {
+					enabled: false,
+					listen: '127.0.0.1:9001',
+					peer: 'backup.wdtt.example:56000',
+					password: 'reserve-password',
+					vkHashes: '',
+					workers: 16,
+					obfs: 'video',
+					fingerprint: 'safari',
+					deviceId: 'dev-abc123',
+					captchaMode: 'manual',
+					vkAuthMode: 'auto',
+					sub: 'https://sub.wdtt.example/s/demo',
+					debug: false,
+				},
+			},
+		],
+		clientSeq: 2,
+	};
+}
+
+let mockWdtt = createInitialMockWdtt();
+
+function mockWdttFind(id) {
+	return mockWdtt.clients.find((i) => i.id === id) ?? null;
+}
+
+function mockWdttProcessStatus(inst) {
+	if (!inst) {
+		return {
+			running: false,
+			log: '',
+			binary: '/opt/bin/wdtt-client',
+			binaryPresent: mockWdtt.binaryPresent,
+		};
+	}
+	return {
+		running: inst.running,
+		...(inst.running ? { pid: inst.pid, startedAt: inst.startedAt } : {}),
+		...(inst.running
+			? {
+					log:
+						'09:14:02 [info] dtls pool ready: 24 workers\n' +
+						`09:14:03 [info] tunnel up ${inst.config.peer}\n` +
+						'09:14:05 [info] wireguard config received\n' +
+						'09:14:09 [info] keepalive ok · rtt 21ms',
+					wgConfig: MOCK_WDTT_WG_CONFIG,
+					dtlsConnections: 3,
+				}
+			: { log: '08:51:30 [info] process stopped' }),
+		binary: '/opt/bin/wdtt-client',
+		binaryPresent: mockWdtt.binaryPresent,
 	};
 }
 
@@ -5190,6 +5329,34 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// AWG3 imported endpoints — read-only list is enough for docs screenshots.
+	// One endpoint carries all five device timers so the timer readout renders.
+	if (req.method === 'GET' && path === '/awg3-endpoints') {
+		send(res, 200, {
+			success: true,
+			data: [
+				{
+					id: 'awg3-Amsterdam01',
+					tag: 'amsterdam',
+					host: 'vpn.example.com:51820',
+					headerProtection: true,
+					rekeyTimeout: '5',
+					rekeyAfterTime: '120-150',
+					rejectAfterTime: '180',
+					keepaliveTimeout: '25',
+					maxHandshakeAttempts: '5',
+				},
+				{
+					id: 'awg3-Berlin0002',
+					tag: 'berlin',
+					host: '203.0.113.7:51820',
+					headerProtection: false,
+				},
+			],
+		});
+		return;
+	}
+
 	if (req.method === 'POST' && path === '/__mock/singbox-install-fail') {
 		try {
 			const body = await readJsonBody(req);
@@ -7082,74 +7249,248 @@ const server = http.createServer(async (req, res) => {
 	// ── FreeTurn ───────────────────────────────────────────────────────────────
 
 	if (req.method === 'GET' && path === '/freeturn/config') {
-		sendData(res, mockFreeturn.config);
-		return;
-	}
-
-	if (
-		req.method === 'PUT' &&
-		(path === '/freeturn/client/config' || path === '/freeturn/server/config')
-	) {
-		const kind = path === '/freeturn/client/config' ? 'client' : 'server';
-		readRequestText(req).then((raw) => {
-			try {
-				mockFreeturn.config[kind] = { ...mockFreeturn.config[kind], ...JSON.parse(raw || '{}') };
-				sendData(res, mockFreeturn.config[kind]);
-			} catch (e) {
-				sendInvalidRequest(res, e);
-			}
+		sendData(res, {
+			version: 2,
+			clients: mockFreeturn.clients.map((i) => ({ id: i.id, name: i.name, config: i.config })),
+			servers: mockFreeturn.servers.map((i) => ({ id: i.id, name: i.name, config: i.config })),
 		});
 		return;
 	}
 
+	// Легаси PUT дефолтного инстанса (v1 API) + PUT конкретного инстанса (v2).
+	{
+		const legacy =
+			req.method === 'PUT' &&
+			(path === '/freeturn/client/config' || path === '/freeturn/server/config');
+		const m = req.method === 'PUT' && /^\/freeturn\/(clients|servers)\/([^/]+)$/.exec(path);
+		if (legacy || m) {
+			const kind = legacy
+				? path === '/freeturn/client/config'
+					? 'client'
+					: 'server'
+				: m[1] === 'clients'
+					? 'client'
+					: 'server';
+			const id = legacy ? 'default' : decodeURIComponent(m[2]);
+			const inst = mockFreeturnFind(kind, id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `freeturn ${kind} ${id} not found` },
+				});
+				return;
+			}
+			readRequestText(req).then((raw) => {
+				try {
+					inst.config = { ...inst.config, ...JSON.parse(raw || '{}') };
+					sendData(res, inst.config);
+				} catch (e) {
+					sendInvalidRequest(res, e);
+				}
+			});
+			return;
+		}
+	}
+
 	if (req.method === 'GET' && path === '/freeturn/status') {
+		const defClient = mockFreeturnFind('client', 'default') ?? mockFreeturn.clients[0];
+		const defServer = mockFreeturnFind('server', 'default') ?? mockFreeturn.servers[0];
 		sendData(res, {
-			client: mockFreeturnProcessStatus('client'),
-			server: mockFreeturnProcessStatus('server'),
+			clients: mockFreeturn.clients.map((i) => ({
+				id: i.id,
+				name: i.name,
+				status: mockFreeturnProcessStatus(i, 'client'),
+			})),
+			servers: mockFreeturn.servers.map((i) => ({
+				id: i.id,
+				name: i.name,
+				status: mockFreeturnProcessStatus(i, 'server'),
+			})),
+			// Легаси-зеркала дефолтного инстанса для старых читателей.
+			client: mockFreeturnProcessStatus(defClient, 'client'),
+			server: mockFreeturnProcessStatus(defServer, 'server'),
 			installAvailable: true,
 			installVersion: '1.8.0',
+			installedVersion: mockFreeturn.binaryPresent ? '1.8.0' : undefined,
+			updateAvailable: false,
 			installing: false,
 		});
 		return;
 	}
 
+	// Создание инстанса (v2): POST /freeturn/clients | /freeturn/servers
 	{
-		const m = req.method === 'POST' && /^\/freeturn\/(client|server)\/(start|stop)$/.exec(path);
+		const m = req.method === 'POST' && /^\/freeturn\/(clients|servers)$/.exec(path);
 		if (m) {
-			const [, kind, action] = m;
-			const proc = mockFreeturn[kind];
-			proc.running = action === 'start';
-			proc.startedAt = proc.running ? new Date().toISOString() : null;
-			sendData(res, { message: `freeturn ${kind}: ${action} (mock)` });
+			const kind = m[1] === 'clients' ? 'client' : 'server';
+			readRequestText(req).then((raw) => {
+				try {
+					const body = raw ? JSON.parse(raw) : {};
+					const seqKey = kind === 'client' ? 'clientSeq' : 'serverSeq';
+					mockFreeturn[seqKey] += 1;
+					const n = mockFreeturn[seqKey];
+					const template = mockFreeturnList(kind)[0]?.config ?? {};
+					const inst = {
+						id: `${kind}-${n}`,
+						name: body.name?.trim() || `${kind === 'client' ? 'Клиент' : 'Сервер'} ${n}`,
+						running: false,
+						pid: 20000 + n,
+						startedAt: null,
+						config: { ...structuredClone(template), enabled: false },
+					};
+					mockFreeturnList(kind).push(inst);
+					sendData(res, { id: inst.id, name: inst.name, config: inst.config });
+				} catch (e) {
+					sendInvalidRequest(res, e);
+				}
+			});
 			return;
 		}
 	}
 
-	if (req.method === 'POST' && path === '/freeturn/server/link') {
-		readRequestText(req).then((raw) => {
-			try {
-				const body = raw ? JSON.parse(raw) : {};
-				const srv = mockFreeturn.config.server;
-				const port = Number(srv.listen.split(':').pop()) || 56000;
-				const peer = `203.0.113.10:${port}`;
-				const payload = {
-					v: 1,
-					provider: body.provider || 'vk',
-					peer,
-					obf: srv.obfProfile,
-					...(srv.obfKey ? { key: srv.obfKey } : {}),
-					mtu: body.mtu || 1376,
-					...(body.clientId ? { cid: body.clientId } : {}),
-					...(body.name ? { name: body.name } : {}),
-					...(body.wg ? { wg: body.wg } : {}),
-				};
-				const link = 'freeturn://' + Buffer.from(JSON.stringify(payload)).toString('base64');
-				sendData(res, { link, peer, ...(body.clientId ? { clientId: body.clientId } : {}) });
-			} catch (e) {
-				sendInvalidRequest(res, e);
+	// Rename (PATCH) / delete (DELETE) инстанса: /freeturn/clients|servers/{id}
+	{
+		const m = /^\/freeturn\/(clients|servers)\/([^/]+)$/.exec(path);
+		if (m && (req.method === 'PATCH' || req.method === 'DELETE')) {
+			const kind = m[1] === 'clients' ? 'client' : 'server';
+			const id = decodeURIComponent(m[2]);
+			const list = mockFreeturnList(kind);
+			const inst = list.find((i) => i.id === id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `freeturn ${kind} ${id} not found` },
+				});
+				return;
 			}
-		});
-		return;
+			if (req.method === 'DELETE') {
+				list.splice(list.indexOf(inst), 1);
+				if (kind === 'server') delete mockFreeturn.allowlists[id];
+				sendData(res, { message: `freeturn ${kind} ${id} удалён (mock)` });
+				return;
+			}
+			readRequestText(req).then((raw) => {
+				try {
+					const body = raw ? JSON.parse(raw) : {};
+					if (body.name?.trim()) inst.name = body.name.trim();
+					sendData(res, { id: inst.id, name: inst.name, config: inst.config });
+				} catch (e) {
+					sendInvalidRequest(res, e);
+				}
+			});
+			return;
+		}
+	}
+
+	// Start/stop — легаси дефолт (v1) + конкретный инстанс (v2).
+	{
+		const legacy = req.method === 'POST' && /^\/freeturn\/(client|server)\/(start|stop)$/.exec(path);
+		const m =
+			req.method === 'POST' &&
+			/^\/freeturn\/(clients|servers)\/([^/]+)\/(start|stop)$/.exec(path);
+		if (legacy || m) {
+			const kind = legacy ? legacy[1] : m[1] === 'clients' ? 'client' : 'server';
+			const id = legacy ? 'default' : decodeURIComponent(m[2]);
+			const action = legacy ? legacy[2] : m[3];
+			const inst = mockFreeturnFind(kind, id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `freeturn ${kind} ${id} not found` },
+				});
+				return;
+			}
+			inst.running = action === 'start';
+			inst.startedAt = inst.running ? new Date().toISOString() : null;
+			sendData(res, { message: `freeturn ${kind} ${id}: ${action} (mock)` });
+			return;
+		}
+	}
+
+	// Генерация ссылки — легаси дефолт (/server/link) + инстанс (/servers/{id}/link).
+	{
+		const legacy = req.method === 'POST' && path === '/freeturn/server/link';
+		const m = req.method === 'POST' && /^\/freeturn\/servers\/([^/]+)\/link$/.exec(path);
+		if (legacy || m) {
+			const id = legacy ? 'default' : decodeURIComponent(m[1]);
+			const inst = mockFreeturnFind('server', id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `freeturn server ${id} not found` },
+				});
+				return;
+			}
+			readRequestText(req).then((raw) => {
+				try {
+					const body = raw ? JSON.parse(raw) : {};
+					const srv = inst.config;
+					const port = Number(srv.listen.split(':').pop()) || 56000;
+					const peer = `203.0.113.10:${port}`;
+					const payload = {
+						v: 1,
+						provider: body.provider || 'vk',
+						peer,
+						obf: srv.obfProfile,
+						...(srv.obfKey ? { key: srv.obfKey } : {}),
+						mtu: body.mtu || 1376,
+						...(body.clientId ? { cid: body.clientId } : {}),
+						...(body.name ? { name: body.name } : {}),
+						...(body.wg ? { wg: body.wg } : {}),
+					};
+					const link = 'freeturn://' + Buffer.from(JSON.stringify(payload)).toString('base64');
+					sendData(res, { link, peer, ...(body.clientId ? { clientId: body.clientId } : {}) });
+				} catch (e) {
+					sendInvalidRequest(res, e);
+				}
+			});
+			return;
+		}
+	}
+
+	// Allowlist сервера: GET/POST /freeturn/servers/{id}/allowlist,
+	// DELETE .../allowlist (disable), DELETE .../allowlist/{clientId} (remove).
+	{
+		const remove = /^\/freeturn\/servers\/([^/]+)\/allowlist\/([^/]+)$/.exec(path);
+		const base = /^\/freeturn\/servers\/([^/]+)\/allowlist$/.exec(path);
+		if (remove && req.method === 'DELETE') {
+			const serverId = decodeURIComponent(remove[1]);
+			const clientId = decodeURIComponent(remove[2]);
+			const al = mockFreeturnAllowlist(serverId);
+			al.clients = al.clients.filter((c) => c.clientId !== clientId);
+			sendData(res, { message: `client ${clientId} убран из allowlist (mock)` });
+			return;
+		}
+		if (base) {
+			const serverId = decodeURIComponent(base[1]);
+			const al = mockFreeturnAllowlist(serverId);
+			if (req.method === 'GET') {
+				sendData(res, al);
+				return;
+			}
+			if (req.method === 'DELETE') {
+				al.enabled = false;
+				sendData(res, { message: 'allowlist отключён (mock)' });
+				return;
+			}
+			if (req.method === 'POST') {
+				readRequestText(req).then((raw) => {
+					try {
+						const body = raw ? JSON.parse(raw) : {};
+						const clientId = String(body.clientId ?? '').trim();
+						if (!clientId) throw new Error('clientId обязателен');
+						al.enabled = true;
+						if (!al.clients.some((c) => c.clientId === clientId)) {
+							al.clients.push({ clientId, comment: body.comment?.trim() || undefined });
+						}
+						sendData(res, { ...al, needsRestart: true });
+					} catch (e) {
+						sendInvalidRequest(res, e);
+					}
+				});
+				return;
+			}
+		}
 	}
 
 	if (req.method === 'POST' && path === '/freeturn/link/decode') {
@@ -7174,6 +7515,255 @@ const server = http.createServer(async (req, res) => {
 	}
 
 	// ── end FreeTurn ───────────────────────────────────────────────────────────
+
+	// ── WDTT — клиент-only мультиинстанс. ────────────────────────────────────────
+
+	if (req.method === 'GET' && path === '/wdtt/config') {
+		sendData(res, {
+			version: 2,
+			clients: mockWdtt.clients.map((i) => ({ id: i.id, name: i.name, config: i.config })),
+		});
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/wdtt/status') {
+		const defClient = mockWdttFind('default') ?? mockWdtt.clients[0];
+		sendData(res, {
+			clients: mockWdtt.clients.map((i) => ({
+				id: i.id,
+				name: i.name,
+				status: mockWdttProcessStatus(i),
+			})),
+			// Легаси-зеркало дефолтного инстанса.
+			client: mockWdttProcessStatus(defClient),
+			installAvailable: true,
+			installVersion: '2.3.1',
+			installedVersion: mockWdtt.binaryPresent ? '2.3.1' : undefined,
+			updateAvailable: false,
+			installing: false,
+			routerClock: new Date().toISOString(),
+		});
+		return;
+	}
+
+	// Обновление конфига: легаси дефолт (PUT /wdtt/client/config) + инстанс (PUT /wdtt/clients/{id}).
+	{
+		const legacy = req.method === 'PUT' && path === '/wdtt/client/config';
+		const m = req.method === 'PUT' && /^\/wdtt\/clients\/([^/]+)$/.exec(path);
+		if (legacy || m) {
+			const id = legacy ? 'default' : decodeURIComponent(m[1]);
+			const inst = mockWdttFind(id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `wdtt client ${id} not found` },
+				});
+				return;
+			}
+			readRequestText(req).then((raw) => {
+				try {
+					inst.config = { ...inst.config, ...JSON.parse(raw || '{}') };
+					sendData(res, { config: inst.config });
+				} catch (e) {
+					sendInvalidRequest(res, e);
+				}
+			});
+			return;
+		}
+	}
+
+	// Создание инстанса: POST /wdtt/clients
+	if (req.method === 'POST' && path === '/wdtt/clients') {
+		readRequestText(req).then((raw) => {
+			try {
+				const body = raw ? JSON.parse(raw) : {};
+				mockWdtt.clientSeq += 1;
+				const n = mockWdtt.clientSeq;
+				const template = mockWdtt.clients[0]?.config ?? {};
+				const inst = {
+					id: `wdtt-${n}`,
+					name: body.name?.trim() || `Клиент ${n}`,
+					running: false,
+					pid: 20000 + n,
+					startedAt: null,
+					config: { ...structuredClone(template), enabled: false },
+				};
+				mockWdtt.clients.push(inst);
+				sendData(res, { id: inst.id, name: inst.name, config: inst.config });
+			} catch (e) {
+				sendInvalidRequest(res, e);
+			}
+		});
+		return;
+	}
+
+	// Rename (PATCH) / delete (DELETE) инстанса: /wdtt/clients/{id}
+	{
+		const m = /^\/wdtt\/clients\/([^/]+)$/.exec(path);
+		if (m && (req.method === 'PATCH' || req.method === 'DELETE')) {
+			const id = decodeURIComponent(m[1]);
+			const inst = mockWdttFind(id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `wdtt client ${id} not found` },
+				});
+				return;
+			}
+			if (req.method === 'DELETE') {
+				mockWdtt.clients.splice(mockWdtt.clients.indexOf(inst), 1);
+				sendData(res, { message: `wdtt client ${id} удалён (mock)` });
+				return;
+			}
+			readRequestText(req).then((raw) => {
+				try {
+					const body = raw ? JSON.parse(raw) : {};
+					if (body.name?.trim()) inst.name = body.name.trim();
+					sendData(res, { id: inst.id, name: inst.name, config: inst.config });
+				} catch (e) {
+					sendInvalidRequest(res, e);
+				}
+			});
+			return;
+		}
+	}
+
+	// Start/stop инстанса: POST /wdtt/clients/{id}/start|stop
+	{
+		const m = req.method === 'POST' && /^\/wdtt\/clients\/([^/]+)\/(start|stop)$/.exec(path);
+		if (m) {
+			const id = decodeURIComponent(m[1]);
+			const action = m[2];
+			const inst = mockWdttFind(id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `wdtt client ${id} not found` },
+				});
+				return;
+			}
+			inst.running = action === 'start';
+			inst.startedAt = inst.running ? new Date().toISOString() : null;
+			sendData(res, { message: `wdtt client ${id}: ${action} (mock)` });
+			return;
+		}
+	}
+
+	// AWG-туннель из лога: POST /wdtt/clients/{id}/ensure-wg-tunnel
+	{
+		const m = req.method === 'POST' && /^\/wdtt\/clients\/([^/]+)\/ensure-wg-tunnel$/.exec(path);
+		if (m) {
+			const id = decodeURIComponent(m[1]);
+			const inst = mockWdttFind(id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `wdtt client ${id} not found` },
+				});
+				return;
+			}
+			// Туннель считаем уже привязанным (created:false + tunnelId) — авто-поллинг
+			// помечает клиент settled и не долбит POST каждую секунду.
+			sendData(res, {
+				created: false,
+				tunnelId: `wdtt-tunnel-${id}`,
+				tunnelName: `${inst.name} wdtt`,
+				message: 'Туннель уже привязан (mock)',
+			});
+			return;
+		}
+	}
+
+	// Обновление подписки: POST /wdtt/clients/{id}/subscription/refresh
+	{
+		const m = req.method === 'POST' && /^\/wdtt\/clients\/([^/]+)\/subscription\/refresh$/.exec(path);
+		if (m) {
+			const id = decodeURIComponent(m[1]);
+			const inst = mockWdttFind(id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `wdtt client ${id} not found` },
+				});
+				return;
+			}
+			const payload = {
+				name: inst.name,
+				peer: inst.config.peer,
+				password: inst.config.password,
+				vkHashes: inst.config.vkHashes ? inst.config.vkHashes.split(',') : [],
+				workers: inst.config.workers,
+				listen: inst.config.listen,
+				subUrl: inst.config.sub || undefined,
+			};
+			sendData(res, {
+				instance: { id: inst.id, name: inst.name, config: inst.config },
+				payload,
+				message: 'Подписка обновлена (mock)',
+			});
+			return;
+		}
+	}
+
+	if (req.method === 'POST' && path === '/wdtt/link/decode') {
+		readRequestText(req).then((raw) => {
+			try {
+				const { link } = JSON.parse(raw || '{}');
+				const text = String(link ?? '').trim();
+				// Подписочная ссылка (http/https) → превью со списком профилей.
+				if (/^https?:\/\//i.test(text)) {
+					sendData(res, {
+						subscription: {
+							name: 'WDTT demo subscription',
+							description: 'Мок-подписка для стенда',
+							trafficUsedMb: 1240,
+							trafficLimitMb: 51200,
+							updatedAt: new Date().toISOString(),
+							subUrl: text,
+							profiles: [
+								{
+									name: 'RU · Москва',
+									peer: 'ru.wdtt.example:56000',
+									password: 'sub-pass-ru',
+									vkHashes: ['aa11bb22'],
+									workers: 24,
+									listen: '127.0.0.1:9000',
+									subUrl: text,
+								},
+								{
+									name: 'DE · Франкфурт',
+									peer: 'de.wdtt.example:56000',
+									password: 'sub-pass-de',
+									vkHashes: ['cc33dd44'],
+									workers: 24,
+									listen: '127.0.0.1:9000',
+									subUrl: text,
+								},
+							],
+						},
+					});
+					return;
+				}
+				// Одиночная ссылка wdtt:// или qwdtt:// → один профиль.
+				const m = /^q?wdtt:\/\/(.+)$/i.exec(text);
+				if (!m) throw new Error('ожидается ссылка вида wdtt://… или подписка https://…');
+				const b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+				const decoded = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+				sendData(res, { profile: decoded });
+			} catch (e) {
+				sendInvalidRequest(res, e);
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/wdtt/install') {
+		mockWdtt.binaryPresent = true;
+		sendData(res, { message: 'wdtt-client установлен (mock)' });
+		return;
+	}
+
+	// ── end WDTT ─────────────────────────────────────────────────────────────────
 
 	// Pass-through for everything else (including /events SSE).
 	const upstream = new URL(UPSTREAM);

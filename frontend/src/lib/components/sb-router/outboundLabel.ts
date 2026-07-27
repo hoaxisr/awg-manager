@@ -1,4 +1,4 @@
-import type { SingboxRouterOutbound, Subscription } from '$lib/types';
+import type { SingboxRouterOutbound, Subscription, SubscriptionGroup } from '$lib/types';
 
 export interface OutboundDisplay {
 	title: string;
@@ -11,6 +11,14 @@ export function isSubscriptionOutbound(
 ): boolean {
 	if (o.source === 'subscription') return true;
 	return subscriptions?.some((s) => s.selectorTag === o.tag) ?? false;
+}
+
+/** #572: outbound принадлежит сводной группе подписок (matched by tag). */
+export function isGroupOutbound(
+	o: SingboxRouterOutbound,
+	groups: SubscriptionGroup[] | undefined | null = null,
+): boolean {
+	return groups?.some((g) => g.tag === o.tag) ?? false;
 }
 
 function typeSubtitle(o: SingboxRouterOutbound): string {
@@ -30,7 +38,14 @@ function typeSubtitle(o: SingboxRouterOutbound): string {
 export function outboundDisplay(
 	o: SingboxRouterOutbound,
 	subscriptions: Subscription[] | undefined | null,
+	groups: SubscriptionGroup[] | undefined | null = null,
 ): OutboundDisplay {
+	// #572: сводная группа — показываем её Label ("Все европейские"),
+	// а не сырой тег "agg-xxxxxxxx".
+	const group = groups?.find((g) => g.tag === o.tag);
+	if (group) {
+		return { title: group.label || o.tag, subtitle: typeSubtitle(o) };
+	}
 	if (isSubscriptionOutbound(o, subscriptions)) {
 		const sub = subscriptions?.find((s) => s.selectorTag === o.tag);
 		return { title: sub?.label || o.tag, subtitle: typeSubtitle(o) };

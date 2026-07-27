@@ -19,6 +19,7 @@ const (
 	SlotBase            Slot = "base"             // 00-base.json — always on
 	SlotTunnels         Slot = "tunnels"          // 10-tunnels.json
 	SlotAwg             Slot = "awg"              // 15-awg.json
+	SlotAwg3            Slot = "awg3"             // 16-awg3.json
 	SlotDNSRewrites     Slot = "dns-rewrites"     // 17-dns-rewrites.json
 	SlotQoSRoutes       Slot = "qos-routes"       // 18-qos-routes.json
 	SlotSelectiveRoutes Slot = "selective-routes" // 19-selective-routes.json
@@ -69,6 +70,7 @@ func KnownSlots() []SlotMeta {
 		{Slot: SlotBase, Filename: "00-base.json", AlwaysOn: true},
 		{Slot: SlotTunnels, Filename: "10-tunnels.json", AlwaysOn: true},
 		{Slot: SlotAwg, Filename: "15-awg.json", AlwaysOn: true},
+		{Slot: SlotAwg3, Filename: "16-awg3.json", AlwaysOn: true},
 		{Slot: SlotDNSRewrites, Filename: "17-dns-rewrites.json"},
 		// 18 merges BEFORE 19/20 on purpose: sing-box evaluates route rules
 		// in merged-file order, so managed QoS rules (an explicit per-packet

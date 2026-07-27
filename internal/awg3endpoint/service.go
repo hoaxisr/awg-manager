@@ -1,0 +1,91 @@
+package awg3endpoint
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+)
+
+type TagInfo struct {
+	Tag  string `json:"tag"`
+	Kind string `json:"kind"` // "awg3"
+}
+
+// Валидирующая запись: SaveAndValidate прогоняет sing-box check и на невалидном
+// конфиге НЕ применяет его (см. orchestrator/draft.go). Sync возвращает ошибку,
+// чтобы handler откатил только что добавленную запись.
+type Orchestrator interface {
+	SaveAndValidate(slot orchestrator.Slot, jsonBytes []byte) (orchestrator.ValidationResult, error)
+}
+
+type Service struct {
+	store  *Store // тот же пакет awg3endpoint (Task 2)
+	orch   Orchestrator
+	appLog *logging.ScopedLogger
+}
+
+func NewService(store *Store, orch Orchestrator, appLogger logging.AppLogger) *Service {
+	return &Service{
+		store:  store,
+		orch:   orch,
+		appLog: logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubAwg3),
+	}
+}
+
+// Sync материализует store → 16-awg3.json как {"endpoints":[...]}, перезаписывая
+// поле tag каждого endpoint на человекочитаемый Record.Tag.
+func (s *Service) Sync() error {
+	list, err := s.store.List()
+	if err != nil {
+		return err
+	}
+	eps := make([]json.RawMessage, 0, len(list))
+	for _, rec := range list {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(rec.Endpoint, &obj); err != nil {
+			// битую запись пропускаем (не роняем весь slot), но оставляем след
+			s.appLog.Warn("sync-skip", rec.Tag, fmt.Sprintf("id=%s: невалидный endpoint JSON: %v", rec.ID, err))
+			continue
+		}
+		tagJSON, _ := json.Marshal(rec.Tag)
+		obj["tag"] = tagJSON
+		merged, err := json.Marshal(obj)
+		if err != nil {
+			s.appLog.Warn("sync-skip", rec.Tag, fmt.Sprintf("id=%s: не удалось сериализовать endpoint: %v", rec.ID, err))
+			continue
+		}
+		eps = append(eps, merged)
+	}
+	data, err := json.MarshalIndent(map[string]any{"endpoints": eps}, "", "  ")
+	if err != nil {
+		return err
+	}
+	res, err := s.orch.SaveAndValidate(orchestrator.SlotAwg3, data)
+	if err != nil {
+		return err
+	}
+	// ВАЖНО (ревью I-1): при провале валидации SaveAndValidate возвращает (res, nil) —
+	// err==nil. ValidationResult имеет Ok() bool и Error() string (НЕ Valid/Message).
+	if !res.Ok() {
+		return fmt.Errorf("sing-box check: %s", res.Error())
+	}
+	return nil
+}
+
+// ListTags возвращает теги всех записей. Сигнатура без error зафиксирована
+// адаптерами ([]TagInfo без error): при ошибке чтения store отдаём пустой
+// список, но оставляем след в журнале — молчаливое проглатывание скрыло бы
+// битый store.
+func (s *Service) ListTags() []TagInfo {
+	list, err := s.store.List()
+	if err != nil {
+		s.appLog.Warn("list-tags", "", fmt.Sprintf("не удалось прочитать store: %v", err))
+	}
+	out := make([]TagInfo, 0, len(list))
+	for _, rec := range list {
+		out = append(out, TagInfo{Tag: rec.Tag, Kind: "awg3"})
+	}
+	return out
+}

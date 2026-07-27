@@ -12,10 +12,10 @@ import "time"
 type ClientConfig struct {
 	Enabled bool `json:"enabled"`
 
-	Listen    string `json:"listen"`          // -listen, local addr WG/Xray connects to (default 127.0.0.1:9000)
-	Peer      string `json:"peer"`            // -peer, required: VPS server addr host:port
-	Provider  string `json:"provider"`        // -provider, default "vk"
-	Links     string `json:"links,omitempty"` // -links, comma-separated VK Calls URLs; required when provider=vk
+	Listen   string `json:"listen"`          // -listen, local addr WG/Xray connects to (default 127.0.0.1:9000)
+	Peer     string `json:"peer"`            // -peer, required: VPS server addr host:port
+	Provider string `json:"provider"`        // -provider, default "vk"
+	Links    string `json:"links,omitempty"` // -links, comma-separated VK Calls URLs; required when provider=vk
 	// (-link, singular, is upstream's deprecated one-link alias — we always
 	// emit -links so multiple call links, i.e. multiple credential pools,
 	// work: see internal/config/config.go in samosvalishe/free-turn-proxy.)
@@ -30,9 +30,8 @@ type ClientConfig struct {
 	ObfProfile string `json:"obfProfile"`       // -obf-profile, none|rtpopus|rtpopus2|rtpopus3 (internal/config/config.go ObfProfile enum; upstream docs/flags.md lags behind)
 	ObfKey     string `json:"obfKey,omitempty"` // -obf-key, 64 hex chars, required if obfProfile != none
 
-	StreamsPerCred int    `json:"streamsPerCred"` // -streams-per-cred, provider=vk only
-	Browser        string `json:"browser"`        // -browser, chrome|firefox, provider=vk only
-	ManualCaptcha  bool   `json:"manualCaptcha"`  // -manual-captcha, provider=vk only
+	StreamsPerCred int    `json:"streamsPerCred"`                                             // -streams-per-cred, provider=vk only
+	Browser        string `json:"browser" swaggertype:"string" enums:"chrome,firefox,safari"` // -browser, provider=vk only
 
 	DNSMode    string `json:"dnsMode"`              // -dns-mode, plain|doh|auto
 	DNSServers string `json:"dnsServers,omitempty"` // -dns-servers, ip[:port][,ip[:port]...]
@@ -53,7 +52,7 @@ func DefaultClientConfig() ClientConfig {
 		Mode:           "udp",
 		ObfProfile:     "none",
 		StreamsPerCred: 10,
-		Browser:        "firefox",
+		Browser:        "chrome",
 		DNSMode:        "auto",
 	}
 }
@@ -80,18 +79,59 @@ func DefaultServerConfig() ServerConfig {
 	}
 }
 
-// Config is the full persisted FreeTurn configuration (both roles can be
-// configured independently; a given router instance might only ever run
-// one of the two).
-type Config struct {
-	Client ClientConfig `json:"client"`
-	Server ServerConfig `json:"server"`
+// ClientInstance is one freeturn-client profile (separate process + listen port).
+type ClientInstance struct {
+	ID     string       `json:"id"`
+	Name   string       `json:"name"`
+	Config ClientConfig `json:"config"`
 }
 
-// DefaultConfig returns a Config with both roles at upstream defaults and
-// Enabled=false.
+// ServerInstance is one freeturn-server profile (separate process + listen port).
+type ServerInstance struct {
+	ID     string       `json:"id"`
+	Name   string       `json:"name"`
+	Config ServerConfig `json:"config"`
+}
+
+// Config is the full persisted FreeTurn configuration. Multiple client and
+// server instances can run concurrently on different listen ports.
+type Config struct {
+	Version int              `json:"version,omitempty"`
+	Clients []ClientInstance `json:"clients"`
+	Servers []ServerInstance `json:"servers"`
+
+	// Legacy v1 fields — read during migration only, never written back.
+	Client ClientConfig `json:"client,omitempty"`
+	Server ServerConfig `json:"server,omitempty"`
+}
+
+// DefaultConfig returns a v2 config with one default client and server.
 func DefaultConfig() Config {
-	return Config{Client: DefaultClientConfig(), Server: DefaultServerConfig()}
+	return Config{
+		Version: ConfigVersion,
+		Clients: []ClientInstance{{
+			ID:     DefaultInstanceID,
+			Name:   "Клиент",
+			Config: DefaultClientConfig(),
+		}},
+		Servers: []ServerInstance{{
+			ID:     DefaultInstanceID,
+			Name:   "Сервер",
+			Config: DefaultServerConfig(),
+		}},
+	}
+}
+
+// CreateClientInput is the body for POST /api/freeturn/clients.
+type CreateClientInput struct {
+	Name   string        `json:"name,omitempty"`
+	Config *ClientConfig `json:"config,omitempty"`
+}
+
+// CreateServerInput is the body for POST /api/freeturn/servers.
+type CreateServerInput struct {
+	Name   string        `json:"name,omitempty"`
+	Config *ServerConfig `json:"config,omitempty"`
 }
 
 // ProcessStatus describes the live state of one managed child process.
@@ -108,6 +148,9 @@ type ProcessStatus struct {
 	// confirmations — so the panel can show whether the tunnel actually
 	// connected instead of just "running".
 	Log string `json:"log,omitempty"`
+	// DtlsConnections is the number of freeturn streams with an established
+	// DTLS session in the current log tail (0 when not running).
+	DtlsConnections int `json:"dtlsConnections,omitempty"`
 	// Binary is the configured binary path; BinaryPresent reports whether
 	// an executable actually exists there. awg-manager does NOT ship the
 	// freeturn binaries — the panel uses this to show an honest
@@ -116,8 +159,18 @@ type ProcessStatus struct {
 	BinaryPresent bool   `json:"binaryPresent"`
 }
 
-// Status is the combined client+server status returned to the API/frontend.
+// InstanceStatus pairs instance metadata with live process state.
+type InstanceStatus struct {
+	ID     string        `json:"id"`
+	Name   string        `json:"name"`
+	Status ProcessStatus `json:"status"`
+}
+
+// Status is the combined status returned to the API/frontend.
 type Status struct {
+	Clients []InstanceStatus `json:"clients"`
+	Servers []InstanceStatus `json:"servers"`
+	// Client/Server mirror the default instance for legacy API consumers.
 	Client ProcessStatus `json:"client"`
 	Server ProcessStatus `json:"server"`
 	// InstallAvailable: для этой архитектуры есть закреплённая сборка и
@@ -125,6 +178,12 @@ type Status struct {
 	InstallAvailable bool `json:"installAvailable"`
 	// InstallVersion — версия freeturn, которую поставит установка.
 	InstallVersion string `json:"installVersion,omitempty"`
+	// InstalledVersion — версия, записанная после последней установки.
+	InstalledVersion string `json:"installedVersion,omitempty"`
+	// UpdateAvailable — бинари отсутствуют или устарели относительно InstallVersion.
+	UpdateAvailable bool `json:"updateAvailable"`
 	// Installing — установка сейчас идёт (кнопка блокируется).
 	Installing bool `json:"installing"`
+	// RouterClock — текущее время роутера для сверки с метками в логе freeturn.
+	RouterClock string `json:"routerClock,omitempty"`
 }

@@ -366,6 +366,64 @@ definitions:
         example: admin
         type: string
     type: object
+  api.Awg3ImportRequest:
+    properties:
+      config:
+        type: object
+      tag:
+        example: amsterdam
+        type: string
+    type: object
+  api.Awg3ListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.Awg3TunnelDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.Awg3RenameRequest:
+    properties:
+      tag:
+        example: berlin
+        type: string
+    type: object
+  api.Awg3TunnelDTO:
+    properties:
+      headerProtection:
+        example: true
+        type: boolean
+      host:
+        example: vpn.example.com:51820
+        type: string
+      id:
+        example: awg3-Ab12Cd34Ef
+        type: string
+      keepaliveTimeout:
+        example: "25"
+        type: string
+      maxHandshakeAttempts:
+        example: "5"
+        type: string
+      rejectAfterTime:
+        example: "180"
+        type: string
+      rekeyAfterTime:
+        example: 120-150
+        type: string
+      rekeyTimeout:
+        description: |-
+          AWG3 device timers — read-only passthrough from the imported config
+          (edited only in RouteBox). Strings as RouteBox emits them (may be ranges
+          like "120-150"); omitted when the config carries no such field.
+        example: "5"
+        type: string
+      tag:
+        example: amsterdam
+        type: string
+    type: object
   api.BackupWarningDTO:
     properties:
       interfaceName:
@@ -447,6 +505,15 @@ definitions:
         type: string
       tunnelId:
         example: tun_abc123
+        type: string
+    type: object
+  api.ClientRouteToggleData:
+    properties:
+      enabled:
+        example: true
+        type: boolean
+      id:
+        example: cr_001
         type: string
     type: object
   api.ClientRoutesListResponse:
@@ -778,6 +845,10 @@ definitions:
       mode:
         description: '"urltest" (default) | "selector"'
         example: urltest
+        type: string
+      tag:
+        description: Tag — пользовательский outbound-тег (#572); пусто = авто "agg-<id8>".
+        example: eu-all
         type: string
       urlTest:
         $ref: '#/definitions/api.SubscriptionURLTestDTO'
@@ -1319,6 +1390,17 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.EnsureWGTunnelResponse:
+    properties:
+      created:
+        type: boolean
+      message:
+        type: string
+      tunnelId:
+        type: string
+      tunnelName:
+        type: string
+    type: object
   api.ExcludeMembersRequest:
     properties:
       memberTags:
@@ -1363,10 +1445,42 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.FreeTurnAllowlistResponse:
+    properties:
+      data:
+        $ref: '#/definitions/freeturn.AllowlistStatus'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.FreeTurnCaptchaStatusResponse:
+    properties:
+      data:
+        $ref: '#/definitions/freeturn.CaptchaOverview'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.FreeTurnClientInstanceResponse:
+    properties:
+      data:
+        $ref: '#/definitions/freeturn.ClientInstance'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.FreeTurnConfigResponse:
     properties:
       data:
         $ref: '#/definitions/freeturn.Config'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.FreeTurnServerInstanceResponse:
+    properties:
+      data:
+        $ref: '#/definitions/freeturn.ServerInstance'
       success:
         example: true
         type: boolean
@@ -1378,6 +1492,27 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.GenerateLinkRequest:
+    properties:
+      clientId:
+        type: string
+      mtu:
+        type: integer
+      "n":
+        type: integer
+      name:
+        type: string
+      peer:
+        type: string
+      provider:
+        type: string
+      serverId:
+        type: string
+      streamsPerCred:
+        type: integer
+      wg:
+        type: string
     type: object
   api.GenerateLinkResponse:
     properties:
@@ -1674,6 +1809,20 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.ImportConfRequest:
+    properties:
+      backend:
+        description: '"nativewg" | "kernel" (default: "kernel")'
+        type: string
+      content:
+        type: string
+      freeTurnClientId:
+        type: string
+      name:
+        type: string
+      wdttClientId:
+        type: string
     type: object
   api.IpsetUsageData:
     properties:
@@ -3317,6 +3466,41 @@ definitions:
         example: start
         type: string
     type: object
+  api.SingboxDNSCertificateDTO:
+    properties:
+      certificate_public_key_sha256:
+        type: string
+      issuer:
+        type: string
+      not_after:
+        type: string
+      subject:
+        type: string
+    type: object
+  api.SingboxDNSClientTLSOptionsDTO:
+    properties:
+      alpn:
+        example:
+        - h2
+        items:
+          type: string
+        type: array
+      certificate_public_key_sha256:
+        items:
+          type: string
+        type: array
+      insecure:
+        type: boolean
+      max_version:
+        example: "1.3"
+        type: string
+      min_version:
+        example: "1.2"
+        type: string
+      server_name:
+        example: cloudflare-dns.com
+        type: string
+    type: object
   api.SingboxDNSGlobalsData:
     properties:
       final:
@@ -3332,6 +3516,28 @@ definitions:
         $ref: '#/definitions/api.SingboxDNSGlobalsData'
       success:
         example: true
+        type: boolean
+    type: object
+  api.SingboxDNSLookupData:
+    properties:
+      certificate_public_key_sha256:
+        items:
+          type: string
+        type: array
+      certificates:
+        items:
+          $ref: '#/definitions/api.SingboxDNSCertificateDTO'
+        type: array
+      ips:
+        items:
+          type: string
+        type: array
+    type: object
+  api.SingboxDNSLookupResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SingboxDNSLookupData'
+      success:
         type: boolean
     type: object
   api.SingboxDNSRewriteDTO:
@@ -3473,6 +3679,8 @@ definitions:
       tag:
         example: cloudflare
         type: string
+      tls:
+        $ref: '#/definitions/api.SingboxDNSClientTLSOptionsDTO'
       type:
         example: udp
         type: string
@@ -5126,6 +5334,34 @@ definitions:
         example: ws
         type: string
     type: object
+  api.SubscriptionRefreshData:
+    properties:
+      added:
+        example: 1
+        type: integer
+      orphaned:
+        example: 0
+        type: integer
+      parseErrors:
+        items:
+          type: string
+        type: array
+      skippedDuplicate:
+        example: 0
+        type: integer
+      skippedOther:
+        example: 0
+        type: integer
+      skippedVmess:
+        example: 0
+        type: integer
+      updated:
+        example: 2
+        type: integer
+      when:
+        example: "2026-07-20T12:00:00Z"
+        type: string
+    type: object
   api.SubscriptionRejectedDTO:
     properties:
       label:
@@ -5354,6 +5590,12 @@ definitions:
         example: /opt/etc/HydraRoute/geosite_GA.dat
         type: string
     type: object
+  api.TerminalInstallData:
+    properties:
+      installed:
+        example: true
+        type: boolean
+    type: object
   api.TerminalStartData:
     properties:
       port:
@@ -5571,6 +5813,9 @@ definitions:
       lastLatency:
         example: 35
         type: integer
+      latencyNote:
+        example: метод проверки не измеряет время отклика
+        type: string
       method:
         example: http
         type: string
@@ -5971,6 +6216,51 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.WdttClientInstanceResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdtt.ClientInstance'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.WdttConfigResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdtt.Config'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.WdttDecodeLinkResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdtt.LinkDecodeResult'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.WdttEnsureWGTunnelResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.EnsureWGTunnelResponse'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.WdttImportRequest:
+    properties:
+      link:
+        type: string
+    type: object
+  api.WdttStatusResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdtt.Status'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.WireguardServerDTO:
     properties:
       address:
@@ -6178,13 +6468,84 @@ definitions:
       sni:
         type: string
     type: object
+  freeturn.AllowlistEntry:
+    properties:
+      clientId:
+        type: string
+      comment:
+        type: string
+    type: object
+  freeturn.AllowlistStatus:
+    properties:
+      clients:
+        items:
+          $ref: '#/definitions/freeturn.AllowlistEntry'
+        type: array
+      clientsFile:
+        type: string
+      enabled:
+        type: boolean
+    type: object
+  freeturn.CaptchaClientStatus:
+    properties:
+      active:
+        description: 'Active: this client''s process currently owns the local captcha
+          HTTP server (:8765).'
+        type: boolean
+      canOpen:
+        description: 'CanOpen: UI may open the proxied captcha page for this client.'
+        type: boolean
+      captchaSession:
+        description: 'CaptchaSession: manual captcha (re)starts in this process run
+          — bump to reload iframe.'
+        type: integer
+      clientId:
+        type: string
+      clientName:
+        type: string
+      pendingStreams:
+        description: 'PendingStreams: VK-auth streams in this client still waiting
+          on manual captcha.'
+        type: integer
+      portContention:
+        description: 'PortContention: manual captcha port :8765 is busy with another
+          stream''s session.'
+        type: boolean
+      queued:
+        description: 'Queued: waiting but another client holds :8765 — solve the active
+          one first.'
+        type: boolean
+      url:
+        type: string
+      waiting:
+        description: 'Waiting: client log indicates manual captcha is required (auto
+          failed or -manual-captcha).'
+        type: boolean
+    type: object
+  freeturn.CaptchaOverview:
+    properties:
+      clients:
+        items:
+          $ref: '#/definitions/freeturn.CaptchaClientStatus'
+        type: array
+      ownerClientId:
+        type: string
+      ownerName:
+        type: string
+      portOpen:
+        type: boolean
+    type: object
   freeturn.ClientConfig:
     properties:
       bond:
         description: -bond, only meaningful with mode=tcp
         type: boolean
       browser:
-        description: -browser, chrome|firefox, provider=vk only
+        description: -browser, provider=vk only
+        enum:
+        - chrome
+        - firefox
+        - safari
         type: string
       clientId:
         description: -client-id, auto-generated if empty
@@ -6205,9 +6566,6 @@ definitions:
       listen:
         description: -listen, local addr WG/Xray connects to (default 127.0.0.1:9000)
         type: string
-      manualCaptcha:
-        description: -manual-captcha, provider=vk only
-        type: boolean
       mode:
         description: -mode, udp|tcp (tunnel mode)
         type: string
@@ -6246,12 +6604,57 @@ definitions:
         description: -port, override TURN server port
         type: integer
     type: object
+  freeturn.ClientInstance:
+    properties:
+      config:
+        $ref: '#/definitions/freeturn.ClientConfig'
+      id:
+        type: string
+      name:
+        type: string
+    type: object
   freeturn.Config:
     properties:
       client:
-        $ref: '#/definitions/freeturn.ClientConfig'
+        allOf:
+        - $ref: '#/definitions/freeturn.ClientConfig'
+        description: Legacy v1 fields — read during migration only, never written
+          back.
+      clients:
+        items:
+          $ref: '#/definitions/freeturn.ClientInstance'
+        type: array
       server:
         $ref: '#/definitions/freeturn.ServerConfig'
+      servers:
+        items:
+          $ref: '#/definitions/freeturn.ServerInstance'
+        type: array
+      version:
+        type: integer
+    type: object
+  freeturn.CreateClientInput:
+    properties:
+      config:
+        $ref: '#/definitions/freeturn.ClientConfig'
+      name:
+        type: string
+    type: object
+  freeturn.CreateServerInput:
+    properties:
+      config:
+        $ref: '#/definitions/freeturn.ServerConfig'
+      name:
+        type: string
+    type: object
+  freeturn.InstanceStatus:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        $ref: '#/definitions/freeturn.ProcessStatus'
     type: object
   freeturn.LinkPayload:
     properties:
@@ -6309,6 +6712,11 @@ definitions:
         type: string
       binaryPresent:
         type: boolean
+      dtlsConnections:
+        description: |-
+          DtlsConnections is the number of freeturn streams with an established
+          DTLS session in the current log tail (0 when not running).
+        type: integer
       lastError:
         description: |-
           LastError holds the tail of stderr from the most recent exit, only
@@ -6354,10 +6762,25 @@ definitions:
         description: -obf-profile, none|rtpopus|rtpopus2|rtpopus3
         type: string
     type: object
+  freeturn.ServerInstance:
+    properties:
+      config:
+        $ref: '#/definitions/freeturn.ServerConfig'
+      id:
+        type: string
+      name:
+        type: string
+    type: object
   freeturn.Status:
     properties:
       client:
-        $ref: '#/definitions/freeturn.ProcessStatus'
+        allOf:
+        - $ref: '#/definitions/freeturn.ProcessStatus'
+        description: Client/Server mirror the default instance for legacy API consumers.
+      clients:
+        items:
+          $ref: '#/definitions/freeturn.InstanceStatus'
+        type: array
       installAvailable:
         description: |-
           InstallAvailable: для этой архитектуры есть закреплённая сборка и
@@ -6366,11 +6789,26 @@ definitions:
       installVersion:
         description: InstallVersion — версия freeturn, которую поставит установка.
         type: string
+      installedVersion:
+        description: InstalledVersion — версия, записанная после последней установки.
+        type: string
       installing:
         description: Installing — установка сейчас идёт (кнопка блокируется).
         type: boolean
+      routerClock:
+        description: RouterClock — текущее время роутера для сверки с метками в логе
+          freeturn.
+        type: string
       server:
         $ref: '#/definitions/freeturn.ProcessStatus'
+      servers:
+        items:
+          $ref: '#/definitions/freeturn.InstanceStatus'
+        type: array
+      updateAvailable:
+        description: UpdateAvailable — бинари отсутствуют или устарели относительно
+          InstallVersion.
+        type: boolean
     type: object
   presets.DNSEngine:
     properties:
@@ -6452,6 +6890,172 @@ definitions:
         items:
           $ref: '#/definitions/presets.RuleRef'
         type: array
+    type: object
+  wdtt.ClientConfig:
+    properties:
+      captchaMode:
+        description: '-captcha-mode: auto|rjs|wv (router default rjs)'
+        type: string
+      debug:
+        type: boolean
+      deviceId:
+        description: -device-id
+        type: string
+      enabled:
+        type: boolean
+      fingerprint:
+        description: -fingerprint
+        type: string
+      listen:
+        description: -listen, local UDP addr (default 127.0.0.1:9000)
+        type: string
+      obfs:
+        description: -obfs, audio|video
+        type: string
+      password:
+        description: -password, WRAP key derivation
+        type: string
+      peer:
+        description: -peer, VPS host:dtls_port
+        type: string
+      sub:
+        description: subscription URL (metadata only)
+        type: string
+      vkAuthMode:
+        description: -vk-auth-mode
+        type: string
+      vkHashes:
+        description: -vk, comma-separated call hashes
+        type: string
+      workers:
+        description: -n, parallel workers (multiple of 12)
+        type: integer
+    type: object
+  wdtt.ClientInstance:
+    properties:
+      config:
+        $ref: '#/definitions/wdtt.ClientConfig'
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  wdtt.Config:
+    properties:
+      clients:
+        items:
+          $ref: '#/definitions/wdtt.ClientInstance'
+        type: array
+      version:
+        type: integer
+    type: object
+  wdtt.CreateClientInput:
+    properties:
+      config:
+        $ref: '#/definitions/wdtt.ClientConfig'
+      name:
+        type: string
+    type: object
+  wdtt.ImportPayload:
+    properties:
+      deviceId:
+        type: string
+      listen:
+        type: string
+      name:
+        type: string
+      password:
+        type: string
+      peer:
+        type: string
+      subUrl:
+        type: string
+      vkHashes:
+        items:
+          type: string
+        type: array
+      wg:
+        description: optional bundled WireGuard client config
+        type: string
+      workers:
+        type: integer
+    type: object
+  wdtt.InstanceStatus:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        $ref: '#/definitions/wdtt.ProcessStatus'
+    type: object
+  wdtt.LinkDecodeResult:
+    properties:
+      profile:
+        $ref: '#/definitions/wdtt.ImportPayload'
+      subscription:
+        $ref: '#/definitions/wdtt.SubscriptionPreview'
+    type: object
+  wdtt.ProcessStatus:
+    properties:
+      binary:
+        type: string
+      binaryPresent:
+        type: boolean
+      dtlsConnections:
+        type: integer
+      lastError:
+        type: string
+      log:
+        type: string
+      pid:
+        type: integer
+      running:
+        type: boolean
+      startedAt:
+        type: string
+      wgConfig:
+        type: string
+    type: object
+  wdtt.Status:
+    properties:
+      client:
+        $ref: '#/definitions/wdtt.ProcessStatus'
+      clients:
+        items:
+          $ref: '#/definitions/wdtt.InstanceStatus'
+        type: array
+      installAvailable:
+        type: boolean
+      installVersion:
+        type: string
+      installedVersion:
+        type: string
+      installing:
+        type: boolean
+      routerClock:
+        type: string
+      updateAvailable:
+        type: boolean
+    type: object
+  wdtt.SubscriptionPreview:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      profiles:
+        items:
+          $ref: '#/definitions/wdtt.ImportPayload'
+        type: array
+      subUrl:
+        type: string
+      trafficLimitMb:
+        type: number
+      trafficUsedMb:
+        type: number
+      updatedAt:
+        type: string
     type: object
 info:
   contact: {}
@@ -6989,6 +7593,125 @@ paths:
       summary: Auth status
       tags:
       - auth
+  /awg3-endpoints:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Awg3ListResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List AWG3 endpoints
+      tags:
+      - awg3-endpoints
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Tag and endpoint config
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.Awg3ImportRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Awg3ListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Import an AWG3 endpoint
+      tags:
+      - awg3-endpoints
+  /awg3-endpoints/{id}:
+    delete:
+      parameters:
+      - description: Endpoint id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Awg3ListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Delete an AWG3 endpoint
+      tags:
+      - awg3-endpoints
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Endpoint id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New tag
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.Awg3RenameRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Awg3ListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Rename an AWG3 endpoint
+      tags:
+      - awg3-endpoints
   /boot-status:
     get:
       description: 'Public snapshot: initializing flag, phase, instance id.'
@@ -7042,7 +7765,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.ClientRoutesListResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ClientRouteDTO'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -7070,7 +7798,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.ClientRoutesListResponse'
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
@@ -7100,7 +7828,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.ClientRoutesListResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ClientRouteToggleData'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -7130,7 +7863,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.ClientRoutesListResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ClientRouteDTO'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -7950,6 +8688,18 @@ paths:
       summary: Adopt external tunnel
       tags:
       - tunnels
+  /freeturn/captcha/status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.FreeTurnCaptchaStatusResponse'
+      summary: Get FreeTurn VK captcha queue and per-client status
+      tags:
+      - freeturn
   /freeturn/client/config:
     put:
       responses:
@@ -7958,6 +8708,124 @@ paths:
           schema:
             $ref: '#/definitions/api.FreeTurnConfigResponse'
       summary: Update FreeTurn client configuration
+  /freeturn/clients:
+    post:
+      parameters:
+      - description: Optional name and initial config
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/freeturn.CreateClientInput'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.FreeTurnClientInstanceResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Create a new FreeTurn client instance
+      tags:
+      - freeturn
+  /freeturn/clients/{id}:
+    delete:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a FreeTurn client instance
+      tags:
+      - freeturn
+    patch:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a FreeTurn client instance
+      tags:
+      - freeturn
+    put:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a FreeTurn client instance
+      tags:
+      - freeturn
+  /freeturn/clients/{id}/start:
+    post:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Start a FreeTurn client instance
+      tags:
+      - freeturn
+  /freeturn/clients/{id}/stop:
+    post:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Stop a FreeTurn client instance
+      tags:
+      - freeturn
   /freeturn/config:
     get:
       responses:
@@ -8004,6 +8872,227 @@ paths:
           schema:
             $ref: '#/definitions/api.GenerateLinkResponse'
       summary: Generate a freeturn:// share link from the current server config
+  /freeturn/servers:
+    post:
+      parameters:
+      - description: Optional name and initial config
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/freeturn.CreateServerInput'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.FreeTurnServerInstanceResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Create a new FreeTurn server instance
+      tags:
+      - freeturn
+  /freeturn/servers/{id}:
+    delete:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a FreeTurn server instance
+      tags:
+      - freeturn
+    patch:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a FreeTurn server instance
+      tags:
+      - freeturn
+    put:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a FreeTurn server instance
+      tags:
+      - freeturn
+  /freeturn/servers/{id}/allowlist:
+    delete:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.FreeTurnAllowlistResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Manage a FreeTurn server client-ID allowlist
+      tags:
+      - freeturn
+    get:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.FreeTurnAllowlistResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Manage a FreeTurn server client-ID allowlist
+      tags:
+      - freeturn
+    post:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.FreeTurnAllowlistResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Manage a FreeTurn server client-ID allowlist
+      tags:
+      - freeturn
+  /freeturn/servers/{id}/allowlist/{clientId}:
+    delete:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.FreeTurnAllowlistResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Manage a FreeTurn server client-ID allowlist
+      tags:
+      - freeturn
+  /freeturn/servers/{id}/link:
+    post:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Optional overrides (peer, provider, mtu, wg, clientId, name)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/api.GenerateLinkRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.GenerateLinkResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Generate a freeturn:// share link from a specific server instance
+      tags:
+      - freeturn
+  /freeturn/servers/{id}/start:
+    post:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Start a FreeTurn server instance
+      tags:
+      - freeturn
+  /freeturn/servers/{id}/stop:
+    post:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Stop a FreeTurn server instance
+      tags:
+      - freeturn
   /freeturn/status:
     get:
       responses:
@@ -8130,7 +9219,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.GeoExpandData'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.GeoExpandData'
+              type: object
       security:
       - CookieAuth: []
       summary: HydraRoute geo tag expand
@@ -8389,6 +9483,13 @@ paths:
     post:
       consumes:
       - application/json
+      parameters:
+      - description: Config content and optional metadata
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.ImportConfRequest'
       produces:
       - application/json
       responses:
@@ -9396,7 +10497,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SaveStatusDTO'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SaveStatusDTO'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -9511,7 +10617,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.PresetsListResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.PresetsListResponse'
+              type: object
       summary: List unified presets
       tags:
       - presets
@@ -10025,7 +11136,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.ResolveResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ResolveResponse'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -12760,6 +13876,42 @@ paths:
       summary: List singbox-router DNS servers
       tags:
       - singbox-router
+  /singbox/router/dns/servers/lookup:
+    get:
+      parameters:
+      - description: DNS server hostname or IP
+        in: query
+        name: server
+        required: true
+        type: string
+      - description: TLS port (default 853)
+        in: query
+        name: server_port
+        type: integer
+      - description: TLS SNI (defaults to server)
+        in: query
+        name: server_name
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxDNSLookupResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Resolve DNS server and fetch TLS certificates
+      tags:
+      - singbox-router
   /singbox/router/dns/servers/move:
     post:
       consumes:
@@ -13937,7 +15089,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SelectiveStatusData'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SelectiveStatusData'
+              type: object
       security:
       - CookieAuth: []
       summary: Install conntrack-tools package
@@ -13951,7 +15108,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SelectiveStatusData'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SelectiveStatusData'
+              type: object
         "409":
           description: already installing
           schema:
@@ -13970,7 +15132,12 @@ paths:
           description: rebuild started (or already running); rebuilding reflects live
             state
           schema:
-            $ref: '#/definitions/api.SelectiveStatusData'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SelectiveStatusData'
+              type: object
         "409":
           description: sing-box config apply in progress
           schema:
@@ -13995,7 +15162,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SelectiveCancelData'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SelectiveCancelData'
+              type: object
         "405":
           description: Method Not Allowed
           schema:
@@ -14026,7 +15198,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SelectiveSnapshotMatchersData'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SelectiveSnapshotMatchersData'
+              type: object
         "405":
           description: Method Not Allowed
           schema:
@@ -14048,7 +15225,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SelectiveStatusData'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SelectiveStatusData'
+              type: object
       security:
       - CookieAuth: []
       summary: Selective-bypass status
@@ -14160,7 +15342,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.RouterStagingStatusResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.RouterStagingStatusResponse'
+              type: object
         "405":
           description: Method Not Allowed
           schema:
@@ -14338,7 +15525,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SubscriptionResponse'
+            $ref: '#/definitions/api.OkResponse'
         "400":
           description: Bad Request
           schema:
@@ -14856,7 +16043,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SubscriptionResponse'
+            $ref: '#/definitions/api.OkResponse'
         "500":
           description: Internal Server Error
           schema:
@@ -14915,7 +16102,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SubscriptionResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SubscriptionRefreshData'
+              type: object
         "409":
           description: фильтр и исключения скрывают все серверы (ALL_MEMBERS_FILTERED)
           schema:
@@ -15357,7 +16549,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.StaticRoutesListResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.StaticRouteDTO'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -15409,7 +16606,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.StaticRoutesListResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.StaticRouteDTO'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -15485,7 +16687,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.StaticRoutesListResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.StaticRouteDTO'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -15810,7 +17017,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.TerminalStatusResponse'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.TerminalInstallData'
+              type: object
         "400":
           description: Bad Request
           schema:
@@ -16442,6 +17654,328 @@ paths:
       summary: WAN status
       tags:
       - wan
+  /wdtt/client/config:
+    put:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update WDTT client configuration
+      tags:
+      - wdtt
+  /wdtt/client/start:
+    post:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Start the WDTT client and its linked AWG tunnels
+      tags:
+      - wdtt
+  /wdtt/client/stop:
+    post:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Stop the WDTT client and its linked AWG tunnels
+      tags:
+      - wdtt
+  /wdtt/clients:
+    post:
+      parameters:
+      - description: Optional name and initial config
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/wdtt.CreateClientInput'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.WdttClientInstanceResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Create a new WDTT client instance
+      tags:
+      - wdtt
+  /wdtt/clients/{id}:
+    delete:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a WDTT client instance
+      tags:
+      - wdtt
+    patch:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a WDTT client instance
+      tags:
+      - wdtt
+    put:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a WDTT client instance
+      tags:
+      - wdtt
+  /wdtt/clients/{id}/ensure-wg-tunnel:
+    post:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.WdttEnsureWGTunnelResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Ensure an AWG tunnel exists for the client's WireGuard config
+      tags:
+      - wdtt
+  /wdtt/clients/{id}/import:
+    post:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Link to import
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.WdttImportRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Import a link into a specific WDTT client instance
+      tags:
+      - wdtt
+  /wdtt/clients/{id}/linked-tunnels/clear:
+    post:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Delete AWG tunnels linked to a WDTT client
+      tags:
+      - wdtt
+  /wdtt/clients/{id}/start:
+    post:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Start a WDTT client instance
+      tags:
+      - wdtt
+  /wdtt/clients/{id}/stop:
+    post:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Stop a WDTT client instance
+      tags:
+      - wdtt
+  /wdtt/clients/{id}/subscription/refresh:
+    post:
+      parameters:
+      - description: Client instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Refresh a WDTT client's subscription
+      tags:
+      - wdtt
+  /wdtt/config:
+    get:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.WdttConfigResponse'
+      summary: Get WDTT client configuration
+      tags:
+      - wdtt
+  /wdtt/install:
+    post:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Download and activate the pinned wdtt client binary
+      tags:
+      - wdtt
+  /wdtt/link/decode:
+    post:
+      parameters:
+      - description: Link to decode
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.WdttImportRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.WdttDecodeLinkResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Decode a wdtt:// / qwdtt:// / subscription link
+      tags:
+      - wdtt
+  /wdtt/link/import:
+    post:
+      parameters:
+      - description: Link to import
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.WdttImportRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Import a wdtt:// / qwdtt:// / subscription link into the default client
+      tags:
+      - wdtt
+  /wdtt/status:
+    get:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.WdttStatusResponse'
+      summary: Get WDTT live process status
+      tags:
+      - wdtt
 securityDefinitions:
   CookieAuth:
     description: Session cookie set by POST /auth/login. Omit for public routes.

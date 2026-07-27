@@ -19,7 +19,7 @@ import (
 //	@Produce		json
 //	@Param			id	query		string				true	"subscription id"
 //	@Param			req	body		ActiveMemberRequest	true	"member tag"
-//	@Success		200	{object}	SubscriptionResponse
+//	@Success		200	{object}	OkResponse
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/subscriptions/active-member [post]
@@ -178,7 +178,7 @@ func (h *SubscriptionHandler) GetStream(w http.ResponseWriter, r *http.Request) 
 //	@Tags			subscriptions
 //	@Produce		json
 //	@Param			id	query		string	true	"subscription id"
-//	@Success		200	{object}	SubscriptionResponse
+//	@Success		200	{object}	OkResponse
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/subscriptions/orphans/delete [post]
 func (h *SubscriptionHandler) OrphansDelete(w http.ResponseWriter, r *http.Request) {

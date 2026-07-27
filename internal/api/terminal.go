@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -26,6 +27,17 @@ type TerminalStartResponse struct {
 	Data    TerminalStartData `json:"data"`
 }
 
+// terminalPingInterval — период keepalive-ping'ов клиенту WS-прокси.
+// Без них промежуточные прокси (KeenDNS-облако и т.п.) рвут idle-соединение,
+// и сессия терминала «сама» умирает (#588). vars — для подмены в тестах.
+// Пропавший pong (terminalPongTimeout) = мёртвый клиент: сессию закрываем,
+// чтобы освободить single-session слот для реконнекта (фронт ретраит дольше,
+// чем худшее удержание слота: interval+timeout).
+var (
+	terminalPingInterval = 30 * time.Second
+	terminalPongTimeout  = 10 * time.Second
+)
+
 // TerminalHandler handles terminal API endpoints.
 type TerminalHandler struct {
 	manager terminal.Manager
@@ -42,6 +54,11 @@ type TerminalStatusResponse struct {
 	Installed     bool `json:"installed" example:"true"`
 	Running       bool `json:"running" example:"false"`
 	SessionActive bool `json:"sessionActive" example:"false"`
+}
+
+// TerminalInstallData is the payload of POST /terminal/install.
+type TerminalInstallData struct {
+	Installed bool `json:"installed" example:"true"`
 }
 
 // Status returns the current terminal state.
@@ -74,7 +91,7 @@ func (h *TerminalHandler) Status(w http.ResponseWriter, r *http.Request) {
 //	@Tags			terminal
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	TerminalStatusResponse
+//	@Success		200	{object}	APIEnvelope{data=TerminalInstallData}
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/terminal/install [post]
@@ -220,6 +237,32 @@ func (h *TerminalHandler) WebSocket(w http.ResponseWriter, r *http.Request) {
 	// ttyd -> client
 	go func() {
 		errc <- wsCopy(proxyCtx, clientConn, ttydConn)
+	}()
+
+	// Keepalive: ping клиенту, чтобы idle-сессию не резали промежуточные
+	// прокси. Ping ждёт pong — ошибка означает мёртвое соединение, гасим
+	// сессию через proxyCancel (не пишем в errc: там ждут только wsCopy).
+	go func() {
+		ticker := time.NewTicker(terminalPingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-proxyCtx.Done():
+				return
+			case <-ticker.C:
+				pingCtx, cancel := context.WithTimeout(proxyCtx, terminalPongTimeout)
+				err := clientConn.Ping(pingCtx)
+				cancel()
+				if err != nil {
+					if h.log != nil {
+						h.log.AppLog(logging.LevelWarn, "terminal", "", "keepalive", "ttyd",
+							"client missed pong — closing session to free the slot: "+err.Error())
+					}
+					proxyCancel()
+					return
+				}
+			}
+		}
 	}()
 
 	// Wait for either direction to finish.

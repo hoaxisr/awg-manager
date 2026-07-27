@@ -26,6 +26,22 @@ export function sanitizeDnsServerForApi(
 	if (server.path?.trim()) out.path = server.path.trim();
 	if (server.domain_strategy) out.domain_strategy = server.domain_strategy;
 	if (server.domain_resolver) out.domain_resolver = { ...server.domain_resolver };
+	const tls = server.tls;
+	if (tls) {
+		const cleanTLS = {
+			...(tls.server_name?.trim() ? { server_name: tls.server_name.trim() } : {}),
+			...(tls.insecure ? { insecure: true } : {}),
+			...(tls.alpn?.map((value) => value.trim()).filter(Boolean).length
+				? { alpn: tls.alpn.map((value) => value.trim()).filter(Boolean) }
+				: {}),
+			...(tls.min_version ? { min_version: tls.min_version } : {}),
+			...(tls.max_version ? { max_version: tls.max_version } : {}),
+			...(tls.certificate_public_key_sha256?.map((value) => value.trim()).filter(Boolean).length
+				? { certificate_public_key_sha256: tls.certificate_public_key_sha256.map((value) => value.trim()).filter(Boolean) }
+				: {}),
+		};
+		if (Object.keys(cleanTLS).length) out.tls = cleanTLS;
+	}
 	if (detour && !shouldOmitDnsServerDetour(server.tag, detour)) {
 		out.detour = detour;
 	}

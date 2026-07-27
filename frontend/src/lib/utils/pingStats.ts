@@ -31,7 +31,11 @@ export function groupLogsByTunnel(logs: PingLogEntry[]): Map<string, PingLogEntr
 export function computeCardStats(entries: PingLogEntry[], status: TunnelPingStatus): CardStats {
 	const window = entries.slice(0, STAT_WINDOW);
 	const ok = window.filter((e) => e.success);
-	const okLat = ok.map((e) => e.latency);
+	// latency <= 0 у успешной проверки означает «не измерено» (NativeWG:
+	// NDMS не отдаёт время, а методы handshake/disabled его не меряют).
+	// В avg/min/max такие записи не входят, но остаются успешными
+	// проверками — в lossPct и в полоске они учитываются.
+	const okLat = ok.map((e) => e.latency).filter((v) => v > 0);
 
 	const avgMs = okLat.length ? Math.round(okLat.reduce((s, v) => s + v, 0) / okLat.length) : null;
 	const minMs = okLat.length ? Math.min(...okLat) : null;

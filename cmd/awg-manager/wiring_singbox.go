@@ -9,6 +9,7 @@ import (
 	"runtime"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
+	"github.com/hoaxisr/awg-manager/internal/awg3endpoint"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
@@ -98,6 +99,11 @@ func (a *app) setupSingbox() {
 	// (slot-file writes from router/deviceproxy/subscriptions) respect a
 	// user-pressed Stop in the same way the watchdog does.
 	a.sbOrch.SetShouldRun(func() bool { return !a.singboxOp.IsManuallyStopped() })
+	// AWG3 imported endpoints — store owns awg3.json, service projects it into
+	// the 16-awg3.json slot. Constructed here so the SlotAwg3 HasContent closure
+	// (below) can read the store, mirroring SlotTunnels' HasUserTunnels gate.
+	a.awg3Store = awg3endpoint.NewStore(filepath.Join(a.dataDir, "awg3.json"))
+	a.awg3Svc = awg3endpoint.NewService(a.awg3Store, a.sbOrch, a.loggingService)
 	for _, meta := range singboxorch.KnownSlots() {
 		// SlotTunnels is AlwaysOn but only counts as "active work" when
 		// the user has defined sing-box tunnels — wire HasContent so
@@ -107,12 +113,35 @@ func (a *app) setupSingbox() {
 				return a.singboxOp.HasUserTunnels()
 			}
 		}
+		// SlotAwg3 is AlwaysOn too — it only justifies keeping the daemon
+		// running once the user has imported at least one AWG3 endpoint.
+		if meta.Slot == singboxorch.SlotAwg3 {
+			meta.HasContent = func() bool {
+				return a.awg3Store.Len() > 0
+			}
+		}
 		if err := a.sbOrch.Register(meta); err != nil {
 			a.bootLog.Error("singbox-orchestrator", string(meta.Slot), "register failed: "+err.Error())
 		}
 	}
 	if err := a.sbOrch.Bootstrap(); err != nil {
 		a.bootLog.Error("singbox-orchestrator", "bootstrap", err.Error())
+	}
+	// Project any imported AWG3 endpoints into 16-awg3.json on boot so a
+	// restart re-materializes the slot from awg3.json (the source of truth).
+	// Skip when there is neither a store record nor a 16-awg3.json file:
+	// Sync would only spawn a `sing-box check` subprocess (seconds on MIPS,
+	// warns without the binary) to produce an empty slot that is already empty.
+	// If the slot file exists while the store is empty, still Sync to clear it.
+	slotExists := func() bool {
+		_, _, ok := a.sbOrch.EffectiveStat(singboxorch.SlotAwg3)
+		return ok
+	}
+	// || is lazy: EffectiveStat (a stat syscall) runs only when the store is empty.
+	if a.awg3Store.Len() > 0 || slotExists() {
+		if err := a.awg3Svc.Sync(); err != nil {
+			a.bootLog.Warn("awg3-sync", "boot", err.Error())
+		}
 	}
 	// Миграция URL rule-set'ов переписала файлы мимо оркестратора: переживший
 	// рестарт awgm sing-box иначе держит старые (заблокированные) URL в памяти
@@ -231,7 +260,7 @@ func (a *app) setupSingbox() {
 
 	delayChecker := singbox.NewDelayChecker(
 		a.singboxOp.Clash(),
-		&singboxAndSubLister{op: a.singboxOp, sub: a.subSvc},
+		&singboxAndSubLister{op: a.singboxOp, sub: a.subSvc, awg3: a.awg3Svc},
 		a.eventBus,
 	)
 	a.singboxHandler = api.NewSingboxHandler(a.singboxOp, a.eventBus, delayChecker, a.testService, a.loggingService)

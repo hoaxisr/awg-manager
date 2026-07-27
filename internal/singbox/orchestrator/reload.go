@@ -306,6 +306,14 @@ func (o *Orchestrator) enabledOutboundTagsLocked(exclude map[Slot]bool) map[stri
 				known[ob.Tag] = true
 			}
 		}
+		// Endpoints share the outbound tag namespace (validate.go collects them
+		// the same way); include them so selector/device-proxy refs to an awg3
+		// endpoint tag aren't pruned as dangling.
+		for _, ep := range c.Endpoints {
+			if ep.Tag != "" {
+				known[ep.Tag] = true
+			}
+		}
 	}
 	return known
 }

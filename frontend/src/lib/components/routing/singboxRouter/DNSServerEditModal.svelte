@@ -15,6 +15,7 @@
 		sanitizeDnsServerForApi,
 	} from '$lib/utils/dnsServerDetour';
 	import { dnsServerDetourDisplay } from '$lib/components/sb-router/dnsServerDetourDisplay';
+	import { api } from '$lib/api/client';
 
 	interface Props {
 		server?: SingboxRouterDNSServer;
@@ -40,6 +41,13 @@
 		{ value: 'ipv6_only', label: 'ipv6_only' },
 		{ value: 'prefer_ipv4', label: 'prefer_ipv4' },
 		{ value: 'prefer_ipv6', label: 'prefer_ipv6' },
+	];
+	const TLS_VERSION_OPTIONS: DropdownOption[] = [
+		{ value: '', label: '— default —' },
+		{ value: '1.0', label: 'TLS 1.0' },
+		{ value: '1.1', label: 'TLS 1.1' },
+		{ value: '1.2', label: 'TLS 1.2' },
+		{ value: '1.3', label: 'TLS 1.3' },
 	];
 
 	const detourOptions = $derived<DropdownOption[]>([
@@ -93,6 +101,22 @@
 	let resolverServer = $state(server?.domain_resolver?.server ?? '');
 	// svelte-ignore state_referenced_locally
 	let resolverStrategy = $state<SingboxRouterDNSStrategy>(server?.domain_resolver?.strategy ?? '');
+	// svelte-ignore state_referenced_locally
+	let tlsServerName = $state(server?.tls?.server_name ?? '');
+	// svelte-ignore state_referenced_locally
+	let tlsInsecure = $state(server?.tls?.insecure ?? false);
+	// svelte-ignore state_referenced_locally
+	let tlsALPN = $state(server?.tls?.alpn?.join(', ') ?? '');
+	// svelte-ignore state_referenced_locally
+	let tlsMinVersion = $state(server?.tls?.min_version ?? '');
+	// svelte-ignore state_referenced_locally
+	let tlsMaxVersion = $state(server?.tls?.max_version ?? '');
+	// svelte-ignore state_referenced_locally
+	let tlsCertificatePins = $state(server?.tls?.certificate_public_key_sha256?.join(', ') ?? '');
+	let lookupBusy = $state(false);
+	let lookupError = $state('');
+	let lookupIPs = $state<string[]>([]);
+	let lookupCertificates = $state<Array<{ subject: string; issuer: string; not_after: string }>>([]);
 
 	let busy = $state(false);
 	let error = $state('');
@@ -108,6 +132,8 @@
 	let initialResolverEnabled = $state(false);
 	let initialResolverServer = $state('');
 	let initialResolverStrategy = $state<SingboxRouterDNSStrategy>('');
+	let initialTLS = $state('');
+	let previousType = $state<SingboxRouterDNSType | null>(null);
 
 	// Initialize snapshot when modal opens
 	$effect(() => {
@@ -125,6 +151,15 @@
 			initialResolverEnabled = server.domain_resolver != null;
 			initialResolverServer = server.domain_resolver?.server ?? '';
 			initialResolverStrategy = server.domain_resolver?.strategy ?? '';
+			initialTLS = JSON.stringify({
+				server_name: server.tls?.server_name?.trim() ?? '',
+				insecure: server.tls?.insecure ?? false,
+				alpn: server.tls?.alpn?.map((item) => item.trim()).filter(Boolean) ?? [],
+				min_version: server.tls?.min_version ?? '',
+				max_version: server.tls?.max_version ?? '',
+				certificate_public_key_sha256:
+					server.tls?.certificate_public_key_sha256?.map((item) => item.trim()).filter(Boolean) ?? [],
+			});
 		} else {
 			initialTag = '';
 			initialType = 'udp';
@@ -136,7 +171,31 @@
 			initialResolverEnabled = false;
 			initialResolverServer = '';
 			initialResolverStrategy = '';
+			initialTLS = '';
 		}
+	});
+
+	$effect(() => {
+		if (previousType === null) {
+			previousType = type;
+			return;
+		}
+		if (type === previousType) return;
+		previousType = type;
+		serverAddr = '';
+		serverPort = '';
+		path = '';
+		detour = '';
+		strategy = '';
+		resolverEnabled = false;
+		resolverServer = '';
+		resolverStrategy = '';
+		tlsServerName = '';
+		tlsInsecure = false;
+		tlsALPN = '';
+		tlsMinVersion = '';
+		tlsMaxVersion = '';
+		tlsCertificatePins = '';
 	});
 
 	const isDirty = $derived.by(() => {
@@ -151,11 +210,14 @@
 			strategy !== initialStrategy ||
 			resolverEnabled !== initialResolverEnabled ||
 			resolverServer !== initialResolverServer ||
-			resolverStrategy !== initialResolverStrategy
+			resolverStrategy !== initialResolverStrategy ||
+			serializeTLSState() !== initialTLS
 		);
 	});
 
 	const needsResolver = $derived(type !== 'udp' && type !== 'local' && !isIPLiteral(serverAddr));
+	const supportsTLS = $derived(type === 'tls' || type === 'quic' || type === 'https' || type === 'h3');
+	const hasOutboundDetour = $derived(!isManagedDnsDirect && detour !== '');
 	const availableResolvers = $derived(servers.filter((s) => s.tag !== tag).map((s) => s.tag));
 	const resolverServerOptions = $derived<DropdownOption[]>([
 		{ value: '', label: '— выберите —' },
@@ -166,6 +228,44 @@
 		return /^(\d{1,3}\.){3}\d{1,3}$/.test(s) || s.includes(':');
 	}
 
+	function splitList(value: string): string[] {
+		return value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean);
+	}
+
+	function serializeTLSState(): string {
+		return JSON.stringify({
+			server_name: tlsServerName.trim(),
+			insecure: tlsInsecure,
+			alpn: splitList(tlsALPN),
+			min_version: tlsMinVersion,
+			max_version: tlsMaxVersion,
+			certificate_public_key_sha256: splitList(tlsCertificatePins),
+		});
+	}
+
+	async function lookupTLS(): Promise<void> {
+		if (!serverAddr.trim()) {
+			lookupError = 'Укажите домен DNS-сервера';
+			return;
+		}
+		lookupBusy = true;
+		lookupError = '';
+		try {
+			const hostname = serverAddr.trim();
+			const lookupPort = serverPort === '' ? (type === 'https' || type === 'h3' ? 443 : 853) : serverPort;
+			const result = await api.singboxRouterLookupDNSServer(hostname, lookupPort, tlsServerName || hostname);
+			lookupIPs = result.ips;
+			lookupCertificates = result.certificates;
+			if (result.ips[0]) serverAddr = result.ips[0];
+			if (!tlsServerName.trim() && !isIPLiteral(hostname)) tlsServerName = hostname;
+			tlsCertificatePins = result.certificate_public_key_sha256.join(', ');
+		} catch (e) {
+			lookupError = (e as Error).message;
+		} finally {
+			lookupBusy = false;
+		}
+	}
+
 	async function save(): Promise<void> {
 		busy = true;
 		error = '';
@@ -173,6 +273,9 @@
 			if (!tag.trim()) { error = 'Tag обязателен'; busy = false; return; }
 			if (type !== 'local' && !serverAddr.trim()) { error = 'Server обязателен'; busy = false; return; }
 			if (resolverEnabled && !resolverServer) { error = 'Укажите domain_resolver'; busy = false; return; }
+			if (tlsMinVersion && tlsMaxVersion && Number(tlsMinVersion) > Number(tlsMaxVersion)) {
+				error = 'Минимальная версия TLS не может быть выше максимальной'; busy = false; return;
+			}
 
 			const built: SingboxRouterDNSServer = {
 				tag: tag.trim(),
@@ -182,10 +285,23 @@
 			if (type !== 'local') {
 				if (serverPort !== '' && Number(serverPort) > 0) built.server_port = Number(serverPort);
 				if (path.trim()) built.path = path.trim();
-				if (resolverEnabled && resolverServer) {
+				if (!hasOutboundDetour && resolverEnabled && resolverServer) {
 					built.domain_resolver = { server: resolverServer };
 					if (resolverStrategy) built.domain_resolver.strategy = resolverStrategy;
 				}
+			}
+			if (supportsTLS) {
+				const tls = {
+					...(tlsServerName.trim() ? { server_name: tlsServerName.trim() } : {}),
+					...(tlsInsecure ? { insecure: true } : {}),
+					...(splitList(tlsALPN).length ? { alpn: splitList(tlsALPN) } : {}),
+					...(tlsMinVersion ? { min_version: tlsMinVersion as '1.0' | '1.1' | '1.2' | '1.3' } : {}),
+					...(tlsMaxVersion ? { max_version: tlsMaxVersion as '1.0' | '1.1' | '1.2' | '1.3' } : {}),
+					...(splitList(tlsCertificatePins).length
+						? { certificate_public_key_sha256: splitList(tlsCertificatePins) }
+						: {}),
+				};
+				if (Object.keys(tls).length) built.tls = tls;
 			}
 			if (type !== 'local') {
 				if (strategy) built.domain_strategy = strategy;
@@ -297,7 +413,7 @@
 			</section>
 		{/if}
 
-		{#if type !== 'udp' && type !== 'local'}
+		{#if type !== 'udp' && type !== 'local' && !hasOutboundDetour}
 			<section class="form-section">
 				<div class="section-label">Bootstrap resolver (для домена сервера)</div>
 
@@ -324,6 +440,53 @@
 						</label>
 					</div>
 				{/if}
+			</section>
+		{/if}
+
+		{#if supportsTLS}
+			<section class="form-section form-section-divided">
+				<div class="section-label">TLS</div>
+				<div class="hint lookup-action">
+					<Button variant="ghost" size="sm" onclick={lookupTLS} disabled={lookupBusy} loading={lookupBusy} type="button">
+						Получить IP и сертификаты
+					</Button>
+					<span>Подставит первый IP и SHA-256 pins; домен сохранится как SNI.</span>
+				</div>
+				{#if lookupError}<div class="error">{lookupError}</div>{/if}
+				{#if lookupIPs.length}
+					<div class="hint">Найденные IP: {lookupIPs.join(', ')}</div>
+				{/if}
+				{#if lookupCertificates.length}
+					<div class="hint">Сертификаты: {lookupCertificates.map((cert) => `${cert.subject} · до ${cert.not_after}`).join('; ')}</div>
+				{/if}
+				<div class="fields-grid">
+					<label class="field span-full">
+						<div class="lbl">Server name (SNI)</div>
+						<input bind:value={tlsServerName} placeholder="cloudflare-dns.com" />
+					</label>
+					<label class="toggle span-full">
+						<input type="checkbox" bind:checked={tlsInsecure} />
+						<span>Принимать любой сертификат</span>
+					</label>
+					<label class="field span-full">
+						<div class="lbl">ALPN</div>
+						<input bind:value={tlsALPN} placeholder="h2, http/1.1" />
+						<div class="hint">Значения через запятую или с новой строки.</div>
+					</label>
+					<label class="field">
+						<div class="lbl">Минимальная версия TLS</div>
+						<Dropdown bind:value={tlsMinVersion} options={TLS_VERSION_OPTIONS} fullWidth />
+					</label>
+					<label class="field">
+						<div class="lbl">Максимальная версия TLS</div>
+						<Dropdown bind:value={tlsMaxVersion} options={TLS_VERSION_OPTIONS} fullWidth />
+					</label>
+					<label class="field span-full">
+						<div class="lbl">SHA-256 публичного ключа сертификата</div>
+						<input bind:value={tlsCertificatePins} placeholder="base64 pin" />
+						<div class="hint">Несколько значений — через запятую или с новой строки.</div>
+					</label>
+				</div>
 			</section>
 		{/if}
 

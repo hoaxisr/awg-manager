@@ -6,11 +6,13 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/auth"
+	"github.com/hoaxisr/awg-manager/internal/awg3endpoint"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/freeturn"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
@@ -120,6 +122,7 @@ type app struct {
 	pingCheckService    *pingcheck.Service
 	pingCheckFacade     *pingcheck.Facade
 	freeturnService     *freeturn.Service
+	wdttService         *wdtt.Service
 	monitoringService   *monitoring.Service
 	keeneticClient      *auth.KeeneticClient
 	sessionStore        *auth.SessionStore
@@ -145,6 +148,8 @@ type app struct {
 	awgoutboundsSvc     *awgoutbounds.ServiceImpl
 	deviceProxySvc      *deviceproxy.Service
 	routerScheduler     *router.Scheduler
+	awg3Store           *awg3endpoint.Store
+	awg3Svc             *awg3endpoint.Service
 
 	// HTTP
 	srv *server.Server

@@ -64,6 +64,46 @@ func InstallAsLocal() bool {
 	return true
 }
 
+// AppendTZFromRouter adds TZ from the router's /etc/TZ or /var/TZ when the
+// environment does not already define it. Child processes do not inherit
+// Go's time.Local — they need TZ in the environment for local timestamps.
+func AppendTZFromRouter(env []string) []string {
+	if envTZDefined(env) {
+		return env
+	}
+	return appendTZFromRouter(env)
+}
+
+// WithTZFromRouter sets router TZ for a child process, replacing any existing
+// TZ (Entware often exports TZ=UTC, which makes freeturn logs lag MSK by 3h).
+func WithTZFromRouter(env []string) []string {
+	return appendTZFromRouter(env)
+}
+
+func envTZDefined(env []string) bool {
+	for _, item := range env {
+		if strings.HasPrefix(item, "TZ=") {
+			return true
+		}
+	}
+	return false
+}
+
+func appendTZFromRouter(env []string) []string {
+	info := Get()
+	if info.RawTZ == "" {
+		return env
+	}
+	out := make([]string, 0, len(env)+1)
+	for _, item := range env {
+		if strings.HasPrefix(item, "TZ=") {
+			continue
+		}
+		out = append(out, item)
+	}
+	return append(out, "TZ="+info.RawTZ)
+}
+
 func readRouterTZ() (string, string, bool) {
 	for _, p := range tzCandidates {
 		b, err := os.ReadFile(p)

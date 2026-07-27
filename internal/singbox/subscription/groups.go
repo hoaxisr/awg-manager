@@ -4,8 +4,49 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+// groupTagRe — допустимый пользовательский outbound-тег группы (#572):
+// латиница/цифры/._-, до 32 символов, первый символ — буква или цифра.
+var groupTagRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$`)
+
+// reservedGroupTags — теги, занятые системными outbound'ами sing-box.
+var reservedGroupTags = map[string]struct{}{"direct": {}, "block": {}, "dns-out": {}}
+
+// validateGroupTag проверяет формат пользовательского тега; коллизии со
+// слотами вне подписок ловит sing-box check при Reload (rollback → 422).
+func validateGroupTag(tag string) error {
+	if !groupTagRe.MatchString(tag) {
+		return fmt.Errorf("%w: недопустимый тег %q — латиница, цифры и ._-, до 32 символов, первый символ — буква или цифра", ErrValidation, tag)
+	}
+	if _, ok := reservedGroupTags[tag]; ok {
+		return fmt.Errorf("%w: тег %q зарезервирован", ErrValidation, tag)
+	}
+	if strings.HasPrefix(tag, "sub-") {
+		return fmt.Errorf("%w: префикс \"sub-\" зарезервирован за подписками", ErrValidation)
+	}
+	return nil
+}
+
+// groupTagConflict проверяет коллизии тега (и производного "<tag>-in") с
+// selector/inbound/member-тегами существующих подписок.
+func (s *Service) groupTagConflict(tag string) error {
+	in := tag + "-in"
+	for _, sub := range s.store.List() {
+		if sub.SelectorTag == tag || sub.InboundTag == tag ||
+			sub.SelectorTag == in || sub.InboundTag == in {
+			return fmt.Errorf("%w: тег %q уже занят подпиской %q", ErrValidation, tag, sub.Label)
+		}
+		for _, m := range sub.Members {
+			if m.Tag == tag || m.Tag == in {
+				return fmt.Errorf("%w: тег %q уже занят сервером подписки %q", ErrValidation, tag, sub.Label)
+			}
+		}
+	}
+	return nil
+}
 
 // ErrGroupsDisabled возвращается Group-CRUD, когда GroupStore не подключён
 // (SetGroupStore не вызывался — тесты / legacy bootstrap).
@@ -208,6 +249,14 @@ func (s *Service) CreateGroup(ctx context.Context, in GroupCreateInput) (*Aggreg
 	}
 	if strings.TrimSpace(in.Label) == "" {
 		return nil, errors.New("subscription: название группы не может быть пустым")
+	}
+	if in.Tag != "" {
+		if err := validateGroupTag(in.Tag); err != nil {
+			return nil, err
+		}
+		if err := s.groupTagConflict(in.Tag); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := CompileMemberFilter(in.FilterInclude, in.FilterExclude); err != nil {
 		return nil, fmt.Errorf("subscription: %w", err)

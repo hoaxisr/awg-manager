@@ -32,7 +32,16 @@ func (s *Store) Load() (Config, error) {
 	defer s.mu.Unlock()
 
 	if s.cfg != nil {
-		return *s.cfg, nil
+		// Изолируем срезы от кэша: shallow-copy делит backing array,
+		// normalizeConfig и мутации хендлеров иначе меняют кэш до Save.
+		cfg := copyConfig(*s.cfg)
+		if changed := normalizeConfig(&cfg); changed || len(cfg.Clients) != len(s.cfg.Clients) || len(cfg.Servers) != len(s.cfg.Servers) {
+			if err := s.saveLocked(cfg); err != nil {
+				return cfg, err
+			}
+			return cfg, nil
+		}
+		return cfg, nil
 	}
 
 	data, err := os.ReadFile(s.path)
@@ -42,7 +51,7 @@ func (s *Store) Load() (Config, error) {
 			if saveErr := s.saveLocked(cfg); saveErr != nil {
 				return cfg, saveErr
 			}
-			return cfg, nil
+			return copyConfig(cfg), nil
 		}
 		return Config{}, err
 	}
@@ -51,8 +60,26 @@ func (s *Store) Load() (Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, err
 	}
+	if changed := normalizeConfig(&cfg); changed {
+		if err := s.saveLocked(cfg); err != nil {
+			return cfg, err
+		}
+	}
 	s.cfg = &cfg
-	return cfg, nil
+	return copyConfig(cfg), nil
+}
+
+// copyConfig возвращает копию cfg, у которой срезы Clients и Servers лежат в
+// свежих backing array — чтобы мутации возвращённого значения не протекали в
+// кэш s.cfg (и наоборот). Применяется во всех точках возврата Load.
+func copyConfig(cfg Config) Config {
+	if cfg.Clients != nil {
+		cfg.Clients = append([]ClientInstance(nil), cfg.Clients...)
+	}
+	if cfg.Servers != nil {
+		cfg.Servers = append([]ServerInstance(nil), cfg.Servers...)
+	}
+	return cfg
 }
 
 func (s *Store) Save(cfg Config) error {
@@ -64,6 +91,7 @@ func (s *Store) Save(cfg Config) error {
 // saveLocked writes via a temp file + rename so a crash mid-write can't
 // leave freeturn.json truncated/corrupt.
 func (s *Store) saveLocked(cfg Config) error {
+	normalizeConfig(&cfg)
 	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
 		return err
 	}

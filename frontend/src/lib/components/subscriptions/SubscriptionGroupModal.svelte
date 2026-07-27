@@ -21,6 +21,7 @@
 	let { open, group, subscriptions, onclose, onsaved }: Props = $props();
 
 	let label = $state('');
+	let tag = $state('');
 	let mode = $state<SubscriptionMode>('urltest');
 	let utUrl = $state(DEFAULT_SUBSCRIPTION_URLTEST.url);
 	let utIntervalSec = $state(DEFAULT_SUBSCRIPTION_URLTEST.intervalSec);
@@ -36,6 +37,7 @@
 	$effect(() => {
 		if (!open) return;
 		label = group?.label ?? '';
+		tag = '';
 		mode = group?.mode ?? 'urltest';
 		utUrl = group?.urlTest?.url ?? DEFAULT_SUBSCRIPTION_URLTEST.url;
 		utIntervalSec = group?.urlTest?.intervalSec ?? DEFAULT_SUBSCRIPTION_URLTEST.intervalSec;
@@ -61,7 +63,15 @@
 		resolveGroupPreview(subscriptions, selectedIds, filterInclude.trim(), filterExclude.trim()),
 	);
 
-	const canSave = $derived(label.trim().length > 0 && !saving);
+	// #572: клиентская проверка формата тега; авторитетна серверная
+	// (там же коллизии с другими тегами).
+	const GROUP_TAG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
+	const tagValid = $derived.by(() => {
+		const t = tag.trim();
+		return t === '' || (GROUP_TAG_RE.test(t) && !t.startsWith('sub-'));
+	});
+
+	const canSave = $derived(label.trim().length > 0 && tagValid && !saving);
 
 	async function save(): Promise<void> {
 		if (!canSave) return;
@@ -84,7 +94,7 @@
 				await api.updateSubscriptionGroup(group.id, payload);
 				notifications.success('Группа обновлена');
 			} else {
-				await api.createSubscriptionGroup(payload);
+				await api.createSubscriptionGroup({ ...payload, tag: tag.trim() || undefined });
 				notifications.success('Группа создана');
 			}
 			onsaved();
@@ -117,6 +127,30 @@
 			<span class="lbl">Название</span>
 			<input class="inp" bind:value={label} placeholder="Все европейские" required />
 		</label>
+
+		{#if group}
+			<label class="row">
+				<span class="lbl">Тег outbound (sing-box)</span>
+				<input class="inp mono" value={group.tag} readonly disabled />
+			</label>
+		{:else}
+			<label class="row">
+				<span class="lbl">Тег outbound (sing-box)</span>
+				<input
+					class="inp mono"
+					bind:value={tag}
+					placeholder="авто (agg-xxxxxxxx)"
+					autocomplete="off"
+					spellcheck="false"
+				/>
+				{#if !tagValid}
+					<span class="err">Латиница, цифры и ._-, до 32 символов, первый символ — буква или цифра, без префикса «sub-»</span>
+				{/if}
+				<div class="hint">
+					Имя outbound'а в конфиге sing-box и правилах маршрутизации. После создания не меняется.
+				</div>
+			</label>
+		{/if}
 
 		<div class="block">
 			<span class="lbl">Режим выбора сервера</span>

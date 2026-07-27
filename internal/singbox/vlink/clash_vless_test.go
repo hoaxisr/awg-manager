@@ -128,8 +128,9 @@ func TestMapClashVless_PortAsString(t *testing.T) {
 }
 
 // TestMapClashVless_FlowNormalizedAndEncryption verifies the Clash mapper goes
-// through the shared buildVlessOutbound: flow loses the -udp443 suffix and
-// encryption is carried — both previously diverged from the share-link path.
+// through the shared buildVlessOutbound: flow loses the -udp443 suffix, and
+// encryption never reaches the outbound — sing-box has no such field on VLESS
+// and rejects the whole config when it appears (issue #603).
 func TestMapClashVless_FlowNormalizedAndEncryption(t *testing.T) {
 	in := map[string]any{
 		"name":       "n",
@@ -138,7 +139,7 @@ func TestMapClashVless_FlowNormalizedAndEncryption(t *testing.T) {
 		"port":       443,
 		"uuid":       "3a3b1c2e-9999-4321-aaaa-1234567890ab",
 		"flow":       "xtls-rprx-vision-udp443",
-		"encryption": "xtls-rprx",
+		"encryption": "auto",
 		"tls":        true,
 		"servername": "h",
 	}
@@ -153,8 +154,24 @@ func TestMapClashVless_FlowNormalizedAndEncryption(t *testing.T) {
 	if ob["flow"] != "xtls-rprx-vision" {
 		t.Errorf("flow not normalized: got %v, want xtls-rprx-vision (stripped -udp443)", ob["flow"])
 	}
-	if ob["encryption"] != "xtls-rprx" {
-		t.Errorf("encryption dropped: got %v, want xtls-rprx", ob["encryption"])
+	if _, present := ob["encryption"]; present {
+		t.Errorf("encryption reached the sing-box outbound: %s", got.Outbound)
+	}
+}
+
+// Clash-путь обязан отказывать так же, как share-link: настоящий VLESS
+// Encryption sing-box не умеет, и сервер не заработает.
+func TestMapClashVless_RealEncryptionRejected(t *testing.T) {
+	in := map[string]any{
+		"name":       "n",
+		"type":       "vless",
+		"server":     "ex.com",
+		"port":       443,
+		"uuid":       "3a3b1c2e-9999-4321-aaaa-1234567890ab",
+		"encryption": "mlkem768x25519plus.native.600s.AAAA",
+	}
+	if _, err := mapClashVless(in); err == nil {
+		t.Fatal("expected rejection: sing-box cannot carry VLESS Encryption")
 	}
 }
 

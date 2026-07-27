@@ -1,33 +1,46 @@
 package freeturn
 
 import (
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
 
 // Service is the public facade consumed by the API layer (one instance per
 // running awg-manager process — wired up in cmd/awg-manager/main.go the
 // same way pingcheck.Service is).
 type Service struct {
-	store *Store
+	store   *Store
+	dataDir string
 
 	clientBin string
 	serverBin string
 
-	clientProc *process
-	serverProc *process
+	clientProcs *processRegistry
+	serverProcs *processRegistry
 
-	// One-click install (install.go): pinned specs for this arch + shared
-	// downloader; nil = install unavailable (UI keeps the manual hint).
+	// mu сериализует Load-modify-Save методы: без него два конкурентных
+	// запроса теряют правки друг друга и могут выдать один listen-порт дважды.
+	mu sync.Mutex
+
+	versionPath string
+
 	installSpecs *ArchSpecs
-	downloader   Downloader
+	downloader   childproc.Downloader
 	installMu    sync.Mutex
 	installing   bool
 
 	appLog *logging.ScopedLogger
+
+	listenPortChecker LocalListenPortChecker
 }
 
 // SetLogger wires the UI-visible journal (nil-safe scoped logger).
@@ -35,21 +48,32 @@ func (s *Service) SetLogger(appLogger logging.AppLogger) {
 	s.appLog = logging.NewScopedLogger(appLogger, logging.GroupRouting, "freeturn")
 }
 
-// NewService wires up config storage and the two process managers.
-//
-//   - dataDir:    e.g. /opt/etc/awg-manager — where freeturn.json lives.
-//   - runtimeDir: e.g. filepath.Join(dataDir, "run") — where PID files live.
-//   - clientBin / serverBin: paths to the freeturn client/server binaries.
-//     The upstream project ships them as two separate binaries (see
-//     docs/quickstart.md) — e.g. /opt/bin/freeturn-client, /opt/bin/freeturn-server.
-//     Adjust to match whatever the install script actually drops on the router.
+// SetListenPortChecker wires external localhost listen ports (AWG tunnel endpoints, etc.).
+func (s *Service) SetListenPortChecker(c LocalListenPortChecker) {
+	s.listenPortChecker = c
+}
+
+func (s *Service) occupiedLocalListenPorts() map[int]bool {
+	if s.listenPortChecker == nil {
+		return nil
+	}
+	used, err := s.listenPortChecker.OccupiedLocalListenPorts()
+	if err != nil || len(used) == 0 {
+		return nil
+	}
+	return used
+}
+
+// NewService wires up config storage and process managers per instance id.
 func NewService(dataDir, runtimeDir, clientBin, serverBin string) *Service {
 	return &Service{
-		store:      NewStore(dataDir),
-		clientBin:  clientBin,
-		serverBin:  serverBin,
-		clientProc: newProcess("client", clientBin, runtimeDir),
-		serverProc: newProcess("server", serverBin, runtimeDir),
+		store:       NewStore(dataDir),
+		dataDir:     dataDir,
+		clientBin:   clientBin,
+		serverBin:   serverBin,
+		versionPath: filepath.Join(dataDir, "freeturn-version.json"),
+		clientProcs: newProcessRegistry("client", clientBin, runtimeDir),
+		serverProcs: newProcessRegistry("server", serverBin, runtimeDir),
 	}
 }
 
@@ -58,81 +82,437 @@ func (s *Service) GetConfig() (Config, error) {
 }
 
 func (s *Service) UpdateClientConfig(cfg ClientConfig) error {
-	full, err := s.store.Load()
-	if err != nil {
-		return err
-	}
-	full.Client = cfg
-	return s.store.Save(full)
+	return s.UpdateClientInstance(DefaultInstanceID, cfg)
 }
 
 func (s *Service) UpdateServerConfig(cfg ServerConfig) error {
+	return s.UpdateServerInstance(DefaultInstanceID, cfg)
+}
+
+func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
 		return err
 	}
-	full.Server = cfg
+	idx := findClientIndex(full.Clients, id)
+	if idx < 0 {
+		return fmt.Errorf("клиент %q не найден", id)
+	}
+	listens := clientListenAddresses(full.Clients)
+	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(), 9000, 9200)
+	cfg.Browser = normalizeBrowser(cfg.Browser)
+	full.Clients[idx].Config = cfg
 	return s.store.Save(full)
 }
 
-func (s *Service) Status() Status {
-	version, available := s.InstallInfo()
-	return Status{
-		Client:           s.clientProc.Status(),
-		Server:           s.serverProc.Status(),
-		InstallAvailable: available,
-		InstallVersion:   version,
-		Installing:       s.Installing(),
-	}
-}
-
-// StartClient validates the required flags (-peer always; -link when
-// provider=vk, per docs/flags.md) before spawning, so the API can return a
-// clear Russian-language error instead of an opaque process-exit message.
-func (s *Service) StartClient() error {
-	cfg, err := s.store.Load()
+func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full, err := s.store.Load()
 	if err != nil {
 		return err
 	}
-	if cfg.Client.Peer == "" {
+	idx := findServerIndex(full.Servers, id)
+	if idx < 0 {
+		return fmt.Errorf("сервер %q не найден", id)
+	}
+	listens := serverListenAddresses(full.Servers)
+	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, 56000, 56100)
+	full.Servers[idx].Config = cfg
+	return s.store.Save(full)
+}
+
+func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full, err := s.store.Load()
+	if err != nil {
+		return ClientInstance{}, err
+	}
+	cfg := DefaultClientConfig()
+	if in.Config != nil {
+		cfg = *in.Config
+	}
+	cfg.Browser = normalizeBrowser(cfg.Browser)
+	cfg.Listen = nextClientListen(full.Clients, s.occupiedLocalListenPorts())
+	name := in.Name
+	if name == "" {
+		name = fmt.Sprintf("Клиент %d", len(full.Clients)+1)
+	}
+	inst := ClientInstance{ID: childproc.NewInstanceID(), Name: name, Config: cfg}
+	full.Clients = append(full.Clients, inst)
+	if err := s.store.Save(full); err != nil {
+		return ClientInstance{}, err
+	}
+	return inst, nil
+}
+
+func (s *Service) CreateServer(in CreateServerInput) (ServerInstance, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full, err := s.store.Load()
+	if err != nil {
+		return ServerInstance{}, err
+	}
+	cfg := DefaultServerConfig()
+	if in.Config != nil {
+		cfg = *in.Config
+	}
+	cfg.Listen = nextServerListen(full.Servers)
+	name := in.Name
+	if name == "" {
+		name = fmt.Sprintf("Сервер %d", len(full.Servers)+1)
+	}
+	inst := ServerInstance{ID: childproc.NewInstanceID(), Name: name, Config: cfg}
+	full.Servers = append(full.Servers, inst)
+	if err := s.store.Save(full); err != nil {
+		return ServerInstance{}, err
+	}
+	return inst, nil
+}
+
+func (s *Service) DeleteClient(id string) error {
+	s.mu.Lock()
+	full, err := s.store.Load()
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	idx := findClientIndex(full.Clients, id)
+	if idx < 0 {
+		s.mu.Unlock()
+		return fmt.Errorf("клиент %q не найден", id)
+	}
+	full.Clients = append(full.Clients[:idx], full.Clients[idx+1:]...)
+	saveErr := s.store.Save(full)
+	s.mu.Unlock()
+	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
+	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
+	_ = s.clientProcs.get(id).Stop()
+	return saveErr
+}
+
+func (s *Service) DeleteServer(id string) error {
+	s.mu.Lock()
+	full, err := s.store.Load()
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	idx := findServerIndex(full.Servers, id)
+	if idx < 0 {
+		s.mu.Unlock()
+		return fmt.Errorf("сервер %q не найден", id)
+	}
+	full.Servers = append(full.Servers[:idx], full.Servers[idx+1:]...)
+	saveErr := s.store.Save(full)
+	s.mu.Unlock()
+	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
+	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
+	_ = s.serverProcs.get(id).Stop()
+	return saveErr
+}
+
+func (s *Service) RenameClient(id, name string) error {
+	name = trimName(name)
+	if name == "" {
+		return errors.New("укажите имя")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full, err := s.store.Load()
+	if err != nil {
+		return err
+	}
+	idx := findClientIndex(full.Clients, id)
+	if idx < 0 {
+		return fmt.Errorf("клиент %q не найден", id)
+	}
+	full.Clients[idx].Name = name
+	return s.store.Save(full)
+}
+
+func (s *Service) RenameServer(id, name string) error {
+	name = trimName(name)
+	if name == "" {
+		return errors.New("укажите имя")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full, err := s.store.Load()
+	if err != nil {
+		return err
+	}
+	idx := findServerIndex(full.Servers, id)
+	if idx < 0 {
+		return fmt.Errorf("сервер %q не найден", id)
+	}
+	full.Servers[idx].Name = name
+	return s.store.Save(full)
+}
+
+func trimName(s string) string {
+	for len(s) > 0 && (s[0] == ' ' || s[0] == '\t') {
+		s = s[1:]
+	}
+	for len(s) > 0 && (s[len(s)-1] == ' ' || s[len(s)-1] == '\t') {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+func findClientIndex(clients []ClientInstance, id string) int {
+	for i, c := range clients {
+		if c.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func findServerIndex(servers []ServerInstance, id string) int {
+	for i, srv := range servers {
+		if srv.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func (s *Service) clientInstance(id string) (ClientInstance, error) {
+	full, err := s.store.Load()
+	if err != nil {
+		return ClientInstance{}, err
+	}
+	idx := findClientIndex(full.Clients, id)
+	if idx < 0 {
+		return ClientInstance{}, fmt.Errorf("клиент %q не найден", id)
+	}
+	return full.Clients[idx], nil
+}
+
+func (s *Service) serverInstance(id string) (ServerInstance, error) {
+	full, err := s.store.Load()
+	if err != nil {
+		return ServerInstance{}, err
+	}
+	idx := findServerIndex(full.Servers, id)
+	if idx < 0 {
+		return ServerInstance{}, fmt.Errorf("сервер %q не найден", id)
+	}
+	return full.Servers[idx], nil
+}
+
+// Status returns the local install/instance state without any network calls.
+func (s *Service) Status() Status {
+	return s.statusLocked()
+}
+
+func (s *Service) statusLocked() Status {
+	cfg, err := s.store.Load()
+	if err != nil {
+		cfg = DefaultConfig()
+	}
+	version, available := s.InstallInfo()
+	installedVersion, updateAvailable := s.installStatusFields(version)
+	clock := routerclock.Get()
+	st := Status{
+		InstallAvailable: available,
+		InstallVersion:   version,
+		InstalledVersion: installedVersion,
+		UpdateAvailable:  updateAvailable,
+		Installing:       s.Installing(),
+		RouterClock:      clock.Now.Format("2006-01-02 15:04:05") + " " + clock.ZoneName,
+	}
+	for _, c := range cfg.Clients {
+		st.Clients = append(st.Clients, InstanceStatus{
+			ID:     c.ID,
+			Name:   c.Name,
+			Status: s.clientProcs.get(c.ID).Status(),
+		})
+	}
+	for _, srv := range cfg.Servers {
+		st.Servers = append(st.Servers, InstanceStatus{
+			ID:     srv.ID,
+			Name:   srv.Name,
+			Status: s.serverProcs.get(srv.ID).Status(),
+		})
+	}
+	if cs := instanceStatusByID(st.Clients, DefaultInstanceID); cs != nil {
+		st.Client = *cs
+	} else if len(st.Clients) > 0 {
+		st.Client = st.Clients[0].Status
+	}
+	if ss := instanceStatusByID(st.Servers, DefaultInstanceID); ss != nil {
+		st.Server = *ss
+	} else if len(st.Servers) > 0 {
+		st.Server = st.Servers[0].Status
+	}
+	return st
+}
+
+func instanceStatusByID(list []InstanceStatus, id string) *ProcessStatus {
+	for _, item := range list {
+		if item.ID == id {
+			st := item.Status
+			return &st
+		}
+	}
+	return nil
+}
+
+func (s *Service) StartClient() error {
+	return s.StartClientInstance(DefaultInstanceID)
+}
+
+func (s *Service) StartClientInstance(id string) error {
+	inst, err := s.clientInstance(id)
+	if err != nil {
+		return err
+	}
+	if inst.Config.Peer == "" {
 		return errors.New("укажите адрес сервера (-peer)")
 	}
-	if cfg.Client.Provider == "vk" && cfg.Client.Links == "" {
+	if inst.Config.Provider == "vk" && inst.Config.Links == "" {
 		return errors.New("укажите ссылку(-и) VK Calls (-links) — обязательны для provider=vk")
 	}
-	return s.clientProc.Start(buildClientArgs(cfg.Client))
+	if err := validateObfKey(inst.Config.ObfProfile, inst.Config.ObfKey); err != nil {
+		return err
+	}
+	if err := s.clientProcs.get(id).Start(buildClientArgs(inst.Config)); err != nil {
+		return err
+	}
+	// Enabled авторитетно = «пользователь запустил»; выставляем только по факту
+	// успешного старта (fail-closed). Ошибку сохранения логируем — процесс уже жив.
+	if err := s.setClientEnabled(id, true); err != nil && s.appLog != nil {
+		s.appLog.Warn("start", id, "не удалось сохранить enabled: "+err.Error())
+	}
+	return nil
 }
 
 func (s *Service) StopClient() error {
-	return s.clientProc.Stop()
+	return s.StopClientInstance(DefaultInstanceID)
+}
+
+func (s *Service) StopClientInstance(id string) error {
+	if _, err := s.clientInstance(id); err != nil {
+		return err
+	}
+	err := s.clientProcs.get(id).Stop()
+	// Явный пользовательский стоп снимает авторитетный Enabled, чтобы автостарт
+	// на следующем бооте его не поднял. Stop() на выходе демона сюда не заходит.
+	if e := s.setClientEnabled(id, false); e != nil && s.appLog != nil {
+		s.appLog.Warn("stop", id, "не удалось сбросить enabled: "+e.Error())
+	}
+	return err
 }
 
 func (s *Service) StartServer() error {
-	cfg, err := s.store.Load()
+	return s.StartServerInstance(DefaultInstanceID)
+}
+
+func (s *Service) StartServerInstance(id string) error {
+	inst, err := s.serverInstance(id)
 	if err != nil {
 		return err
 	}
-	if cfg.Server.Connect == "" {
+	if inst.Config.Connect == "" {
 		return errors.New("укажите backend-адрес (-connect)")
 	}
-	return s.serverProc.Start(buildServerArgs(cfg.Server))
+	if err := validateObfKey(inst.Config.ObfProfile, inst.Config.ObfKey); err != nil {
+		return err
+	}
+	return s.serverProcs.get(id).Start(buildServerArgs(inst.Config))
 }
 
 func (s *Service) StopServer() error {
-	return s.serverProc.Stop()
+	return s.StopServerInstance(DefaultInstanceID)
 }
 
-// Stop is wired into the app shutdown-hook chain in cmd/awg-manager/main.go
-// (srv.AddShutdownHook(freeturnService.Stop)), same pattern as pingCheckService.
+func (s *Service) StopServerInstance(id string) error {
+	if _, err := s.serverInstance(id); err != nil {
+		return err
+	}
+	return s.serverProcs.get(id).Stop()
+}
+
+func (s *Service) ServerConfigForLink(id string) (ServerConfig, error) {
+	inst, err := s.serverInstance(id)
+	if err != nil {
+		return ServerConfig{}, err
+	}
+	return inst.Config, nil
+}
+
+// Stop is wired into the app shutdown-hook chain in cmd/awg-manager/main.go.
 func (s *Service) Stop() {
-	_ = s.clientProc.Stop()
-	_ = s.serverProc.Stop()
+	s.clientProcs.stopAll()
+	s.serverProcs.stopAll()
 }
 
-// buildClientArgs / buildServerArgs translate Config into the exact CLI
-// flags from free-turn-proxy's docs/flags.md. Only non-zero-value fields
-// are emitted explicitly, so the binary's own defaults stay in effect for
-// anything left unset — saves users from having to know every default.
+// ResumeEnabled стартует всех клиентов с Enabled==true (авторитетный флаг
+// «должен работать»). Вызывается на бооте в горутине. Ошибки логирует и
+// продолжает; идемпотентно (повторный старт живого процесса — no-op).
+// Серверы вне scope: блэкхол linked-туннеля — клиентская проблема.
+func (s *Service) ResumeEnabled() {
+	full, err := s.store.Load()
+	if err != nil {
+		if s.appLog != nil {
+			s.appLog.Warn("resume", "", "не удалось прочитать конфиг: "+err.Error())
+		}
+		return
+	}
+	for _, c := range full.Clients {
+		if !c.Config.Enabled {
+			continue
+		}
+		if err := s.StartClientInstance(c.ID); err != nil && s.appLog != nil {
+			s.appLog.Warn("resume", c.ID, "автостарт не удался: "+err.Error())
+		}
+	}
+}
+
+// setClientEnabled — RMW-хелпер: под s.mu грузит конфиг, выставляет Enabled
+// клиента и сохраняет. НЕ вызывать из уже-лоченного s.mu метода (дедлок);
+// Start/StopClientInstance не лочены, вызов оттуда безопасен.
+func (s *Service) setClientEnabled(id string, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full, err := s.store.Load()
+	if err != nil {
+		return err
+	}
+	idx := findClientIndex(full.Clients, id)
+	if idx < 0 {
+		return fmt.Errorf("клиент %q не найден", id)
+	}
+	if full.Clients[idx].Config.Enabled == enabled {
+		return nil
+	}
+	full.Clients[idx].Config.Enabled = enabled
+	return s.store.Save(full)
+}
+
+// validateObfKey — ключ обфускации обязателен при профиле ≠ none и должен
+// быть 64 hex-символа (32 байта); иначе бинарь падает с опак-ошибкой (#584).
+func validateObfKey(profile, key string) error {
+	if profile == "" || profile == "none" {
+		return nil
+	}
+	if key == "" {
+		return errors.New("сгенерируйте или укажите ключ обфускации (-obf-key) — обязателен при профиле ≠ none")
+	}
+	if len(key) != 64 {
+		return errors.New("ключ обфускации (-obf-key) должен состоять из 64 hex-символов")
+	}
+	if _, err := hex.DecodeString(key); err != nil {
+		return errors.New("ключ обфускации (-obf-key) должен состоять из 64 hex-символов")
+	}
+	return nil
+}
+
 func buildClientArgs(c ClientConfig) []string {
 	var args []string
 	str := func(flag, val string) {
@@ -165,14 +545,27 @@ func buildClientArgs(c ClientConfig) []string {
 	if c.StreamsPerCred > 0 {
 		args = append(args, "-streams-per-cred", strconv.Itoa(c.StreamsPerCred))
 	}
-	str("-browser", c.Browser)
-	flag("-manual-captcha", c.ManualCaptcha)
+	if b := strings.TrimSpace(c.Browser); b != "" {
+		str("-browser", normalizeBrowser(b))
+	}
+	// awg-manager: только авто-капча; ручной fallback (:8765) не поддерживается в UI.
 	str("-dns-mode", c.DNSMode)
 	str("-dns-servers", c.DNSServers)
 	str("-client-id", c.ClientID)
 	str("-sub", c.Sub)
 	flag("-debug", c.Debug)
 	return args
+}
+
+func normalizeBrowser(b string) string {
+	switch strings.ToLower(strings.TrimSpace(b)) {
+	case "chrome", "firefox", "safari":
+		return strings.ToLower(strings.TrimSpace(b))
+	case "chromium":
+		return "chrome"
+	default:
+		return "chrome"
+	}
 }
 
 func buildServerArgs(c ServerConfig) []string {

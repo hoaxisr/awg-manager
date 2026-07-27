@@ -271,8 +271,10 @@ func (p *Process) startLocked() (spawned bool, err error) {
 	}()
 	select {
 	case waitErr := <-errCh:
-		p.cleanupPidIfOurs(cmd.Process.Pid)
+		// Хвост читаем ДО удаления pidfile: его исчезновение разблокирует
+		// Start преемника, который truncate'ит err.log (см. пост-grace ветку).
 		msg := strings.TrimSpace(readLogTail(errPath, stderrBufferSize))
+		p.cleanupPidIfOurs(cmd.Process.Pid)
 		if msg == "" {
 			if waitErr != nil {
 				msg = waitErr.Error()
@@ -301,17 +303,17 @@ func (p *Process) startLocked() (spawned bool, err error) {
 			// так что здесь честный ответ «этот выход был наш» даже при
 			// мгновенном stop→start (FIX-C).
 			deliberate := gen.deliberate.Load()
-			p.cleanupPidIfOurs(myPid)
-			// Capture the tail RIGHT NOW, before the delayed cancel
-			// below: cmd.Wait already returned, so this generation's
-			// writes are fully visible on disk. A successor startLocked
-			// (tun-restart/watchdog) can truncate err.log within the
-			// sleep that follows — a delayed read here would see the NEW
-			// generation's startup lines instead of ours: phantom
-			// lastError overwriting the new gen's setLastError(""), and
-			// the OOM heuristic (stderrTail=="" && exitedBySIGKILL)
-			// defeated. Mirrors the immediate-exit branch above.
+			// Capture the tail BEFORE removing the pidfile: cmd.Wait
+			// already returned, so this generation's writes are fully
+			// visible on disk, while a successor startLocked
+			// (tun-restart/watchdog) is unblocked exactly by the pidfile
+			// removal and truncates err.log. A read after cleanup raced
+			// that truncate (CI flake: empty tail) — phantom lastError
+			// overwriting the new gen's setLastError(""), and the OOM
+			// heuristic (stderrTail=="" && exitedBySIGKILL) defeated.
+			// Mirrors the immediate-exit branch above.
 			tail := strings.TrimSpace(readLogTail(errPath, stderrBufferSize))
+			p.cleanupPidIfOurs(myPid)
 			safeTail := sanitizeSingboxLogText(tail)
 			p.setLastStderr(safeTail)
 			// Give the tail goroutines one poll cycle to catch the

@@ -149,10 +149,16 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if h.settings != nil && h.settings.IsEntwareAuthEnabled() && h.entware != nil {
 		if entwareErr = h.entware.Verify(req.Login, req.Password); entwareErr == nil {
 			authSource = "entware"
+		} else if errors.Is(entwareErr, auth.ErrEntwareUnavailable) || errors.Is(entwareErr, auth.ErrUnsupportedHash) {
+			// Конфигурационная проблема — тумблер включён, а вход через
+			// Entware невозможен в принципе (нет shadow/passwd, неподдер-
+			// живаемая схема хэша). Warn, чтобы причину было видно в
+			// Журнале; HTTP-ответ остаётся единым — без энумерации.
+			h.log.Warn("login", req.Login, "Entware-вход невозможен ("+entwareErr.Error()+") — продолжаем через Keenetic")
 		} else {
-			// Log the internal reason (never the password); the client
-			// only ever sees the uniform outcome below — no user
-			// enumeration.
+			// Обычный фолбэк (нет такого пользователя / не тот пароль /
+			// учётка заблокирована) — Debug, чтобы вход админа через
+			// Keenetic не шумел в журнале. Пароль не логируется никогда.
 			h.log.Debug("login", req.Login, "Entware verification failed, falling back to Keenetic: "+entwareErr.Error())
 		}
 	}

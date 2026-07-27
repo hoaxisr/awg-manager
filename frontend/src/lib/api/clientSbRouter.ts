@@ -9,6 +9,7 @@ import type {
 	SingboxProxiesTestRequest,
 	SingboxProxiesTestResponse,
 	SingboxRouterDNSGlobals,
+	SingboxRouterDNSLookupResult,
 	SingboxRouterDNSRewrite,
 	SingboxRouterDNSRule,
 	SingboxRouterDNSServer,
@@ -221,6 +222,13 @@ export class SbRouterClient extends SingboxClient {
 
 	async singboxRouterListDNSServers(): Promise<SingboxRouterDNSServer[]> {
 		return this.request<SingboxRouterDNSServer[]>('/singbox/router/dns/servers/list');
+	}
+
+	async singboxRouterLookupDNSServer(server: string, port: number | '', serverName = ''): Promise<SingboxRouterDNSLookupResult> {
+		const query = new URLSearchParams({ server });
+		if (port !== '') query.set('server_port', String(port));
+		if (serverName.trim()) query.set('server_name', serverName.trim());
+		return this.request(`/singbox/router/dns/servers/lookup?${query}`);
 	}
 
 	async singboxRouterAddDNSServer(server: SingboxRouterDNSServer): Promise<void> {

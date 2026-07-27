@@ -88,6 +88,7 @@ type Server struct {
 	tunnels                    *storage.AWGTunnelStore
 	pingCheckService           api.PingCheckService
 	freeturnService            api.FreeTurnService
+	wdttService                api.WdttService
 	loggingService             *logging.Service
 	activeBackend              backend.Backend
 	kmodLoader                 *kmod.Loader
@@ -121,6 +122,7 @@ type Server struct {
 	awgOutboundsHandler        *api.AWGOutboundsHandler
 	subscriptionHandler        *api.SubscriptionHandler
 	dnsRewritesHandler         *api.DNSRewritesHandler
+	awg3Handler                *api.Awg3Handler
 	clashProxy                 *api.ClashProxy
 	singboxOp                  *singbox.Operator
 	singboxOrch                *singboxorch.Orchestrator
@@ -173,6 +175,7 @@ type Deps struct {
 	Tunnels              *storage.AWGTunnelStore
 	PingCheckService     api.PingCheckService
 	FreeTurnService      api.FreeTurnService
+	WdttService          api.WdttService
 	LoggingService       *logging.Service
 	ActiveBackend        backend.Backend
 	KmodLoader           *kmod.Loader
@@ -233,6 +236,7 @@ func New(cfg Config, deps Deps) *Server {
 		tunnels:                deps.Tunnels,
 		pingCheckService:       deps.PingCheckService,
 		freeturnService:        deps.FreeTurnService,
+		wdttService:            deps.WdttService,
 		loggingService:         deps.LoggingService,
 		activeBackend:          deps.ActiveBackend,
 		kmodLoader:             deps.KmodLoader,
@@ -390,6 +394,12 @@ func (s *Server) SetSubscriptionHandler(h *api.SubscriptionHandler) {
 // /api/singbox/router/dns/rewrites/* routes can be registered.
 func (s *Server) SetDNSRewritesHandler(h *api.DNSRewritesHandler) {
 	s.dnsRewritesHandler = h
+}
+
+// SetAwg3Handler wires the AWG3 endpoint import/CRUD handler so the
+// /api/awg3-endpoints[/{id}] routes can be registered.
+func (s *Server) SetAwg3Handler(h *api.Awg3Handler) {
+	s.awg3Handler = h
 }
 
 // generateInstanceID creates a random 16-byte hex string (32 chars).
@@ -581,7 +591,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	s.registerSingboxRoutes(mux, h)
 	s.registerStaticRoutes(mux, h)
 }
-
 
 // spaHandler serves static files with SPA fallback to index.html.
 func spaHandler(staticFS fs.FS) http.Handler {

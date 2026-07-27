@@ -69,6 +69,27 @@ func TestDNSServerMarshalOmitsEmptyDetour(t *testing.T) {
 	}
 }
 
+func TestDNSServerTLSMarshalAndValidation(t *testing.T) {
+	srv := DNSServer{
+		Tag: "dot", Type: "tls", Server: "dns.example",
+		TLS: &DNSClientTLSOptions{ServerName: "dns.example", Insecure: true, ALPN: []string{"dot"}, MinVersion: "1.2", MaxVersion: "1.3", CertificatePublicKeySHA256: []string{"pin"}},
+	}
+	raw, err := json.Marshal(srv)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"tls":{"server_name":"dns.example","insecure":true,"alpn":["dot"],"min_version":"1.2","max_version":"1.3","certificate_public_key_sha256":["pin"]}`) {
+		t.Fatalf("tls was not retained: %s", raw)
+	}
+	if err := validateDNSServer(srv); err != nil {
+		t.Fatalf("valid tls rejected: %v", err)
+	}
+	srv.TLS.MinVersion, srv.TLS.MaxVersion = "1.3", "1.2"
+	if err := validateDNSServer(srv); err == nil {
+		t.Fatal("invalid tls version range accepted")
+	}
+}
+
 func TestAddDNSServerNormalizesDirectDetour(t *testing.T) {
 	c := NewEmptyConfig()
 	if err := c.AddDNSServer(makeDNSServer("bootstrap", "udp", "1.1.1.1", "direct")); err != nil {
@@ -76,6 +97,19 @@ func TestAddDNSServerNormalizesDirectDetour(t *testing.T) {
 	}
 	if c.DNS.Servers[0].Detour != "" {
 		t.Fatalf("direct detour normalized away, got %q", c.DNS.Servers[0].Detour)
+	}
+}
+
+func TestAddDNSServerWithDetourClearsDomainResolver(t *testing.T) {
+	c := NewEmptyConfig()
+	if err := c.AddDNSServer(DNSServer{
+		Tag: "dot", Type: "tls", Server: "dns.example", Detour: "tunnel",
+		DomainResolver: &DomainResolver{Server: "bootstrap"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if c.DNS.Servers[0].DomainResolver != nil {
+		t.Fatalf("domain_resolver retained with detour: %#v", c.DNS.Servers[0])
 	}
 }
 
@@ -378,9 +412,8 @@ func TestDNSRoundTrip(t *testing.T) {
 	if loaded.DNS.Final != "vpn" || loaded.DNS.Strategy != "ipv4_only" {
 		t.Errorf("globals: %+v", loaded.DNS)
 	}
-	if loaded.DNS.Servers[1].DomainResolver == nil ||
-		loaded.DNS.Servers[1].DomainResolver.Server != "bootstrap" {
-		t.Errorf("resolver: %+v", loaded.DNS.Servers[1])
+	if loaded.DNS.Servers[1].DomainResolver != nil {
+		t.Errorf("domain_resolver must be cleared when detour is set: %+v", loaded.DNS.Servers[1])
 	}
 	raw, _ := json.MarshalIndent(loaded, "", "  ")
 	if !json.Valid(raw) {

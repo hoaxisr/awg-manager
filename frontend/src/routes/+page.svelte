@@ -30,6 +30,8 @@
 		TableSortHeader,
 	} from '$lib/components/ui';
 	import { singboxDelayHistory, singboxStatus, singboxTraffic, singboxTunnels } from '$lib/stores/singbox';
+	import { awg3Tunnels } from '$lib/stores/awg3';
+	import { Awg3TunnelsSection } from '$lib/components/awg3';
 	import { feedTraffic, getTrafficRates, getTrafficSparklineSeries, subscribeTraffic } from '$lib/stores/traffic';
 	import { usageLevel } from '$lib/stores/settings';
 	import { isSectionVisible, isTunnelDashboardAvailable } from '$lib/types/usageLevel';
@@ -37,6 +39,7 @@
 	import SubscriptionsTabSection from '$lib/components/subscriptions/SubscriptionsTabSection.svelte';
 	import SingboxTunnelsTabSection from '$lib/components/singbox/SingboxTunnelsTabSection.svelte';
 	import { FreeTurnTab } from '$lib/components/freeturn';
+	import { WdttTab } from '$lib/components/wdtt';
 	import AwgTunnelsTabSection from '$lib/components/tunnels/AwgTunnelsTabSection.svelte';
 	import DashboardFlatSection from '$lib/components/tunnels/DashboardFlatSection.svelte';
 	import TunnelPageModals from '$lib/components/tunnels/TunnelPageModals.svelte';
@@ -112,7 +115,7 @@
 		type SubscriptionSortKey,
 	} from '$lib/stores/tunnelTableSort';
 
-	type TunnelTab = 'awg' | 'singbox' | 'subscriptions' | 'freeturn';
+	type TunnelTab = 'awg' | 'singbox' | 'subscriptions' | 'awg3' | 'freeturn' | 'wdtt';
 	type AwgTunnelViewMode = 'cards' | 'compact' | 'list';
 	type TunnelSurfaceLayout = SingboxLayoutMode | 'cards';
 
@@ -126,6 +129,7 @@
 	const AWG_TUNNEL_VIEW_STORAGE_KEY = 'awg_tunnel_view_mode';
 	const SINGBOX_TUNNELS_LAYOUT_STORAGE_KEY = 'singbox_tunnels_layout_mode';
 	const SINGBOX_SUBSCRIPTIONS_LAYOUT_STORAGE_KEY = 'singbox_subscriptions_layout_mode';
+	const AWG3_TUNNELS_LAYOUT_STORAGE_KEY = 'awg3_tunnels_layout_mode';
 	const isMockDevMode = getIsMockDevMode();
 
 	// Polling-store subscription: first subscriber triggers the fetch,
@@ -210,6 +214,7 @@
 	let awgListSearchQuery = $state('');
 	let singboxTunnelsSearchQuery = $state('');
 	let singboxSubscriptionsSearchQuery = $state('');
+	let awg3TunnelsSearchQuery = $state('');
 	let dashboardSearchQuery = $state('');
 
 	function endpointVisibilityKey(scope: EndpointScope, id: string): string {
@@ -381,16 +386,20 @@
 	// First subscribe triggers fetch; last unsubscribe stops polling.
 	let unsubSingboxStatus: (() => void) | undefined;
 	let unsubSingboxTunnels: (() => void) | undefined;
+	let unsubAwg3Tunnels: (() => void) | undefined;
 	onMount(() => {
 		unsubSingboxStatus = singboxStatus.subscribe(() => {});
 		unsubSingboxTunnels = singboxTunnels.subscribe(() => {});
+		unsubAwg3Tunnels = awg3Tunnels.subscribe(() => {});
 	});
 	onDestroy(() => {
 		unsubSingboxStatus?.();
 		unsubSingboxTunnels?.();
+		unsubAwg3Tunnels?.();
 	});
 
 	let singboxTunnelsList = $derived($singboxTunnels.data ?? []);
+	let awg3List = $derived($awg3Tunnels.data ?? []);
 	let singboxTunnelsInitialLoading = $derived(
 		$singboxTunnels.data === null &&
 		($singboxTunnels.status === 'idle' || $singboxTunnels.status === 'loading'),
@@ -538,8 +547,10 @@
 	let showAwgViewModeSwitch = $derived($usageLevel !== 'basic');
 	let singboxTunnelsLayoutMode = $state<SingboxLayoutMode>('compact');
 	let singboxSubscriptionsLayoutMode = $state<SingboxLayoutMode>('compact');
+	let awg3TunnelsLayoutMode = $state<SingboxLayoutMode>('compact');
 	let singboxTunnelsLayoutReady = false;
 	let singboxSubscriptionsLayoutReady = false;
+	let awg3TunnelsLayoutReady = false;
 	let showSingboxListOption = $derived($usageLevel !== 'basic');
 	let singboxTunnelsEffectiveLayout = $derived<SingboxLayoutMode>(
 		!showSingboxListOption && singboxTunnelsLayoutMode === 'list'
@@ -560,6 +571,12 @@
 	let singboxSubscriptionsRenderMode = $derived(
 		resolveTunnelRenderMode(isAwgMobile, singboxSubscriptionsEffectiveLayout),
 	);
+	let awg3TunnelsEffectiveLayout = $derived<SingboxLayoutMode>(
+		!showSingboxListOption && awg3TunnelsLayoutMode === 'list' ? 'compact' : awg3TunnelsLayoutMode,
+	);
+	let awg3TunnelsRenderMode = $derived(
+		resolveTunnelRenderMode(isAwgMobile, awg3TunnelsEffectiveLayout),
+	);
 	let awgCardViewMode = $derived<'cards' | 'compact'>(
 		awgEffectiveViewMode === 'cards' ? 'cards' : 'compact',
 	);
@@ -569,6 +586,28 @@
 	// instead of locking the user into a hidden mode.
 	let dashboardOn = $derived($tunnelDashboardMode && isTunnelDashboardAvailable($usageLevel));
 	const showSingboxSections = $derived(isSectionVisible($usageLevel, 'singboxTunnels'));
+	// FreeTurn существует только табом; в dashboard-режиме вход — кнопка
+	// тулбара, раскрывающая панель под дашбордом (#585).
+	const freeturnAvailable = $derived(isSectionVisible($usageLevel, 'freeturn'));
+	const wdttAvailable = $derived(isSectionVisible($usageLevel, 'wdtt'));
+	let dashboardFreeturnOpen = $state(false);
+	let dashboardFreeturnEl: HTMLElement | null = $state(null);
+	function toggleDashboardFreeturn() {
+		dashboardFreeturnOpen = !dashboardFreeturnOpen;
+		if (dashboardFreeturnOpen) {
+			dashboardWdttOpen = false;
+			requestAnimationFrame(() => dashboardFreeturnEl?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+		}
+	}
+	let dashboardWdttOpen = $state(false);
+	let dashboardWdttEl: HTMLElement | null = $state(null);
+	function toggleDashboardWdtt() {
+		dashboardWdttOpen = !dashboardWdttOpen;
+		if (dashboardWdttOpen) {
+			dashboardFreeturnOpen = false;
+			requestAnimationFrame(() => dashboardWdttEl?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+		}
+	}
 	// Sing-box data is admitted into the dashboard only while its sections are
 	// visible at this usage level AND sing-box is installed (or still probing).
 	const dashboardSingboxVisible = $derived(
@@ -655,9 +694,11 @@
 			isSectionVisible($usageLevel, 'singboxTunnels')
 				? { id: 'subscriptions', label: 'Sing-box подписки', badge: subscriptionsList.length }
 				: null,
+			{ id: 'awg3', label: 'AWG3 туннели', badge: awg3List.length },
 			isSectionVisible($usageLevel, 'freeturn')
 				? { id: 'freeturn', label: 'FreeTurn' }
 				: null,
+			isSectionVisible($usageLevel, 'wdtt') ? { id: 'wdtt', label: 'WDTT' } : null,
 		].filter((t): t is { id: string; label: string; badge?: number } => t !== null),
 	);
 
@@ -689,6 +730,11 @@
 		const parsedSubscriptions = parseSingboxLayoutMode(sbSubscriptions);
 		if (parsedSubscriptions) singboxSubscriptionsLayoutMode = parsedSubscriptions;
 		singboxSubscriptionsLayoutReady = true;
+
+		const awg3Stored = localStorage.getItem(AWG3_TUNNELS_LAYOUT_STORAGE_KEY) ?? legacyShared;
+		const parsedAwg3 = parseSingboxLayoutMode(awg3Stored);
+		if (parsedAwg3) awg3TunnelsLayoutMode = parsedAwg3;
+		awg3TunnelsLayoutReady = true;
 	});
 
 	onMount(() => subscribeTunnelMobileLayout((mobile) => {
@@ -718,6 +764,11 @@
 			SINGBOX_SUBSCRIPTIONS_LAYOUT_STORAGE_KEY,
 			singboxSubscriptionsLayoutMode,
 		);
+	});
+
+	$effect(() => {
+		if (!awg3TunnelsLayoutReady) return;
+		localStorage.setItem(AWG3_TUNNELS_LAYOUT_STORAGE_KEY, awg3TunnelsLayoutMode);
 	});
 
 	let awgAutoConnectivityNonce = $state(0);
@@ -754,6 +805,14 @@
 		return subscriptionsActiveCards
 			.map((card) => card.activeMember.tag)
 			.filter(Boolean)
+			.sort()
+			.join(',');
+	}
+
+	// AWG3-эндпоинты — обычные sing-box outbound'ы без on/off: все они пробуемы.
+	function activeAwg3DelayTags(): string {
+		return awg3List
+			.map((t) => t.tag)
 			.sort()
 			.join(',');
 	}
@@ -850,11 +909,13 @@
 			return;
 		}
 
-		if (tab !== 'singbox' && tab !== 'subscriptions') return;
+		if (tab !== 'singbox' && tab !== 'subscriptions' && tab !== 'awg3') return;
 
 		const tags = tab === 'singbox'
 			? activeSingboxDelayTags()
-			: activeSubscriptionDelayTags();
+			: tab === 'awg3'
+				? activeAwg3DelayTags()
+				: activeSubscriptionDelayTags();
 		if (!tags) return;
 
 		const key = `${tab}:${entry}:${tags}`;
@@ -1012,6 +1073,13 @@
 		return getTrafficSparklineSeries(id, 28);
 	}
 
+	// #576: окно истории для «Пиковой скорости» — те же точки, что рисует
+	// график карточки, а не только последний сэмпл.
+	function windowRates(id: string): { rx: number[]; tx: number[] } {
+		void trafficTick;
+		return getTrafficRates(id);
+	}
+
 	let awgSummaryTotal = $derived(awgList.length + visibleSystemList.length + externalList.length);
 	let awgSummaryActive = $derived(
 		awgList.filter((t) => isManagedTunnelOn(t)).length +
@@ -1019,7 +1087,7 @@
 		externalList.filter((t) => !!t.lastHandshake).length,
 	);
 
-	let awgSummaryPeak = $derived(computeAwgSummaryPeak(awgList, visibleSystemList, latestRate));
+	let awgSummaryPeak = $derived(computeAwgSummaryPeak(awgList, visibleSystemList, windowRates));
 
 	let awgSummaryRx = $derived(
 		awgList.reduce((sum, tunnel) => sum + (tunnel.rxBytes ?? 0), 0) +
@@ -1136,6 +1204,17 @@
 	let dashboardSubscriptionsCount = $derived(
 		dashboardSubscriptionsActive.length + dashboardSubscriptionsStopped.length,
 	);
+	// AWG3-эндпоинты допускаются в дашборд по тем же воротам, что и sing-box:
+	// это sing-box outbound'ы, без установленного sing-box они мертвы. Фильтр
+	// по поисковому запросу дашборда — как у остальных видов.
+	let dashboardAwg3Tunnels = $derived.by(() => {
+		if (!dashboardSingboxVisible) return [];
+		const q = dashboardSearchQuery.trim().toLowerCase();
+		if (q === '') return awg3List;
+		return awg3List.filter(
+			(t) => t.tag.toLowerCase().includes(q) || t.host.toLowerCase().includes(q),
+		);
+	});
 	// Локальный (не персистентный) фильтр по тегу; сбрасывается при выходе из
 	// дашборда и в видах, где он не применяется (секции с группировкой «Тип») —
 	// иначе чип в тулбаре остаётся, а секции показывают нефильтрованные списки.
@@ -1151,6 +1230,7 @@
 			awg: sortedFilteredAwgList,
 			system: sortedFilteredSystemList,
 			external: sortedFilteredExternalList,
+			awg3: dashboardAwg3Tunnels,
 			singbox: dashboardSingboxTunnels,
 			subscriptionsActive: dashboardSubscriptionsActive,
 			subscriptionsStopped: dashboardSubscriptionsStopped,
@@ -1283,6 +1363,7 @@
 			awgList.length === 0 &&
 			systemList.length === 0 &&
 			externalList.length === 0 &&
+			dashboardAwg3Tunnels.length === 0 &&
 			dashboardSingboxTunnels.length === 0 &&
 			dashboardSubscriptionsCount === 0 &&
 			dashboardSearchQuery.trim() === '',
@@ -1308,9 +1389,25 @@
 				dashboardSingboxVisible &&
 				(subscriptionsInitialLoading || subscriptionsFetchFailed)),
 	);
-	// FreeTurn — настройки/статус, не туннельные карточки: в dashboard-режиме
-	// (плоские карточки, табов нет) вкладка недоступна — как и «подписки».
-	let showFreeturnBlock = $derived(!dashboardOn && activeTab === 'freeturn');
+	// AWG3 — секция с собственным тулбаром/импортом. В сплошном/теговом дашборде
+	// карточки AWG3 приходят через плоский поток (buildFlatDashboardItems); в
+	// секциях «по типу» рендерится эта секция с подавленным тулбаром, как sing-box.
+	let showAwg3Block = $derived(
+		(!dashboardOn && activeTab === 'awg3') ||
+			(dashboardTypeSections && dashboardAwg3Tunnels.length > 0),
+	);
+
+	// FreeTurn — настройки/статус, не туннельные карточки: в таб-режиме — вкладка,
+	// в dashboard-режиме — панель под дашбордом по кнопке тулбара (#585).
+	let showFreeturnBlock = $derived(
+		(!dashboardOn && activeTab === 'freeturn') ||
+			(dashboardOn && dashboardFreeturnOpen && freeturnAvailable),
+	);
+
+	let showWdttBlock = $derived(
+		(!dashboardOn && activeTab === 'wdtt') ||
+			(dashboardOn && dashboardWdttOpen && wdttAvailable),
+	);
 
 	// Единый класс сетки для сплошного и тегового карточных видов — классы
 	// плотности не могут разъехаться между двумя разметками.
@@ -1332,6 +1429,7 @@
 		'awg-managed': 'AWG',
 		'awg-system': 'system',
 		'awg-external': 'external',
+		awg3: 'AWG3',
 		singbox: 'sing-box',
 		'sub-active': 'подписка',
 		'sub-stopped': 'подписка',
@@ -1343,11 +1441,15 @@
 		if (!dashboardOn) return [];
 		const sb = dashboardSingboxVisible ? singboxTunnelListStats : null;
 		const subs = dashboardSingboxVisible ? singboxSubscriptionsTrafficStats : null;
-		const totalAll = awgSummaryTotal + (sb?.count ?? 0) + (subs?.count ?? 0);
+		// AWG3 — sing-box endpoint'ы без running/traffic-метрик: учитываем только
+		// их количество в общем счётчике туннелей.
+		const awg3Count = dashboardAwg3Tunnels.length;
+		const totalAll = awgSummaryTotal + (sb?.count ?? 0) + (subs?.count ?? 0) + awg3Count;
 		const totalActive = awgSummaryActive + (sb?.running ?? 0) + (subs?.activeCount ?? 0);
 		const kinds = [`AWG ${awgSummaryActive}/${awgSummaryTotal}`];
 		if (sb) kinds.push(`Sing-box ${sb.running}/${sb.count}`);
 		if (subs) kinds.push(`Подписки ${subs.activeCount}/${subs.count}`);
+		if (awg3Count > 0) kinds.push(`AWG3 ${awg3Count}`);
 		const rx = awgSummaryRx + (sb?.down ?? 0) + (subs?.down ?? 0);
 		const tx = awgSummaryTx + (sb?.up ?? 0) + (subs?.up ?? 0);
 		const leaders = [
@@ -1454,6 +1556,12 @@
 		get showSingboxListOption() { return showSingboxListOption; },
 		get showSingboxSections() { return showSingboxSections; },
 		get exporting() { return exporting; },
+		get freeturnAvailable() { return freeturnAvailable; },
+		get freeturnOpen() { return dashboardFreeturnOpen; },
+		toggleFreeturn: toggleDashboardFreeturn,
+		get wdttAvailable() { return wdttAvailable; },
+		get wdttOpen() { return dashboardWdttOpen; },
+		toggleWdtt: toggleDashboardWdtt,
 		get awgAutoConnectivityNonce() { return awgAutoConnectivityNonce; },
 		get singboxAutoDelayCheckNonce() { return singboxAutoDelayCheckNonce; },
 		get deleteLoading() { return deleteLoading; },
@@ -1640,8 +1748,36 @@
 			/>
 		{/if}
 
+		{#if dashboardTypeSections && dashboardAwg3Tunnels.length > 0}
+			<TunnelSectionHeader
+				title="AWG3 туннели"
+				count={dashboardAwg3Tunnels.length}
+				countLabel={pluralForm(dashboardAwg3Tunnels.length, TUNNEL_WORDS)}
+			/>
+		{/if}
+		{#if showAwg3Block}
+			<Awg3TunnelsSection
+				tunnels={dashboardTypeSections ? dashboardAwg3Tunnels : awg3List}
+				renderMode={dashboardTypeSections ? effectiveSingboxTunnelsRenderMode : awg3TunnelsRenderMode}
+				layout={dashboardTypeSections ? effectiveSingboxTunnelsEffectiveLayout : awg3TunnelsEffectiveLayout}
+				showGridListToggle={showSingboxGridListToggle}
+				showToolbar={!dashboardOn}
+				autoDelayCheckNonce={singboxAutoDelayCheckNonce}
+				bind:searchQuery={awg3TunnelsSearchQuery}
+				bind:layoutMode={awg3TunnelsLayoutMode}
+			/>
+		{/if}
+
 		{#if showFreeturnBlock}
-			<FreeTurnTab />
+			<div bind:this={dashboardFreeturnEl}>
+				<FreeTurnTab />
+			</div>
+		{/if}
+
+		{#if showWdttBlock}
+			<div bind:this={dashboardWdttEl}>
+				<WdttTab />
+			</div>
 		{/if}
 	{/if}
 </PageContainer>

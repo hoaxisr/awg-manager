@@ -205,17 +205,33 @@ describe('подписки', () => {
 
 describe('сводные статистики', () => {
 	it('computeAwgSummaryPeak учитывает только включённые туннели', () => {
-		const rates: Record<string, { rx: number; tx: number }> = {
-			t1: { rx: 100, tx: 100 },
-			t2: { rx: 5, tx: 5 },
-			w1: { rx: 50, tx: 0 },
+		const rates: Record<string, { rx: number[]; tx: number[] }> = {
+			t1: { rx: [100], tx: [100] },
+			t2: { rx: [5], tx: [5] },
+			w1: { rx: [50], tx: [0] },
 		};
 		const peak = computeAwgSummaryPeak(
 			[awg({ id: 't1', name: 'Off', status: 'stopped' }), awg({ id: 't2', name: 'On', status: 'running' })],
 			[sys({ id: 'w1', description: 'Sys', status: 'up' })],
-			(id) => rates[id] ?? { rx: 0, tx: 0 },
+			(id) => rates[id] ?? { rx: [], tx: [] },
 		);
 		expect(peak).toEqual({ rate: 50, name: 'Sys' });
+	});
+
+	// #576: «Пиковая скорость» показывала последнюю точку (текущую скорость),
+	// а не максимум по окну истории — при затишье плитка расходилась с
+	// пиками на графиках карточек на порядки.
+	it('computeAwgSummaryPeak берёт максимум по окну, а не последнюю точку', () => {
+		const rates: Record<string, { rx: number[]; tx: number[] }> = {
+			t1: { rx: [10, 25_000_000, 20], tx: [5, 400_000, 22] },
+			w1: { rx: [100, 200], tx: [100, 300] },
+		};
+		const peak = computeAwgSummaryPeak(
+			[awg({ id: 't1', name: 'Fi', status: 'running' })],
+			[sys({ id: 'w1', description: 'Sys', status: 'up' })],
+			(id) => rates[id] ?? { rx: [], tx: [] },
+		);
+		expect(peak).toEqual({ rate: 25_400_000, name: 'Fi' });
 	});
 
 	it('computeAwgTrafficLeader выбирает максимум по трём спискам', () => {

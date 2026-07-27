@@ -84,6 +84,8 @@ export interface AWGTunnel {
 	connectivityCheck?: ConnectivityCheckConfig;
 	warnings?: string[];
 	backend?: 'nativewg' | 'kernel';
+	freeTurnClientId?: string;
+	wdttClientId?: string;
 }
 
 export interface TunnelListItem {
@@ -254,7 +256,10 @@ export interface TunnelPingStatus {
 	status: 'alive' | 'recovering' | 'disabled' | 'stopped' | 'warming';
 	method: string;
 	lastCheck?: string;
+	/** ms; -1 — проверка прошла, но время не измерено (см. latencyNote). */
 	lastLatency: number;
+	/** Почему время отклика не измерено; пусто — измеряется нормально. */
+	latencyNote?: string;
 	failCount: number;
 	successCount?: number;
 	failThreshold: number;

@@ -16,3 +16,10 @@ export const obfOptions = [
 	{ value: 'rtpopus2', label: 'rtpopus2' },
 	{ value: 'rtpopus3', label: 'rtpopus3' }
 ];
+
+/** TLS/UA-персона freeturn для VK Smart Captcha (-browser). */
+export const browserOptions = [
+	{ value: 'chrome', label: 'Chrome' },
+	{ value: 'firefox', label: 'Firefox' },
+	{ value: 'safari', label: 'Safari' }
+];

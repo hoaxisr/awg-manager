@@ -17,6 +17,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/freeturn"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
@@ -90,6 +91,7 @@ func (a *app) setupServer() {
 			Tunnels:             a.awgStore,
 			PingCheckService:    a.pingCheckFacade,
 			FreeTurnService:     a.freeturnService,
+			WdttService:         a.wdttService,
 			LoggingService:      a.loggingService,
 			ActiveBackend:       a.backendImpl,
 			KmodLoader:          a.kmodLoader,
@@ -244,6 +246,16 @@ func (a *app) setupDeviceProxy() {
 		a.freeturnService.SetInstallSpecs(specs)
 		a.freeturnService.SetDownloader(&freeturnDownloaderAdapter{svc: sharedDownloadSvc})
 	}
+	a.wdttService.SetLogger(a.loggingService)
+	if spec, ok := wdtt.EmbeddedBinaries[detectArch()]; ok {
+		a.wdttService.SetInstallSpec(spec)
+		a.wdttService.SetDownloader(&wdttDownloaderAdapter{svc: sharedDownloadSvc})
+	}
+	// Автостарт клиентов, которые пользователь запускал (Enabled), — иначе после
+	// рестарта/ребута linked-AWG-туннель шлёт трафик в мёртвый 127.0.0.1:90xx.
+	// В горутине, чтобы не блокировать boot; логгеры уже выставлены выше.
+	go a.freeturnService.ResumeEnabled()
+	go a.wdttService.ResumeEnabled()
 	if a.singboxInstaller != nil {
 		a.singboxInstaller.SetDownloader(&installerDownloaderAdapter{svc: sharedDownloadSvc})
 		// Auto-migration goroutine: when legacy sing-box-naive opkg
@@ -303,7 +315,7 @@ func (a *app) setupRouter() {
 		Policies:               &routerAccessPolicyAdapter{svc: a.accessPolicySvc, wan: a.wanModel},
 		Events:                 a.eventBus,
 		Bus:                    a.eventBus,
-		AWGTags:                &routerAWGTagAdapter{src: a.awgoutboundsSvc},
+		AWGTags:                &routerAWGTagAdapter{src: a.awgoutboundsSvc, awg3: a.awg3Svc},
 		AWGOutboundsRefresh:    a.awgoutboundsSvc.Reconcile,
 		SingboxTunnels:         &routerSingboxTunnelAdapter{src: a.singboxOp},
 		SubscriptionComposites: router.NewSubscriptionCompositesAdapter(a.subAdapter),
@@ -456,7 +468,15 @@ func (a *app) setupRouter() {
 		return st.PolicyMark, true
 	})
 	a.srv.SetSingboxFakeIPConfigHandler(api.NewSingboxFakeIPConfigHandler(routerSvc, a.loggingService))
-	a.srv.SetAWGOutboundsHandler(api.NewAWGOutboundsHandler(a.awgoutboundsSvc))
+	mergedAWGOutbounds := &awg3MergedAWGOutbounds{inner: a.awgoutboundsSvc, awg3: a.awg3Svc}
+	a.srv.SetAWGOutboundsHandler(api.NewAWGOutboundsHandler(mergedAWGOutbounds))
+	// AWG3 endpoint import/CRUD. Wired here (not setupSingbox) because the
+	// rename-conflict check needs routerSvc's ListRules, only built in this phase.
+	awg3Handler := api.NewAwg3Handler(a.awg3Store, a.awg3Svc, routerSvc, a.loggingService)
+	// Same merged catalog the rule-editor dropdown uses — lets import/rename
+	// reject a tag already taken by any outbound early with a clear message.
+	awg3Handler.SetOutboundTagLister(mergedAWGOutbounds)
+	a.srv.SetAwg3Handler(awg3Handler)
 	a.srv.SetSingboxConfigHandler(api.NewSingboxConfigHandler(a.sbOrch.ConfigDir))
 	// Эксперт-редактор конфигурации: обзор слотов config.d + draft-пайплайн
 	// пользовательского слота 90-user.json (единственный слот без продюсера).

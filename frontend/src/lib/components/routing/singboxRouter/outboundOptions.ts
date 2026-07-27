@@ -32,6 +32,7 @@ export function buildOutboundOptions(
 
 	const managed = tags.filter((t) => t.kind === 'managed');
 	const system = tags.filter((t) => t.kind === 'system');
+	const awg3 = tags.filter((t) => t.kind === 'awg3');
 
 	if (managed.length > 0) {
 		groups.push({
@@ -49,6 +50,18 @@ export function buildOutboundOptions(
 			items: system.map((t) => ({
 				value: t.tag,
 				label: `${t.label} (${t.iface})`,
+			})),
+		});
+	}
+
+	if (awg3.length > 0) {
+		groups.push({
+			group: 'AWG3 туннели',
+			items: awg3.map((t) => ({
+				value: t.tag,
+				// AWG3-эндпоинты не имеют kernel-iface — скобки печатаются только
+				// когда iface непустой, иначе label остаётся без «(…)».
+				label: t.iface ? `${t.label} (${t.iface})` : t.label,
 			})),
 		});
 	}

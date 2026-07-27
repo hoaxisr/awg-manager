@@ -11,6 +11,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/childproc"
+	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
 
 // startupGrace is how long Start waits before declaring success. If the
@@ -28,23 +31,29 @@ const startupGrace = 1500 * time.Millisecond
 // which is also used to namespace the PID file.
 //
 // Platform-specific bits (process-group setup, SIGTERM/SIGKILL, liveness
-// probe) live in process_linux.go / process_other.go so the package still
-// compiles on a Windows dev box even though it only ever runs on the
-// Linux/ARM router. This mirrors the split in internal/sys/exec.
+// probe) live in internal/childproc so the package still compiles on a
+// non-Linux dev box even though it only ever runs on the Linux/ARM router.
 type process struct {
 	name    string
 	binary  string
 	pidPath string
+
+	startMu sync.Mutex // serializes Start so two concurrent calls can't both spawn
 
 	mu            sync.Mutex
 	startedAt     *time.Time
 	lastErr       string
 	stopRequested bool // set by Stop() so the exit-watcher goroutine knows this death was expected
 
-	logTail *ringBuffer
+	logTail *childproc.RingBuffer
 
 	// Seam for tests.
 	startCmd func(bin string, args ...string) *exec.Cmd
+
+	// drainStartDelay искусственно задерживает старт чтения пайпа —
+	// тест-seam для форсирования окна гонки «Wait закрыл пайп раньше drain».
+	// В проде zero → без эффекта.
+	drainStartDelay time.Duration
 }
 
 func newProcess(name, binary, runtimeDir string) *process {
@@ -52,7 +61,7 @@ func newProcess(name, binary, runtimeDir string) *process {
 		name:    name,
 		binary:  binary,
 		pidPath: filepath.Join(runtimeDir, "freeturn-"+name+".pid"),
-		logTail: newRingBuffer(80),
+		logTail: childproc.NewRingBuffer(processLogMaxLines),
 		startCmd: func(bin string, args ...string) *exec.Cmd {
 			return exec.Command(bin, args...)
 		},
@@ -63,6 +72,8 @@ func newProcess(name, binary, runtimeDir string) *process {
 // process has survived startupGrace; returns an error (with stderr tail)
 // if it exits before that. No-op if already running.
 func (p *process) Start(args []string) error {
+	p.startMu.Lock()
+	defer p.startMu.Unlock()
 	if running, _ := p.IsRunning(); running {
 		return nil
 	}
@@ -77,7 +88,8 @@ func (p *process) Start(args []string) error {
 	}
 
 	cmd := p.startCmd(p.binary, args...)
-	setProcessGroup(cmd) // platform-specific (Setsid on Linux, no-op elsewhere)
+	cmd.Env = freeturnRuntimeEnv(os.Environ())
+	childproc.SetProcessGroup(cmd) // platform-specific (Setsid on Linux, no-op elsewhere)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -97,17 +109,23 @@ func (p *process) Start(args []string) error {
 		return fmt.Errorf("freeturn %s: start: %w", p.name, err)
 	}
 
-	go p.drain(stdout)
-	go p.drain(stderr)
+	var drainWG sync.WaitGroup
+	drainWG.Add(2)
+	go func() { defer drainWG.Done(); p.drain(stdout) }()
+	go func() { defer drainWG.Done(); p.drain(stderr) }()
 
 	if err := p.writePID(cmd.Process.Pid); err != nil {
-		_ = terminate(cmd.Process.Pid)
+		_ = childproc.Terminate(cmd.Process.Pid)
+		drainWG.Wait() // Terminate убил ребёнка → write-концы закрылись → drain EOF
 		_ = cmd.Wait()
 		return fmt.Errorf("freeturn %s: write pidfile: %w", p.name, err)
 	}
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- cmd.Wait() }()
+	go func() {
+		drainWG.Wait()      // drain'ы дочитали до EOF — Wait не уничтожит буфер пайпов
+		errCh <- cmd.Wait() // безопасно: читать больше нечего
+	}()
 
 	myPid := cmd.Process.Pid
 
@@ -115,6 +133,8 @@ func (p *process) Start(args []string) error {
 	case waitErr := <-errCh:
 		// Died before grace period — this is a startup failure.
 		p.cleanupPidIfOurs(myPid)
+		// К моменту получения из errCh drain'ы гарантированно завершены (Wait
+		// вызывается после drainWG.Wait()), хвост stderr уже в logTail.
 		msg := strings.TrimSpace(p.logTail.LastLines(30))
 		if msg == "" && waitErr != nil {
 			msg = waitErr.Error()
@@ -172,17 +192,17 @@ func (p *process) Stop() error {
 	p.mu.Lock()
 	p.stopRequested = true
 	p.mu.Unlock()
-	_ = terminate(pid) // SIGTERM on Linux, Process.Kill elsewhere
+	_ = childproc.Terminate(pid) // SIGTERM on Linux, Process.Kill elsewhere
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if !isAlive(pid) {
+		if !childproc.IsAlive(pid) {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if isAlive(pid) {
-		_ = kill(pid) // SIGKILL on Linux, Process.Kill elsewhere
+	if childproc.IsAlive(pid) {
+		_ = childproc.Kill(pid) // SIGKILL on Linux, Process.Kill elsewhere
 	}
 	_ = os.Remove(p.pidPath)
 
@@ -198,7 +218,7 @@ func (p *process) IsRunning() (bool, int) {
 	if err != nil {
 		return false, 0
 	}
-	if !isAlive(pid) {
+	if !childproc.IsAlive(pid) {
 		return false, pid
 	}
 	return true, pid
@@ -218,6 +238,7 @@ func (p *process) Status() ProcessStatus {
 	if running {
 		st.PID = pid
 		st.StartedAt = p.startedAt
+		st.DtlsConnections = countActiveDTLSConnections(st.Log)
 	}
 	return st
 }
@@ -233,7 +254,14 @@ func binaryPresent(path string) bool {
 	return st.Mode().Perm()&0111 != 0
 }
 
+func freeturnRuntimeEnv(base []string) []string {
+	return routerclock.WithTZFromRouter(base)
+}
+
 func (p *process) drain(r io.Reader) {
+	if p.drainStartDelay > 0 {
+		time.Sleep(p.drainStartDelay)
+	}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 4096), 64*1024)
 	for sc.Scan() {

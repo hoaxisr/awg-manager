@@ -33,6 +33,7 @@ type routeHandlers struct {
 	wanHandler          *api.WANHandler
 	pingCheckHandler    *api.PingCheckHandler
 	freeturnHandler     *api.FreeTurnHandler
+	wdttHandler         *api.WdttHandler
 	loggingHandler      *api.LoggingHandler
 	externalHandler     *api.ExternalTunnelsHandler
 	updateHandler       *api.UpdateHandler
@@ -156,6 +157,15 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.eventsHandler = api.NewEventsHandler(s.bus, s.instanceID)
 
 	h.freeturnHandler = api.NewFreeTurnHandler(s.freeturnService)
+	if s.ndmsQueries != nil {
+		h.freeturnHandler.SetNDMSQueries(s.ndmsQueries)
+	}
+	h.freeturnHandler.SetLinkedTunnelCleanup(s.tunnels, s.tunnelService)
+	h.freeturnHandler.SetTunnelsHandler(h.tunnelsHandler)
+
+	h.wdttHandler = api.NewWdttHandler(s.wdttService)
+	h.wdttHandler.SetLinkedTunnelCleanup(s.tunnels, s.tunnelService)
+	h.wdttHandler.SetTunnelsHandler(h.tunnelsHandler)
 
 	// Auth middleware helper
 	h.guarded = s.authMiddleware.RequireAuthFunc
@@ -372,6 +382,7 @@ func (s *Server) registerSettingsRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/freeturn/client/config", h.guarded(h.freeturnHandler.UpdateClientConfig))
 	mux.HandleFunc("/api/freeturn/server/config", h.guarded(h.freeturnHandler.UpdateServerConfig))
 	mux.HandleFunc("/api/freeturn/status", h.guarded(h.freeturnHandler.GetStatus))
+	mux.HandleFunc("/api/freeturn/captcha/status", h.guarded(h.freeturnHandler.GetCaptchaStatus))
 	mux.HandleFunc("/api/freeturn/client/start", h.guarded(h.freeturnHandler.StartClient))
 	mux.HandleFunc("/api/freeturn/client/stop", h.guarded(h.freeturnHandler.StopClient))
 	mux.HandleFunc("/api/freeturn/server/start", h.guarded(h.freeturnHandler.StartServer))
@@ -379,6 +390,21 @@ func (s *Server) registerSettingsRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/freeturn/server/link", h.guarded(h.freeturnHandler.GenerateLink))
 	mux.HandleFunc("/api/freeturn/link/decode", h.guarded(h.freeturnHandler.DecodeLink))
 	mux.HandleFunc("/api/freeturn/install", h.guarded(h.freeturnHandler.Install))
+	mux.HandleFunc("/api/freeturn/clients/", h.guarded(h.freeturnHandler.ServeClients))
+	mux.HandleFunc("/api/freeturn/servers/", h.guarded(h.freeturnHandler.ServeServers))
+	mux.HandleFunc("/api/freeturn/clients", h.guarded(h.freeturnHandler.CreateClient))
+	mux.HandleFunc("/api/freeturn/servers", h.guarded(h.freeturnHandler.CreateServer))
+
+	mux.HandleFunc("/api/wdtt/config", h.guarded(h.wdttHandler.GetConfig))
+	mux.HandleFunc("/api/wdtt/client/config", h.guarded(h.wdttHandler.UpdateClientConfig))
+	mux.HandleFunc("/api/wdtt/status", h.guarded(h.wdttHandler.GetStatus))
+	mux.HandleFunc("/api/wdtt/client/start", h.guarded(h.wdttHandler.StartClient))
+	mux.HandleFunc("/api/wdtt/client/stop", h.guarded(h.wdttHandler.StopClient))
+	mux.HandleFunc("/api/wdtt/link/decode", h.guarded(h.wdttHandler.DecodeLink))
+	mux.HandleFunc("/api/wdtt/link/import", h.guarded(h.wdttHandler.ImportLink))
+	mux.HandleFunc("/api/wdtt/install", h.guarded(h.wdttHandler.Install))
+	mux.HandleFunc("/api/wdtt/clients/", h.guarded(h.wdttHandler.ServeClients))
+	mux.HandleFunc("/api/wdtt/clients", h.guarded(h.wdttHandler.CreateClient))
 
 }
 
@@ -617,6 +643,9 @@ func (s *Server) wireCrossHandlers(mux *http.ServeMux, h *routeHandlers) {
 	h.accessPolicyHandler.SetEventBus(s.bus)
 	h.crHandler.SetEventBus(s.bus)
 	h.serverHandler.SetEventBus(s.bus)
+	if s.awg3Handler != nil {
+		s.awg3Handler.SetEventBus(s.bus)
+	}
 
 	// Cross-wire servers <-> managed for unified server:updated event
 	h.serverHandler.SetManagedHandler(h.managedHandler)
@@ -798,6 +827,7 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/router/dns/servers/update", h.guarded(rh.UpdateDNSServer))
 		mux.HandleFunc("/api/singbox/router/dns/servers/delete", h.guarded(rh.DeleteDNSServer))
 		mux.HandleFunc("/api/singbox/router/dns/servers/move", h.guarded(rh.MoveDNSServer))
+		mux.HandleFunc("/api/singbox/router/dns/servers/lookup", h.guarded(rh.LookupDNSServer))
 		mux.HandleFunc("/api/singbox/router/dns/rules/list", h.guarded(rh.ListDNSRules))
 		mux.HandleFunc("/api/singbox/router/dns/rules/add", h.guarded(rh.AddDNSRule))
 		mux.HandleFunc("/api/singbox/router/dns/rules/update", h.guarded(rh.UpdateDNSRule))
@@ -908,6 +938,13 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/router/dns/rewrites/update", h.guarded(rw.Update))
 		mux.HandleFunc("/api/singbox/router/dns/rewrites/delete", h.guarded(rw.Delete))
 		mux.HandleFunc("/api/singbox/router/dns/rewrites/move", h.guarded(rw.Move))
+	}
+
+	// AWG3 endpoint import/CRUD. One handler dispatches by method+path over
+	// both the collection route and the item route (trailing slash = subtree).
+	if s.awg3Handler != nil {
+		mux.HandleFunc("/api/awg3-endpoints", h.guarded(s.awg3Handler.Handle))
+		mux.HandleFunc("/api/awg3-endpoints/", h.guarded(s.awg3Handler.Handle))
 	}
 
 }

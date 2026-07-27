@@ -3,11 +3,11 @@
 -->
 
 <script lang="ts">
-  import type { SingboxProxyGroup, SingboxRouterOutbound, Subscription } from '$lib/types';
+  import type { SingboxProxyGroup, SingboxRouterOutbound, Subscription, SubscriptionGroup } from '$lib/types';
   import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
   import { Badge } from '$lib/components/ui';
   import { Edit3, Trash2 } from 'lucide-svelte';
-  import { isSubscriptionOutbound, outboundDisplay } from './outboundLabel';
+  import { isGroupOutbound, isSubscriptionOutbound, outboundDisplay } from './outboundLabel';
   import { outboundDeleteBlockReasons, type OutboundUsageInput } from './outboundUsage';
   import { COMPOSITE_OUTBOUND_TYPES, resolveCompositeOutboundView } from './compositeOutboundDisplay';
 
@@ -17,6 +17,8 @@
     onDelete?: (tag: string) => void;
     /** Subscriptions, to resolve sub-<hash> composite tags to their names. */
     subscriptions?: Subscription[];
+    /** Сводные группы подписок — имя вместо agg-тега и бейдж «группа» (#572). */
+    groups?: SubscriptionGroup[];
     usage?: Omit<OutboundUsageInput, 'tag'>;
     /** Живые clash-группы (`now`) — для строки «активен: …» у композитов. */
     proxyGroups?: SingboxProxyGroup[];
@@ -29,6 +31,7 @@
     onEdit,
     onDelete,
     subscriptions = [],
+    groups = [],
     usage,
     proxyGroups = [],
     outboundOptions = [],
@@ -51,9 +54,21 @@
   }
 
   function kindLabel(o: SingboxRouterOutbound): string {
+    if (isGroupOutbound(o, groups)) return 'группа';
     if (isSubscriptionOutbound(o, subscriptions)) return 'subscription';
     if (o.type === 'selector' || o.type === 'urltest' || o.type === 'loadbalance') return 'composite';
     return o.type;
+  }
+
+  // #572: outbound'ы подписок/групп живут в слоте 40-subscriptions —
+  // generic-редактор router-слота их менять не может (падал бы с
+  // «outbound not found»). Редактирование — в своих разделах.
+  function editBlockReason(o: SingboxRouterOutbound): string | null {
+    if (isGroupOutbound(o, groups))
+      return 'Редактируется в разделе Туннели → Sing-box подписки → Сводные группы';
+    if (isSubscriptionOutbound(o, subscriptions))
+      return 'Редактируется в разделе Туннели → Sing-box подписки';
+    return null;
   }
 
   // Один проход по конфигу на список вместо O(outbounds × конфиг) на строку.
@@ -62,12 +77,19 @@
 
 <div class="list">
   {#each outbounds as o (o.tag)}
-    {@const d = outboundDisplay(o, subscriptions)}
+    {@const d = outboundDisplay(o, subscriptions, groups)}
     {@const deleteReason = deleteReasons?.get(o.tag) ?? null}
+    {@const editReason = editBlockReason(o)}
     {@const av = activeView(o)}
     <div class="row">
       <span class="dot" data-tone={toneFor(o.type)}></span>
-      <button type="button" class="meta-btn" onclick={() => onEdit(o.tag)}>
+      <button
+        type="button"
+        class="meta-btn"
+        disabled={editReason !== null}
+        title={editReason ?? undefined}
+        onclick={() => onEdit(o.tag)}
+      >
         <div class="meta">
           <div class="tag">{d.title}</div>
           <div class="sub">{d.subtitle}</div>
@@ -87,9 +109,10 @@
         <button
           type="button"
           class="route-action-btn"
+          disabled={editReason !== null}
           onclick={() => onEdit(o.tag)}
           aria-label={`Редактировать outbound ${o.tag}`}
-          title={`Редактировать outbound «${d.title}»`}
+          title={editReason ?? `Редактировать outbound «${d.title}»`}
         >
           <Edit3 size={15} />
         </button>

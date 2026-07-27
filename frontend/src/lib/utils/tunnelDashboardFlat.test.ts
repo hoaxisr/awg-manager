@@ -7,6 +7,7 @@ describe('buildFlatDashboardItems', () => {
 			awg: [{ id: 'z-tunnel', name: 'Zulu AWG' } as never],
 			system: [{ id: 'sys-1', interfaceName: 'wg-sys', description: 'Mike system' } as never],
 			external: [{ interfaceName: 'ext-alpha' } as never],
+			awg3: [{ id: 'awg3-x', tag: 'Charlie AWG3', host: 'h:1' } as never],
 			singbox: [{ tag: 'Bravo SB' } as never],
 			subscriptionsActive: [
 				{
@@ -21,6 +22,7 @@ describe('buildFlatDashboardItems', () => {
 			'awg-managed',
 			'awg-system',
 			'awg-external',
+			'awg3',
 			'singbox',
 			'sub-active',
 			'sub-stopped',
@@ -29,6 +31,7 @@ describe('buildFlatDashboardItems', () => {
 			'Zulu AWG',
 			'Mike system',
 			'ext-alpha',
+			'Charlie AWG3',
 			'Bravo SB',
 			'Alpha sub',
 			'Stopped sub',
@@ -40,6 +43,7 @@ describe('buildFlatDashboardItems', () => {
 			awg: [{ id: 'a', name: 'Zulu' } as never],
 			system: [],
 			external: [],
+			awg3: [],
 			singbox: [{ tag: 'Alpha SB' } as never],
 			subscriptionsActive: [],
 			subscriptionsStopped: [],
@@ -55,6 +59,7 @@ describe('buildFlatDashboardItems', () => {
 			awg: [],
 			system: [],
 			external: [],
+			awg3: [],
 			singbox: [],
 			subscriptionsActive: [
 				{
@@ -68,6 +73,7 @@ describe('buildFlatDashboardItems', () => {
 			awg: [],
 			system: [],
 			external: [],
+			awg3: [],
 			singbox: [],
 			subscriptionsActive: [],
 			subscriptionsStopped: [{ id: 'sub-1', label: 'My sub' } as never],

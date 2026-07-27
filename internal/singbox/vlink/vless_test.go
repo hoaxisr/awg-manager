@@ -209,3 +209,42 @@ func TestParseVless_NoFragmentLabelEmpty(t *testing.T) {
 		t.Errorf("Label=%q want empty", got.Label)
 	}
 }
+
+// Issue #603. sing-box не имеет поля encryption у VLESS-outbound'а
+// (option.VLESSOutboundOptions), а декодер строгий, поэтому конфиг с ним
+// падает целиком: `outbounds[N].encryption: json: unknown field`. Значения
+// вроде auto/aes-128-gcm для VLESS ничего не значат (наследие VMess) —
+// такие ссылки обязаны парситься, просто без поля.
+func TestParseVless_MeaninglessEncryptionIgnored(t *testing.T) {
+	for _, enc := range []string{"none", "auto", "zero", "aes-128-gcm", "chacha20-poly1305"} {
+		t.Run(enc, func(t *testing.T) {
+			link := "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?security=tls&type=tcp&encryption=" + enc + "#n"
+			got, err := ParseLink(link)
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			var ob map[string]any
+			if err := json.Unmarshal(got.Outbound, &ob); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if _, present := ob["encryption"]; present {
+				t.Fatalf("encryption reached the sing-box outbound: %s", got.Outbound)
+			}
+		})
+	}
+}
+
+// Настоящий VLESS Encryption (фича Xray) sing-box не умеет вовсе, поэтому
+// сервер не заработает никак. Молча выкинуть параметр — значит отдать
+// пользователю нерабочий сервер без объяснения; отказываем с внятным текстом,
+// он доезжает до UI через BatchResult.Errors.
+func TestParseVless_RealEncryptionRejected(t *testing.T) {
+	link := "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?security=tls&type=tcp&encryption=mlkem768x25519plus.native.600s.AAAA#n"
+	_, err := ParseLink(link)
+	if err == nil {
+		t.Fatal("expected rejection: sing-box cannot carry VLESS Encryption")
+	}
+	if !strings.Contains(err.Error(), "encryption") {
+		t.Fatalf("error must name the culprit, got: %v", err)
+	}
+}

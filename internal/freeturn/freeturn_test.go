@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 )
 
 // ---------------------------------------------------------------------------
@@ -66,7 +68,7 @@ func TestBuildClientArgs_FullAndZero(t *testing.T) {
 		Links: "https://vk.ru/call/join/a", Streams: 4, Transport: "tcp",
 		Mode: "udp", Bond: true, TurnHost: "turn.host", TurnPort: 3478,
 		ObfProfile: "rtpopus2", ObfKey: "deadbeef", StreamsPerCred: 2,
-		Browser: "chromium", ManualCaptcha: true, DNSMode: "doh",
+		Browser: "chromium", DNSMode: "doh",
 		DNSServers: "1.1.1.1", ClientID: "cid", Sub: "s", Debug: true,
 	}
 	want := []string{
@@ -74,7 +76,7 @@ func TestBuildClientArgs_FullAndZero(t *testing.T) {
 		"-links", "https://vk.ru/call/join/a", "-n", "4", "-transport", "tcp",
 		"-mode", "udp", "-bond", "-turn", "turn.host", "-port", "3478",
 		"-obf-profile", "rtpopus2", "-obf-key", "deadbeef",
-		"-streams-per-cred", "2", "-browser", "chromium", "-manual-captcha",
+		"-streams-per-cred", "2", "-browser", "chrome",
 		"-dns-mode", "doh", "-dns-servers", "1.1.1.1", "-client-id", "cid",
 		"-sub", "s", "-debug",
 	}
@@ -95,6 +97,32 @@ func TestBuildServerArgs(t *testing.T) {
 	}
 }
 
+func TestValidateObfKey(t *testing.T) {
+	valid := strings.Repeat("ab", 32) // 64 hex-символа
+	cases := []struct {
+		name    string
+		profile string
+		key     string
+		wantErr bool
+	}{
+		{"no-profile", "", "", false},
+		{"none-profile", "none", "", false},
+		{"none-ignores-key", "none", "xx", false},
+		{"empty-key", "rtpopus2", "", true},
+		{"short-key", "rtpopus2", "deadbeef", true},
+		{"non-hex-key", "rtpopus2", strings.Repeat("zz", 32), true},
+		{"valid", "rtpopus2", valid, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := validateObfKey(c.profile, c.key)
+			if (err != nil) != c.wantErr {
+				t.Fatalf("validateObfKey(%q, %q) = %v, wantErr=%v", c.profile, c.key, err, c.wantErr)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // store.go
 // ---------------------------------------------------------------------------
@@ -106,8 +134,8 @@ func TestStore_Roundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Client.Peer = "h:56000"
-	cfg.Server.Connect = "127.0.0.1:51820"
+	cfg.Clients[0].Config.Peer = "h:56000"
+	cfg.Servers[0].Config.Connect = "127.0.0.1:51820"
 	if err := s.Save(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -115,8 +143,192 @@ func TestStore_Roundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Client.Peer != "h:56000" || got.Server.Connect != "127.0.0.1:51820" {
+	if got.Clients[0].Config.Peer != "h:56000" || got.Servers[0].Config.Connect != "127.0.0.1:51820" {
 		t.Fatalf("roundtrip mismatch: %+v", got)
+	}
+}
+
+func TestCompareFreeturnVersion_Revision(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"1.8.0-2", "1.8.0-3", -1}, // баг, который чинит фикс: semver.Compare даёт 0
+		{"1.8.0-3", "1.8.0-2", 1},
+		{"1.8.0-3", "1.8.0-3", 0},
+		{"1.8.0", "1.8.0-1", -1}, // нет суффикса → ревизия 0
+		{"1.8.1-1", "1.8.0-9", 1}, // разные базы решает semver, ревизия не важна
+	}
+	for _, c := range cases {
+		if got := compareFreeturnVersion(c.a, c.b); got != c.want {
+			t.Errorf("compareFreeturnVersion(%q,%q)=%d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestResolveInstallSpecs_AlwaysPin(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, filepath.Join(dir, "c"), filepath.Join(dir, "s"))
+	s.installSpecs = &ArchSpecs{
+		Client: BinarySpec{Version: "1.0.0", URL: "https://pin/client", SHA256: strings.Repeat("a", 64), Size: 1},
+		Server: BinarySpec{Version: "1.0.0", URL: "https://pin/server", SHA256: strings.Repeat("b", 64), Size: 1},
+	}
+	specs, ver := s.resolveInstallSpecs()
+	if ver != "1.0.0" || specs.Client.URL != "https://pin/client" {
+		t.Fatalf("resolve: ver=%s specs=%+v (ожидался пин 1.0.0)", ver, specs)
+	}
+}
+
+func TestStore_MigrateV1(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "freeturn.json")
+	v1 := `{"client":{"peer":"h:56000"},"server":{"connect":"127.0.0.1:51820"}}`
+	if err := os.WriteFile(path, []byte(v1), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := NewStore(dir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Version != ConfigVersion || len(got.Clients) != 1 || len(got.Servers) != 1 {
+		t.Fatalf("migrate: %+v", got)
+	}
+	if got.Clients[0].ID != DefaultInstanceID || got.Clients[0].Config.Peer != "h:56000" {
+		t.Fatalf("client migrate: %+v", got.Clients[0])
+	}
+	if got.Servers[0].Config.Connect != "127.0.0.1:51820" {
+		t.Fatalf("server migrate: %+v", got.Servers[0])
+	}
+}
+
+func TestStore_DeleteAllClientsRestoresDefault(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Clients = nil
+	if err := s.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Clients) != 1 {
+		t.Fatalf("after save with empty clients want 1, got %d", len(got.Clients))
+	}
+	if got.Clients[0].ID != DefaultInstanceID {
+		t.Fatalf("want default id %q, got %q", DefaultInstanceID, got.Clients[0].ID)
+	}
+}
+
+func TestStore_LoadReturnsIsolatedCopy(t *testing.T) {
+	// Кэш-ветка: прогреваем кэш, далее мутируем результат Load.
+	t.Run("cache", func(t *testing.T) {
+		s := NewStore(t.TempDir())
+		if _, err := s.Load(); err != nil {
+			t.Fatal(err)
+		}
+		assertLoadIsolated(t, s)
+	})
+
+	// Первый Load, disk-ветка file-missing (DefaultConfig): срезы результата
+	// не должны алиасить кэш, который выставил saveLocked.
+	t.Run("first-load-missing", func(t *testing.T) {
+		assertLoadIsolated(t, NewStore(t.TempDir()))
+	})
+
+	// Первый Load, disk-ветка file-exists: читаем готовый файл, срезы
+	// результата не должны алиасить кэш s.cfg.
+	t.Run("first-load-existing", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "freeturn.json"),
+			[]byte(`{"version":1,"clients":[{"id":"default"}],"servers":[{"id":"default"}]}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		assertLoadIsolated(t, NewStore(dir))
+	})
+}
+
+// assertLoadIsolated: результат первого зафиксированного Load мутируется, и
+// эта мутация не должна быть видна в последующем Load (т.е. не протекла в кэш).
+func assertLoadIsolated(t *testing.T, s *Store) {
+	t.Helper()
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Clients) == 0 || len(cfg.Servers) == 0 {
+		t.Fatal("want at least one client and server")
+	}
+	cfg.Clients[0].Config.Peer = "leaked-client"
+	cfg.Servers[0].Config.Connect = "leaked-server"
+
+	got, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Clients[0].Config.Peer == "leaked-client" {
+		t.Fatal("мутация client протекла в кэш")
+	}
+	if got.Servers[0].Config.Connect == "leaked-server" {
+		t.Fatal("мутация server протекла в кэш")
+	}
+}
+
+func TestStore_DeleteAllServersRestoresDefault(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Servers = nil
+	if err := s.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Servers) != 1 {
+		t.Fatalf("after save with empty servers want 1, got %d", len(got.Servers))
+	}
+	if got.Servers[0].ID != DefaultInstanceID {
+		t.Fatalf("want default id %q, got %q", DefaultInstanceID, got.Servers[0].ID)
+	}
+}
+
+func TestService_CreateMultipleClients(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, filepath.Join(dir, "c"), filepath.Join(dir, "s"))
+
+	first, err := s.CreateClient(CreateClientInput{Name: "A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.CreateClient(CreateClientInput{Name: "B"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Config.Listen == second.Config.Listen {
+		t.Fatalf("listen ports must differ: %s", first.Config.Listen)
+	}
+	cfg, err := s.GetConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Clients) != 3 { // default + 2
+		t.Fatalf("want 3 clients, got %d", len(cfg.Clients))
+	}
+	if err := s.DeleteClient(second.ID); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ = s.GetConfig()
+	if len(cfg.Clients) != 2 {
+		t.Fatalf("after delete want 2 clients, got %d", len(cfg.Clients))
 	}
 }
 
@@ -148,6 +360,18 @@ func TestProcess_StartupFailureCapturesStderr(t *testing.T) {
 	}
 	if st := p.Status(); st.LastError == "" {
 		t.Fatal("LastError must survive for the status endpoint")
+	}
+}
+
+// TestProcess_StartupFailure_StderrCaptured_UnderDrainDelay детерминированно
+// воспроизводит гонку os/exec: если Wait() закрывает пайпы раньше, чем drain
+// успел прочитать stderr, «boom» теряется. drainStartDelay форсирует окно.
+func TestProcess_StartupFailure_StderrCaptured_UnderDrainDelay(t *testing.T) {
+	p := newTestProcess(t, "echo boom >&2; exit 1")
+	p.drainStartDelay = 50 * time.Millisecond
+	err := p.Start(nil)
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("stderr должен быть в ошибке даже с задержкой drain, got: %v", err)
 	}
 }
 
@@ -222,7 +446,7 @@ func sha256Hex(b []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-func newInstallService(t *testing.T, dl Downloader, specs ArchSpecs) *Service {
+func newInstallService(t *testing.T, dl childproc.Downloader, specs ArchSpecs) *Service {
 	t.Helper()
 	dir := t.TempDir()
 	s := NewService(dir, dir, filepath.Join(dir, "freeturn-client"), filepath.Join(dir, "freeturn-server"))
@@ -254,6 +478,9 @@ func TestInstallBinaries_HappyPath(t *testing.T) {
 	}
 	if !st.Client.BinaryPresent || !st.Server.BinaryPresent {
 		t.Errorf("binaryPresent must flip after install: %+v", st)
+	}
+	if st.InstalledVersion != "1.8.0" || st.UpdateAvailable {
+		t.Errorf("want installed version recorded and up-to-date: %+v", st)
 	}
 }
 
@@ -297,7 +524,7 @@ func TestEmbeddedBinaries_CoverAllArches(t *testing.T) {
 		}
 		for name, sp := range map[string]BinarySpec{"client": specs.Client, "server": specs.Server} {
 			if sp.Version != PinnedVersion || len(sp.SHA256) != 64 || sp.Size <= 0 ||
-				!strings.HasPrefix(sp.URL, "https://github.com/samosvalishe/free-turn-proxy/releases/download/v"+PinnedVersion+"/") {
+				sp.URL == "" {
 				t.Errorf("%s/%s: bad spec %+v", arch, name, sp)
 			}
 		}

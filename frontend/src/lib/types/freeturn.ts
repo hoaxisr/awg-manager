@@ -18,8 +18,7 @@ export interface FreeTurnClientConfig {
 	obfProfile: 'none' | 'rtpopus' | 'rtpopus2' | 'rtpopus3';
 	obfKey?: string;
 	streamsPerCred: number;
-	browser: 'chrome' | 'firefox';
-	manualCaptcha: boolean;
+	browser: 'chrome' | 'firefox' | 'safari';
 	dnsMode: 'plain' | 'doh' | 'auto';
 	dnsServers?: string;
 	clientId?: string;
@@ -38,9 +37,22 @@ export interface FreeTurnServerConfig {
 	debug: boolean;
 }
 
+export interface FreeTurnClientInstance {
+	id: string;
+	name: string;
+	config: FreeTurnClientConfig;
+}
+
+export interface FreeTurnServerInstance {
+	id: string;
+	name: string;
+	config: FreeTurnServerConfig;
+}
+
 export interface FreeTurnConfig {
-	client: FreeTurnClientConfig;
-	server: FreeTurnServerConfig;
+	version?: number;
+	clients: FreeTurnClientInstance[];
+	servers: FreeTurnServerInstance[];
 }
 
 export interface FreeTurnProcessStatus {
@@ -49,30 +61,33 @@ export interface FreeTurnProcessStatus {
 	startedAt?: string;
 	lastError?: string;
 	log?: string;
-	/** Путь к бинарю и признак его наличия — awg-manager freeturn не поставляет */
+	dtlsConnections?: number;
 	binary: string;
 	binaryPresent: boolean;
 }
 
-export interface FreeTurnStatus {
-	client: FreeTurnProcessStatus;
-	server: FreeTurnProcessStatus;
-	/** Для этой архитектуры есть закреплённая сборка — доступна установка в один клик */
-	installAvailable: boolean;
-	/** Версия freeturn, которую поставит установка */
-	installVersion?: string;
-	/** Установка сейчас идёт */
-	installing: boolean;
+export interface FreeTurnInstanceStatus {
+	id: string;
+	name: string;
+	status: FreeTurnProcessStatus;
 }
 
-// Share-link payload: freeturn://base64(JSON). Two flavors exist and both
-// decode into this same shape — the upstream free-turn-proxy format (see
-// samosvalishe/free-turn-proxy docs/uri.md: v/provider/peer/transport/mode/
-// bond/obf/key/n/spc/cid/listen/dns/dnss/mcap/name) and the informal
-// freeturn-entware-installer one (v/provider/peer/obf/key/mtu/wg). `cid` is
-// a Client ID the link's creator generated and must separately allowlist in
-// their own server's clients.json (if -clients-file auth is on) — importing
-// a link does NOT do that registration for you.
+export interface FreeTurnStatus {
+	clients: FreeTurnInstanceStatus[];
+	servers: FreeTurnInstanceStatus[];
+	/** Legacy mirror of default client instance */
+	client: FreeTurnProcessStatus;
+	/** Legacy mirror of default server instance */
+	server: FreeTurnProcessStatus;
+	installAvailable: boolean;
+	installVersion?: string;
+	installedVersion?: string;
+	updateAvailable?: boolean;
+	installing: boolean;
+	/** Текущее время роутера — для сверки с метками в логе freeturn. */
+	routerClock?: string;
+}
+
 export interface FreeTurnLinkPayload {
 	v: number;
 	provider?: string;
@@ -103,12 +118,54 @@ export interface FreeTurnGenerateLinkRequest {
 	name?: string;
 	n?: number;
 	streamsPerCred?: number;
+	serverId?: string;
 }
 
 export interface FreeTurnGenerateLinkResult {
 	link: string;
 	peer: string;
 	clientId?: string;
+}
+
+export interface FreeTurnAllowlistEntry {
+	clientId: string;
+	comment?: string;
+}
+
+export interface FreeTurnAllowlistStatus {
+	enabled: boolean;
+	clientsFile?: string;
+	clients: FreeTurnAllowlistEntry[];
+}
+
+export interface FreeTurnAllowlistAddResult extends FreeTurnAllowlistStatus {
+	needsRestart?: boolean;
+}
+
+export interface FreeTurnCaptchaClientStatus {
+	clientId: string;
+	clientName: string;
+	waiting: boolean;
+	active: boolean;
+	queued: boolean;
+	canOpen: boolean;
+	url?: string;
+	pendingStreams?: number;
+	portContention?: boolean;
+	captchaSession?: number;
+}
+
+export interface FreeTurnCaptchaOverview {
+	portOpen: boolean;
+	ownerClientId?: string;
+	ownerName?: string;
+	clients: FreeTurnCaptchaClientStatus[];
+}
+
+export interface FreeTurnDeleteClientResult {
+	message?: string;
+	deletedTunnels?: string[];
+	tunnelErrors?: string[];
 }
 
 // #endregion

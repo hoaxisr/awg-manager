@@ -126,7 +126,7 @@ func mergeViaSingbox(t *testing.T, binPath, configDir string) map[string]any {
 func TestIntegration_RouterFinal_OverridesAfterFreshBaseConfig(t *testing.T) {
 	bin := locateSingboxBinary(t)
 	if bin == "" {
-		t.Skip("no host sing-box binary available; build via scripts/build-singbox.sh or `apt install sing-box`")
+		t.Skip("no host sing-box binary available; build from the fork (hoaxisr/amnezia-box) or `apt install sing-box`")
 	}
 
 	dir := t.TempDir()
