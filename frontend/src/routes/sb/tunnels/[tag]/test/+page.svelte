@@ -33,7 +33,7 @@
 	kind="singbox"
 	targetId={tunnelTag}
 	{displayName}
-	backHref="/?tab=singbox"
+	backHref="/sb/tunnels"
 	backLabel="К списку туннелей"
 	subjectLabel="туннель"
 	iface={tunnel?.kernelInterface}

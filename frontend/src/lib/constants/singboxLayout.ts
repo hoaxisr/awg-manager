@@ -4,6 +4,18 @@ export type SingboxLayoutMode = 'dense' | 'compact' | 'list';
 /** How a tunnel surface renders — table on desktop list, cards otherwise. */
 export type TunnelRenderMode = 'table' | 'list-card' | 'dense' | 'compact';
 
+/** Layout choices of a tunnel surface: AWG `cards` plus the sing-box modes. */
+export type TunnelSurfaceLayout = SingboxLayoutMode | 'cards';
+
+export function resolveTunnelRenderMode(
+	mobile: boolean,
+	layout: TunnelSurfaceLayout,
+): TunnelRenderMode {
+	if (layout === 'list') return mobile ? 'list-card' : 'table';
+	if (layout === 'dense' || layout === 'cards') return 'dense';
+	return 'compact';
+}
+
 /**
  * Same breakpoint as the AWG tunnels tab (`isAwgMobile` on the home page).
  * Below this width: list mode uses compact card rows (dense header + actions).

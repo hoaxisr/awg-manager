@@ -72,8 +72,8 @@ export const NAV_TREE: NavEntry[] = [
 			{
 				id: 'sb-tunnels',
 				label: 'Туннели',
-				href: '/?tab=singbox',
-				match: (url) => (url.pathname === '/' && tab(url) === 'singbox') || isPath(url, '/singbox'),
+				href: '/sb/tunnels',
+				match: (url) => isPath(url, '/sb/tunnels'),
 			},
 			{
 				// Принцип IA: все sing-box inbound/outbound/endpoint — подпункты

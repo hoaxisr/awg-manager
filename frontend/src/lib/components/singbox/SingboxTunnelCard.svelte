@@ -146,7 +146,7 @@
 	}
 
 	function edit(): void {
-		goto(`/singbox/${encodeURIComponent(tunnel.tag)}`);
+		goto(`/sb/tunnels/${encodeURIComponent(tunnel.tag)}`);
 	}
 
 	// ─── Traffic sparkline (rate history fed by +layout SSE handler) ─

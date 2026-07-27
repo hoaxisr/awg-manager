@@ -49,7 +49,7 @@
 		egress.source === 'subscription' && egress.subscriptionId
 			? `/subscriptions/${egress.subscriptionId}`
 			: egress.source === 'tunnel'
-				? `/singbox/${encodeURIComponent(egress.tag)}`
+				? `/sb/tunnels/${encodeURIComponent(egress.tag)}`
 				: '/',
 	);
 	const manageLabel = $derived(

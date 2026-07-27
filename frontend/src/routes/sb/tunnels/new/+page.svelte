@@ -10,7 +10,7 @@
 	function onComplete(imported: number): void {
 		const verb = imported === 1 ? 'Импортирован' : 'Импортировано';
 		notifications.success(`${verb} ${pluralize(imported, TUNNEL_WORDS)}`);
-		goto('/?tab=singbox');
+		goto('/sb/tunnels');
 	}
 </script>
 
@@ -21,7 +21,7 @@
 <PageContainer>
 	<div class="sticky-header">
 		<div class="header-left">
-			<Button variant="ghost" size="sm" onclick={() => goto('/?tab=singbox')} iconBefore={backIcon}>
+			<Button variant="ghost" size="sm" onclick={() => goto('/sb/tunnels')} iconBefore={backIcon}>
 				Назад
 			</Button>
 			<h1 class="page-title">Новый Sing-box туннель</h1>

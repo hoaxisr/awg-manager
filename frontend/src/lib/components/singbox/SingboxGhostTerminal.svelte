@@ -5,7 +5,7 @@
 
 	interface Props {
 		/** Called once after a successful import finishes. Used by the
-		 * /singbox/new dedicated page to navigate back to the tunnels list.
+		 * /sb/tunnels/new dedicated page to navigate back to the tunnels list.
 		 * Omitted on the empty-state embedding — that one stays in place
 		 * and relies on SSE to refresh the count. */
 		oncomplete?: (imported: number) => void;

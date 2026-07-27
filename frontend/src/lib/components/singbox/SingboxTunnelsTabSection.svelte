@@ -10,7 +10,7 @@
 	import { ariaSort } from '$lib/utils/tunnelTableSort';
 	import type { SingboxLayoutMode, TunnelRenderMode } from '$lib/constants/singboxLayout';
 	import type { SingboxTunnel } from '$lib/types';
-	import type { SubscriptionActiveCardVM, SingboxTunnelListStats } from '$lib/components/subscriptions/subscriptionVMs';
+	import type { SingboxTunnelListStats } from '$lib/components/subscriptions/subscriptionVMs';
 	import { Globe, LayoutGrid, Link } from 'lucide-svelte';
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
 
@@ -26,9 +26,11 @@
 		showSingboxGridListToggle: boolean;
 		effectiveSingboxTunnelsEffectiveLayout: SingboxLayoutMode;
 		effectiveSingboxTunnelsRenderMode: TunnelRenderMode;
-		subscriptionsActiveCards: SubscriptionActiveCardVM[];
-		singboxTunnelsSearchQuery: string;
-		singboxTunnelsLayoutMode: SingboxLayoutMode;
+		/** Активные подписки — тоже sing-box: при них тулбар виден и с пустым списком туннелей. */
+		hasActiveSubscriptions: boolean;
+		/** Тулбар (и его поиск/переключатель вида) рендерится только вне дашборда. */
+		singboxTunnelsSearchQuery?: string;
+		singboxTunnelsLayoutMode?: SingboxLayoutMode;
 		handleSingboxTunnelSortChange: (key: SingboxTunnelSortKey) => void;
 		openSingboxDetail: (tag: string) => void;
 		openWizard: (preselect: 'choose' | 'single' | 'inline' | 'url') => void;
@@ -46,9 +48,9 @@
 		showSingboxGridListToggle,
 		effectiveSingboxTunnelsEffectiveLayout,
 		effectiveSingboxTunnelsRenderMode,
-		subscriptionsActiveCards,
-		singboxTunnelsSearchQuery = $bindable(),
-		singboxTunnelsLayoutMode = $bindable(),
+		hasActiveSubscriptions,
+		singboxTunnelsSearchQuery = $bindable(''),
+		singboxTunnelsLayoutMode = $bindable('compact'),
 		handleSingboxTunnelSortChange,
 		openSingboxDetail,
 		openWizard,
@@ -61,7 +63,7 @@
 
 	{#if !dashboardOn}
 	<SingboxInstallBanner />
-	{#if singboxTunnelsList.length > 0 || subscriptionsActiveCards.length > 0}
+	{#if singboxTunnelsList.length > 0 || hasActiveSubscriptions}
 		<div class="tunnels-toolbar">
 			<span class="tunnel-count">
 				{singboxTunnelsList.length}

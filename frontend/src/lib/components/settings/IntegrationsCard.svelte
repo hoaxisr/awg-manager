@@ -183,7 +183,7 @@
 					{singboxUpdating ? 'Обновление...' : 'Обновить'}
 				</Button>
 			{:else if singboxInstalled}
-				<Button variant="secondary" size="sm" href="/?tab=singbox">Открыть</Button>
+				<Button variant="secondary" size="sm" href="/sb/tunnels">Открыть</Button>
 			{:else if singboxStatusLoading}
 				<Button variant="secondary" size="sm" disabled>Ожидание…</Button>
 			{:else}

@@ -96,7 +96,7 @@
 				fresh = await api.singboxUpdateTunnel(nextTag, outbound);
 				singboxTunnels.applyMutationResponse(fresh);
 			}
-			goto('/?tab=singbox');
+			goto('/sb/tunnels');
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -191,7 +191,7 @@
 	<div class="edit-wrapper">
 	<div class="sticky-header">
 		<div class="header-left">
-			<Button variant="ghost" size="sm" onclick={() => goto('/?tab=singbox')} iconBefore={backIcon}>
+			<Button variant="ghost" size="sm" onclick={() => goto('/sb/tunnels')} iconBefore={backIcon}>
 				Назад
 			</Button>
 			<h1 class="page-title">{tag}</h1>
@@ -671,7 +671,7 @@
 			{/if}
 
 			<div class="form-actions">
-				<Button variant="secondary" size="sm" onclick={() => goto('/?tab=singbox')}>Отмена</Button>
+				<Button variant="secondary" size="sm" onclick={() => goto('/sb/tunnels')}>Отмена</Button>
 				<Button variant="primary" size="sm" type="submit" loading={saving}>
 					Сохранить
 				</Button>

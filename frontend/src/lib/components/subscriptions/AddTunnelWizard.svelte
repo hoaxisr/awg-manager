@@ -223,7 +223,7 @@
 			if ((res.imported?.length ?? 0) > 0) {
 				open = false;
 				reset();
-				goto('/?tab=singbox');
+				goto('/sb/tunnels');
 			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Не удалось импортировать';
