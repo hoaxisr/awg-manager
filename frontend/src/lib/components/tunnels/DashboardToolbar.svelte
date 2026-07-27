@@ -5,10 +5,6 @@
 	import TunnelSearchInput from './TunnelSearchInput.svelte';
 	import TunnelCreateMenu from './TunnelCreateMenu.svelte';
 	import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
-	import {
-		TUNNEL_DASHBOARD_LAYOUT_LABELS,
-		type TunnelDashboardLayout,
-	} from '$lib/stores/tunnelDashboardMode';
 	import type {
 		TunnelDashboardGroupMode,
 		TunnelDashboardOrderMode,
@@ -17,8 +13,6 @@
 	interface Props {
 		searchQuery: string;
 		onSearchChange: (value: string) => void;
-		layout: TunnelDashboardLayout;
-		onLayoutChange: (layout: TunnelDashboardLayout) => void;
 		viewMode: SingboxLayoutMode;
 		onViewModeChange: (mode: SingboxLayoutMode) => void;
 		orderMode?: TunnelDashboardOrderMode;
@@ -44,8 +38,6 @@
 	let {
 		searchQuery,
 		onSearchChange,
-		layout,
-		onLayoutChange,
 		viewMode,
 		onViewModeChange,
 		orderMode = 'auto',
@@ -67,11 +59,6 @@
 		actions,
 	}: Props = $props();
 
-	const layoutOptions: Array<{ value: TunnelDashboardLayout; label: string }> = [
-		{ value: 'flat', label: TUNNEL_DASHBOARD_LAYOUT_LABELS.flat },
-		{ value: 'sections', label: TUNNEL_DASHBOARD_LAYOUT_LABELS.sections },
-	];
-
 	const orderOptions: Array<{ value: TunnelDashboardOrderMode; label: string }> = [
 		{ value: 'auto', label: 'Авто' },
 		{ value: 'manual', label: 'Вручную' },
@@ -86,15 +73,6 @@
 <div class="dashboard-toolbar">
 	<div class="tunnel-toolbar-search">
 		<TunnelSearchInput value={searchQuery} onInput={onSearchChange} />
-	</div>
-
-	<div class="dashboard-toolbar-layout">
-		<SegmentedControl
-			value={layout}
-			options={layoutOptions}
-			ariaLabel="Расположение туннелей на дашборде"
-			onchange={(next) => onLayoutChange(next)}
-		/>
 	</div>
 
 	{#if showOrderControl}
@@ -180,18 +158,12 @@
 		max-width: 220px;
 	}
 
-	.dashboard-toolbar-layout {
-		flex: 0 1 auto;
-		min-width: 0;
-	}
-
 	.dashboard-toolbar-order,
 	.dashboard-toolbar-group {
 		flex: 0 1 auto;
 		min-width: 0;
 	}
 
-	.dashboard-toolbar-layout :global(.segmented-control),
 	.dashboard-toolbar-order :global(.segmented-control),
 	.dashboard-toolbar-group :global(.segmented-control) {
 		height: 32px;
@@ -249,9 +221,9 @@
 	}
 
 	/* Mobile: авторазмещение по order, компактно в ≤4 строки —
-	   row 1: layout + view 50/50; row 2: order + group 50/50;
-	   row 3: тег-фильтр + actions 50/50 (одиночный растягивается на всю
-	   строку); row 4: search + create 50/50 */
+	   row 1: вид + порядок/группировка 50/50; row 2: тег-фильтр + actions
+	   50/50 (одиночный растягивается на всю строку); row 3: search + create
+	   50/50 */
 	@media (max-width: 760px) {
 		.dashboard-toolbar {
 			display: grid;
@@ -266,53 +238,47 @@
 			grid-column: 1 / -1;
 		}
 
-		.dashboard-toolbar-layout {
+		.dashboard-toolbar-view {
 			order: 1;
 			width: 100%;
 		}
 
-		.dashboard-toolbar-view {
+		.dashboard-toolbar-order {
 			order: 2;
 			width: 100%;
 		}
 
-		.dashboard-toolbar-order {
+		.dashboard-toolbar-group {
 			order: 3;
 			width: 100%;
 		}
 
-		.dashboard-toolbar-group {
-			order: 4;
-			width: 100%;
-		}
-
 		.dashboard-toolbar-tag-filter {
-			order: 5;
+			order: 4;
 			min-width: 0;
 		}
 
 		.dashboard-toolbar-actions {
-			order: 6;
+			order: 5;
 			width: 100%;
 			min-width: 0;
 		}
 
 		.tunnel-toolbar-search {
-			order: 7;
+			order: 6;
 			min-width: 0;
 			max-width: none;
 			width: 100%;
 		}
 
 		.dashboard-toolbar-create {
-			order: 8;
+			order: 7;
 			justify-self: stretch;
 			align-self: center;
 			min-width: 0;
 		}
 
 		/* Контрол без пары растягивается на всю строку */
-		.dashboard-toolbar:not(:has(.dashboard-toolbar-view)) .dashboard-toolbar-layout,
 		.dashboard-toolbar:not(:has(.dashboard-toolbar-group)) .dashboard-toolbar-order,
 		.dashboard-toolbar:not(:has(.dashboard-toolbar-order)) .dashboard-toolbar-group,
 		.dashboard-toolbar:not(:has(.dashboard-toolbar-actions)) .dashboard-toolbar-tag-filter,
@@ -320,7 +286,6 @@
 			grid-column: 1 / -1;
 		}
 
-		.dashboard-toolbar-layout :global(.segmented-control),
 		.dashboard-toolbar-order :global(.segmented-control),
 		.dashboard-toolbar-group :global(.segmented-control),
 		.dashboard-toolbar-view :global(.segmented-control) {
@@ -335,7 +300,6 @@
 		   кнопки не влезают, и подписи наезжают друг на друга:
 		   «СплошнРазделы»). display:block + line-height — чтобы работал
 		   text-overflow (не применяется к тексту внутри flex-контейнера). */
-		.dashboard-toolbar-layout :global(.segmented-control .segmented-control-btn),
 		.dashboard-toolbar-order :global(.segmented-control .segmented-control-btn),
 		.dashboard-toolbar-group :global(.segmented-control .segmented-control-btn) {
 			flex: 1 1 0;

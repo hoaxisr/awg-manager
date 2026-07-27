@@ -18,6 +18,16 @@ describe('NAV_TREE hrefs', () => {
 });
 
 describe('activeItem', () => {
+	it('«Все туннели» на /tunnels', () => {
+		expect(activeItem(u('/tunnels'))?.item.id).toBe('tunnels-all');
+		expect(activeItem(u('/tunnels?detail=t1'))?.item.id).toBe('tunnels-all');
+	});
+	it('«Все туннели» — первый пункт дерева', () => {
+		expect(NAV_TREE[0].id).toBe('tunnels-all');
+	});
+	it('корень не подсвечивает ничего — с него уводит редирект', () => {
+		expect(activeItem(u('/'))).toBeNull();
+	});
 	it('AWG-туннели на своём маршруте', () => {
 		expect(activeItem(u('/awg/tunnels'))?.item.id).toBe('awg-tunnels');
 		expect(activeItem(u('/awg/tunnels?detail=t1'))?.item.id).toBe('awg-tunnels');
@@ -88,6 +98,9 @@ describe('breadcrumbFor', () => {
 	it('сервис на своём маршруте → Сервисы + раздел', () => {
 		expect(breadcrumbFor(u('/services/freeturn'))).toEqual({ group: 'Сервисы', label: 'FreeTurn' });
 		expect(breadcrumbFor(u('/services/wdtt'))).toEqual({ group: 'Сервисы', label: 'WDTT' });
+	});
+	it('«Все туннели» → плоский пункт без группы', () => {
+		expect(breadcrumbFor(u('/tunnels'))).toEqual({ group: null, label: 'Все туннели' });
 	});
 	it('плоский пункт → без группы', () => {
 		expect(breadcrumbFor(u('/settings'))).toEqual({ group: null, label: 'Настройки' });

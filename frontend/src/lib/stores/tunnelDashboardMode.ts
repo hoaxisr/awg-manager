@@ -1,31 +1,19 @@
-// Dashboard mode for the tunnels page (issue #142): an OPT-IN alternative to
-// the AWG / Sing-box / Subscriptions tabs that shows every tunnel kind on one
-// screen. Three persisted knobs:
-//   - tunnelDashboardMode   — the master switch (default OFF → tabs, the
-//     pre-existing UI stays byte-identical until the user opts in)
-//   - tunnelDashboardLayout — 'sections' (collapsible per-kind groups) or
-//     'flat' (one merged list, kind→name order)
-//   - tunnelDashboardView   — card density for the dashboard, independent
-//     from the per-tab view modes so switching modes never clobbers them.
-//     Default 'dense': a fresh dashboard shows full AWG cards with traffic
-//     graphs in both layouts (issue: flat layout looked degraded).
+// Настройки сводной страницы туннелей /tunnels (issue #142). Персистентные
+// ручки:
+//   - tunnelDashboardLayout — 'sections' (per-kind groups) или 'flat'; после
+//     расщепления навигации v3 роль «разделов» выполняет сайдбар, страница
+//     значение не читает (переключатель снят) — стор оставлен под фазу 3
+//   - tunnelDashboardView   — плотность карточек. Default 'dense': свежая
+//     страница показывает полные AWG-карточки с графиками трафика.
 import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
 import { parseSingboxLayoutMode } from '$lib/constants/singboxLayout';
-import { createPersistedFlag, createPersistedStore } from './persisted';
+import { createPersistedStore } from './persisted';
 
 export type TunnelDashboardLayout = 'flat' | 'sections';
 
 export const TUNNEL_DASHBOARD_LAYOUT_LABELS: Record<TunnelDashboardLayout, string> = {
 	flat: 'Сплошной',
 	sections: 'Разделы',
-};
-
-const modeStore = createPersistedFlag('awg-manager-tunnel-dashboard-mode', false);
-
-export const tunnelDashboardMode = {
-	subscribe: modeStore.subscribe,
-	init: modeStore.init,
-	setEnabled: modeStore.set,
 };
 
 const layoutStore = createPersistedStore<TunnelDashboardLayout>(

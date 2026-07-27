@@ -12,6 +12,7 @@
 	import TunnelDiagnosticsModal from '$lib/components/testing/TunnelDiagnosticsModal.svelte';
 	import AwgTunnelsTabSection from '$lib/components/tunnels/AwgTunnelsTabSection.svelte';
 	import TunnelsLoadingSkeleton from '$lib/components/tunnels/TunnelsLoadingSkeleton.svelte';
+	import KernelModuleOverlay from '$lib/components/tunnels/KernelModuleOverlay.svelte';
 	import { tunnels } from '$lib/stores/tunnels';
 	import { systemInfo as systemInfoStore } from '$lib/stores/system';
 	import { notifications } from '$lib/stores/notifications';
@@ -388,3 +389,5 @@
 		onSaved={closeConnectivitySettings}
 	/>
 {/if}
+
+<KernelModuleOverlay />

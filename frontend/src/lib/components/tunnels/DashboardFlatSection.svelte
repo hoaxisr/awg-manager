@@ -12,7 +12,7 @@
 	import TunnelTagChips from '$lib/components/tunnels/TunnelTagChips.svelte';
 	import { tunnels } from '$lib/stores/tunnels';
 	import { goto } from '$app/navigation';
-	import { tunnelDashboardLayout, tunnelDashboardView } from '$lib/stores/tunnelDashboardMode';
+	import { tunnelDashboardView } from '$lib/stores/tunnelDashboardMode';
 	import DashboardSummary from '$lib/components/tunnels/DashboardSummary.svelte';
 	import TunnelSectionHeader from '$lib/components/tunnels/TunnelSectionHeader.svelte';
 	import { SingboxInstallBanner, SingboxTunnelCard } from '$lib/components/singbox';
@@ -149,16 +149,14 @@
 			<DashboardToolbar
 				searchQuery={ctx.dashboardSearchQuery}
 				onSearchChange={(value) => (ctx.dashboardSearchQuery = value)}
-				layout={$tunnelDashboardLayout}
-				onLayoutChange={(layout) => tunnelDashboardLayout.setLayout(layout)}
 				viewMode={$tunnelDashboardView}
 				onViewModeChange={tunnelDashboardView.setViewMode}
 				orderMode={$tunnelDashboardOrderMode}
 				onOrderModeChange={tunnelDashboardOrderMode.setMode}
-				showOrderControl={ctx.dashboardFlatLayout}
+				showOrderControl={ctx.dashboardFlatCardMode}
 				groupMode={$tunnelDashboardGroupMode}
 				onGroupModeChange={tunnelDashboardGroupMode.setMode}
-				showGroupControl={!ctx.dashboardFlatLayout}
+				showGroupControl={true}
 				activeTagFilter={ctx.dashboardTagFilter}
 				onClearTagFilter={() => (ctx.dashboardTagFilter = null)}
 				onCreateAwg={() => goto('/awg/tunnels/new')}

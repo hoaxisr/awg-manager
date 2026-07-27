@@ -1,4 +1,4 @@
-import { Server, Waypoints, Globe, Activity, Wrench, Settings } from 'lucide-svelte';
+import { Layers, Server, Waypoints, Globe, Activity, Wrench, Settings } from 'lucide-svelte';
 
 /**
  * lucide-svelte v1 экспортирует классовые компоненты (SvelteComponentTyped) —
@@ -38,6 +38,16 @@ const isPath = (url: URL, ...prefixes: string[]) =>
 // В фазе 2, при расщеплении контейнеров, hrefs и match меняются на финальные
 // (/awg/tunnels, /sb/*, /router/*, /services/*) — см. спеку, раздел 3.
 export const NAV_TREE: NavEntry[] = [
+	{
+		// Сводная страница всех видов туннелей. Стоит первой — в фазе 3 сюда
+		// же встанет «Обзор», и «Все туннели» сдвинутся под него.
+		kind: 'link',
+		id: 'tunnels-all',
+		label: 'Все туннели',
+		icon: Layers,
+		href: '/tunnels',
+		match: (url) => isPath(url, '/tunnels'),
+	},
 	{
 		kind: 'group',
 		id: 'awg',

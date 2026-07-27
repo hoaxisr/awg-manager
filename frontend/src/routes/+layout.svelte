@@ -7,7 +7,6 @@
 	import { compactLayout } from '$lib/stores/compactLayout';
 	import {
 		tunnelDashboardLayout,
-		tunnelDashboardMode,
 		tunnelDashboardView,
 	} from '$lib/stores/tunnelDashboardMode';
 	import {
@@ -346,7 +345,6 @@
 		compactLayout.init();
 		settingsSectionIconMode.init();
 		serviceLetterIcons.init();
-		tunnelDashboardMode.init();
 		tunnelDashboardLayout.init();
 		tunnelDashboardView.init();
 		tunnelDashboardOrderMode.init();

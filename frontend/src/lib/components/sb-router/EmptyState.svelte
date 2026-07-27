@@ -100,7 +100,7 @@
     {:else if $optionsReady}
       <div class="empty-tunnels">
         Нет доступных туннелей.
-        <button type="button" class="link" onclick={() => goto('/')}>Создайте туннель</button>
+        <button type="button" class="link" onclick={() => goto('/awg/tunnels')}>Создайте туннель</button>
         и вернитесь сюда.
       </div>
     {/if}

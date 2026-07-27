@@ -8,7 +8,6 @@
 		type SettingsSectionIconMode,
 	} from '$lib/stores/settingsSectionIconMode';
 	import { serviceLetterIcons } from '$lib/stores/serviceLetterIcons';
-	import { tunnelDashboardMode } from '$lib/stores/tunnelDashboardMode';
 	import {
 		theme,
 		THEME_PRESETS,
@@ -222,18 +221,6 @@
 			onchange={(enabled) => compactLayout.setEnabled(enabled)}
 		/>
 	</div>
-	<div class="setting-row dashboard-mode-row">
-		<div class="flex flex-col gap-1">
-			<span class="font-medium">Режим дашборда</span>
-			<span class="setting-description">
-				Объединяет AWG, Sing-box и подписки на одной странице с общей панелью поиска и создания.
-			</span>
-		</div>
-		<Toggle
-			checked={$tunnelDashboardMode}
-			onchange={(enabled) => tunnelDashboardMode.setEnabled(enabled)}
-		/>
-	</div>
 	<div class="setting-row letter-icons-row">
 		<div class="flex flex-col gap-1">
 			<span class="font-medium">Буквенные иконки</span>
@@ -251,14 +238,12 @@
 
 <style>
 	.compact-layout-row,
-	.dashboard-mode-row,
 	.letter-icons-row {
 		align-items: center;
 	}
 
 	@media (max-width: 640px) {
 		.compact-layout-row,
-		.dashboard-mode-row,
 		.letter-icons-row {
 			flex-direction: row;
 			align-items: center;
@@ -267,7 +252,6 @@
 		}
 
 		.compact-layout-row > *:first-child,
-		.dashboard-mode-row > *:first-child,
 		.letter-icons-row > *:first-child {
 			flex: 1 1 auto;
 			min-width: 0;

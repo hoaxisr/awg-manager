@@ -16,7 +16,6 @@ export interface DashboardFlatContext {
 	readonly dashboardDndEnabled: boolean;
 	readonly dashboardFilterEmpty: boolean;
 	readonly dashboardFlatCardMode: boolean;
-	readonly dashboardFlatLayout: boolean;
 	readonly dashboardGridClass: string;
 	readonly dashboardGroupByTags: boolean;
 	readonly dashboardRenderItems: TunnelDashboardFlatItem[];
