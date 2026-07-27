@@ -20,10 +20,20 @@ func wsFeed() (a, b, other vlink.ParsedOutbound) {
 }
 
 // narrowInfo — метаданные того единственного члена, который существовал до
-// правки: узкий тег и общие для группы протокол/сервер/порт/SNI.
+// правки: узкий тег и общие для группы протокол/сервер/порт/SNI. TransportKey
+// у таких записей ПУСТ: поле появилось вместе с этой правкой, и на диске у
+// пользователя его нет. Заполнить его здесь означало бы тестировать
+// несуществующие данные и скрыть поведение грубого сравнения.
 func narrowInfo(p vlink.ParsedOutbound) MemberInfo {
 	mi := toMemberInfo(stableTagFromKey("sub", identityKey(p)), p)
+	mi.TransportKey = ""
 	return mi
+}
+
+// currentInfo — запись, сделанная уже новым кодом: тег полного ключа и
+// заполненный TransportKey.
+func currentInfo(p vlink.ParsedOutbound) MemberInfo {
+	return toMemberInfo(stableTagFromKey("sub", fullKey(p)), p)
 }
 
 func TestRemapStaleTags_ExpandsCollapsedGroup(t *testing.T) {
@@ -31,7 +41,7 @@ func TestRemapStaleTags_ExpandsCollapsedGroup(t *testing.T) {
 	diff := ApplyDiff("sub", nil, []vlink.ParsedOutbound{a, b, other})
 	old := narrowInfo(a)
 
-	got, active, changed := remapStaleTags([]string{old.Tag}, []MemberInfo{old}, diff, "")
+	got, active, changed := remapStaleTags([]string{old.Tag}, []MemberInfo{old}, diff, "", nil)
 	if !changed {
 		t.Fatal("changed = false, want true")
 	}
@@ -55,7 +65,7 @@ func TestRemapStaleTags_KeepsTagWithoutMatchInFeed(t *testing.T) {
 	diff := ApplyDiff("sub", nil, []vlink.ParsedOutbound{other})
 	gone := MemberInfo{Tag: "sub-x-deadbeef", Protocol: "vless", Server: "gone.example.com", Port: 443}
 
-	got, _, changed := remapStaleTags([]string{gone.Tag}, []MemberInfo{gone}, diff, "")
+	got, _, changed := remapStaleTags([]string{gone.Tag}, []MemberInfo{gone}, diff, "", nil)
 	if changed {
 		t.Error("changed = true, want false")
 	}
@@ -69,8 +79,8 @@ func TestRemapStaleTags_Idempotent(t *testing.T) {
 	diff := ApplyDiff("sub", nil, []vlink.ParsedOutbound{a, b, other})
 	old := narrowInfo(a)
 
-	first, _, _ := remapStaleTags([]string{old.Tag}, []MemberInfo{old}, diff, "")
-	second, _, changed := remapStaleTags(first, []MemberInfo{old}, diff, "")
+	first, _, _ := remapStaleTags([]string{old.Tag}, []MemberInfo{old}, diff, "", nil)
+	second, _, changed := remapStaleTags(first, []MemberInfo{old}, diff, "", nil)
 	if changed {
 		t.Error("second pass reported a change, want no-op")
 	}
@@ -87,7 +97,7 @@ func TestRemapStaleTags_RemapsActiveMember(t *testing.T) {
 	diff := ApplyDiff("sub", nil, []vlink.ParsedOutbound{a, b, other})
 	old := narrowInfo(a)
 
-	_, active, changed := remapStaleTags(nil, []MemberInfo{old}, diff, old.Tag)
+	_, active, changed := remapStaleTags(nil, []MemberInfo{old}, diff, old.Tag, nil)
 	if !changed {
 		t.Fatal("changed = false, want true")
 	}
@@ -113,11 +123,71 @@ func TestRemapStaleTags_GuardAgainstExcludingEveryone(t *testing.T) {
 	diff := ApplyDiff("sub", nil, []vlink.ParsedOutbound{a, b})
 	old := narrowInfo(a)
 
-	got, _, changed := remapStaleTags([]string{old.Tag}, []MemberInfo{old}, diff, "")
+	got, _, changed := remapStaleTags([]string{old.Tag}, []MemberInfo{old}, diff, "", nil)
 	if changed {
 		t.Error("changed = true, want the expansion skipped")
 	}
 	if len(got) != 1 || got[0] != old.Tag {
 		t.Fatalf("got %v, want the original tag untouched", got)
+	}
+}
+
+// Тег протухает не только от смены схемы: уровень ключа зависит от состава
+// фида, поэтому группа схлопывается и расширяется обратно, когда провайдер
+// убирает и возвращает эндпоинт. В такой момент грубое сравнение исключило бы
+// и соседний эндпоинт, которого пользователь не трогал.
+func TestRemapStaleTags_NoContagionWhenTransportKnown(t *testing.T) {
+	a, b, other := wsFeed()
+	diff := ApplyDiff("sub", nil, []vlink.ParsedOutbound{a, b, other})
+	// Запись сделана новым кодом, но её тег протух (группа успела схлопнуться).
+	stale := currentInfo(a)
+	stale.Tag = stableTagFromKey("sub", identityKey(a))
+
+	got, _, changed := remapStaleTags([]string{stale.Tag}, []MemberInfo{stale}, diff, "", nil)
+	if !changed {
+		t.Fatal("changed = false, want the tag remapped")
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %v, want exactly the endpoint the user excluded", got)
+	}
+	if want := stableTagFromKey("sub", fullKey(a)); got[0] != want {
+		t.Errorf("got %q, want %q (/path1)", got[0], want)
+	}
+}
+
+// Guard обязан считать оставшихся так же, как applyDiff: член жив, только если
+// не исключён И не срезан regex-фильтром. Иначе refresh валился бы с
+// ErrAllMembersFiltered на каждом тике.
+func TestRemapStaleTags_GuardCountsFilteredOut(t *testing.T) {
+	a, b, other := wsFeed()
+	// Имена обязаны различаться: без этого предикат резал бы всех подряд и
+	// тест проходил бы независимо от guard'а.
+	a.Label, b.Label, other.Label = "A", "B", "OTHER"
+	diff := ApplyDiff("sub", nil, []vlink.ParsedOutbound{a, b, other})
+	old := narrowInfo(a)
+	// Единственный член вне расширяемой группы срезан фильтром по имени.
+	allows := func(label string) bool { return label != "OTHER" }
+
+	got, _, changed := remapStaleTags([]string{old.Tag}, []MemberInfo{old}, diff, "", allows)
+	if changed {
+		t.Error("changed = true, want the expansion skipped: nothing would stay alive")
+	}
+	if len(got) != 1 || got[0] != old.Tag {
+		t.Fatalf("got %v, want the original tag untouched", got)
+	}
+}
+
+// Активный член не может переехать на тег, который этой же миграцией
+// исключён.
+func TestRemapStaleTags_ActiveNeverLandsOnExcluded(t *testing.T) {
+	a, b, other := wsFeed()
+	diff := ApplyDiff("sub", nil, []vlink.ParsedOutbound{a, b, other})
+	old := narrowInfo(a)
+
+	excluded, active, _ := remapStaleTags([]string{old.Tag}, []MemberInfo{old}, diff, old.Tag, nil)
+	for _, e := range excluded {
+		if e == active {
+			t.Fatalf("active %q is also excluded: %v", active, excluded)
+		}
 	}
 }

@@ -530,18 +530,15 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 	known := make([]MemberInfo, 0, len(sub.ExcludedMembers)+len(sub.Members))
 	known = append(known, sub.ExcludedMembers...)
 	known = append(known, sub.Members...)
-	if tags, active, changed := remapStaleTags(sub.ExcludedTags, known, diff, sub.ActiveMember); changed {
-		if err := s.store.SetExcludedTags(id, tags, sub.ExcludedMembers); err != nil {
-			return nil, err
-		}
+	prevActive := sub.ActiveMember
+	tags, active, migrated := remapStaleTags(sub.ExcludedTags, known, diff, sub.ActiveMember, flt.Allows)
+	if migrated {
+		// В память — сразу (applyDiff читает sub.ExcludedTags), в стор — только
+		// после успешного applyDiff: иначе упавший refresh оставил бы на диске
+		// новые теги со старыми ExcludedMembers, и вкладка «исключённые»
+		// потеряла бы строку восстановления.
 		sub.ExcludedTags = tags
-		if active != sub.ActiveMember {
-			if err := s.store.SetActiveMember(id, active); err != nil {
-				return nil, err
-			}
-			sub.ActiveMember = active
-		}
-		s.logInfo("subscription-refresh", id, fmt.Sprintf("migrated %d excluded tag(s) to the current identity scheme", len(tags)))
+		sub.ActiveMember = active
 	}
 
 	// applyDiff (stage → Reload) и Rollback-компенсация выполняются одной
@@ -608,6 +605,20 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 	info := mergeInfoItems(sub.InfoItems, filterDismissedInfo(parts.Info, sub.DismissedInfoIDs))
 	if len(prunedTags) > 0 {
 		s.logWarn("subscription-refresh", id, fmt.Sprintf("pruned %d member(s) not materialized (dropped by validation): %s", len(prunedTags), strings.Join(prunedTags, ", ")))
+	}
+	// Миграция тегов фиксируется здесь — после успешного applyDiff и вместе с
+	// пересобранными excludedMembers, чтобы теги и метаданные исключённых
+	// уехали на диск согласованными.
+	if migrated {
+		if err := s.store.SetExcludedTags(id, sub.ExcludedTags, excludedMembers); err != nil {
+			return nil, err
+		}
+		if active != prevActive {
+			if err := s.store.SetActiveMember(id, active); err != nil {
+				return nil, err
+			}
+		}
+		s.logInfo("subscription-refresh", id, fmt.Sprintf("migrated %d excluded tag(s) to the current identity scheme", len(sub.ExcludedTags)))
 	}
 	if err := s.store.SetMembersExtras(id, newMembers, diff.Orphan, rejected, info, excludedMembers, filteredMembers); err != nil {
 		return nil, err
