@@ -164,9 +164,9 @@
      Local stacking (z:1–10) lives in components and is intentionally not
      tokenized — it's contained inside its own stacking context. These
      tokens cover the global layering only. */
-  --z-sticky-secondary: 50; /* TunnelEditHeader sub-sticky under AppHeader */
+  --z-sticky-secondary: 50; /* TunnelEditHeader sub-sticky under the sticky header */
   --z-page-overlay: 60;     /* tab dropdowns, popovers, member-pickers */
-  --z-sticky-header: 80;    /* AppHeader sticky bar */
+  --z-sticky-header: 80;    /* sticky header bar */
   --z-fab: 95;              /* floating action buttons (below drawers) */
   --z-drawer-backdrop: 90;  /* hamburger / drawer dimming layer */
   --z-drawer: 100;          /* hamburger panel, SideDrawer panel */

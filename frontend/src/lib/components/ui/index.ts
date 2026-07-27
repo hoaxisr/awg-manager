@@ -21,8 +21,6 @@ export type { StatusDotVariant, StatusDotSize } from './StatusDot.svelte';
 export { default as Stat } from './Stat.svelte';
 export { default as StatStrip } from './StatStrip.svelte';
 export { default as Tabs } from './Tabs.svelte';
-export { default as LegacyTabs } from './LegacyTabs.svelte';
-export { default as LegacyTab } from './LegacyTab.svelte';
 export { default as Input } from './Input.svelte';
 export type { InputType, InputAutocomplete } from './Input.svelte';
 export { default as ChipMultiSelect, type ChipOption } from './ChipMultiSelect.svelte';

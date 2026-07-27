@@ -1,6 +1,6 @@
 <script lang="ts">
   import './_styles.css';
-  import { Button, IconButton, Card, Badge, StatusDot, Tabs, LegacyTabs, LegacyTab, Input, Dropdown, Toggle, Modal } from '$lib/components/ui';
+  import { Button, IconButton, Card, Badge, StatusDot, Tabs, Input, Dropdown, Toggle, Modal } from '$lib/components/ui';
   import { LogsLiveIndicator, LogRow, LogsToolbar } from '$lib/components/diagnostics';
 
   let theme = $state<'dark' | 'light'>('dark');
@@ -12,8 +12,6 @@
     };
   });
 
-  let tabUnderline = $state('tunnels');
-  let tabPill = $state('basic');
   let tabCanonical = $state('logs');
   const canonicalTabsDemo = [
     { id: 'logs', label: 'Журнал' },
@@ -265,27 +263,6 @@
         onchange={(id) => (tabCanonical = id)}
       />
       <p style="color: var(--color-text-muted); font-size: 12px; margin-top: 0.5rem;">Active: {tabCanonical}</p>
-    </div>
-
-    <div class="dev-row" style="flex-direction: column; align-items: stretch;">
-      <span class="dev-row-label">LegacyTabs — underline variant (deprecated, used by AppHeader only)</span>
-      <LegacyTabs bind:value={tabUnderline} variant="underline">
-        <LegacyTab value="tunnels">Туннели</LegacyTab>
-        <LegacyTab value="routing">Маршрутизация</LegacyTab>
-        <LegacyTab value="monitoring">Мониторинг</LegacyTab>
-        <LegacyTab value="diagnostics">Диагностика</LegacyTab>
-      </LegacyTabs>
-      <p style="color: var(--color-text-muted); font-size: 12px; margin-top: 0.5rem;">Active: {tabUnderline}</p>
-    </div>
-
-    <div class="dev-row" style="flex-direction: column; align-items: stretch;">
-      <span class="dev-row-label">LegacyTabs — pill variant (deprecated)</span>
-      <LegacyTabs bind:value={tabPill} variant="pill">
-        <LegacyTab value="basic">Основное</LegacyTab>
-        <LegacyTab value="obfuscation">Обфускация</LegacyTab>
-        <LegacyTab value="routing">Маршрутизация</LegacyTab>
-      </LegacyTabs>
-      <p style="color: var(--color-text-muted); font-size: 12px; margin-top: 0.5rem;">Active: {tabPill}</p>
     </div>
   </section>
 
