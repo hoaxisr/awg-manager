@@ -61,7 +61,7 @@
 	<div class="edit-wrapper">
 		<div class="sticky-header">
 		<div class="header-left">
-			<Button variant="ghost" size="sm" onclick={() => goto('/')} iconBefore={backIcon}>
+			<Button variant="ghost" size="sm" onclick={() => goto('/awg/tunnels')} iconBefore={backIcon}>
 				Назад
 			</Button>
 			<h1 class="page-title">{tunnel?.description || name}</h1>

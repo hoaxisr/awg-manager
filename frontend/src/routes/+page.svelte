@@ -1,34 +1,13 @@
 <script lang="ts">
-	import { onMount, onDestroy, untrack } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { tunnels } from '$lib/stores/tunnels';
 	import { systemInfo as systemInfoStore } from '$lib/stores/system';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
-	import {
-		TunnelListTrafficCell,
-		TunnelPingButton,
-		TunnelTitleRow,
-		TunnelMetaText,
-		TunnelToolbarViewRow,
-		DefaultRouteBadge,
-		TunnelCardSkeleton,
-	} from '$lib/components/tunnels';
-	import { TunnelListActions } from '$lib/components/ui';
 	import { PageContainer, PageHeader, EmptyState } from '$lib/components/layout';
 	import { tunnelsSkeletonCount, clampSkeletonCount } from '$lib/stores/skeletonCounts';
-	import {
-		TrafficSparkline,
-		Badge,
-		Tabs,
-		Toggle,
-		StatusDot,
-		Stat,
-		StatStrip,
-		LayoutViewToggle,
-		TableSortHeader,
-	} from '$lib/components/ui';
+	import TunnelsLoadingSkeleton from '$lib/components/tunnels/TunnelsLoadingSkeleton.svelte';
 	import { singboxDelayHistory, singboxStatus, singboxTraffic, singboxTunnels } from '$lib/stores/singbox';
 	import { awg3Tunnels } from '$lib/stores/awg3';
 	import { Awg3TunnelsSection } from '$lib/components/awg3';
@@ -44,10 +23,13 @@
 	import type { TunnelPageModalsContext } from '$lib/components/tunnels/tunnelPageModalsContext';
 	import {
 		buildSingboxDelayMap,
+		computeAwgSummary,
 		computeAwgSummaryPeak,
 		computeAwgTrafficLeader,
 		computeSingboxTunnelListStats,
 		computeSubscriptionsTrafficStats,
+		endpointHost,
+		endpointPort,
 		externalStatusLabel,
 		externalStatusVariant,
 		isManagedTunnelOn,
@@ -61,7 +43,10 @@
 		systemStatusLabel,
 		systemStatusVariant,
 	} from '$lib/components/tunnels/tunnelPageSelectors';
-	import type { AwgTabContext } from '$lib/components/tunnels/awgTabContext';
+	import type { AwgTabContext, EndpointScope } from '$lib/components/tunnels/awgTabContext';
+	import { createAwgTunnelActions } from '$lib/components/tunnels/awgTunnelActions.svelte';
+	import { createAwgConfigImport } from '$lib/components/tunnels/awgConfigImport.svelte';
+	import { createAwgAutoConnectivity } from '$lib/components/tunnels/awgAutoConnectivity.svelte';
 	import type { ExternalTunnel, Subscription, SubscriptionMember, SystemTunnel, TunnelListItem } from '$lib/types';
 	import { formatBitRate, formatBytes, formatDuration, formatRelativeTime, secondsSince } from '$lib/utils/format';
 	import { showOutboundReferencedError } from '$lib/utils/outboundReferenced';
@@ -75,7 +60,6 @@
 	} from '$lib/utils/awgPingStatus';
 	import { awgManagedStatusDot } from '$lib/utils/statusDot';
 	import { resolveSubscriptionMemberTag } from '$lib/utils/subscriptionMember';
-	import { nativewgUnavailableHint } from '$lib/utils/backendAvailability';
 	import {
 		readTunnelMobileLayout,
 		resolveTunnelRenderMode,
@@ -111,11 +95,8 @@
 		type SubscriptionSortKey,
 	} from '$lib/stores/tunnelTableSort';
 
-	type TunnelTab = 'awg';
 	type AwgTunnelViewMode = 'cards' | 'compact' | 'list';
-	type EndpointScope = 'managed' | 'system' | 'external';
 
-	const AWG_TUNNEL_VIEW_STORAGE_KEY = 'awg_tunnel_view_mode';
 	const isMockDevMode = getIsMockDevMode();
 
 	// Polling-store subscription: first subscriber triggers the fetch,
@@ -184,49 +165,30 @@
 		!sysInfo.backendAvailability?.nativewg
 	);
 
-	let toggleLoading = $state<Record<string, boolean>>({});
-	let pingChecking = $state<Record<string, boolean>>({});
+	// Действия над AWG-туннелями + импорт .conf — общий с /awg/tunnels срез
+	// (карточки дашборда зовут те же обработчики).
+	const tunnelActions = createAwgTunnelActions(() => awgList);
+	const configImport = createAwgConfigImport(() => sysInfo);
+
 	let connectivitySettingsOpen = $state(false);
 	let connectivitySettingsTunnel = $state<TunnelListItem | null>(null);
-	let deleteLoading = $state<Record<string, boolean>>({});
-	let deleteConfirmId = $state<string | null>(null);
-	let referencedDetails = $state<import('$lib/types').TunnelReferencedError | null>(null);
-	let referencedTunnelName = $state<string>('');
 
 	let detailId = $state<string | null>(null);
 	let singboxDetailTag = $state<string | null>(null);
 	let awgDiagnosticsTarget = $state<{ id: string; name: string; kind: 'awg' | 'system' } | null>(null);
 	let endpointVisibility = $state<Record<string, boolean>>({});
-	let awgListSearchQuery = $state('');
 	let dashboardSearchQuery = $state('');
 
-	function endpointVisibilityKey(scope: EndpointScope, id: string): string {
-		return `${scope}:${id}`;
-	}
-
 	function endpointVisible(scope: EndpointScope, id: string): boolean {
-		return endpointVisibility[endpointVisibilityKey(scope, id)] ?? false;
+		return endpointVisibility[`${scope}:${id}`] ?? false;
 	}
 
 	function toggleEndpointVisible(scope: EndpointScope, id: string): void {
-		const key = endpointVisibilityKey(scope, id);
+		const key = `${scope}:${id}`;
 		endpointVisibility = {
 			...endpointVisibility,
 			[key]: !endpointVisibility[key],
 		};
-	}
-
-	function endpointHost(endpoint?: string | null): string {
-		const value = endpoint ?? '';
-		const match = value.match(/^(?:\[([^\]]+)\]|([^:]+)):(\d+)$/);
-		if (match) return match[1] || match[2] || value;
-		return value;
-	}
-
-	function endpointPort(endpoint?: string | null): string {
-		const value = endpoint ?? '';
-		const match = value.match(/:(\d+)$/);
-		return match ? match[1] : '';
 	}
 
 	function openDetail(id: string) {
@@ -277,31 +239,6 @@
 		singboxDetailTag = sbQ && sbQ.length > 0 ? sbQ : null;
 	});
 
-	async function markAsServer(id: string) {
-		try {
-			await api.markServerInterface(id);
-			// markServerInterface returns fresh ServersSnapshot; the tunnels
-			// list also changes (the system card disappears) — invalidate.
-			tunnels.invalidate();
-			notifications.success(`Туннель ${id} перенесён в серверы.`);
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка переноса в серверы');
-		}
-	}
-
-	async function checkPing(id: string) {
-		if (pingChecking[id]) return;
-		pingChecking[id] = true;
-		try {
-			const result = await api.checkConnectivity(id);
-			tunnels.updateConnectivity(id, result.connected, result.latency ?? null);
-		} catch {
-			tunnels.updateConnectivity(id, false, null);
-		} finally {
-			pingChecking[id] = false;
-		}
-	}
-
 	function openConnectivitySettings(tunnel: TunnelListItem): void {
 		connectivitySettingsTunnel = tunnel;
 		connectivitySettingsOpen = true;
@@ -310,59 +247,6 @@
 	function closeConnectivitySettings(): void {
 		connectivitySettingsOpen = false;
 		connectivitySettingsTunnel = null;
-	}
-
-	async function handleToggleOnOff(id: string) {
-		const tunnel = awgList.find(t => t.id === id);
-		if (!tunnel) return;
-		// needs_start is NOT "on" — it means "intent up but not actually running",
-		// so the toggle should show OFF and the click should fire Start, not Stop.
-		const isOn = ['running', 'starting', 'broken'].includes(tunnel.status);
-		toggleLoading = { ...toggleLoading, [id]: true };
-		try {
-			if (isOn) {
-				await tunnels.stop(id);
-				notifications.success('Туннель остановлен');
-			} else {
-				await tunnels.start(id);
-				notifications.success('Туннель запущен');
-			}
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка');
-		} finally {
-			const { [id]: _, ...rest } = toggleLoading;
-			toggleLoading = rest;
-		}
-	}
-
-	function requestDelete(id: string) {
-		deleteConfirmId = id;
-	}
-
-	async function handleDelete(id: string) {
-		deleteConfirmId = null;
-		deleteLoading = { ...deleteLoading, [id]: true };
-		try {
-			const result = await tunnels.remove(id);
-			if (result.success && result.verified) {
-				notifications.success('Туннель удалён');
-			} else {
-				notifications.error('Не удалось верифицировать удаление');
-			}
-		} catch (e) {
-			if (e instanceof Error && e.message === 'tunnel_referenced') {
-				const refErr = e as Error & {
-					details: import('$lib/types').TunnelReferencedError;
-				};
-				referencedDetails = refErr.details;
-				referencedTunnelName = awgList.find((t) => t.id === id)?.name ?? id;
-			} else {
-				notifications.error(e instanceof Error ? e.message : 'Не удалось удалить туннель');
-			}
-		} finally {
-			const { [id]: _, ...rest } = deleteLoading;
-			deleteLoading = rest;
-		}
 	}
 
 	// Polling-store subscriptions for sing-box status + tunnels list.
@@ -484,17 +368,8 @@
 		);
 	});
 
-	// Tabs
-	let activeTab = $state<TunnelTab>('awg');
-	let awgViewMode = $state<AwgTunnelViewMode>('compact');
-	let awgViewModeReady = false;
 	let isAwgMobile = $state(readTunnelMobileLayout());
 	const showSingboxGridListToggle = true;
-	let awgEffectiveViewMode = $derived(awgViewMode);
-	let awgRenderMode = $derived(resolveTunnelRenderMode(isAwgMobile, awgEffectiveViewMode));
-	let awgCardViewMode = $derived<'cards' | 'compact'>(
-		awgEffectiveViewMode === 'cards' ? 'cards' : 'compact',
-	);
 
 	let dashboardOn = $derived($tunnelDashboardMode);
 	// Sing-box data is admitted into the dashboard only while sing-box is
@@ -541,13 +416,11 @@
 	let dashboardCardViewMode = $derived<'cards' | 'compact'>(
 		dashboardAwgViewMode === 'cards' ? 'cards' : 'compact',
 	);
-	let effectiveAwgRenderMode = $derived(dashboardOn ? dashboardAwgRenderMode : awgRenderMode);
-	let effectiveAwgEffectiveViewMode = $derived(
-		dashboardOn ? dashboardAwgViewMode : awgEffectiveViewMode,
-	);
-	let effectiveAwgCardViewMode = $derived(
-		dashboardOn ? dashboardCardViewMode : awgCardViewMode,
-	);
+	// AWG-туннели остались на главной только внутри дашборда (своя вкладка
+	// переехала на /awg/tunnels) — вид всегда дашбордный.
+	let effectiveAwgRenderMode = $derived(dashboardAwgRenderMode);
+	let effectiveAwgEffectiveViewMode = $derived(dashboardAwgViewMode);
+	let effectiveAwgCardViewMode = $derived(dashboardCardViewMode);
 	// Sing-box туннели остались на главной только внутри дашборда (своя вкладка
 	// переехала на /sb/tunnels) — вид всегда дашбордный.
 	let effectiveSingboxTunnelsRenderMode = $derived(dashboardSingboxRenderMode);
@@ -556,41 +429,10 @@
 	// переехала на /sb/subscriptions) — вид и поиск всегда дашбордные.
 	let effectiveSingboxSubscriptionsRenderMode = $derived(dashboardSingboxRenderMode);
 	let effectiveSingboxSubscriptionsEffectiveLayout = $derived(dashboardSingboxLayoutMode);
-	let effectiveAwgSearchQuery = $derived(dashboardOn ? dashboardSearchQuery : awgListSearchQuery);
-
-	function isAwgTunnelViewMode(value: string | null): value is AwgTunnelViewMode {
-		return value === 'cards' || value === 'compact' || value === 'list';
-	}
-
-	const tunnelTabs = $derived(
-		[
-			{ id: 'awg', label: 'AWG', badge: awgList.length + systemList.length },
-		] satisfies Array<{ id: string; label: string; badge?: number }>,
-	);
-
-	// Auto-switch off sing-box tab if it becomes hidden (basic mode).
-	$effect(() => {
-		if (!tunnelTabs.find((t) => t.id === activeTab)) {
-			activeTab = 'awg';
-		}
-	});
-
-	onMount(() => {
-		const stored = localStorage.getItem(AWG_TUNNEL_VIEW_STORAGE_KEY);
-		if (isAwgTunnelViewMode(stored)) {
-			awgViewMode = stored;
-		}
-		awgViewModeReady = true;
-	});
 
 	onMount(() => subscribeTunnelMobileLayout((mobile) => {
 		isAwgMobile = mobile;
 	}));
-
-	$effect(() => {
-		if (!awgViewModeReady) return;
-		localStorage.setItem(AWG_TUNNEL_VIEW_STORAGE_KEY, awgViewMode);
-	});
 
 	// Память формы скелетона: фактическое число AWG-карточек прошлого визита.
 	$effect(() => {
@@ -599,96 +441,24 @@
 		}
 	});
 
-	let awgAutoConnectivityNonce = $state(0);
 	let singboxAutoDelayCheckNonce = $state(0);
-	let lastAutoCheckKey = '';
-	// Separate dedupe key for the dashboard: there both the AWG connectivity
-	// effect and the sing-box delay effect are live at once, so sharing
-	// lastAutoCheckKey would ping-pong and re-trigger checks on every poll.
+	// Ключ дедупликации дашбордной авто-проверки delay. Поверхность = само
+	// монтирование главной, поэтому ключ стартует пустым (entry-nonce не нужен).
 	let lastDashboardDelayKey = '';
-	let currentTunnelSurface = '';
-	let tunnelSurfaceEntryNonce = $state(0);
 
-	function activeAwgConnectivityIds(): string {
-		return awgList
-			.filter((t) =>
-				t.enabled &&
-				(t.status === 'running' || t.status === 'broken') &&
-				(t.connectivityCheck?.method ?? 'http') !== 'disabled'
-			)
-			.map((t) => t.id)
-			.sort()
-			.join(',');
-	}
-
-	$effect(() => {
-		const surface = $page.url.pathname === '/' ? activeTab : 'outside';
-		if (surface === currentTunnelSurface) return;
-		currentTunnelSurface = surface;
-		tunnelSurfaceEntryNonce += 1;
-	});
-
-	$effect(() => {
-		const path = $page.url.pathname;
-		const tab = activeTab;
-		const entry = tunnelSurfaceEntryNonce;
-		if (path !== '/' || tab !== 'awg' || loading) return;
-
-		const ids = activeAwgConnectivityIds();
-		if (!ids) return;
-
-		const key = `awg:${entry}:${ids}`;
-		if (key === lastAutoCheckKey) return;
-		lastAutoCheckKey = key;
-		awgAutoConnectivityNonce += 1;
-	});
-
-	// Только в табличном рендере не рендерятся TunnelCard — там срабатывает autoConnectivity.
-	// Иначе connectivityMap не заполняется и подстрока статуса залипает на «Проверка…».
-	// В list-card (мобильный «список» и сплошной дашборд) карточки сами
-	// проверяются по тому же nonce — дублировать запросы со страницы нельзя.
-	$effect(() => {
-		const mode = effectiveAwgRenderMode;
-		const nonce = awgAutoConnectivityNonce;
-		if (mode !== 'table' || loading || nonce <= 0) return;
-
-		const targets = untrack(() =>
-			awgList.filter(
-				(t) =>
-					t.enabled &&
-					(t.status === 'running' || t.status === 'broken') &&
-					(t.connectivityCheck?.method ?? 'http') !== 'disabled',
-			),
-		);
-		if (targets.length === 0) return;
-
-		const timers: ReturnType<typeof setTimeout>[] = [];
-		for (let i = 0; i < targets.length; i++) {
-			const id = targets[i].id;
-			timers.push(
-				setTimeout(() => {
-					void api
-						.checkConnectivity(id)
-						.then((result) => {
-							tunnels.updateConnectivity(id, result.connected, result.latency ?? null);
-						})
-						.catch(() => {
-							tunnels.updateConnectivity(id, false, null);
-						});
-				}, i * 180),
-			);
-		}
-		return () => {
-			for (const t of timers) clearTimeout(t);
-		};
+	// Авто-проверка связности AWG — общий с /awg/tunnels механизм; на главной
+	// живёт только пока показан дашборд.
+	const awgAutoConnectivity = createAwgAutoConnectivity({
+		awgList: () => awgList,
+		renderMode: () => effectiveAwgRenderMode,
+		loading: () => loading,
+		enabled: () => dashboardOn,
 	});
 
 	// Sing-box туннели, подписки и AWG3 живут на главной только внутри
 	// дашборда — авто-проверка delay осталась одной дашбордной ветвью.
 	$effect(() => {
-		const path = $page.url.pathname;
-		const entry = tunnelSurfaceEntryNonce;
-		if (path !== '/' || !dashboardOn) return;
+		if (!dashboardOn) return;
 
 		const sbTags = dashboardSingboxTunnels
 			.filter((t) => t.running === true)
@@ -704,7 +474,7 @@
 
 		// Отдельные префиксы групп: набор тегов туннелей и подписок не
 		// должен схлопываться в один ключ при перестановке между группами.
-		const key = `dashboard:${entry}:sb:${sbTags}|sub:${subTags}`;
+		const key = `dashboard:sb:${sbTags}|sub:${subTags}`;
 		if (key === lastDashboardDelayKey) return;
 		lastDashboardDelayKey = key;
 		singboxAutoDelayCheckNonce += 1;
@@ -736,89 +506,6 @@
 		} finally {
 			adoptLoading = false;
 		}
-	}
-
-	// Empty state: inline drag-and-drop import
-	let dragOver = $state(false);
-	let importing = $state(false);
-
-	let exporting = $state(false);
-
-	async function handleExportAll() {
-		exporting = true;
-		try {
-			const blob = await api.exportAllTunnels();
-			const { downloadBlob } = await import('$lib/utils/download');
-			downloadBlob(blob, 'awg-tunnels.zip');
-		} catch (e) {
-			notifications.error('Не удалось экспортировать конфиги');
-		} finally {
-			exporting = false;
-		}
-	}
-
-	function handleDrop(event: DragEvent) {
-		event.preventDefault();
-		dragOver = false;
-		if (event.dataTransfer?.files?.[0]) {
-			readAndImport(event.dataTransfer.files[0]);
-		}
-	}
-
-	function handleDragOver(event: DragEvent) {
-		event.preventDefault();
-		dragOver = true;
-	}
-
-	function handleDragLeave() {
-		dragOver = false;
-	}
-
-	let selectedBackend = $state<'nativewg' | 'kernel'>('nativewg');
-
-	let nativewgHint = $derived(
-		sysInfo !== null && !sysInfo.backendAvailability?.nativewg
-			? nativewgUnavailableHint(sysInfo.nativewgReason)
-			: ''
-	);
-
-	// Auto-select backend based on availability
-	$effect(() => {
-		if (sysInfo?.backendAvailability && !sysInfo.backendAvailability.nativewg && sysInfo.backendAvailability.kernel) {
-			selectedBackend = 'kernel';
-		}
-	});
-
-	let fileInput = $state<HTMLInputElement>();
-
-	function handleFileSelect(event: Event) {
-		const input = event.target as HTMLInputElement;
-		if (input.files?.[0]) {
-			readAndImport(input.files[0]);
-		}
-	}
-
-	function readAndImport(file: File) {
-		const reader = new FileReader();
-		reader.onload = async (e) => {
-			const content = e.target?.result as string;
-			if (!content?.trim()) return;
-			importing = true;
-			try {
-				const name = file.name.replace(/\.conf$/i, '');
-				const tunnel = await tunnels.importConfig(content, name, selectedBackend);
-				if (tunnel.warnings?.length) {
-					tunnel.warnings.forEach(w => notifications.warning(w));
-				}
-				notifications.success('Туннель импортирован');
-				goto(`/tunnels/${tunnel.id}`);
-			} catch (err) {
-				notifications.error(err instanceof Error ? err.message : 'Ошибка импорта');
-			} finally {
-				importing = false;
-			}
-		};
-		reader.readAsText(file);
 	}
 
 	// Terminal status line
@@ -866,27 +553,8 @@
 		return getTrafficRates(id);
 	}
 
-	let awgSummaryTotal = $derived(awgList.length + visibleSystemList.length + externalList.length);
-	let awgSummaryActive = $derived(
-		awgList.filter((t) => isManagedTunnelOn(t)).length +
-		visibleSystemList.filter((t) => t.status === 'up').length +
-		externalList.filter((t) => !!t.lastHandshake).length,
-	);
-
+	let awgSummary = $derived(computeAwgSummary(awgList, visibleSystemList, externalList));
 	let awgSummaryPeak = $derived(computeAwgSummaryPeak(awgList, visibleSystemList, windowRates));
-
-	let awgSummaryRx = $derived(
-		awgList.reduce((sum, tunnel) => sum + (tunnel.rxBytes ?? 0), 0) +
-		visibleSystemList.reduce((sum, tunnel) => sum + (tunnel.peer?.rxBytes ?? 0), 0) +
-		externalList.reduce((sum, tunnel) => sum + tunnel.rxBytes, 0),
-	);
-
-	let awgSummaryTx = $derived(
-		awgList.reduce((sum, tunnel) => sum + (tunnel.txBytes ?? 0), 0) +
-		visibleSystemList.reduce((sum, tunnel) => sum + (tunnel.peer?.txBytes ?? 0), 0) +
-		externalList.reduce((sum, tunnel) => sum + tunnel.txBytes, 0),
-	);
-
 	let awgTrafficLeader = $derived(computeAwgTrafficLeader(awgList, visibleSystemList, externalList));
 
 	function handleAwgSortChange(key: AwgTunnelSortKey): void {
@@ -902,15 +570,15 @@
 	}
 
 	let sortedFilteredAwgList = $derived(
-		sortFilterAwgList(awgList, effectiveAwgSearchQuery, $awgTunnelTableSort.sortBy, $awgTunnelTableSort.sortAsc),
+		sortFilterAwgList(awgList, dashboardSearchQuery, $awgTunnelTableSort.sortBy, $awgTunnelTableSort.sortAsc),
 	);
 
 	let sortedFilteredSystemList = $derived(
-		sortFilterSystemList(visibleSystemList, effectiveAwgSearchQuery, $awgTunnelTableSort.sortBy, $awgTunnelTableSort.sortAsc),
+		sortFilterSystemList(visibleSystemList, dashboardSearchQuery, $awgTunnelTableSort.sortBy, $awgTunnelTableSort.sortAsc),
 	);
 
 	let sortedFilteredExternalList = $derived(
-		sortFilterExternalList(externalList, effectiveAwgSearchQuery, $awgTunnelTableSort.sortBy, $awgTunnelTableSort.sortAsc),
+		sortFilterExternalList(externalList, dashboardSearchQuery, $awgTunnelTableSort.sortBy, $awgTunnelTableSort.sortAsc),
 	);
 
 	let singboxTunnelDelayValue = $derived(buildSingboxDelayMap(singboxTunnelsList, $singboxDelayHistory));
@@ -962,7 +630,7 @@
 		sortedFilteredSubscriptionsActiveCards.length + sortedFilteredSubscriptionsListRows.length,
 	);
 	let awgSearchEmpty = $derived(
-		effectiveAwgSearchQuery.trim() !== '' &&
+		dashboardSearchQuery.trim() !== '' &&
 			awgFilteredRowsCount === 0,
 	);
 	let singboxTunnelsSearchEmpty = $derived(
@@ -1160,8 +828,7 @@
 	// Per-kind dashboard sections render only in sections layout with grouping
 	// by kind ('type'); the tag-group view replaces them wholesale.
 	let showAwgBlock = $derived(
-		(!dashboardOn && activeTab === 'awg') ||
-			(dashboardTypeSections && awgFilteredRowsCount > 0) ||
+		(dashboardTypeSections && awgFilteredRowsCount > 0) ||
 			(dashboardOn && dashboardNothingAtAll),
 	);
 	let showSingboxBlock = $derived(dashboardTypeSections && dashboardSingboxTunnels.length > 0);
@@ -1213,14 +880,14 @@
 		// AWG3 — sing-box endpoint'ы без running/traffic-метрик: учитываем только
 		// их количество в общем счётчике туннелей.
 		const awg3Count = dashboardAwg3Tunnels.length;
-		const totalAll = awgSummaryTotal + (sb?.count ?? 0) + (subs?.count ?? 0) + awg3Count;
-		const totalActive = awgSummaryActive + (sb?.running ?? 0) + (subs?.activeCount ?? 0);
-		const kinds = [`AWG ${awgSummaryActive}/${awgSummaryTotal}`];
+		const totalAll = awgSummary.total + (sb?.count ?? 0) + (subs?.count ?? 0) + awg3Count;
+		const totalActive = awgSummary.active + (sb?.running ?? 0) + (subs?.activeCount ?? 0);
+		const kinds = [`AWG ${awgSummary.active}/${awgSummary.total}`];
 		if (sb) kinds.push(`Sing-box ${sb.running}/${sb.count}`);
 		if (subs) kinds.push(`Подписки ${subs.activeCount}/${subs.count}`);
 		if (awg3Count > 0) kinds.push(`AWG3 ${awg3Count}`);
-		const rx = awgSummaryRx + (sb?.down ?? 0) + (subs?.down ?? 0);
-		const tx = awgSummaryTx + (sb?.up ?? 0) + (subs?.up ?? 0);
+		const rx = awgSummary.rx + (sb?.down ?? 0) + (subs?.down ?? 0);
+		const tx = awgSummary.tx + (sb?.up ?? 0) + (subs?.up ?? 0);
 		const leaders = [
 			{ bytes: awgTrafficLeader.bytes, name: awgTrafficLeader.name },
 			{ bytes: sb?.leaderBytes ?? 0, name: sb?.leaderName ?? '—' },
@@ -1266,13 +933,13 @@
 		get awgConnectivityMap() { return awgConnectivityMap; },
 		get statusLine() { return statusLine; },
 		get sysInfo() { return sysInfo; },
-		get awgSummaryActive() { return awgSummaryActive; },
+		get awgSummaryActive() { return awgSummary.active; },
 		get awgSummaryPeak() { return awgSummaryPeak; },
-		get awgSummaryRx() { return awgSummaryRx; },
-		get awgSummaryTx() { return awgSummaryTx; },
-		get awgSummaryTotal() { return awgSummaryTotal; },
+		get awgSummaryRx() { return awgSummary.rx; },
+		get awgSummaryTx() { return awgSummary.tx; },
+		get awgSummaryTotal() { return awgSummary.total; },
 		get awgTrafficLeader() { return awgTrafficLeader; },
-		get nativewgHint() { return nativewgHint; },
+		get nativewgHint() { return configImport.nativewgHint; },
 		get dashboardOn() { return dashboardOn; },
 		get dashboardSectionsLayout() { return dashboardSectionsLayout; },
 		get dashboardNothingAtAll() { return dashboardNothingAtAll; },
@@ -1281,26 +948,37 @@
 		get effectiveAwgCardViewMode() { return effectiveAwgCardViewMode; },
 		get effectiveAwgEffectiveViewMode() { return effectiveAwgEffectiveViewMode; },
 		get effectiveAwgRenderMode() { return effectiveAwgRenderMode; },
-		get awgAutoConnectivityNonce() { return awgAutoConnectivityNonce; },
-		get deleteLoading() { return deleteLoading; },
-		get dragOver() { return dragOver; },
-		get exporting() { return exporting; },
-		get importing() { return importing; },
-		get pingChecking() { return pingChecking; },
-		get toggleLoading() { return toggleLoading; },
+		get awgAutoConnectivityNonce() { return awgAutoConnectivity.nonce; },
+		get deleteLoading() { return tunnelActions.deleteLoading; },
+		get dragOver() { return configImport.dragOver; },
+		get exporting() { return tunnelActions.exporting; },
+		get importing() { return configImport.importing; },
+		get pingChecking() { return tunnelActions.pingChecking; },
+		get toggleLoading() { return tunnelActions.toggleLoading; },
 		get adoptDialogOpen() { return adoptDialogOpen; },
 		set adoptDialogOpen(v) { adoptDialogOpen = v; },
 		get adoptingInterface() { return adoptingInterface; },
 		set adoptingInterface(v) { adoptingInterface = v; },
-		get awgListSearchQuery() { return awgListSearchQuery; },
-		set awgListSearchQuery(v) { awgListSearchQuery = v; },
-		get awgViewMode() { return awgViewMode; },
-		set awgViewMode(v) { awgViewMode = v; },
-		get selectedBackend() { return selectedBackend; },
-		set selectedBackend(v) { selectedBackend = v; },
-		get fileInput() { return fileInput; },
-		set fileInput(v) { fileInput = v; },
-		endpointHost, endpointPort, endpointVisible, toggleEndpointVisible, externalStatusLabel, externalStatusVariant, systemStatusLabel, systemStatusVariant, isManagedTunnelOn, managedRouteMeta, showManagedPing, latestRate, sparklineSeries, handleAdoptClick, handleAwgSortChange, handleDragLeave, handleDragOver, handleDrop, handleFileSelect, openAwgDiagnostics, openConnectivitySettings, openDetail, requestDelete, markAsServer, handleToggleOnOff, checkPing, handleExportAll,
+		// Тулбар вкладки на дашборде скрыт: поиск и вид задаются дашбордом,
+		// секция эти поля не читает и не пишет (см. AwgTunnelsTabSection).
+		get awgListSearchQuery() { return dashboardSearchQuery; },
+		set awgListSearchQuery(v) { dashboardSearchQuery = v; },
+		get awgViewMode() { return dashboardAwgViewMode; },
+		set awgViewMode(_v) {},
+		get selectedBackend() { return configImport.selectedBackend; },
+		set selectedBackend(v) { configImport.selectedBackend = v; },
+		get fileInput() { return configImport.fileInput; },
+		set fileInput(v) { configImport.fileInput = v; },
+		endpointHost, endpointPort, endpointVisible, toggleEndpointVisible, externalStatusLabel, externalStatusVariant, systemStatusLabel, systemStatusVariant, isManagedTunnelOn, managedRouteMeta, showManagedPing, latestRate, sparklineSeries, handleAdoptClick, handleAwgSortChange, openAwgDiagnostics, openConnectivitySettings, openDetail,
+		handleDragLeave: configImport.handleDragLeave,
+		handleDragOver: configImport.handleDragOver,
+		handleDrop: configImport.handleDrop,
+		handleFileSelect: configImport.handleFileSelect,
+		requestDelete: tunnelActions.requestDelete,
+		markAsServer: tunnelActions.markAsServer,
+		handleToggleOnOff: tunnelActions.handleToggleOnOff,
+		checkPing: tunnelActions.checkPing,
+		handleExportAll: tunnelActions.handleExportAll,
 	};
 
 	// Live-контекст flat-дашборда (см. dashboardFlatContext.ts).
@@ -1321,11 +999,11 @@
 		get effectiveSingboxTunnelsRenderMode() { return effectiveSingboxTunnelsRenderMode; },
 		get effectiveSingboxSubscriptionsEffectiveLayout() { return effectiveSingboxSubscriptionsEffectiveLayout; },
 		get effectiveSingboxSubscriptionsRenderMode() { return effectiveSingboxSubscriptionsRenderMode; },
-		get exporting() { return exporting; },
-		get awgAutoConnectivityNonce() { return awgAutoConnectivityNonce; },
+		get exporting() { return tunnelActions.exporting; },
+		get awgAutoConnectivityNonce() { return awgAutoConnectivity.nonce; },
 		get singboxAutoDelayCheckNonce() { return singboxAutoDelayCheckNonce; },
-		get deleteLoading() { return deleteLoading; },
-		get toggleLoading() { return toggleLoading; },
+		get deleteLoading() { return tunnelActions.deleteLoading; },
+		get toggleLoading() { return tunnelActions.toggleLoading; },
 		get liveActives() { return liveActives; },
 		get flatDrag() { return flatDrag; },
 		get flatRowEls() { return flatRowEls; },
@@ -1335,7 +1013,11 @@
 		set dashboardTagFilter(v) { dashboardTagFilter = v; },
 		get flatGridEl() { return flatGridEl; },
 		set flatGridEl(v) { flatGridEl = v; },
-		handleAdoptClick, handleExportAll, handleGripKeydown, handleGripPointerDown, handleToggleOnOff, markAsServer, openAwgDiagnostics, openDetail, openSingboxDetail, openWizard, requestDelete, requestSubscriptionDelete,
+		handleAdoptClick, handleGripKeydown, handleGripPointerDown, openAwgDiagnostics, openDetail, openSingboxDetail, openWizard, requestSubscriptionDelete,
+		handleExportAll: tunnelActions.handleExportAll,
+		handleToggleOnOff: tunnelActions.handleToggleOnOff,
+		markAsServer: tunnelActions.markAsServer,
+		requestDelete: tunnelActions.requestDelete,
 	};
 
 	// Live-контекст модалок страницы (см. tunnelPageModalsContext.ts).
@@ -1354,12 +1036,12 @@
 		get adoptLoading() { return adoptLoading; },
 		set adoptLoading(v) { adoptLoading = v; },
 		get adoptingInterface() { return adoptingInterface; },
-		get deleteConfirmId() { return deleteConfirmId; },
-		set deleteConfirmId(v) { deleteConfirmId = v; },
-		get referencedDetails() { return referencedDetails; },
-		set referencedDetails(v) { referencedDetails = v; },
-		get referencedTunnelName() { return referencedTunnelName; },
-		set referencedTunnelName(v) { referencedTunnelName = v; },
+		get deleteConfirmId() { return tunnelActions.deleteConfirmId; },
+		set deleteConfirmId(v) { tunnelActions.deleteConfirmId = v; },
+		get referencedDetails() { return tunnelActions.referencedDetails; },
+		set referencedDetails(v) { tunnelActions.referencedDetails = v; },
+		get referencedTunnelName() { return tunnelActions.referencedTunnelName; },
+		set referencedTunnelName(v) { tunnelActions.referencedTunnelName = v; },
 		get createModalOpen() { return createModalOpen; },
 		set createModalOpen(v) { createModalOpen = v; },
 		get wizardPreselect() { return wizardPreselect; },
@@ -1372,7 +1054,8 @@
 		get connectivitySettingsTunnel() { return connectivitySettingsTunnel; },
 		get connectivitySettingsOpen() { return connectivitySettingsOpen; },
 		set connectivitySettingsOpen(v) { connectivitySettingsOpen = v; },
-		handleAdopt, handleDelete, confirmSubscriptionDelete, closeDetail, closeSingboxDetail, closeAwgDiagnostics, closeConnectivitySettings,
+		handleAdopt, confirmSubscriptionDelete,
+		handleDelete: tunnelActions.handleDelete, closeDetail, closeSingboxDetail, closeAwgDiagnostics, closeConnectivitySettings,
 	};
 </script>
 
@@ -1383,34 +1066,7 @@
 <PageContainer width="full">
 	<PageHeader title="Туннели" />
 	{#if loading}
-		<div aria-hidden="true">
-			{#if !dashboardOn}
-				<!-- полоса на месте Tabs -->
-				<div class="skeleton" style="height: 2rem; width: 260px; margin-bottom: 14px;"></div>
-			{/if}
-			{#if !dashboardOn && awgViewMode === 'list' && !isAwgMobile}
-				<!-- desktop-таблица: строки-полоски (mobile list рендерится карточками — ветка ниже) -->
-				<div class="skel-table">
-					{#each Array.from({ length: $tunnelsSkeletonCount }) as _, i (i)}
-						<div class="skel-row">
-							{#each ['28%', '18%', '14%', '12%', '10%'] as w, ci (ci)}
-								<span class="skeleton" style="height: 0.75rem; width: {w}"></span>
-							{/each}
-						</div>
-					{/each}
-				</div>
-			{:else}
-				<div
-					class="tunnel-grid"
-					class:tunnel-grid--dense={!dashboardOn && awgViewMode === 'cards'}
-					class:tunnel-grid--compact={dashboardOn || awgViewMode === 'compact'}
-				>
-					{#each Array.from({ length: $tunnelsSkeletonCount }) as _, i (i)}
-						<TunnelCardSkeleton compact={dashboardOn || awgViewMode === 'compact'} />
-					{/each}
-				</div>
-			{/if}
-		</div>
+		<TunnelsLoadingSkeleton compact={dashboardOn} />
 	{:else if tunnelSnap.status === 'error' && !tunnelSnap.data}
 		<EmptyState
 			title="Ошибка загрузки"
@@ -1419,14 +1075,6 @@
 	{:else}
 		{#if dashboardOn}
 			<DashboardFlatSection ctx={dashboardFlatCtx} />
-		{:else}
-			<Tabs
-				tabs={tunnelTabs}
-				active={activeTab}
-				onchange={(id) => (activeTab = id as TunnelTab)}
-				urlParam="tab"
-				defaultTab="awg"
-			/>
 		{/if}
 
 		{#if dashboardTypeSections && awgFilteredRowsCount > 0}
@@ -1690,17 +1338,5 @@
 		background: var(--color-accent);
 		color: #fff;
 		border-color: var(--color-accent);
-	}
-
-	.skel-table {
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-		padding: 8px 4px;
-	}
-	.skel-row {
-		display: flex;
-		gap: 16px;
-		align-items: center;
 	}
 </style>

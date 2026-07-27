@@ -350,7 +350,7 @@
 		<div class="actions">
 			<TunnelListActions
 				variant="labeled"
-				editHref="/system-tunnels/{tunnel.id}"
+				editHref="/awg/tunnels/system/{tunnel.id}"
 				editTitle="Изменить туннель «{displayName}»"
 				onTest={openTest}
 				testTitle="Тест туннеля «{displayName}»"

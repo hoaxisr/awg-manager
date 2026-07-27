@@ -47,13 +47,10 @@ export const NAV_TREE: NavEntry[] = [
 			{
 				id: 'awg-tunnels',
 				label: 'Туннели',
-				// Явный ?tab=awg: с чужой вкладки главной голый '/' не переключает
-				// Tabs (inbound-эффект игнорирует пропажу параметра, outbound
-				// возвращает старый ?tab=). Фаза 2: станет /awg/tunnels.
-				href: '/?tab=awg',
-				match: (url) =>
-					(url.pathname === '/' && (tab(url) === null || tab(url) === 'awg')) ||
-					isPath(url, '/tunnels', '/system-tunnels'),
+				href: '/awg/tunnels',
+				// Префикс покрывает и детальные: /awg/tunnels/{id},
+				// /awg/tunnels/new, /awg/tunnels/system/{name}.
+				match: (url) => isPath(url, '/awg/tunnels'),
 			},
 			{
 				id: 'awg-servers',

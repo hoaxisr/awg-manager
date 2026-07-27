@@ -8,7 +8,6 @@ describe('NAV_TREE hrefs', () => {
 	// с ЧУЖОЙ вкладки не переключает Tabs (пункт становится мёртвым).
 	// Такие пункты обязаны указывать вкладку явно.
 	it.each([
-		['awg-tunnels', '/?tab=awg'],
 		['router-ndms', '/routing?tab=dns'],
 	])('%s указывает вкладку явно', (id, href) => {
 		const all = NAV_TREE.flatMap((e) => (e.kind === 'group' ? e.items : [e]));
@@ -19,13 +18,18 @@ describe('NAV_TREE hrefs', () => {
 });
 
 describe('activeItem', () => {
-	it('/ и /?tab=awg → AWG Туннели', () => {
-		expect(activeItem(u('/'))?.item.id).toBe('awg-tunnels');
-		expect(activeItem(u('/?tab=awg'))?.item.id).toBe('awg-tunnels');
+	it('AWG-туннели на своём маршруте', () => {
+		expect(activeItem(u('/awg/tunnels'))?.item.id).toBe('awg-tunnels');
+		expect(activeItem(u('/awg/tunnels?detail=t1'))?.item.id).toBe('awg-tunnels');
 	});
 	it('детальные страницы туннелей → AWG Туннели', () => {
-		expect(activeItem(u('/tunnels/abc'))?.item.id).toBe('awg-tunnels');
-		expect(activeItem(u('/system-tunnels/nwg0'))?.item.id).toBe('awg-tunnels');
+		expect(activeItem(u('/awg/tunnels/abc'))?.item.id).toBe('awg-tunnels');
+		expect(activeItem(u('/awg/tunnels/new'))?.item.id).toBe('awg-tunnels');
+		expect(activeItem(u('/awg/tunnels/system/nwg0'))?.item.id).toBe('awg-tunnels');
+	});
+	it('главная больше не подсвечивает AWG-туннели', () => {
+		expect(activeItem(u('/'))?.item.id).not.toBe('awg-tunnels');
+		expect(activeItem(u('/?tab=awg'))?.item.id).not.toBe('awg-tunnels');
 	});
 	it('sing-box туннели на своём маршруте', () => {
 		expect(activeItem(u('/sb/tunnels'))?.item.id).toBe('sb-tunnels');

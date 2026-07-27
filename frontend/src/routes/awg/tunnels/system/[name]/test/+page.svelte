@@ -10,7 +10,7 @@
 	mode="page"
 	targetId={tunnelName}
 	displayName={tunnelName}
-	backHref="/"
+	backHref="/awg/tunnels"
 	backLabel="К списку туннелей"
 	subjectLabel="туннель"
 />

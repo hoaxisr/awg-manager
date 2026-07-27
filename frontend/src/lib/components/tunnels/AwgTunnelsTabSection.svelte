@@ -114,7 +114,7 @@
 				<button class="term-cmd" onclick={() => ctx.fileInput?.click()}>
 					<span class="term-arrow">{'>'}</span> импортировать файл
 				</button>
-				<button class="term-cmd" onclick={() => goto('/tunnels/new?tab=vpn')}>
+				<button class="term-cmd" onclick={() => goto('/awg/tunnels/new?tab=vpn')}>
 					<span class="term-arrow">{'>'}</span> импортировать ссылку
 				</button>
 			</div>
@@ -181,7 +181,7 @@
 			<Button variant="secondary" size="md" onclick={ctx.handleExportAll} disabled={ctx.exporting} iconBefore={exportIcon}>
 				Экспорт
 			</Button>
-			<Button variant="primary" size="md" onclick={() => goto('/tunnels/new')} iconBefore={createIcon}>
+			<Button variant="primary" size="md" onclick={() => goto('/awg/tunnels/new')} iconBefore={createIcon}>
 				Создать
 			</Button>
 		</div>
@@ -399,7 +399,7 @@
 					</div>
 					<div class="awg-list-cell awg-list-cell-actions tunnel-list-cell--actions" data-label="Действия">
 						<TunnelListActions
-							editHref="/tunnels/{tunnel.id}"
+							editHref="/awg/tunnels/{tunnel.id}"
 							editTitle="Изменить туннель «{tunnel.name}»"
 							onTest={() => ctx.openAwgDiagnostics(tunnel.id, tunnel.name)}
 							testTitle="Тест туннеля «{tunnel.name}»"
@@ -511,7 +511,7 @@
 						</div>
 						<div class="awg-list-cell awg-list-cell-actions tunnel-list-cell--actions" data-label="Действия">
 							<TunnelListActions
-								editHref="/system-tunnels/{tunnel.id}"
+								editHref="/awg/tunnels/system/{tunnel.id}"
 								editTitle="Изменить туннель «{tunnel.description || tunnel.id}»"
 								onTest={() => ctx.openAwgDiagnostics(tunnel.id, tunnel.description || tunnel.id, 'system')}
 								testTitle="Тест туннеля «{tunnel.description || tunnel.id}»"

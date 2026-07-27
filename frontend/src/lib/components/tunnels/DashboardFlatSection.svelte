@@ -161,7 +161,7 @@
 				showGroupControl={!ctx.dashboardFlatLayout}
 				activeTagFilter={ctx.dashboardTagFilter}
 				onClearTagFilter={() => (ctx.dashboardTagFilter = null)}
-				onCreateAwg={() => goto('/tunnels/new')}
+				onCreateAwg={() => goto('/awg/tunnels/new')}
 				onCreateSingboxSingle={() => ctx.openWizard('single')}
 				onCreateSingboxGroup={() => ctx.openWizard('inline')}
 				onCreateSingboxSubscription={() => ctx.openWizard('url')}

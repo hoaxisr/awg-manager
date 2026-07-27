@@ -92,6 +92,19 @@ export function externalStatusLabel(tunnel: ExternalTunnel): string {
 	return tunnel.lastHandshake ? 'Подключён' : 'Неактивен';
 }
 
+export function endpointHost(endpoint?: string | null): string {
+	const value = endpoint ?? '';
+	const match = value.match(/^(?:\[([^\]]+)\]|([^:]+)):(\d+)$/);
+	if (match) return match[1] || match[2] || value;
+	return value;
+}
+
+export function endpointPort(endpoint?: string | null): string {
+	const value = endpoint ?? '';
+	const match = value.match(/:(\d+)$/);
+	return match ? match[1] : '';
+}
+
 export function matchQuery(values: Array<string | null | undefined>, query: string): boolean {
 	const q = query.trim().toLowerCase();
 	if (!q) return true;
@@ -448,6 +461,29 @@ function peakCombinedRate(win: { rx: number[]; tx: number[] }): number {
 		if (combined > peak) peak = combined;
 	}
 	return peak;
+}
+
+/** Счётчики и суммарный трафик AWG-сводки (управляемые + системные + внешние). */
+export function computeAwgSummary(
+	awgList: TunnelListItem[],
+	systemList: SystemTunnel[],
+	externalList: ExternalTunnel[],
+): { total: number; active: number; rx: number; tx: number } {
+	return {
+		total: awgList.length + systemList.length + externalList.length,
+		active:
+			awgList.filter((t) => isManagedTunnelOn(t)).length +
+			systemList.filter((t) => t.status === 'up').length +
+			externalList.filter((t) => !!t.lastHandshake).length,
+		rx:
+			awgList.reduce((sum, t) => sum + (t.rxBytes ?? 0), 0) +
+			systemList.reduce((sum, t) => sum + (t.peer?.rxBytes ?? 0), 0) +
+			externalList.reduce((sum, t) => sum + t.rxBytes, 0),
+		tx:
+			awgList.reduce((sum, t) => sum + (t.txBytes ?? 0), 0) +
+			systemList.reduce((sum, t) => sum + (t.peer?.txBytes ?? 0), 0) +
+			externalList.reduce((sum, t) => sum + t.txBytes, 0),
+	};
 }
 
 export function computeAwgSummaryPeak(

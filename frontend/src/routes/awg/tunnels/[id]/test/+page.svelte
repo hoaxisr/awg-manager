@@ -25,7 +25,7 @@
 	kind="awg"
 	targetId={tunnelId}
 	{displayName}
-	backHref="/"
+	backHref="/awg/tunnels"
 	backLabel="К списку туннелей"
 	subjectLabel="туннель"
 />

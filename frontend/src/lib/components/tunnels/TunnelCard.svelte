@@ -557,7 +557,7 @@
 		<div class="actions">
 			<TunnelListActions
 				variant="labeled"
-				editHref="/tunnels/{tunnel.id}"
+				editHref="/awg/tunnels/{tunnel.id}"
 				onTest={() => (diagnosticsOpen = true)}
 				onDelete={() => ondelete?.()}
 				deleteDisabled={deleteLoading}

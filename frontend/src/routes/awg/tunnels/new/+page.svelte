@@ -102,7 +102,7 @@
 				tunnel.warnings.forEach(w => notifications.warning(w));
 			}
 			notifications.success('Туннель успешно импортирован');
-			goto(`/tunnels/${tunnel.id}`);
+			goto(`/awg/tunnels/${tunnel.id}`);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Ошибка импорта');
 		} finally {
@@ -129,7 +129,7 @@
 
 <PageContainer>
 <div class="page-header">
-	<BackLink href="/" />
+	<BackLink href="/awg/tunnels" />
 	<h2 class="page-title">Новый туннель</h2>
 </div>
 

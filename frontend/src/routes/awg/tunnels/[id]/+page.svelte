@@ -118,7 +118,7 @@
 	async function loadTunnel() {
 		if (!tunnelId) {
 			notifications.error('ID туннеля не указан');
-			goto('/');
+			goto('/awg/tunnels');
 			return;
 		}
 
@@ -128,7 +128,7 @@
 			populateForm();
 		} catch (e) {
 			notifications.error(`Ошибка загрузки: ${(e as Error).message}`);
-			goto('/');
+			goto('/awg/tunnels');
 		} finally {
 			loading = false;
 		}
@@ -215,7 +215,7 @@
 		try {
 			await tunnels.update(tunnelId, buildUpdatePayload());
 			notifications.success('Туннель сохранён');
-			goto('/');
+			goto('/awg/tunnels');
 		} catch (e) {
 			notifications.error(`Ошибка: ${(e as Error).message}`);
 		} finally {
@@ -237,7 +237,7 @@
 				await tunnels.start(tunnelId);
 			}
 			notifications.success(isRunning ? 'Туннель сохранён и перезапущен' : 'Туннель сохранён и запущен');
-			goto('/');
+			goto('/awg/tunnels');
 		} catch (e) {
 			notifications.error(`Ошибка: ${(e as Error).message}`);
 			showActionResult('error');

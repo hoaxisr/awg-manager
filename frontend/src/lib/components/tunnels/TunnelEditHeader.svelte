@@ -35,7 +35,7 @@
 
 <div class="sticky-header">
 	<div class="header-left flex items-center gap-4">
-		<BackLink href="/" />
+		<BackLink href="/awg/tunnels" />
 		<div class="flex items-center gap-2.5">
 			<h1 class="page-title text-lg font-semibold">{tunnelName}</h1>
 			<span class="badge" class:badge-success={tunnelState === 'running'} class:badge-warning={tunnelState === 'starting' || tunnelState === 'broken' || tunnelState === 'needs_start' || tunnelState === 'needs_stop' || tunnelState === 'stopping'} class:badge-muted={tunnelState === 'disabled'} class:badge-error={tunnelState === 'stopped' || tunnelState === 'not_created'}>
