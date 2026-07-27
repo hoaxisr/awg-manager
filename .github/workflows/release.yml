@@ -113,6 +113,7 @@ jobs:
         run: |
           set -euo pipefail
           ver="$(sed -n 's/^const RequiredVersion = "\(.*\)"/\1/p' internal/singbox/installer/embedded.go)"
+          ver="${ver%-awgm.*}"  # у SagerNet нет релизов форка; для rule-set decompile хватает апстрим-базы
           curl -fsSL -o /tmp/sb.tgz "https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box-${ver}-linux-amd64.tar.gz"
           tar -xzf /tmp/sb.tgz -C /tmp
           echo "SB=$(find /tmp -type f -name sing-box -path "*${ver}-linux-amd64*" | head -1)" >> "$GITHUB_ENV"
