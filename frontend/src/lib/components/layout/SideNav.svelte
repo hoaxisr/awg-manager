@@ -26,7 +26,9 @@
 </script>
 
 <div class="sidenav">
-	<a href="/" class="brand" aria-label="AWG Manager" onclick={onNavigate}>
+	<!-- фаза 3: вернуть '/' когда на корне появится дашборд «Обзор»;
+	     сейчас голый '/' с чужой вкладки главной не переключает Tabs -->
+	<a href="/?tab=awg" class="brand" aria-label="AWG Manager" onclick={onNavigate}>
 		<BrandLogoMark />
 		<span class="wordmark">AWG⋅Manager</span>
 	</a>

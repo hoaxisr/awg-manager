@@ -1,7 +1,22 @@
 import { describe, it, expect } from 'vitest';
-import { activeItem, breadcrumbFor } from './navigation';
+import { NAV_TREE, activeItem, breadcrumbFor } from './navigation';
 
 const u = (path: string) => new URL(`http://router${path}`);
+
+describe('NAV_TREE hrefs', () => {
+	// Вкладка по умолчанию вычищается из URL, поэтому переход на голый путь
+	// с ЧУЖОЙ вкладки не переключает Tabs (пункт становится мёртвым).
+	// Такие пункты обязаны указывать вкладку явно.
+	it.each([
+		['awg-tunnels', '/?tab=awg'],
+		['router-ndms', '/routing?tab=dns'],
+	])('%s указывает вкладку явно', (id, href) => {
+		const all = NAV_TREE.flatMap((e) => (e.kind === 'group' ? e.items : [e]));
+		const item = all.find((i) => i.id === id);
+		expect(item?.href).toBe(href);
+		expect(item?.href).toContain('?tab=');
+	});
+});
 
 describe('activeItem', () => {
 	it('/ и /?tab=awg → AWG Туннели', () => {
