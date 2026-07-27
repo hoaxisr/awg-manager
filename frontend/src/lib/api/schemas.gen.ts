@@ -2561,6 +2561,7 @@ const wdtt_ClientInstance: v.GenericSchema = v.looseObject({
 
 const wdtt_Config: v.GenericSchema = v.looseObject({
 	clients: v.optional(v.nullable(v.array(v.lazy(() => wdtt_ClientInstance)))),
+	servers: v.optional(v.nullable(v.array(v.lazy(() => wdtt_ServerInstance)))),
 	version: v.optional(v.nullable(v.number())),
 });
 
@@ -2599,6 +2600,29 @@ const wdtt_ProcessStatus: v.GenericSchema = v.looseObject({
 	wgConfig: v.optional(v.nullable(v.string())),
 });
 
+const wdtt_ServerConfig: v.GenericSchema = v.looseObject({
+	adminId: v.optional(v.nullable(v.string())),
+	botToken: v.optional(v.nullable(v.string())),
+	configDir: v.optional(v.nullable(v.string())),
+	debug: v.optional(v.nullable(v.boolean())),
+	enabled: v.optional(v.nullable(v.boolean())),
+	ingressEnabled: v.optional(v.nullable(v.boolean())),
+	lanSegments: v.optional(v.nullable(v.array(v.string()))),
+	listen: v.optional(v.nullable(v.string())),
+	natIface: v.optional(v.nullable(v.string())),
+	natMode: v.optional(v.nullable(v.string())),
+	natStaticWan: v.optional(v.nullable(v.string())),
+	password: v.optional(v.nullable(v.string())),
+	policy: v.optional(v.nullable(v.string())),
+	wgPort: v.optional(v.nullable(v.number())),
+});
+
+const wdtt_ServerInstance: v.GenericSchema = v.looseObject({
+	config: v.optional(v.nullable(v.lazy(() => wdtt_ServerConfig))),
+	id: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+});
+
 const wdtt_Status: v.GenericSchema = v.looseObject({
 	client: v.optional(v.nullable(v.lazy(() => wdtt_ProcessStatus))),
 	clients: v.optional(v.nullable(v.array(v.lazy(() => wdtt_InstanceStatus)))),
@@ -2607,6 +2631,8 @@ const wdtt_Status: v.GenericSchema = v.looseObject({
 	installedVersion: v.optional(v.nullable(v.string())),
 	installing: v.optional(v.nullable(v.boolean())),
 	routerClock: v.optional(v.nullable(v.string())),
+	server: v.optional(v.nullable(v.lazy(() => wdtt_ProcessStatus))),
+	servers: v.optional(v.nullable(v.array(v.lazy(() => wdtt_InstanceStatus)))),
 	updateAvailable: v.optional(v.nullable(v.boolean())),
 });
 

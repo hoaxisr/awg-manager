@@ -6946,6 +6946,10 @@ definitions:
         items:
           $ref: '#/definitions/wdtt.ClientInstance'
         type: array
+      servers:
+        items:
+          $ref: '#/definitions/wdtt.ServerInstance'
+        type: array
       version:
         type: integer
     type: object
@@ -7017,6 +7021,60 @@ definitions:
       wgConfig:
         type: string
     type: object
+  wdtt.ServerConfig:
+    properties:
+      adminId:
+        description: -admin, optional Telegram user id
+        type: string
+      botToken:
+        description: -bot-token, optional Telegram bot
+        type: string
+      configDir:
+        description: -config-dir; empty → dataDir/wdtt/server/{id}
+        type: string
+      debug:
+        type: boolean
+      enabled:
+        type: boolean
+      ingressEnabled:
+        description: sing-box ingress for iface:wdtt0
+        type: boolean
+      lanSegments:
+        description: LAN bridge names
+        items:
+          type: string
+        type: array
+      listen:
+        description: -listen, DTLS (default 0.0.0.0:56002)
+        type: string
+      natIface:
+        description: 'Router integration (awg-manager + NDMS for wdtt0):'
+        type: string
+      natMode:
+        description: full | internet-only | none via managed service
+        type: string
+      natStaticWan:
+        description: persisted WAN for internet-only teardown
+        type: string
+      password:
+        description: -password, WRAP key derivation
+        type: string
+      policy:
+        description: NDMS hotspot policy or "none"
+        type: string
+      wgPort:
+        description: -wg-port, internal WG (default 56001)
+        type: integer
+    type: object
+  wdtt.ServerInstance:
+    properties:
+      config:
+        $ref: '#/definitions/wdtt.ServerConfig'
+      id:
+        type: string
+      name:
+        type: string
+    type: object
   wdtt.Status:
     properties:
       client:
@@ -7035,6 +7093,12 @@ definitions:
         type: boolean
       routerClock:
         type: string
+      server:
+        $ref: '#/definitions/wdtt.ProcessStatus'
+      servers:
+        items:
+          $ref: '#/definitions/wdtt.InstanceStatus'
+        type: array
       updateAvailable:
         type: boolean
     type: object
