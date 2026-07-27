@@ -106,7 +106,7 @@
 		{#snippet footer()}
 			<div class="notif-footer">
 				<span class="notif-retention">Хранится 7 дней · до 100</span>
-				<a class="notif-journal" href="/logs" onclick={() => (open = false)}>Открыть журнал →</a>
+				<a class="notif-journal" href="/tools?tab=logs" onclick={() => (open = false)}>Открыть журнал →</a>
 			</div>
 		{/snippet}
 	</SideDrawer>
