@@ -91,9 +91,7 @@ export const NAV_TREE: NavEntry[] = [
 				id: 'sb-routing',
 				label: 'Маршрутизация',
 				href: '/routing?tab=singbox',
-				match: (url) =>
-					isPath(url, '/routing') &&
-					(tab(url) === 'singbox' || tab(url) === 'fakeip' || tab(url) === null),
+				match: (url) => isPath(url, '/routing') && (tab(url) === 'singbox' || tab(url) === 'fakeip'),
 			},
 			{
 				id: 'sb-geodata',
@@ -113,7 +111,10 @@ export const NAV_TREE: NavEntry[] = [
 				id: 'router-ndms',
 				label: 'NDMS',
 				href: '/routing?tab=dns',
-				match: (url) => isPath(url, '/routing') && tab(url) === 'dns',
+				// `dns` — вкладка по умолчанию на /routing, и Tabs вычищает
+				// её из URL (?tab=dns → /routing). Поэтому голый /routing
+				// подсвечиваем как NDMS: это то, что страница и открывает.
+				match: (url) => isPath(url, '/routing') && (tab(url) === 'dns' || tab(url) === null),
 			},
 			{
 				id: 'router-ip',

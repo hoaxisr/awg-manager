@@ -32,7 +32,8 @@ describe('activeItem', () => {
 		expect(activeItem(u('/routing?tab=fakeip'))?.item.id).toBe('sb-routing');
 		expect(activeItem(u('/routing?tab=geodata'))?.item.id).toBe('sb-geodata');
 		expect(activeItem(u('/routing?tab=hrneo'))?.item.id).toBe('svc-hrneo');
-		expect(activeItem(u('/routing'))?.item.id).toBe('sb-routing');
+		// Голый /routing = вкладка по умолчанию (NDMS): Tabs вычищает ?tab=dns.
+		expect(activeItem(u('/routing'))?.item.id).toBe('router-ndms');
 	});
 	it('серверы и инструменты', () => {
 		expect(activeItem(u('/awg/servers'))?.item.id).toBe('awg-servers');
