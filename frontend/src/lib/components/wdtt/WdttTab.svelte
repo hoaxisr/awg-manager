@@ -2,6 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
+	import { wdttStatus } from '$lib/stores/wdttStatus';
 	import InstanceBar from '../freeturn/InstanceBar.svelte';
 	import { ProcessAlerts } from '$lib/components/ui';
 	import WdttClientSimple from './WdttClientSimple.svelte';
@@ -13,8 +14,7 @@
 		WdttClientConfig,
 		WdttClientInstance,
 		WdttConfig,
-		WdttImportPayload,
-		WdttStatus
+		WdttImportPayload
 	} from '$lib/types';
 
 	let loading = $state(true);
@@ -24,7 +24,9 @@
 	let installing = $state(false);
 
 	let config = $state<WdttConfig | null>(null);
-	let status = $state<WdttStatus | null>(null);
+	// Статус живёт в общем сторе (его же читает «Обзор»); вкладке нужна
+	// секундная реакция, поэтому она ускоряет стор своим refetch-поллингом.
+	const status = $derived($wdttStatus.data);
 	let savedConfig = $state<WdttConfig | null>(null);
 	let selectedClientId = $state('default');
 
@@ -120,12 +122,9 @@
 	}
 
 	async function loadStatus() {
-		try {
-			status = await api.getWdttStatus();
-			await maybeEnsureWgFromLog();
-		} catch {
-			// polling — молча
-		}
+		// Ошибки глотает сам стор — молча, как ping-бейджи списка туннелей.
+		await wdttStatus.refetch();
+		await maybeEnsureWgFromLog();
 	}
 
 	async function maybeEnsureWgFromLog() {

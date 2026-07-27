@@ -29,7 +29,7 @@
 	import { appLogEntries, singboxLogEntries, logStoreFor, type LogBucket } from '$lib/stores/logs';
 	import { monitoringStore } from '$lib/stores/monitoring';
 	import { appendPingLog } from '$lib/stores/pingcheck';
-	import { systemInfo } from '$lib/stores/system';
+	import { systemInfo, updateInfo as updateInfoStore } from '$lib/stores/system';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { feedTraffic } from '$lib/stores/traffic';
 	import { applyTraffic as singboxApplyTraffic, applyTrafficTotals as singboxApplyTrafficTotals, applyDelay as singboxApplyDelay } from '$lib/stores/singbox';
@@ -70,6 +70,11 @@
 		currentVersion.includes('-dev')
 	);
 	const hasUpdate = $derived(updateInfo?.available ?? false);
+	// Зеркало в сторе: «Обзор» читает updateInfo оттуда, чтобы не дублировать
+	// checkUpdate вторым запросом.
+	$effect(() => {
+		updateInfoStore.set(updateInfo);
+	});
 	/** Для Neo вторая ветка визуально тёмная, но mode остаётся dark ради color-scheme. */
 	const themeDisplayMode = $derived($theme.preset === 'neo' ? $theme.legacyMode : $theme.mode);
 

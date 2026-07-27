@@ -2,6 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
+	import { freeturnStatus } from '$lib/stores/freeturnStatus';
 	import { copyToClipboard as copyText } from '$lib/utils/clipboard';
 	import { Tabs, ProcessAlerts } from '$lib/components/ui';
 	import type {
@@ -10,8 +11,7 @@
 		FreeTurnConfig,
 		FreeTurnGenerateLinkResult,
 		FreeTurnServerConfig,
-		FreeTurnServerInstance,
-		FreeTurnStatus
+		FreeTurnServerInstance
 	} from '$lib/types';
 	import InstanceBar from './InstanceBar.svelte';
 	import FreeTurnClientSimple from './FreeTurnClientSimple.svelte';
@@ -28,7 +28,9 @@
 	let saving = $state(false);
 
 	let config = $state<FreeTurnConfig | null>(null);
-	let status = $state<FreeTurnStatus | null>(null);
+	// Статус живёт в общем сторе (его же читает «Обзор»); вкладке нужна
+	// секундная реакция, поэтому она ускоряет стор своим refetch-поллингом.
+	const status = $derived($freeturnStatus.data);
 	let savedConfig = $state<FreeTurnConfig | null>(null);
 
 	let selectedClientId = $state('default');
@@ -161,11 +163,8 @@
 	}
 
 	async function loadStatus() {
-		try {
-			status = await api.getFreeTurnStatus();
-		} catch {
-			// Молча — как ping-бейджи списка туннелей.
-		}
+		// Ошибки глотает сам стор — молча, как ping-бейджи списка туннелей.
+		await freeturnStatus.refetch();
 	}
 
 	async function saveClientConfig(cfg: FreeTurnClientConfig) {

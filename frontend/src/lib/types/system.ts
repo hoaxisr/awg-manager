@@ -161,6 +161,9 @@ export interface WANStatus {
 export interface WANInterfaceStatus {
 	up: boolean;
 	label: string;
+	/** Приоритет интерфейса в NDMS; активный WAN — поднятый с максимальным
+	 *  (wan.InterfaceStatus.Priority). Absent на старых бэкендах. */
+	priority?: number;
 }
 
 export interface TerminalStatus {

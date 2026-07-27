@@ -8,9 +8,10 @@
  * Invalidation hook: SSE `resource:invalidated` with Resource="sysInfo"
  * triggers an immediate refetch via the store registry.
  */
+import { writable } from 'svelte/store';
 import { createPollingStore, type PollingStore } from './polling';
 import { registerStore } from './storeRegistry';
-import type { SystemInfo } from '$lib/types';
+import type { SystemInfo, UpdateInfo } from '$lib/types';
 
 async function fetchSysInfo(): Promise<SystemInfo> {
 	const res = await fetch('/api/system/info');
@@ -25,3 +26,10 @@ export const systemInfo: PollingStore<SystemInfo> = createPollingStore<SystemInf
 });
 
 registerStore('sysInfo', systemInfo);
+
+/**
+ * updateInfo — результат единственного `api.checkUpdate()` из +layout.
+ * Страницы (бейдж «обновление доступно» на «Обзоре») читают его отсюда,
+ * а не дёргают ручку повторно.
+ */
+export const updateInfo = writable<UpdateInfo | null>(null);
