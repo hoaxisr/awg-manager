@@ -46,7 +46,7 @@
 	import { outboundReferenced } from '$lib/stores/outboundReferenced';
 	import { selectiveBypass } from '$lib/stores/selectiveBypass';
 	import TunnelReferencedModal from '$lib/components/tunnels/TunnelReferencedModal.svelte';
-	import { TriangleAlert } from 'lucide-svelte';
+	import { TriangleAlert, Sun, Moon } from 'lucide-svelte';
 	import DevelopFeedbackFab from '$lib/components/layout/DevelopFeedbackFab.svelte';
 	import {
 		isSectionVisible,
@@ -56,13 +56,13 @@
 	} from '$lib/types/usageLevel';
 	import type { UpdateInfo } from '$lib/types';
 	import LoginForm from '$lib/components/LoginForm.svelte';
-	import { Modal } from '$lib/components/ui';
-	import { AppHeader } from '$lib/components/layout';
+	import { IconButton, Modal } from '$lib/components/ui';
+	import { AppShell, BrandLogoMark } from '$lib/components/layout';
+	import { navGroups } from '$lib/stores/navGroups';
 	import '../app.css';
 
 	let { children }: { children: Snippet } = $props();
 
-	let mobileMenuOpen = $state(false);
 	let booting = $state(false);
 
 	let backendOffline = $derived(!$serverOnline);
@@ -78,6 +78,8 @@
 		currentVersion.includes('-dev')
 	);
 	const hasUpdate = $derived(updateInfo?.available ?? false);
+	/** Для Neo вторая ветка визуально тёмная, но mode остаётся dark ради color-scheme. */
+	const themeDisplayMode = $derived($theme.preset === 'neo' ? $theme.legacyMode : $theme.mode);
 
 	let disconnectSSE: (() => void) | null = null;
 	let unsubSysInfo: (() => void) | null = null;
@@ -385,6 +387,7 @@
 		tunnelDashboardManualOrder.init();
 		tunnelDashboardGroupMode.init();
 		tunnelDashboardTags.init();
+		navGroups.init();
 		await auth.checkStatus();
 	});
 
@@ -414,27 +417,46 @@
 		<div class="loading-spinner"></div>
 	</div>
 {:else}
-	<AppHeader
-		authenticated={$isAuthenticated}
-		authDisabled={$auth.authDisabled}
-		username={$auth.login}
-		theme={$theme}
-		{currentVersion}
-		versionPending={$isAuthenticated && updateFetchState === 'loading'}
-		{hasUpdate}
-		{isPreRelease}
-		bind:mobileMenuOpen
-		onToggleThemeMode={() => theme.toggleMode()}
-		onLogout={() => auth.logout()}
-		onOpenDonate={openDonateModal}
-	/>
-
-	{#if !$isAuthenticated && $page.url.pathname !== '/terms'}
-		<LoginForm />
+	{#if !$isAuthenticated}
+		{#if $page.url.pathname !== '/terms'}
+			<div class="login-screen">
+				<header class="login-topstrip">
+					<span class="login-brand">
+						<BrandLogoMark />
+						<span class="login-wordmark">AWG⋅Manager</span>
+					</span>
+					{#if $theme.preset !== 'custom'}
+						<IconButton ariaLabel="Переключить тему" onclick={() => theme.toggleMode()}>
+							{#if themeDisplayMode === 'dark'}
+								<Sun size={16} aria-hidden="true" />
+							{:else}
+								<Moon size={16} aria-hidden="true" />
+							{/if}
+						</IconButton>
+					{/if}
+				</header>
+				<LoginForm />
+			</div>
+		{:else}
+			<main class="main">
+				{@render children()}
+			</main>
+		{/if}
 	{:else}
-		<main class="main">
+		<AppShell
+			authDisabled={$auth.authDisabled}
+			username={$auth.login}
+			theme={$theme}
+			{currentVersion}
+			versionPending={updateFetchState === 'loading'}
+			{hasUpdate}
+			{isPreRelease}
+			onToggleThemeMode={() => theme.toggleMode()}
+			onLogout={() => auth.logout()}
+			onOpenDonate={openDonateModal}
+		>
 			{@render children()}
-		</main>
+		</AppShell>
 
 		<div class="toast-container">
 			{#if $notifications.length > 1}
@@ -550,6 +572,28 @@
 		margin-left: auto;
 		margin-right: auto;
 		padding: 0 1rem;
+	}
+
+	.login-topstrip {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.75rem 1.125rem;
+	}
+
+	.login-brand {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		color: var(--color-text-primary);
+	}
+
+	.login-wordmark {
+		font-family: var(--font-mono);
+		font-weight: 700;
+		font-size: 13px;
+		letter-spacing: -0.02em;
+		text-transform: uppercase;
 	}
 
 	.offline-screen {
