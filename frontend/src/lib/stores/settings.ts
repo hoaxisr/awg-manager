@@ -1,25 +1,16 @@
-// Minimal global cache for Settings + a derived UsageLevel store.
+// Minimal global cache for Settings.
 // Loaded once from /+layout.svelte after authentication; updated by:
-//   1. UsageLevelCard after a successful api.updateSettings() call
-//   2. The settings page after any of its save flows (write-through)
-//   3. The SSE handler for resource:invalidated{resource:"settings"}
+//   1. The settings page after any of its save flows (write-through)
+//   2. The SSE handler for resource:invalidated{resource:"settings"}
 //      which calls reloadSettings() (see Task 9)
-// Pages that don't care about UsageLevel can keep loading settings their
-// own way — this store coexists with that pattern.
+// Pages can keep loading settings their own way — this store coexists
+// with that pattern.
 
-import { writable, derived, get } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 import type { Settings } from '$lib/types';
-import { type UsageLevel } from '$lib/types/usageLevel';
 import { api } from '$lib/api/client';
 
 export const settings = writable<Settings | null>(null);
-
-// Safe fallback: when the store is empty we return 'advanced' so the UI
-// doesn't flicker by hiding things it should show.
-export const usageLevel = derived(
-	settings,
-	($s): UsageLevel => ($s?.usageLevel ?? 'advanced'),
-);
 
 export function setSettings(s: Settings) {
 	settings.set(s);

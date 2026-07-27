@@ -8,7 +8,6 @@
 	import { PageContainer, PageHeader } from '$lib/components/layout';
 	import { Tabs } from '$lib/components/ui';
 	import { LogsTerminal } from '$lib/components/diagnostics';
-	import { settings, usageLevel } from '$lib/stores/settings';
 	import ConnectionsTab from './ConnectionsTab.svelte';
 	import ChecksTab from './ChecksTab.svelte';
 	import AwgConfigAnalyzerTab from './AwgConfigAnalyzerTab.svelte';
@@ -45,41 +44,15 @@
 	let activeTab = $state<ActiveTab>(initialDiagnosticsTab());
 	let tunnels = $state<DiagnosticsTargetSeed[]>([]);
 
-	const diagnosticsTabs = $derived.by((): { id: ActiveTab; label: string }[] => {
-		const base: { id: ActiveTab; label: string }[] = [
-			{ id: 'logs', label: 'Журнал' },
-			{ id: 'monitoring', label: 'Мониторинг' },
-			{ id: 'connections', label: 'Соединения' },
-			{ id: 'checks', label: 'Проверки' },
-			{ id: 'about', label: 'Окружение' },
-		];
-		if ($usageLevel === 'expert') {
-			base.push({ id: 'awgConfig', label: 'Конфиг AWG' });
-		}
-		if ($usageLevel === 'expert') {
-			base.push({ id: 'dns', label: 'Сведения о DNS' });
-		}
-		return base;
-	});
-
-	$effect(() => {
-		// Пока настройки не загружены usageLevel имеет fallback 'advanced'
-		// и guard может преждевременно сбросить awgConfig на logs + вычистить URL.
-		// Ждём загрузки settings — Tabs сам восстановит вкладку из URL.
-		if ($settings === null) return;
-		if ($usageLevel === 'expert') return;
-		if (activeTab === 'awgConfig' || activeTab === 'dns') {
-			activeTab = 'logs';
-		}
-		const tab = $page.url.searchParams.get('tab');
-		if (tab === 'awgConfig' || tab === 'dns') {
-			const url = new URL($page.url);
-			url.searchParams.delete('tab');
-			const q = url.searchParams.toString();
-			const target = url.pathname + (q ? `?${q}` : '') + url.hash;
-			void goto(target, { replaceState: true, keepFocus: true, noScroll: true });
-		}
-	});
+	const diagnosticsTabs: { id: ActiveTab; label: string }[] = [
+		{ id: 'logs', label: 'Журнал' },
+		{ id: 'monitoring', label: 'Мониторинг' },
+		{ id: 'connections', label: 'Соединения' },
+		{ id: 'checks', label: 'Проверки' },
+		{ id: 'about', label: 'Окружение' },
+		{ id: 'awgConfig', label: 'Конфиг AWG' },
+		{ id: 'dns', label: 'Сведения о DNS' },
+	];
 
 	// Legacy URL sanitizer — rewrite ?tab=tests / ?tab=dnscheck (which used
 	// to render the health rail inside the logs tab) to ?tab=checks BEFORE

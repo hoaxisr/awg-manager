@@ -16,7 +16,7 @@
 		TunnelCardSkeleton,
 	} from '$lib/components/tunnels';
 	import { TunnelListActions } from '$lib/components/ui';
-	import { PageContainer, PageHeader, EmptyState, WelcomeBanner } from '$lib/components/layout';
+	import { PageContainer, PageHeader, EmptyState } from '$lib/components/layout';
 	import { tunnelsSkeletonCount, clampSkeletonCount } from '$lib/stores/skeletonCounts';
 	import {
 		TrafficSparkline,
@@ -33,8 +33,6 @@
 	import { awg3Tunnels } from '$lib/stores/awg3';
 	import { Awg3TunnelsSection } from '$lib/components/awg3';
 	import { feedTraffic, getTrafficRates, getTrafficSparklineSeries, subscribeTraffic } from '$lib/stores/traffic';
-	import { usageLevel } from '$lib/stores/settings';
-	import { isSectionVisible, isTunnelDashboardAvailable } from '$lib/types/usageLevel';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import SubscriptionsTabSection from '$lib/components/subscriptions/SubscriptionsTabSection.svelte';
 	import SingboxTunnelsTabSection from '$lib/components/singbox/SingboxTunnelsTabSection.svelte';
@@ -544,26 +542,18 @@
 	let awgViewMode = $state<AwgTunnelViewMode>('compact');
 	let awgViewModeReady = false;
 	let isAwgMobile = $state(readTunnelMobileLayout());
-	let showAwgViewModeSwitch = $derived($usageLevel !== 'basic');
 	let singboxTunnelsLayoutMode = $state<SingboxLayoutMode>('compact');
 	let singboxSubscriptionsLayoutMode = $state<SingboxLayoutMode>('compact');
 	let awg3TunnelsLayoutMode = $state<SingboxLayoutMode>('compact');
 	let singboxTunnelsLayoutReady = false;
 	let singboxSubscriptionsLayoutReady = false;
 	let awg3TunnelsLayoutReady = false;
-	let showSingboxListOption = $derived($usageLevel !== 'basic');
-	let singboxTunnelsEffectiveLayout = $derived<SingboxLayoutMode>(
-		!showSingboxListOption && singboxTunnelsLayoutMode === 'list'
-			? 'compact'
-			: singboxTunnelsLayoutMode,
-	);
+	let singboxTunnelsEffectiveLayout = $derived<SingboxLayoutMode>(singboxTunnelsLayoutMode);
 	let singboxSubscriptionsEffectiveLayout = $derived<SingboxLayoutMode>(
-		!showSingboxListOption && singboxSubscriptionsLayoutMode === 'list'
-			? 'compact'
-			: singboxSubscriptionsLayoutMode,
+		singboxSubscriptionsLayoutMode,
 	);
-	let showSingboxGridListToggle = $derived(showSingboxListOption);
-	let awgEffectiveViewMode = $derived(!showAwgViewModeSwitch ? 'compact' : awgViewMode);
+	const showSingboxGridListToggle = true;
+	let awgEffectiveViewMode = $derived(awgViewMode);
 	let awgRenderMode = $derived(resolveTunnelRenderMode(isAwgMobile, awgEffectiveViewMode));
 	let singboxTunnelsRenderMode = $derived(
 		resolveTunnelRenderMode(isAwgMobile, singboxTunnelsEffectiveLayout),
@@ -572,7 +562,7 @@
 		resolveTunnelRenderMode(isAwgMobile, singboxSubscriptionsEffectiveLayout),
 	);
 	let awg3TunnelsEffectiveLayout = $derived<SingboxLayoutMode>(
-		!showSingboxListOption && awg3TunnelsLayoutMode === 'list' ? 'compact' : awg3TunnelsLayoutMode,
+		awg3TunnelsLayoutMode,
 	);
 	let awg3TunnelsRenderMode = $derived(
 		resolveTunnelRenderMode(isAwgMobile, awg3TunnelsEffectiveLayout),
@@ -581,15 +571,7 @@
 		awgEffectiveViewMode === 'cards' ? 'cards' : 'compact',
 	);
 
-	// Dashboard mode is only reachable while its settings toggle is available
-	// («advanced»+): on «basic» a persisted flag must fall back to tabs
-	// instead of locking the user into a hidden mode.
-	let dashboardOn = $derived($tunnelDashboardMode && isTunnelDashboardAvailable($usageLevel));
-	const showSingboxSections = $derived(isSectionVisible($usageLevel, 'singboxTunnels'));
-	// FreeTurn существует только табом; в dashboard-режиме вход — кнопка
-	// тулбара, раскрывающая панель под дашбордом (#585).
-	const freeturnAvailable = $derived(isSectionVisible($usageLevel, 'freeturn'));
-	const wdttAvailable = $derived(isSectionVisible($usageLevel, 'wdtt'));
+	let dashboardOn = $derived($tunnelDashboardMode);
 	let dashboardFreeturnOpen = $state(false);
 	let dashboardFreeturnEl: HTMLElement | null = $state(null);
 	function toggleDashboardFreeturn() {
@@ -608,13 +590,11 @@
 			requestAnimationFrame(() => dashboardWdttEl?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
 		}
 	}
-	// Sing-box data is admitted into the dashboard only while its sections are
-	// visible at this usage level AND sing-box is installed (or still probing).
-	const dashboardSingboxVisible = $derived(
-		showSingboxSections && (singboxStatusLoading || singboxInstalled),
-	);
+	// Sing-box data is admitted into the dashboard only while sing-box is
+	// installed (or still probing).
+	const dashboardSingboxVisible = $derived(singboxStatusLoading || singboxInstalled);
 	let dashboardEffectiveView = $derived(
-		!showSingboxListOption && $tunnelDashboardView === 'list' ? 'compact' : $tunnelDashboardView,
+		$tunnelDashboardView,
 	);
 	let dashboardAwgViewMode = $derived<AwgTunnelViewMode>(
 		dashboardEffectiveView === 'dense' ? 'cards' : dashboardEffectiveView === 'compact' ? 'compact' : 'list',
@@ -688,18 +668,12 @@
 	const tunnelTabs = $derived(
 		[
 			{ id: 'awg', label: 'AWG', badge: awgList.length + systemList.length },
-			isSectionVisible($usageLevel, 'singboxTunnels')
-				? { id: 'singbox', label: 'Sing-box туннели', badge: singboxTunnelsList.length }
-				: null,
-			isSectionVisible($usageLevel, 'singboxTunnels')
-				? { id: 'subscriptions', label: 'Sing-box подписки', badge: subscriptionsList.length }
-				: null,
+			{ id: 'singbox', label: 'Sing-box туннели', badge: singboxTunnelsList.length },
+			{ id: 'subscriptions', label: 'Sing-box подписки', badge: subscriptionsList.length },
 			{ id: 'awg3', label: 'AWG3 туннели', badge: awg3List.length },
-			isSectionVisible($usageLevel, 'freeturn')
-				? { id: 'freeturn', label: 'FreeTurn' }
-				: null,
-			isSectionVisible($usageLevel, 'wdtt') ? { id: 'wdtt', label: 'WDTT' } : null,
-		].filter((t): t is { id: string; label: string; badge?: number } => t !== null),
+			{ id: 'freeturn', label: 'FreeTurn' },
+			{ id: 'wdtt', label: 'WDTT' },
+		] satisfies Array<{ id: string; label: string; badge?: number }>,
 	);
 
 	// Auto-switch off sing-box tab if it becomes hidden (basic mode).
@@ -1401,12 +1375,12 @@
 	// в dashboard-режиме — панель под дашбордом по кнопке тулбара (#585).
 	let showFreeturnBlock = $derived(
 		(!dashboardOn && activeTab === 'freeturn') ||
-			(dashboardOn && dashboardFreeturnOpen && freeturnAvailable),
+			(dashboardOn && dashboardFreeturnOpen),
 	);
 
 	let showWdttBlock = $derived(
 		(!dashboardOn && activeTab === 'wdtt') ||
-			(dashboardOn && dashboardWdttOpen && wdttAvailable),
+			(dashboardOn && dashboardWdttOpen),
 	);
 
 	// Единый класс сетки для сплошного и тегового карточных видов — классы
@@ -1509,7 +1483,6 @@
 		get dashboardNothingAtAll() { return dashboardNothingAtAll; },
 		get awgSearchEmpty() { return awgSearchEmpty; },
 		get awgSourceRowCount() { return awgSourceRowCount; },
-		get showAwgViewModeSwitch() { return showAwgViewModeSwitch; },
 		get effectiveAwgCardViewMode() { return effectiveAwgCardViewMode; },
 		get effectiveAwgEffectiveViewMode() { return effectiveAwgEffectiveViewMode; },
 		get effectiveAwgRenderMode() { return effectiveAwgRenderMode; },
@@ -1553,13 +1526,9 @@
 		get effectiveSingboxTunnelsRenderMode() { return effectiveSingboxTunnelsRenderMode; },
 		get effectiveSingboxSubscriptionsEffectiveLayout() { return effectiveSingboxSubscriptionsEffectiveLayout; },
 		get effectiveSingboxSubscriptionsRenderMode() { return effectiveSingboxSubscriptionsRenderMode; },
-		get showSingboxListOption() { return showSingboxListOption; },
-		get showSingboxSections() { return showSingboxSections; },
 		get exporting() { return exporting; },
-		get freeturnAvailable() { return freeturnAvailable; },
 		get freeturnOpen() { return dashboardFreeturnOpen; },
 		toggleFreeturn: toggleDashboardFreeturn,
-		get wdttAvailable() { return wdttAvailable; },
 		get wdttOpen() { return dashboardWdttOpen; },
 		toggleWdtt: toggleDashboardWdtt,
 		get awgAutoConnectivityNonce() { return awgAutoConnectivityNonce; },
@@ -1622,7 +1591,6 @@
 
 <PageContainer width="full">
 	<PageHeader title="Туннели" />
-	<WelcomeBanner />
 	{#if loading}
 		<div aria-hidden="true">
 			{#if !dashboardOn}

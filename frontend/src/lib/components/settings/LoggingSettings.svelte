@@ -1,9 +1,6 @@
 <script lang="ts">
 	import { Toggle, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import type { Settings } from '$lib/types';
-	import { usageLevel } from '$lib/stores/settings';
-
-	const isBasic = $derived($usageLevel === 'basic');
 
 	interface Props {
 		settings: Settings;
@@ -176,25 +173,23 @@
 		</div>
 	</div>
 
-	{#if !isBasic}
-		<div class="setting-row logging-buffer-row">
-			<div class="flex flex-col gap-1">
-				<span class="font-medium">Размер буфера sing-box</span>
-				<span class="setting-description">Sing-box форвардер шумный — отдельный буфер, чтобы не вытеснять записи приложения. По умолчанию 5000.</span>
-			</div>
-			<div class="num-input">
-				<input
-					type="number"
-					bind:value={localSingboxMaxEntries}
-					onblur={handleSingboxCommit}
-					min={MIN_ENTRIES}
-					max={MAX_ENTRIES}
-					step="500"
-					disabled={saving}
-				/>
-			</div>
+	<div class="setting-row logging-buffer-row">
+		<div class="flex flex-col gap-1">
+			<span class="font-medium">Размер буфера sing-box</span>
+			<span class="setting-description">Sing-box форвардер шумный — отдельный буфер, чтобы не вытеснять записи приложения. По умолчанию 5000.</span>
 		</div>
-	{/if}
+		<div class="num-input">
+			<input
+				type="number"
+				bind:value={localSingboxMaxEntries}
+				onblur={handleSingboxCommit}
+				min={MIN_ENTRIES}
+				max={MAX_ENTRIES}
+				step="500"
+				disabled={saving}
+			/>
+		</div>
+	</div>
 {/if}
 
 <style>

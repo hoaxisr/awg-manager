@@ -2,10 +2,9 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { get } from 'svelte/store';
 	import type { Snippet } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { theme } from '$lib/stores/theme';
-	import { compactLayout, isCompactLayoutActive } from '$lib/stores/compactLayout';
+	import { compactLayout } from '$lib/stores/compactLayout';
 	import {
 		tunnelDashboardLayout,
 		tunnelDashboardMode,
@@ -40,7 +39,7 @@
 	import { fakeipTransition } from '$lib/stores/fakeipTransition';
 	import { invalidateResource, invalidateAll } from '$lib/stores/storeRegistry';
 	import { setDeviceProxyMissingTarget, clearDeviceProxyMissingTarget } from '$lib/stores/deviceproxy';
-	import { settings as settingsStore, reloadSettings, usageLevel } from '$lib/stores/settings';
+	import { settings as settingsStore, reloadSettings } from '$lib/stores/settings';
 	import { loadPresetCatalog } from '$lib/stores/presets';
 	import { donateModalOpen, openDonateModal, closeDonateModal } from '$lib/stores/donateModal';
 	import { outboundReferenced } from '$lib/stores/outboundReferenced';
@@ -48,12 +47,6 @@
 	import TunnelReferencedModal from '$lib/components/tunnels/TunnelReferencedModal.svelte';
 	import { TriangleAlert, Sun, Moon } from 'lucide-svelte';
 	import DevelopFeedbackFab from '$lib/components/layout/DevelopFeedbackFab.svelte';
-	import {
-		isSectionVisible,
-		pathToSection,
-		SECTION_LABELS,
-		USAGE_LEVEL_LABELS,
-	} from '$lib/types/usageLevel';
 	import type { UpdateInfo } from '$lib/types';
 	import LoginForm from '$lib/components/LoginForm.svelte';
 	import { IconButton, Modal } from '$lib/components/ui';
@@ -343,36 +336,9 @@
 		}
 	});
 
-	// Sync usage level and compact layout to <html> for gutter tokens.
+	// Sync compact layout to <html> for gutter tokens.
 	$effect(() => {
-		document.documentElement.setAttribute('data-usage-level', $usageLevel);
-		const compact = isCompactLayoutActive($usageLevel, $compactLayout);
-		document.documentElement.setAttribute('data-layout-compact', compact ? 'true' : 'false');
-	});
-
-	// Route guard: redirect away from sections hidden at the current usage level.
-	let lastWarnedPath = $state<string | null>(null);
-
-	$effect(() => {
-		if (!$isAuthenticated) {
-			lastWarnedPath = null;
-			return;
-		}
-		if ($settingsStore === null) return;
-		const path = $page.url.pathname;
-		const section = pathToSection(path);
-		if (!section || isSectionVisible($usageLevel, section)) {
-			lastWarnedPath = null;
-			return;
-		}
-		if (lastWarnedPath === path) return;
-		lastWarnedPath = path;
-
-		notifications.warning(
-			`Раздел «${SECTION_LABELS[section]}» недоступен в режиме «${USAGE_LEVEL_LABELS[$usageLevel]}». Изменить уровень в Настройках.`,
-			{ action: { label: 'Настройки', href: '/settings' } },
-		);
-		void goto('/', { replaceState: true });
+		document.documentElement.setAttribute('data-layout-compact', $compactLayout ? 'true' : 'false');
 	});
 
 	onMount(async () => {

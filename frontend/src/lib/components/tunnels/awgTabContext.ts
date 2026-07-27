@@ -34,7 +34,6 @@ export interface AwgTabContext {
 	readonly dashboardNothingAtAll: boolean;
 	readonly awgSearchEmpty: boolean;
 	readonly awgSourceRowCount: number;
-	readonly showAwgViewModeSwitch: boolean;
 	readonly effectiveAwgCardViewMode: 'cards' | 'compact';
 	readonly effectiveAwgEffectiveViewMode: AwgTunnelViewMode;
 	readonly effectiveAwgRenderMode: TunnelRenderMode;

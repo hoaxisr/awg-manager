@@ -4,15 +4,10 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { systemInfo } from '$lib/stores/system';
-	import { settings, usageLevel, reloadSettings } from '$lib/stores/settings';
+	import { settings, reloadSettings } from '$lib/stores/settings';
 	import { auth } from '$lib/stores/auth';
 	import { theme } from '$lib/stores/theme';
 	import { singboxStatus } from '$lib/stores/singbox';
-	import {
-		isRoutingSubTabVisible,
-		isSectionVisible,
-		type UsageLevel,
-	} from '$lib/types/usageLevel';
 	import type {
 		AccessPolicy,
 		DeviceProxyConfig,
@@ -71,9 +66,7 @@
 			lastAwgmCounts = { ...lastAwgmCounts, ...counts };
 		}
 		const c = lastAwgmCounts;
-		const level = get(usageLevel);
 		awgmSnap = buildAwgmServicesSnapshot({
-			level,
 			theme: get(theme),
 			settings: get(settings),
 			authDisabled: get(auth).authDisabled,
@@ -82,13 +75,11 @@
 			singbox: get(singboxStatus).data,
 			hydra: c.hydra ?? null,
 			hydraLoaded: c.hydraLoaded ?? false,
-			showHydra: isRoutingSubTabVisible(level, 'hrNeo'),
 			deviceProxy: c.deviceProxy ?? null,
 			deviceProxyRuntime: c.deviceProxyRuntime ?? null,
 			dnsRoutesTotal: c.dnsRoutesTotal ?? 0,
 			dnsRoutesEnabled: c.dnsRoutesEnabled ?? 0,
 			dnsRoutesLoaded: c.dnsRoutesLoaded ?? false,
-			showDnsRoutes: isRoutingSubTabVisible(level, 'dnsRoutes'),
 			awgRunning: c.awgRunning ?? 0,
 			awgTotal: c.awgTotal ?? 0,
 			awgCountsLoaded: c.awgCountsLoaded ?? false,
@@ -99,9 +90,6 @@
 	}
 
 	async function fetchAccessPolicies(): Promise<AccessPolicy[]> {
-		if (!isSectionVisible(get(usageLevel), 'routing')) {
-			return [];
-		}
 		try {
 			const res = await fetch('/api/routing/access-policies');
 			if (!res.ok) return [];
@@ -125,8 +113,7 @@
 		}
 	}
 
-	function loadHydraStatus(level: UsageLevel) {
-		if (!isRoutingSubTabVisible(level, 'hrNeo')) return;
+	function loadHydraStatus() {
 		void api
 			.getHydraRouteStatus()
 			.then((hydra) => {
@@ -138,15 +125,11 @@
 	}
 
 	async function loadRemoteContext() {
-		const level = get(usageLevel);
-
 		// Клиент в сети — приоритет, без ожидания HydraRoute и тяжёлых счётчиков.
 		const [dns, policies, devices] = await Promise.all([
 			fetchClientContext(),
 			fetchAccessPolicies(),
-			isRoutingSubTabVisible(level, 'clientRoutes')
-				? api.listPolicyDevices().catch(() => null)
-				: Promise.resolve(null),
+			api.listPolicyDevices().catch(() => null),
 		]);
 
 		routerClient = buildRouterClientContext(dns, devices, buildPolicyNameLookup(policies));
@@ -164,47 +147,41 @@
 			})
 			.catch(() => {});
 
-		if (isRoutingSubTabVisible(level, 'dnsRoutes')) {
-			void fetch('/api/routing/dns-routes')
-				.then(async (res) => {
-					if (!res.ok) return;
-					const body = await res.json();
-					const lists = (body.data ?? []) as { enabled?: boolean }[];
-					patchAwgmFromStores({
-						dnsRoutesTotal: lists.length,
-						dnsRoutesEnabled: lists.filter((l) => l.enabled).length,
-						dnsRoutesLoaded: true,
-					});
-				})
-				.catch(() => {});
-		}
-
-		if (isRoutingSubTabVisible(level, 'clientRoutes')) {
-			void Promise.all([
-				api.getDeviceProxyConfig().catch(() => null),
-				api.getDeviceProxyRuntime().catch(() => null),
-			]).then(([cfg, rt]) => {
+		void fetch('/api/routing/dns-routes')
+			.then(async (res) => {
+				if (!res.ok) return;
+				const body = await res.json();
+				const lists = (body.data ?? []) as { enabled?: boolean }[];
 				patchAwgmFromStores({
-					deviceProxy: cfg,
-					deviceProxyRuntime: rt,
+					dnsRoutesTotal: lists.length,
+					dnsRoutesEnabled: lists.filter((l) => l.enabled).length,
+					dnsRoutesLoaded: true,
 				});
+			})
+			.catch(() => {});
+
+		void Promise.all([
+			api.getDeviceProxyConfig().catch(() => null),
+			api.getDeviceProxyRuntime().catch(() => null),
+		]).then(([cfg, rt]) => {
+			patchAwgmFromStores({
+				deviceProxy: cfg,
+				deviceProxyRuntime: rt,
 			});
-		}
+		});
 
-		if (level !== 'basic') {
-			void api
-				.listSubscriptions()
-				.then((subs: Subscription[]) => {
-					patchAwgmFromStores({
-						subscriptionsTotal: subs.length,
-						subscriptionsEnabled: subs.filter((s) => s.enabled).length,
-						subscriptionsLoaded: true,
-					});
-				})
-				.catch(() => {});
-		}
+		void api
+			.listSubscriptions()
+			.then((subs: Subscription[]) => {
+				patchAwgmFromStores({
+					subscriptionsTotal: subs.length,
+					subscriptionsEnabled: subs.filter((s) => s.enabled).length,
+					subscriptionsLoaded: true,
+				});
+			})
+			.catch(() => {});
 
-		loadHydraStatus(level);
+		loadHydraStatus();
 	}
 
 	async function refresh() {
@@ -231,7 +208,7 @@
 		void loadRemoteContext();
 	});
 
-	const routerRows = $derived(sysInfo ? routerStaticRows(sysInfo, $usageLevel) : []);
+	const routerRows = $derived(sysInfo ? routerStaticRows(sysInfo) : []);
 	const browserRows = $derived(browserSnap ? browserSnapshotRows(browserSnap) : []);
 	const clientRows = $derived(routerClientRows(routerClient));
 	const servicesRows = $derived(awgmSnap ? awgmServicesRows(awgmSnap) : []);

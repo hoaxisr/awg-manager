@@ -17,8 +17,6 @@
 
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { usageLevel } from '$lib/stores/settings';
-	import { isRoutingSubTabVisible } from '$lib/types/usageLevel';
 	import { ChevronUp, ChevronDown } from 'lucide-svelte';
 
 	interface Props {
@@ -58,8 +56,6 @@
 	function isServiceSelected(item: ServiceItem): boolean {
 		return selected?.type === 'service' && selected.item === item;
 	}
-
-	let showGeodataLink = $derived(isRoutingSubTabVisible($usageLevel, 'geoData'));
 
 	function openGeodataTab() {
 		void goto('/routing?tab=geodata');
@@ -135,7 +131,6 @@
 	<div class="sidebar-section">
 		<div class="section-label">Служебное</div>
 
-		{#if showGeodataLink}
 		<div
 			role="link"
 			tabindex="0"
@@ -157,7 +152,6 @@
 			</div>
 			<span class="row-link-hint" aria-hidden="true">→</span>
 		</div>
-		{/if}
 
 		<div
 			role="button"

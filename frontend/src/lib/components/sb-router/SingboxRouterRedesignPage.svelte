@@ -52,9 +52,7 @@
   let activeSingboxSub = $derived($page.url.searchParams.get('sub'));
   let inspectorOpen = $state(false);
   let jsonOpen = $state(false);
-  // Эксперт-редактор config.d (слоты + 90-user.json). Страница целиком
-  // доступна только на usageLevel=expert (ROUTING_SUBTAB_MIN_LEVEL), кнопка
-  // дополнительно показывается лишь в режиме «Эксперт».
+  // Эксперт-редактор config.d (слоты + 90-user.json).
   let configEditorOpen = $state(false);
   const singboxRulesStore = singboxRouterStore.rules;
   const singboxInitialized = singboxRouterStore.initialized;

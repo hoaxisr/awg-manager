@@ -31,8 +31,6 @@
     import ModeSwitchHost from '$lib/components/routing/ModeSwitchHost.svelte';
     import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
     import GeoDataTab from './GeoDataTab.svelte';
-    import { isRoutingSubTabVisible, type RoutingSubTab, type UsageLevel } from '$lib/types/usageLevel';
-    import { usageLevel } from '$lib/stores/settings';
 
     // Per-section polling stores — subscribe here so all 8 fetch while
     // the routing page is open. Unsubscribed on destroy to stop polling.
@@ -215,22 +213,6 @@
         muted?: boolean;
     };
 
-    const TAB_TO_SUBTAB: Record<string, RoutingSubTab> = {
-        policy: 'accessPolicies',
-        clientvpn: 'clientRoutes',
-        dns: 'dnsRoutes',
-        ip: 'ipRoutes',
-        hrneo: 'hrNeo',
-        geodata: 'geoData',
-        singbox: 'singboxRouter',
-    };
-
-    function tabVisible(localId: string, level?: UsageLevel): boolean {
-        const sub = TAB_TO_SUBTAB[localId];
-        const lvl = level ?? $usageLevel;
-        return sub ? isRoutingSubTabVisible(lvl, sub) : true;
-    }
-
     const singboxRouterStatus = singboxRouterStore.status;
     let singboxRuleCount = $derived($singboxRouterStatus?.ruleCount ?? 0);
 
@@ -252,12 +234,7 @@
                 ? { id: 'singbox', label: 'Sing-box: TProxy', badge: singboxRuleCount, separatorBefore: true,
                     muted: !!$singboxRouterStatus?.enabled && $singboxSettings?.routingMode === 'fakeip-tun' }
                 : null,
-            // FakeIP is expert-gated (mirrors the 'singbox' tab's 'expert'
-            // level) BUT stays visible whenever the engine is actually in
-            // fakeip-tun mode — that's the in-use case the auto-select effect
-            // lands on, and hiding the chip there would strand activeTab on a
-            // tab with no chip to navigate back from.
-            (singboxInstalled && (tabVisible('singbox') || $singboxSettings?.routingMode === 'fakeip-tun'))
+            singboxInstalled
                 ? { id: 'fakeip', label: 'Sing-box: FakeIP', badge: undefined, separatorBefore: false,
                     muted: !!$singboxRouterStatus?.enabled && $singboxSettings?.routingMode === 'tproxy' }
                 : null,
@@ -268,7 +245,6 @@
                 : null,
         ] as (TabItem | null)[])
             .filter((t): t is TabItem => t !== null)
-            .filter((t) => tabVisible(t.id))
     );
 
     // If the user deep-linked / had the tab active and sing-box disappeared

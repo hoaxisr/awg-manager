@@ -1,20 +1,18 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import type { SystemInfo } from '$lib/types';
-	import type { UsageLevel } from '$lib/types/usageLevel';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { Router, ChevronDown } from 'lucide-svelte';
 
 	interface Props {
 		systemInfo: SystemInfo;
-		usageLevel: UsageLevel;
 		onrefresh?: () => void;
 		refreshing?: boolean;
 		lastUpdated?: string | null;
 		autoRefreshMs?: number;
 	}
 
-	let { systemInfo, usageLevel, onrefresh, refreshing = false, lastUpdated = null, autoRefreshMs = 0 }: Props = $props();
+	let { systemInfo, onrefresh, refreshing = false, lastUpdated = null, autoRefreshMs = 0 }: Props = $props();
 	let detailsOpen = $state(false);
 	const DETAILS_KEY = 'awgm.settings.system.detailsOpen';
 	const COLLAPSED_KEY = 'awgm.settings.system.collapsed';
@@ -91,9 +89,6 @@
 		if (!browser) return;
 		localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0');
 	});
-
-	const isBasic = $derived(usageLevel === 'basic');
-	const isExpert = $derived(usageLevel === 'expert');
 </script>
 
 <div class="settings-block sysinfo-block">
@@ -109,16 +104,14 @@
 				<SettingsSectionLabel label="Система" icon={Router} tone="blue" inline />
 				<span class="section-chevron system-collapse-marker" class:open={!collapsed} aria-hidden="true"><ChevronDown size={14} strokeWidth={2} /></span>
 			</button>
-			{#if !isBasic}
-				<div class="head-actions">
-					{#if updatedLabel}
-						<span class="updated-at" title="Последнее обновление">
-							<span class="live-dot" class:live-dot-loading={refreshing}></span>
-							{updatedLabel}
-						</span>
-					{/if}
-				</div>
-			{/if}
+			<div class="head-actions">
+				{#if updatedLabel}
+					<span class="updated-at" title="Последнее обновление">
+						<span class="live-dot" class:live-dot-loading={refreshing}></span>
+						{updatedLabel}
+					</span>
+				{/if}
+			</div>
 		</div>
 
 		<div class="collapsible-body" class:body-hidden={collapsed}>
@@ -144,43 +137,39 @@
 			{/if}
 		</span>
 	</div>
-	{#if !isBasic}
-		<div class="setting-row">
-			<span class="info-key">CPU / Темп.</span>
-			<span class="info-val info-val-stack">
-				<span>{cpuModelLine}</span>
-				<span class="sub-line">{cpuTempLine}</span>
-			</span>
-		</div>
-		<div class="setting-row">
-			<span class="info-key">Память</span>
-			<span class="info-val">
-				{memoryMain}
-				{#if memoryPercent}
-					<span class="muted-inline"> ({memoryPercent})</span>
-				{/if}
-			</span>
-		</div>
-	{/if}
+	<div class="setting-row">
+		<span class="info-key">CPU / Темп.</span>
+		<span class="info-val info-val-stack">
+			<span>{cpuModelLine}</span>
+			<span class="sub-line">{cpuTempLine}</span>
+		</span>
+	</div>
+	<div class="setting-row">
+		<span class="info-key">Память</span>
+		<span class="info-val">
+			{memoryMain}
+			{#if memoryPercent}
+				<span class="muted-inline"> ({memoryPercent})</span>
+			{/if}
+		</span>
+	</div>
 	<div class="setting-row">
 		<span class="info-key">Uptime</span>
 		<span class="info-val">{details?.uptimeHuman || '—'}</span>
 	</div>
-	{#if !isBasic}
-		<div class="setting-row">
-			<span class="info-key">Load Avg</span>
-			<span class="info-val">{details?.loadAverage || '—'}</span>
-		</div>
-		<div class="setting-row">
-			<span class="info-key">OPKG</span>
-			<span class="info-val">{details?.opkgStorage || '—'}</span>
-		</div>
-	{/if}
+	<div class="setting-row">
+		<span class="info-key">Load Avg</span>
+		<span class="info-val">{details?.loadAverage || '—'}</span>
+	</div>
+	<div class="setting-row">
+		<span class="info-key">OPKG</span>
+		<span class="info-val">{details?.opkgStorage || '—'}</span>
+	</div>
 	<div class="setting-row">
 		<span class="info-key">Сообщество</span>
 		<a class="info-link" href="https://t.me/awgmanager" target="_blank" rel="noopener noreferrer">Telegram →</a>
 	</div>
-	{#if isExpert && details}
+	{#if details}
 		<details class="more-box" bind:open={detailsOpen}>
 			<summary class="more-summary">
 				<span>Подробнее</span>

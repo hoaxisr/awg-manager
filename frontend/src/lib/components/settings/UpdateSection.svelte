@@ -7,7 +7,6 @@
 	import { downloadErrorToText } from '$lib/utils/downloadError';
 	import { formatDate } from '$lib/utils/format';
 	import { setSettings as setGlobalSettings } from '$lib/stores/settings';
-	import { isAutoInstallSettingsVisible } from '$lib/types/usageLevel';
 	import type { Settings, UpdateInfo } from '$lib/types';
 
 	interface Props {
@@ -218,60 +217,58 @@
 	</div>
 </div>
 
-{#if isAutoInstallSettingsVisible(settings.usageLevel)}
-	<div class="setting-row toggle-inline-row">
-		<div class="flex flex-col gap-1">
-			<span class="font-medium">Автоматическая установка</span>
-			<span class="setting-description">
-				Устанавливать проверенные обновления автоматически по расписанию.
-			</span>
-		</div>
-		<Toggle
-			checked={settings.updates.autoInstallEnabled}
-			onchange={toggleAutoInstall}
-			disabled={savingAutoInstall}
-		/>
+<div class="setting-row toggle-inline-row">
+	<div class="flex flex-col gap-1">
+		<span class="font-medium">Автоматическая установка</span>
+		<span class="setting-description">
+			Устанавливать проверенные обновления автоматически по расписанию.
+		</span>
 	</div>
+	<Toggle
+		checked={settings.updates.autoInstallEnabled}
+		onchange={toggleAutoInstall}
+		disabled={savingAutoInstall}
+	/>
+</div>
 
-	{#if settings.updates.autoInstallEnabled}
-		<div class="settings-panel">
-			<div class="inline-form">
-				<div class="input-with-suffix">
-					<input
-						type="number"
-						id="autoInstallIntervalDays"
-						bind:value={localIntervalDays}
-						min="1"
-						max="30"
-						disabled={savingAutoInstall}
-					/>
-					<span class="input-suffix">каждые N дней</span>
-				</div>
+{#if settings.updates.autoInstallEnabled}
+	<div class="settings-panel">
+		<div class="inline-form">
+			<div class="input-with-suffix">
 				<input
-					type="time"
-					id="autoInstallTime"
-					bind:value={localTime}
+					type="number"
+					id="autoInstallIntervalDays"
+					bind:value={localIntervalDays}
+					min="1"
+					max="30"
 					disabled={savingAutoInstall}
 				/>
-				{#if autoInstallScheduleChanged}
-					<Button
-						variant="primary"
-						size="sm"
-						onclick={saveAutoInstallSchedule}
-						loading={savingAutoInstall}
-					>
-						{savingAutoInstall ? 'Сохранение...' : 'Сохранить'}
-					</Button>
-				{/if}
+				<span class="input-suffix">каждые N дней</span>
 			</div>
-			{#if updateInfo?.nextAutoInstallAt}
-				<p class="auto-install-status">Следующее окно: {formatDate(updateInfo.nextAutoInstallAt)}</p>
-			{/if}
-			{#if updateInfo?.lastAutoInstallAt}
-				<p class="auto-install-status">Последняя автоустановка: {formatDate(updateInfo.lastAutoInstallAt)}</p>
+			<input
+				type="time"
+				id="autoInstallTime"
+				bind:value={localTime}
+				disabled={savingAutoInstall}
+			/>
+			{#if autoInstallScheduleChanged}
+				<Button
+					variant="primary"
+					size="sm"
+					onclick={saveAutoInstallSchedule}
+					loading={savingAutoInstall}
+				>
+					{savingAutoInstall ? 'Сохранение...' : 'Сохранить'}
+				</Button>
 			{/if}
 		</div>
-	{/if}
+		{#if updateInfo?.nextAutoInstallAt}
+			<p class="auto-install-status">Следующее окно: {formatDate(updateInfo.nextAutoInstallAt)}</p>
+		{/if}
+		{#if updateInfo?.lastAutoInstallAt}
+			<p class="auto-install-status">Последняя автоустановка: {formatDate(updateInfo.lastAutoInstallAt)}</p>
+		{/if}
+	</div>
 {/if}
 
 <Modal

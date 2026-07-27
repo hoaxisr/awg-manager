@@ -9,8 +9,6 @@
 	} from '$lib/stores/settingsSectionIconMode';
 	import { serviceLetterIcons } from '$lib/stores/serviceLetterIcons';
 	import { tunnelDashboardMode } from '$lib/stores/tunnelDashboardMode';
-	import { usageLevel } from '$lib/stores/settings';
-	import { isTunnelDashboardAvailable } from '$lib/types/usageLevel';
 	import {
 		theme,
 		THEME_PRESETS,
@@ -40,9 +38,7 @@
 	];
 
 	let expanded = $state(false);
-	const compactForced = $derived($usageLevel === 'basic');
-	const dashboardRowVisible = $derived(isTunnelDashboardAvailable($usageLevel));
-	const compactChecked = $derived(compactForced || $compactLayout);
+	const compactChecked = $derived($compactLayout);
 
 	const currentThemeLabel = $derived.by(() => {
 		if ($theme.preset !== 'custom') {
@@ -218,20 +214,14 @@
 		<div class="flex flex-col gap-1">
 			<span class="font-medium">Компактный режим</span>
 			<span class="setting-description">
-				{#if compactForced}
-					В базовом режиме всегда включена: колонка 960px и меньшие боковые отступы.
-				{:else}
-					Сужает интерфейс с краев, как в версии 2.8.2, фокусируя внимание на центре экрана (автоматически включается в базовом режиме).
-				{/if}
+				Сужает интерфейс с краев, как в версии 2.8.2, фокусируя внимание на центре экрана.
 			</span>
 		</div>
 		<Toggle
 			checked={compactChecked}
-			disabled={compactForced}
 			onchange={(enabled) => compactLayout.setEnabled(enabled)}
 		/>
 	</div>
-	{#if dashboardRowVisible}
 	<div class="setting-row dashboard-mode-row">
 		<div class="flex flex-col gap-1">
 			<span class="font-medium">Режим дашборда</span>
@@ -244,7 +234,6 @@
 			onchange={(enabled) => tunnelDashboardMode.setEnabled(enabled)}
 		/>
 	</div>
-	{/if}
 	<div class="setting-row letter-icons-row">
 		<div class="flex flex-col gap-1">
 			<span class="font-medium">Буквенные иконки</span>

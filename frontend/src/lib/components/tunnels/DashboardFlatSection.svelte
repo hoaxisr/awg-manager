@@ -142,9 +142,7 @@
 	{/if}
 {/snippet}
 
-{#if ctx.showSingboxSections}
-	<SingboxInstallBanner />
-{/if}
+<SingboxInstallBanner />
 <div class="dashboard-sticky">
 	<div class="tunnels-toolbar">
 		<div class="toolbar-actions">
@@ -155,8 +153,6 @@
 				onLayoutChange={(layout) => tunnelDashboardLayout.setLayout(layout)}
 				viewMode={$tunnelDashboardView}
 				onViewModeChange={tunnelDashboardView.setViewMode}
-				showViewToggle={ctx.showSingboxListOption}
-				showListOption={ctx.showSingboxListOption}
 				orderMode={$tunnelDashboardOrderMode}
 				onOrderModeChange={tunnelDashboardOrderMode.setMode}
 				showOrderControl={ctx.dashboardFlatLayout}
@@ -165,7 +161,6 @@
 				showGroupControl={!ctx.dashboardFlatLayout}
 				activeTagFilter={ctx.dashboardTagFilter}
 				onClearTagFilter={() => (ctx.dashboardTagFilter = null)}
-				showSingboxCreate={ctx.showSingboxSections}
 				onCreateAwg={() => goto('/tunnels/new')}
 				onCreateSingboxSingle={() => ctx.openWizard('single')}
 				onCreateSingboxGroup={() => ctx.openWizard('inline')}
@@ -174,24 +169,20 @@
 			>
 				{#snippet actions()}
 					<StoreStatusBadge store={tunnels} />
-					{#if ctx.freeturnAvailable}
-						<Button
-							variant={ctx.freeturnOpen ? 'primary' : 'secondary'}
-							size="md"
-							onclick={ctx.toggleFreeturn}
-						>
-							FreeTurn
-						</Button>
-					{/if}
-					{#if ctx.wdttAvailable}
-						<Button
-							variant={ctx.wdttOpen ? 'primary' : 'secondary'}
-							size="md"
-							onclick={ctx.toggleWdtt}
-						>
-							WDTT
-						</Button>
-					{/if}
+					<Button
+						variant={ctx.freeturnOpen ? 'primary' : 'secondary'}
+						size="md"
+						onclick={ctx.toggleFreeturn}
+					>
+						FreeTurn
+					</Button>
+					<Button
+						variant={ctx.wdttOpen ? 'primary' : 'secondary'}
+						size="md"
+						onclick={ctx.toggleWdtt}
+					>
+						WDTT
+					</Button>
 					<Button variant="secondary" size="md" onclick={ctx.handleExportAll} disabled={ctx.exporting} iconBefore={exportIcon}>
 						Экспорт
 					</Button>

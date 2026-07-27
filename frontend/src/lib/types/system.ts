@@ -1,4 +1,3 @@
-import type { UsageLevel } from './usageLevel';
 
 // ─────────────────────────────────────────────
 // #region System — info, WAN, interfaces
@@ -275,7 +274,6 @@ export interface Settings {
 	dnsRoute: DNSRouteSettings;
 	geoFile: GeoFileSettings;
 	connectivityCheckUrl: string;
-	usageLevel: UsageLevel;
 	hiddenSystemTunnels?: string[];
 	monitoringExcludedTunnels?: string[];
 }

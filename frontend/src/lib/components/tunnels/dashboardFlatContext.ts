@@ -28,13 +28,9 @@ export interface DashboardFlatContext {
 	readonly effectiveSingboxTunnelsRenderMode: TunnelRenderMode;
 	readonly effectiveSingboxSubscriptionsEffectiveLayout: SingboxLayoutMode;
 	readonly effectiveSingboxSubscriptionsRenderMode: TunnelRenderMode;
-	readonly showSingboxListOption: boolean;
-	readonly showSingboxSections: boolean;
 	readonly exporting: boolean;
 	// FreeTurn доступен только табом — в dashboard-режиме вход через кнопку тулбара (#585).
-	readonly freeturnAvailable: boolean;
 	readonly freeturnOpen: boolean;
-	readonly wdttAvailable: boolean;
 	readonly wdttOpen: boolean;
 	readonly awgAutoConnectivityNonce: number;
 	readonly singboxAutoDelayCheckNonce: number;

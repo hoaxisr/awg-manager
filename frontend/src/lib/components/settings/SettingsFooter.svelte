@@ -1,9 +1,6 @@
 <script lang="ts">
-	import { usageLevel } from '$lib/stores/settings';
 	import { GITHUB_BUG_REPORT_URL } from '$lib/utils/githubFeedback';
 	import { ChevronRight } from 'lucide-svelte';
-
-	const isExpert = $derived($usageLevel === 'expert');
 
 	const genericIssueUrl = GITHUB_BUG_REPORT_URL;
 
@@ -74,10 +71,8 @@
 				>
 					Сообщить о проблеме
 				</a>
-				{#if isExpert}
-					<span class="footer-sep" aria-hidden="true">·</span>
-					<a href="/api-docs">Swagger UI</a>
-				{/if}
+				<span class="footer-sep" aria-hidden="true">·</span>
+				<a href="/api-docs">Swagger UI</a>
 			</div>
 		</div>
 		<button

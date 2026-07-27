@@ -8,7 +8,6 @@
 	import SubscriptionMembersTab from '$lib/components/subscriptions/SubscriptionMembersTab.svelte';
 	import SubscriptionExcludedSection from '$lib/components/subscriptions/SubscriptionExcludedSection.svelte';
 	import SubscriptionSettingsTab from '$lib/components/subscriptions/SubscriptionSettingsTab.svelte';
-	import { usageLevel } from '$lib/stores/settings';
 	import {
 		SINGBOX_LAYOUT_STORAGE_KEY,
 		parseSingboxLayoutMode,
@@ -45,9 +44,8 @@
 	let singboxLayoutMode = $state<SingboxLayoutMode>('compact');
 	let singboxLayoutReady = false;
 	let isSingboxMembersMobile = $state(readTunnelMobileLayout());
-	const showSingboxListOption = $derived($usageLevel !== 'basic');
 	const singboxEffectiveLayout = $derived.by((): SingboxLayoutMode => {
-		if (isSingboxMembersMobile || (!showSingboxListOption && singboxLayoutMode === 'list')) {
+		if (isSingboxMembersMobile) {
 			return 'compact';
 		}
 		// Members tab has no dense cards — same grid as compact.
@@ -55,7 +53,7 @@
 		return singboxLayoutMode;
 	});
 	const showSingboxLayoutPicker = $derived(!isSingboxMembersMobile);
-	const showSingboxGridListToggle = $derived(showSingboxListOption && showSingboxLayoutPicker);
+	const showSingboxGridListToggle = $derived(showSingboxLayoutPicker);
 
 	let evtSrc: EventSource | null = null;
 

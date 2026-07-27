@@ -1,7 +1,7 @@
 import { get } from 'svelte/store';
 import { api } from '$lib/api/client';
 import { auth } from '$lib/stores/auth';
-import { reloadSettings, settings, usageLevel } from '$lib/stores/settings';
+import { reloadSettings, settings } from '$lib/stores/settings';
 import { singboxStatus } from '$lib/stores/singbox';
 import { systemInfo } from '$lib/stores/system';
 import { theme } from '$lib/stores/theme';
@@ -28,11 +28,6 @@ import {
 	type BrowserSnapshot,
 	type RouterClientContext,
 } from '$lib/utils/about-device';
-import {
-	isRoutingSubTabVisible,
-	isSectionVisible,
-	type UsageLevel,
-} from '$lib/types/usageLevel';
 
 export interface DiagnosticsEnvironmentSection {
 	title: string;
@@ -139,8 +134,7 @@ async function capture<T>(
 	}
 }
 
-async function fetchAccessPolicies(level: UsageLevel): Promise<AccessPolicy[]> {
-	if (!isSectionVisible(level, 'routing')) return [];
+async function fetchAccessPolicies(): Promise<AccessPolicy[]> {
 	const res = await fetch('/api/routing/access-policies');
 	if (!res.ok) {
 		throw new Error(`access-policies ${res.status}`);
@@ -188,8 +182,6 @@ export async function collectDiagnosticsEnvironmentSnapshot(): Promise<Diagnosti
 		}
 	}
 
-	const level = get(usageLevel);
-
 	const sys = get(systemInfo).data ?? null;
 	const routerOffset = sys?.routerTimezoneOffsetMinutes;
 
@@ -200,10 +192,8 @@ export async function collectDiagnosticsEnvironmentSnapshot(): Promise<Diagnosti
 	const counts: AwgmCounts = {};
 
 	const dns = await capture('routerClient.dns', fetchClientContextOrThrow, null, errors, markPartial);
-	const policies = await capture('routerClient.policies', () => fetchAccessPolicies(level), [] as AccessPolicy[], errors, markPartial);
-	const devices = isRoutingSubTabVisible(level, 'clientRoutes')
-		? await capture('routerClient.devices', () => api.listPolicyDevices(), null as PolicyDevice[] | null, errors, markPartial)
-		: null;
+	const policies = await capture('routerClient.policies', () => fetchAccessPolicies(), [] as AccessPolicy[], errors, markPartial);
+	const devices = await capture('routerClient.devices', () => api.listPolicyDevices(), null as PolicyDevice[] | null, errors, markPartial);
 	routerClient = buildRouterClientContext(dns, devices, buildPolicyNameLookup(policies));
 
 	const snap = await capture('awgTunnels', () => api.getTunnelsAll(), null, errors, markPartial);
@@ -214,53 +204,44 @@ export async function collectDiagnosticsEnvironmentSnapshot(): Promise<Diagnosti
 		counts.awgCountsLoaded = true;
 	}
 
-	if (isRoutingSubTabVisible(level, 'dnsRoutes')) {
-		await capture(
-			'dnsRoutes',
-			async () => {
-				const res = await fetch('/api/routing/dns-routes');
-				if (!res.ok) {
-					throw new Error(`dns-routes ${res.status}`);
-				}
-				const body = await res.json();
-				const lists = (body.data ?? []) as { enabled?: boolean }[];
-				counts.dnsRoutesTotal = lists.length;
-				counts.dnsRoutesEnabled = lists.filter((l) => l.enabled).length;
-				counts.dnsRoutesLoaded = true;
-				return true;
-			},
-			false,
-			errors,
-			markPartial,
-		);
-	}
+	await capture(
+		'dnsRoutes',
+		async () => {
+			const res = await fetch('/api/routing/dns-routes');
+			if (!res.ok) {
+				throw new Error(`dns-routes ${res.status}`);
+			}
+			const body = await res.json();
+			const lists = (body.data ?? []) as { enabled?: boolean }[];
+			counts.dnsRoutesTotal = lists.length;
+			counts.dnsRoutesEnabled = lists.filter((l) => l.enabled).length;
+			counts.dnsRoutesLoaded = true;
+			return true;
+		},
+		false,
+		errors,
+		markPartial,
+	);
 
-	if (isRoutingSubTabVisible(level, 'clientRoutes')) {
-		const [cfg, rt] = await Promise.all([
-			capture('deviceProxy.config', () => api.getDeviceProxyConfig(), null as DeviceProxyConfig | null, errors, markPartial),
-			capture('deviceProxy.runtime', () => api.getDeviceProxyRuntime(), null as DeviceProxyRuntime | null, errors, markPartial),
-		]);
-		counts.deviceProxy = cfg;
-		counts.deviceProxyRuntime = rt;
-	}
+	const [deviceProxyCfg, deviceProxyRt] = await Promise.all([
+		capture('deviceProxy.config', () => api.getDeviceProxyConfig(), null as DeviceProxyConfig | null, errors, markPartial),
+		capture('deviceProxy.runtime', () => api.getDeviceProxyRuntime(), null as DeviceProxyRuntime | null, errors, markPartial),
+	]);
+	counts.deviceProxy = deviceProxyCfg;
+	counts.deviceProxyRuntime = deviceProxyRt;
 
-	if (isRoutingSubTabVisible(level, 'hrNeo')) {
-		counts.hydra = await capture('hydraRoute', () => api.getHydraRouteStatus(), null as HydraRouteStatus | null, errors, markPartial);
-		counts.hydraLoaded = true;
-	}
+	counts.hydra = await capture('hydraRoute', () => api.getHydraRouteStatus(), null as HydraRouteStatus | null, errors, markPartial);
+	counts.hydraLoaded = true;
 
-	if (level !== 'basic') {
-		const subs = await capture('subscriptions', () => api.listSubscriptions(), [] as Subscription[], errors, markPartial);
-		counts.subscriptionsTotal = subs.length;
-		counts.subscriptionsEnabled = subs.filter((s) => s.enabled).length;
-		counts.subscriptionsLoaded = true;
-	}
+	const subs = await capture('subscriptions', () => api.listSubscriptions(), [] as Subscription[], errors, markPartial);
+	counts.subscriptionsTotal = subs.length;
+	counts.subscriptionsEnabled = subs.filter((s) => s.enabled).length;
+	counts.subscriptionsLoaded = true;
 
 	awgm = await capture(
 		'awgm',
 		async () =>
 			buildAwgmServicesSnapshot({
-				level,
 				theme: get(theme),
 				settings: get(settings),
 				authDisabled: get(auth).authDisabled,
@@ -269,13 +250,11 @@ export async function collectDiagnosticsEnvironmentSnapshot(): Promise<Diagnosti
 				singbox: get(singboxStatus).data,
 				hydra: counts.hydra ?? null,
 				hydraLoaded: counts.hydraLoaded ?? false,
-				showHydra: isRoutingSubTabVisible(level, 'hrNeo'),
 				deviceProxy: counts.deviceProxy ?? null,
 				deviceProxyRuntime: counts.deviceProxyRuntime ?? null,
 				dnsRoutesTotal: counts.dnsRoutesTotal ?? 0,
 				dnsRoutesEnabled: counts.dnsRoutesEnabled ?? 0,
 				dnsRoutesLoaded: counts.dnsRoutesLoaded ?? false,
-				showDnsRoutes: isRoutingSubTabVisible(level, 'dnsRoutes'),
 				awgRunning: counts.awgRunning ?? 0,
 				awgTotal: counts.awgTotal ?? 0,
 				awgCountsLoaded: counts.awgCountsLoaded ?? false,
@@ -288,7 +267,7 @@ export async function collectDiagnosticsEnvironmentSnapshot(): Promise<Diagnosti
 		markPartial,
 	);
 
-	const routerRows = sys ? routerStaticRows(sys, level) : [{ label: 'Статус', value: 'Не загружено' }];
+	const routerRows = sys ? routerStaticRows(sys) : [{ label: 'Статус', value: 'Не загружено' }];
 	const browserRows = browserSnapshotRows(browser);
 	const sanitizedRouterClient = sanitizeRouterClientContext(routerClient);
 	const clientRows = sanitizeClientRows(routerClientRows(sanitizedRouterClient));

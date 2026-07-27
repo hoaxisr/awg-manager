@@ -6,7 +6,7 @@
   import { Button } from '$lib/components/ui';
   import { api } from '$lib/api/client';
   import { notifications } from '$lib/stores/notifications';
-  import { usageLevel, settings } from '$lib/stores/settings';
+  import { settings } from '$lib/stores/settings';
   import { systemInfo } from '$lib/stores/system';
   import { copyToClipboard } from '$lib/utils/clipboard';
   import { stripAnsi } from '$lib/utils/ansi';
@@ -151,11 +151,11 @@
   let pageOffset = $state(0);
   let manualFrozenLogs = $state<LogEntry[] | null>(null);
 
-  /** Subgroup `profiling` is expert-only and only when -slow-request-ms > 0 at daemon start. */
+  /** Subgroup `profiling` exists only when -slow-request-ms > 0 at daemon start. */
   $effect(() => {
     if (!$settings) return;
     const profilingEnabled = ($systemInfo.data?.slowRequestThresholdMs ?? 0) > 0;
-    if ($usageLevel === 'expert' && profilingEnabled) return;
+    if (profilingEnabled) return;
     if (!filter.subgroups.includes('profiling')) return;
     (async () => {
       try {

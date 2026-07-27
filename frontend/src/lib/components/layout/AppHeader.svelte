@@ -4,14 +4,12 @@
 	import { LegacyTabs, LegacyTab, IconButton } from '$lib/components/ui';
 	import BrandLogoMark from './BrandLogoMark.svelte';
 	import NotificationCenter from './NotificationCenter.svelte';
-	import { usageLevel } from '$lib/stores/settings';
 	import type { ThemeState } from '$lib/stores/theme';
-	import { isAppearanceSettingsVisible, isSectionVisible, type Section } from '$lib/types/usageLevel';
-	import { handleVersionBadgeClick } from '$lib/utils/versionBadgeEasterEgg';
+	import { settingsUpdateHighlight } from '$lib/stores/settingsUpdateHighlight';
 	import { Sun, Moon, Heart, LogOut, X, Menu, Terminal, ChevronRight } from 'lucide-svelte';
 
 	type NavItem = {
-		section: Section;
+		section: string;
 		href: string;
 		label: string;
 		matches: (path: string) => boolean;
@@ -99,9 +97,7 @@
 		onOpenDonate,
 	}: Props = $props();
 
-	const visibleItems = $derived(
-		NAV_ITEMS.filter((item) => isSectionVisible($usageLevel, item.section)),
-	);
+	const visibleItems = NAV_ITEMS;
 
 	const currentRoute = $derived.by(() => {
 		const path = $page.url.pathname;
@@ -137,17 +133,14 @@
 	const themeDisplayMode = $derived(theme.preset === 'neo' ? theme.legacyMode : theme.mode);
 
 	const onSettingsPage = $derived($page.url.pathname.startsWith('/settings'));
-	const versionClickableOnSettings = $derived(
-		onSettingsPage && ($usageLevel === 'expert' || hasUpdate),
-	);
+	const versionClickableOnSettings = $derived(onSettingsPage && hasUpdate);
 
 	function onVersionBadgeClick(event: MouseEvent) {
-		if (!onSettingsPage) return;
+		if (!onSettingsPage || !hasUpdate) return;
 		event.preventDefault();
-		handleVersionBadgeClick({
-			usageLevel: $usageLevel,
-			hasUpdate,
-			onSettingsPage: true,
+		settingsUpdateHighlight.pulse();
+		window.requestAnimationFrame(() => {
+			document.getElementById('awgm-update')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 		});
 	}
 
@@ -231,13 +224,13 @@
 
 			<NotificationCenter {authenticated} />
 
-			{#if authenticated && isSectionVisible($usageLevel, 'terminal')}
+			{#if authenticated}
 				<IconButton ariaLabel="Терминал" href="/terminal">
 					<Terminal size={16} aria-hidden="true" />
 				</IconButton>
 			{/if}
 
-			{#if isAppearanceSettingsVisible($usageLevel) && theme.preset !== 'custom'}
+			{#if theme.preset !== 'custom'}
 				<IconButton ariaLabel={themeButtonLabel} onclick={onToggleThemeMode}>
 					{#if themeDisplayMode === 'dark'}
 						<Sun size={16} aria-hidden="true" />

@@ -18,10 +18,8 @@
 		IntegrationsCard,
 		ThemeSchemeCard,
 		SettingsFooter,
-		UsageLevelCard,
 		HttpServerCard,
 		DevelopChannelGateModal,
-		ExperimentalSettingsCard,
 		PukhososPatrol,
 		SettingsSectionLabel,
 	} from "$lib/components/settings";
@@ -31,27 +29,15 @@
 		downloadOutboundsLoading,
 		downloadOutboundsError,
 		ensureDownloadOutboundsLoaded,
-		resolveDownloadRouteLabel,
 	} from "$lib/stores/downloadRoute";
 	import type {
 		SystemInfo,
 		Settings,
 		UpdateInfo,
 	} from "$lib/types";
-	import {
-		USAGE_LEVEL_LABELS,
-		isAppearanceSettingsVisible,
-		isSectionVisible,
-		isRoutingSubTabVisible,
-		isUpdateChannelSwitchVisible,
-		areDownloadRouteDetailsVisible,
-		type UsageLevel,
-	} from "$lib/types/usageLevel";
-	import { usageLevel } from "$lib/stores/settings";
 	import { waitForBackendRestart } from "$lib/restartRecovery";
 	import { hasDevelopChannelQuizPassed } from "$lib/utils/developChannelGate";
 	import { developFeedbackFabVisible } from "$lib/stores/developFeedbackFab";
-	import { experimentalSettingsUnlocked } from "$lib/stores/experimentalSettingsUnlocked";
 	import { settingsUpdateHighlight } from "$lib/stores/settingsUpdateHighlight";
 	import { pluralize, AVAILABLE_WORDS, TUNNEL_WORDS } from "$lib/utils/pluralize";
 	import {
@@ -73,7 +59,6 @@
 		SESSION_TTL_MAX_HOURS,
 	} from "$lib/components/settings/sessionTtl";
 
-	const expandUsageLevel = $derived($page.url.searchParams.has('mode'));
 	const highlightFeedbackFab = $derived($page.url.searchParams.has('feedbackFab'));
 	const defaultPingTarget = "8.8.8.8";
 	const defaultConnectivityCheckUrl = "http://connectivitycheck.gstatic.com/generate_204";
@@ -84,12 +69,6 @@
 	let loading = $state(true);
 	let saving = $state(false);
 	const origin = $derived(typeof window !== "undefined" ? window.location.origin : "");
-	const showSingboxIntegration = $derived(isSectionVisible($usageLevel, "singboxTunnels"));
-	const showHydraIntegration = $derived(isRoutingSubTabVisible($usageLevel, "hrNeo"));
-	const showDnsRouteCard = $derived(isRoutingSubTabVisible($usageLevel, "dnsRoutes"));
-	const showDownloadRouteDetails = $derived(areDownloadRouteDetailsVisible($usageLevel));
-	const downloadRouteLabel = $derived(resolveDownloadRouteLabel(settings, $downloadOutbounds));
-	const visibleDownloadRouteLabel = $derived(showDownloadRouteDetails ? downloadRouteLabel : '');
 	let updateInfo: UpdateInfo | null = $state(null);
 	let restarting = $state(false);
 	let restartConfirmOpen = $state(false);
@@ -333,9 +312,7 @@ onMount(() => {
 });
 
 $effect(() => {
-	if (showDownloadRouteDetails) {
-		void ensureDownloadOutboundsLoaded();
-	}
+	void ensureDownloadOutboundsLoaded();
 });
 
 	async function toggleAuth(enabled: boolean) {
@@ -576,20 +553,6 @@ $effect(() => {
 		await selectChannel('develop');
 	}
 
-	async function selectUsageLevel(level: UsageLevel) {
-		if (!settings) return;
-		saving = true;
-		try {
-			settings = await api.updateSettings({ ...settings, usageLevel: level });
-			setGlobalSettings(settings);
-			notifications.success(`Уровень: ${USAGE_LEVEL_LABELS[level]}`);
-		} catch {
-			notifications.error("Не удалось сохранить уровень");
-		} finally {
-			saving = false;
-		}
-	}
-
 	async function restartDaemon() {
 		restartConfirmOpen = false;
 		restarting = true;
@@ -713,7 +676,6 @@ $effect(() => {
 			<aside class="settings-left">
 				<SystemInfoGrid
 					{systemInfo}
-					usageLevel={settings.usageLevel}
 					onrefresh={refreshSystemInfo}
 					refreshing={systemInfoRefreshing}
 					lastUpdated={systemInfoUpdatedAt}
@@ -739,23 +701,11 @@ $effect(() => {
 					{singboxUpdateError}
 					oninstallSingbox={installSingbox}
 					onupdateSingbox={updateSingbox}
-					showSingbox={showSingboxIntegration}
-					showHydra={showHydraIntegration}
 				/>
 			</aside>
 
 			<main class="settings-right">
-			<UsageLevelCard
-				value={settings.usageLevel}
-				{saving}
-				onSelect={selectUsageLevel}
-				initialExpanded={expandUsageLevel}
-				highlighted={expandUsageLevel}
-			/>
-
-			{#if isAppearanceSettingsVisible(settings.usageLevel)}
-				<ThemeSchemeCard />
-			{/if}
+			<ThemeSchemeCard />
 
 				<div class="settings-block">
 					<div class="card">
@@ -834,7 +784,7 @@ $effect(() => {
 							disabled={saving}
 						/>
 					</div>
-					{#if systemInfo.isOS5 && showDnsRouteCard}
+					{#if systemInfo.isOS5}
 						<DnsRouteSettings
 							bind:settings
 							{saving}
@@ -842,39 +792,35 @@ $effect(() => {
 							onSave={saveDnsRouteSettings}
 						/>
 					{/if}
-					{#if isUpdateChannelSwitchVisible(settings.usageLevel)}
-						<div class="setting-row">
-							<div class="flex flex-col gap-1">
-								<span class="font-medium">Канал обновлений</span>
-								<span class="setting-description">
-									Ветка develop — свежие, потенциально нестабильные сборки из ветки разработки.
-								</span>
-							</div>
-							<SegmentedControl
-								value={settings.updates.channel}
-								options={[
-									{ value: 'stable', label: 'Стабильный' },
-									{ value: 'develop', label: 'Разработка' },
-								] satisfies Array<{ value: 'stable' | 'develop'; label: string }>}
-								ariaLabel="Канал обновлений"
-								disabled={saving}
-								onchange={(channel) => requestChannel(channel)}
-							/>
+					<div class="setting-row">
+						<div class="flex flex-col gap-1">
+							<span class="font-medium">Канал обновлений</span>
+							<span class="setting-description">
+								Ветка develop — свежие, потенциально нестабильные сборки из ветки разработки.
+							</span>
 						</div>
-					{/if}
-					{#if showDownloadRouteDetails}
-						<div class="settings-highlight-target" class:highlighted={highlightDownloads}>
-							<DownloadSettings
-								bind:settings
-								{saving}
-								outbounds={$downloadOutbounds}
-								loading={$downloadOutboundsLoading}
-								error={$downloadOutboundsError}
-								onRefresh={refreshDownloadOutbounds}
-								onSelectRoute={selectDownloadRoute}
-							/>
-						</div>
-					{/if}
+						<SegmentedControl
+							value={settings.updates.channel}
+							options={[
+								{ value: 'stable', label: 'Стабильный' },
+								{ value: 'develop', label: 'Разработка' },
+							] satisfies Array<{ value: 'stable' | 'develop'; label: string }>}
+							ariaLabel="Канал обновлений"
+							disabled={saving}
+							onchange={(channel) => requestChannel(channel)}
+						/>
+					</div>
+					<div class="settings-highlight-target" class:highlighted={highlightDownloads}>
+						<DownloadSettings
+							bind:settings
+							{saving}
+							outbounds={$downloadOutbounds}
+							loading={$downloadOutboundsLoading}
+							error={$downloadOutboundsError}
+							onRefresh={refreshDownloadOutbounds}
+							onSelectRoute={selectDownloadRoute}
+						/>
+					</div>
 					</div>
 				</div>
 
@@ -890,126 +836,120 @@ $effect(() => {
 					</div>
 				</div>
 
-				{#if $usageLevel === "expert"}
-				<div class="settings-block">
-					<div class="card">
-					<SettingsSectionLabel label="Проверка пинга" icon={Activity} tone="teal" header />
-					<div class="setting-row ping-target-setting">
-						<div class="flex flex-col gap-1">
-							<span class="font-medium">Цели проверки</span>
-							<span class="setting-description">
-								ICMP target используется как глобальный адрес для ping-check. HTTP URL вызывается через туннель для проверки доступности и задержки.
-							</span>
-						</div>
-						<div class="ping-target-controls">
-							<label class="ping-target-field">
-								<span>ICMP target</span>
-								<input
-									type="text"
-									class="settings-text-input"
-									bind:value={settings.pingCheck.defaults.target}
-									placeholder={defaultPingTarget}
-									disabled={saving}
-								/>
-							</label>
-							<label class="ping-target-field">
-								<span>HTTP URL проверки</span>
-								<input
-									type="url"
-									class="settings-text-input"
-									bind:value={settings.connectivityCheckUrl}
-									placeholder={defaultConnectivityCheckUrl}
-									disabled={saving}
-								/>
-							</label>
-							<div class="ping-target-action">
-								<Button variant="secondary" size="md" onclick={savePingTargetsSettings} disabled={saving}>
-									Сохранить
-								</Button>
-							</div>
-						</div>
+			<div class="settings-block">
+				<div class="card">
+				<SettingsSectionLabel label="Проверка пинга" icon={Activity} tone="teal" header />
+				<div class="setting-row ping-target-setting">
+					<div class="flex flex-col gap-1">
+						<span class="font-medium">Цели проверки</span>
+						<span class="setting-description">
+							ICMP target используется как глобальный адрес для ping-check. HTTP URL вызывается через туннель для проверки доступности и задержки.
+						</span>
 					</div>
-					</div>
-				</div>
-
-				<div class="settings-block">
-					<div
-						id="feedback-fab"
-						class="card settings-highlight-target"
-						class:highlighted={highlightFeedbackFab}
-					>
-					<SettingsSectionLabel label="Расширенные" icon={Wrench} tone="indigo" header />
-					<div class="setting-row api-key-setting">
-						<div class="flex flex-col gap-1">
-							<span class="font-medium">API Key</span>
-							<span class="setting-description">
-								API ключ для доступа к&nbsp;<code>{origin}/api/</code>, если включена авторизация. Передавайте в заголовке <code>Authorization: Bearer &lt;ключ&gt;</code>.
-							</span>
-						</div>
-						<div class="api-key-controls">
+					<div class="ping-target-controls">
+						<label class="ping-target-field">
+							<span>ICMP target</span>
 							<input
 								type="text"
-								class="api-key-input"
-								value={settings.apiKey ?? ""}
-								readonly
-								placeholder="не сгенерирован"
-								onclick={copyApiKey}
-								title={settings.apiKey?.trim()
-									? "Нажмите, чтобы скопировать в буфер обмена"
-									: "Сначала нажмите «Сгенерировать»"}
+								class="settings-text-input"
+								bind:value={settings.pingCheck.defaults.target}
+								placeholder={defaultPingTarget}
+								disabled={saving}
 							/>
-							<div class="api-key-action">
-								<Button variant="secondary" size="md" onclick={generateApiKey} disabled={saving}>
-									Сгенерировать
-								</Button>
-							</div>
+						</label>
+						<label class="ping-target-field">
+							<span>HTTP URL проверки</span>
+							<input
+								type="url"
+								class="settings-text-input"
+								bind:value={settings.connectivityCheckUrl}
+								placeholder={defaultConnectivityCheckUrl}
+								disabled={saving}
+							/>
+						</label>
+						<div class="ping-target-action">
+							<Button variant="secondary" size="md" onclick={savePingTargetsSettings} disabled={saving}>
+								Сохранить
+							</Button>
 						</div>
 					</div>
-					{#if settings.updates.channel === 'develop'}
+				</div>
+				</div>
+			</div>
+
+			<div class="settings-block">
+				<div
+					id="feedback-fab"
+					class="card settings-highlight-target"
+					class:highlighted={highlightFeedbackFab}
+				>
+				<SettingsSectionLabel label="Расширенные" icon={Wrench} tone="indigo" header />
+				<div class="setting-row api-key-setting">
+					<div class="flex flex-col gap-1">
+						<span class="font-medium">API Key</span>
+						<span class="setting-description">
+							API ключ для доступа к&nbsp;<code>{origin}/api/</code>, если включена авторизация. Передавайте в заголовке <code>Authorization: Bearer &lt;ключ&gt;</code>.
+						</span>
+					</div>
+					<div class="api-key-controls">
+						<input
+							type="text"
+							class="api-key-input"
+							value={settings.apiKey ?? ""}
+							readonly
+							placeholder="не сгенерирован"
+							onclick={copyApiKey}
+							title={settings.apiKey?.trim()
+								? "Нажмите, чтобы скопировать в буфер обмена"
+								: "Сначала нажмите «Сгенерировать»"}
+						/>
+						<div class="api-key-action">
+							<Button variant="secondary" size="md" onclick={generateApiKey} disabled={saving}>
+								Сгенерировать
+							</Button>
+						</div>
+					</div>
+				</div>
+				{#if settings.updates.channel === 'develop'}
+				<div class="setting-row toggle-inline-row">
+					<div class="flex flex-col gap-1">
+						<span class="font-medium">Кнопка обратной связи</span>
+						<span class="setting-description">
+							Плавающая кнопка «!» в правом нижнем углу на канале разработки.
+							Помогает быстро сообщить об ошибке или предложить улучшение.
+						</span>
+					</div>
+					<Toggle
+						checked={$developFeedbackFabVisible}
+						onchange={(v) => developFeedbackFabVisible.set(v)}
+					/>
+				</div>
+				{/if}
+				{#if singboxInstalled}
 					<div class="setting-row toggle-inline-row">
 						<div class="flex flex-col gap-1">
-							<span class="font-medium">Кнопка обратной связи</span>
+							<span class="font-medium">NDMS Proxy для sing-box туннелей</span>
 							<span class="setting-description">
-								Плавающая кнопка «!» в правом нижнем углу на канале разработки.
-								Помогает быстро сообщить об ошибке или предложить улучшение.
+								{#if ndmsProxyEnabled}
+									Если включено — для каждого туннеля sing-box создаётся интерфейс ProxyX в роутере.
+									<br>
+									Необходимо, если используете NDMS-маршрутизацию (Access Policy, политики роутера) для sing-box.
+								{:else}
+									Выключено — sing-box работает только через свою маршрутизацию. ProxyX-интерфейсы не создаются
+									(решает проблему зависания роутера при потере WAN).
+								{/if}
 							</span>
 						</div>
 						<Toggle
-							checked={$developFeedbackFabVisible}
-							onchange={(v) => developFeedbackFabVisible.set(v)}
+							checked={ndmsProxyEnabled}
+							controlled
+							disabled={ndmsProxyBusy}
+							onchange={handleNDMSProxyToggleClick}
 						/>
 					</div>
-					{/if}
-					{#if singboxInstalled && showSingboxIntegration}
-						<div class="setting-row toggle-inline-row">
-							<div class="flex flex-col gap-1">
-								<span class="font-medium">NDMS Proxy для sing-box туннелей</span>
-								<span class="setting-description">
-									{#if ndmsProxyEnabled}
-										Если включено — для каждого туннеля sing-box создаётся интерфейс ProxyX в роутере.
-										<br>
-										Необходимо, если используете NDMS-маршрутизацию (Access Policy, политики роутера) для sing-box.
-									{:else}
-										Выключено — sing-box работает только через свою маршрутизацию. ProxyX-интерфейсы не создаются
-										(решает проблему зависания роутера при потере WAN).
-									{/if}
-								</span>
-							</div>
-							<Toggle
-								checked={ndmsProxyEnabled}
-								controlled
-								disabled={ndmsProxyBusy}
-								onchange={handleNDMSProxyToggleClick}
-							/>
-						</div>
-					{/if}
-					</div>
+				{/if}
 				</div>
-
-				{#if $experimentalSettingsUnlocked}
-					<ExperimentalSettingsCard />
-				{/if}
-				{/if}
+			</div>
 			</main>
 		</div>
 
@@ -1031,7 +971,7 @@ $effect(() => {
 				</Button>
 			</div>
 
-			{#if singboxInstalled && showSingboxIntegration}
+			{#if singboxInstalled}
 				<div class="setting-row">
 					<div class="flex flex-col gap-1">
 						<span class="font-medium">Sing-box</span>
@@ -1060,7 +1000,7 @@ $effect(() => {
 				</div>
 			{/if}
 
-			{#if hydraInstalled && showHydraIntegration}
+			{#if hydraInstalled}
 				<div class="setting-row">
 					<div class="flex flex-col gap-1">
 						<span class="font-medium">HydraRoute Neo</span>

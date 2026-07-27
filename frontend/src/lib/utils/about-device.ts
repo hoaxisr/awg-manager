@@ -11,8 +11,6 @@ import type {
 	Subscription,
 	SystemInfo,
 } from '$lib/types';
-import type { UsageLevel } from '$lib/types/usageLevel';
-import { USAGE_LEVEL_LABELS } from '$lib/types/usageLevel';
 import type { ThemeState } from '$lib/stores/theme';
 
 export interface AboutInfoRow {
@@ -39,7 +37,6 @@ export interface BrowserSnapshot {
 	secureContext: string;
 	maxTouchPoints: string;
 	connection: string;
-	usageLevelAttr: string;
 	pageUrl: string;
 }
 
@@ -67,7 +64,6 @@ export function buildPolicyNameLookup(policies: AccessPolicy[]): PolicyNameLooku
 }
 
 export interface AwgmServicesSnapshot {
-	usageLevel: string;
 	interfaceWidth: string;
 	theme: string;
 	auth: string;
@@ -165,14 +161,12 @@ export function collectBrowserSnapshot(): BrowserSnapshot {
 			secureContext: '—',
 			maxTouchPoints: '—',
 			connection: '—',
-			usageLevelAttr: '—',
 			pageUrl: '—',
 		};
 	}
 
 	const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 	const prefers = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-	const root = document.documentElement;
 
 	return {
 		userAgent: navigator.userAgent,
@@ -192,7 +186,6 @@ export function collectBrowserSnapshot(): BrowserSnapshot {
 		secureContext: window.isSecureContext ? 'да' : 'нет',
 		maxTouchPoints: String(navigator.maxTouchPoints ?? 0),
 		connection: connectionSummary(),
-		usageLevelAttr: root.getAttribute('data-usage-level') ?? '—',
 		pageUrl: location.href,
 	};
 }
@@ -209,7 +202,6 @@ export function browserSnapshotRows(s: BrowserSnapshot): AboutInfoRow[] {
 		{ label: 'DPR', value: s.devicePixelRatio },
 		{ label: 'Глубина цвета', value: s.colorDepth },
 		{ label: 'Тема ОС', value: s.prefersColorScheme },
-		{ label: 'Режим UI (атрибут)', value: s.usageLevelAttr },
 		{ label: 'Сеть', value: s.connection },
 		{ label: 'Ядра CPU', value: s.hardwareConcurrency },
 		{ label: 'Онлайн', value: s.onLine },
@@ -219,7 +211,7 @@ export function browserSnapshotRows(s: BrowserSnapshot): AboutInfoRow[] {
 	];
 }
 
-export function routerStaticRows(info: SystemInfo, level: UsageLevel): AboutInfoRow[] {
+export function routerStaticRows(info: SystemInfo): AboutInfoRow[] {
 	const d = info.routerDetails;
 	const model =
 		d?.modelDisplay || d?.model || info.kernelModuleModel || '—';
@@ -249,21 +241,19 @@ export function routerStaticRows(info: SystemInfo, level: UsageLevel): AboutInfo
 		});
 	}
 
-	if (level !== 'basic') {
-		rows.push(
-			{ label: 'Архитектура Go', value: `${info.goOS}/${info.goArch}` },
-			{
-				label: 'Модуль ядра',
-				value: info.kernelModuleLoaded
-					? `загружен (${info.kernelModuleModel || '?'})`
-					: info.kernelModuleExists
-						? 'есть, не загружен'
-						: 'нет',
-			},
-		);
-	}
+	rows.push(
+		{ label: 'Архитектура Go', value: `${info.goOS}/${info.goArch}` },
+		{
+			label: 'Модуль ядра',
+			value: info.kernelModuleLoaded
+				? `загружен (${info.kernelModuleModel || '?'})`
+				: info.kernelModuleExists
+					? 'есть, не загружен'
+					: 'нет',
+		},
+	);
 
-	if (level === 'expert' && d) {
+	if (d) {
 		if (d.firmwareBuildDate) {
 			rows.push({ label: 'Дата сборки', value: d.firmwareBuildDate });
 		}
@@ -350,7 +340,6 @@ export function buildRouterClientContext(
 }
 
 export function buildAwgmServicesSnapshot(input: {
-	level: UsageLevel;
 	theme: ThemeState | null;
 	settings: Settings | null;
 	authDisabled: boolean;
@@ -359,13 +348,11 @@ export function buildAwgmServicesSnapshot(input: {
 	singbox: SingboxStatus | null;
 	hydra: HydraRouteStatus | null;
 	hydraLoaded?: boolean;
-	showHydra?: boolean;
 	deviceProxy: DeviceProxyConfig | null;
 	deviceProxyRuntime: DeviceProxyRuntime | null;
 	dnsRoutesTotal: number;
 	dnsRoutesEnabled: number;
 	dnsRoutesLoaded?: boolean;
-	showDnsRoutes?: boolean;
 	awgRunning: number;
 	awgTotal: number;
 	awgCountsLoaded?: boolean;
@@ -373,7 +360,6 @@ export function buildAwgmServicesSnapshot(input: {
 	subscriptionsTotal: number;
 	subscriptionsLoaded?: boolean;
 }): AwgmServicesSnapshot {
-	const level = input.level;
 
 	let auth = '—';
 	if (input.settings) {
@@ -402,17 +388,15 @@ export function buildAwgmServicesSnapshot(input: {
 	}
 
 	let hydra: string | null = null;
-	if (input.showHydra) {
-		if (input.hydraLoaded) {
-			if (input.hydra) {
-				hydra = input.hydra.installed
-					? input.hydra.running
-						? 'работает'
-						: 'остановлен'
-					: 'не установлен';
-			} else {
-				hydra = '—';
-			}
+	if (input.hydraLoaded) {
+		if (input.hydra) {
+			hydra = input.hydra.installed
+				? input.hydra.running
+					? 'работает'
+					: 'остановлен'
+				: 'не установлен';
+		} else {
+			hydra = '—';
 		}
 	}
 
@@ -425,26 +409,19 @@ export function buildAwgmServicesSnapshot(input: {
 			: 'выкл';
 	}
 
-	const dnsRoutes =
-		!input.showDnsRoutes
-			? '—'
-			: input.dnsRoutesLoaded
-				? `${input.dnsRoutesEnabled} вкл / ${input.dnsRoutesTotal} всего`
-				: '…';
+	const dnsRoutes = input.dnsRoutesLoaded
+		? `${input.dnsRoutesEnabled} вкл / ${input.dnsRoutesTotal} всего`
+		: '…';
 
 	const awgTunnels = input.awgCountsLoaded
 		? `${input.awgRunning} запущено / ${input.awgTotal} всего`
 		: '…';
 
-	const subscriptions =
-		level === 'basic'
-			? 'раздел недоступен в базовом режиме'
-			: input.subscriptionsLoaded
-				? `${input.subscriptionsEnabled} вкл / ${input.subscriptionsTotal} всего`
-				: '…';
+	const subscriptions = input.subscriptionsLoaded
+		? `${input.subscriptionsEnabled} вкл / ${input.subscriptionsTotal} всего`
+		: '…';
 
 	return {
-		usageLevel: USAGE_LEVEL_LABELS[level],
 		interfaceWidth: formatInterfaceWidth(),
 		theme: formatAwgmTheme(input.theme),
 		auth,
@@ -461,7 +438,6 @@ export function buildAwgmServicesSnapshot(input: {
 
 export function awgmServicesRows(s: AwgmServicesSnapshot): AboutInfoRow[] {
 	const rows: AboutInfoRow[] = [
-		{ label: 'Режим интерфейса', value: s.usageLevel },
 		{ label: 'Ширина интерфейса', value: s.interfaceWidth },
 		{ label: 'Тема AWGM', value: s.theme },
 		{ label: 'Авторизация', value: s.auth },

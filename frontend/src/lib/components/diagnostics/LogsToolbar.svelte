@@ -88,7 +88,6 @@
   import { Calendar, EyeOff, Eye, Play, Pause, Copy, Download, Trash2 } from 'lucide-svelte';
   import { Badge, StatusDot, Modal, Button } from '$lib/components/ui';
   import { formatRelativeTime } from '$lib/utils/format';
-  import { usageLevel } from '$lib/stores/settings';
   import { systemInfo } from '$lib/stores/system';
 
   interface Props {
@@ -153,12 +152,10 @@
 
   const groupOptions = $derived(bucket === 'singbox' ? SINGBOX_GROUPS : APP_GROUPS);
 
-  /** `profiling` has a dedicated expert-only chip — never duplicate it in subgroup chips. */
+  /** `profiling` has a dedicated chip — never duplicate it in subgroup chips. */
   const visibleSubgroups = $derived(availableSubgroups.filter((s) => s !== 'profiling'));
   const slowRequestProfilingMs = $derived($systemInfo.data?.slowRequestThresholdMs ?? 0);
-  const showExpertProfilingChip = $derived(
-    bucket === 'app' && $usageLevel === 'expert' && slowRequestProfilingMs > 0,
-  );
+  const showExpertProfilingChip = $derived(bucket === 'app' && slowRequestProfilingMs > 0);
 
   function toggleLevel(lvl: string) {
     const set = new Set(filter.levels);

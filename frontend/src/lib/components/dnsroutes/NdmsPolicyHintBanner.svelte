@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { usageLevel } from '$lib/stores/settings';
 	import { TriangleAlert } from 'lucide-svelte';
 
 	interface Props {
@@ -9,7 +8,7 @@
 
 	let { isOS5 = false }: Props = $props();
 
-	const visible = $derived($usageLevel === 'basic' && isOS5);
+	const visible = $derived(isOS5);
 </script>
 
 {#if visible}

@@ -17,13 +17,12 @@
     import { notifications } from '$lib/stores/notifications';
     import { downloadErrorToText } from '$lib/utils/downloadError';
     import { dnsRoutesStore } from '$lib/stores/routing';
-    import { settings, usageLevel } from '$lib/stores/settings';
+    import { settings } from '$lib/stores/settings';
     import {
         downloadOutbounds,
         ensureDownloadOutboundsLoaded,
         resolveDownloadRouteLabel,
     } from '$lib/stores/downloadRoute';
-    import { areDownloadRouteDetailsVisible } from '$lib/types/usageLevel';
     import RoutingTabBodySkeleton from './RoutingTabBodySkeleton.svelte';
     import RoutingRuleAddMenu from '$lib/components/routing/RoutingRuleAddMenu.svelte';
     import { ERROR_WORDS, pluralForm, pluralize, RULE_WORDS } from '$lib/utils/pluralize';
@@ -90,9 +89,7 @@
     let orphanDnsRoutes = $derived(dnsRoutes.filter(r => (r.routes?.length ?? 0) === 0));
     let boundDnsRoutes = $derived(dnsRoutes.filter(r => (r.routes?.length ?? 0) > 0));
     let dnsActiveCount = $derived(boundDnsRoutes.filter(r => r.enabled).length);
-    const showDownloadRouteDetails = $derived(areDownloadRouteDetailsVisible($usageLevel));
-    const downloadRouteLabel = $derived(resolveDownloadRouteLabel($settings, $downloadOutbounds));
-    const visibleDownloadRouteLabel = $derived(showDownloadRouteDetails ? downloadRouteLabel : '');
+    const visibleDownloadRouteLabel = $derived(resolveDownloadRouteLabel($settings, $downloadOutbounds));
 
     async function createDnsRoute(data: Partial<DnsRoute>) {
         dnsSaving = true;
@@ -117,9 +114,7 @@
     }
 
     $effect(() => {
-        if (showDownloadRouteDetails) {
-            void ensureDownloadOutboundsLoaded();
-        }
+        void ensureDownloadOutboundsLoaded();
     });
 
     async function updateDnsRoute(data: Partial<DnsRoute>) {

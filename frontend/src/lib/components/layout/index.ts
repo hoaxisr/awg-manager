@@ -5,7 +5,6 @@ export { default as LoadingSpinner } from './LoadingSpinner.svelte';
 export { default as EmptyState } from './EmptyState.svelte';
 export { default as AppHeader } from './AppHeader.svelte';
 export { default as BrandLogoMark } from './BrandLogoMark.svelte';
-export { default as WelcomeBanner } from './WelcomeBanner.svelte';
 export { default as DevelopFeedbackFab } from './DevelopFeedbackFab.svelte';
 export { default as NotificationCenter } from './NotificationCenter.svelte';
 export { default as SideNavItem } from './SideNavItem.svelte';
