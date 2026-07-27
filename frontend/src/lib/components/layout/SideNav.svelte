@@ -26,9 +26,7 @@
 </script>
 
 <div class="sidenav">
-	<!-- фаза 3: вернуть '/' когда на корне появится «Обзор»; сейчас корень —
-	     редирект-стаб, поэтому логотип ведёт в сводку «Все туннели» -->
-	<a href="/tunnels" class="brand" aria-label="AWG Manager" onclick={onNavigate}>
+	<a href="/" class="brand" aria-label="AWG Manager" onclick={onNavigate}>
 		<BrandLogoMark />
 		<span class="wordmark">AWG⋅Manager</span>
 	</a>

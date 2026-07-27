@@ -19,11 +19,19 @@ describe('activeItem', () => {
 		expect(activeItem(u('/tunnels'))?.item.id).toBe('tunnels-all');
 		expect(activeItem(u('/tunnels?detail=t1'))?.item.id).toBe('tunnels-all');
 	});
-	it('«Все туннели» — первый пункт дерева', () => {
-		expect(NAV_TREE[0].id).toBe('tunnels-all');
+	it('«Обзор» — первый пункт дерева, «Все туннели» — второй', () => {
+		expect(NAV_TREE[0].id).toBe('overview');
+		expect(NAV_TREE[1].id).toBe('tunnels-all');
 	});
-	it('корень не подсвечивает ничего — с него уводит редирект', () => {
-		expect(activeItem(u('/'))).toBeNull();
+	it('корень → «Обзор»', () => {
+		expect(activeItem(u('/'))?.item.id).toBe('overview');
+		expect(activeItem(u('/?tab=awg'))?.item.id).toBe('overview');
+	});
+	it('«Обзор» матчится точным путём, а не префиксом', () => {
+		// href '/' с префиксным матчером подсветил бы вообще всё дерево.
+		expect(activeItem(u('/settings'))?.item.id).toBe('settings');
+		expect(activeItem(u('/tunnels'))?.item.id).toBe('tunnels-all');
+		expect(activeItem(u('/nope'))).toBeNull();
 	});
 	it('AWG-туннели на своём маршруте', () => {
 		expect(activeItem(u('/awg/tunnels'))?.item.id).toBe('awg-tunnels');
@@ -122,6 +130,9 @@ describe('breadcrumbFor', () => {
 	});
 	it('«Все туннели» → плоский пункт без группы', () => {
 		expect(breadcrumbFor(u('/tunnels'))).toEqual({ group: null, label: 'Все туннели' });
+	});
+	it('корень → «Обзор» без группы', () => {
+		expect(breadcrumbFor(u('/'))).toEqual({ group: null, label: 'Обзор' });
 	});
 	it('плоский пункт → без группы', () => {
 		expect(breadcrumbFor(u('/settings'))).toEqual({ group: null, label: 'Настройки' });

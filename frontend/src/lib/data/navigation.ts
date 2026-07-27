@@ -1,4 +1,13 @@
-import { Layers, Server, Waypoints, Globe, Activity, Wrench, Settings } from 'lucide-svelte';
+import {
+	LayoutDashboard,
+	Layers,
+	Server,
+	Waypoints,
+	Globe,
+	Activity,
+	Wrench,
+	Settings,
+} from 'lucide-svelte';
 
 /**
  * lucide-svelte v1 экспортирует классовые компоненты (SvelteComponentTyped) —
@@ -38,8 +47,17 @@ const isPath = (url: URL, ...prefixes: string[]) =>
 // по пути — параметры поверхности (?edit=, ?view=, ?mode=) на это не влияют.
 export const NAV_TREE: NavEntry[] = [
 	{
-		// Сводная страница всех видов туннелей. Стоит первой — в фазе 3 сюда
-		// же встанет «Обзор», и «Все туннели» сдвинутся под него.
+		// Обзор — статусная сводка на корне. Матчер точный: префиксный '/'
+		// совпал бы с любым путём и подсветил бы весь список сразу.
+		kind: 'link',
+		id: 'overview',
+		label: 'Обзор',
+		icon: LayoutDashboard,
+		href: '/',
+		match: (url) => url.pathname === '/',
+	},
+	{
+		// Сводная страница всех видов туннелей.
 		kind: 'link',
 		id: 'tunnels-all',
 		label: 'Все туннели',
