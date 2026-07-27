@@ -33,7 +33,7 @@ class Scenario:
 
 
 def _open_edit_managed_server(p: Page):
-    """Open EditManagedServerModal from /servers via the cog icon on a server card."""
+    """Open EditManagedServerModal from /awg/servers via the cog icon on a server card."""
     # The server detail card shows a settings cog icon button with aria-label="Настройки"
     loc = p.locator('button[aria-label="Настройки"]').first
     if loc.count() > 0:
@@ -45,7 +45,7 @@ def _open_edit_managed_server(p: Page):
 SCENARIOS: list[Scenario] = [
     Scenario(
         name="EditManagedServerModal",
-        navigate=lambda p: goto(p, "/servers"),
+        navigate=lambda p: goto(p, "/awg/servers"),
         trigger=_open_edit_managed_server,
         # First text input in the open modal — usually the name (description) field
         input_selector='.modal-card input[type="text"]',
@@ -56,19 +56,19 @@ SCENARIOS: list[Scenario] = [
 SCENARIOS.extend([
     Scenario(
         name="CreateManagedServerModal",
-        navigate=lambda p: goto(p, "/servers"),
+        navigate=lambda p: goto(p, "/awg/servers"),
         trigger=lambda p: p.locator('button:has-text("Новый сервер")').first.click(timeout=4000),
         input_selector='.modal-card input[type="text"]',
     ),
     Scenario(
         name="AddManagedPeerModal",
-        navigate=lambda p: goto(p, "/servers"),
+        navigate=lambda p: goto(p, "/awg/servers"),
         trigger=lambda p: p.locator('button:has-text("Добавить")').last.click(timeout=4000),
         input_selector='.modal-card input[type="text"]',
     ),
     Scenario(
         name="EditManagedPeerModal",
-        navigate=lambda p: goto(p, "/servers"),
+        navigate=lambda p: goto(p, "/awg/servers"),
         trigger=lambda p: p.locator('.peer-row').first.locator('.peer-action-btn').nth(1).click(timeout=4000),
         input_selector='#emp-desc',
     ),

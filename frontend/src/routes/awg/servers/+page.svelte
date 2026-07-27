@@ -251,7 +251,7 @@
 	}
 
 	function openManagedASC(serverId: string) {
-		goto(`/servers/managed-asc?id=${encodeURIComponent(serverId)}`);
+		goto(`/awg/servers/managed-asc?id=${encodeURIComponent(serverId)}`);
 	}
 
 	function openCreate() {

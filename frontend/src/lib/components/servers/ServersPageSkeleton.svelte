@@ -1,6 +1,6 @@
 <script lang="ts">
 	// Скелет страницы «Серверы»: рейл + detail-карточка. Каркас .layout
-	// продублирован из routes/servers/+page.svelte (scoped-стили страницы
+	// продублирован из routes/awg/servers/+page.svelte (scoped-стили страницы
 	// из компонента недостижимы) — включая мобильный брейкпоинт 768px.
 	interface Props {
 		count?: number;
