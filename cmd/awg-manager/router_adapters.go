@@ -7,6 +7,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -323,4 +324,45 @@ func filterBindable(ifaces []ndms.AllInterface, native, occupied map[string]bool
 		})
 	}
 	return out
+}
+
+// wdttAccessAdapter projects managed.Service into wdtt.AccessManager.
+type wdttAccessAdapter struct {
+	svc    *managed.Service
+	ifaces *ndmscommand.InterfaceCommands
+}
+
+func (a *wdttAccessAdapter) ApplyNATModeToInterface(ctx context.Context, ifaceName, mode, prevWAN string) (string, error) {
+	if a.svc == nil {
+		return "", fmt.Errorf("managed service not available")
+	}
+	return a.svc.ApplyNATModeToInterface(ctx, ifaceName, mode, prevWAN)
+}
+
+func (a *wdttAccessAdapter) ApplyPolicyToInterface(ctx context.Context, ifaceName, policy string) error {
+	if a.svc == nil {
+		return fmt.Errorf("managed service not available")
+	}
+	return a.svc.ApplyPolicyToInterface(ctx, ifaceName, policy)
+}
+
+func (a *wdttAccessAdapter) ApplyLANSegmentsToInterface(ctx context.Context, iface, addr, mask string, segments []string) error {
+	if a.svc == nil {
+		return fmt.Errorf("managed service not available")
+	}
+	return a.svc.ApplyLANSegmentsToInterface(ctx, iface, addr, mask, segments)
+}
+
+func (a *wdttAccessAdapter) EnsureInterfaceFirewallPermit(ctx context.Context, ifaceName string) error {
+	if a.ifaces == nil {
+		return nil
+	}
+	return a.ifaces.SetPermitAllACL(ctx, ifaceName)
+}
+
+func (a *wdttAccessAdapter) KernelIfaceName(ctx context.Context, ndmsName string) string {
+	if a.svc == nil {
+		return ndmsName
+	}
+	return a.svc.ResolveKernelIfaceName(ctx, ndmsName)
 }

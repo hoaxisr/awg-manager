@@ -195,15 +195,23 @@ func (a *app) setupServices() {
 		"/opt/bin/freeturn-client",
 		"/opt/bin/freeturn-server",
 	)
-	a.freeturnService.SetListenPortChecker(&awgListenPortChecker{store: a.awgStore})
-	a.deferOnExit(a.freeturnService.Stop)
-
 	a.wdttService = wdtt.NewService(
 		a.dataDir,
 		filepath.Join(a.dataDir, "run"),
 		"/opt/bin/wdtt-client",
+		"/opt/bin/wdtt-server",
 	)
-	a.wdttService.SetListenPortChecker(&awgListenPortChecker{store: a.awgStore})
+	a.freeturnService.SetListenPortChecker(&crossListenPortChecker{
+		AWGStore:           a.awgStore,
+		WDTT:               a.wdttService,
+		IncludeWdttClients: true,
+	})
+	a.wdttService.SetListenPortChecker(&crossListenPortChecker{
+		AWGStore:               a.awgStore,
+		FreeTurn:               a.freeturnService,
+		IncludeFreeTurnClients: true,
+	})
+	a.deferOnExit(a.freeturnService.Stop)
 	a.deferOnExit(a.wdttService.Stop)
 
 	// Unified facade: kernel → custom loop, NativeWG → NDMS native

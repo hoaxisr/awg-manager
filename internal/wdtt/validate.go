@@ -112,6 +112,63 @@ func findClientIndex(clients []ClientInstance, id string) int {
 	return -1
 }
 
+func findServerIndex(servers []ServerInstance, id string) int {
+	for i, s := range servers {
+		if s.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func ensureUniqueServerListenAddr(listens []string, selfIdx int, addr string, portMin, portMax int) string {
+	if err := validateUniqueListens(listens, selfIdx, addr); err == nil {
+		return addr
+	}
+	used := map[int]bool{}
+	for i, a := range listens {
+		if i == selfIdx {
+			continue
+		}
+		if port, err := listenPort(a); err == nil {
+			used[port] = true
+		}
+	}
+	host := "0.0.0.0"
+	if h, _, err := net.SplitHostPort(addr); err == nil && strings.TrimSpace(h) != "" {
+		host = h
+	}
+	for port := portMin; port < portMax; port++ {
+		if !used[port] {
+			return fmt.Sprintf("%s:%d", host, port)
+		}
+	}
+	return fmt.Sprintf("%s:%d", host, portMin)
+}
+
+func serverListenAddresses(servers []ServerInstance) []string {
+	out := make([]string, len(servers))
+	for i, s := range servers {
+		out[i] = s.Config.Listen
+	}
+	return out
+}
+
+func nextServerListen(servers []ServerInstance) string {
+	used := map[int]bool{}
+	for _, s := range servers {
+		if port, err := listenPort(s.Config.Listen); err == nil {
+			used[port] = true
+		}
+	}
+	for port := 56000; port < 56100; port++ {
+		if !used[port] {
+			return fmt.Sprintf("0.0.0.0:%d", port)
+		}
+	}
+	return "0.0.0.0:56000"
+}
+
 // LocalListenPort parses host:port and returns port when host is loopback.
 func LocalListenPort(addr string) (int, bool) {
 	addr = strings.TrimSpace(addr)

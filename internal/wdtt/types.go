@@ -39,9 +39,52 @@ type ClientInstance struct {
 	Config ClientConfig `json:"config"`
 }
 
+// ServerConfig mirrors flags accepted by the wdtt-server binary.
+type ServerConfig struct {
+	Enabled bool `json:"enabled"`
+
+	Listen    string `json:"listen"`              // -listen, DTLS (default 0.0.0.0:56002)
+	WgPort    int    `json:"wgPort"`              // -wg-port, internal WG (default 56001)
+	Password  string `json:"password"`            // -password, WRAP key derivation
+	ConfigDir string `json:"configDir,omitempty"` // -config-dir; empty → dataDir/wdtt/server/{id}
+	AdminID   string `json:"adminId,omitempty"`   // -admin, optional Telegram user id
+	BotToken  string `json:"botToken,omitempty"`  // -bot-token, optional Telegram bot
+	Debug     bool   `json:"debug"`
+
+	// Router integration (awg-manager + NDMS for wdtt0):
+	NatIface     string   `json:"natIface,omitempty"`     // -nat-if when built-in NAT enabled manually
+	NatMode      string   `json:"natMode"`                // full | internet-only | none via managed service
+	NatStaticWAN string   `json:"natStaticWan,omitempty"` // persisted WAN for internet-only teardown
+	Policy       string   `json:"policy"`                 // NDMS hotspot policy or "none"
+	LanSegments  []string `json:"lanSegments,omitempty"`  // LAN bridge names
+	IngressEnabled bool   `json:"ingressEnabled,omitempty"` // sing-box ingress for iface:wdtt0
+}
+
+const (
+	DefaultWdttIface    = "wdtt0"
+	DefaultWdttAddress  = "10.66.66.1"
+	DefaultWdttMask     = "255.255.255.0"
+)
+
+func DefaultServerConfig() ServerConfig {
+	return ServerConfig{
+		Listen: "0.0.0.0:56002",
+		WgPort: 56001,
+		NatMode: "full",
+		Policy: "none",
+	}
+}
+
+type ServerInstance struct {
+	ID     string       `json:"id"`
+	Name   string       `json:"name"`
+	Config ServerConfig `json:"config"`
+}
+
 type Config struct {
 	Version int              `json:"version,omitempty"`
 	Clients []ClientInstance `json:"clients"`
+	Servers []ServerInstance `json:"servers"`
 }
 
 func DefaultConfig() Config {
@@ -52,12 +95,22 @@ func DefaultConfig() Config {
 			Name:   "Клиент",
 			Config: DefaultClientConfig(),
 		}},
+		Servers: []ServerInstance{{
+			ID:     DefaultInstanceID,
+			Name:   "Сервер",
+			Config: DefaultServerConfig(),
+		}},
 	}
 }
 
 type CreateClientInput struct {
 	Name   string        `json:"name,omitempty"`
 	Config *ClientConfig `json:"config,omitempty"`
+}
+
+type CreateServerInput struct {
+	Name   string        `json:"name,omitempty"`
+	Config *ServerConfig `json:"config,omitempty"`
 }
 
 type ProcessStatus struct {
@@ -80,7 +133,9 @@ type InstanceStatus struct {
 
 type Status struct {
 	Clients []InstanceStatus `json:"clients"`
+	Servers []InstanceStatus `json:"servers"`
 	Client  ProcessStatus    `json:"client"`
+	Server  ProcessStatus    `json:"server"`
 	InstallAvailable bool   `json:"installAvailable"`
 	InstallVersion   string `json:"installVersion,omitempty"`
 	InstalledVersion string `json:"installedVersion,omitempty"`

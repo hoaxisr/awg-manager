@@ -18,28 +18,34 @@ type Service struct {
 	store     *Store
 	dataDir   string
 	clientBin string
-	procs     *processRegistry
+	serverBin string
+	clientProcs *processRegistry
+	serverProcs *processRegistry
 
 	// mu сериализует Load-modify-Save методы: без него два конкурентных
 	// запроса теряют правки друг друга и могут выдать один listen-порт дважды.
 	mu sync.Mutex
 
 	versionPath  string
-	installSpec  *BinarySpec
+	installSpecs *ArchSpecs
 	downloader   childproc.Downloader
 	installMu    sync.Mutex
 	installing   bool
 	appLog       *logging.ScopedLogger
 	listenChecker LocalListenPortChecker
+	accessMgr     AccessManager
+	ifaceChecker  InterfaceChecker
 }
 
-func NewService(dataDir, runtimeDir, clientBin string) *Service {
+func NewService(dataDir, runtimeDir, clientBin, serverBin string) *Service {
 	return &Service{
 		store:       NewStore(dataDir),
 		dataDir:     dataDir,
 		clientBin:   clientBin,
+		serverBin:   serverBin,
 		versionPath: filepath.Join(dataDir, "wdtt-version.json"),
-		procs:       newProcessRegistry(clientBin, runtimeDir),
+		clientProcs: newProcessRegistry("client", clientBin, runtimeDir),
+		serverProcs: newProcessRegistry("server", serverBin, runtimeDir),
 	}
 }
 
@@ -51,8 +57,16 @@ func (s *Service) SetListenPortChecker(c LocalListenPortChecker) {
 	s.listenChecker = c
 }
 
-func (s *Service) SetInstallSpec(spec BinarySpec) {
-	s.installSpec = &spec
+func (s *Service) SetAccessManager(m AccessManager) {
+	s.accessMgr = m
+}
+
+func (s *Service) SetInterfaceChecker(c InterfaceChecker) {
+	s.ifaceChecker = c
+}
+
+func (s *Service) SetInstallSpecs(specs ArchSpecs) {
+	s.installSpecs = &specs
 }
 
 func (s *Service) SetDownloader(dl childproc.Downloader) {
@@ -138,7 +152,7 @@ func (s *Service) DeleteClient(id string) error {
 	s.mu.Unlock()
 	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
 	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
-	_ = s.procs.get(id).Stop()
+	_ = s.clientProcs.get(id).Stop()
 	return saveErr
 }
 
@@ -209,13 +223,25 @@ func (s *Service) Status() Status {
 		st.Clients = append(st.Clients, InstanceStatus{
 			ID:     c.ID,
 			Name:   c.Name,
-			Status: s.procs.get(c.ID).Status(),
+			Status: s.clientProcs.get(c.ID).Status(),
+		})
+	}
+	for _, srv := range cfg.Servers {
+		st.Servers = append(st.Servers, InstanceStatus{
+			ID:     srv.ID,
+			Name:   srv.Name,
+			Status: s.serverProcs.get(srv.ID).Status(),
 		})
 	}
 	if cs := instanceStatusByID(st.Clients, DefaultInstanceID); cs != nil {
 		st.Client = *cs
 	} else if len(st.Clients) > 0 {
 		st.Client = st.Clients[0].Status
+	}
+	if ss := instanceStatusByID(st.Servers, DefaultInstanceID); ss != nil {
+		st.Server = *ss
+	} else if len(st.Servers) > 0 {
+		st.Server = st.Servers[0].Status
 	}
 	return st
 }
@@ -234,21 +260,49 @@ func (s *Service) StartClient() error {
 	return s.StartClientInstance(DefaultInstanceID)
 }
 
+func (s *Service) repairClientListenPort(id string) (ClientConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full, err := s.store.Load()
+	if err != nil {
+		return ClientConfig{}, err
+	}
+	idx := findClientIndex(full.Clients, id)
+	if idx < 0 {
+		return ClientConfig{}, fmt.Errorf("клиент %q не найден", id)
+	}
+	listens := clientListenAddresses(full.Clients)
+	cfg := full.Clients[idx].Config
+	next := ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(), 9000, 9200)
+	if next == cfg.Listen {
+		return cfg, nil
+	}
+	cfg.Listen = next
+	full.Clients[idx].Config = cfg
+	if err := s.store.Save(full); err != nil {
+		return ClientConfig{}, err
+	}
+	if s.appLog != nil {
+		s.appLog.Info("listen-repair", id, "listen переназначен на "+next)
+	}
+	return cfg, nil
+}
+
 func (s *Service) StartClientInstance(id string) error {
-	inst, err := s.clientInstance(id)
+	cfg, err := s.repairClientListenPort(id)
 	if err != nil {
 		return err
 	}
-	if inst.Config.Peer == "" {
+	if cfg.Peer == "" {
 		return errors.New("укажите адрес сервера (-peer)")
 	}
-	if strings.TrimSpace(inst.Config.VKHashes) == "" {
+	if strings.TrimSpace(cfg.VKHashes) == "" {
 		return errors.New("укажите VK-хеши (-vk)")
 	}
-	if strings.TrimSpace(inst.Config.Password) == "" {
+	if strings.TrimSpace(cfg.Password) == "" {
 		return errors.New("укажите пароль подключения (-password)")
 	}
-	if err := s.procs.get(id).Start(buildClientArgs(inst.Config)); err != nil {
+	if err := s.clientProcs.get(id).Start(buildClientArgs(cfg)); err != nil {
 		return err
 	}
 	// Enabled авторитетно = «пользователь запустил»; выставляем только по факту
@@ -267,7 +321,7 @@ func (s *Service) StopClientInstance(id string) error {
 	if _, err := s.clientInstance(id); err != nil {
 		return err
 	}
-	err := s.procs.get(id).Stop()
+	err := s.clientProcs.get(id).Stop()
 	// Явный пользовательский стоп снимает авторитетный Enabled, чтобы автостарт
 	// на следующем бооте его не поднял. Stop() на выходе демона сюда не заходит.
 	if e := s.setEnabled(id, false); e != nil && s.appLog != nil {
@@ -277,7 +331,8 @@ func (s *Service) StopClientInstance(id string) error {
 }
 
 func (s *Service) Stop() {
-	s.procs.stopAll()
+	s.clientProcs.stopAll()
+	s.serverProcs.stopAll()
 }
 
 // ResumeEnabled стартует всех клиентов с Enabled==true (авторитетный флаг
@@ -297,6 +352,14 @@ func (s *Service) ResumeEnabled() {
 		}
 		if err := s.StartClientInstance(c.ID); err != nil && s.appLog != nil {
 			s.appLog.Warn("resume", c.ID, "автостарт не удался: "+err.Error())
+		}
+	}
+	for _, srv := range full.Servers {
+		if !srv.Config.Enabled {
+			continue
+		}
+		if err := s.StartServerInstance(srv.ID); err != nil && s.appLog != nil {
+			s.appLog.Warn("resume", srv.ID, "автостарт сервера не удался: "+err.Error())
 		}
 	}
 }
@@ -388,8 +451,8 @@ func normalizeCaptchaMode(mode string) string {
 }
 
 func (s *Service) InstallBinaries(ctx context.Context) error {
-	if s.installSpec == nil || s.downloader == nil {
-		return fmt.Errorf("установка недоступна: для этой архитектуры нет закреплённой сборки wdtt-client")
+	if s.installSpecs == nil || s.downloader == nil {
+		return fmt.Errorf("установка недоступна: для этой архитектуры нет закреплённой сборки wdtt")
 	}
 	s.installMu.Lock()
 	if s.installing {
@@ -404,24 +467,28 @@ func (s *Service) InstallBinaries(ctx context.Context) error {
 		s.installMu.Unlock()
 	}()
 
-	spec := *s.installSpec
-	if err := s.installOne(ctx, s.clientBin, spec); err != nil {
-		return err
+	specs := *s.installSpecs
+	if err := s.installOne(ctx, s.clientBin, specs.Client); err != nil {
+		return fmt.Errorf("клиент: %w", err)
 	}
-	if err := s.writeInstalledVersion(spec.Version); err != nil && s.appLog != nil {
+	if err := s.installOne(ctx, s.serverBin, specs.Server); err != nil {
+		return fmt.Errorf("сервер: %w", err)
+	}
+	if err := s.writeInstalledVersion(installVersionLabel(specs)); err != nil && s.appLog != nil {
 		s.appLog.Warn("install", "version-file", err.Error())
 	}
 	if s.appLog != nil {
-		s.appLog.Info("install", spec.Version, fmt.Sprintf("wdtt-client v%s установлен: %s", spec.Version, s.clientBin))
+		s.appLog.Info("install", specs.Client.Version,
+			fmt.Sprintf("wdtt установлен: %s, %s", s.clientBin, s.serverBin))
 	}
 	return nil
 }
 
 func (s *Service) InstallInfo() (version string, available bool) {
-	if s.installSpec == nil || s.downloader == nil {
+	if s.installSpecs == nil || s.downloader == nil {
 		return "", false
 	}
-	return s.installSpec.Version, true
+	return installVersionLabel(*s.installSpecs), true
 }
 
 func (s *Service) Installing() bool {

@@ -2,8 +2,11 @@ import type {
 	WdttClientConfig,
 	WdttClientInstance,
 	WdttConfig,
+	WdttGenerateLinkResult,
 	WdttImportPayload,
 	WdttLinkDecodeResult,
+	WdttServerConfig,
+	WdttServerInstance,
 	WdttStatus
 } from '$lib/types';
 import { FreeturnClient } from './clientFreeturn';
@@ -25,6 +28,10 @@ export type WdttSaveClientResult = {
 	config: WdttClientConfig;
 	deletedTunnels?: string[];
 	tunnelErrors?: string[];
+};
+
+export type WdttSaveServerResult = {
+	config: WdttServerConfig;
 };
 
 export class WdttClient extends FreeturnClient {
@@ -102,6 +109,50 @@ export class WdttClient extends FreeturnClient {
 	}> {
 		return this.request(`/wdtt/clients/${encodeURIComponent(id)}/subscription/refresh`, {
 			method: 'POST'
+		});
+	}
+
+	async updateWdttServerInstance(id: string, config: WdttServerConfig): Promise<WdttSaveServerResult> {
+		const res = await this.request<{ config: WdttServerConfig }>(
+			`/wdtt/servers/${encodeURIComponent(id)}`,
+			{ method: 'PUT', body: JSON.stringify(config) }
+		);
+		return { config: res.config };
+	}
+
+	async createWdttServer(name?: string, config?: WdttServerConfig): Promise<WdttServerInstance> {
+		return this.request<WdttServerInstance>('/wdtt/servers', {
+			method: 'POST',
+			body: JSON.stringify({ name, config })
+		});
+	}
+
+	async deleteWdttServer(id: string): Promise<{ message: string }> {
+		return this.request(`/wdtt/servers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+	}
+
+	async renameWdttServer(id: string, name: string): Promise<{ message: string }> {
+		return this.request(`/wdtt/servers/${encodeURIComponent(id)}`, {
+			method: 'PATCH',
+			body: JSON.stringify({ name })
+		});
+	}
+
+	async startWdttServerInstance(id: string): Promise<void> {
+		await this.request(`/wdtt/servers/${encodeURIComponent(id)}/start`, { method: 'POST' });
+	}
+
+	async stopWdttServerInstance(id: string): Promise<void> {
+		await this.request(`/wdtt/servers/${encodeURIComponent(id)}/stop`, { method: 'POST' });
+	}
+
+	async generateWdttServerLink(
+		id: string,
+		opts?: { peer?: string; vkHashes?: string[]; name?: string }
+	): Promise<WdttGenerateLinkResult> {
+		return this.request<WdttGenerateLinkResult>(`/wdtt/servers/${encodeURIComponent(id)}/link`, {
+			method: 'POST',
+			body: JSON.stringify(opts ?? {})
 		});
 	}
 }

@@ -3,14 +3,15 @@ package wdtt
 import "sync"
 
 type processRegistry struct {
+	role       string // "client" or "server"
 	binary     string
 	runtimeDir string
 	mu         sync.Mutex
 	procs      map[string]*process
 }
 
-func newProcessRegistry(binary, runtimeDir string) *processRegistry {
-	return &processRegistry{binary: binary, runtimeDir: runtimeDir}
+func newProcessRegistry(role, binary, runtimeDir string) *processRegistry {
+	return &processRegistry{role: role, binary: binary, runtimeDir: runtimeDir}
 }
 
 func (r *processRegistry) get(id string) *process {
@@ -22,9 +23,9 @@ func (r *processRegistry) get(id string) *process {
 	if p, ok := r.procs[id]; ok {
 		return p
 	}
-	pidName := "client"
+	pidName := r.role
 	if id != DefaultInstanceID {
-		pidName = "client-" + id
+		pidName = r.role + "-" + id
 	}
 	p := newProcess(pidName, r.binary, r.runtimeDir)
 	r.procs[id] = p

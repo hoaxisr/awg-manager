@@ -247,8 +247,15 @@ func (a *app) setupDeviceProxy() {
 		a.freeturnService.SetDownloader(&freeturnDownloaderAdapter{svc: sharedDownloadSvc})
 	}
 	a.wdttService.SetLogger(a.loggingService)
-	if spec, ok := wdtt.EmbeddedBinaries[detectArch()]; ok {
-		a.wdttService.SetInstallSpec(spec)
+	if a.managedService != nil {
+		a.wdttService.SetAccessManager(&wdttAccessAdapter{
+			svc:    a.managedService,
+			ifaces: a.ndmsCommands.Interfaces,
+		})
+	}
+	a.wdttService.SetInterfaceChecker(wdtt.NewSysNetChecker())
+	if specs, ok := wdtt.EmbeddedBinaries[detectArch()]; ok {
+		a.wdttService.SetInstallSpecs(specs)
 		a.wdttService.SetDownloader(&wdttDownloaderAdapter{svc: sharedDownloadSvc})
 	}
 	// Автостарт клиентов, которые пользователь запускал (Enabled), — иначе после
@@ -600,6 +607,8 @@ func (a *app) setupShutdown() {
 
 	// Start the monitoring scheduler now that shutdownCtx exists.
 	a.monitoringService.Start(a.shutdownCtx)
+	// Re-apply WDTT entware iptables NAT — sing-box router reconcile can flush rules.
+	a.wdttService.StartNATReconciler(a.shutdownCtx)
 
 	// Register shutdown hooks for graceful cleanup before syscall.Exec restart.
 	a.srv.AddShutdownHook(a.shutdownCancel)

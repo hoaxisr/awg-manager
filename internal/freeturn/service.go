@@ -367,21 +367,49 @@ func (s *Service) StartClient() error {
 	return s.StartClientInstance(DefaultInstanceID)
 }
 
+func (s *Service) repairClientListenPort(id string) (ClientConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full, err := s.store.Load()
+	if err != nil {
+		return ClientConfig{}, err
+	}
+	idx := findClientIndex(full.Clients, id)
+	if idx < 0 {
+		return ClientConfig{}, fmt.Errorf("клиент %q не найден", id)
+	}
+	listens := clientListenAddresses(full.Clients)
+	cfg := full.Clients[idx].Config
+	next := ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(), 9000, 9200)
+	if next == cfg.Listen {
+		return cfg, nil
+	}
+	cfg.Listen = next
+	full.Clients[idx].Config = cfg
+	if err := s.store.Save(full); err != nil {
+		return ClientConfig{}, err
+	}
+	if s.appLog != nil {
+		s.appLog.Info("listen-repair", id, "listen переназначен на "+next)
+	}
+	return cfg, nil
+}
+
 func (s *Service) StartClientInstance(id string) error {
-	inst, err := s.clientInstance(id)
+	cfg, err := s.repairClientListenPort(id)
 	if err != nil {
 		return err
 	}
-	if inst.Config.Peer == "" {
+	if cfg.Peer == "" {
 		return errors.New("укажите адрес сервера (-peer)")
 	}
-	if inst.Config.Provider == "vk" && inst.Config.Links == "" {
+	if cfg.Provider == "vk" && cfg.Links == "" {
 		return errors.New("укажите ссылку(-и) VK Calls (-links) — обязательны для provider=vk")
 	}
-	if err := validateObfKey(inst.Config.ObfProfile, inst.Config.ObfKey); err != nil {
+	if err := validateObfKey(cfg.ObfProfile, cfg.ObfKey); err != nil {
 		return err
 	}
-	if err := s.clientProcs.get(id).Start(buildClientArgs(inst.Config)); err != nil {
+	if err := s.clientProcs.get(id).Start(buildClientArgs(cfg)); err != nil {
 		return err
 	}
 	// Enabled авторитетно = «пользователь запустил»; выставляем только по факту
