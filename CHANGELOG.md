@@ -4,7 +4,7 @@
 
 ### Новые возможности
 
-- **Обновление sing-box до `1.14.0-beta.1-awgm.2`** — наш форк перенесён на актуальный upstream sing-box `v1.14.0-beta.1`, а AmneziaWG-ядро — на финальный upstream AWG3 (влит в master); попутно нашими силами исправлена гонка таймера рекея в устройстве и IPv6-endpoint у AWG-туннелей. Новая схема версий форка `<upstream>-awgm.N` вместо длинного `-awg3-xhttp-mieru-N`.
+- **Обновление sing-box до `1.14.0-beta.1-awgm.2`** — форк перенесён на актуальный upstream sing-box `v1.14.0-beta.1`, а AmneziaWG-ядро — на финальный upstream AWG3 (влит в master). Новая схема версий форка `<upstream>-awgm.N` вместо длинного `-awg3-xhttp-mieru-N`.
 - **Показ AWG3 device-таймеров на карточке импортированного туннеля** — если в конфиге заданы `rekey_timeout` / `reject_after_time` / `keepalive_timeout` / `max_handshake_attempts`, они видны read-only в карточке и таблице AWG3-туннелей. Настраиваются эти таймеры на стороне сервера (routebox); awg-manager их принимает и показывает.
 - **Импорт нативного `.conf` AmneziaWG 3 в AWG3-туннели** — модалка импорта AWG3 принимает конфиг в формате `awg.conf` (вставкой и загрузкой файла): формат детектится автоматически, конфиг конвертируется в endpoint sing-box, тег берётся из Endpoint. Конвертация сверена с эталонными конфигами RouteBox.
 
