@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
 )
@@ -87,6 +88,51 @@ func extendedKey(p vlink.ParsedOutbound) string {
 	return identityKey(p) + "|" + sni + "|" + sid
 }
 
+// transportKey collects the transport fields that make two endpoints on one
+// server:port:credential:SNI genuinely different routes: ws/httpupgrade/xhttp
+// path and Host, gRPC service_name, xhttp mode (issue #625). Empty when the
+// outbound carries no transport block (plain TCP).
+//
+// Field shapes differ per transport type (host is a string for httpupgrade and
+// xhttp but a []string for http/h2, and ws puts it in headers.Host), so every
+// spelling is read here rather than branching on the transport type.
+func transportKey(ob map[string]any) string {
+	tr, ok := ob["transport"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	host := ""
+	switch h := tr["host"].(type) {
+	case string:
+		host = h
+	case []any:
+		parts := make([]string, 0, len(h))
+		for _, v := range h {
+			if s, ok := v.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		host = strings.Join(parts, ",")
+	}
+	if host == "" {
+		if headers, ok := tr["headers"].(map[string]any); ok {
+			host, _ = headers["Host"].(string)
+		}
+	}
+	typ, _ := tr["type"].(string)
+	path, _ := tr["path"].(string)
+	service, _ := tr["service_name"].(string)
+	mode, _ := tr["mode"].(string)
+	return typ + "|" + path + "|" + host + "|" + service + "|" + mode
+}
+
+// fullKey is the widest identity: extendedKey plus the transport fields.
+func fullKey(p vlink.ParsedOutbound) string {
+	var ob map[string]any
+	json.Unmarshal(p.Outbound, &ob)
+	return extendedKey(p) + "|" + transportKey(ob)
+}
+
 func itoa(p uint16) string {
 	if p == 0 {
 		return "0"
@@ -111,20 +157,34 @@ func itoa(p uint16) string {
 // (preview) and the final tag (refresh) agree.
 func chooseKeys(parsed []vlink.ParsedOutbound) []string {
 	distinctExt := make(map[string]map[string]struct{}, len(parsed))
+	distinctFull := make(map[string]map[string]struct{}, len(parsed))
 	for _, p := range parsed {
 		nk := identityKey(p)
 		if distinctExt[nk] == nil {
 			distinctExt[nk] = make(map[string]struct{})
+			distinctFull[nk] = make(map[string]struct{})
 		}
 		distinctExt[nk][extendedKey(p)] = struct{}{}
+		distinctFull[nk][fullKey(p)] = struct{}{}
 	}
 	keys := make([]string, len(parsed))
 	for i, p := range parsed {
 		nk := identityKey(p)
-		if len(distinctExt[nk]) > 1 {
-			keys[i] = extendedKey(p)
-		} else {
+		switch {
+		case len(distinctFull[nk]) <= 1:
+			// Byte-identical duplicates: narrow key keeps the tag stable
+			// across refreshes and matches previously stored narrow tags.
 			keys[i] = nk
+		case len(distinctExt[nk]) == len(distinctFull[nk]):
+			// Masking alone tells them apart (issue #373). Staying on the
+			// extended key keeps tags of already-widened groups unchanged —
+			// widening further would re-tag subscriptions that never had the
+			// bug.
+			keys[i] = extendedKey(p)
+		default:
+			// Endpoints share masking and differ only by transport
+			// (issue #625): only the full key separates them.
+			keys[i] = fullKey(p)
 		}
 	}
 	return keys

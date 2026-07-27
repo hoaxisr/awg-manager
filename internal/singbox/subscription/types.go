@@ -14,6 +14,12 @@ type MemberInfo struct {
 	SNI       string `json:"sni,omitempty"`
 	Transport string `json:"transport,omitempty"` // "tcp" | "ws" | "grpc" | "http" — empty if N/A
 	Security  string `json:"security,omitempty"`  // "tls" | "reality" | "" (none/Hy2 always tls)
+	// TransportKey is the canonical transport fingerprint (path, Host,
+	// service_name, mode). Two endpoints of one server:port:credential:SNI
+	// differ only here, and without it a manual add rejects them as duplicates
+	// (issue #625). Empty on records written before this field existed —
+	// consumers must fall back to the coarse comparison for those.
+	TransportKey string `json:"transportKey,omitempty"`
 }
 
 // SubscriptionMode picks which sing-box outbound type wraps the

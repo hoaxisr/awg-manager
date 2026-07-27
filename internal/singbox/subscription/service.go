@@ -522,6 +522,25 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 
 	diff := ApplyDiff(id, sub.MemberTags, parts.Valid)
 
+	// Перенос исключений на текущую схему тегов (issues #614/#625). Обязан
+	// идти ДО applyDiff: тот читает sub.ExcludedTags (см. ниже) и без переноса
+	// применил бы протухшие теги, вернув исключённые серверы в строй.
+	// Метаданные берём и у исключённых, и у активных членов — активный член
+	// тоже мог протухнуть, а BuildSelector принадлежность набору не проверяет.
+	known := make([]MemberInfo, 0, len(sub.ExcludedMembers)+len(sub.Members))
+	known = append(known, sub.ExcludedMembers...)
+	known = append(known, sub.Members...)
+	prevActive := sub.ActiveMember
+	tags, active, migrated := remapStaleTags(sub.ExcludedTags, known, diff, sub.ActiveMember, flt.Allows)
+	if migrated {
+		// В память — сразу (applyDiff читает sub.ExcludedTags), в стор — только
+		// после успешного applyDiff: иначе упавший refresh оставил бы на диске
+		// новые теги со старыми ExcludedMembers, и вкладка «исключённые»
+		// потеряла бы строку восстановления.
+		sub.ExcludedTags = tags
+		sub.ActiveMember = active
+	}
+
 	// applyDiff (stage → Reload) и Rollback-компенсация выполняются одной
 	// txMu-секцией: между staged-мутациями и их коммитом/откатом не может
 	// вклиниться Reload/Rollback параллельной операции (общий батч слота).
@@ -586,6 +605,20 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 	info := mergeInfoItems(sub.InfoItems, filterDismissedInfo(parts.Info, sub.DismissedInfoIDs))
 	if len(prunedTags) > 0 {
 		s.logWarn("subscription-refresh", id, fmt.Sprintf("pruned %d member(s) not materialized (dropped by validation): %s", len(prunedTags), strings.Join(prunedTags, ", ")))
+	}
+	// Миграция тегов фиксируется здесь — после успешного applyDiff и вместе с
+	// пересобранными excludedMembers, чтобы теги и метаданные исключённых
+	// уехали на диск согласованными.
+	if migrated {
+		if err := s.store.SetExcludedTags(id, sub.ExcludedTags, excludedMembers); err != nil {
+			return nil, err
+		}
+		if active != prevActive {
+			if err := s.store.SetActiveMember(id, active); err != nil {
+				return nil, err
+			}
+		}
+		s.logInfo("subscription-refresh", id, fmt.Sprintf("migrated %d excluded tag(s) to the current identity scheme", len(sub.ExcludedTags)))
 	}
 	if err := s.store.SetMembersExtras(id, newMembers, diff.Orphan, rejected, info, excludedMembers, filteredMembers); err != nil {
 		return nil, err
@@ -825,6 +858,7 @@ func toMemberInfo(tag string, p vlink.ParsedOutbound) MemberInfo {
 			mi.Transport = t
 		}
 	}
+	mi.TransportKey = transportKey(ob)
 	if tls, ok := ob["tls"].(map[string]any); ok {
 		if serverName, ok := tls["server_name"].(string); ok {
 			mi.SNI = strings.TrimSpace(serverName)
@@ -1125,17 +1159,28 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 	}
 	out := parts.Valid[0]
 	// Набор для chooseKeys недоступен (credential существующих членов не
-	// хранится), поэтому тег нового члена считаем по расширенному ключу, а
-	// точный повтор ловим по метаданным MemberInfo (server+port+protocol+SNI).
-	// ponytail: short_id/uuid в MemberInfo нет — два сервера на одном
-	// server:port:SNI с разным short_id/uuid дадут ложный отказ; редкий край.
-	tag := stableTagFromKey(sub.ID, extendedKey(out))
+	// хранится), поэтому тег считаем по полному ключу: два эндпоинта одного
+	// сервера, различающиеся
+	// только транспортом, обязаны получить РАЗНЫЕ теги, иначе второй outbound
+	// перезаписал бы первый (issue #625).
+	//
+	// Повтор по-прежнему ловим по метаданным: точного ключа существующих
+	// членов взять неоткуда (мутатор не отдаёт тела outbound'ов), а их теги
+	// могли быть посчитаны на любом уровне ключа. TransportKey закрывает ту
+	// дыру, из-за которой разные ws-пути считались одним сервером; у записей,
+	// сделанных до появления поля, он пуст — для них остаётся прежнее грубое
+	// сравнение, иначе точный повтор проскочил бы под тем же тегом.
+	tag := stableTagFromKey(sub.ID, fullKey(out))
 	mi := toMemberInfo(tag, out)
 	for _, existing := range sub.Members {
-		if existing.Server == mi.Server && existing.Port == mi.Port &&
-			existing.Protocol == mi.Protocol && existing.SNI == mi.SNI {
-			return nil, ErrMemberDuplicate
+		if existing.Server != mi.Server || existing.Port != mi.Port ||
+			existing.Protocol != mi.Protocol || existing.SNI != mi.SNI {
+			continue
 		}
+		if existing.TransportKey != "" && existing.TransportKey != mi.TransportKey {
+			continue
+		}
+		return nil, ErrMemberDuplicate
 	}
 
 	// Fail-closed write order: mutate sing-box config (idempotent
