@@ -12,8 +12,10 @@
     Subscription,
   } from '$lib/types';
   import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
+  import { onDestroy } from 'svelte';
   import { Badge, Button } from '$lib/components/ui';
-  import { Trash2, Edit3 } from 'lucide-svelte';
+  import { Trash2, Edit3, GripVertical } from 'lucide-svelte';
+  import { createReorderDrag } from './reorderDrag.svelte';
   import { dnsServerDetourDisplay, dnsServerSubtitle } from './dnsServerDetourDisplay';
   import OutboundTile from './OutboundTile.svelte';
   import { dnsRuleTarget, type DnsRuleTarget } from './dnsRuleLabel';
@@ -30,6 +32,8 @@
     onDeleteServer?: (tag: string) => void;
     onEditRule: (idx: number) => void;
     onDeleteRule?: (idx: number) => void;
+    /** Задан — включает перетаскивание правил (оптимистика/откат — на стороне хоста). */
+    onMoveRule?: (from: number, to: number) => Promise<void>;
     onAddRule?: () => void;
     addRuleDisabled?: boolean;
     addRuleTitle?: string;
@@ -48,6 +52,7 @@
     onDeleteServer,
     onEditRule,
     onDeleteRule,
+    onMoveRule,
     onAddRule,
     addRuleDisabled = false,
     addRuleTitle,
@@ -77,7 +82,138 @@
     if (kind === 'respond') return 'purple';
     return 'accent';
   }
+
+  // ── Drag-reorder правил (общий движок reorderDrag, как в fakeip/DnsTab) ──
+  let ruleRowEls = $state<Array<HTMLElement | null>>([]);
+  let rulesEl = $state<HTMLElement | null>(null);
+
+  const ruleDrag = createReorderDrag({
+    getRowElement: (i) => ruleRowEls[i] ?? null,
+    count: () => rules.length,
+    getPanelEl: () => rulesEl,
+    // Правила пресета бэкенд отклоняет на move (DNS_RULE_MANAGED): ни схватить,
+    // ни уронить на их место.
+    isFixed: (i) => {
+      const r = rules[i];
+      return !!r && isManagedDnsChainRule(r);
+    },
+    onCommit: async (from, to) => {
+      await onMoveRule?.(from, to);
+    },
+  });
+
+  onDestroy(() => ruleDrag.destroy());
 </script>
+
+<!-- Строка DNS-правила: рисуется и в списке, и в плавающем ghost'е. -->
+{#snippet ruleRow(r: SingboxRouterDNSRule, i: number, ghost: boolean)}
+  {@const tgt = dnsRuleTarget(r)}
+  {@const matchers = dnsMatcherParts(r)}
+  {@const shadowed = !ghost && shadowedRuleIdx.has(i)}
+  {@const managed = isManagedDnsChainRule(r)}
+  <div
+    class="rule-row"
+    class:shadowed
+    class:has-grip={!!onMoveRule}
+    class:dragging={!ghost && ruleDrag.draggingIndex === i}
+  >
+    {#if onMoveRule}
+      {#if managed}
+        <span class="grip grip-fixed" aria-hidden="true"></span>
+      {:else}
+        <button
+          type="button"
+          class="grip"
+          class:is-busy={ruleDrag.busy}
+          aria-label={`Перетащить DNS-правило #${i + 1}`}
+          title="Перетащить для изменения порядка"
+          onpointerdown={ruleDrag.busy ? undefined : (e) => ruleDrag.handlePointerDown(i, e)}
+        >
+          <GripVertical size={16} strokeWidth={2} />
+        </button>
+      {/if}
+    {/if}
+    <button
+      type="button"
+      class="rule-content"
+      disabled={managed}
+      onclick={() => onEditRule(i)}
+      title={managed
+        ? 'Правило DNS-пресета — управляется автоматически'
+        : shadowed
+        ? `${dnsMatcherSummary(r)} → ${tgt.label} · перекрыто catch-all правилом выше`
+        : `${dnsMatcherSummary(r)} → ${tgt.label}`}
+    >
+      <span class="rule-match">
+        {#if matchers.length === 0}
+          <Badge variant="accent" size="xs">
+            {r.action === 'evaluate'
+              ? 'catch-all · оценивает все запросы'
+              : 'catch-all · всё остальное'}
+          </Badge>
+        {:else}
+          {#each matchers as part, pi (part.key + pi)}
+            <span class="m-part">
+              <span class="m-head">
+                {#if pi > 0}<span class="m-sep">· </span>{/if}
+                {#if part.key === 'query_type'}
+                  <span class="m-key">query_type</span><span class="m-eq">=</span>
+                {:else}
+                  <span class="m-key">{part.key}</span><span class="m-colon">: </span>
+                {/if}
+              </span>
+              <span class="m-val">{part.value}</span>
+            </span>
+          {/each}
+        {/if}
+        {#if shadowed}
+          <Badge variant="warning" size="xs">перекрыто catch-all выше</Badge>
+        {/if}
+        {#if managed}
+          <Badge variant="muted" size="xs">пресет</Badge>
+        {/if}
+      </span>
+      <span class="rule-arrow" aria-hidden="true">→</span>
+      {#if tgt.kind === 'none'}
+        <span class="rule-target none">{tgt.label}</span>
+      {:else}
+        <span class="rule-target" title={tgt.label}>
+          <Badge variant={targetVariant(tgt.kind)} size="sm" mono>{tgt.label}</Badge>
+          {#if r.race}<Badge variant="muted" size="xs">race</Badge>{/if}
+          {#if r.speculative}<Badge variant="muted" size="xs">spec</Badge>{/if}
+        </span>
+      {/if}
+    </button>
+
+    <!-- Правило пресета: бэкенд отклоняет edit/delete/move
+         (DNS_RULE_MANAGED) — действий не показываем. -->
+    <div class="rule-actions">
+      {#if !managed}
+        <button
+          type="button"
+          class="route-action-btn"
+          onclick={() => onEditRule(i)}
+          aria-label={`Редактировать DNS-правило #${i + 1}`}
+          title={`Редактировать DNS-правило #${i + 1}`}
+        >
+          <Edit3 size={15} />
+        </button>
+
+        {#if onDeleteRule}
+          <button
+            type="button"
+            class="route-action-btn danger"
+            onclick={() => onDeleteRule(i)}
+            aria-label={`Удалить DNS-правило #${i + 1}`}
+            title={`Удалить DNS-правило #${i + 1}`}
+          >
+            <Trash2 size={15} />
+          </button>
+        {/if}
+      {/if}
+    </div>
+  </div>
+{/snippet}
 
 <div class="wrap">
   <div class="servers">
@@ -147,100 +283,55 @@
   {/if}
   {#if rules.length > 0}
     <div class="rules-table">
-      <div class="rules-rows">
+      <div
+        class="rules-rows"
+        class:is-dragging={ruleDrag.active}
+        style={ruleDrag.cardsMotionStyle()}
+        bind:this={rulesEl}
+      >
         {#each rules as r, i (i)}
-          {@const tgt = dnsRuleTarget(r)}
-          {@const matchers = dnsMatcherParts(r)}
-          {@const shadowed = shadowedRuleIdx.has(i)}
-          {@const managed = isManagedDnsChainRule(r)}
-          <div class="rule-row" class:shadowed>
-            <button
-              type="button"
-              class="rule-content"
-              disabled={managed}
-              onclick={() => onEditRule(i)}
-              title={managed
-                ? 'Правило DNS-пресета — управляется автоматически'
-                : shadowed
-                ? `${dnsMatcherSummary(r)} → ${tgt.label} · перекрыто catch-all правилом выше`
-                : `${dnsMatcherSummary(r)} → ${tgt.label}`}
-            >
-              <span class="rule-match">
-                {#if matchers.length === 0}
-                  <Badge variant="accent" size="xs">
-                    {r.action === 'evaluate'
-                      ? 'catch-all · оценивает все запросы'
-                      : 'catch-all · всё остальное'}
-                  </Badge>
-                {:else}
-                  {#each matchers as part, pi (part.key + pi)}
-                    <span class="m-part">
-                      <span class="m-head">
-                        {#if pi > 0}<span class="m-sep">· </span>{/if}
-                        {#if part.key === 'query_type'}
-                          <span class="m-key">query_type</span><span class="m-eq">=</span>
-                        {:else}
-                          <span class="m-key">{part.key}</span><span class="m-colon">: </span>
-                        {/if}
-                      </span>
-                      <span class="m-val">{part.value}</span>
-                    </span>
-                  {/each}
-                {/if}
-                {#if shadowed}
-                  <Badge variant="warning" size="xs">перекрыто catch-all выше</Badge>
-                {/if}
-                {#if managed}
-                  <Badge variant="muted" size="xs">пресет</Badge>
-                {/if}
-              </span>
-              <span class="rule-arrow" aria-hidden="true">→</span>
-              {#if tgt.kind === 'none'}
-                <span class="rule-target none">{tgt.label}</span>
-              {:else}
-                <span class="rule-target" title={tgt.label}>
-                  <Badge variant={targetVariant(tgt.kind)} size="sm" mono>{tgt.label}</Badge>
-                  {#if r.race}<Badge variant="muted" size="xs">race</Badge>{/if}
-                  {#if r.speculative}<Badge variant="muted" size="xs">spec</Badge>{/if}
-                </span>
-              {/if}
-            </button>
-
-            <!-- Правило пресета: бэкенд отклоняет edit/delete/move
-                 (DNS_RULE_MANAGED) — действий не показываем. -->
-            <div class="rule-actions">
-              {#if !managed}
-                <button
-                  type="button"
-                  class="route-action-btn"
-                  onclick={() => onEditRule(i)}
-                  aria-label={`Редактировать DNS-правило #${i + 1}`}
-                  title={`Редактировать DNS-правило #${i + 1}`}
-                >
-                  <Edit3 size={15} />
-                </button>
-
-                {#if onDeleteRule}
-                  <button
-                    type="button"
-                    class="route-action-btn danger"
-                    onclick={() => onDeleteRule(i)}
-                    aria-label={`Удалить DNS-правило #${i + 1}`}
-                    title={`Удалить DNS-правило #${i + 1}`}
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                {/if}
-              {/if}
-            </div>
+          <div
+            class="row-shell"
+            class:drag-source-exiting={ruleDrag.isDragSource(i)}
+            class:drag-source-collapsed={ruleDrag.sourceCollapsed(i)}
+            style={ruleDrag.isDragSource(i) ? ruleDrag.dropIndicatorStyle() : undefined}
+            bind:this={ruleRowEls[i]}
+          >
+            {#if ruleDrag.showsDropBefore(i)}
+              <div
+                class="drop-indicator"
+                class:expanded={ruleDrag.dropBeforeExpanded(i)}
+                class:collapsing={ruleDrag.dropBeforeCollapsing(i)}
+                style={ruleDrag.dropIndicatorStyle()}
+              ></div>
+            {/if}
+            {@render ruleRow(r, i, false)}
           </div>
         {/each}
+        {#if ruleDrag.showsDropAtEnd()}
+          <div
+            class="drop-indicator drop-indicator-end"
+            class:expanded={ruleDrag.dropEndExpanded()}
+            class:collapsing={ruleDrag.dropEndCollapsing()}
+            style={ruleDrag.dropIndicatorStyle()}
+          ></div>
+        {/if}
       </div>
     </div>
   {:else}
     <div class="empty">Нет правил</div>
   {/if}
 </div>
+
+<!-- Плавающая ghost-карточка: тот же сниппет строки → пиксель-в-пиксель. -->
+{#if ruleDrag.ghostVisible && ruleDrag.ghostFromIndex !== null && rules[ruleDrag.ghostFromIndex]}
+  <div
+    class="drag-ghost"
+    style={`top:${ruleDrag.ghostTop}px;left:${ruleDrag.ghostLeft}px;width:${ruleDrag.ghostWidth}px;`}
+  >
+    {@render ruleRow(rules[ruleDrag.ghostFromIndex], ruleDrag.ghostFromIndex, true)}
+  </div>
+{/if}
 
 <style>
   .wrap {
@@ -345,6 +436,150 @@
     gap: 0.25rem;
     min-width: 0;
   }
+
+  /* ── Drag-reorder: разметка общего движка reorderDrag (ghost + скелетон-слот
+     + схлопывание источника), как в fakeip/DnsTab. Инлайновый --card-gap движка
+     (6px из route.rules) перебиваем фактическим зазором списка. ── */
+  .rules-rows,
+  .rules-rows .row-shell,
+  .rules-rows .drop-indicator {
+    --card-gap: 4px !important;
+  }
+  .rules-rows.is-dragging {
+    user-select: none;
+  }
+  .row-shell {
+    position: relative;
+    min-width: 0;
+  }
+  .row-shell.drag-source-exiting {
+    overflow: hidden;
+    height: var(--drop-height);
+    opacity: 1;
+    transition:
+      height var(--drop-slot-motion-ms, 360ms) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+      opacity var(--drop-slot-motion-ms, 360ms) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+      margin var(--drop-slot-motion-ms, 360ms) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95));
+  }
+  .row-shell.drag-source-exiting.drag-source-collapsed {
+    height: 0;
+    max-height: 0;
+    opacity: 0;
+    margin-bottom: calc(-1 * var(--card-gap, 4px));
+  }
+  .drop-indicator {
+    box-sizing: border-box;
+    overflow: hidden;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: var(--color-accent, var(--accent));
+    box-shadow: 0 0 10px color-mix(in srgb, var(--color-accent, var(--accent)) 45%, transparent);
+    opacity: 1;
+    pointer-events: none;
+    transition:
+      height var(--drop-slot-motion-ms, 360ms) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+      margin var(--drop-slot-motion-ms, 360ms) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+      background calc(var(--drop-slot-motion-ms, 360ms) * 0.85) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+      border-color calc(var(--drop-slot-motion-ms, 360ms) * 0.85) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95)),
+      opacity calc(var(--drop-slot-motion-ms, 360ms) * 0.85) var(--slot-ease, cubic-bezier(0.45, 0.05, 0.55, 0.95));
+  }
+  .drop-indicator:not(.expanded):not(.collapsing) {
+    position: absolute;
+    top: -3px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    margin: 0;
+    z-index: 2;
+  }
+  .drop-indicator.expanded:not(.collapsing) {
+    position: static;
+    top: auto;
+    height: var(--drop-height);
+    margin: 0 0 var(--card-gap, 4px);
+    border-radius: var(--radius-sm, 6px);
+    background: color-mix(in srgb, var(--color-accent, var(--accent)) 6%, transparent);
+    border-color: color-mix(in srgb, var(--color-accent, var(--accent)) 55%, transparent);
+    border-style: dashed;
+    box-shadow: none;
+  }
+  .drop-indicator.collapsing {
+    margin: 0 !important;
+    opacity: 0;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+  }
+  .drop-indicator.collapsing.expanded {
+    position: static;
+    height: 0 !important;
+  }
+  .drop-indicator.collapsing:not(.expanded) {
+    position: absolute;
+    top: -3px;
+    left: 0;
+    right: 0;
+    height: 2px !important;
+    z-index: 2;
+  }
+  .drop-indicator-end:not(.expanded):not(.collapsing),
+  .drop-indicator-end.collapsing:not(.expanded) {
+    position: relative;
+    top: auto;
+    left: auto;
+    right: auto;
+    height: 2px !important;
+    margin: -1px 0 0 !important;
+  }
+  .drag-ghost {
+    position: fixed;
+    z-index: 10000;
+    pointer-events: none;
+    opacity: 0.96;
+    filter: drop-shadow(0 14px 24px rgba(0, 0, 0, 0.35));
+    background: var(--bg-secondary);
+    border: 1px solid color-mix(in srgb, var(--color-accent, var(--accent)) 55%, var(--border));
+    border-radius: var(--radius-sm, 6px);
+  }
+  .rule-row.dragging {
+    opacity: 0.7;
+    outline: 1px solid color-mix(in srgb, var(--color-accent, var(--accent)) 55%, var(--border));
+    outline-offset: -1px;
+  }
+  .grip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: var(--text-muted);
+    opacity: 0.55;
+    cursor: grab;
+    touch-action: none;
+    border-radius: 4px;
+  }
+  button.grip:hover {
+    color: var(--text-primary);
+    opacity: 1;
+  }
+  button.grip:active {
+    cursor: grabbing;
+  }
+  .grip.is-busy {
+    cursor: wait;
+    opacity: 0.3;
+    pointer-events: none;
+  }
+  /* managed-строка: место грипа держим, но тащить нечего */
+  .grip-fixed {
+    cursor: default;
+  }
+
+  :global(body.reorder-dragging) {
+    user-select: none;
+    cursor: grabbing;
+  }
   .rule-row {
     transition: background-color 0.15s ease;
     display: grid;
@@ -355,6 +590,9 @@
     background: var(--surface-bg);
     padding: 0.55rem 0.75rem;
     border-radius: 4px;
+  }
+  .rule-row.has-grip {
+    grid-template-columns: 18px minmax(0, 1fr) auto;
   }
   /* Правило, перекрытое catch-all выше: мёртвый код — приглушаем. */
   .rule-row.shadowed {
@@ -449,8 +687,19 @@
     white-space: nowrap;
   }
   @media (max-width: 768px) {
+    .rules-rows,
+    .rules-rows .row-shell,
+    .rules-rows .drop-indicator {
+      /* строки без зазора → скелетону нечего компенсировать */
+      --card-gap: 0px !important;
+    }
+
     .rules-rows {
       gap: 0;
+    }
+
+    .rule-row.has-grip {
+      grid-template-columns: 18px minmax(0, 1fr) auto;
     }
 
     .rule-row {

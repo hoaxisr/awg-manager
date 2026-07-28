@@ -26,4 +26,27 @@ describe('DnsServersCompact — managed-правила пресета', () => {
 		expect(screen.queryByLabelText('Редактировать DNS-правило #2')).toBeNull();
 		expect(screen.queryByLabelText('Удалить DNS-правило #2')).toBeNull();
 	});
+
+	it('грип для перетаскивания есть у обычного правила и нет у managed', () => {
+		render(DnsServersCompact, {
+			props: {
+				servers: [],
+				rules,
+				onEditServer: vi.fn(),
+				onEditRule: vi.fn(),
+				onMoveRule: vi.fn(),
+			},
+		});
+
+		expect(screen.getByLabelText('Перетащить DNS-правило #1')).toBeTruthy();
+		expect(screen.queryByLabelText('Перетащить DNS-правило #2')).toBeNull();
+	});
+
+	it('без onMoveRule грипов нет вовсе', () => {
+		render(DnsServersCompact, {
+			props: { servers: [], rules, onEditServer: vi.fn(), onEditRule: vi.fn() },
+		});
+
+		expect(screen.queryByLabelText('Перетащить DNS-правило #1')).toBeNull();
+	});
 });

@@ -913,6 +913,24 @@
     }
   }
 
+  // Перестановка DNS-правила перетаскиванием: оптимистика в стор, при ошибке
+  // бэкенда (например move ломает цепочку evaluate/match_response) — откат
+  // снапшота + тост, как в fakeip/DnsTab.
+  async function handleMoveDnsRule(from: number, to: number) {
+    const snapshot = get(singboxRouterStore.dnsRules);
+    const next = snapshot.slice();
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    singboxRouterStore.applyDNSRules(next);
+    try {
+      await api.singboxRouterMoveDNSRule(from, to);
+      await singboxRouterStore.loadAll();
+    } catch (e) {
+      singboxRouterStore.applyDNSRules(snapshot);
+      notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   async function handleDnsGlobalsSave(globals: { final: string; strategy: SingboxRouterDNSStrategy }) {
     await api.singboxRouterPutDNSGlobals(globals);
     dnsGlobalsModalOpen = false;
@@ -1141,6 +1159,7 @@
           onDeleteServer={handleDeleteDnsServer}
           onEditRule={(idx) => (dnsRuleEditIdx = idx)}
           onDeleteRule={handleDeleteDNSRule}
+          onMoveRule={handleMoveDnsRule}
           onAddRule={() => (dnsRuleAddOpen = true)}
         />
       </SidePanel>
