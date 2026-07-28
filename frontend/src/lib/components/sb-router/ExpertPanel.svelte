@@ -25,13 +25,18 @@
   import { formatBytes, formatByteRate } from '$lib/utils/format';
   import { notifications } from '$lib/stores/notifications';
   import { api } from '$lib/api/client';
-  import { computeRuleSetUsage, DNSGlobalsEditModal } from '$lib/components/routing/singboxRouter';
+  import {
+    computeRuleSetUsage,
+    DNSChainPresetCard,
+    DNSGlobalsEditModal,
+  } from '$lib/components/routing/singboxRouter';
   import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
   import type {
     CatalogPreset,
     SingboxRouterRule,
     SingboxRouterRuleSet,
     SingboxRouterOutbound,
+    SingboxRouterDNSChainPreset,
     SingboxRouterDNSServer,
     SingboxRouterDNSRule,
     SingboxRouterDNSStrategy,
@@ -313,8 +318,28 @@
     };
   }
 
+  // DNS-пресет цепочки хранится в настройках, а не в конфиге роутера, — грузим
+  // отдельно от store.loadAll. Ошибка (старый бэкенд/мок) оставляет «Выкл».
+  let dnsChainPreset = $state<SingboxRouterDNSChainPreset>({ mode: '' });
+
+  async function loadDnsChainPreset(): Promise<void> {
+    try {
+      dnsChainPreset = await api.singboxRouterGetDNSChainPreset();
+    } catch {
+      /* пресет недоступен — карточка остаётся выключенной */
+    }
+  }
+
+  // Ошибку намеренно не глушим: её показывает сама карточка.
+  async function handleDnsChainPresetApply(preset: SingboxRouterDNSChainPreset) {
+    await api.singboxRouterSetDNSChainPreset(preset);
+    await loadDnsChainPreset();
+    await singboxRouterStore.loadAll();
+  }
+
   onMount(() => {
     void singboxRouterStore.loadAll();
+    void loadDnsChainPreset();
     void loadActiveProxyCount();
     void loadAllInbounds();
   });
@@ -1059,6 +1084,13 @@
           </div>
           <span class="globals-summary-action">Настроить</span>
         </button>
+        <DNSChainPresetCard
+          servers={$storeDnsServers}
+          preset={dnsChainPreset}
+          finalServer={$storeDnsGlobals.final}
+          fakeipMode={$storeSettings?.routingMode === 'fakeip-tun'}
+          onApply={handleDnsChainPresetApply}
+        />
         <DnsServersCompact
           servers={$storeDnsServers}
           rules={$storeDnsRules}

@@ -464,6 +464,21 @@ export interface SingboxRouterDNSGlobals {
 	strategy: SingboxRouterDNSStrategy;
 }
 
+/** Режим DNS-пресета: '' — выключен. */
+export type SingboxRouterDNSChainMode = '' | 'resilient' | 'antipoison';
+
+/**
+ * Пресет DNS-цепочки (sing-box 1.14 evaluate/match_response). Managed-правила
+ * цепочки собирает бэкенд; пользователь задаёт только режим и серверы.
+ */
+export interface SingboxRouterDNSChainPreset {
+	mode: SingboxRouterDNSChainMode;
+	directServer?: string;
+	proxyServer?: string;
+	/** ip_cidr «отравленных» ответов для antipoison (пусто = серверный сид). */
+	poisonCidrs?: string[];
+}
+
 export interface SingboxRouterDNSRewrite {
 	pattern: string;
 	ips: string[];

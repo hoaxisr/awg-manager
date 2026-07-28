@@ -20,6 +20,7 @@
   import { dnsMatcherParts, dnsMatcherSummary } from './dnsMatcherParts';
   import { dnsServerDeleteBlockReasons, type DnsServerUsageInput } from './dnsServerUsage';
   import { computeShadowedDnsRuleIndices, isCatchAllDnsRule } from './dnsRuleShadow';
+  import { isManagedDnsChainRule } from './dnsChainManaged';
 
   interface Props {
     servers: SingboxRouterDNSServer[];
@@ -151,12 +152,16 @@
           {@const tgt = dnsRuleTarget(r)}
           {@const matchers = dnsMatcherParts(r)}
           {@const shadowed = shadowedRuleIdx.has(i)}
+          {@const managed = isManagedDnsChainRule(r)}
           <div class="rule-row" class:shadowed>
             <button
               type="button"
               class="rule-content"
+              disabled={managed}
               onclick={() => onEditRule(i)}
-              title={shadowed
+              title={managed
+                ? 'Правило DNS-пресета — управляется автоматически'
+                : shadowed
                 ? `${dnsMatcherSummary(r)} → ${tgt.label} · перекрыто catch-all правилом выше`
                 : `${dnsMatcherSummary(r)} → ${tgt.label}`}
             >
@@ -185,6 +190,9 @@
                 {#if shadowed}
                   <Badge variant="warning" size="xs">перекрыто catch-all выше</Badge>
                 {/if}
+                {#if managed}
+                  <Badge variant="muted" size="xs">пресет</Badge>
+                {/if}
               </span>
               <span class="rule-arrow" aria-hidden="true">→</span>
               {#if tgt.kind === 'none'}
@@ -198,27 +206,31 @@
               {/if}
             </button>
 
+            <!-- Правило пресета: бэкенд отклоняет edit/delete/move
+                 (DNS_RULE_MANAGED) — действий не показываем. -->
             <div class="rule-actions">
-              <button
-                type="button"
-                class="route-action-btn"
-                onclick={() => onEditRule(i)}
-                aria-label={`Редактировать DNS-правило #${i + 1}`}
-                title={`Редактировать DNS-правило #${i + 1}`}
-              >
-                <Edit3 size={15} />
-              </button>
-
-              {#if onDeleteRule}
+              {#if !managed}
                 <button
                   type="button"
-                  class="route-action-btn danger"
-                  onclick={() => onDeleteRule(i)}
-                  aria-label={`Удалить DNS-правило #${i + 1}`}
-                  title={`Удалить DNS-правило #${i + 1}`}
+                  class="route-action-btn"
+                  onclick={() => onEditRule(i)}
+                  aria-label={`Редактировать DNS-правило #${i + 1}`}
+                  title={`Редактировать DNS-правило #${i + 1}`}
                 >
-                  <Trash2 size={15} />
+                  <Edit3 size={15} />
                 </button>
+
+                {#if onDeleteRule}
+                  <button
+                    type="button"
+                    class="route-action-btn danger"
+                    onclick={() => onDeleteRule(i)}
+                    aria-label={`Удалить DNS-правило #${i + 1}`}
+                    title={`Удалить DNS-правило #${i + 1}`}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                {/if}
               {/if}
             </div>
           </div>
@@ -369,6 +381,9 @@
     font-family: var(--font-mono);
     text-align: left;
     cursor: pointer;
+  }
+  .rule-content:disabled {
+    cursor: default;
   }
   .rule-match {
     grid-column: 1;
