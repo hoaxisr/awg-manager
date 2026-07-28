@@ -12,6 +12,7 @@ vi.mock('$lib/api/client', () => ({
     singboxRouterAddDNSRule: vi.fn(),
     singboxRouterUpdateDNSRule: vi.fn(),
     singboxRouterDeleteDNSRule: vi.fn(),
+    singboxRouterMoveDNSRule: vi.fn(),
     singboxRouterGetDNSGlobals: vi.fn(async () => ({ final: '', strategy: 'ipv4_only' })),
     singboxRouterPutDNSGlobals: vi.fn(),
   },
@@ -39,7 +40,7 @@ import { api } from '$lib/api/client';
 import { singboxRouter } from '$lib/stores/singboxRouter';
 import { submitWizard } from './addWizardActions';
 import { mergeAndSaveSettings } from './settingsActions';
-import { finishSetup, ensureTunnelDnsInfra, syncTunnelDnsRule } from './emptyStateActions';
+import { finishSetup, ensureTunnelDnsInfra, syncTunnelDnsRule, ensureLanNamesRule } from './emptyStateActions';
 
 describe('emptyStateActions', () => {
   beforeEach(() => {
@@ -144,5 +145,49 @@ describe('ensureTunnelDnsInfra', () => {
     (api.singboxRouterGetDNSGlobals as ReturnType<typeof vi.fn>).mockResolvedValue({ final: '', strategy: '' });
     await ensureTunnelDnsInfra('wg-nl');
     expect(api.singboxRouterPutDNSGlobals).toHaveBeenCalledWith(expect.objectContaining({ final: 'dns-direct', strategy: 'prefer_ipv4' }));
+  });
+});
+
+describe('ensureLanNamesRule', () => {
+  const LAN_RULE = { domain_regex: ['^[^.]+$'], server: 'dns-local' };
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('пусто → dns-local + правило LAN-имён первым в цепочке', async () => {
+    (api.singboxRouterListDNSServers as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (api.singboxRouterListDNSRules as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce([{ domain_suffix: ['x.com'], server: 'dns-tunnel' }])
+      .mockResolvedValueOnce([{ domain_suffix: ['x.com'], server: 'dns-tunnel' }, LAN_RULE]);
+    await ensureLanNamesRule();
+    expect(api.singboxRouterAddDNSServer).toHaveBeenCalledWith({ tag: 'dns-local', type: 'local', server: '' });
+    expect(api.singboxRouterAddDNSRule).toHaveBeenCalledWith(LAN_RULE);
+    expect(api.singboxRouterMoveDNSRule).toHaveBeenCalledWith(1, 0);
+  });
+
+  it('повторный вызов — no-op (сервер и правило уже есть)', async () => {
+    (api.singboxRouterListDNSServers as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { tag: 'dns-local', type: 'local', server: '' },
+    ]);
+    (api.singboxRouterListDNSRules as ReturnType<typeof vi.fn>).mockResolvedValue([LAN_RULE]);
+    await ensureLanNamesRule();
+    expect(api.singboxRouterAddDNSServer).not.toHaveBeenCalled();
+    expect(api.singboxRouterAddDNSRule).not.toHaveBeenCalled();
+    expect(api.singboxRouterMoveDNSRule).not.toHaveBeenCalled();
+  });
+
+  it('активный пресет: двигаем СВОЁ правило, а не managed-хвост цепочки', async () => {
+    (api.singboxRouterListDNSServers as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { tag: 'dns-local', type: 'local', server: '' },
+    ]);
+    (api.singboxRouterListDNSRules as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce([{ domain_suffix: ['x.com'], server: 'dns-tunnel' }, { tag: 'awgm-dns-probe', server: 'dns-direct' }])
+      // ensure-хук пересобрал цепочку в конец: наше правило — предпоследнее.
+      .mockResolvedValueOnce([
+        { domain_suffix: ['x.com'], server: 'dns-tunnel' },
+        LAN_RULE,
+        { tag: 'awgm-dns-probe', server: 'dns-direct' },
+      ]);
+    await ensureLanNamesRule();
+    expect(api.singboxRouterMoveDNSRule).toHaveBeenCalledWith(1, 0);
   });
 });

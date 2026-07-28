@@ -65,6 +65,32 @@ export async function ensureTunnelDnsInfra(tunnelTag: string): Promise<void> {
   await api.singboxRouterPutDNSGlobals({ final: DNS_DIRECT_TAG, strategy: globals.strategy || 'prefer_ipv4' });
 }
 
+const DNS_LOCAL_TAG = 'dns-local';
+// `^[^.]+$` — имя без точек (LAN-имя). Замена domain_label_count: 1 до бампа
+// базы sing-box: в beta.1 этого поля ещё нет.
+const LAN_NAMES_REGEX = '^[^.]+$';
+
+function isLanNamesRule(r: SingboxRouterDNSRule): boolean {
+  return r.domain_regex?.length === 1 && r.domain_regex[0] === LAN_NAMES_REGEX;
+}
+
+/** Заводит локальный DNS-сервер и правило «имена без точек → dns-local». Идемпотентно. */
+export async function ensureLanNamesRule(): Promise<void> {
+  const servers = await api.singboxRouterListDNSServers();
+  if (!servers.some((s) => s.tag === DNS_LOCAL_TAG)) {
+    await api.singboxRouterAddDNSServer({ tag: DNS_LOCAL_TAG, type: 'local', server: '' });
+  }
+  const rules = await api.singboxRouterListDNSRules();
+  if (rules.some(isLanNamesRule)) return;
+  await api.singboxRouterAddDNSRule({ domain_regex: [LAN_NAMES_REGEX], server: DNS_LOCAL_TAG });
+  // При активном DNS-пресете ensure-хук на бэкенде пере-нормализует managed-
+  // цепочку в конец, и добавленное правило перестаёт быть последним — индекс
+  // берём из ФАКТИЧЕСКОГО списка после Add, а не из локального кэша.
+  const after = await api.singboxRouterListDNSRules();
+  const idx = after.findIndex(isLanNamesRule);
+  if (idx > 0) await api.singboxRouterMoveDNSRule(idx, 0);
+}
+
 function collectTunnelDomainMatchers(rules: SingboxRouterRule[]) {
   const rs = new Set<string>(), ds = new Set<string>();
   for (const r of rules) {

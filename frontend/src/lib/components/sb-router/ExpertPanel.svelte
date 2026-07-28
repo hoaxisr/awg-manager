@@ -64,6 +64,7 @@
   import InboundsMirror from './InboundsMirror.svelte';
   import { expertPanelCollapse } from './expertPanelCollapseStore';
   import InboundSettingsDrawer from './InboundSettingsDrawer.svelte';
+  import { ensureLanNamesRule } from './emptyStateActions';
   import EngineFatalModal from './EngineFatalModal.svelte';
 
   import RuleEditModal from '$lib/components/routing/singboxRouter/RuleEditModal.svelte';
@@ -891,6 +892,21 @@
     await singboxRouterStore.loadAll();
   }
 
+  let lanNamesBusy = $state(false);
+
+  async function applyLanNamesRule() {
+    lanNamesBusy = true;
+    try {
+      await ensureLanNamesRule();
+      await singboxRouterStore.loadAll();
+      notifications.success('Правило LAN-имён на месте');
+    } catch (e) {
+      notifications.error(`Не удалось: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      lanNamesBusy = false;
+    }
+  }
+
   async function handleDnsGlobalsSave(globals: { final: string; strategy: SingboxRouterDNSStrategy }) {
     await api.singboxRouterPutDNSGlobals(globals);
     dnsGlobalsModalOpen = false;
@@ -1066,10 +1082,18 @@
         section="dnsServers"
         title="DNS-серверы"
         count={String($storeDnsServers.length)}
-        actionLabel="+ Сервер"
-        actionVariant="filled"
-        onAction={() => (dnsServerAddOpen = true)}
       >
+        {#snippet actions()}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={lanNamesBusy}
+            onclick={applyLanNamesRule}
+          >
+            LAN-имена → локальный DNS
+          </Button>
+          <Button variant="primary" size="sm" onclick={() => (dnsServerAddOpen = true)}>+ Сервер</Button>
+        {/snippet}
         <button
           type="button"
           class="globals-summary"
