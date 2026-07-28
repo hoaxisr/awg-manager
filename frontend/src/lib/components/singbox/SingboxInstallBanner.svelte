@@ -246,13 +246,13 @@
 		gap: 1rem;
 		padding: 1rem;
 		border: 1px solid var(--warning);
-		background: rgba(245, 158, 11, 0.08);
+		background: color-mix(in srgb, var(--color-warning) 8%, transparent);
 		border-radius: var(--radius);
 		margin-bottom: 1rem;
 	}
 	.banner-error {
 		border-color: var(--error);
-		background: rgba(239, 68, 68, 0.08);
+		background: color-mix(in srgb, var(--color-error) 8%, transparent);
 	}
 	.text { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 	.text .hint {

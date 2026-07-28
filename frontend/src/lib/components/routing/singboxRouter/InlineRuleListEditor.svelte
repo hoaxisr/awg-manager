@@ -414,7 +414,7 @@ geosite:xai`;
 	.parse-messages-warning {
 		border-color: var(--color-warning, #d97706);
 		color: var(--color-warning, #d97706);
-		background: rgba(217, 119, 6, 0.08);
+		background: color-mix(in srgb, var(--color-warning) 8%, transparent);
 	}
 	.info {
 		color: var(--color-success);

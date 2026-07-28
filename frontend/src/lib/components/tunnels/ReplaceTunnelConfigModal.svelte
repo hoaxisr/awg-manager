@@ -156,8 +156,8 @@
         align-items: flex-start;
         gap: 8px;
         padding: 10px 14px;
-        background: rgba(224, 175, 104, 0.08);
-        border: 1px solid rgba(224, 175, 104, 0.25);
+        background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+        border: 1px solid color-mix(in srgb, var(--color-warning) 25%, transparent);
         border-radius: 6px;
         font-size: 0.75rem;
         color: var(--warning, #e0af68);

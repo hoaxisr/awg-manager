@@ -61,7 +61,7 @@
 	}
 
 	.warn-banner {
-		background: rgba(224, 175, 104, 0.1);
+		background: color-mix(in srgb, var(--color-warning) 10%, transparent);
 		border-left: 3px solid var(--warning);
 		color: var(--text-primary);
 		padding: 10px 12px;

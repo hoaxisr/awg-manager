@@ -674,7 +674,7 @@
 	}
 
 	.error-banner {
-		background: rgba(247, 118, 142, 0.1);
+		background: color-mix(in srgb, var(--color-error) 10%, transparent);
 		border-left: 3px solid var(--error);
 		color: var(--error);
 		padding: 8px 12px;
@@ -777,7 +777,7 @@
 		font-weight: 600;
 		padding: 2px 8px;
 		border-radius: 10px;
-		background: rgba(245, 158, 11, 0.15);
+		background: color-mix(in srgb, var(--color-warning) 15%, transparent);
 		color: var(--warning, #f59e0b);
 		cursor: help;
 	}
@@ -854,19 +854,19 @@
 	}
 
 	.route-status-ok {
-		background: rgba(74, 222, 128, 0.1);
+		background: color-mix(in srgb, var(--color-success) 10%, transparent);
 		color: var(--text-primary);
 		border-left: 3px solid var(--success, #4ade80);
 	}
 
 	.route-status-error {
-		background: rgba(247, 118, 142, 0.1);
+		background: color-mix(in srgb, var(--color-error) 10%, transparent);
 		color: var(--error);
 		border-left: 3px solid var(--error);
 	}
 
 	.route-status-warn {
-		background: rgba(245, 158, 11, 0.12);
+		background: color-mix(in srgb, var(--color-warning) 12%, transparent);
 		color: var(--warning, #f59e0b);
 		border-left: 3px solid var(--warning, #f59e0b);
 	}

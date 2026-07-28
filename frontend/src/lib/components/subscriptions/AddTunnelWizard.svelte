@@ -688,7 +688,7 @@
 	.err-list { margin: 0.4rem 0 0; padding-left: 1.2rem; }
 	.warn {
 		padding: 0.6rem 0.8rem;
-		background: rgba(245, 158, 11, 0.08);
+		background: color-mix(in srgb, var(--color-warning) 8%, transparent);
 		border: 1px solid var(--warning, #d29922);
 		border-radius: 4px;
 		font-size: 0.82rem;

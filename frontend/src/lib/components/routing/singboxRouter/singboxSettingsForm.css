@@ -168,7 +168,7 @@
 
 .sbr-settings-form .warn {
 	padding: 0.5rem 0.7rem;
-	background: rgba(224, 175, 104, 0.12);
+	background: color-mix(in srgb, var(--color-warning) 12%, transparent);
 	border-left: 3px solid var(--warning, #e0af68);
 	border-radius: 3px;
 	font-size: 0.72rem;
@@ -373,7 +373,7 @@
 .sbr-settings-form .parse-messages-warning {
 	border-color: var(--color-warning, #d97706);
 	color: var(--color-warning, #d97706);
-	background: rgba(217, 119, 6, 0.08);
+	background: color-mix(in srgb, var(--color-warning) 8%, transparent);
 }
 
 @media (max-width: 640px) {
@@ -410,7 +410,7 @@
 }
 
 .sbr-settings-form .detour-legacy-invalid :global(.trigger) {
-	border-color: rgba(181, 101, 119, 0.55) !important;
-	background: rgba(181, 101, 119, 0.1) !important;
+	border-color: color-mix(in srgb, var(--color-error) 55%, transparent) !important;
+	background: color-mix(in srgb, var(--color-error) 10%, transparent) !important;
 	color: var(--error) !important;
 }

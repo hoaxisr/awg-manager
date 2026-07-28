@@ -167,7 +167,7 @@
 	}
 
 	.broken-badge {
-		background: rgba(247, 118, 142, 0.15);
+		background: color-mix(in srgb, var(--color-error) 15%, transparent);
 		color: var(--error);
 		font-size: 0.6875rem;
 		padding: 1px 6px;

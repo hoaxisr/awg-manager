@@ -136,17 +136,17 @@
 	}
 
 	.badge-success {
-		background: rgba(16, 185, 129, 0.15);
+		background: color-mix(in srgb, var(--color-success) 15%, transparent);
 		color: var(--success);
 	}
 
 	.badge-error {
-		background: rgba(239, 68, 68, 0.15);
+		background: color-mix(in srgb, var(--color-error) 15%, transparent);
 		color: var(--error);
 	}
 
 	.badge-warning {
-		background: rgba(245, 158, 11, 0.15);
+		background: color-mix(in srgb, var(--color-warning) 15%, transparent);
 		color: var(--warning, #f59e0b);
 	}
 

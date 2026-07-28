@@ -257,7 +257,7 @@
 	}
 
 	.error-banner {
-		background: rgba(247, 118, 142, 0.1);
+		background: color-mix(in srgb, var(--color-error) 10%, transparent);
 		border-left: 3px solid var(--error);
 		color: var(--error);
 		padding: 8px 12px;

@@ -887,7 +887,7 @@ Ctrl+/ или Cmd+/ комментирует выбранные строки.</s
 
 	.btn-remove:hover {
 		color: var(--error, #ef4444);
-		background: rgba(239, 68, 68, 0.1);
+		background: color-mix(in srgb, var(--color-error) 10%, transparent);
 	}
 
 	/* Fallback */
@@ -944,10 +944,10 @@ Ctrl+/ или Cmd+/ комментирует выбранные строки.</s
 
 	.route-hint-error {
 		color: var(--color-error);
-		background: rgba(239, 68, 68, 0.08);
+		background: color-mix(in srgb, var(--color-error) 8%, transparent);
 		padding: 0.5rem;
 		border-radius: 6px;
-		border: 1px solid rgba(239, 68, 68, 0.25);
+		border: 1px solid color-mix(in srgb, var(--color-error) 25%, transparent);
 	}
 
 	.dedup-details {

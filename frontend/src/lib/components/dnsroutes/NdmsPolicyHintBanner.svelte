@@ -31,8 +31,8 @@
 		gap: 0.75rem;
 		margin-bottom: 1rem;
 		padding: 0.875rem 1rem;
-		background: var(--color-warning-tint, rgba(224, 175, 104, 0.1));
-		border: 1px solid var(--color-warning-border, rgba(224, 175, 104, 0.4));
+		background: var(--color-warning-tint);
+		border: 1px solid var(--color-warning-border);
 		border-left: 3px solid var(--color-warning, var(--warning));
 		border-radius: var(--radius-sm, 6px);
 		color: var(--color-text-primary, var(--text-primary));

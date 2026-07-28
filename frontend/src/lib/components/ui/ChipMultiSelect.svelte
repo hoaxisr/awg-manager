@@ -335,7 +335,7 @@
     }
     .chip-orphan {
         border-color: var(--warning, #e0af68);
-        background: rgba(224, 175, 104, 0.12);
+        background: color-mix(in srgb, var(--color-warning) 12%, transparent);
     }
     .chip-orphan-badge {
         font-size: 0.65rem;

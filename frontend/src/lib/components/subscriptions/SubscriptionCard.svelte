@@ -633,7 +633,7 @@
 		font-size: var(--sbx-card-badge);
 		font-weight: 500;
 		border-radius: 10px;
-		background: rgba(88, 166, 255, 0.15);
+		background: color-mix(in srgb, var(--color-accent) 15%, transparent);
 		color: var(--color-accent);
 	}
 	.inactive-note {

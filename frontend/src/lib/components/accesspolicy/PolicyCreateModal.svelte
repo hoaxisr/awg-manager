@@ -112,7 +112,7 @@
 
 	.field-error .field-input {
 		border-color: var(--error, #ef4444);
-		box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.15);
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-error) 15%, transparent);
 	}
 
 	.field-hint {

@@ -1105,7 +1105,7 @@
         border-radius: 10px;
         font-weight: 500;
     }
-    .badge.proto    { background: rgba(88,166,255,0.15); color: var(--color-accent); }
+    .badge.proto    { background: color-mix(in srgb, var(--color-accent) 15%, transparent); color: var(--color-accent); }
     .badge.transport{ background: var(--color-bg-tertiary); color: var(--color-text-muted); }
     .badge.tls      { background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success); }
     .badge.reality  { background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning); }

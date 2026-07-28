@@ -412,12 +412,12 @@
 
 	.field-error .device-list {
 		border-color: var(--error, #ef4444);
-		box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.15);
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-error) 15%, transparent);
 	}
 
 	.warning-box {
 		padding: 0.75rem 1rem;
-		background: rgba(234, 179, 8, 0.1);
+		background: color-mix(in srgb, var(--color-warning) 10%, transparent);
 		border: 1px solid var(--warning, #eab308);
 		border-radius: 6px;
 		color: var(--warning, #eab308);

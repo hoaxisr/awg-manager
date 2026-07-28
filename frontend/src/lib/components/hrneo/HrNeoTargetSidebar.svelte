@@ -309,7 +309,7 @@
 		color: var(--info);
 	}
 	.kind-warn {
-		background: rgba(224, 175, 104, 0.15);
+		background: color-mix(in srgb, var(--color-warning) 15%, transparent);
 		color: var(--warning);
 	}
 

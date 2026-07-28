@@ -366,11 +366,11 @@
     }
 
     .tab-badge.success {
-        background: rgba(158, 206, 106, 0.18);
+        background: color-mix(in srgb, var(--color-success) 18%, transparent);
         color: var(--success);
     }
     .tab-badge.warning {
-        background: rgba(224, 175, 104, 0.18);
+        background: color-mix(in srgb, var(--color-warning) 18%, transparent);
         color: var(--warning);
     }
     .tab-badge.muted {

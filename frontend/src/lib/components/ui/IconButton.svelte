@@ -95,7 +95,7 @@
   }
 
   .variant-danger:hover:not(:disabled):not(.is-disabled) {
-    background: rgba(247, 118, 142, 0.1);
+    background: color-mix(in srgb, var(--color-error) 10%, transparent);
     color: var(--color-error);
   }
 

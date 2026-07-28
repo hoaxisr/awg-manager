@@ -1115,7 +1115,7 @@
 
 	.speed-error {
 		padding: 8px 12px;
-		background: rgba(239, 68, 68, 0.08);
+		background: color-mix(in srgb, var(--color-error) 8%, transparent);
 		border-left: 2px solid var(--error);
 		border-radius: 3px;
 		font-size: 12px;
@@ -1134,7 +1134,7 @@
 	}
 
 	.hint-warning {
-		background: rgba(245, 158, 11, 0.08);
+		background: color-mix(in srgb, var(--color-warning) 8%, transparent);
 		color: var(--warning);
 	}
 

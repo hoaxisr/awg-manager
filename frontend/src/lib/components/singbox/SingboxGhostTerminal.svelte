@@ -204,7 +204,7 @@
 	.term-singbox-success {
 		padding: 10px 14px;
 		margin-top: 12px;
-		background: rgba(16, 185, 129, 0.1);
+		background: color-mix(in srgb, var(--color-success) 10%, transparent);
 		border-left: 2px solid var(--success, #10b981);
 		border-radius: 3px;
 		font-size: 12px;
@@ -213,7 +213,7 @@
 	.term-singbox-errors {
 		padding: 10px 14px;
 		margin-top: 12px;
-		background: rgba(239, 68, 68, 0.08);
+		background: color-mix(in srgb, var(--color-error) 8%, transparent);
 		border-left: 2px solid var(--error, #ef4444);
 		border-radius: 3px;
 		font-size: 12px;
