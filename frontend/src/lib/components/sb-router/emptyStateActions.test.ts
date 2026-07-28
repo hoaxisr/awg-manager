@@ -114,6 +114,45 @@ describe('syncTunnelDnsRule', () => {
     expect(api.singboxRouterAddDNSRule).not.toHaveBeenCalled();
   });
 
+  it('managed-правила пресета (server=dns-tunnel) не трогаем — правим только своё', async () => {
+    (api.singboxRouterListDNSServers as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { tag: 'dns-tunnel', type: 'udp', server: '9.9.9.9', detour: 'wg-nl' },
+    ]);
+    (api.singboxRouterListRules as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { rule_set: ['geosite-netflix'], outbound: 'wg-nl', action: 'route' },
+    ]);
+    (api.singboxRouterListDNSRules as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { tag: 'awgm-dns-rp', action: 'evaluate', server: 'dns-tunnel' },
+      { rule_set: ['old'], server: 'dns-tunnel' },
+    ]);
+    await syncTunnelDnsRule();
+    expect(api.singboxRouterUpdateDNSRule).toHaveBeenCalledTimes(1);
+    expect(api.singboxRouterUpdateDNSRule).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ rule_set: ['geosite-netflix'], server: 'dns-tunnel' }),
+    );
+    expect(api.singboxRouterDeleteDNSRule).not.toHaveBeenCalled();
+  });
+
+  it('есть только managed-правило → добавляем своё, а не переписываем чужое', async () => {
+    (api.singboxRouterListDNSServers as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { tag: 'dns-tunnel', type: 'udp', server: '9.9.9.9', detour: 'wg-nl' },
+    ]);
+    (api.singboxRouterListRules as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { rule_set: ['geosite-netflix'], outbound: 'wg-nl', action: 'route' },
+    ]);
+    (api.singboxRouterListDNSRules as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { tag: 'awgm-dns-rp', action: 'evaluate', server: 'dns-tunnel' },
+      { match_response: 'awgm-dns-rp', server: 'dns-tunnel' },
+    ]);
+    await syncTunnelDnsRule();
+    expect(api.singboxRouterAddDNSRule).toHaveBeenCalledWith(
+      expect.objectContaining({ rule_set: ['geosite-netflix'], server: 'dns-tunnel' }),
+    );
+    expect(api.singboxRouterUpdateDNSRule).not.toHaveBeenCalled();
+    expect(api.singboxRouterDeleteDNSRule).not.toHaveBeenCalled();
+  });
+
   it('пустой агрегат → удаляет все dns-tunnel правила', async () => {
     (api.singboxRouterListRules as ReturnType<typeof vi.fn>).mockResolvedValue([
       { domain_suffix: ['y.com'], outbound: 'direct', action: 'route' },

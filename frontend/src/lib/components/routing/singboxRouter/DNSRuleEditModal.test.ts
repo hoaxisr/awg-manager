@@ -102,6 +102,22 @@ describe('DNSRuleEditModal', () => {
 		]);
 	});
 
+	it('нет evaluate-правил выше → подсказка под дропдауном ответа', () => {
+		render(DNSRuleEditModal, {
+			props: { ...baseProps, rules: [{ domain: ['a.com'], server: 'dns-direct' }], onSave: vi.fn() },
+		});
+
+		expect(screen.getByText(/Нет evaluate-правил выше/)).toBeTruthy();
+	});
+
+	it('есть evaluate-правило выше → подсказки нет', () => {
+		render(DNSRuleEditModal, {
+			props: { ...baseProps, rules: [evalRD], onSave: vi.fn() },
+		});
+
+		expect(screen.queryByText(/Нет evaluate-правил выше/)).toBeNull();
+	});
+
 	it('respond с одним match_response сохраняется', async () => {
 		const onSave = vi.fn().mockResolvedValue(undefined);
 		render(DNSRuleEditModal, {

@@ -6,6 +6,7 @@ import type { TemplateGroup } from './templatesData';
 import type { SubmitResult } from './templatesActions';
 import { submitWizard } from './addWizardActions';
 import { mergeAndSaveSettings } from './settingsActions';
+import { isManagedDnsChainRule } from './dnsChainManaged';
 
 export interface FinishSetupArgs {
   tunnelTag: string;
@@ -119,7 +120,11 @@ export async function syncTunnelDnsRule(): Promise<void> {
   const hasTunnelServer = servers.some((s) => s.tag === DNS_TUNNEL_TAG);
   const dnsRules = await api.singboxRouterListDNSRules();
   const tunnelIdx: number[] = [];
-  dnsRules.forEach((r, i) => { if (r.server === DNS_TUNNEL_TAG) tunnelIdx.push(i); });
+  // Правила оверлея DNS-пресета тоже могут указывать на dns-tunnel, но бэкенд
+  // отклоняет их edit/delete (DNS_RULE_MANAGED) — трогаем только свои.
+  dnsRules.forEach((r, i) => {
+    if (r.server === DNS_TUNNEL_TAG && !isManagedDnsChainRule(r)) tunnelIdx.push(i);
+  });
 
   if (!hasTunnelServer) {
     for (let k = tunnelIdx.length - 1; k >= 0; k--) {

@@ -91,8 +91,8 @@
 		return 'route';
 	}
 	// A rule with NO matchers matches every query = catch-all («всё остальное»).
-	// We surface the simplified «catch-all» mode only for the route-to-server
-	// shape; a matcher-less block is unusual and stays in the full editor.
+	// We surface the simplified «catch-all» mode for route/evaluate/respond;
+	// a matcher-less block is unusual and stays in the full editor.
 	function isMatcherless(r?: SingboxRouterDNSRule): boolean {
 		if (!r) return false;
 		return !(
@@ -211,6 +211,8 @@
 		}
 		return opts;
 	});
+	// Кроме «выкл» вариантов нет — привязывать ответ не к чему.
+	const noEvaluateAbove = $derived(matchResponseOptions.length === 1);
 	// Секция «По DNS-ответу» доступна только в режиме matchers.
 	const responseOn = $derived(!catchAll && matchResponse !== '');
 	const speculativeOn = $derived(speculative && (action === 'route' || action === 'evaluate'));
@@ -520,6 +522,11 @@
 					<div class="lbl">Ответ evaluate</div>
 					<Dropdown bind:value={matchResponse} options={matchResponseOptions} fullWidth />
 				</label>
+				{#if noEvaluateAbove}
+					<div class="hint">
+						Нет evaluate-правил выше — сначала создайте правило с действием Evaluate
+					</div>
+				{/if}
 
 				{#if responseOn}
 					<label class="field">
