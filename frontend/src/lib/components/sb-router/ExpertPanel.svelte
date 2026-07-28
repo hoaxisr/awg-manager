@@ -64,7 +64,7 @@
   import InboundsMirror from './InboundsMirror.svelte';
   import { expertPanelCollapse } from './expertPanelCollapseStore';
   import InboundSettingsDrawer from './InboundSettingsDrawer.svelte';
-  import { ensureLanNamesRule } from './emptyStateActions';
+  import { ensureLanNamesRule, isLanNamesRule, removeLanNamesRule } from './emptyStateActions';
   import EngineFatalModal from './EngineFatalModal.svelte';
 
   import RuleEditModal from '$lib/components/routing/singboxRouter/RuleEditModal.svelte';
@@ -74,7 +74,7 @@
   import DNSRuleEditModal from '$lib/components/routing/singboxRouter/DNSRuleEditModal.svelte';
   import { DNSRewritesList } from '$lib/components/routing/singboxRouter';
   import { ConfirmModal, Dropdown, Button, type DropdownOption } from '$lib/components/ui';
-  import { LayoutGrid, Library } from 'lucide-svelte';
+  import { Check, LayoutGrid, Library } from 'lucide-svelte';
   import { browser } from '$app/environment';
 
   // Store subscriptions
@@ -893,13 +893,19 @@
   }
 
   let lanNamesBusy = $state(false);
+  const lanNamesOn = $derived($storeDnsRules.some(isLanNamesRule));
 
-  async function applyLanNamesRule() {
+  async function toggleLanNamesRule() {
+    const on = lanNamesOn;
     lanNamesBusy = true;
     try {
-      await ensureLanNamesRule();
+      if (on) {
+        await removeLanNamesRule();
+      } else {
+        await ensureLanNamesRule();
+      }
       await singboxRouterStore.loadAll();
-      notifications.success('Правило LAN-имён на месте');
+      notifications.success(on ? 'Правило LAN-имён удалено' : 'Правило LAN-имён на месте');
     } catch (e) {
       notifications.error(`Не удалось: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -1084,11 +1090,18 @@
         count={String($storeDnsServers.length)}
       >
         {#snippet actions()}
+          {#snippet lanNamesCheck()}
+            <Check size={14} aria-hidden="true" />
+          {/snippet}
           <Button
-            variant="ghost"
+            variant={lanNamesOn ? 'secondary' : 'ghost'}
             size="sm"
             disabled={lanNamesBusy}
-            onclick={applyLanNamesRule}
+            iconBefore={lanNamesOn ? lanNamesCheck : undefined}
+            title={lanNamesOn
+              ? 'Правило активно — нажмите, чтобы удалить'
+              : 'Создать правило: имена без точек резолвит локальный DNS'}
+            onclick={toggleLanNamesRule}
           >
             LAN-имена → локальный DNS
           </Button>

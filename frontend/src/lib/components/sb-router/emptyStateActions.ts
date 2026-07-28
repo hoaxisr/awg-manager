@@ -70,7 +70,7 @@ const DNS_LOCAL_TAG = 'dns-local';
 // базы sing-box: в beta.1 этого поля ещё нет.
 const LAN_NAMES_REGEX = '^[^.]+$';
 
-function isLanNamesRule(r: SingboxRouterDNSRule): boolean {
+export function isLanNamesRule(r: SingboxRouterDNSRule): boolean {
   return r.domain_regex?.length === 1 && r.domain_regex[0] === LAN_NAMES_REGEX;
 }
 
@@ -89,6 +89,14 @@ export async function ensureLanNamesRule(): Promise<void> {
   const after = await api.singboxRouterListDNSRules();
   const idx = after.findIndex(isLanNamesRule);
   if (idx > 0) await api.singboxRouterMoveDNSRule(idx, 0);
+}
+
+/** Снимает правило «имена без точек». Сервер dns-local не трогаем — он может быть нужен другим правилам. */
+export async function removeLanNamesRule(): Promise<void> {
+  const rules = await api.singboxRouterListDNSRules();
+  for (let i = rules.length - 1; i >= 0; i--) {
+    if (isLanNamesRule(rules[i])) await api.singboxRouterDeleteDNSRule(i);
+  }
 }
 
 function collectTunnelDomainMatchers(rules: SingboxRouterRule[]) {

@@ -40,7 +40,7 @@ import { api } from '$lib/api/client';
 import { singboxRouter } from '$lib/stores/singboxRouter';
 import { submitWizard } from './addWizardActions';
 import { mergeAndSaveSettings } from './settingsActions';
-import { finishSetup, ensureTunnelDnsInfra, syncTunnelDnsRule, ensureLanNamesRule } from './emptyStateActions';
+import { finishSetup, ensureTunnelDnsInfra, syncTunnelDnsRule, ensureLanNamesRule, removeLanNamesRule } from './emptyStateActions';
 
 describe('emptyStateActions', () => {
   beforeEach(() => {
@@ -189,5 +189,39 @@ describe('ensureLanNamesRule', () => {
       ]);
     await ensureLanNamesRule();
     expect(api.singboxRouterMoveDNSRule).toHaveBeenCalledWith(1, 0);
+  });
+});
+
+describe('removeLanNamesRule', () => {
+  const LAN_RULE = { domain_regex: ['^[^.]+$'], server: 'dns-local' };
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('удаляет только LAN-правило, сервер dns-local не трогает', async () => {
+    (api.singboxRouterListDNSRules as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { domain_suffix: ['x.com'], server: 'dns-tunnel' },
+      LAN_RULE,
+    ]);
+    await removeLanNamesRule();
+    expect(api.singboxRouterDeleteDNSRule).toHaveBeenCalledTimes(1);
+    expect(api.singboxRouterDeleteDNSRule).toHaveBeenCalledWith(1);
+  });
+
+  it('правила нет — no-op', async () => {
+    (api.singboxRouterListDNSRules as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { domain_suffix: ['x.com'], server: 'dns-tunnel' },
+    ]);
+    await removeLanNamesRule();
+    expect(api.singboxRouterDeleteDNSRule).not.toHaveBeenCalled();
+  });
+
+  it('дубликаты удаляются с конца — индексы не съезжают', async () => {
+    (api.singboxRouterListDNSRules as ReturnType<typeof vi.fn>).mockResolvedValue([
+      LAN_RULE,
+      { domain_suffix: ['x.com'], server: 'dns-tunnel' },
+      LAN_RULE,
+    ]);
+    await removeLanNamesRule();
+    expect((api.singboxRouterDeleteDNSRule as ReturnType<typeof vi.fn>).mock.calls).toEqual([[2], [0]]);
   });
 });

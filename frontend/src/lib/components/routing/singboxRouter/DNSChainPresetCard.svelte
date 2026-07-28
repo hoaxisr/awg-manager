@@ -99,6 +99,7 @@
 		options={MODE_OPTIONS}
 		ariaLabel="Режим DNS-пресета"
 		disabled={fakeipMode}
+		fullWidth
 		onchange={(v) => (mode = v)}
 	/>
 
@@ -150,6 +151,7 @@
 	.preset-card {
 		display: flex;
 		flex-direction: column;
+		min-width: 0;
 		gap: 8px;
 		padding: 12px 14px;
 		border-bottom: 1px solid var(--border);
@@ -176,6 +178,7 @@
 	.field {
 		display: flex;
 		flex-direction: column;
+		min-width: 0;
 		gap: 4px;
 	}
 	.lbl {
@@ -184,7 +187,9 @@
 		font-weight: 500;
 	}
 	.inp {
+		width: 100%;
 		min-width: 0;
+		box-sizing: border-box;
 		padding: 6px 8px;
 		border-radius: var(--radius-sm);
 		background: var(--bg-primary);
