@@ -632,3 +632,83 @@ func TestValidateDNSRuleBeta1(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateDNSChain(t *testing.T) {
+	evalRD := DNSRule{Action: "evaluate", Server: "dns-direct", Tag: "rd"}
+	evalAnon := DNSRule{Action: "evaluate", Server: "dns-direct"}
+	mrRD := &DNSMatchResponse{Enabled: true, Tag: "rd"}
+	respondRD := DNSRule{MatchResponse: mrRD, ResponseRcode: "NOERROR", Action: "respond"}
+	cases := []struct {
+		name    string
+		rules   []DNSRule
+		wantErr bool
+	}{
+		{"здоровая цепочка", []DNSRule{evalRD, respondRD}, false},
+		{"match_response по тегу без evaluate выше", []DNSRule{respondRD}, true},
+		{"evaluate НИЖЕ match_response не считается", []DNSRule{respondRD, evalRD}, true},
+		{"анонимный match_response без evaluate выше", []DNSRule{{MatchResponse: &DNSMatchResponse{Enabled: true}, ResponseRcode: "NOERROR", Action: "respond"}}, true},
+		{"анонимный match_response после анонимного evaluate", []DNSRule{evalAnon, {MatchResponse: &DNSMatchResponse{Enabled: true}, ResponseRcode: "NOERROR", Action: "respond"}}, false},
+		{"анонимный match_response после ТЕГИРОВАННОГО evaluate", []DNSRule{evalRD, {MatchResponse: &DNSMatchResponse{Enabled: true}, ResponseRcode: "NOERROR", Action: "respond"}}, true},
+		{"дубль тега evaluate", []DNSRule{evalRD, evalRD, respondRD}, true},
+		{"дубль анонимных evaluate — не ошибка", []DNSRule{evalAnon, evalAnon, {MatchResponse: &DNSMatchResponse{Enabled: true}, ResponseRcode: "NOERROR", Action: "respond"}}, false},
+		{"respond без match_response без анонимного evaluate", []DNSRule{evalRD, {Action: "respond"}}, true},
+		{"respond без match_response после анонимного evaluate", []DNSRule{evalAnon, {Action: "respond"}}, false},
+		{"legacy-конфиг без нового механизма — ок", []DNSRule{{Domain: []string{"x.com"}, Server: "dns-direct"}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateDNSChain(tc.rules)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err=%v, wantErr=%v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestDNSRuleMutationsValidateChain(t *testing.T) {
+	mk := func() *RouterConfig {
+		cfg := &RouterConfig{}
+		cfg.DNS.Servers = []DNSServer{{Tag: "dns-direct", Type: "udp", Server: "1.1.1.1"}}
+		if err := cfg.AddDNSRule(DNSRule{Action: "evaluate", Server: "dns-direct", Tag: "rd"}); err != nil {
+			t.Fatalf("seed evaluate: %v", err)
+		}
+		if err := cfg.AddDNSRule(DNSRule{MatchResponse: &DNSMatchResponse{Enabled: true, Tag: "rd"}, ResponseRcode: "NOERROR", Action: "respond"}); err != nil {
+			t.Fatalf("seed respond: %v", err)
+		}
+		return cfg
+	}
+	t.Run("Delete evaluate с потребителем — ошибка", func(t *testing.T) {
+		cfg := mk()
+		if err := cfg.DeleteDNSRule(0); err == nil {
+			t.Fatal("удаление evaluate с match_response ниже должно падать")
+		}
+		if len(cfg.DNS.Rules) != 2 {
+			t.Fatalf("состояние не должно меняться: %+v", cfg.DNS.Rules)
+		}
+	})
+	t.Run("Move respond выше evaluate — ошибка", func(t *testing.T) {
+		cfg := mk()
+		if err := cfg.MoveDNSRule(1, 0); err == nil {
+			t.Fatal("перенос match_response выше evaluate должен падать")
+		}
+		if cfg.DNS.Rules[0].Action != "evaluate" {
+			t.Fatalf("состояние не должно меняться: %+v", cfg.DNS.Rules)
+		}
+	})
+	t.Run("Add match_response без evaluate — ошибка", func(t *testing.T) {
+		cfg := &RouterConfig{}
+		cfg.DNS.Servers = []DNSServer{{Tag: "dns-direct", Type: "udp", Server: "1.1.1.1"}}
+		if err := cfg.AddDNSRule(DNSRule{MatchResponse: &DNSMatchResponse{Enabled: true, Tag: "rd"}, ResponseRcode: "NOERROR", Action: "respond"}); err == nil {
+			t.Fatal("match_response без evaluate должен падать")
+		}
+	})
+	t.Run("Update evaluate в route ломает потребителя — ошибка", func(t *testing.T) {
+		cfg := mk()
+		if err := cfg.UpdateDNSRule(0, DNSRule{Domain: []string{"x.com"}, Server: "dns-direct"}); err == nil {
+			t.Fatal("замена evaluate на обычное правило должна падать")
+		}
+		if cfg.DNS.Rules[0].Action != "evaluate" {
+			t.Fatalf("состояние не должно меняться: %+v", cfg.DNS.Rules)
+		}
+	})
+}

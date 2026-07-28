@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -45,8 +46,9 @@ var validDNSRuleActions = map[string]bool{
 	"respond":    true,
 }
 
-// validDNSRcodes — полный словарь miekg dns.StringToRcode (upstream принимает
-// его целиком, плюс числовую форму; числа — сознательное сужение, не принимаем).
+// validDNSRcodes — словарь miekg dns.StringToRcode (upstream принимает его
+// целиком, плюс числовую форму). Мы чуть строже: без DSOTYPENI и без алиаса
+// NOTIMPL, числовую форму тоже не принимаем — сознательное сужение.
 var validDNSRcodes = map[string]bool{
 	"NOERROR": true, "FORMERR": true, "SERVFAIL": true, "NXDOMAIN": true,
 	"NOTIMP": true, "REFUSED": true, "YXDOMAIN": true, "YXRRSET": true,
@@ -259,13 +261,56 @@ func validateDNSRule(r DNSRule, servers map[string]string) error {
 	}
 	// route/evaluate (или пустое действие)
 	if strings.TrimSpace(r.Server) == "" {
-		return fmt.Errorf("dns rule: server is required when action is route")
+		return fmt.Errorf("dns rule: server is required when action is route/evaluate")
 	}
 	if _, ok := servers[r.Server]; !ok {
 		return fmt.Errorf("%w: %q", ErrDNSInvalidServer, r.Server)
 	}
 	if r.Action == "evaluate" && servers[r.Server] == "fakeip" {
 		return fmt.Errorf("dns rule: evaluate не может использовать fakeip-сервер %q", r.Server)
+	}
+	return nil
+}
+
+// validateDNSChain — порядковые инварианты цепочек evaluate/match_response.
+// Всё это FATAL у `sing-box check` beta.1 (dns/router.go
+// validateLegacyDNSModeDisabledRules), поэтому жёстко: битая цепочка не должна
+// доехать до apply. Прогоны релизного бинаря 1.14.0-beta.1 (fixtures):
+//   - тегированный evaluate + анонимный match_response ниже (a1) → exit 1,
+//     «requires a preceding evaluate action without `tag`»: тег анонимного
+//     потребителя не удовлетворяет, требуем анонимный evaluate;
+//   - два анонимных evaluate подряд (a2) → exit 0 (только WARN
+//     «overwritten … before any use»): дубль анонимных — не ошибка;
+//   - respond без match_response и без evaluate выше (c6) → exit 1, а после
+//     анонимного evaluate (c5) → exit 0: bare respond — анонимный потребитель.
+func validateDNSChain(rules []DNSRule) error {
+	seenTags := map[string]bool{}
+	anonymousAbove := false
+	for i, r := range rules {
+		if r.MatchResponse.IsEnabled() {
+			if tag := r.MatchResponse.Tag; tag != "" {
+				if !seenTags[tag] {
+					return fmt.Errorf("dns rule %d: match_response %q — выше нет evaluate с этим тегом", i, tag)
+				}
+			} else if !anonymousAbove {
+				return fmt.Errorf("dns rule %d: match_response — выше нет анонимного evaluate", i)
+			}
+		} else if r.Action == "respond" {
+			// respond без match_response — анонимный потребитель (needsAnonymous).
+			if !anonymousAbove {
+				return fmt.Errorf("dns rule %d: respond без match_response требует анонимного evaluate выше", i)
+			}
+		}
+		if r.Action == "evaluate" {
+			if r.Tag == "" {
+				anonymousAbove = true
+			} else {
+				if seenTags[r.Tag] {
+					return fmt.Errorf("dns rule %d: дубль тега evaluate %q", i, r.Tag)
+				}
+				seenTags[r.Tag] = true
+			}
+		}
 	}
 	return nil
 }
@@ -287,7 +332,8 @@ func dnsRuleHasMatcher(r DNSRule) bool {
 // evaluates DNS rules top-down and a matcher-less rule matches every query, so
 // nothing after it is ever reached. Returns nil when there is no catch-all or
 // nothing follows it. Intended for the UI / validator to surface dead rules
-// (bug #445 phase 3).
+// (bug #445 phase 3). A matcher-less `evaluate` is not a catch-all: it does not
+// terminate the chain and therefore shadows nothing (sing-box 1.14).
 func (c *RouterConfig) DNSRulesShadowedByCatchAll() []int {
 	catchAll := -1
 	for i := range c.DNS.Rules {
@@ -446,7 +492,11 @@ func (c *RouterConfig) AddDNSRule(r DNSRule) error {
 	if err := validateDNSRule(r, c.dnsServerTypes()); err != nil {
 		return err
 	}
-	c.DNS.Rules = append(c.DNS.Rules, r)
+	candidate := append(slices.Clone(c.DNS.Rules), r)
+	if err := validateDNSChain(candidate); err != nil {
+		return err
+	}
+	c.DNS.Rules = candidate
 	return nil
 }
 
@@ -457,7 +507,12 @@ func (c *RouterConfig) UpdateDNSRule(index int, r DNSRule) error {
 	if err := validateDNSRule(r, c.dnsServerTypes()); err != nil {
 		return err
 	}
-	c.DNS.Rules[index] = r
+	candidate := slices.Clone(c.DNS.Rules)
+	candidate[index] = r
+	if err := validateDNSChain(candidate); err != nil {
+		return err
+	}
+	c.DNS.Rules = candidate
 	return nil
 }
 
@@ -465,7 +520,11 @@ func (c *RouterConfig) DeleteDNSRule(index int) error {
 	if index < 0 || index >= len(c.DNS.Rules) {
 		return ErrDNSRuleIndexOutOfRange
 	}
-	c.DNS.Rules = append(c.DNS.Rules[:index], c.DNS.Rules[index+1:]...)
+	candidate := slices.Delete(slices.Clone(c.DNS.Rules), index, index+1)
+	if err := validateDNSChain(candidate); err != nil {
+		return err
+	}
+	c.DNS.Rules = candidate
 	return nil
 }
 
@@ -478,11 +537,14 @@ func (c *RouterConfig) MoveDNSRule(from, to int) error {
 		return nil
 	}
 	r := c.DNS.Rules[from]
-	without := append(c.DNS.Rules[:from:from], c.DNS.Rules[from+1:]...)
+	without := slices.Delete(slices.Clone(c.DNS.Rules), from, from+1)
 	rules := make([]DNSRule, 0, n)
 	rules = append(rules, without[:to]...)
 	rules = append(rules, r)
 	rules = append(rules, without[to:]...)
+	if err := validateDNSChain(rules); err != nil {
+		return err
+	}
 	c.DNS.Rules = rules
 	return nil
 }
