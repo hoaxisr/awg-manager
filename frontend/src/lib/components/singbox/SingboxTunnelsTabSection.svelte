@@ -340,7 +340,7 @@
 
 	.empty-kind-card:hover {
 		border-color: var(--color-accent);
-		background: rgba(59, 130, 246, 0.04);
+		background: color-mix(in srgb, var(--color-accent) 4%, transparent);
 		transform: translateY(-1px);
 	}
 

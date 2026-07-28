@@ -78,9 +78,9 @@
 		all: unset; cursor: pointer;
 		padding: 4px 12px;
 		border-radius: 4px;
-		background: rgba(255, 107, 107, 0.1);
+		background: color-mix(in srgb, var(--color-error) 10%, transparent);
 		color: var(--color-error);
 		font-size: 12px;
 	}
-	.kill-btn:hover { background: rgba(255, 107, 107, 0.2); }
+	.kill-btn:hover { background: color-mix(in srgb, var(--color-error) 20%, transparent); }
 </style>

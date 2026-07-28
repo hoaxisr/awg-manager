@@ -408,7 +408,7 @@ geosite:xai`;
 	.parse-messages-error {
 		border-color: var(--color-error);
 		color: var(--color-error);
-		background: rgba(220, 38, 38, 0.08);
+		background: color-mix(in srgb, var(--color-error) 8%, transparent);
 	}
 
 	.parse-messages-warning {

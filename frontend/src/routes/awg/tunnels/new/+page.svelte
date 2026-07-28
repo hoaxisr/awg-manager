@@ -291,7 +291,7 @@
 
 	.backend-option.selected {
 		border-color: var(--color-accent);
-		background: rgba(122, 162, 247, 0.08);
+		background: color-mix(in srgb, var(--color-accent) 8%, transparent);
 	}
 
 	.backend-option.disabled {

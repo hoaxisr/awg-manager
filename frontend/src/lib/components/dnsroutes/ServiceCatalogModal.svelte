@@ -514,7 +514,7 @@
     }
 
     .chip.active {
-        background: var(--accent-soft, rgba(59, 130, 246, 0.12));
+        background: var(--accent-soft);
         border-color: var(--accent-line, var(--color-accent));
         color: var(--color-accent);
         font-weight: 600;

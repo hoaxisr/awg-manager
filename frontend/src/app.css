@@ -1478,9 +1478,9 @@ label {
 	font-family: var(--font-mono, monospace);
 }
 
-.proto-tcp { background: rgba(122,162,247,0.15); color: var(--accent); }
-.proto-udp { background: rgba(34,197,94,0.15); color: var(--success, #22c55e); }
-.proto-icmp { background: rgba(245,158,11,0.15); color: var(--warning, #f59e0b); }
+.proto-tcp { background: color-mix(in srgb, var(--hue-blue) 15%, transparent); color: var(--hue-blue); }
+.proto-udp { background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success); }
+.proto-icmp { background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning); }
 
 /* ─── Tunnel/server card grid (responsive: column shrinks to 100% on narrow viewports) ─── */
 .tunnel-grid {

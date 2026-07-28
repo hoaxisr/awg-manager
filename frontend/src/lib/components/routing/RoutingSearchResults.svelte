@@ -285,7 +285,7 @@
     }
 
     .result-tunnel code {
-        background: rgba(122,162,247,0.1);
+        background: color-mix(in srgb, var(--color-accent) 10%, transparent);
         color: var(--accent);
         padding: 0 4px;
         border-radius: 3px;
@@ -315,7 +315,7 @@
     }
 
     .resolve-group {
-        background: rgba(122,162,247,0.03);
+        background: color-mix(in srgb, var(--color-accent) 3%, transparent);
         border-radius: 6px;
         padding: 4px;
     }

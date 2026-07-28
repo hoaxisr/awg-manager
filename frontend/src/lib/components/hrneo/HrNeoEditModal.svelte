@@ -866,7 +866,7 @@
 		border: 1px solid var(--color-accent);
 		border-radius: 8px;
 		padding: 12px;
-		background: linear-gradient(180deg, rgba(122, 162, 247, 0.08) 0%, transparent 100%);
+		background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 8%, transparent) 0%, transparent 100%);
 	}
 	.policy-card-header {
 		color: var(--color-accent);

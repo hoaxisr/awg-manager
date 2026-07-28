@@ -551,7 +551,7 @@
 		font-size: 11px;
 		font-weight: 500;
 		border-radius: 10px;
-		background: rgba(59, 130, 246, 0.15);
+		background: color-mix(in srgb, var(--color-accent) 15%, transparent);
 		color: var(--accent);
 	}
 

@@ -118,7 +118,7 @@
     }
     .row:last-of-type { border-bottom: 0; }
     .row:hover:not(:disabled):not(.active) { background: var(--color-bg-tertiary); }
-    .row.active { background: rgba(63, 185, 80, 0.08); }
+    .row.active { background: color-mix(in srgb, var(--color-success) 8%, transparent); }
     .row.switching { opacity: 0.7; cursor: wait; }
     .row:disabled { cursor: wait; }
     .led {
@@ -129,7 +129,7 @@
     }
     .led.on {
         background: var(--color-success);
-        box-shadow: 0 0 0 2px rgba(63, 185, 80, 0.22);
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-success) 22%, transparent);
     }
     .server {
         flex: 1;

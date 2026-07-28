@@ -589,11 +589,11 @@
 		border-radius: var(--radius-sm);
 	}
 	.pill {
-		background: rgba(96, 165, 250, 0.12);
-		color: var(--accent, #60a5fa);
+		background: var(--color-accent-tint);
+		color: var(--accent);
 	}
 	.pill-muted {
-		background: var(--bg-tertiary, rgba(255, 255, 255, 0.04));
+		background: var(--bg-tertiary);
 		color: var(--text-muted, #888);
 	}
 

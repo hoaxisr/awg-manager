@@ -133,20 +133,20 @@
 		box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.14);
 	}
 	.status-dot.ok {
-		background: var(--success, #10b981);
-		box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
+		background: var(--color-success);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 16%, transparent);
 	}
 	.status-dot.ready {
 		background: var(--color-info);
-		box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.16);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-info) 16%, transparent);
 	}
 	.status-dot.warn {
-		background: var(--warning, #f59e0b);
-		box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.16);
+		background: var(--color-warning);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-warning) 16%, transparent);
 	}
 	.status-dot.error {
-		background: var(--error, #ef4444);
-		box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16);
+		background: var(--color-error);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-error) 16%, transparent);
 	}
 	.term-info {
 		color: var(--text-muted);
@@ -196,7 +196,7 @@
 	}
 	.term-cmd-primary {
 		color: var(--color-info);
-		border-color: rgba(96, 165, 250, 0.4);
+		border-color: color-mix(in srgb, var(--color-info) 40%, transparent);
 	}
 	.term-arrow {
 		margin-right: 6px;

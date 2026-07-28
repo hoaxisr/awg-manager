@@ -653,12 +653,12 @@
 		border-radius: 10px;
 	}
 	.status-badge.status-ok {
-		background: rgba(16, 185, 129, 0.15);
-		color: var(--color-success, #10b981);
+		background: color-mix(in srgb, var(--color-success) 15%, transparent);
+		color: var(--color-success);
 	}
 	.status-badge.status-error {
-		background: rgba(248, 81, 73, 0.15);
-		color: var(--color-error, #f85149);
+		background: color-mix(in srgb, var(--color-error) 15%, transparent);
+		color: var(--color-error);
 	}
 	.status-badge.status-off,
 	.status-badge.status-pending {

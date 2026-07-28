@@ -100,7 +100,7 @@
 		margin-bottom: 0.75rem;
 		border: 1px solid var(--color-warning-border, var(--border));
 		border-radius: var(--radius);
-		background: var(--color-warning-tint, var(--bg-secondary, rgba(234, 179, 8, 0.08)));
+		background: var(--color-warning-tint);
 	}
 	.changelog-notice p {
 		margin: 0;

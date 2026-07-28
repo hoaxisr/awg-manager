@@ -642,7 +642,7 @@
 	}
 	.kind-card:hover {
 		border-color: var(--color-accent);
-		background: rgba(59, 130, 246, 0.04);
+		background: color-mix(in srgb, var(--color-accent) 4%, transparent);
 		transform: translateY(-1px);
 	}
 	.kind-card:focus-visible {
@@ -714,7 +714,7 @@
 	.mode-card:hover { border-color: var(--color-text-muted); }
 	.mode-card.selected {
 		border-color: var(--color-accent);
-		background: rgba(59, 130, 246, 0.06);
+		background: color-mix(in srgb, var(--color-accent) 6%, transparent);
 	}
 	.mode-card:focus-visible {
 		outline: 2px solid var(--color-accent);

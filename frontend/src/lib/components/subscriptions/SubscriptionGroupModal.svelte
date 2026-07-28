@@ -341,7 +341,7 @@
 	}
 	.mode-card.selected {
 		border-color: var(--color-accent);
-		background: rgba(59, 130, 246, 0.06);
+		background: color-mix(in srgb, var(--color-accent) 6%, transparent);
 	}
 	.mode-title {
 		font-weight: 600;
@@ -444,7 +444,7 @@
 		font-size: 0.8rem;
 		color: var(--color-text-primary);
 		padding: 0.45rem 0.6rem;
-		background: var(--color-accent-tint, rgba(59, 130, 246, 0.08));
+		background: var(--color-accent-tint);
 		border-radius: 6px;
 	}
 	.preview-empty {

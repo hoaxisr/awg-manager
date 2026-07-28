@@ -111,12 +111,12 @@
 	}
 
 	.kind-policy {
-		background: rgba(122, 162, 247, 0.15);
+		background: color-mix(in srgb, var(--color-accent) 15%, transparent);
 		color: var(--accent);
 	}
 
 	.kind-interface {
-		background: rgba(125, 207, 255, 0.15);
+		background: color-mix(in srgb, var(--color-info) 15%, transparent);
 		color: var(--info);
 	}
 

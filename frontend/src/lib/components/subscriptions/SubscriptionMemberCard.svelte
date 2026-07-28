@@ -214,7 +214,7 @@
 	}
 	.led.on {
 		background: var(--color-success);
-		box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.22);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 22%, transparent);
 	}
 	.title {
 		font-size: var(--sbx-card-title);

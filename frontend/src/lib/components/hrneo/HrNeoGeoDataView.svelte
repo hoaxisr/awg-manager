@@ -726,11 +726,11 @@
 		border-radius: 10px;
 	}
 	.type-geosite {
-		background: rgba(122, 162, 247, 0.15);
+		background: color-mix(in srgb, var(--color-accent) 15%, transparent);
 		color: var(--accent);
 	}
 	.type-geoip {
-		background: rgba(125, 207, 255, 0.15);
+		background: color-mix(in srgb, var(--color-info) 15%, transparent);
 		color: var(--info);
 	}
 
@@ -848,7 +848,7 @@
 	}
 
 	.route-status-live {
-		background: rgba(122, 162, 247, 0.1);
+		background: color-mix(in srgb, var(--color-accent) 10%, transparent);
 		color: var(--text-primary);
 		border-left: 3px solid var(--accent);
 	}
@@ -888,7 +888,7 @@
 	.busy-hint {
 		margin-top: 0.75rem;
 		padding: 8px 10px;
-		background: rgba(122, 162, 247, 0.1);
+		background: color-mix(in srgb, var(--color-accent) 10%, transparent);
 		border-left: 3px solid var(--accent);
 		color: var(--text-primary);
 		font-size: 0.8125rem;
