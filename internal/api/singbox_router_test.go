@@ -46,6 +46,9 @@ type mockRouterSvc struct {
 	// be asserted without a real ServiceImpl.
 	bulkOutboundErr error
 	bulkDetourErr   error
+	// dnsRuleErr, when set, is returned by AddDNSRule/UpdateDNSRule so the
+	// DNS-preset error mapping (reserved tag vs managed rule) can be asserted.
+	dnsRuleErr error
 }
 
 func (m *mockRouterSvc) Enable(ctx context.Context) error    { return m.enableErr }
@@ -163,9 +166,11 @@ func (m *mockRouterSvc) DeleteDNSServer(ctx context.Context, tag string, force b
 }
 func (m *mockRouterSvc) MoveDNSServer(ctx context.Context, from, to int) error      { return nil }
 func (m *mockRouterSvc) ListDNSRules(ctx context.Context) ([]router.DNSRule, error) { return nil, nil }
-func (m *mockRouterSvc) AddDNSRule(ctx context.Context, r router.DNSRule) error     { return nil }
+func (m *mockRouterSvc) AddDNSRule(ctx context.Context, r router.DNSRule) error {
+	return m.dnsRuleErr
+}
 func (m *mockRouterSvc) UpdateDNSRule(ctx context.Context, index int, r router.DNSRule) error {
-	return nil
+	return m.dnsRuleErr
 }
 func (m *mockRouterSvc) DeleteDNSRule(ctx context.Context, index int) error  { return nil }
 func (m *mockRouterSvc) MoveDNSRule(ctx context.Context, from, to int) error { return nil }
@@ -901,5 +906,53 @@ func TestDatRuleSetSRS_BadToken_Returns403(t *testing.T) {
 	h.DatRuleSetSRS(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("want 403, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// DNS-preset errors map to two distinct codes: claiming the reserved awgm-dns-*
+// tag namespace is a different fix for the caller than touching a managed rule.
+func TestRouterAddDNSRule_ChainTagReserved_ReturnsOwnCode(t *testing.T) {
+	svc := &mockRouterSvc{dnsRuleErr: router.ErrDNSChainTagReserved}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/dns/rules",
+		strings.NewReader(`{"tag":"awgm-dns-mine","server":"dns-direct"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.AddDNSRule(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal: %v (body: %s)", err, rr.Body.String())
+	}
+	if env.Code != "DNS_TAG_RESERVED" {
+		t.Fatalf("want code DNS_TAG_RESERVED, got %q", env.Code)
+	}
+}
+
+func TestRouterUpdateDNSRule_Managed_ReturnsManagedCode(t *testing.T) {
+	svc := &mockRouterSvc{dnsRuleErr: router.ErrDNSRuleManaged}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/dns/rules/update",
+		strings.NewReader(`{"index":0,"rule":{"server":"dns-direct"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.UpdateDNSRule(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal: %v (body: %s)", err, rr.Body.String())
+	}
+	if env.Code != "DNS_RULE_MANAGED" {
+		t.Fatalf("want code DNS_RULE_MANAGED, got %q", env.Code)
 	}
 }
