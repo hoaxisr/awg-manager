@@ -577,3 +577,46 @@ func TestDNSRuleNewFieldsRoundTrip(t *testing.T) {
 		t.Fatalf("round-trip разошёлся: %+v vs %+v", back, r)
 	}
 }
+
+func TestValidateDNSRuleBeta1(t *testing.T) {
+	servers := map[string]string{"dns-direct": "udp", "dns-proxy": "udp", "fake": "fakeip"}
+	mrTrue := &DNSMatchResponse{Enabled: true}
+	mrRD := &DNSMatchResponse{Enabled: true, Tag: "rd"}
+	cases := []struct {
+		name    string
+		r       DNSRule
+		wantErr bool
+	}{
+		{"evaluate ok", DNSRule{Domain: []string{"x.com"}, Action: "evaluate", Server: "dns-direct", Tag: "rd", Speculative: true}, false},
+		{"evaluate без server", DNSRule{Domain: []string{"x.com"}, Action: "evaluate"}, true},
+		{"evaluate несуществующий server", DNSRule{Domain: []string{"x.com"}, Action: "evaluate", Server: "nope"}, true},
+		{"evaluate на fakeip-сервер", DNSRule{Domain: []string{"x.com"}, Action: "evaluate", Server: "fake"}, true},
+		{"respond ok", DNSRule{MatchResponse: mrRD, ResponseRcode: "NOERROR", Action: "respond"}, false},
+		{"respond с server", DNSRule{MatchResponse: mrRD, Action: "respond", Server: "dns-direct"}, true},
+		{"respond с tag", DNSRule{MatchResponse: mrRD, Action: "respond", Tag: "x"}, true},
+		{"respond со speculative", DNSRule{MatchResponse: mrRD, Action: "respond", Speculative: true}, true},
+		{"tag не на evaluate", DNSRule{Domain: []string{"x.com"}, Action: "route", Server: "dns-direct", Tag: "rd"}, true},
+		{"speculative на route ВАЛИДЕН", DNSRule{Domain: []string{"x.com"}, Action: "route", Server: "dns-direct", Speculative: true}, false},
+		{"speculative на reject", DNSRule{Domain: []string{"x.com"}, Action: "reject", Speculative: true}, true},
+		{"race ok", DNSRule{MatchResponse: mrRD, Race: true, Action: "respond"}, false},
+		{"race без match_response", DNSRule{Domain: []string{"x.com"}, Race: true, Action: "route", Server: "dns-direct"}, true},
+		{"race на evaluate", DNSRule{MatchResponse: mrTrue, Race: true, Action: "evaluate", Server: "dns-direct"}, true},
+		{"race+speculative", DNSRule{Domain: []string{"x.com"}, MatchResponse: mrTrue, Race: true, Speculative: true, Action: "route", Server: "dns-direct"}, true},
+		{"response_* без match_response", DNSRule{Domain: []string{"x.com"}, ResponseRcode: "NOERROR", Action: "route", Server: "dns-direct"}, true},
+		{"ip_cidr без match_response", DNSRule{IPCIDR: []string{"10.0.0.0/8"}, Action: "route", Server: "dns-direct"}, true},
+		{"ip_cidr с match_response ok", DNSRule{MatchResponse: mrRD, IPCIDR: []string{"10.0.0.0/8"}, Action: "route", Server: "dns-direct"}, false},
+		{"расширенный rcode NOTAUTH ok", DNSRule{MatchResponse: mrRD, ResponseRcode: "NOTAUTH", Action: "respond"}, false},
+		{"плохой response_rcode", DNSRule{MatchResponse: mrRD, ResponseRcode: "WAT", Action: "respond"}, true},
+		{"пустая строка в response_answer", DNSRule{MatchResponse: mrRD, ResponseAnswer: []string{" "}, Action: "respond"}, true},
+		{"плохой ip_cidr формат", DNSRule{MatchResponse: mrRD, IPCIDR: []string{"нет"}, Action: "route", Server: "dns-direct"}, true},
+		{"match_response считается матчером", DNSRule{MatchResponse: mrTrue, Action: "route", Server: "dns-direct"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateDNSRule(tc.r, servers)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err=%v, wantErr=%v", err, tc.wantErr)
+			}
+		})
+	}
+}

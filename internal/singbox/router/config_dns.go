@@ -41,11 +41,18 @@ var validDNSRuleActions = map[string]bool{
 	"route":      true,
 	"reject":     true,
 	"predefined": true,
+	"evaluate":   true,
+	"respond":    true,
 }
 
+// validDNSRcodes — полный словарь miekg dns.StringToRcode (upstream принимает
+// его целиком, плюс числовую форму; числа — сознательное сужение, не принимаем).
 var validDNSRcodes = map[string]bool{
-	"NOERROR": true, "FORMERR": true, "SERVFAIL": true,
-	"NXDOMAIN": true, "NOTIMP": true, "REFUSED": true,
+	"NOERROR": true, "FORMERR": true, "SERVFAIL": true, "NXDOMAIN": true,
+	"NOTIMP": true, "REFUSED": true, "YXDOMAIN": true, "YXRRSET": true,
+	"NXRRSET": true, "NOTAUTH": true, "NOTZONE": true, "BADSIG": true,
+	"BADKEY": true, "BADTIME": true, "BADMODE": true, "BADNAME": true,
+	"BADALG": true, "BADTRUNC": true, "BADCOOKIE": true,
 }
 
 var validRejectMethods = map[string]bool{
@@ -162,7 +169,7 @@ func validateDNSServer(s DNSServer) error {
 	return nil
 }
 
-func validateDNSRule(r DNSRule, serverTags map[string]bool) error {
+func validateDNSRule(r DNSRule, servers map[string]string) error {
 	if !dnsRuleHasMatcher(r) {
 		// A matcher-less DNS rule is valid sing-box — it matches every query
 		// (catch-all). Permit it PROVIDED it carries a server or an action;
@@ -186,6 +193,52 @@ func validateDNSRule(r DNSRule, serverTags map[string]bool) error {
 	if !validDNSRuleActions[r.Action] {
 		return fmt.Errorf("dns rule: unknown action %q", r.Action)
 	}
+	// Инварианты sing-box 1.14 (сверено живыми прогонами sing-box check
+	// beta.1): parse-FATAL'ы полей. Порядок правил — validateDNSChain.
+	if r.Tag != "" && r.Action != "evaluate" {
+		return fmt.Errorf("dns rule: tag допустим только для action=evaluate")
+	}
+	switch r.Action {
+	case "respond", "reject", "predefined":
+		if r.Speculative {
+			return fmt.Errorf("dns rule: speculative недопустим для action=%s", r.Action)
+		}
+	}
+	if r.Race {
+		if !r.MatchResponse.IsEnabled() {
+			return fmt.Errorf("dns rule: race требует match_response")
+		}
+		if r.Action == "evaluate" {
+			return fmt.Errorf("dns rule: race требует финального действия (route/respond/reject/predefined)")
+		}
+		if r.Speculative {
+			return fmt.Errorf("dns rule: race и speculative несовместимы")
+		}
+	}
+	// ip_cidr/response_* без match_response: sing-box FATAL'ит их, как только
+	// в конфиге появляется первое evaluate/respond/race-правило (legacy-режим
+	// выключается конфиг-уровнево). Требуем match_response всегда, чтобы
+	// валидное сегодня правило не взрывалось от добавления соседнего evaluate.
+	hasResponseFields := r.ResponseRcode != "" || len(r.ResponseAnswer) > 0 ||
+		len(r.ResponseNS) > 0 || len(r.ResponseExtra) > 0
+	if (hasResponseFields || len(r.IPCIDR) > 0) && !r.MatchResponse.IsEnabled() {
+		return fmt.Errorf("dns rule: ip_cidr и response_* поля требуют match_response")
+	}
+	if r.ResponseRcode != "" && !validDNSRcodes[r.ResponseRcode] {
+		return fmt.Errorf("dns rule: unknown response_rcode %q", r.ResponseRcode)
+	}
+	for _, recs := range [][]string{r.ResponseAnswer, r.ResponseNS, r.ResponseExtra} {
+		for _, rec := range recs {
+			if strings.TrimSpace(rec) == "" {
+				return fmt.Errorf("dns rule: пустая запись в response_answer/ns/extra")
+			}
+		}
+	}
+	for _, c := range r.IPCIDR {
+		if err := validateCIDROrAddr("dns rule: invalid ip_cidr", c); err != nil {
+			return err
+		}
+	}
 	switch r.Action {
 	case "reject":
 		if !validRejectMethods[r.RejectMethod] {
@@ -197,13 +250,22 @@ func validateDNSRule(r DNSRule, serverTags map[string]bool) error {
 			return fmt.Errorf("dns rule: unknown rcode %q", r.Rcode)
 		}
 		return nil
+	case "respond":
+		// respond у sing-box отвергает route-поля на парсе (unknown field).
+		if strings.TrimSpace(r.Server) != "" {
+			return fmt.Errorf("dns rule: server недопустим для action=respond")
+		}
+		return nil
 	}
-	// route (или пустое действие)
+	// route/evaluate (или пустое действие)
 	if strings.TrimSpace(r.Server) == "" {
 		return fmt.Errorf("dns rule: server is required when action is route")
 	}
-	if !serverTags[r.Server] {
+	if _, ok := servers[r.Server]; !ok {
 		return fmt.Errorf("%w: %q", ErrDNSInvalidServer, r.Server)
+	}
+	if r.Action == "evaluate" && servers[r.Server] == "fakeip" {
+		return fmt.Errorf("dns rule: evaluate не может использовать fakeip-сервер %q", r.Server)
 	}
 	return nil
 }
@@ -215,6 +277,8 @@ func dnsRuleHasMatcher(r DNSRule) bool {
 		len(r.Domain) > 0 ||
 		len(r.DomainKeyword) > 0 ||
 		len(r.DomainRegex) > 0 ||
+		r.MatchResponse.IsEnabled() ||
+		len(r.IPCIDR) > 0 ||
 		len(r.QueryType) > 0
 }
 
@@ -242,12 +306,14 @@ func (c *RouterConfig) DNSRulesShadowedByCatchAll() []int {
 	return shadowed
 }
 
-func (c *RouterConfig) dnsServerTags() map[string]bool {
-	tags := make(map[string]bool, len(c.DNS.Servers))
+// dnsServerTypes возвращает карту тег → тип DNS-сервера: тип нужен валидатору
+// правил (evaluate несовместим с fakeip-сервером).
+func (c *RouterConfig) dnsServerTypes() map[string]string {
+	types := make(map[string]string, len(c.DNS.Servers))
 	for _, s := range c.DNS.Servers {
-		tags[s.Tag] = true
+		types[s.Tag] = s.Type
 	}
-	return tags
+	return types
 }
 
 func (c *RouterConfig) AddDNSServer(s DNSServer) error {
@@ -260,8 +326,10 @@ func (c *RouterConfig) AddDNSServer(s DNSServer) error {
 			return fmt.Errorf("%w: %q", ErrDNSServerTagConflict, s.Tag)
 		}
 	}
-	if s.DomainResolver != nil && !c.dnsServerTags()[s.DomainResolver.Server] && s.DomainResolver.Server != s.Tag {
-		return fmt.Errorf("%w: domain_resolver.server %q not found", ErrDNSServerNotFound, s.DomainResolver.Server)
+	if s.DomainResolver != nil && s.DomainResolver.Server != s.Tag {
+		if _, ok := c.dnsServerTypes()[s.DomainResolver.Server]; !ok {
+			return fmt.Errorf("%w: domain_resolver.server %q not found", ErrDNSServerNotFound, s.DomainResolver.Server)
+		}
 	}
 	c.DNS.Servers = append(c.DNS.Servers, s)
 	return nil
@@ -286,10 +354,10 @@ func (c *RouterConfig) UpdateDNSServer(tag string, s DNSServer) error {
 		return fmt.Errorf("%w: %q", ErrDNSServerNotFound, tag)
 	}
 	if s.DomainResolver != nil {
-		tags := c.dnsServerTags()
-		delete(tags, tag)
-		tags[s.Tag] = true
-		if !tags[s.DomainResolver.Server] {
+		types := c.dnsServerTypes()
+		delete(types, tag)
+		types[s.Tag] = s.Type
+		if _, ok := types[s.DomainResolver.Server]; !ok {
 			return fmt.Errorf("%w: domain_resolver.server %q not found", ErrDNSServerNotFound, s.DomainResolver.Server)
 		}
 	}
@@ -371,7 +439,7 @@ func (c *RouterConfig) dnsServerReferences(tag string) []string {
 }
 
 func (c *RouterConfig) AddDNSRule(r DNSRule) error {
-	if err := validateDNSRule(r, c.dnsServerTags()); err != nil {
+	if err := validateDNSRule(r, c.dnsServerTypes()); err != nil {
 		return err
 	}
 	c.DNS.Rules = append(c.DNS.Rules, r)
@@ -382,7 +450,7 @@ func (c *RouterConfig) UpdateDNSRule(index int, r DNSRule) error {
 	if index < 0 || index >= len(c.DNS.Rules) {
 		return ErrDNSRuleIndexOutOfRange
 	}
-	if err := validateDNSRule(r, c.dnsServerTags()); err != nil {
+	if err := validateDNSRule(r, c.dnsServerTypes()); err != nil {
 		return err
 	}
 	c.DNS.Rules[index] = r
@@ -437,8 +505,10 @@ func (c *RouterConfig) MoveDNSServer(from, to int) error {
 }
 
 func (c *RouterConfig) SetDNSGlobals(final, strategy string) error {
-	if final != "" && !c.dnsServerTags()[final] {
-		return fmt.Errorf("%w: final %q", ErrDNSServerNotFound, final)
+	if final != "" {
+		if _, ok := c.dnsServerTypes()[final]; !ok {
+			return fmt.Errorf("%w: final %q", ErrDNSServerNotFound, final)
+		}
 	}
 	if !validDNSStrategies[strategy] {
 		return fmt.Errorf("dns: unknown strategy %q", strategy)
