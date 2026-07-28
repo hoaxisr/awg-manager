@@ -253,9 +253,16 @@ func validateDNSRule(r DNSRule, servers map[string]string) error {
 		}
 		return nil
 	case "respond":
-		// respond у sing-box отвергает route-поля на парсе (unknown field).
+		// respond у sing-box отвергает чужие поля на парсе (unknown field):
+		// server (route), rcode (predefined), method (reject).
 		if strings.TrimSpace(r.Server) != "" {
 			return fmt.Errorf("dns rule: server недопустим для action=respond")
+		}
+		if strings.TrimSpace(r.Rcode) != "" {
+			return fmt.Errorf("dns rule: rcode недопустим для action=respond")
+		}
+		if strings.TrimSpace(r.RejectMethod) != "" {
+			return fmt.Errorf("dns rule: method недопустим для action=respond")
 		}
 		return nil
 	}
@@ -417,6 +424,16 @@ func (c *RouterConfig) UpdateDNSServer(tag string, s DNSServer) error {
 		types[s.Tag] = s.Type
 		if _, ok := types[s.DomainResolver.Server]; !ok {
 			return fmt.Errorf("%w: domain_resolver.server %q not found", ErrDNSServerNotFound, s.DomainResolver.Server)
+		}
+	}
+	// Смена типа на fakeip обходила инвариант «evaluate не может использовать
+	// fakeip-сервер»: правила проверяются только на своих мутациях. Правила ещё
+	// ссылаются на СТАРЫЙ tag — renameDNSServerReferences идёт ниже.
+	if s.Type == "fakeip" {
+		for _, r := range c.DNS.Rules {
+			if r.Action == "evaluate" && r.Server == tag {
+				return fmt.Errorf("dns server %q: тип fakeip недопустим — на сервер ссылается evaluate-правило", tag)
+			}
 		}
 	}
 	c.DNS.Servers[idx] = s

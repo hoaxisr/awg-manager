@@ -204,6 +204,40 @@ func TestAddDNSServerWithDomainResolver(t *testing.T) {
 	}
 }
 
+// TestUpdateDNSServerFakeIPWithEvaluate: инвариант «evaluate не может
+// использовать fakeip-сервер» обходился сменой ТИПА живого сервера — правила не
+// трогали, а сервер становился fakeip.
+func TestUpdateDNSServerFakeIPWithEvaluate(t *testing.T) {
+	c := NewEmptyConfig()
+	if err := c.AddDNSServer(makeDNSServer("resolver", "udp", "1.1.1.1", "")); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddDNSServer(makeDNSServer("plain", "udp", "8.8.8.8", "")); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddDNSRule(DNSRule{Domain: []string{"x.com"}, Action: "evaluate", Server: "resolver"}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := c.UpdateDNSServer("resolver", DNSServer{Tag: "resolver", Type: "fakeip", Inet4Range: "198.18.0.0/15"})
+	if err == nil {
+		t.Fatal("ожидалась ошибка: на сервер ссылается evaluate-правило")
+	}
+	if c.DNS.Servers[0].Type != "udp" {
+		t.Fatalf("сервер изменён при ошибке: %#v", c.DNS.Servers[0])
+	}
+
+	// Переименование в том же вызове: правила ещё ссылаются на старый tag.
+	if err := c.UpdateDNSServer("resolver", DNSServer{Tag: "fake", Type: "fakeip", Inet4Range: "198.18.0.0/15"}); err == nil {
+		t.Fatal("ожидалась ошибка при смене типа+тега под evaluate")
+	}
+
+	// Контроль: сервер без evaluate-ссылок меняет тип свободно.
+	if err := c.UpdateDNSServer("plain", DNSServer{Tag: "plain", Type: "fakeip", Inet4Range: "198.18.0.0/15"}); err != nil {
+		t.Fatalf("смена типа без evaluate-правил: %v", err)
+	}
+}
+
 func TestUpdateDNSServerRenamesReferences(t *testing.T) {
 	c := NewEmptyConfig()
 	_ = c.AddDNSServer(makeDNSServer("bootstrap", "udp", "1.1.1.1", ""))
@@ -669,6 +703,8 @@ func TestValidateDNSRuleBeta1(t *testing.T) {
 		{"evaluate на fakeip-сервер", DNSRule{Domain: []string{"x.com"}, Action: "evaluate", Server: "fake"}, true},
 		{"respond ok", DNSRule{MatchResponse: mrRD, ResponseRcode: "NOERROR", Action: "respond"}, false},
 		{"respond с server", DNSRule{MatchResponse: mrRD, Action: "respond", Server: "dns-direct"}, true},
+		{"respond с rcode", DNSRule{MatchResponse: mrRD, Action: "respond", Rcode: "NOERROR"}, true},
+		{"respond с method", DNSRule{MatchResponse: mrRD, Action: "respond", RejectMethod: "default"}, true},
 		{"respond с tag", DNSRule{MatchResponse: mrRD, Action: "respond", Tag: "x"}, true},
 		{"respond со speculative", DNSRule{MatchResponse: mrRD, Action: "respond", Speculative: true}, true},
 		{"tag не на evaluate", DNSRule{Domain: []string{"x.com"}, Action: "route", Server: "dns-direct", Tag: "rd"}, true},
