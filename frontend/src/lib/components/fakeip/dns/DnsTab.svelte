@@ -47,7 +47,7 @@
 	} from '$lib/components/routing/singboxRouter';
 	import { ConfirmModal, Badge } from '$lib/components/ui';
 	import { GripVertical, Pencil, Trash2, Lock, Plus } from 'lucide-svelte';
-	import { dnsRuleTarget } from '$lib/components/sb-router/dnsRuleLabel';
+	import { dnsRuleTarget, type DnsRuleTarget } from '$lib/components/sb-router/dnsRuleLabel';
 	import { dnsMatcherParts, dnsMatcherSummary } from '$lib/components/sb-router/dnsMatcherParts';
 	import { computeShadowedDnsRuleIndices } from '$lib/components/sb-router/dnsRuleShadow';
 	import { dnsServerDetourDisplay } from '$lib/components/sb-router/dnsServerDetourDisplay';
@@ -93,6 +93,13 @@
 		if (type === 'fakeip') return 'accent';
 		if (type === 'local') return 'success';
 		return 'default';
+	}
+	// Тон бейджа цели: evaluate/respond (sing-box 1.14) отличимы от route/block.
+	function targetVariant(kind: DnsRuleTarget['kind']): 'accent' | 'error' | 'info' | 'purple' {
+		if (kind === 'block') return 'error';
+		if (kind === 'evaluate') return 'info';
+		if (kind === 'respond') return 'purple';
+		return 'accent';
 	}
 	function serverAddr(s: SingboxRouterDNSServer): string {
 		if (s.type === 'local') return 'системный resolver';
@@ -357,7 +364,11 @@
 				: `${dnsMatcherSummary(r)} → ${tgt.label}`}
 		>
 			{#if matchers.length === 0}
-				<Badge variant="accent" size="xs">catch-all · всё остальное</Badge>
+				<Badge variant="accent" size="xs">
+					{r.action === 'evaluate'
+						? 'catch-all · оценивает все запросы'
+						: 'catch-all · всё остальное'}
+				</Badge>
 			{:else}
 				{#each matchers as part, pi (part.key + pi)}
 					<span class="m-part">
@@ -371,12 +382,12 @@
 				<Badge variant="warning" size="xs">перекрыто catch-all выше</Badge>
 			{/if}
 			<span class="r-arrow" aria-hidden="true">→</span>
-			{#if tgt.kind === 'block'}
-				<Badge variant="error" size="sm" mono>{tgt.label}</Badge>
-			{:else if tgt.kind === 'none'}
+			{#if tgt.kind === 'none'}
 				<span class="r-target none">{tgt.label}</span>
 			{:else}
-				<Badge variant="accent" size="sm" mono>{tgt.label}</Badge>
+				<Badge variant={targetVariant(tgt.kind)} size="sm" mono>{tgt.label}</Badge>
+				{#if r.race}<Badge variant="muted" size="xs">race</Badge>{/if}
+				{#if r.speculative}<Badge variant="muted" size="xs">spec</Badge>{/if}
 			{/if}
 		</button>
 		<div class="acts">

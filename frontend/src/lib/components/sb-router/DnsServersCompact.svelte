@@ -16,7 +16,7 @@
   import { Trash2, Edit3 } from 'lucide-svelte';
   import { dnsServerDetourDisplay, dnsServerSubtitle } from './dnsServerDetourDisplay';
   import OutboundTile from './OutboundTile.svelte';
-  import { dnsRuleTarget } from './dnsRuleLabel';
+  import { dnsRuleTarget, type DnsRuleTarget } from './dnsRuleLabel';
   import { dnsMatcherParts, dnsMatcherSummary } from './dnsMatcherParts';
   import { dnsServerDeleteBlockReasons, type DnsServerUsageInput } from './dnsServerUsage';
   import { computeShadowedDnsRuleIndices, isCatchAllDnsRule } from './dnsRuleShadow';
@@ -68,6 +68,14 @@
   // (catch-all) перехватывает всё, поэтому всё, что ниже него, — мёртвый код.
   // Пересчитывается на каждый drag-reorder (rules — реактивный prop).
   const shadowedRuleIdx = $derived(computeShadowedDnsRuleIndices(rules));
+
+  // Тон бейджа цели: evaluate/respond (sing-box 1.14) отличимы от route/block.
+  function targetVariant(kind: DnsRuleTarget['kind']): 'accent' | 'error' | 'info' | 'purple' {
+    if (kind === 'block') return 'error';
+    if (kind === 'evaluate') return 'info';
+    if (kind === 'respond') return 'purple';
+    return 'accent';
+  }
 </script>
 
 <div class="wrap">
@@ -154,7 +162,11 @@
             >
               <span class="rule-match">
                 {#if matchers.length === 0}
-                  <Badge variant="accent" size="xs">catch-all · всё остальное</Badge>
+                  <Badge variant="accent" size="xs">
+                    {r.action === 'evaluate'
+                      ? 'catch-all · оценивает все запросы'
+                      : 'catch-all · всё остальное'}
+                  </Badge>
                 {:else}
                   {#each matchers as part, pi (part.key + pi)}
                     <span class="m-part">
@@ -175,15 +187,13 @@
                 {/if}
               </span>
               <span class="rule-arrow" aria-hidden="true">→</span>
-              {#if tgt.kind === 'block'}
-                <span class="rule-target">
-                  <Badge variant="error" size="sm" mono>{tgt.label}</Badge>
-                </span>
-              {:else if tgt.kind === 'none'}
+              {#if tgt.kind === 'none'}
                 <span class="rule-target none">{tgt.label}</span>
               {:else}
                 <span class="rule-target" title={tgt.label}>
-                  <Badge variant="accent" size="sm" mono>{tgt.label}</Badge>
+                  <Badge variant={targetVariant(tgt.kind)} size="sm" mono>{tgt.label}</Badge>
+                  {#if r.race}<Badge variant="muted" size="xs">race</Badge>{/if}
+                  {#if r.speculative}<Badge variant="muted" size="xs">spec</Badge>{/if}
                 </span>
               {/if}
             </button>
@@ -396,6 +406,10 @@
   .rule-target {
     grid-column: 3;
     justify-self: end;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
     max-width: 10rem;
     min-width: 0;
     overflow: hidden;
@@ -403,6 +417,7 @@
   .rule-target :global(.badge) {
     display: block;
     max-width: 100%;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
   }
