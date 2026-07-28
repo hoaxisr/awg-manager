@@ -3616,10 +3616,8 @@ definitions:
         type: array
       match_response:
         description: |-
-          MatchResponse — union: true (любой ответ) либо тег правила evaluate.
-          В swagger отражается строкой; значение true передаётся булевым литералом.
-        example: rd
-        type: string
+          MatchResponse — union: true (любой ответ) либо тег правила evaluate ("rd").
+          Тип в swagger намеренно не объявлен: обе формы union'а легальны.
       query_type:
         example:
         - A

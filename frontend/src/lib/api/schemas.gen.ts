@@ -1370,7 +1370,7 @@ const api_SingboxDNSRuleDTO: v.GenericSchema = v.looseObject({
 	domain_keyword: v.optional(v.nullable(v.array(v.string()))),
 	domain_suffix: v.optional(v.nullable(v.array(v.string()))),
 	ip_cidr: v.optional(v.nullable(v.array(v.string()))),
-	match_response: v.optional(v.nullable(v.string())),
+	match_response: v.optional(v.nullable(v.unknown())),
 	query_type: v.optional(v.nullable(v.array(v.string()))),
 	race: v.optional(v.nullable(v.boolean())),
 	response_answer: v.optional(v.nullable(v.array(v.string()))),

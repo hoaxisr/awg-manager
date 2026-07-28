@@ -58,9 +58,9 @@ type SingboxDNSRuleDTO struct {
 
 	// sing-box 1.14: DNS-механизм evaluate/match_response.
 	Tag string `json:"tag,omitempty" example:"rd"`
-	// MatchResponse — union: true (любой ответ) либо тег правила evaluate.
-	// В swagger отражается строкой; значение true передаётся булевым литералом.
-	MatchResponse  any      `json:"match_response,omitempty" swaggertype:"string" example:"rd"`
+	// MatchResponse — union: true (любой ответ) либо тег правила evaluate ("rd").
+	// Тип в swagger намеренно не объявлен: обе формы union'а легальны.
+	MatchResponse  any      `json:"match_response,omitempty"`
 	IPCIDR         []string `json:"ip_cidr,omitempty" example:"10.0.0.0/8"`
 	ResponseRcode  string   `json:"response_rcode,omitempty" example:"NOERROR"`
 	ResponseAnswer []string `json:"response_answer,omitempty" example:"example.com. IN A 1.2.3.4"`
