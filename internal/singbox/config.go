@@ -539,6 +539,11 @@ func detectTransport(ob map[string]any) string {
 		return "quic"
 	case "naive":
 		return "https"
+	case "trusttunnel":
+		if quic, _ := ob["quic"].(bool); quic {
+			return "quic"
+		}
+		return "https"
 	case "mieru":
 		return strings.ToLower(strOr(ob["transport"], "tcp"))
 	}
@@ -566,6 +571,55 @@ func detectFingerprint(ob map[string]any) string {
 		return ""
 	}
 	return strOr(utls["fingerprint"], "")
+}
+
+// outboundRequiresFeature maps a sing-box outbound "type" value to the
+// build-tag name that a sing-box binary must declare in its `Tags:` line
+// (from `sing-box version`) for that outbound type to be available at
+// runtime. Empty string means no feature-tag is required (the type is
+// compiled into the core binary unconditionally).
+//
+// Sing-box upstream naming convention for optional outbounds is
+// `with_<type>_outbound` (with_naive_outbound, with_mieru_outbound, …).
+// TrustTunnel, being a recent addition, follows the same convention.
+func outboundRequiresFeature(obType string) string {
+	switch obType {
+	case "naive":
+		return "with_naive_outbound"
+	case "mieru":
+		return "with_mieru_outbound"
+	case "trusttunnel":
+		return "with_trusttunnel_outbound"
+	}
+	return ""
+}
+
+// OutboundTypeRequiresFeature exposes outboundRequiresFeature for
+// cross-package callers (Operator, orchestrator, subscription layer).
+func OutboundTypeRequiresFeature(obType string) string {
+	return outboundRequiresFeature(obType)
+}
+
+// OutboundSupportedByFeatures returns true when the given sing-box build
+// tags (Features slice from InstallStatus) include the optional build tag
+// required for outboundType. Returns true for built-in types (no required
+// tag) and for unknown types — callers still get an error from
+// `sing-box check` in that case.
+//
+// Prefer this to direct Features-contains checks: callers don't need to
+// remember the exact tag name for every protocol, and unknown protocols
+// are treated as "probably supported" so sing-box itself gets to decide.
+func OutboundSupportedByFeatures(features []string, outboundType string) bool {
+	required := outboundRequiresFeature(outboundType)
+	if required == "" {
+		return true
+	}
+	for _, f := range features {
+		if f == required {
+			return true
+		}
+	}
+	return false
 }
 
 // DeviceProxySpec is the externally-supplied description of the

@@ -76,6 +76,30 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if existingID := findLinkedTunnelID(h.store, req.FreeTurnClientID, req.WdttClientID); existingID != "" {
+		if err := h.svc.ReplaceConfig(r.Context(), existingID, req.Content, req.Name); err != nil {
+			h.log.Warn("import", req.Name, "Failed to replace linked tunnel: "+err.Error())
+			response.Error(w, err.Error(), "IMPORT_FAILED")
+			return
+		}
+		h.log.Info("import", req.Name, "Linked tunnel config replaced")
+		var quiescent time.Time
+		if h.tunnelsHandler != nil {
+			h.tunnelsHandler.publishTunnelList(r.Context())
+			quiescent = h.tunnelsHandler.quiescentFor(existingID)
+		}
+		resp, err := BuildTunnelResponse(r, h.svc, h.store, existingID, quiescent)
+		if err != nil {
+			response.Error(w, err.Error(), "IMPORT_FAILED")
+			return
+		}
+		if warnings := h.svc.CheckAddressConflicts(r.Context(), existingID); len(warnings) > 0 {
+			resp["warnings"] = warnings
+		}
+		response.Success(w, resp)
+		return
+	}
+
 	tunnel, err := h.svc.Import(r.Context(), req.Content, req.Name, req.Backend)
 	if err != nil {
 		h.log.Warn("import", req.Name, "Failed to import tunnel: "+err.Error())
@@ -129,4 +153,28 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 		resp["warnings"] = warnings
 	}
 	response.Success(w, resp)
+}
+
+func findLinkedTunnelID(store *storage.AWGTunnelStore, freeTurnClientID, wdttClientID string) string {
+	if store == nil {
+		return ""
+	}
+	ftID := strings.TrimSpace(freeTurnClientID)
+	wdID := strings.TrimSpace(wdttClientID)
+	if ftID == "" && wdID == "" {
+		return ""
+	}
+	tunnels, err := store.List()
+	if err != nil {
+		return ""
+	}
+	for _, tun := range tunnels {
+		if ftID != "" && strings.TrimSpace(tun.FreeTurnClientID) == ftID {
+			return tun.ID
+		}
+		if wdID != "" && strings.TrimSpace(tun.WdttClientID) == wdID {
+			return tun.ID
+		}
+	}
+	return ""
 }

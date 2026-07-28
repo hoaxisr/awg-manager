@@ -52,6 +52,8 @@
 	let ensuringWg = $state(false);
 	let refreshingSub = $state(false);
 	let subscriptionTick = $state(0);
+	/** Сбрасывает локальный UI импорта/подписки после удаления клиента (id «default» не меняется). */
+	let clientUiEpoch = $state(0);
 
 	const selectedClient = $derived(
 		config
@@ -121,6 +123,8 @@
 			};
 		})
 	);
+	/** wdtt-server поднимает один общий интерфейс wdtt0 — второй инстанс создать нельзя. */
+	const canAddWdttServer = $derived((config?.servers.length ?? 0) === 0);
 
 	function wdttTunnelName(profileName?: string): string {
 		const base = profileName?.trim() || 'WDTT';
@@ -363,6 +367,8 @@
 			const result = await api.deleteWdttClient(id);
 			await loadConfig();
 			await loadStatus();
+			clientUiEpoch++;
+			subscriptionTick = 0;
 			let msg = 'Клиент удалён';
 			const n = result.deletedTunnels?.length ?? 0;
 			if (n > 0) msg += `, AWG-туннелей удалено: ${n}`;
@@ -466,6 +472,17 @@
 		}
 	}
 
+	async function addServer() {
+		try {
+			const inst = await api.createWdttServer();
+			await loadConfig();
+			selectedServerId = inst.id;
+			notifications.success(`Сервер «${inst.name}» создан`);
+		} catch (e) {
+			notifications.error('Не удалось создать сервер: ' + errText(e));
+		}
+	}
+
 	async function renameServer(id: string, name: string) {
 		try {
 			await api.renameWdttServer(id, name);
@@ -475,14 +492,19 @@
 		}
 	}
 
-	async function generateServerLink(peer: string, vkHashes: string[]) {
+	async function generateServerLink(
+		peer: string,
+		vkHashes: string[],
+		opts?: { password?: string; name?: string }
+	) {
 		if (!selectedServer) return null;
 		generating = true;
 		try {
 			const result = await api.generateWdttServerLink(selectedServer.id, {
 				peer: peer || undefined,
 				vkHashes: vkHashes.length ? vkHashes : undefined,
-				name: selectedServer.name
+				name: opts?.name ?? selectedServer.name,
+				password: opts?.password
 			});
 			generatedLink = result.link;
 			genPeer = result.peer;
@@ -498,7 +520,7 @@
 
 	async function applyImportPayload(
 		payload: WdttImportPayload,
-		meta?: { subUrl?: string; clientName?: string }
+		meta?: { subUrl?: string; clientName?: string; andStart?: boolean }
 	) {
 		if (!selectedClient || !config) return;
 		importing = true;
@@ -520,7 +542,12 @@
 				await api.renameWdttClient(selectedClientId, clientName);
 			}
 
-			if (payload.peer && !peersEqual(oldPeer, payload.peer) && clientStatus?.running) {
+			if (
+				payload.peer &&
+				!peersEqual(oldPeer, payload.peer) &&
+				clientStatus?.running &&
+				!meta?.andStart
+			) {
 				await api.stopWdttClientInstance(selectedClientId);
 				await loadStatus();
 			}
@@ -629,7 +656,7 @@
 	/>
 
 	{#if selectedClient}
-		{#key selectedClientId}
+		{#key `${selectedClientId}:${clientUiEpoch}`}
 			<WdttClientSimple
 				client={selectedClient.config}
 				running={clientStatus?.running ?? false}
@@ -661,10 +688,12 @@
 	<InstanceBar
 		items={serverBarItems}
 		selectedId={selectedServerId}
+		showDtls={false}
 		onSelect={(id) => {
 			selectedServerId = id;
 		}}
 		onToggle={toggleServerInstance}
+		onAdd={canAddWdttServer ? addServer : undefined}
 		onDelete={deleteServer}
 		onRename={renameServer}
 	/>

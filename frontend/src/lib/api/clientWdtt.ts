@@ -148,11 +148,35 @@ export class WdttClient extends FreeturnClient {
 
 	async generateWdttServerLink(
 		id: string,
-		opts?: { peer?: string; vkHashes?: string[]; name?: string }
+		opts?: { peer?: string; vkHashes?: string[]; name?: string; password?: string }
 	): Promise<WdttGenerateLinkResult> {
 		return this.request<WdttGenerateLinkResult>(`/wdtt/servers/${encodeURIComponent(id)}/link`, {
 			method: 'POST',
 			body: JSON.stringify(opts ?? {})
 		});
+	}
+
+	async getWdttServerPanelUsers(serverId: string): Promise<import('$lib/types').WdttPanelUsersStatus> {
+		return this.request(`/wdtt/servers/${encodeURIComponent(serverId)}/users`);
+	}
+
+	async addWdttServerPanelUser(
+		serverId: string,
+		opts: { password?: string; comment?: string; vkHash?: string; mainPassword?: string }
+	): Promise<import('$lib/types').WdttPanelUsersStatus> {
+		return this.request(`/wdtt/servers/${encodeURIComponent(serverId)}/users`, {
+			method: 'POST',
+			body: JSON.stringify(opts)
+		});
+	}
+
+	async removeWdttServerPanelUser(
+		serverId: string,
+		password: string
+	): Promise<import('$lib/types').WdttPanelUsersStatus> {
+		return this.request(
+			`/wdtt/servers/${encodeURIComponent(serverId)}/users/${encodeURIComponent(password)}`,
+			{ method: 'DELETE' }
+		);
 	}
 }

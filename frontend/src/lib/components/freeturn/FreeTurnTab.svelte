@@ -401,7 +401,7 @@
 						undefined,
 						selectedClientId
 					);
-					msg += `. Создан туннель «${tunnel.name}» (Endpoint 127.0.0.1:${listenPort})`;
+					msg += `. Туннель «${tunnel.name}» (Endpoint 127.0.0.1:${listenPort})`;
 				} catch (e) {
 					notifications.error('Поля заполнены, но не удалось создать туннель из конфига: ' + errText(e));
 				}

@@ -5,7 +5,7 @@ import type { Settings } from './system';
 
 export interface SingboxTunnel {
 	tag: string;
-	protocol: 'vless' | 'hysteria2' | 'naive' | 'trojan' | 'shadowsocks' | 'mieru';
+	protocol: 'vless' | 'hysteria2' | 'naive' | 'trojan' | 'shadowsocks' | 'mieru' | 'trusttunnel';
 	server: string;
 	port: number;
 	security: 'reality' | 'tls' | 'none';

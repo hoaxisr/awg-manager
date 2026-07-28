@@ -92,6 +92,8 @@ func ParseLinkMany(input string) ([]ParsedOutbound, error) {
 		return singleOutbound(parseSocks(input))
 	case strings.HasPrefix(lower, "socks://"):
 		return singleOutbound(parseSocks(input))
+	case strings.HasPrefix(lower, "trusttunnel://") || strings.HasPrefix(lower, "tt://"):
+		return singleOutbound(parseTrusttunnel(input))
 	case strings.HasPrefix(lower, "vmess://"):
 		return nil, ErrSchemeDropped
 	}

@@ -35,6 +35,8 @@ export interface WdttServerConfig {
 	lanSegments?: string[];
 	ingressEnabled?: boolean;
 	natIface?: string;
+	/** Открыть DTLS-порт в firewall Keenetic (INPUT). undefined = true */
+	openFirewall?: boolean;
 }
 
 export interface WdttServerInstance {
@@ -111,4 +113,20 @@ export interface WdttGenerateLinkResult {
 	link: string;
 	linkQwdtt?: string;
 	peer: string;
+}
+
+export interface WdttPanelUserEntry {
+	password: string;
+	comment?: string;
+	vkHash?: string;
+	isMain: boolean;
+	isDeactivated: boolean;
+	deviceCount: number;
+	lastSeenAt?: number;
+}
+
+export interface WdttPanelUsersStatus {
+	panelDbPath?: string;
+	available: boolean;
+	users: WdttPanelUserEntry[];
 }

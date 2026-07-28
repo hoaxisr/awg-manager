@@ -68,6 +68,10 @@ type ServerConfig struct {
 	ObfKey      string `json:"obfKey,omitempty"`      // -obf-key
 	ClientsFile string `json:"clientsFile,omitempty"` // -clients-file, enables Client-ID allowlist auth
 	Debug       bool   `json:"debug"`
+
+	// OpenFirewall opens the server listen port in Keenetic INPUT (iptables).
+	// nil / omitted → true (WAN relay works out of the box).
+	OpenFirewall *bool `json:"openFirewall,omitempty"`
 }
 
 // DefaultServerConfig mirrors the binary's own flag defaults.

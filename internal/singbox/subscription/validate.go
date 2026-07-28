@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
@@ -23,11 +24,18 @@ type DropReason struct {
 // (selector / urltest) are NOT filtered here — that happens during
 // reference cleanup after a leaf outbound is removed.
 //
+// singboxFeatures is the list of build tags from the installed sing-box
+// binary (Features field of InstallStatus). When non-empty, outbounds
+// that require an optional tag (e.g. trusttunnel needs
+// with_trusttunnel_outbound) are dropped early with a user-facing reason
+// instead of waiting for `sing-box check` to report "unknown outbound
+// type".
+//
 // Returns the kept outbounds (same shape) and the list of dropped ones
 // with a human-readable reason. Outbounds whose shape we cannot parse
 // (non-object) are dropped with reason "non-object outbound" — sing-box
 // would reject the whole config on those anyway.
-func preFilterOutbounds(outbounds []any) ([]any, []DropReason) {
+func preFilterOutbounds(outbounds []any, singboxFeatures []string) ([]any, []DropReason) {
 	kept := make([]any, 0, len(outbounds))
 	dropped := []DropReason{}
 	for _, raw := range outbounds {
@@ -39,6 +47,12 @@ func preFilterOutbounds(outbounds []any) ([]any, []DropReason) {
 		if reason := classifyOutbound(ob); reason != "" {
 			dropped = append(dropped, DropReason{Tag: outboundTag(ob), Reason: reason})
 			continue
+		}
+		if len(singboxFeatures) > 0 {
+			if reason := classifyOutboundFeatureSupport(ob, singboxFeatures); reason != "" {
+				dropped = append(dropped, DropReason{Tag: outboundTag(ob), Reason: reason})
+				continue
+			}
 		}
 		kept = append(kept, ob)
 	}
@@ -92,6 +106,13 @@ func classifyOutbound(ob map[string]any) string {
 		if stringOf(ob["password"]) == "" {
 			return "missing hysteria2 password"
 		}
+	case "trusttunnel":
+		if stringOf(ob["username"]) == "" {
+			return "missing trusttunnel username"
+		}
+		if stringOf(ob["password"]) == "" {
+			return "missing trusttunnel password"
+		}
 	case "shadowsocks":
 		if stringOf(ob["password"]) == "" {
 			return "missing shadowsocks password"
@@ -101,6 +122,29 @@ func classifyOutbound(ob map[string]any) string {
 		}
 	}
 	return ""
+}
+
+// classifyOutboundFeatureSupport returns "" when the outbound's required
+// build tag (if any) is present in singboxFeatures. Otherwise returns a
+// short human-readable reason string like
+// "trusttunnel: missing sing-box build tag with_trusttunnel_outbound,
+// update sing-box to a version supporting trusttunnel".
+func classifyOutboundFeatureSupport(ob map[string]any, singboxFeatures []string) string {
+	typ, _ := ob["type"].(string)
+	if typ == "" || typ == "selector" || typ == "urltest" {
+		return ""
+	}
+	required := singbox.OutboundTypeRequiresFeature(typ)
+	if required == "" {
+		return ""
+	}
+	if singbox.OutboundSupportedByFeatures(singboxFeatures, typ) {
+		return ""
+	}
+	return fmt.Sprintf(
+		"%s: missing sing-box build tag %q, update sing-box to a version supporting %s",
+		typ, required, typ,
+	)
 }
 
 // checkRealityUTLS reports the "reality requires uTLS" structural rule

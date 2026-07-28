@@ -1,6 +1,7 @@
 package freeturn
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -64,6 +65,27 @@ func (s *Service) occupiedLocalListenPorts() map[int]bool {
 	return used
 }
 
+func (s *Service) reservedServerPortsExcept(id string) map[int]bool {
+	used := s.occupiedLocalListenPorts()
+	if len(used) == 0 {
+		return used
+	}
+	inst, err := s.serverInstance(id)
+	if err != nil {
+		return used
+	}
+	out := map[int]bool{}
+	for port, v := range used {
+		if v {
+			out[port] = true
+		}
+	}
+	if port, err := listenPort(inst.Config.Listen); err == nil {
+		delete(out, port)
+	}
+	return out
+}
+
 // NewService wires up config storage and process managers per instance id.
 func NewService(dataDir, runtimeDir, clientBin, serverBin string) *Service {
 	return &Service{
@@ -109,19 +131,30 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 
 func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
+		s.mu.Unlock()
 		return err
 	}
 	idx := findServerIndex(full.Servers, id)
 	if idx < 0 {
+		s.mu.Unlock()
 		return fmt.Errorf("сервер %q не найден", id)
 	}
+	prevCfg := full.Servers[idx].Config
 	listens := serverListenAddresses(full.Servers)
-	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, 56000, 56100)
+	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, s.reservedServerPortsExcept(id), 56000, 56100)
 	full.Servers[idx].Config = cfg
-	return s.store.Save(full)
+	saveErr := s.store.Save(full)
+	running := s.serverProcs.get(id).Status().Running
+	s.mu.Unlock()
+	if saveErr != nil {
+		return saveErr
+	}
+	if running {
+		s.syncServerListenFirewall(context.Background(), id, prevCfg, cfg)
+	}
+	return nil
 }
 
 func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
@@ -160,7 +193,7 @@ func (s *Service) CreateServer(in CreateServerInput) (ServerInstance, error) {
 	if in.Config != nil {
 		cfg = *in.Config
 	}
-	cfg.Listen = nextServerListen(full.Servers)
+	cfg.Listen = nextServerListen(full.Servers, s.occupiedLocalListenPorts())
 	name := in.Name
 	if name == "" {
 		name = fmt.Sprintf("Сервер %d", len(full.Servers)+1)
@@ -446,13 +479,26 @@ func (s *Service) StartServerInstance(id string) error {
 	if err != nil {
 		return err
 	}
+	if err := s.UpdateServerInstance(id, inst.Config); err != nil {
+		return err
+	}
+	inst, err = s.serverInstance(id)
+	if err != nil {
+		return err
+	}
 	if inst.Config.Connect == "" {
 		return errors.New("укажите backend-адрес (-connect)")
 	}
 	if err := validateObfKey(inst.Config.ObfProfile, inst.Config.ObfKey); err != nil {
 		return err
 	}
-	return s.serverProcs.get(id).Start(buildServerArgs(inst.Config))
+	if err := s.serverProcs.get(id).Start(buildServerArgs(inst.Config)); err != nil {
+		return err
+	}
+	if err := applyServerListenFirewall(context.Background(), inst.Config); err != nil && s.appLog != nil {
+		s.appLog.Warn("firewall", id, "INPUT для listen-порта: "+err.Error())
+	}
+	return nil
 }
 
 func (s *Service) StopServer() error {
@@ -460,9 +506,11 @@ func (s *Service) StopServer() error {
 }
 
 func (s *Service) StopServerInstance(id string) error {
-	if _, err := s.serverInstance(id); err != nil {
+	inst, err := s.serverInstance(id)
+	if err != nil {
 		return err
 	}
+	removeServerListenFirewall(context.Background(), inst.Config)
 	return s.serverProcs.get(id).Stop()
 }
 
@@ -476,6 +524,12 @@ func (s *Service) ServerConfigForLink(id string) (ServerConfig, error) {
 
 // Stop is wired into the app shutdown-hook chain in cmd/awg-manager/main.go.
 func (s *Service) Stop() {
+	full, _ := s.store.Load()
+	for _, srv := range full.Servers {
+		if s.serverProcs.get(srv.ID).Status().Running {
+			removeServerListenFirewall(context.Background(), srv.Config)
+		}
+	}
 	s.clientProcs.stopAll()
 	s.serverProcs.stopAll()
 }

@@ -84,6 +84,30 @@ func (s *Service) occupiedLocalListenPorts() map[int]bool {
 	return used
 }
 
+func (s *Service) reservedServerPortsExcept(id string) map[int]bool {
+	used := s.occupiedLocalListenPorts()
+	if len(used) == 0 {
+		return used
+	}
+	inst, err := s.serverInstance(id)
+	if err != nil {
+		return used
+	}
+	out := map[int]bool{}
+	for port, v := range used {
+		if v {
+			out[port] = true
+		}
+	}
+	if port, err := listenPort(inst.Config.Listen); err == nil {
+		delete(out, port)
+	}
+	if inst.Config.WgPort > 0 {
+		delete(out, inst.Config.WgPort)
+	}
+	return out
+}
+
 func (s *Service) GetConfig() (Config, error) {
 	return s.store.Load()
 }
@@ -331,6 +355,12 @@ func (s *Service) StopClientInstance(id string) error {
 }
 
 func (s *Service) Stop() {
+	full, _ := s.store.Load()
+	for _, srv := range full.Servers {
+		if s.serverProcs.get(srv.ID).Status().Running {
+			removeServerListenFirewall(context.Background(), srv.Config)
+		}
+	}
 	s.clientProcs.stopAll()
 	s.serverProcs.stopAll()
 }

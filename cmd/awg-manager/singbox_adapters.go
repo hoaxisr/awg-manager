@@ -50,14 +50,18 @@ func (l *singboxAndSubLister) ListSubActiveTags() []string {
 	return out
 }
 
-// orchValidatorAdapter bridges singbox.Validator (no context) to the
-// singboxorch.DraftValidator interface (with context).
+// orchValidatorAdapter bridges singbox.Validator to singboxorch.DraftValidator.
 type orchValidatorAdapter struct {
 	v *singbox.Validator
 }
 
 func (a *orchValidatorAdapter) Validate(ctx context.Context, configDir string) error {
-	return a.v.Validate(configDir)
+	_ = ctx
+	v := a.v
+	if v == nil {
+		v = singbox.NewValidator(singbox.DefaultBinaryPath())
+	}
+	return v.Validate(configDir)
 }
 
 // subProxySet adapts the subscription store to singbox.SubscriptionProxySet,

@@ -937,12 +937,95 @@ func (o *Operator) ApplyLogLevel(level string) error {
 // sing-box itself only reports the tag ("duplicate outbound/endpoint
 // tag: direct"), so surfacing our message into LastError gives users
 // an actionable diagnostic without needing SSH access to grep through
-// config.d/. Falls through to `sing-box check` for everything our
-// merge doesn't cover (parse errors, schema violations, unknown
-// option keys, etc.).
+// config.d/. Then runs the outbound-feature gating step, and finally
+// `sing-box check` for everything our merge doesn't cover (parse
+// errors, schema violations, unknown option keys, etc.).
 func (o *Operator) preflightConfigDir() error {
 	if _, err := configmerge.MergeDir(o.configPath); err != nil {
 		return err
 	}
+	if err := o.checkOutboundFeatures(); err != nil {
+		return err
+	}
 	return o.validator.Validate(o.configPath)
+}
+
+// checkOutboundFeatures scans every config.d JSON fragment for outbounds
+// whose declared "type" requires a build tag the installed sing-box
+// binary does not declare, and returns a human-readable error BEFORE we
+// hand control to `sing-box check`. Without this pre-check, sing-box
+// reports only:
+//
+//	FATAL decode config …: outbounds[N]: unknown outbound type: trusttunnel
+//
+// which leaves the user guessing whether it's a typo, a bad sub, or an
+// outdated binary. Our error names the specific missing build tag and
+// recommends upgrading the pinned sing-box.
+func (o *Operator) checkOutboundFeatures() error {
+	ctx, cancel := context.WithTimeout(context.Background(), singboxVersionProbeTimeout)
+	defer cancel()
+	version, features := o.detectVersionAndFeaturesCached(ctx)
+	if len(features) == 0 && version == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(o.configPath)
+	if err != nil {
+		return nil
+	}
+	var unsupported []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		path := filepath.Join(o.configPath, name)
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			continue
+		}
+		var cfg map[string]any
+		if json.Unmarshal(data, &cfg) != nil {
+			continue
+		}
+		obs, ok := cfg["outbounds"].([]any)
+		if !ok {
+			continue
+		}
+		for i, raw := range obs {
+			ob, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			typ, _ := ob["type"].(string)
+			tag, _ := ob["tag"].(string)
+			required := OutboundTypeRequiresFeature(typ)
+			if required == "" {
+				continue
+			}
+			has := false
+			for _, f := range features {
+				if f == required {
+					has = true
+					break
+				}
+			}
+			if has {
+				continue
+			}
+			if tag == "" {
+				tag = fmt.Sprintf("<no-tag index=%d>", i)
+			}
+			unsupported = append(unsupported, fmt.Sprintf(
+				"%s outbounds[%d] %q (%s): missing sing-box build tag %q, update sing-box to version supporting %s",
+				name, i, tag, typ, required, typ,
+			))
+		}
+	}
+	if len(unsupported) > 0 {
+		return fmt.Errorf("unsupported outbound type in config.d:\n  %s", strings.Join(unsupported, "\n  "))
+	}
+	return nil
 }

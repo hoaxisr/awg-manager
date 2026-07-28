@@ -58,6 +58,10 @@ type ServerConfig struct {
 	Policy         string   `json:"policy"`                   // NDMS hotspot policy or "none"
 	LanSegments    []string `json:"lanSegments,omitempty"`    // LAN bridge names
 	IngressEnabled bool     `json:"ingressEnabled,omitempty"` // sing-box ingress for iface:wdtt0
+
+	// OpenFirewall opens the DTLS listen port in Keenetic INPUT (iptables).
+	// nil / omitted → true (WAN relay works out of the box).
+	OpenFirewall *bool `json:"openFirewall,omitempty"`
 }
 
 const (

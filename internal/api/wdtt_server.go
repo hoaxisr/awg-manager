@@ -83,6 +83,7 @@ type WdttGenerateLinkRequest struct {
 	Peer     string   `json:"peer,omitempty"`
 	VKHashes []string `json:"vkHashes,omitempty"`
 	Name     string   `json:"name,omitempty"`
+	Password string   `json:"password,omitempty"` // per-client password from panel.db; empty → server password
 }
 
 // CreateServer handles POST /api/wdtt/servers.
@@ -119,6 +120,59 @@ func (h *WdttHandler) ServeServers(w http.ResponseWriter, r *http.Request) {
 		h.stopServerInstance(w, r, id)
 	case len(sub) == 1 && sub[0] == "link":
 		h.generateLinkForServer(w, r, id)
+	case len(sub) >= 1 && sub[0] == "users":
+		h.serveServerPanelUsers(w, r, id, sub[1:])
+	default:
+		response.ErrorWithStatus(w, http.StatusNotFound, "Not found", "NOT_FOUND")
+	}
+}
+
+type wdttPanelUserAddRequest struct {
+	Password     string `json:"password,omitempty"`
+	Comment      string `json:"comment,omitempty"`
+	VkHash       string `json:"vkHash,omitempty"`
+	MainPassword string `json:"mainPassword,omitempty"`
+}
+
+// serveServerPanelUsers handles GET/POST/DELETE /api/wdtt/servers/{id}/users[/{password}].
+func (h *WdttHandler) serveServerPanelUsers(w http.ResponseWriter, r *http.Request, serverID string, sub []string) {
+	switch {
+	case len(sub) == 0:
+		switch r.Method {
+		case http.MethodGet:
+			st, err := h.svc.ListServerPanelUsers(serverID)
+			if err != nil {
+				response.Error(w, err.Error(), "WDTT_PANEL_USERS_FAILED")
+				return
+			}
+			response.Success(w, st)
+		case http.MethodPost:
+			var req wdttPanelUserAddRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				response.Error(w, "invalid request body", "BAD_REQUEST")
+				return
+			}
+			st, err := h.svc.AddServerPanelUser(serverID, req.Password, req.Comment, req.VkHash, req.MainPassword)
+			if err != nil {
+				response.Error(w, err.Error(), "WDTT_PANEL_USER_ADD_FAILED")
+				return
+			}
+			response.Success(w, st)
+		default:
+			response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	case len(sub) == 1:
+		password := sub[0]
+		if r.Method != http.MethodDelete {
+			response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+			return
+		}
+		st, err := h.svc.RemoveServerPanelUser(serverID, password)
+		if err != nil {
+			response.Error(w, err.Error(), "WDTT_PANEL_USER_DELETE_FAILED")
+			return
+		}
+		response.Success(w, st)
 	default:
 		response.ErrorWithStatus(w, http.StatusNotFound, "Not found", "NOT_FOUND")
 	}
@@ -207,6 +261,11 @@ func (h *WdttHandler) generateLinkCore(w http.ResponseWriter, r *http.Request, s
 		return
 	}
 
+	linkPassword := strings.TrimSpace(req.Password)
+	if linkPassword == "" {
+		linkPassword = srvCfg.Password
+	}
+
 	peer := strings.TrimSpace(req.Peer)
 	if peer != "" {
 		if !strings.Contains(peer, ":") {
@@ -234,12 +293,12 @@ func (h *WdttHandler) generateLinkCore(w http.ResponseWriter, r *http.Request, s
 		name = "Router WDTT"
 	}
 
-	link, err := wdtt.EncodeLink(peer, srvCfg.WgPort, srvCfg.Password, req.VKHashes, name)
+	link, err := wdtt.EncodeLink(peer, srvCfg.WgPort, linkPassword, req.VKHashes, name)
 	if err != nil {
 		response.Error(w, err.Error(), "WDTT_LINK_ENCODE_FAILED")
 		return
 	}
-	qLink, qErr := wdtt.EncodeQwdttLink(peer, srvCfg.Password, req.VKHashes, name, 0, 0)
+	qLink, qErr := wdtt.EncodeQwdttLink(peer, linkPassword, req.VKHashes, name, 0, 0)
 	if qErr != nil {
 		response.Error(w, qErr.Error(), "WDTT_LINK_ENCODE_FAILED")
 		return

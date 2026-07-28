@@ -71,6 +71,18 @@ type OperatorAdapter struct {
 	pm    ProxyRegistrar
 	clash ClashSelector
 
+	// singboxFeaturesFn, when non-nil, is called once per flush() Pass 1 to
+	// fetch the current installed sing-box build tags (from
+	// sing-box version → Tags: line). Used for cheap pre-filtering of
+	// outbounds whose type requires an optional build tag (trusttunnel,
+	// mieru, naive) — we drop them in Pass 1 with a human-readable reason
+	// instead of letting `sing-box check` report unknown type.
+	//
+	// nil-safe: tests leave it unset and preFilterOutbounds treats nil as
+	// "skip feature gating" (same as empty slice but preserves back-compat
+	// with pre-feature-gate tests).
+	singboxFeaturesFn func() []string
+
 	mu              sync.Mutex
 	cfg             slotConfig
 	lastDropped     []DropReason // outbounds filtered out of the most recent flush
@@ -82,6 +94,13 @@ type OperatorAdapter struct {
 	// validate+save+reload, and on failure restores this snapshot. Rollback()
 	// discards an uncommitted batch (failed Create). nil = no open batch.
 	pending *slotSnapshot
+}
+
+// SetSingboxFeaturesFn registers the late-bound closure used during flush()
+// Pass 1 to obtain the current sing-box build tags. Pass nil to disable
+// feature-based pre-filtering (tests).
+func (a *OperatorAdapter) SetSingboxFeaturesFn(fn func() []string) {
+	a.singboxFeaturesFn = fn
 }
 
 // slotSnapshot is a shallow copy of the mutable slot state. Shallow is enough
@@ -524,8 +543,17 @@ func (a *OperatorAdapter) flush() error {
 	dropped := append([]DropReason(nil), a.preFlushDropped...)
 	a.preFlushDropped = nil
 
-	// Pass 1 — structural pre-filter.
-	kept, p1Dropped := preFilterOutbounds(a.cfg.Outbounds)
+	// Resolve sing-box build tags once per flush: the closure is expected to
+	// be cheap (Operator caches probes under a mtime+size fingerprint). Nil
+	// → pass nil into preFilterOutbounds, which skips feature gating (tests
+	// and pre-bootstrap).
+	var features []string
+	if a.singboxFeaturesFn != nil {
+		features = a.singboxFeaturesFn()
+	}
+
+	// Pass 1 — structural pre-filter + build-tag gating.
+	kept, p1Dropped := preFilterOutbounds(a.cfg.Outbounds, features)
 	a.cfg.Outbounds = kept
 	dropped = append(dropped, p1Dropped...)
 	for _, d := range p1Dropped {

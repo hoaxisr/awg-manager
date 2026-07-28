@@ -18,6 +18,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/freeturn"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/listenfirewall"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
 	"github.com/hoaxisr/awg-manager/internal/server"
@@ -609,6 +610,13 @@ func (a *app) setupShutdown() {
 	a.monitoringService.Start(a.shutdownCtx)
 	// Re-apply WDTT entware iptables NAT — sing-box router reconcile can flush rules.
 	a.wdttService.StartNATReconciler(a.shutdownCtx)
+	// Re-apply FreeTurn/WDTT listen-port INPUT rules after iptables flushes.
+	listenfirewall.StartReconciler(a.shutdownCtx, func() []listenfirewall.PortSpec {
+		var out []listenfirewall.PortSpec
+		out = append(out, a.freeturnService.RunningServerListenPorts()...)
+		out = append(out, a.wdttService.RunningServerListenPorts()...)
+		return listenfirewall.MergePortSpecs(out)
+	})
 
 	// Register shutdown hooks for graceful cleanup before syscall.Exec restart.
 	a.srv.AddShutdownHook(a.shutdownCancel)

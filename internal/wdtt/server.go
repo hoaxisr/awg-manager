@@ -32,9 +32,12 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfi
 		s.mu.Unlock()
 		return ServerConfig{}, fmt.Errorf("сервер %q не найден", id)
 	}
+	prevCfg := full.Servers[idx].Config
 	listens := serverListenAddresses(full.Servers)
-	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, 56000, 56100)
+	reserved := s.reservedServerPortsExcept(id)
+	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, reserved, 56000, 56100)
 	cfg = normalizeServerConfig(cfg)
+	cfg.WgPort = ensureUniqueWgPort(cfg.WgPort, cfg.Listen, reserved, 56000, 56100)
 	full.Servers[idx].Config = cfg
 	saveErr := s.store.Save(full)
 	running := s.serverProcs.get(id).Status().Running
@@ -43,10 +46,21 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfi
 	if saveErr != nil {
 		return ServerConfig{}, saveErr
 	}
-	if running {
-		if err := s.applyServerAccess(context.Background(), id, savedCfg); err != nil {
-			return savedCfg, err
+	if pwd := strings.TrimSpace(savedCfg.Password); pwd != "" {
+		if cfgDir, dirErr := s.serverConfigDir(id, savedCfg); dirErr == nil {
+			go func(dir, pass string) {
+				_ = syncPanelMainPassword(dir, pass)
+			}(cfgDir, pwd)
 		}
+	}
+	if running {
+		go func(prev, saved ServerConfig) {
+			ctx := context.Background()
+			if err := s.applyServerAccess(ctx, id, saved); err != nil && s.appLog != nil {
+				s.appLog.Warn("access", id, "фоновое применение NAT/LAN: "+err.Error())
+			}
+			s.syncServerListenFirewall(ctx, id, prev, saved)
+		}(prevCfg, savedCfg)
 	}
 	return savedCfg, nil
 }
@@ -67,8 +81,10 @@ func (s *Service) CreateServer(in CreateServerInput) (ServerInstance, error) {
 	if in.Config != nil {
 		cfg = *in.Config
 	}
+	reserved := s.occupiedLocalListenPorts()
 	cfg = normalizeServerConfig(cfg)
-	cfg.Listen = nextServerListen(full.Servers)
+	cfg.Listen = nextServerListen(full.Servers, reserved)
+	cfg.WgPort = ensureUniqueWgPort(cfg.WgPort, cfg.Listen, reserved, 56000, 56100)
 	name := in.Name
 	if name == "" {
 		name = fmt.Sprintf("Сервер %d", len(full.Servers)+1)
@@ -124,17 +140,21 @@ func (s *Service) StartServerInstance(id string) error {
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(inst.Config.Password) == "" {
+	saved, err := s.UpdateServerInstance(id, inst.Config)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(saved.Password) == "" {
 		return errors.New("укажите пароль подключения (-password)")
 	}
-	cfgDir, err := s.serverConfigDir(id, inst.Config)
+	cfgDir, err := s.serverConfigDir(id, saved)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(cfgDir, 0755); err != nil {
 		return fmt.Errorf("config-dir: %w", err)
 	}
-	cfg := inst.Config
+	cfg := saved
 	cfg.ConfigDir = cfgDir
 	if err := s.serverProcs.get(id).Start(buildServerArgs(cfg)); err != nil {
 		return err
@@ -143,6 +163,9 @@ func (s *Service) StartServerInstance(id string) error {
 	if err := s.applyServerAccess(context.Background(), id, cfg); err != nil {
 		_ = s.serverProcs.get(id).Stop()
 		return err
+	}
+	if err := applyServerListenFirewall(context.Background(), cfg); err != nil && s.appLog != nil {
+		s.appLog.Warn("firewall", id, "INPUT для listen-порта: "+err.Error())
 	}
 	if err := s.setServerEnabled(id, true); err != nil && s.appLog != nil {
 		s.appLog.Warn("start", id, "не удалось сохранить enabled: "+err.Error())
@@ -155,11 +178,13 @@ func (s *Service) StopServer() error {
 }
 
 func (s *Service) StopServerInstance(id string) error {
-	if _, err := s.serverInstance(id); err != nil {
+	inst, err := s.serverInstance(id)
+	if err != nil {
 		return err
 	}
 	removeEntwareNAT(context.Background(), DefaultWdttIface)
-	err := s.serverProcs.get(id).Stop()
+	removeServerListenFirewall(context.Background(), inst.Config)
+	err = s.serverProcs.get(id).Stop()
 	if e := s.setServerEnabled(id, false); e != nil && s.appLog != nil {
 		s.appLog.Warn("stop", id, "не удалось сбросить enabled: "+e.Error())
 	}

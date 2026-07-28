@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { Dropdown, Button, Input } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { servers, type ServersSnapshot } from '$lib/stores/servers';
@@ -14,16 +14,18 @@
 	interface Props {
 		onConnect: (addr: string) => void;
 		onPeerConf: (conf: string) => void;
+		wgConf?: string;
+		keeneticSelected?: boolean;
 		clientListenPort?: number;
-		/** В простом режиме: применить сразу при выборе пира */
 		autoApply?: boolean;
-		/** Компактный вид без лишних рамок */
 		compact?: boolean;
 	}
 
 	let {
 		onConnect,
 		onPeerConf,
+		wgConf = $bindable(''),
+		keeneticSelected = $bindable(false),
 		clientListenPort = 9000,
 		autoApply = false,
 		compact = false
@@ -42,6 +44,23 @@
 	const options = $derived(buildRunningServerPeerDropdownOptions(snap));
 	const endpointHint = $derived(wgEndpointHint(endpointPort));
 
+	const keeneticPeer = $derived.by(() => {
+		if (!selected || !snap) return false;
+		try {
+			const { kind, serverId, pubkey } = decodeServerPeerValue(selected);
+			if (kind !== 'system') return false;
+			const srv = snap.servers?.find((s) => s.id === serverId);
+			const peer = srv?.peers?.find((p) => p.publicKey === pubkey);
+			return peer?.confAvailable !== true;
+		} catch {
+			return false;
+		}
+	});
+
+	$effect(() => {
+		keeneticSelected = keeneticPeer;
+	});
+
 	onMount(() => {
 		const unsub = servers.subscribe((st) => {
 			snap = st.data;
@@ -49,6 +68,15 @@
 		void servers.refetch();
 		return unsub;
 	});
+
+	function applyManualWgConf() {
+		const raw = wgConf.trim();
+		if (!raw) {
+			onPeerConf('');
+			return;
+		}
+		onPeerConf(patchWgConfEndpoint(raw, endpointPort));
+	}
 
 	async function apply() {
 		if (!selected || !snap) return;
@@ -63,10 +91,21 @@
 			}
 			onConnect(`127.0.0.1:${port}`);
 
+			if (kind === 'system') {
+				const srv = snap.servers?.find((s) => s.id === serverId);
+				const peer = srv?.peers?.find((p) => p.publicKey === pubkey);
+				if (peer?.confAvailable !== true) {
+					wgConf = '';
+					onPeerConf('');
+					return;
+				}
+			}
+
 			const conf =
 				kind === 'system'
 					? await api.getSystemServerPeerConf(serverId, pubkey)
 					: await api.getManagedPeerConf(serverId, pubkey);
+			wgConf = conf;
 			onPeerConf(patchWgConfEndpoint(conf, endpointPort));
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -80,6 +119,18 @@
 		if (!autoApply || !selected || selected === lastAutoSelected) return;
 		lastAutoSelected = selected;
 		void apply();
+	});
+
+	$effect(() => {
+		if (!keeneticPeer) return;
+		const raw = wgConf;
+		untrack(() => {
+			if (!raw.trim()) {
+				onPeerConf('');
+				return;
+			}
+			onPeerConf(patchWgConfEndpoint(raw.trim(), endpointPort));
+		});
 	});
 </script>
 
@@ -132,6 +183,23 @@
 			<span class="ft-hint">Адрес: <code>127.0.0.1</code>, порт — listen клиента freeturn (вкладка «Клиент»)</span>
 		</div>
 	{/if}
+
+	{#if keeneticPeer}
+		<div class="ft-keenetic-warn">
+			Пир создан в Keenetic OS — приватный ключ недоступен через API. Вставьте WG-конфиг клиента
+			(<code>[Interface]</code> / <code>[Peer]</code>) в поле ниже.
+		</div>
+		<label class="ft-wg-conf-label" for="ft-wg-conf-manual">WG-конфиг клиента</label>
+		<textarea
+			id="ft-wg-conf-manual"
+			class="ft-wg-conf"
+			bind:value={wgConf}
+			oninput={applyManualWgConf}
+			rows="8"
+			placeholder="[Interface]&#10;PrivateKey = …&#10;Address = …&#10;&#10;[Peer]&#10;PublicKey = …&#10;Endpoint = 127.0.0.1:9000"
+		></textarea>
+	{/if}
+
 	{#if error}
 		<p class="ft-err">{error}</p>
 	{/if}
@@ -174,6 +242,40 @@
 		font-size: 0.8125rem;
 		color: var(--color-text-secondary);
 		margin: 0.375rem 0 0.625rem;
+	}
+
+	.ft-keenetic-warn {
+		margin-top: 0.875rem;
+		padding: 0.625rem 0.75rem;
+		border-radius: var(--radius-sm);
+		border: 1px solid color-mix(in srgb, var(--color-warning, #d97706) 45%, var(--color-border));
+		background: color-mix(in srgb, var(--color-warning, #d97706) 8%, var(--color-bg-primary));
+		color: var(--color-text-primary);
+		font-size: 1rem;
+		line-height: 1.45;
+	}
+
+	.ft-wg-conf-label {
+		display: block;
+		margin-top: 0.75rem;
+		margin-bottom: 0.375rem;
+		font-size: 0.8125rem;
+		font-weight: 500;
+		color: var(--color-text-secondary);
+	}
+
+	.ft-wg-conf {
+		width: 100%;
+		min-height: 9rem;
+		padding: 0.625rem 0.75rem;
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		line-height: 1.45;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-primary);
+		color: var(--color-text-primary);
+		resize: vertical;
 	}
 
 	.ft-err {
