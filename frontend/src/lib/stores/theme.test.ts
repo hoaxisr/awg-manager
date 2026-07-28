@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ThemePreset, ThemeSelection } from './theme';
 
 type MediaQueryEntry = {
 	mql: MediaQueryList;
@@ -92,6 +93,159 @@ function latestState(spy: ReturnType<typeof vi.fn>) {
 	if (!current) throw new Error('Theme state is missing');
 	return current;
 }
+
+describe('resolveThemeTokens — новые пресеты', () => {
+	beforeEach(() => {
+		vi.stubGlobal('localStorage', createLocalStorageMock());
+		installMatchMediaMock(false);
+	});
+
+	async function tokensFor(preset: ThemePreset, mode: 'dark' | 'light') {
+		vi.resetModules();
+		const { resolveThemeTokens, DEFAULT_CUSTOM_THEME } = await import('./theme');
+		const selection: ThemeSelection = { preset, modePreference: mode, custom: DEFAULT_CUSTOM_THEME };
+		return resolveThemeTokens(selection);
+	}
+
+	const expectations: Record<string, Record<'dark' | 'light', Record<string, string>>> = {
+		grafit: {
+			dark: {
+				'--color-bg-primary': '#131315',
+				'--color-bg-secondary': '#1b1b1f',
+				'--color-bg-tertiary': '#26262c',
+				'--color-bg-hover': '#303038',
+				'--color-text-primary': '#e8e8ec',
+				'--color-text-muted': '#74747f',
+				'--color-accent': '#e8a33d',
+				'--color-accent-hover': '#f2b657',
+				'--color-accent-contrast': '#131315',
+				'--color-success': '#6fb388',
+				'--color-error': '#d47585',
+				'--color-warning': '#d9a05b',
+				'--color-info': '#7aa6c2',
+				'--color-border': '#34343d',
+				'--color-border-hover': '#585860',
+				'--color-tunneled-row': 'rgba(232, 163, 61, 0.03)',
+				'--shadow': '0 2px 8px rgba(0, 0, 0, 0.3)',
+			},
+			light: {
+				'--color-bg-primary': '#ececee',
+				'--color-bg-secondary': '#f7f7f8',
+				'--color-bg-tertiary': '#dfdfe3',
+				'--color-bg-hover': '#d2d2d8',
+				'--color-text-primary': '#1d1d24',
+				'--color-text-muted': '#6d6d78',
+				'--color-accent': '#b97a1e',
+				'--color-accent-hover': '#a06715',
+				'--color-accent-contrast': '#131315',
+				'--color-success': '#3d7d55',
+				'--color-error': '#a94b5c',
+				'--color-warning': '#9a742e',
+				'--color-info': '#3f6f8e',
+				'--color-border': '#c2c2c9',
+				'--color-border-hover': '#a1a1a8',
+				'--color-tunneled-row': 'rgba(185, 122, 30, 0.07)',
+				'--shadow': '0 2px 10px rgba(29, 29, 36, 0.08)',
+			},
+		},
+		sever: {
+			dark: {
+				'--color-bg-primary': '#14181f',
+				'--color-bg-secondary': '#1c222b',
+				'--color-bg-tertiary': '#272f3a',
+				'--color-bg-hover': '#333d4b',
+				'--color-text-primary': '#dde3ec',
+				'--color-text-muted': '#6e7a8c',
+				'--color-accent': '#7fb3c8',
+				'--color-accent-hover': '#93c4d8',
+				'--color-accent-contrast': '#14181f',
+				'--color-success': '#8fb573',
+				'--color-error': '#c76b74',
+				'--color-warning': '#d1a15e',
+				'--color-info': '#81a1c1',
+				'--color-border': '#39434f',
+				'--color-border-hover': '#5a636e',
+				'--color-tunneled-row': 'rgba(127, 179, 200, 0.03)',
+				'--shadow': '0 2px 8px rgba(0, 0, 0, 0.3)',
+			},
+			light: {
+				'--color-bg-primary': '#e8ebef',
+				'--color-bg-secondary': '#f4f6f8',
+				'--color-bg-tertiary': '#d9dee5',
+				'--color-bg-hover': '#cbd2db',
+				'--color-text-primary': '#242b36',
+				'--color-text-muted': '#6b7684',
+				'--color-accent': '#3a7d99',
+				'--color-accent-hover': '#2f6a83',
+				'--color-accent-contrast': '#ffffff',
+				'--color-success': '#4c7d3a',
+				'--color-error': '#a44e58',
+				'--color-warning': '#96703a',
+				'--color-info': '#46698f',
+				'--color-border': '#b9c1cb',
+				'--color-border-hover': '#9ba3ad',
+				'--color-tunneled-row': 'rgba(58, 125, 153, 0.07)',
+				'--shadow': '0 2px 10px rgba(36, 43, 54, 0.08)',
+			},
+		},
+		mokh: {
+			dark: {
+				'--color-bg-primary': '#171614',
+				'--color-bg-secondary': '#201e1b',
+				'--color-bg-tertiary': '#2b2925',
+				'--color-bg-hover': '#383530',
+				'--color-text-primary': '#e6e1d7',
+				'--color-text-muted': '#7d776b',
+				'--color-accent': '#97a97c',
+				'--color-accent-hover': '#a9bb8e',
+				'--color-accent-contrast': '#171614',
+				'--color-success': '#6faf7f',
+				'--color-error': '#c96f66',
+				'--color-warning': '#cc9a4e',
+				'--color-info': '#7fa6a3',
+				'--color-border': '#3b3833',
+				'--color-border-hover': '#5d5a54',
+				'--color-tunneled-row': 'rgba(151, 169, 124, 0.03)',
+				'--shadow': '0 2px 8px rgba(0, 0, 0, 0.3)',
+			},
+			light: {
+				'--color-bg-primary': '#eceae5',
+				'--color-bg-secondary': '#f6f5f1',
+				'--color-bg-tertiary': '#dedbd3',
+				'--color-bg-hover': '#d0ccc2',
+				'--color-text-primary': '#26241f',
+				'--color-text-muted': '#6f6a5f',
+				'--color-accent': '#5f7440',
+				'--color-accent-hover': '#4e6134',
+				'--color-accent-contrast': '#ffffff',
+				'--color-success': '#3f7d50',
+				'--color-error': '#a1493f',
+				'--color-warning': '#8f6a2a',
+				'--color-info': '#3f6f6b',
+				'--color-border': '#c4bfb3',
+				'--color-border-hover': '#a4a095',
+				'--color-tunneled-row': 'rgba(95, 116, 64, 0.07)',
+				'--shadow': '0 2px 10px rgba(38, 36, 31, 0.08)',
+			},
+		},
+	};
+
+	for (const [preset, modes] of Object.entries(expectations)) {
+		for (const mode of ['dark', 'light'] as const) {
+			it(`${preset} ${mode} соответствует утверждённой палитре`, async () => {
+				expect(await tokensFor(preset as ThemePreset, mode)).toMatchObject(modes[mode]);
+			});
+		}
+	}
+
+	it('каждая карта новых пресетов содержит ровно 22 ключа', async () => {
+		for (const preset of ['grafit', 'sever', 'mokh'] as const) {
+			for (const mode of ['dark', 'light'] as const) {
+				expect(Object.keys(await tokensFor(preset, mode))).toHaveLength(22);
+			}
+		}
+	});
+});
 
 describe('theme store system mode', () => {
 	beforeEach(() => {

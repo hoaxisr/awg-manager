@@ -6,7 +6,7 @@ import {
 	refreshDynamicFavicon
 } from './themeFavicon';
 
-export type ThemePreset = 'legacy' | 'neo' | 'mint' | 'custom';
+export type ThemePreset = 'grafit' | 'sever' | 'mokh' | 'legacy' | 'neo' | 'mint' | 'custom';
 export type ThemeMode = 'dark' | 'light';
 export type ThemeModePreference = 'system' | ThemeMode;
 
@@ -33,7 +33,15 @@ export interface ThemeState extends ThemeSelection {
 export type ThemeTokenMap = Record<string, string>;
 
 const storageKey = 'awg-manager-theme';
-const presetCycleOrder: ThemePreset[] = ['legacy', 'neo', 'mint', 'custom'];
+const presetCycleOrder: ThemePreset[] = [
+	'grafit',
+	'sever',
+	'mokh',
+	'mint',
+	'custom',
+	'legacy',
+	'neo',
+];
 const SYSTEM_LIGHT_MEDIA_QUERY = '(prefers-color-scheme: light)';
 
 
@@ -260,7 +268,175 @@ const MINT_LIGHT_TOKENS: ThemeTokenMap = {
  * или раскомментируй и добавь в ThemePreset / THEME_PRESETS / resolveThemeTokens.
  */
 
+/** Графит — нейтральный графит с янтарным акцентом */
+const GRAFIT_DARK_TOKENS: ThemeTokenMap = {
+	'--color-accent': '#e8a33d',
+	'--color-accent-hover': '#f2b657',
+	'--color-accent-contrast': '#131315',
+	'--color-success': '#6fb388',
+	'--color-success-contrast': '#131315',
+	'--color-error': '#d47585',
+	'--color-error-contrast': '#131315',
+	'--color-warning': '#d9a05b',
+	'--color-warning-contrast': '#131315',
+	'--color-info': '#7aa6c2',
+	'--color-info-contrast': '#131315',
+	'--color-bg-primary': '#131315',
+	'--color-bg-secondary': '#1b1b1f',
+	'--color-bg-tertiary': '#26262c',
+	'--color-bg-hover': '#303038',
+	'--color-text-primary': '#e8e8ec',
+	'--color-text-secondary': '#b6b6c2',
+	'--color-text-muted': '#74747f',
+	'--color-border': '#34343d',
+	'--color-border-hover': '#585860',
+	'--shadow': '0 2px 8px rgba(0, 0, 0, 0.3)',
+	'--color-tunneled-row': 'rgba(232, 163, 61, 0.03)',
+};
+
+const GRAFIT_LIGHT_TOKENS: ThemeTokenMap = {
+	'--color-accent': '#b97a1e',
+	'--color-accent-hover': '#a06715',
+	'--color-accent-contrast': '#131315',
+	'--color-success': '#3d7d55',
+	'--color-success-contrast': '#ffffff',
+	'--color-error': '#a94b5c',
+	'--color-error-contrast': '#ffffff',
+	'--color-warning': '#9a742e',
+	'--color-warning-contrast': '#131315',
+	'--color-info': '#3f6f8e',
+	'--color-info-contrast': '#ffffff',
+	'--color-bg-primary': '#ececee',
+	'--color-bg-secondary': '#f7f7f8',
+	'--color-bg-tertiary': '#dfdfe3',
+	'--color-bg-hover': '#d2d2d8',
+	'--color-text-primary': '#1d1d24',
+	'--color-text-secondary': '#41414c',
+	'--color-text-muted': '#6d6d78',
+	'--color-border': '#c2c2c9',
+	'--color-border-hover': '#a1a1a8',
+	'--shadow': '0 2px 10px rgba(29, 29, 36, 0.08)',
+	'--color-tunneled-row': 'rgba(185, 122, 30, 0.07)',
+};
+
+/** Север — холодная сине-серая гамма */
+const SEVER_DARK_TOKENS: ThemeTokenMap = {
+	'--color-accent': '#7fb3c8',
+	'--color-accent-hover': '#93c4d8',
+	'--color-accent-contrast': '#14181f',
+	'--color-success': '#8fb573',
+	'--color-success-contrast': '#14181f',
+	'--color-error': '#c76b74',
+	'--color-error-contrast': '#14181f',
+	'--color-warning': '#d1a15e',
+	'--color-warning-contrast': '#14181f',
+	'--color-info': '#81a1c1',
+	'--color-info-contrast': '#14181f',
+	'--color-bg-primary': '#14181f',
+	'--color-bg-secondary': '#1c222b',
+	'--color-bg-tertiary': '#272f3a',
+	'--color-bg-hover': '#333d4b',
+	'--color-text-primary': '#dde3ec',
+	'--color-text-secondary': '#a9b4c4',
+	'--color-text-muted': '#6e7a8c',
+	'--color-border': '#39434f',
+	'--color-border-hover': '#5a636e',
+	'--shadow': '0 2px 8px rgba(0, 0, 0, 0.3)',
+	'--color-tunneled-row': 'rgba(127, 179, 200, 0.03)',
+};
+
+const SEVER_LIGHT_TOKENS: ThemeTokenMap = {
+	'--color-accent': '#3a7d99',
+	'--color-accent-hover': '#2f6a83',
+	'--color-accent-contrast': '#ffffff',
+	'--color-success': '#4c7d3a',
+	'--color-success-contrast': '#ffffff',
+	'--color-error': '#a44e58',
+	'--color-error-contrast': '#ffffff',
+	'--color-warning': '#96703a',
+	'--color-warning-contrast': '#ffffff',
+	'--color-info': '#46698f',
+	'--color-info-contrast': '#ffffff',
+	'--color-bg-primary': '#e8ebef',
+	'--color-bg-secondary': '#f4f6f8',
+	'--color-bg-tertiary': '#d9dee5',
+	'--color-bg-hover': '#cbd2db',
+	'--color-text-primary': '#242b36',
+	'--color-text-secondary': '#46505e',
+	'--color-text-muted': '#6b7684',
+	'--color-border': '#b9c1cb',
+	'--color-border-hover': '#9ba3ad',
+	'--shadow': '0 2px 10px rgba(36, 43, 54, 0.08)',
+	'--color-tunneled-row': 'rgba(58, 125, 153, 0.07)',
+};
+
+/** Мох — тёплый гравий с мшистым акцентом */
+const MOKH_DARK_TOKENS: ThemeTokenMap = {
+	'--color-accent': '#97a97c',
+	'--color-accent-hover': '#a9bb8e',
+	'--color-accent-contrast': '#171614',
+	'--color-success': '#6faf7f',
+	'--color-success-contrast': '#171614',
+	'--color-error': '#c96f66',
+	'--color-error-contrast': '#171614',
+	'--color-warning': '#cc9a4e',
+	'--color-warning-contrast': '#171614',
+	'--color-info': '#7fa6a3',
+	'--color-info-contrast': '#171614',
+	'--color-bg-primary': '#171614',
+	'--color-bg-secondary': '#201e1b',
+	'--color-bg-tertiary': '#2b2925',
+	'--color-bg-hover': '#383530',
+	'--color-text-primary': '#e6e1d7',
+	'--color-text-secondary': '#bdb6a8',
+	'--color-text-muted': '#7d776b',
+	'--color-border': '#3b3833',
+	'--color-border-hover': '#5d5a54',
+	'--shadow': '0 2px 8px rgba(0, 0, 0, 0.3)',
+	'--color-tunneled-row': 'rgba(151, 169, 124, 0.03)',
+};
+
+const MOKH_LIGHT_TOKENS: ThemeTokenMap = {
+	'--color-accent': '#5f7440',
+	'--color-accent-hover': '#4e6134',
+	'--color-accent-contrast': '#ffffff',
+	'--color-success': '#3f7d50',
+	'--color-success-contrast': '#ffffff',
+	'--color-error': '#a1493f',
+	'--color-error-contrast': '#ffffff',
+	'--color-warning': '#8f6a2a',
+	'--color-warning-contrast': '#ffffff',
+	'--color-info': '#3f6f6b',
+	'--color-info-contrast': '#ffffff',
+	'--color-bg-primary': '#eceae5',
+	'--color-bg-secondary': '#f6f5f1',
+	'--color-bg-tertiary': '#dedbd3',
+	'--color-bg-hover': '#d0ccc2',
+	'--color-text-primary': '#26241f',
+	'--color-text-secondary': '#4a463e',
+	'--color-text-muted': '#6f6a5f',
+	'--color-border': '#c4bfb3',
+	'--color-border-hover': '#a4a095',
+	'--shadow': '0 2px 10px rgba(38, 36, 31, 0.08)',
+	'--color-tunneled-row': 'rgba(95, 116, 64, 0.07)',
+};
+
 export const THEME_PRESETS = {
+	grafit: {
+		label: 'AWGM - Графит',
+		summary: 'Нейтральный графитовый фон и тёплый янтарный акцент.',
+		supportsModeToggle: true,
+	},
+	sever: {
+		label: 'AWGM - Север',
+		summary: 'Холодная сине-серая гамма со спокойным ледяным акцентом.',
+		supportsModeToggle: true,
+	},
+	mokh: {
+		label: 'AWGM - Мох',
+		summary: 'Тёплые гравийные тона и приглушённый мшисто-зелёный акцент.',
+		supportsModeToggle: true,
+	},
 	legacy: {
 		label: 'AWGM - Legacy',
 		summary:
@@ -297,6 +473,12 @@ const THEME_VARIABLE_KEYS = [
 		...Object.keys(NEO_LIGHT_TOKENS),
 		...Object.keys(MINT_DARK_TOKENS),
 		...Object.keys(MINT_LIGHT_TOKENS),
+		...Object.keys(GRAFIT_DARK_TOKENS),
+		...Object.keys(GRAFIT_LIGHT_TOKENS),
+		...Object.keys(SEVER_DARK_TOKENS),
+		...Object.keys(SEVER_LIGHT_TOKENS),
+		...Object.keys(MOKH_DARK_TOKENS),
+		...Object.keys(MOKH_LIGHT_TOKENS),
 	]),
 ];
 
@@ -309,7 +491,15 @@ function isThemeModePreference(value: string | null | undefined): value is Theme
 }
 
 function isThemePreset(value: string | null | undefined): value is ThemePreset {
-	return value === 'legacy' || value === 'neo' || value === 'mint' || value === 'custom';
+	return (
+		value === 'grafit' ||
+		value === 'sever' ||
+		value === 'mokh' ||
+		value === 'legacy' ||
+		value === 'neo' ||
+		value === 'mint' ||
+		value === 'custom'
+	);
 }
 
 export function normalizeHexColor(value: string | null | undefined, fallback: string): string {
@@ -470,6 +660,15 @@ function resolveToggledModePreference(selection: ThemeSelection): ThemeMode {
 
 export function resolveThemeTokens(selection: ThemeSelection): ThemeTokenMap {
 	const legacyMode = resolveLegacyMode(selection);
+	if (selection.preset === 'grafit') {
+		return legacyMode === 'light' ? GRAFIT_LIGHT_TOKENS : GRAFIT_DARK_TOKENS;
+	}
+	if (selection.preset === 'sever') {
+		return legacyMode === 'light' ? SEVER_LIGHT_TOKENS : SEVER_DARK_TOKENS;
+	}
+	if (selection.preset === 'mokh') {
+		return legacyMode === 'light' ? MOKH_LIGHT_TOKENS : MOKH_DARK_TOKENS;
+	}
 	if (selection.preset === 'legacy') {
 		return legacyMode === 'light' ? LEGACY_LIGHT_TOKENS : LEGACY_DARK_TOKENS;
 	}
