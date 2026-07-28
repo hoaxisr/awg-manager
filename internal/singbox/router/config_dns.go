@@ -284,21 +284,29 @@ func validateDNSRule(r DNSRule, servers map[string]string) error {
 //   - respond без match_response и без evaluate выше (c6) → exit 1, а после
 //     анонимного evaluate (c5) → exit 0: bare respond — анонимный потребитель.
 func validateDNSChain(rules []DNSRule) error {
+	_, err := firstDNSChainViolation(rules)
+	return err
+}
+
+// firstDNSChainViolation возвращает индекс первого правила, ломающего цепочку,
+// и саму ошибку (иначе -1, nil). Индекс нужен force-удалению сервера, которое
+// вычищает битые правила до фикс-пойнта.
+func firstDNSChainViolation(rules []DNSRule) (int, error) {
 	seenTags := map[string]bool{}
 	anonymousAbove := false
 	for i, r := range rules {
 		if r.MatchResponse.IsEnabled() {
 			if tag := r.MatchResponse.Tag; tag != "" {
 				if !seenTags[tag] {
-					return fmt.Errorf("dns rule %d: match_response %q — выше нет evaluate с этим тегом", i, tag)
+					return i, fmt.Errorf("dns rule %d: match_response %q — выше нет evaluate с этим тегом", i, tag)
 				}
 			} else if !anonymousAbove {
-				return fmt.Errorf("dns rule %d: match_response — выше нет анонимного evaluate", i)
+				return i, fmt.Errorf("dns rule %d: match_response — выше нет анонимного evaluate", i)
 			}
 		} else if r.Action == "respond" {
 			// respond без match_response — анонимный потребитель (needsAnonymous).
 			if !anonymousAbove {
-				return fmt.Errorf("dns rule %d: respond без match_response требует анонимного evaluate выше", i)
+				return i, fmt.Errorf("dns rule %d: respond без match_response требует анонимного evaluate выше", i)
 			}
 		}
 		if r.Action == "evaluate" {
@@ -306,13 +314,13 @@ func validateDNSChain(rules []DNSRule) error {
 				anonymousAbove = true
 			} else {
 				if seenTags[r.Tag] {
-					return fmt.Errorf("dns rule %d: дубль тега evaluate %q", i, r.Tag)
+					return i, fmt.Errorf("dns rule %d: дубль тега evaluate %q", i, r.Tag)
 				}
 				seenTags[r.Tag] = true
 			}
 		}
 	}
-	return nil
+	return -1, nil
 }
 
 func dnsRuleHasMatcher(r DNSRule) bool {
@@ -453,6 +461,19 @@ func (c *RouterConfig) DeleteDNSServer(tag string, force bool) error {
 				continue
 			}
 			rules = append(rules, r)
+		}
+		// Каскад: снос правил сервера может осиротить потребителей убитых
+		// evaluate (match_response по тегу, bare respond) — вычищаем их до
+		// фикс-пойнта, потому что каскад транзитивен: удалённый потребитель
+		// сам мог быть evaluate для правил ниже. Инвариант на выходе —
+		// validateDNSChain(c.DNS.Rules) == nil, чтобы битая цепочка не
+		// сохранилась и не всплыла невнятным FATAL'ом на apply.
+		for {
+			i, err := firstDNSChainViolation(rules)
+			if err == nil {
+				break
+			}
+			rules = slices.Delete(rules, i, i+1)
 		}
 		c.DNS.Rules = rules
 		for i := range c.DNS.Servers {

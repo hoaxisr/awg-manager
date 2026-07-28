@@ -249,6 +249,70 @@ func TestDeleteDNSServerBlocksWhenReferenced(t *testing.T) {
 	}
 }
 
+func TestDeleteDNSServerForceCascadesChain(t *testing.T) {
+	mk := func(rules ...DNSRule) *RouterConfig {
+		c := NewEmptyConfig()
+		_ = c.AddDNSServer(makeDNSServer("x", "udp", "1.1.1.1", ""))
+		_ = c.AddDNSServer(makeDNSServer("y", "udp", "8.8.8.8", ""))
+		c.DNS.Rules = rules
+		return c
+	}
+	cases := []struct {
+		name  string
+		rules []DNSRule
+		want  int
+	}{
+		{
+			"тегированный evaluate уносит своего match_response",
+			[]DNSRule{
+				{Action: "evaluate", Server: "x", Tag: "rd"},
+				{MatchResponse: &DNSMatchResponse{Enabled: true, Tag: "rd"}, ResponseRcode: "NOERROR", Action: "respond"},
+			},
+			0,
+		},
+		{
+			"анонимный evaluate уносит bare respond",
+			[]DNSRule{
+				{Action: "evaluate", Server: "x"},
+				{Domain: []string{"a.com"}, Action: "respond"},
+			},
+			0,
+		},
+		{
+			"каскад транзитивен",
+			[]DNSRule{
+				{Action: "evaluate", Server: "x", Tag: "a"},
+				{MatchResponse: &DNSMatchResponse{Enabled: true, Tag: "a"}, Action: "evaluate", Server: "y", Tag: "b"},
+				{MatchResponse: &DNSMatchResponse{Enabled: true, Tag: "b"}, ResponseRcode: "NOERROR", Action: "respond"},
+			},
+			0,
+		},
+		{
+			"независимые правила выживают",
+			[]DNSRule{
+				{DomainSuffix: []string{".ru"}, Server: "y"},
+				{Action: "evaluate", Server: "x", Tag: "rd"},
+				{MatchResponse: &DNSMatchResponse{Enabled: true, Tag: "rd"}, ResponseRcode: "NOERROR", Action: "respond"},
+			},
+			1,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := mk(tc.rules...)
+			if err := c.DeleteDNSServer("x", true); err != nil {
+				t.Fatalf("force delete: %v", err)
+			}
+			if len(c.DNS.Rules) != tc.want {
+				t.Fatalf("rules=%d, want %d: %+v", len(c.DNS.Rules), tc.want, c.DNS.Rules)
+			}
+			if err := validateDNSChain(c.DNS.Rules); err != nil {
+				t.Fatalf("цепочка после force-delete должна быть валидной: %v", err)
+			}
+		})
+	}
+}
+
 func TestAddDNSRuleValidates(t *testing.T) {
 	c := NewEmptyConfig()
 	_ = c.AddDNSServer(makeDNSServer("s", "udp", "1.1.1.1", ""))
