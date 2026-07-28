@@ -86,6 +86,15 @@ var (
 	netfilterHookPath      = "/opt/etc/ndm/netfilter.d/50-awgm-tproxy.sh"
 	netfilterRulesPath     = "/opt/etc/awg-manager/singbox/router-netfilter.rules"
 	netfilterBlackholePath = "/opt/etc/awg-manager/singbox/router-blackhole.rules"
+	// Per-table copies of the rules blob (issue #627): the netfilter.d hook
+	// restores ONLY the table NDMS actually wiped, so a routine mangle-only
+	// reload (DHCP renew) never tears down the working nat chain and vice
+	// versa. The combined file above stays as the full-rebuild fallback.
+	netfilterMangleRulesPath = "/opt/etc/awg-manager/singbox/router-netfilter-mangle.rules"
+	netfilterNatRulesPath    = "/opt/etc/awg-manager/singbox/router-netfilter-nat.rules"
+	// netfilterCtCleanPath is the poisoned-flow eviction script (issue #627),
+	// invoked by the hook after a TPROXY restore and by Install.
+	netfilterCtCleanPath = "/opt/etc/awg-manager/singbox/awgm-ctclean.sh"
 )
 
 // selectiveSetName is the ipset name used for selective bypass — aliased
@@ -486,7 +495,15 @@ func buildBlackholeRestoreInput(spec RestoreInputSpec) string {
 	return b.String()
 }
 
+// buildRestoreInput renders the full iptables-restore blob — the mangle and
+// nat sections concatenated. Install and the hook's full-rebuild fallback
+// consume this; the hook's per-table fast heal consumes the sections
+// individually (issue #627).
 func buildRestoreInput(spec RestoreInputSpec) string {
+	return buildMangleRestoreInput(spec) + buildNatRestoreInput(spec)
+}
+
+func buildMangleRestoreInput(spec RestoreInputSpec) string {
 	var b strings.Builder
 
 	// SKeen-style layout (`reference/SKeen/skeen.sh`, set_chain_rules /
@@ -587,6 +604,11 @@ func buildRestoreInput(spec RestoreInputSpec) string {
 	emitPreroutingJump(&b, ChainName, spec)
 
 	b.WriteString("COMMIT\n")
+	return b.String()
+}
+
+func buildNatRestoreInput(spec RestoreInputSpec) string {
+	var b strings.Builder
 
 	// ---- *nat table: TCP via REDIRECT ----
 	// Literal port of `add_redirect_rules` from reference/SKeen/skeen.sh
@@ -693,17 +715,19 @@ type runFn func(ctx context.Context, args ...string) error
 type runOutFn func(ctx context.Context, args ...string) (string, error)
 
 type persistFn func(input string) error
+type persistRulesFn func(combined, mangle, nat string) error
 
 type IPTables struct {
 	restoreNoflush   restoreNoflushFn
 	runIPTables      runFn
 	runIPTablesOut   runOutFn
 	runIP            runFn
-	persistRules     persistFn
+	persistRules     persistRulesFn
 	persistHook      func() error
 	cleanupHook      func()
 	persistBlackhole persistFn
 	cleanupBlackhole func()
+	runCtClean       func(ctx context.Context)
 }
 
 func NewIPTables() *IPTables {
@@ -715,11 +739,16 @@ func NewIPTables() *IPTables {
 			result, err := sysexec.Run(ctx, "ip", args...)
 			return sysexec.FormatError(result, err)
 		},
-		persistRules:     writeNetfilterRulesFile,
+		persistRules:     writeNetfilterRulesFiles,
 		persistHook:      writeNetfilterHook,
 		cleanupHook:      removeNetfilterRulesFile,
 		persistBlackhole: writeNetfilterBlackholeRulesFile,
 		cleanupBlackhole: removeNetfilterBlackholeRulesFile,
+		runCtClean: func(ctx context.Context) {
+			// Best-effort: the script self-logs via logger; a failure here
+			// must never fail Install (interception is already up).
+			_, _ = sysexec.Run(ctx, netfilterCtCleanPath)
+		},
 	}
 }
 
@@ -777,9 +806,11 @@ func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 	// Idempotent: a no-op when no prior jumps exist.
 	it.removeSourceHooks(ctx)
 
-	input := buildRestoreInput(spec)
+	mangle := buildMangleRestoreInput(spec)
+	nat := buildNatRestoreInput(spec)
+	input := mangle + nat
 	if it.persistRules != nil {
-		if err := it.persistRules(input); err != nil {
+		if err := it.persistRules(input, mangle, nat); err != nil {
 			return fmt.Errorf("write netfilter rules: %w", err)
 		}
 	}
@@ -816,6 +847,13 @@ func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 			return fmt.Errorf("ip route add: %w", err)
 		}
 	}
+	// The window between engine start and this Install is fail-open exactly
+	// like an NDMS reload: UDP flows whose first packet slipped past the
+	// absent TPROXY jump carry a direct WAN NAT in conntrack and would
+	// bypass tproxy for life (issue #627) — evict them now that rules are up.
+	if it.runCtClean != nil {
+		it.runCtClean(ctx)
+	}
 	return nil
 }
 
@@ -823,8 +861,14 @@ func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 // the hook on every firewall reload; the hook feeds the rules file to
 // iptables-restore), so they must never be observable half-written — use the
 // fsync'ed temp-file+rename writer, not a truncate-in-place WriteFile.
-func writeNetfilterRulesFile(input string) error {
-	return storage.AtomicWritePerm(netfilterRulesPath, []byte(input), 0644)
+func writeNetfilterRulesFiles(combined, mangle, nat string) error {
+	if err := storage.AtomicWritePerm(netfilterRulesPath, []byte(combined), 0644); err != nil {
+		return err
+	}
+	if err := storage.AtomicWritePerm(netfilterMangleRulesPath, []byte(mangle), 0644); err != nil {
+		return err
+	}
+	return storage.AtomicWritePerm(netfilterNatRulesPath, []byte(nat), 0644)
 }
 
 func writeNetfilterBlackholeRulesFile(input string) error {
@@ -839,7 +883,10 @@ func removeNetfilterBlackholeRulesFile() {
 }
 
 func writeNetfilterHook() error {
-	return storage.AtomicWritePerm(netfilterHookPath, []byte(netfilterHookScript()), 0755)
+	if err := storage.AtomicWritePerm(netfilterHookPath, []byte(netfilterHookScript()), 0755); err != nil {
+		return err
+	}
+	return storage.AtomicWritePerm(netfilterCtCleanPath, []byte(ctCleanScript()), 0755)
 }
 
 // netfilterHookScript renders the netfilter.d hook with all placeholders
@@ -850,10 +897,15 @@ func writeNetfilterHook() error {
 //
 //   - ALIVE: real interception governs. Scrub any lingering fail-closed
 //     blackhole, then restore the AWGM chains if NDMS wiped their PREROUTING
-//     jumps. Scrub-before-restore: when NDMS reloads only one table (e.g. nat)
-//     but leaves mangle intact, restoring --noflush would append a SECOND
-//     jump on top of the surviving one. The `-[jg]` regex covers both legacy
-//     `-j` and current `-g` syntax so upgrades don't leave duplicates.
+//     jumps. Per-table fast heal (issue #627): a routine reload wipes ONE
+//     table (DHCP renew → mangle), so only the broken table is scrubbed and
+//     restored — the intact table's working interception is never torn down.
+//     The full both-table rebuild stays as fallback for the upgrade window
+//     when the per-table rules files don't exist yet. Scrub-before-restore:
+//     restoring --noflush over a surviving jump would append a SECOND one.
+//     The `-[jg]` regex covers both legacy `-j` and current `-g` syntax so
+//     upgrades don't leave duplicates. After any TPROXY restore the
+//     poisoned-flow eviction script runs (see ctCleanScript).
 //   - DEAD: fail-closed. Re-assert the blackhole DROP (if its rules file exists
 //     and the jump was wiped) so policy traffic can NEVER reach WAN while the
 //     engine is down — the old hook simply exited here, leaving a leak window
@@ -869,13 +921,24 @@ for mod in xt_TPROXY xt_comment xt_mark xt_connmark xt_conntrack xt_pkttype xt_d
   grep -q "^${mod} " /proc/modules 2>/dev/null && continue
   [ -f "/lib/modules/${KREL}/${mod}.ko" ] && insmod "/lib/modules/${KREL}/${mod}.ko" 2>/dev/null || true
 done
+# scrub_jumps <table> <chain>: delete every PREROUTING jump into <chain>.
+scrub_jumps() {
+  /opt/sbin/iptables -w -t "$1" -S PREROUTING 2>/dev/null \
+    | grep -E -- "-[jg] $2(\$| )" \
+    | sed 's/-A PREROUTING/-D PREROUTING/' \
+    | while IFS= read -r line; do /opt/sbin/iptables -w -t "$1" $line 2>/dev/null; done
+}
+# scrub_tagged <table> <tag>: delete comment-tagged direct PREROUTING rules.
+scrub_tagged() {
+  /opt/sbin/iptables -w -t "$1" -S PREROUTING 2>/dev/null \
+    | grep -E -- "--comment \"?$2" \
+    | sed 's/-A PREROUTING/-D PREROUTING/' \
+    | while IFS= read -r line; do /opt/sbin/iptables -w -t "$1" $line 2>/dev/null; done
+}
 if pidof sing-box >/dev/null 2>&1; then
   # sing-box ALIVE — real interception governs. Drop any lingering fail-closed
   # blackhole first so a stale DROP never sits in front of the interception jump.
-  /opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null \
-    | grep -E -- '-[jg] %[11]s($| )' \
-    | sed 's/-A PREROUTING/-D PREROUTING/' \
-    | while IFS= read -r line; do /opt/sbin/iptables -w -t mangle $line 2>/dev/null; done
+  scrub_jumps mangle %[11]s
   /opt/sbin/iptables -w -t mangle -F %[11]s 2>/dev/null
   /opt/sbin/iptables -w -t mangle -X %[11]s 2>/dev/null
   [ -f %[1]q ] || exit 0
@@ -890,33 +953,42 @@ if pidof sing-box >/dev/null 2>&1; then
     && /opt/sbin/iptables -w -t nat -S PREROUTING 2>/dev/null | grep -qE -- '-[jg] %[6]s($| )' \
     && nat_ok=1
   if [ "$mangle_ok" -eq 0 ] || [ "$nat_ok" -eq 0 ]; then
-    /opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null \
-      | grep -E -- '-[jg] %[2]s($| )' \
-      | sed 's/-A PREROUTING/-D PREROUTING/' \
-      | while IFS= read -r line; do /opt/sbin/iptables -w -t mangle $line 2>/dev/null; done
-    /opt/sbin/iptables -w -t nat -S PREROUTING 2>/dev/null \
-      | grep -E -- '-[jg] %[6]s($| )' \
-      | sed 's/-A PREROUTING/-D PREROUTING/' \
-      | while IFS= read -r line; do /opt/sbin/iptables -w -t nat $line 2>/dev/null; done
-    # Scrub DNS-RESCUE direct PREROUTING rules in nat (comment-tagged -j REDIRECT).
-    /opt/sbin/iptables -w -t nat -S PREROUTING 2>/dev/null \
-      | grep -E -- '--comment "?%[7]s' \
-      | sed 's/-A PREROUTING/-D PREROUTING/' \
-      | while IFS= read -r line; do /opt/sbin/iptables -w -t nat $line 2>/dev/null; done
-    # Legacy DNS-NOPOLICY MARK rules in mangle (dead code from earlier builds).
-    /opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null \
-      | grep -E -- '--comment "?%[8]s' \
-      | sed 's/-A PREROUTING/-D PREROUTING/' \
-      | while IFS= read -r line; do /opt/sbin/iptables -w -t mangle $line 2>/dev/null; done
-    # Ingress-scope MARK/CONNMARK rules in mangle (comment-tagged).
-    /opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null \
-      | grep -E -- '--comment "?%[9]s' \
-      | sed 's/-A PREROUTING/-D PREROUTING/' \
-      | while IFS= read -r line; do /opt/sbin/iptables -w -t mangle $line 2>/dev/null; done
-    /opt/sbin/iptables-restore --noflush < %[1]q
-    /opt/sbin/ip rule add fwmark 0x%[3]x table %[4]d priority %[5]d 2>/dev/null || true
-    /opt/sbin/ip route add local 0.0.0.0/0 dev lo table %[4]d 2>/dev/null || true
-    logger -t awgm-tproxy "netfilter.d: restored AWGM chains after NDMS reload"
+    if { [ "$mangle_ok" -eq 1 ] || [ -f %[12]q ]; } && { [ "$nat_ok" -eq 1 ] || [ -f %[13]q ]; }; then
+      # Per-table fast heal (issue #627): restore only the broken table so a
+      # routine mangle-only reload never interrupts the working nat chain
+      # (and vice versa) for the whole heavy rebuild.
+      if [ "$mangle_ok" -eq 0 ]; then
+        scrub_jumps mangle %[2]s
+        # Legacy DNS-NOPOLICY MARK rules (dead code from earlier builds).
+        scrub_tagged mangle %[8]s
+        # Ingress-scope MARK/CONNMARK rules (comment-tagged).
+        scrub_tagged mangle %[9]s
+        /opt/sbin/iptables-restore --noflush < %[12]q
+        /opt/sbin/ip rule add fwmark 0x%[3]x table %[4]d priority %[5]d 2>/dev/null || true
+        /opt/sbin/ip route add local 0.0.0.0/0 dev lo table %[4]d 2>/dev/null || true
+        logger -t awgm-tproxy "netfilter.d: fast-restored mangle AWGM chain after NDMS reload"
+      fi
+      if [ "$nat_ok" -eq 0 ]; then
+        scrub_jumps nat %[6]s
+        # DNS-RESCUE direct PREROUTING rules in nat (comment-tagged -j REDIRECT).
+        scrub_tagged nat %[7]s
+        /opt/sbin/iptables-restore --noflush < %[13]q
+        logger -t awgm-tproxy "netfilter.d: fast-restored nat AWGM chain after NDMS reload"
+      fi
+    else
+      scrub_jumps mangle %[2]s
+      scrub_jumps nat %[6]s
+      scrub_tagged nat %[7]s
+      scrub_tagged mangle %[8]s
+      scrub_tagged mangle %[9]s
+      /opt/sbin/iptables-restore --noflush < %[1]q
+      /opt/sbin/ip rule add fwmark 0x%[3]x table %[4]d priority %[5]d 2>/dev/null || true
+      /opt/sbin/ip route add local 0.0.0.0/0 dev lo table %[4]d 2>/dev/null || true
+      logger -t awgm-tproxy "netfilter.d: restored AWGM chains after NDMS reload"
+    fi
+    # TPROXY was down: UDP flows whose first packet hit the no-jump window got
+    # a direct WAN NAT in conntrack and bypass tproxy for life — evict them.
+    [ "$mangle_ok" -eq 0 ] && [ -x %[14]q ] && %[14]q
   fi
 else
   # sing-box DEAD — fail-closed. Re-assert the blackhole DROP if its rules file
@@ -928,14 +1000,92 @@ else
     logger -t awgm-tproxy "netfilter.d: re-asserted fail-closed blackhole (sing-box down)"
   fi
 fi
-`, netfilterRulesPath, ChainName, Fwmark, RoutingTable, IPRulePriority, RedirectChain, DNSRescueTag, DNSNoPolicyTag, IngressTag, netfilterBlackholePath, BlackholeChain)
+exit 0
+`, netfilterRulesPath, ChainName, Fwmark, RoutingTable, IPRulePriority, RedirectChain, DNSRescueTag, DNSNoPolicyTag, IngressTag, netfilterBlackholePath, BlackholeChain, netfilterMangleRulesPath, netfilterNatRulesPath, netfilterCtCleanPath)
 }
 
-// removeNetfilterRulesFile deletes the persisted rules file so the
+// ctCleanScript renders the poisoned-flow eviction script (issue #627). While
+// the TPROXY PREROUTING jump is absent (NDMS netfilter reload, engine start),
+// a UDP flow whose FIRST packet slips through gets a direct WAN SNAT in
+// conntrack and is picked up by FASTNAT/hwnat offload — after which its
+// packets never reach netfilter again, so restoring the rules does not heal
+// it: the flow bypasses tproxy until it dies (for a WhatsApp call: "they
+// stopped hearing me until I hang up"). Deleting the conntrack entry costs
+// one packet — the next one re-creates the flow through tproxy, and the
+// offload shortcut dies with the entry. UDP only: killing established TCP
+// mid-stream breaks it hard, while new TCP connects self-heal on the next SYN.
+//
+// Scope self-adapts to the device mode by reading the live PREROUTING jump:
+//   - policy mode (connmark on the jump): one kernel-side `conntrack -D
+//     --mark <policy> --reply-dst <WAN IP>` per WAN IP — cost independent of
+//     conntrack table size (matters on mips with big P2P tables), and the
+//     mark excludes the router's own flows;
+//   - all-devices mode: awk pass over /proc/net/nf_conntrack scoped by mac=
+//     (present on every LAN-originated flow on Keenetic, absent on the
+//     router's own), with a cheap grep pre-filter.
+//
+// WAN IPv4s are read from the default-route interfaces at call time — the
+// trigger IS often a DHCP renew, so baked-in addresses would go stale.
+// Pure (no I/O) so a test can validate the generated shell with `sh -n`.
+func ctCleanScript() string {
+	return fmt.Sprintf(`#!/bin/sh
+CT=/opt/sbin/conntrack
+[ -x "$CT" ] || { logger -t awgm-ctclean "conntrack tool missing — poisoned-flow eviction skipped"; exit 0; }
+wan_ips=""
+for dev in $(/opt/sbin/ip -4 route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | sort -u); do
+  wan_ips="$wan_ips $(/opt/sbin/ip -4 addr show dev "$dev" 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p')"
+done
+set -- $wan_ips
+[ $# -gt 0 ] || exit 0
+pmark="$(/opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null \
+  | sed -n 's/.*-m connmark --mark \(0x[0-9a-fA-F]*\).*-[jg] %[1]s.*/\1/p' | head -n 1)"
+[ -n "$pmark" ] && pmark="$(printf '%%d' "$pmark" 2>/dev/null)"
+n=0
+if [ -n "$pmark" ]; then
+  for ip in "$@"; do
+    d="$("$CT" -D -p udp --mark "$pmark" --reply-dst "$ip" 2>&1 >/dev/null \
+      | sed -n 's/.* \([0-9][0-9]*\) flow entries.*/\1/p')"
+    [ -n "$d" ] && n=$((n + d))
+  done
+else
+  hit=0
+  for ip in "$@"; do
+    grep -q "dst=$ip " /proc/net/nf_conntrack 2>/dev/null && { hit=1; break; }
+  done
+  if [ "$hit" -eq 1 ]; then
+    list="$(awk -v wans="$*" '
+      BEGIN { split(wans, a, " "); for (i in a) wan[a[i]] = 1 }
+      $3 == "udp" {
+        src = ""; dst = ""; sp = ""; dp = ""; nd = 0; rdst = ""; hasmac = 0;
+        for (i = 1; i <= NF; i++) {
+          if ($i ~ /^src=/ && src == "") src = substr($i, 5);
+          else if ($i ~ /^dst=/) { nd++; if (nd == 1) dst = substr($i, 5); else if (nd == 2) rdst = substr($i, 5); }
+          else if ($i ~ /^sport=/ && sp == "") sp = substr($i, 7);
+          else if ($i ~ /^dport=/ && dp == "") dp = substr($i, 7);
+          else if ($i ~ /^mac=/) hasmac = 1;
+        }
+        if (hasmac && (rdst in wan)) print src, dst, sp, dp;
+      }' /proc/net/nf_conntrack 2>/dev/null)"
+    if [ -n "$list" ]; then
+      n="$(printf '%%s\n' "$list" | wc -l)"
+      printf '%%s\n' "$list" | while read -r s d sp dp; do
+        "$CT" -D -p udp -s "$s" -d "$d" --sport "$sp" --dport "$dp" >/dev/null 2>&1
+      done
+    fi
+  fi
+fi
+[ "$n" -gt 0 ] && logger -t awgm-ctclean "evicted $n direct-NAT UDP flow(s) after TPROXY restore"
+exit 0
+`, ChainName)
+}
+
+// removeNetfilterRulesFile deletes the persisted rules files so the
 // netfilter.d hook becomes a no-op on the next NDMS reload. Called on
 // engine Disable. Idempotent.
 func removeNetfilterRulesFile() {
 	_ = os.Remove(netfilterRulesPath)
+	_ = os.Remove(netfilterMangleRulesPath)
+	_ = os.Remove(netfilterNatRulesPath)
 }
 
 // refreshNetfilterHookIfPresent rewrites the netfilter.d hook script

@@ -1143,7 +1143,7 @@ func noopNotInstalledIPTables() *IPTables {
 		runIPTables:    func(_ context.Context, _ ...string) error { return errors.New("chain missing") },
 		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) { return "", nil },
 		runIP:          func(_ context.Context, _ ...string) error { return nil },
-		persistRules:   func(_ string) error { return nil },
+		persistRules:   func(_, _, _ string) error { return nil },
 		persistHook:    func() error { return nil },
 		cleanupHook:    func() {},
 	}
