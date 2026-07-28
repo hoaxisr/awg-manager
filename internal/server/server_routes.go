@@ -840,6 +840,13 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 				rh.PutDNSGlobals(w, r)
 			}
 		}))
+		mux.HandleFunc("/api/singbox/router/dns/chain-preset", h.guarded(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				rh.GetDNSChainPreset(w, r)
+			} else {
+				rh.PutDNSChainPreset(w, r)
+			}
+		}))
 		mux.HandleFunc("/api/singbox/router/route/final", h.guarded(rh.SetRouteFinal))
 		mux.HandleFunc("/api/singbox/router/inspect", h.guarded(rh.Inspect))
 		mux.HandleFunc("/api/singbox/router/inspect-dns", h.guarded(rh.InspectDNS))

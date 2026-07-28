@@ -336,6 +336,10 @@ var nonPatchableSettings = map[string]struct{}{
 	// the allocated OpkgTun index / provisioned flag — the exact race this
 	// design eliminates by keeping the state off the settings API.
 	"fakeip": {},
+	// dnsChainPreset is backend-managed DNS-preset state written ONLY via
+	// SettingsStore.SetDNSChainPresetState — same single-writer reasoning as
+	// fakeip: a generic PUT must not silently switch/clear the preset.
+	"dnsChainPreset": {},
 }
 
 // TestSettingsPatch_ExcludesServerSecrets pins the intentional exclusion: a

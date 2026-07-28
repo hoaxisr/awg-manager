@@ -1,7 +1,16 @@
 import type { SingboxRouterDNSRule } from '$lib/types';
 
 export interface DnsMatcherPart {
-	key: 'rule_set' | 'suffix' | 'domain' | 'keyword' | 'regex' | 'query_type' | 'source_ip';
+	key:
+		| 'rule_set'
+		| 'suffix'
+		| 'domain'
+		| 'keyword'
+		| 'regex'
+		| 'query_type'
+		| 'source_ip'
+		| 'match_response'
+		| 'ip_cidr';
 	value: string;
 }
 
@@ -15,6 +24,15 @@ function headWithExtra(items: string[], stripLeadingDot = false): string {
 /** Matcher fragments for DNS rule compact rows (order matches edit modal). */
 export function dnsMatcherParts(r: SingboxRouterDNSRule): DnsMatcherPart[] {
 	const parts: DnsMatcherPart[] = [];
+	// match_response — матчер ответа (sing-box 1.14): true = анонимный evaluate
+	// выше по цепочке, строка = тег конкретного evaluate. false из hand-edited
+	// конфига — «выключено» (backend IsEnabled).
+	if (r.match_response !== undefined && r.match_response !== false) {
+		parts.push({
+			key: 'match_response',
+			value: r.match_response === true ? 'анонимный' : r.match_response,
+		});
+	}
 	if (r.rule_set?.length) parts.push({ key: 'rule_set', value: r.rule_set.join(', ') });
 	if (r.domain_suffix?.length) {
 		parts.push({ key: 'suffix', value: headWithExtra(r.domain_suffix, true) });
@@ -29,6 +47,9 @@ export function dnsMatcherParts(r: SingboxRouterDNSRule): DnsMatcherPart[] {
 	// keeps isCatchAllDnsRule / shadow detection in sync with the backend.
 	if (r.source_ip_cidr?.length) {
 		parts.push({ key: 'source_ip', value: headWithExtra(r.source_ip_cidr) });
+	}
+	if (r.ip_cidr?.length) {
+		parts.push({ key: 'ip_cidr', value: r.ip_cidr.join(', ') });
 	}
 	return parts;
 }

@@ -8,6 +8,7 @@ import type {
 	SingboxProxiesSelectRequest,
 	SingboxProxiesTestRequest,
 	SingboxProxiesTestResponse,
+	SingboxRouterDNSChainPreset,
 	SingboxRouterDNSGlobals,
 	SingboxRouterDNSLookupResult,
 	SingboxRouterDNSRewrite,
@@ -333,6 +334,17 @@ export class SbRouterClient extends SingboxClient {
 		await this.request('/singbox/router/dns/globals', {
 			method: 'PUT',
 			body: JSON.stringify(globals),
+		});
+	}
+
+	async singboxRouterGetDNSChainPreset(): Promise<SingboxRouterDNSChainPreset> {
+		return this.request('/singbox/router/dns/chain-preset');
+	}
+
+	async singboxRouterSetDNSChainPreset(preset: SingboxRouterDNSChainPreset): Promise<void> {
+		await this.request('/singbox/router/dns/chain-preset', {
+			method: 'POST',
+			body: JSON.stringify(preset),
 		});
 	}
 

@@ -3477,6 +3477,32 @@ definitions:
       subject:
         type: string
     type: object
+  api.SingboxDNSChainPresetData:
+    properties:
+      directServer:
+        example: dns-direct
+        type: string
+      mode:
+        example: resilient
+        type: string
+      poisonCidrs:
+        example:
+        - 0.0.0.0/32
+        items:
+          type: string
+        type: array
+      proxyServer:
+        example: dns-tunnel
+        type: string
+    type: object
+  api.SingboxDNSChainPresetResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SingboxDNSChainPresetData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.SingboxDNSClientTLSOptionsDTO:
     properties:
       alpn:
@@ -3608,12 +3634,42 @@ definitions:
         items:
           type: string
         type: array
+      ip_cidr:
+        example:
+        - 10.0.0.0/8
+        items:
+          type: string
+        type: array
+      match_response:
+        description: |-
+          MatchResponse — union: true (любой ответ) либо тег правила evaluate ("rd").
+          Тип в swagger намеренно не объявлен: обе формы union'а легальны.
       query_type:
         example:
         - A
         items:
           type: string
         type: array
+      race:
+        example: true
+        type: boolean
+      response_answer:
+        example:
+        - example.com. IN A 1.2.3.4
+        items:
+          type: string
+        type: array
+      response_extra:
+        items:
+          type: string
+        type: array
+      response_ns:
+        items:
+          type: string
+        type: array
+      response_rcode:
+        example: NOERROR
+        type: string
       rule_set:
         example:
         - geosite-cn
@@ -3622,6 +3678,13 @@ definitions:
         type: array
       server:
         example: cloudflare
+        type: string
+      speculative:
+        example: false
+        type: boolean
+      tag:
+        description: 'sing-box 1.14: DNS-механизм evaluate/match_response.'
+        example: rd
         type: string
     type: object
   api.SingboxDNSRuleDeleteRequest:
@@ -13377,6 +13440,68 @@ paths:
       security:
       - CookieAuth: []
       summary: Disable singbox-router
+      tags:
+      - singbox-router
+  /singbox/router/dns/chain-preset:
+    get:
+      description: 'Returns the DNS-chain preset (sing-box 1.14 evaluate/match_response):
+        `mode` ("" = off, resilient, antipoison), the direct/proxy server tags and
+        the antipoison ip_cidr list.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxDNSChainPresetResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Get singbox-router DNS chain preset
+      tags:
+      - singbox-router
+    post:
+      consumes:
+      - application/json
+      description: 'Enables/switches/disables the DNS-chain preset. `mode: ""` turns
+        it off and removes the managed chain; otherwise the direct/proxy server tags
+        must reference existing DNS servers.'
+      parameters:
+      - description: mode + servers + poison cidrs
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxDNSChainPresetData'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Update singbox-router DNS chain preset
       tags:
       - singbox-router
   /singbox/router/dns/globals:

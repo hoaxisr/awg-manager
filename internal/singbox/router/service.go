@@ -97,6 +97,12 @@ type Service interface {
 	GetDNSGlobals(ctx context.Context) (final, strategy string, err error)
 	SetDNSGlobals(ctx context.Context, final, strategy string) error
 
+	// GetDNSChainPreset / SetDNSChainPreset — DNS-пресет цепочек sing-box 1.14
+	// (Mode "" = выключен). Состояние живёт в настройках, правила цепочки —
+	// managed-оверлей поверх DNS-правил конфига.
+	GetDNSChainPreset(ctx context.Context) (storage.DNSChainPresetState, error)
+	SetDNSChainPreset(ctx context.Context, st storage.DNSChainPresetState) error
+
 	Inspect(ctx context.Context, input InspectInput) (InspectResult, error)
 	InspectStream(ctx context.Context, input InspectInput) (<-chan InspectStreamEvent, error)
 	InspectDNS(ctx context.Context, input InspectDNSInput) (InspectDNSResult, error)
@@ -770,6 +776,9 @@ func (s *ServiceImpl) withConfig(ctx context.Context, event string, fn func(*Rou
 	}
 	cfg = s.ruleSetMaterializer().restoreConfig(cfg)
 	if err := fn(cfg); err != nil {
+		return err
+	}
+	if err := s.ensureDNSChainOverlayFromState(cfg); err != nil {
 		return err
 	}
 	if err := s.persistConfig(ctx, cfg); err != nil {

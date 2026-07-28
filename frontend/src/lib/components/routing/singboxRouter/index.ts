@@ -7,6 +7,7 @@ export { default as CompositeOutboundEditModal } from './CompositeOutboundEditMo
 export { default as PresetIcon } from './PresetIcon.svelte';
 export { default as DNSServerEditModal } from './DNSServerEditModal.svelte';
 export { default as DNSRuleEditModal } from './DNSRuleEditModal.svelte';
+export { default as DNSChainPresetCard } from './DNSChainPresetCard.svelte';
 export { default as DNSRewritesList } from './DNSRewritesList.svelte';
 export { default as DNSRewriteEditModal } from './DNSRewriteEditModal.svelte';
 export { default as ConnectionsSubTab } from './ConnectionsSubTab.svelte';
