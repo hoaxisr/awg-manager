@@ -226,44 +226,8 @@ func (o *Orchestrator) pruneDanglingSelectorRefsLocked() []string {
 		if json.Unmarshal(data, &root) != nil {
 			continue
 		}
-		obs, ok := root["outbounds"].([]any)
-		if !ok {
-			continue
-		}
-		changed := false
-		for _, v := range obs {
-			ob, ok := v.(map[string]any)
-			if !ok {
-				continue
-			}
-			members, ok := ob["outbounds"].([]any)
-			if !ok || len(members) == 0 {
-				continue // not a selector/urltest
-			}
-			kept := make([]any, 0, len(members))
-			var dropped []string
-			for _, mv := range members {
-				tag, _ := mv.(string)
-				if tag == "" || known[tag] {
-					kept = append(kept, mv)
-					continue
-				}
-				dropped = append(dropped, tag)
-			}
-			// Never empty a selector — leave it for validateLocked to flag.
-			if len(dropped) > 0 && len(kept) > 0 {
-				ob["outbounds"] = kept
-				changed = true
-				tag, _ := ob["tag"].(string)
-				logs = append(logs, fmt.Sprintf("orchestrator: pruned dangling selector members %v from %q in [%s]", dropped, tag, meta.Slot))
-			}
-			if def, _ := ob["default"].(string); def != "" && !known[def] {
-				delete(ob, "default")
-				changed = true
-				tag, _ := ob["tag"].(string)
-				logs = append(logs, fmt.Sprintf("orchestrator: cleared dangling selector default %q from %q in [%s]", def, tag, meta.Slot))
-			}
-		}
+		changed, slotLogs := pruneDanglingSelectorRefsInDoc(root, known, meta.Slot)
+		logs = append(logs, slotLogs...)
 		if !changed {
 			continue
 		}
@@ -276,6 +240,54 @@ func (o *Orchestrator) pruneDanglingSelectorRefsLocked() []string {
 		}
 	}
 	return logs
+}
+
+// pruneDanglingSelectorRefsInDoc applies the selector-member/default prune to
+// ONE parsed slot document, in place: members/defaults whose tag is not in
+// known are dropped. Never empties a selector (sing-box rejects a memberless
+// selector) — an all-dangling selector is left untouched for validation to
+// flag. Shared by the on-disk prune above and the virtual prune in
+// validateDraftLocked (issue #633), so CheckMerged predicts exactly what
+// Reload will apply.
+func pruneDanglingSelectorRefsInDoc(root map[string]any, known map[string]bool, slot Slot) (changed bool, logs []string) {
+	obs, ok := root["outbounds"].([]any)
+	if !ok {
+		return false, nil
+	}
+	for _, v := range obs {
+		ob, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		members, ok := ob["outbounds"].([]any)
+		if !ok || len(members) == 0 {
+			continue // not a selector/urltest
+		}
+		kept := make([]any, 0, len(members))
+		var dropped []string
+		for _, mv := range members {
+			tag, _ := mv.(string)
+			if tag == "" || known[tag] {
+				kept = append(kept, mv)
+				continue
+			}
+			dropped = append(dropped, tag)
+		}
+		// Never empty a selector — leave it for validateLocked to flag.
+		if len(dropped) > 0 && len(kept) > 0 {
+			ob["outbounds"] = kept
+			changed = true
+			tag, _ := ob["tag"].(string)
+			logs = append(logs, fmt.Sprintf("orchestrator: pruned dangling selector members %v from %q in [%s]", dropped, tag, slot))
+		}
+		if def, _ := ob["default"].(string); def != "" && !known[def] {
+			delete(ob, "default")
+			changed = true
+			tag, _ := ob["tag"].(string)
+			logs = append(logs, fmt.Sprintf("orchestrator: cleared dangling selector default %q from %q in [%s]", def, tag, slot))
+		}
+	}
+	return changed, logs
 }
 
 // enabledOutboundTagsLocked builds the set of outbound tags the merged
