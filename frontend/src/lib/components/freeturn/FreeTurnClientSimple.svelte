@@ -188,7 +188,7 @@
 						hint="Скопируйте с сервера (шаг «Запуск и freeturn://»)"
 						primaryLabel="Далее: VK Calls"
 						primaryDisabled={!step1Done}
-						onPrimary={() => (quickActive = 'links')}
+						onPrimary={() => { quickActive = 'links'; }}
 					>
 						<ProxyWizardGuide items={importGuideItems} />
 						<div class="ft-import-row">
@@ -208,7 +208,7 @@
 						hint="Маскировка трафика через VK"
 						primaryLabel="Далее: потоки"
 						primaryDisabled={!step2Done}
-						onPrimary={() => (quickActive = 'streams')}
+						onPrimary={() => { quickActive = 'streams'; }}
 					>
 						<ProxyWizardGuide items={linksGuideItems} />
 						<textarea class="ft-simple-textarea" bind:value={client.links} placeholder="https://vk.com/call/join/…" rows="4"></textarea>
@@ -218,7 +218,7 @@
 						title="Потоки и браузер"
 						primaryLabel="Далее: запуск"
 						primaryDisabled={!step3Done}
-						onPrimary={() => (quickActive = 'start')}
+						onPrimary={() => { quickActive = 'start'; }}
 					>
 						<ProxyWizardGuide items={streamsGuideItems} />
 						<div class="ft-simple-grid">

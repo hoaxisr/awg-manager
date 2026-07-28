@@ -406,7 +406,7 @@
 						hint="VPS:DTLS-порт"
 						primaryLabel="Далее: VK-хеши"
 						primaryDisabled={!step2Done}
-						onPrimary={() => (quickActive = 'vk')}
+						onPrimary={() => { quickActive = 'vk'; }}
 					>
 						<ProxyWizardGuide items={peerGuideItems} />
 						<Input bind:value={client.peer} placeholder="1.2.3.4:56000" />
@@ -424,7 +424,7 @@
 						title="VK-хеши и потоки"
 						primaryLabel="Далее: запуск"
 						primaryDisabled={!step3Done}
-						onPrimary={() => (quickActive = 'start')}
+						onPrimary={() => { quickActive = 'start'; }}
 					>
 						<ProxyWizardGuide items={vkGuideItems} />
 						<Input bind:value={client.vkHashes} placeholder="hash1,hash2" />

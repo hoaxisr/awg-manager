@@ -640,18 +640,6 @@
 		gap: 0.375rem;
 	}
 
-	.wdtt-text-link {
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--color-accent, #3b82f6);
-		background: none;
-		border: none;
-		padding: 0;
-		cursor: pointer;
-		text-align: left;
-		text-decoration: underline;
-	}
-
 	.wdtt-link-box {
 		display: flex;
 		flex-direction: column;

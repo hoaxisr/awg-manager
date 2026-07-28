@@ -534,16 +534,6 @@
 		border: 1px solid color-mix(in srgb, var(--color-warning, #d97706) 40%, var(--color-border));
 		background: color-mix(in srgb, var(--color-warning, #d97706) 8%, var(--color-bg-primary));
 	}
-	.ft-text-link {
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--color-accent);
-		background: none;
-		border: none;
-		padding: 0;
-		cursor: pointer;
-		text-decoration: underline;
-	}
 	.ft-readonly {
 		margin: 0;
 		font-family: var(--font-mono);

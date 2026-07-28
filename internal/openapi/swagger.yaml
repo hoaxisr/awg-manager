@@ -6761,6 +6761,11 @@ definitions:
       obfProfile:
         description: -obf-profile, none|rtpopus|rtpopus2|rtpopus3
         type: string
+      openFirewall:
+        description: |-
+          OpenFirewall opens the server listen port in Keenetic INPUT (iptables).
+          nil / omitted → true (WAN relay works out of the box).
+        type: boolean
     type: object
   freeturn.ServerInstance:
     properties:
@@ -7056,6 +7061,11 @@ definitions:
       natStaticWan:
         description: persisted WAN for internet-only teardown
         type: string
+      openFirewall:
+        description: |-
+          OpenFirewall opens the DTLS listen port in Keenetic INPUT (iptables).
+          nil / omitted → true (WAN relay works out of the box).
+        type: boolean
       password:
         description: -password, WRAP key derivation
         type: string

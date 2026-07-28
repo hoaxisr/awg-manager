@@ -2475,6 +2475,7 @@ const freeturn_ServerConfig: v.GenericSchema = v.looseObject({
 	mode: v.optional(v.nullable(v.string())),
 	obfKey: v.optional(v.nullable(v.string())),
 	obfProfile: v.optional(v.nullable(v.string())),
+	openFirewall: v.optional(v.nullable(v.boolean())),
 });
 
 const freeturn_ServerInstance: v.GenericSchema = v.looseObject({
@@ -2612,6 +2613,7 @@ const wdtt_ServerConfig: v.GenericSchema = v.looseObject({
 	natIface: v.optional(v.nullable(v.string())),
 	natMode: v.optional(v.nullable(v.string())),
 	natStaticWan: v.optional(v.nullable(v.string())),
+	openFirewall: v.optional(v.nullable(v.boolean())),
 	password: v.optional(v.nullable(v.string())),
 	policy: v.optional(v.nullable(v.string())),
 	wgPort: v.optional(v.nullable(v.number())),
