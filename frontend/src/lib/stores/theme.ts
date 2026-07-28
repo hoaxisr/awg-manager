@@ -321,28 +321,28 @@ const MOKH_LIGHT_TOKENS: ThemeTokenMap = {
 
 export const THEME_PRESETS = {
 	grafit: {
-		label: 'AWGM - Графит',
+		label: 'Графит',
 		summary: 'Нейтральный графитовый фон и тёплый янтарный акцент.',
 		supportsModeToggle: true,
 	},
 	sever: {
-		label: 'AWGM - Север',
+		label: 'Север',
 		summary: 'Холодная сине-серая гамма со спокойным ледяным акцентом.',
 		supportsModeToggle: true,
 	},
 	mokh: {
-		label: 'AWGM - Мох',
+		label: 'Мох',
 		summary: 'Тёплые гравийные тона и приглушённый мшисто-зелёный акцент.',
 		supportsModeToggle: true,
 	},
 	mint: {
-		label: 'AWGM - Mint',
+		label: 'Мята',
 		summary:
 			'Мягкая аквамариновая палитра и нейтральная серо-синяя стилистика.',
 		supportsModeToggle: true,
 	},
 	custom: {
-		label: 'AWGM - Custom',
+		label: 'Custom',
 		summary: 'Выберите акцентный, фоновый и текстовый цвета, чтобы создать свою уникальную тему.',
 		supportsModeToggle: false,
 	},

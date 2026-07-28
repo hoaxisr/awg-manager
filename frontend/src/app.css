@@ -80,18 +80,18 @@
 /* ─── Design tokens (Tailwind v4 @theme — single source of truth) ─── */
 @theme {
   /* Colors — semantic */
-  --color-accent: #7aa2f7;
-  --color-accent-hover: #6e8bbb;
-  --color-success: #9ece6a;
-  --color-error: #f7768e;
-  --color-warning: #e0af68;
-  --color-info: #7dcfff;
+  --color-accent: #e8a33d;
+  --color-accent-hover: #f2b657;
+  --color-success: #6fb388;
+  --color-error: #d47585;
+  --color-warning: #d9a05b;
+  --color-info: #7aa6c2;
 
-  /* Surfaces — Tokyo Night ramp: editor → sidebar/inset → highlight */
-  --color-bg-primary: #1a1b26;
-  --color-bg-secondary: #16161e;
-  --color-bg-tertiary: #24283b;
-  --color-bg-hover: #292e42;
+  /* Surfaces — Графит (dark) ramp: editor → sidebar/inset → highlight */
+  --color-bg-primary: #131315;
+  --color-bg-secondary: #1b1b1f;
+  --color-bg-tertiary: #26262c;
+  --color-bg-hover: #303038;
   /** Settings cards/panels — inset (secondary); controls — highlight (tertiary) */
   --color-settings-surface-bg: var(--color-bg-secondary);
   /** Settings controls — highlight layer; light theme uses darker inset (tertiary) */
@@ -100,13 +100,13 @@
   --color-icon-tile-bg: var(--color-bg-tertiary);
 
   /* Text */
-  --color-text-primary: #c0caf5;
-  --color-text-secondary: #a9b1d6;
-  --color-text-muted: #737aa2;
+  --color-text-primary: #e8e8ec;
+  --color-text-secondary: #b6b6c2;
+  --color-text-muted: #74747f;
 
   /* Borders */
-  --color-border: #3b4261;
-  --color-border-hover: #565f89;
+  --color-border: #34343d;
+  --color-border-hover: #585860;
 
   /* Typography */
   --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -125,7 +125,7 @@
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 
   /* Tunneled row tint (3% accent wash for tables) */
-  --color-tunneled-row: rgba(122, 162, 247, 0.03);
+  --color-tunneled-row: rgba(232, 163, 61, 0.03);
 
   /* Semantic tints — derived from semantic colors so light theme tracks automatically */
   --color-error-tint: color-mix(in srgb, var(--color-error) 18%, transparent);
