@@ -25,6 +25,16 @@ describe('dnsMatcherParts', () => {
 		).toBe('rule_set: geosite-netflix · suffix: yt.com +1 · query_type=HTTPS');
 	});
 
+	it('match_response и ip_cidr — матчеры', () => {
+		const parts = dnsMatcherParts({ match_response: 'rd', ip_cidr: ['10.0.0.0/8'] });
+		expect(parts.map((p) => p.key)).toEqual(['match_response', 'ip_cidr']);
+	});
+
+	it('match_response: true — анонимная форма', () => {
+		const parts = dnsMatcherParts({ match_response: true });
+		expect(parts[0].key).toBe('match_response');
+	});
+
 	it('empty rule → dash summary', () => {
 		expect(dnsMatcherSummary({})).toBe('—');
 		expect(dnsMatcherParts({})).toEqual([]);

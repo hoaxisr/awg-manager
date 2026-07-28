@@ -41,4 +41,16 @@ describe('dnsRuleTarget', () => {
 	it('no action, no server → dash', () => {
 		expect(dnsRuleTarget({})).toEqual({ kind: 'none', label: '—' });
 	});
+
+	it('evaluate → метка с сервером и тегом', () => {
+		const t = dnsRuleTarget({ action: 'evaluate', server: 'dns-direct', tag: 'rd' });
+		expect(t.kind).toBe('evaluate');
+		expect(t.label).toContain('dns-direct');
+		expect(t.label).toContain('rd');
+	});
+
+	it('respond → метка respond', () => {
+		const t = dnsRuleTarget({ action: 'respond', match_response: 'rd' });
+		expect(t.kind).toBe('respond');
+	});
 });

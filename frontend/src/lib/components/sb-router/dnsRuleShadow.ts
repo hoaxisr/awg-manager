@@ -11,9 +11,14 @@ export function isCatchAllDnsRule(r: SingboxRouterDNSRule): boolean {
 	return dnsMatcherParts(r).length === 0;
 }
 
-/** Index of the first catch-all (matcher-less) rule, or -1 if none exists. */
+/**
+ * Index of the first catch-all (matcher-less) rule, or -1 if none exists.
+ * A matcher-less `evaluate` is skipped: it does not terminate the chain and
+ * therefore shadows nothing (sing-box 1.14, mirrors backend
+ * DNSRulesShadowedByCatchAll).
+ */
 export function firstCatchAllDnsRuleIndex(rules: readonly SingboxRouterDNSRule[]): number {
-	return rules.findIndex((r) => isCatchAllDnsRule(r));
+	return rules.findIndex((r) => r.action !== 'evaluate' && isCatchAllDnsRule(r));
 }
 
 /**

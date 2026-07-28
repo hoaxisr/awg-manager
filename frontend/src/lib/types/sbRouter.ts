@@ -440,9 +440,19 @@ export interface SingboxRouterDNSRule {
 	// modeled so a hand-edited source-scoped rule isn't mistaken for a catch-all.
 	source_ip_cidr?: string[];
 	server?: string;
-	action?: '' | 'route' | 'reject' | 'predefined';
+	action?: '' | 'route' | 'reject' | 'predefined' | 'evaluate' | 'respond';
 	rcode?: string;
 	method?: string;
+	tag?: string;
+	/** union sing-box: true (последний анонимный evaluate) | "<tag>" */
+	match_response?: true | string;
+	ip_cidr?: string[];
+	response_rcode?: string;
+	response_answer?: string[];
+	response_ns?: string[];
+	response_extra?: string[];
+	race?: boolean;
+	speculative?: boolean;
 }
 
 export interface SingboxRouterDNSGlobals {

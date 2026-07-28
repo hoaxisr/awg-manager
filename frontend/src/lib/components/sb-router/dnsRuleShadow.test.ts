@@ -39,6 +39,10 @@ describe('isCatchAllDnsRule', () => {
 		expect(isCatchAllDnsRule(sourceOnly)).toBe(false);
 		expect(computeShadowedDnsRuleIndices([sourceOnly, suffix('a')]).size).toBe(0);
 	});
+
+	it('правило только с match_response — не catch-all', () => {
+		expect(isCatchAllDnsRule({ match_response: true, action: 'respond' })).toBe(false);
+	});
 });
 
 describe('firstCatchAllDnsRuleIndex', () => {
@@ -80,5 +84,13 @@ describe('computeShadowedDnsRuleIndices', () => {
 
 	it('handles an empty list', () => {
 		expect(computeShadowedDnsRuleIndices([]).size).toBe(0);
+	});
+
+	it('catch-all evaluate не затеняет правила ниже', () => {
+		const rules: SingboxRouterDNSRule[] = [
+			{ action: 'evaluate', server: 's', tag: 'rd' },
+			{ match_response: 'rd', response_rcode: 'NOERROR', action: 'respond' },
+		];
+		expect(computeShadowedDnsRuleIndices(rules).size).toBe(0);
 	});
 });
