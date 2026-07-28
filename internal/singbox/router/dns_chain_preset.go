@@ -141,7 +141,16 @@ func buildDNSChain(st *storage.DNSChainPresetState) ([]DNSRule, error) {
 		}, nil
 	case "antipoison":
 		// Ответ прямого резолвера с «отравленным» адресом переспрашивается у
-		// проксирующего; остальные ответы отдаются как есть.
+		// проксирующего; остальные ответы отдаются как есть. Хвост (два
+		// последних правила) — фолбэк на случай, когда прямой резолвер не
+		// ответил вовсе: evaluate тогда не даёт ответа, оба match_response
+		// выше не матчатся, и без хвоста запрос ушёл бы на dns.final — то
+		// есть, как правило, на тот же прямой сервер, молча отключая защиту.
+		// Хвост — evaluate+respond, а не matcher-less route: обе строки несут
+		// awgm-тег и опознаются isManagedDNSChainRule (catch-all route
+		// неотличим от пользовательского правила). Прогон 1.14.0-beta.1: при
+		// живом прямом резолвере правила 2-3 терминируют раньше и evaluate
+		// проксирующего не исполняется — лишнего запроса в туннель нет.
 		cidrs := st.PoisonCIDRs
 		if len(cidrs) == 0 {
 			cidrs = defaultPoisonCIDRs()
@@ -150,6 +159,8 @@ func buildDNSChain(st *storage.DNSChainPresetState) ([]DNSRule, error) {
 			{Action: "evaluate", Server: st.DirectServer, Tag: dnsChainTagPrefix + "ap"},
 			{MatchResponse: &DNSMatchResponse{Enabled: true, Tag: dnsChainTagPrefix + "ap"}, IPCIDR: cidrs, Action: "route", Server: st.ProxyServer},
 			{MatchResponse: &DNSMatchResponse{Enabled: true, Tag: dnsChainTagPrefix + "ap"}, Action: "respond"},
+			{Action: "evaluate", Server: st.ProxyServer, Tag: dnsChainTagPrefix + "apf"},
+			{MatchResponse: &DNSMatchResponse{Enabled: true, Tag: dnsChainTagPrefix + "apf"}, Action: "respond"},
 		}, nil
 	}
 	return nil, fmt.Errorf("dns-пресет: неизвестный режим %q", st.Mode)

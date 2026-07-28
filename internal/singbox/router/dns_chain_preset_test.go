@@ -70,11 +70,46 @@ func TestEnsureDNSChainOverlay(t *testing.T) {
 		if err := ensureDNSChainOverlay(cfg, ap); err != nil {
 			t.Fatal(err)
 		}
-		if len(cfg.DNS.Rules) != 4 {
-			t.Fatalf("ожидалось 4 правила (1 user + 3 antipoison), got %d", len(cfg.DNS.Rules))
+		if len(cfg.DNS.Rules) != 6 {
+			t.Fatalf("ожидалось 6 правил (1 user + 5 antipoison), got %d", len(cfg.DNS.Rules))
 		}
 		if err := validateDNSChain(cfg.DNS.Rules); err != nil {
 			t.Fatal(err)
+		}
+	})
+	// Хвост цепочки antipoison — фолбэк на проксирующий сервер: при мёртвом
+	// прямом резолвере evaluate не даёт ответа, match_response-правила не
+	// матчатся, и без хвоста запрос ушёл бы на dns.final (типично — тот же
+	// прямой сервер, то есть защита молча отключалась бы). Подтверждено
+	// прогоном 1.14.0-beta.1: match[3] => evaluate(proxy), match[4] => respond.
+	t.Run("antipoison: хвост уводит резолв в туннель, а не на dns.final", func(t *testing.T) {
+		cfg := base()
+		ap := &storage.DNSChainPresetState{Mode: "antipoison", DirectServer: "dns-direct", ProxyServer: "dns-tunnel"}
+		if err := ensureDNSChainOverlay(cfg, ap); err != nil {
+			t.Fatal(err)
+		}
+		rules := cfg.DNS.Rules
+		fallbackEval, fallbackRespond := rules[len(rules)-2], rules[len(rules)-1]
+		if fallbackEval.Action != "evaluate" || fallbackEval.Server != "dns-tunnel" {
+			t.Fatalf("предпоследнее правило — evaluate проксирующего сервера: %+v", fallbackEval)
+		}
+		if fallbackRespond.Action != "respond" || fallbackRespond.MatchResponse.Tag != fallbackEval.Tag {
+			t.Fatalf("последнее правило — respond ответом фолбэка: %+v", fallbackRespond)
+		}
+		// Обе строки хвоста обязаны опознаваться конвенцией префикса — иначе
+		// ensure перестанет их снимать и они переживут выключение пресета.
+		for _, r := range []DNSRule{fallbackEval, fallbackRespond} {
+			if !isManagedDNSChainRule(r) {
+				t.Fatalf("правило хвоста должно быть managed: %+v", r)
+			}
+		}
+		if err := validateDNSChain(rules); err != nil {
+			t.Fatalf("validateDNSChain: %v", err)
+		}
+		for _, r := range rules[1:] {
+			if err := validateDNSRule(r, cfg.dnsServerTypes()); err != nil {
+				t.Fatalf("правило цепочки невалидно: %v (%+v)", err, r)
+			}
 		}
 	})
 	t.Run("Mode пустой / nil state удаляет цепочку", func(t *testing.T) {
