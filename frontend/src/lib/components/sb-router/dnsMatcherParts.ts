@@ -25,8 +25,9 @@ function headWithExtra(items: string[], stripLeadingDot = false): string {
 export function dnsMatcherParts(r: SingboxRouterDNSRule): DnsMatcherPart[] {
 	const parts: DnsMatcherPart[] = [];
 	// match_response — матчер ответа (sing-box 1.14): true = анонимный evaluate
-	// выше по цепочке, строка = тег конкретного evaluate.
-	if (r.match_response !== undefined) {
+	// выше по цепочке, строка = тег конкретного evaluate. false из hand-edited
+	// конфига — «выключено» (backend IsEnabled).
+	if (r.match_response !== undefined && r.match_response !== false) {
 		parts.push({
 			key: 'match_response',
 			value: r.match_response === true ? 'анонимный' : r.match_response,

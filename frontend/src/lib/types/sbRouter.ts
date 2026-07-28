@@ -444,8 +444,12 @@ export interface SingboxRouterDNSRule {
 	rcode?: string;
 	method?: string;
 	tag?: string;
-	/** union sing-box: true (последний анонимный evaluate) | "<tag>" */
-	match_response?: true | string;
+	/**
+	 * union sing-box: true (последний анонимный evaluate) | "<tag>".
+	 * false в конфиг не пишем, но hand-edited конфиг его допускает — это
+	 * «выключено» (backend DNSMatchResponse.IsEnabled).
+	 */
+	match_response?: boolean | string;
 	ip_cidr?: string[];
 	response_rcode?: string;
 	response_answer?: string[];

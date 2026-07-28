@@ -1223,6 +1223,7 @@
     servers={$storeDnsServers}
     availableRuleSets={sortedRuleSets}
     ruleSetUsage={ruleSetUsageForDnsAdd}
+    rules={$storeDnsRules}
     onClose={() => (dnsRuleAddOpen = false)}
     onSave={handleDnsRuleAddSave}
   />
@@ -1235,6 +1236,8 @@
     servers={$storeDnsServers}
     availableRuleSets={sortedRuleSets}
     ruleSetUsage={ruleSetUsageForDnsEdit}
+    rules={$storeDnsRules}
+    ruleIndex={dnsRuleEditIdx ?? undefined}
     onClose={() => (dnsRuleEditIdx = null)}
     onSave={handleDnsRuleEditSave}
   />
