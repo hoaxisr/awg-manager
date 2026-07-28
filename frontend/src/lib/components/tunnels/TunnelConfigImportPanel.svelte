@@ -273,7 +273,7 @@
 
 	.file-drop-zone.drag-over {
 		border-color: var(--import-accent);
-		background: rgba(122, 162, 247, 0.1);
+		background: color-mix(in srgb, var(--color-accent) 10%, transparent);
 	}
 
 	.file-drop-zone.has-content {

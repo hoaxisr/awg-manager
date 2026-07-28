@@ -293,7 +293,7 @@
     opacity: 0.6;
   }
   .row.route {
-    background: rgba(122, 162, 247, 0.025);
+    background: var(--color-tunneled-row);
   }
 
   @media (hover: hover) and (pointer: fine) {
