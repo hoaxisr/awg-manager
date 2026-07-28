@@ -44,9 +44,6 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 			continue
 		}
 		iface := DefaultWdttIface
-		if entwareNATPresent(ctx, iface) {
-			continue
-		}
 		mode := normalizeNatMode(srv.Config.NatMode)
 		if mode == "none" {
 			continue
@@ -56,6 +53,9 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 			if wan := strings.TrimSpace(srv.Config.NatStaticWAN); wan != "" {
 				wanDev = s.accessMgr.KernelIfaceName(ctx, wan)
 			}
+		}
+		if entwareNATPresent(ctx, iface, wanDev) {
+			continue
 		}
 		if err := applyEntwareNAT(ctx, iface, mode, wanDev); err != nil {
 			if s.appLog != nil {

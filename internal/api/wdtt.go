@@ -27,7 +27,7 @@ type WdttService interface {
 	StopClientInstance(id string) error
 	RefreshSubscription(id string) (wdtt.ClientInstance, wdtt.ImportPayload, error)
 	UpdateServerConfig(wdtt.ServerConfig) error
-	UpdateServerInstance(id string, cfg wdtt.ServerConfig) error
+	UpdateServerInstance(id string, cfg wdtt.ServerConfig) (wdtt.ServerConfig, error)
 	CreateServer(wdtt.CreateServerInput) (wdtt.ServerInstance, error)
 	DeleteServer(id string) error
 	RenameServer(id, name string) error

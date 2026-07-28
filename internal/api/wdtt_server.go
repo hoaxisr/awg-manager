@@ -132,11 +132,12 @@ func (h *WdttHandler) serveServerByID(w http.ResponseWriter, r *http.Request, id
 			response.Error(w, "invalid request body", "BAD_REQUEST")
 			return
 		}
-		if err := h.svc.UpdateServerInstance(id, cfg); err != nil {
+		saved, err := h.svc.UpdateServerInstance(id, cfg)
+		if err != nil {
 			response.Error(w, err.Error(), "WDTT_SERVER_UPDATE_FAILED")
 			return
 		}
-		response.Success(w, map[string]any{"config": cfg})
+		response.Success(w, map[string]any{"config": saved})
 	case http.MethodPatch:
 		var req renameRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

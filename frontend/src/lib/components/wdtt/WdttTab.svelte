@@ -452,18 +452,6 @@
 		}
 	}
 
-	async function addServer() {
-		try {
-			const inst = await api.createWdttServer();
-			await loadConfig();
-			selectedServerId = inst.id;
-			wdttTab = 'server';
-			notifications.success(`Сервер «${inst.name}» создан`);
-		} catch (e) {
-			notifications.error('Не удалось создать сервер: ' + errText(e));
-		}
-	}
-
 	async function deleteServer(id: string) {
 		const inst = config?.servers.find((s) => s.id === id);
 		const name = inst?.name ?? id;
@@ -677,7 +665,6 @@
 			selectedServerId = id;
 		}}
 		onToggle={toggleServerInstance}
-		onAdd={addServer}
 		onDelete={deleteServer}
 		onRename={renameServer}
 	/>
@@ -706,7 +693,7 @@
 			/>
 		{/key}
 	{:else}
-		<p class="wdtt-empty-hint">Нет выбранного сервера. Нажмите «+ Добавить», чтобы создать новый.</p>
+		<p class="wdtt-empty-hint">Нет выбранного сервера.</p>
 	{/if}
 	{/if}
 {/if}

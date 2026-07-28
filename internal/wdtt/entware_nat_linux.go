@@ -14,16 +14,44 @@ import (
 
 const entwareNATComment = "AWGM_WDTT"
 
-// entwareNATPresent reports whether awg-manager WDTT iptables rules are still installed.
-func entwareNATPresent(ctx context.Context, wgIface string) bool {
+// entwareNATPresent reports whether awg-manager WDTT iptables rules are still
+// installed AND the MASQUERADE still exits through wanDev (empty wanDev →
+// current default-route dev): после WAN-failover правило с комментом живо, но
+// смотрит в мёртвый интерфейс — считаем его отсутствующим, чтобы reconcile
+// переустановил.
+func entwareNATPresent(ctx context.Context, wgIface, wanDev string) bool {
 	natOut, err1 := iptables.RunOutput(ctx, "-t", "nat", "-S", "POSTROUTING")
 	fwdOut, err2 := iptables.RunOutput(ctx, "-S", "FORWARD")
 	if err1 != nil || err2 != nil {
 		return false
 	}
-	return strings.Contains(natOut, entwareNATComment) &&
-		strings.Contains(fwdOut, entwareNATComment) &&
-		strings.Contains(fwdOut, wgIface)
+	if !strings.Contains(fwdOut, entwareNATComment) || !strings.Contains(fwdOut, wgIface) {
+		return false
+	}
+	if wanDev == "" {
+		dev, err := defaultWANDev(ctx)
+		if err != nil {
+			return strings.Contains(natOut, entwareNATComment)
+		}
+		wanDev = dev
+	}
+	return masqueradeOutDev(natOut) == wanDev
+}
+
+// masqueradeOutDev returns the `-o <dev>` of the AWGM_WDTT MASQUERADE rule.
+func masqueradeOutDev(natOut string) string {
+	for _, line := range strings.Split(natOut, "\n") {
+		if !strings.Contains(line, entwareNATComment) {
+			continue
+		}
+		fields := strings.Fields(line)
+		for i, f := range fields {
+			if f == "-o" && i+1 < len(fields) {
+				return fields[i+1]
+			}
+		}
+	}
+	return ""
 }
 
 // applyEntwareNAT installs MASQUERADE + FORWARD for Entware-created wdtt0.
@@ -46,10 +74,7 @@ func applyEntwareNAT(ctx context.Context, wgIface, mode, wanDev string) error {
 	setupEntwareForward(ctx, wgIface)
 
 	cidr := DefaultWdttAddress + "/24"
-	for i := 0; i < 5; i++ {
-		_ = iptables.Run(ctx, "-t", "nat", "-D", "POSTROUTING",
-			"-s", cidr, "-o", extIface, "-m", "comment", "--comment", entwareNATComment, "-j", "MASQUERADE")
-	}
+	flushEntwareMasquerade(ctx)
 	if err := iptables.Run(ctx, "-t", "nat", "-I", "POSTROUTING", "1",
 		"-s", cidr, "-o", extIface, "-m", "comment", "--comment", entwareNATComment, "-j", "MASQUERADE"); err != nil {
 		return fmt.Errorf("MASQUERADE %s via %s: %w", cidr, extIface, err)
@@ -58,12 +83,30 @@ func applyEntwareNAT(ctx context.Context, wgIface, mode, wanDev string) error {
 }
 
 func removeEntwareNAT(ctx context.Context, wgIface string) {
-	cidr := DefaultWdttAddress + "/24"
+	flushEntwareMasquerade(ctx)
 	for i := 0; i < 5; i++ {
-		_ = iptables.Run(ctx, "-t", "nat", "-D", "POSTROUTING",
-			"-s", cidr, "-m", "comment", "--comment", entwareNATComment, "-j", "MASQUERADE")
 		_ = iptables.Run(ctx, "-D", "FORWARD", "-i", wgIface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
 		_ = iptables.Run(ctx, "-D", "FORWARD", "-o", wgIface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
+	}
+}
+
+// flushEntwareMasquerade удаляет все AWGM_WDTT MASQUERADE-правила реплеем
+// вывода -S: iptables -D требует точного совпадения спеки, а -o меняется при
+// смене WAN — удаление по фиксированной спеке молча промахивается.
+func flushEntwareMasquerade(ctx context.Context) {
+	out, err := iptables.RunOutput(ctx, "-t", "nat", "-S", "POSTROUTING")
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, entwareNATComment) {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "-A" {
+			continue
+		}
+		_ = iptables.Run(ctx, append([]string{"-t", "nat", "-D"}, fields[1:]...)...)
 	}
 }
 

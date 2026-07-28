@@ -20,7 +20,7 @@
 		showDtls?: boolean;
 		onSelect: (id: string) => void;
 		onToggle: (id: string, on: boolean) => void;
-		onAdd: () => void;
+		onAdd?: () => void;
 		onDelete: (id: string) => void;
 		onRename?: (id: string, name: string) => void;
 	}
@@ -128,7 +128,9 @@
 			</div>
 		{/each}
 	</div>
-	<Button variant="secondary" size="sm" onclick={onAdd}>+ Добавить</Button>
+	{#if onAdd}
+		<Button variant="secondary" size="sm" onclick={onAdd}>+ Добавить</Button>
+	{/if}
 </div>
 
 <style>

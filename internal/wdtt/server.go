@@ -14,20 +14,23 @@ import (
 )
 
 func (s *Service) UpdateServerConfig(cfg ServerConfig) error {
-	return s.UpdateServerInstance(DefaultInstanceID, cfg)
+	_, err := s.UpdateServerInstance(DefaultInstanceID, cfg)
+	return err
 }
 
-func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
+// UpdateServerInstance сохраняет конфиг и возвращает его фактическое состояние
+// после нормализации и авто-починки listen — его и отдаёт API.
+func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfig, error) {
 	s.mu.Lock()
 	full, err := s.store.Load()
 	if err != nil {
 		s.mu.Unlock()
-		return err
+		return ServerConfig{}, err
 	}
 	idx := findServerIndex(full.Servers, id)
 	if idx < 0 {
 		s.mu.Unlock()
-		return fmt.Errorf("сервер %q не найден", id)
+		return ServerConfig{}, fmt.Errorf("сервер %q не найден", id)
 	}
 	listens := serverListenAddresses(full.Servers)
 	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, 56000, 56100)
@@ -38,14 +41,14 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
 	savedCfg := full.Servers[idx].Config
 	s.mu.Unlock()
 	if saveErr != nil {
-		return saveErr
+		return ServerConfig{}, saveErr
 	}
 	if running {
 		if err := s.applyServerAccess(context.Background(), id, savedCfg); err != nil {
-			return err
+			return savedCfg, err
 		}
 	}
-	return nil
+	return savedCfg, nil
 }
 
 func (s *Service) CreateServer(in CreateServerInput) (ServerInstance, error) {
@@ -54,6 +57,11 @@ func (s *Service) CreateServer(in CreateServerInput) (ServerInstance, error) {
 	full, err := s.store.Load()
 	if err != nil {
 		return ServerInstance{}, err
+	}
+	// Один инстанс: wdtt-server всегда создаёт интерфейс wdtt0 с адресом
+	// 10.66.66.1 — второй параллельный сервер поднять физически нельзя.
+	if len(full.Servers) > 0 {
+		return ServerInstance{}, errors.New("wdtt-server поддерживает один инстанс: интерфейс wdtt0 общий")
 	}
 	cfg := DefaultServerConfig()
 	if in.Config != nil {

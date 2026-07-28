@@ -121,7 +121,7 @@
 
 	const listenPort = $derived.by(() => {
 		const listen = server.listen?.trim() ?? '';
-		if (!listen) return '56000';
+		if (!listen) return '56002';
 		const idx = listen.lastIndexOf(':');
 		return idx >= 0 ? listen.slice(idx + 1) : listen;
 	});
@@ -231,14 +231,10 @@
 
 	<WizardStep n={2} title="Порты" hint="DTLS на WAN и внутренний WG-порт" active={step1Done}>
 		<p class="wdtt-readonly">
-			DTLS (-listen): <code>{server.listen || '0.0.0.0:56000'}</code>
+			DTLS (-listen): <code>{server.listen || '0.0.0.0:56002'}</code>
 		</p>
 		<p class="wdtt-readonly">
 			WG (-wg-port): <code>{server.wgPort || 56001}</code>
-		</p>
-		<p class="wdtt-hint">
-			Если FreeTurn-сервер уже слушает 56000, создайте второй инстанс WDTT — порт подберётся
-			автоматически (56001, 56002…).
 		</p>
 	</WizardStep>
 
@@ -412,12 +408,6 @@
 	.wdtt-readonly {
 		margin: 0.25rem 0;
 		font-size: 0.875rem;
-	}
-
-	.wdtt-hint {
-		margin: 0.5rem 0 0;
-		font-size: 0.8125rem;
-		color: var(--color-text-secondary);
 	}
 
 	.wdtt-link-box {
