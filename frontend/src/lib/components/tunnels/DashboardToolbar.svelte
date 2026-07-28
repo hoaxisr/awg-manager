@@ -65,7 +65,7 @@
 	];
 
 	const groupOptions: Array<{ value: TunnelDashboardGroupMode; label: string }> = [
-		{ value: 'type', label: 'Тип' },
+		{ value: 'type', label: 'Список' },
 		{ value: 'tags', label: 'Теги' },
 	];
 </script>
