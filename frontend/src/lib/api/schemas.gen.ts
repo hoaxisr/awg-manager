@@ -1369,9 +1369,18 @@ const api_SingboxDNSRuleDTO: v.GenericSchema = v.looseObject({
 	domain: v.optional(v.nullable(v.array(v.string()))),
 	domain_keyword: v.optional(v.nullable(v.array(v.string()))),
 	domain_suffix: v.optional(v.nullable(v.array(v.string()))),
+	ip_cidr: v.optional(v.nullable(v.array(v.string()))),
+	match_response: v.optional(v.nullable(v.string())),
 	query_type: v.optional(v.nullable(v.array(v.string()))),
+	race: v.optional(v.nullable(v.boolean())),
+	response_answer: v.optional(v.nullable(v.array(v.string()))),
+	response_extra: v.optional(v.nullable(v.array(v.string()))),
+	response_ns: v.optional(v.nullable(v.array(v.string()))),
+	response_rcode: v.optional(v.nullable(v.string())),
 	rule_set: v.optional(v.nullable(v.array(v.string()))),
 	server: v.optional(v.nullable(v.string())),
+	speculative: v.optional(v.nullable(v.boolean())),
+	tag: v.optional(v.nullable(v.string())),
 });
 
 const api_SingboxDNSRulesListResponse: v.GenericSchema = v.looseObject({

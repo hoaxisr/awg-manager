@@ -55,6 +55,19 @@ type SingboxDNSRuleDTO struct {
 	QueryType     []string `json:"query_type,omitempty" example:"A"`
 	Server        string   `json:"server,omitempty" example:"cloudflare"`
 	Action        string   `json:"action,omitempty" example:"route"`
+
+	// sing-box 1.14: DNS-механизм evaluate/match_response.
+	Tag string `json:"tag,omitempty" example:"rd"`
+	// MatchResponse — union: true (любой ответ) либо тег правила evaluate.
+	// В swagger отражается строкой; значение true передаётся булевым литералом.
+	MatchResponse  any      `json:"match_response,omitempty" swaggertype:"string" example:"rd"`
+	IPCIDR         []string `json:"ip_cidr,omitempty" example:"10.0.0.0/8"`
+	ResponseRcode  string   `json:"response_rcode,omitempty" example:"NOERROR"`
+	ResponseAnswer []string `json:"response_answer,omitempty" example:"example.com. IN A 1.2.3.4"`
+	ResponseNS     []string `json:"response_ns,omitempty"`
+	ResponseExtra  []string `json:"response_extra,omitempty"`
+	Race           bool     `json:"race,omitempty" example:"true"`
+	Speculative    bool     `json:"speculative,omitempty" example:"false"`
 }
 
 // SingboxDNSRulesListResponse is the envelope for

@@ -3608,12 +3608,44 @@ definitions:
         items:
           type: string
         type: array
+      ip_cidr:
+        example:
+        - 10.0.0.0/8
+        items:
+          type: string
+        type: array
+      match_response:
+        description: |-
+          MatchResponse — union: true (любой ответ) либо тег правила evaluate.
+          В swagger отражается строкой; значение true передаётся булевым литералом.
+        example: rd
+        type: string
       query_type:
         example:
         - A
         items:
           type: string
         type: array
+      race:
+        example: true
+        type: boolean
+      response_answer:
+        example:
+        - example.com. IN A 1.2.3.4
+        items:
+          type: string
+        type: array
+      response_extra:
+        items:
+          type: string
+        type: array
+      response_ns:
+        items:
+          type: string
+        type: array
+      response_rcode:
+        example: NOERROR
+        type: string
       rule_set:
         example:
         - geosite-cn
@@ -3622,6 +3654,13 @@ definitions:
         type: array
       server:
         example: cloudflare
+        type: string
+      speculative:
+        example: false
+        type: boolean
+      tag:
+        description: 'sing-box 1.14: DNS-механизм evaluate/match_response.'
+        example: rd
         type: string
     type: object
   api.SingboxDNSRuleDeleteRequest:
