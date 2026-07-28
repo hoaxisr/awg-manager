@@ -271,6 +271,11 @@ func (h *SingboxRouterHandler) handleErr(w http.ResponseWriter, action string, e
 		// 400 with the detailed Russian message (DSCP range/duplicate/limit/
 		// outbound) intact so the settings UI can surface it verbatim.
 		response.Error(w, err.Error(), "QOS_CLASSES_INVALID")
+	case errors.Is(err, router.ErrDNSChainTagReserved),
+		errors.Is(err, router.ErrDNSRuleManaged):
+		// 400: awgm-dns-* принадлежит оверлею DNS-пресета — ни занять тег,
+		// ни править/двигать managed-правило пользователь не может.
+		response.Error(w, err.Error(), "DNS_RULE_MANAGED")
 	case errors.Is(err, router.ErrReservedInboundTag):
 		// 400: user rules must not claim the reserved qos-* inbound namespace
 		// (they'd be inert shadow rules — the managed slot merges first).

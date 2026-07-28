@@ -42,17 +42,87 @@ func ensureDNSChainOverlay(cfg *RouterConfig, st *storage.DNSChainPresetState) e
 		cfg.DNS.Rules = kept
 		return nil
 	}
-	chain, err := buildDNSChain(st)
+	chain, err := dnsChainRules(cfg, st)
 	if err != nil {
 		return err
+	}
+	cfg.DNS.Rules = append(kept, chain...)
+	return nil
+}
+
+// dnsChainRules собирает цепочку пресета и проверяет каждое её правило в
+// контексте cfg (сервер существует, evaluate не на fakeip-сервере). Отдельно от
+// ensureDNSChainOverlay — тем же вызовом валидируется пресет в SetDNSChainPreset,
+// до того как состояние уйдёт в настройки.
+func dnsChainRules(cfg *RouterConfig, st *storage.DNSChainPresetState) ([]DNSRule, error) {
+	chain, err := buildDNSChain(st)
+	if err != nil {
+		return nil, err
 	}
 	types := cfg.dnsServerTypes()
 	for _, r := range chain {
 		if err := validateDNSRule(r, types); err != nil {
-			return fmt.Errorf("dns-пресет %q: %w", st.Mode, err)
+			return nil, fmt.Errorf("dns-пресет %q: %w", st.Mode, err)
 		}
 	}
-	cfg.DNS.Rules = append(kept, chain...)
+	return chain, nil
+}
+
+// dnsChainPresetState читает состояние пресета из настроек. nil = пресет не
+// включён (или Settings не сконфигурирован — тестовые сборки).
+func (s *ServiceImpl) dnsChainPresetState() (*storage.DNSChainPresetState, error) {
+	if s.deps.Settings == nil {
+		return nil, nil
+	}
+	settings, err := s.deps.Settings.Load()
+	if err != nil {
+		return nil, fmt.Errorf("dns-пресет: load settings: %w", err)
+	}
+	if settings == nil {
+		return nil, nil
+	}
+	return settings.DNSChainPreset, nil
+}
+
+// ensureDNSChainOverlayFromState — ensure-хук записи конфига (withConfig): при
+// активном пресете переассертит его цепочку в конец DNS-правил, чтобы
+// пользовательские Add/Update/Move не оставляли правил ЗА цепочкой. Ошибка
+// ensure = ошибка мутации: правка, из-за которой цепочка перестаёт собираться
+// (например force-снос сервера пресета), не сохраняется. Пресет выключен →
+// no-op: снятие цепочки делает SetDNSChainPreset, а не каждая запись.
+func (s *ServiceImpl) ensureDNSChainOverlayFromState(cfg *RouterConfig) error {
+	st, err := s.dnsChainPresetState()
+	if err != nil || st == nil || st.Mode == "" {
+		return err
+	}
+	return ensureDNSChainOverlay(cfg, st)
+}
+
+// captureDNSChainServerRename переносит переименование DNS-сервера в состояние
+// пресета ДО ensure-хука — иначе тот упал бы «сервер не найден» и переименование
+// сервера, на который ссылается пресет, стало бы невозможным. Прецедент —
+// captureFakeIPRealServerEdit (issue #487).
+func (s *ServiceImpl) captureDNSChainServerRename(oldTag, newTag string) error {
+	if oldTag == newTag {
+		return nil
+	}
+	st, err := s.dnsChainPresetState()
+	if err != nil || st == nil || st.Mode == "" {
+		return err
+	}
+	if st.DirectServer != oldTag && st.ProxyServer != oldTag {
+		return nil
+	}
+	updated := *st
+	if updated.DirectServer == oldTag {
+		updated.DirectServer = newTag
+	}
+	if updated.ProxyServer == oldTag {
+		updated.ProxyServer = newTag
+	}
+	if err := s.deps.Settings.SetDNSChainPresetState(&updated); err != nil {
+		return fmt.Errorf("dns-пресет: save settings: %w", err)
+	}
 	return nil
 }
 

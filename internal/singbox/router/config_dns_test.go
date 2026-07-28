@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 func makeDNSServer(tag, typ, server, detour string) DNSServer {
@@ -828,4 +830,85 @@ func TestDNSChainTagPrefixReservedOnMutations(t *testing.T) {
 	if err := validateDNSRule(DNSRule{Action: "evaluate", Server: "dns-direct", Tag: "awgm-dns-x"}, cfg.dnsServerTypes()); err != nil {
 		t.Fatalf("validateDNSRule не должен знать о резерве: %v", err)
 	}
+}
+
+// TestDNSChainManagedRuleGuards — managed-правила пресета неприкосновенны для
+// пользовательских CRUD: Update/Delete отвергаются, Move отвергается только по
+// from (перенос ПОЛЬЗОВАТЕЛЬСКОГО правила через хвост цепочки легален —
+// ensure-хук всё равно нормализует порядок).
+func TestDNSChainManagedRuleGuards(t *testing.T) {
+	// [0] = пользовательское правило, [1..4] = цепочка resilient.
+	base := func(t *testing.T) *RouterConfig {
+		t.Helper()
+		cfg := &RouterConfig{}
+		cfg.DNS.Servers = []DNSServer{
+			{Tag: "dns-direct", Type: "udp", Server: "77.88.8.8"},
+			{Tag: "dns-tunnel", Type: "udp", Server: "9.9.9.9"},
+		}
+		cfg.DNS.Rules = []DNSRule{{Domain: []string{"x.com"}, Server: "dns-tunnel"}}
+		st := &storage.DNSChainPresetState{Mode: "resilient", DirectServer: "dns-direct", ProxyServer: "dns-tunnel"}
+		if err := ensureDNSChainOverlay(cfg, st); err != nil {
+			t.Fatalf("ensureDNSChainOverlay: %v", err)
+		}
+		return cfg
+	}
+
+	t.Run("Update managed-правила отвергается", func(t *testing.T) {
+		cfg := base(t)
+		err := cfg.UpdateDNSRule(1, DNSRule{Domain: []string{"y.com"}, Server: "dns-direct"})
+		if !errors.Is(err, ErrDNSRuleManaged) {
+			t.Fatalf("UpdateDNSRule(managed) = %v, want ErrDNSRuleManaged", err)
+		}
+		if len(cfg.DNS.Rules) != 5 || !isManagedDNSChainRule(cfg.DNS.Rules[1]) {
+			t.Fatalf("состояние не должно меняться: %+v", cfg.DNS.Rules)
+		}
+	})
+	t.Run("Delete managed-правила отвергается", func(t *testing.T) {
+		cfg := base(t)
+		if err := cfg.DeleteDNSRule(4); !errors.Is(err, ErrDNSRuleManaged) {
+			t.Fatalf("DeleteDNSRule(managed) = %v, want ErrDNSRuleManaged", err)
+		}
+		if len(cfg.DNS.Rules) != 5 {
+			t.Fatalf("состояние не должно меняться: %+v", cfg.DNS.Rules)
+		}
+	})
+	t.Run("Move managed-правила отвергается", func(t *testing.T) {
+		cfg := base(t)
+		if err := cfg.MoveDNSRule(1, 0); !errors.Is(err, ErrDNSRuleManaged) {
+			t.Fatalf("MoveDNSRule(from=managed) = %v, want ErrDNSRuleManaged", err)
+		}
+		if isManagedDNSChainRule(cfg.DNS.Rules[0]) {
+			t.Fatalf("состояние не должно меняться: %+v", cfg.DNS.Rules)
+		}
+	})
+	t.Run("Move пользовательского правила через цепочку легален", func(t *testing.T) {
+		cfg := base(t)
+		if err := cfg.MoveDNSRule(0, 4); err != nil {
+			t.Fatalf("MoveDNSRule(user) = %v, want nil", err)
+		}
+		if cfg.DNS.Rules[4].Domain == nil {
+			t.Fatalf("пользовательское правило должно оказаться последним: %+v", cfg.DNS.Rules)
+		}
+	})
+	t.Run("пользовательское правило редактируется и удаляется", func(t *testing.T) {
+		cfg := base(t)
+		if err := cfg.UpdateDNSRule(0, DNSRule{Domain: []string{"y.com"}, Server: "dns-direct"}); err != nil {
+			t.Fatalf("UpdateDNSRule(user): %v", err)
+		}
+		if err := cfg.DeleteDNSRule(0); err != nil {
+			t.Fatalf("DeleteDNSRule(user): %v", err)
+		}
+		if len(cfg.DNS.Rules) != 4 {
+			t.Fatalf("ожидалась только цепочка: %+v", cfg.DNS.Rules)
+		}
+	})
+	t.Run("force-снос сервера пресета каскадом не блокируется guard'ами", func(t *testing.T) {
+		cfg := base(t)
+		if err := cfg.DeleteDNSServer("dns-tunnel", true); err != nil {
+			t.Fatalf("DeleteDNSServer(force): %v", err)
+		}
+		if err := validateDNSChain(cfg.DNS.Rules); err != nil {
+			t.Fatalf("каскад обязан оставить валидную цепочку: %v", err)
+		}
+	})
 }

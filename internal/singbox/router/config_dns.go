@@ -531,7 +531,17 @@ func (c *RouterConfig) dnsServerReferences(tag string) []string {
 // правила DNS-пресета, и самозванца снёс бы ближайший ensureDNSChainOverlay.
 func dnsChainTagReserved(r DNSRule) error {
 	if isManagedDNSChainRule(r) {
-		return fmt.Errorf("dns rule: тег %s* зарезервирован для DNS-пресета", dnsChainTagPrefix)
+		return ErrDNSChainTagReserved
+	}
+	return nil
+}
+
+// dnsChainRuleManaged — правило по индексу принадлежит оверлею пресета и
+// потому не редактируется/не удаляется/не двигается пользователем: ближайший
+// ensureDNSChainOverlay всё равно перезапишет цепочку.
+func (c *RouterConfig) dnsChainRuleManaged(index int) error {
+	if isManagedDNSChainRule(c.DNS.Rules[index]) {
+		return ErrDNSRuleManaged
 	}
 	return nil
 }
@@ -555,6 +565,9 @@ func (c *RouterConfig) UpdateDNSRule(index int, r DNSRule) error {
 	if index < 0 || index >= len(c.DNS.Rules) {
 		return ErrDNSRuleIndexOutOfRange
 	}
+	if err := c.dnsChainRuleManaged(index); err != nil {
+		return err
+	}
 	if err := dnsChainTagReserved(r); err != nil {
 		return err
 	}
@@ -574,6 +587,9 @@ func (c *RouterConfig) DeleteDNSRule(index int) error {
 	if index < 0 || index >= len(c.DNS.Rules) {
 		return ErrDNSRuleIndexOutOfRange
 	}
+	if err := c.dnsChainRuleManaged(index); err != nil {
+		return err
+	}
 	candidate := slices.Delete(slices.Clone(c.DNS.Rules), index, index+1)
 	if err := validateDNSChain(candidate); err != nil {
 		return err
@@ -589,6 +605,11 @@ func (c *RouterConfig) MoveDNSRule(from, to int) error {
 	}
 	if from == to {
 		return nil
+	}
+	// Только from: перенос ПОЛЬЗОВАТЕЛЬСКОГО правила через managed-хвост
+	// легален — ensureDNSChainOverlay нормализует цепочку обратно в конец.
+	if err := c.dnsChainRuleManaged(from); err != nil {
+		return err
 	}
 	r := c.DNS.Rules[from]
 	without := slices.Delete(slices.Clone(c.DNS.Rules), from, from+1)

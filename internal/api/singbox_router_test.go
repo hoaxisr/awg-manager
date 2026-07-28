@@ -175,6 +175,12 @@ func (m *mockRouterSvc) GetDNSGlobals(ctx context.Context) (string, string, erro
 func (m *mockRouterSvc) SetDNSGlobals(ctx context.Context, final, strategy string) error {
 	return nil
 }
+func (m *mockRouterSvc) GetDNSChainPreset(ctx context.Context) (storage.DNSChainPresetState, error) {
+	return storage.DNSChainPresetState{}, nil
+}
+func (m *mockRouterSvc) SetDNSChainPreset(ctx context.Context, st storage.DNSChainPresetState) error {
+	return nil
+}
 func (m *mockRouterSvc) Inspect(ctx context.Context, input router.InspectInput) (router.InspectResult, error) {
 	return router.InspectResult{Input: input.Domain, InputType: "domain", Destination: "direct", MatchedRule: -1, Matches: []router.RuleMatchResult{}, Final: "direct"}, nil
 }

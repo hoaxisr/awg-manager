@@ -1324,6 +1324,18 @@ const api_SingboxDNSCertificateDTO: v.GenericSchema = v.looseObject({
 	subject: v.optional(v.nullable(v.string())),
 });
 
+const api_SingboxDNSChainPresetData: v.GenericSchema = v.looseObject({
+	directServer: v.optional(v.nullable(v.string())),
+	mode: v.optional(v.nullable(v.string())),
+	poisonCidrs: v.optional(v.nullable(v.array(v.string()))),
+	proxyServer: v.optional(v.nullable(v.string())),
+});
+
+const api_SingboxDNSChainPresetResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SingboxDNSChainPresetData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_SingboxDNSClientTLSOptionsDTO: v.GenericSchema = v.looseObject({
 	alpn: v.optional(v.nullable(v.array(v.string()))),
 	certificate_public_key_sha256: v.optional(v.nullable(v.array(v.string()))),
@@ -2748,6 +2760,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	data: v.optional(v.nullable(v.lazy(() => api_SingboxInboundsResponse))),
 })]),
 	"GET /singbox/router/bindable-interfaces": v.lazy(() => api_SingboxRouterWANInterfacesListResponse),
+	"GET /singbox/router/dns/chain-preset": v.lazy(() => api_SingboxDNSChainPresetResponse),
 	"GET /singbox/router/dns/globals": v.lazy(() => api_SingboxDNSGlobalsResponse),
 	"GET /singbox/router/dns/rewrites/list": v.lazy(() => api_SingboxDNSRewritesListResponse),
 	"GET /singbox/router/dns/rules/list": v.lazy(() => api_SingboxDNSRulesListResponse),
@@ -2942,6 +2955,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/install": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/ndms-proxy": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/router/disable": v.lazy(() => api_OkResponse),
+	"POST /singbox/router/dns/chain-preset": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/globals": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/rewrites/add": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/rewrites/delete": v.lazy(() => api_OkResponse),
