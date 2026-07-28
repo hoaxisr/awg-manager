@@ -236,6 +236,21 @@ html.light, [data-theme="light"] {
   --hue-violet: #5a3fc0;
   --hue-sky: #18658a;
   --hue-blue: #3a5aa6;
+
+  /* «Деградировал» — тот же оттенок, затемнён до AA и на карточке, и на
+     собственном tint (--color-broken-tint/-border выводятся из него сами). */
+  --color-broken: #8d3c04;
+
+  /* Палитра семейств журнала — затемнённые версии тёмных значений; подложки
+     --family-*-bg/-bd остаются прежними (12%/32% того же оттенка на светлом
+     фоне дают тот же лёгкий вымыв). */
+  --family-routing-fg:         #134ec1;
+  --family-lifecycle-fg:       #844710;
+  --family-network-fg:         #2a6143;
+  --family-policy-fg:          #742bc2;
+  --family-system-fg:          #53585f;
+  --family-feature-fg:         #17615d;
+  --family-singbox-runtime-fg: #8f3957;
 }
 
 /* ─── Backwards-compatible aliases (will be removed phase-by-phase) ─── */
