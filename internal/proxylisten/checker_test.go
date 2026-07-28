@@ -52,8 +52,8 @@ func TestCrossChecker_IncludesFreeTurnForWdtt(t *testing.T) {
 
 func TestCrossChecker_IncludesAWGTunnelEndpoint(t *testing.T) {
 	dir := t.TempDir()
-	awgStore := storage.NewAWGTunnelStore(dir)
-	if err := awgStore.Save(storage.AWGTunnel{
+	awgStore := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	if err := awgStore.Save(&storage.AWGTunnel{
 		ID:   "awg10",
 		Name: "linked",
 		Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9002"},

@@ -15,10 +15,10 @@ import (
 )
 
 type Service struct {
-	store     *Store
-	dataDir   string
-	clientBin string
-	serverBin string
+	store       *Store
+	dataDir     string
+	clientBin   string
+	serverBin   string
 	clientProcs *processRegistry
 	serverProcs *processRegistry
 
@@ -26,12 +26,12 @@ type Service struct {
 	// запроса теряют правки друг друга и могут выдать один listen-порт дважды.
 	mu sync.Mutex
 
-	versionPath  string
-	installSpecs *ArchSpecs
-	downloader   childproc.Downloader
-	installMu    sync.Mutex
-	installing   bool
-	appLog       *logging.ScopedLogger
+	versionPath   string
+	installSpecs  *ArchSpecs
+	downloader    childproc.Downloader
+	installMu     sync.Mutex
+	installing    bool
+	appLog        *logging.ScopedLogger
 	listenChecker LocalListenPortChecker
 	accessMgr     AccessManager
 	ifaceChecker  InterfaceChecker
