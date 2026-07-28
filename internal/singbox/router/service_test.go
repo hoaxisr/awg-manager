@@ -70,7 +70,7 @@ func newStubIPTables(restoreRecorder func(context.Context, string) error) *IPTab
 		runIPTables:    func(_ context.Context, _ ...string) error { return nil },
 		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) { return jumpsPresentDump(), nil },
 		runIP:          func(_ context.Context, _ ...string) error { return nil },
-		persistRules:   func(_ string) error { return nil },
+		persistRules:   func(_, _, _ string) error { return nil },
 		persistHook:    func() error { return nil },
 		cleanupHook:    func() {},
 	}
@@ -970,7 +970,7 @@ func TestReconcile_JumpsMissing_Reinstalls(t *testing.T) {
 			return "-P PREROUTING ACCEPT\n-N " + ChainName + "\n-N " + RedirectChain + "\n", nil
 		},
 		runIP:        func(_ context.Context, _ ...string) error { return nil },
-		persistRules: func(_ string) error { return nil },
+		persistRules: func(_, _, _ string) error { return nil },
 		persistHook:  func() error { return nil },
 		cleanupHook:  func() {},
 	}
@@ -1019,7 +1019,7 @@ func TestReconcile_ProbeError_NoReinstall(t *testing.T) {
 			return "", errors.New("iptables: resource temporarily unavailable")
 		},
 		runIP:        func(_ context.Context, _ ...string) error { return nil },
-		persistRules: func(_ string) error { return nil },
+		persistRules: func(_, _, _ string) error { return nil },
 		persistHook:  func() error { return nil },
 		cleanupHook:  func() {},
 	}

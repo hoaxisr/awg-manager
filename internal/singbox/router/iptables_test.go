@@ -417,9 +417,10 @@ func TestIPTablesUninstallSequence(t *testing.T) {
 
 func TestWriteNetfilterHookContainsPidofGuard(t *testing.T) {
 	tmp := t.TempDir()
-	orig := netfilterHookPath
+	orig, origCt := netfilterHookPath, netfilterCtCleanPath
 	netfilterHookPath = filepath.Join(tmp, "50-awgm-tproxy.sh")
-	t.Cleanup(func() { netfilterHookPath = orig })
+	netfilterCtCleanPath = filepath.Join(tmp, "awgm-ctclean.sh")
+	t.Cleanup(func() { netfilterHookPath, netfilterCtCleanPath = orig, origCt })
 
 	if err := writeNetfilterHook(); err != nil {
 		t.Fatalf("writeNetfilterHook: %v", err)
@@ -442,9 +443,10 @@ func TestWriteNetfilterHookContainsPidofGuard(t *testing.T) {
 
 func TestWriteNetfilterHookPreloadsModules(t *testing.T) {
 	tmp := t.TempDir()
-	orig := netfilterHookPath
+	orig, origCt := netfilterHookPath, netfilterCtCleanPath
 	netfilterHookPath = filepath.Join(tmp, "50-awgm-tproxy.sh")
-	t.Cleanup(func() { netfilterHookPath = orig })
+	netfilterCtCleanPath = filepath.Join(tmp, "awgm-ctclean.sh")
+	t.Cleanup(func() { netfilterHookPath, netfilterCtCleanPath = orig, origCt })
 
 	if err := writeNetfilterHook(); err != nil {
 		t.Fatalf("writeNetfilterHook: %v", err)
@@ -473,9 +475,10 @@ func TestWriteNetfilterHookPreloadsModules(t *testing.T) {
 
 func TestWriteNetfilterHookHasScrub(t *testing.T) {
 	tmp := t.TempDir()
-	orig := netfilterHookPath
+	orig, origCt := netfilterHookPath, netfilterCtCleanPath
 	netfilterHookPath = filepath.Join(tmp, "50-awgm-tproxy.sh")
-	t.Cleanup(func() { netfilterHookPath = orig })
+	netfilterCtCleanPath = filepath.Join(tmp, "awgm-ctclean.sh")
+	t.Cleanup(func() { netfilterHookPath, netfilterCtCleanPath = orig, origCt })
 
 	if err := writeNetfilterHook(); err != nil {
 		t.Fatalf("writeNetfilterHook: %v", err)
@@ -527,9 +530,10 @@ func TestRemoveNetfilterRulesFile(t *testing.T) {
 
 func TestRefreshNetfilterHookIfPresent(t *testing.T) {
 	tmp := t.TempDir()
-	orig := netfilterHookPath
+	orig, origCt := netfilterHookPath, netfilterCtCleanPath
 	netfilterHookPath = filepath.Join(tmp, "50-awgm-tproxy.sh")
-	t.Cleanup(func() { netfilterHookPath = orig })
+	netfilterCtCleanPath = filepath.Join(tmp, "awgm-ctclean.sh")
+	t.Cleanup(func() { netfilterHookPath, netfilterCtCleanPath = orig, origCt })
 
 	// No file → no-op (does not create one).
 	refreshNetfilterHookIfPresent()
@@ -558,7 +562,7 @@ func TestInstall_IdempotentOnFileExists(t *testing.T) {
 		restoreNoflush: rec.restoreNoflush,
 		runIPTables:    rec.runIPTables,
 		runIP:          rec.runIP,
-		persistRules:   func(string) error { return nil },
+		persistRules:   func(_, _, _ string) error { return nil },
 		persistHook:    func() error { return nil },
 		cleanupHook:    func() {},
 	}
@@ -1238,9 +1242,10 @@ func TestBuildRestoreInput_IngressScope_EmptyMarkSkips(t *testing.T) {
 
 func TestWriteNetfilterHook_IngressScrub(t *testing.T) {
 	dir := t.TempDir()
-	old := netfilterHookPath
+	old, oldCt := netfilterHookPath, netfilterCtCleanPath
 	netfilterHookPath = filepath.Join(dir, "hook.sh")
-	defer func() { netfilterHookPath = old }()
+	netfilterCtCleanPath = filepath.Join(dir, "awgm-ctclean.sh")
+	defer func() { netfilterHookPath, netfilterCtCleanPath = old, oldCt }()
 
 	if err := writeNetfilterHook(); err != nil {
 		t.Fatalf("writeNetfilterHook: %v", err)
@@ -1252,8 +1257,11 @@ func TestWriteNetfilterHook_IngressScrub(t *testing.T) {
 	// `grep -F` misses them, so the netfilter.d reload re-appends a
 	// duplicate of the rule it failed to scrub. The robust form is an
 	// ERE with an optional quote.
-	if !strings.Contains(string(data), `--comment "?AWGM-INGRESS`) {
-		t.Fatalf("hook script missing robust (quote-optional) AWGM-INGRESS scrub:\n%s", data)
+	if !strings.Contains(string(data), `--comment \"?$2`) {
+		t.Fatalf("hook script missing robust (quote-optional) comment scrub helper:\n%s", data)
+	}
+	if !strings.Contains(string(data), "scrub_tagged mangle AWGM-INGRESS") {
+		t.Fatalf("hook script missing AWGM-INGRESS scrub call:\n%s", data)
 	}
 	if strings.Contains(string(data), `grep -F -- '--comment "AWGM-INGRESS"'`) {
 		t.Fatalf("hook still uses fragile quoted-only -F scrub for AWGM-INGRESS:\n%s", data)
@@ -1732,5 +1740,274 @@ func TestBuildRestoreInput_KeenDNSPresetCIDR(t *testing.T) {
 	bh := buildBlackholeRestoreInput(spec)
 	if !strings.Contains(bh, "-A "+BlackholeChain+" "+ret) {
 		t.Errorf("blackhole chain missing keendns bypass: %s", bh)
+	}
+}
+
+// --- issue #627: per-table fast heal + poisoned-flow eviction ---
+
+// The rules blob is split per table so the netfilter.d hook can restore ONLY
+// the table NDMS actually wiped, instead of tearing down both. The combined
+// blob must stay byte-identical to the concatenation (Install and the full
+// fallback path still consume it).
+func TestBuildRestoreInput_SplitPerTable(t *testing.T) {
+	spec := RestoreInputSpec{
+		PolicyMark:        "0xffffaaa",
+		WANIPs:            []string{"1.2.3.4"},
+		LANBridges:        []LANBridgeDNSRedir{{Bridge: "br0", Port: 41100}},
+		IngressInterfaces: []string{"ovpn_br0"},
+	}
+	mangle := buildMangleRestoreInput(spec)
+	nat := buildNatRestoreInput(spec)
+	if mangle+nat != buildRestoreInput(spec) {
+		t.Errorf("mangle+nat sections must concatenate to the combined blob")
+	}
+	if !strings.Contains(mangle, "*mangle\n") || strings.Contains(mangle, "*nat\n") {
+		t.Errorf("mangle section must contain only the mangle table:\n%s", mangle)
+	}
+	if !strings.Contains(mangle, ChainName) || strings.Contains(mangle, RedirectChain) {
+		t.Errorf("mangle section chain leakage:\n%s", mangle)
+	}
+	if !strings.Contains(mangle, IngressTag) {
+		t.Errorf("mangle section must carry ingress-scope rules:\n%s", mangle)
+	}
+	if !strings.Contains(nat, "*nat\n") || strings.Contains(nat, "*mangle\n") {
+		t.Errorf("nat section must contain only the nat table:\n%s", nat)
+	}
+	if !strings.Contains(nat, RedirectChain) || strings.Contains(nat, ChainName) {
+		t.Errorf("nat section chain leakage:\n%s", nat)
+	}
+	if !strings.Contains(nat, DNSRescueTag) {
+		t.Errorf("nat section must carry DNS-RESCUE rules:\n%s", nat)
+	}
+}
+
+// The hook must heal per table: a mangle-only wipe (routine DHCP renew) must
+// not tear down the working nat chain and vice versa. The full rebuild stays
+// as fallback for the upgrade window when per-table files don't exist yet.
+func TestNetfilterHookScript_PerTableFastHeal(t *testing.T) {
+	s := netfilterHookScript()
+	for _, w := range []string{
+		netfilterMangleRulesPath,
+		netfilterNatRulesPath,
+		netfilterCtCleanPath,
+		"fast-restored mangle",
+		"fast-restored nat",
+		"restored AWGM chains after NDMS reload", // full fallback kept
+	} {
+		if !strings.Contains(s, w) {
+			t.Errorf("hook missing %q:\n%s", w, s)
+		}
+	}
+	// Eviction runs ONLY when the mangle (TPROXY) side was down — a nat-only
+	// heal never opened a window for UDP flows to leak past tproxy.
+	if !strings.Contains(s, `[ "$mangle_ok" -eq 0 ] && [ -x`) {
+		t.Errorf("hook must gate ctclean on mangle_ok:\n%s", s)
+	}
+}
+
+// The eviction script runs on the live router — validate syntax and the
+// safety invariants: UDP only, WAN reply-dst scope, policy-mark scope with
+// mac= fallback for all-devices mode.
+func TestCtCleanScript_ValidShellAndScope(t *testing.T) {
+	s := ctCleanScript()
+
+	cmd := exec.Command("sh", "-n")
+	cmd.Stdin = strings.NewReader(s)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("generated ctclean script is not valid sh: %v\n%s", err, out)
+	}
+	for _, w := range []string{"conntrack", "-p udp", "--reply-dst", "mac=", "--mark", ChainName} {
+		if !strings.Contains(s, w) {
+			t.Errorf("ctclean missing %q:\n%s", w, s)
+		}
+	}
+	if strings.Contains(s, "-p tcp") {
+		t.Errorf("ctclean must never evict TCP flows:\n%s", s)
+	}
+}
+
+func TestWriteNetfilterHook_WritesCtCleanScript(t *testing.T) {
+	tmp := t.TempDir()
+	origHook, origCt := netfilterHookPath, netfilterCtCleanPath
+	netfilterHookPath = filepath.Join(tmp, "50-awgm-tproxy.sh")
+	netfilterCtCleanPath = filepath.Join(tmp, "awgm-ctclean.sh")
+	t.Cleanup(func() { netfilterHookPath, netfilterCtCleanPath = origHook, origCt })
+
+	if err := writeNetfilterHook(); err != nil {
+		t.Fatalf("writeNetfilterHook: %v", err)
+	}
+	fi, err := os.Stat(netfilterCtCleanPath)
+	if err != nil {
+		t.Fatalf("ctclean script not written: %v", err)
+	}
+	if fi.Mode().Perm()&0111 == 0 {
+		t.Errorf("ctclean script must be executable, mode %v", fi.Mode())
+	}
+}
+
+// Install persists all three rules files (combined for Install/fallback,
+// per-table for the hook's fast heal) and runs the eviction script after the
+// rules are up — the engine-start window is fail-open just like a reload.
+func TestInstall_PersistsPerTableRulesAndRunsCtClean(t *testing.T) {
+	fe := &fakeExec{}
+	var persisted [3]string
+	order := []string{}
+	it := &IPTables{
+		restoreNoflush: func(ctx context.Context, input string) error {
+			order = append(order, "restore")
+			return fe.restoreNoflush(ctx, input)
+		},
+		runIPTables:    fe.runIPTables,
+		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) { return jumpsPresentDump(), nil },
+		runIP:          fe.runIP,
+		persistRules: func(combined, mangle, nat string) error {
+			persisted = [3]string{combined, mangle, nat}
+			return nil
+		},
+		persistHook: func() error { return nil },
+		runCtClean:  func(_ context.Context) { order = append(order, "ctclean") },
+	}
+	spec := RestoreInputSpec{PolicyMark: "0xffffaaa"}
+	if err := it.Install(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if persisted[0] != buildRestoreInput(spec) {
+		t.Errorf("combined rules mismatch")
+	}
+	if persisted[1] != buildMangleRestoreInput(spec) || persisted[2] != buildNatRestoreInput(spec) {
+		t.Errorf("per-table rules mismatch")
+	}
+	if want := []string{"restore", "ctclean"}; len(order) != 2 || order[0] != want[0] || order[1] != want[1] {
+		t.Errorf("ctclean must run after restore, got order %v", order)
+	}
+}
+
+func TestRemoveNetfilterRulesFile_RemovesPerTableFiles(t *testing.T) {
+	tmp := t.TempDir()
+	orig, origM, origN := netfilterRulesPath, netfilterMangleRulesPath, netfilterNatRulesPath
+	netfilterRulesPath = filepath.Join(tmp, "router-netfilter.rules")
+	netfilterMangleRulesPath = filepath.Join(tmp, "router-netfilter-mangle.rules")
+	netfilterNatRulesPath = filepath.Join(tmp, "router-netfilter-nat.rules")
+	t.Cleanup(func() {
+		netfilterRulesPath, netfilterMangleRulesPath, netfilterNatRulesPath = orig, origM, origN
+	})
+
+	for _, p := range []string{netfilterRulesPath, netfilterMangleRulesPath, netfilterNatRulesPath} {
+		if err := os.WriteFile(p, []byte("dummy"), 0644); err != nil {
+			t.Fatalf("seed %s: %v", p, err)
+		}
+	}
+	removeNetfilterRulesFile()
+	for _, p := range []string{netfilterRulesPath, netfilterMangleRulesPath, netfilterNatRulesPath} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("expected %s to be gone, got err=%v", p, err)
+		}
+	}
+}
+
+// Execute-based verification of the hook's branch logic: fake iptables/ip/
+// pidof/logger binaries record their calls, and each (mangle_ok × nat_ok ×
+// per-table files) combination must take exactly the expected path. The
+// /opt/sbin/ prefix is rewritten to the fake bin dir — the only script
+// transformation applied.
+func TestNetfilterHookScript_BranchExecution(t *testing.T) {
+	cases := []struct {
+		name          string
+		mangleJump    bool
+		natJump       bool
+		perTableFiles bool
+		wantRestores  []string // markers of files fed to iptables-restore, in order
+		wantCtClean   bool
+	}{
+		{"mangle broken → fast mangle only + ctclean", false, true, true, []string{"MANGLE-RULES"}, true},
+		{"nat broken → fast nat only, no ctclean", true, false, true, []string{"NAT-RULES"}, false},
+		{"mangle broken, no per-table files → full fallback + ctclean", false, true, false, []string{"COMBINED-RULES"}, true},
+		{"both broken → fast both + ctclean", false, false, true, []string{"MANGLE-RULES", "NAT-RULES"}, true},
+		{"both ok → no restore, no ctclean", true, true, true, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			bin := filepath.Join(tmp, "bin")
+			if err := os.Mkdir(bin, 0755); err != nil {
+				t.Fatal(err)
+			}
+			callLog := filepath.Join(tmp, "calls.log")
+
+			origR, origM, origN, origB, origCt := netfilterRulesPath, netfilterMangleRulesPath,
+				netfilterNatRulesPath, netfilterBlackholePath, netfilterCtCleanPath
+			netfilterRulesPath = filepath.Join(tmp, "combined.rules")
+			netfilterMangleRulesPath = filepath.Join(tmp, "mangle.rules")
+			netfilterNatRulesPath = filepath.Join(tmp, "nat.rules")
+			netfilterBlackholePath = filepath.Join(tmp, "blackhole.rules")
+			netfilterCtCleanPath = filepath.Join(tmp, "ctclean.sh")
+			t.Cleanup(func() {
+				netfilterRulesPath, netfilterMangleRulesPath, netfilterNatRulesPath,
+					netfilterBlackholePath, netfilterCtCleanPath = origR, origM, origN, origB, origCt
+			})
+
+			os.WriteFile(netfilterRulesPath, []byte("COMBINED-RULES\n"), 0644)
+			if tc.perTableFiles {
+				os.WriteFile(netfilterMangleRulesPath, []byte("MANGLE-RULES\n"), 0644)
+				os.WriteFile(netfilterNatRulesPath, []byte("NAT-RULES\n"), 0644)
+			}
+			os.WriteFile(netfilterCtCleanPath, []byte("#!/bin/sh\necho CTCLEAN >> "+callLog+"\n"), 0755)
+
+			// Fake iptables: -S PREROUTING prints the jump when the table's
+			// flag file exists; -nL <chain> always succeeds (chains exist —
+			// the NDMS-wipe scenario removes jumps, not chains).
+			jump := func(table, chain string, present bool) {
+				if present {
+					os.WriteFile(filepath.Join(tmp, table+".jump"), []byte(chain), 0644)
+				}
+			}
+			jump("mangle", ChainName, tc.mangleJump)
+			jump("nat", RedirectChain, tc.natJump)
+			fakeIPTables := `#!/bin/sh
+table=""; prev=""
+for a in "$@"; do [ "$prev" = "-t" ] && table="$a"; prev="$a"; done
+case "$*" in
+  *"-S PREROUTING"*) [ -f "` + tmp + `/$table.jump" ] && echo "-A PREROUTING -m conntrack ! --ctstate INVALID -j $(cat "` + tmp + `/$table.jump")"; exit 0 ;;
+  *"-nL"*) exit 0 ;;
+esac
+exit 0
+`
+			os.WriteFile(filepath.Join(bin, "iptables"), []byte(fakeIPTables), 0755)
+			os.WriteFile(filepath.Join(bin, "iptables-restore"),
+				[]byte("#!/bin/sh\nhead -n1 | sed 's/^/RESTORE /' >> "+callLog+"\n"), 0755)
+			os.WriteFile(filepath.Join(bin, "ip"), []byte("#!/bin/sh\nexit 0\n"), 0755)
+			os.WriteFile(filepath.Join(bin, "pidof"), []byte("#!/bin/sh\nexit 0\n"), 0755) // sing-box alive
+			os.WriteFile(filepath.Join(bin, "logger"), []byte("#!/bin/sh\nexit 0\n"), 0755)
+
+			script := strings.ReplaceAll(netfilterHookScript(), "/opt/sbin/", bin+"/")
+			cmd := exec.Command("sh", "-c", script)
+			cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "type=iptables", "table=mangle")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("hook execution failed: %v\n%s", err, out)
+			}
+
+			data, _ := os.ReadFile(callLog)
+			var restores []string
+			ctCleanSeen := false
+			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+				switch {
+				case strings.HasPrefix(line, "RESTORE "):
+					restores = append(restores, strings.TrimPrefix(line, "RESTORE "))
+				case line == "CTCLEAN":
+					ctCleanSeen = true
+				}
+			}
+			if len(restores) != len(tc.wantRestores) {
+				t.Fatalf("restores = %v, want %v\nlog:\n%s", restores, tc.wantRestores, data)
+			}
+			for i := range restores {
+				if restores[i] != tc.wantRestores[i] {
+					t.Errorf("restore[%d] = %q, want %q", i, restores[i], tc.wantRestores[i])
+				}
+			}
+			if ctCleanSeen != tc.wantCtClean {
+				t.Errorf("ctclean invoked = %v, want %v\nlog:\n%s", ctCleanSeen, tc.wantCtClean, data)
+			}
+		})
 	}
 }
