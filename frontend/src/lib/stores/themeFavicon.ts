@@ -9,7 +9,7 @@ import { DEFAULT_CUSTOM_THEME, normalizeHexColor } from './theme';
 
 const faviconStorageKey = 'awg-manager-dynamic-favicon';
 
-const faviconCacheVersion = 1;
+const faviconCacheVersion = 2;
 
 const faviconTemplateUrl = '/favicon.svg';
 
