@@ -812,3 +812,20 @@ func TestDNSRuleMutationsValidateChain(t *testing.T) {
 		}
 	})
 }
+
+func TestDNSChainTagPrefixReservedOnMutations(t *testing.T) {
+	cfg := &RouterConfig{}
+	cfg.DNS.Servers = []DNSServer{{Tag: "dns-direct", Type: "udp", Server: "1.1.1.1"}}
+	// evaluate с зарезервированным тегом — Add отвергает
+	if err := cfg.AddDNSRule(DNSRule{Action: "evaluate", Server: "dns-direct", Tag: "awgm-dns-x"}); err == nil {
+		t.Fatal("Add: префикс awgm-dns- зарезервирован (tag)")
+	}
+	// match_response-ссылка на зарезервированный тег — тоже
+	if err := cfg.AddDNSRule(DNSRule{MatchResponse: &DNSMatchResponse{Enabled: true, Tag: "awgm-dns-rd"}, ResponseRcode: "NOERROR", Action: "respond"}); err == nil {
+		t.Fatal("Add: префикс awgm-dns- зарезервирован (match_response)")
+	}
+	// validateDNSRule сам по себе managed-правило ПРИНИМАЕТ (нужно оверлею)
+	if err := validateDNSRule(DNSRule{Action: "evaluate", Server: "dns-direct", Tag: "awgm-dns-x"}, cfg.dnsServerTypes()); err != nil {
+		t.Fatalf("validateDNSRule не должен знать о резерве: %v", err)
+	}
+}

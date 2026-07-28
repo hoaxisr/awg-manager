@@ -526,7 +526,20 @@ func (c *RouterConfig) dnsServerReferences(tag string) []string {
 	return refs
 }
 
+// dnsChainTagReserved — пользовательское правило не может носить тег
+// awgm-dns-* и не может ссылаться на него: этим префиксом помечены managed-
+// правила DNS-пресета, и самозванца снёс бы ближайший ensureDNSChainOverlay.
+func dnsChainTagReserved(r DNSRule) error {
+	if isManagedDNSChainRule(r) {
+		return fmt.Errorf("dns rule: тег %s* зарезервирован для DNS-пресета", dnsChainTagPrefix)
+	}
+	return nil
+}
+
 func (c *RouterConfig) AddDNSRule(r DNSRule) error {
+	if err := dnsChainTagReserved(r); err != nil {
+		return err
+	}
 	if err := validateDNSRule(r, c.dnsServerTypes()); err != nil {
 		return err
 	}
@@ -541,6 +554,9 @@ func (c *RouterConfig) AddDNSRule(r DNSRule) error {
 func (c *RouterConfig) UpdateDNSRule(index int, r DNSRule) error {
 	if index < 0 || index >= len(c.DNS.Rules) {
 		return ErrDNSRuleIndexOutOfRange
+	}
+	if err := dnsChainTagReserved(r); err != nil {
+		return err
 	}
 	if err := validateDNSRule(r, c.dnsServerTypes()); err != nil {
 		return err
