@@ -319,6 +319,18 @@ func TestDNSRulesShadowedByCatchAll(t *testing.T) {
 	}
 }
 
+func TestDNSRulesShadowedByCatchAll_EvaluateDoesNotShadow(t *testing.T) {
+	cfg := &RouterConfig{}
+	cfg.DNS.Servers = []DNSServer{{Tag: "dns-direct", Type: "udp", Server: "1.1.1.1"}}
+	cfg.DNS.Rules = []DNSRule{
+		{Action: "evaluate", Server: "dns-direct", Tag: "rd"}, // catch-all evaluate
+		{MatchResponse: &DNSMatchResponse{Enabled: true, Tag: "rd"}, ResponseRcode: "NOERROR", Action: "respond"},
+	}
+	if got := cfg.DNSRulesShadowedByCatchAll(); got != nil {
+		t.Fatalf("evaluate не должен затенять: got %v", got)
+	}
+}
+
 func TestAddDNSRuleValidatesSourceIPCIDR(t *testing.T) {
 	c := NewEmptyConfig()
 	if err := c.AddDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10"}); err != nil {

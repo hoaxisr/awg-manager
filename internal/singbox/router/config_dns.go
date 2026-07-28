@@ -291,6 +291,10 @@ func dnsRuleHasMatcher(r DNSRule) bool {
 func (c *RouterConfig) DNSRulesShadowedByCatchAll() []int {
 	catchAll := -1
 	for i := range c.DNS.Rules {
+		// evaluate не терминирует цепочку — не затеняет (sing-box 1.14).
+		if c.DNS.Rules[i].Action == "evaluate" {
+			continue
+		}
 		if !dnsRuleHasMatcher(c.DNS.Rules[i]) {
 			catchAll = i
 			break
