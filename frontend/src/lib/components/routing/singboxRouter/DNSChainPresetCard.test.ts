@@ -74,6 +74,30 @@ describe('DNSChainPresetCard', () => {
 		).toBeTruthy();
 	});
 
+	it('при выбранном режиме объясняет порядок цепочки', async () => {
+		render(DNSChainPresetCard, { props: { ...baseProps, onApply: vi.fn() } });
+
+		expect(screen.queryByText(/цепочка автоматически держится в конце списка/)).toBeNull();
+		await fireEvent.click(screen.getByText('Отказоустойчивый'));
+		expect(screen.getByText(/цепочка автоматически держится в конце списка/)).toBeTruthy();
+	});
+
+	it('catch-all выше цепочки — карточка предупреждает, что пресет не действует', () => {
+		render(DNSChainPresetCard, {
+			props: {
+				...baseProps,
+				preset: { mode: 'resilient' as const, directServer: 'dns-direct', proxyServer: 'dns-tunnel' },
+				rules: [
+					{ server: 'dns-direct' },
+					{ action: 'evaluate' as const, server: 'dns-direct', tag: 'awgm-dns-rd' },
+				],
+				onApply: vi.fn(),
+			},
+		});
+
+		expect(screen.getByText(/Пресет не действует/)).toBeTruthy();
+	});
+
 	it('в режиме FakeIP карточка задизейблена', () => {
 		render(DNSChainPresetCard, {
 			props: { ...baseProps, fakeipMode: true, onApply: vi.fn() },
@@ -82,6 +106,19 @@ describe('DNSChainPresetCard', () => {
 		expect(screen.getByText('Недоступно в режиме FakeIP')).toBeTruthy();
 		expect(screen.getByRole('button', { name: 'Отказоустойчивый' }).hasAttribute('disabled')).toBe(true);
 		expect(screen.getByRole('button', { name: 'Применить' }).hasAttribute('disabled')).toBe(true);
+	});
+
+	it('в FakeIP с остатками цепочки в списке — говорит, что они неактивны', () => {
+		render(DNSChainPresetCard, {
+			props: {
+				...baseProps,
+				fakeipMode: true,
+				rules: [{ action: 'evaluate' as const, server: 'dns-direct', tag: 'awgm-dns-rd' }],
+				onApply: vi.fn(),
+			},
+		});
+
+		expect(screen.getByText(/относятся к режиму TPROXY и сейчас неактивны/)).toBeTruthy();
 	});
 
 	it('«Применить» отдаёт выбранный пресет', async () => {

@@ -75,14 +75,18 @@ export function isLanNamesRule(r: SingboxRouterDNSRule): boolean {
   return r.domain_regex?.length === 1 && r.domain_regex[0] === LAN_NAMES_REGEX;
 }
 
-/** Заводит локальный DNS-сервер и правило «имена без точек → dns-local». Идемпотентно. */
-export async function ensureLanNamesRule(): Promise<void> {
+/**
+ * Заводит локальный DNS-сервер и правило «имена без точек → dns-local».
+ * Идемпотентно; возвращает, было ли правило реально создано — вызывающий
+ * различает этим тексты уведомлений.
+ */
+export async function ensureLanNamesRule(): Promise<'created' | 'noop'> {
   const servers = await api.singboxRouterListDNSServers();
   if (!servers.some((s) => s.tag === DNS_LOCAL_TAG)) {
     await api.singboxRouterAddDNSServer({ tag: DNS_LOCAL_TAG, type: 'local', server: '' });
   }
   const rules = await api.singboxRouterListDNSRules();
-  if (rules.some(isLanNamesRule)) return;
+  if (rules.some(isLanNamesRule)) return 'noop';
   await api.singboxRouterAddDNSRule({ domain_regex: [LAN_NAMES_REGEX], server: DNS_LOCAL_TAG });
   // При активном DNS-пресете ensure-хук на бэкенде пере-нормализует managed-
   // цепочку в конец, и добавленное правило перестаёт быть последним — индекс
@@ -90,6 +94,7 @@ export async function ensureLanNamesRule(): Promise<void> {
   const after = await api.singboxRouterListDNSRules();
   const idx = after.findIndex(isLanNamesRule);
   if (idx > 0) await api.singboxRouterMoveDNSRule(idx, 0);
+  return 'created';
 }
 
 /** Снимает правило «имена без точек». Сервер dns-local не трогаем — он может быть нужен другим правилам. */

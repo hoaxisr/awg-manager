@@ -141,6 +141,18 @@
 		},
 	});
 
+	async function moveDnsRule(from: number, to: number): Promise<void> {
+		const snapshot = get(fakeipConfig.dnsRules);
+		fakeipConfig.applyDNSRules(reorder(snapshot, from, to));
+		try {
+			await api.singboxFakeIPMoveDNSRule(from, to);
+			await fakeipConfig.loadAll();
+		} catch (e) {
+			fakeipConfig.applyDNSRules(snapshot);
+			notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	}
+
 	const ruleDrag = createReorderDrag({
 		getRowElement: (i) => ruleRowEls[i] ?? null,
 		// +1 виртуальная read-only «final»-строка в самом конце.
@@ -148,18 +160,19 @@
 		getPanelEl: () => rulePanelEl,
 		// «final»-строка (последний индекс) фиксирована: ни схватить, ни уронить под неё.
 		isFixed: (i) => i >= $storeDnsRules.length,
-		onCommit: async (from, to) => {
-			const snapshot = get(fakeipConfig.dnsRules);
-			fakeipConfig.applyDNSRules(reorder(snapshot, from, to));
-			try {
-				await api.singboxFakeIPMoveDNSRule(from, to);
-				await fakeipConfig.loadAll();
-			} catch (e) {
-				fakeipConfig.applyDNSRules(snapshot);
-				notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
-			}
-		},
+		onCommit: moveDnsRule,
 	});
+
+	// Клавиатурная альтернатива перетаскиванию: стрелки на грипе двигают правило
+	// на соседнюю позицию (виртуальная «final»-строка недостижима).
+	function handleGripKeydown(i: number, e: KeyboardEvent): void {
+		if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+		if (ruleDrag.busy) return;
+		const to = e.key === 'ArrowUp' ? i - 1 : i + 1;
+		if (to < 0 || to >= $storeDnsRules.length) return;
+		e.preventDefault();
+		void moveDnsRule(i, to);
+	}
 
 	onMount(() => {
 		void fakeipConfig.loadAll();
@@ -349,8 +362,9 @@
 			class="grip"
 			class:is-busy={ruleDrag.busy}
 			aria-label={`Перетащить DNS-правило #${i + 1}`}
-			title="Перетащить для изменения порядка"
+			title="Перетащить для изменения порядка (или стрелки вверх/вниз)"
 			onpointerdown={ruleDrag.busy ? undefined : (e) => ruleDrag.handlePointerDown(i, e)}
+			onkeydown={(e) => handleGripKeydown(i, e)}
 		>
 			<GripVertical size={16} strokeWidth={2} />
 		</button>

@@ -899,13 +899,18 @@
     const on = lanNamesOn;
     lanNamesBusy = true;
     try {
+      let msg: string;
       if (on) {
         await removeLanNamesRule();
+        msg = 'Правило LAN-имён удалено';
       } else {
-        await ensureLanNamesRule();
+        msg =
+          (await ensureLanNamesRule()) === 'created'
+            ? 'Правило LAN-имён создано'
+            : 'Правило LAN-имён уже настроено';
       }
       await singboxRouterStore.loadAll();
-      notifications.success(on ? 'Правило LAN-имён удалено' : 'Правило LAN-имён на месте');
+      notifications.success(msg);
     } catch (e) {
       notifications.error(`Не удалось: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -1141,6 +1146,7 @@
         </button>
         <DNSChainPresetCard
           servers={$storeDnsServers}
+          rules={$storeDnsRules}
           preset={dnsChainPreset}
           finalServer={$storeDnsGlobals.final}
           fakeipMode={$storeSettings?.routingMode === 'fakeip-tun'}

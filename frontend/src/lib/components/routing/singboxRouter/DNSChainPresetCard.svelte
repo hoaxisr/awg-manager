@@ -14,11 +14,18 @@
 	import type {
 		SingboxRouterDNSChainMode,
 		SingboxRouterDNSChainPreset,
+		SingboxRouterDNSRule,
 		SingboxRouterDNSServer,
 	} from '$lib/types';
+	import {
+		isDnsChainShadowed,
+		isManagedDnsChainRule,
+	} from '$lib/components/sb-router/dnsChainManaged';
 
 	interface Props {
 		servers: SingboxRouterDNSServer[];
+		/** Текущий список DNS-правил — нужен, чтобы увидеть цепочку в нём. */
+		rules?: SingboxRouterDNSRule[];
 		preset: SingboxRouterDNSChainPreset;
 		/** dns.final — сервер, куда уходит запрос, если цепочка не ответила. */
 		finalServer: string;
@@ -26,7 +33,7 @@
 		onApply: (preset: SingboxRouterDNSChainPreset) => Promise<void> | void;
 	}
 
-	let { servers, preset, finalServer, fakeipMode = false, onApply }: Props = $props();
+	let { servers, rules = [], preset, finalServer, fakeipMode = false, onApply }: Props = $props();
 
 	const MODE_OPTIONS: SegmentedOption<SingboxRouterDNSChainMode>[] = [
 		{ value: '', label: 'Выкл' },
@@ -63,6 +70,16 @@
 	let error = $state('');
 
 	const incomplete = $derived(mode !== '' && (!directServer || !proxyServer));
+
+	// Цепочка уже применена, но перекрыта пользовательским catch-all выше.
+	const shadowed = $derived(preset.mode !== '' && isDnsChainShadowed(rules));
+	// В fakeip-режиме цепочка не пишется, но старые managed-правила в списке
+	// остаются — они относятся к TPROXY и сейчас ничего не делают.
+	const fakeipHint = $derived(
+		rules.some(isManagedDnsChainRule)
+			? 'Недоступно в режиме FakeIP. Правила цепочки в списке относятся к режиму TPROXY и сейчас неактивны.'
+			: 'Недоступно в режиме FakeIP',
+	);
 
 	async function apply(): Promise<void> {
 		if (busy || fakeipMode || incomplete) return;
@@ -104,7 +121,7 @@
 	/>
 
 	{#if fakeipMode}
-		<p class="hint">Недоступно в режиме FakeIP</p>
+		<p class="hint">{fakeipHint}</p>
 	{:else if mode !== ''}
 		<Dropdown
 			bind:value={directServer}
@@ -127,10 +144,19 @@
 				></textarea>
 			</label>
 		{/if}
+		<p class="hint">
+			Правила пресета выполняются после ваших: цепочка автоматически держится в конце списка
+		</p>
+	{/if}
+
+	{#if shadowed}
+		<p class="warn">
+			Пресет не действует: выше цепочки стоит catch-all-правило, перехватывающее все запросы
+		</p>
 	{/if}
 
 	<p class="hint">
-		Если цепочка не даёт ответа, запрос уходит на финальный сервер: {finalServer || '—'}
+		Если оба резолвера недоступны, запрос уходит на финальный сервер: {finalServer || '—'}
 	</p>
 
 	{#if error}<p class="err">{error}</p>{/if}
@@ -167,6 +193,12 @@
 		margin: 0;
 		font-size: 11.5px;
 		color: var(--text-muted);
+		line-height: 1.4;
+	}
+	.warn {
+		margin: 0;
+		font-size: 11.5px;
+		color: var(--color-warning, #d97706);
 		line-height: 1.4;
 	}
 	.err {

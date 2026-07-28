@@ -575,3 +575,20 @@
 		</Button>
 	{/snippet}
 </SingboxSettingsModal>
+
+<style>
+	/* Спойлер RR-записей: рамка/паддинг/типографика как у полей формы. */
+	details {
+		display: grid;
+		gap: 0.65rem;
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		padding: 0.4rem 0.6rem;
+	}
+	summary {
+		cursor: pointer;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--text-primary, var(--text));
+	}
+</style>

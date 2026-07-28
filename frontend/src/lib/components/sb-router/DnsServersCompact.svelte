@@ -87,20 +87,33 @@
   let ruleRowEls = $state<Array<HTMLElement | null>>([]);
   let rulesEl = $state<HTMLElement | null>(null);
 
+  // Правила пресета бэкенд отклоняет на move (DNS_RULE_MANAGED): ни схватить,
+  // ни уронить на их место.
+  function isFixedRule(i: number): boolean {
+    const r = rules[i];
+    return !!r && isManagedDnsChainRule(r);
+  }
+
   const ruleDrag = createReorderDrag({
     getRowElement: (i) => ruleRowEls[i] ?? null,
     count: () => rules.length,
     getPanelEl: () => rulesEl,
-    // Правила пресета бэкенд отклоняет на move (DNS_RULE_MANAGED): ни схватить,
-    // ни уронить на их место.
-    isFixed: (i) => {
-      const r = rules[i];
-      return !!r && isManagedDnsChainRule(r);
-    },
+    isFixed: isFixedRule,
     onCommit: async (from, to) => {
       await onMoveRule?.(from, to);
     },
   });
+
+  // Клавиатурная альтернатива перетаскиванию: стрелки на грипе двигают правило
+  // на соседнюю позицию с теми же гейтами, что и drop.
+  function handleGripKeydown(i: number, e: KeyboardEvent): void {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    if (ruleDrag.busy) return;
+    const to = e.key === 'ArrowUp' ? i - 1 : i + 1;
+    if (to < 0 || to >= rules.length || isFixedRule(to)) return;
+    e.preventDefault();
+    void onMoveRule?.(i, to);
+  }
 
   onDestroy(() => ruleDrag.destroy());
 </script>
@@ -116,6 +129,7 @@
     class:shadowed
     class:has-grip={!!onMoveRule}
     class:dragging={!ghost && ruleDrag.draggingIndex === i}
+    title={managed ? 'Правило DNS-пресета — изменяется через карточку пресета' : undefined}
   >
     {#if onMoveRule}
       {#if managed}
@@ -126,8 +140,9 @@
           class="grip"
           class:is-busy={ruleDrag.busy}
           aria-label={`Перетащить DNS-правило #${i + 1}`}
-          title="Перетащить для изменения порядка"
+          title="Перетащить для изменения порядка (или стрелки вверх/вниз)"
           onpointerdown={ruleDrag.busy ? undefined : (e) => ruleDrag.handlePointerDown(i, e)}
+          onkeydown={(e) => handleGripKeydown(i, e)}
         >
           <GripVertical size={16} strokeWidth={2} />
         </button>
@@ -139,7 +154,7 @@
       disabled={managed}
       onclick={() => onEditRule(i)}
       title={managed
-        ? 'Правило DNS-пресета — управляется автоматически'
+        ? undefined
         : shadowed
         ? `${dnsMatcherSummary(r)} → ${tgt.label} · перекрыто catch-all правилом выше`
         : `${dnsMatcherSummary(r)} → ${tgt.label}`}
@@ -179,8 +194,12 @@
       {:else}
         <span class="rule-target" title={tgt.label}>
           <Badge variant={targetVariant(tgt.kind)} size="sm" mono>{tgt.label}</Badge>
-          {#if r.race}<Badge variant="muted" size="xs">race</Badge>{/if}
-          {#if r.speculative}<Badge variant="muted" size="xs">spec</Badge>{/if}
+          {#if r.race || r.speculative}
+            <span class="rule-flags">
+              {#if r.race}<Badge variant="muted" size="xs">race</Badge>{/if}
+              {#if r.speculative}<Badge variant="muted" size="xs">spec</Badge>{/if}
+            </span>
+          {/if}
         </span>
       {/if}
     </button>
@@ -667,12 +686,19 @@
     min-width: 0;
     overflow: hidden;
   }
-  .rule-target :global(.badge) {
+  /* Ужимается только длинный бейдж цели — прямой ребёнок; race/spec целые. */
+  .rule-target > :global(.badge) {
     display: block;
     max-width: 100%;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .rule-flags {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
   }
   .rule-target.none {
     color: var(--text-muted);

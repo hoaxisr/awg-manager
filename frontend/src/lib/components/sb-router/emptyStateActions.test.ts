@@ -197,7 +197,7 @@ describe('ensureLanNamesRule', () => {
     (api.singboxRouterListDNSRules as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce([{ domain_suffix: ['x.com'], server: 'dns-tunnel' }])
       .mockResolvedValueOnce([{ domain_suffix: ['x.com'], server: 'dns-tunnel' }, LAN_RULE]);
-    await ensureLanNamesRule();
+    expect(await ensureLanNamesRule()).toBe('created');
     expect(api.singboxRouterAddDNSServer).toHaveBeenCalledWith({ tag: 'dns-local', type: 'local', server: '' });
     expect(api.singboxRouterAddDNSRule).toHaveBeenCalledWith(LAN_RULE);
     expect(api.singboxRouterMoveDNSRule).toHaveBeenCalledWith(1, 0);
@@ -208,7 +208,7 @@ describe('ensureLanNamesRule', () => {
       { tag: 'dns-local', type: 'local', server: '' },
     ]);
     (api.singboxRouterListDNSRules as ReturnType<typeof vi.fn>).mockResolvedValue([LAN_RULE]);
-    await ensureLanNamesRule();
+    expect(await ensureLanNamesRule()).toBe('noop');
     expect(api.singboxRouterAddDNSServer).not.toHaveBeenCalled();
     expect(api.singboxRouterAddDNSRule).not.toHaveBeenCalled();
     expect(api.singboxRouterMoveDNSRule).not.toHaveBeenCalled();

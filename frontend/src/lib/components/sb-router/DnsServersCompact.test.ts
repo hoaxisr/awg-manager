@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import DnsServersCompact from './DnsServersCompact.svelte';
 import type { SingboxRouterDNSRule } from '$lib/types';
 
@@ -40,6 +40,31 @@ describe('DnsServersCompact — managed-правила пресета', () => {
 
 		expect(screen.getByLabelText('Перетащить DNS-правило #1')).toBeTruthy();
 		expect(screen.queryByLabelText('Перетащить DNS-правило #2')).toBeNull();
+	});
+
+	it('стрелки на грипе двигают правило, но не на managed-позицию', async () => {
+		const onMoveRule = vi.fn().mockResolvedValue(undefined);
+		// Три правила: managed — последнее, значит вниз из #2 ходу нет.
+		render(DnsServersCompact, {
+			props: {
+				servers: [],
+				rules: [rules[0], { domain: ['b.com'], action: 'route', server: 'dns-direct' }, rules[1]],
+				onEditServer: vi.fn(),
+				onEditRule: vi.fn(),
+				onMoveRule,
+			},
+		});
+
+		const grip = screen.getByLabelText('Перетащить DNS-правило #2');
+		await fireEvent.keyDown(grip, { key: 'ArrowUp' });
+		expect(onMoveRule).toHaveBeenCalledWith(1, 0);
+
+		onMoveRule.mockClear();
+		await fireEvent.keyDown(grip, { key: 'ArrowDown' });
+		expect(onMoveRule).not.toHaveBeenCalled();
+
+		await fireEvent.keyDown(screen.getByLabelText('Перетащить DNS-правило #1'), { key: 'ArrowUp' });
+		expect(onMoveRule).not.toHaveBeenCalled();
 	});
 
 	it('без onMoveRule грипов нет вовсе', () => {
