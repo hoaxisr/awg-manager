@@ -1,5 +1,5 @@
 <svelte:head>
-	<title>Пользовательское соглашение - AWG Manager</title>
+	<title>Пользовательское соглашение - AWGM</title>
 </svelte:head>
 
 <div class="terms-page">

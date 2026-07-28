@@ -91,7 +91,7 @@
 </script>
 
 <svelte:head>
-	<title>Гео-данные - AWG Manager</title>
+	<title>Гео-данные - AWGM</title>
 </svelte:head>
 
 <PageContainer width="full">

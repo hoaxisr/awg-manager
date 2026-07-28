@@ -228,7 +228,7 @@ onMount(() => {
 </script>
 
 <svelte:head>
-	<title>Настройки - AWG Manager</title>
+	<title>Настройки - AWGM</title>
 </svelte:head>
 
 <PageContainer width="full">

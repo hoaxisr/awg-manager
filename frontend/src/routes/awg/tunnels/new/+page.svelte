@@ -124,7 +124,7 @@
 </script>
 
 <svelte:head>
-	<title>Новый туннель - AWG Manager</title>
+	<title>Новый туннель - AWGM</title>
 </svelte:head>
 
 <PageContainer>

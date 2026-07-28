@@ -140,7 +140,7 @@
 </script>
 
 <svelte:head>
-	<title>{pageTitle} - AWG Manager</title>
+	<title>{pageTitle} - AWGM</title>
 </svelte:head>
 
 <PageContainer width="full">

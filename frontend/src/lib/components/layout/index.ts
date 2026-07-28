@@ -4,6 +4,7 @@ export type { PageWidth } from './PageContainer.svelte';
 export { default as LoadingSpinner } from './LoadingSpinner.svelte';
 export { default as EmptyState } from './EmptyState.svelte';
 export { default as BrandLogoMark } from './BrandLogoMark.svelte';
+export { default as BrandLogoScene } from './BrandLogoScene.svelte';
 export { default as DevelopFeedbackFab } from './DevelopFeedbackFab.svelte';
 export { default as NotificationCenter } from './NotificationCenter.svelte';
 export { default as SideNavItem } from './SideNavItem.svelte';

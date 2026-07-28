@@ -79,7 +79,7 @@
 </script>
 
 <svelte:head>
-	<title>Терминал — AWG Manager</title>
+	<title>Терминал — AWGM</title>
 </svelte:head>
 
 {#if pageState === 'loading' || pageState === 'starting'}

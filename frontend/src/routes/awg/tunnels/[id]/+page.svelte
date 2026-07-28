@@ -302,7 +302,7 @@
 </script>
 
 <svelte:head>
-	<title>{tunnel?.name || 'Туннель'} - AWG Manager</title>
+	<title>{tunnel?.name || 'Туннель'} - AWGM</title>
 </svelte:head>
 
 {#if loading}

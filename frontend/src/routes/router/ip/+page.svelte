@@ -20,7 +20,7 @@
 </script>
 
 <svelte:head>
-    <title>IP-адреса - AWG Manager</title>
+    <title>IP-адреса - AWGM</title>
 </svelte:head>
 
 <PageContainer width="full">

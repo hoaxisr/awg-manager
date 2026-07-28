@@ -27,7 +27,7 @@
 </script>
 
 <svelte:head>
-    <title>HR Neo - AWG Manager</title>
+    <title>HR Neo - AWGM</title>
 </svelte:head>
 
 <PageContainer width="full">

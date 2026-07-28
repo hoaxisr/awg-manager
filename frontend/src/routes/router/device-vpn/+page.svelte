@@ -16,7 +16,7 @@
 </script>
 
 <svelte:head>
-    <title>VPN для устройств - AWG Manager</title>
+    <title>VPN для устройств - AWGM</title>
 </svelte:head>
 
 <PageContainer width="full">

@@ -106,7 +106,7 @@
 </script>
 
 <svelte:head>
-	<title>Маршрутизация sing-box - AWG Manager</title>
+	<title>Маршрутизация sing-box - AWGM</title>
 </svelte:head>
 
 <PageContainer width="full">

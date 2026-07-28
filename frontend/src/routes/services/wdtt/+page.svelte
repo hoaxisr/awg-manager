@@ -4,7 +4,7 @@
 </script>
 
 <svelte:head>
-	<title>WDTT - AWG Manager</title>
+	<title>WDTT - AWGM</title>
 </svelte:head>
 
 <PageContainer width="full">

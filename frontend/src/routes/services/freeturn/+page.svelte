@@ -4,7 +4,7 @@
 </script>
 
 <svelte:head>
-	<title>FreeTurn - AWG Manager</title>
+	<title>FreeTurn - AWGM</title>
 </svelte:head>
 
 <PageContainer width="full">

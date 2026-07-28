@@ -251,7 +251,7 @@
 </script>
 
 <svelte:head>
-	<title>Sing-box подписки - AWG Manager</title>
+	<title>Sing-box подписки - AWGM</title>
 </svelte:head>
 
 <PageContainer width="full">

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { auth } from '$lib/stores/auth';
 	import { Button } from '$lib/components/ui';
-	import BrandLogoMark from '$lib/components/layout/BrandLogoMark.svelte';
+	import BrandLogoScene from '$lib/components/layout/BrandLogoScene.svelte';
 
 	let login = $state('');
 	let password = $state('');
@@ -30,9 +30,9 @@
 	<div class="login-card">
 		<div class="login-header">
 			<div class="login-brand">
-				<BrandLogoMark dimension={52} />
+				<BrandLogoScene width={240} />
 			</div>
-			<h1>AWG Manager</h1>
+			<h1>AWGM</h1>
 			<p class="login-subtitle">
 				{entwareAuthEnabled
 					? 'Данные роутера или учётной записи Entware'
@@ -133,15 +133,15 @@
 		margin-bottom: 0.75rem;
 	}
 
-	.login-brand :global(.brand-logo-mark) {
-		width: 52px;
-		height: 52px;
+	.login-brand :global(.brand-logo-scene) {
+		width: 100%;
+		max-width: 240px;
+		height: auto;
 	}
 
 	@media (min-width: 641px) and (max-width: 1050px) {
-		.login-brand :global(.brand-logo-mark) {
-			width: 44px;
-			height: 44px;
+		.login-brand :global(.brand-logo-scene) {
+			max-width: 200px;
 		}
 
 		.login-header h1 {
@@ -150,6 +150,9 @@
 	}
 
 	.login-header h1 {
+		font-family: var(--font-mono);
+		font-weight: 700;
+		letter-spacing: -0.02em;
 		font-size: 1.5rem;
 		margin-bottom: 0.25rem;
 	}

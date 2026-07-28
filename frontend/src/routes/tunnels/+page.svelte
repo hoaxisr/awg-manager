@@ -318,7 +318,7 @@
 </script>
 
 <svelte:head>
-	<title>Все туннели - AWG Manager</title>
+	<title>Все туннели - AWGM</title>
 </svelte:head>
 
 <PageContainer width="full">

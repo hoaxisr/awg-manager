@@ -391,7 +391,7 @@
 				<header class="login-topstrip">
 					<span class="login-brand">
 						<BrandLogoMark />
-						<span class="login-wordmark">AWG⋅Manager</span>
+						<span class="login-wordmark">AWGM</span>
 					</span>
 					{#if $theme.preset !== 'custom'}
 						<IconButton ariaLabel="Переключить тему" onclick={() => theme.toggleMode()}>

@@ -54,7 +54,7 @@
 </script>
 
 <svelte:head>
-	<title>{tunnel?.description || name} — AWG Manager</title>
+	<title>{tunnel?.description || name} — AWGM</title>
 </svelte:head>
 
 <PageContainer width="wide">

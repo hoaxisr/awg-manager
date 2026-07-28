@@ -26,7 +26,7 @@
 </script>
 
 <svelte:head>
-    <title>NDMS - AWG Manager</title>
+    <title>NDMS - AWGM</title>
 </svelte:head>
 
 <PageContainer width="full">

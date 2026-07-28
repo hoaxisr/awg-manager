@@ -167,7 +167,7 @@
 </script>
 
 <svelte:head>
-	<title>Sing-box туннели - AWG Manager</title>
+	<title>Sing-box туннели - AWGM</title>
 </svelte:head>
 
 <PageContainer width="full">

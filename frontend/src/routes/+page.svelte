@@ -52,7 +52,7 @@
 </script>
 
 <svelte:head>
-	<title>Обзор - AWG Manager</title>
+	<title>Обзор - AWGM</title>
 </svelte:head>
 
 <PageContainer width="narrow">

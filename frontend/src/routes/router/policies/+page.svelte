@@ -20,7 +20,7 @@
 </script>
 
 <svelte:head>
-    <title>Политики доступа - AWG Manager</title>
+    <title>Политики доступа - AWGM</title>
 </svelte:head>
 
 <PageContainer width="full">

@@ -39,7 +39,7 @@
 </script>
 
 <svelte:head>
-	<title>API docs — AWG Manager</title>
+	<title>API docs — AWGM</title>
 	<!-- Global Swagger UI theme overrides — scoped to this page via .swagger-root -->
 	<style>
 		/* ── Transparent scheme container in both themes ── */

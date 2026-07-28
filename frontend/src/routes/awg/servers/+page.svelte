@@ -260,7 +260,7 @@
 </script>
 
 <svelte:head>
-	<title>Серверы - AWG Manager</title>
+	<title>Серверы - AWGM</title>
 </svelte:head>
 
 <PageContainer width="full">

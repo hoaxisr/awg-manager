@@ -126,7 +126,7 @@
 </script>
 
 <svelte:head>
-	<title>Обфускация — AWG Manager</title>
+	<title>Обфускация — AWGM</title>
 </svelte:head>
 
 <PageContainer width="wide">

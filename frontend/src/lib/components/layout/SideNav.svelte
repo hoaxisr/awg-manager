@@ -26,9 +26,9 @@
 </script>
 
 <div class="sidenav">
-	<a href="/" class="brand" aria-label="AWG Manager" onclick={onNavigate}>
+	<a href="/" class="brand" aria-label="AWGM" onclick={onNavigate}>
 		<BrandLogoMark />
-		<span class="wordmark">AWG⋅Manager</span>
+		<span class="wordmark">AWGM</span>
 	</a>
 
 	<nav class="tree" aria-label="Главная навигация">

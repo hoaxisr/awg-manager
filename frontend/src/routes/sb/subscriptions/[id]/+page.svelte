@@ -283,7 +283,7 @@
 </script>
 
 <svelte:head>
-	<title>{subscription?.label ?? 'Подписка'} - AWG Manager</title>
+	<title>{subscription?.label ?? 'Подписка'} - AWGM</title>
 </svelte:head>
 
 <PageContainer width="wide">

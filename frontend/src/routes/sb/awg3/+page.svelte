@@ -71,7 +71,7 @@
 </script>
 
 <svelte:head>
-	<title>AWG3 туннели - AWG Manager</title>
+	<title>AWG3 туннели - AWGM</title>
 </svelte:head>
 
 <PageContainer width="full">

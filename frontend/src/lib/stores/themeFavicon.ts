@@ -17,7 +17,7 @@ const dynamicFaviconSelector = 'link[data-awgm-dynamic-favicon]';
 
 const staticFaviconSelector = 'link[data-awgm-static-favicon]';
 
-const faviconAccentPattern = /#7aa1f7|#7aa2f7/gi;
+const faviconAccentPattern = /#e8a33d/gi;
 
 interface CachedDynamicFavicon {
 	version: number;
