@@ -332,7 +332,7 @@
 		<p class="lead">Что добавить?</p>
 		<div class="kind-grid">
 			<button type="button" class="kind-card" onclick={() => (kind = 'single')}>
-				<Link size={28} strokeWidth={1.6} style="color: var(--color-primary, #3b82f6)" aria-hidden="true" />
+				<Link size={28} strokeWidth={1.6} style="color: var(--color-accent)" aria-hidden="true" />
 				<div class="kind-title">Один сервер</div>
 				<div class="kind-desc">
 					Вставь одну или несколько share-link'ов — каждая станет
@@ -340,7 +340,7 @@
 				</div>
 			</button>
 			<button type="button" class="kind-card" onclick={() => (kind = 'inline')}>
-				<LayoutGrid size={28} strokeWidth={1.6} style="color: var(--color-primary, #3b82f6)" aria-hidden="true" />
+				<LayoutGrid size={28} strokeWidth={1.6} style="color: var(--color-accent)" aria-hidden="true" />
 				<div class="kind-title">Группа серверов</div>
 				<div class="kind-desc">
 					Несколько ссылок становятся одной группой с общим Proxy.
@@ -348,7 +348,7 @@
 				</div>
 			</button>
 			<button type="button" class="kind-card" onclick={() => (kind = 'url')}>
-				<Globe size={28} strokeWidth={1.6} style="color: var(--color-primary, #3b82f6)" aria-hidden="true" />
+				<Globe size={28} strokeWidth={1.6} style="color: var(--color-accent)" aria-hidden="true" />
 				<div class="kind-title">Подписка по URL</div>
 				<div class="kind-desc">
 					Адрес подписки провайдера. Список серверов обновляется
@@ -641,12 +641,12 @@
 		transition: border-color 120ms, transform 120ms, background 120ms;
 	}
 	.kind-card:hover {
-		border-color: var(--color-primary, #3b82f6);
+		border-color: var(--color-accent);
 		background: rgba(59, 130, 246, 0.04);
 		transform: translateY(-1px);
 	}
 	.kind-card:focus-visible {
-		outline: 2px solid var(--color-primary, #3b82f6);
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 
@@ -713,11 +713,11 @@
 	}
 	.mode-card:hover { border-color: var(--color-text-muted); }
 	.mode-card.selected {
-		border-color: var(--color-primary, #3b82f6);
+		border-color: var(--color-accent);
 		background: rgba(59, 130, 246, 0.06);
 	}
 	.mode-card:focus-visible {
-		outline: 2px solid var(--color-primary, #3b82f6);
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 	.mode-title { font-weight: 500; font-size: 0.85rem; }
@@ -731,7 +731,7 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		color: var(--color-primary, #3b82f6);
+		color: var(--color-accent);
 	}
 
 	.urltest-block {

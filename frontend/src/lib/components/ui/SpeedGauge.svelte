@@ -23,9 +23,9 @@
 	const progressGap = $derived(circumference - progressLen);
 
 	const progressColor = $derived(
-		phase === 'download' ? '#10b981'
-			: phase === 'upload' ? '#60a5fa'
-				: phase === 'done' ? '#60a5fa'
+		phase === 'download' ? 'var(--color-success)'
+			: phase === 'upload' ? 'var(--hue-blue)'
+				: phase === 'done' ? 'var(--hue-blue)'
 					: 'rgba(100,100,100,0.4)'
 	);
 
@@ -38,8 +38,8 @@
 	);
 
 	const phaseColor = $derived(
-		phase === 'download' ? '#10b981'
-			: phase === 'upload' ? '#60a5fa'
+		phase === 'download' ? 'var(--color-success)'
+			: phase === 'upload' ? 'var(--hue-blue)'
 				: 'var(--text-muted)'
 	);
 

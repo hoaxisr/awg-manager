@@ -79,13 +79,20 @@
 
 /* ─── Design tokens (Tailwind v4 @theme — single source of truth) ─── */
 @theme {
-  /* Colors — semantic */
+  /* Colors — semantic (+ *-contrast: текст поверх заливки этим цветом).
+     Значения обязаны совпадать с GRAFIT_DARK_TOKENS в lib/stores/theme.ts —
+     это первый кадр до гидрации стора темы. */
   --color-accent: #e8a33d;
   --color-accent-hover: #f2b657;
+  --color-accent-contrast: #131315;
   --color-success: #6fb388;
+  --color-success-contrast: #131315;
   --color-error: #d47585;
+  --color-error-contrast: #131315;
   --color-warning: #d9a05b;
+  --color-warning-contrast: #131315;
   --color-info: #7aa6c2;
+  --color-info-contrast: #131315;
 
   /* Surfaces — Графит (dark) ramp: editor → sidebar/inset → highlight */
   --color-bg-primary: #131315;
@@ -155,6 +162,15 @@
   --latency-dot-slow-shadow: var(--color-warning-border);
   --latency-dot-fail-shadow: var(--color-error-border);
 
+  /* Небрендовые оттенки вне семантической рампы: нужны там, где надо различать
+     категории (outbound'ы, протоколы, теги), а success/error/warning заняты
+     смыслом. Не входят в пресеты темы — светлые значения задаются ниже
+     каскадом; без них контраст на светлых темах падает до 1.5:1. */
+  --hue-teal: #56c8b8;
+  --hue-violet: #9c8aff;
+  --hue-sky: #7dcfff;
+  --hue-blue: #8ab4f8;
+
   /* Override Tailwind utility radii to match our scale */
   --radius-md: var(--radius-sm);
   --radius-lg: var(--radius);
@@ -179,31 +195,47 @@
 }
 
 /* ─── Light theme override ─── */
+/* Палитра — Графит (light), паритет с GRAFIT_LIGHT_TOKENS в lib/stores/theme.ts.
+   В проде стор темы перебивает эти значения инлайном на :root, но токены вне
+   пресетов (--tone-*) приходят только отсюда, и на /dev/primitives каскад
+   работает целиком. */
 html.light, [data-theme="light"] {
-  --color-accent: #4f6e9c;
-  --color-accent-hover: #6082b0;
-  --color-success: #5b8568;
-  --color-error: #9a4f60;
-  --color-warning: #a07a3f;
-  --color-info: #547e91;
+  --color-accent: #b97a1e;
+  --color-accent-hover: #a06715;
+  --color-accent-contrast: #131315;
+  --color-success: #3d7d55;
+  --color-success-contrast: #ffffff;
+  --color-error: #a94b5c;
+  --color-error-contrast: #ffffff;
+  --color-warning: #9a742e;
+  --color-warning-contrast: #131315;
+  --color-info: #3f6f8e;
+  --color-info-contrast: #ffffff;
 
-  --color-bg-primary: #e9e9ed;
-  --color-bg-secondary: #f0f0f3;
-  --color-bg-tertiary: #d5d6db;
-  --color-bg-hover: #cacbd2;
+  --color-bg-primary: #ececee;
+  --color-bg-secondary: #f7f7f8;
+  --color-bg-tertiary: #dfdfe3;
+  --color-bg-hover: #d2d2d8;
   --color-settings-surface-bg: var(--color-bg-secondary);
   --color-settings-control-bg: var(--color-bg-tertiary);
 
-  --color-text-primary: #343b58;
-  --color-text-secondary: #434754;
-  --color-text-muted: #545760;
+  --color-text-primary: #1d1d24;
+  --color-text-secondary: #41414c;
+  --color-text-muted: #6d6d78;
 
-  --color-border: #b8b9c0;
-  --color-border-hover: #9a9ba2;
+  --color-border: #c2c2c9;
+  --color-border-hover: #a1a1a8;
 
-  --shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  --shadow: 0 2px 10px rgba(29, 29, 36, 0.08);
 
-  --color-tunneled-row: rgba(46, 125, 233, 0.05);
+  --color-tunneled-row: rgba(185, 122, 30, 0.07);
+
+  /* Небрендовые оттенки — затемнённые версии тёмных значений (AA на карточке
+     во всех светлых пресетах). */
+  --hue-teal: #14685d;
+  --hue-violet: #5a3fc0;
+  --hue-sky: #18658a;
+  --hue-blue: #3a5aa6;
 }
 
 /* ─── Backwards-compatible aliases (will be removed phase-by-phase) ─── */

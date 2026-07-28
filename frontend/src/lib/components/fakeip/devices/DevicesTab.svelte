@@ -531,7 +531,7 @@
 	.btn.primary {
 		background: var(--color-accent, var(--accent));
 		border-color: var(--color-accent, var(--accent));
-		color: var(--color-on-accent, #0a0a0a);
+		color: var(--color-accent-contrast);
 	}
 	.btn.ghost:hover:not(:disabled) {
 		border-color: var(--color-border-hover, var(--border));

@@ -126,7 +126,7 @@
 	}
 	.share-links-back :global(.share-link-proto) {
 		font-weight: 600;
-		color: var(--color-primary, #2563eb);
+		color: var(--color-accent);
 	}
 	.share-links-back :global(.hl-json-key) {
 		color: var(--hl-json-key, #0284c7);
@@ -186,9 +186,9 @@
 		outline: none;
 	}
 	.share-links-ta::selection {
-		background: color-mix(in srgb, var(--color-primary, #2563eb) 38%, transparent);
+		background: color-mix(in srgb, var(--color-accent) 38%, transparent);
 	}
 	.share-links-editor:focus-within {
-		border-color: var(--color-primary, #3b82f6);
+		border-color: var(--color-accent);
 	}
 </style>

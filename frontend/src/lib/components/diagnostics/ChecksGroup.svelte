@@ -8,15 +8,15 @@
 	}
 
 	const KIND_STYLES: Record<string, KindStyle> = {
-		'wg':     { label: 'WG',      color: '#7aa2f7', bg: 'rgba(122,162,247,0.14)' },
-		'awg':    { label: 'AWG',     color: '#7aa2f7', bg: 'rgba(122,162,247,0.14)' },
-		'awg1.0': { label: 'AWG 1.0', color: '#7aa2f7', bg: 'rgba(122,162,247,0.14)' },
-		'awg1.5': { label: 'AWG 1.5', color: '#7dcfff', bg: 'rgba(125,207,255,0.14)' },
-		'awg2.0': { label: 'AWG 2.0', color: '#7dcfff', bg: 'rgba(125,207,255,0.14)' },
-		'xray':   { label: 'XRAY',    color: '#bb9af7', bg: 'rgba(187,154,247,0.14)' },
-		'vless':  { label: 'VLESS',   color: '#bb9af7', bg: 'rgba(187,154,247,0.14)' },
-		'hy2':    { label: 'HY2',     color: '#f7768e', bg: 'rgba(247,118,142,0.14)' },
-		'ss':     { label: 'SS',      color: '#9ece6a', bg: 'rgba(158,206,106,0.14)' },
+		'wg':     { label: 'WG',      color: 'var(--hue-blue)', bg: 'color-mix(in srgb, var(--hue-blue) 14%, transparent)' },
+		'awg':    { label: 'AWG',     color: 'var(--hue-blue)', bg: 'color-mix(in srgb, var(--hue-blue) 14%, transparent)' },
+		'awg1.0': { label: 'AWG 1.0', color: 'var(--hue-blue)', bg: 'color-mix(in srgb, var(--hue-blue) 14%, transparent)' },
+		'awg1.5': { label: 'AWG 1.5', color: 'var(--hue-sky)', bg: 'color-mix(in srgb, var(--hue-sky) 14%, transparent)' },
+		'awg2.0': { label: 'AWG 2.0', color: 'var(--hue-sky)', bg: 'color-mix(in srgb, var(--hue-sky) 14%, transparent)' },
+		'xray':   { label: 'XRAY',    color: 'var(--hue-violet)', bg: 'color-mix(in srgb, var(--hue-violet) 14%, transparent)' },
+		'vless':  { label: 'VLESS',   color: 'var(--hue-violet)', bg: 'color-mix(in srgb, var(--hue-violet) 14%, transparent)' },
+		'hy2':    { label: 'HY2',     color: 'var(--color-error)', bg: 'var(--color-error-tint)' },
+		'ss':     { label: 'SS',      color: 'var(--color-success)', bg: 'var(--color-success-tint)' },
 	};
 
 	const PLANNED_GLOBAL = [

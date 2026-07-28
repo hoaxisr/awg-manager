@@ -72,7 +72,7 @@
 <style>
 	.pol { border: 1px solid var(--border-soft, var(--border)); border-radius: 10px; margin-bottom: 8px; overflow: hidden; }
 	.pol-head { display: flex; align-items: center; gap: 14px; width: 100%; padding: 11px 14px; background: none; border: none; cursor: pointer; text-align: left; color: inherit; font: inherit; }
-	.pol-head:hover { background: var(--surface-hover, rgba(127,127,127,.06)); }
+	.pol-head:hover { background: var(--color-bg-hover); }
 	.chev { color: var(--text-muted); transition: transform .15s; }
 	.pol.open .chev { transform: rotate(90deg); }
 	.pol-name { font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 150px; }

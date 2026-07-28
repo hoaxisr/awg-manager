@@ -345,8 +345,8 @@
 
 		.member-slot--inline.member-slot--active,
 		.member-slot--exclude.member-slot--active {
-			border-color: #3fb950;
-			background: rgba(63, 185, 80, 0.06);
+			border-color: var(--color-success);
+			background: color-mix(in srgb, var(--color-success) 6%, transparent);
 		}
 
 		.member-slot--inline :global(.card),
@@ -463,7 +463,7 @@
 		color: var(--color-text-primary);
 	}
 	.member-list-meta-row .meta-val strong {
-		color: #3fb950;
+		color: var(--color-success);
 		font-weight: 600;
 	}
 	.member-list-meta-row .meta-empty {

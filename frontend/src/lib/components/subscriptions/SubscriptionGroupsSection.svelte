@@ -289,8 +289,8 @@
 		background: var(--color-bg-tertiary);
 	}
 	.icon-btn.danger:hover {
-		color: var(--color-danger, #f85149);
-		background: color-mix(in srgb, var(--color-danger, #f85149) 12%, transparent);
+		color: var(--color-error);
+		background: color-mix(in srgb, var(--color-error) 12%, transparent);
 	}
 	.icon-btn:focus-visible {
 		outline: 2px solid var(--color-accent);

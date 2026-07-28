@@ -768,7 +768,7 @@
 	.delay-inline-err {
 		font-size: var(--sbx-card-badge);
 		line-height: 1.25;
-		color: #f85149;
+		color: var(--color-error);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;

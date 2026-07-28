@@ -137,7 +137,7 @@
 		box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
 	}
 	.status-dot.ready {
-		background: var(--primary, #60a5fa);
+		background: var(--color-info);
 		box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.16);
 	}
 	.status-dot.warn {
@@ -169,7 +169,7 @@
 	}
 	.term-singbox-input:focus {
 		outline: none;
-		border-color: var(--primary, #60a5fa);
+		border-color: var(--color-info);
 	}
 	.term-commands {
 		display: flex;
@@ -187,15 +187,15 @@
 		cursor: pointer;
 	}
 	.term-cmd:hover:not(:disabled) {
-		border-color: var(--primary, #60a5fa);
-		color: var(--primary, #60a5fa);
+		border-color: var(--color-info);
+		color: var(--color-info);
 	}
 	.term-cmd:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
 	}
 	.term-cmd-primary {
-		color: var(--primary, #60a5fa);
+		color: var(--color-info);
 		border-color: rgba(96, 165, 250, 0.4);
 	}
 	.term-arrow {

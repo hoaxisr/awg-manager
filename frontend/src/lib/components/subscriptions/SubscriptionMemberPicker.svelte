@@ -128,7 +128,7 @@
         flex-shrink: 0;
     }
     .led.on {
-        background: #3fb950;
+        background: var(--color-success);
         box-shadow: 0 0 0 2px rgba(63, 185, 80, 0.22);
     }
     .server {
@@ -156,7 +156,7 @@
     .delay.unknown { color: var(--color-text-muted); }
     .err {
         padding: 0.5rem 0.75rem;
-        color: #f85149;
+        color: var(--color-error);
         font-size: 0.78rem;
         border-top: 1px solid var(--color-border);
     }

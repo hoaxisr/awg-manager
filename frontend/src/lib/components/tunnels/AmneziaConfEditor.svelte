@@ -220,7 +220,7 @@
 	}
 
 	.ace-back :global(.ace-section) {
-		color: var(--color-accent, var(--accent, #7aa2f7));
+		color: var(--color-accent);
 	}
 	.ace-back :global(.ace-comment) {
 		color: var(--color-text-muted, var(--text-muted));
@@ -277,6 +277,6 @@
 	}
 
 	.ace-ta::selection {
-		background: color-mix(in srgb, var(--color-accent, #7aa2f7) 38%, transparent);
+		background: color-mix(in srgb, var(--color-accent) 38%, transparent);
 	}
 </style>

@@ -634,11 +634,11 @@
 	}
 	.mode-card:hover { border-color: var(--color-text-muted); }
 	.mode-card.selected {
-		border-color: var(--color-primary, #3b82f6);
+		border-color: var(--color-accent);
 		background: rgba(59, 130, 246, 0.06);
 	}
 	.mode-card:focus-visible {
-		outline: 2px solid var(--color-primary, #3b82f6);
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 	.mode-title {
@@ -660,7 +660,7 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		color: var(--color-primary, #3b82f6);
+		color: var(--color-accent);
 	}
 	.mode-check svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 3; }
 	.urltest-block {
@@ -712,7 +712,7 @@
 	}
 	.filter-warn {
 		font-size: var(--sub-meta);
-		color: #d29922;
+		color: var(--color-warning);
 	}
 	.filter-hint {
 		font-size: var(--sub-meta);
@@ -727,7 +727,7 @@
 		border-radius: 3px;
 	}
 	.filter-hint-inline {
-		color: #d29922;
+		color: var(--color-warning);
 	}
 
 	.mono { font-family: var(--font-mono, ui-monospace, monospace); }

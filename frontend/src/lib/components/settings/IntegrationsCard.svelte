@@ -416,14 +416,14 @@
 		left: 0;
 		top: 0;
 		bottom: 0;
-		background: var(--color-primary, #3b82f6);
+		background: var(--color-accent);
 		transition: width 120ms ease-out;
 	}
 	.progress-bar.indeterminate .progress-fill {
 		background: linear-gradient(
 			90deg,
 			transparent 0%,
-			var(--color-primary, #3b82f6) 50%,
+			var(--color-accent) 50%,
 			transparent 100%
 		);
 		background-size: 200% 100%;

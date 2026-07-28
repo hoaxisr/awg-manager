@@ -152,7 +152,7 @@
 	}
 	.t th, .t td {
 		padding: 6px 10px;
-		border-bottom: 1px solid var(--border-1, #2c3134);
+		border-bottom: 1px solid var(--color-border);
 		text-align: left;
 		vertical-align: top;
 		overflow: hidden;
@@ -167,7 +167,7 @@
 		font-size: 11px; font-weight: 600;
 		text-transform: uppercase; letter-spacing: 0.04em;
 		color: var(--text-primary, #c0caf5);
-		background: var(--bg-secondary, #16161e);
+		background: var(--bg-secondary);
 		/* z-index lifts the header above tbody rows so they don't bleed
 		   through during scroll (sticky elements get a stacking context
 		   but tbody rows have z-index:auto by default). */
@@ -187,22 +187,22 @@
 		font-weight: 600;
 		font-family: ui-monospace, monospace;
 	}
-	.proto-tcp { background: rgba(74, 158, 255, 0.15); color: #4a9eff; }
-	.proto-udp { background: rgba(218, 184, 86, 0.15); color: #dab856; }
+	.proto-tcp { background: color-mix(in srgb, var(--hue-blue) 15%, transparent); color: var(--hue-blue); }
+	.proto-udp { background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning); }
 	.badge {
 		display: inline-block;
 		padding: 2px 6px;
 		border-radius: 3px;
-		background: rgba(218, 119, 86, 0.12);
-		color: #da7756;
+		background: var(--color-accent-tint);
+		color: var(--color-accent);
 		font-size: 11px;
 		font-family: ui-monospace, monospace;
 	}
 	.badge.awg {
-		background: rgba(156, 138, 255, 0.14);
-		color: #9c8aff;
+		background: color-mix(in srgb, var(--hue-violet) 14%, transparent);
+		color: var(--hue-violet);
 	}
-	.badge.muted { background: rgba(110, 110, 110, 0.15); color: var(--text-tertiary, #6e6e6e); }
+	.badge.muted { background: var(--color-muted-tint); color: var(--text-tertiary); }
 	.kill {
 		all: unset;
 		cursor: pointer;
@@ -212,7 +212,7 @@
 		font-size: 16px;
 		line-height: 1;
 	}
-	.kill:hover { color: #ff6b6b; background: rgba(255, 107, 107, 0.1); }
+	.kill:hover { color: var(--color-error); background: color-mix(in srgb, var(--color-error) 10%, transparent); }
 	.empty { text-align: center; color: var(--text-tertiary, #6e6e6e); padding: 24px; }
 	.pager {
 		display: flex; gap: 12px; align-items: center; justify-content: center;
@@ -223,9 +223,9 @@
 		cursor: pointer;
 		padding: 4px 10px;
 		border-radius: 4px;
-		background: var(--surface-1, #1f2425);
+		background: var(--color-bg-tertiary);
 	}
-	.pager button:hover:not(:disabled) { background: var(--surface-hover, #262a2c); }
+	.pager button:hover:not(:disabled) { background: var(--color-bg-hover); }
 	.pager button:disabled { opacity: 0.3; cursor: not-allowed; }
 	/* RULE column: cap at its colgroup hint so long rule_set=[…] strings
 	   don't push the column wider than intended. The full value is always

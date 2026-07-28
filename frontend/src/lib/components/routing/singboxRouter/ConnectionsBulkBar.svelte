@@ -68,7 +68,7 @@
 	.bar {
 		display: flex; justify-content: space-between; align-items: center;
 		padding: 8px 12px; margin-bottom: 8px;
-		background: var(--bg-secondary, #16161e);
+		background: var(--bg-secondary);
 		border: 1px solid var(--border, #3b4261);
 		border-radius: 6px;
 		font-size: 13px;
@@ -79,7 +79,7 @@
 		padding: 4px 12px;
 		border-radius: 4px;
 		background: rgba(255, 107, 107, 0.1);
-		color: #ff6b6b;
+		color: var(--color-error);
 		font-size: 12px;
 	}
 	.kill-btn:hover { background: rgba(255, 107, 107, 0.2); }

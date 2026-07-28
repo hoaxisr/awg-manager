@@ -656,7 +656,7 @@
 	}
 	.error-text {
 		font-size: 0.75rem;
-		color: var(--color-danger, #e74c3c);
+		color: var(--color-error);
 		margin: 0;
 	}
 	.tile-bg-controls {

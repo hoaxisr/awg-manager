@@ -524,9 +524,9 @@
 	}
 
 	.quiz-timer-urgent {
-		border-color: color-mix(in srgb, var(--danger, #ef4444) 45%, var(--border));
-		color: var(--danger, #ef4444);
-		background: color-mix(in srgb, var(--danger, #ef4444) 10%, transparent);
+		border-color: color-mix(in srgb, var(--color-error) 45%, var(--border));
+		color: var(--color-error);
+		background: color-mix(in srgb, var(--color-error) 10%, transparent);
 	}
 
 	.gate-lead {
@@ -734,7 +734,7 @@
 		text-align: left;
 		border: 1px solid var(--border);
 		border-radius: 0.65rem;
-		background: var(--surface, transparent);
+		background: transparent;
 		color: var(--text-primary);
 		cursor: pointer;
 		transition:
@@ -793,8 +793,8 @@
 	}
 
 	.result-banner.failed {
-		border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 35%, var(--border));
-		background: color-mix(in srgb, var(--danger, #ef4444) 8%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-error) 35%, var(--border));
+		background: color-mix(in srgb, var(--color-error) 8%, transparent);
 	}
 
 	.result-score {
@@ -808,7 +808,7 @@
 	}
 
 	.result-banner.failed .result-score {
-		color: var(--danger, #ef4444);
+		color: var(--color-error);
 	}
 
 	.result-caption {

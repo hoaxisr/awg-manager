@@ -59,8 +59,8 @@
 		font-size: 0.9em;
 	}
 	.install-error {
-		background: var(--bg-error, #2d1b1b);
-		border: 1px solid var(--border-error, #5c2828);
+		background: var(--color-error-tint);
+		border: 1px solid var(--color-error-border);
 		border-radius: 6px;
 		padding: 0.75rem;
 		max-width: 500px;

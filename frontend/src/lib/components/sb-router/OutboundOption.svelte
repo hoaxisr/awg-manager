@@ -29,7 +29,7 @@
   </div>
   {#if count}<div class="count">{count}</div>{/if}
   {#if selected}
-    <div class="check"><Check size={10} color="#fff" /></div>
+    <div class="check"><Check size={10} /></div>
   {/if}
 </button>
 
@@ -89,10 +89,11 @@
     height: 16px;
     border-radius: 50%;
     background: var(--accent);
+    color: var(--color-accent-contrast, #fff);
     display: flex;
     align-items: center;
     justify-content: center;
   }
   .opt.tone-muted .check { background: var(--text-muted); }
-  .opt.tone-error .check { background: var(--color-error, #dc2626); }
+  .opt.tone-error .check { background: var(--color-error); color: var(--color-error-contrast, #fff); }
 </style>

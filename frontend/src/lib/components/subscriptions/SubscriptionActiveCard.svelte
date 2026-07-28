@@ -1107,8 +1107,8 @@
     }
     .badge.proto    { background: rgba(88,166,255,0.15); color: var(--color-accent); }
     .badge.transport{ background: var(--color-bg-tertiary); color: var(--color-text-muted); }
-    .badge.tls      { background: rgba(63,185,80,0.15); color: #3fb950; }
-    .badge.reality  { background: rgba(210,153,34,0.15); color: #d29922; }
+    .badge.tls      { background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success); }
+    .badge.reality  { background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning); }
     .server-section {
         padding-top: 8px;
         border-top: 1px dashed var(--color-border);
@@ -1218,7 +1218,7 @@
     }
     .sub-error {
         font-size: var(--sbx-card-meta);
-        color: #f85149;
+        color: var(--color-error);
     }
     .mono {
         font-family: var(--font-mono, ui-monospace, monospace);
@@ -1272,7 +1272,7 @@
     .delay-inline-err {
         font-size: var(--sbx-card-badge);
         line-height: 1.25;
-        color: #f85149;
+        color: var(--color-error);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;

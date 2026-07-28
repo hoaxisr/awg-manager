@@ -52,32 +52,32 @@
 
 .tone-chip.tone-proxy,
 .tone-icon.tone-proxy {
-	color: #56c8b8;
+	color: var(--hue-teal);
 }
 
 .tone-chip.tone-proxy {
-	background: color-mix(in srgb, #56c8b8 14%, transparent);
-	border-color: color-mix(in srgb, #56c8b8 36%, transparent);
+	background: color-mix(in srgb, var(--hue-teal) 14%, transparent);
+	border-color: color-mix(in srgb, var(--hue-teal) 36%, transparent);
 }
 
 .tone-chip.tone-awg,
 .tone-icon.tone-awg {
-	color: #9c8aff;
+	color: var(--hue-violet);
 }
 
 .tone-chip.tone-awg {
-	background: color-mix(in srgb, #9c8aff 12%, transparent);
-	border-color: color-mix(in srgb, #9c8aff 34%, transparent);
+	background: color-mix(in srgb, var(--hue-violet) 12%, transparent);
+	border-color: color-mix(in srgb, var(--hue-violet) 34%, transparent);
 }
 
 .tone-chip.tone-subscription,
 .tone-icon.tone-subscription {
-	color: #7dcfff;
+	color: var(--hue-sky);
 }
 
 .tone-chip.tone-subscription {
-	background: color-mix(in srgb, #7dcfff 14%, transparent);
-	border-color: color-mix(in srgb, #7dcfff 36%, transparent);
+	background: color-mix(in srgb, var(--hue-sky) 14%, transparent);
+	border-color: color-mix(in srgb, var(--hue-sky) 36%, transparent);
 }
 
 .tone-chip.tone-composite,
@@ -96,8 +96,8 @@
 }
 
 .tone-chip.tone-block {
-	background: rgba(181, 101, 119, 0.12);
-	border-color: rgba(181, 101, 119, 0.3);
+	background: color-mix(in srgb, var(--error) 14%, transparent);
+	border-color: color-mix(in srgb, var(--error) 34%, transparent);
 }
 
 .tone-chip.tone-direct,
@@ -106,19 +106,19 @@
 }
 
 .tone-chip.tone-direct {
-	background: rgba(255, 255, 255, 0.04);
+	background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 	border-color: var(--border);
 	font-weight: 500;
 }
 
 .tone-chip.tone-via-route,
 .tone-icon.tone-via-route {
-	color: #8ab4f8;
+	color: var(--hue-blue);
 }
 
 .tone-chip.tone-via-route {
-	background: color-mix(in srgb, #8ab4f8 12%, transparent);
-	border-color: color-mix(in srgb, #8ab4f8 32%, transparent);
+	background: color-mix(in srgb, var(--hue-blue) 12%, transparent);
+	border-color: color-mix(in srgb, var(--hue-blue) 32%, transparent);
 }
 
 .tone-chip.tone-invalid,
@@ -127,8 +127,8 @@
 }
 
 .tone-chip.tone-invalid {
-	background: rgba(181, 101, 119, 0.14);
-	border-color: rgba(181, 101, 119, 0.45);
+	background: color-mix(in srgb, var(--error) 18%, transparent);
+	border-color: color-mix(in srgb, var(--error) 48%, transparent);
 }
 
 .tone-chip.tone-system,
@@ -149,6 +149,6 @@
 }
 
 .tone-chip.tone-unknown {
-	background: rgba(184, 147, 90, 0.12);
-	border-color: rgba(184, 147, 90, 0.3);
+	background: color-mix(in srgb, var(--warning) 14%, transparent);
+	border-color: color-mix(in srgb, var(--warning) 34%, transparent);
 }

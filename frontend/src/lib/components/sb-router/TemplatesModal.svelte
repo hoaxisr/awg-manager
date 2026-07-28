@@ -393,7 +393,7 @@
     padding: 6px 14px;
     border-radius: var(--radius-sm);
     background: var(--accent);
-    color: #fff;
+    color: var(--color-accent-contrast, #fff);
     border: 0;
     cursor: pointer;
     font-family: inherit;

@@ -666,7 +666,7 @@
 		font-family: inherit;
 	}
 	.selected-geo:hover {
-		border-color: var(--danger, #dc2626);
+		border-color: var(--color-error);
 	}
 	.selected-geo code {
 		min-width: 0;

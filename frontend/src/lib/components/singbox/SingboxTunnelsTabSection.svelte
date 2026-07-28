@@ -339,17 +339,17 @@
 	}
 
 	.empty-kind-card:hover {
-		border-color: var(--color-primary, #3b82f6);
+		border-color: var(--color-accent);
 		background: rgba(59, 130, 246, 0.04);
 		transform: translateY(-1px);
 	}
 
 	.empty-kind-card:focus-visible {
-		outline: 2px solid var(--color-primary, #3b82f6);
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 
-	:global(.empty-kind-icon) { color: var(--color-primary, #3b82f6); }
+	:global(.empty-kind-icon) { color: var(--color-accent); }
 
 	.empty-kind-title { font-weight: 600; font-size: 0.95rem; }
 

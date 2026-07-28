@@ -23,7 +23,7 @@
 <button type="button" class="row" class:selected aria-pressed={selected} {onclick}>
   <div class="check">
     {#if selected}
-      <Check size={10} color="#fff" />
+      <Check size={10} />
     {/if}
   </div>
   <div class="meta">
@@ -73,6 +73,7 @@
   .row.selected .check {
     background: var(--accent);
     border-color: var(--accent);
+    color: var(--color-accent-contrast, #fff);
   }
   .meta {
     min-width: 0;

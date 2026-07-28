@@ -198,7 +198,7 @@
 		transition: border-color 0.15s ease, background 0.15s ease;
 	}
 	.card:hover:not(.active):not(:disabled) { border-color: var(--color-accent); }
-	.card.active { border-color: #3fb950; background: rgba(63, 185, 80, 0.06); }
+	.card.active { border-color: var(--color-success); background: color-mix(in srgb, var(--color-success) 6%, transparent); }
 	.card.switching { opacity: 0.7; cursor: wait; }
 	.card:disabled { cursor: wait; opacity: 0.6; }
 	.header {
@@ -213,7 +213,7 @@
 		flex-shrink: 0;
 	}
 	.led.on {
-		background: #3fb950;
+		background: var(--color-success);
 		box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.22);
 	}
 	.title {
@@ -241,8 +241,8 @@
 	}
 	.badge.proto { background: rgba(88,166,255,0.15); color: var(--color-accent); }
 	.badge.transport { background: var(--color-bg-tertiary); color: var(--color-text-muted); }
-	.badge.tls { background: rgba(63,185,80,0.15); color: #3fb950; }
-	.badge.reality { background: rgba(210,153,34,0.15); color: #d29922; }
+	.badge.tls { background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success); }
+	.badge.reality { background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning); }
 	.footer {
 		display: flex;
 		justify-content: space-between;
@@ -263,7 +263,7 @@
 		padding: 0.1rem 0.45rem;
 		border-radius: 999px;
 	}
-	.active-badge { background: rgba(63,185,80,0.15); color: #3fb950; }
+	.active-badge { background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success); }
 	.switching-badge { background: rgba(88,166,255,0.15); color: var(--color-accent); }
 	.mono { font-family: var(--font-mono, ui-monospace, monospace); }
 	.delay-row {

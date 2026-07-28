@@ -111,7 +111,7 @@
 
 	.unsupported-link-primary {
 		background: var(--color-accent);
-		color: #fff;
+		color: var(--color-accent-contrast, #fff);
 		border-color: var(--color-accent);
 	}
 </style>

@@ -131,8 +131,8 @@
 		font-size: 10px;
 		font-weight: 700;
 		line-height: 1;
-		color: #fff;
-		background: var(--color-danger, #e5484d);
+		color: var(--color-error-contrast, #fff);
+		background: var(--color-error);
 		border-radius: 999px;
 		pointer-events: none;
 	}
@@ -211,7 +211,7 @@
 	}
 
 	.notif-row.is-error .notif-msg {
-		color: var(--color-danger, #e5484d);
+		color: var(--color-error);
 	}
 
 	.notif-meta {

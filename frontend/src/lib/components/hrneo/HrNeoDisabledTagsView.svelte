@@ -95,7 +95,7 @@
 	.tag-name {
 		font-family: ui-monospace, monospace;
 		font-weight: 600;
-		color: #bb8bff;
+		color: var(--hue-violet);
 	}
 
 	.tag-count {

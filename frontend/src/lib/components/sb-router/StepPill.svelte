@@ -20,7 +20,7 @@
 <div class="pill" class:active class:done>
   <span class="bullet">
     {#if done}
-      <Check size={12} color="#fff" />
+      <Check size={12} />
     {:else}
       {n}
     {/if}
@@ -62,11 +62,11 @@
   }
   .pill.active .bullet {
     background: var(--accent);
-    color: #fff;
+    color: var(--color-accent-contrast, #fff);
   }
   .pill.done .bullet {
-    background: var(--color-success, #22c55e);
-    color: #fff;
+    background: var(--color-success);
+    color: var(--color-success-contrast, #fff);
   }
   .label {
     font-size: 12.5px;

@@ -23,7 +23,7 @@
 <button type="button" class="tile" class:selected aria-pressed={selected} {onclick}>
   <div class="check">
     {#if selected}
-      <Check size={10} color="#fff" />
+      <Check size={10} />
     {/if}
   </div>
   <div class="icon">
@@ -71,6 +71,7 @@
   .tile.selected .check {
     background: var(--accent);
     border-color: var(--accent);
+    color: var(--color-accent-contrast, #fff);
   }
   .icon {
     width: 26px;

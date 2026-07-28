@@ -485,7 +485,7 @@
 
 	.wdtt-load-error {
 		font-size: 0.8125rem;
-		color: var(--color-danger);
+		color: var(--color-error);
 		margin-top: 0.5rem;
 	}
 

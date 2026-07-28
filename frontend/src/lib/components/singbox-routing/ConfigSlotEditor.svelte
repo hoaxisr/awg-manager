@@ -460,7 +460,7 @@
 		line-height: 1.45;
 	}
 	.editor-frame:focus-within {
-		border-color: var(--color-primary, #3b82f6);
+		border-color: var(--color-accent);
 	}
 
 	.gutter {

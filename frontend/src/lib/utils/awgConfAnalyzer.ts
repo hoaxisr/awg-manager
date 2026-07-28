@@ -1145,8 +1145,8 @@ export function getVerdict(score: number): AwgVerdict {
 	if (score >= 30) {
 		return {
 			label: 'Слабая защита',
-			color: '#f97316',
-			tint: 'color-mix(in srgb, #f97316 12%, transparent)',
+			color: 'var(--color-broken)',
+			tint: 'var(--color-broken-tint)',
 			text: 'Минимальная обфускация. Трафик легко идентифицируется как WireGuard.',
 		};
 	}

@@ -328,7 +328,7 @@ geosite:xai`;
 		padding: 0.5rem 0.65rem;
 		border: 1px solid var(--border);
 		border-radius: 0.45rem;
-		background: var(--surface-1, rgba(255, 255, 255, 0.035));
+		background: var(--color-bg-tertiary);
 		color: var(--muted-text);
 		font-size: 0.8rem;
 		line-height: 1.45;
@@ -365,7 +365,7 @@ geosite:xai`;
 	}
 
 	.inline-help code {
-		background: var(--surface-2, rgba(255, 255, 255, 0.06));
+		background: var(--color-bg-hover);
 		border-radius: 0.25rem;
 		padding: 0.05rem 0.25rem;
 		font-size: 0.78rem;
@@ -379,7 +379,7 @@ geosite:xai`;
 		padding: 0.55rem 0.65rem;
 		border: 1px solid var(--border);
 		border-radius: 0.45rem;
-		background: var(--surface-1, rgba(255, 255, 255, 0.035));
+		background: var(--color-bg-tertiary);
 		font-size: 0.82rem;
 		line-height: 1.4;
 		max-height: min(12rem, 32vh);
@@ -406,8 +406,8 @@ geosite:xai`;
 	}
 
 	.parse-messages-error {
-		border-color: var(--danger, #dc2626);
-		color: var(--danger, #dc2626);
+		border-color: var(--color-error);
+		color: var(--color-error);
 		background: rgba(220, 38, 38, 0.08);
 	}
 
@@ -417,7 +417,7 @@ geosite:xai`;
 		background: rgba(217, 119, 6, 0.08);
 	}
 	.info {
-		color: #10b981;
+		color: var(--color-success);
 		font-size: 0.85rem;
 	}
 	.json-preview {

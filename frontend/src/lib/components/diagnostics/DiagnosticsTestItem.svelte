@@ -80,28 +80,28 @@
 	}
 
 	.test-pass .test-icon {
-		background: rgba(34, 197, 94, 0.15);
-		color: #22c55e;
+		background: color-mix(in srgb, var(--color-success) 15%, transparent);
+		color: var(--color-success);
 	}
 
 	.test-fail .test-icon {
-		background: rgba(239, 68, 68, 0.15);
-		color: #ef4444;
+		background: color-mix(in srgb, var(--color-error) 15%, transparent);
+		color: var(--color-error);
 	}
 
 	.test-warn .test-icon {
-		background: rgba(224, 175, 104, 0.15);
+		background: color-mix(in srgb, var(--color-warning) 15%, transparent);
 		color: var(--color-warning);
 	}
 
 	.test-skip .test-icon {
-		background: rgba(156, 163, 175, 0.15);
-		color: #9ca3af;
+		background: var(--color-muted-tint);
+		color: var(--color-text-muted);
 	}
 
 	.test-error .test-icon {
-		background: rgba(234, 179, 8, 0.15);
-		color: #eab308;
+		background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+		color: var(--color-warning);
 	}
 
 	.test-name {

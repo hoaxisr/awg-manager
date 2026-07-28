@@ -92,9 +92,9 @@
   }
 
   .variant-purple {
-    background: color-mix(in srgb, #9c8aff 14%, transparent);
-    color: #9c8aff;
-    border-color: color-mix(in srgb, #9c8aff 36%, transparent);
+    background: color-mix(in srgb, var(--hue-violet) 14%, transparent);
+    color: var(--hue-violet);
+    border-color: color-mix(in srgb, var(--hue-violet) 36%, transparent);
   }
 
   .variant-success {

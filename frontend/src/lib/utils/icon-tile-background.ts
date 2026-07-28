@@ -10,7 +10,7 @@ export const QURE_ICON_INNER_SCALE = 0.72;
  * and slightly darker in light theme, so icons do not blend into the card.
  */
 export const DEFAULT_ICON_TILE_BG =
-	'var(--color-icon-tile-bg, var(--color-bg-tertiary, var(--bg-tertiary, #24283b)))';
+	'var(--color-icon-tile-bg, var(--color-bg-tertiary, var(--bg-tertiary, #26262c)))';
 
 export function isQureIconUrl(url: string | undefined): url is string {
 	return typeof url === 'string' && iconImageSrc(url).startsWith(QURE_CDN_BASE);
@@ -39,13 +39,13 @@ export function resolveIconTileBackground(_ruleName: string, iconUrl?: string): 
 
 /** Read resolved --color-icon-tile-bg from the active theme (for color inputs). */
 export function readThemeIconTileHex(): string {
-	if (typeof document === 'undefined') return '#24283b';
+	if (typeof document === 'undefined') return '#26262c';
 	const probe = document.createElement('div');
 	probe.style.cssText = `position:absolute;visibility:hidden;background:${DEFAULT_ICON_TILE_BG}`;
 	document.body.appendChild(probe);
 	const hex = rgbCssToHex(getComputedStyle(probe).backgroundColor);
 	probe.remove();
-	return hex ?? '#24283b';
+	return hex ?? '#26262c';
 }
 
 function rgbCssToHex(css: string): string | null {

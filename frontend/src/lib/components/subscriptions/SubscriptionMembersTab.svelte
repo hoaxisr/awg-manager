@@ -840,9 +840,9 @@
 		text-transform: uppercase;
 		letter-spacing: 0.5px;
 	}
-	.lbl.warn { color: #d29922; }
+	.lbl.warn { color: var(--color-warning); }
 	.val { color: var(--color-text-primary); font-size: 0.85rem; }
-	.err { color: #f85149; font-size: 0.85rem; margin-bottom: 0.6rem; }
+	.err { color: var(--color-error); font-size: 0.85rem; margin-bottom: 0.6rem; }
 	.hint { color: var(--color-text-muted); font-size: 0.82rem; margin-bottom: 0.8rem; }
 	.empty {
 		padding: 2rem;
@@ -906,8 +906,8 @@
 		cursor: pointer;
 	}
 	.info-remove-btn:hover:not(:disabled) {
-		color: var(--color-danger, #f85149);
-		background: color-mix(in srgb, var(--color-danger, #f85149) 12%, transparent);
+		color: var(--color-error);
+		background: color-mix(in srgb, var(--color-error) 12%, transparent);
 	}
 	.info-remove-btn:disabled {
 		opacity: 0.45;
@@ -1051,7 +1051,7 @@
 		font-family: var(--font-mono, ui-monospace, monospace);
 		font-size: 0.82rem;
 	}
-	.warn { color: #d29922; font-size: 0.85rem; }
+	.warn { color: var(--color-warning); font-size: 0.85rem; }
 
 	@media (max-width: 900px) {
 		.grid {

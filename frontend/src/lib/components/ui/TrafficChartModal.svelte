@@ -498,7 +498,7 @@
 								cy={hoverRxY}
 								r="3.5"
 								fill="var(--accent, #60a5fa)"
-								stroke="var(--bg-primary, #1a1b26)"
+								stroke="var(--bg-primary)"
 								stroke-width="1"
 							/>
 							<circle
@@ -506,7 +506,7 @@
 								cy={hoverTxY}
 								r="3.5"
 								fill="var(--success, #4ade80)"
-								stroke="var(--bg-primary, #1a1b26)"
+								stroke="var(--bg-primary)"
 								stroke-width="1"
 							/>
 							<!-- Tooltip -->
@@ -517,7 +517,7 @@
 									width={TOOLTIP_W}
 									height={TOOLTIP_H}
 									rx="4"
-									fill="var(--bg-secondary, #16161e)"
+									fill="var(--bg-secondary)"
 									stroke="var(--border, #333)"
 									stroke-width="0.6"
 									opacity="0.96"

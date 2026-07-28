@@ -67,6 +67,6 @@
 		color: var(--warning, #f59e0b);
 	}
 	.download-route-note-error {
-		color: var(--color-danger, #ef4444);
+		color: var(--color-error);
 	}
 </style>

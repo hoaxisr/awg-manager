@@ -362,7 +362,7 @@
 </PageContainer>
 
 <style>
-	.err { color: #f85149; margin-top: 1rem; }
+	.err { color: var(--color-error); margin-top: 1rem; }
 	.content { margin-top: 1rem; }
 	.members-toolbar {
 		display: flex;

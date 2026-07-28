@@ -244,7 +244,7 @@
 
 <style>
 	.wd-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; padding-top: 16px; }
-	.wd-skel { height: 220px; border-radius: 12px; background: var(--color-surface-2, rgba(255, 255, 255, 0.03)); animation: wd-pulse 1.4s ease-in-out infinite; }
+	.wd-skel { height: 220px; border-radius: 12px; background: var(--color-bg-tertiary); animation: wd-pulse 1.4s ease-in-out infinite; }
 	@keyframes wd-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.7; } }
 	@media (max-width: 640px) { .wd-grid { grid-template-columns: 1fr; } }
 </style>

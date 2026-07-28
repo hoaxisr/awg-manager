@@ -240,9 +240,9 @@ const emptyStateText = $derived(
 		font-variant-numeric: tabular-nums;
 		flex-shrink: 0;
 	}
-	.status-ok .dot-icon { color: #3d9970; }
-	.status-warn .dot-icon { color: #dab856; }
-	.status-err .dot-icon { color: #ff6b6b; }
+	.status-ok .dot-icon { color: var(--color-success); }
+	.status-warn .dot-icon { color: var(--color-warning); }
+	.status-err .dot-icon { color: var(--color-error); }
 	.empty-state {
 		margin-top: 10px;
 		padding: 12px;

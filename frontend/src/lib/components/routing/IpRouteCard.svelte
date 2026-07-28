@@ -296,7 +296,7 @@
 
 	.dns-card.orphan {
 		opacity: 0.7;
-		border: 1px dashed var(--warn, #d08770);
+		border: 1px dashed var(--color-warning);
 	}
 
 </style>

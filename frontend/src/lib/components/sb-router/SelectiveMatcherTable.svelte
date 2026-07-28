@@ -101,12 +101,12 @@
 		border-radius: 3px;
 	}
 	.badge.cdn {
-		background: #1a3a5c;
-		color: #7eb8ff;
+		background: var(--color-info-tint);
+		color: var(--color-info);
 	}
 	.badge.err {
-		background: #3a1a1a;
-		color: #ff8a8a;
+		background: var(--color-error-tint);
+		color: var(--color-error);
 	}
 	.has-err td {
 		opacity: 0.85;
@@ -126,7 +126,7 @@
 		cursor: default;
 	}
 	.snap-err {
-		color: #f88;
+		color: var(--color-error);
 		font-size: 12px;
 	}
 	.snap-hint {

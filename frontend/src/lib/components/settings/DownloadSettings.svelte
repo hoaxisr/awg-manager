@@ -246,7 +246,7 @@
 	}
 
 	.download-error {
-		color: var(--color-danger);
+		color: var(--color-error);
 		font-size: 0.75rem;
 	}
 

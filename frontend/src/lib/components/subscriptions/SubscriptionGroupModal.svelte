@@ -340,7 +340,7 @@
 		border-color: var(--color-text-muted);
 	}
 	.mode-card.selected {
-		border-color: var(--color-primary, #3b82f6);
+		border-color: var(--color-accent);
 		background: rgba(59, 130, 246, 0.06);
 	}
 	.mode-title {
@@ -448,13 +448,13 @@
 		border-radius: 6px;
 	}
 	.preview-empty {
-		color: #d29922;
+		color: var(--color-warning);
 	}
 	.preview-warn {
 		color: var(--color-text-muted);
 	}
 	.err {
-		color: #f85149;
+		color: var(--color-error);
 		font-size: 0.82rem;
 	}
 	.mono {

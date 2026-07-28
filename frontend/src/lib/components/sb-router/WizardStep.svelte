@@ -64,7 +64,7 @@
   }
   .step.active .circle {
     background: var(--accent);
-    color: #fff;
+    color: var(--color-accent-contrast, #fff);
   }
   .title {
     margin: 0;

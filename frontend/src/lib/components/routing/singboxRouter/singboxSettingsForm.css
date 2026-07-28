@@ -148,7 +148,7 @@
 }
 
 .sbr-settings-form .req {
-	color: var(--danger, #dc2626);
+	color: var(--color-error);
 }
 
 .sbr-settings-form .toggle {
@@ -184,7 +184,7 @@
 }
 
 .sbr-settings-form .error {
-	color: var(--danger, #dc2626);
+	color: var(--color-error);
 	font-size: 0.85rem;
 }
 
@@ -344,7 +344,7 @@
 	padding: 0.55rem 0.65rem;
 	border: 1px solid var(--border);
 	border-radius: 0.45rem;
-	background: var(--surface-1, rgba(255, 255, 255, 0.035));
+	background: var(--color-bg-tertiary);
 	font-size: 0.72rem;
 	line-height: 1.4;
 	max-height: min(12rem, 32vh);

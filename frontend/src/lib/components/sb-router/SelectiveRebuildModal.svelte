@@ -248,7 +248,7 @@
 		padding: 16px;
 	}
 	.modal {
-		background: var(--surface, #1e1e1e);
+		background: var(--color-bg-secondary);
 		border: 1px solid var(--border, #333);
 		border-radius: 8px;
 		max-width: 520px;
@@ -294,11 +294,11 @@
 	}
 	.step[data-state='done'] {
 		opacity: 0.85;
-		color: #6c6;
+		color: var(--color-success);
 	}
 	.step[data-state='error'] {
 		opacity: 1;
-		color: #f66;
+		color: var(--color-error);
 	}
 	.step-icon {
 		width: 1.2em;
@@ -330,7 +330,7 @@
 		font-family: var(--font-mono, monospace);
 	}
 	.err {
-		color: #f88;
+		color: var(--color-error);
 		font-size: 12px;
 	}
 	.done-block {
@@ -359,8 +359,8 @@
 		font-size: 13px;
 	}
 	.btn-danger {
-		border-color: #a44;
-		color: #f88;
+		border-color: var(--color-error-border);
+		color: var(--color-error);
 	}
 	.btn-danger:disabled {
 		opacity: 0.6;

@@ -887,18 +887,18 @@
 		border-radius: 10px;
 		font-weight: 500;
 	}
-	.b-vless { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
-	.b-hysteria2 { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
-	.b-trojan { background: rgba(244, 63, 94, 0.15); color: #fb7185; }
-	.b-shadowsocks { background: rgba(16, 185, 129, 0.15); color: #34d399; }
-	.b-mieru { background: rgba(20, 184, 166, 0.18); color: #5eead4; }
+	.b-vless { background: color-mix(in srgb, var(--hue-blue) 15%, transparent); color: var(--hue-blue); }
+	.b-hysteria2 { background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning); }
+	.b-trojan { background: color-mix(in srgb, var(--color-error) 15%, transparent); color: var(--color-error); }
+	.b-shadowsocks { background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success); }
+	.b-mieru { background: color-mix(in srgb, var(--hue-teal) 18%, transparent); color: var(--hue-teal); }
 	/* Cyan-400 on 15% alpha perceptually washed out against the dark
 	   bg — bump to cyan-300 text with slightly denser background so
 	   NaiveProxy matches the contrast of the other protocol badges. */
-	.b-naive { background: rgba(34, 211, 238, 0.22); color: #67e8f9; }
-	.b-reality { background: rgba(236, 72, 153, 0.15); color: #f472b6; }
-	.b-tls { background: rgba(139, 92, 246, 0.15); color: #a78bfa; }
-	.b-transport { background: rgba(100, 100, 100, 0.3); color: var(--text-muted); }
+	.b-naive { background: color-mix(in srgb, var(--hue-sky) 22%, transparent); color: var(--hue-sky); }
+	.b-reality { background: var(--color-accent-tint); color: var(--color-accent); }
+	.b-tls { background: color-mix(in srgb, var(--hue-violet) 15%, transparent); color: var(--hue-violet); }
+	.b-transport { background: var(--color-muted-tint); color: var(--text-muted); }
 
 	.row {
 		display: flex;
@@ -1132,8 +1132,8 @@
 		letter-spacing: 0.04em;
 	}
 	.run-pill.run-on {
-		background: rgba(16, 185, 129, 0.2);
-		color: #10b981;
+		background: color-mix(in srgb, var(--color-success) 20%, transparent);
+		color: var(--color-success);
 	}
 	.traffic-mini {
 		font-size: var(--sbx-card-note);

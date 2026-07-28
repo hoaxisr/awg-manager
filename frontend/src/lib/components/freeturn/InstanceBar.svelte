@@ -241,7 +241,7 @@
 	}
 
 	.ft-chip-action.danger:hover {
-		color: var(--color-danger);
+		color: var(--color-error);
 	}
 
 	.ft-rename-input {

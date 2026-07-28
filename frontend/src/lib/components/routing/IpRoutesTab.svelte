@@ -398,7 +398,7 @@
     .orphan-header {
         font-size: 0.8125rem;
         font-weight: 600;
-        color: var(--warn, #d08770);
+        color: var(--color-warning);
         margin: 0 0 4px 0;
         text-transform: uppercase;
         letter-spacing: 0.05em;
@@ -411,7 +411,7 @@
     }
 
     .orphan-count {
-        color: var(--warn, #d08770);
+        color: var(--color-warning);
         font-weight: 500;
     }
 </style>
