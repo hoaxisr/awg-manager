@@ -45,6 +45,13 @@ describe('StagingBanner', () => {
 		expect(getByText('Сбросить')).toBeTruthy();
 	});
 
+	it('renders banner without the time when draftedAt is unparseable', () => {
+		stagingWritable.set({ hasDraft: true, draftedAt: 'не-дата' });
+		const { container } = render(StagingBanner);
+		expect(container.querySelector('.staging-banner')).toBeTruthy();
+		expect(container.querySelector('.time')).toBeNull();
+	});
+
 	it('clicking Apply calls api.singboxRouterStagingApply', async () => {
 		stagingWritable.set({ hasDraft: true, draftedAt: '2026-05-11T16:32:00Z' });
 		vi.mocked(apiFn.singboxRouterStagingApply).mockResolvedValue(undefined);

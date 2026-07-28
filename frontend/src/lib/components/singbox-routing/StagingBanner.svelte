@@ -11,7 +11,7 @@
 	const stagingStore = singboxRouter.staging;
 	const staging = $derived($stagingStore);
 	const hasDraft = $derived(staging?.hasDraft === true);
-	const draftedAt = $derived(staging?.draftedAt ? new Date(staging.draftedAt) : null);
+	const draftedAt = $derived(parseDrafted(staging?.draftedAt));
 
 	let applying = $state(false);
 	let discarding = $state(false);
@@ -53,8 +53,14 @@
 		}
 	}
 
-	function formatDrafted(d: Date | null): string {
-		if (!d) return '';
+	/** Дата из бэкенда может быть непарсимой — Invalid Date роняет toISOString(). */
+	function parseDrafted(value: string | null | undefined): Date | null {
+		if (!value) return null;
+		const d = new Date(value);
+		return Number.isNaN(d.getTime()) ? null : d;
+	}
+
+	function formatDrafted(d: Date): string {
 		return `с ${formatTime(d.toISOString())}`;
 	}
 
@@ -140,7 +146,7 @@
 				<span class="dot" aria-hidden="true"></span>
 				<span class="title">
 					{hasErrors ? 'Не могу применить' : 'Несохранённые изменения'}
-					·&nbsp;<span class="time">{formatDrafted(draftedAt)}</span>
+					{#if draftedAt}·&nbsp;<span class="time">{formatDrafted(draftedAt)}</span>{/if}
 				</span>
 				<div class="spacer"></div>
 				{@render bannerActions()}
