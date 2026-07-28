@@ -18,7 +18,7 @@
 	} from '$lib/stores/theme';
 	import { Palette, ChevronDown, Check } from 'lucide-svelte';
 
-	const PRESET_ORDER: ThemePreset[] = ['legacy', 'neo', 'mint', 'custom'];
+	const PRESET_ORDER: ThemePreset[] = ['grafit', 'sever', 'mokh', 'mint', 'custom'];
 	const LEGACY_MODE_OPTIONS: Array<{ value: ThemeModePreference; label: string }> = [
 		{ value: 'system', label: 'Системная' },
 		{ value: 'dark', label: 'Тёмная' },

@@ -264,6 +264,7 @@ describe('theme store system mode', () => {
 		const unsub = theme.subscribe(state);
 		const current = latestState(state);
 
+		expect(current.preset).toBe('grafit');
 		expect(current.modePreference).toBe('system');
 		expect(current.legacyMode).toBe('light');
 		expect(current.mode).toBe('light');
@@ -278,6 +279,7 @@ describe('theme store system mode', () => {
 		let unsub = module.theme.subscribe(state);
 		let current = latestState(state);
 
+		expect(current.preset).toBe('grafit');
 		expect(current.modePreference).toBe('dark');
 		expect(current.legacyMode).toBe('dark');
 
@@ -286,7 +288,7 @@ describe('theme store system mode', () => {
 		localStorage.setItem(
 			'awg-manager-theme',
 			JSON.stringify({
-				preset: 'neo',
+				preset: 'sever',
 				legacyMode: 'light',
 				custom: { accent: '#123456', background: '#111111', text: '#eeeeee' },
 			}),
@@ -296,9 +298,53 @@ describe('theme store system mode', () => {
 		unsub = module.theme.subscribe(state);
 		current = latestState(state);
 
-		expect(current.preset).toBe('neo');
+		expect(current.preset).toBe('sever');
 		expect(current.modePreference).toBe('light');
 		expect(current.legacyMode).toBe('light');
+
+		unsub();
+	});
+
+	for (const removed of ['legacy', 'neo'] as const) {
+		it(`мигрирует сохранённый пресет ${removed} в grafit, сохраняя режим и custom`, async () => {
+			localStorage.setItem(
+				'awg-manager-theme',
+				JSON.stringify({
+					preset: removed,
+					modePreference: 'light',
+					custom: { accent: '#123456', background: '#111111', text: '#eeeeee' },
+				}),
+			);
+			const { theme } = await initThemeStore();
+			const state = vi.fn();
+			const unsub = theme.subscribe(state);
+			const current = latestState(state);
+
+			expect(current.preset).toBe('grafit');
+			expect(current.modePreference).toBe('light');
+			expect(current.legacyMode).toBe('light');
+			expect(current.mode).toBe('light');
+			expect((current as unknown as { custom: Record<string, string> }).custom).toEqual({
+				accent: '#123456',
+				background: '#111111',
+				text: '#eeeeee',
+			});
+
+			unsub();
+		});
+	}
+
+	it('не воскрешает удалённые пресеты при перезаписи хранилища', async () => {
+		localStorage.setItem(
+			'awg-manager-theme',
+			JSON.stringify({ preset: 'neo', modePreference: 'dark' }),
+		);
+		const { theme } = await initThemeStore();
+		const state = vi.fn();
+		const unsub = theme.subscribe(state);
+
+		expect(latestState(state).preset).toBe('grafit');
+		expect(localStorage.getItem('awg-manager-theme')).toContain('"preset":"grafit"');
 
 		unsub();
 	});
@@ -325,7 +371,7 @@ describe('theme store system mode', () => {
 		localStorage.setItem(
 			'awg-manager-theme',
 			JSON.stringify({
-				preset: 'legacy',
+				preset: 'sever',
 				modePreference: 'dark',
 				custom: { accent: '#8b5cf6', background: '#111827', text: '#f8fafc' },
 			}),
@@ -355,7 +401,7 @@ describe('theme store system mode', () => {
 		const themeMeta = document.querySelector('meta[name="theme-color"]');
 		const appleMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
 
-		expect(themeMeta?.getAttribute('content')).toBe('#16161e');
+		expect(themeMeta?.getAttribute('content')).toBe('#1b1b1f');
 		expect(appleMeta?.getAttribute('content')).toBe('black');
 
 		theme.setPreset('mint');

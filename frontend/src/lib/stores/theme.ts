@@ -6,7 +6,7 @@ import {
 	refreshDynamicFavicon
 } from './themeFavicon';
 
-export type ThemePreset = 'grafit' | 'sever' | 'mokh' | 'legacy' | 'neo' | 'mint' | 'custom';
+export type ThemePreset = 'grafit' | 'sever' | 'mokh' | 'mint' | 'custom';
 export type ThemeMode = 'dark' | 'light';
 export type ThemeModePreference = 'system' | ThemeMode;
 
@@ -23,6 +23,7 @@ export interface ThemeSelection {
 }
 
 export interface ThemeState extends ThemeSelection {
+	/** После удаления пресета neo тождественно `mode`; кандидат на чистку. */
 	legacyMode: ThemeMode;
 	mode: ThemeMode;
 	label: string;
@@ -39,8 +40,6 @@ const presetCycleOrder: ThemePreset[] = [
 	'mokh',
 	'mint',
 	'custom',
-	'legacy',
-	'neo',
 ];
 const SYSTEM_LIGHT_MEDIA_QUERY = '(prefers-color-scheme: light)';
 
@@ -55,107 +54,6 @@ export const DEFAULT_CUSTOM_THEME: ThemeCustomPalette = {
 	accent: '#8b5cf6',
 	background: '#111827',
 	text: '#f8fafc',
-};
-
-const LEGACY_DARK_TOKENS: ThemeTokenMap = {
-	'--color-accent': '#7aa2f7',
-	'--color-accent-hover': '#6e8bbb',
-	'--color-accent-contrast': '#0b1327',
-	'--color-success': '#9ece6a',
-	'--color-success-contrast': '#08130a',
-	'--color-error': '#f7768e',
-	'--color-error-contrast': '#ffffff',
-	'--color-warning': '#e0af68',
-	'--color-warning-contrast': '#1c1306',
-	'--color-info': '#7dcfff',
-	'--color-info-contrast': '#082f49',
-	'--color-bg-primary': '#1a1b26',
-	'--color-bg-secondary': '#16161e',
-	'--color-bg-tertiary': '#24283b',
-	'--color-bg-hover': '#292e42',
-	'--color-text-primary': '#c0caf5',
-	'--color-text-secondary': '#a9b1d6',
-	'--color-text-muted': '#737aa2',
-	'--color-border': '#3b4261',
-	'--color-border-hover': '#565f89',
-	'--shadow': '0 2px 8px rgba(0, 0, 0, 0.3)',
-	'--color-tunneled-row': 'rgba(122, 162, 247, 0.03)',
-};
-
-const LEGACY_LIGHT_TOKENS: ThemeTokenMap = {
-	'--color-accent': '#0096e1',
-	'--color-accent-hover': '#1ba8ef',
-	'--color-accent-contrast': '#ffffff',
-	'--color-success': '#0d9488',
-	'--color-success-contrast': '#f0fdfa',
-	'--color-error': '#dc2626',
-	'--color-error-contrast': '#fff1f2',
-	'--color-warning': '#b45309',
-	'--color-warning-contrast': '#fffbeb',
-	'--color-info': '#0284c7',
-	'--color-info-contrast': '#f0f9ff',
-	'--color-bg-primary': '#f0f4f8',
-	'--color-bg-secondary': '#ffffff',
-	'--color-bg-tertiary': '#e4edf5',
-	'--color-bg-hover': '#d6e3f0',
-	'--color-text-primary': '#1a212c',
-	'--color-text-secondary': '#3d4d5f',
-	'--color-text-muted': '#5c6b7d',
-	'--color-border': '#c5d4e4',
-	'--color-border-hover': '#9eb4cc',
-	'--shadow': '0 2px 10px rgba(26, 33, 44, 0.08)',
-	'--color-tunneled-row': 'rgba(0, 150, 225, 0.07)',
-};
-
-const NEO_DARK_TOKENS: ThemeTokenMap = {
-	'--color-accent': '#faff69',
-	'--color-accent-hover': '#e6eb52',
-	'--color-accent-contrast': '#0b0b0b',
-	'--color-success': '#22c55e',
-	'--color-success-contrast': '#052e16',
-	'--color-error': '#ef4444',
-	'--color-error-contrast': '#ffffff',
-	'--color-warning': '#f59e0b',
-	'--color-warning-contrast': '#1c1917',
-	'--color-info': '#3b82f6',
-	'--color-info-contrast': '#eff6ff',
-	'--color-bg-primary': '#0a0a0a',
-	'--color-bg-secondary': '#121212',
-	'--color-bg-tertiary': '#1a1a1a',
-	'--color-bg-hover': '#242424',
-	'--color-text-primary': '#ffffff',
-	'--color-text-secondary': '#cccccc',
-	'--color-text-muted': '#888888',
-	'--color-border': '#2a2a2a',
-	'--color-border-hover': '#3a3a3a',
-	'--shadow': '0 2px 8px rgba(0, 0, 0, 0.3)',
-	'--color-tunneled-row': 'rgba(250, 255, 105, 0.03)',
-};
-
-/** Neo «светлая»: фон и текст как у тёмного Gruvbox, акцент — жёлтый Neo */
-const NEO_LIGHT_TOKENS: ThemeTokenMap = {
-	'--color-accent': '#faff69',
-	'--color-accent-hover': '#e6eb52',
-	'--color-accent-contrast': '#282828',
-	'--color-success': '#b8bb26',
-	'--color-success-contrast': '#282828',
-	'--color-error': '#fb4934',
-	'--color-error-contrast': '#282828',
-	'--color-warning': '#fabd2f',
-	'--color-warning-contrast': '#282828',
-	'--color-info': '#83a598',
-	'--color-info-contrast': '#282828',
-	'--color-bg-primary': '#282828',
-	'--color-bg-secondary': '#3c3836',
-	'--color-bg-tertiary': '#504945',
-	'--color-bg-hover': '#665c54',
-	'--color-text-primary': '#ebdbb2',
-	'--color-text-secondary': '#d5c4a1',
-	'--color-text-muted': '#a89984',
-	'--color-border': '#504945',
-	'--color-border-hover': '#665c54',
-	'--shadow': '0 2px 10px rgba(0, 0, 0, 0.35)',
-	'--color-tunneled-row': 'rgba(250, 255, 105, 0.06)',
 };
 
 /* Отключено: слишком близко к «ещё одному синему». Раскомментируй токены + preset + ветку в resolveThemeTokens при необходимости.
@@ -437,18 +335,6 @@ export const THEME_PRESETS = {
 		summary: 'Тёплые гравийные тона и приглушённый мшисто-зелёный акцент.',
 		supportsModeToggle: true,
 	},
-	legacy: {
-		label: 'AWGM - Legacy',
-		summary:
-			'Классическая тема AWGM с глубокими тёмно-синими оттенками.',
-		supportsModeToggle: true,
-	},
-	neo: {
-		label: 'AWGM - Neo',
-		summary:
-			'Авторская фирменная тема AWGM в ярко-жёлтых тонах с высокой контрастностью.',
-		supportsModeToggle: true,
-	},
 	mint: {
 		label: 'AWGM - Mint',
 		summary:
@@ -467,10 +353,6 @@ export const THEME_PRESETS = {
 
 const THEME_VARIABLE_KEYS = [
 	...new Set([
-		...Object.keys(LEGACY_DARK_TOKENS),
-		...Object.keys(LEGACY_LIGHT_TOKENS),
-		...Object.keys(NEO_DARK_TOKENS),
-		...Object.keys(NEO_LIGHT_TOKENS),
 		...Object.keys(MINT_DARK_TOKENS),
 		...Object.keys(MINT_LIGHT_TOKENS),
 		...Object.keys(GRAFIT_DARK_TOKENS),
@@ -495,8 +377,6 @@ function isThemePreset(value: string | null | undefined): value is ThemePreset {
 		value === 'grafit' ||
 		value === 'sever' ||
 		value === 'mokh' ||
-		value === 'legacy' ||
-		value === 'neo' ||
 		value === 'mint' ||
 		value === 'custom'
 	);
@@ -638,16 +518,9 @@ function resolveLegacyMode(selection: ThemeSelection): ThemeMode {
 	return selection.modePreference;
 }
 
+/** После удаления пресета neo расхождений с resolveLegacyMode не осталось. */
 function resolveThemeMode(selection: ThemeSelection): ThemeMode {
-	const legacyMode = resolveLegacyMode(selection);
-	if (selection.preset === 'custom') {
-		return legacyMode;
-	}
-	/* Neo «светлая» — палитра тёмного Gruvbox; для color-scheme и data-theme оставляем dark */
-	if (selection.preset === 'neo' && legacyMode === 'light') {
-		return 'dark';
-	}
-	return legacyMode;
+	return resolveLegacyMode(selection);
 }
 
 function resolveToggledModePreference(selection: ThemeSelection): ThemeMode {
@@ -668,12 +541,6 @@ export function resolveThemeTokens(selection: ThemeSelection): ThemeTokenMap {
 	}
 	if (selection.preset === 'mokh') {
 		return legacyMode === 'light' ? MOKH_LIGHT_TOKENS : MOKH_DARK_TOKENS;
-	}
-	if (selection.preset === 'legacy') {
-		return legacyMode === 'light' ? LEGACY_LIGHT_TOKENS : LEGACY_DARK_TOKENS;
-	}
-	if (selection.preset === 'neo') {
-		return legacyMode === 'light' ? NEO_LIGHT_TOKENS : NEO_DARK_TOKENS;
 	}
 	if (selection.preset === 'mint') {
 		return legacyMode === 'light' ? MINT_LIGHT_TOKENS : MINT_DARK_TOKENS;
@@ -712,7 +579,7 @@ function applyThemeChromeMetadata(tokens: ThemeTokenMap, mode: ThemeMode): void 
 	const themeColor =
 		tokens['--color-bg-secondary'] ??
 		tokens['--color-bg-primary'] ??
-		(mode === 'light' ? '#f0f0f3' : '#16161e');
+		(mode === 'light' ? '#f7f7f8' : '#1b1b1f');
 
 	const themeColorMetas = Array.from(
 		document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'),
@@ -771,7 +638,7 @@ function getSystemPreferredMode(): ThemeMode {
 
 function getInitialSelection(): ThemeSelection {
 	const fallback: ThemeSelection = {
-		preset: 'legacy',
+		preset: 'grafit',
 		modePreference: 'system',
 		custom: DEFAULT_CUSTOM_THEME,
 	};
@@ -781,7 +648,7 @@ function getInitialSelection(): ThemeSelection {
 	if (!stored) return fallback;
 
 	if (isThemeMode(stored)) {
-		return { ...fallback, preset: 'legacy', modePreference: stored };
+		return { ...fallback, modePreference: stored };
 	}
 
 	try {

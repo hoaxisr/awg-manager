@@ -213,16 +213,6 @@
             inset 0 1px 0 rgba(255, 255, 255, 0.45);
     }
 
-    /* Neo: жёлтый трек — почти белый бегунок теряется; затемняем в обеих ветках пресета */
-    :global(html[data-theme-preset='neo']) .toggle-container input:checked ~ .toggle-slider::before {
-        background: color-mix(in srgb, #8a8000 48%, var(--color-bg-primary) 52%);
-        border-color: color-mix(in srgb, var(--color-text-primary) 32%, transparent);
-        box-shadow:
-            0 1px 3px rgba(0, 0, 0, 0.42),
-            0 0 0 1px color-mix(in srgb, var(--color-text-primary) 14%, transparent),
-            inset 0 1px 0 rgba(255, 255, 255, 0.22);
-    }
-
     .toggle-container:hover .toggle-slider {
         background: var(--color-border);
     }

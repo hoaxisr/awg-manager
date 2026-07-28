@@ -333,9 +333,4 @@
 		outline: 2px solid var(--accent);
 		outline-offset: 2px;
 	}
-
-	:global(html[data-theme-preset='neo']) .card-source,
-	:global(html[data-theme-preset='neo']) .card-route {
-		color: var(--text-primary);
-	}
 </style>

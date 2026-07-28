@@ -29,8 +29,7 @@
 	}: Props = $props();
 
 	const crumb = $derived(breadcrumbFor($page.url));
-	/** Для Neo вторая ветка визуально тёмная, но mode остаётся dark ради color-scheme. */
-	const themeDisplayMode = $derived(theme.preset === 'neo' ? theme.legacyMode : theme.mode);
+	const themeDisplayMode = $derived(theme.mode);
 
 	const themeButtonLabel = $derived.by(() => {
 		const currentModeLabel = themeDisplayMode === 'light' ? 'светлая' : 'тёмная';
