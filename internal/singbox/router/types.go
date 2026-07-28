@@ -291,6 +291,40 @@ type DNSServer struct {
 	Inet6Range     string               `json:"inet6_range,omitempty"`
 }
 
+// DNSMatchResponse — union sing-box `match_response`: true | "<tag>"
+// (option/rule_dns.go beta.1). false сериализуется как false — как в upstream.
+type DNSMatchResponse struct {
+	Enabled bool
+	Tag     string
+}
+
+func (m *DNSMatchResponse) UnmarshalJSON(b []byte) error {
+	var v bool
+	if err := json.Unmarshal(b, &v); err == nil {
+		*m = DNSMatchResponse{Enabled: v}
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return fmt.Errorf("match_response: ожидается true или строка-тег")
+	}
+	if s == "" {
+		return fmt.Errorf("match_response: пустой тег")
+	}
+	*m = DNSMatchResponse{Enabled: true, Tag: s}
+	return nil
+}
+
+func (m DNSMatchResponse) MarshalJSON() ([]byte, error) {
+	if m.Tag != "" {
+		return json.Marshal(m.Tag)
+	}
+	return json.Marshal(m.Enabled)
+}
+
+// IsEnabled nil-safe: правило без match_response не матчит ответы.
+func (m *DNSMatchResponse) IsEnabled() bool { return m != nil && m.Enabled }
+
 type DNSRule struct {
 	RuleSet       []string `json:"rule_set,omitempty"`
 	SourceIPCIDR  []string `json:"source_ip_cidr,omitempty"`
@@ -303,6 +337,16 @@ type DNSRule struct {
 	Action        string   `json:"action,omitempty"`
 	Rcode         string   `json:"rcode,omitempty"`
 	RejectMethod  string   `json:"method,omitempty"`
+
+	Tag            string            `json:"tag,omitempty"`
+	MatchResponse  *DNSMatchResponse `json:"match_response,omitempty"`
+	IPCIDR         []string          `json:"ip_cidr,omitempty"`
+	ResponseRcode  string            `json:"response_rcode,omitempty"`
+	ResponseAnswer []string          `json:"response_answer,omitempty"`
+	ResponseNS     []string          `json:"response_ns,omitempty"`
+	ResponseExtra  []string          `json:"response_extra,omitempty"`
+	Race           bool              `json:"race,omitempty"`
+	Speculative    bool              `json:"speculative,omitempty"`
 }
 
 type DNS struct {

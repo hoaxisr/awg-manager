@@ -515,3 +515,65 @@ func TestAddDNSRule_SourceIPCIDRToFakeip(t *testing.T) {
 		t.Errorf("missing source_ip_cidr: %s", b)
 	}
 }
+
+func TestDNSMatchResponseJSON(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string // JSON правила
+		want DNSMatchResponse
+		out  string // ожидаемая сериализация match_response
+	}{
+		{"bool true", `{"match_response":true,"server":"dns-direct"}`, DNSMatchResponse{Enabled: true}, `true`},
+		{"tag", `{"match_response":"rd","server":"dns-direct"}`, DNSMatchResponse{Enabled: true, Tag: "rd"}, `"rd"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var r DNSRule
+			if err := json.Unmarshal([]byte(tc.in), &r); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if r.MatchResponse == nil || *r.MatchResponse != tc.want {
+				t.Fatalf("got %+v, want %+v", r.MatchResponse, tc.want)
+			}
+			b, err := json.Marshal(r)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !strings.Contains(string(b), `"match_response":`+tc.out) {
+				t.Fatalf("marshal = %s, want match_response %s", b, tc.out)
+			}
+		})
+	}
+}
+
+func TestDNSMatchResponseJSONErrors(t *testing.T) {
+	var r DNSRule
+	if err := json.Unmarshal([]byte(`{"match_response":""}`), &r); err == nil {
+		t.Fatal("пустой тег match_response должен быть ошибкой")
+	}
+	if err := json.Unmarshal([]byte(`{"match_response":42}`), &r); err == nil {
+		t.Fatal("число в match_response должно быть ошибкой")
+	}
+}
+
+func TestDNSRuleNewFieldsRoundTrip(t *testing.T) {
+	in := `{"action":"evaluate","server":"dns-direct","tag":"rd","speculative":true,` +
+		`"race":false,"ip_cidr":["10.0.0.0/8"],"response_rcode":"NOERROR",` +
+		`"response_answer":["a"],"response_ns":["b"],"response_extra":["c"]}`
+	var r DNSRule
+	if err := json.Unmarshal([]byte(in), &r); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if r.Tag != "rd" || !r.Speculative || len(r.IPCIDR) != 1 || r.ResponseRcode != "NOERROR" ||
+		len(r.ResponseAnswer) != 1 || len(r.ResponseNS) != 1 || len(r.ResponseExtra) != 1 {
+		t.Fatalf("поля потеряны: %+v", r)
+	}
+	b, _ := json.Marshal(r)
+	var back DNSRule
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatalf("re-unmarshal: %v", err)
+	}
+	if back.Tag != r.Tag || back.Speculative != r.Speculative {
+		t.Fatalf("round-trip разошёлся: %+v vs %+v", back, r)
+	}
+}
