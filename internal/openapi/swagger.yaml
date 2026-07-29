@@ -7106,6 +7106,11 @@ definitions:
         type: string
       server:
         $ref: '#/definitions/wdtt.ProcessStatus'
+      serverSupported:
+        description: |-
+          ServerSupported — собирается ли wdtt-server под эту архитектуру.
+          На mips/mipsel его нет (см. internal/wdtt/install.go), UI прячет вкладку «Сервер».
+        type: boolean
       servers:
         items:
           $ref: '#/definitions/wdtt.InstanceStatus'

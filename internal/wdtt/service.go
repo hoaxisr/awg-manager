@@ -236,6 +236,7 @@ func (s *Service) Status() Status {
 	installedVersion, updateAvailable := s.installStatusFields(version)
 	clock := routerclock.Get()
 	st := Status{
+		ServerSupported:  s.installSpecs.serverSupported() || binaryPresent(s.serverBin),
 		InstallAvailable: available,
 		InstallVersion:   version,
 		InstalledVersion: installedVersion,

@@ -2634,6 +2634,7 @@ const wdtt_Status: v.GenericSchema = v.looseObject({
 	installing: v.optional(v.nullable(v.boolean())),
 	routerClock: v.optional(v.nullable(v.string())),
 	server: v.optional(v.nullable(v.lazy(() => wdtt_ProcessStatus))),
+	serverSupported: v.optional(v.nullable(v.boolean())),
 	servers: v.optional(v.nullable(v.array(v.lazy(() => wdtt_InstanceStatus)))),
 	updateAvailable: v.optional(v.nullable(v.boolean())),
 });

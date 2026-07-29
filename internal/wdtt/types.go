@@ -136,16 +136,19 @@ type InstanceStatus struct {
 }
 
 type Status struct {
-	Clients          []InstanceStatus `json:"clients"`
-	Servers          []InstanceStatus `json:"servers"`
-	Client           ProcessStatus    `json:"client"`
-	Server           ProcessStatus    `json:"server"`
-	InstallAvailable bool             `json:"installAvailable"`
-	InstallVersion   string           `json:"installVersion,omitempty"`
-	InstalledVersion string           `json:"installedVersion,omitempty"`
-	UpdateAvailable  bool             `json:"updateAvailable"`
-	Installing       bool             `json:"installing"`
-	RouterClock      string           `json:"routerClock,omitempty"`
+	Clients []InstanceStatus `json:"clients"`
+	Servers []InstanceStatus `json:"servers"`
+	Client  ProcessStatus    `json:"client"`
+	Server  ProcessStatus    `json:"server"`
+	// ServerSupported — собирается ли wdtt-server под эту архитектуру.
+	// На mips/mipsel его нет (см. internal/wdtt/install.go), UI прячет вкладку «Сервер».
+	ServerSupported  bool   `json:"serverSupported"`
+	InstallAvailable bool   `json:"installAvailable"`
+	InstallVersion   string `json:"installVersion,omitempty"`
+	InstalledVersion string `json:"installedVersion,omitempty"`
+	UpdateAvailable  bool   `json:"updateAvailable"`
+	Installing       bool   `json:"installing"`
+	RouterClock      string `json:"routerClock,omitempty"`
 }
 
 // PanelUserEntry is one WDTT client password row from panel.db.

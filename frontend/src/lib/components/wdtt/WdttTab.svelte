@@ -40,10 +40,18 @@
 	let generatedLinkQwdtt = $state('');
 	let generating = $state(false);
 
-	const wdttTabs = [
-		{ id: 'client', label: 'Клиент' },
-		{ id: 'server', label: 'Сервер' }
-	];
+	// wdtt-server собирается не под все арки роутеров (нет mips/mipsel) — там вкладки нет.
+	// Пока статус не загружен, показываем обе: серверный режим — частый случай.
+	const serverSupported = $derived(status?.serverSupported !== false);
+	const wdttTabs = $derived(
+		serverSupported
+			? [
+					{ id: 'client', label: 'Клиент' },
+					{ id: 'server', label: 'Сервер' }
+				]
+			: [{ id: 'client', label: 'Клиент' }]
+	);
+	const activeTab = $derived<WdttTabId>(serverSupported ? wdttTab : 'client');
 
 	const statusPoll = createSelfReschedulingPoll(loadStatus);
 	// Не реактивны (в шаблоне не читаются) — дедуп/кулдаун авто-ensure в поллинге.
@@ -615,7 +623,7 @@
 	</div>
 {:else if config}
 	<ProcessAlerts
-		status={wdttTab === 'client' ? clientStatus : serverStatus}
+		status={activeTab === 'client' ? clientStatus : serverStatus}
 		installAvailable={status?.installAvailable ?? false}
 		installVersion={status?.installVersion}
 		installedVersion={status?.installedVersion}
@@ -635,13 +643,13 @@
 
 	<Tabs
 		tabs={wdttTabs}
-		active={wdttTab}
+		active={activeTab}
 		onchange={(id) => {
 			wdttTab = id as WdttTabId;
 		}}
 	/>
 
-	{#if wdttTab === 'client'}
+	{#if activeTab === 'client'}
 	<InstanceBar
 		items={clientBarItems}
 		selectedId={selectedClientId}

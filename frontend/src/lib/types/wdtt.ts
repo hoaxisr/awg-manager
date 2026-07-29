@@ -74,6 +74,8 @@ export interface WdttStatus {
 	servers: WdttInstanceStatus[];
 	client: WdttProcessStatus;
 	server: WdttProcessStatus;
+	/** Собирается ли wdtt-server под арку роутера (на mips/mipsel — нет). */
+	serverSupported?: boolean;
 	installAvailable: boolean;
 	installVersion?: string;
 	installedVersion?: string;
