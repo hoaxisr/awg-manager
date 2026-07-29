@@ -37,7 +37,7 @@ func TestPreFilterOutbounds_AcceptsValidVless(t *testing.T) {
 			},
 		},
 	}
-	kept, dropped := preFilterOutbounds([]any{ob})
+	kept, dropped := preFilterOutbounds([]any{ob}, nil)
 	if len(kept) != 1 || len(dropped) != 0 {
 		t.Fatalf("expected 1 kept / 0 dropped, got %d / %d (reasons=%v)", len(kept), len(dropped), dropped)
 	}
@@ -62,7 +62,7 @@ func TestPreFilterOutbounds_DropsRealityWithoutUTLSBlock(t *testing.T) {
 			},
 		},
 	}
-	kept, dropped := preFilterOutbounds([]any{ob})
+	kept, dropped := preFilterOutbounds([]any{ob}, nil)
 	if len(kept) != 0 {
 		t.Fatalf("expected 0 kept, got %d", len(kept))
 	}
@@ -91,7 +91,7 @@ func TestPreFilterOutbounds_DropsRealityWithUTLSDisabled(t *testing.T) {
 			"utls":        map[string]any{"enabled": false, "fingerprint": "chrome"},
 		},
 	}
-	_, dropped := preFilterOutbounds([]any{ob})
+	_, dropped := preFilterOutbounds([]any{ob}, nil)
 	if len(dropped) != 1 {
 		t.Fatalf("expected 1 dropped, got %d", len(dropped))
 	}
@@ -113,7 +113,7 @@ func TestPreFilterOutbounds_AcceptsPlainTLSNoReality(t *testing.T) {
 			"server_name": "example.org",
 		},
 	}
-	kept, dropped := preFilterOutbounds([]any{ob})
+	kept, dropped := preFilterOutbounds([]any{ob}, nil)
 	if len(kept) != 1 || len(dropped) != 0 {
 		t.Fatalf("expected 1 kept / 0 dropped, got %d / %d (reasons=%v)", len(kept), len(dropped), dropped)
 	}
@@ -127,7 +127,7 @@ func TestPreFilterOutbounds_DropsInvalidUUID(t *testing.T) {
 		"server_port": float64(443),
 		"uuid":        "Telegram:@SomeHandle", // pattern from issue #221 JSON
 	}
-	_, dropped := preFilterOutbounds([]any{ob})
+	_, dropped := preFilterOutbounds([]any{ob}, nil)
 	if len(dropped) != 1 || !strings.Contains(dropped[0].Reason, "uuid") {
 		t.Fatalf("expected 1 drop with uuid reason, got %v", dropped)
 	}
@@ -172,7 +172,7 @@ func TestPreFilterOutbounds_DropsMissingFields(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, dropped := preFilterOutbounds([]any{tc.ob})
+			_, dropped := preFilterOutbounds([]any{tc.ob}, nil)
 			if len(dropped) != 1 {
 				t.Fatalf("expected 1 dropped, got %d", len(dropped))
 			}
@@ -197,14 +197,14 @@ func TestPreFilterOutbounds_SkipsGroupOutbounds(t *testing.T) {
 		"outbounds": []any{"member-a"},
 		"url":       "https://example.com/204",
 	}
-	kept, dropped := preFilterOutbounds([]any{sel, urltest})
+	kept, dropped := preFilterOutbounds([]any{sel, urltest}, nil)
 	if len(kept) != 2 || len(dropped) != 0 {
 		t.Fatalf("expected 2 kept / 0 dropped, got %d / %d (reasons=%v)", len(kept), len(dropped), dropped)
 	}
 }
 
 func TestPreFilterOutbounds_DropsNonObject(t *testing.T) {
-	_, dropped := preFilterOutbounds([]any{"not an object", 42})
+	_, dropped := preFilterOutbounds([]any{"not an object", 42}, nil)
 	if len(dropped) != 2 {
 		t.Fatalf("expected 2 dropped non-objects, got %d", len(dropped))
 	}
@@ -321,6 +321,36 @@ func TestCleanReferencesToTag_DropsEmptyGroups(t *testing.T) {
 	}
 	if len(cfg.Outbounds) != 0 {
 		t.Fatalf("expected outbounds empty after cascade, got %d (%v)", len(cfg.Outbounds), cfg.Outbounds)
+	}
+}
+
+func TestPreFilterOutboundsFeatureGate(t *testing.T) {
+	mieru := map[string]any{"type": "mieru", "tag": "m", "server": "1.2.3.4", "server_port": 443}
+
+	for _, tc := range []struct {
+		name     string
+		features []string
+		wantKept bool
+	}{
+		{"нет фичи — отбраковываем", []string{"with_quic"}, false},
+		{"фича есть — оставляем", []string{"with_mieru_outbound"}, true},
+		{"features неизвестны — не трогаем", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kept, dropped := preFilterOutbounds([]any{mieru}, tc.features)
+			if tc.wantKept {
+				if len(kept) != 1 || len(dropped) != 0 {
+					t.Fatalf("ожидали сохранение, got kept=%d dropped=%v", len(kept), dropped)
+				}
+				return
+			}
+			if len(kept) != 0 || len(dropped) != 1 {
+				t.Fatalf("ожидали отбраковку, got kept=%d dropped=%v", len(kept), dropped)
+			}
+			if !strings.Contains(dropped[0].Reason, "with_mieru_outbound") {
+				t.Fatalf("причина без имени тега: %q", dropped[0].Reason)
+			}
+		})
 	}
 }
 
