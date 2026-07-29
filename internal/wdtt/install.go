@@ -43,17 +43,16 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 		},
 		Server: BinarySpec{
 			Version: PinnedServerVersion, URL: serverReleaseBase + "wdtt-server-linux-arm64",
-			SHA256: "ac651abdd0475cb384aebedf77a19883e99fc3f117226adb6e6b02df4185236", Size: 12320930,
+			SHA256: "5f05aa294e47bc14afebd58099f5100b5bd915719cfa68698c170ffcd259ad1f", Size: 12320930,
 		},
 	},
+	// mipsel/mips — только клиент: апстримовый pkg/paneldb тянет
+	// modernc.org/sqlite → modernc.org/libc, где нет этих архитектур,
+	// поэтому wdtt-server под них не собирается (contrib/wdtt-server-patch/BUILD.md).
 	"mipsel-3.4": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-mipsle-softfloat",
 			SHA256: "7cd2c6b0dfee1bbfb64dba415d8c20318a05dccb8babc59d18d77d843c7163f7", Size: 13172929,
-		},
-		Server: BinarySpec{
-			Version: PinnedServerVersion, URL: serverReleaseBase + "wdtt-server-entware-mipsel-softfloat",
-			SHA256: "04cc241a27ecc8de1aa59a0034541c22b0c3f22bc7ad37ac17cf46521b24b1ef", Size: 8913053,
 		},
 	},
 	"mips-3.4": {
@@ -61,12 +60,11 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-mips-softfloat",
 			SHA256: "f62be339ae86ead7f97439fbe919fd17d0321bfd7265fb8ca2ad484709c5392d", Size: 13172929,
 		},
-		Server: BinarySpec{
-			Version: PinnedServerVersion, URL: serverReleaseBase + "wdtt-server-entware-mips-softfloat",
-			SHA256: "6f55ddfa11aac98b8f17af7908e9440a5e76c3524a9ed0a16ab1d166a80ef951", Size: 8913053,
-		},
 	},
 }
+
+// serverSupported — есть ли для этой арки собираемый wdtt-server.
+func (s *ArchSpecs) serverSupported() bool { return s != nil && s.Server.URL != "" }
 
 type installedVersionRecord struct {
 	Version     string    `json:"version"`
@@ -78,6 +76,9 @@ type installedVersionRecord struct {
 }
 
 func installVersionLabel(specs ArchSpecs) string {
+	if !specs.serverSupported() {
+		return specs.Client.Version
+	}
 	return specs.Client.Version + "+server-" + specs.Server.Version
 }
 
@@ -137,7 +138,10 @@ func (s *Service) installStatusFields(installVersion string) (installedVersion s
 		return s.readInstalledVersion(), false
 	}
 	installedVersion = s.readInstalledVersion()
-	if !binaryPresent(s.clientBin) || !binaryPresent(s.serverBin) {
+	if !binaryPresent(s.clientBin) {
+		return installedVersion, true
+	}
+	if s.installSpecs.serverSupported() && !binaryPresent(s.serverBin) {
 		return installedVersion, true
 	}
 	if installedVersion == "" {

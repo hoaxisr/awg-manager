@@ -501,8 +501,10 @@ func (s *Service) InstallBinaries(ctx context.Context) error {
 	if err := s.installOne(ctx, s.clientBin, specs.Client); err != nil {
 		return fmt.Errorf("клиент: %w", err)
 	}
-	if err := s.installOne(ctx, s.serverBin, specs.Server); err != nil {
-		return fmt.Errorf("сервер: %w", err)
+	if specs.serverSupported() {
+		if err := s.installOne(ctx, s.serverBin, specs.Server); err != nil {
+			return fmt.Errorf("сервер: %w", err)
+		}
 	}
 	if err := s.writeInstalledVersion(installVersionLabel(specs)); err != nil && s.appLog != nil {
 		s.appLog.Warn("install", "version-file", err.Error())

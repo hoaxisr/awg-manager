@@ -148,6 +148,24 @@ type Status struct {
 	RouterClock      string           `json:"routerClock,omitempty"`
 }
 
+// PanelUserEntry is one WDTT client password row from panel.db.
+type PanelUserEntry struct {
+	Password      string `json:"password"`
+	Comment       string `json:"comment,omitempty"`
+	VkHash        string `json:"vkHash,omitempty"`
+	IsMain        bool   `json:"isMain"`
+	IsDeactivated bool   `json:"isDeactivated"`
+	DeviceCount   int    `json:"deviceCount"`
+	LastSeenAt    int64  `json:"lastSeenAt,omitempty"`
+}
+
+// PanelUsersStatus is returned by the panel users API.
+type PanelUsersStatus struct {
+	PanelDBPath string           `json:"panelDbPath,omitempty"`
+	Available   bool             `json:"available"`
+	Users       []PanelUserEntry `json:"users"`
+}
+
 // ImportPayload is the normalized result of wdtt://, qwdtt:// or subscription import.
 type ImportPayload struct {
 	Name     string   `json:"name,omitempty"`
