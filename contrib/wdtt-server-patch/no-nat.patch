@@ -1,5 +1,5 @@
 diff --git a/server/config.go b/server/config.go
-index 89ee8a4..73008aa 100644
+index 89ee8a4..3fc2cb2 100644
 --- a/server/config.go
 +++ b/server/config.go
 @@ -20,6 +20,8 @@ type ServerConfig struct {
@@ -21,9 +21,9 @@ index 89ee8a4..73008aa 100644
  
  func initServerFlags() {
 @@ -46,6 +50,8 @@ func initServerFlags() {
- 		flagHandshake = flag.Duration("handshake-timeout", 30*time.Second, "timeout DTLS handshake")
+ 		flagHandshake = flag.Duration("handshake-timeout", 30*time.Second, "таймаут DTLS handshake")
  		flagAdminAddr = flag.String("admin-addr", "127.0.0.1:2861", "HTTP admin (localhost): /health, POST /admin/reload")
- 		flagMaxDTLSDev = flag.Int("max-dtls-per-device", 0, "max parallel GETCONF per device_id (0 = unlimited)")
+ 		flagMaxDTLSDev = flag.Int("max-dtls-per-device", 0, "макс. параллельных GETCONF на device_id (0 = без лимита)")
 +		flagNoNAT = flag.Bool("no-nat", false, "skip iptables/nft NAT setup (NAT handled by router/awg-manager)")
 +		flagNatIface = flag.String("nat-if", "", "egress interface for MASQUERADE (empty = auto-detect WAN)")
  		flag.Parse()
@@ -39,7 +39,7 @@ index 89ee8a4..73008aa 100644
  }
  
 diff --git a/server/server.go b/server/server.go
-index 28d68a1..87a680d 100644
+index 28d68a1..22e9ac7 100644
 --- a/server/server.go
 +++ b/server/server.go
 @@ -537,7 +537,7 @@ func runServerOnce(ctx context.Context, cfg ServerConfig) {
@@ -49,7 +49,7 @@ index 28d68a1..87a680d 100644
 -	wgDev, err := startUserspaceWG(keys, cfg.WgPort)
 +	wgDev, err := startUserspaceWG(keys, cfg.WgPort, cfg)
  	if err != nil {
- 		log.Fatalf("[WG] start: %v", err)
+ 		log.Fatalf("[WG] Запуск: %v", err)
  	}
 @@ -550,6 +550,7 @@ func runServerOnce(ctx context.Context, cfg ServerConfig) {
  	syncPersistedPeersToWG(wgDev)
@@ -69,10 +69,10 @@ index b2b9b2b..e74d0b5 100644
  
 -func setupFullConeNAT(wgIface string) error {
 +func setupFullConeNAT(wgIface string, noNAT bool, natIface string) error {
- 	log.Println("[NAT] ========================================")
+ 	log.Println("[NAT] ══════════════════════════════════════")
 +	if noNAT {
-+		log.Println("[NAT] skip (-no-nat): iptables/nft/ip_forward untouched")
-+		log.Println("[NAT] ========================================")
++		log.Println("[NAT] пропуск (-no-nat): iptables/nft/ip_forward не трогаем")
++		log.Println("[NAT] ══════════════════════════════════════")
 +		return nil
 +	}
  
@@ -85,7 +85,7 @@ index b2b9b2b..e74d0b5 100644
 +	if extIface == "" {
 +		extIface = getDefaultInterface()
 +	}
- 	log.Printf("[NAT] external: %s", extIface)
+ 	log.Printf("[NAT] Внешний: %s", extIface)
  
  	switch {
 @@ -492,9 +500,28 @@ func setupForwardRules(wgIface string) {
