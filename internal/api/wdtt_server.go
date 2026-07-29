@@ -35,6 +35,16 @@ func (h *WdttHandler) resolveExternalIP(ctx context.Context) (string, error) {
 }
 
 // UpdateServerConfig handles PUT /api/wdtt/server/config.
+//
+//	@Summary	Update the default WDTT server config (legacy single-instance route)
+//	@Tags		wdtt
+//	@Accept		json
+//	@Param		request	body		wdtt.ServerConfig	true	"Server config"
+//	@Success	200		{object}	APIEnvelope
+//	@Failure	400		{object}	APIErrorEnvelope
+//	@Failure	500		{object}	APIErrorEnvelope
+//	@Router		/wdtt/server/config [put]
+//	@Router		/wdtt/server/config [post]
 func (h *WdttHandler) UpdateServerConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut && r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -53,6 +63,12 @@ func (h *WdttHandler) UpdateServerConfig(w http.ResponseWriter, r *http.Request)
 }
 
 // StartServer handles POST /api/wdtt/server/start.
+//
+//	@Summary	Start the default WDTT server (legacy single-instance route)
+//	@Tags		wdtt
+//	@Success	200	{object}	APIEnvelope
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/wdtt/server/start [post]
 func (h *WdttHandler) StartServer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -66,6 +82,12 @@ func (h *WdttHandler) StartServer(w http.ResponseWriter, r *http.Request) {
 }
 
 // StopServer handles POST /api/wdtt/server/stop.
+//
+//	@Summary	Stop the default WDTT server (legacy single-instance route)
+//	@Tags		wdtt
+//	@Success	200	{object}	APIEnvelope
+//	@Failure	500	{object}	APIErrorEnvelope
+//	@Router		/wdtt/server/stop [post]
 func (h *WdttHandler) StopServer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -87,6 +109,16 @@ type WdttGenerateLinkRequest struct {
 }
 
 // CreateServer handles POST /api/wdtt/servers.
+//
+//	@Summary	Create a WDTT server instance
+//	@Description	wdtt-server owns the shared wdtt0 interface, so a second instance is rejected.
+//	@Tags		wdtt
+//	@Accept		json
+//	@Param		request	body		wdtt.CreateServerInput	false	"Server instance"
+//	@Success	200		{object}	APIEnvelope
+//	@Failure	400		{object}	APIErrorEnvelope
+//	@Failure	500		{object}	APIErrorEnvelope
+//	@Router		/wdtt/servers [post]
 func (h *WdttHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -135,6 +167,19 @@ type wdttPanelUserAddRequest struct {
 }
 
 // serveServerPanelUsers handles GET/POST/DELETE /api/wdtt/servers/{id}/users[/{password}].
+//
+//	@Summary	List, add or delete WDTT client passwords stored in panel.db
+//	@Tags		wdtt
+//	@Accept		json
+//	@Param		id			path		string					true	"Server instance id"
+//	@Param		password	path		string					false	"Client password to delete"
+//	@Param		request		body		wdttPanelUserAddRequest	false	"New client password"
+//	@Success	200			{object}	APIEnvelope
+//	@Failure	400			{object}	APIErrorEnvelope
+//	@Failure	500			{object}	APIErrorEnvelope
+//	@Router		/wdtt/servers/{id}/users [get]
+//	@Router		/wdtt/servers/{id}/users [post]
+//	@Router		/wdtt/servers/{id}/users/{password} [delete]
 func (h *WdttHandler) serveServerPanelUsers(w http.ResponseWriter, r *http.Request, serverID string, sub []string) {
 	switch {
 	case len(sub) == 0:
@@ -178,6 +223,16 @@ func (h *WdttHandler) serveServerPanelUsers(w http.ResponseWriter, r *http.Reque
 	}
 }
 
+// @Summary	Update config, rename or delete a WDTT server instance
+// @Tags		wdtt
+// @Accept		json
+// @Param		id		path		string	true	"Server instance id"
+// @Success	200		{object}	APIEnvelope
+// @Failure	400		{object}	APIErrorEnvelope
+// @Failure	500		{object}	APIErrorEnvelope
+// @Router		/wdtt/servers/{id} [put]
+// @Router		/wdtt/servers/{id} [patch]
+// @Router		/wdtt/servers/{id} [delete]
 func (h *WdttHandler) serveServerByID(w http.ResponseWriter, r *http.Request, id string) {
 	switch r.Method {
 	case http.MethodPut, http.MethodPost:
@@ -214,6 +269,12 @@ func (h *WdttHandler) serveServerByID(w http.ResponseWriter, r *http.Request, id
 	}
 }
 
+// @Summary	Start a WDTT server instance
+// @Tags		wdtt
+// @Param		id	path		string	true	"Server instance id"
+// @Success	200	{object}	APIEnvelope
+// @Failure	500	{object}	APIErrorEnvelope
+// @Router		/wdtt/servers/{id}/start [post]
 func (h *WdttHandler) startServerInstance(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -226,6 +287,12 @@ func (h *WdttHandler) startServerInstance(w http.ResponseWriter, r *http.Request
 	response.Success(w, map[string]string{"message": "server started"})
 }
 
+// @Summary	Stop a WDTT server instance
+// @Tags		wdtt
+// @Param		id	path		string	true	"Server instance id"
+// @Success	200	{object}	APIEnvelope
+// @Failure	500	{object}	APIErrorEnvelope
+// @Router		/wdtt/servers/{id}/stop [post]
 func (h *WdttHandler) stopServerInstance(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -238,6 +305,15 @@ func (h *WdttHandler) stopServerInstance(w http.ResponseWriter, r *http.Request,
 	response.Success(w, map[string]string{"message": "server stopped"})
 }
 
+// @Summary	Generate a wdtt:// / qwdtt:// share link for a server instance
+// @Tags		wdtt
+// @Accept		json
+// @Param		id		path		string					true	"Server instance id"
+// @Param		request	body		WdttGenerateLinkRequest	false	"Link options"
+// @Success	200		{object}	APIEnvelope
+// @Failure	400		{object}	APIErrorEnvelope
+// @Failure	500		{object}	APIErrorEnvelope
+// @Router		/wdtt/servers/{id}/link [post]
 func (h *WdttHandler) generateLinkForServer(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")

@@ -6250,6 +6250,20 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.WdttGenerateLinkRequest:
+    properties:
+      name:
+        type: string
+      password:
+        description: per-client password from panel.db; empty → server password
+        type: string
+      peer:
+        type: string
+      vkHashes:
+        items:
+          type: string
+        type: array
+    type: object
   api.WdttImportRequest:
     properties:
       link:
@@ -6381,6 +6395,17 @@ definitions:
     properties:
       enabled:
         type: boolean
+    type: object
+  api.wdttPanelUserAddRequest:
+    properties:
+      comment:
+        type: string
+      mainPassword:
+        type: string
+      password:
+        type: string
+      vkHash:
+        type: string
     type: object
   diagnostics.DNSProxy:
     properties:
@@ -6963,6 +6988,13 @@ definitions:
     properties:
       config:
         $ref: '#/definitions/wdtt.ClientConfig'
+      name:
+        type: string
+    type: object
+  wdtt.CreateServerInput:
+    properties:
+      config:
+        $ref: '#/definitions/wdtt.ServerConfig'
       name:
         type: string
     type: object
@@ -18044,6 +18076,358 @@ paths:
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       summary: Import a wdtt:// / qwdtt:// / subscription link into the default client
+      tags:
+      - wdtt
+  /wdtt/server/config:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server config
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/wdtt.ServerConfig'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update the default WDTT server config (legacy single-instance route)
+      tags:
+      - wdtt
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server config
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/wdtt.ServerConfig'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update the default WDTT server config (legacy single-instance route)
+      tags:
+      - wdtt
+  /wdtt/server/start:
+    post:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Start the default WDTT server (legacy single-instance route)
+      tags:
+      - wdtt
+  /wdtt/server/stop:
+    post:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Stop the default WDTT server (legacy single-instance route)
+      tags:
+      - wdtt
+  /wdtt/servers:
+    post:
+      consumes:
+      - application/json
+      description: wdtt-server owns the shared wdtt0 interface, so a second instance
+        is rejected.
+      parameters:
+      - description: Server instance
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/wdtt.CreateServerInput'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Create a WDTT server instance
+      tags:
+      - wdtt
+  /wdtt/servers/{id}:
+    delete:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a WDTT server instance
+      tags:
+      - wdtt
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a WDTT server instance
+      tags:
+      - wdtt
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a WDTT server instance
+      tags:
+      - wdtt
+  /wdtt/servers/{id}/link:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Link options
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/api.WdttGenerateLinkRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Generate a wdtt:// / qwdtt:// share link for a server instance
+      tags:
+      - wdtt
+  /wdtt/servers/{id}/start:
+    post:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Start a WDTT server instance
+      tags:
+      - wdtt
+  /wdtt/servers/{id}/stop:
+    post:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Stop a WDTT server instance
+      tags:
+      - wdtt
+  /wdtt/servers/{id}/users:
+    get:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New client password
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/api.wdttPanelUserAddRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: List, add or delete WDTT client passwords stored in panel.db
+      tags:
+      - wdtt
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New client password
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/api.wdttPanelUserAddRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: List, add or delete WDTT client passwords stored in panel.db
+      tags:
+      - wdtt
+  /wdtt/servers/{id}/users/{password}:
+    delete:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Client password to delete
+        in: path
+        name: password
+        type: string
+      - description: New client password
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/api.wdttPanelUserAddRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: List, add or delete WDTT client passwords stored in panel.db
       tags:
       - wdtt
   /wdtt/status:

@@ -42,6 +42,12 @@ type Service struct {
 	appLog *logging.ScopedLogger
 
 	listenPortChecker LocalListenPortChecker
+
+	// Кеш binariesMatchSpecs: сверка хеширует оба бинаря (~21 МБ), а
+	// статус опрашивается раз в 2 секунды, пока открыта вкладка.
+	matchMu  sync.Mutex
+	matchKey string
+	matchVal bool
 }
 
 // SetLogger wires the UI-visible journal (nil-safe scoped logger).

@@ -99,20 +99,46 @@ func (s *Service) effectiveInstalledVersion() string {
 	return s.readInstalledVersion()
 }
 
+// binariesMatchSpecs сверяет SHA256 обоих бинарей с пином сборки.
+//
+// Результат кешируется по mtime+size файлов: сверка читает ~21 МБ, а
+// вызывается она из installStatusFields — дважды на каждый статус, который
+// UI опрашивает раз в 2 секунды. На mipsel это заметный CPU и постоянное
+// чтение флеша. Ключ меняется при любой перезаписи бинаря, так что
+// установка новой версии инвалидирует кеш сама.
 func (s *Service) binariesMatchSpecs(specs ArchSpecs) bool {
 	if specs.Client.SHA256 == "" || specs.Server.SHA256 == "" {
 		return false
 	}
-	clientHash, err := sha256File(s.clientBin)
-	if err != nil {
-		return false
+	key := specs.Client.SHA256 + "|" + specs.Server.SHA256 + "|" +
+		fileFingerprint(s.clientBin) + "|" + fileFingerprint(s.serverBin)
+
+	s.matchMu.Lock()
+	defer s.matchMu.Unlock()
+	if key == s.matchKey {
+		return s.matchVal
 	}
-	serverHash, err := sha256File(s.serverBin)
-	if err != nil {
-		return false
+
+	match := false
+	clientHash, cErr := sha256File(s.clientBin)
+	serverHash, sErr := sha256File(s.serverBin)
+	if cErr == nil && sErr == nil {
+		match = strings.EqualFold(clientHash, specs.Client.SHA256) &&
+			strings.EqualFold(serverHash, specs.Server.SHA256)
 	}
-	return strings.EqualFold(clientHash, specs.Client.SHA256) &&
-		strings.EqualFold(serverHash, specs.Server.SHA256)
+	s.matchKey, s.matchVal = key, match
+	return match
+}
+
+// fileFingerprint — дешёвая замена содержимому файла: mtime+size.
+// Пустая строка для отсутствующего файла (такой ключ тоже валиден:
+// «оба файла отсутствуют» — стабильное состояние).
+func fileFingerprint(path string) string {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return strconv.FormatInt(fi.ModTime().UnixNano(), 10) + "_" + strconv.FormatInt(fi.Size(), 10)
 }
 
 // EnsureBundledInstall fixes permissions on shipped binaries (IPK tar on
