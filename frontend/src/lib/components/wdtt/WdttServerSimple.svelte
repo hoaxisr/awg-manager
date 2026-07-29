@@ -3,12 +3,12 @@
 	import { Button, Input, Toggle, SegmentedControl, ChipMultiSelect } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { createIngressMutationLock } from '$lib/utils/ingressMutation';
 	import { proxyInOpsMode, proxyServerOpsMode } from '$lib/utils/proxyOpsMode';
 	import type { NatMode } from '$lib/utils/network';
 	import ProcessLogBox from '../freeturn/ProcessLogBox.svelte';
 	import WdttServerUsers from './WdttServerUsers.svelte';
+	import WdttLinkShare from './WdttLinkShare.svelte';
 	import { ServerAccessPolicyDropdown } from '$lib/components/servers';
 	import ProxyInstanceStatusBar from '../proxy-panel/ProxyInstanceStatusBar.svelte';
 	import ProxyPanelTabs from '../proxy-panel/ProxyPanelTabs.svelte';
@@ -198,8 +198,10 @@
 		if (!step1Done && quickActive !== 'secret') quickActive = 'secret';
 	});
 
+	/** Запущенный сервер: сразу «Раздача» (при возврате на страницу или смене инстанса). */
 	$effect(() => {
-		if (opsMode && generatedLink) opsTab = 'links';
+		serverInstanceId;
+		if (opsMode && running) opsTab = 'links';
 	});
 
 	onMount(async () => {
@@ -342,11 +344,6 @@
 		}
 	}
 
-	async function copyLink() {
-		if (!generatedLink) return;
-		const ok = await copyToClipboard(generatedLink);
-		if (ok) notifications.success('Ссылка скопирована');
-	}
 </script>
 
 <div class="wdtt-server-wrap">
@@ -420,11 +417,8 @@
 							VK-хеши добавляются в ссылку как <code>vk=…</code> для маскировки. Пароль
 							подключения — это поле «Пароль» на шаге 1 (или отдельный пароль клиента в panel.db).
 						</p>
-						{#if generatedLink}
-							<div class="wdtt-link-box">
-								<code>{generatedLink}</code>
-								<Button variant="secondary" size="sm" onclick={copyLink}>Копировать</Button>
-							</div>
+						{#if generatedLink || generatedLinkQwdtt}
+							<WdttLinkShare linkWdtt={generatedLink} linkQwdtt={generatedLinkQwdtt} />
 						{/if}
 					</ProxyQuickStartStep>
 				{:else}
@@ -510,24 +504,8 @@
 				<div class="wdtt-actions">
 					<Button disabled={!canSave || generating} onclick={generateLinkNow}>Сгенерировать ссылку</Button>
 				</div>
-				{#if generatedLink}
-					<div class="wdtt-link-box">
-						<p class="wdtt-link-label">wdtt://</p>
-						<code>{generatedLink}</code>
-						<Button variant="secondary" onclick={copyLink}>Копировать wdtt://</Button>
-					</div>
-				{/if}
-				{#if generatedLinkQwdtt}
-					<div class="wdtt-link-box">
-						<p class="wdtt-link-label">qwdtt://</p>
-						<code>{generatedLinkQwdtt}</code>
-						<Button
-							variant="secondary"
-							onclick={async () => {
-								if (await copyToClipboard(generatedLinkQwdtt)) notifications.success('qwdtt:// скопирована');
-							}}>Копировать qwdtt://</Button
-						>
-					</div>
+				{#if generatedLink || generatedLinkQwdtt}
+					<WdttLinkShare linkWdtt={generatedLink} linkQwdtt={generatedLinkQwdtt} />
 				{/if}
 		</section>
 
@@ -638,22 +616,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.375rem;
-	}
-
-	.wdtt-link-box {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-		padding: 0.75rem;
-		background: var(--color-surface-secondary, rgba(0, 0, 0, 0.04));
-		border-radius: 6px;
-		word-break: break-all;
-	}
-
-	.wdtt-link-label {
-		margin: 0;
-		font-size: 0.8125rem;
-		color: var(--color-text-secondary);
 	}
 
 	.wdtt-hint {

@@ -8,6 +8,7 @@
 		starting?: boolean;
 		canSave?: boolean;
 		canStart?: boolean;
+		saveLabel?: string;
 		onSave?: () => void | Promise<void>;
 		onToggle?: (on: boolean) => void | Promise<void>;
 	}
@@ -19,6 +20,7 @@
 		starting = false,
 		canSave = true,
 		canStart = true,
+		saveLabel = 'Сохранить',
 		onSave,
 		onToggle
 	}: Props = $props();
@@ -35,7 +37,7 @@
 	<div class="proxy-status-actions">
 		{#if onSave}
 			<Button variant="secondary" size="sm" loading={saving} disabled={!canSave} onclick={() => onSave?.()}>
-				Сохранить
+				{saveLabel}
 			</Button>
 		{/if}
 		{#if onToggle}

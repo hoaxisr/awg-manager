@@ -217,9 +217,14 @@
 		if (!wgStepDone && quickActive !== 'wg') quickActive = 'wg';
 	});
 
+	/** Запущенный сервер: сразу «Раздача» (при возврате на страницу или смене инстанса). */
 	$effect(() => {
-		if (opsMode && generatedLink) opsTab = 'links';
+		serverInstanceId;
+		if (opsMode && running) opsTab = 'links';
 	});
+
+	const mainTabNext = $derived(opsMode && running && opsTab === 'main' && step1Done);
+	const statusSaveLabel = $derived(mainTabNext ? 'Далее' : 'Сохранить');
 
 	function ensureObfKey() {
 		if (server.obfProfile !== 'none' && !server.obfKey?.trim()) {
@@ -263,6 +268,11 @@
 		if (!canSave) return;
 		ensureObfKey();
 		await onSave(server);
+	}
+
+	async function saveAndGoToLinks() {
+		await saveOnly();
+		if (mainTabNext) opsTab = 'links';
 	}
 
 	async function startOnly() {
@@ -419,7 +429,8 @@
 			{starting}
 			{canSave}
 			{canStart}
-			onSave={saveOnly}
+			saveLabel={statusSaveLabel}
+			onSave={mainTabNext ? saveAndGoToLinks : saveOnly}
 			onToggle={onToggle}
 		/>
 		<ProxyPanelTabs tabs={[...SERVER_TABS]} active={opsTab} onchange={(id) => (opsTab = id as ServerTab)} />
@@ -450,7 +461,9 @@
 						await onSave(server);
 					}}
 				/>
-				<Button variant="secondary" onclick={saveOnly}>Сохранить</Button>
+				<Button variant="secondary" disabled={!canSave} loading={saving} onclick={saveAndGoToLinks}>
+					{mainTabNext ? 'Далее' : 'Сохранить'}
+				</Button>
 			</section>
 		{:else if opsTab === 'links'}
 			<section class="ops-section">
