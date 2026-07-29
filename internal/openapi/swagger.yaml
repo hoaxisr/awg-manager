@@ -6542,12 +6542,6 @@ definitions:
       bond:
         description: -bond, only meaningful with mode=tcp
         type: boolean
-      platform:
-        description: -platform, provider=vk only (persona class)
-        enum:
-        - desktop
-        - mobile
-        type: string
       clientId:
         description: -client-id, auto-generated if empty
         type: string
@@ -6579,6 +6573,12 @@ definitions:
         type: string
       peer:
         description: '-peer, required: VPS server addr host:port'
+        type: string
+      platform:
+        description: -platform, provider=vk only (persona class)
+        enum:
+        - desktop
+        - mobile
         type: string
       provider:
         description: -provider, default "vk"
