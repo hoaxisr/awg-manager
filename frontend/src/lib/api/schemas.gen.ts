@@ -2393,7 +2393,6 @@ const freeturn_CaptchaOverview: v.GenericSchema = v.looseObject({
 
 const freeturn_ClientConfig: v.GenericSchema = v.looseObject({
 	bond: v.optional(v.nullable(v.boolean())),
-	platform: v.optional(v.nullable(v.string())),
 	clientId: v.optional(v.nullable(v.string())),
 	debug: v.optional(v.nullable(v.boolean())),
 	dnsMode: v.optional(v.nullable(v.string())),
@@ -2405,6 +2404,7 @@ const freeturn_ClientConfig: v.GenericSchema = v.looseObject({
 	obfKey: v.optional(v.nullable(v.string())),
 	obfProfile: v.optional(v.nullable(v.string())),
 	peer: v.optional(v.nullable(v.string())),
+	platform: v.optional(v.nullable(v.string())),
 	provider: v.optional(v.nullable(v.string())),
 	streams: v.optional(v.nullable(v.number())),
 	streamsPerCred: v.optional(v.nullable(v.number())),
