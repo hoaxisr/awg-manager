@@ -186,7 +186,7 @@ func (a *app) setupSingbox() {
 	// Wire the Operator's cached sing-box build-tag probe into the
 	// subscription adapter so flush() Pass 1 can cheaply pre-filter
 	// outbounds whose type requires a missing optional build tag
-	// (trusttunnel, mieru, naive). The probe is cached by binary
+	// (naive). The probe is cached by binary
 	// mtime+size in Operator.detectVersionAndFeaturesCached — common
 	// path is ~10µs per call (stat-only check, no subprocess).
 	a.subAdapter.SetSingboxFeaturesFn(a.singboxOp.SingboxFeatures)

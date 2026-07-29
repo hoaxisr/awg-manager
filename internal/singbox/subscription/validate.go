@@ -26,8 +26,8 @@ type DropReason struct {
 //
 // singboxFeatures is the list of build tags from the installed sing-box
 // binary (Features field of InstallStatus). When non-empty, outbounds
-// that require an optional tag (e.g. trusttunnel needs
-// with_trusttunnel_outbound) are dropped early with a user-facing reason
+// that require an optional tag (e.g. naive needs
+// with_naive_outbound) are dropped early with a user-facing reason
 // instead of waiting for `sing-box check` to report "unknown outbound
 // type".
 //
@@ -106,13 +106,6 @@ func classifyOutbound(ob map[string]any) string {
 		if stringOf(ob["password"]) == "" {
 			return "missing hysteria2 password"
 		}
-	case "trusttunnel":
-		if stringOf(ob["username"]) == "" {
-			return "missing trusttunnel username"
-		}
-		if stringOf(ob["password"]) == "" {
-			return "missing trusttunnel password"
-		}
 	case "shadowsocks":
 		if stringOf(ob["password"]) == "" {
 			return "missing shadowsocks password"
@@ -127,8 +120,8 @@ func classifyOutbound(ob map[string]any) string {
 // classifyOutboundFeatureSupport returns "" when the outbound's required
 // build tag (if any) is present in singboxFeatures. Otherwise returns a
 // short human-readable reason string like
-// "trusttunnel: missing sing-box build tag with_trusttunnel_outbound,
-// update sing-box to a version supporting trusttunnel".
+// "naive: missing sing-box build tag with_naive_outbound,
+// update sing-box to a version supporting naive".
 func classifyOutboundFeatureSupport(ob map[string]any, singboxFeatures []string) string {
 	typ, _ := ob["type"].(string)
 	if typ == "" || typ == "selector" || typ == "urltest" {

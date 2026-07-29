@@ -226,5 +226,5 @@ func LocalListenPort(addr string) (int, bool) {
 }
 
 type LocalListenPortChecker interface {
-	OccupiedLocalListenPorts() (map[int]bool, error)
+	OccupiedLocalListenPorts(excludeWdttClientID, excludeFreeTurnClientID string) (map[int]bool, error)
 }

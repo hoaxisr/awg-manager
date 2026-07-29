@@ -1,8 +1,11 @@
 package wdtt
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 )
 
 // ListServerPanelUsers returns WDTT client passwords from panel.db for a server instance.
@@ -68,11 +71,38 @@ func (s *Service) RemoveServerPanelUser(serverID, password string) (PanelUsersSt
 	return st, nil
 }
 
+// serverAdminAddr — дефолтный -admin-addr у wdtt-server; мы его не переопределяем.
+const serverAdminAddr = "127.0.0.1:2861"
+
 func (s *Service) notifyServerPanelUsersChanged(serverID string) {
 	if !s.serverProcs.get(serverID).Status().Running {
 		return
 	}
-	if err := s.serverProcs.get(serverID).Reload(); err != nil && s.appLog != nil {
-		s.appLog.Warn("panel", serverID, "SIGHUP после panel.db: "+err.Error())
+	if err := reloadServerPanelDB(); err != nil && s.appLog != nil {
+		s.appLog.Warn("panel", serverID, "перечитывание panel.db: "+err.Error())
 	}
+}
+
+// reloadServerPanelDB просит запущенный wdtt-server перечитать panel.db.
+//
+// SIGHUP для этого не годится: сервер подписан только на SIGTERM и SIGINT
+// (server/server.go в апстриме), а необработанный SIGHUP в Go сохраняет
+// дефолтную диспозицию и убивает процесс. Штатный путь — admin-ручка на
+// localhost; токен не нужен, пока session_key в panel.db пуст (headless).
+func reloadServerPanelDB() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+serverAdminAddr+"/admin/reload", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("admin/reload: %s", resp.Status)
+	}
+	return nil
 }

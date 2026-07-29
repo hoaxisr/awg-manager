@@ -73,11 +73,11 @@ func (s *Service) SetDownloader(dl childproc.Downloader) {
 	s.downloader = dl
 }
 
-func (s *Service) occupiedLocalListenPorts() map[int]bool {
+func (s *Service) occupiedLocalListenPorts(selfClientID string) map[int]bool {
 	if s.listenChecker == nil {
 		return nil
 	}
-	used, err := s.listenChecker.OccupiedLocalListenPorts()
+	used, err := s.listenChecker.OccupiedLocalListenPorts(selfClientID, "")
 	if err != nil || len(used) == 0 {
 		return nil
 	}
@@ -85,7 +85,7 @@ func (s *Service) occupiedLocalListenPorts() map[int]bool {
 }
 
 func (s *Service) reservedServerPortsExcept(id string) map[int]bool {
-	used := s.occupiedLocalListenPorts()
+	used := s.occupiedLocalListenPorts("")
 	if len(used) == 0 {
 		return used
 	}
@@ -128,7 +128,7 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 		return fmt.Errorf("клиент %q не найден", id)
 	}
 	listens := clientListenAddresses(full.Clients)
-	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(), 9000, 9200)
+	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
 	cfg = normalizeClientConfig(cfg)
 	full.Clients[idx].Config = cfg
 	return s.store.Save(full)
@@ -146,7 +146,7 @@ func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
 		cfg = *in.Config
 	}
 	cfg = normalizeClientConfig(cfg)
-	cfg.Listen = nextClientListen(full.Clients, s.occupiedLocalListenPorts())
+	cfg.Listen = nextClientListen(full.Clients, s.occupiedLocalListenPorts(""))
 	name := in.Name
 	if name == "" {
 		name = fmt.Sprintf("Клиент %d", len(full.Clients)+1)
@@ -212,7 +212,7 @@ func (s *Service) ImportLink(id, link string) (ClientInstance, ImportPayload, er
 	}
 	cfg := ApplyImport(full.Clients[idx].Config, payload)
 	listens := clientListenAddresses(full.Clients)
-	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(), 9000, 9200)
+	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
 	if name := strings.TrimSpace(payload.Name); name != "" {
 		full.Clients[idx].Name = name
 	}
@@ -298,7 +298,7 @@ func (s *Service) repairClientListenPort(id string) (ClientConfig, error) {
 	}
 	listens := clientListenAddresses(full.Clients)
 	cfg := full.Clients[idx].Config
-	next := ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(), 9000, 9200)
+	next := ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
 	if next == cfg.Listen {
 		return cfg, nil
 	}
@@ -357,13 +357,20 @@ func (s *Service) StopClientInstance(id string) error {
 
 func (s *Service) Stop() {
 	full, _ := s.store.Load()
+	hadRunning := false
 	for _, srv := range full.Servers {
 		if s.serverProcs.get(srv.ID).Status().Running {
+			hadRunning = true
 			removeServerListenFirewall(context.Background(), srv.Config)
 		}
 	}
 	s.clientProcs.stopAll()
 	s.serverProcs.stopAll()
+	// Снимаем NAT после остановки: иначе MASQUERADE и FORWARD на wdtt0
+	// переживали бы рестарт демона и копились на роутере.
+	if hadRunning {
+		removeEntwareNAT(context.Background(), DefaultWdttIface)
+	}
 }
 
 // ResumeEnabled стартует всех клиентов с Enabled==true (авторитетный флаг

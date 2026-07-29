@@ -956,7 +956,7 @@ func (o *Operator) preflightConfigDir() error {
 // hand control to `sing-box check`. Without this pre-check, sing-box
 // reports only:
 //
-//	FATAL decode config …: outbounds[N]: unknown outbound type: trusttunnel
+//	FATAL decode config …: outbounds[N]: unknown outbound type: naive
 //
 // which leaves the user guessing whether it's a typo, a bad sub, or an
 // outdated binary. Our error names the specific missing build tag and
@@ -964,8 +964,11 @@ func (o *Operator) preflightConfigDir() error {
 func (o *Operator) checkOutboundFeatures() error {
 	ctx, cancel := context.WithTimeout(context.Background(), singboxVersionProbeTimeout)
 	defer cancel()
-	version, features := o.detectVersionAndFeaturesCached(ctx)
-	if len(features) == 0 && version == "" {
+	_, features := o.detectVersionAndFeaturesCached(ctx)
+	// Пустой список тегов — это «не удалось определить», а не «фич нет».
+	// Бинарь мог не отдать строку Tags вовсе; гейт на пути старта процесса
+	// не имеет права резать конфиг по такой догадке.
+	if len(features) == 0 {
 		return nil
 	}
 	entries, err := os.ReadDir(o.configPath)

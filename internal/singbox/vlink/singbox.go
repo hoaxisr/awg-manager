@@ -30,7 +30,6 @@ var supportedSingboxTypes = map[string]bool{
 	"shadowsocks": true,
 	"hysteria2":   true,
 	"mieru":       true,
-	"trusttunnel": true,
 }
 
 // servicedSingboxTypes is the set of outbound types that are infrastructural

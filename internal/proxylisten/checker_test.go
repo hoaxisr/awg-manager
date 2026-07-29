@@ -21,7 +21,7 @@ func TestCrossChecker_IncludesWdttForFreeTurn(t *testing.T) {
 		WDTT:               wdtt.NewService(dir, filepath.Join(dir, "run"), "wdtt-client", "wdtt-server"),
 		IncludeWdttClients: true,
 	}
-	used, err := checker.OccupiedLocalListenPorts()
+	used, err := checker.OccupiedLocalListenPorts("", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestCrossChecker_IncludesFreeTurnForWdtt(t *testing.T) {
 		FreeTurn:               freeturn.NewService(dir, filepath.Join(dir, "run"), "freeturn-client", "freeturn-server"),
 		IncludeFreeTurnClients: true,
 	}
-	used, err := checker.OccupiedLocalListenPorts()
+	used, err := checker.OccupiedLocalListenPorts("", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestCrossChecker_IncludesWdttServerPortsForFreeTurn(t *testing.T) {
 	checker := &CrossChecker{
 		WDTT: wdtt.NewService(dir, filepath.Join(dir, "run"), "wdtt-client", "wdtt-server"),
 	}
-	used, err := checker.OccupiedLocalListenPorts()
+	used, err := checker.OccupiedLocalListenPorts("", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestCrossChecker_IncludesFreeTurnServerPortsForWdtt(t *testing.T) {
 	checker := &CrossChecker{
 		FreeTurn: freeturn.NewService(dir, filepath.Join(dir, "run"), "freeturn-client", "freeturn-server"),
 	}
-	used, err := checker.OccupiedLocalListenPorts()
+	used, err := checker.OccupiedLocalListenPorts("", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,11 +98,59 @@ func TestCrossChecker_IncludesAWGTunnelEndpoint(t *testing.T) {
 	}
 
 	checker := &CrossChecker{AWGStore: awgStore}
-	used, err := checker.OccupiedLocalListenPorts()
+	used, err := checker.OccupiedLocalListenPorts("", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !used[9002] {
 		t.Fatalf("expected awg endpoint port 9002 reserved, got %v", used)
+	}
+}
+
+// Туннель, привязанный к самому клиенту, не должен считаться занятым: иначе
+// клиент на каждом старте видит свой же порт занятым и переезжает, а endpoint
+// туннеля остаётся на старом — связка разваливается без шанса на самолечение.
+func TestCrossChecker_SkipsOwnClientTunnel(t *testing.T) {
+	dir := t.TempDir()
+	awgStore := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	if err := awgStore.Save(&storage.AWGTunnel{
+		ID:           "awg11",
+		Name:         "linked-wdtt",
+		WdttClientID: "client-a",
+		Peer:         storage.AWGPeer{Endpoint: "127.0.0.1:9000"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awgStore.Save(&storage.AWGTunnel{
+		ID:               "awg12",
+		Name:             "linked-freeturn",
+		FreeTurnClientID: "client-b",
+		Peer:             storage.AWGPeer{Endpoint: "127.0.0.1:9001"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	checker := &CrossChecker{AWGStore: awgStore}
+
+	used, err := checker.OccupiedLocalListenPorts("client-a", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used[9000] {
+		t.Fatalf("собственный туннель клиента не должен резервировать 9000: %v", used)
+	}
+	if !used[9001] {
+		t.Fatalf("чужой туннель обязан резервировать 9001: %v", used)
+	}
+
+	used, err = checker.OccupiedLocalListenPorts("", "client-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used[9001] {
+		t.Fatalf("собственный туннель freeturn-клиента не должен резервировать 9001: %v", used)
+	}
+	if !used[9000] {
+		t.Fatalf("чужой туннель обязан резервировать 9000: %v", used)
 	}
 }

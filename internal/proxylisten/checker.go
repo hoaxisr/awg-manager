@@ -39,7 +39,12 @@ func anyHostPort(addr string) (int, bool) {
 	return port, true
 }
 
-func (c *CrossChecker) OccupiedLocalListenPorts() (map[int]bool, error) {
+// OccupiedLocalListenPorts собирает занятые порты. excludeWdttClientID и
+// excludeFreeTurnClientID — клиент, для которого порт и подбирается: его
+// собственный AWG-туннель указывает на 127.0.0.1:<его listen>, и без этого
+// исключения клиент считал бы свой же порт занятым и переезжал на соседний,
+// оставляя endpoint туннеля висеть на старом (endpoint нигде не обновляется).
+func (c *CrossChecker) OccupiedLocalListenPorts(excludeWdttClientID, excludeFreeTurnClientID string) (map[int]bool, error) {
 	used := map[int]bool{}
 
 	if c.AWGStore != nil {
@@ -48,6 +53,12 @@ func (c *CrossChecker) OccupiedLocalListenPorts() (map[int]bool, error) {
 			return nil, err
 		}
 		for _, tun := range tunnels {
+			if excludeWdttClientID != "" && strings.TrimSpace(tun.WdttClientID) == excludeWdttClientID {
+				continue
+			}
+			if excludeFreeTurnClientID != "" && strings.TrimSpace(tun.FreeTurnClientID) == excludeFreeTurnClientID {
+				continue
+			}
 			if port, ok := freeturn.LocalListenPort(tun.Peer.Endpoint); ok {
 				used[port] = true
 			}

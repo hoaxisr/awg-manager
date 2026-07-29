@@ -38,8 +38,6 @@ func EncodeOutbound(raw json.RawMessage, label string) (string, error) {
 		return encodeNaive(ob, label)
 	case "mieru":
 		return encodeMieru(ob, label)
-	case "trusttunnel":
-		return encodeTrusttunnel(ob, label)
 	default:
 		return "", fmt.Errorf("%w: %q", ErrEncodeUnsupported, typ)
 	}
@@ -298,47 +296,6 @@ func encodeMieru(ob map[string]any, label string) (string, error) {
 		Host:     host,
 		User:     url.UserPassword(username, password),
 		RawQuery: q.Encode(),
-	}
-	return u.String(), nil
-}
-
-func encodeTrusttunnel(ob map[string]any, label string) (string, error) {
-	username, _ := ob["username"].(string)
-	password, _ := ob["password"].(string)
-	if username == "" {
-		return "", errors.New("vlink: trusttunnel: missing username")
-	}
-	if password == "" {
-		return "", errors.New("vlink: trusttunnel: missing password")
-	}
-	host, _ := ob["server"].(string)
-	if host == "" {
-		return "", errors.New("vlink: trusttunnel: missing server")
-	}
-	port := intFromAny(ob["server_port"])
-	if port <= 0 || port > 65535 {
-		return "", errors.New("vlink: trusttunnel: invalid server_port")
-	}
-
-	u := &url.URL{
-		Scheme: "trusttunnel",
-		Host:   netJoinHostPort(host, port),
-		User:   url.UserPassword(username, password),
-	}
-
-	q, err := streamQueryFromOutbound(ob)
-	if err != nil {
-		return "", err
-	}
-	ttQ := trusttunnelQueryFromOutbound(ob)
-	for k, vs := range ttQ {
-		for _, v := range vs {
-			q.Set(k, v)
-		}
-	}
-	u.RawQuery = q.Encode()
-	if label != "" {
-		u.Fragment = label
 	}
 	return u.String(), nil
 }

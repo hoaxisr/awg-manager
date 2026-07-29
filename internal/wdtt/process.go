@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/childproc"
@@ -162,17 +161,6 @@ func (p *process) Start(args []string) error {
 		}()
 		return nil
 	}
-}
-
-func (p *process) Reload() error {
-	pid, err := p.readPID()
-	if err != nil || pid <= 0 {
-		return err
-	}
-	if !childproc.IsAlive(pid) {
-		return fmt.Errorf("wdtt %s: процесс не запущен", p.name)
-	}
-	return childproc.Signal(pid, syscall.SIGHUP)
 }
 
 func (p *process) Stop() error {

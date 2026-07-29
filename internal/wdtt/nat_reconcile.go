@@ -31,12 +31,29 @@ func (s *Service) natReconcileLoop(ctx context.Context) {
 	}
 }
 
+func (s *Service) anyServerRunning(full Config) bool {
+	for _, srv := range full.Servers {
+		if s.serverProcs.get(srv.ID).Status().Running {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 	if s.accessMgr == nil {
 		return
 	}
 	full, err := s.store.Load()
 	if err != nil {
+		return
+	}
+	// Ни одного живого сервера — снимаем свои правила. Иначе внешний kill,
+	// падение процесса или удаление инстанса оставляли бы MASQUERADE и
+	// FORWARD на несуществующем wdtt0 навсегда: снятие есть только на
+	// штатном пути остановки.
+	if !s.anyServerRunning(full) {
+		removeEntwareNAT(ctx, DefaultWdttIface)
 		return
 	}
 	for _, srv := range full.Servers {

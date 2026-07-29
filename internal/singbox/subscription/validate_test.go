@@ -325,7 +325,7 @@ func TestCleanReferencesToTag_DropsEmptyGroups(t *testing.T) {
 }
 
 func TestPreFilterOutboundsFeatureGate(t *testing.T) {
-	mieru := map[string]any{"type": "mieru", "tag": "m", "server": "1.2.3.4", "server_port": 443}
+	naive := map[string]any{"type": "naive", "tag": "n", "server": "1.2.3.4", "server_port": 443}
 
 	for _, tc := range []struct {
 		name     string
@@ -333,11 +333,11 @@ func TestPreFilterOutboundsFeatureGate(t *testing.T) {
 		wantKept bool
 	}{
 		{"нет фичи — отбраковываем", []string{"with_quic"}, false},
-		{"фича есть — оставляем", []string{"with_mieru_outbound"}, true},
+		{"фича есть — оставляем", []string{"with_naive_outbound"}, true},
 		{"features неизвестны — не трогаем", nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			kept, dropped := preFilterOutbounds([]any{mieru}, tc.features)
+			kept, dropped := preFilterOutbounds([]any{naive}, tc.features)
 			if tc.wantKept {
 				if len(kept) != 1 || len(dropped) != 0 {
 					t.Fatalf("ожидали сохранение, got kept=%d dropped=%v", len(kept), dropped)
@@ -347,10 +347,21 @@ func TestPreFilterOutboundsFeatureGate(t *testing.T) {
 			if len(kept) != 0 || len(dropped) != 1 {
 				t.Fatalf("ожидали отбраковку, got kept=%d dropped=%v", len(kept), dropped)
 			}
-			if !strings.Contains(dropped[0].Reason, "with_mieru_outbound") {
+			if !strings.Contains(dropped[0].Reason, "with_naive_outbound") {
 				t.Fatalf("причина без имени тега: %q", dropped[0].Reason)
 			}
 		})
+	}
+}
+
+// mieru в нашем форке регистрируется в include/registry.go — файле без
+// build-тегов, — поэтому тега with_mieru_outbound не существует. Гейт,
+// выводящий имя тега из соглашения, отбраковывал бы рабочие подключения.
+func TestPreFilterOutboundsKeepsMieruWithoutTag(t *testing.T) {
+	mieru := map[string]any{"type": "mieru", "tag": "m", "server": "1.2.3.4", "server_port": 443}
+	kept, dropped := preFilterOutbounds([]any{mieru}, []string{"with_naive_outbound", "with_quic"})
+	if len(kept) != 1 || len(dropped) != 0 {
+		t.Fatalf("mieru не требует build-тега, got kept=%d dropped=%v", len(kept), dropped)
 	}
 }
 

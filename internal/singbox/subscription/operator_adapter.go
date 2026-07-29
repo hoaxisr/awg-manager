@@ -74,7 +74,7 @@ type OperatorAdapter struct {
 	// singboxFeaturesFn, when non-nil, is called once per flush() Pass 1 to
 	// fetch the current installed sing-box build tags (from
 	// sing-box version → Tags: line). Used for cheap pre-filtering of
-	// outbounds whose type requires an optional build tag (trusttunnel,
+	// outbounds whose type requires an optional build tag (naive,
 	// mieru, naive) — we drop them in Pass 1 with a human-readable reason
 	// instead of letting `sing-box check` report unknown type.
 	//

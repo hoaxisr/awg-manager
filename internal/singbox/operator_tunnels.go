@@ -126,10 +126,6 @@ func outboundFingerprint(ob map[string]any) string {
 		u, _ := ob["username"].(string)
 		p, _ := ob["password"].(string)
 		secret = u + ":" + p
-	case "trusttunnel":
-		u, _ := ob["username"].(string)
-		p, _ := ob["password"].(string)
-		secret = u + ":" + p
 	default:
 		return ""
 	}
@@ -199,9 +195,6 @@ func parseTunnelLinksInput(linksText string) vlink.BatchResult {
 	if body := []byte(linksText); vlink.IsMieruClientJSON(body) {
 		return vlink.ParseMieruClientJSON(body)
 	}
-	if body := []byte(linksText); vlink.IsTrustTunnelTOML(body) {
-		return vlink.ParseTrustTunnelTOML(body)
-	}
 	return vlink.ParseBatch(strings.Split(linksText, "\n"))
 }
 
@@ -247,13 +240,17 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 	var addedTags []string
 	// Pre-gate by sing-box build features BEFORE we mutate cfg or allocate
 	// NDMS proxy slots. Outbounds that require a missing sing-box build tag
-	// (e.g. trusttunnel needs with_trusttunnel_outbound) are rejected with
-	// a user-visible BatchError: adding them would just fail later at the
+	// (e.g. naive needs with_naive_outbound) are rejected with a
+	// user-visible BatchError: adding them would just fail later at the
 	// applyConfig → preflightConfigDir step, but stopping early here keeps
 	// the rest of the batch intact and avoids partial side-effects.
+	//
+	// Пустой список = проба не удалась (бинарь ещё не установлен), а не
+	// «фич нет»: гейт в этом случае пропускает всё, решение остаётся за
+	// самим sing-box.
 	features := o.singboxFeaturesCached()
 	for _, p := range batchResult.Outbounds {
-		if !OutboundSupportedByFeatures(features, p.Protocol) {
+		if len(features) > 0 && !OutboundSupportedByFeatures(features, p.Protocol) {
 			required := OutboundTypeRequiresFeature(p.Protocol)
 			if required == "" {
 				required = "<unknown required tag>"

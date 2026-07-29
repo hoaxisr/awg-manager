@@ -9,7 +9,7 @@ import (
 // LocalListenPortChecker reports localhost listen ports already claimed outside
 // freeturn (e.g. AWG tunnel peer endpoints on 127.0.0.1:PORT).
 type LocalListenPortChecker interface {
-	OccupiedLocalListenPorts() (map[int]bool, error)
+	OccupiedLocalListenPorts(excludeWdttClientID, excludeFreeTurnClientID string) (map[int]bool, error)
 }
 
 func isLocalHost(host string) bool {

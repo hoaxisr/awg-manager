@@ -54,11 +54,11 @@ func (s *Service) SetListenPortChecker(c LocalListenPortChecker) {
 	s.listenPortChecker = c
 }
 
-func (s *Service) occupiedLocalListenPorts() map[int]bool {
+func (s *Service) occupiedLocalListenPorts(selfClientID string) map[int]bool {
 	if s.listenPortChecker == nil {
 		return nil
 	}
-	used, err := s.listenPortChecker.OccupiedLocalListenPorts()
+	used, err := s.listenPortChecker.OccupiedLocalListenPorts("", selfClientID)
 	if err != nil || len(used) == 0 {
 		return nil
 	}
@@ -66,7 +66,7 @@ func (s *Service) occupiedLocalListenPorts() map[int]bool {
 }
 
 func (s *Service) reservedServerPortsExcept(id string) map[int]bool {
-	used := s.occupiedLocalListenPorts()
+	used := s.occupiedLocalListenPorts("")
 	if len(used) == 0 {
 		return used
 	}
@@ -123,7 +123,7 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 		return fmt.Errorf("клиент %q не найден", id)
 	}
 	listens := clientListenAddresses(full.Clients)
-	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(), 9000, 9200)
+	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
 	cfg.Platform = normalizePlatform(cfg.Platform)
 	full.Clients[idx].Config = cfg
 	return s.store.Save(full)
@@ -169,7 +169,7 @@ func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
 		cfg = *in.Config
 	}
 	cfg.Platform = normalizePlatform(cfg.Platform)
-	cfg.Listen = nextClientListen(full.Clients, s.occupiedLocalListenPorts())
+	cfg.Listen = nextClientListen(full.Clients, s.occupiedLocalListenPorts(""))
 	name := in.Name
 	if name == "" {
 		name = fmt.Sprintf("Клиент %d", len(full.Clients)+1)
@@ -193,7 +193,7 @@ func (s *Service) CreateServer(in CreateServerInput) (ServerInstance, error) {
 	if in.Config != nil {
 		cfg = *in.Config
 	}
-	cfg.Listen = nextServerListen(full.Servers, s.occupiedLocalListenPorts())
+	cfg.Listen = nextServerListen(full.Servers, s.occupiedLocalListenPorts(""))
 	name := in.Name
 	if name == "" {
 		name = fmt.Sprintf("Сервер %d", len(full.Servers)+1)
@@ -413,7 +413,7 @@ func (s *Service) repairClientListenPort(id string) (ClientConfig, error) {
 	}
 	listens := clientListenAddresses(full.Clients)
 	cfg := full.Clients[idx].Config
-	next := ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(), 9000, 9200)
+	next := ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
 	if next == cfg.Listen {
 		return cfg, nil
 	}

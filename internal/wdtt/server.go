@@ -81,7 +81,7 @@ func (s *Service) CreateServer(in CreateServerInput) (ServerInstance, error) {
 	if in.Config != nil {
 		cfg = *in.Config
 	}
-	reserved := s.occupiedLocalListenPorts()
+	reserved := s.occupiedLocalListenPorts("")
 	cfg = normalizeServerConfig(cfg)
 	cfg.Listen = nextServerListen(full.Servers, reserved)
 	cfg.WgPort = ensureUniqueWgPort(cfg.WgPort, cfg.Listen, reserved, 56000, 56100)
@@ -109,10 +109,13 @@ func (s *Service) DeleteServer(id string) error {
 		s.mu.Unlock()
 		return fmt.Errorf("сервер %q не найден", id)
 	}
+	inst := full.Servers[idx]
 	full.Servers = append(full.Servers[:idx], full.Servers[idx+1:]...)
 	saveErr := s.store.Save(full)
 	s.mu.Unlock()
 	_ = s.serverProcs.get(id).Stop()
+	removeEntwareNAT(context.Background(), DefaultWdttIface)
+	removeServerListenFirewall(context.Background(), inst.Config)
 	return saveErr
 }
 
@@ -182,9 +185,12 @@ func (s *Service) StopServerInstance(id string) error {
 	if err != nil {
 		return err
 	}
+	// Останавливаем ДО снятия правил: Stop блокирует до ~3с, и тик
+	// NAT-ресинка, попав в это окно, увидел бы процесс живым и поставил
+	// правила заново — снять их было бы уже некому.
+	err = s.serverProcs.get(id).Stop()
 	removeEntwareNAT(context.Background(), DefaultWdttIface)
 	removeServerListenFirewall(context.Background(), inst.Config)
-	err = s.serverProcs.get(id).Stop()
 	if e := s.setServerEnabled(id, false); e != nil && s.appLog != nil {
 		s.appLog.Warn("stop", id, "не удалось сбросить enabled: "+e.Error())
 	}

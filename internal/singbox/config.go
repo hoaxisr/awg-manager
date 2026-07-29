@@ -539,11 +539,6 @@ func detectTransport(ob map[string]any) string {
 		return "quic"
 	case "naive":
 		return "https"
-	case "trusttunnel":
-		if quic, _ := ob["quic"].(bool); quic {
-			return "quic"
-		}
-		return "https"
 	case "mieru":
 		return strings.ToLower(strOr(ob["transport"], "tcp"))
 	}
@@ -579,17 +574,15 @@ func detectFingerprint(ob map[string]any) string {
 // runtime. Empty string means no feature-tag is required (the type is
 // compiled into the core binary unconditionally).
 //
-// Sing-box upstream naming convention for optional outbounds is
-// `with_<type>_outbound` (with_naive_outbound, with_mieru_outbound, …).
-// TrustTunnel, being a recent addition, follows the same convention.
+// Список закрыт намеренно: имя тега нельзя выводить из соглашения
+// `with_<type>_outbound`. В нашем форке (include/registry.go, файл без
+// build-тегов) mieru регистрируется безусловно, тега with_mieru_outbound
+// не существует — и вывод такого тега из соглашения отбраковывал бы
+// рабочие mieru-подключения. Здесь только теги, подтверждённые файлом
+// include/<type>_outbound.go в исходниках sing-box.
 func outboundRequiresFeature(obType string) string {
-	switch obType {
-	case "naive":
+	if obType == "naive" {
 		return "with_naive_outbound"
-	case "mieru":
-		return "with_mieru_outbound"
-	case "trusttunnel":
-		return "with_trusttunnel_outbound"
 	}
 	return ""
 }
