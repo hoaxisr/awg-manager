@@ -43,10 +43,10 @@ func validateUniqueListens(listens []string, selfIdx int, selfAddr string) error
 	return nil
 }
 
+// ensureUniqueListenAddr returns addr when its port is free among listens[selfIdx]
+// and reserved (AWG tunnel endpoints, sibling proxy clients); otherwise the next
+// free loopback port in [portMin, portMax).
 func ensureUniqueListenAddr(listens []string, selfIdx int, addr string, reserved map[int]bool, portMin, portMax int) string {
-	if err := validateUniqueListens(listens, selfIdx, addr); err == nil {
-		return addr
-	}
 	used := map[int]bool{}
 	for i, a := range listens {
 		if i == selfIdx {
@@ -61,6 +61,9 @@ func ensureUniqueListenAddr(listens []string, selfIdx int, addr string, reserved
 			used[port] = true
 		}
 	}
+	if selfPort, err := listenPort(addr); err == nil && !used[selfPort] {
+		return addr
+	}
 	host := "127.0.0.1"
 	if h, _, err := net.SplitHostPort(addr); err == nil && strings.TrimSpace(h) != "" {
 		host = h
@@ -73,10 +76,7 @@ func ensureUniqueListenAddr(listens []string, selfIdx int, addr string, reserved
 	return fmt.Sprintf("%s:%d", host, portMin)
 }
 
-func ensureUniqueServerListenAddr(listens []string, selfIdx int, addr string, portMin, portMax int) string {
-	if err := validateUniqueListens(listens, selfIdx, addr); err == nil {
-		return addr
-	}
+func ensureUniqueServerListenAddr(listens []string, selfIdx int, addr string, reserved map[int]bool, portMin, portMax int) string {
 	used := map[int]bool{}
 	for i, a := range listens {
 		if i == selfIdx {
@@ -85,6 +85,14 @@ func ensureUniqueServerListenAddr(listens []string, selfIdx int, addr string, po
 		if port, err := listenPort(a); err == nil {
 			used[port] = true
 		}
+	}
+	for port, v := range reserved {
+		if v {
+			used[port] = true
+		}
+	}
+	if selfPort, err := listenPort(addr); err == nil && !used[selfPort] {
+		return addr
 	}
 	host := "0.0.0.0"
 	if h, _, err := net.SplitHostPort(addr); err == nil && strings.TrimSpace(h) != "" {
@@ -124,17 +132,23 @@ func nextClientListen(clients []ClientInstance, reserved map[int]bool) string {
 	return "127.0.0.1:9000"
 }
 
-func nextServerListen(servers []ServerInstance) string {
+func nextServerListen(servers []ServerInstance, reserved map[int]bool) string {
+	used := mergeListenPorts(serverListenPorts(servers), reserved)
+	host := "0.0.0.0"
+	for port := 56000; port < 56100; port++ {
+		if !used[port] {
+			return fmt.Sprintf("%s:%d", host, port)
+		}
+	}
+	return "0.0.0.0:56000"
+}
+
+func serverListenPorts(servers []ServerInstance) map[int]bool {
 	used := map[int]bool{}
 	for _, s := range servers {
 		if port, err := listenPort(s.Config.Listen); err == nil {
 			used[port] = true
 		}
 	}
-	for port := 56000; port < 56100; port++ {
-		if !used[port] {
-			return fmt.Sprintf("0.0.0.0:%d", port)
-		}
-	}
-	return "0.0.0.0:56000"
+	return used
 }

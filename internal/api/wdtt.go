@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/wdtt"
@@ -25,7 +26,20 @@ type WdttService interface {
 	StartClientInstance(id string) error
 	StopClientInstance(id string) error
 	RefreshSubscription(id string) (wdtt.ClientInstance, wdtt.ImportPayload, error)
+	UpdateServerConfig(wdtt.ServerConfig) error
+	UpdateServerInstance(id string, cfg wdtt.ServerConfig) (wdtt.ServerConfig, error)
+	CreateServer(wdtt.CreateServerInput) (wdtt.ServerInstance, error)
+	DeleteServer(id string) error
+	RenameServer(id, name string) error
+	ServerConfigForLink(id string) (wdtt.ServerConfig, error)
+	StartServer() error
+	StopServer() error
+	StartServerInstance(id string) error
+	StopServerInstance(id string) error
 	InstallBinaries(ctx context.Context) error
+	ListServerPanelUsers(serverID string) (wdtt.PanelUsersStatus, error)
+	AddServerPanelUser(serverID, password, comment, vkHash, mainPassword string) (wdtt.PanelUsersStatus, error)
+	RemoveServerPanelUser(serverID, password string) (wdtt.PanelUsersStatus, error)
 }
 
 type WdttHandler struct {
@@ -33,6 +47,7 @@ type WdttHandler struct {
 	awgStore       *storage.AWGTunnelStore
 	tunnelSvc      TunnelService
 	tunnelsHandler *TunnelsHandler
+	queries        *ndmsquery.Queries
 }
 
 func NewWdttHandler(svc WdttService) *WdttHandler {

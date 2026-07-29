@@ -2414,7 +2414,6 @@ const freeturn_CaptchaOverview: v.GenericSchema = v.looseObject({
 
 const freeturn_ClientConfig: v.GenericSchema = v.looseObject({
 	bond: v.optional(v.nullable(v.boolean())),
-	browser: v.optional(v.nullable(v.string())),
 	clientId: v.optional(v.nullable(v.string())),
 	debug: v.optional(v.nullable(v.boolean())),
 	dnsMode: v.optional(v.nullable(v.string())),
@@ -2426,6 +2425,7 @@ const freeturn_ClientConfig: v.GenericSchema = v.looseObject({
 	obfKey: v.optional(v.nullable(v.string())),
 	obfProfile: v.optional(v.nullable(v.string())),
 	peer: v.optional(v.nullable(v.string())),
+	platform: v.optional(v.nullable(v.string())),
 	provider: v.optional(v.nullable(v.string())),
 	streams: v.optional(v.nullable(v.number())),
 	streamsPerCred: v.optional(v.nullable(v.number())),
@@ -2496,6 +2496,7 @@ const freeturn_ServerConfig: v.GenericSchema = v.looseObject({
 	mode: v.optional(v.nullable(v.string())),
 	obfKey: v.optional(v.nullable(v.string())),
 	obfProfile: v.optional(v.nullable(v.string())),
+	openFirewall: v.optional(v.nullable(v.boolean())),
 });
 
 const freeturn_ServerInstance: v.GenericSchema = v.looseObject({
@@ -2582,6 +2583,7 @@ const wdtt_ClientInstance: v.GenericSchema = v.looseObject({
 
 const wdtt_Config: v.GenericSchema = v.looseObject({
 	clients: v.optional(v.nullable(v.array(v.lazy(() => wdtt_ClientInstance)))),
+	servers: v.optional(v.nullable(v.array(v.lazy(() => wdtt_ServerInstance)))),
 	version: v.optional(v.nullable(v.number())),
 });
 
@@ -2620,6 +2622,30 @@ const wdtt_ProcessStatus: v.GenericSchema = v.looseObject({
 	wgConfig: v.optional(v.nullable(v.string())),
 });
 
+const wdtt_ServerConfig: v.GenericSchema = v.looseObject({
+	adminId: v.optional(v.nullable(v.string())),
+	botToken: v.optional(v.nullable(v.string())),
+	configDir: v.optional(v.nullable(v.string())),
+	debug: v.optional(v.nullable(v.boolean())),
+	enabled: v.optional(v.nullable(v.boolean())),
+	ingressEnabled: v.optional(v.nullable(v.boolean())),
+	lanSegments: v.optional(v.nullable(v.array(v.string()))),
+	listen: v.optional(v.nullable(v.string())),
+	natIface: v.optional(v.nullable(v.string())),
+	natMode: v.optional(v.nullable(v.string())),
+	natStaticWan: v.optional(v.nullable(v.string())),
+	openFirewall: v.optional(v.nullable(v.boolean())),
+	password: v.optional(v.nullable(v.string())),
+	policy: v.optional(v.nullable(v.string())),
+	wgPort: v.optional(v.nullable(v.number())),
+});
+
+const wdtt_ServerInstance: v.GenericSchema = v.looseObject({
+	config: v.optional(v.nullable(v.lazy(() => wdtt_ServerConfig))),
+	id: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+});
+
 const wdtt_Status: v.GenericSchema = v.looseObject({
 	client: v.optional(v.nullable(v.lazy(() => wdtt_ProcessStatus))),
 	clients: v.optional(v.nullable(v.array(v.lazy(() => wdtt_InstanceStatus)))),
@@ -2628,6 +2654,9 @@ const wdtt_Status: v.GenericSchema = v.looseObject({
 	installedVersion: v.optional(v.nullable(v.string())),
 	installing: v.optional(v.nullable(v.boolean())),
 	routerClock: v.optional(v.nullable(v.string())),
+	server: v.optional(v.nullable(v.lazy(() => wdtt_ProcessStatus))),
+	serverSupported: v.optional(v.nullable(v.boolean())),
+	servers: v.optional(v.nullable(v.array(v.lazy(() => wdtt_InstanceStatus)))),
 	updateAvailable: v.optional(v.nullable(v.boolean())),
 });
 
@@ -2664,6 +2693,8 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"DELETE /singbox/subscriptions/delete": v.lazy(() => api_APIEnvelope),
 	"DELETE /singbox/tunnels": v.lazy(() => api_SingboxTunnelsResponse),
 	"DELETE /wdtt/clients/{id}": v.lazy(() => api_APIEnvelope),
+	"DELETE /wdtt/servers/{id}": v.lazy(() => api_APIEnvelope),
+	"DELETE /wdtt/servers/{id}/users/{password}": v.lazy(() => api_APIEnvelope),
 	"GET /access-policies": v.lazy(() => api_AccessPoliciesListResponse),
 	"GET /access-policies/devices": v.lazy(() => api_PolicyDevicesListResponse),
 	"GET /access-policies/interfaces": v.lazy(() => api_PolicyInterfacesListResponse),
@@ -2827,12 +2858,14 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /tunnels/traffic": v.lazy(() => api_TunnelTrafficResponse),
 	"GET /wan/status": v.lazy(() => api_WANStatusEnvelope),
 	"GET /wdtt/config": v.lazy(() => api_WdttConfigResponse),
+	"GET /wdtt/servers/{id}/users": v.lazy(() => api_APIEnvelope),
 	"GET /wdtt/status": v.lazy(() => api_WdttStatusResponse),
 	"PATCH /awg3-endpoints/{id}": v.lazy(() => api_Awg3ListResponse),
 	"PATCH /freeturn/clients/{id}": v.lazy(() => api_APIEnvelope),
 	"PATCH /freeturn/servers/{id}": v.lazy(() => api_APIEnvelope),
 	"PATCH /singbox/tunnels/rename": v.lazy(() => api_SingboxTunnelsResponse),
 	"PATCH /wdtt/clients/{id}": v.lazy(() => api_APIEnvelope),
+	"PATCH /wdtt/servers/{id}": v.lazy(() => api_APIEnvelope),
 	"POST /access-policies/assign": v.lazy(() => api_OkResponse),
 	"POST /access-policies/create": v.lazy(() => api_AccessPolicyResponse),
 	"POST /access-policies/description": v.lazy(() => api_OkResponse),
@@ -3064,6 +3097,14 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /wdtt/install": v.lazy(() => api_APIEnvelope),
 	"POST /wdtt/link/decode": v.lazy(() => api_WdttDecodeLinkResponse),
 	"POST /wdtt/link/import": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/server/config": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/server/start": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/server/stop": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/servers": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/servers/{id}/link": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/servers/{id}/start": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/servers/{id}/stop": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/servers/{id}/users": v.lazy(() => api_APIEnvelope),
 	"PUT /freeturn/client/config": v.lazy(() => api_FreeTurnConfigResponse),
 	"PUT /freeturn/clients/{id}": v.lazy(() => api_APIEnvelope),
 	"PUT /freeturn/server/config": v.lazy(() => api_FreeTurnConfigResponse),
@@ -3084,4 +3125,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"PUT /singbox/tunnels": v.lazy(() => api_SingboxTunnelsResponse),
 	"PUT /wdtt/client/config": v.lazy(() => api_APIEnvelope),
 	"PUT /wdtt/clients/{id}": v.lazy(() => api_APIEnvelope),
+	"PUT /wdtt/server/config": v.lazy(() => api_APIEnvelope),
+	"PUT /wdtt/servers/{id}": v.lazy(() => api_APIEnvelope),
 };

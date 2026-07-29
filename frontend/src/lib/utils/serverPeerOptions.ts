@@ -88,10 +88,12 @@ export function buildRunningServerPeerDropdownOptions(
 		if (s.status !== 'up') continue;
 		const group = `Системный WG · ${s.description || s.interfaceName}`;
 		for (const p of s.peers ?? []) {
-			if (p.confAvailable !== true) continue;
+			const keeneticOnly = p.confAvailable !== true;
 			opts.push({
 				value: encodeServerPeerValue('system', s.id, p.publicKey),
-				label: peerLabel(p.publicKey, p.description),
+				label: keeneticOnly
+					? `${peerLabel(p.publicKey, p.description)} · Keenetic OS`
+					: peerLabel(p.publicKey, p.description),
 				group,
 			});
 		}

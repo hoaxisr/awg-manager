@@ -1,6 +1,7 @@
 package freeturn
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -41,6 +42,12 @@ type Service struct {
 	appLog *logging.ScopedLogger
 
 	listenPortChecker LocalListenPortChecker
+
+	// Кеш binariesMatchSpecs: сверка хеширует оба бинаря (~21 МБ), а
+	// статус опрашивается раз в 2 секунды, пока открыта вкладка.
+	matchMu  sync.Mutex
+	matchKey string
+	matchVal bool
 }
 
 // SetLogger wires the UI-visible journal (nil-safe scoped logger).
@@ -53,15 +60,36 @@ func (s *Service) SetListenPortChecker(c LocalListenPortChecker) {
 	s.listenPortChecker = c
 }
 
-func (s *Service) occupiedLocalListenPorts() map[int]bool {
+func (s *Service) occupiedLocalListenPorts(selfClientID string) map[int]bool {
 	if s.listenPortChecker == nil {
 		return nil
 	}
-	used, err := s.listenPortChecker.OccupiedLocalListenPorts()
+	used, err := s.listenPortChecker.OccupiedLocalListenPorts("", selfClientID)
 	if err != nil || len(used) == 0 {
 		return nil
 	}
 	return used
+}
+
+func (s *Service) reservedServerPortsExcept(id string) map[int]bool {
+	used := s.occupiedLocalListenPorts("")
+	if len(used) == 0 {
+		return used
+	}
+	inst, err := s.serverInstance(id)
+	if err != nil {
+		return used
+	}
+	out := map[int]bool{}
+	for port, v := range used {
+		if v {
+			out[port] = true
+		}
+	}
+	if port, err := listenPort(inst.Config.Listen); err == nil {
+		delete(out, port)
+	}
+	return out
 }
 
 // NewService wires up config storage and process managers per instance id.
@@ -101,27 +129,38 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 		return fmt.Errorf("клиент %q не найден", id)
 	}
 	listens := clientListenAddresses(full.Clients)
-	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(), 9000, 9200)
-	cfg.Browser = normalizeBrowser(cfg.Browser)
+	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
+	cfg.Platform = normalizePlatform(cfg.Platform)
 	full.Clients[idx].Config = cfg
 	return s.store.Save(full)
 }
 
 func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
+		s.mu.Unlock()
 		return err
 	}
 	idx := findServerIndex(full.Servers, id)
 	if idx < 0 {
+		s.mu.Unlock()
 		return fmt.Errorf("сервер %q не найден", id)
 	}
+	prevCfg := full.Servers[idx].Config
 	listens := serverListenAddresses(full.Servers)
-	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, 56000, 56100)
+	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, s.reservedServerPortsExcept(id), 56000, 56100)
 	full.Servers[idx].Config = cfg
-	return s.store.Save(full)
+	saveErr := s.store.Save(full)
+	running := s.serverProcs.get(id).Status().Running
+	s.mu.Unlock()
+	if saveErr != nil {
+		return saveErr
+	}
+	if running {
+		s.syncServerListenFirewall(context.Background(), id, prevCfg, cfg)
+	}
+	return nil
 }
 
 func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
@@ -135,8 +174,8 @@ func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
 	if in.Config != nil {
 		cfg = *in.Config
 	}
-	cfg.Browser = normalizeBrowser(cfg.Browser)
-	cfg.Listen = nextClientListen(full.Clients, s.occupiedLocalListenPorts())
+	cfg.Platform = normalizePlatform(cfg.Platform)
+	cfg.Listen = nextClientListen(full.Clients, s.occupiedLocalListenPorts(""))
 	name := in.Name
 	if name == "" {
 		name = fmt.Sprintf("Клиент %d", len(full.Clients)+1)
@@ -160,7 +199,7 @@ func (s *Service) CreateServer(in CreateServerInput) (ServerInstance, error) {
 	if in.Config != nil {
 		cfg = *in.Config
 	}
-	cfg.Listen = nextServerListen(full.Servers)
+	cfg.Listen = nextServerListen(full.Servers, s.occupiedLocalListenPorts(""))
 	name := in.Name
 	if name == "" {
 		name = fmt.Sprintf("Сервер %d", len(full.Servers)+1)
@@ -367,21 +406,49 @@ func (s *Service) StartClient() error {
 	return s.StartClientInstance(DefaultInstanceID)
 }
 
+func (s *Service) repairClientListenPort(id string) (ClientConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full, err := s.store.Load()
+	if err != nil {
+		return ClientConfig{}, err
+	}
+	idx := findClientIndex(full.Clients, id)
+	if idx < 0 {
+		return ClientConfig{}, fmt.Errorf("клиент %q не найден", id)
+	}
+	listens := clientListenAddresses(full.Clients)
+	cfg := full.Clients[idx].Config
+	next := ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
+	if next == cfg.Listen {
+		return cfg, nil
+	}
+	cfg.Listen = next
+	full.Clients[idx].Config = cfg
+	if err := s.store.Save(full); err != nil {
+		return ClientConfig{}, err
+	}
+	if s.appLog != nil {
+		s.appLog.Info("listen-repair", id, "listen переназначен на "+next)
+	}
+	return cfg, nil
+}
+
 func (s *Service) StartClientInstance(id string) error {
-	inst, err := s.clientInstance(id)
+	cfg, err := s.repairClientListenPort(id)
 	if err != nil {
 		return err
 	}
-	if inst.Config.Peer == "" {
+	if cfg.Peer == "" {
 		return errors.New("укажите адрес сервера (-peer)")
 	}
-	if inst.Config.Provider == "vk" && inst.Config.Links == "" {
+	if cfg.Provider == "vk" && cfg.Links == "" {
 		return errors.New("укажите ссылку(-и) VK Calls (-links) — обязательны для provider=vk")
 	}
-	if err := validateObfKey(inst.Config.ObfProfile, inst.Config.ObfKey); err != nil {
+	if err := validateObfKey(cfg.ObfProfile, cfg.ObfKey); err != nil {
 		return err
 	}
-	if err := s.clientProcs.get(id).Start(buildClientArgs(inst.Config)); err != nil {
+	if err := s.clientProcs.get(id).Start(buildClientArgs(cfg)); err != nil {
 		return err
 	}
 	// Enabled авторитетно = «пользователь запустил»; выставляем только по факту
@@ -418,13 +485,26 @@ func (s *Service) StartServerInstance(id string) error {
 	if err != nil {
 		return err
 	}
+	if err := s.UpdateServerInstance(id, inst.Config); err != nil {
+		return err
+	}
+	inst, err = s.serverInstance(id)
+	if err != nil {
+		return err
+	}
 	if inst.Config.Connect == "" {
 		return errors.New("укажите backend-адрес (-connect)")
 	}
 	if err := validateObfKey(inst.Config.ObfProfile, inst.Config.ObfKey); err != nil {
 		return err
 	}
-	return s.serverProcs.get(id).Start(buildServerArgs(inst.Config))
+	if err := s.serverProcs.get(id).Start(buildServerArgs(inst.Config)); err != nil {
+		return err
+	}
+	if err := applyServerListenFirewall(context.Background(), inst.Config); err != nil && s.appLog != nil {
+		s.appLog.Warn("firewall", id, "INPUT для listen-порта: "+err.Error())
+	}
+	return nil
 }
 
 func (s *Service) StopServer() error {
@@ -432,9 +512,11 @@ func (s *Service) StopServer() error {
 }
 
 func (s *Service) StopServerInstance(id string) error {
-	if _, err := s.serverInstance(id); err != nil {
+	inst, err := s.serverInstance(id)
+	if err != nil {
 		return err
 	}
+	removeServerListenFirewall(context.Background(), inst.Config)
 	return s.serverProcs.get(id).Stop()
 }
 
@@ -448,6 +530,12 @@ func (s *Service) ServerConfigForLink(id string) (ServerConfig, error) {
 
 // Stop is wired into the app shutdown-hook chain in cmd/awg-manager/main.go.
 func (s *Service) Stop() {
+	full, _ := s.store.Load()
+	for _, srv := range full.Servers {
+		if s.serverProcs.get(srv.ID).Status().Running {
+			removeServerListenFirewall(context.Background(), srv.Config)
+		}
+	}
 	s.clientProcs.stopAll()
 	s.serverProcs.stopAll()
 }
@@ -545,8 +633,8 @@ func buildClientArgs(c ClientConfig) []string {
 	if c.StreamsPerCred > 0 {
 		args = append(args, "-streams-per-cred", strconv.Itoa(c.StreamsPerCred))
 	}
-	if b := strings.TrimSpace(c.Browser); b != "" {
-		str("-browser", normalizeBrowser(b))
+	if p := normalizePlatform(c.Platform); p == "mobile" {
+		str("-platform", p)
 	}
 	// awg-manager: только авто-капча; ручной fallback (:8765) не поддерживается в UI.
 	str("-dns-mode", c.DNSMode)
@@ -557,14 +645,12 @@ func buildClientArgs(c ClientConfig) []string {
 	return args
 }
 
-func normalizeBrowser(b string) string {
-	switch strings.ToLower(strings.TrimSpace(b)) {
-	case "chrome", "firefox", "safari":
-		return strings.ToLower(strings.TrimSpace(b))
-	case "chromium":
-		return "chrome"
+func normalizePlatform(p string) string {
+	switch strings.ToLower(strings.TrimSpace(p)) {
+	case "mobile":
+		return "mobile"
 	default:
-		return "chrome"
+		return "desktop"
 	}
 }
 

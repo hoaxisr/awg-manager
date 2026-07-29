@@ -164,6 +164,9 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.freeturnHandler.SetTunnelsHandler(h.tunnelsHandler)
 
 	h.wdttHandler = api.NewWdttHandler(s.wdttService)
+	if s.ndmsQueries != nil {
+		h.wdttHandler.SetNDMSQueries(s.ndmsQueries)
+	}
 	h.wdttHandler.SetLinkedTunnelCleanup(s.tunnels, s.tunnelService)
 	h.wdttHandler.SetTunnelsHandler(h.tunnelsHandler)
 
@@ -403,8 +406,13 @@ func (s *Server) registerSettingsRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/wdtt/link/decode", h.guarded(h.wdttHandler.DecodeLink))
 	mux.HandleFunc("/api/wdtt/link/import", h.guarded(h.wdttHandler.ImportLink))
 	mux.HandleFunc("/api/wdtt/install", h.guarded(h.wdttHandler.Install))
+	mux.HandleFunc("/api/wdtt/server/config", h.guarded(h.wdttHandler.UpdateServerConfig))
+	mux.HandleFunc("/api/wdtt/server/start", h.guarded(h.wdttHandler.StartServer))
+	mux.HandleFunc("/api/wdtt/server/stop", h.guarded(h.wdttHandler.StopServer))
 	mux.HandleFunc("/api/wdtt/clients/", h.guarded(h.wdttHandler.ServeClients))
 	mux.HandleFunc("/api/wdtt/clients", h.guarded(h.wdttHandler.CreateClient))
+	mux.HandleFunc("/api/wdtt/servers/", h.guarded(h.wdttHandler.ServeServers))
+	mux.HandleFunc("/api/wdtt/servers", h.guarded(h.wdttHandler.CreateServer))
 
 }
 

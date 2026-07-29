@@ -6,7 +6,7 @@ import "testing"
 // повторное удаление даёт «не найден». Регрессия к выносу Stop() из-под s.mu.
 func TestService_DeleteClient(t *testing.T) {
 	dir := t.TempDir()
-	s := NewService(dir, dir, "/bin/sh")
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
 
 	inst, err := s.CreateClient(CreateClientInput{Name: "A"})
 	if err != nil {

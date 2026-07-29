@@ -6,6 +6,7 @@
 		running: boolean;
 		binary: string;
 		binaryPresent: boolean;
+		pid?: number;
 		lastError?: string;
 	}
 
@@ -58,6 +59,18 @@
 		<Button variant="secondary" size="sm" loading={installing} onclick={onInstall}>
 			Установить v{installVersion}{installSuffix}
 		</Button>
+	</div>
+{:else if status?.running && status.binaryPresent === false}
+	<div class="proc-alert proc-alert--warn">
+		<span>
+			Процесс ещё работает{status.pid ? ` (PID ${status.pid})` : ''}, но бинарь <code>{status.binary}</code> отсутствует
+			на диске — остановите сервер и {notFoundHint}
+		</span>
+		{#if installAvailable && installVersion}
+			<Button variant="secondary" size="sm" loading={installing} onclick={onInstall}>
+				Установить v{installVersion}{installSuffix}
+			</Button>
+		{/if}
 	</div>
 {:else if showInstall === false && status && !status.binaryPresent && !installAvailable}
 	<div class="proc-alert proc-alert--warn">

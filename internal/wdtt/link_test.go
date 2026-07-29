@@ -2,6 +2,7 @@ package wdtt
 
 import (
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -73,8 +74,45 @@ func TestNormalizeSubURL_KeepsQuery(t *testing.T) {
 	}
 }
 
+func TestEncodeLink_ColonFormat(t *testing.T) {
+	link, err := EncodeLink("1.2.3.4:56000", 56001, "secret", []string{"hash1", "hash2"}, "MyServer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(link, ":9000:secret:") {
+		t.Fatalf("link must include client listen port 9000, got %q", link)
+	}
+	got, err := DecodeImport(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Peer != "1.2.3.4:56000" || got.Password != "secret" || len(got.VKHashes) != 2 {
+		t.Fatalf("roundtrip failed: %+v", got)
+	}
+	if got.Listen != "127.0.0.1:9000" {
+		t.Fatalf("listen=%q want 127.0.0.1:9000", got.Listen)
+	}
+	if got.Name != "MyServer" {
+		t.Fatalf("name=%q", got.Name)
+	}
+}
+
+func TestEncodeQwdttLink_Port9000(t *testing.T) {
+	link, err := EncodeQwdttLink("1.2.3.4:56001", "secret", []string{"h1"}, "Srv", 0, 18)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := DecodeImport(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Listen != "127.0.0.1:9000" {
+		t.Fatalf("listen=%q", got.Listen)
+	}
+}
+
 func TestDecodeImport_WdttColon(t *testing.T) {
-	link := "wdtt://1.2.3.4:56000:56001:0:secret:hash1,hash2#MyServer"
+	link := "wdtt://1.2.3.4:56000:56001:9000:secret:hash1,hash2#MyServer"
 	got, err := DecodeImport(link)
 	if err != nil {
 		t.Fatal(err)

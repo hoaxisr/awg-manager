@@ -97,6 +97,104 @@ func isVKCallJoinURL(raw string) bool {
 	return strings.Contains(lower, "vk.com/call/join/") || strings.Contains(lower, "vk.ru/call/join/")
 }
 
+// EncodeLink builds a wdtt:// share link in the colon format:
+// host:dtls:wg:clientListenPort:password:hashes
+// clientListenPort — локальный UDP-порт wdtt-client/qWDTT (127.0.0.1:9000).
+// Раньше здесь был 0; qWDTT трактует это как listen :1 → permission denied.
+func EncodeLink(peer string, wgPort int, password string, vkHashes []string, name string) (string, error) {
+	return EncodeLinkWithClientPort(peer, wgPort, password, vkHashes, name, 0)
+}
+
+func EncodeLinkWithClientPort(peer string, wgPort int, password string, vkHashes []string, name string, clientListenPort int) (string, error) {
+	peer = normalizePeer(strings.TrimSpace(peer))
+	password = strings.TrimSpace(password)
+	if peer == "" {
+		return "", fmt.Errorf("peer не задан")
+	}
+	if password == "" {
+		return "", fmt.Errorf("password не задан")
+	}
+	if wgPort <= 0 {
+		wgPort = DefaultServerConfig().WgPort
+	}
+	if clientListenPort <= 0 {
+		if p, ok := LocalListenPort(DefaultClientConfig().Listen); ok {
+			clientListenPort = p
+		} else {
+			clientListenPort = 9000
+		}
+	}
+	host, dtlsPort, err := splitPeerHostPort(peer)
+	if err != nil {
+		return "", err
+	}
+	payload := fmt.Sprintf("%s:%d:%d:%d:%s", host, dtlsPort, wgPort, clientListenPort, password)
+	if hashes := strings.Join(splitHashes(strings.Join(vkHashes, ",")), ","); hashes != "" {
+		payload += ":" + hashes
+	}
+	link := SchemeWdtt + payload
+	if n := strings.TrimSpace(name); n != "" {
+		link += "#" + n
+	}
+	return link, nil
+}
+
+// EncodeQwdttLink builds qwdtt:// for qWDTT/Android — явный port=9000 в query.
+func EncodeQwdttLink(peer, password string, vkHashes []string, name string, clientListenPort, workers int) (string, error) {
+	peer = normalizePeer(strings.TrimSpace(peer))
+	password = strings.TrimSpace(password)
+	if peer == "" {
+		return "", fmt.Errorf("peer не задан")
+	}
+	if password == "" {
+		return "", fmt.Errorf("password не задан")
+	}
+	if clientListenPort <= 0 {
+		if p, ok := LocalListenPort(DefaultClientConfig().Listen); ok {
+			clientListenPort = p
+		} else {
+			clientListenPort = 9000
+		}
+	}
+	if workers <= 0 {
+		workers = 18
+	}
+	q := url.Values{}
+	q.Set("peer", peer)
+	q.Set("pass", password)
+	if len(vkHashes) > 0 {
+		q.Set("hashes", strings.Join(splitHashes(strings.Join(vkHashes, ",")), ","))
+	}
+	q.Set("port", strconv.Itoa(clientListenPort))
+	q.Set("workers", strconv.Itoa(workers))
+	if n := strings.TrimSpace(name); n != "" {
+		q.Set("name", n)
+	}
+	return SchemeQwdtt + "config?" + q.Encode(), nil
+}
+
+func splitPeerHostPort(peer string) (host string, port int, err error) {
+	peer = strings.TrimSpace(peer)
+	if !strings.Contains(peer, ":") {
+		return peer, 56000, nil
+	}
+	h, portStr, splitErr := net.SplitHostPort(peer)
+	if splitErr != nil {
+		// fallback for bare host:port without brackets
+		parts := strings.Split(peer, ":")
+		if len(parts) < 2 {
+			return "", 0, fmt.Errorf("некорректный peer %q", peer)
+		}
+		h = strings.Join(parts[:len(parts)-1], ":")
+		portStr = parts[len(parts)-1]
+	}
+	p, convErr := strconv.Atoi(portStr)
+	if convErr != nil || p <= 0 {
+		return "", 0, fmt.Errorf("некорректный порт в peer %q", peer)
+	}
+	return h, p, nil
+}
+
 func parseWdttURI(link string) (ImportPayload, error) {
 	link = strings.TrimSpace(link)
 	if !strings.HasPrefix(link, SchemeWdtt) {
@@ -134,12 +232,19 @@ func colonWdttToPayload(payload, name string) (ImportPayload, error) {
 	if len(parts) > 5 && parts[5] != "" {
 		hashes = splitHashes(parts[5])
 	}
+	listen := ""
+	if len(parts) > 3 && isDigits(parts[3]) {
+		if p, err := strconv.Atoi(parts[3]); err == nil && p > 0 {
+			listen = fmt.Sprintf("127.0.0.1:%d", p)
+		}
+	}
 	return ImportPayload{
 		Name:     name,
 		Peer:     parts[0] + ":" + parts[1],
 		Password: parts[4],
 		VKHashes: hashes,
 		Workers:  16,
+		Listen:   listen,
 	}, nil
 }
 

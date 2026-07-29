@@ -11,7 +11,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/freeturn"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
@@ -34,6 +33,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/state"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // setupTunnels wires the tunnel core (wg/backend/state/firewall, NDMS
@@ -195,15 +195,23 @@ func (a *app) setupServices() {
 		"/opt/bin/freeturn-client",
 		"/opt/bin/freeturn-server",
 	)
-	a.freeturnService.SetListenPortChecker(&awgListenPortChecker{store: a.awgStore})
-	a.deferOnExit(a.freeturnService.Stop)
-
 	a.wdttService = wdtt.NewService(
 		a.dataDir,
 		filepath.Join(a.dataDir, "run"),
 		"/opt/bin/wdtt-client",
+		"/opt/bin/wdtt-server",
 	)
-	a.wdttService.SetListenPortChecker(&awgListenPortChecker{store: a.awgStore})
+	a.freeturnService.SetListenPortChecker(&crossListenPortChecker{
+		AWGStore:           a.awgStore,
+		WDTT:               a.wdttService,
+		IncludeWdttClients: true,
+	})
+	a.wdttService.SetListenPortChecker(&crossListenPortChecker{
+		AWGStore:               a.awgStore,
+		FreeTurn:               a.freeturnService,
+		IncludeFreeTurnClients: true,
+	})
+	a.deferOnExit(a.freeturnService.Stop)
 	a.deferOnExit(a.wdttService.Stop)
 
 	// Unified facade: kernel → custom loop, NativeWG → NDMS native

@@ -5,6 +5,11 @@ package freeturn
 func normalizeConfig(cfg *Config) bool {
 	if cfg.Version >= ConfigVersion && len(cfg.Clients) > 0 && len(cfg.Servers) > 0 {
 		changed := cfg.Client != (ClientConfig{}) || cfg.Server != (ServerConfig{}) || cfg.Version != ConfigVersion
+		for i := range cfg.Clients {
+			if migrateClientConfig(&cfg.Clients[i].Config) {
+				changed = true
+			}
+		}
 		cfg.Version = ConfigVersion
 		cfg.Client = ClientConfig{}
 		cfg.Server = ServerConfig{}
@@ -46,5 +51,25 @@ func normalizeConfig(cfg *Config) bool {
 	cfg.Version = ConfigVersion
 	cfg.Client = ClientConfig{}
 	cfg.Server = ServerConfig{}
-	return true
+	changed := true
+	for i := range cfg.Clients {
+		if migrateClientConfig(&cfg.Clients[i].Config) {
+			changed = true
+		}
+	}
+	return changed
+}
+
+// migrateClientConfig upgrades persisted client fields (browser → platform, etc.).
+func migrateClientConfig(c *ClientConfig) bool {
+	changed := false
+	if c.Platform == "" {
+		c.Platform = "desktop"
+		changed = true
+	}
+	if c.Platform != "desktop" && c.Platform != "mobile" {
+		c.Platform = "desktop"
+		changed = true
+	}
+	return changed
 }

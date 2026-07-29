@@ -33,6 +33,11 @@ func Kill(pid int) error {
 	return proc.Kill()
 }
 
+// Signal is a no-op stub on non-Linux dev hosts.
+func Signal(_ int, _ syscall.Signal) error {
+	return nil
+}
+
 // IsAlive probes liveness with signal 0. os.FindProcess never fails on
 // Unix (it just wraps the pid), so the real check is Signal(0): it returns
 // nil while the process exists and an error (ESRCH / "process already
