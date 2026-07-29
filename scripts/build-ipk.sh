@@ -113,32 +113,6 @@ build_ipk_one() {
     cp "$AWG_CLI_BIN" "$IPK_ROOT/opt/sbin/awg"
     chmod +x "$IPK_ROOT/opt/sbin/awg"
 
-    # Bundled freeturn (optional): prebuilt/freeturn/ft-*-linux-* for this arch.
-    local FT_CLIENT="" FT_SERVER=""
-    case "$ENTWARE_ARCH" in
-        aarch64-3.10)
-            FT_CLIENT="prebuilt/freeturn/ft-client-linux-arm64"
-            FT_SERVER="prebuilt/freeturn/ft-server-linux-arm64"
-            ;;
-        mipsel-3.4)
-            FT_CLIENT="prebuilt/freeturn/ft-client-linux-mipsle-softfloat"
-            FT_SERVER="prebuilt/freeturn/ft-server-linux-mipsle-softfloat"
-            ;;
-        mips-3.4)
-            FT_CLIENT="prebuilt/freeturn/ft-client-linux-mips-softfloat"
-            FT_SERVER="prebuilt/freeturn/ft-server-linux-mips-softfloat"
-            ;;
-    esac
-    if [[ -n "$FT_CLIENT" && -f "$FT_CLIENT" && -f "$FT_SERVER" ]]; then
-        cp "$FT_CLIENT" "$IPK_ROOT/opt/bin/freeturn-client"
-        cp "$FT_SERVER" "$IPK_ROOT/opt/bin/freeturn-server"
-        chmod +x "$IPK_ROOT/opt/bin/freeturn-client" "$IPK_ROOT/opt/bin/freeturn-server"
-        echo "Bundled freeturn client+server from $FT_CLIENT"
-    elif [[ -n "$FT_CLIENT" ]]; then
-        # Не блокер: freeturn ставится с зеркала (internal/freeturn/install.go).
-        echo "NOTE: freeturn prebuilt отсутствует для $ENTWARE_ARCH — в IPK не кладём (см. scripts/build-freeturn.sh)"
-    fi
-
     local KMOD_VERSION
     KMOD_VERSION=$(grep 'ExpectedKmodVersion' internal/sys/kmod/download.go | grep -oP '"[^"]+"' | tr -d '"')
     local BUNDLED_DIR="$IPK_ROOT/opt/etc/awg-manager/modules/bundled"

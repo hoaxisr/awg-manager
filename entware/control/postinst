@@ -17,8 +17,6 @@ chmod 755 /opt/bin/awg-manager
 chmod 755 /opt/sbin/awg
 [ -f /opt/bin/wdtt-server ] && chmod 755 /opt/bin/wdtt-server
 [ -f /opt/bin/wdtt-client ] && chmod 755 /opt/bin/wdtt-client
-[ -f /opt/bin/freeturn-server ] && chmod 755 /opt/bin/freeturn-server
-[ -f /opt/bin/freeturn-client ] && chmod 755 /opt/bin/freeturn-client
 chmod 755 /opt/etc/init.d/S99awg-manager
 for hook in iflayerchanged ifcreated ifdestroyed ifipchanged; do
     chmod 755 "/opt/etc/ndm/${hook}.d/50-awg-manager.sh" 2>/dev/null || true
