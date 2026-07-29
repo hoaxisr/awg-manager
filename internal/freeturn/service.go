@@ -124,7 +124,7 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 	}
 	listens := clientListenAddresses(full.Clients)
 	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(), 9000, 9200)
-	cfg.Browser = normalizeBrowser(cfg.Browser)
+	cfg.Platform = normalizePlatform(cfg.Platform)
 	full.Clients[idx].Config = cfg
 	return s.store.Save(full)
 }
@@ -168,7 +168,7 @@ func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
 	if in.Config != nil {
 		cfg = *in.Config
 	}
-	cfg.Browser = normalizeBrowser(cfg.Browser)
+	cfg.Platform = normalizePlatform(cfg.Platform)
 	cfg.Listen = nextClientListen(full.Clients, s.occupiedLocalListenPorts())
 	name := in.Name
 	if name == "" {
@@ -627,8 +627,8 @@ func buildClientArgs(c ClientConfig) []string {
 	if c.StreamsPerCred > 0 {
 		args = append(args, "-streams-per-cred", strconv.Itoa(c.StreamsPerCred))
 	}
-	if b := strings.TrimSpace(c.Browser); b != "" {
-		str("-browser", normalizeBrowser(b))
+	if p := normalizePlatform(c.Platform); p == "mobile" {
+		str("-platform", p)
 	}
 	// awg-manager: только авто-капча; ручной fallback (:8765) не поддерживается в UI.
 	str("-dns-mode", c.DNSMode)
@@ -639,14 +639,12 @@ func buildClientArgs(c ClientConfig) []string {
 	return args
 }
 
-func normalizeBrowser(b string) string {
-	switch strings.ToLower(strings.TrimSpace(b)) {
-	case "chrome", "firefox", "safari":
-		return strings.ToLower(strings.TrimSpace(b))
-	case "chromium":
-		return "chrome"
+func normalizePlatform(p string) string {
+	switch strings.ToLower(strings.TrimSpace(p)) {
+	case "mobile":
+		return "mobile"
 	default:
-		return "chrome"
+		return "desktop"
 	}
 }
 

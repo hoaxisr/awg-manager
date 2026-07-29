@@ -1511,6 +1511,8 @@ definitions:
         type: string
       streamsPerCred:
         type: integer
+      transport:
+        type: string
       wg:
         type: string
     type: object
@@ -6540,12 +6542,11 @@ definitions:
       bond:
         description: -bond, only meaningful with mode=tcp
         type: boolean
-      browser:
-        description: -browser, provider=vk only
+      platform:
+        description: -platform, provider=vk only (persona class)
         enum:
-        - chrome
-        - firefox
-        - safari
+        - desktop
+        - mobile
         type: string
       clientId:
         description: -client-id, auto-generated if empty

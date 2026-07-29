@@ -53,18 +53,17 @@ func TestLocalListenPort(t *testing.T) {
 	}
 }
 
-func TestNormalizeBrowser(t *testing.T) {
+func TestNormalizePlatform(t *testing.T) {
 	cases := map[string]string{
-		"chromium": "chrome",
-		"Chrome":   "chrome",
-		"firefox":  "firefox",
-		"safari":   "safari",
-		"":         "chrome",
-		"edge":     "chrome",
+		"mobile":  "mobile",
+		"Mobile":  "mobile",
+		"desktop": "desktop",
+		"":        "desktop",
+		"edge":    "desktop",
 	}
 	for in, want := range cases {
-		if got := normalizeBrowser(in); got != want {
-			t.Fatalf("normalizeBrowser(%q) = %q want %q", in, got, want)
+		if got := normalizePlatform(in); got != want {
+			t.Fatalf("normalizePlatform(%q) = %q want %q", in, got, want)
 		}
 	}
 }

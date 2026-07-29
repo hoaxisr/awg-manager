@@ -10,7 +10,7 @@
 	import type { WizardGuideItem } from '../proxy-panel/ProxyWizardGuide.svelte';
 	import type { QuickStartItem } from '../proxy-panel/ProxyQuickStart.svelte';
 	import { guide, finalizeGuide } from '$lib/utils/proxyWizardGuides';
-	import { browserOptions, modeOptions, transportOptions } from './options';
+	import { platformOptions, modeOptions, transportOptions } from './options';
 	import { api } from '$lib/api/client';
 	import { proxyInOpsMode } from '$lib/utils/proxyOpsMode';
 	import type { FreeTurnClientConfig, FreeTurnLinkPayload, FreeTurnProcessStatus } from '$lib/types';
@@ -65,7 +65,7 @@
 	const step1Done = $derived(!!client.peer.trim());
 	const step2Done = $derived(step1Done && !!client.links?.trim());
 	const step3Done = $derived(
-		step2Done && client.streams > 0 && client.streamsPerCred > 0 && !!client.browser
+		step2Done && client.streams > 0 && client.streamsPerCred > 0 && !!client.platform
 	);
 	const canSave = $derived((step1Done || step2Done) && !saving && !starting);
 	const canStart = $derived(step3Done && !saving && !starting);
@@ -111,8 +111,8 @@
 				done: client.streams > 0 && client.streamsPerCred > 0,
 				pending: !step2Done
 			}),
-			guide('browser', 'Выберите режим, транспорт и браузер (-browser)', {
-				done: !!client.browser,
+			guide('platform', 'Выберите режим, транспорт и платформу VK-auth (-platform)', {
+				done: !!client.platform,
 				pending: !step2Done
 			}),
 			guide('next', 'Нажмите «Далее: запуск»', { done: step3Done, pending: !step2Done })
@@ -237,7 +237,7 @@
 						</div>
 						<Dropdown label="Режим (-mode)" bind:value={client.mode} options={modeOptions} />
 						<Dropdown label="Транспорт (-transport)" bind:value={client.transport} options={transportOptions} />
-						<Dropdown label="Браузер (-browser)" bind:value={client.browser} options={browserOptions} />
+						<Dropdown label="Платформа (-platform)" bind:value={client.platform} options={platformOptions} />
 					</ProxyQuickStartStep>
 				{:else}
 					<ProxyQuickStartStep
@@ -285,7 +285,7 @@
 				</div>
 				<Dropdown label="Mode" bind:value={client.mode} options={modeOptions} />
 				<Dropdown label="Transport" bind:value={client.transport} options={transportOptions} />
-				<Dropdown label="Browser" bind:value={client.browser} options={browserOptions} />
+				<Dropdown label="Platform" bind:value={client.platform} options={platformOptions} />
 				<p class="ft-hint">{linksCount} VK-ссылок · listen <code>{listenMeta}</code></p>
 				<Button variant="secondary" loading={saving} disabled={!canSave} onclick={saveOnly}>Сохранить</Button>
 			</section>

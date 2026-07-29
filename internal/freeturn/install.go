@@ -28,7 +28,7 @@ type ArchSpecs struct {
 // PinnedVersion is the free-turn-proxy release this build installs.
 // Bump procedure: update the constant, URLs, SHA256 (from the release's
 // checksums.txt) and sizes below.
-const PinnedVersion = "1.8.0-3"
+const PinnedVersion = "2.0.1-1"
 
 // releaseBase — прод-доставка с зеркала (паритет с
 // internal/singbox/installer/embedded.go — GitHub из RU у части пользователей
@@ -41,8 +41,8 @@ const releaseBase = "http://repo.hoaxisr.ru/ft/" + PinnedVersion + "/"
 // релиза hoaxisr/free-turn-proxy v<PinnedVersion>.
 var EmbeddedBinaries = map[string]ArchSpecs{
 	"aarch64-3.10": {
-		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-arm64", SHA256: "759774918785d101fdef066e9f9baebbe767ab0131f8f029f6d4f2dec1792220", Size: 14811298},
-		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-arm64", SHA256: "c44cdbd399fc51c82caedcb744f5295513455020e2f566d096a7115b1a38be47", Size: 6160546},
+		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-arm64", SHA256: "41a3ed5e5983702b68dbfe2735c01491af2fa4bc02151ba8dc8fae818208d4e4", Size: 14811298},
+		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-arm64", SHA256: "f2c87f556fc392aafdd95131ece322093a2f6cd5b39c01e1b61c56faf1e59891", Size: 6160546},
 	},
 	"mipsel-3.4": {
 		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-mipsle-softfloat", SHA256: "dbe3e9fcc6525c75db6853383e0b5719af4b19613367e92ddf7ff3e26db0f1de", Size: 16711873},

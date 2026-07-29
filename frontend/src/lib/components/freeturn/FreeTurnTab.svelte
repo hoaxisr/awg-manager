@@ -39,7 +39,7 @@
 
 	let genProvider = $state('vk');
 	let genPeer = $state('');
-	let genMTU = $state(1376);
+	let genMTU = $state(1280);
 	let genWG = $state('');
 	let genClientId = $state('');
 	let genName = $state('');
@@ -106,12 +106,8 @@
 			dnsServers: c.dnsServers ?? '',
 			clientId: c.clientId ?? '',
 			sub: c.sub ?? '',
-			browser:
-				(c.browser as string) === 'chromium'
-					? 'chrome'
-					: c.browser === 'safari' || c.browser === 'firefox'
-						? c.browser
-						: 'chrome',
+			platform:
+				c.platform === 'mobile' || c.platform === 'desktop' ? c.platform : 'desktop',
 			streams: c.streams > 0 ? c.streams : 10,
 			streamsPerCred: c.streamsPerCred > 0 ? c.streamsPerCred : 10,
 			debug: !!c.debug
@@ -382,6 +378,10 @@
 			if (payload.transport) c.transport = payload.transport as typeof c.transport;
 			if (payload.mode) c.mode = payload.mode as typeof c.mode;
 			if (typeof payload.bond === 'boolean') c.bond = payload.bond;
+			if (payload.listen) c.listen = payload.listen;
+			if (payload.dns === 'plain' || payload.dns === 'doh' || payload.dns === 'auto') {
+				c.dnsMode = payload.dns;
+			}
 			const wg = payload.wg?.trim() ? payload.wg : null;
 
 			let msg = 'Ссылка распознана, поля заполнены — не забудьте сохранить';
@@ -509,7 +509,7 @@
 		onInstall={install}
 		productName="freeturn"
 		installSuffix=" (клиент + сервер)"
-		notFoundHint="awg-manager не поставляет freeturn в своём пакете."
+		notFoundHint="переустановите awg-manager (IPK с freeturn) или установите кнопкой ниже."
 	>
 		{#snippet manualInstall(binary)}
 			<span>

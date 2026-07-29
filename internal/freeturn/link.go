@@ -64,10 +64,28 @@ func EncodeLink(p LinkPayload) (string, error) {
 	return LinkScheme + base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
-// DecodeLink parses a freeturn:// link back into its payload. Accepts the
-// link with or without the scheme prefix, either base64 alphabet
-// (standard '+/' or URL-safe '-_'), and with or without '=' padding —
-// covering both the upstream format and the older entware-installer one.
+// StripWGConfMTU removes MTU= lines (and comment-only lines) from a WG config
+// embedded in freeturn:// links — mtu travels as a separate JSON field (Android parity).
+func StripWGConfMTU(conf string) string {
+	if conf == "" {
+		return conf
+	}
+	lines := strings.Split(conf, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+			continue
+		}
+		upper := strings.ToUpper(trimmed)
+		if strings.HasPrefix(upper, "MTU") && strings.Contains(trimmed, "=") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
 func DecodeLink(link string) (LinkPayload, error) {
 	var p LinkPayload
 	body := strings.TrimSpace(link)

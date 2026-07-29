@@ -81,7 +81,7 @@ func (p *process) Start(args []string) error {
 		return fmt.Errorf("freeturn %s: binary path not configured", p.name)
 	}
 	if !binaryPresent(p.binary) {
-		return fmt.Errorf("бинарь %s не найден или не исполняем — awg-manager не поставляет freeturn, установите его отдельно", p.binary)
+		return fmt.Errorf("бинарь %s не найден или не исполняем — установите freeturn из панели или переустановите awg-manager", p.binary)
 	}
 	if err := os.MkdirAll(filepath.Dir(p.pidPath), 0755); err != nil {
 		return err
@@ -228,6 +228,7 @@ func (p *process) Status() ProcessStatus {
 	running, pid := p.IsRunning()
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	ensureExecutable(p.binary)
 	st := ProcessStatus{
 		Running:       running,
 		LastError:     p.lastErr,

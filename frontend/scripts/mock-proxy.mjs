@@ -3063,7 +3063,7 @@ function createInitialMockFreeturn() {
 					obfProfile: 'rtpopus2',
 					obfKey: MOCK_FREETURN_OBF_KEY,
 					streamsPerCred: 4,
-					browser: 'chrome',
+					platform: 'desktop',
 					manualCaptcha: false,
 					dnsMode: 'auto',
 					clientId: '',

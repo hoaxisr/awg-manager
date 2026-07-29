@@ -6,7 +6,7 @@
 	import { proxyInOpsMode, proxyServerOpsMode } from '$lib/utils/proxyOpsMode';
 	import ServerWgBind from './ServerWgBind.svelte';
 	import ProcessLogBox from './ProcessLogBox.svelte';
-	import LinkParamsSummary from './LinkParamsSummary.svelte';
+	import FreeturnLinkShare from './FreeturnLinkShare.svelte';
 	import ServerAllowlist from './ServerAllowlist.svelte';
 	import ProxyInstanceStatusBar from '../proxy-panel/ProxyInstanceStatusBar.svelte';
 	import ProxyPanelTabs from '../proxy-panel/ProxyPanelTabs.svelte';
@@ -194,12 +194,17 @@
 				done: !!genPeer.trim() || !!generatedLink,
 				pending: !wgStepDone
 			}),
-			guide('copy', 'Скопируйте freeturn:// и передайте на клиент', {
+			guide('copy', 'Скопируйте freeturn:// или откройте QR — передайте на клиент', {
 				done: false,
 				pending: !generatedLink,
 				active: !!generatedLink
 			}),
-			guide('client', 'На вкладке FreeTurn «Клиент» вставьте ссылку и нажмите «Импорт»', {
+			guide('android', 'Android: FreeTurn app → импорт ссылки/QR → добавьте VK Calls (их нет в ссылке)', {
+				done: false,
+				pending: !generatedLink,
+				active: !!generatedLink
+			}),
+			guide('client', 'Роутер: вкладка FreeTurn «Клиент» → «Импорт»', {
 				done: false,
 				pending: !generatedLink,
 				active: !!generatedLink
@@ -392,11 +397,7 @@
 							<Button variant="ghost" size="sm" loading={loadingWanPeer} onclick={fillWanPeer}>WAN IP</Button>
 						</div>
 						{#if generatedLink}
-							<div class="ft-result">
-								<div class="ft-link-box">{generatedLink}</div>
-								<Button variant="ghost" size="sm" onclick={() => onCopy(generatedLink)}>Скопировать</Button>
-								<LinkParamsSummary payload={linkParams} peer={generatedPeer} />
-							</div>
+							<FreeturnLinkShare link={generatedLink} peer={generatedPeer} payload={linkParams} {onCopy} />
 						{:else if !linkReady}
 							<p class="ft-hint ft-hint-warn">
 								{#if keeneticPeerSelected && !genWG.trim()}
@@ -459,7 +460,7 @@
 				</div>
 				<div class="ft-gen-row">
 					<Input label="Provider" bind:value={genProvider} />
-					<Input label="MTU" type="number" value={String(genMTU)} onchange={(v) => (genMTU = Number(v) || 1376)} />
+					<Input label="MTU" type="number" value={String(genMTU)} onchange={(v) => (genMTU = Number(v) || 1280)} />
 					<div class="ft-gen-cid">
 						<Input label="Client ID" bind:value={genClientId} />
 						<Button variant="ghost" size="sm" onclick={randomClientId}><RefreshCw size={14} /></Button>
@@ -480,11 +481,7 @@
 					</Button>
 				</div>
 				{#if generatedLink}
-					<div class="ft-result">
-						<div class="ft-link-box">{generatedLink}</div>
-						<Button variant="ghost" size="sm" onclick={() => onCopy(generatedLink)}>Скопировать</Button>
-						<LinkParamsSummary payload={linkParams} peer={generatedPeer} />
-					</div>
+					<FreeturnLinkShare link={generatedLink} peer={generatedPeer} payload={linkParams} {onCopy} />
 				{/if}
 				<ServerAllowlist bind:this={allowlistPanel} {serverInstanceId} {server} />
 			</section>
@@ -559,15 +556,5 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.5rem;
-	}
-	.ft-result {
-		padding: 0.75rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-	}
-	.ft-link-box {
-		font-family: var(--font-mono);
-		font-size: 0.8125rem;
-		word-break: break-all;
 	}
 </style>
