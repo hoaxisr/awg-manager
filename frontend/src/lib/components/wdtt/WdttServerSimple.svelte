@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { Button, Input, Toggle, SegmentedControl, ChipMultiSelect } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -201,7 +201,11 @@
 	/** Запущенный сервер: сразу «Раздача» (при возврате на страницу или смене инстанса). */
 	$effect(() => {
 		serverInstanceId;
-		if (opsMode && running) opsTab = 'links';
+		// Только на смену инстанса: иначе рестарт сервера (running false→true из
+		// поллинга) утаскивал бы пользователя с «Сети» или «Журнала».
+		untrack(() => {
+			if (opsMode && running) opsTab = 'links';
+		});
 	});
 
 	onMount(async () => {
@@ -452,7 +456,8 @@
 
 		<ProxyPanelTabs tabs={[...SERVER_TABS]} active={opsTab} onchange={(id) => (opsTab = id as ServerTab)} />
 
-		<section class="ops-section" hidden={opsTab !== 'main'}>
+		{#if opsTab === 'main'}
+		<section class="ops-section">
 				<label class="wdtt-field">
 					<span class="section-label">Пароль (-password)</span>
 					<div class="wdtt-row">
@@ -475,8 +480,10 @@
 					}}
 				/>
 		</section>
+		{/if}
 
-		<section class="ops-section" hidden={opsTab !== 'links'}>
+		{#if opsTab === 'links'}
+		<section class="ops-section">
 				<div class="wdtt-row">
 					<Input bind:value={genPeer} placeholder="203.0.113.1:56000" />
 					<Button variant="secondary" disabled={loadingWanPeer} onclick={fillWanPeer}>WAN IP</Button>
@@ -508,8 +515,10 @@
 					<WdttLinkShare linkWdtt={generatedLink} linkQwdtt={generatedLinkQwdtt} />
 				{/if}
 		</section>
+		{/if}
 
-		<section class="ops-section server-detail-card wdtt-access-settings" hidden={opsTab !== 'network'}>
+		{#if opsTab === 'network'}
+		<section class="ops-section server-detail-card wdtt-access-settings">
 				<div class="setting-row">
 					<div class="setting-copy">
 						<span class="setting-title">NAT</span>
@@ -557,8 +566,10 @@
 					onchange={handlePolicyChange}
 				/>
 		</section>
+		{/if}
 
-		<section class="ops-section" hidden={opsTab !== 'log'}>
+		{#if opsTab === 'log'}
+		<section class="ops-section">
 				<ProcessLogBox
 					log={status?.log}
 					bind:debug={server.debug}
@@ -568,6 +579,7 @@
 					{onSelectInstance}
 				/>
 		</section>
+		{/if}
 	{/if}
 </div>
 

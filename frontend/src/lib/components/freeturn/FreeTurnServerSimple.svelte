@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { RefreshCw } from 'lucide-svelte';
 	import { Button, Input, Dropdown, Toggle } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
@@ -220,7 +221,11 @@
 	/** Запущенный сервер: сразу «Раздача» (при возврате на страницу или смене инстанса). */
 	$effect(() => {
 		serverInstanceId;
-		if (opsMode && running) opsTab = 'links';
+		// Только на смену инстанса: иначе рестарт сервера (running false→true из
+		// поллинга) утаскивал бы пользователя с других вкладок.
+		untrack(() => {
+			if (opsMode && running) opsTab = 'links';
+		});
 	});
 
 	const mainTabNext = $derived(opsMode && running && opsTab === 'main' && step1Done);
