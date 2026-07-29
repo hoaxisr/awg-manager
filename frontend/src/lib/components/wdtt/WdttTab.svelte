@@ -631,12 +631,12 @@
 		installing={installing || (status?.installing ?? false)}
 		onInstall={install}
 		productName="wdtt"
-		notFoundHint="установите wdtt-client и wdtt-server из IPK или кнопкой «Установить»."
+		notFoundHint="нажмите «Установить» — бинари скачаются с зеркала."
 	>
 		{#snippet manualInstall(binary)}
 			<span>
-				Бинарь <code>{binary}</code> не найден. Кнопка «Установить» ставит client+server;
-				сервер можно также положить вручную в <code>/opt/bin/wdtt-server</code>.
+				Бинарь <code>{binary}</code> не найден. Кнопка «Установить» скачает
+				{serverSupported ? 'клиент и сервер' : 'клиент'} с зеркала.
 			</span>
 		{/snippet}
 	</ProcessAlerts>

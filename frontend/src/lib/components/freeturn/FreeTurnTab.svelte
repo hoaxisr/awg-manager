@@ -509,7 +509,7 @@
 		onInstall={install}
 		productName="freeturn"
 		installSuffix=" (клиент + сервер)"
-		notFoundHint="переустановите awg-manager (IPK с freeturn) или установите кнопкой ниже."
+		notFoundHint="нажмите «Установить» — клиент и сервер скачаются с зеркала."
 	>
 		{#snippet manualInstall(binary)}
 			<span>
