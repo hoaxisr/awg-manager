@@ -38,20 +38,22 @@ const releaseBase = "http://repo.hoaxisr.ru/ft/" + PinnedVersion + "/"
 
 // EmbeddedBinaries maps the awg-manager build arch (detectArch(): e.g.
 // "mipsel-3.4") to pinned freeturn assets. SHA256/Size — из checksums.txt
-// нашей сборки hoaxisr/free-turn-proxy v<PinnedVersion> (ветка awg
-// поверх upstream v2.0.1), выложенной на зеркало.
+// релиза hoaxisr/free-turn-proxy v<PinnedVersion> (ветка awg поверх
+// upstream v2.0.1). Источник истины — checksums.txt из GitHub-релиза:
+// локальная сборка ему не равна (свой тулчейн + встроенная VCS-ревизия),
+// на зеркало кладём ровно артефакты релиза.
 var EmbeddedBinaries = map[string]ArchSpecs{
 	"aarch64-3.10": {
-		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-arm64", SHA256: "429a7a1e040629a720e6b6654f5b1616479a2c236874d8f114db2921c6c13b0e", Size: 14811298},
-		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-arm64", SHA256: "bc13af3d0da97159d1dec77bfafc52857abb08b26236061bad0939dec3fa6339", Size: 6160546},
+		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-arm64", SHA256: "0db85cb89d69d951d05d3b617623a35089d2bdf171326979a1a2eb5de8639957", Size: 14811298},
+		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-arm64", SHA256: "d1b202faee85f3a0ba0001c4617cae48b5ee777cee9495353523c58e9c7b14a6", Size: 6160546},
 	},
 	"mipsel-3.4": {
-		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-mipsle-softfloat", SHA256: "26f5b4bee961d39a589b87b385e81894a70993940e869bba9cad188ceb7053ea", Size: 16711873},
-		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-mipsle-softfloat", SHA256: "44f6bd20442831fb79c663e06133b74cfc591fc6bcf7652d9d710b77c242dd12", Size: 7012545},
+		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-mipsle-softfloat", SHA256: "83984c52518ee794cf07e433b2cdd6b8a66dd0a9aaea68f15fb2d484fa2c0627", Size: 16711873},
+		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-mipsle-softfloat", SHA256: "03672e2d64af255a519fc7b9818fac94b88b3a2c400ca2ecd901d978f27ad971", Size: 7012545},
 	},
 	"mips-3.4": {
-		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-mips-softfloat", SHA256: "679cafcbdb3220249bd82fa3a45f4fb921261c5ed7f30d9dc19af85b5e15e69c", Size: 16711873},
-		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-mips-softfloat", SHA256: "6bf361bce1c0def464b2732c46f376448455870f51b7d4b821c358ec50740400", Size: 7012545},
+		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-mips-softfloat", SHA256: "98f8d4ec9a29db6df54ce549700c097c11f1ce7ab0225daadf811d6105e5879e", Size: 16711873},
+		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-mips-softfloat", SHA256: "57f46d56a0745e54935569f1e89554ed8f31ebd85138f8610d79677f9dc7c2e8", Size: 7012545},
 	},
 }
 
