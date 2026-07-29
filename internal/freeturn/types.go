@@ -30,7 +30,7 @@ type ClientConfig struct {
 	ObfProfile string `json:"obfProfile"`       // -obf-profile, none|rtpopus|rtpopus2|rtpopus3 (internal/config/config.go ObfProfile enum; upstream docs/flags.md lags behind)
 	ObfKey     string `json:"obfKey,omitempty"` // -obf-key, 64 hex chars, required if obfProfile != none
 
-	StreamsPerCred int    `json:"streamsPerCred"` // -streams-per-cred, provider=vk only
+	StreamsPerCred int    `json:"streamsPerCred"`                                       // -streams-per-cred, provider=vk only
 	Platform       string `json:"platform" swaggertype:"string" enums:"desktop,mobile"` // -platform, provider=vk only (persona class)
 
 	DNSMode    string `json:"dnsMode"`              // -dns-mode, plain|doh|auto

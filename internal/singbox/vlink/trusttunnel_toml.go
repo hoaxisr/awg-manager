@@ -15,16 +15,16 @@ type trustTunnelTOML struct {
 }
 
 type trustTunnelEndpoint struct {
-	Hostname                string   `toml:"hostname"`
-	Addresses               []string `toml:"addresses"`
-	Username                string   `toml:"username"`
-	Password                string   `toml:"password"`
-	SkipVerification        bool     `toml:"skip_verification"`
-	UpstreamProtocol        string   `toml:"upstream_protocol"`
-	UpstreamFallbackProtocol string  `toml:"upstream_fallback_protocol"`
-	AntiDPI                 bool     `toml:"anti_dpi"`
-	CustomSNI               string   `toml:"custom_sni"`
-	ClientRandomPrefix      string   `toml:"client_random_prefix"`
+	Hostname                 string   `toml:"hostname"`
+	Addresses                []string `toml:"addresses"`
+	Username                 string   `toml:"username"`
+	Password                 string   `toml:"password"`
+	SkipVerification         bool     `toml:"skip_verification"`
+	UpstreamProtocol         string   `toml:"upstream_protocol"`
+	UpstreamFallbackProtocol string   `toml:"upstream_fallback_protocol"`
+	AntiDPI                  bool     `toml:"anti_dpi"`
+	CustomSNI                string   `toml:"custom_sni"`
+	ClientRandomPrefix       string   `toml:"client_random_prefix"`
 }
 
 func hasTrustTunnelTOMLMarkers(s string) bool {

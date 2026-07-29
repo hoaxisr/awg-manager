@@ -129,16 +129,14 @@ build_ipk_one() {
             FT_SERVER="prebuilt/freeturn/ft-server-linux-mips-softfloat"
             ;;
     esac
-    if [[ -n "$FT_CLIENT" ]]; then
-        if [[ ! -f "$FT_CLIENT" || ! -f "$FT_SERVER" ]]; then
-            echo "ERROR: freeturn prebuilt missing for $ENTWARE_ARCH (expected $FT_CLIENT and $FT_SERVER)" >&2
-            echo "Run: scripts/build-freeturn.sh" >&2
-            exit 1
-        fi
+    if [[ -n "$FT_CLIENT" && -f "$FT_CLIENT" && -f "$FT_SERVER" ]]; then
         cp "$FT_CLIENT" "$IPK_ROOT/opt/bin/freeturn-client"
         cp "$FT_SERVER" "$IPK_ROOT/opt/bin/freeturn-server"
         chmod +x "$IPK_ROOT/opt/bin/freeturn-client" "$IPK_ROOT/opt/bin/freeturn-server"
         echo "Bundled freeturn client+server from $FT_CLIENT"
+    elif [[ -n "$FT_CLIENT" ]]; then
+        # Не блокер: freeturn ставится с зеркала (internal/freeturn/install.go).
+        echo "NOTE: freeturn prebuilt отсутствует для $ENTWARE_ARCH — в IPK не кладём (см. scripts/build-freeturn.sh)"
     fi
 
     local KMOD_VERSION
