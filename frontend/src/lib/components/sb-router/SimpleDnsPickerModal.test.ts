@@ -25,14 +25,6 @@ describe('SimpleDnsPickerModal', () => {
     expect(yandex.checked).toBe(true);
   });
 
-  it('фильтрующие провайдеры подписаны в списке', () => {
-    render(SimpleDnsPickerModal, {
-      props: { server: direct, allowProtocol: true, onclose: vi.fn(), onsaved: vi.fn() },
-    });
-    expect(screen.getByText('блокирует malware')).toBeTruthy();
-    expect(screen.getByText('блокирует рекламу')).toBeTruthy();
-  });
-
   it('выбор Cloudflare + DoH сохраняет корректный DTO и зовёт onsaved', async () => {
     const onsaved = vi.fn();
     render(SimpleDnsPickerModal, {

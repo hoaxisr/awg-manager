@@ -45,11 +45,6 @@ describe('DNS_PRESETS', () => {
     }
   });
 
-  it('фильтрующие пресеты подписаны', () => {
-    expect(DNS_PRESETS.find((p) => p.id === 'quad9')?.note).toBe('блокирует malware');
-    expect(DNS_PRESETS.find((p) => p.id === 'adguard')?.note).toBe('блокирует рекламу');
-    expect(DNS_PRESETS.find((p) => p.id === 'cloudflare')?.note).toBeUndefined();
-  });
 });
 
 describe('findDnsPresetByIp', () => {

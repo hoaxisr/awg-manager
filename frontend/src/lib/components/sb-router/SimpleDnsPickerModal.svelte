@@ -101,7 +101,6 @@
         <input type="radio" name="dns-preset" value={p.id} checked={choice === p.id} onchange={() => (choice = p.id)} />
         <span class="label">{p.label}</span>
         <span class="ip">{p.ip}</span>
-        <span class="note">{p.note ?? ''}</span>
       </label>
     {/each}
     <!-- Не оборачиваем в <label>: поле ввода внутри метки радиокнопки
@@ -165,7 +164,7 @@
   }
   .row {
     display: grid;
-    grid-template-columns: auto minmax(6rem, max-content) minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(6rem, max-content) minmax(0, 1fr);
     align-items: center;
     gap: 10px;
     padding: 8px 6px;
@@ -184,12 +183,6 @@
     font-family: var(--font-mono);
     font-size: 12px;
     color: var(--text-secondary);
-  }
-  .note {
-    font-size: 11px;
-    color: var(--text-muted);
-    text-align: right;
-    white-space: nowrap;
   }
   .custom {
     grid-column: 3 / -1;

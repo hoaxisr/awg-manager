@@ -10,8 +10,6 @@ export interface DnsPreset {
 	ip: string;
 	/** Имя для SNI и проверки сертификата (DoT/DoH). */
 	sni: string;
-	/** Провайдер фильтрует ответы — подписывается в списке. */
-	note?: string;
 }
 
 /**
@@ -32,15 +30,15 @@ export interface DnsPreset {
  *     *.adguard.com вообще без IP в SAN — использовать нельзя.
  *
  * 9.9.9.9 и 94.140.14.14 — фильтрующие профили по умолчанию у своих
- * провайдеров; берём их (это те самые «девятки» из issue #560), но
- * подписываем note.
+ * провайдеров (malware и реклама соответственно); берём их, это те самые
+ * «девятки» из issue #560.
  */
 export const DNS_PRESETS: readonly DnsPreset[] = [
 	{ id: 'yandex', label: 'Яндекс', ip: '77.88.8.8', sni: 'common.dot.dns.yandex.net' },
-	{ id: 'quad9', label: 'Quad9', ip: '9.9.9.9', sni: 'dns.quad9.net', note: 'блокирует malware' },
+	{ id: 'quad9', label: 'Quad9', ip: '9.9.9.9', sni: 'dns.quad9.net' },
 	{ id: 'cloudflare', label: 'Cloudflare', ip: '1.1.1.1', sni: 'cloudflare-dns.com' },
 	{ id: 'google', label: 'Google', ip: '8.8.8.8', sni: 'dns.google' },
-	{ id: 'adguard', label: 'AdGuard', ip: '94.140.14.14', sni: 'dns.adguard-dns.com', note: 'блокирует рекламу' },
+	{ id: 'adguard', label: 'AdGuard', ip: '94.140.14.14', sni: 'dns.adguard-dns.com' },
 ];
 
 export function findDnsPresetByIp(ip: string): DnsPreset | undefined {
