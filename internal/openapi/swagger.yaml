@@ -5763,6 +5763,7 @@ definitions:
         - awg1.0
         - awg1.5
         - awg2.0
+        - awg3
         example: awg2.0
         type: string
       backend:
