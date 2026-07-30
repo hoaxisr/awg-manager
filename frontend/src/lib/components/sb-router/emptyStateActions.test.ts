@@ -185,6 +185,57 @@ describe('ensureTunnelDnsInfra', () => {
     await ensureTunnelDnsInfra('wg-nl');
     expect(api.singboxRouterPutDNSGlobals).toHaveBeenCalledWith(expect.objectContaining({ final: 'dns-direct', strategy: 'prefer_ipv4' }));
   });
+
+  it('не трогает server существующего dns-tunnel, только detour', async () => {
+    (api.singboxRouterListDNSServers as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { tag: 'dns-direct', type: 'udp', server: '1.1.1.1' },
+      { tag: 'dns-tunnel', type: 'https', server: '8.8.8.8', server_port: 443, path: '/dns-query', tls: { server_name: 'dns.google' }, detour: 'wg-old' },
+    ]);
+    (api.singboxRouterGetDNSGlobals as ReturnType<typeof vi.fn>).mockResolvedValue({ final: 'dns-direct', strategy: 'ipv4_only' });
+    await ensureTunnelDnsInfra('wg-nl');
+    expect(api.singboxRouterAddDNSServer).not.toHaveBeenCalled();
+    expect(api.singboxRouterUpdateDNSServer).toHaveBeenCalledWith('dns-tunnel', {
+      tag: 'dns-tunnel',
+      type: 'https',
+      server: '8.8.8.8',
+      server_port: 443,
+      path: '/dns-query',
+      tls: { server_name: 'dns.google' },
+      detour: 'wg-nl',
+    });
+  });
+
+  it('detour уже верный — записи вообще нет', async () => {
+    (api.singboxRouterListDNSServers as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { tag: 'dns-direct', type: 'udp', server: '77.88.8.8' },
+      { tag: 'dns-tunnel', type: 'udp', server: '1.1.1.1', detour: 'wg-nl' },
+    ]);
+    (api.singboxRouterGetDNSGlobals as ReturnType<typeof vi.fn>).mockResolvedValue({ final: 'dns-direct', strategy: 'ipv4_only' });
+    await ensureTunnelDnsInfra('wg-nl');
+    expect(api.singboxRouterUpdateDNSServer).not.toHaveBeenCalled();
+    expect(api.singboxRouterAddDNSServer).not.toHaveBeenCalled();
+  });
+
+  it('не перебивает dns.final, если он указывает на существующий сервер', async () => {
+    (api.singboxRouterListDNSServers as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { tag: 'dns-direct', type: 'udp', server: '77.88.8.8' },
+      { tag: 'dns-tunnel', type: 'udp', server: '9.9.9.9', detour: 'wg-nl' },
+      { tag: 'dns-doh', type: 'https', server: '1.1.1.1' },
+    ]);
+    (api.singboxRouterGetDNSGlobals as ReturnType<typeof vi.fn>).mockResolvedValue({ final: 'dns-doh', strategy: 'ipv4_only' });
+    await ensureTunnelDnsInfra('wg-nl');
+    expect(api.singboxRouterPutDNSGlobals).not.toHaveBeenCalled();
+  });
+
+  it('чинит dns.final, если он указывает на удалённый сервер', async () => {
+    (api.singboxRouterListDNSServers as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { tag: 'dns-direct', type: 'udp', server: '77.88.8.8' },
+      { tag: 'dns-tunnel', type: 'udp', server: '9.9.9.9', detour: 'wg-nl' },
+    ]);
+    (api.singboxRouterGetDNSGlobals as ReturnType<typeof vi.fn>).mockResolvedValue({ final: 'dns-gone', strategy: 'ipv4_only' });
+    await ensureTunnelDnsInfra('wg-nl');
+    expect(api.singboxRouterPutDNSGlobals).toHaveBeenCalledWith({ final: 'dns-direct', strategy: 'ipv4_only' });
+  });
 });
 
 describe('ensureLanNamesRule', () => {

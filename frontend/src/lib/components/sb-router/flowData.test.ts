@@ -98,4 +98,26 @@ describe('deriveRoutingSummary', () => {
     expect(s.defaultLabel).toBe('Office VPN (t2s10)');
     expect(s.tunnels).toEqual(['Office VPN (t2s10)']);
   });
+
+  it('отдаёт теги DNS-серверов обеих веток', () => {
+    const s = deriveRoutingSummary([], 'direct', dnsServers, globals);
+    expect(s.defaultDnsTag).toBe('dns-direct');
+    expect(s.tunnelDnsTag).toBe('dns-tunnel');
+  });
+
+  it('нет сервера под final / нет detour-сервера → теги null', () => {
+    const s = deriveRoutingSummary([], 'direct', [], { final: 'dns-gone', strategy: 'ipv4_only' });
+    expect(s.defaultDnsTag).toBeNull();
+    expect(s.tunnelDnsTag).toBeNull();
+    expect(s.defaultDnsLabel).toBe('системный');
+  });
+
+  it('легаси-конфиг с detour на dns-direct: туннельным берётся dns-tunnel по тегу', () => {
+    const legacyServers: SingboxRouterDNSServer[] = [
+      { tag: 'dns-direct', type: 'udp', server: '77.88.8.8', detour: 'my-selector' },
+      { tag: 'dns-tunnel', type: 'udp', server: '9.9.9.9' },
+    ];
+    const s = deriveRoutingSummary([], 'direct', legacyServers, globals);
+    expect(s.tunnelDnsTag).toBe('dns-tunnel');
+  });
 });
