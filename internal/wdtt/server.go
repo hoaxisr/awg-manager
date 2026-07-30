@@ -46,11 +46,17 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfi
 	if saveErr != nil {
 		return ServerConfig{}, saveErr
 	}
+	// Синхронно: пароль обязан лежать в panel.db к моменту ответа, иначе
+	// пользователь успевает нажать «Запустить» с ещё не записанным паролем и
+	// клиенты не аутентифицируются. Запись мелкая — одна строка в локальном
+	// SQLite. Раньше это была fire-and-forget горутина с проглоченной
+	// ошибкой: провал записи оставался невидимым, а в тестах она дописывала
+	// panel.db в уже удаляемый t.TempDir().
 	if pwd := strings.TrimSpace(savedCfg.Password); pwd != "" {
 		if cfgDir, dirErr := s.serverConfigDir(id, savedCfg); dirErr == nil {
-			go func(dir, pass string) {
-				_ = syncPanelMainPassword(dir, pass)
-			}(cfgDir, pwd)
+			if err := syncPanelMainPassword(cfgDir, pwd); err != nil && s.appLog != nil {
+				s.appLog.Warn("panel", id, "пароль сервера не записан в panel.db: "+err.Error())
+			}
 		}
 	}
 	if running {
