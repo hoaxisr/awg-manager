@@ -12,6 +12,7 @@
   import {
     DNS_PRESETS,
     buildDnsServer,
+    certPinWillReset,
     findDnsPresetByIp,
     protoOfDnsServer,
     udpDropsTls,
@@ -51,6 +52,7 @@
   // Без имени в сертификате шифрованный вариант не проверить — свой адрес только по UDP.
   const effectiveProto = $derived<DnsPresetProto>(preset && allowProtocol ? proto : 'udp');
   const tlsLoss = $derived(effectiveProto === 'udp' && udpDropsTls(server));
+  const pinLoss = $derived(effectiveProto !== 'udp' && certPinWillReset(server, addr));
   const canSave = $derived(!busy && addr.length > 0);
 
   async function save() {
@@ -86,6 +88,9 @@
       {/if}
       {#if tlsLoss}
         <p class="warn">Настройки TLS будут удалены: обычный DNS их не поддерживает</p>
+      {/if}
+      {#if pinLoss}
+        <p class="warn">Пин сертификата будет сброшен: он привязан к прежнему адресу</p>
       {/if}
     </div>
   {/if}

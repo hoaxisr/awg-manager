@@ -10,7 +10,6 @@ export interface DnsPreset {
 	ip: string;
 	/** Имя для SNI и проверки сертификата (DoT/DoH). */
 	sni: string;
-	path: string;
 	/** Провайдер фильтрует ответы — подписывается в списке. */
 	note?: string;
 }
@@ -18,6 +17,9 @@ export interface DnsPreset {
 /**
  * Пары IP + SNI подтверждены живыми запросами (openssl s_client, dig +tls,
  * curl --resolve): сертификат проверяется, DoT отдаёт NOERROR, DoH — 200.
+ * Исключение — Quad9: живой прогон делался на 9.9.9.10 (тот же пул, общий
+ * сертификат), а не на 9.9.9.9 из каталога; прямого подтверждения по этому
+ * IP нет.
  *
  * Гочи, из-за которых значения нельзя «поправить по памяти»:
  *   - у Яндекса DoH живёт на том же хосте, что DoT: common.DOT.dns.yandex.net.
@@ -34,11 +36,11 @@ export interface DnsPreset {
  * подписываем note.
  */
 export const DNS_PRESETS: readonly DnsPreset[] = [
-	{ id: 'yandex', label: 'Яндекс', ip: '77.88.8.8', sni: 'common.dot.dns.yandex.net', path: '/dns-query' },
-	{ id: 'quad9', label: 'Quad9', ip: '9.9.9.9', sni: 'dns.quad9.net', path: '/dns-query', note: 'блокирует malware' },
-	{ id: 'cloudflare', label: 'Cloudflare', ip: '1.1.1.1', sni: 'cloudflare-dns.com', path: '/dns-query' },
-	{ id: 'google', label: 'Google', ip: '8.8.8.8', sni: 'dns.google', path: '/dns-query' },
-	{ id: 'adguard', label: 'AdGuard', ip: '94.140.14.14', sni: 'dns.adguard-dns.com', path: '/dns-query', note: 'блокирует рекламу' },
+	{ id: 'yandex', label: 'Яндекс', ip: '77.88.8.8', sni: 'common.dot.dns.yandex.net' },
+	{ id: 'quad9', label: 'Quad9', ip: '9.9.9.9', sni: 'dns.quad9.net', note: 'блокирует malware' },
+	{ id: 'cloudflare', label: 'Cloudflare', ip: '1.1.1.1', sni: 'cloudflare-dns.com' },
+	{ id: 'google', label: 'Google', ip: '8.8.8.8', sni: 'dns.google' },
+	{ id: 'adguard', label: 'AdGuard', ip: '94.140.14.14', sni: 'dns.adguard-dns.com', note: 'блокирует рекламу' },
 ];
 
 export function findDnsPresetByIp(ip: string): DnsPreset | undefined {
@@ -76,6 +78,14 @@ const PROTO_TYPE: Record<DnsPresetProto, SingboxRouterDNSServer['type']> = {
 };
 
 /**
+ * true, если смена адреса сбросит пин сертификата (buildDnsServer держится
+ * того же правила) — используется модалкой для предупреждения до сохранения.
+ */
+export function certPinWillReset(base: SingboxRouterDNSServer, addr: string): boolean {
+	return !!base.tls?.certificate_public_key_sha256?.length && addr.trim() !== base.server.trim();
+}
+
+/**
  * Собирает DTO DNS-сервера с нуля: из base переносится только то, что не
  * зависит от выбранного провайдера. path и server_port пересчитываются по
  * протоколу — иначе при DoH → UDP остался бы висеть /dns-query (бэкенд path
@@ -100,8 +110,14 @@ export function buildDnsServer(
 
 	out.server_port = proto === 'dot' ? 853 : 443;
 	if (proto === 'doh') out.path = '/dns-query';
-	// Остальной TLS-хвост (пины, alpn, версии) сохраняем: терять пины
-	// сертификата одним кликом в простом режиме — тихий даунгрейд.
-	out.tls = { ...base.tls, server_name: sni.trim() };
+	// TLS-хвост (пины, alpn, версии) переносим, но пин и alpn привязаны
+	// к прежнему серверу и протоколу — при их смене они станут неверными
+	// и молча уронят резолв на первом handshake.
+	const addressChanged = addr.trim() !== base.server.trim();
+	const protocolChanged = PROTO_TYPE[proto] !== base.type;
+	const tls = { ...base.tls };
+	if (addressChanged) delete tls.certificate_public_key_sha256;
+	if (protocolChanged) delete tls.alpn;
+	out.tls = { ...tls, server_name: sni.trim() };
 	return out;
 }

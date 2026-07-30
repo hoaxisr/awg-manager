@@ -3,6 +3,7 @@ import type { SingboxRouterDNSServer } from '$lib/types';
 import {
   DNS_PRESETS,
   buildDnsServer,
+  certPinWillReset,
   findDnsPresetByIp,
   protoOfDnsServer,
   udpDropsTls,
@@ -30,7 +31,7 @@ const dotBase: SingboxRouterDNSServer = {
 };
 
 describe('DNS_PRESETS', () => {
-  it('пять провайдеров, у каждого IPv4-адрес, SNI и путь', () => {
+  it('пять провайдеров, у каждого IPv4-адрес и SNI', () => {
     expect(DNS_PRESETS.map((p) => p.id)).toEqual([
       'yandex',
       'quad9',
@@ -41,7 +42,6 @@ describe('DNS_PRESETS', () => {
     for (const p of DNS_PRESETS) {
       expect(p.ip).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
       expect(p.sni).not.toBe('');
-      expect(p.path).toBe('/dns-query');
     }
   });
 
@@ -123,16 +123,47 @@ describe('buildDnsServer', () => {
     expect(back.tls).toBeUndefined();
   });
 
-  it('DoT → DoH: пины, alpn, версии и domain_resolver переносятся, server_name перетирается', () => {
+  it('DoT → DoH со сменой адреса и протокола: пин и alpn сброшены, версии и domain_resolver переносятся', () => {
     const out = buildDnsServer(dotBase, '9.9.9.9', 'dns.quad9.net', 'doh');
     expect(out.tls).toEqual({
       server_name: 'dns.quad9.net',
+      min_version: '1.2',
+    });
+    expect(out.domain_resolver).toEqual({ server: 'dns-bootstrap', strategy: 'ipv4_only' });
+    expect(out.domain_strategy).toBe('prefer_ipv4');
+  });
+
+  it('смена адреса выбрасывает пин, но сохраняет insecure и версии TLS', () => {
+    const base: SingboxRouterDNSServer = {
+      ...dotBase,
+      tls: { ...dotBase.tls, insecure: true },
+    };
+    const out = buildDnsServer(base, '9.9.9.9', 'dns.quad9.net', 'dot');
+    expect(out.tls).toEqual({
+      server_name: 'dns.quad9.net',
+      alpn: ['h2'],
+      insecure: true,
+      min_version: '1.2',
+    });
+  });
+
+  it('смена протокола выбрасывает alpn, адрес тот же — пин сохраняется', () => {
+    const out = buildDnsServer(dotBase, '1.1.1.1', 'cloudflare-dns.com', 'doh');
+    expect(out.tls).toEqual({
+      server_name: 'cloudflare-dns.com',
+      min_version: '1.2',
+      certificate_public_key_sha256: ['AAAA'],
+    });
+  });
+
+  it('тот же адрес и тот же протокол: пин и alpn сохраняются', () => {
+    const out = buildDnsServer(dotBase, '1.1.1.1', 'cloudflare-dns.com', 'dot');
+    expect(out.tls).toEqual({
+      server_name: 'cloudflare-dns.com',
       alpn: ['h2'],
       min_version: '1.2',
       certificate_public_key_sha256: ['AAAA'],
     });
-    expect(out.domain_resolver).toEqual({ server: 'dns-bootstrap', strategy: 'ipv4_only' });
-    expect(out.domain_strategy).toBe('prefer_ipv4');
   });
 
   it('переносит detour и не создаёт пустых полей', () => {
@@ -149,5 +180,19 @@ describe('buildDnsServer', () => {
   it('domain_resolver копируется, а не переиспользуется по ссылке', () => {
     const out = buildDnsServer(dotBase, '9.9.9.9', 'dns.quad9.net', 'doh');
     expect(out.domain_resolver).not.toBe(dotBase.domain_resolver);
+  });
+});
+
+describe('certPinWillReset', () => {
+  it('true при смене адреса, если пин был', () => {
+    expect(certPinWillReset(dotBase, '9.9.9.9')).toBe(true);
+  });
+
+  it('false при том же адресе', () => {
+    expect(certPinWillReset(dotBase, '1.1.1.1')).toBe(false);
+  });
+
+  it('false без пина в base', () => {
+    expect(certPinWillReset({ ...dotBase, tls: { server_name: 'x' } }, '9.9.9.9')).toBe(false);
   });
 });
