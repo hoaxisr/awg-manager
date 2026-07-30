@@ -51,7 +51,7 @@ const SECTION_MIN_LEVEL: Record<Section, UsageLevel> = {
 };
 
 const ROUTING_SUBTAB_MIN_LEVEL: Record<RoutingSubTab, UsageLevel> = {
-	accessPolicies: 'advanced',
+	accessPolicies: 'basic',
 	clientRoutes: 'basic',
 	dnsRoutes: 'basic',
 	ipRoutes: 'advanced',

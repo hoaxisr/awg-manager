@@ -242,7 +242,7 @@
             isOS5 ? { id: 'dns', label: 'NDMS', badge: dnsActiveCount } : null,
             { id: 'ip', label: 'IP-адреса', badge: ipActiveCount },
             { id: 'clientvpn', label: 'VPN для устройств', badge: clientActiveCount },
-            isOS5 ? { id: 'policy', label: 'Политики доступа', badge: policyCount } : null,
+            { id: 'policy', label: 'Политики доступа', badge: policyCount },
             // Visual gap separates the NDMS-stack tabs above from the
             // sing-box / hydraroute stack below. TProxy + FakeIP are the two
             // mutually-exclusive sing-box routing modes — kept adjacent (no
@@ -282,8 +282,8 @@
 
     // Пока список вкладок меняется (systemInfo, HR, уровень), не держим
     // active на id, которого ещё нет в tabItems — иначе пустой контент.
-    // Не сбрасываем NDMS/политики/sing-box до прихода systemInfo: до fetch
-    // isOS5=false и вкладки dns|policy ещё нет в списке — иначе F5 с NDMS
+    // Не сбрасываем NDMS/sing-box до прихода systemInfo: до fetch
+    // isOS5=false и вкладки dns ещё нет в списке — иначе F5 с NDMS
     // уводил на IP. Аналогично HR Neo — ждём hydraroute-status.
     $effect(() => {
         const items = tabItems;
@@ -296,7 +296,7 @@
 
         if (
             !systemKnown &&
-            (activeTab === 'dns' || activeTab === 'policy' || activeTab === 'singbox') &&
+            (activeTab === 'dns' || activeTab === 'singbox') &&
             !items.some((it) => it.id === activeTab)
         ) {
             return;
