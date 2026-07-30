@@ -27,6 +27,10 @@ export interface RoutingSummary {
   tunnelDnsTag: string | null;
 }
 
+// Конвенция тега туннельного DNS-сервера (см. emptyStateActions.ts). Своя
+// константа: импорт между модулями сюда не нужен.
+const DNS_TUNNEL_TAG = 'dns-tunnel';
+
 function isTunneled(r: SingboxRouterRule): boolean {
   return !!r.outbound && r.outbound !== 'direct' && r.action !== 'reject';
 }
@@ -91,7 +95,9 @@ export function deriveRoutingSummary(
   const finalServer = dnsServers.find((x) => x.tag === dnsGlobals.final);
   const defaultDnsLabel = finalServer ? finalServer.server || finalServer.tag : 'системный';
 
-  const detourServer = dnsServers.find((s) => !!s.detour);
+  // На легаси-конфигах detour может висеть на dns-direct — тег dns-tunnel
+  // приоритетнее первого сервера с detour.
+  const detourServer = dnsServers.find((s) => s.tag === DNS_TUNNEL_TAG) ?? dnsServers.find((s) => !!s.detour);
   const tunnelDnsLabel = detourServer ? (detourServer.server || detourServer.tag) : null;
 
   return {
