@@ -3,7 +3,6 @@ package dnsroute
 import (
 	"context"
 	"fmt"
-	"net"
 	"strings"
 	"sync"
 	"time"
@@ -165,60 +164,6 @@ func (s *ServiceImpl) LookupAffectedLists(tunnelID string, action string) []Affe
 	return result
 }
 
-// validateExcludes checks that every Excludes entry has a matching
-// include in the same list. Domain-style excludes must be subdomains
-// of one of list.Domains (or equal to one); CIDR-style excludes must
-// lie inside one of list.Subnets (or equal one).
-//
-// Returns the first error found.
-func validateExcludes(domains, subnets, exclDomains, exclSubnets []string) error {
-	for _, e := range exclDomains {
-		ne := normalizeDomain(e)
-		if ne == "" {
-			continue
-		}
-		ok := false
-		for _, d := range domains {
-			nd := normalizeDomain(d)
-			if nd == "" {
-				continue
-			}
-			if ne == nd {
-				ok = true
-				break
-			}
-			if strings.HasSuffix(ne, "."+nd) {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return fmt.Errorf("exclude %q has no matching include in this list", e)
-		}
-	}
-	for _, e := range exclSubnets {
-		_, en, err := net.ParseCIDR(e)
-		if err != nil {
-			return fmt.Errorf("exclude subnet %q is not a valid CIDR", e)
-		}
-		ok := false
-		for _, s := range subnets {
-			_, sn, err := net.ParseCIDR(s)
-			if err != nil {
-				continue
-			}
-			if cidrCovers(sn, en) {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return fmt.Errorf("exclude subnet %q has no matching include in this list", e)
-		}
-	}
-	return nil
-}
-
 // Create adds a new domain list, persists it, and reconciles router state.
 func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList, error) {
 	s.opMu.Lock()
@@ -258,10 +203,6 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 	// Split user-input excludes into domain-form and CIDR-form, mirroring
 	// the same handling used for ManualDomains → Domains/Subnets.
 	list.Excludes, list.ExcludeSubnets = splitDomainsAndSubnets(deduplicateDomains(list.Excludes))
-
-	if err := validateExcludes(list.Domains, list.Subnets, list.Excludes, list.ExcludeSubnets); err != nil {
-		return nil, err
-	}
 
 	// Resolve tunnel IDs to NDMS interface names for RCI commands.
 	if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {
@@ -464,10 +405,6 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 	}
 
 	list.Excludes, list.ExcludeSubnets = splitDomainsAndSubnets(deduplicateDomains(list.Excludes))
-
-	if err := validateExcludes(list.Domains, list.Subnets, list.Excludes, list.ExcludeSubnets); err != nil {
-		return nil, err
-	}
 
 	// Resolve tunnel IDs to NDMS interface names for RCI commands.
 	if err := s.resolveRouteInterfaces(ctx, list.Routes); err != nil {

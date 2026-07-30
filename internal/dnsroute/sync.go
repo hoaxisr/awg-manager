@@ -227,9 +227,10 @@ func buildTargetState(data *StoreData, failedTunnels map[string]struct{}) target
 		items = append(items, list.Domains...)
 		items = append(items, list.Subnets...)
 
-		// Excludes live in the first group only and also count against
-		// the group's capacity; shrink the first chunk's budget accordingly.
-		chunks := chunkWithFirstBudget(items, MaxDomainsPerGroup, len(list.Excludes))
+		// NDMS applies an exclude only inside its own object-group, so the
+		// full exclude set goes into every chunk. Excludes also count
+		// against the group's capacity — shrink each chunk's budget.
+		chunks := chunkWithReserve(items, MaxDomainsPerGroup, len(list.Excludes))
 
 		for i, chunk := range chunks {
 			groupName := buildGroupName(list.ID, list.Name, i+1)
@@ -237,10 +238,7 @@ func buildTargetState(data *StoreData, failedTunnels map[string]struct{}) target
 			g := targetGroup{
 				name:     groupName,
 				includes: chunk,
-			}
-
-			if i == 0 {
-				g.excludes = list.Excludes
+				excludes: list.Excludes,
 			}
 
 			ts.groups = append(ts.groups, g)
@@ -287,29 +285,23 @@ func materializedFallback(f string) string {
 	return ""
 }
 
-// chunkWithFirstBudget splits items into chunks of at most maxPerChunk, where
-// the first chunk is shrunk by firstReserved slots so the caller can inject
-// extra elements (excludes) into that group without overflowing NDMS's limit.
+// chunkWithReserve splits items into chunks of at most maxPerChunk, where
+// every chunk is shrunk by reserved slots so the caller can inject extra
+// elements (excludes) into each group without overflowing NDMS's limit.
 //
-// The returned slice always has len == ceil-ish of items size; if firstReserved
-// consumes all of the first chunk's capacity, chunks[0] is empty (caller still
-// needs a group for the excludes) and items start in chunks[1].
-func chunkWithFirstBudget(items []string, maxPerChunk, firstReserved int) [][]string {
+// If reserved swallows the whole budget the chunk size falls back to 1 — the
+// group will overflow and NDMS will say so, which beats looping forever.
+func chunkWithReserve(items []string, maxPerChunk, reserved int) [][]string {
 	if maxPerChunk <= 0 || len(items) == 0 {
 		return nil
 	}
-	firstBudget := maxPerChunk - firstReserved
-	if firstBudget < 0 {
-		firstBudget = 0
+	budget := maxPerChunk - reserved
+	if budget < 1 {
+		budget = 1
 	}
 	var chunks [][]string
-	end := firstBudget
-	if end > len(items) {
-		end = len(items)
-	}
-	chunks = append(chunks, items[:end])
-	for i := end; i < len(items); i += maxPerChunk {
-		j := i + maxPerChunk
+	for i := 0; i < len(items); i += budget {
+		j := i + budget
 		if j > len(items) {
 			j = len(items)
 		}
