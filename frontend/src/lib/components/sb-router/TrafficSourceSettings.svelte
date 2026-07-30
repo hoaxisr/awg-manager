@@ -77,11 +77,13 @@
           Привязку MAC-адресов настраивайте на странице политик.
         {/if}
       </p>
-      {#if variant === 'beginner'}
-        <Button variant="ghost" size="sm" href="/routing?tab=policy">
-          Управление устройствами →
-        </Button>
-      {/if}
+      <Button
+        variant="ghost"
+        size="sm"
+        href="/routing?tab=policy&policy={encodeURIComponent(cfg.policyName)}"
+      >
+        Управление устройствами →
+      </Button>
     {:else}
       <p class="hint">Выберите или создайте политику — без неё sing-box не обработает трафик устройств.</p>
     {/if}
