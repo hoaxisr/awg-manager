@@ -102,7 +102,7 @@
 			{#if fqdn}<span class="secondary mono">{conn.dst}</span>{/if}
 		</span>
 		<span class="cell c-route">
-			<Badge variant={routeVariant(conn)} size="sm">{routeLabel(conn)}</Badge>
+			<Badge variant={routeVariant(conn)} size="sm" title={routeLabel(conn)}>{routeLabel(conn)}</Badge>
 		</span>
 		<span class="cell c-state">
 			{#if conn.state}
@@ -202,7 +202,9 @@
 	.thead,
 	.row {
 		display: grid;
-		grid-template-columns: 52px 1.1fr 1.3fr 96px 104px 80px 30px;
+		/* Маршрут — имя туннеля произвольной длины: колонка растёт за счёт
+		   избытка у источника/назначения, остаток режется многоточием (#643). */
+		grid-template-columns: 52px 1.1fr 1.3fr minmax(96px, 0.45fr) 104px 80px 30px;
 		align-items: center;
 		border-bottom: 1px solid var(--color-border);
 	}
@@ -288,6 +290,16 @@
 	.proto-icmp { background: var(--color-info-tint); color: var(--color-info); }
 	.rule-badge { margin-left: 0.25rem; }
 	.c-bytes { text-align: right; font-variant-numeric: tabular-nums; }
+	/* Бейдж — не текстовый узел, поэтому ellipsis у .cell на него не действует:
+	   без своего overflow имя туннеля обрезалось рубленым краем (#643).
+	   inline-block вместо inline-flex — text-overflow во flex не работает. */
+	.c-route :global(.badge) {
+		display: inline-block;
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		vertical-align: middle;
+	}
 	.kill-btn {
 		all: unset;
 		display: inline-flex;
