@@ -152,6 +152,8 @@ type Server struct {
 
 	bootStatusFn func() bool // returns true if boot still in progress
 
+	proxyClientAutostart api.ProxyClientAutostart
+
 	// Restart lifecycle
 	restartOnce   sync.Once // prevents multiple restart goroutines
 	shutdownHooks []func()  // cleanup functions called before syscall.Exec
@@ -447,6 +449,11 @@ func IsPortFree(port int) bool {
 
 func (s *Server) SetBootStatusFunc(fn func() bool) {
 	s.bootStatusFn = fn
+}
+
+// SetProxyClientAutostart wires WAN-up retry for FreeTurn/WDTT autostart.
+func (s *Server) SetProxyClientAutostart(fn api.ProxyClientAutostart) {
+	s.proxyClientAutostart = fn
 }
 
 // Start starts the HTTP server.

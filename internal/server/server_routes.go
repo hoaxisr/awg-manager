@@ -219,6 +219,9 @@ func (s *Server) registerCoreRoutes(mux *http.ServeMux, h *routeHandlers) {
 		// still pending.
 		s.tunnelService.SetSelfCreateGate(h.hookHandler)
 	}
+	if s.proxyClientAutostart != nil {
+		h.hookHandler.SetProxyClientAutostart(s.proxyClientAutostart)
+	}
 	mux.HandleFunc("/api/hook/ndms", h.hookHandler.HandleNDMS)
 
 	// WAN status (protected) — event ingress is now /api/hook/ndms.

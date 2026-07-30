@@ -262,14 +262,9 @@ func (a *app) setupDeviceProxy() {
 		a.wdttService.SetInstallSpecs(specs)
 		a.wdttService.SetDownloader(&wdttDownloaderAdapter{svc: sharedDownloadSvc})
 	}
-	// Автостарт клиентов, которые пользователь запускал (Enabled), — иначе после
-	// рестарта/ребута linked-AWG-туннель шлёт трафик в мёртвый 127.0.0.1:90xx.
-	// После restore из резервной копии ResumeEnabled откладывается до post-restore
-	// cold boot (см. boot.go), чтобы порты не перемешались.
-	if !backup.HasPostRestoreMarker(a.dataDir) {
-		go a.freeturnService.ResumeEnabled()
-		go a.wdttService.ResumeEnabled()
-	}
+	// Автостарт FreeTurn/WDTT — в boot.go (cold-boot/post-restore/daemon-restart)
+	// и по WAN UP hook; не здесь: ранний старт ловит DNS до sing-box.
+	a.srv.SetProxyClientAutostart(a.resumeEnabledProxyClients)
 	if a.singboxInstaller != nil {
 		a.singboxInstaller.SetDownloader(&installerDownloaderAdapter{svc: sharedDownloadSvc})
 		// Auto-migration goroutine: when legacy sing-box-naive opkg

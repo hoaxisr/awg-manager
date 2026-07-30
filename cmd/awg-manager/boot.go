@@ -220,6 +220,10 @@ func (a *app) startBootSequence() {
 				a.orch.HandleEvent(a.shutdownCtx, orchestrator.Event{Type: orchestrator.EventBoot})
 			}
 
+			// FreeTurn/WDTT — после Phase 1/1b (NDMS+WAN), не сразу при старте
+			// демона: иначе WDTT vkcalls бьётся о мёртвый 127.0.0.1:53.
+			a.scheduleProxyClientAutostart("cold-boot")
+
 			// Wait for background migrations to finish (non-critical but
 			// we track them so they don't leak on shutdown).
 			bgDone.Wait()
@@ -258,8 +262,7 @@ func (a *app) startBootSequence() {
 			}
 			a.orch.LoadState(context.Background())
 			a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventBoot})
-			go a.freeturnService.ResumeEnabled()
-			go a.wdttService.ResumeEnabled()
+			a.scheduleProxyClientAutostart("post-restore")
 			return
 		}
 
@@ -268,6 +271,7 @@ func (a *app) startBootSequence() {
 
 		a.orch.LoadState(context.Background())
 		a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventReconnect})
+		a.resumeEnabledProxyClients("daemon-restart")
 	}
 
 }
