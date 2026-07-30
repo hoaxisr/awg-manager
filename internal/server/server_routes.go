@@ -503,6 +503,15 @@ func (s *Server) registerServerRoutes(mux *http.ServeMux, h *routeHandlers) {
 		// invalidation), so per-request cost is an in-memory read.
 		s.singboxConnsHandler.SetWGServers(h.serverHandler)
 	}
+	if h.connectionsService != nil {
+		// Те же источники имён для conntrack-соединений (issue #639):
+		// клиенты туннелей приходят без MAC и без этого видны как IP.
+		var managed connections.ManagedServersLister
+		if s.managedServiceImpl != nil {
+			managed = s.managedServiceImpl
+		}
+		h.connectionsService.SetPeerNameSources(h.serverHandler, managed)
+	}
 	mux.HandleFunc("/api/servers", h.guarded(h.serverHandler.List))
 	mux.HandleFunc("/api/servers/all", h.guarded(h.serverHandler.GetAll))
 	mux.HandleFunc("/api/servers/get", h.guarded(h.serverHandler.Get))
