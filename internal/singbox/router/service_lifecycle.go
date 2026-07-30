@@ -515,7 +515,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// Managed QoS route rules → 18-qos-routes.json. Runs AFTER the router
 	// slot write so outbound resolution sees the applied config; the
 	// orchestratorApplyNow below covers both slots in one reload.
-	if _, err := s.syncQoSRoutesSlot(ctx, qosClasses); err != nil {
+	if _, err := s.syncQoSRoutesSlot(ctx, qosClasses, sr); err != nil {
 		return fmt.Errorf("sync qos routes slot: %w", err)
 	}
 	// Слот 20 снова активен — зависимые продюсеры (device-proxy) должны

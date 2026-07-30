@@ -65,11 +65,47 @@ func marshalQoSRoutesSlot(rules []Rule) ([]byte, error) {
 // order), so syncQoSRoutesSlot can byte-compare the marshalled slot to skip
 // the sing-box reload. No AwgmManaged marker — the slot is merged by
 // sing-box, which rejects unknown rule fields.
-func buildQoSRouteRules(classes []qosClass) []Rule {
+//
+// The leading route-options rule carries the same UDP timeout that
+// EnsureUDPTimeoutRule keeps in 20-router.json (#554). That copy cannot be
+// reached from here: sing-box merges config.d in filename order, so this slot's
+// rules run first and a class's final `route` action ends evaluation. Without
+// the rule QoS traffic gets no metadata.UDPTimeout at all — the inbound's own
+// udp_timeout only sets the udpnat cache lifetime, which sing-box purges lazily
+// (nothing calls PurgeExpired), so an idle session never closes. Putting
+// udp_timeout on the class rule itself does NOT work: sing-box drops the field
+// when building an `action: route` (route/rule/rule_action.go copies it only
+// for route-options — the docs claim otherwise). Scoped to the class tproxy
+// inbounds on purpose: a matcher-less copy would land ahead of the system
+// hijack-dns rule in the merge and stretch 10s DNS sessions to the user's
+// timeout. The 20-router.json copy stays — this slot is parked whenever QoS
+// is off.
+//
+// The sniff rule is there for the same merge-order reason: the system one lives
+// in 20-router.json, behind the class rules, so QoS connections would carry no
+// protocol/domain in the connections view. It follows the user's sniffer toggle
+// exactly like EnsureSystemRules does, and cannot shorten the timeout above —
+// route/conn.go prefers metadata.UDPTimeout over the sniffed-protocol defaults.
+func buildQoSRouteRules(classes []qosClass, sr storage.SingboxRouterSettings) []Rule {
 	if len(classes) == 0 {
 		return nil
 	}
-	out := make([]Rule, 0, len(classes))
+	udpInbounds := make([]string, 0, len(classes))
+	allInbounds := make([]string, 0, 2*len(classes))
+	for _, q := range classes {
+		udpInbounds = append(udpInbounds, qosTProxyTag(q.DSCP))
+		allInbounds = append(allInbounds, qosTProxyTag(q.DSCP), qosRedirectTag(q.DSCP))
+	}
+	out := make([]Rule, 0, len(classes)+2)
+	if sr.SnifferEnabled {
+		out = append(out, Rule{Inbound: allInbounds, Action: "sniff"})
+	}
+	out = append(out, Rule{
+		Inbound:    udpInbounds,
+		Action:     "route-options",
+		Network:    "udp",
+		UDPTimeout: resolveUDPTimeout(sr.UDPTimeout),
+	})
 	for _, q := range classes {
 		out = append(out, Rule{
 			Inbound:  []string{qosTProxyTag(q.DSCP), qosRedirectTag(q.DSCP)},
@@ -123,7 +159,7 @@ func (s *ServiceImpl) filterQoSClassesWithKnownOutbounds(ctx context.Context, cl
 // Classes whose outbound is unknown at emit time are skipped (see
 // filterQoSClassesWithKnownOutbounds); GetStatus independently reports them
 // as qos-outbound-missing issues.
-func (s *ServiceImpl) syncQoSRoutesSlot(ctx context.Context, classes []qosClass) (bool, error) {
+func (s *ServiceImpl) syncQoSRoutesSlot(ctx context.Context, classes []qosClass, sr storage.SingboxRouterSettings) (bool, error) {
 	if s.deps.Orch == nil {
 		return false, nil
 	}
@@ -143,7 +179,7 @@ func (s *ServiceImpl) syncQoSRoutesSlot(ctx context.Context, classes []qosClass)
 				fmt.Sprintf("класс QoS (DSCP %d) ссылается на несуществующий outbound %q — правило не эмитится", c.DSCP, c.Outbound))
 		}
 	}
-	rules := buildQoSRouteRules(emit)
+	rules := buildQoSRouteRules(emit, sr)
 	enable := len(rules) > 0
 	data, err := marshalQoSRoutesSlot(rules)
 	if err != nil {
@@ -299,7 +335,7 @@ func (s *ServiceImpl) healQoSConfig(ctx context.Context, sr storage.SingboxRoute
 			return false, err
 		}
 	}
-	slotChanged, err := s.syncQoSRoutesSlot(ctx, classes)
+	slotChanged, err := s.syncQoSRoutesSlot(ctx, classes, sr)
 	if err != nil {
 		return inChanged, err
 	}
