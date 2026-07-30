@@ -7138,7 +7138,7 @@ definitions:
       enabled:
         type: boolean
       ingressEnabled:
-        description: sing-box ingress for iface:wdtt0
+        description: sing-box ingress for iface:wgIface
         type: boolean
       lanSegments:
         description: LAN bridge names
@@ -7149,13 +7149,17 @@ definitions:
         description: -listen, DTLS (default 0.0.0.0:56002)
         type: string
       natIface:
-        description: 'Router integration (awg-manager + NDMS for wdtt0):'
+        description: 'Router integration (awg-manager + NDMS):'
         type: string
       natMode:
         description: full | internet-only | none via managed service
         type: string
       natStaticWan:
         description: persisted WAN for internet-only teardown
+        type: string
+      ndmsIface:
+        description: NdmsIface — NDMS id (OpkgTun90..99) when WDTT зарегистрирован
+          в роутере.
         type: string
       openFirewall:
         description: |-
@@ -7167,6 +7171,9 @@ definitions:
         type: string
       policy:
         description: NDMS hotspot policy or "none"
+        type: string
+      wgIface:
+        description: WgIface — kernel WireGuard dev (opkgtunN); пусто → legacy wdtt0.
         type: string
       wgPort:
         description: -wg-port, internal WG (default 56001)
