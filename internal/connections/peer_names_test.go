@@ -39,6 +39,23 @@ func TestBuildPeerNames_SystemAndManaged(t *testing.T) {
 	}
 }
 
+// conntrack отдаёт IPv6 в канонической форме, а описание пира заводит
+// человек — ключ обязан канонизироваться, иначе имя не найдётся.
+func TestPeerHostIP_CanonicalizesIPv6(t *testing.T) {
+	cases := map[string]string{
+		"fd00:0:0::2/128": "fd00::2",
+		"10.0.0.2/32":     "10.0.0.2",
+		" 10.0.0.3 ":      "10.0.0.3",
+		"10.0.0.0/24":     "",
+		"not-an-ip":       "",
+	}
+	for in, want := range cases {
+		if got := PeerHostIP(in); got != want {
+			t.Errorf("PeerHostIP(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestApplyPeerNames_OnlyFillsEmpty(t *testing.T) {
 	conns := []Connection{
 		{Src: "10.10.0.3"},

@@ -61,7 +61,7 @@ func buildPeerNames(servers []ndms.WireguardServer, managed []storage.ManagedSer
 			// Первая host-запись (/32|/128): у site-to-site пиров впереди
 			// могут стоять маршрутизируемые подсети или 0.0.0.0/0.
 			for _, entry := range p.AllowedIPs {
-				if ip := peerHostIP(entry); ip != "" {
+				if ip := PeerHostIP(entry); ip != "" {
 					out[ip] = p.Description
 					break
 				}
@@ -73,7 +73,7 @@ func buildPeerNames(servers []ndms.WireguardServer, managed []storage.ManagedSer
 			if p.Description == "" {
 				continue
 			}
-			if ip := peerHostIP(p.TunnelIP); ip != "" {
+			if ip := PeerHostIP(p.TunnelIP); ip != "" {
 				out[ip] = p.Description
 			}
 		}
@@ -97,10 +97,11 @@ func applyPeerNames(conns []Connection, names map[string]string) {
 	}
 }
 
-// peerHostIP normalizes a single-host peer address ("10.0.0.2/32",
-// "fd00::2/128" or bare "10.0.0.2") to a bare-IP map key. Returns "" for
-// anything that is not a single host (e.g. "10.0.0.0/24") or not a valid IP.
-func peerHostIP(entry string) string {
+// PeerHostIP normalizes a single-host peer address ("10.0.0.2/32",
+// "fd00::2/128" or bare "10.0.0.2") to the lowercased bare-IP map key
+// callers look up by. Returns "" for anything that is not a single host
+// (e.g. "10.0.0.0/24") or not a valid IP.
+func PeerHostIP(entry string) string {
 	entry = strings.TrimSpace(entry)
 	host := entry
 	if i := strings.IndexByte(entry, '/'); i >= 0 {
@@ -109,8 +110,11 @@ func peerHostIP(entry string) string {
 		}
 		host = entry[:i]
 	}
-	if net.ParseIP(host) == nil {
+	parsed := net.ParseIP(host)
+	if parsed == nil {
 		return ""
 	}
-	return strings.ToLower(host)
+	// Каноническая форма: user-typed IPv6 ("fd00:0:0::2") должен совпасть
+	// с source IP из conntrack / Clash API ("fd00::2").
+	return strings.ToLower(parsed.String())
 }
