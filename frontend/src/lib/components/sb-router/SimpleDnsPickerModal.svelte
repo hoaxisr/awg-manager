@@ -41,6 +41,7 @@
   // svelte-ignore state_referenced_locally
   let proto = $state<DnsPresetProto>(protoOfDnsServer(server));
   let choice = $state(initialPreset?.id ?? CUSTOM);
+  // svelte-ignore state_referenced_locally
   let customAddr = $state(initialPreset ? '' : server.server);
   let busy = $state(false);
   let error = $state('');
