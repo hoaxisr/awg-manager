@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -135,20 +136,16 @@ func TestOutboundReferenceLocations_IncludesFakeIPSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Точные строки, а не Contains: формат — контракт с фронтом.
+	// frontend/src/lib/utils/tunnelRefs.ts разбирает префикс слота и
+	// route.rules[N] регулярками, молча падая в raw-путь при расхождении.
 	locs := svc.OutboundReferenceLocations("tun-x")
-	var composite, rule bool
-	for _, l := range locs {
-		if strings.Contains(l, "[fakeip]") {
-			if strings.Contains(l, "FI+LV") {
-				composite = true
-			}
-			if strings.Contains(l, "rules") {
-				rule = true
-			}
-		}
+	want := []string{
+		`[fakeip] route.rules[0]`,
+		`[fakeip] outbounds[0="FI+LV"].outbounds[0]`,
 	}
-	if !composite || !rule {
-		t.Fatalf("fakeip references missing (composite=%v rule=%v): %v", composite, rule, locs)
+	if !slices.Equal(locs, want) {
+		t.Fatalf("fakeip references = %q, want %q", locs, want)
 	}
 	if locs := svc.OutboundReferenceLocations("absent-tag"); len(locs) != 0 {
 		t.Fatalf("unreferenced tag must give no locations, got %v", locs)

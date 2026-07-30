@@ -133,7 +133,7 @@
 		const ruleIndex = typeof progress.ruleIndex === 'number' ? progress.ruleIndex : undefined;
 		const ruleTotal = typeof progress.ruleTotal === 'number' ? progress.ruleTotal : undefined;
 		const ruleSetTag = progress.ruleSetTag || undefined;
-		let label = progress.message || formatProgressFallback(progress);
+		let label = progress.message || progress.phase;
 		let meta = '';
 		if (typeof ruleIndex === 'number' && ruleTotal) {
 			meta = `Правило #${ruleIndex} из ${ruleTotal}`;
@@ -184,7 +184,6 @@
 	}
 
 	function buildNextStep(): InspectorStep | null {
-		if (currentProgressMessage === 'Инспектор завершил проверку') return null;
 		if (totalRules <= 0) {
 			return {
 				id: `next:config:${Date.now()}`,
@@ -197,7 +196,7 @@
 			if (activeRuleSetTag) {
 				return {
 					id: `next:ruleset:${Date.now()}`,
-					label: `Завершить проверку rule_set и перейти к результату правила #${currentRule + 1}`,
+					label: `Завершить проверку rule_set и перейти к результату правила #${currentRule}`,
 					status: 'next',
 					meta: activeRuleSetTag ? `rule_set: ${activeRuleSetTag}` : '',
 				};
@@ -205,7 +204,7 @@
 			if (currentRule + 1 < totalRules) {
 				return {
 					id: `next:rule:${Date.now()}`,
-					label: `Далее: правило #${currentRule + 2} из ${totalRules}`,
+					label: `Далее: правило #${currentRule + 1} из ${totalRules}`,
 					status: 'next',
 					meta: '',
 				};
@@ -227,7 +226,7 @@
 
 	function handleProgress(progress: SingboxRouterInspectProgress): void {
 		const now = Date.now();
-		currentProgressMessage = progress.message || formatProgressFallback(progress);
+		currentProgressMessage = progress.message || progress.phase;
 		const ruleIndex = typeof progress.ruleIndex === 'number' ? progress.ruleIndex : undefined;
 		const ruleTotal = typeof progress.ruleTotal === 'number' ? progress.ruleTotal : undefined;
 		const ruleSetTag = progress.ruleSetTag || undefined;
@@ -323,21 +322,6 @@
 			slowestSteps,
 			ruleSetSteps,
 		};
-	}
-
-	function formatProgressFallback(progress: SingboxRouterInspectProgress): string {
-		switch (progress.phase) {
-			case 'rule_start':
-				return `Проверяем правило #${progress.ruleIndex ?? 0} из ${progress.ruleTotal ?? 0}`;
-			case 'rule_done':
-				return `Проверка правила #${(progress.ruleIndex ?? 0) + 1} завершена`;
-			case 'rule_set_start':
-				return `Проверяем rule_set ${progress.ruleSetTag ?? ''}`.trim();
-			case 'rule_set_match_start':
-				return `Проверяем rule_set ${progress.ruleSetTag ?? ''} через sing-box…`.trim();
-			default:
-				return progress.phase;
-		}
 	}
 
 	const currentRuleIndex = $derived(currentRule);

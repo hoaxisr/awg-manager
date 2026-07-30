@@ -1,6 +1,7 @@
 // «используется в» (мокап page-rulesets-v3): для каждого rule-set тега —
-// в каких DNS-правилах и route-правилах он упомянут (1-based номера, как в UI:
-// «DNS #1 · Route #3»). computeRuleSetUsage из routing/singboxRouter даёт только
+// в каких DNS-правилах и route-правилах он упомянут (номера как в самих
+// таблицах: DNS с 1, route с 0 — «DNS #1 · Route #2»).
+// computeRuleSetUsage из routing/singboxRouter даёт только
 // СУММУ ссылок; здесь нужен СПИСОК ссылок с разбивкой DNS/Route → отдельный
 // чистый хелпер.
 //
@@ -15,13 +16,13 @@ type WithRuleSet = { rule_set?: string[] };
 export interface RuleSetUsageRef {
 	/** 1-based номера DNS-правил, ссылающихся на тег. */
 	dns: number[];
-	/** 1-based номера route-правил, ссылающихся на тег. */
+	/** 0-based номера route-правил, ссылающихся на тег. */
 	route: number[];
 }
 
 /**
  * Строит карту tag → { dns:[…], route:[…] } из списков DNS- и route-правил.
- * Номера 1-based и в порядке появления правил. Тег учитывается один раз на
+ * Номера в порядке появления правил. Тег учитывается один раз на
  * правило (если правило ссылается на один rule_set дважды — номер не дублируется).
  */
 export function computeRuleSetUsageRefs(
@@ -42,6 +43,7 @@ export function computeRuleSetUsageRefs(
 	const collect = (
 		rules: readonly WithRuleSet[],
 		pick: (ref: RuleSetUsageRef) => number[],
+		base: number,
 	): void => {
 		for (let i = 0; i < rules.length; i++) {
 			const tags = rules[i].rule_set;
@@ -51,13 +53,13 @@ export function computeRuleSetUsageRefs(
 				const tag = displayRuleSetTag(raw);
 				if (seen.has(tag)) continue;
 				seen.add(tag);
-				pick(ensure(tag)).push(i + 1);
+				pick(ensure(tag)).push(i + base);
 			}
 		}
 	};
 
-	collect(dnsRules, (ref) => ref.dns);
-	collect(routeRules, (ref) => ref.route);
+	collect(dnsRules, (ref) => ref.dns, 1);
+	collect(routeRules, (ref) => ref.route, 0);
 
 	return m;
 }
