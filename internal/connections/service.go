@@ -42,6 +42,10 @@ type Service struct {
 	// вида "0xffffaaa"), когда tproxy-движок активен. nil = не подключён.
 	sbMarkProvider func(ctx context.Context) (string, bool)
 
+	// Источники имён WG-пиров (issue #639); nil = резолвим только по MAC.
+	wgServers      WGServerPeersLister
+	managedServers ManagedServersLister
+
 	markMu      sync.Mutex
 	markCached  uint32
 	markOK      bool
@@ -159,6 +163,10 @@ func (s *Service) List(ctx context.Context, params ListParams) (*ListResponse, e
 		}
 		conns = append(conns, c)
 	}
+
+	// 5.5. Клиенты из туннелей приходят без MAC — доименовываем их по IP
+	// из описаний WG-пиров, чтобы они выглядели как LAN-устройства (#639).
+	applyPeerNames(conns, s.resolvePeerNames(ctx))
 
 	// 6. Compute stats (over ALL connections, before filtering)
 	stats, tunnelSummary := computeStats(conns)
